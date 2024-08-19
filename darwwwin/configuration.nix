@@ -1,5 +1,4 @@
-self@{ pkgs, ... }:
-{
+self@{ pkgs, ... }: {
   users.users."0xgleb" = {
     home = "/Users/0xgleb";
     shell = pkgs.zsh;
@@ -11,14 +10,32 @@ self@{ pkgs, ... }:
   programs.vim.enable = true;
   programs.vim.enableSensible = true;
 
+  # homebrew = {
+  #   enable = true;
+
+  #   onActivation = {
+  #     autoUpdate = true;
+  #     cleanup = "zap";
+  #     upgrade = true;
+  #   };
+
+  #   brews = [ "emacs-mac" ];
+  #   casks = [ "emacs-mac" ];
+  #   taps = [ "railwaycat/emacsmacport" ];
+  # };
+
   # List packages installed in system profile. To search by name, run:
   # $ nix-env -qaP | grep wget
   environment.systemPackages = with pkgs; [
     bat
+    nil
+    nixfmt-classic
     emacs
     magic-wormhole
+    ripgrep
     openssl
     zellij
+    spotify
     telegram-desktop
     _1password
     htop
