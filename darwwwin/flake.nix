@@ -9,8 +9,7 @@
     home-manager.inputs.nixpkgs.follows = "nixpkgs";
   };
 
-  outputs = inputs@{ self, nix-darwin, nixpkgs, home-manager, ... }:
-  {
+  outputs = inputs@{ self, nix-darwin, nixpkgs, home-manager, ... }: {
     # Build darwin flake using:
     # $ darwin-rebuild build --flake ~/.config/nix-darwin#darwwwin
     darwinConfigurations.darwwwin = nix-darwin.lib.darwinSystem {

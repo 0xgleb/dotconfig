@@ -5,24 +5,34 @@ self@{ pkgs, ... }: {
   };
 
   # Create /etc/zshrc that loads the nix-darwin environment.
-  programs.zsh.enable = true;
   programs.direnv.enable = true;
   programs.vim.enable = true;
   programs.vim.enableSensible = true;
+  programs.zsh = let
+    zshCustom = pkgs.stdenv.mkDerivation {
+      name = "zsh-custom";
+      src = ./.;
+      installPhase = ''
+        mkdir -p $out/themes
+        mv -v ./hyperzsh.zsh-theme $out/themes/
+      '';
+    };
+  in {
+    enable = true;
+    promptInit = ''
+      export ZSH_CUSTOM="${zshCustom}"
+      export ZSH="${pkgs.oh-my-zsh}/share/oh-my-zsh"
+      source $ZSH/oh-my-zsh.sh
 
-  # homebrew = {
-  #   enable = true;
+      ZSH_THEME="hyperzsh"
+      PROMPT='%{$fg[cyan]%}%c %{$reset_color%}> '
 
-  #   onActivation = {
-  #     autoUpdate = true;
-  #     cleanup = "zap";
-  #     upgrade = true;
-  #   };
+      alias l='ls -lAh'
+      set -o vi
+    '';
+  };
 
-  #   brews = [ "emacs-mac" ];
-  #   casks = [ "emacs-mac" ];
-  #   taps = [ "railwaycat/emacsmacport" ];
-  # };
+  homebrew.enable = false;
 
   # List packages installed in system profile. To search by name, run:
   # $ nix-env -qaP | grep wget
@@ -37,10 +47,14 @@ self@{ pkgs, ... }: {
     zellij
     spotify
     telegram-desktop
+    google-cloud-sdk
+    nodejs_18
+    bottom
     _1password
     htop
     fzf
     obsidian
+    oh-my-zsh
     iterm2
     tldr
     git
