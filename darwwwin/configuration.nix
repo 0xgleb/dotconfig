@@ -19,15 +19,18 @@ self@{ pkgs, ... }: {
     };
   in {
     enable = true;
+    enableFzfGit = true;
+    enableFzfHistory = true;
+    enableFzfCompletion = true;
     promptInit = ''
       export ZSH_CUSTOM="${zshCustom}"
       export ZSH="${pkgs.oh-my-zsh}/share/oh-my-zsh"
       source $ZSH/oh-my-zsh.sh
 
       ZSH_THEME="hyperzsh"
-      PROMPT='%{$fg[cyan]%}%c %{$reset_color%}> '
+      PROMPT='%{$fg[cyan]%}%c%{$reset_color%}: '
 
-      alias l='ls -lAh'
+      alias l='ls -GAlh'
       set -o vi
     '';
   };

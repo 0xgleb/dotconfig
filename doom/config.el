@@ -222,9 +222,8 @@ cursor position and markers by using
 
 
 
-                                        ; copilot
-
-(setq copilot-node-executable "~/.nvm/versions/node/v18.20.2/bin/node")
+; copilot
+(setq copilot-node-executable "/run/current-system/sw/bin/node")
 
 ;; accept completion from copilot and fallback to company
 (use-package! copilot
