@@ -28,7 +28,7 @@ self@{ pkgs, ... }: {
       source $ZSH/oh-my-zsh.sh
 
       ZSH_THEME="hyperzsh"
-      PROMPT='%{$fg[cyan]%}%c%{$reset_color%}: '
+      PROMPT='%{$fg[cyan]%}%c $(git_prompt_info | sed -E 's/git://')%{$reset_color%}➜ '
 
       alias l='ls -GAlh'
       set -o vi
@@ -39,31 +39,14 @@ self@{ pkgs, ... }: {
 
   # List packages installed in system profile. To search by name, run:
   # $ nix-env -qaP | grep wget
-  environment.systemPackages = with pkgs; [
-    bat
-    nil
-    nixfmt-classic
-    emacs
-    magic-wormhole
-    ripgrep
-    openssl
-    zellij
-    spotify
-    telegram-desktop
-    google-cloud-sdk
-    nodejs_18
-    bottom
-    _1password
-    htop
-    fzf
-    obsidian
-    oh-my-zsh
-    iterm2
-    tldr
-    git
-    gh
-    jq
-  ];
+  environment.systemPackages = with pkgs;
+    let
+      shellessentials =
+        [ bat fzf htop bottom oh-my-zsh ripgrep tldr jq zellij ];
+      devessentials = [ emacs gh git git-extras nil nixfmt-classic nodejs_18 ];
+      remotessentials = [ google-cloud-sdk magic-wormhole openssl ];
+      normiessentials = [ _1password iterm2 obsidian spotify vscodium ];
+    in shellessentials ++ devessentials ++ remotessentials ++ normiessentials;
 
   # Auto upgrade nix package and the daemon service.
   services.nix-daemon.enable = true;
