@@ -6,6 +6,17 @@
   home.username = "0xgleb";
   home.homeDirectory = "/Users/0xgleb";
 
+  programs.vscode = {
+    enable = true;
+    package = pkgs.vscodium;
+    extensions = with pkgs.vscode-extensions; [
+      mkhl.direnv
+      bbenoist.nix
+      jnoortheen.nix-ide
+      vscodevim.vim
+    ];
+  };
+
   # Let Home Manager install and manage itself.
   programs.home-manager.enable = true;
 

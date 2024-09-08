@@ -222,7 +222,7 @@ cursor position and markers by using
 
 
 
-; copilot
+                                        ; copilot
 (setq copilot-node-executable "/run/current-system/sw/bin/node")
 
 ;; accept completion from copilot and fallback to company
@@ -238,6 +238,7 @@ cursor position and markers by using
 
 (setq lsp-rust-analyzer-cargo-watch-command "clippy")
 (setq lsp-rust-analyzer-cargo-extra-args ["--all-features"])
+(setq lsp-file-watch-threshold 10000)
 
 ;; enable word/line wrapping
 (setq global-word-wrap-whitespace-mode t)

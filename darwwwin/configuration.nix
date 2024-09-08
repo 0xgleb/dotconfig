@@ -43,9 +43,10 @@ self@{ pkgs, ... }: {
     let
       shellessentials =
         [ bat fzf htop bottom oh-my-zsh ripgrep tldr jq zellij ];
-      devessentials = [ emacs gh git git-extras nil nixfmt-classic nodejs_18 ];
+      devessentials =
+        [ emacs gh git git-lfs git-extras nil nixfmt-classic nodejs_18 ];
       remotessentials = [ google-cloud-sdk magic-wormhole openssl ];
-      normiessentials = [ _1password iterm2 obsidian spotify vscodium ];
+      normiessentials = [ _1password iterm2 obsidian spotify ];
     in shellessentials ++ devessentials ++ remotessentials ++ normiessentials;
 
   # Auto upgrade nix package and the daemon service.
