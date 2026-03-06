@@ -1,0 +1,37 @@
+name: Ralph Down
+
+on:
+  workflow_dispatch:
+
+jobs:
+  teardown:
+    runs-on: ubuntu-latest
+    steps:
+      - name: Install doctl
+        uses: digitalocean/action-doctl@v2
+        with:
+          token: ${{ secrets.DO_TOKEN }}
+
+      - name: Delete droplet and SSH key
+        run: |
+          # Delete droplet by name
+          dropletId=$(doctl compute droplet list --format ID,Name --no-header | grep ralph-loop | awk '{print $1}')
+          if [ -n "$dropletId" ]; then
+            doctl compute droplet delete "$dropletId" --force
+            echo "Deleted droplet $dropletId"
+          else
+            echo "No droplet found"
+          fi
+
+          # Delete SSH key by name
+          keyId=$(doctl compute ssh-key list --format ID,Name --no-header | grep ralph-loop-key | awk '{print $1}')
+          if [ -n "$keyId" ]; then
+            doctl compute ssh-key delete "$keyId" --force
+            echo "Deleted SSH key $keyId"
+          else
+            echo "No SSH key found"
+          fi
+
+      - name: Confirm teardown
+        run: |
+          echo "## Ralph Loop Instance Destroyed" >> $GITHUB_STEP_SUMMARY

@@ -1,0 +1,94 @@
+name: Ralph Up
+
+on:
+  workflow_dispatch:
+    inputs:
+      droplet_size:
+        description: 'Droplet size'
+        required: false
+        default: 's-2vcpu-4gb'
+        type: choice
+        options:
+          - s-1vcpu-1gb
+          - s-2vcpu-4gb
+          - s-4vcpu-8gb
+
+jobs:
+  deploy:
+    runs-on: ubuntu-latest
+    steps:
+      - uses: actions/checkout@v4
+
+      - uses: cachix/install-nix-action@v27
+        with:
+          extra_nix_config: |
+            experimental-features = nix-command flakes
+
+      - name: Install doctl
+        uses: digitalocean/action-doctl@v2
+        with:
+          token: ${{ secrets.DO_TOKEN }}
+
+      - name: Setup SSH key
+        run: |
+          mkdir -p ~/.ssh
+          echo "${{ secrets.RALPH_SSH_PRIVATE_KEY }}" > ~/.ssh/ralph_ed25519
+          chmod 600 ~/.ssh/ralph_ed25519
+
+      - name: Create SSH key in DO
+        run: |
+          # Derive public key from private
+          pubKey=$(ssh-keygen -y -f ~/.ssh/ralph_ed25519)
+          # Check if key exists, create if not
+          if ! doctl compute ssh-key list --format Name --no-header | grep -q ralph-loop-key; then
+            doctl compute ssh-key create ralph-loop-key --public-key "$pubKey"
+          fi
+          echo "SSH_KEY_ID=$(doctl compute ssh-key list --format ID,Name --no-header | grep ralph-loop-key | awk '{print $1}')" >> $GITHUB_ENV
+
+      - name: Create droplet
+        run: |
+          # Delete existing droplet if any
+          existingId=$(doctl compute droplet list --format ID,Name --no-header | grep ralph-loop | awk '{print $1}')
+          if [ -n "$existingId" ]; then
+            doctl compute droplet delete "$existingId" --force
+            sleep 10
+          fi
+
+          # Create new droplet
+          doctl compute droplet create ralph-loop \
+            --image ubuntu-24-04-x64 \
+            --size ${{ inputs.droplet_size }} \
+            --region nyc1 \
+            --ssh-keys ${{ env.SSH_KEY_ID }} \
+            --wait
+
+          # Get IP
+          sleep 5
+          echo "DROPLET_IP=$(doctl compute droplet get ralph-loop --format PublicIPv4 --no-header)" >> $GITHUB_ENV
+
+      - name: Wait for SSH
+        run: |
+          echo "Waiting for SSH on ${{ env.DROPLET_IP }}..."
+          for i in {1..60}; do
+            if ssh -i ~/.ssh/ralph_ed25519 -o ConnectTimeout=5 -o StrictHostKeyChecking=accept-new root@${{ env.DROPLET_IP }} true 2>/dev/null; then
+              echo "SSH ready"
+              break
+            fi
+            sleep 5
+          done
+
+      - name: Install NixOS
+        run: |
+          nix run github:nix-community/nixos-anywhere -- \
+            --flake .#nixxxos \
+            --ssh-option "IdentityFile=$HOME/.ssh/ralph_ed25519" \
+            --target-host root@${{ env.DROPLET_IP }}
+
+      - name: Output connection info
+        run: |
+          echo "## Ralph Loop Instance Ready" >> $GITHUB_STEP_SUMMARY
+          echo "" >> $GITHUB_STEP_SUMMARY
+          echo "Connect with:" >> $GITHUB_STEP_SUMMARY
+          echo "\`\`\`" >> $GITHUB_STEP_SUMMARY
+          echo "ssh -i ~/.ssh/ralph_ed25519 0xgleb@${{ env.DROPLET_IP }}" >> $GITHUB_STEP_SUMMARY
+          echo "\`\`\`" >> $GITHUB_STEP_SUMMARY
