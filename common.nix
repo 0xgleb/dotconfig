@@ -64,6 +64,9 @@ in {
     openssl
     rage
 
+    # Shells
+    nushell
+
     # Editors
     vim-full
   ];
@@ -76,7 +79,9 @@ in {
     shellAliases = {
       l = if pkgs.stdenv.isDarwin then "ls -GAlh" else "ls -Alh --color=auto";
     };
-    shells = [ pkgs.zsh ];
+    shells = [ pkgs.zsh pkgs.nushell ];
+    etc."nushell/config.nu".source = ./nushell/config.nu;
+    etc."nushell/env.nu".source = ./nushell/env.nu;
   };
 
   nix.settings = {
