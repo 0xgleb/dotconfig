@@ -27,21 +27,41 @@ in {
   };
 
   # Zsh config (portable via home-manager)
-  programs.zsh = {
-    enable = true;
-    oh-my-zsh = {
+  programs.zsh =
+    let
+      graphiteCompletion = ''
+        #compdef gt
+        ###-begin-gt-completions-###
+        # yargs command completion script
+        _gt_yargs_completions()
+        {
+          local reply
+          local si=$IFS
+          IFS=
+        ' reply=($(COMP_CWORD="$((CURRENT-1))" COMP_LINE="$BUFFER" COMP_POINT="$CURSOR" gt --get-yargs-completions "''${words[@]}"))
+          IFS=$si
+          _describe 'values' reply
+        }
+        compdef _gt_yargs_completions gt
+        ###-end-gt-completions-###
+      '';
+    in
+    {
       enable = true;
-      custom = "${zshCustom}";
-      theme = "hyperzsh";
-      plugins = [ "autojump" ];
+      oh-my-zsh = {
+        enable = true;
+        custom = "${zshCustom}";
+        theme = "hyperzsh";
+        plugins = [ "autojump" ];
+      };
+      initContent = ''
+        PROMPT='%{$fg[cyan]%}%c %{$reset_color%}➜ '
+        export PATH="$PATH:/opt/homebrew/bin"
+        set -o vi
+        fastfetch
+        ${graphiteCompletion}
+      '';
     };
-    initContent = ''
-      PROMPT='%{$fg[cyan]%}%c %{$reset_color%}➜ '
-      export PATH="$PATH:/opt/homebrew/bin"
-      set -o vi
-      fastfetch
-    '';
-  };
 
   # Zellij
   programs.zellij = { enable = true; };

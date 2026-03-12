@@ -25,3 +25,5 @@ AppSupport
 /graphite/
 /nvim/
 /opencode/
+/.tmp/
+/result

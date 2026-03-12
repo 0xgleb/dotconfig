@@ -1,10 +1,18 @@
 { pkgs, lib, inputs, ... }:
 let
   unstable = import inputs.nixpkgs-unstable {
-    system = pkgs.system;
+    system = pkgs.stdenv.hostPlatform.system;
     config.allowUnfree = true;
   };
+
+  # User configuration (source of truth)
+  user = {
+    name = "0xgleb";
+    home = "/Users/0xgleb";
+  };
 in {
+  # Export for use in other modules
+  _module.args.userConfig = user;
   environment.systemPackages = with pkgs; [
     # CLI tools
     autojump
@@ -48,7 +56,7 @@ in {
     # Nix tools
     nil
     nixd
-    nixfmt-classic
+    nixfmt
 
     # Security
     gnupg

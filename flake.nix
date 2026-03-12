@@ -66,13 +66,73 @@
       ];
     };
 
-    # Helper scripts (run with: nix run .#ralph-up)
+    # Helper scripts
     packages.aarch64-darwin = let
       pkgs = import nixpkgs {
         system = "aarch64-darwin";
         config.allowUnfree = true;
       };
     in {
+      mdSync = pkgs.writeShellApplication {
+        name = "md-sync";
+        runtimeInputs = with pkgs; [ git rsync coreutils ];
+        text = ''
+          orgRoot="''${MD_SYNC_ORG:-$HOME/code/st0x}"
+          notesRoot="''${MD_SYNC_NOTES:-$HOME/code/st0x/notes}"
+          mkdir -p "$notesRoot"
+
+          # Get markdown files tracked by git in a repo
+          md_files() {
+            git -C "$1" ls-tree -r --name-only HEAD 2>/dev/null | { grep '\.md$' || true; }
+          }
+
+          # Sync one repo's markdown files into notes dir
+          # Usage: sync_repo <gitPath> <repoName>
+          # Result: AGENTS.md → notes/AGENTS.<repoName>.md (preserving subdirs)
+          sync_repo() {
+            local gitPath=$1 repoName=$2
+            [ -d "$gitPath" ] || return 0
+            local count=0
+            while IFS= read -r file; do
+              [ -z "$file" ] && continue
+              local basename="''${file##*/}"
+              local nameonly="''${basename%.md}"
+              local dirname="''${file%/*}"
+              local dest
+              if [ "$dirname" = "$file" ]; then
+                dest="$notesRoot/$nameonly.$repoName.md"
+              else
+                dest="$notesRoot/$dirname/$nameonly.$repoName.md"
+              fi
+              mkdir -p "''${dest%/*}"
+              rsync -q "$gitPath/$file" "$dest"
+              count=$((count + 1))
+            done < <(md_files "$gitPath")
+            echo "[$repoName] $gitPath -> $count files"
+          }
+
+          # Sync all repos
+          cmd_sync() {
+            for repo in liquidity issuance; do
+              local repoPath="$orgRoot/st0x.$repo"
+              sync_repo "$repoPath" "$repo"
+
+              local wtDir="$repoPath/.worktrees"
+              [ -d "$wtDir" ] || continue
+              for wtPath in "$wtDir"/*; do
+                [ -d "$wtPath" ] || continue
+                sync_repo "$wtPath" "$repo"
+              done
+            done
+          }
+
+          case "''${1:-sync}" in
+            sync) cmd_sync ;;
+            *) echo "Usage: md-sync [sync]"; exit 1 ;;
+          esac
+        '';
+      };
+
       ralphUp = pkgs.writeShellApplication {
         name = "ralph-up";
         runtimeInputs = [ pkgs.terraform pkgs.openssh ];

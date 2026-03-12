@@ -1,5 +1,15 @@
 # Roadmap
 
+## Notes sync
+
+Bidirectional markdown sync between st0x repos and a unified Obsidian vault.
+
+- [x] Extract md-sync into standalone nix package (`nix run .#mdSync`)
+- [ ] Sync st0x repos (liquidity, issuance + worktrees) with `.repo.md` qualification
+- [ ] fswatch-based continuous sync
+- [ ] Redeploy as launchd service
+- [ ] dotconfig sync support (~/.config → notes/dotconfig)
+
 ## Emacs Graphite Plugin
 
 Build a magit extension for Graphite (`magit-graphite.el`). Transient-based UI
