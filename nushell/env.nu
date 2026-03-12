@@ -5,6 +5,12 @@
 # `char esep` is the platform's env separator (: on unix, ; on windows)
 # split row turns the string into a list, prepend adds to the front
 # https://www.nushell.sh/book/configuration.html#path-configuration
-$env.PATH = ($env.PATH | split row (char esep) | prepend '/opt/homebrew/bin')
+$env.PATH = ($env.PATH | split row (char esep) | prepend [
+  '/opt/homebrew/bin'
+  '/run/current-system/sw/bin'
+  '/etc/profiles/per-user/0xgleb/bin'
+  $'($env.HOME)/.nix-profile/bin'
+  '/nix/var/nix/profiles/default/bin'
+])
 
 $env.EDITOR = 'vim'

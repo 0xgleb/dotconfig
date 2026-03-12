@@ -38,6 +38,7 @@ in {
     # Git
     gh
     git
+    gitui
     git-lfs
     git-extras
     unstable.graphite-cli

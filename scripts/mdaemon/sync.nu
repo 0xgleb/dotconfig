@@ -30,22 +30,18 @@ def main [--notes: string, --watch] {
     # `| lines` splits the stream into individual lines as they arrive
     # https://www.nushell.sh/commands/docs/lines.html
     (fswatch -l 3 -x
-      --exclude '\.git' --exclude '\.obsidian' --include '\.md$' --exclude '.*'
+      --exclude '\.git' --exclude '\.obsidian' --include '\.md' --exclude '.*'
       ...$watch_paths
       | lines
       | each {|changed_line|
         let timestamp = (date now | format date '%H:%M:%S')
-        print $"[($timestamp)] fswatch: ($changed_line)"
+        print -e $"[($timestamp)] fswatch: ($changed_line)"
 
         # fswatch -x appends flags after a space; grab just the path
         let changed_path = ($changed_line | split row ' ' | first)
         let repo = (repo-for-path $changed_path $sync_targets $notes_root)
 
         if $repo != null {
-          print $"[($timestamp)] syncing ($repo)..."
-          # where returns a table; first gets the single matching row
-          # .path accesses the "path" column of that row (cell path)
-          # https://www.nushell.sh/book/types_of_data.html#cell-paths
           let target = ($sync_targets | where name == $repo | first)
           sync-repo $target.path $target.name $notes_root
         }
