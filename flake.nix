@@ -93,6 +93,7 @@
 
           md_files() {
             git -C "$1" ls-tree -r --name-only HEAD 2>/dev/null | { grep '\.md$' || true; }
+            (cd "$1" && find .local -name '*.md' 2>/dev/null) || true
           }
 
           undot() {
@@ -113,8 +114,9 @@
 
             while IFS= read -r file; do
               [ -z "$file" ] && continue
-              local noteFile
-              noteFile="$(undot "$file")"
+              local noteFile="$file"
+              noteFile="''${noteFile#.local/}"
+              noteFile="$(undot "$noteFile")"
               local dir="''${noteFile%/*}"
               if [ "$dir" != "$noteFile" ]; then
                 mkdir -p "$repoNotes/$dir"
@@ -124,19 +126,19 @@
               local dst="$repoNotes/$noteFile"
 
               if [ ! -f "$dst" ]; then
-                echo "[$(date +%H:%M:%S)] [st0x.$repoName --new--> notes] $repoName/$file"
+                echo "[$(date +%H:%M:%S)] [st0x.$repoName --new--> notes] $repoName/$noteFile"
                 cp "$src" "$dst"
               elif ! diff -q "$src" "$dst" > /dev/null 2>&1; then
                 local adds dels
                 if [ "$src" -nt "$dst" ]; then
                   adds="$(diff "$dst" "$src" 2>/dev/null | grep -c '^>' || true)"
                   dels="$(diff "$dst" "$src" 2>/dev/null | grep -c '^<' || true)"
-                  echo "[$(date +%H:%M:%S)] [st0x.$repoName --+$adds,-$dels--> notes] $repoName/$file"
+                  echo "[$(date +%H:%M:%S)] [st0x.$repoName --+$adds,-$dels--> notes] $repoName/$noteFile"
                   cp "$src" "$dst"
                 else
                   adds="$(diff "$src" "$dst" 2>/dev/null | grep -c '^>' || true)"
                   dels="$(diff "$src" "$dst" 2>/dev/null | grep -c '^<' || true)"
-                  echo "[$(date +%H:%M:%S)] [notes --+$adds,-$dels--> st0x.$repoName] $repoName/$file"
+                  echo "[$(date +%H:%M:%S)] [notes --+$adds,-$dels--> st0x.$repoName] $repoName/$noteFile"
                   cp "$dst" "$src"
                 fi
               fi
