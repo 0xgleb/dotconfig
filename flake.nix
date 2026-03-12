@@ -95,6 +95,16 @@
             git -C "$1" ls-tree -r --name-only HEAD 2>/dev/null | { grep '\.md$' || true; }
           }
 
+          undot() {
+            local p="$1" result=""
+            while [[ "$p" == */* ]]; do
+              local seg="''${p%%/*}"
+              p="''${p#*/}"
+              result="$result''${seg#.}/"
+            done
+            echo "$result''${p#.}"
+          }
+
           sync_repo() {
             local repoPath="$1" repoName="$2"
             [ -d "$repoPath" ] || return 0
@@ -103,13 +113,15 @@
 
             while IFS= read -r file; do
               [ -z "$file" ] && continue
-              local dir="''${file%/*}"
-              if [ "$dir" != "$file" ]; then
+              local noteFile
+              noteFile="$(undot "$file")"
+              local dir="''${noteFile%/*}"
+              if [ "$dir" != "$noteFile" ]; then
                 mkdir -p "$repoNotes/$dir"
               fi
 
               local src="$repoPath/$file"
-              local dst="$repoNotes/$file"
+              local dst="$repoNotes/$noteFile"
 
               if [ ! -f "$dst" ]; then
                 echo "[$(date +%H:%M:%S)] [st0x.$repoName --new--> notes] $repoName/$file"
@@ -133,9 +145,30 @@
 
           repos=(liquidity issuance rest.api)
 
+          declare -A sync_targets
+          for repo in "''${repos[@]}"; do
+            sync_targets["$repo"]="$orgRoot/st0x.$repo"
+          done
+          for repo in "''${repos[@]}"; do
+            wtDir="$orgRoot/st0x.$repo/.worktrees"
+            [ -d "$wtDir" ] || continue
+            for wt in "$wtDir"/*/; do
+              [ -d "$wt/.git" ] || [ -f "$wt/.git" ] || continue
+              wtName="''${wt%/}"
+              wtName="$repo/worktrees/''${wtName##*/}"
+              sync_targets["$wtName"]="''${wt%/}"
+            done
+            for wt in "$wtDir"/*/*/; do
+              [ -d "$wt/.git" ] || [ -f "$wt/.git" ] || continue
+              wtName="''${wt%/}"
+              wtName="$repo/worktrees/''${wtName##*/}"
+              sync_targets["$wtName"]="''${wt%/}"
+            done
+          done
+
           sync_all() {
-            for repo in "''${repos[@]}"; do
-              sync_repo "$orgRoot/st0x.$repo" "$repo"
+            for name in "''${!sync_targets[@]}"; do
+              sync_repo "''${sync_targets[$name]}" "$name"
             done
           }
 
@@ -152,37 +185,48 @@
               local path="$1"
               if [[ "$path" == "$notesRoot/"* ]]; then
                 local rel="''${path#"$notesRoot"/}"
-                echo "''${rel%%/*}"
+                for name in "''${!sync_targets[@]}"; do
+                  if [[ "$rel" == "$name/"* ]] || [[ "$rel" == "$name" ]]; then
+                    echo "$name"
+                    return
+                  fi
+                done
                 return
               fi
-              for repo in "''${repos[@]}"; do
-                if [[ "$path" == "$orgRoot/st0x.$repo/"* ]]; then
-                  echo "$repo"
-                  return
+              local best="" bestLen=0
+              for name in "''${!sync_targets[@]}"; do
+                local tp="''${sync_targets[$name]}"
+                if [[ "$path" == "$tp/"* ]] && [ ''${#tp} -gt "$bestLen" ]; then
+                  best="$name"
+                  bestLen=''${#tp}
                 fi
               done
+              echo "$best"
             }
+
+            parse_path() { echo "''${1%% *}"; }
 
             fswatch -l 3 -x \
               --exclude='\.git' --exclude='\.obsidian' --include='\.md$' --exclude='.*' \
               "''${watchPaths[@]}" | while read -r changed; do
               echo "[$(date +%H:%M:%S)] fswatch: $(short "$changed")"
-              # drain queued events, collect unique repos
               declare -A touched_repos
-              repo=$(repo_for_path "$changed")
+              path=$(parse_path "$changed")
+              repo=$(repo_for_path "$path")
               if [ -n "$repo" ]; then
                 touched_repos["$repo"]=1
               fi
               while read -r -t 0.1 extra; do
                 echo "[$(date +%H:%M:%S)] fswatch: $(short "$extra")"
-                repo=$(repo_for_path "$extra")
+                path=$(parse_path "$extra")
+                repo=$(repo_for_path "$path")
                 if [ -n "$repo" ]; then
                   touched_repos["$repo"]=1
                 fi
               done
-              for repo in "''${!touched_repos[@]}"; do
-                echo "[$(date +%H:%M:%S)] syncing $repo..."
-                sync_repo "$orgRoot/st0x.$repo" "$repo"
+              for name in "''${!touched_repos[@]}"; do
+                echo "[$(date +%H:%M:%S)] syncing $name..."
+                sync_repo "''${sync_targets[$name]}" "$name"
               done
               unset touched_repos
             done
