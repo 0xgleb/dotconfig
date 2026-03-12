@@ -75,61 +75,118 @@
     in {
       mdSync = pkgs.writeShellApplication {
         name = "md-sync";
-        runtimeInputs = with pkgs; [ git rsync coreutils ];
+        runtimeInputs = with pkgs; [ git rsync coreutils fswatch ];
         text = ''
-          orgRoot="''${MD_SYNC_ORG:-$HOME/code/st0x}"
-          notesRoot="''${MD_SYNC_NOTES:-$HOME/code/st0x/notes}"
-          mkdir -p "$notesRoot"
+          orgRoot="$HOME/code/st0x"
+          notesRoot="$HOME/code/st0x/notes"
 
-          # Get markdown files tracked by git in a repo
+          short() { echo "''${1/$HOME/\~}"; }
+
+          watch=false
+          while [[ $# -gt 0 ]]; do
+            case "$1" in
+              --notes) notesRoot="$2"; shift 2 ;;
+              --watch) watch=true; shift ;;
+              *) echo "Usage: md-sync [--notes DIR] [--watch]"; exit 1 ;;
+            esac
+          done
+
           md_files() {
             git -C "$1" ls-tree -r --name-only HEAD 2>/dev/null | { grep '\.md$' || true; }
           }
 
-          # Sync one repo's markdown files into notes dir
-          # Usage: sync_repo <gitPath> <repoName>
-          # Result: AGENTS.md → notes/AGENTS.<repoName>.md (preserving subdirs)
           sync_repo() {
-            local gitPath=$1 repoName=$2
-            [ -d "$gitPath" ] || return 0
-            local count=0
+            local repoPath="$1" repoName="$2"
+            [ -d "$repoPath" ] || return 0
+            local repoNotes="$notesRoot/$repoName"
+            mkdir -p "$repoNotes"
+
             while IFS= read -r file; do
               [ -z "$file" ] && continue
-              local basename="''${file##*/}"
-              local nameonly="''${basename%.md}"
-              local dirname="''${file%/*}"
-              local dest
-              if [ "$dirname" = "$file" ]; then
-                dest="$notesRoot/$nameonly.$repoName.md"
-              else
-                dest="$notesRoot/$dirname/$nameonly.$repoName.md"
+              local dir="''${file%/*}"
+              if [ "$dir" != "$file" ]; then
+                mkdir -p "$repoNotes/$dir"
               fi
-              mkdir -p "''${dest%/*}"
-              rsync -q "$gitPath/$file" "$dest"
-              count=$((count + 1))
-            done < <(md_files "$gitPath")
-            echo "[$repoName] $gitPath -> $count files"
+
+              local src="$repoPath/$file"
+              local dst="$repoNotes/$file"
+
+              if [ ! -f "$dst" ]; then
+                echo "[$(date +%H:%M:%S)] [st0x.$repoName --new--> notes] $repoName/$file"
+                cp "$src" "$dst"
+              elif ! diff -q "$src" "$dst" > /dev/null 2>&1; then
+                local adds dels
+                if [ "$src" -nt "$dst" ]; then
+                  adds="$(diff "$dst" "$src" 2>/dev/null | grep -c '^>' || true)"
+                  dels="$(diff "$dst" "$src" 2>/dev/null | grep -c '^<' || true)"
+                  echo "[$(date +%H:%M:%S)] [st0x.$repoName --+$adds,-$dels--> notes] $repoName/$file"
+                  cp "$src" "$dst"
+                else
+                  adds="$(diff "$src" "$dst" 2>/dev/null | grep -c '^>' || true)"
+                  dels="$(diff "$src" "$dst" 2>/dev/null | grep -c '^<' || true)"
+                  echo "[$(date +%H:%M:%S)] [notes --+$adds,-$dels--> st0x.$repoName] $repoName/$file"
+                  cp "$dst" "$src"
+                fi
+              fi
+            done < <(md_files "$repoPath")
           }
 
-          # Sync all repos
-          cmd_sync() {
-            for repo in liquidity issuance; do
-              local repoPath="$orgRoot/st0x.$repo"
-              sync_repo "$repoPath" "$repo"
+          repos=(liquidity issuance rest.api)
 
-              local wtDir="$repoPath/.worktrees"
-              [ -d "$wtDir" ] || continue
-              for wtPath in "$wtDir"/*; do
-                [ -d "$wtPath" ] || continue
-                sync_repo "$wtPath" "$repo"
-              done
+          sync_all() {
+            for repo in "''${repos[@]}"; do
+              sync_repo "$orgRoot/st0x.$repo" "$repo"
             done
           }
 
-          case "''${1:-sync}" in
-            sync) cmd_sync ;;
-            *) echo "Usage: md-sync [sync]"; exit 1 ;;
-          esac
+          sync_all
+
+          if [ "$watch" = true ]; then
+            echo "watching for changes..."
+            watchPaths=("$notesRoot")
+            for repo in "''${repos[@]}"; do
+              watchPaths+=("$orgRoot/st0x.$repo")
+            done
+
+            repo_for_path() {
+              local path="$1"
+              if [[ "$path" == "$notesRoot/"* ]]; then
+                local rel="''${path#"$notesRoot"/}"
+                echo "''${rel%%/*}"
+                return
+              fi
+              for repo in "''${repos[@]}"; do
+                if [[ "$path" == "$orgRoot/st0x.$repo/"* ]]; then
+                  echo "$repo"
+                  return
+                fi
+              done
+            }
+
+            fswatch -l 3 -x \
+              --exclude='\.git' --exclude='\.obsidian' --include='\.md$' --exclude='.*' \
+              "''${watchPaths[@]}" | while read -r changed; do
+              echo "[$(date +%H:%M:%S)] fswatch: $(short "$changed")"
+              # drain queued events, collect unique repos
+              declare -A touched_repos
+              repo=$(repo_for_path "$changed")
+              if [ -n "$repo" ]; then
+                touched_repos["$repo"]=1
+              fi
+              while read -r -t 0.1 extra; do
+                echo "[$(date +%H:%M:%S)] fswatch: $(short "$extra")"
+                repo=$(repo_for_path "$extra")
+                if [ -n "$repo" ]; then
+                  touched_repos["$repo"]=1
+                fi
+              done
+              for repo in "''${!touched_repos[@]}"; do
+                echo "[$(date +%H:%M:%S)] syncing $repo..."
+                sync_repo "$orgRoot/st0x.$repo" "$repo"
+              done
+              unset touched_repos
+            done
+          fi
         '';
       };
 

@@ -46,17 +46,15 @@
     };
   };
 
-  # Sync markdown files bidirectionally between repos and notes vault
-  # Disabled while reworking sync logic — will re-enable after testing
-  # launchd.user.agents.syncNotes = {
-  #   serviceConfig = {
-  #     ProgramArguments = [ "${self.packages.aarch64-darwin.mdSync}/bin/md-sync" "sync" ];
-  #     KeepAlive = true;
-  #     RunAtLoad = true;
-  #     StandardErrorPath = "${userConfig.home}/Library/Logs/syncNotes.err";
-  #     StandardOutPath = "${userConfig.home}/Library/Logs/syncNotes.out";
-  #   };
-  # };
+  launchd.user.agents.syncNotes = {
+    serviceConfig = {
+      ProgramArguments = [ "${self.packages.aarch64-darwin.mdSync}/bin/md-sync" "--watch" ];
+      KeepAlive = true;
+      RunAtLoad = true;
+      StandardErrorPath = "${userConfig.home}/Library/Logs/syncNotes.err";
+      StandardOutPath = "${userConfig.home}/Library/Logs/syncNotes.out";
+    };
+  };
 
   networking.hostName = "darwwwin";
 

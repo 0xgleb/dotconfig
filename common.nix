@@ -26,6 +26,7 @@ in {
     oh-my-zsh
     ripgrep
     tldr
+    tree
     wget
 
     # windows in terminals?
