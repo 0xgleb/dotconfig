@@ -9,6 +9,8 @@
 (setq user-full-name "0xgleb"
       user-mail-address "gleb.dianov@protonmail.com")
 
+(setq custom-file (expand-file-name "custom.el" doom-cache-dir))
+
 ;; Doom exposes five (optional) variables for controlling fonts in Doom. Here
 ;; are the three important ones:
 ;;

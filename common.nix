@@ -10,9 +10,8 @@ in {
     autojump
     bat
     bottom
-    dust
     fzf
-    htop
+    fd
     jq
     magic-wormhole
     fastfetch
@@ -20,19 +19,25 @@ in {
     ripgrep
     tldr
     wget
-    zellij
 
-    # Dev tools
-    cargo-watch
-    docker
-    fswatch
+    # windows in terminals?
+    zellij
+    mprocs
+    htop
+    dust
+
+    # Git
     gh
     git
-    git-extras
     git-lfs
+    git-extras
     unstable.graphite-cli
+
+    # Dev tools
     nodejs_24
-    unixtools.watch
+    bacon
+    docker
+    fswatch
 
     # AI
     codex

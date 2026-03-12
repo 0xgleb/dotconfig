@@ -57,4 +57,12 @@ in {
     enable = true;
     nix-direnv.enable = true;
   };
+
+  # Doom Emacs (managed by nix-doom-emacs-unstraightened)
+  programs.doom-emacs = {
+    enable = true;
+    doomDir = ./doom;
+    emacs =
+      if pkgs.stdenv.isDarwin then pkgs.emacs-macport else pkgs.emacs;
+  };
 }

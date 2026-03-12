@@ -100,6 +100,30 @@ Good abstractions serve the system, not implementation details:
 The mistake is focusing too narrowly on specific cases or centering on
 implementation details rather than the domain.
 
+## Roadmap Format
+
+**Never use numbered phases** (Phase 1, Phase 2, etc.) in roadmaps. Use the
+epic-based format from st0x.liquidity/ROADMAP.md:
+
+- Each `##` section is an **epic** — a goal-oriented group of related issues
+- Epics are ordered by priority (highest first)
+- Use mermaid dependency graphs when tasks have dependencies
+- Checkbox lists (`- [ ]` / `- [x]`) with issue/PR links
+- Sub-sections under epics for logical groupings
+- `## Not epic` section for unorganized items
+- `## Completed: <name>` sections at the bottom for done work
+
+Epics describe WHY the work matters, not just WHAT it is. Each epic has a
+short prose description of the goal before the task list.
+
+**Maximize parallelizability.** Structure epics and tasks so independent work
+streams are visually obvious. Use mermaid graphs to show what can run in
+parallel vs what has sequential dependencies. Each independent work stream
+becomes a git worktree with its own graphite stack, enabling multiple agents to
+work simultaneously. Tasks should be large and meaningful enough to justify a
+dedicated worktree — don't split into tiny pieces that create coordination
+overhead.
+
 ## Code Style
 
 - Prefer functional programming patterns
@@ -161,6 +185,23 @@ command).
 requires user approval — combining multiple commands into one call forces the
 user to approve/reject them as a bundle, which is disruptive and wasteful.
 
+**Keep commands simple and inline.** Never use `$(cat <<'EOF' ... EOF)` or
+similar heredoc constructs for commit messages or arguments — just pass the
+string directly with `-m "message"`. Overcomplicated shell constructs trigger
+manual approval prompts, block the workflow while the user isn't looking, and
+look terrible in logs. If a message doesn't fit in a simple `-m "..."`, it's
+too long.
+
+**Verify after state transitions.** After any command that changes state (`cd`,
+`git add`, `git checkout`, etc.), run a read-only verification command in a
+separate Bash call (`pwd`, `git status`, etc.) to confirm the transition
+succeeded. Never assume success — confirm it.
+
+**Never pipe to `| tail` or `| head`** to limit command output. If you're
+worried about too much output, redirect to a file instead:
+`command > ./.tmp/descriptive-name` (relative path, `.tmp/` directory). Then
+read the file with the Read tool if needed.
+
 **CRITICAL: Before running `git checkout -- <file>` or any command that discards
 working tree changes**, always run `git status` first to check for staged and
 unstaged changes. Blindly running `git checkout` destroys work — both your edits
@@ -181,6 +222,11 @@ options, or need something else from them:
 
 **Work until done:** Don't stop until all tasks are complete or you need user
 input. Keep working through the task list autonomously.
+
+**Summarize skipped findings:** When told to verify a batch of findings or
+review comments, always provide a summary at the end listing what was skipped
+and why it wasn't valid. The user needs to see which suggestions were rejected
+and the reasoning, not just what was applied.
 
 ## Plan Adherence
 
@@ -328,10 +374,19 @@ changes, assess quality, check for guideline violations, and fix any problems
 - Don't write throwaway scripts for experimentation. Write tests instead, and
   remove them when no longer needed.
 
-- **Commit as you go**: After completing each task (or logical unit of work),
-  commit the changes using Graphite before moving to the next task. Don't
-  accumulate uncommitted work across multiple tasks — small, incremental commits
-  make progress visible and reviewable.
+- **Commit and push as you go**: After completing each task (or logical unit of
+  work), commit the changes using Graphite and push (`gt ss`) before moving to
+  the next task. Don't accumulate uncommitted or unpushed work across multiple
+  tasks — small, incremental commits pushed regularly make progress visible,
+  reviewable, and safe from local failures. Never wait for the user to ask you
+  to commit or push.
+
+- **Branch immediately when stacking**: When told to stack changes (e.g., "put
+  this on the stack", "stack a PR for this"), IMMEDIATELY create a Graphite
+  branch with `gt create` before making any edits. Do not accumulate changes on
+  master or an unrelated branch. After the initial commit, regularly `gt modify`
+  as you make progress and `gt ss` to sync with remote. The user should never
+  have to ask "why aren't we on a branch yet?"
 
 ## Diff Review (Before Handing Over)
 
@@ -423,6 +478,60 @@ https://graphite.com/docs/command-reference
   intent** (e.g., "we need to submit the stack"). If they don't know the
   command, then provide it.
 
+## Git Worktrees
+
+Use a `.worktrees/` directory (gitignored) inside the repo for parallel work
+without stashing or switching branches.
+
+```
+myrepo/              # regular clone, main working tree on your current branch
+  .worktrees/        # gitignored, spin up as needed
+    feat/auth/       # worktree for auth feature
+    feat/billing/    # worktree for billing feature
+```
+
+**Setup:** Add `.worktrees/` to `.gitignore`, then create worktrees with:
+
+```bash
+git worktree add .worktrees/feat/my-feature -b feat/my-feature
+```
+
+**Cleanup:** Remove when done:
+
+```bash
+git worktree remove .worktrees/feat/my-feature
+```
+
+**Key points:**
+
+- No bare clone ceremony — works with a normal clone
+- Each worktree gets its own working directory and branch
+- Shared `.git` object store — no extra disk for history
+- `.worktrees/` is gitignored so worktree state is local-only
+
+**Submodules in worktrees:** Git worktrees don't share submodule checkouts.
+If a project has submodules (e.g., `lib/`), the worktree will have broken
+gitlinks. Fix by creating a **real directory** with individual symlinks inside
+(Git 2.45+ rejects symlinks in intermediate path components per CVE-2024-32002):
+
+```bash
+# From the worktree root (e.g., .worktrees/category/name/)
+mkdir lib
+ln -s ../../../../lib/forge-std lib/forge-std
+ln -s ../../../../lib/other-sub lib/other-sub
+# Adjust ../ depth to match worktree nesting: one ../ per directory level
+# to reach the main repo root, then append lib/<submodule>
+
+# Hide the "deleted" submodule gitlinks from git status
+git update-index --assume-unchanged lib/forge-std lib/other-sub ...
+```
+
+The individual symlinks make builds work while keeping `lib/` a real directory
+(satisfying git's security checks); `--assume-unchanged` keeps `git status`
+clean. The `gt modify -a` flag won't work (it runs `git add --all` which fails
+on broken submodule refs) — always stage specific files with `git add <files>`
+then `gt modify`.
+
 ## This Repository (dotconfig)
 
 ### Build Commands
@@ -467,3 +576,50 @@ Managed declaratively via nix-doom-emacs-unstraightened. No `doom sync` — edit
 - Shared (both platforms): `common.nix`
 - macOS only: `darwin.nix`
 - NixOS only: `nixos.nix`
+
+## Notes Vault Organization
+
+The unified notes vault at `~/code/st0x/notes/` is automatically synced from multiple source repositories via the `syncNotes` launchd service. This allows Obsidian to index all markdown files in one fast vault instead of scanning multiple directories.
+
+### Organizational Rules
+
+**Directory Structure by Source:**
+- `~/code/st0x/st0x.liquidity/` → `notes/liquidity/`
+- `~/code/st0x/st0x.issuance/` → `notes/issuance/`
+- `~/code/st0x/st0x.REPO/.worktrees/feat/name/` → `notes/name/` (repo name appended to files)
+- `~/.config/` → `notes/dotconfig/`
+
+**Naming Conventions:**
+- Main repos preserve directory structure: `docs/file.md` → `docs/file.md`
+- Worktree files include repo in filename: `docs/file.md` → `docs/file.liquidity.md`
+- Paths starting with `.` are converted: `.config` → `dotconfig`
+
+**Example Structure:**
+```
+notes/
+  liquidity/
+    ROADMAP.md
+    docs/
+      cqrs.md
+      architecture.md
+  issuance/
+    ROADMAP.md
+  feat-branch/
+    docs/
+      design.liquidity.md
+  dotconfig/
+    CLAUDE.md
+    home.nix.md
+```
+
+**Sync Behavior:**
+- Bidirectional: repos ↔ notes
+- Only syncs files with parity in source repositories
+- Files in notes without corresponding source files are never modified
+- Allows editing in Obsidian and syncing changes back to source repos
+- Automatically triggered on file changes (via fswatch)
+
+**Service Details:**
+- Runs continuously via `launchd.user.agents.syncNotes`
+- Logs to `/tmp/sync-notes.out` (debug with `tail -f`)
+- Rebuilds applied with `darwin-rebuild switch --flake ~/.config`
