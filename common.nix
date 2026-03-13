@@ -79,6 +79,8 @@ in {
     variables = { EDITOR = "nvim"; };
     shellAliases = {
       l = if pkgs.stdenv.isDarwin then "ls -GAlh" else "ls -Alh --color=auto";
+      magit = "gitui";
+      phite = "gt";
     };
     shells = [ pkgs.zsh pkgs.nushell ];
     etc."nushell/config.nu".source = ./nushell/config.nu;
