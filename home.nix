@@ -67,6 +67,7 @@ in
   programs.direnv = {
     enable = true;
     nix-direnv.enable = true;
+    config.global.hide_env_diff = true;
   };
 
   # Doom Emacs (managed by nix-doom-emacs-unstraightened)
