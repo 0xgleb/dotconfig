@@ -70,6 +70,18 @@ in
     config.global.hide_env_diff = true;
   };
 
+  # Neovim + AstroNvim
+  programs.neovim = {
+    enable = true;
+    defaultEditor = true;
+    viAlias = true;
+    vimAlias = true;
+    extraPackages = with pkgs; [
+      gcc
+      gnumake
+    ];
+  };
+
   # Doom Emacs (managed by nix-doom-emacs-unstraightened)
   programs.doom-emacs = {
     enable = true;
