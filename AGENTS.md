@@ -1,3 +1,20 @@
+# Nix Style Guidelines
+
+- **Flatten small attribute sets**: When an attrset has fewer than 3 items (1 or 2), use dotted paths instead of nesting:
+  ```nix
+  # Good
+  fzf.enable = true;
+  fzf.enableZshIntegration = true;
+
+  # Bad
+  fzf = {
+    enable = true;
+    enableZshIntegration = true;
+  };
+  ```
+- **Group related attrs**: Consolidate repeated top-level keys into a single block (e.g. one `programs = { ... };` instead of many `programs.foo = ...;` blocks)
+- **nixfmt**: The repo uses nixfmt for formatting
+
 # Agents and Services
 
 ## Markdown Sync Service

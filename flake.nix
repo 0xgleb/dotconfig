@@ -18,137 +18,170 @@
     nix-doom-emacs-unstraightened.inputs.nixpkgs.follows = "nixpkgs";
   };
 
-  outputs = inputs@{ self, nixpkgs, nix-darwin, home-manager, disko, ... }: {
+  outputs =
+    inputs@{
+      self,
+      nixpkgs,
+      nix-darwin,
+      home-manager,
+      disko,
+      ...
+    }:
+    {
 
-    # Local macOS
-    darwinConfigurations.darwwwin = nix-darwin.lib.darwinSystem {
-      specialArgs = { inherit inputs self; };
-      modules = [
-        ./common.nix
-        ./darwin.nix
-        home-manager.darwinModules.home-manager
-        {
-          home-manager.useGlobalPkgs = true;
-          home-manager.useUserPackages = true;
-          home-manager.backupFileExtension = "hm-backup";
-          home-manager.extraSpecialArgs = { inherit inputs; };
-          home-manager.users."0xgleb" = { pkgs, inputs, ... }: {
-            imports = [
-              inputs.nix-doom-emacs-unstraightened.homeModule
-              ./home.nix
-            ];
+      # Local macOS
+      darwinConfigurations.darwwwin = nix-darwin.lib.darwinSystem {
+        specialArgs = { inherit inputs self; };
+        modules = [
+          ./common.nix
+          ./darwin.nix
+          home-manager.darwinModules.home-manager
+          {
+            home-manager.useGlobalPkgs = true;
+            home-manager.useUserPackages = true;
+            home-manager.backupFileExtension = "hm-backup";
+            home-manager.extraSpecialArgs = { inherit inputs; };
+            home-manager.users."0xgleb" =
+              { pkgs, inputs, ... }:
+              {
+                imports = [
+                  inputs.nix-doom-emacs-unstraightened.homeModule
+                  ./home.nix
+                ];
+              };
+          }
+        ];
+      };
+
+      # Remote NixOS on Digital Ocean
+      nixosConfigurations.nixxxos = nixpkgs.lib.nixosSystem {
+        system = "x86_64-linux";
+        specialArgs = { inherit inputs; };
+        modules = [
+          ./common.nix
+          ./nixos.nix
+          ./digitalocean.nix
+          disko.nixosModules.disko
+          home-manager.nixosModules.home-manager
+          {
+            home-manager.useGlobalPkgs = true;
+            home-manager.useUserPackages = true;
+            home-manager.extraSpecialArgs = { inherit inputs; };
+            home-manager.users."0xgleb" =
+              { pkgs, inputs, ... }:
+              {
+                imports = [
+                  inputs.nix-doom-emacs-unstraightened.homeModule
+                  ./home.nix
+                ];
+              };
+          }
+        ];
+      };
+
+      # Helper scripts
+      packages.aarch64-darwin =
+        let
+          pkgs = import nixpkgs {
+            system = "aarch64-darwin";
+            config.allowUnfree = true;
           };
-        }
-      ];
-    };
-
-    # Remote NixOS on Digital Ocean
-    nixosConfigurations.nixxxos = nixpkgs.lib.nixosSystem {
-      system = "x86_64-linux";
-      specialArgs = { inherit inputs; };
-      modules = [
-        ./common.nix
-        ./nixos.nix
-        ./digitalocean.nix
-        disko.nixosModules.disko
-        home-manager.nixosModules.home-manager
+        in
         {
-          home-manager.useGlobalPkgs = true;
-          home-manager.useUserPackages = true;
-          home-manager.extraSpecialArgs = { inherit inputs; };
-          home-manager.users."0xgleb" = { pkgs, inputs, ... }: {
-            imports = [
-              inputs.nix-doom-emacs-unstraightened.homeModule
-              ./home.nix
+          mdSync =
+            let
+              script = pkgs.writeScriptBin "md-sync-inner" ''
+                #!${pkgs.nushell}/bin/nu
+                ${builtins.readFile ./scripts/mdaemon/sync-lib.nu}
+                ${builtins.readFile ./scripts/mdaemon/sync.nu}
+              '';
+            in
+            pkgs.writeShellApplication {
+              name = "md-sync";
+              runtimeInputs = with pkgs; [
+                git
+                fswatch
+                nushell
+              ];
+              text = ''
+                exec ${script}/bin/md-sync-inner "$@"
+              '';
+            };
+
+          ralphUp = pkgs.writeShellApplication {
+            name = "ralph-up";
+            runtimeInputs = [
+              pkgs.terraform
+              pkgs.openssh
             ];
+            text = ''
+              flakeDir="$HOME/.config"
+              tfDir="$flakeDir/darwwwin/terraform"
+              sshKey="$HOME/.ssh/ralph_ed25519"
+              dropletSize="''${1:-s-2vcpu-4gb}"
+              cd "$tfDir"
+              terraform init -upgrade
+              terraform apply -var "droplet_size=$dropletSize" -auto-approve
+              ip=$(terraform output -raw ip)
+              echo "Waiting for SSH..."
+              until ssh -i "$sshKey" \
+                -o ConnectTimeout=5 \
+                -o StrictHostKeyChecking=accept-new \
+                root@"$ip" true 2>/dev/null; do sleep 2; done
+              echo "Installing NixOS..."
+              nix run github:nix-community/nixos-anywhere -- \
+                --flake "$flakeDir#nixxxos" \
+                --ssh-option "IdentityFile=$sshKey" \
+                --target-host root@"$ip"
+              echo "Done! ssh -i $sshKey 0xgleb@$ip"
+            '';
           };
-        }
-      ];
+
+          ralphDown = pkgs.writeShellApplication {
+            name = "ralph-down";
+            runtimeInputs = [ pkgs.terraform ];
+            text = ''
+              tfDir="$HOME/.config/darwwwin/terraform"
+              cd "$tfDir"
+              terraform destroy -auto-approve
+            '';
+          };
+        };
+
+      checks.aarch64-darwin =
+        let
+          pkgs = import nixpkgs {
+            system = "aarch64-darwin";
+            config.allowUnfree = true;
+          };
+        in
+        {
+          md-sync =
+            pkgs.runCommand "md-sync-test"
+              {
+                nativeBuildInputs = with pkgs; [
+                  nushell
+                  git
+                ];
+              }
+              ''
+                export HOME=$(mktemp -d)
+                git config --global user.email "test@test.com"
+                git config --global user.name "test"
+
+                echo "validating assembled script parses..."
+                ${pkgs.nushell}/bin/nu --ide-check 0 \
+                  ${self.packages.aarch64-darwin.mdSync}/bin/md-sync-inner
+                echo "assembled script parses ok"
+
+                cp ${./scripts/mdaemon/sync-lib.nu} sync-lib.nu
+                cp ${./scripts/mdaemon/sync.test.nu} sync.test.nu
+                ${pkgs.nushell}/bin/nu sync.test.nu
+                touch $out
+              '';
+        };
+
+      # Expose package set for convenience
+      darwinPackages = self.darwinConfigurations.darwwwin.pkgs;
     };
-
-    # Helper scripts
-    packages.aarch64-darwin = let
-      pkgs = import nixpkgs {
-        system = "aarch64-darwin";
-        config.allowUnfree = true;
-      };
-    in {
-      mdSync = let
-        script = pkgs.writeScriptBin "md-sync-inner" ''
-          #!${pkgs.nushell}/bin/nu
-          ${builtins.readFile ./scripts/mdaemon/sync-lib.nu}
-          ${builtins.readFile ./scripts/mdaemon/sync.nu}
-        '';
-      in pkgs.writeShellApplication {
-        name = "md-sync";
-        runtimeInputs = with pkgs; [ git fswatch nushell ];
-        text = ''
-          exec ${script}/bin/md-sync-inner "$@"
-        '';
-      };
-
-      ralphUp = pkgs.writeShellApplication {
-        name = "ralph-up";
-        runtimeInputs = [ pkgs.terraform pkgs.openssh ];
-        text = ''
-          flakeDir="$HOME/.config"
-          tfDir="$flakeDir/darwwwin/terraform"
-          sshKey="$HOME/.ssh/ralph_ed25519"
-          dropletSize="''${1:-s-2vcpu-4gb}"
-          cd "$tfDir"
-          terraform init -upgrade
-          terraform apply -var "droplet_size=$dropletSize" -auto-approve
-          ip=$(terraform output -raw ip)
-          echo "Waiting for SSH..."
-          until ssh -i "$sshKey" \
-            -o ConnectTimeout=5 \
-            -o StrictHostKeyChecking=accept-new \
-            root@"$ip" true 2>/dev/null; do sleep 2; done
-          echo "Installing NixOS..."
-          nix run github:nix-community/nixos-anywhere -- \
-            --flake "$flakeDir#nixxxos" \
-            --ssh-option "IdentityFile=$sshKey" \
-            --target-host root@"$ip"
-          echo "Done! ssh -i $sshKey 0xgleb@$ip"
-        '';
-      };
-
-      ralphDown = pkgs.writeShellApplication {
-        name = "ralph-down";
-        runtimeInputs = [ pkgs.terraform ];
-        text = ''
-          tfDir="$HOME/.config/darwwwin/terraform"
-          cd "$tfDir"
-          terraform destroy -auto-approve
-        '';
-      };
-    };
-
-    checks.aarch64-darwin = let
-      pkgs = import nixpkgs {
-        system = "aarch64-darwin";
-        config.allowUnfree = true;
-      };
-    in {
-      md-sync = pkgs.runCommand "md-sync-test" {
-        nativeBuildInputs = with pkgs; [ nushell git ];
-      } ''
-        export HOME=$(mktemp -d)
-        git config --global user.email "test@test.com"
-        git config --global user.name "test"
-
-        echo "validating assembled script parses..."
-        ${pkgs.nushell}/bin/nu --ide-check 0 ${self.packages.aarch64-darwin.mdSync}/bin/md-sync-inner
-        echo "assembled script parses ok"
-
-        cp ${./scripts/mdaemon/sync-lib.nu} sync-lib.nu
-        cp ${./scripts/mdaemon/sync.test.nu} sync.test.nu
-        ${pkgs.nushell}/bin/nu sync.test.nu
-        touch $out
-      '';
-    };
-
-    # Expose package set for convenience
-    darwinPackages = self.darwinConfigurations.darwwwin.pkgs;
-  };
 }
