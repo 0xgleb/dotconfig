@@ -69,14 +69,14 @@ in {
     nushell
 
     # Editors
-    vim-full
+    neovim
   ];
 
   programs.zsh.enable = true;
   programs.direnv.enable = true;
 
   environment = {
-    variables = { EDITOR = "vim"; };
+    variables = { EDITOR = "nvim"; };
     shellAliases = {
       l = if pkgs.stdenv.isDarwin then "ls -GAlh" else "ls -Alh --color=auto";
     };
