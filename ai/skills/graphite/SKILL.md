@@ -16,24 +16,25 @@ allowed-tools:
 
 # Graphite Skill
 
-Work with Graphite (`gt`) for creating, navigating, and managing stacked pull requests.
+Work with Graphite (`gt`) for creating, navigating, and managing stacked pull
+requests.
 
 ## Quick Reference
 
-| I want to... | Command |
-|--------------|---------|
-| Create a new branch/PR | `gt create branch-name -m "message"` |
-| Amend current branch | `gt modify -m "message"` |
-| Navigate up the stack | `gt up` |
-| Navigate down the stack | `gt down` |
-| Jump to top of stack | `gt top` |
-| Jump to bottom of stack | `gt bottom` |
-| View stack structure | `gt ls` |
-| Submit stack for review | `gt submit --no-interactive` |
-| Rebase stack on trunk | `gt restack` |
-| Change branch parent | `gt track --parent <branch>` |
-| Rename current branch | `gt rename <new-name>` |
-| Move branch in stack | `gt move` |
+| I want to...            | Command                              |
+| ----------------------- | ------------------------------------ |
+| Create a new branch/PR  | `gt create branch-name -m "message"` |
+| Amend current branch    | `gt modify -m "message"`             |
+| Navigate up the stack   | `gt up`                              |
+| Navigate down the stack | `gt down`                            |
+| Jump to top of stack    | `gt top`                             |
+| Jump to bottom of stack | `gt bottom`                          |
+| View stack structure    | `gt ls`                              |
+| Submit stack for review | `gt submit --no-interactive`         |
+| Rebase stack on trunk   | `gt restack`                         |
+| Change branch parent    | `gt track --parent <branch>`         |
+| Rename current branch   | `gt rename <new-name>`               |
+| Move branch in stack    | `gt move`                            |
 
 ---
 
@@ -41,15 +42,20 @@ Work with Graphite (`gt`) for creating, navigating, and managing stacked pull re
 
 In roughly descending order of importance:
 
-- **Atomic/hermetic** - independent of other changes; will pass CI and be safe to deploy on its own
-- **Narrow semantic scope** - changes only to module X, or the same change across modules X, Y, Z
+- **Atomic/hermetic** - independent of other changes; will pass CI and be safe
+  to deploy on its own
+- **Narrow semantic scope** - changes only to module X, or the same change
+  across modules X, Y, Z
 - **Small diff** - (heuristic) small total diff line count
 
-**Do NOT worry about creating TOO MANY pull requests.** It is **always** preferable to create more pull requests than fewer.
+**Do NOT worry about creating TOO MANY pull requests.** It is **always**
+preferable to create more pull requests than fewer.
 
-**NO CHANGE IS TOO SMALL:** tiny PRs allow for the medium/larger-sized PRs to have more clarity.
+**NO CHANGE IS TOO SMALL:** tiny PRs allow for the medium/larger-sized PRs to
+have more clarity.
 
-Always argue in favor of creating more PRs, as long as they independently pass build.
+Always argue in favor of creating more PRs, as long as they independently pass
+build.
 
 ---
 
@@ -57,7 +63,8 @@ Always argue in favor of creating more PRs, as long as they independently pass b
 
 **CRITICAL: Always pass an explicit branch name to `gt create`.** Without one,
 Graphite auto-generates names like `graphite-base/390` which are meaningless.
-Never run `gt create -m "message"` alone — always `gt create branch-name -m "message"`.
+Never run `gt create -m "message"` alone — always
+`gt create branch-name -m "message"`.
 
 When naming PRs in a stack, follow this syntax:
 
@@ -95,6 +102,7 @@ gt branch info
 If you see "ERROR: Cannot perform this operation on untracked branch":
 
 **Option A (Recommended): Track temporarily, then re-parent**
+
 1. Track current branch: `gt track -p main`
 2. Create your stack normally with `gt create`
 3. After creating ALL branches, re-parent your first new branch onto main:
@@ -105,9 +113,11 @@ If you see "ERROR: Cannot perform this operation on untracked branch":
    ```
 
 **Option B: Stash changes and start from main**
+
 1. `git stash`
 2. `git checkout main && git pull`
-3. Create new branch and unstash: `git checkout -b temp-working && git stash pop`
+3. Create new branch and unstash:
+   `git checkout -b temp-working && git stash pop`
 4. Proceed with `gt track -p main` and `gt create`
 
 ---
@@ -144,7 +154,8 @@ gt modify -m "updated commit message"
 
 ### Reorder Branches
 
-Use `gt move` to reorder branches in the stack. This is simpler than trying to use `gt create --insert`.
+Use `gt move` to reorder branches in the stack. This is simpler than trying to
+use `gt create --insert`.
 
 ### Re-parent a Stack
 
@@ -197,6 +208,7 @@ gt ls
 ```
 
 If the first branch has a parent other than `main`:
+
 ```bash
 gt checkout <first-branch>
 gt track -p main
@@ -224,9 +236,11 @@ gt submit --no-interactive
 
 After submitting, use `gh pr edit` to set proper titles and descriptions.
 
-**IMPORTANT:** Never use Bash heredocs for PR descriptions - shell escaping breaks markdown tables, code blocks, etc. Instead:
+**IMPORTANT:** Never use Bash heredocs for PR descriptions - shell escaping
+breaks markdown tables, code blocks, etc. Instead:
 
-1. Use the `Write` tool to create `/tmp/pr-body.md` with the full markdown content
+1. Use the `Write` tool to create `/tmp/pr-body.md` with the full markdown
+   content
 2. Use `gh pr edit` with `--body-file`:
 
 ```bash
@@ -234,44 +248,49 @@ gh pr edit <PR_NUMBER> --title "stack-name: description" --body-file /tmp/pr-bod
 ```
 
 PR descriptions must include:
+
 - **Stack Context**: What is the bigger goal of this stack?
 - **What?** (optional for small changes): Super terse, focus on what not why
-- **Why?**: What prompted the change? Why this solution? How does it fit into the stack?
+- **Why?**: What prompted the change? Why this solution? How does it fit into
+  the stack?
 
 **Example** (for a PR in a 3-PR stack adding a warning feature):
 
 ```markdown
 ## Stack Context
 
-This stack adds a warning on the merge button when users are bypassing GitHub rulesets.
+This stack adds a warning on the merge button when users are bypassing GitHub
+rulesets.
 
 ## Why?
 
-Users who can bypass rulesets (via org admin or team membership) currently see no indication
-they're circumventing branch protection. This PR threads the bypass data from the server to
-enable the frontend warning (PR 2) to display it.
+Users who can bypass rulesets (via org admin or team membership) currently see
+no indication they're circumventing branch protection. This PR threads the
+bypass data from the server to enable the frontend warning (PR 2) to display it.
 ```
 
 ---
 
 ## Troubleshooting
 
-| Problem | Solution |
-|---------|----------|
-| "Cannot perform this operation on untracked branch" | Run `gt track -p main` first |
-| Stack parented on wrong branch | Use `gt track -p main` then `gt restack` |
-| Need to reorder PRs | Use `gt move` |
-| Conflicts during restack | Resolve conflicts, then `git rebase --continue` |
-| Want to split a PR | Reset commits (`git reset HEAD^`), re-stage selectively, create new branches |
-| Need to delete a branch (non-interactive) | `gt delete <branch> -f -q` |
-| `gt restack` hitting unrelated conflicts | Use targeted `git rebase <target>` instead (see below) |
-| Rebase interrupted mid-conflict | Check if files are resolved but unstaged, then `git add` + `git rebase --continue` |
+| Problem                                             | Solution                                                                           |
+| --------------------------------------------------- | ---------------------------------------------------------------------------------- |
+| "Cannot perform this operation on untracked branch" | Run `gt track -p main` first                                                       |
+| Stack parented on wrong branch                      | Use `gt track -p main` then `gt restack`                                           |
+| Need to reorder PRs                                 | Use `gt move`                                                                      |
+| Conflicts during restack                            | Resolve conflicts, then `git rebase --continue`                                    |
+| Want to split a PR                                  | Reset commits (`git reset HEAD^`), re-stage selectively, create new branches       |
+| Need to delete a branch (non-interactive)           | `gt delete <branch> -f -q`                                                         |
+| `gt restack` hitting unrelated conflicts            | Use targeted `git rebase <target>` instead (see below)                             |
+| Rebase interrupted mid-conflict                     | Check if files are resolved but unstaged, then `git add` + `git rebase --continue` |
 
 ---
 
 ## Advanced: Surgical Rebasing in Complex Stacks
 
-In deeply nested stacks with many sibling branches, `gt restack` can be problematic:
+In deeply nested stacks with many sibling branches, `gt restack` can be
+problematic:
+
 - It restacks ALL branches that need it, not just your stack
 - Can hit conflicts in completely unrelated branches
 - Is all-or-nothing - hard to be surgical
@@ -279,6 +298,7 @@ In deeply nested stacks with many sibling branches, `gt restack` can be problema
 ### When to Use `git rebase` Instead of `gt restack`
 
 Use direct `git rebase` when:
+
 - You only want to update specific branches in your stack
 - `gt restack` is hitting conflicts in unrelated branches
 - You need to skip obsolete commits during the rebase
@@ -314,7 +334,8 @@ If a rebase was interrupted (e.g., Claude session ran out of context):
    # Look for "interactive rebase in progress" and "Unmerged paths"
    ```
 
-2. **Read the "unmerged" files** - they may already be resolved (no conflict markers)
+2. **Read the "unmerged" files** - they may already be resolved (no conflict
+   markers)
 
 3. **If already resolved, just stage and continue:**
    ```bash
@@ -322,7 +343,8 @@ If a rebase was interrupted (e.g., Claude session ran out of context):
    git rebase --continue
    ```
 
-4. **If still has conflict markers**, resolve them first, then stage and continue
+4. **If still has conflict markers**, resolve them first, then stage and
+   continue
 
 ### Deleting Branches from a Stack
 
@@ -338,10 +360,13 @@ gt delete branch-to-delete -f -q --downstack
 ```
 
 **Flags:**
+
 - `-f` / `--force`: Delete even if not merged or closed
 - `-q` / `--quiet`: Implies `--no-interactive`, minimizes output
 
-**After deleting intermediate branches**, children are automatically restacked onto the parent. If you need to manually update tracking:
+**After deleting intermediate branches**, children are automatically restacked
+onto the parent. If you need to manually update tracking:
+
 ```bash
 gt checkout child-branch
 gt track --parent new-parent-branch

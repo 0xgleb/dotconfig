@@ -57,25 +57,26 @@ Create a new git worktree from the main branch of the current repository.
    ```
 
 6. **Symlink submodules in `lib/`** from the main repo into the worktree (only
-   if `lib/` exists in the main repo). Git rejects symlinks in intermediate
-   path components (CVE-2024-32002), so you must create a **real directory**
-   with **individual symlinks** inside — never symlink the entire `lib/` dir.
+   if `lib/` exists in the main repo). Git rejects symlinks in intermediate path
+   components (CVE-2024-32002), so you must create a **real directory** with
+   **individual symlinks** inside — never symlink the entire `lib/` dir.
    - Remove any existing `lib/` in the worktree: `rm -rf <worktree-path>/lib`
    - Create a real directory: `mkdir <worktree-path>/lib`
-   - For each submodule in `<main-repo-root>/lib/`, create an individual
-     symlink using a **relative path**. **Count the directory depth** from the
-     symlink location back to the main repo root — the number of `../` segments
-     must match. For example:
+   - For each submodule in `<main-repo-root>/lib/`, create an individual symlink
+     using a **relative path**. **Count the directory depth** from the symlink
+     location back to the main repo root — the number of `../` segments must
+     match. For example:
      - `.worktrees/<name>/lib/<sub>` -> `../../../lib/<sub>` (3 levels up)
-     - `.worktrees/<cat>/<name>/lib/<sub>` -> `../../../../lib/<sub>` (4 levels up)
+     - `.worktrees/<cat>/<name>/lib/<sub>` -> `../../../../lib/<sub>` (4 levels
+       up)
 
      **CRITICAL: Always compute the depth dynamically** by counting path
      components between `<worktree-path>/lib/` and `<main-repo-root>`. Do NOT
      hardcode `../../../` — worktree names with slashes (e.g., `feat/foo`)
-     create extra nesting levels. A wrong depth silently breaks nested
-     submodule resolution (e.g., `rain-math-float` inside
-     `rain.orderbook/lib/.../lib/`), causing `cargo check` to fail with
-     "No such file or directory" on deeply nested `Cargo.toml` paths.
+     create extra nesting levels. A wrong depth silently breaks nested submodule
+     resolution (e.g., `rain-math-float` inside `rain.orderbook/lib/.../lib/`),
+     causing `cargo check` to fail with "No such file or directory" on deeply
+     nested `Cargo.toml` paths.
      ```bash
      # Compute relative prefix dynamically:
      # From <worktree-path>/lib/, count dirs back to <main-repo-root>
@@ -87,8 +88,8 @@ Create a new git worktree from the main branch of the current repository.
      cd <worktree-path> && git ls-tree --name-only HEAD lib/ | xargs git update-index --assume-unchanged
      ```
 
-7. **Allow direnv** and wait for the nix shell to initialize (only if a
-   `.envrc` file exists in the worktree):
+7. **Allow direnv** and wait for the nix shell to initialize (only if a `.envrc`
+   file exists in the worktree):
    ```bash
    cd <worktree-path> && direnv allow
    ```
