@@ -11,9 +11,12 @@
   nixpkgs.config.allowUnfree = true;
 
   ids.gids.nixbld = 350;
+  environment.shells = [ pkgs.nushell ];
+  users.knownUsers = [ userConfig.name ];
   users.users."${userConfig.name}" = {
+    uid = 501;
     home = userConfig.home;
-    shell = pkgs.zsh;
+    shell = pkgs.nushell;
   };
 
   # macOS-specific packages
@@ -63,22 +66,28 @@
     };
   };
 
-  # launchd.user.agents.syncNotes = {
-  #   serviceConfig = {
-  #     ProgramArguments = [ "${self.packages.aarch64-darwin.mdSync}/bin/md-sync" "--watch" ];
-  #     KeepAlive = true;
-  #     RunAtLoad = true;
-  #     StandardErrorPath = "${userConfig.home}/Library/Logs/syncNotes.err";
-  #     StandardOutPath = "${userConfig.home}/Library/Logs/syncNotes.out";
-  #   };
-  # };
+  launchd.user.agents.mdaemon = {
+    serviceConfig = {
+      StandardErrorPath = "${userConfig.home}/Library/Logs/mdaemon.err";
+      StandardOutPath = "${userConfig.home}/Library/Logs/mdaemon.out";
+      ProgramArguments = [
+        "${self.packages.aarch64-darwin.mdSync}/bin/md-sync"
+        "--watch"
+      ];
 
-  # # Workaround for nix-darwin #1255: launchctl load/unload runs as root,
-  # # targeting the system domain instead of the user domain. User agents
-  # # don't actually restart on darwin-rebuild switch without this.
-  # system.activationScripts.postActivation.text = ''
-  #   sudo -u ${userConfig.name} launchctl kickstart -k "gui/$(id -u ${userConfig.name})/org.nixos.syncNotes" 2>/dev/null || true
-  # '';
+      KeepAlive = true;
+      RunAtLoad = true;
+    };
+  };
+
+  # Workaround for nix-darwin #1255: launchctl load/unload runs as root,
+  # targeting the system domain instead of the user domain. User agents
+  # don't actually restart on darwin-rebuild switch without this.
+  system.activationScripts.postActivation.text = ''
+    sudo -u ${userConfig.name} launchctl \
+      kickstart -k "gui/$(id -u ${userConfig.name})/org.nixos.mdaemon" \
+        2>/dev/null || true
+  '';
 
   networking.hostName = "darwwwin";
 

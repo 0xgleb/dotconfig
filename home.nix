@@ -8,7 +8,8 @@ let
       cp ./hyperzsh.zsh-theme $out/themes/
     '';
   };
-in {
+in
+{
   programs.home-manager.enable = true;
 
   home = {
@@ -27,39 +28,22 @@ in {
   };
 
   # Zsh config (portable via home-manager)
-  programs.zsh =
-    let
-      graphiteCompletion = ''
-        #compdef gt
-        ###-begin-gt-completions-###
-        _gt_yargs_completions()
-        {
-          local reply
-          local si=$IFS
-          IFS=$'\n' reply=($(COMP_CWORD="$((CURRENT-1))" COMP_LINE="$BUFFER" COMP_POINT="$CURSOR" gt --get-yargs-completions "''${words[@]}"))
-          IFS=$si
-          _describe 'values' reply
-        }
-        compdef _gt_yargs_completions gt
-        ###-end-gt-completions-###
-      '';
-    in
-    {
+  programs.zsh = {
+    enable = true;
+    oh-my-zsh = {
       enable = true;
-      oh-my-zsh = {
-        enable = true;
-        custom = "${zshCustom}";
-        theme = "hyperzsh";
-        plugins = [ "autojump" ];
-      };
-      initContent = ''
-        PROMPT='%{$fg[cyan]%}%c %{$reset_color%}➜ '
-        export PATH="$PATH:/opt/homebrew/bin"
-        set -o vi
-        fastfetch
-        ${graphiteCompletion}
-      '';
+      custom = "${zshCustom}";
+      theme = "hyperzsh";
+      plugins = [ "autojump" ];
     };
+    initContent = ''
+      PROMPT='%{$fg[cyan]%}%c %{$reset_color%}➜ '
+      export PATH="$PATH:/opt/homebrew/bin"
+      set -o vi
+      fastfetch
+      eval "$(gt completion --shell zsh)"
+    '';
+  };
 
   # Nushell
   programs.nushell = {
@@ -69,7 +53,9 @@ in {
   };
 
   # Zellij
-  programs.zellij = { enable = true; };
+  programs.zellij = {
+    enable = true;
+  };
 
   # FZF
   programs.fzf = {
@@ -87,7 +73,6 @@ in {
   programs.doom-emacs = {
     enable = true;
     doomDir = ./doom;
-    emacs =
-      if pkgs.stdenv.isDarwin then pkgs.emacs-macport else pkgs.emacs;
+    emacs = if pkgs.stdenv.isDarwin then pkgs.emacs-macport else pkgs.emacs;
   };
 }

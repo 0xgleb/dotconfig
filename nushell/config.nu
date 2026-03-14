@@ -12,6 +12,22 @@ $env.config = {
     partial: true                # complete partial matches
   }
 
+  keybindings: [
+    {
+      name: accept_suggestion
+      modifier: none
+      keycode: tab
+      mode: [vi_normal vi_insert]
+      event: {
+        until: [
+          { send: HistoryHintComplete }
+          { send: menu name: completion_menu }
+          { send: MenuNext }
+        ]
+      }
+    }
+  ]
+
   # https://www.nushell.sh/book/history.html
   history: {
     max_size: 100_000
