@@ -40,6 +40,25 @@ alias l = ls -la
 alias ui = gitui
 alias ph = gt
 
+# fj — unified git/graphite/gitui command
+def --wrapped fj [...args: string] {
+  let gt_commands = [create modify ss submit sync co checkout up down restack reorder move absorb ls ll log init get guide demo feedback]
+  if ($args | length) == 0 {
+    ^git status
+    ^gt ls
+  } else if $args.0 == "ui" {
+    ^gitui ...($args | skip 1)
+  } else if $args.0 == "pr" {
+    ^gh pr ...($args | skip 1)
+  } else if $args.0 == "mut" {
+    ^gt modify ...($args | skip 1)
+  } else if $args.0 in $gt_commands {
+    ^gt ...$args
+  } else {
+    ^git ...$args
+  }
+}
+
 # Prompt: closure called before each line
 # {|| } is a closure with no parameters
 # https://www.nushell.sh/book/coloring_and_theming.html#prompt-configuration
