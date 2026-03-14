@@ -10,70 +10,74 @@ let
   };
 in
 {
-  programs.home-manager.enable = true;
-
   home = {
     username = "0xgleb";
     stateVersion = "24.05";
   };
 
-  # Git config (NOT available at system level in nix-darwin)
-  programs.git = {
-    enable = true;
-    settings = {
-      user.name = "0xgleb";
-      init.defaultBranch = "main";
-      push.autoSetupRemote = true;
-    };
-  };
+  programs = {
+    home-manager.enable = true;
 
-  # Zsh config (portable via home-manager)
-  programs.zsh = {
-    enable = true;
-    oh-my-zsh = {
+    # Git config (NOT available at system level in nix-darwin)
+    git = {
       enable = true;
-      custom = "${zshCustom}";
-      theme = "hyperzsh";
-      plugins = [ "autojump" ];
+      settings = {
+        user.name = "0xgleb";
+        init.defaultBranch = "main";
+        push.autoSetupRemote = true;
+      };
     };
-    initContent = ''
-      PROMPT='%{$fg[cyan]%}%c %{$reset_color%}➜ '
-      export PATH="$PATH:/opt/homebrew/bin"
-      set -o vi
-      fastfetch
-      eval "$(gt completion --shell zsh)"
-    '';
-  };
 
-  # Nushell
-  programs.nushell = {
-    enable = true;
-    configFile.source = ./nushell/config.nu;
-    envFile.source = ./nushell/env.nu;
-  };
+    # Zsh config (portable via home-manager)
+    zsh = {
+      enable = true;
+      oh-my-zsh = {
+        enable = true;
+        custom = "${zshCustom}";
+        theme = "hyperzsh";
+        plugins = [ "autojump" ];
+      };
+      initContent = ''
+        PROMPT='%{$fg[cyan]%}%c %{$reset_color%}➜ '
+        export PATH="$PATH:/opt/homebrew/bin"
+        set -o vi
+        fastfetch
+        eval "$(gt completion --shell zsh)"
+      '';
+    };
 
-  # Zellij
-  programs.zellij = {
-    enable = true;
-  };
+    # Neovim + AstroNvim
+    neovim = {
+      enable = true;
+      defaultEditor = true;
+      extraPackages = with pkgs; [
+        gcc
+        gnumake
+      ];
+    };
 
-  # FZF
-  programs.fzf = {
-    enable = true;
-    enableZshIntegration = true;
-  };
+    # Nushell
+    nushell.enable = true;
+    nushell.configFile.source = ./nushell/config.nu;
+    nushell.envFile.source = ./nushell/env.nu;
 
-  # Direnv
-  programs.direnv = {
-    enable = true;
-    nix-direnv.enable = true;
-    config.global.hide_env_diff = true;
-  };
+    # Zellij
+    zellij.enable = true;
 
-  # Doom Emacs (managed by nix-doom-emacs-unstraightened)
-  programs.doom-emacs = {
-    enable = true;
-    doomDir = ./doom;
-    emacs = if pkgs.stdenv.isDarwin then pkgs.emacs-macport else pkgs.emacs;
+    # FZF
+    fzf.enable = true;
+    fzf.enableZshIntegration = true;
+
+    # Direnv
+    direnv.enable = true;
+    direnv.nix-direnv.enable = true;
+    direnv.config.global.hide_env_diff = true;
+
+    # Doom Emacs (managed by nix-doom-emacs-unstraightened)
+    doom-emacs = {
+      enable = true;
+      doomDir = ./doom;
+      emacs = if pkgs.stdenv.isDarwin then pkgs.emacs-macport else pkgs.emacs;
+    };
   };
 }

@@ -37,6 +37,8 @@ $env.config = {
 }
 
 alias l = ls -la
+alias ui = gitui
+alias ph = gt
 
 # Prompt: closure called before each line
 # {|| } is a closure with no parameters

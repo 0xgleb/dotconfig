@@ -1,4 +1,9 @@
-{ pkgs, lib, inputs, ... }:
+{
+  pkgs,
+  lib,
+  inputs,
+  ...
+}:
 let
   unstable = import inputs.nixpkgs-unstable {
     system = pkgs.stdenv.hostPlatform.system;
@@ -10,86 +15,93 @@ let
     name = "0xgleb";
     home = "/Users/0xgleb";
   };
-in {
+in
+{
   # Export for use in other modules
   _module.args.userConfig = user;
-  environment.systemPackages = with pkgs; [
-    # CLI tools
-    autojump
-    bat
-    bottom
-    fzf
-    fd
-    jq
-    magic-wormhole
-    fastfetch
-    oh-my-zsh
-    ripgrep
-    tldr
-    tree
-    wget
-
-    # windows in terminals?
-    zellij
-    mprocs
-    htop
-    dust
-
-    # Git
-    gh
-    git
-    gitui
-    git-lfs
-    git-extras
-    unstable.graphite-cli
-
-    # Dev tools
-    nodejs_24
-    bacon
-    docker
-    fswatch
-
-    # AI
-    codex
-    unstable.claude-code
-    ollama
-    opencode
-
-    # Nix tools
-    nil
-    nixd
-    nixfmt
-
-    # Security
-    gnupg
-    openssl
-    rage
-
-    # Shells
-    nushell
-
-    # Editors
-    vim-full
-  ];
-
   programs.zsh.enable = true;
   programs.direnv.enable = true;
 
   environment = {
-    variables = { EDITOR = "vim"; };
+    variables.EDITOR = "nvim";
+
     shellAliases = {
       l = if pkgs.stdenv.isDarwin then "ls -GAlh" else "ls -Alh --color=auto";
     };
-    shells = [ pkgs.zsh pkgs.nushell ];
+
+    shells = [
+      pkgs.zsh
+      pkgs.nushell
+    ];
+
     etc."nushell/config.nu".source = ./nushell/config.nu;
     etc."nushell/env.nu".source = ./nushell/env.nu;
+
+    systemPackages = with pkgs; [
+      # CLI tools
+      autojump
+      bat
+      bottom
+      fzf
+      fd
+      jq
+      magic-wormhole
+      fastfetch
+      oh-my-zsh
+      ripgrep
+      tldr
+      tree
+      wget
+
+      # windows in terminals?
+      zellij
+      mprocs
+      htop
+      dust
+
+      # Git
+      gh
+      git
+      gitui
+      git-lfs
+      git-extras
+      unstable.graphite-cli
+
+      # Dev tools
+      nodejs_24
+      bacon
+      docker
+      fswatch
+
+      # AI
+      codex
+      unstable.claude-code
+      ollama
+      opencode
+
+      # Nix tools
+      nil
+      nixd
+      nixfmt
+
+      # Security
+      gnupg
+      openssl
+      rage
+
+      # Shells
+      nushell
+
+      # Editors
+      neovim
+    ];
+
   };
 
   nix.settings = {
     experimental-features = "nix-command flakes";
     trusted-users = [ "0xgleb" ];
     substituters = [ "https://cache.nixos.org" ];
-    trusted-public-keys =
-      [ "cache.nixos.org-1:6NCHdD59X431o0gWypbMrAURkbJ16ZPMQFGspcDShjY=" ];
+    trusted-public-keys = [ "cache.nixos.org-1:6NCHdD59X431o0gWypbMrAURkbJ16ZPMQFGspcDShjY=" ];
   };
 }

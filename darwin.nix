@@ -7,6 +7,15 @@
   ...
 }:
 {
+  networking.hostName = "darwwwin";
+
+  nix.enable = true;
+  nix.package = pkgs.nix;
+
+  system.primaryUser = "0xgleb";
+  system.stateVersion = 4;
+  system.configurationRevision = self.rev or self.dirtyRev or null;
+
   nixpkgs.hostPlatform = "aarch64-darwin";
   nixpkgs.config.allowUnfree = true;
 
@@ -89,12 +98,4 @@
         2>/dev/null || true
   '';
 
-  networking.hostName = "darwwwin";
-
-  nix.enable = true;
-  nix.package = pkgs.nix;
-
-  system.primaryUser = "0xgleb";
-  system.stateVersion = 4;
-  system.configurationRevision = self.rev or self.dirtyRev or null;
 }
