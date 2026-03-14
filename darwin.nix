@@ -56,6 +56,7 @@
     casks = [
       "amethyst"
       "coderabbit"
+      "font-jetbrains-mono-nerd-font"
       "karabiner-elements"
     ];
   };

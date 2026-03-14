@@ -13,4 +13,4 @@ $env.PATH = ($env.PATH | split row (char esep) | prepend [
   '/nix/var/nix/profiles/default/bin'
 ])
 
-$env.EDITOR = 'vim'
+$env.EDITOR = 'nvim'

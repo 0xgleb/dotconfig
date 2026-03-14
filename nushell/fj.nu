@@ -1,7 +1,7 @@
 # fj routing logic — returns { tool: string, args: list<string> }
 # Extracted for testability; fj in config.nu calls this then executes.
 
-const gt_commands = [create modify ss submit sync co checkout up down restack reorder move absorb ls ll log init get guide demo feedback]
+const gt_commands = [create modify ss submit sync co checkout top bottom up down restack reorder move absorb rename ls ll log init get guide demo feedback]
 
 def --wrapped fj-route [...args: string]: nothing -> record<tool: string, args: list<string>> {
   if ($args | length) == 0 {
