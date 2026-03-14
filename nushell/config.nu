@@ -37,12 +37,12 @@ $env.config = {
 }
 
 alias l = ls -la
-alias ui = gitui
-alias ph = gt
 
 # fj — unified git/graphite/gitui command
+# Routing logic duplicated in fj.nu for testability (see fj.test.nu)
+const gt_commands = [create modify ss submit sync co checkout up down restack reorder move absorb ls ll log init get guide demo feedback]
+
 def --wrapped fj [...args: string] {
-  let gt_commands = [create modify ss submit sync co checkout up down restack reorder move absorb ls ll log init get guide demo feedback]
   if ($args | length) == 0 {
     ^git status
     ^gt ls
@@ -64,7 +64,12 @@ def --wrapped fj [...args: string] {
 # https://www.nushell.sh/book/coloring_and_theming.html#prompt-configuration
 $env.PROMPT_COMMAND = {||
   let path = ($env.PWD | path basename)
-  $"(ansi cyan)($path)(ansi reset) > "
+  let who = (whoami)
+  if $who == "root" {
+    $"(ansi red_bold)ROOT(ansi reset) (ansi yellow)($path)(ansi reset) # "
+  } else {
+    $"(ansi cyan)($path)(ansi reset) > "
+  }
 }
 
 $env.PROMPT_COMMAND_RIGHT = ""

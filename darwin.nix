@@ -27,6 +27,7 @@
     home = userConfig.home;
     shell = pkgs.nushell;
   };
+  users.users.root.shell = pkgs.nushell;
 
   # macOS-specific packages
   environment.systemPackages = with pkgs; [
@@ -89,10 +90,12 @@
     };
   };
 
-  # Workaround for nix-darwin #1255: launchctl load/unload runs as root,
-  # targeting the system domain instead of the user domain. User agents
-  # don't actually restart on darwin-rebuild switch without this.
+  # Symlink root's nushell config to /etc/nushell so root gets the same shell config
+  # Workaround for nix-darwin #1255: kickstart user agents after activation
   system.activationScripts.postActivation.text = ''
+    mkdir -p "/var/root/Library/Application Support/nushell"
+    ln -sf /etc/nushell/config.nu "/var/root/Library/Application Support/nushell/config.nu"
+    ln -sf /etc/nushell/env.nu "/var/root/Library/Application Support/nushell/env.nu"
     sudo -u ${userConfig.name} launchctl \
       kickstart -k "gui/$(id -u ${userConfig.name})/org.nixos.mdaemon" \
         2>/dev/null || true

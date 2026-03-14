@@ -19,6 +19,7 @@ in
 {
   # Export for use in other modules
   _module.args.userConfig = user;
+
   programs.zsh.enable = true;
   programs.direnv.enable = true;
 
