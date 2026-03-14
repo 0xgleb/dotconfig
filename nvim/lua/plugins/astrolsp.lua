@@ -14,35 +14,7 @@ return {
       },
       timeout_ms = 1000,
     },
-    servers = {
-      "nil_ls",
-      "nixd",
-      "rust_analyzer",
-      "ts_ls",
-      "hls",
-      "terraformls",
-      "html",
-      "cssls",
-      "jsonls",
-      "yamlls",
-    },
-    config = {
-      rust_analyzer = {
-        settings = {
-          ["rust-analyzer"] = {
-            checkOnSave = true,
-            check = { command = "clippy" },
-          },
-        },
-      },
-      hls = {
-        settings = {
-          haskell = {
-            formattingProvider = "fourmolu",
-          },
-        },
-      },
-    },
+    servers = {},
     autocmds = {
       lsp_codelens_refresh = {
         cond = "textDocument/codeLens",

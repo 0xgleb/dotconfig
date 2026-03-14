@@ -4,7 +4,9 @@ Bidirectional markdown sync: st0x repos → unified Obsidian vault.
 
 ## Plan
 
-**Structure**: `notes/{repo}/` mirrors exact repo paths, only `.md` files. No suffix qualification.
+**Structure**: `notes/{repo}/` mirrors exact repo paths, only `.md` files. No
+suffix qualification.
+
 ```
 notes/
   liquidity/   — mirrors st0x.liquidity
@@ -12,11 +14,13 @@ notes/
   rest.api/    — mirrors st0x.rest.api
 ```
 
-**Bidirectional**: forward (repo → notes) always runs. Reverse (notes → repo) uses `rsync -u` so newer file wins, scoped to files that exist in repo's git tree.
+**Bidirectional**: forward (repo → notes) always runs. Reverse (notes → repo)
+uses `rsync -u` so newer file wins, scoped to files that exist in repo's git
+tree.
 
-**Package**: `flake.nix` → `packages.aarch64-darwin.mdSync` → `md-sync`
-**CLI**: `md-sync [--notes DIR]` — defaults to `~/code/st0x/notes`
-**Service**: disabled in darwin.nix, will re-enable after testing
+**Package**: `flake.nix` → `packages.aarch64-darwin.mdSync` → `md-sync` **CLI**:
+`md-sync [--notes DIR]` — defaults to `~/code/st0x/notes` **Service**: disabled
+in darwin.nix, will re-enable after testing
 
 ## What's done
 

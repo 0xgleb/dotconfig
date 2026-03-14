@@ -36,7 +36,6 @@ $env.config = {
   }
 }
 
-alias l = ls -la
 alias vi = nvim
 
 # fj — unified git/graphite/gitui command

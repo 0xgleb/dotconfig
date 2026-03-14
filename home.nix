@@ -13,6 +13,17 @@ in
   home = {
     username = "0xgleb";
     stateVersion = "24.05";
+
+    packages = with pkgs; [
+      # ChatGpt told me to put this
+      ripgrep
+      fd
+      python3Packages.pynvim
+      gcc
+      lua
+      luarocks
+      lazygit
+    ];
   };
 
   programs = {
@@ -23,43 +34,49 @@ in
       enable = true;
       settings = {
         user.name = "0xgleb";
-        init.defaultBranch = "main";
+        init.defaultBranch = "master";
         push.autoSetupRemote = true;
       };
-    };
-
-    # Zsh config (portable via home-manager)
-    zsh = {
-      enable = true;
-      oh-my-zsh = {
-        enable = true;
-        custom = "${zshCustom}";
-        theme = "hyperzsh";
-        plugins = [ "autojump" ];
-      };
-      initContent = ''
-        PROMPT='%{$fg[cyan]%}%c %{$reset_color%}➜ '
-        export PATH="$PATH:/opt/homebrew/bin"
-        set -o vi
-        fastfetch
-        eval "$(gt completion --shell zsh)"
-      '';
     };
 
     # Neovim + AstroNvim
     neovim = {
       enable = true;
       defaultEditor = true;
+
+      viAlias = true;
+      vimAlias = true;
+      vimdiffAlias = true;
+
+      withPython3 = true;
+      withNodeJs = true;
+      withPerl = true;
+      withRuby = true;
+
+      # autowrapRuntimeDeps = false;
       extraPackages = with pkgs; [
+        tree-sitter
+        ripgrep
+        lazygit
+        luarocks
         gcc
-        gnumake
+        fd
+      ];
+
+      plugins = with pkgs.vimPlugins; [
+        nvim-treesitter.withAllGrammars
+        nvim-lspconfig
+        plenary-nvim
+        mini-nvim
       ];
     };
 
     # Nushell
-    nushell.enable = true;
-    nushell.configFile.source = ./nushell/config.nu;
-    nushell.envFile.source = ./nushell/env.nu;
+    nushell = {
+      enable = true;
+      configFile.source = ./nushell/config.nu;
+      envFile.source = ./nushell/env.nu;
+    };
 
     # Zellij
     zellij.enable = true;
@@ -78,6 +95,24 @@ in
       enable = true;
       doomDir = ./doom;
       emacs = if pkgs.stdenv.isDarwin then pkgs.emacs-macport else pkgs.emacs;
+    };
+
+    # Zsh config (portable via home-manager)
+    zsh = {
+      enable = true;
+      oh-my-zsh = {
+        enable = true;
+        custom = "${zshCustom}";
+        theme = "hyperzsh";
+        plugins = [ "autojump" ];
+      };
+      initContent = ''
+        PROMPT='%{$fg[cyan]%}%c %{$reset_color%}➜ '
+        export PATH="$PATH:/opt/homebrew/bin"
+        set -o vi
+        fastfetch
+        eval "$(gt completion --shell zsh)"
+      '';
     };
   };
 }
