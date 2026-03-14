@@ -23,7 +23,7 @@ AppSupport
 /git/
 /cabal/
 /graphite/
-/nvim/
+/nvim/lazy-lock.json
 /opencode/
 /.tmp/
 /result
