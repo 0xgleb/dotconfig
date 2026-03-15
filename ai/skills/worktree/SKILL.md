@@ -23,10 +23,57 @@ Manage git worktrees with multiple subcommands.
 ## Usage
 
 ```
+/worktree                # Auto-detect situation and resolve (smart mode)
 /worktree create         # Create a new worktree from main branch
 /worktree fix-submodules <path>  # Fix submodules in an existing worktree
 /worktree verify         # Check if .worktrees/ paths match branch names
 ```
+
+## Smart Mode (No Subcommand)
+
+When no subcommand is provided, automatically detect the current situation and recommend or resolve as appropriate.
+
+### Detection Logic
+
+1. **Detect if we're in a worktree or main repo:**
+   - Check if `git rev-parse --git-common-dir` differs from the current `.git` location
+   - If in a worktree, get the worktree path and branch name
+
+2. **If in main repo:**
+   - Run `verify` to check all worktrees for issues
+   - Suggest creating a new worktree if none exist
+   - List any existing worktrees and offer to create another
+
+3. **If in a worktree:**
+   - Check if submodules are broken:
+     - Look for broken symlinks in `lib/`
+     - Try to resolve a submodule path (e.g., `lib/some-sub/Cargo.toml`)
+     - If broken or unreachable, suggest `fix-submodules`
+   - Check if `.worktrees/path/to/name` matches current branch name:
+     - Extract expected path from branch (e.g., `feat/auth` → `.worktrees/feat/auth`)
+     - If mismatch, report and suggest moving worktree
+   - If no issues detected, report status: ✓ worktree is healthy
+
+4. **If ambiguous or multiple issues:**
+   - Ask user which action to take with explicit options
+
+### Steps
+
+1. **Determine location:**
+   ```bash
+   git_dir=$(git rev-parse --git-dir)
+   common_dir=$(git rev-parse --git-common-dir)
+   is_worktree=$([ "$git_dir" != "$common_dir/.git" ] && echo true || echo false)
+   ```
+
+2. **If main repo:** Run `verify` subcommand steps and suggest next action
+
+3. **If worktree:**
+   - Get current branch: `git rev-parse --abbrev-ref HEAD`
+   - Get worktree path: extract from `git worktree list`
+   - Check for broken submodules by attempting to list files in `lib/`
+   - If any issues found, recommend the appropriate fix
+   - If all healthy, report success and offer to open the worktree or run a build check
 
 ## Subcommands
 
