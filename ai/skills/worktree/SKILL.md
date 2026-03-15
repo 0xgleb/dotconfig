@@ -1,6 +1,6 @@
 ---
 name: worktree
-description: Manage git worktrees with create, fix-submodules, and verify subcommands
+description: Manage git worktrees with create, submodules, and verify subcommands
 user-invocable: true
 allowed-tools:
   - "Bash(git *)"
@@ -25,18 +25,20 @@ Manage git worktrees with multiple subcommands.
 ```
 /worktree                # Auto-detect situation and resolve (smart mode)
 /worktree create         # Create a new worktree from main branch
-/worktree fix-submodules <path>  # Fix submodules in an existing worktree
+/worktree submodules <path>  # Fix submodules in an existing worktree
 /worktree verify         # Check if .worktrees/ paths match branch names
 ```
 
 ## Smart Mode (No Subcommand)
 
-When no subcommand is provided, automatically detect the current situation and recommend or resolve as appropriate.
+When no subcommand is provided, automatically detect the current situation and
+recommend or resolve as appropriate.
 
 ### Detection Logic
 
 1. **Detect if we're in a worktree or main repo:**
-   - Check if `git rev-parse --git-common-dir` differs from the current `.git` location
+   - Check if `git rev-parse --git-common-dir` differs from the current `.git`
+     location
    - If in a worktree, get the worktree path and branch name
 
 2. **If in main repo:**
@@ -48,9 +50,10 @@ When no subcommand is provided, automatically detect the current situation and r
    - Check if submodules are broken:
      - Look for broken symlinks in `lib/`
      - Try to resolve a submodule path (e.g., `lib/some-sub/Cargo.toml`)
-     - If broken or unreachable, suggest `fix-submodules`
+     - If broken or unreachable, suggest `submodules`
    - Check if `.worktrees/path/to/name` matches current branch name:
-     - Extract expected path from branch (e.g., `feat/auth` → `.worktrees/feat/auth`)
+     - Extract expected path from branch (e.g., `feat/auth` →
+       `.worktrees/feat/auth`)
      - If mismatch, report and suggest moving worktree
    - If no issues detected, report status: ✓ worktree is healthy
 
@@ -73,7 +76,8 @@ When no subcommand is provided, automatically detect the current situation and r
    - Get worktree path: extract from `git worktree list`
    - Check for broken submodules by attempting to list files in `lib/`
    - If any issues found, recommend the appropriate fix
-   - If all healthy, report success and offer to open the worktree or run a build check
+   - If all healthy, report success and offer to open the worktree or run a
+     build check
 
 ## Subcommands
 
@@ -170,16 +174,20 @@ Create a new git worktree from the main branch of the current repository.
 
 9. **Report** the worktree path and confirm it's ready to use.
 
-### fix-submodules
+### submodules
 
-Fix broken submodules in an already-created worktree. Run this if submodule symlinks are missing or broken, or if `cargo check` fails with "No such file or directory" on Cargo.toml paths.
+Fix broken submodules in an already-created worktree. Run this if submodule
+symlinks are missing or broken, or if `cargo check` fails with "No such file or
+directory" on Cargo.toml paths.
 
-**Arguments:** `<worktree-path>` — the path to the worktree (e.g., `.worktrees/feat/auth`)
+**Arguments:** `<worktree-path>` — the path to the worktree (e.g.,
+`.worktrees/feat/auth`)
 
 #### Steps
 
 1. **Resolve paths:**
-   - Main repo root: run `git rev-parse --git-common-dir` from the worktree and strip the `/.git` suffix.
+   - Main repo root: run `git rev-parse --git-common-dir` from the worktree and
+     strip the `/.git` suffix.
    - Worktree path: validate it exists and is a git worktree.
 
 2. **Check if `lib/` exists** in the main repo. If it doesn't, report and exit.
@@ -187,8 +195,10 @@ Fix broken submodules in an already-created worktree. Run this if submodule syml
 3. **Recreate the `lib/` symlink structure:**
    - Remove the existing `lib/` directory: `rm -rf <worktree-path>/lib`
    - Create a real directory: `mkdir <worktree-path>/lib`
-   - For each submodule in `<main-repo-root>/lib/`, create an individual symlink using a relative path.
-   - **Compute the relative path dynamically** by counting directory depth from `<worktree-path>/lib/` back to `<main-repo-root>`. For example:
+   - For each submodule in `<main-repo-root>/lib/`, create an individual symlink
+     using a relative path.
+   - **Compute the relative path dynamically** by counting directory depth from
+     `<worktree-path>/lib/` back to `<main-repo-root>`. For example:
      - `.worktrees/<name>/lib/<sub>` -> `../../../lib/<sub>` (3 levels)
      - `.worktrees/<cat>/<name>/lib/<sub>` -> `../../../../lib/<sub>` (4 levels)
    - Create each symlink:
@@ -205,7 +215,8 @@ Fix broken submodules in an already-created worktree. Run this if submodule syml
 
 ### verify
 
-Check if the `.worktrees/` directory structure matches actual branch names. This helps identify when worktree paths and branch names have diverged.
+Check if the `.worktrees/` directory structure matches actual branch names. This
+helps identify when worktree paths and branch names have diverged.
 
 **Arguments:** none — scans all worktrees in the current repo
 
@@ -213,17 +224,22 @@ Check if the `.worktrees/` directory structure matches actual branch names. This
 
 1. **Resolve the main repo root** using `git rev-parse --git-common-dir`.
 
-2. **Check if `.worktrees/` exists.** If it doesn't, report that no worktrees exist.
+2. **Check if `.worktrees/` exists.** If it doesn't, report that no worktrees
+   exist.
 
-3. **Find all worktrees** in `.worktrees/` (recursively, since nesting is allowed).
+3. **Find all worktrees** in `.worktrees/` (recursively, since nesting is
+   allowed).
 
 4. **For each worktree path:**
-   - Extract the branch name: `git -C <worktree-path> rev-parse --abbrev-ref HEAD`
-   - Compare it to the path structure (e.g., `.worktrees/feat/auth` → `feat/auth`)
+   - Extract the branch name:
+     `git -C <worktree-path> rev-parse --abbrev-ref HEAD`
+   - Compare it to the path structure (e.g., `.worktrees/feat/auth` →
+     `feat/auth`)
    - If they match, mark as ✓
    - If they don't match, report the mismatch with the actual branch name
 
 5. **Report a summary:**
    - List all worktrees and their status
    - For mismatches, show the expected path vs. the actual branch
-   - Suggest moving the worktree if the user wants the path to match the branch (not automated — requires user decision)
+   - Suggest moving the worktree if the user wants the path to match the branch
+     (not automated — requires user decision)
