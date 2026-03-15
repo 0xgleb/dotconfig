@@ -1,6 +1,6 @@
 ---
 name: worktree
-description: Create a new git worktree from the main branch of the current repository with full project setup (graphite, direnv, database).
+description: Manage git worktrees with create, fix-submodules, and verify subcommands
 user-invocable: true
 allowed-tools:
   - "Bash(git *)"
@@ -12,14 +12,29 @@ allowed-tools:
   - "Bash(direnv *)"
   - "Bash(cd *)"
   - "Bash(date *)"
+  - "Bash(find *)"
   - AskUserQuestion
 ---
 
 # Worktree Skill
 
+Manage git worktrees with multiple subcommands.
+
+## Usage
+
+```
+/worktree create         # Create a new worktree from main branch
+/worktree fix-submodules <path>  # Fix submodules in an existing worktree
+/worktree verify         # Check if .worktrees/ paths match branch names
+```
+
+## Subcommands
+
+### create
+
 Create a new git worktree from the main branch of the current repository.
 
-## Steps
+#### Steps
 
 1. **Ask the user for the worktree name.** Suggest today's date (`YYYY-MM-DD`)
    as the default. If the user accepts the default or provides no name, use the
@@ -107,3 +122,61 @@ Create a new git worktree from the main branch of the current repository.
    ```
 
 9. **Report** the worktree path and confirm it's ready to use.
+
+### fix-submodules
+
+Fix broken submodules in an already-created worktree. Run this if submodule symlinks are missing or broken, or if `cargo check` fails with "No such file or directory" on Cargo.toml paths.
+
+**Arguments:** `<worktree-path>` — the path to the worktree (e.g., `.worktrees/feat/auth`)
+
+#### Steps
+
+1. **Resolve paths:**
+   - Main repo root: run `git rev-parse --git-common-dir` from the worktree and strip the `/.git` suffix.
+   - Worktree path: validate it exists and is a git worktree.
+
+2. **Check if `lib/` exists** in the main repo. If it doesn't, report and exit.
+
+3. **Recreate the `lib/` symlink structure:**
+   - Remove the existing `lib/` directory: `rm -rf <worktree-path>/lib`
+   - Create a real directory: `mkdir <worktree-path>/lib`
+   - For each submodule in `<main-repo-root>/lib/`, create an individual symlink using a relative path.
+   - **Compute the relative path dynamically** by counting directory depth from `<worktree-path>/lib/` back to `<main-repo-root>`. For example:
+     - `.worktrees/<name>/lib/<sub>` -> `../../../lib/<sub>` (3 levels)
+     - `.worktrees/<cat>/<name>/lib/<sub>` -> `../../../../lib/<sub>` (4 levels)
+   - Create each symlink:
+     ```bash
+     ln -sf <computed-relative-prefix>/lib/<submodule> <worktree-path>/lib/<submodule>
+     ```
+
+4. **Mark all submodule entries as assume-unchanged:**
+   ```bash
+   cd <worktree-path> && git ls-tree --name-only HEAD lib/ | xargs git update-index --assume-unchanged
+   ```
+
+5. **Report** what was fixed.
+
+### verify
+
+Check if the `.worktrees/` directory structure matches actual branch names. This helps identify when worktree paths and branch names have diverged.
+
+**Arguments:** none — scans all worktrees in the current repo
+
+#### Steps
+
+1. **Resolve the main repo root** using `git rev-parse --git-common-dir`.
+
+2. **Check if `.worktrees/` exists.** If it doesn't, report that no worktrees exist.
+
+3. **Find all worktrees** in `.worktrees/` (recursively, since nesting is allowed).
+
+4. **For each worktree path:**
+   - Extract the branch name: `git -C <worktree-path> rev-parse --abbrev-ref HEAD`
+   - Compare it to the path structure (e.g., `.worktrees/feat/auth` → `feat/auth`)
+   - If they match, mark as ✓
+   - If they don't match, report the mismatch with the actual branch name
+
+5. **Report a summary:**
+   - List all worktrees and their status
+   - For mismatches, show the expected path vs. the actual branch
+   - Suggest moving the worktree if the user wants the path to match the branch (not automated — requires user decision)
