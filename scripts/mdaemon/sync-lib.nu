@@ -1,33 +1,33 @@
+use std/log
+
 # Discover all sync targets: main repos + their git worktrees.
 # Returns a table with {name, path} rows.
 # "name" is the notes subdirectory (e.g. "liquidity/worktrees/untouchable")
 # "path" is the absolute filesystem path to the repo/worktree
-# https://www.nushell.sh/commands/docs/each.html
-# https://www.nushell.sh/commands/docs/glob.html
 def build-targets [org_root: string, repos: list<string>] {
   let main_targets = ($repos | each {|repo|
     { name: $repo, path: $"($org_root)/st0x.($repo)" }
   })
 
-  # Scan .worktrees/ for 1-deep and 2-deep dirs (e.g. feat/name/)
-  # glob returns absolute paths; compact drops nulls from the if-branches
-  # https://www.nushell.sh/commands/docs/compact.html
-  # https://www.nushell.sh/commands/docs/flatten.html
   let worktree_targets = ($repos | each {|repo|
     let worktree_dir = $"($org_root)/st0x.($repo)/.worktrees"
 
     if ($worktree_dir | path exists) {
-      # glob only takes one pattern, so call twice and append
-      (glob $"($worktree_dir)/*/" | append (glob $"($worktree_dir)/*/*/"))
+      let one_deep = (glob $"($worktree_dir)/*" --no-file --no-symlink)
+      let two_deep = (glob $"($worktree_dir)/*/*" --no-file --no-symlink)
+      let candidates = ($one_deep | append $two_deep)
+      log debug $"($repo): .worktrees/ has ($candidates | length) candidate dirs"
+
+      $candidates
         | each {|worktree_path|
           let worktree_path = ($worktree_path | str trim --right --char '/')
+          let has_git = ($"($worktree_path)/.git" | path exists)
+          log debug $"  ($worktree_path): .git exists = ($has_git)"
 
-          # Only include dirs that are actual git worktrees
-          if ($"($worktree_path)/.git" | path exists) {
+          if $has_git {
             let leaf_name = ($worktree_path | path basename)
             { name: $"($repo)/worktrees/($leaf_name)", path: $worktree_path }
           }
-          # when the if is false, each produces null -- compact strips these
         }
         | compact
     }
@@ -61,7 +61,9 @@ def md-files [repo_path: string] {
     []
   }
 
-  $git_files | append $local_files
+  $git_files
+    | append $local_files
+    | where {|file| ($"($repo_path)/($file)" | path type) != "symlink" }
 }
 
 # Strip leading dots from each path segment: ".local/prompts/x.md" -> "local/prompts/x.md"
@@ -153,7 +155,7 @@ def sync-file [source: string, destination: string, repo_name: string, note_file
 # https://www.nushell.sh/book/pipelines.html#pipeline-input-and-the-in-variable
 def sync-repo [repo_path: string, repo_name: string, notes_root: string] {
   if not ($repo_path | path exists) {
-    print -e $"[(date now | format date '%H:%M:%S')] [SKIP] ($repo_name): path ($repo_path) does not exist"
+    log warning $"($repo_name): path ($repo_path) does not exist, skipping"
     return
   }
 
@@ -161,7 +163,7 @@ def sync-repo [repo_path: string, repo_name: string, notes_root: string] {
   mkdir $repo_notes
 
   let files = (md-files $repo_path)
-  print $"[(date now | format date '%H:%M:%S')] [SYNC] ($repo_name): ($files | length) md file(s)"
+  log info $"($repo_name): ($files | length) md files"
 
   let errors = ($files | each {|file|
     let note_file = ($file | str replace '.local/' '' | undot $in)
@@ -172,14 +174,13 @@ def sync-repo [repo_path: string, repo_name: string, notes_root: string] {
       sync-file $source $destination $repo_name $note_file
       null
     } catch {|e|
-      let timestamp = (date now | format date '%H:%M:%S')
-      print -e $"[($timestamp)] [ERROR] ($repo_name)/($note_file): ($e.msg)"
+      log error $"($repo_name)/($note_file): ($e.msg)"
       $e.msg
     }
   } | compact)
 
   if ($errors | length) > 0 {
-    print -e $"[($repo_name)] ($errors | length) file(s) failed to sync"
+    log warning $"($repo_name): ($errors | length) files failed to sync"
   }
 
   null
@@ -193,14 +194,13 @@ def sync-all [targets: table<name: string, path: string>, notes_root: string] {
       sync-repo $target.path $target.name $notes_root
       null
     } catch {|e|
-      let timestamp = (date now | format date '%H:%M:%S')
-      print -e $"[($timestamp)] [ERROR] repo ($target.name) failed: ($e.msg)"
+      log error $"repo ($target.name) failed: ($e.msg)"
       $target.name
     }
   } | compact)
 
   if ($errors | length) > 0 {
-    print -e $"($errors | length) repo(s) failed to sync: ($errors | str join ', ')"
+    log warning $"($errors | length) repos failed to sync: ($errors | str join ', ')"
   }
 
   null
