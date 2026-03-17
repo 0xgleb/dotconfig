@@ -102,6 +102,7 @@
                 git
                 fswatch
                 nushell
+                diffutils
               ];
               text = ''
                 exec ${script}/bin/md-sync-inner "$@"
@@ -162,6 +163,7 @@
                 nativeBuildInputs = with pkgs; [
                   nushell
                   git
+                  diffutils
                 ];
               }
               ''
