@@ -109,6 +109,27 @@
               '';
             };
 
+          mdup =
+            let
+              script = pkgs.writeScriptBin "mdup" ''
+                #!${pkgs.nushell}/bin/nu
+                ${builtins.readFile ./scripts/mdaemon/sync-lib.nu}
+                ${builtins.readFile ./scripts/mdaemon/mdup-lib.nu}
+                ${builtins.readFile ./scripts/mdaemon/mdup.nu}
+              '';
+            in
+            pkgs.writeShellApplication {
+              name = "mdup";
+              runtimeInputs = with pkgs; [
+                git
+                nushell
+                diffutils
+              ];
+              text = ''
+                exec ${script}/bin/mdup "$@"
+              '';
+            };
+
           ralphUp = pkgs.writeShellApplication {
             name = "ralph-up";
             runtimeInputs = [
@@ -179,6 +200,32 @@
                 cp ${./scripts/mdaemon/sync-lib.nu} sync-lib.nu
                 cp ${./scripts/mdaemon/sync.test.nu} sync.test.nu
                 ${pkgs.nushell}/bin/nu sync.test.nu
+                touch $out
+              '';
+
+          mdup =
+            pkgs.runCommand "mdup-test"
+              {
+                nativeBuildInputs = with pkgs; [
+                  nushell
+                  git
+                  diffutils
+                ];
+              }
+              ''
+                export HOME=$(mktemp -d)
+                git config --global user.email "test@test.com"
+                git config --global user.name "test"
+
+                echo "validating assembled mdup script parses..."
+                ${pkgs.nushell}/bin/nu --ide-check 0 \
+                  ${self.packages.aarch64-darwin.mdup}/bin/mdup
+                echo "mdup script parses ok"
+
+                cp ${./scripts/mdaemon/sync-lib.nu} sync-lib.nu
+                cp ${./scripts/mdaemon/mdup-lib.nu} mdup-lib.nu
+                cp ${./scripts/mdaemon/mdup.test.nu} mdup.test.nu
+                ${pkgs.nushell}/bin/nu mdup.test.nu
                 touch $out
               '';
         };

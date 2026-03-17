@@ -1,0 +1,171 @@
+# mdup: terraform-like plan/apply for markdown vault sync
+# Library functions are in sync-lib.nu and mdup-lib.nu (concatenated by nix at build time)
+
+def "main plan" [
+  --org: string
+  --vault: string
+  --out: string
+] {
+  if $org == null or $vault == null {
+    print (plan-help-text)
+    return
+  }
+
+  let org_root = ($org | path expand)
+  let notes_root = ($vault | path expand)
+  let plan_path = if $out != null { $out } else { ".mdup-plan.nuon" }
+
+  let targets = (build-targets $org_root $DEFAULT_REPOS)
+  print $"org:    ($org_root)"
+  print $"vault:  ($notes_root)"
+  print $"targets: ($targets | length) \(($targets | get name | str join ', '))"
+  print ""
+
+  let actions = (compute-actions $targets $notes_root)
+
+  if ($actions | length) == 0 {
+    print "No changes detected. Vault is up to date."
+    return
+  }
+
+  let creates = ($actions | where action == "create" | length)
+  let forwards = ($actions | where action == "forward" | length)
+  let reverses = ($actions | where action == "reverse" | length)
+  let blocked = ($actions | where action == "blocked" | length)
+
+  $actions | each {|a| print (format-action $a) }
+  print ""
+
+  let summary_parts = (
+    [[count label]; [$creates "new"] [$forwards "repo->vault"] [$reverses "vault->repo"] [$blocked "blocked"]]
+    | where count > 0
+    | each {|row| $"($row.count) ($row.label)" }
+  )
+
+  print $"($actions | length) changes \(($summary_parts | str join ', '))"
+
+  let plan = {
+    version: $PLAN_VERSION
+    created_at: (date now | format date '%+')
+    org: $org_root
+    vault: $notes_root
+    actions: $actions
+  }
+
+  $plan | to nuon --indent 2 | save --force $plan_path
+  print $"Plan saved to: ($plan_path)"
+}
+
+def "main apply" [
+  --plan: string
+  --yes (-y)
+] {
+  let plan_path = if $plan != null { $plan } else { ".mdup-plan.nuon" }
+
+  if not ($plan_path | path exists) {
+    error make { msg: $"plan file not found: ($plan_path). Run `mdup plan` first." }
+  }
+
+  let plan = (open $plan_path)
+
+  if $plan.version != $PLAN_VERSION {
+    error make { msg: $"unsupported plan version: ($plan.version)" }
+  }
+
+  let actions = ($plan.actions | where action != "blocked")
+
+  if ($actions | length) == 0 {
+    print "No applicable actions in plan."
+    return
+  }
+
+  print $"Plan from: ($plan.created_at)"
+  print $"org:   ($plan.org)"
+  print $"vault: ($plan.vault)"
+  print $"($actions | length) action\(s) to apply"
+  print ""
+
+  # Verify all hashes still match (drift detection)
+  let drifted = ($actions | each {|a|
+    let source_ok = if ($a.source | path exists) {
+      (file-hash $a.source) == $a.source_hash
+    } else {
+      $a.action != "reverse"
+    }
+
+    let dest_ok = if $a.destination_hash == null {
+      not ($a.destination | path exists)
+    } else if ($a.destination | path exists) {
+      (file-hash $a.destination) == $a.destination_hash
+    } else {
+      false
+    }
+
+    if (not $source_ok) or (not $dest_ok) {
+      $a
+    } else {
+      null
+    }
+  } | compact)
+
+  if ($drifted | length) > 0 {
+    print $"(ansi red)Drift detected! ($drifted | length) file\(s) changed since plan was created:(ansi reset)"
+    $drifted | each {|a|
+      print $"  ! ($a.repo_name)/($a.note_file)"
+    }
+    print ""
+    print "Re-run `mdup plan` to generate a fresh plan."
+    error make { msg: "plan is stale, aborting" }
+  }
+
+  if not $yes {
+    let answer = (input $"Apply ($actions | length) change\(s)? [y/N] ")
+    if ($answer | str downcase) != "y" {
+      print "Aborted."
+      return
+    }
+  }
+
+  # Apply each action, collect results
+  let results = ($actions | each {|action|
+    try {
+      match $action.action {
+        "create" => {
+          let parent = ($action.destination | path dirname)
+          mkdir $parent
+          atomic-cp $action.source $action.destination
+          print $"  (ansi green)+(ansi reset) ($action.repo_name)/($action.note_file)"
+        }
+        "forward" => {
+          atomic-cp $action.source $action.destination
+          print $"  (ansi yellow)~(ansi reset) ($action.repo_name)/($action.note_file) (repo -> vault)"
+        }
+        "reverse" => {
+          atomic-cp $action.destination $action.source
+          print $"  (ansi cyan)~(ansi reset) ($action.repo_name)/($action.note_file) (vault -> repo)"
+        }
+      }
+      "ok"
+    } catch {|e|
+      print -e $"  (ansi red)ERROR(ansi reset) ($action.repo_name)/($action.note_file): ($e.msg)"
+      "error"
+    }
+  })
+
+  let applied = ($results | where $it == "ok" | length)
+  let error_count = ($results | where $it == "error" | length)
+
+  print ""
+  print $"Applied: ($applied), Errors: ($error_count)"
+
+  if $error_count == 0 {
+    rm $plan_path
+    print "Plan file cleaned up."
+  } else {
+    print "Plan file kept due to errors. Fix issues and re-run apply."
+  }
+}
+
+def main [] {
+  print (help-text)
+}
