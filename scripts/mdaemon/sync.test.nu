@@ -77,6 +77,55 @@ def "test repo-for-path returns null for unknown path" [] {
   assert equal $result null
 }
 
+# --- atomic-cp ---
+
+def "test atomic-cp copies file correctly" [] {
+  with-temp-dir {|dir|
+    let src = $"($dir)/src.md"
+    let dst = $"($dir)/dst.md"
+    "hello world" | save $src
+    atomic-cp $src $dst
+    assert equal (open --raw $dst | str trim) "hello world"
+  }
+}
+
+def "test atomic-cp does not leave tmp file on success" [] {
+  with-temp-dir {|dir|
+    let src = $"($dir)/src.md"
+    let dst = $"($dir)/dst.md"
+    "content" | save $src
+    atomic-cp $src $dst
+    assert (not ($"($dst).md-sync-tmp" | path exists))
+  }
+}
+
+# --- guard-empty-overwrite ---
+
+def "test guard-empty-overwrite allows non-empty to overwrite" [] {
+  with-temp-dir {|dir|
+    let newer = $"($dir)/newer.md"
+    let older = $"($dir)/older.md"
+    "new content" | save $newer
+    "old content" | save $older
+    guard-empty-overwrite $newer $older
+  }
+}
+
+def "test guard-empty-overwrite rejects empty overwrite" [] {
+  with-temp-dir {|dir|
+    let newer = $"($dir)/newer.md"
+    let older = $"($dir)/older.md"
+    "" | save $newer
+    "real content" | save $older
+    try {
+      guard-empty-overwrite $newer $older
+      assert false "should have errored"
+    } catch {|e|
+      assert ($e.msg | str contains "refusing to overwrite")
+    }
+  }
+}
+
 # --- sync-file (integration with temp dirs) ---
 
 def with-temp-dir [block: closure] {
@@ -121,6 +170,24 @@ def "test sync-file notes-to-repo when dst is newer" [] {
     "new content" | save $dst
     sync-file $src $dst "test-repo" "src.md"
     assert equal (open --raw $src | str trim) "new content"
+  }
+}
+
+def "test sync-file rejects empty overwriting non-empty" [] {
+  with-temp-dir {|dir|
+    let src = $"($dir)/src.md"
+    let dst = $"($dir)/dst.md"
+    "real content here" | save $dst
+    sleep 100ms
+    "" | save $src
+    let original = (open --raw $dst)
+    try {
+      sync-file $src $dst "test-repo" "src.md"
+      assert false "should have errored"
+    } catch {|e|
+      assert ($e.msg | str contains "refusing to overwrite")
+    }
+    assert equal (open --raw $dst) $original
   }
 }
 

@@ -20,7 +20,7 @@ $env.config = {
       mode: [vi_normal vi_insert]
       event: {
         until: [
-          { send: HistoryHintComplete }
+          { send: HistoryHintWordComplete }
           { send: menu name: completion_menu }
           { send: MenuNext }
         ]
@@ -36,7 +36,12 @@ $env.config = {
   }
 }
 
+def --wrapped l [...args: string] {
+  ls -a
+}
+
 alias vi = nvim
+alias vim = nvim
 
 # fj — unified git/graphite/gitui command
 # Routing logic duplicated in fj.nu for testability (see fj.test.nu)

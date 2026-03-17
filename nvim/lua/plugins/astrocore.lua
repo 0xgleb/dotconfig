@@ -151,7 +151,7 @@ return {
         ["<Leader>on"] = { "<Cmd>Neotree toggle<CR>", desc = "File tree" },
         ["<Leader>oN"] = { "<Cmd>Neotree reveal<CR>", desc = "File tree (reveal current)" },
         ["<Leader>op"] = { "<Cmd>Neotree toggle<CR>", desc = "Project sidebar" },
-        ["<Leader>ot"] = { function() require("astrocore").toggle_term_cmd(nil) end, desc = "Terminal" },
+        ["<Leader>ot"] = { "<Cmd>ToggleTerm<CR>", desc = "Terminal" },
 
         -- ╭─────────────────────────────────────────╮
         -- │ SPC p — Project                          │

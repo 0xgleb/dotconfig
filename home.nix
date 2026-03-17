@@ -14,13 +14,11 @@ in
     username = "0xgleb";
     stateVersion = "24.05";
 
+    shell.enableNushellIntegration = true;
     packages = with pkgs; [
       # ChatGpt told me to put this
-      ripgrep
-      fd
       python3Packages.pynvim
       gcc
-      lua
       luarocks
       lazygit
     ];
@@ -39,20 +37,13 @@ in
       };
     };
 
+    difftastic.enable = true;
+    difftastic.git.enable = true;
+    difftastic.git.diffToolMode = true;
+
     # Neovim + AstroNvim
     neovim = {
       enable = true;
-      defaultEditor = true;
-
-      viAlias = true;
-      vimAlias = true;
-      vimdiffAlias = true;
-
-      withPython3 = true;
-      withNodeJs = true;
-      withPerl = true;
-      withRuby = true;
-
       # autowrapRuntimeDeps = false;
       extraPackages = with pkgs; [
         tree-sitter
@@ -62,13 +53,6 @@ in
         gcc
         fd
       ];
-
-      plugins = with pkgs.vimPlugins; [
-        nvim-treesitter.withAllGrammars
-        nvim-lspconfig
-        plenary-nvim
-        mini-nvim
-      ];
     };
 
     # Nushell
@@ -76,6 +60,7 @@ in
       enable = true;
       configFile.source = ./nushell/config.nu;
       envFile.source = ./nushell/env.nu;
+      plugins = with pkgs.nushellPlugins; [ polars query ];
     };
 
     # Zellij
@@ -84,6 +69,19 @@ in
     # FZF
     fzf.enable = true;
     fzf.enableZshIntegration = true;
+
+    # Atuin — fuzzy history search (ctrl+r) for nushell
+    atuin.enable = true;
+    atuin.enableNushellIntegration = true;
+
+    # Carapace — completions for git, docker, gh, and hundreds more
+    carapace.enable = true;
+    carapace.enableNushellIntegration = true;
+
+    # Zoxide — smart directory jumping (replaces autojump)
+    zoxide.enable = true;
+    zoxide.enableNushellIntegration = true;
+    zoxide.enableZshIntegration = true;
 
     # Direnv
     direnv.enable = true;

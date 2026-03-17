@@ -24,19 +24,19 @@ in
   programs.direnv.enable = true;
 
   environment = {
-    # variables.EDITOR = "nvim";
-
-    # shellAliases = {
-    #   l = if pkgs.stdenv.isDarwin then "ls -GAlh" else "ls -Alh --color=auto";
-    # };
-
+    etc."nushell/config.nu".source = ./nushell/config.nu;
+    etc."nushell/env.nu".source = ./nushell/env.nu;
     shells = [
       pkgs.zsh
       pkgs.nushell
     ];
 
-    etc."nushell/config.nu".source = ./nushell/config.nu;
-    etc."nushell/env.nu".source = ./nushell/env.nu;
+    variables.EDITOR = "nvim";
+    shellAliases = {
+      l = "ls -GAlh";
+      vi = "nvim";
+      vim = "nvim";
+    };
 
     systemPackages = with pkgs; [
       # CLI tools
@@ -68,7 +68,6 @@ in
       # Dev tools
       nodejs_24
       bacon
-      # docker
       fswatch
 
       # # AI
@@ -87,8 +86,8 @@ in
       openssl
       rage
 
-      # # Editors
-      # neovim
+      # Editors
+      neovim
     ];
   };
 

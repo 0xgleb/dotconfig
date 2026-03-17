@@ -88,6 +88,30 @@ def diff-stats [source: string, destination: string] {
   { adds: $additions, dels: $deletions }
 }
 
+# Atomically copy a file: write to a temp sibling, then rename.
+# Prevents partial writes from corrupting the destination.
+def atomic-cp [source: string, destination: string] {
+  let tmp = $"($destination).md-sync-tmp"
+  cp $source $tmp
+  let src_hash = (open --raw $source | hash md5)
+  let tmp_hash = (open --raw $tmp | hash md5)
+  if $src_hash != $tmp_hash {
+    rm $tmp
+    error make { msg: $"copy verification failed: ($source) -> ($destination)" }
+  }
+  mv --force $tmp $destination
+}
+
+# Refuse to sync when the "newer" file is empty but the older has real content.
+# This catches truncation bugs, failed writes, and editor save errors.
+def guard-empty-overwrite [newer: string, older: string] {
+  let newer_size = (ls -l $newer | first | get size | into int)
+  let older_size = (ls -l $older | first | get size | into int)
+  if $newer_size == 0 and $older_size > 0 {
+    error make { msg: $"refusing to overwrite non-empty file with empty file: ($newer) -> ($older)" }
+  }
+}
+
 # Bidirectional sync of a single file. Newer file wins.
 # - Missing destination: copy source (repo -> notes)
 # - Contents differ: compare mtime, copy the newer one over the older
@@ -101,7 +125,7 @@ def sync-file [source: string, destination: string, repo_name: string, note_file
     mkdir $parent_dir
 
     print $"[($timestamp)] [st0x.($repo_name) --new--> notes] ($repo_name)/($note_file)"
-    cp $source $destination
+    atomic-cp $source $destination
 
   } else if (open --raw $source) != (open --raw $destination) {
     # ls -l returns a table with a `modified` column (datetime)
@@ -110,13 +134,15 @@ def sync-file [source: string, destination: string, repo_name: string, note_file
     let destination_modified = (ls -l $destination | first | get modified)
 
     if $source_modified > $destination_modified {
+      guard-empty-overwrite $source $destination
       let stats = (diff-stats $destination $source)
       print $"[($timestamp)] [st0x.($repo_name) --+($stats.adds),-($stats.dels)--> notes] ($repo_name)/($note_file)"
-      cp $source $destination
+      atomic-cp $source $destination
     } else {
+      guard-empty-overwrite $destination $source
       let stats = (diff-stats $source $destination)
       print $"[($timestamp)] [notes --+($stats.adds),-($stats.dels)--> st0x.($repo_name)] ($repo_name)/($note_file)"
-      cp $destination $source
+      atomic-cp $destination $source
     }
   }
 }
@@ -126,30 +152,55 @@ def sync-file [source: string, destination: string, repo_name: string, note_file
 # `$in` refers to the pipeline input -- here it's the result of str replace
 # https://www.nushell.sh/book/pipelines.html#pipeline-input-and-the-in-variable
 def sync-repo [repo_path: string, repo_name: string, notes_root: string] {
-  if not ($repo_path | path exists) { return }
+  if not ($repo_path | path exists) {
+    print -e $"[(date now | format date '%H:%M:%S')] [SKIP] ($repo_name): path ($repo_path) does not exist"
+    return
+  }
 
   let repo_notes = $"($notes_root)/($repo_name)"
   mkdir $repo_notes
 
-  md-files $repo_path | each {|file|
-    # str replace strips ".local/" prefix, then undot strips leading dots
-    # `$in` captures the pipeline result of str replace as input to undot
+  let files = (md-files $repo_path)
+  print $"[(date now | format date '%H:%M:%S')] [SYNC] ($repo_name): ($files | length) md file(s)"
+
+  let errors = ($files | each {|file|
     let note_file = ($file | str replace '.local/' '' | undot $in)
     let source = $"($repo_path)/($file)"
     let destination = $"($repo_notes)/($note_file)"
 
-    sync-file $source $destination $repo_name $note_file
+    try {
+      sync-file $source $destination $repo_name $note_file
+      null
+    } catch {|e|
+      let timestamp = (date now | format date '%H:%M:%S')
+      print -e $"[($timestamp)] [ERROR] ($repo_name)/($note_file): ($e.msg)"
+      $e.msg
+    }
+  } | compact)
+
+  if ($errors | length) > 0 {
+    print -e $"[($repo_name)] ($errors | length) file(s) failed to sync"
   }
 
-  # each returns a list of results; null discards it
-  # https://www.nushell.sh/book/pipelines.html
   null
 }
 
-# Iterate over all targets and sync each one
+# Iterate over all targets and sync each one.
+# Errors in one repo don't prevent syncing others.
 def sync-all [targets: table<name: string, path: string>, notes_root: string] {
-  $targets | each {|target|
-    sync-repo $target.path $target.name $notes_root
+  let errors = ($targets | each {|target|
+    try {
+      sync-repo $target.path $target.name $notes_root
+      null
+    } catch {|e|
+      let timestamp = (date now | format date '%H:%M:%S')
+      print -e $"[($timestamp)] [ERROR] repo ($target.name) failed: ($e.msg)"
+      $target.name
+    }
+  } | compact)
+
+  if ($errors | length) > 0 {
+    print -e $"($errors | length) repo(s) failed to sync: ($errors | str join ', ')"
   }
 
   null
