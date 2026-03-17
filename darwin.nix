@@ -44,6 +44,7 @@
     _1password-gui
     fswatch
     rsync
+    self.packages.aarch64-darwin.mdup
   ];
 
   # nix-darwin specific zsh options
