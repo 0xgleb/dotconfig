@@ -1,6 +1,1 @@
-{
-  vault: "~/code/st0x/notes"
-  orgs: [
-    "~/code/st0x"
-  ]
-}
+{vault: ~/notes, orgs: ["~/code/st0x", ~/code/data-cartel/]}
