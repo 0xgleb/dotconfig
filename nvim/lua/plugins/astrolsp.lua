@@ -14,7 +14,35 @@ return {
       },
       timeout_ms = 1000,
     },
-    servers = {},
+    servers = {
+      "lua_ls",
+      "nil_ls",
+      "ts_ls",
+      "svelte",
+      "rust_analyzer",
+    },
+    config = {
+      nil_ls = {
+        settings = {
+          ["nil"] = {
+            formatting = { command = { "nixfmt" } },
+          },
+        },
+      },
+      rust_analyzer = {
+        settings = {
+          ["rust-analyzer"] = {
+            check = {
+              command = "clippy",
+              extraArgs = { "--no-deps" },
+            },
+            files = {
+              excludeDirs = { ".direnv", ".git", ".worktrees", "target" },
+            },
+          },
+        },
+      },
+    },
     autocmds = {
       lsp_codelens_refresh = {
         cond = "textDocument/codeLens",
