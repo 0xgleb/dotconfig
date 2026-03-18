@@ -33,6 +33,12 @@ def "test help-text lists plan command" [] {
   assert ($text | str contains "Compute a sync plan")
 }
 
+def "test help-text documents config" [] {
+  let text = (help-text)
+  assert ($text | str contains "mdaemon.nuon")
+  assert ($text | str contains "CONFIG")
+}
+
 def "test help-text lists apply command" [] {
   let text = (help-text)
   assert ($text | str contains "apply:")
@@ -55,6 +61,7 @@ def "test help-text examples use mdup not mdup-inner" [] {
   assert (not ($text | str contains "mdup-inner"))
   assert ($text | str contains "mdup plan")
   assert ($text | str contains "mdup apply")
+  assert ($text | str contains "mdup diff")
 }
 
 def "test help-text contains learn more section" [] {
@@ -83,6 +90,7 @@ def "test plan-help-text contains usage" [] {
 
 def "test plan-help-text lists all flags" [] {
   let text = (plan-help-text)
+  assert ($text | str contains "--config")
   assert ($text | str contains "--org")
   assert ($text | str contains "--vault")
   assert ($text | str contains "--out")
@@ -142,6 +150,7 @@ def "test diff-help-text lists all flags" [] {
   assert ($text | str contains "--plan")
   assert ($text | str contains "--org")
   assert ($text | str contains "--vault")
+  assert ($text | str contains "--config")
 }
 
 def "test diff-help-text has examples" [] {
@@ -483,6 +492,137 @@ def "test action-diff blocked shows reason" [] {
   let output = (action-diff $action)
   assert ($output | str contains "BLOCKED")
   assert ($output | str contains "empty file")
+}
+
+# --- build-targets ---
+
+def "test build-targets discovers repos in org dir" [] {
+  with-temp-dir {|dir|
+    let org = $"($dir)/myorg"
+    let vault = $"($dir)/vault"
+    mkdir $org
+    mkdir $vault
+
+    let repo_a = $"($org)/repo-a"
+    let repo_b = $"($org)/repo-b"
+    mkdir $repo_a
+    mkdir $repo_b
+    git -C $repo_a init
+    git -C $repo_b init
+
+    let targets = (build-targets $org $vault)
+    let names = ($targets | get name | sort)
+
+    assert equal $names ["repo-a" "repo-b"]
+  }
+}
+
+def "test build-targets excludes vault dir" [] {
+  with-temp-dir {|dir|
+    let org = $"($dir)/myorg"
+    let vault = $"($org)/notes"
+    mkdir $org
+    mkdir $vault
+
+    let repo = $"($org)/real-repo"
+    mkdir $repo
+    git -C $repo init
+
+    # vault dir also has .git
+    git -C $vault init
+
+    let targets = (build-targets $org $vault)
+    let names = ($targets | get name)
+
+    assert equal $names ["real-repo"]
+  }
+}
+
+def "test build-targets discovers worktrees with repo prefix" [] {
+  with-temp-dir {|dir|
+    let org = $"($dir)/myorg"
+    let vault = $"($dir)/vault"
+    mkdir $org
+    mkdir $vault
+
+    let repo = $"($org)/myrepo"
+    mkdir $repo
+    git -C $repo init
+
+    let wt = $"($repo)/.worktrees/feat/cool-feature"
+    mkdir $wt
+    "gitdir: dummy" | save $"($wt)/.git"
+
+    let targets = (build-targets $org $vault)
+    let names = ($targets | get name | sort)
+
+    assert equal $names ["myrepo" "myrepo/worktrees/cool-feature"]
+  }
+}
+
+# --- load-config ---
+
+def "test load-config reads orgs and vault" [] {
+  with-temp-dir {|dir|
+    let config_path = $"($dir)/mdaemon.nuon"
+    { vault: $"($dir)/vault", orgs: [$"($dir)/org1", $"($dir)/org2"] }
+      | to nuon
+      | save $config_path
+
+    let config = (load-config $config_path)
+
+    assert equal $config.vault $"($dir)/vault"
+    assert equal ($config.orgs | length) 2
+  }
+}
+
+# --- multi-org targets ---
+
+def "test build-all-targets combines multiple orgs" [] {
+  with-temp-dir {|dir|
+    let vault = $"($dir)/vault"
+    mkdir $vault
+
+    let org1 = $"($dir)/alpha"
+    let org2 = $"($dir)/beta"
+    mkdir $org1
+    mkdir $org2
+
+    let repo1 = $"($org1)/service-a"
+    let repo2 = $"($org2)/service-b"
+    mkdir $repo1
+    mkdir $repo2
+    git -C $repo1 init
+    git -C $repo2 init
+
+    let config = { vault: $vault, orgs: [$org1, $org2] }
+    let targets = (build-all-targets $config)
+    let names = ($targets | get name | sort)
+
+    assert equal $names ["alpha/service-a" "beta/service-b"]
+  }
+}
+
+def "test build-all-targets vault path is org/repo/file" [] {
+  with-temp-dir {|dir|
+    let vault = $"($dir)/vault"
+    mkdir $vault
+
+    let org = $"($dir)/st0x"
+    mkdir $org
+    let repo = $"($org)/liquidity"
+    mkdir $repo
+    git -C $repo init
+    "# readme" | save $"($repo)/README.md"
+    git -C $repo add -A
+    git -C $repo commit -m "init"
+
+    let config = { vault: $vault, orgs: [$org] }
+    let targets = (build-all-targets $config)
+    let actions = (compute-actions $targets $vault)
+
+    assert equal ($actions | first | get destination) $"($vault)/st0x/liquidity/README.md"
+  }
 }
 
 # --- symlink filtering ---
