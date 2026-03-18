@@ -39,6 +39,12 @@ def "test help-text lists apply command" [] {
   assert ($text | str contains "Apply a previously generated sync plan")
 }
 
+def "test help-text lists diff command" [] {
+  let text = (help-text)
+  assert ($text | str contains "diff:")
+  assert ($text | str contains "Show unified diffs")
+}
+
 def "test help-text contains examples section" [] {
   let text = (help-text)
   assert ($text | str contains "EXAMPLES")
@@ -120,6 +126,31 @@ def "test apply-help-text has examples" [] {
 
 def "test apply-help-text uses mdup not mdup-inner" [] {
   let text = (apply-help-text)
+  assert (not ($text | str contains "mdup-inner"))
+}
+
+# --- diff help text ---
+
+def "test diff-help-text contains usage" [] {
+  let text = (diff-help-text)
+  assert ($text | str contains "USAGE")
+  assert ($text | str contains "mdup diff")
+}
+
+def "test diff-help-text lists all flags" [] {
+  let text = (diff-help-text)
+  assert ($text | str contains "--plan")
+  assert ($text | str contains "--org")
+  assert ($text | str contains "--vault")
+}
+
+def "test diff-help-text has examples" [] {
+  let text = (diff-help-text)
+  assert ($text | str contains "EXAMPLES")
+}
+
+def "test diff-help-text uses mdup not mdup-inner" [] {
+  let text = (diff-help-text)
   assert (not ($text | str contains "mdup-inner"))
 }
 

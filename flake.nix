@@ -121,6 +121,7 @@
             pkgs.writeShellApplication {
               name = "mdup";
               runtimeInputs = with pkgs; [
+                bat
                 git
                 nushell
                 diffutils
