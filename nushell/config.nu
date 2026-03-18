@@ -37,10 +37,10 @@ $env.config = {
 }
 
 def --wrapped l [...args: string] {
-  ls -a
+  ls -a ...$args
 }
 
-alias vi = nvim
+alias vi = nvim 
 alias vim = nvim
 
 # fj — unified git/graphite/gitui command
