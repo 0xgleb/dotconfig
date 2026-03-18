@@ -16,6 +16,7 @@ in
 
     shell.enableNushellIntegration = true;
 
+    file."Library/Application Support/nushell/fix-worktree-submodules.nu".source = ./nushell/fix-worktree-submodules.nu;
   };
 
   services.ollama.enable = false;
