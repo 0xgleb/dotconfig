@@ -31,8 +31,16 @@
 
   # macOS-specific packages
   environment.systemPackages = with pkgs; [
+    autojump
+    zoxide
+    bat
+    lua
+    ripgrep
+    fd
+    bottom
     brave
     obsidian
+    # ghostty
     _1password-gui
     fswatch
     rsync
@@ -56,39 +64,30 @@
     casks = [
       "amethyst"
       "coderabbit"
+      "font-jetbrains-mono-nerd-font"
       "karabiner-elements"
     ];
   };
 
-  # Ollama service for local LLM inference
-  # TODO: add oneshot agent to pull models automatically (qwen3:32b)
-  launchd.user.agents.ollama = {
-    serviceConfig = {
-      ProgramArguments = [
-        "${pkgs.ollama}/bin/ollama"
-        "serve"
-      ];
-      KeepAlive = true;
-      RunAtLoad = true;
-      EnvironmentVariables = {
-        OLLAMA_ORIGINS = "*";
-      };
-    };
-  };
+  fonts.packages = with pkgs; [
+    nerd-fonts.fira-mono
+    nerd-fonts.fira-code
+  ];
 
-  launchd.user.agents.mdaemon = {
-    serviceConfig = {
-      StandardErrorPath = "${userConfig.home}/Library/Logs/mdaemon.err";
-      StandardOutPath = "${userConfig.home}/Library/Logs/mdaemon.out";
-      ProgramArguments = [
-        "${self.packages.aarch64-darwin.mdSync}/bin/md-sync"
-        "--watch"
-      ];
 
-      KeepAlive = true;
-      RunAtLoad = true;
-    };
-  };
+  # launchd.user.agents.mdaemon = {
+  #   serviceConfig = {
+  #     StandardErrorPath = "${userConfig.home}/Library/Logs/mdaemon.err";
+  #     StandardOutPath = "${userConfig.home}/Library/Logs/mdaemon.out";
+  #     ProgramArguments = [
+  #       "${self.packages.aarch64-darwin.mdSync}/bin/md-sync"
+  #       "--watch"
+  #     ];
+  #
+  #     KeepAlive = true;
+  #     RunAtLoad = true;
+  #   };
+  # };
 
   # Symlink root's nushell config to /etc/nushell so root gets the same shell config
   # Workaround for nix-darwin #1255: kickstart user agents after activation

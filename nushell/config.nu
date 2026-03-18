@@ -20,7 +20,7 @@ $env.config = {
       mode: [vi_normal vi_insert]
       event: {
         until: [
-          { send: HistoryHintComplete }
+          { send: HistoryHintWordComplete }
           { send: menu name: completion_menu }
           { send: MenuNext }
         ]
@@ -36,11 +36,16 @@ $env.config = {
   }
 }
 
-alias l = ls -la
+def --wrapped l [...args: string] {
+  ls -a
+}
+
+alias vi = nvim
+alias vim = nvim
 
 # fj — unified git/graphite/gitui command
 # Routing logic duplicated in fj.nu for testability (see fj.test.nu)
-const gt_commands = [create modify ss submit sync co checkout up down restack reorder move absorb ls ll log init get guide demo feedback]
+const gt_commands = [create modify ss submit sync co checkout top bottom up down restack reorder move absorb rename ls ll log init get guide demo feedback]
 
 def --wrapped fj [...args: string] {
   if ($args | length) == 0 {
@@ -63,7 +68,11 @@ def --wrapped fj [...args: string] {
 # {|| } is a closure with no parameters
 # https://www.nushell.sh/book/coloring_and_theming.html#prompt-configuration
 $env.PROMPT_COMMAND = {||
-  let path = ($env.PWD | path basename)
+  let path = if $env.PWD == $nu.home-dir {
+    "~"
+  } else {
+    $env.PWD | path basename
+  }
   let who = (whoami)
   if $who == "root" {
     $"(ansi red_bold)ROOT(ansi reset) (ansi yellow)($path)(ansi reset) # "

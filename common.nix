@@ -24,31 +24,28 @@ in
   programs.direnv.enable = true;
 
   environment = {
-    variables.EDITOR = "nvim";
-
-    shellAliases = {
-      l = if pkgs.stdenv.isDarwin then "ls -GAlh" else "ls -Alh --color=auto";
-    };
-
+    etc."nushell/config.nu".source = ./nushell/config.nu;
+    etc."nushell/env.nu".source = ./nushell/env.nu;
     shells = [
       pkgs.zsh
       pkgs.nushell
     ];
 
-    etc."nushell/config.nu".source = ./nushell/config.nu;
-    etc."nushell/env.nu".source = ./nushell/env.nu;
+    variables.EDITOR = "nvim";
+    shellAliases = {
+      l = "ls -GAlh";
+      vi = "nvim";
+      vim = "nvim";
+    };
 
     systemPackages = with pkgs; [
       # CLI tools
-      autojump
-      bat
-      bottom
       fzf
       fd
       jq
       magic-wormhole
       fastfetch
-      oh-my-zsh
+      # oh-my-zsh
       ripgrep
       tldr
       tree
@@ -71,14 +68,13 @@ in
       # Dev tools
       nodejs_24
       bacon
-      docker
       fswatch
 
-      # AI
-      codex
-      unstable.claude-code
+      # # AI
+      # codex
       ollama
-      opencode
+      # opencode
+      unstable.claude-code
 
       # Nix tools
       nil
@@ -90,13 +86,9 @@ in
       openssl
       rage
 
-      # Shells
-      nushell
-
       # Editors
       neovim
     ];
-
   };
 
   nix.settings = {

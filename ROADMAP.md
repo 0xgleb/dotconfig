@@ -31,8 +31,8 @@ graph LR
 ### Worktree sync
 
 - [ ] Detect `.worktrees/` directories inside each repo and sync their markdown,
-      appending repo name to filenames per naming convention
-      (`docs/file.md` → `docs/file.liquidity.md`)
+      appending repo name to filenames per naming convention (`docs/file.md` →
+      `docs/file.liquidity.md`)
 - [ ] Watch for worktree creation/deletion and dynamically add/remove fswatch
       paths without restarting the service
 - [ ] Handle worktree cleanup: remove notes subdirectory when a worktree is
@@ -44,8 +44,8 @@ graph LR
       working tree) and remove the corresponding notes file
 - [ ] Detect new `.md` files added to a repo — sync on next fswatch event
       without waiting for full `sync_all`
-- [ ] Detect file deletion in notes and remove from repo (safeguard: only if
-      the file is untracked or unchanged in git)
+- [ ] Detect file deletion in notes and remove from repo (safeguard: only if the
+      file is untracked or unchanged in git)
 - [ ] Handle renames: detect via git and update the notes copy accordingly
 
 ### Dotconfig self-sync
@@ -66,7 +66,8 @@ graph LR
 
 ### Obsidian frontmatter
 
-- [ ] Inject YAML frontmatter on sync to notes (repo, tags for doc type, version)
+- [ ] Inject YAML frontmatter on sync to notes (repo, tags for doc type,
+      version)
 - [ ] Strip frontmatter on sync back to repo so source files stay clean
 
 ### Logging and observability
@@ -76,6 +77,15 @@ graph LR
 - [ ] Log rotation or size cap to prevent unbounded growth
 - [ ] Health check: periodic heartbeat so absence of logs is distinguishable
       from "service died silently"
+
+## Git hooks via git-hooks.nix
+
+Declarative pre-commit hooks managed by git-hooks.nix so formatting, linting,
+and checks run automatically on commit across all repos without manual setup.
+
+- [ ] Add git-hooks.nix to the flake inputs
+- [ ] Configure hooks (nixfmt, denofmt, etc.)
+- [ ] Integrate with direnv so hooks activate per-project
 
 ## Not epic
 

@@ -34,10 +34,11 @@ return {
         -- │ Top-level Doom bindings                  │
         -- ╰─────────────────────────────────────────╯
         ["<Leader>/"] = { function() require("telescope.builtin").live_grep() end, desc = "Search project" },
-        ["<Leader>SPC"] = { function() require("telescope.builtin").find_files() end, desc = "Find file in project" },
+        ["<Leader><Space>"] = { function() require("telescope.builtin").find_files() end, desc = "Find file in project" },
         ["<Leader>."] = { function() require("telescope.builtin").find_files() end, desc = "Find file" },
         ["<Leader>,"] = { function() require("telescope.builtin").buffers() end, desc = "Switch buffer" },
         ["<Leader>:"] = { function() require("telescope.builtin").commands() end, desc = "Command palette" },
+        ["<M-x>"] = { function() require("telescope.builtin").commands() end, desc = "Command palette" },
         ["<Leader>;"] = { ":", desc = "Enter command" },
         ["<Leader>x"] = { function() require("astrocore.buffer").close() end, desc = "Close buffer" },
 
@@ -70,7 +71,7 @@ return {
         -- ╭─────────────────────────────────────────╮
         -- │ SPC c — Code / LSP                       │
         -- ╰─────────────────────────────────────────╯
-        ["<Leader>c"] = { desc = "Code" },
+        ["<Leader>c"] = false,
         ["<Leader>cd"] = { function() vim.lsp.buf.definition() end, desc = "Go to definition" },
         ["<Leader>cD"] = { function() vim.lsp.buf.references() end, desc = "Find references" },
         ["<Leader>ca"] = { function() vim.lsp.buf.code_action() end, desc = "Code action" },
@@ -150,14 +151,13 @@ return {
         ["<Leader>on"] = { "<Cmd>Neotree toggle<CR>", desc = "File tree" },
         ["<Leader>oN"] = { "<Cmd>Neotree reveal<CR>", desc = "File tree (reveal current)" },
         ["<Leader>op"] = { "<Cmd>Neotree toggle<CR>", desc = "Project sidebar" },
-        ["<Leader>ot"] = { function() require("astrocore").toggle_term_cmd(nil) end, desc = "Terminal" },
+        ["<Leader>ot"] = { "<Cmd>ToggleTerm<CR>", desc = "Terminal" },
 
         -- ╭─────────────────────────────────────────╮
         -- │ SPC p — Project                          │
         -- ╰─────────────────────────────────────────╯
         ["<Leader>p"] = { desc = "Project" },
-        ["<Leader>pf"] = { function() require("telescope.builtin").find_files() end, desc = "Find file in project" },
-        ["<Leader>p/"] = { function() require("telescope.builtin").live_grep() end, desc = "Search in project" },
+        ["<Leader>pf"] = { function() require("telescope.builtin").live_grep() end, desc = "Search project" },
         ["<Leader>pr"] = { function() require("telescope.builtin").oldfiles() end, desc = "Recent project files" },
         ["<Leader>pp"] = { function() require("telescope").extensions.projects.projects {} end, desc = "Switch project" },
 
@@ -228,6 +228,7 @@ return {
         ["<Leader>ww"] = { "<C-w>w", desc = "Next window" },
         ["<Leader>wW"] = { "<C-w>W", desc = "Previous window" },
         ["<Leader>wo"] = { "<C-w>o", desc = "Only window" },
+        ["<Leader>wm"] = { "<C-w>o", desc = "Maximize window" },
         ["<Leader>w="] = { "<C-w>=", desc = "Balance windows" },
         ["<Leader>wH"] = { "<C-w>H", desc = "Move window left" },
         ["<Leader>wJ"] = { "<C-w>J", desc = "Move window down" },
