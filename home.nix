@@ -15,13 +15,7 @@ in
     stateVersion = "24.05";
 
     shell.enableNushellIntegration = true;
-    packages = with pkgs; [
-      # ChatGpt told me to put this
-      python3Packages.pynvim
-      gcc
-      luarocks
-      lazygit
-    ];
+
   };
 
   programs = {
@@ -52,6 +46,11 @@ in
         luarocks
         gcc
         fd
+        lua-language-server
+        nil
+        rust-analyzer
+        nodePackages.typescript-language-server
+        nodePackages.svelte-language-server
       ];
     };
 

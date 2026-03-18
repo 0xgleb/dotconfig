@@ -32,11 +32,11 @@ return {
       })
       opts.pickers = vim.tbl_deep_extend("force", opts.pickers or {}, {
         live_grep = {
-          additional_args = { "--trim" },
+          additional_args = { "--trim", "--glob", "!.worktrees/" },
         },
         find_files = {
           hidden = true,
-          file_ignore_patterns = { "^%.git/" },
+          file_ignore_patterns = { "^%.git/", "^%.worktrees/" },
         },
       })
     end,

@@ -71,7 +71,7 @@ return {
         -- ╭─────────────────────────────────────────╮
         -- │ SPC c — Code / LSP                       │
         -- ╰─────────────────────────────────────────╯
-        ["<Leader>c"] = false,
+        ["<Leader>c"] = { desc = "Code" },
         ["<Leader>cd"] = { function() vim.lsp.buf.definition() end, desc = "Go to definition" },
         ["<Leader>cD"] = { function() vim.lsp.buf.references() end, desc = "Find references" },
         ["<Leader>ca"] = { function() vim.lsp.buf.code_action() end, desc = "Code action" },

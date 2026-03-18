@@ -32,17 +32,13 @@
   # macOS-specific packages
   environment.systemPackages = with pkgs; [
     autojump
-    zoxide
     bat
     lua
-    ripgrep
-    fd
     bottom
     brave
     obsidian
     # ghostty
     _1password-gui
-    fswatch
     rsync
     self.packages.aarch64-darwin.mdup
   ];

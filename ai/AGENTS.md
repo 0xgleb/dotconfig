@@ -568,6 +568,24 @@ Nix flake managing two targets from a single repo:
 | `zellij/`          | Terminal multiplexer config                                  |
 | `karabiner/`       | Keyboard remapping (caps lock → ctrl/esc)                    |
 
+### Neovim (AstroNvim v5)
+
+Mason is disabled. LSP servers are provided via Nix and managed through standard
+lspconfig:
+
+- **Binaries**: Added to `programs.neovim.extraPackages` in `home.nix`
+- **Registration**: Listed by lspconfig name in `astrolsp opts.servers`
+  (`nvim/lua/plugins/astrolsp.lua`)
+- **Both steps required**: A binary without registration won't start; a
+  registration without a binary will error
+
+Home Manager owns neovim — do NOT add `neovim` to `common.nix` or `darwin.nix`.
+The HM wrapper ensures `extraPackages` are on nvim's PATH.
+
+**Do NOT use rustaceanvim.** It manages rust-analyzer outside the standard
+lspconfig flow, which breaks goto-definition and all semantic LSP actions.
+rust-analyzer runs through standard lspconfig like every other server.
+
 ### Doom Emacs
 
 Managed declaratively via nix-doom-emacs-unstraightened. No `doom sync` — edit

@@ -85,9 +85,6 @@ in
       gnupg
       openssl
       rage
-
-      # Editors
-      neovim
     ];
   };
 
