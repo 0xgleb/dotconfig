@@ -1,30 +1,29 @@
-{ pkgs, lib, ... }:
-let
-  zshCustom = pkgs.stdenv.mkDerivation {
-    name = "zsh-custom";
-    src = ./.;
-    installPhase = ''
-      mkdir -p $out/themes
-      cp ./hyperzsh.zsh-theme $out/themes/
-    '';
-  };
-in
-{
+{ pkgs, lib, ... }: {
   home = {
     username = "0xgleb";
     stateVersion = "24.05";
 
-    shell.enableNushellIntegration = true;
+    packages = with pkgs; [ cargo-watch ];
 
-    file."Library/Application Support/nushell/fix-worktree-submodules.nu".source = ./nushell/fix-worktree-submodules.nu;
+    shell.enableNushellIntegration = true;
+    file."Library/Application Support/nushell/fix-worktree-submodules.nu".source =
+      ./nushell/fix-worktree-submodules.nu;
   };
 
-  services.ollama.enable = false;
+  # NOTE: this shit doesn't clean up after itself if you enable/disable it
+  # services.ollama.enable = false;
 
   programs = {
     home-manager.enable = true;
 
-    # Git config (NOT available at system level in nix-darwin)
+    zellij.enable = true;
+    nushell = {
+      enable = true;
+      configFile.source = ./nushell/config.nu;
+      envFile.source = ./nushell/env.nu;
+      plugins = with pkgs.nushellPlugins; [ polars query ];
+    };
+
     git = {
       enable = true;
       settings = {
@@ -34,48 +33,31 @@ in
       };
     };
 
-    difftastic.enable = true;
-    difftastic.git.enable = true;
-    difftastic.git.diffToolMode = true;
+    difftastic = {
+      enable = true;
+      git.enable = true;
+      git.diffToolMode = true;
+    };
 
-    # Neovim + AstroNvim
     neovim = {
       enable = true;
-      # autowrapRuntimeDeps = false;
       extraPackages = with pkgs; [
-        tree-sitter
-        ripgrep
-        lazygit
-        luarocks
-        gcc
         fd
+        gcc
+        lazygit
         lua-language-server
+        luarocks
         nil
-        rust-analyzer
-        nodePackages.typescript-language-server
         nodePackages.svelte-language-server
+        nodePackages.typescript-language-server
+        ripgrep
+        rust-analyzer
+        tree-sitter
       ];
     };
-
-    # Nushell
-    nushell = {
-      enable = true;
-      configFile.source = ./nushell/config.nu;
-      envFile.source = ./nushell/env.nu;
-      plugins = with pkgs.nushellPlugins; [
-        polars
-        query
-      ];
-    };
-
-    # Zellij
-    zellij.enable = true;
-
-    # FZF
-    fzf.enable = true;
-    fzf.enableZshIntegration = true;
 
     # Atuin — fuzzy history search (ctrl+r) for nushell
+    # TODO: replace with a better one
     atuin.enable = true;
     atuin.enableNushellIntegration = true;
 
@@ -83,7 +65,7 @@ in
     carapace.enable = true;
     carapace.enableNushellIntegration = true;
 
-    # Zoxide — smart directory jumping (replaces autojump)
+    # Zoxide — smart directory jumping
     zoxide.enable = true;
     zoxide.enableNushellIntegration = true;
     zoxide.enableZshIntegration = true;
@@ -93,6 +75,9 @@ in
     direnv.nix-direnv.enable = true;
     direnv.config.global.hide_env_diff = true;
 
+    fzf.enable = true;
+    fzf.enableZshIntegration = true;
+
     # Doom Emacs (managed by nix-doom-emacs-unstraightened)
     doom-emacs = {
       enable = true;
@@ -100,8 +85,17 @@ in
       emacs = if pkgs.stdenv.isDarwin then pkgs.emacs-macport else pkgs.emacs;
     };
 
-    # Zsh config (portable via home-manager)
-    zsh = {
+    zsh = let
+      zshCustom = pkgs.stdenv.mkDerivation {
+        name = "zsh-custom";
+        src = ./.;
+        installPhase = ''
+          mkdir -p $out/themes
+          cp ./hyperzsh.zsh-theme $out/themes/
+        '';
+      };
+
+    in {
       enable = true;
       oh-my-zsh = {
         enable = true;
@@ -109,6 +103,7 @@ in
         theme = "hyperzsh";
         plugins = [ "autojump" ];
       };
+
       initContent = ''
         PROMPT='%{$fg[cyan]%}%c %{$reset_color%}➜ '
         export PATH="$PATH:/opt/homebrew/bin"
