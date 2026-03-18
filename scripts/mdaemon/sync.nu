@@ -11,12 +11,9 @@ def main [--notes: string, --watch] {
   let org_root = $"($env.HOME)/code/st0x"
 
   let notes_root = if $notes != null { $notes } else { $"($org_root)/notes" }
-  let repos = [liquidity issuance rest.api]
 
-  print $"md-sync starting | notes=($notes_root) repos=($repos | str join ',')"
-
-  let sync_targets = build-targets $org_root $repos
-  print $"discovered ($sync_targets | length) sync targets: ($sync_targets | get name | str join ', ')"
+  let sync_targets = (build-targets $org_root $notes_root)
+  print $"md-sync starting | notes=($notes_root) targets=($sync_targets | get name | str join ', ')"
 
   sync-all $sync_targets $notes_root
   print "initial sync complete"
@@ -24,9 +21,10 @@ def main [--notes: string, --watch] {
   if $watch {
     print "watching for changes..."
 
-    let watch_paths = ($repos
-      | each {|repo| $"($org_root)/st0x.($repo)" }
-      | prepend $notes_root)
+    let watch_paths = ($sync_targets
+      | get path
+      | prepend $notes_root
+      | uniq)
 
     print $"watching paths: ($watch_paths | str join ', ')"
 

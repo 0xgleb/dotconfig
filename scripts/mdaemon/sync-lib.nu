@@ -4,19 +4,26 @@ use std/log
 # Returns a table with {name, path} rows.
 # "name" is the notes subdirectory (e.g. "liquidity/worktrees/untouchable")
 # "path" is the absolute filesystem path to the repo/worktree
-def build-targets [org_root: string, repos: list<string>] {
-  let main_targets = ($repos | each {|repo|
-    { name: $repo, path: $"($org_root)/st0x.($repo)" }
+def build-targets [org_root: string, exclude: string = ""] {
+  let repos = (glob $"($org_root)/*" --no-file --no-symlink
+    | where {|dir|
+      let name = ($dir | path basename)
+      ($"($dir)/.git" | path exists) and ($dir != $exclude) and (not ($name | str starts-with "."))
+    })
+
+  let main_targets = ($repos | each {|dir|
+    { name: ($dir | path basename), path: $dir }
   })
 
-  let worktree_targets = ($repos | each {|repo|
-    let worktree_dir = $"($org_root)/st0x.($repo)/.worktrees"
+  let worktree_targets = ($repos | each {|dir|
+    let repo_name = ($dir | path basename)
+    let worktree_dir = $"($dir)/.worktrees"
 
     if ($worktree_dir | path exists) {
       let one_deep = (glob $"($worktree_dir)/*" --no-file --no-symlink)
       let two_deep = (glob $"($worktree_dir)/*/*" --no-file --no-symlink)
       let candidates = ($one_deep | append $two_deep)
-      log debug $"($repo): .worktrees/ has ($candidates | length) candidate dirs"
+      log debug $"($repo_name): .worktrees/ has ($candidates | length) candidate dirs"
 
       $candidates
         | each {|worktree_path|
@@ -26,7 +33,7 @@ def build-targets [org_root: string, repos: list<string>] {
 
           if $has_git {
             let leaf_name = ($worktree_path | path basename)
-            { name: $"($repo)/worktrees/($leaf_name)", path: $worktree_path }
+            { name: $"($repo_name)/worktrees/($leaf_name)", path: $worktree_path }
           }
         }
         | compact
@@ -126,7 +133,7 @@ def sync-file [source: string, destination: string, repo_name: string, note_file
     let parent_dir = ($destination | path dirname)
     mkdir $parent_dir
 
-    print $"[($timestamp)] [st0x.($repo_name) --new--> notes] ($repo_name)/($note_file)"
+    print $"[($timestamp)] [($repo_name) --new--> notes] ($repo_name)/($note_file)"
     atomic-cp $source $destination
 
   } else if (open --raw $source) != (open --raw $destination) {
@@ -138,12 +145,12 @@ def sync-file [source: string, destination: string, repo_name: string, note_file
     if $source_modified > $destination_modified {
       guard-empty-overwrite $source $destination
       let stats = (diff-stats $destination $source)
-      print $"[($timestamp)] [st0x.($repo_name) --+($stats.adds),-($stats.dels)--> notes] ($repo_name)/($note_file)"
+      print $"[($timestamp)] [($repo_name) --+($stats.adds),-($stats.dels)--> notes] ($repo_name)/($note_file)"
       atomic-cp $source $destination
     } else {
       guard-empty-overwrite $destination $source
       let stats = (diff-stats $source $destination)
-      print $"[($timestamp)] [notes --+($stats.adds),-($stats.dels)--> st0x.($repo_name)] ($repo_name)/($note_file)"
+      print $"[($timestamp)] [notes --+($stats.adds),-($stats.dels)--> ($repo_name)] ($repo_name)/($note_file)"
       atomic-cp $destination $source
     }
   }

@@ -1,7 +1,6 @@
 use std/log
 
 const PLAN_VERSION = 1
-const DEFAULT_REPOS = [liquidity issuance rest.api]
 
 def file-hash [path: string] {
   open --raw $path | hash md5
