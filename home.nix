@@ -18,6 +18,8 @@ in
 
   };
 
+  services.ollama.enable = true;
+
   programs = {
     home-manager.enable = true;
 
