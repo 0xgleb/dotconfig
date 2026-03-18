@@ -7,6 +7,20 @@ def file-hash [path: string] {
   open --raw $path | hash md5
 }
 
+def fmt-content [path: string] {
+  let tmp = (mktemp --suffix .md)
+  cp $path $tmp
+  try { do { deno fmt --quiet $tmp } | complete } catch {}
+  let content = (open --raw $tmp)
+  rm -f $tmp
+  $content
+}
+
+def fmt-copy [source: string, dest: string] {
+  cp $source $dest
+  try { do { deno fmt --quiet $dest } | complete } catch {}
+}
+
 def compute-actions [targets: table<name: string, path: string>, notes_root: string] {
   $targets | each {|target|
     if not ($target.path | path exists) {
@@ -42,7 +56,7 @@ def compute-actions [targets: table<name: string, path: string>, notes_root: str
           adds: $line_count
           dels: 0
         }
-      } else if (open --raw $source) != (open --raw $destination) {
+      } else if (fmt-content $source) != (fmt-content $destination) {
         let source_modified = (ls -l $source | first | get modified)
         let destination_modified = (ls -l $destination | first | get modified)
 
@@ -72,11 +86,18 @@ def compute-actions [targets: table<name: string, path: string>, notes_root: str
             dels: 0
           }
         } else {
-          let stats = if $source_modified > $destination_modified {
-            diff-stats $destination $source
+          let tmp = (mktemp -d)
+          let fmt_old = $"($tmp)/old.md"
+          let fmt_new = $"($tmp)/new.md"
+          if $source_modified > $destination_modified {
+            fmt-copy $destination $fmt_old
+            fmt-copy $source $fmt_new
           } else {
-            diff-stats $source $destination
+            fmt-copy $source $fmt_old
+            fmt-copy $destination $fmt_new
           }
+          let stats = (diff-stats $fmt_old $fmt_new)
+          rm -rf $tmp
 
           let direction = if $source_modified > $destination_modified { "forward" } else { "reverse" }
           let arrow = if $direction == "forward" { "repo -> vault" } else { "vault -> repo" }
@@ -120,6 +141,38 @@ def format-action [a: record] {
   $"  ($direction)  ($a.repo_name)/($a.note_file)  ($stats)"
 }
 
+def action-diff [a: record] {
+  let tmp = (mktemp -d)
+
+  let result = match $a.action {
+    "create" => {
+      let formatted = $"($tmp)/new.md"
+      fmt-copy $a.source $formatted
+      do { diff -u /dev/null $formatted } | complete | get stdout
+    }
+    "forward" => {
+      let old = $"($tmp)/old.md"
+      let new = $"($tmp)/new.md"
+      fmt-copy $a.destination $old
+      fmt-copy $a.source $new
+      do { diff -u $old $new } | complete | get stdout
+    }
+    "reverse" => {
+      let old = $"($tmp)/old.md"
+      let new = $"($tmp)/new.md"
+      fmt-copy $a.source $old
+      fmt-copy $a.destination $new
+      do { diff -u $old $new } | complete | get stdout
+    }
+    "blocked" => {
+      $"# BLOCKED: ($a.repo_name)/($a.note_file) — ($a.reason)\n"
+    }
+  }
+
+  rm -rf $tmp
+  $result
+}
+
 def help-text [] {
   [
     "Sync markdown files between source repos and an Obsidian vault."
@@ -128,8 +181,9 @@ def help-text [] {
     "  mdup <command> [flags]"
     ""
     "COMMANDS"
-    "  plan:    Compute a sync plan between org repos and the vault"
-    "  apply:   Apply a previously generated sync plan"
+    "  plan:     Compute a sync plan between org repos and the vault"
+    "  apply:    Apply a previously generated sync plan"
+    "  diff:     Show unified diffs for all changes in a plan"
     ""
     "FLAGS"
     "  --help   Show help for command"
@@ -184,5 +238,29 @@ def apply-help-text [] {
     "  $ mdup apply"
     "  $ mdup apply --plan ./my-plan.nuon"
     "  $ mdup apply --yes"
+  ] | str join "\n"
+}
+
+def diff-help-text [] {
+  [
+    "Show unified diffs for all changes in a plan."
+    ""
+    "USAGE"
+    "  mdup diff [--plan <file>] [--org <path>] [--vault <path>]"
+    ""
+    "FLAGS"
+    "  --plan <file>    Path to existing plan file"
+    "  --org <path>     Organization root (computes plan on the fly)"
+    "  --vault <path>   Notes vault path (computes plan on the fly)"
+    "  --stat           Show per-file summary only, no diffs"
+    ""
+    "If --plan is given, diffs from the saved plan."
+    "If --org and --vault are given, computes a plan and diffs it."
+    "With no flags, reads the default plan file (.mdup-plan.nuon)."
+    ""
+    "EXAMPLES"
+    "  $ mdup diff"
+    "  $ mdup diff --plan ./my-plan.json"
+    "  $ mdup diff --org ~/code/st0x --vault ~/code/st0x/notes"
   ] | str join "\n"
 }

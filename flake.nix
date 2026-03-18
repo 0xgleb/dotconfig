@@ -121,6 +121,8 @@
             pkgs.writeShellApplication {
               name = "mdup";
               runtimeInputs = with pkgs; [
+                bat
+                deno
                 git
                 nushell
                 diffutils
@@ -207,6 +209,7 @@
             pkgs.runCommand "mdup-test"
               {
                 nativeBuildInputs = with pkgs; [
+                  deno
                   nushell
                   git
                   diffutils

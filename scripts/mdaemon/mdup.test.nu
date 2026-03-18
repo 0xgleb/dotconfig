@@ -39,6 +39,12 @@ def "test help-text lists apply command" [] {
   assert ($text | str contains "Apply a previously generated sync plan")
 }
 
+def "test help-text lists diff command" [] {
+  let text = (help-text)
+  assert ($text | str contains "diff:")
+  assert ($text | str contains "Show unified diffs")
+}
+
 def "test help-text contains examples section" [] {
   let text = (help-text)
   assert ($text | str contains "EXAMPLES")
@@ -120,6 +126,31 @@ def "test apply-help-text has examples" [] {
 
 def "test apply-help-text uses mdup not mdup-inner" [] {
   let text = (apply-help-text)
+  assert (not ($text | str contains "mdup-inner"))
+}
+
+# --- diff help text ---
+
+def "test diff-help-text contains usage" [] {
+  let text = (diff-help-text)
+  assert ($text | str contains "USAGE")
+  assert ($text | str contains "mdup diff")
+}
+
+def "test diff-help-text lists all flags" [] {
+  let text = (diff-help-text)
+  assert ($text | str contains "--plan")
+  assert ($text | str contains "--org")
+  assert ($text | str contains "--vault")
+}
+
+def "test diff-help-text has examples" [] {
+  let text = (diff-help-text)
+  assert ($text | str contains "EXAMPLES")
+}
+
+def "test diff-help-text uses mdup not mdup-inner" [] {
+  let text = (diff-help-text)
   assert (not ($text | str contains "mdup-inner"))
 }
 
@@ -370,6 +401,127 @@ def "test drift detection catches modified source" [] {
     let current_hash = (open --raw $"($repo)/README.md" | hash md5)
     assert ($current_hash != $action.source_hash)
   }
+}
+
+# --- action-diff ---
+
+def "test action-diff create shows all lines as additions" [] {
+  with-temp-dir {|dir|
+    "line one\nline two\n" | save $"($dir)/new.md"
+    let action = {
+      action: "create"
+      repo_name: "test"
+      note_file: "new.md"
+      source: $"($dir)/new.md"
+      destination: $"($dir)/notes/new.md"
+      source_hash: "abc"
+      destination_hash: null
+      adds: 2
+      dels: 0
+    }
+    let output = (action-diff $action)
+    assert ($output | str contains "+line one")
+    assert ($output | str contains "+line two")
+  }
+}
+
+def "test action-diff forward shows unified diff" [] {
+  with-temp-dir {|dir|
+    "old content" | save $"($dir)/dest.md"
+    "new content" | save $"($dir)/source.md"
+    let action = {
+      action: "forward"
+      repo_name: "test"
+      note_file: "file.md"
+      source: $"($dir)/source.md"
+      destination: $"($dir)/dest.md"
+      source_hash: "abc"
+      destination_hash: "def"
+      adds: 1
+      dels: 1
+    }
+    let output = (action-diff $action)
+    assert ($output | str contains "-old content")
+    assert ($output | str contains "+new content")
+  }
+}
+
+def "test action-diff reverse shows unified diff" [] {
+  with-temp-dir {|dir|
+    "repo version" | save $"($dir)/source.md"
+    "vault version" | save $"($dir)/dest.md"
+    let action = {
+      action: "reverse"
+      repo_name: "test"
+      note_file: "file.md"
+      source: $"($dir)/source.md"
+      destination: $"($dir)/dest.md"
+      source_hash: "abc"
+      destination_hash: "def"
+      adds: 1
+      dels: 1
+    }
+    let output = (action-diff $action)
+    assert ($output | str contains "-repo version")
+    assert ($output | str contains "+vault version")
+  }
+}
+
+def "test action-diff blocked shows reason" [] {
+  let action = {
+    action: "blocked"
+    repo_name: "test"
+    note_file: "file.md"
+    source: "/fake/source"
+    destination: "/fake/dest"
+    source_hash: "abc"
+    destination_hash: "def"
+    reason: "empty file would overwrite non-empty file"
+    adds: 0
+    dels: 0
+  }
+  let output = (action-diff $action)
+  assert ($output | str contains "BLOCKED")
+  assert ($output | str contains "empty file")
+}
+
+# --- symlink filtering ---
+
+def "test md-files skips symlinks" [] {
+  with-temp-dir {|dir|
+    let repo = $"($dir)/repo"
+    mkdir $repo
+    git -C $repo init
+    "# real file" | save $"($repo)/README.md"
+    "# target" | save $"($dir)/target.md"
+    ^ln -s $"($dir)/target.md" $"($repo)/LINK.md"
+    git -C $repo add -A
+    git -C $repo commit -m "init"
+
+    let files = (md-files $repo)
+    assert ($files | any {|f| $f == "README.md" })
+    assert (not ($files | any {|f| $f == "LINK.md" }))
+  }
+}
+
+# --- format-action ---
+
+def "test format-action contains repo name and note file" [] {
+  let action = {
+    action: "forward"
+    repo_name: "liquidity"
+    note_file: "ROADMAP.md"
+    source: "/fake/source"
+    destination: "/fake/dest"
+    source_hash: "abc"
+    destination_hash: "def"
+    adds: 5
+    dels: 2
+  }
+  let output = (format-action $action)
+  assert ($output | str contains "liquidity/ROADMAP.md")
+  assert ($output | str contains "+5")
+  assert ($output | str contains "-2")
 }
 
 # --- test runner ---

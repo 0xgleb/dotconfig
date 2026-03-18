@@ -47,12 +47,13 @@
     self.packages.aarch64-darwin.mdup
   ];
 
-  # nix-darwin specific zsh options
-  programs.zsh = {
-    enableFzfGit = true;
-    enableFzfHistory = true;
-    enableFzfCompletion = true;
-  };
+  # home.nix should take care of this already
+  # # nix-darwin specific zsh options
+  # programs.zsh = {
+  #   enableFzfGit = true;
+  #   enableFzfHistory = true;
+  #   enableFzfCompletion = true;
+  # };
 
   # Homebrew for GUI apps that don't work well with Nix on macOS
   homebrew = {
@@ -75,6 +76,13 @@
     nerd-fonts.fira-code
   ];
 
+  launchd.daemons.limit-maxfiles = {
+    script = "launchctl limit maxfiles 524288 524288";
+    serviceConfig = {
+      RunAtLoad = true;
+      LaunchOnlyOnce = true;
+    };
+  };
 
   # launchd.user.agents.mdaemon = {
   #   serviceConfig = {
