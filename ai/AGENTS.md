@@ -106,7 +106,9 @@ implementation details rather than the domain.
 epic-based format from st0x.liquidity/ROADMAP.md:
 
 - Each `##` section is an **epic** — a goal-oriented group of related issues
-- Epics are ordered by priority (highest first)
+- Epics are ordered by priority (highest first) — **the first epic is always the
+  next thing to implement, and whatever should be implemented next must be the
+  first epic** (reorder if priorities change)
 - Use mermaid dependency graphs when tasks have dependencies
 - Checkbox lists (`- [ ]` / `- [x]`) with issue/PR links
 - Sub-sections under epics for logical groupings
