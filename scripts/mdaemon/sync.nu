@@ -1,19 +1,19 @@
 # Entrypoint for md-sync. Library functions are in md-sync-lib.nu
 # (concatenated by nix at build time via builtins.readFile)
 #
-# --notes: override the notes directory (default: ~/code/st0x/notes)
+# --config: override config file path (default: ~/.config/mdaemon.nuon)
 # --watch: after initial sync, watch for filesystem changes via fswatch
 # https://www.nushell.sh/book/custom_commands.html#flags
 const MAX_CONSECUTIVE_FAILURES = 10
 const BACKOFF_SECONDS = 30
 
-def main [--notes: string, --watch] {
-  let org_root = $"($env.HOME)/code/st0x"
+def main [--config: string, --watch] {
+  let config_path = if $config != null { $config } else { $DEFAULT_CONFIG_PATH }
+  let cfg = (load-config $config_path)
+  let notes_root = $cfg.vault
+  let sync_targets = (build-all-targets $cfg)
 
-  let notes_root = if $notes != null { $notes } else { $"($org_root)/notes" }
-
-  let sync_targets = (build-targets $org_root $notes_root)
-  print $"md-sync starting | notes=($notes_root) targets=($sync_targets | get name | str join ', ')"
+  print $"md-sync starting | vault=($notes_root) targets=($sync_targets | get name | str join ', ')"
 
   sync-all $sync_targets $notes_root
   print "initial sync complete"

@@ -1,23 +1,33 @@
 # mdup: terraform-like plan/apply for markdown vault sync
 # Library functions are in sync-lib.nu and mdup-lib.nu (concatenated by nix at build time)
 
-def "main plan" [
-  --org: string
-  --vault: string
-  --out: string
-] {
-  if $org == null or $vault == null {
-    print (plan-help-text)
-    return
+def resolve-targets [--org: string, --vault: string, --config: string] {
+  if $org != null and $vault != null {
+    let org_root = ($org | path expand)
+    let notes_root = ($vault | path expand)
+    let targets = (build-targets $org_root $notes_root)
+    { vault: $notes_root, targets: $targets, orgs: [$org_root] }
+  } else {
+    let config_path = if $config != null { $config } else { $DEFAULT_CONFIG_PATH }
+    let cfg = (load-config $config_path)
+    let targets = (build-all-targets $cfg)
+    { vault: $cfg.vault, targets: $targets, orgs: $cfg.orgs }
   }
+}
 
-  let org_root = ($org | path expand)
-  let notes_root = ($vault | path expand)
-  let plan_path = if $out != null { $out } else { ".mdup-plan.nuon" }
+def "main plan" [
+  --org: string      # single org root (overrides config)
+  --vault: string    # vault path (overrides config)
+  --config: string   # config file path (default: ~/.config/mdaemon.nuon)
+  --out: string      # output plan file (default: .mdup-plan.nuon)
+] {
+  let resolved = (resolve-targets --org $org --vault $vault --config $config)
+  let notes_root = $resolved.vault
+  let targets = $resolved.targets
+  let plan_path = if $out != null { $out } else { ($DEFAULT_PLAN_PATH | path expand) }
 
-  let targets = (build-targets $org_root $notes_root)
-  print $"org:    ($org_root)"
-  print $"vault:  ($notes_root)"
+  print $"vault:   ($notes_root)"
+  print $"orgs:    ($resolved.orgs | each {|o| $o | path basename } | str join ', ')"
   print $"targets: ($targets | length) \(($targets | get name | str join ', '))"
   print ""
 
@@ -26,8 +36,8 @@ def "main plan" [
   let plan = {
     version: $PLAN_VERSION
     created_at: (date now | format date '%+')
-    org: $org_root
     vault: $notes_root
+    orgs: $resolved.orgs
     actions: $actions
   }
 
@@ -48,7 +58,7 @@ def "main apply" [
   --plan: string
   --yes (-y)
 ] {
-  let plan_path = if $plan != null { $plan } else { ".mdup-plan.nuon" }
+  let plan_path = if $plan != null { $plan } else { ($DEFAULT_PLAN_PATH | path expand) }
 
   if not ($plan_path | path exists) {
     error make { msg: $"plan file not found: ($plan_path). Run `mdup plan` first." }
@@ -68,7 +78,6 @@ def "main apply" [
   }
 
   print $"Plan from: ($plan.created_at)"
-  print $"org:   ($plan.org)"
   print $"vault: ($plan.vault)"
   print $"($actions | length) action\(s) to apply"
   print ""
@@ -168,17 +177,15 @@ def "main apply" [
   }
 }
 
-def load-actions [--plan: string, --org: string, --vault: string] {
+def load-actions [--plan: string, --org: string, --vault: string, --config: string] {
   if $org != null and $vault != null {
-    let org_root = ($org | path expand)
-    let notes_root = ($vault | path expand)
-    let targets = (build-targets $org_root $notes_root)
-    compute-actions $targets $notes_root
-  } else {
-    let plan_path = if $plan != null { $plan } else { ".mdup-plan.nuon" }
+    let resolved = (resolve-targets --org $org --vault $vault)
+    compute-actions $resolved.targets $resolved.vault
+  } else if $plan != null or (($DEFAULT_PLAN_PATH | path expand) | path exists) {
+    let plan_path = if $plan != null { $plan } else { ($DEFAULT_PLAN_PATH | path expand) }
 
     if not ($plan_path | path exists) {
-      error make { msg: $"plan file not found: ($plan_path). Run `mdup plan` first or pass --org/--vault." }
+      error make { msg: $"plan file not found: ($plan_path)." }
     }
 
     let loaded = (open $plan_path)
@@ -188,6 +195,9 @@ def load-actions [--plan: string, --org: string, --vault: string] {
     }
 
     $loaded.actions
+  } else {
+    let resolved = (resolve-targets --config $config)
+    compute-actions $resolved.targets $resolved.vault
   }
 }
 
@@ -207,12 +217,13 @@ def print-summary [actions: list] {
 }
 
 def "main diff" [
-  --plan: string   # path to existing plan file
-  --org: string    # organization root (computes plan on the fly)
-  --vault: string  # notes vault path (computes plan on the fly)
-  --stat           # show only per-file summary, no diffs
+  --plan: string     # path to existing plan file
+  --org: string      # single org root (overrides config)
+  --vault: string    # vault path (overrides config)
+  --config: string   # config file path
+  --stat             # show only per-file summary, no diffs
 ] {
-  let actions = (load-actions --plan $plan --org $org --vault $vault)
+  let actions = (load-actions --plan $plan --org $org --vault $vault --config $config)
 
   if ($actions | length) == 0 {
     print "No changes. Vault is up to date."

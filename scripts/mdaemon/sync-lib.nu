@@ -1,5 +1,19 @@
 use std/log
 
+const DEFAULT_CONFIG_PATH = "~/.config/mdaemon.nuon"
+
+def load-config [path: string] {
+  let config_path = ($path | path expand)
+  if not ($config_path | path exists) {
+    error make { msg: $"config file not found: ($config_path)" }
+  }
+  let config = (open $config_path)
+  {
+    vault: ($config.vault | path expand)
+    orgs: ($config.orgs | each {|o| $o | path expand })
+  }
+}
+
 # Discover all sync targets: main repos + their git worktrees.
 # Returns a table with {name, path} rows.
 # "name" is the notes subdirectory (e.g. "liquidity/worktrees/untouchable")
@@ -8,7 +22,12 @@ def build-targets [org_root: string, exclude: string = ""] {
   let repos = (glob $"($org_root)/*" --no-file --no-symlink
     | where {|dir|
       let name = ($dir | path basename)
-      ($"($dir)/.git" | path exists) and ($dir != $exclude) and (not ($name | str starts-with "."))
+      let is_excluded = if $exclude != "" {
+        ($dir | str starts-with $exclude) or ($exclude | str starts-with $dir)
+      } else {
+        false
+      }
+      ($"($dir)/.git" | path exists) and (not $is_excluded) and (not ($name | str starts-with "."))
     })
 
   let main_targets = ($repos | each {|dir|
@@ -41,6 +60,16 @@ def build-targets [org_root: string, exclude: string = ""] {
   } | flatten | compact)
 
   $main_targets | append $worktree_targets
+}
+
+def build-all-targets [config: record] {
+  $config.orgs | each {|org|
+    let org_name = ($org | path basename)
+    let targets = (build-targets $org $config.vault)
+    $targets | each {|t|
+      { name: $"($org_name)/($t.name)", path: $t.path }
+    }
+  } | flatten
 }
 
 # Find all markdown files in a repo: committed files + gitignored .local/ files.
