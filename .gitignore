@@ -3,7 +3,6 @@ AppSupport
 .DS_Store
 
 /cagent/
-
 /gcloud/
 /gh/
 /github-copilot/
