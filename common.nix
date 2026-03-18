@@ -20,8 +20,8 @@ in
   # Export for use in other modules
   _module.args.userConfig = user;
 
-  programs.zsh.enable = true;
-  programs.direnv.enable = true;
+  # programs.zsh.enable = true;
+  # programs.direnv.enable = true;
 
   environment = {
     etc."nushell/config.nu".source = ./nushell/config.nu;

@@ -7,7 +7,7 @@ allowed-tools:
   - "Bash(gt init *)"
   - "Bash(mkdir *)"
   - "Bash(rm -rf *)"
-  - "Bash(ln -sf *)"
+  - "Bash(ln -sfn *)"
   - "Bash(ls *)"
   - "Bash(direnv *)"
   - "Bash(cd *)"
@@ -146,7 +146,7 @@ Create a new git worktree from the main branch of the current repository.
      ```bash
      # Compute relative prefix dynamically:
      # From <worktree-path>/lib/, count dirs back to <main-repo-root>
-     ln -sf <computed-relative-prefix>/lib/<submodule> <worktree-path>/lib/<submodule>
+     ln -sfn <computed-relative-prefix>/lib/<submodule> <worktree-path>/lib/<submodule>
      ```
    - Mark all `lib/` submodule entries as assume-unchanged so `gt modify -a` and
      `git add -A` won't stage submodule pointer changes:
@@ -203,7 +203,7 @@ directory" on Cargo.toml paths.
      - `.worktrees/<cat>/<name>/lib/<sub>` -> `../../../../lib/<sub>` (4 levels)
    - Create each symlink:
      ```bash
-     ln -sf <computed-relative-prefix>/lib/<submodule> <worktree-path>/lib/<submodule>
+     ln -sfn <computed-relative-prefix>/lib/<submodule> <worktree-path>/lib/<submodule>
      ```
 
 4. **Mark all submodule entries as assume-unchanged:**
