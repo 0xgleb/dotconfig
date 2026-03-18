@@ -26,6 +26,7 @@ in
   environment = {
     etc."nushell/config.nu".source = ./nushell/config.nu;
     etc."nushell/env.nu".source = ./nushell/env.nu;
+    etc."nushell/fix-worktree-submodules.nu".source = ./nushell/fix-worktree-submodules.nu;
     shells = [
       pkgs.zsh
       pkgs.nushell

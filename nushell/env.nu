@@ -14,3 +14,5 @@ $env.PATH = ($env.PATH | split row (char esep) | append [
 ])
 
 $env.EDITOR = 'nvim'
+
+const NU_LIB_DIRS = ["/etc/nushell"]

@@ -18,7 +18,7 @@ in
 
   };
 
-  services.ollama.enable = true;
+  services.ollama.enable = false;
 
   programs = {
     home-manager.enable = true;
@@ -61,7 +61,10 @@ in
       enable = true;
       configFile.source = ./nushell/config.nu;
       envFile.source = ./nushell/env.nu;
-      plugins = with pkgs.nushellPlugins; [ polars query ];
+      plugins = with pkgs.nushellPlugins; [
+        polars
+        query
+      ];
     };
 
     # Zellij
@@ -114,4 +117,5 @@ in
       '';
     };
   };
+
 }

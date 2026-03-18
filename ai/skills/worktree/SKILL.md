@@ -122,37 +122,13 @@ Create a new git worktree from the main branch of the current repository.
    cd <worktree-path> && gt init --trunk <trunk>
    ```
 
-6. **Symlink submodules in `lib/`** from the main repo into the worktree (only
-   if `lib/` exists in the main repo). Git rejects symlinks in intermediate path
-   components (CVE-2024-32002), so you must create a **real directory** with
-   **individual symlinks** inside — never symlink the entire `lib/` dir.
-   - Remove any existing `lib/` in the worktree: `rm -rf <worktree-path>/lib`
-   - Create a real directory: `mkdir <worktree-path>/lib`
-   - For each submodule in `<main-repo-root>/lib/`, create an individual symlink
-     using a **relative path**. **Count the directory depth** from the symlink
-     location back to the main repo root — the number of `../` segments must
-     match. For example:
-     - `.worktrees/<name>/lib/<sub>` -> `../../../lib/<sub>` (3 levels up)
-     - `.worktrees/<cat>/<name>/lib/<sub>` -> `../../../../lib/<sub>` (4 levels
-       up)
-
-     **CRITICAL: Always compute the depth dynamically** by counting path
-     components between `<worktree-path>/lib/` and `<main-repo-root>`. Do NOT
-     hardcode `../../../` — worktree names with slashes (e.g., `feat/foo`)
-     create extra nesting levels. A wrong depth silently breaks nested submodule
-     resolution (e.g., `rain-math-float` inside `rain.orderbook/lib/.../lib/`),
-     causing `cargo check` to fail with "No such file or directory" on deeply
-     nested `Cargo.toml` paths.
-     ```bash
-     # Compute relative prefix dynamically:
-     # From <worktree-path>/lib/, count dirs back to <main-repo-root>
-     ln -sfn <computed-relative-prefix>/lib/<submodule> <worktree-path>/lib/<submodule>
-     ```
-   - Mark all `lib/` submodule entries as assume-unchanged so `gt modify -a` and
-     `git add -A` won't stage submodule pointer changes:
-     ```bash
-     cd <worktree-path> && git ls-tree --name-only HEAD lib/ | xargs git update-index --assume-unchanged
-     ```
+6. **Fix submodule symlinks** (only if `lib/` exists in the main repo):
+   ```bash
+   fix-worktree-submodules <worktree-path>
+   ```
+   This nushell command handles everything: creates a real `lib/` directory with
+   individual relative symlinks to each submodule, computes the correct `../`
+   depth dynamically, and marks entries as assume-unchanged.
 
 7. **Allow direnv** and wait for the nix shell to initialize (only if a `.envrc`
    file exists in the worktree):
@@ -185,33 +161,11 @@ directory" on Cargo.toml paths.
 
 #### Steps
 
-1. **Resolve paths:**
-   - Main repo root: run `git rev-parse --git-common-dir` from the worktree and
-     strip the `/.git` suffix.
-   - Worktree path: validate it exists and is a git worktree.
-
-2. **Check if `lib/` exists** in the main repo. If it doesn't, report and exit.
-
-3. **Recreate the `lib/` symlink structure:**
-   - Remove the existing `lib/` directory: `rm -rf <worktree-path>/lib`
-   - Create a real directory: `mkdir <worktree-path>/lib`
-   - For each submodule in `<main-repo-root>/lib/`, create an individual symlink
-     using a relative path.
-   - **Compute the relative path dynamically** by counting directory depth from
-     `<worktree-path>/lib/` back to `<main-repo-root>`. For example:
-     - `.worktrees/<name>/lib/<sub>` -> `../../../lib/<sub>` (3 levels)
-     - `.worktrees/<cat>/<name>/lib/<sub>` -> `../../../../lib/<sub>` (4 levels)
-   - Create each symlink:
-     ```bash
-     ln -sfn <computed-relative-prefix>/lib/<submodule> <worktree-path>/lib/<submodule>
-     ```
-
-4. **Mark all submodule entries as assume-unchanged:**
+1. Run the nushell command:
    ```bash
-   cd <worktree-path> && git ls-tree --name-only HEAD lib/ | xargs git update-index --assume-unchanged
+   fix-worktree-submodules <worktree-path>
    ```
-
-5. **Report** what was fixed.
+2. **Report** what was fixed.
 
 ### verify
 
