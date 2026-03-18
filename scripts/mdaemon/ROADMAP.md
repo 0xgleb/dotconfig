@@ -5,9 +5,9 @@
 Show actual file diffs when reviewing a plan, not just action summaries. Users
 need to see what changed before applying.
 
-- [ ] `mdup diff` subcommand — show unified diffs for all actions in a plan
-- [ ] `mdup diff --plan <file>` — diff from a specific plan file
-- [ ] Colorized output with `+`/`-` line prefixes
+- [x] `mdup diff` subcommand — show unified diffs for all actions in a plan
+- [x] `mdup diff --plan <file>` — diff from a specific plan file
+- [x] Colorized output with `+`/`-` line prefixes
 
 ## Worktree-aware sync
 

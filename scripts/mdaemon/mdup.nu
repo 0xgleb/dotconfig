@@ -166,6 +166,73 @@ def "main apply" [
   }
 }
 
+def load-actions [--plan: string, --org: string, --vault: string] {
+  if $org != null and $vault != null {
+    let org_root = ($org | path expand)
+    let notes_root = ($vault | path expand)
+    let targets = (build-targets $org_root $DEFAULT_REPOS)
+    compute-actions $targets $notes_root
+  } else {
+    let plan_path = if $plan != null { $plan } else { ".mdup-plan.nuon" }
+
+    if not ($plan_path | path exists) {
+      error make { msg: $"plan file not found: ($plan_path). Run `mdup plan` first or pass --org/--vault." }
+    }
+
+    let loaded = (open $plan_path)
+
+    if $loaded.version != $PLAN_VERSION {
+      error make { msg: $"unsupported plan version: ($loaded.version)" }
+    }
+
+    $loaded.actions
+  }
+}
+
+def print-summary [actions: list] {
+  let creates = ($actions | where action == "create" | length)
+  let forwards = ($actions | where action == "forward" | length)
+  let reverses = ($actions | where action == "reverse" | length)
+  let blocked = ($actions | where action == "blocked" | length)
+
+  mut summary_parts = []
+  if $creates > 0 { $summary_parts = ($summary_parts | append $"($creates) new") }
+  if $forwards > 0 { $summary_parts = ($summary_parts | append $"($forwards) repo->vault") }
+  if $reverses > 0 { $summary_parts = ($summary_parts | append $"($reverses) vault->repo") }
+  if $blocked > 0 { $summary_parts = ($summary_parts | append $"(ansi red)($blocked) blocked(ansi reset)") }
+
+  print $"($actions | length) changes \(($summary_parts | str join ', '))"
+}
+
+def "main diff" [
+  --plan: string   # path to existing plan file
+  --org: string    # organization root (computes plan on the fly)
+  --vault: string  # notes vault path (computes plan on the fly)
+  --stat           # show only per-file summary, no diffs
+] {
+  let actions = (load-actions --plan $plan --org $org --vault $vault)
+
+  if ($actions | length) == 0 {
+    print "No changes. Vault is up to date."
+    return
+  }
+
+  if $stat {
+    $actions | each {|a| print (format-action $a) }
+    print ""
+    print-summary $actions
+    return
+  }
+
+  let diff_output = ($actions
+    | each {|a| action-diff $a }
+    | str join "\n")
+
+  $diff_output | bat -l diff --style=plain --paging=auto
+
+  print-summary $actions
+}
+
 def main [] {
   print (help-text)
 }

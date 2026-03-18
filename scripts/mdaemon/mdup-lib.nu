@@ -120,6 +120,26 @@ def format-action [a: record] {
   $"  ($direction)  ($a.repo_name)/($a.note_file)  ($stats)"
 }
 
+def action-diff [a: record] {
+  match $a.action {
+    "create" => {
+      let result = (do { diff -u /dev/null $a.source } | complete)
+      $result.stdout
+    }
+    "forward" => {
+      let result = (do { diff -u $a.destination $a.source } | complete)
+      $result.stdout
+    }
+    "reverse" => {
+      let result = (do { diff -u $a.source $a.destination } | complete)
+      $result.stdout
+    }
+    "blocked" => {
+      $"# BLOCKED: ($a.repo_name)/($a.note_file) — ($a.reason)\n"
+    }
+  }
+}
+
 def help-text [] {
   [
     "Sync markdown files between source repos and an Obsidian vault."
@@ -128,8 +148,9 @@ def help-text [] {
     "  mdup <command> [flags]"
     ""
     "COMMANDS"
-    "  plan:    Compute a sync plan between org repos and the vault"
-    "  apply:   Apply a previously generated sync plan"
+    "  plan:     Compute a sync plan between org repos and the vault"
+    "  apply:    Apply a previously generated sync plan"
+    "  diff:     Show unified diffs for all changes in a plan"
     ""
     "FLAGS"
     "  --help   Show help for command"
@@ -184,5 +205,29 @@ def apply-help-text [] {
     "  $ mdup apply"
     "  $ mdup apply --plan ./my-plan.nuon"
     "  $ mdup apply --yes"
+  ] | str join "\n"
+}
+
+def diff-help-text [] {
+  [
+    "Show unified diffs for all changes in a plan."
+    ""
+    "USAGE"
+    "  mdup diff [--plan <file>] [--org <path>] [--vault <path>]"
+    ""
+    "FLAGS"
+    "  --plan <file>    Path to existing plan file"
+    "  --org <path>     Organization root (computes plan on the fly)"
+    "  --vault <path>   Notes vault path (computes plan on the fly)"
+    "  --stat           Show per-file summary only, no diffs"
+    ""
+    "If --plan is given, diffs from the saved plan."
+    "If --org and --vault are given, computes a plan and diffs it."
+    "With no flags, reads the default plan file (.mdup-plan.nuon)."
+    ""
+    "EXAMPLES"
+    "  $ mdup diff"
+    "  $ mdup diff --plan ./my-plan.json"
+    "  $ mdup diff --org ~/code/st0x --vault ~/code/st0x/notes"
   ] | str join "\n"
 }
