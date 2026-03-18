@@ -15,7 +15,7 @@ def "main plan" [
   let notes_root = ($vault | path expand)
   let plan_path = if $out != null { $out } else { ".mdup-plan.nuon" }
 
-  let targets = (build-targets $org_root $DEFAULT_REPOS)
+  let targets = (build-targets $org_root $notes_root)
   print $"org:    ($org_root)"
   print $"vault:  ($notes_root)"
   print $"targets: ($targets | length) \(($targets | get name | str join ', '))"
@@ -172,7 +172,7 @@ def load-actions [--plan: string, --org: string, --vault: string] {
   if $org != null and $vault != null {
     let org_root = ($org | path expand)
     let notes_root = ($vault | path expand)
-    let targets = (build-targets $org_root $DEFAULT_REPOS)
+    let targets = (build-targets $org_root $notes_root)
     compute-actions $targets $notes_root
   } else {
     let plan_path = if $plan != null { $plan } else { ".mdup-plan.nuon" }
