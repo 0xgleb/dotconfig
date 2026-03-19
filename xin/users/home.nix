@@ -2,6 +2,7 @@
   pkgs,
   lib,
   config,
+  inputs,
   ...
 }:
 
@@ -11,37 +12,75 @@ let
       "Library/Application Support/nushell"
     else
       "${config.xdg.configHome}/nushell";
-
 in
 {
+  imports = [ inputs.nix-doom-emacs-unstraightened.homeModule ];
+
   home = {
-    username = "0xgleb";
     stateVersion = "24.05";
 
-    packages = with pkgs; [ cargo-watch ];
+    packages = with pkgs; [
+      # CLI tools
+      bat
+      bottom
+      dust
+      htop
+      jq
+      magic-wormhole
+      fastfetch
+      tldr
+      tree
+      wget
+      mprocs
+
+      # Git
+      gh
+      gitui
+      git-lfs
+      git-extras
+
+      # Dev tools
+      nodejs_24
+      bacon
+      cargo-watch
+      fswatch
+
+      # AI
+      ollama
+
+      # Security
+      gnupg
+      openssl
+      rage
+    ];
+
+    sessionVariables.EDITOR = "nvim";
+
+    shellAliases = {
+      l = "ls -GAlh";
+      vi = "nvim";
+      vim = "nvim";
+    };
 
     shell.enableNushellIntegration = true;
-    file."${nuConfigDir}/scripts".source = ./nushell/scripts;
+    file."${nuConfigDir}/scripts".source = ../../nushell/scripts;
   };
-
-  # NOTE: this shit doesn't clean up after itself if you enable/disable it
-  # services.ollama.enable = false;
 
   programs = {
     home-manager.enable = true;
 
-    zellij.enable = true;
     nushell = {
       enable = true;
-      envFile.source = ./nushell/env.nu;
-      configFile.source = ./nushell/config.nu;
-      # configDir = nuDir;
+      envFile.source = ../../nushell/env.nu;
+      configFile.source = ../../nushell/config.nu;
 
       plugins = with pkgs.nushellPlugins; [
         polars
         query
       ];
     };
+
+    zellij.enable = true;
 
     git = {
       enable = true;
@@ -61,35 +100,27 @@ in
     neovim = {
       enable = true;
       extraPackages = with pkgs; [
-        fd
         gcc
         lazygit
         lua-language-server
         luarocks
-        nil
         nodePackages.svelte-language-server
         nodePackages.typescript-language-server
-        ripgrep
         rust-analyzer
         tree-sitter
       ];
     };
 
-    # Atuin — fuzzy history search (ctrl+r) for nushell
-    # TODO: replace with a better one
     atuin.enable = true;
     atuin.enableNushellIntegration = true;
 
-    # Carapace — completions for git, docker, gh, and hundreds more
     carapace.enable = true;
     carapace.enableNushellIntegration = true;
 
-    # Zoxide — smart directory jumping
     zoxide.enable = true;
     zoxide.enableNushellIntegration = true;
     zoxide.enableZshIntegration = true;
 
-    # Direnv
     direnv.enable = true;
     direnv.nix-direnv.enable = true;
     direnv.config.global.hide_env_diff = true;
@@ -97,10 +128,9 @@ in
     fzf.enable = true;
     fzf.enableZshIntegration = true;
 
-    # Doom Emacs (managed by nix-doom-emacs-unstraightened)
     doom-emacs = {
       enable = true;
-      doomDir = ./doom;
+      doomDir = ../../doom;
       emacs = if pkgs.stdenv.isDarwin then pkgs.emacs-macport else pkgs.emacs;
     };
 
@@ -108,13 +138,12 @@ in
       let
         zshCustom = pkgs.stdenv.mkDerivation {
           name = "zsh-custom";
-          src = ./.;
+          src = ../../.;
           installPhase = ''
             mkdir -p $out/themes
             cp ./hyperzsh.zsh-theme $out/themes/
           '';
         };
-
       in
       {
         enable = true;
