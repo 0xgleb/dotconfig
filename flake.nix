@@ -39,7 +39,7 @@
           {
             home-manager.useGlobalPkgs = true;
             home-manager.useUserPackages = true;
-            home-manager.backupFileExtension = "hm-backup";
+            home-manager.backupFileExtension = "home.bak";
             home-manager.extraSpecialArgs = { inherit inputs; };
             home-manager.users."0xgleb" =
               { pkgs, inputs, ... }:
@@ -92,8 +92,8 @@
             let
               script = pkgs.writeScriptBin "md-sync-inner" ''
                 #!${pkgs.nushell}/bin/nu
-                ${builtins.readFile ./scripts/mdaemon/sync-lib.nu}
-                ${builtins.readFile ./scripts/mdaemon/sync.nu}
+                ${builtins.readFile ./mdaemon/sync-lib.nu}
+                ${builtins.readFile ./mdaemon/sync.nu}
               '';
             in
             pkgs.writeShellApplication {
@@ -113,9 +113,9 @@
             let
               script = pkgs.writeScriptBin "mdup" ''
                 #!${pkgs.nushell}/bin/nu
-                ${builtins.readFile ./scripts/mdaemon/sync-lib.nu}
-                ${builtins.readFile ./scripts/mdaemon/mdup-lib.nu}
-                ${builtins.readFile ./scripts/mdaemon/mdup.nu}
+                ${builtins.readFile ./mdaemon/sync-lib.nu}
+                ${builtins.readFile ./mdaemon/mdup-lib.nu}
+                ${builtins.readFile ./mdaemon/mdup.nu}
               '';
             in
             pkgs.writeShellApplication {
@@ -199,8 +199,8 @@
                   ${self.packages.aarch64-darwin.mdSync}/bin/md-sync-inner
                 echo "assembled script parses ok"
 
-                cp ${./scripts/mdaemon/sync-lib.nu} sync-lib.nu
-                cp ${./scripts/mdaemon/sync.test.nu} sync.test.nu
+                cp ${./mdaemon/sync-lib.nu} sync-lib.nu
+                cp ${./mdaemon/sync.test.nu} sync.test.nu
                 ${pkgs.nushell}/bin/nu sync.test.nu
                 touch $out
               '';
@@ -225,9 +225,9 @@
                   ${self.packages.aarch64-darwin.mdup}/bin/mdup
                 echo "mdup script parses ok"
 
-                cp ${./scripts/mdaemon/sync-lib.nu} sync-lib.nu
-                cp ${./scripts/mdaemon/mdup-lib.nu} mdup-lib.nu
-                cp ${./scripts/mdaemon/mdup.test.nu} mdup.test.nu
+                cp ${./mdaemon/sync-lib.nu} sync-lib.nu
+                cp ${./mdaemon/mdup-lib.nu} mdup-lib.nu
+                cp ${./mdaemon/mdup.test.nu} mdup.test.nu
                 ${pkgs.nushell}/bin/nu mdup.test.nu
                 touch $out
               '';

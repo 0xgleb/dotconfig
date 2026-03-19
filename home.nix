@@ -4,6 +4,15 @@
   config,
   ...
 }:
+
+let
+  nuConfigDir =
+    if pkgs.stdenv.isDarwin && !config.xdg.enable then
+      "Library/Application Support/nushell"
+    else
+      "${config.xdg.configHome}/nushell";
+
+in
 {
   home = {
     username = "0xgleb";
@@ -12,6 +21,7 @@
     packages = with pkgs; [ cargo-watch ];
 
     shell.enableNushellIntegration = true;
+    file."${nuConfigDir}/scripts".source = ./nushell/scripts;
   };
 
   # NOTE: this shit doesn't clean up after itself if you enable/disable it
@@ -23,9 +33,10 @@
     zellij.enable = true;
     nushell = {
       enable = true;
-      # envFile.source = ./nushell/env.nu;
-      # configFile.source = ./nushell/config.nu;
-      configDir = "${config.home.homeDirectory}/.config/nushell";
+      envFile.source = ./nushell/env.nu;
+      configFile.source = ./nushell/config.nu;
+      # configDir = nuDir;
+
       plugins = with pkgs.nushellPlugins; [
         polars
         query
@@ -114,6 +125,8 @@
           plugins = [ "autojump" ];
         };
 
+        dotDir = "${config.xdg.configHome}/.zsh";
+
         initContent = ''
           PROMPT='%{$fg[cyan]%}%c %{$reset_color%}➜ '
           export PATH="$PATH:/opt/homebrew/bin"
@@ -123,5 +136,4 @@
         '';
       };
   };
-
 }

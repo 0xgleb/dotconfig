@@ -15,4 +15,4 @@ $env.PATH = ($env.PATH | split row (char esep) | append [
 
 $env.EDITOR = 'nvim'
 
-const NU_LIB_DIRS = ["/etc/nushell"]
+const NU_LIB_DIRS = [($nu.home-dir | path join ".config" "nushell")]

@@ -27,3 +27,7 @@ AppSupport
 /.tmp/
 /result
 .mdup-plan.nuon
+.claude/
+.nushell/
+.zsh/
+.nushell/

@@ -1,9 +1,9 @@
 #!/usr/bin/env nu
 
 # Dev runner: execute mdup directly from source without nix build.
-# Usage: nu scripts/mdaemon/dev-mdup.nu plan --org ~/code/st0x --vault ~/code/st0x/notes
-# Usage: nu scripts/mdaemon/dev-mdup.nu diff
-# Usage: nu scripts/mdaemon/dev-mdup.nu apply
+# Usage: nu mdaemon/dev-mdup.nu plan --org ~/code/st0x --vault ~/code/st0x/notes
+# Usage: nu mdaemon/dev-mdup.nu diff
+# Usage: nu mdaemon/dev-mdup.nu apply
 
 def main [...rest: string] {
   let script_dir = ($env.CURRENT_FILE | path dirname)

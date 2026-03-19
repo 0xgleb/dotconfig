@@ -29,7 +29,6 @@
   };
   users.users.root.shell = pkgs.nushell;
 
-  # macOS-specific packages
   environment.systemPackages = with pkgs; [
     autojump
     bat
@@ -42,14 +41,6 @@
     rsync
     self.packages.aarch64-darwin.mdup
   ];
-
-  # home.nix should take care of this already
-  # # nix-darwin specific zsh options
-  # programs.zsh = {
-  #   enableFzfGit = true;
-  #   enableFzfHistory = true;
-  #   enableFzfCompletion = true;
-  # };
 
   # Homebrew for GUI apps that don't work well with Nix on macOS
   homebrew = {
@@ -72,37 +63,15 @@
     nerd-fonts.fira-code
   ];
 
-  launchd.daemons.limit-maxfiles = {
-    script = "launchctl limit maxfiles 524288 524288";
-    serviceConfig = {
-      RunAtLoad = true;
-      LaunchOnlyOnce = true;
+  launchd = {
+    user.envVariables.XDG_CONFIG_HOME = "${userConfig.home}/.config";
+
+    daemons.limit-maxfiles = {
+      script = "launchctl limit maxfiles 524288 524288";
+      serviceConfig = {
+        RunAtLoad = true;
+        LaunchOnlyOnce = true;
+      };
     };
   };
-
-  # launchd.user.agents.mdaemon = {
-  #   serviceConfig = {
-  #     StandardErrorPath = "${userConfig.home}/Library/Logs/mdaemon.err";
-  #     StandardOutPath = "${userConfig.home}/Library/Logs/mdaemon.out";
-  #     ProgramArguments = [
-  #       "${self.packages.aarch64-darwin.mdSync}/bin/md-sync"
-  #       "--watch"
-  #     ];
-  #
-  #     KeepAlive = true;
-  #     RunAtLoad = true;
-  #   };
-  # };
-
-  # Symlink root's nushell config to /etc/nushell so root gets the same shell config
-  # Workaround for nix-darwin #1255: kickstart user agents after activation
-  system.activationScripts.postActivation.text = ''
-    mkdir -p "/var/root/Library/Application Support/nushell"
-    ln -sf /etc/nushell/config.nu "/var/root/Library/Application Support/nushell/config.nu"
-    ln -sf /etc/nushell/env.nu "/var/root/Library/Application Support/nushell/env.nu"
-    sudo -u ${userConfig.name} launchctl \
-      kickstart -k "gui/$(id -u ${userConfig.name})/org.nixos.mdaemon" \
-        2>/dev/null || true
-  '';
-
 }
