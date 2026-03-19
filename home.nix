@@ -1,4 +1,10 @@
-{ pkgs, lib, ... }: {
+{
+  pkgs,
+  lib,
+  config,
+  ...
+}:
+{
   home = {
     username = "0xgleb";
     stateVersion = "24.05";
@@ -6,8 +12,6 @@
     packages = with pkgs; [ cargo-watch ];
 
     shell.enableNushellIntegration = true;
-    file."Library/Application Support/nushell/fix-worktree-submodules.nu".source =
-      ./nushell/fix-worktree-submodules.nu;
   };
 
   # NOTE: this shit doesn't clean up after itself if you enable/disable it
@@ -19,9 +23,13 @@
     zellij.enable = true;
     nushell = {
       enable = true;
-      configFile.source = ./nushell/config.nu;
-      envFile.source = ./nushell/env.nu;
-      plugins = with pkgs.nushellPlugins; [ polars query ];
+      # envFile.source = ./nushell/env.nu;
+      # configFile.source = ./nushell/config.nu;
+      configDir = "${config.home.homeDirectory}/.config/nushell";
+      plugins = with pkgs.nushellPlugins; [
+        polars
+        query
+      ];
     };
 
     git = {
@@ -85,33 +93,35 @@
       emacs = if pkgs.stdenv.isDarwin then pkgs.emacs-macport else pkgs.emacs;
     };
 
-    zsh = let
-      zshCustom = pkgs.stdenv.mkDerivation {
-        name = "zsh-custom";
-        src = ./.;
-        installPhase = ''
-          mkdir -p $out/themes
-          cp ./hyperzsh.zsh-theme $out/themes/
+    zsh =
+      let
+        zshCustom = pkgs.stdenv.mkDerivation {
+          name = "zsh-custom";
+          src = ./.;
+          installPhase = ''
+            mkdir -p $out/themes
+            cp ./hyperzsh.zsh-theme $out/themes/
+          '';
+        };
+
+      in
+      {
+        enable = true;
+        oh-my-zsh = {
+          enable = true;
+          custom = "${zshCustom}";
+          theme = "hyperzsh";
+          plugins = [ "autojump" ];
+        };
+
+        initContent = ''
+          PROMPT='%{$fg[cyan]%}%c %{$reset_color%}➜ '
+          export PATH="$PATH:/opt/homebrew/bin"
+          set -o vi
+          fastfetch
+          eval "$(gt completion --shell zsh)"
         '';
       };
-
-    in {
-      enable = true;
-      oh-my-zsh = {
-        enable = true;
-        custom = "${zshCustom}";
-        theme = "hyperzsh";
-        plugins = [ "autojump" ];
-      };
-
-      initContent = ''
-        PROMPT='%{$fg[cyan]%}%c %{$reset_color%}➜ '
-        export PATH="$PATH:/opt/homebrew/bin"
-        set -o vi
-        fastfetch
-        eval "$(gt completion --shell zsh)"
-      '';
-    };
   };
 
 }

@@ -84,3 +84,4 @@ $env.PROMPT_COMMAND = {||
 $env.PROMPT_COMMAND_RIGHT = ""
 
 use fix-worktree-submodules.nu
+use devkit.nu
