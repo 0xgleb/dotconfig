@@ -15,11 +15,7 @@ const skill_issues = [
 
 def exe [cmd: closure] {
   log debug $"Running ($cmd)"
-  try { do $cmd } catch {
-    let msg = ($skill_issues | get (random int 0..9))
-    print $"\n(ansi red_bold)($msg)(ansi reset)\n"
-    exit 1
-  }
+  do $cmd
 }
 
 def stox-liquidity-check [] {
@@ -73,7 +69,12 @@ export def run [] {
   let is_liquidity = ( $url | str contains "st0x.liquidity" )
 
   if $is_liquidity {
-    stox-liquidity-check
+    try {
+      stox-liquidity-check
+    } catch {
+      let msg = ($skill_issues | get (random int 0..9))
+      print $"\n(ansi red_bold)($msg)(ansi reset)\n"
+    }
   } else {
     error make { msg: $"Couldn't determine what checks to run in (pwd)"}
   }
