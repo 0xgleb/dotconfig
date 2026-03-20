@@ -1,7 +1,7 @@
 use std/assert
 
 source sync-lib.nu
-source mdup-lib.nu
+source lib.nu
 
 def with-temp-dir [block: closure] {
   let dir = (mktemp -d)
@@ -13,154 +13,6 @@ def with-temp-dir [block: closure] {
     error make { msg: $e.msg }
   }
   rm -rf $dir
-}
-
-# --- help text ---
-
-def "test help-text contains usage section" [] {
-  let text = (help-text)
-  assert ($text | str contains "USAGE")
-}
-
-def "test help-text contains commands section" [] {
-  let text = (help-text)
-  assert ($text | str contains "COMMANDS")
-}
-
-def "test help-text lists plan command" [] {
-  let text = (help-text)
-  assert ($text | str contains "plan:")
-  assert ($text | str contains "Compute a sync plan")
-}
-
-def "test help-text documents config" [] {
-  let text = (help-text)
-  assert ($text | str contains "mdaemon.nuon")
-  assert ($text | str contains "CONFIG")
-}
-
-def "test help-text lists apply command" [] {
-  let text = (help-text)
-  assert ($text | str contains "apply:")
-  assert ($text | str contains "Apply a previously generated sync plan")
-}
-
-def "test help-text lists diff command" [] {
-  let text = (help-text)
-  assert ($text | str contains "diff:")
-  assert ($text | str contains "Show unified diffs")
-}
-
-def "test help-text contains examples section" [] {
-  let text = (help-text)
-  assert ($text | str contains "EXAMPLES")
-}
-
-def "test help-text examples use mdup not mdup-inner" [] {
-  let text = (help-text)
-  assert (not ($text | str contains "mdup-inner"))
-  assert ($text | str contains "mdup plan")
-  assert ($text | str contains "mdup apply")
-  assert ($text | str contains "mdup diff")
-}
-
-def "test help-text contains learn more section" [] {
-  let text = (help-text)
-  assert ($text | str contains "LEARN MORE")
-}
-
-def "test help-text has no input/output types table" [] {
-  let text = (help-text)
-  assert (not ($text | str contains "input/output"))
-  assert (not ($text | str contains "╭"))
-}
-
-def "test help-text documents NU_LOG_LEVEL" [] {
-  let text = (help-text)
-  assert ($text | str contains "NU_LOG_LEVEL")
-}
-
-# --- plan help text ---
-
-def "test plan-help-text contains usage" [] {
-  let text = (plan-help-text)
-  assert ($text | str contains "USAGE")
-  assert ($text | str contains "mdup plan")
-}
-
-def "test plan-help-text lists all flags" [] {
-  let text = (plan-help-text)
-  assert ($text | str contains "--config")
-  assert ($text | str contains "--org")
-  assert ($text | str contains "--vault")
-  assert ($text | str contains "--out")
-}
-
-def "test plan-help-text documents log levels" [] {
-  let text = (plan-help-text)
-  assert ($text | str contains "NU_LOG_LEVEL")
-  assert ($text | str contains "DEBUG")
-}
-
-def "test plan-help-text has examples" [] {
-  let text = (plan-help-text)
-  assert ($text | str contains "EXAMPLES")
-  assert ($text | str contains "mdup plan --org")
-}
-
-def "test plan-help-text uses mdup not mdup-inner" [] {
-  let text = (plan-help-text)
-  assert (not ($text | str contains "mdup-inner"))
-}
-
-# --- apply help text ---
-
-def "test apply-help-text contains usage" [] {
-  let text = (apply-help-text)
-  assert ($text | str contains "USAGE")
-  assert ($text | str contains "mdup apply")
-}
-
-def "test apply-help-text lists all flags" [] {
-  let text = (apply-help-text)
-  assert ($text | str contains "--plan")
-  assert ($text | str contains "--yes")
-}
-
-def "test apply-help-text has examples" [] {
-  let text = (apply-help-text)
-  assert ($text | str contains "EXAMPLES")
-}
-
-def "test apply-help-text uses mdup not mdup-inner" [] {
-  let text = (apply-help-text)
-  assert (not ($text | str contains "mdup-inner"))
-}
-
-# --- diff help text ---
-
-def "test diff-help-text contains usage" [] {
-  let text = (diff-help-text)
-  assert ($text | str contains "USAGE")
-  assert ($text | str contains "mdup diff")
-}
-
-def "test diff-help-text lists all flags" [] {
-  let text = (diff-help-text)
-  assert ($text | str contains "--plan")
-  assert ($text | str contains "--org")
-  assert ($text | str contains "--vault")
-  assert ($text | str contains "--config")
-}
-
-def "test diff-help-text has examples" [] {
-  let text = (diff-help-text)
-  assert ($text | str contains "EXAMPLES")
-}
-
-def "test diff-help-text uses mdup not mdup-inner" [] {
-  let text = (diff-help-text)
-  assert (not ($text | str contains "mdup-inner"))
 }
 
 # --- compute-actions ---
@@ -329,7 +181,6 @@ def "test apply creates new files from plan" [] {
     let targets = [{ name: "test-repo", path: $repo }]
     let actions = (compute-actions $targets $notes)
 
-    # Simulate apply: create actions copy source to destination
     $actions | where action == "create" | each {|a|
       let parent = ($a.destination | path dirname)
       mkdir $parent
@@ -404,7 +255,6 @@ def "test drift detection catches modified source" [] {
     let actions = (compute-actions $targets $notes)
     let action = ($actions | first)
 
-    # Modify source after plan was created
     "modified after plan" | save --force $"($repo)/README.md"
 
     let current_hash = (open --raw $"($repo)/README.md" | hash md5)
@@ -528,7 +378,6 @@ def "test build-targets excludes vault dir" [] {
     mkdir $repo
     git -C $repo init
 
-    # vault dir also has .git
     git -C $vault init
 
     let targets = (build-targets $org $vault)
@@ -667,7 +516,7 @@ def "test format-action contains repo name and note file" [] {
 # --- test runner ---
 
 def main [] {
-  print "Running mdup tests..."
+  print "Running md lib tests..."
   let tests = (scope commands
     | where ($it.type == "custom") and ($it.name | str starts-with "test ")
     | get name)

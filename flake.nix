@@ -90,10 +90,10 @@
         {
           mdSync =
             let
-              script = pkgs.writeScriptBin "md-sync-inner" ''
-                #!${pkgs.nushell}/bin/nu
-                ${builtins.readFile ./mdaemon/sync-lib.nu}
-                ${builtins.readFile ./mdaemon/sync.nu}
+              scriptDir = pkgs.runCommand "md-sync-scripts" { } ''
+                mkdir -p $out
+                cp ${./nushell/scripts/fj/md/sync-lib.nu} $out/sync-lib.nu
+                cp ${./nushell/scripts/fj/md/sync-daemon.nu} $out/sync-daemon.nu
               '';
             in
             pkgs.writeShellApplication {
@@ -105,17 +105,17 @@
                 diffutils
               ];
               text = ''
-                exec ${script}/bin/md-sync-inner "$@"
+                exec ${pkgs.nushell}/bin/nu ${scriptDir}/sync-daemon.nu "$@"
               '';
             };
 
           mdup =
             let
-              script = pkgs.writeScriptBin "mdup" ''
-                #!${pkgs.nushell}/bin/nu
-                ${builtins.readFile ./mdaemon/sync-lib.nu}
-                ${builtins.readFile ./mdaemon/mdup-lib.nu}
-                ${builtins.readFile ./mdaemon/mdup.nu}
+              scriptDir = pkgs.runCommand "mdup-scripts" { } ''
+                mkdir -p $out
+                cp ${./nushell/scripts/fj/md/sync-lib.nu} $out/sync-lib.nu
+                cp ${./nushell/scripts/fj/md/lib.nu} $out/lib.nu
+                cp ${./nushell/scripts/fj/md/mdup.nu} $out/mdup.nu
               '';
             in
             pkgs.writeShellApplication {
@@ -128,7 +128,7 @@
                 diffutils
               ];
               text = ''
-                exec ${script}/bin/mdup "$@"
+                exec ${pkgs.nushell}/bin/nu ${scriptDir}/mdup.nu "$@"
               '';
             };
 
@@ -194,14 +194,14 @@
                 git config --global user.email "test@test.com"
                 git config --global user.name "test"
 
-                echo "validating assembled script parses..."
-                ${pkgs.nushell}/bin/nu --ide-check 0 \
-                  ${self.packages.aarch64-darwin.mdSync}/bin/md-sync-inner
-                echo "assembled script parses ok"
+                echo "validating sync-daemon.nu parses..."
+                cp ${./nushell/scripts/fj/md/sync-lib.nu} sync-lib.nu
+                cp ${./nushell/scripts/fj/md/sync-daemon.nu} sync-daemon.nu
+                ${pkgs.nushell}/bin/nu --ide-check 0 sync-daemon.nu
+                echo "sync-daemon.nu parses ok"
 
-                cp ${./mdaemon/sync-lib.nu} sync-lib.nu
-                cp ${./mdaemon/sync.test.nu} sync.test.nu
-                ${pkgs.nushell}/bin/nu sync.test.nu
+                cp ${./nushell/scripts/fj/md/sync-lib.test.nu} sync-lib.test.nu
+                ${pkgs.nushell}/bin/nu sync-lib.test.nu
                 touch $out
               '';
 
@@ -220,15 +220,15 @@
                 git config --global user.email "test@test.com"
                 git config --global user.name "test"
 
-                echo "validating assembled mdup script parses..."
-                ${pkgs.nushell}/bin/nu --ide-check 0 \
-                  ${self.packages.aarch64-darwin.mdup}/bin/mdup
-                echo "mdup script parses ok"
+                echo "validating mdup.nu parses..."
+                cp ${./nushell/scripts/fj/md/sync-lib.nu} sync-lib.nu
+                cp ${./nushell/scripts/fj/md/lib.nu} lib.nu
+                cp ${./nushell/scripts/fj/md/mdup.nu} mdup.nu
+                ${pkgs.nushell}/bin/nu --ide-check 0 mdup.nu
+                echo "mdup.nu parses ok"
 
-                cp ${./mdaemon/sync-lib.nu} sync-lib.nu
-                cp ${./mdaemon/mdup-lib.nu} mdup-lib.nu
-                cp ${./mdaemon/mdup.test.nu} mdup.test.nu
-                ${pkgs.nushell}/bin/nu mdup.test.nu
+                cp ${./nushell/scripts/fj/md/lib.test.nu} lib.test.nu
+                ${pkgs.nushell}/bin/nu lib.test.nu
                 touch $out
               '';
         };
