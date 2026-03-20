@@ -18,26 +18,6 @@ def "test fj ui passes extra args" [] {
   assert equal (fj-route ...[ui -p somerepo]) { tool: "gitui", args: ["-p", "somerepo"] }
 }
 
-# --- pr: gh ---
-
-def "test fj pr list routes to gh" [] {
-  assert equal (fj-route pr list) { tool: "gh", args: ["pr", "list"] }
-}
-
-def "test fj pr view routes to gh" [] {
-  assert equal (fj-route pr view 123) { tool: "gh", args: ["pr", "view", "123"] }
-}
-
-# --- issue: gh ---
-
-def "test fj issue list routes to gh" [] {
-  assert equal (fj-route issue list) { tool: "gh", args: ["issue", "list"] }
-}
-
-def "test fj issue create routes to gh" [] {
-  assert equal (fj-route ...[issue create -t "bug" -b "broken"]) { tool: "gh", args: ["issue", "create", "-t", "bug", "-b", "broken"] }
-}
-
 # --- mut: gt modify ---
 
 def "test fj mut routes to gt modify" [] {
@@ -70,7 +50,7 @@ def "test fj log routes to gt" [] {
   assert equal (fj-route log) { tool: "gt", args: ["log"] }
 }
 
-# --- git fallthrough ---
+# --- whitelisted git commands ---
 
 def "test fj diff routes to git" [] {
   assert equal (fj-route diff) { tool: "git", args: ["diff"] }
@@ -92,6 +72,24 @@ def "test fj stash routes to git" [] {
   assert equal (fj-route stash) { tool: "git", args: ["stash"] }
 }
 
+def "test fj show routes to git" [] {
+  assert equal (fj-route ...[show HEAD]) { tool: "git", args: ["show", "HEAD"] }
+}
+
+def "test fj blame routes to git" [] {
+  assert equal (fj-route ...[blame src/main.rs]) { tool: "git", args: ["blame", "src/main.rs"] }
+}
+
+# --- unknown commands error ---
+
+def "test fj unknown command returns unknown" [] {
+  assert equal (fj-route help) { tool: "unknown", args: ["help"] }
+}
+
+def "test fj garbage returns unknown" [] {
+  assert equal (fj-route ...[yolo swag]) { tool: "unknown", args: ["yolo", "swag"] }
+}
+
 # --- test runner ---
 
 def main [] {
@@ -101,7 +99,7 @@ def main [] {
     | get name)
 
   let test_commands = ($tests
-    | each {|test_name| $"print '  ok ($test_name)'; ($test_name)" }
+    | each {|test_name| $"($test_name); print '  ok ($test_name)'" }
     | str join "; ")
 
   nu --commands $"source ($env.CURRENT_FILE); ($test_commands)"
