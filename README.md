@@ -26,22 +26,43 @@ Nix flake managing two targets from a single repo:
 | `home.nix`         | Home Manager: git, zsh, neovim, zellij, fzf, direnv |
 | `nvim/`            | Neovim config (AstroNvim v5)                        |
 | `doom/`            | Doom Emacs config (nix-doom-emacs-unstraightened)   |
-| `nushell/`         | Nushell config and environment                      |
+| `nushell/`         | Nushell config, `fj` command, and md sync           |
 | `zellij/`          | Terminal multiplexer config                         |
 | `karabiner/`       | Keyboard remapping (caps lock -> ctrl/esc)          |
 
 ## Shell
 
-**Nushell** is the primary shell. `fj` unifies version control tools:
+**Nushell** is the primary shell. `fj` (also aliased as `jf`) unifies version
+control and developer tools:
 
 | Command                              | Routes to              |
 | ------------------------------------ | ---------------------- |
 | `fj`                                 | `git status` + `gt ls` |
 | `fj ui`                              | `gitui`                |
-| `fj pr list`, etc.                   | `gh pr list`           |
-| `fj mut`                             | `gt modify`            |
+| `fj pr list`, `fj pr view 123`       | `gh pr ...`            |
+| `fj issue list`, `fj issue create`   | `gh issue ...`         |
+| `fj mut`, `fj mut -a`                | `gt modify ...`        |
 | `fj ss`, `fj create`, `fj sync`, ... | `gt` (graphite)        |
+| `fj check`                           | repo-specific checks   |
 | anything else                        | `git`                  |
+
+### Markdown vault sync (`fj md`)
+
+Terraform-like plan/apply for syncing markdown files between source repos and an
+Obsidian vault.
+
+| Command        | Purpose                                  |
+| -------------- | ---------------------------------------- |
+| `fj md plan`   | Compute a sync plan                      |
+| `fj md diff`   | Show unified diffs for planned changes   |
+| `fj md sync`   | Apply a previously generated plan        |
+| `fj md`        | Run plan + diff + apply in one step      |
+
+Config lives at `~/.config/mdaemon.nuon`:
+
+```nushell
+{ vault: "~/code/notes", orgs: ["~/code/st0x"] }
+```
 
 ## Build
 
@@ -50,3 +71,24 @@ darwin-rebuild switch --flake ~/.config
 darwin-rebuild build --flake ~/.config
 nixfmt *.nix
 ```
+
+## Adding packages
+
+- Shared (both platforms): `common.nix`
+- macOS only: `darwin.nix`
+- NixOS only: `nixos.nix`
+
+---
+
+## For contributors and agents
+
+See `CLAUDE.md` at the repo root for coding guidelines, architecture details,
+and workflow rules. Per-directory `CLAUDE.md` and `README.md` files provide
+additional context for specific areas.
+
+### Documentation organization
+
+- **README.md**: user-facing docs at top, contributor summary at bottom
+- **CLAUDE.md**: contributor and agent instructions
+- Root-level files cover high-level guidelines; per-directory files cover
+  concrete, detailed instructions for that area
