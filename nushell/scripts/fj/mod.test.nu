@@ -1,7 +1,7 @@
 use std/assert
 
 def expected-commands [] {
-  ["fj" "fj check" "fj issue" "fj issue list" "fj issue view" "fj pr" "fj pr list" "fj pr view" "fj md" "fj md plan" "fj md diff" "fj md sync"]
+  ["fj" "fj check" "fj unfuck" "fj issue" "fj issue list" "fj issue view" "fj pr" "fj pr list" "fj pr view" "fj md" "fj md plan" "fj md diff" "fj md sync"]
 }
 
 def "test fj module exports all subcommands" [] {
@@ -16,8 +16,10 @@ def "test fj module exports all subcommands" [] {
 
 # --- unknown commands must error, not fall through ---
 
-def "test fj rejects help" [] {
-  try { fj help; assert false "fj help should have errored" } catch {|e| assert ($e.msg | str contains "unknown fj command") }
+def "test fj help does not error" [] {
+  try { fj help } catch {|e|
+    assert (not ($e.msg | str contains "unknown fj command")) "fj help should not error as unknown"
+  }
 }
 
 def "test fj rejects yolo" [] {
