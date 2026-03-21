@@ -46,8 +46,8 @@ def "test fj co routes to gt" [] {
   assert equal (fj-route co) { tool: "gt", args: ["co"] }
 }
 
-def "test fj log routes to gt" [] {
-  assert equal (fj-route log) { tool: "gt", args: ["log"] }
+def "test fj log routes to git" [] {
+  assert equal (fj-route log) { tool: "git", args: ["log"] }
 }
 
 # --- whitelisted git commands ---
@@ -82,8 +82,16 @@ def "test fj blame routes to git" [] {
 
 # --- unknown commands error ---
 
+def "test fj do routes to do" [] {
+  assert equal (fj-route do) { tool: "do", args: [] }
+}
+
+def "test fj help routes to help" [] {
+  assert equal (fj-route help) { tool: "help", args: [] }
+}
+
 def "test fj unknown command returns unknown" [] {
-  assert equal (fj-route help) { tool: "unknown", args: ["help"] }
+  assert equal (fj-route ...[yeet lmao]) { tool: "unknown", args: ["yeet", "lmao"] }
 }
 
 def "test fj garbage returns unknown" [] {
