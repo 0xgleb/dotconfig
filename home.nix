@@ -18,10 +18,14 @@ in
     username = "0xgleb";
     stateVersion = "24.05";
 
-    packages = with pkgs; [ cargo-watch ];
+    packages = with pkgs; [
+      cargo-watch
+      ghostty-bin
+    ];
 
     shell.enableNushellIntegration = true;
     file."${nuConfigDir}/scripts".source = ./nushell/scripts;
+    file."Library/Application Support/com.mitchellh.ghostty/config.ghostty".source = ./ghostty/config.ghostty;
   };
 
   # NOTE: this shit doesn't clean up after itself if you enable/disable it

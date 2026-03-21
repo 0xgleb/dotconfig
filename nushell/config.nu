@@ -73,11 +73,32 @@ $env.PROMPT_COMMAND = {||
   } else {
     $env.PWD | path basename
   }
+
+  let origin = do { git remote get-url origin } | complete
+  let name = if $origin.exit_code == 0 {
+    $origin.stdout | str trim | split row "/" | last | str replace ".git" ""
+  } else {
+    ""
+  }
+
+  if ("ZELLIJ" in $env) {
+    let branch = do { git branch --show-current } | complete
+    if $branch.exit_code == 0 and ($branch.stdout | str trim) != "" {
+      zellij action rename-tab $"($name):($branch.stdout | str trim)"
+    }
+  }
+
+  let repo_name = if $name != "" {
+    $"(ansi yellow)\(($name)\)(ansi reset) "
+  } else {
+    ""
+  }
+
   let who = (whoami)
   if $who == "root" {
-    $"(ansi red_bold)ROOT(ansi reset) (ansi yellow)($path)(ansi reset) # "
+    $"(ansi red_bold)ROOT(ansi reset) (ansi yellow)($repo_name)(ansi reset)($path) # "
   } else {
-    $"(ansi cyan)($path)(ansi reset) > "
+    $"(ansi cyan)($repo_name)(ansi reset)($path) > "
   }
 }
 
