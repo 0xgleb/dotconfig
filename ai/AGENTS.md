@@ -227,6 +227,13 @@ input. Keep working through the task list autonomously. Never stay idle when
 there are pending tasks you're not blocked on — check the task list and pick up
 the next one immediately.
 
+**Exhaust options before dismissing.** When asked to do something, seriously
+consider every available tool and approach before claiming it can't or shouldn't
+be done. If the first approach has issues (e.g., violates composability), think
+about whether a different approach achieves the same goal without the tradeoff.
+Scripts, checks, assertions, test derivations — explore all of them before
+concluding "not feasible."
+
 **Verify-and-fix workflow:** When told to "verify each finding against the
 current code and only fix it if needed" (PR review feedback), follow this exact
 sequence:
