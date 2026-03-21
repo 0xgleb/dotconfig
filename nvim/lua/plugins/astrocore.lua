@@ -7,12 +7,13 @@ return {
       large_buf = { size = 1024 * 256, lines = 10000 },
       autopairs = true,
       cmp = true,
-      diagnostics = { virtual_text = true, virtual_lines = false },
+      diagnostics = { virtual_text = false, virtual_lines = true },
       highlighturl = true,
       notifications = true,
     },
     diagnostics = {
-      virtual_text = true,
+      virtual_text = false,
+      virtual_lines = true,
       underline = true,
     },
     options = {
@@ -211,6 +212,17 @@ return {
         ["<Leader>ts"] = { function() vim.opt.spell = not vim.opt.spell:get() end, desc = "Toggle spell check" },
         ["<Leader>tf"] = { function() require("astrolsp.toggles").buffer_autoformat() end, desc = "Toggle format on save" },
         ["<Leader>td"] = { function() require("astrolsp.toggles").diagnostics() end, desc = "Toggle diagnostics" },
+        ["<Leader>tD"] = {
+          function()
+            local current = vim.diagnostic.config()
+            if current.virtual_lines then
+              vim.diagnostic.config { virtual_lines = false, virtual_text = true }
+            else
+              vim.diagnostic.config { virtual_lines = true, virtual_text = false }
+            end
+          end,
+          desc = "Toggle diagnostic style (lines/text)",
+        },
 
         -- ╭─────────────────────────────────────────╮
         -- │ SPC w — Window                           │
