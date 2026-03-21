@@ -4,12 +4,12 @@
 
 $env.config = {
   show_banner: false
-  edit_mode: vi                  # vi keybindings (normal/insert modes)
+  edit_mode: vi
 
   completions: {
     case_sensitive: false
-    quick: true                  # auto-complete single match without tab
-    partial: true                # complete partial matches
+    quick: true
+    partial: true
   }
 
   keybindings: [
@@ -28,11 +28,10 @@ $env.config = {
     }
   ]
 
-  # https://www.nushell.sh/book/history.html
   history: {
     max_size: 100_000
-    sync_on_enter: true          # write to history on each command
-    file_format: "sqlite"        # sqlite enables cross-session search
+    sync_on_enter: false
+    file_format: "sqlite"
   }
 }
 
@@ -43,9 +42,6 @@ def --wrapped l [...args: string] {
 alias vi = nvim
 alias vim = nvim
 
-# Prompt: closure called before each line
-# {|| } is a closure with no parameters
-# https://www.nushell.sh/book/coloring_and_theming.html#prompt-configuration
 $env.PROMPT_COMMAND = {||
   let path = if $env.PWD == $nu.home-dir {
     "~"
@@ -62,18 +58,7 @@ $env.PROMPT_COMMAND = {||
 
 $env.PROMPT_COMMAND_RIGHT = ""
 
+
 use scripts/fix-worktree-submodules.nu
 use scripts/fj/
-
-def --wrapped jf [...args: string] { fj ...$args }
-def "jf check" [] { fj check }
-def --wrapped "jf issue" [...args: string] { fj issue ...$args }
-def --wrapped "jf issue list" [...args: string] { fj issue list ...$args }
-def "jf issue view" [id: string, --web (-w), --comments (-c)] { fj issue view $id --web=$web --comments=$comments }
-def --wrapped "jf pr" [...args: string] { fj pr ...$args }
-def --wrapped "jf pr list" [...args: string] { fj pr list ...$args }
-def "jf pr view" [id?: string, --web (-w), --comments (-c)] { fj pr view $id --web=$web --comments=$comments }
-def "jf md" [] { fj md }
-def "jf md plan" [--org: string, --vault: string, --config: string, --out: string, --verbose (-v)] { fj md plan --org $org --vault $vault --config $config --out $out --verbose=$verbose }
-def "jf md diff" [--plan: string, --org: string, --vault: string, --config: string, --stat] { fj md diff --plan $plan --org $org --vault $vault --config $config --stat=$stat }
-def "jf md sync" [--plan: string, --yes (-y)] { fj md sync --plan $plan --yes=$yes }
+use scripts/jf.nu
