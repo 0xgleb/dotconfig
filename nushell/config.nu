@@ -42,6 +42,31 @@ def --wrapped l [...args: string] {
 alias vi = nvim
 alias vim = nvim
 
+def ask [question: string, context: closure] {
+  print $"\nQ: ($question)?"
+
+  let prompt = [
+    "Request:"
+    $"( $question | str trim )"
+    "Below is some context to help you answer"
+    "---"
+    $"( do $context )"
+    "---"
+    "Response:"
+  ] | str join "\n\n"                                                                                                                                                   
+
+  let response = (
+    claude -p $prompt 
+    | str trim 
+    | lines 
+    | where $it !~ "```" 
+    | str join "\n" 
+    | pbcopy
+  )
+
+  print $"\nA: (pbpaste)\n"
+}
+
 $env.PROMPT_COMMAND = {||
   let path = if $env.PWD == $nu.home-dir {
     "~"
@@ -59,6 +84,5 @@ $env.PROMPT_COMMAND = {||
 $env.PROMPT_COMMAND_RIGHT = ""
 
 
-use scripts/fix-worktree-submodules.nu
 use scripts/fj/
 use scripts/jf.nu
