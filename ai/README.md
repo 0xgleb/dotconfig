@@ -15,7 +15,7 @@ into `~/.claude/`:
 
 ## Directory Structure
 
-```
+```text
 ai/
   AGENTS.md           # Global agent instructions (symlinked as ~/.claude/CLAUDE.md)
   settings.json       # Claude Code-specific settings (hooks, permissions)
@@ -47,7 +47,7 @@ abandoned.
 
 ### Decision tree
 
-```
+```text
 Claude tries to stop
   │
   ├─ Has incomplete non-blocked tasks?

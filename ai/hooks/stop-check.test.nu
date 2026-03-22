@@ -4,13 +4,13 @@ source stop-check.nu
 
 def with-temp-dir [block: closure] {
   let dir = (mktemp -d)
-  try {
-    do $block $dir
-  } catch {|e|
-    rm -rf $dir
-    error make { msg: $e.msg }
-  }
+  # Capture error so cleanup always runs. Nushell has no native rethrow,
+  # so we reconstruct from $e.msg (stack trace / labels are lost).
+  let err = (try { do $block $dir; null } catch {|e| $e })
   rm -rf $dir
+  if $err != null {
+    error make { msg: $err.msg }
+  }
 }
 
 # --- doc-recently-changed ---

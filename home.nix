@@ -54,7 +54,9 @@ in
     username = "0xgleb";
     stateVersion = "24.05";
 
-    packages = with pkgs; [ cargo-watch ] ++ [ stopCheck unicodeCheck ];
+    # stopCheck/unicodeCheck are local derivations (not in pkgs), so they
+    # sit outside the `with pkgs` scope in one flat list.
+    packages = [ pkgs.cargo-watch stopCheck unicodeCheck ];
 
     shell.enableNushellIntegration = true;
     file."${nuConfigDir}/scripts".source = ./nushell/scripts;
