@@ -1,4 +1,4 @@
-# ai/ — AI Coding Agent Configuration
+# ai/ -- AI Coding Agent Configuration
 
 Shared configuration for AI coding agents. `AGENTS.md` and `skills/` apply to
 any agent that follows the AGENTS.md convention (Claude Code, Codex, etc.).
@@ -21,8 +21,10 @@ ai/
   settings.json       # Claude Code-specific settings (hooks, permissions)
   README.md           # This file
   hooks/
-    stop-check.nu      # Stop hook — task handoff protocol (nushell)
+    stop-check.nu      # Stop hook -- task handoff protocol (nushell)
     stop-check.test.nu # Tests (run via `nix flake check`)
+    unicode-check.nu      # PreToolUse hook -- rejects non-ASCII in edits
+    unicode-check.test.nu # Tests (run via `nix flake check`)
   skills/
     graphite/SKILL.md # Graphite (gt) stacked PR management
     worktree/SKILL.md # Git worktree management
@@ -98,3 +100,10 @@ timestamp: 2026-03-22T14:30:00Z
 
 The stop hook detects recent modifications (< 5 minutes) and prompts Claude to
 check for replies before writing a new entry.
+
+## Unicode Check Hook
+
+`hooks/unicode-check.nu` is a PreToolUse hook that runs before every Edit and
+Write tool call. It rejects any content containing non-ASCII Unicode characters
+(em dashes, arrows, box-drawing characters, etc.). Use ASCII equivalents
+instead: `--` for em dash, `->` for arrow.

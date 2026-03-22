@@ -228,6 +228,24 @@
                 touch $out
               '';
 
+          unicode-check =
+            pkgs.runCommand "unicode-check-test"
+              {
+                nativeBuildInputs = with pkgs; [
+                  nushell
+                ];
+              }
+              ''
+                echo "validating unicode-check.nu parses..."
+                cp ${./ai/hooks/unicode-check.nu} unicode-check.nu
+                ${pkgs.nushell}/bin/nu --ide-check 0 unicode-check.nu
+                echo "unicode-check.nu parses ok"
+
+                cp ${./ai/hooks/unicode-check.test.nu} unicode-check.test.nu
+                ${pkgs.nushell}/bin/nu unicode-check.test.nu
+                touch $out
+              '';
+
           mdup =
             pkgs.runCommand "mdup-test"
               {

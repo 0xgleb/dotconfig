@@ -31,7 +31,7 @@ export def gather-context [input: record, now: int] -> record {
 }
 
 export def build-reason [ctx: record] -> string {
-  $"STOP HOOK TRIGGERED — follow this protocol exactly:
+  $"STOP HOOK TRIGGERED -- follow this protocol exactly:
 
 ## Context
 - repo: ($ctx.repo)
@@ -52,7 +52,7 @@ export def build-reason [ctx: record] -> string {
    - Do NOT stop
 
 3. IF all remaining tasks are blocked \(or all complete\):
-   a. If handoff doc was recently changed \(doc_recently_changed=true\), read it first — check if the user replied or if anything changed that unblocks you. If unblocked, update task list and continue working.
+   a. If handoff doc was recently changed \(doc_recently_changed=true\), read it first -- check if the user replied or if anything changed that unblocks you. If unblocked, update task list and continue working.
    b. Write \(prepend\) a new entry to the handoff doc at ($ctx.doc_path). Create the file and directory if needed. The entry format:
 
 ---

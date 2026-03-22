@@ -128,6 +128,10 @@ overhead.
 
 ## Code Style
 
+- **ASCII only**: Never use non-ASCII Unicode characters in code, comments, docs,
+  or commit messages. Use ASCII equivalents: `--` not em dash, `->` not arrow,
+  `<->` not bidirectional arrow, etc. A PreToolUse hook enforces this and will
+  reject edits containing non-ASCII characters.
 - Prefer functional programming patterns
 - Use strict compiler and linter settings
 - Comprehensive test coverage is expected
@@ -553,11 +557,11 @@ with tests run as nix derivation checks (`nix flake check`). Never add untested
 bash scripts.
 
 - Script source goes in the appropriate directory (e.g., `ai/hooks/`)
-- Tests go alongside: `foo.nu` → `foo.test.nu`
+- Tests go alongside: `foo.nu` -> `foo.test.nu`
 - Add a `checks.aarch64-darwin` entry in `flake.nix` that parses the script
   (`nu --ide-check 0`) and runs the test file
 - Build a `writeShellApplication` wrapper that execs `nu` on the script with
-  the right `runtimeInputs` — either in `home.nix` (if it needs to be on PATH)
+  the right `runtimeInputs` -- either in `home.nix` (if it needs to be on PATH)
   or in `flake.nix` `packages`
 - Follow the existing test pattern: `use std/assert`, named test functions,
   `main` runner that discovers and runs them

@@ -31,13 +31,30 @@ let
       '';
     };
 
+  unicodeCheck =
+    let
+      scriptDir = pkgs.runCommand "unicode-check-scripts" { } ''
+        mkdir -p $out
+        cp ${./ai/hooks/unicode-check.nu} $out/unicode-check.nu
+      '';
+    in
+    pkgs.writeShellApplication {
+      name = "unicode-check";
+      runtimeInputs = with pkgs; [
+        nushell
+      ];
+      text = ''
+        exec ${pkgs.nushell}/bin/nu ${scriptDir}/unicode-check.nu "$@"
+      '';
+    };
+
 in
 {
   home = {
     username = "0xgleb";
     stateVersion = "24.05";
 
-    packages = with pkgs; [ cargo-watch ] ++ [ stopCheck ];
+    packages = with pkgs; [ cargo-watch ] ++ [ stopCheck unicodeCheck ];
 
     shell.enableNushellIntegration = true;
     file."${nuConfigDir}/scripts".source = ./nushell/scripts;
