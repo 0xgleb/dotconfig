@@ -4,8 +4,9 @@ source stop-check.nu
 
 def with-temp-dir [block: closure] {
   let dir = (mktemp -d)
-  # Capture error so cleanup always runs. Nushell has no native rethrow,
-  # so we reconstruct from $e.msg (stack trace / labels are lost).
+  # Structured this way instead of try/catch with rm in both paths so
+  # cleanup runs exactly once regardless of success/failure. Nushell has
+  # no native rethrow, so we reconstruct from $e.msg (labels are lost).
   let err = (try { do $block $dir; null } catch {|e| $e })
   rm -rf $dir
   if $err != null {

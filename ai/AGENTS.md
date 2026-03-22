@@ -143,7 +143,10 @@ overhead.
 - Never leave useless comments. Documentation (docstrings explaining how to use
   the code) is good. Comments explaining what the code does are unacceptable
   unless something genuinely cannot be made clear through properly structured
-  and named code.
+  and named code. **Do** leave comments on non-obvious patterns that would
+  mislead reviewers -- language limitations, structural choices that look wrong
+  but are intentional, why something is scoped a certain way, etc. If a
+  reviewer would reasonably flag it, preempt with a comment.
 - **Avoid boolean blindness**: Raw booleans obscure meaning at call sites.
   Prefer discriminated unions (e.g., `type Status = "open" | "closed"`) over
   booleans. When booleans are unavoidable, wrap them in named functions
