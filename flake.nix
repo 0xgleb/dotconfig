@@ -172,106 +172,114 @@
           };
         };
 
-      checks.aarch64-darwin =
+      checks =
         let
-          pkgs = import nixpkgs {
-            system = "aarch64-darwin";
-            config.allowUnfree = true;
-          };
+          mkChecks =
+            system:
+            let
+              pkgs = import nixpkgs {
+                inherit system;
+                config.allowUnfree = true;
+              };
+            in
+            {
+              md-sync =
+                pkgs.runCommand "md-sync-test"
+                  {
+                    nativeBuildInputs = with pkgs; [
+                      nushell
+                      git
+                      diffutils
+                    ];
+                  }
+                  ''
+                    export HOME=$(mktemp -d)
+                    git config --global user.email "test@test.com"
+                    git config --global user.name "test"
+
+                    echo "validating sync-daemon.nu parses..."
+                    cp ${./nushell/scripts/fj/md/sync-lib.nu} sync-lib.nu
+                    cp ${./nushell/scripts/fj/md/sync-daemon.nu} sync-daemon.nu
+                    ${pkgs.nushell}/bin/nu --ide-check 0 sync-daemon.nu
+                    echo "sync-daemon.nu parses ok"
+
+                    cp ${./nushell/scripts/fj/md/sync-lib.test.nu} sync-lib.test.nu
+                    ${pkgs.nushell}/bin/nu sync-lib.test.nu
+                    touch $out
+                  '';
+
+              stop-check =
+                pkgs.runCommand "stop-check-test"
+                  {
+                    nativeBuildInputs = with pkgs; [
+                      nushell
+                      git
+                    ];
+                  }
+                  ''
+                    export HOME=$(mktemp -d)
+                    git config --global user.email "test@test.com"
+                    git config --global user.name "test"
+
+                    echo "validating stop-check.nu parses..."
+                    cp ${./ai/hooks/stop-check.nu} stop-check.nu
+                    ${pkgs.nushell}/bin/nu --ide-check 0 stop-check.nu
+                    echo "stop-check.nu parses ok"
+
+                    cp ${./ai/hooks/stop-check.test.nu} stop-check.test.nu
+                    ${pkgs.nushell}/bin/nu stop-check.test.nu
+                    touch $out
+                  '';
+
+              unicode-check =
+                pkgs.runCommand "unicode-check-test"
+                  {
+                    nativeBuildInputs = with pkgs; [
+                      nushell
+                    ];
+                  }
+                  ''
+                    echo "validating unicode-check.nu parses..."
+                    cp ${./ai/hooks/unicode-check.nu} unicode-check.nu
+                    ${pkgs.nushell}/bin/nu --ide-check 0 unicode-check.nu
+                    echo "unicode-check.nu parses ok"
+
+                    cp ${./ai/hooks/unicode-check.test.nu} unicode-check.test.nu
+                    ${pkgs.nushell}/bin/nu unicode-check.test.nu
+                    touch $out
+                  '';
+
+              mdup =
+                pkgs.runCommand "mdup-test"
+                  {
+                    nativeBuildInputs = with pkgs; [
+                      deno
+                      nushell
+                      git
+                      diffutils
+                    ];
+                  }
+                  ''
+                    export HOME=$(mktemp -d)
+                    git config --global user.email "test@test.com"
+                    git config --global user.name "test"
+
+                    echo "validating mdup.nu parses..."
+                    cp ${./nushell/scripts/fj/md/sync-lib.nu} sync-lib.nu
+                    cp ${./nushell/scripts/fj/md/lib.nu} lib.nu
+                    cp ${./nushell/scripts/fj/md/mdup.nu} mdup.nu
+                    ${pkgs.nushell}/bin/nu --ide-check 0 mdup.nu
+                    echo "mdup.nu parses ok"
+
+                    cp ${./nushell/scripts/fj/md/lib.test.nu} lib.test.nu
+                    ${pkgs.nushell}/bin/nu lib.test.nu
+                    touch $out
+                  '';
+            };
         in
         {
-          md-sync =
-            pkgs.runCommand "md-sync-test"
-              {
-                nativeBuildInputs = with pkgs; [
-                  nushell
-                  git
-                  diffutils
-                ];
-              }
-              ''
-                export HOME=$(mktemp -d)
-                git config --global user.email "test@test.com"
-                git config --global user.name "test"
-
-                echo "validating sync-daemon.nu parses..."
-                cp ${./nushell/scripts/fj/md/sync-lib.nu} sync-lib.nu
-                cp ${./nushell/scripts/fj/md/sync-daemon.nu} sync-daemon.nu
-                ${pkgs.nushell}/bin/nu --ide-check 0 sync-daemon.nu
-                echo "sync-daemon.nu parses ok"
-
-                cp ${./nushell/scripts/fj/md/sync-lib.test.nu} sync-lib.test.nu
-                ${pkgs.nushell}/bin/nu sync-lib.test.nu
-                touch $out
-              '';
-
-          stop-check =
-            pkgs.runCommand "stop-check-test"
-              {
-                nativeBuildInputs = with pkgs; [
-                  nushell
-                  git
-                ];
-              }
-              ''
-                export HOME=$(mktemp -d)
-                git config --global user.email "test@test.com"
-                git config --global user.name "test"
-
-                echo "validating stop-check.nu parses..."
-                cp ${./ai/hooks/stop-check.nu} stop-check.nu
-                ${pkgs.nushell}/bin/nu --ide-check 0 stop-check.nu
-                echo "stop-check.nu parses ok"
-
-                cp ${./ai/hooks/stop-check.test.nu} stop-check.test.nu
-                ${pkgs.nushell}/bin/nu stop-check.test.nu
-                touch $out
-              '';
-
-          unicode-check =
-            pkgs.runCommand "unicode-check-test"
-              {
-                nativeBuildInputs = with pkgs; [
-                  nushell
-                ];
-              }
-              ''
-                echo "validating unicode-check.nu parses..."
-                cp ${./ai/hooks/unicode-check.nu} unicode-check.nu
-                ${pkgs.nushell}/bin/nu --ide-check 0 unicode-check.nu
-                echo "unicode-check.nu parses ok"
-
-                cp ${./ai/hooks/unicode-check.test.nu} unicode-check.test.nu
-                ${pkgs.nushell}/bin/nu unicode-check.test.nu
-                touch $out
-              '';
-
-          mdup =
-            pkgs.runCommand "mdup-test"
-              {
-                nativeBuildInputs = with pkgs; [
-                  deno
-                  nushell
-                  git
-                  diffutils
-                ];
-              }
-              ''
-                export HOME=$(mktemp -d)
-                git config --global user.email "test@test.com"
-                git config --global user.name "test"
-
-                echo "validating mdup.nu parses..."
-                cp ${./nushell/scripts/fj/md/sync-lib.nu} sync-lib.nu
-                cp ${./nushell/scripts/fj/md/lib.nu} lib.nu
-                cp ${./nushell/scripts/fj/md/mdup.nu} mdup.nu
-                ${pkgs.nushell}/bin/nu --ide-check 0 mdup.nu
-                echo "mdup.nu parses ok"
-
-                cp ${./nushell/scripts/fj/md/lib.test.nu} lib.test.nu
-                ${pkgs.nushell}/bin/nu lib.test.nu
-                touch $out
-              '';
+          "aarch64-darwin" = mkChecks "aarch64-darwin";
+          "x86_64-linux" = mkChecks "x86_64-linux";
         };
 
       # Expose package set for convenience
