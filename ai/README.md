@@ -1,4 +1,8 @@
-# ai/ — Claude Code Configuration
+# ai/ — AI Coding Agent Configuration
+
+Shared configuration for AI coding agents. `AGENTS.md` and `skills/` apply to
+any agent that follows the AGENTS.md convention (Claude Code, Codex, etc.).
+Hooks and `settings.json` are Claude Code-specific.
 
 Managed by home-manager. On `darwin-rebuild switch`, these files are symlinked
 into `~/.claude/`:
@@ -13,8 +17,8 @@ into `~/.claude/`:
 
 ```
 ai/
-  AGENTS.md           # Global Claude instructions (symlinked as CLAUDE.md)
-  settings.json       # Claude Code settings (hooks, permissions)
+  AGENTS.md           # Global agent instructions (symlinked as ~/.claude/CLAUDE.md)
+  settings.json       # Claude Code-specific settings (hooks, permissions)
   README.md           # This file
   hooks/
     stop-check.sh     # Stop hook — task handoff protocol
