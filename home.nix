@@ -12,16 +12,58 @@ let
     else
       "${config.xdg.configHome}/nushell";
 
+  stopCheck =
+    let
+      scriptDir = pkgs.runCommand "stop-check-scripts" { } ''
+        mkdir -p $out
+        cp ${./ai/hooks/stop-check.nu} $out/stop-check.nu
+      '';
+    in
+    pkgs.writeShellApplication {
+      name = "stop-check";
+      runtimeInputs = with pkgs; [
+        git
+        gh
+        nushell
+      ];
+      text = ''
+        exec ${pkgs.nushell}/bin/nu ${scriptDir}/stop-check.nu "$@"
+      '';
+    };
+
+  unicodeCheck =
+    let
+      scriptDir = pkgs.runCommand "unicode-check-scripts" { } ''
+        mkdir -p $out
+        cp ${./ai/hooks/unicode-check.nu} $out/unicode-check.nu
+      '';
+    in
+    pkgs.writeShellApplication {
+      name = "unicode-check";
+      runtimeInputs = with pkgs; [
+        nushell
+      ];
+      text = ''
+        exec ${pkgs.nushell}/bin/nu ${scriptDir}/unicode-check.nu "$@"
+      '';
+    };
+
 in
 {
   home = {
     username = "0xgleb";
     stateVersion = "24.05";
 
-    packages = with pkgs; [ cargo-watch ];
+    # stopCheck/unicodeCheck are local derivations (not in pkgs), so they
+    # sit outside the `with pkgs` scope in one flat list.
+    packages = [ pkgs.cargo-watch stopCheck unicodeCheck ];
 
     shell.enableNushellIntegration = true;
     file."${nuConfigDir}/scripts".source = ./nushell/scripts;
+
+    file.".claude/CLAUDE.md".source = ./ai/AGENTS.md;
+    file.".claude/skills".source = ./ai/skills;
+    file.".claude/settings.json".source = ./ai/settings.json;
   };
 
   # NOTE: this shit doesn't clean up after itself if you enable/disable it

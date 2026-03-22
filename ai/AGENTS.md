@@ -128,6 +128,10 @@ overhead.
 
 ## Code Style
 
+- **ASCII only**: Never use non-ASCII Unicode characters in code, comments, docs,
+  or commit messages. Use ASCII equivalents: `--` not em dash, `->` not arrow,
+  `<->` not bidirectional arrow, etc. A PreToolUse hook enforces this and will
+  reject edits containing non-ASCII characters.
 - Prefer functional programming patterns
 - Use strict compiler and linter settings
 - Comprehensive test coverage is expected
@@ -139,7 +143,10 @@ overhead.
 - Never leave useless comments. Documentation (docstrings explaining how to use
   the code) is good. Comments explaining what the code does are unacceptable
   unless something genuinely cannot be made clear through properly structured
-  and named code.
+  and named code. **Do** leave comments on non-obvious patterns that would
+  mislead reviewers -- language limitations, structural choices that look wrong
+  but are intentional, why something is scoped a certain way, etc. If a
+  reviewer would reasonably flag it, preempt with a comment.
 - **Avoid boolean blindness**: Raw booleans obscure meaning at call sites.
   Prefer discriminated unions (e.g., `type Status = "open" | "closed"`) over
   booleans. When booleans are unavoidable, wrap them in named functions
@@ -545,6 +552,22 @@ on broken submodule refs) — always stage specific files with `git add <files>`
 then `gt modify`.
 
 ## This Repository (dotconfig)
+
+### Scripting
+
+**Write nushell, not bash.** All scripts in this repo must be nushell (`.nu`)
+with tests run as nix derivation checks (`nix flake check`). Never add untested
+bash scripts.
+
+- Script source goes in the appropriate directory (e.g., `ai/hooks/`)
+- Tests go alongside: `foo.nu` -> `foo.test.nu`
+- Add a `checks.aarch64-darwin` entry in `flake.nix` that parses the script
+  (`nu --ide-check 0`) and runs the test file
+- Build a `writeShellApplication` wrapper that execs `nu` on the script with
+  the right `runtimeInputs` -- either in `home.nix` (if it needs to be on PATH)
+  or in `flake.nix` `packages`
+- Follow the existing test pattern: `use std/assert`, named test functions,
+  `main` runner that discovers and runs them
 
 ### Build Commands
 

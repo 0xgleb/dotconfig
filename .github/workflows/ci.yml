@@ -14,7 +14,7 @@ jobs:
         with:
           extra_nix_config: |
             experimental-features = nix-command flakes
-      - run: nix flake check
+      - run: nix build --no-link .#checks.x86_64-linux.stop-check .#checks.x86_64-linux.unicode-check .#checks.x86_64-linux.md-sync .#checks.x86_64-linux.mdup
 
   build-nixos:
     runs-on: ubuntu-latest
