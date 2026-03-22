@@ -21,7 +21,8 @@ ai/
   settings.json       # Claude Code-specific settings (hooks, permissions)
   README.md           # This file
   hooks/
-    stop-check.sh     # Stop hook — task handoff protocol
+    stop-check.nu      # Stop hook — task handoff protocol (nushell)
+    stop-check.test.nu # Tests (run via `nix flake check`)
   skills/
     graphite/SKILL.md # Graphite (gt) stacked PR management
     worktree/SKILL.md # Git worktree management
@@ -29,8 +30,10 @@ ai/
 
 ## Stop Hook Protocol
 
-`hooks/stop-check.sh` runs every time Claude tries to stop. It enforces a
-handoff protocol so work is never silently abandoned.
+`hooks/stop-check.nu` runs every time Claude tries to stop. It's built as a
+nix wrapper (`stop-check` on PATH via home-manager) and tested via
+`nix flake check`. It enforces a handoff protocol so work is never silently
+abandoned.
 
 ### How it works
 

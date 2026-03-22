@@ -205,6 +205,29 @@
                 touch $out
               '';
 
+          stop-check =
+            pkgs.runCommand "stop-check-test"
+              {
+                nativeBuildInputs = with pkgs; [
+                  nushell
+                  git
+                ];
+              }
+              ''
+                export HOME=$(mktemp -d)
+                git config --global user.email "test@test.com"
+                git config --global user.name "test"
+
+                echo "validating stop-check.nu parses..."
+                cp ${./ai/hooks/stop-check.nu} stop-check.nu
+                ${pkgs.nushell}/bin/nu --ide-check 0 stop-check.nu
+                echo "stop-check.nu parses ok"
+
+                cp ${./ai/hooks/stop-check.test.nu} stop-check.test.nu
+                ${pkgs.nushell}/bin/nu stop-check.test.nu
+                touch $out
+              '';
+
           mdup =
             pkgs.runCommand "mdup-test"
               {

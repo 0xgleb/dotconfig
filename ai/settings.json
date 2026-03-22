@@ -6,7 +6,7 @@
         "hooks": [
           {
             "type": "command",
-            "command": "~/.config/ai/hooks/stop-check.sh"
+            "command": "stop-check"
           }
         ]
       }

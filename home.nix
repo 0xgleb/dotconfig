@@ -12,13 +12,32 @@ let
     else
       "${config.xdg.configHome}/nushell";
 
+  stopCheck =
+    let
+      scriptDir = pkgs.runCommand "stop-check-scripts" { } ''
+        mkdir -p $out
+        cp ${./ai/hooks/stop-check.nu} $out/stop-check.nu
+      '';
+    in
+    pkgs.writeShellApplication {
+      name = "stop-check";
+      runtimeInputs = with pkgs; [
+        git
+        gh
+        nushell
+      ];
+      text = ''
+        exec ${pkgs.nushell}/bin/nu ${scriptDir}/stop-check.nu "$@"
+      '';
+    };
+
 in
 {
   home = {
     username = "0xgleb";
     stateVersion = "24.05";
 
-    packages = with pkgs; [ cargo-watch ];
+    packages = with pkgs; [ cargo-watch ] ++ [ stopCheck ];
 
     shell.enableNushellIntegration = true;
     file."${nuConfigDir}/scripts".source = ./nushell/scripts;
