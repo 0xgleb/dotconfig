@@ -22,6 +22,10 @@ in
 
     shell.enableNushellIntegration = true;
     file."${nuConfigDir}/scripts".source = ./nushell/scripts;
+
+    file.".claude/CLAUDE.md".source = ./ai/AGENTS.md;
+    file.".claude/skills".source = ./ai/skills;
+    file.".claude/settings.json".source = ./ai/settings.json;
   };
 
   # NOTE: this shit doesn't clean up after itself if you enable/disable it
