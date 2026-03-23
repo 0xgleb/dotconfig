@@ -10,15 +10,11 @@ let
     config.allowUnfree = true;
   };
 
-  # User configuration (source of truth)
-  user = {
-    name = "0xgleb";
-    home = "/Users/0xgleb";
-  };
+  users = import ./users.nix;
 in
 {
-  # Export for use in other modules
-  _module.args.userConfig = user;
+  _module.args.userConfig = users.primary;
+  _module.args.aiUserConfig = users.ai;
 
   # programs.zsh.enable = true;
   # programs.direnv.enable = true;
@@ -91,7 +87,7 @@ in
 
   nix.settings = {
     experimental-features = "nix-command flakes";
-    trusted-users = [ "0xgleb" ];
+    trusted-users = [ users.primary.name ];
     substituters = [ "https://cache.nixos.org" ];
     trusted-public-keys = [ "cache.nixos.org-1:6NCHdD59X431o0gWypbMrAURkbJ16ZPMQFGspcDShjY=" ];
   };

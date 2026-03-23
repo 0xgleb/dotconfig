@@ -27,6 +27,9 @@
       disko,
       ...
     }:
+    let
+      users = import ./users.nix;
+    in
     {
 
       # Local macOS
@@ -40,14 +43,25 @@
             home-manager.useGlobalPkgs = true;
             home-manager.useUserPackages = true;
             home-manager.backupFileExtension = "home.bak";
-            home-manager.extraSpecialArgs = { inherit inputs; };
-            home-manager.users."0xgleb" =
-              { pkgs, inputs, ... }:
+            home-manager.extraSpecialArgs = {
+              inherit inputs;
+              userConfig = users.primary;
+              aiUserConfig = users.ai;
+            };
+
+            home-manager.users."${users.primary.name}" =
+              { inputs, ... }:
               {
                 imports = [
                   inputs.nix-doom-emacs-unstraightened.homeModule
-                  ./home.nix
+                  ./homes/0xgleb.nix
                 ];
+              };
+
+            home-manager.users."${users.ai.name}" =
+              { ... }:
+              {
+                imports = [ ./homes/ai.nix ];
               };
           }
         ];
@@ -66,13 +80,17 @@
           {
             home-manager.useGlobalPkgs = true;
             home-manager.useUserPackages = true;
-            home-manager.extraSpecialArgs = { inherit inputs; };
-            home-manager.users."0xgleb" =
-              { pkgs, inputs, ... }:
+            home-manager.extraSpecialArgs = {
+              inherit inputs;
+              userConfig = users.primary;
+              aiUserConfig = users.ai;
+            };
+            home-manager.users."${users.primary.name}" =
+              { inputs, ... }:
               {
                 imports = [
                   inputs.nix-doom-emacs-unstraightened.homeModule
-                  ./home.nix
+                  ./homes/0xgleb.nix
                 ];
               };
           }
