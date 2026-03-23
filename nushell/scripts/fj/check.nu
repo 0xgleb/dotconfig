@@ -13,7 +13,13 @@ const skill_issues = [
   "no cap your code is cooked, respectfully go fix it"
 ]
 
-def stox-liquidity-check [] {
+def logged [log_file: string] {
+  $in out+err>| ^tee -a $log_file
+}
+
+def stox-liquidity-check [log_file?: string] {
+  let log = ($log_file | default "/dev/null")
+
   let branch = (git branch --show-current)
   log info $"st0x.liquidity checks on ($branch)"
 
@@ -23,47 +29,90 @@ def stox-liquidity-check [] {
 
   try { rm ./dashboard/src/lib/api/* e> /dev/null }
 
-  cargo check -q
+  cargo check --color=always -q | logged $log
 
   log debug "auto-fixing before checks"
-  try { cargo fix --quiet --allow-staged --tests --workspace --all-features e> /dev/null }
+  try {
+    (cargo fix --quiet --allow-staged
+      --tests --workspace --all-features
+      e> /dev/null)
+  }
 
-  cargo nextest run --workspace --all-features --profile dev --show-progress=only
+  (cargo nextest run --color=always
+    --workspace --all-features
+    --profile dev --show-progress=only
+    | logged $log)
 
-  cargo clippy --quiet --workspace --all-targets --all-features -- -D clippy::all -D warnings
+  (cargo clippy --color=always --quiet
+    --workspace --all-targets --all-features
+    -- -D clippy::all -D warnings
+    | logged $log)
 
   log info "backend's looking good, checking the dashboard"
 
   cd $"($worktree_path)/dashboard"
 
-  bun install
-  bun run check
-  bun run test:run
-  bun run lint:fix
+  with-env { FORCE_COLOR: "1" } {
+    bun install | logged $log
+    bun run check | logged $log
+    bun run test:run | logged $log
+    bun run lint:fix | logged $log
+  }
   log info "dashboard seems good to go too"
 
   log debug "running pre-commit hooks"
-  try { pre-commit run -a } catch { pre-commit run -a }
-
-  log info $"st0x.liquidity on ($branch) just passed the vibe check"
-}
-
-export def run-captured []: nothing -> record<passed: bool, output: string> {
-  let url = (git remote get-url origin)
-  let is_liquidity = ($url | str contains "st0x.liquidity")
-
-  if not $is_liquidity {
-    error make { msg: $"Couldn't determine what checks to run in (pwd)" }
+  try {
+    pre-commit run -a | logged $log
+  } catch {
+    pre-commit run -a | logged $log
   }
 
+  log info (
+    $"st0x.liquidity on ($branch)"
+    + " just passed the vibe check"
+  )
+}
+
+export def run-captured [
+]: nothing -> record<passed: bool, output: string> {
+  let url = (git remote get-url origin)
+  let is_liquidity = (
+    $url | str contains "st0x.liquidity"
+  )
+
+  if not $is_liquidity {
+    error make {
+      msg: $"Couldn't determine what checks to run in (pwd)"
+    }
+  }
+
+  let log_file = (mktemp --suffix .log)
+
   try {
-    stox-liquidity-check
+    stox-liquidity-check $log_file
+    rm -f $log_file
     { passed: true, output: "" }
   } catch {|e|
     if ($e.msg | str contains "interrupt") {
+      rm -f $log_file
       error make --unspanned { msg: "interrupted" }
     }
-    let output = if ($e | get -o rendered? | is-not-empty) { $e.rendered } else { $e.msg }
+    let captured = if ($log_file | path exists) {
+      open --raw $log_file | str trim
+    } else {
+      ""
+    }
+    let error_msg = if ($e | get -o rendered? | is-not-empty) {
+      $e.rendered
+    } else {
+      $e.msg
+    }
+    let output = if ($captured | is-not-empty) {
+      $captured
+    } else {
+      $error_msg
+    }
+    rm -f $log_file
     { passed: false, output: $output }
   }
 }

@@ -205,6 +205,19 @@
                 touch $out
               '';
 
+          fj-workflow =
+            pkgs.runCommand "fj-workflow-test"
+              {
+                nativeBuildInputs = with pkgs; [
+                  nushell
+                ];
+              }
+              ''
+                cp ${./nushell/scripts/fj/workflow.test.nu} workflow.test.nu
+                ${pkgs.nushell}/bin/nu workflow.test.nu
+                touch $out
+              '';
+
           mdup =
             pkgs.runCommand "mdup-test"
               {
