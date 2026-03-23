@@ -13,7 +13,7 @@ export def --wrapped main [...args: string@fj-complete] {
   match $route.tool {
     "status" => {
       ^git status
-      ^gt ls
+      ^gt ls -a
     }
     "gitui" => { ^gitui ...$route.args }
     "gt" => { ^gt ...$route.args }

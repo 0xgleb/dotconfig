@@ -26,4 +26,5 @@ AppSupport
 /nvim/lazy-lock.json
 /op/
 /opencode/
+/nushell/history.*
 /result
