@@ -27,4 +27,6 @@ AppSupport
 /op/
 /opencode/
 /nushell/history.*
+/nushell/config.nu
+/nushell/env.nu
 /result

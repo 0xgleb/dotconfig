@@ -25,6 +25,12 @@ in
 
     shell.enableNushellIntegration = true;
     file."${nuConfigDir}/scripts".source = ./nushell/scripts;
+    file.".config/nushell/config.nu".source =
+      config.lib.file.mkOutOfStoreSymlink
+        "${config.home.homeDirectory}/Library/Application Support/nushell/config.nu";
+    file.".config/nushell/env.nu".source =
+      config.lib.file.mkOutOfStoreSymlink
+        "${config.home.homeDirectory}/Library/Application Support/nushell/env.nu";
     file."Library/Application Support/com.mitchellh.ghostty/config.ghostty".source = ./ghostty/config.ghostty;
   };
 
@@ -37,8 +43,8 @@ in
     zellij.enable = true;
     nushell = {
       enable = true;
-      envFile.source = ./nushell/env.nu;
-      configFile.source = ./nushell/config.nu;
+      envFile.source = ./nushell/env.src.nu;
+      configFile.source = ./nushell/config.src.nu;
       # configDir = nuDir;
 
       plugins = with pkgs.nushellPlugins; [
