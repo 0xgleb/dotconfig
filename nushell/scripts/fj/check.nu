@@ -13,13 +13,7 @@ const skill_issues = [
   "no cap your code is cooked, respectfully go fix it"
 ]
 
-def logged [log_file: string] {
-  $in out+err>| ^tee -a $log_file
-}
-
-def stox-liquidity-check [log_file?: string] {
-  let log = ($log_file | default "/dev/null")
-
+def stox-liquidity-check [] {
   let branch = (git branch --show-current)
   log info $"st0x.liquidity checks on ($branch)"
 
@@ -29,7 +23,7 @@ def stox-liquidity-check [log_file?: string] {
 
   try { rm ./dashboard/src/lib/api/* e> /dev/null }
 
-  cargo check --color=always -q | logged $log
+  cargo check --color=always
 
   log debug "auto-fixing before checks"
   try {
@@ -40,31 +34,29 @@ def stox-liquidity-check [log_file?: string] {
 
   (cargo nextest run --color=always
     --workspace --all-features
-    --profile dev --show-progress=only
-    | logged $log)
+    --profile dev --show-progress=only)
 
   (cargo clippy --color=always --quiet
     --workspace --all-targets --all-features
-    -- -D clippy::all -D warnings
-    | logged $log)
+    -- -D clippy::all -D warnings)
 
   log info "backend's looking good, checking the dashboard"
 
   cd $"($worktree_path)/dashboard"
 
   with-env { FORCE_COLOR: "1" } {
-    bun install | logged $log
-    bun run check | logged $log
-    bun run test:run | logged $log
-    bun run lint:fix | logged $log
+    bun install
+    bun run check
+    bun run test:run
+    bun run lint:fix
   }
   log info "dashboard seems good to go too"
 
   log debug "running pre-commit hooks"
   try {
-    pre-commit run -a | logged $log
+    pre-commit run -a
   } catch {
-    pre-commit run -a | logged $log
+    pre-commit run -a
   }
 
   log info (
@@ -73,47 +65,73 @@ def stox-liquidity-check [log_file?: string] {
   )
 }
 
-export def run-captured [
-]: nothing -> record<passed: bool, output: string> {
-  let url = (git remote get-url origin)
-  let is_liquidity = (
-    $url | str contains "st0x.liquidity"
-  )
+def dotconfig-check [] {
+  log info "dotconfig checks"
 
-  if not $is_liquidity {
+  let repo_root = (git rev-parse --show-toplevel)
+  cd $repo_root
+
+  log debug "checking nix formatting"
+  nixfmt --check ...(glob "*.nix")
+
+  log debug "building nix flake"
+  darwin-rebuild build --flake $repo_root
+
+  log info "dotconfig passed the vibe check"
+}
+
+def detect-repo []: nothing -> string {
+  let url = (git remote get-url origin)
+  if ($url | str contains "st0x.liquidity") {
+    "liquidity"
+  } else if ($url | str contains "dotconfig") {
+    "dotconfig"
+  } else {
+    "unknown"
+  }
+}
+
+def run-check [] {
+  let repo = (detect-repo)
+
+  if $repo == "unknown" {
     error make {
       msg: $"Couldn't determine what checks to run in (pwd)"
     }
   }
 
-  let log_file = (mktemp --suffix .log)
+  match $repo {
+    "liquidity" => { stox-liquidity-check }
+    "dotconfig" => { dotconfig-check }
+  }
+}
+
+export def run-captured [
+]: nothing -> record<passed: bool, output: string> {
+  let repo = (detect-repo)
+
+  if $repo == "unknown" {
+    error make {
+      msg: $"Couldn't determine what checks to run in (pwd)"
+    }
+  }
 
   try {
-    stox-liquidity-check $log_file
-    rm -f $log_file
+    match $repo {
+      "liquidity" => { stox-liquidity-check }
+      "dotconfig" => { dotconfig-check }
+    }
     { passed: true, output: "" }
   } catch {|e|
     if ($e.msg | str contains "interrupt") {
-      rm -f $log_file
       error make --unspanned { msg: "interrupted" }
-    }
-    let captured = if ($log_file | path exists) {
-      open --raw $log_file | str trim
-    } else {
-      ""
     }
     let error_msg = if ($e | get -o rendered? | is-not-empty) {
       $e.rendered
     } else {
       $e.msg
     }
-    let output = if ($captured | is-not-empty) {
-      $captured
-    } else {
-      $error_msg
-    }
-    rm -f $log_file
-    { passed: false, output: $output }
+    { passed: false, output: $error_msg }
   }
 }
 
@@ -122,9 +140,12 @@ export def skill-issue []: nothing -> string {
 }
 
 export def run [] {
-  let result = (run-captured)
-  if not $result.passed {
-    print $result.output
+  try {
+    run-check
+  } catch {|e|
+    if ($e.msg | str contains "interrupt") {
+      error make --unspanned { msg: "interrupted" }
+    }
     let msg = ($skill_issues | get (random int 0..9))
     print $"\n(ansi red_bold)($msg)(ansi reset)\n"
   }
