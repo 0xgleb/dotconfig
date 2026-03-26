@@ -1,15 +1,8 @@
 {
   pkgs,
-  lib,
-  inputs,
   ...
 }:
 let
-  unstable = import inputs.nixpkgs-unstable {
-    system = pkgs.stdenv.hostPlatform.system;
-    config.allowUnfree = true;
-  };
-
   # User configuration (source of truth)
   user = {
     name = "0xgleb";
@@ -64,7 +57,6 @@ in
       gitui
       git-lfs
       git-extras
-      unstable.graphite-cli
 
       # Dev tools
       nodejs_24
@@ -72,10 +64,8 @@ in
       fswatch
 
       # # AI
-      # codex
-      ollama
       # opencode
-      unstable.claude-code
+      ollama
 
       # Nix tools
       nil
