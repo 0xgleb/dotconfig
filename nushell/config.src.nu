@@ -41,6 +41,7 @@ def --wrapped l [...args: string] {
 
 alias vi = nvim
 alias vim = nvim
+alias nix = nix --accept-flake-config
 
 def ask [question: string, context: closure] {
   print $"\nQ: ($question)?"
@@ -68,37 +69,33 @@ def ask [question: string, context: closure] {
 }
 
 $env.PROMPT_COMMAND = {||
-  let path = if $env.PWD == $nu.home-dir {
-    "~"
-  } else {
-    $env.PWD | path basename
+  let branch_result = do { git branch --show-current } | complete
+
+  if $branch_result.exit_code != 0 {
+    let path = if $env.PWD == $nu.home-dir { "~" } else { $env.PWD | path basename }
+    return $"($path) $ "
   }
 
-  let origin = do { git remote get-url origin } | complete
-  let name = if $origin.exit_code == 0 {
-    $origin.stdout | str trim | split row "/" | last | str replace ".git" ""
+  let branch_name = $branch_result.stdout | str trim
+  let branch_name = if $branch_name == "" {
+    (do { git rev-parse --short HEAD } | complete).stdout | str trim
   } else {
-    ""
+    $branch_name
   }
+
+  let rel_path = (do { git rev-parse --show-prefix } | complete).stdout | str trim
 
   if ("ZELLIJ" in $env) {
-    let branch = do { git branch --show-current } | complete
-    if $branch.exit_code == 0 and ($branch.stdout | str trim) != "" {
-      zellij action rename-tab $"($name):($branch.stdout | str trim)"
-    }
+    zellij action rename-tab $branch_name
   }
 
-  let repo_name = if $name != "" {
-    $"(ansi yellow)\(($name)\)(ansi reset) "
-  } else {
-    ""
-  }
+  let path_suffix = if $rel_path != "" { $":($rel_path)" } else { "" }
 
   let who = (whoami)
   if $who == "root" {
-    $"(ansi red_bold)ROOT(ansi reset) (ansi yellow)($repo_name)(ansi reset)($path) # "
+    $"(ansi red_bold)ROOT(ansi reset) (ansi cyan)($branch_name)($path_suffix)(ansi reset) # "
   } else {
-    $"(ansi cyan)($repo_name)(ansi reset)($path) > "
+    $"(ansi cyan)($branch_name)($path_suffix)(ansi reset) $ "
   }
 }
 
