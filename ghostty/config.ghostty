@@ -1,0 +1,14 @@
+theme = iTerm2 Default
+macos-option-as-alt = left
+clipboard-read = allow
+clipboard-write = allow
+
+# Unbind Ghostty defaults that conflict with Zellij Alt bindings
+keybind = alt+arrow_left=unbind
+keybind = alt+arrow_right=unbind
+keybind = super+alt+arrow_up=unbind
+keybind = super+alt+arrow_down=unbind
+keybind = super+alt+arrow_left=unbind
+keybind = super+alt+arrow_right=unbind
+keybind = ctrl+tab=unbind
+keybind = ctrl+shift+tab=unbind

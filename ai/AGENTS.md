@@ -223,12 +223,29 @@ options, or need something else from them:
 - STOP and make it clear you need input before proceeding
 
 **Work until done:** Don't stop until all tasks are complete or you need user
-input. Keep working through the task list autonomously.
+input. Keep working through the task list autonomously. Never stay idle when
+there are pending tasks you're not blocked on — check the task list and pick up
+the next one immediately.
 
-**Summarize skipped findings:** When told to verify a batch of findings or
-review comments, always provide a summary at the end listing what was skipped
-and why it wasn't valid. The user needs to see which suggestions were rejected
-and the reasoning, not just what was applied.
+**Exhaust options before dismissing.** When asked to do something, seriously
+consider every available tool and approach before claiming it can't or shouldn't
+be done. If the first approach has issues (e.g., violates composability), think
+about whether a different approach achieves the same goal without the tradeoff.
+Scripts, checks, assertions, test derivations — explore all of them before
+concluding "not feasible."
+
+**Verify-and-fix workflow:** When told to "verify each finding against the
+current code and only fix it if needed" (PR review feedback), follow this exact
+sequence:
+
+1. Create tasks for every finding upfront
+2. Work through all valid findings and fix them — do ALL the work first
+3. After ALL fixes are committed, provide a summary listing which findings were
+   invalid and explain WHY each one didn't need to be addressed
+
+Always give the invalid-findings list at the end, every time. Never skip it.
+Don't interrupt the fix workflow with validity assessments — do the work first,
+report at the end.
 
 ## Plan Adherence
 

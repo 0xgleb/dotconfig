@@ -1,9 +1,9 @@
-# Entrypoint for md-sync. Library functions are in md-sync-lib.nu
-# (concatenated by nix at build time via builtins.readFile)
-#
-# --config: override config file path (default: ~/.config/mdaemon.nuon)
-# --watch: after initial sync, watch for filesystem changes via fswatch
-# https://www.nushell.sh/book/custom_commands.html#flags
+# Background sync daemon for markdown vault.
+# Runs as a launchd service, not as part of the fj module.
+# Expects sync-lib.nu to be in the same directory.
+
+source sync-lib.nu
+
 const MAX_CONSECUTIVE_FAILURES = 10
 const BACKOFF_SECONDS = 30
 
