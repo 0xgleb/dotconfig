@@ -4,6 +4,7 @@
   self,
   inputs,
   userConfig,
+  aiUserConfig,
   ...
 }:
 {
@@ -12,7 +13,7 @@
   nix.enable = true;
   nix.package = pkgs.nix;
 
-  system.primaryUser = "0xgleb";
+  system.primaryUser = userConfig.name;
   system.stateVersion = 4;
   system.configurationRevision = self.rev or self.dirtyRev or null;
 
@@ -21,13 +22,27 @@
 
   ids.gids.nixbld = 350;
   environment.shells = [ pkgs.nushell ];
-  users.knownUsers = [ userConfig.name ];
+
+  users.knownUsers = [
+    userConfig.name
+    aiUserConfig.name
+  ];
   users.users."${userConfig.name}" = {
     uid = 501;
     home = userConfig.home;
     shell = pkgs.nushell;
   };
+  users.users."${aiUserConfig.name}" = {
+    uid = 502;
+    home = aiUserConfig.home;
+    shell = pkgs.nushell;
+    description = "AI tools sandbox user";
+  };
   users.users.root.shell = pkgs.nushell;
+
+  security.sudo.extraConfig = ''
+    ${userConfig.name} ALL=(${aiUserConfig.name}) NOPASSWD: SETENV: ALL
+  '';
 
   environment.systemPackages = with pkgs; [
     autojump
