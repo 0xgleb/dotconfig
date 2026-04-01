@@ -106,6 +106,10 @@ in
     carapace.enable = true;
     carapace.enableNushellIntegration = true;
 
+    # Starship — cross-shell prompt
+    starship.enable = true;
+    starship.enableNushellIntegration = true;
+
     # Zoxide — smart directory jumping
     zoxide.enable = true;
     zoxide.enableNushellIntegration = true;
