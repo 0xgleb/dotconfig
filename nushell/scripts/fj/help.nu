@@ -100,7 +100,7 @@ def overview [] {
     "  help [cmd]      show help"
     ""
     "GRAPHITE (gt)"
-    "  ss, create, sync, co, ls, ll, restack, absorb, ..."
+    "  ss, create, sync, co, ls, ll, restack, absorb, squash, ..."
     ""
     "GIT"
     "  diff, add, status, stash, push, pull, show, blame, branch,"

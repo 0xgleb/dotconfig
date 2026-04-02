@@ -50,6 +50,10 @@ def "test fj fold routes to gt" [] {
   assert equal (fj-route fold) { tool: "gt", args: ["fold"] }
 }
 
+def "test fj squash routes to gt" [] {
+  assert equal (fj-route squash) { tool: "gt", args: ["squash"] }
+}
+
 def "test fj log routes to git" [] {
   assert equal (fj-route log) { tool: "git", args: ["log"] }
 }

@@ -1,7 +1,7 @@
 # fj routing logic — returns { tool: string, args: list<string> }
 # Extracted for testability; mod.nu calls this then executes.
 
-const gt_commands = [create modify ss submit sync co checkout top bottom up down restack reorder move absorb rename ls ll init get guide demo feedback fold]
+const gt_commands = [create modify ss submit sync co checkout top bottom up down restack reorder move absorb rename ls ll init get guide demo feedback fold squash]
 
 const git_commands = [diff add status stash push pull show blame branch commit reset restore switch tag fetch rebase merge cherry-pick revert bisect remote submodule worktree clean log]
 
