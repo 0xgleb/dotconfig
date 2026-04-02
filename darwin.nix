@@ -31,6 +31,9 @@
 
   # macOS-specific packages
   environment.systemPackages = with pkgs; [
+    autojump
+    bat
+    bottom
     brave
     obsidian
     _1password-gui
@@ -60,6 +63,11 @@
       "karabiner-elements"
     ];
   };
+
+  fonts.packages = with pkgs; [
+    nerd-fonts.fira-mono
+    nerd-fonts.fira-code
+  ];
 
   # Ollama service for local LLM inference
   # TODO: add oneshot agent to pull models automatically (qwen3:32b)

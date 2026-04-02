@@ -113,8 +113,8 @@ epic-based format from st0x.liquidity/ROADMAP.md:
 - `## Not epic` section for unorganized items
 - `## Completed: <name>` sections at the bottom for done work
 
-Epics describe WHY the work matters, not just WHAT it is. Each epic has a
-short prose description of the goal before the task list.
+Epics describe WHY the work matters, not just WHAT it is. Each epic has a short
+prose description of the goal before the task list.
 
 **Maximize parallelizability.** Structure epics and tasks so independent work
 streams are visually obvious. Use mermaid graphs to show what can run in
@@ -189,8 +189,8 @@ user to approve/reject them as a bundle, which is disruptive and wasteful.
 similar heredoc constructs for commit messages or arguments — just pass the
 string directly with `-m "message"`. Overcomplicated shell constructs trigger
 manual approval prompts, block the workflow while the user isn't looking, and
-look terrible in logs. If a message doesn't fit in a simple `-m "..."`, it's
-too long.
+look terrible in logs. If a message doesn't fit in a simple `-m "..."`, it's too
+long.
 
 **Verify after state transitions.** After any command that changes state (`cd`,
 `git add`, `git checkout`, etc.), run a read-only verification command in a
@@ -509,10 +509,10 @@ git worktree remove .worktrees/feat/my-feature
 - Shared `.git` object store — no extra disk for history
 - `.worktrees/` is gitignored so worktree state is local-only
 
-**Submodules in worktrees:** Git worktrees don't share submodule checkouts.
-If a project has submodules (e.g., `lib/`), the worktree will have broken
-gitlinks. Fix by creating a **real directory** with individual symlinks inside
-(Git 2.45+ rejects symlinks in intermediate path components per CVE-2024-32002):
+**Submodules in worktrees:** Git worktrees don't share submodule checkouts. If a
+project has submodules (e.g., `lib/`), the worktree will have broken gitlinks.
+Fix by creating a **real directory** with individual symlinks inside (Git 2.45+
+rejects symlinks in intermediate path components per CVE-2024-32002):
 
 ```bash
 # From the worktree root (e.g., .worktrees/category/name/)
@@ -579,22 +579,30 @@ Managed declaratively via nix-doom-emacs-unstraightened. No `doom sync` — edit
 
 ## Notes Vault Organization
 
-The unified notes vault at `~/code/st0x/notes/` is automatically synced from multiple source repositories via the `syncNotes` launchd service. This allows Obsidian to index all markdown files in one fast vault instead of scanning multiple directories.
+The unified notes vault at `~/code/st0x/notes/` is automatically synced from
+multiple source repositories via the `syncNotes` launchd service. This allows
+Obsidian to index all markdown files in one fast vault instead of scanning
+multiple directories.
 
 ### Organizational Rules
 
 **Directory Structure by Source:**
+
 - `~/code/st0x/st0x.liquidity/` → `notes/liquidity/`
 - `~/code/st0x/st0x.issuance/` → `notes/issuance/`
-- `~/code/st0x/st0x.REPO/.worktrees/feat/name/` → `notes/name/` (repo name appended to files)
+- `~/code/st0x/st0x.REPO/.worktrees/feat/name/` → `notes/name/` (repo name
+  appended to files)
 - `~/.config/` → `notes/dotconfig/`
 
 **Naming Conventions:**
+
 - Main repos preserve directory structure: `docs/file.md` → `docs/file.md`
-- Worktree files include repo in filename: `docs/file.md` → `docs/file.liquidity.md`
+- Worktree files include repo in filename: `docs/file.md` →
+  `docs/file.liquidity.md`
 - Paths starting with `.` are converted: `.config` → `dotconfig`
 
 **Example Structure:**
+
 ```
 notes/
   liquidity/
@@ -613,6 +621,7 @@ notes/
 ```
 
 **Sync Behavior:**
+
 - Bidirectional: repos ↔ notes
 - Only syncs files with parity in source repositories
 - Files in notes without corresponding source files are never modified
@@ -620,6 +629,7 @@ notes/
 - Automatically triggered on file changes (via fswatch)
 
 **Service Details:**
+
 - Runs continuously via `launchd.user.agents.syncNotes`
 - Logs to `/tmp/sync-notes.out` (debug with `tail -f`)
 - Rebuilds applied with `darwin-rebuild switch --flake ~/.config`
