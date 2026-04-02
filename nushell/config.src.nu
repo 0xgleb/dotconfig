@@ -43,7 +43,7 @@ alias vi = nvim
 alias vim = nvim
 alias nix = nix --accept-flake-config
 
-def ask [question: string, context: closure] {
+def ask [context: closure, question: string] {
   print $"\nQ: ($question)?"
 
   let prompt = [
@@ -54,18 +54,43 @@ def ask [question: string, context: closure] {
     $"( do $context )"
     "---"
     "Response:"
-  ] | str join "\n\n"                                                                                                                                                   
+  ] | str join "\n\n"
 
   let response = (
-    claude -p $prompt 
-    | str trim 
-    | lines 
-    | where $it !~ "```" 
-    | str join "\n" 
+    claude -p $prompt
+    | str trim
+    | lines
+    | where $it !~ "```"
+    | str join "\n"
     | pbcopy
   )
 
   print $"\nA: (pbpaste)\n"
+}
+
+def fix [context: closure, prompt?: string] {
+  let result = do { do $context } | complete
+
+  if $result.exit_code == 0 {
+    print "Already passing, nothing to fix."
+    return
+  }
+
+  print $"Command failed with exit code ($result.exit_code), asking Claude to fix..."
+
+  let parts = [
+    "The following command failed. Fix the issue."
+    $"stdout:\n($result.stdout)"
+    $"stderr:\n($result.stderr)"
+  ]
+
+  let parts = if $prompt != null {
+    $parts | append $"Additional context: ($prompt)"
+  } else {
+    $parts
+  }
+
+  claude -p ($parts | str join "\n\n")
 }
 
 $env.PROMPT_COMMAND = {||
