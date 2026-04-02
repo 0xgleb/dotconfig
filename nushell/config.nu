@@ -40,29 +40,16 @@ def --wrapped l [...args: string] {
   ls -a ...$args
 }
 
-alias vi = nvim 
+alias vi = nvim
 alias vim = nvim
-
-# fj — unified git/graphite/gitui command
-# Routing logic duplicated in fj.nu for testability (see fj.test.nu)
-const gt_commands = [create modify ss submit sync co checkout top bottom up down restack reorder move absorb rename ls ll log init get guide demo feedback]
-
-def --wrapped fj [...args: string] {
-  if ($args | length) == 0 {
-    ^git status
-    ^gt ls
-  } else if $args.0 == "ui" {
-    ^gitui ...($args | skip 1)
-  } else if $args.0 == "pr" {
-    ^gh pr ...($args | skip 1)
-  } else if $args.0 == "mut" {
-    ^gt modify ...($args | skip 1)
-  } else if $args.0 in $gt_commands {
-    ^gt ...$args
-  } else {
-    ^git ...$args
-  }
-}
+def --wrapped jf [...args: string] { fj ...$args }
+def "jf check" [] { fj check }
+def --wrapped "jf issue" [...args: string] { fj issue ...$args }
+def --wrapped "jf pr" [...args: string] { fj pr ...$args }
+def --wrapped "jf md" [...args: string] { fj md ...$args }
+def "jf md plan" [--org: string, --vault: string, --config: string, --out: string, --verbose (-v)] { fj md plan --org $org --vault $vault --config $config --out $out --verbose=$verbose }
+def "jf md diff" [--plan: string, --org: string, --vault: string, --config: string, --stat] { fj md diff --plan $plan --org $org --vault $vault --config $config --stat=$stat }
+def "jf md sync" [--plan: string, --yes (-y)] { fj md sync --plan $plan --yes=$yes }
 
 # Prompt: closure called before each line
 # {|| } is a closure with no parameters
@@ -84,4 +71,4 @@ $env.PROMPT_COMMAND = {||
 $env.PROMPT_COMMAND_RIGHT = ""
 
 use scripts/fix-worktree-submodules.nu
-use scripts/devkit.nu *
+use scripts/fj/

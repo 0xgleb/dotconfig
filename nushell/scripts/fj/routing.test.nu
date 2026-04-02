@@ -1,6 +1,6 @@
 use std/assert
 
-source fj.nu
+source routing.nu
 
 # --- no args: status ---
 
@@ -26,6 +26,16 @@ def "test fj pr list routes to gh" [] {
 
 def "test fj pr view routes to gh" [] {
   assert equal (fj-route pr view 123) { tool: "gh", args: ["pr", "view", "123"] }
+}
+
+# --- issue: gh ---
+
+def "test fj issue list routes to gh" [] {
+  assert equal (fj-route issue list) { tool: "gh", args: ["issue", "list"] }
+}
+
+def "test fj issue create routes to gh" [] {
+  assert equal (fj-route ...[issue create -t "bug" -b "broken"]) { tool: "gh", args: ["issue", "create", "-t", "bug", "-b", "broken"] }
 }
 
 # --- mut: gt modify ---
