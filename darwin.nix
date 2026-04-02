@@ -50,11 +50,16 @@
       upgrade = true;
       cleanup = "uninstall";
     };
+    brews = [
+      "schpet/tap/linear"
+    ];
+
     casks = [
       "amethyst"
       "coderabbit"
       "font-jetbrains-mono-nerd-font"
       "karabiner-elements"
+      "linear-linear"
     ];
   };
 
