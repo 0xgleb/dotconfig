@@ -670,3 +670,8 @@ notes/
 - Runs continuously via `launchd.user.agents.syncNotes`
 - Logs to `/tmp/sync-notes.out` (debug with `tail -f`)
 - Rebuilds applied with `darwin-rebuild switch --flake ~/.config`
+
+## Personal Skills
+
+- For Linear work, use `/Users/0xgleb/.config/ai/skills/linear/SKILL.md`.
+- Default to read-only operations first, inspect `linear --help` before using unfamiliar commands, and treat `linear api` mutations as high-risk until the exact payload has been reviewed.
