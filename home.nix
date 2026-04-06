@@ -59,14 +59,15 @@ in
       configFile.source = ./nushell/config.src.nu;
       # configDir = nuDir;
 
-      plugins = with pkgs.nushellPlugins; [
-        polars
-        query
-      ];
+      # plugins = with pkgs.nushellPlugins; [
+      #   polars
+      #   query
+      # ];
     };
 
     git = {
       enable = true;
+      signing.format = "openpgp";
       settings = {
         user.name = "0xgleb";
         init.defaultBranch = "master";
@@ -89,11 +90,11 @@ in
         lua-language-server
         luarocks
         nil
-        nodePackages.svelte-language-server
-        nodePackages.typescript-language-server
         ripgrep
         rust-analyzer
+        svelte-language-server
         tree-sitter
+        typescript-language-server
       ];
     };
 
@@ -116,16 +117,16 @@ in
     direnv.nix-direnv.enable = true;
     direnv.config.global.hide_env_diff = true;
 
-    fzf.enable = true;
-    fzf.enableZshIntegration = true;
+    # fzf.enable = true;
+    # fzf.enableZshIntegration = true;
 
-    # Doom Emacs (managed by nix-doom-emacs-unstraightened)
-    doom-emacs = {
-      enable = true;
-      doomDir = ./doom;
-      emacs = if pkgs.stdenv.isDarwin then pkgs.emacs-macport else pkgs.emacs;
-    };
-
+    # # Doom Emacs (managed by nix-doom-emacs-unstraightened)
+    # doom-emacs = {
+    #   enable = true;
+    #   doomDir = ./doom;
+    #   emacs = if pkgs.stdenv.isDarwin then pkgs.emacs-macport else pkgs.emacs;
+    # };
+    #
     zsh =
       let
         zshCustom = pkgs.stdenv.mkDerivation {
