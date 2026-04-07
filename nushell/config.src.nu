@@ -69,19 +69,25 @@ def ask [context: closure, question: string] {
 }
 
 def fix [context: closure, prompt?: string] {
-  let result = do { do $context } | complete
+  do -i { do $context }
+  let exit_code = $env.LAST_EXIT_CODE
 
-  if $result.exit_code == 0 {
+  if $exit_code == 0 {
     print "Already passing, nothing to fix."
     return
   }
 
-  print $"Command failed with exit code ($result.exit_code), asking Claude to fix..."
+  print $"Command failed with exit code ($exit_code), re-running to capture output for Claude..."
+
+  do -i { do $context } out> /tmp/claude-fix-stdout err> /tmp/claude-fix-stderr
+
+  let stdout = try { open /tmp/claude-fix-stdout | into string } catch { "" }
+  let stderr = try { open /tmp/claude-fix-stderr | into string } catch { "" }
 
   let parts = [
     "The following command failed. Fix the issue."
-    $"stdout:\n($result.stdout)"
-    $"stderr:\n($result.stderr)"
+    $"stdout:\n($stdout)"
+    $"stderr:\n($stderr)"
   ]
 
   let parts = if $prompt != null {
