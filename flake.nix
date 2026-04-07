@@ -143,20 +143,25 @@
               tfDir="$flakeDir/darwwwin/terraform"
               sshKey="$HOME/.ssh/ralph_ed25519"
               dropletSize="''${1:-s-2vcpu-4gb}"
+
               cd "$tfDir"
               terraform init -upgrade
               terraform apply -var "droplet_size=$dropletSize" -auto-approve
+
               ip=$(terraform output -raw ip)
               echo "Waiting for SSH..."
+
               until ssh -i "$sshKey" \
                 -o ConnectTimeout=5 \
                 -o StrictHostKeyChecking=accept-new \
                 root@"$ip" true 2>/dev/null; do sleep 2; done
+
               echo "Installing NixOS..."
               nix run github:nix-community/nixos-anywhere -- \
                 --flake "$flakeDir#nixxxos" \
                 --ssh-option "IdentityFile=$sshKey" \
                 --target-host root@"$ip"
+
               echo "Done! ssh -i $sshKey 0xgleb@$ip"
             '';
           };
@@ -208,9 +213,7 @@
           fj-workflow =
             pkgs.runCommand "fj-workflow-test"
               {
-                nativeBuildInputs = with pkgs; [
-                  nushell
-                ];
+                nativeBuildInputs = with pkgs; [ nushell ];
               }
               ''
                 cp ${./nushell/scripts/fj/workflow.test.nu} workflow.test.nu

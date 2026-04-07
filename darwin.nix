@@ -1,12 +1,4 @@
-{
-  pkgs,
-  lib,
-  self,
-  inputs,
-  userConfig,
-  ...
-}:
-{
+{ pkgs, lib, self, inputs, userConfig, ... }: {
   networking.hostName = "darwwwin";
 
   nix.enable = true;
@@ -50,9 +42,7 @@
       upgrade = true;
       cleanup = "uninstall";
     };
-    brews = [
-      "schpet/tap/linear"
-    ];
+    brews = [ "schpet/tap/linear" ];
 
     casks = [
       "amethyst"
@@ -63,10 +53,7 @@
     ];
   };
 
-  fonts.packages = with pkgs; [
-    nerd-fonts.fira-mono
-    nerd-fonts.fira-code
-  ];
+  fonts.packages = with pkgs; [ nerd-fonts.fira-mono nerd-fonts.fira-code ];
 
   launchd = {
     user.envVariables.XDG_CONFIG_HOME = "${userConfig.home}/.config";

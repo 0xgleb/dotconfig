@@ -1,15 +1,11 @@
-{
-  pkgs,
-  ...
-}:
+{ pkgs, ... }:
 let
   # User configuration (source of truth)
   user = {
     name = "0xgleb";
     home = "/Users/0xgleb";
   };
-in
-{
+in {
   # Export for use in other modules
   _module.args.userConfig = user;
 
@@ -20,10 +16,7 @@ in
     # etc."nushell/config.nu".source = ./nushell/config.nu;
     # etc."nushell/env.nu".source = ./nushell/env.nu;
     # etc."nushell/fix-worktree-submodules.nu".source = ./nushell/fix-worktree-submodules.nu;
-    shells = [
-      pkgs.zsh
-      pkgs.nushell
-    ];
+    shells = [ pkgs.zsh pkgs.nushell ];
 
     variables.EDITOR = "nvim";
     shellAliases = {
@@ -83,6 +76,7 @@ in
     experimental-features = "nix-command flakes";
     trusted-users = [ "0xgleb" ];
     substituters = [ "https://cache.nixos.org" ];
-    trusted-public-keys = [ "cache.nixos.org-1:6NCHdD59X431o0gWypbMrAURkbJ16ZPMQFGspcDShjY=" ];
+    trusted-public-keys =
+      [ "cache.nixos.org-1:6NCHdD59X431o0gWypbMrAURkbJ16ZPMQFGspcDShjY=" ];
   };
 }
