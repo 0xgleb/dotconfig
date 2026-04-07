@@ -54,6 +54,10 @@ def "test fj squash routes to gt" [] {
   assert equal (fj-route squash) { tool: "gt", args: ["squash"] }
 }
 
+def "test fj untrack routes to gt" [] {
+  assert equal (fj-route ...[untrack 03-14-nvim_life]) { tool: "gt", args: ["untrack", "03-14-nvim_life"] }
+}
+
 def "test fj log routes to git" [] {
   assert equal (fj-route log) { tool: "git", args: ["log"] }
 }

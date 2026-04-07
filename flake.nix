@@ -246,6 +246,8 @@
               '';
         };
 
+      formatter.aarch64-darwin = (import nixpkgs { system = "aarch64-darwin"; }).nixfmt;
+
       # Expose package set for convenience
       darwinPackages = self.darwinConfigurations.darwwwin.pkgs;
     };

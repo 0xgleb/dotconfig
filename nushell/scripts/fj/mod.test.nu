@@ -46,6 +46,12 @@ def "test fj ls does not error as unknown" [] {
   }
 }
 
+def "test fj untrack does not error as unknown" [] {
+  try { fj untrack test-branch } catch {|e|
+    assert (not ($e.msg | str contains "unknown fj command")) "fj untrack should route to gt, not error as unknown"
+  }
+}
+
 # --- test runner ---
 
 def main [] {

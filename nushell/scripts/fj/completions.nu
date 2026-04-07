@@ -19,6 +19,7 @@ def fj-subcommands [] {
     { value: "log", description: "gt log" }
     { value: "restack", description: "gt restack" }
     { value: "absorb", description: "gt absorb" }
+    { value: "untrack", description: "gt untrack branch" }
     { value: "fold", description: "gt fold" }
     { value: "squash", description: "gt squash" }
     { value: "diff", description: "git diff" }
