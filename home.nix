@@ -111,13 +111,12 @@ in {
     # fzf.enable = true;
     # fzf.enableZshIntegration = true;
 
-    # # Doom Emacs (managed by nix-doom-emacs-unstraightened)
-    # doom-emacs = {
-    #   enable = true;
-    #   doomDir = ./doom;
-    #   emacs = if pkgs.stdenv.isDarwin then pkgs.emacs-macport else pkgs.emacs;
-    # };
-    #
+    # Doom Emacs (managed by nix-doom-emacs-unstraightened)
+    doom-emacs = {
+      enable = true;
+      doomDir = ./doom;
+      emacs = if pkgs.stdenv.isDarwin then pkgs.emacs-macport else pkgs.emacs;
+    };
     zsh = let
       zshCustom = pkgs.stdenv.mkDerivation {
         name = "zsh-custom";

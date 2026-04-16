@@ -30,6 +30,19 @@ export def --wrapped main [...args: string@fj-complete] {
   }
 }
 
+# resolve a merge conflict — take ours or theirs, then stage
+export def take [
+  version: string    # "ours" or "theirs"
+  path: string       # file with conflict
+] {
+  if $version not-in ["ours" "theirs"] {
+    error make --unspanned { msg: $"version must be 'ours' or 'theirs', got '($version)'" }
+  }
+  ^git checkout $"--($version)" -- $path
+  ^git add $path
+  print $"(ansi green)resolved(ansi reset) ($path) -> ($version)"
+}
+
 # run repo-specific checks (auto-unfucks first)
 export def check [] {
   unfuck run

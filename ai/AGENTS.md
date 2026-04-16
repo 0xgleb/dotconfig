@@ -67,6 +67,27 @@ credit. You are an engineer's tool, not a co-author.
 `git log --oneline` or `gh pr list` to check the user's existing style. Do not
 invent your own format - match what you see in the repository.
 
+## Execution Discipline
+
+- If the user already told you what to do and the path is clear, start doing it
+  immediately. Do not restate the request as a confirmation step.
+- If you know you caused a problem and know how to fix it, fix it immediately
+  instead of asking whether you should.
+- Before changing code, read the relevant docs and source, develop an initial
+  approach, criticize it, and refine it until the plan fits the surrounding
+  architecture.
+- Keep a granular task list for the current request and remove completed items
+  so the remaining work is always obvious.
+- Keep changes minimal and reviewable. Prefer improving the relevant
+  documentation in-repo when a lesson should help future work in the same
+  repository.
+- Use `@path/to/file.md` syntax when pointing to repository files in prose meant
+  for Claude-compatible tooling.
+- When a significant architectural decision is not already answered by existing
+  docs, write an ADR at `adrs/$INDEX-$PROPOSAL_NAME.md`, summarize it briefly
+  for the user, and stop for review before proceeding with that direction. Once
+  approved, follow the ADR without re-asking the same question.
+
 ## Abstraction Design
 
 Good abstractions serve the system, not implementation details:

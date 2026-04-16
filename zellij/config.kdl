@@ -296,10 +296,10 @@ stacked_resize false
 // 
 // default_cwd "/tmp"
 
-// The name of the default layout to load on startup
-// Default: "default"
-// 
-default_layout "wayout"
+// // The name of the default layout to load on startup
+// // Default: "default"
+// // 
+// default_layout "wayout"
  
 // The folder in which Zellij will look for layouts
 // (Requires restart)

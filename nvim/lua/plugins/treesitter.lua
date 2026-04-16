@@ -1,15 +1,16 @@
-if true then return {} end -- WARN: REMOVE THIS LINE TO ACTIVATE THIS FILE
-
--- Customize Treesitter
-
 ---@type LazySpec
 return {
-  "nvim-treesitter/nvim-treesitter",
-  opts = {
-    ensure_installed = {
-      "lua",
-      "vim",
-      -- add more arguments for adding more treesitter parsers
+  {
+    "nvim-treesitter/nvim-treesitter",
+    opts = {
+      highlight = { enable = false },
+    },
+  },
+  {
+    "folke/snacks.nvim",
+    opts = {
+      indent = { enabled = false },
+      scope = { enabled = false },
     },
   },
 }

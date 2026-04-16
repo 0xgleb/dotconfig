@@ -49,6 +49,14 @@ const command_help = {
       --yes (-y)             skip confirmation
     fj md                    plan + diff + apply in one step"
 
+  take: "fj take <ours|theirs> <path> — resolve a merge conflict
+
+  Checks out the chosen version of a conflicted file and stages it.
+
+  EXAMPLES
+    fj take ours src/lib.rs
+    fj take theirs SPEC.md"
+
   ui: "fj ui — launch gitui"
 
   mut: "fj mut [-a] — gt modify
@@ -95,6 +103,7 @@ def overview [] {
     "  md diff         show diffs for planned changes"
     "  md sync         apply sync plan"
     "  md              plan + diff + apply"
+    "  take <v> <path> resolve conflict (ours/theirs) and stage"
     "  ui              gitui"
     "  mut [-a]        gt modify"
     "  help [cmd]      show help"

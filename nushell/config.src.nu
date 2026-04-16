@@ -100,33 +100,27 @@ def fix [context: closure, prompt?: string] {
 }
 
 $env.PROMPT_COMMAND = {||
+  let path = if $env.PWD == $nu.home-dir { "~" } else { $env.PWD | path basename }
   let branch_result = do { git branch --show-current } | complete
 
-  if $branch_result.exit_code != 0 {
-    let path = if $env.PWD == $nu.home-dir { "~" } else { $env.PWD | path basename }
-    return $"($path) $ "
+  if $branch_result.exit_code == 0 {
+    let branch_name = $branch_result.stdout | str trim
+    let branch_name = if $branch_name == "" {
+      (do { git rev-parse --short HEAD } | complete).stdout | str trim
+    } else {
+      $branch_name
+    }
+
+    if ("ZELLIJ" in $env) {
+      zellij action rename-tab $branch_name
+    }
   }
-
-  let branch_name = $branch_result.stdout | str trim
-  let branch_name = if $branch_name == "" {
-    (do { git rev-parse --short HEAD } | complete).stdout | str trim
-  } else {
-    $branch_name
-  }
-
-  let rel_path = (do { git rev-parse --show-prefix } | complete).stdout | str trim
-
-  if ("ZELLIJ" in $env) {
-    zellij action rename-tab $branch_name
-  }
-
-  let path_suffix = if $rel_path != "" { $":($rel_path)" } else { "" }
 
   let who = (whoami)
   if $who == "root" {
-    $"(ansi red_bold)ROOT(ansi reset) (ansi cyan)($branch_name)($path_suffix)(ansi reset) # "
+    $"(ansi red_bold)ROOT(ansi reset) ($path) # "
   } else {
-    $"(ansi cyan)($branch_name)($path_suffix)(ansi reset) $ "
+    $"($path) $ "
   }
 }
 
