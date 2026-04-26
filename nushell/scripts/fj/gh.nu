@@ -11,7 +11,7 @@ def format-issue-view [data: record] {
     $"author: ($data.author.login)"
     $"issue: #($data.number)"
     $"state: ($state)"
-    $"created: ($data.createdAt)"($labels)
+    $"created: ($data.createdAt)($labels)"
     "---"
     ""
     $"# ($data.title)"
@@ -37,7 +37,7 @@ def format-pr-view [data: record] {
     $"state: ($state)"
     $"branch: ($data.headRefName) -> ($data.baseRefName)"
     $"created: ($data.createdAt)"
-    $"+($data.additions) -($data.deletions) across ($data.changedFiles) files"($labels)($reviews)
+    $"+($data.additions) -($data.deletions) across ($data.changedFiles) files($labels)($reviews)"
     "---"
     ""
     $"# ($data.title)"

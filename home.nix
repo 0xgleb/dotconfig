@@ -74,6 +74,8 @@ in {
 
     neovim = {
       enable = true;
+      withRuby = false;
+      withPython3 = false;
       extraPackages = with pkgs; [
         fd
         gcc
