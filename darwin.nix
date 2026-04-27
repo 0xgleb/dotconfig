@@ -50,6 +50,7 @@
       "font-jetbrains-mono-nerd-font"
       "karabiner-elements"
       "linear-linear"
+      "tailscale-app"
     ];
   };
 
