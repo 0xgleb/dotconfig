@@ -49,6 +49,16 @@ const command_help = {
       --yes (-y)             skip confirmation
     fj md                    plan + diff + apply in one step"
 
+  infra: "fj infra — infrastructure management
+
+SUBCOMMANDS
+  fj infra consequences   terraform plan (auto-init, decrypts tfvars)
+  fj infra enact          terraform apply (auto-init, decrypts tfvars)
+  fj infra edit vars      decrypt tfvars, open in $EDITOR, re-encrypt
+
+Secrets managed via rage. Identity: ~/.ssh/nixxxos_ed25519.
+All commands run from ~/.config/infra/."
+
   take: "fj take <ours|theirs> <path> — resolve a merge conflict
 
   Checks out the chosen version of a conflicted file and stages it.
@@ -103,6 +113,9 @@ def overview [] {
     "  md diff         show diffs for planned changes"
     "  md sync         apply sync plan"
     "  md              plan + diff + apply"
+    "  infra consequences  terraform plan"
+    "  infra enact         terraform apply"
+    "  infra edit vars     edit encrypted tfvars"
     "  take <v> <path> resolve conflict (ours/theirs) and stage"
     "  ui              gitui"
     "  mut [-a]        gt modify"

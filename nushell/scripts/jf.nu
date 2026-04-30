@@ -33,6 +33,12 @@ export def "pr view" [
   fj pr view $id --web=$web --comments=$comments
 }
 
+export def "infra consequences" [] { fj infra consequences }
+
+export def "infra enact" [] { fj infra enact }
+
+export def "infra edit vars" [] { fj infra edit vars }
+
 export def md [] { fj md }
 
 export def "md plan" [

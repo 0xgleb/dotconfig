@@ -8,6 +8,7 @@ def fj-subcommands [] {
     { value: "issue", description: "gh issue" }
     { value: "pr", description: "gh pr" }
     { value: "md", description: "Markdown vault sync" }
+    { value: "infra", description: "Infrastructure (terraform)" }
     { value: "ui", description: "gitui" }
     { value: "mut", description: "gt modify" }
     { value: "ss", description: "gt submit stack" }

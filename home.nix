@@ -1,40 +1,55 @@
-{ pkgs, inputs, config, ... }:
+{
+  pkgs,
+  lib,
+  inputs,
+  config,
+  ...
+}:
 
 let
-  nuConfigDir = if pkgs.stdenv.isDarwin && !config.xdg.enable then
-    "Library/Application Support/nushell"
-  else
-    "${config.xdg.configHome}/nushell";
+  isDarwin = pkgs.stdenv.isDarwin;
+  nuConfigDir =
+    if isDarwin && !config.xdg.enable then
+      "Library/Application Support/nushell"
+    else
+      "${config.xdg.configHome}/nushell";
 
-in {
+  darwinFiles = {
+    ".config/nushell/config.nu".source =
+      config.lib.file.mkOutOfStoreSymlink "${config.home.homeDirectory}/Library/Application Support/nushell/config.nu";
+    ".config/nushell/env.nu".source =
+      config.lib.file.mkOutOfStoreSymlink "${config.home.homeDirectory}/Library/Application Support/nushell/env.nu";
+    "Library/Application Support/com.mitchellh.ghostty/config.ghostty".source =
+      ./ghostty/config.ghostty;
+  };
+
+in
+{
   home = {
     username = "0xgleb";
     stateVersion = "24.05";
 
-    packages = let
-      unstable = import inputs.nixpkgs-unstable {
-        system = pkgs.stdenv.hostPlatform.system;
-        config.allowUnfree = true;
-      };
+    packages =
+      let
+        unstable = import inputs.nixpkgs-unstable {
+          system = pkgs.stdenv.hostPlatform.system;
+          config.allowUnfree = true;
+        };
 
-    in with pkgs; [
-      cargo-watch
-      ghostty-bin
-      unstable.graphite-cli
+      in
+      (with pkgs; [
+        cargo-watch
+        unstable.graphite-cli
 
-      unstable.codex
-      unstable.claude-code
-    ];
+        unstable.codex
+        unstable.claude-code
+      ]);
 
     shell.enableNushellIntegration = true;
-    file."${nuConfigDir}/scripts".source = ./nushell/scripts;
-    file.".config/nushell/config.nu".source =
-      config.lib.file.mkOutOfStoreSymlink
-      "${config.home.homeDirectory}/Library/Application Support/nushell/config.nu";
-    file.".config/nushell/env.nu".source = config.lib.file.mkOutOfStoreSymlink
-      "${config.home.homeDirectory}/Library/Application Support/nushell/env.nu";
-    file."Library/Application Support/com.mitchellh.ghostty/config.ghostty".source =
-      ./ghostty/config.ghostty;
+    file = {
+      "${nuConfigDir}/scripts".source = ./nushell/scripts;
+    }
+    // lib.optionalAttrs isDarwin darwinFiles;
   };
 
   # NOTE: this shit doesn't clean up after itself if you enable/disable it
@@ -74,6 +89,8 @@ in {
 
     neovim = {
       enable = true;
+      withRuby = false;
+      withPython3 = false;
       extraPackages = with pkgs; [
         fd
         gcc
@@ -117,34 +134,36 @@ in {
       doomDir = ./doom;
       emacs = if pkgs.stdenv.isDarwin then pkgs.emacs-macport else pkgs.emacs;
     };
-    zsh = let
-      zshCustom = pkgs.stdenv.mkDerivation {
-        name = "zsh-custom";
-        src = ./.;
-        installPhase = ''
-          mkdir -p $out/themes
-          cp ./hyperzsh.zsh-theme $out/themes/
+    zsh =
+      let
+        zshCustom = pkgs.stdenv.mkDerivation {
+          name = "zsh-custom";
+          src = ./.;
+          installPhase = ''
+            mkdir -p $out/themes
+            cp ./hyperzsh.zsh-theme $out/themes/
+          '';
+        };
+
+      in
+      {
+        enable = true;
+        oh-my-zsh = {
+          enable = true;
+          custom = "${zshCustom}";
+          theme = "hyperzsh";
+          plugins = [ "autojump" ];
+        };
+
+        dotDir = "${config.xdg.configHome}/.zsh";
+
+        initContent = ''
+          PROMPT='%{$fg[cyan]%}%c %{$reset_color%}➜ '
+          export PATH="$PATH:/opt/homebrew/bin"
+          set -o vi
+          fastfetch
+          eval "$(gt completion --shell zsh)"
         '';
       };
-
-    in {
-      enable = true;
-      oh-my-zsh = {
-        enable = true;
-        custom = "${zshCustom}";
-        theme = "hyperzsh";
-        plugins = [ "autojump" ];
-      };
-
-      dotDir = "${config.xdg.configHome}/.zsh";
-
-      initContent = ''
-        PROMPT='%{$fg[cyan]%}%c %{$reset_color%}➜ '
-        export PATH="$PATH:/opt/homebrew/bin"
-        set -o vi
-        fastfetch
-        eval "$(gt completion --shell zsh)"
-      '';
-    };
   };
 }
