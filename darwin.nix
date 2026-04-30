@@ -1,49 +1,56 @@
-{ pkgs, lib, self, inputs, userConfig, ... }: {
+{
+  pkgs,
+  self,
+  userConfig,
+  ...
+}:
+{
+  system = {
+    primaryUser = "0xgleb";
+    stateVersion = 4;
+    configurationRevision = self.rev or self.dirtyRev or null;
+  };
+
   networking.hostName = "darwwwin";
 
   nix.enable = true;
   nix.package = pkgs.nix;
 
-  system.primaryUser = "0xgleb";
-  system.stateVersion = 4;
-  system.configurationRevision = self.rev or self.dirtyRev or null;
-
   nixpkgs.hostPlatform = "aarch64-darwin";
   nixpkgs.config.allowUnfree = true;
 
   ids.gids.nixbld = 350;
-  environment.shells = [ pkgs.nushell ];
-  users.knownUsers = [ userConfig.name ];
-  users.users."${userConfig.name}" = {
-    uid = 501;
-    home = userConfig.home;
-    shell = pkgs.nushell;
-  };
-  users.users.root.shell = pkgs.nushell;
 
+  users = {
+    knownUsers = [ userConfig.name ];
+    users = {
+      root.shell = pkgs.nushell;
+
+      "${userConfig.name}" = {
+        uid = 501;
+        home = userConfig.home;
+        shell = pkgs.nushell;
+      };
+    };
+  };
+
+  environment.shells = [ pkgs.nushell ];
   environment.systemPackages = with pkgs; [
-    autojump
+    _1password-gui
     bat
-    lua
     bottom
     brave
+    lua
     obsidian
-    # ghostty
-    _1password-gui
     rsync
-    self.packages.aarch64-darwin.mdup
+    terraform
   ];
 
   # Homebrew for GUI apps that don't work well with Nix on macOS
   homebrew = {
     enable = true;
-    onActivation = {
-      autoUpdate = true;
-      upgrade = true;
-      cleanup = "uninstall";
-    };
-    brews = [ "schpet/tap/linear" ];
 
+    brews = [ "schpet/tap/linear" ];
     casks = [
       "amethyst"
       "coderabbit"
@@ -51,9 +58,18 @@
       "karabiner-elements"
       "linear-linear"
     ];
+
+    onActivation = {
+      autoUpdate = true;
+      upgrade = true;
+      cleanup = "uninstall";
+    };
   };
 
-  fonts.packages = with pkgs; [ nerd-fonts.fira-mono nerd-fonts.fira-code ];
+  fonts.packages = with pkgs.nerd-fonts; [
+    fira-mono
+    fira-code
+  ];
 
   launchd = {
     user.envVariables.XDG_CONFIG_HOME = "${userConfig.home}/.config";

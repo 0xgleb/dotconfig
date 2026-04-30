@@ -43,6 +43,11 @@ alias vi = nvim
 alias vim = nvim
 alias nix = nix --accept-flake-config
 
+def evolve [] {
+  print "root priviliges might be used during the rebuild"
+  sudo darwin-rebuild switch -v --flake $"($env.HOME)/.config"
+}
+
 def ask [context: closure, question: string] {
   print $"\nQ: ($question)?"
 

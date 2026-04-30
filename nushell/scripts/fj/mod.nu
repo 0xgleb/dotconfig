@@ -6,6 +6,7 @@ use completions.nu [fj-complete issue-complete pr-complete]
 use gh.nu
 use help.nu
 export use md/
+export use infra/
 
 # unified dev command — run `fj help` for details
 export def --wrapped main [...args: string@fj-complete] {
