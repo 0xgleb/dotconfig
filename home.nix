@@ -101,8 +101,25 @@ in
         ripgrep
         rust-analyzer
         svelte-language-server
-        tree-sitter
         typescript-language-server
+      ];
+      plugins = with pkgs.vimPlugins; [
+        (nvim-treesitter.withPlugins (grammars: [
+          grammars.bash
+          grammars.html
+          grammars.css
+          grammars.javascript
+          grammars.json
+          grammars.lua
+          grammars.markdown
+          grammars.markdown_inline
+          grammars.nix
+          grammars.rust
+          grammars.svelte
+          grammars.toml
+          grammars.typescript
+          grammars.yaml
+        ]))
       ];
     };
 
