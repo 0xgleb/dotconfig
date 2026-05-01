@@ -7,6 +7,7 @@
 }:
 
 let
+  jf = import ./nushell/jf.nix { inherit pkgs; };
   isDarwin = pkgs.stdenv.isDarwin;
   nuConfigDir =
     if isDarwin && !config.xdg.enable then
@@ -43,6 +44,8 @@ in
 
         unstable.codex
         unstable.claude-code
+
+        jf
       ]);
 
     shell.enableNushellIntegration = true;

@@ -92,7 +92,43 @@ def "test fj blame routes to git" [] {
   assert equal (fj-route ...[blame src/main.rs]) { tool: "git", args: ["blame", "src/main.rs"] }
 }
 
-# --- unknown commands error ---
+# --- internal commands ---
+
+def "test fj check routes to check" [] {
+  assert equal (fj-route check) { tool: "check", args: [] }
+}
+
+def "test fj unfuck routes to unfuck" [] {
+  assert equal (fj-route unfuck) { tool: "unfuck", args: [] }
+}
+
+def "test fj take routes to take" [] {
+  assert equal (fj-route ...[take ours src/lib.rs]) { tool: "take", args: ["ours", "src/lib.rs"] }
+}
+
+def "test fj issue routes to issue" [] {
+  assert equal (fj-route issue) { tool: "issue", args: [] }
+}
+
+def "test fj issue list routes to issue with list" [] {
+  assert equal (fj-route ...[issue list --label bug]) { tool: "issue", args: ["list", "--label", "bug"] }
+}
+
+def "test fj pr routes to pr" [] {
+  assert equal (fj-route pr) { tool: "pr", args: [] }
+}
+
+def "test fj pr view routes to pr with view" [] {
+  assert equal (fj-route ...[pr view 42]) { tool: "pr", args: ["view", "42"] }
+}
+
+def "test fj md routes to md" [] {
+  assert equal (fj-route ...[md plan --verbose]) { tool: "md", args: ["plan", "--verbose"] }
+}
+
+def "test fj infra routes to infra" [] {
+  assert equal (fj-route ...[infra consequences]) { tool: "infra", args: ["consequences"] }
+}
 
 def "test fj do routes to do" [] {
   assert equal (fj-route do) { tool: "do", args: [] }
