@@ -79,17 +79,23 @@ HTTPS. SSH only via Tailscale.
 ### Provision and deploy
 
 ```bash
-# 1. Spin up the droplet + install NixOS + join Tailscale
-TS_AUTHKEY=tskey-auth-... nixxxos-up -i ~/.ssh/st0x-op
+# 1. Plan infrastructure changes
+tf-plan -i ~/.ssh/st0x-op
 
-# 2. SSH in via Tailscale and authenticate Claude Code (one-time)
+# 2. Apply -- creates the DO droplet
+tf-apply -i ~/.ssh/st0x-op -auto-approve
+
+# 3. Bootstrap -- installs NixOS via nixos-anywhere, joins Tailscale
+TS_AUTHKEY=tskey-auth-... nixxxos-bootstrap -i ~/.ssh/st0x-op
+
+# 4. SSH in via Tailscale and authenticate Claude Code (one-time)
 ssh -i ~/.ssh/st0x-op 0xgleb@<tailnet-ip>
 claude auth login
 
-# 3. Start the remote control service
+# 5. Start the remote control service
 sudo systemctl start claude-remote-control
 
-# 4. Open claude.ai/code -- the session "nixxxos" appears in the list
+# 6. Open claude.ai/code -- the session "nixxxos" appears in the list
 ```
 
 ### Manage
@@ -105,13 +111,15 @@ systemctl status claude-remote-control
 journalctl -u claude-remote-control -f
 
 # Tear down
-nixxxos-down -i ~/.ssh/st0x-op
+tf-destroy -i ~/.ssh/st0x-op
 ```
 
 ### How it works
 
-- `nixxxos-up` runs terraform to create a DO droplet, then `nixos-anywhere` to
-  install NixOS from `flake.nix#nixxxos`, then joins the Tailscale network
+- `tf-plan` / `tf-apply` provision the DO droplet via terraform
+- `nixxxos-bootstrap` runs `nixos-anywhere` to install NixOS from
+  `flake.nix#nixxxos`, waits for the host to come back, and joins the Tailscale
+  network if `TS_AUTHKEY` is set
 - `nixos.nix` defines a `claude-remote-control` systemd service that runs
   `claude remote-control --name nixxxos --spawn worktree` as user `0xgleb`
 - Remote control is outbound-only (no inbound ports needed) -- Anthropic's API

@@ -59,6 +59,28 @@ in
     '';
   };
 
+  tfApply = writeNushellApplication {
+    name = "tf-apply";
+    runtimeInputs = infraInputs;
+    text = ''
+      ${infraPreamble}
+      def --wrapped main [--identity (-i): path, ...rest: string] {
+        with-infra $identity { ^terraform apply -var-file=terraform.tfvars ...$rest }
+      }
+    '';
+  };
+
+  tfDestroy = writeNushellApplication {
+    name = "tf-destroy";
+    runtimeInputs = infraInputs;
+    text = ''
+      ${infraPreamble}
+      def main [--identity (-i): path] {
+        with-infra $identity { ^terraform destroy -var-file=terraform.tfvars -auto-approve }
+      }
+    '';
+  };
+
   tfEditVars = writeNushellApplication {
     name = "tf-edit-vars";
     runtimeInputs = infraInputs;
@@ -79,24 +101,18 @@ in
     '';
   };
 
-  nixxxosUp = writeNushellApplication {
-    name = "nixxxos-up";
+  bootstrap = writeNushellApplication {
+    name = "nixxxos-bootstrap";
     runtimeInputs = infraInputs ++ [ pkgs.openssh ];
     text = ''
-      ${infraPreamble}
-      def main [--identity (-i): path, droplet_size: string = "s-2vcpu-4gb"] {
-        with-infra $identity {
-          ^terraform apply -var-file=terraform.tfvars -var $"droplet_size=($droplet_size)" -auto-approve
-        }
-
+      def main [--identity (-i): path] {
         cd $"($env.HOME)/.config/infra"
-        let ssh_key = $identity
-        let flake_dir = $"($env.HOME)/.config"
         let ip = (^terraform output -raw ip | str trim)
-        print "Waiting for SSH..."
+        let flake_dir = $"($env.HOME)/.config"
 
+        print $"Waiting for SSH on ($ip)..."
         loop {
-          let result = (do { ^ssh -i $ssh_key -o ConnectTimeout=5 -o StrictHostKeyChecking=accept-new $"root@($ip)" true } | complete)
+          let result = (do { ^ssh -i $identity -o ConnectTimeout=5 -o StrictHostKeyChecking=accept-new $"root@($ip)" true } | complete)
           if $result.exit_code == 0 { break }
           sleep 2sec
         }
@@ -104,36 +120,31 @@ in
         print "Installing NixOS..."
         (^nix run github:nix-community/nixos-anywhere --
           --flake $"($flake_dir)#nixxxos"
-          --ssh-option $"IdentityFile=($ssh_key)"
+          --ssh-option $"IdentityFile=($identity)"
           --target-host $"root@($ip)")
+
+        print "Waiting for host to come back..."
+        loop {
+          let result = (do { ^ssh -i $identity -o ConnectTimeout=5 -o StrictHostKeyChecking=accept-new $"root@($ip)" true } | complete)
+          if $result.exit_code == 0 { break }
+          sleep 5sec
+        }
 
         let ts_authkey = ($env.TS_AUTHKEY? | default "")
         if $ts_authkey != "" {
           print "Joining tailnet..."
-          ^ssh -i $ssh_key -o StrictHostKeyChecking=accept-new $"root@($ip)" $"tailscale up --auth-key=($ts_authkey) --hostname=nixxxos"
-          let tailnet_ip = (^ssh -i $ssh_key $"root@($ip)" "tailscale ip -4" | str trim)
+          ^ssh -i $identity $"root@($ip)" $"tailscale up --auth-key=($ts_authkey) --hostname=nixxxos"
+          let tailnet_ip = (^ssh -i $identity $"root@($ip)" "tailscale ip -4" | str trim)
           print $"Tailnet IP: ($tailnet_ip)"
           print ""
           print "Next: SSH in and authenticate Claude Code for remote control:"
-          print $"  ssh -i ($ssh_key) 0xgleb@($tailnet_ip)"
+          print $"  ssh -i <key> 0xgleb@($tailnet_ip)"
           print "  claude auth login"
-          print "  systemctl --user enable --now claude-remote-control"
+          print "  sudo systemctl start claude-remote-control"
         } else {
-          print $"Done! ssh -i ($ssh_key) 0xgleb@($ip)"
           print "WARNING: No TS_AUTHKEY set. Port 22 is closed by default."
-          print "Set TS_AUTHKEY to join a tailnet for SSH access."
+          print "Set TS_AUTHKEY env var to join a tailnet for SSH access."
         }
-      }
-    '';
-  };
-
-  nixxxosDown = writeNushellApplication {
-    name = "nixxxos-down";
-    runtimeInputs = infraInputs;
-    text = ''
-      ${infraPreamble}
-      def main [--identity (-i): path] {
-        with-infra $identity { ^terraform destroy -var-file=terraform.tfvars -auto-approve }
       }
     '';
   };
