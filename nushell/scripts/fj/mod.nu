@@ -7,6 +7,7 @@ use gh.nu
 use help.nu
 export use md/
 export use infra/
+export use genie/
 
 # unified dev command — run `fj help` for details
 export def --wrapped main [...args: string@fj-complete] {
@@ -14,12 +15,61 @@ export def --wrapped main [...args: string@fj-complete] {
   match $route.tool {
     "status" => {
       ^git status
-      ^gt ls -a
+      try { ^gt ls -a }
     }
     "gitui" => { ^gitui ...$route.args }
     "gt" => { ^gt ...$route.args }
     "git" => { ^git ...$route.args }
     "do" => { workflow run }
+    "check" => {
+      unfuck run
+      check run
+    }
+    "unfuck" => { unfuck run }
+    "take" => {
+      let version = ($route.args | get 0)
+      let path = ($route.args | get 1)
+      if $version not-in ["ours" "theirs"] {
+        error make --unspanned { msg: $"version must be 'ours' or 'theirs', got '($version)'" }
+      }
+      ^git checkout $"--($version)" -- $path
+      ^git add $path
+      print $"(ansi green)resolved(ansi reset) ($path) -> ($version)"
+    }
+    "issue" => {
+      if ($route.args | is-empty) {
+        ^gh issue
+      } else if $route.args.0 == "list" {
+        ^gh issue list ...($route.args | skip 1)
+      } else if $route.args.0 == "view" {
+        let view_args = ($route.args | skip 1)
+        let web = ("--web" in $view_args) or ("-w" in $view_args)
+        let comments = ("--comments" in $view_args) or ("-c" in $view_args)
+        let id = ($view_args | where { $in not-in ["--web" "-w" "--comments" "-c"] } | first)
+        gh issue-view $id --web=$web --comments=$comments
+      } else {
+        ^gh issue ...$route.args
+      }
+    }
+    "pr" => {
+      if ($route.args | is-empty) {
+        ^gh pr
+      } else if $route.args.0 == "list" {
+        ^gh pr list ...($route.args | skip 1)
+      } else if $route.args.0 == "view" {
+        let view_args = ($route.args | skip 1)
+        let web = ("--web" in $view_args) or ("-w" in $view_args)
+        let comments = ("--comments" in $view_args) or ("-c" in $view_args)
+        let positional = ($view_args | where { $in not-in ["--web" "-w" "--comments" "-c"] })
+        let id = if ($positional | is-empty) { null } else { $positional | first }
+        gh pr-view $id --web=$web --comments=$comments
+      } else {
+        ^gh pr ...$route.args
+      }
+    }
+    "md" => { fj md ...$route.args }
+    "infra" => { fj infra ...$route.args }
+    "genie" => { fj genie ...$route.args }
     "help" => {
       let topic = if ($route.args | is-empty) { null } else { $route.args | first }
       help show $topic

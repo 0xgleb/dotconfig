@@ -64,6 +64,61 @@ Config lives at `~/.config/mdaemon.nuon`:
 { vault: "~/code/notes", orgs: ["~/code/st0x"] }
 ```
 
+## Remote Claude Code
+
+On-demand DigitalOcean instance running Claude Code with remote control, accessible
+from claude.ai/code or the mobile app. Zero public ports -- all traffic is outbound
+HTTPS. SSH only via Tailscale.
+
+### Prerequisites
+
+- SSH keypair at `~/.ssh/nixxxos_ed25519` (all tools default to this)
+- DigitalOcean API token encrypted in `infra/terraform.tfvars.age`
+- Tailscale auth key (generate at https://login.tailscale.com/admin/settings/keys)
+
+### Commands
+
+All via `fj genie` (or `jf genie`):
+
+| Command                | Purpose                                             |
+| ---------------------- | --------------------------------------------------- |
+| `fj genie`             | Show instance status (IP, tailnet, service)         |
+| `fj genie bottle`      | Plan infrastructure (saves plan file)               |
+| `fj genie bottle open` | Apply saved plan (creates the DO droplet)           |
+| `fj genie bootstrap`   | Install NixOS via nixos-anywhere, join Tailscale    |
+| `fj genie talk`        | SSH in + attach to zellij session with Claude Code  |
+| `fj genie murder`      | Destroy the instance                                |
+
+### First-time setup
+
+```bash
+fj genie bottle
+fj genie bottle open
+TS_AUTHKEY=tskey-auth-... fj genie bootstrap
+
+# one-time: authenticate claude code
+ssh 0xgleb@<tailnet-ip>
+claude auth login
+sudo systemctl start claude-remote-control
+```
+
+After that, `fj genie talk` to connect.
+
+### How it works
+
+- `fj genie bottle` runs `terraform plan -out` with encrypted vars, saving a
+  plan file; `bottle open` applies it
+- `fj genie bootstrap` runs `nixos-anywhere` to install NixOS from
+  `flake.nix#nixxxos`, waits for the host, and joins Tailscale if `TS_AUTHKEY`
+  is set
+- `fj genie talk` SSHes via Tailscale and attaches to a named zellij session
+- `nixos.nix` defines a `claude-remote-control` systemd service that runs
+  `claude remote-control --name nixxxos --spawn worktree` as user `0xgleb`
+- Remote control is outbound-only (no inbound ports) -- Anthropic's API relays
+  between the local process and claude.ai/code or the mobile app
+- Zero public ports; SSH only via `tailscale0` trusted interface
+- `linger = true` keeps the service alive without an active login session
+
 ## Build
 
 ```bash

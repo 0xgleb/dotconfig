@@ -78,12 +78,16 @@
         ];
       };
 
-      packages.aarch64-darwin = import ./packages.nix {
-        pkgs = import nixpkgs {
-          system = "aarch64-darwin";
-          config.allowUnfree = true;
+      packages.aarch64-darwin =
+        let
+          pkgs = import nixpkgs {
+            system = "aarch64-darwin";
+            config.allowUnfree = true;
+          };
+        in
+        {
+          jf = import ./nushell/jf.nix { inherit pkgs; };
         };
-      };
 
       checks.aarch64-darwin =
         let

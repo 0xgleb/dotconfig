@@ -7,10 +7,10 @@ def with-temp-dir [block: closure] {
   let dir = (mktemp -d)
   try {
     do $block $dir
-  } catch {|e|
-    print -e $"TEST ERROR: ($e.msg)"
+  } catch {|error|
+    print -e $"TEST ERROR: ($error.msg)"
     rm -rf $dir
-    error make { msg: $e.msg }
+    error make { msg: $error.msg }
   }
   rm -rf $dir
 }
@@ -181,10 +181,10 @@ def "test apply creates new files from plan" [] {
     let targets = [{ name: "test-repo", path: $repo }]
     let actions = (compute-actions $targets $notes)
 
-    $actions | where action == "create" | each {|a|
-      let parent = ($a.destination | path dirname)
+    $actions | where action == "create" | each {|action|
+      let parent = ($action.destination | path dirname)
       mkdir $parent
-      atomic-cp $a.source $a.destination
+      atomic-cp $action.source $action.destination
     }
 
     assert ($"($notes)/test-repo/README.md" | path exists)
@@ -208,8 +208,8 @@ def "test apply forward copies repo to vault" [] {
     let targets = [{ name: "test-repo", path: $repo }]
     let actions = (compute-actions $targets $"($dir)/notes")
 
-    $actions | where action == "forward" | each {|a|
-      atomic-cp $a.source $a.destination
+    $actions | where action == "forward" | each {|action|
+      atomic-cp $action.source $action.destination
     }
 
     assert equal (open --raw $"($notes_dir)/README.md") "new from repo"
@@ -232,8 +232,8 @@ def "test apply reverse copies vault to repo" [] {
     let targets = [{ name: "test-repo", path: $repo }]
     let actions = (compute-actions $targets $"($dir)/notes")
 
-    $actions | where action == "reverse" | each {|a|
-      atomic-cp $a.destination $a.source
+    $actions | where action == "reverse" | each {|action|
+      atomic-cp $action.destination $action.source
     }
 
     assert equal (open --raw $"($repo)/README.md") "new from vault"
@@ -488,8 +488,8 @@ def "test md-files skips symlinks" [] {
     git -C $repo commit -m "init"
 
     let files = (md-files $repo)
-    assert ($files | any {|f| $f == "README.md" })
-    assert (not ($files | any {|f| $f == "LINK.md" }))
+    assert ($files | any {|file| $file == "README.md" })
+    assert (not ($files | any {|file| $file == "LINK.md" }))
   }
 }
 

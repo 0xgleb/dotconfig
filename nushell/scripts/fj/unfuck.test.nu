@@ -6,9 +6,9 @@ def with-temp-dir [block: closure] {
   let dir = (mktemp -d)
   try {
     do $block $dir
-  } catch {|e|
+  } catch {|error|
     rm -rf $dir
-    error make { msg: $e.msg }
+    error make { msg: $error.msg }
   }
   rm -rf $dir
 }
@@ -35,7 +35,7 @@ def "test detect-issues finds broken submodules in worktree" [] {
 
     cd $wt
     let issues = (detect-issues)
-    assert ($issues | any {|i| $i.action == "fix-submodules" }) "should detect broken submodules"
+    assert ($issues | any {|issue| $issue.action == "fix-submodules" }) "should detect broken submodules"
   }
 }
 
@@ -60,7 +60,7 @@ def "test detect-issues clean worktree with symlinks has no submodule issue" [] 
 
     cd $wt
     let issues = (detect-issues)
-    assert (not ($issues | any {|i| $i.action == "fix-submodules" })) "should not flag fixed submodules"
+    assert (not ($issues | any {|issue| $issue.action == "fix-submodules" })) "should not flag fixed submodules"
   }
 }
 
@@ -99,7 +99,7 @@ def "test detect-issues detects typechanged files" [] {
 
     cd $repo
     let issues = (detect-issues)
-    assert ($issues | any {|i| ($i.action | str starts-with "restore-symlink:") }) "should detect typechanged file"
+    assert ($issues | any {|issue| ($issue.action | str starts-with "restore-symlink:") }) "should detect typechanged file"
   }
 }
 

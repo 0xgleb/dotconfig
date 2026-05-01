@@ -10,7 +10,7 @@ export def load-config [path: string] {
   let config = (open $config_path)
   {
     vault: ($config.vault | path expand)
-    orgs: ($config.orgs | each {|o| $o | path expand })
+    orgs: ($config.orgs | each {|org| $org | path expand })
   }
 }
 
@@ -66,8 +66,8 @@ export def build-all-targets [config: record] {
   $config.orgs | each {|org|
     let org_name = ($org | path basename)
     let targets = (build-targets $org $config.vault)
-    $targets | each {|t|
-      { name: $"($org_name)/($t.name)", path: $t.path }
+    $targets | each {|target|
+      { name: $"($org_name)/($target.name)", path: $target.path }
     }
   } | flatten
 }
@@ -185,9 +185,9 @@ export def sync-repo [repo_path: string, repo_name: string, notes_root: string] 
     try {
       sync-file $source $destination $repo_name $note_file
       null
-    } catch {|e|
-      log error $"($repo_name)/($note_file): ($e.msg)"
-      $e.msg
+    } catch {|error|
+      log error $"($repo_name)/($note_file): ($error.msg)"
+      $error.msg
     }
   } | compact)
 
@@ -204,8 +204,8 @@ export def sync-all [targets: table<name: string, path: string>, notes_root: str
     try {
       sync-repo $target.path $target.name $notes_root
       null
-    } catch {|e|
-      log error $"repo ($target.name) failed: ($e.msg)"
+    } catch {|error|
+      log error $"repo ($target.name) failed: ($error.msg)"
       $target.name
     }
   } | compact)

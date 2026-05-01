@@ -1,5 +1,32 @@
 # Roadmap
 
+## Remote Claude Code instances
+
+On-demand provisioned cloud instances running Claude Code with remote control
+enabled, controllable from the web app or mobile app without SSH. Enables
+background work streams while away from the laptop or working on higher-priority
+tasks.
+
+Security is non-negotiable — no unauthorized access. If Tailscale is needed to
+avoid exposing ports, use it. If remote control makes SSH and open ports
+unnecessary, skip them entirely.
+
+```mermaid
+graph LR
+  A[provision instance] --> B[claude code systemd service]
+  B --> C[remote control access]
+  A --> D[security: tailscale or zero ports]
+  D --> C
+```
+
+- [ ] Terraform config to provision a DigitalOcean instance on demand
+- [ ] NixOS config for the instance with Claude Code installed
+- [ ] systemd service running Claude Code with remote control enabled
+- [ ] Determine security model: Tailscale VPN vs zero exposed ports vs other
+- [ ] `fj infra` subcommands to spin up/down instances
+- [ ] Verify remote control works from web app and mobile app
+- [ ] #41 — add Tailscale as homebrew cask (if needed for VPN mesh)
+
 ## Obsidian notes syncing
 
 Bidirectional sync between st0x source repos and a unified Obsidian vault so all

@@ -17,7 +17,7 @@ def fj-subcommands [] {
     { value: "co", description: "gt checkout" }
     { value: "ls", description: "gt ls (stack)" }
     { value: "ll", description: "gt ll (stack detail)" }
-    { value: "log", description: "gt log" }
+    { value: "log", description: "gt log --oneline --stat" }
     { value: "restack", description: "gt restack" }
     { value: "absorb", description: "gt absorb" }
     { value: "untrack", description: "gt untrack branch" }

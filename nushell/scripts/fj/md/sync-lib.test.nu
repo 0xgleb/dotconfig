@@ -120,8 +120,8 @@ def "test guard-empty-overwrite rejects empty overwrite" [] {
     try {
       guard-empty-overwrite $newer $older
       assert false "should have errored"
-    } catch {|e|
-      assert ($e.msg | str contains "refusing to overwrite")
+    } catch {|error|
+      assert ($error.msg | str contains "refusing to overwrite")
     }
   }
 }
@@ -132,9 +132,9 @@ def with-temp-dir [block: closure] {
   let dir = (mktemp -d)
   try {
     do $block $dir
-  } catch {|e|
+  } catch {|error|
     rm -rf $dir
-    error make { msg: $e.msg }
+    error make { msg: $error.msg }
   }
   rm -rf $dir
 }
@@ -184,8 +184,8 @@ def "test sync-file rejects empty overwriting non-empty" [] {
     try {
       sync-file $src $dst "test-repo" "src.md"
       assert false "should have errored"
-    } catch {|e|
-      assert ($e.msg | str contains "refusing to overwrite")
+    } catch {|error|
+      assert ($error.msg | str contains "refusing to overwrite")
     }
     assert equal (open --raw $dst) $original
   }
@@ -215,8 +215,8 @@ def "test md-files finds committed md files" [] {
     git -C $dir add -A
     git -C $dir commit -m "init"
     let files = (md-files $dir)
-    assert ($files | any {|f| $f == "README.md" })
-    assert (not ($files | any {|f| $f == "main.rs" }))
+    assert ($files | any {|file| $file == "README.md" })
+    assert (not ($files | any {|file| $file == "main.rs" }))
   }
 }
 
@@ -229,8 +229,8 @@ def "test md-files finds .local files" [] {
     mkdir $"($dir)/.local/prompts"
     "prompt content" | save $"($dir)/.local/prompts/01-setup.md"
     let files = (md-files $dir)
-    assert ($files | any {|f| $f == "README.md" })
-    assert ($files | any {|f| $f == ".local/prompts/01-setup.md" })
+    assert ($files | any {|file| $file == "README.md" })
+    assert ($files | any {|file| $file == ".local/prompts/01-setup.md" })
   }
 }
 

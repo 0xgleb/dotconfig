@@ -133,4 +133,5 @@ $env.PROMPT_COMMAND_RIGHT = ""
 
 
 use scripts/fj/
-use scripts/jf.nu
+alias f = fj
+alias j = fj
