@@ -12,6 +12,7 @@ let
     installPhase = ''
       mkdir -p $out/fj
       cp -r $src/* $out/fj/
+      chmod -R u+w $out
       find $out -name '*.test.nu' -delete
     '';
   };
