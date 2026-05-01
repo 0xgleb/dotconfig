@@ -64,6 +64,63 @@ Config lives at `~/.config/mdaemon.nuon`:
 { vault: "~/code/notes", orgs: ["~/code/st0x"] }
 ```
 
+## Remote Claude Code
+
+On-demand DigitalOcean instance running Claude Code with remote control, accessible
+from claude.ai/code or the mobile app. Zero public ports -- all traffic is outbound
+HTTPS. SSH only via Tailscale.
+
+### Prerequisites
+
+- DigitalOcean API token encrypted in `infra/terraform.tfvars.age`
+- SSH key matching `keys.nix` (e.g. `~/.ssh/st0x-op`)
+- Tailscale auth key (generate at https://login.tailscale.com/admin/settings/keys)
+
+### Provision and deploy
+
+```bash
+# 1. Spin up the droplet + install NixOS + join Tailscale
+TS_AUTHKEY=tskey-auth-... nixxxos-up -i ~/.ssh/st0x-op
+
+# 2. SSH in via Tailscale and authenticate Claude Code (one-time)
+ssh -i ~/.ssh/st0x-op 0xgleb@<tailnet-ip>
+claude auth login
+
+# 3. Start the remote control service
+sudo systemctl start claude-remote-control
+
+# 4. Open claude.ai/code -- the session "nixxxos" appears in the list
+```
+
+### Manage
+
+```bash
+# SSH in (via Tailscale only, port 22 is not public)
+ssh -i ~/.ssh/st0x-op 0xgleb@<tailnet-ip>
+
+# Check service status
+systemctl status claude-remote-control
+
+# View logs
+journalctl -u claude-remote-control -f
+
+# Tear down
+nixxxos-down -i ~/.ssh/st0x-op
+```
+
+### How it works
+
+- `nixxxos-up` runs terraform to create a DO droplet, then `nixos-anywhere` to
+  install NixOS from `flake.nix#nixxxos`, then joins the Tailscale network
+- `nixos.nix` defines a `claude-remote-control` systemd service that runs
+  `claude remote-control --name nixxxos --spawn worktree` as user `0xgleb`
+- Remote control is outbound-only (no inbound ports needed) -- Anthropic's API
+  relays messages between the local process and claude.ai/code or the mobile app
+- The firewall exposes zero public ports; SSH is only accessible via the
+  `tailscale0` trusted interface
+- `linger = true` on the user account keeps the service alive without an active
+  login session
+
 ## Build
 
 ```bash
