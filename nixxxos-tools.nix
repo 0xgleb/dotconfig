@@ -35,11 +35,10 @@ let
   ];
 
   infraPreamble = ''
-    def with-infra [action: closure] {
+    def with-infra [identity: path, action: closure] {
       cd $"($env.HOME)/.config/infra"
       if not (".terraform" | path exists) { ^terraform init }
 
-      let identity = $"($env.HOME)/.ssh/nixxxos_ed25519"
       ^rage -d -i $identity -o terraform.tfvars terraform.tfvars.age
 
       let failed = (try { do $action; false } catch { true })
@@ -54,8 +53,8 @@ in
     runtimeInputs = infraInputs;
     text = ''
       ${infraPreamble}
-      def --wrapped main [...rest: string] {
-        with-infra { ^terraform plan -var-file=terraform.tfvars ...$rest }
+      def --wrapped main [--identity (-i): path, ...rest: string] {
+        with-infra $identity { ^terraform plan -var-file=terraform.tfvars ...$rest }
       }
     '';
   };
@@ -64,9 +63,8 @@ in
     name = "tf-edit-vars";
     runtimeInputs = infraInputs;
     text = ''
-      def main [] {
+      def main [--identity (-i): path] {
         cd $"($env.HOME)/.config/infra"
-        let identity = $"($env.HOME)/.ssh/nixxxos_ed25519"
         let keys_file = $"($env.HOME)/.config/keys.nix"
 
         ^rage -d -i $identity -o terraform.tfvars terraform.tfvars.age
@@ -86,13 +84,13 @@ in
     runtimeInputs = infraInputs ++ [ pkgs.openssh ];
     text = ''
       ${infraPreamble}
-      def main [droplet_size: string = "s-2vcpu-4gb"] {
-        with-infra {
+      def main [--identity (-i): path, droplet_size: string = "s-2vcpu-4gb"] {
+        with-infra $identity {
           ^terraform apply -var-file=terraform.tfvars -var $"droplet_size=($droplet_size)" -auto-approve
         }
 
         cd $"($env.HOME)/.config/infra"
-        let ssh_key = $"($env.HOME)/.ssh/nixxxos_ed25519"
+        let ssh_key = $identity
         let flake_dir = $"($env.HOME)/.config"
         let ip = (^terraform output -raw ip | str trim)
         print "Waiting for SSH..."
@@ -114,11 +112,16 @@ in
           print "Joining tailnet..."
           ^ssh -i $ssh_key -o StrictHostKeyChecking=accept-new $"root@($ip)" $"tailscale up --auth-key=($ts_authkey) --hostname=nixxxos"
           let tailnet_ip = (^ssh -i $ssh_key $"root@($ip)" "tailscale ip -4" | str trim)
-          print $"Done! Tailnet IP: ($tailnet_ip)"
-          print $"ssh -i ($ssh_key) 0xgleb@($tailnet_ip)"
+          print $"Tailnet IP: ($tailnet_ip)"
+          print ""
+          print "Next: SSH in and authenticate Claude Code for remote control:"
+          print $"  ssh -i ($ssh_key) 0xgleb@($tailnet_ip)"
+          print "  claude auth login"
+          print "  systemctl --user enable --now claude-remote-control"
         } else {
           print $"Done! ssh -i ($ssh_key) 0xgleb@($ip)"
-          print "Run 'sudo tailscale up' on the box to join a tailnet."
+          print "WARNING: No TS_AUTHKEY set. Port 22 is closed by default."
+          print "Set TS_AUTHKEY to join a tailnet for SSH access."
         }
       }
     '';
@@ -129,8 +132,8 @@ in
     runtimeInputs = infraInputs;
     text = ''
       ${infraPreamble}
-      def main [] {
-        with-infra { ^terraform destroy -var-file=terraform.tfvars -auto-approve }
+      def main [--identity (-i): path] {
+        with-infra $identity { ^terraform destroy -var-file=terraform.tfvars -auto-approve }
       }
     '';
   };

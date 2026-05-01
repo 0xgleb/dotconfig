@@ -599,9 +599,9 @@ Nix flake managing two targets from a single repo:
 | `flake.nix`        | Flake definition, system configs, helper scripts             |
 | `common.nix`       | Shared packages and settings (both platforms)                |
 | `darwin.nix`       | macOS-specific: homebrew, GUI apps, hostname                 |
-| `nixos.nix`        | NixOS-specific: SSH, firewall, users                         |
+| `nixos.nix`        | NixOS-specific: SSH, firewall, users, systemd services       |
 | `digitalocean.nix` | Disk/boot config for DO droplets                             |
-| `home.nix`         | Home Manager: zsh, git, doom-emacs, zellij, fzf, direnv      |
+| `home.nix`         | Home Manager: shared user env (both platforms)               |
 | `doom/`            | Doom Emacs config (managed by nix-doom-emacs-unstraightened) |
 | `zellij/`          | Terminal multiplexer config                                  |
 | `karabiner/`       | Keyboard remapping (caps lock → ctrl/esc)                    |
@@ -634,6 +634,18 @@ Managed declaratively via nix-doom-emacs-unstraightened. No `doom sync` — edit
 - Shared (both platforms): `common.nix`
 - macOS only: `darwin.nix`
 - NixOS only: `nixos.nix`
+
+### Platform boundary rules
+
+`home.nix` is **shared** between Darwin and NixOS. It must not contain
+platform-specific services, systemd units, launchd agents, or anything that only
+makes sense on one platform. Platform-specific config goes in the
+platform-specific file:
+
+- **systemd services** → `nixos.nix` (NixOS only; Darwin doesn't have systemd)
+- **launchd agents/daemons** → `darwin.nix` (macOS only)
+- **homebrew casks/brews** → `darwin.nix`
+- **NixOS-only packages** → `nixos.nix`
 
 ## Notes Vault Organization
 
