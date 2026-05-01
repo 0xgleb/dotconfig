@@ -91,7 +91,7 @@ export def run [] {
   }
 
   print $"found ($issues | length) thing\(s) to unfuck:"
-  $issues | each {|i| print $"  - ($i.description)" }
+  $issues | each {|issue| print $"  - ($issue.description)" }
   print ""
 
   for issue in $issues {

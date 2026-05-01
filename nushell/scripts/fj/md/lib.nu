@@ -235,7 +235,7 @@ export def run-plan [--org: string, --vault: string, --config: string, --out: st
   let plan_path = if $out != null { $out } else { ($DEFAULT_PLAN_PATH | path expand) }
 
   print $"vault:   ($notes_root)"
-  print $"orgs:    ($resolved.orgs | each {|o| $o | path basename } | str join ', ')"
+  print $"orgs:    ($resolved.orgs | each {|org| $org | path basename } | str join ', ')"
   print $"targets: ($targets | length) \(($targets | get name | str join ', '))"
   print ""
 
@@ -256,7 +256,7 @@ export def run-plan [--org: string, --vault: string, --config: string, --out: st
     return
   }
 
-  $actions | each {|a| print (format-action $a) }
+  $actions | each {|action| print (format-action $action) }
   print ""
   print-summary $actions
   print $"Plan saved to: ($plan_path)"
@@ -271,7 +271,7 @@ export def run-diff [--plan: string, --org: string, --vault: string, --config: s
   }
 
   if $stat {
-    $actions | each {|a| print (format-action $a) }
+    $actions | each {|action| print (format-action $action) }
     print ""
     print-summary $actions
     return
@@ -280,9 +280,9 @@ export def run-diff [--plan: string, --org: string, --vault: string, --config: s
   let tmp = (mktemp -d)
   let diff_file = $"($tmp)/diff.patch"
 
-  let parts = ($actions | each {|a|
-    let header = (format-action $a)
-    let diff_text = (action-diff $a)
+  let parts = ($actions | each {|action|
+    let header = (format-action $action)
+    let diff_text = (action-diff $action)
     $"($header)\n($diff_text)"
   })
 
@@ -319,23 +319,23 @@ export def run-apply [--plan: string, --yes (-y)] {
   print $"($actions | length) action\(s) to apply"
   print ""
 
-  let drifted = ($actions | each {|a|
-    let source_ok = if ($a.source | path exists) {
-      (file-hash $a.source) == $a.source_hash
+  let drifted = ($actions | each {|action|
+    let source_ok = if ($action.source | path exists) {
+      (file-hash $action.source) == $action.source_hash
     } else {
-      $a.action != "reverse"
+      $action.action != "reverse"
     }
 
-    let dest_ok = if $a.destination_hash == null {
-      not ($a.destination | path exists)
-    } else if ($a.destination | path exists) {
-      (file-hash $a.destination) == $a.destination_hash
+    let dest_ok = if $action.destination_hash == null {
+      not ($action.destination | path exists)
+    } else if ($action.destination | path exists) {
+      (file-hash $action.destination) == $action.destination_hash
     } else {
       false
     }
 
     if (not $source_ok) or (not $dest_ok) {
-      $a
+      $action
     } else {
       null
     }
@@ -343,8 +343,8 @@ export def run-apply [--plan: string, --yes (-y)] {
 
   if ($drifted | length) > 0 {
     print $"(ansi red)Drift detected! ($drifted | length) file\(s) changed since plan was created:(ansi reset)"
-    $drifted | each {|a|
-      print $"  ! ($a.repo_name)/($a.note_file)"
+    $drifted | each {|action|
+      print $"  ! ($action.repo_name)/($action.note_file)"
     }
     print ""
     print "Re-run `fj md plan` to generate a fresh plan."
@@ -385,11 +385,11 @@ export def run-apply [--plan: string, --yes (-y)] {
         }
       }
       "ok"
-    } catch {|e|
-      let detail = if ($e | get -o rendered? | is-not-empty) {
-        $e.rendered
+    } catch {|error|
+      let detail = if ($error | get -o rendered? | is-not-empty) {
+        $error.rendered
       } else {
-        $e.msg
+        $error.msg
       }
       print -e $"  (ansi red)ERROR(ansi reset) ($label):"
       print -e $"    ($detail)"

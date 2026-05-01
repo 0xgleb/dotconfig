@@ -17,38 +17,38 @@ def "test fj module exports all subcommands" [] {
 # --- unknown commands must error, not fall through ---
 
 def "test fj help does not error" [] {
-  try { fj help } catch {|e|
-    assert (not ($e.msg | str contains "unknown fj command")) "fj help should not error as unknown"
+  try { fj help } catch {|error|
+    assert (not ($error.msg | str contains "unknown fj command")) "fj help should not error as unknown"
   }
 }
 
 def "test fj rejects yolo" [] {
-  try { fj yolo; assert false "fj yolo should have errored" } catch {|e| assert ($e.msg | str contains "unknown fj command") }
+  try { fj yolo; assert false "fj yolo should have errored" } catch {|error| assert ($error.msg | str contains "unknown fj command") }
 }
 
 def "test fj rejects foo" [] {
-  try { fj foo; assert false "fj foo should have errored" } catch {|e| assert ($e.msg | str contains "unknown fj command") }
+  try { fj foo; assert false "fj foo should have errored" } catch {|error| assert ($error.msg | str contains "unknown fj command") }
 }
 
 # --- whitelisted git commands must route (not error as unknown) ---
 
 def "test fj diff does not error as unknown" [] {
-  try { fj diff --stat } catch {|e|
-    assert (not ($e.msg | str contains "unknown fj command")) "fj diff should route to git, not error as unknown"
+  try { fj diff --stat } catch {|error|
+    assert (not ($error.msg | str contains "unknown fj command")) "fj diff should route to git, not error as unknown"
   }
 }
 
 # --- graphite commands must route (not error as unknown) ---
 
 def "test fj ls does not error as unknown" [] {
-  try { fj ls } catch {|e|
-    assert (not ($e.msg | str contains "unknown fj command")) "fj ls should route to gt, not error as unknown"
+  try { fj ls } catch {|error|
+    assert (not ($error.msg | str contains "unknown fj command")) "fj ls should route to gt, not error as unknown"
   }
 }
 
 def "test fj untrack does not error as unknown" [] {
-  try { fj untrack test-branch } catch {|e|
-    assert (not ($e.msg | str contains "unknown fj command")) "fj untrack should route to gt, not error as unknown"
+  try { fj untrack test-branch } catch {|error|
+    assert (not ($error.msg | str contains "unknown fj command")) "fj untrack should route to gt, not error as unknown"
   }
 }
 

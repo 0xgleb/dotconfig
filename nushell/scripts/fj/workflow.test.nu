@@ -102,8 +102,8 @@ def main [] {
     | get name)
 
   let test_commands = ($tests
-    | each {|t|
-      $"($t); print '  ok ($t)'"
+    | each {|test_name|
+      $"($test_name); print '  ok ($test_name)'"
     }
     | str join "; ")
 

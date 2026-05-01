@@ -1,17 +1,29 @@
 # jf — typo-tolerant alias for fj
 # Must be loaded AFTER `use scripts/fj/`
 
-export def --wrapped main [...args: string] { fj ...$args }
+export def --wrapped main [...args: string] {
+  fj ...$args
+}
 
-export def check [] { fj check }
+export def check [] {
+  fj check
+}
 
-export def unfuck [] { fj unfuck }
+export def unfuck [] {
+  fj unfuck
+}
 
-export def "do" [] { fj "do" }
+export def "do" [] {
+  fj "do"
+}
 
-export def --wrapped issue [...args: string] { fj issue ...$args }
+export def --wrapped issue [...args: string] {
+  fj issue ...$args
+}
 
-export def --wrapped "issue list" [...args: string] { fj issue list ...$args }
+export def --wrapped "issue list" [...args: string] {
+  fj issue list ...$args
+}
 
 export def "issue view" [
   id: string
@@ -21,9 +33,13 @@ export def "issue view" [
   fj issue view $id --web=$web --comments=$comments
 }
 
-export def --wrapped pr [...args: string] { fj pr ...$args }
+export def --wrapped pr [...args: string] {
+  fj pr ...$args
+}
 
-export def --wrapped "pr list" [...args: string] { fj pr list ...$args }
+export def --wrapped "pr list" [...args: string] {
+  fj pr list ...$args
+}
 
 export def "pr view" [
   id?: string
@@ -33,13 +49,21 @@ export def "pr view" [
   fj pr view $id --web=$web --comments=$comments
 }
 
-export def "infra consequences" [] { fj infra consequences }
+export def "infra consequences" [] {
+  fj infra consequences
+}
 
-export def "infra enact" [] { fj infra enact }
+export def "infra enact" [] {
+  fj infra enact
+}
 
-export def "infra edit vars" [] { fj infra edit vars }
+export def "infra edit vars" [] {
+  fj infra edit vars
+}
 
-export def md [] { fj md }
+export def md [] {
+  fj md
+}
 
 export def "md plan" [
   --org: string

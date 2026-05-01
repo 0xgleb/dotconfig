@@ -26,7 +26,7 @@ def format-pr-view [data: record] {
   }
   let state = if $data.isDraft { "draft" } else { $data.state | str downcase }
   let reviews = if ($data.latestReviews | is-empty) { "" } else {
-    let reviewers = ($data.latestReviews | each {|r| $"($r.author.login) \(($r.state | str downcase))" } | str join ", ")
+    let reviewers = ($data.latestReviews | each {|review| $"($review.author.login) \(($review.state | str downcase))" } | str join ", ")
     $"\nreviews: ($reviewers)"
   }
 

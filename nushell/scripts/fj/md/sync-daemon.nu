@@ -47,9 +47,9 @@ def main [--config: string, --watch] {
           try {
             sync-repo $target.path $target.name $notes_root
             $consecutive_failures = 0
-          } catch {|e|
+          } catch {|error|
             $consecutive_failures = $consecutive_failures + 1
-            print -e $"[($timestamp)] [ERROR] watch sync failed (($consecutive_failures)/($MAX_CONSECUTIVE_FAILURES)): ($e.msg)"
+            print -e $"[($timestamp)] [ERROR] watch sync failed (($consecutive_failures)/($MAX_CONSECUTIVE_FAILURES)): ($error.msg)"
 
             if $consecutive_failures >= $MAX_CONSECUTIVE_FAILURES {
               print -e $"[($timestamp)] [FATAL] ($MAX_CONSECUTIVE_FAILURES) consecutive failures, backing off ($BACKOFF_SECONDS)s"

@@ -57,11 +57,11 @@ export def run [] {
         + $"## check output\n($result.output)"
       ^claude --continue $prompt
     }
-  } catch {|e|
-    if ($e.msg | str contains "interrupt") {
+  } catch {|error|
+    if ($error.msg | str contains "interrupt") {
       print "\naborted"
     } else {
-      error make --unspanned { msg: $e.msg }
+      error make --unspanned { msg: $error.msg }
     }
   }
 }

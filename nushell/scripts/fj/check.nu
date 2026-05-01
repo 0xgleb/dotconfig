@@ -122,14 +122,14 @@ export def run-captured [
       "dotconfig" => { dotconfig-check }
     }
     { passed: true, output: "" }
-  } catch {|e|
-    if ($e.msg | str contains "interrupt") {
+  } catch {|error|
+    if ($error.msg | str contains "interrupt") {
       error make --unspanned { msg: "interrupted" }
     }
-    let error_msg = if ($e | get -o rendered? | is-not-empty) {
-      $e.rendered
+    let error_msg = if ($error | get -o rendered? | is-not-empty) {
+      $error.rendered
     } else {
-      $e.msg
+      $error.msg
     }
     { passed: false, output: $error_msg }
   }
@@ -142,8 +142,8 @@ export def skill-issue []: nothing -> string {
 export def run [] {
   try {
     run-check
-  } catch {|e|
-    if ($e.msg | str contains "interrupt") {
+  } catch {|error|
+    if ($error.msg | str contains "interrupt") {
       error make --unspanned { msg: "interrupted" }
     }
     let msg = ($skill_issues | get (random int 0..9))
