@@ -68,6 +68,20 @@ export def fj-route [...args: string]: nothing -> record<tool: string, args: lis
     { tool: "do", args: ($args | skip 1) }
   } else if $args.0 == "mut" {
     { tool: "gt", args: (["modify"] | append ($args | skip 1)) }
+  } else if $args.0 == "check" {
+    { tool: "check", args: ($args | skip 1) }
+  } else if $args.0 == "unfuck" {
+    { tool: "unfuck", args: ($args | skip 1) }
+  } else if $args.0 == "take" {
+    { tool: "take", args: ($args | skip 1) }
+  } else if $args.0 == "issue" {
+    { tool: "issue", args: ($args | skip 1) }
+  } else if $args.0 == "pr" {
+    { tool: "pr", args: ($args | skip 1) }
+  } else if $args.0 == "md" {
+    { tool: "md", args: ($args | skip 1) }
+  } else if $args.0 == "infra" {
+    { tool: "infra", args: ($args | skip 1) }
   } else if $args.0 in $gt_commands {
     { tool: "gt", args: $args }
   } else if $args.0 in $git_commands {
