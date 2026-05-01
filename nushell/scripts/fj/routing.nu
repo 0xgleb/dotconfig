@@ -1,9 +1,63 @@
 # fj routing logic — returns { tool: string, args: list<string> }
 # Extracted for testability; mod.nu calls this then executes.
 
-const gt_commands = [create modify ss submit sync co checkout top bottom up down restack reorder move absorb rename untrack ls ll init get guide demo feedback fold squash]
+const gt_commands = [
+  absorb
+  bottom
+  checkout
+  co
+  create
+  delete
+  demo
+  down
+  feedback
+  fold
+  get
+  guide
+  init
+  ll
+  ls
+  modify
+  move
+  rename
+  reorder
+  restack
+  squash
+  ss
+  submit
+  sync
+  top
+  untrack
+  up
+]
 
-const git_commands = [diff add status stash push pull show blame branch commit reset restore switch tag fetch rebase merge cherry-pick revert bisect remote submodule worktree clean log]
+const git_commands = [
+  add
+  bisect
+  blame
+  branch
+  cherry-pick
+  clean
+  commit
+  diff
+  fetch
+  log
+  merge
+  pull
+  push
+  rebase
+  remote
+  reset
+  restore
+  revert
+  show
+  stash
+  status
+  submodule
+  switch
+  tag
+  worktree
+]
 
 export def fj-route [...args: string]: nothing -> record<tool: string, args: list<string>> {
   if ($args | length) == 0 {
@@ -17,9 +71,15 @@ export def fj-route [...args: string]: nothing -> record<tool: string, args: lis
   } else if $args.0 in $gt_commands {
     { tool: "gt", args: $args }
   } else if $args.0 in $git_commands {
-    { tool: "git", args: $args }
+    {
+      tool: "git",
+      args: $args
+    }
   } else if $args.0 == "help" or $args.0 == "--help" or $args.0 == "-h" {
-    { tool: "help", args: ($args | skip 1) }
+    {
+      tool: "help",
+      args: ($args | skip 1)
+    }
   } else {
     { tool: "unknown", args: $args }
   }
