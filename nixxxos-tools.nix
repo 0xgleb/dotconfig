@@ -34,6 +34,8 @@ let
     pkgs.rage
   ];
 
+  defaultIdentity = "$\"($env.HOME)/.ssh/nixxxos_ed25519\"";
+
   infraPreamble = ''
     def with-infra [identity: path, action: closure] {
       cd $"($env.HOME)/.config/infra"
@@ -53,7 +55,7 @@ in
     runtimeInputs = infraInputs;
     text = ''
       ${infraPreamble}
-      def --wrapped main [--identity (-i): path, ...rest: string] {
+      def --wrapped main [--identity (-i): path = ${defaultIdentity}, ...rest: string] {
         with-infra $identity { ^terraform plan -var-file=terraform.tfvars ...$rest }
       }
     '';
@@ -64,7 +66,7 @@ in
     runtimeInputs = infraInputs;
     text = ''
       ${infraPreamble}
-      def --wrapped main [--identity (-i): path, ...rest: string] {
+      def --wrapped main [--identity (-i): path = ${defaultIdentity}, ...rest: string] {
         with-infra $identity { ^terraform apply -var-file=terraform.tfvars ...$rest }
       }
     '';
@@ -75,7 +77,7 @@ in
     runtimeInputs = infraInputs;
     text = ''
       ${infraPreamble}
-      def main [--identity (-i): path] {
+      def main [--identity (-i): path = ${defaultIdentity}] {
         with-infra $identity { ^terraform destroy -var-file=terraform.tfvars -auto-approve }
       }
     '';
@@ -85,7 +87,7 @@ in
     name = "tf-edit-vars";
     runtimeInputs = infraInputs;
     text = ''
-      def main [--identity (-i): path] {
+      def main [--identity (-i): path = ${defaultIdentity}] {
         cd $"($env.HOME)/.config/infra"
         let keys_file = $"($env.HOME)/.config/keys.nix"
 
@@ -105,7 +107,7 @@ in
     name = "nixxxos-bootstrap";
     runtimeInputs = infraInputs ++ [ pkgs.openssh ];
     text = ''
-      def main [--identity (-i): path] {
+      def main [--identity (-i): path = ${defaultIdentity}] {
         cd $"($env.HOME)/.config/infra"
         let ip = (^terraform output -raw ip | str trim)
         let flake_dir = $"($env.HOME)/.config"

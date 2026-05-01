@@ -72,24 +72,24 @@ HTTPS. SSH only via Tailscale.
 
 ### Prerequisites
 
+- SSH keypair at `~/.ssh/nixxxos_ed25519` (all tools default to this)
 - DigitalOcean API token encrypted in `infra/terraform.tfvars.age`
-- SSH key matching `keys.nix` (e.g. `~/.ssh/st0x-op`)
 - Tailscale auth key (generate at https://login.tailscale.com/admin/settings/keys)
 
 ### Provision and deploy
 
 ```bash
 # 1. Plan infrastructure changes
-tf-plan -i ~/.ssh/st0x-op
+tf-plan
 
 # 2. Apply -- creates the DO droplet
-tf-apply -i ~/.ssh/st0x-op -auto-approve
+tf-apply -auto-approve
 
 # 3. Bootstrap -- installs NixOS via nixos-anywhere, joins Tailscale
-TS_AUTHKEY=tskey-auth-... nixxxos-bootstrap -i ~/.ssh/st0x-op
+TS_AUTHKEY=tskey-auth-... nixxxos-bootstrap
 
 # 4. SSH in via Tailscale and authenticate Claude Code (one-time)
-ssh -i ~/.ssh/st0x-op 0xgleb@<tailnet-ip>
+ssh 0xgleb@<tailnet-ip>
 claude auth login
 
 # 5. Start the remote control service
@@ -102,7 +102,7 @@ sudo systemctl start claude-remote-control
 
 ```bash
 # SSH in (via Tailscale only, port 22 is not public)
-ssh -i ~/.ssh/st0x-op 0xgleb@<tailnet-ip>
+ssh 0xgleb@<tailnet-ip>
 
 # Check service status
 systemctl status claude-remote-control
@@ -111,7 +111,7 @@ systemctl status claude-remote-control
 journalctl -u claude-remote-control -f
 
 # Tear down
-tf-destroy -i ~/.ssh/st0x-op
+tf-destroy
 ```
 
 ### How it works
