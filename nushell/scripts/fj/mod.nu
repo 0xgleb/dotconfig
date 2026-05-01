@@ -7,6 +7,7 @@ use gh.nu
 use help.nu
 export use md/
 export use infra/
+export use genie/
 
 # unified dev command — run `fj help` for details
 export def --wrapped main [...args: string@fj-complete] {
@@ -68,6 +69,7 @@ export def --wrapped main [...args: string@fj-complete] {
     }
     "md" => { fj md ...$route.args }
     "infra" => { fj infra ...$route.args }
+    "genie" => { fj genie ...$route.args }
     "help" => {
       let topic = if ($route.args | is-empty) { null } else { $route.args | first }
       help show $topic

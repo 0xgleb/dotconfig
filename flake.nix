@@ -87,8 +87,7 @@
         in
         {
           jf = import ./nushell/jf.nix { inherit pkgs; };
-        }
-        // import ./nixxxos-tools.nix { inherit pkgs; };
+        };
 
       checks.aarch64-darwin =
         let

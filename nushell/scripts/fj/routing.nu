@@ -82,6 +82,8 @@ export def fj-route [...args: string]: nothing -> record<tool: string, args: lis
     { tool: "md", args: ($args | skip 1) }
   } else if $args.0 == "infra" {
     { tool: "infra", args: ($args | skip 1) }
+  } else if $args.0 == "genie" {
+    { tool: "genie", args: ($args | skip 1) }
   } else if $args.0 in $gt_commands {
     { tool: "gt", args: $args }
   } else if $args.0 in $git_commands {

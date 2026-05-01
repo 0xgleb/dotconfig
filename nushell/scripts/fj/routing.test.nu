@@ -134,6 +134,26 @@ def "test fj do routes to do" [] {
   assert equal (fj-route do) { tool: "do", args: [] }
 }
 
+def "test fj genie routes to genie" [] {
+  assert equal (fj-route genie) { tool: "genie", args: [] }
+}
+
+def "test fj genie bottle routes to genie with bottle" [] {
+  assert equal (fj-route ...[genie bottle]) { tool: "genie", args: ["bottle"] }
+}
+
+def "test fj genie bottle open routes to genie" [] {
+  assert equal (fj-route ...[genie bottle open]) { tool: "genie", args: ["bottle", "open"] }
+}
+
+def "test fj genie talk routes to genie" [] {
+  assert equal (fj-route ...[genie talk]) { tool: "genie", args: ["talk"] }
+}
+
+def "test fj genie murder routes to genie" [] {
+  assert equal (fj-route ...[genie murder]) { tool: "genie", args: ["murder"] }
+}
+
 def "test fj help routes to help" [] {
   assert equal (fj-route help) { tool: "help", args: [] }
 }

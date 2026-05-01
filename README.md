@@ -76,58 +76,48 @@ HTTPS. SSH only via Tailscale.
 - DigitalOcean API token encrypted in `infra/terraform.tfvars.age`
 - Tailscale auth key (generate at https://login.tailscale.com/admin/settings/keys)
 
-### Provision and deploy
+### Commands
+
+All via `fj genie` (or `jf genie`):
+
+| Command                | Purpose                                             |
+| ---------------------- | --------------------------------------------------- |
+| `fj genie`             | Show instance status (IP, tailnet, service)         |
+| `fj genie bottle`      | Plan infrastructure (saves plan file)               |
+| `fj genie bottle open` | Apply saved plan (creates the DO droplet)           |
+| `fj genie bootstrap`   | Install NixOS via nixos-anywhere, join Tailscale    |
+| `fj genie talk`        | SSH in + attach to zellij session with Claude Code  |
+| `fj genie murder`      | Destroy the instance                                |
+
+### First-time setup
 
 ```bash
-# 1. Plan infrastructure changes
-tf-plan
+fj genie bottle
+fj genie bottle open
+TS_AUTHKEY=tskey-auth-... fj genie bootstrap
 
-# 2. Apply -- creates the DO droplet
-tf-apply -auto-approve
-
-# 3. Bootstrap -- installs NixOS via nixos-anywhere, joins Tailscale
-TS_AUTHKEY=tskey-auth-... nixxxos-bootstrap
-
-# 4. SSH in via Tailscale and authenticate Claude Code (one-time)
+# one-time: authenticate claude code
 ssh 0xgleb@<tailnet-ip>
 claude auth login
-
-# 5. Start the remote control service
 sudo systemctl start claude-remote-control
-
-# 6. Open claude.ai/code -- the session "nixxxos" appears in the list
 ```
 
-### Manage
-
-```bash
-# SSH in (via Tailscale only, port 22 is not public)
-ssh 0xgleb@<tailnet-ip>
-
-# Check service status
-systemctl status claude-remote-control
-
-# View logs
-journalctl -u claude-remote-control -f
-
-# Tear down
-tf-destroy
-```
+After that, `fj genie talk` to connect.
 
 ### How it works
 
-- `tf-plan` / `tf-apply` provision the DO droplet via terraform
-- `nixxxos-bootstrap` runs `nixos-anywhere` to install NixOS from
-  `flake.nix#nixxxos`, waits for the host to come back, and joins the Tailscale
-  network if `TS_AUTHKEY` is set
+- `fj genie bottle` runs `terraform plan -out` with encrypted vars, saving a
+  plan file; `bottle open` applies it
+- `fj genie bootstrap` runs `nixos-anywhere` to install NixOS from
+  `flake.nix#nixxxos`, waits for the host, and joins Tailscale if `TS_AUTHKEY`
+  is set
+- `fj genie talk` SSHes via Tailscale and attaches to a named zellij session
 - `nixos.nix` defines a `claude-remote-control` systemd service that runs
   `claude remote-control --name nixxxos --spawn worktree` as user `0xgleb`
-- Remote control is outbound-only (no inbound ports needed) -- Anthropic's API
-  relays messages between the local process and claude.ai/code or the mobile app
-- The firewall exposes zero public ports; SSH is only accessible via the
-  `tailscale0` trusted interface
-- `linger = true` on the user account keeps the service alive without an active
-  login session
+- Remote control is outbound-only (no inbound ports) -- Anthropic's API relays
+  between the local process and claude.ai/code or the mobile app
+- Zero public ports; SSH only via `tailscale0` trusted interface
+- `linger = true` keeps the service alive without an active login session
 
 ## Build
 
