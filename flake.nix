@@ -134,6 +134,19 @@
                 touch $out
               '';
 
+          fj-infra-lib =
+            pkgs.runCommand "fj-infra-lib-test"
+              {
+                nativeBuildInputs = with pkgs; [ nushell ];
+              }
+              ''
+                cp ${./nushell/scripts/fj/infra/lib.nu} lib.nu
+                cp ${./nushell/scripts/fj/infra/lib.test.nu} lib.test.nu
+                ${pkgs.nushell}/bin/nu --ide-check 0 lib.nu
+                ${pkgs.nushell}/bin/nu lib.test.nu
+                touch $out
+              '';
+
           mdup =
             pkgs.runCommand "mdup-test"
               {

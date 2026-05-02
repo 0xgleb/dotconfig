@@ -56,7 +56,7 @@ SUBCOMMANDS
   fj infra enact          terraform apply (auto-init, decrypts tfvars)
   fj infra edit vars      decrypt tfvars, open in $EDITOR, re-encrypt
 
-Secrets managed via rage. Identity: ~/.ssh/nixxxos_ed25519.
+Secrets managed via rage. Identity: ~/.ssh/doop.
 All commands run from ~/.config/infra/."
 
   take: "fj take <ours|theirs> <path> — resolve a merge conflict

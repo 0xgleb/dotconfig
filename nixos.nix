@@ -32,6 +32,32 @@ in
 
   services.tailscale.enable = true;
 
+  systemd.services.tailscale-autoconnect = {
+    description = "Automatic Tailscale connection";
+    after = [
+      "network-online.target"
+      "tailscaled.service"
+    ];
+    wants = [
+      "network-online.target"
+      "tailscaled.service"
+    ];
+    wantedBy = [ "multi-user.target" ];
+    serviceConfig = {
+      Type = "oneshot";
+      Restart = "on-failure";
+      RestartSec = 5;
+    };
+    path = [ pkgs.tailscale ];
+    script = ''
+      authkey="/etc/tailscale/authkey"
+      [ -f "$authkey" ] || exit 0
+
+      tailscale up --auth-key "$(cat "$authkey")" --hostname=nixxxos
+      rm -f "$authkey"
+    '';
+  };
+
   networking.firewall = {
     allowedTCPPorts = [ 22 ];
     trustedInterfaces = [ "tailscale0" ];
