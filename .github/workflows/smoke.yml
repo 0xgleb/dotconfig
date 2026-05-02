@@ -1,0 +1,48 @@
+name: smoke
+
+on:
+  push:
+  workflow_dispatch:
+
+concurrency:
+  group: smoke
+  cancel-in-progress: false
+
+jobs:
+  smoke:
+    runs-on: ubuntu-latest
+    timeout-minutes: 25
+    permissions:
+      contents: read
+    env:
+      INFRA_DIR: ${{ github.workspace }}/infra
+      FLAKE_DIR: ${{ github.workspace }}
+    steps:
+      - uses: actions/checkout@v4
+
+      - uses: DeterminateSystems/nix-installer-action@main
+
+      - name: Set up SSH identity
+        run: |
+          mkdir -p ~/.ssh
+          install -m 0600 /dev/stdin ~/.ssh/ci_key <<<"${{ secrets.SSH_IDENTITY }}"
+
+      - name: Provision
+        env:
+          TS_AUTHKEY: ${{ secrets.TS_AUTHKEY }}
+          SECRETSPEC_PROVIDER: env
+        run: nix run .#provision -- -i ~/.ssh/ci_key
+
+      - name: Health check
+        run: |
+          ip=$(nix run .#tfOutput -- -raw ip)
+          ssh -i ~/.ssh/ci_key -o StrictHostKeyChecking=accept-new -o BatchMode=yes "root@$ip" '
+            set -eux
+            systemctl is-active tailscaled
+            tailscale status
+            tailscale ip -4 | grep -E "^100\."
+          '
+
+      - name: Destroy
+        if: always()
+        run: nix run .#tfDestroy -- -i ~/.ssh/ci_key

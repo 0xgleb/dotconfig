@@ -30,3 +30,4 @@ AppSupport
 /nushell/config.nu
 /nushell/env.nu
 /result
+/.direnv/

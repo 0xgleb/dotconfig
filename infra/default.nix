@@ -1,4 +1,4 @@
-{ pkgs }:
+{ pkgs, system, deploy-rs }:
 let
   inherit (pkgs) lib;
 
@@ -34,67 +34,91 @@ let
     pkgs.rage
   ];
 
+  deployInputs = [
+    deploy-rs.packages.${system}.default
+    pkgs.openssh
+  ];
+
   keysFile = ../keys.nix;
   libFile = ../nushell/scripts/fj/infra/lib.nu;
-  infraDir = ''$"($env.HOME)/.config/infra"'';
+
+  resolveDirs = ''
+    let infra_dir = ($env.INFRA_DIR? | default $"($env.HOME)/.config/infra")
+    let flake_dir = ($env.FLAKE_DIR? | default $"($env.HOME)/.config")
+  '';
 
   provisionInner = writeNushellApplication {
     name = "provision-inner";
-    runtimeInputs = infraInputs ++ [ pkgs.openssh ];
+    runtimeInputs = infraInputs ++ deployInputs;
     text = ''
       source ${libFile}
 
       def main [--identity (-i): string, droplet_size: string = "s-2vcpu-4gb"] {
+        ${resolveDirs}
         let id = (parse-identity -i $identity)
-        with-infra $id ${keysFile} ${infraDir} {
-          ^terraform apply -var-file=terraform.tfvars -var $"droplet_size=($droplet_size)" -auto-approve
+        let auth_keys = (authorized-keys ${keysFile})
+
+        with-infra $id ${keysFile} $infra_dir {
+          (^terraform apply -var-file=terraform.tfvars
+            -var $"droplet_size=($droplet_size)"
+            -var $"authorized_keys=($auth_keys)"
+            -auto-approve)
         }
 
-        cd ${infraDir}
-        let ip = (do { ^terraform output -raw ip } | complete)
-        if $ip.exit_code != 0 or ($ip.stdout | str trim | is-empty) {
+        cd $infra_dir
+        let ip_result = (^terraform output -raw ip | complete)
+        if $ip_result.exit_code != 0 or ($ip_result.stdout | str trim | is-empty) {
           print "No droplet IP found — nothing to provision."
           return
         }
-        let ip = ($ip.stdout | str trim)
+        let ip = ($ip_result.stdout | str trim)
 
-        print $"Waiting for SSH at ($ip)..."
+        let ssh_opts = [-i $id -o ConnectTimeout=10 -o StrictHostKeyChecking=accept-new -o BatchMode=yes]
+
+        print $"Waiting for SSH on ($ip)..."
+        mut attempt = 0
         loop {
-          let result = (do { ^ssh -i $id -o ConnectTimeout=5 -o StrictHostKeyChecking=accept-new $"root@($ip)" true } | complete)
-          if $result.exit_code == 0 { break }
-          sleep 2sec
+          $attempt = $attempt + 1
+          let r = (^ssh ...$ssh_opts $"root@($ip)" true | complete)
+          if $r.exit_code == 0 { break }
+          print $"  attempt ($attempt) failed \(exit ($r.exit_code)\), retrying in 5s..."
+          sleep 5sec
         }
 
-        # secretspec exposes TS_AUTHKEY as a file path (as_path = true).
-        # Empty when the secret isn't configured (required = false).
+        let cloud_init = (^ssh ...$ssh_opts $"root@($ip)" "cloud-init status --wait" | complete)
+        if not ($cloud_init.stdout | str contains "status: done") {
+          print $cloud_init.stdout
+          print $cloud_init.stderr
+          exit 1
+        }
+
+        let nix_check = (^ssh ...$ssh_opts $"root@($ip)" "test -x /usr/local/bin/nix-daemon" | complete)
+        if $nix_check.exit_code != 0 {
+          print "nix-daemon not found at /usr/local/bin/nix-daemon"
+          exit 1
+        }
+
         let ts_authkey_path = ($env.TS_AUTHKEY? | default "")
-        let extra_files = if ($ts_authkey_path | is-not-empty) and ($ts_authkey_path | path exists) {
-          let tmpdir = (mktemp -d)
-          mkdir $"($tmpdir)/etc/tailscale"
-          cp $ts_authkey_path $"($tmpdir)/etc/tailscale/authkey"
-          $tmpdir
+        if ($ts_authkey_path | is-not-empty) and ($ts_authkey_path | path exists) {
+          ^ssh ...$ssh_opts $"root@($ip)" "mkdir -p /etc/tailscale && chmod 700 /etc/tailscale"
+          ^scp ...$ssh_opts $ts_authkey_path $"root@($ip):/etc/tailscale/authkey"
+          ^ssh ...$ssh_opts $"root@($ip)" "chmod 600 /etc/tailscale/authkey"
         } else {
-          ""
+          print "No TS_AUTHKEY configured — tailscale will install but not auto-join."
+          print "Store an auth key with: cd ~/.config/infra && secretspec set TS_AUTHKEY"
         }
 
-        print "Installing NixOS..."
-        let flake_dir = $"($env.HOME)/.config"
-        let extra_args = if $extra_files != "" { [--extra-files $extra_files] } else { [] }
-        (^nix run github:nix-community/nixos-anywhere --
-          --flake $"($flake_dir)#nixxxos"
-          --ssh-option $"IdentityFile=($id)"
-          --target-host $"root@($ip)"
-          ...$extra_args)
+        let ssh_str = $"-i ($id) -o StrictHostKeyChecking=accept-new"
+        with-env { DEPLOY_HOST: $ip, NIX_SSHOPTS: $ssh_str } {
+          (^deploy --debug-logs --skip-checks
+            --ssh-opts $ssh_str
+            $"path:($flake_dir)#nixxxos"
+            -- --impure --accept-flake-config)
+        }
 
-        if $extra_files != "" { rm -rf $extra_files }
-
+        print $"Done! ssh -i ($id) root@($ip)"
         if ($ts_authkey_path | is-not-empty) {
-          print "Done! Auth key provisioned — box will auto-join the tailnet on boot."
-          print $"Check tailnet IP with: ssh -i ($id) root@($ip) 'tailscale ip -4'"
-        } else {
-          print $"Done! ssh -i ($id) root@($ip)"
-          print "No TS_AUTHKEY configured. Run 'sudo tailscale up' on the box to join a tailnet,"
-          print "or store an auth key with: cd ~/.config/infra && secretspec set TS_AUTHKEY"
+          print $"Tailnet IP: ssh -i ($id) root@($ip) 'tailscale ip -4'"
         }
       }
     '';
@@ -108,9 +132,13 @@ in
       source ${libFile}
 
       def --wrapped main [--identity (-i): string, ...rest: string] {
+        ${resolveDirs}
         let id = (parse-identity -i $identity)
-        with-infra $id ${keysFile} ${infraDir} {
-          ^terraform plan -var-file=terraform.tfvars ...$rest
+        let auth_keys = (authorized-keys ${keysFile})
+        with-infra $id ${keysFile} $infra_dir {
+          (^terraform plan -var-file=terraform.tfvars
+            -var $"authorized_keys=($auth_keys)"
+            ...$rest)
         }
       }
     '';
@@ -123,7 +151,8 @@ in
       source ${libFile}
 
       def main [--identity (-i): string] {
-        cd ${infraDir}
+        ${resolveDirs}
+        cd $infra_dir
         let id = (parse-identity -i $identity)
 
         decrypt-vars $id
@@ -137,9 +166,45 @@ in
     '';
   };
 
+  tfDestroy = writeNushellApplication {
+    name = "tf-destroy";
+    runtimeInputs = infraInputs;
+    text = ''
+      source ${libFile}
+
+      def --wrapped main [--identity (-i): string, ...rest: string] {
+        ${resolveDirs}
+        let id = (parse-identity -i $identity)
+        let auth_keys = (authorized-keys ${keysFile})
+        with-infra $id ${keysFile} $infra_dir {
+          (^terraform destroy -var-file=terraform.tfvars
+            -var $"authorized_keys=($auth_keys)"
+            -auto-approve
+            ...$rest)
+        }
+      }
+    '';
+  };
+
+  tfOutput = writeNushellApplication {
+    name = "tf-output";
+    runtimeInputs = infraInputs;
+    text = ''
+      def --wrapped main [...rest: string] {
+        ${resolveDirs}
+        cd $infra_dir
+        ^terraform output ...$rest
+      }
+    '';
+  };
+
   provision = pkgs.writeShellScriptBin "provision" ''
     set -euo pipefail
-    cd "$HOME/.config/infra"
-    exec ${pkgs.secretspec}/bin/secretspec run -- ${provisionInner}/bin/provision-inner "$@"
+    : "''${INFRA_DIR:=$HOME/.config/infra}"
+    : "''${FLAKE_DIR:=$HOME/.config}"
+    export INFRA_DIR FLAKE_DIR
+    cd "$INFRA_DIR"
+    provider="''${SECRETSPEC_PROVIDER:-keyring}"
+    exec ${pkgs.secretspec}/bin/secretspec run --provider "$provider" -- ${provisionInner}/bin/provision-inner "$@"
   '';
 }

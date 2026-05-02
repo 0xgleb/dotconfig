@@ -54,6 +54,12 @@ def cleanup-vars [] {
   rm -f terraform.tfvars
 }
 
+# Read the authorized SSH public keys from keys.nix, returning them as a JSON
+# string suitable for passing to `terraform -var authorized_keys=<json>`.
+def authorized-keys [keys_file: path]: nothing -> string {
+  ^nix eval --json --file $keys_file keys --apply 'builtins.attrValues'
+}
+
 # Run $action with terraform.tfvars decrypted in $infra_dir.
 # Always re-encrypts and cleans up, even on failure.
 def with-infra [

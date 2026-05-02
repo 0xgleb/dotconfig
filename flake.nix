@@ -11,8 +11,8 @@
     home-manager.url = "github:nix-community/home-manager";
     home-manager.inputs.nixpkgs.follows = "nixpkgs";
 
-    disko.url = "github:nix-community/disko";
-    disko.inputs.nixpkgs.follows = "nixpkgs";
+    deploy-rs.url = "github:serokell/deploy-rs";
+    deploy-rs.inputs.nixpkgs.follows = "nixpkgs";
 
     nix-doom-emacs-unstraightened.url = "github:marienz/nix-doom-emacs-unstraightened";
     nix-doom-emacs-unstraightened.inputs.nixpkgs.follows = "nixpkgs";
@@ -24,7 +24,7 @@
       nixpkgs,
       nix-darwin,
       home-manager,
-      disko,
+      deploy-rs,
       ...
     }:
     {
@@ -52,43 +52,50 @@
         ];
       };
 
-      # Remote NixOS on Digital Ocean
-      nixosConfigurations.nixxxos = nixpkgs.lib.nixosSystem {
-        system = "x86_64-linux";
-        specialArgs = { inherit inputs; };
-        modules = [
-          ./common.nix
-          ./nixos.nix
-          ./digitalocean.nix
-          disko.nixosModules.disko
-          home-manager.nixosModules.home-manager
-          {
-            home-manager.useGlobalPkgs = true;
-            home-manager.useUserPackages = true;
-            home-manager.extraSpecialArgs = { inherit inputs; };
-            home-manager.users."0xgleb" =
-              { pkgs, inputs, ... }:
-              {
-                imports = [
-                  inputs.nix-doom-emacs-unstraightened.homeModule
-                  ./home.nix
-                ];
-              };
-          }
-        ];
+      deploy = import ./infra/deploy.nix {
+        inherit deploy-rs;
+        pkgs = import nixpkgs { system = "x86_64-linux"; };
       };
 
-      packages.aarch64-darwin =
+      packages =
+        let
+          mkInfra = system:
+            let
+              pkgs = import nixpkgs {
+                inherit system;
+                config.allowUnfree = true;
+              };
+            in
+            import ./infra { inherit pkgs system deploy-rs; };
+        in
+        {
+          aarch64-darwin =
+            let
+              pkgs = import nixpkgs {
+                system = "aarch64-darwin";
+                config.allowUnfree = true;
+              };
+            in
+            { jf = import ./nushell/jf.nix { inherit pkgs; }; }
+            // mkInfra "aarch64-darwin";
+          x86_64-linux = mkInfra "x86_64-linux";
+        };
+
+      devShells.aarch64-darwin.default =
         let
           pkgs = import nixpkgs {
             system = "aarch64-darwin";
             config.allowUnfree = true;
           };
         in
-        {
-          jf = import ./nushell/jf.nix { inherit pkgs; };
-        }
-        // import ./infra { inherit pkgs; };
+        pkgs.mkShell {
+          packages = [
+            pkgs.secretspec
+            pkgs.terraform
+            pkgs.rage
+            deploy-rs.packages.aarch64-darwin.default
+          ];
+        };
 
       checks.aarch64-darwin =
         let

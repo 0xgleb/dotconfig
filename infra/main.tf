@@ -22,6 +22,10 @@ resource "digitalocean_droplet" "nixxxos" {
   region   = var.region
   ssh_keys = [data.digitalocean_ssh_key.doop.id]
 
+  user_data = templatefile("${path.module}/cloud-init.yaml.tmpl", {
+    authorized_keys = var.authorized_keys
+  })
+
   lifecycle {
     ignore_changes = [image]
   }
