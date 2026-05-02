@@ -11,9 +11,8 @@ provider "digitalocean" {
   token = var.do_token
 }
 
-resource "digitalocean_ssh_key" "nixxxos" {
-  name       = "nixxxos"
-  public_key = file(pathexpand(var.ssh_public_key_path))
+data "digitalocean_ssh_key" "doop" {
+  name = "doop"
 }
 
 resource "digitalocean_droplet" "nixxxos" {
@@ -21,7 +20,7 @@ resource "digitalocean_droplet" "nixxxos" {
   image    = "ubuntu-24-04-x64"
   size     = var.droplet_size
   region   = var.region
-  ssh_keys = [digitalocean_ssh_key.nixxxos.fingerprint]
+  ssh_keys = [data.digitalocean_ssh_key.doop.id]
 
   lifecycle {
     ignore_changes = [image]
@@ -33,5 +32,5 @@ output "ip" {
 }
 
 output "ssh_command" {
-  value = "ssh -i ~/.ssh/nixxxos_ed25519 root@${digitalocean_droplet.nixxxos.ipv4_address}"
+  value = "ssh -i ~/.ssh/doop root@${digitalocean_droplet.nixxxos.ipv4_address}"
 }

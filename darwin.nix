@@ -43,7 +43,6 @@
     lua
     obsidian
     rsync
-    terraform
   ];
 
   # Homebrew for GUI apps that don't work well with Nix on macOS
@@ -57,6 +56,7 @@
       "font-jetbrains-mono-nerd-font"
       "karabiner-elements"
       "linear-linear"
+      "tailscale"
     ];
 
     onActivation = {

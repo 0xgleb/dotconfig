@@ -35,14 +35,23 @@ let
   ];
 
   infraPreamble = ''
-    def with-infra [action: closure] {
+    def with-infra [identity: string, action: closure] {
       cd $"($env.HOME)/.config/infra"
       if not (".terraform" | path exists) { ^terraform init }
 
-      let identity = $"($env.HOME)/.ssh/doop"
-      ^rage -d -i $identity -o terraform.tfvars terraform.tfvars.age
+      let fresh = not ("terraform.tfvars.age" | path exists)
+      if $fresh {
+        cp example.terraform.tfvars terraform.tfvars
+        let editor = ($env.EDITOR? | default "nvim")
+        ^$editor terraform.tfvars
+      } else {
+        ^rage -d -i $identity -o terraform.tfvars terraform.tfvars.age
+      }
 
+      let keys_file = $"($env.HOME)/.config/keys.nix"
+      let recipients = (^nix eval --raw --file $keys_file roles.infra --apply 'builtins.concatStringsSep "\n"')
       let failed = (try { do $action; false } catch { true })
+      $recipients | ^rage -e -R /dev/stdin -o terraform.tfvars.age terraform.tfvars
       rm -f terraform.tfvars
       if $failed { exit 1 }
     }
@@ -54,22 +63,27 @@ in
     runtimeInputs = infraInputs;
     text = ''
       ${infraPreamble}
-      def --wrapped main [...rest: string] {
-        with-infra { ^terraform plan -var-file=terraform.tfvars ...$rest }
+      def --wrapped main [--identity (-i): string, ...rest: string] {
+        let id = ($identity | default $"($env.HOME)/.ssh/id_ed25519")
+        with-infra $id { ^terraform plan -var-file=terraform.tfvars ...$rest }
       }
     '';
   };
 
-  tfEditVars = writeNushellApplication {
-    name = "tf-edit-vars";
+  tfVars = writeNushellApplication {
+    name = "tf-vars";
     runtimeInputs = infraInputs;
     text = ''
-      def main [] {
+      def main [--identity (-i): string] {
         cd $"($env.HOME)/.config/infra"
-        let identity = $"($env.HOME)/.ssh/nixxxos_ed25519"
+        let identity = ($identity | default $"($env.HOME)/.ssh/id_ed25519")
         let keys_file = $"($env.HOME)/.config/keys.nix"
 
-        ^rage -d -i $identity -o terraform.tfvars terraform.tfvars.age
+        if not ("terraform.tfvars.age" | path exists) {
+          cp example.terraform.tfvars terraform.tfvars
+        } else {
+          ^rage -d -i $identity -o terraform.tfvars terraform.tfvars.age
+        }
 
         let editor = ($env.EDITOR? | default "nvim")
         ^$editor terraform.tfvars
@@ -81,18 +95,19 @@ in
     '';
   };
 
-  nixxxosUp = writeNushellApplication {
-    name = "nixxxos-up";
+  provision = writeNushellApplication {
+    name = "provision";
     runtimeInputs = infraInputs ++ [ pkgs.openssh ];
     text = ''
       ${infraPreamble}
-      def main [droplet_size: string = "s-2vcpu-4gb"] {
-        with-infra {
+      def main [--identity (-i): string, droplet_size: string = "s-2vcpu-4gb"] {
+        let id = ($identity | default $"($env.HOME)/.ssh/id_ed25519")
+        with-infra $id {
           ^terraform apply -var-file=terraform.tfvars -var $"droplet_size=($droplet_size)" -auto-approve
         }
 
         cd $"($env.HOME)/.config/infra"
-        let ssh_key = $"($env.HOME)/.ssh/nixxxos_ed25519"
+        let ssh_key = $id
         let flake_dir = $"($env.HOME)/.config"
         let ip = (^terraform output -raw ip | str trim)
         print "Waiting for SSH..."
@@ -124,14 +139,4 @@ in
     '';
   };
 
-  nixxxosDown = writeNushellApplication {
-    name = "nixxxos-down";
-    runtimeInputs = infraInputs;
-    text = ''
-      ${infraPreamble}
-      def main [] {
-        with-infra { ^terraform destroy -var-file=terraform.tfvars -auto-approve }
-      }
-    '';
-  };
 }

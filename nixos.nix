@@ -1,26 +1,26 @@
 { pkgs, ... }:
+let
+  keys = (import ./keys.nix).keys;
+  authorizedKeys = builtins.attrValues keys;
+in
 {
   nixpkgs.config.allowUnfree = true;
 
-  users.users.root.openssh.authorizedKeys.keys = [
-    "ssh-ed25519 AAAAC3NzaC1lZDI1NTE5AAAAIJ8m2M/93ymq8JIG/cDvNhXnHDrI7mzSjKhZBLTgdKXe nixxxos"
-  ];
+  users.users.root.openssh.authorizedKeys.keys = authorizedKeys;
 
   users.users."0xgleb" = {
     isNormalUser = true;
     home = "/home/0xgleb";
     shell = pkgs.nushell;
     extraGroups = [ "wheel" ];
-    openssh.authorizedKeys.keys = [
-      "ssh-ed25519 AAAAC3NzaC1lZDI1NTE5AAAAIJ8m2M/93ymq8JIG/cDvNhXnHDrI7mzSjKhZBLTgdKXe nixxxos"
-    ];
+    openssh.authorizedKeys.keys = authorizedKeys;
   };
 
   # Allow passwordless sudo for wheel group
   security.sudo.wheelNeedsPassword = false;
 
   # NixOS-specific packages
-  environment.systemPackages = with pkgs; [ emacs-nox ];
+  environment.systemPackages = [ ];
 
   services.openssh = {
     enable = true;

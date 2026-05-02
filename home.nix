@@ -150,9 +150,9 @@ in
 
     # Doom Emacs (managed by nix-doom-emacs-unstraightened)
     doom-emacs = {
-      enable = true;
+      enable = isDarwin;
       doomDir = ./doom;
-      emacs = if pkgs.stdenv.isDarwin then pkgs.emacs-macport else pkgs.emacs;
+      emacs = if isDarwin then pkgs.emacs-macport else pkgs.emacs;
     };
     zsh =
       let
