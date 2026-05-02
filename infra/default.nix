@@ -39,7 +39,7 @@ let
       cd $"($env.HOME)/.config/infra"
       if not (".terraform" | path exists) { ^terraform init }
 
-      let identity = $"($env.HOME)/.ssh/nixxxos_ed25519"
+      let identity = $"($env.HOME)/.ssh/doop"
       ^rage -d -i $identity -o terraform.tfvars terraform.tfvars.age
 
       let failed = (try { do $action; false } catch { true })
