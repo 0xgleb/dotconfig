@@ -29,6 +29,7 @@ jobs:
 
       - name: Provision
         env:
+          TS_AUTHKEY: ${{ secrets.TS_AUTHKEY }}
           SECRETSPEC_PROVIDER: env
         run: nix run .#provision -- -i ~/.ssh/ci_key
 
@@ -38,7 +39,8 @@ jobs:
           ssh -i ~/.ssh/ci_key -o StrictHostKeyChecking=accept-new -o BatchMode=yes "root@$ip" '
             set -eux
             systemctl is-active tailscaled
-            test -x /usr/local/bin/tailscale
+            tailscale status
+            tailscale ip -4 | grep -E "^100\."
           '
 
       - name: Destroy
