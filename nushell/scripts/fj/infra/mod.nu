@@ -4,7 +4,7 @@ def with-infra [action: closure] {
     ^terraform init
   }
 
-  let identity = $"($env.HOME)/.ssh/nixxxos_ed25519"
+  let identity = $"($env.HOME)/.ssh/doop"
   ^rage -d -i $identity -o terraform.tfvars terraform.tfvars.age
 
   let failed = (try { do $action; false } catch { true })
@@ -33,7 +33,7 @@ export def enact [] {
 
 export def "edit vars" [] {
   cd ~/.config/infra
-  let identity = $"($env.HOME)/.ssh/nixxxos_ed25519"
+  let identity = $"($env.HOME)/.ssh/doop"
 
   if ("terraform.tfvars.age" | path exists) {
     ^rage -d -i $identity -o terraform.tfvars terraform.tfvars.age

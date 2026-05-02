@@ -69,6 +69,7 @@ in {
       gnupg
       openssl
       rage
+      secretspec
     ];
   };
 
