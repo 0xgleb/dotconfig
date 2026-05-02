@@ -33,7 +33,7 @@ let
     "systemctl enable tailscaled.service"
     "systemctl restart tailscaled.service"
     "sleep 2"
-    ''if [ -f /etc/tailscale/authkey ]; then ${tailscale}/bin/tailscale up --auth-key="$(cat /etc/tailscale/authkey)" --hostname=nixxxos && shred -u /etc/tailscale/authkey; fi''
+    ''if [ -s /etc/tailscale/authkey ]; then ${tailscale}/bin/tailscale up --auth-key="$(cat /etc/tailscale/authkey)" --hostname=nixxxos && shred -u /etc/tailscale/authkey; fi''
   ];
 in
 {

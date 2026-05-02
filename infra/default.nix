@@ -133,7 +133,11 @@ let
         }
 
         let ts_authkey_path = ($env.TS_AUTHKEY? | default "")
-        let ts_authkey_valid = ($ts_authkey_path | is-not-empty) and ($ts_authkey_path | path exists)
+        let ts_authkey_valid = (
+          ($ts_authkey_path | is-not-empty)
+          and ($ts_authkey_path | path exists)
+          and (((ls -l $ts_authkey_path | get 0.size) | into int) > 0)
+        )
         if $ts_authkey_valid {
           ^ssh ...$ssh_opts $"root@($ip)" "mkdir -p /etc/tailscale && chmod 700 /etc/tailscale"
           ^scp ...$ssh_opts $ts_authkey_path $"root@($ip):/etc/tailscale/authkey"
