@@ -2,6 +2,7 @@ name: smoke
 
 on:
   push:
+  pull_request:
   workflow_dispatch:
 
 concurrency:
