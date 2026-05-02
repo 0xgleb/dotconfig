@@ -67,25 +67,59 @@ let
 
         cd $infra_dir
         let ip_result = (^terraform output -raw ip | complete)
-        if $ip_result.exit_code != 0 or ($ip_result.stdout | str trim | is-empty) {
-          print "No droplet IP found — nothing to provision."
-          return
+        if $ip_result.exit_code != 0 {
+          print $"terraform output failed \(exit ($ip_result.exit_code)\):"
+          print $ip_result.stdout
+          print $ip_result.stderr
+          exit 1
+        }
+        if ($ip_result.stdout | str trim | is-empty) {
+          print "terraform output -raw ip returned empty — no droplet to provision."
+          exit 1
         }
         let ip = ($ip_result.stdout | str trim)
 
         let ssh_opts = [-i $id -o ConnectTimeout=10 -o StrictHostKeyChecking=accept-new -o BatchMode=yes]
 
         print $"Waiting for SSH on ($ip)..."
+        let ssh_max_attempts = 60
         mut attempt = 0
+        mut last_r = { exit_code: -1, stdout: "", stderr: "" }
         loop {
           $attempt = $attempt + 1
           let r = (^ssh ...$ssh_opts $"root@($ip)" true | complete)
+          $last_r = $r
           if $r.exit_code == 0 { break }
+          if $attempt >= $ssh_max_attempts {
+            print $"SSH did not come up after ($ssh_max_attempts) attempts."
+            print $"  last exit: ($r.exit_code)"
+            print $"  stdout: ($r.stdout)"
+            print $"  stderr: ($r.stderr)"
+            exit 1
+          }
           print $"  attempt ($attempt) failed \(exit ($r.exit_code)\), retrying in 5s..."
           sleep 5sec
         }
 
-        let cloud_init = (^ssh ...$ssh_opts $"root@($ip)" "cloud-init status --wait" | complete)
+        let cloud_init_max_attempts = 60
+        mut ci_attempt = 0
+        mut cloud_init = { exit_code: -1, stdout: "", stderr: "" }
+        loop {
+          $ci_attempt = $ci_attempt + 1
+          let r = (^ssh ...$ssh_opts $"root@($ip)" "cloud-init status" | complete)
+          $cloud_init = $r
+          let s = ($r.stdout | str trim)
+          if ($s | str contains "status: done") or ($s | str contains "status: error") {
+            break
+          }
+          if $ci_attempt >= $cloud_init_max_attempts {
+            print $"cloud-init did not finish after ($cloud_init_max_attempts) checks."
+            print $r.stdout
+            print $r.stderr
+            exit 1
+          }
+          sleep 5sec
+        }
         if not ($cloud_init.stdout | str contains "status: done") {
           print $cloud_init.stdout
           print $cloud_init.stderr
@@ -99,7 +133,8 @@ let
         }
 
         let ts_authkey_path = ($env.TS_AUTHKEY? | default "")
-        if ($ts_authkey_path | is-not-empty) and ($ts_authkey_path | path exists) {
+        let ts_authkey_valid = ($ts_authkey_path | is-not-empty) and ($ts_authkey_path | path exists)
+        if $ts_authkey_valid {
           ^ssh ...$ssh_opts $"root@($ip)" "mkdir -p /etc/tailscale && chmod 700 /etc/tailscale"
           ^scp ...$ssh_opts $ts_authkey_path $"root@($ip):/etc/tailscale/authkey"
           ^ssh ...$ssh_opts $"root@($ip)" "chmod 600 /etc/tailscale/authkey"
@@ -117,7 +152,7 @@ let
         }
 
         print $"Done! ssh -i ($id) root@($ip)"
-        if ($ts_authkey_path | is-not-empty) {
+        if $ts_authkey_valid {
           print $"Tailnet IP: ssh -i ($id) root@($ip) 'tailscale ip -4'"
         }
       }

@@ -2,22 +2,27 @@ use std/assert
 
 source lib.nu
 
-# --- parse-identity ---
-
 def "test parse-identity returns explicit flag value" [] {
-  assert equal (parse-identity --identity "/tmp/explicit") "/tmp/explicit"
+  let key = (mktemp)
+  assert equal (parse-identity --identity $key) $key
+  rm -f $key
 }
 
 def "test parse-identity returns SSH_IDENTITY env when no flag" [] {
-  with-env { SSH_IDENTITY: "/tmp/from-env" } {
-    assert equal (parse-identity) "/tmp/from-env"
+  let key = (mktemp)
+  with-env { SSH_IDENTITY: $key } {
+    assert equal (parse-identity) $key
   }
+  rm -f $key
 }
 
 def "test parse-identity prefers explicit flag over env" [] {
-  with-env { SSH_IDENTITY: "/tmp/from-env" } {
-    assert equal (parse-identity --identity "/tmp/explicit") "/tmp/explicit"
+  let explicit = (mktemp)
+  let env_key = (mktemp)
+  with-env { SSH_IDENTITY: $env_key } {
+    assert equal (parse-identity --identity $explicit) $explicit
   }
+  rm -f $explicit $env_key
 }
 
 def "test parse-identity falls back to default when it exists" [] {
@@ -54,12 +59,27 @@ def "test parse-identity ignores empty SSH_IDENTITY" [] {
   rm -rf $tmp
 }
 
-# --- decrypt-vars / encrypt-vars / cleanup-vars / with-infra ---
-# These shell out to external tools (rage, terraform, nix) so they're
-# integration-tested by running tf-plan against a real infra directory.
-# No unit tests here.
+def "test parse-identity errors when explicit path does not exist" [] {
+  let errored = try {
+    parse-identity --identity "/tmp/definitely-not-a-real-path-xyz123"
+    false
+  } catch {
+    true
+  }
+  assert $errored "should error when explicit identity path does not exist"
+}
 
-# --- test runner ---
+def "test parse-identity errors when SSH_IDENTITY path does not exist" [] {
+  let errored = try {
+    with-env { SSH_IDENTITY: "/tmp/definitely-not-a-real-path-xyz123" } {
+      parse-identity
+    }
+    false
+  } catch {
+    true
+  }
+  assert $errored "should error when SSH_IDENTITY path does not exist"
+}
 
 def main [] {
   print "Running fj infra lib tests..."

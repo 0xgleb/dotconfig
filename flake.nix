@@ -57,29 +57,27 @@
         pkgs = import nixpkgs { system = "x86_64-linux"; };
       };
 
-      packages =
+      packages.aarch64-darwin =
         let
-          mkInfra = system:
-            let
-              pkgs = import nixpkgs {
-                inherit system;
-                config.allowUnfree = true;
-              };
-            in
-            import ./infra { inherit pkgs system deploy-rs; };
+          pkgs = import nixpkgs {
+            system = "aarch64-darwin";
+            config.allowUnfree = true;
+          };
         in
-        {
-          aarch64-darwin =
-            let
-              pkgs = import nixpkgs {
-                system = "aarch64-darwin";
-                config.allowUnfree = true;
-              };
-            in
-            { jf = import ./nushell/jf.nix { inherit pkgs; }; }
-            // mkInfra "aarch64-darwin";
-          x86_64-linux = mkInfra "x86_64-linux";
+        { jf = import ./nushell/jf.nix { inherit pkgs; }; }
+        // import ./infra {
+          inherit pkgs deploy-rs;
+          system = "aarch64-darwin";
         };
+
+      packages.x86_64-linux = import ./infra {
+        pkgs = import nixpkgs {
+          system = "x86_64-linux";
+          config.allowUnfree = true;
+        };
+        system = "x86_64-linux";
+        inherit deploy-rs;
+      };
 
       devShells.aarch64-darwin.default =
         let

@@ -28,6 +28,7 @@ let
 
   tailscaleActivate = builtins.concatStringsSep " && " [
     "install -D -m 0644 ${tailscaledUnit} /etc/systemd/system/tailscaled.service"
+    "ln -sfn ${tailscale}/bin/tailscale /usr/local/bin/tailscale"
     "systemctl daemon-reload"
     "systemctl enable tailscaled.service"
     "systemctl restart tailscaled.service"
@@ -36,11 +37,8 @@ let
   ];
 in
 {
-  nodes.nixxxos = {
-    hostname = builtins.getEnv "DEPLOY_HOST";
-    sshUser = "root";
-    user = "root";
-
-    profiles.tailscale.path = activate.custom tailscale tailscaleActivate;
-  };
+  nodes.nixxxos.hostname = builtins.getEnv "DEPLOY_HOST";
+  nodes.nixxxos.sshUser = "root";
+  nodes.nixxxos.user = "root";
+  nodes.nixxxos.profiles.tailscale.path = activate.custom tailscale tailscaleActivate;
 }

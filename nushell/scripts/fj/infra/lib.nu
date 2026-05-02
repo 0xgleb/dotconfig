@@ -8,9 +8,15 @@
 #   3. $env.HOME/.ssh/id_ed25519 (if it exists)
 def parse-identity [--identity (-i): string] {
   if ($identity | is-not-empty) {
+    if not ($identity | path exists) {
+      error make --unspanned { msg: $"Identity path does not exist: ($identity)" }
+    }
     return $identity
   }
   if ($env.SSH_IDENTITY? | is-not-empty) {
+    if not ($env.SSH_IDENTITY | path exists) {
+      error make --unspanned { msg: $"SSH_IDENTITY path does not exist: ($env.SSH_IDENTITY)" }
+    }
     return $env.SSH_IDENTITY
   }
   let default = $"($env.HOME)/.ssh/id_ed25519"
@@ -72,8 +78,8 @@ def with-infra [
   if not (".terraform" | path exists) { ^terraform init }
 
   decrypt-vars $identity
-  let failed = (try { do $action; false } catch { true })
-  encrypt-vars $keys_file
+  let action_failed = (try { do $action; false } catch { true })
+  let encrypt_failed = (try { encrypt-vars $keys_file; false } catch { true })
   cleanup-vars
-  if $failed { exit 1 }
+  if $action_failed or $encrypt_failed { exit 1 }
 }
