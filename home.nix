@@ -53,6 +53,12 @@ in
       "${nuConfigDir}/scripts".source = ./nushell/scripts;
     }
     // lib.optionalAttrs isDarwin darwinFiles;
+
+    activation.nvimLazyRestore = lib.hm.dag.entryAfter [ "writeBoundary" ] ''
+      export PATH=${lib.makeBinPath [ pkgs.git ]}:$PATH
+      $DRY_RUN_CMD ${config.programs.neovim.finalPackage}/bin/nvim \
+        --headless "+Lazy! restore" +qa 2>/dev/null || true
+    '';
   };
 
   # NOTE: this shit doesn't clean up after itself if you enable/disable it
@@ -124,6 +130,7 @@ in
           grammars.yaml
         ]))
       ];
+      extraLuaConfig = builtins.readFile ./nvim/bootstrap.lua;
     };
 
     # Atuin — fuzzy history search (ctrl+r) for nushell
