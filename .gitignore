@@ -2,6 +2,7 @@ credentials.db
 AppSupport
 .DS_Store
 
+direnv/
 .claude/
 .mdup-plan.nuon
 .nushell/
