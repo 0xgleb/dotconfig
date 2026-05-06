@@ -415,18 +415,20 @@ changes, assess quality, check for guideline violations, and fix any problems
   remove them when no longer needed.
 
 - **Commit and push as you go**: After completing each task (or logical unit of
-  work), commit the changes using Graphite and push (`gt ss`) before moving to
-  the next task. Don't accumulate uncommitted or unpushed work across multiple
-  tasks — small, incremental commits pushed regularly make progress visible,
-  reviewable, and safe from local failures. Never wait for the user to ask you
-  to commit or push.
+  work), commit the changes and push before moving to the next task. Don't
+  accumulate uncommitted or unpushed work across multiple tasks — small,
+  incremental commits pushed regularly make progress visible, reviewable, and
+  safe from local failures. Never wait for the user to ask you to commit or
+  push. Use plain `git commit` + `git push` by default; only use Graphite (`gt
+  modify` / `gt ss`) in repos that have explicitly opted in (see "Version
+  Control" below).
 
 - **Branch immediately when stacking**: When told to stack changes (e.g., "put
-  this on the stack", "stack a PR for this"), IMMEDIATELY create a Graphite
-  branch with `gt create` before making any edits. Do not accumulate changes on
-  master or an unrelated branch. After the initial commit, regularly `gt modify`
-  as you make progress and `gt ss` to sync with remote. The user should never
-  have to ask "why aren't we on a branch yet?"
+  this on the stack", "stack a PR for this"), IMMEDIATELY create a branch
+  before making any edits. Do not accumulate changes on master or an unrelated
+  branch. Use `git checkout -b` by default; use `gt create` only in
+  Graphite-opted-in repos. The user should never have to ask "why aren't we
+  on a branch yet?"
 
 ## Diff Review (Before Handing Over)
 
@@ -470,7 +472,25 @@ When creating issues:
 - Reference code by file/function/struct names, not line numbers (line numbers
   go stale)
 
-## Version Control (Graphite)
+## Version Control
+
+**Default to plain `git`.** Use `git checkout -b`, `git commit`, `git push`,
+`git pull`, `git rebase` — the standard tools. Do not invoke `gt` unless the
+repo has explicitly opted into Graphite.
+
+**A repo is opted into Graphite only if** at least one of the following is
+true:
+- A `.graphite_repo_config` file exists at the repo root.
+- A repo-level CLAUDE.md or AGENTS.md tells you to use Graphite for that repo.
+- The user has told you (in this session or via memory) to use Graphite here.
+
+If none of those hold, treat the repo as plain-git and never run `gt init`,
+`gt create`, `gt modify`, `gt ss`, etc. — including not running them
+"speculatively" to check state. `gt ls` will silently initialize Graphite if
+not present, so do not use it as a probe; check for `.graphite_repo_config`
+instead.
+
+### Graphite (only in opted-in repos)
 
 Graphite manages stacked PRs on top of git. Each branch = one PR. PRs stack on
 top of each other for incremental review.

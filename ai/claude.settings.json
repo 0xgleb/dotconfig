@@ -52,7 +52,7 @@
     ],
     "deny": [
       "Bash(darwin-rebuild switch:*)",
-      "Bash(git checkout:*)",
+      "Bash(git checkout master:*)",
       "Bash(git stash:*)",
       "Bash(git apply:*)",
       "Bash(sed:*)",
@@ -68,5 +68,6 @@
   "editorMode": "vim",
   "verbose": true,
   "remoteControlAtStartup": false,
-  "agentPushNotifEnabled": true
+  "agentPushNotifEnabled": true,
+  "skipAutoPermissionPrompt": true
 }
