@@ -28,6 +28,7 @@ direnv/
 /nushell/config.nu
 /nushell/env.nu
 /nushell/history.*
+/nvim/init.lua
 /nvim/lazy-lock.json
 /op/
 /opencode/

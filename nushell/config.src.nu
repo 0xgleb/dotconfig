@@ -106,19 +106,15 @@ def fix [context: closure, prompt?: string] {
 
 $env.PROMPT_COMMAND = {||
   let path = if $env.PWD == $nu.home-dir { "~" } else { $env.PWD | path basename }
-  let branch_result = do { git branch --show-current } | complete
 
-  if $branch_result.exit_code == 0 {
-    let branch_name = $branch_result.stdout | str trim
-    let branch_name = if $branch_name == "" {
-      (do { git rev-parse --short HEAD } | complete).stdout | str trim
+  if ("ZELLIJ" in $env) {
+    let common_dir_result = do { git rev-parse --path-format=absolute --git-common-dir } | complete
+    let tab_name = if $common_dir_result.exit_code == 0 and (($common_dir_result.stdout | str trim | path dirname) == $env.PWD) {
+      "primary"
     } else {
-      $branch_name
+      $path
     }
-
-    if ("ZELLIJ" in $env) {
-      zellij action rename-tab $branch_name
-    }
+    zellij action rename-tab $tab_name
   }
 
   let who = (whoami)
