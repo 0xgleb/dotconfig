@@ -55,14 +55,18 @@
       "coderabbit"
       "font-jetbrains-mono-nerd-font"
       "karabiner-elements"
-      "linear-linear"
-      "tailscale"
+      "linear"
+      "tailscale-app"
     ];
 
     onActivation = {
       autoUpdate = true;
       upgrade = true;
       cleanup = "uninstall";
+      # Workaround for Homebrew 5.1.x JSON API parser bug:
+      # cask_struct_generator.rb:99 NPEs on certain depends_on shapes.
+      # Forces brew to use git-cloned taps instead of the JSON API.
+      extraEnv.HOMEBREW_NO_INSTALL_FROM_API = "1";
     };
   };
 
