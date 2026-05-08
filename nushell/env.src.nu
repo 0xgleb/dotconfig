@@ -11,6 +11,7 @@ $env.PATH = ($env.PATH | split row (char esep) | append [
   $'($env.HOME)/.nix-profile/bin'
   '/nix/var/nix/profiles/default/bin'
   '/opt/homebrew/bin'
+  '/usr/local/bin'
 ])
 
 $env.EDITOR = 'nvim'
