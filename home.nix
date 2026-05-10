@@ -36,16 +36,15 @@ in
           system = pkgs.stdenv.hostPlatform.system;
           config.allowUnfree = true;
         };
-
       in
       (with pkgs; [
         cargo-watch
-        unstable.graphite-cli
-
-        unstable.codex
-        unstable.claude-code
-
         jf
+      ])
+      ++ (with unstable; [
+        claude-code
+        codex
+        graphite-cli
       ]);
 
     shell.enableNushellIntegration = true;
@@ -63,6 +62,11 @@ in
 
   # NOTE: this shit doesn't clean up after itself if you enable/disable it
   # services.ollama.enable = false;
+
+  xdg.configFile."eza/theme.yml".source = pkgs.fetchurl {
+    url = "https://raw.githubusercontent.com/eza-community/eza-themes/add4c72c546992b8db674d6d3eea315bf2111b9a/themes/tokyonight.yml";
+    sha256 = "0mkiad3jhqy9rdm0sj9gwi46v4i38m9vg8021cwd1qx7003mijh6";
+  };
 
   programs = {
     home-manager.enable = true;
@@ -147,6 +151,14 @@ in
     zoxide.enableNushellIntegration = true;
     zoxide.enableZshIntegration = true;
 
+    # Eza — modern ls replacement
+    eza = {
+      enable = true;
+      git = true;
+      enableNushellIntegration = true;
+      enableZshIntegration = true;
+    };
+
     # Direnv
     direnv.enable = true;
     direnv.nix-direnv.enable = true;
@@ -161,6 +173,7 @@ in
       doomDir = ./doom;
       emacs = if isDarwin then pkgs.emacs-macport else pkgs.emacs;
     };
+
     zsh =
       let
         zshCustom = pkgs.stdenv.mkDerivation {
