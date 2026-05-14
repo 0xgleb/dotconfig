@@ -1,5 +1,4 @@
 {
-      "Bash(darwin-rebuild build:*)",
   "env": {
     "DISABLE_AUTOUPDATER": "1"
   },

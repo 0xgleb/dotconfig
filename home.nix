@@ -133,8 +133,9 @@ in
           grammars.typescript
           grammars.yaml
         ]))
+        telescope-fzf-native-nvim
       ];
-      extraLuaConfig = builtins.readFile ./nvim/bootstrap.lua;
+      initLua = builtins.readFile ./nvim/bootstrap.lua;
     };
 
     # Atuin — fuzzy history search (ctrl+r) for nushell
