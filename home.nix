@@ -45,6 +45,7 @@ in
         claude-code
         codex
         graphite-cli
+        cursor-cli
       ]);
 
     shell.enableNushellIntegration = true;
@@ -170,7 +171,7 @@ in
 
     # Doom Emacs (managed by nix-doom-emacs-unstraightened)
     doom-emacs = {
-      enable = isDarwin;
+      enable = false; # isDarwin;
       doomDir = ./doom;
       emacs = if isDarwin then pkgs.emacs-macport else pkgs.emacs;
     };

@@ -110,8 +110,8 @@ $env.PROMPT_COMMAND = {||
 
   if ("ZELLIJ" in $env) {
     let common_dir_result = do { git rev-parse --path-format=absolute --git-common-dir } | complete
-    let tab_name = if $common_dir_result.exit_code == 0 and (($common_dir_result.stdout | str trim | path dirname) == $env.PWD) {
-      "primary"
+    let tab_name = if $common_dir_result.exit_code == 0 {
+      $common_dir_result.stdout | str trim | path dirname | path basename
     } else {
       $path
     }

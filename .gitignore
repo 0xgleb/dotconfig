@@ -33,3 +33,6 @@ direnv/
 /op/
 /opencode/
 /result
+
+solana/id.json
+configstore/update-notifier-create-solana-dapp.json
