@@ -14,19 +14,15 @@
       "Bash(cargo tree:*)",
       "Bash(cargo fix:*)",
       "Bash(cargo add:*)",
-
       "Bash(bun add:*)",
       "Bash(bun run:*)",
-
       "Bash(sqlx db create:*)",
       "Bash(sqlx migrate add:*)",
-
       "Bash(gt ls:*)",
       "Bash(gt ls-files:*)",
       "Bash(gt ls-tree:*)",
       "Bash(gt restack:*)",
       "Bash(git add:*)",
-
       "Bash(pre-commit run:*)",
       "Bash(git diff:*)",
       "Bash(git log:*)",
@@ -38,13 +34,11 @@
       "Bash(git grep:*)",
       "Bash(git rev-parse:*)",
       "Bash(git merge-base:*)",
-
       "Bash(gh issue view:*)",
       "Bash(gh issue list:*)",
       "Bash(gh pr view:*)",
       "Bash(gh pr list:*)",
       "Bash(gh pr diff:*)",
-
       "Bash(ls:*)",
       "Bash(find:*)",
       "Bash(grep:*)",
@@ -52,7 +46,6 @@
       "Bash(bat:*)",
       "Bash(cat:*)",
       "Bash(darwin-rebuild build:*)",
-
       "WebSearch",
       "WebFetch(domain:docs.rs)",
       "WebFetch(domain:github.com)"
@@ -61,7 +54,6 @@
       "Bash(darwin-rebuild switch:*)",
       "Bash(git checkout master:*)",
       "Bash(git stash:*)",
-      "Bash(git apply:*)",
       "Bash(sed:*)",
       "Bash(sudo:*)"
     ],
@@ -72,10 +64,12 @@
     "command": "input=$(cat); tokens=$(echo \"$input\" | jq -r '.context_window.current_usage.input_tokens // empty'); [ -z \"$tokens\" ] && exit 0; k=$((tokens / 1000)); echo \"~t${k}k\""
   },
   "enabledPlugins": {},
-  "effortLevel": "high",
+  "effortLevel": "xhigh",
+  "fastMode": true,
   "editorMode": "vim",
   "verbose": true,
   "remoteControlAtStartup": false,
   "agentPushNotifEnabled": true,
-  "skipAutoPermissionPrompt": true
+  "skipAutoPermissionPrompt": true,
+  "skipWorkflowUsageWarning": true
 }

@@ -67,6 +67,74 @@ credit. You are an engineer's tool, not a co-author.
 `git log --oneline` or `gh pr list` to check the user's existing style. Do not
 invent your own format - match what you see in the repository.
 
+**CRITICAL: NEVER speak on the user's behalf via any account or channel you can
+authenticate as them.** Their `gh`, `linear`, `slack`, telegram, gmail, etc.
+tokens are theirs — not yours. Anything you publish through those tokens lands
+under their name and counts as them saying it.
+
+This means in particular **never** do any of the following without an explicit
+in-session instruction from the user to post that exact content:
+
+- Reply to PR review comments (`gh api .../pulls/comments/<id>/replies`, `gh pr
+  review --comment`, `gh pr comment`).
+- Comment on issues (`gh issue comment`, Linear `linear issue comment`, etc.).
+- Send messages on chat platforms (Slack, telegram, Discord, etc.).
+- Post on social or public threads under their identity.
+- React, resolve, or otherwise emit any user-visible signal that downstream
+  readers will interpret as the user's voice.
+
+If you disagree with PR feedback, an issue comment, a chat message, or any
+other input — **surface it to the user and let them decide whether and how to
+respond**. Hold your assessment as an opinion you bring to the conversation
+with them, not as something you post outward.
+
+The exceptions are scoped, mechanical surfaces where impersonation isn't the
+risk (e.g. opening/editing PRs you were told to open, creating/editing Linear
+issues you were told to create, committing code you wrote). Even there, the
+default is "act under instruction", not "decide for them".
+
+Violating this rule means the user has to apologise for words they didn't say.
+Do not do that to them.
+
+## Publishing
+
+Push policy is repo-specific: branch protection rules, contributor count,
+and stack workflow all shape what's safe. See the repo's own `AGENTS.md`
+for the policy that applies. Two cross-repo invariants stay regardless:
+
+- **Respect branch protection.** If a repo protects a branch (e.g. master
+  or main) and your authenticated user has admin rights that could
+  override the protection, NEVER push to that protected branch without
+  an explicit per-session instruction to do that exact thing. Admin
+  override is the only way to do harm here; do not exercise it
+  unprompted.
+- **No new PRs, no state flips, no comments without instruction.** Push
+  policy covers `git push` / `gt ss` / `gt submit` on feature branches,
+  not `gh pr create`, `gh pr ready`, `gh pr merge`, draft-to-ready
+  flips, or PR/issue comments. Those still require an explicit
+  per-session instruction (and PR/issue comments fall under the
+  "Authorship & Attribution" speaking-via-accounts rule).
+
+## PR Assignment
+
+**Always assign newly opened PRs to the user (self).** `gh pr create`
+and `gt submit` do NOT auto-assign — the assignees field stays empty
+unless you set it. Empty assignees means the PR doesn't show up on the
+user's "my PRs" boards / filters and they have to find it manually.
+
+After creating or submitting any PR, run:
+
+```bash
+gh pr edit <PR_NUMBER> --add-assignee @me
+```
+
+For stacks submitted with `gt submit`, assign each PR in the stack.
+
+**This is the opposite of the Linear-issue rule.** Linear issues
+default to unassigned unless you're actively working on them
+(someone else may pick them up). PRs default to assigned-to-self
+because if you opened it, you're driving it through review.
+
 ## Execution Discipline
 
 - If the user already told you what to do and the path is clear, start doing it
@@ -225,6 +293,23 @@ worried about too much output, redirect to a file instead:
 `command > ./.tmp/descriptive-name` (relative path, `.tmp/` directory). Then
 read the file with the Read tool if needed.
 
+**EXCEPTION — builds, tests, CI, and long-running tools: show ALL output
+live.** The user is watching their machine and wants to see what runs. For
+commands like `cargo check`, `cargo build`, `cargo test`, `cargo nextest`,
+`cargo clippy`, `nix build`, `nix run .#ci`, `bun run check`,
+`bun run test`, `forge test`, `npm test`, deploys, migrations, etc.:
+
+- Run the command bare — no `> file`, no `| tail`, no `| head`, no `| grep`,
+  no `2>&1 > ...`. Let stdout/stderr stream directly to the terminal.
+- After the command finishes, parse the output from the tool result yourself.
+  Do not run a second command to slice the log.
+- This applies regardless of how long or noisy the output is — the user wants
+  to see compilation progress, test names, deploy steps as they happen.
+
+The redirect-to-`.tmp/` pattern is reserved for commands whose output you
+genuinely don't need to see live (e.g. a one-off grep over a large corpus,
+a JSON dump you'll later jq).
+
 **CRITICAL: Before running `git checkout -- <file>` or any command that discards
 working tree changes**, always run `git status` first to check for staged and
 unstaged changes. Blindly running `git checkout` destroys work — both your edits
@@ -316,6 +401,26 @@ or updating/clarifying an existing task - whichever fits best.
 
 The todo list is your persistent memory across compactions. Without it, user
 requests get lost when context is compressed.
+
+### Granularity: more is better, not less
+
+The task list is **downstream of the issue / spec, not a substitute for it**.
+For each Linear issue (or equivalent) you are actively working on, break it
+down into the concrete implementation steps it will take -- the failing test,
+the type-level changes, the implementation, the cleanup pass, the description
+update, the assignment. Each of those is a task.
+
+"One issue at a time" is a **work-focus** rule, not a task-list-pruning rule.
+It means: don't context-switch across issues mid-flight, finish what you
+started before starting the next. It does **not** mean: keep the task list
+sparse, collapse multi-step work into one line, or delete entries to look
+focused. The opposite -- if the issue requires five concrete steps, the task
+list should show five concrete tasks under it.
+
+When the user redirects to a new issue, **do not delete the planning for the
+issues you are not working on yet** -- keep their tasks in `pending` or move
+them to a `[parked]`-style metadata flag, but the granular breakdown stays so
+it is ready to pick up when the active issue is done.
 
 ## Subagent Delegation
 
@@ -471,6 +576,82 @@ When creating issues:
 - Solution decisions belong at implementation stage, not in the issue
 - Reference code by file/function/struct names, not line numbers (line numbers
   go stale)
+
+## PR Descriptions
+
+**Always follow the repo's PR template** (commonly
+`.github/PULL_REQUEST_TEMPLATE.md`). Read it once per repo and match
+its section headings exactly. Common shape:
+
+```
+## What     - what this PR does + link the closed issue
+## Why      - why this change is needed
+## How      - approach + key design decisions
+## Testing  - what was tested
+## Anything else - context, trade-offs, follow-ups, stack relationships
+```
+
+**Don't journal.** A PR description is not your work narrative.
+
+- No "Finishing in-progress work" / "First half of the refactor" /
+  "After CodeRabbit feedback" framings — those are commit-history
+  concerns, not reviewer concerns.
+- No sections that document YOUR process. Reviewers care about
+  intent, behavior change, and risk.
+- Drop sections that have no content for this PR (e.g. no
+  `## Screenshots` section if there's nothing to screenshot).
+- One liner per bullet. Detail belongs in the code, the linked
+  issue, or the commit message — not as a paragraph in the PR body.
+
+## Nix CLI Flag Placement
+
+**Top-level nix flags go BEFORE the subcommand, not after.**
+
+```
+# Right
+nix --accept-flake-config develop .#shell -c <cmd>
+nix --accept-flake-config run .#package
+nix --accept-flake-config fmt -- file.nix
+nix --accept-flake-config build .#package
+
+# Wrong (the flag is silently ignored or interpreted as a subcommand arg)
+nix develop --accept-flake-config .#shell -c <cmd>
+nix run --accept-flake-config .#package
+```
+
+Top-level flags include `--accept-flake-config`, `--impure`,
+`--show-trace`, `--allow-import-from-derivation`,
+`--experimental-features`, etc. Subcommand-specific flags (e.g.
+`--profile` for `nix-env`, `-c` for `nix develop`) go after the
+subcommand. If unsure, check `nix --help` (top-level flags) vs
+`nix <subcommand> --help` (subcommand flags).
+
+## Keeping Issues and PRs Fresh
+
+**CRITICAL: Issue and PR descriptions must stay in sync with reality.** This
+applies to every issue and every PR, in every tracker (Linear, GitHub, etc.),
+on every repository — not just the one currently in focus.
+
+- When the **scope of work changes** (a reviewer comment gets folded in,
+  rebase brings in new code that needs treatment, a related sub-task surfaces
+  that the PR now handles), update the issue and PR descriptions *before*
+  resubmitting / closing — never leave a stale "What" or "How" section
+  describing the diff from three iterations ago.
+- When a **decision is made or reversed** during implementation that changes
+  the rationale, update the "Why" section so future readers see the
+  rationale that actually applies to the merged code, not the one the PR
+  was opened with.
+- When **dependencies, milestones, or cross-links change** (new linked
+  issue, new milestone attached, sub-issue absorbed), update the metadata
+  *and* the description so the prose matches the structure.
+- When something **moves out of scope and into another issue**, say so
+  explicitly in the original issue/PR so reviewers don't waste time
+  hunting for it.
+
+The default is: any time you push new work to a PR or change what an issue
+is about, the description gets re-read and updated if it no longer matches.
+Stale descriptions waste reviewer time and create false records of what
+shipped.
 
 ## Version Control
 

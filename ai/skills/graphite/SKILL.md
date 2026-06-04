@@ -66,18 +66,25 @@ Graphite auto-generates names like `graphite-base/390` which are meaningless.
 Never run `gt create -m "message"` alone — always
 `gt create branch-name -m "message"`.
 
-When naming PRs in a stack, follow this syntax:
+**DEFAULT: name branches `<type>/<kebab-description>`.** This is the user's
+standing convention across all repos. `<type>` is the conventional-commit type
+(`feat` | `fix` | `refactor` | `chore` | `docs` | `test` | `spec` | `ops`) and
+the description is self-contained plain-English kebab-case that says what the
+change does — e.g. `feat/drop-usdc-from-rebalancer`,
+`refactor/queue-push-error-enum`, `test/chaos-alpaca-transient-5xx`. When
+splitting one branch into a stack, each slice gets its own
+`<type>/<description>` name; the shared feature word lives in the description,
+not as a stack prefix.
 
-`terse-stack-feature-name/terse-description-of-change`
+If a repo's `AGENTS.md` / `CLAUDE.md` or its existing branches (`gt ls`,
+`git branch -a`) show a *different* convention, match that instead — the repo's
+own convention always wins over this default.
 
-For example, a 4 PR stack:
-
-```
-auth-bugfix/reorder-args
-auth-bugfix/improve-logging
-auth-bugfix/improve-documentation
-auth-bugfix/handle-401-status-codes
-```
+**DO NOT use `terse-stack-feature-name/terse-description-of-change`** (e.g.
+`auth-bugfix/reorder-args`). That pattern is graphite's own doc default; the
+user does not use it. It is mentioned here only so you recognize where it comes
+from and avoid copying it — applying it to a repo that uses `<type>/<description>`
+is a naming error.
 
 ---
 
@@ -279,10 +286,59 @@ bypass data from the server to enable the frontend warning (PR 2) to display it.
 | Stack parented on wrong branch                      | Use `gt track -p main` then `gt restack`                                           |
 | Need to reorder PRs                                 | Use `gt move`                                                                      |
 | Conflicts during restack                            | Resolve conflicts, then `git rebase --continue`                                    |
-| Want to split a PR                                  | Reset commits (`git reset HEAD^`), re-stage selectively, create new branches       |
+| Want to split a PR                                  | Prefer `gt split` (see below). Fallback: reset commits and re-stage selectively.   |
 | Need to delete a branch (non-interactive)           | `gt delete <branch> -f -q`                                                         |
 | `gt restack` hitting unrelated conflicts            | Use targeted `git rebase <target>` instead (see below)                             |
 | Rebase interrupted mid-conflict                     | Check if files are resolved but unstaged, then `git add` + `git rebase --continue` |
+
+---
+
+## Splitting a Branch with `gt split`
+
+When a branch has accumulated too much for one PR, `gt split` slices it
+into multiple branches that get stacked in order. Three modes:
+
+| Mode                                | What it does                                                                                  | Interactive? |
+| ----------------------------------- | --------------------------------------------------------------------------------------------- | ------------ |
+| `gt split --by-commit` (`-c`)       | Pick split points between existing commits on the branch.                                     | Yes          |
+| `gt split --by-hunk` (`-h`)         | Stage hunks into N new single-commit branches. Use when one big commit needs to be split.     | Yes          |
+| `gt split --by-file -f <pathspec>`  | Extract files matching the pathspec into a NEW PARENT branch. Repeat `-f` for more patterns.  | **No**       |
+
+### When `--by-file` works cleanly
+
+Each file ends up in exactly one slice (no shared edits). Example: a
+branch that touches `module-a.rs` and `module-b.rs` and you want each
+as its own PR:
+
+```bash
+gt split --by-file -f 'src/module-a*'
+# now current branch has only module-b; parent has module-a
+```
+
+### When you need `--by-hunk`
+
+Any file appears in multiple slices (e.g. a single `flake.nix` has
+changes spanning all your intended PRs). `--by-file` can't separate
+hunks within a file — only `--by-hunk` can. **`--by-hunk` requires a
+TTY**, so the user must drive the interactive prompt; you can't run it
+non-interactively from an agent.
+
+### Fallback when neither mode fits the split
+
+If the split mixes hunk-level changes AND no TTY is available for
+`--by-hunk`, the only path is manual reconstruction:
+
+1. Save the full diff as a safety-net branch (`git branch
+   refactor-snapshot`).
+2. From the trunk, build each slice sequentially with `gt create`,
+   editing the relevant files to match that slice's intended end
+   state.
+3. Verify each slice independently with the project's tooling
+   (`nix flake show`, `cargo check`, `bun run check`, etc.) before
+   stacking the next one.
+
+Slow but reliable. Use only when `--by-file` and `--by-hunk` both
+can't do the job.
 
 ---
 
