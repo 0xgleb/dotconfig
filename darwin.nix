@@ -63,6 +63,10 @@
       autoUpdate = true;
       upgrade = true;
       cleanup = "uninstall";
+      # Homebrew 4.x+ rejects `brew bundle --cleanup` unless a force flag is
+      # given, since cleanup uninstalls formulae. nix-darwin runs activation
+      # non-interactively, so perform the cleanup without the confirmation prompt.
+      extraFlags = [ "--force-cleanup" ];
       # Workaround for Homebrew 5.1.x JSON API parser bug:
       # cask_struct_generator.rb:99 NPEs on certain depends_on shapes.
       # Forces brew to use git-cloned taps instead of the JSON API.

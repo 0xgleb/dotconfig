@@ -97,9 +97,16 @@ allowed-tools:
 5. **Draft.** Match the format of the last few EODs. Common shape:
    - `# Daily Update:  YYYY-MM-DD`
    - Status paragraph (one to three sentences)
-   - A one-line **stats summary** (counts only, drop any zero): e.g.
-     `3 PRs opened · 1 merged · 5 reviewed · 2 issues created · 1 closed`.
-     At-a-glance numbers for the group chat; the detail follows below.
+   - A one-line **stats summary** — be granular. "N PRs opened" alone is
+     near-meaningless; the group chat wants the breakdown of where those
+     PRs landed. Report each of the following counts, dropping any that
+     are zero: **PRs opened, PRs submitted for review (reviewers
+     assigned), PRs still draft, PRs merged, PRs reviewed, issues
+     created, issues closed**. e.g.
+     `11 PRs opened - 3 submitted for review - 8 still draft - 2 merged - 5 reviewed - 7 issues created - 1 closed`.
+     Opened-but-still-draft vs submitted-for-review vs merged is the
+     signal — never collapse it back to a single "opened" number. The
+     detail follows below.
    - `## What Was Done` with topic-grouped subsections or a flat
      bullet list, whichever the recent notes use
    - `### Reviews` if any PRs were reviewed
@@ -170,6 +177,23 @@ gh search prs --author=@me --merged=YYYY-MM-DD --json number --jq length
 gh search prs --reviewed-by=@me --updated=YYYY-MM-DD --json number --jq length
 ```
 
+**Submitted-for-review vs still-draft split.** `gh search prs` does NOT
+expose draft status or review requests, so split the opened-today PRs
+per repo with `gh pr list`. A PR counts as "submitted for review" when
+`isDraft` is false AND `reviewRequests` is non-empty; "still draft" when
+`isDraft` is true. Filter the rows to `createdAt` = today.
+
+```bash
+gh pr list --repo ST0x-Technology/<repo> --author @me --state open \
+  --json number,isDraft,reviewRequests,createdAt --limit 50
+```
+
+Run once per repo touched today (check the "PRs I authored that moved
+today" output for which repos to query). Reviewers assigned today on an
+older PR also count as submitted-for-review, but that's not cheaply
+queryable — the opened-today split is the reliable signal; note any
+known draft-to-ready flips of older PRs in prose rather than the count.
+
 ```bash
 # Linear issues you closed (completed) today
 linear api 'query($u: ID!, $a: DateTimeOrDuration!) {
@@ -193,6 +217,15 @@ to describe an open stack the user mentioned.
 - **One line per thing.** Every bullet is a fact + identifier (RAI
   tag, PR number, repo). No prose paragraphs explaining what a PR
   does — readers click through if they want detail.
+- **Prose must stand on its own for an outsider.** PR titles in
+  backticks can stay technical (readers click through), but any prose
+  YOU write -- the summary sentence, a section header, the line
+  grouping a set of PRs -- must make sense to someone in the ~10-person
+  chat who was NOT managing this line of work. No insider shorthand:
+  "Dep prep ahead of the stack" is meaningless to them; "two library
+  upgrades the refactor depends on" is not. If you can't restate a
+  grouping in plain words, the reader can't decode it either -- so
+  don't write it that way.
 - **Collapse runs.** Five PRs in one repo with similar titles
   collapse to `repo PRs A, B, C, D, E`. Don't list each title
   separately unless the titles are doing real work.

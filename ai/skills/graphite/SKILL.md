@@ -19,6 +19,25 @@ allowed-tools:
 Work with Graphite (`gt`) for creating, navigating, and managing stacked pull
 requests.
 
+## CRITICAL: Never use `git` to switch branches in a Graphite repo
+
+**Branch navigation MUST go through `gt`, never `git checkout` / `git switch`.**
+In a Graphite repo the stack is the unit of work; moving with raw `git` desyncs
+Graphite's tracking and silently breaks restack/submit.
+
+- Switch to a specific branch: `gt co <branch>` (alias for `gt checkout`)
+- Move toward trunk / toward top: `gt down` / `gt up`
+- Jump to ends: `gt bottom` / `gt top`
+- See where you are and what exists: `gt ls`
+
+**FORBIDDEN for branch switching:** `git checkout <branch>`, `git switch
+<branch>`, `git checkout -b <branch>`, `git branch <name>` as a way to move or
+create a stack branch. Create branches with `gt create <name> -m "..."`.
+
+The only `git checkout` use that remains acceptable is restoring file contents
+(`git checkout -- <file>`) during conflict resolution — never to change the
+checked-out branch. When in doubt, reach for `gt`, not `git`.
+
 ## Quick Reference
 
 | I want to...            | Command                              |
