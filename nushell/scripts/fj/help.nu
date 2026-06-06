@@ -69,9 +69,11 @@ All commands run from ~/.config/infra/."
 
   ui: "fj ui — launch gitui"
 
-  mut: "fj mut [-a] — gt modify
+  mut: "fj mut [-a] — stack modify (amend)
 
-  Shorthand for gt modify. Pass -a to stage all files."
+  Shorthand for the stack backend's modify/amend. Pass -a to stage all files.
+  Backend depends on the repo: gt in graphite orgs (rainlanguage, st0x),
+  gitbutler-cli (but) elsewhere when installed, otherwise git."
 
   help: "fj help [command] — show help
 
@@ -101,7 +103,7 @@ def overview [] {
     "  fj <command> [args]"
     ""
     "COMMANDS"
-    "  (no args)       git status + gt ls"
+    "  (no args)       git status (+ gt ls in graphite repos)"
     "  do              check -> commit on pass, claude on fail"
     "  check           run repo-specific checks (auto-unfucks first)"
     "  unfuck          fix common repo issues (submodules, symlinks)"
@@ -118,11 +120,17 @@ def overview [] {
     "  infra edit vars     edit encrypted tfvars"
     "  take <v> <path> resolve conflict (ours/theirs) and stage"
     "  ui              gitui"
-    "  mut [-a]        gt modify"
+    "  mut [-a]        stack modify (gt/but/git by repo — see STACK)"
     "  help [cmd]      show help"
     ""
-    "GRAPHITE (gt)"
-    "  ss, create, sync, co, ls, ll, restack, absorb, untrack, squash, ..."
+    "STACK (repo-dependent backend, verbs translated)"
+    "  ss, create, sync, co, ls, ll, restack, absorb, untrack, squash, mut, ..."
+    "  routed to:  gt   in ~/code/rainlanguage/* and ~/code/st0x/*"
+    "              but  in other repos when gitbutler-cli is installed"
+    "              git  otherwise"
+    "  e.g. mut -> gt modify / but amend / git commit --amend;"
+    "       co  -> gt co     / but apply / git checkout"
+    "  graphite-only verbs (up/down/top/bottom, ...) error on but/git"
     ""
     "GIT"
     "  diff, add, status, stash, push, pull, show, blame, branch,"

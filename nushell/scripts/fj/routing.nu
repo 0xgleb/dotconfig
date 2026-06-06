@@ -1,5 +1,16 @@
 # fj routing logic — returns { tool: string, args: list<string> }
-# Extracted for testability; mod.nu calls this then executes.
+# Extracted for testability; mod.nu resolves the vcs backend, calls fj-route,
+# maps the tool through resolve-tool, then executes.
+#
+# VCS backend policy (see vcs-backend): graphite (`gt`) is only used in the orgs
+# that actually use it — rainlanguage and st0x. Everywhere else, stack-style
+# commands go to gitbutler (`but`) when it's installed, otherwise plain `git`.
+
+# orgs whose repos use graphite for stacked PRs
+const graphite_orgs = [
+  rainlanguage
+  st0x
+]
 
 const gt_commands = [
   absorb
@@ -96,5 +107,98 @@ export def fj-route [...args: string]: nothing -> record<tool: string, args: lis
     }
   } else {
     { tool: "unknown", args: $args }
+  }
+}
+
+# Resolve the version-control backend tool for a working directory.
+#
+#   "gt"  — repos under a graphite org (~/code/rainlanguage/*, ~/code/st0x/*)
+#   "but" — any other repo when the gitbutler CLI (`but`) is on PATH
+#   "git" — fallback when neither applies
+#
+# Pure: callers pass the cwd, the home prefix, and whether `but` exists, so this
+# stays testable without touching the environment.
+export def vcs-backend [
+  cwd: string                 # absolute working directory
+  home: string                # home directory prefix (e.g. $env.HOME)
+  gitbutler_available: bool   # whether the `but` CLI is on PATH
+]: nothing -> string {
+  let under_graphite_org = ($graphite_orgs | any {|org|
+    $cwd | str starts-with $"($home)/code/($org)/"
+  })
+  if $under_graphite_org {
+    "gt"
+  } else if $gitbutler_available {
+    "but"
+  } else {
+    "git"
+  }
+}
+
+# Verb translations from fj's graphite-flavoured stack commands to the
+# equivalent gitbutler (`but`) command. GitButler has no stack cursor and a
+# different vocabulary, so each entry replaces the leading verb with one or more
+# tokens; trailing args are preserved. Verbs absent here have no faithful
+# gitbutler equivalent (e.g. the up/down/top/bottom cursor moves) and are
+# reported as unsupported rather than guessed at.
+const but_translations = {
+  ls: [status]
+  ll: [status]
+  modify: [amend]
+  ss: [push]
+  submit: [push]
+  sync: [pull]
+  squash: [squash]
+  absorb: [absorb]
+  move: [move]
+  reorder: [move]
+  rename: [reword]
+  create: [branch new]
+  co: [apply]
+  checkout: [apply]
+  untrack: [unapply]
+  restack: [pull]
+  init: [setup]
+}
+
+# Verb translations for the plain-git fallback ("neither" graphite nor
+# gitbutler). Only stack verbs with an unambiguous git equivalent are listed;
+# the rest are unsupported on git.
+const git_translations = {
+  modify: [commit --amend]
+  ss: [push]
+  submit: [push]
+  sync: [pull]
+  co: [checkout]
+  checkout: [checkout]
+  create: [checkout -b]
+  rename: [branch -m]
+}
+
+# Translate a routed stack command (tool "gt") to the active backend, mapping
+# both the tool and the verb. Non-stack routes pass through unchanged.
+#
+#   backend "gt"  -> route unchanged (graphite already speaks these verbs)
+#   backend "but" -> { tool: "but", args: <translated> } or "unsupported"
+#   backend "git" -> { tool: "git", args: <translated> } or "unsupported"
+#
+# "unsupported" carries [verb, backend] so callers can print a clear error.
+export def resolve-stack [
+  route: record<tool: string, args: list<string>>
+  backend: string
+]: nothing -> record<tool: string, args: list<string>> {
+  if $route.tool != "gt" or $backend == "gt" {
+    return $route
+  }
+
+  let verb = ($route.args | first)
+  let rest = ($route.args | skip 1)
+  let table = if $backend == "but" { $but_translations } else { $git_translations }
+  let mapped = ($table | get -o $verb)
+
+  if $mapped == null {
+    { tool: "unsupported", args: [$verb $backend] }
+  } else {
+    { tool: $backend, args: ($mapped | append $rest) }
   }
 }

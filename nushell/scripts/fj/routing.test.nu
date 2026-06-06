@@ -146,6 +146,94 @@ def "test fj garbage returns unknown" [] {
   assert equal (fj-route ...[yolo swag]) { tool: "unknown", args: ["yolo", "swag"] }
 }
 
+# --- vcs backend detection ---
+
+def "test vcs-backend rainlanguage repo is graphite" [] {
+  assert equal (vcs-backend "/home/u/code/rainlanguage/rain.cli" "/home/u" true) "gt"
+}
+
+def "test vcs-backend st0x repo is graphite even without gitbutler" [] {
+  assert equal (vcs-backend "/home/u/code/st0x/st0x.liquidity" "/home/u" false) "gt"
+}
+
+def "test vcs-backend nested subdir of graphite org is graphite" [] {
+  assert equal (vcs-backend "/home/u/code/st0x/st0x.liquidity/dashboard/src" "/home/u" false) "gt"
+}
+
+def "test vcs-backend other repo with gitbutler is but" [] {
+  assert equal (vcs-backend "/home/u/code/data-cartel/moneymentum" "/home/u" true) "but"
+}
+
+def "test vcs-backend other repo without gitbutler is git" [] {
+  assert equal (vcs-backend "/home/u/code/data-cartel/moneymentum" "/home/u" false) "git"
+}
+
+def "test vcs-backend dotconfig without gitbutler is git" [] {
+  assert equal (vcs-backend "/home/u/.config" "/home/u" false) "git"
+}
+
+def "test vcs-backend org name outside code dir does not match" [] {
+  assert equal (vcs-backend "/home/u/work/rainlanguage/x" "/home/u" false) "git"
+}
+
+# --- resolve-stack: backend + verb translation ---
+
+def "test resolve-stack keeps graphite route unchanged" [] {
+  assert equal (resolve-stack { tool: "gt", args: ["ss"] } "gt") { tool: "gt", args: ["ss"] }
+}
+
+def "test resolve-stack passes through non-stack git route" [] {
+  assert equal (resolve-stack { tool: "git", args: ["push"] } "but") { tool: "git", args: ["push"] }
+}
+
+def "test resolve-stack passes through internal route" [] {
+  assert equal (resolve-stack { tool: "issue", args: [] } "but") { tool: "issue", args: [] }
+}
+
+# gitbutler verb translation
+
+def "test resolve-stack but translates modify to amend keeping flags" [] {
+  assert equal (resolve-stack { tool: "gt", args: ["modify", "-a"] } "but") { tool: "but", args: ["amend", "-a"] }
+}
+
+def "test resolve-stack but translates ss to push" [] {
+  assert equal (resolve-stack { tool: "gt", args: ["ss"] } "but") { tool: "but", args: ["push"] }
+}
+
+def "test resolve-stack but translates sync to pull" [] {
+  assert equal (resolve-stack { tool: "gt", args: ["sync"] } "but") { tool: "but", args: ["pull"] }
+}
+
+def "test resolve-stack but translates co to apply with branch arg" [] {
+  assert equal (resolve-stack { tool: "gt", args: ["co", "feature"] } "but") { tool: "but", args: ["apply", "feature"] }
+}
+
+def "test resolve-stack but translates create to branch new" [] {
+  assert equal (resolve-stack { tool: "gt", args: ["create", "my-branch"] } "but") { tool: "but", args: ["branch", "new", "my-branch"] }
+}
+
+def "test resolve-stack but translates untrack to unapply" [] {
+  assert equal (resolve-stack { tool: "gt", args: ["untrack", "br"] } "but") { tool: "but", args: ["unapply", "br"] }
+}
+
+def "test resolve-stack but reports cursor-move verb as unsupported" [] {
+  assert equal (resolve-stack { tool: "gt", args: ["up"] } "but") { tool: "unsupported", args: ["up", "but"] }
+}
+
+# plain-git fallback translation
+
+def "test resolve-stack git translates modify to commit amend" [] {
+  assert equal (resolve-stack { tool: "gt", args: ["modify"] } "git") { tool: "git", args: ["commit", "--amend"] }
+}
+
+def "test resolve-stack git translates create to checkout dash b" [] {
+  assert equal (resolve-stack { tool: "gt", args: ["create", "br"] } "git") { tool: "git", args: ["checkout", "-b", "br"] }
+}
+
+def "test resolve-stack git reports squash as unsupported" [] {
+  assert equal (resolve-stack { tool: "gt", args: ["squash"] } "git") { tool: "unsupported", args: ["squash", "git"] }
+}
+
 # --- test runner ---
 
 def main [] {

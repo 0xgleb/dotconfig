@@ -1,4 +1,4 @@
-use routing.nu fj-route
+use routing.nu [fj-route vcs-backend resolve-stack]
 use check.nu
 use unfuck.nu
 use workflow.nu
@@ -10,15 +10,30 @@ export use infra/
 
 # unified dev command — run `fj help` for details
 export def --wrapped main [...args: string@fj-complete] {
-  let route = (fj-route ...$args)
+  let raw = (fj-route ...$args)
+  let backend = (vcs-backend $env.PWD $env.HOME (which but | is-not-empty))
+  let route = (resolve-stack $raw $backend)
   match $route.tool {
     "status" => {
-      ^git status
-      try { ^gt ls -a }
+      match $backend {
+        "but" => { try { ^but status } catch { ^git status } }
+        _ => {
+          ^git status
+          if $backend == "gt" { try { ^gt ls -a } }
+        }
+      }
     }
     "gitui" => { ^gitui ...$route.args }
     "gt" => { ^gt ...$route.args }
+    "but" => { ^but ...$route.args }
     "git" => { ^git ...$route.args }
+    "unsupported" => {
+      let verb = ($route.args | get 0)
+      let be = ($route.args | get 1)
+      error make --unspanned {
+        msg: $"`fj ($verb)` has no equivalent on the ($be) backend in this repo"
+      }
+    }
     "do" => { workflow run }
     "check" => {
       unfuck run

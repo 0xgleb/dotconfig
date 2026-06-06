@@ -44,6 +44,60 @@ Common mistakes to avoid:
   submappings)
 - Adding a binding to the README without adding it to the config (or vice versa)
 
+# fj — unified dev command
+
+`fj` (aliases `f`, `j`) is a nushell module at `nushell/scripts/fj/` that is the
+user's single entry point for day-to-day version control and dev chores. It
+dispatches a subcommand to the right underlying tool: `git`, a stacking backend
+(`gt`/`but`), `gh`, or an internal workflow (`do`, `check`, `unfuck`, `take`,
+`md`, `infra`). Run `fj help` for the full command list.
+
+## VCS backend routing
+
+Only a few orgs use Graphite, so stack-style commands (`ss`, `create`, `sync`,
+`co`, `restack`, `mut`, …) are routed per repository:
+
+- `~/code/rainlanguage/*` and `~/code/st0x/*` → **`gt`** (Graphite)
+- any other repo where the gitbutler CLI (`but`) is on `PATH` → **`but`**
+- otherwise → plain **`git`**
+
+Plain git commands (`add`, `commit`, `push`, `status`, `diff`, `log`, …) always
+route to `git` regardless of backend. `gh`-backed commands (`issue`, `pr`) and
+internal workflows are backend-independent.
+
+The stack **verbs are translated**, not passed through — gitbutler has a
+different vocabulary and no stack cursor. For example `fj mut` → `gt modify` /
+`but amend` / `git commit --amend`; `fj co` → `gt co` / `but apply` / `git
+checkout`; `fj create` → `gt create` / `but branch new` / `git checkout -b`.
+Graphite-only verbs with no equivalent (the `up`/`down`/`top`/`bottom` cursor
+moves, and on git also `squash`/`absorb`/`move`/…) error with a clear message
+instead of being guessed at. The translation tables are `but_translations` and
+`git_translations` in `routing.nu`.
+
+To change which orgs use Graphite, edit `graphite_orgs` in
+`nushell/scripts/fj/routing.nu`.
+
+## Routing internals
+
+`nushell/scripts/fj/routing.nu` holds the pure, testable routing logic:
+
+- `fj-route ...args` — maps the invocation to `{ tool, args }` (logical routing;
+  stack commands carry tool `"gt"`)
+- `vcs-backend cwd home gitbutler_available` — resolves `"gt" | "but" | "git"`
+  for a working directory
+- `resolve-stack route backend` — translates a stack route (tool `"gt"`) to the
+  active backend, mapping both the tool and the verb; returns tool
+  `"unsupported"` (carrying `[verb, backend]`) when there is no equivalent.
+  Non-stack routes pass through unchanged.
+
+`mod.nu` wires them together (`vcs-backend $env.PWD $env.HOME (which but |
+is-not-empty)`), then dispatches; an `"unsupported"` route errors with a clear
+message. Run the unit tests after any routing change:
+
+```bash
+nu nushell/scripts/fj/routing.test.nu
+```
+
 # Agents and Services
 
 ## Markdown Sync Service
