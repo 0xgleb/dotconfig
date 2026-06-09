@@ -143,13 +143,17 @@ trunk=$(git symbolic-ref refs/remotes/origin/HEAD --short 2>/dev/null \
   excluding) trunk — stopping at `S` if `--start S` is set — to get the chain,
   then reverse it so it runs bottom → `E`. If `--start S` is set and `S` never
   appears while walking down from `E`, error: `E` is not a descendant of `S`.
-- **no `--end`** (subtree DFS): the frontier roots are `S` (if `--start S`),
-  else trunk's children. Get a node's children by checking it out and reading
-  `gt children`; get trunk's children by `gt checkout "$trunk"` then
-  `gt children`. DFS pre-order: emit a node, then recurse into its children.
-  The actual checkout + review + fold happens in step 5 as you visit each
-  node; you do not need to pre-compute the full list, but you must always
-  finish a node (review + fold) before descending into its children.
+- **no `--end`** (subtree DFS): start at `S` (if `--start S`), else at the
+  **bottom of the stack** — run `gt bottom` to land on the first branch above
+  trunk and begin there. Get a node's children with `gt children` (children of
+  the *current* branch, after checking it out). DFS pre-order: review + fold a
+  node, then descend into each child. **Multi-root trees:** `gt bottom` only
+  reaches the bottom of the *current* path; if trunk has other children not on
+  it, return to trunk (`gt checkout "$trunk"` then `gt children`) once that
+  root's subtree is done and DFS each remaining root. The actual checkout +
+  review + fold happens in step 5 as you visit each node; you need not
+  pre-compute the full list, but you must always finish a node (review + fold)
+  before descending into its children.
 
 **[GitButler]** Enumerate with JSON so you never parse the human graph:
 

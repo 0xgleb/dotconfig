@@ -1,5 +1,17 @@
 {
   "nodes": {
+    "claude-code-manifest": {
+      "flake": false,
+      "locked": {
+        "narHash": "sha256-lWbLYN2iMly85rpEFB4OaaZlWIsZKeHcHkqREKZMsH8=",
+        "type": "file",
+        "url": "https://downloads.claude.ai/claude-code-releases/2.1.170/manifest.json"
+      },
+      "original": {
+        "type": "file",
+        "url": "https://downloads.claude.ai/claude-code-releases/2.1.170/manifest.json"
+      }
+    },
     "disko": {
       "inputs": {
         "nixpkgs": [
@@ -156,6 +168,7 @@
     },
     "root": {
       "inputs": {
+        "claude-code-manifest": "claude-code-manifest",
         "disko": "disko",
         "home-manager": "home-manager",
         "nix-darwin": "nix-darwin",

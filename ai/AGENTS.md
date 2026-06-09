@@ -824,5 +824,10 @@ logs to `/tmp/sync-notes.out` (debug with `tail -f`), rebuilds applied with
 
 ## Personal Skills
 
+Shared skills live in `~/.config/ai/skills/` and are symlinked into both harnesses:
+
+- Claude: `~/.claude/skills` → `~/.config/ai/skills`
+- Cursor: `~/.cursor/skills` → `~/.config/ai/skills`
+
 - For Linear work, use `/Users/0xgleb/.config/ai/skills/linear/SKILL.md`.
 - Default to read-only operations first, inspect `linear --help` before using unfamiliar commands, and treat `linear api` mutations as high-risk until the exact payload has been reviewed.

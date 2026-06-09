@@ -1,6 +1,6 @@
 ---
 name: new-skill
-description: Create a new Claude skill in this dotconfig repo (~/.config/ai/skills). Handles metadata, drafting the SKILL.md, git commit, and symlink verification.
+description: Create a new agent skill in this dotconfig repo (~/.config/ai/skills). Handles metadata, drafting the SKILL.md, git commit, and symlink verification for Claude and Cursor.
 user-invocable: true
 allowed-tools:
   - "Bash(git add *)"
@@ -23,20 +23,35 @@ allowed-tools:
 
 Creates a new Claude skill in this dotconfig repo. Skills live in
 `~/.config/ai/skills/<name>/SKILL.md` (git-tracked source of truth) and are
-reached by Claude through the `~/.claude/skills` symlink.
+reached by Claude through the `~/.claude/skills` symlink and by Cursor through
+`~/.cursor/skills`.
 
 ## Architecture context
 
 ```
 ~/.config/                      # git repo (source of truth)
-  ai/skills/                     # Claude skills — one subdirectory + SKILL.md each
+  ai/skills/                     # shared agent skills — one subdirectory + SKILL.md each
     eod/SKILL.md
     graphite/SKILL.md
     linear/SKILL.md
     worktree/SKILL.md
+  ai/commands/                   # slash commands (Claude + Cursor)
+  ai/AGENTS.md                   # global agent guidelines
+  ai/claude.settings.json        # Claude Code settings (permissions, etc.)
+  ai/cursor.settings.json        # Cursor CLI settings merged into cli-config.json
 
 ~/.claude/
-  skills -> ~/.config/ai/skills  # symlink; this is how Claude discovers them
+  skills -> ~/.config/ai/skills
+  commands -> ~/.config/ai/commands
+  CLAUDE.md -> ~/.config/ai/AGENTS.md
+  settings.json -> ~/.config/ai/claude.settings.json
+
+~/.cursor/
+  skills -> ~/.config/ai/skills
+  commands -> ~/.config/ai/commands
+  AGENTS.md -> ~/.config/ai/AGENTS.md
+  CLAUDE.md -> ~/.config/ai/AGENTS.md
+  cli-config.json                # local runtime state; preferences merged from ai/cursor.settings.json
 ```
 
 A skill is a subdirectory containing `SKILL.md` (plus any sibling context
@@ -116,12 +131,13 @@ Write `~/.config/ai/skills/<name>/SKILL.md` with the `Write` tool (it creates
 the subdirectory). Never write into `~/.claude/skills` directly — that is a
 symlink into this repo.
 
-## Step 5 — Verify the symlink
+## Step 5 — Verify the symlinks
 
-Confirm the file is reachable through the `~/.claude/skills` symlink:
+Confirm the file is reachable through both agent harness symlinks:
 
 ```bash
-test -f ~/.claude/skills/<name>/SKILL.md && echo "skill linked" || echo "NOT linked — investigate"
+test -f ~/.claude/skills/<name>/SKILL.md && echo "claude linked" || echo "claude NOT linked — investigate"
+test -f ~/.cursor/skills/<name>/SKILL.md && echo "cursor linked" || echo "cursor NOT linked — investigate"
 ```
 
 Then print the file path and a short summary of what was created.
@@ -167,7 +183,7 @@ If yes, `cd ~/.config && git push`. If no, stop.
    `allowed-tools`. Enumerate the specific command families the skill needs
    (`Bash(git add *)`, `Bash(git commit *)`, …).
 4. Show the full draft to the user before writing the file.
-5. Verify the `~/.claude/skills` symlink resolves to the new file after writing.
+5. Verify both `~/.claude/skills` and `~/.cursor/skills` resolve to the new file after writing.
 6. Never push without an explicit per-session yes from the user.
 
 ## Failure modes
@@ -175,7 +191,8 @@ If yes, `cd ~/.config && git push`. If no, stop.
 - **Name collides with an existing skill** — `test -e` in Step 1 catches this.
   Stop and confirm; do not overwrite (Hard rule 2).
 - **Symlink check fails in Step 5** — the file exists in the repo but
-  `~/.claude/skills/<name>/SKILL.md` does not resolve. The `~/.claude/skills`
-  symlink is broken or missing; report it rather than re-creating the file.
+  `~/.claude/skills/<name>/SKILL.md` or `~/.cursor/skills/<name>/SKILL.md` does
+  not resolve. The harness symlinks are broken or missing; report it rather than
+  re-creating the file.
 - **Description too vague** — the skill won't auto-trigger reliably. Push the
   user for concrete trigger phrasing in Step 2.

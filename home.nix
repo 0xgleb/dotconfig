@@ -9,6 +9,8 @@
 let
   jf = import ./nushell/jf.nix { inherit pkgs; };
   isDarwin = pkgs.stdenv.isDarwin;
+  aiDir = "${config.home.homeDirectory}/.config/ai";
+  cursorDir = "${config.home.homeDirectory}/.cursor";
   nuConfigDir =
     if isDarwin && !config.xdg.enable then
       "Library/Application Support/nushell"
@@ -36,29 +38,67 @@ in
           system = pkgs.stdenv.hostPlatform.system;
           config.allowUnfree = true;
         };
+
+        # Track Anthropic's prebuilt Claude Code binary ahead of nixpkgs by
+        # pinning the release manifest as a flake input. The binary checksums
+        # live in the manifest (verified by fetchurl); the manifest itself is
+        # pinned in flake.lock. Bump via the claude-code-manifest input.
+        claude-code-latest =
+          let
+            manifest = builtins.fromJSON (builtins.readFile inputs.claude-code-manifest);
+            key = "${pkgs.stdenv.hostPlatform.node.platform}-${pkgs.stdenv.hostPlatform.node.arch}";
+          in
+          unstable.claude-code.overrideAttrs (_: {
+            version = manifest.version;
+            src = pkgs.fetchurl {
+              url = "https://downloads.claude.ai/claude-code-releases/${manifest.version}/${key}/claude";
+              sha256 = manifest.platforms.${key}.checksum;
+            };
+          });
       in
       (with pkgs; [
         cargo-watch
         jf
       ])
+      ++ [ claude-code-latest ]
       ++ (with unstable; [
-        claude-code
         codex
         graphite-cli
         cursor-cli
       ]);
 
     shell.enableNushellIntegration = true;
-    file = {
-      "${nuConfigDir}/scripts".source = ./nushell/scripts;
-    }
-    // lib.optionalAttrs isDarwin darwinFiles;
+    file =
+      {
+        "${nuConfigDir}/scripts".source = ./nushell/scripts;
+        ".cursor/skills".source = config.lib.file.mkOutOfStoreSymlink "${aiDir}/skills";
+        ".cursor/commands".source = config.lib.file.mkOutOfStoreSymlink "${aiDir}/commands";
+        ".cursor/AGENTS.md".source = config.lib.file.mkOutOfStoreSymlink "${aiDir}/AGENTS.md";
+        ".cursor/CLAUDE.md".source = config.lib.file.mkOutOfStoreSymlink "${aiDir}/AGENTS.md";
+      }
+      // lib.optionalAttrs isDarwin darwinFiles;
 
-    activation.nvimLazyRestore = lib.hm.dag.entryAfter [ "writeBoundary" ] ''
-      export PATH=${lib.makeBinPath [ pkgs.git ]}:$PATH
-      $DRY_RUN_CMD ${config.programs.neovim.finalPackage}/bin/nvim \
-        --headless "+Lazy! restore" +qa 2>/dev/null || true
-    '';
+    activation = {
+      nvimLazyRestore = lib.hm.dag.entryAfter [ "writeBoundary" ] ''
+        export PATH=${lib.makeBinPath [ pkgs.git ]}:$PATH
+        $DRY_RUN_CMD ${config.programs.neovim.finalPackage}/bin/nvim \
+          --headless "+Lazy! restore" +qa 2>/dev/null || true
+      '';
+
+      mergeCursorCliConfig = lib.hm.dag.entryAfter [ "writeBoundary" ] ''
+        cursor_config="${cursorDir}/cli-config.json"
+        cursor_settings="${aiDir}/cursor.settings.json"
+        if [ ! -f "$cursor_settings" ]; then
+          exit 0
+        fi
+        if [ -f "$cursor_config" ]; then
+          $DRY_RUN_CMD ${pkgs.jq}/bin/jq -s '.[0] * .[1]' "$cursor_config" "$cursor_settings" > "$cursor_config.tmp"
+        else
+          $DRY_RUN_CMD ${pkgs.jq}/bin/jq '. + {"version": 1}' "$cursor_settings" > "$cursor_config.tmp"
+        fi
+        $DRY_RUN_CMD mv "$cursor_config.tmp" "$cursor_config"
+      '';
+    };
   };
 
   # NOTE: this shit doesn't clean up after itself if you enable/disable it
