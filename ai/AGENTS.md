@@ -5,35 +5,23 @@ These rules apply across all repositories.
 ## ABSOLUTE PROHIBITION: Credentials and Secrets
 
 **YOU MUST NEVER, UNDER ANY CIRCUMSTANCES, ACCESS CREDENTIAL OR SECRET FILES.**
+No task, debugging scenario, or edge case permits it — not reading, grepping,
+listing, opening, referencing, or even confirming their existence.
 
-This is a non-negotiable, unconditional, exceptionless rule. There is no task,
-no debugging scenario, no edge case, no justification that permits touching
-these files. Not reading, not grepping, not listing, not opening, not
-referencing, not even confirming their existence. Nothing.
+**Forbidden files** (never touch, read, grep, glob, list, or access in any way):
+`.env`, `.env.*`, `.env.local`, `.env.production`; `credentials.json`,
+`secrets.json`, `secrets.yaml`; `*.key`, `*.pem`, `*.p12`, `*.pfx`; any file
+that could plausibly contain real credentials or secrets.
 
-**Forbidden files — NEVER touch, read, grep, glob, list, or access in any way:**
+**Forbidden operations:** `Read` on any credential file; `Grep`/`Glob` without
+excluding credential files (always use `--glob '!.env*'` or equivalent); `Bash`
+commands like `cat`/`grep`/`find`/`ls` that could expose their contents; ANY
+tool invocation whose output could include credential file contents.
 
-- `.env`, `.env.*`, `.env.local`, `.env.production` — contain real API keys and
-  secrets
-- `credentials.json`, `secrets.json`, `secrets.yaml` — credential storage
-- `*.key`, `*.pem`, `*.p12`, `*.pfx` — private keys and certificates
-- Any file that could plausibly contain real credentials or secrets
-
-**Forbidden operations — NEVER do any of the following:**
-
-- `Read` on any credential file
-- `Grep` or `Glob` without explicitly excluding credential files (always use
-  `--glob '!.env*'` or equivalent exclusions)
-- `Bash` commands like `cat`, `grep`, `find`, `ls` that could expose credential
-  file contents
-- ANY tool invocation whose output could include credential file contents
-
-**When searching the codebase:**
-
-- ALWAYS exclude `.env*` files from Grep/Glob searches
-- Use `.env.example` for understanding config structure — NEVER `.env`
-- If a search accidentally matches a credential file, STOP and do not process or
-  repeat the contents
+**When searching the codebase:** always exclude `.env*` from Grep/Glob; use
+`.env.example` to understand config structure, NEVER `.env`; if a search
+accidentally matches a credential file, STOP and do not process or repeat the
+contents.
 
 **Violation of this rule is the single most unacceptable thing an agent can
 do.** No amount of task completion justifies exposing credentials.
@@ -42,21 +30,19 @@ do.** No amount of task completion justifies exposing credentials.
 
 **NEVER fabricate commands, flags, arguments, values, URLs, or any other
 concrete information.** If you don't know the exact syntax, value, or answer,
-look it up FIRST. This applies to everything:
+look it up FIRST:
 
 - **Commands and flags**: Run `--help` before using any flag you're not 100%
   certain about. Never invent CLI flags.
 - **Project-specific details**: Read project files, configs, scripts, and code
-  before suggesting commands or values. Never give the user a template with
-  placeholders when the real values are available in the codebase.
-- **Suggestions and answers**: Before suggesting anything or answering any
-  question, get context. Read the relevant code, docs, or configs first. An
-  informed answer after 10 seconds of reading beats an instant guess that wastes
-  the user's time.
+  before suggesting commands or values. Never hand the user a placeholder
+  template when the real values are in the codebase.
+- **Suggestions and answers**: Get context before answering — read the relevant
+  code, docs, or configs first. An informed answer beats an instant guess.
 
-**The rule is simple: context first, action second.** Read before you speak.
-Check before you run. Look up before you suggest. If you cannot verify
-something, say you don't know — never fill the gap with fabrication.
+**Context first, action second.** Read before you speak, check before you run,
+look up before you suggest. If you cannot verify something, say you don't know —
+never fill the gap with fabrication.
 
 ## Authorship & Attribution
 
@@ -64,37 +50,38 @@ When writing commit messages, PR descriptions, titles, etc., never give yourself
 credit. You are an engineer's tool, not a co-author.
 
 **CRITICAL**: Before writing ANY commit message or PR title, you MUST run
-`git log --oneline` or `gh pr list` to check the user's existing style. Do not
-invent your own format - match what you see in the repository.
+`git log --oneline` or `gh pr list` to check the user's existing style. Match
+what you see in the repository — do not invent your own format.
 
 **CRITICAL: NEVER speak on the user's behalf via any account or channel you can
 authenticate as them.** Their `gh`, `linear`, `slack`, telegram, gmail, etc.
-tokens are theirs — not yours. Anything you publish through those tokens lands
-under their name and counts as them saying it.
+tokens are theirs — anything you publish through them lands under their name.
 
-This means in particular **never** do any of the following without an explicit
-in-session instruction from the user to post that exact content:
+Without an explicit in-session instruction to post that exact content, **never**:
 
 - Reply to PR review comments (`gh api .../pulls/comments/<id>/replies`, `gh pr
   review --comment`, `gh pr comment`).
 - Comment on issues (`gh issue comment`, Linear `linear issue comment`, etc.).
 - Send messages on chat platforms (Slack, telegram, Discord, etc.).
 - Post on social or public threads under their identity.
-- React, resolve, or otherwise emit any user-visible signal that downstream
-  readers will interpret as the user's voice.
+- React, resolve, or otherwise emit any user-visible signal downstream readers
+  will read as the user's voice.
+- **Request, re-request, or remove a PR's reviewers, or dismiss / approve /
+  request-changes on a review.** Re-requesting pings a real human and resets
+  approval state under the user's name — a review-state action, never neutral.
+  If a PR needs (re-)review, tell the user; NEVER touch review state yourself.
+  (A stack submit can re-request reviewers as a side effect, so scope submits
+  narrowly — see "Version Control".)
 
-If you disagree with PR feedback, an issue comment, a chat message, or any
-other input — **surface it to the user and let them decide whether and how to
-respond**. Hold your assessment as an opinion you bring to the conversation
-with them, not as something you post outward.
+If you disagree with PR feedback, an issue/chat comment, or any other input,
+**surface it to the user and let them decide whether and how to respond.** Hold
+your assessment as an opinion you bring to them, not something you post outward.
 
-The exceptions are scoped, mechanical surfaces where impersonation isn't the
-risk (e.g. opening/editing PRs you were told to open, creating/editing Linear
-issues you were told to create, committing code you wrote). Even there, the
-default is "act under instruction", not "decide for them".
-
-Violating this rule means the user has to apologise for words they didn't say.
-Do not do that to them.
+Exceptions are scoped, mechanical surfaces where impersonation isn't the risk
+(opening/editing PRs you were told to open, creating/editing Linear issues you
+were told to create, committing code you wrote). Even there, default to "act
+under instruction", not "decide for them". Violating this rule means the user
+has to apologise for words they didn't say.
 
 ## Publishing
 
@@ -117,23 +104,16 @@ for the policy that applies. Two cross-repo invariants stay regardless:
 
 ## PR Assignment
 
-**Always assign newly opened PRs to the user (self).** `gh pr create`
-and `gt submit` do NOT auto-assign — the assignees field stays empty
-unless you set it. Empty assignees means the PR doesn't show up on the
-user's "my PRs" boards / filters and they have to find it manually.
+**Always assign newly opened PRs to the user (self).** `gh pr create` and
+`gt submit` do NOT auto-assign; empty assignees means the PR won't show up on
+the user's "my PRs" boards and they have to find it manually. After creating or
+submitting any PR, run `gh pr edit <PR_NUMBER> --add-assignee @me` (assign each
+PR in a `gt submit` stack).
 
-After creating or submitting any PR, run:
-
-```bash
-gh pr edit <PR_NUMBER> --add-assignee @me
-```
-
-For stacks submitted with `gt submit`, assign each PR in the stack.
-
-**This is the opposite of the Linear-issue rule.** Linear issues
-default to unassigned unless you're actively working on them
-(someone else may pick them up). PRs default to assigned-to-self
-because if you opened it, you're driving it through review.
+**This is the opposite of the Linear-issue rule:** Linear issues default to
+unassigned unless you're actively working on them (someone else may pick them
+up); PRs default to assigned-to-self because if you opened it, you're driving it
+through review.
 
 ## Execution Discipline
 
@@ -160,31 +140,26 @@ because if you opened it, you're driving it through review.
 
 Good abstractions serve the system, not implementation details:
 
-- **Couple what belongs together**: Things that must happen together should be
-  impossible to separate. If operation A always requires operation B, the
-  abstraction should enforce this - don't rely on callers remembering.
-- **Decouple what varies independently**: Things that can change separately
-  should be loosely coupled. Easy to swap implementations, move components,
-  without cascading changes.
-- **Model domain capabilities**: Abstractions should describe what the system
-  can DO in domain terms. Ask "what purpose does this serve?" not "how is this
+- **Couple what belongs together**: If operation A always requires operation B,
+  the abstraction should make them impossible to separate — don't rely on
+  callers remembering.
+- **Decouple what varies independently**: Things that change separately should
+  be loosely coupled — easy to swap implementations without cascading changes.
+- **Model domain capabilities**: Abstractions describe what the system can DO in
+  domain terms. Ask "what purpose does this serve?" not "how is this
   implemented?"
 - **Abstractions are fractal**: Each level has its own domain and implementation
-  details. At the top level, "redeem tokens" is domain. One level down,
-  "persist/retrieve data" becomes domain for that layer (implementation of the
-  layer above). Each layer's implementation details become the domain concerns
-  of the layer below. A capability that's "implementation detail" at one level
-  might be a valid abstraction at a lower level.
+  details. "Redeem tokens" is domain at the top; one level down
+  "persist/retrieve data" becomes that layer's domain. A capability that's
+  implementation detail at one level may be a valid abstraction below it.
 - **Domain vs implementation is context-dependent**: What counts as "domain"
-  depends on what the system is for. In financial infrastructure, token backing
-  is domain. In a video game, the same operation might be implementation detail.
-  Understand the system's value proposition to identify its domain boundaries.
+  depends on what the system is for. In financial infrastructure token backing
+  is domain; in a video game the same operation might be implementation detail.
 - **Enable meaningful tests**: Good abstractions let you test business
-  invariants, not implementation details. If tests break when refactoring
-  internals, the abstraction leaked.
-- **Think holistically**: Don't design for the immediate case alone. Consider
-  the system as a whole - what features matter to consumers? Avoid ad-hoc
-  solutions that only fit one scenario.
+  invariants, not internals. If tests break when refactoring internals, the
+  abstraction leaked.
+- **Think holistically**: Consider the system as a whole — what features matter
+  to consumers? Avoid ad-hoc solutions that only fit one scenario.
 
 The mistake is focusing too narrowly on specific cases or centering on
 implementation details rather than the domain.
@@ -294,21 +269,15 @@ worried about too much output, redirect to a file instead:
 read the file with the Read tool if needed.
 
 **EXCEPTION — builds, tests, CI, and long-running tools: show ALL output
-live.** The user is watching their machine and wants to see what runs. For
-commands like `cargo check`, `cargo build`, `cargo test`, `cargo nextest`,
-`cargo clippy`, `nix build`, `nix run .#ci`, `bun run check`,
-`bun run test`, `forge test`, `npm test`, deploys, migrations, etc.:
+live.** For `cargo check`/`build`/`test`/`nextest`/`clippy`, `nix build`,
+`nix run .#ci`, `bun run check`/`test`, `forge test`, `npm test`, deploys,
+migrations, etc.: run the command bare — no `> file`, `| tail`, `| head`,
+`| grep`, or `2>&1 > ...`. Let stdout/stderr stream to the terminal and parse
+the tool result yourself afterward; never run a second command to slice the log.
+This holds regardless of output size — the user wants to see progress live.
 
-- Run the command bare — no `> file`, no `| tail`, no `| head`, no `| grep`,
-  no `2>&1 > ...`. Let stdout/stderr stream directly to the terminal.
-- After the command finishes, parse the output from the tool result yourself.
-  Do not run a second command to slice the log.
-- This applies regardless of how long or noisy the output is — the user wants
-  to see compilation progress, test names, deploy steps as they happen.
-
-The redirect-to-`.tmp/` pattern is reserved for commands whose output you
-genuinely don't need to see live (e.g. a one-off grep over a large corpus,
-a JSON dump you'll later jq).
+The redirect-to-`.tmp/` pattern is reserved for output you genuinely don't need
+live (e.g. a one-off grep over a large corpus, a JSON dump you'll later jq).
 
 **CRITICAL: Before running `git checkout -- <file>` or any command that discards
 working tree changes**, always run `git status` first to check for staged and
@@ -464,25 +433,22 @@ RULES:
 ```
 
 **Scope:** Each subagent should have a narrow, well-defined task (e.g., "rename
-X to Y in these 3 files"). Do not give subagents broad exploratory mandates that
-could lead to unintended changes.
+X to Y in these 3 files"), never a broad exploratory mandate that could lead to
+unintended changes.
 
 **Include all relevant rules in the prompt**: The user cannot chat with
 subagents to steer them. Every repo-specific guideline, naming convention, code
-style rule, and constraint relevant to the subagent's task MUST be included in
-the prompt upfront. Copy the relevant sections verbatim from AGENTS.md or
-CLAUDE.md if needed - being thorough here prevents rework.
+style rule, and constraint relevant to the task MUST be in the prompt upfront —
+copy the relevant sections verbatim from AGENTS.md if needed.
 
-**Never read multiple subagent outputs back-to-back.** Reading responses from
-several agents in quick succession (e.g., checking on 3-5 completed agents in
-one turn) will blow out the context window and trigger compaction. Instead,
-check on ONE agent at a time: read its output, process/verify it, then move on
-to the next agent in a subsequent turn. Space out the reads across turns.
+**Never read multiple subagent outputs back-to-back.** Reading several agents'
+responses in one turn blows out the context window and triggers compaction.
+Check ONE agent at a time: read, process/verify, then move to the next in a
+subsequent turn.
 
-**You own subagent output.** Like a team lead is responsible for the team's
-output, you are responsible for everything subagents produce. Review all
-changes, assess quality, check for guideline violations, and fix any problems
-(yourself or via another subagent) before considering the task complete.
+**You own subagent output.** Like a team lead, you are responsible for
+everything subagents produce. Review all changes, check for guideline
+violations, and fix any problems before considering the task complete.
 
 ## Workflow
 
@@ -715,6 +681,12 @@ https://graphite.com/docs/command-reference
 - Use `gt modify` to amend, NOT `git commit --amend`
 - Use `gt sync` to pull, NOT `git pull`
 - Read-only git commands (`git status`, `git diff`, `git log`) are fine
+- **A stack submit can silently re-request reviewers** on PRs already in the
+  stack — including already-approved lower PRs, resetting their approval under
+  the user's name (a review-state action — see "Authorship & Attribution").
+  NEVER blanket-resubmit a stack whose lower PRs are already approved. Scope the
+  submit to the branches you actually changed, and run `gt submit --dry-run`
+  first to confirm which PRs will be touched (it labels each No-op vs Update).
 - When the user needs to run a graphite command, **stop and tell them the
   intent** (e.g., "we need to submit the stack"). If they don't know the
   command, then provide it.
@@ -722,33 +694,14 @@ https://graphite.com/docs/command-reference
 ## Git Worktrees
 
 Use a `.worktrees/` directory (gitignored) inside the repo for parallel work
-without stashing or switching branches.
+without stashing or switching branches. Each worktree gets its own working
+directory and branch, sharing the `.git` object store (no extra disk for
+history); `.worktrees/` is gitignored so worktree state is local-only.
 
-```
-myrepo/              # regular clone, main working tree on your current branch
-  .worktrees/        # gitignored, spin up as needed
-    feat/auth/       # worktree for auth feature
-    feat/billing/    # worktree for billing feature
-```
+**Setup:** Add `.worktrees/` to `.gitignore`, then
+`git worktree add .worktrees/feat/my-feature -b feat/my-feature`.
 
-**Setup:** Add `.worktrees/` to `.gitignore`, then create worktrees with:
-
-```bash
-git worktree add .worktrees/feat/my-feature -b feat/my-feature
-```
-
-**Cleanup:** Remove when done:
-
-```bash
-git worktree remove .worktrees/feat/my-feature
-```
-
-**Key points:**
-
-- No bare clone ceremony — works with a normal clone
-- Each worktree gets its own working directory and branch
-- Shared `.git` object store — no extra disk for history
-- `.worktrees/` is gitignored so worktree state is local-only
+**Cleanup:** `git worktree remove .worktrees/feat/my-feature`.
 
 **Submodules in worktrees:** Git worktrees don't share submodule checkouts. If a
 project has submodules (e.g., `lib/`), the worktree will have broken gitlinks.
@@ -860,38 +813,14 @@ multiple directories.
   `docs/file.liquidity.md`
 - Paths starting with `.` are converted: `.config` → `dotconfig`
 
-**Example Structure:**
+**Sync Behavior:** bidirectional (repos ↔ notes), only syncs files with parity
+in source repos, never modifies notes files without a corresponding source
+file, allows editing in Obsidian and syncing back, triggered on file changes
+(via fswatch).
 
-```
-notes/
-  liquidity/
-    ROADMAP.md
-    docs/
-      cqrs.md
-      architecture.md
-  issuance/
-    ROADMAP.md
-  feat-branch/
-    docs/
-      design.liquidity.md
-  dotconfig/
-    CLAUDE.md
-    home.nix.md
-```
-
-**Sync Behavior:**
-
-- Bidirectional: repos ↔ notes
-- Only syncs files with parity in source repositories
-- Files in notes without corresponding source files are never modified
-- Allows editing in Obsidian and syncing changes back to source repos
-- Automatically triggered on file changes (via fswatch)
-
-**Service Details:**
-
-- Runs continuously via `launchd.user.agents.syncNotes`
-- Logs to `/tmp/sync-notes.out` (debug with `tail -f`)
-- Rebuilds applied with `darwin-rebuild switch --flake ~/.config`
+**Service Details:** runs continuously via `launchd.user.agents.syncNotes`,
+logs to `/tmp/sync-notes.out` (debug with `tail -f`), rebuilds applied with
+`darwin-rebuild switch --flake ~/.config`.
 
 ## Personal Skills
 

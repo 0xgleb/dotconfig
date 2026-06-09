@@ -25,6 +25,9 @@ allowed-tools:
 
 ## Hard rules
 
+- **Scope: the st0x / Rain family of orgs** — ST0x-Technology, rainlanguage,
+  and sibling family orgs. NEVER data-cartel: that's the user's own org and
+  belongs in a separate update, not this one.
 - **Tools: `linear`, `gh`, `gt` only.** No `git`, no `cat`, no ad-hoc
   scripts. Read files with `Read`.
 - **Never fabricate.** No "Next items" unless the user wrote them. No
@@ -86,13 +89,20 @@ allowed-tools:
    directives for this run.
 
 4. **Source of truth.**
-   - **With brain dump (CLI arg or embedded TLDR):** user's text is
-     canonical. Cross-reference to Linear/GitHub so stakeholders can
-     drill down (link RAI tickets and PR numbers where they fit),
-     but don't contradict or embellish the dump.
-   - **Without brain dump:** gather from Linear and GitHub (queries
-     below). If the data is sparse, ask before drafting — don't
-     invent a day.
+   - **With brain dump (CLI arg or embedded TLDR):** the user's text is
+     canonical for framing and emphasis — don't contradict or embellish it.
+     But a brain dump is a TLDR, not a complete inventory: still run the
+     queries below and reconcile. A throwaway line like "addressing feedback,
+     merging" routinely hides work across several repos — never let the dump's
+     brevity become an omission. Cross-reference Linear/GitHub so readers can
+     drill down (link RAI tickets and PR numbers where they fit).
+   - **Without brain dump:** gather from Linear and GitHub (queries below).
+     If the data is sparse, ask before drafting — don't invent a day.
+
+   Either way, gather by **activity** across the family orgs: a PR you pushed
+   commits to today (addressing review, iterating a draft) is today's work even
+   if it was opened earlier — filter by `--updated`, not just
+   `created`/`merged-at`, and check every repo, not just the obvious one.
 
 5. **Draft.** Match the format of the last few EODs. Common shape:
    - `# Daily Update:  YYYY-MM-DD`
@@ -150,31 +160,44 @@ linear api 'query($u: ID!, $a: DateTimeOrDuration!) {
 }' --variable u=<id> --variable a=<iso>
 ```
 
-**PRs I reviewed today:**
+**PRs I reviewed today** (NOISY — `--reviewed-by` + `--updated` returns every PR
+you have *ever* reviewed that happened to be updated today, including your own
+PRs and stale reviews bumped by someone else's commit). Treat it as a candidate
+list; verify each one you cite is a review you actually submitted today:
 
 ```bash
-gh search prs --reviewed-by=@me --updated=YYYY-MM-DD \
-  --json number,title,repository,url --limit 50
+gh search prs --reviewed-by=@me --owner=ST0x-Technology,rainlanguage \
+  --updated=YYYY-MM-DD --json number,title,repository,url --limit 100
+# verify a candidate: did YOU submit a review today?
+gh pr view <N> --repo <org>/<repo> --json reviews \
+  --jq '.reviews[] | select(.author.login=="<your-login>") | {state, submittedAt}'
 ```
 
-**PRs I authored that moved today:**
+**PRs I authored that moved today** — filter by `--updated` (catches PRs you
+*iterated on* today even if opened earlier, e.g. pushing fixes after review) and
+scope to the family orgs. There is NO `mergedAt` field on `gh search prs` —
+requesting it errors:
 
 ```bash
-gh search prs --author=@me --updated=YYYY-MM-DD \
-  --json number,title,repository,url,state,mergedAt --limit 50
+gh search prs --author=@me --owner=ST0x-Technology,rainlanguage \
+  --updated=YYYY-MM-DD --json number,title,repository,url,state,isDraft --limit 100
 ```
 
-**Day stats (counts for the summary line).** `--jq length` returns the
-count directly. `--merged` / `--created` / `--closed` take a single
-`YYYY-MM-DD`, not a range.
+**Day stats (counts for the summary line).** On `gh search prs`, `--jq length`
+returns the count directly. `--created` / `--closed` / `--merged-at` take a
+`YYYY-MM-DD` (or a `START..END` range). WATCH OUT: the bare `--merged` flag is a
+BOOLEAN, not a date — passing a date errors; use `--merged-at`. `linear api`
+does NOT support `--jq` — count Linear results by fetching `identifier`s and
+counting the nodes.
 
 ```bash
+# scope every query to the family orgs (add siblings as needed; never data-cartel)
 # PRs opened today
-gh search prs --author=@me --created=YYYY-MM-DD --json number --jq length
+gh search prs --author=@me --owner=ST0x-Technology,rainlanguage --created=YYYY-MM-DD --json number --jq length
 # PRs merged today
-gh search prs --author=@me --merged=YYYY-MM-DD --json number --jq length
-# PRs reviewed today (rough — PRs you reviewed that moved today)
-gh search prs --reviewed-by=@me --updated=YYYY-MM-DD --json number --jq length
+gh search prs --author=@me --owner=ST0x-Technology,rainlanguage --merged-at=YYYY-MM-DD --json number --jq length
+# PRs reviewed today (rough — see the review-noise warning above; verify before citing)
+gh search prs --reviewed-by=@me --owner=ST0x-Technology,rainlanguage --updated=YYYY-MM-DD --json number --jq length
 ```
 
 **Submitted-for-review vs still-draft split.** `gh search prs` does NOT
@@ -244,3 +267,15 @@ to describe an open stack the user mentioned.
   bullet already has the PR number tied to that issue elsewhere.
 - Each section earns its place. If the day's work has no Linear
   output, drop the Linear section. If no reviews, drop Reviews.
+- Reviews are a stat, not prose. Cite the count (and which repos); never
+  describe what someone else's reviewed PR does — the note is what the user
+  built, not the work they happened to review.
+- Link every PR reference, or none — never link the first and leave the rest
+  bare. Pick one convention and apply it uniformly.
+- Don't borrow a tool's reserved words for loose meaning: "initiative",
+  "project", "epic", "cycle" are Linear primitives; "stack" is Graphite. And
+  don't imply newness ("N new X") unless the user said it's new.
+- It's a clean note for stakeholders, not a transcript of the chat: never
+  paste the user's feedback or your own corrections into the note (e.g. "none
+  of it new", "not just what merged"), and read every sentence for sense and
+  grammar before finishing.
