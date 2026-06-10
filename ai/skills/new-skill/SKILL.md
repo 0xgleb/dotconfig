@@ -58,10 +58,8 @@ A skill is a subdirectory containing `SKILL.md` (plus any sibling context
 files). Claude auto-triggers a skill when its `description` matches the user's
 request; skills marked `user-invocable: true` can also be invoked explicitly.
 
-> Claude slash commands (`~/.claude/commands/<name>.md`) and Codex skills
-> (`~/.codex/skills/<name>/SKILL.md`) are real directories **outside** this git
-> repo — this skill does not manage them. It creates git-tracked Claude skills
-> only.
+> This skill creates git-tracked skills only. Slash commands
+> (`ai/commands/<name>.md`) are a separate surface it does not manage.
 
 ## Step 1 — Determine the name
 

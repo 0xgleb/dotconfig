@@ -1,6 +1,6 @@
 ---
-allowed-tools: Bash(gh:*), Bash(git:*), Bash(codex:*), Bash(mkdir:*), Bash(wc:*), Bash(date:*), Bash(basename:*), Bash(test:*), Bash(grep:*), Read, Write, Agent, Workflow, Skill
-description: Cross-review a pull request by number or URL without checking it out. Runs a multi-model Workflow panel (2x Fable, Sonnet, 2x Codex gpt-5.5 + inspectors) with per-finding verification, then starts a conversation so you can decide which findings (if any) to comment on the PR.
+allowed-tools: Bash(gh:*), Bash(git:*), Bash(cursor-agent:*), Bash(mkdir:*), Bash(wc:*), Bash(date:*), Bash(basename:*), Bash(test:*), Bash(grep:*), Read, Write, Agent, Workflow, Skill
+description: Cross-review a pull request by number or URL without checking it out. Runs a multi-model Workflow panel (2x Fable, Sonnet, 2x GPT-5.5 via cursor-agent + inspectors) with per-finding verification, then starts a conversation so you can decide which findings (if any) to comment on the PR.
 argument-hint: <pr-number | pr-url>
 ---
 
@@ -185,11 +185,13 @@ If you find nothing worth raising, return an empty findings list and set
 clean_reason to a one-sentence justification of why the diff is clean.
 ```
 
-(For the two Codex lanes, replace the "Output" paragraph in their prompt
-files with the original markdown output format — `### <title>` sections with
-Severity/File/Category/Finding/Why it matters/Recommended fix/Confidence
-bullets, "### No findings" when clean — since Codex returns text that the
-lane agent converts to structured output.)
+(For the two cursor-agent lanes, replace the "Output" paragraph in their
+prompt files with the original markdown output format — `### <title>` sections
+with Severity/File/Category/Finding/Why it matters/Recommended fix/Confidence
+bullets, "### No findings" when clean — since cursor-agent returns text that
+the lane agent converts to structured output. Their prompt files must be
+self-contained: cursor-agent reads no other prompt files, so inline the full
+review instructions and note that the diff path is appended to the prompt.)
 
 ### Per-reviewer focus paragraphs
 
@@ -224,7 +226,7 @@ for silent failures, missing error propagation, and recovery paths that
 leave the system in an inconsistent state.
 ```
 
-**Codex A — Edge cases & boundary conditions:**
+**Cursor A (GPT-5.5) — Edge cases & boundary conditions:**
 ```
 YOUR FOCUS: Look for edge cases at boundaries. What happens at block 0?
 When a range is empty? When both inputs are equal? When an optional value
@@ -232,7 +234,7 @@ is None for the first time? When a counter overflows? Find the inputs
 that the author probably didn't test.
 ```
 
-**Codex B — Broad general sweep:**
+**Cursor B (GPT-5.5) — Broad general sweep:**
 ```
 YOUR FOCUS: Do a broad, unbiased review. Don't focus on any particular
 category — instead, try to find anything the other reviewers might miss.
@@ -304,22 +306,22 @@ no output-file validation, no separate aggregator agent.
 
 ### Lanes
 
-Build the lane list (drop the codex lanes if `codex` is not on PATH — check
-`command -v codex`; warn the user and continue with 7 lanes):
+Build the lane list (drop the cursor lanes if `cursor-agent` is not on PATH —
+check `command -v cursor-agent`; warn the user and continue with 7 lanes):
 
-| key                | codex | model  | promptPath                              |
-| ------------------ | ----- | ------ | --------------------------------------- |
-| fable-a            | no    | fable  | prompt-fable-a.txt (concurrency)        |
-| fable-b            | no    | fable  | prompt-fable-b.txt (goal evaluation)    |
-| sonnet             | no    | sonnet | prompt-sonnet.txt (error handling)      |
-| codex-a            | yes   | —      | prompt-codex-a.txt (edge cases)         |
-| codex-b            | yes   | —      | prompt-codex-b.txt (broad sweep)        |
-| test-inspector     | no    | sonnet | prompt-test-inspector.txt               |
-| rust-inspector     | no    | fable  | prompt-rust-inspector.txt               |
-| typing-inspector   | no    | sonnet | prompt-typing-inspector.txt             |
-| contract-inspector | no    | fable  | prompt-contract-inspector.txt           |
+| key                | cursor | model  | promptPath                              |
+| ------------------ | ------ | ------ | --------------------------------------- |
+| fable-a            | no     | fable  | prompt-fable-a.txt (concurrency)        |
+| fable-b            | no     | fable  | prompt-fable-b.txt (goal evaluation)    |
+| sonnet             | no     | sonnet | prompt-sonnet.txt (error handling)      |
+| cursor-a           | yes    | —      | prompt-cursor-a.txt (edge cases)        |
+| cursor-b           | yes    | —      | prompt-cursor-b.txt (broad sweep)       |
+| test-inspector     | no     | sonnet | prompt-test-inspector.txt               |
+| rust-inspector     | no     | fable  | prompt-rust-inspector.txt               |
+| typing-inspector   | no     | sonnet | prompt-typing-inspector.txt             |
+| contract-inspector | no     | fable  | prompt-contract-inspector.txt           |
 
-Each lane object: `{key, codex, model, promptPath, diffPath}`. All lanes
+Each lane object: `{key, cursor, model, promptPath, diffPath}`. All lanes
 share `$out_dir/diff.patch`.
 
 ### Workflow invocation
@@ -398,15 +400,14 @@ const laneResults = await parallel(lanes.map(lane => () => {
     `Project docs: ${docsPaths.join(', ')}\n` +
     `Repo root: ${repoRoot}`
 
-  const prompt = lane.codex
+  const prompt = lane.cursor
     ? `Use Bash to run exactly this command (one call, 10 minute timeout):\n` +
-      `cat "${lane.diffPath}" | codex exec --sandbox read-only -m gpt-5.5 ` +
-      `-C "${repoRoot}" "$(cat "${lane.promptPath}")"\n` +
-      `Codex mixes tool-call logs with the review; the review appears after ` +
-      `the last bare 'codex' marker line in stdout, before any 'tokens used' ` +
-      `trailer. If the command fails with a rate-limit or quota error, retry ` +
-      `once with -m o3. Convert the resulting review into structured ` +
-      `findings (parse each ### section into one finding). If codex is ` +
+      `cursor-agent -p --mode plan --model gpt-5.5-high --trust ` +
+      `--workspace "${repoRoot}" ` +
+      `"$(cat "${lane.promptPath}") The diff to review is at: ${lane.diffPath}"\n` +
+      `cursor-agent prints the review text directly to stdout (no log noise). ` +
+      `Convert the resulting review into structured findings (parse each ` +
+      `### section into one finding). If cursor-agent fails or is ` +
       `unusable, return an empty findings list and set reviewer_error.`
     : `Read the review instructions at ${lane.promptPath} and follow them ` +
       `exactly.\n${context}\nRead the diff, the project docs, and any ` +
@@ -712,7 +713,7 @@ itself to be targeted inline feedback, not a wall of text.
    not a one-shot.
 6. If the PR is closed/merged/draft, ask before proceeding.
 7. **Posted reviews must read like a human wrote them.** No AI references
-   (models, agents, Claude, Codex, Gemini). No numbered
+   (models, agents, Claude, GPT, Gemini). No numbered
    finding prefixes (`#1`, `**#2 (HIGH)**`). No em dashes. No bold
    severity labels. Use lowercase severity prefixes (`critical:`,
    `should fix:`, `minor:`, `nit:`) to signal importance. Write short,
@@ -726,5 +727,6 @@ itself to be targeted inline feedback, not a wall of text.
    inline comment on a diff line. When a finding references unchanged
    code, place the comment on the nearest related changed line.
 9. The review runs as a single `Workflow` invocation — never hand-roll the
-   fan-out with individual Agent calls. `--sandbox read-only` for codex is
-   non-negotiable.
+   fan-out with individual Agent calls. `--mode plan` (read-only) for
+   cursor-agent is non-negotiable — never `-f`/`--yolo`, and `-w` is
+   --worktree, NOT --workspace.

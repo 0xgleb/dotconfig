@@ -145,7 +145,7 @@ const but_translations = {
   ls: [status]
   ll: [status]
   modify: [amend]
-  ss: [push]
+  ss: [push all]
   submit: [push]
   sync: [pull]
   squash: [squash]

@@ -1,11 +1,11 @@
 ---
-allowed-tools: Bash(gt:*), Bash(but:*), Bash(direnv:*), Bash(git:*), Bash(gh:*), Bash(codex:*), Bash(linear:*), Bash(cargo:*), Bash(mkdir:*), Bash(cat:*), Bash(mktemp:*), Bash(rm:*), Bash(test:*), Bash(grep:*), Bash(wc:*), Bash(date:*), Bash(basename:*), Bash(find:*), Bash(ls:*), Read, Write, Edit, Agent, Workflow, AskUserQuestion, Skill
-description: Sweep the whole stack bottom-to-top, running the full /review-loop on each branch and folding the fixes into it before moving up. Detects the repo's stacking tool (Graphite or GitButler) and uses the right primitives. Optional --start / --end bound the range; otherwise it covers every branch upstack of the trunk. Graphite stacks are traversed as trees (parent before child); GitButler stacks as a forest of applied series.
+allowed-tools: Bash(gt:*), Bash(but:*), Bash(direnv:*), Bash(git:*), Bash(gh:*), Bash(cursor-agent:*), Bash(linear:*), Bash(cargo:*), Bash(mkdir:*), Bash(cat:*), Bash(mktemp:*), Bash(rm:*), Bash(test:*), Bash(grep:*), Bash(wc:*), Bash(date:*), Bash(basename:*), Bash(find:*), Bash(ls:*), Read, Write, Edit, Agent, Workflow, AskUserQuestion, Skill
+description: Sweep the whole stack bottom-to-top, running the full /review-loop on each branch and modifying the fixes into it before moving up. Detects the repo's stacking tool (Graphite or GitButler) and uses the right primitives. Optional --start / --end bound the range; otherwise it covers every branch upstack of the trunk. Graphite stacks are traversed as trees (parent before child); GitButler stacks as a forest of applied series.
 argument-hint: [--start <branch>] [--end <branch>]
 ---
 
 Sweep an entire stack with the self-review loop. For every branch upstack of
-the trunk, run the full `/review-loop` single-branch procedure, fold the fixes
+the trunk, run the full `/review-loop` single-branch procedure, modify the fixes
 into that branch, then move up — so each branch is reviewed in the rebased
 state its parent's fixes produced.
 
@@ -20,7 +20,7 @@ This is a strict generalization of `/review-loop stack`:
 
 The per-branch review work is identical to `/review-loop` and is **not**
 re-specified here — this command only adds the stack traversal and the
-tool-specific scope/fold operations around it.
+tool-specific scope/modify operations around it.
 
 Follow these steps precisely.
 
@@ -32,7 +32,7 @@ Three layers. Only the adapter is tool-specific.
 
 - **Stack adapter** (tool-specific): detect the tool, enumerate the branches
   to sweep in parent-before-child order, produce the per-branch review scope
-  (`diff.patch` + `files.txt`), and fold a branch's accumulated fixes back
+  (`diff.patch` + `files.txt`), and modify a branch's accumulated fixes back
   into that branch.
 - **Review engine** (tool-agnostic): given a per-branch scope, run
   **`/review-loop` steps 3–12** — build the panel prompts, run the
@@ -49,7 +49,7 @@ Three layers. Only the adapter is tool-specific.
 | enumerate (parent→child) | pre-order DFS via `gt children`               | each applied stack's series, bottom→top                |
 | navigate to a branch     | `gt checkout <branch>`                         | none — all virtual branches are applied at once        |
 | scope one branch's diff  | `git diff $(gt parent)`                        | `but branch show <branch>` (commits ahead of its base) |
-| fold fixes into a branch | `gt modify -a` (amends + restacks descendants) | `but absorb <branch>` (`--dry-run` first)              |
+| modify fixes into a branch | `gt modify -a` (restacks descendants; NEVER `gt fold` — that merges a branch into its parent) | `but absorb <branch>` (`--dry-run` first)              |
 | return to start          | `gt checkout <start-branch>`                   | none                                                   |
 
 ---
@@ -94,9 +94,9 @@ Semantics, on a tree (Graphite) or forest (GitButler):
 
 ## 3. Preflight
 
-Common: confirm `codex` and the review tooling are available exactly as
-`/review-loop` step 1 requires (drop the two codex lanes with a warning if
-`codex` is missing).
+Common: confirm `cursor-agent` and the review tooling are available exactly as
+`/review-loop` step 1 requires (drop the two GPT-5.5 lanes with a warning if
+`cursor-agent` is missing).
 
 **[Graphite]** Same preflight as `/review-loop`:
 
@@ -146,13 +146,13 @@ trunk=$(git symbolic-ref refs/remotes/origin/HEAD --short 2>/dev/null \
 - **no `--end`** (subtree DFS): start at `S` (if `--start S`), else at the
   **bottom of the stack** — run `gt bottom` to land on the first branch above
   trunk and begin there. Get a node's children with `gt children` (children of
-  the *current* branch, after checking it out). DFS pre-order: review + fold a
+  the *current* branch, after checking it out). DFS pre-order: review + modify a
   node, then descend into each child. **Multi-root trees:** `gt bottom` only
   reaches the bottom of the *current* path; if trunk has other children not on
   it, return to trunk (`gt checkout "$trunk"` then `gt children`) once that
   root's subtree is done and DFS each remaining root. The actual checkout +
-  review + fold happens in step 5 as you visit each node; you need not
-  pre-compute the full list, but you must always finish a node (review + fold)
+  review + modify happens in step 5 as you visit each node; you need not
+  pre-compute the full list, but you must always finish a node (review + modify)
   before descending into its children.
 
 **[GitButler]** Enumerate with JSON so you never parse the human graph:
@@ -209,8 +209,8 @@ For each branch in `order` (parent before child), do one full pass:
    `/review-loop`'s hard rules apply per branch, including the 4-pass cap and
    "convergence requires a clean pass — never end on a fix."
 
-3. **Fold the fixes into this branch.** Only if the engine changed files:
-   - **[Graphite]** `gt modify -a` (invoke the `graphite` skill). This amends
+3. **Modify the fixes into this branch.** Only if the engine changed files:
+   - **[Graphite]** `gt modify -a` (invoke the `graphite` skill). This puts
      the fixes into the branch's commit and restacks its descendants, so the
      children you descend into next are already rebased on the fixed parent.
    - **[GitButler]** `but absorb <branch>` to route the staged fixes into that
@@ -221,7 +221,7 @@ For each branch in `order` (parent before child), do one full pass:
 4. **Advance.**
    - **[Graphite]** If `--end` mode (linear chain), move to the next branch in
      the precomputed chain. Otherwise (subtree DFS) read `gt children` of the
-     branch you just folded and descend into each, unless this branch is the
+     branch you just modified and descend into each, unless this branch is the
      `--end` target (then prune — do not descend).
    - **[GitButler]** Move to the next branch in the series; when a series ends,
      start the next applied stack's series.
@@ -246,7 +246,7 @@ Then print the summary:
 ━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━
 Review sweep complete — <tool>  ·  <N> branches
 ━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━
-  feat/a       converged clean (fixed 3, folded)
+  feat/a       converged clean (fixed 3, modified)
   feat/a-x     converged clean (no changes)
   feat/a-y     stuck (4-pass cap — see above)   [sweep stopped here]
 
@@ -259,20 +259,21 @@ Then stop. Do **not** push or submit — the user decides when to publish.
 
 ## Hard rules
 
-1. **Amend-and-advance is the whole point and is allowed**: folding each
+1. **Modify-and-advance is the whole point and is allowed**: modifying each
    branch's fixes into it (`gt modify -a` / `but absorb`) is expected. This is
    the same relaxation `/review-loop stack` makes to `/review-loop`'s "never
-   amend automatically" rule — scoped to folding review fixes into the branch
+   amend automatically" rule — scoped to modifying review fixes into the branch
    they belong to.
 2. **Never push, submit, or open/flip PRs.** No `gt submit`/`gt ss`, no
    `but push`, no `gh pr` state changes — not even at the end, not even if a
    branch converges clean. Publishing is always the user's explicit call.
 3. **Never change the VCS's mode or topology.** No `gt init`, no `but setup` /
    `but teardown`, no creating/deleting/reparenting/reordering branches. The
-   sweep reviews and folds within the existing stack; it never restructures it.
+   sweep reviews and modifies within the existing stack; it never restructures
+   it. NEVER run `gt fold` — it merges a branch into its parent.
    (`gt modify -a` restacking descendants is an expected side effect of
-   folding, not a topology change.)
-4. **Parent before child, always.** A branch is reviewed and folded before any
+   modifying, not a topology change.)
+4. **Parent before child, always.** A branch is reviewed and modified before any
    of its children, so every child is reviewed on top of its parent's fixes.
    Use `gt children` (never `gt up`) for Graphite trees; use the series order
    for GitButler.
@@ -280,7 +281,7 @@ Then stop. Do **not** push or submit — the user decides when to publish.
    branch that failed to converge — their scope is built on unsettled code.
 6. **Per branch, `/review-loop` owns the review.** Every per-branch pass is
    `/review-loop` steps 3–12 verbatim (single `review-panel` Workflow, verify
-   and synthesize inside the workflow, `--sandbox read-only` codex, 4-pass cap,
+   and synthesize inside the workflow, `--mode plan` cursor-agent, 4-pass cap,
    clean-pass convergence). Do not hand-roll the fan-out or relax those rules.
 7. **GitButler workspace mode is a precondition, not something you create.** If
    `but status` fails, stop and tell the user to enter workspace mode; never
@@ -302,6 +303,6 @@ Then stop. Do **not** push or submit — the user decides when to publish.
   sweep from that branch.
 - **`but` not on PATH** — fall back to `direnv exec "$repo_root" but …`; if that
   also fails, stop and tell the user the flake dev shell isn't loaded.
-- **User says "stop" mid-sweep** — finish folding the current branch if a fold
+- **User says "stop" mid-sweep** — finish modifying the current branch if a modify
   is already in flight (never leave a half-applied fix), then stop and print the
   summary of branches done so far.

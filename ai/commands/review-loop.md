@@ -1,6 +1,6 @@
 ---
-allowed-tools: Bash(gt:*), Bash(git:*), Bash(gh:*), Bash(codex:*), Bash(linear:*), Bash(cargo:*), Bash(mkdir:*), Bash(cat:*), Bash(mktemp:*), Bash(rm:*), Bash(test:*), Bash(grep:*), Bash(wc:*), Bash(date:*), Bash(basename:*), Bash(find:*), Read, Write, Edit, Agent, Workflow, AskUserQuestion
-description: Cross-review the current branch with a multi-model Workflow panel (2x Fable, Sonnet, 2x Codex gpt-5.5 + inspectors), auto-fix findings, and re-review until clean. Re-review passes use fast delta verification. Loops automatically — only stops for user input on disputed findings or massive changes. Pass `stack` to run the loop across the whole upstack, amending each branch.
+allowed-tools: Bash(gt:*), Bash(git:*), Bash(gh:*), Bash(cursor-agent:*), Bash(linear:*), Bash(cargo:*), Bash(mkdir:*), Bash(cat:*), Bash(mktemp:*), Bash(rm:*), Bash(test:*), Bash(grep:*), Bash(wc:*), Bash(date:*), Bash(basename:*), Bash(find:*), Read, Write, Edit, Agent, Workflow, AskUserQuestion
+description: Cross-review the current branch with a multi-model Workflow panel (2x Fable, Sonnet, 2x GPT-5.5 via cursor-agent + inspectors), auto-fix findings, and re-review until clean. Re-review passes use fast delta verification. Loops automatically — only stops for user input on disputed findings or massive changes. Pass `stack` to run the loop across the whole upstack, amending each branch.
 argument-hint: [stack]
 ---
 
@@ -32,7 +32,7 @@ Follow these steps precisely.
 ## Stack mode (`/review-loop stack`)
 
 When invoked with the `stack` argument, wrap the single-branch loop (steps
-1–14) in an upstack walk: review-loop the current branch, fold the fixes into
+1–14) in an upstack walk: review-loop the current branch, modify the fixes into
 its commit, move up, and repeat until the top of the stack. Passing `stack` is
 an explicit opt-in to the amend-and-advance flow, so in stack mode **hard rule
 #4 is relaxed**: you MAY `gt modify -a` to amend fixes into the current
@@ -87,12 +87,12 @@ Verify prerequisites before doing anything:
    gt log short
    ```
 
-2. `codex` and `gt` are on PATH:
+2. `cursor-agent` and `gt` are on PATH:
    ```bash
-   command -v codex gt
+   command -v cursor-agent gt
    ```
-   If `codex` is missing, warn the user and drop the two Codex lanes from the
-   panel (7 lanes instead of 9). Seven lanes is still valuable.
+   If `cursor-agent` is missing, warn the user and drop the two GPT-5.5 lanes
+   from the panel (7 lanes instead of 9). Seven lanes is still valuable.
 
 3. The working tree is clean or stashed. A dirty tree pollutes the diff
    and confuses reviewers:
@@ -228,11 +228,13 @@ If you find nothing worth raising, return an empty findings list and set
 clean_reason to a one-sentence justification of why the diff is clean.
 ```
 
-(For the two Codex lanes, replace the "Output" paragraph in their prompt
-files with the original markdown output format — `### <title>` sections with
-Severity/File/Category/Finding/Why it matters/Recommended fix/Confidence
-bullets, "### No findings" when clean — since Codex returns text that the
-lane agent converts to structured output.)
+(For the two cursor-agent lanes, replace the "Output" paragraph in their
+prompt files with the original markdown output format — `### <title>` sections
+with Severity/File/Category/Finding/Why it matters/Recommended fix/Confidence
+bullets, "### No findings" when clean — since cursor-agent returns text that
+the lane agent converts to structured output. Their prompt files must be
+self-contained: cursor-agent reads no other prompt files, so inline the full
+review instructions and note that the diff path is appended to the prompt.)
 
 ### Per-reviewer focus paragraphs
 
@@ -267,7 +269,7 @@ for silent failures, missing error propagation, and recovery paths that
 leave the system in an inconsistent state.
 ```
 
-**Codex A — Edge cases & boundary conditions:**
+**Cursor A (GPT-5.5) — Edge cases & boundary conditions:**
 ```
 YOUR FOCUS: Look for edge cases at boundaries. What happens at block 0?
 When a range is empty? When both inputs are equal? When an optional value
@@ -275,7 +277,7 @@ is None for the first time? When a counter overflows? Find the inputs
 that the author probably didn't test.
 ```
 
-**Codex B — Broad general sweep:**
+**Cursor B (GPT-5.5) — Broad general sweep:**
 ```
 YOUR FOCUS: Do a broad, unbiased review. Don't focus on any particular
 category — instead, try to find anything the other reviewers might miss.
@@ -372,21 +374,21 @@ aggregator agent in the main session.
 
 ### Lanes
 
-Build the lane list (drop the codex lanes if `codex` is not on PATH):
+Build the lane list (drop the cursor lanes if `cursor-agent` is not on PATH):
 
-| key                | codex | model  | promptPath                              |
-| ------------------ | ----- | ------ | --------------------------------------- |
-| fable-a            | no    | fable  | prompt-fable-a.txt (concurrency)        |
-| fable-b            | no    | fable  | prompt-fable-b.txt (goal evaluation)    |
-| sonnet             | no    | sonnet | prompt-sonnet.txt (error handling)      |
-| codex-a            | yes   | —      | prompt-codex-a.txt (edge cases)         |
-| codex-b            | yes   | —      | prompt-codex-b.txt (broad sweep)        |
-| test-inspector     | no    | sonnet | prompt-test-inspector.txt               |
-| rust-inspector     | no    | fable  | prompt-rust-inspector.txt               |
-| typing-inspector   | no    | sonnet | prompt-typing-inspector.txt             |
-| contract-inspector | no    | fable  | prompt-contract-inspector.txt           |
+| key                | cursor | model  | promptPath                              |
+| ------------------ | ------ | ------ | --------------------------------------- |
+| fable-a            | no     | fable  | prompt-fable-a.txt (concurrency)        |
+| fable-b            | no     | fable  | prompt-fable-b.txt (goal evaluation)    |
+| sonnet             | no     | sonnet | prompt-sonnet.txt (error handling)      |
+| cursor-a           | yes    | —      | prompt-cursor-a.txt (edge cases)        |
+| cursor-b           | yes    | —      | prompt-cursor-b.txt (broad sweep)       |
+| test-inspector     | no     | sonnet | prompt-test-inspector.txt               |
+| rust-inspector     | no     | fable  | prompt-rust-inspector.txt               |
+| typing-inspector   | no     | sonnet | prompt-typing-inspector.txt             |
+| contract-inspector | no     | fable  | prompt-contract-inspector.txt           |
 
-Each lane object: `{key, codex, model, promptPath, diffPath}`. Normally all
+Each lane object: `{key, cursor, model, promptPath, diffPath}`. Normally all
 lanes share `$out_dir/diff.patch`; chunked runs differ (see below).
 
 ### Workflow invocation
@@ -398,7 +400,7 @@ Invoke the `Workflow` tool with the script below via `script`, and `args`:
   "repoRoot": "<repo_root>",
   "docsPaths": ["<CLAUDE.md/AGENTS.md paths>"],
   "lanes": [ ...lane objects... ],
-  "reportHeader": "# Review — <branch>\n**Commit:** <head_sha>\n**Parent:** <parent_sha> (<parent branch>)\n**Files changed:** <N>\n**Diff size:** <LOC> lines\n**Panel:** 2x Fable, Sonnet, 2x Codex gpt-5.5, 4 inspectors; per-finding verification; Fable synthesis",
+  "reportHeader": "# Review — <branch>\n**Commit:** <head_sha>\n**Parent:** <parent_sha> (<parent branch>)\n**Files changed:** <N>\n**Diff size:** <LOC> lines\n**Panel:** 2x Fable, Sonnet, 2x GPT-5.5 (cursor-agent), 4 inspectors; per-finding verification; Fable synthesis",
   "synthesisExtra": ""
 }
 ```
@@ -468,15 +470,14 @@ const laneResults = await parallel(lanes.map(lane => () => {
     `Project docs: ${docsPaths.join(', ')}\n` +
     `Repo root: ${repoRoot}`
 
-  const prompt = lane.codex
+  const prompt = lane.cursor
     ? `Use Bash to run exactly this command (one call, 10 minute timeout):\n` +
-      `cat "${lane.diffPath}" | codex exec --sandbox read-only -m gpt-5.5 ` +
-      `-C "${repoRoot}" "$(cat "${lane.promptPath}")"\n` +
-      `Codex mixes tool-call logs with the review; the review appears after ` +
-      `the last bare 'codex' marker line in stdout, before any 'tokens used' ` +
-      `trailer. If the command fails with a rate-limit or quota error, retry ` +
-      `once with -m o3. Convert the resulting review into structured ` +
-      `findings (parse each ### section into one finding). If codex is ` +
+      `cursor-agent -p --mode plan --model gpt-5.5-high --trust ` +
+      `--workspace "${repoRoot}" ` +
+      `"$(cat "${lane.promptPath}") The diff to review is at: ${lane.diffPath}"\n` +
+      `cursor-agent prints the review text directly to stdout (no log noise). ` +
+      `Convert the resulting review into structured findings (parse each ` +
+      `### section into one finding). If cursor-agent fails or is ` +
       `unusable, return an empty findings list and set reviewer_error.`
     : `Read the review instructions at ${lane.promptPath} and follow them ` +
       `exactly.\n${context}\nRead the diff, the project docs, and any ` +
@@ -651,7 +652,7 @@ Review — <branch>
 
 ▲ CRITICAL (count)
   1. <title>
-     <file>:<line>  [fable-a, codex-b]  confidence: 95
+     <file>:<line>  [fable-a, cursor-b]  confidence: 95
      <one-line fix>
 
 ▲ HIGH (count)
@@ -1116,7 +1117,7 @@ per-branch summary line, then continue the upstack walk — do not stop here.
   deferred items. Ask the user whether to retry the failed one at the end.
 - **The user says "stop" mid-loop:** immediately stop, then print the
   summary with what was completed so far. Do not silently abandon the rest.
-- **Codex not installed:** warn the user and drop the codex lanes
+- **cursor-agent not installed:** warn the user and drop the cursor lanes
   (7 lanes instead of 9). Seven lanes is still valuable.
 
 ## Hard rules
@@ -1145,7 +1146,10 @@ per-branch summary line, then continue the upstack walk — do not stop here.
 10. The review pass runs as a single `Workflow` invocation — never run
     reviewers sequentially or hand-roll the fan-out with individual Agent
     calls.
-11. Use `--sandbox read-only` for codex — non-negotiable.
+11. Use `--mode plan` (read-only) for cursor-agent — non-negotiable. Never
+    `-f`/`--yolo`, and never bare `-p` without a read-only mode (headless
+    print mode otherwise has write and shell access). `-w` is --worktree,
+    NOT --workspace — always spell out `--workspace`.
 12. Verification and synthesis happen inside the workflow, never in the
     main session (context pollution).
 13. Never fabricate findings when a lane errors — record the failure from

@@ -196,8 +196,8 @@ def "test resolve-stack but translates modify to amend keeping flags" [] {
   assert equal (resolve-stack { tool: "gt", args: ["modify", "-a"] } "but") { tool: "but", args: ["amend", "-a"] }
 }
 
-def "test resolve-stack but translates ss to push" [] {
-  assert equal (resolve-stack { tool: "gt", args: ["ss"] } "but") { tool: "but", args: ["push"] }
+def "test resolve-stack but translates ss to push all" [] {
+  assert equal (resolve-stack { tool: "gt", args: ["ss"] } "but") { tool: "but", args: ["push", "all"] }
 }
 
 def "test resolve-stack but translates sync to pull" [] {

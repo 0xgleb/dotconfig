@@ -132,6 +132,13 @@ allowed-tools:
 
 ## Data queries
 
+The `linear` CLI lives in the repo's nix dev shell, not on PATH — run it
+through direnv from a family-repo checkout (e.g. st0x.issuance):
+
+```bash
+direnv exec . linear api '...'
+```
+
 Cache `viewer.id` once per run:
 
 ```bash
@@ -162,16 +169,49 @@ linear api 'query($u: ID!, $a: DateTimeOrDuration!) {
 
 **PRs I reviewed today** (NOISY — `--reviewed-by` + `--updated` returns every PR
 you have *ever* reviewed that happened to be updated today, including your own
-PRs and stale reviews bumped by someone else's commit). Treat it as a candidate
-list; verify each one you cite is a review you actually submitted today:
+PRs and stale reviews bumped by someone else's commit). In practice the raw
+candidate list can run 3x+ the real count (observed: 42 candidates, 12 actual).
+NEVER cite the raw count. Treat it as a candidate list, then batch-verify every
+candidate before citing any:
 
 ```bash
+# 1. candidate list, compact repo+number pairs
 gh search prs --reviewed-by=@me --owner=ST0x-Technology,rainlanguage \
-  --updated=YYYY-MM-DD --json number,title,repository,url --limit 100
-# verify a candidate: did YOU submit a review today?
-gh pr view <N> --repo <org>/<repo> --json reviews \
-  --jq '.reviews[] | select(.author.login=="<your-login>") | {state, submittedAt}'
+  --updated=YYYY-MM-DD --json number,repository \
+  --jq '.[] | "\(.repository.nameWithOwner) \(.number)"' --limit 100
+
+# 2. batch-verify: keep only PRs where YOU submitted a review in today's window.
+#    Use the REST reviews endpoint (submitted_at + user.login), filter by both:
+while read -r repo num; do
+  n=$(gh api "repos/$repo/pulls/$num/reviews" \
+    --jq '[.[] | select(.user.login=="<your-login>")
+              | select(.submitted_at >= "YYYY-MM-DDT00:00:00Z")] | length' 2>/dev/null)
+  [ "$n" != "0" ] && [ -n "$n" ] && echo "$repo#$num: $n review(s) today"
+done <<'EOF'
+<paste step-1 output here>
+EOF
 ```
+
+Drop from the verified list: your own PRs (replying to review feedback on your
+PR is not a review) and anything with zero reviews submitted in the window.
+Adjust the timestamp lower bound for the user's actual workday (UTC-3: a day
+starting at local midnight begins at `T03:00:00Z`).
+
+**Human vs AI-bot feedback.** "Addressed review feedback" / "resubmitted after
+feedback" implies a HUMAN reviewed the PR. Before writing it, check who the
+review authors actually are:
+
+```bash
+gh api "repos/<org>/<repo>/pulls/<N>/reviews" \
+  --jq '[.[] | .user.login] | group_by(.) | map({login: .[0], count: length})'
+```
+
+- Human reviewer (e.g. `JuaniRios`, `findolor`) → name them: "addressed Juan's
+  feedback on N".
+- Only `coderabbitai[bot]` / Graphite AI / other bots → do NOT call it feedback;
+  say "resubmitted for review" or similar. Clearing bot comments is routine PR
+  hygiene, not review iteration, and naming it "feedback" overstates the day.
+- Never lump human and bot feedback into one undifferentiated "feedback" claim.
 
 **PRs I authored that moved today** — filter by `--updated` (catches PRs you
 *iterated on* today even if opened earlier, e.g. pushing fixes after review) and
