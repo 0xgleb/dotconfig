@@ -65,6 +65,7 @@ in
         codex
         graphite-cli
         cursor-cli
+        gemini-cli
       ]);
 
     shell.enableNushellIntegration = true;

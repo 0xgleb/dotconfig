@@ -1,6 +1,6 @@
 ---
-allowed-tools: Bash(gh:*), Bash(git:*), Bash(cursor-agent:*), Bash(mkdir:*), Bash(wc:*), Bash(date:*), Bash(basename:*), Bash(test:*), Bash(grep:*), Read, Write, Agent, Workflow, Skill
-description: Cross-review a pull request by number or URL without checking it out. Runs a multi-model Workflow panel (2x Fable, Sonnet, 2x GPT-5.5 via cursor-agent + inspectors) with per-finding verification, then starts a conversation so you can decide which findings (if any) to comment on the PR.
+allowed-tools: Bash(gh:*), Bash(git:*), Bash(cursor-agent:*), Bash(gemini:*), Bash(command:*), Bash(mkdir:*), Bash(wc:*), Bash(date:*), Bash(basename:*), Bash(test:*), Bash(grep:*), Read, Write, Agent, Workflow, Skill
+description: Cross-review a pull request by number or URL without checking it out. Runs a multi-model Workflow panel (2x Fable, Sonnet, a Composer cross-lab augment lane, 2 frontier external lanes that fall back GPT-5.5 -> Gemini per Cursor usage limits, + inspectors) with per-finding verification, then starts a conversation so you can decide which findings (if any) to comment on the PR.
 argument-hint: <pr-number | pr-url>
 ---
 
@@ -185,13 +185,16 @@ If you find nothing worth raising, return an empty findings list and set
 clean_reason to a one-sentence justification of why the diff is clean.
 ```
 
-(For the two cursor-agent lanes, replace the "Output" paragraph in their
-prompt files with the original markdown output format — `### <title>` sections
-with Severity/File/Category/Finding/Why it matters/Recommended fix/Confidence
-bullets, "### No findings" when clean — since cursor-agent returns text that
-the lane agent converts to structured output. Their prompt files must be
-self-contained: cursor-agent reads no other prompt files, so inline the full
-review instructions and note that the diff path is appended to the prompt.)
+(For external lanes that run through an external CLI — cursor-agent or
+gemini — replace the "Output" paragraph in their prompt files with the
+original markdown output format — `### <title>` sections with
+Severity/File/Category/Finding/Why it matters/Recommended fix/Confidence
+bullets, "### No findings" when clean — since the external CLI returns text
+that the lane agent converts to structured output. Their prompt files must
+be self-contained: the external CLI reads no other prompt files, so inline
+the full review instructions and note that the diff path is appended to the
+prompt. If an external lane fell back to a **native sonnet lane** on the
+preflight probes, keep the standard structured-output paragraph instead.)
 
 ### Per-reviewer focus paragraphs
 
@@ -226,7 +229,7 @@ for silent failures, missing error propagation, and recovery paths that
 leave the system in an inconsistent state.
 ```
 
-**Cursor A (GPT-5.5) — Edge cases & boundary conditions:**
+**External A — Edge cases & boundary conditions:**
 ```
 YOUR FOCUS: Look for edge cases at boundaries. What happens at block 0?
 When a range is empty? When both inputs are equal? When an optional value
@@ -234,7 +237,7 @@ is None for the first time? When a counter overflows? Find the inputs
 that the author probably didn't test.
 ```
 
-**Cursor B (GPT-5.5) — Broad general sweep:**
+**External B — Broad general sweep:**
 ```
 YOUR FOCUS: Do a broad, unbiased review. Don't focus on any particular
 category — instead, try to find anything the other reviewers might miss.
@@ -304,25 +307,93 @@ runs as **one `Workflow` invocation** using the same `review-panel` script
 as `/review-loop`. Findings come back schema-validated; no markdown parsing,
 no output-file validation, no separate aggregator agent.
 
+### External lane resolution (usage-limit probes)
+
+Cursor has no CLI command to query remaining usage, so probe each candidate
+with a one-token call instead. The panel uses two model tiers:
+
+- **Frontier tier** (the two external lanes): GPT-5.5 via cursor-agent
+  (burns Cursor's API-model pool); when that pool is low or out, the
+  Gemini CLI free tier is the frontier-tier replacement from another lab.
+- **Fast tier** (the sonnet lanes): Composer is the Sonnet-comparable fast
+  model — quick but still quite capable, with its own Cursor limit pool
+  separate from the API models. It augments the sonnet lane for cross-lab
+  redundancy, and conditionally replaces frontier lanes when both frontier
+  options are exhausted.
+
+Run the probes (skip any whose CLI is not on PATH):
+
+```bash
+# (a) Cursor API-model pool (frontier)
+cursor-agent -p --mode plan --model gpt-5.5-high --trust "Reply with exactly: OK"
+# (b) only if (a) failed — Gemini free tier (frontier replacement)
+gemini -p "Reply with exactly: OK" --approval-mode plan --skip-trust
+# (c) always — Composer pool (fast tier, separate Cursor limits)
+cursor-agent -p --mode plan --model composer-2.5 --trust "Reply with exactly: OK"
+```
+
+A probe **passes** if it exits cleanly and prints `OK`. It **fails** if the
+command errors or the output mentions a usage/rate limit (match "usage
+limit", "rate limit", "quota", "limit reached" case-insensitively) or an
+auth problem.
+
+Assign lanes from the probe results:
+
+| Frontier probe result | Composer | external-a (edge cases)     | external-b (broad sweep)    | composer lane (error handling) |
+| --------------------- | -------- | --------------------------- | --------------------------- | ------------------------------ |
+| (a) gpt-5.5 OK        | OK       | cursor-agent `gpt-5.5-high` | cursor-agent `gpt-5.5-high` | cursor-agent `composer-2.5`    |
+| (a) gpt-5.5 OK        | out      | cursor-agent `gpt-5.5-high` | cursor-agent `gpt-5.5-high` | dropped                        |
+| (b) gemini OK         | OK       | `gemini`                    | `gemini`                    | cursor-agent `composer-2.5`    |
+| (b) gemini OK         | out      | `gemini`                    | `gemini`                    | dropped                        |
+| both frontier out     | OK       | cursor-agent `composer-2.5` | native `sonnet` lane        | dropped (composer moved to a)  |
+| both frontier out     | out      | native `sonnet` lane        | dropped                     | dropped                        |
+
+The **composer lane** is a fast-tier augment: it mirrors the sonnet lane's
+error-handling focus so the same ground is covered by models from two
+different labs. When both frontier options are exhausted, Composer is
+promoted into external-a instead (conditional replacement) and the augment
+lane is dropped — no point running Composer twice. Tell the user which
+configuration the panel landed on whenever it is not the first row.
+
 ### Lanes
 
-Build the lane list (drop the cursor lanes if `cursor-agent` is not on PATH —
-check `command -v cursor-agent`; warn the user and continue with 7 lanes):
+Build the lane list:
 
-| key                | cursor | model  | promptPath                              |
-| ------------------ | ------ | ------ | --------------------------------------- |
-| fable-a            | no     | fable  | prompt-fable-a.txt (concurrency)        |
-| fable-b            | no     | fable  | prompt-fable-b.txt (goal evaluation)    |
-| sonnet             | no     | sonnet | prompt-sonnet.txt (error handling)      |
-| cursor-a           | yes    | —      | prompt-cursor-a.txt (edge cases)        |
-| cursor-b           | yes    | —      | prompt-cursor-b.txt (broad sweep)       |
-| test-inspector     | no     | sonnet | prompt-test-inspector.txt               |
-| rust-inspector     | no     | fable  | prompt-rust-inspector.txt               |
-| typing-inspector   | no     | sonnet | prompt-typing-inspector.txt             |
-| contract-inspector | no     | fable  | prompt-contract-inspector.txt           |
+| key                | external | model  | promptPath                              |
+| ------------------ | -------- | ------ | --------------------------------------- |
+| fable-a            | no       | fable  | prompt-fable-a.txt (concurrency)        |
+| fable-b            | no       | fable  | prompt-fable-b.txt (goal evaluation)    |
+| sonnet             | no       | sonnet | prompt-sonnet.txt (error handling)      |
+| composer           | yes      | —      | prompt-composer.txt (error handling, cross-lab augment; present per probes) |
+| external-a         | probes   | —      | prompt-external-a.txt (edge cases)      |
+| external-b         | probes   | —      | prompt-external-b.txt (broad sweep)     |
+| test-inspector     | no       | sonnet | prompt-test-inspector.txt               |
+| rust-inspector     | no       | fable  | prompt-rust-inspector.txt               |
+| typing-inspector   | no       | sonnet | prompt-typing-inspector.txt             |
+| contract-inspector | no       | fable  | prompt-contract-inspector.txt           |
 
-Each lane object: `{key, cursor, model, promptPath, diffPath}`. All lanes
-share `$out_dir/diff.patch`.
+The composer lane reuses the Sonnet focus paragraph (error handling &
+failure modes) in the external-CLI prompt format — same coverage, different
+lab.
+
+Each lane object: `{key, externalCmd, model, promptPath, diffPath}`. All
+lanes share `$out_dir/diff.patch`.
+
+For external lanes still running through an external CLI, set `externalCmd`
+to the **complete shell command** (with the lane's own prompt and diff paths
+substituted) and omit `model`:
+
+- cursor-agent lanes (`gpt-5.5-high` or `composer-2.5`):
+  ```
+  cursor-agent -p --mode plan --model <lane-model> --trust --workspace "<repo_root>" "$(cat "<promptPath>") The diff to review is at: <diffPath>"
+  ```
+- gemini lanes:
+  ```
+  gemini -p "$(cat "<promptPath>") The diff to review is at: <diffPath>" --approval-mode plan --skip-trust
+  ```
+
+For native lanes (including an external lane that fell back to native
+sonnet), leave `externalCmd` unset and set `model` as usual.
 
 ### Workflow invocation
 
@@ -400,15 +471,14 @@ const laneResults = await parallel(lanes.map(lane => () => {
     `Project docs: ${docsPaths.join(', ')}\n` +
     `Repo root: ${repoRoot}`
 
-  const prompt = lane.cursor
-    ? `Use Bash to run exactly this command (one call, 10 minute timeout):\n` +
-      `cursor-agent -p --mode plan --model gpt-5.5-high --trust ` +
-      `--workspace "${repoRoot}" ` +
-      `"$(cat "${lane.promptPath}") The diff to review is at: ${lane.diffPath}"\n` +
-      `cursor-agent prints the review text directly to stdout (no log noise). ` +
-      `Convert the resulting review into structured findings (parse each ` +
-      `### section into one finding). If cursor-agent fails or is ` +
-      `unusable, return an empty findings list and set reviewer_error.`
+  const prompt = lane.externalCmd
+    ? `Use Bash to run exactly this command from the directory ${repoRoot} ` +
+      `(one call, 10 minute timeout):\n${lane.externalCmd}\n` +
+      `The command prints the review text directly to stdout (no log ` +
+      `noise). Convert the resulting review into structured findings ` +
+      `(parse each ### section into one finding). If the command fails, ` +
+      `reports a usage/rate limit, or is unusable, return an empty ` +
+      `findings list and set reviewer_error to the exact error text.`
     : `Read the review instructions at ${lane.promptPath} and follow them ` +
       `exactly.\n${context}\nRead the diff, the project docs, and any ` +
       `source files referenced by the diff that you need for context.`
@@ -727,6 +797,8 @@ itself to be targeted inline feedback, not a wall of text.
    inline comment on a diff line. When a finding references unchanged
    code, place the comment on the nearest related changed line.
 9. The review runs as a single `Workflow` invocation — never hand-roll the
-   fan-out with individual Agent calls. `--mode plan` (read-only) for
-   cursor-agent is non-negotiable — never `-f`/`--yolo`, and `-w` is
-   --worktree, NOT --workspace.
+   fan-out with individual Agent calls. External CLIs run read-only —
+   non-negotiable. cursor-agent: always `--mode plan`, never `-f`/`--yolo`,
+   and `-w` is --worktree, NOT --workspace — always spell out
+   `--workspace`. gemini: always `--approval-mode plan`, never
+   `-y`/`--yolo`.

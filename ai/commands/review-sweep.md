@@ -1,5 +1,5 @@
 ---
-allowed-tools: Bash(gt:*), Bash(but:*), Bash(direnv:*), Bash(git:*), Bash(gh:*), Bash(cursor-agent:*), Bash(linear:*), Bash(cargo:*), Bash(mkdir:*), Bash(cat:*), Bash(mktemp:*), Bash(rm:*), Bash(test:*), Bash(grep:*), Bash(wc:*), Bash(date:*), Bash(basename:*), Bash(find:*), Bash(ls:*), Read, Write, Edit, Agent, Workflow, AskUserQuestion, Skill
+allowed-tools: Bash(gt:*), Bash(but:*), Bash(direnv:*), Bash(git:*), Bash(gh:*), Bash(cursor-agent:*), Bash(gemini:*), Bash(command:*), Bash(linear:*), Bash(cargo:*), Bash(mkdir:*), Bash(cat:*), Bash(mktemp:*), Bash(rm:*), Bash(test:*), Bash(grep:*), Bash(wc:*), Bash(date:*), Bash(basename:*), Bash(find:*), Bash(ls:*), Read, Write, Edit, Agent, Workflow, AskUserQuestion, Skill
 description: Sweep the whole stack bottom-to-top, running the full /review-loop on each branch and modifying the fixes into it before moving up. Detects the repo's stacking tool (Graphite or GitButler) and uses the right primitives. Optional --start / --end bound the range; otherwise it covers every branch upstack of the trunk. Graphite stacks are traversed as trees (parent before child); GitButler stacks as a forest of applied series.
 argument-hint: [--start <branch>] [--end <branch>]
 ---
@@ -94,9 +94,11 @@ Semantics, on a tree (Graphite) or forest (GitButler):
 
 ## 3. Preflight
 
-Common: confirm `cursor-agent` and the review tooling are available exactly as
-`/review-loop` step 1 requires (drop the two GPT-5.5 lanes with a warning if
-`cursor-agent` is missing).
+Common: confirm the review tooling is available exactly as `/review-loop`
+step 1 requires, including its usage-limit probes (step 1.3) that resolve the
+external lanes (GPT-5.5 -> Gemini frontier fallback, Composer cross-lab
+augment). Run the probes once for the whole sweep, not per branch; re-resolve
+only if a lane hits a usage limit mid-sweep.
 
 **[Graphite]** Same preflight as `/review-loop`:
 
@@ -281,7 +283,8 @@ Then stop. Do **not** push or submit — the user decides when to publish.
    branch that failed to converge — their scope is built on unsettled code.
 6. **Per branch, `/review-loop` owns the review.** Every per-branch pass is
    `/review-loop` steps 3–12 verbatim (single `review-panel` Workflow, verify
-   and synthesize inside the workflow, `--mode plan` cursor-agent, 4-pass cap,
+   and synthesize inside the workflow, read-only external CLIs — `--mode plan`
+   for cursor-agent, `--approval-mode plan` for gemini — 4-pass cap,
    clean-pass convergence). Do not hand-roll the fan-out or relax those rules.
 7. **GitButler workspace mode is a precondition, not something you create.** If
    `but status` fails, stop and tell the user to enter workspace mode; never
