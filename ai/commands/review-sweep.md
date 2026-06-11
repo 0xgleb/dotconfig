@@ -1,6 +1,6 @@
 ---
 allowed-tools: Bash(gt:*), Bash(but:*), Bash(direnv:*), Bash(git:*), Bash(gh:*), Bash(cursor-agent:*), Bash(gemini:*), Bash(command:*), Bash(linear:*), Bash(cargo:*), Bash(mkdir:*), Bash(cat:*), Bash(mktemp:*), Bash(rm:*), Bash(test:*), Bash(grep:*), Bash(wc:*), Bash(date:*), Bash(basename:*), Bash(find:*), Bash(ls:*), Read, Write, Edit, Agent, Workflow, AskUserQuestion, Skill
-description: Sweep the whole stack bottom-to-top, running the full /review-loop on each branch and modifying the fixes into it before moving up. Detects the repo's stacking tool (Graphite or GitButler) and uses the right primitives. Optional --start / --end bound the range; otherwise it covers every branch upstack of the trunk. Graphite stacks are traversed as trees (parent before child); GitButler stacks as a forest of applied series.
+description: Sweep the whole stack bottom-to-top, running the full /review-loop on each branch — folding the branch PR's unaddressed reviewer feedback into the same triage — and modifying the fixes into it before moving up. Detects the repo's stacking tool (Graphite or GitButler) and uses the right primitives. Optional --start / --end bound the range; otherwise it covers every branch upstack of the trunk. Graphite stacks are traversed as trees (parent before child); GitButler stacks as a forest of applied series.
 argument-hint: [--start <branch>] [--end <branch>]
 ---
 
@@ -38,7 +38,10 @@ Three layers. Only the adapter is tool-specific.
   **`/review-loop` steps 3–12** — build the panel prompts, run the
   `review-panel` Workflow, triage, fix-now loop, compile gate, and the
   delta-mode re-review loop until the branch converges clean, then `/ci`. Do
-  not re-implement any of that here; reuse it verbatim per branch.
+  not re-implement any of that here; reuse it verbatim per branch. The sweep
+  adds one input the single-branch loop doesn't have: the branch PR's
+  **unaddressed reviewer feedback** (step 5.2) is folded into the same triage
+  table as the panel's verified findings.
 - **Orchestration** (this command): resolve the range, drive the adapter over
   it branch by branch, return to the start, and print the per-branch summary.
 
@@ -203,7 +206,36 @@ For each branch in `order` (parent before child), do one full pass:
      Reviewers read source straight from the working tree, which already
      reflects the whole applied stack.
 
-2. **Run the review engine = `/review-loop` steps 3–12** on this branch's
+2. **Collect unaddressed PR feedback.** If the branch has a PR, fetch the
+   feedback a human or bot reviewer left that was never addressed:
+
+   ```bash
+   pr_number=$(gh pr view <branch> --json number --jq '.number' 2>/dev/null)
+   ```
+
+   - **Unresolved review threads** (the primary signal — resolved threads are
+     done, outdated-and-resolved ones doubly so):
+     ```bash
+     gh api graphql -f query='query($owner:String!,$repo:String!,$pr:Int!){
+       repository(owner:$owner,name:$repo){pullRequest(number:$pr){
+         reviewThreads(first:100){nodes{isResolved isOutdated path line
+           comments(first:20){nodes{author{login} body}}}}}}}' \
+       -F owner=<owner> -F repo=<repo> -F pr="$pr_number"
+     ```
+     Keep threads with `isResolved == false`.
+   - **Top-level review bodies and issue comments** (`gh pr view --json
+     reviews,comments`) that request concrete changes and have no visible
+     follow-up.
+
+   Convert each unaddressed item into a finding candidate: file/line from the
+   thread, the reviewer's ask as the finding text, severity inferred from
+   content. **Verify each against the current working tree first** — feedback
+   often predates rebases and may already be addressed or made moot; treat
+   stale items as resolved, and report them as such in the summary rather
+   than re-fixing. If the branch has no PR or `gh` is unreachable, note it
+   and continue with panel findings only.
+
+3. **Run the review engine = `/review-loop` steps 3–12** on this branch's
    scope: load project docs, build the panel prompts and inspector prompts, run
    the `review-panel` Workflow, print findings, triage with the bias-to-fix
    table, run the fix-now loop, the compile gate, and the delta-mode re-review
@@ -211,7 +243,14 @@ For each branch in `order` (parent before child), do one full pass:
    `/review-loop`'s hard rules apply per branch, including the 4-pass cap and
    "convergence requires a clean pass — never end on a fix."
 
-3. **Modify the fixes into this branch.** Only if the engine changed files:
+   Fold the step-5.2 feedback candidates into the triage table alongside the
+   panel's verified findings (they enter the same fix-now loop and the same
+   re-review passes). PR feedback gets a mild extra bias toward fixing: a
+   human asked for it. Dismissing a feedback item requires the same standard
+   as any review dismissal — existing coverage or factually wrong — and every
+   dismissal must be listed in the final summary with its reason.
+
+4. **Modify the fixes into this branch.** Only if the engine changed files:
    - **[Graphite]** `gt modify -a` (invoke the `graphite` skill). This puts
      the fixes into the branch's commit and restacks its descendants, so the
      children you descend into next are already rebased on the fixed parent.
@@ -220,7 +259,7 @@ For each branch in `order` (parent before child), do one full pass:
      plan targets only this branch's commits, then absorb. For a fix that must
      land in one specific commit, use `but amend <file> <commit>` instead.
 
-4. **Advance.**
+5. **Advance.**
    - **[Graphite]** If `--end` mode (linear chain), move to the next branch in
      the precomputed chain. Otherwise (subtree DFS) read `gt children` of the
      branch you just modified and descend into each, unless this branch is the
@@ -228,11 +267,12 @@ For each branch in `order` (parent before child), do one full pass:
    - **[GitButler]** Move to the next branch in the series; when a series ends,
      start the next applied stack's series.
 
-5. **Per-branch outcome.** Record: converged clean (and how many fixes), no
-   changes, or **stuck** (hit the 4-pass cap). If a branch is stuck, stop the
-   whole sweep — do **not** descend into its children, because their diffs are
-   built on an unsettled parent. Report the stuck branch and follow
-   `/review-loop`'s non-convergence flow.
+6. **Per-branch outcome.** Record: converged clean (and how many fixes,
+   including how many PR-feedback items were fixed / already addressed /
+   dismissed), no changes, or **stuck** (hit the 4-pass cap). If a branch is
+   stuck, stop the whole sweep — do **not** descend into its children, because
+   their diffs are built on an unsettled parent. Report the stuck branch and
+   follow `/review-loop`'s non-convergence flow.
 
 The Defer-to-Linear step (`/review-loop` step 13) still applies per branch when
 the user explicitly defers a finding.
@@ -248,9 +288,12 @@ Then print the summary:
 ━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━
 Review sweep complete — <tool>  ·  <N> branches
 ━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━
-  feat/a       converged clean (fixed 3, modified)
-  feat/a-x     converged clean (no changes)
+  feat/a       converged clean (fixed 3 + 2 PR comments, modified)
+  feat/a-x     converged clean (no changes; 1 PR comment already addressed)
   feat/a-y     stuck (4-pass cap — see above)   [sweep stopped here]
+
+PR feedback dismissed as invalid (with reasons):
+  feat/a  #12 "rename X" — factually wrong: X matches docs/domain.md
 
 Reports under: <out_dir root>
 ```
@@ -292,6 +335,11 @@ Then stop. Do **not** push or submit — the user decides when to publish.
 8. **`--start` / `--end` resolve against the live stack.** A name not in the
    stack, or `--end` not a descendant of `--start`, is a hard error — never
    silently sweep a different range than asked.
+9. **PR feedback is read-only on the PR side.** Never reply to, react to, or
+   resolve threads, never comment, never touch review state — fixes land in
+   code, dismissals land in the chat summary. Always re-verify each feedback
+   item against the current working tree before fixing: the sweep rebases
+   branches as it climbs, so feedback may already be addressed or moot.
 
 ## Failure modes
 
@@ -306,6 +354,9 @@ Then stop. Do **not** push or submit — the user decides when to publish.
   sweep from that branch.
 - **`but` not on PATH** — fall back to `direnv exec "$repo_root" but …`; if that
   also fails, stop and tell the user the flake dev shell isn't loaded.
+- **`gh` unreachable or branch has no PR** — skip the feedback step for that
+  branch (panel findings only), retry `gh` on the next branch, and mark the
+  branch "feedback not checked" in the summary so the gap is visible.
 - **User says "stop" mid-sweep** — finish modifying the current branch if a modify
   is already in flight (never leave a half-applied fix), then stop and print the
   summary of branches done so far.
