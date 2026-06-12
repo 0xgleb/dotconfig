@@ -19,8 +19,23 @@ def encrypt-vars [] {
   rm -f terraform.tfvars
 }
 
-export def main [] {
-  consequences
+# mod.nu imports dispatch directly — not via `fj infra`, which parses as main at compile time.
+export def dispatch [args: list<string>] {
+  main ...$args
+}
+
+export def main [...args: string] {
+  if ($args | is-empty) {
+    consequences
+  } else if $args.0 == "consequences" {
+    consequences
+  } else if $args.0 == "enact" {
+    enact
+  } else if $args.0 == "edit" and ($args | get 1?) == "vars" {
+    edit vars
+  } else {
+    error make --unspanned { msg: $"unknown fj infra subcommand: ($args | str join ' ')" }
+  }
 }
 
 export def consequences [] {

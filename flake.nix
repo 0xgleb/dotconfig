@@ -148,9 +148,8 @@
                 nativeBuildInputs = with pkgs; [ nushell ];
               }
               ''
-                cp -r ${./nushell/scripts} scripts
-                cp ${./nushell/scripts/fj/routing.test.nu} routing.test.nu
-                cp ${./nushell/scripts/fj/mod.test.nu} mod.test.nu
+                cp -r ${./nushell/scripts/fj} fj
+                cd fj
                 ${pkgs.nushell}/bin/nu routing.test.nu
                 ${pkgs.nushell}/bin/nu mod.test.nu
                 touch $out

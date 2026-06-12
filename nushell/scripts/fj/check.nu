@@ -74,8 +74,8 @@ def dotconfig-check [] {
   log debug "checking nix formatting"
   nixfmt --check ...(glob "*.nix")
 
-  log debug "building nix flake"
-  darwin-rebuild build --flake $repo_root
+  log debug "running nix flake check"
+  nix flake check $repo_root
 
   log info "dotconfig passed the vibe check"
 }

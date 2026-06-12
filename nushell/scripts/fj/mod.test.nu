@@ -64,6 +64,7 @@ def main [] {
     | each {|test_name| $"($test_name); print '  ok ($test_name)'" }
     | str join "; ")
 
-  nu --commands $"use nushell/scripts/fj/; source ($env.CURRENT_FILE); ($test_commands)"
+  let fj_dir = ($env.CURRENT_FILE | path dirname)
+  nu --commands $"use ($fj_dir); source ($env.CURRENT_FILE); ($test_commands)"
   print $"(ansi green)All ($tests | length) tests passed(ansi reset)"
 }

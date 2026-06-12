@@ -5,6 +5,8 @@ use workflow.nu
 use completions.nu [fj-complete issue-complete pr-complete]
 use gh.nu
 use help.nu
+use md/
+use infra/
 export use md/
 export use infra/
 
@@ -81,8 +83,8 @@ export def --wrapped main [...args: string@fj-complete] {
         ^gh pr ...$route.args
       }
     }
-    "md" => { fj md ...$route.args }
-    "infra" => { fj infra ...$route.args }
+    "md" => { md dispatch $route.args }
+    "infra" => { infra dispatch $route.args }
     "help" => {
       let topic = if ($route.args | is-empty) { null } else { $route.args | first }
       help show $topic
