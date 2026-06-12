@@ -74,6 +74,8 @@ in
         "${nuConfigDir}/scripts".source = ./nushell/scripts;
         ".cursor/skills".source = config.lib.file.mkOutOfStoreSymlink "${aiDir}/skills";
         ".cursor/commands".source = config.lib.file.mkOutOfStoreSymlink "${aiDir}/commands";
+        ".cursor/hooks".source = config.lib.file.mkOutOfStoreSymlink "${aiDir}/cursor/hooks";
+        ".cursor/hooks.json".source = config.lib.file.mkOutOfStoreSymlink "${aiDir}/cursor/hooks.json";
         ".cursor/AGENTS.md".source = config.lib.file.mkOutOfStoreSymlink "${aiDir}/AGENTS.md";
         ".cursor/CLAUDE.md".source = config.lib.file.mkOutOfStoreSymlink "${aiDir}/AGENTS.md";
       }
@@ -170,7 +172,6 @@ in
           grammars.typescript
           grammars.yaml
         ]))
-        telescope-fzf-native-nvim
       ];
       initLua = builtins.readFile ./nvim/bootstrap.lua;
     };

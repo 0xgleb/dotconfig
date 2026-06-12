@@ -142,6 +142,37 @@
                 touch $out
               '';
 
+          fj-module =
+            pkgs.runCommand "fj-module-test"
+              {
+                nativeBuildInputs = with pkgs; [ nushell ];
+              }
+              ''
+                cp -r ${./nushell/scripts} scripts
+                cp ${./nushell/scripts/fj/routing.test.nu} routing.test.nu
+                cp ${./nushell/scripts/fj/mod.test.nu} mod.test.nu
+                ${pkgs.nushell}/bin/nu routing.test.nu
+                ${pkgs.nushell}/bin/nu mod.test.nu
+                touch $out
+              '';
+
+          nushell-config =
+            pkgs.runCommand "nushell-config-test"
+              {
+                nativeBuildInputs = with pkgs; [ nushell ];
+              }
+              ''
+                export HOME=$(mktemp -d)
+                mkdir -p "$HOME/.config/nushell"
+                cp -r ${./nushell/scripts} "$HOME/.config/nushell/scripts"
+                cp ${./nushell/env.src.nu} "$HOME/.config/nushell/env.src.nu"
+                cp ${./nushell/config.src.nu} "$HOME/.config/nushell/config.src.nu"
+                echo "validating nushell config sources..."
+                ${pkgs.nushell}/bin/nu --commands 'source ~/.config/nushell/env.src.nu; source ~/.config/nushell/config.src.nu'
+                echo "nushell config sources ok"
+                touch $out
+              '';
+
           mdup =
             pkgs.runCommand "mdup-test"
               {

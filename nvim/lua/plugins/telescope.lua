@@ -2,6 +2,12 @@
 return {
   {
     "nvim-telescope/telescope.nvim",
+    dependencies = {
+      {
+        "nvim-telescope/telescope-fzf-native.nvim",
+        build = "make",
+      },
+    },
     opts = function(_, opts)
       local actions = require "telescope.actions"
       opts.defaults = vim.tbl_deep_extend("force", opts.defaults or {}, {
