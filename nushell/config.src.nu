@@ -46,8 +46,7 @@ alias nix = nix --accept-flake-config
 
 def darwin-evolve [] {
   sudo echo authorized
-  z ~/.config
-  nix -v flake update
+  nix -v flake update --flake $'($env.HOME)/.config'
   sudo darwin-rebuild switch -v --flake $"($env.HOME)/.config"
   nix -v store gc
 }
