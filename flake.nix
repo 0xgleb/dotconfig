@@ -9,7 +9,7 @@
     # binaries ahead of nixpkgs. Bump the version in this URL and run
     # `nix flake update claude-code-manifest` to upgrade.
     claude-code-manifest = {
-      url = "https://downloads.claude.ai/claude-code-releases/2.1.172/manifest.json";
+      url = "https://downloads.claude.ai/claude-code-releases/2.1.175/manifest.json";
       flake = false;
     };
 

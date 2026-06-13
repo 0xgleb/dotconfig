@@ -3,13 +3,13 @@
     "claude-code-manifest": {
       "flake": false,
       "locked": {
-        "narHash": "sha256-wZnAO1fxlIZLYPubBjj6Rtdznahik5TsdOIuSCqqF6Y=",
+        "narHash": "sha256-wziQWnsW9q1Ns4thIb8nAhdQxqYWfzLk6lcT1hYnSuo=",
         "type": "file",
-        "url": "https://downloads.claude.ai/claude-code-releases/2.1.172/manifest.json"
+        "url": "https://downloads.claude.ai/claude-code-releases/2.1.175/manifest.json"
       },
       "original": {
         "type": "file",
-        "url": "https://downloads.claude.ai/claude-code-releases/2.1.172/manifest.json"
+        "url": "https://downloads.claude.ai/claude-code-releases/2.1.175/manifest.json"
       }
     },
     "disko": {
