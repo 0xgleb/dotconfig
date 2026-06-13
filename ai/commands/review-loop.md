@@ -1,5 +1,5 @@
 ---
-allowed-tools: Bash(gt:*), Bash(git:*), Bash(gh:*), Bash(cursor-agent:*), Bash(gemini:*), Bash(command:*), Bash(linear:*), Bash(cargo:*), Bash(mkdir:*), Bash(cat:*), Bash(mktemp:*), Bash(rm:*), Bash(test:*), Bash(grep:*), Bash(wc:*), Bash(date:*), Bash(basename:*), Bash(find:*), Read, Write, Edit, Agent, Workflow, AskUserQuestion
+allowed-tools: Bash(gt:*), Bash(but:*), Bash(direnv:*), Bash(git:*), Bash(gh:*), Bash(cursor-agent:*), Bash(gemini:*), Bash(command:*), Bash(linear:*), Bash(cargo:*), Bash(nix:*), Bash(mkdir:*), Bash(cat:*), Bash(mktemp:*), Bash(rm:*), Bash(test:*), Bash(grep:*), Bash(wc:*), Bash(date:*), Bash(basename:*), Bash(find:*), Read, Write, Edit, Agent, Workflow, AskUserQuestion
 description: Cross-review the current branch with a multi-model Workflow panel (2x Opus, Sonnet, a Composer cross-lab augment lane, 2 frontier external lanes that fall back GPT-5.5 -> Gemini per Cursor usage limits, + inspectors), auto-fix findings, and re-review until clean. Re-review passes use fast delta verification. Loops automatically — only stops for user input on disputed findings or massive changes. Pass `stack` to run the loop across the whole upstack, amending each branch.
 argument-hint: [stack]
 ---
@@ -13,12 +13,16 @@ are fixed without asking. The loop re-reviews after each fix pass to catch
 issues introduced by the fixes themselves. It stops when a review pass
 returns no new actionable findings.
 
-**Speed design:** the **first pass** runs the full multi-model panel. Each
-finding is adversarially verified **before** triage so false positives never
-cost a fix-and-re-review cycle. A **compile gate** runs after each fix pass
-so a broken fix never burns a review pass. **Re-review passes** run in fast
-delta mode (per-fix verifiers plus one broad sweep of the fix delta) unless
-the fixes were large enough to warrant re-running the full panel.
+**Speed design:** the **first pass** runs the multi-model panel, **adaptively
+sized to the diff** (small diffs run fewer lanes). Each finding is adversarially
+verified **before** triage so false positives never cost a fix-and-re-review
+cycle. A **compile gate** runs after each fix pass so a broken fix never burns
+a review pass, and a **formatter-only delta** is treated as verified by
+construction and skips the pass entirely. **Re-review passes** run in fast
+delta mode (per-fix verifiers plus one broad sweep of the fix delta) and
+**escalate to a full independent panel pass** when the fix delta is large,
+scope grew, or it touched security-sensitive paths. On an escalated full pass,
+`/ci` overlaps the panel concurrently.
 
 **Argument:** with no argument, the loop runs on the **current branch only**
 and never touches version control (the safe default). With `stack`, it runs
@@ -32,17 +36,63 @@ Follow these steps precisely.
 ## Stack mode (`/review-loop stack`)
 
 When invoked with the `stack` argument, wrap the single-branch loop (steps
-1–14) in an upstack walk: review-loop the current branch, modify the fixes into
-its commit, move up, and repeat until the top of the stack. Passing `stack` is
-an explicit opt-in to the amend-and-advance flow, so in stack mode **hard rule
-#4 is relaxed**: you MAY `gt modify -a` to amend fixes into the current
-branch before moving up. You still never `gt submit`/push without the user
-asking.
+1–14) in an upstack walk: review-loop a branch, fold the fixes into its commit,
+advance to the next branch, and repeat to the top of the stack. Passing `stack`
+is an explicit opt-in to the amend-and-advance flow, so in stack mode **hard
+rule #4 is relaxed**: you MAY amend fixes into the current branch before moving
+up (`gt modify -a` under Graphite, `but absorb` under GitButler). You still
+never submit/push without the user asking.
 
 With no `stack` argument, skip this section entirely and run steps 1–14 once
 on the current branch.
 
-### Stack flow
+### Detect the stacking tool
+
+Stack mode is tool-specific — the user runs Graphite on some repos, GitButler
+on others, and plain git on the rest. Detect which (same detection as
+`/review-sweep`):
+
+```bash
+repo_root=$(git rev-parse --show-toplevel)
+if [ -f "$repo_root/.git/.graphite_repo_config" ]; then tool=graphite
+elif [ -d "$repo_root/.git/gitbutler" ];          then tool=gitbutler
+else tool=none
+fi
+echo "stacking tool: $tool"
+```
+
+(For a linked worktree, `$repo_root/.git` is a file — resolve the real git dir
+with `git rev-parse --git-common-dir` and look for the markers there.)
+
+**`tool=none` (plain git):** there is no stack to walk. Tell the user this repo
+has no stacking tool, run steps 1–14 once on the current branch (the normal
+single-branch loop), and stop — do not amend or advance.
+
+The rest of this section branches on `$tool`. Each branch gets its own review
+directory (the step-2 `out_dir` is branch-named), its own diff against its own
+parent, and its own 4-pass cap. The Defer-to-Linear step (13) still applies per
+branch.
+
+### Stack adapter
+
+| Adapter operation         | Graphite                                              | GitButler                                              |
+| ------------------------- | ----------------------------------------------------- | ------------------------------------------------------ |
+| ready check               | working tree clean                                    | on a `gitbutler/*` workspace branch (`but status` ok)  |
+| advance to next branch    | `gt up`                                               | none — all virtual branches are applied at once        |
+| scope one branch's diff   | `git diff $(gt parent)`                               | `but branch show <branch>` (commits ahead of its base) |
+| amend fixes into a branch | `gt modify -a` (restacks descendants; NEVER `gt fold`) | `but absorb <branch>` (`--dry-run` first)             |
+| return to start           | `gt checkout <start-branch>`                          | none                                                   |
+
+`but` is provided by the repo's flake/devenv — if it is not on `PATH`, invoke
+it as `direnv exec "$repo_root" but …` for every `but` call. Never run `but
+setup` / `but teardown` or otherwise change GitButler mode yourself.
+
+### Stack flow — [Graphite]
+
+`gt up` walks a single child. On a **tree** stack (a branch with multiple
+children) it is ambiguous — for those, point the user at `/review-sweep`, which
+traverses the tree properly. This linear walk covers the common single-child
+upstack.
 
 1. Record the starting branch: `git branch --show-current`. You return here at
    the very end.
@@ -63,17 +113,38 @@ on the current branch.
    4-pass cap), stop on that branch — do **NOT** continue up the stack. Report
    which branch is stuck and follow the normal non-convergence flow.
 6. When done (success or failure), return to the starting branch
-   (`gt checkout <starting-branch>`) and print a per-branch summary:
-   ```
-   Stack review-loop summary:
-     branch-a: converged clean (fixed 3, amended)
-     branch-b: converged clean (no changes)
-     branch-c: stuck (4-pass cap — see above)
-   ```
+   (`gt checkout <starting-branch>`) and print the per-branch summary below.
 
-Each branch gets its own review directory (the step-2 `out_dir` is
-branch-named), its own diff against its own `gt parent`, and its own 4-pass
-cap. The Defer-to-Linear step (13) still applies per branch.
+### Stack flow — [GitButler]
+
+All virtual branches are applied at once, so there is no checkout/advance — you
+iterate the applied series in place.
+
+1. Confirm workspace mode: `but status` must succeed (you are on a
+   `gitbutler/*` workspace branch). If it fails with "Setup required" or
+   similar, **stop and tell the user to enter GitButler workspace mode first**.
+2. Enumerate the applied series bottom→top from JSON (`but status -j`); confirm
+   field names with `but status -h` before relying on them — do not guess.
+3. For each branch, scope its diff with `but branch show <branch>` (its commits
+   ahead of base) into that branch's `out_dir`, then run the full single-branch
+   loop (**steps 1–14**) against that diff.
+4. After the loop converges clean and `/ci` has passed, fold the fixes into
+   that branch with `but absorb <branch>` — run `but absorb <branch> --dry-run`
+   first and confirm it targets the intended branch. If nothing was modified,
+   skip.
+5. Same non-convergence rule: if a branch hits the 4-pass cap, stop on it — do
+   **NOT** advance to the next series. Report which branch is stuck.
+6. When done, print the per-branch summary below. No return-to-start checkout
+   is needed (nothing was checked out).
+
+Per-branch summary (either tool):
+
+```
+Stack review-loop summary:
+  branch-a: converged clean (fixed 3, amended)
+  branch-b: converged clean (no changes)
+  branch-c: stuck (4-pass cap — see above)
+```
 
 ---
 
@@ -81,13 +152,18 @@ cap. The Defer-to-Linear step (13) still applies per branch.
 
 Verify prerequisites before doing anything:
 
-1. You are in a git repo with a graphite-tracked branch:
+1. You are in a git repo:
    ```bash
    git rev-parse --show-toplevel
-   gt log short
    ```
+   Single-branch mode (the default) works on **any** git repo — Graphite,
+   GitButler, or plain git alike. Only `stack` mode needs a stacking tool; it
+   detects which one in the **Stack mode** section above (and bails to a
+   single-branch run under plain git). Under Graphite, `gt log short` shows the
+   current stack; skip it elsewhere.
 
-2. `gt` is on PATH (`command -v gt`).
+2. `gt` is on PATH **only if** this is a Graphite repo running in `stack` mode
+   (`command -v gt`). Plain-git and GitButler repos do not need it.
 
 3. Resolve the external lanes via **usage-limit probes**. Cursor has no
    CLI command to query remaining usage, so probe each candidate with a
@@ -147,9 +223,15 @@ Verify prerequisites before doing anything:
 
 ## 2. Resolve scope & prepare workspace
 
-Determine what to review. On a graphite stack, **always diff against `gt
-parent`**, not trunk — reviewing against trunk on a stacked branch would
-include ancestor PRs and drown the reviewers in unrelated changes.
+Determine what to review. On a stacked branch, **always diff against the
+branch's own parent**, not trunk — reviewing against trunk would include
+ancestor PRs and drown the reviewers in unrelated changes. Resolve the parent
+per stacking tool: Graphite → `gt parent`; GitButler stack mode → the base
+from `but branch show <branch>` (set `parent` to that base SHA); plain git →
+the merge-base with the default branch. The command below tries `gt parent`
+and falls back to merge-base, which is correct for plain git and for Graphite;
+in GitButler `stack` mode, override `parent` with the branch's base from the
+adapter.
 
 ```bash
 default_branch=$(git symbolic-ref refs/remotes/origin/HEAD --short 2>/dev/null || echo origin/master)
@@ -459,6 +541,67 @@ substituted) and omit `model`:
 
 For native lanes (including an external lane that fell back to native
 sonnet), leave `externalCmd` unset and set `model` as usual.
+
+### Adaptive panel sizing (by diff size)
+
+Size the panel to the diff so each pass stays affordable (this matters most
+for the re-review escalation in step 12, where a full panel can run again).
+Inspectors are always included — they are cheap (9–18s each):
+
+- **< 50 changed lines:** `opus-b` (goal eval) + one external broad-sweep lane
+  + all four inspectors. ~6 lanes.
+- **50–500 lines:** the full catalogue minus one redundant lane (`external-a`
+  and `external-b` overlap heavily — drop one; or drop the `composer` augment
+  if both frontier lanes are live). ~8 lanes.
+- **> 500 lines, or any diff touching security-sensitive paths** (auth,
+  secrets, payment/financial, on-chain, migrations): the full catalogue.
+
+Security-sensitive paths force the full panel regardless of size. When in
+doubt, size up. Drop lanes by omitting their objects from the `lanes` array —
+the script rebuilds the panel from whatever lanes it receives.
+
+### Shared context file
+
+Write one small context file the native lanes point at, instead of
+duplicating the diff path / docs / PR description into every lane prompt. With
+an identical base prompt plus one shared pointer, the concurrent native lanes
+share prompt-cache prefixes:
+
+```bash
+cat > "$out_dir/context.txt" <<EOF
+Diff: $out_dir/diff.patch
+Project docs: <CLAUDE.md/AGENTS.md paths, comma-separated>
+PR description (author-written, bot footers stripped):
+<pr_body>
+EOF
+```
+
+External (cursor-agent/gemini) lanes still take their diff path inline in
+`externalCmd` — they don't share the harness prompt cache.
+
+### Prewarm (overlap setup with the panel) — rarely needed
+
+**Prefer the project's direnv-provided dev shell.** If the repo has an
+`.envrc` (`use flake` / `use nix`), direnv has already loaded the default dev
+shell into the environment — the tools `/ci` needs are on `PATH` and the shell
+is warm. There is **nothing to prewarm** in that case; skip this step. Run
+commands through the active environment (or `direnv exec "$repo_root" <cmd>`),
+not a fresh `nix develop`.
+
+Only reach for a manual `nix develop` when `/ci` needs a **non-default** shell
+that direnv does *not* load (e.g. a `.#integration` / `.#e2e` shell for tests
+not run locally by default) and that shell is slow to instantiate cold. Even
+then, you must know the **real** devShell attr — read it from the project's
+`/ci` skill or `nix flake show`. **Never invent an attr like `.#ci`**; if you
+can't name the shell, don't prewarm.
+
+Repos without a Nix dev shell at all (e.g. a nix-darwin config rebuilt with
+`darwin-rebuild`, or one whose `/ci` just runs `cargo`/`bun`/`npm`) have
+nothing to warm — skip silently. On the rare occasion it genuinely applies:
+
+```bash
+nix develop .#<real-non-default-attr> -c true >/dev/null 2>&1 &
+```
 
 ### Workflow invocation
 
@@ -860,6 +1003,18 @@ If while implementing a fix you realize it's larger than expected or the
 finding is more nuanced than the report suggests, stop and tell the user.
 Offer to re-triage (defer, dismiss, or adjust the fix).
 
+### Optional: fan out independent fixes
+
+When there are **≥4 fix-now findings whose edits touch disjoint file
+regions**, applying them serially is the slow path. Instead dispatch them as a
+small `Workflow`: one agent per finding-cluster (a cluster = findings whose
+`file` + line ranges overlap or are adjacent), each agent reading the source
+and applying its cluster's fix with `Edit`. Use `isolation: 'worktree'` only
+if two clusters touch the same file. The main loop then reviews the combined
+patch instead of authoring every edit. For ≤3 fixes, or fixes that interact,
+stay in the main loop — the coordination overhead isn't worth it. Either way,
+the compile gate below still runs on the merged result.
+
 ### Compile gate
 
 After all fix-now items are done, run the **compile gate** before any
@@ -872,7 +1027,7 @@ convergence.
 
 Then proceed directly to step 12 (re-review).
 
-## 12. Re-review loop (delta mode)
+## 12. Re-review loop (delta + escalation)
 
 Re-review after every fix pass to catch issues introduced by the fixes. This
 is the core of the automatic loop.
@@ -900,10 +1055,23 @@ git diff HEAD --stat | tail -1
 git diff "$parent" > "$out_dir/diff-iter${N}.patch"   # updated full diff
 ```
 
+**Formatter-only skip.** If the only thing that changed since the last
+reviewed state is the output of a deterministic formatter/hook (`cargo fmt`,
+`deno fmt`, `prettier`, `yamlfmt`, `nixfmt`) and that formatter now passes,
+**do not spawn a review pass over it** — formatter output cannot introduce a
+review-worthy finding. Confirm the delta matches what re-running the formatter
+produces; if any hand-written line changed, fall through to the normal modes.
+Treat a pure-formatter delta as verified by construction and skip to
+convergence.
+
 **Escalate to a full panel pass** (re-run steps 4–7 with the updated full
-diff; reuse the workflow `scriptPath`) only when:
+diff, applying the step-5 adaptive sizing; reuse the workflow `scriptPath`)
+when any of:
 - the fix delta exceeds ~200 changed lines, OR
-- the fixes touched files that no fixed finding implicated (scope grew).
+- the fixes touched files that no fixed finding implicated (scope grew), OR
+- the fixes touched **security-sensitive paths** (auth, secrets,
+  payment/financial, on-chain, migrations) — a fresh independent pass is worth
+  the cost here even for a small delta.
 
 **Otherwise run delta mode** — the default and the fast path. One small
 workflow: a fix-verifier per fixed finding plus one Opus broad sweep of the
@@ -1001,17 +1169,30 @@ Pass `args`: `{fixedFindings: <findings fixed this loop so far>,
 deltaDiffPath, fullDiffPath, repoRoot, docsPaths}`. Reuse the returned
 `scriptPath` on subsequent delta passes.
 
+**Overlap `/ci` with an escalated full-panel pass.** A delta pass is cheap, so
+running `/ci` only after it converges is fine. But when this iteration
+**escalated to a full panel** (slow), start `/ci` (invoke the `ci` skill) in
+the background as you fire the panel — they read the same working tree and
+don't interact — then gate convergence on both: panel clean **and** `/ci`
+green with no changes → converged; panel clean **and** `/ci` made only
+formatter changes → apply the formatter-only skip; panel not clean → discard
+the in-flight `/ci` result (it reruns at the next convergence). Never overlap
+`/ci` with a cheap delta pass — the wasted CI runs aren't worth it.
+
 ### Interpret the result
 
 1. Save the result to `$out_dir/delta-iter${N}.json` (audit trail).
 2. **Clean pass** = every verification has `fixed: true` with no
    `new_issues`, and `sweepFindings` is empty. The loop has converged.
-   Run `/ci` (invoke the `ci` skill) and let it run until it passes or it
-   asks the user for help. `/ci`'s own "amend via `gt modify -a` on
-   success" step is overridden by this loop: never amend in single-branch
-   mode (hard rule 4 — the user drives version control); in stack mode the
-   stack flow amends once per branch after convergence, so `/ci` must not
-   amend separately there either.
+   If the project has a `/ci` skill, run it (invoke the `ci` skill) and let it
+   run until it passes or it asks the user for help. `/ci` is **project-level**
+   — repos without one (e.g. a nix-darwin config validated by `darwin-rebuild`,
+   not a test suite) have nothing to run here, so skip straight to step 13/14.
+   When `/ci` does run, its own "amend via `gt modify -a` on success" step is
+   overridden by this loop: never amend in single-branch mode (hard rule 4 —
+   the user drives version control); in stack mode the stack flow amends once
+   per branch after convergence, so `/ci` must not amend separately there
+   either.
    - If `/ci` made **no code changes**: proceed to step 13/14.
    - If `/ci` **made code changes** (lint, formatting): run one more delta
      pass over the new delta. This converges quickly since `/ci` changes are
