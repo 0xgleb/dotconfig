@@ -22,7 +22,7 @@ construction and skips the pass entirely. **Re-review passes** run in fast
 delta mode (per-fix verifiers plus one broad sweep of the fix delta) and
 **escalate to a full independent panel pass** when the fix delta is large,
 scope grew, or it touched security-sensitive paths. On an escalated full pass,
-`/ci` overlaps the panel concurrently.
+the project's check command overlaps the panel concurrently.
 
 **Argument:** with no argument, the loop runs on the **current branch only**
 and never touches version control (the safe default). With `stack`, it runs
@@ -100,8 +100,9 @@ upstack.
    - **Relax the step-1 clean-tree gate after the first branch**: `gt up`
      restacks descendants, so a non-empty tree from that is expected. Still
      stop if there are unrelated uncommitted edits you did not make.
-3. After the loop converges clean and `/ci` has passed, if any files were
-   modified on this branch (by fixes or by `/ci`), amend them into the
+3. After the loop converges clean and the project's check command has passed,
+   if any files were modified on this branch (by fixes or by the check
+   command), amend them into the
    branch's commit with `gt modify -a` (invoke the `graphite` skill). This
    also restacks descendants. If nothing was modified, skip the amend.
 4. Move up the stack with `gt up` (via the `graphite` skill):
@@ -128,7 +129,8 @@ iterate the applied series in place.
 3. For each branch, scope its diff with `but branch show <branch>` (its commits
    ahead of base) into that branch's `out_dir`, then run the full single-branch
    loop (**steps 1–14**) against that diff.
-4. After the loop converges clean and `/ci` has passed, fold the fixes into
+4. After the loop converges clean and the project's check command has passed,
+   fold the fixes into
    that branch with `but absorb <branch>` — run `but absorb <branch> --dry-run`
    first and confirm it targets the intended branch. If nothing was modified,
    skip.
@@ -282,6 +284,25 @@ cut everything from the first HTML-comment footer marker onward (e.g.
 `<!-- codesmith:footer -->`, CodeRabbit/Codesmith badges, tracking links).
 Reviewers should see only the author-written description — bot HTML wastes
 their context and can mislead the goal-evaluation lane.
+
+### Discover the project's check command
+
+The loop runs the project's own verification after it converges. This command
+is **project-specific and must be declared by the project**, never assumed by
+this skill — different repos check themselves in completely different ways, and
+hardcoding one repo's command (or a laptop-global wrapper) would couple this
+skill to a setup it shouldn't know about. Discover it, in order:
+
+1. An explicit declaration in the project's `CLAUDE.md` / `AGENTS.md` (a
+   "check"/"CI"/"verify"/"build commands" section naming the command to run).
+2. A task runner target the repo defines — `just check`, a `Makefile`
+   `check`/`test` target, `package.json` scripts, `cargo`/`nix` invocations the
+   docs point at.
+
+Record the discovered command as `check_cmd` and use it everywhere this skill
+says "the project's check command". **If the project declares no check command,
+set `check_cmd` to empty and skip every check step** (convergence is then
+decided by the review passes alone) — do not invent one.
 
 ## 4. Build the reviewer prompts
 
@@ -583,21 +604,22 @@ External (cursor-agent/gemini) lanes still take their diff path inline in
 
 **Prefer the project's direnv-provided dev shell.** If the repo has an
 `.envrc` (`use flake` / `use nix`), direnv has already loaded the default dev
-shell into the environment — the tools `/ci` needs are on `PATH` and the shell
-is warm. There is **nothing to prewarm** in that case; skip this step. Run
-commands through the active environment (or `direnv exec "$repo_root" <cmd>`),
-not a fresh `nix develop`.
+shell into the environment — the tools the check command needs are on `PATH`
+and the shell is warm. There is **nothing to prewarm** in that case; skip this
+step. Run commands through the active environment (or
+`direnv exec "$repo_root" <cmd>`), not a fresh `nix develop`.
 
-Only reach for a manual `nix develop` when `/ci` needs a **non-default** shell
-that direnv does *not* load (e.g. a `.#integration` / `.#e2e` shell for tests
-not run locally by default) and that shell is slow to instantiate cold. Even
-then, you must know the **real** devShell attr — read it from the project's
-`/ci` skill or `nix flake show`. **Never invent an attr like `.#ci`**; if you
-can't name the shell, don't prewarm.
+Only reach for a manual `nix develop` when the check command needs a
+**non-default** shell that direnv does *not* load (e.g. a `.#integration` /
+`.#e2e` shell for tests not run locally by default) and that shell is slow to
+instantiate cold. Even then, you must know the **real** devShell attr — read it
+from the project's declared check command or `nix flake show`. **Never invent
+an attr like `.#ci`**; if you can't name the shell, don't prewarm.
 
 Repos without a Nix dev shell at all (e.g. a nix-darwin config rebuilt with
-`darwin-rebuild`, or one whose `/ci` just runs `cargo`/`bun`/`npm`) have
-nothing to warm — skip silently. On the rare occasion it genuinely applies:
+`darwin-rebuild`, or one whose check command just runs `cargo`/`bun`/`npm`)
+have nothing to warm — skip silently. On the rare occasion it genuinely
+applies:
 
 ```bash
 nix develop .#<real-non-default-attr> -c true >/dev/null 2>&1 &
@@ -996,8 +1018,8 @@ For each "fix now" finding, in severity order:
    the kind of logic being fixed, add tests even if the finding didn't
    mention it.
 6. Print a one-line summary of what changed.
-7. Do **not** run the full test suite, lints, or commit yet — `/ci` runs
-   only after the review loop converges.
+7. Do **not** run the full test suite, lints, or commit yet — the project's
+   check command runs only after the review loop converges.
 
 If while implementing a fix you realize it's larger than expected or the
 finding is more nuanced than the report suggests, stop and tell the user.
@@ -1022,8 +1044,8 @@ re-review: the project's fastest typecheck scoped to what was touched (for
 Rust, `cargo check -p <touched crates>`; otherwise the project's equivalent).
 Fix any compile errors immediately — never enter a re-review pass with code
 that doesn't compile; that wastes an entire review pass. The compile gate is
-NOT a substitute for `/ci` — full tests and lints still run only after
-convergence.
+NOT a substitute for the project's check command — full tests and lints still
+run only after convergence.
 
 Then proceed directly to step 12 (re-review).
 
@@ -1040,9 +1062,10 @@ loop is done, not your judgment.
 **CRITICAL: Convergence requires a CLEAN review pass.** The loop is ONLY
 done when a review pass returns no new actionable findings. Fixing the
 last batch of findings is NOT convergence. The pattern is always:
-`review → fix → review → fix → review(clean) → /ci → done`. You can
-never end on a fix — you must always end on a clean review. `/ci` runs
-only after convergence, and if it makes changes, you re-enter the loop.
+`review → fix → review → fix → review(clean) → check → done`. You can
+never end on a fix — you must always end on a clean review. The project's
+check command runs only after convergence, and if it makes changes, you
+re-enter the loop.
 
 ### Choose the re-review mode
 
@@ -1169,34 +1192,36 @@ Pass `args`: `{fixedFindings: <findings fixed this loop so far>,
 deltaDiffPath, fullDiffPath, repoRoot, docsPaths}`. Reuse the returned
 `scriptPath` on subsequent delta passes.
 
-**Overlap `/ci` with an escalated full-panel pass.** A delta pass is cheap, so
-running `/ci` only after it converges is fine. But when this iteration
-**escalated to a full panel** (slow), start `/ci` (invoke the `ci` skill) in
-the background as you fire the panel — they read the same working tree and
-don't interact — then gate convergence on both: panel clean **and** `/ci`
-green with no changes → converged; panel clean **and** `/ci` made only
-formatter changes → apply the formatter-only skip; panel not clean → discard
-the in-flight `/ci` result (it reruns at the next convergence). Never overlap
-`/ci` with a cheap delta pass — the wasted CI runs aren't worth it.
+**Overlap the check command with an escalated full-panel pass.** A delta pass
+is cheap, so running the check command only after it converges is fine. But
+when this iteration **escalated to a full panel** (slow), start the project's
+check command in the background as you fire the panel — they read the same
+working tree and don't interact — then gate convergence on both: panel clean
+**and** the check command green with no changes → converged; panel clean
+**and** the check command made only formatter changes → apply the
+formatter-only skip; panel not clean → discard the in-flight check result (it
+reruns at the next convergence). Never overlap the check command with a cheap
+delta pass — the wasted runs aren't worth it. (Skip entirely if the project
+declared no check command.)
 
 ### Interpret the result
 
 1. Save the result to `$out_dir/delta-iter${N}.json` (audit trail).
 2. **Clean pass** = every verification has `fixed: true` with no
    `new_issues`, and `sweepFindings` is empty. The loop has converged.
-   If the project has a `/ci` skill, run it (invoke the `ci` skill) and let it
-   run until it passes or it asks the user for help. `/ci` is **project-level**
-   — repos without one (e.g. a nix-darwin config validated by `darwin-rebuild`,
-   not a test suite) have nothing to run here, so skip straight to step 13/14.
-   When `/ci` does run, its own "amend via `gt modify -a` on success" step is
-   overridden by this loop: never amend in single-branch mode (hard rule 4 —
-   the user drives version control); in stack mode the stack flow amends once
-   per branch after convergence, so `/ci` must not amend separately there
+   Run the project's check command (`check_cmd`, discovered in step 3) and let
+   it run until it passes or it needs the user. If the project declared **no**
+   check command (`check_cmd` empty — e.g. a repo with no test suite), there is
+   nothing to run here, so skip straight to step 13/14. If the check command
+   itself commits or amends on success (some do), that behavior is **overridden
+   by this loop**: never amend in single-branch mode (hard rule 4 — the user
+   drives version control); in stack mode the stack flow amends once per branch
+   after convergence, so the check command must not amend separately there
    either.
-   - If `/ci` made **no code changes**: proceed to step 13/14.
-   - If `/ci` **made code changes** (lint, formatting): run one more delta
-     pass over the new delta. This converges quickly since `/ci` changes are
-     mechanical.
+   - If the check command made **no code changes**: proceed to step 13/14.
+   - If it **made code changes** (lint, formatting, auto-fixes): run one more
+     delta pass over the new delta. This converges quickly since those changes
+     are mechanical.
 3. **Not clean**: collect unresolved findings (`fixed: false` — re-fix),
    `new_issues`, and `sweepFindings`. Filter out anything substantively
    identical to a finding already fixed or dismissed (compare file + line
@@ -1394,9 +1419,9 @@ per-branch summary line, then continue the upstack walk — do not stop here.
 6. Always re-verify findings against the current source before applying
    fixes — the code may have changed since the review.
 7. Keep fixes surgical. No "while I'm here" cleanups.
-8. Run the compile gate after every fix pass; run `/ci` only after the
-   review loop converges clean. If `/ci` makes code changes, run another
-   delta pass.
+8. Run the compile gate after every fix pass; run the project's check command
+   (`check_cmd`, or skip if none declared) only after the review loop converges
+   clean. If it makes code changes, run another delta pass.
 9. Cap at 4 review passes (full or delta). Convergence requires a clean
    pass — never end on a fix. Stop and ask the user if you don't converge.
 10. The review pass runs as a single `Workflow` invocation — never run

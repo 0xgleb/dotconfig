@@ -37,7 +37,9 @@ Three layers. Only the adapter is tool-specific.
 - **Review engine** (tool-agnostic): given a per-branch scope, run
   **`/review-loop` steps 3–12** — build the panel prompts, run the
   `review-panel` Workflow, triage, fix-now loop, compile gate, and the
-  delta-mode re-review loop until the branch converges clean, then `/ci`. Do
+  delta-mode re-review loop until the branch converges clean, then the
+  project's check command (the project-declared `check_cmd` from `/review-loop`
+  step 3; skip if none). Do
   not re-implement any of that here; reuse it verbatim per branch. The sweep
   adds one input the single-branch loop doesn't have: the branch PR's
   **unaddressed reviewer feedback** (step 5.2) is folded into the same triage
@@ -239,7 +241,8 @@ For each branch in `order` (parent before child), do one full pass:
    scope: load project docs, build the panel prompts and inspector prompts, run
    the `review-panel` Workflow, print findings, triage with the bias-to-fix
    table, run the fix-now loop, the compile gate, and the delta-mode re-review
-   loop until the branch returns a **clean** review pass, then `/ci`. All of
+   loop until the branch returns a **clean** review pass, then the project's
+   declared check command (`check_cmd`; skip if none). All of
    `/review-loop`'s hard rules apply per branch, including the 4-pass cap and
    "convergence requires a clean pass — never end on a fix."
 
