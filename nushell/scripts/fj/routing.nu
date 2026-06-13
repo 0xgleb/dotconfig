@@ -166,7 +166,7 @@ const but_translations = {
 # the rest are unsupported on git.
 const git_translations = {
   modify: [commit --amend]
-  ss: [push]
+  ss: [push --force-with-lease]
   submit: [push]
   sync: [pull]
   co: [checkout]
