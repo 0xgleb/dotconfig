@@ -4,6 +4,12 @@
 # Cursor's non-interactive shells carry stale DIRENV_* snapshot vars, so
 # direnv export returns empty unless we unset them first.
 
+agent_env="${HOME}/.cursor/agent-env.sh"
+if [[ -f "$agent_env" ]]; then
+  # shellcheck source=/dev/null
+  source "$agent_env"
+fi
+
 input=$(cat)
 
 if ! command -v jq >/dev/null 2>&1; then
@@ -27,7 +33,12 @@ if [[ -z "$working_directory" ]]; then
   working_directory="$(pwd)"
 fi
 
-if [[ ! -f "${working_directory}/.envrc" ]]; then
+envrc_directory="$working_directory"
+while [[ ! -f "${envrc_directory}/.envrc" && "$envrc_directory" != "/" ]]; do
+  envrc_directory="$(dirname "$envrc_directory")"
+done
+
+if [[ ! -f "${envrc_directory}/.envrc" ]]; then
   echo '{"permission": "allow"}'
   exit 0
 fi
@@ -37,10 +48,11 @@ if ! command -v direnv >/dev/null 2>&1; then
   exit 0
 fi
 
-escaped_working_directory=${working_directory//\'/\'\\\'\'}
+escaped_agent_env=${agent_env//\'/\'\\\'\'}
+escaped_envrc_directory=${envrc_directory//\'/\'\\\'\'}
 
 read -r -d '' inject <<EOF || true
-unset DIRENV_DIFF DIRENV_WATCHES IN_NIX_SHELL; cd '${escaped_working_directory}' && eval "\$(direnv export bash 2>/dev/null)";
+source '${escaped_agent_env}'; unset DIRENV_DIFF DIRENV_WATCHES IN_NIX_SHELL; cd '${escaped_envrc_directory}' && eval "\$(direnv export bash 2>/dev/null)";
 EOF
 
 updated_command="${inject}${command}"

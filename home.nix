@@ -69,6 +69,14 @@ in
       ]);
 
     shell.enableNushellIntegration = true;
+    sessionPath = lib.mkIf isDarwin [
+      "$HOME/.nix-profile/bin"
+      "/run/current-system/sw/bin"
+      "/etc/profiles/per-user/${config.home.username}/bin"
+      "/nix/var/nix/profiles/default/bin"
+      "/opt/homebrew/bin"
+      "/usr/local/bin"
+    ];
     file =
       {
         "${nuConfigDir}/scripts".source = ./nushell/scripts;
@@ -76,6 +84,7 @@ in
         ".cursor/commands".source = config.lib.file.mkOutOfStoreSymlink "${aiDir}/commands";
         ".cursor/hooks".source = config.lib.file.mkOutOfStoreSymlink "${aiDir}/cursor/hooks";
         ".cursor/hooks.json".source = config.lib.file.mkOutOfStoreSymlink "${aiDir}/cursor/hooks.json";
+        ".cursor/agent-env.sh".source = config.lib.file.mkOutOfStoreSymlink "${aiDir}/cursor/agent-env.sh";
         ".cursor/AGENTS.md".source = config.lib.file.mkOutOfStoreSymlink "${aiDir}/AGENTS.md";
         ".cursor/CLAUDE.md".source = config.lib.file.mkOutOfStoreSymlink "${aiDir}/AGENTS.md";
       }

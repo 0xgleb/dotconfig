@@ -1,6 +1,6 @@
 ---
 allowed-tools: Bash(gh:*), Bash(git:*), Bash(cursor-agent:*), Bash(gemini:*), Bash(command:*), Bash(mkdir:*), Bash(wc:*), Bash(date:*), Bash(basename:*), Bash(test:*), Bash(grep:*), Read, Write, Agent, Workflow, Skill
-description: Cross-review a pull request by number or URL without checking it out. Runs a multi-model Workflow panel (2x Fable, Sonnet, a Composer cross-lab augment lane, 2 frontier external lanes that fall back GPT-5.5 -> Gemini per Cursor usage limits, + inspectors) with per-finding verification, then starts a conversation so you can decide which findings (if any) to comment on the PR.
+description: Cross-review a pull request by number or URL without checking it out. Runs a multi-model Workflow panel (2x Opus, Sonnet, a Composer cross-lab augment lane, 2 frontier external lanes that fall back GPT-5.5 -> Gemini per Cursor usage limits, + inspectors) with per-finding verification, then starts a conversation so you can decide which findings (if any) to comment on the PR.
 argument-hint: <pr-number | pr-url>
 ---
 
@@ -200,7 +200,7 @@ preflight probes, keep the standard structured-output paragraph instead.)
 
 Append one of these to the base prompt for each reviewer:
 
-**Fable A — Concurrency & async ordering:**
+**Opus A — Concurrency & async ordering:**
 ```
 YOUR FOCUS: Pay special attention to the ordering of async operations
 during setup, teardown, and reconnection. When two async steps happen in
@@ -210,7 +210,7 @@ setup sequences, concurrent writers to shared state, and assumptions about
 which operation completes first.
 ```
 
-**Fable B — Goal evaluation & domain logic:**
+**Opus B — Goal evaluation & domain logic:**
 ```
 YOUR FOCUS: Read the PR description carefully, then evaluate whether the
 implementation actually achieves what it claims. If the PR says "events
@@ -361,16 +361,16 @@ Build the lane list:
 
 | key                | external | model  | promptPath                              |
 | ------------------ | -------- | ------ | --------------------------------------- |
-| fable-a            | no       | fable  | prompt-fable-a.txt (concurrency)        |
-| fable-b            | no       | fable  | prompt-fable-b.txt (goal evaluation)    |
+| opus-a            | no       | opus  | prompt-opus-a.txt (concurrency)        |
+| opus-b            | no       | opus  | prompt-opus-b.txt (goal evaluation)    |
 | sonnet             | no       | sonnet | prompt-sonnet.txt (error handling)      |
 | composer           | yes      | —      | prompt-composer.txt (error handling, cross-lab augment; present per probes) |
 | external-a         | probes   | —      | prompt-external-a.txt (edge cases)      |
 | external-b         | probes   | —      | prompt-external-b.txt (broad sweep)     |
 | test-inspector     | no       | sonnet | prompt-test-inspector.txt               |
-| rust-inspector     | no       | fable  | prompt-rust-inspector.txt               |
+| rust-inspector     | no       | opus  | prompt-rust-inspector.txt               |
 | typing-inspector   | no       | sonnet | prompt-typing-inspector.txt             |
-| contract-inspector | no       | fable  | prompt-contract-inspector.txt           |
+| contract-inspector | no       | opus  | prompt-contract-inspector.txt           |
 
 The composer lane reuses the Sonnet focus paragraph (error handling &
 failure modes) in the external-CLI prompt format — same coverage, different
@@ -586,7 +586,7 @@ const synthesis = await agent(
   `out-of-scope", "## Overall assessment" (2-3 paragraphs of your own ` +
   `senior-engineer judgment). No emojis, no apologies, be decisive.` +
   (synthesisExtra ? `\n\n${synthesisExtra}` : ''),
-  { label: 'synthesize', phase: 'Synthesize', model: 'fable',
+  { label: 'synthesize', phase: 'Synthesize', model: 'opus',
     schema: {
       type: 'object',
       required: ['report_markdown'],

@@ -1,6 +1,6 @@
 ---
 allowed-tools: Bash(gt:*), Bash(git:*), Bash(gh:*), Bash(cursor-agent:*), Bash(gemini:*), Bash(command:*), Bash(linear:*), Bash(cargo:*), Bash(mkdir:*), Bash(cat:*), Bash(mktemp:*), Bash(rm:*), Bash(test:*), Bash(grep:*), Bash(wc:*), Bash(date:*), Bash(basename:*), Bash(find:*), Read, Write, Edit, Agent, Workflow, AskUserQuestion
-description: Cross-review the current branch with a multi-model Workflow panel (2x Fable, Sonnet, a Composer cross-lab augment lane, 2 frontier external lanes that fall back GPT-5.5 -> Gemini per Cursor usage limits, + inspectors), auto-fix findings, and re-review until clean. Re-review passes use fast delta verification. Loops automatically — only stops for user input on disputed findings or massive changes. Pass `stack` to run the loop across the whole upstack, amending each branch.
+description: Cross-review the current branch with a multi-model Workflow panel (2x Opus, Sonnet, a Composer cross-lab augment lane, 2 frontier external lanes that fall back GPT-5.5 -> Gemini per Cursor usage limits, + inspectors), auto-fix findings, and re-review until clean. Re-review passes use fast delta verification. Loops automatically — only stops for user input on disputed findings or massive changes. Pass `stack` to run the loop across the whole upstack, amending each branch.
 argument-hint: [stack]
 ---
 
@@ -287,7 +287,7 @@ preflight probes, keep the standard structured-output paragraph instead.)
 
 Append one of these to the base prompt for each reviewer:
 
-**Fable A — Concurrency & async ordering:**
+**Opus A — Concurrency & async ordering:**
 ```
 YOUR FOCUS: Pay special attention to the ordering of async operations
 during setup, teardown, and reconnection. When two async steps happen in
@@ -297,7 +297,7 @@ setup sequences, concurrent writers to shared state, and assumptions about
 which operation completes first.
 ```
 
-**Fable B — Goal evaluation & domain logic:**
+**Opus B — Goal evaluation & domain logic:**
 ```
 YOUR FOCUS: Read the PR description carefully, then evaluate whether the
 implementation actually achieves what it claims. If the PR says "events
@@ -426,16 +426,16 @@ resolved by the preflight probes (step 1.3):
 
 | key                | external | model  | promptPath                              |
 | ------------------ | -------- | ------ | --------------------------------------- |
-| fable-a            | no       | fable  | prompt-fable-a.txt (concurrency)        |
-| fable-b            | no       | fable  | prompt-fable-b.txt (goal evaluation)    |
+| opus-a            | no       | opus  | prompt-opus-a.txt (concurrency)        |
+| opus-b            | no       | opus  | prompt-opus-b.txt (goal evaluation)    |
 | sonnet             | no       | sonnet | prompt-sonnet.txt (error handling)      |
 | composer           | yes      | —      | prompt-composer.txt (error handling, cross-lab augment; present per probes) |
 | external-a         | probes   | —      | prompt-external-a.txt (edge cases)      |
 | external-b         | probes   | —      | prompt-external-b.txt (broad sweep)     |
 | test-inspector     | no       | sonnet | prompt-test-inspector.txt               |
-| rust-inspector     | no       | fable  | prompt-rust-inspector.txt               |
+| rust-inspector     | no       | opus  | prompt-rust-inspector.txt               |
 | typing-inspector   | no       | sonnet | prompt-typing-inspector.txt             |
-| contract-inspector | no       | fable  | prompt-contract-inspector.txt           |
+| contract-inspector | no       | opus  | prompt-contract-inspector.txt           |
 
 The composer lane reuses the Sonnet focus paragraph (error handling &
 failure modes) in the external-CLI prompt format — same coverage, different
@@ -469,7 +469,7 @@ Invoke the `Workflow` tool with the script below via `script`, and `args`:
   "repoRoot": "<repo_root>",
   "docsPaths": ["<CLAUDE.md/AGENTS.md paths>"],
   "lanes": [ ...lane objects... ],
-  "reportHeader": "# Review — <branch>\n**Commit:** <head_sha>\n**Parent:** <parent_sha> (<parent branch>)\n**Files changed:** <N>\n**Diff size:** <LOC> lines\n**Panel:** 2x Fable, Sonnet, <resolved external/composer lanes>, 4 inspectors; per-finding verification; Fable synthesis",
+  "reportHeader": "# Review — <branch>\n**Commit:** <head_sha>\n**Parent:** <parent_sha> (<parent branch>)\n**Files changed:** <N>\n**Diff size:** <LOC> lines\n**Panel:** 2x Opus, Sonnet, <resolved external/composer lanes>, 4 inspectors; per-finding verification; Opus synthesis",
   "synthesisExtra": ""
 }
 ```
@@ -655,7 +655,7 @@ const synthesis = await agent(
   `senior-engineer judgment on merge readiness). No emojis, no apologies, ` +
   `be decisive.` +
   (synthesisExtra ? `\n\n${synthesisExtra}` : ''),
-  { label: 'synthesize', phase: 'Synthesize', model: 'fable',
+  { label: 'synthesize', phase: 'Synthesize', model: 'opus',
     schema: {
       type: 'object',
       required: ['report_markdown'],
@@ -685,7 +685,7 @@ lines.
    ```
 4. Verify all files are covered.
 5. Report chunk sizes to the user before proceeding.
-6. Duplicate the five reviewer lanes per chunk (keys like `fable-a-chunk-b`),
+6. Duplicate the five reviewer lanes per chunk (keys like `opus-a-chunk-b`),
    each with its chunk's `diffPath`. Inspector lanes run once on the full
    diff. Pass all lanes to a single workflow invocation — dedup and
    verification handle the rest.
@@ -720,7 +720,7 @@ Review — <branch>
 
 ▲ CRITICAL (count)
   1. <title>
-     <file>:<line>  [fable-a, external-b]  confidence: 95
+     <file>:<line>  [opus-a, external-b]  confidence: 95
      <one-line fix>
 
 ▲ HIGH (count)
@@ -906,7 +906,7 @@ diff; reuse the workflow `scriptPath`) only when:
 - the fixes touched files that no fixed finding implicated (scope grew).
 
 **Otherwise run delta mode** — the default and the fast path. One small
-workflow: a fix-verifier per fixed finding plus one Fable broad sweep of the
+workflow: a fix-verifier per fixed finding plus one Opus broad sweep of the
 fix delta:
 
 ```javascript
@@ -987,7 +987,7 @@ const [verifications, sweep] = await parallel([
     `project docs. Apply the same bar as a full review — correctness ` +
     `first, no style nits, nothing the compiler or linter would catch. ` +
     `Return findings, or an empty list with clean_reason if clean.`,
-    { label: 'delta-sweep', phase: 'Sweep', model: 'fable',
+    { label: 'delta-sweep', phase: 'Sweep', model: 'opus',
       schema: SWEEP_SCHEMA }),
 ])
 

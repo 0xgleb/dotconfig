@@ -59,7 +59,6 @@
     ],
     "defaultMode": "acceptEdits"
   },
-  "model": "sonnet",
   "statusLine": {
     "type": "command",
     "command": "input=$(cat); tokens=$(echo \"$input\" | jq -r '.context_window.current_usage.input_tokens // empty'); [ -z \"$tokens\" ] && exit 0; k=$((tokens / 1000)); echo \"~t${k}k\""
