@@ -12,6 +12,16 @@ allowed-tools:
 
 Work with Linear conservatively.
 
+## Scope: not every project uses Linear
+
+Linear is not the universal issue tracker. Some projects track work in GitHub
+issues (e.g. `data-cartel/moneymentum`), others in a different system entirely.
+Before reaching for Linear, confirm the project actually uses it -- check the
+repo's `AGENTS.md` / `CONTRIBUTING` / `ROADMAP`, its memory, or whether it has
+existing Linear issues at all. If the project's source of truth is GitHub
+issues, use `gh issue` and the repo's issue conventions instead; only use this
+skill for projects whose work actually lives in Linear.
+
 ## Default posture
 
 - Prefer read-only operations first.
