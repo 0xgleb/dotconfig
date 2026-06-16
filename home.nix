@@ -26,6 +26,34 @@ let
       ./ghostty/config.ghostty;
   };
 
+  # `ai/skills` is the single source of truth, authored in Claude's native
+  # SKILL.md frontmatter (name, description, user-invocable, allowed-tools,
+  # argument-hint). Claude and Cursor consume it live via out-of-store symlinks.
+  # Codex reads a stricter frontmatter: it rejects `<`/`>` in the description and
+  # ignores Claude-only keys, so `codexSkills` rewrites each SKILL.md to drop
+  # `user-invocable`/`argument-hint` and turn `->` into `to`, leaving the body and
+  # `allowed-tools` (which Codex also honours) untouched.
+  skillNames = builtins.attrNames (
+    lib.filterAttrs (_: type: type == "directory") (builtins.readDir ./ai/skills)
+  );
+
+  codexSkills = pkgs.runCommandLocal "codex-skills" { } ''
+    export HOME=$(mktemp -d)
+    mkdir -p "$out"
+    cp -R ${./ai/skills}/. "$out/"
+    chmod -R u+w "$out"
+    ${pkgs.nushell}/bin/nu --no-config-file ${./ai/codex-skills.nu} "$out"
+  '';
+
+  # Codex owns `~/.codex/skills/.system`, so link each skill individually rather
+  # than replacing the whole directory.
+  codexSkillFiles = lib.listToAttrs (
+    map (name: {
+      name = ".codex/skills/${name}";
+      value.source = "${codexSkills}/${name}";
+    }) skillNames
+  );
+
 in
 {
   home = {
@@ -87,7 +115,8 @@ in
         ".cursor/AGENTS.md".source = config.lib.file.mkOutOfStoreSymlink "${aiDir}/AGENTS.md";
         ".cursor/CLAUDE.md".source = config.lib.file.mkOutOfStoreSymlink "${aiDir}/AGENTS.md";
       }
-      // lib.optionalAttrs isDarwin darwinFiles;
+      // lib.optionalAttrs isDarwin darwinFiles
+      // lib.optionalAttrs isDarwin codexSkillFiles;
 
     activation = {
       nvimLazyRestore = lib.hm.dag.entryAfter [ "writeBoundary" ] ''

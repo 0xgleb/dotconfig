@@ -41,16 +41,27 @@ reached by Claude through the `~/.claude/skills` symlink and by Cursor through
   ai/cursor.settings.json        # Cursor CLI settings merged into cli-config.json
 
 ~/.claude/
-  skills -> ~/.config/ai/skills
+  skills -> ~/.config/ai/skills        # live symlink (Claude's native frontmatter)
   CLAUDE.md -> ~/.config/ai/AGENTS.md
   settings.json -> ~/.config/ai/claude.settings.json
 
 ~/.cursor/
-  skills -> ~/.config/ai/skills
+  skills -> ~/.config/ai/skills        # live symlink (managed by home.nix)
   AGENTS.md -> ~/.config/ai/AGENTS.md
   CLAUDE.md -> ~/.config/ai/AGENTS.md
   cli-config.json                # local runtime state; preferences merged from ai/cursor.settings.json
+
+~/.codex/
+  skills/<name> -> /nix/store/…-codex-skills/<name>   # per home.nix codexSkills derivation
 ```
+
+Claude and Cursor read `ai/skills` **live** — edits apply immediately. Codex
+reads a stricter SKILL.md frontmatter (it rejects `<`/`>` in the description and
+ignores Claude-only keys), so home.nix builds a `codexSkills` derivation that
+rewrites each SKILL.md — dropping `user-invocable`/`argument-hint` and turning
+`->` into `to` — and symlinks each skill into `~/.codex/skills/<name>`. Because
+Codex is fed from a derivation, **a new or edited skill only reaches Codex after
+`darwin-rebuild switch`**; Claude and Cursor see it without a rebuild.
 
 A skill is a subdirectory containing `SKILL.md` (plus any sibling context
 files). Claude auto-triggers a skill when its `description` matches the user's
@@ -78,7 +89,9 @@ Batch these into one `AskUserQuestion` where possible:
 
 1. **Description** — one-line summary of *when* this skill should activate.
    This is critical: Claude matches against it to decide whether to trigger.
-   Be specific about trigger phrases.
+   Be specific about trigger phrases. Avoid `<` and `>` (use words, not `->`):
+   Codex rejects angle brackets in the description, and the `codexSkills`
+   derivation only rewrites `->`, not every bracket.
 2. **User-invocable** — should the user be able to invoke it explicitly
    (`user-invocable: true`), or is it auto-trigger only? Most explicit
    workflow skills here (`eod`, `linear`) set `user-invocable: true`;
@@ -128,12 +141,16 @@ symlink into this repo.
 
 ## Step 5 — Verify the symlinks
 
-Confirm the file is reachable through both agent harness symlinks:
+Confirm the file is reachable through the live agent harness symlinks:
 
 ```bash
 test -f ~/.claude/skills/<name>/SKILL.md && echo "claude linked" || echo "claude NOT linked — investigate"
 test -f ~/.cursor/skills/<name>/SKILL.md && echo "cursor linked" || echo "cursor NOT linked — investigate"
 ```
+
+Codex is fed from the `codexSkills` derivation in `home.nix`, so a brand-new
+skill only appears under `~/.codex/skills/<name>` after the next
+`darwin-rebuild switch` — there is nothing to verify here until then.
 
 Then print the file path and a short summary of what was created.
 
