@@ -28,6 +28,14 @@ allowed-tools:
 - **Scope: the st0x / Rain family of orgs** — ST0x-Technology, rainlanguage,
   and sibling family orgs. NEVER data-cartel: that's the user's own org and
   belongs in a separate update, not this one.
+- **Time scope: everything since the last daily update, up until NOW.** This is
+  NOT a 24-hour or calendar-day window. The lower bound is the date of the most
+  recent prior `*-eod.md` note; the upper bound is the moment you run. Daily
+  updates are not filed every day, so a single note routinely covers several
+  days of work. Do not drop work because it landed yesterday or just past
+  midnight — if it happened after the last EOD and before now, it's in scope.
+  Don't agonize over hour-level boundaries (evening vs. past-midnight); the
+  span is last-EOD-to-now, full stop.
 - **Tools: `linear`, `gh`, `gt` only.** No `git`, no `cat`, no ad-hoc
   scripts. Read files with `Read`.
 - **Never fabricate.** No "Next items" unless the user wrote them. No
@@ -99,10 +107,13 @@ allowed-tools:
    - **Without brain dump:** gather from Linear and GitHub (queries below).
      If the data is sparse, ask before drafting — don't invent a day.
 
-   Either way, gather by **activity** across the family orgs: a PR you pushed
-   commits to today (addressing review, iterating a draft) is today's work even
-   if it was opened earlier — filter by `--updated`, not just
-   `created`/`merged-at`, and check every repo, not just the obvious one.
+   Either way, gather by **activity** across the family orgs over the whole
+   since-last-EOD span (see "Time scope" above): a PR you pushed commits to in
+   that span (addressing review, iterating a draft) is in scope even if it was
+   opened earlier — filter by `--updated`, not just `created`/`merged-at`, and
+   check every repo, not just the obvious one. First establish the window: `ls`
+   the notes dir and read the date of the previous `*-eod.md`; that date is the
+   lower bound for every query below.
 
 5. **Draft.** Match the format of the last few EODs. Common shape:
    - `# Daily Update:  YYYY-MM-DD`
@@ -145,7 +156,16 @@ Cache `viewer.id` once per run:
 linear api 'query { viewer { id displayName email } }'
 ```
 
-Substitute today as `YYYY-MM-DDT00:00:00Z`.
+**Window, not "today."** Every query below is scoped to the since-last-EOD span,
+not a single day. Substitute the lower bound (`<since>`) with the previous EOD's
+date as `YYYY-MM-DDT00:00:00Z`. **Never assume a fixed timezone offset** — the
+user travels across timezones (GMT+7, GMT-3, whatever the current month is), so
+there is no stable "UTC-3 workday" to adjust by. Just use the previous note's
+date at UTC midnight as the lower bound; erring earlier only risks re-listing
+already-reported work, which you reconcile against the last note anyway. For
+`gh search`, use a `START..END` date range (e.g.
+`--created=2026-06-13..2026-06-16`) instead of a single date. The examples below
+say "today" for brevity — read it as "since the last EOD."
 
 **Issues I created today:**
 
@@ -193,9 +213,10 @@ EOF
 ```
 
 Drop from the verified list: your own PRs (replying to review feedback on your
-PR is not a review) and anything with zero reviews submitted in the window.
-Adjust the timestamp lower bound for the user's actual workday (UTC-3: a day
-starting at local midnight begins at `T03:00:00Z`).
+PR is not a review) and anything with zero reviews submitted in the window. Use
+the previous EOD's date at UTC midnight as the lower bound — do NOT assume a
+fixed local-timezone offset; the user travels (could be GMT+7 one month, GMT-3
+the next), so there is no stable workday boundary to shift by.
 
 **Human vs AI-bot feedback.** "Addressed review feedback" / "resubmitted after
 feedback" implies a HUMAN reviewed the PR. Before writing it, check who the
@@ -244,7 +265,8 @@ gh search prs --reviewed-by=@me --owner=ST0x-Technology,rainlanguage --updated=Y
 expose draft status or review requests, so split the opened-today PRs
 per repo with `gh pr list`. A PR counts as "submitted for review" when
 `isDraft` is false AND `reviewRequests` is non-empty; "still draft" when
-`isDraft` is true. Filter the rows to `createdAt` = today.
+`isDraft` is true. Filter the rows to `createdAt` within the since-last-EOD
+window (not a single day).
 
 ```bash
 gh pr list --repo ST0x-Technology/<repo> --author @me --state open \
@@ -302,7 +324,11 @@ to describe an open stack the user mentioned.
 - Repo names abbreviated (`st0x.issuance`, `raindex`), not full
   `org/name` paths, unless prior EODs use the long form.
 - ISO dates only.
-- No emoji. No "I"/"we" — drop the subject.
+- **ASCII only.** No Unicode anywhere in the note — no em/en dashes (use `--`
+  for the section-header separator and `-` for ranges/hyphens), no curly quotes,
+  no ellipsis character, no arrows. The note ships to Telegram and must stay
+  plain ASCII.
+- No emoji. No "I"/"we" -- drop the subject.
 - Strip redundant info: don't repeat the RAI tag in a PR title if the
   bullet already has the PR number tied to that issue elsewhere.
 - Each section earns its place. If the day's work has no Linear

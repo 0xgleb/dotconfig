@@ -301,7 +301,23 @@ PR feedback dismissed as invalid (with reasons):
 Reports under: <out_dir root>
 ```
 
-Then stop. Do **not** push or submit — the user decides when to publish.
+Then **submit the fixes** — a stack of review fixes left local is worthless to a
+reviewer staring at the PRs, and is exactly the failure that makes the user chase
+you for the obvious next step. Submit once, at the end, from the start branch:
+
+- **[Graphite]** `gt ss` (the sweep modified branches up and down the stack, so
+  submit the whole stack). When any *lower* PR is already **approved**, run
+  `gt submit --stack --dry-run` first and read the per-branch labels (No-op vs
+  Update) so you know which approvals the resubmit will disturb — then submit. A
+  No-op everywhere means it is already pushed; say so and don't force a pointless
+  re-push.
+- **[GitButler]** `but push` the series you modified.
+
+Submitting is NOT publishing. Keep every publishing guardrail: never `--publish`,
+never flip draft→ready, never open a NEW PR, never post/resolve/react to PR
+comments or otherwise change review state beyond the resubmit itself, and never
+override branch protection (no admin-force-push to a protected branch). If
+nothing was modified on any branch, there is nothing to submit — say so and stop.
 
 ---
 
@@ -312,9 +328,15 @@ Then stop. Do **not** push or submit — the user decides when to publish.
    the same relaxation `/review-loop stack` makes to `/review-loop`'s "never
    amend automatically" rule — scoped to modifying review fixes into the branch
    they belong to.
-2. **Never push, submit, or open/flip PRs.** No `gt submit`/`gt ss`, no
-   `but push`, no `gh pr` state changes — not even at the end, not even if a
-   branch converges clean. Publishing is always the user's explicit call.
+2. **Submit the fixes; do not publish.** Once the sweep has modified the
+   branches, push them so the fixes reach the PRs (`gt ss` / `but push`, per the
+   final step) — review fixes left local are worthless. But never `--publish`,
+   never flip draft→ready, never open a NEW PR, never post/resolve/react to PR
+   comments or change review state (beyond the resubmit's own side effects), and
+   never override branch protection (no admin-force-push to a protected branch).
+   Submitting existing-PR code is the job; publishing/announcing is the user's
+   call. When lower PRs are already approved, `gt submit --stack --dry-run`
+   first so you know which approvals a resubmit disturbs.
 3. **Never change the VCS's mode or topology.** No `gt init`, no `but setup` /
    `but teardown`, no creating/deleting/reparenting/reordering branches. The
    sweep reviews and modifies within the existing stack; it never restructures

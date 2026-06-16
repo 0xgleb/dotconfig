@@ -40,8 +40,11 @@ When invoked with the `stack` argument, wrap the single-branch loop (steps
 advance to the next branch, and repeat to the top of the stack. Passing `stack`
 is an explicit opt-in to the amend-and-advance flow, so in stack mode **hard
 rule #4 is relaxed**: you MAY amend fixes into the current branch before moving
-up (`gt modify -a` under Graphite, `but absorb` under GitButler). You still
-never submit/push without the user asking.
+up (`gt modify -a` under Graphite, `but absorb` under GitButler). When the walk
+finishes converged, **submit the modified stack** (`gt ss` / `but push`) so the
+fixes reach the PRs — see the Stack flow's final step. Submitting is not
+publishing: never `--publish`, flip draft→ready, open new PRs, or post PR
+comments.
 
 With no `stack` argument, skip this section entirely and run steps 1–14 once
 on the current branch.
@@ -113,8 +116,15 @@ upstack.
 5. If the single-branch loop **fails to converge** on any branch (hits the
    4-pass cap), stop on that branch — do **NOT** continue up the stack. Report
    which branch is stuck and follow the normal non-convergence flow.
-6. When done (success or failure), return to the starting branch
-   (`gt checkout <starting-branch>`) and print the per-branch summary below.
+6. When done, return to the starting branch (`gt checkout <starting-branch>`).
+   If the walk **converged** (did not stop on a stuck branch) and amended any
+   branch, **submit the stack**: `gt ss` from the start branch so the fixes
+   reach the PRs — review fixes left local are worthless. When a *lower* PR is
+   already approved, `gt submit --stack --dry-run` first to see which approvals
+   the resubmit disturbs. Submitting is NOT publishing: never `--publish`, flip
+   draft→ready, open a NEW PR, post/resolve PR comments, or override branch
+   protection. Then print the per-branch summary below. (If the walk stopped on
+   a stuck branch, do not submit — report and let the user decide.)
 
 ### Stack flow — [GitButler]
 
@@ -136,8 +146,11 @@ iterate the applied series in place.
    skip.
 5. Same non-convergence rule: if a branch hits the 4-pass cap, stop on it — do
    **NOT** advance to the next series. Report which branch is stuck.
-6. When done, print the per-branch summary below. No return-to-start checkout
-   is needed (nothing was checked out).
+6. When done, if the walk converged (did not stop on a stuck branch) and
+   absorbed any fixes, **push the modified series** (`but push`) so the fixes
+   reach the PRs — never `but` mode changes, never `--publish`/draft-flip, never
+   new PRs or PR comments. Then print the per-branch summary below. No
+   return-to-start checkout is needed (nothing was checked out).
 
 Per-branch summary (either tool):
 
@@ -1368,7 +1381,9 @@ mutation — the user decides when to amend and push.
 
 **In stack mode**, this is where the single-branch loop returns to the Stack
 flow: the wrapper amends the branch (`gt modify -a`) and moves up. Print the
-per-branch summary line, then continue the upstack walk — do not stop here.
+per-branch summary line, then continue the upstack walk — do not stop here. The
+stack is submitted once at the end of the walk (Stack flow, final step), not
+per branch.
 
 ---
 
@@ -1409,11 +1424,13 @@ per-branch summary line, then continue the upstack walk — do not stop here.
    asks or the fix is too large for the current PR.
 3. Never create Linear issues without explicit per-issue user confirmation
    of the exact draft content.
-4. Never amend, commit, or `gt submit` automatically — the user drives
-   version control. **Exception (stack mode only):** when invoked with the
-   `stack` argument, `gt modify -a` to amend fixes into the current branch
-   before moving up is expected and allowed. Never `gt submit`/push without
-   the user asking, even in stack mode.
+4. **Single-branch mode:** never amend, commit, or push — leave the fixes
+   uncommitted for the user to review (the safe default). **Stack mode:**
+   `gt modify -a` to amend fixes into each branch is expected, and once the
+   walk converges you **submit the stack** (`gt ss` / `but push`) so the fixes
+   reach the PRs — leaving a whole stack of review fixes local is worthless.
+   Submitting existing-PR code is the job; never `--publish`, flip draft→ready,
+   open a NEW PR, post/resolve PR comments, or override branch protection.
 5. Always use `--description-file` with `linear issue create`, never inline
    `--description`.
 6. Always re-verify findings against the current source before applying

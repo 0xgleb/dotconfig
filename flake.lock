@@ -3,13 +3,13 @@
     "claude-code-manifest": {
       "flake": false,
       "locked": {
-        "narHash": "sha256-wziQWnsW9q1Ns4thIb8nAhdQxqYWfzLk6lcT1hYnSuo=",
+        "narHash": "sha256-7Qy5qfjDfSPLVBWwHj4vY7AiSlZuJ/l3BT5zUQgbrhY=",
         "type": "file",
-        "url": "https://downloads.claude.ai/claude-code-releases/2.1.175/manifest.json"
+        "url": "https://downloads.claude.ai/claude-code-releases/2.1.177/manifest.json"
       },
       "original": {
         "type": "file",
-        "url": "https://downloads.claude.ai/claude-code-releases/2.1.175/manifest.json"
+        "url": "https://downloads.claude.ai/claude-code-releases/2.1.177/manifest.json"
       }
     },
     "disko": {
@@ -35,11 +35,11 @@
     "doomemacs": {
       "flake": false,
       "locked": {
-        "lastModified": 1781231856,
-        "narHash": "sha256-6guic96x59OlZP1MCLTGZphjq2WM6FT2+b/AtyBxTc8=",
+        "lastModified": 1781507235,
+        "narHash": "sha256-XH5gN5MKhcA1u5CQI4LYOG68krB0w9/mr0DE+b6bbzE=",
         "owner": "doomemacs",
         "repo": "doomemacs",
-        "rev": "c4eb05b53cc55c21f8c0c4120de26525d4ccdb8e",
+        "rev": "cf771df284f69ef8b1584017d84fccf0ef38eb07",
         "type": "github"
       },
       "original": {
@@ -51,11 +51,11 @@
     "doomemacs-modules": {
       "flake": false,
       "locked": {
-        "lastModified": 1780954812,
-        "narHash": "sha256-kznQDqklH8b37CbL9/dvOxi7v13nZ9VQU6VKalcgQU4=",
+        "lastModified": 1781422387,
+        "narHash": "sha256-OpcKPDoguGnpgElNa9hAktV025UvGt4BSPa1NFMo7IY=",
         "owner": "doomemacs",
         "repo": "modules",
-        "rev": "bdb9a0ce826269903f88887037dc86caf8dd4ed9",
+        "rev": "5a44cf7bdb74ffccd0e61921803d5fba51a4df10",
         "type": "github"
       },
       "original": {
@@ -74,11 +74,11 @@
         ]
       },
       "locked": {
-        "lastModified": 1781264733,
-        "narHash": "sha256-cNYlsTEtcCRBgUc5FHjvjg2QnX+S2QngrJm80Gp/7qk=",
+        "lastModified": 1781533659,
+        "narHash": "sha256-Bh3z1ELr/m4iJnnJrK9PFVzv+Y77VbES79hc6s1SPmY=",
         "owner": "nix-community",
         "repo": "emacs-overlay",
-        "rev": "fac500b62447e36aff69fc34581b99cffde576cf",
+        "rev": "730b1c14cd09d50a06f6254cb156a616b81e7af9",
         "type": "github"
       },
       "original": {
@@ -94,11 +94,11 @@
         ]
       },
       "locked": {
-        "lastModified": 1781305496,
-        "narHash": "sha256-g8Vv4Qfc7n+lgov97REu3X6BeJtvYY0hlSUZR1GrGQQ=",
+        "lastModified": 1781533608,
+        "narHash": "sha256-Mgsu/x5cs8EqlhIQ7bMBo14LpkAYtgzDbG/S/eattJA=",
         "owner": "nix-community",
         "repo": "home-manager",
-        "rev": "c87a39aa979acc4848016d2220c6238390d84779",
+        "rev": "8aec76cc1e045f37b55d82ca3cee4910ae04d3db",
         "type": "github"
       },
       "original": {
@@ -138,11 +138,11 @@
         "systems": "systems"
       },
       "locked": {
-        "lastModified": 1781265265,
-        "narHash": "sha256-ooq8EF0a9C9TbwtsJ0vXfoWGNGs2iumKNCQAyxR4Y8k=",
+        "lastModified": 1781534334,
+        "narHash": "sha256-uGG2Rnnh6pAT2ncxaHacwHOQzWavIoj5QvSPT6AutE8=",
         "owner": "marienz",
         "repo": "nix-doom-emacs-unstraightened",
-        "rev": "4c9486b91ba53c58e9466a5369b68a0523b47418",
+        "rev": "d76c0e30f89a1df1f483a9b29a4970e8d3b939e7",
         "type": "github"
       },
       "original": {

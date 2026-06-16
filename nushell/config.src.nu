@@ -35,14 +35,11 @@ $env.config = {
   }
 }
 
-def --wrapped l [...args: string] {
-  ls -a ...$args
-}
-
 alias g = git
 alias vi = nvim
 alias vim = nvim
 alias nix = nix --accept-flake-config
+alias l = ls -a
 
 def darwin-evolve [] {
   sudo echo authorized
