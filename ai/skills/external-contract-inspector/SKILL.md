@@ -1,4 +1,6 @@
 ---
+name: external-contract-inspector
+user-invocable: true
 allowed-tools: Bash(gh:*), Bash(git:*), Bash(rg:*), Bash(grep:*), Bash(wc:*), Bash(test:*), Bash(date:*), Read, Grep, Glob, Agent
 description: Lightweight review — flags assumptions the diff makes about an external API/contract (types, units, encoding, field presence, error shapes) that aren't backed by cited documentation or a test encoding a real response.
 argument-hint: "[pr-number | pr-url]"

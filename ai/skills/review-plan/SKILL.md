@@ -1,3 +1,9 @@
+---
+name: review-plan
+user-invocable: true
+description: Review and optimize an implementation plan before executing it — checks logical consistency, sequencing, vertical-slice structure, and validation points.
+---
+
 Before executing this plan, review and optimize it:
 
 1. **Logical Consistency**: Verify each task's prerequisites are satisfied by prior tasks. Ensure no circular dependencies or gaps in the workflow.

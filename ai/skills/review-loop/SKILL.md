@@ -1,4 +1,6 @@
 ---
+name: review-loop
+user-invocable: true
 allowed-tools: Bash(gt:*), Bash(but:*), Bash(direnv:*), Bash(git:*), Bash(gh:*), Bash(cursor-agent:*), Bash(gemini:*), Bash(command:*), Bash(linear:*), Bash(cargo:*), Bash(nix:*), Bash(mkdir:*), Bash(cat:*), Bash(mktemp:*), Bash(rm:*), Bash(test:*), Bash(grep:*), Bash(wc:*), Bash(date:*), Bash(basename:*), Bash(find:*), Read, Write, Edit, Agent, Workflow, AskUserQuestion
 description: Cross-review the current branch with a multi-model Workflow panel (2x Opus, Sonnet, a Composer cross-lab augment lane, 2 frontier external lanes that fall back GPT-5.5 -> Gemini per Cursor usage limits, + inspectors), auto-fix findings, and re-review until clean. Re-review passes use fast delta verification. Loops automatically — only stops for user input on disputed findings or massive changes. Pass `stack` to run the loop across the whole upstack, amending each branch.
 argument-hint: [stack]
@@ -454,12 +456,12 @@ Save each complete prompt (base + focus) to `$out_dir/prompt-{reviewer}.txt`.
 ### Inspector prompts
 
 Write four inspector prompt files the same way. Each contains the full body
-of the corresponding command file (everything below the frontmatter, with
+of the corresponding skill file (everything below the frontmatter, with
 `$ARGUMENTS` replaced by the empty string — use the current branch), plus an
 appended context block, plus structured-output mapping rules:
 
 **Test Inspector** — `$out_dir/prompt-test-inspector.txt` from
-`~/.claude/commands/test-inspector.md`. Append:
+`~/.claude/skills/test-inspector/SKILL.md`. Append:
 
 ```
 The diff is at: {DIFF_PATH}
@@ -475,7 +477,7 @@ for risky logic = high, mock abuse = medium.
 ```
 
 **Idiomatic Rust Inspector** — `$out_dir/prompt-rust-inspector.txt` from
-`~/.claude/commands/idiomatic-rust-inspector.md`. Append:
+`~/.claude/skills/idiomatic-rust-inspector/SKILL.md`. Append:
 
 ```
 The diff is at: {DIFF_PATH}
@@ -492,7 +494,7 @@ style-only = medium, suboptimal = low.
 ```
 
 **Strong Typing Inspector** — `$out_dir/prompt-typing-inspector.txt` from
-`~/.claude/commands/strong-typing-inspector.md`. Append:
+`~/.claude/skills/strong-typing-inspector/SKILL.md`. Append:
 
 ```
 The diff is at: {DIFF_PATH}
@@ -509,7 +511,7 @@ opportunity = low.
 ```
 
 **External Contract Inspector** — `$out_dir/prompt-contract-inspector.txt`
-from `~/.claude/commands/external-contract-inspector.md`. Append:
+from `~/.claude/skills/external-contract-inspector/SKILL.md`. Append:
 
 ```
 The diff is at: {DIFF_PATH}

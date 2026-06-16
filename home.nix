@@ -81,7 +81,6 @@ in
       {
         "${nuConfigDir}/scripts".source = ./nushell/scripts;
         ".cursor/skills".source = config.lib.file.mkOutOfStoreSymlink "${aiDir}/skills";
-        ".cursor/commands".source = config.lib.file.mkOutOfStoreSymlink "${aiDir}/commands";
         ".cursor/hooks".source = config.lib.file.mkOutOfStoreSymlink "${aiDir}/cursor/hooks";
         ".cursor/hooks.json".source = config.lib.file.mkOutOfStoreSymlink "${aiDir}/cursor/hooks.json";
         ".cursor/agent-env.sh".source = config.lib.file.mkOutOfStoreSymlink "${aiDir}/cursor/agent-env.sh";

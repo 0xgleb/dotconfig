@@ -1,4 +1,6 @@
 ---
+name: test-inspector
+user-invocable: true
 allowed-tools: Bash(gh:*), Bash(git:*), Bash(wc:*), Bash(test:*), Bash(date:*), Bash(mktemp:*), Bash(rm:*), Read, Grep, Glob, Agent
 description: Review tests in a PR for quality — flags useless tests, over-mocking, implementation-detail coupling, and tests that don't verify real behavior.
 argument-hint: "[pr-number | pr-url]"

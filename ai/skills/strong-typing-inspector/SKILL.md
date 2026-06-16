@@ -1,4 +1,6 @@
 ---
+name: strong-typing-inspector
+user-invocable: true
 allowed-tools: Bash(gh:*), Bash(git:*), Bash(rg:*), Bash(grep:*), Bash(wc:*), Bash(test:*), Bash(date:*), Read, Grep, Glob, Agent
 description: Lightweight review — flags primitives used where a domain type already exists (e.g. String for a USD field when Usd exists) and missed newtype opportunities.
 argument-hint: "[pr-number | pr-url]"

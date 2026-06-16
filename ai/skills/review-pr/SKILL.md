@@ -1,4 +1,6 @@
 ---
+name: review-pr
+user-invocable: true
 allowed-tools: Bash(gh:*), Bash(git:*), Bash(cursor-agent:*), Bash(gemini:*), Bash(command:*), Bash(mkdir:*), Bash(wc:*), Bash(date:*), Bash(basename:*), Bash(test:*), Bash(grep:*), Read, Write, Agent, Workflow, Skill
 description: Cross-review a pull request by number or URL without checking it out. Runs a multi-model Workflow panel (2x Opus, Sonnet, a Composer cross-lab augment lane, 2 frontier external lanes that fall back GPT-5.5 -> Gemini per Cursor usage limits, + inspectors) with per-finding verification, then starts a conversation so you can decide which findings (if any) to comment on the PR.
 argument-hint: <pr-number | pr-url>
@@ -249,7 +251,7 @@ behavior? Are there implicit assumptions that aren't documented?
 ### Inspector prompts
 
 Write four inspector prompt files the same way. Each contains the full body
-of the corresponding command file (everything below the frontmatter, with
+of the corresponding skill file (everything below the frontmatter, with
 `$ARGUMENTS` replaced by the PR reference), plus this shared context block:
 
 ```
@@ -261,7 +263,7 @@ The PR is at commit <head_sha>. Read source files via
 
 plus per-inspector structured-output mapping rules:
 
-- **Test Inspector** (`~/.claude/commands/test-inspector.md` →
+- **Test Inspector** (`~/.claude/skills/test-inspector/SKILL.md` →
   `prompt-test-inspector.txt`): "Read the diff to identify test files. Read
   the full test files and the source files they test. If no test files are
   in the diff, return an empty findings list with clean_reason. Return
@@ -269,7 +271,7 @@ plus per-inspector structured-output mapping rules:
   Severity mapping: useless tests = medium, weak tests = low, missing
   coverage for risky logic = high, mock abuse = medium."
 - **Idiomatic Rust Inspector**
-  (`~/.claude/commands/idiomatic-rust-inspector.md` →
+  (`~/.claude/skills/idiomatic-rust-inspector/SKILL.md` →
   `prompt-rust-inspector.txt`): "Read the diff to identify Rust files. Read
   the full files and related type/trait/error definitions. If no Rust files
   are in the diff, return an empty findings list with clean_reason. Return
@@ -278,7 +280,7 @@ plus per-inspector structured-output mapping rules:
   Severity mapping: non-idiomatic with correctness impact = high,
   style-only = medium, suboptimal = low."
 - **Strong Typing Inspector**
-  (`~/.claude/commands/strong-typing-inspector.md` →
+  (`~/.claude/skills/strong-typing-inspector/SKILL.md` →
   `prompt-typing-inspector.txt`): "Build the domain-type inventory from the
   repo first, then scan the diff. If the diff has no source files where
   strong typing is relevant, return an empty findings list with
@@ -287,7 +289,7 @@ plus per-inspector structured-output mapping rules:
   primitive-where-domain-type-exists = medium (high if it touches financial
   values or identifiers), missed-newtype opportunity = low."
 - **External Contract Inspector**
-  (`~/.claude/commands/external-contract-inspector.md` →
+  (`~/.claude/skills/external-contract-inspector/SKILL.md` →
   `prompt-contract-inspector.txt`): "Identify external touchpoints in the
   diff (HTTP/RPC/SDK responses, on-chain ABIs and message formats,
   units/decimals). For each, check whether the assumed shape is backed by a

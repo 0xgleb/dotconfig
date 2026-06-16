@@ -1,4 +1,6 @@
 ---
+name: idiomatic-rust-inspector
+user-invocable: true
 allowed-tools: Bash(gh:*), Bash(git:*), Bash(wc:*), Bash(test:*), Bash(date:*), Bash(mktemp:*), Bash(rm:*), Read, Grep, Glob, Agent
 description: Review Rust code in a PR for idiomatic patterns — flags non-idiomatic constructs, missed std library usage, ownership anti-patterns, and code that fights the borrow checker instead of working with it.
 argument-hint: "[pr-number | pr-url]"

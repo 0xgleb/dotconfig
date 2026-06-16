@@ -34,21 +34,19 @@ reached by Claude through the `~/.claude/skills` symlink and by Cursor through
     eod/SKILL.md
     graphite/SKILL.md
     linear/SKILL.md
+    review-loop/SKILL.md
     worktree/SKILL.md
-  ai/commands/                   # slash commands (Claude + Cursor)
   ai/AGENTS.md                   # global agent guidelines
   ai/claude.settings.json        # Claude Code settings (permissions, etc.)
   ai/cursor.settings.json        # Cursor CLI settings merged into cli-config.json
 
 ~/.claude/
   skills -> ~/.config/ai/skills
-  commands -> ~/.config/ai/commands
   CLAUDE.md -> ~/.config/ai/AGENTS.md
   settings.json -> ~/.config/ai/claude.settings.json
 
 ~/.cursor/
   skills -> ~/.config/ai/skills
-  commands -> ~/.config/ai/commands
   AGENTS.md -> ~/.config/ai/AGENTS.md
   CLAUDE.md -> ~/.config/ai/AGENTS.md
   cli-config.json                # local runtime state; preferences merged from ai/cursor.settings.json
@@ -57,9 +55,8 @@ reached by Claude through the `~/.claude/skills` symlink and by Cursor through
 A skill is a subdirectory containing `SKILL.md` (plus any sibling context
 files). Claude auto-triggers a skill when its `description` matches the user's
 request; skills marked `user-invocable: true` can also be invoked explicitly.
-
-> This skill creates git-tracked skills only. Slash commands
-> (`ai/commands/<name>.md`) are a separate surface it does not manage.
+Skills are the only agent surface in this repo — what used to be slash commands
+(`ai/commands/<name>.md`) are now skills too.
 
 ## Step 1 — Determine the name
 
