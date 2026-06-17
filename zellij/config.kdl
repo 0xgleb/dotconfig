@@ -135,6 +135,7 @@ keybinds clear-defaults=true {
         bind "Alt =" { Resize "Increase"; }
         bind "Alt [" { PreviousSwapLayout; }
         bind "Alt ]" { NextSwapLayout; }
+        bind "Alt e" { PreviousSwapLayout; NextSwapLayout; }
         bind "Alt f" { ToggleFloatingPanes; }
         bind "Ctrl \\" { SwitchToMode "locked"; }
         bind "Alt i" { MoveTab "left"; }
@@ -296,10 +297,9 @@ stacked_resize false
 // 
 // default_cwd "/tmp"
 
-// // The name of the default layout to load on startup
-// // Default: "default"
-// // 
-// default_layout "wayout"
+// The name of the default layout to load on startup
+// Default: "default"
+default_layout "wayout"
  
 // The folder in which Zellij will look for layouts
 // (Requires restart)
