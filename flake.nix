@@ -24,6 +24,9 @@
 
     nix-doom-emacs-unstraightened.url = "github:marienz/nix-doom-emacs-unstraightened";
     nix-doom-emacs-unstraightened.inputs.nixpkgs.follows = "nixpkgs";
+
+    but-nix.url = "github:data-cartel/but.nix";
+    but-nix.inputs.nixpkgs.follows = "nixpkgs";
   };
 
   outputs =

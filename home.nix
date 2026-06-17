@@ -62,10 +62,14 @@ in
 
     packages =
       let
+        system = pkgs.stdenv.hostPlatform.system;
+
         unstable = import inputs.nixpkgs-unstable {
-          system = pkgs.stdenv.hostPlatform.system;
+          inherit system;
           config.allowUnfree = true;
         };
+
+        but = inputs.but-nix.packages.${system}.gitbutler-cli;
 
         # Track Anthropic's prebuilt Claude Code binary ahead of nixpkgs by
         # pinning the release manifest as a flake input. The binary checksums
@@ -86,6 +90,7 @@ in
       in
       (with pkgs; [
         cargo-watch
+        but
         jf
       ])
       ++ [ claude-code-latest ]
@@ -105,18 +110,17 @@ in
       "/opt/homebrew/bin"
       "/usr/local/bin"
     ];
-    file =
-      {
-        "${nuConfigDir}/scripts".source = ./nushell/scripts;
-        ".cursor/skills".source = config.lib.file.mkOutOfStoreSymlink "${aiDir}/skills";
-        ".cursor/hooks".source = config.lib.file.mkOutOfStoreSymlink "${aiDir}/cursor/hooks";
-        ".cursor/hooks.json".source = config.lib.file.mkOutOfStoreSymlink "${aiDir}/cursor/hooks.json";
-        ".cursor/agent-env.sh".source = config.lib.file.mkOutOfStoreSymlink "${aiDir}/cursor/agent-env.sh";
-        ".cursor/AGENTS.md".source = config.lib.file.mkOutOfStoreSymlink "${aiDir}/AGENTS.md";
-        ".cursor/CLAUDE.md".source = config.lib.file.mkOutOfStoreSymlink "${aiDir}/AGENTS.md";
-      }
-      // lib.optionalAttrs isDarwin darwinFiles
-      // lib.optionalAttrs isDarwin codexSkillFiles;
+    file = {
+      "${nuConfigDir}/scripts".source = ./nushell/scripts;
+      ".cursor/skills".source = config.lib.file.mkOutOfStoreSymlink "${aiDir}/skills";
+      ".cursor/hooks".source = config.lib.file.mkOutOfStoreSymlink "${aiDir}/cursor/hooks";
+      ".cursor/hooks.json".source = config.lib.file.mkOutOfStoreSymlink "${aiDir}/cursor/hooks.json";
+      ".cursor/agent-env.sh".source = config.lib.file.mkOutOfStoreSymlink "${aiDir}/cursor/agent-env.sh";
+      ".cursor/AGENTS.md".source = config.lib.file.mkOutOfStoreSymlink "${aiDir}/AGENTS.md";
+      ".cursor/CLAUDE.md".source = config.lib.file.mkOutOfStoreSymlink "${aiDir}/AGENTS.md";
+    }
+    // lib.optionalAttrs isDarwin darwinFiles
+    // lib.optionalAttrs isDarwin codexSkillFiles;
 
     activation = {
       nvimLazyRestore = lib.hm.dag.entryAfter [ "writeBoundary" ] ''
