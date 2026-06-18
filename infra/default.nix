@@ -52,6 +52,12 @@ in
     text = withLib ./scripts/tf-plan.nu;
   };
 
+  tfApply = writeNushellApplication {
+    name = "tf-apply";
+    runtimeInputs = infraInputs;
+    text = withLib ./scripts/tf-apply.nu;
+  };
+
   tfVars = writeNushellApplication {
     name = "tf-vars";
     runtimeInputs = infraInputs;

@@ -60,6 +60,12 @@ resource "tailscale_tailnet_key" "ci" {
   description   = "github actions deploy"
 }
 
+# Enable MagicDNS tailnet-wide so `ssh nixxxos` resolves (the device's hostname
+# becomes a *.ts.net name). Requires the Tailscale client to accept Tailscale DNS.
+resource "tailscale_dns_preferences" "magic_dns" {
+  magic_dns = true
+}
+
 output "ip" {
   value = digitalocean_droplet.nixxxos.ipv4_address
 }
