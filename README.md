@@ -21,7 +21,7 @@ Nix flake managing two targets from a single repo:
 | `flake.nix`        | Flake definition, system configs, helper scripts                  |
 | `common.nix`       | Shared packages and settings (both platforms)                     |
 | `darwin.nix`       | macOS-specific: homebrew, GUI apps, hostname                      |
-| `nixos.nix`        | NixOS-specific: SSH, firewall, Tailscale, Hermes Agent            |
+| `nixos.nix`        | NixOS-specific: SSH, firewall, Tailscale, OpenClaw                |
 | `digitalocean.nix` | Disk/boot config for DO droplets                                  |
 | `infra/`           | Terraform (droplet + Tailscale keys) and provision/deploy scripts |
 | `home.nix`         | Home Manager: git, zsh, neovim, zellij, fzf, direnv               |
@@ -83,7 +83,11 @@ nixfmt *.nix
 
 The `nixxxos` droplet is provisioned with Terraform and installed with
 nixos-anywhere. Terraform also mints the Tailscale auth keys; NixOS joins the
-tailnet declaratively and runs Hermes Agent as a native systemd service.
+tailnet declaratively and runs [OpenClaw](https://github.com/openclaw/openclaw)
+(self-hosted personal agent) as a native systemd gateway via the
+[`nix-openclaw`](https://github.com/openclaw/nix-openclaw) module. Its model
+backends are existing **subscriptions**, not paid APIs: Cursor via the acpx ACP
+harness (`cursor-agent`), with Claude Code CLI as a fallback.
 
 ### Secrets
 
@@ -107,10 +111,13 @@ encrypted disk; it is never committed.
 On the box, runtime secrets are plain root-only files under `/var/lib/secrets/`,
 seeded at install time and persisted across rebuilds:
 
-| File                                 | Purpose                                      |
-| ------------------------------------ | -------------------------------------------- |
-| `/var/lib/secrets/tailscale.authkey` | Tailscale node key (auto-join on first boot) |
-| `/var/lib/secrets/hermes.env`        | Hermes Agent secrets (LLM key, bot tokens)   |
+| File                                 | Purpose                                       |
+| ------------------------------------ | --------------------------------------------- |
+| `/var/lib/secrets/tailscale.authkey` | Tailscale node key (auto-join on first boot)  |
+| `/var/lib/secrets/openclaw.env`      | OpenClaw secrets (Cursor key, channel tokens) |
+
+The OpenClaw secrets are declarative: set `openclaw_env` via `nix run .#tfVars`
+(e.g. `openclaw_env = "CURSOR_API_KEY=..."`) and `provision` seeds the file.
 
 ### Provision (first install)
 
@@ -118,21 +125,32 @@ seeded at install time and persisted across rebuilds:
 nix run .#provision
 ```
 
-This applies Terraform, installs NixOS via nixos-anywhere, seeds
-`/var/lib/secrets/`, and waits for the box to join the tailnet. Afterwards set
-the Hermes LLM key on the box and redeploy:
+This applies Terraform and installs NixOS via nixos-anywhere, seeding
+`/var/lib/secrets/`. The box then joins the tailnet on first boot. Because the
+node is untagged, **disable key expiry** for it in the Tailscale admin console
+(Machines → nixxxos → Disable key expiry), or its default 180-day expiry will
+drop it off the tailnet.
+
+### OpenClaw model auth (one-time, on the box)
+
+OpenClaw drives the first-party CLIs, which use your subscriptions. These are
+runtime steps (not declarative); do them once on the box (over the tailnet):
 
 ```bash
 ssh nixxxos
-sudo sh -c 'echo "ANTHROPIC_API_KEY=sk-ant-..." >> /var/lib/secrets/hermes.env'
+sudo -u openclaw -H bash -lc '
+  cursor-agent login                 # Cursor sub (or set CURSOR_API_KEY in openclaw.env)
+  claude setup-token                 # Claude sub fallback; then unset ANTHROPIC_API_KEY
+  openclaw plugins install @openclaw/acpx
+  openclaw config set plugins.entries.acpx.enabled true
+  openclaw acp doctor                # confirm the cursor ACP backend is healthy
+'
 ```
 
-Pick the matching model in `nixos.nix` (`services.hermes-agent.settings.model`).
-
-Then, because the node is untagged, **disable key expiry** for it in the
-Tailscale admin console (Machines → nixxxos → Disable key expiry). Otherwise the
-device's default 180-day key expiry deauthorizes it and it drops off the
-tailnet.
+`cursor-agent` is the explicitly-permitted path; the Claude `claude-cli` backend
+is a fallback and sits in an Anthropic-ToS gray zone. Finalize "Cursor answers
+messages" routing via `/acp doctor`; redeploys are cheap (OpenClaw is
+substituted from the garnix cache, not built).
 
 ### Deploy (CI/CD)
 
@@ -149,8 +167,8 @@ on a green build — deploys it to `nixxxos` over the tailnet
 3. Deploy once locally (`nix run .#provision` or a manual `nixos-rebuild`) so
    the `ci` key lands in the box's authorized_keys before CI first runs.
 
-> The deploy builds the full Hermes Agent closure (`uv2nix`, Node, Playwright)
-> on the runner — consider adding a Cachix cache to cut build time.
+> OpenClaw is substituted from the garnix cache (wired up in `common.nix`), so
+> neither the runner nor the box builds it from source.
 
 ---
 

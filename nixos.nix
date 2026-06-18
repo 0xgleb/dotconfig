@@ -1,4 +1,4 @@
-{ pkgs, ... }:
+{ pkgs, inputs, ... }:
 let
   authorizedKeys = (import ./keys.nix).authorized;
 in
@@ -54,29 +54,49 @@ in
     checkReversePath = "loose";
   };
 
-  # Hermes Agent (Nous Research) as a native systemd gateway service.
-  # The package, user, hardening and config.yaml/.env wiring come from the
-  # upstream nixosModule imported in flake.nix.
-  services.hermes-agent = {
+  # OpenClaw — self-hosted personal agent, as a native systemd gateway service
+  # (nix-openclaw module, imported in flake.nix). Reachable only over the tailnet
+  # (no public port; the gateway binds locally and rides tailscale0).
+  #
+  # Model backends use existing SUBSCRIPTIONS, not paid APIs:
+  #   - Cursor via the acpx ACP harness (cursor-agent) — the explicitly-permitted
+  #     path; the default agent.
+  #   - Claude Code CLI (claude-cli) as a text-only fallback.
+  # Both CLIs are on the service PATH but must be logged in once on the box, and
+  # the @openclaw/acpx plugin installed once (both are runtime, not declarative —
+  # see README). openclaw.json is strict-validated, so this config stays minimal;
+  # finalize routing with `/acp doctor` on the running gateway (redeploys are
+  # cheap thanks to the garnix cache).
+  services.openclaw-gateway = {
     enable = true;
+    package = inputs.nix-openclaw.packages.x86_64-linux.openclaw;
 
-    # Put the `hermes` CLI on PATH and share HERMES_HOME with the service so
-    # interactive `hermes` sessions over SSH see the same state.
-    addToSystemPackages = true;
+    servicePath = [
+      pkgs.cursor-cli # cursor-agent — Cursor subscription backend (ACP)
+      pkgs.claude-code # claude — Claude subscription fallback (CLI backend)
+    ];
 
-    # Declarative config.yaml. The LLM provider/key is left out on purpose
-    # (see environmentFiles); change the model to match the key you provide.
-    settings = {
-      model = "anthropic/claude-sonnet-4-6";
-      terminal.backend = "local";
+    # Secrets (CURSOR_API_KEY, channel tokens) from the out-of-store file seeded
+    # by `provision` / set via `nix run .#tfVars`.
+    environmentFiles = [ "/var/lib/secrets/openclaw.env" ];
+
+    # Deep-merged into /etc/openclaw/openclaw.json.
+    config = {
+      acp = {
+        enabled = true;
+        dispatch.enabled = true;
+        backend = "acpx";
+        defaultAgent = "cursor";
+        allowedAgents = [
+          "cursor"
+          "claude"
+        ];
+      };
+
+      plugins.entries.acpx.enabled = true;
+
+      agents.defaults.cliBackends."claude-cli".command = "${pkgs.claude-code}/bin/claude";
     };
-
-    # Secrets (LLM API key, messaging tokens) are read from this out-of-store
-    # file and merged into HERMES_HOME/.env at activation. The file is seeded
-    # as a template by `provision`; populate it on the box, e.g.
-    #   ANTHROPIC_API_KEY=sk-ant-...
-    # then re-run a deploy (or `nixos-rebuild switch`) to apply.
-    environmentFiles = [ "/var/lib/secrets/hermes.env" ];
   };
 
   # Set hostname

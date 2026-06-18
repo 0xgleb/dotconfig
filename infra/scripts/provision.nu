@@ -50,7 +50,7 @@ def main [--identity (-i): string, droplet_size?: string] {
   print "Access is tailnet-only (public SSH is closed). nixxxos joins the tailnet"
   print "on first boot (~1 min); reach it with:  ssh nixxxos"
   print "Find its tailnet IP with `tailscale status` from any tailnet device."
-  print "Then set the Hermes LLM key in /var/lib/secrets/hermes.env and redeploy."
+  print "OpenClaw model auth (cursor-agent login + acpx plugin) is a one-time on-box step — see the README."
 }
 
 # Wait until the freshly created droplet accepts SSH as root.
@@ -96,26 +96,26 @@ def stage-secrets [] {
     | str trim
     | save -f ($secrets | path join "tailscale.authkey"))
 
-  # hermes.env comes from the encrypted tfvars (var/output hermes_env). When it
-  # is empty we still write a template so the file exists for the activation
-  # merge; set hermes_env via `nix run .#tfVars` to seed the real secrets.
-  let hermes_env = (^terraform output -raw hermes_env)
-  let hermes_content = if ($hermes_env | str trim | is-empty) {
+  # openclaw.env comes from the encrypted tfvars (var/output openclaw_env). When
+  # it is empty we still write a template so the file exists; set openclaw_env
+  # via `nix run .#tfVars` to seed the real secrets.
+  let openclaw_env = (^terraform output -raw openclaw_env)
+  let openclaw_content = if ($openclaw_env | str trim | is-empty) {
     [
-      "# Hermes Agent secrets, merged into HERMES_HOME/.env at activation."
-      "# Set hermes_env in terraform.tfvars (nix run .#tfVars) to seed these."
-      "# ANTHROPIC_API_KEY=sk-ant-..."
+      "# OpenClaw secrets, loaded by the gateway service (systemd EnvironmentFile)."
+      "# Set openclaw_env in terraform.tfvars (nix run .#tfVars) to seed these."
+      "# CURSOR_API_KEY=..."
       ""
     ] | str join "\n"
   } else {
-    $hermes_env
+    $openclaw_env
   }
 
-  $hermes_content | save -f ($secrets | path join "hermes.env")
+  $openclaw_content | save -f ($secrets | path join "openclaw.env")
 
   ^chmod 700 $secrets
   ^chmod 600 ($secrets | path join "tailscale.authkey")
-  ^chmod 600 ($secrets | path join "hermes.env")
+  ^chmod 600 ($secrets | path join "openclaw.env")
 
   $extra
 }

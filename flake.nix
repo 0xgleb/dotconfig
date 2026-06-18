@@ -28,11 +28,10 @@
     but-nix.url = "github:data-cartel/but.nix";
     but-nix.inputs.nixpkgs.follows = "nixpkgs";
 
-    # Hermes Agent (Nous Research). Ships its own uv2nix-built package and a
-    # native systemd NixOS module. Intentionally NOT following our nixpkgs:
-    # the uv2nix build is pinned against its own nixpkgs and overriding it
-    # tends to break dependency resolution.
-    hermes-agent.url = "github:NousResearch/hermes-agent";
+    # OpenClaw — self-hosted personal agent. Provides the openclaw-gateway NixOS
+    # module + prebuilt packages (substituted from the garnix cache wired up in
+    # common.nix). Not following our nixpkgs, to match its pinned build.
+    nix-openclaw.url = "github:openclaw/nix-openclaw";
   };
 
   outputs =
@@ -44,41 +43,6 @@
       disko,
       ...
     }:
-    let
-      # Upstream hard-codes one npm-deps hash in nix/lib.nix that is only correct
-      # on the maintainer's arch; on x86_64-linux fetchNpmDeps produces a
-      # different hash, so hermes-tui (and thus hermes-agent) fails to build.
-      # Fix it with an overlay that rewrites only that one known-bad hash to the
-      # x86_64-linux value, then build hermes from upstream's own nixpkgs +
-      # inputs. The overlay (rather than patching the source via applyPatches)
-      # keeps this import-from-derivation free: we read hermes-agent's already
-      # realized flake source directly, so the build works across machines (e.g.
-      # nixos-anywhere) where an IFD-built path can't cross the trust boundary.
-      hermesInputs = inputs.hermes-agent.inputs;
-
-      hermesPkgs = import hermesInputs.nixpkgs {
-        system = "x86_64-linux";
-        config.allowUnfree = true;
-        overlays = [
-          (_final: prev: {
-            fetchNpmDeps =
-              args:
-              prev.fetchNpmDeps (
-                if (args.hash or "") == "sha256-m9cjbjzi4SaFCjODfdrawS5e+1ag+MpRn528/upSNqo=" then
-                  args // { hash = "sha256-kbjJksq7limRIYqP3DwI+GNgCXkG96tXcsQqmuEedxo="; }
-                else
-                  args
-              );
-          })
-        ];
-      };
-
-      hermesAgentPackage = hermesPkgs.callPackage "${inputs.hermes-agent}/nix/hermes-agent.nix" {
-        inherit (hermesInputs) uv2nix pyproject-nix pyproject-build-systems;
-        npm-lockfile-fix = hermesInputs.npm-lockfile-fix.packages.x86_64-linux.default;
-        rev = null;
-      };
-    in
     {
 
       # Local macOS
@@ -113,8 +77,7 @@
           ./nixos.nix
           ./digitalocean.nix
           disko.nixosModules.disko
-          inputs.hermes-agent.nixosModules.default
-          { services.hermes-agent.package = hermesAgentPackage; }
+          inputs.nix-openclaw.nixosModules.openclaw-gateway
           home-manager.nixosModules.home-manager
           {
             home-manager.useGlobalPkgs = true;

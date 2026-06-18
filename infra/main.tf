@@ -80,9 +80,9 @@ output "tailscale_node_authkey" {
   sensitive = true
 }
 
-# Seeded into /var/lib/secrets/hermes.env by the provision script.
-output "hermes_env" {
-  value     = var.hermes_env
+# Seeded into /var/lib/secrets/openclaw.env by the provision script.
+output "openclaw_env" {
+  value     = var.openclaw_env
   sensitive = true
 }
 
