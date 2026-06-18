@@ -48,28 +48,32 @@
       # Upstream hard-codes one npm-deps hash in nix/lib.nix that is only correct
       # on the maintainer's arch; on x86_64-linux fetchNpmDeps produces a
       # different hash, so hermes-tui (and thus hermes-agent) fails to build.
-      # Rebuild hermes from a source with the x86_64-linux hash patched in (the
-      # "got:" value from a real build), using upstream's own nixpkgs + inputs so
-      # the result is identical to their package apart from the corrected hash.
+      # Fix it with an overlay that rewrites only that one known-bad hash to the
+      # x86_64-linux value, then build hermes from upstream's own nixpkgs +
+      # inputs. The overlay (rather than patching the source via applyPatches)
+      # keeps this import-from-derivation free: we read hermes-agent's already
+      # realized flake source directly, so the build works across machines (e.g.
+      # nixos-anywhere) where an IFD-built path can't cross the trust boundary.
       hermesInputs = inputs.hermes-agent.inputs;
 
       hermesPkgs = import hermesInputs.nixpkgs {
         system = "x86_64-linux";
         config.allowUnfree = true;
+        overlays = [
+          (_final: prev: {
+            fetchNpmDeps =
+              args:
+              prev.fetchNpmDeps (
+                if (args.hash or "") == "sha256-m9cjbjzi4SaFCjODfdrawS5e+1ag+MpRn528/upSNqo=" then
+                  args // { hash = "sha256-kbjJksq7limRIYqP3DwI+GNgCXkG96tXcsQqmuEedxo="; }
+                else
+                  args
+              );
+          })
+        ];
       };
 
-      hermesAgentSrc = hermesPkgs.applyPatches {
-        name = "hermes-agent-linux-npmhash";
-        src = inputs.hermes-agent;
-        postPatch = ''
-          substituteInPlace nix/lib.nix \
-            --replace-fail \
-              "sha256-m9cjbjzi4SaFCjODfdrawS5e+1ag+MpRn528/upSNqo=" \
-              "sha256-kbjJksq7limRIYqP3DwI+GNgCXkG96tXcsQqmuEedxo="
-        '';
-      };
-
-      hermesAgentPackage = hermesPkgs.callPackage "${hermesAgentSrc}/nix/hermes-agent.nix" {
+      hermesAgentPackage = hermesPkgs.callPackage "${inputs.hermes-agent}/nix/hermes-agent.nix" {
         inherit (hermesInputs) uv2nix pyproject-nix pyproject-build-systems;
         npm-lockfile-fix = hermesInputs.npm-lockfile-fix.packages.x86_64-linux.default;
         rev = null;
