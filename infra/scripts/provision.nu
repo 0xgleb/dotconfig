@@ -6,12 +6,16 @@ def main [--identity (-i): string, droplet_size?: string] {
   let id = (resolve-identity $identity)
 
   with-infra $id {
-    # The droplet size defaults to the terraform config (variables.tf); only
-    # override it when an explicit size is passed on the command line.
+    # provision is a from-scratch install, so always recreate the droplet to
+    # start from a clean image. nixos-anywhere wipes the disk anyway, and an
+    # in-place resize of a half-installed box leaves it unbootable with no way to
+    # retry. For non-destructive config changes use the CD deploy / nixos-rebuild
+    # instead. The droplet size defaults to variables.tf; -var overrides it.
+    let replace = "-replace=digitalocean_droplet.nixxxos"
     if $droplet_size == null {
-      ^terraform apply -var-file=terraform.tfvars -auto-approve
+      ^terraform apply $replace -var-file=terraform.tfvars -auto-approve
     } else {
-      ^terraform apply -var-file=terraform.tfvars -var $"droplet_size=($droplet_size)" -auto-approve
+      ^terraform apply $replace -var-file=terraform.tfvars -var $"droplet_size=($droplet_size)" -auto-approve
     }
   }
 
