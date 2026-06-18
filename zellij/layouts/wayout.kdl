@@ -20,25 +20,28 @@ layout {
     // ===========================================================================
     // GRID  --  the default layout (config.kdl sets default_layout "wayout")
     //
-    //   Up to 4 even-width columns. Panes 1-4 each open a new column; pane 5+
-    //   stack as new rows *within* columns (filling left-to-right), so every
-    //   column keeps the same width -- no full-width / double-width panes.
-    //     1..4 = one row of N columns
-    //     5  = [2,1,1,1]   6  = [2,2,1,1]   7  = [2,2,2,1]   8  = [2,2,2,2]
-    //     9  = [3,2,2,2]  10  = [3,3,2,2]  11  = [3,3,3,2]  12  = [3,3,3,3]
+    //   Row-major grid, up to 4 columns per row. Panes fill a row left-to-right
+    //   until it holds 4 columns, then a new even-height row starts below. Each
+    //   row splits its own width evenly across however many panes it holds, and
+    //   all rows share height evenly.
+    //     1..4 = one row of N even columns
+    //     5  = [4,1]   6  = [4,2]   7  = [4,3]   8  = [4,4]
+    //     9  = [4,4,1]  10 = [4,4,2]  11 = [4,4,3]  12 = [4,4,4]
+    //   ([a,b,..] = columns per row, top to bottom.)
     //   Alt n          add a pane; it auto-rebalances into the grid
     //   Alt e          re-even now (after a manual split/resize broke the spacing)
     //   Alt ] / Alt [  toggle grid <-> even rows
     //
     // >>> TO SUPPORT MORE PANES (>12) <<<
     //   Copy the last `ui exact_panes=12 { ... }` block, bump the number, and add
-    //   the extra pane to the shortest column (left-to-right). Each of the 4
-    //   columns is a `pane { ... }` holding its stacked panes; the very last cell
-    //   in the block is the only `pane { children; }`.
-    //   To change the 4-column cap, add/remove a column in every variant.
+    //   the extra pane to the last (bottom) row, starting a new row once the last
+    //   row holds 4 columns. Each row is a `pane split_direction="vertical"`
+    //   holding its columns; the very last cell in the block is the only
+    //   `pane { children; }`.
+    //   To change the 4-column cap, change where rows wrap in every variant.
     //   Verify: `zellij setup --check`  (must report "Well defined.")
     // ===========================================================================
-    swap_tiled_layout name="columns" {
+    swap_tiled_layout name="grid" {
         ui exact_panes=1 {
             pane { children; }
         }
@@ -65,154 +68,86 @@ layout {
         }
         ui exact_panes=5 {
             pane split_direction="vertical" {
-                pane {
-                    pane
-                    pane
-                }
-                pane
-                pane
-                pane { children; }
+                pane; pane; pane; pane
             }
+            pane { children; }
         }
         ui exact_panes=6 {
             pane split_direction="vertical" {
-                pane {
-                    pane
-                    pane
-                }
-                pane {
-                    pane
-                    pane
-                }
+                pane; pane; pane; pane
+            }
+            pane split_direction="vertical" {
                 pane
                 pane { children; }
             }
         }
         ui exact_panes=7 {
             pane split_direction="vertical" {
-                pane {
-                    pane
-                    pane
-                }
-                pane {
-                    pane
-                    pane
-                }
-                pane {
-                    pane
-                    pane
-                }
+                pane; pane; pane; pane
+            }
+            pane split_direction="vertical" {
+                pane
+                pane
                 pane { children; }
             }
         }
         ui exact_panes=8 {
             pane split_direction="vertical" {
-                pane {
-                    pane
-                    pane
-                }
-                pane {
-                    pane
-                    pane
-                }
-                pane {
-                    pane
-                    pane
-                }
-                pane {
-                    pane
-                    pane { children; }
-                }
+                pane; pane; pane; pane
+            }
+            pane split_direction="vertical" {
+                pane
+                pane
+                pane
+                pane { children; }
             }
         }
         ui exact_panes=9 {
             pane split_direction="vertical" {
-                pane {
-                    pane
-                    pane
-                    pane
-                }
-                pane {
-                    pane
-                    pane
-                }
-                pane {
-                    pane
-                    pane
-                }
-                pane {
-                    pane
-                    pane { children; }
-                }
+                pane; pane; pane; pane
             }
+            pane split_direction="vertical" {
+                pane; pane; pane; pane
+            }
+            pane { children; }
         }
         ui exact_panes=10 {
             pane split_direction="vertical" {
-                pane {
-                    pane
-                    pane
-                    pane
-                }
-                pane {
-                    pane
-                    pane
-                    pane
-                }
-                pane {
-                    pane
-                    pane
-                }
-                pane {
-                    pane
-                    pane { children; }
-                }
+                pane; pane; pane; pane
+            }
+            pane split_direction="vertical" {
+                pane; pane; pane; pane
+            }
+            pane split_direction="vertical" {
+                pane
+                pane { children; }
             }
         }
         ui exact_panes=11 {
             pane split_direction="vertical" {
-                pane {
-                    pane
-                    pane
-                    pane
-                }
-                pane {
-                    pane
-                    pane
-                    pane
-                }
-                pane {
-                    pane
-                    pane
-                    pane
-                }
-                pane {
-                    pane
-                    pane { children; }
-                }
+                pane; pane; pane; pane
+            }
+            pane split_direction="vertical" {
+                pane; pane; pane; pane
+            }
+            pane split_direction="vertical" {
+                pane
+                pane
+                pane { children; }
             }
         }
         ui exact_panes=12 {
             pane split_direction="vertical" {
-                pane {
-                    pane
-                    pane
-                    pane
-                }
-                pane {
-                    pane
-                    pane
-                    pane
-                }
-                pane {
-                    pane
-                    pane
-                    pane
-                }
-                pane {
-                    pane
-                    pane
-                    pane { children; }
-                }
+                pane; pane; pane; pane
+            }
+            pane split_direction="vertical" {
+                pane; pane; pane; pane
+            }
+            pane split_direction="vertical" {
+                pane
+                pane
+                pane
+                pane { children; }
             }
         }
     }
