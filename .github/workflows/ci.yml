@@ -17,8 +17,6 @@ jobs:
         with:
           extra_nix_config: |
             experimental-features = nix-command flakes
-            extra-substituters = https://cache.garnix.io
-            extra-trusted-public-keys = cache.garnix.io:CTFPyKSLcx5RMJKfLo5EEPUObbA78b0YQ2DTCJXqr9g=
       - run: nix flake check
 
   build-nixos:
@@ -36,8 +34,6 @@ jobs:
         with:
           extra_nix_config: |
             experimental-features = nix-command flakes
-            extra-substituters = https://cache.garnix.io
-            extra-trusted-public-keys = cache.garnix.io:CTFPyKSLcx5RMJKfLo5EEPUObbA78b0YQ2DTCJXqr9g=
       - run: nix build .#nixosConfigurations.nixxxos.config.system.build.toplevel
 
   # Build on the runner and push the closure to nixxxos over the tailnet, then
@@ -68,8 +64,6 @@ jobs:
         with:
           extra_nix_config: |
             experimental-features = nix-command flakes
-            extra-substituters = https://cache.garnix.io
-            extra-trusted-public-keys = cache.garnix.io:CTFPyKSLcx5RMJKfLo5EEPUObbA78b0YQ2DTCJXqr9g=
       - name: Join tailnet
         uses: tailscale/github-action@306e68a486fd2350f2bfc3b19fcd143891a4a2d8 # v4
         with:
