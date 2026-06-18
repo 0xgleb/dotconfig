@@ -27,6 +27,12 @@
 
     but-nix.url = "github:data-cartel/but.nix";
     but-nix.inputs.nixpkgs.follows = "nixpkgs";
+
+    # Hermes Agent (Nous Research). Ships its own uv2nix-built package and a
+    # native systemd NixOS module. Intentionally NOT following our nixpkgs:
+    # the uv2nix build is pinned against its own nixpkgs and overriding it
+    # tends to break dependency resolution.
+    hermes-agent.url = "github:NousResearch/hermes-agent";
   };
 
   outputs =
@@ -72,6 +78,7 @@
           ./nixos.nix
           ./digitalocean.nix
           disko.nixosModules.disko
+          inputs.hermes-agent.nixosModules.default
           home-manager.nixosModules.home-manager
           {
             home-manager.useGlobalPkgs = true;

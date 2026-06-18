@@ -21,8 +21,59 @@ jobs:
     runs-on: ubuntu-latest
     steps:
       - uses: actions/checkout@v4
+      - name: Free disk space
+        run: |
+          sudo rm -rf /usr/share/dotnet /usr/local/lib/android /opt/ghc /opt/hostedtoolcache/CodeQL
+          sudo docker image prune --all --force || true
+          df -h /
       - uses: cachix/install-nix-action@v27
         with:
           extra_nix_config: |
             experimental-features = nix-command flakes
       - run: nix build .#nixosConfigurations.nixxxos.config.system.build.toplevel
+
+  # Build on the runner and push the closure to nixxxos over the tailnet, then
+  # activate. Only runs for pushes to master, after check + build pass.
+  # Requires repository secrets TS_AUTHKEY (Tailscale ephemeral auth key, from
+  # `terraform -chdir=infra output -raw tailscale_ci_authkey`) and DEPLOY_SSH_KEY
+  # (private half of keys.nix `ci`, authorized for root on the box).
+  # Bootstrap: this job fails until `ci` is set in keys.nix AND that config has
+  # been applied to the box once out-of-band (e.g. `nix run .#provision`) — CI
+  # cannot install its own deploy key.
+  deploy:
+    needs: [check, build-nixos]
+    if: github.ref == 'refs/heads/master' && github.event_name == 'push'
+    runs-on: ubuntu-latest
+    concurrency:
+      group: deploy-nixxxos
+      cancel-in-progress: false
+    steps:
+      - uses: actions/checkout@v4
+      - name: Free disk space
+        run: |
+          sudo rm -rf /usr/share/dotnet /usr/local/lib/android /opt/ghc /opt/hostedtoolcache/CodeQL
+          sudo docker image prune --all --force || true
+          df -h /
+      - uses: cachix/install-nix-action@v27
+        with:
+          extra_nix_config: |
+            experimental-features = nix-command flakes
+      - name: Join tailnet
+        uses: tailscale/github-action@v4
+        with:
+          authkey: ${{ secrets.TS_AUTHKEY }}
+      - name: Deploy to nixxxos
+        env:
+          DEPLOY_SSH_KEY: ${{ secrets.DEPLOY_SSH_KEY }}
+        run: |
+          install -d -m700 ~/.ssh
+          printf '%s\n' "$DEPLOY_SSH_KEY" > ~/.ssh/deploy
+          chmod 600 ~/.ssh/deploy
+          # Resolve via tailscaled (works without host DNS / a MagicDNS search
+          # domain, which the runner's resolver does not get on Linux).
+          target="$(tailscale ip -4 nixxxos)"
+          export NIX_SSHOPTS="-i $HOME/.ssh/deploy -o StrictHostKeyChecking=no -o UserKnownHostsFile=/dev/null"
+          nix run nixpkgs#nixos-rebuild -- switch \
+            --flake .#nixxxos \
+            --target-host "root@$target" \
+            --no-reexec

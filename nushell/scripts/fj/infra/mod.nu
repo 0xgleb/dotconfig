@@ -1,8 +1,8 @@
 def with-infra [action: closure] {
   cd ~/.config/infra
-  if not (".terraform" | path exists) {
-    ^terraform init
-  }
+
+  # Idempotent, and the only way newly added providers get installed.
+  ^terraform init
 
   let identity = $"($env.HOME)/.ssh/nixxxos_ed25519"
   ^rage -d -i $identity -o terraform.tfvars terraform.tfvars.age

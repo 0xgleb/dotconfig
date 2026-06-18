@@ -16,3 +16,16 @@ variable "do_token" {
   type      = string
   sensitive = true
 }
+
+variable "tailscale_api_key" {
+  type      = string
+  sensitive = true
+  # Create at https://login.tailscale.com/admin/settings/keys (API access token).
+  # Note: Tailscale API keys expire after 90 days and must be rotated.
+}
+
+variable "tailscale_tailnet" {
+  type    = string
+  default = "-"
+  # "-" means the default tailnet of the account that owns the API key.
+}
