@@ -1,9 +1,10 @@
 variable "droplet_size" {
   type    = string
-  default = "s-2vcpu-4gb"
-  # s-1vcpu-1gb: $6/mo — minimal
-  # s-2vcpu-4gb: $24/mo — dev work
-  # s-4vcpu-8gb: $48/mo — heavier work
+  default = "s-4vcpu-8gb"
+  # s-1vcpu-1gb:  $6/mo  — minimal
+  # s-2vcpu-4gb:  $24/mo — dev work, but OOMs building the Hermes closure
+  # s-4vcpu-8gb:  $48/mo — enough RAM to build Hermes during install
+  # s-8vcpu-16gb: $96/mo — headroom if 8gb still OOMs on the build
 }
 
 variable "region" {

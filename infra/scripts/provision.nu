@@ -2,11 +2,17 @@
 # secrets so the box auto-joins the tailnet on first boot.
 # `with-infra` / `resolve-identity` come from lib.nu (concatenated at build).
 
-def main [--identity (-i): string, droplet_size: string = "s-2vcpu-4gb"] {
+def main [--identity (-i): string, droplet_size?: string] {
   let id = (resolve-identity $identity)
 
   with-infra $id {
-    ^terraform apply -var-file=terraform.tfvars -var $"droplet_size=($droplet_size)" -auto-approve
+    # The droplet size defaults to the terraform config (variables.tf); only
+    # override it when an explicit size is passed on the command line.
+    if $droplet_size == null {
+      ^terraform apply -var-file=terraform.tfvars -auto-approve
+    } else {
+      ^terraform apply -var-file=terraform.tfvars -var $"droplet_size=($droplet_size)" -auto-approve
+    }
   }
 
   cd $"($env.HOME)/.config/infra"
