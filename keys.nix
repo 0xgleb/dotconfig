@@ -2,9 +2,9 @@ let
   keys = {
     server = "ssh-ed25519 AAAAC3NzaC1lZDI1NTE5AAAAIJ8m2M/93ymq8JIG/cDvNhXnHDrI7mzSjKhZBLTgdKXe";
 
-    # doop is the digital ocean op SSH key referenced in terraform as "doop".
-    # it's the initial key digital ocean gives access to
-    doop = "ssh-ed25519 AAAAC3NzaC1lZDI1NTE5AAAAIN/KMPlaN/tD5ia465z6rrkbrJnmtUyi+MNlky4DYRWg";
+    # dotconfig-nixos is the DigitalOcean SSH key (registered there as
+    # "dotconfig-nixos") that seeds initial root access to the droplet.
+    dotconfig-nixos = "ssh-ed25519 AAAAC3NzaC1lZDI1NTE5AAAAIN/KMPlaN/tD5ia465z6rrkbrJnmtUyi+MNlky4DYRWg";
 
     # ci is the public half of the keypair GitHub Actions uses to deploy to
     # nixxxos (private half stored as the DEPLOY_SSH_KEY repository secret).
@@ -23,6 +23,6 @@ in
 
   roles.infra = with keys; [
     server
-    doop
+    dotconfig-nixos
   ];
 }

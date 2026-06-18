@@ -20,8 +20,8 @@ provider "tailscale" {
   tailnet = var.tailscale_tailnet
 }
 
-data "digitalocean_ssh_key" "doop" {
-  name = "doop"
+data "digitalocean_ssh_key" "dotconfig-nixos" {
+  name = "dotconfig-nixos"
 }
 
 resource "digitalocean_droplet" "nixxxos" {
@@ -29,7 +29,7 @@ resource "digitalocean_droplet" "nixxxos" {
   image    = "ubuntu-24-04-x64"
   size     = var.droplet_size
   region   = var.region
-  ssh_keys = [data.digitalocean_ssh_key.doop.id]
+  ssh_keys = [data.digitalocean_ssh_key.dotconfig-nixos.id]
 
   lifecycle {
     ignore_changes = [image]
@@ -65,7 +65,7 @@ output "ip" {
 }
 
 output "ssh_command" {
-  value = "ssh -i ~/.ssh/doop root@${digitalocean_droplet.nixxxos.ipv4_address}"
+  value = "ssh -i ~/.ssh/dotconfig-nixos root@${digitalocean_droplet.nixxxos.ipv4_address}"
 }
 
 # Consumed by the provision script and seeded onto the box at install time.
