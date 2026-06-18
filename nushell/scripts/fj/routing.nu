@@ -113,22 +113,28 @@ export def fj-route [...args: string]: nothing -> record<tool: string, args: lis
 # Resolve the version-control backend tool for a working directory.
 #
 #   "gt"  — repos under a graphite org (~/code/rainlanguage/*, ~/code/st0x/*)
-#   "but" — any other repo when the gitbutler CLI (`but`) is on PATH
+#   "but" — any other repo currently managed by gitbutler (on a gitbutler/*
+#           branch, which is the only state where the `but` CLI operates)
 #   "git" — fallback when neither applies
 #
-# Pure: callers pass the cwd, the home prefix, and whether `but` exists, so this
-# stays testable without touching the environment.
+# `but` being on PATH is NOT enough to pick the gitbutler backend: it's
+# installed globally, so keying off availability routes every repo to `but`,
+# and `but` then nags to run setup in repos it doesn't manage. The real signal
+# is the one `but` itself gates on — HEAD sitting on a gitbutler/* branch.
+#
+# Pure: callers pass the cwd, the home prefix, and whether the repo is currently
+# gitbutler-managed, so this stays testable without touching the environment.
 export def vcs-backend [
-  cwd: string                 # absolute working directory
-  home: string                # home directory prefix (e.g. $env.HOME)
-  gitbutler_available: bool   # whether the `but` CLI is on PATH
+  cwd: string               # absolute working directory
+  home: string              # home directory prefix (e.g. $env.HOME)
+  gitbutler_managed: bool   # whether HEAD is on a gitbutler/* branch
 ]: nothing -> string {
   let under_graphite_org = ($graphite_orgs | any {|org|
     $cwd | str starts-with $"($home)/code/($org)/"
   })
   if $under_graphite_org {
     "gt"
-  } else if $gitbutler_available {
+  } else if $gitbutler_managed {
     "but"
   } else {
     "git"

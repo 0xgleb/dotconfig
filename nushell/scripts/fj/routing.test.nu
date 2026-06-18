@@ -152,7 +152,7 @@ def "test vcs-backend rainlanguage repo is graphite" [] {
   assert equal (vcs-backend "/home/u/code/rainlanguage/rain.cli" "/home/u" true) "gt"
 }
 
-def "test vcs-backend st0x repo is graphite even without gitbutler" [] {
+def "test vcs-backend st0x repo is graphite even when not gitbutler-managed" [] {
   assert equal (vcs-backend "/home/u/code/st0x/st0x.liquidity" "/home/u" false) "gt"
 }
 
@@ -160,15 +160,15 @@ def "test vcs-backend nested subdir of graphite org is graphite" [] {
   assert equal (vcs-backend "/home/u/code/st0x/st0x.liquidity/dashboard/src" "/home/u" false) "gt"
 }
 
-def "test vcs-backend other repo with gitbutler is but" [] {
+def "test vcs-backend other repo managed by gitbutler is but" [] {
   assert equal (vcs-backend "/home/u/code/data-cartel/moneymentum" "/home/u" true) "but"
 }
 
-def "test vcs-backend other repo without gitbutler is git" [] {
+def "test vcs-backend other repo not gitbutler-managed is git" [] {
   assert equal (vcs-backend "/home/u/code/data-cartel/moneymentum" "/home/u" false) "git"
 }
 
-def "test vcs-backend dotconfig without gitbutler is git" [] {
+def "test vcs-backend dotconfig not gitbutler-managed is git" [] {
   assert equal (vcs-backend "/home/u/.config" "/home/u" false) "git"
 }
 

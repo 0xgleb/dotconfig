@@ -13,7 +13,13 @@ export use infra/
 # unified dev command — run `fj help` for details
 export def --wrapped main [...args: string@fj-complete] {
   let raw = (fj-route ...$args)
-  let backend = (vcs-backend $env.PWD $env.HOME (which but | is-not-empty))
+  let gitbutler_managed = (
+    (which but | is-not-empty) and (
+      (do { ^git rev-parse --abbrev-ref HEAD } | complete | get stdout | str trim)
+      | str starts-with "gitbutler/"
+    )
+  )
+  let backend = (vcs-backend $env.PWD $env.HOME $gitbutler_managed)
   let route = (resolve-stack $raw $backend)
   match $route.tool {
     "status" => {
