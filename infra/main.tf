@@ -80,6 +80,12 @@ output "tailscale_node_authkey" {
   sensitive = true
 }
 
+# Seeded into /var/lib/secrets/hermes.env by the provision script.
+output "hermes_env" {
+  value     = var.hermes_env
+  sensitive = true
+}
+
 # Copy into the GitHub Actions repository secret TS_AUTHKEY:
 #   terraform -chdir=infra output -raw tailscale_ci_authkey
 output "tailscale_ci_authkey" {

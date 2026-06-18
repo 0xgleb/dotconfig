@@ -30,3 +30,12 @@ variable "tailscale_tailnet" {
   default = "-"
   # "-" means the default tailnet of the account that owns the API key.
 }
+
+variable "hermes_env" {
+  type      = string
+  sensitive = true
+  default   = ""
+  # Contents of /var/lib/secrets/hermes.env on the box: the LLM API key (and any
+  # messaging tokens), e.g. "ANTHROPIC_API_KEY=sk-ant-...". Use a heredoc for
+  # multiple lines. Seeded by `provision`; empty leaves a fill-in-later template.
+}

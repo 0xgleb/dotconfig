@@ -1,5 +1,8 @@
 do_token          = ""
 tailscale_api_key = ""
+
+# Seeds /var/lib/secrets/hermes.env on the box (LLM key + messaging tokens):
+# hermes_env = "ANTHROPIC_API_KEY=sk-ant-..."
 # tailscale_tailnet defaults to "-" (the API key owner's default tailnet);
 # override only if the key spans multiple tailnets.
 # tailscale_tailnet = "example.com"

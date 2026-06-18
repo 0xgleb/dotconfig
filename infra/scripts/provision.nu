@@ -96,14 +96,22 @@ def stage-secrets [] {
     | str trim
     | save -f ($secrets | path join "tailscale.authkey"))
 
-  let hermes_env = [
-    "# Hermes Agent secrets, merged into HERMES_HOME/.env at activation."
-    "# Add your LLM provider key (and any messaging tokens), then redeploy."
-    "# ANTHROPIC_API_KEY=sk-ant-..."
-    ""
-  ] | str join "\n"
+  # hermes.env comes from the encrypted tfvars (var/output hermes_env). When it
+  # is empty we still write a template so the file exists for the activation
+  # merge; set hermes_env via `nix run .#tfVars` to seed the real secrets.
+  let hermes_env = (^terraform output -raw hermes_env)
+  let hermes_content = if ($hermes_env | str trim | is-empty) {
+    [
+      "# Hermes Agent secrets, merged into HERMES_HOME/.env at activation."
+      "# Set hermes_env in terraform.tfvars (nix run .#tfVars) to seed these."
+      "# ANTHROPIC_API_KEY=sk-ant-..."
+      ""
+    ] | str join "\n"
+  } else {
+    $hermes_env
+  }
 
-  $hermes_env | save -f ($secrets | path join "hermes.env")
+  $hermes_content | save -f ($secrets | path join "hermes.env")
 
   ^chmod 700 $secrets
   ^chmod 600 ($secrets | path join "tailscale.authkey")
