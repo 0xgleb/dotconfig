@@ -45,11 +45,12 @@ def main [--identity (-i): string, droplet_size?: string] {
 
   rm -rf $extra
 
-  let tailnet_ip = (wait-for-tailnet $id $ip)
-
-  print $"Done! Tailnet IP: ($tailnet_ip)"
-  print "Reach it with: ssh nixxxos   # MagicDNS, or use the tailnet IP above"
-  print "Set the Hermes LLM key in /var/lib/secrets/hermes.env on the box, then redeploy."
+  print ""
+  print "### Installed. ###"
+  print "Access is tailnet-only (public SSH is closed). nixxxos joins the tailnet"
+  print "on first boot (~1 min); reach it with:  ssh nixxxos"
+  print "Find its tailnet IP with `tailscale status` from any tailnet device."
+  print "Then set the Hermes LLM key in /var/lib/secrets/hermes.env and redeploy."
 }
 
 # Wait until the freshly created droplet accepts SSH as root.
@@ -109,36 +110,4 @@ def stage-secrets [] {
   ^chmod 600 ($secrets | path join "hermes.env")
 
   $extra
-}
-
-# Poll the box until tailscaled reports an address, then return it. The box
-# regenerates host keys during install, so known_hosts is intentionally bypassed.
-def wait-for-tailnet [identity: string, ip: string] {
-  let opts = [
-    "-i" $identity
-    "-o" "StrictHostKeyChecking=no"
-    "-o" "UserKnownHostsFile=/dev/null"
-  ]
-
-  print "Waiting for the box to join the tailnet..."
-
-  # ~10 min cap (300 * 2s): install + reboot + tailnet join can take a while.
-  mut attempts = 0
-  loop {
-    let probe = (
-      do { ^ssh ...$opts -o ConnectTimeout=5 $"root@($ip)" "tailscale ip -4" } | complete
-    )
-    let addr = ($probe.stdout | str trim)
-
-    if $probe.exit_code == 0 and $addr != "" {
-      return $addr
-    }
-
-    $attempts += 1
-    if $attempts >= 300 {
-      error make { msg: $"timed out waiting for tailnet join on ($ip)" }
-    }
-
-    sleep 2sec
-  }
 }

@@ -44,7 +44,10 @@ in
   };
 
   networking.firewall = {
-    allowedTCPPorts = [ 22 ];
+    # No public ports. SSH (and anything else) is reachable only over the
+    # tailnet via the trusted tailscale0 interface; the public interface is
+    # closed. That is the whole point of running Tailscale.
+    allowedTCPPorts = [ ];
     trustedInterfaces = [ "tailscale0" ];
     # Loose reverse-path filtering avoids asymmetric tailnet traffic being
     # silently dropped (also what the tailscale module sets for "client").
