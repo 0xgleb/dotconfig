@@ -58,6 +58,12 @@ in
     text = withLib ./scripts/tf-apply.nu;
   };
 
+  tfDestroy = writeNushellApplication {
+    name = "tf-destroy";
+    runtimeInputs = infraInputs;
+    text = withLib ./scripts/tf-destroy.nu;
+  };
+
   tfVars = writeNushellApplication {
     name = "tf-vars";
     runtimeInputs = infraInputs;
