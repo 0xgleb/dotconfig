@@ -5,25 +5,37 @@
 # Decrypt terraform.tfvars, run an action with it present, then re-encrypt and
 # remove the plaintext. On a fresh checkout (no .age yet) it seeds the file from
 # the example and opens it in $EDITOR first.
-def with-infra [identity: string, action: closure] {
+def with-infra [identity: any, action: closure] {
   cd $"($env.HOME)/.config/infra"
 
   # Idempotent, and the only way newly added providers get installed.
   ^terraform init
 
-  if not ("terraform.tfvars.age" | path exists) {
-    cp terraform.tfvars.example terraform.tfvars
-
-    let editor = ($env.EDITOR? | default "nvim")
-    ^$editor terraform.tfvars
-  } else {
-    ^rage -d -i $identity -o terraform.tfvars terraform.tfvars.age
-  }
-
+  # Resolve recipients before any plaintext exists, so a failure here can't
+  # strand a decrypted tfvars on disk.
   let recipients = (infra-recipients)
-  let failed = (try { do $action; false } catch { true })
 
-  $recipients | ^rage -e -R /dev/stdin -o terraform.tfvars.age terraform.tfvars
+  # Everything that touches the plaintext runs inside the try so the rm below
+  # always fires, on success or failure. The .age is re-written before the
+  # action so freshly entered secrets survive an action failure.
+  let failed = (try {
+    if not ("terraform.tfvars.age" | path exists) {
+      cp terraform.tfvars.example terraform.tfvars
+
+      let editor = ($env.EDITOR? | default "nvim")
+      ^$editor terraform.tfvars
+    } else {
+      ^rage -d -i $identity -o terraform.tfvars terraform.tfvars.age
+    }
+
+    $recipients | ^rage -e -R /dev/stdin -o terraform.tfvars.age terraform.tfvars
+
+    do $action
+    false
+  } catch {
+    true
+  })
+
   rm -f terraform.tfvars
 
   if $failed { exit 1 }
@@ -37,6 +49,7 @@ def infra-recipients [] {
 }
 
 # Default SSH identity used to reach the box, overridable with --identity.
-def resolve-identity [identity: string] {
+# `any` (not `string`) so the null from an omitted --identity flag is accepted.
+def resolve-identity [identity: any] {
   $identity | default $"($env.HOME)/.ssh/id_ed25519"
 }

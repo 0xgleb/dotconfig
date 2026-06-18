@@ -94,6 +94,11 @@ token + Tailscale API key). Edit them with:
 nix run .#tfVars   # decrypt, edit in $EDITOR, re-encrypt
 ```
 
+Terraform state (`infra/terraform.tfstate`) uses the default local backend and
+is gitignored, but holds the generated secrets (DO token, Tailscale keys) in
+plaintext — the intentional model for this personal repo. Keep it on an
+encrypted disk; it is never committed.
+
 > Tailscale credentials all expire after 90 days: the API token **and** the two
 > auth keys it mints. Rotate the API token, re-run `provision` (re-mints +
 > re-seeds the node key), and refresh the `TS_AUTHKEY` GitHub secret from the

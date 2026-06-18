@@ -10,8 +10,10 @@ jobs:
   check:
     runs-on: ubuntu-latest
     steps:
-      - uses: actions/checkout@v4
-      - uses: cachix/install-nix-action@v27
+      - uses: actions/checkout@34e114876b0b11c390a56381ad16ebd13914f8d5 # v4
+        with:
+          persist-credentials: false
+      - uses: cachix/install-nix-action@ba0dd844c9180cbf77aa72a116d6fbc515d0e87b # v27
         with:
           extra_nix_config: |
             experimental-features = nix-command flakes
@@ -20,13 +22,15 @@ jobs:
   build-nixos:
     runs-on: ubuntu-latest
     steps:
-      - uses: actions/checkout@v4
+      - uses: actions/checkout@34e114876b0b11c390a56381ad16ebd13914f8d5 # v4
+        with:
+          persist-credentials: false
       - name: Free disk space
         run: |
           sudo rm -rf /usr/share/dotnet /usr/local/lib/android /opt/ghc /opt/hostedtoolcache/CodeQL
           sudo docker image prune --all --force || true
           df -h /
-      - uses: cachix/install-nix-action@v27
+      - uses: cachix/install-nix-action@ba0dd844c9180cbf77aa72a116d6fbc515d0e87b # v27
         with:
           extra_nix_config: |
             experimental-features = nix-command flakes
@@ -48,23 +52,26 @@ jobs:
       group: deploy-nixxxos
       cancel-in-progress: false
     steps:
-      - uses: actions/checkout@v4
+      - uses: actions/checkout@34e114876b0b11c390a56381ad16ebd13914f8d5 # v4
+        with:
+          persist-credentials: false
       - name: Free disk space
         run: |
           sudo rm -rf /usr/share/dotnet /usr/local/lib/android /opt/ghc /opt/hostedtoolcache/CodeQL
           sudo docker image prune --all --force || true
           df -h /
-      - uses: cachix/install-nix-action@v27
+      - uses: cachix/install-nix-action@ba0dd844c9180cbf77aa72a116d6fbc515d0e87b # v27
         with:
           extra_nix_config: |
             experimental-features = nix-command flakes
       - name: Join tailnet
-        uses: tailscale/github-action@v4
+        uses: tailscale/github-action@306e68a486fd2350f2bfc3b19fcd143891a4a2d8 # v4
         with:
           authkey: ${{ secrets.TS_AUTHKEY }}
       - name: Deploy to nixxxos
         env:
           DEPLOY_SSH_KEY: ${{ secrets.DEPLOY_SSH_KEY }}
+          NIXXXOS_KNOWN_HOSTS: ${{ secrets.NIXXXOS_KNOWN_HOSTS }}
         run: |
           install -d -m700 ~/.ssh
           printf '%s\n' "$DEPLOY_SSH_KEY" > ~/.ssh/deploy
@@ -72,7 +79,18 @@ jobs:
           # Resolve via tailscaled (works without host DNS / a MagicDNS search
           # domain, which the runner's resolver does not get on Linux).
           target="$(tailscale ip -4 nixxxos)"
-          export NIX_SSHOPTS="-i $HOME/.ssh/deploy -o StrictHostKeyChecking=no -o UserKnownHostsFile=/dev/null"
+          # The tailnet (WireGuard) already binds this IP to nixxxos's node key,
+          # so the transport is authenticated. If a pinned host key is provided
+          # via the NIXXXOS_KNOWN_HOSTS secret, verify against it; otherwise fall
+          # back to trust-on-first-use rather than disabling verification.
+          if [ -n "$NIXXXOS_KNOWN_HOSTS" ]; then
+            printf '%s\n' "$NIXXXOS_KNOWN_HOSTS" > ~/.ssh/known_hosts
+            chmod 600 ~/.ssh/known_hosts
+            hostkey="-o StrictHostKeyChecking=yes"
+          else
+            hostkey="-o StrictHostKeyChecking=accept-new"
+          fi
+          export NIX_SSHOPTS="-i $HOME/.ssh/deploy -o UserKnownHostsFile=$HOME/.ssh/known_hosts $hostkey"
           nix run nixpkgs#nixos-rebuild -- switch \
             --flake .#nixxxos \
             --target-host "root@$target" \

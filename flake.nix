@@ -44,6 +44,37 @@
       disko,
       ...
     }:
+    let
+      # Upstream hard-codes one npm-deps hash in nix/lib.nix that is only correct
+      # on the maintainer's arch; on x86_64-linux fetchNpmDeps produces a
+      # different hash, so hermes-tui (and thus hermes-agent) fails to build.
+      # Rebuild hermes from a source with the x86_64-linux hash patched in (the
+      # "got:" value from a real build), using upstream's own nixpkgs + inputs so
+      # the result is identical to their package apart from the corrected hash.
+      hermesInputs = inputs.hermes-agent.inputs;
+
+      hermesPkgs = import hermesInputs.nixpkgs {
+        system = "x86_64-linux";
+        config.allowUnfree = true;
+      };
+
+      hermesAgentSrc = hermesPkgs.applyPatches {
+        name = "hermes-agent-linux-npmhash";
+        src = inputs.hermes-agent;
+        postPatch = ''
+          substituteInPlace nix/lib.nix \
+            --replace-fail \
+              "sha256-m9cjbjzi4SaFCjODfdrawS5e+1ag+MpRn528/upSNqo=" \
+              "sha256-kbjJksq7limRIYqP3DwI+GNgCXkG96tXcsQqmuEedxo="
+        '';
+      };
+
+      hermesAgentPackage = hermesPkgs.callPackage "${hermesAgentSrc}/nix/hermes-agent.nix" {
+        inherit (hermesInputs) uv2nix pyproject-nix pyproject-build-systems;
+        npm-lockfile-fix = hermesInputs.npm-lockfile-fix.packages.x86_64-linux.default;
+        rev = null;
+      };
+    in
     {
 
       # Local macOS
@@ -79,6 +110,7 @@
           ./digitalocean.nix
           disko.nixosModules.disko
           inputs.hermes-agent.nixosModules.default
+          { services.hermes-agent.package = hermesAgentPackage; }
           home-manager.nixosModules.home-manager
           {
             home-manager.useGlobalPkgs = true;

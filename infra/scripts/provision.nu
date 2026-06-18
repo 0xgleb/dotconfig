@@ -55,12 +55,19 @@ def wait-for-ssh [identity: string, ip: string] {
     "-o" "UserKnownHostsFile=/dev/null"
   ]
 
+  # ~5 min cap (150 * 2s) so a box that never comes up fails instead of hanging.
+  mut attempts = 0
   loop {
     let probe = (
       do { ^ssh ...$opts -o ConnectTimeout=5 $"root@($ip)" true } | complete
     )
 
     if $probe.exit_code == 0 { break }
+
+    $attempts += 1
+    if $attempts >= 150 {
+      error make { msg: $"timed out waiting for SSH on ($ip)" }
+    }
 
     sleep 2sec
   }
@@ -105,6 +112,8 @@ def wait-for-tailnet [identity: string, ip: string] {
 
   print "Waiting for the box to join the tailnet..."
 
+  # ~10 min cap (300 * 2s): install + reboot + tailnet join can take a while.
+  mut attempts = 0
   loop {
     let probe = (
       do { ^ssh ...$opts -o ConnectTimeout=5 $"root@($ip)" "tailscale ip -4" } | complete
@@ -113,6 +122,11 @@ def wait-for-tailnet [identity: string, ip: string] {
 
     if $probe.exit_code == 0 and $addr != "" {
       return $addr
+    }
+
+    $attempts += 1
+    if $attempts >= 300 {
+      error make { msg: $"timed out waiting for tailnet join on ($ip)" }
     }
 
     sleep 2sec
