@@ -65,8 +65,7 @@ in
   # Both CLIs are on the service PATH but must be logged in once on the box, and
   # the @openclaw/acpx plugin installed once (both are runtime, not declarative —
   # see README). openclaw.json is strict-validated, so this config stays minimal;
-  # finalize routing with `/acp doctor` on the running gateway (redeploys are
-  # cheap thanks to the garnix cache).
+  # finalize routing with `/acp doctor` on the running gateway.
   services.openclaw-gateway = {
     enable = true;
     package = inputs.nix-openclaw.packages.x86_64-linux.openclaw;

@@ -16,20 +16,21 @@ Nix flake managing two targets from a single repo:
 
 ## Structure
 
-| File               | Purpose                                                           |
-| ------------------ | ----------------------------------------------------------------- |
-| `flake.nix`        | Flake definition, system configs, helper scripts                  |
-| `common.nix`       | Shared packages and settings (both platforms)                     |
-| `darwin.nix`       | macOS-specific: homebrew, GUI apps, hostname                      |
-| `nixos.nix`        | NixOS-specific: SSH, firewall, Tailscale, OpenClaw                |
-| `digitalocean.nix` | Disk/boot config for DO droplets                                  |
-| `infra/`           | Terraform (droplet + Tailscale keys) and provision/deploy scripts |
-| `home.nix`         | Home Manager: git, zsh, neovim, zellij, fzf, direnv               |
-| `nvim/`            | Neovim config (AstroNvim v5)                                      |
-| `doom/`            | Doom Emacs config (nix-doom-emacs-unstraightened)                 |
-| `nushell/`         | Nushell config, `fj` command, and md sync                         |
-| `zellij/`          | Terminal multiplexer config                                       |
-| `karabiner/`       | Keyboard remapping (caps lock -> ctrl/esc)                        |
+| File                    | Purpose                                                           |
+| ----------------------- | ----------------------------------------------------------------- |
+| `flake.nix`             | Flake definition, system configs, helper scripts                  |
+| `common.nix`            | Shared packages and settings (both platforms)                     |
+| `darwin.nix`            | macOS-specific: homebrew, GUI apps, hostname                      |
+| `mullvad-wireguard.nix` | macOS: Mullvad-as-WireGuard so Tailscale coexists with the VPN    |
+| `nixos.nix`             | NixOS-specific: SSH, firewall, Tailscale, OpenClaw                |
+| `digitalocean.nix`      | Disk/boot config for DO droplets                                  |
+| `infra/`                | Terraform (droplet + Tailscale keys) and provision/deploy scripts |
+| `home.nix`              | Home Manager: git, zsh, neovim, zellij, fzf, direnv               |
+| `nvim/`                 | Neovim config (AstroNvim v5)                                      |
+| `doom/`                 | Doom Emacs config (nix-doom-emacs-unstraightened)                 |
+| `nushell/`              | Nushell config, `fj` command, and md sync                         |
+| `zellij/`               | Terminal multiplexer config                                       |
+| `karabiner/`            | Keyboard remapping (caps lock -> ctrl/esc)                        |
 
 ## Shell
 
@@ -149,8 +150,7 @@ sudo -u openclaw -H bash -lc '
 
 `cursor-agent` is the explicitly-permitted path; the Claude `claude-cli` backend
 is a fallback and sits in an Anthropic-ToS gray zone. Finalize "Cursor answers
-messages" routing via `/acp doctor`; redeploys are cheap (OpenClaw is
-substituted from the garnix cache, not built).
+messages" routing via `/acp doctor`.
 
 ### Deploy (CI/CD)
 
@@ -167,8 +167,33 @@ on a green build — deploys it to `nixxxos` over the tailnet
 3. Deploy once locally (`nix run .#provision` or a manual `nixos-rebuild`) so
    the `ci` key lands in the box's authorized_keys before CI first runs.
 
-> OpenClaw is substituted from the garnix cache (wired up in `common.nix`), so
-> neither the runner nor the box builds it from source.
+> OpenClaw currently builds from source (the runner builds it on CI/deploy; a
+> fresh `provision` builds it on the box). Wire up a Cachix cache to have CI
+> push it once and everyone pull it prebuilt — keeps the box light.
+
+## Mullvad + Tailscale (macOS)
+
+Two full-tunnel VPNs can't both own the macOS default route, and Mullvad's
+app/CLI split tunnel only excludes app _binaries_ — which can't carve out
+Tailscale's CGNAT range (its data path is a separate system extension). So
+`mullvad-wireguard.nix` runs **Mullvad as a raw WireGuard tunnel** (launchd
+daemon) with `AllowedIPs` = everything except the tailnet (`100.64.0.0/10` +
+`fd7a:115c:a1e0::/48`). Mullvad tunnels everything else; tailnet traffic
+bypasses it, so Tailscale stays reachable with Mullvad up.
+
+One-time setup (the private key stays out-of-store, so it's not in the flake):
+
+```bash
+# Generate a WireGuard config at https://mullvad.net/en/account/wireguard-config
+# (new key, pick a server, download), then:
+sudo install -m600 -D ~/Downloads/<server>.conf /etc/wireguard/mullvad.conf
+darwin-rebuild switch --flake ~/.config
+```
+
+The daemon rewrites that config's `AllowedIPs` and brings the tunnel up at boot;
+until the file exists it changes nothing. Don't also run the Mullvad GUI app.
+Rollback: delete `/etc/wireguard/mullvad.conf` and rebuild (or
+`sudo wg-quick down /var/run/mullvad-split.conf`).
 
 ---
 

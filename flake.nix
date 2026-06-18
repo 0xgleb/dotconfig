@@ -29,8 +29,7 @@
     but-nix.inputs.nixpkgs.follows = "nixpkgs";
 
     # OpenClaw — self-hosted personal agent. Provides the openclaw-gateway NixOS
-    # module + prebuilt packages (substituted from the garnix cache wired up in
-    # common.nix). Not following our nixpkgs, to match its pinned build.
+    # module + packages. Not following our nixpkgs, to match its pinned build.
     nix-openclaw.url = "github:openclaw/nix-openclaw";
   };
 
@@ -51,6 +50,7 @@
         modules = [
           ./common.nix
           ./darwin.nix
+          ./mullvad-wireguard.nix
           home-manager.darwinModules.home-manager
           {
             home-manager.useGlobalPkgs = true;
