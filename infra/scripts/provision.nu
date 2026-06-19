@@ -33,6 +33,11 @@ def main [--identity (-i): string, droplet_size?: string] {
   let flake_dir = $"($env.HOME)/.config"
   let ip = (^terraform output -raw ip | str trim)
 
+  # The droplet was recreated, so the previous nixxxos node is now dead. Remove
+  # it from the tailnet before the new box first-boots and registers, or the
+  # stale node keeps the `nixxxos` MagicDNS name (new box becomes `nixxxos-1`).
+  remove-stale-device
+
   wait-for-ssh $id $ip
 
   let extra = (stage-secrets)
@@ -42,7 +47,7 @@ def main [--identity (-i): string, droplet_size?: string] {
   # Guarantee the staged plaintext secrets are removed even if the install
   # aborts partway through, so a live auth key never lingers on disk.
   try {
-    (^nix run github:nix-community/nixos-anywhere --
+    (^nixos-anywhere
       --flake $"($flake_dir)#nixxxos"
       --ssh-option $"IdentityFile=($id)"
       --extra-files $extra
@@ -62,7 +67,7 @@ def main [--identity (-i): string, droplet_size?: string] {
   do { ^ssh-keygen -R "nixxxos" } | complete | ignore
 
   print ""
-  print "### Installed and joined the tailnet. ###"
+  print "### Install complete. ###"
   print "Access is tailnet-only (public SSH is closed). Reach it with:  ssh nixxxos"
   print "Cleared the stale host-key pin for `nixxxos`; if you also reach it by"
   print "tailnet IP, run `ssh-keygen -R <ip>` (find it with `tailscale status`)."
@@ -76,6 +81,8 @@ def main [--identity (-i): string, droplet_size?: string] {
 # loudly here instead of leaving the operator to discover it later.
 def wait-for-tailnet [identity: string] {
   print "Waiting for nixxxos to join the tailnet (first boot ~1 min)..."
+  print "(this probes `ssh nixxxos` over the tailnet, so THIS machine must be on"
+  print " the tailnet with MagicDNS for the check to pass)"
 
   # Reach the box by its MagicDNS name over the tailnet, bypassing known_hosts
   # (the freshly installed host key is new and would otherwise fail the check).
@@ -86,15 +93,26 @@ def wait-for-tailnet [identity: string] {
     "-o" "ConnectTimeout=5"
   ]
 
-  # ~5 min cap (60 * 5s) so a box that never joins fails instead of hanging.
+  # ~5 min cap (60 * 5s) so the probe doesn't hang forever.
   mut attempts = 0
   loop {
     let probe = (do { ^ssh ...$opts $"root@nixxxos" true } | complete)
-    if $probe.exit_code == 0 { break }
+    if $probe.exit_code == 0 {
+      print "nixxxos is up on the tailnet."
+      return
+    }
 
     $attempts += 1
     if $attempts >= 60 {
-      error make { msg: "nixxxos never came up on the tailnet — check tailscaled via the DigitalOcean console" }
+      # Don't hard-fail: a timeout can mean the box failed to join OR that this
+      # machine simply isn't on the tailnet — the install itself already
+      # succeeded. Warn loudly and let the operator decide.
+      print ""
+      print "WARNING: could not reach nixxxos over the tailnet after ~5 min."
+      print "  - If this machine is on the tailnet, the box likely failed to join"
+      print "    — check tailscaled via the DigitalOcean console."
+      print "  - If it is not, the box may be fine; confirm with `tailscale status`."
+      return
     }
 
     sleep 5sec
@@ -132,6 +150,45 @@ def wait-for-ssh [identity: string, ip: string] {
   }
 }
 
+# Delete the previous nixxxos machine(s) from the tailnet so the freshly
+# reinstalled box can claim the `nixxxos` MagicDNS name. Without this, both
+# `ssh nixxxos` (wait-for-tailnet) and the CI `tailscale ip -4 nixxxos` lookup
+# can resolve to the dead node or time out while the new box is healthy.
+def remove-stale-device [] {
+  # Cleanup is best-effort: any failure here (no API key, terraform/output error,
+  # unexpected API envelope) prints a note and skips, never aborts the install.
+  let api_key = (do { ^terraform output -raw tailscale_api_key } | complete)
+  let key = ($api_key.stdout | str trim)
+  if ($api_key.exit_code != 0 or ($key | is-empty)) {
+    print "No Tailscale API key available; skipping stale-device cleanup."
+    return
+  }
+
+  let tailnet_raw = (do { ^terraform output -raw tailscale_tailnet } | complete | get stdout | str trim)
+  let tailnet = (if ($tailnet_raw | is-empty) { "-" } else { $tailnet_raw })
+  let headers = { Authorization: $"Bearer ($key)" }
+
+  let listed = (try {
+    http get --headers $headers $"https://api.tailscale.com/api/v2/tailnet/($tailnet)/devices"
+  } catch {
+    print "Could not list tailnet devices; skipping stale-device cleanup."
+    null
+  })
+
+  # Null-safe even if a 200 returns an unexpected shape without a `devices` key.
+  let devices = ($listed | default {} | get devices? | default [])
+  let stale = ($devices | where { |d| ($d.hostname? | default "") == "nixxxos" })
+  for d in $stale {
+    print $"Removing stale tailnet device ($d.name)..."
+    # DELETE returns 200 with an empty body, which `http delete` would choke on
+    # while parsing — go through `complete` and judge success by exit code.
+    let res = (do { http delete --headers $headers $"https://api.tailscale.com/api/v2/device/($d.id)" } | complete)
+    if $res.exit_code != 0 {
+      print $"  could not delete device ($d.id); continuing."
+    }
+  }
+}
+
 # Build a directory tree that nixos-anywhere copies into the target root,
 # seeding /var/lib/secrets before first boot. Returns its path.
 def stage-secrets [] {
@@ -147,7 +204,9 @@ def stage-secrets [] {
   if ($tailscale_key | is-empty) {
     error make { msg: "terraform output tailscale_node_authkey is empty — did terraform apply succeed?" }
   }
-  $tailscale_key | save -f ($secrets | path join "tailscale.authkey")
+  let authkey_path = ($secrets | path join "tailscale.authkey")
+  $tailscale_key | save -f $authkey_path
+  ^chmod 600 $authkey_path
 
   # openclaw.env comes from the encrypted tfvars (var/output openclaw_env). When
   # it is empty we still write a template so the file exists; set openclaw_env
@@ -164,11 +223,9 @@ def stage-secrets [] {
     $openclaw_env
   }
 
-  $openclaw_content | save -f ($secrets | path join "openclaw.env")
-
-  ^chmod 700 $secrets
-  ^chmod 600 ($secrets | path join "tailscale.authkey")
-  ^chmod 600 ($secrets | path join "openclaw.env")
+  let openclaw_path = ($secrets | path join "openclaw.env")
+  $openclaw_content | save -f $openclaw_path
+  ^chmod 600 $openclaw_path
 
   $extra
 }

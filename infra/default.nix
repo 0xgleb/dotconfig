@@ -1,6 +1,8 @@
-{ pkgs }:
+{ pkgs, inputs }:
 let
   inherit (pkgs) lib;
+
+  nixos-anywhere = inputs.nixos-anywhere.packages.${pkgs.system}.default;
 
   writeNushellApplication =
     {
@@ -75,6 +77,7 @@ in
     runtimeInputs = infraInputs ++ [
       pkgs.openssh
       pkgs.coreutils
+      nixos-anywhere
     ];
     text = withLib ./scripts/provision.nu;
   };

@@ -22,6 +22,11 @@
     disko.url = "github:nix-community/disko";
     disko.inputs.nixpkgs.follows = "nixpkgs";
 
+    # Pinned (via flake.lock) so `provision` installs with a known nixos-anywhere
+    # instead of refetching tip-of-tree on every run.
+    nixos-anywhere.url = "github:nix-community/nixos-anywhere";
+    nixos-anywhere.inputs.nixpkgs.follows = "nixpkgs";
+
     nix-doom-emacs-unstraightened.url = "github:marienz/nix-doom-emacs-unstraightened";
     nix-doom-emacs-unstraightened.inputs.nixpkgs.follows = "nixpkgs";
 
@@ -50,7 +55,6 @@
         modules = [
           ./common.nix
           ./darwin.nix
-          ./mullvad-wireguard.nix
           home-manager.darwinModules.home-manager
           {
             home-manager.useGlobalPkgs = true;
@@ -105,7 +109,7 @@
         {
           jf = import ./nushell/jf.nix { inherit pkgs; };
         }
-        // import ./infra { inherit pkgs; };
+        // import ./infra { inherit pkgs inputs; };
 
       checks.aarch64-darwin =
         let

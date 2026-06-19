@@ -1,4 +1,9 @@
-{ pkgs, inputs, ... }:
+{
+  pkgs,
+  lib,
+  inputs,
+  ...
+}:
 let
   authorizedKeys = (import ./keys.nix).authorized;
 in
@@ -56,7 +61,12 @@ in
     wantedBy = [ "multi-user.target" ];
     serviceConfig.Type = "oneshot";
     script = ''
-      if ${pkgs.tailscale}/bin/tailscale status >/dev/null 2>&1; then
+      # Only remove the key once tailscaled is up AND has persisted its node
+      # state to disk. Otherwise a crash between join and the next async state
+      # flush could leave the box with neither a key file nor recoverable state.
+      # If state isn't flushed yet, leave the key — a later activation cleans it.
+      if ${pkgs.tailscale}/bin/tailscale status >/dev/null 2>&1 \
+        && [ -s /var/lib/tailscale/tailscaled.state ]; then
         rm -f /var/lib/secrets/tailscale.authkey
       fi
     '';
@@ -124,6 +134,18 @@ in
 
       agents.defaults.cliBackends."claude-cli".command = "${pkgs.claude-code}/bin/claude";
     };
+  };
+
+  # The acpx plugin and CLI logins are one-time on-box runtime steps (see README),
+  # so a freshly provisioned box runs the gateway before they are done. Cap the
+  # restart rate so an unconfigured gateway backs off into a clean failed state
+  # instead of hammering a tight crash-loop until setup is completed.
+  systemd.services.openclaw-gateway = {
+    startLimitIntervalSec = 300;
+    startLimitBurst = 5;
+    # The module ships RestartSec = 2 (tight loop); back it off so an
+    # unconfigured gateway hits the start-limit and stops instead of hammering.
+    serviceConfig.RestartSec = lib.mkForce 15;
   };
 
   # Set hostname

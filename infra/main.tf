@@ -20,6 +20,10 @@ provider "tailscale" {
   tailnet = var.tailscale_tailnet
 }
 
+# Looks up an existing DigitalOcean SSH key by name — it must already exist in
+# the DO account under exactly this name (Settings -> Security -> SSH keys), and
+# its public half must match `dotconfig-nixos` in keys.nix. Renaming it (here or
+# in DO) breaks `terraform apply` and locks provision out of the fresh droplet.
 data "digitalocean_ssh_key" "dotconfig-nixos" {
   name = "dotconfig-nixos"
 }
@@ -78,6 +82,17 @@ output "ssh_command" {
 output "tailscale_node_authkey" {
   value     = tailscale_tailnet_key.node.key
   sensitive = true
+}
+
+# Consumed by the provision script to delete the previous nixxxos device from the
+# tailnet before reinstall, so the new box does not collide on the MagicDNS name.
+output "tailscale_api_key" {
+  value     = var.tailscale_api_key
+  sensitive = true
+}
+
+output "tailscale_tailnet" {
+  value = var.tailscale_tailnet
 }
 
 # Seeded into /var/lib/secrets/openclaw.env by the provision script.

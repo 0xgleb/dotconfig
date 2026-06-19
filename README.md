@@ -21,7 +21,6 @@ Nix flake managing two targets from a single repo:
 | `flake.nix`             | Flake definition, system configs, helper scripts                  |
 | `common.nix`            | Shared packages and settings (both platforms)                     |
 | `darwin.nix`            | macOS-specific: homebrew, GUI apps, hostname                      |
-| `mullvad-wireguard.nix` | macOS: Mullvad-as-WireGuard so Tailscale coexists with the VPN    |
 | `nixos.nix`             | NixOS-specific: SSH, firewall, Tailscale, OpenClaw                |
 | `digitalocean.nix`      | Disk/boot config for DO droplets                                  |
 | `infra/`                | Terraform (droplet + Tailscale keys) and provision/deploy scripts |
@@ -181,6 +180,11 @@ on a green build — deploys it to `nixxxos` over the tailnet
    ```bash
    terraform -chdir=infra output -raw tailscale_ci_authkey
    ```
+   The CI runner joins the tailnet as an untagged ephemeral node, so it gets the
+   tailnet's default ACL (full access). To restrict it, define an ACL tag (e.g.
+   `tag:ci`) in the Tailscale admin console and add `tags = ["tag:ci"]` to
+   `tailscale_tailnet_key.ci` in `infra/main.tf` — the tag must exist in the
+   policy first or `terraform apply` rejects it.
 3. Deploy once locally (`nix run .#provision` or a manual `nixos-rebuild`) so
    the `ci` key lands in the box's authorized_keys before CI first runs.
 
@@ -188,36 +192,16 @@ on a green build — deploys it to `nixxxos` over the tailnet
 > host key (`ssh-keyscan` it over the tailnet right after provision) to pin the
 > host instead of trusting on first use. The deploy authenticates over the
 > tailnet (WireGuard) regardless; pinning just makes it independent of tailnet
-> ACL correctness. Until `DEPLOY_SSH_KEY` is set, the deploy job skips cleanly
-> rather than failing every push to `master`.
+> ACL correctness. Without it the deploy uses trust-on-first-use **every** run
+> (runners are ephemeral), so set it for ongoing hardening, not just once. A
+> reprovision regenerates the host key, so refresh the secret afterwards or the
+> pinned deploy will fail host-key verification. Until both `TS_AUTHKEY` and
+> `DEPLOY_SSH_KEY` are set, the deploy job skips cleanly rather than failing
+> every push to `master`.
 
 > OpenClaw currently builds from source (the runner builds it on CI/deploy; a
 > fresh `provision` builds it on the box). Wire up a Cachix cache to have CI
 > push it once and everyone pull it prebuilt — keeps the box light.
-
-## Mullvad + Tailscale (macOS)
-
-Two full-tunnel VPNs can't both own the macOS default route, and Mullvad's
-app/CLI split tunnel only excludes app _binaries_ — which can't carve out
-Tailscale's CGNAT range (its data path is a separate system extension). So
-`mullvad-wireguard.nix` runs **Mullvad as a raw WireGuard tunnel** (launchd
-daemon) with `AllowedIPs` = everything except the tailnet (`100.64.0.0/10` +
-`fd7a:115c:a1e0::/48`). Mullvad tunnels everything else; tailnet traffic
-bypasses it, so Tailscale stays reachable with Mullvad up.
-
-One-time setup (the private key stays out-of-store, so it's not in the flake):
-
-```bash
-# Generate a WireGuard config at https://mullvad.net/en/account/wireguard-config
-# (new key, pick a server, download), then:
-sudo install -m600 -D ~/Downloads/<server>.conf /etc/wireguard/mullvad.conf
-darwin-rebuild switch --flake ~/.config
-```
-
-The daemon rewrites that config's `AllowedIPs` and brings the tunnel up at boot;
-until the file exists it changes nothing. Don't also run the Mullvad GUI app.
-Rollback: delete `/etc/wireguard/mullvad.conf` and rebuild (or
-`sudo wg-quick down /var/run/mullvad-split.conf`).
 
 ---
 

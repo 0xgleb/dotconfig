@@ -10,6 +10,13 @@ let
     # nixxxos (private half stored as the DEPLOY_SSH_KEY repository secret).
     # Leave empty to disable CI deploys; empty keys are filtered out where the
     # authorized_keys list is built, so the config stays valid until set.
+    #
+    # NOTE: once set, this grants full interactive root over the tailnet — a
+    # forced `command=` restriction is not applied because the deploy uses
+    # `nixos-rebuild --target-host`, which drives many commands over SSH (nix
+    # copy + activation), not a single one. A stolen DEPLOY_SSH_KEY (plus the
+    # ephemeral TS_AUTHKEY, both GitHub secrets) is therefore root on the box;
+    # scoping that down would need a dedicated deploy user with restricted sudo.
     ci = "";
   };
 
