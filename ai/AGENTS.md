@@ -829,5 +829,14 @@ Shared skills live in `~/.config/ai/skills/` and are symlinked into both harness
 - Claude: `~/.claude/skills` → `~/.config/ai/skills`
 - Cursor: `~/.cursor/skills` → `~/.config/ai/skills`
 
-- For Linear work, use `/Users/0xgleb/.config/ai/skills/linear/SKILL.md`.
-- Default to read-only operations first, inspect `linear --help` before using unfamiliar commands, and treat `linear api` mutations as high-risk until the exact payload has been reviewed.
+- Linear is the work tracker for the **st0x** and **rainlanguage** repos
+  (`~/code/st0x/*`, `~/code/rainlanguage/*`) — the same orgs that use Graphite.
+  Other repos do **not** use Linear: this dotconfig repo, and any repo outside
+  those orgs, track work in GitHub issues (or nowhere). Don't reach for Linear,
+  defer review findings to Linear, or assume issues live there unless you're in
+  a Linear-tracked repo.
+- For Linear work (in those repos), use
+  `/Users/0xgleb/.config/ai/skills/linear/SKILL.md`. Default to read-only
+  operations first, inspect `linear --help` before using unfamiliar commands,
+  and treat `linear api` mutations as high-risk until the exact payload has been
+  reviewed.

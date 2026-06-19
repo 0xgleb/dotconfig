@@ -73,19 +73,38 @@ jobs:
           DEPLOY_SSH_KEY: ${{ secrets.DEPLOY_SSH_KEY }}
           NIXXXOS_KNOWN_HOSTS: ${{ secrets.NIXXXOS_KNOWN_HOSTS }}
         run: |
+          set -euo pipefail
+          # Bootstrap guard: until the `ci` key is set in keys.nix, applied to the
+          # box, and the DEPLOY_SSH_KEY secret added, there is nothing to deploy.
+          # Skip cleanly rather than failing every master push.
+          if [ -z "$DEPLOY_SSH_KEY" ]; then
+            echo "DEPLOY_SSH_KEY is unset — skipping deploy (bootstrap incomplete)."
+            exit 0
+          fi
           install -d -m700 ~/.ssh
-          printf '%s\n' "$DEPLOY_SSH_KEY" > ~/.ssh/deploy
-          chmod 600 ~/.ssh/deploy
+          # Write the private key with restrictive perms from the start (umask 177
+          # -> mode 600) so it is never briefly world-readable on the runner.
+          (umask 177; printf '%s\n' "$DEPLOY_SSH_KEY" > ~/.ssh/deploy)
           # Resolve via tailscaled (works without host DNS / a MagicDNS search
-          # domain, which the runner's resolver does not get on Linux).
-          target="$(tailscale ip -4 nixxxos)"
+          # domain, which the runner's resolver does not get on Linux). The runner
+          # just joined the tailnet, so nixxxos may take a few seconds to appear in
+          # the peer list — retry before giving up.
+          target=""
+          for _ in $(seq 1 10); do
+            target="$(tailscale ip -4 nixxxos 2>/dev/null || true)"
+            [ -n "$target" ] && break
+            sleep 3
+          done
+          if [ -z "$target" ]; then
+            echo "nixxxos did not appear on the tailnet after retries" >&2
+            exit 1
+          fi
           # The tailnet (WireGuard) already binds this IP to nixxxos's node key,
           # so the transport is authenticated. If a pinned host key is provided
           # via the NIXXXOS_KNOWN_HOSTS secret, verify against it; otherwise fall
           # back to trust-on-first-use rather than disabling verification.
           if [ -n "$NIXXXOS_KNOWN_HOSTS" ]; then
-            printf '%s\n' "$NIXXXOS_KNOWN_HOSTS" > ~/.ssh/known_hosts
-            chmod 600 ~/.ssh/known_hosts
+            (umask 177; printf '%s\n' "$NIXXXOS_KNOWN_HOSTS" > ~/.ssh/known_hosts)
             hostkey="-o StrictHostKeyChecking=yes"
           else
             hostkey="-o StrictHostKeyChecking=accept-new"

@@ -105,9 +105,12 @@ plaintext — the intentional model for this personal repo. Keep it on an
 encrypted disk; it is never committed.
 
 > Tailscale credentials all expire after 90 days: the API token **and** the two
-> auth keys it mints. Rotate the API token, re-run `provision` (re-mints +
-> re-seeds the node key), and refresh the `TS_AUTHKEY` GitHub secret from the
-> new CI key on that cadence.
+> auth keys it mints. Rotate the API token, then re-run `provision` (it
+> `-replace`s and re-seeds the **node** key, so the fresh box joins with a live
+> key). The **CI** key is left alone by `provision` so a reprovision doesn't
+> silently invalidate `TS_AUTHKEY`; re-mint it on the same cadence with
+> `nix run .#tfApply -- -replace=tailscale_tailnet_key.ci` and copy the new
+> `tailscale_ci_authkey` output into the `TS_AUTHKEY` GitHub secret.
 
 On the box, runtime secrets are plain root-only files under `/var/lib/secrets/`,
 seeded at install time and persisted across rebuilds:
@@ -120,6 +123,13 @@ seeded at install time and persisted across rebuilds:
 The OpenClaw secrets are declarative: set `openclaw_env` via `nix run .#tfVars`
 (e.g. `openclaw_env = "CURSOR_API_KEY=..."`) and `provision` seeds the file.
 
+> The file is seeded **only at install time** (`nixos-anywhere --extra-files`).
+> The CD deploy (`nixos-rebuild switch`) does **not** re-seed it, so changing
+> `openclaw_env` in tfvars only reaches the box on the next `provision` (a
+> destructive reinstall) — or edit `/var/lib/secrets/openclaw.env` on the box
+> directly. Activation guarantees the file exists (empty if unset) so the
+> gateway never fails to start on a missing file.
+
 ### Provision (first install)
 
 ```bash
@@ -127,10 +137,17 @@ nix run .#provision
 ```
 
 This applies Terraform and installs NixOS via nixos-anywhere, seeding
-`/var/lib/secrets/`. The box then joins the tailnet on first boot. Because the
+`/var/lib/secrets/`. The box joins the tailnet on first boot, and `provision`
+waits for it to become reachable over the tailnet before reporting success —
+if it times out, check `tailscaled` from the DigitalOcean console. Because the
 node is untagged, **disable key expiry** for it in the Tailscale admin console
 (Machines → nixxxos → Disable key expiry), or its default 180-day expiry will
 drop it off the tailnet.
+
+> `provision` is destructive: it `-replace`s the droplet and nixos-anywhere
+> wipes the disk. If it fails partway (e.g. after the disk is wiped but before
+> NixOS activates), the box is left unbootable — just re-run `nix run .#provision`
+> to reinstall from scratch.
 
 ### OpenClaw model auth (one-time, on the box)
 
@@ -166,6 +183,13 @@ on a green build — deploys it to `nixxxos` over the tailnet
    ```
 3. Deploy once locally (`nix run .#provision` or a manual `nixos-rebuild`) so
    the `ci` key lands in the box's authorized_keys before CI first runs.
+
+> Optional hardening: set the `NIXXXOS_KNOWN_HOSTS` repo secret to nixxxos's SSH
+> host key (`ssh-keyscan` it over the tailnet right after provision) to pin the
+> host instead of trusting on first use. The deploy authenticates over the
+> tailnet (WireGuard) regardless; pinning just makes it independent of tailnet
+> ACL correctness. Until `DEPLOY_SSH_KEY` is set, the deploy job skips cleanly
+> rather than failing every push to `master`.
 
 > OpenClaw currently builds from source (the runner builds it on CI/deploy; a
 > fresh `provision` builds it on the box). Wire up a Cachix cache to have CI

@@ -49,7 +49,10 @@ def infra-recipients [] {
 }
 
 # Default SSH identity used to reach the box, overridable with --identity.
+# Defaults to the dotconfig-nixos key — the one Terraform actually authorizes on
+# the droplet (main.tf installs only that DigitalOcean key), so a bare
+# `nix run .#provision` connects instead of looping in wait-for-ssh.
 # `any` (not `string`) so the null from an omitted --identity flag is accepted.
 def resolve-identity [identity: any] {
-  $identity | default $"($env.HOME)/.ssh/id_ed25519"
+  $identity | default $"($env.HOME)/.ssh/dotconfig-nixos"
 }

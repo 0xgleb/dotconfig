@@ -43,6 +43,25 @@ in
     useRoutingFeatures = "client";
   };
 
+  # The node key is reusable (so re-provisioning works) and therefore does not
+  # die on use — left on disk it is a standing credential that could register new
+  # tailnet nodes if the disk is imaged or backed up. tailscaled-autoconnect runs
+  # `tailscale up` and only completes once joined, and tailscaled then persists
+  # its state in /var/lib/tailscale, so the file is dead weight afterwards.
+  # Remove it once the daemon reports up.
+  systemd.services.tailscale-authkey-cleanup = {
+    description = "Remove the consumed Tailscale auth key once the node has joined";
+    after = [ "tailscaled-autoconnect.service" ];
+    requires = [ "tailscaled-autoconnect.service" ];
+    wantedBy = [ "multi-user.target" ];
+    serviceConfig.Type = "oneshot";
+    script = ''
+      if ${pkgs.tailscale}/bin/tailscale status >/dev/null 2>&1; then
+        rm -f /var/lib/secrets/tailscale.authkey
+      fi
+    '';
+  };
+
   networking.firewall = {
     # No public ports. SSH (and anything else) is reachable only over the
     # tailnet via the trusted tailscale0 interface; the public interface is
@@ -53,6 +72,15 @@ in
     # silently dropped (also what the tailscale module sets for "client").
     checkReversePath = "loose";
   };
+
+  # The gateway's EnvironmentFile is a hard dependency: systemd fails the unit if
+  # /var/lib/secrets/openclaw.env is missing. provision seeds it on first boot,
+  # but a CD rebuild never re-seeds it, so guarantee both the dir and an (at
+  # least empty) file exist at activation. `-` leaves a seeded file untouched.
+  systemd.tmpfiles.rules = [
+    "d /var/lib/secrets 0700 root root -"
+    "f /var/lib/secrets/openclaw.env 0600 root root -"
+  ];
 
   # OpenClaw — self-hosted personal agent, as a native systemd gateway service
   # (nix-openclaw module, imported in flake.nix). Reachable only over the tailnet
