@@ -98,6 +98,13 @@ message. Run the unit tests after any routing change:
 nu nushell/scripts/fj/routing.test.nu
 ```
 
+# Work Tracking
+
+This repo does **not** use Linear. Work here is tracked in GitHub issues/PRs (or
+nowhere) — never create or defer findings to Linear for dotconfig. Linear is the
+tracker only for the `~/code/st0x/*` and `~/code/rainlanguage/*` repos (the same
+orgs that route stacks to Graphite). The `linear` skill applies there, not here.
+
 # Agents and Services
 
 ## Markdown Sync Service

@@ -1,1 +1,8 @@
-do_token = ""
+do_token          = ""
+tailscale_api_key = ""
+
+# Seeds /var/lib/secrets/openclaw.env on the box (Cursor key + channel tokens):
+# openclaw_env = "CURSOR_API_KEY=..."
+# tailscale_tailnet defaults to "-" (the API key owner's default tailnet);
+# override only if the key spans multiple tailnets.
+# tailscale_tailnet = "example.com"

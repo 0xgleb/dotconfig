@@ -5,6 +5,17 @@ const command_help = {
   and commits with git add -A. On fail, opens $EDITOR for context,
   then sends check output + context to claude --continue."
 
+  clanker: "fj clanker — launch claude code, cranked up
+
+  Starts an interactive claude session with:
+    - ultracode      xhigh effort + standing dynamic-workflow orchestration
+    - auto mode      --permission-mode auto
+    - flicker-free   fullscreen alt-screen renderer (tui: fullscreen)
+
+  Any extra args are passed through to claude:
+    fj clanker --continue   resume the most recent session here (-c)
+    fj clanker \"refactor the routing module\"   start with an initial prompt"
+
   check: "fj check — run repo-specific checks
 
   Auto-unfucks first (submodules, symlinks), then runs the full
@@ -52,12 +63,13 @@ const command_help = {
   infra: "fj infra — infrastructure management
 
 SUBCOMMANDS
-  fj infra consequences   terraform plan (auto-init, decrypts tfvars)
-  fj infra enact          terraform apply (auto-init, decrypts tfvars)
-  fj infra edit vars      decrypt tfvars, open in $EDITOR, re-encrypt
+  fj infra consequences   terraform plan      (nix run .#tfPlan)
+  fj infra enact          terraform apply     (nix run .#tfApply)
+  fj infra edit vars      edit encrypted vars (nix run .#tfVars)
 
-Secrets managed via rage. Identity: ~/.ssh/nixxxos_ed25519.
-All commands run from ~/.config/infra/."
+Thin aliases over the packaged infra apps (infra/default.nix), which own
+auto-init, tfvars decrypt/re-encrypt, and identity resolution (default
+~/.ssh/dotconfig-nixos). Secrets managed via rage."
 
   take: "fj take <ours|theirs> <path> — resolve a merge conflict
 
@@ -105,6 +117,7 @@ def overview [] {
     "COMMANDS"
     "  (no args)       git status (+ gt ls in graphite repos)"
     "  do              check -> commit on pass, claude on fail"
+    "  clanker         launch claude (ultracode, auto mode, flicker-free)"
     "  check           run repo-specific checks (auto-unfucks first)"
     "  unfuck          fix common repo issues (submodules, symlinks)"
     "  issue list      list issues"

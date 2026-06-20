@@ -9,7 +9,7 @@
     # binaries ahead of nixpkgs. Bump the version in this URL and run
     # `nix flake update claude-code-manifest` to upgrade.
     claude-code-manifest = {
-      url = "https://downloads.claude.ai/claude-code-releases/2.1.177/manifest.json";
+      url = "https://downloads.claude.ai/claude-code-releases/2.1.181/manifest.json";
       flake = false;
     };
 
@@ -22,11 +22,20 @@
     disko.url = "github:nix-community/disko";
     disko.inputs.nixpkgs.follows = "nixpkgs";
 
+    # Pinned (via flake.lock) so `provision` installs with a known nixos-anywhere
+    # instead of refetching tip-of-tree on every run.
+    nixos-anywhere.url = "github:nix-community/nixos-anywhere";
+    nixos-anywhere.inputs.nixpkgs.follows = "nixpkgs";
+
     nix-doom-emacs-unstraightened.url = "github:marienz/nix-doom-emacs-unstraightened";
     nix-doom-emacs-unstraightened.inputs.nixpkgs.follows = "nixpkgs";
 
     but-nix.url = "github:data-cartel/but.nix";
     but-nix.inputs.nixpkgs.follows = "nixpkgs";
+
+    # OpenClaw — self-hosted personal agent. Provides the openclaw-gateway NixOS
+    # module + packages. Not following our nixpkgs, to match its pinned build.
+    nix-openclaw.url = "github:openclaw/nix-openclaw";
   };
 
   outputs =
@@ -72,6 +81,7 @@
           ./nixos.nix
           ./digitalocean.nix
           disko.nixosModules.disko
+          inputs.nix-openclaw.nixosModules.openclaw-gateway
           home-manager.nixosModules.home-manager
           {
             home-manager.useGlobalPkgs = true;
@@ -99,7 +109,7 @@
         {
           jf = import ./nushell/jf.nix { inherit pkgs; };
         }
-        // import ./infra { inherit pkgs; };
+        // import ./infra { inherit pkgs inputs; };
 
       checks.aarch64-darwin =
         let

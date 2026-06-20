@@ -259,7 +259,7 @@ parent_sha=$(git rev-parse "$parent")
 repo_root=$(git rev-parse --show-toplevel)
 ts=$(date +%Y-%m-%d_%H-%M-%S)
 safe_branch=$(echo "$branch" | tr '/' '_')
-out_dir="$repo_root/claude-local-ctx/reviews/${ts}-${safe_branch}"
+out_dir="$repo_root/.tmp/claude-local-ctx/reviews/${ts}-${safe_branch}"
 mkdir -p "$out_dir"
 ```
 
@@ -275,9 +275,10 @@ wc -l "$out_dir/diff.patch"
 Refuse to proceed if the diff is empty. If it exceeds 5000 lines, warn the
 user and ask whether to proceed — reviewer quality degrades on huge diffs.
 
-**Ensure the local-ctx folder is gitignored.** If `claude-local-ctx/` is not
-in `.gitignore` (check with `grep -q claude-local-ctx "$repo_root/.gitignore"`),
-ask the user for permission to add it. Do not silently modify `.gitignore`.
+**Ensure the artifact folder is gitignored.** Artifacts are written under
+`$repo_root/.tmp/claude-local-ctx/`. If `.tmp/` is not already gitignored
+(check with `grep -q '\.tmp/' "$repo_root/.gitignore"`), ask the user for
+permission to add it. Do not silently modify `.gitignore`.
 
 ## 3. Load project context
 
@@ -1458,8 +1459,8 @@ per branch.
     `laneErrors`.
 14. Save `review.md`, `findings.json`, and delta results to `$out_dir`
     before printing to the terminal.
-15. Never silently modify `.gitignore` — ask permission to add
-    `claude-local-ctx/` if missing.
+15. Never silently modify `.gitignore` — ask permission to add `.tmp/`
+    (the artifact root is `.tmp/claude-local-ctx/`) if missing.
 16. Delta mode is only valid when the fix delta is small (~200 lines) and
     confined to files implicated by fixed findings — otherwise escalate to
     a full panel pass.

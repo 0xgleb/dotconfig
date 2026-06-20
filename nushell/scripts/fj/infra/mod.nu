@@ -1,23 +1,8 @@
-def with-infra [action: closure] {
-  cd ~/.config/infra
-  if not (".terraform" | path exists) {
-    ^terraform init
-  }
-
-  let identity = $"($env.HOME)/.ssh/nixxxos_ed25519"
-  ^rage -d -i $identity -o terraform.tfvars terraform.tfvars.age
-
-  let failed = (try { do $action; false } catch { true })
-  rm -f terraform.tfvars
-  if $failed { exit 1 }
-}
-
-def encrypt-vars [] {
-  let keys_file = $"($env.HOME)/.config/keys.nix"
-  let recipients = (^nix eval --raw --file $keys_file roles.infra --apply 'builtins.concatStringsSep "\n"')
-  $recipients | ^rage -e -R /dev/stdin -o terraform.tfvars.age terraform.tfvars
-  rm -f terraform.tfvars
-}
+# `fj infra` is a thin alias layer over the packaged infra apps in
+# `infra/default.nix` (`nix run .#tfPlan` / `.#tfApply` / `.#tfVars`). Those own
+# the real logic — auto-init, fresh-checkout seeding from the example, decrypt /
+# re-encrypt around each action, identity resolution — so this module just maps
+# the `fj infra` verbs onto them instead of maintaining a second, divergent copy.
 
 # mod.nu imports dispatch directly — not via `fj infra`, which parses as main at compile time.
 export def dispatch [args: list<string>] {
@@ -38,26 +23,18 @@ export def main [...args: string] {
   }
 }
 
+def infra-app [app: string] {
+  ^nix run $"($env.HOME)/.config#($app)"
+}
+
 export def consequences [] {
-  with-infra { ^terraform plan -var-file=terraform.tfvars }
+  infra-app "tfPlan"
 }
 
 export def enact [] {
-  with-infra { ^terraform apply -var-file=terraform.tfvars }
+  infra-app "tfApply"
 }
 
 export def "edit vars" [] {
-  cd ~/.config/infra
-  let identity = $"($env.HOME)/.ssh/nixxxos_ed25519"
-
-  if ("terraform.tfvars.age" | path exists) {
-    ^rage -d -i $identity -o terraform.tfvars terraform.tfvars.age
-  } else {
-    "" | save terraform.tfvars
-  }
-
-  let editor = ($env.EDITOR? | default "nvim")
-  ^$editor terraform.tfvars
-
-  encrypt-vars
+  infra-app "tfVars"
 }

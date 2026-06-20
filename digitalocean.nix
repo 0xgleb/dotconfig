@@ -7,8 +7,21 @@
     devices = [ ]; # Disko will populate this
   };
 
-  # Digital Ocean uses DHCP
-  networking.useDHCP = true;
+  # DigitalOcean does NOT serve DHCP for the public interface; it injects the
+  # network config via cloud-init metadata. With networking.useDHCP the box comes
+  # up with no/garbage networking after the first reboot and is unreachable (no
+  # SSH, never joins the tailnet). cloud-init's DigitalOcean datasource renders
+  # the correct static config instead. See nix-community/nixos-anywhere-examples#5.
+  networking.useDHCP = false;
+
+  services.cloud-init = {
+    enable = true;
+    network.enable = true;
+    settings = {
+      datasource_list = [ "DigitalOcean" ];
+      datasource.DigitalOcean = { };
+    };
+  };
 
   # Disko configuration for disk partitioning
   disko.devices = {
