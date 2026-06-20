@@ -5,6 +5,17 @@ const command_help = {
   and commits with git add -A. On fail, opens $EDITOR for context,
   then sends check output + context to claude --continue."
 
+  clanker: "fj clanker — launch claude code, cranked up
+
+  Starts an interactive claude session with:
+    - ultracode      xhigh effort + standing dynamic-workflow orchestration
+    - auto mode      --permission-mode auto
+    - flicker-free   fullscreen alt-screen renderer (tui: fullscreen)
+
+  Any extra args are passed through to claude:
+    fj clanker --continue   resume the most recent session here (-c)
+    fj clanker \"refactor the routing module\"   start with an initial prompt"
+
   check: "fj check — run repo-specific checks
 
   Auto-unfucks first (submodules, symlinks), then runs the full
@@ -106,6 +117,7 @@ def overview [] {
     "COMMANDS"
     "  (no args)       git status (+ gt ls in graphite repos)"
     "  do              check -> commit on pass, claude on fail"
+    "  clanker         launch claude (ultracode, auto mode, flicker-free)"
     "  check           run repo-specific checks (auto-unfucks first)"
     "  unfuck          fix common repo issues (submodules, symlinks)"
     "  issue list      list issues"

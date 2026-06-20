@@ -18,6 +18,20 @@ def "test fj ui passes extra args" [] {
   assert equal (fj-route ...[ui -p somerepo]) { tool: "gitui", args: ["-p", "somerepo"] }
 }
 
+# --- clanker: launch claude code ---
+
+def "test fj clanker routes to clanker" [] {
+  assert equal (fj-route clanker) { tool: "clanker", args: [] }
+}
+
+def "test fj clanker passes through extra args" [] {
+  assert equal (fj-route ...[clanker "fix the bug"]) { tool: "clanker", args: ["fix the bug"] }
+}
+
+def "test fj clanker forwards continue flag to claude" [] {
+  assert equal (fj-route ...[clanker --continue]) { tool: "clanker", args: ["--continue"] }
+}
+
 # --- mut: gt modify ---
 
 def "test fj mut routes to gt modify" [] {

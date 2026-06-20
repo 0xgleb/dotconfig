@@ -77,6 +77,8 @@ export def fj-route [...args: string]: nothing -> record<tool: string, args: lis
     { tool: "gitui", args: ($args | skip 1) }
   } else if $args.0 == "do" {
     { tool: "do", args: ($args | skip 1) }
+  } else if $args.0 == "clanker" {
+    { tool: "clanker", args: ($args | skip 1) }
   } else if $args.0 == "mut" {
     { tool: "gt", args: (["modify"] | append ($args | skip 1)) }
   } else if $args.0 == "check" {

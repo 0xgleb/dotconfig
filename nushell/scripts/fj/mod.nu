@@ -43,6 +43,7 @@ export def --wrapped main [...args: string@fj-complete] {
       }
     }
     "do" => { workflow run }
+    "clanker" => { clanker ...$route.args }
     "check" => {
       unfuck run
       check run
@@ -124,6 +125,19 @@ export def check [] {
 # fix common repo issues (submodules, symlinks)
 export def unfuck [] {
   unfuck run
+}
+
+# launch claude code in ultracode (xhigh effort + standing workflow
+# orchestration), auto permission mode, and flicker-free rendering.
+# extra args pass straight through to claude — e.g. `--continue` (`-c`)
+# resumes the most recent session in this directory, or an initial prompt.
+export def --wrapped clanker [...args: string] {
+  (
+    ^claude
+      --settings '{"ultracode": true, "tui": "fullscreen"}'
+      --permission-mode auto
+      ...$args
+  )
 }
 
 # list github issues
