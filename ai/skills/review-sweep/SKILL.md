@@ -22,7 +22,10 @@ This is a strict generalization of `/review-loop stack`:
 
 The per-branch review work is identical to `/review-loop` and is **not**
 re-specified here — this command only adds the stack traversal and the
-tool-specific scope/modify operations around it.
+tool-specific scope/modify operations around it. The review engine itself (panel,
+probes, prompts, the `review-panel` Workflow) is the shared
+`~/.claude/skills/review-core/SKILL.md` that `/review-loop` and `/review-pr` also
+use; the fix-loop action around it is `/review-loop`'s.
 
 Follow these steps precisely.
 
@@ -36,14 +39,14 @@ Three layers. Only the adapter is tool-specific.
   to sweep in parent-before-child order, produce the per-branch review scope
   (`diff.patch` + `files.txt`), and modify a branch's accumulated fixes back
   into that branch.
-- **Review engine** (tool-agnostic): given a per-branch scope, run
-  **`/review-loop` steps 3–12** — build the panel prompts, run the
-  `review-panel` Workflow, triage, fix-now loop, compile gate, and the
-  delta-mode re-review loop until the branch converges clean, then the
-  project's check command (the project-declared `check_cmd` from `/review-loop`
-  step 3; skip if none). Do
-  not re-implement any of that here; reuse it verbatim per branch. The sweep
-  adds one input the single-branch loop doesn't have: the branch PR's
+- **Review engine** (tool-agnostic): given a per-branch scope, run the shared
+  panel (`review-core`) to get verified findings, then `/review-loop`'s fix-loop
+  action — triage, the parallel fix-now pass, the compile gate, and the
+  delta-mode re-review loop until the branch converges clean, then the project's
+  declared check command (`check_cmd`, discovered in `/review-loop` step 3; skip
+  if none). This is exactly `/review-loop`'s per-branch procedure (its steps
+  3–11); do not re-implement any of it here — reuse it verbatim per branch. The
+  sweep adds one input the single-branch loop doesn't have: the branch PR's
   **unaddressed reviewer feedback** (step 5.2) is folded into the same triage
   table as the panel's verified findings.
 - **Orchestration** (this command): resolve the range, drive the adapter over
@@ -102,10 +105,11 @@ Semantics, on a tree (Graphite) or forest (GitButler):
 ## 3. Preflight
 
 Common: confirm the review tooling is available exactly as `/review-loop`
-step 1 requires, including its usage-limit probes (step 1.3) that resolve the
-external lanes (GPT-5.5 -> Gemini frontier fallback, Composer cross-lab
-augment). Run the probes once for the whole sweep, not per branch; re-resolve
-only if a lane hits a usage limit mid-sweep.
+step 1 requires, and run the shared engine's usage-limit probes (`review-core`
+step 1) that resolve the external lanes (GPT-5.5 -> Gemini frontier fallback,
+Composer cross-lab augment). Run the probes once for the whole sweep,
+not per
+branch; re-resolve only if a lane hits a usage limit mid-sweep.
 
 **[Graphite]** Same preflight as `/review-loop`:
 
@@ -239,14 +243,15 @@ For each branch in `order` (parent before child), do one full pass:
    than re-fixing. If the branch has no PR or `gh` is unreachable, note it
    and continue with panel findings only.
 
-3. **Run the review engine = `/review-loop` steps 3–12** on this branch's
-   scope: load project docs, build the panel prompts and inspector prompts, run
-   the `review-panel` Workflow, print findings, triage with the bias-to-fix
-   table, run the fix-now loop, the compile gate, and the delta-mode re-review
-   loop until the branch returns a **clean** review pass, then the project's
-   declared check command (`check_cmd`; skip if none). All of
-   `/review-loop`'s hard rules apply per branch, including the 4-pass cap and
-   "convergence requires a clean pass — never end on a fix."
+3. **Run the panel, then `/review-loop`'s fix action** on this branch's scope
+   (this is `/review-loop` steps 3–11 verbatim): load project docs and discover
+   `check_cmd` (`/review-loop` step 3), run the shared panel (`review-core`) to
+   get verified findings and print them, triage with the bias-to-fix table, run
+   the parallel fix-now pass, the compile gate, and the delta-mode re-review loop
+   until the branch returns a **clean** review pass, then the project's declared
+   check command (`check_cmd`; skip if none). All of `/review-loop`'s hard rules
+   apply per branch, including the 4-pass cap and "convergence requires a clean
+   pass — never end on a fix."
 
    Fold the step-5.2 feedback candidates into the triage table alongside the
    panel's verified findings (they enter the same fix-now loop and the same
@@ -279,7 +284,7 @@ For each branch in `order` (parent before child), do one full pass:
    their diffs are built on an unsettled parent. Report the stuck branch and
    follow `/review-loop`'s non-convergence flow.
 
-The Defer-to-Linear step (`/review-loop` step 13) still applies per branch when
+The Defer-to-Linear step (`/review-loop` step 10) still applies per branch when
 the user explicitly defers a finding.
 
 ## 6. Return and summarize
@@ -352,10 +357,12 @@ nothing was modified on any branch, there is nothing to submit — say so and st
 5. **Stop the sweep on a stuck branch.** Never descend into the children of a
    branch that failed to converge — their scope is built on unsettled code.
 6. **Per branch, `/review-loop` owns the review.** Every per-branch pass is
-   `/review-loop` steps 3–12 verbatim (single `review-panel` Workflow, verify
-   and synthesize inside the workflow, read-only external CLIs — `--mode plan`
-   for cursor-agent, `--approval-mode plan` for gemini — 4-pass cap,
-   clean-pass convergence). Do not hand-roll the fan-out or relax those rules.
+   `/review-loop` steps 3–11 verbatim — the shared `review-core` panel (single
+   `review-panel` Workflow, verify and synthesize inside it, read-only external
+   CLIs — `--mode plan` for cursor-agent, `--approval-mode plan` for gemini)
+   followed by `/review-loop`'s triage / parallel fix / delta re-review loop
+   (4-pass cap, clean-pass convergence). Do not hand-roll the fan-out or relax
+   those rules.
 7. **GitButler workspace mode is a precondition, not something you create.** If
    `but status` fails, stop and tell the user to enter workspace mode; never
    switch onto or off the `gitbutler/*` branch yourself.
@@ -377,8 +384,8 @@ nothing was modified on any branch, there is nothing to submit — say so and st
 - **A branch fails to converge (4-pass cap)** — stop the sweep on that branch,
   do not descend, report it.
 - **The `review-panel` Workflow fails mid-run on a branch** — relaunch it with
-  `{scriptPath, args, resumeFromRunId}` (per `/review-loop`), then continue the
-  sweep from that branch.
+  `{scriptPath, args, resumeFromRunId}` (per `review-core`'s engine failure
+  modes), then continue the sweep from that branch.
 - **`but` not on PATH** — fall back to `direnv exec "$repo_root" but …`; if that
   also fails, stop and tell the user the flake dev shell isn't loaded.
 - **`gh` unreachable or branch has no PR** — skip the feedback step for that
