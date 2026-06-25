@@ -367,6 +367,21 @@ Review priorities, in order:
 6. TEST COVERAGE — missing coverage for new logic, tests that assert the
    wrong thing, tests that document gaps instead of fixing them. Only flag if
    the project's docs call test coverage out as required.
+7. DOCUMENTATION SELF-CONTAINMENT — for any prose doc in the diff (ADRs,
+   READMEs, design docs, SPEC), check it reads as a standalone record a future
+   reader understands without the PR, the review threads, the chat, or the code
+   in front of them. Flag passages that: reference an artifact the reader
+   cannot see in the doc ("the implementation comment", "the reviewer said",
+   "as noted above" with nothing above, an unquoted code comment); narrate the
+   authoring/review/delivery process ("a re-review found", "added in this PR",
+   "this stack", "already shipped in #N", "stacked below", "slice(s)") instead
+   of stating the decision; argue against an external position ("this is NOT
+   the benign X that Y claims") instead of stating the fact directly; carry a
+   dangling cross-reference (an ADR number, section, or PR that does not
+   resolve or contradicts the doc's own numbering); or use a term as if defined
+   when it never was. These examples are illustrative of the class — apply the
+   principle, do not pattern-match the phrases. Scope: prose docs actually in
+   the diff (this is not the "missing documentation" case below).
 
 What NOT to flag:
 
@@ -382,7 +397,7 @@ What NOT to flag:
 Output: return your findings via the structured output tool you have been
 given. Each finding needs: title, severity (critical | high | medium | low |
 nit), file (repo-relative path), line_start, line_end, category (correctness
-| security | convention | maintainability | tests), finding (one-paragraph
+| security | convention | maintainability | tests | doc-coherence), finding (one-paragraph
 description), why_it_matters (concrete consequence if not fixed),
 recommended_fix (specific and actionable — not "consider doing X"), and
 confidence (0-100; 100 = certain, 50 = plausible but unverified, 25 = hunch).
@@ -679,7 +694,7 @@ const FINDING = {
     file: { type: 'string' },
     line_start: { type: 'integer' },
     line_end: { type: 'integer' },
-    category: { enum: ['correctness', 'security', 'convention', 'maintainability', 'tests'] },
+    category: { enum: ['correctness', 'security', 'convention', 'maintainability', 'tests', 'doc-coherence'] },
     finding: { type: 'string' },
     why_it_matters: { type: 'string' },
     recommended_fix: { type: 'string' },
@@ -1136,7 +1151,7 @@ const FINDING = {
     file: { type: 'string' },
     line_start: { type: 'integer' },
     line_end: { type: 'integer' },
-    category: { enum: ['correctness', 'security', 'convention', 'maintainability', 'tests'] },
+    category: { enum: ['correctness', 'security', 'convention', 'maintainability', 'tests', 'doc-coherence'] },
     finding: { type: 'string' },
     why_it_matters: { type: 'string' },
     recommended_fix: { type: 'string' },
@@ -1300,8 +1315,8 @@ For each "defer" finding, invoke the `linear-cli` skill. For each one:
 
 2. **Choose metadata**: priority by severity (critical -> urgent, high ->
    high, medium -> medium, low -> low, nit -> low). Labels: prefer `bug`
-   for correctness/security, `tech-debt` for maintainability, `test` for
-   test-coverage findings. Project and team come from the repo's
+   for correctness/security, `tech-debt` for maintainability or doc-coherence,
+   `test` for test-coverage findings. Project and team come from the repo's
    `.linear.toml` — let `linear` pick them up automatically. Do not pass
    `--team` or `--project` unless the user tells you which ones.
 
