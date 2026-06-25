@@ -6,17 +6,23 @@ use routing.nu [
   claude-project-dirname
 ]
 use check.nu
-use unfuck.nu
 use workflow.nu
 use completions.nu [fj-complete issue-complete pr-complete]
 use gh.nu
 use help.nu
-use md/
-use infra/
-export use md/
-export use infra/
+export use md.nu
+export use infra.nu
+export use cheatsheet.nu
 
-# unified dev command — run `fj help` for details
+# unified dev command — run `fj help` for details.
+#
+# Dispatch model: commands with typed flags, completions, or their own help
+# (check, clanker, take, issue, pr, md, infra) are `export def` subcommands
+# below. Nushell resolves `fj <those>` to the subcommand, which SHADOWS this
+# `--wrapped main`, so main only ever runs for the passthrough space:
+# no-args, ui, do, mut, the stack/git verbs, help, and unknowns. `fj-route`
+# therefore handles only those — adding a subcommand def means routing it
+# here is dead code.
 export def --wrapped main [...args: string@fj-complete] {
   let raw = (fj-route ...$args)
   let gitbutler_managed = (
@@ -49,55 +55,6 @@ export def --wrapped main [...args: string@fj-complete] {
       }
     }
     "do" => { workflow run }
-    "clanker" => { clanker ...$route.args }
-    "check" => {
-      unfuck run
-      check run
-    }
-    "unfuck" => { unfuck run }
-    "take" => {
-      let version = ($route.args | get 0)
-      let path = ($route.args | get 1)
-      if $version not-in ["ours" "theirs"] {
-        error make --unspanned { msg: $"version must be 'ours' or 'theirs', got '($version)'" }
-      }
-      ^git checkout $"--($version)" -- $path
-      ^git add $path
-      print $"(ansi green)resolved(ansi reset) ($path) -> ($version)"
-    }
-    "issue" => {
-      if ($route.args | is-empty) {
-        ^gh issue
-      } else if $route.args.0 == "list" {
-        ^gh issue list ...($route.args | skip 1)
-      } else if $route.args.0 == "view" {
-        let view_args = ($route.args | skip 1)
-        let web = ("--web" in $view_args) or ("-w" in $view_args)
-        let comments = ("--comments" in $view_args) or ("-c" in $view_args)
-        let id = ($view_args | where { $in not-in ["--web" "-w" "--comments" "-c"] } | first)
-        gh issue-view $id --web=$web --comments=$comments
-      } else {
-        ^gh issue ...$route.args
-      }
-    }
-    "pr" => {
-      if ($route.args | is-empty) {
-        ^gh pr
-      } else if $route.args.0 == "list" {
-        ^gh pr list ...($route.args | skip 1)
-      } else if $route.args.0 == "view" {
-        let view_args = ($route.args | skip 1)
-        let web = ("--web" in $view_args) or ("-w" in $view_args)
-        let comments = ("--comments" in $view_args) or ("-c" in $view_args)
-        let positional = ($view_args | where { $in not-in ["--web" "-w" "--comments" "-c"] })
-        let id = if ($positional | is-empty) { null } else { $positional | first }
-        gh pr-view $id --web=$web --comments=$comments
-      } else {
-        ^gh pr ...$route.args
-      }
-    }
-    "md" => { md dispatch $route.args }
-    "infra" => { infra dispatch $route.args }
     "help" => {
       let topic = if ($route.args | is-empty) { null } else { $route.args | first }
       help show $topic
@@ -122,15 +79,9 @@ export def take [
   print $"(ansi green)resolved(ansi reset) ($path) -> ($version)"
 }
 
-# run repo-specific checks (auto-unfucks first)
+# run repo-specific checks
 export def check [] {
-  unfuck run
   check run
-}
-
-# fix common repo issues (submodules, symlinks)
-export def unfuck [] {
-  unfuck run
 }
 
 # launch claude code in ultracode (xhigh effort + standing workflow

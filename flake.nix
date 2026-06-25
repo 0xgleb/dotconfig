@@ -133,14 +133,16 @@
                 git config --global user.email "test@test.com"
                 git config --global user.name "test"
 
-                echo "validating sync-daemon.nu parses..."
-                cp ${./nushell/scripts/fj/md/sync-lib.nu} sync-lib.nu
-                cp ${./nushell/scripts/fj/md/sync-daemon.nu} sync-daemon.nu
-                ${pkgs.nushell}/bin/nu --ide-check 0 sync-daemon.nu
-                echo "sync-daemon.nu parses ok"
+                echo "validating md-sync-daemon.nu parses..."
+                cp ${./nushell/fj/md-sync-lib.nu} md-sync-lib.nu
+                cp ${./nushell/fj/md-sync-daemon.nu} md-sync-daemon.nu
+                # `source` fails on parse errors; `--ide-check` does not (it
+                # prints diagnostics but exits 0, so it never gates the build).
+                ${pkgs.nushell}/bin/nu --commands 'source md-sync-daemon.nu'
+                echo "md-sync-daemon.nu parses ok"
 
-                cp ${./nushell/scripts/fj/md/sync-lib.test.nu} sync-lib.test.nu
-                ${pkgs.nushell}/bin/nu sync-lib.test.nu
+                cp ${./nushell/fj/md-sync-lib.test.nu} md-sync-lib.test.nu
+                ${pkgs.nushell}/bin/nu md-sync-lib.test.nu
                 touch $out
               '';
 
@@ -150,7 +152,7 @@
                 nativeBuildInputs = with pkgs; [ nushell ];
               }
               ''
-                cp ${./nushell/scripts/fj/workflow.test.nu} workflow.test.nu
+                cp ${./nushell/fj/workflow.test.nu} workflow.test.nu
                 ${pkgs.nushell}/bin/nu workflow.test.nu
                 touch $out
               '';
@@ -161,7 +163,7 @@
                 nativeBuildInputs = with pkgs; [ nushell ];
               }
               ''
-                cp -r ${./nushell/scripts/fj} fj
+                cp -r ${./nushell/fj} fj
                 cd fj
                 ${pkgs.nushell}/bin/nu routing.test.nu
                 ${pkgs.nushell}/bin/nu mod.test.nu
@@ -176,7 +178,7 @@
               ''
                 export HOME=$(mktemp -d)
                 mkdir -p "$HOME/.config/nushell"
-                cp -r ${./nushell/scripts} "$HOME/.config/nushell/scripts"
+                cp -r ${./nushell/fj} "$HOME/.config/nushell/fj"
                 cp ${./nushell/env.src.nu} "$HOME/.config/nushell/env.src.nu"
                 cp ${./nushell/config.src.nu} "$HOME/.config/nushell/config.src.nu"
                 echo "validating nushell config sources..."
@@ -200,15 +202,16 @@
                 git config --global user.email "test@test.com"
                 git config --global user.name "test"
 
-                echo "validating mdup.nu parses..."
-                cp ${./nushell/scripts/fj/md/sync-lib.nu} sync-lib.nu
-                cp ${./nushell/scripts/fj/md/lib.nu} lib.nu
-                cp ${./nushell/scripts/fj/md/mdup.nu} mdup.nu
-                ${pkgs.nushell}/bin/nu --ide-check 0 mdup.nu
-                echo "mdup.nu parses ok"
+                echo "validating md-mdup.nu parses..."
+                cp ${./nushell/fj/md-sync-lib.nu} md-sync-lib.nu
+                cp ${./nushell/fj/md-lib.nu} md-lib.nu
+                cp ${./nushell/fj/md-mdup.nu} md-mdup.nu
+                # `source` fails on parse errors; `--ide-check` does not.
+                ${pkgs.nushell}/bin/nu --commands 'source md-mdup.nu'
+                echo "md-mdup.nu parses ok"
 
-                cp ${./nushell/scripts/fj/md/lib.test.nu} lib.test.nu
-                ${pkgs.nushell}/bin/nu lib.test.nu
+                cp ${./nushell/fj/md-lib.test.nu} md-lib.test.nu
+                ${pkgs.nushell}/bin/nu md-lib.test.nu
                 touch $out
               '';
         };

@@ -1,7 +1,7 @@
 use std/assert
 
-source sync-lib.nu
-source lib.nu
+source md-sync-lib.nu
+source md-lib.nu
 
 def with-temp-dir [block: closure] {
   let dir = (mktemp -d)
@@ -266,7 +266,9 @@ def "test drift detection catches modified source" [] {
 
 def "test action-diff create shows all lines as additions" [] {
   with-temp-dir {|dir|
-    "line one\nline two\n" | save $"($dir)/new.md"
+    # Separate paragraphs (blank line between) so `deno fmt` can't reflow them
+    # onto one line, which would make `+line two` no longer its own diff line.
+    "line one\n\nline two\n" | save $"($dir)/new.md"
     let action = {
       action: "create"
       repo_name: "test"
@@ -522,7 +524,7 @@ def main [] {
     | get name)
 
   let test_commands = ($tests
-    | each {|test_name| $"print '  ok ($test_name)'; ($test_name)" }
+    | each {|test_name| $"($test_name); print '  ok ($test_name)'" }
     | str join "; ")
 
   nu --commands $"source ($env.CURRENT_FILE); ($test_commands)"

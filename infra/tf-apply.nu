@@ -4,9 +4,5 @@
 # `with-infra` / `resolve-identity` come from lib.nu (concatenated at build).
 
 def --wrapped main [--identity (-i): string, ...rest: string] {
-  let id = (resolve-identity $identity)
-
-  with-infra $id {
-    ^terraform apply -var-file=terraform.tfvars -auto-approve ...$rest
-  }
+  tf-run $identity "apply" "-auto-approve" ...$rest
 }

@@ -1,5 +1,5 @@
 use std/log
-use sync-lib.nu *
+use md-sync-lib.nu *
 
 const PLAN_VERSION = 1
 const DEFAULT_CONFIG_PATH = "~/.config/mdaemon.nuon"
@@ -12,7 +12,7 @@ def file-hash [path: string] {
 def fmt-content [path: string] {
   let tmp = (mktemp --suffix .md)
   cp $path $tmp
-  try { do { deno fmt --quiet $tmp } | complete } catch {}
+  try { do { ^deno fmt --quiet$tmp } | complete } catch {}
   let content = (open --raw $tmp)
   rm -f $tmp
   $content
@@ -20,7 +20,7 @@ def fmt-content [path: string] {
 
 def fmt-copy [source: string, dest: string] {
   cp $source $dest
-  try { do { deno fmt --quiet $dest } | complete } catch {}
+  try { do { ^deno fmt --quiet$dest } | complete } catch {}
 }
 
 export def compute-actions [targets: table<name: string, path: string>, notes_root: string] {
@@ -35,7 +35,7 @@ export def compute-actions [targets: table<name: string, path: string>, notes_ro
     log info $"($target.name): ($target.path) -> ($files | length) md file\(s)"
 
     $files | each {|file|
-      let note_file = ($file | str replace '.local/' '' | undot $in)
+      let note_file = (note-file $file)
       let source = $"($target.path)/($file)"
       let destination = $"($repo_notes)/($note_file)"
 
@@ -59,22 +59,18 @@ export def compute-actions [targets: table<name: string, path: string>, notes_ro
           dels: 0
         }
       } else if (fmt-content $source) != (fmt-content $destination) {
-        let source_modified = (ls -l $source | first | get modified)
-        let destination_modified = (ls -l $destination | first | get modified)
+        let src = (ls -l $source | first)
+        let dst = (ls -l $destination | first)
+        let forward = $src.modified > $dst.modified
+        let label = $"($target.name)/($note_file)"
 
-        let newer_size = if $source_modified > $destination_modified {
-          ls -l $source | first | get size | into int
-        } else {
-          ls -l $destination | first | get size | into int
-        }
-        let older_size = if $source_modified > $destination_modified {
-          ls -l $destination | first | get size | into int
-        } else {
-          ls -l $source | first | get size | into int
-        }
+        let newer = if $forward { $src } else { $dst }
+        let older = if $forward { $dst } else { $src }
+        let newer_size = ($newer.size | into int)
+        let older_size = ($older.size | into int)
 
         if $newer_size == 0 and $older_size > 0 {
-          log warning $"($target.name)/($note_file): blocked -- empty file would overwrite non-empty"
+          log warning $"($label): blocked -- empty file would overwrite non-empty"
           {
             action: "blocked"
             repo_name: $target.name
@@ -91,7 +87,7 @@ export def compute-actions [targets: table<name: string, path: string>, notes_ro
           let tmp = (mktemp -d)
           let fmt_old = $"($tmp)/old.md"
           let fmt_new = $"($tmp)/new.md"
-          if $source_modified > $destination_modified {
+          if $forward {
             fmt-copy $destination $fmt_old
             fmt-copy $source $fmt_new
           } else {
@@ -101,9 +97,9 @@ export def compute-actions [targets: table<name: string, path: string>, notes_ro
           let stats = (diff-stats $fmt_old $fmt_new)
           rm -rf $tmp
 
-          let direction = if $source_modified > $destination_modified { "forward" } else { "reverse" }
-          let arrow = if $direction == "forward" { "repo -> vault" } else { "vault -> repo" }
-          log debug $"($target.name)/($note_file): changed \(($arrow), +($stats.adds) -($stats.dels))"
+          let direction = if $forward { "forward" } else { "reverse" }
+          let arrow = if $forward { "repo -> vault" } else { "vault -> repo" }
+          log debug $"($label): changed \(($arrow), +($stats.adds) -($stats.dels))"
 
           {
             action: $direction
@@ -181,11 +177,13 @@ export def print-summary [actions: list] {
   let reverses = ($actions | where action == "reverse" | length)
   let blocked = ($actions | where action == "blocked" | length)
 
-  mut summary_parts = []
-  if $creates > 0 { $summary_parts = ($summary_parts | append $"($creates) new") }
-  if $forwards > 0 { $summary_parts = ($summary_parts | append $"($forwards) repo->vault") }
-  if $reverses > 0 { $summary_parts = ($summary_parts | append $"($reverses) vault->repo") }
-  if $blocked > 0 { $summary_parts = ($summary_parts | append $"(ansi red)($blocked) blocked(ansi reset)") }
+  let parts = [
+    { n: $creates, text: $"($creates) new" }
+    { n: $forwards, text: $"($forwards) repo->vault" }
+    { n: $reverses, text: $"($reverses) vault->repo" }
+    { n: $blocked, text: $"(ansi red)($blocked) blocked(ansi reset)" }
+  ]
+  let summary_parts = ($parts | where n > 0 | get text)
 
   print $"($actions | length) changes \(($summary_parts | str join ', '))"
 }
@@ -204,24 +202,25 @@ export def resolve-targets [--org: string, --vault: string, --config: string] {
   }
 }
 
+# Open a plan file, verifying it exists and matches the supported version.
+def load-plan [plan_path: string] {
+  if not ($plan_path | path exists) {
+    error make { msg: $"plan file not found: ($plan_path). Run `fj md plan` first." }
+  }
+  let loaded = (open $plan_path)
+  if $loaded.version != $PLAN_VERSION {
+    error make { msg: $"unsupported plan version: ($loaded.version)" }
+  }
+  $loaded
+}
+
 export def load-actions [--plan: string, --org: string, --vault: string, --config: string] {
   if $org != null and $vault != null {
     let resolved = (resolve-targets --org $org --vault $vault)
     compute-actions $resolved.targets $resolved.vault
   } else if $plan != null or (($DEFAULT_PLAN_PATH | path expand) | path exists) {
     let plan_path = if $plan != null { $plan } else { ($DEFAULT_PLAN_PATH | path expand) }
-
-    if not ($plan_path | path exists) {
-      error make { msg: $"plan file not found: ($plan_path)." }
-    }
-
-    let loaded = (open $plan_path)
-
-    if $loaded.version != $PLAN_VERSION {
-      error make { msg: $"unsupported plan version: ($loaded.version)" }
-    }
-
-    $loaded.actions
+    (load-plan $plan_path).actions
   } else {
     let resolved = (resolve-targets --config $config)
     compute-actions $resolved.targets $resolved.vault
@@ -287,7 +286,7 @@ export def run-diff [--plan: string, --org: string, --vault: string, --config: s
   })
 
   $parts | str join "\n" | save --force $diff_file
-  bat -l diff --style=plain --paging=auto $diff_file
+  ^bat -l diff --style=plain --paging=auto $diff_file
 
   rm -rf $tmp
 
@@ -296,17 +295,7 @@ export def run-diff [--plan: string, --org: string, --vault: string, --config: s
 
 export def run-apply [--plan: string, --yes (-y)] {
   let plan_path = if $plan != null { $plan } else { ($DEFAULT_PLAN_PATH | path expand) }
-
-  if not ($plan_path | path exists) {
-    error make { msg: $"plan file not found: ($plan_path). Run `fj md plan` first." }
-  }
-
-  let plan = (open $plan_path)
-
-  if $plan.version != $PLAN_VERSION {
-    error make { msg: $"unsupported plan version: ($plan.version)" }
-  }
-
+  let plan = (load-plan $plan_path)
   let actions = ($plan.actions | where action != "blocked")
 
   if ($actions | length) == 0 {
@@ -342,7 +331,9 @@ export def run-apply [--plan: string, --yes (-y)] {
   } | compact)
 
   if ($drifted | length) > 0 {
-    print $"(ansi red)Drift detected! ($drifted | length) file\(s) changed since plan was created:(ansi reset)"
+    let n = ($drifted | length)
+    let msg = $"Drift detected! ($n) file\(s) changed since plan was created:"
+    print $"(ansi red)($msg)(ansi reset)"
     $drifted | each {|a|
       print $"  ! ($a.repo_name)/($a.note_file)"
     }

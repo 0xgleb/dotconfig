@@ -70,45 +70,35 @@ const git_commands = [
   worktree
 ]
 
+# Route an `fj` invocation to a tool + args. Only the PASSTHROUGH space reaches
+# here: commands with dedicated `export def` subcommands (check, clanker, take,
+# issue, pr, md, infra) are intercepted by nushell before main calls fj-route
+# (see mod.nu's dispatch model), so routing them here would be dead code.
+#
+#   <empty>           -> status
+#   ui                -> gitui
+#   do                -> the check/commit workflow
+#   mut [..]          -> gt modify [..]   (stack verb, translated per backend)
+#   <gt verb> [..]    -> gt
+#   <git verb> [..]   -> git
+#   help | --help|-h  -> help
+#   anything else     -> unknown
 export def fj-route [...args: string]: nothing -> record<tool: string, args: list<string>> {
   if ($args | length) == 0 {
-    { tool: "status", args: [] }
-  } else if $args.0 == "ui" {
-    { tool: "gitui", args: ($args | skip 1) }
-  } else if $args.0 == "do" {
-    { tool: "do", args: ($args | skip 1) }
-  } else if $args.0 == "clanker" {
-    { tool: "clanker", args: ($args | skip 1) }
-  } else if $args.0 == "mut" {
-    { tool: "gt", args: (["modify"] | append ($args | skip 1)) }
-  } else if $args.0 == "check" {
-    { tool: "check", args: ($args | skip 1) }
-  } else if $args.0 == "unfuck" {
-    { tool: "unfuck", args: ($args | skip 1) }
-  } else if $args.0 == "take" {
-    { tool: "take", args: ($args | skip 1) }
-  } else if $args.0 == "issue" {
-    { tool: "issue", args: ($args | skip 1) }
-  } else if $args.0 == "pr" {
-    { tool: "pr", args: ($args | skip 1) }
-  } else if $args.0 == "md" {
-    { tool: "md", args: ($args | skip 1) }
-  } else if $args.0 == "infra" {
-    { tool: "infra", args: ($args | skip 1) }
-  } else if $args.0 in $gt_commands {
-    { tool: "gt", args: $args }
-  } else if $args.0 in $git_commands {
-    {
-      tool: "git",
-      args: $args
-    }
-  } else if $args.0 == "help" or $args.0 == "--help" or $args.0 == "-h" {
-    {
-      tool: "help",
-      args: ($args | skip 1)
-    }
-  } else {
-    { tool: "unknown", args: $args }
+    return { tool: "status", args: [] }
+  }
+
+  let verb = $args.0
+  let rest = ($args | skip 1)
+
+  match $verb {
+    "ui" => { tool: "gitui", args: $rest }
+    "do" => { tool: "do", args: $rest }
+    "mut" => { tool: "gt", args: (["modify"] | append $rest) }
+    "help" | "--help" | "-h" => { tool: "help", args: $rest }
+    _ if $verb in $gt_commands => { tool: "gt", args: $args }
+    _ if $verb in $git_commands => { tool: "git", args: $args }
+    _ => { tool: "unknown", args: $args }
   }
 }
 

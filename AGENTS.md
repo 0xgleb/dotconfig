@@ -46,11 +46,11 @@ Common mistakes to avoid:
 
 # fj — unified dev command
 
-`fj` (aliases `f`, `j`) is a nushell module at `nushell/scripts/fj/` that is the
+`fj` (aliases `f`, `j`) is a nushell module at `nushell/fj/` that is the
 user's single entry point for day-to-day version control and dev chores. It
 dispatches a subcommand to the right underlying tool: `git`, a stacking backend
-(`gt`/`but`), `gh`, or an internal workflow (`do`, `check`, `unfuck`, `take`,
-`md`, `infra`). Run `fj help` for the full command list.
+(`gt`/`but`), `gh`, or an internal workflow (`do`, `check`, `take`, `md`,
+`infra`). Run `fj help` for the full command list.
 
 ## VCS backend routing
 
@@ -75,11 +75,11 @@ instead of being guessed at. The translation tables are `but_translations` and
 `git_translations` in `routing.nu`.
 
 To change which orgs use Graphite, edit `graphite_orgs` in
-`nushell/scripts/fj/routing.nu`.
+`nushell/fj/routing.nu`.
 
 ## Routing internals
 
-`nushell/scripts/fj/routing.nu` holds the pure, testable routing logic:
+`nushell/fj/routing.nu` holds the pure, testable routing logic:
 
 - `fj-route ...args` — maps the invocation to `{ tool, args }` (logical routing;
   stack commands carry tool `"gt"`)
@@ -95,7 +95,7 @@ is-not-empty)`), then dispatches; an `"unsupported"` route errors with a clear
 message. Run the unit tests after any routing change:
 
 ```bash
-nu nushell/scripts/fj/routing.test.nu
+nu nushell/fj/routing.test.nu
 ```
 
 # Work Tracking

@@ -5,7 +5,7 @@ let
   fjLib = pkgs.stdenv.mkDerivation {
     name = "fj-nushell-lib";
     src = builtins.path {
-      path = ./scripts/fj;
+      path = ./fj;
       name = "fj-src";
     };
     phases = [ "installPhase" ];
@@ -26,8 +26,12 @@ let
     gitui
   ];
 
+  # No `--` before "$@": nushell passes it through as a literal arg rather than
+  # consuming it (so `jf status` became `fj -- status` -> "unknown command --"),
+  # and nu does not intercept --help/-h after the script path, so dropping it
+  # makes `jf --help` / `jf -h` reach fj's own help.
   wrapper = pkgs.writeShellScriptBin "jf" ''
-    exec ${pkgs.nushell}/bin/nu --no-config-file ${entrypoint} -- "$@"
+    exec ${pkgs.nushell}/bin/nu --no-config-file ${entrypoint} "$@"
   '';
 in
 pkgs.symlinkJoin {

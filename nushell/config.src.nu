@@ -41,14 +41,13 @@ alias vim = nvim
 alias nix = nix --accept-flake-config
 alias l = ls -a
 
-def darwin-evolve [] {
-  sudo echo authorized
-  nix -v flake update --flake $'($env.HOME)/.config'
-  sudo darwin-rebuild switch -v --flake $"($env.HOME)/.config"
+def evolve [] {
+  # `nix` stays unprefixed on purpose — it is aliased to add --accept-flake-config.
+  ^sudo -v
+  nix -v flake update --flake $"($env.HOME)/.config"
+  ^sudo darwin-rebuild switch -v --flake $"($env.HOME)/.config"
   nix -v store gc
 }
-
-alias evolve = darwin-evolve
 
 def ask [context: closure, question: string] {
   print $"\nQ: ($question)?"
@@ -64,46 +63,40 @@ def ask [context: closure, question: string] {
   ] | str join "\n\n"
 
   let response = (
-    claude -p $prompt
+    ^claude -p $prompt
     | str trim
     | lines
     | where $it !~ "```"
     | str join "\n"
-    | pbcopy
   )
 
-  print $"\nA: (pbpaste)\n"
+  if (which pbcopy | is-not-empty) { $response | ^pbcopy }
+  print $"\nA: ($response)\n"
 }
 
 def fix [context: closure, prompt?: string] {
-  do -i { do $context }
-  let exit_code = $env.LAST_EXIT_CODE
+  let result = (do $context | complete)
 
-  if $exit_code == 0 {
+  if $result.exit_code == 0 {
     print "Already passing, nothing to fix."
     return
   }
 
-  print $"Command failed with exit code ($exit_code), re-running to capture output for Claude..."
-
-  do -i { do $context } out> /tmp/claude-fix-stdout err> /tmp/claude-fix-stderr
-
-  let stdout = try { open /tmp/claude-fix-stdout | into string } catch { "" }
-  let stderr = try { open /tmp/claude-fix-stderr | into string } catch { "" }
+  print $"Command failed with exit code ($result.exit_code), sending output to Claude..."
 
   let parts = [
     "The following command failed. Fix the issue."
-    $"stdout:\n($stdout)"
-    $"stderr:\n($stderr)"
+    $"stdout:\n($result.stdout)"
+    $"stderr:\n($result.stderr)"
   ]
 
-  let parts = if $prompt != null {
+  let parts = if ($prompt | is-not-empty) {
     $parts | append $"Additional context: ($prompt)"
   } else {
     $parts
   }
 
-  claude -p ($parts | str join "\n\n")
+  ^claude -p ($parts | str join "\n\n")
 }
 
 $env.PROMPT_COMMAND = {||
@@ -130,6 +123,6 @@ $env.PROMPT_COMMAND = {||
 $env.PROMPT_COMMAND_RIGHT = ""
 
 
-use scripts/fj/
+use fj/
 alias f = fj
 alias j = fj

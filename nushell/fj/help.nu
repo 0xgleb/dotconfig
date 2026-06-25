@@ -1,9 +1,9 @@
 const command_help = {
   do: "fj do — check, then commit or fix
 
-  Runs unfuck + checks. On pass, opens $EDITOR for a commit message
-  and commits with git add -A. On fail, opens $EDITOR for context,
-  then sends check output + context to claude --continue."
+  Runs checks. On pass, opens $EDITOR for a commit message and commits
+  with git add -A. On fail, opens $EDITOR for context, then sends check
+  output + context to claude --continue."
 
   clanker: "fj clanker — launch claude code, cranked up
 
@@ -26,14 +26,8 @@ const command_help = {
 
   check: "fj check — run repo-specific checks
 
-  Auto-unfucks first (submodules, symlinks), then runs the full
-  check suite for the current repo (cargo, nextest, clippy, bun, etc)."
-
-  unfuck: "fj unfuck — fix common repo issues
-
-  Detects and fixes:
-    - broken submodule symlinks in worktrees (lib/)
-    - typechanged files (e.g. CLAUDE.md replaced with regular file)"
+  Runs the full check suite for the current repo (cargo, nextest,
+  clippy, bun, etc)."
 
   issue: "fj issue — github issues
 
@@ -87,6 +81,12 @@ auto-init, tfvars decrypt/re-encrypt, and identity resolution (default
     fj take ours src/lib.rs
     fj take theirs SPEC.md"
 
+  cheatsheet: "fj cheatsheet [topic] — shell quick reference
+
+  Prints a grouped nushell/shell cheatsheet (navigation, pipes, logs,
+  nix, bash-to-nushell translations, ...). Pass a topic to show only
+  matching sections, e.g. `fj cheatsheet nix`."
+
   ui: "fj ui — launch gitui"
 
   mut: "fj mut [-a] — stack modify (amend)
@@ -126,8 +126,7 @@ def overview [] {
     "  (no args)       git status (+ gt ls in graphite repos)"
     "  do              check -> commit on pass, claude on fail"
     "  clanker         launch claude, resume by default (--new for fresh)"
-    "  check           run repo-specific checks (auto-unfucks first)"
-    "  unfuck          fix common repo issues (submodules, symlinks)"
+    "  check           run repo-specific checks"
     "  issue list      list issues"
     "  issue view <n>  view issue in markdown format"
     "  pr list         list pull requests"
@@ -140,6 +139,7 @@ def overview [] {
     "  infra enact         terraform apply"
     "  infra edit vars     edit encrypted tfvars"
     "  take <v> <path> resolve conflict (ours/theirs) and stage"
+    "  cheatsheet      shell quick reference (`fj cheatsheet [topic]`)"
     "  ui              gitui"
     "  mut [-a]        stack modify (gt/but/git by repo — see STACK)"
     "  help [cmd]      show help"

@@ -4,9 +4,5 @@
 # `with-infra` / `resolve-identity` come from lib.nu (concatenated at build).
 
 def --wrapped main [--identity (-i): string, ...rest: string] {
-  let id = (resolve-identity $identity)
-
-  with-infra $id {
-    ^terraform destroy -var-file=terraform.tfvars ...$rest
-  }
+  tf-run $identity "destroy" ...$rest
 }

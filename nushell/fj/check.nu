@@ -14,29 +14,29 @@ const skill_issues = [
 ]
 
 def stox-liquidity-check [] {
-  let branch = (git branch --show-current)
+  let branch = (^git branch --show-current)
   log info $"st0x.liquidity checks on ($branch)"
 
-  let worktree_path = (git rev-parse --show-toplevel)
+  let worktree_path = (^git rev-parse --show-toplevel)
   cd $worktree_path
   log debug $"running from ($worktree_path)"
 
   try { rm ./dashboard/src/lib/api/* e> /dev/null }
 
-  cargo check --color=always
+  ^cargo check --color=always
 
   log debug "auto-fixing before checks"
   try {
-    (cargo fix --quiet --allow-staged
+    (^cargo fix --quiet --allow-staged
       --tests --workspace --all-features
       e> /dev/null)
   }
 
-  (cargo nextest run --color=always
+  (^cargo nextest run --color=always
     --workspace --all-features
     --profile dev --show-progress=only)
 
-  (cargo clippy --color=always --quiet
+  (^cargo clippy --color=always --quiet
     --workspace --all-targets --all-features
     -- -D clippy::all -D warnings)
 
@@ -45,18 +45,19 @@ def stox-liquidity-check [] {
   cd $"($worktree_path)/dashboard"
 
   with-env { FORCE_COLOR: "1" } {
-    bun install
-    bun run check
-    bun run test:run
-    bun run lint:fix
+    ^bun install
+    ^bun run check
+    ^bun run test:run
+    ^bun run lint:fix
   }
   log info "dashboard seems good to go too"
 
   log debug "running pre-commit hooks"
+  # First run may auto-fix and exit non-zero; the retry verifies a clean pass.
   try {
-    pre-commit run -a
+    ^pre-commit run -a
   } catch {
-    pre-commit run -a
+    ^pre-commit run -a
   }
 
   log info (
@@ -68,20 +69,20 @@ def stox-liquidity-check [] {
 def dotconfig-check [] {
   log info "dotconfig checks"
 
-  let repo_root = (git rev-parse --show-toplevel)
+  let repo_root = (^git rev-parse --show-toplevel)
   cd $repo_root
 
   log debug "checking nix formatting"
-  nixfmt --check ...(glob "*.nix")
+  ^nixfmt --check ...(glob "*.nix")
 
   log debug "running nix flake check"
-  nix flake check $repo_root
+  ^nix flake check $repo_root
 
   log info "dotconfig passed the vibe check"
 }
 
 def detect-repo []: nothing -> string {
-  let url = (git remote get-url origin)
+  let url = (^git remote get-url origin)
   if ($url | str contains "st0x.liquidity") {
     "liquidity"
   } else if ($url | str contains "dotconfig") {
@@ -91,41 +92,29 @@ def detect-repo []: nothing -> string {
   }
 }
 
-def run-check [] {
-  let repo = (detect-repo)
-
-  if $repo == "unknown" {
-    error make {
-      msg: $"Couldn't determine what checks to run in (pwd)"
-    }
-  }
-
-  match $repo {
+# Detect the current repo and run its checks; errors if it isn't recognized.
+def dispatch-check [] {
+  match (detect-repo) {
     "liquidity" => { stox-liquidity-check }
     "dotconfig" => { dotconfig-check }
+    _ => { error make { msg: $"Couldn't determine what checks to run in (pwd)" } }
   }
 }
 
-export def run-captured [
-]: nothing -> record<passed: bool, output: string> {
-  let repo = (detect-repo)
-
-  if $repo == "unknown" {
-    error make {
-      msg: $"Couldn't determine what checks to run in (pwd)"
-    }
+# Re-raise a Ctrl-C interrupt so it propagates instead of being reported as a
+# check failure; a no-op for any other error.
+def rethrow-if-interrupt [e: record] {
+  if ($e.msg | str contains "interrupt") {
+    error make --unspanned { msg: "interrupted" }
   }
+}
 
+export def run-captured []: nothing -> record<passed: bool, output: string> {
   try {
-    match $repo {
-      "liquidity" => { stox-liquidity-check }
-      "dotconfig" => { dotconfig-check }
-    }
+    dispatch-check
     { passed: true, output: "" }
   } catch {|e|
-    if ($e.msg | str contains "interrupt") {
-      error make --unspanned { msg: "interrupted" }
-    }
+    rethrow-if-interrupt $e
     let error_msg = if ($e | get -o rendered? | is-not-empty) {
       $e.rendered
     } else {
@@ -136,17 +125,14 @@ export def run-captured [
 }
 
 export def skill-issue []: nothing -> string {
-  $skill_issues | get (random int 0..9)
+  $skill_issues | shuffle | first
 }
 
 export def run [] {
   try {
-    run-check
+    dispatch-check
   } catch {|e|
-    if ($e.msg | str contains "interrupt") {
-      error make --unspanned { msg: "interrupted" }
-    }
-    let msg = ($skill_issues | get (random int 0..9))
-    print $"\n(ansi red_bold)($msg)(ansi reset)\n"
+    rethrow-if-interrupt $e
+    print $"\n(ansi red_bold)(skill-issue)(ansi reset)\n"
   }
 }

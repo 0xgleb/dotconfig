@@ -18,20 +18,6 @@ def "test fj ui passes extra args" [] {
   assert equal (fj-route ...[ui -p somerepo]) { tool: "gitui", args: ["-p", "somerepo"] }
 }
 
-# --- clanker: launch claude code ---
-
-def "test fj clanker routes to clanker" [] {
-  assert equal (fj-route clanker) { tool: "clanker", args: [] }
-}
-
-def "test fj clanker passes through extra args" [] {
-  assert equal (fj-route ...[clanker "fix the bug"]) { tool: "clanker", args: ["fix the bug"] }
-}
-
-def "test fj clanker forwards continue flag to claude" [] {
-  assert equal (fj-route ...[clanker --continue]) { tool: "clanker", args: ["--continue"] }
-}
-
 # --- claude-project-dirname: cwd -> session store name ---
 
 def "test claude-project-dirname encodes dots and slashes" [] {
@@ -99,7 +85,9 @@ def "test fj ss routes to gt" [] {
 }
 
 def "test fj create routes to gt" [] {
-  assert equal (fj-route ...[create my-branch -m msg]) { tool: "gt", args: ["create", "my-branch", "-m", "msg"] }
+  assert equal (fj-route ...[create my-branch -m msg]) {
+    tool: "gt", args: ["create", "my-branch", "-m", "msg"]
+  }
 }
 
 def "test fj sync routes to gt" [] {
@@ -119,7 +107,9 @@ def "test fj squash routes to gt" [] {
 }
 
 def "test fj untrack routes to gt" [] {
-  assert equal (fj-route ...[untrack 03-14-nvim_life]) { tool: "gt", args: ["untrack", "03-14-nvim_life"] }
+  assert equal (fj-route ...[untrack 03-14-nvim_life]) {
+    tool: "gt", args: ["untrack", "03-14-nvim_life"]
+  }
 }
 
 def "test fj log routes to git" [] {
@@ -153,46 +143,14 @@ def "test fj show routes to git" [] {
 }
 
 def "test fj blame routes to git" [] {
-  assert equal (fj-route ...[blame src/main.rs]) { tool: "git", args: ["blame", "src/main.rs"] }
+  assert equal (fj-route ...[blame src/main.rs]) {
+    tool: "git", args: ["blame", "src/main.rs"]
+  }
 }
 
-# --- internal commands ---
-
-def "test fj check routes to check" [] {
-  assert equal (fj-route check) { tool: "check", args: [] }
-}
-
-def "test fj unfuck routes to unfuck" [] {
-  assert equal (fj-route unfuck) { tool: "unfuck", args: [] }
-}
-
-def "test fj take routes to take" [] {
-  assert equal (fj-route ...[take ours src/lib.rs]) { tool: "take", args: ["ours", "src/lib.rs"] }
-}
-
-def "test fj issue routes to issue" [] {
-  assert equal (fj-route issue) { tool: "issue", args: [] }
-}
-
-def "test fj issue list routes to issue with list" [] {
-  assert equal (fj-route ...[issue list --label bug]) { tool: "issue", args: ["list", "--label", "bug"] }
-}
-
-def "test fj pr routes to pr" [] {
-  assert equal (fj-route pr) { tool: "pr", args: [] }
-}
-
-def "test fj pr view routes to pr with view" [] {
-  assert equal (fj-route ...[pr view 42]) { tool: "pr", args: ["view", "42"] }
-}
-
-def "test fj md routes to md" [] {
-  assert equal (fj-route ...[md plan --verbose]) { tool: "md", args: ["plan", "--verbose"] }
-}
-
-def "test fj infra routes to infra" [] {
-  assert equal (fj-route ...[infra consequences]) { tool: "infra", args: ["consequences"] }
-}
+# --- internal passthrough commands ---
+# check/clanker/take/issue/pr/md/infra are dedicated subcommands that shadow
+# main, so fj-route never sees them (see routing.nu); only do/help reach here.
 
 def "test fj do routes to do" [] {
   assert equal (fj-route do) { tool: "do", args: [] }
@@ -251,17 +209,21 @@ def "test resolve-stack passes through non-stack git route" [] {
 }
 
 def "test resolve-stack passes through internal route" [] {
-  assert equal (resolve-stack { tool: "issue", args: [] } "but") { tool: "issue", args: [] }
+  assert equal (resolve-stack { tool: "do", args: [] } "but") { tool: "do", args: [] }
 }
 
 # gitbutler verb translation
 
 def "test resolve-stack but translates modify to amend keeping flags" [] {
-  assert equal (resolve-stack { tool: "gt", args: ["modify", "-a"] } "but") { tool: "but", args: ["amend", "-a"] }
+  assert equal (resolve-stack { tool: "gt", args: ["modify", "-a"] } "but") {
+    tool: "but", args: ["amend", "-a"]
+  }
 }
 
 def "test resolve-stack but translates ss to push all" [] {
-  assert equal (resolve-stack { tool: "gt", args: ["ss"] } "but") { tool: "but", args: ["push", "all"] }
+  assert equal (resolve-stack { tool: "gt", args: ["ss"] } "but") {
+    tool: "but", args: ["push", "all"]
+  }
 }
 
 def "test resolve-stack but translates sync to pull" [] {
@@ -269,33 +231,47 @@ def "test resolve-stack but translates sync to pull" [] {
 }
 
 def "test resolve-stack but translates co to apply with branch arg" [] {
-  assert equal (resolve-stack { tool: "gt", args: ["co", "feature"] } "but") { tool: "but", args: ["apply", "feature"] }
+  assert equal (resolve-stack { tool: "gt", args: ["co", "feature"] } "but") {
+    tool: "but", args: ["apply", "feature"]
+  }
 }
 
 def "test resolve-stack but translates create to branch new" [] {
-  assert equal (resolve-stack { tool: "gt", args: ["create", "my-branch"] } "but") { tool: "but", args: ["branch", "new", "my-branch"] }
+  assert equal (resolve-stack { tool: "gt", args: ["create", "my-branch"] } "but") {
+    tool: "but", args: ["branch", "new", "my-branch"]
+  }
 }
 
 def "test resolve-stack but translates untrack to unapply" [] {
-  assert equal (resolve-stack { tool: "gt", args: ["untrack", "br"] } "but") { tool: "but", args: ["unapply", "br"] }
+  assert equal (resolve-stack { tool: "gt", args: ["untrack", "br"] } "but") {
+    tool: "but", args: ["unapply", "br"]
+  }
 }
 
 def "test resolve-stack but reports cursor-move verb as unsupported" [] {
-  assert equal (resolve-stack { tool: "gt", args: ["up"] } "but") { tool: "unsupported", args: ["up", "but"] }
+  assert equal (resolve-stack { tool: "gt", args: ["up"] } "but") {
+    tool: "unsupported", args: ["up", "but"]
+  }
 }
 
 # plain-git fallback translation
 
 def "test resolve-stack git translates modify to commit amend" [] {
-  assert equal (resolve-stack { tool: "gt", args: ["modify"] } "git") { tool: "git", args: ["commit", "--amend"] }
+  assert equal (resolve-stack { tool: "gt", args: ["modify"] } "git") {
+    tool: "git", args: ["commit", "--amend"]
+  }
 }
 
 def "test resolve-stack git translates create to checkout dash b" [] {
-  assert equal (resolve-stack { tool: "gt", args: ["create", "br"] } "git") { tool: "git", args: ["checkout", "-b", "br"] }
+  assert equal (resolve-stack { tool: "gt", args: ["create", "br"] } "git") {
+    tool: "git", args: ["checkout", "-b", "br"]
+  }
 }
 
 def "test resolve-stack git reports squash as unsupported" [] {
-  assert equal (resolve-stack { tool: "gt", args: ["squash"] } "git") { tool: "unsupported", args: ["squash", "git"] }
+  assert equal (resolve-stack { tool: "gt", args: ["squash"] } "git") {
+    tool: "unsupported", args: ["squash", "git"]
+  }
 }
 
 # --- test runner ---

@@ -1,8 +1,8 @@
 # Standalone CLI entrypoint for mdup (used by nix build).
-# Expects sync-lib.nu and lib.nu to be in the same directory.
+# Expects md-sync-lib.nu and md-lib.nu to be in the same directory.
 
-source sync-lib.nu
-source lib.nu
+source md-sync-lib.nu
+source md-lib.nu
 
 def "main plan" [
   --org: string

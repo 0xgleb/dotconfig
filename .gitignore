@@ -1,11 +1,13 @@
 credentials.db
 AppSupport
 .DS_Store
+*.bak
+*.backup
+*.hm-backup
 
 direnv/
 .claude/
 .mdup-plan.nuon
-.nushell/
 .nushell/
 .zsh/
 

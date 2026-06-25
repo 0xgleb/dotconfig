@@ -111,7 +111,7 @@ in
       "/usr/local/bin"
     ];
     file = {
-      "${nuConfigDir}/scripts".source = ./nushell/scripts;
+      "${nuConfigDir}/fj".source = ./nushell/fj;
       ".cursor/skills".source = config.lib.file.mkOutOfStoreSymlink "${aiDir}/skills";
       ".cursor/hooks".source = config.lib.file.mkOutOfStoreSymlink "${aiDir}/cursor/hooks";
       ".cursor/hooks.json".source = config.lib.file.mkOutOfStoreSymlink "${aiDir}/cursor/hooks.json";

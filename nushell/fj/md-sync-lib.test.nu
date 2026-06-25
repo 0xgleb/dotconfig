@@ -1,6 +1,6 @@
 use std/assert
 
-source sync-lib.nu
+source md-sync-lib.nu
 
 # --- undot ---
 
@@ -24,11 +24,7 @@ def "test undot preserves dots mid-segment" [] {
   assert equal (undot "st0x.liquidity/README.md") "st0x.liquidity/README.md"
 }
 
-# --- note-file mapping (.local stripping + undot) ---
-
-def note-file [file: string] {
-  $file | str replace '.local/' '' | undot $in
-}
+# --- note-file mapping (.local stripping + undot), exported from md-sync-lib ---
 
 def "test note-file strips .local and undots" [] {
   assert equal (note-file ".local/prompts/01-setup.md") "prompts/01-setup.md"
@@ -48,7 +44,10 @@ def test-targets [] {
   [
     { name: "liquidity", path: "/org/st0x.liquidity" }
     { name: "issuance", path: "/org/st0x.issuance" }
-    { name: "liquidity/worktrees/untouchable", path: "/org/st0x.liquidity/.worktrees/feat/untouchable" }
+    {
+      name: "liquidity/worktrees/untouchable"
+      path: "/org/st0x.liquidity/.worktrees/feat/untouchable"
+    }
   ]
 }
 
@@ -58,7 +57,10 @@ def "test repo-for-path matches repo file" [] {
 }
 
 def "test repo-for-path matches worktree over main repo" [] {
-  let result = (repo-for-path "/org/st0x.liquidity/.worktrees/feat/untouchable/docs/cqrs.md" (test-targets) "/org/notes")
+  let result = (repo-for-path
+    "/org/st0x.liquidity/.worktrees/feat/untouchable/docs/cqrs.md"
+    (test-targets)
+    "/org/notes")
   assert equal $result "liquidity/worktrees/untouchable"
 }
 
@@ -68,7 +70,10 @@ def "test repo-for-path matches notes path to repo" [] {
 }
 
 def "test repo-for-path matches notes path to worktree" [] {
-  let result = (repo-for-path "/org/notes/liquidity/worktrees/untouchable/docs/cqrs.md" (test-targets) "/org/notes")
+  let result = (repo-for-path
+    "/org/notes/liquidity/worktrees/untouchable/docs/cqrs.md"
+    (test-targets)
+    "/org/notes")
   assert equal $result "liquidity/worktrees/untouchable"
 }
 
@@ -281,7 +286,7 @@ def main [] {
     | get name)
 
   let test_commands = ($tests
-    | each {|test_name| $"print '  ok ($test_name)'; ($test_name)" }
+    | each {|test_name| $"($test_name); print '  ok ($test_name)'" }
     | str join "; ")
 
   nu --commands $"source ($env.CURRENT_FILE); ($test_commands)"

@@ -29,7 +29,7 @@ def main [] {
     | get name)
 
   let test_commands = ($tests
-    | each {|test_name| $"print '  ok ($test_name)'; ($test_name)" }
+    | each {|test_name| $"($test_name); print '  ok ($test_name)'" }
     | str join "; ")
 
   nu --commands $"source ($env.CURRENT_FILE); ($test_commands)"

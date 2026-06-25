@@ -5,11 +5,11 @@ def fj-subcommands [] {
     { value: "do", description: "Check -> commit on pass, claude on fail" }
     { value: "clanker", description: "Launch claude (resume; --new = fresh)" }
     { value: "check", description: "Run repo-specific checks" }
-    { value: "unfuck", description: "Fix common repo issues" }
     { value: "issue", description: "gh issue" }
     { value: "pr", description: "gh pr" }
     { value: "md", description: "Markdown vault sync" }
     { value: "infra", description: "Infrastructure (terraform)" }
+    { value: "cheatsheet", description: "Shell quick reference" }
     { value: "ui", description: "gitui" }
     { value: "mut", description: "gt modify" }
     { value: "ss", description: "gt submit stack" }

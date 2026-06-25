@@ -61,37 +61,6 @@ def "test strip-comments whitespace only" [] {
   assert equal (strip-comments "  \n  ") ""
 }
 
-def "test tee captures all output and propagates error" [] {
-  let log_file = (mktemp --suffix .log)
-
-  let errored = try {
-    (^nu -c "print 'step 1 ok'"
-      o+e>| ^tee -a $log_file)
-    (^nu -c (
-      "print -e 'error: mismatched types';"
-      + " print -e '  expected Option<Arc<Foo>>';"
-      + " exit 1"
-    ) o+e>| ^tee -a $log_file)
-    false
-  } catch {
-    true
-  }
-
-  let captured = if ($log_file | path exists) {
-    open --raw $log_file | str trim
-  } else {
-    ""
-  }
-  assert $errored "should have propagated the error"
-  assert ($captured | str contains "step 1 ok") (
-    $"should capture stdout, got: ($captured)"
-  )
-  assert ($captured | str contains "mismatched types") (
-    $"should capture stderr, got: ($captured)"
-  )
-  rm -f $log_file
-}
-
 def main [] {
   print "Running fj workflow tests..."
   let tests = (scope commands

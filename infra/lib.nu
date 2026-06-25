@@ -41,6 +41,17 @@ def with-infra [identity: any, action: closure] {
   if $failed { exit 1 }
 }
 
+# Run a terraform subcommand against the decrypted tfvars. Resolves the SSH
+# identity, then wraps the call in the decrypt/re-encrypt lifecycle. Fixed flags
+# (e.g. -auto-approve for apply) are passed as leading `args`, ahead of $rest.
+def tf-run [identity: any, verb: string, ...args: string] {
+  let id = (resolve-identity $identity)
+
+  with-infra $id {
+    ^terraform $verb -var-file=terraform.tfvars ...$args
+  }
+}
+
 # The age recipients allowed to read infra secrets, newline-joined for rage.
 def infra-recipients [] {
   let keys_file = $"($env.HOME)/.config/keys.nix"

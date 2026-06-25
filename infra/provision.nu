@@ -24,7 +24,8 @@ def main [--identity (-i): string, droplet_size?: string] {
     if $droplet_size == null {
       ^terraform apply ...$replace -var-file=terraform.tfvars -auto-approve
     } else {
-      ^terraform apply ...$replace -var-file=terraform.tfvars -var $"droplet_size=($droplet_size)" -auto-approve
+      (^terraform apply ...$replace -var-file=terraform.tfvars
+        -var $"droplet_size=($droplet_size)" -auto-approve)
     }
   }
 
@@ -71,7 +72,19 @@ def main [--identity (-i): string, droplet_size?: string] {
   print "Access is tailnet-only (public SSH is closed). Reach it with:  ssh nixxxos"
   print "Cleared the stale host-key pin for `nixxxos`; if you also reach it by"
   print "tailnet IP, run `ssh-keygen -R <ip>` (find it with `tailscale status`)."
-  print "OpenClaw model auth (cursor-agent login + acpx plugin) is a one-time on-box step — see the README."
+  print ("OpenClaw model auth (cursor-agent login + acpx plugin) is a one-time"
+    + " on-box step — see the README.")
+}
+
+# Shared SSH options for probing the box: pin the identity and bypass
+# known_hosts (the freshly installed/regenerated host key would otherwise fail).
+def ssh-probe-opts [identity: string] {
+  [
+    "-i" $identity
+    "-o" "StrictHostKeyChecking=no"
+    "-o" "UserKnownHostsFile=/dev/null"
+    "-o" "ConnectTimeout=5"
+  ]
 }
 
 # Confirm the box actually joined the tailnet and is reachable over it before
@@ -86,12 +99,7 @@ def wait-for-tailnet [identity: string] {
 
   # Reach the box by its MagicDNS name over the tailnet, bypassing known_hosts
   # (the freshly installed host key is new and would otherwise fail the check).
-  let opts = [
-    "-i" $identity
-    "-o" "StrictHostKeyChecking=no"
-    "-o" "UserKnownHostsFile=/dev/null"
-    "-o" "ConnectTimeout=5"
-  ]
+  let opts = (ssh-probe-opts $identity)
 
   # ~5 min cap (60 * 5s) so the probe doesn't hang forever.
   mut attempts = 0
@@ -126,18 +134,12 @@ def wait-for-ssh [identity: string, ip: string] {
   # The pre-install host key is throwaway (nixos-anywhere regenerates it), so
   # bypass known_hosts — otherwise a re-provision against a reused IP whose key
   # changed would fail the host-key check on every probe and loop forever.
-  let opts = [
-    "-i" $identity
-    "-o" "StrictHostKeyChecking=no"
-    "-o" "UserKnownHostsFile=/dev/null"
-  ]
+  let opts = (ssh-probe-opts $identity)
 
   # ~5 min cap (150 * 2s) so a box that never comes up fails instead of hanging.
   mut attempts = 0
   loop {
-    let probe = (
-      do { ^ssh ...$opts -o ConnectTimeout=5 $"root@($ip)" true } | complete
-    )
+    let probe = (do { ^ssh ...$opts $"root@($ip)" true } | complete)
 
     if $probe.exit_code == 0 { break }
 
@@ -164,7 +166,8 @@ def remove-stale-device [] {
     return
   }
 
-  let tailnet_raw = (do { ^terraform output -raw tailscale_tailnet } | complete | get stdout | str trim)
+  let tailnet_raw = (do { ^terraform output -raw tailscale_tailnet }
+    | complete | get stdout | str trim)
   let tailnet = (if ($tailnet_raw | is-empty) { "-" } else { $tailnet_raw })
   let headers = { Authorization: $"Bearer ($key)" }
 
@@ -182,7 +185,8 @@ def remove-stale-device [] {
     print $"Removing stale tailnet device ($d.name)..."
     # DELETE returns 200 with an empty body, which `http delete` would choke on
     # while parsing — go through `complete` and judge success by exit code.
-    let res = (do { http delete --headers $headers $"https://api.tailscale.com/api/v2/device/($d.id)" } | complete)
+    let url = $"https://api.tailscale.com/api/v2/device/($d.id)"
+    let res = (do { http delete --headers $headers $url } | complete)
     if $res.exit_code != 0 {
       print $"  could not delete device ($d.id); continuing."
     }
@@ -202,7 +206,9 @@ def stage-secrets [] {
 
   let tailscale_key = (^terraform output -raw tailscale_node_authkey | str trim)
   if ($tailscale_key | is-empty) {
-    error make { msg: "terraform output tailscale_node_authkey is empty — did terraform apply succeed?" }
+    error make {
+      msg: "terraform output tailscale_node_authkey is empty — did terraform apply succeed?"
+    }
   }
   let authkey_path = ($secrets | path join "tailscale.authkey")
   $tailscale_key | save -f $authkey_path

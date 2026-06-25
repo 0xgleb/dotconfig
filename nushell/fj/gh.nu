@@ -1,5 +1,9 @@
 # Pretty wrappers around gh issue and gh pr
 
+const issue_view_fields = "number,title,body,author,state,labels,createdAt,assignees"
+const pr_view_fields = ("number,title,body,author,state,isDraft,labels,createdAt"
+  + ",headRefName,baseRefName,additions,deletions,changedFiles,latestReviews")
+
 def format-issue-view [data: record] {
   let labels = if ($data.labels | is-empty) { "" } else {
     $"\nlabels: ($data.labels | get name | str join ', ')"
@@ -8,7 +12,7 @@ def format-issue-view [data: record] {
 
   [
     "---"
-    $"author: ($data.author.login)"
+    $"author: ($data.author?.login? | default 'unknown')"
     $"issue: #($data.number)"
     $"state: ($state)"
     $"created: ($data.createdAt)($labels)"
@@ -26,13 +30,15 @@ def format-pr-view [data: record] {
   }
   let state = if $data.isDraft { "draft" } else { $data.state | str downcase }
   let reviews = if ($data.latestReviews | is-empty) { "" } else {
-    let reviewers = ($data.latestReviews | each {|r| $"($r.author.login) \(($r.state | str downcase))" } | str join ", ")
+    let reviewers = ($data.latestReviews
+      | each {|r| $"($r.author?.login? | default '?') \(($r.state | str downcase))" }
+      | str join ", ")
     $"\nreviews: ($reviewers)"
   }
 
   [
     "---"
-    $"author: ($data.author.login)"
+    $"author: ($data.author?.login? | default 'unknown')"
     $"pr: #($data.number)"
     $"state: ($state)"
     $"branch: ($data.headRefName) -> ($data.baseRefName)"
@@ -55,7 +61,7 @@ export def issue-view [id: string, --web (-w), --comments (-c)] {
     ^gh issue view $id --comments
     return
   }
-  let data = (^gh issue view $id --json number,title,body,author,state,labels,createdAt,assignees | from json)
+  let data = (^gh issue view $id --json $issue_view_fields | from json)
   print (format-issue-view $data)
 }
 
@@ -64,19 +70,18 @@ export def issue-list [...args: string] {
 }
 
 export def pr-view [id?: string, --web (-w), --comments (-c)] {
+  # no id -> gh defaults to the current branch's PR
+  let id_arg = if $id == null { [] } else { [$id] }
+
   if $web {
-    if $id != null { ^gh pr view $id --web } else { ^gh pr view --web }
+    ^gh pr view ...$id_arg --web
     return
   }
   if $comments {
-    if $id != null { ^gh pr view $id --comments } else { ^gh pr view --comments }
+    ^gh pr view ...$id_arg --comments
     return
   }
-  let data = if $id != null {
-    ^gh pr view $id --json number,title,body,author,state,isDraft,labels,createdAt,headRefName,baseRefName,additions,deletions,changedFiles,latestReviews | from json
-  } else {
-    ^gh pr view --json number,title,body,author,state,isDraft,labels,createdAt,headRefName,baseRefName,additions,deletions,changedFiles,latestReviews | from json
-  }
+  let data = (^gh pr view ...$id_arg --json $pr_view_fields | from json)
   print (format-pr-view $data)
 }
 

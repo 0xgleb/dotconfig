@@ -1,5 +1,4 @@
 use check.nu
-use unfuck.nu
 
 export def strip-comments [
   raw: string
@@ -23,21 +22,20 @@ def editor-prompt [initial_content: string]: nothing -> string {
 
 export def run [] {
   try {
-    unfuck run
     let result = (check run-captured)
 
     if $result.passed {
       print $"\n(ansi green_bold)checks passed(ansi reset)\n"
 
-      git add -A
+      ^git add -A
       let has_staged = (
-        git diff --cached --quiet | complete
-      ).exit_code != 0
+        do { ^git diff --cached --quiet } | complete | get exit_code
+      ) != 0
       if not $has_staged {
         print "nothing to commit"
         return
       }
-      git commit
+      ^git commit
     } else {
       print $result.output
       let roast = (check skill-issue)

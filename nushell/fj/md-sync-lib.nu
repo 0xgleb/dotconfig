@@ -75,7 +75,7 @@ export def build-all-targets [config: record] {
 # Find all markdown files in a repo: committed files + gitignored .local/ files.
 # Returns relative paths like "docs/arch.md" or ".local/prompts/01.md"
 export def md-files [repo_path: string] {
-  let git_files = (do { git -C $repo_path ls-tree -r --name-only HEAD }
+  let git_files = (do { ^git -C $repo_path ls-tree -r --name-only HEAD }
     | complete
     | get stdout
     | lines
@@ -101,6 +101,12 @@ export def undot [path: string] {
     | split row '/'
     | each {|segment| $segment | str trim --left --char '.' }
     | str join '/'
+}
+
+# Map a repo-relative md path to its notes filename: drop a leading `.local/`,
+# then undot each segment. ".local/prompts/01.md" -> "prompts/01.md".
+export def note-file [file: string] {
+  $file | str replace '.local/' '' | undot $in
 }
 
 # Count additions/deletions between two files using unix diff.
@@ -131,19 +137,21 @@ export def guard-empty-overwrite [newer: string, older: string] {
   let newer_size = (ls -l $newer | first | get size | into int)
   let older_size = (ls -l $older | first | get size | into int)
   if $newer_size == 0 and $older_size > 0 {
-    error make { msg: $"refusing to overwrite non-empty file with empty file: ($newer) -> ($older)" }
+    error make {
+      msg: $"refusing to overwrite non-empty file with empty file: ($newer) -> ($older)"
+    }
   }
 }
 
 # Bidirectional sync of a single file. Newer file wins.
 export def sync-file [source: string, destination: string, repo_name: string, note_file: string] {
   let timestamp = (date now | format date '%H:%M:%S')
+  let label = $"($repo_name)/($note_file)"
 
   if not ($destination | path exists) {
-    let parent_dir = ($destination | path dirname)
-    mkdir $parent_dir
+    mkdir ($destination | path dirname)
 
-    print $"[($timestamp)] [($repo_name) --new--> notes] ($repo_name)/($note_file)"
+    print $"[($timestamp)] [($repo_name) --new--> notes] ($label)"
     atomic-cp $source $destination
 
   } else if (open --raw $source) != (open --raw $destination) {
@@ -153,12 +161,14 @@ export def sync-file [source: string, destination: string, repo_name: string, no
     if $source_modified > $destination_modified {
       guard-empty-overwrite $source $destination
       let stats = (diff-stats $destination $source)
-      print $"[($timestamp)] [($repo_name) --+($stats.adds),-($stats.dels)--> notes] ($repo_name)/($note_file)"
+      let arrow = $"($repo_name) --+($stats.adds),-($stats.dels)--> notes"
+      print $"[($timestamp)] [($arrow)] ($label)"
       atomic-cp $source $destination
     } else {
       guard-empty-overwrite $destination $source
       let stats = (diff-stats $source $destination)
-      print $"[($timestamp)] [notes --+($stats.adds),-($stats.dels)--> ($repo_name)] ($repo_name)/($note_file)"
+      let arrow = $"notes --+($stats.adds),-($stats.dels)--> ($repo_name)"
+      print $"[($timestamp)] [($arrow)] ($label)"
       atomic-cp $destination $source
     }
   }
@@ -178,7 +188,7 @@ export def sync-repo [repo_path: string, repo_name: string, notes_root: string] 
   log info $"($repo_name): ($files | length) md files"
 
   let errors = ($files | each {|file|
-    let note_file = ($file | str replace '.local/' '' | undot $in)
+    let note_file = (note-file $file)
     let source = $"($repo_path)/($file)"
     let destination = $"($repo_notes)/($note_file)"
 
@@ -227,7 +237,9 @@ export def repo-for-path [
     let relative = ($path | str replace $"($notes_root)/" '')
 
     let matched = ($targets
-      | where {|target| ($relative | str starts-with $"($target.name)/") or ($relative == $target.name) }
+      | where {|target|
+        ($relative | str starts-with $"($target.name)/") or ($relative == $target.name)
+      }
       | sort-by {|target| $target.name | str length } --reverse
       | first)
 

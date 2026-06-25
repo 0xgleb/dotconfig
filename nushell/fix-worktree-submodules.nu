@@ -16,7 +16,7 @@ export def main [
 ] {
   let target = if $worktree_path != null { $worktree_path | path expand } else { $env.PWD }
 
-  let git_common = git -C $target rev-parse --git-common-dir | str trim
+  let git_common = ^git -C $target rev-parse --git-common-dir | str trim
   let main_root = if ($git_common | path basename) == ".git" {
     $git_common | path dirname
   } else {
@@ -31,11 +31,15 @@ export def main [
 
   let is_worktree = ($target | path expand) != ($main_root | path expand)
   if not $is_worktree {
-    print "Current directory is the main repo root, not a worktree. Pass a worktree path as argument."
+    print ("Current directory is the main repo root, not a worktree."
+      + " Pass a worktree path as argument.")
     return
   }
 
-  let submodules = ls $lib_dir | where type == dir or type == symlink | get name | each { path basename }
+  let submodules = (ls $lib_dir
+    | where type == dir or type == symlink
+    | get name
+    | each { path basename })
   if ($submodules | is-empty) {
     print "No submodules found in lib/"
     return
@@ -54,9 +58,9 @@ export def main [
     print $"  symlinked ($sub) -> ($link_target)"
   }
 
-  let git_tracked = git -C $target ls-tree --name-only HEAD lib/ | lines | where { $in != "" }
+  let git_tracked = ^git -C $target ls-tree --name-only HEAD lib/ | lines | where { $in != "" }
   if not ($git_tracked | is-empty) {
-    $git_tracked | each { git -C $target update-index --assume-unchanged $in }
+    $git_tracked | each { ^git -C $target update-index --assume-unchanged $in }
     print $"\n  Marked ($git_tracked | length) entries as assume-unchanged"
   }
 

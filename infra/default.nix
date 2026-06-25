@@ -38,7 +38,7 @@ let
 
   # Shared nushell helpers (with-infra, resolve-identity, infra-recipients).
   # Concatenated ahead of each command so the helpers are in scope at runtime.
-  infraLib = builtins.readFile ./scripts/lib.nu;
+  infraLib = builtins.readFile ./lib.nu;
 
   withLib =
     file:
@@ -51,25 +51,25 @@ in
   tfPlan = writeNushellApplication {
     name = "tf-plan";
     runtimeInputs = infraInputs;
-    text = withLib ./scripts/tf-plan.nu;
+    text = withLib ./tf-plan.nu;
   };
 
   tfApply = writeNushellApplication {
     name = "tf-apply";
     runtimeInputs = infraInputs;
-    text = withLib ./scripts/tf-apply.nu;
+    text = withLib ./tf-apply.nu;
   };
 
   tfDestroy = writeNushellApplication {
     name = "tf-destroy";
     runtimeInputs = infraInputs;
-    text = withLib ./scripts/tf-destroy.nu;
+    text = withLib ./tf-destroy.nu;
   };
 
   tfVars = writeNushellApplication {
     name = "tf-vars";
     runtimeInputs = infraInputs;
-    text = withLib ./scripts/tf-vars.nu;
+    text = withLib ./tf-vars.nu;
   };
 
   provision = writeNushellApplication {
@@ -79,6 +79,6 @@ in
       pkgs.coreutils
       nixos-anywhere
     ];
-    text = withLib ./scripts/provision.nu;
+    text = withLib ./provision.nu;
   };
 }
