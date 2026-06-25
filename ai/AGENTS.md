@@ -70,8 +70,8 @@ Without an explicit in-session instruction to post that exact content, **never**
   request-changes on a review.** Re-requesting pings a real human and resets
   approval state under the user's name — a review-state action, never neutral.
   If a PR needs (re-)review, tell the user; NEVER touch review state yourself.
-  (A stack submit can re-request reviewers as a side effect, so scope submits
-  narrowly — see "Version Control".)
+  This is about explicit review-API calls (`gh` reviewer/review endpoints), NOT
+  about pushing code — a `gt ss`/stack submit does not touch review state.
 
 If you disagree with PR feedback, an issue/chat comment, or any other input,
 **surface it to the user and let them decide whether and how to respond.** Hold
@@ -681,12 +681,14 @@ https://graphite.com/docs/command-reference
 - Use `gt modify` to amend, NOT `git commit --amend`
 - Use `gt sync` to pull, NOT `git pull`
 - Read-only git commands (`git status`, `git diff`, `git log`) are fine
-- **A stack submit can silently re-request reviewers** on PRs already in the
-  stack — including already-approved lower PRs, resetting their approval under
-  the user's name (a review-state action — see "Authorship & Attribution").
-  NEVER blanket-resubmit a stack whose lower PRs are already approved. Scope the
-  submit to the branches you actually changed, and run `gt submit --dry-run`
-  first to confirm which PRs will be touched (it labels each No-op vs Update).
+- **A stack submit (`gt ss`) is review-state-neutral.** It force-pushes commits
+  like any push and does NOT re-request reviewers or dismiss approvals on its own
+  — approval dismissal is a GitHub branch-protection setting ("dismiss stale
+  approvals on push"), tool-agnostic, and only affects PRs targeting a protected
+  branch. The reason to scope a submit is noise, not review state: `gt ss`
+  submits the WHOLE stack, so when you changed one branch, push just that branch
+  (or run `gt submit --dry-run` first to see No-op vs Update) instead of
+  re-pushing branches you didn't touch.
 - When the user needs to run a graphite command, **stop and tell them the
   intent** (e.g., "we need to submit the stack"). If they don't know the
   command, then provide it.

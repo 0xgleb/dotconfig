@@ -11,10 +11,18 @@ const command_help = {
     - ultracode      xhigh effort + standing dynamic-workflow orchestration
     - auto mode      --permission-mode auto
     - flicker-free   fullscreen alt-screen renderer (tui: fullscreen)
+    - resume         picks up the most recent session here (--continue)
 
-  Any extra args are passed through to claude:
-    fj clanker --continue   resume the most recent session here (-c)
-    fj clanker \"refactor the routing module\"   start with an initial prompt"
+  Resumes by default, but only when a session for this directory
+  exists; in a fresh, renamed, or moved directory it starts fresh
+  instead of erroring. Override the resume behaviour:
+    fj clanker                         resume the most recent session here
+    fj clanker \"refactor the router\"   resume, then send an initial prompt
+    fj clanker --new                   force a fresh session instead
+    fj clanker --new \"scaffold X\"       fresh session with an initial prompt
+    fj clanker -r <id>                 resume a specific session (suppresses
+                                       the implicit --continue)
+  Any other args pass straight through to claude."
 
   check: "fj check — run repo-specific checks
 
@@ -117,7 +125,7 @@ def overview [] {
     "COMMANDS"
     "  (no args)       git status (+ gt ls in graphite repos)"
     "  do              check -> commit on pass, claude on fail"
-    "  clanker         launch claude (ultracode, auto mode, flicker-free)"
+    "  clanker         launch claude, resume by default (--new for fresh)"
     "  check           run repo-specific checks (auto-unfucks first)"
     "  unfuck          fix common repo issues (submodules, symlinks)"
     "  issue list      list issues"

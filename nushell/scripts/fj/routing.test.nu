@@ -32,6 +32,56 @@ def "test fj clanker forwards continue flag to claude" [] {
   assert equal (fj-route ...[clanker --continue]) { tool: "clanker", args: ["--continue"] }
 }
 
+# --- claude-project-dirname: cwd -> session store name ---
+
+def "test claude-project-dirname encodes dots and slashes" [] {
+  let encoded = (claude-project-dirname "/Users/0xgleb/.config")
+  assert equal $encoded "-Users-0xgleb--config"
+}
+
+def "test claude-project-dirname encodes underscores" [] {
+  let encoded = (claude-project-dirname "/a/b_c/d.e")
+  assert equal $encoded "-a-b-c-d-e"
+}
+
+# --- clanker-args: implicit --continue + overrides ---
+
+def "test clanker-args resumes when a session exists" [] {
+  let argv = (clanker-args true)
+  assert (("--continue" in $argv)) "should inject --continue when a session exists"
+  assert (("auto" in $argv)) "should pass --permission-mode auto"
+}
+
+def "test clanker-args starts fresh when no session exists" [] {
+  let argv = (clanker-args false "fix the bug")
+  assert (not ("--continue" in $argv)) "no session means no implicit --continue"
+  assert (("fix the bug" in $argv)) "a bare prompt still passes through"
+}
+
+def "test clanker-args new starts fresh" [] {
+  let argv = (clanker-args true --new "fix the bug")
+  assert (not ("--continue" in $argv)) "--new suppresses the implicit --continue"
+  assert (not ("--new" in $argv)) "--new is consumed, not forwarded to claude"
+  assert (("fix the bug" in $argv)) "other args still pass through"
+}
+
+def "test clanker-args does not double the continue flag" [] {
+  let count = (clanker-args true --continue | where { $in == "--continue" } | length)
+  assert equal $count 1
+}
+
+def "test clanker-args honours explicit resume flags" [] {
+  let argv = (clanker-args true -r abc123)
+  assert (not ("--continue" in $argv)) "explicit -r suppresses the implicit --continue"
+  assert (("abc123" in $argv)) "resume target passes through"
+}
+
+def "test clanker-args forwards a bare prompt with resume" [] {
+  let argv = (clanker-args true "refactor the routing module")
+  assert (("--continue" in $argv)) "a bare prompt still resumes by default"
+  assert (("refactor the routing module" in $argv))
+}
+
 # --- mut: gt modify ---
 
 def "test fj mut routes to gt modify" [] {

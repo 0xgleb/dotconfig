@@ -55,12 +55,13 @@ continue. Proceed only on explicit confirmation.
 repo_root=$(git rev-parse --show-toplevel 2>/dev/null || pwd)
 ts=$(date +%Y-%m-%d_%H-%M-%S)
 safe_branch=$(echo "<headRefName>" | tr '/' '_')
-out_dir="$repo_root/claude-local-ctx/reviews/pr-${pr_number}-${ts}-${safe_branch}"
+out_dir="$repo_root/.tmp/reviews/pr-${pr_number}-${ts}-${safe_branch}"
 mkdir -p "$out_dir"
 ```
 
-If `claude-local-ctx/` is not in `.gitignore`, ask the user for permission to
-add it. Do not silently modify `.gitignore`.
+Review artifacts always go under `.tmp/` (review output is local-only and
+ephemeral). Most repos already gitignore `.tmp/`; if this one does not, ask the
+user for permission before adding it. Do not silently modify `.gitignore`.
 
 ## 3. Fetch the diff
 

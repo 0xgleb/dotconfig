@@ -1,4 +1,10 @@
-use routing.nu [fj-route vcs-backend resolve-stack]
+use routing.nu [
+  fj-route
+  vcs-backend
+  resolve-stack
+  clanker-args
+  claude-project-dirname
+]
 use check.nu
 use unfuck.nu
 use workflow.nu
@@ -128,16 +134,18 @@ export def unfuck [] {
 }
 
 # launch claude code in ultracode (xhigh effort + standing workflow
-# orchestration), auto permission mode, and flicker-free rendering.
-# extra args pass straight through to claude — e.g. `--continue` (`-c`)
-# resumes the most recent session in this directory, or an initial prompt.
+# orchestration), auto permission mode, and flicker-free rendering. resumes the
+# most recent session here by default, but only when one actually exists;
+# otherwise (fresh, renamed, or moved dir) it starts fresh instead of erroring.
+# pass `--new` to force a fresh start. see `clanker-args` for the full rules.
 export def --wrapped clanker [...args: string] {
-  (
-    ^claude
-      --settings '{"ultracode": true, "tui": "fullscreen"}'
-      --permission-mode auto
-      ...$args
+  let dirname = (claude-project-dirname $env.PWD)
+  let project_dir = $"($env.HOME)/.claude/projects/($dirname)"
+  let has_session = (
+    ($project_dir | path exists)
+    and ((glob $"($project_dir)/*.jsonl") | is-not-empty)
   )
+  ^claude ...(clanker-args $has_session ...$args)
 }
 
 # list github issues

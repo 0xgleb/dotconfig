@@ -3,7 +3,7 @@
 def fj-subcommands [] {
   [
     { value: "do", description: "Check -> commit on pass, claude on fail" }
-    { value: "clanker", description: "Launch claude code (ultracode, auto, flicker-free)" }
+    { value: "clanker", description: "Launch claude (resume; --new = fresh)" }
     { value: "check", description: "Run repo-specific checks" }
     { value: "unfuck", description: "Fix common repo issues" }
     { value: "issue", description: "gh issue" }

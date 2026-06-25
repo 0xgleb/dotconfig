@@ -55,6 +55,10 @@
       "Bash(git checkout master:*)",
       "Bash(git stash:*)",
       "Bash(sed:*)",
+      "Bash(ruby:*)",
+      "Bash(perl:*)",
+      "Bash(python:*)",
+      "Bash(python3:*)",
       "Bash(sudo:*)"
     ],
     "defaultMode": "acceptEdits"
@@ -67,6 +71,7 @@
   },
   "enabledPlugins": {},
   "effortLevel": "medium",
+  "tui": "fullscreen",
   "skipWorkflowUsageWarning": true,
   "theme": "auto",
   "editorMode": "vim",
