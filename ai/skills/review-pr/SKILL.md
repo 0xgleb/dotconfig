@@ -1,8 +1,8 @@
 ---
 name: review-pr
 user-invocable: true
-allowed-tools: Bash(gh:*), Bash(git:*), Bash(cursor-agent:*), Bash(gemini:*), Bash(command:*), Bash(mkdir:*), Bash(cat:*), Bash(mktemp:*), Bash(rm:*), Bash(wc:*), Bash(date:*), Bash(basename:*), Bash(test:*), Bash(grep:*), Bash(find:*), Read, Write, Agent, Workflow, Skill
-description: Cross-review a pull request by number or URL without checking it out. Runs a multi-model Workflow panel (2x Opus, Sonnet, a Composer cross-lab augment lane, 2 frontier external lanes that fall back GPT-5.5 -> Gemini per Cursor usage limits, + inspectors) with per-finding verification, then starts a conversation so you can decide which findings (if any) to comment on the PR.
+allowed-tools: Bash(gh:*), Bash(git:*), Bash(cursor-agent:*), Bash(agy:*), Bash(command:*), Bash(mkdir:*), Bash(cat:*), Bash(mktemp:*), Bash(rm:*), Bash(wc:*), Bash(date:*), Bash(basename:*), Bash(test:*), Bash(grep:*), Bash(find:*), Read, Write, Agent, Workflow, Skill
+description: Cross-review a pull request by number or URL without checking it out. Runs a multi-model Workflow panel (2x Opus, Sonnet, a Composer cross-lab augment lane, 2 frontier external lanes that fall back GPT-5.5 -> Antigravity (agy) per Cursor usage limits, + inspectors) with per-finding verification, then starts a conversation so you can decide which findings (if any) to comment on the PR.
 argument-hint: <pr-number | pr-url>
 ---
 
@@ -310,5 +310,5 @@ you print in the conversation (Step 2) rather than the posted `body` — the dra
 9. The review runs as a single `Workflow` invocation (review-core) — never
    hand-roll the fan-out with individual Agent calls. External CLIs run read-only
    (review-core step 4 / hard rules): cursor-agent always `--mode plan`, never
-   `-f`/`--yolo`, and `--workspace` spelled out (`-w` is `--worktree`); gemini
-   always `--approval-mode plan`, never `-y`/`--yolo`.
+   `-f`/`--yolo`, and `--workspace` spelled out (`-w` is `--worktree`); agy always
+   `--sandbox` and NEVER `--dangerously-skip-permissions`.

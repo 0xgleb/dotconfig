@@ -1,7 +1,7 @@
 ---
 name: review-sweep
 user-invocable: true
-allowed-tools: Bash(gt:*), Bash(but:*), Bash(direnv:*), Bash(git:*), Bash(gh:*), Bash(cursor-agent:*), Bash(gemini:*), Bash(command:*), Bash(linear:*), Bash(cargo:*), Bash(mkdir:*), Bash(cat:*), Bash(mktemp:*), Bash(rm:*), Bash(test:*), Bash(grep:*), Bash(wc:*), Bash(date:*), Bash(basename:*), Bash(find:*), Bash(ls:*), Read, Write, Edit, Agent, Workflow, AskUserQuestion, Skill
+allowed-tools: Bash(gt:*), Bash(but:*), Bash(direnv:*), Bash(git:*), Bash(gh:*), Bash(cursor-agent:*), Bash(agy:*), Bash(command:*), Bash(linear:*), Bash(cargo:*), Bash(mkdir:*), Bash(cat:*), Bash(mktemp:*), Bash(rm:*), Bash(test:*), Bash(grep:*), Bash(wc:*), Bash(date:*), Bash(basename:*), Bash(find:*), Bash(ls:*), Read, Write, Edit, Agent, Workflow, AskUserQuestion, Skill
 description: Sweep the whole stack bottom-to-top, running the full /review-loop on each branch — folding the branch PR's unaddressed reviewer feedback into the same triage — and modifying the fixes into it before moving up. Detects the repo's stacking tool (Graphite or GitButler) and uses the right primitives. Optional --start / --end bound the range; otherwise it covers every branch upstack of the trunk. Graphite stacks are traversed as trees (parent before child); GitButler stacks as a forest of applied series.
 argument-hint: [--start <branch>] [--end <branch>]
 ---
@@ -106,8 +106,8 @@ Semantics, on a tree (Graphite) or forest (GitButler):
 
 Common: confirm the review tooling is available exactly as `/review-loop`
 step 1 requires, and run the shared engine's usage-limit probes (`review-core`
-step 1) that resolve the external lanes (GPT-5.5 -> Gemini frontier fallback,
-Composer cross-lab augment). Run the probes once for the whole sweep,
+step 1) that resolve the external lanes (GPT-5.5 -> Antigravity (agy) frontier
+fallback, Composer cross-lab augment). Run the probes once for the whole sweep,
 not per
 branch; re-resolve only if a lane hits a usage limit mid-sweep.
 
@@ -359,7 +359,8 @@ nothing was modified on any branch, there is nothing to submit — say so and st
 6. **Per branch, `/review-loop` owns the review.** Every per-branch pass is
    `/review-loop` steps 3–11 verbatim — the shared `review-core` panel (single
    `review-panel` Workflow, verify and synthesize inside it, read-only external
-   CLIs — `--mode plan` for cursor-agent, `--approval-mode plan` for gemini)
+   CLIs — `--mode plan` for cursor-agent, `--sandbox` and never
+   `--dangerously-skip-permissions` for agy)
    followed by `/review-loop`'s triage / parallel fix / delta re-review loop
    (4-pass cap, clean-pass convergence). Do not hand-roll the fan-out or relax
    those rules.

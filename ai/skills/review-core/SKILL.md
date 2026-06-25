@@ -1,7 +1,7 @@
 ---
 name: review-core
 description: Internal shared review-engine reference for the review-loop, review-pr, and review-sweep skills. Not a user task and never invoked directly; those skills read this file to run the multi-model panel, probes, prompts, and finding output.
-allowed-tools: Bash(cursor-agent:*), Bash(gemini:*), Bash(command:*), Bash(cat:*), Bash(find:*), Bash(mkdir:*), Bash(wc:*), Read, Write, Agent, Workflow
+allowed-tools: Bash(cursor-agent:*), Bash(agy:*), Bash(command:*), Bash(cat:*), Bash(find:*), Bash(mkdir:*), Bash(wc:*), Read, Write, Agent, Workflow
 ---
 
 # Review engine (shared)
@@ -42,8 +42,9 @@ Cursor has no CLI to query remaining usage, so probe each candidate with a
 one-token call. The panel uses two model tiers:
 
 - **Frontier tier** (the two external lanes): GPT-5.5 via cursor-agent (burns
-  Cursor's API-model pool); when that pool is low or out, the Gemini CLI free
-  tier is the frontier-tier replacement from another lab.
+  Cursor's API-model pool); when that pool is low or out, the Antigravity CLI
+  (`agy` — Google's terminal agent that replaced the Gemini CLI on 2026-06-18)
+  is the frontier-tier replacement from another lab.
 - **Fast tier** (the sonnet lanes): Composer is the Sonnet-comparable fast
   model — quick but capable, with its own Cursor limit pool separate from the
   API models. It augments the sonnet lane for cross-lab redundancy, and
@@ -58,8 +59,10 @@ fails:
 cursor-agent -p --mode plan --model gpt-5.5-high --trust "Reply with exactly: OK"
 # (c) Composer pool (fast tier, separate Cursor limits) — run alongside (a)
 cursor-agent -p --mode plan --model composer-2.5 --trust "Reply with exactly: OK"
-# (b) only if (a) failed — Gemini free tier (frontier replacement)
-gemini -p "Reply with exactly: OK" --approval-mode plan --skip-trust
+# (b) only if (a) failed — Antigravity CLI (frontier replacement); needs a
+#     one-time `agy` sign-in, so an unauthenticated agy fails the probe and the
+#     panel falls back to composer/native, exactly as intended.
+agy -p "Reply with exactly: OK"
 ```
 
 A probe **passes** if it exits cleanly and prints `OK`. It **fails** if the
@@ -72,8 +75,8 @@ Assign lanes from the probe results:
 | --------------------- | -------- | --------------------------- | --------------------------- | ------------------------------ |
 | (a) gpt-5.5 OK        | OK       | cursor-agent `gpt-5.5-high` | cursor-agent `gpt-5.5-high` | cursor-agent `composer-2.5`    |
 | (a) gpt-5.5 OK        | out      | cursor-agent `gpt-5.5-high` | cursor-agent `gpt-5.5-high` | dropped                        |
-| (b) gemini OK         | OK       | `gemini`                    | `gemini`                    | cursor-agent `composer-2.5`    |
-| (b) gemini OK         | out      | `gemini`                    | `gemini`                    | dropped                        |
+| (b) agy OK            | OK       | `agy`                       | `agy`                       | cursor-agent `composer-2.5`    |
+| (b) agy OK            | out      | `agy`                       | `agy`                       | dropped                        |
 | both frontier out     | OK       | cursor-agent `composer-2.5` | native `sonnet` lane        | dropped (composer moved to a)  |
 | both frontier out     | out      | native `sonnet` lane        | dropped                     | dropped                        |
 
@@ -173,7 +176,7 @@ If you find nothing worth raising, return an empty findings list and set
 clean_reason to a one-sentence justification of why the diff is clean.
 ```
 
-(For external lanes that run through an external CLI — cursor-agent or gemini —
+(For external lanes that run through an external CLI — cursor-agent or agy —
 replace the "Output" paragraph in their prompt files with the original markdown
 output format — `### <title>` sections with Severity/File/Category/Finding/Why
 it matters/Recommended fix/Confidence bullets, "### No findings" when clean —
@@ -318,10 +321,16 @@ substituted) and omit `model`:
   ```
   cursor-agent -p --mode plan --model <lane-model> --trust --workspace "{REPO_ROOT}" "$(cat "<promptPath>") The diff to review is at: <diffPath>"
   ```
-- gemini lanes:
+- agy (Antigravity CLI) lanes:
   ```
-  gemini -p "$(cat "<promptPath>") The diff to review is at: <diffPath>" --approval-mode plan --skip-trust
+  agy -p "$(cat "<promptPath>") The diff to review is at: <diffPath>" --sandbox
   ```
+  Run from `{REPO_ROOT}` as cwd (agy has no `--workspace` flag; the workspace is
+  the working directory, and the diff lives under it). The command omits
+  `--model`, so agy uses its default. To make this lane truly frontier-tier,
+  sign in once (`agy`), run `agy models`, and pin a strong Gemini model by adding
+  `--model <id>` here — this is the **single** place to change it for all three
+  review skills.
 
 For native lanes (including an external lane that fell back to native sonnet),
 leave `externalCmd` unset and set `model` as usual.
@@ -329,8 +338,15 @@ leave `externalCmd` unset and set `model` as usual.
 **External CLIs run read-only — non-negotiable.** cursor-agent: always `--mode
 plan`, never `-f`/`--yolo`, never bare `-p` without a read-only mode (headless
 print mode otherwise has write and shell access); `-w` is `--worktree`, NOT
-`--workspace` — always spell out `--workspace`. gemini: always `--approval-mode
-plan`, never `-y`/`--yolo`.
+`--workspace` — always spell out `--workspace`. agy: always `--sandbox` and
+**NEVER `--dangerously-skip-permissions`** (that auto-approves every tool,
+including writes and shell). Use `-p` for the one-shot prompt. Without
+skip-permissions agy cannot perform approval-gated mutations unattended, and
+`--sandbox` confines tool execution with terminal restrictions — together the
+read-only equivalent of plan mode. If a signed-in agy still blocks the file
+reads it needs to review the diff, set the `strict` tool-permission preset in
+agy's config (read tools allowed, everything else blocked) rather than relaxing
+to skip-permissions.
 
 ### Adaptive panel sizing (by diff size)
 
@@ -658,8 +674,8 @@ what happens when there are no findings and what to do next.
    reviewers sequentially or hand-roll the fan-out with individual Agent calls.
 2. Verification and synthesis happen **inside the workflow**, never in the main
    session (context pollution).
-3. **External CLIs run read-only** — see step 4 (`--mode plan` / `--approval-mode
-   plan`, never yolo, always `--workspace`).
+3. **External CLIs run read-only** — see step 4 (cursor-agent `--mode plan`; agy
+   `--sandbox` and NEVER `--dangerously-skip-permissions`).
 4. Never fabricate findings when a lane errors — record the failure from
    `laneErrors`.
 5. The Review→Verify and Verify→Synthesize barriers are **intentional** (dedup

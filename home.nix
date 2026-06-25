@@ -98,7 +98,7 @@ in
         codex
         graphite-cli
         cursor-cli
-        gemini-cli
+        antigravity-cli
       ]);
 
     shell.enableNushellIntegration = true;
