@@ -66,12 +66,25 @@ Without an explicit in-session instruction to post that exact content, **never**
 - Post on social or public threads under their identity.
 - React, resolve, or otherwise emit any user-visible signal downstream readers
   will read as the user's voice.
-- **Request, re-request, or remove a PR's reviewers, or dismiss / approve /
-  request-changes on a review.** Re-requesting pings a real human and resets
-  approval state under the user's name — a review-state action, never neutral.
-  If a PR needs (re-)review, tell the user; NEVER touch review state yourself.
-  This is about explicit review-API calls (`gh` reviewer/review endpoints), NOT
-  about pushing code — a `gt ss`/stack submit does not touch review state.
+- **Submit a review verdict — approve, comment-as-review, or request changes —
+  or request, re-request, or remove a PR's reviewers.** The review verdict is the
+  user's alone: only the user reviews, and only the user decides when and what
+  gets submitted — they submit it themselves in the UI. Re-requesting pings a real
+  human and resets approval state under the user's name. NEVER run a review
+  submission (`gh pr review --approve` / `--comment` / `--request-changes`, or any
+  reviews-API call carrying an `event`) and never touch reviewer state. This is
+  about review-API calls, NOT pushing code — a `gt ss`/stack submit does not touch
+  review state.
+
+  **Drafting a review is the allowed assist; submitting it is never yours.** You
+  may help the user review — draft the findings and (when that's the task) post
+  them as a PENDING, unsubmitted review: inline draft comments that stay private
+  to the user until they submit. The user then takes another pass in the UI,
+  decides what to add/remove/keep/adjust, and chooses whether to approve, comment,
+  or request changes (with or without comments). You only ever produce the draft;
+  the verdict and the submit are theirs. Never phrase your output, a commit, or a
+  note as if YOU reviewed / approved / requested changes — those are the user's
+  actions.
 
 If you disagree with PR feedback, an issue/chat comment, or any other input,
 **surface it to the user and let them decide whether and how to respond.** Hold

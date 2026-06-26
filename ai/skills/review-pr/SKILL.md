@@ -2,7 +2,7 @@
 name: review-pr
 user-invocable: true
 allowed-tools: Bash(gh:*), Bash(git:*), Bash(cursor-agent:*), Bash(agy:*), Bash(command:*), Bash(mkdir:*), Bash(cat:*), Bash(mktemp:*), Bash(rm:*), Bash(wc:*), Bash(date:*), Bash(basename:*), Bash(test:*), Bash(grep:*), Bash(find:*), Read, Write, Agent, Workflow, Skill
-description: Cross-review a pull request by number or URL without checking it out. Runs a multi-model Workflow panel (2x Opus, Sonnet, a Composer cross-lab augment lane, 2 frontier external lanes that fall back GPT-5.5 -> Antigravity (agy) per Cursor usage limits, + inspectors) with per-finding verification, then starts a conversation so you can decide which findings (if any) to comment on the PR.
+description: Cross-review a pull request by number or URL without checking it out. Runs a multi-model Workflow panel (2x Opus, Sonnet, a Composer cross-lab augment lane, 2 frontier external lanes that fall back GPT-5.5 -> Antigravity (agy) per Cursor usage limits, + inspectors) with per-finding verification, then posts the verified findings as a draft (pending) PR review you take from there in the UI. Never submits the review verdict.
 argument-hint: <pr-number | pr-url>
 ---
 
@@ -13,9 +13,10 @@ want independent, multi-model analysis before commenting.
 The **review engine** (panel, probes, prompts, the `review-panel` Workflow,
 finding output) is shared with `/review-loop` and `/review-sweep` and lives in
 `~/.claude/skills/review-core/SKILL.md`. This skill **scopes the diff to the PR
-(without checking it out)** and, after the engine returns findings, **takes the
-comment action**: a conversation where you decide which findings to post as a
-draft PR review. It never modifies code.
+(without checking it out)** and, after the engine returns findings, **posts the
+verified findings as a draft (pending) PR review** and then converses so you can
+adjust before submitting. It never modifies code, and never submits the review
+verdict — you do that in the GitHub UI.
 
 Follow these steps precisely.
 
@@ -151,39 +152,51 @@ The engine writes `$out_dir/review.md` and `$out_dir/findings.json` and prints t
 terminal summary. Then continue to the conversation below — **do not** triage or
 fix anything; this skill only comments.
 
-## 7. Enter the review conversation
+## 7. Post the draft batch, then converse
 
-After the engine prints, **stay in the session**. Do not end the turn with a
-summary — the user wants to have a conversation about the findings.
+After the engine prints, **immediately post the verified findings as a draft
+batch** — this is the default, with no approval gate and no waiting. Create one
+**PENDING (draft) GitHub review** with every verified finding as an inline comment
+(see "Posting a draft review" below). You only ever create the draft; you NEVER
+submit the review verdict (approve / comment / request changes) — the user does
+that in the GitHub UI.
 
-Say something like:
+Then **stay in the session** so the user can take it from there. Tell them the
+draft is up and print the overall assessment as a copy-paste block. Say something
+like:
 
-> Review saved to `<path>`. Let me know which findings you want to dig into, and
-> when you're ready I can post comments on the PR.
+> Draft review posted to <pr-url> with N inline comments — inspect, edit, or
+> delete in the UI, then submit the verdict yourself when ready. Paste this into
+> the summary box on submit:
+>
+> ```
+> <overall assessment — 2-3 sentences>
+> ```
+>
+> Want me to dig into any finding, or add/drop comments before you submit?
 
-Then wait. For any follow-up question:
+For any follow-up:
 
 - **"tell me more about #N"** — read the full finding from `review.md` and explain
   it conversationally. Read the relevant source via `git show $head_sha:<path>` to
   confirm the claim yourself.
 - **"is finding #N actually valid?"** — verify by reading the code at the head
   SHA. Report your independent read.
-- **"draft a comment for #N"** — write a PR-comment-style message (concise,
-  constructive, cite file/line, propose fix). Show it to the user and wait for
-  approval.
-- **"post"** or **"post as draft"** — create a **pending (draft) GitHub review**
-  with inline comments. See "Posting a draft review" below. The user will inspect,
-  edit, and submit from the GitHub UI — no per-comment text approval is needed
-  here.
-- **"post #N, #M"** — same as "post" but only include the listed findings.
-- **"I'm done"** — summarize what was posted (if anything) and end the turn.
+- **"drop #N"** / **"add a comment about X"** — update the still-pending draft
+  (delete or add the relevant inline comments via the API, or tell the user to do
+  it in the UI). Never submit the review.
+- **"I'm done"** — summarize what's in the draft and end the turn. The user submits
+  the verdict themselves.
+
+If the user ever says "don't post yet" (or similar) up front, skip the auto-post
+and converse first — but the default on invocation is to post the batch.
 
 ### Posting a draft review
 
-When the user says "post" or "post as draft", create a **PENDING** GitHub review
-with each finding as an inline comment on its file/line. This lets the user go to
-the GitHub UI, inspect each comment, edit or delete as needed, and click "Submit
-review" themselves.
+Create a **PENDING** GitHub review with each verified finding as an inline comment
+on its file/line. This lets the user go to the GitHub UI, inspect each comment,
+edit or delete as needed, and click "Submit review" themselves — you never submit
+it.
 
 **Step 1 — Build the comments JSON.** For each finding, create an inline comment
 object. Use the finding's file path and line number from the review.
@@ -287,9 +300,11 @@ you print in the conversation (Step 2) rather than the posted `body` — the dra
    SHA.
 2. `review.md` has no per-finding agent attribution (`{INCLUDE_ATTRIBUTION}` is
    false). Attribution stays in `findings.json` only.
-3. For draft reviews ("post" / "post as draft"), per-comment approval is NOT
-   required — the GitHub UI is the approval mechanism. For immediate submissions
-   (non-draft), never post without explicit user approval of the exact text.
+3. Only ever create a **PENDING (draft)** review (`event` omitted). Submitting the
+   review verdict — approve / comment / request changes — is the user's alone,
+   done in the GitHub UI; never submit a verdict yourself, even if asked. The
+   draft needs no per-comment approval — the UI is where the user inspects, edits,
+   deletes, and submits.
 4. Always use `--body-file` (or heredoc to a tempfile) for comment bodies.
 5. Stay in the session after the engine prints — this command is a conversation,
    not a one-shot.

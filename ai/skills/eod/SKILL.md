@@ -41,6 +41,11 @@ allowed-tools:
 - **Never fabricate.** No "Next items" unless the user wrote them. No
   prose pulled from places the user didn't point you at. Filing a
   ticket today does not mean it's tomorrow's plan.
+- **Don't overstate relative to existing state.** If work *improves* or
+  *extends* something that already exists, frame it as that — never imply it is
+  new or from-scratch ("started making the flows durable" when they already had
+  crash recovery; "moved the side effects into the durable job model" is the
+  honest delta). State the actual change, not a grander one.
 - **Never assign the user tasks.** You report what happened. They
   decide what's next.
 - **If unclear, stop and ask** while the user is in the chat. If they
@@ -117,7 +122,8 @@ allowed-tools:
 
 5. **Draft.** Match the format of the last few EODs. Common shape:
    - `# Daily Update:  YYYY-MM-DD`
-   - Status paragraph (one to three sentences)
+   - Status paragraph (one to three sentences) -- lead with the concrete
+     deliverables and their state, not abstract framing or "opened N PRs"
    - A one-line **stats summary** — be granular. "N PRs opened" alone is
      near-meaningless; the group chat wants the breakdown of where those
      PRs landed. Report each of the following counts, dropping any that
@@ -200,13 +206,13 @@ gh search prs --reviewed-by=@me --owner=ST0x-Technology,rainlanguage \
   --updated=YYYY-MM-DD --json number,repository \
   --jq '.[] | "\(.repository.nameWithOwner) \(.number)"' --limit 100
 
-# 2. batch-verify: keep only PRs where YOU submitted a review in today's window.
-#    Use the REST reviews endpoint (submitted_at + user.login), filter by both:
+# 2. batch-verify: print each review YOU submitted since the last EOD, with its
+#    state, so you can both verify AND group by status. submitted_at + user.login:
 while read -r repo num; do
-  n=$(gh api "repos/$repo/pulls/$num/reviews" \
-    --jq '[.[] | select(.user.login=="<your-login>")
-              | select(.submitted_at >= "YYYY-MM-DDT00:00:00Z")] | length' 2>/dev/null)
-  [ "$n" != "0" ] && [ -n "$n" ] && echo "$repo#$num: $n review(s) today"
+  gh api "repos/$repo/pulls/$num/reviews" \
+    --jq ".[] | select(.user.login==\"<your-login>\")
+              | select(.submitted_at >= \"<since>T00:00:00Z\")
+              | \"$repo#$num \(.submitted_at) \(.state)\"" 2>/dev/null
 done <<'EOF'
 <paste step-1 output here>
 EOF
@@ -215,8 +221,17 @@ EOF
 Drop from the verified list: your own PRs (replying to review feedback on your
 PR is not a review) and anything with zero reviews submitted in the window. Use
 the previous EOD's date at UTC midnight as the lower bound — do NOT assume a
-fixed local-timezone offset; the user travels (could be GMT+7 one month, GMT-3
-the next), so there is no stable workday boundary to shift by.
+fixed local-timezone offset, and do NOT tighten it to "today"; the user travels
+(could be GMT+7 one month, GMT-3 the next), so there is no stable workday
+boundary to shift by, and a too-tight bound silently drops real reviews.
+
+**Re-reviews count; don't pre-exclude PRs from the last note.** A PR that
+appeared in the *previous* note's review list can still carry a NEW review in
+this window — you requested changes on it yesterday and approved it today. So
+verify EVERY candidate against the previous-EOD lower bound (the noisy list
+includes them), and keep any with a review submitted after the last EOD, even if
+its first pass was already reported. The `.state` from the query above is what
+you group the Reviews section by (Approved / Commented / Changes-requested).
 
 **Human vs AI-bot feedback.** "Addressed review feedback" / "resubmitted after
 feedback" implies a HUMAN reviewed the PR. Before writing it, check who the
@@ -299,6 +314,14 @@ to describe an open stack the user mentioned.
   Treat it as a standup post, not a journal entry. Telegram premium
   message limit is 4096 chars — aim well under that, and the user
   will still call out bloat over ~1500 chars.
+- **Lead with deliverables and their state, not mechanics.** The body explains
+  what was *delivered* (the improvement, fix, or plan), why it matters, and its
+  state -- in review / in progress / merged -- in plain terms an outsider gets.
+  Nobody cares about stacks, PR counts, or "opened N PRs" in the prose; that is
+  busywork noise that belongs in the stats line, never the body. Don't open with
+  an abstract filler sentence ("a refactor-and-planning span across the family")
+  -- lead with the concrete deliverable. Planning days are deliverables too: a
+  settled, dependency-ordered plan is the deliverable, not "refined some issues".
 - **One line per thing.** Every bullet is a fact + identifier (RAI
   tag, PR number, repo). No prose paragraphs explaining what a PR
   does — readers click through if they want detail.
@@ -333,9 +356,13 @@ to describe an open stack the user mentioned.
   bullet already has the PR number tied to that issue elsewhere.
 - Each section earns its place. If the day's work has no Linear
   output, drop the Linear section. If no reviews, drop Reviews.
-- Reviews are a stat, not prose. Cite the count (and which repos); never
-  describe what someone else's reviewed PR does — the note is what the user
-  built, not the work they happened to review.
+- **Reviews: break down by status, not just a list.** Group what you reviewed by
+  outcome -- Approved / Commented / Changes-requested -- with the PR numbers per
+  status (drop a status with none). Reviews are collaboration, secondary to your
+  own deliverables, so keep them to those short lines; never describe what someone
+  else's reviewed PR does. A re-review or approval of a PR you first-reviewed in a
+  prior window counts as THIS window's review (e.g. changes-requested yesterday,
+  approved today).
 - Link every PR reference, or none — never link the first and leave the rest
   bare. Pick one convention and apply it uniformly.
 - Don't borrow a tool's reserved words for loose meaning: "initiative",

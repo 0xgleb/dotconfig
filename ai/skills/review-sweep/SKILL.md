@@ -2,14 +2,27 @@
 name: review-sweep
 user-invocable: true
 allowed-tools: Bash(gt:*), Bash(but:*), Bash(direnv:*), Bash(git:*), Bash(gh:*), Bash(cursor-agent:*), Bash(agy:*), Bash(command:*), Bash(linear:*), Bash(cargo:*), Bash(mkdir:*), Bash(cat:*), Bash(mktemp:*), Bash(rm:*), Bash(test:*), Bash(grep:*), Bash(wc:*), Bash(date:*), Bash(basename:*), Bash(find:*), Bash(ls:*), Read, Write, Edit, Agent, Workflow, AskUserQuestion, Skill
-description: Sweep the whole stack bottom-to-top, running the full /review-loop on each branch — folding the branch PR's unaddressed reviewer feedback into the same triage — and modifying the fixes into it before moving up. Detects the repo's stacking tool (Graphite or GitButler) and uses the right primitives. Optional --start / --end bound the range; otherwise it covers every branch upstack of the trunk. Graphite stacks are traversed as trees (parent before child); GitButler stacks as a forest of applied series.
+description: Sweep a whole stack bottom-to-top, dispatching per authorship. On your OWN stack it runs /review-loop per branch (fix findings + fold in unaddressed PR feedback, modify into the branch, then submit). On SOMEONE ELSE's stack where you're the reviewer it runs /review-pr per branch (cross-review, post a draft batch of comments, never touch their code or submit a verdict). Detects the repo's stacking tool (Graphite or GitButler), traverses parent-before-child. Optional --start / --end bound the range.
 argument-hint: [--start <branch>] [--end <branch>]
 ---
 
-Sweep an entire stack with the self-review loop. For every branch upstack of
-the trunk, run the full `/review-loop` single-branch procedure, modify the fixes
-into that branch, then move up — so each branch is reviewed in the rebased
-state its parent's fixes produced.
+Sweep an entire stack, dispatching per **authorship** — who wrote the stack
+decides which per-branch skill runs:
+
+- **Author mode — your own stack** (you authored the PRs): `/review-loop` per
+  branch — fix the findings, modify them into the branch, advance, and submit the
+  stack at the end. Each branch is reviewed in the rebased state its parent's
+  fixes produced.
+- **Reviewer mode — someone else's stack** (you're the reviewer): `/review-pr`
+  per branch's PR — cross-review and post a draft batch of comments for the author
+  to take from there. NEVER modify their code, NEVER submit a review verdict,
+  NEVER push their branches.
+
+Detect the mode once, up front (step 4.5), then sweep. The Graphite/GitButler
+traversal and the range resolution are **shared**; only the per-branch action and
+the end-of-sweep step differ by mode. The author-mode per-branch work is a strict
+generalization of `/review-loop stack`; the reviewer-mode per-branch work is
+`/review-pr`, run once per branch.
 
 This is a strict generalization of `/review-loop stack`:
 
@@ -182,11 +195,33 @@ in every applied stack, each stack swept bottom → top. Apply `--start` /
 contain neither. (If the JSON field names are unfamiliar, inspect them with
 `but status -h` / `but branch list -h` before relying on them — do not guess.)
 
+## 4.5 Determine the mode (author vs reviewer)
+
+A stack has one author. Decide `mode` from the PR author of the branches in range
+versus your own login:
+
+```bash
+me=$(gh api user --jq '.login')
+# pick any branch in the resolved range that has a PR
+author=$(gh pr view <a-branch-in-range> --json author --jq '.author.login' 2>/dev/null)
+```
+
+- No PR on any branch in range (local-only WIP) -> **author mode** (it's your own
+  in-progress stack).
+- `author == $me` -> **author mode** (`/review-loop` per branch: fix + modify +
+  submit).
+- `author != $me` -> **reviewer mode** (`/review-pr` per branch: draft comments,
+  no code changes, no submit).
+- **Mixed authors across the range** (rare) -> stop and ask the user which mode
+  they want; never guess and never mix fix-and-comment in one sweep.
+
+Print the chosen mode in the plan header below.
+
 Print the resolved plan before sweeping:
 
 ```
 ━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━
-Review sweep — <tool>  ·  <N> branches
+Review sweep — <tool>  ·  <author|reviewer> mode  ·  <N> branches
   trunk: <trunk>      range: <start or ⊥> → <end or top>
 ━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━
   1. feat/a        (parent: <trunk>)
@@ -200,7 +235,17 @@ user that this is a long, token-heavy run and ask whether to proceed.
 
 ## 5. Sweep loop
 
-For each branch in `order` (parent before child), do one full pass:
+**[Reviewer mode]** For each branch in `order` (parent before child), invoke
+`/review-pr <branch>` via the Skill tool — it scopes to that branch's PR,
+cross-reviews with the panel, and posts a draft batch of inline comments for the
+author. Do NOT scope / collect-feedback / fix / modify / submit here; `/review-pr`
+owns the review and the draft. You only walk the branches in order so each PR
+reviews in its stacked context. Then skip to step 6's reviewer-mode summary. You
+never modify their code, never push their branches, and never submit the review
+verdict — the draft comments are theirs to submit in the UI.
+
+**[Author mode]** For each branch in `order` (parent before child), do one full
+pass:
 
 1. **Scope the branch.**
    - **[Graphite]** `gt checkout <branch>`, then write the per-branch diff and
@@ -308,9 +353,15 @@ PR feedback dismissed as invalid (with reasons):
 Reports under: <out_dir root>
 ```
 
-Then **submit the fixes** — a stack of review fixes left local is worthless to a
-reviewer staring at the PRs, and is exactly the failure that makes the user chase
-you for the obvious next step. Submit once, at the end, from the start branch:
+**[Reviewer mode]** Nothing to submit — each branch's `/review-pr` run already
+posted its own draft batch of comments. Summarize per PR (count of draft comments
++ link) so the user can inspect and submit each review from the UI. Do not push,
+modify, or submit anything.
+
+**[Author mode]** Then **submit the fixes** — a stack of review fixes left local
+is worthless to a reviewer staring at the PRs, and is exactly the failure that
+makes the user chase you for the obvious next step. Submit once, at the end, from
+the start branch:
 
 - **[Graphite]** `gt ss` (the sweep modified branches up and down the stack, so
   submit the whole stack). When any *lower* PR is already **approved**, run
@@ -330,7 +381,13 @@ nothing was modified on any branch, there is nothing to submit — say so and st
 
 ## Hard rules
 
-1. **Modify-and-advance is the whole point and is allowed**: modifying each
+**Mode dispatch first.** Author mode (your own stack) fixes + modifies + submits
+via `/review-loop`; reviewer mode (someone else's stack) only cross-reviews and
+posts draft comments via `/review-pr`, and NEVER modifies, pushes, or submits on a
+stack you don't own — the draft comments are the user's to submit in the UI. Every
+modify/submit rule below is **author-mode only**.
+
+1. **Modify-and-advance is the whole point and is allowed** (author mode): modifying each
    branch's fixes into it (`gt modify -a` / `but absorb`) is expected. This is
    the same relaxation `/review-loop stack` makes to `/review-loop`'s "never
    amend automatically" rule — scoped to modifying review fixes into the branch
@@ -370,9 +427,11 @@ nothing was modified on any branch, there is nothing to submit — say so and st
 8. **`--start` / `--end` resolve against the live stack.** A name not in the
    stack, or `--end` not a descendant of `--start`, is a hard error — never
    silently sweep a different range than asked.
-9. **PR feedback is read-only on the PR side.** Never reply to, react to, or
-   resolve threads, never comment, never touch review state — fixes land in
-   code, dismissals land in the chat summary. Always re-verify each feedback
+9. **PR feedback is read-only on the PR side (author mode).** While folding
+   reviewer feedback into your own stack, never reply to, react to, or resolve
+   threads, never comment, never touch review state — fixes land in code,
+   dismissals land in the chat summary. (Reviewer mode is different: there
+   `/review-pr` posts a draft batch of comments — pending, never submitted.) Always re-verify each feedback
    item against the current working tree before fixing: the sweep rebases
    branches as it climbs, so feedback may already be addressed or moot.
 
