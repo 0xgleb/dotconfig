@@ -52,8 +52,6 @@
     ],
     "deny": [
       "Bash(darwin-rebuild switch:*)",
-      "Bash(git checkout master:*)",
-      "Bash(git stash:*)",
       "Bash(sed:*)",
       "Bash(ruby:*)",
       "Bash(perl:*)",
