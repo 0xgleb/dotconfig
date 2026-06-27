@@ -14,8 +14,14 @@ export def --wrapped main [...args: string] {
   consequences
 }
 
-def infra-app [app: string] {
-  ^nix run $"($env.HOME)/.config#($app)"
+def --wrapped infra-app [app: string, ...args: string] {
+  let flake = $"($env.HOME)/.config#($app)"
+  if ($args | is-empty) {
+    ^nix run $flake
+  } else {
+    # `--` forwards the rest to the app, not to `nix run` itself.
+    ^nix run $flake "--" ...$args
+  }
 }
 
 export def consequences [] {
@@ -28,4 +34,16 @@ export def enact [] {
 
 export def "edit vars" [] {
   infra-app "tfVars"
+}
+
+# Stand up the box (idempotent) and attach the `nixxxos` zellij session. Extra
+# args pass through, e.g. `fj infra provision s-4vcpu-8gb`.
+export def --wrapped provision [...args: string] {
+  infra-app "provision" ...$args
+}
+
+# Tear the box down: terraform destroy + clear the local host-key pin. Pass
+# `-auto-approve` to skip terraform's confirmation.
+export def --wrapped decommission [...args: string] {
+  infra-app "decommission" ...$args
 }

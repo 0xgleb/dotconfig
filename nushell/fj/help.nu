@@ -67,13 +67,16 @@ const command_help = {
   infra: "fj infra — infrastructure management
 
 SUBCOMMANDS
-  fj infra consequences   terraform plan      (nix run .#tfPlan)
-  fj infra enact          terraform apply     (nix run .#tfApply)
-  fj infra edit vars      edit encrypted vars (nix run .#tfVars)
+  fj infra consequences   terraform plan       (nix run .#tfPlan)
+  fj infra enact          terraform apply      (nix run .#tfApply)
+  fj infra edit vars      edit encrypted vars  (nix run .#tfVars)
+  fj infra provision      stand up the box + attach zellij (nix run .#provision)
+  fj infra decommission   tear the box down    (nix run .#decommission)
 
 Thin aliases over the packaged infra apps (infra/default.nix), which own
 auto-init, tfvars decrypt/re-encrypt, and identity resolution (default
-~/.ssh/dotconfig-nixos). Secrets managed via rage."
+~/.ssh/dotconfig-nixos). Secrets managed via rage. `provision` is idempotent
+(never recreates an existing box); `decommission` destroys it."
 
   take: "fj take <ours|theirs> <path> — resolve a merge conflict
 
@@ -140,6 +143,8 @@ def overview [] {
     "  infra consequences  terraform plan"
     "  infra enact         terraform apply"
     "  infra edit vars     edit encrypted tfvars"
+    "  infra provision     stand up the box + attach zellij"
+    "  infra decommission  tear the box down"
     "  take <v> <path> resolve conflict (ours/theirs) and stage"
     "  cheatsheet      shell quick reference (`fj cheatsheet [topic]`)"
     "  ui              gitui"

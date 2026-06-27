@@ -4,6 +4,8 @@ def expected-commands [] {
   [
     "fj" "fj check" "fj cheatsheet" "fj issue" "fj issue list" "fj issue view"
     "fj pr" "fj pr list" "fj pr view" "fj md" "fj md plan" "fj md diff" "fj md sync"
+    "fj infra" "fj infra consequences" "fj infra enact" "fj infra edit vars"
+    "fj infra provision" "fj infra decommission"
   ]
 }
 

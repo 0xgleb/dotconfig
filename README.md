@@ -103,12 +103,13 @@ plaintext — the intentional model for this personal repo. Keep it on an
 encrypted disk; it is never committed.
 
 > Tailscale credentials all expire after 90 days: the API token **and** the two
-> auth keys it mints. Rotate the API token, then re-run `provision` (it
-> `-replace`s and re-seeds the **node** key, so the fresh box joins with a live
-> key). The **CI** key is left alone by `provision` so a reprovision doesn't
-> silently invalidate `TS_AUTHKEY`; re-mint it on the same cadence with
-> `nix run .#tfApply -- -replace=tailscale_tailnet_key.ci` and copy the new
-> `tailscale_ci_authkey` output into the `TS_AUTHKEY` GitHub secret.
+> auth keys it mints. Rotate the API token, then re-mint the **node** key with
+> `nix run .#tfApply -- -replace=tailscale_tailnet_key.node` and re-seed it onto
+> the box by rebuilding (`nix run .#decommission` then `nix run .#provision`,
+> since the node key is only staged at install time). Re-mint the **CI** key on
+> the same cadence with `nix run .#tfApply -- -replace=tailscale_tailnet_key.ci`
+> and copy the new `tailscale_ci_authkey` output into the `TS_AUTHKEY` GitHub
+> secret.
 
 On the box, runtime secrets are plain root-only files under `/var/lib/secrets/`,
 seeded at install time and persisted across rebuilds:
@@ -121,24 +122,36 @@ The node key is seeded **only at install time** (`nixos-anywhere --extra-files`)
 and removed once tailscaled has joined and persisted its state, after which the
 box stays on the tailnet across rebuilds without it.
 
-### Provision (first install)
+### Provision and decommission
 
 ```bash
-nix run .#provision
+nix run .#provision      # stand up the box (idempotent) and connect
+nix run .#decommission   # tear the box down
+
+# or via fj:
+fj infra provision
+fj infra decommission
 ```
 
-This applies Terraform and installs NixOS via nixos-anywhere, seeding
-`/var/lib/secrets/`. The box joins the tailnet on first boot, and `provision`
-waits for it to become reachable over the tailnet before reporting success —
-if it times out, check `tailscaled` from the DigitalOcean console. Because the
-node is untagged, **disable key expiry** for it in the Tailscale admin console
-(Machines → nixxxos → Disable key expiry), or its default 180-day expiry will
-drop it off the tailnet.
+`provision` applies Terraform and, **only when no box already exists in
+terraform state**, installs NixOS via nixos-anywhere (seeding
+`/var/lib/secrets/`). An existing box is left intact — it is never `-replace`d —
+so re-running `provision` is safe. Once the box is reachable over the tailnet,
+`provision` SSHes in (over the tailnet, since public SSH is closed) as
+`-i ~/.ssh/dotconfig-nixos` and attaches a zellij session named `nixxxos`; if it
+isn't reachable yet it prints the manual connect command instead of hanging.
+Because the node is untagged, **disable key expiry** for it in the Tailscale
+admin console (Machines → nixxxos → Disable key expiry), or its default 180-day
+expiry will drop it off the tailnet.
 
-> `provision` is destructive: it `-replace`s the droplet and nixos-anywhere
-> wipes the disk. If it fails partway (e.g. after the disk is wiped but before
-> NixOS activates), the box is left unbootable — just re-run `nix run .#provision`
-> to reinstall from scratch.
+`decommission` runs `terraform destroy` (droplet + Tailscale auth keys) and
+clears the local host-key pin. To rebuild from scratch: `decommission` then
+`provision`; to change an existing box without recreating it, use the CD deploy.
+
+> A fresh install seeds the node auth key at install time
+> (`nixos-anywhere --extra-files`). If install fails partway (disk wiped, NixOS
+> not yet activated), the box is left unbootable — `decommission` then re-run
+> `provision`.
 
 ### Running an agent on the box (manual)
 

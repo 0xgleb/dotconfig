@@ -81,4 +81,10 @@ in
     ];
     text = withLib ./provision.nu;
   };
+
+  decommission = writeNushellApplication {
+    name = "decommission";
+    runtimeInputs = infraInputs ++ [ pkgs.openssh ];
+    text = withLib ./decommission.nu;
+  };
 }
