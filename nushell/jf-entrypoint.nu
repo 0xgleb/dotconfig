@@ -104,3 +104,11 @@ def "main infra enact" [] {
 def "main infra edit vars" [] {
   fj infra edit vars
 }
+
+def --wrapped "main infra provision" [...args: string] {
+  fj infra provision ...$args
+}
+
+def --wrapped "main infra decommission" [...args: string] {
+  fj infra decommission ...$args
+}
