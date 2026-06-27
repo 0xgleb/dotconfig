@@ -124,5 +124,10 @@ $env.PROMPT_COMMAND_RIGHT = ""
 
 
 use fj/
-alias f = fj
-alias j = fj
+# `f`/`j` alias the `jf` binary, NOT the `fj` module: a nushell alias to a module
+# command does not compose with subcommands (`f infra provision` would call
+# `fj`'s main with `infra provision` as args -> "unknown fj command: infra").
+# The `jf` binary has explicit `main <sub>` forwarders, so `f infra provision`
+# dispatches correctly. Use the bare `fj` word for the faster in-process module.
+alias f = jf
+alias j = jf
