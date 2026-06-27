@@ -32,10 +32,6 @@
 
     but-nix.url = "github:data-cartel/but.nix";
     but-nix.inputs.nixpkgs.follows = "nixpkgs";
-
-    # OpenClaw — self-hosted personal agent. Provides the openclaw-gateway NixOS
-    # module + packages. Not following our nixpkgs, to match its pinned build.
-    nix-openclaw.url = "github:openclaw/nix-openclaw";
   };
 
   outputs =
@@ -81,7 +77,6 @@
           ./nixos.nix
           ./digitalocean.nix
           disko.nixosModules.disko
-          inputs.nix-openclaw.nixosModules.openclaw-gateway
           home-manager.nixosModules.home-manager
           {
             home-manager.useGlobalPkgs = true;

@@ -21,7 +21,7 @@ Nix flake managing two targets from a single repo:
 | `flake.nix`             | Flake definition, system configs, helper scripts                  |
 | `common.nix`            | Shared packages and settings (both platforms)                     |
 | `darwin.nix`            | macOS-specific: homebrew, GUI apps, hostname                      |
-| `nixos.nix`             | NixOS-specific: SSH, firewall, Tailscale, OpenClaw                |
+| `nixos.nix`             | NixOS-specific: SSH, firewall, Tailscale                          |
 | `digitalocean.nix`      | Disk/boot config for DO droplets                                  |
 | `infra/`                | Terraform (droplet + Tailscale keys) and provision/deploy scripts |
 | `home.nix`              | Home Manager: git, zsh, neovim, zellij, fzf, direnv               |
@@ -83,11 +83,10 @@ nixfmt *.nix
 
 The `nixxxos` droplet is provisioned with Terraform and installed with
 nixos-anywhere. Terraform also mints the Tailscale auth keys; NixOS joins the
-tailnet declaratively and runs [OpenClaw](https://github.com/openclaw/openclaw)
-(self-hosted personal agent) as a native systemd gateway via the
-[`nix-openclaw`](https://github.com/openclaw/nix-openclaw) module. Its model
-backends are existing **subscriptions**, not paid APIs: Cursor via the acpx ACP
-harness (`cursor-agent`), with Claude Code CLI as a fallback.
+tailnet declaratively. There is no resident agent service — run one manually over
+the tailnet (`ssh nixxxos`, then `fj clanker`, which launches Claude Code with
+`--remote-control` on that host so you can drive it from claude.ai / mobile; see
+"Running an agent on the box" below).
 
 ### Secrets
 
@@ -117,17 +116,10 @@ seeded at install time and persisted across rebuilds:
 | File                                 | Purpose                                       |
 | ------------------------------------ | --------------------------------------------- |
 | `/var/lib/secrets/tailscale.authkey` | Tailscale node key (auto-join on first boot)  |
-| `/var/lib/secrets/openclaw.env`      | OpenClaw secrets (Cursor key, channel tokens) |
 
-The OpenClaw secrets are declarative: set `openclaw_env` via `nix run .#tfVars`
-(e.g. `openclaw_env = "CURSOR_API_KEY=..."`) and `provision` seeds the file.
-
-> The file is seeded **only at install time** (`nixos-anywhere --extra-files`).
-> The CD deploy (`nixos-rebuild switch`) does **not** re-seed it, so changing
-> `openclaw_env` in tfvars only reaches the box on the next `provision` (a
-> destructive reinstall) — or edit `/var/lib/secrets/openclaw.env` on the box
-> directly. Activation guarantees the file exists (empty if unset) so the
-> gateway never fails to start on a missing file.
+The node key is seeded **only at install time** (`nixos-anywhere --extra-files`)
+and removed once tailscaled has joined and persisted its state, after which the
+box stays on the tailnet across rebuilds without it.
 
 ### Provision (first install)
 
@@ -148,25 +140,20 @@ drop it off the tailnet.
 > NixOS activates), the box is left unbootable — just re-run `nix run .#provision`
 > to reinstall from scratch.
 
-### OpenClaw model auth (one-time, on the box)
+### Running an agent on the box (manual)
 
-OpenClaw drives the first-party CLIs, which use your subscriptions. These are
-runtime steps (not declarative); do them once on the box (over the tailnet):
+There is no resident agent service; start Claude Code by hand over the tailnet.
+Sign in once with a claude.ai account (remote control needs OAuth, not an API
+key):
 
 ```bash
 ssh nixxxos
-sudo -u openclaw -H bash -lc '
-  cursor-agent login                 # Cursor sub (or set CURSOR_API_KEY in openclaw.env)
-  claude setup-token                 # Claude sub fallback; then unset ANTHROPIC_API_KEY
-  openclaw plugins install @openclaw/acpx
-  openclaw config set plugins.entries.acpx.enabled true
-  openclaw acp doctor                # confirm the cursor ACP backend is healthy
-'
+claude /login        # claude.ai account; required for remote control
 ```
 
-`cursor-agent` is the explicitly-permitted path; the Claude `claude-cli` backend
-is a fallback and sits in an Anthropic-ToS gray zone. Finalize "Cursor answers
-messages" routing via `/acp doctor`.
+Then launch it with `fj clanker`. On the `nixxxos` host `clanker` automatically
+adds `claude --remote-control`, so the session is drivable from claude.ai and the
+Claude mobile app. (On the local workstation `clanker` omits the flag.)
 
 ### Deploy (CI/CD)
 
@@ -198,10 +185,6 @@ on a green build — deploys it to `nixxxos` over the tailnet
 > pinned deploy will fail host-key verification. Until both `TS_AUTHKEY` and
 > `DEPLOY_SSH_KEY` are set, the deploy job skips cleanly rather than failing
 > every push to `master`.
-
-> OpenClaw currently builds from source (the runner builds it on CI/deploy; a
-> fresh `provision` builds it on the box). Wire up a Cachix cache to have CI
-> push it once and everyone pull it prebuilt — keeps the box light.
 
 ---
 

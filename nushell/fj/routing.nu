@@ -232,7 +232,8 @@ export def claude-project-dirname [path: string]: nothing -> string {
 # Pure: the session probe is hoisted to the caller (has_session) so the
 # resume logic stays testable without filesystem access or execing.
 export def --wrapped clanker-args [
-  has_session: bool   # whether claude has a resumable session for the cwd
+  has_session: bool    # whether claude has a resumable session for the cwd
+  --remote-control     # add `claude --remote-control` (set when on the nixxxos host)
   ...args: string
 ]: nothing -> list<string> {
   let resume_flags = ["--continue" "-c" "--resume" "-r" "--from-pr"]
@@ -240,6 +241,7 @@ export def --wrapped clanker-args [
   let start_fresh = (("--new" in $args) or (not $has_session))
   let add_continue = (not ($start_fresh or $steers_session))
   let resume = if $add_continue { ["--continue"] } else { [] }
+  let remote = if $remote_control { ["--remote-control"] } else { [] }
   let forwarded = ($args | where { $in != "--new" })
 
   [
@@ -248,6 +250,7 @@ export def --wrapped clanker-args [
     "--permission-mode"
     "auto"
   ]
+  | append $remote
   | append $resume
   | append $forwarded
 }

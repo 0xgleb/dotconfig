@@ -95,12 +95,6 @@ output "tailscale_tailnet" {
   value = var.tailscale_tailnet
 }
 
-# Seeded into /var/lib/secrets/openclaw.env by the provision script.
-output "openclaw_env" {
-  value     = var.openclaw_env
-  sensitive = true
-}
-
 # Copy into the GitHub Actions repository secret TS_AUTHKEY:
 #   terraform -chdir=infra output -raw tailscale_ci_authkey
 output "tailscale_ci_authkey" {

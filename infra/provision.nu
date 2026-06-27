@@ -1,79 +1,92 @@
-# `provision` — apply terraform, install NixOS via nixos-anywhere, and seed
-# secrets so the box auto-joins the tailnet on first boot.
+# `provision` — stand up the nixxxos box and connect: terraform apply (create if
+# absent, never -replace), install NixOS via nixos-anywhere on a fresh box, seed
+# secrets so it auto-joins the tailnet, then SSH in over the tailnet and attach
+# the `nixxxos` zellij session. An existing box is left intact — tear it down
+# with `nix run .#decommission` to rebuild, or update it via the CD deploy.
 # `with-infra` / `resolve-identity` come from lib.nu (concatenated at build).
 
 def main [--identity (-i): string, droplet_size?: string] {
   let id = (resolve-identity $identity)
 
+  cd $"($env.HOME)/.config/infra"
+
+  # provision is non-destructive: stand up a NEW box only when one isn't already
+  # in terraform state. The apply below runs WITHOUT -replace, so an existing
+  # droplet is never recreated and its disk / tailnet state survive. To rebuild
+  # from scratch, `nix run .#decommission` first; to change an existing box, use
+  # the CD deploy / nixos-rebuild. (A fresh box mints a fresh node auth key on
+  # create, so the old -replace re-mint is unnecessary.) `state list` fails
+  # cleanly (exit != 0, empty stdout) on a fresh checkout, which reads as "no box".
+  let preexisting = (
+    (do { ^terraform state list } | complete | get stdout)
+    | lines
+    | any {|r| $r == "digitalocean_droplet.nixxxos" }
+  )
+
   with-infra $id {
-    # provision is a from-scratch install, so always recreate the droplet to
-    # start from a clean image. nixos-anywhere wipes the disk anyway, and an
-    # in-place resize of a half-installed box leaves it unbootable with no way to
-    # retry. For non-destructive config changes use the CD deploy / nixos-rebuild
-    # instead. The droplet size defaults to variables.tf; -var overrides it.
-    #
-    # Also re-mint the node auth key so a reprovision after Tailscale's 90-day
-    # key expiry seeds a *fresh* key onto the box — otherwise stage-secrets would
-    # write a dead key and the box (public SSH closed) never joins the tailnet.
-    # The ci key is left alone here so a reprovision doesn't silently invalidate
-    # the TS_AUTHKEY GitHub secret; refresh it on the documented 90-day cadence.
-    let replace = [
-      "-replace=digitalocean_droplet.nixxxos"
-      "-replace=tailscale_tailnet_key.node"
-    ]
     if $droplet_size == null {
-      ^terraform apply ...$replace -var-file=terraform.tfvars -auto-approve
+      ^terraform apply -var-file=terraform.tfvars -auto-approve
     } else {
-      (^terraform apply ...$replace -var-file=terraform.tfvars
+      (^terraform apply -var-file=terraform.tfvars
         -var $"droplet_size=($droplet_size)" -auto-approve)
     }
   }
 
-  cd $"($env.HOME)/.config/infra"
+  if $preexisting {
+    print ""
+    print "nixxxos already exists in terraform state — leaving it intact and"
+    print "skipping the destructive reinstall. `nix run .#decommission` to rebuild,"
+    print "or use the CD deploy to update it in place."
+  } else {
+    let flake_dir = $"($env.HOME)/.config"
+    let ip = (^terraform output -raw ip | str trim)
 
-  let flake_dir = $"($env.HOME)/.config"
-  let ip = (^terraform output -raw ip | str trim)
+    # Clear any stale `nixxxos` tailnet device so the fresh box claims the name
+    # (otherwise it registers as `nixxxos-1`).
+    remove-stale-device
 
-  # The droplet was recreated, so the previous nixxxos node is now dead. Remove
-  # it from the tailnet before the new box first-boots and registers, or the
-  # stale node keeps the `nixxxos` MagicDNS name (new box becomes `nixxxos-1`).
-  remove-stale-device
+    wait-for-ssh $id $ip
 
-  wait-for-ssh $id $ip
+    let extra = (stage-secrets)
 
-  let extra = (stage-secrets)
+    print "Installing NixOS..."
 
-  print "Installing NixOS..."
+    # Remove the staged plaintext secrets even if the install aborts partway, so
+    # a live auth key never lingers on disk.
+    try {
+      (^nixos-anywhere
+        --flake $"($flake_dir)#nixxxos"
+        --ssh-option $"IdentityFile=($id)"
+        --extra-files $extra
+        --target-host $"root@($ip)")
+    } catch {
+      rm -rf $extra
+      error make { msg: "nixos-anywhere install failed; staged secrets removed" }
+    }
 
-  # Guarantee the staged plaintext secrets are removed even if the install
-  # aborts partway through, so a live auth key never lingers on disk.
-  try {
-    (^nixos-anywhere
-      --flake $"($flake_dir)#nixxxos"
-      --ssh-option $"IdentityFile=($id)"
-      --extra-files $extra
-      --target-host $"root@($ip)")
-  } catch {
     rm -rf $extra
-    error make { msg: "nixos-anywhere install failed; staged secrets removed" }
+
+    # Fresh box, new SSH host key — clear any stale pin so the attach below (and a
+    # later `ssh nixxxos`) doesn't trip the host-key-changed check.
+    do { ^ssh-keygen -R "nixxxos" } | complete | ignore
+
+    print ""
+    print "### Install complete. ###"
+    print "Access is tailnet-only (public SSH is closed)."
+    print ("On the box, run `claude /login` once (claude.ai account) so `fj clanker`"
+      + " there launches with remote control.")
   }
 
-  rm -rf $extra
-
-  wait-for-tailnet $id
-
-  # The droplet was recreated, so its SSH host key changed. Clear any stale pin
-  # for the tailnet name so the operator's next `ssh nixxxos` doesn't trip the
-  # host-key-changed check (the probe above bypasses known_hosts, so it can't).
-  do { ^ssh-keygen -R "nixxxos" } | complete | ignore
-
-  print ""
-  print "### Install complete. ###"
-  print "Access is tailnet-only (public SSH is closed). Reach it with:  ssh nixxxos"
-  print "Cleared the stale host-key pin for `nixxxos`; if you also reach it by"
-  print "tailnet IP, run `ssh-keygen -R <ip>` (find it with `tailscale status`)."
-  print ("OpenClaw model auth (cursor-agent login + acpx plugin) is a one-time"
-    + " on-box step — see the README.")
+  # Connect: attach the `nixxxos` zellij session over the tailnet — but only once
+  # the box is actually reachable, so an unjoined box prints a hint instead of
+  # hanging on a dead SSH.
+  if (wait-for-tailnet $id) {
+    attach-nixxxos $id
+  } else {
+    print ""
+    print "Skipping auto-connect — nixxxos isn't reachable over the tailnet yet."
+    print "Once it's up:  ssh -i ~/.ssh/dotconfig-nixos -t root@nixxxos zellij attach -c nixxxos"
+  }
 }
 
 # Shared SSH options for probing the box: pin the identity and bypass
@@ -107,7 +120,7 @@ def wait-for-tailnet [identity: string] {
     let probe = (do { ^ssh ...$opts $"root@nixxxos" true } | complete)
     if $probe.exit_code == 0 {
       print "nixxxos is up on the tailnet."
-      return
+      return true
     }
 
     $attempts += 1
@@ -120,11 +133,26 @@ def wait-for-tailnet [identity: string] {
       print "  - If this machine is on the tailnet, the box likely failed to join"
       print "    — check tailscaled via the DigitalOcean console."
       print "  - If it is not, the box may be fine; confirm with `tailscale status`."
-      return
+      return false
     }
 
     sleep 5sec
   }
+}
+
+# Open an interactive SSH session over the tailnet and attach (creating if
+# needed) the `nixxxos` zellij session. Public SSH is closed, so this rides the
+# tailnet MagicDNS name; -t gives zellij a TTY, and accept-new pins the box's
+# fresh host key without a prompt (the install cleared any stale pin first).
+# zellij is a system package on the box, so it is on root's PATH.
+def attach-nixxxos [identity: string] {
+  print ""
+  print "Connecting to nixxxos (zellij session `nixxxos`)..."
+  (^ssh
+    "-i" $identity
+    "-o" "StrictHostKeyChecking=accept-new"
+    "-t" "root@nixxxos"
+    "zellij" "attach" "-c" "nixxxos")
 }
 
 # Wait until the freshly created droplet accepts SSH as root.
@@ -183,11 +211,12 @@ def remove-stale-device [] {
   let stale = ($devices | where { |d| ($d.hostname? | default "") == "nixxxos" })
   for d in $stale {
     print $"Removing stale tailnet device ($d.name)..."
-    # DELETE returns 200 with an empty body, which `http delete` would choke on
-    # while parsing — go through `complete` and judge success by exit code.
+    # `complete` only works on external commands; `http delete` is built-in, so
+    # judge success with try/catch (best-effort cleanup — any failure just skips).
+    # An empty 200 body is fine here; a non-2xx status raises and is caught.
     let url = $"https://api.tailscale.com/api/v2/device/($d.id)"
-    let res = (do { http delete --headers $headers $url } | complete)
-    if $res.exit_code != 0 {
+    let ok = (try { http delete --headers $headers $url; true } catch { false })
+    if not $ok {
       print $"  could not delete device ($d.id); continuing."
     }
   }
@@ -213,25 +242,6 @@ def stage-secrets [] {
   let authkey_path = ($secrets | path join "tailscale.authkey")
   $tailscale_key | save -f $authkey_path
   ^chmod 600 $authkey_path
-
-  # openclaw.env comes from the encrypted tfvars (var/output openclaw_env). When
-  # it is empty we still write a template so the file exists; set openclaw_env
-  # via `nix run .#tfVars` to seed the real secrets.
-  let openclaw_env = (^terraform output -raw openclaw_env)
-  let openclaw_content = if ($openclaw_env | str trim | is-empty) {
-    [
-      "# OpenClaw secrets, loaded by the gateway service (systemd EnvironmentFile)."
-      "# Set openclaw_env in terraform.tfvars (nix run .#tfVars) to seed these."
-      "# CURSOR_API_KEY=..."
-      ""
-    ] | str join "\n"
-  } else {
-    $openclaw_env
-  }
-
-  let openclaw_path = ($secrets | path join "openclaw.env")
-  $openclaw_content | save -f $openclaw_path
-  ^chmod 600 $openclaw_path
 
   $extra
 }

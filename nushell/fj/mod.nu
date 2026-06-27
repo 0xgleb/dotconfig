@@ -96,7 +96,11 @@ export def --wrapped clanker [...args: string] {
     ($project_dir | path exists)
     and ((glob $"($project_dir)/*.jsonl") | is-not-empty)
   )
-  ^claude ...(clanker-args $has_session ...$args)
+  # On the remote nixxxos host, launch with `claude --remote-control` so the
+  # session can be driven from claude.ai / the mobile app (a one-time
+  # `claude /login` on the box is required). No-op on the darwin workstation.
+  let on_nixxxos = ((^hostname | str trim) == "nixxxos")
+  ^claude ...(clanker-args $has_session --remote-control=$on_nixxxos ...$args)
 }
 
 # list github issues

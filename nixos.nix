@@ -1,7 +1,5 @@
 {
   pkgs,
-  lib,
-  inputs,
   ...
 }:
 let
@@ -83,70 +81,13 @@ in
     checkReversePath = "loose";
   };
 
-  # The gateway's EnvironmentFile is a hard dependency: systemd fails the unit if
-  # /var/lib/secrets/openclaw.env is missing. provision seeds it on first boot,
-  # but a CD rebuild never re-seeds it, so guarantee both the dir and an (at
-  # least empty) file exist at activation. `-` leaves a seeded file untouched.
+  # /var/lib/secrets holds the out-of-store Tailscale node auth key that
+  # `provision` seeds at install time (services.tailscale.authKeyFile above).
+  # Guarantee the dir exists (mode 700) at activation so a rebuild never races a
+  # missing parent.
   systemd.tmpfiles.rules = [
     "d /var/lib/secrets 0700 root root -"
-    "f /var/lib/secrets/openclaw.env 0600 root root -"
   ];
-
-  # OpenClaw — self-hosted personal agent, as a native systemd gateway service
-  # (nix-openclaw module, imported in flake.nix). Reachable only over the tailnet
-  # (no public port; the gateway binds locally and rides tailscale0).
-  #
-  # Model backends use existing SUBSCRIPTIONS, not paid APIs:
-  #   - Cursor via the acpx ACP harness (cursor-agent) — the explicitly-permitted
-  #     path; the default agent.
-  #   - Claude Code CLI (claude-cli) as a text-only fallback.
-  # Both CLIs are on the service PATH but must be logged in once on the box, and
-  # the @openclaw/acpx plugin installed once (both are runtime, not declarative —
-  # see README). openclaw.json is strict-validated, so this config stays minimal;
-  # finalize routing with `/acp doctor` on the running gateway.
-  services.openclaw-gateway = {
-    enable = true;
-    package = inputs.nix-openclaw.packages.x86_64-linux.openclaw;
-
-    servicePath = [
-      pkgs.cursor-cli # cursor-agent — Cursor subscription backend (ACP)
-      pkgs.claude-code # claude — Claude subscription fallback (CLI backend)
-    ];
-
-    # Secrets (CURSOR_API_KEY, channel tokens) from the out-of-store file seeded
-    # by `provision` / set via `nix run .#tfVars`.
-    environmentFiles = [ "/var/lib/secrets/openclaw.env" ];
-
-    # Deep-merged into /etc/openclaw/openclaw.json.
-    config = {
-      acp = {
-        enabled = true;
-        dispatch.enabled = true;
-        backend = "acpx";
-        defaultAgent = "cursor";
-        allowedAgents = [
-          "cursor"
-          "claude"
-        ];
-      };
-
-      plugins.entries.acpx.enabled = true;
-
-      agents.defaults.cliBackends."claude-cli".command = "${pkgs.claude-code}/bin/claude";
-    };
-  };
-
-  # The acpx plugin and CLI logins are one-time on-box runtime steps (see README),
-  # so a freshly provisioned box runs the gateway before they are done. Cap the
-  # restart rate so an unconfigured gateway backs off into a clean failed state
-  # instead of hammering a tight crash-loop until setup is completed.
-  systemd.services.openclaw-gateway = {
-    startLimitIntervalSec = 300;
-    startLimitBurst = 5;
-    # The module ships RestartSec = 2 (tight loop); back it off so an
-    # unconfigured gateway hits the start-limit and stops instead of hammering.
-    serviceConfig.RestartSec = lib.mkForce 15;
-  };
 
   # Set hostname
   networking.hostName = "nixxxos";

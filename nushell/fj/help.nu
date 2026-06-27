@@ -12,6 +12,8 @@ const command_help = {
     - auto mode      --permission-mode auto
     - flicker-free   fullscreen alt-screen renderer (tui: fullscreen)
     - resume         picks up the most recent session here (--continue)
+    - remote ctl     on the nixxxos host only, adds --remote-control so the
+                     session can be driven from claude.ai / mobile
 
   Resumes by default, but only when a session for this directory
   exists; in a fresh, renamed, or moved directory it starts fresh

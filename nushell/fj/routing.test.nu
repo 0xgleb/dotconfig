@@ -68,6 +68,23 @@ def "test clanker-args forwards a bare prompt with resume" [] {
   assert (("refactor the routing module" in $argv))
 }
 
+def "test clanker-args adds remote-control on the nixxxos host" [] {
+  let argv = (clanker-args true --remote-control)
+  assert (("--remote-control" in $argv)) "the host flag must add claude --remote-control"
+}
+
+def "test clanker-args omits remote-control off the nixxxos host" [] {
+  let argv = (clanker-args true)
+  assert (not ("--remote-control" in $argv)) "no remote-control unless on the nixxxos host"
+}
+
+def "test clanker-args remote-control coexists with resume and a prompt" [] {
+  let argv = (clanker-args true --remote-control "fix the bug")
+  assert (("--remote-control" in $argv))
+  assert (("--continue" in $argv)) "remote-control does not disturb the implicit resume"
+  assert (("fix the bug" in $argv)) "the prompt still passes through"
+}
+
 # --- mut: gt modify ---
 
 def "test fj mut routes to gt modify" [] {
