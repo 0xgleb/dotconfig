@@ -24,8 +24,11 @@ Follow these steps precisely.
 
 ## 1. Resolve the audit scope
 
-`$ARGUMENTS` is an optional package or path. With no argument, audit the **whole
-repository**.
+`$ARGUMENTS` is an optional package or path. With no argument — the common case —
+audit the **whole repository**. A whole-repo audit is the intended default: it is
+expected to be large, and size alone is NEVER a reason to stop and ask. Chunk hard
+(step 5) and proceed. The only scope-related stop-and-ask is a *named* scope that
+fails to resolve (below); an unscoped invocation always runs the whole repo.
 
 ```bash
 repo_root=$(git rev-parse --show-toplevel 2>/dev/null || pwd)
@@ -76,10 +79,12 @@ wc -l "$out_dir/diff.patch"
 ```
 
 Refuse on an empty target. A whole repo is large, so this leans hard on chunking
-(step 5); if the target exceeds ~8000 lines, tell the user it is a long,
-token-heavy run and that scoping to a package (`/audit crates/NAME`) is cheaper —
-proceed once they confirm or if they already scoped it. (Audit `HEAD` by default;
-drop `HEAD` from the `git diff` to audit the working tree instead.)
+(step 5) — large is expected, not a blocker. **Do not stop for size confirmation
+on an unscoped audit**: the whole repo is the intended default, so chunk and
+proceed. A one-line heads-up that it is a long, token-heavy run is fine (and you
+may note that `/audit crates/NAME` is a cheaper way to focus a follow-up), but
+size alone never gates the run — only an explicit user "stop" does. (Audit `HEAD`
+by default; drop `HEAD` from the `git diff` to audit the working tree instead.)
 
 ## 4. Load project context and the check command
 
@@ -231,8 +236,10 @@ issue-writing rule). Always confirm drafts before creating.
 - **Dirty tree** — stop; fixes need clean branches off trunk.
 - **Empty or unresolvable scope** — stop and ask; never fall back to the whole
   repo when a named scope failed to resolve.
-- **Target too large to be affordable** — warn, recommend scoping to a package,
-  proceed only on confirmation; chunk either way.
+- **Target large** — expected for a whole-repo audit; never a blocker. Chunk hard
+  and proceed; a one-line heads-up is fine, but do NOT stop for confirmation on an
+  unscoped audit. Scoping to a package is an optional cheaper follow-up the user
+  may choose, not a gate.
 - **A cluster's fix fails to converge or breaks the check command** — do not open
   that PR; report it, keep its findings in the deferred list, and continue with
   the other clusters.
