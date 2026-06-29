@@ -49,6 +49,11 @@ one-token call. The panel uses two model tiers:
   model — quick but capable, with its own Cursor limit pool separate from the
   API models. It augments the sonnet lane for cross-lab redundancy, and
   conditionally replaces frontier lanes when both frontier options are exhausted.
+- **Auto fallback**: when BOTH frontier models (gpt-5.5 and agy/Gemini) are out,
+  the second external lane runs cursor-agent's **auto** model mode — Cursor routes
+  to whatever model is still within limits — so the panel keeps two cross-model
+  external lanes (composer-2.5 + auto) instead of dropping to a same-lab native
+  sonnet lane.
 
 Run the probes (skip any whose CLI is not on PATH). Probes **(a) and (c) are
 independent — run them in the same batch (parallel)**; only run **(b)** if (a)
@@ -61,8 +66,12 @@ cursor-agent -p --mode plan --model gpt-5.5-high --trust "Reply with exactly: OK
 cursor-agent -p --mode plan --model composer-2.5 --trust "Reply with exactly: OK"
 # (b) only if (a) failed — Antigravity CLI (frontier replacement); needs a
 #     one-time `agy` sign-in, so an unauthenticated agy fails the probe and the
-#     panel falls back to composer/native, exactly as intended.
+#     panel falls back to composer/auto/native, exactly as intended.
 agy -p "Reply with exactly: OK"
+# (d) only if BOTH frontier options ((a) and (b)) failed — cursor-agent auto
+#     model mode; Cursor routes to whatever model is still within limits, so it
+#     can fill the second external lane even when the named API models are out.
+cursor-agent -p --mode plan --model auto --trust "Reply with exactly: OK"
 ```
 
 A probe **passes** if it exits cleanly and prints `OK`. It **fails** if the
@@ -77,15 +86,19 @@ Assign lanes from the probe results:
 | (a) gpt-5.5 OK        | out      | cursor-agent `gpt-5.5-high` | cursor-agent `gpt-5.5-high` | dropped                        |
 | (b) agy OK            | OK       | `agy`                       | `agy`                       | cursor-agent `composer-2.5`    |
 | (b) agy OK            | out      | `agy`                       | `agy`                       | dropped                        |
-| both frontier out     | OK       | cursor-agent `composer-2.5` | native `sonnet` lane        | dropped (composer moved to a)  |
-| both frontier out     | out      | native `sonnet` lane        | dropped                     | dropped                        |
+| both frontier out     | OK            | cursor-agent `composer-2.5` | cursor-agent `auto`         | dropped (composer moved to a)  |
+| both frontier out     | out, auto OK  | cursor-agent `auto`         | dropped                     | dropped                        |
+| both frontier out     | out, auto out | native `sonnet` lane        | dropped                     | dropped                        |
 
 The **composer lane** is a fast-tier augment: it mirrors the sonnet lane's
 error-handling focus so the same ground is covered by models from two different
 labs. When both frontier options are exhausted, Composer is promoted into
-external-a (conditional replacement) and the augment lane is dropped — no point
-running Composer twice. Tell the user which configuration the panel landed on
-whenever it is not the first row.
+external-a and the second external lane runs cursor-agent **auto** (Cursor's
+automatic model selection) so the panel keeps two cross-model lanes; the augment
+lane is dropped — no point running Composer twice. If Composer is also out, the
+auto lane alone fills external-a; only when every Cursor pool is exhausted does
+the panel fall back to a native sonnet lane. Tell the user which configuration
+the panel landed on whenever it is not the first row.
 
 ## 2. Build the reviewer prompts
 
@@ -317,7 +330,7 @@ For external lanes running through an external CLI, set `externalCmd` to the
 **complete shell command** (with the lane's own prompt and diff paths
 substituted) and omit `model`:
 
-- cursor-agent lanes (`gpt-5.5-high` or `composer-2.5`):
+- cursor-agent lanes (`gpt-5.5-high`, `composer-2.5`, or `auto`):
   ```
   cursor-agent -p --mode plan --model <lane-model> --trust --workspace "{REPO_ROOT}" "$(cat "<promptPath>") The diff to review is at: <diffPath>"
   ```
