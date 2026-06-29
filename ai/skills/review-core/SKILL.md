@@ -50,10 +50,11 @@ one-token call. The panel uses two model tiers:
   API models. It augments the sonnet lane for cross-lab redundancy, and
   conditionally replaces frontier lanes when both frontier options are exhausted.
 - **Auto fallback**: when BOTH frontier models (gpt-5.5 and agy/Gemini) are out,
-  the second external lane runs cursor-agent's **auto** model mode — Cursor routes
-  to whatever model is still within limits — so the panel keeps two cross-model
-  external lanes (composer-2.5 + auto) instead of dropping to a same-lab native
-  sonnet lane.
+  the second external lane runs cursor-agent's **auto** model mode so the panel
+  keeps two cross-model external lanes (composer-2.5 + auto) instead of dropping
+  to a same-lab native sonnet lane. `auto` shares Composer's Cursor tier, so the
+  Composer probe (c) already decides both — they are available together or not at
+  all, and there is no separate auto probe.
 
 Run the probes (skip any whose CLI is not on PATH). Probes **(a) and (c) are
 independent — run them in the same batch (parallel)**; only run **(b)** if (a)
@@ -62,16 +63,14 @@ fails:
 ```bash
 # (a) Cursor API-model pool (frontier)
 cursor-agent -p --mode plan --model gpt-5.5-high --trust "Reply with exactly: OK"
-# (c) Composer pool (fast tier, separate Cursor limits) — run alongside (a)
+# (c) Composer / fast tier (separate Cursor limit pool from the API models) — run
+#     alongside (a). This one probe decides BOTH composer-2.5 and auto mode: they
+#     share the tier, so they are available together or not at all (no auto probe).
 cursor-agent -p --mode plan --model composer-2.5 --trust "Reply with exactly: OK"
 # (b) only if (a) failed — Antigravity CLI (frontier replacement); needs a
 #     one-time `agy` sign-in, so an unauthenticated agy fails the probe and the
-#     panel falls back to composer/auto/native, exactly as intended.
+#     panel falls back to composer+auto or native, exactly as intended.
 agy -p "Reply with exactly: OK"
-# (d) only if BOTH frontier options ((a) and (b)) failed — cursor-agent auto
-#     model mode; Cursor routes to whatever model is still within limits, so it
-#     can fill the second external lane even when the named API models are out.
-cursor-agent -p --mode plan --model auto --trust "Reply with exactly: OK"
 ```
 
 A probe **passes** if it exits cleanly and prints `OK`. It **fails** if the
@@ -86,19 +85,18 @@ Assign lanes from the probe results:
 | (a) gpt-5.5 OK        | out      | cursor-agent `gpt-5.5-high` | cursor-agent `gpt-5.5-high` | dropped                        |
 | (b) agy OK            | OK       | `agy`                       | `agy`                       | cursor-agent `composer-2.5`    |
 | (b) agy OK            | out      | `agy`                       | `agy`                       | dropped                        |
-| both frontier out     | OK            | cursor-agent `composer-2.5` | cursor-agent `auto`         | dropped (composer moved to a)  |
-| both frontier out     | out, auto OK  | cursor-agent `auto`         | dropped                     | dropped                        |
-| both frontier out     | out, auto out | native `sonnet` lane        | dropped                     | dropped                        |
+| both frontier out     | OK       | cursor-agent `composer-2.5` | cursor-agent `auto`         | dropped (composer moved to a)  |
+| both frontier out     | out      | native `sonnet` lane        | dropped                     | dropped                        |
 
 The **composer lane** is a fast-tier augment: it mirrors the sonnet lane's
 error-handling focus so the same ground is covered by models from two different
 labs. When both frontier options are exhausted, Composer is promoted into
 external-a and the second external lane runs cursor-agent **auto** (Cursor's
 automatic model selection) so the panel keeps two cross-model lanes; the augment
-lane is dropped — no point running Composer twice. If Composer is also out, the
-auto lane alone fills external-a; only when every Cursor pool is exhausted does
-the panel fall back to a native sonnet lane. Tell the user which configuration
-the panel landed on whenever it is not the first row.
+lane is dropped — no point running Composer twice. composer-2.5 and auto share
+one Cursor tier, so they come as a pair: when that tier is also out, both go and
+the panel falls back to a single native sonnet lane. Tell the user which
+configuration the panel landed on whenever it is not the first row.
 
 ## 2. Build the reviewer prompts
 
