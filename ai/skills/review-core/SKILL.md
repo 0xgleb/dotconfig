@@ -247,12 +247,38 @@ there interactions between components that could produce surprising
 behavior? Are there implicit assumptions that aren't documented?
 ```
 
-## 3. Build the inspector prompts
+## 3. Build the inspector prompts (selected by what the scope contains)
 
-Write four inspector prompt files. Each contains the full body of the
-corresponding skill file (everything below the frontmatter, with `$ARGUMENTS`
-replaced by `{INSPECTOR_ARG}`), plus the shared context block, plus the
-per-inspector structured-output mapping rules.
+**Inspectors are context-driven — include only the ones that match the code in
+the scope.** Running the Rust inspector on a TypeScript change (or all 13 on a
+one-language repo) wastes lanes. Decide the set from `{FILES_PATH}` extensions
+plus two content sniffs of the diff (`grep` the diff for `from "effect"` and for
+`solid-js`). Inspectors are cheap, so when a language is present, include its
+inspector; the functional-programming inspector rides along with any FP-leaning
+source.
+
+| Inspector | Skill (under `~/.claude/skills/`) | Include when the scope has | Lane model | Category / severity mapping |
+| --- | --- | --- | --- | --- |
+| test | `test-inspector` | test files | sonnet | category `tests`; useless=medium, weak=low, missing-coverage-for-risky=high, mock-abuse=medium |
+| rust | `idiomatic-rust-inspector` | `.rs` | opus | `maintainability` for idiom, `correctness` for ownership/unsafe; non-idiomatic-with-correctness-impact=high, style-only=medium, suboptimal=low |
+| typescript | `idiomatic-typescript-inspector` | `.ts` / `.tsx` | sonnet | `maintainability` (or `correctness` when an `any`/unsafe cast hides a bug); same scale as rust |
+| effect | `idiomatic-effect-inspector` | a TS file importing `effect` | opus | `maintainability`/`correctness`; throwing or an untyped error channel = high |
+| nushell | `idiomatic-nushell-inspector` | `.nu` | sonnet | `maintainability`; `complete` on an internal command or data-loss from string-parsing = high |
+| nix | `idiomatic-nix-inspector` | `.nix` | opus | `maintainability`; import-from-derivation / impurity / non-reproducibility = high |
+| solidjs | `idiomatic-solidjs-inspector` | `solid-js` used | sonnet | `maintainability`; reactivity-breaking (prop destructure, effect-for-derived) = high |
+| svelte | `idiomatic-svelte-inspector` | `.svelte` | sonnet | `maintainability`; reactivity bugs (effect-for-derived, legacy runes) = high |
+| github-actions | `idiomatic-github-actions-inspector` | files under `.github/workflows/` | opus | `security` for unpinned actions / script injection / over-broad permissions (high..critical); else `maintainability` |
+| terraform | `idiomatic-terraform-inspector` | `.tf` | opus | `security` for plaintext secrets = critical; `maintainability` for count-vs-for_each / structure |
+| functional-programming | `idiomatic-functional-programming-inspector` | any FP-leaning source (`.rs`/`.ts`/`.tsx`/`.nu`/`.nix`) | sonnet | `maintainability`; side-effects-in-transforms / partial functions / invalid-states-representable = high |
+| strong-typing | `strong-typing-inspector` | any typed source (`.rs`/`.ts`/`.tsx`) | sonnet | `maintainability`; primitive-where-domain-type-exists = medium (high for money/identifiers), missed-newtype = low |
+| external-contract | `external-contract-inspector` | external touchpoints (HTTP/RPC/SDK responses, on-chain ABIs, units/decimals) — usually worth including | opus | `correctness`; risk-weighted critical (wrong width/unit/encoding at a money or on-chain boundary) down to low |
+
+For each **selected** inspector, write `$out_dir/prompt-<inspector>.txt` =
+the full body of its skill file (everything below the frontmatter, with
+`$ARGUMENTS` replaced by `{INSPECTOR_ARG}`) + the shared context block below +
+its mapping rule from the table (tell it to return findings via the structured
+output tool, and to return an empty findings list with `clean_reason` if its
+language is not actually present once it reads the diff).
 
 Shared context block (append to every inspector prompt):
 
@@ -261,44 +287,6 @@ The diff is at: {DIFF_PATH}
 Repo root: {REPO_ROOT}
 {SOURCE_ACCESS}
 ```
-
-Per-inspector files and mapping rules:
-
-- **Test Inspector** — `$out_dir/prompt-test-inspector.txt` from
-  `~/.claude/skills/test-inspector/SKILL.md`. Append: "Read the diff to identify
-  test files. Read the full test files and the source files they test. If no
-  test files are in the diff, return an empty findings list with clean_reason.
-  Return findings via the structured output tool. Category is always 'tests'.
-  Severity mapping: useless tests = medium, weak tests = low, missing coverage
-  for risky logic = high, mock abuse = medium."
-- **Idiomatic Rust Inspector** — `$out_dir/prompt-rust-inspector.txt` from
-  `~/.claude/skills/idiomatic-rust-inspector/SKILL.md`. Append: "Read the diff
-  to identify Rust files. Read the full files and related type/trait/error
-  definitions. If no Rust files are in the diff, return an empty findings list
-  with clean_reason. Return findings via the structured output tool. Category:
-  'maintainability' for style/idiom issues, 'correctness' for ownership bugs or
-  unsafe misuse. Severity mapping: non-idiomatic with correctness impact = high,
-  style-only = medium, suboptimal = low."
-- **Strong Typing Inspector** — `$out_dir/prompt-typing-inspector.txt` from
-  `~/.claude/skills/strong-typing-inspector/SKILL.md`. Append: "Build the
-  domain-type inventory from the repo first, then scan the diff. If the diff has
-  no source files where strong typing is relevant, return an empty findings list
-  with clean_reason. Return findings via the structured output tool. Category is
-  always 'maintainability'. Severity mapping: primitive-where-domain-type-exists
-  = medium (high if it touches financial values or identifiers), missed-newtype
-  opportunity = low."
-- **External Contract Inspector** — `$out_dir/prompt-contract-inspector.txt`
-  from `~/.claude/skills/external-contract-inspector/SKILL.md`. Append:
-  "Identify external touchpoints in the diff (HTTP/RPC/SDK responses, on-chain
-  ABIs and message formats, units/decimals). For each, check whether the assumed
-  shape is backed by a cited spec or a test encoding a real response. Read the
-  relevant test files and fixtures to decide. If the diff has no external
-  touchpoints, return an empty findings list with clean_reason. Return findings
-  via the structured output tool. Category is always 'correctness'. Severity is
-  risk-weighted: critical for wrong width/unit/encoding at a money or on-chain
-  boundary, down to low for cosmetic shape assumptions. The recommended_fix
-  should name how to pin the assumption (cite the spec, or add the real-response
-  test)."
 
 ## 4. Assemble the lanes
 
@@ -313,10 +301,7 @@ the step-1 probes.
 | composer           | yes      | —      | prompt-composer.txt (error handling, cross-lab augment; present per probes) |
 | external-a         | probes   | —      | prompt-external-a.txt (edge cases)      |
 | external-b         | probes   | —      | prompt-external-b.txt (broad sweep)     |
-| test-inspector     | no       | sonnet | prompt-test-inspector.txt               |
-| rust-inspector     | no       | opus   | prompt-rust-inspector.txt               |
-| typing-inspector   | no       | sonnet | prompt-typing-inspector.txt             |
-| contract-inspector | no       | opus   | prompt-contract-inspector.txt           |
+| inspectors         | no       | per step 3 | one lane per inspector SELECTED in step 3 — key `<inspector>-inspector`, its model + `prompt-<inspector>.txt` from the step-3 table (never the full set; only what the scope's languages call for) |
 
 The composer lane reuses the Sonnet focus paragraph (error handling & failure
 modes) in the external-CLI prompt format — same coverage, different lab.

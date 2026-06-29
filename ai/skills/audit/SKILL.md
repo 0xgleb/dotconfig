@@ -117,13 +117,20 @@ Run the shared engine (`review-core` steps 1–7) with these contract inputs:
 | `{SYNTHESIS_EXTRA}`     | empty string                                                          |
 | `{INCLUDE_ATTRIBUTION}` | `true`                                                                |
 
-**Chunking is the norm here.** Apply review-core's chunk splitting: group
-`files.txt` into per-crate/dir chunks under ~3,500 lines, generate each chunk's
-diff with the same empty-tree command plus a path filter, duplicate the reviewer
-lanes per chunk (inspectors run once), and pass all lanes to one workflow
-invocation. Report the chunk plan first. The engine writes `review.md` /
-`findings.json` and prints the summary. If `findings` is empty, say the audit
-found nothing actionable and stop.
+**Chunk HARDER than a review — that is the whole point of audit-vs-review.** A
+review sees a small diff; an audit sees the entire tree, so split aggressively for
+maximum parallelism: aim for **~1,500-2,000 lines per chunk** (not review-core's
+~3,500 review default), and give a single large file its own chunk rather than
+bundling it. Group by crate / directory / feature so each chunk is coherent.
+Generate each chunk's diff with the same empty-tree command plus a path filter,
+duplicate the reviewer lanes per chunk, and run the **context-selected inspectors**
+(review-core step 3 — only the languages actually present) once over the full
+target. Pass ALL chunk lanes to one workflow invocation: the executor caps real
+concurrency, but more, smaller chunks keep every slot busy and keep each reviewer
+well within quality range. Scale up rather than down — a large repo wants dozens
+of lanes, not a handful. Report the chunk plan first. The engine writes
+`review.md` / `findings.json` and prints the summary. If `findings` is empty, say
+the audit found nothing actionable and stop.
 
 ## 6. Triage
 
