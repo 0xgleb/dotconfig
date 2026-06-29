@@ -560,14 +560,21 @@ When creating issues:
 
 **Always follow the repo's PR template** (commonly
 `.github/PULL_REQUEST_TEMPLATE.md`). Read it once per repo and match
-its section headings exactly. Common shape:
+its section headings exactly. The default shape, used whenever a repo
+does not ship its own template, is **Motivation / Solution** — never
+What/Why/How:
 
 ```
-## What     - what this PR does + link the closed issue
-## Why      - why this change is needed
-## How      - approach + key design decisions
-## Testing  - what was tested
-## Anything else - context, trade-offs, follow-ups, stack relationships
+## Motivation
+
+<!-- Why is this change needed? Link the issue/ADR it advances. State the problem
+     and the desired end state, not the diff. -->
+
+## Solution
+
+<!-- How does this PR solve it? Approach and key design decisions. One line per
+     bullet; detail belongs in the code or the linked issue. Note stack
+     relationships and any trade-offs or follow-ups. -->
 ```
 
 **Don't journal.** A PR description is not your work narrative.
