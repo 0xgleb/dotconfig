@@ -2,6 +2,7 @@ use routing.nu [
   fj-route
   vcs-backend
   resolve-stack
+  protected-push-blocked
   clanker-args
   claude-project-dirname
 ]
@@ -25,13 +26,22 @@ export use cheatsheet.nu
 # here is dead code.
 export def --wrapped main [...args: string@fj-complete] {
   let raw = (fj-route ...$args)
+  let current_branch = (
+    try { do { ^git rev-parse --abbrev-ref HEAD } | complete | get stdout | str trim } catch { "" }
+  )
   let gitbutler_managed = (
-    (which but | is-not-empty) and (
-      (do { ^git rev-parse --abbrev-ref HEAD } | complete | get stdout | str trim)
-      | str starts-with "gitbutler/"
-    )
+    (which but | is-not-empty) and ($current_branch | str starts-with "gitbutler/")
   )
   let backend = (vcs-backend $env.PWD $env.HOME $gitbutler_managed)
+
+  if (protected-push-blocked $raw $backend $current_branch) {
+    error make --unspanned {
+      msg: ($"refusing `fj ss` on '($current_branch)': it force-pushes a protected"
+        + $" branch on the ($backend) backend. Switch to a feature branch, or run"
+        + " an explicit `git push` if you really mean to.")
+    }
+  }
+
   let route = (resolve-stack $raw $backend)
   match $route.tool {
     "status" => {

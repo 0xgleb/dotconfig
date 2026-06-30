@@ -22,8 +22,11 @@ export def build-targets [org_root: string, exclude: string = ""] {
   let repos = (glob $"($org_root)/*" --no-file --no-symlink
     | where {|dir|
       let name = ($dir | path basename)
+      # Path-aware: exclude only when dir IS the vault, sits under it, or is an
+      # ancestor of it. A bare string-prefix test would wrongly exclude a sibling
+      # like `/code/notes-archive` when the vault is `/code/notes`.
       let is_excluded = if $exclude != "" {
-        ($dir | str starts-with $exclude) or ($exclude | str starts-with $dir)
+        ($dir == $exclude) or ($dir | str starts-with $"($exclude)/") or ($exclude | str starts-with $"($dir)/")
       } else {
         false
       }
@@ -103,10 +106,25 @@ export def undot [path: string] {
     | str join '/'
 }
 
-# Map a repo-relative md path to its notes filename: drop a leading `.local/`,
-# then undot each segment. ".local/prompts/01.md" -> "prompts/01.md".
+# Map a repo-relative md path to its notes filename: drop a LEADING `.local/`,
+# then undot each segment. ".local/prompts/01.md" -> "prompts/01.md". The strip
+# is anchored to the start so a committed path that merely contains `.local/`
+# mid-path is left alone.
 export def note-file [file: string] {
-  $file | str replace '.local/' '' | undot $in
+  $file | str replace --regex '^\.local/' '' | undot $in
+}
+
+# note-file is not injective: distinct sources can collapse to one note path
+# (`.github/x.md` and `github/x.md` both undot to `github/x.md`; `.local/p/x.md`
+# and a committed `p/x.md` both map to `p/x.md`). Group the files by note path and
+# return only the colliding groups, so callers can skip them with a warning
+# instead of silently overwriting one source with the other.
+export def note-collisions [files: list<string>] {
+  $files
+    | each {|f| { file: $f, note: (note-file $f) } }
+    | group-by note
+    | items {|note, rows| { note: $note, files: ($rows | get file) } }
+    | where {|g| ($g.files | length) > 1 }
 }
 
 # Count additions/deletions between two files using unix diff.
@@ -119,17 +137,42 @@ export def diff-stats [source: string, destination: string] {
   { adds: $additions, dels: $deletions }
 }
 
-# Atomically copy a file: write to a temp sibling, then rename.
+# Atomically copy a file: stage to a unique temp in the destination's own
+# directory, verify, then rename into place. The temp is per-call unique (so the
+# continuous daemon and a manual `fj md sync` can't race on a shared temp and
+# publish each other's bytes), lives on the destination's filesystem (so the mv
+# is a real atomic rename), and is named with a leading dot and no `.md`
+# substring so the daemon's fswatch `\.md` include / `.*` exclude never fires on
+# it.
 export def atomic-cp [source: string, destination: string] {
-  let tmp = $"($destination).md-sync-tmp"
+  let dir = ($destination | path dirname)
+  let tmp = (mktemp --tmpdir-path $dir --suffix .tmp ".sync-XXXXXX")
   cp $source $tmp
   let src_hash = (open --raw $source | hash md5)
   let tmp_hash = (open --raw $tmp | hash md5)
   if $src_hash != $tmp_hash {
-    rm $tmp
+    rm -f $tmp
     error make { msg: $"copy verification failed: ($source) -> ($destination)" }
   }
   mv --force $tmp $destination
+}
+
+# Snapshot the file about to be overwritten so a bidirectional clobber is always
+# recoverable. mtime-wins resolution can't tell a one-sided edit from a true
+# concurrent edit (no last-synced baseline is kept), so before the losing side is
+# overwritten its current bytes are copied, timestamped, into a hidden
+# `<notes_root>/.md-sync-conflicts/` tree that sits outside both the git repo and
+# the normal vault listing. No-op when notes_root is unset.
+def backup-overwritten [victim: string, repo_name: string, note_file: string, notes_root: string] {
+  if ($notes_root | is-empty) { return }
+
+  let backup_dir = ([$notes_root ".md-sync-conflicts" $repo_name] | path join)
+  mkdir $backup_dir
+  let stamp = (date now | format date '%Y%m%dT%H%M%S')
+  let flat = ($note_file | str replace --all '/' '_')
+  let backup = ([$backup_dir $"($flat).($stamp).bak"] | path join)
+  cp $victim $backup
+  log warning $"backed up the overwritten ($repo_name)/($note_file) to ($backup)"
 }
 
 # Refuse to sync when the "newer" file is empty but the older has real content.
@@ -143,8 +186,16 @@ export def guard-empty-overwrite [newer: string, older: string] {
   }
 }
 
-# Bidirectional sync of a single file. Newer file wins.
-export def sync-file [source: string, destination: string, repo_name: string, note_file: string] {
+# Bidirectional sync of a single file. Newer file wins. When notes_root is given,
+# the losing side is backed up before being overwritten (see backup-overwritten)
+# so a clobber is recoverable.
+export def sync-file [
+  source: string,
+  destination: string,
+  repo_name: string,
+  note_file: string,
+  notes_root: string = ""
+] {
   let timestamp = (date now | format date '%H:%M:%S')
   let label = $"($repo_name)/($note_file)"
 
@@ -160,12 +211,14 @@ export def sync-file [source: string, destination: string, repo_name: string, no
 
     if $source_modified > $destination_modified {
       guard-empty-overwrite $source $destination
+      backup-overwritten $destination $repo_name $note_file $notes_root
       let stats = (diff-stats $destination $source)
       let arrow = $"($repo_name) --+($stats.adds),-($stats.dels)--> notes"
       print $"[($timestamp)] [($arrow)] ($label)"
       atomic-cp $source $destination
     } else {
       guard-empty-overwrite $destination $source
+      backup-overwritten $source $repo_name $note_file $notes_root
       let stats = (diff-stats $source $destination)
       let arrow = $"notes --+($stats.adds),-($stats.dels)--> ($repo_name)"
       print $"[($timestamp)] [($arrow)] ($label)"
@@ -187,13 +240,24 @@ export def sync-repo [repo_path: string, repo_name: string, notes_root: string] 
   let files = (md-files $repo_path)
   log info $"($repo_name): ($files | length) md files"
 
-  let errors = ($files | each {|file|
+  # Skip files whose note paths collide: syncing them would let the second
+  # overwrite the first. Surface the collision instead of losing data silently.
+  let collisions = (note-collisions $files)
+  let colliding_notes = ($collisions | get note)
+  for c in $collisions {
+    log warning ($"($repo_name): note-path collision -- "
+      + $"(($c.files) | str join ', ') all map to '($c.note)'; "
+      + "skipping all of them. Rename or relocate one to resolve.")
+  }
+  let safe_files = ($files | where {|file| (note-file $file) not-in $colliding_notes })
+
+  let errors = ($safe_files | each {|file|
     let note_file = (note-file $file)
     let source = $"($repo_path)/($file)"
     let destination = $"($repo_notes)/($note_file)"
 
     try {
-      sync-file $source $destination $repo_name $note_file
+      sync-file $source $destination $repo_name $note_file $notes_root
       null
     } catch {|e|
       log error $"($repo_name)/($note_file): ($e.msg)"

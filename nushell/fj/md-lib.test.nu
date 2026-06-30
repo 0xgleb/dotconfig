@@ -515,6 +515,128 @@ def "test format-action contains repo name and note file" [] {
   assert ($output | str contains "-2")
 }
 
+# --- build-targets prefix-collision regression ---
+
+def "test build-targets keeps prefix-sibling of vault" [] {
+  with-temp-dir {|dir|
+    let org = $"($dir)/myorg"
+    let vault = $"($org)/notes"
+    mkdir $org
+    mkdir $vault
+    git -C $vault init
+    let sibling = $"($org)/notes-archive"
+    mkdir $sibling
+    git -C $sibling init
+
+    let names = (build-targets $org $vault | get name)
+    # `notes-archive` shares a string prefix with the vault `notes` but is a
+    # distinct sibling dir -- it must NOT be excluded.
+    assert ($names | any {|n| $n == "notes-archive" })
+    assert (not ($names | any {|n| $n == "notes" }))
+  }
+}
+
+# --- compute-actions collision handling (non-injective note-file regression) ---
+
+def "test compute-actions skips colliding note paths" [] {
+  with-temp-dir {|dir|
+    let repo = $"($dir)/repo"
+    let notes = $"($dir)/notes"
+    mkdir $repo
+    mkdir $notes
+    git -C $repo init
+    mkdir $"($repo)/prompts"
+    "committed" | save $"($repo)/prompts/x.md"
+    git -C $repo add -A
+    git -C $repo commit -m "init"
+    mkdir $"($repo)/.local/prompts"
+    "local" | save $"($repo)/.local/prompts/x.md"
+
+    let targets = [{ name: "test-repo", path: $repo }]
+    let actions = (compute-actions $targets $notes)
+    # both files map to prompts/x.md -> collision -> no action emitted for it
+    assert (not ($actions | any {|a| $a.note_file == "prompts/x.md" }))
+  }
+}
+
+# --- run-apply drift guard (the data-loss backstop, previously untested) ---
+
+def "test run-apply aborts on destination drift" [] {
+  with-temp-dir {|dir|
+    let src = $"($dir)/src.md"
+    let dst = $"($dir)/dst.md"
+    "repo new content" | save $src
+    "vault old content" | save $dst
+    let plan_path = $"($dir)/plan.nuon"
+    {
+      version: $PLAN_VERSION
+      created_at: "test"
+      vault: $dir
+      orgs: [$dir]
+      actions: [{
+        action: "forward"
+        repo_name: "test-repo"
+        note_file: "dst.md"
+        source: $src
+        destination: $dst
+        source_hash: (open --raw $src | hash md5)
+        destination_hash: (open --raw $dst | hash md5)
+        adds: 1
+        dels: 1
+      }]
+    } | to nuon | save -f $plan_path
+
+    # destination changes after the plan was captured -> stale
+    "vault edited after planning" | save -f $dst
+
+    try {
+      run-apply --plan $plan_path --yes
+      assert false "should have aborted on drift"
+    } catch {|e|
+      assert ($e.msg | str contains "plan is stale")
+    }
+    # the drifted destination must be left untouched, not overwritten
+    assert equal (open --raw $dst | str trim) "vault edited after planning"
+  }
+}
+
+def "test run-apply aborts on source drift" [] {
+  with-temp-dir {|dir|
+    let src = $"($dir)/src.md"
+    let dst = $"($dir)/dst.md"
+    "repo content" | save $src
+    "vault content" | save $dst
+    let plan_path = $"($dir)/plan.nuon"
+    {
+      version: $PLAN_VERSION
+      created_at: "test"
+      vault: $dir
+      orgs: [$dir]
+      actions: [{
+        action: "forward"
+        repo_name: "test-repo"
+        note_file: "dst.md"
+        source: $src
+        destination: $dst
+        source_hash: (open --raw $src | hash md5)
+        destination_hash: (open --raw $dst | hash md5)
+        adds: 1
+        dels: 1
+      }]
+    } | to nuon | save -f $plan_path
+
+    # source changes after the plan was captured -> stale
+    "repo edited after planning" | save -f $src
+
+    try {
+      run-apply --plan $plan_path --yes
+      assert false "should have aborted on drift"
+    } catch {|e|
+      assert ($e.msg | str contains "plan is stale")
+    }
+  }
+}
+
 # --- test runner ---
 
 def main [] {

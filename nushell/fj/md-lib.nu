@@ -12,7 +12,7 @@ def file-hash [path: string] {
 def fmt-content [path: string] {
   let tmp = (mktemp --suffix .md)
   cp $path $tmp
-  try { do { ^deno fmt --quiet$tmp } | complete } catch {}
+  try { do { ^deno fmt --quiet $tmp } | complete } catch {}
   let content = (open --raw $tmp)
   rm -f $tmp
   $content
@@ -20,7 +20,7 @@ def fmt-content [path: string] {
 
 def fmt-copy [source: string, dest: string] {
   cp $source $dest
-  try { do { ^deno fmt --quiet$dest } | complete } catch {}
+  try { do { ^deno fmt --quiet $dest } | complete } catch {}
 }
 
 export def compute-actions [targets: table<name: string, path: string>, notes_root: string] {
@@ -34,7 +34,17 @@ export def compute-actions [targets: table<name: string, path: string>, notes_ro
     let files = (md-files $target.path)
     log info $"($target.name): ($target.path) -> ($files | length) md file\(s)"
 
-    $files | each {|file|
+    # Skip files whose note paths collide (note-file is not injective): planning
+    # both would create two actions for one destination. Surface, don't clobber.
+    let collisions = (note-collisions $files)
+    let colliding_notes = ($collisions | get note)
+    for c in $collisions {
+      log warning ($"($target.name): note-path collision -- "
+        + $"(($c.files) | str join ', ') all map to '($c.note)'; skipping all.")
+    }
+    let safe_files = ($files | where {|file| (note-file $file) not-in $colliding_notes })
+
+    $safe_files | each {|file|
       let note_file = (note-file $file)
       let source = $"($target.path)/($file)"
       let destination = $"($repo_notes)/($note_file)"

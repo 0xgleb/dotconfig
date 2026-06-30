@@ -201,6 +201,21 @@ export def resolve-stack [
   }
 }
 
+# Whether a routed command would force-push a protected branch on the non-graphite
+# backends. `fj ss` translates to `git push --force-with-lease` (git) / `but push
+# all` (but); on master/main that rewrites a protected branch, which the global
+# rules forbid and which `ss` ("submit") does not advertise. Graphite manages its
+# own stack branches, so the `gt` backend is left alone. Pure: the caller passes
+# the current branch.
+export def protected-push-blocked [
+  raw: record<tool: string, args: list<string>>
+  backend: string
+  current_branch: string
+]: nothing -> bool {
+  let verb = ($raw.args | first | default "")
+  ($raw.tool == "gt") and ($verb == "ss") and ($backend in ["git" "but"]) and ($current_branch in ["master" "main"])
+}
+
 # Encode an absolute path the way Claude Code names its per-directory
 # session store under ~/.claude/projects/: every non-alphanumeric
 # character (slash, dot, underscore) collapses to a dash. So

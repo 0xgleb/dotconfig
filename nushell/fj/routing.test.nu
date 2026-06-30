@@ -291,6 +291,64 @@ def "test resolve-stack git reports squash as unsupported" [] {
   }
 }
 
+def "test resolve-stack git translates ss to force-with-lease push" [] {
+  assert equal (resolve-stack { tool: "gt", args: ["ss"] } "git") {
+    tool: "git", args: ["push", "--force-with-lease"]
+  }
+}
+
+def "test resolve-stack git translates submit to push" [] {
+  assert equal (resolve-stack { tool: "gt", args: ["submit"] } "git") {
+    tool: "git", args: ["push"]
+  }
+}
+
+def "test resolve-stack git translates sync to pull" [] {
+  assert equal (resolve-stack { tool: "gt", args: ["sync"] } "git") {
+    tool: "git", args: ["pull"]
+  }
+}
+
+def "test resolve-stack git translates co preserving branch arg" [] {
+  assert equal (resolve-stack { tool: "gt", args: ["co", "feature"] } "git") {
+    tool: "git", args: ["checkout", "feature"]
+  }
+}
+
+def "test resolve-stack git translates checkout preserving branch arg" [] {
+  assert equal (resolve-stack { tool: "gt", args: ["checkout", "feature"] } "git") {
+    tool: "git", args: ["checkout", "feature"]
+  }
+}
+
+def "test resolve-stack git translates rename preserving branch name" [] {
+  assert equal (resolve-stack { tool: "gt", args: ["rename", "new-name"] } "git") {
+    tool: "git", args: ["branch", "-m", "new-name"]
+  }
+}
+
+# --- protected-branch force-push guard ---
+
+def "test protected-push-blocked blocks ss on master git backend" [] {
+  assert (protected-push-blocked { tool: "gt", args: ["ss"] } "git" "master")
+}
+
+def "test protected-push-blocked blocks ss on main but backend" [] {
+  assert (protected-push-blocked { tool: "gt", args: ["ss"] } "but" "main")
+}
+
+def "test protected-push-blocked allows ss on a feature branch" [] {
+  assert (not (protected-push-blocked { tool: "gt", args: ["ss"] } "git" "feat/x"))
+}
+
+def "test protected-push-blocked leaves the graphite backend alone" [] {
+  assert (not (protected-push-blocked { tool: "gt", args: ["ss"] } "gt" "master"))
+}
+
+def "test protected-push-blocked ignores non-ss verbs on master" [] {
+  assert (not (protected-push-blocked { tool: "gt", args: ["sync"] } "git" "master"))
+}
+
 # --- test runner ---
 
 def main [] {

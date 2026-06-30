@@ -277,6 +277,66 @@ def "test sync-repo maps .local files stripping prefix" [] {
   }
 }
 
+# --- note-file anchoring + collisions (non-injective mapping regression) ---
+
+def "test note-file leaves mid-path .local untouched" [] {
+  # Only a LEADING .local/ is stripped; a committed path that merely contains
+  # .local/ mid-path keeps its structure (undot still drops the leading dot).
+  assert equal (note-file "docs/.local/x.md") "docs/local/x.md"
+}
+
+def "test note-collisions flags distinct sources mapping to one note" [] {
+  let collisions = (note-collisions [".local/prompts/x.md" "prompts/x.md" "docs/unique.md"])
+  assert equal ($collisions | length) 1
+  assert equal ($collisions | first | get note) "prompts/x.md"
+  assert equal ($collisions | first | get files | sort) [".local/prompts/x.md" "prompts/x.md"]
+}
+
+def "test note-collisions empty when all paths distinct" [] {
+  assert equal (note-collisions ["a.md" "docs/b.md" ".local/c.md"]) []
+}
+
+# --- sync-file backup-before-clobber (recoverability backstop) ---
+
+def "test sync-file backs up the overwritten side on clobber" [] {
+  with-temp-dir {|dir|
+    let notes = $"($dir)/notes"
+    mkdir $"($notes)/repo"
+    let src = $"($notes)/repo/src.md"
+    let dst = $"($notes)/repo/dst.md"
+    "vault old content" | save $dst
+    sleep 100ms
+    "repo new content" | save $src
+    sync-file $src $dst "repo" "src.md" $notes
+    assert equal (open --raw $dst | str trim) "repo new content"
+    let backups = (glob $"($notes)/.md-sync-conflicts/repo/*.bak")
+    assert equal ($backups | length) 1
+    assert equal (open --raw ($backups | first) | str trim) "vault old content"
+  }
+}
+
+# --- sync-repo collision handling ---
+
+def "test sync-repo skips colliding note paths" [] {
+  with-temp-dir {|dir|
+    let repo = $"($dir)/repo"
+    let notes = $"($dir)/notes"
+    mkdir $repo
+    mkdir $notes
+    git -C $repo init
+    mkdir $"($repo)/prompts"
+    "committed" | save $"($repo)/prompts/x.md"
+    git -C $repo add -A
+    git -C $repo commit -m "init"
+    mkdir $"($repo)/.local/prompts"
+    "local" | save $"($repo)/.local/prompts/x.md"
+
+    # both map to prompts/x.md -> collision -> neither is synced
+    sync-repo $repo "test-repo" $notes
+    assert (not ($"($notes)/test-repo/prompts/x.md" | path exists))
+  }
+}
+
 # --- test runner ---
 
 def main [] {
