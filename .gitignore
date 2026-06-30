@@ -14,6 +14,7 @@ direnv/
 /.direnv/
 /.tmp/
 /cagent/
+/doom/custom.el
 /emacs/
 /gcloud/
 /gh-copilot/

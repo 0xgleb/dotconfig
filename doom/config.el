@@ -6,8 +6,12 @@
 
 ;; Some functionality uses this to identify you, e.g. GPG configuration, email
 ;; clients, file templates and snippets.
-(setq user-full-name "0xgleb"
-      user-mail-address "gleb.dianov@protonmail.com")
+(setq user-full-name "0xgleb")
+
+;; Keep personal identity (email, etc.) out of this PUBLIC repo: load it from a
+;; machine-local file in $HOME that is never committed. The trailing flags make
+;; the load optional and silent, so a fresh checkout without the file still starts.
+(load (expand-file-name "~/.doom-local.el") 'noerror 'nomessage)
 
 (setq custom-file (expand-file-name "custom.el" doom-cache-dir))
 
@@ -130,7 +134,7 @@
   (add-to-list 'org-modules 'org-habit t)
 
   (setq org-agenda-files
-        '(directory-files (expand-file-name "~/Dropbox/life/") nil "^\\([^.]\\|\\.[^.]\\|\\.\\..\\)"))
+        (directory-files (expand-file-name "~/Dropbox/life/") t "^[^.].*\\.org$"))
 
   (setq org-capture-templates
         '(("t" "Todo" entry (file "~/Dropbox/life/aaye-inbox.org")
