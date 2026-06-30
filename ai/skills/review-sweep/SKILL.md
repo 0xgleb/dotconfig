@@ -3,7 +3,7 @@ name: review-sweep
 user-invocable: true
 allowed-tools: Bash(gt:*), Bash(but:*), Bash(direnv:*), Bash(git:*), Bash(gh:*), Bash(cursor-agent:*), Bash(agy:*), Bash(command:*), Bash(linear:*), Bash(cargo:*), Bash(mkdir:*), Bash(cat:*), Bash(mktemp:*), Bash(rm:*), Bash(test:*), Bash(grep:*), Bash(wc:*), Bash(date:*), Bash(basename:*), Bash(find:*), Bash(ls:*), Read, Write, Edit, Agent, Workflow, AskUserQuestion, Skill
 description: Sweep a whole stack in parallel, dispatching per authorship. With no arguments it sweeps the ENTIRE stack (every branch upstack of trunk) with no confirmation. On your OWN stack it runs /review-loop per branch (fix findings + fold in unaddressed PR feedback, modify into the branch, then submit). On SOMEONE ELSE's stack where you are the reviewer it runs /review-pr per branch (cross-review, post a draft batch of comments, never touch their code or submit a verdict). Detects the repo's stacking tool (Graphite or GitButler). Optional --start / --end bound the range.
-argument-hint: [--start <branch>] [--end <branch>]
+argument-hint: "[--start BRANCH] [--end BRANCH]"
 ---
 
 Sweep an entire stack with the multi-model review panel, **parallelized**, and

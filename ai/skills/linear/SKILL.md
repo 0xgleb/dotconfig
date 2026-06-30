@@ -3,8 +3,11 @@ name: linear
 description: Work with Linear carefully. Prefer read-only operations, inspect help/docs first, and require an explicit preview before writes.
 user-invocable: true
 allowed-tools:
-  - "Bash(linear *)"
-  - "Bash(curl *)"
+  - "Bash(linear api *)"
+  - "Bash(linear issue view *)"
+  - "Bash(linear issue list *)"
+  - "Bash(linear --help)"
+  - "Bash(linear * --help)"
   - "WebFetch(domain:linear.app)"
 ---
 
@@ -15,7 +18,7 @@ Work with Linear conservatively.
 ## Scope: not every project uses Linear
 
 Linear is not the universal issue tracker. Some projects track work in GitHub
-issues (e.g. `data-cartel/moneymentum`), others in a different system entirely.
+issues, others in a different system entirely.
 Before reaching for Linear, confirm the project actually uses it -- check the
 repo's `AGENTS.md` / `CONTRIBUTING` / `ROADMAP`, its memory, or whether it has
 existing Linear issues at all. If the project's source of truth is GitHub

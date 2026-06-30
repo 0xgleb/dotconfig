@@ -6,7 +6,7 @@ allowed-tools:
   - "Bash(git *)"
   - "Bash(gt init *)"
   - "Bash(mkdir *)"
-  - "Bash(rm -rf *)"
+  - "Bash(fix-worktree-submodules *)"
   - "Bash(ln -sfn *)"
   - "Bash(ls *)"
   - "Bash(direnv *)"

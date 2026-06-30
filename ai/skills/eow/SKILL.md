@@ -3,9 +3,8 @@ name: eow
 description: Write the weekly update (end-of-week summary) in the Obsidian vault — high-level outcomes per workstream across the st0x/Rain family repos, sourced from Linear and GitHub. A reference for the weekly dev sync whether or not you attend the call.
 user-invocable: true
 allowed-tools:
-  - "Bash(linear *)"
-  - "Bash(gh *)"
-  - "Bash(gt *)"
+  - "Bash(linear api *)"
+  - "Bash(gh search prs *)"
   - "Bash(ls *)"
   - "Bash(date *)"
   - "Read"
@@ -35,8 +34,8 @@ allowed-tools:
 ## Hard rules
 
 - **Scope: the st0x / Rain family of orgs** — ST0x-Technology, rainlanguage, and
-  sibling family orgs. NEVER data-cartel: that's the user's own org and belongs
-  in a separate update.
+  sibling family orgs. NEVER the user's own personal / side-project orgs (outside
+  the st0x / Rain family) — those belong in a separate update.
 - **Tools: `linear`, `gh`, `gt` only.** No `git`, no `cat`, no ad-hoc scripts.
   Read files with `Read`.
 - **Never fabricate.** Plans = only what the user states; don't invent next
@@ -67,7 +66,7 @@ to merge is the #1 failure mode of this skill.
 ## Workflow
 
 1. **Find the file.** The weekly note lives under
-   `/Users/0xgleb/Library/Mobile Documents/iCloud~md~obsidian/Documents/repos/notes/`
+   `~/Library/Mobile Documents/iCloud~md~obsidian/Documents/repos/notes/`
    as `YY.MM.DD@HH.MM-weekly.md`, matched by today's date prefix
    (`date +%y.%m.%d`). If none exists, ask the user — they create it in
    Obsidian. Preserve anything they've already written.
@@ -147,4 +146,4 @@ gh search prs --reviewed-by=@me --owner=ST0x-Technology,rainlanguage --updated=S
 ```
 
 (`--owner` takes comma-separated orgs; add sibling family orgs as needed, never
-data-cartel.)
+the user's own personal orgs.)

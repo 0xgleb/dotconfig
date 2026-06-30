@@ -3,9 +3,11 @@ name: eod
 description: Write today's end-of-day update in the Obsidian vault, sourcing from Linear and GitHub. Optional brain-dump context overrides everything.
 user-invocable: true
 allowed-tools:
-  - "Bash(linear *)"
-  - "Bash(gh *)"
-  - "Bash(gt *)"
+  - "Bash(linear api *)"
+  - "Bash(gh search prs *)"
+  - "Bash(gh pr list *)"
+  - "Bash(gh api repos/*/pulls/*/reviews *)"
+  - "Bash(gt log *)"
   - "Bash(ls *)"
   - "Bash(date *)"
   - "Read"
@@ -26,8 +28,9 @@ allowed-tools:
 ## Hard rules
 
 - **Scope: the st0x / Rain family of orgs** — ST0x-Technology, rainlanguage,
-  and sibling family orgs. NEVER data-cartel: that's the user's own org and
-  belongs in a separate update, not this one.
+  and sibling family orgs. NEVER the user's own personal / side-project orgs
+  (outside the st0x / Rain family) — those belong in a separate update, not this
+  one.
 - **Time scope: everything since the last daily update, up until NOW.** This is
   NOT a 24-hour or calendar-day window. The lower bound is the date of the most
   recent prior `*-eod.md` note; the upper bound is the moment you run. Daily
@@ -57,7 +60,7 @@ allowed-tools:
 ## Workflow
 
 1. **Find the file.** Today's note lives at
-   `/Users/0xgleb/Library/Mobile Documents/iCloud~md~obsidian/Documents/repos/notes/`
+   `~/Library/Mobile Documents/iCloud~md~obsidian/Documents/repos/notes/`
    under `YY.MM.DD@HH.MM-eod.md`. Match by today's date prefix
    (`date +%y.%m.%d`). If none exists, ask the user — they create it
    in Obsidian. If multiple, ask which.
@@ -267,7 +270,7 @@ does NOT support `--jq` — count Linear results by fetching `identifier`s and
 counting the nodes.
 
 ```bash
-# scope every query to the family orgs (add siblings as needed; never data-cartel)
+# scope every query to the family orgs (add siblings as needed; never the user's own personal orgs)
 # PRs opened today
 gh search prs --author=@me --owner=ST0x-Technology,rainlanguage --created=YYYY-MM-DD --json number --jq length
 # PRs merged today
