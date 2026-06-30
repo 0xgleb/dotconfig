@@ -28,7 +28,11 @@ def with-infra [identity: any, action: closure] {
       ^rage -d -i $identity -o terraform.tfvars terraform.tfvars.age
     }
 
-    $recipients | ^rage -e -R /dev/stdin -o terraform.tfvars.age terraform.tfvars
+    # Encrypt to a temp file and atomically swap it in, so a partway failure
+    # (bad recipients, disk full, kill) leaves the existing .age intact rather
+    # than truncating the only ciphertext copy over a half-written one.
+    $recipients | ^rage -e -R /dev/stdin -o terraform.tfvars.age.tmp terraform.tfvars
+    mv -f terraform.tfvars.age.tmp terraform.tfvars.age
 
     do $action
     false
@@ -36,7 +40,7 @@ def with-infra [identity: any, action: closure] {
     true
   })
 
-  rm -f terraform.tfvars
+  rm -f terraform.tfvars terraform.tfvars.age.tmp
 
   if $failed { exit 1 }
 }

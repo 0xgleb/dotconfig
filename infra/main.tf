@@ -84,16 +84,10 @@ output "tailscale_node_authkey" {
   sensitive = true
 }
 
-# Consumed by the provision script to delete the previous nixxxos device from the
-# tailnet before reinstall, so the new box does not collide on the MagicDNS name.
-output "tailscale_api_key" {
-  value     = var.tailscale_api_key
-  sensitive = true
-}
-
-output "tailscale_tailnet" {
-  value = var.tailscale_tailnet
-}
+# NOTE: tailscale_api_key / tailscale_tailnet are deliberately NOT exposed as
+# outputs. The provision script reads them straight from the decrypted tfvars
+# (remove-stale-device), so the long-lived admin API key never gets persisted
+# into the plaintext terraform.tfstate.
 
 # Copy into the GitHub Actions repository secret TS_AUTHKEY:
 #   terraform -chdir=infra output -raw tailscale_ci_authkey

@@ -15,13 +15,8 @@ def main [--identity (-i): string, droplet_size?: string] {
   # droplet is never recreated and its disk / tailnet state survive. To rebuild
   # from scratch, `nix run .#decommission` first; to change an existing box, use
   # the CD deploy / nixos-rebuild. (A fresh box mints a fresh node auth key on
-  # create, so the old -replace re-mint is unnecessary.) `state list` fails
-  # cleanly (exit != 0, empty stdout) on a fresh checkout, which reads as "no box".
-  let preexisting = (
-    (do { ^terraform state list } | complete | get stdout)
-    | lines
-    | any {|r| $r == "digitalocean_droplet.nixxxos" }
-  )
+  # create, so the old -replace re-mint is unnecessary.)
+  let preexisting = (provision-preexisting)
 
   with-infra $id {
     if $droplet_size == null {
@@ -29,6 +24,13 @@ def main [--identity (-i): string, droplet_size?: string] {
     } else {
       (^terraform apply -var-file=terraform.tfvars
         -var $"droplet_size=($droplet_size)" -auto-approve)
+    }
+
+    # Fresh install only: clear the previous `nixxxos` tailnet device now, while
+    # terraform.tfvars is decrypted (the Tailscale admin key is read from there,
+    # kept out of tfstate). Otherwise the new box registers as `nixxxos-1`.
+    if not $preexisting {
+      remove-stale-device
     }
   }
 
@@ -40,10 +42,6 @@ def main [--identity (-i): string, droplet_size?: string] {
   } else {
     let flake_dir = $"($env.HOME)/.config"
     let ip = (^terraform output -raw ip | str trim)
-
-    # Clear any stale `nixxxos` tailnet device so the fresh box claims the name
-    # (otherwise it registers as `nixxxos-1`).
-    remove-stale-device
 
     wait-for-ssh $id $ip
 
@@ -87,6 +85,34 @@ def main [--identity (-i): string, droplet_size?: string] {
     print "Skipping auto-connect — nixxxos isn't reachable over the tailnet yet."
     print "Once it's up:  ssh -i ~/.ssh/dotconfig-nixos -t root@nixxxos zellij attach -c nixxxos"
   }
+}
+
+# Decide whether a nixxxos droplet already exists, erring hard toward "yes" so a
+# flaky state query can never authorize the destructive reinstall below.
+#
+# A fresh checkout has no local state file at all; `nix run .#decommission`
+# leaves an empty-but-present state. An existing box's state file is present even
+# when `terraform state list` fails transiently (held lock, corrupted state,
+# version-upgrade prompt). So: no state file => no box; state file present but the
+# query fails => abort rather than wipe a live box on an indeterminate answer.
+def provision-preexisting [] {
+  # terraform's local backend writes terraform.tfstate in this dir; its absence
+  # means nothing has ever been applied here, so there is no box.
+  if not ("terraform.tfstate" | path exists) {
+    return false
+  }
+
+  let probe = (do { ^terraform state list } | complete)
+  if $probe.exit_code != 0 {
+    error make {
+      msg: ($"`terraform state list` failed \(exit ($probe.exit_code)) but a state"
+        + " file is present — refusing to provision, since falling through could"
+        + " wipe a live droplet. Resolve the terraform state error and retry."
+        + $"\n($probe.stderr)")
+    }
+  }
+
+  $probe.stdout | lines | any {|r| $r == "digitalocean_droplet.nixxxos" }
 }
 
 # Shared SSH options for probing the box: pin the identity and bypass
@@ -184,18 +210,40 @@ def wait-for-ssh [identity: string, ip: string] {
 # reinstalled box can claim the `nixxxos` MagicDNS name. Without this, both
 # `ssh nixxxos` (wait-for-tailnet) and the CI `tailscale ip -4 nixxxos` lookup
 # can resolve to the dead node or time out while the new box is healthy.
+# Read a scalar value from the decrypted terraform.tfvars (present only inside a
+# with-infra block). tfvars here is flat `name = "value"` lines, so a
+# line-oriented parse suffices. Returns "" when the key is absent or commented.
+def tfvar [name: string]: nothing -> string {
+  if not ("terraform.tfvars" | path exists) { return "" }
+
+  # Single-quoted regex body is literal (no nushell interpolation), so the
+  # capture group survives; $name is a fixed identifier with no regex specials.
+  let pattern = ('^' + $name + '\s*=\s*"?(?<val>[^"]*)"?\s*$')
+
+  open --raw terraform.tfvars
+  | lines
+  | each {|l| $l | str trim }
+  | where {|l| not ($l | str starts-with "#") }
+  | parse --regex $pattern
+  | get val?
+  | get 0?
+  | default ""
+  | str trim
+}
+
 def remove-stale-device [] {
-  # Cleanup is best-effort: any failure here (no API key, terraform/output error,
-  # unexpected API envelope) prints a note and skips, never aborts the install.
-  let api_key = (do { ^terraform output -raw tailscale_api_key } | complete)
-  let key = ($api_key.stdout | str trim)
-  if ($api_key.exit_code != 0 or ($key | is-empty)) {
-    print "No Tailscale API key available; skipping stale-device cleanup."
+  # Cleanup is best-effort: any failure here (no API key, unexpected API
+  # envelope) prints a note and skips, never aborts the install. The Tailscale
+  # admin key is read from the decrypted tfvars (this runs inside with-infra),
+  # NOT from tfstate, so the long-lived admin credential never lands in the
+  # plaintext state file.
+  let key = (tfvar "tailscale_api_key")
+  if ($key | is-empty) {
+    print "No Tailscale API key in tfvars; skipping stale-device cleanup."
     return
   }
 
-  let tailnet_raw = (do { ^terraform output -raw tailscale_tailnet }
-    | complete | get stdout | str trim)
+  let tailnet_raw = (tfvar "tailscale_tailnet")
   let tailnet = (if ($tailnet_raw | is-empty) { "-" } else { $tailnet_raw })
   let headers = { Authorization: $"Bearer ($key)" }
 

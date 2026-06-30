@@ -26,6 +26,13 @@ in
 
   services.openssh = {
     enable = true;
+    # Keep sshd off the public interface: it opens only via the tailscale0
+    # trusted interface below. Without this, openFirewall defaults to true and
+    # punches port 22 on every interface — the [ 22 ] it injects merges with
+    # allowedTCPPorts, so the empty list does NOT override it. First install still
+    # works: nixos-anywhere runs from the kexec installer over the public IP
+    # before this config is live, and CI deploys ride the tailnet.
+    openFirewall = false;
     settings = {
       PermitRootLogin = "prohibit-password";
       PasswordAuthentication = false;

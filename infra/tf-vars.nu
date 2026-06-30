@@ -19,12 +19,16 @@ def main [--identity (-i): string] {
     let editor = ($env.EDITOR? | default "nvim")
     ^$editor terraform.tfvars
 
-    $recipients | ^rage -e -R /dev/stdin -o terraform.tfvars.age terraform.tfvars
+    # Atomic swap: encrypt to a temp file, then rename over the real .age, so a
+    # failed encryption can't truncate the only ciphertext copy (the freshly
+    # hand-edited secrets here aren't in git yet — losing them is unrecoverable).
+    $recipients | ^rage -e -R /dev/stdin -o terraform.tfvars.age.tmp terraform.tfvars
+    mv -f terraform.tfvars.age.tmp terraform.tfvars.age
     false
   } catch {
     true
   })
 
-  rm -f terraform.tfvars
+  rm -f terraform.tfvars terraform.tfvars.age.tmp
   if $failed { exit 1 }
 }
