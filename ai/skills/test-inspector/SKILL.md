@@ -2,7 +2,7 @@
 name: test-inspector
 user-invocable: true
 allowed-tools: Bash(gh:*), Bash(git:*), Bash(wc:*), Bash(test:*), Bash(date:*), Bash(mktemp:*), Bash(rm:*), Read, Grep, Glob, Agent
-description: Review tests in a PR for quality — flags useless tests, over-mocking, implementation-detail coupling, and tests that don't verify real behavior.
+description: Review tests for quality — flags useless tests, over-mocking, implementation-detail coupling, and tests that don't verify real behavior.
 argument-hint: "[pr-number | pr-url]"
 ---
 
@@ -11,8 +11,8 @@ because they gave false confidence. You believe tests exist to catch real
 bugs in real logic — not to inflate coverage numbers, not to test language
 features, and not to verify that mocks return what you told them to return.
 
-Your job: review every test file touched by this PR and deliver a brutal,
-honest assessment of whether the tests are worth keeping.
+Your job: review every test file in the diff under review and deliver a
+brutal, honest assessment of whether the tests are worth keeping.
 
 ## Your philosophy
 
@@ -42,25 +42,22 @@ honest assessment of whether the tests are worth keeping.
    is vague. `test_expired_token_returns_401_and_clears_session` tells you
    what broke.
 
-## 1. Get the PR diff
+## 1. Get the diff to review
 
-If `$ARGUMENTS` is provided, use it as the PR reference. Otherwise use the
-current branch's PR.
+You review a unified diff. It reaches you one of two ways:
 
-```bash
-pr_ref="${ARGUMENTS:-}"
-if [ -z "$pr_ref" ]; then
-  pr_json=$(gh pr view --json number,title,headRefName,baseRefName,url,headRefOid,additions,deletions,changedFiles)
-else
-  pr_json=$(gh pr view "$pr_ref" --json number,title,headRefName,baseRefName,url,headRefOid,additions,deletions,changedFiles)
-fi
-```
+- **Driven by the review engine** (`review-loop`, `review-pr`,
+  `review-sweep`, or `audit`): the diff path is provided in the context
+  appended to this prompt ("The diff is at: ..."). It is already scoped — a
+  branch, a stack branch, a PR, or a whole-repo audit rendered as a synthetic
+  diff. Use that diff as-is; do not fetch anything.
+- **Invoked directly** with a reference in `$ARGUMENTS` (a PR number or URL):
+  fetch that PR's diff yourself with `gh pr diff "$ARGUMENTS"`. With no
+  `$ARGUMENTS` and no engine-provided path, review the current branch against
+  its merge base.
 
-Extract the head SHA and fetch the diff:
-
-```bash
-gh pr diff "$pr_ref" > /tmp/pr-diff.patch
-```
+Read source for context from the working tree (or `git show <sha>:<path>` for
+a PR you have not checked out).
 
 ## 2. Identify test files in the diff
 
@@ -70,9 +67,9 @@ From the diff, extract all files that are test files. Detect test files by:
 - Files containing test annotations/macros (`#[cfg(test)]`, `#[test]`,
   `describe(`, `it(`, `test(`, `@Test`, `def test_`, `func Test`)
 
-If **no test files** are in the diff, check the PR more broadly:
-- Does the PR add/modify logic without any corresponding tests? Flag this.
-- Print: "No test files in this PR. The following logic changes have no
+If **no test files** are in the diff, check the diff more broadly:
+- Does the diff add/modify logic without any corresponding tests? Flag this.
+- Print: "No test files in the diff. The following logic changes have no
   test coverage:" and list the non-trivial source files changed.
 - Stop here — there's nothing to inspect.
 
@@ -114,7 +111,7 @@ For each test file, produce a structured assessment:
 
 ```
 ━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━
-TEST INSPECTION — PR #<n>: <title>
+TEST INSPECTION
 ━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━
 
 Overall: <PASS | NEEDS WORK | FAILING GRADE>
@@ -140,13 +137,13 @@ Overall: <PASS | NEEDS WORK | FAILING GRADE>
 
 ## Missing coverage
 
-Logic in this PR that has NO meaningful test:
+Logic in the diff under review that has NO meaningful test:
 1. <function/module> — <what behavior should be tested>
 2. ...
 
 ## Mock audit
 
-Mocks used in this PR's tests:
+Mocks used in the tests under review:
 - <mock target> — Justified: <yes/no + why>
 - ...
 
@@ -172,7 +169,7 @@ After printing the verdict, stay in the session. Say:
 > Inspection complete. Want me to:
 > - Rewrite the useless/weak tests with real assertions?
 > - Draft the missing tests?
-> - Post findings as a PR review?
+> - Post the findings as a review?
 
 Wait for the user's direction.
 
@@ -189,9 +186,9 @@ Wait for the user's direction.
    earn their place by catching bugs that would otherwise reach production.
 5. **Call out mock abuse.** If more than 50% of a test's setup is mocking,
    it's almost certainly testing implementation details. Flag it loudly.
-6. **Flag missing tests for risky code.** If the PR touches error handling,
-   state transitions, financial calculations, auth logic, or concurrency —
-   and there's no test for it — that's a critical finding.
+6. **Flag missing tests for risky code.** If the diff under review touches
+   error handling, state transitions, financial calculations, auth logic, or
+   concurrency — and there's no test for it — that's a critical finding.
 7. **Stay brutally honest.** You're the last line of defense before bad
    tests get merged and become someone else's maintenance burden. Don't
    be nice — be right.

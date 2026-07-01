@@ -13,7 +13,7 @@ derived state derives itself, and you reach for the primitive that
 already exists instead of hand-rolling reactivity with effects and
 stores.
 
-Your job: review every Svelte file touched by this PR and deliver a
+Your job: review every Svelte file in the diff under review and deliver a
 focused assessment of whether the code is idiomatic for the version it
 targets, leveraging the runes system rather than fighting it.
 
@@ -56,31 +56,28 @@ targets, leveraging the runes system rather than fighting it.
     codebase — only flag legacy patterns in runes-mode (or migrated) code.
     Mixing the two models in one component is the real bug.
 
-## 1. Get the PR diff
+## 1. Get the diff to review
 
-If `$ARGUMENTS` is provided, use it as the PR reference. Otherwise use the
-current branch's PR.
+You review a unified diff. It reaches you one of two ways:
 
-```bash
-pr_ref="${ARGUMENTS:-}"
-if [ -z "$pr_ref" ]; then
-  pr_json=$(gh pr view --json number,title,headRefName,baseRefName,url,headRefOid,additions,deletions,changedFiles)
-else
-  pr_json=$(gh pr view "$pr_ref" --json number,title,headRefName,baseRefName,url,headRefOid,additions,deletions,changedFiles)
-fi
-```
+- **Driven by the review engine** (`review-loop`, `review-pr`,
+  `review-sweep`, or `audit`): the diff path is provided in the context
+  appended to this prompt ("The diff is at: ..."). It is already scoped — a
+  branch, a stack branch, a PR, or a whole-repo audit rendered as a synthetic
+  diff. Use that diff as-is; do not fetch anything.
+- **Invoked directly** with a reference in `$ARGUMENTS` (a PR number or URL):
+  fetch that PR's diff yourself with `gh pr diff "$ARGUMENTS"`. With no
+  `$ARGUMENTS` and no engine-provided path, review the current branch against
+  its merge base.
 
-Extract the head SHA and fetch the diff:
-
-```bash
-gh pr diff "$pr_ref" > /tmp/pr-diff.patch
-```
+Read source for context from the working tree (or `git show <sha>:<path>` for
+a PR you have not checked out).
 
 ## 2. Identify Svelte files in the diff
 
 From the diff, extract all `.svelte` files (and `.svelte.js` / `.svelte.ts`
 rune modules). If **no Svelte files** are in the diff, print "No Svelte
-files in this PR — nothing to inspect." and stop.
+files in the diff — nothing to inspect." and stop.
 
 ## 3. Read and analyze each Svelte file
 
@@ -138,7 +135,7 @@ For each piece of changed code, evaluate against these criteria:
 
 ```
 ━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━
-SVELTE IDIOM INSPECTION — PR #<n>: <title>
+SVELTE IDIOM INSPECTION
 ━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━
 
 Overall: <IDIOMATIC | NEEDS WORK | FIGHTING THE RUNES>
@@ -165,7 +162,7 @@ Target version: <Svelte 4 | Svelte 5 runes | mixed>
 
 ## Reactivity audit
 
-State and derivations introduced or modified in this PR:
+State and derivations introduced or modified in the diff under review:
 - `<name>` — <assessment: correct rune | should be $derived | effect masquerading as derivation>
 - ...
 
@@ -174,7 +171,7 @@ Rule: A value that is a pure function of other reactive values is a
 
 ## Props & events audit
 
-Component boundary in this PR:
+Component boundary in the diff under review:
 - <prop / event pattern> — <assessment: idiomatic | legacy dispatcher | should be $bindable>
 - ...
 
@@ -182,7 +179,7 @@ Rule: Props in via `$props()`, out via callback props, two-way via `$bindable`.
 
 ## State-scope audit
 
-State ownership in this PR:
+State ownership in the diff under review:
 - <state / store> — <assessment: correct scope | store where $state fits | local where shared needed>
 - ...
 
@@ -209,7 +206,7 @@ After printing the verdict, stay in the session. Say:
 > Inspection complete. Want me to:
 > - Rewrite the legacy patterns into runes (`$:` → `$derived`, `export let` → `$props`)?
 > - Convert slots to snippets and dispatchers to callback props?
-> - Post findings as a PR review?
+> - Post the findings as a review?
 
 Wait for the user's direction.
 

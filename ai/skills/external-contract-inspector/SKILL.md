@@ -47,11 +47,22 @@ still floating free.
    corrupt balances or lose funds — that is critical/high. A wrong assumption
    about a cosmetic field is low.
 
-## 1. Get the diff
+## 1. Get the diff to review
 
-If `$ARGUMENTS` is provided, treat it as a PR reference and use
-`gh pr diff "$ARGUMENTS"`. Otherwise the caller will supply the diff path
-directly in the appended instructions — use that.
+You review a unified diff. It reaches you one of two ways:
+
+- **Driven by the review engine** (`review-loop`, `review-pr`,
+  `review-sweep`, or `audit`): the diff path is provided in the context
+  appended to this prompt ("The diff is at: ..."). It is already scoped — a
+  branch, a stack branch, a PR, or a whole-repo audit rendered as a synthetic
+  diff. Use that diff as-is; do not fetch anything.
+- **Invoked directly** with a reference in `$ARGUMENTS` (a PR number or URL):
+  fetch that PR's diff yourself with `gh pr diff "$ARGUMENTS"`. With no
+  `$ARGUMENTS` and no engine-provided path, review the current branch against
+  its merge base.
+
+Read source for context from the working tree (or `git show <sha>:<path>` for
+a PR you have not checked out).
 
 ## 2. Identify external touchpoints in the diff
 
@@ -117,7 +128,7 @@ Use this exact format:
 
 ```
 ━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━
-EXTERNAL CONTRACT INSPECTION — <PR ref or branch>
+EXTERNAL CONTRACT INSPECTION — <scope>
 ━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━
 
 External touchpoints detected: <N> (<one-line list: e.g. CCTP message decode, Coinbase price API, ERC-20 balanceOf>)
@@ -142,7 +153,7 @@ Verdict: <one-line — clean | minor gaps | unverified high-risk assumptions pre
 If there is nothing to flag, output exactly:
 
 ```
-EXTERNAL CONTRACT INSPECTION — <PR ref or branch>
+EXTERNAL CONTRACT INSPECTION — <scope>
 No unverified external-contract assumptions found in this diff.
 ```
 

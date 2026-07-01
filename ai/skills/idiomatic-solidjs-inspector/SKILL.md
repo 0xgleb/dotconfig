@@ -13,7 +13,7 @@ components run once, and only what actually changed updates. Code that
 fights this model leaks reactivity and recreates the very re-render
 problems Solid was built to avoid.
 
-Your job: review every Solid file touched by this PR and deliver a
+Your job: review every Solid file in the diff under review and deliver a
 focused assessment of whether the code is idiomatic, working with the
 reactive graph rather than against it.
 
@@ -61,32 +61,29 @@ reactive graph rather than against it.
     `<ErrorBoundary>`) model loading and error states declaratively.
     Raw `async`/`await` in a component body runs once and never reacts.
 
-## 1. Get the PR diff
+## 1. Get the diff to review
 
-If `$ARGUMENTS` is provided, use it as the PR reference. Otherwise use the
-current branch's PR.
+You review a unified diff. It reaches you one of two ways:
 
-```bash
-pr_ref="${ARGUMENTS:-}"
-if [ -z "$pr_ref" ]; then
-  pr_json=$(gh pr view --json number,title,headRefName,baseRefName,url,headRefOid,additions,deletions,changedFiles)
-else
-  pr_json=$(gh pr view "$pr_ref" --json number,title,headRefName,baseRefName,url,headRefOid,additions,deletions,changedFiles)
-fi
-```
+- **Driven by the review engine** (`review-loop`, `review-pr`,
+  `review-sweep`, or `audit`): the diff path is provided in the context
+  appended to this prompt ("The diff is at: ..."). It is already scoped — a
+  branch, a stack branch, a PR, or a whole-repo audit rendered as a synthetic
+  diff. Use that diff as-is; do not fetch anything.
+- **Invoked directly** with a reference in `$ARGUMENTS` (a PR number or URL):
+  fetch that PR's diff yourself with `gh pr diff "$ARGUMENTS"`. With no
+  `$ARGUMENTS` and no engine-provided path, review the current branch against
+  its merge base.
 
-Extract the head SHA and fetch the diff:
-
-```bash
-gh pr diff "$pr_ref" > /tmp/pr-diff.patch
-```
+Read source for context from the working tree (or `git show <sha>:<path>` for
+a PR you have not checked out).
 
 ## 2. Identify SolidJS files in the diff
 
 From the diff, extract all `.tsx`, `.jsx`, `.ts`, and `.js` files, then
 keep only those that import from `solid-js` (or `solid-js/store`,
 `solid-js/web`). If **no SolidJS files** are in the diff, print "No
-SolidJS files in this PR — nothing to inspect." and stop.
+SolidJS files in the diff — nothing to inspect." and stop.
 
 ## 3. Read and analyze each SolidJS file
 
@@ -140,7 +137,7 @@ For each piece of changed code, evaluate against these criteria:
 
 ```
 ━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━
-SOLIDJS IDIOM INSPECTION — PR #<n>: <title>
+SOLIDJS IDIOM INSPECTION
 ━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━
 
 Overall: <IDIOMATIC | NEEDS WORK | REACT IN DISGUISE>
@@ -166,7 +163,7 @@ Overall: <IDIOMATIC | NEEDS WORK | REACT IN DISGUISE>
 
 ## Reactivity audit
 
-Reactive reads and tracking in this PR:
+Reactive reads and tracking in the diff under review:
 - <pattern> — <assessment: tracked correctly | severed by destructure | stale closure>
 - ...
 
@@ -175,7 +172,7 @@ Reads at setup time are frozen forever.
 
 ## State-shape audit
 
-State primitives introduced or modified in this PR:
+State primitives introduced or modified in the diff under review:
 - `signal/store name` — <assessment: right primitive | should be store | should be memo>
 - ...
 
@@ -184,7 +181,7 @@ values. Effects never own derived state.
 
 ## Effects audit
 
-Effects in this PR:
+Effects in the diff under review:
 - <effect> — <assessment: real side effect | should be a memo | missing onCleanup>
 - ...
 
@@ -211,7 +208,7 @@ After printing the verdict, stay in the session. Say:
 > Inspection complete. Want me to:
 > - Rewrite the non-idiomatic code with idiomatic alternatives?
 > - Convert effect-driven derived state into memos / stores?
-> - Post findings as a PR review?
+> - Post the findings as a review?
 
 Wait for the user's direction.
 

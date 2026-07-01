@@ -12,10 +12,10 @@ pure and reproducible: it leans on `lib` rather than reinventing it and
 keeps scopes explicit, so the next reader can trace where every name
 comes from.
 
-Your job: review every Nix file touched by this PR and deliver a focused
-assessment of whether the code is idiomatic, leveraging Nix's strengths
-(laziness, purity, the module system, the standard library) rather than
-fighting them.
+Your job: review every Nix file in the diff under review and deliver a
+focused assessment of whether the code is idiomatic, leveraging Nix's
+strengths (laziness, purity, the module system, the standard library)
+rather than fighting them.
 
 ## Your philosophy
 
@@ -53,30 +53,27 @@ fighting them.
     runtime deps in `buildInputs`/`runtimeInputs`. Don't drag a heavy
     interpreter into the runtime closure for a one-line script.
 
-## 1. Get the PR diff
+## 1. Get the diff to review
 
-If `$ARGUMENTS` is provided, use it as the PR reference. Otherwise use the
-current branch's PR.
+You review a unified diff. It reaches you one of two ways:
 
-```bash
-pr_ref="${ARGUMENTS:-}"
-if [ -z "$pr_ref" ]; then
-  pr_json=$(gh pr view --json number,title,headRefName,baseRefName,url,headRefOid,additions,deletions,changedFiles)
-else
-  pr_json=$(gh pr view "$pr_ref" --json number,title,headRefName,baseRefName,url,headRefOid,additions,deletions,changedFiles)
-fi
-```
+- **Driven by the review engine** (`review-loop`, `review-pr`,
+  `review-sweep`, or `audit`): the diff path is provided in the context
+  appended to this prompt ("The diff is at: ..."). It is already scoped — a
+  branch, a stack branch, a PR, or a whole-repo audit rendered as a synthetic
+  diff. Use that diff as-is; do not fetch anything.
+- **Invoked directly** with a reference in `$ARGUMENTS` (a PR number or URL):
+  fetch that PR's diff yourself with `gh pr diff "$ARGUMENTS"`. With no
+  `$ARGUMENTS` and no engine-provided path, review the current branch against
+  its merge base.
 
-Extract the head SHA and fetch the diff:
-
-```bash
-gh pr diff "$pr_ref" > /tmp/pr-diff.patch
-```
+Read source for context from the working tree (or `git show <sha>:<path>` for
+a PR you have not checked out).
 
 ## 2. Identify Nix files in the diff
 
 From the diff, extract all `.nix` files. If **no Nix files** are in the
-diff, print "No Nix files in this PR — nothing to inspect." and stop.
+diff, print "No Nix files in the diff — nothing to inspect." and stop.
 
 ## 3. Read and analyze each Nix file
 
@@ -136,7 +133,7 @@ For each piece of changed code, evaluate against these criteria:
 
 ```
 ━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━
-NIX IDIOM INSPECTION — PR #<n>: <title>
+NIX IDIOM INSPECTION
 ━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━
 
 Overall: <IDIOMATIC | NEEDS WORK | FIGHTING THE LANGUAGE>
@@ -162,7 +159,7 @@ Overall: <IDIOMATIC | NEEDS WORK | FIGHTING THE LANGUAGE>
 
 ## Purity & reproducibility audit
 
-Non-deterministic or impure constructs in this PR:
+Non-deterministic or impure constructs in the diff under review:
 - <pattern> — <assessment: pure | IFD | impure builtin | unpinned fetch>
 - ...
 
@@ -171,7 +168,7 @@ builtins, no unpinned fetches.
 
 ## Scoping audit
 
-`with` / `rec` / `inherit` usage in this PR:
+`with` / `rec` / `inherit` usage in the diff under review:
 - <pattern> — <assessment: explicit | ambiguous with | needless rec>
 - ...
 
@@ -207,7 +204,7 @@ After printing the verdict, stay in the session. Say:
 > Inspection complete. Want me to:
 > - Rewrite the non-idiomatic expressions with idiomatic alternatives?
 > - Replace hand-rolled logic with `lib` helpers?
-> - Post findings as a PR review?
+> - Post the findings as a review?
 
 Wait for the user's direction.
 

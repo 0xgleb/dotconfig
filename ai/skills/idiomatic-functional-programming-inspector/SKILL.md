@@ -13,7 +13,7 @@ Functional code earns its keep by making behavior predictable: pure
 transforms, values instead of control flow, and data models where the
 compiler rejects nonsense.
 
-Your job: review every source file touched by this PR and deliver a
+Your job: review every source file in the diff under review and deliver a
 focused assessment of whether the code is functional — composing pure
 pieces and pushing effects to the edges — rather than imperative logic
 wearing functional syntax. This applies across the user's languages
@@ -51,31 +51,28 @@ file is written in.
     value without changing behavior. Impure builtins (current time, env,
     global mutable state) break it.
 
-## 1. Get the PR diff
+## 1. Get the diff to review
 
-If `$ARGUMENTS` is provided, use it as the PR reference. Otherwise use the
-current branch's PR.
+You review a unified diff. It reaches you one of two ways:
 
-```bash
-pr_ref="${ARGUMENTS:-}"
-if [ -z "$pr_ref" ]; then
-  pr_json=$(gh pr view --json number,title,headRefName,baseRefName,url,headRefOid,additions,deletions,changedFiles)
-else
-  pr_json=$(gh pr view "$pr_ref" --json number,title,headRefName,baseRefName,url,headRefOid,additions,deletions,changedFiles)
-fi
-```
+- **Driven by the review engine** (`review-loop`, `review-pr`,
+  `review-sweep`, or `audit`): the diff path is provided in the context
+  appended to this prompt ("The diff is at: ..."). It is already scoped — a
+  branch, a stack branch, a PR, or a whole-repo audit rendered as a synthetic
+  diff. Use that diff as-is; do not fetch anything.
+- **Invoked directly** with a reference in `$ARGUMENTS` (a PR number or URL):
+  fetch that PR's diff yourself with `gh pr diff "$ARGUMENTS"`. With no
+  `$ARGUMENTS` and no engine-provided path, review the current branch against
+  its merge base.
 
-Extract the head SHA and fetch the diff:
-
-```bash
-gh pr diff "$pr_ref" > /tmp/pr-diff.patch
-```
+Read source for context from the working tree (or `git show <sha>:<path>` for
+a PR you have not checked out).
 
 ## 2. Identify source files in the diff
 
 From the diff, extract all `.rs`, `.ts`, `.tsx`, `.nu`, and `.nix` files.
 If **no reviewable source files** are in the diff, print "No reviewable
-source files in this PR — nothing to inspect." and stop.
+source files in the diff — nothing to inspect." and stop.
 
 ## 3. Read and analyze each source file
 
@@ -129,7 +126,7 @@ For each piece of changed code, evaluate against these criteria:
 
 ```
 ━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━
-FUNCTIONAL IDIOM INSPECTION — PR #<n>: <title>
+FUNCTIONAL IDIOM INSPECTION
 ━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━
 
 Overall: <FUNCTIONAL | MIXED PARADIGM | IMPERATIVE IN DISGUISE>
@@ -155,7 +152,7 @@ Overall: <FUNCTIONAL | MIXED PARADIGM | IMPERATIVE IN DISGUISE>
 
 ## Purity & effects audit
 
-Functions / pipelines introduced or modified in this PR:
+Functions / pipelines introduced or modified in the diff under review:
 - `<name>` — <pure | hidden side effect in transform | effect not at the edge>
 - ...
 
@@ -164,7 +161,7 @@ functional core.
 
 ## Domain modeling audit
 
-Data shapes introduced or modified in this PR:
+Data shapes introduced or modified in the diff under review:
 - `<type>` — <invalid states unrepresentable | booleans where a sum type fits | optional soup>
 - ...
 
@@ -173,7 +170,7 @@ unions.
 
 ## Error & totality audit
 
-Error and absence handling in this PR:
+Error and absence handling in the diff under review:
 - <pattern> — <typed errors, total | exceptions for control flow | partial function>
 - ...
 
@@ -200,7 +197,7 @@ After printing the verdict, stay in the session. Say:
 > - Rewrite the impure transforms and imperative loops as pure pipelines?
 > - Remodel the data with sum types so invalid states can't exist?
 > - Replace exception-based control flow with typed `Result`/`Option`/`Either`?
-> - Post findings as a PR review?
+> - Post the findings as a review?
 
 Wait for the user's direction.
 

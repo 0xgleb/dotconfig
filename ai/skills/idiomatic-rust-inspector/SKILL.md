@@ -2,7 +2,7 @@
 name: idiomatic-rust-inspector
 user-invocable: true
 allowed-tools: Bash(gh:*), Bash(git:*), Bash(wc:*), Bash(test:*), Bash(date:*), Bash(mktemp:*), Bash(rm:*), Read, Grep, Glob, Agent
-description: Review Rust code in a PR for idiomatic patterns — flags non-idiomatic constructs, missed std library usage, ownership anti-patterns, and code that fights the borrow checker instead of working with it.
+description: Review Rust code for idiomatic patterns — flags non-idiomatic constructs, missed std library usage, ownership anti-patterns, and code that fights the borrow checker instead of working with it.
 argument-hint: "[pr-number | pr-url]"
 ---
 
@@ -12,7 +12,7 @@ Rust, in your view, lets ownership prove correctness at compile time,
 encodes intent in the type system, and reaches for the standard library
 before hand-rolling anything.
 
-Your job: review every Rust file touched by this PR and deliver a
+Your job: review every Rust file in the diff under review and deliver a
 focused assessment of whether the code is idiomatic, leveraging Rust's
 strengths rather than fighting them.
 
@@ -56,30 +56,27 @@ strengths rather than fighting them.
     `// SAFETY:` comment explaining the invariant. Unsafe used to bypass
     the borrow checker (instead of redesigning) is a red flag.
 
-## 1. Get the PR diff
+## 1. Get the diff to review
 
-If `$ARGUMENTS` is provided, use it as the PR reference. Otherwise use the
-current branch's PR.
+You review a unified diff. It reaches you one of two ways:
 
-```bash
-pr_ref="${ARGUMENTS:-}"
-if [ -z "$pr_ref" ]; then
-  pr_json=$(gh pr view --json number,title,headRefName,baseRefName,url,headRefOid,additions,deletions,changedFiles)
-else
-  pr_json=$(gh pr view "$pr_ref" --json number,title,headRefName,baseRefName,url,headRefOid,additions,deletions,changedFiles)
-fi
-```
+- **Driven by the review engine** (`review-loop`, `review-pr`,
+  `review-sweep`, or `audit`): the diff path is provided in the context
+  appended to this prompt ("The diff is at: ..."). It is already scoped — a
+  branch, a stack branch, a PR, or a whole-repo audit rendered as a synthetic
+  diff. Use that diff as-is; do not fetch anything.
+- **Invoked directly** with a reference in `$ARGUMENTS` (a PR number or URL):
+  fetch that PR's diff yourself with `gh pr diff "$ARGUMENTS"`. With no
+  `$ARGUMENTS` and no engine-provided path, review the current branch against
+  its merge base.
 
-Extract the head SHA and fetch the diff:
-
-```bash
-gh pr diff "$pr_ref" > /tmp/pr-diff.patch
-```
+Read source for context from the working tree (or `git show <sha>:<path>` for
+a PR you have not checked out).
 
 ## 2. Identify Rust files in the diff
 
 From the diff, extract all `.rs` files. If **no Rust files** are in the
-diff, print "No Rust files in this PR — nothing to inspect." and stop.
+diff, print "No Rust files in the diff — nothing to inspect." and stop.
 
 ## 3. Read and analyze each Rust file
 
@@ -132,7 +129,7 @@ For each piece of changed code, evaluate against these criteria:
 
 ```
 ━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━
-RUST IDIOM INSPECTION — PR #<n>: <title>
+RUST IDIOM INSPECTION
 ━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━
 
 Overall: <IDIOMATIC | NEEDS WORK | FIGHTING THE LANGUAGE>
@@ -158,7 +155,7 @@ Overall: <IDIOMATIC | NEEDS WORK | FIGHTING THE LANGUAGE>
 
 ## Type design audit
 
-Types introduced or modified in this PR:
+Types introduced or modified in the diff under review:
 - `TypeName` — <assessment: well-designed | could be stronger | fighting the type system>
 - ...
 
@@ -166,7 +163,7 @@ Rule: Every type should make illegal states unrepresentable.
 
 ## Error handling audit
 
-Error types and propagation in this PR:
+Error types and propagation in the diff under review:
 - <error pattern> — <assessment: idiomatic | lazy | lossy>
 - ...
 
@@ -175,7 +172,7 @@ they can do about it.
 
 ## Ownership audit
 
-Ownership patterns in this PR:
+Ownership patterns in the diff under review:
 - <pattern> — <assessment: correct | unnecessary clone/Arc | could borrow>
 - ...
 
@@ -202,7 +199,7 @@ After printing the verdict, stay in the session. Say:
 > Inspection complete. Want me to:
 > - Rewrite the non-idiomatic code with idiomatic alternatives?
 > - Refactor the error types?
-> - Post findings as a PR review?
+> - Post the findings as a review?
 
 Wait for the user's direction.
 

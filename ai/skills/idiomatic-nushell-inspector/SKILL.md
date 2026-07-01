@@ -13,7 +13,7 @@ with `&&`. The Nushell you respect keeps data **structured** end to end:
 transforms are pipelines, and records and tables flow through the type
 system instead of being torn apart and rebuilt from strings.
 
-Your job: review every Nushell file touched by this PR and deliver a
+Your job: review every Nushell file in the diff under review and deliver a
 focused assessment of whether the code embraces structured data and
 pipelines rather than fighting the shell like it's bash.
 
@@ -49,30 +49,27 @@ pipelines rather than fighting the shell like it's bash.
    `{|x| ...}` (a bare `{}` is a record). Paths for `use`/`source` must be
    `const`, and a `const` is module-local — share it with `export const`.
 
-## 1. Get the PR diff
+## 1. Get the diff to review
 
-If `$ARGUMENTS` is provided, use it as the PR reference. Otherwise use the
-current branch's PR.
+You review a unified diff. It reaches you one of two ways:
 
-```bash
-pr_ref="${ARGUMENTS:-}"
-if [ -z "$pr_ref" ]; then
-  pr_json=$(gh pr view --json number,title,headRefName,baseRefName,url,headRefOid,additions,deletions,changedFiles)
-else
-  pr_json=$(gh pr view "$pr_ref" --json number,title,headRefName,baseRefName,url,headRefOid,additions,deletions,changedFiles)
-fi
-```
+- **Driven by the review engine** (`review-loop`, `review-pr`,
+  `review-sweep`, or `audit`): the diff path is provided in the context
+  appended to this prompt ("The diff is at: ..."). It is already scoped — a
+  branch, a stack branch, a PR, or a whole-repo audit rendered as a synthetic
+  diff. Use that diff as-is; do not fetch anything.
+- **Invoked directly** with a reference in `$ARGUMENTS` (a PR number or URL):
+  fetch that PR's diff yourself with `gh pr diff "$ARGUMENTS"`. With no
+  `$ARGUMENTS` and no engine-provided path, review the current branch against
+  its merge base.
 
-Extract the head SHA and fetch the diff:
-
-```bash
-gh pr diff "$pr_ref" > /tmp/pr-diff.patch
-```
+Read source for context from the working tree (or `git show <sha>:<path>` for
+a PR you have not checked out).
 
 ## 2. Identify Nushell files in the diff
 
 From the diff, extract all `.nu` files. If **no Nushell files** are in the
-diff, print "No Nushell files in this PR — nothing to inspect." and stop.
+diff, print "No Nushell files in the diff — nothing to inspect." and stop.
 
 ## 3. Read and analyze each Nushell file
 
@@ -130,7 +127,7 @@ For each piece of changed code, evaluate against these criteria:
 
 ```
 ━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━
-NUSHELL IDIOM INSPECTION — PR #<n>: <title>
+NUSHELL IDIOM INSPECTION
 ━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━
 
 Overall: <IDIOMATIC | NEEDS WORK | WRITING BASH IN NUSHELL>
@@ -165,7 +162,7 @@ text you already had structured.
 
 ## Error handling audit
 
-Error and capture patterns in this PR:
+Error and capture patterns in the diff under review:
 - <pattern> — <assessment: idiomatic | `complete` on internal | bare-string error | silent failure>
 - ...
 
@@ -174,7 +171,7 @@ for raising. Never swallow a failure.
 
 ## External-command audit
 
-External-command usage in this PR:
+External-command usage in the diff under review:
 - <call> — <assessment: `^`-prefixed and captured | missing `^` | uncaptured exit code>
 - ...
 
@@ -201,7 +198,7 @@ After printing the verdict, stay in the session. Say:
 > Inspection complete. Want me to:
 > - Rewrite the non-idiomatic code with idiomatic pipelines?
 > - Convert string-parsing to structured data access?
-> - Post findings as a PR review?
+> - Post the findings as a review?
 
 Wait for the user's direction.
 

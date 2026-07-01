@@ -13,7 +13,7 @@ makes the compiler do the work: the domain is modeled so invalid states
 cannot be constructed, and inference is trusted rather than overridden
 with casts.
 
-Your job: review every TypeScript file touched by this PR and deliver a
+Your job: review every TypeScript file in the diff under review and deliver a
 focused assessment of whether the code uses the type system to its
 strengths rather than escaping it.
 
@@ -52,30 +52,27 @@ strengths rather than escaping it.
 10. **Trust inference; annotate intent.** Annotate function boundaries and
     public APIs; let locals infer. Redundant annotations add noise and rot.
 
-## 1. Get the PR diff
+## 1. Get the diff to review
 
-If `$ARGUMENTS` is provided, use it as the PR reference. Otherwise use the
-current branch's PR.
+You review a unified diff. It reaches you one of two ways:
 
-```bash
-pr_ref="${ARGUMENTS:-}"
-if [ -z "$pr_ref" ]; then
-  pr_json=$(gh pr view --json number,title,headRefName,baseRefName,url,headRefOid,additions,deletions,changedFiles)
-else
-  pr_json=$(gh pr view "$pr_ref" --json number,title,headRefName,baseRefName,url,headRefOid,additions,deletions,changedFiles)
-fi
-```
+- **Driven by the review engine** (`review-loop`, `review-pr`,
+  `review-sweep`, or `audit`): the diff path is provided in the context
+  appended to this prompt ("The diff is at: ..."). It is already scoped — a
+  branch, a stack branch, a PR, or a whole-repo audit rendered as a synthetic
+  diff. Use that diff as-is; do not fetch anything.
+- **Invoked directly** with a reference in `$ARGUMENTS` (a PR number or URL):
+  fetch that PR's diff yourself with `gh pr diff "$ARGUMENTS"`. With no
+  `$ARGUMENTS` and no engine-provided path, review the current branch against
+  its merge base.
 
-Extract the head SHA and fetch the diff:
-
-```bash
-gh pr diff "$pr_ref" > /tmp/pr-diff.patch
-```
+Read source for context from the working tree (or `git show <sha>:<path>` for
+a PR you have not checked out).
 
 ## 2. Identify TypeScript files in the diff
 
 From the diff, extract all `.ts` and `.tsx` files. If **no TypeScript files**
-are in the diff, print "No TypeScript files in this PR — nothing to inspect."
+are in the diff, print "No TypeScript files in the diff — nothing to inspect."
 and stop.
 
 ## 3. Read and analyze each TypeScript file
@@ -132,7 +129,7 @@ For each piece of changed code, evaluate against these criteria:
 
 ```
 ━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━
-TYPESCRIPT IDIOM INSPECTION — PR #<n>: <title>
+TYPESCRIPT IDIOM INSPECTION
 ━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━
 
 Overall: <IDIOMATIC | NEEDS WORK | ESCAPING THE TYPE SYSTEM>
@@ -158,7 +155,7 @@ Overall: <IDIOMATIC | NEEDS WORK | ESCAPING THE TYPE SYSTEM>
 
 ## Type design audit
 
-Types introduced or modified in this PR:
+Types introduced or modified in the diff under review:
 - `TypeName` — <assessment: well-designed | could be stronger | leaks invalid states>
 - ...
 
@@ -166,7 +163,7 @@ Rule: Every type should make illegal states unrepresentable.
 
 ## Type-safety audit
 
-`any`, casts, and assertions in this PR:
+`any`, casts, and assertions in the diff under review:
 - <pattern> — <assessment: justified | unsafe escape | should narrow>
 - ...
 
@@ -175,7 +172,7 @@ Prove it with a guard or remove it.
 
 ## State modeling audit
 
-State shapes in this PR:
+State shapes in the diff under review:
 - <pattern> — <assessment: discriminated union | impossible states allowed | boolean-blind>
 - ...
 
@@ -203,7 +200,7 @@ After printing the verdict, stay in the session. Say:
 > - Rewrite the non-idiomatic code with idiomatic alternatives?
 > - Replace `any`/casts with type guards and narrow the boundaries?
 > - Remodel the state shapes as discriminated unions?
-> - Post findings as a PR review?
+> - Post the findings as a review?
 
 Wait for the user's direction.
 

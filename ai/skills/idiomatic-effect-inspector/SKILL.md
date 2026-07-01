@@ -13,9 +13,10 @@ about making failures and dependencies visible in the type, deferring execution
 to the edge of the program, and letting the runtime handle concurrency,
 interruption, and resource safety for you.
 
-Your job: review every TypeScript file touched by this PR that uses Effect and
-deliver a focused assessment of whether the code leverages Effect's three-channel
-type and its runtime, rather than smuggling imperative async habits past it.
+Your job: review every TypeScript file in the diff under review that uses
+Effect and deliver a focused assessment of whether the code leverages
+Effect's three-channel type and its runtime, rather than smuggling
+imperative async habits past it.
 
 ## Your philosophy
 
@@ -53,31 +54,28 @@ type and its runtime, rather than smuggling imperative async habits past it.
     Layers with `Layer.provide`/`Layer.merge` instead of constructing services by
     hand.
 
-## 1. Get the PR diff
+## 1. Get the diff to review
 
-If `$ARGUMENTS` is provided, use it as the PR reference. Otherwise use the
-current branch's PR.
+You review a unified diff. It reaches you one of two ways:
 
-```bash
-pr_ref="${ARGUMENTS:-}"
-if [ -z "$pr_ref" ]; then
-  pr_json=$(gh pr view --json number,title,headRefName,baseRefName,url,headRefOid,additions,deletions,changedFiles)
-else
-  pr_json=$(gh pr view "$pr_ref" --json number,title,headRefName,baseRefName,url,headRefOid,additions,deletions,changedFiles)
-fi
-```
+- **Driven by the review engine** (`review-loop`, `review-pr`,
+  `review-sweep`, or `audit`): the diff path is provided in the context
+  appended to this prompt ("The diff is at: ..."). It is already scoped — a
+  branch, a stack branch, a PR, or a whole-repo audit rendered as a synthetic
+  diff. Use that diff as-is; do not fetch anything.
+- **Invoked directly** with a reference in `$ARGUMENTS` (a PR number or URL):
+  fetch that PR's diff yourself with `gh pr diff "$ARGUMENTS"`. With no
+  `$ARGUMENTS` and no engine-provided path, review the current branch against
+  its merge base.
 
-Extract the head SHA and fetch the diff:
-
-```bash
-gh pr diff "$pr_ref" > /tmp/pr-diff.patch
-```
+Read source for context from the working tree (or `git show <sha>:<path>` for
+a PR you have not checked out).
 
 ## 2. Identify Effect files in the diff
 
 From the diff, extract all `.ts` / `.tsx` (and `.mts`/`.cts`) files, then keep
 only those that import the `effect` library (or `@effect/*` packages). If **no
-Effect files** are in the diff, print "No Effect files in this PR — nothing to
+Effect files** are in the diff, print "No Effect files in the diff — nothing to
 inspect." and stop.
 
 ## 3. Read and analyze each Effect file
@@ -136,7 +134,7 @@ For each piece of changed code, evaluate against these criteria:
 
 ```
 ━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━
-EFFECT IDIOM INSPECTION — PR #<n>: <title>
+EFFECT IDIOM INSPECTION
 ━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━
 
 Overall: <IDIOMATIC | NEEDS WORK | ASYNC-IN-DISGUISE>
@@ -162,7 +160,7 @@ Overall: <IDIOMATIC | NEEDS WORK | ASYNC-IN-DISGUISE>
 
 ## Error channel audit
 
-Error handling in this PR:
+Error handling in the diff under review:
 - <error pattern> — <assessment: typed & tagged | widened | thrown/swallowed>
 - ...
 
@@ -171,7 +169,7 @@ and silent `catchAll`/`orDie` are leaks.
 
 ## Dependency injection audit
 
-Services and Layers in this PR:
+Services and Layers in the diff under review:
 - <service/dependency> — <assessment: Context.Tag + Layer | hand-threaded | hand-constructed>
 - ...
 
@@ -207,7 +205,7 @@ After printing the verdict, stay in the session. Say:
 > Inspection complete. Want me to:
 > - Rewrite the non-idiomatic code with idiomatic Effect alternatives?
 > - Refactor the error types into tagged errors, or extract services into Layers?
-> - Post findings as a PR review?
+> - Post the findings as a review?
 
 Wait for the user's direction.
 

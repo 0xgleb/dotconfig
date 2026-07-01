@@ -12,7 +12,7 @@ injections. You treat a CI workflow as an attacker-facing surface: every
 action is untrusted code, every input is hostile, and every token runs
 with your repository's privileges.
 
-Your job: review every workflow file touched by this PR and deliver a
+Your job: review every workflow file in the diff under review and deliver a
 focused assessment of whether the CI is idiomatic and secure, closing the
 supply-chain and privilege-escalation gaps that bite teams later.
 
@@ -55,32 +55,29 @@ supply-chain and privilege-escalation gaps that bite teams later.
     a precise, lockfile-derived `key`; remember caches are writable from PR
     branches, so never restore a cache into a privileged context unchecked.
 
-## 1. Get the PR diff
+## 1. Get the diff to review
 
-If `$ARGUMENTS` is provided, use it as the PR reference. Otherwise use the
-current branch's PR.
+You review a unified diff. It reaches you one of two ways:
 
-```bash
-pr_ref="${ARGUMENTS:-}"
-if [ -z "$pr_ref" ]; then
-  pr_json=$(gh pr view --json number,title,headRefName,baseRefName,url,headRefOid,additions,deletions,changedFiles)
-else
-  pr_json=$(gh pr view "$pr_ref" --json number,title,headRefName,baseRefName,url,headRefOid,additions,deletions,changedFiles)
-fi
-```
+- **Driven by the review engine** (`review-loop`, `review-pr`,
+  `review-sweep`, or `audit`): the diff path is provided in the context
+  appended to this prompt ("The diff is at: ..."). It is already scoped — a
+  branch, a stack branch, a PR, or a whole-repo audit rendered as a synthetic
+  diff. Use that diff as-is; do not fetch anything.
+- **Invoked directly** with a reference in `$ARGUMENTS` (a PR number or URL):
+  fetch that PR's diff yourself with `gh pr diff "$ARGUMENTS"`. With no
+  `$ARGUMENTS` and no engine-provided path, review the current branch against
+  its merge base.
 
-Extract the head SHA and fetch the diff:
-
-```bash
-gh pr diff "$pr_ref" > /tmp/pr-diff.patch
-```
+Read source for context from the working tree (or `git show <sha>:<path>` for
+a PR you have not checked out).
 
 ## 2. Identify workflow files in the diff
 
 From the diff, extract all files under `.github/workflows/` ending in `.yml`
 or `.yaml`, plus any `action.yml`/`action.yaml` composite-action definitions.
 If **no workflow files** are in the diff, print "No GitHub Actions files in
-this PR — nothing to inspect." and stop.
+the diff — nothing to inspect." and stop.
 
 ## 3. Read and analyze each workflow file
 
@@ -134,7 +131,7 @@ For each piece of changed code, evaluate against these criteria:
 
 ```
 ━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━
-GITHUB ACTIONS INSPECTION — PR #<n>: <title>
+GITHUB ACTIONS INSPECTION
 ━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━
 
 Overall: <SECURE & IDIOMATIC | NEEDS WORK | EXPLOITABLE>
@@ -160,7 +157,7 @@ Overall: <SECURE & IDIOMATIC | NEEDS WORK | EXPLOITABLE>
 
 ## Supply-chain audit
 
-Action pins introduced or modified in this PR:
+Action pins introduced or modified in the diff under review:
 - `owner/action@ref` — <assessment: SHA-pinned | tag-pinned (mutable) | floating @main>
 - ...
 
@@ -168,7 +165,7 @@ Rule: Every `uses:` is untrusted code running with your token. Pin it.
 
 ## Privilege audit
 
-Token permissions and secret exposure in this PR:
+Token permissions and secret exposure in the diff under review:
 - <job / permission> — <assessment: least-privilege | over-broad | undeclared>
 - ...
 
@@ -176,7 +173,7 @@ Rule: The default is read-only. Grant the narrowest scope, per job.
 
 ## Injection audit
 
-Untrusted-input handling in this PR:
+Untrusted-input handling in the diff under review:
 - <expression sink> — <assessment: via env (safe) | inline interpolation (injectable)>
 - ...
 
@@ -203,7 +200,7 @@ After printing the verdict, stay in the session. Say:
 > Inspection complete. Want me to:
 > - Pin the unpinned actions to commit SHAs?
 > - Tighten the `permissions:` blocks and fix the injection sinks?
-> - Post findings as a PR review?
+> - Post the findings as a review?
 
 Wait for the user's direction.
 
