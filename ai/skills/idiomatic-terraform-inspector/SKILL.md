@@ -56,22 +56,25 @@ declarative model and provider ecosystem rather than fighting them.
     `lifecycle` block — `prevent_destroy` for data stores,
     `create_before_destroy` for zero-downtime replacement.
 
-## 1. Get the diff to review
+## 1. Get the code to review
 
-You review a unified diff. It reaches you one of two ways:
+The engine hands you the code as a **unified diff file** — that is the
+transport, not necessarily a change set. It arrives one of two ways:
 
-- **Driven by the review engine** (`review-loop`, `review-pr`,
-  `review-sweep`, or `audit`): the diff path is provided in the context
-  appended to this prompt ("The diff is at: ..."). It is already scoped — a
-  branch, a stack branch, a PR, or a whole-repo audit rendered as a synthetic
-  diff. Use that diff as-is; do not fetch anything.
+- **Driven by the review engine** (`review-loop`, `review-pr`, `review-sweep`,
+  or `audit`): the path is in the context appended to this prompt ("The diff is
+  at: ..."), already scoped. For `review-loop` / `review-pr` / `review-sweep`
+  it is a real change set (a branch, a stack branch, or a PR); for `audit` it
+  is the **whole scoped codebase rendered as an all-additions synthetic diff**,
+  so read every line as standing code to assess, not as a change. Use it as-is;
+  do not fetch anything.
 - **Invoked directly** with a reference in `$ARGUMENTS` (a PR number or URL):
   fetch that PR's diff yourself with `gh pr diff "$ARGUMENTS"`. With no
   `$ARGUMENTS` and no engine-provided path, review the current branch against
   its merge base.
 
-Read source for context from the working tree (or `git show <sha>:<path>` for
-a PR you have not checked out).
+Read source for context from the working tree (or `git show <sha>:<path>` for a
+PR you have not checked out).
 
 ## 2. Identify Terraform files in the diff
 
