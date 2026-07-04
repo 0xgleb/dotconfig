@@ -50,9 +50,10 @@ fi
 
 escaped_agent_env=${agent_env//\'/\'\\\'\'}
 escaped_envrc_directory=${envrc_directory//\'/\'\\\'\'}
+escaped_working_directory=${working_directory//\'/\'\\\'\'}
 
 read -r -d '' inject <<EOF || true
-source '${escaped_agent_env}'; unset DIRENV_DIFF DIRENV_WATCHES IN_NIX_SHELL; cd '${escaped_envrc_directory}' && eval "\$(direnv export bash 2>/dev/null)";
+source '${escaped_agent_env}'; unset DIRENV_DIFF DIRENV_WATCHES IN_NIX_SHELL; cd '${escaped_envrc_directory}' && eval "\$(direnv export bash 2>/dev/null)" && cd '${escaped_working_directory}';
 EOF
 
 updated_command="${inject}${command}"

@@ -2,7 +2,7 @@
 name: review-loop
 user-invocable: true
 allowed-tools: Bash(gt:*), Bash(but:*), Bash(direnv:*), Bash(git:*), Bash(gh:*), Bash(cursor-agent:*), Bash(agy:*), Bash(command:*), Bash(linear:*), Bash(cargo:*), Bash(nix:*), Bash(mkdir:*), Bash(cat:*), Bash(mktemp:*), Bash(rm:*), Bash(test:*), Bash(grep:*), Bash(wc:*), Bash(date:*), Bash(basename:*), Bash(find:*), Read, Write, Edit, Agent, Workflow, AskUserQuestion
-description: Cross-review the current branch with a multi-model Workflow panel (2x Opus, Sonnet, a Composer cross-lab augment lane, 2 frontier external lanes that fall back GPT-5.5 -> Antigravity (agy) per Cursor usage limits, + inspectors), auto-fix findings, and re-review until clean. Re-review passes use fast delta verification. Loops automatically — only stops for user input on disputed findings or massive changes. Pass `stack` to run the loop across the whole upstack, amending each branch.
+description: Cross-review the current branch with a multi-model Workflow panel (native Fable/Opus/Sonnet always; optional cursor-agent when limits allow), auto-fix findings, and re-review until clean. Works on limit-blown days via native-only mode. Re-review passes use fast delta verification. Pass `stack` for the whole upstack.
 argument-hint: [stack]
 ---
 
@@ -194,8 +194,9 @@ Verify prerequisites before doing anything:
    ```
    If dirty, tell the user and stop.
 
-The external-lane usage-limit probes are part of the review engine — they run in
-step 4 (review-core step 1). Nothing to do here for them.
+The external-lane panel mode resolution is part of the review engine (review-core
+step 1): cache first, at most two sentinel probes, then `native-only` when
+composer is out. **Never stop the loop because cursor-agent hit usage limit.**
 
 ## 2. Resolve scope & prepare workspace
 
@@ -300,7 +301,7 @@ nix develop .#<real-non-default-attr> -c true >/dev/null 2>&1 &
 ## 4. Run the review engine
 
 Run the shared engine in `~/.claude/skills/review-core/SKILL.md` (steps 1–7:
-probes → reviewer prompts → inspector prompts → lanes → the `review-panel`
+panel mode → reviewer prompts → inspector prompts → lanes → the `review-panel`
 Workflow → after-workflow handling → print findings). Pass the contract inputs:
 
 | Contract input          | Value for review-loop                                                   |
@@ -311,7 +312,7 @@ Workflow → after-workflow handling → print findings). Pass the contract inpu
 | `{SOURCE_ACCESS}`       | `Read source files directly from the working tree, which already reflects the change under review.` |
 | `{SCOPE_NOTE}`          | `The diff is scoped to exactly the changes under review (the current branch against its parent).` |
 | `{INSPECTOR_ARG}`       | empty string (the inspectors review the current branch)                |
-| `{REPORT_HEADER}`       | `# Review — <branch>\n**Commit:** <head_sha>\n**Parent:** <parent_sha> (<parent branch>)\n**Files changed:** <N>\n**Diff size:** <LOC> lines\n**Panel:** 2x Opus, Sonnet, <resolved external/composer lanes>, 4 inspectors; per-finding verification; Opus synthesis` |
+| `{REPORT_HEADER}`       | `# Review — <branch>\n**Commit:** <head_sha>\n**Parent:** <parent_sha> (<parent branch>)\n**Files changed:** <N>\n**Diff size:** <LOC> lines\n**Panel:** Fable, Opus, Sonnet, <resolved external/composer lanes>, 4 inspectors; per-finding verification; Opus synthesis` |
 | `{TERMINAL_HEADER}`     | `Review — <branch>\n<N> files, <LOC> lines changed`                    |
 | `{SYNTHESIS_EXTRA}`     | empty string                                                           |
 | `{INCLUDE_ATTRIBUTION}` | `true`                                                                 |
@@ -816,9 +817,9 @@ submitted once at the end of the walk (Stack flow, final step), not per branch.
 
 ## Failure modes
 
-- **All reviewer lanes error:** stop immediately, tell the user, don't proceed to
-  triage. (Inspector lanes erroring is non-fatal.) See review-core engine failure
-  modes.
+- **All reviewer lanes error:** stop only if native Workflow lanes all failed
+  (rare). Usage limit on cursor-agent is **not** fatal — use native-only. See
+  review-core engine failure modes.
 - **Review returns no findings:** print "No findings" and exit the command
   successfully — nothing to loop over.
 - **A fix turns out to be larger than expected:** stop, report progress, ask
@@ -833,9 +834,8 @@ submitted once at the end of the walk (Stack flow, final step), not per branch.
   the user whether to retry the failed one at the end.
 - **The user says "stop" mid-loop:** immediately stop, then print the summary with
   what was completed so far. Do not silently abandon the rest.
-- **cursor-agent not installed or out of usage:** review-core's probes handle this
-  — agy replaces the frontier lanes, composer/sonnet cover the rest. Only when
-  every option fails does the panel shrink; warn the user either way.
+- **cursor-agent out of usage:** review-core step 1 sets `native-only` (cached
+  4h). Proceed with five native reviewer lanes — do not stop, do not probe agy.
 
 ## Hard rules
 

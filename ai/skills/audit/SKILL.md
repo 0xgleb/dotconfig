@@ -128,9 +128,15 @@ duplicate the reviewer lanes per chunk, and run the **context-selected inspector
 target. Pass ALL chunk lanes to one workflow invocation: the executor caps real
 concurrency, but more, smaller chunks keep every slot busy and keep each reviewer
 well within quality range. Scale up rather than down — a large repo wants dozens
-of lanes, not a handful. Report the chunk plan first. The engine writes
-`review.md` / `findings.json` and prints the summary. If `findings` is empty, say
-the audit found nothing actionable and stop.
+of lanes, not a handful. Report the chunk plan first.
+
+**Usage limits / native-only:** if step 1 lands on `native-only` (typical on
+limit-blown days), batch workflow passes (~40 lanes each) for whole-repo audits.
+Tell the user once; do not re-probe. `/review-pr`-scale diffs run one native-only
+pass — five reviewers + inspectors is sufficient.
+
+The engine writes `review.md` / `findings.json` and prints the summary. If
+`findings` is empty, say the audit found nothing actionable and stop.
 
 ## 6. Triage
 

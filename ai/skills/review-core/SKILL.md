@@ -36,67 +36,155 @@ the steps below reference `{NAME}`:
 | `{SYNTHESIS_EXTRA}` | Extra synthesis instructions, or `""`. PR review passes the no-AI-references / frame-to-reviewer block. |
 | `{INCLUDE_ATTRIBUTION}` | `true` to keep `Found by` lane attribution in the report and terminal output; `false` to strip it (PR review). |
 
-## 1. Resolve external lanes (usage-limit probes)
+## 1. Resolve panel mode (limits-aware — never block the review)
 
-Cursor has no CLI to query remaining usage, so probe each candidate with a
-one-token call. The panel uses two model tiers:
+External CLIs (`cursor-agent`, `agy`) are **optional enrichments**. The Workflow
+**always** runs, but **Harness models (Opus/Sonnet) share the same Cursor usage
+pools** as cursor-agent — on limit-blown days Opus is often out too. When that
+happens, set `harness_tier=sonnet-only` so every Workflow phase uses **sonnet**
+(review, verify, synthesis, inspectors). `/review-pr` must still complete.
 
-- **Frontier tier** (the two external lanes): GPT-5.5 via cursor-agent (burns
-  Cursor's API-model pool); when that pool is low or out, the Antigravity CLI
-  (`agy` — Google's terminal agent that replaced the Gemini CLI on 2026-06-18)
-  is the frontier-tier replacement from another lab.
-- **Fast tier** (the sonnet lanes): Composer is the Sonnet-comparable fast
-  model — quick but capable, with its own Cursor limit pool separate from the
-  API models. It augments the sonnet lane for cross-lab redundancy, and
-  conditionally replaces frontier lanes when both frontier options are exhausted.
-- **Auto fallback**: when BOTH frontier models (gpt-5.5 and agy/Gemini) are out,
-  the second external lane runs cursor-agent's **auto** model mode so the panel
-  keeps two cross-model external lanes (composer-2.5 + auto) instead of dropping
-  to a same-lab native sonnet lane. `auto` shares Composer's Cursor tier, so the
-  Composer probe (c) already decides both — they are available together or not at
-  all, and there is no separate auto probe.
+Two independent axes:
 
-Run the probes (skip any whose CLI is not on PATH). Probes **(a) and (c) are
-independent — run them in the same batch (parallel)**; only run **(b)** if (a)
-fails:
+| Axis | Values | Controls |
+| ---- | ------ | -------- |
+| `panel_mode` | `full` / `degraded-fast` / `native-only` | External CLIs (cursor-agent) |
+| `harness_tier` | `full` / `sonnet-only` | Workflow `model:` for Fable/Opus lanes, synthesis, opus inspectors |
+
+**Rule:** `panel_mode=native-only` **always** implies `harness_tier=sonnet-only`.
+When composer sentinel fails, assume Opus is out too — do not probe Opus separately.
+
+Three panel modes:
+
+| Mode            | When                         | External CLIs | Harness |
+| --------------- | ---------------------------- | ------------- | ------- |
+| `full`          | Both sentinels pass          | frontier + composer augment | fable/opus where configured |
+| `degraded-fast` | Frontier out, composer OK    | composer only | fable/opus where configured |
+| `native-only`   | Composer out (or cache)      | **none**      | **sonnet-only** |
+
+### 1a. Read the session cache (do this first)
 
 ```bash
-# (a) Cursor API-model pool (frontier)
-cursor-agent -p --mode plan --model gpt-5.5-high --trust "Reply with exactly: OK"
-# (c) Composer / fast tier (separate Cursor limit pool from the API models) — run
-#     alongside (a). This one probe decides BOTH composer-2.5 and auto mode: they
-#     share the tier, so they are available together or not at all (no auto probe).
-cursor-agent -p --mode plan --model composer-2.5 --trust "Reply with exactly: OK"
-# (b) only if (a) failed — Antigravity CLI (frontier replacement); needs a
-#     one-time `agy` sign-in, so an unauthenticated agy fails the probe and the
-#     panel falls back to composer+auto or native, exactly as intended.
-agy -p "Reply with exactly: OK"
+cache="$HOME/.config/.tmp/claude-local-ctx/review-panel-cache.json"
+mkdir -p "$(dirname "$cache")"
 ```
 
-A probe **passes** if it exits cleanly and prints `OK`. It **fails** if the
-command errors or the output mentions a usage/rate limit (match "usage limit",
-"rate limit", "quota", "limit reached" case-insensitively) or an auth problem.
+If the file exists and `mode` is `native-only` and `cached_at` is within the
+last **4 hours**, set `panel_mode=native-only` and `harness_tier=sonnet-only`
+and **skip all probes**. Tell the user: "Panel: native-only, harness: sonnet
+(limit-blown day — cached)."
 
-Assign lanes from the probe results:
+To force a re-probe (e.g. after billing reset): delete the cache file.
 
-| Frontier probe result | Composer | external-a (edge cases)     | external-b (broad sweep)    | composer lane (error handling) |
-| --------------------- | -------- | --------------------------- | --------------------------- | ------------------------------ |
-| (a) gpt-5.5 OK        | OK       | cursor-agent `gpt-5.5-high` | cursor-agent `gpt-5.5-high` | cursor-agent `composer-2.5`    |
-| (a) gpt-5.5 OK        | out      | cursor-agent `gpt-5.5-high` | cursor-agent `gpt-5.5-high` | dropped                        |
-| (b) agy OK            | OK       | `agy`                       | `agy`                       | cursor-agent `composer-2.5`    |
-| (b) agy OK            | out      | `agy`                       | `agy`                       | dropped                        |
-| both frontier out     | OK       | cursor-agent `composer-2.5` | cursor-agent `auto`         | dropped (composer moved to a)  |
-| both frontier out     | out      | native `sonnet` lane        | dropped                     | dropped                        |
+### 1b. Sentinel probes (only when cache miss — max TWO calls)
 
-The **composer lane** is a fast-tier augment: it mirrors the sonnet lane's
-error-handling focus so the same ground is covered by models from two different
-labs. When both frontier options are exhausted, Composer is promoted into
-external-a and the second external lane runs cursor-agent **auto** (Cursor's
-automatic model selection) so the panel keeps two cross-model lanes; the augment
-lane is dropped — no point running Composer twice. composer-2.5 and auto share
-one Cursor tier, so they come as a pair: when that tier is also out, both go and
-the panel falls back to a single native sonnet lane. Tell the user which
-configuration the panel landed on whenever it is not the first row.
+**Do NOT walk the full model chain on every invoke.** That burns minutes on
+limit-blown days and blocks `/review-pr` before the Workflow starts.
+
+Run **at most two** one-token probes, **15 seconds each**, one Bash call each.
+A probe **fails** on non-zero exit, timeout, or output matching "usage limit",
+"rate limit", "quota", or "limit reached" (case-insensitive).
+
+```bash
+# Sentinel 1 — fast tier (decisive for limit-blown days)
+cursor-agent -p --mode plan --model composer-2.5 --trust "Reply with exactly: OK"
+
+# Sentinel 2 — only if sentinel 1 passed; skip agy entirely on limit days
+cursor-agent -p --mode plan --model gpt-5.5-high --trust "Reply with exactly: OK"
+```
+
+**Decision table** (apply immediately — do not run more probes):
+
+| Sentinel 1 (composer) | Sentinel 2 (gpt-5.5) | panel_mode      | Action |
+| --------------------- | -------------------- | --------------- | ------ |
+| usage limit / fail    | (skip)               | `native-only`   | Write cache; **never probe agy or other models** |
+| OK                    | usage limit / fail   | `degraded-fast` | external-a/b = composer-2.5 + composer-2.5-fast or auto |
+| OK                    | OK                   | `full`          | external-a/b = gpt-5.5-high; composer augment = composer-2.5 |
+| not on PATH           | —                    | `native-only`   | cursor-agent missing |
+
+When `panel_mode=native-only`, write the cache with both axes:
+
+```json
+{"mode":"native-only","harness_tier":"sonnet-only","cached_at":"<ISO8601>","reason":"composer sentinel: usage limit"}
+```
+
+Tell the user which mode landed. **Proceed to step 2 immediately** — limits
+are never a reason to stop.
+
+### 1c. Optional upgrade probes (full mode only, never required)
+
+Only when sentinel 2 passed **and** the diff is large enough to justify extra
+frontier capacity, you *may* try cheaper frontier models **one at a time** until
+one passes or all fail — then stay on `gpt-5.5-high` from sentinel 2:
+
+`gpt-5.4-high`, `gpt-5.3-codex-high`, `gemini-3.1-pro`
+
+**Never run these on a cache hit, in native-only mode, or when sentinel 2 already
+failed.** Never run `agy` when any cursor-agent probe returned usage limit (agy
+hangs and shares the same billing reality). Skip `agy` entirely unless the user
+explicitly asks for it.
+
+### 1d. Lane assignment by panel_mode
+
+Record `harness_tier` and `harnessModels` for the Workflow args (step 5):
+
+```json
+{ "verify": "sonnet", "synthesis": "opus" }
+```
+
+When `harness_tier=sonnet-only`, use `{ "verify": "sonnet", "synthesis": "sonnet" }`
+for **every** Workflow agent call — review lanes, verify, synthesis. Never pass
+`fable` or `opus` to the Workflow on a limit-blown day.
+
+**Reviewer lanes** — keys keep their focus prompts; **model** follows harness:
+
+| key        | promptPath            | model (full harness) | model (sonnet-only) |
+| ---------- | --------------------- | -------------------- | ------------------- |
+| opus-a     | prompt-opus-a.txt     | opus                 | sonnet              |
+| fable      | prompt-fable.txt      | fable                | sonnet              |
+| sonnet     | prompt-sonnet.txt     | sonnet               | sonnet              |
+| external-a | prompt-external-a.txt | see below            | sonnet              |
+| external-b | prompt-external-b.txt | see below            | sonnet              |
+
+**Fable budget — at most ONE fable agent per panel:** the `fable` reviewer
+lane, nothing else. Synthesis, verify, inspector, and external lanes never run
+on fable — they keep their table/harness defaults (synthesis: opus on a full
+harness, else sonnet). Fable burns usage limits far faster than sonnet; the
+budget is a hard cap, not a tuning suggestion. Watch the implicit path: a
+Workflow agent with no `model` inherits the SESSION model (fable when the main
+loop runs Fable) — the panel script therefore defaults model-less lanes to
+sonnet (`model: lane.model ?? 'sonnet'`); never remove that default.
+
+**native-only** (`panel_mode=native-only`, `harness_tier=sonnet-only`): all five
+rows use **sonnet**, no `externalCmd`, no `composer` lane. Inspectors: override
+every inspector lane to **sonnet** (ignore the opus defaults in the step-3 table).
+
+**degraded-fast** — composer as external (omit `composer` augment):
+
+| key         | externalCmd model   |
+| ----------- | ------------------- |
+| external-a  | cursor-agent `composer-2.5` |
+| external-b  | cursor-agent `composer-2.5-fast` or `auto` |
+
+**full** — frontier + augment:
+
+| key         | externalCmd model   |
+| ----------- | ------------------- |
+| external-a  | cursor-agent `gpt-5.5-high` (or upgrade-winner) |
+| external-b  | cursor-agent `gpt-5.5-high` (or upgrade-winner) |
+| composer    | cursor-agent `composer-2.5` |
+
+### 1e. Mid-run exhaustion (external modes only)
+
+When `panel_mode` is not `native-only`, external lanes may hit limits mid-panel.
+Each external lane carries `fallbackCmds` as before.
+
+**If any Workflow lane errors with a Fable/Opus usage limit** (even in `full` mode):
+1. Set `harness_tier=sonnet-only`, update cache, relaunch Workflow with
+   `{scriptPath, args}` — every lane model and `harnessModels.synthesis` → sonnet.
+2. Do **not** stop `/review-pr`. The relaunch is the recovery path.
+
+When `harness_tier=sonnet-only`, no lane may use `model: 'fable'` or `model: 'opus'`.
 
 ## 2. Build the reviewer prompts
 
@@ -211,7 +299,7 @@ setup sequences, concurrent writers to shared state, and assumptions about
 which operation completes first.
 ```
 
-**Opus B — Goal evaluation & domain logic:**
+**Fable — Goal evaluation & domain logic:**
 ```
 YOUR FOCUS: Read the description carefully, then evaluate whether the
 implementation actually achieves what it claims. If it says "events are
@@ -273,6 +361,10 @@ source.
 | strong-typing | `strong-typing-inspector` | any typed source (`.rs`/`.ts`/`.tsx`) | sonnet | `maintainability`; primitive-where-domain-type-exists = medium (high for money/identifiers), missed-newtype = low |
 | external-contract | `external-contract-inspector` | external touchpoints (HTTP/RPC/SDK responses, on-chain ABIs, units/decimals) — usually worth including | opus | `correctness`; risk-weighted critical (wrong width/unit/encoding at a money or on-chain boundary) down to low |
 
+**Harness override:** when `harness_tier=sonnet-only`, set **every** inspector lane
+model to `sonnet` regardless of the table above. Inspector lanes never run on
+`fable` under any tier (see the Fable budget in step 1d).
+
 For each **selected** inspector, write `$out_dir/prompt-<inspector>.txt` =
 the full body of its skill file (everything below the frontmatter, with
 `$ARGUMENTS` replaced by `{INSPECTOR_ARG}`) + the shared context block below +
@@ -290,30 +382,34 @@ Repo root: {REPO_ROOT}
 
 ## 4. Assemble the lanes
 
-Build the lane list. The external lanes and the composer augment lane come from
-the step-1 probes.
+Build the lane list from `panel_mode` (step 1). **native-only**: five native
+reviewer lanes, no `externalCmd`, no `composer` lane. **degraded-fast** / **full**:
+add external lanes per step 1d.
 
 | key                | external | model  | promptPath                              |
 | ------------------ | -------- | ------ | --------------------------------------- |
 | opus-a             | no       | opus   | prompt-opus-a.txt (concurrency)         |
-| opus-b             | no       | opus   | prompt-opus-b.txt (goal evaluation)     |
+| fable              | no       | fable  | prompt-fable.txt (goal evaluation)      |
 | sonnet             | no       | sonnet | prompt-sonnet.txt (error handling)      |
-| composer           | yes      | —      | prompt-composer.txt (error handling, cross-lab augment; present per probes) |
-| external-a         | probes   | —      | prompt-external-a.txt (edge cases)      |
-| external-b         | probes   | —      | prompt-external-b.txt (broad sweep)     |
-| inspectors         | no       | per step 3 | one lane per inspector SELECTED in step 3 — key `<inspector>-inspector`, its model + `prompt-<inspector>.txt` from the step-3 table (never the full set; only what the scope's languages call for) |
+| external-a         | if ext   | sonnet or — | prompt-external-a.txt (edge cases) |
+| external-b         | if ext   | sonnet or — | prompt-external-b.txt (broad sweep) |
+| composer           | yes      | —      | prompt-composer.txt (**full mode only**) |
+| inspectors         | no       | per step 3 | one lane per inspector SELECTED in step 3 |
 
 The composer lane reuses the Sonnet focus paragraph (error handling & failure
 modes) in the external-CLI prompt format — same coverage, different lab.
 
-Each lane object: `{key, externalCmd, model, promptPath, diffPath}`. Normally all
-lanes share `{DIFF_PATH}`; chunked runs differ (see "Chunk splitting").
+Each lane object: `{key, externalCmd, fallbackCmds, model, promptPath, diffPath}`.
+Normally all lanes share `{DIFF_PATH}`; chunked runs differ (see "Chunk splitting").
+Omit `fallbackCmds` (or `[]`) on native lanes. External lanes MUST populate
+`fallbackCmds` per step 1.
 
 For external lanes running through an external CLI, set `externalCmd` to the
 **complete shell command** (with the lane's own prompt and diff paths
 substituted) and omit `model`:
 
-- cursor-agent lanes (`gpt-5.5-high`, `composer-2.5`, or `auto`):
+- cursor-agent lanes (`gpt-5.5-high`, `composer-2.5`, `auto`, or any model from
+  the probe chains):
   ```
   cursor-agent -p --mode plan --model <lane-model> --trust --workspace "{REPO_ROOT}" "$(cat "<promptPath>") The diff to review is at: <diffPath>"
   ```
@@ -350,7 +446,7 @@ Size the panel to the diff so each pass stays affordable (this matters most when
 a caller re-runs the panel). Inspectors are always included — they are cheap
 (9–18s each):
 
-- **< 50 changed lines:** `opus-b` (goal eval) + one external broad-sweep lane +
+- **< 50 changed lines:** `fable` (goal eval) + one external broad-sweep lane +
   all four inspectors. ~6 lanes.
 - **50–500 lines:** the full catalogue minus one redundant lane (`external-a`
   and `external-b` overlap heavily — drop one; or drop the `composer` augment if
@@ -361,6 +457,12 @@ a caller re-runs the panel). Inspectors are always included — they are cheap
 Security-sensitive paths force the full panel regardless of size. When in doubt,
 size up. Drop lanes by omitting their objects from the `lanes` array — the script
 rebuilds the panel from whatever lanes it receives.
+
+**Degraded / native-only sizing:** when `panel_mode` is `native-only` or
+`degraded-fast`, drop the `composer` augment (already omitted in native-only).
+For whole-repo audits in native-only mode, **batch** workflow passes (~40 lanes
+each). For `/review-pr` and normal branch reviews, one pass is fine — five native
+reviewers + inspectors is the designed limit-blown panel.
 
 ### Chunk splitting for large diffs
 
@@ -395,13 +497,19 @@ Invoke `Workflow` with the script below via `script`, and `args`:
 {
   "repoRoot": "{REPO_ROOT}",
   "docsPaths": ["{PROJECT_DOCS_PATHS as array}"],
-  "lanes": [ ...lane objects... ],
+  "lanes": [ ...lane objects — every lane.model must match harness_tier... ],
+  "harnessModels": { "verify": "sonnet", "synthesis": "sonnet" },
   "reportHeader": "{REPORT_HEADER}",
   "synthesisExtra": "{SYNTHESIS_EXTRA}",
   "sourceAccess": "{SOURCE_ACCESS}",
   "includeAttribution": {INCLUDE_ATTRIBUTION}
 }
 ```
+
+`harnessModels` comes from step 1d. **`native-only` / `sonnet-only`:** both
+`verify` and `synthesis` must be `"sonnet"`. **`full` harness:** synthesis may
+be `"opus"`. Never pass `"opus"` or `"fable"` anywhere when the cache says
+`sonnet-only`.
 
 The tool result includes a `scriptPath` — the caller keeps it and reuses
 `{scriptPath, args}` for any later full-panel pass instead of resending the
@@ -461,7 +569,8 @@ const VERDICT_SCHEMA = {
 // parsed object — parse defensively before destructuring.
 const parsedArgs = typeof args === 'string' ? JSON.parse(args) : args
 const { repoRoot, docsPaths, lanes, reportHeader, synthesisExtra,
-  sourceAccess, includeAttribution } = parsedArgs
+  sourceAccess, includeAttribution,
+  harnessModels = { verify: 'sonnet', synthesis: 'opus' } } = parsedArgs
 
 phase('Review')
 
@@ -471,13 +580,22 @@ const laneResults = await parallel(lanes.map(lane => () => {
     `Repo root: ${repoRoot}`
 
   const prompt = lane.externalCmd
-    ? `Use Bash to run exactly this command from the directory ${repoRoot} ` +
-      `(one call, 10 minute timeout):\n${lane.externalCmd}\n` +
-      `The command prints the review text directly to stdout (no log ` +
-      `noise). Convert the resulting review into structured findings ` +
-      `(parse each ### section into one finding). If the command fails, ` +
-      `reports a usage/rate limit, or is unusable, return an empty ` +
-      `findings list and set reviewer_error to the exact error text.`
+    ? `Use Bash to run external review commands from the directory ${repoRoot} ` +
+      `(one call per command, 10 minute timeout each).\n\n` +
+      `Primary command:\n${lane.externalCmd}\n\n` +
+      (lane.fallbackCmds?.length
+        ? `If the primary fails with usage limit, rate limit, quota, auth, or ` +
+          `timeout errors, try these fallbacks IN ORDER (one Bash call each):\n` +
+          lane.fallbackCmds.map((cmd, i) => `${i + 1}. ${cmd}`).join('\n') +
+          `\n\nIf every external command fails, read the review instructions at ` +
+          `${lane.promptPath} and follow them as a native sonnet reviewer ` +
+          `(standard structured output — not markdown sections).\n`
+        : `If the command fails, reports a usage/rate limit, or is unusable, ` +
+          `read the review instructions at ${lane.promptPath} and follow them ` +
+          `as a native sonnet reviewer instead.\n`) +
+      `Otherwise convert the review stdout into structured findings (parse each ` +
+      `### section into one finding). If all attempts fail, return an empty ` +
+      `findings list and set reviewer_error to a summary of each attempt.`
     : `Read the review instructions at ${lane.promptPath} and follow them ` +
       `exactly.\n${context}\nRead the diff, the project docs, and any ` +
       `source files referenced by the diff that you need for context.`
@@ -485,7 +603,7 @@ const laneResults = await parallel(lanes.map(lane => () => {
   return agent(prompt, {
     label: `review:${lane.key}`,
     phase: 'Review',
-    model: lane.model,
+    model: lane.model ?? 'sonnet',
     schema: REVIEW_SCHEMA,
   }).then(result => result && ({
     key: lane.key,
@@ -546,7 +664,7 @@ const verified = await parallel(merged.map(finding => () =>
     `with concrete evidence from the code; do not dismiss ` +
     `uncertain-but-plausible findings. Re-score severity and confidence ` +
     `from your own reading (confidence 100 = you verified it yourself).`,
-    { label: `verify:${finding.file}`, phase: 'Verify', model: 'sonnet',
+    { label: `verify:${finding.file}`, phase: 'Verify', model: harnessModels.verify,
       schema: VERDICT_SCHEMA },
   ).then(verdict => verdict && ({ ...finding, ...verdict }))
 ))
@@ -590,7 +708,7 @@ const synthesis = await agent(
   `your own senior-engineer judgment on merge readiness). No emojis, no ` +
   `apologies, be decisive.` +
   (synthesisExtra ? `\n\n${synthesisExtra}` : ''),
-  { label: 'synthesize', phase: 'Synthesize', model: 'opus',
+  { label: 'synthesize', phase: 'Synthesize', model: harnessModels.synthesis,
     schema: {
       type: 'object',
       required: ['report_markdown'],
@@ -653,16 +771,16 @@ what happens when there are no findings and what to do next.
 
 ## Engine failure modes
 
-- **All reviewer lanes error:** stop; do not proceed to the caller's action.
-  (Inspector lanes erroring is non-fatal.)
+- **All reviewer lanes error:** stop only if **sonnet** Workflow lanes all failed
+  (rare). **Opus usage limit is not fatal** — set `harness_tier=sonnet-only`,
+  rebuild lanes with all models `sonnet`, set `harnessModels.synthesis` to
+  `sonnet`, relaunch Workflow. **Never stop `/review-pr` for Opus limits.**
 - **The workflow itself fails mid-run:** relaunch with `{scriptPath, args,
   resumeFromRunId}` — completed lanes return cached results instantly; only the
   failed part re-runs.
-- **An external lane hits a usage limit mid-panel** (probe passed but the pool
-  ran out during the run): the lane returns `reviewer_error` with the limit
-  message. Record it from `laneErrors`; never fabricate findings for a lane that
-  errored. (A caller that re-runs the panel should treat that pool as exhausted
-  for later passes and re-resolve the lane assignment without re-probing.)
+- **An external lane hits a usage limit mid-panel:** walk `fallbackCmds`, then
+  native sonnet for that lane; write `native-only` cache before the next invoke
+  in the same session.
 
 ## Hard rules
 

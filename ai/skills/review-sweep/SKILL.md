@@ -111,9 +111,9 @@ Semantics, on a tree (Graphite) or forest (GitButler):
 ## 3. Preflight
 
 Common: confirm the review tooling is available exactly as `/review-loop` step 1
-requires, and run the shared engine's usage-limit probes (`review-core` step 1)
-that resolve the external lanes (GPT-5.5 -> Antigravity (agy) frontier fallback,
-Composer cross-lab augment). Run the probes **once for the whole sweep** and reuse
+requires, and run review-core step 1 (cache → two sentinels max → native-only
+when composer is out). Run **once for the whole sweep** and reuse the cached
+panel mode — never walk a long probe chain mid-sweep.
 the resolved lanes for every branch's panel; re-resolve only if a lane hits a
 usage limit mid-sweep.
 

@@ -1,14 +1,5 @@
 use std/assert
-
-def strip-comments [
-  raw: string
-]: nothing -> string {
-  $raw
-    | lines
-    | where { not ($in | str starts-with "#") }
-    | str join "\n"
-    | str trim
-}
+use workflow.nu [strip-comments]
 
 def "test strip-comments removes comment lines" [] {
   assert equal (

@@ -2,7 +2,7 @@
 name: review-pr
 user-invocable: true
 allowed-tools: Bash(gh:*), Bash(git:*), Bash(cursor-agent:*), Bash(agy:*), Bash(command:*), Bash(mkdir:*), Bash(cat:*), Bash(mktemp:*), Bash(rm:*), Bash(wc:*), Bash(date:*), Bash(basename:*), Bash(test:*), Bash(grep:*), Bash(find:*), Read, Write, Agent, Workflow, Skill
-description: Cross-review a pull request by number or URL without checking it out. Runs a multi-model Workflow panel (2x Opus, Sonnet, a Composer cross-lab augment lane, 2 frontier external lanes that fall back GPT-5.5 -> Antigravity (agy) per Cursor usage limits, + inspectors) with per-finding verification, then posts the verified findings as a draft (pending) PR review you take from there in the UI. Never submits the review verdict.
+description: Cross-review a pull request by number or URL without checking it out. Runs a multi-model Workflow panel (native Fable/Opus/Sonnet always; optional cursor-agent when limits allow) with per-finding verification, then posts verified findings as a draft PR review. Works on limit-blown days via native-only mode — never blocked by usage limits.
 argument-hint: <pr-number | pr-url>
 ---
 
@@ -125,8 +125,15 @@ Keep only the paths — they become `docsPaths` for the engine.
 
 ## 6. Run the review engine
 
+**Limit-blown days:** the review must still complete. Run review-core step 1
+(cache → at most two 15s sentinels → `native-only` + `harness_tier=sonnet-only`
+when composer is out). **Every Workflow lane and `harnessModels` must use
+sonnet — never fable or opus.** Do not walk a long probe chain, do not run
+`agy`, do not stop on usage limit. If a Fable/Opus limit errors anyway, relaunch
+Workflow all-sonnet.
+
 Run the shared engine in `~/.claude/skills/review-core/SKILL.md` (steps 1–7:
-probes → reviewer prompts → inspector prompts → lanes → the `review-panel`
+panel mode → reviewer prompts → inspector prompts → lanes → the `review-panel`
 Workflow → after-workflow handling → print findings). Pass the contract inputs:
 
 | Contract input          | Value for review-pr                                                     |

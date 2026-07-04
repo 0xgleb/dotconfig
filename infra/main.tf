@@ -55,6 +55,7 @@ resource "tailscale_tailnet_key" "node" {
 
 # Ephemeral, reusable key for GitHub Actions deploy runners. Ephemeral nodes
 # are removed from the tailnet automatically after each CI run.
+# Requires tag:ci in the tailnet ACL policy (see README).
 # NOTE: also expires after 90 days — re-mint (terraform apply) and refresh the
 # TS_AUTHKEY GitHub secret on that cadence.
 resource "tailscale_tailnet_key" "ci" {
@@ -62,6 +63,7 @@ resource "tailscale_tailnet_key" "ci" {
   ephemeral     = true
   preauthorized = true
   description   = "github actions deploy"
+  tags          = ["tag:ci"]
 }
 
 # Enable MagicDNS tailnet-wide so `ssh nixxxos` resolves (the device's hostname

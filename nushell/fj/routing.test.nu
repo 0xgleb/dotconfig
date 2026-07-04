@@ -85,6 +85,13 @@ def "test clanker-args remote-control coexists with resume and a prompt" [] {
   assert (("fix the bug" in $argv)) "the prompt still passes through"
 }
 
+def "test clanker-args launches high effort with workflows enabled" [] {
+  let settings = (clanker-args true | skip until { $in == "--settings" } | get 1 | from json)
+  assert equal $settings.effortLevel "high"
+  assert equal $settings.enableWorkflows true
+  assert (not ("ultracode" in ($settings | columns))) "explicit effort + workflows replaces ultracode mode"
+}
+
 # --- mut: gt modify ---
 
 def "test fj mut routes to gt modify" [] {

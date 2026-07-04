@@ -228,8 +228,9 @@ export def claude-project-dirname [path: string]: nothing -> string {
 
 # Build the claude argv for `fj clanker` from the user's extra args.
 #
-# clanker always launches with ultracode + auto permission mode + the
-# flicker-free fullscreen TUI. On top of that it implicitly resumes the
+# clanker always launches with high effort + workflows enabled + auto
+# permission mode + the flicker-free fullscreen TUI. On top of that it
+# implicitly resumes the
 # most recent session here (claude --continue), since picking up where
 # you left off is the common case. The implicit --continue is dropped:
 #
@@ -261,7 +262,7 @@ export def --wrapped clanker-args [
 
   [
     "--settings"
-    '{"ultracode": true, "tui": "fullscreen"}'
+    '{"effortLevel": "high", "enableWorkflows": true, "tui": "fullscreen"}'
     "--permission-mode"
     "auto"
   ]

@@ -8,7 +8,7 @@ const command_help = {
   clanker: "fj clanker — launch claude code, cranked up
 
   Starts an interactive claude session with:
-    - ultracode      xhigh effort + standing dynamic-workflow orchestration
+    - high effort    effortLevel high, with workflow orchestration enabled
     - auto mode      --permission-mode auto
     - flicker-free   fullscreen alt-screen renderer (tui: fullscreen)
     - resume         picks up the most recent session here (--continue)

@@ -94,8 +94,8 @@ export def check [] {
   check run
 }
 
-# launch claude code in ultracode (xhigh effort + standing workflow
-# orchestration), auto permission mode, and flicker-free rendering. resumes the
+# launch claude code with high effort, workflows enabled, auto permission
+# mode, and flicker-free rendering. resumes the
 # most recent session here by default, but only when one actually exists;
 # otherwise (fresh, renamed, or moved dir) it starts fresh instead of erroring.
 # pass `--new` to force a fresh start. see `clanker-args` for the full rules.

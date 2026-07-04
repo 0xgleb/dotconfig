@@ -70,10 +70,9 @@ def dotconfig-check [] {
   log info "dotconfig checks"
 
   let repo_root = (^git rev-parse --show-toplevel)
-  cd $repo_root
 
   log debug "checking nix formatting"
-  ^nixfmt --check ...(glob "*.nix")
+  ^nixfmt --check ...(glob $"($repo_root)/**/*.nix")
 
   log debug "running nix flake check"
   ^nix flake check $repo_root
@@ -110,7 +109,8 @@ def rethrow-if-interrupt [e: record] {
 }
 
 export def run-captured []: nothing -> record<passed: bool, output: string> {
-  try {
+  let start_pwd = $env.PWD
+  let result = (try {
     dispatch-check
     { passed: true, output: "" }
   } catch {|e|
@@ -121,7 +121,9 @@ export def run-captured []: nothing -> record<passed: bool, output: string> {
       $e.msg
     }
     { passed: false, output: $error_msg }
-  }
+  })
+  cd $start_pwd
+  $result
 }
 
 export def skill-issue []: nothing -> string {
@@ -129,10 +131,12 @@ export def skill-issue []: nothing -> string {
 }
 
 export def run [] {
+  let start_pwd = $env.PWD
   try {
     dispatch-check
   } catch {|e|
     rethrow-if-interrupt $e
     print $"\n(ansi red_bold)(skill-issue)(ansi reset)\n"
   }
+  cd $start_pwd
 }
