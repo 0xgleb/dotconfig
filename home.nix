@@ -67,6 +67,7 @@ in
         unstable = import inputs.nixpkgs-unstable {
           inherit system;
           config.allowUnfree = true;
+          overlays = [ (import ./graphite-cli-overlay.nix) ];
         };
 
         but = inputs.but-nix.packages.${system}.gitbutler-cli;
