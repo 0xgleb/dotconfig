@@ -26,6 +26,18 @@ $env.config = {
         ]
       }
     }
+    {
+      name: force_completion_menu
+      modifier: shift
+      keycode: backtab
+      mode: [vi_normal vi_insert]
+      event: {
+        until: [
+          { send: menu name: completion_menu }
+          { send: MenuPrevious }
+        ]
+      }
+    }
   ]
 
   history: {

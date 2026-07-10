@@ -2,6 +2,7 @@
   "env": {
     "DISABLE_AUTOUPDATER": "1"
   },
+  "disableClaudeAiConnectors": true,
   "permissions": {
     "allow": [
       "Bash(cargo test:*)",
@@ -74,6 +75,7 @@
   "theme": "auto",
   "editorMode": "vim",
   "verbose": true,
+  "switchModelsOnFlag": false,
   "remoteControlAtStartup": false,
   "agentPushNotifEnabled": true,
   "skipAutoPermissionPrompt": true

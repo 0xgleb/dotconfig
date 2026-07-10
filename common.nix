@@ -61,7 +61,7 @@ in
       fswatch
 
       # # AI
-      # opencode
+      opencode
       ollama
 
       # Nix tools
