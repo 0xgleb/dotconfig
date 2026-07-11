@@ -90,16 +90,16 @@ A probe **fails** on non-zero exit, timeout, or output matching "usage limit",
 cursor-agent -p --mode plan --model composer-2.5 --trust "Reply with exactly: OK"
 
 # Sentinel 2 — only if sentinel 1 passed; skip agy entirely on limit days
-cursor-agent -p --mode plan --model gpt-5.5-high --trust "Reply with exactly: OK"
+cursor-agent -p --mode plan --model grok-4.5-xhigh --trust "Reply with exactly: OK"
 ```
 
 **Decision table** (apply immediately — do not run more probes):
 
-| Sentinel 1 (composer) | Sentinel 2 (gpt-5.5) | panel_mode      | Action |
+| Sentinel 1 (composer) | Sentinel 2 (grok-4.5) | panel_mode      | Action |
 | --------------------- | -------------------- | --------------- | ------ |
 | usage limit / fail    | (skip)               | `native-only`   | Write cache; **never probe agy or other models** |
 | OK                    | usage limit / fail   | `degraded-fast` | external-a/b = composer-2.5 + composer-2.5-fast or auto |
-| OK                    | OK                   | `full`          | external-a/b = gpt-5.5-high; composer augment = composer-2.5 |
+| OK                    | OK                   | `full`          | external-a/b = grok-4.5-xhigh; composer augment = composer-2.5 |
 | not on PATH           | —                    | `native-only`   | cursor-agent missing |
 
 When `panel_mode=native-only`, write the cache with both axes:
@@ -115,7 +115,7 @@ are never a reason to stop.
 
 Only when sentinel 2 passed **and** the diff is large enough to justify extra
 frontier capacity, you *may* try cheaper frontier models **one at a time** until
-one passes or all fail — then stay on `gpt-5.5-high` from sentinel 2:
+one passes or all fail — then stay on `grok-4.5-xhigh` from sentinel 2:
 
 `gpt-5.4-high`, `gpt-5.3-codex-high`, `gemini-3.1-pro`
 
@@ -170,8 +170,8 @@ every inspector lane to **sonnet** (ignore the opus defaults in the step-3 table
 
 | key         | externalCmd model   |
 | ----------- | ------------------- |
-| external-a  | cursor-agent `gpt-5.5-high` (or upgrade-winner) |
-| external-b  | cursor-agent `gpt-5.5-high` (or upgrade-winner) |
+| external-a  | cursor-agent `grok-4.5-xhigh` (or upgrade-winner) |
+| external-b  | cursor-agent `grok-4.5-xhigh` (or upgrade-winner) |
 | composer    | cursor-agent `composer-2.5` |
 
 ### 1e. Mid-run exhaustion (external modes only)
@@ -408,7 +408,7 @@ For external lanes running through an external CLI, set `externalCmd` to the
 **complete shell command** (with the lane's own prompt and diff paths
 substituted) and omit `model`:
 
-- cursor-agent lanes (`gpt-5.5-high`, `composer-2.5`, `auto`, or any model from
+- cursor-agent lanes (`grok-4.5-xhigh`, `composer-2.5`, `auto`, or any model from
   the probe chains):
   ```
   cursor-agent -p --mode plan --model <lane-model> --trust --workspace "{REPO_ROOT}" "$(cat "<promptPath>") The diff to review is at: <diffPath>"
