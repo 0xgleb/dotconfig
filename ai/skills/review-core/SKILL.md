@@ -338,12 +338,15 @@ behavior? Are there implicit assumptions that aren't documented?
 ## 3. Build the inspector prompts (selected by what the scope contains)
 
 **Inspectors are context-driven — include only the ones that match the code in
-the scope.** Running the Rust inspector on a TypeScript change (or all 13 on a
+the scope.** Running the Rust inspector on a TypeScript change (or all 16 on a
 one-language repo) wastes lanes. Decide the set from `{FILES_PATH}` extensions
 plus two content sniffs of the diff (`grep` the diff for `from "effect"` and for
 `solid-js`). Inspectors are cheap, so when a language is present, include its
 inspector; the functional-programming inspector rides along with any FP-leaning
-source.
+source. The three financial inspectors (financial-programming,
+quantitative-trading, risk-management) are domain-driven, not
+extension-driven — include each when the diff content matches its "include
+when" row, judged from the diff itself.
 
 | Inspector | Skill (under `~/.claude/skills/`) | Include when the scope has | Lane model | Category / severity mapping |
 | --- | --- | --- | --- | --- |
@@ -360,6 +363,9 @@ source.
 | functional-programming | `idiomatic-functional-programming-inspector` | any FP-leaning source (`.rs`/`.ts`/`.tsx`/`.nu`/`.nix`) | sonnet | `maintainability`; side-effects-in-transforms / partial functions / invalid-states-representable = high |
 | strong-typing | `strong-typing-inspector` | any typed source (`.rs`/`.ts`/`.tsx`) | sonnet | `maintainability`; primitive-where-domain-type-exists = medium (high for money/identifiers), missed-newtype = low |
 | external-contract | `external-contract-inspector` | external touchpoints (HTTP/RPC/SDK responses, on-chain ABIs, units/decimals) — usually worth including | opus | `correctness`; risk-weighted critical (wrong width/unit/encoding at a money or on-chain boundary) down to low |
+| financial-programming | `financial-programming-inspector` | monetary values (amounts, balances, prices, fees, ledger entries, token math) | opus | `correctness`; silent value corruption (float-for-money, scale confusion, truncating cast, non-idempotent transfer) = critical, wrong/unspecified rounding or conservation violation = high, precision drift = medium |
+| quantitative-trading | `quantitative-trading-inspector` | trading logic (orders, fills, positions, market data, signals, backtests) | opus | `correctness`; position/PnL desync or sign errors = critical, look-ahead bias / stale-price decisions / venue-constraint violations = high, research-only cost modeling = medium |
+| risk-management | `risk-management-inspector` | automated money-moving paths (order placement, payment dispatch, position sizing loops) | opus | `security` for unbounded paths / fail-open checks / double-send retries (critical..high); `correctness` for silent breach handling (medium) |
 
 **Harness override:** when `harness_tier=sonnet-only`, set **every** inspector lane
 model to `sonnet` regardless of the table above. Inspector lanes never run on
@@ -447,7 +453,7 @@ a caller re-runs the panel). Inspectors are always included — they are cheap
 (9–18s each):
 
 - **< 50 changed lines:** `fable` (goal eval) + one external broad-sweep lane +
-  all four inspectors. ~6 lanes.
+  the inspectors selected in step 3. ~6 lanes.
 - **50–500 lines:** the full catalogue minus one redundant lane (`external-a`
   and `external-b` overlap heavily — drop one; or drop the `composer` augment if
   both frontier lanes are live). ~8 lanes.
