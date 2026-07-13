@@ -37,6 +37,7 @@
 
   environment.shells = [ pkgs.nushell ];
   environment.systemPackages = with pkgs; [
+    _1password-cli
     _1password-gui
     bat
     bottom
