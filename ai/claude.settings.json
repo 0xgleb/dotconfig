@@ -2,7 +2,6 @@
   "env": {
     "DISABLE_AUTOUPDATER": "1"
   },
-  "disableClaudeAiConnectors": true,
   "permissions": {
     "allow": [
       "Bash(cargo test:*)",
@@ -53,7 +52,6 @@
     ],
     "deny": [
       "Bash(darwin-rebuild switch:*)",
-      "Bash(sed:*)",
       "Bash(ruby:*)",
       "Bash(perl:*)",
       "Bash(python:*)",
@@ -63,6 +61,7 @@
     "defaultMode": "acceptEdits"
   },
   "model": "claude-fable-5[1m]",
+  "disableClaudeAiConnectors": true,
   "enableWorkflows": true,
   "statusLine": {
     "type": "command",

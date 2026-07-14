@@ -239,9 +239,10 @@ overhead.
 
 ## Bash Usage
 
-**No bash for loops or complex bash commands.** Use dedicated tools (Glob, Grep,
-Read) for searching and reading files. Bash is for simple, single-purpose
-commands like `cargo check`, `git status`, etc.
+**Bash loops are fine.** (The old ban predated auto mode: compound commands
+used to hang on manual approval even when each iteration was pre-approved. The
+auto classifier handles them now.) Still use dedicated tools (Glob, Grep, Read)
+for searching and reading files rather than shell pipelines.
 
 **NEVER run ad-hoc scripts** (`python3`, `node`, `ruby`, shell scripts, etc.)
 for ANY purpose — not for searching, text processing, data extraction, or
