@@ -1,4 +1,4 @@
-use evidence.nu [classify-commit deployment-environment extract-rai in-window is-bot pr-reportability reportable-review]
+use evidence.nu [classify-commit deployment-environment extract-rai in-window is-bot is-deployment-workflow pr-reportability reportable-review]
 
 def run-gh-json [args: list<string>]: nothing -> record {
   let result = do { ^gh ...$args } | complete
@@ -208,16 +208,15 @@ def collect-deployments [repos: list<string>, date_range: string, since: datetim
     } else {
       let runs = ($runs_result.data
       | where {|run|
-        let identity = $"($run.workflowName? | default '') ($run.displayTitle? | default '')" | str lowercase
-        ($identity | str contains "deploy") and (in-window $run.createdAt $since $until)
+        (is-deployment-workflow ($run.workflowName? | default null)) and (in-window $run.createdAt $since $until)
       }
       | each {|run|
-        let identity = $"($run.workflowName? | default '') ($run.displayTitle? | default '')"
+        let workflow = $run.workflowName? | default ""
         {
           repo: $repo
           run_id: $run.databaseId
           workflow: ($run.workflowName? | default "")
-          environment: (deployment-environment $identity)
+          environment: (deployment-environment $workflow)
           title: ($run.displayTitle? | default "")
           event: ($run.event? | default "")
           status: ($run.status? | default "")

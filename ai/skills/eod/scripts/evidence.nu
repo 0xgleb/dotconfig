@@ -50,6 +50,14 @@ export def reportable-review [review: record, github_user: string, pr_author: st
   ($reviewer == $github_user) and ($pr_author != $github_user) and not (is-bot $reviewer) and $submitted_in_window
 }
 
+export def is-deployment-workflow [workflow: any]: nothing -> bool {
+  if $workflow == null {
+    false
+  } else {
+    $workflow | into string | str lowercase | str contains "deploy"
+  }
+}
+
 export def pr-reportability [pr: record, since: datetime, until: datetime]: nothing -> string {
   if (in-window ($pr.created_at? | default null) $since $until) {
     "new"
