@@ -8,7 +8,7 @@ def format-issue-view [data: record] {
   let labels = if ($data.labels | is-empty) { "" } else {
     $"\nlabels: ($data.labels | get name | str join ', ')"
   }
-  let state = ($data.state | str downcase)
+  let state = ($data.state | str lowercase)
 
   [
     "---"
@@ -28,10 +28,10 @@ def format-pr-view [data: record] {
   let labels = if ($data.labels | is-empty) { "" } else {
     $"\nlabels: ($data.labels | get name | str join ', ')"
   }
-  let state = if $data.isDraft { "draft" } else { $data.state | str downcase }
+  let state = if $data.isDraft { "draft" } else { $data.state | str lowercase }
   let reviews = if ($data.latestReviews | is-empty) { "" } else {
     let reviewers = ($data.latestReviews
-      | each {|r| $"($r.author?.login? | default '?') \(($r.state | str downcase))" }
+      | each {|r| $"($r.author?.login? | default '?') \(($r.state | str lowercase))" }
       | str join ", ")
     $"\nreviews: ($reviewers)"
   }

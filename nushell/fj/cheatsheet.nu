@@ -10,8 +10,8 @@ export def main [topic?: string] {
   let shown = if ($topic | is-empty) {
     $all
   } else {
-    let needle = ($topic | str downcase)
-    $all | where {|s| ($s.title | str downcase) | str contains $needle }
+    let needle = ($topic | str lowercase)
+    $all | where {|s| ($s.title | str lowercase) | str contains $needle }
   }
 
   if ($shown | is-empty) {

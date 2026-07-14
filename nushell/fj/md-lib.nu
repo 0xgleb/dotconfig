@@ -357,7 +357,7 @@ export def run-apply [--plan: string, --yes (-y)] {
     let event = (input listen --types [key])
     let key = if $event.key_type == "char" { $event.code } else { "" }
     print $key
-    if ($key | str downcase) != "y" {
+    if ($key | str lowercase) != "y" {
       print "Aborted."
       return
     }
