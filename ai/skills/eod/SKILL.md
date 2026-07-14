@@ -1,377 +1,151 @@
 ---
 name: eod
-description: Write today's end-of-day update in the Obsidian vault, sourcing from Linear and GitHub. Optional brain-dump context overrides everything.
+description: Write the user's end-of-day update in the Obsidian vault from verified Git, GitHub, deployment, and Linear evidence. Use when the user invokes /eod or asks to prepare or correct a daily update.
 user-invocable: true
 allowed-tools:
-  - "Bash(linear api *)"
-  - "Bash(gh search prs *)"
-  - "Bash(gh pr list *)"
-  - "Bash(gh api repos/*/pulls/*/reviews *)"
-  - "Bash(gt log *)"
-  - "Bash(ls *)"
+  - "Bash(nu /Users/0xgleb/.config/ai/skills/eod/scripts/collect.nu *)"
   - "Bash(date *)"
+  - "Glob"
   - "Read"
   - "Edit"
-  - "Write"
   - "AskUserQuestion"
 ---
 
-# EOD Skill
+# EOD
 
-## Invocation
+Write a short stakeholder update only after the evidence has passed the review
+gate below. A user's brain dump, embedded TLDR, correction, ordering, and
+attribution are canonical. Evidence fills gaps and supplies references; it does
+not override the user's account.
 
-```
-/eod                 # gather context yourself, write the note
-/eod <brain dump>    # user-provided context is the source of truth
-```
+## Scope
 
-## Hard rules
+- Cover the st0x / Rain family only: `ST0x-Technology`, `rainlanguage`, and
+  sibling family organizations. Exclude personal and side-project work.
+- Cover everything from the most recent prior EOD through one captured `now`.
+  This is not a calendar-day or rolling-24-hour report.
+- Never read Claude or Codex session transcripts, credential files, secret
+  files, or raw environment files. If deterministic evidence is insufficient,
+  ask the user.
+- Never infer work from a PR title, body, branch name, `updatedAt`, or committer
+  date. These describe context or can be changed by a Graphite restack.
+- Never infer a Linear project or workstream from wording. Group by
+  `project.name`; if it is absent, leave the item ungrouped or ask.
+- Do not create Linear issues or make any external mutation while running EOD.
 
-- **Scope: the st0x / Rain family of orgs** — ST0x-Technology, rainlanguage,
-  and sibling family orgs. NEVER the user's own personal / side-project orgs
-  (outside the st0x / Rain family) — those belong in a separate update, not this
-  one.
-- **Time scope: everything since the last daily update, up until NOW.** This is
-  NOT a 24-hour or calendar-day window. The lower bound is the date of the most
-  recent prior `*-eod.md` note; the upper bound is the moment you run. Daily
-  updates are not filed every day, so a single note routinely covers several
-  days of work. Do not drop work because it landed yesterday or just past
-  midnight — if it happened after the last EOD and before now, it's in scope.
-  Don't agonize over hour-level boundaries (evening vs. past-midnight); the
-  span is last-EOD-to-now, full stop.
-- **Tools: `linear`, `gh`, `gt` only.** No `git`, no `cat`, no ad-hoc
-  scripts. Read files with `Read`.
-- **Never fabricate.** No "Next items" unless the user wrote them. No
-  prose pulled from places the user didn't point you at. Filing a
-  ticket today does not mean it's tomorrow's plan.
-- **Don't overstate relative to existing state.** If work *improves* or
-  *extends* something that already exists, frame it as that — never imply it is
-  new or from-scratch ("started making the flows durable" when they already had
-  crash recovery; "moved the side effects into the durable job model" is the
-  honest delta). State the actual change, not a grander one.
-- **Never assign the user tasks.** You report what happened. They
-  decide what's next.
-- **If unclear, stop and ask** while the user is in the chat. If they
-  stepped away, leave the section blank rather than guess.
-- **References serve content, not the reverse.** Every bullet should
-  carry a verifiable identifier (RAI-XXX, PR N, repo) but the bullet
-  itself stays terse. Don't pad descriptions with details you scraped.
+## Find the note and reporting window
 
-## Workflow
+1. Use `Glob` in
+   `/Users/0xgleb/Library/Mobile Documents/iCloud~md~obsidian/Documents/repos/notes`
+   to find `*-eod.md` files. Do not run a broad filesystem search.
+2. Match the target by the current local `YY.MM.DD` prefix. If none or more than
+   one exists, ask the user which note to use. The user creates the note in
+   Obsidian.
+3. Read the target and the two or three preceding EOD notes. Match their actual
+   section order, density, punctuation, and repository naming.
+4. Preserve all user-written text. Text after `TLDR:` inside a template comment
+   is a brain dump. Replace that whole template comment with the structured
+   update while preserving its meaning and emphasis.
+5. Derive `since` from the previous EOD filename as that date at `00:00:00Z`.
+   Capture `until` once with `date -u +%Y-%m-%dT%H:%M:%SZ`. Use those exact ISO
+   timestamps for the entire run.
 
-1. **Find the file.** Today's note lives at
-   `~/Library/Mobile Documents/iCloud~md~obsidian/Documents/repos/notes/`
-   under `YY.MM.DD@HH.MM-eod.md`. Match by today's date prefix
-   (`date +%y.%m.%d`). If none exists, ask the user — they create it
-   in Obsidian. If multiple, ask which.
+## Collect evidence
 
-2. **Read recent EODs.** `ls` the notes dir, `Read` the last 2–3
-   `*-eod.md` files. Match their format exactly — section order,
-   dividers, bullet style, dash convention, how repos are abbreviated.
-   The template in the empty file is a skeleton; recent notes show
-   the actual house style.
+Run `/Users/0xgleb/.config/ai/skills/eod/scripts/collect.nu` once with explicit
+`--since`, `--until`, and `--output /tmp/eod-activity.json` arguments. Read the
+resulting JSON.
 
-3. **Preserve user edits.** Read the target file. If anything beyond
-   the empty `<!-- ... -->` template comments is present, the user
-   wrote it — keep it verbatim. Use `Edit`, not `Write`, when filling
-   in around their text.
+The collector deliberately distinguishes:
 
-   **Pre-sketched-TLDR format.** The user often opens Obsidian and
-   leaves their brain dump embedded INSIDE the section comment, like:
+- `new`: the PR was created inside the window.
+- `merged`: the PR was merged inside the window.
+- `verified_continued`: an older PR contains a commit authored inside the
+  window.
+- `unverified_update`: GitHub says an old PR moved, but no authored commit,
+  merge, or other substantive event verifies what changed.
+- `rewritten_or_amended_in_window`: only the committer date moved into the
+  window. Treat this as restack/amend context, never substantive work.
 
-   ```markdown
-   ## Today
+It also collects exact submitted review timestamps, review states, reviewer
+identities, Linear `project.name`, and Actions workflows whose identity says
+they are deployments.
 
-   <!--
-   note, this is the tl;dr from the user. replace this comment with a
-   more structured and cross-referenced note with links to PRs, issues,
-   etc.
+## Evidence gate
 
-   ---
+Before drafting, verify all of the following:
 
-   TLDR:
+1. `source_status.git`, `source_status.github`, and `source_status.linear` are
+   all `available`.
+2. `github.review_collection_status`,
+   `github.linked_commit_lookup_status`, and
+   `github.deployment_collection_status` are all `available`.
+3. Every authored PR has an empty `collection_errors` list.
+4. The window in the JSON exactly matches the window established above.
 
-   <user's actual brain dump text here>
+If any check fails, stop before editing the note. Tell the user which source or
+verification failed and ask whether to retry or proceed with a specifically
+named omission. Never turn a failed source into an empty section.
 
-   -->
-   ```
+For `unverified_update` entries, show the user the PR number, repository, and
+available exact commit subjects during the checkpoint. Do not narrate them as
+work unless the user supplies the missing delta. Omit them if the user does not
+confirm them.
 
-   Treat the text after `TLDR:` inside the comment as the brain dump
-   (same canonical role as a `/eod <brain dump>` argument). When
-   filling in, REPLACE the entire `<!-- ... -->` block with the
-   structured expansion of that TLDR. Do not leave the original
-   comment intact. The user may also drop "note to ai agent: ..."
-   instructions inside the comment — treat those as binding
-   directives for this run.
+## Mandatory checkpoint
 
-4. **Source of truth.**
-   - **With brain dump (CLI arg or embedded TLDR):** the user's text is
-     canonical for framing and emphasis — don't contradict or embellish it.
-     But a brain dump is a TLDR, not a complete inventory: still run the
-     queries below and reconcile. A throwaway line like "addressing feedback,
-     merging" routinely hides work across several repos — never let the dump's
-     brevity become an omission. Cross-reference Linear/GitHub so readers can
-     drill down (link RAI tickets and PR numbers where they fit).
-   - **Without brain dump:** gather from Linear and GitHub (queries below).
-     If the data is sparse, ask before drafting — don't invent a day.
+Before editing the note, present a terse evidence outline:
 
-   Either way, gather by **activity** across the family orgs over the whole
-   since-last-EOD span (see "Time scope" above): a PR you pushed commits to in
-   that span (addressing review, iterating a draft) is in scope even if it was
-   opened earlier — filter by `--updated`, not just `created`/`merged-at`, and
-   check every repo, not just the obvious one. First establish the window: `ls`
-   the notes dir and read the date of the previous `*-eod.md`; that date is the
-   lower bound for every query below.
+- proposed workstreams in the user's requested order;
+- which PRs support each workstream and whether they are new, merged, or
+  verified continued work;
+- exact deployment runs and conclusions;
+- Linear items with their actual `project.name`;
+- review counts grouped by submitted review state;
+- every ambiguity or `unverified_update` that will be omitted without user
+  confirmation.
 
-5. **Draft.** Match the format of the last few EODs. Common shape:
-   - `# Daily Update:  YYYY-MM-DD`
-   - Status paragraph (one to three sentences) -- lead with the concrete
-     deliverables and their state, not abstract framing or "opened N PRs"
-   - A one-line **stats summary** — be granular. "N PRs opened" alone is
-     near-meaningless; the group chat wants the breakdown of where those
-     PRs landed. Report each of the following counts, dropping any that
-     are zero: **PRs opened, PRs submitted for review (reviewers
-     assigned), PRs still draft, PRs merged, PRs reviewed, issues
-     created, issues closed**. e.g.
-     `11 PRs opened - 3 submitted for review - 8 still draft - 2 merged - 5 reviewed - 7 issues created - 1 closed`.
-     Opened-but-still-draft vs submitted-for-review vs merged is the
-     signal — never collapse it back to a single "opened" number. The
-     detail follows below.
-   - `## What Was Done` with topic-grouped subsections or a flat
-     bullet list, whichever the recent notes use
-   - `### Reviews` if any PRs were reviewed
-   - **No `## Next items` unless the user wrote them.**
+Ask the user to confirm or correct that outline. Do not edit the note until they
+respond. Their correction becomes canonical for the draft.
 
-   Drop any section that has no data. Empty sections are bloat.
+## Draft and edit
 
-6. **Optional: file follow-up tickets.** Only if the brain dump
-   explicitly describes something that warrants a new Linear issue,
-   you may create it with `linear issue create` and reference the new
-   ticket from the EOD. Don't proactively create tickets from
-   inferred work.
+- Use `Edit`, not `Write`, so existing user material is not replaced wholesale.
+- Follow recent-note house style. The usual shape is a concrete status paragraph,
+  one granular stats line, `## What Was Done`, topic-grouped bullets, and a
+  compact `### Reviews` section when reviews exist.
+- Lead with deliverables and their state, not PR mechanics or counts.
+- Follow the user's requested workstream order exactly. Otherwise order by
+  stakeholder importance, not repository or query order.
+- A stats line may include nonzero counts for PRs opened, submitted for review,
+  still draft, merged, reviewed, issues created, and issues completed.
+- Report deployments only from `github.deployments`. Include environment only
+  when the workflow identity establishes it; `unspecified` stays unspecified.
+- Group Linear work by its returned project name. An issue being touched today
+  does not prove it was the substantive work performed today.
+- Reviews count only when the user submitted the review inside the window on
+  another author's PR. Group them as Approved, Commented, or Changes-requested.
+- Human and bot feedback are different. Never describe bot-only activity as
+  human review feedback.
+- Collapse related PR runs. One line should state a fact and its references.
+- Use Graphite PR links:
+  `https://app.graphite.com/github/pr/ORG/REPO/NUMBER`.
+- Link every PR reference or none of them.
+- Use ASCII only: no emoji, curly quotes, Unicode dashes, arrows, or ellipses.
+- No first-person voice. No `Next items` unless the user supplied them.
+- Aim below 1500 characters and never exceed Telegram's 4096-character limit.
 
-## Data queries
+## Final verification
 
-The `linear` CLI lives in the repo's nix dev shell, not on PATH — run it
-through direnv from a family-repo checkout (e.g. st0x.issuance):
+Read the completed note once more and verify:
 
-```bash
-direnv exec . linear api '...'
-```
+- every claimed delta has user confirmation or reportable evidence;
+- deployment work is present when deployment runs are present;
+- workstream ordering and attribution match the user's checkpoint correction;
+- no `unverified_update` or committer-date-only event became a work claim;
+- every Linear grouping matches `project.name`;
+- stats agree with the evidence JSON;
+- formatting is ASCII, terse, grammatical, and consistent with recent EODs.
 
-Cache `viewer.id` once per run:
-
-```bash
-linear api 'query { viewer { id displayName email } }'
-```
-
-**Window, not "today."** Every query below is scoped to the since-last-EOD span,
-not a single day. Substitute the lower bound (`<since>`) with the previous EOD's
-date as `YYYY-MM-DDT00:00:00Z`. **Never assume a fixed timezone offset** — the
-user travels across timezones (GMT+7, GMT-3, whatever the current month is), so
-there is no stable "UTC-3 workday" to adjust by. Just use the previous note's
-date at UTC midnight as the lower bound; erring earlier only risks re-listing
-already-reported work, which you reconcile against the last note anyway. For
-`gh search`, use a `START..END` date range (e.g.
-`--created=2026-06-13..2026-06-16`) instead of a single date. The examples below
-say "today" for brevity — read it as "since the last EOD."
-
-**Issues I created today:**
-
-```bash
-linear api 'query($u: ID!, $a: DateTimeOrDuration!) {
-  issues(filter: { creator: { id: { eq: $u } }, createdAt: { gte: $a } }, first: 100) {
-    nodes { identifier title url state { name } assignee { displayName } }
-  }
-}' --variable u=<id> --variable a=<iso>
-```
-
-**My comments today:**
-
-```bash
-linear api 'query($u: ID!, $a: DateTimeOrDuration!) {
-  comments(filter: { user: { id: { eq: $u } }, createdAt: { gte: $a } }, first: 100) {
-    nodes { body issue { identifier title url } }
-  }
-}' --variable u=<id> --variable a=<iso>
-```
-
-**PRs I reviewed today** (NOISY — `--reviewed-by` + `--updated` returns every PR
-you have *ever* reviewed that happened to be updated today, including your own
-PRs and stale reviews bumped by someone else's commit). In practice the raw
-candidate list can run 3x+ the real count (observed: 42 candidates, 12 actual).
-NEVER cite the raw count. Treat it as a candidate list, then batch-verify every
-candidate before citing any:
-
-```bash
-# 1. candidate list, compact repo+number pairs
-gh search prs --reviewed-by=@me --owner=ST0x-Technology,rainlanguage \
-  --updated=YYYY-MM-DD --json number,repository \
-  --jq '.[] | "\(.repository.nameWithOwner) \(.number)"' --limit 100
-
-# 2. batch-verify: print each review YOU submitted since the last EOD, with its
-#    state, so you can both verify AND group by status. submitted_at + user.login:
-while read -r repo num; do
-  gh api "repos/$repo/pulls/$num/reviews" \
-    --jq ".[] | select(.user.login==\"<your-login>\")
-              | select(.submitted_at >= \"<since>T00:00:00Z\")
-              | \"$repo#$num \(.submitted_at) \(.state)\"" 2>/dev/null
-done <<'EOF'
-<paste step-1 output here>
-EOF
-```
-
-Drop from the verified list: your own PRs (replying to review feedback on your
-PR is not a review) and anything with zero reviews submitted in the window. Use
-the previous EOD's date at UTC midnight as the lower bound — do NOT assume a
-fixed local-timezone offset, and do NOT tighten it to "today"; the user travels
-(could be GMT+7 one month, GMT-3 the next), so there is no stable workday
-boundary to shift by, and a too-tight bound silently drops real reviews.
-
-**Re-reviews count; don't pre-exclude PRs from the last note.** A PR that
-appeared in the *previous* note's review list can still carry a NEW review in
-this window — you requested changes on it yesterday and approved it today. So
-verify EVERY candidate against the previous-EOD lower bound (the noisy list
-includes them), and keep any with a review submitted after the last EOD, even if
-its first pass was already reported. The `.state` from the query above is what
-you group the Reviews section by (Approved / Commented / Changes-requested).
-
-**Human vs AI-bot feedback.** "Addressed review feedback" / "resubmitted after
-feedback" implies a HUMAN reviewed the PR. Before writing it, check who the
-review authors actually are:
-
-```bash
-gh api "repos/<org>/<repo>/pulls/<N>/reviews" \
-  --jq '[.[] | .user.login] | group_by(.) | map({login: .[0], count: length})'
-```
-
-- Human reviewer (e.g. `JuaniRios`, `findolor`) → name them: "addressed Juan's
-  feedback on N".
-- Only `coderabbitai[bot]` / Graphite AI / other bots → do NOT call it feedback;
-  say "resubmitted for review" or similar. Clearing bot comments is routine PR
-  hygiene, not review iteration, and naming it "feedback" overstates the day.
-- Never lump human and bot feedback into one undifferentiated "feedback" claim.
-
-**PRs I authored that moved today** — filter by `--updated` (catches PRs you
-*iterated on* today even if opened earlier, e.g. pushing fixes after review) and
-scope to the family orgs. There is NO `mergedAt` field on `gh search prs` —
-requesting it errors:
-
-```bash
-gh search prs --author=@me --owner=ST0x-Technology,rainlanguage \
-  --updated=YYYY-MM-DD --json number,title,repository,url,state,isDraft --limit 100
-```
-
-**Day stats (counts for the summary line).** On `gh search prs`, `--jq length`
-returns the count directly. `--created` / `--closed` / `--merged-at` take a
-`YYYY-MM-DD` (or a `START..END` range). WATCH OUT: the bare `--merged` flag is a
-BOOLEAN, not a date — passing a date errors; use `--merged-at`. `linear api`
-does NOT support `--jq` — count Linear results by fetching `identifier`s and
-counting the nodes.
-
-```bash
-# scope every query to the family orgs (add siblings as needed; never the user's own personal orgs)
-# PRs opened today
-gh search prs --author=@me --owner=ST0x-Technology,rainlanguage --created=YYYY-MM-DD --json number --jq length
-# PRs merged today
-gh search prs --author=@me --owner=ST0x-Technology,rainlanguage --merged-at=YYYY-MM-DD --json number --jq length
-# PRs reviewed today (rough — see the review-noise warning above; verify before citing)
-gh search prs --reviewed-by=@me --owner=ST0x-Technology,rainlanguage --updated=YYYY-MM-DD --json number --jq length
-```
-
-**Submitted-for-review vs still-draft split.** `gh search prs` does NOT
-expose draft status or review requests, so split the opened-today PRs
-per repo with `gh pr list`. A PR counts as "submitted for review" when
-`isDraft` is false AND `reviewRequests` is non-empty; "still draft" when
-`isDraft` is true. Filter the rows to `createdAt` within the since-last-EOD
-window (not a single day).
-
-```bash
-gh pr list --repo ST0x-Technology/<repo> --author @me --state open \
-  --json number,isDraft,reviewRequests,createdAt --limit 50
-```
-
-Run once per repo touched today (check the "PRs I authored that moved
-today" output for which repos to query). Reviewers assigned today on an
-older PR also count as submitted-for-review, but that's not cheaply
-queryable — the opened-today split is the reliable signal; note any
-known draft-to-ready flips of older PRs in prose rather than the count.
-
-```bash
-# Linear issues you closed (completed) today
-linear api 'query($u: ID!, $a: DateTimeOrDuration!) {
-  issues(filter: { assignee: { id: { eq: $u } }, completedAt: { gte: $a } }, first: 100) {
-    nodes { identifier }
-  }
-}' --variable u=<id> --variable a=<iso>
-```
-
-(Issues created today: use the "Issues I created today" query above.)
-
-`gt log short` in a worktree gives the current stack shape if you need
-to describe an open stack the user mentioned.
-
-## Style
-
-- **The EOD ships as a Telegram message to a ~10-person group chat.**
-  Treat it as a standup post, not a journal entry. Telegram premium
-  message limit is 4096 chars — aim well under that, and the user
-  will still call out bloat over ~1500 chars.
-- **Lead with deliverables and their state, not mechanics.** The body explains
-  what was *delivered* (the improvement, fix, or plan), why it matters, and its
-  state -- in review / in progress / merged -- in plain terms an outsider gets.
-  Nobody cares about stacks, PR counts, or "opened N PRs" in the prose; that is
-  busywork noise that belongs in the stats line, never the body. Don't open with
-  an abstract filler sentence ("a refactor-and-planning span across the family")
-  -- lead with the concrete deliverable. Planning days are deliverables too: a
-  settled, dependency-ordered plan is the deliverable, not "refined some issues".
-- **One line per thing.** Every bullet is a fact + identifier (RAI
-  tag, PR number, repo). No prose paragraphs explaining what a PR
-  does — readers click through if they want detail.
-- **Prose must stand on its own for an outsider.** PR titles in
-  backticks can stay technical (readers click through), but any prose
-  YOU write -- the summary sentence, a section header, the line
-  grouping a set of PRs -- must make sense to someone in the ~10-person
-  chat who was NOT managing this line of work. No insider shorthand:
-  "Dep prep ahead of the stack" is meaningless to them; "two library
-  upgrades the refactor depends on" is not. If you can't restate a
-  grouping in plain words, the reader can't decode it either -- so
-  don't write it that way.
-- **Collapse runs.** Five PRs in one repo with similar titles
-  collapse to `repo PRs A, B, C, D, E`. Don't list each title
-  separately unless the titles are doing real work.
-- Backtick PR/commit titles. When you link a PR, link to **Graphite**,
-  never the GitHub `github.com/.../pull/N` URL — the stack is reviewed and
-  merged through Graphite. Format:
-  `[PR N](https://app.graphite.com/github/pr/<org>/<repo>/<N>)`, e.g.
-  `[PR 729](https://app.graphite.com/github/pr/ST0x-Technology/st0x.liquidity/729)`.
-  (Bare `PR N` is fine too if a section reads better unlinked; just never
-  emit a GitHub PR URL.)
-- Repo names abbreviated (`st0x.issuance`, `raindex`), not full
-  `org/name` paths, unless prior EODs use the long form.
-- ISO dates only.
-- **ASCII only.** No Unicode anywhere in the note — no em/en dashes (use `--`
-  for the section-header separator and `-` for ranges/hyphens), no curly quotes,
-  no ellipsis character, no arrows. The note ships to Telegram and must stay
-  plain ASCII.
-- No emoji. No "I"/"we" -- drop the subject.
-- Strip redundant info: don't repeat the RAI tag in a PR title if the
-  bullet already has the PR number tied to that issue elsewhere.
-- Each section earns its place. If the day's work has no Linear
-  output, drop the Linear section. If no reviews, drop Reviews.
-- **Reviews: break down by status, not just a list.** Group what you reviewed by
-  outcome -- Approved / Commented / Changes-requested -- with the PR numbers per
-  status (drop a status with none). Reviews are collaboration, secondary to your
-  own deliverables, so keep them to those short lines; never describe what someone
-  else's reviewed PR does. A re-review or approval of a PR you first-reviewed in a
-  prior window counts as THIS window's review (e.g. changes-requested yesterday,
-  approved today).
-- Link every PR reference, or none — never link the first and leave the rest
-  bare. Pick one convention and apply it uniformly.
-- Don't borrow a tool's reserved words for loose meaning: "initiative",
-  "project", "epic", "cycle" are Linear primitives; "stack" is Graphite. And
-  don't imply newness ("N new X") unless the user said it's new.
-- It's a clean note for stakeholders, not a transcript of the chat: never
-  paste the user's feedback or your own corrections into the note (e.g. "none
-  of it new", "not just what merged"), and read every sentence for sense and
-  grammar before finishing.
+If any sentence cannot be traced to the user's words or the evidence JSON,
+remove it or ask.

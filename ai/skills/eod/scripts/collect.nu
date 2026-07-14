@@ -1,0 +1,579 @@
+use evidence.nu [classify-commit deployment-environment extract-rai in-window is-bot pr-reportability reportable-review]
+
+def run-gh-json [args: list<string>]: nothing -> record {
+  let result = do { ^gh ...$args } | complete
+  if $result.exit_code != 0 {
+    {ok: false, data: null, error: "GitHub command failed", exit_code: $result.exit_code}
+  } else {
+    let output = $result.stdout | str trim
+    if ($output | is-empty) {
+      {ok: true, data: [], error: null, exit_code: 0}
+    } else {
+      try {
+        {ok: true, data: ($output | from json), error: null, exit_code: 0}
+      } catch {
+        {ok: false, data: null, error: "GitHub returned invalid JSON", exit_code: 0}
+      }
+    }
+  }
+}
+
+def run-linear-json [linear_repo: path, args: list<string>]: nothing -> record {
+  let result = do { ^direnv exec $linear_repo linear ...$args } | complete
+  if $result.exit_code != 0 {
+    {ok: false, data: null, error: "Linear command failed", exit_code: $result.exit_code}
+  } else {
+    let output = $result.stdout | str trim
+    if ($output | is-empty) {
+      {ok: false, data: null, error: "Linear returned no data", exit_code: 0}
+    } else {
+      try {
+        {ok: true, data: ($output | from json), error: null, exit_code: 0}
+      } catch {
+        {ok: false, data: null, error: "Linear returned invalid JSON", exit_code: 0}
+      }
+    }
+  }
+}
+
+def first-line [text: any]: nothing -> string {
+  if $text == null or ($text | into string | is-empty) {
+    ""
+  } else {
+    $text | into string | lines | first
+  }
+}
+
+def collect-git [workspace: path, since: datetime, until: datetime, since_text: string, until_text: string]: nothing -> record {
+  let email_result = do { ^git config --global user.email } | complete
+  if $email_result.exit_code != 0 or ($email_result.stdout | str trim | is-empty) {
+    return {status: "unavailable", error: "Git author email is not configured", repos: []}
+  }
+
+  let git_email = $email_result.stdout | str trim
+  let repos = (glob ($workspace | path join "*/.git")
+    | each { path dirname }
+    | sort)
+
+  let activity = ($repos | each {|repo|
+    let log_result = (do {
+      ^git -C $repo log --all $"--since=($since_text)" $"--until=($until_text)" $"--author=($git_email)" '--pretty=format:%H%x09%s%x09%aI%x09%cI%x09%D'
+    } | complete)
+
+    let commits = if $log_result.exit_code != 0 {
+      []
+    } else {
+      $log_result.stdout
+      | lines
+      | where { str trim | is-not-empty }
+      | each {|line|
+        let fields = $line | split row (char tab)
+        if ($fields | length) < 5 {
+          null
+        } else {
+          let commit = {
+            sha: $fields.0
+            subject: $fields.1
+            author_date: $fields.2
+            committer_date: $fields.3
+            refs: $fields.4
+          }
+          $commit | insert evidence_kind (classify-commit $commit $since $until)
+        }
+      }
+      | compact
+      | where evidence_kind != "outside_window"
+    }
+
+    if ($commits | is-empty) {
+      null
+    } else {
+      {repo: ($repo | path basename), path: $repo, commits: $commits}
+    }
+  } | compact)
+
+  {status: "available", error: null, author_email: $git_email, repos: $activity}
+}
+
+def normalize-commit [commit: record, since: datetime, until: datetime]: nothing -> record {
+  let normalized = {
+    sha: ($commit.oid? | default ($commit.sha? | default ""))
+    subject: ($commit.messageHeadline? | default (first-line ($commit | get -o commit.message)))
+    author_date: ($commit.authoredDate? | default ($commit | get -o commit.author.date))
+    committer_date: ($commit.committedDate? | default ($commit | get -o commit.committer.date))
+  }
+  $normalized | insert evidence_kind (classify-commit $normalized $since $until)
+}
+
+def normalize-review [review: record]: nothing -> record {
+  let login = $review | get -o author.login | default ($review | get -o user.login)
+  {
+    user_login: $login
+    submitted_at: ($review.submittedAt? | default ($review.submitted_at? | default null))
+    state: ($review.state? | default "")
+    is_bot: (is-bot $login)
+  }
+}
+
+def collect-authored-pr [candidate: record, since: datetime, until: datetime]: nothing -> record {
+  let repo = $candidate.repository.nameWithOwner
+  let number = $candidate.number | into string
+  let detail_result = run-gh-json [
+    "pr" "view" $number "--repo" $repo "--json"
+    "number,title,body,url,state,isDraft,reviewRequests,createdAt,updatedAt,mergedAt,author,commits,reviews"
+  ]
+
+  let detail = if $detail_result.ok { $detail_result.data } else { $candidate }
+  let commits = ($detail.commits? | default []
+    | each {|commit| normalize-commit $commit $since $until })
+  let reviews = ($detail.reviews? | default []
+    | each {|review| normalize-review $review }
+    | where {|review| in-window $review.submitted_at $since $until })
+  let rai_ids = extract-rai $"($detail.title? | default '')\n($detail.body? | default '')"
+  let pr = {
+    repo: $repo
+    number: $candidate.number
+    title: ($detail.title? | default $candidate.title)
+    url: ($detail.url? | default $candidate.url)
+    author: ($detail | get -o author.login | default ($candidate | get -o author.login))
+    state: ($detail.state? | default $candidate.state)
+    is_draft: ($detail.isDraft? | default $candidate.isDraft)
+    review_requests: ($detail.reviewRequests? | default [])
+    created_at: ($detail.createdAt? | default $candidate.createdAt)
+    updated_at: ($detail.updatedAt? | default $candidate.updatedAt)
+    merged_at: ($detail.mergedAt? | default null)
+    commits: $commits
+    reviews_received: $reviews
+    rai_ids: $rai_ids
+    collection_errors: (if $detail_result.ok { [] } else { [$detail_result.error] })
+  }
+  $pr | insert reportability (pr-reportability $pr $since $until)
+}
+
+def collect-reviews [github_user: string, owners: string, date_range: string, since: datetime, until: datetime]: nothing -> record {
+  let query = "query($q: String!) {
+    search(query: $q, type: ISSUE, first: 100) {
+      nodes {
+        ... on PullRequest {
+          number title url
+          repository { nameWithOwner }
+          author { login }
+          reviews(first: 100) { nodes { author { login } state submittedAt } }
+        }
+      }
+    }
+  }"
+  let collections = ($owners | split row "," | each {|owner|
+    let search = $"is:pr reviewed-by:($github_user) org:($owner) updated:($date_range)"
+    let result = run-gh-json ["api" "graphql" "-f" $"query=($query)" "-f" $"q=($search)"]
+    if $result.ok {
+      {status: "available", error: null, prs: ($result.data.data.search.nodes | compact)}
+    } else {
+      {status: "unavailable", error: $result.error, prs: []}
+    }
+  })
+  let reviews = ($collections.prs | flatten | each {|candidate|
+    let repo = $candidate.repository.nameWithOwner
+    $candidate.reviews.nodes
+    | each {|review| normalize-review $review }
+    | where {|review| reportable-review $review $github_user $candidate.author.login $since $until }
+    | each {|review|
+      $review | merge {
+        repo: $repo
+        number: $candidate.number
+        title: $candidate.title
+        url: $candidate.url
+        pr_author: $candidate.author.login
+      }
+    }
+  } | flatten)
+  let failures = $collections | where status == "unavailable"
+
+  if ($failures | is-empty) {
+    {status: "available", error: null, reviews: $reviews}
+  } else {
+    {status: "partial", error: "One or more review searches failed", reviews: $reviews}
+  }
+}
+
+def collect-deployments [repos: list<string>, date_range: string, since: datetime, until: datetime]: nothing -> record {
+  let collections = ($repos | each {|repo|
+    let runs_result = run-gh-json [
+      "run" "list" "--repo" $repo "--created" $date_range
+      "--json" "databaseId,workflowName,displayTitle,event,status,conclusion,createdAt,updatedAt,headBranch,headSha,url"
+      "--limit" "100"
+    ]
+    if not $runs_result.ok {
+      {status: "unavailable", runs: []}
+    } else {
+      let runs = ($runs_result.data
+      | where {|run|
+        let identity = $"($run.workflowName? | default '') ($run.displayTitle? | default '')" | str lowercase
+        ($identity | str contains "deploy") and (in-window $run.createdAt $since $until)
+      }
+      | each {|run|
+        let identity = $"($run.workflowName? | default '') ($run.displayTitle? | default '')"
+        {
+          repo: $repo
+          run_id: $run.databaseId
+          workflow: ($run.workflowName? | default "")
+          environment: (deployment-environment $identity)
+          title: ($run.displayTitle? | default "")
+          event: ($run.event? | default "")
+          status: ($run.status? | default "")
+          conclusion: ($run.conclusion? | default "")
+          created_at: ($run.createdAt? | default null)
+          updated_at: ($run.updatedAt? | default null)
+          head_branch: ($run.headBranch? | default "")
+          head_sha: ($run.headSha? | default "")
+          url: ($run.url? | default "")
+        }
+      })
+      {status: "available", runs: $runs}
+    }
+  })
+  let failures = $collections | where status == "unavailable"
+
+  {
+    status: (if ($failures | is-empty) { "available" } else { "partial" })
+    runs: ($collections.runs | flatten)
+  }
+}
+
+def candidate-key [candidate: record]: nothing -> string {
+  $"($candidate.repository.nameWithOwner)#($candidate.number)"
+}
+
+def unique-candidates [candidates: list<record>]: nothing -> list<record> {
+  $candidates
+  | each {|candidate| $candidate | insert evidence_key (candidate-key $candidate) }
+  | uniq-by evidence_key
+  | reject evidence_key
+}
+
+def authored-search [github_user: string, owners: string, qualifier: string, date_range: string]: nothing -> record {
+  run-gh-json [
+    "search" "prs" $"--author=($github_user)" $"--owner=($owners)" $"--($qualifier)=($date_range)"
+    "--json" "number,title,url,state,isDraft,createdAt,updatedAt,repository,author" "--limit" "100"
+  ]
+}
+
+def collect-linked-candidates [git: record, github_user: string, primary_owner: string, known_shas: list<string>]: nothing -> record {
+  let commits = ($git.repos | each {|repo|
+    $repo.commits
+    | where evidence_kind == "authored_in_window"
+    | where {|commit| $commit.sha not-in $known_shas }
+    | each {|commit| {repo: $repo.repo, sha: $commit.sha} }
+  } | flatten | uniq-by sha)
+  let lookups = ($commits | each {|commit|
+    let repo = $"($primary_owner)/($commit.repo)"
+    let result = run-gh-json ["api" $"repos/($repo)/commits/($commit.sha)/pulls"]
+    if $result.ok {
+      let candidates = ($result.data
+        | where {|pr| ($pr | get -o user.login) == $github_user }
+        | each {|pr|
+          {
+            number: $pr.number
+            title: ($pr.title? | default "")
+            url: ($pr.html_url? | default "")
+            state: ($pr.state? | default "")
+            isDraft: ($pr.draft? | default false)
+            createdAt: ($pr.created_at? | default null)
+            updatedAt: ($pr.updated_at? | default null)
+            repository: {nameWithOwner: $repo}
+            author: {login: ($pr | get -o user.login)}
+          }
+        })
+      {status: "available", candidates: $candidates}
+    } else {
+      {status: "unavailable", candidates: []}
+    }
+  })
+  let failures = $lookups | where status == "unavailable"
+
+  {
+    status: (if ($failures | is-empty) { "available" } else { "partial" })
+    candidates: (unique-candidates ($lookups.candidates | flatten))
+  }
+}
+
+def collect-github [git: record, owners: string, deploy_repos: list<string>, since: datetime, until: datetime, since_date: string, until_date: string]: nothing -> record {
+  let user_result = run-gh-json ["api" "user"]
+  if not $user_result.ok {
+    return {
+      status: "unavailable"
+      error: $user_result.error
+      user: null
+      authored_prs: []
+      reviews: []
+      deployments: []
+      stats: {}
+    }
+  }
+
+  let github_user = $user_result.data.login
+  let date_range = $"($since_date)..($until_date)"
+  let created_result = authored-search $github_user $owners "created" $date_range
+  let merged_result = authored-search $github_user $owners "merged-at" $date_range
+  if not $created_result.ok or not $merged_result.ok {
+    return {
+      status: "unavailable"
+      error: "GitHub authored PR search failed"
+      user: $github_user
+      authored_prs: []
+      reviews: []
+      deployments: []
+      stats: {}
+    }
+  }
+
+  let initial_candidates = unique-candidates ($created_result.data ++ $merged_result.data)
+  let initial_prs = ($initial_candidates
+    | each {|candidate| collect-authored-pr $candidate $since $until })
+  let known_shas = ($initial_prs
+    | each {|pr| $pr.commits | get -o sha }
+    | flatten
+    | compact
+    | uniq)
+  let primary_owner = $owners | split row "," | first
+  let linked_collection = collect-linked-candidates $git $github_user $primary_owner $known_shas
+  let initial_keys = $initial_candidates | each {|candidate| candidate-key $candidate }
+  let continued_candidates = ($linked_collection.candidates
+    | where {|candidate| (candidate-key $candidate) not-in $initial_keys })
+  let continued_prs = ($continued_candidates
+    | each {|candidate| collect-authored-pr $candidate $since $until })
+  let authored_prs = $initial_prs ++ $continued_prs
+  let review_collection = collect-reviews $github_user $owners $date_range $since $until
+  let activity_repos = ($authored_prs.repo ++ ($review_collection.reviews.repo? | default []))
+  let deployment_repos = ($deploy_repos ++ $activity_repos | compact | uniq | sort)
+  let deployment_collection = collect-deployments $deployment_repos $date_range $since $until
+  let collection_failures = ($authored_prs
+    | each {|pr| $pr.collection_errors }
+    | flatten)
+  let github_status = if (
+    $review_collection.status == "available"
+    and $linked_collection.status == "available"
+    and $deployment_collection.status == "available"
+    and ($collection_failures | is-empty)
+  ) { "available" } else { "partial" }
+
+  let opened = $authored_prs | where {|pr| in-window $pr.created_at $since $until }
+  let merged = $authored_prs | where {|pr| in-window $pr.merged_at $since $until }
+  let submitted = $opened | where {|pr| (not $pr.is_draft) and ($pr.review_requests | is-not-empty) }
+  let drafts = $opened | where is_draft == true
+  let reviewed_prs = ($review_collection.reviews
+    | each {|review| {key: $"($review.repo)#($review.number)"} }
+    | uniq-by key)
+
+  {
+    status: $github_status
+    error: (if $github_status == "available" { null } else { "One or more GitHub evidence checks failed" })
+    user: $github_user
+    authored_prs: $authored_prs
+    reviews: $review_collection.reviews
+    review_collection_status: $review_collection.status
+    linked_commit_lookup_status: $linked_collection.status
+    deployment_collection_status: $deployment_collection.status
+    deployments: $deployment_collection.runs
+    stats: {
+      opened: ($opened | length)
+      submitted_for_review: ($submitted | length)
+      still_draft: ($drafts | length)
+      merged: ($merged | length)
+      reviewed: ($reviewed_prs | length)
+    }
+  }
+}
+
+def normalize-linear-issue [issue: record]: nothing -> record {
+  {
+    identifier: ($issue.identifier? | default "")
+    title: ($issue.title? | default "")
+    url: ($issue.url? | default "")
+    created_at: ($issue.createdAt? | default null)
+    updated_at: ($issue.updatedAt? | default null)
+    completed_at: ($issue.completedAt? | default null)
+    state: ($issue | get -o state.name)
+    state_type: ($issue | get -o state.type)
+    project: ($issue | get -o project.name)
+  }
+}
+
+def collect-linear [linear_repo: path, referenced_ids: list<string>, since: datetime, until: datetime, since_text: string]: nothing -> record {
+  let viewer_result = run-linear-json $linear_repo ["api" "query { viewer { id displayName } }"]
+  if not $viewer_result.ok {
+    return {
+      status: "unavailable"
+      error: $viewer_result.error
+      created: []
+      completed: []
+      comments: []
+      updated_assigned_context: []
+      referenced_ids: $referenced_ids
+      referenced_issues: []
+    }
+  }
+
+  let viewer_id = $viewer_result.data.data.viewer.id
+  let activity_query = "query($u: ID!, $a: DateTimeOrDuration!) {
+    created: issues(filter: { creator: { id: { eq: $u } }, createdAt: { gte: $a } }, first: 100) {
+      nodes { identifier title url createdAt updatedAt completedAt state { name type } project { name } }
+    }
+    completed: issues(filter: { assignee: { id: { eq: $u } }, completedAt: { gte: $a } }, first: 100) {
+      nodes { identifier title url createdAt updatedAt completedAt state { name type } project { name } }
+    }
+    updated: issues(filter: { assignee: { id: { eq: $u } }, updatedAt: { gte: $a } }, first: 100) {
+      nodes { identifier title url createdAt updatedAt completedAt state { name type } project { name } }
+    }
+    comments(filter: { user: { id: { eq: $u } }, createdAt: { gte: $a } }, first: 100) {
+      nodes { body createdAt issue { identifier title url state { name type } project { name } } }
+    }
+  }"
+  let activity_result = run-linear-json $linear_repo [
+    "api" $activity_query "--variable" $"u=($viewer_id)" "--variable" $"a=($since_text)"
+  ]
+  if not $activity_result.ok {
+    return {
+      status: "unavailable"
+      error: $activity_result.error
+      created: []
+      completed: []
+      comments: []
+      updated_assigned_context: []
+      referenced_ids: $referenced_ids
+      referenced_issues: []
+    }
+  }
+
+  let activity = $activity_result.data.data
+  let created = ($activity.created.nodes
+    | where {|issue| in-window $issue.createdAt $since $until }
+    | each {|issue| normalize-linear-issue $issue })
+  let completed = ($activity.completed.nodes
+    | where {|issue| in-window $issue.completedAt $since $until }
+    | each {|issue| normalize-linear-issue $issue })
+  let updated = ($activity.updated.nodes
+    | where {|issue| in-window $issue.updatedAt $since $until }
+    | each {|issue| normalize-linear-issue $issue })
+  let comments = ($activity.comments.nodes
+    | where {|comment| in-window $comment.createdAt $since $until }
+    | each {|comment|
+      {
+        created_at: $comment.createdAt
+        body: $comment.body
+        issue: (normalize-linear-issue $comment.issue)
+      }
+    })
+
+  let referenced_issues = if ($referenced_ids | is-empty) {
+    []
+  } else {
+    let quote = char dq
+    let fields = ($referenced_ids | enumerate | each {|entry|
+      [
+        "i"
+        ($entry.index | into string)
+        ": issue(id: "
+        $quote
+        $entry.item
+        $quote
+        ") { identifier title url createdAt updatedAt completedAt state { name type } project { name } }"
+      ] | str join
+    } | str join (char newline))
+    let reference_query = $"query { ($fields) }"
+    let reference_result = run-linear-json $linear_repo ["api" $reference_query]
+    if $reference_result.ok {
+      $reference_result.data.data
+      | transpose alias issue
+      | get issue
+      | compact
+      | each {|issue| normalize-linear-issue $issue }
+    } else {
+      []
+    }
+  }
+
+  {
+    status: "available"
+    error: null
+    created: $created
+    completed: $completed
+    comments: $comments
+    updated_assigned_context: $updated
+    referenced_ids: $referenced_ids
+    referenced_issues: $referenced_issues
+  }
+}
+
+export def main [
+  --since: string
+  --until: string
+  --workspace: path = "/Users/0xgleb/code/st0x"
+  --linear-repo: path = "/Users/0xgleb/code/st0x/st0x.issuance"
+  --owners: string = "ST0x-Technology,rainlanguage"
+  --deploy-repos: list<string> = [
+    "ST0x-Technology/st0x.issuance"
+    "ST0x-Technology/st0x.liquidity"
+    "ST0x-Technology/event-sorcery"
+  ]
+  --output: path
+] {
+  if $since == null or $until == null {
+    error make {msg: "--since and --until are required ISO-8601 timestamps"}
+  }
+
+  let since_instant = $since | into datetime
+  let until_instant = $until | into datetime
+  if $until_instant <= $since_instant {
+    error make {msg: "--until must be later than --since"}
+  }
+
+  let workspace_path = $workspace | path expand
+  let linear_repo_path = $linear_repo | path expand
+  let since_date = $since_instant | format date "%Y-%m-%d"
+  let until_date = $until_instant | format date "%Y-%m-%d"
+
+  let git = collect-git $workspace_path $since_instant $until_instant $since $until
+  let github = collect-github $git $owners $deploy_repos $since_instant $until_instant $since_date $until_date
+  let referenced_ids = if $github.status != "unavailable" {
+    $github.authored_prs.rai_ids | flatten | uniq | sort
+  } else {
+    []
+  }
+  let linear = collect-linear $linear_repo_path $referenced_ids $since_instant $until_instant $since
+
+  let result = {
+    window: {since: $since, until: $until}
+    scope: {workspace: $workspace_path, owners: ($owners | split row ",")}
+    source_status: {
+      git: $git.status
+      github: $github.status
+      linear: $linear.status
+    }
+    git: $git
+    github: $github
+    linear: $linear
+    synthesis_guardrails: {
+      reportable: ["new" "merged" "verified_continued"]
+      requires_user_context: ["unverified_update"]
+      forbidden_inferences: [
+        "PR updatedAt alone is not work evidence"
+        "committer date alone may be restack or amend"
+        "PR title, body, and branch name describe scope, not the reporting-window delta"
+        "Linear project grouping requires Linear project.name"
+      ]
+    }
+  }
+
+  if $output == null {
+    $result | to json
+  } else {
+    let output_path = $output | path expand
+    let parent = $output_path | path dirname
+    if not ($parent | path exists) {
+      mkdir $parent
+    }
+    $result | to json | save --force $output_path
+    print $output_path
+  }
+}
