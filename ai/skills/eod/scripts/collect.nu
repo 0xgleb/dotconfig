@@ -257,16 +257,28 @@ def authored-search [github_user: string, owners: string, qualifier: string, dat
   ]
 }
 
-def collect-linked-candidates [git: record, github_user: string, primary_owner: string, known_shas: list<string>]: nothing -> record {
-  let commits = ($git.repos | each {|repo|
-    $repo.commits
-    | where evidence_kind == "authored_in_window"
-    | where {|commit| $commit.sha not-in $known_shas }
-    | each {|commit| {repo: $repo.repo, sha: $commit.sha} }
-  } | flatten | uniq-by sha)
+def collect-family-repositories [owners: string]: nothing -> record {
+  let collections = ($owners | split row "," | each {|owner|
+    let result = run-gh-json [
+      "search" "repos" $"--owner=($owner)" "--json" "name,fullName" "--limit" "100"
+    ]
+    if $result.ok {
+      {status: "available", repositories: $result.data}
+    } else {
+      {status: "unavailable", repositories: []}
+    }
+  })
+  let failures = $collections | where status == "unavailable"
+
+  {
+    status: (if ($failures | is-empty) { "available" } else { "partial" })
+    repositories: ($collections.repositories | flatten | uniq-by fullName)
+  }
+}
+
+def collect-candidates-for-commits [commits: list<record>, github_user: string]: nothing -> record {
   let lookups = ($commits | each {|commit|
-    let repo = $"($primary_owner)/($commit.repo)"
-    let result = run-gh-json ["api" $"repos/($repo)/commits/($commit.sha)/pulls"]
+    let result = run-gh-json ["api" $"repos/($commit.repo)/commits/($commit.sha)/pulls"]
     if $result.ok {
       let candidates = ($result.data
         | where {|pr| ($pr | get -o user.login) == $github_user }
@@ -279,7 +291,7 @@ def collect-linked-candidates [git: record, github_user: string, primary_owner: 
             isDraft: ($pr.draft? | default false)
             createdAt: ($pr.created_at? | default null)
             updatedAt: ($pr.updated_at? | default null)
-            repository: {nameWithOwner: $repo}
+            repository: {nameWithOwner: $commit.repo}
             author: {login: ($pr | get -o user.login)}
           }
         })
@@ -293,6 +305,63 @@ def collect-linked-candidates [git: record, github_user: string, primary_owner: 
   {
     status: (if ($failures | is-empty) { "available" } else { "partial" })
     candidates: (unique-candidates ($lookups.candidates | flatten))
+  }
+}
+
+def collect-linked-candidates [git: record, github_user: string, family_repositories: list<record>, known_shas: list<string>]: nothing -> record {
+  let commits = ($git.repos | each {|repo|
+    let family_repo = $family_repositories | where name == $repo.repo | get -o 0 | default null
+    if $family_repo == null {
+      []
+    } else {
+      $repo.commits
+      | where evidence_kind == "authored_in_window"
+      | where {|commit| $commit.sha not-in $known_shas }
+      | each {|commit| {repo: $family_repo.fullName, sha: $commit.sha} }
+    }
+  } | flatten
+    | each {|commit| $commit | insert evidence_key $"($commit.repo)#($commit.sha)" }
+    | uniq-by evidence_key
+    | reject evidence_key)
+
+  collect-candidates-for-commits $commits $github_user
+}
+
+def collect-deployment-candidates [runs: list<record>, github_user: string]: nothing -> record {
+  let commits = ($runs
+    | where {|run| ($run.head_sha? | default "" | is-not-empty) }
+    | each {|run| {repo: $run.repo, sha: $run.head_sha, evidence_key: $"($run.repo)#($run.head_sha)"} }
+    | uniq-by evidence_key
+    | reject evidence_key)
+  let commit_collection = collect-candidates-for-commits $commits $github_user
+  let branches = ($runs
+    | where {|run|
+      let branch = $run.head_branch? | default ""
+      ($branch | is-not-empty) and ($branch not-in ["main" "master"])
+    }
+    | each {|run| {repo: $run.repo, branch: $run.head_branch, evidence_key: $"($run.repo)#($run.head_branch)"} }
+    | uniq-by evidence_key
+    | reject evidence_key)
+  let branch_lookups = ($branches | each {|branch|
+    let result = run-gh-json [
+      "pr" "list" "--repo" $branch.repo "--head" $branch.branch "--state" "all"
+      "--json" "number,title,url,state,isDraft,createdAt,updatedAt,author" "--limit" "100"
+    ]
+    if $result.ok {
+      let candidates = ($result.data
+        | where {|pr| ($pr | get -o author.login) == $github_user }
+        | each {|pr| $pr | insert repository {nameWithOwner: $branch.repo} })
+      {status: "available", candidates: $candidates}
+    } else {
+      {status: "unavailable", candidates: []}
+    }
+  })
+  let branch_failures = $branch_lookups | where status == "unavailable"
+  let branch_candidates = $branch_lookups.candidates | flatten
+
+  {
+    status: (if $commit_collection.status == "available" and ($branch_failures | is-empty) { "available" } else { "partial" })
+    candidates: (unique-candidates ($commit_collection.candidates ++ $branch_candidates))
   }
 }
 
@@ -312,6 +381,7 @@ def collect-github [git: record, owners: string, deploy_repos: list<string>, sin
 
   let github_user = $user_result.data.login
   let date_range = $"($since_date)..($until_date)"
+  let family_repository_collection = collect-family-repositories $owners
   let created_result = authored-search $github_user $owners "created" $date_range
   let merged_result = authored-search $github_user $owners "merged-at" $date_range
   if not $created_result.ok or not $merged_result.ok {
@@ -334,25 +404,33 @@ def collect-github [git: record, owners: string, deploy_repos: list<string>, sin
     | flatten
     | compact
     | uniq)
-  let primary_owner = $owners | split row "," | first
-  let linked_collection = collect-linked-candidates $git $github_user $primary_owner $known_shas
+  let linked_collection = collect-linked-candidates $git $github_user $family_repository_collection.repositories $known_shas
   let initial_keys = $initial_candidates | each {|candidate| candidate-key $candidate }
   let continued_candidates = ($linked_collection.candidates
     | where {|candidate| (candidate-key $candidate) not-in $initial_keys })
   let continued_prs = ($continued_candidates
     | each {|candidate| collect-authored-pr $candidate $since $until })
-  let authored_prs = $initial_prs ++ $continued_prs
+  let base_authored_prs = $initial_prs ++ $continued_prs
   let review_collection = collect-reviews $github_user $owners $date_range $since $until
-  let activity_repos = ($authored_prs.repo ++ ($review_collection.reviews.repo? | default []))
+  let activity_repos = ($base_authored_prs.repo ++ ($review_collection.reviews.repo? | default []))
   let deployment_repos = ($deploy_repos ++ $activity_repos | compact | uniq | sort)
   let deployment_collection = collect-deployments $deployment_repos $date_range $since $until
+  let deployment_candidate_collection = collect-deployment-candidates $deployment_collection.runs $github_user
+  let base_keys = $base_authored_prs | each {|pr| $"($pr.repo)#($pr.number)" }
+  let deployment_candidates = ($deployment_candidate_collection.candidates
+    | where {|candidate| (candidate-key $candidate) not-in $base_keys })
+  let deployment_prs = ($deployment_candidates
+    | each {|candidate| collect-authored-pr $candidate $since $until })
+  let authored_prs = $base_authored_prs ++ $deployment_prs
   let collection_failures = ($authored_prs
     | each {|pr| $pr.collection_errors }
     | flatten)
   let github_status = if (
     $review_collection.status == "available"
+    and $family_repository_collection.status == "available"
     and $linked_collection.status == "available"
     and $deployment_collection.status == "available"
+    and $deployment_candidate_collection.status == "available"
     and ($collection_failures | is-empty)
   ) { "available" } else { "partial" }
 
@@ -371,8 +449,10 @@ def collect-github [git: record, owners: string, deploy_repos: list<string>, sin
     authored_prs: $authored_prs
     reviews: $review_collection.reviews
     review_collection_status: $review_collection.status
+    family_repository_lookup_status: $family_repository_collection.status
     linked_commit_lookup_status: $linked_collection.status
     deployment_collection_status: $deployment_collection.status
+    deployment_pr_lookup_status: $deployment_candidate_collection.status
     deployments: $deployment_collection.runs
     stats: {
       opened: ($opened | length)

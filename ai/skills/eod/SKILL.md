@@ -78,8 +78,10 @@ Before drafting, verify all of the following:
 1. `source_status.git`, `source_status.github`, and `source_status.linear` are
    all `available`.
 2. `github.review_collection_status`,
+   `github.family_repository_lookup_status`,
    `github.linked_commit_lookup_status`, and
-   `github.deployment_collection_status` are all `available`.
+   `github.deployment_collection_status`, and
+   `github.deployment_pr_lookup_status` are all `available`.
 3. Every authored PR has an empty `collection_errors` list.
 4. The window in the JSON exactly matches the window established above.
 
