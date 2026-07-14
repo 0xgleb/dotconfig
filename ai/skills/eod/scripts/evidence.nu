@@ -58,6 +58,10 @@ export def is-deployment-workflow [workflow: any]: nothing -> bool {
   }
 }
 
+export def pr-event-in-window [pr: record, since: datetime, until: datetime]: nothing -> bool {
+  (in-window ($pr.created_at? | default null) $since $until) or (in-window ($pr.merged_at? | default null) $since $until)
+}
+
 export def pr-reportability [pr: record, since: datetime, until: datetime]: nothing -> string {
   if (in-window ($pr.created_at? | default null) $since $until) {
     "new"

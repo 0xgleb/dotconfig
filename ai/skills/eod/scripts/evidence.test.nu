@@ -1,6 +1,6 @@
 use std/assert
 
-use evidence.nu [classify-commit deployment-environment extract-rai is-bot is-deployment-workflow pr-reportability reportable-review]
+use evidence.nu [classify-commit deployment-environment extract-rai is-bot is-deployment-workflow pr-event-in-window pr-reportability reportable-review]
 
 let since = "2026-07-10T00:00:00Z" | into datetime
 let until = "2026-07-14T06:00:00Z" | into datetime
@@ -68,6 +68,12 @@ def "test derives deployment environment only from workflow identity" [] {
 def "test does not classify a CI run from its commit title" [] {
   assert (is-deployment-workflow "Deploy to Production")
   assert not (is-deployment-workflow "Rainix CI")
+}
+
+def "test excludes a PR created later on the same UTC date" [] {
+  let cutoff = "2026-07-14T04:57:44Z" | into datetime
+  let pr = {created_at: "2026-07-14T05:31:25Z", merged_at: null}
+  assert not (pr-event-in-window $pr $since $cutoff)
 }
 
 def main [] {

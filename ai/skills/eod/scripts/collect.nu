@@ -1,4 +1,4 @@
-use evidence.nu [classify-commit deployment-environment extract-rai in-window is-bot is-deployment-workflow pr-reportability reportable-review]
+use evidence.nu [classify-commit deployment-environment extract-rai in-window is-bot is-deployment-workflow pr-event-in-window pr-reportability reportable-review]
 
 def run-gh-json [args: list<string>]: nothing -> record {
   let result = do { ^gh ...$args } | complete
@@ -398,7 +398,8 @@ def collect-github [git: record, owners: string, deploy_repos: list<string>, sin
 
   let initial_candidates = unique-candidates ($created_result.data ++ $merged_result.data)
   let initial_prs = ($initial_candidates
-    | each {|candidate| collect-authored-pr $candidate $since $until })
+    | each {|candidate| collect-authored-pr $candidate $since $until }
+    | where {|pr| pr-event-in-window $pr $since $until })
   let known_shas = ($initial_prs
     | each {|pr| $pr.commits | get -o sha }
     | flatten
