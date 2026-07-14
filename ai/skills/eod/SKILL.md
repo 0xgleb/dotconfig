@@ -89,26 +89,20 @@ If any check fails, stop before editing the note. Tell the user which source or
 verification failed and ask whether to retry or proceed with a specifically
 named omission. Never turn a failed source into an empty section.
 
-For `unverified_update` entries, show the user the PR number, repository, and
-available exact commit subjects during the checkpoint. Do not narrate them as
-work unless the user supplies the missing delta. Omit them if the user does not
-confirm them.
+For `unverified_update` entries, do not narrate them as work unless the user's
+brain dump explicitly supplies the missing delta. Otherwise omit them and name
+the omission in the handoff after editing.
 
-## Mandatory checkpoint
+## Review boundary
 
-Before editing the note, present a terse evidence outline:
+The Obsidian markdown note is the review artifact. Once the evidence gate
+passes, edit it immediately without asking for a preview, outline approval, or
+pre-edit confirmation. The user reviews the file and will request corrections
+thereafter.
 
-- proposed workstreams in the user's requested order;
-- which PRs support each workstream and whether they are new, merged, or
-  verified continued work;
-- exact deployment runs and conclusions;
-- Linear items with their actual `project.name`;
-- review counts grouped by submitted review state;
-- every ambiguity or `unverified_update` that will be omitted without user
-  confirmation.
-
-Ask the user to confirm or correct that outline. Do not edit the note until they
-respond. Their correction becomes canonical for the draft.
+Never send or post the update to Telegram, Slack, email, Linear, GitHub, or any
+other stakeholder channel. Writing the note is the entire external boundary of
+this skill.
 
 ## Draft and edit
 
