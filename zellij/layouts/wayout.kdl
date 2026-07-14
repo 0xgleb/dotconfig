@@ -30,7 +30,7 @@ layout {
     //   ([a,b,..] = columns per row, top to bottom.)
     //   Alt n          add a pane; it auto-rebalances into the grid
     //   Alt e          re-even now (after a manual split/resize broke the spacing)
-    //   Alt ] / Alt [  toggle grid <-> even rows
+    //   Alt ] / Alt [  toggle grid <-> even columns
     //
     // >>> TO SUPPORT MORE PANES (>12) <<<
     //   Copy the last `ui exact_panes=12 { ... }` block, bump the number, and add
@@ -152,55 +152,77 @@ layout {
         }
     }
 
-    // Alternate: N panes => N even-height rows.
-    // Toggle to/from "columns" with Alt ] / Alt [.
-    swap_tiled_layout name="rows" {
+    // Alternate: N panes => N even-width columns.
+    // Toggle to/from "grid" with Alt ] / Alt [.
+    swap_tiled_layout name="columns" {
         ui exact_panes=1 {
             pane { children; }
         }
         ui exact_panes=2 {
-            pane
-            pane { children; }
+            pane split_direction="vertical" {
+                pane
+                pane { children; }
+            }
         }
         ui exact_panes=3 {
-            pane; pane
-            pane { children; }
+            pane split_direction="vertical" {
+                pane; pane
+                pane { children; }
+            }
         }
         ui exact_panes=4 {
-            pane; pane; pane
-            pane { children; }
+            pane split_direction="vertical" {
+                pane; pane; pane
+                pane { children; }
+            }
         }
         ui exact_panes=5 {
-            pane; pane; pane; pane
-            pane { children; }
+            pane split_direction="vertical" {
+                pane; pane; pane; pane
+                pane { children; }
+            }
         }
         ui exact_panes=6 {
-            pane; pane; pane; pane; pane
-            pane { children; }
+            pane split_direction="vertical" {
+                pane; pane; pane; pane; pane
+                pane { children; }
+            }
         }
         ui exact_panes=7 {
-            pane; pane; pane; pane; pane; pane
-            pane { children; }
+            pane split_direction="vertical" {
+                pane; pane; pane; pane; pane; pane
+                pane { children; }
+            }
         }
         ui exact_panes=8 {
-            pane; pane; pane; pane; pane; pane; pane
-            pane { children; }
+            pane split_direction="vertical" {
+                pane; pane; pane; pane; pane; pane; pane
+                pane { children; }
+            }
         }
         ui exact_panes=9 {
-            pane; pane; pane; pane; pane; pane; pane; pane
-            pane { children; }
+            pane split_direction="vertical" {
+                pane; pane; pane; pane; pane; pane; pane; pane
+                pane { children; }
+            }
         }
         ui exact_panes=10 {
-            pane; pane; pane; pane; pane; pane; pane; pane; pane
-            pane { children; }
+            pane split_direction="vertical" {
+                pane; pane; pane; pane; pane; pane; pane; pane; pane
+                pane { children; }
+            }
         }
         ui exact_panes=11 {
-            pane; pane; pane; pane; pane; pane; pane; pane; pane; pane
-            pane { children; }
+            pane split_direction="vertical" {
+                pane; pane; pane; pane; pane; pane; pane; pane; pane; pane
+                pane { children; }
+            }
         }
         ui exact_panes=12 {
-            pane; pane; pane; pane; pane; pane; pane; pane; pane; pane; pane
-            pane { children; }
+            pane split_direction="vertical" {
+                pane; pane; pane; pane; pane; pane; pane; pane; pane; pane; pane
+                pane { children; }
+            }
         }
     }
 
