@@ -30,10 +30,8 @@ let
   # `ai/skills` is the single source of truth, authored in Claude's native
   # SKILL.md frontmatter (name, description, user-invocable, allowed-tools,
   # argument-hint). Claude and Cursor consume it live via out-of-store symlinks.
-  # Codex reads a stricter frontmatter: it rejects `<`/`>` in the description and
-  # ignores Claude-only keys, so `codexSkills` rewrites each SKILL.md to drop
-  # `user-invocable`/`argument-hint` and turn `->` into `to`, leaving the body and
-  # `allowed-tools` (which Codex also honours) untouched.
+  # Pi and Codex read stricter frontmatter, so `codexSkills` normalizes YAML,
+  # drops Claude-only keys, and removes Codex-invalid description characters.
   skillNames = builtins.attrNames (
     lib.filterAttrs (_: type: type == "directory") (builtins.readDir ./ai/skills)
   );
@@ -53,6 +51,20 @@ let
       name = ".codex/skills/${name}";
       value.source = "${codexSkills}/${name}";
     }) skillNames
+  );
+
+  # Pi also scans ~/.agents/skills, where these are already installed.
+  piDiscoveredSkillNames = [
+    "graphite"
+    "linear"
+    "worktree"
+  ];
+  piSkillNames = builtins.filter (name: !(builtins.elem name piDiscoveredSkillNames)) skillNames;
+  piSkillFiles = lib.listToAttrs (
+    map (name: {
+      name = ".pi/agent/skills/${name}";
+      value.source = "${codexSkills}/${name}";
+    }) piSkillNames
   );
 
 in
@@ -124,8 +136,8 @@ in
       ".pi/agent/AGENTS.md".source = config.lib.file.mkOutOfStoreSymlink "${aiDir}/pi/AGENTS.md";
       ".pi/agent/extensions/classified-workflows".source =
         config.lib.file.mkOutOfStoreSymlink "${aiDir}/pi/extensions/classified-workflows";
-      ".pi/agent/skills".source = config.lib.file.mkOutOfStoreSymlink "${aiDir}/skills";
     }
+    // piSkillFiles
     // lib.optionalAttrs isDarwin darwinFiles
     // lib.optionalAttrs isDarwin codexSkillFiles;
 

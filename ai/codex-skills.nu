@@ -1,11 +1,11 @@
-# Rewrite SKILL.md frontmatter in `dir` for Codex consumption.
+# Rewrite SKILL.md frontmatter in `dir` for Pi and Codex consumption.
 #
 # `ai/skills` is authored in Claude's native frontmatter. Codex rejects `<`/`>`
-# in the description and ignores Claude-only keys, so for each SKILL.md drop the
-# `user-invocable`/`argument-hint` lines and turn `->` into `to`, leaving the
-# body and `allowed-tools` (which Codex also honours) untouched.
+# in the description and ignores Claude-only keys, while Pi requires strict YAML.
+# Drop the Claude-only fields, turn `->` into `to`, and JSON-quote descriptions
+# into YAML-compatible scalars. Leave the body and `allowed-tools` untouched.
 
-def transform [content: string] {
+export def transform [content: string] {
   mut fence = 0
   mut out = []
 
@@ -20,7 +20,20 @@ def transform [content: string] {
       if ($line | str starts-with "user-invocable:") or ($line | str starts-with "argument-hint:") {
         continue
       }
-      $out = ($out | append ($line | str replace --all "->" "to"))
+      let compatible = ($line | str replace --all "->" "to")
+      let normalized = if ($compatible | str starts-with "description:") {
+        let description = ($compatible | str replace --regex '^description:\s*' '')
+        let already_yaml = (
+          ($description | str starts-with '"')
+          or ($description | str starts-with "'")
+          or ($description | str starts-with ">")
+          or ($description | str starts-with "|")
+        )
+        if $already_yaml { $compatible } else { $"description: ($description | to json --raw)" }
+      } else {
+        $compatible
+      }
+      $out = ($out | append $normalized)
       continue
     }
 

@@ -29,13 +29,13 @@ is added or removed.
 
 | Keys              | Action                                                      |
 | ----------------- | ----------------------------------------------------------- |
-| `Alt n`           | New pane — auto-rebalances into the grid                    |
+| `Alt n`           | New pane — explicitly reapplies the active even layout      |
 | `Alt e`           | Re-even now (after a manual split/resize broke the spacing) |
 | `Alt ]` / `Alt [` | Toggle grid ↔ even columns                                  |
 
-Use plain `Alt n` for auto-even. The directional `NewPane` bindings (pane-mode
-`r` / `d`) manually split the focused pane and bypass the layout — hit `Alt e`
-afterward to snap back to even.
+Use plain `Alt n` for auto-even; pane-mode `n` performs the same reflow. The
+directional `NewPane` bindings (pane-mode `r` / `d`) manually split the focused
+pane and bypass the layout — hit `Alt e` afterward to snap back to even.
 
 ## Supporting more panes / changing the cap
 
