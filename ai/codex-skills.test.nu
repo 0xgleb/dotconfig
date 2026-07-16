@@ -38,6 +38,25 @@ def "test every transformed shared skill has valid frontmatter" [] {
   } | ignore
 }
 
+def "test every raw shared skill has valid frontmatter" [] {
+  let skills_dir = ($env.CURRENT_FILE | path dirname | path join "skills")
+
+  glob $"($skills_dir)/**/SKILL.md" | each {|file|
+    let source = (open --raw $file)
+    let yaml = ($source
+      | parse --regex '(?s)^---\n(?<frontmatter>.*?)\n---'
+      | first
+      | get frontmatter)
+    let frontmatter = (try {
+      $yaml | from yaml
+    } catch {|error|
+      error make { msg: $"Invalid skill frontmatter in ($file): ($error.msg)" }
+    })
+    assert ($frontmatter.name | is-not-empty)
+    assert ($frontmatter.description | is-not-empty)
+  } | ignore
+}
+
 def main [] {
   let tests = (scope commands
     | where ($it.type == "custom") and ($it.name | str starts-with "test ")

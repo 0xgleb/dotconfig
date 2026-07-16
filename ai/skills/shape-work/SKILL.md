@@ -10,7 +10,13 @@ allowed-tools:
   - "Bash(gh issue view *)"
   - Write
   - Edit
-description: Use when an idea or issue is vague and needs shaping before a plan, ADR, or multi-file Rust, nix, or Solidity change: triggers on "shape this idea", "explore the design space", "stress-test this direction", "lock intent", "interview me", or starting a Linear or GitHub issue with unclear requirements. Locks intent into testable success criteria and explicit non-goals; it does not plan or write code.
+description: >-
+  Use when an idea or issue is vague and needs shaping before a plan, ADR, or
+  multi-file Rust, nix, or Solidity change: triggers on "shape this idea",
+  "explore the design space", "stress-test this direction", "lock intent",
+  "interview me", or starting a Linear or GitHub issue with unclear
+  requirements. Locks intent into testable success criteria and explicit
+  non-goals; it does not plan or write code.
 ---
 
 Shape vague work into testable success criteria and explicit non-goals BEFORE

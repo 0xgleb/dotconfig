@@ -27,45 +27,11 @@ let
       ./ghostty/config.ghostty;
   };
 
-  # `ai/skills` is the single source of truth, authored in Claude's native
-  # SKILL.md frontmatter (name, description, user-invocable, allowed-tools,
-  # argument-hint). Claude and Cursor consume it live via out-of-store symlinks.
-  # Pi and Codex read stricter frontmatter, so `codexSkills` normalizes YAML,
-  # drops Claude-only keys, and removes Codex-invalid description characters.
-  skillNames = builtins.attrNames (
-    lib.filterAttrs (_: type: type == "directory") (builtins.readDir ./ai/skills)
-  );
-
-  codexSkills = pkgs.runCommandLocal "codex-skills" { } ''
-    export HOME=$(mktemp -d)
+  # Pi discovers the shared skills through ~/.agents/skills. Keep its private
+  # skill root empty so stale Home Manager generations cannot create collisions.
+  emptyPiSkillRoot = pkgs.runCommandLocal "pi-empty-skill-root" { } ''
     mkdir -p "$out"
-    cp -R ${./ai/skills}/. "$out/"
-    chmod -R u+w "$out"
-    ${pkgs.nushell}/bin/nu --no-config-file ${./ai/codex-skills.nu} "$out"
   '';
-
-  # Codex owns `~/.codex/skills/.system`, so link each skill individually rather
-  # than replacing the whole directory.
-  codexSkillFiles = lib.listToAttrs (
-    map (name: {
-      name = ".codex/skills/${name}";
-      value.source = "${codexSkills}/${name}";
-    }) skillNames
-  );
-
-  # Pi also scans ~/.agents/skills, where these are already installed.
-  piDiscoveredSkillNames = [
-    "graphite"
-    "linear"
-    "worktree"
-  ];
-  piSkillNames = builtins.filter (name: !(builtins.elem name piDiscoveredSkillNames)) skillNames;
-  piSkillFiles = lib.listToAttrs (
-    map (name: {
-      name = ".pi/agent/skills/${name}";
-      value.source = "${codexSkills}/${name}";
-    }) piSkillNames
-  );
 
 in
 {
@@ -127,6 +93,7 @@ in
     ];
     file = {
       "${nuConfigDir}/fj".source = ./nushell/fj;
+      ".agents/skills".source = config.lib.file.mkOutOfStoreSymlink "${aiDir}/skills";
       ".cursor/skills".source = config.lib.file.mkOutOfStoreSymlink "${aiDir}/skills";
       ".cursor/hooks".source = config.lib.file.mkOutOfStoreSymlink "${aiDir}/cursor/hooks";
       ".cursor/hooks.json".source = config.lib.file.mkOutOfStoreSymlink "${aiDir}/cursor/hooks.json";
@@ -136,10 +103,9 @@ in
       ".pi/agent/AGENTS.md".source = config.lib.file.mkOutOfStoreSymlink "${aiDir}/pi/AGENTS.md";
       ".pi/agent/extensions/classified-workflows".source =
         config.lib.file.mkOutOfStoreSymlink "${aiDir}/pi/extensions/classified-workflows";
+      ".pi/agent/skills".source = emptyPiSkillRoot;
     }
-    // piSkillFiles
-    // lib.optionalAttrs isDarwin darwinFiles
-    // lib.optionalAttrs isDarwin codexSkillFiles;
+    // lib.optionalAttrs isDarwin darwinFiles;
 
     activation = {
       nvimLazyRestore = lib.hm.dag.entryAfter [ "writeBoundary" ] ''
