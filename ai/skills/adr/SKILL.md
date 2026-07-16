@@ -1,7 +1,6 @@
 ---
 name: adr
-description: Use when making a significant or expensive-to-reverse architectural decision, choosing between competing approaches, or when asked to write, record, or supersede an ADR. Scaffolds the record at adrs/NN-name.md, computes the next index, and stops for review before implementation.
-user-invocable: true
+description: Use when making a significant or expensive-to-reverse architectural decision, choosing between competing approaches, or when asked to write, record, or supersede an ADR. Scaffolds the record at adrs/NN-name.md, computes the next index, commits it as a reviewable increment, and continues unless the user explicitly asks to pause.
 allowed-tools:
   - "Bash(ls adrs*)"
   - "Bash(git add adrs/*)"
@@ -18,10 +17,10 @@ allowed-tools:
 
 # ADR
 
-Records a significant architectural decision at `adrs/NN-name.md`, then stops for
-review before any implementation begins. This operationalizes the standing rule:
-when a significant decision is not already answered by existing docs, write an
-ADR, summarize it, and stop for review before proceeding in that direction.
+Records a significant architectural decision at `adrs/NN-name.md`, surfaces it
+for review, and keeps authorized work moving on a separate commit or child branch.
+The ADR remains `Proposed` until a reviewer accepts it; drafting it creates a
+review point, not an implicit pause.
 
 ## When this applies
 
@@ -68,10 +67,12 @@ message, not in `adrs/`.
    (see the `linear` skill). Everywhere else, link the GitHub issue. If no issue
    exists yet and the decision warrants one, say so rather than inventing a link.
 
-6. **STOP for review and WAIT for approval before implementing.** Summarize the
-   decision and the rejected alternatives for the user in a few lines, point them
-   at `adrs/NN-name.md`, and do not start the implementation until they approve the
-   direction. Once approved, follow the ADR without re-litigating the same question.
+6. **Surface the review point without pausing by default.** Summarize the decision
+   and rejected alternatives, point the user at `adrs/NN-name.md`, then continue
+   authorized implementation on a separate commit or child branch. Keep the ADR
+   `Proposed` until it is explicitly approved; do not infer approval from continued
+   work. Pause only when the user explicitly asks for a review stop or when a
+   missing decision makes further work unsafe or ambiguous.
 
 7. **On reversal, write a NEW ADR.** Never edit or delete an Accepted ADR. Create
    `adrs/MM-name.md` that references the old one, then flip only the old record's
@@ -147,7 +148,8 @@ carries, follow-up work, and the blast radius if this turns out wrong.>
 - "Alternatives Considered" with one entry, or alternatives missing a concrete
   "Rejected because".
 - Numbered "Phase 1 / Phase 2" framing anywhere in the record.
-- Continuing past the draft into code without the user approving the direction.
+- Bundling implementation into the ADR commit instead of leaving the proposed
+  decision independently reviewable.
 
 ## Hard rules
 
@@ -155,7 +157,8 @@ carries, follow-up work, and the blast radius if this turns out wrong.>
    never anywhere else.
 2. The next index is zero-padded to the existing files' width; never reuse or
    renumber.
-3. Always STOP for review after drafting and WAIT for approval before implementing.
+3. Always surface the proposed ADR for review, but continue authorized work by
+   default. Pause only on explicit user instruction or a genuinely missing decision.
 4. Never rewrite or delete an Accepted ADR. Reversals are a new ADR that references
    the old one; the old `Status:` flips to `Superseded by adrs/MM-name.md`.
 5. Every alternative carries Pros, Cons, and an explicit "Rejected because".
@@ -184,7 +187,7 @@ carries, follow-up work, and the blast radius if this turns out wrong.>
   Consequences.
 - For a supersession: the new ADR references the old one, and `git diff` shows the
   old file changed on its `Status:` line only.
-- The user has been shown the summary and has approved the direction before any
-  implementation commit lands.
+- The user has been shown the summary; any implementation is isolated in a later
+  commit or child branch while the ADR remains `Proposed` until explicit approval.
 - `git log --oneline -1` shows the ADR committed as its own small increment on a
   branch, not bundled into an implementation commit.
