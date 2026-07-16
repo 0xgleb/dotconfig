@@ -29,7 +29,7 @@ is added or removed.
 
 | Keys              | Action                                                      |
 | ----------------- | ----------------------------------------------------------- |
-| `Alt n`           | New pane — explicitly reapplies the active even layout      |
+| `Alt n`           | New pane — Zellij auto-applies the matching grid variant    |
 | `Alt e`           | Re-even now (after a manual split/resize broke the spacing) |
 | `Alt ]` / `Alt [` | Toggle grid ↔ even columns                                  |
 
@@ -43,9 +43,10 @@ The grid currently covers up to 12 panes (3 rows of 4). To go higher, copy the
 last `ui exact_panes=12 { ... }` block in the `grid` swap layout, bump the
 number, and add the extra pane to the last (bottom) row — starting a new row
 once the last row holds 4 columns. Each row is a `pane split_direction="vertical"`
-holding its columns, and the very last cell of the grid is the only
-`pane { children; }`. To change the 4-column cap, change where rows wrap in every
-variant. Verify with `zellij setup --check` (must report `Well defined.`).
+holding its columns, and every terminal cell is a plain `pane`. The `children`
+insertion point belongs only in the `ui` tab template. To change the 4-column
+cap, change where rows wrap in every variant. Verify with
+`nu zellij/layouts.test.nu`.
 
 The full step-by-step recipe is kept as a comment above the `grid` layout in
 `wayout.kdl`, right where you'll be editing.

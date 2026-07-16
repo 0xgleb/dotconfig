@@ -36,26 +36,26 @@ layout {
     //   Copy the last `ui exact_panes=12 { ... }` block, bump the number, and add
     //   the extra pane to the last (bottom) row, starting a new row once the last
     //   row holds 4 columns. Each row is a `pane split_direction="vertical"`
-    //   holding its columns; the very last cell in the block is the only
-    //   `pane { children; }`.
+    //   holding its columns. Every terminal cell must be a plain `pane`; the
+    //   `children` insertion point belongs only in the `ui` tab template.
     //   To change the 4-column cap, change where rows wrap in every variant.
     //   Verify: `zellij setup --check`  (must report "Well defined.")
     // ===========================================================================
     swap_tiled_layout name="grid" {
         ui exact_panes=1 {
-            pane { children; }
+            pane
         }
         ui exact_panes=2 {
             pane split_direction="vertical" {
                 pane
-                pane { children; }
+                pane
             }
         }
         ui exact_panes=3 {
             pane split_direction="vertical" {
                 pane
                 pane
-                pane { children; }
+                pane
             }
         }
         ui exact_panes=4 {
@@ -63,14 +63,14 @@ layout {
                 pane
                 pane
                 pane
-                pane { children; }
+                pane
             }
         }
         ui exact_panes=5 {
             pane split_direction="vertical" {
                 pane; pane; pane; pane
             }
-            pane { children; }
+            pane
         }
         ui exact_panes=6 {
             pane split_direction="vertical" {
@@ -78,7 +78,7 @@ layout {
             }
             pane split_direction="vertical" {
                 pane
-                pane { children; }
+                pane
             }
         }
         ui exact_panes=7 {
@@ -88,7 +88,7 @@ layout {
             pane split_direction="vertical" {
                 pane
                 pane
-                pane { children; }
+                pane
             }
         }
         ui exact_panes=8 {
@@ -99,7 +99,7 @@ layout {
                 pane
                 pane
                 pane
-                pane { children; }
+                pane
             }
         }
         ui exact_panes=9 {
@@ -109,7 +109,7 @@ layout {
             pane split_direction="vertical" {
                 pane; pane; pane; pane
             }
-            pane { children; }
+            pane
         }
         ui exact_panes=10 {
             pane split_direction="vertical" {
@@ -120,7 +120,7 @@ layout {
             }
             pane split_direction="vertical" {
                 pane
-                pane { children; }
+                pane
             }
         }
         ui exact_panes=11 {
@@ -133,7 +133,7 @@ layout {
             pane split_direction="vertical" {
                 pane
                 pane
-                pane { children; }
+                pane
             }
         }
         ui exact_panes=12 {
@@ -147,7 +147,7 @@ layout {
                 pane
                 pane
                 pane
-                pane { children; }
+                pane
             }
         }
     }
@@ -156,72 +156,72 @@ layout {
     // Toggle to/from "grid" with Alt ] / Alt [.
     swap_tiled_layout name="columns" {
         ui exact_panes=1 {
-            pane { children; }
+            pane
         }
         ui exact_panes=2 {
             pane split_direction="vertical" {
                 pane
-                pane { children; }
+                pane
             }
         }
         ui exact_panes=3 {
             pane split_direction="vertical" {
                 pane; pane
-                pane { children; }
+                pane
             }
         }
         ui exact_panes=4 {
             pane split_direction="vertical" {
                 pane; pane; pane
-                pane { children; }
+                pane
             }
         }
         ui exact_panes=5 {
             pane split_direction="vertical" {
                 pane; pane; pane; pane
-                pane { children; }
+                pane
             }
         }
         ui exact_panes=6 {
             pane split_direction="vertical" {
                 pane; pane; pane; pane; pane
-                pane { children; }
+                pane
             }
         }
         ui exact_panes=7 {
             pane split_direction="vertical" {
                 pane; pane; pane; pane; pane; pane
-                pane { children; }
+                pane
             }
         }
         ui exact_panes=8 {
             pane split_direction="vertical" {
                 pane; pane; pane; pane; pane; pane; pane
-                pane { children; }
+                pane
             }
         }
         ui exact_panes=9 {
             pane split_direction="vertical" {
                 pane; pane; pane; pane; pane; pane; pane; pane
-                pane { children; }
+                pane
             }
         }
         ui exact_panes=10 {
             pane split_direction="vertical" {
                 pane; pane; pane; pane; pane; pane; pane; pane; pane
-                pane { children; }
+                pane
             }
         }
         ui exact_panes=11 {
             pane split_direction="vertical" {
                 pane; pane; pane; pane; pane; pane; pane; pane; pane; pane
-                pane { children; }
+                pane
             }
         }
         ui exact_panes=12 {
             pane split_direction="vertical" {
                 pane; pane; pane; pane; pane; pane; pane; pane; pane; pane; pane
-                pane { children; }
+                pane
             }
         }
     }
