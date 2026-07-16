@@ -2,6 +2,7 @@ import { spawn } from "node:child_process";
 import { basename } from "node:path";
 import type { AgentToolResult } from "@earendil-works/pi-agent-core";
 import type { ExtensionAPI, ExtensionContext, ToolCallEvent, ToolResultEvent } from "@earendil-works/pi-coding-agent";
+import { Effect, Layer } from "effect";
 import { Type } from "typebox";
 import {
   deterministicDecision,
@@ -12,7 +13,16 @@ import {
   type Decision,
   type WorkflowLimits,
 } from "./core.ts";
-import { buildClassifierPrompt, createClassifiedAgentRunner, type ClassificationRequest } from "./lifecycle.ts";
+import {
+  buildClassifierPrompt,
+  ClassifierConfirmation,
+  ClassifierConfirmationError,
+  createClassifiedAgentRunner,
+  formatDecisionReason,
+  resolveActionDecision,
+  type BlockedAction,
+  type ClassificationRequest,
+} from "./lifecycle.ts";
 import {
   applyGoalEvaluation,
   assistantUsageTokens,
@@ -271,6 +281,28 @@ function blockedResult(reason: string): AgentToolResult<{ status: "blocked" }> {
   };
 }
 
+function classifierConfirmationLayer(ctx: ExtensionContext): Layer.Layer<ClassifierConfirmation> {
+  return Layer.succeed(ClassifierConfirmation, {
+    confirm: ctx.hasUI
+      ? (reason) =>
+          Effect.tryPromise({
+            try: () => ctx.ui.confirm("Auto-classifier verdict", `${reason}\n\nAllow this action once?`),
+            catch: (cause) => new ClassifierConfirmationError({ cause }),
+          })
+      : () => Effect.succeed(false),
+  });
+}
+
+function resolveClassifierAction(decision: Decision, ctx: ExtensionContext): Promise<BlockedAction | undefined> {
+  const blocked: BlockedAction = { block: true, reason: formatDecisionReason(decision) };
+  return Effect.runPromise(
+    resolveActionDecision(decision).pipe(
+      Effect.provide(classifierConfirmationLayer(ctx)),
+      Effect.catchTag("ClassifierConfirmationError", () => Effect.succeed(blocked)),
+    ),
+  );
+}
+
 const WorkflowParameters = Type.Object({
   code: Type.String({
     maxLength: 100_000,
@@ -354,6 +386,7 @@ export default function classifiedWorkflows(pi: ExtensionAPI): void {
   });
 
   pi.on("session_start", (event, ctx) => {
+    ctx.ui.setStatus("auto-classifier", "🛡 auto-classifier active");
     const stored = ctx.sessionManager
       .getBranch()
       .filter((entry) => entry.type === "custom" && entry.customType === GOAL_ENTRY)
@@ -410,7 +443,7 @@ export default function classifiedWorkflows(pi: ExtensionAPI): void {
       input: event.input,
       cwd: ctx.cwd,
     });
-    if (deterministic?.verdict === "block") return { block: true, reason: deterministic.reason };
+    if (deterministic?.verdict === "block") return resolveClassifierAction(deterministic, ctx);
     if (deterministic?.verdict === "allow") return;
 
     const decision = await classify(
@@ -423,7 +456,7 @@ export default function classifiedWorkflows(pi: ExtensionAPI): void {
       ctx,
       ctx.signal,
     );
-    if (decision.verdict === "block") return { block: true, reason: decision.reason };
+    if (decision.verdict === "block") return resolveClassifierAction(decision, ctx);
   });
 
   pi.on("tool_result", async (event: ToolResultEvent, ctx) => {
@@ -439,7 +472,7 @@ export default function classifiedWorkflows(pi: ExtensionAPI): void {
     );
     if (decision.verdict === "block") {
       return {
-        content: [{ type: "text", text: `Tool result blocked by classified workflow policy: ${decision.reason}` }],
+        content: [{ type: "text", text: `Tool result blocked. ${formatDecisionReason(decision)}` }],
         details: undefined,
         isError: true,
       };
