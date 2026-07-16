@@ -18,7 +18,7 @@ def "test fj ui passes extra args" [] {
   assert equal (fj-route ...[ui -p somerepo]) { tool: "gitui", args: ["-p", "somerepo"] }
 }
 
-# --- claude-project-dirname: cwd -> session store name ---
+# --- session directory encodings ---
 
 def "test claude-project-dirname encodes dots and slashes" [] {
   let encoded = (claude-project-dirname "/Users/0xgleb/.config")
@@ -30,66 +30,66 @@ def "test claude-project-dirname encodes underscores" [] {
   assert equal $encoded "-a-b-c-d-e"
 }
 
-# --- clanker-args: implicit --continue + overrides ---
-
-def "test clanker-args resumes when a session exists" [] {
-  let argv = (clanker-args true)
-  assert (("--continue" in $argv)) "should inject --continue when a session exists"
-  assert (("auto" in $argv)) "should pass --permission-mode auto"
+def "test pi-project-dirname matches pi session storage" [] {
+  assert equal (pi-project-dirname "/Users/0xgleb/.config") "--Users-0xgleb-.config--"
 }
 
-def "test clanker-args starts fresh when no session exists" [] {
-  let argv = (clanker-args false "fix the bug")
-  assert (not ("--continue" in $argv)) "no session means no implicit --continue"
-  assert (("fix the bug" in $argv)) "a bare prompt still passes through"
+# --- clanker-route: Pi by default, Claude by opt-in ---
+
+def "test clanker defaults to pi and resumes" [] {
+  let route = (clanker-route true true)
+  assert equal $route.tool "pi"
+  assert (("--continue" in $route.args)) "should resume the Pi session"
+  assert (("high" in $route.args)) "should use high thinking"
 }
 
-def "test clanker-args new starts fresh" [] {
-  let argv = (clanker-args true --new "fix the bug")
-  assert (not ("--continue" in $argv)) "--new suppresses the implicit --continue"
-  assert (not ("--new" in $argv)) "--new is consumed, not forwarded to claude"
-  assert (("fix the bug" in $argv)) "other args still pass through"
+def "test clanker starts fresh when pi has no session" [] {
+  let route = (clanker-route false true "fix the bug")
+  assert equal $route.tool "pi"
+  assert (not ("--continue" in $route.args))
+  assert (("fix the bug" in $route.args))
 }
 
-def "test clanker-args does not double the continue flag" [] {
-  let count = (clanker-args true --continue | where { $in == "--continue" } | length)
+def "test clanker new starts a fresh pi session" [] {
+  let route = (clanker-route true true --new "fix the bug")
+  assert (not ("--continue" in $route.args))
+  assert (not ("--new" in $route.args)) "--new is consumed"
+  assert (("fix the bug" in $route.args))
+}
+
+def "test clanker does not double an explicit pi continue flag" [] {
+  let count = (clanker-route true true --continue | get args | where { $in == "--continue" } | length)
   assert equal $count 1
 }
 
-def "test clanker-args honours explicit resume flags" [] {
-  let argv = (clanker-args true -r abc123)
-  assert (not ("--continue" in $argv)) "explicit -r suppresses the implicit --continue"
-  assert (("abc123" in $argv)) "resume target passes through"
+def "test clanker honours explicit pi session flags" [] {
+  let route = (clanker-route true true --session abc123)
+  assert (not ("--continue" in $route.args))
+  assert (("abc123" in $route.args))
 }
 
-def "test clanker-args forwards a bare prompt with resume" [] {
-  let argv = (clanker-args true "refactor the routing module")
-  assert (("--continue" in $argv)) "a bare prompt still resumes by default"
-  assert (("refactor the routing module" in $argv))
-}
-
-def "test clanker-args adds remote-control on the nixxxos host" [] {
-  let argv = (clanker-args true --remote-control)
-  assert (("--remote-control" in $argv)) "the host flag must add claude --remote-control"
-}
-
-def "test clanker-args omits remote-control off the nixxxos host" [] {
-  let argv = (clanker-args true)
-  assert (not ("--remote-control" in $argv)) "no remote-control unless on the nixxxos host"
-}
-
-def "test clanker-args remote-control coexists with resume and a prompt" [] {
-  let argv = (clanker-args true --remote-control "fix the bug")
-  assert (("--remote-control" in $argv))
-  assert (("--continue" in $argv)) "remote-control does not disturb the implicit resume"
-  assert (("fix the bug" in $argv)) "the prompt still passes through"
-}
-
-def "test clanker-args launches high effort with workflows enabled" [] {
-  let settings = (clanker-args true | skip until { $in == "--settings" } | get 1 | from json)
+def "test clanker claude preserves auto workflows" [] {
+  let route = (clanker-route true true --claude)
+  assert equal $route.tool "claude"
+  assert (("--continue" in $route.args))
+  assert (("auto" in $route.args))
+  let settings = ($route.args | skip until { $in == "--settings" } | get 1 | from json)
   assert equal $settings.effortLevel "high"
   assert equal $settings.enableWorkflows true
-  assert (not ("ultracode" in ($settings | columns))) "explicit effort + workflows replaces ultracode mode"
+}
+
+def "test clanker claude consumes selector and supports remote control" [] {
+  let route = (clanker-route true true --claude --remote-control "fix the bug")
+  assert equal $route.tool "claude"
+  assert (not ("--claude" in $route.args))
+  assert (("--remote-control" in $route.args))
+  assert (("fix the bug" in $route.args))
+}
+
+def "test clanker never adds claude remote control to pi" [] {
+  let route = (clanker-route true true --remote-control)
+  assert equal $route.tool "pi"
+  assert (not ("--remote-control" in $route.args))
 }
 
 # --- mut: gt modify ---

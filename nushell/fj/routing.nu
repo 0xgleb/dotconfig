@@ -226,47 +226,45 @@ export def claude-project-dirname [path: string]: nothing -> string {
   $path | str replace --all --regex '[^a-zA-Z0-9]' '-'
 }
 
-# Build the claude argv for `fj clanker` from the user's extra args.
-#
-# clanker always launches with high effort + workflows enabled + auto
-# permission mode + the flicker-free fullscreen TUI. On top of that it
-# implicitly resumes the
-# most recent session here (claude --continue), since picking up where
-# you left off is the common case. The implicit --continue is dropped:
-#
-#   has_session false   no resumable conversation exists for this dir,
-#                       so --continue would only error ("No conversation
-#                       found to continue") — start fresh instead
-#   --new               explicit fresh start; the flag is consumed here
-#                       (not forwarded) and no --continue is added
-#   -c/-r/--continue/   you are already steering session selection, so
-#   --resume/--from-pr  the implicit --continue is dropped to avoid a
-#                       conflict with the flag you passed
-#
-# Every other arg (e.g. an initial prompt) passes through to claude.
-#
-# Pure: the session probe is hoisted to the caller (has_session) so the
-# resume logic stays testable without filesystem access or execing.
-export def --wrapped clanker-args [
-  has_session: bool    # whether claude has a resumable session for the cwd
-  --remote-control     # add `claude --remote-control` (set when on the nixxxos host)
-  ...args: string
-]: nothing -> list<string> {
-  let resume_flags = ["--continue" "-c" "--resume" "-r" "--from-pr"]
-  let steers_session = ($args | any {|a| $a in $resume_flags })
-  let start_fresh = (("--new" in $args) or (not $has_session))
-  let add_continue = (not ($start_fresh or $steers_session))
-  let resume = if $add_continue { ["--continue"] } else { [] }
-  let remote = if $remote_control { ["--remote-control"] } else { [] }
-  let forwarded = ($args | where { $in != "--new" })
+export def pi-project-dirname [path: string]: nothing -> string {
+  let safe = (
+    $path
+    | str replace --regex '^[\\/]' ''
+    | str replace --all --regex '[\\/:]' '-'
+  )
+  $"--($safe)--"
+}
 
-  [
-    "--settings"
-    '{"effortLevel": "high", "enableWorkflows": true, "tui": "fullscreen"}'
-    "--permission-mode"
-    "auto"
-  ]
-  | append $remote
-  | append $resume
-  | append $forwarded
+def session-args [has_session: bool, start_fresh: bool, resume_flags: list<string>, args: list<string>]: nothing -> list<string> {
+  let steers_session = ($args | any {|arg| $arg in $resume_flags })
+  if $has_session and not ($start_fresh or $steers_session) { ["--continue"] } else { [] }
+}
+
+export def --wrapped clanker-route [
+  pi_has_session: bool
+  claude_has_session: bool
+  --claude
+  --new
+  --remote-control
+  ...args: string
+]: nothing -> record<tool: string, args: list<string>> {
+  if $claude {
+    let resume = (session-args $claude_has_session $new ["--continue" "-c" "--resume" "-r" "--from-pr"] $args)
+    let remote = if $remote_control { ["--remote-control"] } else { [] }
+    {
+      tool: "claude"
+      args: ([
+        "--settings"
+        '{"effortLevel": "high", "enableWorkflows": true, "tui": "fullscreen"}'
+        "--permission-mode"
+        "auto"
+      ] | append $remote | append $resume | append $args)
+    }
+  } else {
+    let resume = (session-args $pi_has_session $new ["--continue" "-c" "--resume" "-r" "--session" "--session-id" "--fork"] $args)
+    {
+      tool: "pi"
+      args: (["--thinking" "high"] | append $resume | append $args)
+    }
+  }
 }

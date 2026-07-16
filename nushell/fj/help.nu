@@ -5,26 +5,20 @@ const command_help = {
   with git add -A. On fail, opens $EDITOR for context, then sends check
   output + context to claude --continue."
 
-  clanker: "fj clanker — launch claude code, cranked up
+  clanker: "fj clanker — launch Pi, cranked up
 
-  Starts an interactive claude session with:
-    - high effort    effortLevel high, with workflow orchestration enabled
-    - auto mode      --permission-mode auto
-    - flicker-free   fullscreen alt-screen renderer (tui: fullscreen)
-    - resume         picks up the most recent session here (--continue)
-    - remote ctl     on the nixxxos host only, adds --remote-control so the
-                     session can be driven from claude.ai / mobile
+  Starts Pi with high thinking, classified dynamic workflows, and the current
+  Zellij session. Pass --claude to use Claude Code with high effort, workflows,
+  Auto Mode, and its fullscreen renderer. On nixxxos, --claude also enables
+  Claude remote control.
 
-  Resumes by default, but only when a session for this directory
-  exists; in a fresh, renamed, or moved directory it starts fresh
-  instead of erroring. Override the resume behaviour:
-    fj clanker                         resume the most recent session here
+  Resumes by default when a session for this directory exists. Override it with:
+    fj clanker                         resume the most recent Pi session here
     fj clanker \"refactor the router\"   resume, then send an initial prompt
-    fj clanker --new                   force a fresh session instead
-    fj clanker --new \"scaffold X\"       fresh session with an initial prompt
-    fj clanker -r <id>                 resume a specific session (suppresses
-                                       the implicit --continue)
-  Any other args pass straight through to claude."
+    fj clanker --new                   force a fresh Pi session
+    fj clanker --session <id>          select a specific Pi session
+    fj clanker --claude                launch Claude Code instead
+  Any other args pass straight through to the selected agent."
 
   check: "fj check — run repo-specific checks
 
@@ -130,7 +124,7 @@ def overview [] {
     "COMMANDS"
     "  (no args)       git status (+ gt ls in graphite repos)"
     "  do              check -> commit on pass, claude on fail"
-    "  clanker         launch claude, resume by default (--new for fresh)"
+    "  clanker         launch Pi, resume by default (--claude for Claude Code)"
     "  check           run repo-specific checks"
     "  issue list      list issues"
     "  issue view <n>  view issue in markdown format"

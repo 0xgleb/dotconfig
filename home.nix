@@ -11,6 +11,7 @@ let
   isDarwin = pkgs.stdenv.isDarwin;
   aiDir = "${config.home.homeDirectory}/.config/ai";
   cursorDir = "${config.home.homeDirectory}/.cursor";
+  piDir = "${config.home.homeDirectory}/.pi/agent";
   nuConfigDir =
     if isDarwin && !config.xdg.enable then
       "Library/Application Support/nushell"
@@ -100,6 +101,7 @@ in
         graphite-cli
         cursor-cli
         antigravity-cli
+        pi-coding-agent
       ]);
 
     shell.enableNushellIntegration = true;
@@ -119,6 +121,10 @@ in
       ".cursor/agent-env.sh".source = config.lib.file.mkOutOfStoreSymlink "${aiDir}/cursor/agent-env.sh";
       ".cursor/AGENTS.md".source = config.lib.file.mkOutOfStoreSymlink "${aiDir}/AGENTS.md";
       ".cursor/CLAUDE.md".source = config.lib.file.mkOutOfStoreSymlink "${aiDir}/AGENTS.md";
+      ".pi/agent/AGENTS.md".source = config.lib.file.mkOutOfStoreSymlink "${aiDir}/pi/AGENTS.md";
+      ".pi/agent/extensions/classified-workflows".source =
+        config.lib.file.mkOutOfStoreSymlink "${aiDir}/pi/extensions/classified-workflows";
+      ".pi/agent/skills".source = config.lib.file.mkOutOfStoreSymlink "${aiDir}/skills";
     }
     // lib.optionalAttrs isDarwin darwinFiles
     // lib.optionalAttrs isDarwin codexSkillFiles;
@@ -142,6 +148,18 @@ in
           $DRY_RUN_CMD ${pkgs.jq}/bin/jq '. + {"version": 1}' "$cursor_settings" > "$cursor_config.tmp"
         fi
         $DRY_RUN_CMD mv "$cursor_config.tmp" "$cursor_config"
+      '';
+
+      mergePiConfig = lib.hm.dag.entryAfter [ "writeBoundary" ] ''
+        pi_settings="${piDir}/settings.json"
+        managed_settings="${aiDir}/pi.settings.json"
+        $DRY_RUN_CMD ${pkgs.coreutils}/bin/mkdir -p "${piDir}"
+        if [ -f "$pi_settings" ]; then
+          $DRY_RUN_CMD ${pkgs.jq}/bin/jq -s '.[0] * .[1]' "$pi_settings" "$managed_settings" > "$pi_settings.tmp"
+        else
+          $DRY_RUN_CMD ${pkgs.jq}/bin/jq '.' "$managed_settings" > "$pi_settings.tmp"
+        fi
+        $DRY_RUN_CMD mv "$pi_settings.tmp" "$pi_settings"
       '';
     };
   };

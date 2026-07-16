@@ -3,8 +3,9 @@ use routing.nu [
   vcs-backend
   resolve-stack
   protected-push-blocked
-  clanker-args
+  clanker-route
   claude-project-dirname
+  pi-project-dirname
 ]
 use check.nu
 use workflow.nu
@@ -94,23 +95,26 @@ export def check [] {
   check run
 }
 
-# launch claude code with high effort, workflows enabled, auto permission
-# mode, and flicker-free rendering. resumes the
-# most recent session here by default, but only when one actually exists;
-# otherwise (fresh, renamed, or moved dir) it starts fresh instead of erroring.
-# pass `--new` to force a fresh start. see `clanker-args` for the full rules.
+# Launch Pi with high thinking and classified workflows. Pass `--claude` for
+# Claude Code's high-effort Auto Mode. Both resume the current project by default
+# when a session exists; `--new` forces a fresh session.
 export def --wrapped clanker [...args: string] {
-  let dirname = (claude-project-dirname $env.PWD)
-  let project_dir = $"($env.HOME)/.claude/projects/($dirname)"
-  let has_session = (
-    ($project_dir | path exists)
-    and ((glob $"($project_dir)/*.jsonl") | is-not-empty)
+  let claude_dir = $"($env.HOME)/.claude/projects/(claude-project-dirname $env.PWD)"
+  let pi_dir = $"($env.HOME)/.pi/agent/sessions/(pi-project-dirname $env.PWD)"
+  let claude_has_session = (
+    ($claude_dir | path exists)
+    and ((glob $"($claude_dir)/*.jsonl") | is-not-empty)
   )
-  # On the remote nixxxos host, launch with `claude --remote-control` so the
-  # session can be driven from claude.ai / the mobile app (a one-time
-  # `claude /login` on the box is required). No-op on the darwin workstation.
+  let pi_has_session = (
+    ($pi_dir | path exists)
+    and ((glob $"($pi_dir)/*.jsonl") | is-not-empty)
+  )
   let on_nixxxos = ((^hostname | str trim) == "nixxxos")
-  ^claude ...(clanker-args $has_session --remote-control=$on_nixxxos ...$args)
+  let route = (clanker-route $pi_has_session $claude_has_session --remote-control=$on_nixxxos ...$args)
+  match $route.tool {
+    "pi" => { ^pi ...$route.args }
+    "claude" => { ^claude ...$route.args }
+  }
 }
 
 # list github issues

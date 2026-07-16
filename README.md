@@ -84,8 +84,8 @@ nixfmt *.nix
 The `nixxxos` droplet is provisioned with Terraform and installed with
 nixos-anywhere. Terraform also mints the Tailscale auth keys; NixOS joins the
 tailnet declaratively. There is no resident agent service — run one manually over
-the tailnet (`ssh nixxxos`, then `fj clanker`, which launches Claude Code with
-`--remote-control` on that host so you can drive it from claude.ai / mobile; see
+the tailnet (`ssh nixxxos`, then `fj clanker`, which launches Pi; use `fj clanker
+--claude` to launch Claude Code with `--remote-control` for claude.ai / mobile; see
 "Running an agent on the box" below).
 
 ### Secrets
@@ -164,9 +164,9 @@ ssh nixxxos
 claude /login        # claude.ai account; required for remote control
 ```
 
-Then launch it with `fj clanker`. On the `nixxxos` host `clanker` automatically
-adds `claude --remote-control`, so the session is drivable from claude.ai and the
-Claude mobile app. (On the local workstation `clanker` omits the flag.)
+Then launch it with `fj clanker --claude`. On the `nixxxos` host the Claude route
+automatically adds `--remote-control`, so the session is drivable from claude.ai
+and the Claude mobile app. Plain `fj clanker` launches Pi instead.
 
 ### Deploy (CI/CD)
 
