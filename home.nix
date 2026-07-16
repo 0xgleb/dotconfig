@@ -101,8 +101,6 @@ in
       ".cursor/AGENTS.md".source = config.lib.file.mkOutOfStoreSymlink "${aiDir}/AGENTS.md";
       ".cursor/CLAUDE.md".source = config.lib.file.mkOutOfStoreSymlink "${aiDir}/AGENTS.md";
       ".pi/agent/AGENTS.md".source = config.lib.file.mkOutOfStoreSymlink "${aiDir}/pi/AGENTS.md";
-      ".pi/agent/extensions/classified-workflows".source =
-        config.lib.file.mkOutOfStoreSymlink "${aiDir}/pi/extensions/classified-workflows";
       ".pi/agent/skills".source = emptyPiSkillRoot;
     }
     // lib.optionalAttrs isDarwin darwinFiles;

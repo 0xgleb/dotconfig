@@ -34,6 +34,7 @@
   },
   "pi": {
     "extensions": [
+      "./classified-workflows/index.ts",
       "./compact-read/index.ts",
       "./todo/index.ts"
     ]
