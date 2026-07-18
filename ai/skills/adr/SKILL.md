@@ -67,12 +67,22 @@ message, not in `adrs/`.
    (see the `linear` skill). Everywhere else, link the GitHub issue. If no issue
    exists yet and the decision warrants one, say so rather than inventing a link.
 
-6. **Surface the review point without pausing by default.** Summarize the decision
-   and rejected alternatives, point the user at `adrs/NN-name.md`, then continue
-   authorized implementation on a separate commit or child branch. Keep the ADR
-   `Proposed` until it is explicitly approved; do not infer approval from continued
-   work. Pause only when the user explicitly asks for a review stop or when a
-   missing decision makes further work unsafe or ambiguous.
+6. **Surface the review point; whether to pause depends on the model.**
+   Summarize the decision and rejected alternatives and point the user at
+   `adrs/NN-name.md`. Then:
+   - **gpt-5.6-sol and Claude Fable (`claude-fable-5`) only: optimistic
+     approval.** Proceed straight into implementation on a separate commit or
+     child branch without waiting. The owner reviews the ADR at PR time — open
+     the PR **non-draft** so CodeRabbit reviews before the owner looks. The
+     owner judged these two models reliable enough that a wrong bet rarely
+     means a full rewrite; that bet is NOT extended to other models.
+   - **Every other model: stop and wait.** Keep the ADR `Proposed`, do not
+     start implementation in the new direction until the user explicitly
+     approves. Do not infer approval from continued unrelated work.
+
+   In both cases the ADR stays `Proposed` until a reviewer accepts it, and a
+   missing decision that makes further work unsafe or ambiguous is always a
+   hard pause.
 
 7. **On reversal, write a NEW ADR.** Never edit or delete an Accepted ADR. Create
    `adrs/MM-name.md` that references the old one, then flip only the old record's
@@ -157,8 +167,10 @@ carries, follow-up work, and the blast radius if this turns out wrong.>
    never anywhere else.
 2. The next index is zero-padded to the existing files' width; never reuse or
    renumber.
-3. Always surface the proposed ADR for review, but continue authorized work by
-   default. Pause only on explicit user instruction or a genuinely missing decision.
+3. Always surface the proposed ADR for review. gpt-5.6-sol and Claude Fable
+   assume optimistic approval and continue into implementation (owner reviews
+   at non-draft PR time, CodeRabbit first); every other model pauses for
+   explicit approval before building in the new direction.
 4. Never rewrite or delete an Accepted ADR. Reversals are a new ADR that references
    the old one; the old `Status:` flips to `Superseded by adrs/MM-name.md`.
 5. Every alternative carries Pros, Cons, and an explicit "Rejected because".
@@ -187,7 +199,9 @@ carries, follow-up work, and the blast radius if this turns out wrong.>
   Consequences.
 - For a supersession: the new ADR references the old one, and `git diff` shows the
   old file changed on its `Status:` line only.
-- The user has been shown the summary; any implementation is isolated in a later
-  commit or child branch while the ADR remains `Proposed` until explicit approval.
+- The user has been shown the summary; implementation is isolated in a later
+  commit or child branch. Under optimistic approval (gpt-5.6-sol / Claude
+  Fable) implementation proceeds with the ADR still `Proposed`; other models
+  hold until explicit approval.
 - `git log --oneline -1` shows the ADR committed as its own small increment on a
   branch, not bundled into an implementation commit.
