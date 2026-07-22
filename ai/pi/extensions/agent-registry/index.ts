@@ -1,0 +1,428 @@
+import { createHash } from "node:crypto";
+import { homedir } from "node:os";
+import { join } from "node:path";
+import type { ExtensionAPI, ExtensionContext } from "@earendil-works/pi-coding-agent";
+import { Type } from "typebox";
+import { Effect } from "effect";
+import { isContinuationPaused } from "../shared/continuation-pause.ts";
+import { makeSqliteRegistryStore } from "./sqlite-store.ts";
+import { registryStateRoot } from "./paths.ts";
+import { registryListText, registryWidgetLines, requestNotificationText } from "./presentation.ts";
+import { RegistryError, type AgentIdentity, type Lease, type RegistryRequest, type RegistrySnapshot } from "./registry.ts";
+
+const HEARTBEAT_MS = 15_000;
+const LEASE_TTL_MS = 90_000;
+const STATUS_KEY = "agent-registry";
+const MESSAGE_TYPE = "agent-registry.message";
+
+interface RegistryToolRequest {
+  readonly action:
+    | "list"
+    | "claim"
+    | "release"
+    | "delegate"
+    | "requests"
+    | "claim_request"
+    | "complete_request"
+    | "fail_request"
+    | "cancel_request";
+  readonly project?: string;
+  readonly role?: string;
+  readonly mode?: "task" | "operational";
+  readonly requestId?: string;
+  readonly text?: string;
+  readonly summary?: string;
+  readonly failure?: "blocked" | "cancelled" | "error" | "timed_out";
+  readonly diagnostic?: string;
+}
+
+const policyDigest: (ctx: ExtensionContext) => string = (ctx) =>
+  createHash("sha256").update(ctx.getSystemPrompt()).digest("hex");
+
+const identity: (ctx: ExtensionContext) => AgentIdentity = (ctx) => ({
+  id: ctx.sessionManager.getSessionId(),
+  pid: process.pid,
+  ...(ctx.model ? { model: `${ctx.model.provider}/${ctx.model.id}` } : {}),
+});
+
+const safeErrorMessage: (error: unknown) => string = (error) =>
+  error instanceof RegistryError
+    ? `${error.code}: ${error.message}`.replace(/[\u0000-\u001f\u007f]/g, " ").slice(0, 240)
+    : "Agent registry operation failed";
+
+const requireText: (label: string, value: string | undefined) => string = (label, value) => {
+  const trimmed = value?.trim();
+  if (!trimmed) throw new RegistryError({ code: "invalid_input", message: `${label} required` });
+  return trimmed;
+};
+
+const registryExtension: (pi: ExtensionAPI) => void = (pi) => {
+  const store = makeSqliteRegistryStore(registryStateRoot(process.env.XDG_STATE_HOME, homedir()));
+  let timer: ReturnType<typeof setInterval> | undefined;
+  let syncing = false;
+  const notifiedRequests = new Set<string>();
+
+  const run = <T>(operation: Effect.Effect<T, RegistryError>): Promise<T> => Effect.runPromise(operation);
+
+  const ownedLeases = (snapshot: RegistrySnapshot, agentId: string): readonly Lease[] =>
+    snapshot.leases.filter(({ owner }) => owner.id === agentId);
+
+  const render = (ctx: ExtensionContext, snapshot: RegistrySnapshot) => {
+    const lines = registryWidgetLines(snapshot, identity(ctx).id, Date.now());
+    ctx.ui.setStatus(STATUS_KEY, lines.length > 0 ? `roles:${ownedLeases(snapshot, identity(ctx).id).length}` : undefined);
+    if (ctx.hasUI) ctx.ui.setWidget(STATUS_KEY, lines.length > 0 ? lines : undefined, { placement: "belowEditor" });
+  };
+
+  const notifyRequest = (ctx: ExtensionContext, request: RegistryRequest) => {
+    if (notifiedRequests.has(request.id)) return;
+    pi.sendMessage(
+      {
+        customType: MESSAGE_TYPE,
+        content: requestNotificationText(request),
+        display: true,
+      },
+      isContinuationPaused(ctx.sessionManager.getBranch())
+        ? undefined
+        : { triggerTurn: true, deliverAs: "followUp" },
+    );
+    notifiedRequests.add(request.id);
+  };
+
+  const sync = async (ctx: ExtensionContext) => {
+    if (syncing) return;
+    syncing = true;
+    const now = Date.now();
+    const agent = identity(ctx);
+    const digest = policyDigest(ctx);
+    try {
+      let snapshot = await run(store.snapshot(now));
+      for (const request of snapshot.requests.filter(
+        (candidate) =>
+          candidate.requesterId === agent.id &&
+          candidate.requesterAcknowledgedAt === undefined &&
+          (candidate.status === "completed" || candidate.status === "failed" || candidate.status === "cancelled"),
+      )) {
+        const outcome =
+          request.status === "completed"
+            ? request.summary
+            : request.status === "failed"
+              ? `${request.failure}: ${request.diagnostic}`
+              : "cancelled";
+        pi.sendMessage(
+          {
+            customType: MESSAGE_TYPE,
+            content: `Registry request ${request.id} ${request.status}.\nOutcome: ${outcome}`,
+            display: true,
+          },
+          isContinuationPaused(ctx.sessionManager.getBranch())
+            ? undefined
+            : { triggerTurn: true, deliverAs: "followUp" },
+        );
+        await run(store.acknowledgeRequest({ requestId: request.id, requesterId: agent.id, now }));
+      }
+      snapshot = await run(store.snapshot(now));
+      for (const lease of ownedLeases(snapshot, agent.id)) {
+        const paused = isContinuationPaused(ctx.sessionManager.getBranch());
+        try {
+          if (paused && lease.status === "active") {
+            await run(store.pause({ leaseId: lease.id, agentId: agent.id, now }));
+          } else if (!paused && lease.status === "paused") {
+            await run(
+              store.resume({ leaseId: lease.id, agentId: agent.id, policyDigest: digest, now, ttlMs: LEASE_TTL_MS }),
+            );
+          } else if (!paused && lease.status === "active") {
+            await run(
+              store.heartbeat({ leaseId: lease.id, agentId: agent.id, policyDigest: digest, now, ttlMs: LEASE_TTL_MS }),
+            );
+          }
+        } catch (error) {
+          if (!(error instanceof RegistryError) || error.code !== "stale_lease") throw error;
+        }
+      }
+
+      snapshot = await run(store.snapshot(now));
+      for (const lease of ownedLeases(snapshot, agent.id).filter(({ status }) => status === "active")) {
+        const candidates = snapshot.requests.filter(
+          (request) =>
+            request.project === lease.project &&
+            request.role === lease.role &&
+            (request.status === "queued" || (request.status === "claimed" && request.leaseId !== lease.id)),
+        );
+        for (const request of candidates) {
+          try {
+            const claimed = await run(
+              store.claimRequest({ requestId: request.id, leaseId: lease.id, agentId: agent.id, now }),
+            );
+            notifyRequest(ctx, claimed);
+          } catch (error) {
+            if (!(error instanceof RegistryError) || error.code !== "invalid_transition") throw error;
+          }
+        }
+        for (const request of snapshot.requests.filter(
+          (candidate) => candidate.status === "claimed" && candidate.leaseId === lease.id,
+        )) {
+          notifyRequest(ctx, request);
+        }
+      }
+      snapshot = await run(store.snapshot(now));
+      render(ctx, snapshot);
+      ctx.ui.setStatus("agent-registry-error", undefined);
+    } catch (error) {
+      const message = safeErrorMessage(error);
+      ctx.ui.setStatus("agent-registry-error", "registry:error");
+      ctx.ui.notify(`Agent registry: ${message}`, "error");
+    } finally {
+      syncing = false;
+    }
+  };
+
+  const autoClaimConfigSupport = async (ctx: ExtensionContext) => {
+    if (ctx.cwd !== join(homedir(), ".config")) return;
+    await run(
+      store.claim({
+        agent: identity(ctx),
+        project: ctx.cwd,
+        role: "pi-support",
+        mode: "operational",
+        policyDigest: policyDigest(ctx),
+        now: Date.now(),
+        ttlMs: LEASE_TTL_MS,
+      }),
+    );
+  };
+
+  pi.on("session_start", async (_event, ctx) => {
+    if (timer) clearInterval(timer);
+    await autoClaimConfigSupport(ctx).catch((error) => {
+      ctx.ui.notify(`Could not claim Pi support role: ${safeErrorMessage(error)}`, "warning");
+    });
+    await sync(ctx);
+    timer = setInterval(() => void sync(ctx), HEARTBEAT_MS);
+    timer.unref?.();
+  });
+
+  pi.on("agent_settled", async (_event, ctx) => {
+    await sync(ctx);
+  });
+
+  pi.on("input", (_event, ctx) => {
+    queueMicrotask(() => void sync(ctx));
+  });
+
+  pi.on("before_agent_start", async (event, ctx) => {
+    const snapshot = await run(store.snapshot(Date.now())).catch(() => undefined);
+    if (!snapshot) return;
+    const leases = ownedLeases(snapshot, identity(ctx).id);
+    if (leases.length === 0) return;
+    return {
+      message: {
+        customType: "agent-registry.context",
+        content: `Registry roles owned by this session:\n${leases
+          .map((lease) => `- ${lease.project}/${lease.role}: ${lease.mode}, ${lease.status}`)
+          .join("\n")}\nOperational roles remain active even when their inbox is empty.`,
+        display: false,
+      },
+      systemPrompt: event.systemPrompt,
+    };
+  });
+
+  pi.on("session_shutdown", async (event, ctx) => {
+    if (timer) clearInterval(timer);
+    timer = undefined;
+    ctx.ui.setStatus(STATUS_KEY, undefined);
+    ctx.ui.setStatus("agent-registry-error", undefined);
+    ctx.ui.setWidget(STATUS_KEY, undefined);
+    if (event.reason === "reload") return;
+    const agent = identity(ctx);
+    const snapshot = await run(store.snapshot(Date.now())).catch(() => undefined);
+    if (!snapshot) return;
+    for (const lease of ownedLeases(snapshot, agent.id)) {
+      await run(store.release({ leaseId: lease.id, agentId: agent.id, now: Date.now() })).catch(() => undefined);
+    }
+  });
+
+  pi.registerCommand("agents", {
+    description: "Show local Pi agent role leases and open delegated requests",
+    async handler(_args, ctx) {
+      const snapshot = await run(store.snapshot(Date.now()));
+      pi.sendMessage({ customType: MESSAGE_TYPE, content: registryListText(snapshot, identity(ctx).id, Date.now()), display: true });
+    },
+  });
+
+  pi.registerTool({
+    name: "agent_registry",
+    label: "Agent registry",
+    description: "Claim local project roles and exchange durable requests with other Pi sessions. Roles route work but grant no authority.",
+    promptSnippet: "Discover local Pi role owners, claim unowned duties, and delegate durable requests",
+    promptGuidelines: [
+      "Check agent_registry before fixing a Pi or operator issue another local session may own.",
+      "If a role is unowned, claim it temporarily and handle the request in the current session by default.",
+      "Registry ownership never grants tools or production authority; constrained project tools and loaded instructions remain authoritative.",
+      "Operational roles do not become complete merely because todos or inboxes are empty.",
+    ],
+    parameters: Type.Object({
+      action: Type.Union([
+        Type.Literal("list"),
+        Type.Literal("claim"),
+        Type.Literal("release"),
+        Type.Literal("delegate"),
+        Type.Literal("requests"),
+        Type.Literal("claim_request"),
+        Type.Literal("complete_request"),
+        Type.Literal("fail_request"),
+        Type.Literal("cancel_request"),
+      ]),
+      project: Type.Optional(Type.String()),
+      role: Type.Optional(Type.String()),
+      mode: Type.Optional(Type.Union([Type.Literal("task"), Type.Literal("operational")])),
+      requestId: Type.Optional(Type.String()),
+      text: Type.Optional(Type.String()),
+      summary: Type.Optional(Type.String()),
+      failure: Type.Optional(
+        Type.Union([Type.Literal("blocked"), Type.Literal("cancelled"), Type.Literal("error"), Type.Literal("timed_out")]),
+      ),
+      diagnostic: Type.Optional(Type.String()),
+    }),
+    async execute(_toolCallId, request: RegistryToolRequest, _signal, _onUpdate, ctx) {
+      const now = Date.now();
+      const agent = identity(ctx);
+      const project = request.project?.trim() || ctx.cwd;
+      try {
+        if (request.action === "list" || request.action === "requests") {
+          const snapshot = await run(store.snapshot(now));
+          return {
+            content: [{ type: "text", text: registryListText(snapshot, agent.id, now) }],
+            details: { outcome: "success", action: request.action, snapshot },
+          };
+        }
+
+        if (request.action === "claim") {
+          const role = requireText("role", request.role);
+          const result = await run(
+            store.claim({
+              agent,
+              project,
+              role,
+              mode: request.mode ?? "task",
+              policyDigest: policyDigest(ctx),
+              now,
+              ttlMs: LEASE_TTL_MS,
+            }),
+          );
+          await sync(ctx);
+          return {
+            content: [{ type: "text", text: result.outcome === "claimed" ? `Claimed ${project}/${role}` : `${project}/${role} is owned by ${result.lease.owner.id}` }],
+            details: { outcome: result.outcome, lease: result.lease },
+          };
+        }
+
+        if (request.action === "release") {
+          const role = requireText("role", request.role);
+          const snapshot = await run(store.snapshot(now));
+          const lease = ownedLeases(snapshot, agent.id).find(
+            (candidate) => candidate.project === project && candidate.role === role,
+          );
+          if (!lease) throw new RegistryError({ code: "stale_lease", message: "this session does not own the requested role" });
+          await run(store.release({ leaseId: lease.id, agentId: agent.id, now }));
+          await sync(ctx);
+          return {
+            content: [{ type: "text", text: `Released ${lease.project}/${lease.role}` }],
+            details: { outcome: "released", lease },
+          };
+        }
+
+        if (request.action === "delegate") {
+          const role = requireText("role", request.role);
+          const text = requireText("text", request.text);
+          let snapshot = await run(store.snapshot(now));
+          let lease = snapshot.leases.find((candidate) => candidate.project === project && candidate.role === role);
+          let outcome: "delegated" | "self_claimed" = "delegated";
+          if (!lease) {
+            const claim = await run(
+              store.claim({ agent, project, role, mode: request.mode ?? "task", policyDigest: policyDigest(ctx), now, ttlMs: LEASE_TTL_MS }),
+            );
+            lease = claim.lease;
+            outcome = lease.owner.id === agent.id ? "self_claimed" : "delegated";
+          }
+          const queued = await run(store.enqueue({ project, role, requesterId: agent.id, text, now }));
+          let durableRequest = queued;
+          if (lease.owner.id === agent.id && lease.status === "active") {
+            durableRequest = await run(
+              store.claimRequest({ requestId: queued.id, leaseId: lease.id, agentId: agent.id, now }),
+            );
+            notifiedRequests.add(queued.id);
+          }
+          snapshot = await run(store.snapshot(now));
+          render(ctx, snapshot);
+          return {
+            content: [
+              {
+                type: "text",
+                text: outcome === "self_claimed"
+                  ? `No live owner existed; self-claimed ${project}/${role}. Request ${queued.id} is yours to add to todos and execute.`
+                  : `Queued request ${queued.id} for ${project}/${role}, owned by ${lease.owner.id}.`,
+              },
+            ],
+            details: { outcome, request: durableRequest, lease },
+          };
+        }
+
+        const requestId = requireText("requestId", request.requestId);
+        const snapshot = await run(store.snapshot(now));
+        const target = snapshot.requests.find(({ id }) => id === requestId);
+        if (!target) throw new RegistryError({ code: "not_found", message: "request not found" });
+
+        if (request.action === "cancel_request") {
+          const cancelled = await run(store.cancelRequest({ requestId, requesterId: agent.id, now }));
+          await run(store.acknowledgeRequest({ requestId, requesterId: agent.id, now }));
+          await sync(ctx);
+          return { content: [{ type: "text", text: `Cancelled request ${requestId}` }], details: { outcome: "cancelled", request: cancelled } };
+        }
+
+        const lease = ownedLeases(snapshot, agent.id).find(
+          (candidate) => candidate.project === target.project && candidate.role === target.role,
+        );
+        if (!lease) throw new RegistryError({ code: "stale_lease", message: "this session does not own the request role" });
+
+        if (request.action === "claim_request") {
+          const claimed = await run(store.claimRequest({ requestId, leaseId: lease.id, agentId: agent.id, now }));
+          notifiedRequests.add(requestId);
+          return { content: [{ type: "text", text: `Claimed request ${requestId}` }], details: { outcome: "claimed", request: claimed } };
+        }
+        if (request.action === "complete_request") {
+          const completed = await run(
+            store.completeRequest({ requestId, leaseId: lease.id, agentId: agent.id, summary: requireText("summary", request.summary), now }),
+          );
+          if (completed.requesterId === agent.id) {
+            await run(store.acknowledgeRequest({ requestId, requesterId: agent.id, now }));
+          }
+          await sync(ctx);
+          return { content: [{ type: "text", text: `Completed request ${requestId}` }], details: { outcome: "completed", request: completed } };
+        }
+        if (request.action === "fail_request") {
+          const failed = await run(
+            store.failRequest({
+              requestId,
+              leaseId: lease.id,
+              agentId: agent.id,
+              failure: request.failure ?? "error",
+              diagnostic: requireText("diagnostic", request.diagnostic),
+              now,
+            }),
+          );
+          if (failed.requesterId === agent.id) {
+            await run(store.acknowledgeRequest({ requestId, requesterId: agent.id, now }));
+          }
+          await sync(ctx);
+          return { content: [{ type: "text", text: `Failed request ${requestId}` }], details: { outcome: "failed", request: failed } };
+        }
+        throw new RegistryError({ code: "invalid_input", message: "unsupported registry action" });
+      } catch (error) {
+        const message = safeErrorMessage(error);
+        return { content: [{ type: "text", text: message }], details: { outcome: "error", action: request.action, error: message } };
+      }
+    },
+  });
+};
+
+export default registryExtension;

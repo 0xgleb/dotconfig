@@ -8,6 +8,10 @@
 - Use the `pi-delegation` skill for subagents. Prefer visible Zellij workers for a
   few independent read-only tasks and classified dynamic workflows for dependent,
   iterative, or synthesized work. Never use tmux.
+- Before taking cross-project Pi support or operator work, check `agent_registry`.
+  Delegate to the live role owner; if the role is unowned, claim it temporarily
+  and handle it locally. A role never grants authority beyond constrained project
+  tools, and an operational role is not done merely because its inbox is empty.
 - Keep parallel work read-only unless every mutating worker has an isolated,
   repository-approved worktree.
 - Treat classifier blocks as policy. Do not evade them by switching tools or

@@ -4,7 +4,7 @@ import vm from "node:vm";
 export type Boundary = "spawn" | "action" | "return" | "tool-result";
 
 export type Decision =
-  | { verdict: "allow"; reason: string; source: "deterministic" | "classifier" }
+  | { verdict: "allow"; reason: string; source: "deterministic" | "classifier"; resultSafe?: boolean }
   | { verdict: "block"; reason: string; source: "deterministic" | "classifier" };
 
 export interface ToolRequest {
@@ -55,6 +55,14 @@ const READ_ONLY_TOOLS = new Set(["read", "grep", "find", "ls"]);
 const WRITE_TOOLS = new Set(["edit", "write"]);
 const TODO_ACTIONS = new Set(["list", "add", "toggle", "block", "unblock", "clear"]);
 const QUESTION_ACTIONS = new Set(["list", "ask", "resolve", "clear_resolved"]);
+const REGISTRY_ACTIONS = new Set([
+  "list",
+  "claim",
+  "release",
+  "requests",
+  "claim_request",
+  "cancel_request",
+]);
 const LOCALLY_GENERATED_RESULT_TOOLS = new Set(["edit", "write", "todo", "ask_user", "reload_pi"]);
 const PATH_KEYS = new Set(["path", "file_path", "cwd", "glob"]);
 const SENSITIVE_PATH =
@@ -173,6 +181,14 @@ export function deterministicDecision(request: ToolRequest): Decision | null {
     };
   }
 
+  if (request.toolName === "agent_registry" && REGISTRY_ACTIONS.has(String(request.input.action))) {
+    return {
+      verdict: "allow",
+      reason: "Local typed agent responsibility coordination",
+      source: "deterministic",
+    };
+  }
+
   if (
     request.toolName === "bash" &&
     typeof request.input.command === "string" &&
@@ -182,6 +198,7 @@ export function deterministicDecision(request: ToolRequest): Decision | null {
       verdict: "allow",
       reason: "Project-local rebuildable Rust incremental cache cleanup",
       source: "deterministic",
+      resultSafe: true,
     };
   }
 
@@ -203,6 +220,7 @@ export function deterministicDecision(request: ToolRequest): Decision | null {
         verdict: "allow",
         reason: "Dotconfig commit and push delivery",
         source: "deterministic",
+        resultSafe: true,
       };
     }
   }
@@ -220,6 +238,9 @@ export function deterministicDecision(request: ToolRequest): Decision | null {
 
   return null;
 }
+
+export const shouldCarryDeterministicResultAllowance: (decision: Decision) => boolean = (decision) =>
+  decision.verdict === "allow" && decision.source === "deterministic" && decision.resultSafe === true;
 
 export function deterministicToolResultDecision(toolName: string): Decision | null {
   return LOCALLY_GENERATED_RESULT_TOOLS.has(toolName)
@@ -333,7 +354,17 @@ export async function runWorkflowScript(
             await retryBackoff(attempt, workflowController.signal);
           }
         } catch (error) {
-          if (workflowController.signal.aborted || attempt >= limits.retries) throw error;
+          if (workflowController.signal.aborted) throw error;
+          if (attempt >= limits.retries) {
+            const reason = error instanceof Error ? error.message : "Agent failed";
+            result = {
+              status: /timed out/i.test(reason) ? "timed-out" : "failed",
+              output: "",
+              reason,
+              usageTokens: 0,
+            };
+            break;
+          }
           await retryBackoff(attempt, workflowController.signal);
         }
       }
@@ -419,6 +450,15 @@ function isPromiseLike(value: unknown): value is PromiseLike<unknown> {
   return isRecord(value) && typeof value.then === "function";
 }
 
+export const minimumRetryEnvelopeMs: (agentTimeoutMs: number, retries: number) => number = (
+  agentTimeoutMs,
+  retries,
+) =>
+  agentTimeoutMs * (retries + 1) +
+  Array.from({ length: retries }, (_unused, attempt) =>
+    Math.min(RETRY_BACKOFF_BASE_MS * 2 ** attempt, RETRY_BACKOFF_MAX_MS),
+  ).reduce((total, delayMs) => total + delayMs, 0);
+
 function validateLimits(limits: WorkflowLimits): void {
   const positive = [limits.maxAgents, limits.concurrency, limits.agentTimeoutMs, limits.workflowTimeoutMs, limits.tokenBudget];
   if (positive.some((value) => !Number.isInteger(value) || value <= 0)) {
@@ -426,4 +466,10 @@ function validateLimits(limits: WorkflowLimits): void {
   }
   if (!Number.isInteger(limits.retries) || limits.retries < 0) throw new Error("Workflow retries must be a non-negative integer");
   if (limits.concurrency > limits.maxAgents) throw new Error("Workflow concurrency cannot exceed the agent limit");
+  const retryEnvelopeMs = minimumRetryEnvelopeMs(limits.agentTimeoutMs, limits.retries);
+  if (limits.workflowTimeoutMs < retryEnvelopeMs) {
+    throw new Error(
+      `Workflow timeout ${limits.workflowTimeoutMs}ms cannot fit one agent's retry envelope of ${retryEnvelopeMs}ms`,
+    );
+  }
 }

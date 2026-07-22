@@ -34,6 +34,7 @@
   },
   "pi": {
     "extensions": [
+      "./agent-registry/index.ts",
       "./auto-reload/index.ts",
       "./classified-workflows/index.ts",
       "./browser-control/index.ts",
@@ -42,6 +43,7 @@
       "./disk-pressure/index.ts",
       "./input-ergonomics/index.ts",
       "./pi-vim/index.ts",
+      "./questions/index.ts",
       "./todo/index.ts"
     ]
   },

@@ -4,8 +4,10 @@ import {
   deterministicDecision,
   deterministicToolResultDecision,
   MIN_AGENT_TOKEN_RESERVATION,
+  minimumRetryEnvelopeMs,
   parseClassifierDecision,
   runWorkflowScript,
+  shouldCarryDeterministicResultAllowance,
   type AgentRequest,
   type AgentResult,
   type WorkflowLimits,
@@ -112,6 +114,37 @@ test("non-blocking user questions are locally allowed", () => {
   assert.equal(deterministicToolResultDecision("ask_user")?.verdict, "allow");
 });
 
+test("typed local agent registry coordination is locally allowed without granting project tools", () => {
+  for (const action of [
+    "list",
+    "claim",
+    "release",
+    "requests",
+    "claim_request",
+    "cancel_request",
+  ]) {
+    assert.deepEqual(
+      deterministicDecision({ boundary: "action", toolName: "agent_registry", input: { action }, cwd: "/repo" }),
+      {
+        verdict: "allow",
+        reason: "Local typed agent responsibility coordination",
+        source: "deterministic",
+      },
+    );
+  }
+  for (const action of ["delegate", "complete_request", "fail_request"]) {
+    assert.equal(
+      deterministicDecision({ boundary: "action", toolName: "agent_registry", input: { action }, cwd: "/repo" }),
+      null,
+    );
+  }
+  assert.equal(deterministicToolResultDecision("agent_registry"), null);
+  assert.equal(
+    deterministicDecision({ boundary: "action", toolName: "bash", input: { command: "ssh prod" }, cwd: "/repo" }),
+    null,
+  );
+});
+
 test("the dedicated Pi reload tool is locally allowed", () => {
   assert.deepEqual(
     deterministicDecision({ boundary: "action", toolName: "reload_pi", input: {}, cwd: "/repo" }),
@@ -128,7 +161,12 @@ test("dotconfig staging, commit, and push delivery is deterministic but shell ch
   for (const command of ["git add -- AGENTS.md", "git commit -m 'fix(pi): continue work'", "git push"]) {
     assert.deepEqual(
       deterministicDecision({ boundary: "action", toolName: "bash", input: { command }, cwd: "/Users/example/.config" }),
-      { verdict: "allow", reason: "Dotconfig commit and push delivery", source: "deterministic" },
+      {
+        verdict: "allow",
+        reason: "Dotconfig commit and push delivery",
+        source: "deterministic",
+        resultSafe: true,
+      },
     );
   }
   assert.equal(
@@ -178,6 +216,7 @@ test("project-local Rust incremental cache cleanup is narrowly deterministic", (
       verdict: "allow",
       reason: "Project-local rebuildable Rust incremental cache cleanup",
       source: "deterministic",
+      resultSafe: true,
     },
   );
   for (const command of [
@@ -259,6 +298,23 @@ test("broad searches require explicit credential exclusions", () => {
   assert.equal(spoofed?.verdict, "block");
 });
 
+test("only deterministic actions with intrinsically safe output carry result allowance", () => {
+  const git = deterministicDecision({
+    boundary: "action",
+    toolName: "bash",
+    input: { command: "git push" },
+    cwd: "/Users/example/.config",
+  });
+  const read = deterministicDecision({
+    boundary: "action",
+    toolName: "read",
+    input: { path: "README.md" },
+    cwd: "/repo",
+  });
+  assert.equal(git ? shouldCarryDeterministicResultAllowance(git) : false, true);
+  assert.equal(read ? shouldCarryDeterministicResultAllowance(read) : false, false);
+});
+
 test("classifier decisions are strict JSON and fail closed", () => {
   assert.deepEqual(parseClassifierDecision('{"verdict":"allow","reason":"aligned"}'), {
     verdict: "allow",
@@ -338,6 +394,21 @@ test("undersized token budgets fail before spawning an idle worker", async () =>
   assert.equal(spawned, 0);
 });
 
+test("workflow timeout preflight leaves room for the configured retry envelope", async () => {
+  assert.equal(minimumRetryEnvelopeMs(180_000, 2), 541_500);
+  await assert.rejects(
+    runWorkflowScript("return 'never';", { ...limits, agentTimeoutMs: 180_000, workflowTimeoutMs: 240_000, retries: 2 }, {
+      async runAgent(): Promise<AgentResult> {
+        return { status: "completed", output: "unused", usageTokens: 0 };
+      },
+      async checkpoint(): Promise<"approved"> {
+        return "approved";
+      },
+    }),
+    /cannot fit.*retry envelope/i,
+  );
+});
+
 test("thrown agent timeouts consume retries instead of killing the workflow immediately", async () => {
   let attempts = 0;
   const result = await runWorkflowScript(
@@ -356,6 +427,26 @@ test("thrown agent timeouts consume retries instead of killing the workflow imme
   );
   assert.equal(attempts, 3);
   assert.deepEqual(result, { status: "completed", output: "recovered", usageTokens: 10 });
+});
+
+test("exhausted thrown timeouts become typed results and preserve parallel siblings", async () => {
+  const result = await runWorkflowScript(
+    `return await parallel([agent("slow"), agent("fast")]);`,
+    { ...limits, retries: 1 },
+    {
+      async runAgent(request): Promise<AgentResult> {
+        if (request.task === "slow") throw new Error("Agent timed out");
+        return { status: "completed", output: "useful", usageTokens: 10 };
+      },
+      async checkpoint(): Promise<"approved"> {
+        return "approved";
+      },
+    },
+  );
+  assert.deepEqual(result, [
+    { status: "timed-out", output: "", reason: "Agent timed out", usageTokens: 0 },
+    { status: "completed", output: "useful", usageTokens: 10 },
+  ]);
 });
 
 test("in-flight fan-out preserves completed results when measured usage crosses the aggregate budget", async () => {
@@ -425,7 +516,7 @@ test("headless checkpoints deny instead of auto-approving", async () => {
   );
 });
 
-test("workflow and per-agent cancellation fail promptly", async () => {
+test("workflow cancellation rejects while per-agent timeout returns a typed failure", async () => {
   const aborted = new AbortController();
   aborted.abort(new Error("Workflow aborted"));
   await assert.rejects(
@@ -440,8 +531,8 @@ test("workflow and per-agent cancellation fail promptly", async () => {
     /workflow aborted/i,
   );
 
-  await assert.rejects(
-    runWorkflowScript("return await agent({ task: 'hang' });", { ...limits, agentTimeoutMs: 10 }, {
+  assert.deepEqual(
+    await runWorkflowScript("return await agent({ task: 'hang' });", { ...limits, agentTimeoutMs: 10 }, {
       async runAgent(): Promise<AgentResult> {
         return new Promise(() => undefined);
       },
@@ -449,6 +540,6 @@ test("workflow and per-agent cancellation fail promptly", async () => {
         return "approved";
       },
     }),
-    /agent timed out/i,
+    { status: "timed-out", output: "", reason: "Agent timed out", usageTokens: 0 },
   );
 });

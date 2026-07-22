@@ -139,6 +139,10 @@ through review.
   architecture.
 - Keep a granular task list for the current request and remove completed items
   so the remaining work is always obvious.
+- Before taking cross-project Pi support or operator work, check `agent_registry`.
+  Delegate to the live role owner; if the role is unowned, claim it temporarily
+  and handle it locally. A role never grants authority beyond constrained project
+  tools, and an operational role is not done merely because its inbox is empty.
 - Never stop while assigned work remains executable. If a goal is active,
   continue until it is achieved. If any todo is pending, continue working through
   the task list. Stop only when all assigned work is complete or all remaining

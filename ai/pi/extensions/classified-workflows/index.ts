@@ -11,6 +11,7 @@ import {
   deterministicToolResultDecision,
   parseClassifierDecision,
   runWorkflowScript,
+  shouldCarryDeterministicResultAllowance,
   type AgentRequest,
   type AgentResult,
   type Decision,
@@ -957,7 +958,9 @@ export default function classifiedWorkflows(pi: ExtensionAPI): void {
     });
     if (deterministic?.verdict === "block") return resolveActionDecision(deterministic);
     if (deterministic?.verdict === "allow") {
-      deterministicResultAllowance.record(event.toolCallId);
+      if (shouldCarryDeterministicResultAllowance(deterministic)) {
+        deterministicResultAllowance.record(event.toolCallId);
+      }
       return;
     }
 

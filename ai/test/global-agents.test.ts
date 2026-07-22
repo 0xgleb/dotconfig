@@ -14,6 +14,16 @@ test("shared and Pi-global instructions enforce disk-pressure hygiene", () => {
   }
 });
 
+test("shared and Pi-global instructions route work through the agent registry", () => {
+  for (const [name, contents] of [["shared", shared], ["Pi global", pi]] as const) {
+    assert.match(contents, /check `agent_registry`/i, `${name} must discover role owners`);
+    assert.match(contents, /delegate to the live role owner/i, `${name} must route owned work`);
+    assert.match(contents, /unowned.*claim.*temporarily/is, `${name} must self-claim by default`);
+    assert.match(contents, /role never grants authority/i, `${name} must separate routing from authority`);
+    assert.match(contents, /operational role.*not done.*inbox.*empty/is, `${name} must preserve operational ownership`);
+  }
+});
+
 test("shared and Pi-global instructions prohibit overwriting the active editor", () => {
   for (const [name, contents] of [["shared", shared], ["Pi global", pi]] as const) {
     assert.match(contents, /never inject.*(?:keystrokes|text).*active.*(?:pane|editor)/is, `${name} must protect prompt drafts`);

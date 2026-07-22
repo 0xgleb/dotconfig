@@ -146,6 +146,7 @@ test("classifier prompt treats reasonable support actions as part of the request
 
   assert.match(prompt, /support actions inherit authorization/i);
   assert.match(prompt, /planning and task tracking/i);
+  assert.match(prompt, /agent-registry discovery and scoped delegation/i);
   assert.match(prompt, /todo\/task-tracking mutations/i);
   assert.match(prompt, /do not block merely because the user did not literally ask to create a todo/i);
   assert.match(prompt, /all still-active user requests/i);
