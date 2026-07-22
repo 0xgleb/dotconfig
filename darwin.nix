@@ -57,7 +57,7 @@
       "coderabbit"
       "font-jetbrains-mono-nerd-font"
       "karabiner-elements"
-      "linear"
+      "homebrew/cask/linear"
       "tailscale-app"
     ];
 
@@ -69,10 +69,6 @@
       # given, since cleanup uninstalls formulae. nix-darwin runs activation
       # non-interactively, so perform the cleanup without the confirmation prompt.
       extraFlags = [ "--force-cleanup" ];
-      # Workaround for Homebrew 5.1.x JSON API parser bug:
-      # cask_struct_generator.rb:99 NPEs on certain depends_on shapes.
-      # Forces brew to use git-cloned taps instead of the JSON API.
-      extraEnv.HOMEBREW_NO_INSTALL_FROM_API = "1";
     };
   };
 
