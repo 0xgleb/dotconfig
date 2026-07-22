@@ -9,7 +9,7 @@ import {
   validateImageMagic,
 } from "./core.ts";
 
-export default function inputErgonomics(pi: ExtensionAPI): void {
+const inputErgonomics: (pi: ExtensionAPI) => void = (pi) => {
   pi.on("input", async (event, ctx) => {
     if (event.source !== "interactive") return { action: "continue" };
     const screenshot = parseTemporaryScreenshot(event.text);
@@ -35,7 +35,7 @@ export default function inputErgonomics(pi: ExtensionAPI): void {
       ctx.ui.notify("Attached temporary screenshot without exposing its filesystem path.", "info");
       return {
         action: "transform",
-        text: attachmentPrompt(""),
+        text: attachmentPrompt(screenshot.remainingText),
         images: [...(event.images ?? []), image],
       };
     } catch (error) {
@@ -43,4 +43,6 @@ export default function inputErgonomics(pi: ExtensionAPI): void {
       return { action: "handled" };
     }
   });
-}
+};
+
+export default inputErgonomics;

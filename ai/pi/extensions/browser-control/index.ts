@@ -1,3 +1,5 @@
+import { homedir } from "node:os";
+import { join } from "node:path";
 import type { ExtensionAPI } from "@earendil-works/pi-coding-agent";
 import { Type } from "typebox";
 import {
@@ -8,6 +10,7 @@ import {
   parseLocalPageUrl,
   publicTarget,
   selectActiveTarget,
+  selectReusableTarget,
   type BrowserAction,
   type CdpResponse,
   type DebugTarget,
@@ -19,8 +22,9 @@ const DASHBOARD_URL = "http://127.0.0.1:5173";
 const MAX_TEXT_LENGTH = 12_000;
 const REQUEST_TIMEOUT_MS = 5_000;
 const TARGET_DISCOVERY_TIMEOUT_MS = 5_000;
+const OPERATOR_PROFILE_PATH = join(homedir(), "Library", "Application Support", "Pi", "Brave Operator");
 const DEBUG_SETUP_MESSAGE =
-  "Brave opened through macOS LaunchServices, but DevTools inspection is unavailable. Configure remote debugging on port 9222 for the existing operator Brave profile manually; Pi will not spawn another Brave app instance.";
+  "The isolated Brave operator profile opened through macOS LaunchServices, but DevTools inspection is not ready yet.";
 
 interface BrowserParams {
   readonly action: BrowserAction;
@@ -80,15 +84,25 @@ const openTarget: (
 ) => Promise<{ readonly url: LocalPageUrl; readonly target?: DebugTarget }> = async (pi, input) => {
   const url = parseLocalPageUrl(input);
   const debugReady = await isDebugEndpointReady();
-  const previousTargetIds = new Set(debugReady ? (await listTargets()).map(({ id }) => id) : []);
-  const request = launchServicesRequest(url);
-  const result = await pi.exec(request.command, [...request.args], { timeout: REQUEST_TIMEOUT_MS });
-  if (result.code !== 0) throw new Error("macOS LaunchServices could not open Brave.");
-  if (!debugReady) {
-    activeTargetId = undefined;
-    return { url };
+  if (debugReady) {
+    const existing = selectReusableTarget(await listTargets(), url, activeTargetId);
+    if (existing) {
+      activeTargetId = existing.id;
+      return { url, target: existing };
+    }
+    const opened = parseDebugTargets(
+      [await requestJson(`/json/new?${encodeURIComponent(url)}`, { method: "PUT" })],
+      DEBUG_PORT,
+    )[0];
+    if (!opened || opened.url !== url) throw new Error("Brave opened an unexpected operator target.");
+    activeTargetId = opened.id;
+    return { url, target: opened };
   }
 
+  const previousTargetIds = new Set<string>();
+  const request = launchServicesRequest(url, OPERATOR_PROFILE_PATH, DEBUG_PORT);
+  const result = await pi.exec(request.command, [...request.args], { timeout: REQUEST_TIMEOUT_MS });
+  if (result.code !== 0) throw new Error("macOS LaunchServices could not open the isolated Brave operator profile.");
   const target = await discoverOpenedTarget(url, previousTargetIds);
   activeTargetId = target?.id;
   return { url, ...(target ? { target } : {}) };

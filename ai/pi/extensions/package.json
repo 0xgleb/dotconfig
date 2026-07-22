@@ -34,6 +34,7 @@
   },
   "pi": {
     "extensions": [
+      "./auto-reload/index.ts",
       "./classified-workflows/index.ts",
       "./browser-control/index.ts",
       "./compact-footer/index.ts",

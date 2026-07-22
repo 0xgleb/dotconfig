@@ -71,17 +71,24 @@ in
               sha256 = manifest.platforms.${key}.checksum;
             };
           });
+
+        pi-coding-agent-with-reload = unstable.pi-coding-agent.overrideAttrs (old: {
+          postInstall = (old.postInstall or "") + ''
+            patch -p1 -d "$out/lib/node_modules/pi-monorepo" \
+              < ${./ai/pi/patches/extension-context-reload.patch}
+          '';
+        });
       in
       (with unstable; [
         codex
         cursor-cli
         graphite-cli
-        pi-coding-agent
       ])
       ++ [
         but
         claude-code-latest
         jf
+        pi-coding-agent-with-reload
       ];
 
     shell.enableNushellIntegration = true;
@@ -104,7 +111,7 @@ in
       ".cursor/CLAUDE.md".source = config.lib.file.mkOutOfStoreSymlink "${aiDir}/AGENTS.md";
       ".pi/agent/AGENTS.md".source = config.lib.file.mkOutOfStoreSymlink "${aiDir}/pi/AGENTS.md";
       ".pi/agent/models.json".text = builtins.toJSON {
-        providers."openai-codex".modelOverrides."gpt-5.6-sol".contextWindow = 1050000;
+        providers."openai-codex".modelOverrides."gpt-5.6-sol".contextWindow = 372000;
       };
       ".pi/agent/skills".source = emptyPiSkillRoot;
       ".config/ai/pi/extensions/node_modules" = {

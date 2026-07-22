@@ -11,11 +11,15 @@ import {
 test("temporary screenshot parser accepts only exact macOS temp image paths", () => {
   assert.deepEqual(
     parseTemporaryScreenshot("/var/folders/ab/cdef/T/pi-clipboard-123.png"),
-    { path: "/var/folders/ab/cdef/T/pi-clipboard-123.png", mimeType: "image/png" },
+    { path: "/var/folders/ab/cdef/T/pi-clipboard-123.png", mimeType: "image/png", remainingText: "" },
   );
   assert.deepEqual(
     parseTemporaryScreenshot("'/var/folders/ab/cdef/TemporaryItems/Screenshot 2026-07-21 at 23.47.22.png'"),
-    { path: "/var/folders/ab/cdef/TemporaryItems/Screenshot 2026-07-21 at 23.47.22.png", mimeType: "image/png" },
+    {
+      path: "/var/folders/ab/cdef/TemporaryItems/Screenshot 2026-07-21 at 23.47.22.png",
+      mimeType: "image/png",
+      remainingText: "",
+    },
   );
   for (const input of [
     "/Users/example/Desktop/private.png",
@@ -25,6 +29,16 @@ test("temporary screenshot parser accepts only exact macOS temp image paths", ()
   ]) {
     assert.equal(parseTemporaryScreenshot(input), undefined);
   }
+  assert.deepEqual(
+    parseTemporaryScreenshot(
+      "compare the allocation panel\n/var/folders/ab/cdef/TemporaryItems/Screenshot\\ 2026-07-22\\ at\\ 14.23.30.png",
+    ),
+    {
+      path: "/var/folders/ab/cdef/TemporaryItems/Screenshot 2026-07-22 at 14.23.30.png",
+      mimeType: "image/png",
+      remainingText: "compare the allocation panel",
+    },
+  );
   assert.equal(MAX_SCREENSHOT_BYTES, 20 * 1024 * 1024);
 });
 

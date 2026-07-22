@@ -15,7 +15,17 @@ export interface DebugTarget {
 
 export interface LaunchServicesRequest {
   readonly command: "/usr/bin/open";
-  readonly args: readonly ["-a", "Brave Browser", LocalPageUrl];
+  readonly args: readonly [
+    "-n",
+    "-a",
+    "Brave Browser",
+    "--args",
+    `--user-data-dir=${string}`,
+    `--remote-debugging-port=${number}`,
+    "--no-first-run",
+    "--no-default-browser-check",
+    LocalPageUrl,
+  ];
 }
 
 export type PublicDebugTarget = Omit<DebugTarget, "webSocketDebuggerUrl">;
@@ -26,10 +36,30 @@ export type CdpResponse =
 
 const LOOPBACK_HOSTS = new Set(["127.0.0.1", "[::1]", "localhost"]);
 
-export const launchServicesRequest: (url: LocalPageUrl) => LaunchServicesRequest = (url) => ({
-  command: "/usr/bin/open",
-  args: ["-a", "Brave Browser", url],
-});
+export const launchServicesRequest: (
+  url: LocalPageUrl,
+  operatorProfilePath: string,
+  debugPort: number,
+) => LaunchServicesRequest = (url, operatorProfilePath, debugPort) => {
+  if (!operatorProfilePath.startsWith("/")) throw new Error("Operator profile path must be absolute.");
+  if (!Number.isSafeInteger(debugPort) || debugPort < 1_024 || debugPort > 65_535) {
+    throw new Error("Operator debugging port is invalid.");
+  }
+  return {
+    command: "/usr/bin/open",
+    args: [
+      "-n",
+      "-a",
+      "Brave Browser",
+      "--args",
+      `--user-data-dir=${operatorProfilePath}`,
+      `--remote-debugging-port=${debugPort}`,
+      "--no-first-run",
+      "--no-default-browser-check",
+      url,
+    ],
+  };
+};
 
 export const parseLocalPageUrl: (input: string) => LocalPageUrl = (input) => {
   let url: URL;
@@ -60,6 +90,14 @@ export const parseDebugTargets: (value: unknown, debugPort: number) => readonly 
     return target ? [target] : [];
   });
 };
+
+export const selectReusableTarget: (
+  targets: readonly DebugTarget[],
+  url: LocalPageUrl,
+  preferredTargetId: string | undefined,
+) => DebugTarget | undefined = (targets, url, preferredTargetId) =>
+  targets.find((target) => target.id === preferredTargetId && target.url === url) ??
+  targets.find((target) => target.url === url);
 
 export const selectActiveTarget: (
   targets: readonly DebugTarget[],

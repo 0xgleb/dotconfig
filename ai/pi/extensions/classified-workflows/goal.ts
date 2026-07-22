@@ -118,6 +118,18 @@ export function buildGoalEvaluatorPrompt(condition: string, transcript: string[]
   ].join("\n");
 }
 
+export const recoverLatestIndependentGoal: (
+  states: readonly GoalState[],
+  isLegacyLoopCondition: (condition: string) => boolean,
+) => Extract<GoalState, { status: "active" }> | undefined = (states, isLegacyLoopCondition) => {
+  for (let index = states.length - 1; index >= 0; index -= 1) {
+    const state = states[index];
+    if (isLegacyLoopCondition(state.condition)) continue;
+    return state.status === "active" ? state : undefined;
+  }
+  return undefined;
+};
+
 export const pendingTodoTexts: (entries: unknown[]) => string[] = (entries) => {
   for (let index = entries.length - 1; index >= 0; index -= 1) {
     const entry = entries[index];

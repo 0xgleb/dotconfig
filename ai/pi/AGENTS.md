@@ -20,6 +20,9 @@
   created Nix result symlinks and stale Pi temporary logs. Never delete
   pre-existing project outputs, user files, global caches, Nix generations, or
   run global garbage collection without explicit user authorization.
+- Never inject keystrokes or text into the user's active Zellij pane or editor;
+  it can overwrite an in-progress prompt. Use registered tools such as
+  `reload_pi` instead, and keep Zellij automation confined to isolated workers.
 - In TypeScript and JavaScript, prefer `const`-bound arrow functions over
   `function` declarations, with explicit callable types when they clarify the
   contract. Keep declarations for overloads, generators, or required semantics.

@@ -3,6 +3,7 @@ import test from "node:test";
 import {
   deterministicDecision,
   deterministicToolResultDecision,
+  MIN_AGENT_TOKEN_RESERVATION,
   parseClassifierDecision,
   runWorkflowScript,
   type AgentRequest,
@@ -88,6 +89,18 @@ test("todo tracking is allowed as session-local agent work support", () => {
       source: "deterministic",
     });
   }
+});
+
+test("the dedicated Pi reload tool is locally allowed", () => {
+  assert.deepEqual(
+    deterministicDecision({ boundary: "action", toolName: "reload_pi", input: {}, cwd: "/repo" }),
+    { verdict: "allow", reason: "Local Pi resource reload", source: "deterministic" },
+  );
+  assert.deepEqual(deterministicToolResultDecision("reload_pi"), {
+    verdict: "allow",
+    reason: "Locally generated mutation acknowledgement",
+    source: "deterministic",
+  });
 });
 
 test("shell and unknown tools require classifier review", () => {
@@ -215,6 +228,23 @@ test("workflow supports positional agent calls and direct promise fan-out", asyn
     { task: "alpha", tools: ["read"] },
     { task: "beta" },
   ]);
+});
+
+test("undersized token budgets fail before spawning an idle worker", async () => {
+  let spawned = 0;
+  await assert.rejects(
+    runWorkflowScript(`return await agent({ task: "never start" });`, { ...limits, tokenBudget: 3_999 }, {
+      async runAgent(): Promise<AgentResult> {
+        spawned += 1;
+        return { status: "completed", output: "unexpected", usageTokens: 1 };
+      },
+      async checkpoint(): Promise<"approved"> {
+        return "approved";
+      },
+    }),
+    new RegExp(`minimum reservation.*${MIN_AGENT_TOKEN_RESERVATION}`, "i"),
+  );
+  assert.equal(spawned, 0);
 });
 
 test("workflow enforces total agent and token limits", async () => {

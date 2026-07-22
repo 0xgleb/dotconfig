@@ -47,10 +47,12 @@ export interface WorkflowDependencies {
   checkpoint(message: string): Promise<"approved" | "denied">;
 }
 
+export const MIN_AGENT_TOKEN_RESERVATION = 4_000;
+
 const READ_ONLY_TOOLS = new Set(["read", "grep", "find", "ls"]);
 const WRITE_TOOLS = new Set(["edit", "write"]);
 const TODO_ACTIONS = new Set(["list", "add", "toggle", "clear"]);
-const LOCALLY_GENERATED_RESULT_TOOLS = new Set(["edit", "write", "todo"]);
+const LOCALLY_GENERATED_RESULT_TOOLS = new Set(["edit", "write", "todo", "reload_pi"]);
 const PATH_KEYS = new Set(["path", "file_path", "cwd", "glob"]);
 const SENSITIVE_PATH =
   /(^|[\\/\s'"])(?:\.env(?!\.example(?:$|[\\/\s'"]))(?:\.[^\\/\s'"]*)?|credentials\.json|secrets\.(?:json|ya?ml)|auth\.json|\.npmrc|\.netrc|\.pypirc|id_(?:rsa|dsa|ecdsa|ed25519)(?:\.pub)?|[^\\/\s'"]+\.(?:key|pem|p12|pfx))($|[\\/\s'"])/i;
@@ -135,6 +137,14 @@ export function deterministicDecision(request: ToolRequest): Decision | null {
     };
   }
 
+  if (request.toolName === "reload_pi") {
+    return {
+      verdict: "allow",
+      reason: "Local Pi resource reload",
+      source: "deterministic",
+    };
+  }
+
   if (request.toolName === "todo" && TODO_ACTIONS.has(String(request.input.action))) {
     return {
       verdict: "allow",
@@ -200,6 +210,7 @@ export async function runWorkflowScript(
 
   let agentCount = 0;
   let usedTokens = 0;
+  let reservedTokens = 0;
   let activeAgents = 0;
   const waiters: Array<() => void> = [];
 
@@ -246,20 +257,32 @@ export async function runWorkflowScript(
     const request = structuredClone(rawRequest);
     if (request.task.length > 32_000) throw new Error("agent tasks may contain at most 32,000 characters");
     if (agentCount >= limits.maxAgents) throw new Error(`Workflow agent limit exceeded (${limits.maxAgents})`);
-    if (usedTokens >= limits.tokenBudget) throw new Error(`Workflow token budget exceeded (${limits.tokenBudget})`);
+    const availableTokens = limits.tokenBudget - usedTokens - reservedTokens;
+    if (availableTokens < MIN_AGENT_TOKEN_RESERVATION) {
+      throw new Error(
+        `Workflow token budget cannot start another agent: ${Math.max(0, availableTokens)} tokens remain; minimum reservation is ${MIN_AGENT_TOKEN_RESERVATION}`,
+      );
+    }
     agentCount += 1;
+    reservedTokens += MIN_AGENT_TOKEN_RESERVATION;
 
     let result: AgentResult | undefined;
-    for (let attempt = 0; attempt <= limits.retries; attempt += 1) {
-      if (workflowController.signal.aborted) throw new Error("Workflow aborted");
-      result = await runOnce(request);
-      if (result.status === "completed" || result.status === "blocked") break;
+    let agentUsageTokens = 0;
+    try {
+      for (let attempt = 0; attempt <= limits.retries; attempt += 1) {
+        if (workflowController.signal.aborted) throw new Error("Workflow aborted");
+        result = await runOnce(request);
+        agentUsageTokens += Math.max(0, result.usageTokens);
+        if (result.status === "completed" || result.status === "blocked") break;
+      }
+    } finally {
+      reservedTokens -= MIN_AGENT_TOKEN_RESERVATION;
     }
 
     if (!result) throw new Error("Agent produced no result");
-    usedTokens += Math.max(0, result.usageTokens);
+    usedTokens += agentUsageTokens;
     if (usedTokens > limits.tokenBudget) throw new Error(`Workflow token budget exceeded (${limits.tokenBudget})`);
-    return result;
+    return { ...result, usageTokens: agentUsageTokens };
   };
 
   const parallel = async <T>(tasks: Array<PromiseLike<T> | (() => PromiseLike<T>)>): Promise<T[]> => {

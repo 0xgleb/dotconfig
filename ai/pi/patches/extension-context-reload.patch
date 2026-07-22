@@ -1,0 +1,26 @@
+diff --git a/dist/core/extensions/runner.js b/dist/core/extensions/runner.js
+--- a/dist/core/extensions/runner.js
++++ b/dist/core/extensions/runner.js
+@@ -483,6 +483,10 @@ export class ExtensionRunner {
+                 runner.assertActive();
+                 runner.compactFn(options);
+             },
++            reload: () => {
++                runner.assertActive();
++                return runner.reloadHandler();
++            },
+             getSystemPrompt: () => {
+                 runner.assertActive();
+                 return runner.getSystemPromptFn();
+diff --git a/dist/core/extensions/types.d.ts b/dist/core/extensions/types.d.ts
+--- a/dist/core/extensions/types.d.ts
++++ b/dist/core/extensions/types.d.ts
+@@ -235,6 +235,8 @@ export interface ExtensionContext {
+     getContextUsage(): ContextUsage | undefined;
+     /** Trigger compaction without awaiting completion. */
+     compact(options?: CompactOptions): void;
++    /** Reload extensions, skills, prompts, themes, and context files. */
++    reload(): Promise<void>;
+     /** Get the current effective system prompt. */
+     getSystemPrompt(): string;
+ }

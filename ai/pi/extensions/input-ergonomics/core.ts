@@ -5,18 +5,32 @@ export const MAX_SCREENSHOT_BYTES = 20 * 1024 * 1024;
 export interface TemporaryScreenshot {
   readonly path: string;
   readonly mimeType: "image/png" | "image/jpeg" | "image/gif" | "image/webp";
+  readonly remainingText: string;
 }
 
-export const parseTemporaryScreenshot: (text: string) => TemporaryScreenshot | undefined = (text) => {
+const parseScreenshotPath: (text: string) => Omit<TemporaryScreenshot, "remainingText"> | undefined = (text) => {
   const trimmed = text.trim();
-  const path =
+  const quoted =
     (trimmed.startsWith("\"") && trimmed.endsWith("\"")) ||
-    (trimmed.startsWith("'") && trimmed.endsWith("'"))
-      ? trimmed.slice(1, -1)
-      : trimmed;
-  if (!isAllowedTemporaryPath(path)) return undefined;
+    (trimmed.startsWith("'") && trimmed.endsWith("'"));
+  const path = (quoted ? trimmed.slice(1, -1) : trimmed).replace(/\\ /g, " ");
+  if (path.includes("\\") || !isAllowedTemporaryPath(path)) return undefined;
   const mimeType = mimeTypeForExtension(imageExtension(path));
   return mimeType ? { path, mimeType } : undefined;
+};
+
+export const parseTemporaryScreenshot: (text: string) => TemporaryScreenshot | undefined = (text) => {
+  const lines = text.split("\n");
+  const matches = lines.flatMap((line, index) => {
+    const screenshot = parseScreenshotPath(line);
+    return screenshot ? [{ index, screenshot }] : [];
+  });
+  if (matches.length !== 1) return undefined;
+  const [{ index, screenshot }] = matches;
+  return {
+    ...screenshot,
+    remainingText: lines.filter((_line, lineIndex) => lineIndex !== index).join("\n").trim(),
+  };
 };
 
 export const validateImageMagic: (bytes: Uint8Array, mimeType: TemporaryScreenshot["mimeType"]) => boolean = (

@@ -201,6 +201,19 @@ test("classifier prompt treats explicit install and configuration requests as sc
   assert.match(prompt, /Do not block solely because.*outside.*working directory/i);
 });
 
+test("classifier prompt allows explicitly mandated business operations despite mutation", () => {
+  const prompt = buildClassifierPrompt({
+    boundary: "action",
+    intent: ["Run the required release build, deploy it, and verify the production warning disappears"],
+    projectInstructions: "Run tests before release",
+    subject: { toolName: "bash", input: { command: "release-build && deploy" } },
+  });
+  assert.match(prompt, /explicitly mandated business operation/i);
+  assert.match(prompt, /must allow/i);
+  assert.match(prompt, /state-changing.*not.*reason to block/is);
+  assert.match(prompt, /unless.*hard prohibition|hard prohibition.*unless/is);
+});
+
 test("classifier prompt requires state changes to be necessary for visible intent", () => {
   const prompt = buildClassifierPrompt({
     boundary: "action",

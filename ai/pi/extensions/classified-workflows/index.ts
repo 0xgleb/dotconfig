@@ -32,6 +32,7 @@ import {
   parseGoalEvaluation,
   parseStoredGoal,
   pendingTodoTexts,
+  recoverLatestIndependentGoal,
   restoreGoal,
   type GoalCommand,
   type GoalEvaluation,
@@ -343,7 +344,7 @@ const WorkflowParameters = Type.Object({
   agentTimeoutMs: Type.Integer({ minimum: 1_000, maximum: 900_000 }),
   workflowTimeoutMs: Type.Integer({ minimum: 1_000, maximum: 3_600_000 }),
   retries: Type.Integer({ minimum: 0, maximum: 3 }),
-  tokenBudget: Type.Integer({ minimum: 1_000, maximum: 5_000_000 }),
+  tokenBudget: Type.Integer({ minimum: 4_000, maximum: 5_000_000 }),
   background: Type.Optional(Type.Boolean({ description: "Start the workflow in the background and return immediately with a workflow id." })),
   label: Type.Optional(Type.String({ maxLength: 80, description: "Short label shown in the workflow control panel." })),
 });
@@ -673,6 +674,28 @@ export default function classifiedWorkflows(pi: ExtensionAPI): void {
     },
   });
 
+  pi.registerTool({
+    name: "reload_pi",
+    label: "Reload Pi",
+    description: "Reload keybindings, extensions, skills, prompts, themes, and context files after updating Pi configuration.",
+    promptSnippet: "Reload Pi resources after changing managed configuration",
+    promptGuidelines: [
+      "Use reload_pi after changing ~/.config-managed Pi resources so the current session activates them.",
+      "Do not inject /reload through the terminal editor; this tool preserves the user's draft.",
+    ],
+    parameters: Type.Object({}, { additionalProperties: false }),
+    async execute(_toolCallId, _params, _signal, _onUpdate, ctx) {
+      if (!("reload" in ctx) || typeof ctx.reload !== "function") {
+        throw new Error("reload_pi requires the managed reload-context host patch; restart after applying the Nix generation.");
+      }
+      await ctx.reload();
+      return {
+        content: [{ type: "text", text: "Reloaded keybindings, extensions, skills, prompts, themes, and context files." }],
+        details: { status: "reloaded" },
+      };
+    },
+  });
+
   pi.registerCommand("loop", {
     description: "Schedule an infinite recurring instruction: /loop [1h] <instruction>; exact 'clear' stops it",
     handler(args, ctx) {
@@ -722,9 +745,8 @@ export default function classifiedWorkflows(pi: ExtensionAPI): void {
   pi.on("session_start", (event, ctx) => {
     latestCtx = ctx;
     const branch = ctx.sessionManager.getBranch();
-    const storedGoal = branch
-      .filter((entry) => entry.type === "custom" && entry.customType === GOAL_ENTRY)
-      .at(-1);
+    const goalEntries = branch.filter((entry) => entry.type === "custom" && entry.customType === GOAL_ENTRY);
+    const storedGoal = goalEntries.at(-1);
     const storedLoop = branch
       .filter((entry) => entry.type === "custom" && entry.customType === LOOP_ENTRY)
       .at(-1);
@@ -732,24 +754,51 @@ export default function classifiedWorkflows(pi: ExtensionAPI): void {
     loopState = storedLoop?.type === "custom" ? parseStoredLoop(storedLoop.data) : undefined;
     goalRunTokens = 0;
     const now = Date.now();
+    const goalHistory = goalEntries.flatMap((entry) => {
+      if (entry.type !== "custom") return [];
+      const state = parseStoredGoal(entry.data);
+      return state ? [state] : [];
+    });
+    const recoveredGoal = recoverLatestIndependentGoal(
+      goalHistory,
+      (condition) => migrateLegacyReloadLoop(condition, now) !== undefined,
+    );
     const migratedLoop =
       !loopState && goalState?.status === "active"
         ? migrateLegacyReloadLoop(goalState.condition, now)
         : undefined;
+    const wasAlreadyMigrated =
+      loopState?.status === "active" &&
+      goalState?.status === "cleared" &&
+      goalState.lastReason === "Migrated from the legacy /loop goal into an infinite recurring loop.";
     if (migratedLoop && goalState?.status === "active") {
       loopState = migratedLoop;
-      goalState = {
-        status: "cleared",
-        condition: goalState.condition,
-        startedAt: goalState.startedAt,
-        finishedAt: now,
-        turns: goalState.turns,
-        tokens: goalState.tokens,
-        lastReason: "Migrated from the legacy /loop goal into an infinite recurring loop.",
-      };
+      goalState = recoveredGoal
+        ? {
+            ...recoveredGoal,
+            lastReason: "Recovered after separating the legacy /loop alias from the independent goal.",
+          }
+        : {
+            status: "cleared",
+            condition: goalState.condition,
+            startedAt: goalState.startedAt,
+            finishedAt: now,
+            turns: goalState.turns,
+            tokens: goalState.tokens,
+            lastReason: "Migrated from the legacy /loop goal into an infinite recurring loop.",
+          };
       pi.appendEntry(GOAL_ENTRY, goalState);
       pi.appendEntry(LOOP_ENTRY, loopState);
-      showLoopMessage(`Migrated legacy loop state.\n${formatLoopStatus(loopState, now)}`);
+      showLoopMessage(
+        `Migrated legacy loop state.${recoveredGoal ? " Recovered the preceding independent goal." : ""}\n${formatLoopStatus(loopState, now)}`,
+      );
+    } else if (wasAlreadyMigrated && recoveredGoal) {
+      goalState = {
+        ...recoveredGoal,
+        lastReason: "Recovered after separating the legacy /loop alias from the independent goal.",
+      };
+      pi.appendEntry(GOAL_ENTRY, goalState);
+      showGoalMessage(`Recovered independent goal: ${goalState.condition}`);
     } else if (goalState?.status === "active" && event.reason !== "reload") {
       goalState = restoreGoal(goalState, now);
       pi.appendEntry(GOAL_ENTRY, goalState);

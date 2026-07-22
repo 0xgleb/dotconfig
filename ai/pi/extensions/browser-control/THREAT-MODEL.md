@@ -1,62 +1,58 @@
 # Pi browser control threat model
 
 The `browser` tool treats every model-supplied argument and every DevTools
-response as untrusted input. Its intended capability is limited to opening and
-reading loopback HTTP pages in the user's existing Brave app.
+response as untrusted input. Its capability is limited to opening and reading
+loopback HTTP pages in a dedicated Brave operator profile.
 
 ## Trust boundaries and assets
 
-- **Model → extension:** action and URL tool arguments are untrusted. URLs must
-  remain on exact loopback hosts and arbitrary JavaScript is not an exposed
-  action.
-- **Extension → macOS LaunchServices:** the extension may ask `/usr/bin/open` to
-  open a validated loopback URL in `Brave Browser`. It never launches Brave's
-  app binary, passes `--args`, creates a profile, or requests a new app instance.
-- **Brave DevTools → extension:** the optional loopback DevTools HTTP and
-  WebSocket responses are untrusted and decoded before use. DevTools endpoint
-  URLs are never returned to the model.
-- **Protected assets:** macOS Brave app identity/window grouping, the operator's
-  chosen profile and cookies, unrelated tabs, DevTools connection URLs, and any
-  non-loopback browsing state.
+- **Model → extension:** action and URL arguments are untrusted. URLs must remain
+  on exact loopback hosts and arbitrary JavaScript is not exposed.
+- **Extension → macOS LaunchServices:** first launch uses `/usr/bin/open -n -a
+  "Brave Browser" --args ...`, preserving Brave's bundle identity while forcing
+  a dedicated user-data directory and debugging port. It never routes an
+  operator URL through the already-running main profile.
+- **Existing operator → extension:** once the dedicated debugging endpoint is
+  ready, new pages are created through its `/json/new` endpoint instead of
+  launching more Brave instances.
+- **Brave DevTools → extension:** HTTP and WebSocket responses are untrusted and
+  decoded before use. Debugger endpoint URLs are never returned to the model.
+- **Protected assets:** the user's main Brave profile, unrelated tabs and
+  cookies, macOS app identity/window grouping, debugger URLs, and non-loopback
+  browsing state.
 
-Remote debugging is optional and must be configured manually for the existing
-operator profile on port 9222. When unavailable, Pi still opens the page through
-LaunchServices but refuses text inspection. Pi does not silently start another
-Brave process to obtain debugging access.
+The isolated profile lives under `~/Library/Application Support/Pi/Brave
+Operator`, outside the configuration repository and the user's main Brave data.
 
 ## STRIDE controls
 
 | Threat | Concrete risk | Control |
 | --- | --- | --- |
-| Spoofing | Another page or local process pretends to be the requested target | Only an exact loopback URL opened through this extension may become active; target IDs and debugger URLs are validated |
-| Tampering | Model arguments or malformed CDP data alter navigation or command handling | URL and every HTTP/WebSocket response cross explicit decoders; CDP method names and JavaScript expressions are fixed in source |
-| Repudiation | Hidden browser launch behavior cannot be distinguished from user activity | Launch behavior is a single inspectable LaunchServices request with no hidden Brave flags |
-| Information disclosure | Unrelated tabs, cookies, or DevTools URLs reach the model | Target selection requires the explicitly opened target; public details omit the debugger WebSocket; page text is bounded |
-| Denial of service | Browser or DevTools calls hang the Pi session | LaunchServices, HTTP, WebSocket, CDP, and target discovery all have finite timeouts |
-| Elevation of privilege | Model gains arbitrary browser scripting or remote navigation | Tool actions are the closed set `status`, `open`, and `text`; URLs are exact loopback HTTP(S); no model-supplied script is evaluated |
+| Spoofing | Another page or process pretends to be the operator target | Dedicated debug port; only exact loopback targets opened by this extension may become active; target IDs and debugger URLs are validated |
+| Tampering | Model arguments or malformed CDP data alter navigation or command handling | URL and every HTTP/WebSocket response cross explicit decoders; CDP methods and JavaScript expressions are fixed in source |
+| Repudiation | Hidden launch behavior cannot be distinguished from user activity | Launch request is a single tested LaunchServices argument vector with explicit isolation flags |
+| Information disclosure | Main-profile tabs, cookies, or debugger URLs reach the model | Separate user-data directory; target selection requires the explicitly opened target; public details omit the debugger WebSocket; page text is bounded |
+| Denial of service | Browser or DevTools calls hang Pi or spawn repeatedly | Finite timeouts; an existing operator is reused through `/json/new` |
+| Elevation of privilege | Model gains arbitrary scripting or remote navigation | Closed actions `status`, `open`, and `text`; URLs are exact loopback HTTP(S); no model-supplied script is evaluated |
 
 ## Abuse cases encoded by tests
 
-- A prompt attempts to navigate to a remote site, local file, deceptive
-  `localhost` suffix, or URL with embedded credentials.
-- Browser launch attempts to bypass LaunchServices, pass Brave flags, create a
-  user-data directory, or request remote debugging automatically.
-- A prompt attempts to run arbitrary page JavaScript or select another browser
-  debugging port.
+- A prompt attempts a remote site, local file, deceptive `localhost` suffix, or
+  URL with embedded credentials.
+- Launch omits the new-instance, dedicated user-data, or debug-port flags and
+  could therefore enter the main profile.
+- A prompt attempts arbitrary page JavaScript or another debugging port.
 - A debug endpoint returns malformed target or command-response data.
-- A target other than the one explicitly opened by this extension is selected.
+- A target other than the explicitly opened operator target is selected.
 - Tool details disclose a DevTools WebSocket URL.
 
 ## Upstream contracts
 
-`/usr/bin/open -a "Brave Browser" <url>` follows the macOS LaunchServices CLI
-contract and reuses the registered app unless `-n` is supplied; this extension
-never supplies `-n` or `--args`.
+`/usr/bin/open -n -a "Brave Browser" --args ...` uses macOS LaunchServices to
+start a new instance under Brave's registered bundle identity. Chromium's
+`--user-data-dir` isolates profile state and `--remote-debugging-port` exposes
+the dedicated local debugging endpoint.
 
-The recorded target fixture in `core.test.ts` follows Chromium's documented
-remote-debugging HTTP endpoint response. Chromium documents `/json/list` and
-the WebSocket command transport at
-<https://chromedevtools.github.io/devtools-protocol/>. Chrome's remote-debugging
-restrictions are why setup is explicit and manual rather than silently attaching
-to a default profile:
-<https://developer.chrome.com/blog/remote-debugging-port>.
+The recorded target fixture follows Chromium's documented `/json/list` and
+WebSocket contracts:
+<https://chromedevtools.github.io/devtools-protocol/>.

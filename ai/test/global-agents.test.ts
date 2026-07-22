@@ -13,6 +13,13 @@ test("shared and Pi-global instructions enforce disk-pressure hygiene", () => {
   }
 });
 
+test("shared and Pi-global instructions prohibit overwriting the active editor", () => {
+  for (const [name, contents] of [["shared", shared], ["Pi global", pi]] as const) {
+    assert.match(contents, /never inject.*(?:keystrokes|text).*active.*(?:pane|editor)/is, `${name} must protect prompt drafts`);
+    assert.match(contents, /reload_pi/, `${name} must direct reloads through the safe tool`);
+  }
+});
+
 test("shared and Pi-global instructions enforce handover ingestion", () => {
   for (const [name, contents] of [["shared", shared], ["Pi global", pi]] as const) {
     assert.match(contents, /\/handover/, `${name} instructions must invoke /handover`);

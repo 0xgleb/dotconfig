@@ -9,6 +9,7 @@ import {
   parseGoalEvaluation,
   parseStoredGoal,
   pendingTodoTexts,
+  recoverLatestIndependentGoal,
   restoreGoal,
   type GoalState,
 } from "./goal.ts";
@@ -105,6 +106,34 @@ test("latest todo snapshot supplies pending completion evidence", () => {
   ];
   assert.deepEqual(pendingTodoTexts(entries), ["#2 Finish handover"]);
   assert.deepEqual(pendingTodoTexts([{ type: "wrong" }]), []);
+});
+
+test("legacy loop migration recovers only the latest still-active independent goal", () => {
+  const businessGoal = { ...active, condition: "Complete the full v1 and v2 buildout" } as const;
+  const legacyLoop = { ...active, condition: "15m /reload latest config", startedAt: 2 } as const;
+  assert.deepEqual(
+    recoverLatestIndependentGoal([businessGoal, legacyLoop], (condition) => condition.includes("/reload")),
+    businessGoal,
+  );
+  assert.equal(
+    recoverLatestIndependentGoal(
+      [
+        businessGoal,
+        {
+          status: "cleared",
+          condition: businessGoal.condition,
+          startedAt: businessGoal.startedAt,
+          finishedAt: 3,
+          turns: 1,
+          tokens: 10,
+          lastReason: "done",
+        },
+        legacyLoop,
+      ],
+      (condition) => condition.includes("/reload"),
+    ),
+    undefined,
+  );
 });
 
 test("met goals become achieved and invalid evaluations keep the goal active", () => {

@@ -9,6 +9,7 @@ import {
   parseLocalPageUrl,
   publicTarget,
   selectActiveTarget,
+  selectReusableTarget,
 } from "./core.ts";
 
 const recordedTarget = {
@@ -26,15 +27,26 @@ test("browser actions expose no arbitrary script evaluation", () => {
   assert.equal(BROWSER_ACTIONS.includes("eval" as never), false);
 });
 
-test("browser pages open through LaunchServices without spawning another Brave instance", () => {
+test("browser pages use an isolated operator profile through the Brave app identity", () => {
   const url = parseLocalPageUrl("http://127.0.0.1:5173/");
-  const request = launchServicesRequest(url);
+  const request = launchServicesRequest(url, "/Users/example/Library/Application Support/Pi/Brave Operator", 9222);
   assert.deepEqual(request, {
     command: "/usr/bin/open",
-    args: ["-a", "Brave Browser", url],
+    args: [
+      "-n",
+      "-a",
+      "Brave Browser",
+      "--args",
+      "--user-data-dir=/Users/example/Library/Application Support/Pi/Brave Operator",
+      "--remote-debugging-port=9222",
+      "--no-first-run",
+      "--no-default-browser-check",
+      url,
+    ],
   });
-  assert.equal(request.args.includes("--args" as never), false);
-  assert.equal(request.args.some((arg) => arg.includes("user-data-dir") || arg.includes("remote-debugging")), false);
+  assert.equal(request.args.includes("--args"), true);
+  assert.equal(request.args.some((arg) => arg.startsWith("--user-data-dir=")), true);
+  assert.equal(request.args.some((arg) => arg === "--remote-debugging-port=9222"), true);
 });
 
 test("local page URLs accept only loopback HTTP origins without credentials", () => {
@@ -68,6 +80,14 @@ test("debug target decoder accepts the documented Chromium response and rejects 
     () => parseDebugTargets([{ ...recordedTarget, webSocketDebuggerUrl: "ws://127.0.0.1:9333/devtools/page/DAB7" }], 9222),
     /debugging endpoint/i,
   );
+});
+
+test("an existing exact-URL operator target is reused instead of duplicated", () => {
+  const [target] = parseDebugTargets([recordedTarget], 9222);
+  const other = { ...target, id: "OTHER", url: parseLocalPageUrl("http://127.0.0.1:5173/other") };
+  assert.equal(selectReusableTarget([other, target], target.url, undefined), target);
+  assert.equal(selectReusableTarget([target, { ...target, id: "NEWER" }], target.url, "NEWER")?.id, "NEWER");
+  assert.equal(selectReusableTarget([other], target.url, undefined), undefined);
 });
 
 test("only the explicitly opened local target can become active", () => {
