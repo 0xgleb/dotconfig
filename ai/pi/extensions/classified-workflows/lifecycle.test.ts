@@ -7,8 +7,44 @@ import {
   resolveActionDecision,
 } from "./lifecycle.ts";
 import type { Decision } from "./core.ts";
+import {
+  CONTINUATION_PAUSE_ENTRY,
+  isContinuationPaused,
+  latestContinuationPause,
+  parseContinuationPause,
+  wasRunAborted,
+} from "../shared/continuation-pause.ts";
 
 const allow: Decision = { verdict: "allow", reason: "aligned", source: "classifier" };
+
+test("manual abort pause state persists defensively and keys off the final assistant", () => {
+  const paused = { paused: true, updatedAt: 42 };
+  assert.deepEqual(parseContinuationPause(paused), paused);
+  assert.equal(parseContinuationPause({ paused: "yes", updatedAt: 42 }), undefined);
+  assert.deepEqual(
+    latestContinuationPause([
+      { type: "custom", customType: CONTINUATION_PAUSE_ENTRY, data: paused },
+      { type: "message", message: { role: "user", content: "later" } },
+    ]),
+    paused,
+  );
+  assert.equal(
+    wasRunAborted([
+      { role: "assistant", stopReason: "aborted" },
+      { role: "assistant", stopReason: "stop" },
+    ]),
+    false,
+  );
+  assert.equal(wasRunAborted([{ role: "assistant", stopReason: "aborted" }]), true);
+  assert.equal(isContinuationPaused([{ type: "custom", customType: CONTINUATION_PAUSE_ENTRY, data: paused }]), true);
+  assert.equal(
+    isContinuationPaused([
+      { type: "custom", customType: CONTINUATION_PAUSE_ENTRY, data: paused },
+      { type: "custom", customType: CONTINUATION_PAUSE_ENTRY, data: { paused: false, updatedAt: 43 } },
+    ]),
+    false,
+  );
+});
 
 test("agent execution is enclosed by spawn and return classification", async () => {
   const boundaries: string[] = [];

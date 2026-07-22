@@ -1,4 +1,5 @@
 import { basename, isAbsolute, join } from "node:path";
+import { isContinuationPaused } from "../shared/continuation-pause.ts";
 
 export const isSafeHandoffName: (name: string) => boolean = (name) =>
   basename(name) === name &&
@@ -13,6 +14,9 @@ export const parseSeenHandoffNames: (value: unknown) => string[] = (value) => {
 
 export const unseenHandoffNames: (names: readonly string[], seen: ReadonlySet<string>) => string[] = (names, seen) =>
   names.filter((name) => isSafeHandoffName(name) && !seen.has(name)).sort();
+
+export const shouldDispatchReloadFollowUp: (reason: string, entries: readonly unknown[]) => boolean = (reason, entries) =>
+  reason === "reload" && !isContinuationPaused(entries);
 
 export const managedPiWatchPaths: (aiRoot: string) => string[] = (aiRoot) =>
   isAbsolute(aiRoot)

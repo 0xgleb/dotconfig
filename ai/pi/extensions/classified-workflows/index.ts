@@ -51,6 +51,11 @@ import {
 } from "./loop.ts";
 import { boundedDiagnosticTail, sanitizeProcessDiagnostic, summarizePiJsonLines } from "./protocol.ts";
 import { activeWorkflowLines, workflowHistoryText, type WorkflowUiItem } from "./workflow-ui.ts";
+import {
+  CONTINUATION_PAUSE_ENTRY,
+  latestContinuationPause,
+  wasRunAborted,
+} from "../shared/continuation-pause.ts";
 
 const CLASSIFIER_MODEL = "openai-codex/gpt-5.4-mini";
 const CLASSIFIER_TIMEOUT_MS = 45_000;
@@ -357,6 +362,7 @@ export default function classifiedWorkflows(pi: ExtensionAPI): void {
   let goalRunTokens = 0;
   let loopState: LoopState | undefined;
   let loopTimer: ReturnType<typeof setTimeout> | undefined;
+  let continuationPaused = false;
   let nextWorkflowId = 1;
   let latestCtx: ExtensionContext | undefined;
   const backgroundWorkflows = new Map<string, BackgroundWorkflow>();
@@ -491,6 +497,17 @@ export default function classifiedWorkflows(pi: ExtensionAPI): void {
     );
   };
 
+  const updateContinuationPauseStatus = (ctx: ExtensionContext) => {
+    ctx.ui.setStatus("continuation-pause", continuationPaused ? "continuation:paused · waiting for you" : undefined);
+  };
+
+  const setContinuationPaused = (paused: boolean, ctx: ExtensionContext) => {
+    if (continuationPaused === paused) return;
+    continuationPaused = paused;
+    pi.appendEntry(CONTINUATION_PAUSE_ENTRY, { paused, updatedAt: Date.now() });
+    updateContinuationPauseStatus(ctx);
+  };
+
   const clearLoopTimer = () => {
     if (loopTimer) clearTimeout(loopTimer);
     loopTimer = undefined;
@@ -517,6 +534,13 @@ export default function classifiedWorkflows(pi: ExtensionAPI): void {
   const runScheduledLoop = (ctx: ExtensionContext) => {
     const active = loopState?.status === "active" ? loopState : undefined;
     if (!active) return;
+    if (continuationPaused) {
+      loopState = { ...active, nextRunAt: Date.now() + active.intervalMs };
+      pi.appendEntry(LOOP_ENTRY, loopState);
+      updateLoopStatus(ctx);
+      scheduleLoop(ctx);
+      return;
+    }
     loopState = advanceLoop(active, Date.now());
     pi.appendEntry(LOOP_ENTRY, loopState);
     updateLoopStatus(ctx);
@@ -765,6 +789,7 @@ export default function classifiedWorkflows(pi: ExtensionAPI): void {
       .at(-1);
     goalState = storedGoal?.type === "custom" ? parseStoredGoal(storedGoal.data) : undefined;
     loopState = storedLoop?.type === "custom" ? parseStoredLoop(storedLoop.data) : undefined;
+    continuationPaused = latestContinuationPause(branch)?.paused ?? false;
     goalRunTokens = 0;
     const now = Date.now();
     const goalHistory = goalEntries.flatMap((entry) => {
@@ -818,6 +843,7 @@ export default function classifiedWorkflows(pi: ExtensionAPI): void {
     }
     updateGoalStatus(ctx);
     updateLoopStatus(ctx);
+    updateContinuationPauseStatus(ctx);
     scheduleLoop(ctx);
     renderWorkflowPanel(ctx);
   });
@@ -825,14 +851,23 @@ export default function classifiedWorkflows(pi: ExtensionAPI): void {
   pi.on("session_shutdown", (_event, ctx) => {
     clearLoopTimer();
     ctx.ui.setStatus("pi-loop", undefined);
+    ctx.ui.setStatus("continuation-pause", undefined);
     ctx.ui.setWidget("pi-loop", undefined);
   });
 
-  pi.on("agent_end", (event) => {
+  pi.on("input", (event, ctx) => {
+    if (continuationPaused && event.source === "interactive" && event.text.trim()) {
+      setContinuationPaused(false, ctx);
+    }
+  });
+
+  pi.on("agent_end", (event, ctx) => {
     if (goalState?.status === "active") goalRunTokens += assistantUsageTokens(event.messages);
+    if (wasRunAborted(event.messages)) setContinuationPaused(true, ctx);
   });
 
   pi.on("agent_settled", async (_event, ctx) => {
+    if (continuationPaused) return;
     const work = todoWorkSnapshot(ctx.sessionManager.getBranch());
     if (goalState?.status !== "active") {
       const continuation = taskContinuationMessage(work);

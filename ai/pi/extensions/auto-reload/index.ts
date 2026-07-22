@@ -3,7 +3,14 @@ import { homedir } from "node:os";
 import { join } from "node:path";
 import type { ExtensionAPI, ExtensionContext } from "@earendil-works/pi-coding-agent";
 
-import { isSafeHandoffName, managedPiWatchPaths, parseSeenHandoffNames, unseenHandoffNames } from "./core.ts";
+import {
+  isSafeHandoffName,
+  managedPiWatchPaths,
+  parseSeenHandoffNames,
+  shouldDispatchReloadFollowUp,
+  unseenHandoffNames,
+} from "./core.ts";
+import { isContinuationPaused } from "../shared/continuation-pause.ts";
 
 const DEBOUNCE_MS = 1_200;
 const HANDOFF_POLL_MS = 60 * 60 * 1_000;
@@ -56,7 +63,7 @@ const autoReload: (pi: ExtensionAPI) => void = (pi) => {
 
   pi.on("session_start", (event, ctx) => {
     closeWatchers();
-    if (event.reason === "reload") {
+    if (shouldDispatchReloadFollowUp(event.reason, ctx.sessionManager.getBranch())) {
       pi.sendMessage(
         {
           customType: "auto-reload.completed",
@@ -97,6 +104,7 @@ const autoReload: (pi: ExtensionAPI) => void = (pi) => {
         if (!storedEntry) pi.appendEntry(HANDOFF_STATE_ENTRY, { names: [...seen].sort() });
 
         const reconcileHandoffs = () => {
+          if (isContinuationPaused(ctx.sessionManager.getBranch())) return;
           const unseen = unseenHandoffNames(globSync("*.md", { cwd: handoffRoot }), seen);
           if (unseen.length === 0) return;
           for (const name of unseen) seen.add(name);

@@ -143,6 +143,9 @@ through review.
   continue until it is achieved. If any todo is pending, continue working through
   the task list. Stop only when all assigned work is complete or all remaining
   todos are explicitly blocked with reasons.
+- Treat a manual user interrupt or double-cancel as an explicit pause. Do not
+  automatically resume goals, loops, or pending tasks until the user submits
+  their next prompt; give them time to finish redirecting the work.
 - Check free disk space before every expensive build, test sweep, or workflow.
   Stop before consuming the crash reserve; do not wait for a build to fail or Pi
   to crash.

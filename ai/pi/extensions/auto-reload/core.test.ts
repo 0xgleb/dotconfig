@@ -1,7 +1,29 @@
 import assert from "node:assert/strict";
 import test from "node:test";
 
-import { isSafeHandoffName, managedPiWatchPaths, parseSeenHandoffNames, unseenHandoffNames } from "./core.ts";
+import {
+  isSafeHandoffName,
+  managedPiWatchPaths,
+  parseSeenHandoffNames,
+  shouldDispatchReloadFollowUp,
+  unseenHandoffNames,
+} from "./core.ts";
+import { CONTINUATION_PAUSE_ENTRY } from "../shared/continuation-pause.ts";
+
+test("auto reload follow-up respects a persisted manual interrupt pause", () => {
+  assert.equal(shouldDispatchReloadFollowUp("reload", []), true);
+  assert.equal(shouldDispatchReloadFollowUp("resume", []), false);
+  assert.equal(
+    shouldDispatchReloadFollowUp("reload", [
+      {
+        type: "custom",
+        customType: CONTINUATION_PAUSE_ENTRY,
+        data: { paused: true, updatedAt: 42 },
+      },
+    ]),
+    false,
+  );
+});
 
 test("auto reload watches only managed Pi source roots", () => {
   assert.deepEqual(managedPiWatchPaths("/Users/example/.config/ai"), [

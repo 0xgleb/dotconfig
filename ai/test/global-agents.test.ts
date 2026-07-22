@@ -29,6 +29,13 @@ test("shared and Pi-global instructions forbid stopping with active work", () =>
   }
 });
 
+test("shared and Pi-global instructions preserve manual interrupt pauses", () => {
+  for (const [name, contents] of [["shared", shared], ["Pi global", pi]] as const) {
+    assert.match(contents, /manual user interrupt|double-cancel/i, `${name} must recognize manual interruption`);
+    assert.match(contents, /do not.*automatically resume.*until.*next prompt/is, `${name} must wait for user redirection`);
+  }
+});
+
 test("dotconfig delivery includes committing and pushing without handoff", () => {
   assert.match(project, /validated changes.*committed and pushed/is);
   assert.match(project, /do not stop.*hand.*back.*user/is);
