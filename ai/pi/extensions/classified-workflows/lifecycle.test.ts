@@ -172,6 +172,29 @@ test("classifier prompt keeps implicitly invoked review skill commands in scope"
   assert.match(prompt, /outcome rather than the command/i);
 });
 
+test("classifier prompt prioritizes active reload todos over stale historical topics", () => {
+  const prompt = buildClassifierPrompt({
+    boundary: "action",
+    intent: [
+      "Investigate the unavailable nav chart",
+      "Resume all assigned work now",
+      "Active todo: stop-line rebuy cash-basis hotfix",
+      "Active todo: isolate the hotfix in GitButler branch fix/rebuy-cash-basis",
+    ],
+    projectInstructions: "Use GitButler for stack-style branch isolation",
+    subject: {
+      toolName: "bash",
+      input: { command: "but stage mp fix/rebuy-cash-basis --format agent" },
+    },
+  });
+
+  assert.match(prompt, /authoritative current-work evidence/i);
+  assert.match(prompt, /especially after a reload message/i);
+  assert.match(prompt, /stale historical topic/i);
+  assert.match(prompt, /version-control isolation, staging, branch, and stack commands/i);
+  assert.match(prompt, /fix\/rebuy-cash-basis/);
+});
+
 test("classifier prompt treats parent-authored spawn tasks as scoped instructions, not returned prompt injection", () => {
   const prompt = buildClassifierPrompt({
     boundary: "spawn",
