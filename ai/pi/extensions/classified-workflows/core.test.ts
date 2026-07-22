@@ -233,6 +233,32 @@ test("project-local Rust incremental cache cleanup is narrowly deterministic", (
   }
 });
 
+test("exact read-only review-panel sentinels are deterministic without broad cursor-agent authority", () => {
+  for (const command of [
+    'cursor-agent -p --mode plan --model composer-2.5 --trust "Reply with exactly: OK"',
+    "cursor-agent -p --mode plan --model grok-4.5-xhigh --trust 'Reply with exactly: OK'",
+  ]) {
+    assert.deepEqual(
+      deterministicDecision({ boundary: "action", toolName: "bash", input: { command }, cwd: "/repo" }),
+      {
+        verdict: "allow",
+        reason: "Exact read-only review-panel availability sentinel",
+        source: "deterministic",
+      },
+    );
+  }
+  for (const command of [
+    'cursor-agent -p --mode plan --model composer-2.5 --trust "Review the repo"',
+    'cursor-agent -p --mode agent --model composer-2.5 --trust "Reply with exactly: OK"',
+    'cursor-agent -p --mode plan --model composer-2.5 --trust "Reply with exactly: OK"; git push',
+  ]) {
+    assert.equal(
+      deterministicDecision({ boundary: "action", toolName: "bash", input: { command }, cwd: "/repo" }),
+      null,
+    );
+  }
+});
+
 test("shell and unknown tools require classifier review", () => {
   assert.equal(
     deterministicDecision({

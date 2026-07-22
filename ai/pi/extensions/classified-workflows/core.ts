@@ -132,6 +132,12 @@ function hasRequiredSearchExclusions(command: string): boolean {
   return REQUIRED_SEARCH_EXCLUSIONS.every((exclusion) => patterns.includes(exclusion));
 }
 
+const isReviewPanelSentinel: (command: string) => boolean = (command) =>
+  !/[;&|`\n\r]/.test(command) &&
+  /^cursor-agent -p --mode plan --model (?:composer-2\.5|grok-4\.5-xhigh) --trust (?:"Reply with exactly: OK"|'Reply with exactly: OK')$/.test(
+    command.trim(),
+  );
+
 export function deterministicDecision(request: ToolRequest): Decision | null {
   if (relevantStrings(request.toolName, request.input).some((value) => SENSITIVE_PATH.test(value))) {
     return {
@@ -185,6 +191,18 @@ export function deterministicDecision(request: ToolRequest): Decision | null {
     return {
       verdict: "allow",
       reason: "Local typed agent responsibility coordination",
+      source: "deterministic",
+    };
+  }
+
+  if (
+    request.toolName === "bash" &&
+    typeof request.input.command === "string" &&
+    isReviewPanelSentinel(request.input.command)
+  ) {
+    return {
+      verdict: "allow",
+      reason: "Exact read-only review-panel availability sentinel",
       source: "deterministic",
     };
   }
