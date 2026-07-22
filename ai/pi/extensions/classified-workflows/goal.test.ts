@@ -21,10 +21,11 @@ const active: GoalState & { status: "active" } = {
   lastReason: "one test still fails",
 };
 
-test("goal command sets, reports, and clears one condition", () => {
+test("goal command sets, reports, and clears only by exact clear command", () => {
   assert.deepEqual(parseGoalCommand(""), { action: "status" });
-  for (const alias of ["clear", "stop", "off", "reset", "none", "cancel"]) {
-    assert.deepEqual(parseGoalCommand(alias), { action: "clear" });
+  assert.deepEqual(parseGoalCommand("clear"), { action: "clear" });
+  for (const condition of ["stop", "off", "reset", "none", "cancel"]) {
+    assert.deepEqual(parseGoalCommand(condition), { action: "set", condition });
   }
   assert.deepEqual(parseGoalCommand("all tests pass and lint is clean"), {
     action: "set",
@@ -55,7 +56,7 @@ test("unmet goals continue with updated counters and reason", () => {
   );
 });
 
-test("met goals become achieved and invalid evaluation pauses", () => {
+test("met goals become achieved and invalid evaluations keep the goal active", () => {
   const achieved = applyGoalEvaluation(active, { status: "valid", met: true, reason: "verified" }, 50, 2_000);
   assert.deepEqual(achieved, {
     status: "achieved",
@@ -67,12 +68,12 @@ test("met goals become achieved and invalid evaluation pauses", () => {
     lastReason: "verified",
   });
 
-  const paused = applyGoalEvaluation(active, { status: "invalid", reason: "evaluator unavailable" }, 0, 2_000);
-  assert.equal(paused.status, "paused");
-  assert.equal(paused.lastReason, "evaluator unavailable");
+  const stillActive = applyGoalEvaluation(active, { status: "invalid", reason: "evaluator unavailable" }, 0, 2_000);
+  assert.equal(stillActive.status, "active");
+  assert.equal(stillActive.lastReason, "evaluator unavailable Continuing until a valid check completes.");
 });
 
-test("only active goals restore and their counters reset", () => {
+test("active and legacy paused goals restore while terminal goals stay terminal", () => {
   assert.deepEqual(restoreGoal(active, 5_000), {
     status: "active",
     condition: active.condition,
@@ -80,6 +81,29 @@ test("only active goals restore and their counters reset", () => {
     turns: 0,
     tokens: 0,
   });
+
+  assert.deepEqual(
+    restoreGoal(
+      {
+        status: "paused",
+        condition: active.condition,
+        startedAt: 1_000,
+        finishedAt: 2_000,
+        turns: 3,
+        tokens: 350,
+        lastReason: "old evaluator outage",
+      },
+      5_000,
+    ),
+    {
+      status: "active",
+      condition: active.condition,
+      startedAt: 5_000,
+      turns: 0,
+      tokens: 0,
+      lastReason: "Restored from paused legacy state: old evaluator outage",
+    },
+  );
 
   const achieved = applyGoalEvaluation(active, { status: "valid", met: true, reason: "done" }, 1, 2_000);
   assert.deepEqual(restoreGoal(achieved, 5_000), achieved);

@@ -26,7 +26,7 @@ export type GoalEvaluation =
   | { status: "valid"; met: boolean; reason: string }
   | { status: "invalid"; reason: string };
 
-const CLEAR_ALIASES = new Set(["clear", "stop", "off", "reset", "none", "cancel"]);
+const CLEAR_COMMAND = "clear";
 const MAX_CONDITION_LENGTH = 4_000;
 
 function isRecord(value: unknown): value is Record<string, unknown> {
@@ -81,7 +81,7 @@ export function parseStoredGoal(value: unknown): GoalState | undefined {
 export function parseGoalCommand(args: string): GoalCommand {
   const condition = args.trim();
   if (condition.length === 0) return { action: "status" };
-  if (CLEAR_ALIASES.has(condition.toLowerCase())) return { action: "clear" };
+  if (condition.toLowerCase() === CLEAR_COMMAND) return { action: "clear" };
   if (condition.length > MAX_CONDITION_LENGTH) {
     throw new Error("Goal conditions may contain at most 4,000 characters.");
   }
@@ -134,11 +134,14 @@ export function applyGoalEvaluation(
 ): GoalState {
   const turns = state.turns + 1;
   const tokens = state.tokens + Math.max(0, usageTokens);
-  if (evaluation.status === "valid" && !evaluation.met) {
+  if (evaluation.status === "invalid") {
+    return { ...state, turns, tokens, lastReason: `${evaluation.reason} Continuing until a valid check completes.` };
+  }
+  if (!evaluation.met) {
     return { ...state, turns, tokens, lastReason: evaluation.reason };
   }
   return {
-    status: evaluation.status === "valid" ? "achieved" : "paused",
+    status: "achieved",
     condition: state.condition,
     startedAt: state.startedAt,
     finishedAt: now,
@@ -149,13 +152,14 @@ export function applyGoalEvaluation(
 }
 
 export function restoreGoal(state: GoalState, now: number): GoalState {
-  if (state.status !== "active") return state;
+  if (state.status !== "active" && state.status !== "paused") return state;
   return {
     status: "active",
     condition: state.condition,
     startedAt: now,
     turns: 0,
     tokens: 0,
+    ...(state.status === "paused" ? { lastReason: `Restored from paused legacy state: ${state.lastReason}` } : {}),
   };
 }
 

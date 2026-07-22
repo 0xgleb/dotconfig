@@ -501,7 +501,7 @@ export default function classifiedWorkflows(pi: ExtensionAPI): void {
   });
 
   pi.registerCommand("goal", {
-    description: "Set a completion condition; no argument shows status, and 'clear' stops it",
+    description: "Set a durable completion condition; no argument shows status, and exact 'clear' clears it",
     async handler(args, ctx) {
       let command: GoalCommand;
       try {
@@ -600,7 +600,7 @@ export default function classifiedWorkflows(pi: ExtensionAPI): void {
     } else if (goalState.status === "achieved") {
       showGoalMessage(`Goal achieved: ${goalState.lastReason}`);
     } else {
-      showGoalMessage(`Goal checking paused: ${goalState.lastReason}`);
+      showGoalMessage(`Goal ended: ${goalState.lastReason}`);
     }
   });
 
