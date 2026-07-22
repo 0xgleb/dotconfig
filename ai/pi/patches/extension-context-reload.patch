@@ -12,6 +12,30 @@ diff --git a/dist/core/extensions/runner.js b/dist/core/extensions/runner.js
              getSystemPrompt: () => {
                  runner.assertActive();
                  return runner.getSystemPromptFn();
+diff --git a/dist/core/agent-session.js b/dist/core/agent-session.js
+--- a/dist/core/agent-session.js
++++ b/dist/core/agent-session.js
+@@ -344,9 +344,7 @@ export class AgentSession {
+         }
+         // Emit to extensions first
+         await this._emitExtensionEvent(event);
+-        // Notify all listeners
+-        this._emit(event.type === "agent_end" ? { ...event, willRetry: this._willRetryAfterAgentEnd(event) } : event);
+-        // Handle session persistence
++        // Persist finalized messages before notifying the TUI so a restart cannot lose rendered output.
+         if (event.type === "message_end") {
+             // Check if this is a custom message from extensions
+             if (event.message.role === "custom") {
+@@ -382,6 +380,8 @@ export class AgentSession {
+                 }
+             }
+         }
++        // Notify all listeners only after synchronous message persistence.
++        this._emit(event.type === "agent_end" ? { ...event, willRetry: this._willRetryAfterAgentEnd(event) } : event);
+     };
+     _willRetryAfterAgentEnd(event) {
+         const settings = this.settingsManager.getRetrySettings();
+
 diff --git a/dist/core/extensions/types.d.ts b/dist/core/extensions/types.d.ts
 --- a/dist/core/extensions/types.d.ts
 +++ b/dist/core/extensions/types.d.ts

@@ -155,6 +155,13 @@ export function deterministicDecision(request: ToolRequest): Decision | null {
 
   if (request.toolName === "bash" && path.basename(path.resolve(request.cwd)) === ".config") {
     const command = request.input.command;
+    if (command === "rm -- ai/pi.models.json") {
+      return {
+        verdict: "allow",
+        reason: "Confirmed obsolete dotconfig model artifact cleanup",
+        source: "deterministic",
+      };
+    }
     if (
       typeof command === "string" &&
       /^\s*git\s+(?:add|commit|push)(?:\s|$)/.test(command) &&

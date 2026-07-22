@@ -123,6 +123,27 @@ test("dotconfig staging, commit, and push delivery is deterministic but shell ch
   );
 });
 
+test("the confirmed obsolete dotconfig model artifact can be removed exactly", () => {
+  assert.deepEqual(
+    deterministicDecision({
+      boundary: "action",
+      toolName: "bash",
+      input: { command: "rm -- ai/pi.models.json" },
+      cwd: "/Users/example/.config",
+    }),
+    { verdict: "allow", reason: "Confirmed obsolete dotconfig model artifact cleanup", source: "deterministic" },
+  );
+  assert.equal(
+    deterministicDecision({
+      boundary: "action",
+      toolName: "bash",
+      input: { command: "rm -- ai/other.json" },
+      cwd: "/Users/example/.config",
+    }),
+    null,
+  );
+});
+
 test("shell and unknown tools require classifier review", () => {
   assert.equal(
     deterministicDecision({
