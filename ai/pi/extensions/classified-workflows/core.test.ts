@@ -233,6 +233,30 @@ test("project-local Rust incremental cache cleanup is narrowly deterministic", (
   }
 });
 
+test("git diff credential pathspecs are allowed only when every sensitive token is an exclusion", () => {
+  const command =
+    "git diff base...head -- . ':(glob,exclude)**/.env*' ':(glob,exclude)**/*secret*' ':(glob,exclude)**/*.pem'";
+  assert.deepEqual(
+    deterministicDecision({ boundary: "action", toolName: "bash", input: { command }, cwd: "/repo" }),
+    {
+      verdict: "allow",
+      reason: "Read-only Git diff with credential-shaped paths used exclusively as exclusions",
+      source: "deterministic",
+    },
+  );
+
+  for (const unsafe of [
+    "git diff -- .env",
+    "git diff --output=/tmp/diff.txt -- . ':(glob,exclude)**/.env*'",
+    "git diff -- . ':(glob,exclude)**/.env*'; cat README.md",
+  ]) {
+    assert.notEqual(
+      deterministicDecision({ boundary: "action", toolName: "bash", input: { command: unsafe }, cwd: "/repo" })?.verdict,
+      "allow",
+    );
+  }
+});
+
 test("exact read-only review-panel sentinels are deterministic without broad cursor-agent authority", () => {
   for (const command of [
     'cursor-agent -p --mode plan --model composer-2.5 --trust "Reply with exactly: OK"',

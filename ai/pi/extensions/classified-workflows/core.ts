@@ -132,6 +132,23 @@ function hasRequiredSearchExclusions(command: string): boolean {
   return REQUIRED_SEARCH_EXCLUSIONS.every((exclusion) => patterns.includes(exclusion));
 }
 
+const unquoteShellWord: (word: string) => string = (word) =>
+  ((word.startsWith("\"") && word.endsWith("\"")) || (word.startsWith("'") && word.endsWith("'")))
+    ? word.slice(1, -1)
+    : word;
+
+const isCredentialExclusionPathspec: (word: string) => boolean = (word) =>
+  /^(?::[!^]|:\((?=[^)]*(?:exclude|!))[^)]*\))/.test(unquoteShellWord(word));
+
+const isSafeCredentialExcludedGitDiff: (command: string) => boolean = (command) => {
+  if (/[;&|`\n\r<>]/.test(command)) return false;
+  const words = command.trim().match(/"(?:[^"\\]|\\.)*"|'[^']*'|[^\s]+/g);
+  if (!words || words[0] !== "git" || words[1] !== "diff") return false;
+  if (words.some((word) => /^--(?:output|ext-diff|textconv)(?:=|$)/.test(unquoteShellWord(word)))) return false;
+  const sensitiveWords = words.filter((word) => SENSITIVE_PATH.test(unquoteShellWord(word)));
+  return sensitiveWords.length > 0 && sensitiveWords.every(isCredentialExclusionPathspec);
+};
+
 const isReviewPanelSentinel: (command: string) => boolean = (command) =>
   !/[;&|`\n\r]/.test(command) &&
   /^cursor-agent -p --mode plan --model (?:composer-2\.5|grok-4\.5-xhigh) --trust (?:"Reply with exactly: OK"|'Reply with exactly: OK')$/.test(
@@ -139,6 +156,18 @@ const isReviewPanelSentinel: (command: string) => boolean = (command) =>
   );
 
 export function deterministicDecision(request: ToolRequest): Decision | null {
+  if (
+    request.toolName === "bash" &&
+    typeof request.input.command === "string" &&
+    isSafeCredentialExcludedGitDiff(request.input.command)
+  ) {
+    return {
+      verdict: "allow",
+      reason: "Read-only Git diff with credential-shaped paths used exclusively as exclusions",
+      source: "deterministic",
+    };
+  }
+
   if (relevantStrings(request.toolName, request.input).some((value) => SENSITIVE_PATH.test(value))) {
     return {
       verdict: "block",
