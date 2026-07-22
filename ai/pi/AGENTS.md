@@ -13,6 +13,13 @@
 - Treat classifier blocks as policy. Do not evade them by switching tools or
   rephrasing the same action.
 - Run relevant tests and report failures or incomplete work accurately.
+- Check free disk space before every expensive build, test sweep, or workflow.
+  Stop before consuming the crash reserve; do not wait for a build to fail or Pi
+  to crash.
+- Track and clean agent-owned artifacts after verification, including newly
+  created Nix result symlinks and stale Pi temporary logs. Never delete
+  pre-existing project outputs, user files, global caches, Nix generations, or
+  run global garbage collection without explicit user authorization.
 - In TypeScript and JavaScript, prefer `const`-bound arrow functions over
   `function` declarations, with explicit callable types when they clarify the
   contract. Keep declarations for overloads, generators, or required semantics.

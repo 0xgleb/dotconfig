@@ -139,6 +139,13 @@ through review.
   architecture.
 - Keep a granular task list for the current request and remove completed items
   so the remaining work is always obvious.
+- Check free disk space before every expensive build, test sweep, or workflow.
+  Stop before consuming the crash reserve; do not wait for a build to fail or Pi
+  to crash.
+- Track and clean agent-created artifacts after verification, including newly
+  created Nix result symlinks and stale Pi temporary logs. Never delete
+  pre-existing project outputs, user files, global caches, Nix generations, or
+  run global garbage collection without explicit user authorization.
 - Keep changes minimal and reviewable. Prefer improving the relevant
   documentation in-repo when a lesson should help future work in the same
   repository.

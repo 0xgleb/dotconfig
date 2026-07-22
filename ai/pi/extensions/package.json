@@ -38,6 +38,7 @@
       "./browser-control/index.ts",
       "./compact-footer/index.ts",
       "./compact-read/index.ts",
+      "./disk-pressure/index.ts",
       "./input-ergonomics/index.ts",
       "./pi-vim/index.ts",
       "./todo/index.ts"
