@@ -143,7 +143,15 @@ const isCredentialExclusionPathspec: (word: string) => boolean = (word) =>
 const isSafeCredentialExcludedGitDiff: (command: string) => boolean = (command) => {
   if (/[;&|`\n\r<>]/.test(command)) return false;
   const words = command.trim().match(/"(?:[^"\\]|\\.)*"|'[^']*'|[^\s]+/g);
-  if (!words || words[0] !== "git" || words[1] !== "diff") return false;
+  if (!words || words[0] !== "git") return false;
+  const diffIndex = words[1] === "-C" ? 3 : 1;
+  if (
+    words[diffIndex] !== "diff" ||
+    (diffIndex === 3 &&
+      (typeof words[2] !== "string" || !path.isAbsolute(unquoteShellWord(words[2])) || SENSITIVE_PATH.test(unquoteShellWord(words[2]))))
+  ) {
+    return false;
+  }
   if (words.some((word) => /^--(?:output|ext-diff|textconv)(?:=|$)/.test(unquoteShellWord(word)))) return false;
   const sensitiveWords = words.filter((word) => SENSITIVE_PATH.test(unquoteShellWord(word)));
   return sensitiveWords.length > 0 && sensitiveWords.every(isCredentialExclusionPathspec);

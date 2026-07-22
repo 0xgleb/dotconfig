@@ -234,16 +234,20 @@ test("project-local Rust incremental cache cleanup is narrowly deterministic", (
 });
 
 test("git diff credential pathspecs are allowed only when every sensitive token is an exclusion", () => {
-  const command =
-    "git diff base...head -- . ':(glob,exclude)**/.env*' ':(glob,exclude)**/*secret*' ':(glob,exclude)**/*.pem'";
-  assert.deepEqual(
-    deterministicDecision({ boundary: "action", toolName: "bash", input: { command }, cwd: "/repo" }),
-    {
-      verdict: "allow",
-      reason: "Read-only Git diff with credential-shaped paths used exclusively as exclusions",
-      source: "deterministic",
-    },
-  );
+  const commands = [
+    "git diff base...head -- . ':(glob,exclude)**/.env*' ':(glob,exclude)**/*secret*' ':(glob,exclude)**/*.pem'",
+    "git -C /Users/example/code/st0x/st0x.rest.api diff base-sha head-sha -- . ':(exclude,glob)**/.env*' ':(exclude).env*' ':(exclude,icase,glob)**/*secret*' ':(exclude,icase,glob)**/*.key' ':(exclude,icase,glob)**/*.pem' ':(exclude,icase,glob)**/*.p12' ':(exclude,icase,glob)**/*.pfx'",
+  ];
+  for (const command of commands) {
+    assert.deepEqual(
+      deterministicDecision({ boundary: "action", toolName: "bash", input: { command }, cwd: "/repo" }),
+      {
+        verdict: "allow",
+        reason: "Read-only Git diff with credential-shaped paths used exclusively as exclusions",
+        source: "deterministic",
+      },
+    );
+  }
 
   for (const unsafe of [
     "git diff -- .env",
