@@ -211,7 +211,7 @@ const requestFromRow: (row: Row) => RegistryRequest = (row) => {
 };
 
 const initialize: (database: DatabaseSync, databasePath: string) => void = (database, databasePath) => {
-  database.exec(`PRAGMA busy_timeout = ${BUSY_TIMEOUT_MS}; PRAGMA journal_mode = WAL;`);
+  database.exec(`PRAGMA busy_timeout = ${BUSY_TIMEOUT_MS};`);
   const version = rowFrom(database.prepare("PRAGMA user_version").get());
   const currentVersion = numberField(version, "user_version");
   if (currentVersion !== 0 && currentVersion !== SCHEMA_VERSION) {

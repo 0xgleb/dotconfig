@@ -153,6 +153,25 @@ test("classifier prompt treats reasonable support actions as part of the request
   assert.match(prompt, /not just the most recent subtask/i);
 });
 
+test("classifier prompt keeps implicitly invoked review skill commands in scope", () => {
+  const probe = 'cursor-agent -p --mode plan --model composer-2.5 --trust "Reply with exactly: OK"';
+  const prompt = buildClassifierPrompt({
+    boundary: "action",
+    intent: ["Review pull request 123 with the review panel"],
+    projectInstructions: "Use the review-pr skill when asked to review a PR",
+    skillProcedures: [
+      `Active skill review-core (/Users/example/.agents/skills/review-core/SKILL.md):\nSentinel probe:\n${probe}`,
+    ],
+    subject: { toolName: "bash", input: { command: probe, timeout: 15 } },
+  });
+
+  assert.match(prompt, /VERIFIED ACTIVE SKILL PROCEDURES/);
+  assert.match(prompt, /skill whose SKILL\.md was deliberately read/i);
+  assert.match(prompt, /read-only capability probes and review-panel launches/i);
+  assert.match(prompt, /cursor-agent -p --mode plan --model composer-2\.5/);
+  assert.match(prompt, /outcome rather than the command/i);
+});
+
 test("classifier prompt treats parent-authored spawn tasks as scoped instructions, not returned prompt injection", () => {
   const prompt = buildClassifierPrompt({
     boundary: "spawn",

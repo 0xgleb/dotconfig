@@ -52,6 +52,7 @@ import {
   type LoopState,
 } from "./loop.ts";
 import { boundedDiagnosticTail, sanitizeProcessDiagnostic, summarizePiJsonLines } from "./protocol.ts";
+import { activeSkillProcedures } from "./skill-context.ts";
 import {
   activeWorkflowLines,
   backgroundWorkflowStartedText,
@@ -448,6 +449,7 @@ export default function classifiedWorkflows(pi: ExtensionAPI): void {
     ctx: ExtensionContext,
     intent: string[],
     instructions: string,
+    skillProcedures: string[],
   ): BackgroundWorkflow => {
     const id = `wf-${nextWorkflowId++}`;
     const limits: WorkflowLimits = {
@@ -479,7 +481,7 @@ export default function classifiedWorkflows(pi: ExtensionAPI): void {
           ctx.modelRegistry.getAvailable(),
           childSignal,
         ),
-    });
+    }, skillProcedures);
 
     void runWorkflowScript(
       params.code,
@@ -969,6 +971,7 @@ export default function classifiedWorkflows(pi: ExtensionAPI): void {
         boundary: "action",
         intent: visibleIntent(ctx, goalState?.status === "active" ? goalState.condition : undefined),
         projectInstructions: projectInstructions(ctx),
+        skillProcedures: activeSkillProcedures(ctx.sessionManager.getBranch(), { cwd: ctx.cwd }),
         subject: { toolName: event.toolName, input: event.input, cwd: ctx.cwd },
       },
       ctx,
@@ -986,6 +989,7 @@ export default function classifiedWorkflows(pi: ExtensionAPI): void {
         boundary: "tool-result",
         intent: visibleIntent(ctx, goalState?.status === "active" ? goalState.condition : undefined),
         projectInstructions: projectInstructions(ctx),
+        skillProcedures: activeSkillProcedures(ctx.sessionManager.getBranch(), { cwd: ctx.cwd }),
         subject: toolResultSubject(event),
       },
       ctx,
@@ -1019,6 +1023,7 @@ export default function classifiedWorkflows(pi: ExtensionAPI): void {
       latestCtx = ctx;
       const intent = visibleIntent(ctx, goalState?.status === "active" ? goalState.condition : undefined);
       const instructions = projectInstructions(ctx);
+      const skillProcedures = activeSkillProcedures(ctx.sessionManager.getBranch(), { cwd: ctx.cwd });
       const limits: WorkflowLimits = {
         maxAgents: params.maxAgents,
         concurrency: params.concurrency,
@@ -1029,7 +1034,7 @@ export default function classifiedWorkflows(pi: ExtensionAPI): void {
       };
 
       if (params.background) {
-        const workflow = startBackgroundWorkflow(params, ctx, intent, instructions);
+        const workflow = startBackgroundWorkflow(params, ctx, intent, instructions, skillProcedures);
         return {
           content: [
             {
@@ -1051,7 +1056,7 @@ export default function classifiedWorkflows(pi: ExtensionAPI): void {
             ctx.modelRegistry.getAvailable(),
             childSignal,
           ),
-      });
+      }, skillProcedures);
 
       try {
         const result = await runWorkflowScript(
