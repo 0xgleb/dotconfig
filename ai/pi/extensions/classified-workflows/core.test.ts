@@ -144,6 +144,32 @@ test("workflow JavaScript can fan out and synthesize", async () => {
   );
 });
 
+test("workflow supports positional agent calls and direct promise fan-out", async () => {
+  const calls: AgentRequest[] = [];
+  const result = await runWorkflowScript(
+    `const outputs = await parallel([
+      agent("alpha", { tools: ["read"] }),
+      agent("beta")
+    ]);
+    return outputs.map((item) => item.output).join("+");`,
+    limits,
+    {
+      async runAgent(request): Promise<AgentResult> {
+        calls.push(request);
+        return { status: "completed", output: request.task.toUpperCase(), usageTokens: 10 };
+      },
+      async checkpoint() {
+        return "approved";
+      },
+    },
+  );
+  assert.equal(result, "ALPHA+BETA");
+  assert.deepEqual(calls, [
+    { task: "alpha", tools: ["read"] },
+    { task: "beta" },
+  ]);
+});
+
 test("workflow enforces total agent and token limits", async () => {
   const dependencies = {
     async runAgent(): Promise<AgentResult> {

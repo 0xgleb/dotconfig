@@ -487,6 +487,7 @@ export default function classifiedWorkflows(pi: ExtensionAPI): void {
     promptSnippet: "Compose bounded, classified dynamic workflows with independent Pi agents",
     promptGuidelines: [
       "Use workflow for fan-out/fan-in, dependent steps, adversarial verification, or synthesis; use direct tools for simple work.",
+      'Call agents as agent("focused task", { cwd?, tools?, model?, thinking? }); parallel accepts an array of agent promises or deferred functions.',
       "Always set the smallest sufficient agent, concurrency, timeout, retry, and token limits.",
       "Use read-only agent tools unless isolated mutation is explicitly required.",
     ],

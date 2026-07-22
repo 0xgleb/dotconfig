@@ -79,10 +79,13 @@ Every workflow must specify the smallest sufficient:
 - retry limit;
 - total token budget.
 
-Every `agent` call must provide a focused prompt, working directory when it differs
-from the parent, tool capabilities, and model or thinking level when the default is
-not appropriate. Prefer cheaper models for bounded discovery and stronger models
-for synthesis or difficult verification.
+Call agents as `agent("focused task", { cwd?, tools?, model?, thinking? })`. Pass
+agent promises directly to `parallel`, for example
+`await parallel([agent("first task"), agent("second task")])`. Every call must
+provide a focused task, working directory when it differs from the parent, tool
+capabilities, and model or thinking level when the default is not appropriate.
+Prefer cheaper models for bounded discovery and stronger models for synthesis or
+difficult verification.
 
 Assume every agent spawn, tool action, tool result, and returned result will be
 classified. Handle a blocked boundary as a typed failure. Do not expose blocked

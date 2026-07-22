@@ -22,6 +22,8 @@ export interface AgentRequest {
   thinking?: "off" | "minimal" | "low" | "medium" | "high" | "xhigh" | "max";
 }
 
+export type AgentOptions = Omit<AgentRequest, "task">;
+
 export type AgentResult =
   | { status: "completed"; output: string; usageTokens: number }
   | {
@@ -201,10 +203,13 @@ export async function runWorkflowScript(
     }
   };
 
-  const agent = async (request: AgentRequest): Promise<AgentResult> => {
-    if (!request || typeof request.task !== "string" || request.task.trim() === "") {
+  const agent = async (requestOrTask: AgentRequest | string, options?: AgentOptions): Promise<AgentResult> => {
+    if (options !== undefined && !isRecord(options)) throw new Error("agent options must be an object");
+    const rawRequest = typeof requestOrTask === "string" ? { ...options, task: requestOrTask } : requestOrTask;
+    if (!rawRequest || typeof rawRequest.task !== "string" || rawRequest.task.trim() === "") {
       throw new Error("agent requires a non-empty task");
     }
+    const request = structuredClone(rawRequest);
     if (request.task.length > 32_000) throw new Error("agent tasks may contain at most 32,000 characters");
     if (agentCount >= limits.maxAgents) throw new Error(`Workflow agent limit exceeded (${limits.maxAgents})`);
     if (usedTokens >= limits.tokenBudget) throw new Error(`Workflow token budget exceeded (${limits.tokenBudget})`);
@@ -223,11 +228,11 @@ export async function runWorkflowScript(
     return result;
   };
 
-  const parallel = async <T>(tasks: Array<() => Promise<T>>): Promise<T[]> => {
-    if (!Array.isArray(tasks) || tasks.some((task) => typeof task !== "function")) {
-      throw new Error("parallel requires an array of functions");
+  const parallel = async <T>(tasks: Array<PromiseLike<T> | (() => PromiseLike<T>)>): Promise<T[]> => {
+    if (!Array.isArray(tasks) || tasks.some((task) => typeof task !== "function" && !isPromiseLike(task))) {
+      throw new Error("parallel requires an array of promises or functions");
     }
-    return Promise.all(tasks.map((task) => task()));
+    return Promise.all(tasks.map((task) => (typeof task === "function" ? task() : task)));
   };
 
   const checkpoint = async (message: string): Promise<void> => {
@@ -269,6 +274,10 @@ export async function runWorkflowScript(
 
 function isRecord(value: unknown): value is Record<string, unknown> {
   return typeof value === "object" && value !== null && !Array.isArray(value);
+}
+
+function isPromiseLike(value: unknown): value is PromiseLike<unknown> {
+  return isRecord(value) && typeof value.then === "function";
 }
 
 function validateLimits(limits: WorkflowLimits): void {
