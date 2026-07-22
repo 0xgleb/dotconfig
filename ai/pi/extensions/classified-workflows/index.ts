@@ -9,6 +9,7 @@ import { AGENT_PROCESS_STDIO, buildAgentArguments, resolveAgentModel, type Avail
 import {
   deterministicDecision,
   deterministicToolResultDecision,
+  MIN_CLASSIFIED_AGENT_TIMEOUT_MS,
   parseClassifierDecision,
   runWorkflowScript,
   shouldCarryDeterministicResultAllowance,
@@ -67,8 +68,8 @@ import {
 } from "../shared/continuation-pause.ts";
 
 const CLASSIFIER_MODEL = "openai-codex/gpt-5.6-luna";
-const CLASSIFIER_TIMEOUT_MS = 45_000;
-const CLASSIFIER_MAX_ATTEMPTS = 3;
+const CLASSIFIER_TIMEOUT_MS = 20_000;
+const CLASSIFIER_MAX_ATTEMPTS = 2;
 const CLASSIFIER_RETRY_BASE_MS = 1_000;
 const MAX_CHILD_STDERR_CHARACTERS = 12_000;
 const CLASSIFIER_SYSTEM_PROMPT =
@@ -290,7 +291,11 @@ async function classify(
       }
     }
   }
-  return { verdict: "block", reason: "Classifier was unavailable after 3 attempts", source: "classifier" };
+  return {
+    verdict: "block",
+    reason: `Classifier was unavailable after ${CLASSIFIER_MAX_ATTEMPTS} attempts`,
+    source: "classifier",
+  };
 }
 
 async function evaluateGoal(
@@ -387,7 +392,7 @@ const WorkflowParameters = Type.Object({
   }),
   maxAgents: Type.Integer({ minimum: 1, maximum: 16 }),
   concurrency: Type.Integer({ minimum: 1, maximum: 8 }),
-  agentTimeoutMs: Type.Integer({ minimum: 1_000, maximum: 900_000 }),
+  agentTimeoutMs: Type.Integer({ minimum: MIN_CLASSIFIED_AGENT_TIMEOUT_MS, maximum: 900_000 }),
   workflowTimeoutMs: Type.Integer({ minimum: 1_000, maximum: 3_600_000 }),
   retries: Type.Integer({ minimum: 0, maximum: 3 }),
   tokenBudget: Type.Integer({ minimum: 4_000, maximum: 5_000_000 }),

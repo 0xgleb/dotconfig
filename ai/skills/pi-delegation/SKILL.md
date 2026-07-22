@@ -87,7 +87,9 @@ Every workflow must specify the smallest sufficient:
 
 - total agent limit;
 - concurrency limit;
-- per-agent and whole-workflow timeouts;
+- per-agent and whole-workflow timeouts (classified children require at least
+  180 seconds per agent so spawn classification, child execution, tool-result
+  classification, and return classification all fit);
 - retry limit;
 - total token budget.
 

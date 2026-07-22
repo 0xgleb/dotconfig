@@ -4,6 +4,7 @@ import {
   deterministicDecision,
   deterministicToolResultDecision,
   MIN_AGENT_TOKEN_RESERVATION,
+  MIN_CLASSIFIED_AGENT_TIMEOUT_MS,
   minimumRetryEnvelopeMs,
   parseClassifierDecision,
   runWorkflowScript,
@@ -377,6 +378,10 @@ test("classifier decisions are strict JSON and fail closed", () => {
   });
   assert.equal(parseClassifierDecision("allow").verdict, "block");
   assert.equal(parseClassifierDecision('{"verdict":"maybe"}').verdict, "block");
+});
+
+test("classified workflow tools reserve enough wall time for both classifier boundaries and child execution", () => {
+  assert.equal(MIN_CLASSIFIED_AGENT_TIMEOUT_MS, 180_000);
 });
 
 test("workflow JavaScript can fan out and synthesize", async () => {

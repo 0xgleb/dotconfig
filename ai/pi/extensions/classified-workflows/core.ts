@@ -48,6 +48,7 @@ export interface WorkflowDependencies {
 }
 
 export const MIN_AGENT_TOKEN_RESERVATION = 4_000;
+export const MIN_CLASSIFIED_AGENT_TIMEOUT_MS = 180_000;
 const RETRY_BACKOFF_BASE_MS = 500;
 const RETRY_BACKOFF_MAX_MS = 5_000;
 
