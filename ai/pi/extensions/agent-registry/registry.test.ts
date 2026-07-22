@@ -7,7 +7,7 @@ import test from "node:test";
 import { DatabaseSync } from "node:sqlite";
 import { Effect } from "effect";
 import { makeSqliteRegistryStore } from "./sqlite-store.ts";
-import { type AgentIdentity, type RegistryStore } from "./registry.ts";
+import { reconcileSessionLease, type AgentIdentity, type RegistryStore } from "./registry.ts";
 
 const withStores: (
   run: (first: RegistryStore, second: RegistryStore, root: string) => Promise<void>,
@@ -157,6 +157,27 @@ test("policy revision changes suspend rather than silently upgrade a lease", asy
     );
     assert.equal(heartbeat.status, "suspended");
     assert.equal(heartbeat.reason, "policy_changed");
+  });
+});
+
+test("session start rebinds an owned suspended lease to the newly loaded policy", async () => {
+  await withStores(async (store) => {
+    const initial = await Effect.runPromise(
+      store.claim({ agent: agent("agent-a"), project: "/workspace/project", role: "operator", mode: "operational", policyDigest: "p1", now: 1_000, ttlMs: 10_000 }),
+    );
+    assert.equal(initial.outcome, "claimed");
+    const suspended = await Effect.runPromise(
+      store.heartbeat({ leaseId: initial.lease.id, agentId: "agent-a", policyDigest: "p2", now: 1_010, ttlMs: 10_000 }),
+    );
+    assert.equal(suspended.status, "suspended");
+
+    const rebound = await Effect.runPromise(
+      reconcileSessionLease({ store, agent: agent("agent-a"), project: "/workspace/project", role: "operator", mode: "operational", policyDigest: "p2", now: 1_020, ttlMs: 10_000 }),
+    );
+    assert.equal(rebound.outcome, "claimed");
+    assert.notEqual(rebound.lease.id, initial.lease.id);
+    assert.equal(rebound.lease.policyDigest, "p2");
+    assert.equal(rebound.lease.status, "active");
   });
 });
 

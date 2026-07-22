@@ -25,6 +25,18 @@ test("screenshot paths render as markers and expand only for submission", () => 
   assert.equal(second.state.paths.size, 2);
 });
 
+test("multiple screenshot paths pasted together become independent attachments", () => {
+  const firstPath =
+    "/var/folders/_4/rw1_bp053k5cl_mv2jg2854w0000gn/T/TemporaryItems/NSIRD_screencaptureui_qRKFSF/Screenshot 2026-07-22 at 19.21.54.png";
+  const secondPath =
+    "/var/folders/_4/rw1_bp053k5cl_mv2jg2854w0000gn/T/TemporaryItems/NSIRD_screencaptureui_WMzzgp/Screenshot 2026-07-22 at 19.22.07.png";
+  const redacted = redactEditorScreenshot(`${firstPath}\n${secondPath}`, emptyEditorAttachmentState());
+
+  assert.equal(redacted.text, "[Image 1]\n[Image 2]");
+  assert.equal(redacted.state.paths.size, 2);
+  assert.equal(expandEditorScreenshots(redacted.text, redacted.state), `${firstPath}\n${secondPath}`);
+});
+
 test("ordinary editor text is unchanged", () => {
   const state = emptyEditorAttachmentState();
   assert.deepEqual(redactEditorScreenshot("hello", state), { text: "hello", state });

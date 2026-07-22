@@ -8,7 +8,14 @@ import { isContinuationPaused } from "../shared/continuation-pause.ts";
 import { makeSqliteRegistryStore } from "./sqlite-store.ts";
 import { registryStateRoot } from "./paths.ts";
 import { registryListText, registryWidgetLines, requestNotificationText } from "./presentation.ts";
-import { RegistryError, type AgentIdentity, type Lease, type RegistryRequest, type RegistrySnapshot } from "./registry.ts";
+import {
+  reconcileSessionLease,
+  RegistryError,
+  type AgentIdentity,
+  type Lease,
+  type RegistryRequest,
+  type RegistrySnapshot,
+} from "./registry.ts";
 
 const HEARTBEAT_MS = 15_000;
 const LEASE_TTL_MS = 90_000;
@@ -59,6 +66,7 @@ const requireText: (label: string, value: string | undefined) => string = (label
 const registryExtension: (pi: ExtensionAPI) => void = (pi) => {
   const store = makeSqliteRegistryStore(registryStateRoot(process.env.XDG_STATE_HOME, homedir()));
   let timer: ReturnType<typeof setInterval> | undefined;
+  let startupTimer: ReturnType<typeof setTimeout> | undefined;
   let syncing = false;
   const notifiedRequests = new Set<string>();
 
@@ -179,7 +187,8 @@ const registryExtension: (pi: ExtensionAPI) => void = (pi) => {
   const autoClaimConfigSupport = async (ctx: ExtensionContext) => {
     if (ctx.cwd !== join(homedir(), ".config")) return;
     await run(
-      store.claim({
+      reconcileSessionLease({
+        store,
         agent: identity(ctx),
         project: ctx.cwd,
         role: "pi-support",
@@ -191,14 +200,20 @@ const registryExtension: (pi: ExtensionAPI) => void = (pi) => {
     );
   };
 
-  pi.on("session_start", async (_event, ctx) => {
+  pi.on("session_start", (_event, ctx) => {
     if (timer) clearInterval(timer);
-    await autoClaimConfigSupport(ctx).catch((error) => {
-      ctx.ui.notify(`Could not claim Pi support role: ${safeErrorMessage(error)}`, "warning");
-    });
-    await sync(ctx);
-    timer = setInterval(() => void sync(ctx), HEARTBEAT_MS);
-    timer.unref?.();
+    if (startupTimer) clearTimeout(startupTimer);
+    startupTimer = setTimeout(() => {
+      startupTimer = undefined;
+      void (async () => {
+        await autoClaimConfigSupport(ctx).catch((error) => {
+          ctx.ui.notify(`Could not claim Pi support role: ${safeErrorMessage(error)}`, "warning");
+        });
+        await sync(ctx);
+        timer = setInterval(() => void sync(ctx), HEARTBEAT_MS);
+        timer.unref?.();
+      })();
+    }, 0);
   });
 
   pi.on("agent_settled", async (_event, ctx) => {
@@ -228,7 +243,9 @@ const registryExtension: (pi: ExtensionAPI) => void = (pi) => {
 
   pi.on("session_shutdown", async (event, ctx) => {
     if (timer) clearInterval(timer);
+    if (startupTimer) clearTimeout(startupTimer);
     timer = undefined;
+    startupTimer = undefined;
     ctx.ui.setStatus(STATUS_KEY, undefined);
     ctx.ui.setStatus("agent-registry-error", undefined);
     ctx.ui.setWidget(STATUS_KEY, undefined);
@@ -255,7 +272,7 @@ const registryExtension: (pi: ExtensionAPI) => void = (pi) => {
     description: "Claim local project roles and exchange durable requests with other Pi sessions. Roles route work but grant no authority.",
     promptSnippet: "Discover local Pi role owners, claim unowned duties, and delegate durable requests",
     promptGuidelines: [
-      "Check agent_registry before fixing a Pi or operator issue another local session may own.",
+      "Delegate Pi host, extension, TUI, classifier, reload, or operator bugs encountered outside ~/.config to /Users/0xgleb/.config, role pi-support, then continue the primary task unless blocked.",
       "If a role is unowned, claim it temporarily and handle the request in the current session by default.",
       "Registry ownership never grants tools or production authority; constrained project tools and loaded instructions remain authoritative.",
       "Operational roles do not become complete merely because todos or inboxes are empty.",

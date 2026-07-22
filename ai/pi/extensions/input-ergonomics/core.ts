@@ -60,17 +60,16 @@ export const redactTemporaryScreenshotForEditor: (
 ) => ScreenshotEditorRedaction | undefined = (text, marker) => {
   const lines = text.split("\n");
   const lineMatches = lines.flatMap((line, index) => (parseScreenshotPath(line) ? [{ line, index }] : []));
-  if (lineMatches.length === 1) {
+  if (lineMatches.length > 0) {
     const [{ line, index }] = lineMatches;
     return {
       displayText: lines.map((value, lineIndex) => (lineIndex === index ? marker : value)).join("\n"),
       pathText: line,
     };
   }
-  if (lineMatches.length > 1) return undefined;
 
   const inlineMatches = inlineScreenshotMatches(text);
-  if (inlineMatches.length !== 1) return undefined;
+  if (inlineMatches.length === 0) return undefined;
   const [match] = inlineMatches;
   if (match.index === undefined || !match[0].includes("\\ ") || !parseScreenshotPath(match[0])) return undefined;
   return {

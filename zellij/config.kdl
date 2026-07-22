@@ -89,7 +89,7 @@ keybinds clear-defaults=true {
     scroll {
         bind "Alt left" { MoveFocusOrTab "left"; SwitchToMode "normal"; }
         bind "Alt down" { MoveFocus "down"; SwitchToMode "normal"; }
-        bind "Alt up" { MoveFocus "up"; SwitchToMode "normal"; }
+        // Alt up is reserved for inner applications such as Pi's queued-message editor.
         bind "Alt right" { MoveFocusOrTab "right"; SwitchToMode "normal"; }
         bind "e" { EditScrollback; SwitchToMode "normal"; }
         bind "Alt h" { MoveFocusOrTab "left"; SwitchToMode "normal"; }
@@ -152,7 +152,7 @@ keybinds clear-defaults=true {
     shared_except "locked" "scroll" {
         bind "Alt left" { MoveFocusOrTab "left"; }
         bind "Alt down" { MoveFocus "down"; }
-        bind "Alt up" { MoveFocus "up"; }
+        // Alt up is reserved for inner applications such as Pi's queued-message editor.
         bind "Alt right" { MoveFocusOrTab "right"; }
         bind "Alt h" { MoveFocusOrTab "left"; }
         bind "Alt j" { MoveFocus "down"; }
