@@ -35,8 +35,10 @@
   "pi": {
     "extensions": [
       "./classified-workflows/index.ts",
+      "./browser-control/index.ts",
       "./compact-footer/index.ts",
       "./compact-read/index.ts",
+      "./input-ergonomics/index.ts",
       "./pi-vim/index.ts",
       "./todo/index.ts"
     ]

@@ -1,9 +1,14 @@
 {
   "defaultProvider": "openai-codex",
-  "defaultModel": "gpt-5.5",
+  "defaultModel": "gpt-5.6-sol",
   "defaultThinkingLevel": "high",
+  "theme": "archeofuturism",
+  "themes": [
+    "/Users/0xgleb/.config/ai/pi/themes"
+  ],
   "enableInstallTelemetry": false,
   "packages": [
-    "/Users/0xgleb/.config/ai/pi/extensions"
+    "/Users/0xgleb/.config/ai/pi/extensions",
+    "npm:pi-hermes-memory@0.8.1"
   ]
 }

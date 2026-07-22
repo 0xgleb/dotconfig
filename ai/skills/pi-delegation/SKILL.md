@@ -57,7 +57,10 @@ Capture the pane ID returned by Zellij. Use structured pane state to determine w
 the process exits and preserve its exit status. Collect the final plain-text output
 with `dump-screen --full`.
 
-Keep completed panes visible so the user can inspect or close them normally.
+Harvest each completed pane's output and exit status promptly, then close the
+pane automatically so finished workers do not linger. Keep failed panes visible
+only long enough to capture diagnostics, then close them too unless the user
+explicitly asks to preserve worker panes.
 
 If a pane exits unsuccessfully or produces no usable result, mark that worker as
 failed. Never infer or invent its answer.

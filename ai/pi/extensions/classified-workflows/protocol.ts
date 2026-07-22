@@ -5,6 +5,25 @@ export interface PiProcessSummary {
   errorMessage?: string;
 }
 
+export const boundedDiagnosticTail: (current: string, chunk: string, maxCharacters: number) => string = (
+  current,
+  chunk,
+  maxCharacters,
+) => {
+  if (!Number.isSafeInteger(maxCharacters) || maxCharacters < 1) {
+    throw new Error("Diagnostic limit must be a positive integer.");
+  }
+  return `${current}${chunk}`.slice(-maxCharacters);
+};
+
+export const sanitizeProcessDiagnostic: (input: string) => string = (input) =>
+  input
+    .replace(/(authorization\s*:\s*bearer\s+)[^\s]+/gi, "$1[REDACTED]")
+    .replace(/\b(api[_-]?key|token|password|secret)\b(\s*[:=]\s*)("[^"]*"|'[^']*'|[^\s]+)/gi, "$1$2[REDACTED]")
+    .replace(/(https?:\/\/)[^/\s:@]+:[^@\s/]+@/gi, "$1[REDACTED]@")
+    .replace(/\bsk-[A-Za-z0-9_-]{8,}\b/g, "[REDACTED]")
+    .trim();
+
 function nonNegativeNumber(value: unknown): number {
   return typeof value === "number" && Number.isFinite(value) && value > 0 ? value : 0;
 }

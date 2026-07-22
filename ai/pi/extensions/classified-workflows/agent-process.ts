@@ -1,6 +1,20 @@
 import type { AgentRequest } from "./core.ts";
 
-export function buildAgentArguments(request: AgentRequest, extensionPath: string): string[] {
+export const AGENT_PROCESS_STDIO = ["ignore", "pipe", "pipe"] as const;
+
+export const qualifyAgentModel: (
+  requestedModel: string | undefined,
+  parentProvider: string | undefined,
+  existsInParentProvider: boolean,
+) => string | undefined = (requestedModel, parentProvider, existsInParentProvider) => {
+  if (!requestedModel || !parentProvider || !existsInParentProvider || requestedModel.includes("/")) return requestedModel;
+  return `${parentProvider}/${requestedModel}`;
+};
+
+export const buildAgentArguments: (request: AgentRequest, extensionPath: string) => string[] = (
+  request,
+  extensionPath,
+) => {
   const requestedTools = request.tools ?? ["read", "grep", "find", "ls"];
   const tools = requestedTools.filter((tool) => AGENT_TOOLS.has(tool));
   if (tools.length !== requestedTools.length || tools.length === 0) throw new Error("Agent requested an unsupported tool");
@@ -23,6 +37,6 @@ export function buildAgentArguments(request: AgentRequest, extensionPath: string
   if (request.thinking) args.push("--thinking", request.thinking);
   args.push(request.task);
   return args;
-}
+};
 
 const AGENT_TOOLS = new Set(["read", "grep", "find", "ls", "bash", "edit", "write"]);

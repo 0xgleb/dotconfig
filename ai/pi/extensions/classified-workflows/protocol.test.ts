@@ -1,6 +1,6 @@
 import assert from "node:assert/strict";
 import test from "node:test";
-import { summarizePiJsonLines } from "./protocol.ts";
+import { boundedDiagnosticTail, sanitizeProcessDiagnostic, summarizePiJsonLines } from "./protocol.ts";
 
 test("JSON event summaries use the last assistant text and aggregate usage", () => {
   const summary = summarizePiJsonLines([
@@ -34,6 +34,21 @@ test("JSON event summaries use the last assistant text and aggregate usage", () 
     stopReason: "stop",
     errorMessage: undefined,
   });
+});
+
+test("stderr diagnostics retain only a bounded tail", () => {
+  assert.equal(boundedDiagnosticTail("12345", "67890", 6), "567890");
+  assert.equal(boundedDiagnosticTail("", "short", 10), "short");
+  assert.throws(() => boundedDiagnosticTail("", "x", 0), /positive/i);
+});
+
+test("process diagnostics redact common credential shapes", () => {
+  const diagnostic = sanitizeProcessDiagnostic(
+    "Authorization: Bearer bearer-secret api_key=api-secret password: pass-secret https://user:pw@example.test/path\nmodel not found",
+  );
+  assert.doesNotMatch(diagnostic, /bearer-secret|api-secret|pass-secret|user:pw/i);
+  assert.match(diagnostic, /\[REDACTED\]/);
+  assert.match(diagnostic, /model not found/);
 });
 
 test("error metadata is retained without exposing non-assistant events", () => {

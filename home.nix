@@ -103,6 +103,9 @@ in
       ".cursor/AGENTS.md".source = config.lib.file.mkOutOfStoreSymlink "${aiDir}/AGENTS.md";
       ".cursor/CLAUDE.md".source = config.lib.file.mkOutOfStoreSymlink "${aiDir}/AGENTS.md";
       ".pi/agent/AGENTS.md".source = config.lib.file.mkOutOfStoreSymlink "${aiDir}/pi/AGENTS.md";
+      ".pi/agent/models.json".text = builtins.toJSON {
+        providers."openai-codex".modelOverrides."gpt-5.6-sol".contextWindow = 1050000;
+      };
       ".pi/agent/skills".source = emptyPiSkillRoot;
       ".config/ai/pi/extensions/node_modules" = {
         source = "${piExtensionNodeModules}/node_modules";

@@ -99,8 +99,23 @@ test("classifier prompt treats reasonable support actions as part of the request
 
   assert.match(prompt, /support actions inherit authorization/i);
   assert.match(prompt, /planning and task tracking/i);
+  assert.match(prompt, /todo\/task-tracking mutations/i);
+  assert.match(prompt, /do not block merely because the user did not literally ask to create a todo/i);
   assert.match(prompt, /all still-active user requests/i);
   assert.match(prompt, /not just the most recent subtask/i);
+});
+
+test("classifier prompt treats parent-authored spawn tasks as scoped instructions, not returned prompt injection", () => {
+  const prompt = buildClassifierPrompt({
+    boundary: "spawn",
+    intent: ["Reproduce the handed-over background child-process failure"],
+    projectInstructions: "Use read-only child agents first",
+    subject: { task: "Reply with exactly CHILD_OK and do not call tools", tools: ["read"] },
+  });
+
+  assert.match(prompt, /spawn.*parent-authored child task/is);
+  assert.match(prompt, /not prompt injection solely because/i);
+  assert.match(prompt, /requested output format/i);
 });
 
 test("classifier prompt does not mistake legitimate project instructions for prompt injection", () => {

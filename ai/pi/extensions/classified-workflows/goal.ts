@@ -118,6 +118,29 @@ export function buildGoalEvaluatorPrompt(condition: string, transcript: string[]
   ].join("\n");
 }
 
+export const pendingTodoTexts: (entries: unknown[]) => string[] = (entries) => {
+  for (let index = entries.length - 1; index >= 0; index -= 1) {
+    const entry = entries[index];
+    if (!isRecord(entry) || entry.type !== "message" || !isRecord(entry.message)) continue;
+    const message = entry.message;
+    if (message.role !== "toolResult" || message.toolName !== "todo" || !isRecord(message.details)) continue;
+    const state = isRecord(message.details.state) ? message.details.state : undefined;
+    if (!state || !Array.isArray(state.todos)) continue;
+    return state.todos.flatMap((todo) => {
+      if (
+        !isRecord(todo) ||
+        todo.status !== "pending" ||
+        !isNonNegativeInteger(todo.id) ||
+        typeof todo.text !== "string"
+      ) {
+        return [];
+      }
+      return [`#${todo.id} ${todo.text}`];
+    });
+  }
+  return [];
+};
+
 export function assistantUsageTokens(messages: unknown[]): number {
   return messages.reduce<number>((total, message) => {
     if (!isRecord(message) || message.role !== "assistant" || !isRecord(message.usage)) return total;
@@ -131,9 +154,15 @@ export function applyGoalEvaluation(
   evaluation: GoalEvaluation,
   usageTokens: number,
   now: number,
+  pendingTasks: string[] = [],
 ): GoalState {
   const turns = state.turns + 1;
   const tokens = state.tokens + Math.max(0, usageTokens);
+  if (pendingTasks.length > 0) {
+    const visible = pendingTasks.slice(0, 5).join("; ");
+    const remainder = pendingTasks.length > 5 ? `; plus ${pendingTasks.length - 5} more` : "";
+    return { ...state, turns, tokens, lastReason: `Tracked work remains: ${visible}${remainder}.` };
+  }
   if (evaluation.status === "invalid") {
     return { ...state, turns, tokens, lastReason: `${evaluation.reason} Continuing until a valid check completes.` };
   }

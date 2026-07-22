@@ -8,6 +8,7 @@ import {
   parseGoalCommand,
   parseGoalEvaluation,
   parseStoredGoal,
+  pendingTodoTexts,
   restoreGoal,
   type GoalState,
 } from "./goal.ts";
@@ -54,6 +55,56 @@ test("unmet goals continue with updated counters and reason", () => {
       lastReason: "lint remains",
     },
   );
+});
+
+test("pending branch-aware todos prevent optimistic goal completion", () => {
+  const guarded = applyGoalEvaluation(
+    active,
+    { status: "valid", met: true, reason: "looks complete" },
+    50,
+    2_000,
+    ["Fix child workflow exits", "Commit and push"],
+  );
+  assert.equal(guarded.status, "active");
+  assert.match(guarded.lastReason ?? "", /tracked work remains/i);
+  assert.match(guarded.lastReason ?? "", /Fix child workflow exits/);
+});
+
+test("latest todo snapshot supplies pending completion evidence", () => {
+  const entries = [
+    {
+      type: "message",
+      message: {
+        role: "toolResult",
+        toolName: "todo",
+        details: {
+          outcome: "success",
+          action: "add",
+          state: { todos: [{ id: 1, text: "Old task", status: "pending" }], nextId: 2 },
+        },
+      },
+    },
+    {
+      type: "message",
+      message: {
+        role: "toolResult",
+        toolName: "todo",
+        details: {
+          outcome: "success",
+          action: "toggle",
+          state: {
+            todos: [
+              { id: 1, text: "Old task", status: "completed" },
+              { id: 2, text: "Finish handover", status: "pending" },
+            ],
+            nextId: 3,
+          },
+        },
+      },
+    },
+  ];
+  assert.deepEqual(pendingTodoTexts(entries), ["#2 Finish handover"]);
+  assert.deepEqual(pendingTodoTexts([{ type: "wrong" }]), []);
 });
 
 test("met goals become achieved and invalid evaluations keep the goal active", () => {

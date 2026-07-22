@@ -18,6 +18,7 @@ import { handleNormalMode, type NormalModeContext } from "./modes/normal.ts";
 import { handleInsertMode, type InsertModeContext } from "./modes/insert.ts";
 import { handleReplaceMode, resetReplaceState, type ReplaceModeContext } from "./modes/replace.ts";
 import { handleVisualMode, getVisualRange, type VisualModeContext } from "./modes/visual.ts";
+import { DoubleEnterSteering } from "./steering.ts";
 import {
   handleSearchInput,
   getSearchPrompt,
@@ -25,10 +26,17 @@ import {
   executeSearchMotion,
 } from "./search.ts";
 
+export interface VimSteeringOptions {
+  readonly isStreaming: () => boolean;
+  readonly onImmediate: (text: string) => void;
+}
+
 export class VimEditor extends CustomEditor {
   public vimState: VimState;
   private redoStack: Array<{ lines: string[]; cursorLine: number; cursorCol: number }> = [];
   private wrapAutocomplete: ((provider: AutocompleteProvider) => AutocompleteProvider) | undefined;
+  private readonly doubleEnterSteering?: DoubleEnterSteering;
+  private readonly isStreaming: () => boolean;
 
   /**
    * DECSCUSR cursor styles:
@@ -44,10 +52,22 @@ export class VimEditor extends CustomEditor {
     keybindings: any,
     options?: EditorOptions,
     wrapAutocomplete?: (provider: AutocompleteProvider) => AutocompleteProvider,
+    steering?: VimSteeringOptions,
   ) {
     super(tui, theme, keybindings, options);
     this.vimState = createInitialState();
     this.wrapAutocomplete = wrapAutocomplete;
+    this.isStreaming = steering?.isStreaming ?? (() => false);
+    this.doubleEnterSteering = steering
+      ? new DoubleEnterSteering({
+          windowMs: 350,
+          onSubmit: (text) => this.onSubmit?.(text),
+          onImmediate: (text) => {
+            this.addToHistory(text);
+            steering.onImmediate(text);
+          },
+        })
+      : undefined;
     this.applyCursorShapeForMode(this.vimState.mode);
   }
 
@@ -124,6 +144,12 @@ export class VimEditor extends CustomEditor {
   }
 
   handleInput(data: string): void {
+    if (matchesKey(data, "enter") && this.doubleEnterSteering) {
+      const result = this.doubleEnterSteering.handleEnter(this.getText(), this.isStreaming());
+      if (result === "deferred") this.setText("");
+      if (result !== "pass") return;
+    }
+
     const { vimState } = this;
     const modeBefore = vimState.mode;
     const textBefore = this.getText();

@@ -2,6 +2,7 @@ import assert from "node:assert/strict";
 import test from "node:test";
 import {
   deterministicDecision,
+  deterministicToolResultDecision,
   parseClassifierDecision,
   runWorkflowScript,
   type AgentRequest,
@@ -68,14 +69,25 @@ test("writes inside the working directory are allowed", () => {
   assert.equal(decision?.verdict, "allow");
 });
 
-test("todo tracking requires classifier review because its text is persisted", () => {
-  const decision = deterministicDecision({
-    boundary: "action",
-    toolName: "todo",
-    input: { action: "add", text: "Move the Graphite stack" },
-    cwd: "/repo",
-  });
-  assert.equal(decision, null);
+test("todo tracking is allowed as session-local agent work support", () => {
+  for (const input of [
+    { action: "list" },
+    { action: "add", text: "Move the Graphite stack" },
+    { action: "toggle", id: 1 },
+    { action: "clear" },
+  ]) {
+    const decision = deterministicDecision({
+      boundary: "action",
+      toolName: "todo",
+      input,
+      cwd: "/repo",
+    });
+    assert.deepEqual(decision, {
+      verdict: "allow",
+      reason: "Session-local agent work tracking",
+      source: "deterministic",
+    });
+  }
 });
 
 test("shell and unknown tools require classifier review", () => {
@@ -88,6 +100,19 @@ test("shell and unknown tools require classifier review", () => {
     }),
     null,
   );
+});
+
+test("locally generated mutation acknowledgements bypass result classification", () => {
+  for (const toolName of ["edit", "write", "todo"]) {
+    assert.deepEqual(deterministicToolResultDecision(toolName), {
+      verdict: "allow",
+      reason: "Locally generated mutation acknowledgement",
+      source: "deterministic",
+    });
+  }
+  assert.equal(deterministicToolResultDecision("read"), null);
+  assert.equal(deterministicToolResultDecision("bash"), null);
+  assert.equal(deterministicToolResultDecision("browser"), null);
 });
 
 test("broad searches require explicit credential exclusions", () => {

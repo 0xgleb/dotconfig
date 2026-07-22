@@ -28,7 +28,18 @@ export default function (pi: ExtensionAPI) {
 
   pi.on("session_start", (_event, ctx) => {
     ctx.ui.setEditorComponent((tui, theme, keybindings) =>
-      new VimEditor(tui, theme, keybindings, undefined, wrapAutocomplete)
+      new VimEditor(tui, theme, keybindings, undefined, wrapAutocomplete, {
+        isStreaming: () => !ctx.isIdle(),
+        onImmediate: (text) => {
+          if (ctx.isIdle()) {
+            pi.sendUserMessage(text);
+            return;
+          }
+          pi.sendUserMessage(text, { deliverAs: "followUp" });
+          ctx.abort();
+          ctx.ui.notify("Interrupted the current turn and delivered steering immediately.", "info");
+        },
+      })
     );
   });
 }

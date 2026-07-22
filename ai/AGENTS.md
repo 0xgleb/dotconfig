@@ -206,6 +206,10 @@ overhead.
 ## Code Style
 
 - Prefer functional programming patterns
+- In TypeScript and JavaScript, prefer `const`-bound arrow functions over
+  `function` declarations. Use an explicit callable type when it clarifies the
+  public contract; reserve declarations for overloads, generators, or APIs that
+  specifically require declaration semantics.
 - Use strict compiler and linter settings
 - Comprehensive test coverage is expected
 - Model types properly - use the type system to make invalid states
@@ -404,6 +408,45 @@ When the user redirects to a new issue, **do not delete the planning for the
 issues you are not working on yet** -- keep their tasks in `pending` or move
 them to a `[parked]`-style metadata flag, but the granular breakdown stays so
 it is ready to pick up when the active issue is done.
+
+## Session Handover Protocol
+
+Use the `/handover` skill as the standard cooperation boundary between long,
+compacted, usage-limited, or parallel human-agent sessions.
+
+### Outgoing sessions
+
+- Invoke `/handover` proactively when the user asks to transfer work, another
+  session is expected to continue it, or context/usage limits threaten reliable
+  continuation. Do not leave transfer state only in conversational memory.
+- Produce the skill's workspace-level handover document and continuation prompt
+  from verified repository state. Never stage or commit the temporary artifact.
+- A handover transfers responsibility; it does not mark unfinished todos done.
+  Preserve every pending request, blocker, decision, and exact pause point.
+
+### Receiving sessions
+
+- When the user says a handover exists, or a continuation prompt names one,
+  read that handover before resuming implementation. Treat its user requests as
+  still-active intent unless the current user message cancels or supersedes them.
+- Record **every** transferred request, feedback item, blocker, and concrete next
+  step in the branch-aware todo list before doing further work. Deduplicate
+  equivalent existing tasks, but never silently drop or collapse requirements.
+- Reconcile the handover against current Git state and current project
+  instructions before editing; handovers can become stale and never override
+  higher-priority or newer user direction.
+- Briefly surface what was imported into the task list so the human can see that
+  the transfer succeeded, then continue autonomously from the named pause point.
+
+### Continuity rules
+
+- If another session is told to run `/handover`, the receiving session owns
+  discovering, ingesting, tracking, and completing that transferred work.
+- After compaction or resume, use the todo list plus any active handover as the
+  continuity source. Ask the user only when those artifacts and repository state
+  genuinely cannot resolve an ambiguity.
+- Never copy secrets into handovers or todos; name the relevant configuration
+  key or protected location instead.
 
 ## Subagent Delegation
 

@@ -49,6 +49,8 @@ export interface WorkflowDependencies {
 
 const READ_ONLY_TOOLS = new Set(["read", "grep", "find", "ls"]);
 const WRITE_TOOLS = new Set(["edit", "write"]);
+const TODO_ACTIONS = new Set(["list", "add", "toggle", "clear"]);
+const LOCALLY_GENERATED_RESULT_TOOLS = new Set(["edit", "write", "todo"]);
 const PATH_KEYS = new Set(["path", "file_path", "cwd", "glob"]);
 const SENSITIVE_PATH =
   /(^|[\\/\s'"])(?:\.env(?!\.example(?:$|[\\/\s'"]))(?:\.[^\\/\s'"]*)?|credentials\.json|secrets\.(?:json|ya?ml)|auth\.json|\.npmrc|\.netrc|\.pypirc|id_(?:rsa|dsa|ecdsa|ed25519)(?:\.pub)?|[^\\/\s'"]+\.(?:key|pem|p12|pfx))($|[\\/\s'"])/i;
@@ -133,6 +135,14 @@ export function deterministicDecision(request: ToolRequest): Decision | null {
     };
   }
 
+  if (request.toolName === "todo" && TODO_ACTIONS.has(String(request.input.action))) {
+    return {
+      verdict: "allow",
+      reason: "Session-local agent work tracking",
+      source: "deterministic",
+    };
+  }
+
   if (WRITE_TOOLS.has(request.toolName)) {
     const candidate = request.input.path ?? request.input.file_path;
     if (typeof candidate === "string" && isInsideCwd(candidate, request.cwd)) {
@@ -145,6 +155,16 @@ export function deterministicDecision(request: ToolRequest): Decision | null {
   }
 
   return null;
+}
+
+export function deterministicToolResultDecision(toolName: string): Decision | null {
+  return LOCALLY_GENERATED_RESULT_TOOLS.has(toolName)
+    ? {
+        verdict: "allow",
+        reason: "Locally generated mutation acknowledgement",
+        source: "deterministic",
+      }
+    : null;
 }
 
 export function parseClassifierDecision(text: string): Decision {
