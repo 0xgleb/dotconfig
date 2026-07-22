@@ -17,7 +17,7 @@ test("shared and Pi-global instructions enforce disk-pressure hygiene", () => {
 test("shared and Pi-global instructions route work through the agent registry", () => {
   for (const [name, contents] of [["shared", shared], ["Pi global", pi]] as const) {
     assert.match(contents, /check `agent_registry`/i, `${name} must discover role owners`);
-    assert.match(contents, /delegate to the live role owner/i, `${name} must route owned work`);
+    assert.match(contents, /delegate\s+to the live role owner/i, `${name} must route owned work`);
     assert.match(contents, /unowned.*claim.*temporarily/is, `${name} must self-claim by default`);
     assert.match(contents, /role never\s+grants authority/i, `${name} must separate routing from authority`);
     assert.match(contents, /operational role.*not done.*inbox.*empty/is, `${name} must preserve operational ownership`);
@@ -27,6 +27,7 @@ test("shared and Pi-global instructions route work through the agent registry", 
 test("Pi-global instructions delegate Pi infrastructure bugs to the standing support operator", () => {
   assert.match(pi, /Pi host, extension, TUI, auto-classifier, delegation, reload, or operator/i);
   assert.match(pi, /project `\/Users\/0xgleb\/\.config`, role `pi-support`/i);
+  assert.match(pi, /queue.*without self-claiming.*dedicated role/is);
   assert.match(pi, /continue.*primary project task.*without duplicating/is);
 });
 

@@ -614,7 +614,7 @@ const [verifications, sweep] = await parallel([
       `have introduced. Report new_issues only for problems caused by or ` +
       `directly adjacent to the fix.`,
       { label: `verify-fix:${finding.title}`, phase: 'Verify fixes',
-        model: 'sonnet', schema: VERIFY_FIX_SCHEMA },
+        model: 'openai-codex/gpt-5.6-luna', schema: VERIFY_FIX_SCHEMA },
     ).then(result => result && ({ finding, ...result })))),
   () => agent(
     `You are a senior staff engineer reviewing a set of fixes applied in ` +
@@ -626,7 +626,7 @@ const [verifications, sweep] = await parallel([
     `project docs. Apply the same bar as a full review — correctness ` +
     `first, no style nits, nothing the compiler or linter would catch. ` +
     `Return findings, or an empty list with clean_reason if clean.`,
-    { label: 'delta-sweep', phase: 'Sweep', model: 'opus',
+    { label: 'delta-sweep', phase: 'Sweep', model: 'openai-codex/gpt-5.6-luna',
       schema: SWEEP_SCHEMA }),
 ])
 

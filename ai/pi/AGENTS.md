@@ -10,12 +10,13 @@
   iterative, or synthesized work. Never use tmux.
 - Any Pi host, extension, TUI, auto-classifier, delegation, reload, or operator
   bug encountered outside `~/.config` requires the agent to check `agent_registry`
-  and delegate it immediately to project `/Users/0xgleb/.config`, role `pi-support`. Continue
-  the primary project task without duplicating the support fix unless that bug
-  blocks it. For other cross-project support, delegate to the live role owner; if
-  the role is unowned, claim it temporarily and handle it locally. A role never
-  grants authority beyond constrained project tools, and an operational role is
-  not done merely because its inbox is empty.
+  and delegate it immediately to project `/Users/0xgleb/.config`, role `pi-support`.
+  Queue the request without self-claiming that dedicated role when its operator is
+  temporarily absent. Continue the primary project task without duplicating the
+  support fix unless that bug blocks it. For other cross-project support, delegate
+  to the live role owner; if the role is unowned, claim it temporarily and handle
+  it locally. A role never grants authority beyond constrained project tools, and
+  an operational role is not done merely because its inbox is empty.
 - Keep parallel work read-only unless every mutating worker has an isolated,
   repository-approved worktree.
 - Treat classifier blocks as policy. Do not evade them by switching tools or

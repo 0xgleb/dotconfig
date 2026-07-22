@@ -3,21 +3,22 @@ import { homedir } from "node:os";
 import { join } from "node:path";
 import type { ExtensionAPI, ExtensionContext } from "@earendil-works/pi-coding-agent";
 import { Type } from "typebox";
-import { Effect } from "effect";
+import type { Effect } from "effect";
 import { isContinuationPaused } from "../shared/continuation-pause.ts";
 import { makeSqliteRegistryStore } from "./sqlite-store.ts";
-import { registryStateRoot } from "./paths.ts";
+import { registryStateRoot, shouldSelfClaimUnownedRole } from "./paths.ts";
 import { registryListText, registryWidgetLines, requestNotificationText } from "./presentation.ts";
 import {
   reconcileSessionLease,
   RegistryError,
+  runRegistryEffect,
   type AgentIdentity,
   type Lease,
   type RegistryRequest,
   type RegistrySnapshot,
 } from "./registry.ts";
 
-const HEARTBEAT_MS = 15_000;
+const SYNC_MS = 5_000;
 const LEASE_TTL_MS = 90_000;
 const STATUS_KEY = "agent-registry";
 const MESSAGE_TYPE = "agent-registry.message";
@@ -66,11 +67,14 @@ const requireText: (label: string, value: string | undefined) => string = (label
 const registryExtension: (pi: ExtensionAPI) => void = (pi) => {
   const store = makeSqliteRegistryStore(registryStateRoot(process.env.XDG_STATE_HOME, homedir()));
   let timer: ReturnType<typeof setInterval> | undefined;
-  let startupTimer: ReturnType<typeof setTimeout> | undefined;
+  let sessionPolicyDigest: string | undefined;
   let syncing = false;
+  let lastSyncError: string | undefined;
   const notifiedRequests = new Set<string>();
 
-  const run = <T>(operation: Effect.Effect<T, RegistryError>): Promise<T> => Effect.runPromise(operation);
+  const run = <T>(operation: Effect.Effect<T, RegistryError>): Promise<T> => runRegistryEffect(operation);
+
+  const currentPolicyDigest = (ctx: ExtensionContext): string => sessionPolicyDigest ?? policyDigest(ctx);
 
   const ownedLeases = (snapshot: RegistrySnapshot, agentId: string): readonly Lease[] =>
     snapshot.leases.filter(({ owner }) => owner.id === agentId);
@@ -96,20 +100,22 @@ const registryExtension: (pi: ExtensionAPI) => void = (pi) => {
     notifiedRequests.add(request.id);
   };
 
-  const sync = async (ctx: ExtensionContext) => {
+  const sync = async (ctx: ExtensionContext, notificationsEnabled = true) => {
     if (syncing) return;
     syncing = true;
     const now = Date.now();
     const agent = identity(ctx);
-    const digest = policyDigest(ctx);
+    const digest = currentPolicyDigest(ctx);
     try {
       let snapshot = await run(store.snapshot(now));
-      for (const request of snapshot.requests.filter(
-        (candidate) =>
-          candidate.requesterId === agent.id &&
-          candidate.requesterAcknowledgedAt === undefined &&
-          (candidate.status === "completed" || candidate.status === "failed" || candidate.status === "cancelled"),
-      )) {
+      for (const request of notificationsEnabled
+        ? snapshot.requests.filter(
+            (candidate) =>
+              candidate.requesterId === agent.id &&
+              candidate.requesterAcknowledgedAt === undefined &&
+              (candidate.status === "completed" || candidate.status === "failed" || candidate.status === "cancelled"),
+          )
+        : []) {
         const outcome =
           request.status === "completed"
             ? request.summary
@@ -161,7 +167,7 @@ const registryExtension: (pi: ExtensionAPI) => void = (pi) => {
             const claimed = await run(
               store.claimRequest({ requestId: request.id, leaseId: lease.id, agentId: agent.id, now }),
             );
-            notifyRequest(ctx, claimed);
+            if (notificationsEnabled) notifyRequest(ctx, claimed);
           } catch (error) {
             if (!(error instanceof RegistryError) || error.code !== "invalid_transition") throw error;
           }
@@ -169,16 +175,20 @@ const registryExtension: (pi: ExtensionAPI) => void = (pi) => {
         for (const request of snapshot.requests.filter(
           (candidate) => candidate.status === "claimed" && candidate.leaseId === lease.id,
         )) {
-          notifyRequest(ctx, request);
+          if (notificationsEnabled) notifyRequest(ctx, request);
         }
       }
       snapshot = await run(store.snapshot(now));
       render(ctx, snapshot);
+      lastSyncError = undefined;
       ctx.ui.setStatus("agent-registry-error", undefined);
     } catch (error) {
       const message = safeErrorMessage(error);
-      ctx.ui.setStatus("agent-registry-error", "registry:error");
-      ctx.ui.notify(`Agent registry: ${message}`, "error");
+      ctx.ui.setStatus("agent-registry-error", `registry:${error instanceof RegistryError ? error.code : "error"}`);
+      if (message !== lastSyncError) {
+        lastSyncError = message;
+        ctx.ui.notify(`Agent registry: ${message}`, "error");
+      }
     } finally {
       syncing = false;
     }
@@ -193,27 +203,22 @@ const registryExtension: (pi: ExtensionAPI) => void = (pi) => {
         project: ctx.cwd,
         role: "pi-support",
         mode: "operational",
-        policyDigest: policyDigest(ctx),
+        policyDigest: currentPolicyDigest(ctx),
         now: Date.now(),
         ttlMs: LEASE_TTL_MS,
       }),
     );
   };
 
-  pi.on("session_start", (_event, ctx) => {
+  pi.on("session_start", async (_event, ctx) => {
     if (timer) clearInterval(timer);
-    if (startupTimer) clearTimeout(startupTimer);
-    startupTimer = setTimeout(() => {
-      startupTimer = undefined;
-      void (async () => {
-        await autoClaimConfigSupport(ctx).catch((error) => {
-          ctx.ui.notify(`Could not claim Pi support role: ${safeErrorMessage(error)}`, "warning");
-        });
-        await sync(ctx);
-        timer = setInterval(() => void sync(ctx), HEARTBEAT_MS);
-        timer.unref?.();
-      })();
-    }, 0);
+    sessionPolicyDigest = policyDigest(ctx);
+    await autoClaimConfigSupport(ctx).catch((error) => {
+      ctx.ui.notify(`Could not claim Pi support role: ${safeErrorMessage(error)}`, "warning");
+    });
+    await sync(ctx, false);
+    timer = setInterval(() => void sync(ctx), SYNC_MS);
+    timer.unref?.();
   });
 
   pi.on("agent_settled", async (_event, ctx) => {
@@ -243,9 +248,8 @@ const registryExtension: (pi: ExtensionAPI) => void = (pi) => {
 
   pi.on("session_shutdown", async (event, ctx) => {
     if (timer) clearInterval(timer);
-    if (startupTimer) clearTimeout(startupTimer);
     timer = undefined;
-    startupTimer = undefined;
+    sessionPolicyDigest = undefined;
     ctx.ui.setStatus(STATUS_KEY, undefined);
     ctx.ui.setStatus("agent-registry-error", undefined);
     ctx.ui.setWidget(STATUS_KEY, undefined);
@@ -272,8 +276,8 @@ const registryExtension: (pi: ExtensionAPI) => void = (pi) => {
     description: "Claim local project roles and exchange durable requests with other Pi sessions. Roles route work but grant no authority.",
     promptSnippet: "Discover local Pi role owners, claim unowned duties, and delegate durable requests",
     promptGuidelines: [
-      "Delegate Pi host, extension, TUI, classifier, reload, or operator bugs encountered outside ~/.config to /Users/0xgleb/.config, role pi-support, then continue the primary task unless blocked.",
-      "If a role is unowned, claim it temporarily and handle the request in the current session by default.",
+      "Delegate Pi host, extension, TUI, classifier, reload, or operator bugs encountered outside ~/.config to /Users/0xgleb/.config, role pi-support, without self-claiming that dedicated role; then continue the primary task unless blocked.",
+      "If a non-dedicated role is unowned, claim it temporarily and handle the request in the current session by default.",
       "Registry ownership never grants tools or production authority; constrained project tools and loaded instructions remain authoritative.",
       "Operational roles do not become complete merely because todos or inboxes are empty.",
     ],
@@ -321,7 +325,7 @@ const registryExtension: (pi: ExtensionAPI) => void = (pi) => {
               project,
               role,
               mode: request.mode ?? "task",
-              policyDigest: policyDigest(ctx),
+              policyDigest: currentPolicyDigest(ctx),
               now,
               ttlMs: LEASE_TTL_MS,
             }),
@@ -353,17 +357,17 @@ const registryExtension: (pi: ExtensionAPI) => void = (pi) => {
           const text = requireText("text", request.text);
           let snapshot = await run(store.snapshot(now));
           let lease = snapshot.leases.find((candidate) => candidate.project === project && candidate.role === role);
-          let outcome: "delegated" | "self_claimed" = "delegated";
-          if (!lease) {
+          let outcome: "delegated" | "queued_unowned" | "self_claimed" = lease ? "delegated" : "queued_unowned";
+          if (!lease && shouldSelfClaimUnownedRole(project, role, ctx.cwd, homedir())) {
             const claim = await run(
-              store.claim({ agent, project, role, mode: request.mode ?? "task", policyDigest: policyDigest(ctx), now, ttlMs: LEASE_TTL_MS }),
+              store.claim({ agent, project, role, mode: request.mode ?? "task", policyDigest: currentPolicyDigest(ctx), now, ttlMs: LEASE_TTL_MS }),
             );
             lease = claim.lease;
             outcome = lease.owner.id === agent.id ? "self_claimed" : "delegated";
           }
           const queued = await run(store.enqueue({ project, role, requesterId: agent.id, text, now }));
           let durableRequest = queued;
-          if (lease.owner.id === agent.id && lease.status === "active") {
+          if (lease?.owner.id === agent.id && lease.status === "active") {
             durableRequest = await run(
               store.claimRequest({ requestId: queued.id, leaseId: lease.id, agentId: agent.id, now }),
             );
@@ -377,7 +381,9 @@ const registryExtension: (pi: ExtensionAPI) => void = (pi) => {
                 type: "text",
                 text: outcome === "self_claimed"
                   ? `No live owner existed; self-claimed ${project}/${role}. Request ${queued.id} is yours to add to todos and execute.`
-                  : `Queued request ${queued.id} for ${project}/${role}, owned by ${lease.owner.id}.`,
+                  : outcome === "queued_unowned"
+                    ? `Queued request ${queued.id} for the standing ${project}/${role} operator; do not duplicate it locally.`
+                    : `Queued request ${queued.id} for ${project}/${role}, owned by ${lease?.owner.id}.`,
               },
             ],
             details: { outcome, request: durableRequest, lease },

@@ -125,12 +125,14 @@ Keep only the paths — they become `docsPaths` for the engine.
 
 ## 6. Run the review engine
 
-**Limit-blown days:** the review must still complete. Run review-core step 1
-(cache → at most two 15s sentinels → `native-only` + `harness_tier=sonnet-only`
-when composer is out). **Every Workflow lane and `harnessModels` must use
-sonnet — never fable or opus.** Do not walk a long probe chain, do not run
-`agy`, do not stop on usage limit. If a Fable/Opus limit errors anyway, relaunch
-Workflow all-sonnet.
+**Limit-blown days:** the review must still complete. Run review-core step 1,
+but apply its provider constraint first: every native Workflow lane, verifier,
+synthesizer, inspector, and external-command wrapper uses
+`openai-codex/gpt-5.6-luna`. Never send `fable`, `sonnet`, `opus`, `claude-*`, or
+`anthropic/*` through Pi. Claude may appear only as an optional external
+`claude -p --permission-mode plan` subscription lane; cursor-agent is omitted
+while its included allowance is exhausted. If either external CLI is unavailable,
+continue the OpenAI-only panel instead of stopping.
 
 Run the shared engine in `~/.claude/skills/review-core/SKILL.md` (steps 1–7:
 panel mode → reviewer prompts → inspector prompts → lanes → the `review-panel`

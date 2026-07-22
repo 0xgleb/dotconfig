@@ -19,9 +19,20 @@ export const resolveAgentModel: (
   availableModels: readonly AvailableAgentModel[],
 ) => string | undefined = (requestedModel, parentProvider, availableModels) => {
   const requested = requestedModel?.trim();
-  if (!requested) return undefined;
+  if (!requested) {
+    if (parentProvider === "anthropic") {
+      throw new Error("Workflow children cannot inherit Anthropic API models; use a non-Claude Pi model or an external claude -p subscription lane");
+    }
+    return undefined;
+  }
   const normalized = requested.toLowerCase();
+  if (/claude|sonnet|opus|fable/.test(normalized)) {
+    throw new Error("Claude models cannot run through Pi API providers; use an external claude -p subscription lane");
+  }
   const canonical = availableModels.find((model) => modelReference(model).toLowerCase() === normalized);
+  if (canonical?.provider === "anthropic") {
+    throw new Error("Anthropic API workflow children are disabled; use an external claude -p subscription lane");
+  }
   if (canonical) return modelReference(canonical);
   if (requested.includes("/")) {
     throw new Error(`Workflow model ${requested} is unavailable or has no configured authentication`);

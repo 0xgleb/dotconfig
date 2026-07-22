@@ -7,7 +7,13 @@ import test from "node:test";
 import { DatabaseSync } from "node:sqlite";
 import { Effect } from "effect";
 import { makeSqliteRegistryStore } from "./sqlite-store.ts";
-import { reconcileSessionLease, type AgentIdentity, type RegistryStore } from "./registry.ts";
+import {
+  reconcileSessionLease,
+  RegistryError,
+  runRegistryEffect,
+  type AgentIdentity,
+  type RegistryStore,
+} from "./registry.ts";
 
 const withStores: (
   run: (first: RegistryStore, second: RegistryStore, root: string) => Promise<void>,
@@ -44,6 +50,11 @@ const agent: (id: string) => AgentIdentity = (id) => ({
   id,
   pid: id === "agent-a" ? 101 : 202,
   model: "openai-codex/gpt-5.6-sol",
+});
+
+test("registry Effect runner preserves typed operational failures", async () => {
+  const failure = new RegistryError({ code: "busy", message: "registry is busy" });
+  await assert.rejects(runRegistryEffect(Effect.fail(failure)), (error) => error === failure);
 });
 
 test("concurrent claims produce exactly one exclusive role owner", async () => {
@@ -307,6 +318,26 @@ test("store construction defers filesystem failures into the Effect error channe
   }
 });
 
+test("legacy v1 databases migrate requester acknowledgements before sync", async () => {
+  await withStores(async (store, _second, root) => {
+    await Effect.runPromise(store.snapshot(0));
+    const legacy = new DatabaseSync(join(root, "registry.sqlite"));
+    legacy.exec("ALTER TABLE requests DROP COLUMN requester_acknowledged_at; PRAGMA user_version = 1;");
+    legacy.close();
+
+    await Effect.runPromise(store.snapshot(1));
+    const migrated = new DatabaseSync(join(root, "registry.sqlite"), { readOnly: true });
+    assert.equal(migrated.prepare("PRAGMA user_version").get()?.user_version, 2);
+    assert.ok(
+      migrated
+        .prepare("PRAGMA table_info(requests)")
+        .all()
+        .some((column) => column.name === "requester_acknowledged_at"),
+    );
+    migrated.close();
+  });
+});
+
 test("malformed input and unknown schema versions fail closed", async () => {
   await withStores(async (store, _second, root) => {
     await assert.rejects(
@@ -342,7 +373,7 @@ test("SQLite adapter commits complete versioned state", async () => {
     );
     const database = new DatabaseSync(join(root, "registry.sqlite"), { readOnly: true });
     try {
-      assert.equal(database.prepare("PRAGMA user_version").get()?.user_version, 1);
+      assert.equal(database.prepare("PRAGMA user_version").get()?.user_version, 2);
       assert.equal(database.prepare("SELECT COUNT(*) AS count FROM leases").get()?.count, 1);
       assert.equal(database.prepare("SELECT COUNT(*) AS count FROM requests").get()?.count, 0);
     } finally {

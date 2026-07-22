@@ -23,7 +23,7 @@ import {
   type ReleaseLeaseInput,
 } from "./registry.ts";
 
-const SCHEMA_VERSION = 1;
+const SCHEMA_VERSION = 2;
 const MAX_LEASES = 1_024;
 const MAX_REQUESTS = 10_000;
 const MAX_REQUEST_TEXT = 8_000;
@@ -210,48 +210,76 @@ const requestFromRow: (row: Row) => RegistryRequest = (row) => {
   throw registryError("corrupt_state", "registry request status is malformed");
 };
 
+const schemaVersion: (database: DatabaseSync) => number = (database) =>
+  numberField(rowFrom(database.prepare("PRAGMA user_version").get()), "user_version");
+
 const initialize: (database: DatabaseSync, databasePath: string) => void = (database, databasePath) => {
   database.exec(`PRAGMA busy_timeout = ${BUSY_TIMEOUT_MS};`);
-  const version = rowFrom(database.prepare("PRAGMA user_version").get());
-  const currentVersion = numberField(version, "user_version");
-  if (currentVersion !== 0 && currentVersion !== SCHEMA_VERSION) {
-    throw registryError("corrupt_state", `unsupported agent registry schema version ${currentVersion}`);
+  const observedVersion = schemaVersion(database);
+  if (observedVersion === SCHEMA_VERSION) {
+    chmodSync(databasePath, 0o600);
+    return;
   }
-  database.exec(`
-    CREATE TABLE IF NOT EXISTS leases (
-      project TEXT NOT NULL,
-      role TEXT NOT NULL,
-      lease_id TEXT NOT NULL UNIQUE,
-      mode TEXT NOT NULL,
-      owner_id TEXT NOT NULL,
-      owner_pid INTEGER NOT NULL,
-      owner_model TEXT,
-      policy_digest TEXT NOT NULL,
-      acquired_at INTEGER NOT NULL,
-      heartbeat_at INTEGER NOT NULL,
-      expires_at INTEGER NOT NULL,
-      status TEXT NOT NULL,
-      reason TEXT,
-      PRIMARY KEY (project, role)
-    ) STRICT;
-    CREATE TABLE IF NOT EXISTS requests (
-      request_id TEXT PRIMARY KEY,
-      project TEXT NOT NULL,
-      role TEXT NOT NULL,
-      requester_id TEXT NOT NULL,
-      text TEXT NOT NULL,
-      created_at INTEGER NOT NULL,
-      updated_at INTEGER NOT NULL,
-      requester_acknowledged_at INTEGER,
-      status TEXT NOT NULL,
-      lease_id TEXT,
-      agent_id TEXT,
-      summary TEXT,
-      failure TEXT,
-      diagnostic TEXT
-    ) STRICT;
-    PRAGMA user_version = ${SCHEMA_VERSION};
-  `);
+  if (observedVersion !== 0 && observedVersion !== 1) {
+    throw registryError("corrupt_state", `unsupported agent registry schema version ${observedVersion}`);
+  }
+
+  database.exec("BEGIN IMMEDIATE");
+  try {
+    const currentVersion = schemaVersion(database);
+    if (currentVersion === 0) {
+      database.exec(`
+        CREATE TABLE leases (
+          project TEXT NOT NULL,
+          role TEXT NOT NULL,
+          lease_id TEXT NOT NULL UNIQUE,
+          mode TEXT NOT NULL,
+          owner_id TEXT NOT NULL,
+          owner_pid INTEGER NOT NULL,
+          owner_model TEXT,
+          policy_digest TEXT NOT NULL,
+          acquired_at INTEGER NOT NULL,
+          heartbeat_at INTEGER NOT NULL,
+          expires_at INTEGER NOT NULL,
+          status TEXT NOT NULL,
+          reason TEXT,
+          PRIMARY KEY (project, role)
+        ) STRICT;
+        CREATE TABLE requests (
+          request_id TEXT PRIMARY KEY,
+          project TEXT NOT NULL,
+          role TEXT NOT NULL,
+          requester_id TEXT NOT NULL,
+          text TEXT NOT NULL,
+          created_at INTEGER NOT NULL,
+          updated_at INTEGER NOT NULL,
+          requester_acknowledged_at INTEGER,
+          status TEXT NOT NULL,
+          lease_id TEXT,
+          agent_id TEXT,
+          summary TEXT,
+          failure TEXT,
+          diagnostic TEXT
+        ) STRICT;
+        PRAGMA user_version = ${SCHEMA_VERSION};
+      `);
+    } else if (currentVersion === 1) {
+      database.exec(`
+        ALTER TABLE requests ADD COLUMN requester_acknowledged_at INTEGER;
+        PRAGMA user_version = ${SCHEMA_VERSION};
+      `);
+    } else if (currentVersion !== SCHEMA_VERSION) {
+      throw registryError("corrupt_state", `unsupported agent registry schema version ${currentVersion}`);
+    }
+    database.exec("COMMIT");
+  } catch (error) {
+    try {
+      database.exec("ROLLBACK");
+    } catch {
+      // Preserve the original typed failure.
+    }
+    throw error;
+  }
   chmodSync(databasePath, 0o600);
 };
 

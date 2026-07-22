@@ -36,13 +36,27 @@ test("workflow model preflight resolves only authenticated available providers",
     { provider: "anthropic", id: "claude-sonnet-4-5-20250929", name: "Claude Sonnet 4.5" },
   ];
   assert.equal(resolveAgentModel("gpt-5.6-sol", "openai-codex", available), "openai-codex/gpt-5.6-sol");
-  assert.equal(resolveAgentModel("sonnet", "openai-codex", available), "anthropic/claude-sonnet-4-6");
-  assert.equal(
-    resolveAgentModel("anthropic/claude-sonnet-4-6", "openai-codex", available),
-    "anthropic/claude-sonnet-4-6",
+  assert.throws(
+    () => resolveAgentModel("fable", "openai-codex", available),
+    /external claude -p subscription lane/i,
+  );
+  assert.throws(
+    () => resolveAgentModel("sonnet", "openai-codex", available),
+    /external claude -p subscription lane/i,
+  );
+  assert.throws(
+    () => resolveAgentModel("anthropic/claude-sonnet-4-6", "openai-codex", available),
+    /external claude -p subscription lane/i,
   );
   assert.equal(resolveAgentModel(undefined, "openai-codex", available), undefined);
-  assert.throws(() => resolveAgentModel("amazon-bedrock/sonnet", "openai-codex", available), /unavailable|authentication/i);
+  assert.throws(
+    () => resolveAgentModel(undefined, "anthropic", available),
+    /cannot inherit Anthropic API models/i,
+  );
+  assert.throws(
+    () => resolveAgentModel("amazon-bedrock/sonnet", "openai-codex", available),
+    /external claude -p subscription lane/i,
+  );
   assert.throws(() => resolveAgentModel("nonexistent", "openai-codex", available), /inherit the parent/i);
 });
 

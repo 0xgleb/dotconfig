@@ -97,7 +97,12 @@ agent promises directly to `parallel`, for example
 provide a focused task, working directory when it differs from the parent, tool
 capabilities, and model or thinking level when the default is not appropriate.
 Prefer cheaper models for bounded discovery and stronger models for synthesis or
-difficult verification.
+difficult verification. Never request `fable`, `sonnet`, `opus`, `claude-*`, or an
+`anthropic/*` model from a Pi workflow child: Anthropic API billing is disabled.
+When Claude adds enough value, run it only as a read-only external subscription
+lane with `claude -p --permission-mode plan`; cursor-agent Claude lanes are allowed
+only when their included allowance is confirmed available. If neither subscription
+route is available, omit Claude rather than falling back to an API provider.
 
 Assume every agent spawn, tool action, tool result, and returned result will be
 classified. Handle a blocked boundary as a typed failure. Do not expose blocked

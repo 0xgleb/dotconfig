@@ -6,6 +6,30 @@ allowed-tools: Bash(cursor-agent:*), Bash(agy:*), Bash(command:*), Bash(cat:*), 
 
 # Review engine (shared)
 
+## Provider constraint (overrides every model cell below)
+
+Anthropic API billing is disabled. Every native Workflow agent, verifier,
+synthesizer, inspector, and external-command wrapper MUST use
+`openai-codex/gpt-5.6-luna`, regardless of legacy lane names such as `fable`,
+`sonnet`, or `opus` and regardless of model values shown in older tables below.
+Those names are focus labels only. Never pass `fable`, `sonnet`, `opus`,
+`claude-*`, or `anthropic/*` as a Workflow `model`.
+
+Claude is optional and may run only through a subscription CLI external lane:
+
+```bash
+claude -p --permission-mode plan --model sonnet --no-session-persistence \
+  --allowedTools "Read,Grep,Glob,Bash(git show *)" \
+  "$(cat \"<promptPath>\") The diff to review is at: <diffPath>"
+```
+
+The Pi wrapper for that external command still uses
+`openai-codex/gpt-5.6-luna`. Cursor-agent Claude lanes are allowed only when the
+included allowance is explicitly confirmed available; it is currently exhausted,
+so omit them. If `claude -p` is unavailable or fails, omit Claude and continue the
+OpenAI-only panel. This constraint supersedes the `sonnet-only`/full-harness model
+assignments below without changing their panel-sizing or focus semantics.
+
 This is **not a user-facing skill**. It is the single source of truth for the
 review engine that `review-loop`, `review-pr`, and `review-sweep` share: turn a
 **diff** into **deduplicated, adversarially verified findings** and a canonical
@@ -129,10 +153,10 @@ explicitly asks for it.
 Record `harness_tier` and `harnessModels` for the Workflow args (step 5):
 
 ```json
-{ "verify": "sonnet", "synthesis": "opus" }
+{ "verify": "openai-codex/gpt-5.6-luna", "synthesis": "openai-codex/gpt-5.6-luna" }
 ```
 
-When `harness_tier=sonnet-only`, use `{ "verify": "sonnet", "synthesis": "sonnet" }`
+When `harness_tier=sonnet-only`, use `{ "verify": "openai-codex/gpt-5.6-luna", "synthesis": "openai-codex/gpt-5.6-luna" }`
 for **every** Workflow agent call — review lanes, verify, synthesis. Never pass
 `fable` or `opus` to the Workflow on a limit-blown day.
 
@@ -504,7 +528,7 @@ Invoke `Workflow` with the script below via `script`, and `args`:
   "repoRoot": "{REPO_ROOT}",
   "docsPaths": ["{PROJECT_DOCS_PATHS as array}"],
   "lanes": [ ...lane objects — every lane.model must match harness_tier... ],
-  "harnessModels": { "verify": "sonnet", "synthesis": "sonnet" },
+  "harnessModels": { "verify": "openai-codex/gpt-5.6-luna", "synthesis": "openai-codex/gpt-5.6-luna" },
   "reportHeader": "{REPORT_HEADER}",
   "synthesisExtra": "{SYNTHESIS_EXTRA}",
   "sourceAccess": "{SOURCE_ACCESS}",
@@ -609,7 +633,7 @@ const laneResults = await parallel(lanes.map(lane => () => {
   return agent(prompt, {
     label: `review:${lane.key}`,
     phase: 'Review',
-    model: lane.model ?? 'sonnet',
+    model: 'openai-codex/gpt-5.6-luna',
     schema: REVIEW_SCHEMA,
   }).then(result => result && ({
     key: lane.key,
@@ -670,7 +694,7 @@ const verified = await parallel(merged.map(finding => () =>
     `with concrete evidence from the code; do not dismiss ` +
     `uncertain-but-plausible findings. Re-score severity and confidence ` +
     `from your own reading (confidence 100 = you verified it yourself).`,
-    { label: `verify:${finding.file}`, phase: 'Verify', model: harnessModels.verify,
+    { label: `verify:${finding.file}`, phase: 'Verify', model: 'openai-codex/gpt-5.6-luna',
       schema: VERDICT_SCHEMA },
   ).then(verdict => verdict && ({ ...finding, ...verdict }))
 ))
@@ -714,7 +738,7 @@ const synthesis = await agent(
   `your own senior-engineer judgment on merge readiness). No emojis, no ` +
   `apologies, be decisive.` +
   (synthesisExtra ? `\n\n${synthesisExtra}` : ''),
-  { label: 'synthesize', phase: 'Synthesize', model: harnessModels.synthesis,
+  { label: 'synthesize', phase: 'Synthesize', model: 'openai-codex/gpt-5.6-luna',
     schema: {
       type: 'object',
       required: ['report_markdown'],

@@ -53,6 +53,7 @@ import {
 } from "./loop.ts";
 import { boundedDiagnosticTail, sanitizeProcessDiagnostic, summarizePiJsonLines } from "./protocol.ts";
 import { activeSkillProcedures } from "./skill-context.ts";
+import { trustedCoordinationIntent } from "./coordination-intent.ts";
 import {
   activeWorkflowLines,
   backgroundWorkflowStartedText,
@@ -65,7 +66,7 @@ import {
   wasRunAborted,
 } from "../shared/continuation-pause.ts";
 
-const CLASSIFIER_MODEL = "openai-codex/gpt-5.4-mini";
+const CLASSIFIER_MODEL = "openai-codex/gpt-5.6-luna";
 const CLASSIFIER_TIMEOUT_MS = 45_000;
 const CLASSIFIER_MAX_ATTEMPTS = 3;
 const CLASSIFIER_RETRY_BASE_MS = 1_000;
@@ -181,8 +182,9 @@ function visibleIntent(ctx: ExtensionContext, activeGoal?: string): string[] {
   const branch = ctx.sessionManager.getBranch();
   const messages = branch
     .flatMap((entry) => {
-      if (entry.type !== "message" || !isRecord(entry.message) || entry.message.role !== "user") return [];
-      return [messageText(entry.message)];
+      if (entry.type !== "message" || !isRecord(entry.message)) return [];
+      if (entry.message.role === "user") return [messageText(entry.message)];
+      return [trustedCoordinationIntent(entry.message)];
     })
     .filter((text): text is string => Boolean(text))
     .slice(-12)

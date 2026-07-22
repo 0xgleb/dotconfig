@@ -37,6 +37,24 @@ test("multiple screenshot paths pasted together become independent attachments",
   assert.equal(expandEditorScreenshots(redacted.text, redacted.state), `${firstPath}\n${secondPath}`);
 });
 
+test("multiple inline escaped screenshot paths preserve surrounding prompt text", () => {
+  const firstPath =
+    "/var/folders/_4/rw1_bp053k5cl_mv2jg2854w0000gn/T/TemporaryItems/NSIRD_screencaptureui_gmlueX/Screenshot\\ 2026-07-22\\ at\\ 19.43.12.png";
+  const secondPath =
+    "/var/folders/_4/rw1_bp053k5cl_mv2jg2854w0000gn/T/TemporaryItems/NSIRD_screencaptureui_Pidjp7/Screenshot\\ 2026-07-22\\ at\\ 19.43.24.png";
+  const redacted = redactEditorScreenshot(
+    `${firstPath} bruh\n\nand here too lol ${secondPath}`,
+    emptyEditorAttachmentState(),
+  );
+
+  assert.equal(redacted.text, "[Image 1] bruh\n\nand here too lol [Image 2]");
+  assert.equal(redacted.state.paths.size, 2);
+  assert.equal(
+    expandEditorScreenshots(redacted.text, redacted.state),
+    `${firstPath} bruh\n\nand here too lol ${secondPath}`,
+  );
+});
+
 test("ordinary editor text is unchanged", () => {
   const state = emptyEditorAttachmentState();
   assert.deepEqual(redactEditorScreenshot("hello", state), { text: "hello", state });

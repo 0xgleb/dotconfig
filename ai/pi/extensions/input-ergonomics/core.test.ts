@@ -5,6 +5,7 @@ import {
   isAllowedTemporaryPath,
   MAX_SCREENSHOT_BYTES,
   parseTemporaryScreenshot,
+  parseTemporaryScreenshots,
   redactTemporaryScreenshotForEditor,
   validateImageMagic,
 } from "./core.ts";
@@ -76,6 +77,21 @@ test("editor redaction replaces only the temporary path with a clean marker", ()
     {
       displayText: "before [Image 2] after",
       pathText: "/private/var/folders/ab/cdef/T/Screenshot\\ 2026-07-22.png",
+    },
+  );
+});
+
+test("screenshot batches preserve compact markers and surrounding text", () => {
+  const first = "/var/folders/ab/cdef/T/Screenshot\\ 2026-07-22\\ at\\ 19.43.12.png";
+  const second = "/var/folders/ab/cdef/T/Screenshot\\ 2026-07-22\\ at\\ 19.43.24.png";
+  assert.deepEqual(
+    parseTemporaryScreenshots(`${first} bruh\n\nand here too lol ${second}`, 2),
+    {
+      screenshots: [
+        { path: "/var/folders/ab/cdef/T/Screenshot 2026-07-22 at 19.43.12.png", mimeType: "image/png" },
+        { path: "/var/folders/ab/cdef/T/Screenshot 2026-07-22 at 19.43.24.png", mimeType: "image/png" },
+      ],
+      text: "[Image 2] bruh\n\nand here too lol [Image 3]",
     },
   );
 });

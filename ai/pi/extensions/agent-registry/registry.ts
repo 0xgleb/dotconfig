@@ -1,4 +1,4 @@
-import { Context, Data, Effect } from "effect";
+import { Context, Data, Effect, Either } from "effect";
 
 export type LeaseMode = "task" | "operational";
 export type LeaseStatus = "active" | "paused" | "suspended";
@@ -168,6 +168,12 @@ export interface RegistryStore {
 }
 
 export const RegistryStore = Context.GenericTag<RegistryStore>("pi/agent-registry/RegistryStore");
+
+export const runRegistryEffect: <T>(operation: Effect.Effect<T, RegistryError>) => Promise<T> = async (operation) => {
+  const result = await Effect.runPromise(Effect.either(operation));
+  if (Either.isLeft(result)) throw result.left;
+  return result.right;
+};
 
 export const reconcileSessionLease: (
   input: ReconcileLeaseInput,

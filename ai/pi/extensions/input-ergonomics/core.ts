@@ -13,6 +13,11 @@ export interface ScreenshotEditorRedaction {
   readonly pathText: string;
 }
 
+export interface TemporaryScreenshotBatch {
+  readonly screenshots: ReadonlyArray<Omit<TemporaryScreenshot, "remainingText">>;
+  readonly text: string;
+}
+
 const parseScreenshotPath: (text: string) => Omit<TemporaryScreenshot, "remainingText"> | undefined = (text) => {
   const trimmed = text.trim();
   const quoted =
@@ -76,6 +81,26 @@ export const redactTemporaryScreenshotForEditor: (
     displayText: `${text.slice(0, match.index)}${marker}${text.slice(match.index + match[0].length)}`,
     pathText: match[0],
   };
+};
+
+export const parseTemporaryScreenshots: (
+  text: string,
+  firstImageNumber?: number,
+) => TemporaryScreenshotBatch | undefined = (text, firstImageNumber = 1) => {
+  let transformed = text;
+  const screenshots: Array<Omit<TemporaryScreenshot, "remainingText">> = [];
+
+  while (true) {
+    const marker = `[Image ${firstImageNumber + screenshots.length}]`;
+    const redaction = redactTemporaryScreenshotForEditor(transformed, marker);
+    if (!redaction) break;
+    const screenshot = parseScreenshotPath(redaction.pathText);
+    if (!screenshot) break;
+    screenshots.push(screenshot);
+    transformed = redaction.displayText;
+  }
+
+  return screenshots.length > 0 ? { screenshots, text: transformed } : undefined;
 };
 
 export const validateImageMagic: (bytes: Uint8Array, mimeType: TemporaryScreenshot["mimeType"]) => boolean = (
