@@ -19,6 +19,7 @@ import {
 import {
   buildClassifierPrompt,
   createClassifiedAgentRunner,
+  createToolResultAllowance,
   formatDecisionReason,
   resolveActionDecision,
   type ClassificationRequest,
@@ -397,6 +398,7 @@ export default function classifiedWorkflows(pi: ExtensionAPI): void {
   let loopState: LoopState | undefined;
   let loopTimer: ReturnType<typeof setTimeout> | undefined;
   let continuationPaused = false;
+  const deterministicResultAllowance = createToolResultAllowance();
   let nextWorkflowId = 1;
   let latestCtx: ExtensionContext | undefined;
   const backgroundWorkflows = new Map<string, BackgroundWorkflow>();
@@ -884,6 +886,7 @@ export default function classifiedWorkflows(pi: ExtensionAPI): void {
 
   pi.on("session_shutdown", (_event, ctx) => {
     clearLoopTimer();
+    deterministicResultAllowance.clear();
     ctx.ui.setStatus("pi-loop", undefined);
     ctx.ui.setStatus("continuation-pause", undefined);
     ctx.ui.setWidget("pi-loop", undefined);
@@ -953,7 +956,10 @@ export default function classifiedWorkflows(pi: ExtensionAPI): void {
       cwd: ctx.cwd,
     });
     if (deterministic?.verdict === "block") return resolveActionDecision(deterministic);
-    if (deterministic?.verdict === "allow") return;
+    if (deterministic?.verdict === "allow") {
+      deterministicResultAllowance.record(event.toolCallId);
+      return;
+    }
 
     const decision = await classify(
       {
@@ -969,6 +975,7 @@ export default function classifiedWorkflows(pi: ExtensionAPI): void {
   });
 
   pi.on("tool_result", async (event: ToolResultEvent, ctx) => {
+    if (deterministicResultAllowance.consume(event.toolCallId)) return;
     if (deterministicToolResultDecision(event.toolName)?.verdict === "allow") return;
 
     const decision = await classify(

@@ -3,6 +3,7 @@ import test from "node:test";
 import {
   buildClassifierPrompt,
   createClassifiedAgentRunner,
+  createToolResultAllowance,
   formatDecisionReason,
   resolveActionDecision,
 } from "./lifecycle.ts";
@@ -44,6 +45,16 @@ test("manual abort pause state persists defensively and keys off the final assis
     ]),
     false,
   );
+});
+
+test("deterministically allowed actions carry one matching result allowance", () => {
+  const allowance = createToolResultAllowance();
+  allowance.record("call-1");
+  assert.equal(allowance.consume("call-1"), true);
+  assert.equal(allowance.consume("call-1"), false);
+  allowance.record("call-2");
+  allowance.clear();
+  assert.equal(allowance.consume("call-2"), false);
 });
 
 test("agent execution is enclosed by spawn and return classification", async () => {

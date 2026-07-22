@@ -19,6 +19,23 @@ export interface BlockedAction {
   reason: string;
 }
 
+export interface ToolResultAllowance {
+  record(toolCallId: string): void;
+  consume(toolCallId: string): boolean;
+  clear(): void;
+}
+
+export const createToolResultAllowance: () => ToolResultAllowance = () => {
+  const allowed = new Set<string>();
+  return {
+    record: (toolCallId) => {
+      allowed.add(toolCallId);
+    },
+    consume: (toolCallId) => allowed.delete(toolCallId),
+    clear: () => allowed.clear(),
+  };
+};
+
 export function formatDecisionReason(decision: Decision): string {
   const label = decision.source === "deterministic" ? "Deterministic policy verdict" : "Auto-classifier verdict";
   return `${label}: ${decision.reason}`;
