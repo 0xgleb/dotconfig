@@ -1,6 +1,6 @@
 import assert from "node:assert/strict";
 import test from "node:test";
-import { AGENT_PROCESS_STDIO, buildAgentArguments, qualifyAgentModel } from "./agent-process.ts";
+import { AGENT_PROCESS_STDIO, buildAgentArguments, resolveAgentModel } from "./agent-process.ts";
 
 test("workflow children load only the classified workflow extension explicitly", () => {
   assert.deepEqual(
@@ -29,11 +29,21 @@ test("workflow children load only the classified workflow extension explicitly",
   );
 });
 
-test("unqualified child models inherit the authenticated parent provider when available", () => {
-  assert.equal(qualifyAgentModel("gpt-5.6-sol", "openai-codex", true), "openai-codex/gpt-5.6-sol");
-  assert.equal(qualifyAgentModel("sonnet", "openai-codex", false), "sonnet");
-  assert.equal(qualifyAgentModel("anthropic/claude-sonnet-4-6", "openai-codex", true), "anthropic/claude-sonnet-4-6");
-  assert.equal(qualifyAgentModel(undefined, "openai-codex", true), undefined);
+test("workflow model preflight resolves only authenticated available providers", () => {
+  const available = [
+    { provider: "openai-codex", id: "gpt-5.6-sol", name: "GPT-5.6 Sol" },
+    { provider: "anthropic", id: "claude-sonnet-4-6", name: "Claude Sonnet 4.6" },
+    { provider: "anthropic", id: "claude-sonnet-4-5-20250929", name: "Claude Sonnet 4.5" },
+  ];
+  assert.equal(resolveAgentModel("gpt-5.6-sol", "openai-codex", available), "openai-codex/gpt-5.6-sol");
+  assert.equal(resolveAgentModel("sonnet", "openai-codex", available), "anthropic/claude-sonnet-4-6");
+  assert.equal(
+    resolveAgentModel("anthropic/claude-sonnet-4-6", "openai-codex", available),
+    "anthropic/claude-sonnet-4-6",
+  );
+  assert.equal(resolveAgentModel(undefined, "openai-codex", available), undefined);
+  assert.throws(() => resolveAgentModel("amazon-bedrock/sonnet", "openai-codex", available), /unavailable|authentication/i);
+  assert.throws(() => resolveAgentModel("nonexistent", "openai-codex", available), /inherit the parent/i);
 });
 
 test("JSON workflow children stay hidden behind captured pipes", () => {

@@ -179,6 +179,23 @@ test("classifier prompt allows ordinary cross-repository and tracker research", 
   assert.match(prompt, /does not require separate authorization/i);
 });
 
+test("classifier prompt allows relevant unauthenticated protocol API introspection", () => {
+  const prompt = buildClassifierPrompt({
+    boundary: "action",
+    intent: ["Active todo: implement the Morpho integration"],
+    projectInstructions: "Verify external API contracts against real responses",
+    subject: {
+      toolName: "bash",
+      input: { command: "python3 -c 'query the public Morpho GraphQL schema'" },
+    },
+  });
+
+  assert.match(prompt, /public protocol APIs/i);
+  assert.match(prompt, /GraphQL schema introspection/i);
+  assert.match(prompt, /active goal, todo list, project source/i);
+  assert.match(prompt, /recent chat discussed a different support task/i);
+});
+
 test("classifier prompt allows read-only supply-chain audits of installation candidates", () => {
   const prompt = buildClassifierPrompt({
     boundary: "action",

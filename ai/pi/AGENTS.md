@@ -30,6 +30,9 @@
 - Never inject keystrokes or text into the user's active Zellij pane or editor;
   it can overwrite an in-progress prompt. Use registered tools such as
   `reload_pi` instead, and keep Zellij automation confined to isolated workers.
+- Never let an agent-created Zellij tab or pane steal focus from the user's
+  active pane. Use only a verified unfocused launch path; if none is available,
+  keep the work in a classified background workflow instead of launching it.
 - In TypeScript and JavaScript, prefer `const`-bound arrow functions over
   `function` declarations, with explicit callable types when they clarify the
   contract. Keep declarations for overloads, generators, or required semantics.

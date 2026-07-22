@@ -93,6 +93,25 @@ test("todo tracking is allowed as session-local agent work support", () => {
   }
 });
 
+test("non-blocking user questions are locally allowed", () => {
+  for (const input of [
+    { action: "list" },
+    { action: "ask", question: "Choose?", guess: "A" },
+    { action: "resolve", id: 1, answer: "A" },
+    { action: "clear_resolved" },
+  ]) {
+    assert.deepEqual(
+      deterministicDecision({ boundary: "action", toolName: "ask_user", input, cwd: "/repo" }),
+      {
+        verdict: "allow",
+        reason: "Session-local non-blocking user question tracking",
+        source: "deterministic",
+      },
+    );
+  }
+  assert.equal(deterministicToolResultDecision("ask_user")?.verdict, "allow");
+});
+
 test("the dedicated Pi reload tool is locally allowed", () => {
   assert.deepEqual(
     deterministicDecision({ boundary: "action", toolName: "reload_pi", input: {}, cwd: "/repo" }),
@@ -144,6 +163,37 @@ test("the confirmed obsolete dotconfig model artifact can be removed exactly", (
   );
 });
 
+test("project-local Rust incremental cache cleanup is narrowly deterministic", () => {
+  assert.deepEqual(
+    deterministicDecision({
+      boundary: "action",
+      toolName: "bash",
+      input: {
+        command:
+          "cd /Users/0xgleb/code/dataclique/yielduck && rm -rf target/debug/incremental && df -h . | tail -1",
+      },
+      cwd: "/Users/0xgleb/code/dataclique/yielduck",
+    }),
+    {
+      verdict: "allow",
+      reason: "Project-local rebuildable Rust incremental cache cleanup",
+      source: "deterministic",
+    },
+  );
+  for (const command of [
+    "rm -rf target",
+    "rm -rf target/release",
+    "rm -rf ../target/debug/incremental",
+    "rm -rf target/debug/incremental; rm -rf src",
+    "cd /tmp/project && rm -rf target/debug/incremental",
+  ]) {
+    assert.equal(
+      deterministicDecision({ boundary: "action", toolName: "bash", input: { command }, cwd: "/repo" }),
+      null,
+    );
+  }
+});
+
 test("shell and unknown tools require classifier review", () => {
   assert.equal(
     deterministicDecision({
@@ -157,7 +207,7 @@ test("shell and unknown tools require classifier review", () => {
 });
 
 test("locally generated mutation acknowledgements bypass result classification", () => {
-  for (const toolName of ["edit", "write", "todo"]) {
+  for (const toolName of ["edit", "write", "todo", "ask_user"]) {
     assert.deepEqual(deterministicToolResultDecision(toolName), {
       verdict: "allow",
       reason: "Locally generated mutation acknowledgement",
@@ -286,6 +336,45 @@ test("undersized token budgets fail before spawning an idle worker", async () =>
     new RegExp(`minimum reservation.*${MIN_AGENT_TOKEN_RESERVATION}`, "i"),
   );
   assert.equal(spawned, 0);
+});
+
+test("thrown agent timeouts consume retries instead of killing the workflow immediately", async () => {
+  let attempts = 0;
+  const result = await runWorkflowScript(
+    `return await agent({ task: "retry me" });`,
+    { ...limits, retries: 2 },
+    {
+      async runAgent(): Promise<AgentResult> {
+        attempts += 1;
+        if (attempts < 3) throw new Error("Agent timed out");
+        return { status: "completed", output: "recovered", usageTokens: 10 };
+      },
+      async checkpoint(): Promise<"approved"> {
+        return "approved";
+      },
+    },
+  );
+  assert.equal(attempts, 3);
+  assert.deepEqual(result, { status: "completed", output: "recovered", usageTokens: 10 });
+});
+
+test("in-flight fan-out preserves completed results when measured usage crosses the aggregate budget", async () => {
+  const result = await runWorkflowScript(
+    `return await parallel([agent("one"), agent("two")]);`,
+    { ...limits, maxAgents: 2, concurrency: 2, tokenBudget: 10_000 },
+    {
+      async runAgent(request): Promise<AgentResult> {
+        return { status: "completed", output: request.task, usageTokens: 6_000 };
+      },
+      async checkpoint(): Promise<"approved"> {
+        return "approved";
+      },
+    },
+  );
+  assert.deepEqual(result, [
+    { status: "completed", output: "one", usageTokens: 6_000 },
+    { status: "completed", output: "two", usageTokens: 6_000 },
+  ]);
 });
 
 test("workflow enforces total agent and token limits", async () => {

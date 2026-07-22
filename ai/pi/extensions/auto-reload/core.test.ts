@@ -2,13 +2,30 @@ import assert from "node:assert/strict";
 import test from "node:test";
 
 import {
+  HANDOFF_GLOBS,
   isSafeHandoffName,
+  managedPiChangeLabel,
   managedPiWatchPaths,
+  parseManagedReloadSummary,
   parseSeenHandoffNames,
   shouldDispatchReloadFollowUp,
   unseenHandoffNames,
 } from "./core.ts";
 import { CONTINUATION_PAUSE_ENTRY } from "../shared/continuation-pause.ts";
+
+test("managed reload summaries identify changed capabilities without exposing full paths", () => {
+  const root = "/Users/example/.config/ai";
+  assert.equal(
+    managedPiChangeLabel(`${root}/pi/extensions/classified-workflows/index.ts`, root),
+    "classified-workflows extension",
+  );
+  assert.equal(managedPiChangeLabel(`${root}/skills/pi-delegation/SKILL.md`, root), "pi-delegation skill");
+  assert.deepEqual(
+    parseManagedReloadSummary({ labels: ["questions extension", "questions extension"], createdAt: 42, announced: false }),
+    { labels: ["questions extension"], createdAt: 42, announced: false },
+  );
+  assert.equal(parseManagedReloadSummary({ labels: [7], createdAt: 42, announced: false }), undefined);
+});
 
 test("auto reload follow-up respects a persisted manual interrupt pause", () => {
   assert.equal(shouldDispatchReloadFollowUp("reload", []), true);
@@ -44,6 +61,10 @@ test("handoff watcher accepts only direct visible Markdown filenames", () => {
   assert.equal(isSafeHandoffName(".hidden.md"), false);
   assert.equal(isSafeHandoffName("pi.txt"), false);
   assert.equal(isSafeHandoffName("unrelated-notes.md"), false);
+  assert.equal(isSafeHandoffName("handoffs/2026-07-22-classified-workflow-budget.md"), true);
+  assert.equal(isSafeHandoffName("other/2026-pi-request.md"), false);
+  assert.equal(isSafeHandoffName("handoffs/nested/pi-request.md"), false);
+  assert.deepEqual(HANDOFF_GLOBS, ["*.md", "handoffs/*.md"]);
 });
 
 test("persisted handoff names are decoded defensively", () => {
@@ -55,9 +76,15 @@ test("persisted handoff names are decoded defensively", () => {
 test("handoff reconciliation returns safe unseen Pi requests", () => {
   assert.deepEqual(
     unseenHandoffNames(
-      ["2026-pi-browser.md", "handoff-classifier.md", "unrelated.md", ".hidden-pi.md"],
+      [
+        "2026-pi-browser.md",
+        "handoff-classifier.md",
+        "handoffs/classified-workflow-budget.md",
+        "unrelated.md",
+        ".hidden-pi.md",
+      ],
       new Set(["2026-pi-browser.md"]),
     ),
-    ["handoff-classifier.md"],
+    ["handoff-classifier.md", "handoffs/classified-workflow-budget.md"],
   );
 });

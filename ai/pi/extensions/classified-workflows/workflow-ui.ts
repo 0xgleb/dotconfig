@@ -18,6 +18,9 @@ export const activeWorkflowLines: (items: ReadonlyArray<WorkflowUiItem>) => stri
   ];
 };
 
+export const backgroundWorkflowStartedText: (id: string, label: string) => string = (id, label) =>
+  `Started background workflow ${id}: ${label}. It owns the delegated task; keep the foreground focused and do not duplicate that work unless the workflow fails or the user reprioritizes it. Use /workflows status, /workflows result ${id}, or /workflows cancel ${id}.`;
+
 export const workflowHistoryText: (items: ReadonlyArray<WorkflowUiItem>) => string = (items) => {
   if (items.length === 0) return "No background workflow history in this session.";
   return items

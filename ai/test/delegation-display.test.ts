@@ -9,3 +9,10 @@ test("visible Zellij workers use human-readable Pi output", () => {
   assert.doesNotMatch(delegationSkill, /pi[^\n]*--mode\s+json/);
   assert.match(delegationSkill, /dump-screen --full/);
 });
+
+test("Zellij delegation never steals the user's focus", () => {
+  assert.match(delegationSkill, /never create.*tab or pane.*changes.*active/is);
+  assert.match(delegationSkill, /verified unfocused path/is);
+  assert.match(delegationSkill, /classified.*background workflow instead/is);
+  assert.match(delegationSkill, /do not create-then-refocus/is);
+});

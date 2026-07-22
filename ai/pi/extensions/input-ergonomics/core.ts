@@ -8,6 +8,11 @@ export interface TemporaryScreenshot {
   readonly remainingText: string;
 }
 
+export interface ScreenshotEditorRedaction {
+  readonly displayText: string;
+  readonly pathText: string;
+}
+
 const parseScreenshotPath: (text: string) => Omit<TemporaryScreenshot, "remainingText"> | undefined = (text) => {
   const trimmed = text.trim();
   const quoted =
@@ -18,6 +23,9 @@ const parseScreenshotPath: (text: string) => Omit<TemporaryScreenshot, "remainin
   const mimeType = mimeTypeForExtension(imageExtension(path));
   return mimeType ? { path, mimeType } : undefined;
 };
+
+const inlineScreenshotMatches: (text: string) => RegExpMatchArray[] = (text) =>
+  [...text.matchAll(/\/(?:private\/)?var\/folders\/(?:\\ |[^\s\\])+\.(?:png|jpe?g|gif|webp)/gi)];
 
 export const parseTemporaryScreenshot: (text: string) => TemporaryScreenshot | undefined = (text) => {
   const lines = text.split("\n");
@@ -34,7 +42,7 @@ export const parseTemporaryScreenshot: (text: string) => TemporaryScreenshot | u
   }
   if (matches.length > 1) return undefined;
 
-  const inlineMatches = [...text.matchAll(/\/(?:private\/)?var\/folders\/(?:\\ |[^\s\\])+\.(?:png|jpe?g|gif|webp)/gi)];
+  const inlineMatches = inlineScreenshotMatches(text);
   if (inlineMatches.length !== 1) return undefined;
   const [inline] = inlineMatches;
   if (inline.index === undefined || !inline[0].includes("\\ ")) return undefined;
@@ -44,6 +52,31 @@ export const parseTemporaryScreenshot: (text: string) => TemporaryScreenshot | u
     .replace(/[ \t]{2,}/g, " ")
     .trim();
   return { ...screenshot, remainingText };
+};
+
+export const redactTemporaryScreenshotForEditor: (
+  text: string,
+  marker: string,
+) => ScreenshotEditorRedaction | undefined = (text, marker) => {
+  const lines = text.split("\n");
+  const lineMatches = lines.flatMap((line, index) => (parseScreenshotPath(line) ? [{ line, index }] : []));
+  if (lineMatches.length === 1) {
+    const [{ line, index }] = lineMatches;
+    return {
+      displayText: lines.map((value, lineIndex) => (lineIndex === index ? marker : value)).join("\n"),
+      pathText: line,
+    };
+  }
+  if (lineMatches.length > 1) return undefined;
+
+  const inlineMatches = inlineScreenshotMatches(text);
+  if (inlineMatches.length !== 1) return undefined;
+  const [match] = inlineMatches;
+  if (match.index === undefined || !match[0].includes("\\ ") || !parseScreenshotPath(match[0])) return undefined;
+  return {
+    displayText: `${text.slice(0, match.index)}${marker}${text.slice(match.index + match[0].length)}`,
+    pathText: match[0],
+  };
 };
 
 export const validateImageMagic: (bytes: Uint8Array, mimeType: TemporaryScreenshot["mimeType"]) => boolean = (
@@ -67,9 +100,10 @@ export const isAllowedTemporaryPath: (path: string) => boolean = (path) => {
   return /^\/(?:private\/)?var\/folders\/[^/]+\/[^/]+\/(?:T|TemporaryItems)\//.test(normalized);
 };
 
-export const attachmentPrompt: (existingText: string) => string = (existingText) => {
+export const attachmentPrompt: (existingText: string, imageNumber?: number) => string = (existingText, imageNumber = 1) => {
   const remaining = existingText.trim();
-  return remaining || "Inspect the attached screenshot.";
+  const marker = `[Image ${imageNumber}]`;
+  return remaining ? `${remaining}\n\n${marker}` : marker;
 };
 
 const MIME_TYPES: Readonly<Record<string, TemporaryScreenshot["mimeType"]>> = {

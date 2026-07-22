@@ -1,0 +1,38 @@
+import assert from "node:assert/strict";
+import test from "node:test";
+import { applyQuestionAction, decodeQuestionState, emptyQuestionState, pendingQuestions } from "./state.ts";
+import { pendingQuestionContext, questionListText, questionWidgetLines } from "./presentation.ts";
+
+test("questions remain pending until explicitly resolved", () => {
+  const asked = applyQuestionAction(emptyQuestionState, {
+    action: "ask",
+    question: "Should production operators deploy directly?",
+    guess: "No; circuit-break only.",
+  });
+  assert.equal(pendingQuestions(asked).length, 1);
+  assert.match(questionWidgetLines(asked).join("\n"), /Awaiting your input: 1/);
+  assert.match(questionWidgetLines(asked).join("\n"), /Guess: No; circuit-break only/);
+  assert.match(pendingQuestionContext(asked) ?? "", /Continue independent work/);
+
+  const resolved = applyQuestionAction(asked, {
+    action: "resolve",
+    id: 1,
+    answer: "Confirmed: circuit-break only.",
+  });
+  assert.equal(pendingQuestions(resolved).length, 0);
+  assert.match(questionListText(resolved), /Confirmed: circuit-break only/);
+});
+
+test("question state decoder rejects malformed partial state", () => {
+  const state = applyQuestionAction(emptyQuestionState, { action: "ask", question: "Need input?" });
+  assert.deepEqual(decodeQuestionState(state), state);
+  assert.equal(decodeQuestionState({ questions: [{ id: 1, status: "resolved", question: "Q" }], nextId: 2 }), undefined);
+});
+
+test("clearing resolved questions preserves pending decisions", () => {
+  const first = applyQuestionAction(emptyQuestionState, { action: "ask", question: "First?" });
+  const second = applyQuestionAction(first, { action: "ask", question: "Second?" });
+  const resolved = applyQuestionAction(second, { action: "resolve", id: 1, answer: "Yes" });
+  const cleared = applyQuestionAction(resolved, { action: "clear_resolved" });
+  assert.deepEqual(pendingQuestions(cleared).map(({ id }) => id), [2]);
+});

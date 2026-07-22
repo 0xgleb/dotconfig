@@ -4,8 +4,11 @@ import { join } from "node:path";
 import type { ExtensionAPI, ExtensionContext } from "@earendil-works/pi-coding-agent";
 
 import {
+  HANDOFF_GLOBS,
   isSafeHandoffName,
+  managedPiChangeLabel,
   managedPiWatchPaths,
+  parseManagedReloadSummary,
   parseSeenHandoffNames,
   shouldDispatchReloadFollowUp,
   unseenHandoffNames,
@@ -15,6 +18,7 @@ import { isContinuationPaused } from "../shared/continuation-pause.ts";
 const DEBOUNCE_MS = 1_200;
 const HANDOFF_POLL_MS = 60 * 60 * 1_000;
 const HANDOFF_STATE_ENTRY = "auto-reload.seen-pi-handoffs";
+const RELOAD_SUMMARY_ENTRY = "auto-reload.managed-change-summary";
 const IDLE_RETRY_MS = 1_000;
 const STATUS_KEY = "auto-reload";
 
@@ -30,6 +34,7 @@ const autoReload: (pi: ExtensionAPI) => void = (pi) => {
   let timer: ReturnType<typeof setTimeout> | undefined;
   let handoffTimer: ReturnType<typeof setInterval> | undefined;
   let pending = false;
+  const changedLabels = new Set<string>();
 
   const closeWatchers = () => {
     if (timer) clearTimeout(timer);
@@ -37,6 +42,7 @@ const autoReload: (pi: ExtensionAPI) => void = (pi) => {
     timer = undefined;
     handoffTimer = undefined;
     pending = false;
+    changedLabels.clear();
     for (const watcher of watchers) watcher.close();
     watchers = [];
   };
@@ -50,11 +56,20 @@ const autoReload: (pi: ExtensionAPI) => void = (pi) => {
     pending = false;
     timer = undefined;
     ctx.ui.setStatus(STATUS_KEY, undefined);
+    if (changedLabels.size > 0) {
+      pi.appendEntry(RELOAD_SUMMARY_ENTRY, {
+        labels: [...changedLabels].sort(),
+        createdAt: Date.now(),
+        announced: false,
+      });
+      changedLabels.clear();
+    }
     await ctx.reload();
   };
 
-  const scheduleReload = (ctx: ReloadableContext, changedPath: string | null) => {
+  const scheduleReload = (ctx: ReloadableContext, changedPath: string | null, aiRoot: string) => {
     if (changedPath?.includes("node_modules") || changedPath?.includes("brave-operator-profile")) return;
+    if (changedPath) changedLabels.add(managedPiChangeLabel(changedPath, aiRoot));
     pending = true;
     ctx.ui.setStatus(STATUS_KEY, "reload:pending");
     if (timer) clearTimeout(timer);
@@ -63,15 +78,28 @@ const autoReload: (pi: ExtensionAPI) => void = (pi) => {
 
   pi.on("session_start", (event, ctx) => {
     closeWatchers();
-    if (shouldDispatchReloadFollowUp(event.reason, ctx.sessionManager.getBranch())) {
-      pi.sendMessage(
-        {
-          customType: "auto-reload.completed",
-          content: "Pi resources auto-reloaded after managed configuration changed. Resume all assigned work now; do not stop while a goal or pending todo remains.",
-          display: true,
-        },
-        { triggerTurn: true, deliverAs: "followUp" },
-      );
+    const branch = ctx.sessionManager.getBranch();
+    const summaryEntry = branch
+      .filter((entry) => entry.type === "custom" && entry.customType === RELOAD_SUMMARY_ENTRY)
+      .at(-1);
+    const summary = summaryEntry?.type === "custom" ? parseManagedReloadSummary(summaryEntry.data) : undefined;
+    if (event.reason === "reload") {
+      const changeText = summary && !summary.announced && summary.labels.length > 0
+        ? ` Updated: ${summary.labels.join(", ")}.`
+        : "";
+      const message = {
+        customType: "auto-reload.completed",
+        content: `Pi resources auto-reloaded after managed configuration changed.${changeText} Resume all assigned work now; do not stop while a goal or pending todo remains.`,
+        display: true,
+      };
+      if (shouldDispatchReloadFollowUp(event.reason, branch)) {
+        pi.sendMessage(message, { triggerTurn: true, deliverAs: "followUp" });
+      } else {
+        pi.sendMessage(message);
+      }
+      if (summary && !summary.announced) {
+        pi.appendEntry(RELOAD_SUMMARY_ENTRY, { ...summary, announced: true });
+      }
     }
     if (!isReloadableContext(ctx)) {
       ctx.ui.notify("Automatic Pi reload requires the managed reload-context host patch; restart after applying the Nix generation.", "warning");
@@ -82,7 +110,11 @@ const autoReload: (pi: ExtensionAPI) => void = (pi) => {
     for (const path of managedPiWatchPaths(aiRoot)) {
       try {
         const recursive = statSync(path).isDirectory();
-        watchers.push(watch(path, { recursive }, (_eventType, filename) => scheduleReload(ctx, filename)));
+        watchers.push(
+          watch(path, { recursive }, (_eventType, filename) =>
+            scheduleReload(ctx, recursive && filename ? join(path, String(filename)) : path, aiRoot),
+          ),
+        );
       } catch (error) {
         ctx.ui.notify(`Could not watch ${path}: ${error instanceof Error ? error.message : "unknown error"}`, "warning");
       }
@@ -99,13 +131,13 @@ const autoReload: (pi: ExtensionAPI) => void = (pi) => {
           .filter((entry) => entry.type === "custom" && entry.customType === HANDOFF_STATE_ENTRY)
           .at(-1);
         const persisted = storedEntry?.type === "custom" ? parseSeenHandoffNames(storedEntry.data) : [];
-        const current = globSync("*.md", { cwd: handoffRoot }).filter(isSafeHandoffName);
+        const current = globSync(HANDOFF_GLOBS, { cwd: handoffRoot }).filter(isSafeHandoffName);
         const seen = new Set(storedEntry ? persisted : current);
         if (!storedEntry) pi.appendEntry(HANDOFF_STATE_ENTRY, { names: [...seen].sort() });
 
         const reconcileHandoffs = () => {
           if (isContinuationPaused(ctx.sessionManager.getBranch())) return;
-          const unseen = unseenHandoffNames(globSync("*.md", { cwd: handoffRoot }), seen);
+          const unseen = unseenHandoffNames(globSync(HANDOFF_GLOBS, { cwd: handoffRoot }), seen);
           if (unseen.length === 0) return;
           for (const name of unseen) seen.add(name);
           pi.appendEntry(HANDOFF_STATE_ENTRY, { names: [...seen].sort() });
@@ -121,7 +153,7 @@ const autoReload: (pi: ExtensionAPI) => void = (pi) => {
 
         reconcileHandoffs();
         watchers.push(
-          watch(handoffRoot, (_eventType, filename) => {
+          watch(handoffRoot, { recursive: true }, (_eventType, filename) => {
             if (!filename || !isSafeHandoffName(filename)) return;
             reconcileHandoffs();
           }),

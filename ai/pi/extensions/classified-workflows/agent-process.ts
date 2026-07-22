@@ -2,13 +2,50 @@ import type { AgentRequest } from "./core.ts";
 
 export const AGENT_PROCESS_STDIO = ["ignore", "pipe", "pipe"] as const;
 
-export const qualifyAgentModel: (
+export interface AvailableAgentModel {
+  readonly provider: string;
+  readonly id: string;
+  readonly name?: string;
+}
+
+const modelReference: (model: AvailableAgentModel) => string = (model) => `${model.provider}/${model.id}`;
+const modelMatches: (model: AvailableAgentModel, pattern: string) => boolean = (model, pattern) =>
+  model.id.toLowerCase().includes(pattern) || model.name?.toLowerCase().includes(pattern) === true;
+const isAlias: (id: string) => boolean = (id) => id.endsWith("-latest") || !/-\d{8}$/.test(id);
+
+export const resolveAgentModel: (
   requestedModel: string | undefined,
   parentProvider: string | undefined,
-  existsInParentProvider: boolean,
-) => string | undefined = (requestedModel, parentProvider, existsInParentProvider) => {
-  if (!requestedModel || !parentProvider || !existsInParentProvider || requestedModel.includes("/")) return requestedModel;
-  return `${parentProvider}/${requestedModel}`;
+  availableModels: readonly AvailableAgentModel[],
+) => string | undefined = (requestedModel, parentProvider, availableModels) => {
+  const requested = requestedModel?.trim();
+  if (!requested) return undefined;
+  const normalized = requested.toLowerCase();
+  const canonical = availableModels.find((model) => modelReference(model).toLowerCase() === normalized);
+  if (canonical) return modelReference(canonical);
+  if (requested.includes("/")) {
+    throw new Error(`Workflow model ${requested} is unavailable or has no configured authentication`);
+  }
+
+  const parentExact = availableModels.find(
+    (model) => model.provider === parentProvider && model.id.toLowerCase() === normalized,
+  );
+  if (parentExact) return modelReference(parentExact);
+  const exact = availableModels.filter((model) => model.id.toLowerCase() === normalized);
+  if (exact.length === 1) return modelReference(exact[0]);
+
+  const partial = availableModels.filter((model) => modelMatches(model, normalized));
+  const parentPartial = partial.filter((model) => model.provider === parentProvider);
+  const candidates = parentPartial.length > 0 ? parentPartial : partial;
+  const aliases = candidates.filter((model) => isAlias(model.id));
+  const ranked = (aliases.length > 0 ? aliases : candidates).toSorted((left, right) => right.id.localeCompare(left.id));
+  const selected = ranked[0];
+  if (!selected) {
+    throw new Error(
+      `Workflow model ${requested} is unavailable or unauthenticated; omit model to inherit the parent or use an available provider/model id`,
+    );
+  }
+  return modelReference(selected);
 };
 
 export const buildAgentArguments: (request: AgentRequest, extensionPath: string) => string[] = (

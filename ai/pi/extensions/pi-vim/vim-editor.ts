@@ -20,6 +20,12 @@ import { handleReplaceMode, resetReplaceState, type ReplaceModeContext } from ".
 import { handleVisualMode, getVisualRange, type VisualModeContext } from "./modes/visual.ts";
 import { DoubleEnterSteering } from "./steering.ts";
 import {
+  emptyEditorAttachmentState,
+  expandEditorScreenshots,
+  redactEditorScreenshot,
+  type EditorAttachmentState,
+} from "./attachments.ts";
+import {
   handleSearchInput,
   getSearchPrompt,
   getSearchState,
@@ -37,6 +43,7 @@ export class VimEditor extends CustomEditor {
   private wrapAutocomplete: ((provider: AutocompleteProvider) => AutocompleteProvider) | undefined;
   private readonly doubleEnterSteering?: DoubleEnterSteering;
   private readonly isStreaming: () => boolean;
+  private attachmentState: EditorAttachmentState = emptyEditorAttachmentState();
 
   /**
    * DECSCUSR cursor styles:
@@ -144,7 +151,13 @@ export class VimEditor extends CustomEditor {
   }
 
   handleInput(data: string): void {
-    if (matchesKey(data, "enter") && this.doubleEnterSteering) {
+    const isEnter = matchesKey(data, "enter");
+    if (isEnter) {
+      const expanded = expandEditorScreenshots(this.getText(), this.attachmentState);
+      if (expanded !== this.getText()) this.setText(expanded);
+      this.attachmentState = emptyEditorAttachmentState();
+    }
+    if (isEnter && this.doubleEnterSteering) {
       const result = this.doubleEnterSteering.handleEnter(this.getText(), this.isStreaming());
       if (result === "deferred") this.setText("");
       if (result !== "pass") return;
@@ -185,6 +198,13 @@ export class VimEditor extends CustomEditor {
 
     // Clear redo stack when text changes from a non-undo/redo action.
     // If the redo stack changed size, it was an undo/redo operation — don't clear.
+    if (!isEnter && this.getText() !== textBefore) {
+      const redacted = redactEditorScreenshot(this.getText(), this.attachmentState);
+      if (redacted.text !== this.getText()) this.setText(redacted.text);
+      this.attachmentState = redacted.state;
+    }
+    if (this.getText() === "") this.attachmentState = emptyEditorAttachmentState();
+
     if (this.redoStack.length === redoStackBefore && this.getText() !== textBefore) {
       this.redoStack.length = 0;
     }

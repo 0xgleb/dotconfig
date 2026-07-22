@@ -47,8 +47,14 @@ Never use tmux.
 ## Zellij workers
 
 Require an existing Zellij session. Do not silently create a detached session.
+Never create a tab or pane through an action that changes the user's active tab or
+pane. Snapshot the active tab and pane IDs and use only a launch path verified to
+leave both unchanged. If this Zellij version has no such path, use a classified
+background workflow instead; do not create-then-refocus because even a transient
+focus switch disrupts the user.
 
-Create or reuse a tab named `pi-workers`. Start each worker in a named pane with an
+Create or reuse a tab named `pi-workers` only through that verified unfocused path.
+Start each worker in a named pane with an
 ephemeral non-interactive Pi process:
 
 `pi --print --no-session --tools read,grep,find,ls`
@@ -56,6 +62,9 @@ ephemeral non-interactive Pi process:
 Capture the pane ID returned by Zellij. Use structured pane state to determine when
 the process exits and preserve its exit status. Collect the final plain-text output
 with `dump-screen --full`.
+
+Creating, polling, harvesting, and closing workers must never focus their tab or
+pane and must never send keys to the user's active pane.
 
 Harvest each completed pane's output and exit status promptly, then close the
 pane automatically so finished workers do not linger. Keep failed panes visible

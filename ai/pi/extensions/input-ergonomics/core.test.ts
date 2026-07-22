@@ -5,6 +5,7 @@ import {
   isAllowedTemporaryPath,
   MAX_SCREENSHOT_BYTES,
   parseTemporaryScreenshot,
+  redactTemporaryScreenshotForEditor,
   validateImageMagic,
 } from "./core.ts";
 
@@ -56,6 +57,29 @@ test("temporary screenshot parser accepts only exact macOS temp image paths", ()
   assert.equal(MAX_SCREENSHOT_BYTES, 20 * 1024 * 1024);
 });
 
+test("editor redaction replaces only the temporary path with a clean marker", () => {
+  assert.deepEqual(
+    redactTemporaryScreenshotForEditor(
+      "compare this\n/var/folders/ab/cdef/T/Screenshot\\ 2026-07-22.png",
+      "[Image 1]",
+    ),
+    {
+      displayText: "compare this\n[Image 1]",
+      pathText: "/var/folders/ab/cdef/T/Screenshot\\ 2026-07-22.png",
+    },
+  );
+  assert.deepEqual(
+    redactTemporaryScreenshotForEditor(
+      "before /private/var/folders/ab/cdef/T/Screenshot\\ 2026-07-22.png after",
+      "[Image 2]",
+    ),
+    {
+      displayText: "before [Image 2] after",
+      pathText: "/private/var/folders/ab/cdef/T/Screenshot\\ 2026-07-22.png",
+    },
+  );
+});
+
 test("temporary path allowlist rejects traversal and unrelated roots", () => {
   assert.equal(isAllowedTemporaryPath("/var/folders/ab/cdef/T/image.png"), true);
   assert.equal(isAllowedTemporaryPath("/var/folders/ab/cdef/TemporaryItems/image.png"), true);
@@ -72,7 +96,8 @@ test("image magic must match the declared extension", () => {
   assert.equal(validateImageMagic(new TextEncoder().encode("not an image"), "image/png"), false);
 });
 
-test("attachment prompt does not disclose the temporary path", () => {
-  assert.equal(attachmentPrompt(""), "Inspect the attached screenshot.");
-  assert.equal(attachmentPrompt("compare the spacing"), "compare the spacing");
+test("attachment prompt keeps an image marker in the sent message without disclosing the path", () => {
+  assert.equal(attachmentPrompt(""), "[Image 1]");
+  assert.equal(attachmentPrompt("compare the spacing"), "compare the spacing\n\n[Image 1]");
+  assert.equal(attachmentPrompt("compare two", 2), "compare two\n\n[Image 2]");
 });

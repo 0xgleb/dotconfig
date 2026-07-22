@@ -32,10 +32,9 @@ const inputErgonomics: (pi: ExtensionAPI) => void = (pi) => {
         data: bytes.toString("base64"),
         mimeType: screenshot.mimeType,
       };
-      ctx.ui.notify("Attached temporary screenshot without exposing its filesystem path.", "info");
       return {
         action: "transform",
-        text: attachmentPrompt(screenshot.remainingText),
+        text: attachmentPrompt(screenshot.remainingText, (event.images?.length ?? 0) + 1),
         images: [...(event.images ?? []), image],
       };
     } catch (error) {

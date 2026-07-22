@@ -48,11 +48,14 @@ export interface WorkflowDependencies {
 }
 
 export const MIN_AGENT_TOKEN_RESERVATION = 4_000;
+const RETRY_BACKOFF_BASE_MS = 500;
+const RETRY_BACKOFF_MAX_MS = 5_000;
 
 const READ_ONLY_TOOLS = new Set(["read", "grep", "find", "ls"]);
 const WRITE_TOOLS = new Set(["edit", "write"]);
 const TODO_ACTIONS = new Set(["list", "add", "toggle", "block", "unblock", "clear"]);
-const LOCALLY_GENERATED_RESULT_TOOLS = new Set(["edit", "write", "todo", "reload_pi"]);
+const QUESTION_ACTIONS = new Set(["list", "ask", "resolve", "clear_resolved"]);
+const LOCALLY_GENERATED_RESULT_TOOLS = new Set(["edit", "write", "todo", "ask_user", "reload_pi"]);
 const PATH_KEYS = new Set(["path", "file_path", "cwd", "glob"]);
 const SENSITIVE_PATH =
   /(^|[\\/\s'"])(?:\.env(?!\.example(?:$|[\\/\s'"]))(?:\.[^\\/\s'"]*)?|credentials\.json|secrets\.(?:json|ya?ml)|auth\.json|\.npmrc|\.netrc|\.pypirc|id_(?:rsa|dsa|ecdsa|ed25519)(?:\.pub)?|[^\\/\s'"]+\.(?:key|pem|p12|pfx))($|[\\/\s'"])/i;
@@ -84,6 +87,15 @@ function stripNegativeGlobArguments(command: string): string {
       (doubleQuoted ?? singleQuoted ?? bare)?.startsWith("!") ? "" : argument,
   );
 }
+
+const isSafeRustIncrementalCleanup: (command: string) => boolean = (command) => {
+  const match = command.match(
+    /^\s*(?:cd\s+(\/[^\s;&|`]+)\s+&&\s+)?rm\s+-(?:rf|fr)\s+(?:\.\/)?target\/debug\/incremental(?:\s+&&\s+df\s+-h\s+\.\s*\|\s*tail\s+-1)?\s*$/,
+  );
+  if (!match) return false;
+  const changedDirectory = match[1];
+  return changedDirectory === undefined || changedDirectory.split(path.sep).includes("code");
+};
 
 function isInsideCwd(candidate: string, cwd: string): boolean {
   const relative = path.relative(path.resolve(cwd), path.resolve(cwd, candidate));
@@ -149,6 +161,26 @@ export function deterministicDecision(request: ToolRequest): Decision | null {
     return {
       verdict: "allow",
       reason: "Session-local agent work tracking",
+      source: "deterministic",
+    };
+  }
+
+  if (request.toolName === "ask_user" && QUESTION_ACTIONS.has(String(request.input.action))) {
+    return {
+      verdict: "allow",
+      reason: "Session-local non-blocking user question tracking",
+      source: "deterministic",
+    };
+  }
+
+  if (
+    request.toolName === "bash" &&
+    typeof request.input.command === "string" &&
+    isSafeRustIncrementalCleanup(request.input.command)
+  ) {
+    return {
+      verdict: "allow",
+      reason: "Project-local rebuildable Rust incremental cache cleanup",
       source: "deterministic",
     };
   }
@@ -293,17 +325,28 @@ export async function runWorkflowScript(
     try {
       for (let attempt = 0; attempt <= limits.retries; attempt += 1) {
         if (workflowController.signal.aborted) throw new Error("Workflow aborted");
-        result = await runOnce(request);
-        agentUsageTokens += Math.max(0, result.usageTokens);
-        if (result.status === "completed" || result.status === "blocked") break;
+        try {
+          result = await runOnce(request);
+          agentUsageTokens += Math.max(0, result.usageTokens);
+          if (result.status === "completed" || result.status === "blocked") break;
+          if (attempt < limits.retries) {
+            await retryBackoff(attempt, workflowController.signal);
+          }
+        } catch (error) {
+          if (workflowController.signal.aborted || attempt >= limits.retries) throw error;
+          await retryBackoff(attempt, workflowController.signal);
+        }
       }
     } finally {
       reservedTokens -= MIN_AGENT_TOKEN_RESERVATION;
     }
 
     if (!result) throw new Error("Agent produced no result");
+    // Child usage is known only after Pi exits, so an already-running wave can
+    // overrun the aggregate estimate. Preserve those completed results and use
+    // the updated total to prevent any later spawn instead of discarding useful
+    // fan-out after the tokens have already been spent.
     usedTokens += agentUsageTokens;
-    if (usedTokens > limits.tokenBudget) throw new Error(`Workflow token budget exceeded (${limits.tokenBudget})`);
     return { ...result, usageTokens: agentUsageTokens };
   };
 
@@ -350,6 +393,23 @@ export async function runWorkflowScript(
     signal?.removeEventListener("abort", abortWorkflow);
   }
 }
+
+const retryBackoff: (attempt: number, signal: AbortSignal) => Promise<void> = async (attempt, signal) => {
+  const delayMs = Math.min(RETRY_BACKOFF_BASE_MS * 2 ** attempt, RETRY_BACKOFF_MAX_MS);
+  await new Promise<void>((resolve, reject) => {
+    const finish = () => {
+      signal.removeEventListener("abort", abort);
+      resolve();
+    };
+    const timer = setTimeout(finish, delayMs);
+    const abort = () => {
+      clearTimeout(timer);
+      reject(signal.reason ?? new Error("Workflow aborted"));
+    };
+    if (signal.aborted) abort();
+    else signal.addEventListener("abort", abort, { once: true });
+  });
+};
 
 function isRecord(value: unknown): value is Record<string, unknown> {
   return typeof value === "object" && value !== null && !Array.isArray(value);
