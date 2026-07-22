@@ -10,9 +10,10 @@ test("visible Zellij workers use human-readable Pi output", () => {
   assert.match(delegationSkill, /dump-screen --full/);
 });
 
-test("Zellij delegation never steals the user's focus", () => {
-  assert.match(delegationSkill, /never create.*tab or pane.*changes.*active/is);
-  assert.match(delegationSkill, /verified unfocused path/is);
-  assert.match(delegationSkill, /classified.*background workflow instead/is);
-  assert.match(delegationSkill, /do not create-then-refocus/is);
+test("Zellij delegation focuses requested agents and restores autonomous background focus", () => {
+  assert.match(delegationSkill, /explicitly asks to spawn.*focusing.*allowed/is);
+  assert.match(delegationSkill, /snapshot.*active tab.*pane IDs/is);
+  assert.match(delegationSkill, /restore both before returning control/is);
+  assert.match(delegationSkill, /verify.*structured Zellij state/is);
+  assert.match(delegationSkill, /classified background workflow instead/is);
 });

@@ -21,10 +21,11 @@ test("shared and Pi-global instructions prohibit overwriting the active editor",
   }
 });
 
-test("shared and Pi-global instructions prohibit agent-created focus stealing", () => {
+test("shared and Pi-global instructions preserve focus for autonomous background delegation", () => {
   for (const [name, contents] of [["shared", shared], ["Pi global", pi]] as const) {
-    assert.match(contents, /agent-created Zellij.*(?:tab|pane).*steal focus/is, `${name} must preserve active focus`);
-    assert.match(contents, /verified unfocused launch path/is, `${name} must fail closed on background launch`);
+    assert.match(contents, /explicitly asks to spawn.*focusing.*allowed/is, `${name} must allow requested focus`);
+    assert.match(contents, /snapshot.*active.*tab and pane.*restore.*exact focus/is, `${name} must restore background focus`);
+    assert.match(contents, /cannot be verified.*classified background workflow/is, `${name} must fail closed on restoration`);
   }
 });
 
