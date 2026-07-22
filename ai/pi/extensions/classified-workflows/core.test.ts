@@ -75,6 +75,8 @@ test("todo tracking is allowed as session-local agent work support", () => {
     { action: "list" },
     { action: "add", text: "Move the Graphite stack" },
     { action: "toggle", id: 1 },
+    { action: "block", id: 1, reason: "External dependency" },
+    { action: "unblock", id: 1 },
     { action: "clear" },
   ]) {
     const decision = deterministicDecision({
@@ -101,6 +103,24 @@ test("the dedicated Pi reload tool is locally allowed", () => {
     reason: "Locally generated mutation acknowledgement",
     source: "deterministic",
   });
+});
+
+test("dotconfig staging, commit, and push delivery is deterministic but shell chaining is not", () => {
+  for (const command of ["git add -- AGENTS.md", "git commit -m 'fix(pi): continue work'", "git push"]) {
+    assert.deepEqual(
+      deterministicDecision({ boundary: "action", toolName: "bash", input: { command }, cwd: "/Users/example/.config" }),
+      { verdict: "allow", reason: "Dotconfig commit and push delivery", source: "deterministic" },
+    );
+  }
+  assert.equal(
+    deterministicDecision({
+      boundary: "action",
+      toolName: "bash",
+      input: { command: "git push; echo unsafe" },
+      cwd: "/Users/example/.config",
+    }),
+    null,
+  );
 });
 
 test("shell and unknown tools require classifier review", () => {

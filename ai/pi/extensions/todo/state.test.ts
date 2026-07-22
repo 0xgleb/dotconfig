@@ -36,6 +36,19 @@ test("toggle changes only the targeted todo status", async () => {
   assert.deepEqual(state.todos[0], { id: 1, text: "First", status: "pending" });
 });
 
+test("blocked work requires a reason and can be unblocked", async () => {
+  const added = await Effect.runPromise(transitionTodoState(emptyTodoState, { action: "add", text: "Deploy" }));
+  const blocked = await Effect.runPromise(
+    transitionTodoState(added.state, { action: "block", id: 1, reason: "Waiting for production access" }),
+  );
+  assert.deepEqual(blocked.state.todos, [
+    { id: 1, text: "Deploy", status: "blocked", reason: "Waiting for production access" },
+  ]);
+  const unblocked = await Effect.runPromise(transitionTodoState(blocked.state, { action: "unblock", id: 1 }));
+  assert.deepEqual(unblocked.state.todos, [{ id: 1, text: "Deploy", status: "pending" }]);
+  assert.equal(Either.isLeft(await Effect.runPromise(Effect.either(parseTodoAction({ action: "block", id: 1 })))), true);
+});
+
 test("invalid add and toggle inputs fail through the typed channel", async () => {
   const missingText = await Effect.runPromise(
     Effect.either(parseTodoAction({ action: "add" })),
@@ -64,8 +77,11 @@ test("clear resets todos and identifiers", async () => {
 
 test("persisted state is decoded instead of cast", () => {
   const valid = decodeTodoState({
-    todos: [{ id: 1, text: "Saved", status: "pending" }],
-    nextId: 2,
+    todos: [
+      { id: 1, text: "Saved", status: "pending" },
+      { id: 2, text: "Blocked", status: "blocked", reason: "External dependency" },
+    ],
+    nextId: 3,
   });
   const invalid = decodeTodoState({ todos: [{ id: "one", text: "Broken", status: "pending" }], nextId: 2 });
 

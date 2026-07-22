@@ -39,6 +39,16 @@ test("temporary screenshot parser accepts only exact macOS temp image paths", ()
       remainingText: "compare the allocation panel",
     },
   );
+  assert.deepEqual(
+    parseTemporaryScreenshot(
+      "before /var/folders/_4/hash/T/TemporaryItems/capture/Screenshot\\ 2026-07-22\\ at\\ 15.44.18.png after reload",
+    ),
+    {
+      path: "/var/folders/_4/hash/T/TemporaryItems/capture/Screenshot 2026-07-22 at 15.44.18.png",
+      mimeType: "image/png",
+      remainingText: "before after reload",
+    },
+  );
   assert.equal(MAX_SCREENSHOT_BYTES, 20 * 1024 * 1024);
 });
 

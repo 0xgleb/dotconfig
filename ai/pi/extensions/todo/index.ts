@@ -23,9 +23,10 @@ import {
 } from "./state.ts";
 
 const TodoParams = Type.Object({
-  action: StringEnum(["list", "add", "toggle", "clear"] as const),
+  action: StringEnum(["list", "add", "toggle", "block", "unblock", "clear"] as const),
   text: Type.Optional(Type.String({ description: "Todo text (for add)" })),
-  id: Type.Optional(Type.Number({ description: "Todo ID (for toggle)" })),
+  id: Type.Optional(Type.Number({ description: "Todo ID (for toggle, block, or unblock)" })),
+  reason: Type.Optional(Type.String({ description: "Required blocker reason for block" })),
 });
 
 class TodoListComponent {
@@ -57,12 +58,25 @@ class TodoListComponent {
       lines.push(truncateToWidth(`  ${this.theme.fg("dim", "No todos yet. Ask the agent to add some!")}`, width));
     } else {
       const completed = this.todos.filter(({ status }) => status === "completed").length;
-      lines.push(truncateToWidth(`  ${this.theme.fg("muted", `${completed}/${this.todos.length} completed`)}`, width), "");
+      const blocked = this.todos.filter(({ status }) => status === "blocked").length;
+      lines.push(
+        truncateToWidth(
+          `  ${this.theme.fg("muted", `${completed}/${this.todos.length} completed · ${blocked} blocked`)}`,
+          width,
+        ),
+        "",
+      );
       for (const todo of this.todos) {
         const isCompleted = todo.status === "completed";
-        const check = isCompleted ? this.theme.fg("success", "✓") : this.theme.fg("dim", "○");
+        const isBlocked = todo.status === "blocked";
+        const check = isCompleted
+          ? this.theme.fg("success", "✓")
+          : isBlocked
+            ? this.theme.fg("warning", "⊘")
+            : this.theme.fg("dim", "○");
         const id = this.theme.fg("accent", `#${todo.id}`);
-        const text = this.theme.fg(isCompleted ? "dim" : "text", todo.text);
+        const label = isBlocked ? `${todo.text} — blocked: ${todo.reason}` : todo.text;
+        const text = this.theme.fg(isCompleted ? "dim" : "text", label);
         lines.push(truncateToWidth(`  ${check} ${id} ${text}`, width));
       }
     }
@@ -109,7 +123,7 @@ class KanbanComponent {
     const lines = [
       "",
       truncateToWidth(
-        `${this.theme.fg("accent", this.theme.bold("KANBAN"))}  ${this.theme.fg("muted", `${summary.completed}/${summary.total} complete · ${summary.pending} active`)}`,
+        `${this.theme.fg("accent", this.theme.bold("KANBAN"))}  ${this.theme.fg("muted", `${summary.completed}/${summary.total} complete · ${summary.pending} active · ${summary.blocked} blocked`)}`,
         width,
       ),
       "",
@@ -205,7 +219,7 @@ export default function todoExtension(pi: ExtensionAPI): void {
   pi.registerTool({
     name: "todo",
     label: "Todo",
-    description: "Manage a branch-aware todo list. Actions: list, add (text), toggle (id), clear",
+    description: "Manage a branch-aware todo list. Actions: list, add, toggle, block (id + reason), unblock, clear",
     parameters: TodoParams,
 
     async execute(_toolCallId, params, _signal, _onUpdate, ctx) {
@@ -233,6 +247,7 @@ export default function todoExtension(pi: ExtensionAPI): void {
       let text = theme.fg("toolTitle", theme.bold("todo ")) + theme.fg("muted", args.action);
       if (args.text) text += ` ${theme.fg("dim", `"${args.text}"`)}`;
       if (args.id !== undefined) text += ` ${theme.fg("accent", `#${args.id}`)}`;
+      if (args.reason) text += ` ${theme.fg("warning", `blocked: ${args.reason}`)}`;
       return new Text(text, 0, 0);
     },
 
@@ -250,8 +265,14 @@ export default function todoExtension(pi: ExtensionAPI): void {
         let text = theme.fg("muted", `${details.state.todos.length} todo(s):`);
         for (const todo of visible) {
           const completed = todo.status === "completed";
-          const check = completed ? theme.fg("success", "✓") : theme.fg("dim", "○");
-          text += `\n${check} ${theme.fg("accent", `#${todo.id}`)} ${theme.fg(completed ? "dim" : "muted", todo.text)}`;
+          const blocked = todo.status === "blocked";
+          const check = completed
+            ? theme.fg("success", "✓")
+            : blocked
+              ? theme.fg("warning", "⊘")
+              : theme.fg("dim", "○");
+          const label = blocked ? `${todo.text} — blocked: ${todo.reason}` : todo.text;
+          text += `\n${check} ${theme.fg("accent", `#${todo.id}`)} ${theme.fg(completed ? "dim" : "muted", label)}`;
         }
         if (!expanded && details.state.todos.length > visible.length) {
           text += `\n${theme.fg("dim", `... ${details.state.todos.length - visible.length} more`)}`;

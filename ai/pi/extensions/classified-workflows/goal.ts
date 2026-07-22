@@ -130,7 +130,12 @@ export const recoverLatestIndependentGoal: (
   return undefined;
 };
 
-export const pendingTodoTexts: (entries: unknown[]) => string[] = (entries) => {
+export interface TodoWorkSnapshot {
+  readonly pending: string[];
+  readonly blocked: string[];
+}
+
+export const todoWorkSnapshot: (entries: unknown[]) => TodoWorkSnapshot = (entries) => {
   for (let index = entries.length - 1; index >= 0; index -= 1) {
     const entry = entries[index];
     if (!isRecord(entry) || entry.type !== "message" || !isRecord(entry.message)) continue;
@@ -138,20 +143,27 @@ export const pendingTodoTexts: (entries: unknown[]) => string[] = (entries) => {
     if (message.role !== "toolResult" || message.toolName !== "todo" || !isRecord(message.details)) continue;
     const state = isRecord(message.details.state) ? message.details.state : undefined;
     if (!state || !Array.isArray(state.todos)) continue;
-    return state.todos.flatMap((todo) => {
-      if (
-        !isRecord(todo) ||
-        todo.status !== "pending" ||
-        !isNonNegativeInteger(todo.id) ||
-        typeof todo.text !== "string"
-      ) {
-        return [];
-      }
-      return [`#${todo.id} ${todo.text}`];
-    });
+    return state.todos.reduce<TodoWorkSnapshot>(
+      (snapshot, todo) => {
+        if (!isRecord(todo) || !isNonNegativeInteger(todo.id) || typeof todo.text !== "string") return snapshot;
+        if (todo.status === "pending") snapshot.pending.push(`#${todo.id} ${todo.text}`);
+        if (todo.status === "blocked" && typeof todo.reason === "string") {
+          snapshot.blocked.push(`#${todo.id} ${todo.text} — ${todo.reason}`);
+        }
+        return snapshot;
+      },
+      { pending: [], blocked: [] },
+    );
   }
-  return [];
+  return { pending: [], blocked: [] };
 };
+
+export const pendingTodoTexts: (entries: unknown[]) => string[] = (entries) => todoWorkSnapshot(entries).pending;
+
+export const taskContinuationMessage: (snapshot: TodoWorkSnapshot) => string | undefined = (snapshot) =>
+  snapshot.pending.length > 0
+    ? `The task list is not complete. Continue working without stopping. Pending: ${snapshot.pending.slice(0, 5).join("; ")}${snapshot.pending.length > 5 ? `; plus ${snapshot.pending.length - 5} more` : ""}.`
+    : undefined;
 
 export function assistantUsageTokens(messages: unknown[]): number {
   return messages.reduce<number>((total, message) => {

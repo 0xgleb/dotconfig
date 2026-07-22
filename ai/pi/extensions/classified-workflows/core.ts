@@ -51,7 +51,7 @@ export const MIN_AGENT_TOKEN_RESERVATION = 4_000;
 
 const READ_ONLY_TOOLS = new Set(["read", "grep", "find", "ls"]);
 const WRITE_TOOLS = new Set(["edit", "write"]);
-const TODO_ACTIONS = new Set(["list", "add", "toggle", "clear"]);
+const TODO_ACTIONS = new Set(["list", "add", "toggle", "block", "unblock", "clear"]);
 const LOCALLY_GENERATED_RESULT_TOOLS = new Set(["edit", "write", "todo", "reload_pi"]);
 const PATH_KEYS = new Set(["path", "file_path", "cwd", "glob"]);
 const SENSITIVE_PATH =
@@ -151,6 +151,21 @@ export function deterministicDecision(request: ToolRequest): Decision | null {
       reason: "Session-local agent work tracking",
       source: "deterministic",
     };
+  }
+
+  if (request.toolName === "bash" && path.basename(path.resolve(request.cwd)) === ".config") {
+    const command = request.input.command;
+    if (
+      typeof command === "string" &&
+      /^\s*git\s+(?:add|commit|push)(?:\s|$)/.test(command) &&
+      !/[;&|`\n\r]/.test(command)
+    ) {
+      return {
+        verdict: "allow",
+        reason: "Dotconfig commit and push delivery",
+        source: "deterministic",
+      };
+    }
   }
 
   if (WRITE_TOOLS.has(request.toolName)) {

@@ -11,6 +11,8 @@ import {
   pendingTodoTexts,
   recoverLatestIndependentGoal,
   restoreGoal,
+  taskContinuationMessage,
+  todoWorkSnapshot,
   type GoalState,
 } from "./goal.ts";
 
@@ -97,6 +99,7 @@ test("latest todo snapshot supplies pending completion evidence", () => {
             todos: [
               { id: 1, text: "Old task", status: "completed" },
               { id: 2, text: "Finish handover", status: "pending" },
+              { id: 3, text: "Deploy", status: "blocked", reason: "No production access" },
             ],
             nextId: 3,
           },
@@ -105,7 +108,17 @@ test("latest todo snapshot supplies pending completion evidence", () => {
     },
   ];
   assert.deepEqual(pendingTodoTexts(entries), ["#2 Finish handover"]);
+  assert.deepEqual(todoWorkSnapshot(entries), {
+    pending: ["#2 Finish handover"],
+    blocked: ["#3 Deploy — No production access"],
+  });
   assert.deepEqual(pendingTodoTexts([{ type: "wrong" }]), []);
+});
+
+test("task continuation stops only when complete or every remainder is blocked", () => {
+  assert.match(taskContinuationMessage({ pending: ["#2 Fix release"], blocked: [] }) ?? "", /continue working/i);
+  assert.equal(taskContinuationMessage({ pending: [], blocked: ["#3 Deploy — no access"] }), undefined);
+  assert.equal(taskContinuationMessage({ pending: [], blocked: [] }), undefined);
 });
 
 test("legacy loop migration recovers only the latest still-active independent goal", () => {
@@ -113,6 +126,25 @@ test("legacy loop migration recovers only the latest still-active independent go
   const legacyLoop = { ...active, condition: "15m /reload latest config", startedAt: 2 } as const;
   assert.deepEqual(
     recoverLatestIndependentGoal([businessGoal, legacyLoop], (condition) => condition.includes("/reload")),
+    businessGoal,
+  );
+  assert.deepEqual(
+    recoverLatestIndependentGoal(
+      [
+        businessGoal,
+        legacyLoop,
+        {
+          status: "cleared",
+          condition: legacyLoop.condition,
+          startedAt: legacyLoop.startedAt,
+          finishedAt: 3,
+          turns: 0,
+          tokens: 0,
+          lastReason: "Migrated from the legacy /loop goal into an infinite recurring loop.",
+        },
+      ],
+      (condition) => condition.includes("/reload"),
+    ),
     businessGoal,
   );
   assert.equal(

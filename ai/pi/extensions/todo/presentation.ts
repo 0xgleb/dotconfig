@@ -4,6 +4,7 @@ export interface TodoSummary {
   readonly total: number;
   readonly completed: number;
   readonly pending: number;
+  readonly blocked: number;
 }
 
 export interface KanbanColumns {
@@ -16,14 +17,16 @@ export const kanbanColumns: (state: TodoState) => KanbanColumns = (state) => {
   const pending = state.todos.filter(({ status }) => status === "pending");
   return {
     now: pending.slice(0, 1),
-    next: pending.slice(1),
+    next: [...pending.slice(1), ...state.todos.filter(({ status }) => status === "blocked")],
     done: state.todos.filter(({ status }) => status === "completed"),
   };
 };
 
 export const todoSummary: (state: TodoState) => TodoSummary = (state) => {
   const completed = state.todos.filter(({ status }) => status === "completed").length;
-  return { total: state.todos.length, completed, pending: state.todos.length - completed };
+  const pending = state.todos.filter(({ status }) => status === "pending").length;
+  const blocked = state.todos.filter(({ status }) => status === "blocked").length;
+  return { total: state.todos.length, completed, pending, blocked };
 };
 
 export const topPendingTodos: (state: TodoState, limit: number) => ReadonlyArray<Todo> = (state, limit) => {
@@ -35,18 +38,25 @@ export const taskWidgetLines: (state: TodoState, limit?: number) => string[] = (
 
   const summary = todoSummary(state);
   const top = topPendingTodos(state, limit);
-  const lines = [`Tasks: ${summary.completed}/${summary.total} done · ${summary.pending} active · /kanban`];
+  const blocked = state.todos.filter((todo): todo is Extract<Todo, { status: "blocked" }> => todo.status === "blocked");
+  const blockedLabel = summary.blocked > 0 ? ` · ${summary.blocked} blocked` : "";
+  const lines = [
+    `Tasks: ${summary.completed}/${summary.total} done · ${summary.pending} active${blockedLabel} · /kanban`,
+  ];
 
-  if (top.length === 0) {
+  if (top.length === 0 && blocked.length === 0) {
     lines.push("✓ all tracked tasks complete");
     return lines;
   }
 
-  for (const todo of top) {
-    lines.push(`○ #${todo.id} ${compactTaskText(todo.text)}`);
-  }
-
+  for (const todo of top) lines.push(`○ #${todo.id} ${compactTaskText(todo.text)}`);
   if (summary.pending > top.length) lines.push(`… ${summary.pending - top.length} more active task(s)`);
+  for (const todo of blocked.slice(0, Math.max(1, limit - top.length))) {
+    lines.push(`⊘ #${todo.id} ${compactTaskText(todo.text)} — blocked: ${compactTaskText(todo.reason)}`);
+  }
+  if (blocked.length > Math.max(1, limit - top.length)) {
+    lines.push(`… ${blocked.length - Math.max(1, limit - top.length)} more blocked task(s)`);
+  }
   return lines;
 };
 

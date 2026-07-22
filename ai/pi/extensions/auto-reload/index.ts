@@ -49,8 +49,18 @@ const autoReload: (pi: ExtensionAPI) => void = (pi) => {
     timer = setTimeout(() => void reloadWhenIdle(ctx), DEBOUNCE_MS);
   };
 
-  pi.on("session_start", (_event, ctx) => {
+  pi.on("session_start", (event, ctx) => {
     closeWatchers();
+    if (event.reason === "reload") {
+      pi.sendMessage(
+        {
+          customType: "auto-reload.completed",
+          content: "Pi resources auto-reloaded after managed configuration changed. Resume all assigned work now; do not stop while a goal or pending todo remains.",
+          display: true,
+        },
+        { triggerTurn: true, deliverAs: "followUp" },
+      );
+    }
     if (!isReloadableContext(ctx)) {
       ctx.ui.notify("Automatic Pi reload requires the managed reload-context host patch; restart after applying the Nix generation.", "warning");
       return;
@@ -65,6 +75,8 @@ const autoReload: (pi: ExtensionAPI) => void = (pi) => {
         ctx.ui.notify(`Could not watch ${path}: ${error instanceof Error ? error.message : "unknown error"}`, "warning");
       }
     }
+
+    ctx.ui.setStatus(STATUS_KEY, "reload:auto");
 
     if (ctx.cwd === configRoot) {
       const handoffRoot = join(configRoot, ".tmp");

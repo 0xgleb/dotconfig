@@ -25,12 +25,25 @@ export const parseTemporaryScreenshot: (text: string) => TemporaryScreenshot | u
     const screenshot = parseScreenshotPath(line);
     return screenshot ? [{ index, screenshot }] : [];
   });
-  if (matches.length !== 1) return undefined;
-  const [{ index, screenshot }] = matches;
-  return {
-    ...screenshot,
-    remainingText: lines.filter((_line, lineIndex) => lineIndex !== index).join("\n").trim(),
-  };
+  if (matches.length === 1) {
+    const [{ index, screenshot }] = matches;
+    return {
+      ...screenshot,
+      remainingText: lines.filter((_line, lineIndex) => lineIndex !== index).join("\n").trim(),
+    };
+  }
+  if (matches.length > 1) return undefined;
+
+  const inlineMatches = [...text.matchAll(/\/var\/folders\/(?:\\ |[^\s\\])+\.(?:png|jpe?g|gif|webp)/gi)];
+  if (inlineMatches.length !== 1) return undefined;
+  const [inline] = inlineMatches;
+  if (inline.index === undefined || !inline[0].includes("\\ ")) return undefined;
+  const screenshot = parseScreenshotPath(inline[0]);
+  if (!screenshot) return undefined;
+  const remainingText = `${text.slice(0, inline.index)} ${text.slice(inline.index + inline[0].length)}`
+    .replace(/[ \t]{2,}/g, " ")
+    .trim();
+  return { ...screenshot, remainingText };
 };
 
 export const validateImageMagic: (bytes: Uint8Array, mimeType: TemporaryScreenshot["mimeType"]) => boolean = (

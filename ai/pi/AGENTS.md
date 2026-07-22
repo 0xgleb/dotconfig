@@ -13,6 +13,10 @@
 - Treat classifier blocks as policy. Do not evade them by switching tools or
   rephrasing the same action.
 - Run relevant tests and report failures or incomplete work accurately.
+- Never stop while assigned work remains executable. If a goal is active,
+  continue until it is achieved. If any todo is pending, continue working through
+  the task list. Stop only when all assigned work is complete or all remaining
+  todos are explicitly blocked with reasons.
 - Check free disk space before every expensive build, test sweep, or workflow.
   Stop before consuming the crash reserve; do not wait for a build to fail or Pi
   to crash.
