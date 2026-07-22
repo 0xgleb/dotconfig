@@ -1,6 +1,6 @@
 ---
 name: handover
-description: Prepare a session handover before hitting context or usage limits. Writes a handover document (active task, state, files with line refs, recent commits, blockers, exact pause point) and a paste-ready continuation prompt so a fresh session or agent resumes instantly with full situational awareness. Invoke as /handover, or when the user says they are running low on limits and need to hand off.
+description: Prepare a session handover before hitting context or usage limits. Writes a workspace-level temporary handover document under .tmp/ outside every repository in scope (active task, state, files with line refs, recent commits, blockers, exact pause point) and a paste-ready continuation prompt so a fresh session or agent resumes instantly with full situational awareness. Invoke as /handover, or when the user says they are running low on limits and need to hand off.
 user-invocable: true
 allowed-tools:
   - "Bash(git status *)"
@@ -19,10 +19,11 @@ allowed-tools:
 
 # Handover
 
-Capture the current session's state into a git-tracked handover document plus a
-paste-ready continuation prompt, so the next session (a fresh context, or a
-different agent) resumes exactly where this one paused -- no context
-rediscovery, no lost momentum.
+Capture the current session's state into a workspace-level temporary handover
+document plus a paste-ready continuation prompt, so the next session (a fresh
+context, or a different agent) resumes exactly where this one paused -- no
+context rediscovery, no lost momentum. Keep the handover outside every Git
+repository in scope and never stage or commit it.
 
 Use this when the user is near a context or usage limit, at the end of a long
 session, or explicitly asks to hand off. The artifact is two things: a
@@ -31,7 +32,8 @@ session, or explicitly asks to hand off. The artifact is two things: a
 
 ## Step 1 -- Gather the git ground truth
 
-Never summarize from memory; read the repo state. Run, in the working repo:
+Never summarize from memory; read the state of every repository in scope. Run
+these commands in each covered repository:
 
 ```bash
 git rev-parse --abbrev-ref HEAD                 # active branch
@@ -41,9 +43,10 @@ git diff --stat                                 # unstaged shape
 git diff --stat --cached                        # staged shape
 ```
 
-Note the branch, the last few commits that belong to this session's work, and
-whether the working tree is clean or mid-edit. A dirty tree means a
-**mid-implementation pause** -- say so explicitly and name the half-done edit.
+For each repository, note the branch, the last few commits that belong to this
+session's work, and whether the working tree is clean or mid-edit. A dirty tree
+means a **mid-implementation pause** -- say so explicitly and name the half-done
+edit.
 
 ## Step 2 -- Decide the pause type
 
@@ -58,17 +61,30 @@ line for the next session.
 
 ## Step 3 -- Write the handover document
 
-Write to `docs/handoffs/YYYY-MM-DD-<slug>.md` in the working repo (create
-`docs/handoffs/` if absent; fall back to a repo-root `handoffs/` if the repo has
-no `docs/`). `<slug>` names the active task in kebab-case. Use this template,
-filling every section with specifics -- file paths, `file:line` refs, command
-names, commit SHAs. No vague summaries:
+Choose a `.tmp/handoffs/` directory outside every Git repository covered by the
+handover:
+
+- Prefer the current workspace root when it is a non-repository parent of the
+  repositories in scope.
+- For cross-repository work, use the nearest shared parent that is outside all
+  covered repositories. Never place the handover inside one arbitrarily chosen
+  repository.
+- For single-repository work launched from inside that repository, use the
+  repository's parent workspace (or a project-defined non-repository workspace
+  root), never the Git toplevel itself.
+
+Write to `<workspace>/.tmp/handoffs/YYYY-MM-DD-<slug>.md`, creating the
+directory if absent. Treat the file as ephemeral local state: do not add it to
+any `.gitignore`, stage it, commit it, or include it in a PR. `<slug>` names the
+active task in kebab-case. Use this template, filling every section with
+specifics -- file paths, `file:line` refs, command names, commit SHAs. No vague
+summaries:
 
 ```markdown
 # Handover: <active task>
 
 - Date: <YYYY-MM-DD>
-- Branch: <branch> (<PR # or "no PR">)
+- Repositories / branches: <each repository, branch, and PR or "no PR">
 - Pause type: mid-implementation | clean boundary
 - Goal: <the outcome this work is driving to, one or two sentences>
 
@@ -114,11 +130,11 @@ e.g. "cargo nextest run -p foo", "the failing test is X, make it pass">.
 
 Below the document (or as a fenced block at its end), write the paste-ready
 message for the next session. It is short, imperative, and self-contained -- it
-names the branch, the task, the pause point, and the first action, and points at
-the handover doc for detail:
+names the repositories and branches, the task, the pause point, and the first
+action, and points at the handover doc for detail:
 
 ```
-Resume <task> on branch <branch>. Read docs/handoffs/<file>.md for full state.
+Resume <task> across <repositories and branches>. Read <workspace>/.tmp/handoffs/<file>.md for full state.
 We paused <mid-implementation at file:line | at a clean boundary>. Next: <first
 concrete action>. Do not re-do committed work: <one-line what is already done>.
 ```
@@ -136,14 +152,10 @@ concrete action>. Do not re-do committed work: <one-line what is already done>.
   to continue without asking a question. If they would have to ask, add the
   answer.
 
-## Step 6 -- Commit and report
+## Step 6 -- Report
 
-Match the repo's commit style (`git log --oneline -10`), stage only the handover
-doc, and commit on the current branch (use the repo's VCS -- plain `git`, or
-`gt`/`but` if the repo has opted in). Then print the document path, the commit,
-and the continuation prompt so the user can copy it immediately.
-
-Do not push unless the user explicitly asks.
+Print the temporary document path and the continuation prompt so the user can
+copy it immediately. Do not stage, commit, push, or submit the handover artifact.
 
 ## Hard rules
 
@@ -153,7 +165,8 @@ Do not push unless the user explicitly asks.
    them is worse than none.
 4. State the pause type and exact pause point at the top; it is the highest-value
    line.
-5. Commit the handover; do not push without an explicit yes.
+5. Keep the handover under a workspace `.tmp/` outside every repository in
+   scope; never stage, commit, push, or submit it.
 
 ## Failure modes
 
@@ -164,5 +177,9 @@ Do not push unless the user explicitly asks.
   next session can check `git log` against them before trusting the plan.
 - **Leaked secret** -- writing an RPC URL or token into the doc. Step 5 catches
   it; treat a miss as a serious error.
-- **No docs/ directory** -- fall back to a repo-root `handoffs/` dir; never write
-  the handover outside the repo.
+- **Tracked handover** -- writing inside a repository, staging the file, or
+  committing it pollutes feature history. Keep it under the external workspace
+  `.tmp/handoffs/` only.
+- **Wrong repository scope** -- a cross-repository handover placed inside one
+  participating repository falsely makes that repo the owner. Use their shared
+  non-repository workspace root.
