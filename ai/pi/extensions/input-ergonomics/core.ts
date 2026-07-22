@@ -34,7 +34,7 @@ export const parseTemporaryScreenshot: (text: string) => TemporaryScreenshot | u
   }
   if (matches.length > 1) return undefined;
 
-  const inlineMatches = [...text.matchAll(/\/var\/folders\/(?:\\ |[^\s\\])+\.(?:png|jpe?g|gif|webp)/gi)];
+  const inlineMatches = [...text.matchAll(/\/(?:private\/)?var\/folders\/(?:\\ |[^\s\\])+\.(?:png|jpe?g|gif|webp)/gi)];
   if (inlineMatches.length !== 1) return undefined;
   const [inline] = inlineMatches;
   if (inline.index === undefined || !inline[0].includes("\\ ")) return undefined;
@@ -64,7 +64,7 @@ export const validateImageMagic: (bytes: Uint8Array, mimeType: TemporaryScreensh
 
 export const isAllowedTemporaryPath: (path: string) => boolean = (path) => {
   const normalized = normalize(path);
-  return /^\/var\/folders\/[^/]+\/[^/]+\/(?:T|TemporaryItems)\//.test(normalized);
+  return /^\/(?:private\/)?var\/folders\/[^/]+\/[^/]+\/(?:T|TemporaryItems)\//.test(normalized);
 };
 
 export const attachmentPrompt: (existingText: string) => string = (existingText) => {

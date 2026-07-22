@@ -1,6 +1,10 @@
 export const BROWSER_ACTIONS = ["status", "open", "text"] as const;
 
 export type BrowserAction = (typeof BROWSER_ACTIONS)[number];
+export type BrowserActivity = "active" | "idle";
+
+export const browserActivityLabel: (activity: BrowserActivity, action?: BrowserAction) => string = (activity, action) =>
+  activity === "active" && action ? `browser:active:${action} · isolated` : `browser:${activity} · isolated`;
 
 declare const localPageUrlBrand: unique symbol;
 export type LocalPageUrl = string & { readonly [localPageUrlBrand]: true };

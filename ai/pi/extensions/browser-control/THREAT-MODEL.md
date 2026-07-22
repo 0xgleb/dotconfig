@@ -30,10 +30,10 @@ Operator`, outside the configuration repository and the user's main Brave data.
 | --- | --- | --- |
 | Spoofing | Another page or process pretends to be the operator target | Dedicated debug port; only exact loopback targets opened by this extension may become active; target IDs and debugger URLs are validated |
 | Tampering | Model arguments or malformed CDP data alter navigation or command handling | URL and every HTTP/WebSocket response cross explicit decoders; CDP methods and JavaScript expressions are fixed in source |
-| Repudiation | Hidden launch behavior cannot be distinguished from user activity | Launch request is a single tested LaunchServices argument vector with explicit isolation flags |
+| Repudiation | Hidden launch behavior cannot be distinguished from user activity | Launch request is a single tested LaunchServices argument vector with explicit isolation flags; Pi shows a persistent isolated-browser status and the operator page carries a fixed active/idle badge |
 | Information disclosure | Main-profile tabs, cookies, or debugger URLs reach the model | Separate user-data directory; target selection requires the explicitly opened target; public details omit the debugger WebSocket; page text is bounded |
 | Denial of service | Browser or DevTools calls hang Pi or spawn repeatedly | Finite timeouts; an existing operator is reused through `/json/new` |
-| Elevation of privilege | Model gains arbitrary scripting or remote navigation | Closed actions `status`, `open`, and `text`; URLs are exact loopback HTTP(S); no model-supplied script is evaluated |
+| Elevation of privilege | Model gains arbitrary scripting or remote navigation | Closed actions `status`, `open`, and `text`; URLs are exact loopback HTTP(S); only source-fixed page text and activity-indicator expressions run—no model-supplied script is evaluated |
 
 ## Abuse cases encoded by tests
 

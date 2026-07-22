@@ -1,8 +1,9 @@
 import { homedir } from "node:os";
 import { join } from "node:path";
-import type { ExtensionAPI } from "@earendil-works/pi-coding-agent";
+import type { ExtensionAPI, ExtensionContext } from "@earendil-works/pi-coding-agent";
 import { Type } from "typebox";
 import {
+  browserActivityLabel,
   launchServicesRequest,
   parseCdpResponse,
   parseDebugTargets,
@@ -19,6 +20,8 @@ import {
 
 const DEBUG_PORT = 9222;
 const DASHBOARD_URL = "http://127.0.0.1:5173";
+const BROWSER_STATUS_KEY = "browser-control";
+const ACTIVITY_INDICATOR_ID = "pi-browser-control-indicator";
 const MAX_TEXT_LENGTH = 12_000;
 const REQUEST_TIMEOUT_MS = 5_000;
 const TARGET_DISCOVERY_TIMEOUT_MS = 5_000;
@@ -223,7 +226,11 @@ const resultText: (value: unknown) => string = (value) => {
 const pageText: () => Promise<string> = async () => {
   return withPage(async (client) => {
     const result = await client.call("Runtime.evaluate", {
-      expression: `(() => ({ title: document.title, url: location.href, text: (document.body?.innerText || '').slice(0, ${MAX_TEXT_LENGTH}) }))()`,
+      expression: `(() => {
+        const excluded = new Set(['● PI IS USING THIS BROWSER', 'PI OPERATOR · IDLE']);
+        const text = (document.body?.innerText || '').split('\\n').filter((line) => !excluded.has(line.trim())).join('\\n');
+        return { title: document.title, url: location.href, text: text.slice(0, ${MAX_TEXT_LENGTH}) };
+      })()`,
       awaitPromise: true,
       returnByValue: true,
       timeout: REQUEST_TIMEOUT_MS,
@@ -232,20 +239,94 @@ const pageText: () => Promise<string> = async () => {
   });
 };
 
+const activityIndicatorExpression: (active: boolean) => string = (active) => `(() => {
+  let indicator = document.getElementById('${ACTIVITY_INDICATOR_ID}');
+  if (!indicator) {
+    indicator = document.createElement('div');
+    indicator.id = '${ACTIVITY_INDICATOR_ID}';
+    indicator.setAttribute('aria-live', 'polite');
+    document.documentElement.appendChild(indicator);
+  }
+  indicator.textContent = '${active ? "● PI IS USING THIS BROWSER" : "PI OPERATOR · IDLE"}';
+  indicator.dataset.activity = '${active ? "active" : "idle"}';
+  indicator.style.cssText = [
+    'position:fixed', 'top:10px', 'right:10px', 'z-index:2147483647',
+    'padding:7px 11px', 'border-radius:6px', 'pointer-events:none',
+    'font:700 11px/1.2 ui-monospace,SFMono-Regular,Menlo,monospace',
+    'letter-spacing:.04em', 'box-shadow:0 2px 12px rgba(0,0,0,.45)',
+    'color:${active ? "#16001f" : "#d8cae8"}',
+    'background:${active ? "#39ffb6" : "#3b274b"}',
+    'border:1px solid ${active ? "#aaffdd" : "#74568a"}'
+  ].join(';');
+  return indicator.dataset.activity;
+})()`;
+
+const setPageActivityIndicator: (active: boolean) => Promise<void> = async (active) => {
+  await withPage(async (client) => {
+    const result = await client.call("Runtime.evaluate", {
+      expression: activityIndicatorExpression(active),
+      awaitPromise: true,
+      returnByValue: true,
+      timeout: REQUEST_TIMEOUT_MS,
+    });
+    parseEvaluationResult(result);
+  });
+};
+
+let activeBrowserOperations = 0;
+
+const setPageActivityBestEffort: (active: boolean) => Promise<void> = async (active) => {
+  try {
+    await setPageActivityIndicator(active);
+  } catch {
+    // The TUI indicator remains authoritative while a page is opening or unavailable.
+  }
+};
+
+const withBrowserActivity: <T>(
+  ctx: ExtensionContext,
+  action: BrowserAction,
+  callback: () => Promise<T>,
+) => Promise<T> = async (ctx, action, callback) => {
+  activeBrowserOperations += 1;
+  ctx.ui.setStatus(BROWSER_STATUS_KEY, browserActivityLabel("active", action));
+  await setPageActivityBestEffort(true);
+  try {
+    return await callback();
+  } finally {
+    activeBrowserOperations = Math.max(0, activeBrowserOperations - 1);
+    if (activeBrowserOperations === 0) {
+      await setPageActivityBestEffort(false);
+      ctx.ui.setStatus(BROWSER_STATUS_KEY, browserActivityLabel("idle"));
+    }
+  }
+};
+
 const browserControl: (pi: ExtensionAPI) => void = (pi) => {
+  pi.on("session_start", (_event, ctx) => {
+    ctx.ui.setStatus(BROWSER_STATUS_KEY, browserActivityLabel("idle"));
+    void setPageActivityBestEffort(false);
+  });
+
+  pi.on("session_shutdown", (_event, ctx) => {
+    ctx.ui.setStatus(BROWSER_STATUS_KEY, undefined);
+  });
   pi.registerCommand("browser", {
     description: "Open a loopback page in the existing Brave app (/browser [local-url])",
     async handler(args, ctx) {
-      const url = args.trim() || DASHBOARD_URL;
-      try {
-        const opened = await openTarget(pi, url);
-        ctx.ui.notify(
-          opened.target ? `Brave operator page ready: ${opened.target.title || opened.target.url}` : DEBUG_SETUP_MESSAGE,
-          opened.target ? "info" : "warning",
-        );
-      } catch (error) {
-        ctx.ui.notify(error instanceof Error ? error.message : "Could not open the Brave operator page", "error");
-      }
+      await withBrowserActivity(ctx, "open", async () => {
+        const url = args.trim() || DASHBOARD_URL;
+        try {
+          const opened = await openTarget(pi, url);
+          await setPageActivityBestEffort(true);
+          ctx.ui.notify(
+            opened.target ? `Brave operator page ready: ${opened.target.title || opened.target.url}` : DEBUG_SETUP_MESSAGE,
+            opened.target ? "info" : "warning",
+          );
+        } catch (error) {
+          ctx.ui.notify(error instanceof Error ? error.message : "Could not open the Brave operator page", "error");
+        }
+      });
     },
   });
 
@@ -262,42 +343,52 @@ const browserControl: (pi: ExtensionAPI) => void = (pi) => {
       action: Type.Union([Type.Literal("status"), Type.Literal("open"), Type.Literal("text")]),
       url: Type.Optional(Type.String({ description: "Loopback HTTP URL for action=open. Defaults to the dashboard dev server." })),
     }),
-    async execute(_toolCallId, params: BrowserParams) {
-      try {
-        if (params.action === "status") {
-          const ready = await isDebugEndpointReady();
-          if (!ready) {
-            return { content: [{ type: "text", text: DEBUG_SETUP_MESSAGE }], details: { ready } };
+    async execute(_toolCallId, params: BrowserParams, _signal, _onUpdate, ctx) {
+      return withBrowserActivity(ctx, params.action, async () => {
+        try {
+          if (params.action === "status") {
+            const ready = await isDebugEndpointReady();
+            if (!ready) {
+              return { content: [{ type: "text", text: DEBUG_SETUP_MESSAGE }], details: { ready } };
+            }
+            const targets = await listTargets();
+            const target = activeTargetId ? targets.find((candidate) => candidate.id === activeTargetId) : undefined;
+            const visibleTarget = target ? publicTarget(target) : undefined;
+            return {
+              content: [
+                {
+                  type: "text",
+                  text: visibleTarget
+                    ? `${visibleTarget.id} ${visibleTarget.title || "(untitled)"} ${visibleTarget.url}`
+                    : "No local page has been opened by this Pi session.",
+                },
+              ],
+              details: { ready, target: visibleTarget },
+            };
           }
-          const targets = await listTargets();
-          const target = activeTargetId ? targets.find((candidate) => candidate.id === activeTargetId) : undefined;
-          const visibleTarget = target ? publicTarget(target) : undefined;
-          return {
-            content: [{ type: "text", text: visibleTarget ? `${visibleTarget.id} ${visibleTarget.title || "(untitled)"} ${visibleTarget.url}` : "No local page has been opened by this Pi session." }],
-            details: { ready, target: visibleTarget },
-          };
-        }
 
-        if (params.action === "open") {
-          const opened = await openTarget(pi, params.url || DASHBOARD_URL);
-          const visibleTarget = opened.target ? publicTarget(opened.target) : undefined;
-          return {
-            content: [
-              {
-                type: "text",
-                text: visibleTarget
-                  ? `Opened ${visibleTarget.title || visibleTarget.url}`
-                  : `Opened ${opened.url} in the existing Brave app. ${DEBUG_SETUP_MESSAGE}`,
-              },
-            ],
-            details: { ready: visibleTarget !== undefined, url: opened.url, target: visibleTarget },
-          };
-        }
+          if (params.action === "open") {
+            const opened = await openTarget(pi, params.url || DASHBOARD_URL);
+            await setPageActivityBestEffort(true);
+            const visibleTarget = opened.target ? publicTarget(opened.target) : undefined;
+            return {
+              content: [
+                {
+                  type: "text",
+                  text: visibleTarget
+                    ? `Opened ${visibleTarget.title || visibleTarget.url}`
+                    : `Opened ${opened.url} in the existing Brave app. ${DEBUG_SETUP_MESSAGE}`,
+                },
+              ],
+              details: { ready: visibleTarget !== undefined, url: opened.url, target: visibleTarget },
+            };
+          }
 
-        return { content: [{ type: "text", text: await pageText() }], details: { status: "ok" } };
-      } catch (error) {
-        throw error instanceof Error ? error : new Error("Browser action failed");
-      }
+          return { content: [{ type: "text", text: await pageText() }], details: { status: "ok" } };
+        } catch (error) {
+          throw error instanceof Error ? error : new Error("Browser action failed");
+        }
+      });
     },
   });
 };

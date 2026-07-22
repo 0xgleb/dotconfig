@@ -14,6 +14,10 @@ test("temporary screenshot parser accepts only exact macOS temp image paths", ()
     { path: "/var/folders/ab/cdef/T/pi-clipboard-123.png", mimeType: "image/png", remainingText: "" },
   );
   assert.deepEqual(
+    parseTemporaryScreenshot("/private/var/folders/ab/cdef/T/pi-hover-panel.png"),
+    { path: "/private/var/folders/ab/cdef/T/pi-hover-panel.png", mimeType: "image/png", remainingText: "" },
+  );
+  assert.deepEqual(
     parseTemporaryScreenshot("'/var/folders/ab/cdef/TemporaryItems/Screenshot 2026-07-21 at 23.47.22.png'"),
     {
       path: "/var/folders/ab/cdef/TemporaryItems/Screenshot 2026-07-21 at 23.47.22.png",
@@ -55,6 +59,7 @@ test("temporary screenshot parser accepts only exact macOS temp image paths", ()
 test("temporary path allowlist rejects traversal and unrelated roots", () => {
   assert.equal(isAllowedTemporaryPath("/var/folders/ab/cdef/T/image.png"), true);
   assert.equal(isAllowedTemporaryPath("/var/folders/ab/cdef/TemporaryItems/image.png"), true);
+  assert.equal(isAllowedTemporaryPath("/private/var/folders/ab/cdef/T/image.png"), true);
   assert.equal(isAllowedTemporaryPath("/tmp/image.png"), false);
   assert.equal(isAllowedTemporaryPath("/var/folders/ab/cdef/T/../image.png"), false);
 });

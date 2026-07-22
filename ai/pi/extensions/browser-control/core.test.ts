@@ -2,6 +2,7 @@ import assert from "node:assert/strict";
 import test from "node:test";
 import {
   BROWSER_ACTIONS,
+  browserActivityLabel,
   launchServicesRequest,
   parseCdpResponse,
   parseDebugTargets,
@@ -21,6 +22,11 @@ const recordedTarget = {
   url: "http://127.0.0.1:5173/health",
   webSocketDebuggerUrl: "ws://127.0.0.1:9222/devtools/page/DAB7",
 };
+
+test("browser activity labels distinguish scoped active control from an idle operator", () => {
+  assert.equal(browserActivityLabel("idle"), "browser:idle · isolated");
+  assert.equal(browserActivityLabel("active", "text"), "browser:active:text · isolated");
+});
 
 test("browser actions expose no arbitrary script evaluation", () => {
   assert.deepEqual(BROWSER_ACTIONS, ["status", "open", "text"]);
