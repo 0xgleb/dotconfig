@@ -19,7 +19,8 @@ export function readResultPresentation(
   if (output.kind === "missing") return Effect.fail(new ReadRenderError({ message: "No content" }));
   if (output.kind === "image") return Effect.succeed("Image loaded");
   if (output.text.startsWith("Error")) {
-    return Effect.fail(new ReadRenderError({ message: output.text.split("\n")[0] }));
+    const message = mode === "expanded" ? output.text : output.text.split("\n")[0]!;
+    return Effect.fail(new ReadRenderError({ message }));
   }
   return Effect.succeed(mode === "expanded" ? output.text : "done");
 }

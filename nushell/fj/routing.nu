@@ -240,16 +240,21 @@ def session-args [has_session: bool, start_fresh: bool, resume_flags: list<strin
   if $has_session and not ($start_fresh or $steers_session) { ["--continue"] } else { [] }
 }
 
+# The --claude and --new selectors are consumed from the rest args rather than
+# declared as switches: the `clanker` wrapper is --wrapped, so user flags reach
+# this command as runtime strings via spread, which nushell never re-parses
+# into declared flags.
 export def --wrapped clanker-route [
   pi_has_session: bool
   claude_has_session: bool
-  --claude
-  --new
   --remote-control
   ...args: string
 ]: nothing -> record<tool: string, args: list<string>> {
-  if $claude {
-    let resume = (session-args $claude_has_session $new ["--continue" "-c" "--resume" "-r" "--from-pr"] $args)
+  let wants_claude = ("--claude" in $args)
+  let start_fresh = ("--new" in $args)
+  let forwarded = ($args | where {|arg| $arg not-in ["--claude" "--new"] })
+  if $wants_claude {
+    let resume = (session-args $claude_has_session $start_fresh ["--continue" "-c" "--resume" "-r" "--from-pr"] $forwarded)
     let remote = if $remote_control { ["--remote-control"] } else { [] }
     {
       tool: "claude"
@@ -258,13 +263,13 @@ export def --wrapped clanker-route [
         '{"effortLevel": "high", "enableWorkflows": true, "tui": "fullscreen"}'
         "--permission-mode"
         "auto"
-      ] | append $remote | append $resume | append $args)
+      ] | append $remote | append $resume | append $forwarded)
     }
   } else {
-    let resume = (session-args $pi_has_session $new ["--continue" "-c" "--resume" "-r" "--session" "--session-id" "--fork"] $args)
+    let resume = (session-args $pi_has_session $start_fresh ["--continue" "-c" "--resume" "-r" "--session" "--session-id" "--fork"] $forwarded)
     {
       tool: "pi"
-      args: (["--thinking" "high"] | append $resume | append $args)
+      args: (["--thinking" "high"] | append $resume | append $forwarded)
     }
   }
 }

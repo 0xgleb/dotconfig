@@ -92,6 +92,26 @@ def "test clanker never adds claude remote control to pi" [] {
   assert (not ("--remote-control" in $route.args))
 }
 
+# The `clanker` wrapper in mod.nu is --wrapped: user flags land in $args as
+# strings and are spread into clanker-route at runtime. Spread values are never
+# re-parsed as flags, so selectors must be consumed from the rest args.
+
+def "test clanker claude selector routes when spread as runtime args" [] {
+  let args = ["--claude" "fix the bug"]
+  let route = (clanker-route true true ...$args)
+  assert equal $route.tool "claude"
+  assert (not ("--claude" in $route.args)) "--claude is consumed"
+  assert (("fix the bug" in $route.args))
+}
+
+def "test clanker new selector starts fresh when spread as runtime args" [] {
+  let args = ["--new" "fix the bug"]
+  let route = (clanker-route true true ...$args)
+  assert equal $route.tool "pi"
+  assert (not ("--continue" in $route.args)) "--new suppresses resume"
+  assert (not ("--new" in $route.args)) "--new is consumed"
+}
+
 # --- mut: gt modify ---
 
 def "test fj mut routes to gt modify" [] {

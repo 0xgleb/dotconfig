@@ -32,6 +32,10 @@ let
   emptyPiSkillRoot = pkgs.runCommandLocal "pi-empty-skill-root" { } ''
     mkdir -p "$out"
   '';
+  piExtensionNodeModules = pkgs.importNpmLock.buildNodeModules {
+    npmRoot = ./ai/pi/extensions;
+    inherit (pkgs) nodejs;
+  };
 
 in
 {
@@ -68,19 +72,17 @@ in
             };
           });
       in
-      (with pkgs; [
-        cargo-watch
-        but
-        jf
-      ])
-      ++ [ claude-code-latest ]
-      ++ (with unstable; [
+      (with unstable; [
         codex
-        graphite-cli
         cursor-cli
-        antigravity-cli
+        graphite-cli
         pi-coding-agent
-      ]);
+      ])
+      ++ [
+        but
+        claude-code-latest
+        jf
+      ];
 
     shell.enableNushellIntegration = true;
     sessionPath = lib.mkIf isDarwin [
@@ -102,6 +104,10 @@ in
       ".cursor/CLAUDE.md".source = config.lib.file.mkOutOfStoreSymlink "${aiDir}/AGENTS.md";
       ".pi/agent/AGENTS.md".source = config.lib.file.mkOutOfStoreSymlink "${aiDir}/pi/AGENTS.md";
       ".pi/agent/skills".source = emptyPiSkillRoot;
+      ".config/ai/pi/extensions/node_modules" = {
+        source = "${piExtensionNodeModules}/node_modules";
+        force = true;
+      };
     }
     // lib.optionalAttrs isDarwin darwinFiles;
 

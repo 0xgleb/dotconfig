@@ -68,7 +68,7 @@ exclude the tracked lockfiles.
 ```bash
 ts=$(date +%Y-%m-%d_%H-%M-%S)
 safe_scope=$(echo "$scope" | tr '/. ' '___')
-out_dir="$repo_root/.tmp/claude-local-ctx/reviews/audit-${ts}-${safe_scope}"
+out_dir="$repo_root/.tmp/agent-local-ctx/reviews/audit-${ts}-${safe_scope}"
 mkdir -p "$out_dir"
 empty=$(git -C "$repo_root" hash-object -t tree /dev/null)   # canonical empty-tree object
 git -C "$repo_root" diff "$empty" HEAD -- "$scope" \

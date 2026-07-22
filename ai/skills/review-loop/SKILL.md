@@ -218,7 +218,7 @@ parent_sha=$(git rev-parse "$parent")
 repo_root=$(git rev-parse --show-toplevel)
 ts=$(date +%Y-%m-%d_%H-%M-%S)
 safe_branch=$(echo "$branch" | tr '/' '_')
-out_dir="$repo_root/.tmp/claude-local-ctx/reviews/${ts}-${safe_branch}"
+out_dir="$repo_root/.tmp/agent-local-ctx/reviews/${ts}-${safe_branch}"
 mkdir -p "$out_dir"
 ```
 
@@ -235,7 +235,7 @@ Refuse to proceed if the diff is empty. If it exceeds 5000 lines, warn the user
 and ask whether to proceed — reviewer quality degrades on huge diffs.
 
 **Ensure the artifact folder is gitignored.** Artifacts are written under
-`$repo_root/.tmp/claude-local-ctx/`. If `.tmp/` is not already gitignored (check
+`$repo_root/.tmp/agent-local-ctx/`. If `.tmp/` is not already gitignored (check
 with `grep -q '\.tmp/' "$repo_root/.gitignore"`), ask the user for permission to
 add it. Do not silently modify `.gitignore`.
 

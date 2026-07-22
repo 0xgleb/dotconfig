@@ -24,6 +24,7 @@ test("credential-shaped paths are always blocked", () => {
     { toolName: "grep", input: { path: "config/secrets.yaml" } },
     { toolName: "read", input: { file_path: "certs/signing.pem" } },
     { toolName: "bash", input: { command: "rg token .env.production" } },
+    { toolName: "bash", input: { command: "rg token -g '.env'" } },
   ];
   for (const { toolName, input } of cases) {
     const decision = deterministicDecision({
@@ -67,6 +68,16 @@ test("writes inside the working directory are allowed", () => {
   assert.equal(decision?.verdict, "allow");
 });
 
+test("todo tracking requires classifier review because its text is persisted", () => {
+  const decision = deterministicDecision({
+    boundary: "action",
+    toolName: "todo",
+    input: { action: "add", text: "Move the Graphite stack" },
+    cwd: "/repo",
+  });
+  assert.equal(decision, null);
+});
+
 test("shell and unknown tools require classifier review", () => {
   assert.equal(
     deterministicDecision({
@@ -106,6 +117,17 @@ test("broad searches require explicit credential exclusions", () => {
     cwd: "/repo",
   });
   assert.equal(excluded, null);
+
+  const spoofed = deterministicDecision({
+    boundary: "action",
+    toolName: "bash",
+    input: {
+      command:
+        "rg --files # -g '!.env*' -g '!credentials.json' -g '!secrets.json' -g '!secrets.yaml' -g '!*.key' -g '!*.pem' -g '!*.p12' -g '!*.pfx'",
+    },
+    cwd: "/repo",
+  });
+  assert.equal(spoofed?.verdict, "block");
 });
 
 test("classifier decisions are strict JSON and fail closed", () => {

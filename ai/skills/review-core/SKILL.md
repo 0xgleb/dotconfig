@@ -65,7 +65,7 @@ Three panel modes:
 ### 1a. Read the session cache (do this first)
 
 ```bash
-cache="$HOME/.config/.tmp/claude-local-ctx/review-panel-cache.json"
+cache="$HOME/.config/.tmp/agent-local-ctx/review-panel-cache.json"
 mkdir -p "$(dirname "$cache")"
 ```
 

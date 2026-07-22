@@ -13,7 +13,7 @@ direnv/
 
 /.direnv/
 /.tmp/
-/ai/pi/extensions/node_modules/
+/ai/pi/extensions/node_modules
 /cagent/
 /doom/custom.el
 /emacs/

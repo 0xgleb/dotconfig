@@ -39,3 +39,13 @@ test("missing and failed read output use the typed error channel", async () => {
   if (Either.isLeft(missing)) assert.equal(missing.left.message, "No content");
   if (Either.isLeft(failed)) assert.equal(failed.left.message, "Error: cannot read");
 });
+
+test("expanded failed reads reveal the complete diagnostic", async () => {
+  const text = "Error: cannot read\ninternal detail";
+  const failed = await Effect.runPromise(
+    Effect.either(readResultPresentation({ kind: "text", text }, "expanded")),
+  );
+
+  assert.equal(Either.isLeft(failed), true);
+  if (Either.isLeft(failed)) assert.equal(failed.left.message, text);
+});

@@ -3,6 +3,7 @@ import { createReadTool } from "@earendil-works/pi-coding-agent";
 import { Text } from "@earendil-works/pi-tui";
 import { Effect } from "effect";
 import { readResultPresentation, type ReadOutput } from "./presentation.ts";
+import { executeWithContextCwd } from "./contextual-tool.ts";
 
 export default function compactRead(pi: ExtensionAPI): void {
   const originalRead = createReadTool(process.cwd());
@@ -13,8 +14,8 @@ export default function compactRead(pi: ExtensionAPI): void {
     description: originalRead.description,
     parameters: originalRead.parameters,
 
-    async execute(toolCallId, params, signal, onUpdate) {
-      return originalRead.execute(toolCallId, params, signal, onUpdate);
+    async execute(toolCallId, params, signal, onUpdate, ctx) {
+      return executeWithContextCwd(ctx.cwd, createReadTool, [toolCallId, params, signal, onUpdate]);
     },
 
     renderCall(args, theme) {

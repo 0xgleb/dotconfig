@@ -65,13 +65,19 @@ const REQUIRED_SEARCH_EXCLUSIONS = [
 
 function relevantStrings(toolName: string, input: Record<string, unknown>): string[] {
   if (toolName === "bash") {
-    return typeof input.command === "string"
-      ? [input.command.replace(/(?:-g|--glob)\s+(?:"[^"]*"|'[^']*'|\S+)/g, "")]
-      : [];
+    return typeof input.command === "string" ? [stripNegativeGlobArguments(input.command)] : [];
   }
 
   return Object.entries(input).flatMap(([key, value]) =>
     PATH_KEYS.has(key) && typeof value === "string" ? [value] : [],
+  );
+}
+
+function stripNegativeGlobArguments(command: string): string {
+  return command.replace(
+    /(?:^|\s)(?:-g|--glob)(?:=|\s+)(?:"([^"]*)"|'([^']*)'|([^\s'"]+))/g,
+    (argument: string, doubleQuoted: string | undefined, singleQuoted: string | undefined, bare: string | undefined) =>
+      (doubleQuoted ?? singleQuoted ?? bare)?.startsWith("!") ? "" : argument,
   );
 }
 
@@ -85,13 +91,21 @@ function isBroadRootSearch(request: ToolRequest): boolean {
     const command = request.input.command;
     if (typeof command !== "string") return false;
     const broad = /^\s*(?:rg\s+--files\b|find(?:\s+\.|\s*$)|ls(?:\s+\.|\s*$)|grep\b[^\n]*(?:\s-r\b|\s-R\b))/m.test(command);
-    return broad && REQUIRED_SEARCH_EXCLUSIONS.some((exclusion) => !command.includes(exclusion));
+    return broad && !hasRequiredSearchExclusions(command);
   }
   if (!new Set(["grep", "find", "ls"]).has(request.toolName)) return false;
   const candidate = request.input.path;
   if (candidate === undefined || candidate === "" || candidate === ".") return true;
   const resolved = path.resolve(request.cwd, String(candidate));
   return resolved === path.resolve(request.cwd) || resolved === path.parse(resolved).root;
+}
+
+function hasRequiredSearchExclusions(command: string): boolean {
+  if (/(?:^|\s)#/.test(command)) return false;
+  const patterns = [...command.matchAll(/(?:^|\s)(?:-g|--glob)(?:=|\s+)(?:"([^"]*)"|'([^']*)'|([^\s'"]+))/g)].map(
+    (match) => match[1] ?? match[2] ?? match[3],
+  );
+  return REQUIRED_SEARCH_EXCLUSIONS.every((exclusion) => patterns.includes(exclusion));
 }
 
 export function deterministicDecision(request: ToolRequest): Decision | null {
