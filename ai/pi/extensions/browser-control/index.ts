@@ -35,36 +35,33 @@ interface PendingCall {
 
 let activeTargetId: string | undefined;
 
-function debugBase(): string {
-  return `http://127.0.0.1:${DEBUG_PORT}`;
-}
+const debugBase: () => string = () => `http://127.0.0.1:${DEBUG_PORT}`;
 
-async function requestJson(path: string, init?: RequestInit): Promise<unknown> {
+const requestJson: (path: string, init?: RequestInit) => Promise<unknown> = async (path, init) => {
   const response = await fetch(`${debugBase()}${path}`, {
     ...init,
     signal: AbortSignal.timeout(REQUEST_TIMEOUT_MS),
   });
   if (!response.ok) throw new Error(`Brave debug endpoint returned HTTP ${response.status}`);
   return response.json();
-}
+};
 
-async function isDebugEndpointReady(): Promise<boolean> {
+const isDebugEndpointReady: () => Promise<boolean> = async () => {
   try {
     await requestJson("/json/version");
     return true;
   } catch {
     return false;
   }
-}
+};
 
-async function listTargets(): Promise<readonly DebugTarget[]> {
-  return parseDebugTargets(await requestJson("/json/list"), DEBUG_PORT);
-}
+const listTargets: () => Promise<readonly DebugTarget[]> = async () =>
+  parseDebugTargets(await requestJson("/json/list"), DEBUG_PORT);
 
-async function discoverOpenedTarget(
+const discoverOpenedTarget: (
   url: LocalPageUrl,
   previousTargetIds: ReadonlySet<string>,
-): Promise<DebugTarget | undefined> {
+) => Promise<DebugTarget | undefined> = async (url, previousTargetIds) => {
   const deadline = Date.now() + TARGET_DISCOVERY_TIMEOUT_MS;
   let matchingTarget: DebugTarget | undefined;
   while (Date.now() < deadline) {
@@ -75,12 +72,12 @@ async function discoverOpenedTarget(
     await new Promise((resolve) => setTimeout(resolve, 250));
   }
   return matchingTarget;
-}
+};
 
-async function openTarget(
+const openTarget: (
   pi: ExtensionAPI,
   input: string,
-): Promise<{ readonly url: LocalPageUrl; readonly target?: DebugTarget }> {
+) => Promise<{ readonly url: LocalPageUrl; readonly target?: DebugTarget }> = async (pi, input) => {
   const url = parseLocalPageUrl(input);
   const debugReady = await isDebugEndpointReady();
   const previousTargetIds = new Set(debugReady ? (await listTargets()).map(({ id }) => id) : []);
@@ -95,12 +92,12 @@ async function openTarget(
   const target = await discoverOpenedTarget(url, previousTargetIds);
   activeTargetId = target?.id;
   return { url, ...(target ? { target } : {}) };
-}
+};
 
-async function activeTarget(): Promise<DebugTarget> {
+const activeTarget: () => Promise<DebugTarget> = async () => {
   if (!(await isDebugEndpointReady())) throw new Error(DEBUG_SETUP_MESSAGE);
   return selectActiveTarget(await listTargets(), activeTargetId);
-}
+};
 
 class CdpClient {
   private nextId = 1;
@@ -192,7 +189,9 @@ class CdpClient {
   }
 }
 
-async function withPage<T>(callback: (client: CdpClient, target: DebugTarget) => Promise<T>): Promise<T> {
+const withPage: <T>(callback: (client: CdpClient, target: DebugTarget) => Promise<T>) => Promise<T> = async (
+  callback,
+) => {
   const target = await activeTarget();
   const client = await CdpClient.connect(target.webSocketDebuggerUrl);
   try {
@@ -200,14 +199,14 @@ async function withPage<T>(callback: (client: CdpClient, target: DebugTarget) =>
   } finally {
     client.close();
   }
-}
+};
 
-function resultText(value: unknown): string {
+const resultText: (value: unknown) => string = (value) => {
   if (typeof value === "string") return value;
   return JSON.stringify(value, null, 2) ?? String(value);
-}
+};
 
-async function pageText(): Promise<string> {
+const pageText: () => Promise<string> = async () => {
   return withPage(async (client) => {
     const result = await client.call("Runtime.evaluate", {
       expression: `(() => ({ title: document.title, url: location.href, text: (document.body?.innerText || '').slice(0, ${MAX_TEXT_LENGTH}) }))()`,
@@ -217,9 +216,9 @@ async function pageText(): Promise<string> {
     });
     return resultText(parseEvaluationResult(result));
   });
-}
+};
 
-export default function browserControl(pi: ExtensionAPI): void {
+const browserControl: (pi: ExtensionAPI) => void = (pi) => {
   pi.registerCommand("browser", {
     description: "Open a loopback page in the existing Brave app (/browser [local-url])",
     async handler(args, ctx) {
@@ -287,4 +286,6 @@ export default function browserControl(pi: ExtensionAPI): void {
       }
     },
   });
-}
+};
+
+export default browserControl;

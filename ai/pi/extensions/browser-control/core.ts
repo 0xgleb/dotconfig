@@ -26,11 +26,12 @@ export type CdpResponse =
 
 const LOOPBACK_HOSTS = new Set(["127.0.0.1", "[::1]", "localhost"]);
 
-export function launchServicesRequest(url: LocalPageUrl): LaunchServicesRequest {
-  return { command: "/usr/bin/open", args: ["-a", "Brave Browser", url] };
-}
+export const launchServicesRequest: (url: LocalPageUrl) => LaunchServicesRequest = (url) => ({
+  command: "/usr/bin/open",
+  args: ["-a", "Brave Browser", url],
+});
 
-export function parseLocalPageUrl(input: string): LocalPageUrl {
+export const parseLocalPageUrl: (input: string) => LocalPageUrl = (input) => {
   let url: URL;
   try {
     url = new URL(input);
@@ -47,36 +48,39 @@ export function parseLocalPageUrl(input: string): LocalPageUrl {
     throw new Error("Browser URLs must not contain credentials.");
   }
   return url.href as LocalPageUrl;
-}
+};
 
-export function parseDebugTargets(value: unknown, debugPort: number): readonly DebugTarget[] {
+export const parseDebugTargets: (value: unknown, debugPort: number) => readonly DebugTarget[] = (
+  value,
+  debugPort,
+) => {
   if (!Array.isArray(value)) throw new Error("Brave debug target response must be an array.");
   return value.flatMap((candidate) => {
     const target = parseDebugTarget(candidate, debugPort);
     return target ? [target] : [];
   });
-}
+};
 
-export function selectActiveTarget(
+export const selectActiveTarget: (
   targets: readonly DebugTarget[],
   activeTargetId: string | undefined,
-): DebugTarget {
+) => DebugTarget = (targets, activeTargetId) => {
   if (!activeTargetId) throw new Error("No explicitly opened local page is available.");
   const target = targets.find((candidate) => candidate.id === activeTargetId);
   if (!target) throw new Error("The explicitly opened local page is no longer available.");
   return target;
-}
+};
 
-export function publicTarget(target: DebugTarget): PublicDebugTarget {
+export const publicTarget: (target: DebugTarget) => PublicDebugTarget = (target) => {
   return {
     id: target.id,
     title: target.title,
     type: target.type,
     url: target.url,
   };
-}
+};
 
-export function parseCdpResponse(data: string): CdpResponse | undefined {
+export const parseCdpResponse: (data: string) => CdpResponse | undefined = (data) => {
   let value: unknown;
   try {
     value = JSON.parse(data);
@@ -96,9 +100,9 @@ export function parseCdpResponse(data: string): CdpResponse | undefined {
     return { kind: "error", id, message: dataMessage ?? message ?? "CDP command failed" };
   }
   return { kind: "result", id, result: value.result };
-}
+};
 
-export function parseEvaluationResult(value: unknown): unknown {
+export const parseEvaluationResult: (value: unknown) => unknown = (value) => {
   if (!isRecord(value)) throw new Error("Brave returned a malformed Runtime.evaluate result.");
   if ("exceptionDetails" in value) {
     if (!isRecord(value.exceptionDetails)) {
@@ -114,9 +118,12 @@ export function parseEvaluationResult(value: unknown): unknown {
   }
   if ("value" in value.result) return value.result.value;
   return typeof value.result.description === "string" ? value.result.description : undefined;
-}
+};
 
-function parseDebugTarget(value: unknown, debugPort: number): DebugTarget | undefined {
+const parseDebugTarget: (value: unknown, debugPort: number) => DebugTarget | undefined = (
+  value,
+  debugPort,
+) => {
   if (!isRecord(value)) throw new Error("Brave returned a malformed debug target.");
   if (value.type !== "page") return undefined;
   if (
@@ -142,9 +149,13 @@ function parseDebugTarget(value: unknown, debugPort: number): DebugTarget | unde
     url,
     webSocketDebuggerUrl: value.webSocketDebuggerUrl,
   };
-}
+};
 
-function validateDebuggerUrl(input: string, targetId: string, debugPort: number): void {
+const validateDebuggerUrl: (input: string, targetId: string, debugPort: number) => void = (
+  input,
+  targetId,
+  debugPort,
+) => {
   let url: URL;
   try {
     url = new URL(input);
@@ -159,8 +170,7 @@ function validateDebuggerUrl(input: string, targetId: string, debugPort: number)
   ) {
     throw new Error("Brave returned an unexpected debugging endpoint.");
   }
-}
+};
 
-function isRecord(value: unknown): value is Readonly<Record<string, unknown>> {
-  return typeof value === "object" && value !== null && !Array.isArray(value);
-}
+const isRecord: (value: unknown) => value is Readonly<Record<string, unknown>> = (value) =>
+  typeof value === "object" && value !== null && !Array.isArray(value);
