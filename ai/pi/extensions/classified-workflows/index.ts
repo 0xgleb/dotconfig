@@ -1,11 +1,23 @@
 import { spawn } from "node:child_process";
-import { basename } from "node:path";
+import { lstatSync, realpathSync } from "node:fs";
+import { basename, relative, resolve, sep } from "node:path";
 import { fileURLToPath } from "node:url";
 import type { AgentToolResult } from "@earendil-works/pi-agent-core";
 import type { ExtensionAPI, ExtensionContext, ToolCallEvent, ToolResultEvent } from "@earendil-works/pi-coding-agent";
 import { Text } from "@earendil-works/pi-tui";
+import { Data, Effect } from "effect";
 import { Type } from "typebox";
 import { AGENT_PROCESS_STDIO, buildAgentArguments, resolveAgentModel, type AvailableAgentModel } from "./agent-process.ts";
+import {
+  ARTIFACT_PROVENANCE_ENTRY,
+  artifactPaths,
+  canonicalScratchArtifactPath,
+  emptyArtifactProvenanceState,
+  forgetArtifact,
+  recordArtifact,
+  restoreArtifactProvenance,
+  type ArtifactProvenanceState,
+} from "./artifact-provenance.ts";
 import {
   deterministicDecision,
   deterministicToolResultDecision,
@@ -427,6 +439,15 @@ function blockedResult(reason: string): AgentToolResult<{ status: "blocked" }> {
   };
 }
 
+const ArtifactProvenanceParameters = Type.Object({
+  action: Type.Union([Type.Literal("list"), Type.Literal("record"), Type.Literal("forget")]),
+  path: Type.Optional(Type.String({ maxLength: 1_024 })),
+});
+
+class ArtifactProvenanceError extends Data.TaggedError("ArtifactProvenanceError")<{
+  readonly message: string;
+}> {}
+
 const WorkflowParameters = Type.Object({
   code: Type.String({
     maxLength: 100_000,
@@ -443,7 +464,7 @@ const WorkflowParameters = Type.Object({
 });
 
 export default function classifiedWorkflows(pi: ExtensionAPI): void {
-  registerRuntimeVersion(pi, "classified-workflows", "2026.07.23.3");
+  registerRuntimeVersion(pi, "classified-workflows", "2026.07.23.4");
   let goalState: GoalState | undefined;
   let goalEvaluating = false;
   let goalRunTokens = 0;
@@ -451,6 +472,8 @@ export default function classifiedWorkflows(pi: ExtensionAPI): void {
   let loopTimer: ReturnType<typeof setTimeout> | undefined;
   let continuationPaused = false;
   let manualReloadPending = false;
+  let artifactProvenance: ArtifactProvenanceState = emptyArtifactProvenanceState;
+  const runtimeStartedAt = Date.now();
   const deterministicResultAllowance = createToolResultAllowance();
   let nextWorkflowId = 1;
   let latestCtx: ExtensionContext | undefined;
@@ -881,6 +904,7 @@ export default function classifiedWorkflows(pi: ExtensionAPI): void {
     goalState = storedGoal?.type === "custom" ? parseStoredGoal(storedGoal.data) : undefined;
     loopState = storedLoop?.type === "custom" ? parseStoredLoop(storedLoop.data) : undefined;
     continuationPaused = latestContinuationPause(branch)?.paused ?? false;
+    artifactProvenance = restoreArtifactProvenance(branch);
     goalRunTokens = 0;
     const now = Date.now();
     const goalHistory = goalEntries.flatMap((entry) => {
@@ -938,6 +962,8 @@ export default function classifiedWorkflows(pi: ExtensionAPI): void {
     scheduleLoop(ctx);
     renderWorkflowPanel(ctx);
   });
+
+  pi.on("session_compact", () => pi.appendEntry(ARTIFACT_PROVENANCE_ENTRY, artifactProvenance));
 
   pi.on("session_shutdown", (_event, ctx) => {
     clearLoopTimer();
@@ -1020,6 +1046,7 @@ export default function classifiedWorkflows(pi: ExtensionAPI): void {
       toolName: event.toolName,
       input: event.input,
       cwd: ctx.cwd,
+      agentArtifacts: artifactPaths(artifactProvenance),
     });
     if (deterministic?.verdict === "block") return resolveActionDecision(deterministic);
     if (deterministic?.verdict === "allow") {
@@ -1067,6 +1094,91 @@ export default function classifiedWorkflows(pi: ExtensionAPI): void {
         isError: true,
       };
     }
+  });
+
+  pi.registerTool({
+    name: "artifact_provenance",
+    label: "Agent artifact provenance",
+    description: "Record, list, or forget canonical agent-created scratch artifacts for exact cleanup authorization.",
+    promptSnippet: "Record newly created project .tmp artifacts before later cleanup",
+    promptGuidelines: [
+      "Record an artifact immediately after creating it; only current-runtime, non-symlink paths under the repository .tmp directory are accepted.",
+      "Recorded provenance authorizes only exact cleanup operands and never parent directories, globs, chaining, or unrelated paths.",
+    ],
+    parameters: ArtifactProvenanceParameters,
+    async execute(_toolCallId, request, _signal, _onUpdate, ctx) {
+      if (request.action === "list") {
+        const paths = artifactPaths(artifactProvenance);
+        return {
+          content: [{ type: "text", text: paths.length > 0 ? paths.join("\n") : "No recorded agent artifacts." }],
+          details: { outcome: "listed", artifacts: artifactProvenance.artifacts },
+        };
+      }
+      const candidate = request.path?.trim();
+      if (!candidate) {
+        return {
+          content: [{ type: "text", text: "path required" }],
+          details: { outcome: "error", error: "path required" },
+          isError: true,
+        };
+      }
+      const canonical = canonicalScratchArtifactPath(ctx.cwd, candidate);
+      if (!canonical) {
+        return {
+          content: [{ type: "text", text: "artifact path must be a child of the current repository .tmp directory" }],
+          details: { outcome: "error", error: "artifact path outside project .tmp" },
+          isError: true,
+        };
+      }
+      if (request.action === "forget") {
+        artifactProvenance = forgetArtifact(artifactProvenance, canonical);
+        pi.appendEntry(ARTIFACT_PROVENANCE_ENTRY, artifactProvenance);
+        return {
+          content: [{ type: "text", text: `Forgot artifact provenance for ${canonical}` }],
+          details: { outcome: "forgotten", path: canonical },
+        };
+      }
+      const validateArtifact = Effect.try({
+        try: () => {
+          const stat = lstatSync(canonical);
+          if (stat.isSymbolicLink()) throw new Error("artifact must not be a symbolic link");
+          const scratchRoot = realpathSync(resolve(ctx.cwd, ".tmp"));
+          const actual = realpathSync(canonical);
+          const child = relative(scratchRoot, actual);
+          if (!child || child === ".." || child.startsWith(`..${sep}`)) {
+            throw new Error("artifact resolves outside project .tmp");
+          }
+          const createdAt = stat.birthtimeMs > 0 ? stat.birthtimeMs : stat.ctimeMs;
+          if (createdAt < runtimeStartedAt - 5_000) {
+            throw new Error("artifact predates the current runtime and cannot be claimed automatically");
+          }
+          return actual;
+        },
+        catch: (error) =>
+          new ArtifactProvenanceError({
+            message: error instanceof Error ? error.message : "artifact validation failed",
+          }),
+      });
+      return Effect.runPromise(
+        validateArtifact.pipe(
+          Effect.match({
+            onFailure: (error) => ({
+              content: [{ type: "text" as const, text: error.message }],
+              details: { outcome: "error" as const, error: error.message },
+              isError: true,
+            }),
+            onSuccess: (actual) => {
+              artifactProvenance = recordArtifact(artifactProvenance, { path: actual, recordedAt: Date.now() });
+              pi.appendEntry(ARTIFACT_PROVENANCE_ENTRY, artifactProvenance);
+              return {
+                content: [{ type: "text" as const, text: `Recorded agent artifact ${actual}` }],
+                details: { outcome: "recorded" as const, path: actual },
+              };
+            },
+          }),
+        ),
+      );
+    },
   });
 
   pi.registerTool({

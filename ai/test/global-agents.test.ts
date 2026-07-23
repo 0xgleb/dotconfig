@@ -28,6 +28,7 @@ test("shared and Pi-global instructions enforce disk-pressure hygiene", () => {
   for (const [name, contents] of [["shared", shared], ["Pi global", pi]] as const) {
     assert.match(contents, /free disk space.*expensive build/is, `${name} instructions must check build capacity`);
     assert.match(contents, /agent-(?:created|owned).*artifact/is, `${name} instructions must clean owned artifacts`);
+    assert.match(contents, /artifact_provenance/is, `${name} instructions must record Pi scratch provenance`);
     assert.match(contents, /never.*global.*(?:cache|garbage collection).*without explicit/is, `${name} instructions must protect global caches`);
   }
 });

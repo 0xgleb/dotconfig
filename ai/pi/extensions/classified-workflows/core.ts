@@ -12,6 +12,7 @@ export interface ToolRequest {
   toolName: string;
   input: Record<string, unknown>;
   cwd: string;
+  agentArtifacts?: readonly string[];
 }
 
 export interface AgentRequest {
@@ -57,6 +58,7 @@ const READ_ONLY_TOOLS = new Set(["read", "grep", "find", "ls"]);
 const WRITE_TOOLS = new Set(["edit", "write"]);
 const TODO_ACTIONS = new Set(["list", "add", "toggle", "block", "unblock", "clear"]);
 const QUESTION_ACTIONS = new Set(["list", "ask", "resolve", "clear_resolved"]);
+const ARTIFACT_PROVENANCE_ACTIONS = new Set(["list", "record", "forget"]);
 const REGISTRY_ACTIONS = new Set([
   "list",
   "claim",
@@ -65,7 +67,7 @@ const REGISTRY_ACTIONS = new Set([
   "claim_request",
   "cancel_request",
 ]);
-const LOCALLY_GENERATED_RESULT_TOOLS = new Set(["edit", "write", "todo", "ask_user", "reload_pi"]);
+const LOCALLY_GENERATED_RESULT_TOOLS = new Set(["edit", "write", "todo", "ask_user", "artifact_provenance", "reload_pi"]);
 const PATH_KEYS = new Set(["path", "file_path", "cwd", "glob"]);
 const SENSITIVE_PATH =
   /(^|[\\/\s'"])(?:\.env(?!\.example(?:$|[\\/\s'"]))(?:\.[^\\/\s'"]*)?[*?]*|credentials\.json|secrets\.(?:json|ya?ml)|auth\.json|\.npmrc|\.netrc|\.pypirc|id_(?:rsa|dsa|ecdsa|ed25519)(?:\.pub)?|[^\\/\s'"]+\.(?:key|pem|p12|pfx))($|[\\/\s'"])/i;
@@ -115,6 +117,29 @@ const isGeneratedReviewCleanup = (command: string, cwd: string): boolean => {
   return tokens.every((candidate) => {
     const resolved = path.resolve(cwd, candidate);
     return /^\/tmp\/pr\d+-review$/.test(resolved) || /^pr\d+$/.test(path.relative(projectReviewRoot, resolved));
+  });
+};
+
+const isRecordedArtifactCleanup = (
+  command: string,
+  cwd: string,
+  agentArtifacts: readonly string[] | undefined,
+): boolean => {
+  if (!agentArtifacts || agentArtifacts.length === 0 || /[;&|`$<>\n\r*?{}\[\]]/.test(command)) return false;
+  const tokens = command.trim().split(/\s+/);
+  if (tokens.shift() !== "rm") return false;
+  let hasForce = false;
+  while (tokens[0]?.startsWith("-")) {
+    const option = tokens.shift();
+    if (option === "--") break;
+    if (!option || !/^-[rf]+$/.test(option)) return false;
+    hasForce ||= option.includes("f");
+  }
+  if (!hasForce || tokens.length === 0 || tokens.some((operand) => operand.startsWith("-"))) return false;
+  const recorded = new Set(agentArtifacts.map((candidate) => path.resolve(candidate)));
+  return tokens.every((operand) => {
+    const resolved = path.resolve(cwd, operand);
+    return recorded.has(resolved);
   });
 };
 
@@ -262,6 +287,14 @@ export function deterministicDecision(request: ToolRequest): Decision | null {
     };
   }
 
+  if (request.toolName === "artifact_provenance" && ARTIFACT_PROVENANCE_ACTIONS.has(String(request.input.action))) {
+    return {
+      verdict: "allow",
+      reason: "Session-local typed agent artifact provenance",
+      source: "deterministic",
+    };
+  }
+
   if (request.toolName === "agent_registry" && REGISTRY_ACTIONS.has(String(request.input.action))) {
     return {
       verdict: "allow",
@@ -279,6 +312,19 @@ export function deterministicDecision(request: ToolRequest): Decision | null {
       verdict: "allow",
       reason: "Exact read-only review-panel availability sentinel",
       source: "deterministic",
+    };
+  }
+
+  if (
+    request.toolName === "bash" &&
+    typeof request.input.command === "string" &&
+    isRecordedArtifactCleanup(request.input.command, request.cwd, request.agentArtifacts)
+  ) {
+    return {
+      verdict: "allow",
+      reason: "Exact cleanup of a provenance-recorded agent artifact",
+      source: "deterministic",
+      resultSafe: true,
     };
   }
 

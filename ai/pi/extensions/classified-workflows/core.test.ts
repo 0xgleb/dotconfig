@@ -228,6 +228,34 @@ test("the confirmed obsolete dotconfig model artifact can be removed exactly", (
   );
 });
 
+test("provenance-recorded scratch cleanup allows exact operands only", () => {
+  const cwd = "/Users/example/code/project";
+  const agentArtifacts = [
+    `${cwd}/.tmp/report.json`,
+    `${cwd}/.tmp/research`,
+  ];
+  for (const command of [
+    "rm -f -- .tmp/report.json",
+    "rm -rf -- .tmp/research .tmp/report.json",
+  ]) {
+    assert.equal(
+      deterministicDecision({ boundary: "action", toolName: "bash", input: { command }, cwd, agentArtifacts })?.verdict,
+      "allow",
+    );
+  }
+  for (const command of [
+    "rm -rf -- .tmp",
+    "rm -rf -- .tmp/research .tmp/other",
+    "rm -rf -- .tmp/re*",
+    "rm -rf -- .tmp/research && echo done",
+  ]) {
+    assert.notEqual(
+      deterministicDecision({ boundary: "action", toolName: "bash", input: { command }, cwd, agentArtifacts })?.verdict,
+      "allow",
+    );
+  }
+});
+
 test("generated review artifact cleanup is exact and cannot widen recursive deletion", () => {
   const cwd = "/Users/example/code/st0x/st0x.rest.api";
   const allowed = deterministicDecision({

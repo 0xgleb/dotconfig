@@ -40,8 +40,9 @@
   Stop before consuming the crash reserve; do not wait for a build to fail or Pi
   to crash.
 - Track and clean agent-owned artifacts after verification, including newly
-  created Nix result symlinks and stale Pi temporary logs. Never delete
-  pre-existing project outputs, user files, global caches, Nix generations, or
+  created Nix result symlinks and stale Pi temporary logs. Record newly created
+  project `.tmp/` files/directories immediately with `artifact_provenance` so
+  later exact cleanup has durable evidence. Never delete pre-existing project outputs, user files, global caches, Nix generations, or
   run global garbage collection without explicit user authorization.
 - Never inject keystrokes or text into the user's active Zellij pane or editor;
   it can overwrite an in-progress prompt. Use registered tools such as

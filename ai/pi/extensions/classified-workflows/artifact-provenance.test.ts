@@ -1,0 +1,34 @@
+import assert from "node:assert/strict";
+import test from "node:test";
+import {
+  ARTIFACT_PROVENANCE_ENTRY,
+  artifactPaths,
+  canonicalScratchArtifactPath,
+  decodeArtifactProvenanceState,
+  emptyArtifactProvenanceState,
+  forgetArtifact,
+  recordArtifact,
+  restoreArtifactProvenance,
+} from "./artifact-provenance.ts";
+
+test("artifact provenance accepts only canonical project scratch children", () => {
+  const cwd = "/workspace/project";
+  assert.equal(canonicalScratchArtifactPath(cwd, ".tmp/report.json"), "/workspace/project/.tmp/report.json");
+  assert.equal(canonicalScratchArtifactPath(cwd, ".tmp"), undefined);
+  assert.equal(canonicalScratchArtifactPath(cwd, "../project-other/.tmp/report.json"), undefined);
+  assert.equal(canonicalScratchArtifactPath(cwd, "src/index.ts"), undefined);
+});
+
+test("artifact provenance persists defensively and forgets exact paths", () => {
+  const recorded = recordArtifact(emptyArtifactProvenanceState, {
+    path: "/workspace/project/.tmp/report.json",
+    recordedAt: 42,
+  });
+  assert.deepEqual(artifactPaths(recorded), ["/workspace/project/.tmp/report.json"]);
+  assert.deepEqual(
+    restoreArtifactProvenance([{ type: "custom", customType: ARTIFACT_PROVENANCE_ENTRY, data: recorded }]),
+    recorded,
+  );
+  assert.deepEqual(forgetArtifact(recorded, "/workspace/project/.tmp/report.json"), emptyArtifactProvenanceState);
+  assert.equal(decodeArtifactProvenanceState({ artifacts: [{ path: "relative", recordedAt: 42 }] }), undefined);
+});
