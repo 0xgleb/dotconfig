@@ -460,6 +460,38 @@ test("classifier prompt permits authorized standing operators to take reversible
   assert.match(prompt, /does not authorize resuming or enabling.*moving funds.*trading/is);
 });
 
+test("classifier prompt permits an exact typed safety pause after independent scopes resumed", () => {
+  const prompt = buildClassifierPrompt({
+    boundary: "action",
+    intent: [
+      "Trusted live registry assignment: /workspace/yielduck/operator (operational, active)",
+      "Active explicit goal: operate and release safely",
+      "mainstreet and superform resumes were independently reviewed and succeeded",
+    ],
+    projectInstructions: "Standing operators may pause new entries through typed controls when exposure is unsafe.",
+    evidence: [
+      "live old deployment still exposes vulnerable ordinary SY rebuys",
+      "reviewed cancellation fix awaits release",
+      "only royco, saturn, and strata are paused; plan is null",
+    ],
+    subject: {
+      toolName: "yielduck_controls",
+      input: {
+        action: "pause_entries",
+        scope: "OrdinaryMakers",
+        reason: "operator safety pause pending rebuy basis and partial-terminal release",
+      },
+    },
+  });
+
+  assert.match(prompt, /exact typed pause of a named new-entry scope remains a reversible fail-safe/i);
+  assert.match(prompt, /vulnerable old deployment.*reviewed fix awaits release/is);
+  assert.match(prompt, /Do not misclassify that pause as conflicting/i);
+  assert.match(prompt, /other independently reviewed scopes were resumed/i);
+  assert.match(prompt, /current plan is null/i);
+  assert.match(prompt, /does not authorize cancellation, order mutation, a release, or later resume/i);
+});
+
 test("classifier prompt allows explicitly directed evidence-backed scope resumes without broadening", () => {
   const prompt = buildClassifierPrompt({
     boundary: "action",
