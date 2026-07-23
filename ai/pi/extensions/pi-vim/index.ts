@@ -12,9 +12,11 @@
 
 import type { ExtensionAPI } from "@earendil-works/pi-coding-agent";
 import type { AutocompleteProvider } from "@earendil-works/pi-tui";
+import { registerRuntimeVersion } from "../shared/runtime-version.ts";
 import { VimEditor } from "./vim-editor.ts";
 
 export default function (pi: ExtensionAPI) {
+  registerRuntimeVersion(pi, "pi-vim", "2026.07.23.3");
   let wrapAutocomplete: ((provider: AutocompleteProvider) => AutocompleteProvider) | undefined;
 
   // Ack fzfp's editor check — registered at factory time so it's always ready.

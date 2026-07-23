@@ -58,7 +58,7 @@ const parseAction: (request: QuestionRequest, state: QuestionState) => QuestionA
 };
 
 const questionsExtension: (pi: ExtensionAPI) => void = (pi) => {
-  registerRuntimeVersion(pi, "questions", "2026.07.23.2");
+  registerRuntimeVersion(pi, "questions", "2026.07.23.3");
   let state = emptyQuestionState;
   let dialogOpen = false;
   let lastPresentedQuestionId = 0;
