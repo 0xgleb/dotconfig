@@ -1,6 +1,11 @@
 import assert from "node:assert/strict";
 import test from "node:test";
-import { registryListText, registryWidgetLines, requestNotificationText } from "./presentation.ts";
+import {
+  registryListText,
+  registryRequestDetailText,
+  registryWidgetLines,
+  requestNotificationText,
+} from "./presentation.ts";
 import type { RegistrySnapshot } from "./registry.ts";
 
 const snapshot: RegistrySnapshot = {
@@ -25,6 +30,8 @@ const snapshot: RegistrySnapshot = {
       project: "/Users/example/.config",
       role: "pi-support",
       requesterId: "agent-b",
+      requesterLabel: "st0x PR reviewer",
+      requesterCwd: "/Users/example/code/st0x/st0x.rest.api",
       text: "fix workflow retries",
       createdAt: 2_000,
       updatedAt: 2_000,
@@ -40,6 +47,13 @@ test("automatic request notification never injects the untrusted request body", 
   assert.doesNotMatch(text, /fix workflow retries/);
   assert.match(text, /inspect its untrusted request data/i);
   assert.match(text, /request-12345678/);
+});
+
+test("request detail exposes full bounded coordination text with source identity", () => {
+  const text = registryRequestDetailText(snapshot.requests[0]);
+  assert.match(text, /Request request-12345678/);
+  assert.match(text, /Source agent: st0x PR reviewer.*st0x\.rest\.api/);
+  assert.match(text, /fix workflow retries/);
 });
 
 test("registry widget keeps operational ownership visible with an inbox count", () => {

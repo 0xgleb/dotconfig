@@ -31,6 +31,8 @@ interface RequestBase {
   readonly project: string;
   readonly role: string;
   readonly requesterId: string;
+  readonly requesterLabel?: string;
+  readonly requesterCwd?: string;
   readonly text: string;
   readonly createdAt: number;
   readonly updatedAt: number;
@@ -103,6 +105,8 @@ export interface EnqueueRequestInput {
   readonly project: string;
   readonly role: string;
   readonly requesterId: string;
+  readonly requesterLabel?: string;
+  readonly requesterCwd?: string;
   readonly text: string;
   readonly now: number;
 }

@@ -233,7 +233,15 @@ test("request lifecycle is durable and terminal transitions require the current 
     );
     const lease = claimedLease.outcome === "claimed" ? claimedLease.lease : assert.fail("missing lease");
     const queued = await Effect.runPromise(
-      store.enqueue({ project: "/workspace/project", role: "pi-support", requesterId: "requester", text: "fix classifier", now: 1_010 }),
+      store.enqueue({
+        project: "/workspace/project",
+        role: "pi-support",
+        requesterId: "requester",
+        requesterLabel: "st0x PR reviewer",
+        requesterCwd: "/workspace/st0x.rest.api",
+        text: "fix classifier",
+        now: 1_010,
+      }),
     );
     const claimed = await Effect.runPromise(
       store.claimRequest({ requestId: queued.id, leaseId: lease.id, agentId: "agent-a", now: 1_020 }),
@@ -250,6 +258,8 @@ test("request lifecycle is durable and terminal transitions require the current 
     const snapshot = await Effect.runPromise(store.snapshot(1_040));
     assert.equal(snapshot.requests[0]?.status, "completed");
     assert.equal(snapshot.requests[0]?.requesterAcknowledgedAt, 1_040);
+    assert.equal(snapshot.requests[0]?.requesterLabel, "st0x PR reviewer");
+    assert.equal(snapshot.requests[0]?.requesterCwd, "/workspace/st0x.rest.api");
   });
 });
 
@@ -318,22 +328,25 @@ test("store construction defers filesystem failures into the Effect error channe
   }
 });
 
-test("legacy v1 databases migrate requester acknowledgements before sync", async () => {
+test("legacy v1 databases migrate requester acknowledgements and source identity before sync", async () => {
   await withStores(async (store, _second, root) => {
     await Effect.runPromise(store.snapshot(0));
     const legacy = new DatabaseSync(join(root, "registry.sqlite"));
-    legacy.exec("ALTER TABLE requests DROP COLUMN requester_acknowledged_at; PRAGMA user_version = 1;");
+    legacy.exec(`
+      ALTER TABLE requests DROP COLUMN requester_acknowledged_at;
+      ALTER TABLE requests DROP COLUMN requester_label;
+      ALTER TABLE requests DROP COLUMN requester_cwd;
+      PRAGMA user_version = 1;
+    `);
     legacy.close();
 
     await Effect.runPromise(store.snapshot(1));
     const migrated = new DatabaseSync(join(root, "registry.sqlite"), { readOnly: true });
-    assert.equal(migrated.prepare("PRAGMA user_version").get()?.user_version, 2);
-    assert.ok(
-      migrated
-        .prepare("PRAGMA table_info(requests)")
-        .all()
-        .some((column) => column.name === "requester_acknowledged_at"),
-    );
+    assert.equal(migrated.prepare("PRAGMA user_version").get()?.user_version, 3);
+    const columns = migrated.prepare("PRAGMA table_info(requests)").all().map((column) => column.name);
+    assert.ok(columns.includes("requester_acknowledged_at"));
+    assert.ok(columns.includes("requester_label"));
+    assert.ok(columns.includes("requester_cwd"));
     migrated.close();
   });
 });
@@ -373,7 +386,7 @@ test("SQLite adapter commits complete versioned state", async () => {
     );
     const database = new DatabaseSync(join(root, "registry.sqlite"), { readOnly: true });
     try {
-      assert.equal(database.prepare("PRAGMA user_version").get()?.user_version, 2);
+      assert.equal(database.prepare("PRAGMA user_version").get()?.user_version, 3);
       assert.equal(database.prepare("SELECT COUNT(*) AS count FROM leases").get()?.count, 1);
       assert.equal(database.prepare("SELECT COUNT(*) AS count FROM requests").get()?.count, 0);
     } finally {

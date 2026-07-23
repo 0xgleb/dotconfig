@@ -1,13 +1,17 @@
 import { createHash } from "node:crypto";
 import { homedir } from "node:os";
-import { join } from "node:path";
 import type { ExtensionAPI, ExtensionContext } from "@earendil-works/pi-coding-agent";
 import { Type } from "typebox";
 import type { Effect } from "effect";
 import { isContinuationPaused } from "../shared/continuation-pause.ts";
 import { makeSqliteRegistryStore } from "./sqlite-store.ts";
-import { registryStateRoot, shouldSelfClaimUnownedRole } from "./paths.ts";
-import { registryListText, registryWidgetLines, requestNotificationText } from "./presentation.ts";
+import { managedOperationalRole, registryStateRoot, shouldSelfClaimUnownedRole } from "./paths.ts";
+import {
+  registryListText,
+  registryRequestDetailText,
+  registryWidgetLines,
+  requestNotificationText,
+} from "./presentation.ts";
 import {
   reconcileSessionLease,
   RegistryError,
@@ -194,14 +198,15 @@ const registryExtension: (pi: ExtensionAPI) => void = (pi) => {
     }
   };
 
-  const autoClaimConfigSupport = async (ctx: ExtensionContext) => {
-    if (ctx.cwd !== join(homedir(), ".config")) return;
+  const autoClaimOperationalRole = async (ctx: ExtensionContext) => {
+    const managed = managedOperationalRole(ctx.cwd, homedir());
+    if (!managed) return;
     await run(
       reconcileSessionLease({
         store,
         agent: identity(ctx),
-        project: ctx.cwd,
-        role: "pi-support",
+        project: managed.project,
+        role: managed.role,
         mode: "operational",
         policyDigest: currentPolicyDigest(ctx),
         now: Date.now(),
@@ -213,8 +218,8 @@ const registryExtension: (pi: ExtensionAPI) => void = (pi) => {
   pi.on("session_start", async (_event, ctx) => {
     if (timer) clearInterval(timer);
     sessionPolicyDigest = policyDigest(ctx);
-    await autoClaimConfigSupport(ctx).catch((error) => {
-      ctx.ui.notify(`Could not claim Pi support role: ${safeErrorMessage(error)}`, "warning");
+    await autoClaimOperationalRole(ctx).catch((error) => {
+      ctx.ui.notify(`Could not claim managed operational role: ${safeErrorMessage(error)}`, "warning");
     });
     await sync(ctx, false);
     timer = setInterval(() => void sync(ctx), SYNC_MS);
@@ -225,7 +230,17 @@ const registryExtension: (pi: ExtensionAPI) => void = (pi) => {
     await sync(ctx);
   });
 
-  pi.on("input", (_event, ctx) => {
+  const showRegistry = async (ctx: ExtensionContext) => {
+    const now = Date.now();
+    const snapshot = await run(store.snapshot(now));
+    pi.sendMessage({ customType: MESSAGE_TYPE, content: registryListText(snapshot, identity(ctx).id, now), display: true });
+  };
+
+  pi.on("input", async (event, ctx) => {
+    if (event.text.trim() === "/agents") {
+      await showRegistry(ctx);
+      return { action: "handled" };
+    }
     queueMicrotask(() => void sync(ctx));
   });
 
@@ -265,8 +280,7 @@ const registryExtension: (pi: ExtensionAPI) => void = (pi) => {
   pi.registerCommand("agents", {
     description: "Show local Pi agent role leases and open delegated requests",
     async handler(_args, ctx) {
-      const snapshot = await run(store.snapshot(Date.now()));
-      pi.sendMessage({ customType: MESSAGE_TYPE, content: registryListText(snapshot, identity(ctx).id, Date.now()), display: true });
+      await showRegistry(ctx);
     },
   });
 
@@ -311,8 +325,23 @@ const registryExtension: (pi: ExtensionAPI) => void = (pi) => {
       try {
         if (request.action === "list" || request.action === "requests") {
           const snapshot = await run(store.snapshot(now));
+          const requested = request.requestId?.trim();
+          const matches = requested
+            ? snapshot.requests.filter(({ id }) => id === requested || id.startsWith(requested))
+            : [];
+          if (requested && matches.length !== 1) {
+            throw new RegistryError({
+              code: matches.length === 0 ? "not_found" : "invalid_input",
+              message: matches.length === 0 ? "request not found" : "request prefix is ambiguous",
+            });
+          }
           return {
-            content: [{ type: "text", text: registryListText(snapshot, agent.id, now) }],
+            content: [
+              {
+                type: "text",
+                text: matches[0] ? registryRequestDetailText(matches[0]) : registryListText(snapshot, agent.id, now),
+              },
+            ],
             details: { outcome: "success", action: request.action, snapshot },
           };
         }
@@ -365,7 +394,17 @@ const registryExtension: (pi: ExtensionAPI) => void = (pi) => {
             lease = claim.lease;
             outcome = lease.owner.id === agent.id ? "self_claimed" : "delegated";
           }
-          const queued = await run(store.enqueue({ project, role, requesterId: agent.id, text, now }));
+          const queued = await run(
+            store.enqueue({
+              project,
+              role,
+              requesterId: agent.id,
+              requesterLabel: pi.getSessionName() ?? ctx.cwd.split("/").at(-1) ?? "Pi agent",
+              requesterCwd: ctx.cwd,
+              text,
+              now,
+            }),
+          );
           let durableRequest = queued;
           if (lease?.owner.id === agent.id && lease.status === "active") {
             durableRequest = await run(

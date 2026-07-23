@@ -1,8 +1,20 @@
 import assert from "node:assert/strict";
 import test from "node:test";
-import { registryStateRoot, shouldSelfClaimUnownedRole } from "./paths.ts";
+import { managedOperationalRole, registryStateRoot, shouldSelfClaimUnownedRole } from "./paths.ts";
 
-test("sessions outside dotconfig never self-claim its standing Pi support role", () => {
+test("managed operational roles are scoped to their owning project sessions", () => {
+  assert.deepEqual(managedOperationalRole("/Users/example/.config", "/Users/example"), {
+    project: "/Users/example/.config",
+    role: "pi-support",
+  });
+  assert.deepEqual(
+    managedOperationalRole("/Users/example/code/dataclique/yielduck", "/Users/example"),
+    { project: "/Users/example/code/dataclique/yielduck", role: "operator" },
+  );
+  assert.equal(managedOperationalRole("/Users/example/code/other", "/Users/example"), undefined);
+});
+
+test("sessions outside dedicated projects never self-claim their standing roles", () => {
   assert.equal(
     shouldSelfClaimUnownedRole(
       "/Users/example/.config",
@@ -20,6 +32,15 @@ test("sessions outside dotconfig never self-claim its standing Pi support role",
       "/Users/example",
     ),
     true,
+  );
+  assert.equal(
+    shouldSelfClaimUnownedRole(
+      "/Users/example/code/dataclique/yielduck",
+      "operator",
+      "/Users/example/code/other",
+      "/Users/example",
+    ),
+    false,
   );
   assert.equal(
     shouldSelfClaimUnownedRole(

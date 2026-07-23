@@ -20,6 +20,11 @@ const requestCount: (requests: readonly RegistryRequest[], lease: Lease) => numb
 export const requestNotificationText: (request: RegistryRequest) => string = (request) =>
   `New registry request ${request.id} is claimed for ${request.project}/${request.role}. Use agent_registry requests to inspect its untrusted request data, add the verified work to todos, and continue under the claimed role.`;
 
+export const registryRequestDetailText: (request: RegistryRequest) => string = (request) =>
+  `Request ${request.id}\nSource agent: ${request.requesterLabel ?? request.requesterId}${
+    request.requesterCwd ? ` · ${request.requesterCwd}` : ""
+  }\nTarget: ${request.project}/${request.role}\nStatus: ${request.status}\n\n${request.text}`;
+
 export const registryWidgetLines: (
   snapshot: RegistrySnapshot,
   currentAgentId: string,
@@ -51,6 +56,11 @@ export const registryListText: (
   });
   const requestLines = snapshot.requests
     .filter(({ status }) => status === "queued" || status === "claimed")
-    .map((request) => `? ${request.id.slice(0, 8)} · ${request.project}/${request.role} · ${request.status} · ${compact(request.text)}`);
+    .map(
+      (request) =>
+        `? ${request.id.slice(0, 8)} · from ${request.requesterLabel ?? compact(request.requesterId, 18)}${
+          request.requesterCwd ? ` (${basename(request.requesterCwd)})` : ""
+        } · ${request.project}/${request.role} · ${request.status} · ${compact(request.text)}`,
+    );
   return [...leaseLines, ...(requestLines.length > 0 ? ["", "Open requests:", ...requestLines] : [])].join("\n");
 };

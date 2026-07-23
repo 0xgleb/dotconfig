@@ -23,7 +23,7 @@ import {
   type ReleaseLeaseInput,
 } from "./registry.ts";
 
-const SCHEMA_VERSION = 2;
+const SCHEMA_VERSION = 3;
 const MAX_LEASES = 1_024;
 const MAX_REQUESTS = 10_000;
 const MAX_REQUEST_TEXT = 8_000;
@@ -181,6 +181,8 @@ const requestFromRow: (row: Row) => RegistryRequest = (row) => {
     project: stringField(row, "project") ?? "",
     role: stringField(row, "role") ?? "",
     requesterId: stringField(row, "requester_id") ?? "",
+    ...(stringField(row, "requester_label", true) ? { requesterLabel: stringField(row, "requester_label", true) } : {}),
+    ...(stringField(row, "requester_cwd", true) ? { requesterCwd: stringField(row, "requester_cwd", true) } : {}),
     text: stringField(row, "text") ?? "",
     createdAt: numberField(row, "created_at"),
     updatedAt: numberField(row, "updated_at"),
@@ -220,7 +222,7 @@ const initialize: (database: DatabaseSync, databasePath: string) => void = (data
     chmodSync(databasePath, 0o600);
     return;
   }
-  if (observedVersion !== 0 && observedVersion !== 1) {
+  if (observedVersion !== 0 && observedVersion !== 1 && observedVersion !== 2) {
     throw registryError("corrupt_state", `unsupported agent registry schema version ${observedVersion}`);
   }
 
@@ -250,6 +252,8 @@ const initialize: (database: DatabaseSync, databasePath: string) => void = (data
           project TEXT NOT NULL,
           role TEXT NOT NULL,
           requester_id TEXT NOT NULL,
+          requester_label TEXT,
+          requester_cwd TEXT,
           text TEXT NOT NULL,
           created_at INTEGER NOT NULL,
           updated_at INTEGER NOT NULL,
@@ -266,6 +270,14 @@ const initialize: (database: DatabaseSync, databasePath: string) => void = (data
     } else if (currentVersion === 1) {
       database.exec(`
         ALTER TABLE requests ADD COLUMN requester_acknowledged_at INTEGER;
+        ALTER TABLE requests ADD COLUMN requester_label TEXT;
+        ALTER TABLE requests ADD COLUMN requester_cwd TEXT;
+        PRAGMA user_version = ${SCHEMA_VERSION};
+      `);
+    } else if (currentVersion === 2) {
+      database.exec(`
+        ALTER TABLE requests ADD COLUMN requester_label TEXT;
+        ALTER TABLE requests ADD COLUMN requester_cwd TEXT;
         PRAGMA user_version = ${SCHEMA_VERSION};
       `);
     } else if (currentVersion !== SCHEMA_VERSION) {
@@ -503,18 +515,22 @@ export const makeSqliteRegistryStore: (root: string) => RegistryStore = (root) =
               project: canonicalProject(input.project),
               role: roleName(input.role),
               requesterId: boundedText("requester id", input.requesterId, 128),
+              ...(input.requesterLabel ? { requesterLabel: boundedText("requester label", input.requesterLabel, 160) } : {}),
+              ...(input.requesterCwd ? { requesterCwd: canonicalProject(input.requesterCwd) } : {}),
               text: persistedText("request", input.text, MAX_REQUEST_TEXT),
               createdAt: now,
               updatedAt: now,
               status: "queued",
             };
             database
-              .prepare("INSERT INTO requests (request_id, project, role, requester_id, text, created_at, updated_at, status) VALUES (?, ?, ?, ?, ?, ?, ?, ?)")
+              .prepare("INSERT INTO requests (request_id, project, role, requester_id, requester_label, requester_cwd, text, created_at, updated_at, status) VALUES (?, ?, ?, ?, ?, ?, ?, ?, ?, ?)")
               .run(
                 request.id,
                 request.project,
                 request.role,
                 request.requesterId,
+                request.requesterLabel ?? null,
+                request.requesterCwd ?? null,
                 request.text,
                 request.createdAt,
                 request.updatedAt,
