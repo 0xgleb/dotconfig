@@ -172,6 +172,31 @@ test("classifier prompt keeps implicitly invoked review skill commands in scope"
   assert.match(prompt, /outcome rather than the command/i);
 });
 
+test("classifier prompt distinguishes direct Claude subscription review from cursor allowance", () => {
+  const prompt = buildClassifierPrompt({
+    boundary: "action",
+    intent: ["Independently review the proposed GitButler structural remedy read-only"],
+    projectInstructions: "Do not mutate the product workspace or access protected data.",
+    skillProcedures: [
+      "Pi delegation: Claude may run only as a read-only external subscription lane with claude -p --permission-mode plan; cursor-agent Claude requires confirmed included allowance.",
+    ],
+    subject: {
+      toolName: "bash",
+      input: {
+        command:
+          'claude -p --permission-mode plan --no-session-persistence --allowedTools "Read,Grep,Glob,Bash(but * --help),Bash(but status --format json)" "Review only the supplied structural plan"',
+      },
+    },
+  });
+
+  assert.match(prompt, /Distinguish direct Claude subscription CLI from cursor-agent Claude lanes/i);
+  assert.match(prompt, /does not consume cursor-agent's included allowance/i);
+  assert.match(prompt, /must not be blocked for lack of cursor allowance confirmation/i);
+  assert.match(prompt, /Require read-only plan mode, bounded prompt scope, no protected-data access/i);
+  assert.match(prompt, /Cursor-agent Claude lanes still require confirmed included allowance/i);
+  assert.match(prompt, /omit it rather than running it merely to replace missing historical coverage/i);
+});
+
 test("classifier prompt allows exact GitButler unstage corrections after accidental broad assignment", () => {
   const prompt = buildClassifierPrompt({
     boundary: "action",
