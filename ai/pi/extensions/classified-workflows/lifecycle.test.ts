@@ -172,6 +172,21 @@ test("classifier prompt keeps implicitly invoked review skill commands in scope"
   assert.match(prompt, /outcome rather than the command/i);
 });
 
+test("classifier prompt allows exact GitButler unstage corrections after accidental broad assignment", () => {
+  const prompt = buildClassifierPrompt({
+    boundary: "action",
+    intent: ["Active todo: isolate only ADR36/Raindex hunks on nv"],
+    projectInstructions: "Do not bundle unrelated changes.",
+    evidence: ["but rub SPEC.md nv accidentally assigned unrelated SPEC.md hunks to nv"],
+    subject: { toolName: "bash", input: { command: "but unstage SPEC.md nv --format agent" } },
+  });
+
+  assert.match(prompt, /accidental broad GitButler file assignment contaminated an active branch/i);
+  assert.match(prompt, /necessary corrective isolation/i);
+  assert.match(prompt, /Do not block them merely as repository-state mutations/i);
+  assert.match(prompt, /do not authorize file-content changes, other files or branches/i);
+});
+
 test("classifier prompt accepts evidence-backed GitButler compound hunk IDs", () => {
   const prompt = buildClassifierPrompt({
     boundary: "action",
