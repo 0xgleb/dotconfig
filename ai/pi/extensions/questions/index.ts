@@ -10,6 +10,7 @@ import {
   type QuestionOption,
   type QuestionState,
 } from "./state.ts";
+import { QUESTION_RESOLVED_EVENT, type UserQuestionResolution } from "../shared/question-events.ts";
 import { registerRuntimeVersion } from "../shared/runtime-version.ts";
 import { pendingQuestionContext, questionListText, questionWidgetLines } from "./presentation.ts";
 
@@ -182,6 +183,16 @@ const questionsExtension: (pi: ExtensionAPI) => void = (pi) => {
       if (answer !== null) {
         state = applyQuestionAction(state, { action: "resolve", id: question.id, answer });
         persist(ctx);
+        const resolution: UserQuestionResolution = { id: question.id, answer };
+        pi.events.emit(QUESTION_RESOLVED_EVENT, resolution);
+        pi.sendMessage(
+          {
+            customType: "pi.questions.answered",
+            content: `The user answered q${question.id}: ${answer}\nContinue the waiting work using this answer.`,
+            display: true,
+          },
+          { triggerTurn: true, deliverAs: "followUp" },
+        );
       }
     } finally {
       dialogOpen = false;

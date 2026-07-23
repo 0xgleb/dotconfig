@@ -67,6 +67,7 @@ import {
   latestContinuationPause,
   wasRunAborted,
 } from "../shared/continuation-pause.ts";
+import { QUESTION_RESOLVED_EVENT, type UserQuestionResolution } from "../shared/question-events.ts";
 import { registerRuntimeVersion } from "../shared/runtime-version.ts";
 
 const CLASSIFIER_MODEL = "openai-codex/gpt-5.6-luna";
@@ -944,6 +945,10 @@ export default function classifiedWorkflows(pi: ExtensionAPI): void {
     if (continuationPaused && event.source === "interactive" && event.text.trim()) {
       setContinuationPaused(false, ctx);
     }
+  });
+
+  pi.events.on(QUESTION_RESOLVED_EVENT, (_resolution: UserQuestionResolution) => {
+    if (continuationPaused && latestCtx) setContinuationPaused(false, latestCtx);
   });
 
   pi.on("agent_end", (event, ctx) => {
