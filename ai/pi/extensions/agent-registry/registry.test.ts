@@ -226,6 +226,38 @@ test("operational leases remain live with an empty inbox until explicit release"
   });
 });
 
+test("lease heartbeats publish bounded component versions for fleet diagnostics", async () => {
+  await withStores(async (store) => {
+    const claimed = await Effect.runPromise(
+      store.claim({
+        agent: { ...agent("agent-a"), runtimeVersions: { "classified-workflows": "2026.07.23.1" } },
+        project: "/workspace/project",
+        role: "operator",
+        mode: "operational",
+        policyDigest: "p1",
+        now: 1_000,
+        ttlMs: 10_000,
+      }),
+    );
+    const updated = await Effect.runPromise(
+      store.heartbeat({
+        leaseId: claimed.lease.id,
+        agentId: "agent-a",
+        policyDigest: "p1",
+        runtimeVersions: { "classified-workflows": "2026.07.23.2", todo: "2026.07.23.2" },
+        now: 2_000,
+        ttlMs: 10_000,
+      }),
+    );
+    assert.deepEqual(updated.owner.runtimeVersions, {
+      "classified-workflows": "2026.07.23.2",
+      todo: "2026.07.23.2",
+    });
+    const snapshot = await Effect.runPromise(store.snapshot(2_001));
+    assert.deepEqual(snapshot.leases[0]?.owner.runtimeVersions, updated.owner.runtimeVersions);
+  });
+});
+
 test("request lifecycle is durable and terminal transitions require the current lease", async () => {
   await withStores(async (store) => {
     const claimedLease = await Effect.runPromise(
@@ -347,6 +379,8 @@ test("legacy v1 databases migrate requester acknowledgements and source identity
     assert.ok(columns.includes("requester_acknowledged_at"));
     assert.ok(columns.includes("requester_label"));
     assert.ok(columns.includes("requester_cwd"));
+    const leaseColumns = migrated.prepare("PRAGMA table_info(leases)").all().map((column) => column.name);
+    assert.ok(leaseColumns.includes("runtime_versions"));
     migrated.close();
   });
 });

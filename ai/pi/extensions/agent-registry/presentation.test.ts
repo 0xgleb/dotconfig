@@ -16,7 +16,12 @@ const snapshot: RegistrySnapshot = {
       project: "/Users/example/.config",
       role: "pi-support",
       mode: "operational",
-      owner: { id: "agent-a", pid: 42, model: "openai-codex/gpt-5.6-sol" },
+      owner: {
+        id: "agent-a",
+        pid: 42,
+        model: "openai-codex/gpt-5.6-sol",
+        runtimeVersions: { "classified-workflows": "2026.07.23.2", todo: "2026.07.23.2" },
+      },
       policyDigest: "p1",
       acquiredAt: 1_000,
       heartbeatAt: 1_000,
@@ -66,5 +71,7 @@ test("registry widget keeps operational ownership visible with an inbox count", 
 test("registry listing shows safe owner and request lifecycle details", () => {
   const text = registryListText(snapshot, "agent-a", 61_000);
   assert.match(text, /\.config\/pi-support.*owner you.*ttl 60s/i);
+  assert.match(text, /classified-workflows@2026\.07\.23\.2/);
+  assert.match(text, /todo@2026\.07\.23\.2/);
   assert.match(text, /request-.*queued.*fix workflow retries/i);
 });

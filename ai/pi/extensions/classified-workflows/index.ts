@@ -67,6 +67,7 @@ import {
   latestContinuationPause,
   wasRunAborted,
 } from "../shared/continuation-pause.ts";
+import { registerRuntimeVersion } from "../shared/runtime-version.ts";
 
 const CLASSIFIER_MODEL = "openai-codex/gpt-5.6-luna";
 const CLASSIFIER_TIMEOUT_MS = 20_000;
@@ -434,6 +435,7 @@ const WorkflowParameters = Type.Object({
 });
 
 export default function classifiedWorkflows(pi: ExtensionAPI): void {
+  registerRuntimeVersion(pi, "classified-workflows", "2026.07.23.2");
   let goalState: GoalState | undefined;
   let goalEvaluating = false;
   let goalRunTokens = 0;

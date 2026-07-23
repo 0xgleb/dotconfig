@@ -10,6 +10,7 @@ import type { ExtensionAPI, ExtensionContext, Theme } from "@earendil-works/pi-c
 import { matchesKey, Text, truncateToWidth, visibleWidth } from "@earendil-works/pi-tui";
 import { Effect, Option, Ref } from "effect";
 import { Type } from "typebox";
+import { registerRuntimeVersion } from "../shared/runtime-version.ts";
 import { kanbanColumns, taskWidgetLines, todoSummary } from "./presentation.ts";
 import {
   decodeTodoDetails,
@@ -204,6 +205,7 @@ function restoredState(ctx: ExtensionContext): TodoState {
 }
 
 export default function todoExtension(pi: ExtensionAPI): void {
+  registerRuntimeVersion(pi, "todo", "2026.07.23.2");
   const stateRef = Effect.runSync(Ref.make<TodoState>(emptyTodoState));
 
   const renderTaskWidget = (ctx: ExtensionContext, state = Effect.runSync(Ref.get(stateRef))) => {

@@ -95,11 +95,25 @@ const roleName: (role: string) => string = (role) => {
   return normalized;
 };
 
+const validateRuntimeVersions = (
+  runtimeVersions: Readonly<Record<string, string>> | undefined,
+): Readonly<Record<string, string>> | undefined => {
+  if (runtimeVersions === undefined) return undefined;
+  const entries = Object.entries(runtimeVersions);
+  if (entries.length > 32) throw registryError("invalid_input", "runtime versions exceed component limit");
+  const validated = entries.map(([component, version]) => [
+    boundedText("runtime component", component, 64),
+    boundedText("runtime version", version, 128),
+  ] as const);
+  return Object.fromEntries(validated.sort(([left], [right]) => left.localeCompare(right)));
+};
+
 const validateAgent: (agent: AgentIdentity) => AgentIdentity = (agent) => {
   const id = boundedText("agent id", agent.id, 128);
   if (!Number.isSafeInteger(agent.pid) || agent.pid < 1) throw registryError("invalid_input", "pid must be positive");
   const model = agent.model ? boundedText("model", agent.model, 256) : undefined;
-  return { id, pid: agent.pid, ...(model ? { model } : {}) };
+  const runtimeVersions = validateRuntimeVersions(agent.runtimeVersions);
+  return { id, pid: agent.pid, ...(model ? { model } : {}), ...(runtimeVersions ? { runtimeVersions } : {}) };
 };
 
 const validateTime: (label: string, value: number) => number = (label, value) => {
@@ -141,6 +155,25 @@ const optionalNumberField: (row: Row, key: string) => number | undefined = (row,
   return numberField(row, key);
 };
 
+const runtimeVersionsFromRow = (row: Row): Readonly<Record<string, string>> | undefined => {
+  const encoded = stringField(row, "runtime_versions", true);
+  if (!encoded) return undefined;
+  let decoded: unknown;
+  try {
+    decoded = JSON.parse(encoded);
+  } catch {
+    throw registryError("corrupt_state", "registry runtime versions are malformed JSON");
+  }
+  if (typeof decoded !== "object" || decoded === null || Array.isArray(decoded)) {
+    throw registryError("corrupt_state", "registry runtime versions are malformed");
+  }
+  const entries = Object.entries(decoded);
+  if (!entries.every((entry): entry is [string, string] => typeof entry[1] === "string")) {
+    throw registryError("corrupt_state", "registry runtime version value is malformed");
+  }
+  return validateRuntimeVersions(Object.fromEntries(entries));
+};
+
 const leaseFromRow: (row: Row) => Lease = (row) => {
   const status = stringField(row, "status");
   const mode = stringField(row, "mode");
@@ -150,10 +183,12 @@ const leaseFromRow: (row: Row) => Lease = (row) => {
   if (mode !== "task" && mode !== "operational") {
     throw registryError("corrupt_state", "registry lease mode is malformed");
   }
+  const runtimeVersions = runtimeVersionsFromRow(row);
   const owner: AgentIdentity = {
     id: stringField(row, "owner_id") ?? "",
     pid: numberField(row, "owner_pid"),
     ...(stringField(row, "owner_model", true) ? { model: stringField(row, "owner_model", true) } : {}),
+    ...(runtimeVersions ? { runtimeVersions } : {}),
   };
   const base = {
     id: stringField(row, "lease_id") ?? "",
@@ -237,6 +272,7 @@ const initialize: (database: DatabaseSync, databasePath: string) => void = (data
           owner_id TEXT NOT NULL,
           owner_pid INTEGER NOT NULL,
           owner_model TEXT,
+          runtime_versions TEXT,
           policy_digest TEXT NOT NULL,
           acquired_at INTEGER NOT NULL,
           heartbeat_at INTEGER NOT NULL,
@@ -274,6 +310,12 @@ const initialize: (database: DatabaseSync, databasePath: string) => void = (data
         database.exec(`ALTER TABLE requests ADD COLUMN ${declaration};`);
         columns.add(name);
       };
+      const leaseColumns = new Set(
+        database.prepare("PRAGMA table_info(leases)").all().map((row) => stringField(rowFrom(row), "name")),
+      );
+      if (!leaseColumns.has("runtime_versions")) {
+        database.exec("ALTER TABLE leases ADD COLUMN runtime_versions TEXT;");
+      }
       if (currentVersion === 1) addColumn("requester_acknowledged_at", "requester_acknowledged_at INTEGER");
       addColumn("requester_label", "requester_label TEXT");
       addColumn("requester_cwd", "requester_cwd TEXT");
@@ -395,9 +437,9 @@ export const makeSqliteRegistryStore: (root: string) => RegistryStore = (root) =
             };
             database
               .prepare(`INSERT INTO leases (
-                project, role, lease_id, mode, owner_id, owner_pid, owner_model,
+                project, role, lease_id, mode, owner_id, owner_pid, owner_model, runtime_versions,
                 policy_digest, acquired_at, heartbeat_at, expires_at, status, reason
-              ) VALUES (?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, NULL)`)
+              ) VALUES (?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, NULL)`)
               .run(
                 lease.project,
                 lease.role,
@@ -406,6 +448,7 @@ export const makeSqliteRegistryStore: (root: string) => RegistryStore = (root) =
                 lease.owner.id,
                 lease.owner.pid,
                 lease.owner.model ?? null,
+                lease.owner.runtimeVersions ? JSON.stringify(lease.owner.runtimeVersions) : null,
                 lease.policyDigest,
                 lease.acquiredAt,
                 lease.heartbeatAt,
@@ -424,6 +467,7 @@ export const makeSqliteRegistryStore: (root: string) => RegistryStore = (root) =
             const now = validateTime("now", input.now);
             const ttlMs = validateTtl(input.ttlMs);
             const policyDigest = boundedText("policy digest", input.policyDigest, 256);
+            const runtimeVersions = validateRuntimeVersions(input.runtimeVersions);
             const row = optionalRowFrom(database.prepare("SELECT * FROM leases WHERE lease_id = ?").get(input.leaseId));
             if (!row) throw registryError("stale_lease", "stale or invalid lease owner");
             const lease = leaseFromRow(row);
@@ -434,11 +478,19 @@ export const makeSqliteRegistryStore: (root: string) => RegistryStore = (root) =
             const reason = status === "suspended" ? "policy_changed" : null;
             const expiration = expiresAt(now, ttlMs);
             database
-              .prepare("UPDATE leases SET heartbeat_at = ?, expires_at = ?, status = ?, reason = ? WHERE lease_id = ?")
-              .run(now, expiration, status, reason, lease.id);
+              .prepare("UPDATE leases SET heartbeat_at = ?, expires_at = ?, status = ?, reason = ?, runtime_versions = ? WHERE lease_id = ?")
+              .run(
+                now,
+                expiration,
+                status,
+                reason,
+                runtimeVersions ? JSON.stringify(runtimeVersions) : null,
+                lease.id,
+              );
+            const owner = { ...lease.owner, ...(runtimeVersions ? { runtimeVersions } : {}) };
             return status === "suspended"
-              ? { ...lease, heartbeatAt: now, expiresAt: expiration, status, reason: "policy_changed" }
-              : { ...lease, heartbeatAt: now, expiresAt: expiration, status };
+              ? { ...lease, owner, heartbeatAt: now, expiresAt: expiration, status, reason: "policy_changed" }
+              : { ...lease, owner, heartbeatAt: now, expiresAt: expiration, status };
           }),
         ),
       ),
@@ -467,6 +519,7 @@ export const makeSqliteRegistryStore: (root: string) => RegistryStore = (root) =
             const now = validateTime("now", input.now);
             const ttlMs = validateTtl(input.ttlMs);
             const policyDigest = boundedText("policy digest", input.policyDigest, 256);
+            const runtimeVersions = validateRuntimeVersions(input.runtimeVersions);
             const row = optionalRowFrom(database.prepare("SELECT * FROM leases WHERE lease_id = ?").get(input.leaseId));
             if (!row) throw registryError("stale_lease", "stale or invalid lease owner");
             const lease = leaseFromRow(row);
@@ -480,9 +533,10 @@ export const makeSqliteRegistryStore: (root: string) => RegistryStore = (root) =
             }
             const expiration = expiresAt(now, ttlMs);
             database
-              .prepare("UPDATE leases SET heartbeat_at = ?, expires_at = ?, status = 'active', reason = NULL WHERE lease_id = ?")
-              .run(now, expiration, lease.id);
-            return { ...lease, heartbeatAt: now, expiresAt: expiration, status: "active" };
+              .prepare("UPDATE leases SET heartbeat_at = ?, expires_at = ?, status = 'active', reason = NULL, runtime_versions = ? WHERE lease_id = ?")
+              .run(now, expiration, runtimeVersions ? JSON.stringify(runtimeVersions) : null, lease.id);
+            const owner = { ...lease.owner, ...(runtimeVersions ? { runtimeVersions } : {}) };
+            return { ...lease, owner, heartbeatAt: now, expiresAt: expiration, status: "active" };
           }),
         ),
       ),

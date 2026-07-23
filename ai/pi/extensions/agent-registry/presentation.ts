@@ -9,6 +9,13 @@ const compact: (text: string, limit?: number) => string = (text, limit = 120) =>
 const ownerLabel: (lease: Lease, currentAgentId: string) => string = (lease, currentAgentId) =>
   lease.owner.id === currentAgentId ? "you" : compact(lease.owner.id, 18);
 
+const runtimeLabel = (lease: Lease): string => {
+  const versions = Object.entries(lease.owner.runtimeVersions ?? {});
+  return versions.length > 0
+    ? versions.map(([component, version]) => `${component}@${version}`).join(",")
+    : "runtime:unknown";
+};
+
 const requestCount: (requests: readonly RegistryRequest[], lease: Lease) => number = (requests, lease) =>
   requests.filter(
     (request) =>
@@ -52,7 +59,7 @@ export const registryListText: (
   const leaseLines = snapshot.leases.map((lease) => {
     const seconds = Math.max(0, Math.ceil((lease.expiresAt - now) / 1_000));
     const state = lease.status === "suspended" ? `suspended:${lease.reason}` : lease.status;
-    return `● ${lease.project}/${lease.role} · ${lease.mode} · ${state} · owner ${ownerLabel(lease, currentAgentId)} · ttl ${seconds}s`;
+    return `● ${lease.project}/${lease.role} · ${lease.mode} · ${state} · owner ${ownerLabel(lease, currentAgentId)} · ${runtimeLabel(lease)} · ttl ${seconds}s`;
   });
   const requestLines = snapshot.requests
     .filter(({ status }) => status === "queued" || status === "claimed")

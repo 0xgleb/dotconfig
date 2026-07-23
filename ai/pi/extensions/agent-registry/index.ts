@@ -4,6 +4,12 @@ import type { ExtensionAPI, ExtensionContext } from "@earendil-works/pi-coding-a
 import { Type } from "typebox";
 import type { Effect } from "effect";
 import { isContinuationPaused } from "../shared/continuation-pause.ts";
+import {
+  MANAGED_CONFIG_GENERATION,
+  registerRuntimeVersion,
+  RUNTIME_VERSION_REQUEST_EVENT,
+  type RuntimeVersionReporter,
+} from "../shared/runtime-version.ts";
 import { makeSqliteRegistryStore } from "./sqlite-store.ts";
 import { managedOperationalRole, registryStateRoot, shouldSelfClaimUnownedRole } from "./paths.ts";
 import {
@@ -51,10 +57,14 @@ interface RegistryToolRequest {
 const policyDigest: (ctx: ExtensionContext) => string = (ctx) =>
   createHash("sha256").update(ctx.getSystemPrompt()).digest("hex");
 
-const identity: (ctx: ExtensionContext) => AgentIdentity = (ctx) => ({
+const sessionIdentity: (ctx: ExtensionContext, runtimeVersions: Readonly<Record<string, string>>) => AgentIdentity = (
+  ctx,
+  runtimeVersions,
+) => ({
   id: ctx.sessionManager.getSessionId(),
   pid: process.pid,
   ...(ctx.model ? { model: `${ctx.model.provider}/${ctx.model.id}` } : {}),
+  runtimeVersions,
 });
 
 const safeErrorMessage: (error: unknown) => string = (error) =>
@@ -69,6 +79,20 @@ const requireText: (label: string, value: string | undefined) => string = (label
 };
 
 const registryExtension: (pi: ExtensionAPI) => void = (pi) => {
+  registerRuntimeVersion(pi, "agent-registry", "2026.07.23.1");
+  const runtimeVersions = (): Readonly<Record<string, string>> => {
+    const hostVersion = process.argv[1]?.match(/pi-coding-agent-([0-9.]+)/)?.[1] ?? "unknown";
+    const versions: Record<string, string> = {
+      "config-generation": MANAGED_CONFIG_GENERATION,
+      "pi-host": hostVersion,
+    };
+    const report: RuntimeVersionReporter = (component, version) => {
+      versions[component] = version;
+    };
+    pi.events.emit(RUNTIME_VERSION_REQUEST_EVENT, report);
+    return Object.fromEntries(Object.entries(versions).sort(([left], [right]) => left.localeCompare(right)));
+  };
+  const identity = (ctx: ExtensionContext): AgentIdentity => sessionIdentity(ctx, runtimeVersions());
   const store = makeSqliteRegistryStore(registryStateRoot(process.env.XDG_STATE_HOME, homedir()));
   let timer: ReturnType<typeof setInterval> | undefined;
   let sessionPolicyDigest: string | undefined;
@@ -146,11 +170,25 @@ const registryExtension: (pi: ExtensionAPI) => void = (pi) => {
             await run(store.pause({ leaseId: lease.id, agentId: agent.id, now }));
           } else if (!paused && lease.status === "paused") {
             await run(
-              store.resume({ leaseId: lease.id, agentId: agent.id, policyDigest: digest, now, ttlMs: LEASE_TTL_MS }),
+              store.resume({
+                leaseId: lease.id,
+                agentId: agent.id,
+                policyDigest: digest,
+                runtimeVersions: agent.runtimeVersions,
+                now,
+                ttlMs: LEASE_TTL_MS,
+              }),
             );
           } else if (!paused && lease.status === "active") {
             await run(
-              store.heartbeat({ leaseId: lease.id, agentId: agent.id, policyDigest: digest, now, ttlMs: LEASE_TTL_MS }),
+              store.heartbeat({
+                leaseId: lease.id,
+                agentId: agent.id,
+                policyDigest: digest,
+                runtimeVersions: agent.runtimeVersions,
+                now,
+                ttlMs: LEASE_TTL_MS,
+              }),
             );
           }
         } catch (error) {

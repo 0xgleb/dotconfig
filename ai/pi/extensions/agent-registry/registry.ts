@@ -8,6 +8,7 @@ export interface AgentIdentity {
   readonly id: string;
   readonly pid: number;
   readonly model?: string;
+  readonly runtimeVersions?: Readonly<Record<string, string>>;
 }
 
 interface LeaseBase {
@@ -85,6 +86,7 @@ export interface HeartbeatInput {
   readonly leaseId: string;
   readonly agentId: string;
   readonly policyDigest: string;
+  readonly runtimeVersions?: Readonly<Record<string, string>>;
   readonly now: number;
   readonly ttlMs: number;
 }

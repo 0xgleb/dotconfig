@@ -15,6 +15,7 @@ import {
   unseenHandoffNames,
 } from "./core.ts";
 import { isContinuationPaused } from "../shared/continuation-pause.ts";
+import { registerRuntimeVersion } from "../shared/runtime-version.ts";
 
 const DEBOUNCE_MS = 30_000;
 const HANDOFF_POLL_MS = 60 * 60 * 1_000;
@@ -61,6 +62,7 @@ export const managedGeneration = (roots: readonly string[]): string => {
 };
 
 const autoReload: (pi: ExtensionAPI) => void = (pi) => {
+  registerRuntimeVersion(pi, "auto-reload", "2026.07.23.2");
   let watchers: FSWatcher[] = [];
   let timer: ReturnType<typeof setTimeout> | undefined;
   let handoffTimer: ReturnType<typeof setInterval> | undefined;
