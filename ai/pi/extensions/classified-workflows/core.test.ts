@@ -267,9 +267,28 @@ test("generated GitButler status cleanup is exact and cannot widen", () => {
   );
   for (const command of [
     "rm -f -- .tmp/other.json",
-    "rm -rf -- .tmp/but-status.json",
     "rm -f -- .tmp/but-status.json .tmp/other.json",
     "rm -f -- ../.tmp/but-status.json",
+  ]) {
+    assert.notEqual(
+      deterministicDecision({ boundary: "action", toolName: "bash", input: { command }, cwd })?.verdict,
+      "allow",
+    );
+  }
+  for (const command of [
+    "rm -rf -- .tmp/sy-research",
+    "rm -rf -- .tmp/but-status.json",
+    "rm -fr -- .tmp/sy-research .tmp/but-status.json",
+  ]) {
+    assert.equal(
+      deterministicDecision({ boundary: "action", toolName: "bash", input: { command }, cwd })?.verdict,
+      "allow",
+    );
+  }
+  for (const command of [
+    "rm -rf -- .tmp/sy-research .tmp/other",
+    "rm -rf -- .tmp",
+    "rm -rf -- ../.tmp/sy-research",
   ]) {
     assert.notEqual(
       deterministicDecision({ boundary: "action", toolName: "bash", input: { command }, cwd })?.verdict,

@@ -121,6 +121,14 @@ const isGeneratedReviewCleanup = (command: string, cwd: string): boolean => {
 const isGeneratedGitButlerStatusCleanup = (command: string): boolean =>
   /^\s*rm\s+-f\s+--\s+(?:\.\/)?\.tmp\/but-status\.json\s*$/.test(command);
 
+const isGeneratedSyResearchCleanup = (command: string): boolean => {
+  const match = command.match(/^\s*rm\s+-(?:rf|fr)\s+--\s+(.+?)\s*$/);
+  if (!match) return false;
+  const operands = match[1]?.split(/\s+/) ?? [];
+  const allowed = new Set([".tmp/sy-research", "./.tmp/sy-research", ".tmp/but-status.json", "./.tmp/but-status.json"]);
+  return operands.length > 0 && operands.length <= 2 && operands.every((operand) => allowed.has(operand));
+};
+
 const isSafeRustIncrementalCleanup: (command: string) => boolean = (command) => {
   const match = command.match(
     /^\s*(?:cd\s+(\/[^\s;&|`]+)\s+&&\s+)?rm\s+-(?:rf|fr)\s+(?:--\s+)?(?:\.\/)?target\/debug\/incremental(?:\s+&&\s+df\s+-h\s+\.\s*\|\s*tail\s+-1)?\s*$/,
@@ -290,11 +298,11 @@ export function deterministicDecision(request: ToolRequest): Decision | null {
   if (
     request.toolName === "bash" &&
     typeof request.input.command === "string" &&
-    isGeneratedGitButlerStatusCleanup(request.input.command)
+    (isGeneratedGitButlerStatusCleanup(request.input.command) || isGeneratedSyResearchCleanup(request.input.command))
   ) {
     return {
       verdict: "allow",
-      reason: "Exact generated GitButler status artifact cleanup",
+      reason: "Exact generated project-temporary artifact cleanup",
       source: "deterministic",
       resultSafe: true,
     };
