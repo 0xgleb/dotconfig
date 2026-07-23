@@ -299,6 +299,19 @@ test("counted O repeats the inserted line like Vim", () => {
   assert.deepEqual(e.cursor(), { line: 2, col: 2 });
 });
 
+test("normal-mode k recalls the latest prompt only when the editor is empty", () => {
+  const empty = editor("");
+  let delegated: string | undefined;
+  empty.normal.superHandleInput = (data) => { delegated = data; };
+  empty.key("k");
+  assert.equal(delegated, ESCAPE_SEQS.up);
+
+  const draft = editor("draft in progress");
+  draft.normal.superHandleInput = () => assert.fail("k must not replace a non-empty draft with history");
+  draft.key("k");
+  assert.equal(draft.text(), "draft in progress");
+});
+
 test("j and k move by logical lines without delegating to wrapped-row arrows", () => {
   const e = editor(`${"a".repeat(500)}\nshort\nthird`, 0, 3);
   e.normal.superHandleInput = () => assert.fail("vertical Vim motions must not use base-editor arrows");

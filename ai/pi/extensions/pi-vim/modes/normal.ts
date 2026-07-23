@@ -456,6 +456,17 @@ export function handleNormalMode(data: string, ctx: NormalModeContext): boolean 
     ? state.pendingOperatorCount * count
     : count;
 
+  // On an empty prompt, normal-mode `k` recalls the latest submitted prompt
+  // through the base editor's history machinery. The base editor also handles
+  // Up-arrow history in insert and normal modes and preserves a browsed draft
+  // for restoration with Down. Once text exists, `k` remains a normal logical
+  // line motion and never replaces the draft.
+  if (data === "k" && !state.pendingOperator && !countExplicit && ctx.getText() === "") {
+    ctx.superHandleInput(ESCAPE_SEQS.up);
+    resetOperatorState(state);
+    return true;
+  }
+
   switch (data) {
     // === Basic directional motions ===
     case "h":
