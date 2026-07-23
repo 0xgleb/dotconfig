@@ -57,6 +57,21 @@ test("registry Effect runner preserves typed operational failures", async () => 
   await assert.rejects(runRegistryEffect(Effect.fail(failure)), (error) => error === failure);
 });
 
+test("current schema reads do not acquire write locks during fleet heartbeats", async () => {
+  await withStores(async (store, _second, root) => {
+    await Effect.runPromise(store.snapshot(0));
+    const writer = new DatabaseSync(join(root, "registry.sqlite"));
+    writer.exec("BEGIN IMMEDIATE");
+    try {
+      const snapshot = await Effect.runPromise(store.snapshot(1));
+      assert.equal(snapshot.version, 1);
+    } finally {
+      writer.exec("ROLLBACK");
+      writer.close();
+    }
+  });
+});
+
 test("concurrent claims produce exactly one exclusive role owner", async () => {
   await withStores(async (first, second) => {
     const claims = await Promise.all([

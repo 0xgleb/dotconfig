@@ -83,6 +83,7 @@ import { QUESTION_RESOLVED_EVENT, type UserQuestionResolution } from "../shared/
 import {
   REGISTRY_INTENT_REQUEST_EVENT,
   type RegistryIntentReporter,
+  type RegistryIntentRequest,
 } from "../shared/registry-intent-events.ts";
 import { registerRuntimeVersion } from "../shared/runtime-version.ts";
 
@@ -202,7 +203,11 @@ function visibleIntent(pi: ExtensionAPI, ctx: ExtensionContext, activeGoal?: str
   const branch = ctx.sessionManager.getBranch();
   const registryIntent: string[] = [];
   const reportRegistryIntent: RegistryIntentReporter = (intent) => registryIntent.push(intent.slice(0, 4_000));
-  pi.events.emit(REGISTRY_INTENT_REQUEST_EVENT, ctx.sessionManager.getSessionId(), reportRegistryIntent);
+  const registryRequest: RegistryIntentRequest = {
+    agentId: ctx.sessionManager.getSessionId(),
+    report: reportRegistryIntent,
+  };
+  pi.events.emit(REGISTRY_INTENT_REQUEST_EVENT, registryRequest);
   const messages = branch
     .flatMap((entry) => {
       if (entry.type !== "message" || !isRecord(entry.message)) return [];
@@ -464,7 +469,7 @@ const WorkflowParameters = Type.Object({
 });
 
 export default function classifiedWorkflows(pi: ExtensionAPI): void {
-  registerRuntimeVersion(pi, "classified-workflows", "2026.07.23.5");
+  registerRuntimeVersion(pi, "classified-workflows", "2026.07.23.6");
   let goalState: GoalState | undefined;
   let goalEvaluating = false;
   let goalRunTokens = 0;

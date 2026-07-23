@@ -270,9 +270,27 @@ const requestFromRow: (row: Row) => RegistryRequest = (row) => {
 const schemaVersion: (database: DatabaseSync) => number = (database) =>
   numberField(rowFrom(database.prepare("PRAGMA user_version").get()), "user_version");
 
+const tableColumns = (database: DatabaseSync, table: string): ReadonlySet<string> =>
+  new Set(database.prepare(`PRAGMA table_info(${table})`).all().map((row) => stringField(rowFrom(row), "name") ?? ""));
+
+const currentAdditiveSchemaInstalled = (database: DatabaseSync): boolean => {
+  const requests = tableColumns(database, "requests");
+  const leases = tableColumns(database, "leases");
+  const agents = tableColumns(database, "agents");
+  return (
+    ["requester_acknowledged_at", "requester_label", "requester_cwd"].every((column) => requests.has(column)) &&
+    leases.has("runtime_versions") &&
+    ["agent_id", "runtime_versions", "cwd", "label", "expires_at"].every((column) => agents.has(column))
+  );
+};
+
 const initialize: (database: DatabaseSync, databasePath: string) => void = (database, databasePath) => {
   database.exec(`PRAGMA busy_timeout = ${BUSY_TIMEOUT_MS};`);
   const observedVersion = schemaVersion(database);
+  if (observedVersion === SCHEMA_VERSION && currentAdditiveSchemaInstalled(database)) {
+    chmodSync(databasePath, 0o600);
+    return;
+  }
   if (observedVersion !== 0 && observedVersion !== 1 && observedVersion !== 2 && observedVersion !== 3) {
     throw registryError("corrupt_state", `unsupported agent registry schema version ${observedVersion}`);
   }

@@ -6,7 +6,7 @@ import type { Effect } from "effect";
 import { isContinuationPaused } from "../shared/continuation-pause.ts";
 import {
   REGISTRY_INTENT_REQUEST_EVENT,
-  type RegistryIntentReporter,
+  type RegistryIntentRequest,
 } from "../shared/registry-intent-events.ts";
 import {
   MANAGED_CONFIG_GENERATION,
@@ -84,7 +84,7 @@ const requireText: (label: string, value: string | undefined) => string = (label
 };
 
 const registryExtension: (pi: ExtensionAPI) => void = (pi) => {
-  registerRuntimeVersion(pi, "agent-registry", "2026.07.23.2");
+  registerRuntimeVersion(pi, "agent-registry", "2026.07.23.3");
   const runtimeVersions = (): Readonly<Record<string, string>> => {
     const hostVersion = process.argv[1]?.match(/pi-coding-agent-([0-9.]+)/)?.[1] ?? "unknown";
     const versions: Record<string, string> = {
@@ -130,17 +130,25 @@ const registryExtension: (pi: ExtensionAPI) => void = (pi) => {
 
   pi.events.on(
     REGISTRY_INTENT_REQUEST_EVENT,
-    (agentId: string, report: RegistryIntentReporter) => {
-      if (!latestSnapshot) return;
-      const leases = latestSnapshot.leases.filter((lease) => lease.owner.id === agentId);
+    (payload: RegistryIntentRequest) => {
+      if (
+        !latestSnapshot ||
+        typeof payload !== "object" ||
+        payload === null ||
+        typeof payload.agentId !== "string" ||
+        typeof payload.report !== "function"
+      ) {
+        return;
+      }
+      const leases = latestSnapshot.leases.filter((lease) => lease.owner.id === payload.agentId);
       for (const lease of leases) {
         const requestIds = latestSnapshot.requests
           .filter(
             (request) =>
-              request.status === "claimed" && request.leaseId === lease.id && request.agentId === agentId,
+              request.status === "claimed" && request.leaseId === lease.id && request.agentId === payload.agentId,
           )
           .map((request) => request.id);
-        report(
+        payload.report(
           `Trusted live registry assignment: ${lease.project}/${lease.role} (${lease.mode}, ${lease.status})${
             requestIds.length > 0 ? `; claimed request IDs: ${requestIds.join(", ")}` : ""
           }`,
