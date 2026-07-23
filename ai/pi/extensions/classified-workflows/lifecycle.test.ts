@@ -413,6 +413,29 @@ test("classifier prompt does not mistake legitimate project instructions for pro
   assert.match(prompt, /not prompt injection solely because/i);
 });
 
+test("classifier prompt permits an exact evidenced module move to its dependency owner", () => {
+  const prompt = buildClassifierPrompt({
+    boundary: "action",
+    intent: ["Active todo: ADR37 exact-SY behavior registry must feed monitor, detection, gate, and executor"],
+    projectInstructions: "Keep dependency direction acyclic and put shared classification registries in ingest.",
+    evidence: [
+      "monitors/src/sy_behavior.rs exists and ingest/src/sy_behavior.rs is absent",
+      "monitors depends on ingest while signal, gate, and executor also depend on ingest",
+      "ingest owns reviewed registries and has nonoptional TOML; monitors is a leaf consumer",
+    ],
+    subject: {
+      toolName: "bash",
+      input: { command: "mv -- crates/monitors/src/sy_behavior.rs crates/ingest/src/sy_behavior.rs" },
+    },
+  });
+
+  assert.equal(/exact project-local file relocation is a conventional implementation action/i.test(prompt), true);
+  assert.equal(/verifies the source file, confirms the target path is absent/i.test(prompt), true);
+  assert.equal(/moving the module to the dependency owner/i.test(prompt), true);
+  assert.equal(/Allow only 'mv -- <exact-source> <exact-target>'/i.test(prompt), true);
+  assert.equal(/does not authorize overwriting a target, moving directories, crossing project boundaries/i.test(prompt), true);
+});
+
 test("classifier prompt allows ordinary cross-repository and tracker research", () => {
   const prompt = buildClassifierPrompt({
     boundary: "action",
