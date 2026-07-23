@@ -6,6 +6,7 @@ import {
   createToolResultAllowance,
   formatDecisionReason,
   resolveActionDecision,
+  withheldExecutedToolResultPatch,
 } from "./lifecycle.ts";
 import type { Decision } from "./core.ts";
 import {
@@ -55,6 +56,23 @@ test("deterministically allowed actions carry one matching result allowance", ()
   allowance.record("call-2");
   allowance.clear();
   assert.equal(allowance.consume("call-2"), false);
+});
+
+test("withheld tool results preserve post-execution truth and prohibit blind retry", () => {
+  const success = withheldExecutedToolResultPatch(false);
+  assert.deepEqual(success, {
+    content: [{
+      type: "text",
+      text:
+        "Tool executed before result filtering. Original tool status: success. " +
+        "Result content was withheld by classified workflow policy. Do not retry or assume rollback; " +
+        "first verify the exact intended state through an independently authorized read-only action.",
+    }],
+    details: undefined,
+  });
+  assert.equal("isError" in success, false);
+  assert.match(withheldExecutedToolResultPatch(true).content[0]?.text ?? "", /Original tool status: error/);
+  assert.match(withheldExecutedToolResultPatch(true).content[0]?.text ?? "", /Do not retry or assume rollback/);
 });
 
 test("agent execution is enclosed by spawn and return classification", async () => {

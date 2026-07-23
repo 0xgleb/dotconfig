@@ -51,6 +51,22 @@ export function resolveActionDecision(decision: Decision): BlockedAction | undef
   return decision.verdict === "block" ? { block: true, reason: formatDecisionReason(decision) } : undefined;
 }
 
+export interface WithheldExecutedToolResultPatch {
+  content: Array<{ type: "text"; text: string }>;
+  details: undefined;
+}
+
+export const withheldExecutedToolResultPatch: (isError: boolean) => WithheldExecutedToolResultPatch = (isError) => ({
+  content: [{
+    type: "text",
+    text:
+      `Tool executed before result filtering. Original tool status: ${isError ? "error" : "success"}. ` +
+      "Result content was withheld by classified workflow policy. Do not retry or assume rollback; " +
+      "first verify the exact intended state through an independently authorized read-only action.",
+  }],
+  details: undefined,
+});
+
 export function createClassifiedAgentRunner(
   intent: string[],
   projectInstructions: string,

@@ -37,6 +37,7 @@ import {
   createToolResultAllowance,
   formatDecisionReason,
   resolveActionDecision,
+  withheldExecutedToolResultPatch,
   type ClassificationRequest,
 } from "./lifecycle.ts";
 import {
@@ -519,7 +520,7 @@ const WorkflowParameters = Type.Object({
 });
 
 export default function classifiedWorkflows(pi: ExtensionAPI): void {
-  registerRuntimeVersion(pi, "classified-workflows", "2026.07.23.34");
+  registerRuntimeVersion(pi, "classified-workflows", "2026.07.23.35");
   let goalState: GoalState | undefined;
   let goalEvaluating = false;
   let goalRunTokens = 0;
@@ -1190,11 +1191,10 @@ export default function classifiedWorkflows(pi: ExtensionAPI): void {
       ctx.signal,
     );
     if (decision.verdict === "block") {
-      return {
-        content: [{ type: "text", text: `Tool result blocked. ${formatDecisionReason(decision)}` }],
-        details: undefined,
-        isError: true,
-      };
+      // The extension API emits tool_result only after execution. Redact output,
+      // but preserve the original success/error bit so a mutation is never
+      // misreported as a pre-execution policy block and blindly retried.
+      return withheldExecutedToolResultPatch(event.isError);
     }
   });
 
