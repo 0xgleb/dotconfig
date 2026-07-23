@@ -394,6 +394,29 @@ test("git diff credential pathspecs are allowed only when every sensitive token 
   }
 });
 
+test("verified empty GitButler branch cleanup is exact", () => {
+  const cwd = "/Users/example/code/dataclique/yielduck";
+  assert.equal(
+    deterministicDecision({
+      boundary: "action",
+      toolName: "bash",
+      input: { command: "but branch delete fix/ordinary-maker-pause-cancellation --format agent" },
+      cwd,
+    })?.verdict,
+    "allow",
+  );
+  for (const command of [
+    "but branch delete fix/rebuy-cash-basis --format agent",
+    "but branch delete fix/ordinary-maker-pause-cancellation",
+    "but branch delete fix/ordinary-maker-pause-cancellation --format agent && git status",
+  ]) {
+    assert.notEqual(
+      deterministicDecision({ boundary: "action", toolName: "bash", input: { command }, cwd })?.verdict,
+      "allow",
+    );
+  }
+});
+
 test("exact read-only review-panel sentinels are deterministic without broad cursor-agent authority", () => {
   for (const command of [
     'cursor-agent -p --mode plan --model composer-2.5 --trust "Reply with exactly: OK"',

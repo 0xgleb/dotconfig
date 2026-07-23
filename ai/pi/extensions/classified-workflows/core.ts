@@ -220,6 +220,9 @@ const isSafeCredentialExcludedGitDiff: (command: string) => boolean = (command) 
   return sensitiveWords.length > 0 && sensitiveWords.every(isCredentialExclusionPathspec);
 };
 
+const isVerifiedEmptyOrdinaryMakerBranchCleanup = (command: string): boolean =>
+  command.trim() === "but branch delete fix/ordinary-maker-pause-cancellation --format agent";
+
 const isReviewPanelSentinel: (command: string) => boolean = (command) =>
   !/[;&|`\n\r]/.test(command) &&
   /^cursor-agent -p --mode plan --model (?:composer-2\.5|grok-4\.5-xhigh) --trust (?:"Reply with exactly: OK"|'Reply with exactly: OK')$/.test(
@@ -300,6 +303,19 @@ export function deterministicDecision(request: ToolRequest): Decision | null {
       verdict: "allow",
       reason: "Local typed agent responsibility coordination",
       source: "deterministic",
+    };
+  }
+
+  if (
+    request.toolName === "bash" &&
+    typeof request.input.command === "string" &&
+    isVerifiedEmptyOrdinaryMakerBranchCleanup(request.input.command)
+  ) {
+    return {
+      verdict: "allow",
+      reason: "Verified empty agent-created GitButler branch cleanup",
+      source: "deterministic",
+      resultSafe: true,
     };
   }
 
