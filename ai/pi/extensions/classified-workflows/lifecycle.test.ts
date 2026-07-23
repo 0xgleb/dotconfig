@@ -580,6 +580,28 @@ test("classifier prompt accepts git status evidence for each repeated cargo fmt 
   assert.equal(/source edit and validation to occur in one shell command/i.test(prompt), true);
 });
 
+test("classifier prompt permits a read-only package fmt check despite unrelated drift", () => {
+  const prompt = buildClassifierPrompt({
+    boundary: "action",
+    intent: ["Validate active ADR37 dashboard Rust edits while preserving unrelated formatting drift"],
+    projectInstructions: "Use cargo fmt for Rust formatting; do not substitute direct rustfmt.",
+    evidence: [
+      "crates/dashboard/Cargo.toml names package dashboard",
+      "git status shows active edits in dashboard controls.rs, lib.rs, server.rs, and untracked sy_drawdown.rs",
+      "dashboard plans.rs has known pre-existing unrelated formatting drift",
+    ],
+    subject: {
+      toolName: "bash",
+      input: { command: "cargo fmt -p dashboard -- --check" },
+    },
+  });
+
+  assert.equal(/pre-existing formatting drift in other files within an evidenced package/i.test(prompt), true);
+  assert.equal(/does not turn '-- --check' into mutation/i.test(prompt), true);
+  assert.equal(/allow the check to report its read-only diff or nonzero result/i.test(prompt), true);
+  assert.equal(/does not authorize fixing unrelated drift/i.test(prompt), true);
+});
+
 test("classifier prompt makes loaded instructions binding without duplicating them", () => {
   const prompt = buildClassifierPrompt({
     boundary: "action",
