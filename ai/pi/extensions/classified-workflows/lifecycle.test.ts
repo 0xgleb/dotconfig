@@ -232,6 +232,28 @@ test("classifier prompt accepts bounded evidence-backed GitButler compound hunk 
   assert.match(prompt, /Do not substitute whole-file staging, accept an unevidenced source\/target/i);
 });
 
+test("classifier prompt refuses to call stack-assigned GitButler changes branch-isolated", () => {
+  const prompt = buildClassifierPrompt({
+    boundary: "action",
+    intent: ["Isolate the SPEC partial-terminal hunk on rt"],
+    projectInstructions: "Do not mutate the product workspace during diagnosis.",
+    evidence: [
+      "structured status lists p5 assignedChanges with gl, ty, us, nv, rt, and uy as empty branches in the same stack",
+      "but diff rt is empty while but diff p5 contains every staged change",
+      "mnn:4e changed to mnn:4 after later move operations",
+    ],
+    subject: { toolName: "bash", input: { command: "but rub mnn:4 rt --format agent" } },
+  });
+
+  assert.match(prompt, /uncommitted assigned changes at stack scope/i);
+  assert.match(prompt, /branch CLI ID alone does not prove branch-isolated ownership/i);
+  assert.match(prompt, /rub may report success.*enclosing stack/is);
+  assert.match(prompt, /block further assignment represented as branch isolation/i);
+  assert.match(prompt, /distinct parallel stacks or a real commit boundary/i);
+  assert.match(prompt, /never move or commit automatically to repair it/i);
+  assert.match(prompt, /success message alone is not attribution evidence/i);
+});
+
 test("classifier prompt prioritizes active reload todos over stale historical topics", () => {
   const prompt = buildClassifierPrompt({
     boundary: "action",
