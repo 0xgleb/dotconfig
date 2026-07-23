@@ -22,7 +22,6 @@ import {
   operatorBacklogText,
   registryListText,
   registryRequestDetailText,
-  registryWidgetLines,
   requestNotificationText,
 } from "./presentation.ts";
 import {
@@ -87,7 +86,7 @@ const requireText: (label: string, value: string | undefined) => string = (label
 };
 
 const registryExtension: (pi: ExtensionAPI) => void = (pi) => {
-  registerRuntimeVersion(pi, "agent-registry", "2026.07.23.8");
+  registerRuntimeVersion(pi, "agent-registry", "2026.07.23.9");
   const runtimeVersions = (): Readonly<Record<string, string>> => {
     const versions: Record<string, string> = {
       "config-generation": MANAGED_CONFIG_GENERATION,
@@ -170,9 +169,9 @@ const registryExtension: (pi: ExtensionAPI) => void = (pi) => {
   };
 
   const render = (ctx: ExtensionContext, snapshot: RegistrySnapshot) => {
-    const lines = registryWidgetLines(snapshot, identity(ctx).id, Date.now());
-    ctx.ui.setStatus(STATUS_KEY, lines.length > 0 ? `roles:${ownedLeases(snapshot, identity(ctx).id).length}` : undefined);
-    if (ctx.hasUI) ctx.ui.setWidget(STATUS_KEY, lines.length > 0 ? lines : undefined, { placement: "belowEditor" });
+    const owned = ownedLeases(snapshot, identity(ctx).id).length;
+    ctx.ui.setStatus(STATUS_KEY, owned > 0 ? `roles:${owned}` : undefined);
+    if (ctx.hasUI) ctx.ui.setWidget(STATUS_KEY, undefined);
   };
 
   const notifyRequest = async (ctx: ExtensionContext, request: RegistryRequest): Promise<void> => {

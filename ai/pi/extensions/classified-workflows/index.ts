@@ -520,7 +520,7 @@ const WorkflowParameters = Type.Object({
 });
 
 export default function classifiedWorkflows(pi: ExtensionAPI): void {
-  registerRuntimeVersion(pi, "classified-workflows", "2026.07.23.35");
+  registerRuntimeVersion(pi, "classified-workflows", "2026.07.23.36");
   let goalState: GoalState | undefined;
   let goalEvaluating = false;
   let goalRunTokens = 0;
@@ -727,11 +727,7 @@ export default function classifiedWorkflows(pi: ExtensionAPI): void {
   const updateLoopStatus = (ctx: ExtensionContext) => {
     const active = loopState?.status === "active" ? loopState : undefined;
     ctx.ui.setStatus("pi-loop", active ? `loop:∞ · ${active.runs} runs` : undefined);
-    if (!ctx.hasUI) return;
-    const lines = active ? formatLoopStatus(active, Date.now()).split("\n") : [];
-    ctx.ui.setWidget("pi-loop", lines.length > 0 ? [...lines, "Repeats until exact /loop clear."] : undefined, {
-      placement: "belowEditor",
-    });
+    if (ctx.hasUI) ctx.ui.setWidget("pi-loop", undefined);
   };
 
   const scheduleLoop = (ctx: ExtensionContext) => {
@@ -764,20 +760,7 @@ export default function classifiedWorkflows(pi: ExtensionAPI): void {
   const updateGoalStatus = (ctx: ExtensionContext) => {
     const status = goalState?.status === "active" ? `/goal · ${goalState.turns} turns` : undefined;
     ctx.ui.setStatus("pi-goal", status);
-    if (!ctx.hasUI) return;
-    if (goalState?.status !== "active") {
-      ctx.ui.setWidget("pi-goal", undefined);
-      return;
-    }
-
-    const condition = goalState.condition.length > 180 ? `${goalState.condition.slice(0, 177)}...` : goalState.condition;
-    const lines = [
-      `Goal: active · ${formatDuration(goalState.startedAt)} · ${goalState.turns} turns · ${goalState.tokens} tokens`,
-      condition,
-      goalState.lastReason ? `Last check: ${goalState.lastReason}` : "Last check: waiting for first evaluator pass",
-      "Continues until achieved or exact /goal clear.",
-    ];
-    ctx.ui.setWidget("pi-goal", lines, { placement: "belowEditor" });
+    if (ctx.hasUI) ctx.ui.setWidget("pi-goal", undefined);
   };
 
   pi.registerMessageRenderer(WORKFLOW_MESSAGE, (message, _options, theme) => {

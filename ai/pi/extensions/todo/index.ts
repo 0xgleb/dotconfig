@@ -12,7 +12,7 @@ import { Effect, Option, Ref } from "effect";
 import { Type } from "typebox";
 import { QUESTION_ASK_EVENT, type UserQuestionRequest } from "../shared/question-events.ts";
 import { registerRuntimeVersion } from "../shared/runtime-version.ts";
-import { kanbanColumns, taskWidgetLines, todoSummary } from "./presentation.ts";
+import { kanbanColumns, todoSummary } from "./presentation.ts";
 import {
   decodeTodoDetails,
   decodeTodoState,
@@ -206,15 +206,14 @@ function restoredState(ctx: ExtensionContext): TodoState {
 }
 
 export default function todoExtension(pi: ExtensionAPI): void {
-  registerRuntimeVersion(pi, "todo", "2026.07.23.4");
+  registerRuntimeVersion(pi, "todo", "2026.07.23.5");
   const stateRef = Effect.runSync(Ref.make<TodoState>(emptyTodoState));
 
   const renderTaskWidget = (ctx: ExtensionContext, state = Effect.runSync(Ref.get(stateRef))) => {
     if (!ctx.hasUI) return;
     const summary = todoSummary(state);
     ctx.ui.setStatus("todo", summary.total > 0 ? `tasks:${summary.pending}/${summary.total}` : undefined);
-    const lines = taskWidgetLines(state);
-    ctx.ui.setWidget("todo-top-tasks", lines.length > 0 ? lines : undefined, { placement: "aboveEditor" });
+    ctx.ui.setWidget("todo-top-tasks", undefined);
   };
 
   const reconstructState = (ctx: ExtensionContext) => Ref.set(stateRef, restoredState(ctx));
