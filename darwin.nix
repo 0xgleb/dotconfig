@@ -41,7 +41,6 @@
     _1password-gui
     bat
     bottom
-    brave
     lua
     obsidian
     rsync
