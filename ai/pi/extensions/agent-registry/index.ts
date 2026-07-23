@@ -18,6 +18,7 @@ import {
 import { makeSqliteRegistryStore } from "./sqlite-store.ts";
 import { managedOperationalRole, registryStateRoot, shouldSelfClaimUnownedRole } from "./paths.ts";
 import {
+  operatorBacklogText,
   registryListText,
   registryRequestDetailText,
   registryWidgetLines,
@@ -85,7 +86,7 @@ const requireText: (label: string, value: string | undefined) => string = (label
 };
 
 const registryExtension: (pi: ExtensionAPI) => void = (pi) => {
-  registerRuntimeVersion(pi, "agent-registry", "2026.07.23.6");
+  registerRuntimeVersion(pi, "agent-registry", "2026.07.23.7");
   const runtimeVersions = (): Readonly<Record<string, string>> => {
     const versions: Record<string, string> = {
       "config-generation": MANAGED_CONFIG_GENERATION,
@@ -351,9 +352,23 @@ const registryExtension: (pi: ExtensionAPI) => void = (pi) => {
     pi.sendMessage({ customType: MESSAGE_TYPE, content: registryListText(snapshot, identity(ctx).id, now), display: true });
   };
 
+  const showOperatorBacklog = async (ctx: ExtensionContext) => {
+    const now = Date.now();
+    const snapshot = await run(store.snapshot(now));
+    pi.sendMessage({
+      customType: MESSAGE_TYPE,
+      content: operatorBacklogText(snapshot, identity(ctx).id, now),
+      display: true,
+    });
+  };
+
   pi.on("input", async (event, ctx) => {
     if (event.text.trim() === "/agents") {
       await showRegistry(ctx);
+      return { action: "handled" };
+    }
+    if (event.text.trim() === "/operator") {
+      await showOperatorBacklog(ctx);
       return { action: "handled" };
     }
     queueMicrotask(() => void sync(ctx));
@@ -396,6 +411,13 @@ const registryExtension: (pi: ExtensionAPI) => void = (pi) => {
     description: "Show local Pi agent role leases and open delegated requests",
     async handler(_args, ctx) {
       await showRegistry(ctx);
+    },
+  });
+
+  pi.registerCommand("operator", {
+    description: "Show owned operational roles, request backlog age, and fleet runtime drift",
+    async handler(_args, ctx) {
+      await showOperatorBacklog(ctx);
     },
   });
 

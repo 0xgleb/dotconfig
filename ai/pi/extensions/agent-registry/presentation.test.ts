@@ -1,6 +1,7 @@
 import assert from "node:assert/strict";
 import test from "node:test";
 import {
+  operatorBacklogText,
   registryListText,
   registryRequestDetailText,
   registryWidgetLines,
@@ -16,10 +17,21 @@ const snapshot: RegistrySnapshot = {
         id: "agent-a",
         pid: 42,
         model: "openai-codex/gpt-5.6-sol",
-        runtimeVersions: { questions: "2026.07.23.2" },
+        runtimeVersions: { "config-generation": "2026.07.23.34", questions: "2026.07.23.2" },
       },
       cwd: "/Users/example/.config",
       label: "dotconfig",
+      heartbeatAt: 60_000,
+      expiresAt: 121_000,
+    },
+    {
+      identity: {
+        id: "agent-b",
+        pid: 43,
+        runtimeVersions: { "config-generation": "2026.07.23.29", "classified-workflows": "2026.07.23.23" },
+      },
+      cwd: "/Users/example/code/st0x/st0x.rest.api",
+      label: "st0x PR reviewer",
       heartbeatAt: 60_000,
       expiresAt: 121_000,
     },
@@ -78,8 +90,16 @@ test("request detail exposes full bounded coordination text with source identity
 test("registry widget keeps operational ownership visible with an inbox count", () => {
   assert.deepEqual(registryWidgetLines(snapshot, "agent-a", 61_000), [
     "Agent registry: 1 role · /agents",
-    "● .config/pi-support · operational · active · inbox 1 · ttl 60s",
+    "● .config/pi-support · operational · active · inbox 1 · oldest 59s · drift 1 · ttl 60s",
   ]);
+});
+
+test("operator backlog shows request age and runtime drift with navigation", () => {
+  const text = operatorBacklogText(snapshot, "agent-a", 61_000);
+  assert.match(text, /Operator control plane/);
+  assert.match(text, /backlog 1 · runtime drift 1/);
+  assert.match(text, /request-.*59s.*st0x PR reviewer.*fix workflow retries/i);
+  assert.match(text, /\/agents for fleet detail.*\/blocked for blocker triage.*\/questions/is);
 });
 
 test("registry listing shows safe owner and request lifecycle details", () => {
