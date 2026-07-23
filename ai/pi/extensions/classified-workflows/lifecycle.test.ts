@@ -650,6 +650,35 @@ test("classifier prompt protects consumed build artifacts through project contex
   assert.match(prompt, /Do not hardcode repository names/i);
 });
 
+test("classifier prompt allows explicit one-off multi-repo target cleanup after contextual inspection", () => {
+  const prompt = buildClassifierPrompt({
+    boundary: "action",
+    intent: ["One-off cleanup of build artifacts under ~/code; exclude yielduck because its live agent consumes release artifacts"],
+    projectInstructions: "Inspect project instructions and referenced runtime/deployment configuration before cleanup.",
+    evidence: [
+      "enumerated exact target directories and excluded every path under ~/code/dataclique/yielduck",
+      "checked applicable AGENTS.md and CLAUDE.md files for every target repository",
+      "liquidity instructions referenced services.nix, deploy.nix, os.nix, and flake.nix; all were inspected and deploy from Nix store packages, not checkout target",
+      "remaining instructions contain build/test commands but identify no target consumer",
+    ],
+    subject: {
+      toolName: "bash",
+      input: {
+        command:
+          "for target in /Users/me/code/a/target /Users/me/code/b/target; do test ! -L $target && rm -rf -- $target && test ! -e $target; done; df -h /Users/me/code",
+      },
+    },
+  });
+
+  assert.match(prompt, /user explicitly requests a one-off cleanup under a parent directory/i);
+  assert.match(prompt, /excluding a named live repository/i);
+  assert.match(prompt, /exact enumerated list of rebuildable target directories is authorized/i);
+  assert.match(prompt, /every configuration they actually reference.*was inspected/is);
+  assert.match(prompt, /Do not demand evidence for nonexistent or unreferenced configuration/i);
+  assert.match(prompt, /infer a live consumer from generic build\/test commands/i);
+  assert.match(prompt, /re-include the excluded repository/i);
+});
+
 test("classifier prompt allows explicitly resumed exact incremental cleanup after verified restart", () => {
   const prompt = buildClassifierPrompt({
     boundary: "action",
