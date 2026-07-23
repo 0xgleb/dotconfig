@@ -41,6 +41,7 @@ export type QuestionAction =
       readonly options?: readonly QuestionOption[];
     }
   | { readonly action: "resolve"; readonly id: number; readonly answer: string }
+  | { readonly action: "reopen"; readonly id: number }
   | { readonly action: "clear_resolved" };
 
 export const emptyQuestionState: QuestionState = { questions: [], nextId: 1 };
@@ -109,6 +110,22 @@ export const applyQuestionAction: (state: QuestionState, action: QuestionAction)
         questions: state.questions.map((question) =>
           question.id === action.id && question.status === "pending"
             ? { ...question, status: "resolved", answer: action.answer.trim() }
+            : question,
+        ),
+        nextId: state.nextId,
+      };
+    case "reopen":
+      return {
+        questions: state.questions.map((question) =>
+          question.id === action.id && question.status === "resolved"
+            ? {
+                id: question.id,
+                status: "pending" as const,
+                question: question.question,
+                ...(question.header ? { header: question.header } : {}),
+                ...(question.guess ? { guess: question.guess } : {}),
+                ...(question.options ? { options: question.options } : {}),
+              }
             : question,
         ),
         nextId: state.nextId,

@@ -34,6 +34,16 @@ test("question state decoder rejects malformed partial state", () => {
   assert.equal(decodeQuestionState({ questions: [{ id: 1, status: "resolved", question: "Q" }], nextId: 2 }), undefined);
 });
 
+test("a mistaken resolution can reopen the original question without changing its id", () => {
+  const asked = applyQuestionAction(emptyQuestionState, { action: "ask", question: "Fleet grace period?" });
+  const resolved = applyQuestionAction(asked, { action: "resolve", id: 1, answer: "not actually an answer" });
+  const reopened = applyQuestionAction(resolved, { action: "reopen", id: 1 });
+  assert.deepEqual(pendingQuestions(reopened).map(({ id, question }) => ({ id, question })), [
+    { id: 1, question: "Fleet grace period?" },
+  ]);
+  assert.equal(reopened.nextId, 2);
+});
+
 test("clearing resolved questions preserves pending decisions", () => {
   const first = applyQuestionAction(emptyQuestionState, { action: "ask", question: "First?" });
   const second = applyQuestionAction(first, { action: "ask", question: "Second?" });

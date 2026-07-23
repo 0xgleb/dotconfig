@@ -19,7 +19,7 @@ const QUESTION_MESSAGE = "pi.questions.list";
 const QUESTION_STATUS_KEY = "pi-questions";
 
 interface QuestionRequest {
-  readonly action: "list" | "ask" | "resolve" | "clear_resolved";
+  readonly action: "list" | "ask" | "resolve" | "reopen" | "clear_resolved";
   readonly question?: string;
   readonly header?: string;
   readonly guess?: string;
@@ -54,14 +54,20 @@ const parseAction: (request: QuestionRequest, state: QuestionState) => QuestionA
       if (target.status !== "pending") throw new Error(`Question q${request.id} is already resolved`);
       return { action: "resolve", id: request.id, answer };
     }
+    case "reopen": {
+      if (request.id === undefined) throw new Error("id required for reopen");
+      const target = state.questions.find(({ id }) => id === request.id);
+      if (!target) throw new Error(`Question q${request.id} not found`);
+      if (target.status !== "resolved") throw new Error(`Question q${request.id} is already pending`);
+      return { action: "reopen", id: request.id };
+    }
   }
 };
 
 const questionsExtension: (pi: ExtensionAPI) => void = (pi) => {
-  registerRuntimeVersion(pi, "questions", "2026.07.23.3");
+  registerRuntimeVersion(pi, "questions", "2026.07.23.4");
   let state = emptyQuestionState;
   let dialogOpen = false;
-  let lastPresentedQuestionId = 0;
 
   const render = (ctx: ExtensionContext) => {
     const pending = pendingQuestions(state).length;
@@ -219,13 +225,6 @@ const questionsExtension: (pi: ExtensionAPI) => void = (pi) => {
     ctx.ui.setStatus(QUESTION_STATUS_KEY, undefined);
     ctx.ui.setWidget(QUESTION_STATUS_KEY, undefined);
   });
-  pi.on("agent_settled", (_event, ctx) => {
-    const newest = pendingQuestions(state).at(-1)?.id;
-    if (newest !== undefined && newest > lastPresentedQuestionId) {
-      lastPresentedQuestionId = newest;
-      void showQuestionDialog(ctx, newest);
-    }
-  });
   pi.on("before_agent_start", (event) => {
     const content = pendingQuestionContext(state);
     return content
@@ -247,18 +246,20 @@ const questionsExtension: (pi: ExtensionAPI) => void = (pi) => {
   pi.registerTool({
     name: "ask_user",
     label: "Question queue",
-    description: "Queue, list, and resolve persistent non-blocking questions for the user.",
+    description: "Queue, list, resolve, or reopen persistent non-blocking questions for the user."},{
     promptSnippet: "Queue a persistent question for the user without blocking unrelated work",
     promptGuidelines: [
       "Use ask_user when a user decision is required but independent work remains executable.",
       "Include a short header, the current best guess, and 2-4 concise options when the decision has bounded choices.",
       "Continue independent work after asking; resolve the question with a concise answer summary when the user responds.",
+      "Queued questions stay passive until the user explicitly opens /questions; never treat ordinary prompt input as an answer.",
     ],
     parameters: Type.Object({
       action: Type.Union([
         Type.Literal("list"),
         Type.Literal("ask"),
         Type.Literal("resolve"),
+        Type.Literal("reopen"),
         Type.Literal("clear_resolved"),
       ]),
       question: Type.Optional(Type.String()),
@@ -284,10 +285,13 @@ const questionsExtension: (pi: ExtensionAPI) => void = (pi) => {
         if (action.action !== "list") persist(ctx);
         const text =
           action.action === "ask"
-            ? `Queued question q${state.nextId - 1}`
+            ? `Queued question q${state.nextId - 1}. The user can answer it explicitly with /questions.`
             : action.action === "resolve"
               ? `Resolved question q${action.id}`
-              : questionListText(state);
+              : action.action === "reopen"
+                ? `Reopened question q${action.id}`
+                : questionListText(state);
+        if (action.action === "ask") ctx.ui.notify(text, "info");
         return { content: [{ type: "text", text }], details: { outcome: "success", action: action.action, state } };
       } catch (error) {
         const message = error instanceof Error ? error.message : "Question action failed";
