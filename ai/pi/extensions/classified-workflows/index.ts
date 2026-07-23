@@ -31,6 +31,7 @@ import {
   assistantUsageTokens,
   buildGoalEvaluatorPrompt,
   formatGoalStatus,
+  latestCompactionSummary,
   parseGoalCommand,
   parseGoalEvaluation,
   parseStoredGoal,
@@ -223,8 +224,9 @@ function projectInstructions(ctx: ExtensionContext): string {
 }
 
 function recentExecutionEvidence(ctx: ExtensionContext): string[] {
-  return ctx.sessionManager
-    .getBranch()
+  const branch = ctx.sessionManager.getBranch();
+  const compaction = latestCompactionSummary(branch);
+  const toolEvidence = branch
     .flatMap((entry) => {
       if (entry.type !== "message" || !isRecord(entry.message) || entry.message.role !== "toolResult") return [];
       const text = typeof entry.message.content === "string"
@@ -241,6 +243,12 @@ function recentExecutionEvidence(ctx: ExtensionContext): string[] {
         : [];
     })
     .slice(-12);
+  return [
+    ...(compaction
+      ? [`compaction summary: ${sanitizeProcessDiagnostic(compaction).replace(/\s+/g, " ").slice(0, 4_000)}`]
+      : []),
+    ...toolEvidence,
+  ];
 }
 
 const classifierBackoff: (attempt: number, signal?: AbortSignal) => Promise<void> = async (attempt, signal) => {

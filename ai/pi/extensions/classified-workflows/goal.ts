@@ -168,6 +168,16 @@ export const todoWorkSnapshot: (entries: unknown[]) => TodoWorkSnapshot = (entri
 
 export const pendingTodoTexts: (entries: unknown[]) => string[] = (entries) => todoWorkSnapshot(entries).pending;
 
+export const latestCompactionSummary: (entries: readonly unknown[]) => string | undefined = (entries) => {
+  for (let index = entries.length - 1; index >= 0; index -= 1) {
+    const entry = entries[index];
+    if (isRecord(entry) && entry.type === "compaction" && typeof entry.summary === "string" && entry.summary.trim()) {
+      return entry.summary;
+    }
+  }
+  return undefined;
+};
+
 export const taskContinuationMessage: (snapshot: TodoWorkSnapshot) => string | undefined = (snapshot) =>
   snapshot.pending.length > 0
     ? `The task list is not complete. Continue working without stopping. Pending: ${snapshot.pending.slice(0, 5).join("; ")}${snapshot.pending.length > 5 ? `; plus ${snapshot.pending.length - 5} more` : ""}.`

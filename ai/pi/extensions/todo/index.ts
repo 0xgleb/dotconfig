@@ -223,6 +223,11 @@ export default function todoExtension(pi: ExtensionAPI): void {
   };
   pi.on("session_start", async (_event, ctx) => reconstructAndRender(ctx));
   pi.on("session_tree", async (_event, ctx) => reconstructAndRender(ctx));
+  pi.on("session_compact", (_event, ctx) => {
+    const state = Effect.runSync(Ref.get(stateRef));
+    pi.appendEntry(TODO_STATE_ENTRY, state);
+    renderTaskWidget(ctx, state);
+  });
 
   pi.registerTool({
     name: "todo",

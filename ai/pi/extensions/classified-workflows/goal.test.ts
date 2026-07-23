@@ -5,6 +5,7 @@ import {
   assistantUsageTokens,
   buildGoalEvaluatorPrompt,
   formatGoalStatus,
+  latestCompactionSummary,
   parseGoalCommand,
   parseGoalEvaluation,
   parseStoredGoal,
@@ -131,6 +132,17 @@ test("durable custom todo state survives compaction for classifier intent", () =
   ]);
   assert.deepEqual(snapshot.pending, ["#10 Separate typed allocation changes"]);
   assert.deepEqual(snapshot.blocked, ["#23 Repair rebuy hotfix — classifier denied staging"]);
+});
+
+test("latest compaction summary remains available as bounded classifier evidence", () => {
+  assert.equal(
+    latestCompactionSummary([
+      { type: "compaction", summary: "Todo #10: old" },
+      { type: "message", message: { role: "user", content: "continue" } },
+      { type: "compaction", summary: "Todo #23: stage the rebuy hotfix IDs" },
+    ]),
+    "Todo #23: stage the rebuy hotfix IDs",
+  );
 });
 
 test("task continuation stops only when complete or every remainder is blocked", () => {
