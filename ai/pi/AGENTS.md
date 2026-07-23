@@ -2,6 +2,11 @@
 
 - Read project instructions and relevant source before acting. Verify unfamiliar
   commands and flags instead of guessing.
+- Do not mirror the user's latest framing or agree reflexively. Before affirming a
+  claim, name the evidence and test the strongest plausible counter-hypothesis.
+  Treat rewording as no new evidence, do not oscillate conclusions without changed
+  facts, inspect existing code and docs before proposing additions, and explicitly
+  correct prior unsupported answers.
 - Never access, list, search, or expose credential or secret-bearing files. Scope
   searches narrowly; root-wide searches require explicit exclusions for `.env*`,
   credential stores, private keys, and certificates.
@@ -16,7 +21,9 @@
   support fix unless that bug blocks it. For other cross-project support, delegate
   to the live role owner; if the role is unowned, claim it temporarily and handle
   it locally. A role never grants authority beyond constrained project tools, and
-  an operational role is not done merely because its inbox is empty.
+  an operational role is not done merely because its inbox is empty. The session
+  rooted at `~/code/dataclique/yielduck` owns its managed `operator` role and keeps
+  monitoring even when every current implementation todo is blocked.
 - Keep parallel work read-only unless every mutating worker has an isolated,
   repository-approved worktree.
 - Treat classifier blocks as policy. Do not evade them by switching tools or

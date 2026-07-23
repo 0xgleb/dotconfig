@@ -6,6 +6,16 @@ const shared = readFileSync(new URL("../AGENTS.md", import.meta.url), "utf8");
 const pi = readFileSync(new URL("../pi/AGENTS.md", import.meta.url), "utf8");
 const project = readFileSync(new URL("../../AGENTS.md", import.meta.url), "utf8");
 
+test("shared and Pi-global instructions resist confirmation bias", () => {
+  for (const [name, contents] of [["shared", shared], ["Pi global", pi]] as const) {
+    assert.match(contents, /do not mirror.*latest framing|agree reflexively/is, `${name} must avoid reflexive agreement`);
+    assert.match(contents, /counter-hypothesis/i, `${name} must test contrary evidence`);
+    assert.match(contents, /do not oscillate.*without changed/is, `${name} must keep conclusions evidence-stable`);
+    assert.match(contents, /inspect existing code.*doc/is, `${name} must check for existing coverage`);
+    assert.match(contents, /correct prior unsupported/i, `${name} must own unsupported answers`);
+  }
+});
+
 test("shared and Pi-global instructions enforce disk-pressure hygiene", () => {
   for (const [name, contents] of [["shared", shared], ["Pi global", pi]] as const) {
     assert.match(contents, /free disk space.*expensive build/is, `${name} instructions must check build capacity`);
@@ -29,6 +39,11 @@ test("Pi-global instructions delegate Pi infrastructure bugs to the standing sup
   assert.match(pi, /project `\/Users\/0xgleb\/\.config`, role `pi-support`/i);
   assert.match(pi, /queue.*without self-claiming.*dedicated role/is);
   assert.match(pi, /continue.*primary project task.*without duplicating/is);
+});
+
+test("Pi-global instructions keep the Yielduck operational owner alive while implementation is blocked", () => {
+  assert.match(pi, /dataclique\/yielduck.*managed `operator` role/is);
+  assert.match(pi, /monitoring even when every.*todo is blocked/is);
 });
 
 test("shared and Pi-global instructions prohibit overwriting the active editor", () => {

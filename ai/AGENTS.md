@@ -2,6 +2,14 @@
 
 These rules apply across all repositories.
 
+## Evidence Before Agreement
+
+Do not mirror the user's latest framing or agree reflexively. Before affirming a
+claim, name the evidence and test the strongest plausible counter-hypothesis.
+Treat rewording as no new evidence, do not oscillate conclusions without changed
+facts, inspect existing code and documentation before proposing additions, and
+explicitly correct prior unsupported answers instead of adopting the newest prompt.
+
 ## ABSOLUTE PROHIBITION: Credentials and Secrets
 
 **YOU MUST NEVER, UNDER ANY CIRCUMSTANCES, ACCESS CREDENTIAL OR SECRET FILES.**
