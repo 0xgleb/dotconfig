@@ -29,6 +29,15 @@ test("workflow children load only the classified workflow extension explicitly",
   );
 });
 
+test("structured workflow children receive an explicit JSON-only contract", () => {
+  const args = buildAgentArguments(
+    { task: "inspect", schema: { type: "object", required: ["findings"] } },
+    "/repo/index.ts",
+  );
+  assert.match(args.at(-1) ?? "", /Return only valid JSON matching this JSON Schema/);
+  assert.match(args.at(-1) ?? "", /\"required\":\[\"findings\"\]/);
+});
+
 test("workflow model preflight resolves only authenticated available providers", () => {
   const available = [
     { provider: "openai-codex", id: "gpt-5.6-sol", name: "GPT-5.6 Sol" },

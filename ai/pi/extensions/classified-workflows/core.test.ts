@@ -11,6 +11,7 @@ import {
   shouldCarryDeterministicResultAllowance,
   type AgentRequest,
   type AgentResult,
+  type WorkflowDependencies,
   type WorkflowLimits,
 } from "./core.ts";
 
@@ -22,6 +23,13 @@ const limits: WorkflowLimits = {
   retries: 0,
   tokenBudget: 10_000,
 };
+
+const dependencies = (runAgent: WorkflowDependencies["runAgent"]): WorkflowDependencies => ({
+  runAgent,
+  async checkpoint() {
+    return "approved";
+  },
+});
 
 test("credential-shaped paths are always blocked", () => {
   const cases: Array<{ toolName: string; input: Record<string, unknown> }> = [
@@ -218,6 +226,32 @@ test("the confirmed obsolete dotconfig model artifact can be removed exactly", (
     }),
     null,
   );
+});
+
+test("generated review artifact cleanup is exact and cannot widen recursive deletion", () => {
+  const cwd = "/Users/example/code/st0x/st0x.rest.api";
+  const allowed = deterministicDecision({
+    boundary: "action",
+    toolName: "bash",
+    input: {
+      command: "rm -rf /tmp/pr161-review /tmp/pr162-review /Users/example/code/st0x/st0x.rest.api/.tmp/reviews/pr161 /Users/example/code/st0x/st0x.rest.api/.tmp/reviews/pr162",
+    },
+    cwd,
+  });
+  assert.equal(allowed?.verdict, "allow");
+  assert.equal(allowed?.resultSafe, true);
+  for (const command of [
+    "rm -rf /tmp/pr161-review /tmp/other",
+    "rm -rf /tmp/pr*-review",
+    "rm -rf .tmp/reviews",
+    "rm -rf .tmp/reviews/pr161 && echo done",
+    "rm -rf ../other/.tmp/reviews/pr161",
+  ]) {
+    assert.notEqual(
+      deterministicDecision({ boundary: "action", toolName: "bash", input: { command }, cwd })?.verdict,
+      "allow",
+    );
+  }
 });
 
 test("project-local Rust incremental cache cleanup is narrowly deterministic", () => {
@@ -452,6 +486,27 @@ test("workflow supports positional agent calls and direct promise fan-out", asyn
     { task: "alpha", tools: ["read"] },
     { task: "beta" },
   ]);
+});
+
+test("schema agents return validated structured values instead of opaque result wrappers", async () => {
+  const result = await runWorkflowScript(
+    `const lane = await agent("review", { schema: { type: "object", required: ["findings"], properties: { findings: { type: "array", items: { type: "string" } } } } }); return lane.findings;`,
+    limits,
+    dependencies(async () => ({ status: "completed", output: '{"findings":["verified"]}', usageTokens: 12 })),
+  );
+  assert.deepEqual(result, ["verified"]);
+});
+
+test("schema agents fail closed on timeouts and malformed output", async () => {
+  const code = `return agent("review", { schema: { type: "object", required: ["findings"], properties: { findings: { type: "array" } } } });`;
+  await assert.rejects(
+    runWorkflowScript(code, { ...limits, retries: 0 }, dependencies(async () => ({ status: "timed-out", output: "", reason: "late", usageTokens: 0 }))),
+    /structured agent timed-out: late/,
+  );
+  await assert.rejects(
+    runWorkflowScript(code, { ...limits, retries: 0 }, dependencies(async () => ({ status: "completed", output: "not json", usageTokens: 1 }))),
+    /structured agent output was not valid JSON/,
+  );
 });
 
 test("undersized token budgets fail before spawning an idle worker", async () => {

@@ -13,6 +13,7 @@ import { Type } from "typebox";
 import { kanbanColumns, taskWidgetLines, todoSummary } from "./presentation.ts";
 import {
   decodeTodoDetails,
+  decodeTodoState,
   emptyTodoState,
   parseTodoAction,
   transitionTodoState,
@@ -189,8 +190,13 @@ function failedToolResult(action: TodoAction["action"], state: TodoState, error:
   return { content: [{ type: "text" as const, text: `Error: ${error}` }], details };
 }
 
+const TODO_STATE_ENTRY = "todo.state";
+
 function restoredState(ctx: ExtensionContext): TodoState {
   const states = ctx.sessionManager.getBranch().flatMap((entry) => {
+    if (entry.type === "custom" && entry.customType === TODO_STATE_ENTRY) {
+      return Option.toArray(decodeTodoState(entry.data));
+    }
     if (entry.type !== "message" || entry.message.role !== "toolResult" || entry.message.toolName !== "todo") return [];
     return Option.toArray(decodeTodoDetails(entry.message.details)).map(({ state }) => state);
   });
@@ -211,7 +217,9 @@ export default function todoExtension(pi: ExtensionAPI): void {
   const reconstructState = (ctx: ExtensionContext) => Ref.set(stateRef, restoredState(ctx));
   const reconstructAndRender = async (ctx: ExtensionContext) => {
     await Effect.runPromise(reconstructState(ctx));
-    renderTaskWidget(ctx);
+    const state = Effect.runSync(Ref.get(stateRef));
+    pi.appendEntry(TODO_STATE_ENTRY, state);
+    renderTaskWidget(ctx, state);
   };
   pi.on("session_start", async (_event, ctx) => reconstructAndRender(ctx));
   pi.on("session_tree", async (_event, ctx) => reconstructAndRender(ctx));
@@ -239,6 +247,7 @@ export default function todoExtension(pi: ExtensionAPI): void {
         ),
       );
       const result = await Effect.runPromise(program);
+      if (result.details.outcome === "success") pi.appendEntry(TODO_STATE_ENTRY, result.details.state);
       renderTaskWidget(ctx, result.details.state);
       return result;
     },

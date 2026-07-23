@@ -20,6 +20,7 @@ export interface AgentRequest {
   tools?: string[];
   model?: string;
   thinking?: "off" | "minimal" | "low" | "medium" | "high" | "xhigh" | "max";
+  schema?: unknown;
 }
 
 export type AgentOptions = Omit<AgentRequest, "task">;
@@ -100,6 +101,22 @@ function stripNegativePathArguments(command: string): string {
     "",
   );
 }
+
+const isGeneratedReviewCleanup = (command: string, cwd: string): boolean => {
+  if (/[;&|`$<>\n\r*?{}\[\]]/.test(command)) return false;
+  const tokens = command.trim().split(/\s+/);
+  if (tokens.shift() !== "rm") return false;
+  while (tokens[0]?.startsWith("-")) {
+    const option = tokens.shift();
+    if (!option || !/^-+[rf]+$/.test(option)) return false;
+  }
+  if (tokens.length === 0) return false;
+  const projectReviewRoot = path.join(path.resolve(cwd), ".tmp", "reviews");
+  return tokens.every((candidate) => {
+    const resolved = path.resolve(cwd, candidate);
+    return /^\/tmp\/pr\d+-review$/.test(resolved) || /^pr\d+$/.test(path.relative(projectReviewRoot, resolved));
+  });
+};
 
 const isSafeRustIncrementalCleanup: (command: string) => boolean = (command) => {
   const match = command.match(
@@ -257,6 +274,19 @@ export function deterministicDecision(request: ToolRequest): Decision | null {
   if (
     request.toolName === "bash" &&
     typeof request.input.command === "string" &&
+    isGeneratedReviewCleanup(request.input.command, request.cwd)
+  ) {
+    return {
+      verdict: "allow",
+      reason: "Exact generated review artifact cleanup",
+      source: "deterministic",
+      resultSafe: true,
+    };
+  }
+
+  if (
+    request.toolName === "bash" &&
+    typeof request.input.command === "string" &&
     isSafeRustIncrementalCleanup(request.input.command)
   ) {
     return {
@@ -336,6 +366,45 @@ export function parseClassifierDecision(text: string): Decision {
   };
 }
 
+const validateStructuredValue = (value: unknown, schema: unknown, path = "$" ): void => {
+  if (!isRecord(schema)) throw new Error("agent schema must be a JSON Schema object");
+  if (Array.isArray(schema.enum) && !schema.enum.some((candidate) => Object.is(candidate, value))) {
+    throw new Error(`structured agent output violates enum at ${path}`);
+  }
+  if (schema.type === "object") {
+    if (!isRecord(value)) throw new Error(`structured agent output requires an object at ${path}`);
+    for (const key of Array.isArray(schema.required) ? schema.required : []) {
+      if (typeof key !== "string" || !(key in value)) throw new Error(`structured agent output is missing ${path}.${String(key)}`);
+    }
+    if (isRecord(schema.properties)) {
+      for (const [key, child] of Object.entries(schema.properties)) {
+        if (key in value) validateStructuredValue(value[key], child, `${path}.${key}`);
+      }
+    }
+    return;
+  }
+  if (schema.type === "array") {
+    if (!Array.isArray(value)) throw new Error(`structured agent output requires an array at ${path}`);
+    if (schema.items !== undefined) value.forEach((item, index) => validateStructuredValue(item, schema.items, `${path}[${index}]`));
+    return;
+  }
+  if (schema.type === "string" && typeof value !== "string") throw new Error(`structured agent output requires a string at ${path}`);
+  if (schema.type === "integer" && !Number.isInteger(value)) throw new Error(`structured agent output requires an integer at ${path}`);
+  if (schema.type === "number" && typeof value !== "number") throw new Error(`structured agent output requires a number at ${path}`);
+  if (schema.type === "boolean" && typeof value !== "boolean") throw new Error(`structured agent output requires a boolean at ${path}`);
+};
+
+const parseStructuredAgentOutput = (output: string, schema: unknown): unknown => {
+  let parsed: unknown;
+  try {
+    parsed = JSON.parse(output.trim());
+  } catch {
+    throw new Error("structured agent output was not valid JSON");
+  }
+  validateStructuredValue(parsed, schema);
+  return parsed;
+};
+
 export async function runWorkflowScript(
   code: string,
   limits: WorkflowLimits,
@@ -388,7 +457,7 @@ export async function runWorkflowScript(
     }
   };
 
-  const agent = async (requestOrTask: AgentRequest | string, options?: AgentOptions): Promise<AgentResult> => {
+  const agent = async (requestOrTask: AgentRequest | string, options?: AgentOptions): Promise<unknown> => {
     if (options !== undefined && !isRecord(options)) throw new Error("agent options must be an object");
     const rawRequest = typeof requestOrTask === "string" ? { ...options, task: requestOrTask } : requestOrTask;
     if (!rawRequest || typeof rawRequest.task !== "string" || rawRequest.task.trim() === "") {
@@ -396,6 +465,16 @@ export async function runWorkflowScript(
     }
     const request = structuredClone(rawRequest);
     if (request.task.length > 32_000) throw new Error("agent tasks may contain at most 32,000 characters");
+    if (request.schema !== undefined) {
+      if (!isRecord(request.schema)) throw new Error("agent schema must be a JSON Schema object");
+      let encodedSchema: string;
+      try {
+        encodedSchema = JSON.stringify(request.schema);
+      } catch {
+        throw new Error("agent schema must be JSON serializable");
+      }
+      if (encodedSchema.length > 16_000) throw new Error("agent schema may contain at most 16,000 characters");
+    }
     if (agentCount >= limits.maxAgents) throw new Error(`Workflow agent limit exceeded (${limits.maxAgents})`);
     const availableTokens = limits.tokenBudget - usedTokens - reservedTokens;
     if (availableTokens < MIN_AGENT_TOKEN_RESERVATION) {
@@ -443,7 +522,12 @@ export async function runWorkflowScript(
     // the updated total to prevent any later spawn instead of discarding useful
     // fan-out after the tokens have already been spent.
     usedTokens += agentUsageTokens;
-    return { ...result, usageTokens: agentUsageTokens };
+    const measuredResult = { ...result, usageTokens: agentUsageTokens };
+    if (request.schema === undefined) return measuredResult;
+    if (measuredResult.status !== "completed") {
+      throw new Error(`structured agent ${measuredResult.status}: ${measuredResult.reason ?? "no result"}`);
+    }
+    return parseStructuredAgentOutput(measuredResult.output, request.schema);
   };
 
   const parallel = async <T>(tasks: Array<PromiseLike<T> | (() => PromiseLike<T>)>): Promise<T[]> => {

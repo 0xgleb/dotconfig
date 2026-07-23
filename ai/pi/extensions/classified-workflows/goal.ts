@@ -138,10 +138,18 @@ export interface TodoWorkSnapshot {
 export const todoWorkSnapshot: (entries: unknown[]) => TodoWorkSnapshot = (entries) => {
   for (let index = entries.length - 1; index >= 0; index -= 1) {
     const entry = entries[index];
-    if (!isRecord(entry) || entry.type !== "message" || !isRecord(entry.message)) continue;
-    const message = entry.message;
-    if (message.role !== "toolResult" || message.toolName !== "todo" || !isRecord(message.details)) continue;
-    const state = isRecord(message.details.state) ? message.details.state : undefined;
+    if (!isRecord(entry)) continue;
+    const state =
+      entry.type === "custom" && entry.customType === "todo.state" && isRecord(entry.data)
+        ? entry.data
+        : entry.type === "message" &&
+            isRecord(entry.message) &&
+            entry.message.role === "toolResult" &&
+            entry.message.toolName === "todo" &&
+            isRecord(entry.message.details) &&
+            isRecord(entry.message.details.state)
+          ? entry.message.details.state
+          : undefined;
     if (!state || !Array.isArray(state.todos)) continue;
     return state.todos.reduce<TodoWorkSnapshot>(
       (snapshot, todo) => {

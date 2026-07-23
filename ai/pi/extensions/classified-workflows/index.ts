@@ -190,7 +190,11 @@ function visibleIntent(ctx: ExtensionContext, activeGoal?: string): string[] {
     .filter((text): text is string => Boolean(text))
     .slice(-12)
     .map((text) => text.slice(0, 4_000));
-  const todoIntent = todoWorkSnapshot(branch).pending.slice(0, 20).map((todo) => `Active todo: ${todo.slice(0, 2_000)}`);
+  const work = todoWorkSnapshot(branch);
+  const todoIntent = [
+    ...work.pending.slice(0, 20).map((todo) => `Active todo: ${todo.slice(0, 2_000)}`),
+    ...work.blocked.slice(0, 20).map((todo) => `Blocked active todo: ${todo.slice(0, 2_000)}`),
+  ];
   return activeGoal
     ? [...messages, ...todoIntent, `Active explicit goal: ${activeGoal}`]
     : [...messages, ...todoIntent];
@@ -216,6 +220,27 @@ function goalTranscript(ctx: ExtensionContext): string[] {
 
 function projectInstructions(ctx: ExtensionContext): string {
   return ctx.getSystemPrompt().slice(0, 64_000);
+}
+
+function recentExecutionEvidence(ctx: ExtensionContext): string[] {
+  return ctx.sessionManager
+    .getBranch()
+    .flatMap((entry) => {
+      if (entry.type !== "message" || !isRecord(entry.message) || entry.message.role !== "toolResult") return [];
+      const text = typeof entry.message.content === "string"
+        ? entry.message.content
+        : Array.isArray(entry.message.content)
+          ? entry.message.content
+              .filter((part): part is Record<string, unknown> =>
+                isRecord(part) && part.type === "text" && typeof part.text === "string")
+              .map((part) => String(part.text))
+              .join("\n")
+          : "";
+      return text
+        ? [`${String(entry.message.toolName ?? "tool")}: ${sanitizeProcessDiagnostic(text).replace(/\s+/g, " ").slice(0, 1_500)}`]
+        : [];
+    })
+    .slice(-12);
 }
 
 const classifierBackoff: (attempt: number, signal?: AbortSignal) => Promise<void> = async (attempt, signal) => {
@@ -979,6 +1004,7 @@ export default function classifiedWorkflows(pi: ExtensionAPI): void {
         intent: visibleIntent(ctx, goalState?.status === "active" ? goalState.condition : undefined),
         projectInstructions: projectInstructions(ctx),
         skillProcedures: activeSkillProcedures(ctx.sessionManager.getBranch(), { cwd: ctx.cwd }),
+        evidence: recentExecutionEvidence(ctx),
         subject: { toolName: event.toolName, input: event.input, cwd: ctx.cwd },
       },
       ctx,
@@ -997,6 +1023,7 @@ export default function classifiedWorkflows(pi: ExtensionAPI): void {
         intent: visibleIntent(ctx, goalState?.status === "active" ? goalState.condition : undefined),
         projectInstructions: projectInstructions(ctx),
         skillProcedures: activeSkillProcedures(ctx.sessionManager.getBranch(), { cwd: ctx.cwd }),
+        evidence: recentExecutionEvidence(ctx),
         subject: toolResultSubject(event),
       },
       ctx,

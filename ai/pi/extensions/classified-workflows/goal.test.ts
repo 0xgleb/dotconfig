@@ -115,6 +115,24 @@ test("latest todo snapshot supplies pending completion evidence", () => {
   assert.deepEqual(pendingTodoTexts([{ type: "wrong" }]), []);
 });
 
+test("durable custom todo state survives compaction for classifier intent", () => {
+  const snapshot = todoWorkSnapshot([
+    {
+      type: "custom",
+      customType: "todo.state",
+      data: {
+        todos: [
+          { id: 10, text: "Separate typed allocation changes", status: "pending" },
+          { id: 23, text: "Repair rebuy hotfix", status: "blocked", reason: "classifier denied staging" },
+        ],
+        nextId: 24,
+      },
+    },
+  ]);
+  assert.deepEqual(snapshot.pending, ["#10 Separate typed allocation changes"]);
+  assert.deepEqual(snapshot.blocked, ["#23 Repair rebuy hotfix — classifier denied staging"]);
+});
+
 test("task continuation stops only when complete or every remainder is blocked", () => {
   assert.match(taskContinuationMessage({ pending: ["#2 Fix release"], blocked: [] }) ?? "", /continue working/i);
   assert.equal(taskContinuationMessage({ pending: [], blocked: ["#3 Deploy — no access"] }), undefined);

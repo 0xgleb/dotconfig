@@ -83,7 +83,10 @@ export const buildAgentArguments: (request: AgentRequest, extensionPath: string)
   ];
   if (request.model) args.push("--model", request.model);
   if (request.thinking) args.push("--thinking", request.thinking);
-  args.push(request.task);
+  const task = request.schema === undefined
+    ? request.task
+    : `${request.task}\n\nReturn only valid JSON matching this JSON Schema. Do not wrap it in Markdown fences:\n${JSON.stringify(request.schema)}`;
+  args.push(task);
   return args;
 };
 
