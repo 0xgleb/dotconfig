@@ -118,6 +118,9 @@ const isGeneratedReviewCleanup = (command: string, cwd: string): boolean => {
   });
 };
 
+const isGeneratedGitButlerStatusCleanup = (command: string): boolean =>
+  /^\s*rm\s+-f\s+--\s+(?:\.\/)?\.tmp\/but-status\.json\s*$/.test(command);
+
 const isSafeRustIncrementalCleanup: (command: string) => boolean = (command) => {
   const match = command.match(
     /^\s*(?:cd\s+(\/[^\s;&|`]+)\s+&&\s+)?rm\s+-(?:rf|fr)\s+(?:--\s+)?(?:\.\/)?target\/debug\/incremental(?:\s+&&\s+df\s+-h\s+\.\s*\|\s*tail\s+-1)?\s*$/,
@@ -279,6 +282,19 @@ export function deterministicDecision(request: ToolRequest): Decision | null {
     return {
       verdict: "allow",
       reason: "Exact generated review artifact cleanup",
+      source: "deterministic",
+      resultSafe: true,
+    };
+  }
+
+  if (
+    request.toolName === "bash" &&
+    typeof request.input.command === "string" &&
+    isGeneratedGitButlerStatusCleanup(request.input.command)
+  ) {
+    return {
+      verdict: "allow",
+      reason: "Exact generated GitButler status artifact cleanup",
       source: "deterministic",
       resultSafe: true,
     };

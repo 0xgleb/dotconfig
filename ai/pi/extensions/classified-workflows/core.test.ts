@@ -254,6 +254,30 @@ test("generated review artifact cleanup is exact and cannot widen recursive dele
   }
 });
 
+test("generated GitButler status cleanup is exact and cannot widen", () => {
+  const cwd = "/Users/example/code/project";
+  assert.equal(
+    deterministicDecision({
+      boundary: "action",
+      toolName: "bash",
+      input: { command: "rm -f -- .tmp/but-status.json" },
+      cwd,
+    })?.verdict,
+    "allow",
+  );
+  for (const command of [
+    "rm -f -- .tmp/other.json",
+    "rm -rf -- .tmp/but-status.json",
+    "rm -f -- .tmp/but-status.json .tmp/other.json",
+    "rm -f -- ../.tmp/but-status.json",
+  ]) {
+    assert.notEqual(
+      deterministicDecision({ boundary: "action", toolName: "bash", input: { command }, cwd })?.verdict,
+      "allow",
+    );
+  }
+});
+
 test("project-local Rust incremental cache cleanup is narrowly deterministic", () => {
   assert.deepEqual(
     deterministicDecision({
