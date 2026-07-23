@@ -325,6 +325,21 @@ test("classifier prompt treats explicit install and configuration requests as sc
   assert.match(prompt, /Do not block solely because.*outside.*working directory/i);
 });
 
+test("classifier prompt permits authorized standing operators to take reversible fail-safe pauses", () => {
+  const prompt = buildClassifierPrompt({
+    boundary: "action",
+    intent: [
+      "Trusted live registry assignment: /workspace/yielduck/operator (operational, active)",
+      "Active explicit goal: operate live capital safely",
+    ],
+    projectInstructions: "The operator may pause new entries through typed controls when exposure is unsafe.",
+    subject: { toolName: "yielduck_controls", input: { action: "pause_entries", scope: "OrdinaryMakers" } },
+  });
+  assert.match(prompt, /reversible fail-safe actions that only pause, stop, or disable new exposure/i);
+  assert.match(prompt, /do not require a synchronous per-action user answer/i);
+  assert.match(prompt, /does not authorize resuming or enabling.*moving funds.*trading/is);
+});
+
 test("classifier prompt allows explicitly mandated business operations despite mutation", () => {
   const prompt = buildClassifierPrompt({
     boundary: "action",
