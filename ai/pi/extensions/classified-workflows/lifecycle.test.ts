@@ -438,6 +438,26 @@ test("classifier prompt permits authorized standing operators to take reversible
   assert.match(prompt, /does not authorize resuming or enabling.*moving funds.*trading/is);
 });
 
+test("classifier prompt allows explicitly directed evidence-backed scope resumes without broadening", () => {
+  const prompt = buildClassifierPrompt({
+    boundary: "action",
+    intent: ["User explicitly directed resuming mainstreet and superform only"],
+    projectInstructions: "ResumeEntries is a typed per-scope control.",
+    evidence: [
+      "mainstreet has no decrease history",
+      "superform remains within reviewed 0.5% tolerance",
+      "Royco, Saturn, and Strata remain genuine drawdowns",
+    ],
+    subject: { toolName: "yielduck_command", input: { command: "ResumeEntries", scopes: ["mainstreet", "superform"] } },
+  });
+
+  assert.match(prompt, /Resuming remains outside standing fail-safe authority/i);
+  assert.match(prompt, /visible user intent explicitly directs resuming named scopes/i);
+  assert.match(prompt, /independently verifies each exact scope as safe/i);
+  assert.match(prompt, /typed ResumeEntries control for only those evidenced names is authorized/i);
+  assert.match(prompt, /do not broaden to unevidenced or genuine-drawdown scopes/i);
+});
+
 test("classifier prompt allows explicitly mandated business operations despite mutation", () => {
   const prompt = buildClassifierPrompt({
     boundary: "action",

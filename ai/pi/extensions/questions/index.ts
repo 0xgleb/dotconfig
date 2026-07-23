@@ -11,7 +11,12 @@ import {
   type QuestionOption,
   type QuestionState,
 } from "./state.ts";
-import { QUESTION_RESOLVED_EVENT, type UserQuestionResolution } from "../shared/question-events.ts";
+import {
+  QUESTION_ASK_EVENT,
+  QUESTION_RESOLVED_EVENT,
+  type UserQuestionRequest,
+  type UserQuestionResolution,
+} from "../shared/question-events.ts";
 import { registerRuntimeVersion } from "../shared/runtime-version.ts";
 import { pendingQuestionContext, questionListText } from "./presentation.ts";
 
@@ -66,9 +71,10 @@ const parseAction: (request: QuestionRequest, state: QuestionState) => QuestionA
 };
 
 const questionsExtension: (pi: ExtensionAPI) => void = (pi) => {
-  registerRuntimeVersion(pi, "questions", "2026.07.23.5");
+  registerRuntimeVersion(pi, "questions", "2026.07.23.6");
   let state = emptyQuestionState;
   let dialogOpen = false;
+  let latestCtx: ExtensionContext | undefined;
 
   const render = (ctx: ExtensionContext) => {
     const pending = pendingQuestions(state).length;
@@ -225,11 +231,32 @@ const questionsExtension: (pi: ExtensionAPI) => void = (pi) => {
     await showQuestionDialog(ctx, pending[selectedIndex]?.id);
   };
 
-  pi.on("session_start", (_event, ctx) => restore(ctx));
+  pi.on("session_start", (_event, ctx) => {
+    latestCtx = ctx;
+    restore(ctx);
+  });
   pi.on("session_shutdown", (_event, ctx) => {
+    latestCtx = undefined;
     ctx.ui.setStatus(QUESTION_STATUS_KEY, undefined);
     ctx.ui.setWidget(QUESTION_STATUS_KEY, undefined);
   });
+  pi.events.on(QUESTION_ASK_EVENT, (request: UserQuestionRequest) => {
+    if (!latestCtx) return;
+    const question = request.question.trim().slice(0, 4_000);
+    if (!question) return;
+    state = applyQuestionAction(state, {
+      action: "ask",
+      question,
+      ...(request.header?.trim() ? { header: request.header.trim().slice(0, 16) } : {}),
+      ...(request.guess?.trim() ? { guess: request.guess.trim().slice(0, 2_000) } : {}),
+      ...(request.options && request.options.length >= 2 && request.options.length <= 4
+        ? { options: request.options }
+        : {}),
+    });
+    persist(latestCtx);
+    latestCtx.ui.notify(`Queued question q${state.nextId - 1}. Open /questions to answer.`, "info");
+  });
+
   pi.on("before_agent_start", (event) => {
     const content = pendingQuestionContext(state);
     return content

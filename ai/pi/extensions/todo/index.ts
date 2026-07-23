@@ -6,10 +6,11 @@
  */
 
 import { StringEnum } from "@earendil-works/pi-ai";
-import type { ExtensionAPI, ExtensionContext, Theme } from "@earendil-works/pi-coding-agent";
-import { matchesKey, Text, truncateToWidth, visibleWidth } from "@earendil-works/pi-tui";
+import { DynamicBorder, type ExtensionAPI, type ExtensionContext, type Theme } from "@earendil-works/pi-coding-agent";
+import { Container, matchesKey, type SelectItem, SelectList, Text, truncateToWidth, visibleWidth } from "@earendil-works/pi-tui";
 import { Effect, Option, Ref } from "effect";
 import { Type } from "typebox";
+import { QUESTION_ASK_EVENT, type UserQuestionRequest } from "../shared/question-events.ts";
 import { registerRuntimeVersion } from "../shared/runtime-version.ts";
 import { kanbanColumns, taskWidgetLines, todoSummary } from "./presentation.ts";
 import {
@@ -205,7 +206,7 @@ function restoredState(ctx: ExtensionContext): TodoState {
 }
 
 export default function todoExtension(pi: ExtensionAPI): void {
-  registerRuntimeVersion(pi, "todo", "2026.07.23.2");
+  registerRuntimeVersion(pi, "todo", "2026.07.23.3");
   const stateRef = Effect.runSync(Ref.make<TodoState>(emptyTodoState));
 
   const renderTaskWidget = (ctx: ExtensionContext, state = Effect.runSync(Ref.get(stateRef))) => {
@@ -230,6 +231,58 @@ export default function todoExtension(pi: ExtensionAPI): void {
     pi.appendEntry(TODO_STATE_ENTRY, state);
     renderTaskWidget(ctx, state);
   });
+
+  const applyUiAction = async (action: TodoAction, ctx: ExtensionContext): Promise<TodoState> => {
+    const current = Effect.runSync(Ref.get(stateRef));
+    const transition = await Effect.runPromise(transitionTodoState(current, action));
+    await Effect.runPromise(Ref.set(stateRef, transition.state));
+    pi.appendEntry(TODO_STATE_ENTRY, transition.state);
+    renderTaskWidget(ctx, transition.state);
+    return transition.state;
+  };
+
+  const chooseBlockedAction = (ctx: ExtensionContext, todo: Extract<Todo, { status: "blocked" }>) =>
+    ctx.ui.custom<string | null>(
+      (tui, theme, _keybindings, done) => {
+        const items: SelectItem[] = [
+          { value: "unblock", label: "Unblock", description: "Move back to pending work" },
+          { value: "resolve", label: "Mark resolved", description: "Complete this blocked item" },
+          { value: "edit", label: "Edit blocker", description: "Replace the blocker reason" },
+          { value: "question", label: "Create pending question", description: "Queue a user decision without auto-focus" },
+          { value: "cancel", label: "Cancel" },
+        ];
+        const list = new SelectList(items, items.length, {
+          selectedPrefix: (text) => theme.fg("accent", text),
+          selectedText: (text) => theme.fg("accent", text),
+          description: (text) => theme.fg("muted", text),
+          scrollInfo: (text) => theme.fg("dim", text),
+          noMatch: (text) => theme.fg("warning", text),
+        });
+        list.onSelect = (item) => done(item.value === "cancel" ? null : item.value);
+        list.onCancel = () => done(null);
+        const container = new Container();
+        const accent = (text: string) => theme.fg("accent", text);
+        container.addChild(new DynamicBorder(accent));
+        container.addChild(new Text(theme.bold(accent(`BLOCKED #${todo.id}`)), 1, 0));
+        container.addChild(new Text(theme.fg("text", todo.text), 1, 1));
+        container.addChild(new Text(`${theme.bold("Reason")}\n${theme.fg("warning", todo.reason)}`, 1, 0));
+        container.addChild(list);
+        container.addChild(new Text(theme.fg("dim", "↑↓ select · enter apply · esc close"), 1, 1));
+        container.addChild(new DynamicBorder(accent));
+        return {
+          render: (width: number) => container.render(width),
+          invalidate: () => container.invalidate(),
+          handleInput: (data: string) => {
+            list.handleInput(data);
+            tui.requestRender();
+          },
+        };
+      },
+      {
+        overlay: true,
+        overlayOptions: { anchor: "center", width: "72%", minWidth: 60, maxHeight: "85%", margin: 1 },
+      },
+    );
 
   pi.registerTool({
     name: "todo",
@@ -313,6 +366,56 @@ export default function todoExtension(pi: ExtensionAPI): void {
       await ctx.ui.custom<void>((_tui, theme, _kb, done) =>
         new TodoListComponent(state.todos, theme, () => done()),
       );
+    },
+  });
+
+  pi.registerCommand("blocked", {
+    description: "Triage blocked todos without auto-focusing normal prompt input",
+    handler: async (_args, ctx) => {
+      if (ctx.mode !== "tui") {
+        ctx.ui.notify("/blocked requires interactive mode", "error");
+        return;
+      }
+      const state = Effect.runSync(Ref.get(stateRef));
+      const blocked = state.todos.filter((todo): todo is Extract<Todo, { status: "blocked" }> => todo.status === "blocked");
+      if (blocked.length === 0) {
+        ctx.ui.notify("No blocked todos.", "info");
+        return;
+      }
+      const choices = blocked.map((todo) => `#${todo.id}  ${todo.text.replace(/\s+/g, " ").slice(0, 100)}`);
+      const selected = await ctx.ui.select("Blocked todos · select one to triage", choices);
+      if (selected === undefined) return;
+      const todo = blocked[choices.indexOf(selected)];
+      if (!todo) return;
+      const action = await chooseBlockedAction(ctx, todo);
+      if (!action) return;
+
+      if (action === "unblock") {
+        await applyUiAction({ action: "unblock", id: todo.id }, ctx);
+        ctx.ui.notify(`Todo #${todo.id} unblocked.`, "info");
+        return;
+      }
+      if (action === "resolve") {
+        await applyUiAction({ action: "unblock", id: todo.id }, ctx);
+        await applyUiAction({ action: "toggle", id: todo.id }, ctx);
+        ctx.ui.notify(`Todo #${todo.id} resolved.`, "info");
+        return;
+      }
+      if (action === "edit") {
+        const reason = await ctx.ui.input(`New blocker reason for #${todo.id}`, todo.reason);
+        if (!reason?.trim()) return;
+        await applyUiAction({ action: "block", id: todo.id, reason: reason.trim() }, ctx);
+        ctx.ui.notify(`Todo #${todo.id} blocker updated.`, "info");
+        return;
+      }
+      const decision = await ctx.ui.input(`Question needed to unblock #${todo.id}`, "What decision or information is needed?");
+      if (!decision?.trim()) return;
+      const request: UserQuestionRequest = {
+        header: "Blocked todo",
+        question: `Blocked todo #${todo.id}: ${todo.text}\nCurrent blocker: ${todo.reason}\nDecision needed: ${decision.trim()}`,
+      };
+      pi.events.emit(QUESTION_ASK_EVENT, request);
+      ctx.ui.notify(`Queued a pending question for todo #${todo.id}.`, "info");
     },
   });
 
