@@ -26,9 +26,9 @@ import {
 } from "./state.ts";
 
 const TodoParams = Type.Object({
-  action: StringEnum(["list", "add", "toggle", "block", "unblock", "clear"] as const),
-  text: Type.Optional(Type.String({ description: "Todo text (for add)" })),
-  id: Type.Optional(Type.Number({ description: "Todo ID (for toggle, block, or unblock)" })),
+  action: StringEnum(["list", "add", "toggle", "block", "reply", "unblock", "clear"] as const),
+  text: Type.Optional(Type.String({ description: "Todo text (for add or reply)" })),
+  id: Type.Optional(Type.Number({ description: "Todo ID (for toggle, block, reply, or unblock)" })),
   reason: Type.Optional(Type.String({ description: "Required blocker reason for block" })),
 });
 
@@ -206,7 +206,7 @@ function restoredState(ctx: ExtensionContext): TodoState {
 }
 
 export default function todoExtension(pi: ExtensionAPI): void {
-  registerRuntimeVersion(pi, "todo", "2026.07.23.3");
+  registerRuntimeVersion(pi, "todo", "2026.07.23.4");
   const stateRef = Effect.runSync(Ref.make<TodoState>(emptyTodoState));
 
   const renderTaskWidget = (ctx: ExtensionContext, state = Effect.runSync(Ref.get(stateRef))) => {
@@ -247,6 +247,7 @@ export default function todoExtension(pi: ExtensionAPI): void {
         const items: SelectItem[] = [
           { value: "unblock", label: "Unblock", description: "Move back to pending work" },
           { value: "resolve", label: "Mark resolved", description: "Complete this blocked item" },
+          { value: "reply", label: "Reply", description: "Attach context while preserving the original blocker" },
           { value: "edit", label: "Edit blocker", description: "Replace the blocker reason" },
           { value: "question", label: "Create pending question", description: "Queue a user decision without auto-focus" },
           { value: "cancel", label: "Cancel" },
@@ -266,6 +267,15 @@ export default function todoExtension(pi: ExtensionAPI): void {
         container.addChild(new Text(theme.bold(accent(`BLOCKED #${todo.id}`)), 1, 0));
         container.addChild(new Text(theme.fg("text", todo.text), 1, 1));
         container.addChild(new Text(`${theme.bold("Reason")}\n${theme.fg("warning", todo.reason)}`, 1, 0));
+        if (todo.replies && todo.replies.length > 0) {
+          container.addChild(
+            new Text(
+              `${theme.bold("Replies")}\n${todo.replies.map((reply) => theme.fg("muted", `↳ ${reply}`)).join("\n")}`,
+              1,
+              0,
+            ),
+          );
+        }
         container.addChild(list);
         container.addChild(new Text(theme.fg("dim", "↑↓ select · enter apply · esc close"), 1, 1));
         container.addChild(new DynamicBorder(accent));
@@ -287,7 +297,7 @@ export default function todoExtension(pi: ExtensionAPI): void {
   pi.registerTool({
     name: "todo",
     label: "Todo",
-    description: "Manage a branch-aware todo list. Actions: list, add, toggle, block (id + reason), unblock, clear",
+    description: "Manage a branch-aware todo list. Actions: list, add, toggle, block (id + reason), reply (id + text), unblock, clear",
     parameters: TodoParams,
 
     async execute(_toolCallId, params, _signal, _onUpdate, ctx) {
@@ -341,7 +351,8 @@ export default function todoExtension(pi: ExtensionAPI): void {
               ? theme.fg("warning", "⊘")
               : theme.fg("dim", "○");
           const label = blocked ? `${todo.text} — blocked: ${todo.reason}` : todo.text;
-          text += `\n${check} ${theme.fg("accent", `#${todo.id}`)} ${theme.fg(completed ? "dim" : "muted", label)}`;
+          const replies = todo.replies?.map((reply) => `\n    ${theme.fg("accent", "↳ reply:")} ${reply}`).join("") ?? "";
+          text += `\n${check} ${theme.fg("accent", `#${todo.id}`)} ${theme.fg(completed ? "dim" : "muted", label)}${replies}`;
         }
         if (!expanded && details.state.todos.length > visible.length) {
           text += `\n${theme.fg("dim", `... ${details.state.todos.length - visible.length} more`)}`;
@@ -399,6 +410,21 @@ export default function todoExtension(pi: ExtensionAPI): void {
         await applyUiAction({ action: "unblock", id: todo.id }, ctx);
         await applyUiAction({ action: "toggle", id: todo.id }, ctx);
         ctx.ui.notify(`Todo #${todo.id} resolved.`, "info");
+        return;
+      }
+      if (action === "reply") {
+        const reply = await ctx.ui.input(`Reply to blocker #${todo.id}`, "Add context or answer the blocker");
+        if (!reply?.trim()) return;
+        const disposition = await ctx.ui.select("After attaching this reply", ["Keep blocked", "Reply and unblock"]);
+        if (disposition === undefined) return;
+        await applyUiAction({ action: "reply", id: todo.id, text: reply.trim() }, ctx);
+        if (disposition === "Reply and unblock") await applyUiAction({ action: "unblock", id: todo.id }, ctx);
+        ctx.ui.notify(
+          disposition === "Reply and unblock"
+            ? `Reply attached and todo #${todo.id} unblocked.`
+            : `Reply attached to blocked todo #${todo.id}.`,
+          "info",
+        );
         return;
       }
       if (action === "edit") {

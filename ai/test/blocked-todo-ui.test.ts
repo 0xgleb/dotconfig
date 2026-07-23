@@ -9,9 +9,13 @@ test("blocked todo triage is explicit focused UI with bounded actions", () => {
   assert.match(todo, /registerCommand\("blocked"/);
   assert.match(todo, /Blocked todos · select one to triage/);
   assert.match(todo, /BLOCKED #\$\{todo\.id\}/);
-  for (const label of ["Unblock", "Mark resolved", "Edit blocker", "Create pending question"]) {
+  for (const label of ["Unblock", "Mark resolved", "Reply", "Edit blocker", "Create pending question"]) {
     assert.match(todo, new RegExp(label));
   }
+  assert.match(todo, /Reply to blocker #\$\{todo\.id\}/);
+  assert.match(todo, /Keep blocked/);
+  assert.match(todo, /Reply and unblock/);
+  assert.match(todo, /action: "reply", id: todo\.id, text: reply\.trim\(\)/);
   assert.match(todo, /overlay: true/);
   assert.doesNotMatch(todo, /pi\.on\("agent_settled"[\s\S]*chooseBlockedAction/);
 });

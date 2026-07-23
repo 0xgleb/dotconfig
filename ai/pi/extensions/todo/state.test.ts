@@ -49,6 +49,34 @@ test("blocked work requires a reason and can be unblocked", async () => {
   assert.equal(Either.isLeft(await Effect.runPromise(Effect.either(parseTodoAction({ action: "block", id: 1 })))), true);
 });
 
+test("replies preserve the original blocker and survive unblocking", async () => {
+  const state = {
+    todos: [{ id: 1, text: "Inspect browser", status: "blocked" as const, reason: "Need user context" }],
+    nextId: 2,
+  };
+  const replied = await Effect.runPromise(
+    transitionTodoState(state, { action: "reply", id: 1, text: "Browser navigation has not been visible enough." }),
+  );
+  assert.deepEqual(replied.state.todos, [
+    {
+      id: 1,
+      text: "Inspect browser",
+      status: "blocked",
+      reason: "Need user context",
+      replies: ["Browser navigation has not been visible enough."],
+    },
+  ]);
+  const unblocked = await Effect.runPromise(transitionTodoState(replied.state, { action: "unblock", id: 1 }));
+  assert.deepEqual(unblocked.state.todos, [
+    {
+      id: 1,
+      text: "Inspect browser",
+      status: "pending",
+      replies: ["Browser navigation has not been visible enough."],
+    },
+  ]);
+});
+
 test("invalid add and toggle inputs fail through the typed channel", async () => {
   const missingText = await Effect.runPromise(
     Effect.either(parseTodoAction({ action: "add" })),
