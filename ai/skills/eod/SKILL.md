@@ -9,6 +9,7 @@ allowed-tools:
   - "Read"
   - "Edit"
   - "AskUserQuestion"
+  - "SessionSearch"
 ---
 
 # EOD
@@ -24,9 +25,10 @@ not override the user's account.
   sibling family organizations. Exclude personal and side-project work.
 - Cover everything from the most recent prior EOD through one captured `now`.
   This is not a calendar-day or rolling-24-hour report.
-- Never read Claude or Codex session transcripts, credential files, secret
-  files, or raw environment files. If deterministic evidence is insufficient,
-  ask the user.
+- Never read raw Claude, Codex, or Pi transcript files, credential files, secret
+  files, or raw environment files. Pi session history may be queried only through
+  bounded `session_search` calls as described below. If deterministic evidence is
+  insufficient, ask the user.
 - Never infer work from a PR title, body, branch name, `updatedAt`, or committer
   date. These describe context or can be changed by a Graphite restack.
 - Never infer a Linear project or workstream from wording. Group by
@@ -70,6 +72,37 @@ The collector deliberately distinguishes:
 It also collects exact submitted review timestamps, review states, reviewer
 identities, Linear `project.name`, and Actions workflows whose identity says
 they are deployments.
+
+### Recover framing from Pi sessions
+
+After the collector succeeds, use bounded `session_search` queries for the same
+reporting window and only the st0x/Rain family repositories. Search by repository,
+workstream, PR/issue identifiers found by the collector, and terms from the target
+note's TLDR. Do not search raw transcript files.
+
+Normalize useful hits conceptually as compact evidence records with these fields:
+`timestamp`, `project`, `session`, `kind` (`user_framing`, `user_correction`,
+`verified_tool_result`, or `assistant_claim`), `summary`, `references`, and
+`confidence`. Keep this shape at the procedure boundary so a future event-log
+adapter can replace `session_search` without changing drafting rules; do not add an
+event-sorcery dependency now and do not persist a new event log.
+
+Use session evidence as follows:
+
+- User requests, corrections, sequencing, attribution, and explicit status
+  statements are canonical framing, just like the note's brain dump.
+- Verified tool results may identify candidate commits, PRs, reviews, deploys, or
+  tests to cross-check against collector evidence.
+- Assistant summaries and claims are discovery hints only. They never prove work
+  happened and must be corroborated by user statements or deterministic evidence.
+- Conflicting session statements require the latest user correction, not the
+  assistant's latest interpretation.
+- Keep only compact extracted facts; never paste conversation excerpts into the
+  EOD note.
+
+If session search is unavailable, continue with the existing deterministic sources
+and say that session framing was omitted. This is not equivalent to Git/GitHub or
+Linear being unavailable and does not fail the evidence gate.
 
 ## Evidence gate
 
@@ -136,6 +169,8 @@ this skill.
 Read the completed note once more and verify:
 
 - every claimed delta has user confirmation or reportable evidence;
+- relevant same-day Pi session framing was reconciled when available, and no
+  assistant-only session claim became a work claim;
 - deployment work is present when deployment runs are present;
 - workstream ordering and attribution match the user's checkpoint correction;
 - no `unverified_update` or committer-date-only event became a work claim;
