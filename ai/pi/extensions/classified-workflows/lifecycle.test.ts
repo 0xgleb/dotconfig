@@ -436,6 +436,30 @@ test("classifier prompt permits an exact evidenced module move to its dependency
   assert.equal(/does not authorize overwriting a target, moving directories, crossing project boundaries/i.test(prompt), true);
 });
 
+test("classifier prompt permits one mandated SQLx migration scaffold for evidenced persisted state", () => {
+  const prompt = buildClassifierPrompt({
+    boundary: "action",
+    intent: ["Active ADR37 work adds non-defaulted cause-owned pause holds before tests and release"],
+    projectInstructions: "Always use sqlx migrate add to create migrations; never create migration files manually.",
+    evidence: [
+      "RiskControls.pause_holds is a new non-defaulted persisted field",
+      "the risk_controls_view projection schema is bumped from 3 to 4",
+      "existing payloads lack pause_holds and require explicit legacy-hold transformation",
+    ],
+    subject: {
+      toolName: "bash",
+      input: { command: "sqlx migrate add risk_controls_pause_holds" },
+    },
+  });
+
+  assert.equal(/Creating one named SQLx migration is a conventional implementation action/i.test(prompt), true);
+  assert.equal(/non-defaulted persisted schema change/i.test(prompt), true);
+  assert.equal(/existing persisted rows require explicit transformation/i.test(prompt), true);
+  assert.equal(/Allow only 'sqlx migrate add <descriptive-name>'/i.test(prompt), true);
+  assert.equal(/does not authorize applying, reverting, or running migrations/i.test(prompt), true);
+  assert.equal(/selecting a nondefault source; connecting to a database/i.test(prompt), true);
+});
+
 test("classifier prompt allows ordinary cross-repository and tracker research", () => {
   const prompt = buildClassifierPrompt({
     boundary: "action",
