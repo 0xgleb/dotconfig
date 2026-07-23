@@ -62,10 +62,27 @@ export type RegistryRequest =
     })
   | (RequestBase & { readonly status: "cancelled" });
 
+export interface RegisteredAgent {
+  readonly identity: AgentIdentity;
+  readonly cwd: string;
+  readonly label: string;
+  readonly heartbeatAt: number;
+  readonly expiresAt: number;
+}
+
 export interface RegistrySnapshot {
   readonly version: 1;
+  readonly agents?: readonly RegisteredAgent[];
   readonly leases: readonly Lease[];
   readonly requests: readonly RegistryRequest[];
+}
+
+export interface AgentHeartbeatInput {
+  readonly agent: AgentIdentity;
+  readonly cwd: string;
+  readonly label: string;
+  readonly now: number;
+  readonly ttlMs: number;
 }
 
 export interface ClaimLeaseInput {
@@ -160,6 +177,7 @@ export interface ReconcileLeaseInput extends ClaimLeaseInput {
 
 export interface RegistryStore {
   readonly snapshot: (now: number) => Effect.Effect<RegistrySnapshot, RegistryError>;
+  readonly heartbeatAgent: (input: AgentHeartbeatInput) => Effect.Effect<RegisteredAgent, RegistryError>;
   readonly claim: (input: ClaimLeaseInput) => Effect.Effect<ClaimLeaseResult, RegistryError>;
   readonly heartbeat: (input: HeartbeatInput) => Effect.Effect<Lease, RegistryError>;
   readonly pause: (input: PauseLeaseInput) => Effect.Effect<Lease, RegistryError>;

@@ -181,6 +181,15 @@ const registryExtension: (pi: ExtensionAPI) => void = (pi) => {
     const agent = identity(ctx);
     const digest = currentPolicyDigest(ctx);
     try {
+      await run(
+        store.heartbeatAgent({
+          agent,
+          cwd: ctx.cwd,
+          label: pi.getSessionName() ?? ctx.cwd.split("/").at(-1) ?? "Pi agent",
+          now,
+          ttlMs: LEASE_TTL_MS,
+        }),
+      );
       let snapshot = await run(store.snapshot(now));
       for (const request of notificationsEnabled
         ? snapshot.requests.filter(

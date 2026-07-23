@@ -6,6 +6,7 @@ import { Effect } from "effect";
 import {
   RegistryError,
   type AcknowledgeRequestInput,
+  type AgentHeartbeatInput,
   type AgentIdentity,
   type CancelRequestInput,
   type ClaimLeaseInput,
@@ -17,6 +18,7 @@ import {
   type HeartbeatInput,
   type Lease,
   type PauseLeaseInput,
+  type RegisteredAgent,
   type RegistryRequest,
   type RegistrySnapshot,
   type RegistryStore,
@@ -210,6 +212,22 @@ const leaseFromRow: (row: Row) => Lease = (row) => {
   return { ...base, status };
 };
 
+const registeredAgentFromRow = (row: Row): RegisteredAgent => {
+  const runtimeVersions = runtimeVersionsFromRow(row);
+  return {
+    identity: {
+      id: stringField(row, "agent_id") ?? "",
+      pid: numberField(row, "pid"),
+      ...(stringField(row, "model", true) ? { model: stringField(row, "model", true) } : {}),
+      ...(runtimeVersions ? { runtimeVersions } : {}),
+    },
+    cwd: stringField(row, "cwd") ?? "",
+    label: stringField(row, "label") ?? "",
+    heartbeatAt: numberField(row, "heartbeat_at"),
+    expiresAt: numberField(row, "expires_at"),
+  };
+};
+
 const requestFromRow: (row: Row) => RegistryRequest = (row) => {
   const status = stringField(row, "status");
   const requesterAcknowledgedAt = optionalNumberField(row, "requester_acknowledged_at");
@@ -264,6 +282,16 @@ const initialize: (database: DatabaseSync, databasePath: string) => void = (data
     const currentVersion = schemaVersion(database);
     if (currentVersion === 0) {
       database.exec(`
+        CREATE TABLE agents (
+          agent_id TEXT PRIMARY KEY,
+          pid INTEGER NOT NULL,
+          model TEXT,
+          runtime_versions TEXT,
+          cwd TEXT NOT NULL,
+          label TEXT NOT NULL,
+          heartbeat_at INTEGER NOT NULL,
+          expires_at INTEGER NOT NULL
+        ) STRICT;
         CREATE TABLE leases (
           project TEXT NOT NULL,
           role TEXT NOT NULL,
@@ -302,6 +330,18 @@ const initialize: (database: DatabaseSync, databasePath: string) => void = (data
         PRAGMA user_version = ${SCHEMA_VERSION};
       `);
     } else {
+      database.exec(`
+        CREATE TABLE IF NOT EXISTS agents (
+          agent_id TEXT PRIMARY KEY,
+          pid INTEGER NOT NULL,
+          model TEXT,
+          runtime_versions TEXT,
+          cwd TEXT NOT NULL,
+          label TEXT NOT NULL,
+          heartbeat_at INTEGER NOT NULL,
+          expires_at INTEGER NOT NULL
+        ) STRICT;
+      `);
       const columns = new Set(
         database.prepare("PRAGMA table_info(requests)").all().map((row) => stringField(rowFrom(row), "name")),
       );
@@ -398,10 +438,55 @@ export const makeSqliteRegistryStore: (root: string) => RegistryStore = (root) =
         const timestamp = validateTime("now", now);
         return withDatabase(databasePath, (database): RegistrySnapshot => ({
           version: 1,
+          agents: rowsFrom(database.prepare("SELECT * FROM agents WHERE expires_at > ? ORDER BY label, agent_id").all(timestamp)).map(registeredAgentFromRow),
           leases: rowsFrom(database.prepare("SELECT * FROM leases WHERE expires_at > ? ORDER BY project, role").all(timestamp)).map(leaseFromRow),
           requests: rowsFrom(database.prepare("SELECT * FROM requests ORDER BY created_at, request_id").all()).map(requestFromRow),
         }));
       }),
+
+    heartbeatAgent: (input: AgentHeartbeatInput) =>
+      effect("Could not heartbeat agent presence", () =>
+        withDatabase(databasePath, (database) =>
+          transaction(database, (): RegisteredAgent => {
+            const now = validateTime("now", input.now);
+            const ttlMs = validateTtl(input.ttlMs);
+            const identity = validateAgent(input.agent);
+            const cwd = canonicalProject(input.cwd);
+            const label = boundedText("agent label", input.label, 160);
+            const agent: RegisteredAgent = {
+              identity,
+              cwd,
+              label,
+              heartbeatAt: now,
+              expiresAt: expiresAt(now, ttlMs),
+            };
+            database.prepare("DELETE FROM agents WHERE expires_at <= ?").run(now);
+            database
+              .prepare(`INSERT INTO agents (
+                agent_id, pid, model, runtime_versions, cwd, label, heartbeat_at, expires_at
+              ) VALUES (?, ?, ?, ?, ?, ?, ?, ?)
+              ON CONFLICT(agent_id) DO UPDATE SET
+                pid = excluded.pid,
+                model = excluded.model,
+                runtime_versions = excluded.runtime_versions,
+                cwd = excluded.cwd,
+                label = excluded.label,
+                heartbeat_at = excluded.heartbeat_at,
+                expires_at = excluded.expires_at`)
+              .run(
+                identity.id,
+                identity.pid,
+                identity.model ?? null,
+                identity.runtimeVersions ? JSON.stringify(identity.runtimeVersions) : null,
+                cwd,
+                label,
+                agent.heartbeatAt,
+                agent.expiresAt,
+              );
+            return agent;
+          }),
+        ),
+      ),
 
     claim: (input: ClaimLeaseInput) =>
       effect("Could not claim role", () =>

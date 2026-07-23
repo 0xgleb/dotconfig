@@ -226,6 +226,27 @@ test("operational leases remain live with an empty inbox until explicit release"
   });
 });
 
+test("every Pi session publishes ephemeral fleet presence without claiming a role", async () => {
+  await withStores(async (store) => {
+    const presence = await Effect.runPromise(
+      store.heartbeatAgent({
+        agent: { ...agent("observer-a"), runtimeVersions: { questions: "2026.07.23.2" } },
+        cwd: "/workspace/review",
+        label: "PR reviewer",
+        now: 1_000,
+        ttlMs: 10_000,
+      }),
+    );
+    assert.equal(presence.label, "PR reviewer");
+    assert.equal(presence.cwd, "/workspace/review");
+    const snapshot = await Effect.runPromise(store.snapshot(1_001));
+    assert.equal(snapshot.agents?.length, 1);
+    assert.deepEqual(snapshot.agents?.[0]?.identity.runtimeVersions, { questions: "2026.07.23.2" });
+    assert.equal(snapshot.leases.length, 0);
+    assert.equal((await Effect.runPromise(store.snapshot(11_001))).agents?.length, 0);
+  });
+});
+
 test("lease heartbeats publish bounded component versions for fleet diagnostics", async () => {
   await withStores(async (store) => {
     const claimed = await Effect.runPromise(
@@ -381,6 +402,7 @@ test("legacy v1 databases migrate requester acknowledgements and source identity
     assert.ok(columns.includes("requester_cwd"));
     const leaseColumns = migrated.prepare("PRAGMA table_info(leases)").all().map((column) => column.name);
     assert.ok(leaseColumns.includes("runtime_versions"));
+    assert.ok(migrated.prepare("SELECT name FROM sqlite_master WHERE type = 'table' AND name = 'agents'").get());
     migrated.close();
   });
 });

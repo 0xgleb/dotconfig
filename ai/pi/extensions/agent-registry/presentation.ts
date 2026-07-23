@@ -1,5 +1,5 @@
 import { basename } from "node:path";
-import type { Lease, RegistryRequest, RegistrySnapshot } from "./registry.ts";
+import type { AgentIdentity, Lease, RegistryRequest, RegistrySnapshot } from "./registry.ts";
 
 const compact: (text: string, limit?: number) => string = (text, limit = 120) => {
   const singleLine = text.replace(/\s+/g, " ").trim();
@@ -9,8 +9,8 @@ const compact: (text: string, limit?: number) => string = (text, limit = 120) =>
 const ownerLabel: (lease: Lease, currentAgentId: string) => string = (lease, currentAgentId) =>
   lease.owner.id === currentAgentId ? "you" : compact(lease.owner.id, 18);
 
-const runtimeLabel = (lease: Lease): string => {
-  const versions = Object.entries(lease.owner.runtimeVersions ?? {});
+const runtimeLabel = (identity: AgentIdentity): string => {
+  const versions = Object.entries(identity.runtimeVersions ?? {});
   return versions.length > 0
     ? versions.map(([component, version]) => `${component}@${version}`).join(",")
     : "runtime:unknown";
@@ -55,11 +55,18 @@ export const registryListText: (
   currentAgentId: string,
   now: number,
 ) => string = (snapshot, currentAgentId, now) => {
-  if (snapshot.leases.length === 0 && snapshot.requests.length === 0) return "Agent registry is empty.";
+  if ((snapshot.agents?.length ?? 0) === 0 && snapshot.leases.length === 0 && snapshot.requests.length === 0) {
+    return "Agent registry is empty.";
+  }
+  const agentLines = (snapshot.agents ?? []).map((agent) => {
+    const seconds = Math.max(0, Math.ceil((agent.expiresAt - now) / 1_000));
+    const owner = agent.identity.id === currentAgentId ? "you" : compact(agent.identity.id, 18);
+    return `◦ ${agent.label} · ${agent.cwd} · session ${owner} · ${runtimeLabel(agent.identity)} · ttl ${seconds}s`;
+  });
   const leaseLines = snapshot.leases.map((lease) => {
     const seconds = Math.max(0, Math.ceil((lease.expiresAt - now) / 1_000));
     const state = lease.status === "suspended" ? `suspended:${lease.reason}` : lease.status;
-    return `● ${lease.project}/${lease.role} · ${lease.mode} · ${state} · owner ${ownerLabel(lease, currentAgentId)} · ${runtimeLabel(lease)} · ttl ${seconds}s`;
+    return `● ${lease.project}/${lease.role} · ${lease.mode} · ${state} · owner ${ownerLabel(lease, currentAgentId)} · ${runtimeLabel(lease.owner)} · ttl ${seconds}s`;
   });
   const requestLines = snapshot.requests
     .filter(({ status }) => status === "queued" || status === "claimed")
@@ -69,5 +76,9 @@ export const registryListText: (
           request.requesterCwd ? ` (${basename(request.requesterCwd)})` : ""
         } · ${request.project}/${request.role} · ${request.status} · ${compact(request.text)}`,
     );
-  return [...leaseLines, ...(requestLines.length > 0 ? ["", "Open requests:", ...requestLines] : [])].join("\n");
+  return [
+    ...(agentLines.length > 0 ? ["Live agents:", ...agentLines, ""] : []),
+    ...leaseLines,
+    ...(requestLines.length > 0 ? ["", "Open requests:", ...requestLines] : []),
+  ].join("\n");
 };

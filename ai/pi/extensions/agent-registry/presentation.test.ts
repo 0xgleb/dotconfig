@@ -10,6 +10,20 @@ import type { RegistrySnapshot } from "./registry.ts";
 
 const snapshot: RegistrySnapshot = {
   version: 1,
+  agents: [
+    {
+      identity: {
+        id: "agent-a",
+        pid: 42,
+        model: "openai-codex/gpt-5.6-sol",
+        runtimeVersions: { questions: "2026.07.23.2" },
+      },
+      cwd: "/Users/example/.config",
+      label: "dotconfig",
+      heartbeatAt: 60_000,
+      expiresAt: 121_000,
+    },
+  ],
   leases: [
     {
       id: "lease-1",
@@ -70,6 +84,8 @@ test("registry widget keeps operational ownership visible with an inbox count", 
 
 test("registry listing shows safe owner and request lifecycle details", () => {
   const text = registryListText(snapshot, "agent-a", 61_000);
+  assert.match(text, /Live agents:/);
+  assert.match(text, /dotconfig.*session you.*questions@2026\.07\.23\.2/i);
   assert.match(text, /\.config\/pi-support.*owner you.*ttl 60s/i);
   assert.match(text, /classified-workflows@2026\.07\.23\.2/);
   assert.match(text, /todo@2026\.07\.23\.2/);
