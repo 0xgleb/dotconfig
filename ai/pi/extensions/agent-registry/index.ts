@@ -84,7 +84,7 @@ const requireText: (label: string, value: string | undefined) => string = (label
 };
 
 const registryExtension: (pi: ExtensionAPI) => void = (pi) => {
-  registerRuntimeVersion(pi, "agent-registry", "2026.07.23.3");
+  registerRuntimeVersion(pi, "agent-registry", "2026.07.23.4");
   const runtimeVersions = (): Readonly<Record<string, string>> => {
     const hostVersion = process.argv[1]?.match(/pi-coding-agent-([0-9.]+)/)?.[1] ?? "unknown";
     const versions: Record<string, string> = {
@@ -166,19 +166,29 @@ const registryExtension: (pi: ExtensionAPI) => void = (pi) => {
     if (ctx.hasUI) ctx.ui.setWidget(STATUS_KEY, lines.length > 0 ? lines : undefined, { placement: "belowEditor" });
   };
 
-  const notifyRequest = (ctx: ExtensionContext, request: RegistryRequest) => {
-    if (notifiedRequests.has(request.id)) return;
+  const notifyRequest = async (ctx: ExtensionContext, request: RegistryRequest): Promise<void> => {
+    if (notifiedRequests.has(request.id) || !ctx.isIdle()) return;
+    const fresh = (await run(store.snapshot(Date.now()))).requests.find(({ id }) => id === request.id);
+    if (
+      !fresh ||
+      fresh.status !== "claimed" ||
+      fresh.leaseId !== request.leaseId ||
+      fresh.agentId !== identity(ctx).id ||
+      !ctx.isIdle()
+    ) {
+      return;
+    }
     pi.sendMessage(
       {
         customType: MESSAGE_TYPE,
-        content: requestNotificationText(request),
+        content: requestNotificationText(fresh),
         display: true,
       },
       isContinuationPaused(ctx.sessionManager.getBranch())
         ? undefined
         : { triggerTurn: true, deliverAs: "followUp" },
     );
-    notifiedRequests.add(request.id);
+    notifiedRequests.add(fresh.id);
     persistNotifiedRequests();
   };
 
@@ -199,7 +209,7 @@ const registryExtension: (pi: ExtensionAPI) => void = (pi) => {
         }),
       );
       let snapshot = await run(store.snapshot(now));
-      for (const request of notificationsEnabled
+      for (const request of notificationsEnabled && ctx.isIdle()
         ? snapshot.requests.filter(
             (candidate) =>
               candidate.requesterId === agent.id &&
@@ -272,7 +282,7 @@ const registryExtension: (pi: ExtensionAPI) => void = (pi) => {
             const claimed = await run(
               store.claimRequest({ requestId: request.id, leaseId: lease.id, agentId: agent.id, now }),
             );
-            if (notificationsEnabled) notifyRequest(ctx, claimed);
+            if (notificationsEnabled) await notifyRequest(ctx, claimed);
           } catch (error) {
             if (!(error instanceof RegistryError) || error.code !== "invalid_transition") throw error;
           }
@@ -280,7 +290,7 @@ const registryExtension: (pi: ExtensionAPI) => void = (pi) => {
         for (const request of snapshot.requests.filter(
           (candidate) => candidate.status === "claimed" && candidate.leaseId === lease.id,
         )) {
-          if (notificationsEnabled) notifyRequest(ctx, request);
+          if (notificationsEnabled) await notifyRequest(ctx, request);
         }
       }
       snapshot = await run(store.snapshot(now));

@@ -7,6 +7,16 @@ const source = readFileSync(new URL("../pi/extensions/agent-registry/index.ts", 
 test("registry request notifications survive reload and compaction", () => {
   assert.match(source, /NOTIFIED_REQUESTS_ENTRY = "agent-registry\.notified-requests"/);
   assert.match(source, /restoreNotifiedRequests\(ctx\)/);
-  assert.match(source, /notifiedRequests\.add\(request\.id\);\s*persistNotifiedRequests\(\)/);
+  assert.match(source, /notifiedRequests\.add\(fresh\.id\);\s*persistNotifiedRequests\(\)/);
   assert.match(source, /pi\.on\("session_compact", \(\) => persistNotifiedRequests\(\)\)/);
+});
+
+test("registry notifications revalidate claimed status only while the agent is idle", () => {
+  assert.match(source, /notifiedRequests\.has\(request\.id\) \|\| !ctx\.isIdle\(\)/);
+  assert.match(source, /store\.snapshot\(Date\.now\(\)\)/);
+  assert.match(source, /fresh\.status !== "claimed"/);
+  assert.match(source, /fresh\.leaseId !== request\.leaseId/);
+  assert.match(source, /fresh\.agentId !== identity\(ctx\)\.id/);
+  assert.match(source, /notificationsEnabled && ctx\.isIdle\(\)/);
+  assert.match(source, /await notifyRequest\(ctx, claimed\)/);
 });
