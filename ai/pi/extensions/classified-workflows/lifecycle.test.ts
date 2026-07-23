@@ -172,6 +172,22 @@ test("classifier prompt keeps implicitly invoked review skill commands in scope"
   assert.match(prompt, /outcome rather than the command/i);
 });
 
+test("classifier prompt accepts evidence-backed GitButler compound hunk IDs", () => {
+  const prompt = buildClassifierPrompt({
+    boundary: "action",
+    intent: ["Active todo: assign only the verified service.rs inventory hunk to branch nv"],
+    projectInstructions: "Do not bundle unrelated file changes.",
+    evidence: ["but diff sm:fa --format agent resolved the intended bounded service.rs hunk"],
+    subject: { toolName: "bash", input: { command: "but rub sm:fa nv --format agent" } },
+  });
+
+  assert.match(prompt, /GitButler CLI entity IDs are opaque/i);
+  assert.match(prompt, /colon-separated compound file\/hunk ID.*valid SOURCE operand/is);
+  assert.match(prompt, /do not reject, split, or normalize it as malformed/i);
+  assert.match(prompt, /recent evidence binds the source ID to the intended hunk/i);
+  assert.match(prompt, /Do not substitute whole-file staging/i);
+});
+
 test("classifier prompt prioritizes active reload todos over stale historical topics", () => {
   const prompt = buildClassifierPrompt({
     boundary: "action",
