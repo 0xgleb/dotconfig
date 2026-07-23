@@ -376,6 +376,24 @@ test("classifier prompt distinguishes draft review staging from publication", ()
   assert.match(prompt, /explicit user authorization/i);
 });
 
+test("classifier prompt allows mandated formatting only over evidenced edited files", () => {
+  const prompt = buildClassifierPrompt({
+    boundary: "action",
+    intent: ["Active todo: finish the eight-file Rust implementation"],
+    projectInstructions: "Run rustfmt --edition 2024 on edited Rust files before delivery.",
+    evidence: ["git diff --name-only verified exactly eight edited Rust files"],
+    subject: {
+      toolName: "bash",
+      input: { command: "rustfmt --edition 2024 a.rs b.rs c.rs && git diff --check" },
+    },
+  });
+
+  assert.match(prompt, /exact invocation of the mandated formatter over only files evidenced as edited/i);
+  assert.match(prompt, /optionally followed by a read-only diff\/check validation/i);
+  assert.match(prompt, /Do not demand that filenames semantically restate the task/i);
+  assert.match(prompt, /does not authorize alternate formatters, unevidenced files, repository-wide formatting/i);
+});
+
 test("classifier prompt makes loaded instructions binding without duplicating them", () => {
   const prompt = buildClassifierPrompt({
     boundary: "action",
