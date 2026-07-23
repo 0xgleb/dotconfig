@@ -192,7 +192,10 @@ test("classifier prompt allows whole-file GitButler assignment only after comple
     boundary: "action",
     intent: ["Stage the validated ADR36 notification implementation on nv"],
     projectInstructions: "Keep unrelated hunks out of the branch.",
-    evidence: ["git diff verified every current notifications.rs hunk implements ADR36; rustfmt and targeted checks pass"],
+    evidence: [
+      "git diff verified every current notifications.rs hunk implements ADR36; rustfmt and targeted checks pass",
+      "structured status shows notifications.rs under unassigned changes and nv as an isolated target",
+    ],
     subject: {
       toolName: "bash",
       input: { command: "but rub crates/yielduck/src/notifications.rs nv --format agent" },
@@ -202,7 +205,29 @@ test("classifier prompt allows whole-file GitButler assignment only after comple
   assert.match(prompt, /whole-file assignment is conventional staging/i);
   assert.match(prompt, /every current uncommitted hunk.*implements the active branch task/is);
   assert.match(prompt, /Registry prose or a filename alone is insufficient/i);
+  assert.match(prompt, /current structured status still shows the file as unassigned/i);
   assert.match(prompt, /does not extend to other files, branches, content changes/i);
+});
+
+test("classifier prompt treats source-not-found as stale when the file is already stack-assigned", () => {
+  const prompt = buildClassifierPrompt({
+    boundary: "action",
+    intent: ["Isolate standing_order.rs on rt"],
+    projectInstructions: "Do not bundle unrelated changes.",
+    evidence: [
+      "but branch show rt listed standing_order.rs among the stack's uncommitted files",
+      "structured status assigns standing_order.rs as lm under p5 assignedChanges",
+      "but diff rt is empty and rt has no commits",
+      "file-path rub to rt returned source not found",
+    ],
+    subject: { toolName: "bash", input: { command: "but rub lm rt --format agent" } },
+  });
+
+  assert.match(prompt, /branch-show listing is not ownership evidence/i);
+  assert.match(prompt, /file-path rub may correctly return source-not-found/i);
+  assert.match(prompt, /Treat that as stale\/already stack-assigned/i);
+  assert.match(prompt, /not permission to retry a staged change ID/i);
+  assert.match(prompt, /apply the stack-ambiguity rule before any reassignment/i);
 });
 
 test("classifier prompt accepts bounded evidence-backed GitButler compound hunk sequences", () => {
