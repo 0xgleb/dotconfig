@@ -60,6 +60,11 @@ for verified structural changes. Never combine `bug`, `feat`, and `test` as a
 hedge. Verify the category from the actual diff and repository context rather
 than a title, registry request, or other untrusted wording alone.
 
+AI-review threads may be resolved only after the fix is verified and current
+thread data identifies the author as an AI reviewer. Never resolve a
+human-authored thread. Resolution permission does not authorize posting a reply;
+reply content remains subject to the external-communication rules below.
+
 ## Authorship & Attribution
 
 When writing commit messages, PR descriptions, titles, etc., never give yourself

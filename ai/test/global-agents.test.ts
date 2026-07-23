@@ -86,6 +86,12 @@ test("shared and Pi-global instructions continue safely after classifier blocks"
   }
 });
 
+test("shared instructions separate AI-thread resolution from reply publication", () => {
+  assert.match(shared, /AI-review threads may be resolved only after the fix is verified/i);
+  assert.match(shared, /Never resolve a\s+human-authored thread/i);
+  assert.match(shared, /Resolution permission does not authorize posting a reply/i);
+});
+
 test("shared instructions require one evidence-backed PR category label", () => {
   assert.match(shared, /Apply exactly one accurate category label per PR/);
   assert.match(shared, /Fixes use `bug`; `test` is\s+only for test-only changes/);

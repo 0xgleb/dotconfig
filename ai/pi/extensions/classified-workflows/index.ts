@@ -30,6 +30,7 @@ import {
   type Decision,
   type WorkflowLimits,
 } from "./core.ts";
+import { boundedExecutionEvidence } from "./execution-evidence.ts";
 import {
   buildClassifierPrompt,
   createClassifiedAgentRunner,
@@ -274,7 +275,7 @@ function recentExecutionEvidence(ctx: ExtensionContext): string[] {
               .join("\n")
           : "";
       return text
-        ? [`${String(entry.message.toolName ?? "tool")}: ${sanitizeProcessDiagnostic(text).replace(/\s+/g, " ").slice(0, 1_500)}`]
+        ? [`${String(entry.message.toolName ?? "tool")}: ${boundedExecutionEvidence(text)}`]
         : [];
     })
     .slice(-12);
@@ -478,7 +479,7 @@ const WorkflowParameters = Type.Object({
 });
 
 export default function classifiedWorkflows(pi: ExtensionAPI): void {
-  registerRuntimeVersion(pi, "classified-workflows", "2026.07.23.11");
+  registerRuntimeVersion(pi, "classified-workflows", "2026.07.23.12");
   let goalState: GoalState | undefined;
   let goalEvaluating = false;
   let goalRunTokens = 0;

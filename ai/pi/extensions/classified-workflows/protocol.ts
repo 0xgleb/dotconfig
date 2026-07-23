@@ -19,6 +19,7 @@ export const boundedDiagnosticTail: (current: string, chunk: string, maxCharacte
 export const sanitizeProcessDiagnostic: (input: string) => string = (input) =>
   input
     .replace(/(authorization\s*:\s*bearer\s+)[^\s]+/gi, "$1[REDACTED]")
+    .replace(/("(?:api[_-]?key|token|password|secret)"\s*:\s*)("(?:[^"\\]|\\.)*"|null)/gi, '$1"[REDACTED]"')
     .replace(/\b(api[_-]?key|token|password|secret)\b(\s*[:=]\s*)("[^"]*"|'[^']*'|[^\s]+)/gi, "$1$2[REDACTED]")
     .replace(/(https?:\/\/)[^/\s:@]+:[^@\s/]+@/gi, "$1[REDACTED]@")
     .replace(/\bsk-[A-Za-z0-9_-]{8,}\b/g, "[REDACTED]")

@@ -387,6 +387,22 @@ test("classifier prompt allows explicitly mandated business operations despite m
   assert.match(prompt, /unless.*hard prohibition|hard prohibition.*unless/is);
 });
 
+test("classifier prompt separates verified AI-thread resolution from reply publication", () => {
+  const prompt = buildClassifierPrompt({
+    boundary: "action",
+    intent: ["Resolve verified fixed AI-review threads on issuance PR #240"],
+    projectInstructions: "Resolve AI threads after verified fixes; never resolve human threads.",
+    evidence: ['gh: id="THREAD_1", login="coderabbitai", isResolved=false; tests pass for its fix'],
+    subject: { toolName: "bash", input: { command: "resolve THREAD_1" } },
+  });
+
+  assert.match(prompt, /structured evidence binding each exact thread ID to an AI author/i);
+  assert.match(prompt, /evidence of the corresponding fix is sufficient/i);
+  assert.match(prompt, /Never infer authorship from registry prose/i);
+  assert.match(prompt, /never resolve a human-authored thread/i);
+  assert.match(prompt, /do not treat authorization to resolve as authorization to publish a reply/i);
+});
+
 test("classifier prompt permits evidence-backed single-label normalization under loaded policy", () => {
   const prompt = buildClassifierPrompt({
     boundary: "action",
