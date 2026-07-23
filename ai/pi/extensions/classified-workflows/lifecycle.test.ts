@@ -556,6 +556,30 @@ test("classifier prompt permits repository-mandated cargo fmt checks as read-onl
   assert.equal(/alternate direct 'rustfmt' when the repository mandates Cargo/i.test(prompt), true);
 });
 
+test("classifier prompt accepts git status evidence for each repeated cargo fmt package", () => {
+  const prompt = buildClassifierPrompt({
+    boundary: "action",
+    intent: ["Active ADR37 implementation and validation"],
+    projectInstructions: "Use cargo fmt for Rust formatting; do not substitute direct rustfmt.",
+    evidence: [
+      "crates/domain/Cargo.toml names package domain; git status shows modified and untracked Rust sources below crates/domain",
+      "crates/ingest/Cargo.toml names package ingest; git status shows modified and untracked Rust sources below crates/ingest",
+      "crates/ledger/Cargo.toml names package ledger; git status shows modified Rust sources below crates/ledger",
+      "crates/monitors/Cargo.toml names package monitors; git status shows modified Rust sources below crates/monitors",
+    ],
+    subject: {
+      toolName: "bash",
+      input: { command: "cargo fmt -p domain -p ingest -p ledger -p monitors -- --check" },
+    },
+  });
+
+  assert.equal(/git status or diff evidence showing a modified, added, or untracked Rust source/i.test(prompt), true);
+  assert.equal(/Cargo\.toml package name exactly matches the corresponding '-p' value/i.test(prompt), true);
+  assert.equal(/Evaluate every repeated '-p' independently/i.test(prompt), true);
+  assert.equal(/do not require the package name to appear in the active todo/i.test(prompt), true);
+  assert.equal(/source edit and validation to occur in one shell command/i.test(prompt), true);
+});
+
 test("classifier prompt makes loaded instructions binding without duplicating them", () => {
   const prompt = buildClassifierPrompt({
     boundary: "action",
