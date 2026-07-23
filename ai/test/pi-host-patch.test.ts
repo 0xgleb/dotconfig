@@ -10,6 +10,8 @@ test("Pi host patch exposes reload without losing finalized messages on restart"
   assert.match(patch, /handleReloadCommand\(true\)/);
   assert.match(patch, /Cannot reload while agent is streaming/);
   assert.match(patch, /if \(throwOnError\)/);
+  assert.match(patch, /dist\/core\/event-bus\.js/);
+  assert.match(patch, /detail\.replace.*slice\(0, 240\)/);
   assert.match(patch, /dist\/core\/agent-session\.js/);
   const persist = patch.indexOf("Persist finalized messages before notifying the TUI");
   const notify = patch.indexOf("Notify all listeners only after synchronous message persistence");

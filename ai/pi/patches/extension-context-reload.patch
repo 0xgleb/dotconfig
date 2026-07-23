@@ -56,6 +56,21 @@ diff --git a/dist/modes/interactive/interactive-mode.js b/dist/modes/interactive
      }
      async handleExportCommand(text) {
 
+diff --git a/dist/core/event-bus.js b/dist/core/event-bus.js
+--- a/dist/core/event-bus.js
++++ b/dist/core/event-bus.js
+@@ -9,7 +9,9 @@ export function createEventBus() {
+                     await handler(data);
+                 }
+                 catch (err) {
+-                    console.error(`Event handler error (${channel}):`, err);
++                    const detail = err instanceof Error ? err.message : String(err);
++                    const bounded = detail.replace(/[\u0000-\u001f\u007f]+/g, " ").slice(0, 240);
++                    console.error(`Event handler error (${channel}): ${bounded || "unknown error"}`);
+                 }
+             };
+             emitter.on(channel, safeHandler);
+
 diff --git a/dist/core/agent-session.js b/dist/core/agent-session.js
 --- a/dist/core/agent-session.js
 +++ b/dist/core/agent-session.js
