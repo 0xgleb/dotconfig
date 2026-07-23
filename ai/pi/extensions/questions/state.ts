@@ -1,17 +1,26 @@
 export type QuestionStatus = "pending" | "resolved";
 
+export interface QuestionOption {
+  readonly label: string;
+  readonly description?: string;
+}
+
 export interface PendingQuestion {
   readonly id: number;
   readonly status: "pending";
   readonly question: string;
+  readonly header?: string;
   readonly guess?: string;
+  readonly options?: readonly QuestionOption[];
 }
 
 export interface ResolvedQuestion {
   readonly id: number;
   readonly status: "resolved";
   readonly question: string;
+  readonly header?: string;
   readonly guess?: string;
+  readonly options?: readonly QuestionOption[];
   readonly answer: string;
 }
 
@@ -24,7 +33,13 @@ export interface QuestionState {
 
 export type QuestionAction =
   | { readonly action: "list" }
-  | { readonly action: "ask"; readonly question: string; readonly guess?: string }
+  | {
+      readonly action: "ask";
+      readonly question: string;
+      readonly header?: string;
+      readonly guess?: string;
+      readonly options?: readonly QuestionOption[];
+    }
   | { readonly action: "resolve"; readonly id: number; readonly answer: string }
   | { readonly action: "clear_resolved" };
 
@@ -40,14 +55,25 @@ export const decodeQuestionState: (value: unknown) => QuestionState | undefined 
       !isRecord(candidate) ||
       !Number.isSafeInteger(candidate.id) ||
       typeof candidate.question !== "string" ||
-      (candidate.guess !== undefined && typeof candidate.guess !== "string")
+      (candidate.header !== undefined && typeof candidate.header !== "string") ||
+      (candidate.guess !== undefined && typeof candidate.guess !== "string") ||
+      (candidate.options !== undefined &&
+        (!Array.isArray(candidate.options) ||
+          !candidate.options.every(
+            (option) =>
+              isRecord(option) &&
+              typeof option.label === "string" &&
+              (option.description === undefined || typeof option.description === "string"),
+          )))
     ) {
       return [];
     }
     const base = {
       id: Number(candidate.id),
       question: candidate.question,
+      ...(candidate.header ? { header: candidate.header } : {}),
       ...(candidate.guess ? { guess: candidate.guess } : {}),
+      ...(candidate.options ? { options: candidate.options as unknown as readonly QuestionOption[] } : {}),
     };
     if (candidate.status === "pending") return [{ ...base, status: "pending" }];
     if (candidate.status === "resolved" && typeof candidate.answer === "string") {
@@ -71,7 +97,9 @@ export const applyQuestionAction: (state: QuestionState, action: QuestionAction)
             id: state.nextId,
             status: "pending",
             question: action.question.trim(),
+            ...(action.header?.trim() ? { header: action.header.trim() } : {}),
             ...(action.guess?.trim() ? { guess: action.guess.trim() } : {}),
+            ...(action.options && action.options.length > 0 ? { options: action.options } : {}),
           },
         ],
         nextId: state.nextId + 1,

@@ -677,13 +677,6 @@ export function handleNormalMode(data: string, ctx: NormalModeContext): boolean 
 
     // === Search command-line entry ===
     case "/":
-      if (ctx.getText().length === 0) {
-        markInsertEntry();
-        state.mode = "insert";
-        ctx.superHandleInput("/");
-        resetOperatorState(state);
-        return true;
-      }
       beginSearch("forward", "normal");
       state.mode = "command-line";
       resetOperatorState(state);

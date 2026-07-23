@@ -8,12 +8,11 @@ const compact: (text: string, limit?: number) => string = (text, limit = 180) =>
 export const questionWidgetLines: (state: QuestionState) => string[] = (state) => {
   const pending = pendingQuestions(state);
   if (pending.length === 0) return [];
+  const current = pending[0];
   return [
-    `Awaiting your input: ${pending.length} · /questions`,
-    ...pending.flatMap((question) => [
-      `? q${question.id} · ${compact(question.question)}`,
-      ...(question.guess ? [`  Guess: ${compact(question.guess)}`] : []),
-    ]),
+    `◆ ACTION REQUIRED · ${pending.length} decision${pending.length === 1 ? "" : "s"} pending · /questions`,
+    `  ${compact(current.question, 120)}`,
+    `  Open /questions to answer${pending.length > 1 ? ` · 1 of ${pending.length}` : ""}`,
   ];
 };
 

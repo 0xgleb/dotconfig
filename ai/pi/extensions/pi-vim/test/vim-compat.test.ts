@@ -75,16 +75,14 @@ function editor(initial: string, line = 0, col = 0) {
   };
 }
 
-test("slash enters extension-command input directly when the prompt is empty", () => {
+test("slash opens Vim search when the prompt is empty", () => {
   const e = editor("");
   e.key("/");
-  assert.equal(e.state.mode, "insert");
-  assert.equal(e.text(), "/");
-  e.type("loop status");
-  assert.equal(e.text(), "/loop status");
+  assert.equal(e.state.mode, "command-line");
+  assert.equal(e.text(), "");
 });
 
-test("slash preserves a non-empty draft and retains Vim search behavior", () => {
+test("slash preserves a non-empty draft and opens Vim search", () => {
   const e = editor("draft in progress");
   e.key("/");
   assert.equal(e.state.mode, "command-line");

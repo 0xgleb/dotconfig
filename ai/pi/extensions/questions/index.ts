@@ -1,4 +1,5 @@
-import type { ExtensionAPI, ExtensionContext } from "@earendil-works/pi-coding-agent";
+import { DynamicBorder, type ExtensionAPI, type ExtensionContext } from "@earendil-works/pi-coding-agent";
+import { Container, Input, matchesKey, Text } from "@earendil-works/pi-tui";
 import { Type } from "typebox";
 import {
   applyQuestionAction,
@@ -6,6 +7,7 @@ import {
   emptyQuestionState,
   pendingQuestions,
   type QuestionAction,
+  type QuestionOption,
   type QuestionState,
 } from "./state.ts";
 import { pendingQuestionContext, questionListText, questionWidgetLines } from "./presentation.ts";
@@ -17,7 +19,9 @@ const QUESTION_STATUS_KEY = "pi-questions";
 interface QuestionRequest {
   readonly action: "list" | "ask" | "resolve" | "clear_resolved";
   readonly question?: string;
+  readonly header?: string;
   readonly guess?: string;
+  readonly options?: readonly QuestionOption[];
   readonly id?: number;
   readonly answer?: string;
 }
@@ -31,7 +35,13 @@ const parseAction: (request: QuestionRequest, state: QuestionState) => QuestionA
     case "ask": {
       const question = request.question?.trim();
       if (!question) throw new Error("question required for ask");
-      return { action: "ask", question, ...(request.guess?.trim() ? { guess: request.guess.trim() } : {}) };
+      return {
+        action: "ask",
+        question,
+        ...(request.header?.trim() ? { header: request.header.trim() } : {}),
+        ...(request.guess?.trim() ? { guess: request.guess.trim() } : {}),
+        ...(request.options && request.options.length > 0 ? { options: request.options } : {}),
+      };
     }
     case "resolve": {
       if (request.id === undefined) throw new Error("id required for resolve");
@@ -47,6 +57,8 @@ const parseAction: (request: QuestionRequest, state: QuestionState) => QuestionA
 
 const questionsExtension: (pi: ExtensionAPI) => void = (pi) => {
   let state = emptyQuestionState;
+  let dialogOpen = false;
+  let lastPresentedQuestionId = 0;
 
   const render = (ctx: ExtensionContext) => {
     const lines = questionWidgetLines(state);
@@ -74,10 +86,118 @@ const questionsExtension: (pi: ExtensionAPI) => void = (pi) => {
     pi.sendMessage({ customType: QUESTION_MESSAGE, content: questionListText(state), display: true });
   };
 
+  const showQuestionDialog = async (ctx: ExtensionContext) => {
+    if (!ctx.hasUI || dialogOpen) return;
+    dialogOpen = true;
+    try {
+      while (true) {
+        const pending = pendingQuestions(state);
+        const question = pending[0];
+        if (!question) break;
+        const progress = state.questions.filter(({ status }) => status === "resolved").length + 1;
+        const total = state.questions.length;
+        const answer = await ctx.ui.custom<string | null>(
+          (tui, theme, _keybindings, done) => {
+            const input = new Input();
+            const container = new Container();
+            const accent = (text: string) => theme.fg("accent", text);
+            const header = question.header ? `ACTION REQUIRED · ${question.header}` : "ACTION REQUIRED";
+            container.addChild(new DynamicBorder(accent));
+            container.addChild(
+              new Text(
+                `${theme.bold(accent(header))}${theme.fg("muted", `  Decision ${progress} of ${total}`)}`,
+                1,
+                0,
+              ),
+            );
+            container.addChild(new Text(theme.fg("text", question.question), 1, 1));
+            if (question.options && question.options.length > 0) {
+              container.addChild(
+                new Text(
+                  question.options
+                    .map(
+                      (option, index) =>
+                        `${accent(`${index + 1}.`)} ${theme.fg("text", option.label)}${
+                          option.description ? theme.fg("muted", ` — ${option.description}`) : ""
+                        }`,
+                    )
+                    .join("\n"),
+                  1,
+                  0,
+                ),
+              );
+            }
+            if (question.guess) {
+              container.addChild(new Text(`${theme.fg("muted", "Suggested answer")}\n${accent(question.guess)}`, 1, 1));
+            }
+            container.addChild(new Text(theme.bold(theme.fg("text", "Your answer")), 1, 1));
+            container.addChild(input);
+            container.addChild(
+              new Text(
+                theme.fg(
+                  "dim",
+                  `${question.options?.length ? `${theme.bold(`1-${question.options.length}`)} choose  ·  ` : ""}${theme.bold("enter")} submit  ·  ${theme.bold("tab")} use suggestion  ·  ${theme.bold("esc")} answer later`,
+                ),
+                1,
+                1,
+              ),
+            );
+            container.addChild(new DynamicBorder(accent));
+            input.onSubmit = (value) => {
+              const trimmed = value.trim();
+              if (trimmed) done(trimmed);
+            };
+            input.onEscape = () => done(null);
+            return {
+              get focused() {
+                return input.focused;
+              },
+              set focused(value: boolean) {
+                input.focused = value;
+              },
+              render: (width: number) => container.render(width),
+              invalidate: () => container.invalidate(),
+              handleInput: (data: string) => {
+                const optionIndex = /^[1-9]$/.test(data) ? Number(data) - 1 : -1;
+                const option = question.options?.[optionIndex];
+                if (option) done(option.label);
+                else if (matchesKey(data, "tab") && question.guess) input.setValue(question.guess);
+                else input.handleInput(data);
+                tui.requestRender();
+              },
+            };
+          },
+          {
+            overlay: true,
+            overlayOptions: {
+              width: "70%",
+              minWidth: 56,
+              maxHeight: "80%",
+              anchor: "center",
+              margin: 1,
+            },
+          },
+        );
+        if (answer === null) break;
+        state = applyQuestionAction(state, { action: "resolve", id: question.id, answer });
+        persist(ctx);
+      }
+    } finally {
+      dialogOpen = false;
+    }
+  };
+
   pi.on("session_start", (_event, ctx) => restore(ctx));
   pi.on("session_shutdown", (_event, ctx) => {
     ctx.ui.setStatus(QUESTION_STATUS_KEY, undefined);
     ctx.ui.setWidget(QUESTION_STATUS_KEY, undefined);
+  });
+  pi.on("agent_settled", (_event, ctx) => {
+    const newest = pendingQuestions(state).at(-1)?.id;
+    if (newest !== undefined && newest > lastPresentedQuestionId) {
+      lastPresentedQuestionId = newest;
+      void showQuestionDialog(ctx);
+    }
   });
   pi.on("before_agent_start", (event) => {
     const content = pendingQuestionContext(state);
@@ -91,9 +211,10 @@ const questionsExtension: (pi: ExtensionAPI) => void = (pi) => {
 
   pi.registerCommand("questions", {
     description: "Show questions awaiting user input",
-    handler(_args, ctx) {
+    async handler(_args, ctx) {
       restore(ctx);
-      showQuestions();
+      if (pendingQuestions(state).length === 0) showQuestions();
+      else await showQuestionDialog(ctx);
     },
   });
 
@@ -104,7 +225,7 @@ const questionsExtension: (pi: ExtensionAPI) => void = (pi) => {
     promptSnippet: "Queue a persistent question for the user without blocking unrelated work",
     promptGuidelines: [
       "Use ask_user when a user decision is required but independent work remains executable.",
-      "Include the current best guess so the user can react to a concrete proposal.",
+      "Include a short header, the current best guess, and 2-4 concise options when the decision has bounded choices.",
       "Continue independent work after asking; resolve the question with a concise answer summary when the user responds.",
     ],
     parameters: Type.Object({
@@ -115,7 +236,17 @@ const questionsExtension: (pi: ExtensionAPI) => void = (pi) => {
         Type.Literal("clear_resolved"),
       ]),
       question: Type.Optional(Type.String()),
+      header: Type.Optional(Type.String({ maxLength: 16 })),
       guess: Type.Optional(Type.String()),
+      options: Type.Optional(
+        Type.Array(
+          Type.Object({
+            label: Type.String({ minLength: 1, maxLength: 80 }),
+            description: Type.Optional(Type.String({ maxLength: 160 })),
+          }),
+          { minItems: 2, maxItems: 4 },
+        ),
+      ),
       id: Type.Optional(Type.Integer({ minimum: 1 })),
       answer: Type.Optional(Type.String()),
     }),

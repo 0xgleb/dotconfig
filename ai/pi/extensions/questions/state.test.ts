@@ -7,12 +7,20 @@ test("questions remain pending until explicitly resolved", () => {
   const asked = applyQuestionAction(emptyQuestionState, {
     action: "ask",
     question: "Should production operators deploy directly?",
+    header: "Deployment",
     guess: "No; circuit-break only.",
+    options: [
+      { label: "No", description: "Circuit-break only" },
+      { label: "Yes", description: "Allow direct deploys" },
+    ],
   });
   assert.equal(pendingQuestions(asked).length, 1);
-  assert.match(questionWidgetLines(asked).join("\n"), /Awaiting your input: 1/);
-  assert.match(questionWidgetLines(asked).join("\n"), /Guess: No; circuit-break only/);
+  assert.match(questionWidgetLines(asked).join("\n"), /ACTION REQUIRED.*1 decision pending/i);
+  assert.match(questionWidgetLines(asked).join("\n"), /Open \/questions to answer/);
+  assert.doesNotMatch(questionWidgetLines(asked).join("\n"), /Guess:/);
   assert.match(pendingQuestionContext(asked) ?? "", /Continue independent work/);
+  assert.equal(pendingQuestions(asked)[0]?.header, "Deployment");
+  assert.deepEqual(pendingQuestions(asked)[0]?.options?.map(({ label }) => label), ["No", "Yes"]);
 
   const resolved = applyQuestionAction(asked, {
     action: "resolve",
