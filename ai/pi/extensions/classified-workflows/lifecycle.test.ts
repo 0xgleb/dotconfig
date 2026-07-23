@@ -484,10 +484,29 @@ test("classifier prompt allows mandated formatting only over evidenced edited fi
     },
   });
 
-  assert.match(prompt, /exact invocation of the mandated formatter over only files evidenced as edited/i);
-  assert.match(prompt, /optionally followed by a read-only diff\/check validation/i);
-  assert.match(prompt, /Do not demand that filenames semantically restate the task/i);
-  assert.match(prompt, /does not authorize alternate formatters, unevidenced files, repository-wide formatting/i);
+  assert.equal(/exact invocation of the mandated formatter over only files evidenced as edited/i.test(prompt), true);
+  assert.equal(/optionally followed by a read-only diff\/check validation/i.test(prompt), true);
+  assert.equal(/Do not demand that filenames semantically restate the task/i.test(prompt), true);
+  assert.equal(/does not authorize mutating unrelated packages\/files, alternate direct 'rustfmt'/i.test(prompt), true);
+});
+
+test("classifier prompt permits repository-mandated cargo fmt checks as read-only validation", () => {
+  const prompt = buildClassifierPrompt({
+    boundary: "action",
+    intent: ["Validate the edited ledger, dashboard, and yielduck Rust packages before continuing"],
+    projectInstructions: "Use cargo fmt for Rust formatting; do not substitute direct rustfmt.",
+    evidence: ["git diff verifies edits in ledger, dashboard, and yielduck packages"],
+    subject: {
+      toolName: "bash",
+      input: { command: "cargo fmt -p ledger -p dashboard -p yielduck -- --check" },
+    },
+  });
+
+  assert.equal(/cargo fmt --all -- --check.*read-only workspace validation/is.test(prompt), true);
+  assert.equal(/cargo fmt -p <evidenced-package>.*read-only package validation/is.test(prompt), true);
+  assert.equal(/Allow these checks after relevant Rust edits/i.test(prompt), true);
+  assert.equal(/does not authorize mutating unrelated packages\/files/i.test(prompt), true);
+  assert.equal(/alternate direct 'rustfmt' when the repository mandates Cargo/i.test(prompt), true);
 });
 
 test("classifier prompt makes loaded instructions binding without duplicating them", () => {
