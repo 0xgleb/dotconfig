@@ -394,6 +394,35 @@ test("git diff credential pathspecs are allowed only when every sensitive token 
   }
 });
 
+test("secondary worktree target cleanup is exact and cannot widen to main worktrees", () => {
+  assert.deepEqual(
+    deterministicDecision({
+      boundary: "action",
+      toolName: "bash",
+      input: { command: "rm -rf -- target" },
+      cwd: "/Users/example/code/st0x/st0x.issuance/.worktrees/feat/corporate-actions-freeze-sync",
+    }),
+    {
+      verdict: "allow",
+      reason: "Exact rebuildable target cleanup in a secondary code worktree",
+      source: "deterministic",
+      resultSafe: true,
+    },
+  );
+
+  for (const [cwd, command] of [
+    ["/Users/example/code/st0x/st0x.issuance", "rm -rf -- target"],
+    ["/Users/example/code/st0x/st0x.issuance/.worktrees/feat/work", "rm -rf -- target other"],
+    ["/Users/example/code/st0x/st0x.issuance/.worktrees/feat/work", "rm -rf -- target && git status"],
+    ["/tmp/.worktrees/work", "rm -rf -- target"],
+  ]) {
+    assert.equal(
+      deterministicDecision({ boundary: "action", toolName: "bash", input: { command }, cwd })?.reason,
+      undefined,
+    );
+  }
+});
+
 test("verified empty GitButler branch cleanup is exact", () => {
   const cwd = "/Users/example/code/dataclique/yielduck";
   assert.equal(
