@@ -33,6 +33,15 @@ test("shared and Pi-global instructions enforce disk-pressure hygiene", () => {
   }
 });
 
+test("shared and Pi-global instructions protect contextually consumed build artifacts", () => {
+  for (const [name, contents] of [["shared", shared], ["Pi global", pi]] as const) {
+    assert.match(contents, /rebuildable build outputs are disposable by default/i, name);
+    assert.match(contents, /project instructions.*configuration may protect artifacts consumed/is, name);
+    assert.match(contents, /Inspect any\s+referenced configuration before cleanup/i, name);
+    assert.match(contents, /preserve a cleanup root containing\s+a configured live artifact/i, name);
+  }
+});
+
 test("shared and Pi-global instructions route work through the agent registry", () => {
   for (const [name, contents] of [["shared", shared], ["Pi global", pi]] as const) {
     assert.match(contents, /check `agent_registry`/i, `${name} must discover role owners`);
@@ -40,6 +49,15 @@ test("shared and Pi-global instructions route work through the agent registry", 
     assert.match(contents, /unowned.*claim.*temporarily/is, `${name} must self-claim by default`);
     assert.match(contents, /role never\s+grants authority/i, `${name} must separate routing from authority`);
     assert.match(contents, /operational role.*not done.*inbox.*empty/is, `${name} must preserve operational ownership`);
+  }
+});
+
+test("registry read failures degrade coordination without blocking unrelated delivery", () => {
+  for (const [name, contents] of [["shared", shared], ["Pi global", pi]] as const) {
+    assert.match(contents, /registry\s+read\/sync failure means coordination is temporarily unavailable/i, name);
+    assert.match(contents, /does not\s+revoke authorization.*or\s+block unrelated Git delivery/is, name);
+    assert.match(contents, /Never infer new\s+authority from an unavailable\s+registry/i, name);
+    assert.match(contents, /block only the operation that actually requires registry\s+ownership/i, name);
   }
 });
 

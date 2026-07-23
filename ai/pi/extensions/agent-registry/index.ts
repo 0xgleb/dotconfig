@@ -84,7 +84,7 @@ const requireText: (label: string, value: string | undefined) => string = (label
 };
 
 const registryExtension: (pi: ExtensionAPI) => void = (pi) => {
-  registerRuntimeVersion(pi, "agent-registry", "2026.07.23.4");
+  registerRuntimeVersion(pi, "agent-registry", "2026.07.23.5");
   const runtimeVersions = (): Readonly<Record<string, string>> => {
     const hostVersion = process.argv[1]?.match(/pi-coding-agent-([0-9.]+)/)?.[1] ?? "unknown";
     const versions: Record<string, string> = {

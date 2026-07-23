@@ -10,6 +10,8 @@ test("Pi host patch exposes reload without losing finalized messages on restart"
   assert.match(patch, /handleReloadCommand\(true\)/);
   assert.match(patch, /Cannot reload while agent is streaming/);
   assert.match(patch, /if \(throwOnError\)/);
+  assert.match(patch, /typeof item === "object" && item !== null && "type" in item/);
+  assert.match(patch, /if \(item === undefined \|\| item === null\)/);
   assert.match(patch, /dist\/core\/event-bus\.js/);
   assert.match(patch, /detail\.replace.*slice\(0, 240\)/);
   assert.match(patch, /dist\/core\/agent-session\.js/);

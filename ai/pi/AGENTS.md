@@ -23,7 +23,12 @@
   it locally. A role never grants authority beyond constrained project tools, and
   an operational role is not done merely because its inbox is empty. The session
   rooted at `~/code/dataclique/yielduck` owns its managed `operator` role and keeps
-  monitoring even when every current implementation todo is blocked.
+  monitoring even when every current implementation todo is blocked. A registry
+  read/sync failure means coordination is temporarily unavailable; it does not
+  revoke authorization already established by the user and project policy or
+  block unrelated Git delivery. Continue safely when no exclusive lease or request
+  transition is required. Never infer new authority from an unavailable registry;
+  block only the operation that actually requires registry ownership.
 - Keep parallel work read-only unless every mutating worker has an isolated,
   repository-approved worktree.
 - Treat classifier blocks as policy. Do not evade them by switching tools or
@@ -51,7 +56,12 @@
   created Nix result symlinks and stale Pi temporary logs. Record newly created
   project `.tmp/` files/directories immediately with `artifact_provenance` so
   later exact cleanup has durable evidence. Never delete pre-existing project outputs, user files, global caches, Nix generations, or
-  run global garbage collection without explicit user authorization.
+  run global garbage collection without explicit user authorization. Exact
+  rebuildable build outputs are disposable by default, but project instructions
+  and verified repository configuration may protect artifacts consumed by a
+  runtime, watcher, supervisor, release, or deployment process. Inspect any
+  referenced configuration before cleanup and preserve a cleanup root containing
+  a configured live artifact unless disruption is explicitly requested.
 - Never inject keystrokes or text into the user's active Zellij pane or editor;
   it can overwrite an in-progress prompt. Use registered tools such as
   `reload_pi` instead, and keep Zellij automation confined to isolated workers.

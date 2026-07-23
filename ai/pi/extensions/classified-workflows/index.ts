@@ -89,6 +89,7 @@ import {
   latestContinuationPause,
   wasRunAborted,
 } from "../shared/continuation-pause.ts";
+import { ACTIVITY_PHASE_EVENT, type ClassifierActivityEvent } from "../shared/activity-events.ts";
 import { QUESTION_RESOLVED_EVENT, type UserQuestionResolution } from "../shared/question-events.ts";
 import {
   REGISTRY_INTENT_REQUEST_EVENT,
@@ -308,8 +309,11 @@ async function classify(
   request: ClassificationRequest,
   ctx: Pick<ExtensionContext, "cwd">,
   signal?: AbortSignal,
+  onActivity?: (active: boolean) => void,
 ): Promise<Decision> {
-  for (let attempt = 0; attempt < CLASSIFIER_MAX_ATTEMPTS; attempt += 1) {
+  onActivity?.(true);
+  try {
+    for (let attempt = 0; attempt < CLASSIFIER_MAX_ATTEMPTS; attempt += 1) {
     const controller = new AbortController();
     const abort = () => controller.abort(signal?.reason);
     if (signal?.aborted) abort();
@@ -360,11 +364,14 @@ async function classify(
       }
     }
   }
-  return {
-    verdict: "block",
-    reason: `Classifier was unavailable after ${CLASSIFIER_MAX_ATTEMPTS} attempts`,
-    source: "classifier",
-  };
+    return {
+      verdict: "block",
+      reason: `Classifier was unavailable after ${CLASSIFIER_MAX_ATTEMPTS} attempts`,
+      source: "classifier",
+    };
+  } finally {
+    onActivity?.(false);
+  }
 }
 
 async function evaluateGoal(
@@ -479,7 +486,7 @@ const WorkflowParameters = Type.Object({
 });
 
 export default function classifiedWorkflows(pi: ExtensionAPI): void {
-  registerRuntimeVersion(pi, "classified-workflows", "2026.07.23.16");
+  registerRuntimeVersion(pi, "classified-workflows", "2026.07.23.17");
   let goalState: GoalState | undefined;
   let goalEvaluating = false;
   let goalRunTokens = 0;
@@ -494,6 +501,20 @@ export default function classifiedWorkflows(pi: ExtensionAPI): void {
   let nextWorkflowId = 1;
   let latestCtx: ExtensionContext | undefined;
   const backgroundWorkflows = new Map<string, BackgroundWorkflow>();
+
+  const classifyWithActivity = (
+    request: ClassificationRequest,
+    ctx: Pick<ExtensionContext, "cwd">,
+    signal?: AbortSignal,
+  ): Promise<Decision> => {
+    const subject = isRecord(request.subject)
+      ? String(request.subject.toolName ?? request.subject.task ?? "policy boundary").slice(0, 80)
+      : "policy boundary";
+    return classify(request, ctx, signal, (active) => {
+      const event: ClassifierActivityEvent = { active, boundary: request.boundary, subject };
+      pi.events.emit(ACTIVITY_PHASE_EVENT, event);
+    });
+  };
 
   const formatDuration = (startedAt: number, finishedAt = Date.now()): string => {
     const seconds = Math.max(0, Math.floor((finishedAt - startedAt) / 1_000));
@@ -568,7 +589,7 @@ export default function classifiedWorkflows(pi: ExtensionAPI): void {
 
     const childAudits: ChildAudit[] = [];
     const classifiedRunAgent = createClassifiedAgentRunner(intent, instructions, {
-      classify: (request, childSignal) => classify(request, ctx, childSignal),
+      classify: (request, childSignal) => classifyWithActivity(request, ctx, childSignal),
       execute: (request, childSignal) =>
         executeAgent(
           request,
@@ -1103,7 +1124,7 @@ export default function classifiedWorkflows(pi: ExtensionAPI): void {
       return;
     }
 
-    const decision = await classify(
+    const decision = await classifyWithActivity(
       {
         boundary: "action",
         intent: visibleIntent(pi, ctx, goalState?.status === "active" ? goalState.condition : undefined),
@@ -1122,7 +1143,7 @@ export default function classifiedWorkflows(pi: ExtensionAPI): void {
     if (deterministicResultAllowance.consume(event.toolCallId)) return;
     if (deterministicToolResultDecision(event.toolName)?.verdict === "allow") return;
 
-    const decision = await classify(
+    const decision = await classifyWithActivity(
       {
         boundary: "tool-result",
         intent: visibleIntent(pi, ctx, goalState?.status === "active" ? goalState.condition : undefined),
@@ -1291,7 +1312,7 @@ export default function classifiedWorkflows(pi: ExtensionAPI): void {
       const auditStartedAt = Date.now();
       const childAudits: ChildAudit[] = [];
       const classifiedRunAgent = createClassifiedAgentRunner(intent, instructions, {
-        classify: (request, childSignal) => classify(request, ctx, childSignal),
+        classify: (request, childSignal) => classifyWithActivity(request, ctx, childSignal),
         execute: (request, childSignal) =>
           executeAgent(
             request,

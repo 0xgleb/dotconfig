@@ -59,7 +59,20 @@ const registryError: (code: RegistryError["code"], message: string) => RegistryE
 const asRegistryError: (error: unknown, fallback: string) => RegistryError = (error, fallback) => {
   if (error instanceof RegistryError) return error;
   const message = error instanceof Error ? error.message : "";
-  return registryError(/busy|locked/i.test(message) ? "busy" : "io", fallback);
+  const code =
+    typeof error === "object" && error !== null && "code" in error && typeof error.code === "string"
+      ? error.code
+      : "";
+  const busy = /busy|locked/i.test(message) || /BUSY|LOCKED/i.test(code);
+  const knownCause = [
+    /database is (?:busy|locked)/i,
+    /disk I\/O error/i,
+    /database disk image is malformed/i,
+    /unable to open database file/i,
+    /readonly database/i,
+  ].find((pattern) => pattern.test(message));
+  const cause = knownCause ? message.match(knownCause)?.[0] : code && /^ERR_SQLITE_[A-Z_]+$/.test(code) ? code : undefined;
+  return registryError(busy ? "busy" : "io", cause ? `${fallback}: ${cause}` : fallback);
 };
 
 const hasUnsafeControlCharacters: (text: string) => boolean = (text) =>
@@ -286,11 +299,20 @@ const currentAdditiveSchemaInstalled = (database: DatabaseSync): boolean => {
 
 const initialize: (database: DatabaseSync, databasePath: string) => void = (database, databasePath) => {
   database.exec(`PRAGMA busy_timeout = ${BUSY_TIMEOUT_MS};`);
-  const observedVersion = schemaVersion(database);
-  if (observedVersion === SCHEMA_VERSION && currentAdditiveSchemaInstalled(database)) {
-    chmodSync(databasePath, 0o600);
-    return;
+  const journalMode = stringField(rowFrom(database.prepare("PRAGMA journal_mode").get()), "journal_mode");
+  if (journalMode.toLowerCase() !== "wal") {
+    try {
+      database.prepare("PRAGMA journal_mode = WAL").get();
+    } catch (error) {
+      const message = error instanceof Error ? error.message : "";
+      if (!/busy|locked/i.test(message)) throw error;
+      // A concurrent first opener may be installing WAL. This connection can
+      // safely continue under the observed mode; a later opener verifies WAL.
+    }
   }
+  database.exec("PRAGMA synchronous = NORMAL;");
+  const observedVersion = schemaVersion(database);
+  if (observedVersion === SCHEMA_VERSION && currentAdditiveSchemaInstalled(database)) return;
   if (observedVersion !== 0 && observedVersion !== 1 && observedVersion !== 2 && observedVersion !== 3) {
     throw registryError("corrupt_state", `unsupported agent registry schema version ${observedVersion}`);
   }

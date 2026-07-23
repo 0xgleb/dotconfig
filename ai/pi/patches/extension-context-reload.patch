@@ -15,6 +15,15 @@ diff --git a/dist/core/extensions/runner.js b/dist/core/extensions/runner.js
 diff --git a/dist/modes/interactive/interactive-mode.js b/dist/modes/interactive/interactive-mode.js
 --- a/dist/modes/interactive/interactive-mode.js
 +++ b/dist/modes/interactive/interactive-mode.js
+@@ -81,7 +81,7 @@ class ExpandableText extends Text {
+     }
+ }
+ function isCustomSessionEntry(item) {
+-    return "type" in item && item.type === "custom";
++    return typeof item === "object" && item !== null && "type" in item && item.type === "custom";
+ }
+ const DEAD_TERMINAL_ERROR_CODES = new Set(["EIO", "EPIPE", "ENOTCONN"]);
+ function isDeadTerminalError(error) {
 @@ -1245,7 +1245,7 @@ export class InteractiveMode {
                      return this.handleResumeSession(sessionPath, options);
                  },
@@ -24,7 +33,17 @@ diff --git a/dist/modes/interactive/interactive-mode.js b/dist/modes/interactive
                  },
              },
              shutdownHandler: () => {
-@@ -4375,13 +4375,19 @@ export class InteractiveMode {
+@@ -2653,6 +2653,9 @@ export class InteractiveMode {
+             this.updateEditorBorderColor();
+         }
+         for (const item of items) {
++            if (item === undefined || item === null) {
++                continue;
++            }
+             if (isCustomSessionEntry(item)) {
+                 this.addCustomEntryToChat(item);
+                 continue;
+@@ -4375,13 +4378,19 @@ export class InteractiveMode {
      // =========================================================================
      // Command handlers
      // =========================================================================
@@ -45,7 +64,7 @@ diff --git a/dist/modes/interactive/interactive-mode.js b/dist/modes/interactive
              return;
          }
          this.resetExtensionUI();
-@@ -4463,6 +4469,9 @@ export class InteractiveMode {
+@@ -4463,6 +4472,9 @@ export class InteractiveMode {
                  dismissReloadBox(previousEditor);
              }
              this.showError(`Reload failed: ${error instanceof Error ? error.message : String(error)}`);

@@ -164,6 +164,11 @@ through review.
   Delegate to the live role owner; if the role is unowned, claim it temporarily
   and handle it locally. A role never grants authority beyond constrained project
   tools, and an operational role is not done merely because its inbox is empty.
+  A registry read/sync failure means coordination is temporarily unavailable; it
+  does not revoke authorization already established by the user and project policy
+  or block unrelated Git delivery. Continue safely when no exclusive lease or
+  request transition is required. Never infer new authority from an unavailable
+  registry; block only the operation that actually requires registry ownership.
 - Never stop while assigned work remains executable. If a goal is active,
   continue until it is achieved. If any todo is pending, continue working through
   the task list. Stop only when all assigned work is complete or all remaining
@@ -187,7 +192,12 @@ through review.
   created Nix result symlinks and stale Pi temporary logs. In Pi, record newly
   created project `.tmp/` files/directories immediately with `artifact_provenance`
   so later exact cleanup has durable evidence. Never delete pre-existing project outputs, user files, global caches, Nix generations, or
-  run global garbage collection without explicit user authorization.
+  run global garbage collection without explicit user authorization. Exact
+  rebuildable build outputs are disposable by default, but project instructions
+  and verified repository configuration may protect artifacts consumed by a
+  runtime, watcher, supervisor, release, or deployment process. Inspect any
+  referenced configuration before cleanup and preserve a cleanup root containing
+  a configured live artifact unless disruption is explicitly requested.
 - Never inject keystrokes or text into the user's active Zellij pane or editor;
   it can overwrite an in-progress prompt. Use registered tools such as
   `reload_pi` instead, and keep Zellij automation confined to isolated workers.

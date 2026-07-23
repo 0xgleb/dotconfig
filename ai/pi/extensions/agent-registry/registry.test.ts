@@ -57,6 +57,19 @@ test("registry Effect runner preserves typed operational failures", async () => 
   await assert.rejects(runRegistryEffect(Effect.fail(failure)), (error) => error === failure);
 });
 
+test("registry uses WAL so fleet readers do not contend with ordinary writers", async () => {
+  await withStores(async (store, _second, root) => {
+    await Effect.runPromise(store.snapshot(0));
+    const database = new DatabaseSync(join(root, "registry.sqlite"));
+    try {
+      const row = database.prepare("PRAGMA journal_mode").get();
+      assert.equal(row?.journal_mode, "wal");
+    } finally {
+      database.close();
+    }
+  });
+});
+
 test("current schema reads do not acquire write locks during fleet heartbeats", async () => {
   await withStores(async (store, _second, root) => {
     await Effect.runPromise(store.snapshot(0));

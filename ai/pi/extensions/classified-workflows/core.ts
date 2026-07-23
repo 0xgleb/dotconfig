@@ -220,18 +220,6 @@ const isSafeCredentialExcludedGitDiff: (command: string) => boolean = (command) 
   return sensitiveWords.length > 0 && sensitiveWords.every(isCredentialExclusionPathspec);
 };
 
-const isExactSecondaryWorktreeTargetCleanup = (command: string, cwd: string): boolean => {
-  if (command.trim() !== "rm -rf -- target") return false;
-  const segments = path.resolve(cwd).split(path.sep);
-  const worktreesIndex = segments.indexOf(".worktrees");
-  return (
-    segments[1] === "Users" &&
-    segments[3] === "code" &&
-    worktreesIndex > 3 &&
-    worktreesIndex < segments.length - 1
-  );
-};
-
 const isVerifiedEmptyOrdinaryMakerBranchCleanup = (command: string): boolean =>
   command.trim() === "but branch delete fix/ordinary-maker-pause-cancellation --format agent";
 
@@ -315,19 +303,6 @@ export function deterministicDecision(request: ToolRequest): Decision | null {
       verdict: "allow",
       reason: "Local typed agent responsibility coordination",
       source: "deterministic",
-    };
-  }
-
-  if (
-    request.toolName === "bash" &&
-    typeof request.input.command === "string" &&
-    isExactSecondaryWorktreeTargetCleanup(request.input.command, request.cwd)
-  ) {
-    return {
-      verdict: "allow",
-      reason: "Exact rebuildable target cleanup in a secondary code worktree",
-      source: "deterministic",
-      resultSafe: true,
     };
   }
 

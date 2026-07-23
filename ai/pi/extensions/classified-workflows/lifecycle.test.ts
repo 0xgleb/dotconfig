@@ -453,6 +453,22 @@ test("classifier prompt permits evidence-backed single-label normalization under
   assert.match(prompt, /must not add multiple labels as a hedge/i);
 });
 
+test("classifier prompt protects consumed build artifacts through project context rather than repo names", () => {
+  const prompt = buildClassifierPrompt({
+    boundary: "action",
+    intent: ["Clean rebuildable build outputs to recover disk"],
+    projectInstructions: "Inspect mprocs.yaml before cleanup; it watches the release bot binary and restarts when it changes.",
+    evidence: ["mprocs.yaml maps the running bot to target/release/yielduck"],
+    subject: { toolName: "bash", input: { command: "rm -rf -- target" } },
+  });
+
+  assert.match(prompt, /build-output directory such as target is ordinary rebuildable-artifact cleanup by default/i);
+  assert.match(prompt, /project instructions and verified repository configuration override that default contextually/i);
+  assert.match(prompt, /require recent evidence that the referenced configuration was inspected/i);
+  assert.match(prompt, /configured consumed or watched artifact is inside the proposed cleanup root, block deletion/i);
+  assert.match(prompt, /Do not hardcode repository names/i);
+});
+
 test("classifier prompt requires state changes to be necessary for visible intent", () => {
   const prompt = buildClassifierPrompt({
     boundary: "action",
