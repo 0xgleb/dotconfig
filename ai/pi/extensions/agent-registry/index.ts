@@ -32,6 +32,7 @@ const SYNC_MS = 5_000;
 const LEASE_TTL_MS = 90_000;
 const STATUS_KEY = "agent-registry";
 const MESSAGE_TYPE = "agent-registry.message";
+const NOTIFIED_REQUESTS_ENTRY = "agent-registry.notified-requests";
 
 interface RegistryToolRequest {
   readonly action:
@@ -100,6 +101,24 @@ const registryExtension: (pi: ExtensionAPI) => void = (pi) => {
   let lastSyncError: string | undefined;
   const notifiedRequests = new Set<string>();
 
+  const restoreNotifiedRequests = (ctx: ExtensionContext) => {
+    notifiedRequests.clear();
+    const entry = ctx.sessionManager
+      .getBranch()
+      .filter((candidate) => candidate.type === "custom" && candidate.customType === NOTIFIED_REQUESTS_ENTRY)
+      .at(-1);
+    if (entry?.type !== "custom" || typeof entry.data !== "object" || entry.data === null || !("ids" in entry.data)) return;
+    const ids = entry.data.ids;
+    if (!Array.isArray(ids) || ids.length > 512) return;
+    for (const id of ids) {
+      if (typeof id === "string" && /^[0-9a-f-]{36}$/.test(id)) notifiedRequests.add(id);
+    }
+  };
+
+  const persistNotifiedRequests = () => {
+    pi.appendEntry(NOTIFIED_REQUESTS_ENTRY, { ids: [...notifiedRequests].slice(-512).sort() });
+  };
+
   const run = <T>(operation: Effect.Effect<T, RegistryError>): Promise<T> => runRegistryEffect(operation);
 
   const currentPolicyDigest = (ctx: ExtensionContext): string => sessionPolicyDigest ?? policyDigest(ctx);
@@ -126,6 +145,7 @@ const registryExtension: (pi: ExtensionAPI) => void = (pi) => {
         : { triggerTurn: true, deliverAs: "followUp" },
     );
     notifiedRequests.add(request.id);
+    persistNotifiedRequests();
   };
 
   const sync = async (ctx: ExtensionContext, notificationsEnabled = true) => {
@@ -255,6 +275,7 @@ const registryExtension: (pi: ExtensionAPI) => void = (pi) => {
 
   pi.on("session_start", async (_event, ctx) => {
     if (timer) clearInterval(timer);
+    restoreNotifiedRequests(ctx);
     sessionPolicyDigest = policyDigest(ctx);
     await autoClaimOperationalRole(ctx).catch((error) => {
       ctx.ui.notify(`Could not claim managed operational role: ${safeErrorMessage(error)}`, "warning");
@@ -263,6 +284,8 @@ const registryExtension: (pi: ExtensionAPI) => void = (pi) => {
     timer = setInterval(() => void sync(ctx), SYNC_MS);
     timer.unref?.();
   });
+
+  pi.on("session_compact", () => persistNotifiedRequests());
 
   pi.on("agent_settled", async (_event, ctx) => {
     await sync(ctx);
@@ -449,6 +472,7 @@ const registryExtension: (pi: ExtensionAPI) => void = (pi) => {
               store.claimRequest({ requestId: queued.id, leaseId: lease.id, agentId: agent.id, now }),
             );
             notifiedRequests.add(queued.id);
+            persistNotifiedRequests();
           }
           snapshot = await run(store.snapshot(now));
           render(ctx, snapshot);
@@ -487,6 +511,7 @@ const registryExtension: (pi: ExtensionAPI) => void = (pi) => {
         if (request.action === "claim_request") {
           const claimed = await run(store.claimRequest({ requestId, leaseId: lease.id, agentId: agent.id, now }));
           notifiedRequests.add(requestId);
+          persistNotifiedRequests();
           return { content: [{ type: "text", text: `Claimed request ${requestId}` }], details: { outcome: "claimed", request: claimed } };
         }
         if (request.action === "complete_request") {
