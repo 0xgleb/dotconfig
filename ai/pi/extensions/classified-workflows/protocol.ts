@@ -29,6 +29,21 @@ function nonNegativeNumber(value: unknown): number {
   return typeof value === "number" && Number.isFinite(value) && value > 0 ? value : 0;
 }
 
+export const usageTokensFromPiJsonLine = (line: string): number => {
+  let parsed: unknown;
+  try {
+    parsed = JSON.parse(line);
+  } catch {
+    return 0;
+  }
+  if (!isRecord(parsed) || parsed.type !== "message_end" || !isRecord(parsed.message)) return 0;
+  const message = parsed.message;
+  if (message.role !== "assistant") return 0;
+  const usage = isRecord(message.usage) ? message.usage : {};
+  const totalTokens = nonNegativeNumber(usage.totalTokens);
+  return totalTokens > 0 ? totalTokens : nonNegativeNumber(usage.input) + nonNegativeNumber(usage.output);
+};
+
 export function summarizePiJsonLines(lines: string[]): PiProcessSummary {
   let output = "";
   let usageTokens = 0;

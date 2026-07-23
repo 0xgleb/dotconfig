@@ -21,7 +21,7 @@ const limits: WorkflowLimits = {
   agentTimeoutMs: 1_000,
   workflowTimeoutMs: 5_000,
   retries: 0,
-  tokenBudget: 10_000,
+  tokenBudget: 20_000,
 };
 
 const dependencies = (runAgent: WorkflowDependencies["runAgent"]): WorkflowDependencies => ({
@@ -701,7 +701,25 @@ test("exhausted thrown timeouts become typed results and preserve parallel sibli
   ]);
 });
 
-test("in-flight fan-out preserves completed results when measured usage crosses the aggregate budget", async () => {
+test("workflow partitions the declared total budget across configured agents", async () => {
+  const tokenLimits: number[] = [];
+  await runWorkflowScript(
+    `return await parallel([agent("one"), agent("two")]);`,
+    { ...limits, maxAgents: 2, concurrency: 2, tokenBudget: 30_000 },
+    {
+      async runAgent(request, _signal, tokenLimit): Promise<AgentResult> {
+        tokenLimits.push(tokenLimit);
+        return { status: "completed", output: request.task, usageTokens: 100 };
+      },
+      async checkpoint(): Promise<"approved"> {
+        return "approved";
+      },
+    },
+  );
+  assert.deepEqual(tokenLimits, [15_000, 15_000]);
+});
+
+test("in-flight fan-out reports each child that exceeds its strict budget share", async () => {
   const result = await runWorkflowScript(
     `return await parallel([agent("one"), agent("two")]);`,
     { ...limits, maxAgents: 2, concurrency: 2, tokenBudget: 10_000 },
@@ -715,8 +733,8 @@ test("in-flight fan-out preserves completed results when measured usage crosses 
     },
   );
   assert.deepEqual(result, [
-    { status: "completed", output: "one", usageTokens: 6_000 },
-    { status: "completed", output: "two", usageTokens: 6_000 },
+    { status: "failed", output: "", reason: "Agent exceeded token limit (6000/5000)", usageTokens: 6_000 },
+    { status: "failed", output: "", reason: "Agent exceeded token limit (6000/5000)", usageTokens: 6_000 },
   ]);
 });
 

@@ -66,7 +66,12 @@ import {
   type LoopCommand,
   type LoopState,
 } from "./loop.ts";
-import { boundedDiagnosticTail, sanitizeProcessDiagnostic, summarizePiJsonLines } from "./protocol.ts";
+import {
+  boundedDiagnosticTail,
+  sanitizeProcessDiagnostic,
+  summarizePiJsonLines,
+  usageTokensFromPiJsonLine,
+} from "./protocol.ts";
 import { activeSkillProcedures } from "./skill-context.ts";
 import { trustedCoordinationIntent } from "./coordination-intent.ts";
 import {
@@ -121,6 +126,7 @@ interface PiProcessResult {
   usageTokens: number;
   stopReason?: string;
   errorMessage?: string;
+  budgetExceeded?: boolean;
 }
 
 type BackgroundWorkflowStatus = "running" | "completed" | "failed" | "cancelled";
@@ -149,13 +155,21 @@ function piInvocation(args: string[]): { command: string; args: string[] } {
   return { command: "pi", args };
 }
 
-async function runPi(args: string[], cwd: string, signal?: AbortSignal): Promise<PiProcessResult> {
+async function runPi(
+  args: string[],
+  cwd: string,
+  signal?: AbortSignal,
+  tokenLimit?: number,
+): Promise<PiProcessResult> {
   return new Promise((resolve) => {
     const invocation = piInvocation(args);
     const child = spawn(invocation.command, invocation.args, { cwd, shell: false, stdio: AGENT_PROCESS_STDIO });
     let stdout = "";
     let stderr = "";
     let spawnError: string | undefined;
+    let streamingLine = "";
+    let observedUsageTokens = 0;
+    let budgetExceeded = false;
     let settled = false;
     let killTimer: ReturnType<typeof setTimeout> | undefined;
 
@@ -169,15 +183,32 @@ async function runPi(args: string[], cwd: string, signal?: AbortSignal): Promise
       settled = true;
       if (killTimer) clearTimeout(killTimer);
       signal?.removeEventListener("abort", abort);
+      if (streamingLine) observedUsageTokens += usageTokensFromPiJsonLine(streamingLine);
+      if (tokenLimit !== undefined && observedUsageTokens > tokenLimit) budgetExceeded = true;
       const summary = summarizePiJsonLines(stdout.split("\n"));
       const diagnostic = sanitizeProcessDiagnostic(stderr);
-      const errorMessage =
-        summary.errorMessage ?? spawnError ?? (exitCode !== 0 && diagnostic ? `Child stderr: ${diagnostic}` : undefined);
-      resolve({ exitCode, ...summary, ...(errorMessage ? { errorMessage } : {}) });
+      const errorMessage = budgetExceeded
+        ? `Child exceeded token limit (${observedUsageTokens}/${tokenLimit})`
+        : summary.errorMessage ?? spawnError ?? (exitCode !== 0 && diagnostic ? `Child stderr: ${diagnostic}` : undefined);
+      resolve({
+        exitCode,
+        ...summary,
+        ...(errorMessage ? { errorMessage } : {}),
+        ...(budgetExceeded ? { budgetExceeded: true } : {}),
+      });
     };
 
     child.stdout.on("data", (chunk) => {
-      stdout += chunk.toString();
+      const text = chunk.toString();
+      stdout += text;
+      streamingLine += text;
+      const lines = streamingLine.split("\n");
+      streamingLine = lines.pop() ?? "";
+      for (const line of lines) observedUsageTokens += usageTokensFromPiJsonLine(line);
+      if (tokenLimit !== undefined && observedUsageTokens > tokenLimit && !budgetExceeded) {
+        budgetExceeded = true;
+        abort();
+      }
     });
     child.stderr.on("data", (chunk) => {
       stderr = boundedDiagnosticTail(stderr, chunk.toString(), MAX_CHILD_STDERR_CHARACTERS);
@@ -422,6 +453,7 @@ async function executeAgent(
   parentProvider: string | undefined,
   availableModels: readonly AvailableAgentModel[],
   signal?: AbortSignal,
+  tokenLimit?: number,
 ): Promise<AgentResult> {
   const model = resolveAgentModel(request.model, parentProvider, availableModels);
   const qualifiedRequest = model && model !== request.model ? { ...request, model } : request;
@@ -429,11 +461,12 @@ async function executeAgent(
     buildAgentArguments(qualifiedRequest, CLASSIFIED_WORKFLOWS_EXTENSION),
     request.cwd ?? defaultCwd,
     signal,
+    tokenLimit,
   );
   if (signal?.aborted) {
     return { status: "timed-out", output: "", reason: "Agent timed out", usageTokens: result.usageTokens };
   }
-  if (result.exitCode !== 0 || result.stopReason === "error" || result.stopReason === "aborted") {
+  if (result.budgetExceeded || result.exitCode !== 0 || result.stopReason === "error" || result.stopReason === "aborted") {
     return {
       status: "failed",
       output: "",
@@ -486,7 +519,7 @@ const WorkflowParameters = Type.Object({
 });
 
 export default function classifiedWorkflows(pi: ExtensionAPI): void {
-  registerRuntimeVersion(pi, "classified-workflows", "2026.07.23.28");
+  registerRuntimeVersion(pi, "classified-workflows", "2026.07.23.29");
   let goalState: GoalState | undefined;
   let goalEvaluating = false;
   let goalRunTokens = 0;
@@ -590,13 +623,14 @@ export default function classifiedWorkflows(pi: ExtensionAPI): void {
     const childAudits: ChildAudit[] = [];
     const classifiedRunAgent = createClassifiedAgentRunner(intent, instructions, {
       classify: (request, childSignal) => classifyWithActivity(request, ctx, childSignal),
-      execute: (request, childSignal) =>
+      execute: (request, childSignal, tokenLimit) =>
         executeAgent(
           request,
           ctx.cwd,
           ctx.model?.provider,
           ctx.modelRegistry.getAvailable(),
           childSignal,
+          tokenLimit,
         ),
     }, skillProcedures);
     const runAgent = auditedAgentRunner(classifiedRunAgent, childAudits, sanitizeProcessDiagnostic);
@@ -1313,13 +1347,14 @@ export default function classifiedWorkflows(pi: ExtensionAPI): void {
       const childAudits: ChildAudit[] = [];
       const classifiedRunAgent = createClassifiedAgentRunner(intent, instructions, {
         classify: (request, childSignal) => classifyWithActivity(request, ctx, childSignal),
-        execute: (request, childSignal) =>
+        execute: (request, childSignal, tokenLimit) =>
           executeAgent(
             request,
             ctx.cwd,
             ctx.model?.provider,
             ctx.modelRegistry.getAvailable(),
             childSignal,
+            tokenLimit,
           ),
       }, skillProcedures);
       const runAgent = auditedAgentRunner(classifiedRunAgent, childAudits, sanitizeProcessDiagnostic);

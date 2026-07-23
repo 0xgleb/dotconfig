@@ -102,16 +102,16 @@ export const restoreWorkflowAudits = (entries: readonly unknown[]): WorkflowAudi
 };
 
 export const auditedAgentRunner = (
-  runAgent: (request: AgentRequest, signal: AbortSignal) => Promise<AgentResult>,
+  runAgent: (request: AgentRequest, signal: AbortSignal, tokenLimit?: number) => Promise<AgentResult>,
   audits: ChildAudit[],
   sanitize: (text: string) => string,
-): ((request: AgentRequest, signal: AbortSignal) => Promise<AgentResult>) => {
+): ((request: AgentRequest, signal: AbortSignal, tokenLimit: number) => Promise<AgentResult>) => {
   let nextIndex = 1;
-  return async (request, signal) => {
+  return async (request, signal, tokenLimit) => {
     const index = nextIndex++;
     const startedAt = Date.now();
     try {
-      const result = await runAgent(request, signal);
+      const result = await runAgent(request, signal, tokenLimit);
       audits.push({
         index,
         ...(request.model ? { requestedModel: request.model } : {}),

@@ -45,7 +45,7 @@ export interface WorkflowLimits {
 }
 
 export interface WorkflowDependencies {
-  runAgent(request: AgentRequest, signal: AbortSignal): Promise<AgentResult>;
+  runAgent(request: AgentRequest, signal: AbortSignal, tokenLimit: number): Promise<AgentResult>;
   checkpoint(message: string): Promise<"approved" | "denied">;
 }
 
@@ -506,6 +506,7 @@ export async function runWorkflowScript(
   let agentCount = 0;
   let usedTokens = 0;
   let reservedTokens = 0;
+  const perAgentTokenLimit = Math.floor(limits.tokenBudget / limits.maxAgents);
   let activeAgents = 0;
   const waiters: Array<() => void> = [];
 
@@ -523,7 +524,7 @@ export async function runWorkflowScript(
     waiters.shift()?.();
   };
 
-  const runOnce = async (request: AgentRequest): Promise<AgentResult> => {
+  const runOnce = async (request: AgentRequest, tokenLimit: number): Promise<AgentResult> => {
     await acquire();
     const controller = new AbortController();
     const abortAgent = () => controller.abort(workflowController.signal.reason);
@@ -535,7 +536,7 @@ export async function runWorkflowScript(
       else controller.signal.addEventListener("abort", rejectAbort, { once: true });
     });
     try {
-      return await Promise.race([dependencies.runAgent(request, controller.signal), aborted]);
+      return await Promise.race([dependencies.runAgent(request, controller.signal, tokenLimit), aborted]);
     } finally {
       clearTimeout(timer);
       workflowController.signal.removeEventListener("abort", abortAgent);
@@ -563,13 +564,13 @@ export async function runWorkflowScript(
     }
     if (agentCount >= limits.maxAgents) throw new Error(`Workflow agent limit exceeded (${limits.maxAgents})`);
     const availableTokens = limits.tokenBudget - usedTokens - reservedTokens;
-    if (availableTokens < MIN_AGENT_TOKEN_RESERVATION) {
+    if (availableTokens < perAgentTokenLimit) {
       throw new Error(
-        `Workflow token budget cannot start another agent: ${Math.max(0, availableTokens)} tokens remain; minimum reservation is ${MIN_AGENT_TOKEN_RESERVATION}`,
+        `Workflow token budget cannot start another agent: ${Math.max(0, availableTokens)} tokens remain; per-agent limit is ${perAgentTokenLimit}`,
       );
     }
     agentCount += 1;
-    reservedTokens += MIN_AGENT_TOKEN_RESERVATION;
+    reservedTokens += perAgentTokenLimit;
 
     let result: AgentResult | undefined;
     let agentUsageTokens = 0;
@@ -577,7 +578,17 @@ export async function runWorkflowScript(
       for (let attempt = 0; attempt <= limits.retries; attempt += 1) {
         if (workflowController.signal.aborted) throw new Error("Workflow aborted");
         try {
-          result = await runOnce(request);
+          const remainingAgentTokens = Math.max(0, perAgentTokenLimit - agentUsageTokens);
+          if (remainingAgentTokens < MIN_AGENT_TOKEN_RESERVATION) {
+            result = {
+              status: "failed",
+              output: "",
+              reason: `Agent token budget exhausted (${agentUsageTokens}/${perAgentTokenLimit})`,
+              usageTokens: 0,
+            };
+            break;
+          }
+          result = await runOnce(request, remainingAgentTokens);
           agentUsageTokens += Math.max(0, result.usageTokens);
           if (result.status === "completed" || result.status === "blocked") break;
           if (attempt < limits.retries) {
@@ -599,16 +610,19 @@ export async function runWorkflowScript(
         }
       }
     } finally {
-      reservedTokens -= MIN_AGENT_TOKEN_RESERVATION;
+      reservedTokens -= perAgentTokenLimit;
     }
 
     if (!result) throw new Error("Agent produced no result");
-    // Child usage is known only after Pi exits, so an already-running wave can
-    // overrun the aggregate estimate. Preserve those completed results and use
-    // the updated total to prevent any later spawn instead of discarding useful
-    // fan-out after the tokens have already been spent.
     usedTokens += agentUsageTokens;
-    const measuredResult = { ...result, usageTokens: agentUsageTokens };
+    const measuredResult: AgentResult = agentUsageTokens > perAgentTokenLimit
+      ? {
+          status: "failed",
+          output: "",
+          reason: `Agent exceeded token limit (${agentUsageTokens}/${perAgentTokenLimit})`,
+          usageTokens: agentUsageTokens,
+        }
+      : { ...result, usageTokens: agentUsageTokens };
     if (request.schema === undefined) return measuredResult;
     if (measuredResult.status !== "completed") {
       throw new Error(`structured agent ${measuredResult.status}: ${measuredResult.reason ?? "no result"}`);
@@ -701,6 +715,12 @@ function validateLimits(limits: WorkflowLimits): void {
   }
   if (!Number.isInteger(limits.retries) || limits.retries < 0) throw new Error("Workflow retries must be a non-negative integer");
   if (limits.concurrency > limits.maxAgents) throw new Error("Workflow concurrency cannot exceed the agent limit");
+  const perAgentTokenLimit = Math.floor(limits.tokenBudget / limits.maxAgents);
+  if (perAgentTokenLimit < MIN_AGENT_TOKEN_RESERVATION) {
+    throw new Error(
+      `Workflow token budget minimum reservation is ${MIN_AGENT_TOKEN_RESERVATION} tokens per configured agent; ${perAgentTokenLimit} available`,
+    );
+  }
   const retryEnvelopeMs = minimumRetryEnvelopeMs(limits.agentTimeoutMs, limits.retries);
   if (limits.workflowTimeoutMs < retryEnvelopeMs) {
     throw new Error(

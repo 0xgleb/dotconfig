@@ -11,10 +11,14 @@ export interface ClassificationRequest {
 
 export interface LifecycleDependencies {
   classify(request: ClassificationRequest, signal?: AbortSignal): Promise<Decision>;
-  execute(request: AgentRequest, signal?: AbortSignal): Promise<AgentResult>;
+  execute(request: AgentRequest, signal: AbortSignal | undefined, tokenLimit: number): Promise<AgentResult>;
 }
 
-export type ClassifiedAgentRunner = (request: AgentRequest, signal?: AbortSignal) => Promise<AgentResult>;
+export type ClassifiedAgentRunner = (
+  request: AgentRequest,
+  signal: AbortSignal | undefined,
+  tokenLimit?: number,
+) => Promise<AgentResult>;
 
 export interface BlockedAction {
   block: true;
@@ -53,7 +57,7 @@ export function createClassifiedAgentRunner(
   dependencies: LifecycleDependencies,
   skillProcedures: string[] = [],
 ): ClassifiedAgentRunner {
-  return async (request, signal) => {
+  return async (request, signal, tokenLimit = Number.MAX_SAFE_INTEGER) => {
     const spawnDecision = await dependencies.classify(
       { boundary: "spawn", intent, projectInstructions, skillProcedures, subject: request },
       signal,
@@ -62,7 +66,7 @@ export function createClassifiedAgentRunner(
       return { status: "blocked", output: "", reason: formatDecisionReason(spawnDecision), usageTokens: 0 };
     }
 
-    const result = await dependencies.execute(request, signal);
+    const result = await dependencies.execute(request, signal, tokenLimit);
     const returnDecision = await dependencies.classify(
       {
         boundary: "return",

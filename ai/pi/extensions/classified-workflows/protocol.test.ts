@@ -1,6 +1,11 @@
 import assert from "node:assert/strict";
 import test from "node:test";
-import { boundedDiagnosticTail, sanitizeProcessDiagnostic, summarizePiJsonLines } from "./protocol.ts";
+import {
+  boundedDiagnosticTail,
+  sanitizeProcessDiagnostic,
+  summarizePiJsonLines,
+  usageTokensFromPiJsonLine,
+} from "./protocol.ts";
 
 test("JSON event summaries use the last assistant text and aggregate usage", () => {
   const summary = summarizePiJsonLines([
@@ -34,6 +39,24 @@ test("JSON event summaries use the last assistant text and aggregate usage", () 
     stopReason: "stop",
     errorMessage: undefined,
   });
+});
+
+test("streaming usage reads only completed assistant turns", () => {
+  assert.equal(
+    usageTokensFromPiJsonLine(JSON.stringify({
+      type: "message_end",
+      message: { role: "assistant", usage: { input: 11, output: 7, totalTokens: 23 } },
+    })),
+    23,
+  );
+  assert.equal(
+    usageTokensFromPiJsonLine(JSON.stringify({
+      type: "message_end",
+      message: { role: "toolResult", usage: { totalTokens: 999 } },
+    })),
+    0,
+  );
+  assert.equal(usageTokensFromPiJsonLine("not json"), 0);
 });
 
 test("stderr diagnostics retain only a bounded tail", () => {
