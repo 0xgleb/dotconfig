@@ -54,7 +54,7 @@ export const MIN_CLASSIFIED_AGENT_TIMEOUT_MS = 180_000;
 const RETRY_BACKOFF_BASE_MS = 500;
 const RETRY_BACKOFF_MAX_MS = 5_000;
 
-const READ_ONLY_TOOLS = new Set(["read", "grep", "find", "ls"]);
+const READ_ONLY_TOOLS = new Set(["read", "grep", "find", "ls", "workflow_audit"]);
 const WRITE_TOOLS = new Set(["edit", "write"]);
 const TODO_ACTIONS = new Set(["list", "add", "toggle", "block", "unblock", "clear"]);
 const QUESTION_ACTIONS = new Set(["list", "ask", "resolve", "clear_resolved"]);
@@ -67,7 +67,7 @@ const REGISTRY_ACTIONS = new Set([
   "claim_request",
   "cancel_request",
 ]);
-const LOCALLY_GENERATED_RESULT_TOOLS = new Set(["edit", "write", "todo", "ask_user", "artifact_provenance", "reload_pi"]);
+const LOCALLY_GENERATED_RESULT_TOOLS = new Set(["edit", "write", "todo", "ask_user", "artifact_provenance", "reload_pi", "workflow_audit"]);
 const PATH_KEYS = new Set(["path", "file_path", "cwd", "glob"]);
 const SENSITIVE_PATH =
   /(^|[\\/\s'"])(?:\.env(?!\.example(?:$|[\\/\s'"]))(?:\.[^\\/\s'"]*)?[*?]*|credentials\.json|secrets\.(?:json|ya?ml)|auth\.json|\.npmrc|\.netrc|\.pypirc|id_(?:rsa|dsa|ecdsa|ed25519)(?:\.pub)?|[^\\/\s'"]+\.(?:key|pem|p12|pfx))($|[\\/\s'"])/i;

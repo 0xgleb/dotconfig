@@ -1,0 +1,142 @@
+import type { AgentRequest, AgentResult, WorkflowLimits } from "./core.ts";
+
+export const WORKFLOW_AUDIT_ENTRY = "classified-workflows.audit";
+
+export interface ChildAudit {
+  readonly index: number;
+  readonly requestedModel?: string;
+  readonly tools: readonly string[];
+  readonly startedAt: number;
+  readonly finishedAt: number;
+  readonly status: AgentResult["status"];
+  readonly usageTokens: number;
+  readonly outputCharacters: number;
+  readonly reason?: string;
+}
+
+export interface WorkflowAudit {
+  readonly id: string;
+  readonly label: string;
+  readonly status: "completed" | "failed" | "cancelled";
+  readonly startedAt: number;
+  readonly finishedAt: number;
+  readonly limits: WorkflowLimits;
+  readonly children: readonly ChildAudit[];
+  readonly outcome?: string;
+}
+
+export interface WorkflowAuditState {
+  readonly workflows: readonly WorkflowAudit[];
+}
+
+export const emptyWorkflowAuditState: WorkflowAuditState = { workflows: [] };
+
+const isRecord = (value: unknown): value is Record<string, unknown> =>
+  typeof value === "object" && value !== null && !Array.isArray(value);
+
+export const appendWorkflowAudit = (state: WorkflowAuditState, audit: WorkflowAudit): WorkflowAuditState => ({
+  workflows: [...state.workflows.filter(({ id }) => id !== audit.id), audit].slice(-50),
+});
+
+const finiteInteger = (value: unknown): value is number => Number.isSafeInteger(value) && Number(value) >= 0;
+
+const decodeChildAudit = (value: unknown): ChildAudit | undefined => {
+  if (!isRecord(value) || !finiteInteger(value.index) || !finiteInteger(value.startedAt) || !finiteInteger(value.finishedAt)) return undefined;
+  if (!Array.isArray(value.tools) || !value.tools.every((tool) => typeof tool === "string")) return undefined;
+  if (!finiteInteger(value.usageTokens) || !finiteInteger(value.outputCharacters)) return undefined;
+  if (value.status !== "completed" && value.status !== "blocked" && value.status !== "failed" && value.status !== "timed-out") return undefined;
+  if (value.requestedModel !== undefined && typeof value.requestedModel !== "string") return undefined;
+  if (value.reason !== undefined && typeof value.reason !== "string") return undefined;
+  return {
+    index: value.index,
+    ...(value.requestedModel ? { requestedModel: value.requestedModel } : {}),
+    tools: value.tools,
+    startedAt: value.startedAt,
+    finishedAt: value.finishedAt,
+    status: value.status,
+    usageTokens: value.usageTokens,
+    outputCharacters: value.outputCharacters,
+    ...(value.reason ? { reason: value.reason } : {}),
+  };
+};
+
+const decodeWorkflowAudit = (value: unknown): WorkflowAudit | undefined => {
+  if (!isRecord(value) || typeof value.id !== "string" || typeof value.label !== "string") return undefined;
+  if (value.status !== "completed" && value.status !== "failed" && value.status !== "cancelled") return undefined;
+  if (!finiteInteger(value.startedAt) || !finiteInteger(value.finishedAt) || !isRecord(value.limits)) return undefined;
+  const limits = value.limits;
+  if (![limits.maxAgents, limits.concurrency, limits.agentTimeoutMs, limits.workflowTimeoutMs, limits.retries, limits.tokenBudget].every(finiteInteger)) return undefined;
+  if (!Array.isArray(value.children) || value.children.length > 256) return undefined;
+  const children = value.children.map(decodeChildAudit);
+  if (children.some((child) => child === undefined)) return undefined;
+  if (value.outcome !== undefined && typeof value.outcome !== "string") return undefined;
+  return {
+    id: value.id,
+    label: value.label,
+    status: value.status,
+    startedAt: value.startedAt,
+    finishedAt: value.finishedAt,
+    limits: {
+      maxAgents: limits.maxAgents,
+      concurrency: limits.concurrency,
+      agentTimeoutMs: limits.agentTimeoutMs,
+      workflowTimeoutMs: limits.workflowTimeoutMs,
+      retries: limits.retries,
+      tokenBudget: limits.tokenBudget,
+    },
+    children: children.filter((child): child is ChildAudit => child !== undefined),
+    ...(value.outcome ? { outcome: value.outcome } : {}),
+  };
+};
+
+export const restoreWorkflowAudits = (entries: readonly unknown[]): WorkflowAuditState => {
+  for (let index = entries.length - 1; index >= 0; index -= 1) {
+    const entry = entries[index];
+    if (!isRecord(entry) || entry.type !== "custom" || entry.customType !== WORKFLOW_AUDIT_ENTRY || !isRecord(entry.data)) continue;
+    if (!Array.isArray(entry.data.workflows) || entry.data.workflows.length > 50) continue;
+    const workflows = entry.data.workflows.map(decodeWorkflowAudit);
+    if (workflows.some((workflow) => workflow === undefined)) continue;
+    return { workflows: workflows.filter((workflow): workflow is WorkflowAudit => workflow !== undefined) };
+  }
+  return emptyWorkflowAuditState;
+};
+
+export const auditedAgentRunner = (
+  runAgent: (request: AgentRequest, signal: AbortSignal) => Promise<AgentResult>,
+  audits: ChildAudit[],
+  sanitize: (text: string) => string,
+): ((request: AgentRequest, signal: AbortSignal) => Promise<AgentResult>) => {
+  let nextIndex = 1;
+  return async (request, signal) => {
+    const index = nextIndex++;
+    const startedAt = Date.now();
+    try {
+      const result = await runAgent(request, signal);
+      audits.push({
+        index,
+        ...(request.model ? { requestedModel: request.model } : {}),
+        tools: request.tools ?? ["read", "grep", "find", "ls"],
+        startedAt,
+        finishedAt: Date.now(),
+        status: result.status,
+        usageTokens: result.usageTokens,
+        outputCharacters: result.output.length,
+        ...(result.status === "completed" ? {} : { reason: sanitize(result.reason).slice(0, 1_000) }),
+      });
+      return result;
+    } catch (error) {
+      audits.push({
+        index,
+        ...(request.model ? { requestedModel: request.model } : {}),
+        tools: request.tools ?? ["read", "grep", "find", "ls"],
+        startedAt,
+        finishedAt: Date.now(),
+        status: "failed",
+        usageTokens: 0,
+        outputCharacters: 0,
+        reason: sanitize(error instanceof Error ? error.message : "Agent failed").slice(0, 1_000),
+      });
+      throw error;
+    }
+  };
+};

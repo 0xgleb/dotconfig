@@ -69,6 +69,15 @@ import { boundedDiagnosticTail, sanitizeProcessDiagnostic, summarizePiJsonLines 
 import { activeSkillProcedures } from "./skill-context.ts";
 import { trustedCoordinationIntent } from "./coordination-intent.ts";
 import {
+  appendWorkflowAudit,
+  auditedAgentRunner,
+  emptyWorkflowAuditState,
+  restoreWorkflowAudits,
+  WORKFLOW_AUDIT_ENTRY,
+  type ChildAudit,
+  type WorkflowAuditState,
+} from "./workflow-audit.ts";
+import {
   activeWorkflowLines,
   backgroundWorkflowStartedText,
   workflowHistoryText,
@@ -469,7 +478,7 @@ const WorkflowParameters = Type.Object({
 });
 
 export default function classifiedWorkflows(pi: ExtensionAPI): void {
-  registerRuntimeVersion(pi, "classified-workflows", "2026.07.23.6");
+  registerRuntimeVersion(pi, "classified-workflows", "2026.07.23.7");
   let goalState: GoalState | undefined;
   let goalEvaluating = false;
   let goalRunTokens = 0;
@@ -478,6 +487,7 @@ export default function classifiedWorkflows(pi: ExtensionAPI): void {
   let continuationPaused = false;
   let manualReloadPending = false;
   let artifactProvenance: ArtifactProvenanceState = emptyArtifactProvenanceState;
+  let workflowAudits: WorkflowAuditState = emptyWorkflowAuditState;
   const runtimeStartedAt = Date.now();
   const deterministicResultAllowance = createToolResultAllowance();
   let nextWorkflowId = 1;
@@ -523,6 +533,11 @@ export default function classifiedWorkflows(pi: ExtensionAPI): void {
   const workflowOutput = (result: unknown): string =>
     typeof result === "string" ? result : JSON.stringify(result, null, 2);
 
+  const persistWorkflowAudit = (audit: Parameters<typeof appendWorkflowAudit>[1]): void => {
+    workflowAudits = appendWorkflowAudit(workflowAudits, audit);
+    pi.appendEntry(WORKFLOW_AUDIT_ENTRY, workflowAudits);
+  };
+
   const startBackgroundWorkflow = (
     params: WorkflowToolParams,
     ctx: ExtensionContext,
@@ -550,7 +565,8 @@ export default function classifiedWorkflows(pi: ExtensionAPI): void {
     backgroundWorkflows.set(id, workflow);
     renderWorkflowPanel(ctx);
 
-    const runAgent = createClassifiedAgentRunner(intent, instructions, {
+    const childAudits: ChildAudit[] = [];
+    const classifiedRunAgent = createClassifiedAgentRunner(intent, instructions, {
       classify: (request, childSignal) => classify(request, ctx, childSignal),
       execute: (request, childSignal) =>
         executeAgent(
@@ -561,6 +577,7 @@ export default function classifiedWorkflows(pi: ExtensionAPI): void {
           childSignal,
         ),
     }, skillProcedures);
+    const runAgent = auditedAgentRunner(classifiedRunAgent, childAudits, sanitizeProcessDiagnostic);
 
     void runWorkflowScript(
       params.code,
@@ -575,7 +592,18 @@ export default function classifiedWorkflows(pi: ExtensionAPI): void {
     )
       .then((result) => {
         workflow.status = "completed";
+        workflow.finishedAt = Date.now();
         workflow.output = workflowOutput(result) || "Workflow completed without a result";
+        persistWorkflowAudit({
+          id,
+          label: workflow.label,
+          status: "completed",
+          startedAt: workflow.startedAt,
+          finishedAt: workflow.finishedAt,
+          limits,
+          children: childAudits,
+          outcome: sanitizeProcessDiagnostic(workflow.output).slice(0, 2_000),
+        });
         showWorkflowMessage(
           `✓ ${workflow.label} (${id}) completed in ${formatDuration(workflow.startedAt)}.\nResult:\n${workflow.output}`,
           { id, status: workflow.status, label: workflow.label },
@@ -583,16 +611,24 @@ export default function classifiedWorkflows(pi: ExtensionAPI): void {
       })
       .catch((error) => {
         workflow.status = workflow.controller.signal.aborted ? "cancelled" : "failed";
+        workflow.finishedAt = Date.now();
         workflow.error = error instanceof Error ? error.message : "Workflow failed closed";
+        persistWorkflowAudit({
+          id,
+          label: workflow.label,
+          status: workflow.status,
+          startedAt: workflow.startedAt,
+          finishedAt: workflow.finishedAt,
+          limits,
+          children: childAudits,
+          outcome: sanitizeProcessDiagnostic(workflow.error).slice(0, 2_000),
+        });
         showWorkflowMessage(
           `${workflow.status === "cancelled" ? "◌" : "✕"} ${workflow.label} (${id}) ${workflow.status} after ${formatDuration(workflow.startedAt)}.\nReason: ${workflow.error}`,
           { id, status: workflow.status, label: workflow.label },
         );
       })
-      .finally(() => {
-        workflow.finishedAt = Date.now();
-        renderWorkflowPanel();
-      });
+      .finally(() => renderWorkflowPanel());
 
     return workflow;
   };
@@ -910,6 +946,7 @@ export default function classifiedWorkflows(pi: ExtensionAPI): void {
     loopState = storedLoop?.type === "custom" ? parseStoredLoop(storedLoop.data) : undefined;
     continuationPaused = latestContinuationPause(branch)?.paused ?? false;
     artifactProvenance = restoreArtifactProvenance(branch);
+    workflowAudits = restoreWorkflowAudits(branch);
     goalRunTokens = 0;
     const now = Date.now();
     const goalHistory = goalEntries.flatMap((entry) => {
@@ -968,7 +1005,10 @@ export default function classifiedWorkflows(pi: ExtensionAPI): void {
     renderWorkflowPanel(ctx);
   });
 
-  pi.on("session_compact", () => pi.appendEntry(ARTIFACT_PROVENANCE_ENTRY, artifactProvenance));
+  pi.on("session_compact", () => {
+    pi.appendEntry(ARTIFACT_PROVENANCE_ENTRY, artifactProvenance);
+    pi.appendEntry(WORKFLOW_AUDIT_ENTRY, workflowAudits);
+  });
 
   pi.on("session_shutdown", (_event, ctx) => {
     clearLoopTimer();
@@ -1187,6 +1227,22 @@ export default function classifiedWorkflows(pi: ExtensionAPI): void {
   });
 
   pi.registerTool({
+    name: "workflow_audit",
+    label: "Workflow audit",
+    description: "Inspect persisted bounded workflow and child diagnostics after completion, failure, reload, or compaction.",
+    parameters: Type.Object({ id: Type.Optional(Type.String({ maxLength: 80 })) }),
+    async execute(_toolCallId, request) {
+      const audits = request.id
+        ? workflowAudits.workflows.filter(({ id }) => id === request.id)
+        : workflowAudits.workflows.slice(-20);
+      return {
+        content: [{ type: "text", text: audits.length > 0 ? JSON.stringify(audits, null, 2) : "No matching workflow audits." }],
+        details: { outcome: "listed", audits },
+      };
+    },
+  });
+
+  pi.registerTool({
     name: "workflow",
     label: "Classified workflow",
     description:
@@ -1228,7 +1284,11 @@ export default function classifiedWorkflows(pi: ExtensionAPI): void {
         };
       }
 
-      const runAgent = createClassifiedAgentRunner(intent, instructions, {
+      const auditId = `wf-${nextWorkflowId++}`;
+      const auditLabel = params.label?.trim() || `workflow ${auditId}`;
+      const auditStartedAt = Date.now();
+      const childAudits: ChildAudit[] = [];
+      const classifiedRunAgent = createClassifiedAgentRunner(intent, instructions, {
         classify: (request, childSignal) => classify(request, ctx, childSignal),
         execute: (request, childSignal) =>
           executeAgent(
@@ -1239,6 +1299,7 @@ export default function classifiedWorkflows(pi: ExtensionAPI): void {
             childSignal,
           ),
       }, skillProcedures);
+      const runAgent = auditedAgentRunner(classifiedRunAgent, childAudits, sanitizeProcessDiagnostic);
 
       try {
         const result = await runWorkflowScript(
@@ -1254,9 +1315,30 @@ export default function classifiedWorkflows(pi: ExtensionAPI): void {
           signal,
         );
         const output = workflowOutput(result);
-        return { content: [{ type: "text", text: output || "Workflow completed without a result" }], details: { status: "completed" } };
+        persistWorkflowAudit({
+          id: auditId,
+          label: auditLabel,
+          status: "completed",
+          startedAt: auditStartedAt,
+          finishedAt: Date.now(),
+          limits,
+          children: childAudits,
+          outcome: sanitizeProcessDiagnostic(output).slice(0, 2_000),
+        });
+        return { content: [{ type: "text", text: output || "Workflow completed without a result" }], details: { status: "completed", auditId } };
       } catch (error) {
-        return blockedResult(error instanceof Error ? error.message : "Workflow failed closed");
+        const reason = error instanceof Error ? error.message : "Workflow failed closed";
+        persistWorkflowAudit({
+          id: auditId,
+          label: auditLabel,
+          status: signal.aborted ? "cancelled" : "failed",
+          startedAt: auditStartedAt,
+          finishedAt: Date.now(),
+          limits,
+          children: childAudits,
+          outcome: sanitizeProcessDiagnostic(reason).slice(0, 2_000),
+        });
+        return blockedResult(reason);
       }
     },
   });
