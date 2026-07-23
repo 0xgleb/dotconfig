@@ -1,4 +1,5 @@
 import { basename, isAbsolute, join, relative, sep } from "node:path";
+import { todoWorkSnapshot } from "../classified-workflows/goal.ts";
 import { isContinuationPaused } from "../shared/continuation-pause.ts";
 
 export const HANDOFF_GLOBS = ["*.md", "handoffs/*.md"] as const;
@@ -57,8 +58,23 @@ export const parseManagedReloadSummary: (value: unknown) => ManagedReloadSummary
   return { labels: [...new Set(value.labels)].sort(), createdAt: Number(value.createdAt), announced: value.announced };
 };
 
+const hasActiveWorkflowState = (entries: readonly unknown[], customType: string): boolean => {
+  for (let index = entries.length - 1; index >= 0; index -= 1) {
+    const entry = entries[index];
+    if (typeof entry !== "object" || entry === null || !("type" in entry) || entry.type !== "custom") continue;
+    if (!("customType" in entry) || entry.customType !== customType || !("data" in entry)) continue;
+    const data = entry.data;
+    return typeof data === "object" && data !== null && "status" in data && data.status === "active";
+  }
+  return false;
+};
+
 export const shouldDispatchReloadFollowUp: (reason: string, entries: readonly unknown[]) => boolean = (reason, entries) =>
-  reason === "reload" && !isContinuationPaused(entries);
+  reason === "reload" &&
+  !isContinuationPaused(entries) &&
+  (todoWorkSnapshot(entries).pending.length > 0 ||
+    hasActiveWorkflowState(entries, "classified-workflows.goal") ||
+    hasActiveWorkflowState(entries, "classified-workflows.loop"));
 
 export const managedPiWatchPaths: (aiRoot: string) => string[] = (aiRoot) =>
   isAbsolute(aiRoot)

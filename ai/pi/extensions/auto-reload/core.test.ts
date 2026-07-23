@@ -27,11 +27,24 @@ test("managed reload summaries identify changed capabilities without exposing fu
   assert.equal(parseManagedReloadSummary({ labels: [7], createdAt: 42, announced: false }), undefined);
 });
 
-test("auto reload follow-up respects a persisted manual interrupt pause", () => {
-  assert.equal(shouldDispatchReloadFollowUp("reload", []), true);
-  assert.equal(shouldDispatchReloadFollowUp("resume", []), false);
+test("auto reload triggers turns only for executable continuation work", () => {
+  const pendingTodo = {
+    type: "custom",
+    customType: "todo.state",
+    data: { todos: [{ id: 1, text: "Continue", status: "pending" }], nextId: 2 },
+  };
+  const blockedTodo = {
+    type: "custom",
+    customType: "todo.state",
+    data: { todos: [{ id: 1, text: "Wait", status: "blocked", reason: "external dependency" }], nextId: 2 },
+  };
+  assert.equal(shouldDispatchReloadFollowUp("reload", []), false);
+  assert.equal(shouldDispatchReloadFollowUp("reload", [pendingTodo]), true);
+  assert.equal(shouldDispatchReloadFollowUp("reload", [blockedTodo]), false);
+  assert.equal(shouldDispatchReloadFollowUp("resume", [pendingTodo]), false);
   assert.equal(
     shouldDispatchReloadFollowUp("reload", [
+      pendingTodo,
       {
         type: "custom",
         customType: CONTINUATION_PAUSE_ENTRY,

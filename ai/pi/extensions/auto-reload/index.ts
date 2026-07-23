@@ -1,4 +1,4 @@
-import { globSync, statSync, watch, type FSWatcher } from "node:fs";
+import { globSync, lstatSync, readdirSync, statSync, watch, type FSWatcher } from "node:fs";
 import { homedir } from "node:os";
 import { join } from "node:path";
 import type { ExtensionAPI, ExtensionContext } from "@earendil-works/pi-coding-agent";
@@ -15,11 +15,12 @@ import {
 } from "./core.ts";
 import { isContinuationPaused } from "../shared/continuation-pause.ts";
 
-const DEBOUNCE_MS = 1_200;
+const DEBOUNCE_MS = 30_000;
 const HANDOFF_POLL_MS = 60 * 60 * 1_000;
 const HANDOFF_STATE_ENTRY = "auto-reload.seen-pi-handoffs";
 const RELOAD_SUMMARY_ENTRY = "auto-reload.managed-change-summary";
 const IDLE_RETRY_MS = 1_000;
+const GENERATION_POLL_MS = 5_000;
 const STATUS_KEY = "auto-reload";
 
 interface ReloadableContext extends ExtensionContext {
@@ -29,18 +30,40 @@ interface ReloadableContext extends ExtensionContext {
 const isReloadableContext: (ctx: ExtensionContext) => ctx is ReloadableContext = (ctx) =>
   "reload" in ctx && typeof ctx.reload === "function";
 
+export const managedGeneration = (roots: readonly string[]): string => {
+  const records: string[] = [];
+  const visit = (candidate: string) => {
+    try {
+      const stat = lstatSync(candidate);
+      records.push(`${candidate}:${stat.mtimeMs}:${stat.size}:${stat.mode}`);
+      if (!stat.isDirectory()) return;
+      for (const name of readdirSync(candidate)) {
+        if (name === "node_modules" || name === "brave-operator-profile") continue;
+        visit(join(candidate, name));
+      }
+    } catch {
+      records.push(`${candidate}:missing`);
+    }
+  };
+  roots.forEach(visit);
+  return records.sort().join("\n");
+};
+
 const autoReload: (pi: ExtensionAPI) => void = (pi) => {
   let watchers: FSWatcher[] = [];
   let timer: ReturnType<typeof setTimeout> | undefined;
   let handoffTimer: ReturnType<typeof setInterval> | undefined;
+  let generationTimer: ReturnType<typeof setInterval> | undefined;
   let pending = false;
   const changedLabels = new Set<string>();
 
   const closeWatchers = () => {
     if (timer) clearTimeout(timer);
     if (handoffTimer) clearInterval(handoffTimer);
+    if (generationTimer) clearInterval(generationTimer);
     timer = undefined;
     handoffTimer = undefined;
+    generationTimer = undefined;
     pending = false;
     changedLabels.clear();
     for (const watcher of watchers) watcher.close();
@@ -107,7 +130,9 @@ const autoReload: (pi: ExtensionAPI) => void = (pi) => {
     }
     const configRoot = join(homedir(), ".config");
     const aiRoot = join(configRoot, "ai");
-    for (const path of managedPiWatchPaths(aiRoot)) {
+    const watchPaths = managedPiWatchPaths(aiRoot);
+    let generation = managedGeneration(watchPaths);
+    for (const path of watchPaths) {
       try {
         const recursive = statSync(path).isDirectory();
         watchers.push(
@@ -119,6 +144,14 @@ const autoReload: (pi: ExtensionAPI) => void = (pi) => {
         ctx.ui.notify(`Could not watch ${path}: ${error instanceof Error ? error.message : "unknown error"}`, "warning");
       }
     }
+
+    generationTimer = setInterval(() => {
+      const nextGeneration = managedGeneration(watchPaths);
+      if (nextGeneration === generation) return;
+      generation = nextGeneration;
+      scheduleReload(ctx, aiRoot, aiRoot);
+    }, GENERATION_POLL_MS);
+    generationTimer.unref?.();
 
     ctx.ui.setStatus(STATUS_KEY, "reload:auto");
 
