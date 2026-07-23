@@ -93,6 +93,15 @@ test("shared instructions require one evidence-backed PR category label", () => 
   assert.match(shared, /actual diff and repository context rather\s+than a title, registry request/);
 });
 
+test("shared and Pi-global instructions prepare and resume safe compaction", () => {
+  for (const [name, contents] of [["shared", shared], ["Pi global", pi]] as const) {
+    assert.match(contents, /safe compaction preparation.*persist critical state/is, `${name} must prepare compaction`);
+    assert.match(contents, /call\s+`safe_compaction_ready` with the exact next action/is, `${name} must acknowledge readiness`);
+    assert.match(contents, /tool call with\s+no successful tool result was not executed/is, `${name} must preserve unfinished tools`);
+    assert.match(contents, /After compaction, resume that\s+action.*continue all assigned work/is, `${name} must resume work`);
+  }
+});
+
 test("shared and Pi-global instructions preserve manual interrupt pauses", () => {
   for (const [name, contents] of [["shared", shared], ["Pi global", pi]] as const) {
     assert.match(contents, /manual user interrupt|double-cancel/i, `${name} must recognize manual interruption`);

@@ -169,6 +169,12 @@ through review.
 - Treat a manual user interrupt or double-cancel as an explicit pause. Do not
   automatically resume goals, loops, or pending tasks until the user submits
   their next prompt; give them time to finish redirecting the work.
+- When safe compaction preparation is requested, persist critical state, goals,
+  todos, exact pause points, and unfinished actions, then call
+  `safe_compaction_ready` with the exact next action. A displayed tool call with
+  no successful tool result was not executed. After compaction, resume that
+  action and continue all assigned work rather than treating the summary as
+  completion.
 - Check free disk space before every expensive build, test sweep, or workflow.
   Stop before consuming the crash reserve; do not wait for a build to fail or Pi
   to crash.

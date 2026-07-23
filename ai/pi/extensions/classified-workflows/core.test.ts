@@ -456,7 +456,7 @@ test("shell and unknown tools require classifier review", () => {
 });
 
 test("locally generated mutation acknowledgements bypass result classification", () => {
-  for (const toolName of ["edit", "write", "todo", "ask_user"]) {
+  for (const toolName of ["edit", "write", "todo", "ask_user", "safe_compaction_ready"]) {
     assert.deepEqual(deterministicToolResultDecision(toolName), {
       verdict: "allow",
       reason: "Locally generated mutation acknowledgement",

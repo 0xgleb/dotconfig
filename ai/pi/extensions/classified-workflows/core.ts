@@ -67,7 +67,7 @@ const REGISTRY_ACTIONS = new Set([
   "claim_request",
   "cancel_request",
 ]);
-const LOCALLY_GENERATED_RESULT_TOOLS = new Set(["edit", "write", "todo", "ask_user", "artifact_provenance", "reload_pi", "workflow_audit"]);
+const LOCALLY_GENERATED_RESULT_TOOLS = new Set(["edit", "write", "todo", "ask_user", "artifact_provenance", "reload_pi", "workflow_audit", "safe_compaction_ready"]);
 const PATH_KEYS = new Set(["path", "file_path", "cwd", "glob"]);
 const SENSITIVE_PATH =
   /(^|[\\/\s'"])(?:\.env(?!\.example(?:$|[\\/\s'"]))(?:\.[^\\/\s'"]*)?[*?]*|credentials\.json|secrets\.(?:json|ya?ml)|auth\.json|\.npmrc|\.netrc|\.pypirc|id_(?:rsa|dsa|ecdsa|ed25519)(?:\.pub)?|[^\\/\s'"]+\.(?:key|pem|p12|pfx))($|[\\/\s'"])/i;

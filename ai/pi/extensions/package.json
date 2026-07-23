@@ -44,6 +44,7 @@
       "./input-ergonomics/index.ts",
       "./pi-vim/index.ts",
       "./questions/index.ts",
+      "./safe-compaction/index.ts",
       "./todo/index.ts"
     ]
   },
