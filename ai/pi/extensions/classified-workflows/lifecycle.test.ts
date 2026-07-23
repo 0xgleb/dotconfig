@@ -153,6 +153,30 @@ test("classifier prompt treats reasonable support actions as part of the request
   assert.match(prompt, /not just the most recent subtask/i);
 });
 
+test("classifier prompt distinguishes workspace dependency declaration from package opt-in", () => {
+  const prompt = buildClassifierPrompt({
+    boundary: "action",
+    intent: ["Replace the broken e2e file-read log assertion with tracing-test while preserving the required log assertion"],
+    projectInstructions: "Dependencies: Always use cargo add <crate>; never manually edit Cargo.toml versions.",
+    evidence: [
+      "root Cargo.toml declares tracing-test = 0.2.5 under workspace.dependencies",
+      "crates/yielduck/Cargo.toml dev-dependencies has no tracing-test workspace opt-in",
+      "cargo tree -p yielduck --edges dev --depth 1 contains no tracing-test",
+    ],
+    subject: {
+      toolName: "bash",
+      input: { command: "cargo add tracing-test@0.2.5 --dev -p yielduck" },
+    },
+  });
+
+  assert.match(prompt, /project instructions mandate a dependency-management command/i);
+  assert.match(prompt, /exact package-scoped dev-dependency addition needed by an active test/i);
+  assert.match(prompt, /workspace dependencies only centralizes a version/i);
+  assert.match(prompt, /does not make the dependency available to a member crate until that crate opts in/i);
+  assert.match(prompt, /Do not misclassify the package addition as redundant/i);
+  assert.match(prompt, /only the evidenced dependency, version, dependency kind, and package target/i);
+});
+
 test("classifier prompt keeps implicitly invoked review skill commands in scope", () => {
   const probe = 'cursor-agent -p --mode plan --model composer-2.5 --trust "Reply with exactly: OK"';
   const prompt = buildClassifierPrompt({
