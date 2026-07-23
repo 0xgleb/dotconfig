@@ -42,6 +42,24 @@ test("credential-shaped paths are always blocked", () => {
   }
 });
 
+test("negative find predicates are exclusions rather than credential access", () => {
+  const command = `for dir in data var runtime state; do if [ -d "$dir" ]; then find "$dir" -maxdepth 3 -type f \\( -name '*.db' -o -name '*.sqlite' -o -name '*.sqlite3' \\) -print; fi; done
+find . -maxdepth 2 -type f \\( -name '*.db' -o -name '*.sqlite' -o -name '*.sqlite3' \\) ! -name '.env*' ! -name '*credential*' ! -name '*secret*' ! -name '*.key' ! -name '*.pem' ! -name '*.crt' -print`;
+  assert.equal(
+    deterministicDecision({ boundary: "action", toolName: "bash", input: { command }, cwd: "/repo" }),
+    null,
+  );
+  assert.equal(
+    deterministicDecision({
+      boundary: "action",
+      toolName: "bash",
+      input: { command: "find . -maxdepth 2 -type f -name '.env*' -print" },
+      cwd: "/repo",
+    })?.verdict,
+    "block",
+  );
+});
+
 test("read-only tools are allowed after the credential guard", () => {
   const example = deterministicDecision({
     boundary: "action",

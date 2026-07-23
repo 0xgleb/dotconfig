@@ -67,7 +67,7 @@ const REGISTRY_ACTIONS = new Set([
 const LOCALLY_GENERATED_RESULT_TOOLS = new Set(["edit", "write", "todo", "ask_user", "reload_pi"]);
 const PATH_KEYS = new Set(["path", "file_path", "cwd", "glob"]);
 const SENSITIVE_PATH =
-  /(^|[\\/\s'"])(?:\.env(?!\.example(?:$|[\\/\s'"]))(?:\.[^\\/\s'"]*)?|credentials\.json|secrets\.(?:json|ya?ml)|auth\.json|\.npmrc|\.netrc|\.pypirc|id_(?:rsa|dsa|ecdsa|ed25519)(?:\.pub)?|[^\\/\s'"]+\.(?:key|pem|p12|pfx))($|[\\/\s'"])/i;
+  /(^|[\\/\s'"])(?:\.env(?!\.example(?:$|[\\/\s'"]))(?:\.[^\\/\s'"]*)?[*?]*|credentials\.json|secrets\.(?:json|ya?ml)|auth\.json|\.npmrc|\.netrc|\.pypirc|id_(?:rsa|dsa|ecdsa|ed25519)(?:\.pub)?|[^\\/\s'"]+\.(?:key|pem|p12|pfx))($|[\\/\s'"])/i;
 const REQUIRED_SEARCH_EXCLUSIONS = [
   "!.env*",
   "!credentials.json",
@@ -81,7 +81,7 @@ const REQUIRED_SEARCH_EXCLUSIONS = [
 
 function relevantStrings(toolName: string, input: Record<string, unknown>): string[] {
   if (toolName === "bash") {
-    return typeof input.command === "string" ? [stripNegativeGlobArguments(input.command)] : [];
+    return typeof input.command === "string" ? [stripNegativePathArguments(input.command)] : [];
   }
 
   return Object.entries(input).flatMap(([key, value]) =>
@@ -89,11 +89,15 @@ function relevantStrings(toolName: string, input: Record<string, unknown>): stri
   );
 }
 
-function stripNegativeGlobArguments(command: string): string {
-  return command.replace(
+function stripNegativePathArguments(command: string): string {
+  const withoutNegativeGlobs = command.replace(
     /(?:^|\s)(?:-g|--glob)(?:=|\s+)(?:"([^"]*)"|'([^']*)'|([^\s'"]+))/g,
     (argument: string, doubleQuoted: string | undefined, singleQuoted: string | undefined, bare: string | undefined) =>
       (doubleQuoted ?? singleQuoted ?? bare)?.startsWith("!") ? "" : argument,
+  );
+  return withoutNegativeGlobs.replace(
+    /(?:^|\s)(?:!|-not)\s+-(?:name|iname|path|ipath)\s+(?:"[^"]*"|'[^']*'|[^\s'"]+)/g,
+    "",
   );
 }
 
@@ -115,8 +119,13 @@ function isBroadRootSearch(request: ToolRequest): boolean {
   if (request.toolName === "bash") {
     const command = request.input.command;
     if (typeof command !== "string") return false;
+    const sanitized = stripNegativePathArguments(command);
+    const boundedTargetedFind = /(?:^|[;\n]\s*)find\s+\.\s+-maxdepth\s+[1-3]\b/.test(sanitized) &&
+      [...sanitized.matchAll(/-(?:name|iname)\s+(?:"([^"]*)"|'([^']*)'|([^\s'"]+))/g)]
+        .map((match) => match[1] ?? match[2] ?? match[3])
+        .some((pattern) => pattern !== "*" && pattern !== "*.*");
     const broad = /^\s*(?:rg\s+--files\b|find(?:\s+\.|\s*$)|ls(?:\s+\.|\s*$)|grep\b[^\n]*(?:\s-r\b|\s-R\b))/m.test(command);
-    return broad && !hasRequiredSearchExclusions(command);
+    return broad && !boundedTargetedFind && !hasRequiredSearchExclusions(command);
   }
   if (!new Set(["grep", "find", "ls"]).has(request.toolName)) return false;
   const candidate = request.input.path;
