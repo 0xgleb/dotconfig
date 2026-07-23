@@ -1,6 +1,6 @@
 import assert from "node:assert/strict";
 import test from "node:test";
-import { DoubleEnterSteering, type SteeringScheduler } from "../steering.ts";
+import { DoubleEnterSteering, isSlashCommandInput, type SteeringScheduler } from "../steering.ts";
 
 class FakeScheduler implements SteeringScheduler {
   callback?: () => void;
@@ -58,6 +58,12 @@ test("second enter interrupts with exactly one immediate steering prompt", () =>
   assert.deepEqual(submitted, []);
   assert.deepEqual(immediate, ["stop guessing and inspect it"]);
   assert.equal(scheduler.cancelled, true);
+});
+
+test("slash command input bypasses streaming double-enter steering", () => {
+  assert.equal(isSlashCommandInput("/ques"), true);
+  assert.equal(isSlashCommandInput("  /questions"), true);
+  assert.equal(isSlashCommandInput("answer the question"), false);
 });
 
 test("enter passes through while idle or without text", () => {

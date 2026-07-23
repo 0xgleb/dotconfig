@@ -18,7 +18,7 @@ import { handleNormalMode, type NormalModeContext } from "./modes/normal.ts";
 import { handleInsertMode, type InsertModeContext } from "./modes/insert.ts";
 import { handleReplaceMode, resetReplaceState, type ReplaceModeContext } from "./modes/replace.ts";
 import { handleVisualMode, getVisualRange, type VisualModeContext } from "./modes/visual.ts";
-import { DoubleEnterSteering } from "./steering.ts";
+import { DoubleEnterSteering, isSlashCommandInput } from "./steering.ts";
 import {
   emptyEditorAttachmentState,
   expandEditorScreenshots,
@@ -157,7 +157,8 @@ export class VimEditor extends CustomEditor {
       if (expanded !== this.getText()) this.setText(expanded);
       this.attachmentState = emptyEditorAttachmentState();
     }
-    if (isEnter && this.doubleEnterSteering) {
+    const enteringSlashCommand = isEnter && this.vimState.mode === "insert" && isSlashCommandInput(this.getText());
+    if (isEnter && this.doubleEnterSteering && !enteringSlashCommand) {
       const result = this.doubleEnterSteering.handleEnter(this.getText(), this.isStreaming());
       if (result === "deferred") this.setText("");
       if (result !== "pass") return;

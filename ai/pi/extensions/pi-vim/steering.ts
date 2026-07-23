@@ -28,6 +28,8 @@ const defaultScheduler: SteeringScheduler = {
   },
 };
 
+export const isSlashCommandInput = (text: string): boolean => text.trimStart().startsWith("/");
+
 export class DoubleEnterSteering {
   private readonly options: DoubleEnterSteeringOptions;
   private readonly scheduler: SteeringScheduler;
