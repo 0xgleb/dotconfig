@@ -272,6 +272,15 @@ test("project-local Rust incremental cache cleanup is narrowly deterministic", (
       resultSafe: true,
     },
   );
+  assert.equal(
+    deterministicDecision({
+      boundary: "action",
+      toolName: "bash",
+      input: { command: "rm -rf -- target/debug/incremental" },
+      cwd: "/Users/0xgleb/code/dataclique/yielduck",
+    })?.verdict,
+    "allow",
+  );
   for (const command of [
     "rm -rf target",
     "rm -rf target/release",

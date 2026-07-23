@@ -120,7 +120,7 @@ const isGeneratedReviewCleanup = (command: string, cwd: string): boolean => {
 
 const isSafeRustIncrementalCleanup: (command: string) => boolean = (command) => {
   const match = command.match(
-    /^\s*(?:cd\s+(\/[^\s;&|`]+)\s+&&\s+)?rm\s+-(?:rf|fr)\s+(?:\.\/)?target\/debug\/incremental(?:\s+&&\s+df\s+-h\s+\.\s*\|\s*tail\s+-1)?\s*$/,
+    /^\s*(?:cd\s+(\/[^\s;&|`]+)\s+&&\s+)?rm\s+-(?:rf|fr)\s+(?:--\s+)?(?:\.\/)?target\/debug\/incremental(?:\s+&&\s+df\s+-h\s+\.\s*\|\s*tail\s+-1)?\s*$/,
   );
   if (!match) return false;
   const changedDirectory = match[1];
