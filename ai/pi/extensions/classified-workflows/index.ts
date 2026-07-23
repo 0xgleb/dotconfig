@@ -479,7 +479,7 @@ const WorkflowParameters = Type.Object({
 });
 
 export default function classifiedWorkflows(pi: ExtensionAPI): void {
-  registerRuntimeVersion(pi, "classified-workflows", "2026.07.23.12");
+  registerRuntimeVersion(pi, "classified-workflows", "2026.07.23.13");
   let goalState: GoalState | undefined;
   let goalEvaluating = false;
   let goalRunTokens = 0;
@@ -885,6 +885,7 @@ export default function classifiedWorkflows(pi: ExtensionAPI): void {
       return {
         content: [{ type: "text", text: "Reload scheduled for immediately after the current turn settles." }],
         details: { status: "scheduled" },
+        terminate: true,
       };
     },
   });

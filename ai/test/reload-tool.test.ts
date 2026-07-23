@@ -7,7 +7,7 @@ const source = readFileSync(new URL("../pi/extensions/classified-workflows/index
 test("reload_pi schedules idle reload instead of claiming synchronous success while streaming", () => {
   assert.match(source, /manualReloadPending = true/);
   assert.match(source, /Reload scheduled for immediately after the current turn settles/);
-  assert.match(source, /details: \{ status: "scheduled" \}/);
+  assert.match(source, /details: \{ status: "scheduled" \}[\s\S]*terminate: true/);
   assert.match(source, /pi\.on\("agent_settled"[\s\S]*if \(manualReloadPending\)[\s\S]*await ctx\.reload\(\)/);
   assert.doesNotMatch(source, /details: \{ status: "reloaded" \}/);
 });
