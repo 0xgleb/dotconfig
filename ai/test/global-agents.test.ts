@@ -16,6 +16,14 @@ test("shared and Pi-global instructions resist confirmation bias", () => {
   }
 });
 
+test("shared and Pi-global TypeScript guidance keeps failures in typed Effect channels", () => {
+  for (const [name, contents] of [["shared", shared], ["Pi global", pi]] as const) {
+    assert.match(contents, /expected failures.*Effect error type/is, `${name} must type expected failures`);
+    assert.match(contents, /Effect\.try.*Effect\.tryPromise/is, `${name} must permit throwing interop translation`);
+    assert.match(contents, /typed error handlers|typed.*rather than untyped.*try.*catch/is, `${name} must avoid untyped exception control flow`);
+  }
+});
+
 test("shared and Pi-global instructions enforce disk-pressure hygiene", () => {
   for (const [name, contents] of [["shared", shared], ["Pi global", pi]] as const) {
     assert.match(contents, /free disk space.*expensive build/is, `${name} instructions must check build capacity`);

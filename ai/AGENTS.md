@@ -244,6 +244,10 @@ overhead.
   public contract; reserve declarations for overloads, generators, or APIs that
   specifically require declaration semantics.
 - Use strict compiler and linter settings
+- In TypeScript, encode expected failures in the Effect error type. Use
+  `Effect.try`/`Effect.tryPromise` to translate genuinely throwing boundaries,
+  then recover with typed error handlers; do not hide ordinary failure paths in
+  untyped `try`/`catch` control flow.
 - Comprehensive test coverage is expected
 - Model types properly - use the type system to make invalid states
   unrepresentable

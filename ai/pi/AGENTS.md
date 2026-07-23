@@ -53,6 +53,9 @@
 - In TypeScript and JavaScript, prefer `const`-bound arrow functions over
   `function` declarations, with explicit callable types when they clarify the
   contract. Keep declarations for overloads, generators, or required semantics.
+- In TypeScript, encode expected failures in the Effect error type. Use
+  `Effect.try`/`Effect.tryPromise` at genuinely throwing boundaries and recover
+  through typed error handlers rather than untyped `try`/`catch` control flow.
 
 ## Cross-session handover
 
