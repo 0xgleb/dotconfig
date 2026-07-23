@@ -205,20 +205,31 @@ test("classifier prompt allows whole-file GitButler assignment only after comple
   assert.match(prompt, /does not extend to other files, branches, content changes/i);
 });
 
-test("classifier prompt accepts evidence-backed GitButler compound hunk IDs", () => {
+test("classifier prompt accepts bounded evidence-backed GitButler compound hunk sequences", () => {
   const prompt = buildClassifierPrompt({
     boundary: "action",
-    intent: ["Active todo: assign only the verified service.rs inventory hunk to branch nv"],
+    intent: ["Active todo: assign only verified Raindex hunks to the active branch"],
     projectInstructions: "Do not bundle unrelated file changes.",
-    evidence: ["but diff sm:fa --format agent resolved the intended bounded service.rs hunk"],
-    subject: { toolName: "bash", input: { command: "but rub sm:fa nv --format agent" } },
+    evidence: [
+      "but diff nkl --format agent resolved nkl:2 to the intended hunk",
+      "but diff vp --format agent resolved vp:4 and vp:8 to intended hunks",
+      "but branch show nv --format agent resolved nv to the active feature branch",
+    ],
+    subject: {
+      toolName: "bash",
+      input: {
+        command:
+          "but rub nkl:2 nv --format agent; but rub vp:4 nv --format agent; but rub vp:8 nv --format agent",
+      },
+    },
   });
 
   assert.match(prompt, /GitButler CLI entity IDs are opaque/i);
   assert.match(prompt, /colon-separated compound file\/hunk ID.*valid SOURCE operand/is);
-  assert.match(prompt, /do not reject, split, or normalize it as malformed/i);
-  assert.match(prompt, /recent evidence binds the source ID to the intended hunk/i);
-  assert.match(prompt, /Do not substitute whole-file staging/i);
+  assert.match(prompt, /do not reject, split, normalize, or demand semantic resemblance/i);
+  assert.match(prompt, /independently binds every source ID.*resolves the target ID/is);
+  assert.match(prompt, /bounded semicolon-separated sequence.*equivalent to separate calls/is);
+  assert.match(prompt, /Do not substitute whole-file staging, accept an unevidenced source\/target/i);
 });
 
 test("classifier prompt prioritizes active reload todos over stale historical topics", () => {
