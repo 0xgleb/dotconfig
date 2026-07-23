@@ -12,7 +12,7 @@ import {
 } from "./state.ts";
 import { QUESTION_RESOLVED_EVENT, type UserQuestionResolution } from "../shared/question-events.ts";
 import { registerRuntimeVersion } from "../shared/runtime-version.ts";
-import { pendingQuestionContext, questionListText, questionWidgetLines } from "./presentation.ts";
+import { pendingQuestionContext, questionListText } from "./presentation.ts";
 
 const QUESTION_ENTRY = "pi.questions.state";
 const QUESTION_MESSAGE = "pi.questions.list";
@@ -64,11 +64,9 @@ const questionsExtension: (pi: ExtensionAPI) => void = (pi) => {
   let lastPresentedQuestionId = 0;
 
   const render = (ctx: ExtensionContext) => {
-    const lines = questionWidgetLines(state);
-    ctx.ui.setStatus(QUESTION_STATUS_KEY, lines.length > 0 ? `awaiting:${pendingQuestions(state).length}` : undefined);
-    if (ctx.hasUI) {
-      ctx.ui.setWidget(QUESTION_STATUS_KEY, lines.length > 0 ? lines : undefined, { placement: "belowEditor" });
-    }
+    const pending = pendingQuestions(state).length;
+    ctx.ui.setStatus(QUESTION_STATUS_KEY, pending > 0 ? `awaiting:${pending} · /questions` : undefined);
+    if (ctx.hasUI) ctx.ui.setWidget(QUESTION_STATUS_KEY, undefined);
   };
 
   const restore = (ctx: ExtensionContext) => {
