@@ -86,6 +86,13 @@ test("shared and Pi-global instructions continue safely after classifier blocks"
   }
 });
 
+test("shared instructions require one evidence-backed PR category label", () => {
+  assert.match(shared, /Apply exactly one accurate category label per PR/);
+  assert.match(shared, /Fixes use `bug`; `test` is\s+only for test-only changes/);
+  assert.match(shared, /Never combine `bug`, `feat`, and `test` as a\s+hedge/);
+  assert.match(shared, /actual diff and repository context rather\s+than a title, registry request/);
+});
+
 test("shared and Pi-global instructions preserve manual interrupt pauses", () => {
   for (const [name, contents] of [["shared", shared], ["Pi global", pi]] as const) {
     assert.match(contents, /manual user interrupt|double-cancel/i, `${name} must recognize manual interruption`);

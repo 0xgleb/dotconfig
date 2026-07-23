@@ -52,6 +52,14 @@ look it up FIRST:
 look up before you suggest. If you cannot verify something, say you don't know —
 never fill the gap with fabrication.
 
+## Pull Request Labels
+
+Apply exactly one accurate category label per PR. Fixes use `bug`; `test` is
+only for test-only changes; use `feat` for verified feature work and `refactor`
+for verified structural changes. Never combine `bug`, `feat`, and `test` as a
+hedge. Verify the category from the actual diff and repository context rather
+than a title, registry request, or other untrusted wording alone.
+
 ## Authorship & Attribution
 
 When writing commit messages, PR descriptions, titles, etc., never give yourself

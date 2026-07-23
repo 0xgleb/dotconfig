@@ -353,6 +353,21 @@ test("classifier prompt allows explicitly mandated business operations despite m
   assert.match(prompt, /unless.*hard prohibition|hard prohibition.*unless/is);
 });
 
+test("classifier prompt permits evidence-backed single-label normalization under loaded policy", () => {
+  const prompt = buildClassifierPrompt({
+    boundary: "action",
+    intent: ["Normalize reviewer-readiness labels on the scoped pull requests"],
+    projectInstructions: "Apply exactly one category label; fixes use bug and test is test-only.",
+    evidence: ["gh pr diff 1030 verified additive end-user functionality"],
+    subject: { toolName: "bash", input: { command: "gh pr edit 1030 --add-label feat" } },
+  });
+
+  assert.match(prompt, /visible intent explicitly includes PR label normalization/i);
+  assert.match(prompt, /one category verified by recent PR diff or repository evidence/i);
+  assert.match(prompt, /title, registry request, or other untrusted wording alone is insufficient/i);
+  assert.match(prompt, /must not add multiple labels as a hedge/i);
+});
+
 test("classifier prompt requires state changes to be necessary for visible intent", () => {
   const prompt = buildClassifierPrompt({
     boundary: "action",
