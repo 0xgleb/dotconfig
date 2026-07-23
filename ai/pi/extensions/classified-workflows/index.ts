@@ -432,6 +432,7 @@ export default function classifiedWorkflows(pi: ExtensionAPI): void {
   let loopState: LoopState | undefined;
   let loopTimer: ReturnType<typeof setTimeout> | undefined;
   let continuationPaused = false;
+  let manualReloadPending = false;
   const deterministicResultAllowance = createToolResultAllowance();
   let nextWorkflowId = 1;
   let latestCtx: ExtensionContext | undefined;
@@ -796,10 +797,11 @@ export default function classifiedWorkflows(pi: ExtensionAPI): void {
       if (!("reload" in ctx) || typeof ctx.reload !== "function") {
         throw new Error("reload_pi requires the managed reload-context host patch; restart after applying the Nix generation.");
       }
-      await ctx.reload();
+      manualReloadPending = true;
+      ctx.ui.setStatus("manual-reload", "reload:after-turn");
       return {
-        content: [{ type: "text", text: "Reloaded keybindings, extensions, skills, prompts, themes, and context files." }],
-        details: { status: "reloaded" },
+        content: [{ type: "text", text: "Reload scheduled for immediately after the current turn settles." }],
+        details: { status: "scheduled" },
       };
     },
   });
@@ -924,6 +926,7 @@ export default function classifiedWorkflows(pi: ExtensionAPI): void {
     deterministicResultAllowance.clear();
     ctx.ui.setStatus("pi-loop", undefined);
     ctx.ui.setStatus("continuation-pause", undefined);
+    ctx.ui.setStatus("manual-reload", undefined);
     ctx.ui.setWidget("pi-loop", undefined);
   });
 
@@ -940,6 +943,12 @@ export default function classifiedWorkflows(pi: ExtensionAPI): void {
 
   pi.on("agent_settled", async (_event, ctx) => {
     if (continuationPaused) return;
+    if (manualReloadPending) {
+      manualReloadPending = false;
+      ctx.ui.setStatus("manual-reload", undefined);
+      await ctx.reload();
+      return;
+    }
     const work = todoWorkSnapshot(ctx.sessionManager.getBranch());
     if (goalState?.status !== "active") {
       const continuation = taskContinuationMessage(work);

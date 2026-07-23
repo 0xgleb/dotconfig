@@ -12,6 +12,50 @@ diff --git a/dist/core/extensions/runner.js b/dist/core/extensions/runner.js
              getSystemPrompt: () => {
                  runner.assertActive();
                  return runner.getSystemPromptFn();
+diff --git a/dist/modes/interactive/interactive-mode.js b/dist/modes/interactive/interactive-mode.js
+--- a/dist/modes/interactive/interactive-mode.js
++++ b/dist/modes/interactive/interactive-mode.js
+@@ -1245,7 +1245,7 @@ export class InteractiveMode {
+                     return this.handleResumeSession(sessionPath, options);
+                 },
+                 reload: async () => {
+-                    await this.handleReloadCommand();
++                    await this.handleReloadCommand(true);
+                 },
+             },
+             shutdownHandler: () => {
+@@ -4375,13 +4375,19 @@ export class InteractiveMode {
+     // =========================================================================
+     // Command handlers
+     // =========================================================================
+-    async handleReloadCommand() {
++    async handleReloadCommand(throwOnError = false) {
+         if (this.session.isStreaming) {
+             this.showWarning("Wait for the current response to finish before reloading.");
++            if (throwOnError) {
++                throw new Error("Cannot reload while agent is streaming");
++            }
+             return;
+         }
+         if (this.session.isCompacting) {
+             this.showWarning("Wait for compaction to finish before reloading.");
++            if (throwOnError) {
++                throw new Error("Cannot reload while session compaction is active");
++            }
+             return;
+         }
+         this.resetExtensionUI();
+@@ -4463,6 +4469,9 @@ export class InteractiveMode {
+                 dismissReloadBox(previousEditor);
+             }
+             this.showError(`Reload failed: ${error instanceof Error ? error.message : String(error)}`);
++            if (throwOnError) {
++                throw error;
++            }
+         }
+     }
+     async handleExportCommand(text) {
+
 diff --git a/dist/core/agent-session.js b/dist/core/agent-session.js
 --- a/dist/core/agent-session.js
 +++ b/dist/core/agent-session.js
