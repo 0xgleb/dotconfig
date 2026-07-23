@@ -23,7 +23,9 @@ import {
   type ReleaseLeaseInput,
 } from "./registry.ts";
 
-const SCHEMA_VERSION = 3;
+// Source-identity columns are an additive v2 extension so sessions still running
+// the v2 adapter can coexist during rolling Pi reloads.
+const SCHEMA_VERSION = 2;
 const MAX_LEASES = 1_024;
 const MAX_REQUESTS = 10_000;
 const MAX_REQUEST_TEXT = 8_000;
@@ -218,11 +220,7 @@ const schemaVersion: (database: DatabaseSync) => number = (database) =>
 const initialize: (database: DatabaseSync, databasePath: string) => void = (database, databasePath) => {
   database.exec(`PRAGMA busy_timeout = ${BUSY_TIMEOUT_MS};`);
   const observedVersion = schemaVersion(database);
-  if (observedVersion === SCHEMA_VERSION) {
-    chmodSync(databasePath, 0o600);
-    return;
-  }
-  if (observedVersion !== 0 && observedVersion !== 1 && observedVersion !== 2) {
+  if (observedVersion !== 0 && observedVersion !== 1 && observedVersion !== 2 && observedVersion !== 3) {
     throw registryError("corrupt_state", `unsupported agent registry schema version ${observedVersion}`);
   }
 
@@ -267,21 +265,19 @@ const initialize: (database: DatabaseSync, databasePath: string) => void = (data
         ) STRICT;
         PRAGMA user_version = ${SCHEMA_VERSION};
       `);
-    } else if (currentVersion === 1) {
-      database.exec(`
-        ALTER TABLE requests ADD COLUMN requester_acknowledged_at INTEGER;
-        ALTER TABLE requests ADD COLUMN requester_label TEXT;
-        ALTER TABLE requests ADD COLUMN requester_cwd TEXT;
-        PRAGMA user_version = ${SCHEMA_VERSION};
-      `);
-    } else if (currentVersion === 2) {
-      database.exec(`
-        ALTER TABLE requests ADD COLUMN requester_label TEXT;
-        ALTER TABLE requests ADD COLUMN requester_cwd TEXT;
-        PRAGMA user_version = ${SCHEMA_VERSION};
-      `);
-    } else if (currentVersion !== SCHEMA_VERSION) {
-      throw registryError("corrupt_state", `unsupported agent registry schema version ${currentVersion}`);
+    } else {
+      const columns = new Set(
+        database.prepare("PRAGMA table_info(requests)").all().map((row) => stringField(rowFrom(row), "name")),
+      );
+      const addColumn = (name: string, declaration: string) => {
+        if (columns.has(name)) return;
+        database.exec(`ALTER TABLE requests ADD COLUMN ${declaration};`);
+        columns.add(name);
+      };
+      if (currentVersion === 1) addColumn("requester_acknowledged_at", "requester_acknowledged_at INTEGER");
+      addColumn("requester_label", "requester_label TEXT");
+      addColumn("requester_cwd", "requester_cwd TEXT");
+      database.exec(`PRAGMA user_version = ${SCHEMA_VERSION};`);
     }
     database.exec("COMMIT");
   } catch (error) {

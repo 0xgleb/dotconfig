@@ -1,9 +1,31 @@
 import assert from "node:assert/strict";
+import { spawnSync } from "node:child_process";
 import { mkdtempSync, rmSync, writeFileSync, mkdirSync } from "node:fs";
 import { tmpdir } from "node:os";
 import { join } from "node:path";
 import test from "node:test";
-import { managedGeneration } from "./index.ts";
+import { managedGeneration, managedSourcesAreCommitted } from "./index.ts";
+
+test("automatic reload waits until managed tracked sources are committed", () => {
+  const root = mkdtempSync(join(tmpdir(), "pi-auto-reload-git-"));
+  const git = (...args: string[]) => spawnSync("git", ["-C", root, ...args], { stdio: "ignore" });
+  try {
+    mkdirSync(join(root, "ai"));
+    writeFileSync(join(root, "ai", "AGENTS.md"), "initial\n");
+    assert.equal(git("init").status, 0);
+    assert.equal(git("add", "ai/AGENTS.md").status, 0);
+    assert.equal(git("-c", "user.name=Pi Test", "-c", "user.email=pi@example.invalid", "commit", "-m", "initial").status, 0);
+    assert.equal(managedSourcesAreCommitted(root), true);
+    writeFileSync(join(root, "ai", "AGENTS.md"), "intermediate\n");
+    assert.equal(managedSourcesAreCommitted(root), false);
+    assert.equal(git("add", "ai/AGENTS.md").status, 0);
+    assert.equal(managedSourcesAreCommitted(root), false);
+    assert.equal(git("-c", "user.name=Pi Test", "-c", "user.email=pi@example.invalid", "commit", "-m", "validated").status, 0);
+    assert.equal(managedSourcesAreCommitted(root), true);
+  } finally {
+    rmSync(root, { recursive: true, force: true });
+  }
+});
 
 test("per-process managed generation detects nested in-place changes missed by directory mtimes", async () => {
   const root = mkdtempSync(join(tmpdir(), "pi-auto-reload-"));

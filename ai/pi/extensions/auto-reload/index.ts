@@ -1,3 +1,4 @@
+import { spawnSync } from "node:child_process";
 import { globSync, lstatSync, readdirSync, statSync, watch, type FSWatcher } from "node:fs";
 import { homedir } from "node:os";
 import { join } from "node:path";
@@ -20,6 +21,7 @@ const HANDOFF_POLL_MS = 60 * 60 * 1_000;
 const HANDOFF_STATE_ENTRY = "auto-reload.seen-pi-handoffs";
 const RELOAD_SUMMARY_ENTRY = "auto-reload.managed-change-summary";
 const IDLE_RETRY_MS = 1_000;
+const COMMIT_RETRY_MS = 2_000;
 const GENERATION_POLL_MS = 5_000;
 const STATUS_KEY = "auto-reload";
 
@@ -29,6 +31,15 @@ interface ReloadableContext extends ExtensionContext {
 
 const isReloadableContext: (ctx: ExtensionContext) => ctx is ReloadableContext = (ctx) =>
   "reload" in ctx && typeof ctx.reload === "function";
+
+export const managedSourcesAreCommitted = (configRoot: string): boolean => {
+  const isClean = (mode: readonly string[]) =>
+    spawnSync("git", ["-C", configRoot, "diff", ...mode, "--quiet", "--", "ai"], {
+      stdio: "ignore",
+      timeout: 5_000,
+    }).status === 0;
+  return isClean([]) && isClean(["--cached"]);
+};
 
 export const managedGeneration = (roots: readonly string[]): string => {
   const records: string[] = [];
@@ -72,6 +83,11 @@ const autoReload: (pi: ExtensionAPI) => void = (pi) => {
 
   const reloadWhenIdle = async (ctx: ReloadableContext) => {
     if (!pending) return;
+    if (!managedSourcesAreCommitted(join(homedir(), ".config"))) {
+      ctx.ui.setStatus(STATUS_KEY, "reload:awaiting-commit");
+      timer = setTimeout(() => void reloadWhenIdle(ctx), COMMIT_RETRY_MS);
+      return;
+    }
     if (!ctx.isIdle()) {
       timer = setTimeout(() => void reloadWhenIdle(ctx), IDLE_RETRY_MS);
       return;

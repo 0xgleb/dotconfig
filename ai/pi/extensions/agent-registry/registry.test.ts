@@ -342,12 +342,29 @@ test("legacy v1 databases migrate requester acknowledgements and source identity
 
     await Effect.runPromise(store.snapshot(1));
     const migrated = new DatabaseSync(join(root, "registry.sqlite"), { readOnly: true });
-    assert.equal(migrated.prepare("PRAGMA user_version").get()?.user_version, 3);
+    assert.equal(migrated.prepare("PRAGMA user_version").get()?.user_version, 2);
     const columns = migrated.prepare("PRAGMA table_info(requests)").all().map((column) => column.name);
     assert.ok(columns.includes("requester_acknowledged_at"));
     assert.ok(columns.includes("requester_label"));
     assert.ok(columns.includes("requester_cwd"));
     migrated.close();
+  });
+});
+
+test("additive source identity remains readable by rolling v2 sessions", async () => {
+  await withStores(async (store, _second, root) => {
+    await Effect.runPromise(store.snapshot(0));
+    const transitional = new DatabaseSync(join(root, "registry.sqlite"));
+    transitional.exec("PRAGMA user_version = 3;");
+    transitional.close();
+
+    await Effect.runPromise(store.snapshot(1));
+    const compatible = new DatabaseSync(join(root, "registry.sqlite"), { readOnly: true });
+    assert.equal(compatible.prepare("PRAGMA user_version").get()?.user_version, 2);
+    const columns = compatible.prepare("PRAGMA table_info(requests)").all().map((column) => column.name);
+    assert.ok(columns.includes("requester_label"));
+    assert.ok(columns.includes("requester_cwd"));
+    compatible.close();
   });
 });
 
@@ -386,7 +403,7 @@ test("SQLite adapter commits complete versioned state", async () => {
     );
     const database = new DatabaseSync(join(root, "registry.sqlite"), { readOnly: true });
     try {
-      assert.equal(database.prepare("PRAGMA user_version").get()?.user_version, 3);
+      assert.equal(database.prepare("PRAGMA user_version").get()?.user_version, 2);
       assert.equal(database.prepare("SELECT COUNT(*) AS count FROM leases").get()?.count, 1);
       assert.equal(database.prepare("SELECT COUNT(*) AS count FROM requests").get()?.count, 0);
     } finally {
