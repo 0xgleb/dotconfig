@@ -16,7 +16,7 @@ test("questions remain pending until explicitly resolved", () => {
   });
   assert.equal(pendingQuestions(asked).length, 1);
   assert.match(questionWidgetLines(asked).join("\n"), /ACTION REQUIRED.*1 decision pending/i);
-  assert.match(questionWidgetLines(asked).join("\n"), /Open \/questions to answer/);
+  assert.match(questionWidgetLines(asked).join("\n"), /\/questions.*↑\/↓ select.*enter to answer/i);
   assert.doesNotMatch(questionWidgetLines(asked).join("\n"), /Guess:/);
   assert.match(pendingQuestionContext(asked) ?? "", /Continue independent work/);
   assert.equal(pendingQuestions(asked)[0]?.header, "Deployment");
@@ -29,6 +29,15 @@ test("questions remain pending until explicitly resolved", () => {
   });
   assert.equal(pendingQuestions(resolved).length, 0);
   assert.match(questionListText(resolved), /Confirmed: circuit-break only/);
+});
+
+test("pending queue renders selectable question identifiers below the editor", () => {
+  const first = applyQuestionAction(emptyQuestionState, { action: "ask", question: "First decision?" });
+  const second = applyQuestionAction(first, { action: "ask", question: "Second decision?" });
+  const lines = questionWidgetLines(second).join("\n");
+  assert.match(lines, /q1\s+First decision/);
+  assert.match(lines, /q2\s+Second decision/);
+  assert.match(lines, /↑\/↓ select/);
 });
 
 test("question state decoder rejects malformed partial state", () => {

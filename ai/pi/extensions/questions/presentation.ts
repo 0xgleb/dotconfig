@@ -8,11 +8,11 @@ const compact: (text: string, limit?: number) => string = (text, limit = 180) =>
 export const questionWidgetLines: (state: QuestionState) => string[] = (state) => {
   const pending = pendingQuestions(state);
   if (pending.length === 0) return [];
-  const current = pending[0];
   return [
-    `◆ ACTION REQUIRED · ${pending.length} decision${pending.length === 1 ? "" : "s"} pending · /questions`,
-    `  ${compact(current.question, 120)}`,
-    `  Open /questions to answer${pending.length > 1 ? ` · 1 of ${pending.length}` : ""}`,
+    `◆ ACTION REQUIRED · ${pending.length} decision${pending.length === 1 ? "" : "s"} pending`,
+    ...pending.slice(0, 3).map((question) => `  q${question.id}  ${compact(question.question, 112)}`),
+    ...(pending.length > 3 ? [`  … ${pending.length - 3} more`] : []),
+    `  /questions open · ↑/↓ select · enter to answer · esc to close`,
   ];
 };
 

@@ -86,15 +86,14 @@ const questionsExtension: (pi: ExtensionAPI) => void = (pi) => {
     pi.sendMessage({ customType: QUESTION_MESSAGE, content: questionListText(state), display: true });
   };
 
-  const showQuestionDialog = async (ctx: ExtensionContext) => {
+  const showQuestionDialog = async (ctx: ExtensionContext, questionId?: number) => {
     if (!ctx.hasUI || dialogOpen) return;
     dialogOpen = true;
     try {
-      while (true) {
-        const pending = pendingQuestions(state);
-        const question = pending[0];
-        if (!question) break;
-        const progress = state.questions.filter(({ status }) => status === "resolved").length + 1;
+      const pending = pendingQuestions(state);
+      const question = questionId === undefined ? pending[0] : pending.find(({ id }) => id === questionId);
+      if (!question) return;
+      const progress = state.questions.findIndex(({ id }) => id === question.id) + 1;
         const total = state.questions.length;
         const answer = await ctx.ui.custom<string | null>(
           (tui, theme, _keybindings, done) => {
@@ -178,13 +177,30 @@ const questionsExtension: (pi: ExtensionAPI) => void = (pi) => {
             },
           },
         );
-        if (answer === null) break;
+      if (answer !== null) {
         state = applyQuestionAction(state, { action: "resolve", id: question.id, answer });
         persist(ctx);
       }
     } finally {
       dialogOpen = false;
     }
+  };
+
+  const selectQuestion = async (ctx: ExtensionContext) => {
+    const pending = pendingQuestions(state);
+    if (pending.length === 0) {
+      showQuestions();
+      return;
+    }
+    if (pending.length === 1) {
+      await showQuestionDialog(ctx, pending[0]?.id);
+      return;
+    }
+    const choices = pending.map((question) => `q${question.id}  ${question.question.replace(/\s+/g, " ").slice(0, 100)}`);
+    const selected = await ctx.ui.select("Pending questions · ↑/↓ select · enter open · esc close", choices);
+    if (selected === undefined) return;
+    const selectedIndex = choices.indexOf(selected);
+    await showQuestionDialog(ctx, pending[selectedIndex]?.id);
   };
 
   pi.on("session_start", (_event, ctx) => restore(ctx));
@@ -196,7 +212,7 @@ const questionsExtension: (pi: ExtensionAPI) => void = (pi) => {
     const newest = pendingQuestions(state).at(-1)?.id;
     if (newest !== undefined && newest > lastPresentedQuestionId) {
       lastPresentedQuestionId = newest;
-      void showQuestionDialog(ctx);
+      void showQuestionDialog(ctx, newest);
     }
   });
   pi.on("before_agent_start", (event) => {
@@ -213,8 +229,7 @@ const questionsExtension: (pi: ExtensionAPI) => void = (pi) => {
     description: "Show questions awaiting user input",
     async handler(_args, ctx) {
       restore(ctx);
-      if (pendingQuestions(state).length === 0) showQuestions();
-      else await showQuestionDialog(ctx);
+      await selectQuestion(ctx);
     },
   });
 
