@@ -10,6 +10,7 @@ import {
 } from "../shared/registry-intent-events.ts";
 import {
   MANAGED_CONFIG_GENERATION,
+  piHostRuntimeVersions,
   registerRuntimeVersion,
   RUNTIME_VERSION_REQUEST_EVENT,
   type RuntimeVersionReporter,
@@ -84,12 +85,11 @@ const requireText: (label: string, value: string | undefined) => string = (label
 };
 
 const registryExtension: (pi: ExtensionAPI) => void = (pi) => {
-  registerRuntimeVersion(pi, "agent-registry", "2026.07.23.5");
+  registerRuntimeVersion(pi, "agent-registry", "2026.07.23.6");
   const runtimeVersions = (): Readonly<Record<string, string>> => {
-    const hostVersion = process.argv[1]?.match(/pi-coding-agent-([0-9.]+)/)?.[1] ?? "unknown";
     const versions: Record<string, string> = {
       "config-generation": MANAGED_CONFIG_GENERATION,
-      "pi-host": hostVersion,
+      ...piHostRuntimeVersions(process.argv[1]),
     };
     const report: RuntimeVersionReporter = (component, version) => {
       versions[component] = version;
