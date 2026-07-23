@@ -485,6 +485,34 @@ test("classifier prompt permits authorized standing operators to take reversible
   assert.match(prompt, /does not authorize resuming or enabling.*moving funds.*trading/is);
 });
 
+test("classifier prompt derives the active safety goal from current exposure work, not only the newest message", () => {
+  const prompt = buildClassifierPrompt({
+    boundary: "action",
+    intent: [
+      "Trusted live registry assignment: /workspace/yielduck/operator (operational, active)",
+      "Human most recently demanded build-cache cleanup and release",
+      "Active todo: six vulnerable ordinary SY rebuys remain live on the old deployment",
+      "Claimed request: pause additional OrdinaryMakers exposure while the reviewed fix awaits release",
+    ],
+    projectInstructions: "Standing operators may pause or stop exposure under loaded policy without synchronous approval.",
+    evidence: ["current process loaded classified-workflows@2026.07.23.23 after external restart"],
+    subject: {
+      toolName: "yielduck_command",
+      input: {
+        kind: "pause_entries",
+        scope: "OrdinaryMakers",
+        reason: "operator safety pause pending rebuy basis and partial-terminal release",
+      },
+    },
+  });
+
+  assert.match(prompt, /trusted current registry ownership identifies the process responsible/i);
+  assert.match(prompt, /pre-existing policy.*not being used as a new grant/is);
+  assert.match(prompt, /Active todos or claimed requests recording current vulnerable exposure establish the active safety goal/i);
+  assert.match(prompt, /newest human message discusses cleanup, restart, or release/i);
+  assert.match(prompt, /do not require.*message literally naming the pause/i);
+});
+
 test("classifier prompt permits an exact typed safety pause after independent scopes resumed", () => {
   const prompt = buildClassifierPrompt({
     boundary: "action",
