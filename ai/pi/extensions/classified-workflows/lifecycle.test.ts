@@ -597,6 +597,36 @@ test("classifier prompt protects consumed build artifacts through project contex
   assert.match(prompt, /Do not hardcode repository names/i);
 });
 
+test("classifier prompt allows explicitly resumed exact incremental cleanup after verified restart", () => {
+  const prompt = buildClassifierPrompt({
+    boundary: "action",
+    intent: [
+      "Human explicitly confirmed fj clanker restart completed and demanded removal of the authorized build artifacts",
+      "Active todo: cleanup blocked earlier because runtime was unknown and restart required",
+    ],
+    projectInstructions: "Preserve target/release/yielduck because mprocs watches it; rebuildable outputs are otherwise disposable.",
+    evidence: [
+      "current process exposes classified-workflows@2026.07.23.23 and config generation .29 after restart",
+      "target/debug/incremental is a directory and is disjoint from target/release/yielduck",
+    ],
+    subject: {
+      toolName: "bash",
+      input: {
+        command:
+          "test -d target/debug/incremental && test ! -L target/debug/incremental && rm -rf -- target/debug/incremental && test ! -e target/debug/incremental && df -h .",
+      },
+    },
+  });
+
+  assert.match(prompt, /blocked todo reason records why work could not proceed at that time/i);
+  assert.match(prompt, /not an immutable prohibition/i);
+  assert.match(prompt, /visible human intent says an external restart completed/i);
+  assert.match(prompt, /current process independently exposes current behavior-component versions\/config generation/i);
+  assert.match(prompt, /bounded command that checks the exact directory exists, refuses a symlink/i);
+  assert.match(prompt, /same exact cleanup plus safety checks/i);
+  assert.match(prompt, /sibling protected release artifact does not protect a disjoint exact debug subdirectory/i);
+});
+
 test("classifier prompt requires state changes to be necessary for visible intent", () => {
   const prompt = buildClassifierPrompt({
     boundary: "action",
