@@ -6,6 +6,7 @@ import {
   decodeQuestionState,
   emptyQuestionState,
   pendingQuestions,
+  repairMisroutedPromptAnswers,
   type QuestionAction,
   type QuestionOption,
   type QuestionState,
@@ -65,7 +66,7 @@ const parseAction: (request: QuestionRequest, state: QuestionState) => QuestionA
 };
 
 const questionsExtension: (pi: ExtensionAPI) => void = (pi) => {
-  registerRuntimeVersion(pi, "questions", "2026.07.23.4");
+  registerRuntimeVersion(pi, "questions", "2026.07.23.5");
   let state = emptyQuestionState;
   let dialogOpen = false;
 
@@ -80,7 +81,11 @@ const questionsExtension: (pi: ExtensionAPI) => void = (pi) => {
       .getBranch()
       .filter((candidate) => candidate.type === "custom" && candidate.customType === QUESTION_ENTRY)
       .at(-1);
-    state = entry?.type === "custom" ? decodeQuestionState(entry.data) ?? emptyQuestionState : emptyQuestionState;
+    const restored = entry?.type === "custom" ? decodeQuestionState(entry.data) ?? emptyQuestionState : emptyQuestionState;
+    state = repairMisroutedPromptAnswers(restored);
+    if (state.questions.some((question, index) => question !== restored.questions[index])) {
+      pi.appendEntry(QUESTION_ENTRY, state);
+    }
     render(ctx);
   };
 

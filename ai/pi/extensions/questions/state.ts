@@ -138,5 +138,26 @@ export const applyQuestionAction: (state: QuestionState, action: QuestionAction)
   }
 };
 
+export const repairMisroutedPromptAnswers = (state: QuestionState): QuestionState => ({
+  ...state,
+  questions: state.questions.map((question) => {
+    if (
+      question.status !== "resolved" ||
+      !/screencaptureui/i.test(question.answer) ||
+      !/trying to do a normal prompt/i.test(question.answer)
+    ) {
+      return question;
+    }
+    return {
+      id: question.id,
+      status: "pending" as const,
+      question: question.question,
+      ...(question.header ? { header: question.header } : {}),
+      ...(question.guess ? { guess: question.guess } : {}),
+      ...(question.options ? { options: question.options } : {}),
+    };
+  }),
+});
+
 export const pendingQuestions: (state: QuestionState) => readonly PendingQuestion[] = (state) =>
   state.questions.filter((question): question is PendingQuestion => question.status === "pending");

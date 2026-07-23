@@ -1,6 +1,12 @@
 import assert from "node:assert/strict";
 import test from "node:test";
-import { applyQuestionAction, decodeQuestionState, emptyQuestionState, pendingQuestions } from "./state.ts";
+import {
+  applyQuestionAction,
+  decodeQuestionState,
+  emptyQuestionState,
+  pendingQuestions,
+  repairMisroutedPromptAnswers,
+} from "./state.ts";
 import { pendingQuestionContext, questionListText } from "./presentation.ts";
 
 test("questions remain pending until explicitly resolved", () => {
@@ -42,6 +48,22 @@ test("a mistaken resolution can reopen the original question without changing it
     { id: 1, question: "Fleet grace period?" },
   ]);
   assert.equal(reopened.nextId, 2);
+});
+
+test("a screenshot-bearing normal prompt captured as an answer is reopened", () => {
+  const asked = applyQuestionAction(emptyQuestionState, { action: "ask", question: "Fleet policy?" });
+  const mistaken = applyQuestionAction(asked, {
+    action: "resolve",
+    id: 1,
+    answer:
+      "a/var/folders/x/TemporaryItems/NSIRD_screencaptureui_x/Screenshot.png fuck you bruv i was trying to do a normal prompt so your question asking is a bug",
+  });
+  const repaired = repairMisroutedPromptAnswers(mistaken);
+  assert.equal(pendingQuestions(repaired)[0]?.id, 1);
+  assert.equal(repaired.nextId, 2);
+
+  const legitimate = applyQuestionAction(asked, { action: "resolve", id: 1, answer: "Use a five-minute grace period." });
+  assert.deepEqual(repairMisroutedPromptAnswers(legitimate), legitimate);
 });
 
 test("clearing resolved questions preserves pending decisions", () => {
