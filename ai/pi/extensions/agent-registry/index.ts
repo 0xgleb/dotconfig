@@ -5,6 +5,10 @@ import { Type } from "typebox";
 import type { Effect } from "effect";
 import { isContinuationPaused } from "../shared/continuation-pause.ts";
 import {
+  REGISTRY_INTENT_REQUEST_EVENT,
+  type RegistryIntentReporter,
+} from "../shared/registry-intent-events.ts";
+import {
   MANAGED_CONFIG_GENERATION,
   registerRuntimeVersion,
   RUNTIME_VERSION_REQUEST_EVENT,
@@ -98,6 +102,7 @@ const registryExtension: (pi: ExtensionAPI) => void = (pi) => {
   let timer: ReturnType<typeof setInterval> | undefined;
   let sessionPolicyDigest: string | undefined;
   let syncing = false;
+  let latestSnapshot: RegistrySnapshot | undefined;
   let lastSyncError: string | undefined;
   const notifiedRequests = new Set<string>();
 
@@ -122,6 +127,27 @@ const registryExtension: (pi: ExtensionAPI) => void = (pi) => {
   const run = <T>(operation: Effect.Effect<T, RegistryError>): Promise<T> => runRegistryEffect(operation);
 
   const currentPolicyDigest = (ctx: ExtensionContext): string => sessionPolicyDigest ?? policyDigest(ctx);
+
+  pi.events.on(
+    REGISTRY_INTENT_REQUEST_EVENT,
+    (agentId: string, report: RegistryIntentReporter) => {
+      if (!latestSnapshot) return;
+      const leases = latestSnapshot.leases.filter((lease) => lease.owner.id === agentId);
+      for (const lease of leases) {
+        const requestIds = latestSnapshot.requests
+          .filter(
+            (request) =>
+              request.status === "claimed" && request.leaseId === lease.id && request.agentId === agentId,
+          )
+          .map((request) => request.id);
+        report(
+          `Trusted live registry assignment: ${lease.project}/${lease.role} (${lease.mode}, ${lease.status})${
+            requestIds.length > 0 ? `; claimed request IDs: ${requestIds.join(", ")}` : ""
+          }`,
+        );
+      }
+    },
+  );
 
   const ownedLeases = (snapshot: RegistrySnapshot, agentId: string): readonly Lease[] =>
     snapshot.leases.filter(({ owner }) => owner.id === agentId);
@@ -241,6 +267,7 @@ const registryExtension: (pi: ExtensionAPI) => void = (pi) => {
         }
       }
       snapshot = await run(store.snapshot(now));
+      latestSnapshot = snapshot;
       render(ctx, snapshot);
       lastSyncError = undefined;
       ctx.ui.setStatus("agent-registry-error", undefined);

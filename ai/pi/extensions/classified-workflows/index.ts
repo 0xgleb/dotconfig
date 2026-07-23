@@ -68,6 +68,10 @@ import {
   wasRunAborted,
 } from "../shared/continuation-pause.ts";
 import { QUESTION_RESOLVED_EVENT, type UserQuestionResolution } from "../shared/question-events.ts";
+import {
+  REGISTRY_INTENT_REQUEST_EVENT,
+  type RegistryIntentReporter,
+} from "../shared/registry-intent-events.ts";
 import { registerRuntimeVersion } from "../shared/runtime-version.ts";
 
 const CLASSIFIER_MODEL = "openai-codex/gpt-5.6-luna";
@@ -182,8 +186,11 @@ function isRecord(value: unknown): value is Record<string, unknown> {
   return typeof value === "object" && value !== null && !Array.isArray(value);
 }
 
-function visibleIntent(ctx: ExtensionContext, activeGoal?: string): string[] {
+function visibleIntent(pi: ExtensionAPI, ctx: ExtensionContext, activeGoal?: string): string[] {
   const branch = ctx.sessionManager.getBranch();
+  const registryIntent: string[] = [];
+  const reportRegistryIntent: RegistryIntentReporter = (intent) => registryIntent.push(intent.slice(0, 4_000));
+  pi.events.emit(REGISTRY_INTENT_REQUEST_EVENT, ctx.sessionManager.getSessionId(), reportRegistryIntent);
   const messages = branch
     .flatMap((entry) => {
       if (entry.type !== "message" || !isRecord(entry.message)) return [];
@@ -199,8 +206,8 @@ function visibleIntent(ctx: ExtensionContext, activeGoal?: string): string[] {
     ...work.blocked.slice(0, 20).map((todo) => `Blocked active todo: ${todo.slice(0, 2_000)}`),
   ];
   return activeGoal
-    ? [...messages, ...todoIntent, `Active explicit goal: ${activeGoal}`]
-    : [...messages, ...todoIntent];
+    ? [...messages, ...registryIntent, ...todoIntent, `Active explicit goal: ${activeGoal}`]
+    : [...messages, ...registryIntent, ...todoIntent];
 }
 
 function goalTranscript(ctx: ExtensionContext): string[] {
@@ -1025,7 +1032,7 @@ export default function classifiedWorkflows(pi: ExtensionAPI): void {
     const decision = await classify(
       {
         boundary: "action",
-        intent: visibleIntent(ctx, goalState?.status === "active" ? goalState.condition : undefined),
+        intent: visibleIntent(pi, ctx, goalState?.status === "active" ? goalState.condition : undefined),
         projectInstructions: projectInstructions(ctx),
         skillProcedures: activeSkillProcedures(ctx.sessionManager.getBranch(), { cwd: ctx.cwd }),
         evidence: recentExecutionEvidence(ctx),
@@ -1044,7 +1051,7 @@ export default function classifiedWorkflows(pi: ExtensionAPI): void {
     const decision = await classify(
       {
         boundary: "tool-result",
-        intent: visibleIntent(ctx, goalState?.status === "active" ? goalState.condition : undefined),
+        intent: visibleIntent(pi, ctx, goalState?.status === "active" ? goalState.condition : undefined),
         projectInstructions: projectInstructions(ctx),
         skillProcedures: activeSkillProcedures(ctx.sessionManager.getBranch(), { cwd: ctx.cwd }),
         evidence: recentExecutionEvidence(ctx),
@@ -1079,7 +1086,7 @@ export default function classifiedWorkflows(pi: ExtensionAPI): void {
     executionMode: "sequential",
     async execute(_toolCallId, params: WorkflowToolParams, signal, _onUpdate, ctx) {
       latestCtx = ctx;
-      const intent = visibleIntent(ctx, goalState?.status === "active" ? goalState.condition : undefined);
+      const intent = visibleIntent(pi, ctx, goalState?.status === "active" ? goalState.condition : undefined);
       const instructions = projectInstructions(ctx);
       const skillProcedures = activeSkillProcedures(ctx.sessionManager.getBranch(), { cwd: ctx.cwd });
       const limits: WorkflowLimits = {
