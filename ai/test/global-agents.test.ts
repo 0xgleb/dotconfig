@@ -78,6 +78,14 @@ test("shared and Pi-global instructions forbid stopping with active work", () =>
   }
 });
 
+test("shared and Pi-global instructions continue safely after classifier blocks", () => {
+  for (const [name, contents] of [["shared", shared], ["Pi global", pi]] as const) {
+    assert.match(contents, /block is not.*permission to stop|correct block is not.*permission to stop/is, `${name} must continue active work`);
+    assert.match(contents, /never.*--force.*bypass/is, `${name} must not invent force bypasses`);
+    assert.match(contents, /return to the real active task.*safe path/is, `${name} must recover task focus`);
+  }
+});
+
 test("shared and Pi-global instructions preserve manual interrupt pauses", () => {
   for (const [name, contents] of [["shared", shared], ["Pi global", pi]] as const) {
     assert.match(contents, /manual user interrupt|double-cancel/i, `${name} must recognize manual interruption`);

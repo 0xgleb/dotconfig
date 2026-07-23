@@ -27,7 +27,9 @@
 - Keep parallel work read-only unless every mutating worker has an isolated,
   repository-approved worktree.
 - Treat classifier blocks as policy. Do not evade them by switching tools or
-  rephrasing the same action.
+  rephrasing the same action. A block is not permission to stop: if the blocked
+  action was unrelated or over-scoped, return to the real active task through a
+  safe path. Never invent `--force` or equivalent bypass flags in response.
 - Run relevant tests and report failures or incomplete work accurately.
 - Never stop while assigned work remains executable. If a goal is active,
   continue until it is achieved. If any todo is pending, continue working through
