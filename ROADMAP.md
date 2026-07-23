@@ -187,7 +187,7 @@ requiring a second migration-specific workflow.
 
 ### Reliable unattended progress
 
-- [ ] Give reload/upgrade settlement priority over request-notification follow-ups
+- [x] Give reload/upgrade settlement priority over request-notification follow-ups
       so a busy support loop cannot strand an operator on stale policy
 - [ ] Coalesce duplicate requests around one active incident and preserve new
       evidence as replies instead of repeatedly triggering turns

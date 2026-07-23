@@ -4,6 +4,7 @@ import type { ExtensionAPI, ExtensionContext } from "@earendil-works/pi-coding-a
 import { Type } from "typebox";
 import type { Effect } from "effect";
 import { isContinuationPaused } from "../shared/continuation-pause.ts";
+import { AUTO_RELOAD_PENDING_REQUEST_EVENT, type AutoReloadPendingReporter } from "../shared/reload-events.ts";
 import {
   REGISTRY_INTENT_REQUEST_EVENT,
   type RegistryIntentRequest,
@@ -86,7 +87,7 @@ const requireText: (label: string, value: string | undefined) => string = (label
 };
 
 const registryExtension: (pi: ExtensionAPI) => void = (pi) => {
-  registerRuntimeVersion(pi, "agent-registry", "2026.07.23.7");
+  registerRuntimeVersion(pi, "agent-registry", "2026.07.23.8");
   const runtimeVersions = (): Readonly<Record<string, string>> => {
     const versions: Record<string, string> = {
       "config-generation": MANAGED_CONFIG_GENERATION,
@@ -161,6 +162,13 @@ const registryExtension: (pi: ExtensionAPI) => void = (pi) => {
   const ownedLeases = (snapshot: RegistrySnapshot, agentId: string): readonly Lease[] =>
     snapshot.leases.filter(({ owner }) => owner.id === agentId);
 
+  const autoReloadPending = (): boolean => {
+    let pending = false;
+    const report: AutoReloadPendingReporter = (value) => { pending ||= value; };
+    pi.events.emit(AUTO_RELOAD_PENDING_REQUEST_EVENT, report);
+    return pending;
+  };
+
   const render = (ctx: ExtensionContext, snapshot: RegistrySnapshot) => {
     const lines = registryWidgetLines(snapshot, identity(ctx).id, Date.now());
     ctx.ui.setStatus(STATUS_KEY, lines.length > 0 ? `roles:${ownedLeases(snapshot, identity(ctx).id).length}` : undefined);
@@ -168,14 +176,15 @@ const registryExtension: (pi: ExtensionAPI) => void = (pi) => {
   };
 
   const notifyRequest = async (ctx: ExtensionContext, request: RegistryRequest): Promise<void> => {
-    if (notifiedRequests.has(request.id) || !ctx.isIdle()) return;
+    if (notifiedRequests.has(request.id) || !ctx.isIdle() || autoReloadPending()) return;
     const fresh = (await run(store.snapshot(Date.now()))).requests.find(({ id }) => id === request.id);
     if (
       !fresh ||
       fresh.status !== "claimed" ||
       fresh.leaseId !== request.leaseId ||
       fresh.agentId !== identity(ctx).id ||
-      !ctx.isIdle()
+      !ctx.isIdle() ||
+      autoReloadPending()
     ) {
       return;
     }
@@ -210,7 +219,7 @@ const registryExtension: (pi: ExtensionAPI) => void = (pi) => {
         }),
       );
       let snapshot = await run(store.snapshot(now));
-      for (const request of notificationsEnabled && ctx.isIdle()
+      for (const request of notificationsEnabled && ctx.isIdle() && !autoReloadPending()
         ? snapshot.requests.filter(
             (candidate) =>
               candidate.requesterId === agent.id &&

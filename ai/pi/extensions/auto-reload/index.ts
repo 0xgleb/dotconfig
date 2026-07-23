@@ -15,6 +15,7 @@ import {
   unseenHandoffNames,
 } from "./core.ts";
 import { isContinuationPaused } from "../shared/continuation-pause.ts";
+import { AUTO_RELOAD_PENDING_REQUEST_EVENT, type AutoReloadPendingReporter } from "../shared/reload-events.ts";
 import { registerRuntimeVersion } from "../shared/runtime-version.ts";
 
 const DEBOUNCE_MS = 30_000;
@@ -62,13 +63,15 @@ export const managedGeneration = (roots: readonly string[]): string => {
 };
 
 const autoReload: (pi: ExtensionAPI) => void = (pi) => {
-  registerRuntimeVersion(pi, "auto-reload", "2026.07.23.2");
+  registerRuntimeVersion(pi, "auto-reload", "2026.07.23.3");
   let watchers: FSWatcher[] = [];
   let timer: ReturnType<typeof setTimeout> | undefined;
   let handoffTimer: ReturnType<typeof setInterval> | undefined;
   let generationTimer: ReturnType<typeof setInterval> | undefined;
   let pending = false;
   const changedLabels = new Set<string>();
+
+  pi.events.on(AUTO_RELOAD_PENDING_REQUEST_EVENT, (report: AutoReloadPendingReporter) => report(pending));
 
   const closeWatchers = () => {
     if (timer) clearTimeout(timer);

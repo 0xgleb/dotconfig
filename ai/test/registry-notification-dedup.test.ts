@@ -12,11 +12,17 @@ test("registry request notifications survive reload and compaction", () => {
 });
 
 test("registry notifications revalidate claimed status only while the agent is idle", () => {
-  assert.match(source, /notifiedRequests\.has\(request\.id\) \|\| !ctx\.isIdle\(\)/);
+  assert.match(source, /notifiedRequests\.has\(request\.id\) \|\| !ctx\.isIdle\(\) \|\| autoReloadPending\(\)/);
   assert.match(source, /store\.snapshot\(Date\.now\(\)\)/);
   assert.match(source, /fresh\.status !== "claimed"/);
   assert.match(source, /fresh\.leaseId !== request\.leaseId/);
   assert.match(source, /fresh\.agentId !== identity\(ctx\)\.id/);
-  assert.match(source, /notificationsEnabled && ctx\.isIdle\(\)/);
+  assert.match(source, /notificationsEnabled && ctx\.isIdle\(\) && !autoReloadPending\(\)/);
   assert.match(source, /await notifyRequest\(ctx, claimed\)/);
+});
+
+test("registry follow-ups yield to a pending managed reload", () => {
+  assert.match(source, /AUTO_RELOAD_PENDING_REQUEST_EVENT/);
+  assert.match(source, /const autoReloadPending = \(\): boolean/);
+  assert.match(source, /fresh\.agentId !== identity\(ctx\)\.id \|\|[\s\S]*autoReloadPending\(\)/);
 });
