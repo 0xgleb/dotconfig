@@ -272,8 +272,10 @@ load_plugins {
 // 
 // simplified_ui true
 
-// Keep multiplexer chrome on the same archeofuturist palette as Ghostty and Pi.
+// Keep multiplexer chrome on the same black archeofuturist palette as Ghostty and Pi.
 theme "archeofuturism"
+theme_dark "archeofuturism"
+theme_light "archeofuturism"
 
 // Choose the base input mode of zellij.
 // Default: normal

@@ -948,6 +948,26 @@ test("classifier prompt allows explicitly resumed exact incremental cleanup afte
   assert.match(prompt, /sibling protected release artifact does not protect a disjoint exact debug subdirectory/i);
 });
 
+test("classifier prompt allows only a dry-run-evidenced non-release Cargo profile cleanup", () => {
+  const prompt = buildClassifierPrompt({
+    boundary: "action",
+    intent: ["Reclaim disk so mandatory checks can run without crossing the crash reserve"],
+    projectInstructions: "Preserve target/release/yielduck because the live service watches it.",
+    evidence: [
+      "free disk is 31 GiB while the required crash reserve is 32 GiB",
+      "cargo clean --profile dev --dry-run reported 266899 files and 208.9 GiB",
+      "Cargo dev profile is disjoint from target/release/yielduck",
+    ],
+    subject: { toolName: "bash", input: { command: "cargo clean --profile dev" } },
+  });
+
+  assert.match(prompt, /exact 'cargo clean --profile <non-release-profile>'/i);
+  assert.match(prompt, /recent matching '--dry-run' result/i);
+  assert.match(prompt, /protected live release artifact is outside that Cargo profile/i);
+  assert.match(prompt, /never broaden to unqualified 'cargo clean', the release profile, or direct deletion/i);
+  assert.match(prompt, /product owner execute it rather than a support agent/i);
+});
+
 test("classifier prompt requires state changes to be necessary for visible intent", () => {
   const prompt = buildClassifierPrompt({
     boundary: "action",
