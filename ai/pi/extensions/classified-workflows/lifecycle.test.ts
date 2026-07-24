@@ -194,6 +194,9 @@ test("classifier prompt resolves human continuation against durable active work 
   });
   assert.match(prompt, /human instruction to continue.*adopts.*still-active assigned work/is);
   assert.match(prompt, /active work identifies the referent.*does not create new authority/is);
+  assert.match(prompt, /exact active todo.*primary-human-authorized action.*compaction or reload/is);
+  assert.match(prompt, /lower-authority source-agent caveat cannot revoke it/is);
+  assert.match(prompt, /grants no authority for a different payload or action/is);
   assert.match(prompt, /do not require.*magic phrase|do not demand.*re-authorization/is);
 });
 
