@@ -33,7 +33,13 @@ not override the user's account.
 - Never infer work from a PR title, body, branch name, `updatedAt`, or committer
   date. These describe context or can be changed by a Graphite restack.
 - Never infer a Linear project or workstream from wording. Group by
-  `project.name`; if it is absent, leave the item ungrouped or ask.
+  `project.name`; if it is absent, leave the item ungrouped or ask. An assigned
+  issue merely entering Done is context, not proof that the user worked on it;
+  require a user-created issue, a user comment, a reportable authored PR link,
+  or canonical user framing before promoting it into the update.
+- A family deployment workflow is context, not user work by itself. Report it
+  only when an exact run is linked to reportable user-authored work or canonical
+  user framing identifies the user's substantive involvement.
 - Do not create Linear issues or make any external mutation while running EOD.
 
 ## Find the note and reporting window
@@ -49,7 +55,9 @@ not override the user's account.
    explicitly selected target is an existing zero-byte file before drafting.
 4. Preserve all user-written text. Text after `TLDR:` inside a template comment
    is a brain dump. Replace that whole template comment with the structured
-   update while preserving its meaning and emphasis.
+   update while preserving its meaning and emphasis. Treat the initial read as a
+   snapshot only: re-read the live target immediately before every mutation and
+   reconcile any intervening manual edits.
 5. Derive `since` from the previous EOD filename as that date at `00:00:00Z`.
    Capture `until` once with `date -u +%Y-%m-%dT%H:%M:%SZ`. Use those exact ISO
    timestamps for the entire run.
@@ -58,7 +66,10 @@ not override the user's account.
 
 Run `/Users/0xgleb/.config/ai/skills/eod/scripts/collect.nu` once with explicit
 `--since`, `--until`, and `--output /tmp/eod-activity.json` arguments. Read the
-resulting JSON.
+resulting JSON. When canonical user framing supplies exact Graphite batch group
+and child PR numbers, also pass one or more bounded `--graphite-batches`
+arguments in `OWNER/REPO#GROUP:CHILD,CHILD` form. Never replace this bounded
+scope with broad `is:merged`, `mergedAt`, or organization-wide searches.
 
 The collector deliberately distinguishes:
 
@@ -68,6 +79,11 @@ The collector deliberately distinguishes:
   window.
 - `unverified_update`: GitHub says an old PR moved, but no authored commit,
   merge, or other substantive event verifies what changed.
+- `merged_via_graphite_batch`: an exact child PR is CLOSED with `mergedAt: null`,
+  but canonical bounded membership and a merged `app/graphite-app` group prove
+  the child was part of the merge batch.
+- `context_only`: Linear completion or a deployment run exists, but no evidence
+  yet connects it to the user's substantive involvement.
 - `rewritten_or_amended_in_window`: only the committer date moved into the
   window. Treat this as restack/amend context, never substantive work.
 
@@ -115,8 +131,9 @@ Before drafting, verify all of the following:
 2. `github.review_collection_status`,
    `github.family_repository_lookup_status`,
    `github.linked_commit_lookup_status`, and
-   `github.deployment_collection_status`, and
-   `github.deployment_pr_lookup_status` are all `available`.
+   `github.deployment_collection_status`,
+   `github.deployment_pr_lookup_status`, and
+   `github.graphite_batch_collection_status` are all `available`.
 3. Every authored PR has an empty `collection_errors` list.
 4. The window in the JSON exactly matches the window established above.
 
@@ -124,9 +141,9 @@ If any check fails, stop before editing the note. Tell the user which source or
 verification failed and ask whether to retry or proceed with a specifically
 named omission. Never turn a failed source into an empty section.
 
-For `unverified_update` entries, do not narrate them as work unless the user's
-brain dump explicitly supplies the missing delta. Otherwise omit them and name
-the omission in the handoff after editing.
+For `unverified_update` or `context_only` entries, do not narrate them as work
+unless canonical user framing explicitly supplies the missing involvement and
+delta. Otherwise omit them and name the omission in the handoff after editing.
 
 ## Review boundary
 
@@ -142,21 +159,32 @@ this skill.
 ## Draft and edit
 
 - For an explicitly user-designated existing zero-byte target verified by `Read`,
-  use `Write` once to initialize it. For every nonempty target, use `Edit` with an
-  exact existing anchor. Never use `Write` on a nonempty note or overwrite any
-  user material wholesale.
-- Follow recent-note house style. The usual shape is a concrete status paragraph,
-  one granular stats line, `## What Was Done`, topic-grouped bullets, and a
-  compact `### Reviews` section when reviews exist.
+  use `Write` once to initialize it. For every nonempty target, re-read it
+  immediately before mutation and use `Edit` only on the exact placeholder or
+  user-requested anchor. If that anchor changed, stop and reconcile; never
+  reconstruct the note from the earlier snapshot. Never use `Write` on a
+  nonempty note or overwrite any user material wholesale.
+- Use meaningful stakeholder headers that state the outcome or decision area.
+  Never emit generic headings such as `What Was Done` or `Review hardening`, and
+  never create a one-bullet section whose heading is merely a project name or a
+  collector category.
 - Lead with deliverables and their state, not PR mechanics or counts.
 - Follow the user's requested workstream order exactly. Otherwise order by
   stakeholder importance, not repository or query order.
-- A stats line may include nonzero counts for PRs opened, submitted for review,
-  still draft, merged, reviewed, issues created, and issues completed.
-- Report deployments only from `github.deployments`. Include environment only
-  when the workflow identity establishes it; `unspecified` stays unspecified.
-- Group Linear work by its returned project name. An issue being touched today
-  does not prove it was the substantive work performed today.
+- Never emit a detached stats line. Put every count in the same sentence or
+  bullet as the exact supporting PR, review, issue, deployment-run, or Graphite
+  batch references. If the references do not support the count one-for-one,
+  omit the count.
+- Report deployments only from `github.deployments` entries marked
+  `verified_user_involvement`. Include environment only when the workflow
+  identity establishes it; `unspecified` stays unspecified.
+- Group Linear work by its returned project name only after its collector entry
+  is marked `verified_user_involvement` or canonical user framing supplies that
+  involvement. An issue being touched or completed today does not prove it was
+  the substantive work performed today.
+- When exact bounded Graphite evidence is supplied, count each child PR once and
+  cite both the child PRs and the merged batch group. Do not count the group as
+  an additional authored PR.
 - Reviews count only when the user submitted the review inside the window on
   another author's PR. Group them as Approved, Commented, or Changes-requested.
 - Human and bot feedback are different. Never describe bot-only activity as
@@ -178,9 +206,13 @@ Read the completed note once more and verify:
   assistant-only session claim became a work claim;
 - deployment work is present when deployment runs are present;
 - workstream ordering and attribution match the user's checkpoint correction;
-- no `unverified_update` or committer-date-only event became a work claim;
-- every Linear grouping matches `project.name`;
-- stats agree with the evidence JSON;
+- no `unverified_update`, `context_only`, or committer-date-only event became a
+  work claim without canonical user framing;
+- every Linear grouping matches `project.name` and every included Linear or
+  deployment item has substantive user-involvement evidence;
+- every count is adjacent to exact references and agrees with those references;
+- Graphite children and their batch group are reconciled without double-counting;
+- the final read preserves every live manual edit outside the requested anchors;
 - formatting is ASCII, terse, grammatical, and consistent with recent EODs.
 
 If any sentence cannot be traced to the user's words or the evidence JSON,

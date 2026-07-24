@@ -5,7 +5,7 @@ import test from "node:test";
 const read = (path: string) => readFileSync(new URL(path, import.meta.url), "utf8");
 
 test("fleet diagnostics expose current behavior-bearing component versions", () => {
-  assert.match(read("../pi/extensions/shared/runtime-version.ts"), /MANAGED_CONFIG_GENERATION = "2026\.07\.23\.88"/);
+  assert.match(read("../pi/extensions/shared/runtime-version.ts"), /MANAGED_CONFIG_GENERATION = "2026\.07\.23\.89"/);
   assert.match(read("../pi/extensions/activity-status/index.ts"), /activity-status", "2026\.07\.23\.1"/);
   assert.match(read("../pi/extensions/agent-registry/index.ts"), /agent-registry", "2026\.07\.23\.12"/);
   assert.match(read("../pi/extensions/auto-reload/index.ts"), /auto-reload", "2026\.07\.23\.6"/);
