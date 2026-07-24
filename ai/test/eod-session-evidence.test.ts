@@ -4,6 +4,13 @@ import test from "node:test";
 
 const eod = readFileSync(new URL("../skills/eod/SKILL.md", import.meta.url), "utf8");
 
+test("EOD safely initializes an explicitly selected zero-byte note without overwriting content", () => {
+  assert.match(eod, /allowed-tools:[\s\S]*?- "Write"/);
+  assert.match(eod, /existing zero-byte.*use `Write`/is);
+  assert.match(eod, /nonempty.*use `Edit`/is);
+  assert.match(eod, /never.*`Write`.*nonempty/is);
+});
+
 test("EOD uses bounded Pi session framing without trusting assistant claims", () => {
   assert.match(eod, /bounded `session_search`/i);
   assert.match(eod, /user_framing.*user_correction.*verified_tool_result.*assistant_claim/is);

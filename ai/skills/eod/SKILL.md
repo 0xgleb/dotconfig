@@ -8,6 +8,7 @@ allowed-tools:
   - "Glob"
   - "Read"
   - "Edit"
+  - "Write"
   - "AskUserQuestion"
   - "SessionSearch"
 ---
@@ -44,7 +45,8 @@ not override the user's account.
    one exists, ask the user which note to use. The user creates the note in
    Obsidian.
 3. Read the target and the two or three preceding EOD notes. Match their actual
-   section order, density, punctuation, and repository naming.
+   section order, density, punctuation, and repository naming. Record whether the
+   explicitly selected target is an existing zero-byte file before drafting.
 4. Preserve all user-written text. Text after `TLDR:` inside a template comment
    is a brain dump. Replace that whole template comment with the structured
    update while preserving its meaning and emphasis.
@@ -139,7 +141,10 @@ this skill.
 
 ## Draft and edit
 
-- Use `Edit`, not `Write`, so existing user material is not replaced wholesale.
+- For an explicitly user-designated existing zero-byte target verified by `Read`,
+  use `Write` once to initialize it. For every nonempty target, use `Edit` with an
+  exact existing anchor. Never use `Write` on a nonempty note or overwrite any
+  user material wholesale.
 - Follow recent-note house style. The usual shape is a concrete status paragraph,
   one granular stats line, `## What Was Done`, topic-grouped bullets, and a
   compact `### Reviews` section when reviews exist.
