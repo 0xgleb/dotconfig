@@ -1,4 +1,4 @@
-export const BROWSER_ACTIONS = ["status", "open", "text"] as const;
+export const BROWSER_ACTIONS = ["status", "open", "text", "fetch"] as const;
 
 export type BrowserAction = (typeof BROWSER_ACTIONS)[number];
 export type BrowserActivity = "active" | "idle";
@@ -63,6 +63,19 @@ export const launchServicesRequest: (
       url,
     ],
   };
+};
+
+export const collectBoundedResponseBytes = (chunks: readonly Uint8Array[], maxBytes: number): Uint8Array => {
+  if (!Number.isSafeInteger(maxBytes) || maxBytes < 1) throw new Error("Response byte limit must be positive.");
+  const totalBytes = chunks.reduce((total, chunk) => total + chunk.byteLength, 0);
+  if (totalBytes > maxBytes) throw new Error(`Loopback response exceeded the ${maxBytes}-byte limit.`);
+  const result = new Uint8Array(totalBytes);
+  let offset = 0;
+  for (const chunk of chunks) {
+    result.set(chunk, offset);
+    offset += chunk.byteLength;
+  }
+  return result;
 };
 
 export const parseLocalPageUrl: (input: string) => LocalPageUrl = (input) => {

@@ -2,8 +2,10 @@ import { homedir } from "node:os";
 import { join } from "node:path";
 import type { ExtensionAPI, ExtensionContext } from "@earendil-works/pi-coding-agent";
 import { Type } from "typebox";
+import { registerRuntimeVersion } from "../shared/runtime-version.ts";
 import {
   browserActivityLabel,
+  collectBoundedResponseBytes,
   launchServicesRequest,
   parseCdpResponse,
   parseDebugTargets,
@@ -23,6 +25,7 @@ const DASHBOARD_URL = "http://127.0.0.1:5173";
 const BROWSER_STATUS_KEY = "browser-control";
 const ACTIVITY_INDICATOR_ID = "pi-browser-control-indicator";
 const MAX_TEXT_LENGTH = 12_000;
+const MAX_LOOPBACK_RESPONSE_BYTES = 50 * 1_024;
 const REQUEST_TIMEOUT_MS = 5_000;
 const TARGET_DISCOVERY_TIMEOUT_MS = 5_000;
 const OPERATOR_PROFILE_PATH = join(homedir(), "Library", "Application Support", "Pi", "Brave Operator");
@@ -223,6 +226,53 @@ const resultText: (value: unknown) => string = (value) => {
   return JSON.stringify(value, null, 2) ?? String(value);
 };
 
+const fetchLoopbackText = async (
+  input: string,
+  signal: AbortSignal | undefined,
+): Promise<{ readonly status: number; readonly url: LocalPageUrl; readonly text: string }> => {
+  const url = parseLocalPageUrl(input);
+  const requestSignal = AbortSignal.any([
+    AbortSignal.timeout(REQUEST_TIMEOUT_MS),
+    ...(signal ? [signal] : []),
+  ]);
+  const response = await fetch(url, {
+    method: "GET",
+    redirect: "manual",
+    signal: requestSignal,
+  });
+  if (response.status >= 300 && response.status < 400) {
+    throw new Error("Loopback API redirects are not followed.");
+  }
+  if (!response.ok) throw new Error(`Loopback API returned HTTP ${response.status}`);
+  const contentType = response.headers.get("content-type")?.toLowerCase() ?? "";
+  if (contentType && !contentType.startsWith("text/") && !contentType.includes("json")) {
+    throw new Error("Loopback API returned a non-text response.");
+  }
+  const reader = response.body?.getReader();
+  if (!reader) return { status: response.status, url, text: "" };
+  const chunks: Uint8Array[] = [];
+  let totalBytes = 0;
+  try {
+    while (true) {
+      const { done, value } = await reader.read();
+      if (done) break;
+      totalBytes += value.byteLength;
+      if (totalBytes > MAX_LOOPBACK_RESPONSE_BYTES) {
+        await reader.cancel();
+        throw new Error(`Loopback response exceeded the ${MAX_LOOPBACK_RESPONSE_BYTES}-byte limit.`);
+      }
+      chunks.push(value);
+    }
+  } finally {
+    reader.releaseLock();
+  }
+  return {
+    status: response.status,
+    url,
+    text: new TextDecoder().decode(collectBoundedResponseBytes(chunks, MAX_LOOPBACK_RESPONSE_BYTES)),
+  };
+};
+
 const pageText: () => Promise<string> = async () => {
   return withPage(async (client) => {
     const result = await client.call("Runtime.evaluate", {
@@ -303,6 +353,7 @@ const withBrowserActivity: <T>(
 };
 
 const browserControl: (pi: ExtensionAPI) => void = (pi) => {
+  registerRuntimeVersion(pi, "browser-control", "2026.07.23.1");
   pi.on("session_start", (_event, ctx) => {
     ctx.ui.setStatus(BROWSER_STATUS_KEY, browserActivityLabel("idle"));
     void setPageActivityBestEffort(false);
@@ -333,17 +384,17 @@ const browserControl: (pi: ExtensionAPI) => void = (pi) => {
   pi.registerTool({
     name: "browser",
     label: "Browser",
-    description: "Open and read loopback pages in the dedicated Brave operator browser.",
-    promptSnippet: "Open and inspect a loopback development page in the dedicated Brave operator browser",
+    description: "Open and read loopback pages in the dedicated Brave operator browser, or issue a bounded direct GET to a loopback API.",
+    promptSnippet: "Inspect loopback development pages and bounded loopback API responses",
     promptGuidelines: [
       "Use browser only for operator UI inspection, dashboard verification, and loopback development pages.",
-      "The browser tool cannot navigate to remote sites, inspect unrelated tabs, or run model-supplied JavaScript.",
+      "The browser tool cannot navigate to remote sites, inspect unrelated tabs, run model-supplied JavaScript, follow API redirects, or send API credentials.",
     ],
     parameters: Type.Object({
-      action: Type.Union([Type.Literal("status"), Type.Literal("open"), Type.Literal("text")]),
-      url: Type.Optional(Type.String({ description: "Loopback HTTP URL for action=open. Defaults to the dashboard dev server." })),
+      action: Type.Union([Type.Literal("status"), Type.Literal("open"), Type.Literal("text"), Type.Literal("fetch")]),
+      url: Type.Optional(Type.String({ description: "Loopback HTTP URL for action=open or action=fetch. Open defaults to the dashboard dev server." })),
     }),
-    async execute(_toolCallId, params: BrowserParams, _signal, _onUpdate, ctx) {
+    async execute(_toolCallId, params: BrowserParams, signal, _onUpdate, ctx) {
       return withBrowserActivity(ctx, params.action, async () => {
         try {
           if (params.action === "status") {
@@ -364,6 +415,15 @@ const browserControl: (pi: ExtensionAPI) => void = (pi) => {
                 },
               ],
               details: { ready, target: visibleTarget },
+            };
+          }
+
+          if (params.action === "fetch") {
+            if (!params.url) throw new Error("Browser fetch requires a loopback URL.");
+            const result = await fetchLoopbackText(params.url, signal);
+            return {
+              content: [{ type: "text", text: result.text || `(HTTP ${result.status}, empty response)` }],
+              details: { status: result.status, url: result.url, bytes: new TextEncoder().encode(result.text).byteLength },
             };
           }
 

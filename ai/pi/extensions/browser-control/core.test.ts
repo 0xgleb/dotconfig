@@ -1,8 +1,10 @@
 import assert from "node:assert/strict";
+import { readFileSync } from "node:fs";
 import test from "node:test";
 import {
   BROWSER_ACTIONS,
   browserActivityLabel,
+  collectBoundedResponseBytes,
   launchServicesRequest,
   parseCdpResponse,
   parseDebugTargets,
@@ -12,6 +14,8 @@ import {
   selectActiveTarget,
   selectReusableTarget,
 } from "./core.ts";
+
+const browserExtension = readFileSync(new URL("./index.ts", import.meta.url), "utf8");
 
 const recordedTarget = {
   description: "",
@@ -23,13 +27,34 @@ const recordedTarget = {
   webSocketDebuggerUrl: "ws://127.0.0.1:9222/devtools/page/DAB7",
 };
 
+test("browser exposes a direct bounded loopback fetch action", () => {
+  assert.deepEqual(BROWSER_ACTIONS, ["status", "open", "text", "fetch"]);
+  const bytes = collectBoundedResponseBytes(
+    [new TextEncoder().encode("{\"ok\":"), new TextEncoder().encode("true}")],
+    64,
+  );
+  assert.equal(new TextDecoder().decode(bytes), '{"ok":true}');
+  assert.throws(
+    () => collectBoundedResponseBytes([new Uint8Array(40), new Uint8Array(30)], 64),
+    /exceeded.*64-byte/i,
+  );
+});
+
+test("direct loopback fetch is GET-only, bounded, credential-free, and refuses redirects", () => {
+  assert.match(browserExtension, /method: "GET"/);
+  assert.match(browserExtension, /redirect: "manual"/);
+  assert.match(browserExtension, /MAX_LOOPBACK_RESPONSE_BYTES/);
+  assert.match(browserExtension, /Loopback API redirects are not followed/);
+  assert.doesNotMatch(browserExtension, /Authorization|Cookie/);
+});
+
 test("browser activity labels distinguish scoped active control from an idle operator", () => {
   assert.equal(browserActivityLabel("idle"), "browser:idle · isolated");
   assert.equal(browserActivityLabel("active", "text"), "browser:active:text · isolated");
 });
 
 test("browser actions expose no arbitrary script evaluation", () => {
-  assert.deepEqual(BROWSER_ACTIONS, ["status", "open", "text"]);
+  assert.deepEqual(BROWSER_ACTIONS, ["status", "open", "text", "fetch"]);
   assert.equal(BROWSER_ACTIONS.includes("eval" as never), false);
 });
 
