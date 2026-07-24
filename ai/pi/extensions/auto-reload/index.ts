@@ -18,7 +18,6 @@ import { isContinuationPaused } from "../shared/continuation-pause.ts";
 import { AUTO_RELOAD_PENDING_REQUEST_EVENT, type AutoReloadPendingReporter } from "../shared/reload-events.ts";
 import { registerRuntimeVersion } from "../shared/runtime-version.ts";
 
-const DEBOUNCE_MS = 30_000;
 const HANDOFF_POLL_MS = 60 * 60 * 1_000;
 const HANDOFF_STATE_ENTRY = "auto-reload.seen-pi-handoffs";
 const RELOAD_SUMMARY_ENTRY = "auto-reload.managed-change-summary";
@@ -63,7 +62,7 @@ export const managedGeneration = (roots: readonly string[]): string => {
 };
 
 const autoReload: (pi: ExtensionAPI) => void = (pi) => {
-  registerRuntimeVersion(pi, "auto-reload", "2026.07.23.4");
+  registerRuntimeVersion(pi, "auto-reload", "2026.07.23.5");
   let watchers: FSWatcher[] = [];
   let timer: ReturnType<typeof setTimeout> | undefined;
   let handoffTimer: ReturnType<typeof setInterval> | undefined;
@@ -117,7 +116,8 @@ const autoReload: (pi: ExtensionAPI) => void = (pi) => {
     pending = true;
     ctx.ui.setStatus(STATUS_KEY, "reload:pending");
     if (timer) clearTimeout(timer);
-    timer = setTimeout(() => void reloadWhenIdle(ctx), DEBOUNCE_MS);
+    timer = undefined;
+    queueMicrotask(() => void reloadWhenIdle(ctx));
   };
 
   pi.on("session_start", (event, ctx) => {

@@ -14,6 +14,11 @@ test("pending managed reload executes as soon as the agent fully settles", () =>
   assert.match(source, /await reloadWhenIdle\(ctx\)/);
 });
 
+test("managed source events start commit-gated reload immediately instead of waiting on a fixed debounce", () => {
+  assert.match(source, /queueMicrotask\(\(\) => void reloadWhenIdle\(ctx\)\)/);
+  assert.doesNotMatch(source, /DEBOUNCE_MS/);
+});
+
 test("automatic reload waits until managed tracked sources are committed", () => {
   const root = mkdtempSync(join(tmpdir(), "pi-auto-reload-git-"));
   const git = (...args: string[]) => spawnSync("git", ["-C", root, ...args], { stdio: "ignore" });
