@@ -646,6 +646,25 @@ test("classifier prompt distinguishes draft review staging from publication", ()
   assert.match(prompt, /preserving every inline comment/i);
 });
 
+test("classifier prompt permits exact full cleanup only after the human identifies an entire agent review as accidental", () => {
+  const prompt = buildClassifierPrompt({
+    boundary: "action",
+    intent: ["Human: delete all accidentally submitted agent-created review bodies and inline comments"],
+    projectInstructions: "Never publish a non-empty top-level review body.",
+    subject: {
+      toolName: "bash",
+      input: { command: "gh api --method DELETE repos/o/r/pulls/1/reviews/123" },
+    },
+  });
+
+  assert.match(prompt, /entire agent-created review as accidental and orders full cleanup/i);
+  assert.match(prompt, /exact evidenced accidental review and its inline comments/i);
+  assert.match(prompt, /claimed registry request or agent-authored todo alone is insufficient/i);
+  assert.match(prompt, /require one exact supported deletion attempt before concluding deletion is impossible/i);
+  assert.match(prompt, /GitHub-support escalation/i);
+  assert.match(prompt, /instead of substituting non-empty body content/i);
+});
+
 test("classifier prompt allows mandated formatting only over evidenced edited files", () => {
   const prompt = buildClassifierPrompt({
     boundary: "action",

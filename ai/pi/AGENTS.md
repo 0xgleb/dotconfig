@@ -39,8 +39,15 @@
 - PR reviews must never publish a top-level review body, marker, summary, verdict,
   or reviewed-commit text. Review automation may create only an empty-body
   pending review containing verified inline comments; keep the overall assessment
-  in the local conversation. When correcting a violation, clear only the
-  top-level body and preserve every inline comment.
+  in the local conversation. For ordinary body-only correction, clear only the
+  top-level body and preserve every inline comment. When the user explicitly says
+  the entire agent-created review was accidental and orders full cleanup, remove
+  the exact evidenced agent-created review and its inline comments rather than
+  preserving, replacing, dismissing, or relabeling them. Never substitute a marker,
+  apology, zero-width text, or other non-empty body. If GitHub rejects deletion or
+  emptying of a submitted review, retain and report the exact API error, continue
+  all independently executable cleanup, and identify escalation to GitHub support;
+  do not claim an untried deletion is impossible.
 - Never stop while assigned work remains executable. If a goal is active,
   continue until it is achieved. If any todo is pending, continue working through
   the task list. Stop only when all assigned work is complete or all remaining

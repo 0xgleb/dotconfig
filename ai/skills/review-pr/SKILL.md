@@ -287,11 +287,10 @@ summary box when they submit from the GitHub UI:
 in the file.** To find the right line number:
 - Read the diff (`$out_dir/diff.patch`) and identify the `+`-side line number
   within the changed hunk that best matches the finding
-- If the finding points to a line NOT in the diff, use the nearest changed line in
-  the same file, or fall back to creating a top-level review comment instead of an
-  inline one
+- If the finding points to a line NOT in the diff, use the nearest related changed
+  line in the same file. Never fall back to a top-level review body.
 
-**Step 3 — Handle findings without diff lines.** Strongly prefer inline comments
+**Step 3 — Handle findings without diff lines.** Use only inline comments
 over top-level body text. If a finding references unchanged code, look for a
 **related** changed line in the diff where the comment makes sense contextually.
 For example, if a finding is about an interaction between existing code and newly
@@ -331,9 +330,15 @@ you print in the conversation (Step 2) rather than the posted `body` — the dra
    paste at submit time. Every finding should be an inline comment on a diff line.
    When a finding references unchanged code, place the comment on the nearest
    related changed line.
-9. When correcting an older review that violated the empty-body rule, update
-   only that review's top-level body to the empty string. Never delete, dismiss,
-   or rewrite its inline comments as part of body cleanup.
+9. For ordinary body-only correction, update only the evidenced review's
+   top-level body to the empty string and preserve its inline comments. If the
+   user explicitly identifies the entire agent-created review as accidental and
+   orders full cleanup, delete only the exact evidenced accidental review and its
+   inline comments. Never replace the body with a marker, apology, zero-width
+   text, or other content. Try the exact supported deletion once before reporting
+   it impossible; retain the API error, continue any independently executable
+   cleanup, and identify GitHub support escalation if submitted-review deletion
+   or emptying is rejected.
 10. The review runs as a single `Workflow` invocation (review-core) — never
    hand-roll the fan-out with individual Agent calls. External CLIs run read-only
    (review-core step 4 / hard rules): cursor-agent always `--mode plan`, never
