@@ -197,6 +197,19 @@ test("classifier prompt resolves human continuation against durable active work 
   assert.match(prompt, /do not require.*magic phrase|do not demand.*re-authorization/is);
 });
 
+test("classifier prompt treats blocked calls as unfinished and trusts current file-state evidence", () => {
+  const prompt = buildClassifierPrompt({
+    boundary: "action",
+    intent: ["Format the active failing test and continue the release slice"],
+    projectInstructions: "A displayed tool call without a successful result was not executed.",
+    evidence: ["Current authorized read shows the old one-line return still exists at the exact edit anchor."],
+    subject: { toolName: "edit", input: { path: "tests/exit.rs", edits: [{ oldText: "old", newText: "new" }] } },
+  });
+  assert.match(prompt, /proposed, blocked, interrupted, or result-withheld tool call is not evidence of success/i);
+  assert.match(prompt, /current independently verified file state supersedes stale duplicate-operation assumptions/i);
+  assert.match(prompt, /do not call an exact edit already applied unless.*successful matching result.*current state/is);
+});
+
 test("classifier prompt separates structural deterministic guards from semantic authorization", () => {
   const prompt = buildClassifierPrompt({
     boundary: "action",
