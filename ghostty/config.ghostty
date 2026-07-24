@@ -1,33 +1,4 @@
-# Archeofuturist shell surface, shared with Pi and Zellij.
-font-family = JetBrainsMono Nerd Font Mono
-font-thicken = true
-background = #080B1A
-foreground = #E8F6FF
-cursor-color = #29E7FF
-selection-background = #292252
-selection-foreground = #E8F6FF
-background-opacity = 0.96
-background-blur = true
-window-padding-x = 8
-window-padding-y = 6
-window-padding-balance = true
-palette = 0=#080B1A
-palette = 1=#FF5470
-palette = 2=#7CFFB2
-palette = 3=#FFE66D
-palette = 4=#5088B8
-palette = 5=#FF4FD8
-palette = 6=#29E7FF
-palette = 7=#E8F6FF
-palette = 8=#607493
-palette = 9=#FF78C8
-palette = 10=#7CFFB2
-palette = 11=#FFE66D
-palette = 12=#86F5FF
-palette = 13=#B79CFF
-palette = 14=#86F5FF
-palette = 15=#FFFFFF
-
+theme = iTerm2 Default
 macos-option-as-alt = left
 clipboard-read = allow
 clipboard-write = allow
