@@ -6,6 +6,7 @@ import {
   createToolResultAllowance,
   formatDecisionReason,
   resolveActionDecision,
+  retainLatestCustomMessages,
   withheldExecutedToolResultPatch,
 } from "./lifecycle.ts";
 import type { Decision } from "./core.ts";
@@ -56,6 +57,25 @@ test("deterministically allowed actions carry one matching result allowance", ()
   allowance.record("call-2");
   allowance.clear();
   assert.equal(allowance.consume("call-2"), false);
+});
+
+test("only the latest lifecycle continuation message remains in model context", () => {
+  const messages = [
+    { role: "user", content: "work" },
+    { role: "custom", customType: "goal", content: "old verbose goal" },
+    { role: "custom", customType: "tasks", content: "old tasks" },
+    { role: "assistant", content: "progress" },
+    { role: "custom", customType: "goal", content: "compact current goal" },
+    { role: "custom", customType: "other", content: "keep unrelated extension state" },
+  ];
+
+  assert.deepEqual(retainLatestCustomMessages(messages, new Set(["goal", "tasks"])), [
+    messages[0],
+    messages[2],
+    messages[3],
+    messages[4],
+    messages[5],
+  ]);
 });
 
 test("withheld tool results preserve post-execution truth and prohibit blind retry", () => {

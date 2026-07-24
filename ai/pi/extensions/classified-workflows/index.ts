@@ -37,6 +37,7 @@ import {
   createToolResultAllowance,
   formatDecisionReason,
   resolveActionDecision,
+  retainLatestCustomMessages,
   withheldExecutedToolResultPatch,
   type ClassificationRequest,
 } from "./lifecycle.ts";
@@ -520,7 +521,7 @@ const WorkflowParameters = Type.Object({
 });
 
 export default function classifiedWorkflows(pi: ExtensionAPI): void {
-  registerRuntimeVersion(pi, "classified-workflows", "2026.07.23.37");
+  registerRuntimeVersion(pi, "classified-workflows", "2026.07.23.38");
   let goalState: GoalState | undefined;
   let goalEvaluating = false;
   let goalRunTokens = 0;
@@ -774,6 +775,13 @@ export default function classifiedWorkflows(pi: ExtensionAPI): void {
   pi.registerMessageRenderer(TASK_MESSAGE, (message, _options, theme) => {
     return new Text(theme.fg("warning", "tasks ") + theme.fg("muted", String(message.content)), 0, 0);
   });
+
+  pi.on("context", (event) => ({
+    messages: retainLatestCustomMessages(
+      event.messages,
+      new Set([GOAL_MESSAGE, LOOP_MESSAGE, TASK_MESSAGE]),
+    ),
+  }));
 
   pi.registerCommand("workflows", {
     description: "Show, cancel, fetch, or clear background classified workflows",
@@ -1116,13 +1124,13 @@ export default function classifiedWorkflows(pi: ExtensionAPI): void {
     updateGoalStatus(ctx);
     if (goalState.status === "active") {
       showGoalMessage(
-        `The goal is not complete. Continue working.\nGoal: ${goalState.condition}\nLatest check: ${goalState.lastReason}`,
+        `Goal remains active · ${work.pending.length} pending task${work.pending.length === 1 ? "" : "s"} · continue working.`,
         true,
       );
     } else if (goalState.status === "achieved") {
-      showGoalMessage(`Goal achieved: ${goalState.lastReason}`);
+      showGoalMessage(`Goal achieved: ${goalState.lastReason.slice(0, 320)}`);
     } else {
-      showGoalMessage(`Goal ended: ${goalState.lastReason}`);
+      showGoalMessage(`Goal ended: ${goalState.lastReason.slice(0, 320)}`);
     }
   });
 

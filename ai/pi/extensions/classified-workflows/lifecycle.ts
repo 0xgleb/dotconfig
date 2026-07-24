@@ -31,6 +31,23 @@ export interface ToolResultAllowance {
   clear(): void;
 }
 
+export const retainLatestCustomMessages = <Message>(
+  messages: readonly Message[],
+  customTypes: ReadonlySet<string>,
+): Message[] => {
+  const seen = new Set<string>();
+  return [...messages].reverse().filter((message) => {
+    if (typeof message !== "object" || message === null) return true;
+    const candidate = message as { role?: unknown; customType?: unknown };
+    if (candidate.role !== "custom" || typeof candidate.customType !== "string" || !customTypes.has(candidate.customType)) {
+      return true;
+    }
+    if (seen.has(candidate.customType)) return false;
+    seen.add(candidate.customType);
+    return true;
+  }).reverse();
+};
+
 export const createToolResultAllowance: () => ToolResultAllowance = () => {
   const allowed = new Set<string>();
   return {

@@ -130,5 +130,41 @@ export const preparationMessage = (reason: "manual" | "threshold"): string =>
   "3. Treat a displayed tool call without a successful tool result as NOT executed. If output limits truncated its arguments, record that it must be reissued completely after compaction.\n" +
   "4. Call safe_compaction_ready with concise resume notes naming the exact next action. Do not stop merely because compaction is pending.";
 
+const MAX_FALLBACK_PREVIOUS_SUMMARY = 32_000;
+
+export const overflowFallbackSummary = (previousSummary: string | undefined, resumeNotes: string): string => {
+  const prior = previousSummary?.trim().slice(-MAX_FALLBACK_PREVIOUS_SUMMARY);
+  return [
+    "## Goal",
+    "Resume the durable active goal and branch-aware todos restored by the loaded Pi extensions.",
+    "",
+    "## Constraints & Preferences",
+    "- Context overflow forced a model-free fallback checkpoint; do not claim omitted history as new evidence.",
+    "- A displayed tool call without a successful tool result remains unfinished.",
+    "",
+    "## Progress",
+    "### Done",
+    "- [x] Preserved persisted goal, todo, registry, loop, and safe-compaction state.",
+    "",
+    "### In Progress",
+    "- [ ] Reconcile the retained recent messages with durable goal and todo state, then continue the exact active task.",
+    "",
+    "### Blocked",
+    "- The normal LLM summarization request exceeded the model context window.",
+    "",
+    "## Key Decisions",
+    "- **Model-free overflow recovery**: Prefer a bounded deterministic checkpoint over an infinite compact-and-retry loop.",
+    "",
+    "## Next Steps",
+    "1. Inspect the retained recent tool results and durable todos.",
+    "2. Resume the exact unfinished action named in the notes below.",
+    "3. Do not rerun successful mutations whose output was merely filtered.",
+    "",
+    "## Critical Context",
+    `- Resume notes: ${resumeNotes}`,
+    ...(prior ? ["", "### Previous checkpoint (bounded tail)", prior] : []),
+  ].join("\n");
+};
+
 export const resumeMessage = (state: Exclude<SafeCompactionState, { phase: "idle" | "preparing" }>): string =>
   `Safe compaction completed. Resume all assigned work now. Do not stop while a goal or pending todo remains.\n\nPre-compaction resume notes:\n${state.resumeNotes}`;

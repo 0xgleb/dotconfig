@@ -5,6 +5,7 @@ import {
   SAFE_COMPACTION_ENTRY,
   beforeCompactionTransition,
   idleSafeCompactionState,
+  overflowFallbackSummary,
   preparationMessage,
   restoreSafeCompactionState,
   resumeMessage,
@@ -18,7 +19,7 @@ const boundedNotes = (value: string): string =>
   value.replace(/[\u0000-\u001f\u007f]+/g, " ").replace(/\s+/g, " ").trim().slice(0, MAX_RESUME_NOTES);
 
 export default function safeCompaction(pi: ExtensionAPI): void {
-  registerRuntimeVersion(pi, "safe-compaction", "2026.07.23.1");
+  registerRuntimeVersion(pi, "safe-compaction", "2026.07.23.2");
   let state: SafeCompactionState = idleSafeCompactionState;
   let compactRequested = false;
   let latestCtx: ExtensionContext | undefined;
@@ -52,6 +53,15 @@ export default function safeCompaction(pi: ExtensionAPI): void {
     persist(transition.state);
     if (transition.notifyPreparation && transition.state.phase === "preparing") {
       sendPreparation(transition.state.reason);
+    }
+    if (event.reason === "overflow" && transition.state.phase === "forced") {
+      return {
+        compaction: {
+          summary: overflowFallbackSummary(event.preparation.previousSummary, transition.state.resumeNotes),
+          firstKeptEntryId: event.preparation.firstKeptEntryId,
+          tokensBefore: event.preparation.tokensBefore,
+        },
+      };
     }
     return transition.cancel ? { cancel: true } : undefined;
   });

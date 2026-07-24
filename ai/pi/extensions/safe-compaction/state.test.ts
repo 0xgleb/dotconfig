@@ -5,6 +5,7 @@ import {
   beforeCompactionTransition,
   decodeSafeCompactionState,
   idleSafeCompactionState,
+  overflowFallbackSummary,
   preparationMessage,
   restoreSafeCompactionState,
   resumeMessage,
@@ -41,6 +42,15 @@ test("overflow compacts immediately but preserves interrupted tool-call recovery
   assert.match(transition.state.resumeNotes, /without a successful result remains unfinished/i);
   assert.match(resumeMessage(transition.state), /Resume all assigned work now/);
   assert.match(resumeMessage(transition.state), /must be reissued with complete arguments/i);
+});
+
+test("overflow fallback is model-free, bounded, and keeps durable recovery instructions", () => {
+  const summary = overflowFallbackSummary(`old-${"x".repeat(50_000)}`, "Resume exact todo #43 without retrying completed writes.");
+  assert.match(summary, /Model-free overflow recovery/);
+  assert.match(summary, /Resume exact todo #43/);
+  assert.match(summary, /Previous checkpoint \(bounded tail\)/);
+  assert.equal(summary.includes("old-"), false);
+  assert.equal(summary.length < 36_000, true);
 });
 
 test("readiness and exact resume notes survive reload", () => {
