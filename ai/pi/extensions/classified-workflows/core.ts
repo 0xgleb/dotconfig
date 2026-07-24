@@ -78,6 +78,8 @@ const READ_ONLY_TOOLS = new Set([
 const TODO_ACTIONS = new Set(["list", "add", "toggle", "status", "block", "reply", "unblock", "clear"]);
 const QUESTION_ACTIONS = new Set(["list", "ask", "resolve", "clear_resolved"]);
 const ARTIFACT_PROVENANCE_ACTIONS = new Set(["list", "record", "forget"]);
+const isSkillView = (toolName: string, input: Readonly<Record<string, unknown>>): boolean =>
+  toolName === "skill_manage" && input.action === "view";
 const REGISTRY_ACTIONS = new Set([
   "list",
   "claim",
@@ -250,7 +252,7 @@ export function deterministicDecision(request: ToolRequest): Decision | null {
     };
   }
 
-  if (READ_ONLY_TOOLS.has(request.toolName)) {
+  if (READ_ONLY_TOOLS.has(request.toolName) || isSkillView(request.toolName, request.input)) {
     return {
       verdict: "allow",
       reason: "Read-only operation outside protected paths",
@@ -321,7 +323,9 @@ export const deterministicReadOnlyToolResultDecision = (request: ToolResultReque
   const registryRead =
     request.toolName === "agent_registry" &&
     (request.input.action === "list" || request.input.action === "requests");
-  if (!READ_ONLY_TOOLS.has(request.toolName) && !registryRead) return null;
+  if (!READ_ONLY_TOOLS.has(request.toolName) && !registryRead && !isSkillView(request.toolName, request.input)) {
+    return null;
+  }
   const action = deterministicDecision({
     boundary: "action",
     toolName: request.toolName,
