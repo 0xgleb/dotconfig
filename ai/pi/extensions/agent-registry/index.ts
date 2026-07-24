@@ -86,7 +86,7 @@ const requireText: (label: string, value: string | undefined) => string = (label
 };
 
 const registryExtension: (pi: ExtensionAPI) => void = (pi) => {
-  registerRuntimeVersion(pi, "agent-registry", "2026.07.23.10");
+  registerRuntimeVersion(pi, "agent-registry", "2026.07.23.11");
   const runtimeVersions = (): Readonly<Record<string, string>> => {
     const versions: Record<string, string> = {
       "config-generation": MANAGED_CONFIG_GENERATION,
@@ -378,16 +378,10 @@ const registryExtension: (pi: ExtensionAPI) => void = (pi) => {
     if (!snapshot) return;
     const leases = ownedLeases(snapshot, identity(ctx).id);
     if (leases.length === 0) return;
-    return {
-      message: {
-        customType: "agent-registry.context",
-        content: `Registry roles owned by this session:\n${leases
-          .map((lease) => `- ${lease.project}/${lease.role}: ${lease.mode}, ${lease.status}`)
-          .join("\n")}\nOperational roles remain active even when their inbox is empty.`,
-        display: false,
-      },
-      systemPrompt: event.systemPrompt,
-    };
+    const content = `Registry roles owned by this session:\n${leases
+      .map((lease) => `- ${lease.project}/${lease.role}: ${lease.mode}, ${lease.status}`)
+      .join("\n")}\nOperational roles remain active even when their inbox is empty.`;
+    return { systemPrompt: `${event.systemPrompt}\n\n${content}` };
   });
 
   pi.on("session_shutdown", async (event, ctx) => {

@@ -71,7 +71,7 @@ const parseAction: (request: QuestionRequest, state: QuestionState) => QuestionA
 };
 
 const questionsExtension: (pi: ExtensionAPI) => void = (pi) => {
-  registerRuntimeVersion(pi, "questions", "2026.07.23.6");
+  registerRuntimeVersion(pi, "questions", "2026.07.23.7");
   let state = emptyQuestionState;
   let dialogOpen = false;
   let latestCtx: ExtensionContext | undefined;
@@ -259,12 +259,7 @@ const questionsExtension: (pi: ExtensionAPI) => void = (pi) => {
 
   pi.on("before_agent_start", (event) => {
     const content = pendingQuestionContext(state);
-    return content
-      ? {
-          message: { customType: "pi.questions.context", content, display: false },
-          systemPrompt: event.systemPrompt,
-        }
-      : undefined;
+    return content ? { systemPrompt: `${event.systemPrompt}\n\n${content}` } : undefined;
   });
 
   pi.registerCommand("questions", {
