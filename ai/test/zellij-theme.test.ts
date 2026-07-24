@@ -1,11 +1,13 @@
 import assert from "node:assert/strict";
-import { existsSync, readFileSync } from "node:fs";
+import { readFileSync } from "node:fs";
 import test from "node:test";
 
 const read = (path: string): string => readFileSync(new URL(path, import.meta.url), "utf8");
 
-test("Zellij preserves its default theme instead of overriding terminal colors", () => {
+test("Zellij keeps the explicitly restored archeofuturist chrome", () => {
   const config = read("../../zellij/config.kdl");
-  assert.doesNotMatch(config, /^theme(?:_dark|_light)?\s+"archeofuturism"/m);
-  assert.equal(existsSync(new URL("../../zellij/themes/archeofuturism.kdl", import.meta.url)), false);
+  assert.match(config, /^theme\s+"archeofuturism"/m);
+  assert.match(config, /^theme_dark\s+"archeofuturism"/m);
+  assert.match(config, /^theme_light\s+"archeofuturism"/m);
+  assert.match(config, /pane_frames true[\s\S]*rounded_corners true/);
 });

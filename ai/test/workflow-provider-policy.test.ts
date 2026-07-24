@@ -10,6 +10,10 @@ const classifier = readFileSync(
   new URL("../pi/extensions/classified-workflows/index.ts", import.meta.url),
   "utf8",
 );
+const intentContext = readFileSync(
+  new URL("../pi/extensions/classified-workflows/intent-context.ts", import.meta.url),
+  "utf8",
+);
 const reviewCore = readFileSync(new URL("../skills/review-core/SKILL.md", import.meta.url), "utf8");
 const reviewLoop = readFileSync(new URL("../skills/review-loop/SKILL.md", import.meta.url), "utf8");
 const reviewPr = readFileSync(new URL("../skills/review-pr/SKILL.md", import.meta.url), "utf8");
@@ -24,8 +28,10 @@ test("Pi workflows never route Claude through API providers", () => {
 
 test("semantic safety classification uses Sol and bounded relevant evidence while review support stays on Luna", () => {
   assert.match(classifier, /CLASSIFIER_MODEL = "openai-codex\/gpt-5\.6-sol"/);
-  assert.match(classifier, /Human message: \$\{text\}/);
-  assert.match(classifier, /Trusted coordination context: \$\{coordination\}/);
+  assert.match(classifier, /conversationIntentEvidence\(branch\)/);
+  assert.match(intentContext, /Human message: \$\{text\}/);
+  assert.match(intentContext, /Trusted coordination context: \$\{coordination\}/);
+  assert.match(intentContext, /Untrusted assistant context for human co-reference/);
   assert.match(classifier, /assistant report \(untrusted\)/);
   assert.match(classifier, /selectRelevantExecutionEvidence\(executionEvidence, subject\)/);
   assert.doesNotMatch(classifier, /CLASSIFIER_MODEL = "openai-codex\/gpt-5\.6-luna"/);
