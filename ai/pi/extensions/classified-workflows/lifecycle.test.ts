@@ -222,6 +222,22 @@ test("classifier prompt separates structural deterministic guards from semantic 
   assert.match(prompt, /do not demand literal wording, opaque IDs, exact command names/i);
 });
 
+test("classifier prompt scopes skill procedures to the task that invoked them", () => {
+  const prompt = buildClassifierPrompt({
+    boundary: "action",
+    intent: [
+      "Blocked shaping task: await the user's answer before architecture code",
+      "Independent active task: add EOD regression tests",
+    ],
+    projectInstructions: "Continue independently executable work.",
+    skillProcedures: ["shape-work: never code while shaping"],
+    subject: { toolName: "write", input: { path: "eod/report-contract.nu" } },
+  });
+  assert.match(prompt, /skill procedure applies only to the task that invoked it/i);
+  assert.match(prompt, /not a global session mode/i);
+  assert.match(prompt, /must not block unrelated independently authorized work/i);
+});
+
 test("classifier prompt keeps ordinary support actions in scope without granting new authority", () => {
   const prompt = buildClassifierPrompt({
     boundary: "action",
