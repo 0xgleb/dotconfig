@@ -30,7 +30,7 @@ import {
   type Decision,
   type WorkflowLimits,
 } from "./core.ts";
-import { boundedExecutionEvidence } from "./execution-evidence.ts";
+import { boundedExecutionEvidence, selectRelevantExecutionEvidence } from "./execution-evidence.ts";
 import { githubReviewGuard } from "./github-review-guard.ts";
 import {
   buildClassifierPrompt,
@@ -106,7 +106,7 @@ import {
 } from "../shared/registry-intent-events.ts";
 import { registerRuntimeVersion } from "../shared/runtime-version.ts";
 
-const CLASSIFIER_MODEL = "openai-codex/gpt-5.6-luna";
+const CLASSIFIER_MODEL = "openai-codex/gpt-5.6-sol";
 const CLASSIFIER_TIMEOUT_MS = 20_000;
 const CLASSIFIER_MAX_ATTEMPTS = 2;
 const CLASSIFIER_RETRY_BASE_MS = 1_000;
@@ -294,7 +294,7 @@ function projectInstructions(ctx: ExtensionContext): string {
   return ctx.getSystemPrompt().slice(0, 64_000);
 }
 
-function recentExecutionEvidence(ctx: ExtensionContext): string[] {
+function recentExecutionEvidence(ctx: ExtensionContext, subject: unknown): string[] {
   const branch = ctx.sessionManager.getBranch();
   const compaction = latestCompactionSummary(branch);
   const toolEvidence = branch
@@ -310,15 +310,15 @@ function recentExecutionEvidence(ctx: ExtensionContext): string[] {
               .join("\n")
           : "";
       return text
-        ? [`${String(entry.message.toolName ?? "tool")}: ${boundedExecutionEvidence(text)}`]
+        ? [`${String(entry.message.toolName ?? "tool")}: ${boundedExecutionEvidence(text, 2_400)}`]
         : [];
     })
-    .slice(-12);
+    .slice(-80);
   return [
     ...(compaction
       ? [`compaction summary: ${sanitizeProcessDiagnostic(compaction).replace(/\s+/g, " ").slice(0, 4_000)}`]
       : []),
-    ...toolEvidence,
+    ...selectRelevantExecutionEvidence(toolEvidence, subject),
   ];
 }
 
@@ -522,7 +522,7 @@ const WorkflowParameters = Type.Object({
 });
 
 export default function classifiedWorkflows(pi: ExtensionAPI): void {
-  registerRuntimeVersion(pi, "classified-workflows", "2026.07.23.51");
+  registerRuntimeVersion(pi, "classified-workflows", "2026.07.23.52");
   let goalState: GoalState | undefined;
   let goalEvaluating = false;
   let goalRunTokens = 0;
@@ -1158,14 +1158,15 @@ export default function classifiedWorkflows(pi: ExtensionAPI): void {
       return;
     }
 
+    const subject = { toolName: event.toolName, input: event.input, cwd: ctx.cwd };
     const decision = await classifyWithActivity(
       {
         boundary: "action",
         intent: visibleIntent(pi, ctx, goalState?.status === "active" ? goalState.condition : undefined),
         projectInstructions: projectInstructions(ctx),
         skillProcedures: activeSkillProcedures(ctx.sessionManager.getBranch(), { cwd: ctx.cwd }),
-        evidence: recentExecutionEvidence(ctx),
-        subject: { toolName: event.toolName, input: event.input, cwd: ctx.cwd },
+        evidence: recentExecutionEvidence(ctx, subject),
+        subject,
       },
       ctx,
       ctx.signal,
@@ -1177,14 +1178,15 @@ export default function classifiedWorkflows(pi: ExtensionAPI): void {
     if (deterministicResultAllowance.consume(event.toolCallId)) return;
     if (deterministicToolResultDecision(event.toolName)?.verdict === "allow") return;
 
+    const subject = toolResultSubject(event);
     const decision = await classifyWithActivity(
       {
         boundary: "tool-result",
         intent: visibleIntent(pi, ctx, goalState?.status === "active" ? goalState.condition : undefined),
         projectInstructions: projectInstructions(ctx),
         skillProcedures: activeSkillProcedures(ctx.sessionManager.getBranch(), { cwd: ctx.cwd }),
-        evidence: recentExecutionEvidence(ctx),
-        subject: toolResultSubject(event),
+        evidence: recentExecutionEvidence(ctx, subject),
+        subject,
       },
       ctx,
       ctx.signal,

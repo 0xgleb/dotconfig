@@ -22,9 +22,10 @@ test("Pi workflows never route Claude through API providers", () => {
   assert.match(reviewPr, /Never send `fable`, `sonnet`, `opus`, `claude-\*`, or/i);
 });
 
-test("workflow support models use the smallest authenticated GPT-5.6 tier", () => {
+test("semantic safety classification uses Sol while bounded review support stays on Luna", () => {
+  assert.match(classifier, /CLASSIFIER_MODEL = "openai-codex\/gpt-5\.6-sol"/);
+  assert.doesNotMatch(classifier, /CLASSIFIER_MODEL = "openai-codex\/gpt-5\.6-luna"/);
   for (const [name, contents] of [
-    ["classifier", classifier],
     ["review core", reviewCore],
     ["review loop", reviewLoop],
     ["review PR", reviewPr],

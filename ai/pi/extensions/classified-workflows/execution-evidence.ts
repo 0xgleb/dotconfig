@@ -20,3 +20,49 @@ export const boundedExecutionEvidence = (text: string, maxCharacters = 4_000): s
   const half = Math.max(0, Math.floor((maxCharacters - 24) / 2));
   return `${sanitized.slice(0, half)} …[bounded] ${sanitized.slice(-half)}`.slice(0, maxCharacters);
 };
+
+const EVIDENCE_STOP_WORDS = new Set([
+  "action",
+  "bash",
+  "command",
+  "content",
+  "false",
+  "input",
+  "result",
+  "toolname",
+  "true",
+]);
+
+const evidenceTerms = (value: unknown): ReadonlySet<string> => {
+  const serialized = JSON.stringify(value)?.toLowerCase() ?? "";
+  return new Set(
+    (serialized.match(/[a-z0-9_./:#-]{4,}/g) ?? [])
+      .map((term) => term.replace(/^[-./:#]+|[-./:#]+$/g, ""))
+      .filter((term) => term.length >= 4 && !EVIDENCE_STOP_WORDS.has(term)),
+  );
+};
+
+/** Keep a small recency window plus older evidence that shares concrete identifiers with the proposed boundary. */
+export const selectRelevantExecutionEvidence = (
+  candidates: readonly string[],
+  subject: unknown,
+  recentCount = 8,
+  relevantCount = 8,
+): readonly string[] => {
+  const recentStart = Math.max(0, candidates.length - recentCount);
+  const recent = candidates.slice(recentStart);
+  const terms = evidenceTerms(subject);
+  const older = candidates
+    .slice(0, recentStart)
+    .map((candidate, index) => ({
+      candidate,
+      index,
+      score: [...terms].reduce((score, term) => score + (candidate.toLowerCase().includes(term) ? 1 : 0), 0),
+    }))
+    .filter(({ score }) => score > 0)
+    .sort((left, right) => right.score - left.score || right.index - left.index)
+    .slice(0, relevantCount)
+    .sort((left, right) => left.index - right.index)
+    .map(({ candidate }) => candidate);
+  return [...older, ...recent];
+};
