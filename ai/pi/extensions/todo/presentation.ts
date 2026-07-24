@@ -114,14 +114,14 @@ export const taskWidgetLines: (state: TodoState, limit?: number) => string[] = (
   ];
 
   if (top.length === 0 && blocked.length === 0) {
-    lines.push("✓ all tracked tasks complete");
+    lines.push("[x] all tracked tasks complete");
     return lines;
   }
 
-  for (const todo of top) lines.push(`○ #${todo.id} ${compactTaskText(todo.text)}`);
+  for (const todo of top) lines.push(`${todoStatusMark(todo.status)} #${todo.id} ${compactTaskText(todo.text)}`);
   if (summary.pending > top.length) lines.push(`… ${summary.pending - top.length} more active task(s)`);
   for (const todo of blocked.slice(0, Math.max(1, limit - top.length))) {
-    lines.push(`⊘ #${todo.id} ${compactTaskText(todo.text)} — blocked: ${compactTaskText(todo.reason)}`);
+    lines.push(`[!] #${todo.id} ${compactTaskText(todo.text)} — blocked: ${compactTaskText(todo.reason)}`);
   }
   if (blocked.length > Math.max(1, limit - top.length)) {
     lines.push(`… ${blocked.length - Math.max(1, limit - top.length)} more blocked task(s)`);

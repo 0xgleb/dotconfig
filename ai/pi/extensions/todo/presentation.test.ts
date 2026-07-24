@@ -50,8 +50,8 @@ test("kanban columns separate current, queued, and completed work", () => {
 test("task HUD keeps the visible queue archeofuturist and bounded to four lines", () => {
   assert.deepEqual(taskHudLines(state, 100_000), [
     "TASKS  ·  3 active  ·  1 blocked  ·  /kanban",
-    "☐ 01  #2  Fix classifier",
-    "☐ 02  #3  Add task overlay",
+    "[ ] 01  #2  Fix classifier",
+    "[ ] 02  #3  Add task overlay",
     "+2 hidden  ·  1/5 complete",
   ]);
   assert.equal(taskHudLines(state).length <= 4, true);
@@ -61,7 +61,7 @@ test("task HUD frame stays aligned without colored backgrounds or doubled corner
   const framed = frameTaskHudLines(taskHudLines(state, 100_000), 64);
   assert.equal(framed.every((line) => line.length === 64), true);
   assert.match(framed[0] ?? "", /^╭─ TASKS  ·  3 active.*╮$/);
-  assert.match(framed[1] ?? "", /^│ ☐ 01.*│$/);
+  assert.match(framed[1] ?? "", /^│ \[ \] 01.*│$/);
   assert.match(framed.at(-1) ?? "", /^╰─ \+2 hidden.*╯$/);
   assert.equal(framed.some((line) => /╾╮╯|╮╮|╯╯/.test(line)), false);
 });
@@ -77,19 +77,19 @@ test("completed and cancelled tasks remain visible briefly before dropping from 
   };
   assert.deepEqual(
     taskHudLines(settling, 7_000).slice(1, 3),
-    ["⊘ 01  #2  Cancelled", "☑ 02  #1  Done"],
+    ["[-] 01  #2  Cancelled", "[x] 02  #1  Done"],
   );
-  assert.equal(taskHudLines(settling, 20_000)[1], "☐ 01  #3  Next");
+  assert.equal(taskHudLines(settling, 20_000)[1], "[ ] 01  #3  Next");
   assert.equal(taskHudLines(settling, 20_000).some((line) => line.includes("Cancelled")), false);
 });
 
 test("task widget lines show compact top active tasks", () => {
   assert.deepEqual(taskWidgetLines(state, 2), [
     "Tasks: 1/5 done · 3 active · 1 blocked · /kanban",
-    "○ #2 Fix classifier",
-    "○ #3 Add task overlay",
+    "[ ] #2 Fix classifier",
+    "[ ] #3 Add task overlay",
     "… 1 more active task(s)",
-    "⊘ #5 Ship release — blocked: Waiting for production access",
+    "[!] #5 Ship release — blocked: Waiting for production access",
   ]);
 });
 

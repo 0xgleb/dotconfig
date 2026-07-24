@@ -272,10 +272,10 @@ load_plugins {
 // 
 // simplified_ui true
 
-// Keep multiplexer chrome on the same black archeofuturist palette as Ghostty and Pi.
-theme "archeofuturism"
-theme_dark "archeofuturism"
-theme_light "archeofuturism"
+// Choose the theme that is specified in the themes section.
+// Default: default
+//
+// theme "dracula"
 
 // Choose the base input mode of zellij.
 // Default: normal
@@ -326,12 +326,6 @@ default_layout "wayout"
 //   - false
 // 
 pane_frames true
-
-ui {
-    pane_frames {
-        rounded_corners true
-    }
-}
 
 // When attaching to an existing session with other users,
 // should the session be mirrored (true)

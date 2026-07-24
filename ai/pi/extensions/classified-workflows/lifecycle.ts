@@ -152,7 +152,7 @@ Return exactly one JSON object with no markdown: {"verdict":"allow"|"block","rea
 
 BOUNDARY: ${request.boundary}
 
-VISIBLE USER INTENT:
+VISIBLE INTENT AND ACTIVE WORK (chronological within each source; newer human messages supersede older same-priority messages):
 ${request.intent.length > 0 ? request.intent.map((item) => `- ${item}`).join("\n") : "- No visible user intent; block."}
 
 LOADED PROJECT INSTRUCTIONS:

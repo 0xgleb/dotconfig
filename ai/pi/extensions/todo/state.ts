@@ -293,12 +293,12 @@ export const parseTodoAction: (request: TodoRequest) => Effect.Effect<TodoAction
 
 export const todoStatusMark: (status: TodoStatus) => string = (status) =>
   ({
-    pending: "☐",
-    in_progress: "◐",
-    completed: "☑",
-    cancelled: "⊘",
-    blocked: "◆",
-    deferred: "◌",
+    pending: "[ ]",
+    in_progress: "[/]",
+    completed: "[x]",
+    cancelled: "[-]",
+    blocked: "[!]",
+    deferred: "[:]",
   })[status];
 
 const formatTodoList: (todos: ReadonlyArray<Todo>) => string = (todos) =>

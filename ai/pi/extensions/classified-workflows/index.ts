@@ -255,10 +255,13 @@ function visibleIntent(pi: ExtensionAPI, ctx: ExtensionContext, activeGoal?: str
   const messages = branch
     .flatMap((entry) => {
       if (entry.type !== "message" || !isRecord(entry.message)) return [];
-      if (entry.message.role === "user") return [messageText(entry.message)];
-      return [trustedCoordinationIntent(entry.message)];
+      if (entry.message.role === "user") {
+        const text = messageText(entry.message);
+        return text ? [`Human message: ${text}`] : [];
+      }
+      const coordination = trustedCoordinationIntent(entry.message);
+      return coordination ? [`Trusted coordination context: ${coordination}`] : [];
     })
-    .filter((text): text is string => Boolean(text))
     .slice(-12)
     .map((text) => text.slice(0, 4_000));
   const work = todoWorkSnapshot(branch);
@@ -526,7 +529,7 @@ const WorkflowParameters = Type.Object({
 });
 
 export default function classifiedWorkflows(pi: ExtensionAPI): void {
-  registerRuntimeVersion(pi, "classified-workflows", "2026.07.23.55");
+  registerRuntimeVersion(pi, "classified-workflows", "2026.07.23.56");
   let goalState: GoalState | undefined;
   let goalEvaluating = false;
   let goalRunTokens = 0;

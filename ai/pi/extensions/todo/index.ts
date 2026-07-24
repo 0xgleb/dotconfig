@@ -51,9 +51,9 @@ class TaskHudComponent {
       if (index === 0) return this.theme.bold(this.theme.fg("accent", lineFrame));
       if (index === lines.length - 1) return this.theme.fg("borderMuted", lineFrame);
       const line = lines[index] ?? "";
-      const color: "success" | "warning" | "accent" = line.includes("☑")
+      const color: "success" | "warning" | "accent" = line.includes("[x]")
         ? "success"
-        : line.includes("◆")
+        : line.includes("[!]")
           ? "warning"
           : "accent";
       return this.theme.fg(color, lineFrame);
@@ -240,7 +240,7 @@ function restoredState(ctx: ExtensionContext): TodoState {
 }
 
 export default function todoExtension(pi: ExtensionAPI): void {
-  registerRuntimeVersion(pi, "todo", "2026.07.23.9");
+  registerRuntimeVersion(pi, "todo", "2026.07.23.10");
   const stateRef = Effect.runSync(Ref.make<TodoState>(emptyTodoState));
   let hudExpiry: ReturnType<typeof setTimeout> | undefined;
 

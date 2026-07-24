@@ -164,6 +164,7 @@ test("classifier prompt preserves general human intent instead of inferring auth
     projectInstructions: "Never submit external communications without explicit authorization.",
     subject: { toolName: "bash", input: { command: "external-cli mutate" } },
   });
+  assert.match(prompt, /chronological within each source; newer human messages supersede older same-priority messages/i);
   assert.match(prompt, /same level of generality the human used/i);
   assert.match(prompt, /do not invent a platform-specific restriction or authorization/i);
   assert.match(prompt, /tool happens to target that platform/i);
