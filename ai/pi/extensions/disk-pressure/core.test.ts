@@ -6,11 +6,13 @@ import test from "node:test";
 
 import {
   CRITICAL_FREE_BYTES,
+  CRITICAL_FREE_MEMORY_BYTES,
   cleanupNewResultSymlinks,
   cleanupStalePiTempLogs,
   diskPressureDecision,
   isExpensiveCommand,
   isStalePiTempLog,
+  resourcePressureDecision,
   resultSymlinkNames,
 } from "./core.ts";
 
@@ -24,6 +26,14 @@ test("expensive build commands are blocked before consuming the crash reserve", 
     reason: "disk pressure",
   });
   assert.deepEqual(diskPressureDecision("git status", 1n), { verdict: "allow" });
+});
+
+test("expensive builds fail closed before consuming the memory crash reserve", () => {
+  assert.deepEqual(
+    resourcePressureDecision("cargo test --workspace", CRITICAL_FREE_BYTES, CRITICAL_FREE_MEMORY_BYTES - 1n),
+    { verdict: "block", reason: "memory pressure" },
+  );
+  assert.deepEqual(resourcePressureDecision("git status", 1n, 1n), { verdict: "allow" });
 });
 
 test("temp cleanup accepts only old exact Pi log files directly under the temp root", () => {

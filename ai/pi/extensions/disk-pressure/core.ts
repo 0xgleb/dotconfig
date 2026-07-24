@@ -8,23 +8,33 @@ const PI_TEMP_LOG = /^pi-bash-[a-f0-9]+\.log$/;
 
 export const CRITICAL_FREE_BYTES = 32n * GIB;
 export const WARNING_FREE_BYTES = 64n * GIB;
+export const CRITICAL_FREE_MEMORY_BYTES = 8n * GIB;
+export const WARNING_FREE_MEMORY_BYTES = 12n * GIB;
 
-export type DiskPressureDecision =
+export type ResourcePressureDecision =
   | { verdict: "allow" }
-  | { verdict: "block"; reason: "disk pressure" };
+  | { verdict: "block"; reason: "disk pressure" | "memory pressure" };
 
 export const isExpensiveCommand: (command: string) => boolean = (command) =>
   /(?:^|[;&|()]|\bsudo\s+)(?:\s*)(?:darwin-rebuild\s+(?:build|switch)|nixos-rebuild\s+(?:build|switch)|nix\s+(?:build|develop|flake\s+check)|cargo\s+(?:build|test|clippy|nextest)|(?:npm|pnpm|yarn|bun)\s+(?:run\s+)?(?:build|test)|forge\s+(?:build|test)|docker\s+build|terraform\s+(?:plan|apply)|make(?:\s|$))/i.test(
     command,
   );
 
-export const diskPressureDecision: (command: string, freeBytes: bigint) => DiskPressureDecision = (
+export const resourcePressureDecision: (
+  command: string,
+  freeDiskBytes: bigint,
+  freeMemoryBytes: bigint,
+) => ResourcePressureDecision = (command, freeDiskBytes, freeMemoryBytes) => {
+  if (!isExpensiveCommand(command)) return { verdict: "allow" };
+  if (freeDiskBytes < CRITICAL_FREE_BYTES) return { verdict: "block", reason: "disk pressure" };
+  if (freeMemoryBytes < CRITICAL_FREE_MEMORY_BYTES) return { verdict: "block", reason: "memory pressure" };
+  return { verdict: "allow" };
+};
+
+export const diskPressureDecision: (command: string, freeBytes: bigint) => ResourcePressureDecision = (
   command,
   freeBytes,
-) =>
-  isExpensiveCommand(command) && freeBytes < CRITICAL_FREE_BYTES
-    ? { verdict: "block", reason: "disk pressure" }
-    : { verdict: "allow" };
+) => resourcePressureDecision(command, freeBytes, CRITICAL_FREE_MEMORY_BYTES);
 
 export const isStalePiTempLog: (
   path: string,
