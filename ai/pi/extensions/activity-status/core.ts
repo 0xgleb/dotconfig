@@ -22,6 +22,68 @@ export const toolPhase = (toolName: string): ActivityPhase =>
     ? { kind: "subagent", label: `SUBAGENT · ${toolName} · ${toolKind(toolName)}` }
     : { kind: "tool", label: `TOOL · ${toolName} · ${toolKind(toolName)}` };
 
+export interface ToolProgress {
+  readonly toolName: string;
+  readonly startedAt: number;
+  readonly updateCount: number;
+  readonly bufferedLineCount: number;
+}
+
+export const startToolProgress = (toolName: string, startedAt: number): ToolProgress => ({
+  toolName,
+  startedAt,
+  updateCount: 0,
+  bufferedLineCount: 0,
+});
+
+const bufferedLineCount = (partialResult: unknown): number => {
+  if (
+    typeof partialResult !== "object" ||
+    partialResult === null ||
+    !("content" in partialResult) ||
+    !Array.isArray(partialResult.content)
+  ) {
+    return 0;
+  }
+  return partialResult.content.reduce((count, part) => {
+    if (typeof part !== "object" || part === null || !("type" in part) || part.type !== "text" || !("text" in part)) {
+      return count;
+    }
+    if (typeof part.text !== "string") return count;
+    return count + part.text.split(/\r?\n/u).filter((line) => line.length > 0).length;
+  }, 0);
+};
+
+export const observeToolProgress = (progress: ToolProgress, partialResult: unknown): ToolProgress => ({
+  ...progress,
+  updateCount: progress.updateCount + 1,
+  bufferedLineCount: Math.max(progress.bufferedLineCount, bufferedLineCount(partialResult)),
+});
+
+const countLabel = (count: number, singular: string): string => `${count} ${singular}${count === 1 ? "" : "s"}`;
+
+const elapsedSeconds = (startedAt: number, now: number): number => Math.max(0, Math.floor((now - startedAt) / 1_000));
+
+export const runningToolProgressPhase = (tools: readonly ToolProgress[], now: number): ActivityPhase => {
+  if (tools.length === 0) return { kind: "model", label: "MODEL · integrating tool results" };
+  const oldest = Math.max(...tools.map((tool) => elapsedSeconds(tool.startedAt, now)));
+  const updates = tools.reduce((total, tool) => total + tool.updateCount, 0);
+  const lines = tools.reduce((total, tool) => total + tool.bufferedLineCount, 0);
+  const progress = lines > 0 ? countLabel(lines, "buffered line") : "heartbeat";
+  if (tools.length === 1) {
+    const tool = tools[0] ?? startToolProgress("unknown", now);
+    return {
+      kind: tool.toolName === "workflow" || tool.toolName === "agent" ? "subagent" : "tool",
+      label: `${toolPhase(tool.toolName).label} · ${oldest}s · ${countLabel(updates, "update")} · ${progress}`,
+    };
+  }
+  const kinds = [...new Set(tools.map(({ toolName }) => toolKind(toolName)))].join(" + ");
+  return {
+    kind: "tool",
+    label: `TOOLS · ${tools.length} running · ${kinds} · oldest ${oldest}s · ${countLabel(updates, "update")} · ${progress}`,
+  };
+};
+
 export const assistantPhase = (message: unknown): ActivityPhase | undefined => {
   if (typeof message !== "object" || message === null || !("content" in message) || !Array.isArray(message.content)) {
     return undefined;

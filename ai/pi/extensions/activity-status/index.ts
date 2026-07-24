@@ -1,15 +1,25 @@
 import type { ExtensionAPI, ExtensionContext } from "@earendil-works/pi-coding-agent";
 import { ACTIVITY_PHASE_EVENT, type ClassifierActivityEvent } from "../shared/activity-events.ts";
 import { registerRuntimeVersion } from "../shared/runtime-version.ts";
-import { assistantPhase, runningToolsPhase, toolPhase, type ActivityPhase } from "./core.ts";
+import {
+  assistantPhase,
+  observeToolProgress,
+  runningToolProgressPhase,
+  startToolProgress,
+  type ActivityPhase,
+  type ToolProgress,
+} from "./core.ts";
 
 const STATUS_KEY = "activity-phase";
+const TOOL_PROGRESS_WIDGET_KEY = "activity-tool-progress";
+const TOOL_PROGRESS_TICK_MS = 1_000;
 
 export default function activityStatus(pi: ExtensionAPI): void {
-  registerRuntimeVersion(pi, "activity-status", "2026.07.23.1");
-  const runningTools = new Map<string, string>();
+  registerRuntimeVersion(pi, "activity-status", "2026.07.23.2");
+  const runningTools = new Map<string, ToolProgress>();
   let latestCtx: ExtensionContext | undefined;
   let classifierDepth = 0;
+  let progressTimer: ReturnType<typeof setInterval> | undefined;
 
   const show = (phase: ActivityPhase, ctx = latestCtx): void => {
     if (!ctx) return;
@@ -18,10 +28,34 @@ export default function activityStatus(pi: ExtensionAPI): void {
     ctx.ui.setStatus(STATUS_KEY, phase.label);
   };
 
+  const stopProgressTicker = (): void => {
+    if (progressTimer) clearInterval(progressTimer);
+    progressTimer = undefined;
+  };
+
+  const clearToolProgress = (ctx = latestCtx): void => {
+    stopProgressTicker();
+    ctx?.ui.setWidget(TOOL_PROGRESS_WIDGET_KEY, undefined);
+  };
+
   const showRunningTools = (ctx = latestCtx): void => {
     if (!ctx) return;
-    const names = [...runningTools.values()];
-    show(names.length > 0 ? runningToolsPhase(names) : { kind: "model", label: "MODEL · integrating tool results" }, ctx);
+    const tools = [...runningTools.values()];
+    const phase = runningToolProgressPhase(tools, Date.now());
+    show(phase, ctx);
+    if (tools.length > 0) {
+      ctx.ui.setWidget(TOOL_PROGRESS_WIDGET_KEY, [phase.label], { placement: "belowEditor" });
+    } else {
+      ctx.ui.setWidget(TOOL_PROGRESS_WIDGET_KEY, undefined);
+    }
+  };
+
+  const startProgressTicker = (ctx: ExtensionContext): void => {
+    if (progressTimer) return;
+    progressTimer = setInterval(() => {
+      if (classifierDepth === 0 && runningTools.size > 0) showRunningTools(ctx);
+    }, TOOL_PROGRESS_TICK_MS);
+    progressTimer.unref();
   };
 
   pi.events.on(ACTIVITY_PHASE_EVENT, (event: ClassifierActivityEvent) => {
@@ -40,6 +74,7 @@ export default function activityStatus(pi: ExtensionAPI): void {
     latestCtx = ctx;
     runningTools.clear();
     classifierDepth = 0;
+    clearToolProgress(ctx);
     ctx.ui.setStatus(STATUS_KEY, undefined);
     ctx.ui.setWorkingMessage();
   });
@@ -47,6 +82,7 @@ export default function activityStatus(pi: ExtensionAPI): void {
   pi.on("agent_start", (_event, ctx) => {
     latestCtx = ctx;
     runningTools.clear();
+    clearToolProgress(ctx);
     show({ kind: "model", label: "MODEL · awaiting generation" }, ctx);
   });
 
@@ -61,17 +97,20 @@ export default function activityStatus(pi: ExtensionAPI): void {
   });
 
   pi.on("tool_execution_start", (event, ctx) => {
-    runningTools.set(event.toolCallId, event.toolName);
+    runningTools.set(event.toolCallId, startToolProgress(event.toolName, Date.now()));
+    startProgressTicker(ctx);
     if (classifierDepth === 0) showRunningTools(ctx);
   });
 
   pi.on("tool_execution_update", (event, ctx) => {
-    runningTools.set(event.toolCallId, event.toolName);
+    const progress = runningTools.get(event.toolCallId) ?? startToolProgress(event.toolName, Date.now());
+    runningTools.set(event.toolCallId, observeToolProgress(progress, event.partialResult));
     if (classifierDepth === 0) showRunningTools(ctx);
   });
 
   pi.on("tool_execution_end", (event, ctx) => {
     runningTools.delete(event.toolCallId);
+    if (runningTools.size === 0) stopProgressTicker();
     if (classifierDepth === 0) showRunningTools(ctx);
   });
 
@@ -86,11 +125,14 @@ export default function activityStatus(pi: ExtensionAPI): void {
   pi.on("agent_end", (_event, ctx) => {
     runningTools.clear();
     classifierDepth = 0;
+    clearToolProgress(ctx);
     ctx.ui.setStatus(STATUS_KEY, undefined);
     ctx.ui.setWorkingMessage();
   });
 
   pi.on("session_shutdown", (_event, ctx) => {
+    runningTools.clear();
+    clearToolProgress(ctx);
     ctx.ui.setStatus(STATUS_KEY, undefined);
     ctx.ui.setWorkingMessage();
     latestCtx = undefined;

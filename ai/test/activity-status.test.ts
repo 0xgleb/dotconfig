@@ -25,6 +25,17 @@ test("live activity phases derive from concrete Pi runtime events", () => {
   assert.match(activity, /COMPACTING/);
 });
 
+test("long-running tool UX is transient, elapsed, and content-safe", () => {
+  assert.match(activity, /setInterval/);
+  assert.match(activity, /event\.partialResult/);
+  assert.match(activity, /setWidget\(TOOL_PROGRESS_WIDGET_KEY, \[phase\.label\]/);
+  assert.match(activity, /setWidget\(TOOL_PROGRESS_WIDGET_KEY, undefined\)/);
+  assert.match(activityCore, /bufferedLineCount/);
+  assert.match(activityCore, /elapsedSeconds/);
+  assert.doesNotMatch(activity, /event\.args/);
+  assert.doesNotMatch(activityCore, /details\.command|partialResult\.details/);
+});
+
 test("classifier status is emitted only around actual model classifier calls", () => {
   assert.match(workflows, /onActivity\?\.\(true\)/);
   assert.match(workflows, /finally \{\s*onActivity\?\.\(false\)/);
