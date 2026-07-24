@@ -1,9 +1,17 @@
 import assert from "node:assert/strict";
 import { readFileSync } from "node:fs";
+import { spawnSync } from "node:child_process";
 import test from "node:test";
 
 const eod = readFileSync(new URL("../skills/eod/SKILL.md", import.meta.url), "utf8");
 const collector = readFileSync(new URL("../skills/eod/scripts/collect.nu", import.meta.url), "utf8");
+const reportContractTest = new URL("../skills/eod/scripts/report-contract.test.nu", import.meta.url);
+
+test("EOD end-to-end report contract preserves concurrent edits and rejects unsupported claims", () => {
+  const result = spawnSync("nu", [reportContractTest.pathname], { encoding: "utf8" });
+  assert.equal(result.status, 0, result.stderr || result.stdout);
+  assert.match(result.stdout, /All 5 tests passed/);
+});
 
 test("EOD safely initializes an explicitly selected zero-byte note without overwriting content", () => {
   assert.match(eod, /allowed-tools:[\s\S]*?- "Write"/);
