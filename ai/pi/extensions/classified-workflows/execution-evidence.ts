@@ -42,6 +42,45 @@ const evidenceTerms = (value: unknown): ReadonlySet<string> => {
   );
 };
 
+const focusedEvidenceTerms = (value: unknown): readonly string[] => {
+  const serialized = JSON.stringify(value)?.toLowerCase() ?? "";
+  return [...new Set(
+    (serialized.match(/[a-z0-9_./:#-]{3,}/g) ?? [])
+      .map((term) => term.replace(/^[-./:#]+|[-./:#]+$/g, ""))
+      .filter((term) => term.length >= 3 && !EVIDENCE_STOP_WORDS.has(term)),
+  )].sort((left, right) => right.length - left.length);
+};
+
+/** Preserve the parts of a large result that share exact anchors with the proposed action. */
+export const boundedRelevantExecutionEvidence = (
+  text: string,
+  subject: unknown,
+  maxCharacters = 4_000,
+): string => {
+  const sanitized = sanitizeProcessDiagnostic(text).replace(/\s+/g, " ").trim();
+  if (sanitized.length <= maxCharacters) return sanitized;
+  const lower = sanitized.toLowerCase();
+  const windows: Array<{ start: number; end: number }> = [];
+  for (const term of focusedEvidenceTerms(subject)) {
+    let offset = 0;
+    while (windows.length < 8) {
+      const index = lower.indexOf(term, offset);
+      if (index < 0) break;
+      const start = Math.max(0, index - 180);
+      const end = Math.min(sanitized.length, index + term.length + 220);
+      if (!windows.some((window) => start <= window.end && end >= window.start)) windows.push({ start, end });
+      offset = index + term.length;
+    }
+    if (windows.length >= 8) break;
+  }
+  if (windows.length === 0) return boundedExecutionEvidence(sanitized, maxCharacters);
+  const focused = windows
+    .sort((left, right) => left.start - right.start)
+    .map(({ start, end }) => sanitized.slice(start, end))
+    .join(" … ");
+  return `…[subject-focused] ${focused}`.slice(0, maxCharacters);
+};
+
 /** Keep a small recency window plus older evidence that shares concrete identifiers with the proposed boundary. */
 export const selectRelevantExecutionEvidence = (
   candidates: readonly string[],

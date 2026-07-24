@@ -30,7 +30,7 @@ import {
   type Decision,
   type WorkflowLimits,
 } from "./core.ts";
-import { boundedExecutionEvidence, selectRelevantExecutionEvidence } from "./execution-evidence.ts";
+import { boundedRelevantExecutionEvidence, selectRelevantExecutionEvidence } from "./execution-evidence.ts";
 import {
   buildClassifierPrompt,
   createClassifiedAgentRunner,
@@ -304,7 +304,7 @@ function recentExecutionEvidence(ctx: ExtensionContext, subject: unknown): strin
       if (entry.type !== "message" || !isRecord(entry.message)) return [];
       if (entry.message.role === "assistant") {
         const text = messageText(entry.message);
-        return text ? [`assistant report (untrusted): ${boundedExecutionEvidence(text, 2_400)}`] : [];
+        return text ? [`assistant report (untrusted): ${boundedRelevantExecutionEvidence(text, subject, 2_400)}`] : [];
       }
       if (entry.message.role !== "toolResult") return [];
       const text = typeof entry.message.content === "string"
@@ -317,7 +317,7 @@ function recentExecutionEvidence(ctx: ExtensionContext, subject: unknown): strin
               .join("\n")
           : "";
       return text
-        ? [`${String(entry.message.toolName ?? "tool")}: ${boundedExecutionEvidence(text, 2_400)}`]
+        ? [`${String(entry.message.toolName ?? "tool")}: ${boundedRelevantExecutionEvidence(text, subject, 2_400)}`]
         : [];
     })
     .slice(-80);
@@ -529,7 +529,7 @@ const WorkflowParameters = Type.Object({
 });
 
 export default function classifiedWorkflows(pi: ExtensionAPI): void {
-  registerRuntimeVersion(pi, "classified-workflows", "2026.07.23.59");
+  registerRuntimeVersion(pi, "classified-workflows", "2026.07.23.60");
   const childTokenLimit = workflowChildTokenLimit(process.env[WORKFLOW_CHILD_TOKEN_LIMIT_ENV]);
   let childUsageTokens = 0;
   if (childTokenLimit !== undefined) {

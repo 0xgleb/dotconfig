@@ -1,6 +1,10 @@
 import assert from "node:assert/strict";
 import test from "node:test";
-import { boundedExecutionEvidence, selectRelevantExecutionEvidence } from "./execution-evidence.ts";
+import {
+  boundedExecutionEvidence,
+  boundedRelevantExecutionEvidence,
+  selectRelevantExecutionEvidence,
+} from "./execution-evidence.ts";
 
 test("large GraphQL tool results retain bounded thread IDs, authors, and resolution state", () => {
   const threads = Array.from({ length: 20 }, (_, index) => ({
@@ -23,6 +27,27 @@ test("short tool results remain intact and diagnostics are sanitized", () => {
     boundedExecutionEvidence('{"login":"coderabbitai","token":"sensitive-value"}'),
     '{"login":"coderabbitai","token":"[REDACTED]"}',
   );
+});
+
+test("subject-aware bounding retains verified draft-comment anchors from the middle of large plans", () => {
+  const findings = Array.from({ length: 62 }, (_, index) =>
+    `finding ${index}: crates/review/src/check_${index}.rs:${100 + index} ${"detail ".repeat(20)}`,
+  );
+  findings[31] = `finding 31: crates/issuance/src/lib.rs:605 verified inline comment ${"detail ".repeat(30)}`;
+  const evidence = boundedRelevantExecutionEvidence(
+    findings.join("\n"),
+    {
+      command: "addPullRequestReviewComment",
+      path: "crates/issuance/src/lib.rs",
+      line: 605,
+      reviewId: "PRR_kwDORISeF88AAAABHE8fRQ",
+    },
+    900,
+  );
+  assert.ok(evidence.length <= 900);
+  assert.match(evidence, /crates\/issuance\/src\/lib\.rs:605/);
+  assert.match(evidence, /verified inline comment/);
+  assert.doesNotMatch(evidence, /finding 0:/);
 });
 
 test("evidence retrieval keeps recent results and older results sharing concrete subject identifiers", () => {
