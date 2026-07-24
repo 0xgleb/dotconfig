@@ -55,7 +55,6 @@ const RETRY_BACKOFF_BASE_MS = 500;
 const RETRY_BACKOFF_MAX_MS = 5_000;
 
 const READ_ONLY_TOOLS = new Set(["read", "grep", "find", "ls", "workflow_audit"]);
-const WRITE_TOOLS = new Set(["edit", "write"]);
 const TODO_ACTIONS = new Set(["list", "add", "toggle", "status", "block", "reply", "unblock", "clear"]);
 const QUESTION_ACTIONS = new Set(["list", "ask", "resolve", "clear_resolved"]);
 const ARTIFACT_PROVENANCE_ACTIONS = new Set(["list", "record", "forget"]);
@@ -105,22 +104,6 @@ function stripNegativePathArguments(command: string): string {
   );
 }
 
-const isGeneratedReviewCleanup = (command: string, cwd: string): boolean => {
-  if (/[;&|`$<>\n\r*?{}\[\]]/.test(command)) return false;
-  const tokens = command.trim().split(/\s+/);
-  if (tokens.shift() !== "rm") return false;
-  while (tokens[0]?.startsWith("-")) {
-    const option = tokens.shift();
-    if (!option || !/^-+[rf]+$/.test(option)) return false;
-  }
-  if (tokens.length === 0) return false;
-  const projectReviewRoot = path.join(path.resolve(cwd), ".tmp", "reviews");
-  return tokens.every((candidate) => {
-    const resolved = path.resolve(cwd, candidate);
-    return /^\/tmp\/pr\d+-review$/.test(resolved) || /^pr\d+$/.test(path.relative(projectReviewRoot, resolved));
-  });
-};
-
 const isRecordedArtifactCleanup = (
   command: string,
   cwd: string,
@@ -143,31 +126,6 @@ const isRecordedArtifactCleanup = (
     return recorded.has(resolved);
   });
 };
-
-const isGeneratedGitButlerStatusCleanup = (command: string): boolean =>
-  /^\s*rm\s+-f\s+--\s+(?:\.\/)?\.tmp\/but-status\.json\s*$/.test(command);
-
-const isGeneratedSyResearchCleanup = (command: string): boolean => {
-  const match = command.match(/^\s*rm\s+-(?:rf|fr)\s+--\s+(.+?)\s*$/);
-  if (!match) return false;
-  const operands = match[1]?.split(/\s+/) ?? [];
-  const allowed = new Set([".tmp/sy-research", "./.tmp/sy-research", ".tmp/but-status.json", "./.tmp/but-status.json"]);
-  return operands.length > 0 && operands.length <= 2 && operands.every((operand) => allowed.has(operand));
-};
-
-const isSafeRustIncrementalCleanup: (command: string) => boolean = (command) => {
-  const match = command.match(
-    /^\s*(?:cd\s+(\/[^\s;&|`]+)\s+&&\s+)?rm\s+-(?:rf|fr)\s+(?:--\s+)?(?:\.\/)?target\/debug\/incremental(?:\s+&&\s+df\s+-h\s+\.\s*\|\s*tail\s+-1)?\s*$/,
-  );
-  if (!match) return false;
-  const changedDirectory = match[1];
-  return changedDirectory === undefined || changedDirectory.split(path.sep).includes("code");
-};
-
-function isInsideCwd(candidate: string, cwd: string): boolean {
-  const relative = path.relative(path.resolve(cwd), path.resolve(cwd, candidate));
-  return relative === "" || (!relative.startsWith(`..${path.sep}`) && relative !== ".." && !path.isAbsolute(relative));
-}
 
 function isBroadRootSearch(request: ToolRequest): boolean {
   if (request.toolName === "bash") {
@@ -220,15 +178,6 @@ const isSafeCredentialExcludedGitDiff: (command: string) => boolean = (command) 
   const sensitiveWords = words.filter((word) => SENSITIVE_PATH.test(unquoteShellWord(word)));
   return sensitiveWords.length > 0 && sensitiveWords.every(isCredentialExclusionPathspec);
 };
-
-const isVerifiedEmptyOrdinaryMakerBranchCleanup = (command: string): boolean =>
-  command.trim() === "but branch delete fix/ordinary-maker-pause-cancellation --format agent";
-
-const isReviewPanelSentinel: (command: string) => boolean = (command) =>
-  !/[;&|`\n\r]/.test(command) &&
-  /^cursor-agent -p --mode plan --model (?:composer-2\.5|grok-4\.5-xhigh) --trust (?:"Reply with exactly: OK"|'Reply with exactly: OK')$/.test(
-    command.trim(),
-  );
 
 const SAFE_ZELLIJ_PROBE =
   /^\s*zellij\s+(?:--version|setup\s+(?:--check|--dump-config|--dump-layout\s+[^\s;&|`]+|--dump-swap-layout\s+[^\s;&|`]+))\s*$/;
@@ -328,31 +277,6 @@ export function deterministicDecision(request: ToolRequest): Decision | null {
   if (
     request.toolName === "bash" &&
     typeof request.input.command === "string" &&
-    isVerifiedEmptyOrdinaryMakerBranchCleanup(request.input.command)
-  ) {
-    return {
-      verdict: "allow",
-      reason: "Verified empty agent-created GitButler branch cleanup",
-      source: "deterministic",
-      resultSafe: true,
-    };
-  }
-
-  if (
-    request.toolName === "bash" &&
-    typeof request.input.command === "string" &&
-    isReviewPanelSentinel(request.input.command)
-  ) {
-    return {
-      verdict: "allow",
-      reason: "Exact read-only review-panel availability sentinel",
-      source: "deterministic",
-    };
-  }
-
-  if (
-    request.toolName === "bash" &&
-    typeof request.input.command === "string" &&
     isRecordedArtifactCleanup(request.input.command, request.cwd, request.agentArtifacts)
   ) {
     return {
@@ -361,79 +285,6 @@ export function deterministicDecision(request: ToolRequest): Decision | null {
       source: "deterministic",
       resultSafe: true,
     };
-  }
-
-  if (
-    request.toolName === "bash" &&
-    typeof request.input.command === "string" &&
-    isGeneratedReviewCleanup(request.input.command, request.cwd)
-  ) {
-    return {
-      verdict: "allow",
-      reason: "Exact generated review artifact cleanup",
-      source: "deterministic",
-      resultSafe: true,
-    };
-  }
-
-  if (
-    request.toolName === "bash" &&
-    typeof request.input.command === "string" &&
-    (isGeneratedGitButlerStatusCleanup(request.input.command) || isGeneratedSyResearchCleanup(request.input.command))
-  ) {
-    return {
-      verdict: "allow",
-      reason: "Exact generated project-temporary artifact cleanup",
-      source: "deterministic",
-      resultSafe: true,
-    };
-  }
-
-  if (
-    request.toolName === "bash" &&
-    typeof request.input.command === "string" &&
-    isSafeRustIncrementalCleanup(request.input.command)
-  ) {
-    return {
-      verdict: "allow",
-      reason: "Project-local rebuildable Rust incremental cache cleanup",
-      source: "deterministic",
-      resultSafe: true,
-    };
-  }
-
-  if (request.toolName === "bash" && path.basename(path.resolve(request.cwd)) === ".config") {
-    const command = request.input.command;
-    if (command === "rm -- ai/pi.models.json") {
-      return {
-        verdict: "allow",
-        reason: "Confirmed obsolete dotconfig model artifact cleanup",
-        source: "deterministic",
-      };
-    }
-    if (
-      typeof command === "string" &&
-      /^\s*git\s+(?:add|commit|push)(?:\s|$)/.test(command) &&
-      !/[;&|`\n\r]/.test(command)
-    ) {
-      return {
-        verdict: "allow",
-        reason: "Dotconfig commit and push delivery",
-        source: "deterministic",
-        resultSafe: true,
-      };
-    }
-  }
-
-  if (WRITE_TOOLS.has(request.toolName)) {
-    const candidate = request.input.path ?? request.input.file_path;
-    if (typeof candidate === "string" && isInsideCwd(candidate, request.cwd)) {
-      return {
-        verdict: "allow",
-        reason: "Working-tree edit outside protected paths",
-        source: "deterministic",
-      };
-    }
   }
 
   return null;

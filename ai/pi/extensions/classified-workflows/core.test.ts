@@ -89,16 +89,6 @@ test("read-only tools are allowed after the credential guard", () => {
   assert.equal(example?.verdict, "allow");
 });
 
-test("writes inside the working directory are allowed", () => {
-  const decision = deterministicDecision({
-    boundary: "action",
-    toolName: "edit",
-    input: { path: "/repo/src/index.ts" },
-    cwd: "/repo",
-  });
-  assert.equal(decision?.verdict, "allow");
-});
-
 test("todo tracking is allowed as session-local agent work support", () => {
   for (const input of [
     { action: "list" },
@@ -215,50 +205,6 @@ test("interactive Zellij commands are blocked before non-TTY bash can emit termi
   }
 });
 
-test("dotconfig staging, commit, and push delivery is deterministic but shell chaining is not", () => {
-  for (const command of ["git add -- AGENTS.md", "git commit -m 'fix(pi): continue work'", "git push"]) {
-    assert.deepEqual(
-      deterministicDecision({ boundary: "action", toolName: "bash", input: { command }, cwd: "/Users/example/.config" }),
-      {
-        verdict: "allow",
-        reason: "Dotconfig commit and push delivery",
-        source: "deterministic",
-        resultSafe: true,
-      },
-    );
-  }
-  assert.equal(
-    deterministicDecision({
-      boundary: "action",
-      toolName: "bash",
-      input: { command: "git push; echo unsafe" },
-      cwd: "/Users/example/.config",
-    }),
-    null,
-  );
-});
-
-test("the confirmed obsolete dotconfig model artifact can be removed exactly", () => {
-  assert.deepEqual(
-    deterministicDecision({
-      boundary: "action",
-      toolName: "bash",
-      input: { command: "rm -- ai/pi.models.json" },
-      cwd: "/Users/example/.config",
-    }),
-    { verdict: "allow", reason: "Confirmed obsolete dotconfig model artifact cleanup", source: "deterministic" },
-  );
-  assert.equal(
-    deterministicDecision({
-      boundary: "action",
-      toolName: "bash",
-      input: { command: "rm -- ai/other.json" },
-      cwd: "/Users/example/.config",
-    }),
-    null,
-  );
-});
-
 test("provenance-recorded scratch cleanup allows exact operands only", () => {
   const cwd = "/Users/example/code/project";
   const agentArtifacts = [
@@ -283,116 +229,6 @@ test("provenance-recorded scratch cleanup allows exact operands only", () => {
     assert.notEqual(
       deterministicDecision({ boundary: "action", toolName: "bash", input: { command }, cwd, agentArtifacts })?.verdict,
       "allow",
-    );
-  }
-});
-
-test("generated review artifact cleanup is exact and cannot widen recursive deletion", () => {
-  const cwd = "/Users/example/code/st0x/st0x.rest.api";
-  const allowed = deterministicDecision({
-    boundary: "action",
-    toolName: "bash",
-    input: {
-      command: "rm -rf /tmp/pr161-review /tmp/pr162-review /Users/example/code/st0x/st0x.rest.api/.tmp/reviews/pr161 /Users/example/code/st0x/st0x.rest.api/.tmp/reviews/pr162",
-    },
-    cwd,
-  });
-  assert.equal(allowed?.verdict, "allow");
-  assert.equal(allowed?.resultSafe, true);
-  for (const command of [
-    "rm -rf /tmp/pr161-review /tmp/other",
-    "rm -rf /tmp/pr*-review",
-    "rm -rf .tmp/reviews",
-    "rm -rf .tmp/reviews/pr161 && echo done",
-    "rm -rf ../other/.tmp/reviews/pr161",
-  ]) {
-    assert.notEqual(
-      deterministicDecision({ boundary: "action", toolName: "bash", input: { command }, cwd })?.verdict,
-      "allow",
-    );
-  }
-});
-
-test("generated GitButler status cleanup is exact and cannot widen", () => {
-  const cwd = "/Users/example/code/project";
-  assert.equal(
-    deterministicDecision({
-      boundary: "action",
-      toolName: "bash",
-      input: { command: "rm -f -- .tmp/but-status.json" },
-      cwd,
-    })?.verdict,
-    "allow",
-  );
-  for (const command of [
-    "rm -f -- .tmp/other.json",
-    "rm -f -- .tmp/but-status.json .tmp/other.json",
-    "rm -f -- ../.tmp/but-status.json",
-  ]) {
-    assert.notEqual(
-      deterministicDecision({ boundary: "action", toolName: "bash", input: { command }, cwd })?.verdict,
-      "allow",
-    );
-  }
-  for (const command of [
-    "rm -rf -- .tmp/sy-research",
-    "rm -rf -- .tmp/but-status.json",
-    "rm -fr -- .tmp/sy-research .tmp/but-status.json",
-  ]) {
-    assert.equal(
-      deterministicDecision({ boundary: "action", toolName: "bash", input: { command }, cwd })?.verdict,
-      "allow",
-    );
-  }
-  for (const command of [
-    "rm -rf -- .tmp/sy-research .tmp/other",
-    "rm -rf -- .tmp",
-    "rm -rf -- ../.tmp/sy-research",
-  ]) {
-    assert.notEqual(
-      deterministicDecision({ boundary: "action", toolName: "bash", input: { command }, cwd })?.verdict,
-      "allow",
-    );
-  }
-});
-
-test("project-local Rust incremental cache cleanup is narrowly deterministic", () => {
-  assert.deepEqual(
-    deterministicDecision({
-      boundary: "action",
-      toolName: "bash",
-      input: {
-        command:
-          "cd /Users/0xgleb/code/dataclique/yielduck && rm -rf target/debug/incremental && df -h . | tail -1",
-      },
-      cwd: "/Users/0xgleb/code/dataclique/yielduck",
-    }),
-    {
-      verdict: "allow",
-      reason: "Project-local rebuildable Rust incremental cache cleanup",
-      source: "deterministic",
-      resultSafe: true,
-    },
-  );
-  assert.equal(
-    deterministicDecision({
-      boundary: "action",
-      toolName: "bash",
-      input: { command: "rm -rf -- target/debug/incremental" },
-      cwd: "/Users/0xgleb/code/dataclique/yielduck",
-    })?.verdict,
-    "allow",
-  );
-  for (const command of [
-    "rm -rf target",
-    "rm -rf target/release",
-    "rm -rf ../target/debug/incremental",
-    "rm -rf target/debug/incremental; rm -rf src",
-    "cd /tmp/project && rm -rf target/debug/incremental",
-  ]) {
-    assert.equal(
-      deterministicDecision({ boundary: "action", toolName: "bash", input: { command }, cwd: "/repo" }),
-      null,
     );
   }
 });
@@ -437,55 +273,6 @@ test("whole target cleanup is context-classified instead of bypassing project ar
         input: { command: "rm -rf -- target" },
         cwd,
       }),
-      null,
-    );
-  }
-});
-
-test("verified empty GitButler branch cleanup is exact", () => {
-  const cwd = "/Users/example/code/dataclique/yielduck";
-  assert.equal(
-    deterministicDecision({
-      boundary: "action",
-      toolName: "bash",
-      input: { command: "but branch delete fix/ordinary-maker-pause-cancellation --format agent" },
-      cwd,
-    })?.verdict,
-    "allow",
-  );
-  for (const command of [
-    "but branch delete fix/rebuy-cash-basis --format agent",
-    "but branch delete fix/ordinary-maker-pause-cancellation",
-    "but branch delete fix/ordinary-maker-pause-cancellation --format agent && git status",
-  ]) {
-    assert.notEqual(
-      deterministicDecision({ boundary: "action", toolName: "bash", input: { command }, cwd })?.verdict,
-      "allow",
-    );
-  }
-});
-
-test("exact read-only review-panel sentinels are deterministic without broad cursor-agent authority", () => {
-  for (const command of [
-    'cursor-agent -p --mode plan --model composer-2.5 --trust "Reply with exactly: OK"',
-    "cursor-agent -p --mode plan --model grok-4.5-xhigh --trust 'Reply with exactly: OK'",
-  ]) {
-    assert.deepEqual(
-      deterministicDecision({ boundary: "action", toolName: "bash", input: { command }, cwd: "/repo" }),
-      {
-        verdict: "allow",
-        reason: "Exact read-only review-panel availability sentinel",
-        source: "deterministic",
-      },
-    );
-  }
-  for (const command of [
-    'cursor-agent -p --mode plan --model composer-2.5 --trust "Review the repo"',
-    'cursor-agent -p --mode agent --model composer-2.5 --trust "Reply with exactly: OK"',
-    'cursor-agent -p --mode plan --model composer-2.5 --trust "Reply with exactly: OK"; git push',
-  ]) {
-    assert.equal(
-      deterministicDecision({ boundary: "action", toolName: "bash", input: { command }, cwd: "/repo" }),
       null,
     );
   }
@@ -557,11 +344,12 @@ test("broad searches require explicit credential exclusions", () => {
 });
 
 test("only deterministic actions with intrinsically safe output carry result allowance", () => {
-  const git = deterministicDecision({
+  const cleanup = deterministicDecision({
     boundary: "action",
     toolName: "bash",
-    input: { command: "git push" },
-    cwd: "/Users/example/.config",
+    input: { command: "rm -f -- .tmp/report.json" },
+    cwd: "/repo",
+    agentArtifacts: ["/repo/.tmp/report.json"],
   });
   const read = deterministicDecision({
     boundary: "action",
@@ -569,7 +357,7 @@ test("only deterministic actions with intrinsically safe output carry result all
     input: { path: "README.md" },
     cwd: "/repo",
   });
-  assert.equal(git ? shouldCarryDeterministicResultAllowance(git) : false, true);
+  assert.equal(cleanup ? shouldCarryDeterministicResultAllowance(cleanup) : false, true);
   assert.equal(read ? shouldCarryDeterministicResultAllowance(read) : false, false);
 });
 

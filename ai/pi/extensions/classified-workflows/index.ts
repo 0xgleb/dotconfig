@@ -31,7 +31,6 @@ import {
   type WorkflowLimits,
 } from "./core.ts";
 import { boundedExecutionEvidence, selectRelevantExecutionEvidence } from "./execution-evidence.ts";
-import { githubReviewGuard } from "./github-review-guard.ts";
 import {
   buildClassifierPrompt,
   createClassifiedAgentRunner,
@@ -527,7 +526,7 @@ const WorkflowParameters = Type.Object({
 });
 
 export default function classifiedWorkflows(pi: ExtensionAPI): void {
-  registerRuntimeVersion(pi, "classified-workflows", "2026.07.23.54");
+  registerRuntimeVersion(pi, "classified-workflows", "2026.07.23.55");
   let goalState: GoalState | undefined;
   let goalEvaluating = false;
   let goalRunTokens = 0;
@@ -1141,13 +1140,6 @@ export default function classifiedWorkflows(pi: ExtensionAPI): void {
   });
 
   pi.on("tool_call", async (event: ToolCallEvent, ctx) => {
-    const reviewGuard = await githubReviewGuard(event.toolName, event.input, ctx.cwd);
-    if (reviewGuard?.verdict === "allow") {
-      deterministicResultAllowance.record(event.toolCallId);
-      return;
-    }
-    if (reviewGuard) return resolveActionDecision(reviewGuard);
-
     const deterministic = deterministicDecision({
       boundary: "action",
       toolName: event.toolName,
