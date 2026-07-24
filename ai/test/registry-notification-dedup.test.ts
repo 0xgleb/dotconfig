@@ -12,13 +12,19 @@ test("registry request notifications survive reload and compaction", () => {
 });
 
 test("registry notifications revalidate claimed status only while the agent is idle", () => {
-  assert.match(source, /notifiedRequests\.has\(request\.id\) \|\| !ctx\.isIdle\(\) \|\| autoReloadPending\(\)/);
+  assert.match(source, /notifiedRequests\.has\(request\.id\) \|\| !ctx\.isIdle\(\) \|\| ctx\.hasPendingMessages\(\) \|\| autoReloadPending\(\)/);
   assert.match(source, /store\.snapshot\(Date\.now\(\)\)/);
   assert.match(source, /fresh\.status !== "claimed"/);
   assert.match(source, /fresh\.leaseId !== request\.leaseId/);
   assert.match(source, /fresh\.agentId !== identity\(ctx\)\.id/);
-  assert.match(source, /notificationsEnabled && ctx\.isIdle\(\) && !autoReloadPending\(\)/);
+  assert.match(source, /notificationsEnabled && ctx\.isIdle\(\) && !ctx\.hasPendingMessages\(\) && !autoReloadPending\(\)/);
   assert.match(source, /await notifyRequest\(ctx, claimed\)/);
+});
+
+test("registry inbox updates are passive and never preempt human prompts", () => {
+  assert.match(source, /ctx\.hasPendingMessages\(\)/);
+  assert.match(source, /passive operator inbox item/);
+  assert.doesNotMatch(source, /triggerTurn: true, deliverAs: "followUp"/);
 });
 
 test("registry follow-ups yield to a pending managed reload", () => {

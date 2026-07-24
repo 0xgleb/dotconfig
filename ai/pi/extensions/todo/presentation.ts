@@ -69,10 +69,13 @@ export const taskHudLines: (state: TodoState, now?: number) => string[] = (state
     ...state.todos.filter(({ status }) => status === "deferred"),
   ];
   const visible = ordered.filter((todo, index) => ordered.findIndex(({ id }) => id === todo.id) === index).slice(0, 2);
-  const blocked = summary.blocked > 0 ? ` · ${summary.blocked} BLOCKED` : "";
-  const deferred = summary.deferred > 0 ? ` · ${summary.deferred} HELD` : "";
+  const metrics = [
+    `${summary.pending} active`,
+    ...(summary.blocked > 0 ? [`${summary.blocked} blocked`] : []),
+    ...(summary.deferred > 0 ? [`${summary.deferred} deferred`] : []),
+  ];
   const lines = [
-    `TASK//GRID  ${summary.pending} ACTIVE${blocked}${deferred}  /kanban`,
+    `TASKS  ·  ${metrics.join("  ·  ")}  ·  /kanban`,
     ...visible.map(
       (todo, index) =>
         `${todoStatusMark(todo.status)} ${String(index + 1).padStart(2, "0")}  #${todo.id}  ${compactTaskText(todo.text)}`,
@@ -81,8 +84,8 @@ export const taskHudLines: (state: TodoState, now?: number) => string[] = (state
   const hidden = Math.max(0, ordered.length - visible.length);
   lines.push(
     hidden > 0
-      ? `+${hidden} HIDDEN  ${summary.completed}/${summary.total} COMPLETE`
-      : `${summary.completed}/${summary.total} COMPLETE`,
+      ? `+${hidden} hidden  ·  ${summary.completed}/${summary.total} complete`
+      : `${summary.completed}/${summary.total} complete`,
   );
   return lines.slice(0, 4);
 };

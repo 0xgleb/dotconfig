@@ -146,6 +146,7 @@ test("typed local agent registry coordination is locally allowed without grantin
     "list",
     "claim",
     "release",
+    "delegate",
     "requests",
     "claim_request",
     "cancel_request",
@@ -159,7 +160,7 @@ test("typed local agent registry coordination is locally allowed without grantin
       },
     );
   }
-  for (const action of ["delegate", "complete_request", "fail_request"]) {
+  for (const action of ["complete_request", "fail_request"]) {
     assert.equal(
       deterministicDecision({ boundary: "action", toolName: "agent_registry", input: { action }, cwd: "/repo" }),
       null,

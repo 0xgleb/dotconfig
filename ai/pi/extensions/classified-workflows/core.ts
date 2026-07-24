@@ -63,6 +63,7 @@ const REGISTRY_ACTIONS = new Set([
   "list",
   "claim",
   "release",
+  "delegate",
   "requests",
   "claim_request",
   "cancel_request",

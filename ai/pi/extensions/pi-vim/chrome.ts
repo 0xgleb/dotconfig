@@ -6,7 +6,7 @@ const fillToWidth = (prefix: string, suffix: string, width: number): string => {
 };
 
 export const promptChromeTopLine = (width: number): string => {
-  const label = truncateToWidth("╼ INPUT//PROMPT ", Math.max(0, width), "");
+  const label = truncateToWidth("╼ PROMPT  ", Math.max(0, width), "");
   return fillToWidth(label, "", width);
 };
 

@@ -25,7 +25,8 @@ test("persistent detail stays out of the editor while the bounded task HUD remai
 
   assert.match(todos, /taskHudLines\(state\)/);
   assert.match(todos, /placement: "aboveEditor"/);
-  assert.match(todoPresentation, /TASK\/\/GRID/);
+  assert.match(todoPresentation, /TASKS  ·/);
+  assert.doesNotMatch(todoPresentation, /TASK\/\/GRID/);
   assertOnlyClearsPersistentWidget(workflows, '"pi-loop",');
   assertOnlyClearsPersistentWidget(workflows, '"pi-goal",');
   assertOnlyClearsPersistentWidget(registry, "STATUS_KEY,");

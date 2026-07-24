@@ -49,10 +49,10 @@ test("kanban columns separate current, queued, and completed work", () => {
 
 test("task HUD keeps the visible queue archeofuturist and bounded to four lines", () => {
   assert.deepEqual(taskHudLines(state, 100_000), [
-    "TASK//GRID  3 ACTIVE · 1 BLOCKED  /kanban",
+    "TASKS  ·  3 active  ·  1 blocked  ·  /kanban",
     "☐ 01  #2  Fix classifier",
     "☐ 02  #3  Add task overlay",
-    "+2 HIDDEN  1/5 COMPLETE",
+    "+2 hidden  ·  1/5 complete",
   ]);
   assert.equal(taskHudLines(state).length <= 4, true);
 });
@@ -60,9 +60,9 @@ test("task HUD keeps the visible queue archeofuturist and bounded to four lines"
 test("task HUD frame stays aligned without colored backgrounds or doubled corners", () => {
   const framed = frameTaskHudLines(taskHudLines(state, 100_000), 64);
   assert.equal(framed.every((line) => line.length === 64), true);
-  assert.match(framed[0] ?? "", /^╭─ TASK\/\/GRID.*╮$/);
+  assert.match(framed[0] ?? "", /^╭─ TASKS  ·  3 active.*╮$/);
   assert.match(framed[1] ?? "", /^│ ☐ 01.*│$/);
-  assert.match(framed.at(-1) ?? "", /^╰─ \+2 HIDDEN.*╯$/);
+  assert.match(framed.at(-1) ?? "", /^╰─ \+2 hidden.*╯$/);
   assert.equal(framed.some((line) => /╾╮╯|╮╮|╯╯/.test(line)), false);
 });
 

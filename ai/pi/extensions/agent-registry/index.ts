@@ -86,7 +86,7 @@ const requireText: (label: string, value: string | undefined) => string = (label
 };
 
 const registryExtension: (pi: ExtensionAPI) => void = (pi) => {
-  registerRuntimeVersion(pi, "agent-registry", "2026.07.23.9");
+  registerRuntimeVersion(pi, "agent-registry", "2026.07.23.10");
   const runtimeVersions = (): Readonly<Record<string, string>> => {
     const versions: Record<string, string> = {
       "config-generation": MANAGED_CONFIG_GENERATION,
@@ -175,7 +175,7 @@ const registryExtension: (pi: ExtensionAPI) => void = (pi) => {
   };
 
   const notifyRequest = async (ctx: ExtensionContext, request: RegistryRequest): Promise<void> => {
-    if (notifiedRequests.has(request.id) || !ctx.isIdle() || autoReloadPending()) return;
+    if (notifiedRequests.has(request.id) || !ctx.isIdle() || ctx.hasPendingMessages() || autoReloadPending()) return;
     const fresh = (await run(store.snapshot(Date.now()))).requests.find(({ id }) => id === request.id);
     if (
       !fresh ||
@@ -183,20 +183,16 @@ const registryExtension: (pi: ExtensionAPI) => void = (pi) => {
       fresh.leaseId !== request.leaseId ||
       fresh.agentId !== identity(ctx).id ||
       !ctx.isIdle() ||
+      ctx.hasPendingMessages() ||
       autoReloadPending()
     ) {
       return;
     }
-    pi.sendMessage(
-      {
-        customType: MESSAGE_TYPE,
-        content: requestNotificationText(fresh),
-        display: true,
-      },
-      isContinuationPaused(ctx.sessionManager.getBranch())
-        ? undefined
-        : { triggerTurn: true, deliverAs: "followUp" },
-    );
+    pi.sendMessage({
+      customType: MESSAGE_TYPE,
+      content: `${requestNotificationText(fresh)}\nThis is a passive operator inbox item. A genuine human prompt always takes priority; process it only on a later continuation turn.`,
+      display: true,
+    });
     notifiedRequests.add(fresh.id);
     persistNotifiedRequests();
   };
@@ -218,7 +214,7 @@ const registryExtension: (pi: ExtensionAPI) => void = (pi) => {
         }),
       );
       let snapshot = await run(store.snapshot(now));
-      for (const request of notificationsEnabled && ctx.isIdle() && !autoReloadPending()
+      for (const request of notificationsEnabled && ctx.isIdle() && !ctx.hasPendingMessages() && !autoReloadPending()
         ? snapshot.requests.filter(
             (candidate) =>
               candidate.requesterId === agent.id &&
@@ -232,16 +228,11 @@ const registryExtension: (pi: ExtensionAPI) => void = (pi) => {
             : request.status === "failed"
               ? `${request.failure}: ${request.diagnostic}`
               : "cancelled";
-        pi.sendMessage(
-          {
-            customType: MESSAGE_TYPE,
-            content: `Registry request ${request.id} ${request.status}.\nOutcome: ${outcome}`,
-            display: true,
-          },
-          isContinuationPaused(ctx.sessionManager.getBranch())
-            ? undefined
-            : { triggerTurn: true, deliverAs: "followUp" },
-        );
+        pi.sendMessage({
+          customType: MESSAGE_TYPE,
+          content: `Registry request ${request.id} ${request.status}.\nOutcome: ${outcome}\nThis passive update must not preempt a human prompt.`,
+          display: true,
+        });
         await run(store.acknowledgeRequest({ requestId: request.id, requesterId: agent.id, now }));
       }
       snapshot = await run(store.snapshot(now));

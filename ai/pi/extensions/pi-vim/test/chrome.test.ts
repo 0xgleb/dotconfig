@@ -9,7 +9,7 @@ test("prompt chrome uses aligned structural rails without a filled background", 
 
   assert.equal(visibleWidth(top), 48);
   assert.equal(visibleWidth(bottom), 48);
-  assert.match(top, /^╼ INPUT\/\/PROMPT ━+$/);
+  assert.match(top, /^╼ PROMPT  ━+$/);
   assert.match(bottom, /^━+ ◈ INSERT ╾$/);
   assert.equal(top.includes("\x1b[4"), false);
   assert.equal(bottom.includes("\x1b[4"), false);

@@ -47,17 +47,18 @@ class TaskHudComponent {
 
   render(width: number): string[] {
     const lines = taskHudLines(this.state);
-    return frameTaskHudLines(lines, width).map((framed, index) => {
-      if (index === 0) return this.theme.bold(this.theme.fg("accent", framed));
-      if (index === lines.length - 1) return this.theme.fg("borderMuted", framed);
+    const framed = frameTaskHudLines(lines, width).map((lineFrame, index) => {
+      if (index === 0) return this.theme.bold(this.theme.fg("accent", lineFrame));
+      if (index === lines.length - 1) return this.theme.fg("borderMuted", lineFrame);
       const line = lines[index] ?? "";
       const color: "success" | "warning" | "accent" = line.includes("☑")
         ? "success"
         : line.includes("◆")
           ? "warning"
           : "accent";
-      return this.theme.fg(color, framed);
+      return this.theme.fg(color, lineFrame);
     });
+    return [...framed, ""];
   }
 
   invalidate(): void {}
@@ -239,7 +240,7 @@ function restoredState(ctx: ExtensionContext): TodoState {
 }
 
 export default function todoExtension(pi: ExtensionAPI): void {
-  registerRuntimeVersion(pi, "todo", "2026.07.23.8");
+  registerRuntimeVersion(pi, "todo", "2026.07.23.9");
   const stateRef = Effect.runSync(Ref.make<TodoState>(emptyTodoState));
   let hudExpiry: ReturnType<typeof setTimeout> | undefined;
 
