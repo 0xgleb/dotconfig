@@ -27,7 +27,7 @@ test("managed reload summaries identify changed capabilities without exposing fu
   assert.equal(parseManagedReloadSummary({ labels: [7], createdAt: 42, announced: false }), undefined);
 });
 
-test("auto reload triggers turns only for executable continuation work", () => {
+test("auto reload triggers turns for active work and blockers that the new generation may resolve", () => {
   const pendingTodo = {
     type: "custom",
     customType: "todo.state",
@@ -40,7 +40,7 @@ test("auto reload triggers turns only for executable continuation work", () => {
   };
   assert.equal(shouldDispatchReloadFollowUp("reload", []), false);
   assert.equal(shouldDispatchReloadFollowUp("reload", [pendingTodo]), true);
-  assert.equal(shouldDispatchReloadFollowUp("reload", [blockedTodo]), false);
+  assert.equal(shouldDispatchReloadFollowUp("reload", [blockedTodo]), true);
   assert.equal(shouldDispatchReloadFollowUp("resume", [pendingTodo]), false);
   assert.equal(
     shouldDispatchReloadFollowUp("reload", [

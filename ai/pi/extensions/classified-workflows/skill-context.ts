@@ -1,3 +1,4 @@
+import { readFileSync } from "node:fs";
 import { homedir } from "node:os";
 import { basename, dirname, isAbsolute, join, normalize, sep } from "node:path";
 
@@ -56,10 +57,11 @@ const skillReadCalls: (message: Record<string, unknown>, home: string, cwd: stri
 
 export const activeSkillProcedures: (
   branch: unknown[],
-  options?: { home?: string; cwd?: string },
+  options?: { home?: string; cwd?: string; readSkillFile?: (path: string) => string },
 ) => string[] = (branch, options = {}) => {
   const home = options.home ?? homedir();
   const cwd = options.cwd ?? process.cwd();
+  const readSkillFile = options.readSkillFile ?? ((path: string) => readFileSync(path, "utf8"));
   const calls = new Map<string, string>();
   const procedures: string[] = [];
   let totalChars = 0;
@@ -71,7 +73,13 @@ export const activeSkillProcedures: (
     if (message.role !== "toolResult" || message.toolName !== "read" || typeof message.toolCallId !== "string") continue;
     const path = calls.get(message.toolCallId);
     if (!path) continue;
-    const content = textContent(message.content);
+    if (!textContent(message.content)) continue;
+    let content: string;
+    try {
+      content = readSkillFile(path);
+    } catch {
+      continue;
+    }
     if (!content) continue;
     const remaining = MAX_TOTAL_CHARS - totalChars;
     if (remaining <= 0) break;

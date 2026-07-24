@@ -73,6 +73,7 @@ export const shouldDispatchReloadFollowUp: (reason: string, entries: readonly un
   reason === "reload" &&
   !isContinuationPaused(entries) &&
   (todoWorkSnapshot(entries).pending.length > 0 ||
+    todoWorkSnapshot(entries).blocked.length > 0 ||
     hasActiveWorkflowState(entries, "classified-workflows.goal") ||
     hasActiveWorkflowState(entries, "classified-workflows.loop"));
 
