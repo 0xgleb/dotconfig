@@ -182,6 +182,21 @@ test("classifier prompt applies loaded policy and the newest same-priority human
   assert.match(prompt, /do not independently grant authority/i);
 });
 
+test("classifier prompt resolves human continuation against durable active work without magic reauthorization", () => {
+  const prompt = buildClassifierPrompt({
+    boundary: "action",
+    intent: [
+      "Active todo: Implement the already-requested message-only bridge with no tools",
+      "Human message: Do your job and continue the assigned work",
+    ],
+    projectInstructions: "Do not grant consequential remote-control authority.",
+    subject: { toolName: "bash", input: { command: "git add bounded bridge files" } },
+  });
+  assert.match(prompt, /human instruction to continue.*adopts.*still-active assigned work/is);
+  assert.match(prompt, /active work identifies the referent.*does not create new authority/is);
+  assert.match(prompt, /do not require.*magic phrase|do not demand.*re-authorization/is);
+});
+
 test("classifier prompt separates structural deterministic guards from semantic authorization", () => {
   const prompt = buildClassifierPrompt({
     boundary: "action",
