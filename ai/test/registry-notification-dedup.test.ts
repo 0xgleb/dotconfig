@@ -21,10 +21,13 @@ test("registry notifications revalidate claimed status only while the agent is i
   assert.match(source, /await notifyRequest\(ctx, claimed\)/);
 });
 
-test("registry inbox updates are passive and never preempt human prompts", () => {
+test("registry inbox wakes one idle owner without preempting human prompts", () => {
   assert.match(source, /ctx\.hasPendingMessages\(\)/);
-  assert.match(source, /passive operator inbox item/);
-  assert.doesNotMatch(source, /triggerTurn: true, deliverAs: "followUp"/);
+  assert.match(source, /Operator inbox trigger/);
+  assert.match(source, /triggerTurn: true, deliverAs: "followUp"/);
+  assert.match(source, /genuine human prompt.*priority/i);
+  assert.match(source, /let notificationSent = false/);
+  assert.match(source, /notificationsEnabled && !notificationSent/);
 });
 
 test("registry follow-ups yield to a pending managed reload", () => {

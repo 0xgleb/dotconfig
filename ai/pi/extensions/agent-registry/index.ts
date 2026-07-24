@@ -86,7 +86,7 @@ const requireText: (label: string, value: string | undefined) => string = (label
 };
 
 const registryExtension: (pi: ExtensionAPI) => void = (pi) => {
-  registerRuntimeVersion(pi, "agent-registry", "2026.07.23.11");
+  registerRuntimeVersion(pi, "agent-registry", "2026.07.23.12");
   const runtimeVersions = (): Readonly<Record<string, string>> => {
     const versions: Record<string, string> = {
       "config-generation": MANAGED_CONFIG_GENERATION,
@@ -174,8 +174,8 @@ const registryExtension: (pi: ExtensionAPI) => void = (pi) => {
     if (ctx.hasUI) ctx.ui.setWidget(STATUS_KEY, undefined);
   };
 
-  const notifyRequest = async (ctx: ExtensionContext, request: RegistryRequest): Promise<void> => {
-    if (notifiedRequests.has(request.id) || !ctx.isIdle() || ctx.hasPendingMessages() || autoReloadPending()) return;
+  const notifyRequest = async (ctx: ExtensionContext, request: RegistryRequest): Promise<boolean> => {
+    if (notifiedRequests.has(request.id) || !ctx.isIdle() || ctx.hasPendingMessages() || autoReloadPending()) return false;
     const fresh = (await run(store.snapshot(Date.now()))).requests.find(({ id }) => id === request.id);
     if (
       !fresh ||
@@ -186,15 +186,19 @@ const registryExtension: (pi: ExtensionAPI) => void = (pi) => {
       ctx.hasPendingMessages() ||
       autoReloadPending()
     ) {
-      return;
+      return false;
     }
-    pi.sendMessage({
-      customType: MESSAGE_TYPE,
-      content: `${requestNotificationText(fresh)}\nThis is a passive operator inbox item. A genuine human prompt always takes priority; process it only on a later continuation turn.`,
-      display: true,
-    });
+    pi.sendMessage(
+      {
+        customType: MESSAGE_TYPE,
+        content: `${requestNotificationText(fresh)}\nOperator inbox trigger: process this request now. A genuine human prompt still has priority and must be handled first if queued.`,
+        display: true,
+      },
+      { triggerTurn: true, deliverAs: "followUp" },
+    );
     notifiedRequests.add(fresh.id);
     persistNotifiedRequests();
+    return true;
   };
 
   const sync = async (ctx: ExtensionContext, notificationsEnabled = true) => {
@@ -270,6 +274,7 @@ const registryExtension: (pi: ExtensionAPI) => void = (pi) => {
       }
 
       snapshot = await run(store.snapshot(now));
+      let notificationSent = false;
       for (const lease of ownedLeases(snapshot, agent.id).filter(({ status }) => status === "active")) {
         const candidates = snapshot.requests.filter(
           (request) =>
@@ -282,7 +287,7 @@ const registryExtension: (pi: ExtensionAPI) => void = (pi) => {
             const claimed = await run(
               store.claimRequest({ requestId: request.id, leaseId: lease.id, agentId: agent.id, now }),
             );
-            if (notificationsEnabled) await notifyRequest(ctx, claimed);
+            if (notificationsEnabled && !notificationSent) notificationSent = await notifyRequest(ctx, claimed);
           } catch (error) {
             if (!(error instanceof RegistryError) || error.code !== "invalid_transition") throw error;
           }
@@ -290,7 +295,7 @@ const registryExtension: (pi: ExtensionAPI) => void = (pi) => {
         for (const request of snapshot.requests.filter(
           (candidate) => candidate.status === "claimed" && candidate.leaseId === lease.id,
         )) {
-          if (notificationsEnabled) await notifyRequest(ctx, request);
+          if (notificationsEnabled && !notificationSent) notificationSent = await notifyRequest(ctx, request);
         }
       }
       snapshot = await run(store.snapshot(now));
