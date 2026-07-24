@@ -1,10 +1,18 @@
 import assert from "node:assert/strict";
 import { spawnSync } from "node:child_process";
-import { mkdtempSync, rmSync, writeFileSync, mkdirSync } from "node:fs";
+import { mkdtempSync, readFileSync, rmSync, writeFileSync, mkdirSync } from "node:fs";
 import { tmpdir } from "node:os";
 import { join } from "node:path";
 import test from "node:test";
 import { managedGeneration, managedSourcesAreCommitted } from "./index.ts";
+
+const source = readFileSync(new URL("./index.ts", import.meta.url), "utf8");
+
+test("pending managed reload executes as soon as the agent fully settles", () => {
+  assert.match(source, /pi\.on\("agent_settled"/);
+  assert.match(source, /if \(!pending \|\| !isReloadableContext\(ctx\)\) return;/);
+  assert.match(source, /await reloadWhenIdle\(ctx\)/);
+});
 
 test("automatic reload waits until managed tracked sources are committed", () => {
   const root = mkdtempSync(join(tmpdir(), "pi-auto-reload-git-"));

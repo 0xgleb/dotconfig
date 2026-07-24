@@ -63,7 +63,7 @@ export const managedGeneration = (roots: readonly string[]): string => {
 };
 
 const autoReload: (pi: ExtensionAPI) => void = (pi) => {
-  registerRuntimeVersion(pi, "auto-reload", "2026.07.23.3");
+  registerRuntimeVersion(pi, "auto-reload", "2026.07.23.4");
   let watchers: FSWatcher[] = [];
   let timer: ReturnType<typeof setTimeout> | undefined;
   let handoffTimer: ReturnType<typeof setInterval> | undefined;
@@ -218,6 +218,11 @@ const autoReload: (pi: ExtensionAPI) => void = (pi) => {
         ctx.ui.notify(`Could not watch Pi handoffs: ${error instanceof Error ? error.message : "unknown error"}`, "warning");
       }
     }
+  });
+
+  pi.on("agent_settled", async (_event, ctx) => {
+    if (!pending || !isReloadableContext(ctx)) return;
+    await reloadWhenIdle(ctx);
   });
 
   pi.on("session_shutdown", (_event, ctx) => {
