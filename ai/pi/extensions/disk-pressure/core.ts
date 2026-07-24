@@ -15,6 +15,33 @@ export type ResourcePressureDecision =
   | { verdict: "allow" }
   | { verdict: "block"; reason: "disk pressure" | "memory pressure" };
 
+export interface ProcessRssAggregate {
+  readonly command: string;
+  readonly count: number;
+  readonly rssMiB: number;
+}
+
+export const aggregateProcessRss = (output: string, limit = 8): ProcessRssAggregate[] => {
+  const aggregates = new Map<string, { count: number; rssKiB: number }>();
+  for (const line of output.split("\n")) {
+    const match = line.match(/^\s*(\d+)\s+(.+?)\s*$/);
+    if (!match) continue;
+    const rssKiB = Number(match[1]);
+    const command = match[2]?.replace(/[\u0000-\u001f\u007f]/g, "").slice(0, 160) ?? "";
+    if (!Number.isSafeInteger(rssKiB) || rssKiB < 0 || !command) continue;
+    const prior = aggregates.get(command) ?? { count: 0, rssKiB: 0 };
+    aggregates.set(command, { count: prior.count + 1, rssKiB: prior.rssKiB + rssKiB });
+  }
+  return [...aggregates.entries()]
+    .map(([command, aggregate]) => ({
+      command,
+      count: aggregate.count,
+      rssMiB: Math.ceil(aggregate.rssKiB / 1_024),
+    }))
+    .sort((left, right) => right.rssMiB - left.rssMiB || left.command.localeCompare(right.command))
+    .slice(0, Math.max(0, limit));
+};
+
 const TARGETED_BUN_TEST = /^(?:\s*cd\s+\/[^;&|`\s]+\s*&&)?\s*bun\s+test\s+[^;&|`\s]+\.(?:test|spec)\.[cm]?[jt]sx?\s*$/i;
 
 export const isExpensiveCommand: (command: string) => boolean = (command) =>

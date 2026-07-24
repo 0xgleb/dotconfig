@@ -1,14 +1,19 @@
+import { spawnSync } from "node:child_process";
 import { statfsSync } from "node:fs";
-import { freemem, tmpdir } from "node:os";
+import { freemem, homedir, tmpdir } from "node:os";
+import { join } from "node:path";
 import type { ExtensionAPI, ExtensionContext } from "@earendil-works/pi-coding-agent";
 import { isToolCallEventType } from "@earendil-works/pi-coding-agent";
+import { Effect, Either } from "effect";
 import { registerRuntimeVersion } from "../shared/runtime-version.ts";
+import { claimResourceIncident, clearResourceIncident } from "./incident.ts";
 
 import {
   CRITICAL_FREE_BYTES,
   CRITICAL_FREE_MEMORY_BYTES,
   WARNING_FREE_BYTES,
   WARNING_FREE_MEMORY_BYTES,
+  aggregateProcessRss,
   cleanupNewResultSymlinks,
   cleanupStalePiTempLogs,
   formatFreeBytes,
@@ -18,6 +23,8 @@ import {
 } from "./core.ts";
 
 const STATUS_KEY = "disk-pressure";
+const INCIDENT_TTL_MS = 10 * 60_000;
+const INCIDENT_PATH = join(homedir(), ".local", "state", "pi", "resource-pressure", "incident.json");
 
 type PendingBuild = {
   cwd: string;
@@ -45,9 +52,64 @@ const updateStatus: (ctx: ExtensionContext, diskAvailable: bigint, memoryAvailab
 
 const freeMemoryBytes = (): bigint => BigInt(freemem());
 
+const processAggregateText = (): string => {
+  const result = spawnSync("ps", ["-axo", "rss=,comm="], {
+    encoding: "utf8",
+    maxBuffer: 512 * 1_024,
+    timeout: 5_000,
+  });
+  if (result.status !== 0 || typeof result.stdout !== "string") return "Process aggregate unavailable.";
+  const aggregates = aggregateProcessRss(result.stdout);
+  return aggregates.length === 0
+    ? "No process aggregate rows were available."
+    : aggregates.map(({ command, count, rssMiB }) => `- ${rssMiB} MiB · ${count}× ${command}`).join("\n");
+};
+
 export default (pi: ExtensionAPI) => {
-  registerRuntimeVersion(pi, "resource-pressure", "2026.07.23.3");
+  registerRuntimeVersion(pi, "resource-pressure", "2026.07.23.4");
   const pendingBuilds = new Map<string, PendingBuild>();
+
+  const reconcileMemoryIncident = (ctx: ExtensionContext, memoryAvailable: bigint): void => {
+    if (memoryAvailable >= WARNING_FREE_MEMORY_BYTES) {
+      Effect.runSync(Effect.either(clearResourceIncident(INCIDENT_PATH)));
+      return;
+    }
+    if (memoryAvailable >= CRITICAL_FREE_MEMORY_BYTES) return;
+    const claimed = Effect.runSync(
+      Effect.either(
+        claimResourceIncident(
+          INCIDENT_PATH,
+          ctx.sessionManager.getSessionId(),
+          Date.now(),
+          INCIDENT_TTL_MS,
+        ),
+      ),
+    );
+    if (Either.isLeft(claimed)) {
+      ctx.ui.notify("Memory pressure requires action, but Pi could not claim the remediation incident. Close or restart a high-memory application before expensive work.", "warning");
+      return;
+    }
+    if (!claimed.right) return;
+    const available = formatFreeBytes(memoryAvailable);
+    ctx.ui.notify(`Memory pressure action assigned to this session: ${available} free. Remediation will start now.`, "warning");
+    pi.sendMessage(
+      {
+        customType: "resource-pressure.incident",
+        content: [
+          `Critical memory-pressure incident: ${available} free, below the ${formatFreeBytes(CRITICAL_FREE_MEMORY_BYTES)} crash reserve.`,
+          "This is an actionable incident, not a passive warning. Stop expensive work and do not poll resource commands repeatedly.",
+          "Use the bounded harness snapshot below. Cancel or clean only evidenced agent-owned orphaned workflow processes/artifacts.",
+          "Do not close user applications or kill unrelated processes without a focused user confirmation. If a user application dominates, ask one direct question naming it and the observed aggregate.",
+          "Report the action taken and continue independently safe work.",
+          "",
+          "Bounded RSS aggregate (command names only; no arguments):",
+          processAggregateText(),
+        ].join("\n"),
+        display: true,
+      },
+      { triggerTurn: true, deliverAs: "followUp" },
+    );
+  };
 
   pi.on("session_start", (_event, ctx) => {
     try {
@@ -55,16 +117,11 @@ export default (pi: ExtensionAPI) => {
       const available = freeBytes(ctx.cwd);
       const memoryAvailable = freeMemoryBytes();
       updateStatus(ctx, available, memoryAvailable);
+      reconcileMemoryIncident(ctx, memoryAvailable);
       if (removed.length > 0) ctx.ui.notify(`Cleaned ${removed.length} stale Pi temporary log${removed.length === 1 ? "" : "s"}.`);
       if (available < CRITICAL_FREE_BYTES) {
         ctx.ui.notify(
           `Disk pressure critical: ${formatFreeBytes(available)} free. Expensive builds are blocked until space is recovered.`,
-          "warning",
-        );
-      }
-      if (memoryAvailable < CRITICAL_FREE_MEMORY_BYTES) {
-        ctx.ui.notify(
-          `Memory pressure critical: ${formatFreeBytes(memoryAvailable)} free. Expensive builds and new workflow agents are blocked to preserve the crash reserve.`,
           "warning",
         );
       }
@@ -79,6 +136,7 @@ export default (pi: ExtensionAPI) => {
       const available = freeBytes(ctx.cwd);
       const memoryAvailable = freeMemoryBytes();
       updateStatus(ctx, available, memoryAvailable);
+      reconcileMemoryIncident(ctx, memoryAvailable);
       const decision = resourcePressureDecision(event.input.command, available, memoryAvailable);
       if (decision.verdict === "block") {
         return decision.reason === "disk pressure"
@@ -107,7 +165,9 @@ export default (pi: ExtensionAPI) => {
     try {
       const removed = cleanupNewResultSymlinks(pending.cwd, pending.resultLinksBefore);
       const available = freeBytes(ctx.cwd);
-      updateStatus(ctx, available, freeMemoryBytes());
+      const memoryAvailable = freeMemoryBytes();
+      updateStatus(ctx, available, memoryAvailable);
+      reconcileMemoryIncident(ctx, memoryAvailable);
       if (removed.length > 0) {
         ctx.ui.notify(`Cleaned agent-created Nix result link${removed.length === 1 ? "" : "s"}: ${removed.join(", ")}.`);
       }

@@ -7,6 +7,7 @@ import test from "node:test";
 import {
   CRITICAL_FREE_BYTES,
   CRITICAL_FREE_MEMORY_BYTES,
+  aggregateProcessRss,
   cleanupNewResultSymlinks,
   cleanupStalePiTempLogs,
   diskPressureDecision,
@@ -40,6 +41,16 @@ test("expensive builds fail closed before consuming the memory crash reserve", (
     { verdict: "block", reason: "memory pressure" },
   );
   assert.deepEqual(resourcePressureDecision("git status", 1n, 1n), { verdict: "allow" });
+});
+
+test("resource incidents report bounded process aggregates without command arguments", () => {
+  assert.deepEqual(
+    aggregateProcessRss("1024 pi\n2048 /Applications/Brave Browser\n3072 pi\nnot-a-row --token secret\n", 2),
+    [
+      { command: "pi", count: 2, rssMiB: 4 },
+      { command: "/Applications/Brave Browser", count: 1, rssMiB: 2 },
+    ],
+  );
 });
 
 test("temp cleanup accepts only old exact Pi log files directly under the temp root", () => {
