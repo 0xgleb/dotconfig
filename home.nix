@@ -36,6 +36,14 @@ let
     npmRoot = ./ai/pi/extensions;
     inherit (pkgs) nodejs;
   };
+  piBridge = pkgs.writeShellApplication {
+    name = "pi-bridge";
+    runtimeInputs = [ pkgs.nodejs ];
+    text = ''
+      exec node --experimental-strip-types \
+        "$HOME/.config/ai/pi/extensions/remote-control/bridge-cli.ts" "$@"
+    '';
+  };
 
 in
 {
@@ -85,9 +93,12 @@ in
         graphite-cli
       ])
       ++ [
+        inputs.ragenix.packages.${system}.default
+        pkgs.age
         but
         claude-code-latest
         jf
+        piBridge
         pi-coding-agent-with-reload
       ];
 
@@ -154,6 +165,13 @@ in
         $DRY_RUN_CMD mv "$pi_settings.tmp" "$pi_settings"
       '';
     };
+  };
+
+  age.identityPaths = lib.mkIf isDarwin [
+    "${config.home.homeDirectory}/.config/agenix/metagenda.txt"
+  ];
+  age.secrets = lib.mkIf (isDarwin && builtins.pathExists ./secrets/metagenda-telegram-token.age) {
+    metagenda-telegram-token.file = ./secrets/metagenda-telegram-token.age;
   };
 
   # NOTE: this shit doesn't clean up after itself if you enable/disable it

@@ -19,6 +19,9 @@
     home-manager.url = "github:nix-community/home-manager";
     home-manager.inputs.nixpkgs.follows = "nixpkgs";
 
+    ragenix.url = "github:yaxitech/ragenix";
+    ragenix.inputs.nixpkgs.follows = "nixpkgs";
+
     disko.url = "github:nix-community/disko";
     disko.inputs.nixpkgs.follows = "nixpkgs";
 
@@ -61,6 +64,7 @@
               {
                 imports = [
                   inputs.nix-doom-emacs-unstraightened.homeModule
+                  inputs.ragenix.homeManagerModules.default
                   ./home.nix
                 ];
               };
@@ -87,6 +91,7 @@
               {
                 imports = [
                   inputs.nix-doom-emacs-unstraightened.homeModule
+                  inputs.ragenix.homeManagerModules.default
                   ./home.nix
                 ];
               };
