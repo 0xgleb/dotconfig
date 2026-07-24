@@ -72,8 +72,14 @@ import {
   boundedDiagnosticTail,
   sanitizeProcessDiagnostic,
   summarizePiJsonLines,
+  usageTokensFromAssistantMessage,
   usageTokensFromPiJsonLine,
 } from "./protocol.ts";
+import {
+  WORKFLOW_CHILD_TOKEN_LIMIT_ENV,
+  capProviderOutputTokens,
+  workflowChildTokenLimit,
+} from "./token-cap.ts";
 import { activeSkillProcedures } from "./skill-context.ts";
 import { trustedCoordinationIntent } from "./coordination-intent.ts";
 import {
@@ -165,7 +171,10 @@ async function runPi(
 ): Promise<PiProcessResult> {
   return new Promise((resolve) => {
     const invocation = piInvocation(args);
-    const child = spawn(invocation.command, invocation.args, { cwd, shell: false, stdio: AGENT_PROCESS_STDIO });
+    const env = tokenLimit === undefined
+      ? process.env
+      : { ...process.env, [WORKFLOW_CHILD_TOKEN_LIMIT_ENV]: String(tokenLimit) };
+    const child = spawn(invocation.command, invocation.args, { cwd, env, shell: false, stdio: AGENT_PROCESS_STDIO });
     let stdout = "";
     let stderr = "";
     let spawnError: string | undefined;
@@ -529,7 +538,23 @@ const WorkflowParameters = Type.Object({
 });
 
 export default function classifiedWorkflows(pi: ExtensionAPI): void {
-  registerRuntimeVersion(pi, "classified-workflows", "2026.07.23.57");
+  registerRuntimeVersion(pi, "classified-workflows", "2026.07.23.58");
+  const childTokenLimit = workflowChildTokenLimit(process.env[WORKFLOW_CHILD_TOKEN_LIMIT_ENV]);
+  let childUsageTokens = 0;
+  if (childTokenLimit !== undefined) {
+    pi.on("message_end", (event) => {
+      childUsageTokens += usageTokensFromAssistantMessage(event.message);
+    });
+    pi.on("before_provider_request", (event, ctx) => {
+      const remaining = childTokenLimit - childUsageTokens;
+      try {
+        return capProviderOutputTokens(event.payload, remaining).payload;
+      } catch {
+        ctx.abort();
+        return event.payload;
+      }
+    });
+  }
   let goalState: GoalState | undefined;
   let goalEvaluating = false;
   let goalRunTokens = 0;

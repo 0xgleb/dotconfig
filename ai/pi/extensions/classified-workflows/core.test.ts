@@ -9,7 +9,7 @@ import {
   WORKFLOW_AGENT_MEMORY_RESERVATION_BYTES,
   minimumRetryEnvelopeMs,
   parseClassifierDecision,
-  runWorkflowScript,
+  runWorkflowScript as runWorkflowScriptCore,
   shouldCarryDeterministicResultAllowance,
   type AgentRequest,
   type AgentResult,
@@ -25,6 +25,16 @@ const limits: WorkflowLimits = {
   retries: 0,
   tokenBudget: 20_000,
 };
+
+const runWorkflowScript = (
+  ...[code, workflowLimits, workflowDependencies, signal]: Parameters<typeof runWorkflowScriptCore>
+): ReturnType<typeof runWorkflowScriptCore> =>
+  runWorkflowScriptCore(
+    code,
+    workflowLimits,
+    { availableMemoryBytes: () => Number.MAX_SAFE_INTEGER, ...workflowDependencies },
+    signal,
+  );
 
 const dependencies = (runAgent: WorkflowDependencies["runAgent"]): WorkflowDependencies => ({
   runAgent,

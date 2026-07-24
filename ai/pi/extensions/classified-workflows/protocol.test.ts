@@ -4,6 +4,7 @@ import {
   boundedDiagnosticTail,
   sanitizeProcessDiagnostic,
   summarizePiJsonLines,
+  usageTokensFromAssistantMessage,
   usageTokensFromPiJsonLine,
 } from "./protocol.ts";
 
@@ -39,6 +40,14 @@ test("JSON event summaries use the last assistant text and aggregate usage", () 
     stopReason: "stop",
     errorMessage: undefined,
   });
+});
+
+test("assistant usage exposes completed child-turn cost for cumulative provider caps", () => {
+  assert.equal(
+    usageTokensFromAssistantMessage({ role: "assistant", usage: { input: 3, output: 5, cacheRead: 7, totalTokens: 15 } }),
+    15,
+  );
+  assert.equal(usageTokensFromAssistantMessage({ role: "user", usage: { totalTokens: 99 } }), 0);
 });
 
 test("streaming usage reads only completed assistant turns", () => {
