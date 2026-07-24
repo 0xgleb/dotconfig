@@ -71,7 +71,7 @@ const parseAction: (request: QuestionRequest, state: QuestionState) => QuestionA
 };
 
 const questionsExtension: (pi: ExtensionAPI) => void = (pi) => {
-  registerRuntimeVersion(pi, "questions", "2026.07.23.7");
+  registerRuntimeVersion(pi, "questions", "2026.07.23.8");
   let state = emptyQuestionState;
   let dialogOpen = false;
   let latestCtx: ExtensionContext | undefined;
@@ -273,7 +273,7 @@ const questionsExtension: (pi: ExtensionAPI) => void = (pi) => {
   pi.registerTool({
     name: "ask_user",
     label: "Question queue",
-    description: "Queue, list, resolve, or reopen persistent non-blocking questions for the user."},{
+    description: "Queue, list, resolve, or reopen persistent non-blocking questions for the user.",
     promptSnippet: "Queue a persistent question for the user without blocking unrelated work",
     promptGuidelines: [
       "Use ask_user when a user decision is required but independent work remains executable.",
