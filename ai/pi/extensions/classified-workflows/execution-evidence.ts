@@ -81,6 +81,27 @@ export const boundedRelevantExecutionEvidence = (
   return `…[subject-focused] ${focused}`.slice(0, maxCharacters);
 };
 
+export interface ToolResultExecutionEvidenceInput {
+  readonly toolName: unknown;
+  readonly text: string;
+  readonly isError: unknown;
+  readonly subject: unknown;
+  readonly maxCharacters?: number;
+}
+
+/** Preserve execution status separately from untrusted result wording. */
+export const toolResultExecutionEvidence: (input: ToolResultExecutionEvidenceInput) => string = ({
+  toolName,
+  text,
+  isError,
+  subject,
+  maxCharacters = 2_400,
+}) => {
+  const name = sanitizeProcessDiagnostic(String(toolName ?? "tool")).replace(/\s+/g, " ").slice(0, 64) || "tool";
+  const status = isError === true ? "error" : isError === false ? "success" : "unknown";
+  return `${name} result status=${status}: ${boundedRelevantExecutionEvidence(text, subject, maxCharacters)}`;
+};
+
 /** Keep a small recency window plus older evidence that shares concrete identifiers with the proposed boundary. */
 export const selectRelevantExecutionEvidence = (
   candidates: readonly string[],

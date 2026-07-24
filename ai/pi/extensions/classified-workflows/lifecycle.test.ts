@@ -206,7 +206,9 @@ test("classifier prompt treats blocked calls as unfinished and trusts current fi
     subject: { toolName: "edit", input: { path: "tests/exit.rs", edits: [{ oldText: "old", newText: "new" }] } },
   });
   assert.match(prompt, /proposed, blocked, interrupted, or result-withheld tool call is not evidence of success/i);
+  assert.match(prompt, /tool result status.*authoritative.*error.*never prove.*mutation/is);
   assert.match(prompt, /current independently verified file state supersedes stale duplicate-operation assumptions/i);
+  assert.match(prompt, /proposed edit's oldText.*current successful read.*not a duplicate/is);
   assert.match(prompt, /do not call an exact edit already applied unless.*successful matching result.*current state/is);
 });
 

@@ -4,6 +4,7 @@ import {
   boundedExecutionEvidence,
   boundedRelevantExecutionEvidence,
   selectRelevantExecutionEvidence,
+  toolResultExecutionEvidence,
 } from "./execution-evidence.ts";
 
 test("large GraphQL tool results retain bounded thread IDs, authors, and resolution state", () => {
@@ -48,6 +49,24 @@ test("subject-aware bounding retains verified draft-comment anchors from the mid
   assert.match(evidence, /crates\/issuance\/src\/lib\.rs:605/);
   assert.match(evidence, /verified inline comment/);
   assert.doesNotMatch(evidence, /finding 0:/);
+});
+
+test("tool-result evidence preserves authoritative success or error status", () => {
+  const failedEdit = toolResultExecutionEvidence({
+    toolName: "edit",
+    text: "oldText not found; replacement may already be present",
+    isError: true,
+    subject: { toolName: "edit", input: { oldText: "pre-transfer Core balance" } },
+  });
+  const currentRead = toolResultExecutionEvidence({
+    toolName: "read",
+    text: "Bind the episode to the pre-transfer Core balance",
+    isError: false,
+    subject: { toolName: "edit", input: { oldText: "pre-transfer Core balance" } },
+  });
+
+  assert.match(failedEdit, /^edit result status=error:/);
+  assert.match(currentRead, /^read result status=success:/);
 });
 
 test("evidence retrieval keeps recent results and older results sharing concrete subject identifiers", () => {
