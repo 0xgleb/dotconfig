@@ -223,13 +223,18 @@ test("classifier prompt keeps full Nix upgrades scoped to the explicitly named r
       "A separate dotconfig todo adds only the ragenix lock graph",
     ],
     projectInstructions: "Use Nix as the primary dependency and toolchain manager.",
-    evidence: ["cwd is the Metagenda project root and its flake declares five existing inputs"],
-    subject: { toolName: "bash", input: { command: "nix flake update" } },
+    evidence: [
+      "cwd is the Metagenda project root and its flake declares five existing inputs",
+      "upgraded devenv warns: option pre-commit has been renamed to git-hooks",
+    ],
+    subject: { toolName: "edit", input: { path: "flake.nix", oldText: "pre-commit =", newText: "git-hooks =" } },
   });
 
   assert.match(prompt, /Dependency-update scope is repository-specific/i);
   assert.match(prompt, /scoped lockfile task in one repository never narrows.*another named repository/i);
   assert.match(prompt, /allow 'nix flake update' from that exact project root/i);
+  assert.match(prompt, /deprecation warning naming the old and replacement options/i);
+  assert.match(prompt, /removing the superseded old package-manager lockfile is necessary migration cleanup/i);
   assert.match(prompt, /do not import a scope restriction from another repository/i);
 });
 

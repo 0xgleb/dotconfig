@@ -12,6 +12,7 @@ import {
 } from "@earendil-works/pi-tui";
 import type { TUI, EditorOptions, EditorTheme, AutocompleteProvider } from "@earendil-works/pi-tui";
 import { createInitialState, modeDisplayName, type VimState } from "./state.ts";
+import { promptChromeBottomLine, promptChromeTopLine } from "./chrome.ts";
 import { moveEditorCursorTo } from "./cursor.ts";
 import { displayColumn } from "./display-width.ts";
 import { handleNormalMode, type NormalModeContext } from "./modes/normal.ts";
@@ -344,26 +345,16 @@ export class VimEditor extends CustomEditor {
       this.applyVisualHighlight(lines, width);
     }
 
-    // Add mode indicator to the bottom border (right side)
+    // Give the editor a compact structural rail without adding side borders
+    // that would disturb cursor and selection column calculations.
     const last = lines.length - 1;
+    lines[0] = this.borderColor(promptChromeTopLine(width));
 
     if (this.vimState.mode === "command-line" && getSearchState().active) {
-      // Show search prompt on the bottom border
       const prompt = getSearchPrompt();
-      const cursorChar = "█";
-      const promptWithCursor = ` ${prompt}${cursorChar} `;
-      if (visibleWidth(lines[last]!) >= promptWithCursor.length) {
-        lines[last] =
-          truncateToWidth(lines[last]!, width - promptWithCursor.length, "") +
-          promptWithCursor;
-      }
+      lines[last] = this.borderColor(promptChromeBottomLine(width, `${prompt}█`));
     } else {
-      const modeName = modeDisplayName(this.vimState.mode);
-      const label = ` ${modeName} `;
-      if (visibleWidth(lines[last]!) >= label.length) {
-        lines[last] =
-          truncateToWidth(lines[last]!, width - label.length, "") + label;
-      }
+      lines[last] = this.borderColor(promptChromeBottomLine(width, `◈ ${modeDisplayName(this.vimState.mode)}`));
     }
 
     return lines;
