@@ -210,6 +210,19 @@ test("classifier prompt treats blocked calls as unfinished and trusts current fi
   assert.match(prompt, /do not call an exact edit already applied unless.*successful matching result.*current state/is);
 });
 
+test("classifier prompt trusts current typed durable state over incomplete result history", () => {
+  const prompt = buildClassifierPrompt({
+    boundary: "action",
+    intent: ["Relay all seven labeled fragments and complete the routing request"],
+    projectInstructions: "Verify durable request state before completion.",
+    evidence: ["Current typed registry snapshot lists claimed fragments 1/7 through 7/7."],
+    subject: { toolName: "agent_registry", input: { action: "complete_request", requestId: "relay" } },
+  });
+  assert.match(prompt, /current typed durable state is authoritative evidence of persisted transitions/i);
+  assert.match(prompt, /supersedes missing, truncated, filtered, or unselected individual tool-result history/i);
+  assert.match(prompt, /do not demand replay.*when the current state proves every required item/is);
+});
+
 test("classifier prompt separates structural deterministic guards from semantic authorization", () => {
   const prompt = buildClassifierPrompt({
     boundary: "action",
