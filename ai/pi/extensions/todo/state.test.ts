@@ -1,7 +1,15 @@
 import assert from "node:assert/strict";
 import test from "node:test";
 import { Effect, Either, Option } from "effect";
-import { decodeTodoDetails, decodeTodoState, emptyTodoState, parseTodoAction, transitionTodoState } from "./state.ts";
+import {
+  decodeTodoDetails,
+  decodeTodoState,
+  emptyTodoState,
+  nextDeferredReminderAt,
+  parseTodoAction,
+  transitionTodoState,
+  wakeDueDeferredTodos,
+} from "./state.ts";
 
 test("adding a todo creates immutable not-started state", async () => {
   const result = await Effect.runPromise(
@@ -56,6 +64,64 @@ test("explicit statuses cover in-progress, cancelled, and deferred work", async 
     { id: 1, text: "Shape UI", status: "cancelled", statusChangedAt: 2_000 },
   ]);
   assert.deepEqual(deferred.state.todos, [{ id: 1, text: "Shape UI", status: "deferred" }]);
+});
+
+test("deferred work can carry a timezone-qualified durable reminder", async () => {
+  const now = Date.parse("2026-07-23T08:00:00Z");
+  const remindAt = "2026-07-23T09:30:00Z";
+  const action = await Effect.runPromise(
+    parseTodoAction({ action: "status", id: 1, status: "deferred", remindAt }, now),
+  );
+  const result = await Effect.runPromise(
+    transitionTodoState(
+      { todos: [{ id: 1, text: "Resume review", status: "pending" }], nextId: 2 },
+      action,
+      now,
+    ),
+  );
+
+  assert.deepEqual(result.state.todos, [
+    { id: 1, text: "Resume review", status: "deferred", remindAt: Date.parse(remindAt) },
+  ]);
+  assert.equal(result.message, "Todo #1 deferred until 2026-07-23T09:30:00.000Z");
+  assert.equal(Option.isSome(decodeTodoState(result.state)), true);
+});
+
+test("reminder input rejects ambiguous, elapsed, and non-deferred schedules", async () => {
+  const now = Date.parse("2026-07-23T08:00:00Z");
+  const cases = [
+    { action: "status" as const, id: 1, status: "deferred" as const, remindAt: "2026-07-23 09:30" },
+    { action: "status" as const, id: 1, status: "deferred" as const, remindAt: "2026-07-23T07:30:00Z" },
+    { action: "status" as const, id: 1, status: "pending" as const, remindAt: "2026-07-23T09:30:00Z" },
+  ];
+
+  for (const request of cases) {
+    assert.equal(Either.isLeft(await Effect.runPromise(Effect.either(parseTodoAction(request, now)))), true);
+  }
+});
+
+test("due deferred reminders wake together while future and indefinite deferrals remain", () => {
+  const now = Date.parse("2026-07-23T10:00:00Z");
+  const state = {
+    todos: [
+      { id: 1, text: "Due", status: "deferred" as const, remindAt: now - 1 },
+      { id: 2, text: "Future", status: "deferred" as const, remindAt: now + 60_000 },
+      { id: 3, text: "Indefinite", status: "deferred" as const },
+      { id: 4, text: "Active", status: "pending" as const },
+    ],
+    nextId: 5,
+  };
+
+  assert.equal(nextDeferredReminderAt(state), now - 1);
+  const wake = wakeDueDeferredTodos(state, now);
+  assert.deepEqual(wake.woken.map(({ id }) => id), [1]);
+  assert.deepEqual(wake.state.todos, [
+    { id: 1, text: "Due", status: "pending" },
+    { id: 2, text: "Future", status: "deferred", remindAt: now + 60_000 },
+    { id: 3, text: "Indefinite", status: "deferred" },
+    { id: 4, text: "Active", status: "pending" },
+  ]);
+  assert.equal(nextDeferredReminderAt(wake.state), now + 60_000);
 });
 
 test("blocked work requires a reason and can be unblocked", async () => {

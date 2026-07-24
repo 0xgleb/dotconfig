@@ -10,16 +10,20 @@ import { DynamicBorder, type ExtensionAPI, type ExtensionContext, type Theme } f
 import { Container, matchesKey, type SelectItem, SelectList, Text, truncateToWidth, visibleWidth } from "@earendil-works/pi-tui";
 import { Effect, Option, Ref } from "effect";
 import { Type } from "typebox";
+import { isContinuationPaused } from "../shared/continuation-pause.ts";
 import { QUESTION_ASK_EVENT, type UserQuestionRequest } from "../shared/question-events.ts";
+import { AUTO_RELOAD_PENDING_REQUEST_EVENT, type AutoReloadPendingReporter } from "../shared/reload-events.ts";
 import { registerRuntimeVersion } from "../shared/runtime-version.ts";
 import { frameTaskHudLines, kanbanColumns, taskHudLines, todoSummary } from "./presentation.ts";
 import {
   decodeTodoDetails,
   decodeTodoState,
   emptyTodoState,
+  nextDeferredReminderAt,
   parseTodoAction,
   transitionTodoState,
   todoStatusMark,
+  wakeDueDeferredTodos,
   type Todo,
   type TodoAction,
   type TodoDetails,
@@ -34,6 +38,9 @@ const TodoParams = Type.Object({
     StringEnum(["pending", "in_progress", "completed", "cancelled", "deferred"] as const),
   ),
   reason: Type.Optional(Type.String({ description: "Required blocker reason for block" })),
+  remindAt: Type.Optional(
+    Type.String({ description: "Timezone-qualified ISO-8601 wake time; only with status=deferred" }),
+  ),
 });
 
 class TaskHudComponent {
@@ -113,7 +120,11 @@ class TodoListComponent {
               : "dim";
         const check = this.theme.fg(color, todoStatusMark(todo.status));
         const id = this.theme.fg("accent", `#${todo.id}`);
-        const label = isBlocked ? `${todo.text} — blocked: ${todo.reason}` : todo.text;
+        const label = isBlocked
+          ? `${todo.text} — blocked: ${todo.reason}`
+          : todo.status === "deferred" && todo.remindAt !== undefined
+            ? `${todo.text} — until ${new Date(todo.remindAt).toISOString()}`
+            : todo.text;
         const text = this.theme.fg(isCompleted ? "dim" : "text", label);
         lines.push(truncateToWidth(`  ${check} ${id} ${text}`, width));
       }
@@ -227,6 +238,8 @@ function failedToolResult(action: TodoAction["action"], state: TodoState, error:
 }
 
 const TODO_STATE_ENTRY = "todo.state";
+const TODO_REMINDER_MESSAGE = "todo.reminder";
+const MAX_TIMER_DELAY_MS = 2_147_483_647;
 
 function restoredState(ctx: ExtensionContext): TodoState {
   const states = ctx.sessionManager.getBranch().flatMap((entry) => {
@@ -240,9 +253,10 @@ function restoredState(ctx: ExtensionContext): TodoState {
 }
 
 export default function todoExtension(pi: ExtensionAPI): void {
-  registerRuntimeVersion(pi, "todo", "2026.07.23.10");
+  registerRuntimeVersion(pi, "todo", "2026.07.23.11");
   const stateRef = Effect.runSync(Ref.make<TodoState>(emptyTodoState));
   let hudExpiry: ReturnType<typeof setTimeout> | undefined;
+  let reminderTimer: ReturnType<typeof setTimeout> | undefined;
 
   const renderTaskWidget = (ctx: ExtensionContext, state = Effect.runSync(Ref.get(stateRef))) => {
     if (!ctx.hasUI) return;
@@ -271,19 +285,84 @@ export default function todoExtension(pi: ExtensionAPI): void {
     }
   };
 
+  let wakeDueReminders: (ctx: ExtensionContext) => Promise<void>;
+
+  const autoReloadPending = (): boolean => {
+    let pending = false;
+    const report: AutoReloadPendingReporter = (value) => {
+      pending ||= value;
+    };
+    pi.events.emit(AUTO_RELOAD_PENDING_REQUEST_EVENT, report);
+    return pending;
+  };
+
+  const scheduleReminder = (ctx: ExtensionContext, state = Effect.runSync(Ref.get(stateRef))) => {
+    if (reminderTimer) clearTimeout(reminderTimer);
+    reminderTimer = undefined;
+    const nextAt = nextDeferredReminderAt(state);
+    if (nextAt === undefined) return;
+    const delay = Math.min(Math.max(0, nextAt - Date.now()), MAX_TIMER_DELAY_MS);
+    reminderTimer = setTimeout(() => {
+      reminderTimer = undefined;
+      void wakeDueReminders(ctx);
+    }, delay);
+  };
+
+  wakeDueReminders = async (ctx: ExtensionContext) => {
+    const current = Effect.runSync(Ref.get(stateRef));
+    const wake = wakeDueDeferredTodos(current, Date.now());
+    if (wake.woken.length === 0) {
+      scheduleReminder(ctx, current);
+      return;
+    }
+    if (
+      isContinuationPaused(ctx.sessionManager.getBranch()) ||
+      !ctx.isIdle() ||
+      ctx.hasPendingMessages() ||
+      autoReloadPending()
+    ) return;
+
+    Effect.runSync(Ref.set(stateRef, wake.state));
+    pi.appendEntry(TODO_STATE_ENTRY, wake.state);
+    renderTaskWidget(ctx, wake.state);
+    scheduleReminder(ctx, wake.state);
+    const due = wake.woken.map(({ id, text }) => `- #${id}: ${text}`).join("\n");
+    pi.sendMessage(
+      {
+        customType: TODO_REMINDER_MESSAGE,
+        content: `Scheduled todo reminder due:\n${due}\nResume these tracked tasks under current authorization; the reminder grants no new authority.`,
+        display: true,
+      },
+      { triggerTurn: true, deliverAs: "followUp" },
+    );
+    if (ctx.hasUI) ctx.ui.notify(`${wake.woken.length} deferred todo reminder(s) due.`, "info");
+  };
+
   const reconstructState = (ctx: ExtensionContext) => Ref.set(stateRef, restoredState(ctx));
   const reconstructAndRender = async (ctx: ExtensionContext) => {
     await Effect.runPromise(reconstructState(ctx));
     const state = Effect.runSync(Ref.get(stateRef));
     pi.appendEntry(TODO_STATE_ENTRY, state);
     renderTaskWidget(ctx, state);
+    scheduleReminder(ctx, state);
+    await wakeDueReminders(ctx);
   };
   pi.on("session_start", async (_event, ctx) => reconstructAndRender(ctx));
   pi.on("session_tree", async (_event, ctx) => reconstructAndRender(ctx));
-  pi.on("session_compact", (_event, ctx) => {
+  pi.on("session_compact", async (_event, ctx) => {
     const state = Effect.runSync(Ref.get(stateRef));
     pi.appendEntry(TODO_STATE_ENTRY, state);
     renderTaskWidget(ctx, state);
+    scheduleReminder(ctx, state);
+    await wakeDueReminders(ctx);
+  });
+  pi.on("session_shutdown", (_event, ctx) => {
+    if (hudExpiry) clearTimeout(hudExpiry);
+    if (reminderTimer) clearTimeout(reminderTimer);
+    hudExpiry = undefined;
+    reminderTimer = undefined;
+    ctx.ui.setStatus("todo", undefined);
+    ctx.ui.setWidget("todo-top-tasks", undefined);
   });
 
   const applyUiAction = async (action: TodoAction, ctx: ExtensionContext): Promise<TodoState> => {
@@ -292,6 +371,7 @@ export default function todoExtension(pi: ExtensionAPI): void {
     await Effect.runPromise(Ref.set(stateRef, transition.state));
     pi.appendEntry(TODO_STATE_ENTRY, transition.state);
     renderTaskWidget(ctx, transition.state);
+    scheduleReminder(ctx, transition.state);
     return transition.state;
   };
 
@@ -351,13 +431,13 @@ export default function todoExtension(pi: ExtensionAPI): void {
   pi.registerTool({
     name: "todo",
     label: "Todo",
-    description: "Manage a branch-aware todo list. Actions: list, add, toggle, status (id + status), block (id + reason), reply (id + text), unblock, clear",
+    description: "Manage a branch-aware todo list. Actions: list, add, toggle, status (id + status; optional remindAt for deferred), block (id + reason), reply (id + text), unblock, clear",
     parameters: TodoParams,
 
     async execute(_toolCallId, params, _signal, _onUpdate, ctx) {
       const program = Ref.get(stateRef).pipe(
         Effect.flatMap((state) =>
-          parseTodoAction(params).pipe(
+          parseTodoAction(params, Date.now()).pipe(
             Effect.flatMap((action) => transitionTodoState(state, action, Date.now())),
             Effect.tap(({ state: nextState }) => Ref.set(stateRef, nextState)),
             Effect.map((transition) =>
@@ -373,6 +453,7 @@ export default function todoExtension(pi: ExtensionAPI): void {
       const result = await Effect.runPromise(program);
       if (result.details.outcome === "success") pi.appendEntry(TODO_STATE_ENTRY, result.details.state);
       renderTaskWidget(ctx, result.details.state);
+      scheduleReminder(ctx, result.details.state);
       return result;
     },
 
@@ -382,6 +463,7 @@ export default function todoExtension(pi: ExtensionAPI): void {
       if (args.id !== undefined) text += ` ${theme.fg("accent", `#${args.id}`)}`;
       if (args.status) text += ` ${theme.fg("accent", args.status)}`;
       if (args.reason) text += ` ${theme.fg("warning", `blocked: ${args.reason}`)}`;
+      if (args.remindAt) text += ` ${theme.fg("accent", `until ${args.remindAt}`)}`;
       return new Text(text, 0, 0);
     },
 
@@ -408,7 +490,11 @@ export default function todoExtension(pi: ExtensionAPI): void {
                 ? "accent"
                 : "dim";
           const check = theme.fg(color, todoStatusMark(todo.status));
-          const label = blocked ? `${todo.text} — blocked: ${todo.reason}` : todo.text;
+          const label = blocked
+            ? `${todo.text} — blocked: ${todo.reason}`
+            : todo.status === "deferred" && todo.remindAt !== undefined
+              ? `${todo.text} — until ${new Date(todo.remindAt).toISOString()}`
+              : todo.text;
           const replies = todo.replies?.map((reply) => `\n    ${theme.fg("accent", "↳ reply:")} ${reply}`).join("") ?? "";
           text += `\n${check} ${theme.fg("accent", `#${todo.id}`)} ${theme.fg(completed ? "dim" : "muted", label)}${replies}`;
         }
@@ -520,4 +606,6 @@ export default function todoExtension(pi: ExtensionAPI): void {
       );
     },
   });
+
+  pi.on("agent_settled", async (_event, ctx) => wakeDueReminders(ctx));
 }

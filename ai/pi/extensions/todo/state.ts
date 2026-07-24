@@ -2,6 +2,7 @@ import { Data, Effect, Option, Schema } from "effect";
 
 export type TodoStatus = "pending" | "in_progress" | "completed" | "cancelled" | "blocked" | "deferred";
 export type SettableTodoStatus = Exclude<TodoStatus, "blocked">;
+type ImmediateTodoStatus = Exclude<SettableTodoStatus, "deferred">;
 
 interface TodoBase {
   readonly id: number;
@@ -11,7 +12,8 @@ interface TodoBase {
 }
 
 export type Todo =
-  | (TodoBase & { readonly status: SettableTodoStatus })
+  | (TodoBase & { readonly status: ImmediateTodoStatus })
+  | (TodoBase & { readonly status: "deferred"; readonly remindAt?: number })
   | (TodoBase & { readonly status: "blocked"; readonly reason: string });
 
 export interface TodoState {
@@ -23,7 +25,12 @@ export type TodoRequest =
   | { readonly action: "list" }
   | { readonly action: "add"; readonly text?: string }
   | { readonly action: "toggle"; readonly id?: number }
-  | { readonly action: "status"; readonly id?: number; readonly status?: SettableTodoStatus }
+  | {
+      readonly action: "status";
+      readonly id?: number;
+      readonly status?: SettableTodoStatus;
+      readonly remindAt?: string;
+    }
   | { readonly action: "block"; readonly id?: number; readonly reason?: string }
   | { readonly action: "reply"; readonly id?: number; readonly text?: string }
   | { readonly action: "unblock"; readonly id?: number }
@@ -33,7 +40,12 @@ export type TodoAction =
   | { readonly action: "list" }
   | { readonly action: "add"; readonly text: string }
   | { readonly action: "toggle"; readonly id: number }
-  | { readonly action: "status"; readonly id: number; readonly status: SettableTodoStatus }
+  | {
+      readonly action: "status";
+      readonly id: number;
+      readonly status: SettableTodoStatus;
+      readonly remindAt?: number;
+    }
   | { readonly action: "block"; readonly id: number; readonly reason: string }
   | { readonly action: "reply"; readonly id: number; readonly text: string }
   | { readonly action: "unblock"; readonly id: number }
@@ -74,7 +86,15 @@ const TodoSchema = Schema.Union(
   Schema.Struct({
     id: Schema.Number,
     text: Schema.String,
-    status: Schema.Literal("pending", "in_progress", "completed", "cancelled", "deferred"),
+    status: Schema.Literal("pending", "in_progress", "completed", "cancelled"),
+    replies: Schema.optional(Schema.Array(Schema.String)),
+    statusChangedAt: Schema.optional(Schema.Number),
+  }),
+  Schema.Struct({
+    id: Schema.Number,
+    text: Schema.String,
+    status: Schema.Literal("deferred"),
+    remindAt: Schema.optional(Schema.Number),
     replies: Schema.optional(Schema.Array(Schema.String)),
     statusChangedAt: Schema.optional(Schema.Number),
   }),
@@ -115,13 +135,22 @@ export const decodeTodoState: (value: unknown) => Option.Option<TodoState> = (va
 export const decodeTodoDetails: (value: unknown) => Option.Option<TodoDetails> = (value) =>
   Schema.decodeUnknownOption(TodoDetailsSchema)(value);
 
-const todoWithStatus: (todo: Todo, status: SettableTodoStatus, now?: number) => Todo = (todo, status, now) => ({
-  id: todo.id,
-  text: todo.text,
-  status,
-  ...(todo.replies && todo.replies.length > 0 ? { replies: todo.replies } : {}),
-  ...(now === undefined ? {} : { statusChangedAt: now }),
-});
+const todoWithStatus: (
+  todo: Todo,
+  status: SettableTodoStatus,
+  now?: number,
+  remindAt?: number,
+) => Todo = (todo, status, now, remindAt) => {
+  const base: TodoBase = {
+    id: todo.id,
+    text: todo.text,
+    ...(todo.replies && todo.replies.length > 0 ? { replies: todo.replies } : {}),
+    ...(now === undefined ? {} : { statusChangedAt: now }),
+  };
+  return status === "deferred"
+    ? { ...base, status, ...(remindAt === undefined ? {} : { remindAt }) }
+    : { ...base, status };
+};
 
 const pendingTodo: (todo: Todo) => Todo = (todo) => todoWithStatus(todo, "pending");
 
@@ -168,14 +197,18 @@ export const transitionTodoState: (
         return Effect.fail(new TodoNotFoundError({ action: "status", message: `Todo #${action.id} not found` }));
       }
       const changedAt = action.status === "completed" || action.status === "cancelled" ? now : undefined;
-      const replacement = todoWithStatus(target, action.status, changedAt);
+      const replacement = todoWithStatus(target, action.status, changedAt, action.remindAt);
+      const schedule =
+        replacement.status === "deferred" && replacement.remindAt !== undefined
+          ? ` until ${new Date(replacement.remindAt).toISOString()}`
+          : "";
       return Effect.succeed({
         action: "status",
         state: {
           todos: state.todos.map((todo) => (todo.id === target.id ? replacement : todo)),
           nextId: state.nextId,
         },
-        message: `Todo #${target.id} ${replacement.status}`,
+        message: `Todo #${target.id} ${replacement.status}${schedule}`,
       });
     }
 
@@ -243,7 +276,39 @@ export const transitionTodoState: (
   }
 };
 
-export const parseTodoAction: (request: TodoRequest) => Effect.Effect<TodoAction, TodoInputError> = (request) => {
+export const nextDeferredReminderAt: (state: TodoState) => number | undefined = (state) =>
+  state.todos
+    .filter((todo): todo is Extract<Todo, { status: "deferred" }> => todo.status === "deferred")
+    .flatMap(({ remindAt }) => (remindAt === undefined ? [] : [remindAt]))
+    .sort((left, right) => left - right)[0];
+
+export interface DeferredTodoWake {
+  readonly state: TodoState;
+  readonly woken: ReadonlyArray<Extract<Todo, { status: "deferred" }>>;
+}
+
+export const wakeDueDeferredTodos: (state: TodoState, now: number) => DeferredTodoWake = (state, now) => {
+  const woken = state.todos.filter(
+    (todo): todo is Extract<Todo, { status: "deferred" }> =>
+      todo.status === "deferred" && todo.remindAt !== undefined && todo.remindAt <= now,
+  );
+  if (woken.length === 0) return { state, woken };
+  const dueIds = new Set(woken.map(({ id }) => id));
+  return {
+    state: {
+      todos: state.todos.map((todo) => (dueIds.has(todo.id) ? pendingTodo(todo) : todo)),
+      nextId: state.nextId,
+    },
+    woken,
+  };
+};
+
+const TIMEZONE_QUALIFIED_ISO = /^\d{4}-\d{2}-\d{2}T.+(?:Z|[+-]\d{2}:\d{2})$/;
+
+export const parseTodoAction: (
+  request: TodoRequest,
+  now?: number,
+) => Effect.Effect<TodoAction, TodoInputError> = (request, now = Date.now()) => {
   switch (request.action) {
     case "list":
       return Effect.succeed(request);
@@ -261,9 +326,29 @@ export const parseTodoAction: (request: TodoRequest) => Effect.Effect<TodoAction
       if (request.id === undefined) {
         return Effect.fail(new TodoInputError({ action: "status", message: "id required for status" }));
       }
-      return request.status === undefined
-        ? Effect.fail(new TodoInputError({ action: "status", message: "status required for status" }))
-        : Effect.succeed({ action: "status", id: request.id, status: request.status });
+      if (request.status === undefined) {
+        return Effect.fail(new TodoInputError({ action: "status", message: "status required for status" }));
+      }
+      if (request.remindAt === undefined) {
+        return Effect.succeed({ action: "status", id: request.id, status: request.status });
+      }
+      if (request.status !== "deferred") {
+        return Effect.fail(
+          new TodoInputError({ action: "status", message: "remindAt is valid only for deferred status" }),
+        );
+      }
+      if (!TIMEZONE_QUALIFIED_ISO.test(request.remindAt)) {
+        return Effect.fail(
+          new TodoInputError({ action: "status", message: "remindAt must be a timezone-qualified ISO-8601 time" }),
+        );
+      }
+      const remindAt = Date.parse(request.remindAt);
+      if (!Number.isFinite(remindAt) || remindAt <= now) {
+        return Effect.fail(
+          new TodoInputError({ action: "status", message: "remindAt must be a valid future time" }),
+        );
+      }
+      return Effect.succeed({ action: "status", id: request.id, status: request.status, remindAt });
     case "block": {
       if (request.id === undefined) {
         return Effect.fail(new TodoInputError({ action: "block", message: "id required for block" }));
@@ -306,7 +391,12 @@ const formatTodoList: (todos: ReadonlyArray<Todo>) => string = (todos) =>
     ? "No todos"
     : todos
         .map((todo) => {
-          const detail = todo.status === "blocked" ? ` — blocked: ${todo.reason}` : "";
+          const detail =
+            todo.status === "blocked"
+              ? ` — blocked: ${todo.reason}`
+              : todo.status === "deferred" && todo.remindAt !== undefined
+                ? ` — deferred until ${new Date(todo.remindAt).toISOString()}`
+                : "";
           const replies = todo.replies?.map((reply) => `\n    ↳ reply: ${reply}`).join("") ?? "";
           return `${todoStatusMark(todo.status)} #${todo.id}: ${todo.text}${detail}${replies}`;
         })
