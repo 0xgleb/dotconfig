@@ -1,15 +1,17 @@
 import { Data, Effect, Option, Schema } from "effect";
 
-export type TodoStatus = "pending" | "completed" | "blocked";
+export type TodoStatus = "pending" | "in_progress" | "completed" | "cancelled" | "blocked" | "deferred";
+export type SettableTodoStatus = Exclude<TodoStatus, "blocked">;
 
 interface TodoBase {
   readonly id: number;
   readonly text: string;
   readonly replies?: ReadonlyArray<string>;
+  readonly statusChangedAt?: number;
 }
 
 export type Todo =
-  | (TodoBase & { readonly status: "pending" | "completed" })
+  | (TodoBase & { readonly status: SettableTodoStatus })
   | (TodoBase & { readonly status: "blocked"; readonly reason: string });
 
 export interface TodoState {
@@ -21,6 +23,7 @@ export type TodoRequest =
   | { readonly action: "list" }
   | { readonly action: "add"; readonly text?: string }
   | { readonly action: "toggle"; readonly id?: number }
+  | { readonly action: "status"; readonly id?: number; readonly status?: SettableTodoStatus }
   | { readonly action: "block"; readonly id?: number; readonly reason?: string }
   | { readonly action: "reply"; readonly id?: number; readonly text?: string }
   | { readonly action: "unblock"; readonly id?: number }
@@ -30,6 +33,7 @@ export type TodoAction =
   | { readonly action: "list" }
   | { readonly action: "add"; readonly text: string }
   | { readonly action: "toggle"; readonly id: number }
+  | { readonly action: "status"; readonly id: number; readonly status: SettableTodoStatus }
   | { readonly action: "block"; readonly id: number; readonly reason: string }
   | { readonly action: "reply"; readonly id: number; readonly text: string }
   | { readonly action: "unblock"; readonly id: number }
@@ -60,7 +64,7 @@ export class TodoInputError extends Data.TaggedError("TodoInputError")<{
 }> {}
 
 export class TodoNotFoundError extends Data.TaggedError("TodoNotFoundError")<{
-  action: "toggle" | "block" | "reply" | "unblock";
+  action: "toggle" | "status" | "block" | "reply" | "unblock";
   message: string;
 }> {}
 
@@ -70,8 +74,9 @@ const TodoSchema = Schema.Union(
   Schema.Struct({
     id: Schema.Number,
     text: Schema.String,
-    status: Schema.Literal("pending", "completed"),
+    status: Schema.Literal("pending", "in_progress", "completed", "cancelled", "deferred"),
     replies: Schema.optional(Schema.Array(Schema.String)),
+    statusChangedAt: Schema.optional(Schema.Number),
   }),
   Schema.Struct({
     id: Schema.Number,
@@ -79,6 +84,7 @@ const TodoSchema = Schema.Union(
     status: Schema.Literal("blocked"),
     reason: Schema.String,
     replies: Schema.optional(Schema.Array(Schema.String)),
+    statusChangedAt: Schema.optional(Schema.Number),
   }),
 );
 
@@ -87,7 +93,7 @@ const TodoStateSchema = Schema.Struct({
   nextId: Schema.Number,
 });
 
-const TodoActionSchema = Schema.Literal("list", "add", "toggle", "block", "reply", "unblock", "clear");
+const TodoActionSchema = Schema.Literal("list", "add", "toggle", "status", "block", "reply", "unblock", "clear");
 
 const TodoDetailsSchema = Schema.Union(
   Schema.Struct({
@@ -109,17 +115,21 @@ export const decodeTodoState: (value: unknown) => Option.Option<TodoState> = (va
 export const decodeTodoDetails: (value: unknown) => Option.Option<TodoDetails> = (value) =>
   Schema.decodeUnknownOption(TodoDetailsSchema)(value);
 
-const pendingTodo: (todo: Todo) => Todo = (todo) => ({
+const todoWithStatus: (todo: Todo, status: SettableTodoStatus, now?: number) => Todo = (todo, status, now) => ({
   id: todo.id,
   text: todo.text,
-  status: "pending",
+  status,
   ...(todo.replies && todo.replies.length > 0 ? { replies: todo.replies } : {}),
+  ...(now === undefined ? {} : { statusChangedAt: now }),
 });
+
+const pendingTodo: (todo: Todo) => Todo = (todo) => todoWithStatus(todo, "pending");
 
 export const transitionTodoState: (
   state: TodoState,
   action: TodoAction,
-) => Effect.Effect<TodoTransition, TodoNotFoundError> = (state, action) => {
+  now?: number,
+) => Effect.Effect<TodoTransition, TodoNotFoundError> = (state, action, now) => {
   switch (action.action) {
     case "list":
       return Effect.succeed({ action: "list", state, message: formatTodoList(state.todos) });
@@ -139,11 +149,28 @@ export const transitionTodoState: (
         return Effect.fail(new TodoNotFoundError({ action: "toggle", message: `Todo #${action.id} not found` }));
       }
       const replacement: Todo =
-        target.status === "pending"
-          ? { id: target.id, text: target.text, status: "completed" }
-          : pendingTodo(target);
+        target.status === "completed"
+          ? pendingTodo(target)
+          : todoWithStatus(target, "completed", now);
       return Effect.succeed({
         action: "toggle",
+        state: {
+          todos: state.todos.map((todo) => (todo.id === target.id ? replacement : todo)),
+          nextId: state.nextId,
+        },
+        message: `Todo #${target.id} ${replacement.status}`,
+      });
+    }
+
+    case "status": {
+      const target = state.todos.find(({ id }) => id === action.id);
+      if (!target) {
+        return Effect.fail(new TodoNotFoundError({ action: "status", message: `Todo #${action.id} not found` }));
+      }
+      const changedAt = action.status === "completed" || action.status === "cancelled" ? now : undefined;
+      const replacement = todoWithStatus(target, action.status, changedAt);
+      return Effect.succeed({
+        action: "status",
         state: {
           todos: state.todos.map((todo) => (todo.id === target.id ? replacement : todo)),
           nextId: state.nextId,
@@ -230,6 +257,13 @@ export const parseTodoAction: (request: TodoRequest) => Effect.Effect<TodoAction
       return request.id === undefined
         ? Effect.fail(new TodoInputError({ action: "toggle", message: "id required for toggle" }))
         : Effect.succeed({ action: "toggle", id: request.id });
+    case "status":
+      if (request.id === undefined) {
+        return Effect.fail(new TodoInputError({ action: "status", message: "id required for status" }));
+      }
+      return request.status === undefined
+        ? Effect.fail(new TodoInputError({ action: "status", message: "status required for status" }))
+        : Effect.succeed({ action: "status", id: request.id, status: request.status });
     case "block": {
       if (request.id === undefined) {
         return Effect.fail(new TodoInputError({ action: "block", message: "id required for block" }));
@@ -257,13 +291,23 @@ export const parseTodoAction: (request: TodoRequest) => Effect.Effect<TodoAction
   }
 };
 
+export const todoStatusMark: (status: TodoStatus) => string = (status) =>
+  ({
+    pending: "☐",
+    in_progress: "◐",
+    completed: "☑",
+    cancelled: "⊘",
+    blocked: "◆",
+    deferred: "◌",
+  })[status];
+
 const formatTodoList: (todos: ReadonlyArray<Todo>) => string = (todos) =>
   todos.length === 0
     ? "No todos"
     : todos
-        .map((todo) =>
-          todo.status === "blocked"
-            ? `[!] #${todo.id}: ${todo.text} — blocked: ${todo.reason}${todo.replies?.map((reply) => `\n    ↳ reply: ${reply}`).join("") ?? ""}`
-            : `[${todo.status === "completed" ? "x" : " "}] #${todo.id}: ${todo.text}${todo.replies?.map((reply) => `\n    ↳ reply: ${reply}`).join("") ?? ""}`,
-        )
+        .map((todo) => {
+          const detail = todo.status === "blocked" ? ` — blocked: ${todo.reason}` : "";
+          const replies = todo.replies?.map((reply) => `\n    ↳ reply: ${reply}`).join("") ?? "";
+          return `${todoStatusMark(todo.status)} #${todo.id}: ${todo.text}${detail}${replies}`;
+        })
         .join("\n");

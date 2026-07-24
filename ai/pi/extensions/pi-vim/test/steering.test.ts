@@ -60,6 +60,46 @@ test("second enter interrupts with exactly one immediate steering prompt", () =>
   assert.equal(scheduler.cancelled, true);
 });
 
+test("double enter with an existing follow-up interrupts so the queue runs now", () => {
+  const scheduler = new FakeScheduler();
+  let interrupted = 0;
+  const steering = new DoubleEnterSteering({
+    windowMs: 350,
+    scheduler,
+    onSubmit: () => assert.fail("must not submit new text"),
+    onImmediate: () => assert.fail("must not duplicate queued text"),
+    hasQueuedMessages: () => true,
+    onQueuedImmediate: () => {
+      interrupted += 1;
+    },
+  });
+
+  assert.equal(steering.handleEnter("", true), "deferred");
+  assert.equal(steering.handleEnter("", true), "immediate");
+  scheduler.fire();
+  assert.equal(interrupted, 1);
+  assert.equal(scheduler.cancelled, true);
+});
+
+test("a single empty enter does not interrupt an existing follow-up queue", () => {
+  const scheduler = new FakeScheduler();
+  let interrupted = false;
+  const steering = new DoubleEnterSteering({
+    windowMs: 350,
+    scheduler,
+    onSubmit: () => assert.fail("must not submit"),
+    onImmediate: () => assert.fail("must not interrupt typed text"),
+    hasQueuedMessages: () => true,
+    onQueuedImmediate: () => {
+      interrupted = true;
+    },
+  });
+
+  assert.equal(steering.handleEnter("", true), "deferred");
+  scheduler.fire();
+  assert.equal(interrupted, false);
+});
+
 test("slash command input bypasses streaming double-enter steering", () => {
   assert.equal(isSlashCommandInput("/ques"), true);
   assert.equal(isSlashCommandInput("  /questions"), true);

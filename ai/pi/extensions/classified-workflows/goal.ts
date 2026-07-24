@@ -154,7 +154,9 @@ export const todoWorkSnapshot: (entries: unknown[]) => TodoWorkSnapshot = (entri
     return state.todos.reduce<TodoWorkSnapshot>(
       (snapshot, todo) => {
         if (!isRecord(todo) || !isNonNegativeInteger(todo.id) || typeof todo.text !== "string") return snapshot;
-        if (todo.status === "pending") snapshot.pending.push(`#${todo.id} ${todo.text}`);
+        if (todo.status === "pending" || todo.status === "in_progress") {
+          snapshot.pending.push(`#${todo.id} ${todo.text}`);
+        }
         if (todo.status === "blocked" && typeof todo.reason === "string") {
           snapshot.blocked.push(`#${todo.id} ${todo.text} — ${todo.reason}`);
         }

@@ -331,7 +331,10 @@ you print in the conversation (Step 2) rather than the posted `body` — the dra
    paste at submit time. Every finding should be an inline comment on a diff line.
    When a finding references unchanged code, place the comment on the nearest
    related changed line.
-9. The review runs as a single `Workflow` invocation (review-core) — never
+9. When correcting an older review that violated the empty-body rule, update
+   only that review's top-level body to the empty string. Never delete, dismiss,
+   or rewrite its inline comments as part of body cleanup.
+10. The review runs as a single `Workflow` invocation (review-core) — never
    hand-roll the fan-out with individual Agent calls. External CLIs run read-only
    (review-core step 4 / hard rules): cursor-agent always `--mode plan`, never
    `-f`/`--yolo`, and `--workspace` spelled out (`-w` is `--worktree`); agy always

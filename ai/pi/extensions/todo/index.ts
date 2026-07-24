@@ -12,13 +12,14 @@ import { Effect, Option, Ref } from "effect";
 import { Type } from "typebox";
 import { QUESTION_ASK_EVENT, type UserQuestionRequest } from "../shared/question-events.ts";
 import { registerRuntimeVersion } from "../shared/runtime-version.ts";
-import { kanbanColumns, todoSummary } from "./presentation.ts";
+import { frameTaskHudLines, kanbanColumns, taskHudLines, todoSummary } from "./presentation.ts";
 import {
   decodeTodoDetails,
   decodeTodoState,
   emptyTodoState,
   parseTodoAction,
   transitionTodoState,
+  todoStatusMark,
   type Todo,
   type TodoAction,
   type TodoDetails,
@@ -26,11 +27,41 @@ import {
 } from "./state.ts";
 
 const TodoParams = Type.Object({
-  action: StringEnum(["list", "add", "toggle", "block", "reply", "unblock", "clear"] as const),
+  action: StringEnum(["list", "add", "toggle", "status", "block", "reply", "unblock", "clear"] as const),
   text: Type.Optional(Type.String({ description: "Todo text (for add or reply)" })),
-  id: Type.Optional(Type.Number({ description: "Todo ID (for toggle, block, reply, or unblock)" })),
+  id: Type.Optional(Type.Number({ description: "Todo ID" })),
+  status: Type.Optional(
+    StringEnum(["pending", "in_progress", "completed", "cancelled", "deferred"] as const),
+  ),
   reason: Type.Optional(Type.String({ description: "Required blocker reason for block" })),
 });
+
+class TaskHudComponent {
+  private readonly state: TodoState;
+  private readonly theme: Theme;
+
+  constructor(state: TodoState, theme: Theme) {
+    this.state = state;
+    this.theme = theme;
+  }
+
+  render(width: number): string[] {
+    const lines = taskHudLines(this.state);
+    return frameTaskHudLines(lines, width).map((framed, index) => {
+      if (index === 0) return this.theme.bold(this.theme.fg("accent", framed));
+      if (index === lines.length - 1) return this.theme.fg("borderMuted", framed);
+      const line = lines[index] ?? "";
+      const color: "success" | "warning" | "accent" = line.includes("☑")
+        ? "success"
+        : line.includes("◆")
+          ? "warning"
+          : "accent";
+      return this.theme.fg(color, framed);
+    });
+  }
+
+  invalidate(): void {}
+}
 
 class TodoListComponent {
   private cachedWidth?: number;
@@ -72,11 +103,14 @@ class TodoListComponent {
       for (const todo of this.todos) {
         const isCompleted = todo.status === "completed";
         const isBlocked = todo.status === "blocked";
-        const check = isCompleted
-          ? this.theme.fg("success", "✓")
+        const color: "success" | "warning" | "accent" | "dim" = isCompleted
+          ? "success"
           : isBlocked
-            ? this.theme.fg("warning", "⊘")
-            : this.theme.fg("dim", "○");
+            ? "warning"
+            : todo.status === "in_progress"
+              ? "accent"
+              : "dim";
+        const check = this.theme.fg(color, todoStatusMark(todo.status));
         const id = this.theme.fg("accent", `#${todo.id}`);
         const label = isBlocked ? `${todo.text} — blocked: ${todo.reason}` : todo.text;
         const text = this.theme.fg(isCompleted ? "dim" : "text", label);
@@ -119,9 +153,9 @@ class KanbanComponent {
     const available = Math.max(3, width - 6);
     const baseWidth = Math.floor(available / 3);
     const columnWidths = [baseWidth, baseWidth, available - baseWidth * 2] as const;
-    const now = this.cardLines(columns.now, "●", "warning", 18, "Nothing active");
-    const next = this.cardLines(columns.next, "○", "accent", 18, "Queue clear");
-    const done = this.cardLines(columns.done.slice().reverse(), "✓", "success", 18, "Nothing done yet");
+    const now = this.cardLines(columns.now, "warning", 18, "Nothing active");
+    const next = this.cardLines(columns.next, "accent", 18, "Queue clear");
+    const done = this.cardLines(columns.done.slice().reverse(), "success", 18, "Nothing done yet");
     const rowCount = Math.max(now.length, next.length, done.length);
     const lines = [
       "",
@@ -159,14 +193,13 @@ class KanbanComponent {
 
   private cardLines(
     todos: ReadonlyArray<Todo>,
-    icon: string,
     color: "accent" | "success" | "warning",
     limit: number,
     emptyLabel: string,
   ): string[] {
     if (todos.length === 0) return [this.theme.fg("dim", emptyLabel)];
     const visible = todos.slice(0, limit).map(
-      (todo) => `${this.theme.fg(color, icon)} ${this.theme.fg("accent", `#${todo.id}`)} ${todo.text}`,
+      (todo) => `${this.theme.fg(color, todoStatusMark(todo.status))} ${this.theme.fg("accent", `#${todo.id}`)} ${todo.text}`,
     );
     if (todos.length > visible.length) visible.push(this.theme.fg("dim", `… ${todos.length - visible.length} more`));
     return visible;
@@ -206,14 +239,35 @@ function restoredState(ctx: ExtensionContext): TodoState {
 }
 
 export default function todoExtension(pi: ExtensionAPI): void {
-  registerRuntimeVersion(pi, "todo", "2026.07.23.5");
+  registerRuntimeVersion(pi, "todo", "2026.07.23.8");
   const stateRef = Effect.runSync(Ref.make<TodoState>(emptyTodoState));
+  let hudExpiry: ReturnType<typeof setTimeout> | undefined;
 
   const renderTaskWidget = (ctx: ExtensionContext, state = Effect.runSync(Ref.get(stateRef))) => {
     if (!ctx.hasUI) return;
     const summary = todoSummary(state);
     ctx.ui.setStatus("todo", summary.total > 0 ? `tasks:${summary.pending}/${summary.total}` : undefined);
-    ctx.ui.setWidget("todo-top-tasks", undefined);
+    const lines = taskHudLines(state);
+    ctx.ui.setWidget(
+      "todo-top-tasks",
+      lines.length === 0 ? undefined : (_tui, theme) => new TaskHudComponent(state, theme),
+      { placement: "aboveEditor" },
+    );
+
+    if (hudExpiry) clearTimeout(hudExpiry);
+    const now = Date.now();
+    const nextExpiry = state.todos
+      .filter(
+        ({ status, statusChangedAt }) =>
+          (status === "completed" || status === "cancelled") &&
+          statusChangedAt !== undefined &&
+          statusChangedAt + 10_000 > now,
+      )
+      .flatMap(({ statusChangedAt }) => (statusChangedAt === undefined ? [] : [statusChangedAt + 10_000 - now]))
+      .sort((left, right) => left - right)[0];
+    if (nextExpiry !== undefined) {
+      hudExpiry = setTimeout(() => renderTaskWidget(ctx), nextExpiry + 25);
+    }
   };
 
   const reconstructState = (ctx: ExtensionContext) => Ref.set(stateRef, restoredState(ctx));
@@ -233,7 +287,7 @@ export default function todoExtension(pi: ExtensionAPI): void {
 
   const applyUiAction = async (action: TodoAction, ctx: ExtensionContext): Promise<TodoState> => {
     const current = Effect.runSync(Ref.get(stateRef));
-    const transition = await Effect.runPromise(transitionTodoState(current, action));
+    const transition = await Effect.runPromise(transitionTodoState(current, action, Date.now()));
     await Effect.runPromise(Ref.set(stateRef, transition.state));
     pi.appendEntry(TODO_STATE_ENTRY, transition.state);
     renderTaskWidget(ctx, transition.state);
@@ -296,14 +350,14 @@ export default function todoExtension(pi: ExtensionAPI): void {
   pi.registerTool({
     name: "todo",
     label: "Todo",
-    description: "Manage a branch-aware todo list. Actions: list, add, toggle, block (id + reason), reply (id + text), unblock, clear",
+    description: "Manage a branch-aware todo list. Actions: list, add, toggle, status (id + status), block (id + reason), reply (id + text), unblock, clear",
     parameters: TodoParams,
 
     async execute(_toolCallId, params, _signal, _onUpdate, ctx) {
       const program = Ref.get(stateRef).pipe(
         Effect.flatMap((state) =>
           parseTodoAction(params).pipe(
-            Effect.flatMap((action) => transitionTodoState(state, action)),
+            Effect.flatMap((action) => transitionTodoState(state, action, Date.now())),
             Effect.tap(({ state: nextState }) => Ref.set(stateRef, nextState)),
             Effect.map((transition) =>
               successfulToolResult(transition.action, transition.state, transition.message),
@@ -325,6 +379,7 @@ export default function todoExtension(pi: ExtensionAPI): void {
       let text = theme.fg("toolTitle", theme.bold("todo ")) + theme.fg("muted", args.action);
       if (args.text) text += ` ${theme.fg("dim", `"${args.text}"`)}`;
       if (args.id !== undefined) text += ` ${theme.fg("accent", `#${args.id}`)}`;
+      if (args.status) text += ` ${theme.fg("accent", args.status)}`;
       if (args.reason) text += ` ${theme.fg("warning", `blocked: ${args.reason}`)}`;
       return new Text(text, 0, 0);
     },
@@ -344,11 +399,14 @@ export default function todoExtension(pi: ExtensionAPI): void {
         for (const todo of visible) {
           const completed = todo.status === "completed";
           const blocked = todo.status === "blocked";
-          const check = completed
-            ? theme.fg("success", "✓")
+          const color: "success" | "warning" | "accent" | "dim" = completed
+            ? "success"
             : blocked
-              ? theme.fg("warning", "⊘")
-              : theme.fg("dim", "○");
+              ? "warning"
+              : todo.status === "in_progress"
+                ? "accent"
+                : "dim";
+          const check = theme.fg(color, todoStatusMark(todo.status));
           const label = blocked ? `${todo.text} — blocked: ${todo.reason}` : todo.text;
           const replies = todo.replies?.map((reply) => `\n    ${theme.fg("accent", "↳ reply:")} ${reply}`).join("") ?? "";
           text += `\n${check} ${theme.fg("accent", `#${todo.id}`)} ${theme.fg(completed ? "dim" : "muted", label)}${replies}`;

@@ -16,7 +16,7 @@ import { registerRuntimeVersion } from "../shared/runtime-version.ts";
 import { VimEditor } from "./vim-editor.ts";
 
 export default function (pi: ExtensionAPI) {
-  registerRuntimeVersion(pi, "pi-vim", "2026.07.23.4");
+  registerRuntimeVersion(pi, "pi-vim", "2026.07.23.5");
   let wrapAutocomplete: ((provider: AutocompleteProvider) => AutocompleteProvider) | undefined;
 
   // Ack fzfp's editor check — registered at factory time so it's always ready.
@@ -32,6 +32,7 @@ export default function (pi: ExtensionAPI) {
     ctx.ui.setEditorComponent((tui, theme, keybindings) =>
       new VimEditor(tui, theme, keybindings, undefined, wrapAutocomplete, {
         isStreaming: () => !ctx.isIdle(),
+        hasPendingMessages: () => ctx.hasPendingMessages(),
         onImmediate: (text) => {
           if (ctx.isIdle()) {
             pi.sendUserMessage(text);
@@ -40,6 +41,11 @@ export default function (pi: ExtensionAPI) {
           pi.sendUserMessage(text, { deliverAs: "followUp" });
           ctx.abort();
           ctx.ui.notify("Interrupted the current turn and delivered steering immediately.", "info");
+        },
+        onQueuedImmediate: () => {
+          if (ctx.isIdle() || !ctx.hasPendingMessages()) return;
+          ctx.abort();
+          ctx.ui.notify("Interrupted the current turn; queued messages will run now.", "info");
         },
       })
     );

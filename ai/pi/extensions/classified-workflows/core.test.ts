@@ -184,6 +184,36 @@ test("the dedicated Pi reload tool is locally allowed", () => {
   });
 });
 
+test("interactive Zellij commands are blocked before non-TTY bash can emit terminal control sequences", () => {
+  for (const command of [
+    "zellij options --theme archeofuturism",
+    "zellij action new-pane",
+    "zellij attach work",
+    "cd /repo && zellij action rename-tab unsafe",
+  ]) {
+    assert.deepEqual(
+      deterministicDecision({ boundary: "action", toolName: "bash", input: { command }, cwd: "/repo" }),
+      {
+        verdict: "block",
+        reason: "Interactive or session-mutating Zellij commands require a TTY-safe dedicated path; direct bash may emit control sequences into the user's terminal",
+        source: "deterministic",
+      },
+    );
+  }
+
+  for (const command of [
+    "zellij --version",
+    "zellij setup --check",
+    "zellij setup --dump-layout default",
+    "git status --short -- zellij/config.kdl",
+  ]) {
+    assert.notEqual(
+      deterministicDecision({ boundary: "action", toolName: "bash", input: { command }, cwd: "/repo" })?.verdict,
+      "block",
+    );
+  }
+});
+
 test("dotconfig staging, commit, and push delivery is deterministic but shell chaining is not", () => {
   for (const command of ["git add -- AGENTS.md", "git commit -m 'fix(pi): continue work'", "git push"]) {
     assert.deepEqual(

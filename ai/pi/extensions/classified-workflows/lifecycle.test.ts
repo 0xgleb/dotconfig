@@ -215,6 +215,42 @@ test("classifier prompt distinguishes workspace dependency declaration from pack
   assert.match(prompt, /only the evidenced dependency, version, dependency kind, and package target/i);
 });
 
+test("classifier prompt keeps full Nix upgrades scoped to the explicitly named repository", () => {
+  const prompt = buildClassifierPrompt({
+    boundary: "action",
+    intent: [
+      "Upgrade all Metagenda project dependencies, including Nix inputs; Nix is the primary dependency manager",
+      "A separate dotconfig todo adds only the ragenix lock graph",
+    ],
+    projectInstructions: "Use Nix as the primary dependency and toolchain manager.",
+    evidence: ["cwd is the Metagenda project root and its flake declares five existing inputs"],
+    subject: { toolName: "bash", input: { command: "nix flake update" } },
+  });
+
+  assert.match(prompt, /Dependency-update scope is repository-specific/i);
+  assert.match(prompt, /scoped lockfile task in one repository never narrows.*another named repository/i);
+  assert.match(prompt, /allow 'nix flake update' from that exact project root/i);
+  assert.match(prompt, /do not import a scope restriction from another repository/i);
+});
+
+test("classifier prompt permits the verified lock graph for one newly declared input", () => {
+  const prompt = buildClassifierPrompt({
+    boundary: "action",
+    intent: ["Set up ragenix and preserve the concurrent Home Manager lock edit"],
+    projectInstructions: "Nix is the primary dependency manager.",
+    evidence: [
+      "nix flake lock --output-lock-file /tmp/ragenix.lock succeeded",
+      "generated root adds ragenix and preserves the pre-existing Home Manager revision",
+    ],
+    subject: { toolName: "bash", input: { command: "nix flake lock" } },
+  });
+
+  assert.match(prompt, /newly declared flake input necessarily requires generating its lock graph/i);
+  assert.match(prompt, /successful 'nix flake lock --output-lock-file <temporary-path>'/i);
+  assert.match(prompt, /allow applying that exact generated lockfile or running 'nix flake lock'/i);
+  assert.match(prompt, /do not authorize updating existing inputs unless separately requested/i);
+});
+
 test("classifier prompt keeps implicitly invoked review skill commands in scope", () => {
   const probe = 'cursor-agent -p --mode plan --model composer-2.5 --trust "Reply with exactly: OK"';
   const prompt = buildClassifierPrompt({
@@ -577,6 +613,8 @@ test("classifier prompt distinguishes draft review staging from publication", ()
   assert.match(prompt, /draft or pending review/i);
   assert.match(prompt, /submitting, publishing, approving, or sending/i);
   assert.match(prompt, /explicit user authorization/i);
+  assert.match(prompt, /top-level review body must remain empty/i);
+  assert.match(prompt, /preserving every inline comment/i);
 });
 
 test("classifier prompt allows mandated formatting only over evidenced edited files", () => {

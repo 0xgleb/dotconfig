@@ -34,7 +34,9 @@ import {
 
 export interface VimSteeringOptions {
   readonly isStreaming: () => boolean;
+  readonly hasPendingMessages: () => boolean;
   readonly onImmediate: (text: string) => void;
+  readonly onQueuedImmediate: () => void;
 }
 
 export class VimEditor extends CustomEditor {
@@ -73,6 +75,8 @@ export class VimEditor extends CustomEditor {
             this.addToHistory(text);
             steering.onImmediate(text);
           },
+          hasQueuedMessages: steering.hasPendingMessages,
+          onQueuedImmediate: steering.onQueuedImmediate,
         })
       : undefined;
     this.applyCursorShapeForMode(this.vimState.mode);

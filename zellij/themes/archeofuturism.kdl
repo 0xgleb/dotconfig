@@ -1,0 +1,120 @@
+themes {
+    archeofuturism {
+        text_unselected {
+            base "#8EA7C7"
+            background "#080B1A"
+            emphasis_0 "#FF9E64"
+            emphasis_1 "#29E7FF"
+            emphasis_2 "#7CFFB2"
+            emphasis_3 "#FF4FD8"
+        }
+        text_selected {
+            base "#E8F6FF"
+            background "#080B1A"
+            emphasis_0 "#FFE66D"
+            emphasis_1 "#86F5FF"
+            emphasis_2 "#7CFFB2"
+            emphasis_3 "#FF78C8"
+        }
+        ribbon_selected {
+            base "#29E7FF"
+            background "#080B1A"
+            emphasis_0 "#FF4FD8"
+            emphasis_1 "#FFE66D"
+            emphasis_2 "#7CFFB2"
+            emphasis_3 "#B79CFF"
+        }
+        ribbon_unselected {
+            base "#8EA7C7"
+            background "#080B1A"
+            emphasis_0 "#FF9E64"
+            emphasis_1 "#29E7FF"
+            emphasis_2 "#B79CFF"
+            emphasis_3 "#FF4FD8"
+        }
+        table_title {
+            base "#29E7FF"
+            background "#080B1A"
+            emphasis_0 "#FF4FD8"
+            emphasis_1 "#FFE66D"
+            emphasis_2 "#7CFFB2"
+            emphasis_3 "#B79CFF"
+        }
+        table_cell_selected {
+            base "#E8F6FF"
+            background "#080B1A"
+            emphasis_0 "#FF9E64"
+            emphasis_1 "#29E7FF"
+            emphasis_2 "#7CFFB2"
+            emphasis_3 "#FF4FD8"
+        }
+        table_cell_unselected {
+            base "#8EA7C7"
+            background "#080B1A"
+            emphasis_0 "#FF9E64"
+            emphasis_1 "#29E7FF"
+            emphasis_2 "#7CFFB2"
+            emphasis_3 "#B79CFF"
+        }
+        list_selected {
+            base "#E8F6FF"
+            background "#080B1A"
+            emphasis_0 "#FF9E64"
+            emphasis_1 "#29E7FF"
+            emphasis_2 "#7CFFB2"
+            emphasis_3 "#FF4FD8"
+        }
+        list_unselected {
+            base "#8EA7C7"
+            background "#080B1A"
+            emphasis_0 "#FF9E64"
+            emphasis_1 "#29E7FF"
+            emphasis_2 "#7CFFB2"
+            emphasis_3 "#B79CFF"
+        }
+        frame_selected {
+            base "#29E7FF"
+            background "#080B1A"
+            emphasis_0 "#FF4FD8"
+            emphasis_1 "#FFE66D"
+            emphasis_2 "#7CFFB2"
+            emphasis_3 "#B79CFF"
+        }
+        frame_highlight {
+            base "#FF4FD8"
+            background "#080B1A"
+            emphasis_0 "#29E7FF"
+            emphasis_1 "#FFE66D"
+            emphasis_2 "#FF78C8"
+            emphasis_3 "#B79CFF"
+        }
+        exit_code_success {
+            base "#7CFFB2"
+            background "#080B1A"
+            emphasis_0 "#29E7FF"
+            emphasis_1 "#0D1024"
+            emphasis_2 "#B79CFF"
+            emphasis_3 "#5088B8"
+        }
+        exit_code_error {
+            base "#FF5470"
+            background "#080B1A"
+            emphasis_0 "#FFE66D"
+            emphasis_1 "#0D1024"
+            emphasis_2 "#FF4FD8"
+            emphasis_3 "#B79CFF"
+        }
+        multiplayer_user_colors {
+            player_1 "#FF4FD8"
+            player_2 "#29E7FF"
+            player_3 "#7CFFB2"
+            player_4 "#FFE66D"
+            player_5 "#B79CFF"
+            player_6 "#FF9E64"
+            player_7 "#FF5470"
+            player_8 "#86F5FF"
+            player_9 "#FF78C8"
+            player_10 "#8EA7C7"
+        }
+    }
+}

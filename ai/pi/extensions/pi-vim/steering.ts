@@ -11,6 +11,8 @@ export interface DoubleEnterSteeringOptions {
   readonly scheduler?: SteeringScheduler;
   readonly onSubmit: (text: string) => void;
   readonly onImmediate: (text: string) => void;
+  readonly hasQueuedMessages?: () => boolean;
+  readonly onQueuedImmediate?: () => void;
 }
 
 export type SteeringEnterResult = "pass" | "deferred" | "immediate";
@@ -34,6 +36,7 @@ export class DoubleEnterSteering {
   private readonly options: DoubleEnterSteeringOptions;
   private readonly scheduler: SteeringScheduler;
   private pending?: PendingSteering;
+  private queuedEnter?: PendingSteering;
 
   constructor(options: DoubleEnterSteeringOptions) {
     if (!Number.isFinite(options.windowMs) || options.windowMs < 100 || options.windowMs > 1_000) {
@@ -55,7 +58,22 @@ export class DoubleEnterSteering {
     }
 
     const steeringText = text.trim();
-    if (!isStreaming || steeringText.length === 0) return "pass";
+    if (!isStreaming) return "pass";
+    if (steeringText.length === 0) {
+      if (!this.options.hasQueuedMessages?.()) return "pass";
+      if (this.queuedEnter) {
+        this.takeQueuedEnter();
+        this.options.onQueuedImmediate?.();
+        return "immediate";
+      }
+      const token = {};
+      const cancellation = this.scheduler.schedule(() => {
+        if (this.queuedEnter?.token === token) this.queuedEnter = undefined;
+      }, this.options.windowMs);
+      this.queuedEnter = { text: "", cancellation, token };
+      return "deferred";
+    }
+    this.takeQueuedEnter();
 
     const token = {};
     const cancellation = this.scheduler.schedule(() => {
@@ -70,6 +88,15 @@ export class DoubleEnterSteering {
 
   dispose(): void {
     this.flushPending();
+    this.takeQueuedEnter();
+  }
+
+  private takeQueuedEnter(): PendingSteering | undefined {
+    const pending = this.queuedEnter;
+    if (!pending) return undefined;
+    this.queuedEnter = undefined;
+    pending.cancellation.cancel();
+    return pending;
   }
 
   private takePending(): PendingSteering | undefined {

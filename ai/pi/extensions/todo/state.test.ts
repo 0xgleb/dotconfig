@@ -3,7 +3,7 @@ import test from "node:test";
 import { Effect, Either, Option } from "effect";
 import { decodeTodoDetails, decodeTodoState, emptyTodoState, parseTodoAction, transitionTodoState } from "./state.ts";
 
-test("adding a todo creates immutable pending state", async () => {
+test("adding a todo creates immutable not-started state", async () => {
   const result = await Effect.runPromise(
     transitionTodoState(emptyTodoState, { action: "add", text: "Fix Pi" }),
   );
@@ -27,13 +27,35 @@ test("toggle changes only the targeted todo status", async () => {
     ],
     nextId: 3,
   };
-  const result = await Effect.runPromise(transitionTodoState(state, { action: "toggle", id: 1 }));
+  const result = await Effect.runPromise(transitionTodoState(state, { action: "toggle", id: 1 }, 1_000));
 
   assert.deepEqual(result.state.todos, [
-    { id: 1, text: "First", status: "completed" },
+    { id: 1, text: "First", status: "completed", statusChangedAt: 1_000 },
     { id: 2, text: "Second", status: "completed" },
   ]);
   assert.deepEqual(state.todos[0], { id: 1, text: "First", status: "pending" });
+});
+
+test("explicit statuses cover in-progress, cancelled, and deferred work", async () => {
+  const state = {
+    todos: [{ id: 1, text: "Shape UI", status: "pending" as const }],
+    nextId: 2,
+  };
+  const started = await Effect.runPromise(
+    transitionTodoState(state, { action: "status", id: 1, status: "in_progress" }, 1_000),
+  );
+  const cancelled = await Effect.runPromise(
+    transitionTodoState(started.state, { action: "status", id: 1, status: "cancelled" }, 2_000),
+  );
+  const deferred = await Effect.runPromise(
+    transitionTodoState(cancelled.state, { action: "status", id: 1, status: "deferred" }, 3_000),
+  );
+
+  assert.deepEqual(started.state.todos, [{ id: 1, text: "Shape UI", status: "in_progress" }]);
+  assert.deepEqual(cancelled.state.todos, [
+    { id: 1, text: "Shape UI", status: "cancelled", statusChangedAt: 2_000 },
+  ]);
+  assert.deepEqual(deferred.state.todos, [{ id: 1, text: "Shape UI", status: "deferred" }]);
 });
 
 test("blocked work requires a reason and can be unblocked", async () => {
@@ -77,18 +99,23 @@ test("replies preserve the original blocker and survive unblocking", async () =>
   ]);
 });
 
-test("invalid add and toggle inputs fail through the typed channel", async () => {
+test("invalid add, toggle, and status inputs fail through the typed channel", async () => {
   const missingText = await Effect.runPromise(
     Effect.either(parseTodoAction({ action: "add" })),
   );
   const missingTodo = await Effect.runPromise(
     Effect.either(transitionTodoState(emptyTodoState, { action: "toggle", id: 7 })),
   );
+  const missingStatus = await Effect.runPromise(
+    Effect.either(parseTodoAction({ action: "status", id: 1 })),
+  );
 
   assert.equal(Either.isLeft(missingText), true);
   assert.equal(Either.isLeft(missingTodo), true);
+  assert.equal(Either.isLeft(missingStatus), true);
   if (Either.isLeft(missingText)) assert.equal(missingText.left.message, "text required for add");
   if (Either.isLeft(missingTodo)) assert.equal(missingTodo.left.message, "Todo #7 not found");
+  if (Either.isLeft(missingStatus)) assert.equal(missingStatus.left.message, "status required for status");
 });
 
 test("clear resets todos and identifiers", async () => {

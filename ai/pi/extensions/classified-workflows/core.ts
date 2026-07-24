@@ -56,7 +56,7 @@ const RETRY_BACKOFF_MAX_MS = 5_000;
 
 const READ_ONLY_TOOLS = new Set(["read", "grep", "find", "ls", "workflow_audit"]);
 const WRITE_TOOLS = new Set(["edit", "write"]);
-const TODO_ACTIONS = new Set(["list", "add", "toggle", "block", "unblock", "clear"]);
+const TODO_ACTIONS = new Set(["list", "add", "toggle", "status", "block", "reply", "unblock", "clear"]);
 const QUESTION_ACTIONS = new Set(["list", "ask", "resolve", "clear_resolved"]);
 const ARTIFACT_PROVENANCE_ACTIONS = new Set(["list", "record", "forget"]);
 const REGISTRY_ACTIONS = new Set([
@@ -229,7 +229,25 @@ const isReviewPanelSentinel: (command: string) => boolean = (command) =>
     command.trim(),
   );
 
+const SAFE_ZELLIJ_PROBE =
+  /^\s*zellij\s+(?:--version|setup\s+(?:--check|--dump-config|--dump-layout\s+[^\s;&|`]+|--dump-swap-layout\s+[^\s;&|`]+))\s*$/;
+
+const isUnsafeZellijInvocation: (command: string) => boolean = (command) =>
+  /(?:^|&&|\|\||[;|\n])\s*zellij(?:\s|$)/.test(command) && !SAFE_ZELLIJ_PROBE.test(command);
+
 export function deterministicDecision(request: ToolRequest): Decision | null {
+  if (
+    request.toolName === "bash" &&
+    typeof request.input.command === "string" &&
+    isUnsafeZellijInvocation(request.input.command)
+  ) {
+    return {
+      verdict: "block",
+      reason: "Interactive or session-mutating Zellij commands require a TTY-safe dedicated path; direct bash may emit control sequences into the user's terminal",
+      source: "deterministic",
+    };
+  }
+
   if (
     request.toolName === "bash" &&
     typeof request.input.command === "string" &&
