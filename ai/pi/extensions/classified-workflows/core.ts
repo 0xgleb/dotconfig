@@ -1,3 +1,4 @@
+import { freemem } from "node:os";
 import path from "node:path";
 import vm from "node:vm";
 
@@ -47,10 +48,13 @@ export interface WorkflowLimits {
 export interface WorkflowDependencies {
   runAgent(request: AgentRequest, signal: AbortSignal, tokenLimit: number): Promise<AgentResult>;
   checkpoint(message: string): Promise<"approved" | "denied">;
+  availableMemoryBytes?: () => number;
 }
 
 export const MIN_AGENT_TOKEN_RESERVATION = 4_000;
 export const MIN_CLASSIFIED_AGENT_TIMEOUT_MS = 180_000;
+export const MIN_WORKFLOW_FREE_MEMORY_BYTES = 8 * 1024 ** 3;
+export const WORKFLOW_AGENT_MEMORY_RESERVATION_BYTES = 2 * 1024 ** 3;
 const RETRY_BACKOFF_BASE_MS = 500;
 const RETRY_BACKOFF_MAX_MS = 5_000;
 
@@ -433,6 +437,15 @@ export async function runWorkflowScript(
       if (encodedSchema.length > 16_000) throw new Error("agent schema may contain at most 16,000 characters");
     }
     if (agentCount >= limits.maxAgents) throw new Error(`Workflow agent limit exceeded (${limits.maxAgents})`);
+    const availableMemory = dependencies.availableMemoryBytes?.() ?? freemem();
+    const requiredMemory = MIN_WORKFLOW_FREE_MEMORY_BYTES + activeAgents * WORKFLOW_AGENT_MEMORY_RESERVATION_BYTES;
+    if (!Number.isFinite(availableMemory) || availableMemory < requiredMemory) {
+      const availableGiB = Number.isFinite(availableMemory) ? (availableMemory / 1024 ** 3).toFixed(1) : "unknown";
+      const requiredGiB = (requiredMemory / 1024 ** 3).toFixed(1);
+      throw new Error(
+        `Workflow memory reserve cannot start another agent: ${availableGiB} GiB available; ${requiredGiB} GiB required for the crash reserve and ${activeAgents} active agent(s)`,
+      );
+    }
     const availableTokens = limits.tokenBudget - usedTokens - reservedTokens;
     if (availableTokens < perAgentTokenLimit) {
       throw new Error(

@@ -5,6 +5,8 @@ import {
   deterministicToolResultDecision,
   MIN_AGENT_TOKEN_RESERVATION,
   MIN_CLASSIFIED_AGENT_TIMEOUT_MS,
+  MIN_WORKFLOW_FREE_MEMORY_BYTES,
+  WORKFLOW_AGENT_MEMORY_RESERVATION_BYTES,
   minimumRetryEnvelopeMs,
   parseClassifierDecision,
   runWorkflowScript,
@@ -446,6 +448,30 @@ test("schema agents fail closed on timeouts and malformed output", async () => {
     runWorkflowScript(code, { ...limits, retries: 0 }, dependencies(async () => ({ status: "completed", output: "not json", usageTokens: 1 }))),
     /structured agent output was not valid JSON/,
   );
+});
+
+test("workflow memory reserve blocks new agents before system pressure can cause a hard restart", async () => {
+  let spawned = false;
+  await assert.rejects(
+    runWorkflowScript(
+      'return agent({ task: "memory-heavy" });',
+      limits,
+      {
+        async runAgent() {
+          spawned = true;
+          return { status: "completed", output: "unexpected", usageTokens: 1 };
+        },
+        async checkpoint() {
+          return "approved";
+        },
+        availableMemoryBytes: () => MIN_WORKFLOW_FREE_MEMORY_BYTES - 1,
+      },
+    ),
+    /Workflow memory reserve cannot start another agent/,
+  );
+  assert.equal(spawned, false);
+  assert.equal(MIN_WORKFLOW_FREE_MEMORY_BYTES, 8 * 1024 ** 3);
+  assert.equal(WORKFLOW_AGENT_MEMORY_RESERVATION_BYTES, 2 * 1024 ** 3);
 });
 
 test("undersized token budgets fail before spawning an idle worker", async () => {
