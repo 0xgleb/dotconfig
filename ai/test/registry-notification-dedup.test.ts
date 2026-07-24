@@ -11,6 +11,12 @@ test("registry request notifications survive reload and compaction", () => {
   assert.match(source, /pi\.on\("session_compact", \(\) => persistNotifiedRequests\(\)\)/);
 });
 
+test("notification epoch replays pre-trigger claimed backlog once after upgrade", () => {
+  assert.match(source, /NOTIFICATION_EPOCH = 2/);
+  assert.match(source, /entry\.data\.epoch !== NOTIFICATION_EPOCH/);
+  assert.match(source, /epoch: NOTIFICATION_EPOCH,[\s\S]*ids:/);
+});
+
 test("registry notifications revalidate claimed status only while the agent is idle", () => {
   assert.match(source, /notifiedRequests\.has\(request\.id\) \|\| !ctx\.isIdle\(\) \|\| ctx\.hasPendingMessages\(\) \|\| autoReloadPending\(\)/);
   assert.match(source, /store\.snapshot\(Date\.now\(\)\)/);

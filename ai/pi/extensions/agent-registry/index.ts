@@ -39,6 +39,7 @@ const LEASE_TTL_MS = 90_000;
 const STATUS_KEY = "agent-registry";
 const MESSAGE_TYPE = "agent-registry.message";
 const NOTIFIED_REQUESTS_ENTRY = "agent-registry.notified-requests";
+const NOTIFICATION_EPOCH = 2;
 
 interface RegistryToolRequest {
   readonly action:
@@ -86,7 +87,7 @@ const requireText: (label: string, value: string | undefined) => string = (label
 };
 
 const registryExtension: (pi: ExtensionAPI) => void = (pi) => {
-  registerRuntimeVersion(pi, "agent-registry", "2026.07.23.12");
+  registerRuntimeVersion(pi, "agent-registry", "2026.07.23.13");
   const runtimeVersions = (): Readonly<Record<string, string>> => {
     const versions: Record<string, string> = {
       "config-generation": MANAGED_CONFIG_GENERATION,
@@ -114,6 +115,7 @@ const registryExtension: (pi: ExtensionAPI) => void = (pi) => {
       .filter((candidate) => candidate.type === "custom" && candidate.customType === NOTIFIED_REQUESTS_ENTRY)
       .at(-1);
     if (entry?.type !== "custom" || typeof entry.data !== "object" || entry.data === null || !("ids" in entry.data)) return;
+    if (!("epoch" in entry.data) || entry.data.epoch !== NOTIFICATION_EPOCH) return;
     const ids = entry.data.ids;
     if (!Array.isArray(ids) || ids.length > 512) return;
     for (const id of ids) {
@@ -122,7 +124,10 @@ const registryExtension: (pi: ExtensionAPI) => void = (pi) => {
   };
 
   const persistNotifiedRequests = () => {
-    pi.appendEntry(NOTIFIED_REQUESTS_ENTRY, { ids: [...notifiedRequests].slice(-512).sort() });
+    pi.appendEntry(NOTIFIED_REQUESTS_ENTRY, {
+      epoch: NOTIFICATION_EPOCH,
+      ids: [...notifiedRequests].slice(-512).sort(),
+    });
   };
 
   const run = <T>(operation: Effect.Effect<T, RegistryError>): Promise<T> => runRegistryEffect(operation);
