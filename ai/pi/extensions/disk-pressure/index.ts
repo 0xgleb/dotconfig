@@ -46,7 +46,7 @@ const updateStatus: (ctx: ExtensionContext, diskAvailable: bigint, memoryAvailab
 const freeMemoryBytes = (): bigint => BigInt(freemem());
 
 export default (pi: ExtensionAPI) => {
-  registerRuntimeVersion(pi, "resource-pressure", "2026.07.23.2");
+  registerRuntimeVersion(pi, "resource-pressure", "2026.07.23.3");
   const pendingBuilds = new Map<string, PendingBuild>();
 
   pi.on("session_start", (_event, ctx) => {

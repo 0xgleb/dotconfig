@@ -15,7 +15,7 @@ export type ResourcePressureDecision =
   | { verdict: "allow" }
   | { verdict: "block"; reason: "disk pressure" | "memory pressure" };
 
-const TARGETED_BUN_TEST = /^\s*bun\s+test\s+[^;&|`\s]+\.(?:test|spec)\.[cm]?[jt]sx?\s*$/i;
+const TARGETED_BUN_TEST = /^(?:\s*cd\s+\/[^;&|`\s]+\s*&&)?\s*bun\s+test\s+[^;&|`\s]+\.(?:test|spec)\.[cm]?[jt]sx?\s*$/i;
 
 export const isExpensiveCommand: (command: string) => boolean = (command) =>
   !TARGETED_BUN_TEST.test(command) &&
