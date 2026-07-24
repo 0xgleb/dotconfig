@@ -66,7 +66,7 @@ const processAggregateText = (): string => {
 };
 
 export default (pi: ExtensionAPI) => {
-  registerRuntimeVersion(pi, "resource-pressure", "2026.07.23.4");
+  registerRuntimeVersion(pi, "resource-pressure", "2026.07.23.5");
   const pendingBuilds = new Map<string, PendingBuild>();
 
   const reconcileMemoryIncident = (ctx: ExtensionContext, memoryAvailable: bigint): void => {
@@ -107,7 +107,7 @@ export default (pi: ExtensionAPI) => {
         ].join("\n"),
         display: true,
       },
-      { triggerTurn: true, deliverAs: "followUp" },
+      { triggerTurn: true, deliverAs: "steer" },
     );
   };
 
@@ -146,7 +146,7 @@ export default (pi: ExtensionAPI) => {
             }
           : {
               block: true,
-              reason: `Memory pressure guard: only ${formatFreeBytes(memoryAvailable)} free; reserve ${formatFreeBytes(CRITICAL_FREE_MEMORY_BYTES)} before expensive builds. Close or restart high-memory user applications before retrying; do not poll repeatedly.`,
+              reason: `Memory pressure incident: only ${formatFreeBytes(memoryAvailable)} free; reserve ${formatFreeBytes(CRITICAL_FREE_MEMORY_BYTES)} before expensive builds. One Pi session has been assigned a bounded remediation turn. Follow that call to action; do not poll repeatedly or retry this build until recovery is reported.`,
             };
       }
       pendingBuilds.set(event.toolCallId, { cwd: ctx.cwd, resultLinksBefore: resultSymlinkNames(ctx.cwd) });
