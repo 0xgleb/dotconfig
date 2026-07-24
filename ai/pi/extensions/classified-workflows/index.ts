@@ -34,6 +34,7 @@ import {
 import {
   boundedRelevantExecutionEvidence,
   selectRelevantExecutionEvidence,
+  toolInputDigest,
   toolResultExecutionEvidence,
 } from "./execution-evidence.ts";
 import {
@@ -304,6 +305,20 @@ function projectInstructions(ctx: ExtensionContext): string {
 function recentExecutionEvidence(ctx: ExtensionContext, subject: unknown): string[] {
   const branch = ctx.sessionManager.getBranch();
   const compaction = latestCompactionSummary(branch);
+  const toolCallInputDigests = new Map<string, string>();
+  for (const entry of branch) {
+    if (entry.type !== "message" || !isRecord(entry.message) || entry.message.role !== "assistant") continue;
+    if (!Array.isArray(entry.message.content)) continue;
+    for (const part of entry.message.content) {
+      if (
+        !isRecord(part) ||
+        part.type !== "toolCall" ||
+        typeof part.id !== "string" ||
+        typeof part.name !== "string"
+      ) continue;
+      toolCallInputDigests.set(part.id, toolInputDigest(part.name, part.arguments));
+    }
+  }
   const executionEvidence = branch
     .flatMap((entry) => {
       if (entry.type !== "message" || !isRecord(entry.message)) return [];
@@ -326,6 +341,10 @@ function recentExecutionEvidence(ctx: ExtensionContext, subject: unknown): strin
             toolName: entry.message.toolName,
             text,
             isError: entry.message.isError,
+            inputDigest:
+              typeof entry.message.toolCallId === "string"
+                ? toolCallInputDigests.get(entry.message.toolCallId)
+                : undefined,
             subject,
             maxCharacters: 2_400,
           })]
@@ -501,6 +520,7 @@ async function executeAgent(
 function toolResultSubject(event: ToolResultEvent): unknown {
   return {
     toolName: event.toolName,
+    inputDigest: toolInputDigest(event.toolName, event.input),
     isError: event.isError,
     content: event.content
       .slice(0, 8)
@@ -540,7 +560,7 @@ const WorkflowParameters = Type.Object({
 });
 
 export default function classifiedWorkflows(pi: ExtensionAPI): void {
-  registerRuntimeVersion(pi, "classified-workflows", "2026.07.23.68");
+  registerRuntimeVersion(pi, "classified-workflows", "2026.07.23.69");
   const childTokenLimit = workflowChildTokenLimit(process.env[WORKFLOW_CHILD_TOKEN_LIMIT_ENV]);
   let childUsageTokens = 0;
   if (childTokenLimit !== undefined) {
@@ -1185,7 +1205,12 @@ export default function classifiedWorkflows(pi: ExtensionAPI): void {
       return;
     }
 
-    const subject = { toolName: event.toolName, input: event.input, cwd: ctx.cwd };
+    const subject = {
+      toolName: event.toolName,
+      input: event.input,
+      inputDigest: toolInputDigest(event.toolName, event.input),
+      cwd: ctx.cwd,
+    };
     const decision = await classifyWithActivity(
       {
         boundary: "action",

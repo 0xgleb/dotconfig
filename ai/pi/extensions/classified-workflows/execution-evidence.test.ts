@@ -4,6 +4,7 @@ import {
   boundedExecutionEvidence,
   boundedRelevantExecutionEvidence,
   selectRelevantExecutionEvidence,
+  toolInputDigest,
   toolResultExecutionEvidence,
 } from "./execution-evidence.ts";
 
@@ -51,11 +52,38 @@ test("subject-aware bounding retains verified draft-comment anchors from the mid
   assert.doesNotMatch(evidence, /finding 0:/);
 });
 
-test("tool-result evidence preserves authoritative success or error status", () => {
+test("tool-input digests are canonical and distinguish materially new mutation payloads", () => {
+  const first = toolInputDigest("skill_manage", {
+    action: "patch",
+    skill_id: "project:yielduck:close-orders",
+    section: "Procedure",
+    content: "current wallet balance",
+  });
+  const reordered = toolInputDigest("skill_manage", {
+    content: "current wallet balance",
+    section: "Procedure",
+    skill_id: "project:yielduck:close-orders",
+    action: "patch",
+  });
+  const newContent = toolInputDigest("skill_manage", {
+    action: "patch",
+    skill_id: "project:yielduck:close-orders",
+    section: "Procedure",
+    content: "chain-attested balance with a fresh projection witness",
+  });
+
+  assert.equal(first, reordered);
+  assert.notEqual(first, newContent);
+  assert.match(first, /^[0-9a-f]{64}$/);
+});
+
+test("tool-result evidence preserves authoritative success or error status and input identity", () => {
+  const inputDigest = toolInputDigest("edit", { oldText: "pre-transfer Core balance" });
   const failedEdit = toolResultExecutionEvidence({
     toolName: "edit",
     text: "oldText not found; replacement may already be present",
     isError: true,
+    inputDigest,
     subject: { toolName: "edit", input: { oldText: "pre-transfer Core balance" } },
   });
   const currentRead = toolResultExecutionEvidence({
@@ -65,7 +93,7 @@ test("tool-result evidence preserves authoritative success or error status", () 
     subject: { toolName: "edit", input: { oldText: "pre-transfer Core balance" } },
   });
 
-  assert.match(failedEdit, /^edit result status=error:/);
+  assert.match(failedEdit, new RegExp(`^edit result status=error inputDigest=${inputDigest}:`));
   assert.match(currentRead, /^read result status=success:/);
 });
 

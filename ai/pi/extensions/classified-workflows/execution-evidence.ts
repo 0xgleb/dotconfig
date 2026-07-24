@@ -1,3 +1,4 @@
+import { createHash } from "node:crypto";
 import { sanitizeProcessDiagnostic } from "./protocol.ts";
 
 const FIELD_PATTERN = /"(id|login|isResolved|databaseId|number|url)"\s*:\s*("(?:[^"\\]|\\.)*"|true|false|null|-?\d+)/gi;
@@ -81,10 +82,29 @@ export const boundedRelevantExecutionEvidence = (
   return `…[subject-focused] ${focused}`.slice(0, maxCharacters);
 };
 
+const canonicalInput: (value: unknown) => unknown = (value) => {
+  if (Array.isArray(value)) return value.map(canonicalInput);
+  if (typeof value !== "object" || value === null) return value;
+  return Object.fromEntries(
+    Object.entries(value as Readonly<Record<string, unknown>>)
+      .filter(([, entry]) => entry !== undefined)
+      .sort(([left], [right]) => left.localeCompare(right))
+      .map(([key, entry]) => [key, canonicalInput(entry)]),
+  );
+};
+
+export const toolInputDigest: (toolName: string, input: unknown) => string = (toolName, input) =>
+  createHash("sha256")
+    .update(toolName)
+    .update("\0")
+    .update(JSON.stringify(canonicalInput(input)) ?? "undefined")
+    .digest("hex");
+
 export interface ToolResultExecutionEvidenceInput {
   readonly toolName: unknown;
   readonly text: string;
   readonly isError: unknown;
+  readonly inputDigest?: string;
   readonly subject: unknown;
   readonly maxCharacters?: number;
 }
@@ -94,12 +114,14 @@ export const toolResultExecutionEvidence: (input: ToolResultExecutionEvidenceInp
   toolName,
   text,
   isError,
+  inputDigest,
   subject,
   maxCharacters = 2_400,
 }) => {
   const name = sanitizeProcessDiagnostic(String(toolName ?? "tool")).replace(/\s+/g, " ").slice(0, 64) || "tool";
   const status = isError === true ? "error" : isError === false ? "success" : "unknown";
-  return `${name} result status=${status}: ${boundedRelevantExecutionEvidence(text, subject, maxCharacters)}`;
+  const identity = inputDigest && /^[0-9a-f]{64}$/.test(inputDigest) ? ` inputDigest=${inputDigest}` : "";
+  return `${name} result status=${status}${identity}: ${boundedRelevantExecutionEvidence(text, subject, maxCharacters)}`;
 };
 
 /** Keep a small recency window plus older evidence that shares concrete identifiers with the proposed boundary. */
