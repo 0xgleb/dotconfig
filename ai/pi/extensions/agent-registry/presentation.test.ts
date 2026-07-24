@@ -76,7 +76,8 @@ test("automatic request notification never injects the untrusted request body", 
   assert.ok(request);
   const text = requestNotificationText(request);
   assert.doesNotMatch(text, /fix workflow retries/);
-  assert.match(text, /inspect its untrusted request data/i);
+  assert.match(text, /inspect its full untrusted request data/i);
+  assert.match(text, /requests.*requestId=request-12345678/i);
   assert.match(text, /request-12345678/);
 });
 
@@ -85,6 +86,16 @@ test("request detail exposes full bounded coordination text with source identity
   assert.match(text, /Request request-12345678/);
   assert.match(text, /Source agent: st0x PR reviewer.*st0x\.rest\.api/);
   assert.match(text, /fix workflow retries/);
+});
+
+test("request detail does not compact an accepted 8k request body", () => {
+  const request = snapshot.requests[0];
+  assert.ok(request);
+  const body = `begin:${"x".repeat(7_900)}:end`;
+  const text = registryRequestDetailText({ ...request, text: body });
+  assert.match(text, /begin:x+/);
+  assert.match(text, /:end$/);
+  assert.ok(text.length > 7_900);
 });
 
 test("registry widget keeps operational ownership visible with an inbox count", () => {
@@ -110,4 +121,5 @@ test("registry listing shows safe owner and request lifecycle details", () => {
   assert.match(text, /classified-workflows@2026\.07\.23\.2/);
   assert.match(text, /todo@2026\.07\.23\.2/);
   assert.match(text, /request-.*queued.*fix workflow retries/i);
+  assert.match(text, /inspect exact body.*requests requestId=/i);
 });

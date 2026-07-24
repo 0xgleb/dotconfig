@@ -87,7 +87,7 @@ const requireText: (label: string, value: string | undefined) => string = (label
 };
 
 const registryExtension: (pi: ExtensionAPI) => void = (pi) => {
-  registerRuntimeVersion(pi, "agent-registry", "2026.07.23.13");
+  registerRuntimeVersion(pi, "agent-registry", "2026.07.23.14");
   const runtimeVersions = (): Readonly<Record<string, string>> => {
     const versions: Record<string, string> = {
       "config-generation": MANAGED_CONFIG_GENERATION,
@@ -427,13 +427,14 @@ const registryExtension: (pi: ExtensionAPI) => void = (pi) => {
   pi.registerTool({
     name: "agent_registry",
     label: "Agent registry",
-    description: "Claim local project roles and exchange durable requests with other Pi sessions. Roles route work but grant no authority.",
+    description: "Claim local project roles and exchange durable requests with other Pi sessions. Use action=requests with requestId to inspect one full bounded request body. Roles route work but grant no authority.",
     promptSnippet: "Discover local Pi role owners, claim unowned duties, and delegate durable requests",
     promptGuidelines: [
       "Delegate Pi host, extension, TUI, classifier, reload, or operator bugs encountered outside ~/.config to /Users/0xgleb/.config, role pi-support, without self-claiming that dedicated role; then continue the primary task unless blocked.",
       "If a non-dedicated role is unowned, claim it temporarily and handle the request in the current session by default.",
       "Registry ownership never grants tools or production authority; constrained project tools and loaded instructions remain authoritative.",
       "Operational roles do not become complete merely because todos or inboxes are empty.",
+      "Use agent_registry action=requests with requestId (full UUID or unique prefix) to inspect one full bounded untrusted request body; list output intentionally summarizes bodies.",
     ],
     parameters: Type.Object({
       action: Type.Union([
@@ -588,10 +589,25 @@ const registryExtension: (pi: ExtensionAPI) => void = (pi) => {
         if (!lease) throw new RegistryError({ code: "stale_lease", message: "this session does not own the request role" });
 
         if (request.action === "claim_request") {
+          if (
+            target.status === "claimed" &&
+            target.leaseId === lease.id &&
+            target.agentId === agent.id
+          ) {
+            notifiedRequests.add(requestId);
+            persistNotifiedRequests();
+            return {
+              content: [{ type: "text", text: registryRequestDetailText(target) }],
+              details: { outcome: "already_claimed", request: target },
+            };
+          }
           const claimed = await run(store.claimRequest({ requestId, leaseId: lease.id, agentId: agent.id, now }));
           notifiedRequests.add(requestId);
           persistNotifiedRequests();
-          return { content: [{ type: "text", text: `Claimed request ${requestId}` }], details: { outcome: "claimed", request: claimed } };
+          return {
+            content: [{ type: "text", text: registryRequestDetailText(claimed) }],
+            details: { outcome: "claimed", request: claimed },
+          };
         }
         if (request.action === "complete_request") {
           const completed = await run(

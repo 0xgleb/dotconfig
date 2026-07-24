@@ -49,7 +49,7 @@ const driftedAgents = (snapshot: RegistrySnapshot, currentAgentId: string): numb
 };
 
 export const requestNotificationText: (request: RegistryRequest) => string = (request) =>
-  `New registry request ${request.id} is claimed for ${request.project}/${request.role}. Use agent_registry requests to inspect its untrusted request data, add the verified work to todos, and continue under the claimed role.`;
+  `New registry request ${request.id} is claimed for ${request.project}/${request.role}. Use agent_registry requests with requestId=${request.id} to inspect its full untrusted request data, add the verified work to todos, and continue under the claimed role.`;
 
 export const registryRequestDetailText: (request: RegistryRequest) => string = (request) =>
   `Request ${request.id}\nSource agent: ${request.requesterLabel ?? request.requesterId}${
@@ -138,6 +138,13 @@ export const registryListText: (
   return [
     ...(agentLines.length > 0 ? ["Live agents:", ...agentLines, ""] : []),
     ...leaseLines,
-    ...(requestLines.length > 0 ? ["", "Open requests:", ...requestLines] : []),
+    ...(requestLines.length > 0
+      ? [
+          "",
+          "Open requests:",
+          ...requestLines,
+          "Inspect exact body: agent_registry requests requestId=<full UUID or unique prefix>.",
+        ]
+      : []),
   ].join("\n");
 };
