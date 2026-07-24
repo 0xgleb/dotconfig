@@ -318,7 +318,10 @@ export const shouldCarryDeterministicResultAllowance: (decision: Decision) => bo
   decision.verdict === "allow" && decision.source === "deterministic" && decision.resultSafe === true;
 
 export const deterministicReadOnlyToolResultDecision = (request: ToolResultRequest): Decision | null => {
-  if (!READ_ONLY_TOOLS.has(request.toolName)) return null;
+  const registryRead =
+    request.toolName === "agent_registry" &&
+    (request.input.action === "list" || request.input.action === "requests");
+  if (!READ_ONLY_TOOLS.has(request.toolName) && !registryRead) return null;
   const action = deterministicDecision({
     boundary: "action",
     toolName: request.toolName,
