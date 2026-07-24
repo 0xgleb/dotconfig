@@ -15,7 +15,10 @@ export type ResourcePressureDecision =
   | { verdict: "allow" }
   | { verdict: "block"; reason: "disk pressure" | "memory pressure" };
 
+const TARGETED_BUN_TEST = /^\s*bun\s+test\s+[^;&|`\s]+\.(?:test|spec)\.[cm]?[jt]sx?\s*$/i;
+
 export const isExpensiveCommand: (command: string) => boolean = (command) =>
+  !TARGETED_BUN_TEST.test(command) &&
   /(?:^|[;&|()]|\bsudo\s+)(?:\s*)(?:darwin-rebuild\s+(?:build|switch)|nixos-rebuild\s+(?:build|switch)|nix\s+(?:build|develop|flake\s+check)|cargo\s+(?:build|test|clippy|nextest)|(?:npm|pnpm|yarn|bun)\s+(?:run\s+)?(?:build|test)|forge\s+(?:build|test)|docker\s+build|terraform\s+(?:plan|apply)|make(?:\s|$))/i.test(
     command,
   );

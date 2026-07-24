@@ -20,6 +20,8 @@ test("expensive build commands are blocked before consuming the crash reserve", 
   assert.equal(isExpensiveCommand("darwin-rebuild build --flake ."), true);
   assert.equal(isExpensiveCommand("nix build .#darwinConfigurations.host.system"), true);
   assert.equal(isExpensiveCommand("cargo nextest run"), true);
+  assert.equal(isExpensiveCommand("bun test"), true);
+  assert.equal(isExpensiveCommand("bun test bot/test/control-panel.test.ts"), false);
   assert.equal(isExpensiveCommand("git status"), false);
   assert.deepEqual(diskPressureDecision("nix build .", CRITICAL_FREE_BYTES - 1n), {
     verdict: "block",
