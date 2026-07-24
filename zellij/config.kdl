@@ -272,10 +272,10 @@ load_plugins {
 // 
 // simplified_ui true
 
-// Choose the theme that is specified in the themes section.
-// Default: default
-//
-// theme "dracula"
+// Keep multiplexer chrome on the requested archeofuturist palette.
+theme "archeofuturism"
+theme_dark "archeofuturism"
+theme_light "archeofuturism"
 
 // Choose the base input mode of zellij.
 // Default: normal
@@ -326,6 +326,12 @@ default_layout "wayout"
 //   - false
 // 
 pane_frames true
+
+ui {
+    pane_frames {
+        rounded_corners true
+    }
+}
 
 // When attaching to an existing session with other users,
 // should the session be mirrored (true)
