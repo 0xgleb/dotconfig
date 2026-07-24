@@ -81,7 +81,7 @@ import {
   workflowChildTokenLimit,
 } from "./token-cap.ts";
 import { activeSkillProcedures } from "./skill-context.ts";
-import { trustedCoordinationIntent } from "./coordination-intent.ts";
+import { conversationIntentEvidence } from "./intent-context.ts";
 import {
   appendWorkflowAudit,
   auditedAgentRunner,
@@ -261,16 +261,7 @@ function visibleIntent(pi: ExtensionAPI, ctx: ExtensionContext, activeGoal?: str
     report: reportRegistryIntent,
   };
   pi.events.emit(REGISTRY_INTENT_REQUEST_EVENT, registryRequest);
-  const messages = branch
-    .flatMap((entry) => {
-      if (entry.type !== "message" || !isRecord(entry.message)) return [];
-      if (entry.message.role === "user") {
-        const text = messageText(entry.message);
-        return text ? [`Human message: ${text}`] : [];
-      }
-      const coordination = trustedCoordinationIntent(entry.message);
-      return coordination ? [`Trusted coordination context: ${coordination}`] : [];
-    })
+  const messages = conversationIntentEvidence(branch)
     .slice(-12)
     .map((text) => text.slice(0, 4_000));
   const work = todoWorkSnapshot(branch);
@@ -538,7 +529,7 @@ const WorkflowParameters = Type.Object({
 });
 
 export default function classifiedWorkflows(pi: ExtensionAPI): void {
-  registerRuntimeVersion(pi, "classified-workflows", "2026.07.23.58");
+  registerRuntimeVersion(pi, "classified-workflows", "2026.07.23.59");
   const childTokenLimit = workflowChildTokenLimit(process.env[WORKFLOW_CHILD_TOKEN_LIMIT_ENV]);
   let childUsageTokens = 0;
   if (childTokenLimit !== undefined) {

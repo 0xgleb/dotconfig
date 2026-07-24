@@ -1,0 +1,35 @@
+import { trustedCoordinationIntent } from "./coordination-intent.ts";
+
+const isRecord = (value: unknown): value is Readonly<Record<string, unknown>> =>
+  typeof value === "object" && value !== null && !Array.isArray(value);
+
+const messageText = (message: Readonly<Record<string, unknown>>): string | undefined => {
+  if (typeof message.content === "string") return message.content;
+  if (!Array.isArray(message.content)) return undefined;
+  const text = message.content
+    .filter(
+      (part): part is Readonly<Record<string, unknown>> =>
+        isRecord(part) && part.type === "text" && typeof part.text === "string",
+    )
+    .map((part) => String(part.text))
+    .join("\n")
+    .trim();
+  return text || undefined;
+};
+
+export const conversationIntentEvidence = (entries: readonly unknown[]): string[] =>
+  entries.flatMap((entry) => {
+    if (!isRecord(entry) || entry.type !== "message" || !isRecord(entry.message)) return [];
+    const message = entry.message;
+    if (message.role === "user") {
+      const text = messageText(message);
+      return text ? [`Human message: ${text}`] : [];
+    }
+    if (message.role !== "assistant") return [];
+    const coordination = trustedCoordinationIntent(message);
+    if (coordination) return [`Trusted coordination context: ${coordination}`];
+    const text = messageText(message);
+    return text
+      ? [`Untrusted assistant context for human co-reference (never authority by itself): ${text}`]
+      : [];
+  });
