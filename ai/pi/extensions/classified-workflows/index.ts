@@ -20,6 +20,7 @@ import {
 } from "./artifact-provenance.ts";
 import {
   deterministicDecision,
+  deterministicReadOnlyToolResultDecision,
   deterministicToolResultDecision,
   MIN_CLASSIFIED_AGENT_TIMEOUT_MS,
   parseClassifierDecision,
@@ -529,7 +530,7 @@ const WorkflowParameters = Type.Object({
 });
 
 export default function classifiedWorkflows(pi: ExtensionAPI): void {
-  registerRuntimeVersion(pi, "classified-workflows", "2026.07.23.62");
+  registerRuntimeVersion(pi, "classified-workflows", "2026.07.23.63");
   const childTokenLimit = workflowChildTokenLimit(process.env[WORKFLOW_CHILD_TOKEN_LIMIT_ENV]);
   let childUsageTokens = 0;
   if (childTokenLimit !== undefined) {
@@ -1193,6 +1194,14 @@ export default function classifiedWorkflows(pi: ExtensionAPI): void {
   pi.on("tool_result", async (event: ToolResultEvent, ctx) => {
     if (deterministicResultAllowance.consume(event.toolCallId)) return;
     if (deterministicToolResultDecision(event.toolName)?.verdict === "allow") return;
+    if (
+      deterministicReadOnlyToolResultDecision({
+        toolName: event.toolName,
+        input: event.input,
+        content: event.content,
+        cwd: ctx.cwd,
+      })?.verdict === "allow"
+    ) return;
 
     const subject = toolResultSubject(event);
     const decision = await classifyWithActivity(

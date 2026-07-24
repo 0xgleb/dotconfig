@@ -16,6 +16,13 @@ export interface ToolRequest {
   agentArtifacts?: readonly string[];
 }
 
+export interface ToolResultRequest {
+  toolName: string;
+  input: Record<string, unknown>;
+  content: unknown;
+  cwd: string;
+}
+
 export interface AgentRequest {
   task: string;
   cwd?: string;
@@ -58,7 +65,16 @@ export const WORKFLOW_AGENT_MEMORY_RESERVATION_BYTES = 2 * 1024 ** 3;
 const RETRY_BACKOFF_BASE_MS = 500;
 const RETRY_BACKOFF_MAX_MS = 5_000;
 
-const READ_ONLY_TOOLS = new Set(["read", "grep", "find", "ls", "workflow_audit"]);
+const READ_ONLY_TOOLS = new Set([
+  "read",
+  "grep",
+  "find",
+  "ls",
+  "browser",
+  "session_search",
+  "memory_search",
+  "workflow_audit",
+]);
 const TODO_ACTIONS = new Set(["list", "add", "toggle", "status", "block", "reply", "unblock", "clear"]);
 const QUESTION_ACTIONS = new Set(["list", "ask", "resolve", "clear_resolved"]);
 const ARTIFACT_PROVENANCE_ACTIONS = new Set(["list", "record", "forget"]);
@@ -75,6 +91,10 @@ const LOCALLY_GENERATED_RESULT_TOOLS = new Set(["edit", "write", "todo", "ask_us
 const PATH_KEYS = new Set(["path", "file_path", "cwd", "glob"]);
 const SENSITIVE_PATH =
   /(^|[\\/\s'"])(?:\.env(?!\.example(?:$|[\\/\s'"]))(?:\.[^\\/\s'"]*)?[*?]*|credentials\.json|secrets\.(?:json|ya?ml)|auth\.json|\.npmrc|\.netrc|\.pypirc|id_(?:rsa|dsa|ecdsa|ed25519)(?:\.pub)?|[^\\/\s'"]+\.(?:key|pem|p12|pfx))($|[\\/\s'"])/i;
+const SENSITIVE_RESULT =
+  /-----BEGIN(?: [A-Z]+)? PRIVATE KEY-----|\b(?:AKIA|ASIA)[A-Z0-9]{16}\b|\bgh[pousr]_[A-Za-z0-9_]{20,}\b|\b(?:api[_-]?key|access[_-]?token|secret|password)\s*[:=]\s*["']?[^\s"']{8,}|\bBearer\s+[A-Za-z0-9._~+/=-]{16,}/i;
+const PROMPT_INJECTION_RESULT =
+  /\bignore (?:all |any )?(?:previous|prior|above) instructions\b|\breveal (?:the )?(?:system prompt|hidden instructions)\b|\byou are now\b/i;
 const REQUIRED_SEARCH_EXCLUSIONS = [
   "!.env*",
   "!credentials.json",
@@ -296,6 +316,24 @@ export function deterministicDecision(request: ToolRequest): Decision | null {
 
 export const shouldCarryDeterministicResultAllowance: (decision: Decision) => boolean = (decision) =>
   decision.verdict === "allow" && decision.source === "deterministic" && decision.resultSafe === true;
+
+export const deterministicReadOnlyToolResultDecision = (request: ToolResultRequest): Decision | null => {
+  if (!READ_ONLY_TOOLS.has(request.toolName)) return null;
+  const action = deterministicDecision({
+    boundary: "action",
+    toolName: request.toolName,
+    input: request.input,
+    cwd: request.cwd,
+  });
+  if (action?.verdict !== "allow") return null;
+  const serialized = typeof request.content === "string" ? request.content : (JSON.stringify(request.content) ?? "");
+  if (SENSITIVE_RESULT.test(serialized) || PROMPT_INJECTION_RESULT.test(serialized)) return null;
+  return {
+    verdict: "allow",
+    reason: "Bounded read-only result passed local sensitive-content guards",
+    source: "deterministic",
+  };
+};
 
 export function deterministicToolResultDecision(toolName: string): Decision | null {
   return LOCALLY_GENERATED_RESULT_TOOLS.has(toolName)
