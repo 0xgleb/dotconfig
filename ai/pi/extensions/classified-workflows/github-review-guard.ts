@@ -9,6 +9,7 @@ class ReviewPayloadReadError extends Data.TaggedError("ReviewPayloadReadError")<
 }> {}
 
 const block = (reason: string): Decision => ({ verdict: "block", reason, source: "deterministic" });
+const allow = (reason: string): Decision => ({ verdict: "allow", reason, source: "deterministic" });
 
 const reviewMutationCommand = (command: string): boolean =>
   /(?:\bgh\s+pr\s+review\b|\/pulls\/[^\s'"?]+\/reviews(?:\b|\/)|(?:add|update|submit|delete)PullRequestReview)/i.test(
@@ -21,6 +22,13 @@ const fieldValue = (command: string, name: string): string | undefined => {
     new RegExp(`(?:^|\\s)(?:-f|--raw-field|-F|--field)\\s+${escaped}=(?:"([^"]*)"|'([^']*)'|([^\\s;&|]+))`),
   );
   return match?.[1] ?? match?.[2] ?? match?.[3];
+};
+
+const exactEmptyBodyUpdate = (command: string, body: string | undefined): boolean => {
+  if (body !== "" || !/updatePullRequestReview/i.test(command)) return false;
+  if (/(?:add|submit|delete)PullRequestReview|\bevent\s*:|\bcomments\s*:/i.test(command)) return false;
+  const mutationCalls = command.match(/\b(?:add|update|submit|delete)PullRequestReview\s*\(/gi) ?? [];
+  return mutationCalls.length === 1 && /pullRequestReviewId\s*:/i.test(command) && /body\s*:\s*\$body\b/i.test(command);
 };
 
 const inputPath = (command: string): string | undefined => {
@@ -81,6 +89,9 @@ export const githubReviewGuard = async (
   const body = fieldValue(command, "body");
   if (body !== undefined && body.length > 0) {
     return block("PR review automation requires an empty top-level review body");
+  }
+  if (exactEmptyBodyUpdate(command, body)) {
+    return allow("Exact empty-body correction of one pull-request review");
   }
 
   const embeddedBody = command.match(/"body"\s*:\s*"((?:\\.|[^"\\])*)"/)?.[1];

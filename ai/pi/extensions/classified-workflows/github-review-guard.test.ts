@@ -21,10 +21,19 @@ test("blocks review verdict commands and non-empty top-level body fields", async
   );
 });
 
-test("allows normal classification of exact empty-body cleanup", async () => {
+test("deterministically allows only an exact variable-bound empty-body cleanup", async () => {
+  const decision = await decisionFor(
+    "gh api graphql -f query='mutation($id: ID!, $body: String!) { updatePullRequestReview(input: {pullRequestReviewId: $id, body: $body}) { pullRequestReview { id body state } } }' -F id='PRR_example' -f body='' --jq '.data.updatePullRequestReview.pullRequestReview'",
+  );
+  assert.deepEqual(decision, {
+    verdict: "allow",
+    reason: "Exact empty-body correction of one pull-request review",
+    source: "deterministic",
+  });
+
   assert.equal(
     await decisionFor(
-      "gh api graphql -f query='mutation($id: ID!) { updatePullRequestReview(input: {pullRequestReviewId: $id, body: \"\"}) { clientMutationId } }' -f body=''",
+      "gh api graphql -f query='mutation($id: ID!, $body: String!) { updatePullRequestReview(input: {pullRequestReviewId: $id, body: $body}) { pullRequestReview { id } } deletePullRequestReview(input: {pullRequestReviewId: $id}) { clientMutationId } }' -F id='PRR_example' -f body=''",
     ),
     null,
   );

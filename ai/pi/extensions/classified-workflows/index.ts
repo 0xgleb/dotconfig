@@ -522,7 +522,7 @@ const WorkflowParameters = Type.Object({
 });
 
 export default function classifiedWorkflows(pi: ExtensionAPI): void {
-  registerRuntimeVersion(pi, "classified-workflows", "2026.07.23.50");
+  registerRuntimeVersion(pi, "classified-workflows", "2026.07.23.51");
   let goalState: GoalState | undefined;
   let goalEvaluating = false;
   let goalRunTokens = 0;
@@ -1137,6 +1137,10 @@ export default function classifiedWorkflows(pi: ExtensionAPI): void {
 
   pi.on("tool_call", async (event: ToolCallEvent, ctx) => {
     const reviewGuard = await githubReviewGuard(event.toolName, event.input, ctx.cwd);
+    if (reviewGuard?.verdict === "allow") {
+      deterministicResultAllowance.record(event.toolCallId);
+      return;
+    }
     if (reviewGuard) return resolveActionDecision(reviewGuard);
 
     const deterministic = deterministicDecision({
