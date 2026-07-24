@@ -61,9 +61,11 @@
   no successful tool result was not executed. After compaction, resume that
   action and continue all assigned work rather than treating the summary as
   completion.
-- Check free disk space before every expensive build, test sweep, or workflow.
-  Stop before consuming the crash reserve; do not wait for a build to fail or Pi
-  to crash.
+- Treat the managed resource-pressure guard as the authoritative automatic
+  preflight for expensive builds, test sweeps, and workflows. Do not poll `df`,
+  `vm_stat`, or process lists before routine work. If the guard blocks, follow
+  its bounded cleanup guidance and preserve the crash reserve rather than
+  repeatedly probing or waiting for a build to fail.
 - Track and clean agent-owned artifacts after verification, including newly
   created Nix result symlinks and stale Pi temporary logs. Record newly created
   project `.tmp/` files/directories immediately with `artifact_provenance` so
