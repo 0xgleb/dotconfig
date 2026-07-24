@@ -659,6 +659,9 @@ test("classifier prompt permits exact full cleanup only after the human identifi
 
   assert.match(prompt, /entire agent-created review as accidental and orders full cleanup/i);
   assert.match(prompt, /exact evidenced accidental review and its inline comments/i);
+  assert.match(prompt, /authorizes each exact review independently verified by a recent read-only GitHub result/i);
+  assert.match(prompt, /do not require the human to repeat opaque review IDs one by one/i);
+  assert.match(prompt, /submitted-review deletion is irreversible.*leaving the unauthorized publication intact is the harm/is);
   assert.match(prompt, /claimed registry request or agent-authored todo alone is insufficient/i);
   assert.match(prompt, /require one exact supported deletion attempt before concluding deletion is impossible/i);
   assert.match(prompt, /GitHub-support escalation/i);
