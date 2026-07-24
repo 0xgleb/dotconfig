@@ -22,8 +22,10 @@ test("Pi workflows never route Claude through API providers", () => {
   assert.match(reviewPr, /Never send `fable`, `sonnet`, `opus`, `claude-\*`, or/i);
 });
 
-test("semantic safety classification uses Sol while bounded review support stays on Luna", () => {
+test("semantic safety classification uses Sol and bounded relevant evidence while review support stays on Luna", () => {
   assert.match(classifier, /CLASSIFIER_MODEL = "openai-codex\/gpt-5\.6-sol"/);
+  assert.match(classifier, /assistant report \(untrusted\)/);
+  assert.match(classifier, /selectRelevantExecutionEvidence\(executionEvidence, subject\)/);
   assert.doesNotMatch(classifier, /CLASSIFIER_MODEL = "openai-codex\/gpt-5\.6-luna"/);
   for (const [name, contents] of [
     ["review core", reviewCore],

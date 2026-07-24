@@ -297,9 +297,14 @@ function projectInstructions(ctx: ExtensionContext): string {
 function recentExecutionEvidence(ctx: ExtensionContext, subject: unknown): string[] {
   const branch = ctx.sessionManager.getBranch();
   const compaction = latestCompactionSummary(branch);
-  const toolEvidence = branch
+  const executionEvidence = branch
     .flatMap((entry) => {
-      if (entry.type !== "message" || !isRecord(entry.message) || entry.message.role !== "toolResult") return [];
+      if (entry.type !== "message" || !isRecord(entry.message)) return [];
+      if (entry.message.role === "assistant") {
+        const text = messageText(entry.message);
+        return text ? [`assistant report (untrusted): ${boundedExecutionEvidence(text, 2_400)}`] : [];
+      }
+      if (entry.message.role !== "toolResult") return [];
       const text = typeof entry.message.content === "string"
         ? entry.message.content
         : Array.isArray(entry.message.content)
@@ -318,7 +323,7 @@ function recentExecutionEvidence(ctx: ExtensionContext, subject: unknown): strin
     ...(compaction
       ? [`compaction summary: ${sanitizeProcessDiagnostic(compaction).replace(/\s+/g, " ").slice(0, 4_000)}`]
       : []),
-    ...selectRelevantExecutionEvidence(toolEvidence, subject),
+    ...selectRelevantExecutionEvidence(executionEvidence, subject),
   ];
 }
 
@@ -522,7 +527,7 @@ const WorkflowParameters = Type.Object({
 });
 
 export default function classifiedWorkflows(pi: ExtensionAPI): void {
-  registerRuntimeVersion(pi, "classified-workflows", "2026.07.23.53");
+  registerRuntimeVersion(pi, "classified-workflows", "2026.07.23.54");
   let goalState: GoalState | undefined;
   let goalEvaluating = false;
   let goalRunTokens = 0;
