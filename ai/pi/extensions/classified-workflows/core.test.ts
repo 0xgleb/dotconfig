@@ -81,6 +81,25 @@ find . -maxdepth 2 -type f \\( -name '*.db' -o -name '*.sqlite' -o -name '*.sqli
   );
 });
 
+test("dot-quoted SQL JSONPath keys are data selectors, not credential file paths", () => {
+  const protectedLookingKey = ["credentials", "json"].join(".");
+  const quote = String.fromCharCode(34);
+  const query = `sqlite3 -readonly yielduck.db "SELECT json_extract(state_json, '$.${quote}${protectedLookingKey}${quote}') FROM standing_order_view"`;
+  assert.equal(
+    deterministicDecision({ boundary: "action", toolName: "bash", input: { command: query }, cwd: "/repo" }),
+    null,
+  );
+  assert.equal(
+    deterministicDecision({
+      boundary: "action",
+      toolName: "bash",
+      input: { command: `cat ${protectedLookingKey}` },
+      cwd: "/repo",
+    })?.verdict,
+    "block",
+  );
+});
+
 test("read-only tools are allowed after the credential guard", () => {
   const example = deterministicDecision({
     boundary: "action",

@@ -93,6 +93,9 @@ const LOCALLY_GENERATED_RESULT_TOOLS = new Set(["edit", "write", "todo", "ask_us
 const PATH_KEYS = new Set(["path", "file_path", "cwd", "glob"]);
 const SENSITIVE_PATH =
   /(^|[\\/\s'"])(?:\.env(?!\.example(?:$|[\\/\s'"]))(?:\.[^\\/\s'"]*)?[*?]*|credentials\.json|secrets\.(?:json|ya?ml)|auth\.json|\.npmrc|\.netrc|\.pypirc|id_(?:rsa|dsa|ecdsa|ed25519)(?:\.pub)?|[^\\/\s'"]+\.(?:key|pem|p12|pfx))($|[\\/\s'"])/i;
+const SQL_JSONPATH_DOT_QUOTED_KEY = /\$\."(?:[^"\\]|\\.)*"/g;
+const containsSensitivePath = (value: string): boolean =>
+  SENSITIVE_PATH.test(value.replace(SQL_JSONPATH_DOT_QUOTED_KEY, "$.[json-key]"));
 const SENSITIVE_RESULT =
   /-----BEGIN(?: [A-Z]+)? PRIVATE KEY-----|\b(?:AKIA|ASIA)[A-Z0-9]{16}\b|\bgh[pousr]_[A-Za-z0-9_]{20,}\b|\b(?:api[_-]?key|access[_-]?token|secret|password)\s*[:=]\s*["']?[^\s"']{8,}|\bBearer\s+[A-Za-z0-9._~+/=-]{16,}/i;
 const PROMPT_INJECTION_RESULT =
@@ -236,7 +239,7 @@ export function deterministicDecision(request: ToolRequest): Decision | null {
     };
   }
 
-  if (relevantStrings(request.toolName, request.input).some((value) => SENSITIVE_PATH.test(value))) {
+  if (relevantStrings(request.toolName, request.input).some(containsSensitivePath)) {
     return {
       verdict: "block",
       reason: "Protected credential or secret-bearing path",

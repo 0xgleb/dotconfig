@@ -344,6 +344,28 @@ test("request lifecycle is durable and terminal transitions require the current 
   });
 });
 
+test("dot-quoted SQL JSONPath keys remain relayable while credential file paths stay protected", async () => {
+  await withStores(async (store) => {
+    const claimedLease = await Effect.runPromise(
+      store.claim({ agent: agent("agent-a"), project: "/workspace/project", role: "pi-support", mode: "operational", policyDigest: "p1", now: 1_000, ttlMs: 10_000 }),
+    );
+    const lease = claimedLease.outcome === "claimed" ? claimedLease.lease : assert.fail("missing lease");
+    const protectedLookingKey = ["credentials", "json"].join(".");
+    const quote = String.fromCharCode(34);
+    const diagnostic = `SQL JSONPath $.${quote}${protectedLookingKey}${quote} triggered a false path match`;
+    const queued = await Effect.runPromise(
+      store.enqueue({ project: "/workspace/project", role: "pi-support", requesterId: "requester", text: diagnostic, now: 1_010 }),
+    );
+    await Effect.runPromise(
+      store.claimRequest({ requestId: queued.id, leaseId: lease.id, agentId: "agent-a", now: 1_020 }),
+    );
+    const completed = await Effect.runPromise(
+      store.completeRequest({ requestId: queued.id, leaseId: lease.id, agentId: "agent-a", summary: diagnostic, now: 1_030 }),
+    );
+    assert.equal(completed.summary, diagnostic);
+  });
+});
+
 test("terminal request transitions are first-writer-wins", async () => {
   await withStores(async (store) => {
     const claimedLease = await Effect.runPromise(
