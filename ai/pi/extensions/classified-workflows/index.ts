@@ -88,6 +88,7 @@ import {
 } from "./token-cap.ts";
 import { activeSkillProcedures } from "./skill-context.ts";
 import { conversationIntentEvidence } from "./intent-context.ts";
+import { currentReadDisprovesDuplicateBlock } from "./stale-duplicate.ts";
 import {
   appendWorkflowAudit,
   auditedAgentRunner,
@@ -560,7 +561,7 @@ const WorkflowParameters = Type.Object({
 });
 
 export default function classifiedWorkflows(pi: ExtensionAPI): void {
-  registerRuntimeVersion(pi, "classified-workflows", "2026.07.23.75");
+  registerRuntimeVersion(pi, "classified-workflows", "2026.07.23.76");
   const childTokenLimit = workflowChildTokenLimit(process.env[WORKFLOW_CHILD_TOKEN_LIMIT_ENV]);
   let childUsageTokens = 0;
   if (childTokenLimit !== undefined) {
@@ -1223,7 +1224,18 @@ export default function classifiedWorkflows(pi: ExtensionAPI): void {
       ctx,
       ctx.signal,
     );
-    if (decision.verdict === "block") return resolveActionDecision(decision);
+    if (decision.verdict === "block") {
+      if (
+        event.toolName === "edit" &&
+        currentReadDisprovesDuplicateBlock({
+          reason: decision.reason,
+          edit: event.input,
+          branch: ctx.sessionManager.getBranch(),
+          cwd: ctx.cwd,
+        })
+      ) return;
+      return resolveActionDecision(decision);
+    }
   });
 
   pi.on("tool_result", async (event: ToolResultEvent, ctx) => {

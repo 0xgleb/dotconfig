@@ -11,3 +11,9 @@ test("classifier execution evidence carries structured result status and mutatio
   assert.match(source, /inputDigest: toolInputDigest\(event\.toolName, event\.input\)/);
   assert.match(source, /inputDigest:[\s\S]{0,160}toolCallInputDigests\.get/);
 });
+
+test("a duplicate-only classifier mistake yields to newer exact read evidence", () => {
+  assert.match(source, /currentReadDisprovesDuplicateBlock\(\{/);
+  assert.match(source, /reason: decision\.reason/);
+  assert.match(source, /branch: ctx\.sessionManager\.getBranch\(\)/);
+});
