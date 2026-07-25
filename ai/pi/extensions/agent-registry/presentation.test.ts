@@ -88,6 +88,28 @@ test("request detail exposes full bounded coordination text with source identity
   assert.match(text, /fix workflow retries/);
 });
 
+test("request detail exposes bounded terminal outcomes as factual evidence", () => {
+  const request = snapshot.requests[0];
+  assert.ok(request);
+  const completed = registryRequestDetailText({
+    ...request,
+    status: "completed",
+    summary: "A",
+    completedAt: 3_000,
+    updatedAt: 3_000,
+  });
+  assert.match(completed, /Status: completed\nOutcome: A/);
+  const failed = registryRequestDetailText({
+    ...request,
+    status: "failed",
+    failure: "blocked",
+    diagnostic: "Awaiting exact evidence",
+    completedAt: 3_000,
+    updatedAt: 3_000,
+  });
+  assert.match(failed, /Status: failed\nOutcome: blocked: Awaiting exact evidence/);
+});
+
 test("request detail does not compact an accepted 8k request body", () => {
   const request = snapshot.requests[0];
   assert.ok(request);

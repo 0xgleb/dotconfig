@@ -87,7 +87,7 @@ const requireText: (label: string, value: string | undefined) => string = (label
 };
 
 const registryExtension: (pi: ExtensionAPI) => void = (pi) => {
-  registerRuntimeVersion(pi, "agent-registry", "2026.07.23.14");
+  registerRuntimeVersion(pi, "agent-registry", "2026.07.23.15");
   const runtimeVersions = (): Readonly<Record<string, string>> => {
     const versions: Record<string, string> = {
       "config-generation": MANAGED_CONFIG_GENERATION,

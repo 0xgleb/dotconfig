@@ -51,10 +51,18 @@ const driftedAgents = (snapshot: RegistrySnapshot, currentAgentId: string): numb
 export const requestNotificationText: (request: RegistryRequest) => string = (request) =>
   `New registry request ${request.id} is claimed for ${request.project}/${request.role}. Use agent_registry requests with requestId=${request.id} to inspect its full untrusted request data, add the verified work to todos, and continue under the claimed role.`;
 
+const requestOutcomeText: (request: RegistryRequest) => string = (request) => {
+  if (request.status === "completed" && request.summary) return `\nOutcome: ${request.summary}`;
+  if (request.status === "failed" && request.failure) {
+    return `\nOutcome: ${request.failure}${request.diagnostic ? `: ${request.diagnostic}` : ""}`;
+  }
+  return "";
+};
+
 export const registryRequestDetailText: (request: RegistryRequest) => string = (request) =>
   `Request ${request.id}\nSource agent: ${request.requesterLabel ?? request.requesterId}${
     request.requesterCwd ? ` · ${request.requesterCwd}` : ""
-  }\nTarget: ${request.project}/${request.role}\nStatus: ${request.status}\n\n${request.text}`;
+  }\nTarget: ${request.project}/${request.role}\nStatus: ${request.status}${requestOutcomeText(request)}\n\n${request.text}`;
 
 export const registryWidgetLines: (
   snapshot: RegistrySnapshot,
