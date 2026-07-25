@@ -23,7 +23,7 @@ test("persistent detail stays out of the editor while the bounded task HUD remai
   const todoPresentation = read("../pi/extensions/todo/presentation.ts");
   const registry = read("../pi/extensions/agent-registry/index.ts");
 
-  assert.match(todos, /taskHudLines\(state\)/);
+  assert.match(todos, /taskHud\(this\.state\)/);
   assert.match(todos, /placement: "aboveEditor"/);
   assert.match(todoPresentation, /TASKS  ·/);
   assert.doesNotMatch(todoPresentation, /TASK\/\/GRID/);

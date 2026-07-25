@@ -59,7 +59,39 @@ test("task HUD keeps the visible queue archeofuturist and bounded to four lines"
   assert.equal(taskHudLines(state).length <= 4, true);
 });
 
-const framedAt = (width: number): string[] => frameTaskHud(taskHud(state, 100_000) as never, width);
+const framedAt = (width: number): string[] => frameTaskHud(taskHud(state, 100_000), width);
+
+test("a session with nothing tracked keeps the HUD as a single rule", () => {
+  const idle = taskHud({ todos: [], nextId: 1 });
+  assert.equal(idle.kind, "idle");
+
+  const framed = frameTaskHud(idle, 64);
+  assert.equal(framed.length, 1, "an idle session must not spend rows on an empty list");
+  assert.equal(visibleWidth(framed[0] as string), 64);
+  assert.match(framed[0] as string, /^╶─ TASKS  ·  nothing tracked ─+ \/kanban ─╴$/);
+});
+
+test("the HUD occupies the same columns whether or not a session tracks work", () => {
+  const idle = frameTaskHud(taskHud({ todos: [], nextId: 1 }), 64);
+  const tracking = framedAt(64);
+
+  for (const line of [...idle, ...tracking]) assert.equal(visibleWidth(line), 64);
+  const contentColumn = (line: string): number => line.search(/[^│╭╰╶╴─ ]/);
+  assert.equal(contentColumn(idle[0] as string), contentColumn(tracking[0] as string));
+});
+
+test("the HUD stays within four lines no matter how much work is tracked", () => {
+  const swamped: TodoState = {
+    nextId: 61,
+    todos: Array.from({ length: 60 }, (_unused, index) => ({
+      id: index + 1,
+      text: `Task ${index + 1}`,
+      status: "pending" as const,
+    })),
+  };
+  assert.equal(frameTaskHud(taskHud(swamped, 100_000), 64).length <= 4, true);
+  assert.equal(taskHudLines(swamped, 100_000).length <= 4, true);
+});
 
 test("task HUD frame stays aligned without colored backgrounds or doubled corners", () => {
   const framed = framedAt(64);
@@ -97,14 +129,14 @@ test("overlong task text is elided rather than cut mid-word without a marker", (
     nextId: 2,
     todos: [{ id: 1, text: "Unstick the Yielduck context-overflow loop and stop verbose amplification", status: "pending" }],
   };
-  const row = frameTaskHud(taskHud(long, 100_000) as never, 44)[1] as string;
+  const row = frameTaskHud(taskHud(long, 100_000), 44)[1] as string;
   assert.equal(visibleWidth(row), 44);
   assert.match(row, /…/);
 });
 
 test("the frame survives widths too narrow to hold its labels", () => {
   for (const width of [0, 6, 8, 12]) {
-    const framed = frameTaskHud(taskHud(state, 100_000) as never, width);
+    const framed = frameTaskHud(taskHud(state, 100_000), width);
     assert.equal(
       framed.every((line) => visibleWidth(line) === Math.max(width, GUTTER_FLOOR)),
       true,

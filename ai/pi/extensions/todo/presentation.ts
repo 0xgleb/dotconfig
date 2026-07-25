@@ -17,11 +17,19 @@ export interface TaskHudRow {
   readonly text: string;
 }
 
-export interface TaskHud {
-  readonly headline: TaskHudRule;
-  readonly rows: ReadonlyArray<TaskHudRow>;
-  readonly footer: TaskHudRule;
-}
+/**
+ * The HUD is always present so every session shows the same fixture; a session
+ * with nothing tracked collapses to a single rule rather than disappearing and
+ * leaving neighbouring panes looking like different programs.
+ */
+export type TaskHud =
+  | { readonly kind: "idle"; readonly headline: TaskHudRule }
+  | {
+      readonly kind: "tracking";
+      readonly headline: TaskHudRule;
+      readonly rows: ReadonlyArray<TaskHudRow>;
+      readonly footer: TaskHudRule;
+    };
 
 export interface TodoSummary {
   readonly total: number;
@@ -73,9 +81,11 @@ const HUD_SETTLE_DELAY_MS = 10_000;
 
 const HUD_ROW_LIMIT = 2;
 
-export const taskHud: (state: TodoState, now?: number) => TaskHud | undefined = (state, now = Date.now()) => {
+export const taskHud: (state: TodoState, now?: number) => TaskHud = (state, now = Date.now()) => {
   const summary = todoSummary(state);
-  if (summary.total === 0) return undefined;
+  if (summary.total === 0) {
+    return { kind: "idle", headline: { left: "TASKS  ·  nothing tracked", right: "/kanban" } };
+  }
   const recent = state.todos
     .filter(
       ({ status, statusChangedAt }) =>
@@ -102,6 +112,7 @@ export const taskHud: (state: TodoState, now?: number) => TaskHud | undefined = 
   ];
   const hidden = Math.max(0, ordered.length - visible.length);
   return {
+    kind: "tracking",
     headline: { left: `TASKS  ·  ${metrics.join("  ·  ")}`, right: "/kanban" },
     rows: visible.map((todo, index) => ({
       status: todo.status,
@@ -142,6 +153,8 @@ const rule = (inner: number, { left, right }: TaskHudRule): string => {
 
 export const frameTaskHud: (hud: TaskHud, width: number) => string[] = (hud, width) => {
   const inner = Math.max(0, width - GUTTER * 2);
+  if (hud.kind === "idle") return [`╶─ ${rule(inner, hud.headline)} ─╴`];
+
   const pad = (text: string): string => {
     const content = truncateToWidth(text, inner, "…");
     return `${content}${" ".repeat(Math.max(0, inner - visibleWidth(content)))}`;
@@ -154,15 +167,17 @@ export const frameTaskHud: (hud: TaskHud, width: number) => string[] = (hud, wid
   ];
 };
 
+const ruleText = ({ left, right }: TaskHudRule): string =>
+  [left, right].filter((part) => part.length > 0).join("  ·  ");
+
 /** Flattened HUD text, without the frame — the bounded footprint the editor reserves. */
 export const taskHudLines: (state: TodoState, now?: number) => string[] = (state, now = Date.now()) => {
   const hud = taskHud(state, now);
-  if (hud === undefined) return [];
-  const label = ({ left, right }: TaskHudRule): string => [left, right].filter((part) => part.length > 0).join("  ·  ");
+  if (hud.kind === "idle") return [ruleText(hud.headline)];
   return [
-    label(hud.headline),
+    ruleText(hud.headline),
     ...hud.rows.map((row) => `${todoStatusMark(row.status)} ${row.text}`),
-    label(hud.footer),
+    ruleText(hud.footer),
   ];
 };
 

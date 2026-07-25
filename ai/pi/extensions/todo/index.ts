@@ -14,7 +14,7 @@ import { isContinuationPaused } from "../shared/continuation-pause.ts";
 import { QUESTION_ASK_EVENT, type UserQuestionRequest } from "../shared/question-events.ts";
 import { AUTO_RELOAD_PENDING_REQUEST_EVENT, type AutoReloadPendingReporter } from "../shared/reload-events.ts";
 import { registerRuntimeVersion } from "../shared/runtime-version.ts";
-import { frameTaskHud, kanbanColumns, taskHud, taskHudLines, todoSummary } from "./presentation.ts";
+import { frameTaskHud, kanbanColumns, taskHud, todoSummary } from "./presentation.ts";
 import {
   decodeTodoDetails,
   decodeTodoState,
@@ -74,9 +74,10 @@ class TaskHudComponent {
 
   render(width: number): string[] {
     const hud = taskHud(this.state);
-    if (hud === undefined) return [];
+    const framed = frameTaskHud(hud, width);
+    if (hud.kind === "idle") return [this.theme.fg("borderMuted", framed[0] ?? ""), ""];
 
-    const [headline, ...rest] = frameTaskHud(hud, width);
+    const [headline, ...rest] = framed;
     const footer = rest.pop() ?? "";
 
     return [
@@ -283,12 +284,11 @@ export default function todoExtension(pi: ExtensionAPI): void {
     if (!ctx.hasUI) return;
     const summary = todoSummary(state);
     ctx.ui.setStatus("todo", summary.total > 0 ? `tasks:${summary.pending}/${summary.total}` : undefined);
-    const lines = taskHudLines(state);
-    ctx.ui.setWidget(
-      "todo-top-tasks",
-      lines.length === 0 ? undefined : (_tui, theme) => new TaskHudComponent(state, theme),
-      { placement: "aboveEditor" },
-    );
+    // Always mounted: a session with no tasks collapses to one rule so panes
+    // sitting side by side keep the same chrome instead of one losing its HUD.
+    ctx.ui.setWidget("todo-top-tasks", (_tui, theme) => new TaskHudComponent(state, theme), {
+      placement: "aboveEditor",
+    });
 
     if (hudExpiry) clearTimeout(hudExpiry);
     const now = Date.now();
