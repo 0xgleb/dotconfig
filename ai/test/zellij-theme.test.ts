@@ -81,6 +81,29 @@ test("the selected ribbon reads as a raised surface rather than a flat repaint",
   assert.ok(luminance(selected) > luminance(base), "the selected ribbon should sit above the bar, not below it");
 });
 
+test("zellij chrome draws from the same palette as the Pi theme", () => {
+  const piTheme = JSON.parse(read("../pi/themes/archeofuturism.json")) as {
+    vars: Record<string, string>;
+    colors: Record<string, string>;
+    export: Record<string, string>;
+  };
+  const palette = new Set(
+    [...Object.values(piTheme.vars), ...Object.values(piTheme.colors), ...Object.values(piTheme.export)]
+      .filter((value) => value.startsWith("#"))
+      .map((value) => value.toUpperCase()),
+  );
+
+  const foreign = [...read(THEME).matchAll(/"(#[0-9A-Fa-f]{6})"/g)]
+    .map(([, color]) => (color as string).toUpperCase())
+    .filter((color) => !palette.has(color));
+
+  assert.deepEqual(
+    [...new Set(foreign)],
+    [],
+    "zellij and Pi sit in the same window; a color in one and not the other reads as two different programs",
+  );
+});
+
 test("zellij keeps the requested rounded pane-frame treatment", () => {
   const config = read(CONFIG);
   assert.match(config, /^pane_frames true/m);

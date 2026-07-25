@@ -14,7 +14,7 @@ import { isContinuationPaused } from "../shared/continuation-pause.ts";
 import { QUESTION_ASK_EVENT, type UserQuestionRequest } from "../shared/question-events.ts";
 import { AUTO_RELOAD_PENDING_REQUEST_EVENT, type AutoReloadPendingReporter } from "../shared/reload-events.ts";
 import { registerRuntimeVersion } from "../shared/runtime-version.ts";
-import { frameTaskHud, kanbanColumns, taskHud, todoSummary } from "./presentation.ts";
+import { CONTENT_GUTTER, frameTaskHud, kanbanColumns, overlayRule, taskHud, todoSummary } from "./presentation.ts";
 import {
   decodeTodoDetails,
   decodeTodoState,
@@ -111,36 +111,26 @@ class TodoListComponent {
     if (this.cachedLines && this.cachedWidth === width) return this.cachedLines;
 
     const lines: string[] = [];
-    const title = this.theme.fg("accent", " Todos ");
-    const header =
-      this.theme.fg("borderMuted", "─".repeat(3)) +
-      title +
-      this.theme.fg("borderMuted", "─".repeat(Math.max(0, width - 10)));
-    lines.push("", truncateToWidth(header, width), "");
+    const completed = this.todos.filter(({ status }) => status === "completed").length;
+    const blocked = this.todos.filter(({ status }) => status === "blocked").length;
+    const header = overlayRule(
+      {
+        left: "TODOS",
+        right: this.todos.length === 0 ? "" : `${completed}/${this.todos.length} complete  ·  ${blocked} blocked`,
+      },
+      width,
+    );
+    lines.push("", this.theme.bold(this.theme.fg("borderAccent", header)), "");
 
     if (this.todos.length === 0) {
-      lines.push(truncateToWidth(`  ${this.theme.fg("dim", "No todos yet. Ask the agent to add some!")}`, width));
-    } else {
-      const completed = this.todos.filter(({ status }) => status === "completed").length;
-      const blocked = this.todos.filter(({ status }) => status === "blocked").length;
       lines.push(
-        truncateToWidth(
-          `  ${this.theme.fg("muted", `${completed}/${this.todos.length} completed · ${blocked} blocked`)}`,
-          width,
-        ),
-        "",
+        truncateToWidth(`${CONTENT_GUTTER}${this.theme.fg("dim", "No todos yet. Ask the agent to add some!")}`, width),
       );
+    } else {
       for (const todo of this.todos) {
         const isCompleted = todo.status === "completed";
         const isBlocked = todo.status === "blocked";
-        const color: "success" | "warning" | "accent" | "dim" = isCompleted
-          ? "success"
-          : isBlocked
-            ? "warning"
-            : todo.status === "in_progress"
-              ? "accent"
-              : "dim";
-        const check = this.theme.fg(color, todoStatusMark(todo.status));
+        const check = this.theme.fg(statusColor(todo.status), todoStatusMark(todo.status));
         const id = this.theme.fg("accent", `#${todo.id}`);
         const label = isBlocked
           ? `${todo.text} — blocked: ${todo.reason}`
@@ -148,11 +138,15 @@ class TodoListComponent {
             ? `${todo.text} — until ${new Date(todo.remindAt).toISOString()}`
             : todo.text;
         const text = this.theme.fg(isCompleted ? "dim" : "text", label);
-        lines.push(truncateToWidth(`  ${check} ${id} ${text}`, width));
+        lines.push(truncateToWidth(`${CONTENT_GUTTER}${check} ${id} ${text}`, width));
       }
     }
 
-    lines.push("", truncateToWidth(`  ${this.theme.fg("dim", "Press Escape to close")}`, width), "");
+    lines.push(
+      "",
+      truncateToWidth(`${CONTENT_GUTTER}${this.theme.fg("dim", "Press Escape to close")}`, width),
+      "",
+    );
     this.cachedWidth = width;
     this.cachedLines = lines;
     return lines;
@@ -193,9 +187,17 @@ class KanbanComponent {
     const rowCount = Math.max(now.length, next.length, done.length);
     const lines = [
       "",
-      truncateToWidth(
-        `${this.theme.fg("accent", this.theme.bold("KANBAN"))}  ${this.theme.fg("muted", `${summary.completed}/${summary.total} complete · ${summary.pending} active · ${summary.blocked} blocked`)}`,
-        width,
+      this.theme.bold(
+        this.theme.fg(
+          "borderAccent",
+          overlayRule(
+            {
+              left: "KANBAN",
+              right: `${summary.completed}/${summary.total} complete  ·  ${summary.pending} active  ·  ${summary.blocked} blocked`,
+            },
+            width,
+          ),
+        ),
       ),
       "",
       this.row(
@@ -214,7 +216,14 @@ class KanbanComponent {
       lines.push(this.row([now[index] ?? "", next[index] ?? "", done[index] ?? ""], columnWidths, separator));
     }
 
-    lines.push("", truncateToWidth(this.theme.fg("dim", "Esc closes · session remains visible behind this board"), width), "");
+    lines.push(
+      "",
+      truncateToWidth(
+        `${CONTENT_GUTTER}${this.theme.fg("dim", "Esc closes · session remains visible behind this board")}`,
+        width,
+      ),
+      "",
+    );
     this.cachedWidth = width;
     this.cachedLines = lines;
     return lines;

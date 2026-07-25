@@ -136,18 +136,43 @@ const GUTTER = 3;
  * itself and the border run, and a label is dropped entirely rather than
  * squeezed against the rule when the width cannot hold it.
  */
+/**
+ * Splits the available columns between two labels: whole when they both fit,
+ * otherwise shrinking the longer one first so a short label is never elided to
+ * make room for a long one it already fits beside.
+ */
+const share = (head: number, tail: number, budget: number): readonly [number, number] => {
+  if (budget <= 0) return [0, 0];
+  if (head + tail <= budget) return [head, tail];
+  const half = Math.floor(budget / 2);
+  if (head <= half) return [head, budget - head];
+  if (tail <= half) return [budget - tail, tail];
+  return [half, budget - half];
+};
+
 const rule = (inner: number, { left, right }: TaskHudRule): string => {
   if (inner <= 0) return "";
   const border = (count: number): string => "─".repeat(Math.max(0, count));
+  const anchored = (label: string, toLeft: boolean): string => {
+    const only = truncateToWidth(label, Math.max(0, inner - 2), "…");
+    const width = visibleWidth(only);
+    if (width === 0) return border(inner);
+    return toLeft ? `${only} ${border(inner - width - 1)}` : `${border(inner - width - 1)} ${only}`;
+  };
 
-  const tail = inner >= 6 ? truncateToWidth(right, Math.floor((inner - 5) / 2), "…") : "";
-  const tailWidth = visibleWidth(tail);
-  const head = truncateToWidth(left, Math.max(0, inner - tailWidth - (tailWidth > 0 ? 4 : 2)), "…");
+  if (left.length === 0 && right.length === 0) return border(inner);
+  if (right.length === 0) return anchored(left, true);
+  if (left.length === 0) return anchored(right, false);
+
+  // One blank column beside each label, and at least one border cell between.
+  const [headRoom, tailRoom] = share(visibleWidth(left), visibleWidth(right), inner - 3);
+  const head = truncateToWidth(left, headRoom, "…");
+  const tail = truncateToWidth(right, tailRoom, "…");
   const headWidth = visibleWidth(head);
+  const tailWidth = visibleWidth(tail);
 
-  if (headWidth === 0 && tailWidth === 0) return border(inner);
-  if (headWidth === 0) return `${border(inner - tailWidth - 1)} ${tail}`;
-  if (tailWidth === 0) return `${head} ${border(inner - headWidth - 1)}`;
+  if (headWidth === 0) return tailWidth === 0 ? border(inner) : anchored(right, false);
+  if (tailWidth === 0) return anchored(left, true);
   return `${head} ${border(inner - headWidth - tailWidth - 2)} ${tail}`;
 };
 
@@ -166,6 +191,16 @@ export const frameTaskHud: (hud: TaskHud, width: number) => string[] = (hud, wid
     `╰─ ${rule(inner, hud.footer)} ─╯`,
   ];
 };
+
+/**
+ * A section rule for full-width overlays, drawn on the same columns as the HUD
+ * frame so the compact and expanded views read as one interface.
+ */
+export const overlayRule: (labels: TaskHudRule, width: number) => string = (labels, width) =>
+  `╶─ ${rule(Math.max(0, width - GUTTER * 2), labels)} ─╴`;
+
+/** The column every framed line starts its content in. */
+export const CONTENT_GUTTER = " ".repeat(GUTTER);
 
 const ruleText = ({ left, right }: TaskHudRule): string =>
   [left, right].filter((part) => part.length > 0).join("  ·  ");
