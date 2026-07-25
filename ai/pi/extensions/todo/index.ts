@@ -14,7 +14,7 @@ import { isContinuationPaused } from "../shared/continuation-pause.ts";
 import { QUESTION_ASK_EVENT, type UserQuestionRequest } from "../shared/question-events.ts";
 import { AUTO_RELOAD_PENDING_REQUEST_EVENT, type AutoReloadPendingReporter } from "../shared/reload-events.ts";
 import { registerRuntimeVersion } from "../shared/runtime-version.ts";
-import { frameTaskHudLines, kanbanColumns, taskHudLines, todoSummary } from "./presentation.ts";
+import { frameTaskHud, kanbanColumns, taskHud, taskHudLines, todoSummary } from "./presentation.ts";
 import {
   decodeTodoDetails,
   decodeTodoState,
@@ -28,6 +28,7 @@ import {
   type TodoAction,
   type TodoDetails,
   type TodoState,
+  type TodoStatus,
 } from "./state.ts";
 
 const TodoParams = Type.Object({
@@ -43,6 +44,25 @@ const TodoParams = Type.Object({
   ),
 });
 
+type StatusColor = "success" | "warning" | "accent" | "dim" | "muted";
+
+const statusColor = (status: TodoStatus | undefined): StatusColor => {
+  switch (status) {
+    case "completed":
+      return "success";
+    case "blocked":
+      return "warning";
+    case "in_progress":
+      return "accent";
+    case "deferred":
+      return "muted";
+    case "cancelled":
+      return "dim";
+    default:
+      return "accent";
+  }
+};
+
 class TaskHudComponent {
   private readonly state: TodoState;
   private readonly theme: Theme;
@@ -53,19 +73,20 @@ class TaskHudComponent {
   }
 
   render(width: number): string[] {
-    const lines = taskHudLines(this.state);
-    const framed = frameTaskHudLines(lines, width).map((lineFrame, index) => {
-      if (index === 0) return this.theme.bold(this.theme.fg("accent", lineFrame));
-      if (index === lines.length - 1) return this.theme.fg("borderMuted", lineFrame);
-      const line = lines[index] ?? "";
-      const color: "success" | "warning" | "accent" = line.includes("[x]")
-        ? "success"
-        : line.includes("[!]")
-          ? "warning"
-          : "accent";
-      return this.theme.fg(color, lineFrame);
-    });
-    return [...framed, ""];
+    const hud = taskHud(this.state);
+    if (hud === undefined) return [];
+
+    const [headline, ...rest] = frameTaskHud(hud, width);
+    const footer = rest.pop() ?? "";
+
+    return [
+      // Depth reads as a single light source: the top edge catches it, the
+      // bottom edge falls into shadow, and the rows sit lit between them.
+      this.theme.bold(this.theme.fg("borderAccent", headline ?? "")),
+      ...rest.map((row, index) => this.theme.fg(statusColor(hud.rows[index]?.status), row)),
+      this.theme.fg("borderMuted", footer),
+      "",
+    ];
   }
 
   invalidate(): void {}

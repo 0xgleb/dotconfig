@@ -1,8 +1,10 @@
 import assert from "node:assert/strict";
 import test from "node:test";
+import { visibleWidth } from "@earendil-works/pi-tui";
 import {
-  frameTaskHudLines,
+  frameTaskHud,
   kanbanColumns,
+  taskHud,
   taskHudLines,
   taskWidgetLines,
   todoSummary,
@@ -57,14 +59,62 @@ test("task HUD keeps the visible queue archeofuturist and bounded to four lines"
   assert.equal(taskHudLines(state).length <= 4, true);
 });
 
+const framedAt = (width: number): string[] => frameTaskHud(taskHud(state, 100_000) as never, width);
+
 test("task HUD frame stays aligned without colored backgrounds or doubled corners", () => {
-  const framed = frameTaskHudLines(taskHudLines(state, 100_000), 64);
-  assert.equal(framed.every((line) => line.length === 64), true);
-  assert.match(framed[0] ?? "", /^╭─ TASKS  ·  3 active.*╮$/);
-  assert.match(framed[1] ?? "", /^│ \[ \] 01.*│$/);
-  assert.match(framed.at(-1) ?? "", /^╰─ \+2 hidden.*╯$/);
+  const framed = framedAt(64);
+  assert.equal(framed.every((line) => visibleWidth(line) === 64), true);
+  assert.match(framed[0] ?? "", /^╭─ TASKS  ·  3 active  ·  1 blocked ─+ \/kanban ─╮$/);
+  assert.match(framed[1] ?? "", /^│  \[ \] 01 {2}#2 {2}Fix classifier +│$/);
+  assert.match(framed.at(-1) ?? "", /^╰─ \+2 hidden ─+ 1\/5 complete ─╯$/);
   assert.equal(framed.some((line) => /╾╮╯|╮╮|╯╯/.test(line)), false);
 });
+
+test("every framed line opens its content in the same column", () => {
+  const columnOf = (line: string): number => line.search(/[^│╭╰─ ]/);
+  const columns = new Set(framedAt(64).map(columnOf));
+  assert.deepEqual([...columns], [3], "headline, rows, and footer must share one content column");
+});
+
+const plain = (line: string): string => line.replaceAll(/\[[0-9;]*m/g, "");
+
+test("labels never touch the border run that separates them", () => {
+  for (const width of [40, 64, 120]) {
+    // Drop the fixed corner gutters; the corners legitimately abut their own rule.
+    const [headline, , , footer] = framedAt(width).map((line) => plain(line).slice(3, -3)) as [
+      string,
+      string,
+      string,
+      string,
+    ];
+    assert.doesNotMatch(headline, /[^ ─]─|─[^ ─]/, `headline at width ${width} crams a label against its rule`);
+    assert.doesNotMatch(footer, /[^ ─]─|─[^ ─]/, `footer at width ${width} crams a label against its rule`);
+  }
+});
+
+test("overlong task text is elided rather than cut mid-word without a marker", () => {
+  const long: TodoState = {
+    nextId: 2,
+    todos: [{ id: 1, text: "Unstick the Yielduck context-overflow loop and stop verbose amplification", status: "pending" }],
+  };
+  const row = frameTaskHud(taskHud(long, 100_000) as never, 44)[1] as string;
+  assert.equal(visibleWidth(row), 44);
+  assert.match(row, /…/);
+});
+
+test("the frame survives widths too narrow to hold its labels", () => {
+  for (const width of [0, 6, 8, 12]) {
+    const framed = frameTaskHud(taskHud(state, 100_000) as never, width);
+    assert.equal(
+      framed.every((line) => visibleWidth(line) === Math.max(width, GUTTER_FLOOR)),
+      true,
+      `width ${width} produced a ragged frame`,
+    );
+  }
+});
+
+/** Below this the two 3-column gutters alone fill the line; the frame cannot shrink further. */
+const GUTTER_FLOOR = 6;
 
 test("completed and cancelled tasks remain visible briefly before dropping from the HUD", () => {
   const settling: TodoState = {

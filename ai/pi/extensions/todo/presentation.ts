@@ -1,5 +1,27 @@
 import { truncateToWidth, visibleWidth } from "@earendil-works/pi-tui";
-import { todoStatusMark, type Todo, type TodoState } from "./state.ts";
+import { todoStatusMark, type Todo, type TodoState, type TodoStatus } from "./state.ts";
+
+/**
+ * A rule is a framed edge of the HUD carrying up to two labels. The renderer
+ * pins `left` after the opening corner and `right` before the closing one, so
+ * every session draws the same columns regardless of how long the labels are.
+ * Either half may be empty; the rule then spans the gap with its border run.
+ */
+export interface TaskHudRule {
+  readonly left: string;
+  readonly right: string;
+}
+
+export interface TaskHudRow {
+  readonly status: TodoStatus;
+  readonly text: string;
+}
+
+export interface TaskHud {
+  readonly headline: TaskHudRule;
+  readonly rows: ReadonlyArray<TaskHudRow>;
+  readonly footer: TaskHudRule;
+}
 
 export interface TodoSummary {
   readonly total: number;
@@ -49,9 +71,11 @@ export const topPendingTodos: (state: TodoState, limit: number) => ReadonlyArray
 
 const HUD_SETTLE_DELAY_MS = 10_000;
 
-export const taskHudLines: (state: TodoState, now?: number) => string[] = (state, now = Date.now()) => {
+const HUD_ROW_LIMIT = 2;
+
+export const taskHud: (state: TodoState, now?: number) => TaskHud | undefined = (state, now = Date.now()) => {
   const summary = todoSummary(state);
-  if (summary.total === 0) return [];
+  if (summary.total === 0) return undefined;
   const recent = state.todos
     .filter(
       ({ status, statusChangedAt }) =>
@@ -68,39 +92,79 @@ export const taskHudLines: (state: TodoState, now?: number) => string[] = (state
     ...state.todos.filter(({ status }) => status === "blocked"),
     ...state.todos.filter(({ status }) => status === "deferred"),
   ];
-  const visible = ordered.filter((todo, index) => ordered.findIndex(({ id }) => id === todo.id) === index).slice(0, 2);
+  const visible = ordered
+    .filter((todo, index) => ordered.findIndex(({ id }) => id === todo.id) === index)
+    .slice(0, HUD_ROW_LIMIT);
   const metrics = [
     `${summary.pending} active`,
     ...(summary.blocked > 0 ? [`${summary.blocked} blocked`] : []),
     ...(summary.deferred > 0 ? [`${summary.deferred} deferred`] : []),
   ];
-  const lines = [
-    `TASKS  ·  ${metrics.join("  ·  ")}  ·  /kanban`,
-    ...visible.map(
-      (todo, index) =>
-        `${todoStatusMark(todo.status)} ${String(index + 1).padStart(2, "0")}  #${todo.id}  ${compactTaskText(todo.text)}`,
-    ),
-  ];
   const hidden = Math.max(0, ordered.length - visible.length);
-  lines.push(
-    hidden > 0
-      ? `+${hidden} hidden  ·  ${summary.completed}/${summary.total} complete`
-      : `${summary.completed}/${summary.total} complete`,
-  );
-  return lines.slice(0, 4);
+  return {
+    headline: { left: `TASKS  ·  ${metrics.join("  ·  ")}`, right: "/kanban" },
+    rows: visible.map((todo, index) => ({
+      status: todo.status,
+      text: `${String(index + 1).padStart(2, "0")}  #${todo.id}  ${compactTaskText(todo.text)}`,
+    })),
+    footer: {
+      left: hidden > 0 ? `+${hidden} hidden` : "",
+      right: `${summary.completed}/${summary.total} complete`,
+    },
+  };
 };
 
-export const frameTaskHudLines: (lines: ReadonlyArray<string>, width: number) => string[] = (lines, width) =>
-  lines.map((line, index) => {
-    const isHeader = index === 0;
-    const isFooter = index === lines.length - 1;
-    const prefix = isHeader ? "╭─ " : isFooter ? "╰─ " : "│ ";
-    const suffix = isHeader ? "╮" : isFooter ? "╯" : "│";
-    const available = Math.max(0, width - visibleWidth(prefix) - visibleWidth(suffix));
-    const content = truncateToWidth(line, available, "");
-    const fill = (isHeader || isFooter ? "─" : " ").repeat(Math.max(0, available - visibleWidth(content)));
-    return `${prefix}${content}${fill}${suffix}`;
-  });
+/**
+ * Every framed line spends the same number of columns on its border, so task
+ * text starts in one column across the headline, the rows, and the footer.
+ */
+const GUTTER = 3;
+
+/**
+ * Renders exactly `inner` columns. Each label keeps a blank column between
+ * itself and the border run, and a label is dropped entirely rather than
+ * squeezed against the rule when the width cannot hold it.
+ */
+const rule = (inner: number, { left, right }: TaskHudRule): string => {
+  if (inner <= 0) return "";
+  const border = (count: number): string => "─".repeat(Math.max(0, count));
+
+  const tail = inner >= 6 ? truncateToWidth(right, Math.floor((inner - 5) / 2), "…") : "";
+  const tailWidth = visibleWidth(tail);
+  const head = truncateToWidth(left, Math.max(0, inner - tailWidth - (tailWidth > 0 ? 4 : 2)), "…");
+  const headWidth = visibleWidth(head);
+
+  if (headWidth === 0 && tailWidth === 0) return border(inner);
+  if (headWidth === 0) return `${border(inner - tailWidth - 1)} ${tail}`;
+  if (tailWidth === 0) return `${head} ${border(inner - headWidth - 1)}`;
+  return `${head} ${border(inner - headWidth - tailWidth - 2)} ${tail}`;
+};
+
+export const frameTaskHud: (hud: TaskHud, width: number) => string[] = (hud, width) => {
+  const inner = Math.max(0, width - GUTTER * 2);
+  const pad = (text: string): string => {
+    const content = truncateToWidth(text, inner, "…");
+    return `${content}${" ".repeat(Math.max(0, inner - visibleWidth(content)))}`;
+  };
+
+  return [
+    `╭─ ${rule(inner, hud.headline)} ─╮`,
+    ...hud.rows.map((row) => `│  ${pad(`${todoStatusMark(row.status)} ${row.text}`)}  │`),
+    `╰─ ${rule(inner, hud.footer)} ─╯`,
+  ];
+};
+
+/** Flattened HUD text, without the frame — the bounded footprint the editor reserves. */
+export const taskHudLines: (state: TodoState, now?: number) => string[] = (state, now = Date.now()) => {
+  const hud = taskHud(state, now);
+  if (hud === undefined) return [];
+  const label = ({ left, right }: TaskHudRule): string => [left, right].filter((part) => part.length > 0).join("  ·  ");
+  return [
+    label(hud.headline),
+    ...hud.rows.map((row) => `${todoStatusMark(row.status)} ${row.text}`),
+    label(hud.footer),
+  ];
+};
 
 export const taskWidgetLines: (state: TodoState, limit?: number) => string[] = (state, limit = 5) => {
   if (state.todos.length === 0) return [];
