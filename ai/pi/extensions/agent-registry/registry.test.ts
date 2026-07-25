@@ -352,7 +352,7 @@ test("dot-quoted SQL JSONPath keys remain relayable while credential file paths 
     const lease = claimedLease.outcome === "claimed" ? claimedLease.lease : assert.fail("missing lease");
     const protectedLookingKey = ["credentials", "json"].join(".");
     const quote = String.fromCharCode(34);
-    const diagnostic = `SQL JSONPath $.${quote}${protectedLookingKey}${quote} triggered a false path match`;
+    const diagnostic = `SQL JSONPath $.state.${quote}${protectedLookingKey}${quote} triggered a false path match`;
     const queued = await Effect.runPromise(
       store.enqueue({ project: "/workspace/project", role: "pi-support", requesterId: "requester", text: diagnostic, now: 1_010 }),
     );

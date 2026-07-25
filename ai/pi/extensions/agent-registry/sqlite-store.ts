@@ -35,7 +35,7 @@ const MAX_SUMMARY_TEXT = 4_000;
 const BUSY_TIMEOUT_MS = 2_000;
 const SENSITIVE_TEXT =
   /(^|[\\/\s'"])(?:\.env(?:\.[^\\/\s'"]*)?|credentials\.json|secrets\.(?:json|ya?ml)|auth\.json|\.npmrc|\.netrc|\.pypirc|id_(?:rsa|dsa|ecdsa|ed25519)(?:\.pub)?|[^\\/\s'"]+\.(?:key|pem|p12|pfx))($|[\\/\s'"])/i;
-const SQL_JSONPATH_DOT_QUOTED_KEY = /\$\."(?:[^"\\]|\\.)*"/g;
+const SQL_JSONPATH_DOT_QUOTED_KEY = /\."(?:[^"\\]|\\.)*"/g;
 const containsSensitiveText = (text: string): boolean =>
   SENSITIVE_TEXT.test(text.replace(SQL_JSONPATH_DOT_QUOTED_KEY, "$.[json-key]"));
 

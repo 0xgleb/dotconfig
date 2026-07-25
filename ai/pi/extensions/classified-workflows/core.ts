@@ -93,7 +93,7 @@ const LOCALLY_GENERATED_RESULT_TOOLS = new Set(["edit", "write", "todo", "ask_us
 const PATH_KEYS = new Set(["path", "file_path", "cwd", "glob"]);
 const SENSITIVE_PATH =
   /(^|[\\/\s'"])(?:\.env(?!\.example(?:$|[\\/\s'"]))(?:\.[^\\/\s'"]*)?[*?]*|credentials\.json|secrets\.(?:json|ya?ml)|auth\.json|\.npmrc|\.netrc|\.pypirc|id_(?:rsa|dsa|ecdsa|ed25519)(?:\.pub)?|[^\\/\s'"]+\.(?:key|pem|p12|pfx))($|[\\/\s'"])/i;
-const SQL_JSONPATH_DOT_QUOTED_KEY = /\$\."(?:[^"\\]|\\.)*"/g;
+const SQL_JSONPATH_DOT_QUOTED_KEY = /\."(?:[^"\\]|\\.)*"/g;
 const containsSensitivePath = (value: string): boolean =>
   SENSITIVE_PATH.test(value.replace(SQL_JSONPATH_DOT_QUOTED_KEY, "$.[json-key]"));
 const SENSITIVE_RESULT =
