@@ -13,6 +13,7 @@ import {
   diskPressureDecision,
   isExpensiveCommand,
   isStalePiTempLog,
+  parseMemoryPressureCapacity,
   resourcePressureDecision,
   resultSymlinkNames,
 } from "./core.ts";
@@ -33,6 +34,28 @@ test("expensive build commands are blocked before consuming the crash reserve", 
     reason: "disk pressure",
   });
   assert.deepEqual(diskPressureDecision("git status", 1n), { verdict: "allow" });
+});
+
+test("macOS memory-pressure capacity counts reclaimable available memory instead of raw free pages", () => {
+  const output = [
+    "The system has 51539607552 (3145728 pages with a page size of 16384).",
+    "System-wide memory free percentage: 44%",
+  ].join("\n");
+  const capacity = parseMemoryPressureCapacity(output);
+  assert.deepEqual(capacity, {
+    totalBytes: 51_539_607_552n,
+    availablePercent: 44,
+    availableBytes: 22_677_427_322n,
+  });
+  assert.deepEqual(
+    resourcePressureDecision("cargo test --workspace", CRITICAL_FREE_BYTES, capacity?.availableBytes ?? 0n),
+    { verdict: "allow" },
+  );
+  assert.equal(parseMemoryPressureCapacity("unknown output"), undefined);
+  assert.equal(
+    parseMemoryPressureCapacity("The system has 51539607552 (pages).\nSystem-wide memory free percentage: 101%"),
+    undefined,
+  );
 });
 
 test("expensive builds fail closed before consuming the memory crash reserve", () => {

@@ -18,6 +18,7 @@ import {
   cleanupStalePiTempLogs,
   formatFreeBytes,
   isExpensiveCommand,
+  parseMemoryPressureCapacity,
   resourcePressureDecision,
   resultSymlinkNames,
 } from "./core.ts";
@@ -50,7 +51,20 @@ const updateStatus: (ctx: ExtensionContext, diskAvailable: bigint, memoryAvailab
   );
 };
 
-const freeMemoryBytes = (): bigint => BigInt(freemem());
+const availableMemoryBytes = (): bigint => {
+  if (process.platform !== "darwin") return BigInt(freemem());
+  const result = spawnSync("/usr/bin/memory_pressure", ["-Q"], {
+    encoding: "utf8",
+    maxBuffer: 16 * 1_024,
+    timeout: 5_000,
+  });
+  if (result.status !== 0 || typeof result.stdout !== "string") {
+    throw new Error("macOS available-memory probe failed");
+  }
+  const capacity = parseMemoryPressureCapacity(result.stdout);
+  if (!capacity) throw new Error("macOS available-memory probe returned an unknown format");
+  return capacity.availableBytes;
+};
 
 const processAggregateText = (): string => {
   const result = spawnSync("ps", ["-axo", "rss=,comm="], {
@@ -66,7 +80,7 @@ const processAggregateText = (): string => {
 };
 
 export default (pi: ExtensionAPI) => {
-  registerRuntimeVersion(pi, "resource-pressure", "2026.07.23.5");
+  registerRuntimeVersion(pi, "resource-pressure", "2026.07.23.6");
   const pendingBuilds = new Map<string, PendingBuild>();
 
   const reconcileMemoryIncident = (ctx: ExtensionContext, memoryAvailable: bigint): void => {
@@ -91,12 +105,12 @@ export default (pi: ExtensionAPI) => {
     }
     if (!claimed.right) return;
     const available = formatFreeBytes(memoryAvailable);
-    ctx.ui.notify(`Memory pressure action assigned to this session: ${available} free. Remediation will start now.`, "warning");
+    ctx.ui.notify(`Memory pressure action assigned to this session: ${available} available. Remediation will start now.`, "warning");
     pi.sendMessage(
       {
         customType: "resource-pressure.incident",
         content: [
-          `Critical memory-pressure incident: ${available} free, below the ${formatFreeBytes(CRITICAL_FREE_MEMORY_BYTES)} crash reserve.`,
+          `Critical memory-pressure incident: ${available} available, below the ${formatFreeBytes(CRITICAL_FREE_MEMORY_BYTES)} crash reserve.`,
           "This is an actionable incident, not a passive warning. Stop expensive work and do not poll resource commands repeatedly.",
           "Use the bounded harness snapshot below. Cancel or clean only evidenced agent-owned orphaned workflow processes/artifacts.",
           "Do not close user applications or kill unrelated processes without a focused user confirmation. If a user application dominates, ask one direct question naming it and the observed aggregate.",
@@ -115,7 +129,7 @@ export default (pi: ExtensionAPI) => {
     try {
       const removed = cleanupStalePiTempLogs(tmpdir());
       const available = freeBytes(ctx.cwd);
-      const memoryAvailable = freeMemoryBytes();
+      const memoryAvailable = availableMemoryBytes();
       updateStatus(ctx, available, memoryAvailable);
       reconcileMemoryIncident(ctx, memoryAvailable);
       if (removed.length > 0) ctx.ui.notify(`Cleaned ${removed.length} stale Pi temporary log${removed.length === 1 ? "" : "s"}.`);
@@ -126,7 +140,7 @@ export default (pi: ExtensionAPI) => {
         );
       }
     } catch (error) {
-      ctx.ui.notify(`Disk-pressure check failed safely: ${error instanceof Error ? error.message : "unknown error"}`, "warning");
+      ctx.ui.notify(`Resource-pressure check failed safely: ${error instanceof Error ? error.message : "unknown error"}`, "warning");
     }
   });
 
@@ -134,7 +148,7 @@ export default (pi: ExtensionAPI) => {
     if (!isToolCallEventType("bash", event) || !isExpensiveCommand(event.input.command)) return;
     try {
       const available = freeBytes(ctx.cwd);
-      const memoryAvailable = freeMemoryBytes();
+      const memoryAvailable = availableMemoryBytes();
       updateStatus(ctx, available, memoryAvailable);
       reconcileMemoryIncident(ctx, memoryAvailable);
       const decision = resourcePressureDecision(event.input.command, available, memoryAvailable);
@@ -146,7 +160,7 @@ export default (pi: ExtensionAPI) => {
             }
           : {
               block: true,
-              reason: `Memory pressure incident: only ${formatFreeBytes(memoryAvailable)} free; reserve ${formatFreeBytes(CRITICAL_FREE_MEMORY_BYTES)} before expensive builds. One Pi session has been assigned a bounded remediation turn. Follow that call to action; do not poll repeatedly or retry this build until recovery is reported.`,
+              reason: `Memory pressure incident: only ${formatFreeBytes(memoryAvailable)} available; reserve ${formatFreeBytes(CRITICAL_FREE_MEMORY_BYTES)} before expensive builds. One Pi session has been assigned a bounded remediation turn. Follow that call to action; do not poll repeatedly or retry this build until recovery is reported.`,
             };
       }
       pendingBuilds.set(event.toolCallId, { cwd: ctx.cwd, resultLinksBefore: resultSymlinkNames(ctx.cwd) });
@@ -165,7 +179,7 @@ export default (pi: ExtensionAPI) => {
     try {
       const removed = cleanupNewResultSymlinks(pending.cwd, pending.resultLinksBefore);
       const available = freeBytes(ctx.cwd);
-      const memoryAvailable = freeMemoryBytes();
+      const memoryAvailable = availableMemoryBytes();
       updateStatus(ctx, available, memoryAvailable);
       reconcileMemoryIncident(ctx, memoryAvailable);
       if (removed.length > 0) {

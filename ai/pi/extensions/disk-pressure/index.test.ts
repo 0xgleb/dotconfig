@@ -4,6 +4,14 @@ import test from "node:test";
 
 const source = readFileSync(new URL("./index.ts", import.meta.url), "utf8");
 
+test("macOS capacity uses the pressure-aware available-memory query instead of raw free pages", () => {
+  assert.match(source, /memory_pressure", \["-Q"\]/);
+  assert.match(source, /parseMemoryPressureCapacity\(result\.stdout\)/);
+  assert.match(source, /availableMemoryBytes\(\)/);
+  assert.doesNotMatch(source, /const freeMemoryBytes/);
+  assert.match(source, /only.*available.*reserve/is);
+});
+
 test("critical memory incidents steer the active session instead of waiting passively", () => {
   assert.match(source, /customType: "resource-pressure\.incident"/);
   assert.match(source, /triggerTurn: true, deliverAs: "steer"/);
