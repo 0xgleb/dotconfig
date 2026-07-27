@@ -185,7 +185,7 @@ test("pane frames stay dark instead of outlining the session in neon", () => {
   }
 });
 
-test("zellij chrome draws from the same palette as the Pi theme", () => {
+const archeofuturismPalette = (): ReadonlySet<string> => {
   const piTheme = JSON.parse(read("../pi/themes/archeofuturism.json")) as {
     vars: Record<string, string>;
     colors: Record<string, string>;
@@ -196,9 +196,45 @@ test("zellij chrome draws from the same palette as the Pi theme", () => {
       .filter((value) => value.startsWith("#"))
       .map((value) => value.toUpperCase()),
   );
-  // The terminal's own background is shared ground between the two, not drift.
+  // The terminal's own background is shared ground, not drift.
   palette.add(ITERM2_DEFAULT_BACKGROUND);
+  return palette;
+};
 
+test("the terminal palette draws from the archeofuturist palette", () => {
+  const palette = archeofuturismPalette();
+  const ghostty = read(GHOSTTY);
+
+  const declared = [...ghostty.matchAll(/^(?:palette\s*=\s*\d+|foreground|cursor-color|selection-\w+)\s*=\s*(#[0-9A-Fa-f]{6})/gm)]
+    .map(([, color]) => (color as string).toUpperCase());
+
+  assert.ok(declared.length >= 16, "expected the full 16-slot ANSI palette to be declared");
+  assert.deepEqual(
+    [...new Set(declared.filter((color) => !palette.has(color)))],
+    [],
+    "a terminal color outside the shared palette makes pane content clash with the chrome around it",
+  );
+});
+
+/**
+ * Zellij paints its bars with an explicit opaque fill. A translucent or
+ * image-backed terminal background would show through the panes but not under
+ * those bars, reintroducing the light/dark stepping at the edge of zellij that
+ * was rejected. Texture has to come from the palette, not from the window.
+ */
+test("the terminal background stays opaque so the chrome cannot step against it", () => {
+  const ghostty = read(GHOSTTY);
+  for (const option of ["background-opacity", "background-image", "background-blur"]) {
+    assert.doesNotMatch(
+      ghostty,
+      new RegExp(`^${option}\\s*=\\s*\\S`, "m"),
+      `${option} makes the terminal background differ from zellij's opaque bars`,
+    );
+  }
+});
+
+test("zellij chrome draws from the same palette as the Pi theme", () => {
+  const palette = archeofuturismPalette();
   const themeBlock = read(CONFIG).match(/themes\s*\{[\s\S]*\n\}/);
   assert.ok(themeBlock, "expected an inline themes block");
 
