@@ -72,6 +72,35 @@ test("every zellij chrome surface stays on the black archeofuturist base", () =>
   }
 });
 
+/**
+ * `base` is the line color of a pane frame. A frame is a large, always-on
+ * shape, so a neon value there turns the border of every pane into a glowing
+ * outline. Focus is still legible well below this cap.
+ */
+const MAX_FRAME_LINE_LUMINANCE = 0.35;
+
+test("pane frames stay dark instead of outlining the session in neon", () => {
+  const theme = read(THEME);
+  for (const component of ["frame_selected", "frame_highlight"]) {
+    const match = theme.match(new RegExp(`${component}\\s*\\{\\s*base\\s+"(#[0-9A-Fa-f]{6})"`));
+    assert.ok(match, `theme must define ${component}`);
+    const line = match[1] as string;
+    assert.ok(
+      luminance(line) <= MAX_FRAME_LINE_LUMINANCE,
+      `${component} line ${line} is bright enough to read as a glowing frame`,
+    );
+  }
+});
+
+test("no chrome surface is a bright panel, whatever the component", () => {
+  const theme = read(THEME);
+  const bright = [...theme.matchAll(/background\s+"(#[0-9A-Fa-f]{6})"/g)]
+    .map(([, color]) => color as string)
+    .filter((color) => luminance(color) > MAX_SURFACE_LUMINANCE);
+
+  assert.deepEqual([...new Set(bright)], [], "a fill this light is the glare the user rejected");
+});
+
 test("the selected ribbon reads as a raised surface rather than a flat repaint", () => {
   const backgrounds = backgroundsByComponent(read(THEME));
   const base = backgrounds.get("text_unselected") as string;
