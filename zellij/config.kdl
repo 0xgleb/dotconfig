@@ -285,12 +285,20 @@ load_plugins {
 // the familiar green pill with dark text. Reversing them is what turned the
 // top and bottom bars into glare.
 //
-// Depth comes from three near-black surfaces, never from brightness:
+// The mode panels are arrow-tipped ribbons. Zellij draws each tip as a glyph in
+// the ribbon's own fill color ON TOP of the bar, so the arrow silhouette only
+// exists where those two colors visibly differ. Fills too close to the bar do
+// not make the panels look flat, they erase the arrows entirely.
+//
+// So the bar stays black and the panels lift off it far enough to keep their
+// shape, while landing well under the grey that was rejected as too bright:
 //
 //   #000000  the bar itself -- matches the Ghostty background exactly, so the
 //            edge of zellij does not step between two different blacks
-//   #11182D  an unselected mode panel, the arrow plates on the bar
-//   #292252  the selected panel, sitting one step further forward
+//   #464B6E  an unselected mode panel  (luminance 0.075)
+//   #5A4E96  the selected panel        (luminance 0.098)
+//
+// For reference, zellij's stock grey panel sits near 0.22.
 theme "archeofuturism"
 theme_dark "archeofuturism"
 theme_light "archeofuturism"
@@ -313,23 +321,23 @@ themes {
             emphasis_2 "#7CFFB2"
             emphasis_3 "#FF78C8"
         }
-        // The arrow plates. Their fill has to differ from the bar or the
-        // separators lose their shape and the panels read as missing.
+        // The arrow plates. Their fill is what draws the arrow tips against the
+        // bar, so it has to stay clearly visible or the panels read as missing.
         ribbon_unselected {
-            base "#8EA7C7"
-            background "#11182D"
+            base "#E8F6FF"
+            background "#464B6E"
             emphasis_0 "#FF9E64"
             emphasis_1 "#29E7FF"
             emphasis_2 "#B79CFF"
             emphasis_3 "#FF4FD8"
         }
         ribbon_selected {
-            base "#29E7FF"
-            background "#292252"
-            emphasis_0 "#FF4FD8"
-            emphasis_1 "#FFE66D"
+            base "#E8F6FF"
+            background "#5A4E96"
+            emphasis_0 "#FFE66D"
+            emphasis_1 "#29E7FF"
             emphasis_2 "#7CFFB2"
-            emphasis_3 "#B79CFF"
+            emphasis_3 "#FF4FD8"
         }
         // Frames mark focus with steel rather than neon, so the border around
         // a pane never becomes a glowing outline.

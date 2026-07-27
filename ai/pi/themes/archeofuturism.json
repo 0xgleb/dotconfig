@@ -7,6 +7,8 @@
     "midnight": "#11182D",
     "indigoGlass": "#18143A",
     "selected": "#292252",
+    "panel": "#464B6E",
+    "panelActive": "#5A4E96",
     "cyan": "#29E7FF",
     "cyanSoft": "#86F5FF",
     "magenta": "#FF4FD8",

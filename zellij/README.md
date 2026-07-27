@@ -73,18 +73,30 @@ breakage:
 - **A selected theme with no definition fails silently.** Zellij falls back to
   its built-in default — whose grey ribbon fill looks white — and
   `zellij setup --check` still reports `CONFIG FILE: Well defined`.
-- **A ribbon whose fill equals the bar's fill loses its arrow shape.** The mode
-  panels are drawn as arrow-tipped ribbons; the tips are only visible where the
-  fill differs from the bar behind them. Painting both the same color does not
-  flatten the panels, it erases them.
+- **A mode panel needs real contrast with the bar or its arrow disappears.**
+  Zellij draws each panel as an arrow-tipped ribbon, and renders the tip as a
+  glyph in the panel's *own fill color* on top of the bar:
 
-Depth comes from three near-black surfaces, never from brightness:
+  ```
+  fg=#000000 bg=#464B6E   left tip, cutting into the panel
+  fg=#E8F6FF bg=#464B6E   the label
+  fg=#464B6E bg=#000000   right tip, pointing into the bar
+  ```
 
-| Surface   | Color     | Role                                          |
-| --------- | --------- | --------------------------------------------- |
-| bar       | `#000000` | matches the Ghostty background exactly        |
-| panel     | `#11182D` | an unselected mode panel on the bar           |
-| selected  | `#292252` | the active panel, one step further forward    |
+  That last pair is the entire silhouette. A panel fill close to the bar does
+  not make the panels look flat — it erases their shape. `#11182D` on black is
+  only 1.19:1 and vanishes; the fills below are 2.5:1 and 2.9:1.
+
+The bar stays black while the panels lift just far enough to keep their shape:
+
+| Surface  | Color     | Luminance | Role                                     |
+| -------- | --------- | --------- | ---------------------------------------- |
+| bar      | `#000000` | 0.000     | matches the Ghostty background exactly   |
+| panel    | `#464B6E` | 0.075     | an unselected mode panel                 |
+| selected | `#5A4E96` | 0.098     | the active panel, one step forward       |
+
+Zellij's stock grey panel sits near `0.22` — the brightness that was rejected.
+Panels are capped at `0.14` so they cannot drift back toward it.
 
 `ai/test/zellij-theme.test.ts` pins all of it: the theme must be inline, the bar
 must equal the terminal background, the panels must stay distinguishable from

@@ -20,8 +20,29 @@ const luminance = (hex: string): number => {
   return 0.2126 * channel(1) + 0.7152 * channel(3) + 0.0722 * channel(5);
 };
 
-/** Above this a fill stops reading as a dark surface and starts glaring. */
+/** Above this a broad fill stops reading as a dark surface and starts glaring. */
 const MAX_SURFACE_LUMINANCE = 0.05;
+
+/**
+ * Mode panels are small and must lift off the bar to keep their arrow tips, so
+ * they get more headroom than a broad surface -- but stay far under zellij's
+ * stock grey panel, which sits near 0.22 and was rejected as too bright.
+ */
+const MAX_PANEL_LUMINANCE = 0.14;
+
+/**
+ * Zellij draws each arrow tip as a glyph in the panel's own fill color on top of
+ * the bar. Below roughly this contrast the tip stops being a visible silhouette
+ * and the panels read as missing rather than as dark.
+ */
+const MIN_PANEL_CONTRAST = 2;
+
+const contrast = (a: string, b: string): number => {
+  const [high, low] = [luminance(a), luminance(b)].sort((left, right) => right - left) as [number, number];
+  return (high + 0.05) / (low + 0.05);
+};
+
+const PANELS = ["ribbon_unselected", "ribbon_selected"];
 
 /**
  * `base` is the line color of a pane frame -- a large, always-on shape. A neon
@@ -85,16 +106,25 @@ test("the bar sits on exactly the terminal background, with no step at the edge"
  * ribbon painted in the bar's own color does not merely look flat -- the panels
  * disappear.
  */
-test("mode panels stay visible against the bar instead of dissolving into it", () => {
+test("mode panels keep an arrow silhouette against the bar", () => {
   const bar = styleOf("text_unselected").background;
-  for (const component of ["ribbon_unselected", "ribbon_selected"]) {
+  for (const component of PANELS) {
     const fill = styleOf(component).background;
-    assert.notEqual(
-      fill.toUpperCase(),
-      bar.toUpperCase(),
-      `${component} shares the bar's fill, so its arrow panel has no shape`,
-    );
     assert.ok(luminance(fill) > luminance(bar), `${component} must sit above the bar, not below it`);
+    assert.ok(
+      contrast(fill, bar) >= MIN_PANEL_CONTRAST,
+      `${component} fill ${fill} contrasts the bar only ${contrast(fill, bar).toFixed(2)}:1, so its arrow tips vanish`,
+    );
+  }
+});
+
+test("mode panels stay well under the stock grey that was rejected", () => {
+  for (const component of PANELS) {
+    const fill = styleOf(component).background;
+    assert.ok(
+      luminance(fill) <= MAX_PANEL_LUMINANCE,
+      `${component} fill ${fill} is drifting back toward the bright grey panel`,
+    );
   }
 });
 
@@ -106,12 +136,14 @@ test("the panels form a depth ramp rather than one flat repaint", () => {
   assert.ok(bar < unselected && unselected < selected, "expected bar < unselected panel < selected panel");
 });
 
-test("no chrome surface is a bright panel, whatever the component", () => {
-  const bright = [...read(CONFIG).matchAll(/background\s+"(#[0-9A-Fa-f]{6})"/g)]
-    .map(([, color]) => color as string)
-    .filter((color) => luminance(color) > MAX_SURFACE_LUMINANCE);
+test("no broad chrome surface is a bright panel", () => {
+  const panelFills = new Set(PANELS.map((component) => styleOf(component).background.toUpperCase()));
+  const bright = [...componentStyles(read(CONFIG))]
+    .filter(([component]) => !PANELS.includes(component))
+    .map(([, { background }]) => background)
+    .filter((color) => !panelFills.has(color.toUpperCase()) && luminance(color) > MAX_SURFACE_LUMINANCE);
 
-  assert.deepEqual([...new Set(bright)], [], "a fill this light is the glare the user rejected");
+  assert.deepEqual([...new Set(bright)], [], "a broad fill this light is the glare the user rejected");
 });
 
 test("pane frames stay dark instead of outlining the session in neon", () => {
