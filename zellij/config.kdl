@@ -295,10 +295,16 @@ load_plugins {
 //
 //   #000000  the bar itself -- matches the Ghostty background exactly, so the
 //            edge of zellij does not step between two different blacks
-//   #464B6E  an unselected mode panel  (luminance 0.075)
-//   #5A4E96  the selected panel        (luminance 0.098)
+//   #6B3172  an unselected mode panel  (luminance 0.065, contrast 2.3)
+//   #983C8D  the selected panel        (luminance 0.118, contrast 3.4)
+//   #8E3480  a selection highlight     (luminance 0.101, contrast 3.0)
 //
 // For reference, zellij's stock grey panel sits near 0.22.
+//
+// text_selected is NOT just a UI style: zellij-server/src/panes/grid.rs uses
+// text_selected.background and .base to paint mouse selections inside terminal
+// panes. Setting its background to the bar color makes selected text render
+// exactly like unselected text, so selections become invisible.
 theme "archeofuturism"
 theme_dark "archeofuturism"
 theme_light "archeofuturism"
@@ -313,9 +319,10 @@ themes {
             emphasis_2 "#7CFFB2"
             emphasis_3 "#FF4FD8"
         }
+        // Mouse selections inside terminal panes are painted from this pair.
         text_selected {
             base "#E8F6FF"
-            background "#000000"
+            background "#8E3480"
             emphasis_0 "#FFE66D"
             emphasis_1 "#86F5FF"
             emphasis_2 "#7CFFB2"
@@ -325,7 +332,7 @@ themes {
         // bar, so it has to stay clearly visible or the panels read as missing.
         ribbon_unselected {
             base "#E8F6FF"
-            background "#464B6E"
+            background "#6B3172"
             emphasis_0 "#FF9E64"
             emphasis_1 "#29E7FF"
             emphasis_2 "#B79CFF"
@@ -333,7 +340,7 @@ themes {
         }
         ribbon_selected {
             base "#E8F6FF"
-            background "#5A4E96"
+            background "#983C8D"
             emphasis_0 "#FFE66D"
             emphasis_1 "#29E7FF"
             emphasis_2 "#7CFFB2"
@@ -367,7 +374,7 @@ themes {
         }
         table_cell_selected {
             base "#E8F6FF"
-            background "#292252"
+            background "#8E3480"
             emphasis_0 "#FF9E64"
             emphasis_1 "#29E7FF"
             emphasis_2 "#7CFFB2"
@@ -383,7 +390,7 @@ themes {
         }
         list_selected {
             base "#E8F6FF"
-            background "#292252"
+            background "#8E3480"
             emphasis_0 "#FF9E64"
             emphasis_1 "#29E7FF"
             emphasis_2 "#7CFFB2"

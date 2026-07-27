@@ -87,16 +87,22 @@ breakage:
   not make the panels look flat — it erases their shape. `#11182D` on black is
   only 1.19:1 and vanishes; the fills below are 2.5:1 and 2.9:1.
 
-The bar stays black while the panels lift just far enough to keep their shape:
+- **`text_selected` is not just a UI style.** `zellij-server/src/panes/grid.rs`
+  paints mouse selections inside terminal panes from `text_selected.background`
+  and `.base`. Giving it the bar's own background makes selected text render
+  identically to the text around it, so selections become invisible.
 
-| Surface  | Color     | Luminance | Role                                     |
-| -------- | --------- | --------- | ---------------------------------------- |
-| bar      | `#000000` | 0.000     | matches the Ghostty background exactly   |
-| panel    | `#464B6E` | 0.075     | an unselected mode panel                 |
-| selected | `#5A4E96` | 0.098     | the active panel, one step forward       |
+The bar stays black while the highlights lift just far enough to be seen:
+
+| Surface   | Color     | Luminance | Contrast | Role                                   |
+| --------- | --------- | --------- | -------- | -------------------------------------- |
+| bar       | `#000000` | 0.000     | —        | matches the Ghostty background exactly |
+| panel     | `#6B3172` | 0.065     | 2.3:1    | an unselected mode panel               |
+| selected  | `#983C8D` | 0.118     | 3.4:1    | the active panel, one step forward     |
+| selection | `#8E3480` | 0.101     | 3.0:1    | selected text, and overlay selections  |
 
 Zellij's stock grey panel sits near `0.22` — the brightness that was rejected.
-Panels are capped at `0.14` so they cannot drift back toward it.
+Highlights are capped at `0.14` so they cannot drift back toward it.
 
 `ai/test/zellij-theme.test.ts` pins all of it: the theme must be inline, the bar
 must equal the terminal background, the panels must stay distinguishable from

@@ -24,23 +24,33 @@ const luminance = (hex: string): number => {
 const MAX_SURFACE_LUMINANCE = 0.05;
 
 /**
- * Mode panels are small and must lift off the bar to keep their arrow tips, so
- * they get more headroom than a broad surface -- but stay far under zellij's
- * stock grey panel, which sits near 0.22 and was rejected as too bright.
+ * Highlights are small and must lift off the bar to be seen at all, so they get
+ * more headroom than a broad surface -- but stay far under zellij's stock grey
+ * panel, which sits near 0.22 and was rejected as too bright.
  */
-const MAX_PANEL_LUMINANCE = 0.14;
+const MAX_HIGHLIGHT_LUMINANCE = 0.14;
 
 /**
- * Zellij draws each arrow tip as a glyph in the panel's own fill color on top of
- * the bar. Below roughly this contrast the tip stops being a visible silhouette
- * and the panels read as missing rather than as dark.
+ * Below roughly this contrast a highlight stops being visible against the bar.
+ * For mode panels that means their arrow tips disappear; for `text_selected` it
+ * means a mouse selection is indistinguishable from unselected text.
  */
-const MIN_PANEL_CONTRAST = 2;
+const MIN_HIGHLIGHT_CONTRAST = 2;
 
 const contrast = (a: string, b: string): number => {
   const [high, low] = [luminance(a), luminance(b)].sort((left, right) => right - left) as [number, number];
   return (high + 0.05) / (low + 0.05);
 };
+
+/**
+ * Surfaces that exist to mark something out. Everything else is broad chrome and
+ * has to stay near-black.
+ *
+ * `text_selected` belongs here because it is not only a UI style: zellij paints
+ * mouse selections inside terminal panes from it
+ * (`zellij-server/src/panes/grid.rs`).
+ */
+const HIGHLIGHTS = ["ribbon_unselected", "ribbon_selected", "text_selected", "table_cell_selected", "list_selected"];
 
 const PANELS = ["ribbon_unselected", "ribbon_selected"];
 
@@ -106,23 +116,43 @@ test("the bar sits on exactly the terminal background, with no step at the edge"
  * ribbon painted in the bar's own color does not merely look flat -- the panels
  * disappear.
  */
-test("mode panels keep an arrow silhouette against the bar", () => {
+test("every highlight is actually visible against the bar", () => {
   const bar = styleOf("text_unselected").background;
-  for (const component of PANELS) {
+  for (const component of HIGHLIGHTS) {
     const fill = styleOf(component).background;
     assert.ok(luminance(fill) > luminance(bar), `${component} must sit above the bar, not below it`);
     assert.ok(
-      contrast(fill, bar) >= MIN_PANEL_CONTRAST,
-      `${component} fill ${fill} contrasts the bar only ${contrast(fill, bar).toFixed(2)}:1, so its arrow tips vanish`,
+      contrast(fill, bar) >= MIN_HIGHLIGHT_CONTRAST,
+      `${component} fill ${fill} contrasts the bar only ${contrast(fill, bar).toFixed(2)}:1, so it cannot be seen`,
     );
   }
 });
 
-test("mode panels stay well under the stock grey that was rejected", () => {
-  for (const component of PANELS) {
+/**
+ * The regression that made selected text unreadable: `text_selected` was given
+ * the bar's own background, so a selection rendered identically to the text
+ * around it. Selected text must also stay legible against its own highlight.
+ */
+test("selected text is distinguishable from unselected text and stays readable", () => {
+  const bar = styleOf("text_unselected").background;
+  const selection = styleOf("text_selected");
+
+  assert.notEqual(
+    selection.background.toUpperCase(),
+    bar.toUpperCase(),
+    "selected text painted on the bar's own background is invisible",
+  );
+  assert.ok(
+    contrast(selection.base, selection.background) >= 4.5,
+    `selected text ${selection.base} on ${selection.background} is only ${contrast(selection.base, selection.background).toFixed(2)}:1`,
+  );
+});
+
+test("highlights stay well under the stock grey that was rejected", () => {
+  for (const component of HIGHLIGHTS) {
     const fill = styleOf(component).background;
     assert.ok(
-      luminance(fill) <= MAX_PANEL_LUMINANCE,
+      luminance(fill) <= MAX_HIGHLIGHT_LUMINANCE,
       `${component} fill ${fill} is drifting back toward the bright grey panel`,
     );
   }
@@ -137,11 +167,10 @@ test("the panels form a depth ramp rather than one flat repaint", () => {
 });
 
 test("no broad chrome surface is a bright panel", () => {
-  const panelFills = new Set(PANELS.map((component) => styleOf(component).background.toUpperCase()));
   const bright = [...componentStyles(read(CONFIG))]
-    .filter(([component]) => !PANELS.includes(component))
-    .map(([, { background }]) => background)
-    .filter((color) => !panelFills.has(color.toUpperCase()) && luminance(color) > MAX_SURFACE_LUMINANCE);
+    .filter(([component]) => !HIGHLIGHTS.includes(component))
+    .filter(([, { background }]) => luminance(background) > MAX_SURFACE_LUMINANCE)
+    .map(([component, { background }]) => `${component}=${background}`);
 
   assert.deepEqual([...new Set(bright)], [], "a broad fill this light is the glare the user rejected");
 });
