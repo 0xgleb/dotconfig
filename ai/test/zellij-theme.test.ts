@@ -6,22 +6,12 @@ const path = (relative: string): URL => new URL(relative, import.meta.url);
 const read = (relative: string): string => readFileSync(path(relative), "utf8");
 
 const CONFIG = "../../zellij/config.kdl";
-const THEME = "../../zellij/themes/archeofuturism.kdl";
+const GHOSTTY = "../../ghostty/config.ghostty";
 
-/**
- * Zellij resolves `theme "name"` against its themes directory and silently
- * falls back to the built-in default when the definition is missing. That
- * default paints the tab bar and status bar with a light grey fill, which is
- * the "retina burning white" chrome the user rejected. A reference without a
- * definition is therefore a visual regression, not a harmless dangling name.
- */
-const themeNameFrom = (config: string, key: string): string => {
-  const match = config.match(new RegExp(`^${key}\\s+"([^"]+)"`, "m"));
-  assert.ok(match, `zellij config must set ${key}`);
-  return match[1] as string;
-};
+/** Ghostty's `iTerm2 Default` theme, which the shell config selects by name. */
+const ITERM2_DEFAULT_BACKGROUND = "#000000";
 
-/** Relative luminance per WCAG; zellij chrome must stay far below any light surface. */
+/** Relative luminance per WCAG. */
 const luminance = (hex: string): number => {
   const channel = (offset: number): number => {
     const srgb = Number.parseInt(hex.slice(offset, offset + 2), 16) / 255;
@@ -30,84 +20,108 @@ const luminance = (hex: string): number => {
   return 0.2126 * channel(1) + 0.7152 * channel(3) + 0.0722 * channel(5);
 };
 
+/** Above this a fill stops reading as a dark surface and starts glaring. */
 const MAX_SURFACE_LUMINANCE = 0.05;
 
-const backgroundsByComponent = (theme: string): ReadonlyMap<string, string> => {
-  const found = new Map<string, string>();
-  for (const [, component, background] of theme.matchAll(
-    /(\w+)\s*\{\s*base\s+"#[0-9A-Fa-f]{6}"\s*\n\s*background\s+"(#[0-9A-Fa-f]{6})"/g,
+/**
+ * `base` is the line color of a pane frame -- a large, always-on shape. A neon
+ * value there outlines every pane in a glow. Focus stays legible well below.
+ */
+const MAX_FRAME_LINE_LUMINANCE = 0.35;
+
+const componentStyles = (config: string): ReadonlyMap<string, { base: string; background: string }> => {
+  const found = new Map<string, { base: string; background: string }>();
+  for (const [, component, base, background] of config.matchAll(
+    /(\w+)\s*\{\s*base\s+"(#[0-9A-Fa-f]{6})"\s*\n\s*background\s+"(#[0-9A-Fa-f]{6})"/g,
   )) {
-    found.set(component as string, background as string);
+    found.set(component as string, { base: base as string, background: background as string });
   }
   return found;
 };
 
-test("the zellij theme selected by config actually exists on disk", () => {
+const styleOf = (component: string): { base: string; background: string } => {
+  const style = componentStyles(read(CONFIG)).get(component);
+  assert.ok(style, `zellij config must define ${component}`);
+  return style;
+};
+
+/**
+ * Zellij live-reloads config.kdl, so a theme defined inline reaches sessions
+ * that are already attached. A theme in themes/ only loads at session start,
+ * and a selected-but-missing one silently falls back to zellij's light default
+ * while `zellij setup --check` still reports the config well defined. Keeping
+ * the definition here is what makes styling edits land without a restart.
+ */
+test("the selected theme is defined inline so running sessions pick it up", () => {
   const config = read(CONFIG);
-  const selected = themeNameFrom(config, "theme");
+  const selected = config.match(/^theme\s+"([^"]+)"/m);
+  assert.ok(selected, "zellij config must select a theme");
 
-  assert.equal(selected, "archeofuturism");
-  assert.equal(themeNameFrom(config, "theme_dark"), selected);
-  assert.equal(themeNameFrom(config, "theme_light"), selected);
-
+  const name = selected[1] as string;
+  assert.match(config, new RegExp(`themes\\s*\\{[\\s\\S]*?\\b${name}\\s*\\{`), `${name} must be defined in config.kdl`);
   assert.ok(
-    existsSync(path(THEME)),
-    `zellij/config.kdl selects "${selected}" but zellij/themes/${selected}.kdl is missing, so zellij falls back to its light default chrome`,
+    !existsSync(path("../../zellij/themes")),
+    "a themes/ directory would compete with the inline definition and only load at session start",
   );
-  assert.match(read(THEME), new RegExp(`^\\s*${selected}\\s*\\{`, "m"));
 });
 
-test("every zellij chrome surface stays on the black archeofuturist base", () => {
-  const backgrounds = backgroundsByComponent(read(THEME));
+test("the bar sits on exactly the terminal background, with no step at the edge", () => {
+  const ghostty = read(GHOSTTY);
+  const explicit = ghostty.match(/^background\s*=\s*(#[0-9A-Fa-f]{6})/m);
+  const terminal = explicit ? (explicit[1] as string) : ITERM2_DEFAULT_BACKGROUND;
 
-  for (const component of ["text_unselected", "text_selected", "ribbon_unselected", "ribbon_selected"]) {
-    assert.ok(backgrounds.has(component), `theme must define ${component}`);
-  }
+  if (!explicit) assert.match(ghostty, /^theme\s*=\s*iTerm2 Default$/m, "terminal background assumption changed");
 
-  for (const [component, background] of backgrounds) {
-    assert.ok(
-      luminance(background) <= MAX_SURFACE_LUMINANCE,
-      `${component} background ${background} is too light for the top and bottom chrome`,
-    );
-  }
+  assert.equal(
+    styleOf("text_unselected").background.toUpperCase(),
+    terminal.toUpperCase(),
+    "a bar fill that differs from the terminal makes the edge of zellij step between two blacks",
+  );
 });
 
 /**
- * `base` is the line color of a pane frame. A frame is a large, always-on
- * shape, so a neon value there turns the border of every pane into a glowing
- * outline. Focus is still legible well below this cap.
+ * The status bar draws its mode panels as arrow-tipped ribbons. The arrow shape
+ * is only visible where the ribbon fill differs from the bar behind it, so a
+ * ribbon painted in the bar's own color does not merely look flat -- the panels
+ * disappear.
  */
-const MAX_FRAME_LINE_LUMINANCE = 0.35;
-
-test("pane frames stay dark instead of outlining the session in neon", () => {
-  const theme = read(THEME);
-  for (const component of ["frame_selected", "frame_highlight"]) {
-    const match = theme.match(new RegExp(`${component}\\s*\\{\\s*base\\s+"(#[0-9A-Fa-f]{6})"`));
-    assert.ok(match, `theme must define ${component}`);
-    const line = match[1] as string;
-    assert.ok(
-      luminance(line) <= MAX_FRAME_LINE_LUMINANCE,
-      `${component} line ${line} is bright enough to read as a glowing frame`,
+test("mode panels stay visible against the bar instead of dissolving into it", () => {
+  const bar = styleOf("text_unselected").background;
+  for (const component of ["ribbon_unselected", "ribbon_selected"]) {
+    const fill = styleOf(component).background;
+    assert.notEqual(
+      fill.toUpperCase(),
+      bar.toUpperCase(),
+      `${component} shares the bar's fill, so its arrow panel has no shape`,
     );
+    assert.ok(luminance(fill) > luminance(bar), `${component} must sit above the bar, not below it`);
   }
 });
 
+test("the panels form a depth ramp rather than one flat repaint", () => {
+  const bar = luminance(styleOf("text_unselected").background);
+  const unselected = luminance(styleOf("ribbon_unselected").background);
+  const selected = luminance(styleOf("ribbon_selected").background);
+
+  assert.ok(bar < unselected && unselected < selected, "expected bar < unselected panel < selected panel");
+});
+
 test("no chrome surface is a bright panel, whatever the component", () => {
-  const theme = read(THEME);
-  const bright = [...theme.matchAll(/background\s+"(#[0-9A-Fa-f]{6})"/g)]
+  const bright = [...read(CONFIG).matchAll(/background\s+"(#[0-9A-Fa-f]{6})"/g)]
     .map(([, color]) => color as string)
     .filter((color) => luminance(color) > MAX_SURFACE_LUMINANCE);
 
   assert.deepEqual([...new Set(bright)], [], "a fill this light is the glare the user rejected");
 });
 
-test("the selected ribbon reads as a raised surface rather than a flat repaint", () => {
-  const backgrounds = backgroundsByComponent(read(THEME));
-  const base = backgrounds.get("text_unselected") as string;
-  const selected = backgrounds.get("ribbon_selected") as string;
-
-  assert.notEqual(selected, base, "selected chrome must be distinguishable from the bar it sits on");
-  assert.ok(luminance(selected) > luminance(base), "the selected ribbon should sit above the bar, not below it");
+test("pane frames stay dark instead of outlining the session in neon", () => {
+  for (const component of ["frame_selected", "frame_highlight"]) {
+    const line = styleOf(component).base;
+    assert.ok(
+      luminance(line) <= MAX_FRAME_LINE_LUMINANCE,
+      `${component} line ${line} is bright enough to read as a glowing frame`,
+    );
+  }
 });
 
 test("zellij chrome draws from the same palette as the Pi theme", () => {
@@ -121,8 +135,13 @@ test("zellij chrome draws from the same palette as the Pi theme", () => {
       .filter((value) => value.startsWith("#"))
       .map((value) => value.toUpperCase()),
   );
+  // The terminal's own background is shared ground between the two, not drift.
+  palette.add(ITERM2_DEFAULT_BACKGROUND);
 
-  const foreign = [...read(THEME).matchAll(/"(#[0-9A-Fa-f]{6})"/g)]
+  const themeBlock = read(CONFIG).match(/themes\s*\{[\s\S]*\n\}/);
+  assert.ok(themeBlock, "expected an inline themes block");
+
+  const foreign = [...(themeBlock[0] as string).matchAll(/"(#[0-9A-Fa-f]{6})"/g)]
     .map(([, color]) => (color as string).toUpperCase())
     .filter((color) => !palette.has(color));
 
@@ -133,8 +152,9 @@ test("zellij chrome draws from the same palette as the Pi theme", () => {
   );
 });
 
-test("zellij keeps the requested rounded pane-frame treatment", () => {
+test("zellij keeps the arrow separators and the rounded pane-frame treatment", () => {
   const config = read(CONFIG);
   assert.match(config, /^pane_frames true/m);
   assert.match(config, /ui \{[\s\S]*?pane_frames \{[\s\S]*?rounded_corners true/);
+  assert.doesNotMatch(config, /^simplified_ui true/m, "simplified_ui strips the arrow separators from the mode panels");
 });
