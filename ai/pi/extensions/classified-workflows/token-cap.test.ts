@@ -41,6 +41,19 @@ test("workflow child fails before dispatch when the request payload already cons
   );
 });
 
+test("Codex can opt into process-measured enforcement when its endpoint rejects output caps", () => {
+  const payload = {
+    model: "gpt-5.6-sol",
+    input: [],
+    instructions: "bounded review",
+    stream: true,
+  };
+  const capped = capProviderOutputTokens(payload, 10_000, { allowProcessMeasuredOutput: true });
+  assert.equal(capped.enforcement, "process-measured");
+  assert.equal(capped.payload, payload);
+  assert.ok(capped.outputTokenLimit > 0);
+});
+
 test("workflow child fails closed when the provider payload has no recognized output-token field", () => {
   assert.throws(() => capProviderOutputTokens({ model: "unknown", input: [] }, 10_000), /output-token field/);
 });

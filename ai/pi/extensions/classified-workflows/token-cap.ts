@@ -9,6 +9,11 @@ export interface CappedProviderPayload {
   readonly payload: Readonly<Record<string, unknown>>;
   readonly estimatedPromptTokens: number;
   readonly outputTokenLimit: number;
+  readonly enforcement: "provider" | "process-measured";
+}
+
+export interface ProviderTokenCapOptions {
+  readonly allowProcessMeasuredOutput?: boolean;
 }
 
 const isRecord = (value: unknown): value is Readonly<Record<string, unknown>> =>
@@ -23,7 +28,11 @@ export const workflowChildTokenLimit = (value: string | undefined): number | und
   return parsed;
 };
 
-export const capProviderOutputTokens = (payload: unknown, tokenLimit: number): CappedProviderPayload => {
+export const capProviderOutputTokens = (
+  payload: unknown,
+  tokenLimit: number,
+  options: ProviderTokenCapOptions = {},
+): CappedProviderPayload => {
   if (!isRecord(payload)) throw new Error("Workflow child provider payload is malformed");
   if (!Number.isSafeInteger(tokenLimit) || tokenLimit < 1) {
     throw new Error("Workflow child token limit is malformed");
@@ -37,7 +46,17 @@ export const capProviderOutputTokens = (payload: unknown, tokenLimit: number): C
     );
   }
   const field = OUTPUT_TOKEN_FIELDS.find((candidate) => Object.hasOwn(payload, candidate));
-  if (!field) throw new Error("Workflow child provider payload has no recognized output-token field");
+  if (!field) {
+    if (!options.allowProcessMeasuredOutput) {
+      throw new Error("Workflow child provider payload has no recognized output-token field");
+    }
+    return {
+      payload,
+      estimatedPromptTokens,
+      outputTokenLimit: availableOutputTokens,
+      enforcement: "process-measured",
+    };
+  }
   const configured = payload[field];
   if (typeof configured !== "number" || !Number.isSafeInteger(configured) || configured < 1) {
     throw new Error(`Workflow child provider payload ${field} is malformed`);
@@ -47,5 +66,6 @@ export const capProviderOutputTokens = (payload: unknown, tokenLimit: number): C
     payload: { ...payload, [field]: outputTokenLimit },
     estimatedPromptTokens,
     outputTokenLimit,
+    enforcement: "provider",
   };
 };
