@@ -182,6 +182,27 @@ test("classifier prompt applies loaded policy and the newest same-priority human
   assert.match(prompt, /do not independently grant authority/i);
 });
 
+test("classifier prompt treats extension-computed Git boundaries as authoritative", () => {
+  const prompt = buildClassifierPrompt({
+    boundary: "action",
+    intent: ["Move the cross-repository handover outside every covered repository"],
+    projectInstructions: "Keep handovers outside every Git repository in scope.",
+    runtimeProjectContext: {
+      cwd: "/workspace/st0x",
+      gitToplevel: "/workspace/st0x",
+      cwdRelation: "repository-root",
+    },
+    subject: {
+      toolName: "bash",
+      input: { command: "cp /workspace/st0x/.tmp/handoff.md /workspace/.tmp/handoffs/handoff.md" },
+    },
+  });
+  assert.match(prompt, /verified runtime project context.*authoritative/is);
+  assert.match(prompt, /path equal to or beneath gitToplevel is inside that repository/i);
+  assert.match(prompt, /never describe it as a non-repository workspace root/i);
+  assert.match(prompt, /"gitToplevel": "\/workspace\/st0x"/);
+});
+
 test("classifier prompt resolves human continuation against durable active work without magic reauthorization", () => {
   const prompt = buildClassifierPrompt({
     boundary: "action",

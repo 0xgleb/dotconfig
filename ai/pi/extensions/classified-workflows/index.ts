@@ -88,6 +88,7 @@ import {
 } from "./token-cap.ts";
 import { activeSkillProcedures } from "./skill-context.ts";
 import { conversationIntentEvidence } from "./intent-context.ts";
+import { runtimeProjectContext } from "./project-context.ts";
 import { currentReadDisprovesDuplicateBlock } from "./stale-duplicate.ts";
 import {
   appendWorkflowAudit,
@@ -561,7 +562,7 @@ const WorkflowParameters = Type.Object({
 });
 
 export default function classifiedWorkflows(pi: ExtensionAPI): void {
-  registerRuntimeVersion(pi, "classified-workflows", "2026.07.23.76");
+  registerRuntimeVersion(pi, "classified-workflows", "2026.07.23.77");
   const childTokenLimit = workflowChildTokenLimit(process.env[WORKFLOW_CHILD_TOKEN_LIMIT_ENV]);
   let childUsageTokens = 0;
   if (childTokenLimit !== undefined) {
@@ -601,10 +602,15 @@ export default function classifiedWorkflows(pi: ExtensionAPI): void {
     const subject = isRecord(request.subject)
       ? String(request.subject.toolName ?? request.subject.task ?? "policy boundary").slice(0, 80)
       : "policy boundary";
-    return classify(request, ctx, signal, (active) => {
-      const event: ClassifierActivityEvent = { active, boundary: request.boundary, subject };
-      pi.events.emit(ACTIVITY_PHASE_EVENT, event);
-    });
+    return classify(
+      { ...request, runtimeProjectContext: runtimeProjectContext(ctx.cwd) },
+      ctx,
+      signal,
+      (active) => {
+        const event: ClassifierActivityEvent = { active, boundary: request.boundary, subject };
+        pi.events.emit(ACTIVITY_PHASE_EVENT, event);
+      },
+    );
   };
 
   const formatDuration = (startedAt: number, finishedAt = Date.now()): string => {
