@@ -1,6 +1,6 @@
-import { freemem } from "node:os";
 import path from "node:path";
 import vm from "node:vm";
+import { availableMemoryBytes as systemAvailableMemoryBytes } from "../shared/memory-capacity.ts";
 
 export type Boundary = "spawn" | "action" | "return" | "tool-result";
 
@@ -485,7 +485,7 @@ export async function runWorkflowScript(
       if (encodedSchema.length > 16_000) throw new Error("agent schema may contain at most 16,000 characters");
     }
     if (agentCount >= limits.maxAgents) throw new Error(`Workflow agent limit exceeded (${limits.maxAgents})`);
-    const availableMemory = dependencies.availableMemoryBytes?.() ?? freemem();
+    const availableMemory = dependencies.availableMemoryBytes?.() ?? Number(systemAvailableMemoryBytes());
     const requiredMemory = MIN_WORKFLOW_FREE_MEMORY_BYTES + activeAgents * WORKFLOW_AGENT_MEMORY_RESERVATION_BYTES;
     if (!Number.isFinite(availableMemory) || availableMemory < requiredMemory) {
       const availableGiB = Number.isFinite(availableMemory) ? (availableMemory / 1024 ** 3).toFixed(1) : "unknown";

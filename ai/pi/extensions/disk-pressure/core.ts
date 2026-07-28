@@ -1,6 +1,8 @@
 import { globSync, lstatSync, unlinkSync } from "node:fs";
 import { basename, dirname, join, resolve } from "node:path";
 
+export { parseMemoryPressureCapacity } from "../shared/memory-capacity.ts";
+
 const GIB = 1024n ** 3n;
 const PI_LOG_RETENTION_MS = 24 * 60 * 60 * 1_000;
 const RESULT_LINK = /^result(?:-\d+)?$/;
@@ -20,28 +22,6 @@ export interface ProcessRssAggregate {
   readonly count: number;
   readonly rssMiB: number;
 }
-
-export interface MemoryPressureCapacity {
-  readonly totalBytes: bigint;
-  readonly availablePercent: number;
-  readonly availableBytes: bigint;
-}
-
-export const parseMemoryPressureCapacity = (output: string): MemoryPressureCapacity | undefined => {
-  const totalMatch = output.match(/system has\s+(\d+)\s+\(/i);
-  const percentMatch = output.match(/memory free percentage:\s*(\d+)%/i);
-  if (!totalMatch?.[1] || !percentMatch?.[1]) return undefined;
-  const totalBytes = BigInt(totalMatch[1]);
-  const availablePercent = Number(percentMatch[1]);
-  if (totalBytes <= 0n || !Number.isSafeInteger(availablePercent) || availablePercent < 0 || availablePercent > 100) {
-    return undefined;
-  }
-  return {
-    totalBytes,
-    availablePercent,
-    availableBytes: (totalBytes * BigInt(availablePercent)) / 100n,
-  };
-};
 
 export const aggregateProcessRss = (output: string, limit = 8): ProcessRssAggregate[] => {
   const aggregates = new Map<string, { count: number; rssKiB: number }>();

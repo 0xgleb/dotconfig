@@ -3,12 +3,14 @@ import { readFileSync } from "node:fs";
 import test from "node:test";
 
 const source = readFileSync(new URL("./index.ts", import.meta.url), "utf8");
+const capacitySource = readFileSync(new URL("../shared/memory-capacity.ts", import.meta.url), "utf8");
 
-test("macOS capacity uses the pressure-aware available-memory query instead of raw free pages", () => {
-  assert.match(source, /memory_pressure", \["-Q"\]/);
-  assert.match(source, /parseMemoryPressureCapacity\(result\.stdout\)/);
+test("macOS capacity uses the shared pressure-aware provider instead of raw free pages", () => {
+  assert.match(source, /import \{ availableMemoryBytes \} from "\.\.\/shared\/memory-capacity\.ts"/);
   assert.match(source, /availableMemoryBytes\(\)/);
-  assert.doesNotMatch(source, /const freeMemoryBytes/);
+  assert.doesNotMatch(source, /\bfreemem\b/);
+  assert.match(capacitySource, /memory_pressure", \["-Q"\]/);
+  assert.match(capacitySource, /parseMemoryPressureCapacity\(result\.stdout\)/);
   assert.match(source, /only.*available.*reserve/is);
 });
 

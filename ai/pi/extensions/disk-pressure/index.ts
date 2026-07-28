@@ -1,10 +1,11 @@
 import { spawnSync } from "node:child_process";
 import { statfsSync } from "node:fs";
-import { freemem, homedir, tmpdir } from "node:os";
+import { homedir, tmpdir } from "node:os";
 import { join } from "node:path";
 import type { ExtensionAPI, ExtensionContext } from "@earendil-works/pi-coding-agent";
 import { isToolCallEventType } from "@earendil-works/pi-coding-agent";
 import { Effect, Either } from "effect";
+import { availableMemoryBytes } from "../shared/memory-capacity.ts";
 import { registerRuntimeVersion } from "../shared/runtime-version.ts";
 import { claimResourceIncident, clearResourceIncident } from "./incident.ts";
 
@@ -18,7 +19,6 @@ import {
   cleanupStalePiTempLogs,
   formatFreeBytes,
   isExpensiveCommand,
-  parseMemoryPressureCapacity,
   resourcePressureDecision,
   resultSymlinkNames,
 } from "./core.ts";
@@ -51,21 +51,6 @@ const updateStatus: (ctx: ExtensionContext, diskAvailable: bigint, memoryAvailab
   );
 };
 
-const availableMemoryBytes = (): bigint => {
-  if (process.platform !== "darwin") return BigInt(freemem());
-  const result = spawnSync("/usr/bin/memory_pressure", ["-Q"], {
-    encoding: "utf8",
-    maxBuffer: 16 * 1_024,
-    timeout: 5_000,
-  });
-  if (result.status !== 0 || typeof result.stdout !== "string") {
-    throw new Error("macOS available-memory probe failed");
-  }
-  const capacity = parseMemoryPressureCapacity(result.stdout);
-  if (!capacity) throw new Error("macOS available-memory probe returned an unknown format");
-  return capacity.availableBytes;
-};
-
 const processAggregateText = (): string => {
   const result = spawnSync("ps", ["-axo", "rss=,comm="], {
     encoding: "utf8",
@@ -80,7 +65,7 @@ const processAggregateText = (): string => {
 };
 
 export default (pi: ExtensionAPI) => {
-  registerRuntimeVersion(pi, "resource-pressure", "2026.07.23.6");
+  registerRuntimeVersion(pi, "resource-pressure", "2026.07.23.7");
   const pendingBuilds = new Map<string, PendingBuild>();
 
   const reconcileMemoryIncident = (ctx: ExtensionContext, memoryAvailable: bigint): void => {
