@@ -1,5 +1,5 @@
 import { spawnSync } from "node:child_process";
-import { relative, resolve, sep } from "node:path";
+import { dirname, isAbsolute, relative, resolve, sep } from "node:path";
 
 export interface RuntimeProjectContext {
   cwd: string;
@@ -41,4 +41,20 @@ export const runtimeProjectContext = (cwd: string): RuntimeProjectContext => {
   });
   const gitToplevel = result.status === 0 ? result.stdout.trim() : undefined;
   return describeRuntimeProjectContext(resolvedCwd, gitToplevel || undefined);
+};
+
+const isAtOrWithin = (root: string, candidate: string): boolean => {
+  const child = relative(resolve(root), resolve(candidate));
+  return child === "" || (child !== ".." && !child.startsWith(`..${sep}`) && !isAbsolute(child));
+};
+
+export const nestedRepositoryRootForPath = (
+  cwd: string,
+  candidate: string,
+  gitToplevelForPath: (path: string) => string | undefined = (path) => runtimeProjectContext(path).gitToplevel,
+): string | undefined => {
+  const resolvedCwd = resolve(cwd);
+  const resolvedCandidate = resolve(resolvedCwd, candidate);
+  const repositoryRoot = gitToplevelForPath(resolvedCandidate) ?? gitToplevelForPath(dirname(resolvedCandidate));
+  return repositoryRoot && isAtOrWithin(resolvedCwd, repositoryRoot) ? resolve(repositoryRoot) : undefined;
 };

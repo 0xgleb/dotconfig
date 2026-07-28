@@ -88,7 +88,7 @@ import {
 } from "./token-cap.ts";
 import { activeSkillProcedures } from "./skill-context.ts";
 import { conversationIntentEvidence } from "./intent-context.ts";
-import { runtimeProjectContext } from "./project-context.ts";
+import { nestedRepositoryRootForPath, runtimeProjectContext } from "./project-context.ts";
 import { currentReadDisprovesDuplicateBlock } from "./stale-duplicate.ts";
 import {
   appendWorkflowAudit,
@@ -562,7 +562,7 @@ const WorkflowParameters = Type.Object({
 });
 
 export default function classifiedWorkflows(pi: ExtensionAPI): void {
-  registerRuntimeVersion(pi, "classified-workflows", "2026.07.23.78");
+  registerRuntimeVersion(pi, "classified-workflows", "2026.07.23.79");
   const childTokenLimit = workflowChildTokenLimit(process.env[WORKFLOW_CHILD_TOKEN_LIMIT_ENV]);
   let childUsageTokens = 0;
   if (childTokenLimit !== undefined) {
@@ -1303,15 +1303,15 @@ export default function classifiedWorkflows(pi: ExtensionAPI): void {
           isError: true,
         };
       }
-      const canonical = canonicalScratchArtifactPath(ctx.cwd, candidate);
-      if (!canonical) {
-        return {
-          content: [{ type: "text", text: "artifact path must be a child of the current repository .tmp directory" }],
-          details: { outcome: "error", error: "artifact path outside project .tmp" },
-          isError: true,
-        };
-      }
       if (request.action === "forget") {
+        const canonical = resolve(ctx.cwd, candidate);
+        if (!artifactPaths(artifactProvenance).includes(canonical)) {
+          return {
+            content: [{ type: "text", text: "artifact path is not recorded in this session" }],
+            details: { outcome: "error", error: "artifact path is not recorded" },
+            isError: true,
+          };
+        }
         artifactProvenance = forgetArtifact(artifactProvenance, canonical);
         pi.appendEntry(ARTIFACT_PROVENANCE_ENTRY, artifactProvenance);
         return {
@@ -1319,11 +1319,22 @@ export default function classifiedWorkflows(pi: ExtensionAPI): void {
           details: { outcome: "forgotten", path: canonical },
         };
       }
+      const repositoryRoot = nestedRepositoryRootForPath(ctx.cwd, candidate);
+      const canonical = repositoryRoot
+        ? canonicalScratchArtifactPath(ctx.cwd, candidate, repositoryRoot)
+        : undefined;
+      if (!canonical) {
+        return {
+          content: [{ type: "text", text: "artifact path must be beneath a repository .tmp within the session workspace" }],
+          details: { outcome: "error", error: "artifact path outside workspace repository .tmp" },
+          isError: true,
+        };
+      }
       const validateArtifact = Effect.try({
         try: () => {
           const stat = lstatSync(canonical);
           if (stat.isSymbolicLink()) throw new Error("artifact must not be a symbolic link");
-          const scratchRoot = realpathSync(resolve(ctx.cwd, ".tmp"));
+          const scratchRoot = realpathSync(resolve(repositoryRoot, ".tmp"));
           const actual = realpathSync(canonical);
           const child = relative(scratchRoot, actual);
           if (!child || child === ".." || child.startsWith(`..${sep}`)) {

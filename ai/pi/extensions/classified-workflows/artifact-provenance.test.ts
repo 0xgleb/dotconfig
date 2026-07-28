@@ -19,6 +19,25 @@ test("artifact provenance accepts only canonical project scratch children", () =
   assert.equal(canonicalScratchArtifactPath(cwd, "src/index.ts"), undefined);
 });
 
+test("artifact provenance accepts scratch children beneath an evidenced nested repository", () => {
+  assert.equal(
+    canonicalScratchArtifactPath(
+      "/workspace",
+      "/workspace/nested-repo/.tmp/report.json",
+      "/workspace/nested-repo",
+    ),
+    "/workspace/nested-repo/.tmp/report.json",
+  );
+  assert.equal(
+    canonicalScratchArtifactPath(
+      "/workspace",
+      "/outside/nested-repo/.tmp/report.json",
+      "/outside/nested-repo",
+    ),
+    undefined,
+  );
+});
+
 test("artifact provenance persists defensively and forgets exact paths", () => {
   const recorded = recordArtifact(emptyArtifactProvenanceState, {
     path: "/workspace/project/.tmp/report.json",

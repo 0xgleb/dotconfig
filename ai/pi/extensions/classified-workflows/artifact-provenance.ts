@@ -50,10 +50,20 @@ export const restoreArtifactProvenance = (entries: readonly unknown[]): Artifact
   return emptyArtifactProvenanceState;
 };
 
-export const canonicalScratchArtifactPath = (cwd: string, candidate: string): string | undefined => {
-  const root = resolve(cwd, ".tmp");
+const isAtOrWithin = (root: string, candidate: string): boolean => {
+  const child = relative(resolve(root), resolve(candidate));
+  return child === "" || (child !== ".." && !child.startsWith(`..${sep}`) && !isAbsolute(child));
+};
+
+export const canonicalScratchArtifactPath = (
+  cwd: string,
+  candidate: string,
+  repositoryRoot = cwd,
+): string | undefined => {
+  if (!isAtOrWithin(cwd, repositoryRoot)) return undefined;
+  const scratchRoot = resolve(repositoryRoot, ".tmp");
   const canonical = resolve(cwd, candidate);
-  const child = relative(root, canonical);
+  const child = relative(scratchRoot, canonical);
   return child && child !== ".." && !child.startsWith(`..${sep}`) && !isAbsolute(child) ? canonical : undefined;
 };
 
