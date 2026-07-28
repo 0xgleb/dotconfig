@@ -25,6 +25,13 @@ export const sanitizeProcessDiagnostic: (input: string) => string = (input) =>
     .replace(/\bsk-[A-Za-z0-9_-]{8,}\b/g, "[REDACTED]")
     .trim();
 
+export const unknownErrorMessage = (error: unknown, fallback: string): string =>
+  error instanceof Error
+    ? error.message
+    : isRecord(error) && typeof error.message === "string"
+      ? error.message
+      : fallback;
+
 function nonNegativeNumber(value: unknown): number {
   return typeof value === "number" && Number.isFinite(value) && value > 0 ? value : 0;
 }

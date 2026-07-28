@@ -55,6 +55,8 @@ export interface WorkflowLimits {
 export interface WorkflowDependencies {
   runAgent(request: AgentRequest, signal: AbortSignal, tokenLimit: number): Promise<AgentResult>;
   checkpoint(message: string): Promise<"approved" | "denied">;
+  phase?: (title: string) => void;
+  log?: (message: string) => void;
   availableMemoryBytes?: () => number;
 }
 
@@ -573,11 +575,27 @@ export async function runWorkflowScript(
     if ((await dependencies.checkpoint(message)) !== "approved") throw new Error(`Checkpoint denied: ${message}`);
   };
 
+  const phase = (title: string): void => {
+    if (typeof title !== "string" || title.trim() === "" || title.length > 80) {
+      throw new Error("phase requires a non-empty title of at most 80 characters");
+    }
+    dependencies.phase?.(title);
+  };
+
+  const log = (message: string): void => {
+    if (typeof message !== "string" || message.trim() === "" || message.length > 2_000) {
+      throw new Error("log requires a non-empty message of at most 2,000 characters");
+    }
+    dependencies.log?.(message);
+  };
+
   const context = vm.createContext(
     {
       agent,
       parallel,
       checkpoint,
+      phase,
+      log,
       Date: undefined,
       Math: undefined,
       process: undefined,

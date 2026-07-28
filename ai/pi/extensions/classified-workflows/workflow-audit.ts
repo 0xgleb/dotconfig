@@ -31,6 +31,12 @@ export interface WorkflowAuditState {
 
 export const emptyWorkflowAuditState: WorkflowAuditState = { workflows: [] };
 
+export const nextWorkflowSequence = (state: WorkflowAuditState): number =>
+  state.workflows.reduce((next, { id }) => {
+    const sequence = Number(id.match(/^wf-(\d+)$/)?.[1]);
+    return Number.isSafeInteger(sequence + 1) && sequence >= 0 ? Math.max(next, sequence + 1) : next;
+  }, 1);
+
 const isRecord = (value: unknown): value is Record<string, unknown> =>
   typeof value === "object" && value !== null && !Array.isArray(value);
 

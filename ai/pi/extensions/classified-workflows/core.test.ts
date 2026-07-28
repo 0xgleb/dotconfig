@@ -519,6 +519,26 @@ test("classified workflow tools reserve enough wall time for both classifier bou
   assert.equal(MIN_CLASSIFIED_AGENT_TIMEOUT_MS, 180_000);
 });
 
+test("workflow JavaScript supports review harness phase and log progress hooks", async () => {
+  const progress: string[] = [];
+  const result = await runWorkflowScript(
+    `phase("Review"); log("2 lanes ready"); phase("Verify"); return "ok";`,
+    limits,
+    {
+      async runAgent(): Promise<AgentResult> {
+        return { status: "completed", output: "unused", usageTokens: 0 };
+      },
+      async checkpoint(): Promise<"approved"> {
+        return "approved";
+      },
+      phase: (title) => progress.push(`phase:${title}`),
+      log: (message) => progress.push(`log:${message}`),
+    },
+  );
+  assert.equal(result, "ok");
+  assert.deepEqual(progress, ["phase:Review", "log:2 lanes ready", "phase:Verify"]);
+});
+
 test("workflow JavaScript can fan out and synthesize", async () => {
   const calls: AgentRequest[] = [];
   const result = await runWorkflowScript(

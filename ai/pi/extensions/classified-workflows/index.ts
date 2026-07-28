@@ -78,6 +78,7 @@ import {
   boundedDiagnosticTail,
   sanitizeProcessDiagnostic,
   summarizePiJsonLines,
+  unknownErrorMessage,
   usageTokensFromAssistantMessage,
   usageTokensFromPiJsonLine,
 } from "./protocol.ts";
@@ -94,6 +95,7 @@ import {
   appendWorkflowAudit,
   auditedAgentRunner,
   emptyWorkflowAuditState,
+  nextWorkflowSequence,
   restoreWorkflowAudits,
   WORKFLOW_AUDIT_ENTRY,
   type ChildAudit,
@@ -562,7 +564,7 @@ const WorkflowParameters = Type.Object({
 });
 
 export default function classifiedWorkflows(pi: ExtensionAPI): void {
-  registerRuntimeVersion(pi, "classified-workflows", "2026.07.23.80");
+  registerRuntimeVersion(pi, "classified-workflows", "2026.07.23.81");
   const childTokenLimit = workflowChildTokenLimit(process.env[WORKFLOW_CHILD_TOKEN_LIMIT_ENV]);
   let childUsageTokens = 0;
   if (childTokenLimit !== undefined) {
@@ -736,7 +738,7 @@ export default function classifiedWorkflows(pi: ExtensionAPI): void {
       .catch((error) => {
         workflow.status = workflow.controller.signal.aborted ? "cancelled" : "failed";
         workflow.finishedAt = Date.now();
-        workflow.error = error instanceof Error ? error.message : "Workflow failed closed";
+        workflow.error = unknownErrorMessage(error, "Workflow failed closed");
         persistWorkflowAudit({
           id,
           label: workflow.label,
@@ -1062,6 +1064,7 @@ export default function classifiedWorkflows(pi: ExtensionAPI): void {
     continuationPaused = latestContinuationPause(branch)?.paused ?? false;
     artifactProvenance = restoreArtifactProvenance(branch);
     workflowAudits = restoreWorkflowAudits(branch);
+    nextWorkflowId = nextWorkflowSequence(workflowAudits);
     goalRunTokens = 0;
     const now = Date.now();
     const goalHistory = goalEntries.flatMap((entry) => {
@@ -1408,7 +1411,7 @@ export default function classifiedWorkflows(pi: ExtensionAPI): void {
     ],
     parameters: WorkflowParameters,
     executionMode: "sequential",
-    async execute(_toolCallId, params: WorkflowToolParams, signal, _onUpdate, ctx) {
+    async execute(_toolCallId, params: WorkflowToolParams, signal, onUpdate, ctx) {
       latestCtx = ctx;
       const intent = visibleIntent(pi, ctx, goalState?.status === "active" ? goalState.condition : undefined);
       const instructions = projectInstructions(ctx);
@@ -1463,6 +1466,14 @@ export default function classifiedWorkflows(pi: ExtensionAPI): void {
               if (!ctx.hasUI) return "denied";
               return (await ctx.ui.confirm("Workflow checkpoint", message)) ? "approved" : "denied";
             },
+            phase: (title) => onUpdate?.({
+              content: [{ type: "text", text: `Phase: ${title}` }],
+              details: { status: "running", auditId, phase: title },
+            }),
+            log: (message) => onUpdate?.({
+              content: [{ type: "text", text: message }],
+              details: { status: "running", auditId },
+            }),
           },
           signal,
         );
@@ -1479,7 +1490,7 @@ export default function classifiedWorkflows(pi: ExtensionAPI): void {
         });
         return { content: [{ type: "text", text: output || "Workflow completed without a result" }], details: { status: "completed", auditId } };
       } catch (error) {
-        const reason = error instanceof Error ? error.message : "Workflow failed closed";
+        const reason = unknownErrorMessage(error, "Workflow failed closed");
         persistWorkflowAudit({
           id: auditId,
           label: auditLabel,

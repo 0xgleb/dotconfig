@@ -1,9 +1,11 @@
 import assert from "node:assert/strict";
 import test from "node:test";
+import vm from "node:vm";
 import {
   boundedDiagnosticTail,
   sanitizeProcessDiagnostic,
   summarizePiJsonLines,
+  unknownErrorMessage,
   usageTokensFromAssistantMessage,
   usageTokensFromPiJsonLine,
 } from "./protocol.ts";
@@ -81,6 +83,12 @@ test("process diagnostics redact common credential shapes", () => {
   assert.doesNotMatch(diagnostic, /bearer-secret|api-secret|pass-secret|user:pw/i);
   assert.match(diagnostic, /\[REDACTED\]/);
   assert.match(diagnostic, /model not found/);
+});
+
+test("cross-realm workflow errors retain their actionable message", () => {
+  const error = vm.runInNewContext('new ReferenceError("phase is not defined")');
+  assert.equal(unknownErrorMessage(error, "Workflow failed closed"), "phase is not defined");
+  assert.equal(unknownErrorMessage(null, "Workflow failed closed"), "Workflow failed closed");
 });
 
 test("error metadata is retained without exposing non-assistant events", () => {

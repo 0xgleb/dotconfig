@@ -6,6 +6,7 @@ import {
   appendWorkflowAudit,
   auditedAgentRunner,
   emptyWorkflowAuditState,
+  nextWorkflowSequence,
   restoreWorkflowAudits,
   type ChildAudit,
 } from "./workflow-audit.ts";
@@ -45,6 +46,31 @@ test("audited runner records bounded zero-token timeout diagnostics", async () =
       reason: "child timeout raw stack should collapse",
     },
   ]);
+});
+
+test("workflow audit sequences continue after reload without replacing prior runs", () => {
+  const state = appendWorkflowAudit(
+    appendWorkflowAudit(emptyWorkflowAuditState, {
+      id: "wf-2",
+      label: "older",
+      status: "completed",
+      startedAt: 1,
+      finishedAt: 2,
+      limits,
+      children: [],
+    }),
+    {
+      id: "wf-7",
+      label: "newer",
+      status: "completed",
+      startedAt: 3,
+      finishedAt: 4,
+      limits,
+      children: [],
+    },
+  );
+  assert.equal(nextWorkflowSequence(state), 8);
+  assert.equal(nextWorkflowSequence(emptyWorkflowAuditState), 1);
 });
 
 test("workflow audits survive reload and compaction state restoration", () => {
