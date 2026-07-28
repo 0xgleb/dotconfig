@@ -210,7 +210,9 @@ async function runPi(
       const diagnostic = sanitizeProcessDiagnostic(stderr);
       const errorMessage = budgetExceeded
         ? `Child exceeded token limit (${observedUsageTokens}/${tokenLimit})`
-        : summary.errorMessage ?? spawnError ?? (exitCode !== 0 && diagnostic ? `Child stderr: ${diagnostic}` : undefined);
+        : diagnostic && (!summary.errorMessage || summary.errorMessage === "Request was aborted")
+          ? `Child stderr: ${diagnostic}`
+          : summary.errorMessage ?? spawnError ?? (exitCode !== 0 && diagnostic ? `Child stderr: ${diagnostic}` : undefined);
       resolve({
         exitCode,
         ...summary,
@@ -564,7 +566,7 @@ const WorkflowParameters = Type.Object({
 });
 
 export default function classifiedWorkflows(pi: ExtensionAPI): void {
-  registerRuntimeVersion(pi, "classified-workflows", "2026.07.23.81");
+  registerRuntimeVersion(pi, "classified-workflows", "2026.07.23.82");
   const childTokenLimit = workflowChildTokenLimit(process.env[WORKFLOW_CHILD_TOKEN_LIMIT_ENV]);
   let childUsageTokens = 0;
   if (childTokenLimit !== undefined) {
@@ -579,7 +581,11 @@ export default function classifiedWorkflows(pi: ExtensionAPI): void {
           // child output is enforced by runPi's measured process budget.
           allowProcessMeasuredOutput: ctx.model?.api === "openai-codex-responses",
         }).payload;
-      } catch {
+      } catch (error) {
+        const diagnostic = sanitizeProcessDiagnostic(
+          unknownErrorMessage(error, "Workflow child provider guard failed closed"),
+        ).replace(/\s+/g, " ").slice(0, 1_000);
+        process.stderr.write(`[classified-workflows] ${diagnostic}\n`);
         ctx.abort();
         return event.payload;
       }
