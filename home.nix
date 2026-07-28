@@ -86,6 +86,32 @@ in
               < ${./ai/pi/patches/extension-context-reload.patch}
           '';
         });
+        piSolReview = pkgs.writeShellApplication {
+          name = "pi-sol-review";
+          runtimeInputs = [ pi-coding-agent-with-reload ];
+          text = ''
+            if [ "$#" -gt 0 ]; then
+              prompt="$*"
+            else
+              prompt="$(cat)"
+            fi
+            if [[ ! "$prompt" =~ [^[:space:]] ]]; then
+              echo "usage: pi-sol-review <focused read-only review task>" >&2
+              exit 2
+            fi
+            exec env -u PI_INTERNAL_WORKFLOW_CHILD_TOKEN_LIMIT pi \
+              --print \
+              --no-session \
+              --no-extensions \
+              --extension "$HOME/.config/ai/pi/extensions/classified-workflows/index.ts" \
+              --no-skills \
+              --no-prompt-templates \
+              --tools read,grep,find,ls \
+              --model openai-codex/gpt-5.6-sol \
+              --thinking high \
+              "$prompt"
+          '';
+        };
       in
       (with unstable; [
         codex
@@ -99,6 +125,7 @@ in
         claude-code-latest
         jf
         piBridge
+        piSolReview
         pi-coding-agent-with-reload
       ];
 

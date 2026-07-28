@@ -1,6 +1,6 @@
 ---
 name: pi-delegation
-description: Delegate Pi work through visible Zellij workers or classified dynamic workflows. Use when the user requests subagents, delegation, parallel investigation, Ultracode-style workflows, independent verification, or multi-agent synthesis.
+description: Delegate work through Pi workflows, visible Zellij workers, or a bounded GPT-5.6 Sol reviewer from Claude Code. Use for subagents, parallel investigation, independent verification, or multi-agent synthesis.
 ---
 
 # Pi delegation
@@ -29,6 +29,22 @@ Use a classified dynamic workflow when:
 - a task-specific program describes the desired behavior better than a fixed schema.
 
 Never use tmux.
+
+## Claude Code and other non-Pi harnesses
+
+When the current harness does not expose Pi's `workflow` tool and the user asks
+for an independent GPT-5.6 Sol check, run `pi-sol-review` from the repository
+being reviewed. Pass one focused, self-contained task as arguments or stdin. The
+wrapper launches authenticated `openai-codex/gpt-5.6-sol` with the managed Pi
+classifier and only `read`, `grep`, `find`, and `ls`; it has no write or shell
+tools and does not depend on agent-registry integration.
+
+Use this lane to challenge an idea, inspect code, or review evidence before the
+human's own review. It does not attest that the human authorized a mutation and
+its output remains an agent claim until checked against source. If the command
+is unavailable, report that the dotconfig generation needs activation rather
+than replacing it with an unclassified `codex exec`, a writable tool set, or an
+Anthropic API call.
 
 ## Shared safety
 

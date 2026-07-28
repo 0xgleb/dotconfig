@@ -2,9 +2,96 @@
 # Full reference: https://www.nushell.sh/book/configuration.html
 # All settings: https://www.nushell.sh/commands/docs/config.html
 
+# Match the archeofuturism Zellij theme without changing Ghostty's global ANSI
+# palette. Nushell tables, values, syntax shapes, file names, and prompts stay
+# coherent while unrelated terminal applications keep their own colors.
+const archeofuturism = {
+  base: "#8EA7C7"
+  bright: "#E8F6FF"
+  steel: "#5088B8"
+  muted: "#7184A8"
+  cyan: "#29E7FF"
+  cyan_soft: "#86F5FF"
+  mint: "#7CFFB2"
+  purple: "#B79CFF"
+  magenta: "#FF4FD8"
+  pink: "#FF78C8"
+  yellow: "#FFE66D"
+  orange: "#FF9E64"
+  red: "#FF5470"
+  selection: "#8E3480"
+}
+
+$env.LS_COLORS = ([
+  $"di=38;2;41;231;255"
+  $"ln=38;2;183;156;255"
+  $"ex=38;2;124;255;178"
+  $"*.md=38;2;255;230;109"
+  $"*.nix=38;2;183;156;255"
+  $"*.rs=38;2;134;245;255"
+  $"*.toml=38;2;255;158;100"
+  $"*.lock=38;2;113;132;168"
+  $"*.log=38;2;113;132;168"
+  $"*.db=38;2;255;120;200"
+] | str join ":")
+
 $env.config = {
   show_banner: false
   edit_mode: vi
+
+  color_config: {
+    separator: $archeofuturism.steel
+    leading_trailing_space_bg: { attr: "n" }
+    header: { fg: $archeofuturism.cyan attr: "b" }
+    empty: $archeofuturism.muted
+    bool: $archeofuturism.mint
+    int: $archeofuturism.mint
+    filesize: $archeofuturism.cyan
+    duration: $archeofuturism.purple
+    date: $archeofuturism.muted
+    range: $archeofuturism.purple
+    float: $archeofuturism.mint
+    string: $archeofuturism.base
+    nothing: $archeofuturism.muted
+    binary: $archeofuturism.orange
+    "cell-path": $archeofuturism.cyan_soft
+    row_index: { fg: $archeofuturism.mint attr: "b" }
+    record: $archeofuturism.base
+    list: $archeofuturism.base
+    block: $archeofuturism.purple
+    hints: $archeofuturism.muted
+    search_result: { fg: $archeofuturism.bright bg: $archeofuturism.selection }
+    shape_and: { fg: $archeofuturism.magenta attr: "b" }
+    shape_binary: { fg: $archeofuturism.orange attr: "b" }
+    shape_block: { fg: $archeofuturism.purple attr: "b" }
+    shape_bool: $archeofuturism.mint
+    shape_closure: { fg: $archeofuturism.purple attr: "b" }
+    shape_directory: $archeofuturism.cyan
+    shape_external: $archeofuturism.cyan_soft
+    shape_externalarg: $archeofuturism.base
+    shape_filepath: $archeofuturism.cyan_soft
+    shape_flag: { fg: $archeofuturism.pink attr: "b" }
+    shape_float: $archeofuturism.mint
+    shape_glob_interpolation: $archeofuturism.cyan
+    shape_globpattern: $archeofuturism.cyan_soft
+    shape_int: $archeofuturism.mint
+    shape_keyword: { fg: $archeofuturism.magenta attr: "b" }
+    shape_list: { fg: $archeofuturism.purple attr: "b" }
+    shape_literal: $archeofuturism.base
+    shape_match_pattern: $archeofuturism.yellow
+    shape_nothing: $archeofuturism.muted
+    shape_operator: { fg: $archeofuturism.magenta attr: "b" }
+    shape_pipe: { fg: $archeofuturism.steel attr: "b" }
+    shape_range: { fg: $archeofuturism.purple attr: "b" }
+    shape_record: { fg: $archeofuturism.purple attr: "b" }
+    shape_redirection: { fg: $archeofuturism.orange attr: "b" }
+    shape_signature: { fg: $archeofuturism.cyan attr: "b" }
+    shape_string: $archeofuturism.base
+    shape_string_interpolation: $archeofuturism.cyan_soft
+    shape_table: { fg: $archeofuturism.purple attr: "b" }
+    shape_variable: $archeofuturism.cyan
+    shape_vardecl: $archeofuturism.cyan
+  }
 
   completions: {
     case_sensitive: false
@@ -126,9 +213,9 @@ $env.PROMPT_COMMAND = {||
 
   let who = (whoami)
   if $who == "root" {
-    $"(ansi red_bold)ROOT(ansi reset) ($path) # "
+    $"(ansi {fg: $archeofuturism.red attr: 'b'})ROOT(ansi reset) (ansi {fg: $archeofuturism.cyan})($path)(ansi reset) # "
   } else {
-    $"($path) $ "
+    $"(ansi {fg: $archeofuturism.cyan})($path)(ansi reset) (ansi {fg: $archeofuturism.purple})$(ansi reset) "
   }
 }
 
