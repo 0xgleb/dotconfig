@@ -1,5 +1,6 @@
 const OUTPUT_TOKEN_FIELDS = ["max_output_tokens", "max_completion_tokens", "max_tokens"] as const;
-const TOKEN_ESTIMATE_CHARACTERS = 2;
+// Match Pi's estimateTextTokens contract in @earendil-works/pi-ai.
+const TOKEN_ESTIMATE_CHARACTERS = 4;
 const TOKEN_ACCOUNTING_RESERVE = 512;
 const MAX_WORKFLOW_CHILD_TOKEN_LIMIT = 5_000_000;
 

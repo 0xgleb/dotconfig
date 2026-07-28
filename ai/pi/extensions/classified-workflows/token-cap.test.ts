@@ -41,6 +41,19 @@ test("workflow child fails before dispatch when the request payload already cons
   );
 });
 
+test("workflow payload estimates match Pi's authoritative four-characters-per-token semantics", () => {
+  const payload = {
+    model: "gpt-5.6-sol",
+    input: "x".repeat(376_000),
+    instructions: "bounded review",
+    stream: true,
+  };
+  const capped = capProviderOutputTokens(payload, 108_156, { allowProcessMeasuredOutput: true });
+  assert.ok(capped.estimatedPromptTokens >= 94_000);
+  assert.ok(capped.estimatedPromptTokens < 95_000);
+  assert.ok(capped.outputTokenLimit > 13_000);
+});
+
 test("Codex can opt into process-measured enforcement when its endpoint rejects output caps", () => {
   const payload = {
     model: "gpt-5.6-sol",
