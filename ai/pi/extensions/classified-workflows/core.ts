@@ -66,6 +66,8 @@ export const MIN_WORKFLOW_FREE_MEMORY_BYTES = 8 * 1024 ** 3;
 export const WORKFLOW_AGENT_MEMORY_RESERVATION_BYTES = 2 * 1024 ** 3;
 const RETRY_BACKOFF_BASE_MS = 500;
 const RETRY_BACKOFF_MAX_MS = 5_000;
+const isNonRetryableBudgetFailure = (result: AgentResult): boolean =>
+  result.status === "failed" && /Minimum child allocation is \d+ tokens/i.test(result.reason);
 
 const READ_ONLY_TOOLS = new Set([
   "read",
@@ -532,7 +534,11 @@ export async function runWorkflowScript(
           }
           result = await runOnce(request, remainingAgentTokens);
           agentUsageTokens += Math.max(0, result.usageTokens);
-          if (result.status === "completed" || result.status === "blocked") break;
+          if (
+            result.status === "completed" ||
+            result.status === "blocked" ||
+            isNonRetryableBudgetFailure(result)
+          ) break;
           if (attempt < limits.retries) {
             await retryBackoff(attempt, workflowController.signal);
           }

@@ -34,10 +34,38 @@ test("workflow child caps chat-completion payloads without adding unknown provid
   assert.equal("max_tokens" in capped.payload, false);
 });
 
-test("workflow child fails before dispatch when the request payload already consumes the budget", () => {
+test("workflow child fails before dispatch with a usable aggregate-budget recommendation", () => {
   assert.throws(
-    () => capProviderOutputTokens({ input: "x".repeat(20_000), max_output_tokens: 100_000 }, 4_000),
-    /prompt estimate already consumes token limit/,
+    () => capProviderOutputTokens(
+      { input: "x".repeat(20_000), max_output_tokens: 100_000 },
+      4_000,
+      { consumedTokens: 1_188 },
+    ),
+    /leaves no usable synthesis budget.*Minimum child allocation is \d+ tokens.*tokenBudget.*multiplied by maxAgents/is,
+  );
+});
+
+test("post-tool prompt growth recommends enough total budget for the next synthesis", () => {
+  const payload = {
+    model: "gpt-5.6-sol",
+    input: "x".repeat(203_000),
+    instructions: "synthesize the read-only evidence",
+    stream: true,
+  };
+  assert.throws(
+    () => capProviderOutputTokens(payload, 48_812, {
+      allowProcessMeasuredOutput: true,
+      consumedTokens: 1_188,
+    }),
+    (error: unknown) => {
+      assert.ok(error instanceof Error);
+      assert.match(error.message, /1_?188|1188/);
+      assert.match(error.message, /Minimum child allocation is \d+ tokens/);
+      assert.match(error.message, /multiplied by maxAgents/);
+      const recommendation = Number(error.message.match(/Minimum child allocation is (\d+) tokens/)?.[1]);
+      assert.ok(recommendation > 50_000);
+      return true;
+    },
   );
 });
 

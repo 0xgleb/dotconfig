@@ -574,7 +574,7 @@ const WorkflowParameters = Type.Object({
 });
 
 export default function classifiedWorkflows(pi: ExtensionAPI): void {
-  registerRuntimeVersion(pi, "classified-workflows", "2026.07.23.89");
+  registerRuntimeVersion(pi, "classified-workflows", "2026.07.23.90");
   const childTokenLimit = workflowChildTokenLimit(process.env[WORKFLOW_CHILD_TOKEN_LIMIT_ENV]);
   let childUsageTokens = 0;
   if (childTokenLimit !== undefined) {
@@ -588,6 +588,7 @@ export default function classifiedWorkflows(pi: ExtensionAPI): void {
           // The authenticated Codex endpoint rejects max_output_tokens. Its
           // child output is enforced by runPi's measured process budget.
           allowProcessMeasuredOutput: ctx.model?.api === "openai-codex-responses",
+          consumedTokens: childUsageTokens,
         }).payload;
       } catch (error) {
         const diagnostic = sanitizeProcessDiagnostic(

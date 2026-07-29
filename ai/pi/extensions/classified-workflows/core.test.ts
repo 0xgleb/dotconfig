@@ -686,6 +686,35 @@ test("workflow timeout preflight leaves room for the configured retry envelope",
   );
 });
 
+test("prompt-budget recommendations fail once instead of retrying an impossible child", async () => {
+  let attempts = 0;
+  const result = await runWorkflowScript(
+    `return await agent({ task: "bounded read-only review" });`,
+    { ...limits, retries: 3, workflowTimeoutMs: 8_000 },
+    {
+      async runAgent(): Promise<AgentResult> {
+        attempts += 1;
+        return {
+          status: "failed",
+          output: "",
+          reason: "Minimum child allocation is 53637 tokens; set workflow tokenBudget to at least 53637 multiplied by maxAgents.",
+          usageTokens: 1_188,
+        };
+      },
+      async checkpoint(): Promise<"approved"> {
+        return "approved";
+      },
+    },
+  );
+  assert.equal(attempts, 1);
+  assert.deepEqual(result, {
+    status: "failed",
+    output: "",
+    reason: "Minimum child allocation is 53637 tokens; set workflow tokenBudget to at least 53637 multiplied by maxAgents.",
+    usageTokens: 1_188,
+  });
+});
+
 test("thrown agent timeouts consume retries instead of killing the workflow immediately", async () => {
   let attempts = 0;
   const result = await runWorkflowScript(
