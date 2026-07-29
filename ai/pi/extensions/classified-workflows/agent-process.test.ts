@@ -57,6 +57,15 @@ test("workflow model preflight resolves only authenticated available providers",
     { provider: "anthropic", id: "claude-sonnet-4-5-20250929", name: "Claude Sonnet 4.5" },
   ];
   assert.equal(resolveAgentModel("gpt-5.6-sol", "openai-codex", available), "openai-codex/gpt-5.6-sol");
+  assert.equal(resolveAgentModel("openai/gpt-5.6-sol", "openai-codex", available), "openai-codex/gpt-5.6-sol");
+  assert.throws(
+    () => resolveAgentModel("openai/gpt-5.6-missing", "openai-codex", available),
+    /unavailable or has no configured authentication/i,
+  );
+  assert.throws(
+    () => resolveAgentModel("other/gpt-5.6-sol", "openai-codex", available),
+    /unavailable or has no configured authentication/i,
+  );
   assert.throws(
     () => resolveAgentModel("fable", "openai-codex", available),
     /external claude -p subscription lane/i,

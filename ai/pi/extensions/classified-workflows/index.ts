@@ -91,6 +91,7 @@ import { activeSkillProcedures } from "./skill-context.ts";
 import { conversationIntentEvidence } from "./intent-context.ts";
 import { nestedRepositoryRootForPath, runtimeProjectContext } from "./project-context.ts";
 import { currentReadDisprovesDuplicateBlock } from "./stale-duplicate.ts";
+import { requiredGitButlerModeExitDisprovesBlock } from "./gitbutler-mode-exit.ts";
 import {
   RESOURCE_PREFLIGHT_REQUEST_EVENT,
   resourcePreflightDisprovesBlock,
@@ -572,7 +573,7 @@ const WorkflowParameters = Type.Object({
 });
 
 export default function classifiedWorkflows(pi: ExtensionAPI): void {
-  registerRuntimeVersion(pi, "classified-workflows", "2026.07.23.87");
+  registerRuntimeVersion(pi, "classified-workflows", "2026.07.23.88");
   const childTokenLimit = workflowChildTokenLimit(process.env[WORKFLOW_CHILD_TOKEN_LIMIT_ENV]);
   let childUsageTokens = 0;
   if (childTokenLimit !== undefined) {
@@ -1263,6 +1264,14 @@ export default function classifiedWorkflows(pi: ExtensionAPI): void {
     );
     if (decision.verdict === "block") {
       if (resourcePreflightDisprovesBlock(decision.reason, resourcePreflight)) return;
+      if (
+        event.toolName === "bash" &&
+        requiredGitButlerModeExitDisprovesBlock({
+          reason: decision.reason,
+          command: event.input.command,
+          branch: ctx.sessionManager.getBranch(),
+        })
+      ) return;
       if (
         event.toolName === "edit" &&
         currentReadDisprovesDuplicateBlock({

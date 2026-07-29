@@ -14,6 +14,7 @@ const modelReference: (model: AvailableAgentModel) => string = (model) => `${mod
 const modelMatches: (model: AvailableAgentModel, pattern: string) => boolean = (model, pattern) =>
   model.id.toLowerCase().includes(pattern) || model.name?.toLowerCase().includes(pattern) === true;
 const isAlias: (id: string) => boolean = (id) => id.endsWith("-latest") || !/-\d{8}$/.test(id);
+const PROVIDER_ALIASES: Readonly<Record<string, string>> = { openai: "openai-codex" };
 
 export const resolveAgentModel: (
   requestedModel: string | undefined,
@@ -37,6 +38,15 @@ export const resolveAgentModel: (
   }
   if (canonical) return modelReference(canonical);
   if (requested.includes("/")) {
+    const separator = normalized.indexOf("/");
+    const aliasedProvider = PROVIDER_ALIASES[normalized.slice(0, separator)];
+    const aliasedId = normalized.slice(separator + 1);
+    const aliased = aliasedProvider
+      ? availableModels.find(
+          (model) => model.provider.toLowerCase() === aliasedProvider && model.id.toLowerCase() === aliasedId,
+        )
+      : undefined;
+    if (aliased) return modelReference(aliased);
     throw new Error(`Workflow model ${requested} is unavailable or has no configured authentication`);
   }
 
