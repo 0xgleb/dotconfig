@@ -67,6 +67,34 @@ test("Codex can opt into process-measured enforcement when its endpoint rejects 
   assert.ok(capped.outputTokenLimit > 0);
 });
 
+test("workflow children reserve a final synthesis turn before another tool call can strand output", () => {
+  const payload = {
+    model: "gpt-5.6-sol",
+    instructions: "x".repeat(39_000),
+    input: [{ role: "user", content: "review" }],
+    tools: [{ type: "function", name: "read" }],
+    tool_choice: "auto",
+    stream: true,
+  };
+  const capped = capProviderOutputTokens(payload, 25_000, { allowProcessMeasuredOutput: true });
+  assert.equal(capped.payload.tool_choice, "none");
+  assert.equal(capped.finalResponseRequired, true);
+});
+
+test("workflow children keep tools available while enough aggregate budget remains", () => {
+  const payload = {
+    model: "gpt-5.6-sol",
+    instructions: "bounded review",
+    input: [{ role: "user", content: "review" }],
+    tools: [{ type: "function", name: "read" }],
+    tool_choice: "auto",
+    stream: true,
+  };
+  const capped = capProviderOutputTokens(payload, 100_000, { allowProcessMeasuredOutput: true });
+  assert.equal(capped.payload.tool_choice, "auto");
+  assert.equal(capped.finalResponseRequired, false);
+});
+
 test("workflow child fails closed when the provider payload has no recognized output-token field", () => {
   assert.throws(() => capProviderOutputTokens({ model: "unknown", input: [] }, 10_000), /output-token field/);
 });

@@ -2,6 +2,7 @@ const OUTPUT_TOKEN_FIELDS = ["max_output_tokens", "max_completion_tokens", "max_
 // Match Pi's estimateTextTokens contract in @earendil-works/pi-ai.
 const TOKEN_ESTIMATE_CHARACTERS = 4;
 const TOKEN_ACCOUNTING_RESERVE = 512;
+const FINAL_SYNTHESIS_PROMPT_MULTIPLIER = 3;
 const MAX_WORKFLOW_CHILD_TOKEN_LIMIT = 5_000_000;
 
 export const WORKFLOW_CHILD_TOKEN_LIMIT_ENV = "PI_INTERNAL_WORKFLOW_CHILD_TOKEN_LIMIT";
@@ -11,6 +12,7 @@ export interface CappedProviderPayload {
   readonly estimatedPromptTokens: number;
   readonly outputTokenLimit: number;
   readonly enforcement: "provider" | "process-measured";
+  readonly finalResponseRequired: boolean;
 }
 
 export interface ProviderTokenCapOptions {
@@ -46,16 +48,24 @@ export const capProviderOutputTokens = (
       `Workflow child prompt estimate already consumes token limit (${estimatedPromptTokens}+${TOKEN_ACCOUNTING_RESERVE}/${tokenLimit})`,
     );
   }
+  const finalResponseRequired =
+    Array.isArray(payload.tools) &&
+    payload.tools.length > 0 &&
+    Object.hasOwn(payload, "tool_choice") &&
+    payload.tool_choice !== "none" &&
+    tokenLimit < estimatedPromptTokens * FINAL_SYNTHESIS_PROMPT_MULTIPLIER + TOKEN_ACCOUNTING_RESERVE;
+  const boundedPayload = finalResponseRequired ? { ...payload, tool_choice: "none" } : payload;
   const field = OUTPUT_TOKEN_FIELDS.find((candidate) => Object.hasOwn(payload, candidate));
   if (!field) {
     if (!options.allowProcessMeasuredOutput) {
       throw new Error("Workflow child provider payload has no recognized output-token field");
     }
     return {
-      payload,
+      payload: boundedPayload,
       estimatedPromptTokens,
       outputTokenLimit: availableOutputTokens,
       enforcement: "process-measured",
+      finalResponseRequired,
     };
   }
   const configured = payload[field];
@@ -64,9 +74,10 @@ export const capProviderOutputTokens = (
   }
   const outputTokenLimit = Math.min(configured, availableOutputTokens);
   return {
-    payload: { ...payload, [field]: outputTokenLimit },
+    payload: { ...boundedPayload, [field]: outputTokenLimit },
     estimatedPromptTokens,
     outputTokenLimit,
     enforcement: "provider",
+    finalResponseRequired,
   };
 };

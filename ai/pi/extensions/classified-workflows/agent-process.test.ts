@@ -1,6 +1,6 @@
 import assert from "node:assert/strict";
 import test from "node:test";
-import { AGENT_PROCESS_STDIO, buildAgentArguments, resolveAgentModel } from "./agent-process.ts";
+import { AGENT_PROCESS_STDIO, buildAgentArguments, resolveAgentModel, WORKFLOW_CHILD_SYSTEM_PROMPT } from "./agent-process.ts";
 
 test("workflow children load only the classified workflow extension explicitly", () => {
   assert.deepEqual(
@@ -18,6 +18,10 @@ test("workflow children load only the classified workflow extension explicitly",
       "/repo/classified-workflows/index.ts",
       "--no-skills",
       "--no-prompt-templates",
+      "--no-themes",
+      "--no-context-files",
+      "--system-prompt",
+      WORKFLOW_CHILD_SYSTEM_PROMPT,
       "--tools",
       "read,bash",
       "--model",
@@ -27,6 +31,14 @@ test("workflow children load only the classified workflow extension explicitly",
       "inspect",
     ],
   );
+});
+
+test("workflow children receive a bounded isolated prompt contract", () => {
+  const args = buildAgentArguments({ task: "inspect" }, "/repo/index.ts");
+  assert.ok(args.includes("--no-context-files"));
+  assert.ok(args.includes("--system-prompt"));
+  assert.match(WORKFLOW_CHILD_SYSTEM_PROMPT, /batch independent reads/i);
+  assert.match(WORKFLOW_CHILD_SYSTEM_PROMPT, /return.*before exhausting/i);
 });
 
 test("structured workflow children receive an explicit JSON-only contract", () => {
