@@ -307,6 +307,24 @@ test("typed local agent registry coordination is locally allowed without grantin
   );
 });
 
+test("release cadence bookkeeping is locally allowed without granting release authority", () => {
+  for (const action of ["status", "enable", "disable", "mark"]) {
+    assert.deepEqual(
+      deterministicDecision({ boundary: "action", toolName: "release_cadence", input: { action }, cwd: "/repo" }),
+      {
+        verdict: "allow",
+        reason: "Session-local verified release cadence bookkeeping",
+        source: "deterministic",
+      },
+    );
+  }
+  assert.equal(
+    deterministicDecision({ boundary: "action", toolName: "release_cadence", input: { action: "ship" }, cwd: "/repo" }),
+    null,
+  );
+  assert.equal(deterministicToolResultDecision("release_cadence")?.verdict, "allow");
+});
+
 test("the dedicated Pi reload tool is locally allowed", () => {
   assert.deepEqual(
     deterministicDecision({ boundary: "action", toolName: "reload_pi", input: {}, cwd: "/repo" }),
