@@ -6,6 +6,11 @@ import type { ExtensionAPI, ExtensionContext } from "@earendil-works/pi-coding-a
 import { isToolCallEventType } from "@earendil-works/pi-coding-agent";
 import { Effect, Either } from "effect";
 import { availableMemoryBytes } from "../shared/memory-capacity.ts";
+import {
+  RESOURCE_PREFLIGHT_REQUEST_EVENT,
+  type ResourcePreflightRequest,
+  type ResourcePreflightSnapshot,
+} from "../shared/resource-preflight.ts";
 import { registerRuntimeVersion } from "../shared/runtime-version.ts";
 import { claimResourceIncident, clearResourceIncident } from "./incident.ts";
 
@@ -65,8 +70,32 @@ const processAggregateText = (): string => {
 };
 
 export default (pi: ExtensionAPI) => {
-  registerRuntimeVersion(pi, "resource-pressure", "2026.07.23.7");
+  registerRuntimeVersion(pi, "resource-pressure", "2026.07.23.8");
   const pendingBuilds = new Map<string, PendingBuild>();
+
+  const resourcePressureSnapshot = (cwd: string, command: string): ResourcePreflightSnapshot | undefined => {
+    if (!isExpensiveCommand(command)) return undefined;
+    const diskAvailable = freeBytes(cwd);
+    const memoryAvailable = availableMemoryBytes();
+    const decision = resourcePressureDecision(command, diskAvailable, memoryAvailable);
+    return {
+      verdict: decision.verdict,
+      ...(decision.verdict === "block" ? { reason: decision.reason } : {}),
+      diskAvailableBytes: String(diskAvailable),
+      diskReserveBytes: String(CRITICAL_FREE_BYTES),
+      memoryAvailableBytes: String(memoryAvailable),
+      memoryReserveBytes: String(CRITICAL_FREE_MEMORY_BYTES),
+      checkedAt: Date.now(),
+    };
+  };
+
+  pi.events.on(RESOURCE_PREFLIGHT_REQUEST_EVENT, (request: ResourcePreflightRequest) => {
+    try {
+      request.report(resourcePressureSnapshot(request.cwd, request.command));
+    } catch {
+      request.report(undefined);
+    }
+  });
 
   const reconcileMemoryIncident = (ctx: ExtensionContext, memoryAvailable: bigint): void => {
     if (memoryAvailable >= WARNING_FREE_MEMORY_BYTES) {

@@ -92,6 +92,12 @@ import { conversationIntentEvidence } from "./intent-context.ts";
 import { nestedRepositoryRootForPath, runtimeProjectContext } from "./project-context.ts";
 import { currentReadDisprovesDuplicateBlock } from "./stale-duplicate.ts";
 import {
+  RESOURCE_PREFLIGHT_REQUEST_EVENT,
+  resourcePreflightDisprovesBlock,
+  type ResourcePreflightRequest,
+  type ResourcePreflightSnapshot,
+} from "../shared/resource-preflight.ts";
+import {
   appendWorkflowAudit,
   auditedAgentRunner,
   emptyWorkflowAuditState,
@@ -566,7 +572,7 @@ const WorkflowParameters = Type.Object({
 });
 
 export default function classifiedWorkflows(pi: ExtensionAPI): void {
-  registerRuntimeVersion(pi, "classified-workflows", "2026.07.23.83");
+  registerRuntimeVersion(pi, "classified-workflows", "2026.07.23.84");
   const childTokenLimit = workflowChildTokenLimit(process.env[WORKFLOW_CHILD_TOKEN_LIMIT_ENV]);
   let childUsageTokens = 0;
   if (childTokenLimit !== undefined) {
@@ -1225,11 +1231,23 @@ export default function classifiedWorkflows(pi: ExtensionAPI): void {
       return;
     }
 
+    let resourcePreflight: ResourcePreflightSnapshot | undefined;
+    if (event.toolName === "bash" && typeof event.input.command === "string") {
+      const request: ResourcePreflightRequest = {
+        cwd: ctx.cwd,
+        command: event.input.command,
+        report: (snapshot) => {
+          resourcePreflight = snapshot;
+        },
+      };
+      pi.events.emit(RESOURCE_PREFLIGHT_REQUEST_EVENT, request);
+    }
     const subject = {
       toolName: event.toolName,
       input: event.input,
       inputDigest: toolInputDigest(event.toolName, event.input),
       cwd: ctx.cwd,
+      ...(resourcePreflight ? { verifiedResourcePreflight: resourcePreflight } : {}),
     };
     const decision = await classifyWithActivity(
       {
@@ -1244,6 +1262,7 @@ export default function classifiedWorkflows(pi: ExtensionAPI): void {
       ctx.signal,
     );
     if (decision.verdict === "block") {
+      if (resourcePreflightDisprovesBlock(decision.reason, resourcePreflight)) return;
       if (
         event.toolName === "edit" &&
         currentReadDisprovesDuplicateBlock({
