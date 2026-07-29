@@ -174,11 +174,16 @@ def wait-for-tailnet [identity: string] {
 def attach-nixxxos [identity: string] {
   print ""
   print "Connecting to nixxxos (zellij session `nixxxos`)..."
-  (^ssh
-    "-i" $identity
-    "-o" "StrictHostKeyChecking=accept-new"
-    "-t" "root@nixxxos"
-    "zellij" "attach" "-c" "nixxxos")
+  # OpenSSH propagates the local terminal name into the remote PTY. Fall back
+  # to the ubiquitous entry so attaching works even before a new NixOS
+  # generation containing Ghostty's terminfo has landed.
+  with-env { TERM: "xterm-256color" } {
+    (^ssh
+      "-i" $identity
+      "-o" "StrictHostKeyChecking=accept-new"
+      "-t" "root@nixxxos"
+      "zellij" "attach" "-c" "nixxxos")
+  }
 }
 
 # Wait until the freshly created droplet accepts SSH as root.

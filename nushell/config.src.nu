@@ -140,6 +140,13 @@ alias vim = nvim
 alias nix = nix --accept-flake-config
 alias l = ls -a
 
+# OpenSSH copies the local TERM into remote PTYs. Most servers do not ship
+# Ghostty's terminfo yet, so use the ubiquitous compatible entry for SSH only;
+# local Ghostty and Zellij sessions keep the richer xterm-ghostty capabilities.
+def --wrapped ssh [...args: string] {
+  with-env { TERM: "xterm-256color" } { ^ssh ...$args }
+}
+
 def evolve [] {
   # `nix` stays unprefixed on purpose — it is aliased to add --accept-flake-config.
   ^sudo -v
