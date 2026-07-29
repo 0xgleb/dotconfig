@@ -279,6 +279,20 @@ test("classifier prompt scopes skill procedures to the task that invoked them", 
   assert.match(prompt, /must not block unrelated independently authorized work/i);
 });
 
+test("classifier prompt honors model-specific optimistic ADR continuation without weakening genuine pauses", () => {
+  const prompt = buildClassifierPrompt({
+    boundary: "action",
+    intent: ["Continue implementing the proposed architecture"],
+    projectInstructions: "Use the loaded ADR procedure.",
+    skillProcedures: ["ADR: gpt-5.6-sol has optimistic approval; continue after surfacing the Proposed record."],
+    subject: { toolName: "memory", input: { action: "add", content: "ADR provenance" } },
+  });
+  assert.match(prompt, /active ADR procedure explicitly grants the current model optimistic approval/i);
+  assert.match(prompt, /Proposed ADR is a review point rather than a pause/i);
+  assert.match(prompt, /do not block.*accurate memory record.*owner review remains pending/is);
+  assert.match(prompt, /genuinely missing decision.*unsafe or ambiguous.*still pauses/is);
+});
+
 test("classifier prompt keeps ordinary support actions in scope without granting new authority", () => {
   const prompt = buildClassifierPrompt({
     boundary: "action",

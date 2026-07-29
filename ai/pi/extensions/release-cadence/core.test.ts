@@ -28,7 +28,38 @@ test("quarter-hour reminders deliver once and the :45 warning prepares to ship",
   assert.ok(due);
   assert.match(due.content, /PREPARE TO SHIP/);
   assert.match(due.content, /2026-07-29T01:00:00\.000Z/);
+  assert.equal(due.triggerTurn, false);
   assert.equal(dueReleaseCadenceReminder(due.nextState, at("2026-07-29T00:45:59Z")), undefined);
+});
+
+test("unchanged release markers back off agent turns between top-of-hour checks", () => {
+  const releaseAt = at("2026-07-29T00:01:00Z");
+  const state = {
+    enabled: true,
+    lastReminderBoundaryAt: at("2026-07-29T00:00:00Z"),
+    latestRelease: { version: "v1.10.12", at: releaseAt },
+    lastTriggeredReleaseAt: releaseAt,
+  };
+  const quarter = dueReleaseCadenceReminder(state, at("2026-07-29T00:15:02Z"));
+  assert.ok(quarter);
+  assert.equal(quarter.triggerTurn, false);
+
+  const hour = dueReleaseCadenceReminder(quarter.nextState, at("2026-07-29T01:00:02Z"));
+  assert.ok(hour);
+  assert.equal(hour.triggerTurn, true);
+});
+
+test("a newly verified live marker wakes the next quarter reminder once", () => {
+  const state = {
+    enabled: true,
+    lastReminderBoundaryAt: at("2026-07-29T00:00:00Z"),
+    latestRelease: { version: "v1.10.13", at: at("2026-07-29T00:08:00Z") },
+    lastTriggeredReleaseAt: at("2026-07-28T23:04:00Z"),
+  };
+  const due = dueReleaseCadenceReminder(state, at("2026-07-29T00:15:02Z"));
+  assert.ok(due);
+  assert.equal(due.triggerTurn, true);
+  assert.equal(due.nextState.lastTriggeredReleaseAt, state.latestRelease.at);
 });
 
 test("top-of-hour flags a verified live-release gap over sixty minutes", () => {
@@ -40,6 +71,7 @@ test("top-of-hour flags a verified live-release gap over sixty minutes", () => {
   const due = dueReleaseCadenceReminder(state, at("2026-07-29T00:00:34Z"));
   assert.ok(due);
   assert.equal(due.cadenceFailure, true);
+  assert.equal(due.triggerTurn, true);
   assert.match(due.content, /CADENCE FAILURE/);
   assert.match(due.content, /v1\.10\.11/);
   assert.match(due.content, /1h 0m elapsed/);

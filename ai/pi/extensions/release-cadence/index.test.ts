@@ -21,6 +21,13 @@ test("due reminders yield to humans, pauses, and reload before follow-up deliver
   assert.doesNotMatch(source, /setEditorText|pasteToEditor|zellij/);
 });
 
+test("unchanged quarter-hour reminders stay visible without burning an agent turn", () => {
+  assert.match(source, /pi\.registerEntryRenderer\(REMINDER_ENTRY/);
+  assert.match(source, /if \(due\.triggerTurn\)/);
+  assert.match(source, /pi\.appendEntry\(REMINDER_ENTRY/);
+  assert.match(source, /without starting another agent turn/);
+});
+
 test("cadence remains explicitly disableable and markers require live verification", () => {
   assert.match(source, /\["status", "enable", "disable", "mark"\]/);
   assert.match(source, /Use release_cadence mark only after a safe dashboard or live version marker has been verified/);

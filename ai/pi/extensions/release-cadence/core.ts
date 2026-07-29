@@ -10,6 +10,7 @@ export interface ReleaseCadenceState {
   readonly enabled: boolean;
   readonly lastReminderBoundaryAt: number;
   readonly latestRelease?: LiveReleaseMarker;
+  readonly lastTriggeredReleaseAt?: number;
 }
 
 export interface DueReleaseCadenceReminder {
@@ -17,6 +18,7 @@ export interface DueReleaseCadenceReminder {
   readonly nextState: ReleaseCadenceState;
   readonly content: string;
   readonly cadenceFailure: boolean;
+  readonly triggerTurn: boolean;
 }
 
 export const quarterBoundaryAt = (now: number): number => Math.floor(now / QUARTER_HOUR_MS) * QUARTER_HOUR_MS;
@@ -53,6 +55,8 @@ export const dueReleaseCadenceReminder = (
   const prepareToShip = minute === 45;
   const elapsedMs = state.latestRelease ? Math.max(0, now - state.latestRelease.at) : undefined;
   const cadenceFailure = topOfHour && elapsedMs !== undefined && elapsedMs > HOUR_MS;
+  const releaseChanged = state.latestRelease !== undefined && state.latestRelease.at !== state.lastTriggeredReleaseAt;
+  const triggerTurn = topOfHour || releaseChanged;
   const nextShipBoundary = nextTopOfHourAt(boundaryAt);
   const marker = state.latestRelease
     ? `${state.latestRelease.version} at ${new Date(state.latestRelease.at).toISOString()} (${elapsedText(elapsedMs ?? 0)} elapsed)`
@@ -74,8 +78,13 @@ export const dueReleaseCadenceReminder = (
 
   return {
     boundaryAt,
-    nextState: { ...state, lastReminderBoundaryAt: boundaryAt },
+    nextState: {
+      ...state,
+      lastReminderBoundaryAt: boundaryAt,
+      ...(triggerTurn && state.latestRelease ? { lastTriggeredReleaseAt: state.latestRelease.at } : {}),
+    },
     content,
     cadenceFailure,
+    triggerTurn,
   };
 };

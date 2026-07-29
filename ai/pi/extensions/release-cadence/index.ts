@@ -1,6 +1,7 @@
 import { basename } from "node:path";
 import { StringEnum } from "@earendil-works/pi-ai";
 import type { ExtensionAPI, ExtensionContext } from "@earendil-works/pi-coding-agent";
+import { Text } from "@earendil-works/pi-tui";
 import { Type } from "typebox";
 import { runtimeProjectContext } from "../classified-workflows/project-context.ts";
 import { isContinuationPaused } from "../shared/continuation-pause.ts";
@@ -15,6 +16,7 @@ import {
 } from "./core.ts";
 
 const STATE_ENTRY = "release-cadence.state";
+const REMINDER_ENTRY = "release-cadence.notice";
 const REMINDER_MESSAGE = "release-cadence.reminder";
 const MAX_TIMER_DELAY_MS = 2_147_483_647;
 const TIMEZONE_QUALIFIED_ISO = /(?:Z|[+-]\d{2}:\d{2})$/;
@@ -32,22 +34,25 @@ const decodeState = (value: unknown): ReleaseCadenceState | undefined => {
   if (
     typeof candidate.enabled !== "boolean" ||
     typeof candidate.lastReminderBoundaryAt !== "number" ||
-    !Number.isSafeInteger(candidate.lastReminderBoundaryAt)
+    !Number.isSafeInteger(candidate.lastReminderBoundaryAt) ||
+    (candidate.lastTriggeredReleaseAt !== undefined &&
+      (typeof candidate.lastTriggeredReleaseAt !== "number" || !Number.isSafeInteger(candidate.lastTriggeredReleaseAt)))
   ) return undefined;
+  const base = {
+    enabled: candidate.enabled,
+    lastReminderBoundaryAt: candidate.lastReminderBoundaryAt,
+    ...(typeof candidate.lastTriggeredReleaseAt === "number"
+      ? { lastTriggeredReleaseAt: candidate.lastTriggeredReleaseAt }
+      : {}),
+  };
   const latest = candidate.latestRelease;
-  if (latest === undefined) {
-    return { enabled: candidate.enabled, lastReminderBoundaryAt: candidate.lastReminderBoundaryAt };
-  }
+  if (latest === undefined) return base;
   if (typeof latest !== "object" || latest === null || Array.isArray(latest)) return undefined;
   const marker = latest as Record<string, unknown>;
   if (typeof marker.version !== "string" || typeof marker.at !== "number" || !Number.isSafeInteger(marker.at)) {
     return undefined;
   }
-  return {
-    enabled: candidate.enabled,
-    lastReminderBoundaryAt: candidate.lastReminderBoundaryAt,
-    latestRelease: { version: marker.version, at: marker.at },
-  };
+  return { ...base, latestRelease: { version: marker.version, at: marker.at } };
 };
 
 const isYielduckProject = (cwd: string): boolean => {
@@ -73,7 +78,14 @@ const statusText = (state: ReleaseCadenceState): string => {
 };
 
 export default (pi: ExtensionAPI) => {
-  registerRuntimeVersion(pi, "release-cadence", "2026.07.23.1");
+  registerRuntimeVersion(pi, "release-cadence", "2026.07.23.2");
+  pi.registerEntryRenderer(REMINDER_ENTRY, (entry, _options, theme) => {
+    const content =
+      typeof entry.data === "object" && entry.data !== null && "content" in entry.data && typeof entry.data.content === "string"
+        ? entry.data.content
+        : "Release cadence reminder.";
+    return new Text(`${theme.fg("accent", "[release cadence]\n")}${content}`, 0, 0);
+  });
   let active = false;
   let state = initialReleaseCadenceState(Date.now());
   let timer: ReturnType<typeof setTimeout> | undefined;
@@ -126,12 +138,21 @@ export default (pi: ExtensionAPI) => {
     persist();
     renderStatus(ctx);
     schedule(ctx);
-    pi.sendMessage(
-      { customType: REMINDER_MESSAGE, content: due.content, display: true },
-      { triggerTurn: true, deliverAs: "followUp" },
-    );
+    if (due.triggerTurn) {
+      pi.sendMessage(
+        { customType: REMINDER_MESSAGE, content: due.content, display: true },
+        { triggerTurn: true, deliverAs: "followUp" },
+      );
+    } else {
+      pi.appendEntry(REMINDER_ENTRY, { content: due.content });
+    }
     if (ctx.hasUI) {
-      ctx.ui.notify(due.cadenceFailure ? "Release cadence failure: more than 60 minutes since the live marker." : "Quarter-hour release reminder.", due.cadenceFailure ? "warning" : "info");
+      const message = due.cadenceFailure
+        ? "Release cadence failure: more than 60 minutes since the live marker."
+        : due.triggerTurn
+          ? "Quarter-hour release reminder."
+          : "Quarter-hour release reminder surfaced without starting another agent turn.";
+      ctx.ui.notify(message, due.cadenceFailure ? "warning" : "info");
     }
   };
 
