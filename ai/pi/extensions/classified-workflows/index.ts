@@ -92,6 +92,7 @@ import { conversationIntentEvidence } from "./intent-context.ts";
 import { nestedRepositoryRootForPath, runtimeProjectContext } from "./project-context.ts";
 import { currentReadDisprovesDuplicateBlock } from "./stale-duplicate.ts";
 import { requiredGitButlerModeExitDisprovesBlock } from "./gitbutler-mode-exit.ts";
+import { exactScaffoldUnwindDisprovesBlock } from "./scaffold-unwind.ts";
 import {
   RESOURCE_PREFLIGHT_REQUEST_EVENT,
   resourcePreflightDisprovesBlock,
@@ -573,7 +574,7 @@ const WorkflowParameters = Type.Object({
 });
 
 export default function classifiedWorkflows(pi: ExtensionAPI): void {
-  registerRuntimeVersion(pi, "classified-workflows", "2026.07.23.88");
+  registerRuntimeVersion(pi, "classified-workflows", "2026.07.23.89");
   const childTokenLimit = workflowChildTokenLimit(process.env[WORKFLOW_CHILD_TOKEN_LIMIT_ENV]);
   let childUsageTokens = 0;
   if (childTokenLimit !== undefined) {
@@ -1270,6 +1271,15 @@ export default function classifiedWorkflows(pi: ExtensionAPI): void {
           reason: decision.reason,
           command: event.input.command,
           branch: ctx.sessionManager.getBranch(),
+        })
+      ) return;
+      if (
+        event.toolName === "edit" &&
+        exactScaffoldUnwindDisprovesBlock({
+          reason: decision.reason,
+          edit: event.input,
+          branch: ctx.sessionManager.getBranch(),
+          cwd: ctx.cwd,
         })
       ) return;
       if (

@@ -293,6 +293,19 @@ test("classifier prompt honors model-specific optimistic ADR continuation withou
   assert.match(prompt, /genuinely missing decision.*unsafe or ambiguous.*still pauses/is);
 });
 
+test("classifier prompt permits exact agent-scaffold unwind after owner reprioritization", () => {
+  const prompt = buildClassifierPrompt({
+    boundary: "action",
+    intent: ["Defer ADR43 and prioritize the Telegram hotfix"],
+    projectInstructions: "Use TTDD for active implementation slices.",
+    subject: { toolName: "edit", input: { path: "adr43.e2e.ts", edits: [] } },
+  });
+  assert.match(prompt, /newest human direction reprioritizes work and explicitly defers a lane/i);
+  assert.match(prompt, /exact unwind of only the agent-created, uncommitted failing test or spec scaffolding/i);
+  assert.match(prompt, /Restoring the pre-scaffold state is not TTDD weakening/i);
+  assert.match(prompt, /does not authorize removing committed, pre-existing, or user-owned verification/i);
+});
+
 test("classifier prompt keeps ordinary support actions in scope without granting new authority", () => {
   const prompt = buildClassifierPrompt({
     boundary: "action",
