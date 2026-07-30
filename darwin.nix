@@ -50,7 +50,10 @@
   homebrew = {
     enable = true;
 
-    brews = [ "schpet/tap/linear" ];
+    brews = [
+      "schpet/tap/linear"
+      "tkhq/tap/turnkey"
+    ];
     casks = [
       "amethyst"
       "coderabbit"
