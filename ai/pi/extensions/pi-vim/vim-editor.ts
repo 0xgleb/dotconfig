@@ -12,7 +12,7 @@ import {
 } from "@earendil-works/pi-tui";
 import type { TUI, EditorOptions, EditorTheme, AutocompleteProvider } from "@earendil-works/pi-tui";
 import { createInitialState, modeDisplayName, type VimState } from "./state.ts";
-import { promptChromeBottomLine, promptChromeTopLine } from "./chrome.ts";
+import { promptChromeBottomLine, promptChromeInset, promptChromeTopLine } from "./chrome.ts";
 import { moveEditorCursorTo } from "./cursor.ts";
 import { displayColumn } from "./display-width.ts";
 import { handleNormalMode, type NormalModeContext } from "./modes/normal.ts";
@@ -325,13 +325,16 @@ export class VimEditor extends CustomEditor {
   }
 
   render(width: number): string[] {
-    const lines = super.render(width);
+    const inset = promptChromeInset(width);
+    const frameWidth = Math.max(12, width - inset * 2);
+    const contentWidth = Math.max(1, frameWidth - 2);
+    const lines = super.render(contentWidth);
     if (lines.length === 0) return lines;
 
     // Show only the hardware cursor in insert mode so bar shape is visible.
     if (this.vimState.mode === "insert") {
-      for (let i = 0; i < lines.length; i++) {
-        lines[i] = this.stripSoftCursorHighlight(lines[i]!);
+      for (let lineIndex = 0; lineIndex < lines.length; lineIndex++) {
+        lines[lineIndex] = this.stripSoftCursorHighlight(lines[lineIndex]!);
       }
     }
 
@@ -342,22 +345,31 @@ export class VimEditor extends CustomEditor {
       this.vimState.mode === "command-line" &&
       (getSearchState().returnMode === "visual" || getSearchState().returnMode === "visual-line");
     if ((isVisual || isSearchFromVisual) && this.vimState.visualAnchor) {
-      this.applyVisualHighlight(lines, width);
+      this.applyVisualHighlight(lines, contentWidth);
     }
 
-    // Give the editor a compact structural rail without adding side borders
-    // that would disturb cursor and selection column calculations.
     const last = lines.length - 1;
-    lines[0] = this.borderColor(promptChromeTopLine(width));
+    lines[0] = this.borderColor(promptChromeTopLine(frameWidth));
 
     if (this.vimState.mode === "command-line" && getSearchState().active) {
       const prompt = getSearchPrompt();
-      lines[last] = this.borderColor(promptChromeBottomLine(width, `${prompt}█`));
+      lines[last] = this.borderColor(promptChromeBottomLine(frameWidth, `${prompt}█`));
     } else {
-      lines[last] = this.borderColor(promptChromeBottomLine(width, `◈ ${modeDisplayName(this.vimState.mode)}`));
+      lines[last] = this.borderColor(
+        promptChromeBottomLine(frameWidth, `◈ ${modeDisplayName(this.vimState.mode)}`),
+      );
     }
 
-    return lines;
+    for (let lineIndex = 1; lineIndex < last; lineIndex++) {
+      const content = truncateToWidth(lines[lineIndex] ?? "", contentWidth, "");
+      const padding = " ".repeat(Math.max(0, contentWidth - visibleWidth(content)));
+      lines[lineIndex] =
+        this.borderColor("│") + content + padding + this.borderColor("│");
+    }
+
+    const leftMargin = " ".repeat(inset);
+    const rightMargin = " ".repeat(Math.max(0, width - inset - frameWidth));
+    return lines.map(line => `${leftMargin}${line}${rightMargin}`);
   }
 
   /**
