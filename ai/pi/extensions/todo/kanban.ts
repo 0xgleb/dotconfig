@@ -107,14 +107,28 @@ export class KanbanComponent {
   ): string[] {
     if (todos.length === 0) return [this.theme.fg("dim", emptyLabel)];
     const visible = todos.slice(0, limit).map(
-      (todo) => `${this.theme.fg(color, todoStatusMark(todo.status))} ${this.theme.fg("accent", `#${todo.id}`)} ${todo.text}`,
+      (todo) =>
+        `${this.theme.fg(color, todoStatusMark(todo.status))} ${this.theme.fg("accent", `#${todo.id}`)} ${this.theme.fg("text", todo.text)}`,
     );
     if (todos.length > visible.length) visible.push(this.theme.fg("dim", `… ${todos.length - visible.length} more`));
     return visible;
   }
 
   private glassLine(content: string, width: number): string {
-    return `${this.theme.fg("borderMuted", "│")}${this.theme.bg("customMessageBg", this.padCell(content, width))}${this.theme.fg("borderMuted", "│")}`;
+    const padded = this.padCell(content, width);
+    const sentinel = "\u0000";
+    const sample = this.theme.bg("customMessageBg", sentinel);
+    const sentinelIndex = sample.indexOf(sentinel);
+    if (sentinelIndex === -1) {
+      return `${this.theme.fg("borderMuted", "│")}${this.theme.bg("customMessageBg", padded)}${this.theme.fg("borderMuted", "│")}`;
+    }
+    const backgroundPrefix = sample.slice(0, sentinelIndex);
+    const backgroundSuffix = sample.slice(sentinelIndex + sentinel.length);
+    const resetSafe = padded.replace(
+      /\x1b\[(?:0|49)m/g,
+      (reset) => `${reset}${backgroundPrefix}`,
+    );
+    return `${this.theme.fg("borderMuted", "│")}${backgroundPrefix}${resetSafe}${backgroundSuffix}${this.theme.fg("borderMuted", "│")}`;
   }
 
   private row(cells: readonly string[], widths: readonly [number, number, number], separator: string): string {

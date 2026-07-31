@@ -46,3 +46,24 @@ test("kanban renders a glass-backed frame in NEXT to NOW to DONE order", () => {
   assert.ok(backgroundCalls >= lines.length - 2);
   for (const line of lines) assert.equal(visibleWidth(line), 90);
 });
+
+test("kanban reapplies its glass background after nested foreground resets", () => {
+  const backgroundPrefix = "\x1b[48;2;24;20;58m";
+  const backgroundSuffix = "\x1b[49m";
+  const theme = {
+    fg: (_color: string, text: string) => `\x1b[38;2;232;246;255m${text}\x1b[0m`,
+    bg: (_color: string, text: string) => `${backgroundPrefix}${text}${backgroundSuffix}`,
+    bold: (text: string) => `\x1b[1m${text}\x1b[0m`,
+  } as unknown as Theme;
+  const lines = new KanbanComponent(state, theme, () => {}).render(90);
+
+  for (const line of lines.slice(1, -1)) {
+    const backgroundStart = line.indexOf(backgroundPrefix);
+    const backgroundEnd = line.lastIndexOf(backgroundSuffix);
+    assert.ok(backgroundStart >= 0, "every interior row starts the glass background");
+    assert.ok(backgroundEnd > backgroundStart, "every interior row closes the glass background");
+    const interior = line.slice(backgroundStart + backgroundPrefix.length, backgroundEnd);
+    assert.doesNotMatch(interior, /\x1b\[0m(?!\x1b\[48;2;24;20;58m)/);
+    assert.equal(visibleWidth(line), 90);
+  }
+});
