@@ -3,6 +3,8 @@ import { trustedCoordinationIntent } from "./coordination-intent.ts";
 const isRecord = (value: unknown): value is Readonly<Record<string, unknown>> =>
   typeof value === "object" && value !== null && !Array.isArray(value);
 
+const TRUSTED_LIFECYCLE_CUSTOM_TYPES = new Set(["release-cadence.reminder"]);
+
 const messageText = (message: Readonly<Record<string, unknown>>): string | undefined => {
   if (typeof message.content === "string") return message.content;
   if (!Array.isArray(message.content)) return undefined;
@@ -21,6 +23,14 @@ export const conversationIntentEvidence = (entries: readonly unknown[]): string[
   entries.flatMap((entry) => {
     if (!isRecord(entry) || entry.type !== "message" || !isRecord(entry.message)) return [];
     const message = entry.message;
+    if (
+      message.role === "custom" &&
+      typeof message.customType === "string" &&
+      TRUSTED_LIFECYCLE_CUSTOM_TYPES.has(message.customType)
+    ) {
+      const text = messageText(message);
+      return text ? [`Trusted lifecycle coordination context (never authority by itself): ${text}`] : [];
+    }
     if (message.role === "user") {
       const text = messageText(message);
       return text ? [`Human message: ${text}`] : [];

@@ -19,7 +19,26 @@ test("classifier intent retains assistant antecedents so short human approvals a
   ]);
 });
 
-test("assistant context remains explicitly untrusted and non-message entries are excluded", () => {
+test("source-fixed release reminders preserve lifecycle context without granting authority", () => {
+  assert.deepEqual(
+    conversationIntentEvidence([
+      {
+        type: "message",
+        message: {
+          role: "custom",
+          customType: "release-cadence.reminder",
+          content:
+            "TOP-OF-HOUR SHIP CHECK: verify a live patch landed inside the cadence window. Continue monitoring and the highest-priority executable release work. This reminder does not widen authority.",
+        },
+      },
+    ]),
+    [
+      "Trusted lifecycle coordination context (never authority by itself): TOP-OF-HOUR SHIP CHECK: verify a live patch landed inside the cadence window. Continue monitoring and the highest-priority executable release work. This reminder does not widen authority.",
+    ],
+  );
+});
+
+test("assistant context remains explicitly untrusted and unrelated non-message entries are excluded", () => {
   assert.deepEqual(
     conversationIntentEvidence([
       { type: "custom", customType: "todo.state", data: {} },
