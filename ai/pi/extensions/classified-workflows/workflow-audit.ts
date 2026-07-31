@@ -44,6 +44,39 @@ export const appendWorkflowAudit = (state: WorkflowAuditState, audit: WorkflowAu
   workflows: [...state.workflows.filter(({ id }) => id !== audit.id), audit].slice(-50),
 });
 
+const boundedEvidenceText = (text: string, limit: number): string =>
+  text.replace(/\s+/g, " ").trim().slice(0, limit);
+
+export const workflowAuditEvidence = (state: WorkflowAuditState): string[] =>
+  state.workflows.slice(-8).map((workflow) => {
+    const children = workflow.children.length === 0
+      ? "none"
+      : workflow.children
+          .map((child) => {
+            const reason = child.reason ? `:${boundedEvidenceText(child.reason, 160)}` : "";
+            return `${child.index}:${child.status}:${child.usageTokens}t${reason}`;
+          })
+          .join(", ");
+    const outcome = workflow.outcome ? `; outcome=${boundedEvidenceText(workflow.outcome, 240)}` : "";
+    return `typed workflow audit: ${workflow.id} status=${workflow.status}; children=${children}${outcome}`;
+  });
+
+export const terminalWorkflowFailureDisprovesOwnershipBlock = (
+  reason: string,
+  state: WorkflowAuditState,
+): boolean => {
+  if (!/\b(?:already owns?|duplicate(?:d)?|ownership)\b/i.test(reason)) return false;
+  const workflowIds = new Set(reason.match(/\bwf-\d+\b/gi)?.map((id) => id.toLowerCase()) ?? []);
+  if (workflowIds.size === 0) return false;
+  return state.workflows.some(
+    (workflow) =>
+      workflowIds.has(workflow.id.toLowerCase()) &&
+      (workflow.status === "failed" ||
+        workflow.status === "cancelled" ||
+        workflow.children.some((child) => child.status !== "completed")),
+  );
+};
+
 const finiteInteger = (value: unknown): value is number => Number.isSafeInteger(value) && Number(value) >= 0;
 
 const decodeChildAudit = (value: unknown): ChildAudit | undefined => {

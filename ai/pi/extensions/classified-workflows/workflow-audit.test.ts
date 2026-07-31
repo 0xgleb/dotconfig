@@ -8,6 +8,8 @@ import {
   emptyWorkflowAuditState,
   nextWorkflowSequence,
   restoreWorkflowAudits,
+  terminalWorkflowFailureDisprovesOwnershipBlock,
+  workflowAuditEvidence,
   type ChildAudit,
 } from "./workflow-audit.ts";
 
@@ -71,6 +73,84 @@ test("workflow audit sequences continue after reload without replacing prior run
   );
   assert.equal(nextWorkflowSequence(state), 8);
   assert.equal(nextWorkflowSequence(emptyWorkflowAuditState), 1);
+});
+
+test("terminal child failures release duplicate-work ownership for a corrected retry", () => {
+  const state = appendWorkflowAudit(emptyWorkflowAuditState, {
+    id: "wf-5",
+    label: "release planning",
+    status: "completed",
+    startedAt: 1,
+    finishedAt: 2,
+    limits,
+    children: [
+      {
+        index: 1,
+        requestedModel: "unauthenticated/model-a",
+        tools: ["read"],
+        startedAt: 1,
+        finishedAt: 2,
+        status: "failed",
+        usageTokens: 0,
+        outputCharacters: 0,
+        reason: "model unavailable or unauthenticated",
+      },
+      {
+        index: 2,
+        requestedModel: "unauthenticated/model-b",
+        tools: ["read"],
+        startedAt: 1,
+        finishedAt: 2,
+        status: "failed",
+        usageTokens: 0,
+        outputCharacters: 0,
+        reason: "model unavailable or unauthenticated",
+      },
+    ],
+    outcome: "both agents failed",
+  });
+
+  assert.equal(
+    terminalWorkflowFailureDisprovesOwnershipBlock(
+      "wf-5 already owns this task and no failure is evidenced",
+      state,
+    ),
+    true,
+  );
+  assert.equal(
+    terminalWorkflowFailureDisprovesOwnershipBlock("wf-5 violates publication policy", state),
+    false,
+  );
+  assert.deepEqual(workflowAuditEvidence(state), [
+    "typed workflow audit: wf-5 status=completed; children=1:failed:0t:model unavailable or unauthenticated, 2:failed:0t:model unavailable or unauthenticated; outcome=both agents failed",
+  ]);
+});
+
+test("completed child work retains ownership", () => {
+  const state = appendWorkflowAudit(emptyWorkflowAuditState, {
+    id: "wf-6",
+    label: "successful review",
+    status: "completed",
+    startedAt: 1,
+    finishedAt: 2,
+    limits,
+    children: [
+      {
+        index: 1,
+        tools: ["read"],
+        startedAt: 1,
+        finishedAt: 2,
+        status: "completed",
+        usageTokens: 200,
+        outputCharacters: 50,
+      },
+    ],
+  });
+
+  assert.equal(
+    terminalWorkflowFailureDisprovesOwnershipBlock("wf-6 already owns this task", state),
+    false,
+  );
 });
 
 test("workflow audits survive reload and compaction state restoration", () => {

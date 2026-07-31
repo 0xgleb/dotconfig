@@ -105,6 +105,8 @@ import {
   emptyWorkflowAuditState,
   nextWorkflowSequence,
   restoreWorkflowAudits,
+  terminalWorkflowFailureDisprovesOwnershipBlock,
+  workflowAuditEvidence,
   WORKFLOW_AUDIT_ENTRY,
   type ChildAudit,
   type WorkflowAuditState,
@@ -369,6 +371,7 @@ function recentExecutionEvidence(ctx: ExtensionContext, subject: unknown): strin
     ...(compaction
       ? [`compaction summary: ${sanitizeProcessDiagnostic(compaction).replace(/\s+/g, " ").slice(0, 4_000)}`]
       : []),
+    ...workflowAuditEvidence(restoreWorkflowAudits(branch)),
     ...selectRelevantExecutionEvidence(executionEvidence, subject),
   ];
 }
@@ -574,7 +577,7 @@ const WorkflowParameters = Type.Object({
 });
 
 export default function classifiedWorkflows(pi: ExtensionAPI): void {
-  registerRuntimeVersion(pi, "classified-workflows", "2026.07.23.91");
+  registerRuntimeVersion(pi, "classified-workflows", "2026.07.23.92");
   const childTokenLimit = workflowChildTokenLimit(process.env[WORKFLOW_CHILD_TOKEN_LIMIT_ENV]);
   let childUsageTokens = 0;
   if (childTokenLimit !== undefined) {
@@ -1265,6 +1268,10 @@ export default function classifiedWorkflows(pi: ExtensionAPI): void {
       ctx.signal,
     );
     if (decision.verdict === "block") {
+      if (
+        event.toolName === "workflow" &&
+        terminalWorkflowFailureDisprovesOwnershipBlock(decision.reason, workflowAudits)
+      ) return;
       if (resourcePreflightDisprovesBlock(decision.reason, resourcePreflight)) return;
       if (
         event.toolName === "bash" &&
