@@ -5,10 +5,10 @@ import test from "node:test";
 const home = readFileSync(new URL("../../home.nix", import.meta.url), "utf8");
 const settings = JSON.parse(readFileSync(new URL("../pi.settings.json", import.meta.url), "utf8"));
 
-test("Codex Sol uses Pi's authoritative built-in context metadata", () => {
-  assert.doesNotMatch(
+test("managed Codex Sol metadata opts into the 1.05M context window", () => {
+  assert.match(
     home,
-    /providers\."openai-codex"\.modelOverrides\."gpt-5\.6-sol"\.contextWindow/,
+    /providers\."openai-codex"\.modelOverrides\."gpt-5\.6-sol"\.contextWindow = 1050000;/,
   );
 });
 
