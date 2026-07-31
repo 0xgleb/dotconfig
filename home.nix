@@ -44,6 +44,14 @@ let
         "$HOME/.config/ai/pi/extensions/remote-control/bridge-cli.ts" "$@"
     '';
   };
+  pieceOfPiTelegram = pkgs.writeShellApplication {
+    name = "piece-of-pi-telegram";
+    runtimeInputs = [ pkgs.nodejs ];
+    text = ''
+      exec node --experimental-strip-types \
+        "$HOME/.config/ai/pi/extensions/remote-control/piece-of-pi.ts" "$@"
+    '';
+  };
 
 in
 {
@@ -124,6 +132,7 @@ in
         but
         claude-code-latest
         jf
+        pieceOfPiTelegram
         piBridge
         piSolReview
         pi-coding-agent-with-reload
@@ -200,6 +209,25 @@ in
   age.secrets = lib.mkIf (isDarwin && builtins.pathExists ./secrets/metagenda-telegram-token.age) {
     metagenda-telegram-token.file = ./secrets/metagenda-telegram-token.age;
   };
+
+  launchd.agents.pieceOfPiTelegram =
+    lib.mkIf (isDarwin && builtins.pathExists ./secrets/metagenda-telegram-token.age)
+      {
+        enable = true;
+        config = {
+          ProgramArguments = [ "${pieceOfPiTelegram}/bin/piece-of-pi-telegram" ];
+          EnvironmentVariables = {
+            PIECE_OF_PI_TELEGRAM_OWNER_USERNAME = "dianov";
+            PIECE_OF_PI_TELEGRAM_TOKEN_FILE = config.age.secrets.metagenda-telegram-token.path;
+          };
+          KeepAlive = true;
+          ProcessType = "Background";
+          RunAtLoad = true;
+          StandardErrorPath = "/tmp/piece-of-pi-telegram.err";
+          StandardOutPath = "/tmp/piece-of-pi-telegram.out";
+          ThrottleInterval = 5;
+        };
+      };
 
   # NOTE: this shit doesn't clean up after itself if you enable/disable it
   # services.ollama.enable = false;
