@@ -19,5 +19,5 @@ test("fleet diagnostics expose current behavior-bearing component versions", () 
   assert.match(read("../pi/extensions/remote-control/index.ts"), /remote-control", "2026\.07\.23\.2"/);
   assert.match(read("../pi/extensions/disk-pressure/index.ts"), /resource-pressure", "2026\.07\.23\.8"/);
   assert.match(read("../pi/extensions/safe-compaction/index.ts"), /safe-compaction", "2026\.07\.23\.2"/);
-  assert.match(read("../pi/extensions/todo/index.ts"), /todo", "2026\.07\.23\.11"/);
+  assert.match(read("../pi/extensions/todo/index.ts"), /todo", "2026\.07\.23\.12"/);
 });

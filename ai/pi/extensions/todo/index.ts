@@ -7,14 +7,15 @@
 
 import { StringEnum } from "@earendil-works/pi-ai";
 import { DynamicBorder, type ExtensionAPI, type ExtensionContext, type Theme } from "@earendil-works/pi-coding-agent";
-import { Container, matchesKey, type SelectItem, SelectList, Text, truncateToWidth, visibleWidth } from "@earendil-works/pi-tui";
+import { Container, matchesKey, type SelectItem, SelectList, Text, truncateToWidth } from "@earendil-works/pi-tui";
 import { Effect, Option, Ref } from "effect";
 import { Type } from "typebox";
 import { isContinuationPaused } from "../shared/continuation-pause.ts";
 import { QUESTION_ASK_EVENT, type UserQuestionRequest } from "../shared/question-events.ts";
 import { AUTO_RELOAD_PENDING_REQUEST_EVENT, type AutoReloadPendingReporter } from "../shared/reload-events.ts";
 import { registerRuntimeVersion } from "../shared/runtime-version.ts";
-import { CONTENT_GUTTER, frameTaskHud, kanbanColumns, overlayRule, taskHud, todoSummary } from "./presentation.ts";
+import { KANBAN_OVERLAY_OPTIONS, KanbanComponent } from "./kanban.ts";
+import { CONTENT_GUTTER, frameTaskHud, overlayRule, taskHud, todoSummary } from "./presentation.ts";
 import {
   decodeTodoDetails,
   decodeTodoState,
@@ -158,106 +159,6 @@ class TodoListComponent {
   }
 }
 
-class KanbanComponent {
-  private cachedWidth?: number;
-  private cachedLines?: string[];
-
-  constructor(
-    private readonly state: TodoState,
-    private readonly theme: Theme,
-    private readonly onClose: () => void,
-  ) {}
-
-  handleInput(data: string): void {
-    if (matchesKey(data, "escape") || matchesKey(data, "ctrl+c")) this.onClose();
-  }
-
-  render(width: number): string[] {
-    if (this.cachedLines && this.cachedWidth === width) return this.cachedLines;
-
-    const summary = todoSummary(this.state);
-    const columns = kanbanColumns(this.state);
-    const separator = this.theme.fg("borderMuted", " │ ");
-    const available = Math.max(3, width - 6);
-    const baseWidth = Math.floor(available / 3);
-    const columnWidths = [baseWidth, baseWidth, available - baseWidth * 2] as const;
-    const now = this.cardLines(columns.now, "warning", 18, "Nothing active");
-    const next = this.cardLines(columns.next, "accent", 18, "Queue clear");
-    const done = this.cardLines(columns.done.slice().reverse(), "success", 18, "Nothing done yet");
-    const rowCount = Math.max(now.length, next.length, done.length);
-    const lines = [
-      "",
-      this.theme.bold(
-        this.theme.fg(
-          "borderAccent",
-          overlayRule(
-            {
-              left: "KANBAN",
-              right: `${summary.completed}/${summary.total} complete  ·  ${summary.pending} active  ·  ${summary.blocked} blocked`,
-            },
-            width,
-          ),
-        ),
-      ),
-      "",
-      this.row(
-        [
-          this.theme.fg("warning", this.theme.bold("NOW")),
-          this.theme.fg("accent", this.theme.bold("NEXT")),
-          this.theme.fg("success", this.theme.bold("DONE")),
-        ],
-        columnWidths,
-        separator,
-      ),
-      this.row(columnWidths.map((columnWidth) => this.theme.fg("borderMuted", "─".repeat(columnWidth))), columnWidths, separator),
-    ];
-
-    for (let index = 0; index < rowCount; index += 1) {
-      lines.push(this.row([now[index] ?? "", next[index] ?? "", done[index] ?? ""], columnWidths, separator));
-    }
-
-    lines.push(
-      "",
-      truncateToWidth(
-        `${CONTENT_GUTTER}${this.theme.fg("dim", "Esc closes · session remains visible behind this board")}`,
-        width,
-      ),
-      "",
-    );
-    this.cachedWidth = width;
-    this.cachedLines = lines;
-    return lines;
-  }
-
-  invalidate(): void {
-    this.cachedWidth = undefined;
-    this.cachedLines = undefined;
-  }
-
-  private cardLines(
-    todos: ReadonlyArray<Todo>,
-    color: "accent" | "success" | "warning",
-    limit: number,
-    emptyLabel: string,
-  ): string[] {
-    if (todos.length === 0) return [this.theme.fg("dim", emptyLabel)];
-    const visible = todos.slice(0, limit).map(
-      (todo) => `${this.theme.fg(color, todoStatusMark(todo.status))} ${this.theme.fg("accent", `#${todo.id}`)} ${todo.text}`,
-    );
-    if (todos.length > visible.length) visible.push(this.theme.fg("dim", `… ${todos.length - visible.length} more`));
-    return visible;
-  }
-
-  private row(cells: readonly string[], widths: readonly [number, number, number], separator: string): string {
-    return cells.map((cell, index) => this.padCell(cell, widths[index] ?? 0)).join(separator);
-  }
-
-  private padCell(content: string, width: number): string {
-    const truncated = truncateToWidth(content, width, "");
-    return truncated + " ".repeat(Math.max(0, width - visibleWidth(truncated)));
-  }
-}
-
 function successfulToolResult(action: TodoAction["action"], state: TodoState, message: string) {
   const details: TodoDetails = { outcome: "success", action, state };
   return { content: [{ type: "text" as const, text: message }], details };
@@ -284,7 +185,7 @@ function restoredState(ctx: ExtensionContext): TodoState {
 }
 
 export default function todoExtension(pi: ExtensionAPI): void {
-  registerRuntimeVersion(pi, "todo", "2026.07.23.11");
+  registerRuntimeVersion(pi, "todo", "2026.07.23.12");
   const stateRef = Effect.runSync(Ref.make<TodoState>(emptyTodoState));
   let hudExpiry: ReturnType<typeof setTimeout> | undefined;
   let reminderTimer: ReturnType<typeof setTimeout> | undefined;
@@ -631,7 +532,7 @@ export default function todoExtension(pi: ExtensionAPI): void {
         (_tui, theme, _kb, done) => new KanbanComponent(state, theme, () => done()),
         {
           overlay: true,
-          overlayOptions: { anchor: "right-center", width: "40%", minWidth: 36, maxHeight: "90%", margin: 1 },
+          overlayOptions: KANBAN_OVERLAY_OPTIONS,
         },
       );
     },
