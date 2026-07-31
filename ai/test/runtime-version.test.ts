@@ -12,7 +12,7 @@ test("fleet diagnostics expose current behavior-bearing component versions", () 
   assert.match(read("../pi/extensions/browser-control/index.ts"), /browser-control", "2026\.07\.23\.1"/);
   assert.match(read("../pi/extensions/btw/index.ts"), /btw", "2026\.07\.23\.1"/);
   assert.match(read("../pi/extensions/classified-workflows/index.ts"), /classified-workflows", "2026\.07\.23\.92"/);
-  assert.match(read("../pi/extensions/compact-read/index.ts"), /compact-read", "2026\.07\.31\.1"/);
+  assert.match(read("../pi/extensions/compact-read/index.ts"), /compact-read", "2026\.07\.31\.2"/);
   assert.match(read("../pi/extensions/link-safety/index.ts"), /link-safety", "2026\.07\.23\.1"/);
   assert.match(read("../pi/extensions/questions/index.ts"), /questions", "2026\.07\.23\.8"/);
   assert.match(read("../pi/extensions/pi-vim/index.ts"), /pi-vim", "2026\.07\.23\.7"/);

@@ -24,9 +24,13 @@ const diffCounts = (diff: string): { readonly additions: number; readonly remova
   )
 
 export default function compactRead(pi: ExtensionAPI): void {
-  registerRuntimeVersion(pi, "compact-read", "2026.07.31.1")
+  registerRuntimeVersion(pi, "compact-read", "2026.07.31.2")
   const originalRead = createReadTool(process.cwd())
   const originalEdit = createEditTool(process.cwd())
+
+  pi.on("session_start", (_event, ctx) => {
+    if (ctx.mode === "tui") ctx.ui.setToolsExpanded(true)
+  })
 
   pi.registerTool({
     name: "read",
