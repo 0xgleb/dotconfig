@@ -128,22 +128,34 @@ class TaskHudComponent {
     this.theme = theme
   }
 
+  private colorTaskLine(line: string): string {
+    const semanticAccent = /([▰▱]{8}|\[[ x\/~!:\-]\]|#[0-9]+)/u
+    return line
+      .split(semanticAccent)
+      .map((part) =>
+        semanticAccent.test(part)
+          ? this.theme.fg("accent", part)
+          : this.theme.fg("borderAccent", part),
+      )
+      .join("")
+  }
+
   render(width: number): string[] {
     const hud = taskHud(this.state)
     const framed = frameTaskHud(hud, width)
     if (hud.kind === "idle") {
       const [headline = "", row = ""] = framed
       return [
-        this.theme.bold(this.theme.fg("borderAccent", headline)),
-        this.theme.fg("borderAccent", row),
+        this.theme.bold(this.colorTaskLine(headline)),
+        this.colorTaskLine(row),
       ]
     }
 
     const [headline, ...rows] = framed
 
     return [
-      this.theme.bold(this.theme.fg("borderAccent", headline ?? "")),
-      ...rows.map((row) => this.theme.fg("borderAccent", row)),
+      this.theme.bold(this.colorTaskLine(headline ?? "")),
+      ...rows.map((row) => this.colorTaskLine(row)),
     ]
   }
 
@@ -277,7 +289,7 @@ function restoredState(ctx: ExtensionContext): TodoState {
 }
 
 export default function todoExtension(pi: ExtensionAPI): void {
-  registerRuntimeVersion(pi, "todo", "2026.07.23.20")
+  registerRuntimeVersion(pi, "todo", "2026.07.23.21")
   const stateRef = Effect.runSync(Ref.make<TodoState>(emptyTodoState))
   let hudExpiry: ReturnType<typeof setTimeout> | undefined
   let reminderTimer: ReturnType<typeof setTimeout> | undefined
