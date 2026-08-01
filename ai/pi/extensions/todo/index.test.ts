@@ -135,14 +135,14 @@ test("kanban unblocks the selected blocked task directly", async () => {
   assert.match(component.render(90).join("\n"), /\[ \] #4 Blocked/)
 })
 
-test("task progress animation blinks at varied rates without a green success pulse", () => {
+test("task progress animation software-blinks without terminal blink codes or green", () => {
   const renderer = todoExtensionSource.slice(
     todoExtensionSource.indexOf("private colorTaskHeadline"),
     todoExtensionSource.indexOf("private colorTaskRow"),
   )
-  assert.doesNotMatch(renderer, /"success"/)
-  assert.match(renderer, /taskProgressBlinkRate/)
-  assert.match(renderer, /SLOW_BLINK|RAPID_BLINK/)
+  assert.doesNotMatch(renderer, /"success"|SLOW_BLINK|RAPID_BLINK|\\x1b\[(?:5|6)m/)
+  assert.match(renderer, /taskProgressCellVisible/)
+  assert.match(renderer, /visible \? cell : " "/)
 })
 
 test("task progress pulse animates only while an agent is running", () => {

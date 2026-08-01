@@ -151,6 +151,20 @@ export const taskProgressBlinkRate = (
   return distance === 0 ? "rapid" : distance === 1 ? "slow" : "steady"
 }
 
+export const taskProgressCellVisible = (
+  frame: number,
+  index: number,
+  width = TASK_PROGRESS_WIDTH,
+): boolean => {
+  const rate = taskProgressBlinkRate(frame, index, width)
+  const boundedFrame = Math.abs(Math.floor(frame))
+  return rate === "rapid"
+    ? boundedFrame % 2 === 1
+    : rate === "slow"
+      ? Math.floor(boundedFrame / 2) % 2 === 1
+      : true
+}
+
 export const taskProgressBar = (completed: number, total: number): string => {
   const boundedTotal = Math.max(0, total)
   const ratio =

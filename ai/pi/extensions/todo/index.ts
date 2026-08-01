@@ -38,7 +38,7 @@ import {
   frameTaskHud,
   overlayRule,
   taskHud,
-  taskProgressBlinkRate,
+  taskProgressCellVisible,
   todoSummary,
 } from "./presentation.ts"
 import {
@@ -120,10 +120,6 @@ const statusColor = (status: TodoStatus | undefined): StatusColor => {
   }
 }
 
-const SLOW_BLINK = "\x1b[5m"
-const RAPID_BLINK = "\x1b[6m"
-const BLINK_OFF = "\x1b[25m"
-
 class TaskHudComponent {
   private readonly state: TodoState
   private readonly theme: Theme
@@ -145,22 +141,13 @@ class TaskHudComponent {
         progressBar.test(part)
           ? [...part]
               .map((cell, index) => {
-                const blinkRate = taskProgressBlinkRate(
+                const visible = taskProgressCellVisible(
                   this.animationFrame,
                   index,
                 )
-                const blink =
-                  blinkRate === "rapid"
-                    ? RAPID_BLINK
-                    : blinkRate === "slow"
-                      ? SLOW_BLINK
-                      : ""
-                const animatedCell = blink
-                  ? `${blink}${cell}${BLINK_OFF}`
-                  : cell
                 return this.theme.fg(
                   cell === "▰" ? "accent" : "muted",
-                  animatedCell,
+                  visible ? cell : " ",
                 )
               })
               .join("")
@@ -333,7 +320,7 @@ function restoredState(ctx: ExtensionContext): TodoState {
 }
 
 export default function todoExtension(pi: ExtensionAPI): void {
-  registerRuntimeVersion(pi, "todo", "2026.08.01.27")
+  registerRuntimeVersion(pi, "todo", "2026.08.01.28")
   const stateRef = Effect.runSync(Ref.make<TodoState>(emptyTodoState))
   let hudExpiry: ReturnType<typeof setTimeout> | undefined
   let hudAnimation: ReturnType<typeof setInterval> | undefined

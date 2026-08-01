@@ -9,6 +9,7 @@ import {
   taskHudLines,
   taskProgressBar,
   taskProgressBlinkRate,
+  taskProgressCellVisible,
   taskProgressPulseIndex,
   taskWidgetLines,
   todoSummary,
@@ -96,6 +97,18 @@ test("progress pulse uses varied blink rates without changing semantic completio
       taskProgressBlinkRate(3, index),
     ),
     ["steady", "steady", "slow", "rapid", "slow", "steady", "steady", "steady"],
+  )
+  assert.deepEqual(
+    Array.from({ length: 8 }, (_, index) =>
+      taskProgressCellVisible(0, index),
+    ),
+    [false, false, true, true, true, true, true, true],
+  )
+  assert.deepEqual(
+    Array.from({ length: 8 }, (_, index) =>
+      taskProgressCellVisible(1, index),
+    ),
+    [false, true, false, true, true, true, true, true],
   )
   assert.equal(taskProgressBar(1, 5), "▰▰▱▱▱▱▱▱")
 })
