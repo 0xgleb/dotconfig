@@ -119,6 +119,7 @@ import {
   preExecutionReviewWorkflowBlockObserved,
   startReviewWorkflow,
   retryBlockedReviewDuty,
+  retryFailedReviewDuty,
   reportReviewDuty,
   restoreReviewDutyState,
   reviewWorkflowBlockReason,
@@ -148,6 +149,7 @@ import {
   appendWorkflowAudit,
   auditedAgentRunner,
   emptyWorkflowAuditState,
+  failedWorkflowWithoutResultAfter,
   nextWorkflowSequence,
   restoreWorkflowAudits,
   terminalWorkflowFailureDisprovesOwnershipBlock,
@@ -775,6 +777,7 @@ const ReviewDutyParameters = Type.Object({
     Type.Literal("report"),
     Type.Literal("recover"),
     Type.Literal("retry-blocked"),
+    Type.Literal("retry-failed"),
   ]),
   repository: Type.Optional(Type.String({ minLength: 1, maxLength: 120 })),
   pullRequest: Type.Optional(Type.Integer({ minimum: 1 })),
@@ -840,7 +843,7 @@ const WorkflowParameters = Type.Object({
 })
 
 export default function classifiedWorkflows(pi: ExtensionAPI): void {
-  registerRuntimeVersion(pi, "classified-workflows", "2026.08.01.123")
+  registerRuntimeVersion(pi, "classified-workflows", "2026.08.01.124")
   const childTokenLimit = workflowChildTokenLimit(
     process.env[WORKFLOW_CHILD_TOKEN_LIMIT_ENV],
   )
@@ -1965,7 +1968,7 @@ export default function classifiedWorkflows(pi: ExtensionAPI): void {
     name: "review_duty",
     label: "Review-duty reporting gate",
     description:
-      "Begin a dedicated ST0x/rainlanguage PR review job, inspect its gate, recover a proven pre-execution block, or prove its typed verdict question is linked to Piece of Pi before advancing.",
+      "Begin a dedicated ST0x/rainlanguage PR review job, inspect its gate, recover a proven pre-execution block or resultless failed execution, or prove its typed verdict question is linked to Piece of Pi before advancing.",
     promptSnippet:
       "Gate each dedicated PR review on a persisted and Telegram-linked verdict question",
     promptGuidelines: [
@@ -2080,6 +2083,44 @@ export default function classifiedWorkflows(pi: ExtensionAPI): void {
           ],
           details: {
             outcome: "retry-blocked" as const,
+            state: reviewDutyState,
+          },
+        }
+      }
+
+      if (request.action === "retry-failed") {
+        refreshWorkflowAudits(ctx)
+        const completedAt =
+          reviewDutyState.phase === "awaiting_report"
+            ? reviewDutyState.completedAt
+            : Number.MAX_SAFE_INTEGER
+        const workflowRunning = [...backgroundWorkflows.values()].some(
+          (workflow) =>
+            workflow.status === "running" && workflow.startedAt >= completedAt,
+        )
+        const transition = retryFailedReviewDuty(
+          reviewDutyState,
+          failedWorkflowWithoutResultAfter(workflowAudits, completedAt),
+          workflowRunning,
+        )
+        if (!transition.ok) {
+          return {
+            content: [{ type: "text" as const, text: transition.error }],
+            details: { outcome: "error" as const, error: transition.error },
+            isError: true,
+          }
+        }
+        reviewDutyState = transition.state
+        pi.appendEntry(REVIEW_DUTY_STATE_ENTRY, reviewDutyState)
+        return {
+          content: [
+            {
+              type: "text" as const,
+              text: `Recovered resultless failed workflow for ${reviewDutyState.repository}#${reviewDutyState.pullRequest}; retry the same review without creating a verdict question`,
+            },
+          ],
+          details: {
+            outcome: "retry-failed" as const,
             state: reviewDutyState,
           },
         }

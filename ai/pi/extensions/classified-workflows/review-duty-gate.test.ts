@@ -9,6 +9,7 @@ import {
   preExecutionReviewWorkflowBlockObserved,
   startReviewWorkflow,
   retryBlockedReviewDuty,
+  retryFailedReviewDuty,
   reportReviewDuty,
   restoreReviewDutyState,
   reviewWorkflowBlockReason,
@@ -177,6 +178,37 @@ test("pre-execution workflow recovery cannot bypass an observed review workflow"
     extensionSource,
     /request\.action === "retry-blocked"[\s\S]*?workflowAudits\.workflows\.some[\s\S]*?backgroundWorkflows\.values\(\)[\s\S]*?retryBlockedReviewDuty/,
   );
+});
+
+test("resultless failed workflow recovery remains fail-closed", () => {
+  const active = beginReviewDuty(emptyReviewDutyState, job, 10);
+  assert.equal(active.ok, true);
+  if (!active.ok) return;
+  const awaiting = startReviewWorkflow(active.state, 20);
+
+  assert.deepEqual(retryFailedReviewDuty(awaiting, true, false), {
+    ok: true,
+    state: active.state,
+  });
+  assert.match(
+    retryFailedReviewDuty(awaiting, false, false).error ?? "",
+    /not a proven terminal failure without any review result/i,
+  );
+  assert.match(
+    retryFailedReviewDuty(awaiting, true, true).error ?? "",
+    /still running/i,
+  );
+  assert.match(
+    retryFailedReviewDuty(active.state, true, false).error ?? "",
+    /no failed review-duty workflow/i,
+  );
+  assert.match(extensionSource, /Type\.Literal\("retry-failed"\)/);
+  const retryHandler = extensionSource.slice(
+    extensionSource.indexOf('request.action === "retry-failed"'),
+    extensionSource.indexOf("if (request.questionId === undefined)"),
+  );
+  assert.match(retryHandler, /failedWorkflowWithoutResultAfter/);
+  assert.match(retryHandler, /retryFailedReviewDuty/);
 });
 
 test("review reporting waits boundedly for asynchronous Telegram linkage", () => {

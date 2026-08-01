@@ -184,6 +184,34 @@ export const retryBlockedReviewDuty = (
   return { ok: true, state: { ...active, phase: "active" } };
 };
 
+export const retryFailedReviewDuty = (
+  state: ReviewDutyState,
+  failedWithoutResult: boolean,
+  workflowRunning: boolean,
+): ReviewDutyTransition => {
+  if (state.phase !== "awaiting_report") {
+    return {
+      ok: false,
+      error: "no failed review-duty workflow awaits recovery",
+    };
+  }
+  if (workflowRunning) {
+    return {
+      ok: false,
+      error: "the review-duty workflow is still running",
+    };
+  }
+  if (!failedWithoutResult) {
+    return {
+      ok: false,
+      error:
+        "the latest workflow is not a proven terminal failure without any review result; a persisted and relayed verdict question is required",
+    };
+  }
+  const { completedAt: _completedAt, ...active } = state;
+  return { ok: true, state: { ...active, phase: "active" } };
+};
+
 const normalizedOptions = (
   question: ReviewDutyQuestion,
 ): readonly string[] =>

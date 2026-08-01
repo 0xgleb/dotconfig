@@ -7,6 +7,7 @@ import {
   appendWorkflowAudit,
   auditedAgentRunner,
   emptyWorkflowAuditState,
+  failedWorkflowWithoutResultAfter,
   nextWorkflowSequence,
   restoreWorkflowAudits,
   terminalWorkflowFailureDisprovesOwnershipBlock,
@@ -204,6 +205,64 @@ test("terminal child failures release duplicate-work ownership for a corrected r
   assert.deepEqual(workflowAuditEvidence(state), [
     "typed workflow audit: wf-5 status=completed; children=1:failed:0t:model unavailable or unauthenticated, 2:failed:0t:model unavailable or unauthenticated; outcome=both agents failed",
   ]);
+});
+
+test("failed review recovery requires the latest terminal audit to contain no result", () => {
+  const blockedFailure = {
+    id: "wf-30",
+    label: "PR307 review",
+    status: "failed" as const,
+    startedAt: 20,
+    finishedAt: 30,
+    limits,
+    children: [
+      {
+        index: 1,
+        tools: ["read"],
+        startedAt: 21,
+        finishedAt: 22,
+        status: "blocked" as const,
+        usageTokens: 0,
+        outputCharacters: 0,
+        reason: "scoped search required",
+      },
+    ],
+    outcome: "token budget preflight failed",
+  };
+  const state = appendWorkflowAudit(emptyWorkflowAuditState, blockedFailure);
+  assert.equal(failedWorkflowWithoutResultAfter(state, 20), true);
+  assert.equal(failedWorkflowWithoutResultAfter(state, 21), false);
+  assert.equal(
+    failedWorkflowWithoutResultAfter(
+      appendWorkflowAudit(state, {
+        ...blockedFailure,
+        id: "wf-31",
+        startedAt: 31,
+        finishedAt: 32,
+        children: [
+          {
+            ...blockedFailure.children[0],
+            status: "completed",
+            outputCharacters: 80,
+          },
+        ],
+      }),
+      20,
+    ),
+    false,
+  );
+  for (const status of ["completed", "cancelled"] as const) {
+    assert.equal(
+      failedWorkflowWithoutResultAfter(
+        appendWorkflowAudit(emptyWorkflowAuditState, {
+          ...blockedFailure,
+          status,
+        }),
+        20,
+      ),
+      false,
+    );
+  }
 });
 
 test("completed child work retains ownership", () => {
