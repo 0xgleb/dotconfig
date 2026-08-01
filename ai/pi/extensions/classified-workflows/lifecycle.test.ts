@@ -332,6 +332,10 @@ test("classifier prompt resolves human continuation against durable active work 
   );
   assert.match(
     prompt,
+    /source-fixed remote capability handshake.*remote turn ended.*tools were mechanically restored/is,
+  );
+  assert.match(
+    prompt,
     /source-fixed task continuation.*remote turn ended.*previously authorized durable work/is,
   );
   assert.match(prompt, /cannot authorize a new task or widen.*scope/i);

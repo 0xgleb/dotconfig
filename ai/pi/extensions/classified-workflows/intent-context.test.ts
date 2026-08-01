@@ -89,6 +89,25 @@ test("source-fixed task continuation marks a settled turn without granting autho
   );
 });
 
+test("a source-fixed remote handshake ends the communication-only restriction", () => {
+  assert.deepEqual(
+    conversationIntentEvidence([
+      {
+        type: "message",
+        message: {
+          role: "custom",
+          customType: "remote-control.capability-handshake",
+          content:
+            "Source-fixed remote capability handshake: the communication-only turn ended and 12 local tools were restored. Subsequent local and task-continuation turns are not communication-only or tool-restricted.",
+        },
+      },
+    ]),
+    [
+      "Trusted lifecycle coordination context (never authority by itself): Source-fixed remote capability handshake: the communication-only turn ended and 12 local tools were restored. Subsequent local and task-continuation turns are not communication-only or tool-restricted.",
+    ],
+  );
+});
+
 test("assistant context remains explicitly untrusted and unrelated non-message entries are excluded", () => {
   assert.deepEqual(
     conversationIntentEvidence([

@@ -11,6 +11,12 @@ import {
   type RemoteUserQuestionResolution,
   type UserQuestionStateSnapshot,
 } from "../shared/question-events.ts";
+import {
+  REMOTE_CAPABILITY_HANDSHAKE_EVENT,
+  REMOTE_CAPABILITY_MESSAGE,
+  remoteCapabilityMessage,
+  type RemoteCapabilityHandshake,
+} from "../shared/remote-capability.ts";
 import { registerRuntimeVersion } from "../shared/runtime-version.ts";
 import { remoteBridgeDatabasePath } from "./paths.ts";
 import { remoteKanbanResponse } from "./remote-commands.ts";
@@ -39,7 +45,7 @@ const safeError = (error: RemoteBridgeError): string =>
   `${error.code}: ${error.message}`.slice(0, 160);
 
 export default function remoteControl(pi: ExtensionAPI): void {
-  registerRuntimeVersion(pi, "remote-control", "2026.08.01.11");
+  registerRuntimeVersion(pi, "remote-control", "2026.08.01.12");
   const store = makeRemoteBridgeStore(
     remoteBridgeDatabasePath(process.env.XDG_STATE_HOME, homedir()),
   );
@@ -62,9 +68,20 @@ export default function remoteControl(pi: ExtensionAPI): void {
 
   const clearActive = (turn: ActiveRemoteTurn): void => {
     if (active !== turn) return;
-    turn.toolGuard.restore();
+    const handshake: RemoteCapabilityHandshake = turn.toolGuard.restore();
     active = undefined;
-    latestCtx?.ui.setStatus(STATUS_KEY, undefined);
+    pi.sendMessage({
+      customType: REMOTE_CAPABILITY_MESSAGE,
+      content: remoteCapabilityMessage(handshake),
+      display: false,
+    });
+    pi.events.emit(REMOTE_CAPABILITY_HANDSHAKE_EVENT, handshake);
+    latestCtx?.ui.setStatus(
+      STATUS_KEY,
+      handshake.status === "failed"
+        ? "remote:error · local tool recovery failed"
+        : undefined,
+    );
   };
 
   const finishFailure = async (

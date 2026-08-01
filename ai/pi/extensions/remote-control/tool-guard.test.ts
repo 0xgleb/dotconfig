@@ -23,10 +23,54 @@ test("remote turns mechanically disable tools and restore the exact prior set on
   assert.deepEqual(guard.priorTools, ["read", "bash", "todo"]);
   guard.enforce();
   assert.deepEqual(active, []);
-  guard.restore();
-  guard.restore();
+  assert.deepEqual(guard.restore(), {
+    status: "restored",
+    recoveryAttempts: 0,
+    expectedTools: ["read", "bash", "todo"],
+    activeTools: ["read", "bash", "todo"],
+  });
+  assert.equal(guard.restore().status, "restored");
   assert.deepEqual(active, ["read", "bash", "todo"]);
   assert.deepEqual(writes, [[], [], ["read", "bash", "todo"]]);
+});
+
+test("remote tool restoration makes one managed recovery attempt", () => {
+  let active = ["read", "bash"];
+  let ignoredRestoration = false;
+  const guard = enterRemoteToolGuard({
+    getActiveTools: () => [...active],
+    setActiveTools: (tools) => {
+      if (tools.length > 0 && !ignoredRestoration) {
+        ignoredRestoration = true;
+        return;
+      }
+      active = [...tools];
+    },
+  });
+
+  assert.deepEqual(guard.restore(), {
+    status: "recovered",
+    recoveryAttempts: 1,
+    expectedTools: ["read", "bash"],
+    activeTools: ["read", "bash"],
+  });
+});
+
+test("remote tool restoration fails closed after one recovery attempt", () => {
+  let active = ["read", "bash"];
+  const guard = enterRemoteToolGuard({
+    getActiveTools: () => [...active],
+    setActiveTools: (tools) => {
+      if (tools.length === 0) active = [];
+    },
+  });
+
+  assert.deepEqual(guard.restore(), {
+    status: "failed",
+    recoveryAttempts: 1,
+    expectedTools: ["read", "bash"],
+    activeTools: [],
+  });
 });
 
 test("remote turns restore tools at turn end before automatic follow-ups", () => {

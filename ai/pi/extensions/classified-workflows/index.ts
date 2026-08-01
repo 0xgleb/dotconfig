@@ -30,6 +30,14 @@ import {
   type ArtifactProvenanceState,
 } from "./artifact-provenance.ts"
 import {
+  advanceCapabilityCircuit,
+  CAPABILITY_CIRCUIT_ENTRY,
+  capabilityOutcome,
+  emptyCapabilityCircuit,
+  restoreCapabilityCircuit,
+  type CapabilityCircuitState,
+} from "./capability-circuit.ts"
+import {
   deterministicDecision,
   deterministicReadOnlyToolResultDecision,
   deterministicToolResultDecision,
@@ -111,6 +119,11 @@ import {
 import { currentReadDisprovesDuplicateBlock } from "./stale-duplicate.ts"
 import { requiredGitButlerModeExitDisprovesBlock } from "./gitbutler-mode-exit.ts"
 import { exactScaffoldUnwindDisprovesBlock } from "./scaffold-unwind.ts"
+import {
+  REMOTE_CAPABILITY_HANDSHAKE_EVENT,
+  REMOTE_CAPABILITY_MESSAGE,
+  type RemoteCapabilityHandshake,
+} from "../shared/remote-capability.ts"
 import {
   RESOURCE_PREFLIGHT_REQUEST_EVENT,
   resourcePreflightDisprovesBlock,
@@ -769,7 +782,7 @@ const WorkflowParameters = Type.Object({
 })
 
 export default function classifiedWorkflows(pi: ExtensionAPI): void {
-  registerRuntimeVersion(pi, "classified-workflows", "2026.08.01.105")
+  registerRuntimeVersion(pi, "classified-workflows", "2026.08.01.106")
   const childTokenLimit = workflowChildTokenLimit(
     process.env[WORKFLOW_CHILD_TOKEN_LIMIT_ENV],
   )
@@ -810,6 +823,8 @@ export default function classifiedWorkflows(pi: ExtensionAPI): void {
   let loopTimer: ReturnType<typeof setTimeout> | undefined
   let continuationPaused = false
   let manualReloadPending = false
+  let capabilityCircuit: CapabilityCircuitState = emptyCapabilityCircuit
+  let skipNextCapabilityOutcome = false
   let artifactProvenance: ArtifactProvenanceState = emptyArtifactProvenanceState
   let workflowAudits: WorkflowAuditState = emptyWorkflowAuditState
   const runtimeStartedAt = Date.now()
@@ -1074,6 +1089,30 @@ export default function classifiedWorkflows(pi: ExtensionAPI): void {
     updateContinuationPauseStatus(ctx)
   }
 
+  const updateCapabilityCircuitStatus = (ctx: ExtensionContext): void => {
+    ctx.ui.setStatus(
+      "capability-circuit",
+      capabilityCircuit.open
+        ? "continuation:paused · local tools unavailable"
+        : undefined,
+    )
+  }
+
+  const setCapabilityCircuit = (
+    state: CapabilityCircuitState,
+    ctx: ExtensionContext,
+  ): void => {
+    if (
+      state.open === capabilityCircuit.open &&
+      state.consecutiveBlockers === capabilityCircuit.consecutiveBlockers
+    ) {
+      return
+    }
+    capabilityCircuit = state
+    pi.appendEntry(CAPABILITY_CIRCUIT_ENTRY, capabilityCircuit)
+    updateCapabilityCircuitStatus(ctx)
+  }
+
   const clearLoopTimer = () => {
     if (loopTimer) clearTimeout(loopTimer)
     loopTimer = undefined
@@ -1154,7 +1193,12 @@ export default function classifiedWorkflows(pi: ExtensionAPI): void {
   pi.on("context", (event) => ({
     messages: retainLatestCustomMessages(
       event.messages,
-      new Set([GOAL_MESSAGE, LOOP_MESSAGE, TASK_MESSAGE]),
+      new Set([
+        GOAL_MESSAGE,
+        LOOP_MESSAGE,
+        TASK_MESSAGE,
+        REMOTE_CAPABILITY_MESSAGE,
+      ]),
     ),
   }))
 
@@ -1411,6 +1455,15 @@ export default function classifiedWorkflows(pi: ExtensionAPI): void {
         ? parseStoredLoop(storedLoop.data)
         : undefined
     continuationPaused = latestContinuationPause(branch)?.paused ?? false
+    capabilityCircuit = restoreCapabilityCircuit(branch)
+    if (capabilityCircuit.open && pi.getActiveTools().length > 0) {
+      capabilityCircuit = {
+        consecutiveBlockers: 0,
+        open: false,
+        updatedAt: Date.now(),
+      }
+      pi.appendEntry(CAPABILITY_CIRCUIT_ENTRY, capabilityCircuit)
+    }
     artifactProvenance = restoreArtifactProvenance(branch)
     workflowAudits = restoreWorkflowAudits(branch)
     nextWorkflowId = nextWorkflowSequence(workflowAudits)
@@ -1472,11 +1525,13 @@ export default function classifiedWorkflows(pi: ExtensionAPI): void {
     updateGoalStatus(ctx)
     updateLoopStatus(ctx)
     updateContinuationPauseStatus(ctx)
+    updateCapabilityCircuitStatus(ctx)
     scheduleLoop(ctx)
     renderWorkflowPanel(ctx)
   })
 
   pi.on("session_compact", () => {
+    pi.appendEntry(CAPABILITY_CIRCUIT_ENTRY, capabilityCircuit)
     pi.appendEntry(ARTIFACT_PROVENANCE_ENTRY, artifactProvenance)
     pi.appendEntry(WORKFLOW_AUDIT_ENTRY, workflowAudits)
   })
@@ -1487,16 +1542,18 @@ export default function classifiedWorkflows(pi: ExtensionAPI): void {
     ctx.ui.setStatus("pi-loop", undefined)
     ctx.ui.setStatus("continuation-pause", undefined)
     ctx.ui.setStatus("manual-reload", undefined)
+    ctx.ui.setStatus("capability-circuit", undefined)
     ctx.ui.setWidget("pi-loop", undefined)
   })
 
   pi.on("input", (event, ctx) => {
-    if (
-      continuationPaused &&
-      event.source === "interactive" &&
-      event.text.trim()
-    ) {
-      setContinuationPaused(false, ctx)
+    if (event.source !== "interactive" || !event.text.trim()) return
+    if (continuationPaused) setContinuationPaused(false, ctx)
+    if (capabilityCircuit.open && pi.getActiveTools().length > 0) {
+      setCapabilityCircuit(
+        { consecutiveBlockers: 0, open: false, updatedAt: Date.now() },
+        ctx,
+      )
     }
   })
 
@@ -1520,11 +1577,38 @@ export default function classifiedWorkflows(pi: ExtensionAPI): void {
     },
   )
 
+  pi.events.on(
+    REMOTE_CAPABILITY_HANDSHAKE_EVENT,
+    (handshake: RemoteCapabilityHandshake) => {
+      if (!latestCtx) return
+      skipNextCapabilityOutcome = true
+      const now = Date.now()
+      setCapabilityCircuit(
+        handshake.status === "failed"
+          ? { consecutiveBlockers: 2, open: true, updatedAt: now }
+          : { consecutiveBlockers: 0, open: false, updatedAt: now },
+        latestCtx,
+      )
+    },
+  )
+
   pi.on("agent_end", (event, ctx) => {
     if (goalState?.status === "active")
       goalRunTokens += assistantUsageTokens(event.messages)
     if (wasRunAborted(event.messages) && !manualReloadPending)
       setContinuationPaused(true, ctx)
+    if (skipNextCapabilityOutcome) {
+      skipNextCapabilityOutcome = false
+      return
+    }
+    setCapabilityCircuit(
+      advanceCapabilityCircuit(
+        capabilityCircuit,
+        capabilityOutcome(event.messages),
+        Date.now(),
+      ),
+      ctx,
+    )
   })
 
   pi.on("agent_settled", async (_event, ctx) => {
@@ -1535,7 +1619,7 @@ export default function classifiedWorkflows(pi: ExtensionAPI): void {
       await ctx.reload()
       return
     }
-    if (continuationPaused) return
+    if (continuationPaused || capabilityCircuit.open) return
     const work = todoWorkSnapshot(ctx.sessionManager.getBranch())
     if (goalState?.status !== "active") {
       const continuation = taskContinuationMessage(work)

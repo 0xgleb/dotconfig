@@ -1,4 +1,5 @@
 import type { UserQuestionStateSnapshot } from "../shared/question-events.ts";
+import { REMOTE_CAPABILITY_MESSAGE } from "../shared/remote-capability.ts";
 import { trustedCoordinationIntent } from "./coordination-intent.ts";
 
 const isRecord = (value: unknown): value is Readonly<Record<string, unknown>> =>
@@ -7,6 +8,7 @@ const isRecord = (value: unknown): value is Readonly<Record<string, unknown>> =>
 const TRUSTED_LIFECYCLE_CUSTOM_TYPES = new Set([
   "release-cadence.reminder",
   "classified-workflows.task-message",
+  REMOTE_CAPABILITY_MESSAGE,
 ]);
 
 const messageText = (
