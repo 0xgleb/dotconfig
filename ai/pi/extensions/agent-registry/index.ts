@@ -108,7 +108,7 @@ const requireText: (label: string, value: string | undefined) => string = (
 }
 
 const registryExtension: (pi: ExtensionAPI) => void = (pi) => {
-  registerRuntimeVersion(pi, "agent-registry", "2026.07.23.18")
+  registerRuntimeVersion(pi, "agent-registry", "2026.08.01.19")
   const runtimeVersions = (): Readonly<Record<string, string>> => {
     const versions: Record<string, string> = {
       "config-generation": MANAGED_CONFIG_GENERATION,
@@ -288,7 +288,6 @@ const registryExtension: (pi: ExtensionAPI) => void = (pi) => {
       )
       let snapshot = await run(store.snapshot(now))
       for (const request of notificationsEnabled &&
-      ctx.isIdle() &&
       !ctx.hasPendingMessages() &&
       !autoReloadPending()
         ? snapshot.requests.filter(
@@ -306,11 +305,14 @@ const registryExtension: (pi: ExtensionAPI) => void = (pi) => {
             : request.status === "failed"
               ? `${request.failure}: ${request.diagnostic}`
               : "cancelled"
-        pi.sendMessage({
-          customType: MESSAGE_TYPE,
-          content: `Registry request ${request.id} ${request.status}.\nOutcome: ${outcome}\nThis passive update must not preempt a human prompt.`,
-          display: true,
-        })
+        pi.sendMessage(
+          {
+            customType: MESSAGE_TYPE,
+            content: `Registry request ${request.id} ${request.status}.\nOutcome: ${outcome}\nThis passive update must not preempt a human prompt.`,
+            display: true,
+          },
+          { deliverAs: "followUp" },
+        )
         await run(
           store.acknowledgeRequest({
             requestId: request.id,
@@ -766,14 +768,26 @@ const registryExtension: (pi: ExtensionAPI) => void = (pi) => {
           }
         }
 
-        const requestId = requireText("requestId", request.requestId)
+        const requestedRequestId = requireText("requestId", request.requestId)
         const snapshot = await run(store.snapshot(now))
-        const target = snapshot.requests.find(({ id }) => id === requestId)
+        const matchingRequests = snapshot.requests.filter(
+          ({ id }) => id === requestedRequestId || id.startsWith(requestedRequestId),
+        )
+        if (matchingRequests.length !== 1)
+          throw new RegistryError({
+            code: matchingRequests.length === 0 ? "not_found" : "invalid_input",
+            message:
+              matchingRequests.length === 0
+                ? "request not found"
+                : "request prefix is ambiguous",
+          })
+        const target = matchingRequests[0]
         if (!target)
           throw new RegistryError({
             code: "not_found",
             message: "request not found",
           })
+        const requestId = target.id
 
         if (request.action === "cancel_request") {
           const cancelled = await run(
