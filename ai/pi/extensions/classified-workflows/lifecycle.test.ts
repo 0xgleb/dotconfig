@@ -485,6 +485,13 @@ test("classifier prompt scopes skill procedures to the task that invoked them", 
     prompt,
     /must not block unrelated independently authorized work/i,
   );
+  assert.match(prompt, /Invocation topic.*scope provenance/i);
+  assert.match(
+    prompt,
+    /cannot block a different established todo, ADR, workstream, or domain/i,
+  );
+  assert.match(prompt, /merely because both edit SPEC\.md, ROADMAP\.md/i);
+  assert.match(prompt, /Require concrete topic\/task overlap/i);
 });
 
 test("classifier prompt honors model-specific optimistic ADR continuation without weakening genuine pauses", () => {

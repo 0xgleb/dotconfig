@@ -39,6 +39,34 @@ test("verified local skill reads become bounded active procedure context", () =>
   assert.match(procedures[0] ?? "", /cursor-agent -p --mode plan/);
 });
 
+test("active skill context retains the bounded human topic that invoked it", () => {
+  const procedures = activeSkillProcedures(
+    [
+      {
+        type: "message",
+        message: {
+          role: "user",
+          content:
+            "Shape future options-market evidence and short-side scope only.",
+        },
+      },
+      ...skillExchange(
+        "/Users/example/.agents/skills/shape-work/SKILL.md",
+        "Do not modify implementation plans while shaping this feature.",
+      ),
+    ],
+    {
+      home: "/Users/example",
+      cwd: "/repo",
+      readSkillFile: () =>
+        "Do not modify implementation plans while shaping this feature.",
+    },
+  );
+
+  assert.match(procedures[0] ?? "", /Invocation topic.*future options-market evidence/);
+  assert.match(procedures[0] ?? "", /scopes this procedure/);
+});
+
 test("reload resolves an observed active skill from its current trusted source", () => {
   const procedures = activeSkillProcedures(
     skillExchange("/Users/example/.agents/skills/eod/SKILL.md", "Stale procedure: always use Edit"),

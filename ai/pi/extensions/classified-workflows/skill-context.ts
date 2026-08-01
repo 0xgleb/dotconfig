@@ -10,6 +10,7 @@ const MAX_BRANCH_ENTRIES = 240;
 interface SkillReadCall {
   id: string;
   path: string;
+  invocationContext?: string;
 }
 
 const isRecord: (value: unknown) => value is Record<string, unknown> = (value) =>
@@ -41,17 +42,20 @@ const trustedSkillPath: (path: string, home: string, cwd: string) => string | un
   return roots.some((root) => isWithin(normalized, root)) ? normalized : undefined;
 };
 
-const skillReadCalls: (message: Record<string, unknown>, home: string, cwd: string) => SkillReadCall[] = (
-  message,
-  home,
-  cwd,
-) => {
+const skillReadCalls: (
+  message: Record<string, unknown>,
+  home: string,
+  cwd: string,
+  invocationContext?: string,
+) => SkillReadCall[] = (message, home, cwd, invocationContext) => {
   if (message.role !== "assistant" || !Array.isArray(message.content)) return [];
   return message.content.flatMap((part) => {
     if (!isRecord(part) || part.type !== "toolCall" || part.name !== "read") return [];
     const args = isRecord(part.arguments) ? part.arguments : undefined;
     const path = args && typeof args.path === "string" ? trustedSkillPath(args.path, home, cwd) : undefined;
-    return typeof part.id === "string" && path ? [{ id: part.id, path }] : [];
+    return typeof part.id === "string" && path
+      ? [{ id: part.id, path, ...(invocationContext ? { invocationContext } : {}) }]
+      : [];
   });
 };
 
@@ -62,17 +66,23 @@ export const activeSkillProcedures: (
   const home = options.home ?? homedir();
   const cwd = options.cwd ?? process.cwd();
   const readSkillFile = options.readSkillFile ?? ((path: string) => readFileSync(path, "utf8"));
-  const calls = new Map<string, string>();
+  const calls = new Map<string, SkillReadCall>();
   const procedures: string[] = [];
   let totalChars = 0;
+  let latestHumanContext: string | undefined;
 
   for (const entry of branch.slice(-MAX_BRANCH_ENTRIES)) {
     if (!isRecord(entry) || entry.type !== "message" || !isRecord(entry.message)) continue;
     const message = entry.message;
-    for (const call of skillReadCalls(message, home, cwd)) calls.set(call.id, call.path);
+    if (message.role === "user") {
+      latestHumanContext = textContent(message.content)?.replace(/\s+/g, " ").trim().slice(0, 2_000);
+    }
+    for (const call of skillReadCalls(message, home, cwd, latestHumanContext))
+      calls.set(call.id, call);
     if (message.role !== "toolResult" || message.toolName !== "read" || typeof message.toolCallId !== "string") continue;
-    const path = calls.get(message.toolCallId);
-    if (!path) continue;
+    const call = calls.get(message.toolCallId);
+    if (!call) continue;
+    const { path } = call;
     if (!textContent(message.content)) continue;
     let content: string;
     try {
@@ -85,7 +95,10 @@ export const activeSkillProcedures: (
     if (remaining <= 0) break;
     const body = content.slice(0, Math.min(MAX_PROCEDURE_CHARS, remaining));
     const name = basename(dirname(path));
-    procedures.push(`Active skill ${name} (${path}):\n${body}`);
+    const provenance = call.invocationContext
+      ? `\nInvocation topic (bounded human context; scopes this procedure): ${call.invocationContext}`
+      : "";
+    procedures.push(`Active skill ${name} (${path}):${provenance}\n${body}`);
     totalChars += body.length;
   }
 
