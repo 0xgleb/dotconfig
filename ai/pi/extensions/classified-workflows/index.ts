@@ -826,7 +826,7 @@ const WorkflowParameters = Type.Object({
 })
 
 export default function classifiedWorkflows(pi: ExtensionAPI): void {
-  registerRuntimeVersion(pi, "classified-workflows", "2026.08.01.115")
+  registerRuntimeVersion(pi, "classified-workflows", "2026.08.01.116")
   const childTokenLimit = workflowChildTokenLimit(
     process.env[WORKFLOW_CHILD_TOKEN_LIMIT_ENV],
   )
@@ -988,6 +988,19 @@ export default function classifiedWorkflows(pi: ExtensionAPI): void {
     pi.appendEntry(WORKFLOW_AUDIT_ENTRY, workflowAudits)
   }
 
+  const refreshWorkflowAudits = (ctx: ExtensionContext): void => {
+    const persisted = restoreWorkflowAudits(ctx.sessionManager.getBranch())
+    for (const audit of persisted.workflows) {
+      const current = workflowAudits.workflows.find(({ id }) => id === audit.id)
+      if (!current || current.finishedAt < audit.finishedAt)
+        workflowAudits = appendWorkflowAudit(workflowAudits, audit)
+    }
+    nextWorkflowId = Math.max(
+      nextWorkflowId,
+      nextWorkflowSequence(workflowAudits),
+    )
+  }
+
   const startBackgroundWorkflow = (
     params: WorkflowToolParams,
     ctx: ExtensionContext,
@@ -996,6 +1009,7 @@ export default function classifiedWorkflows(pi: ExtensionAPI): void {
     skillProcedures: string[],
     parentEvidence: string[],
   ): BackgroundWorkflow => {
+    refreshWorkflowAudits(ctx)
     const id = `wf-${nextWorkflowId++}`
     const limits: WorkflowLimits = {
       maxAgents: params.maxAgents,
@@ -2214,7 +2228,8 @@ export default function classifiedWorkflows(pi: ExtensionAPI): void {
     parameters: Type.Object({
       id: Type.Optional(Type.String({ maxLength: 80 })),
     }),
-    async execute(_toolCallId, request) {
+    async execute(_toolCallId, request, _signal, _onUpdate, ctx) {
+      refreshWorkflowAudits(ctx)
       const audits = request.id
         ? workflowAudits.workflows.filter(({ id }) => id === request.id)
         : workflowAudits.workflows.slice(-20)
@@ -2307,6 +2322,7 @@ export default function classifiedWorkflows(pi: ExtensionAPI): void {
         }
       }
 
+      refreshWorkflowAudits(ctx)
       const auditId = `wf-${nextWorkflowId++}`
       const auditLabel = params.label?.trim() || `workflow ${auditId}`
       const auditStartedAt = Date.now()

@@ -211,8 +211,8 @@ const decodeWorkflowAudit = (value: unknown): WorkflowAudit | undefined => {
 export const restoreWorkflowAudits = (
   entries: readonly unknown[],
 ): WorkflowAuditState => {
-  for (let index = entries.length - 1; index >= 0; index -= 1) {
-    const entry = entries[index];
+  let restored = emptyWorkflowAuditState;
+  for (const entry of entries) {
     if (
       !isRecord(entry) ||
       entry.type !== "custom" ||
@@ -227,13 +227,15 @@ export const restoreWorkflowAudits = (
       continue;
     const workflows = entry.data.workflows.map(decodeWorkflowAudit);
     if (workflows.some((workflow) => workflow === undefined)) continue;
-    return {
-      workflows: workflows.filter(
-        (workflow): workflow is WorkflowAudit => workflow !== undefined,
-      ),
-    };
+    for (const workflow of workflows) {
+      if (!workflow) continue;
+      const current = restored.workflows.find(({ id }) => id === workflow.id);
+      if (!current || current.finishedAt < workflow.finishedAt) {
+        restored = appendWorkflowAudit(restored, workflow);
+      }
+    }
   }
-  return emptyWorkflowAuditState;
+  return restored;
 };
 
 const completedAgentDiagnostic = (

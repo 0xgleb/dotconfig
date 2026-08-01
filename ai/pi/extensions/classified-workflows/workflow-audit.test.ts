@@ -1,4 +1,5 @@
 import assert from "node:assert/strict";
+import { readFileSync } from "node:fs";
 import test from "node:test";
 import type { AgentResult, WorkflowLimits } from "./core.ts";
 import {
@@ -13,6 +14,8 @@ import {
   type ChildAudit,
 } from "./workflow-audit.ts";
 
+const extensionSource = readFileSync(new URL("./index.ts", import.meta.url), "utf8");
+
 const limits: WorkflowLimits = {
   maxAgents: 2,
   concurrency: 2,
@@ -21,6 +24,21 @@ const limits: WorkflowLimits = {
   retries: 0,
   tokenBudget: 10_000,
 };
+
+test("workflow allocation and audit reads reconcile late persisted snapshots", () => {
+  assert.match(
+    extensionSource,
+    /const startBackgroundWorkflow[\s\S]*?refreshWorkflowAudits\(ctx\)[\s\S]*?nextWorkflowId\+\+/,
+  );
+  assert.match(
+    extensionSource,
+    /name: "workflow_audit"[\s\S]*?refreshWorkflowAudits\(ctx\)/,
+  );
+  assert.match(
+    extensionSource,
+    /refreshWorkflowAudits\(ctx\)\s*const auditId = `wf-\$\{nextWorkflowId\+\+\}`/,
+  );
+});
 
 test("audited runner records bounded zero-token timeout diagnostics", async () => {
   const children: ChildAudit[] = [];
@@ -216,6 +234,59 @@ test("completed child work retains ownership", () => {
     ),
     false,
   );
+});
+
+test("workflow audit restoration merges snapshots appended across a reload", () => {
+  const beforeReload = appendWorkflowAudit(emptyWorkflowAuditState, {
+    id: "wf-27",
+    label: "first review",
+    status: "completed",
+    startedAt: 10,
+    finishedAt: 20,
+    limits,
+    children: [],
+    outcome: "first",
+  });
+  const oldRuntimeCompletedLate = appendWorkflowAudit(beforeReload, {
+    id: "wf-28",
+    label: "background review",
+    status: "completed",
+    startedAt: 21,
+    finishedAt: 40,
+    limits,
+    children: [],
+    outcome: "late terminal result",
+  });
+  const newRuntimeSnapshot = appendWorkflowAudit(beforeReload, {
+    id: "wf-29",
+    label: "next review",
+    status: "completed",
+    startedAt: 41,
+    finishedAt: 50,
+    limits,
+    children: [],
+    outcome: "new runtime",
+  });
+
+  const restored = restoreWorkflowAudits([
+    { type: "custom", customType: WORKFLOW_AUDIT_ENTRY, data: beforeReload },
+    {
+      type: "custom",
+      customType: WORKFLOW_AUDIT_ENTRY,
+      data: oldRuntimeCompletedLate,
+    },
+    {
+      type: "custom",
+      customType: WORKFLOW_AUDIT_ENTRY,
+      data: newRuntimeSnapshot,
+    },
+  ]);
+
+  assert.deepEqual(
+    restored.workflows.map(({ id }) => id),
+    ["wf-27", "wf-28", "wf-29"],
+  );
+  assert.equal(nextWorkflowSequence(restored), 30);
 });
 
 test("workflow audits survive reload and compaction state restoration", () => {
