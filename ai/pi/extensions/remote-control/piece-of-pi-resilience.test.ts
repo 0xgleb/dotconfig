@@ -87,8 +87,13 @@ test("voice notes authenticate before bounded local transcription", () => {
   );
   assert.match(
     homeNix,
-    /pieceOfPiWhisper = pkgs\.whisper-cpp\.override \{[\s\S]*?coreMLSupport = false;[\s\S]*?withSDL = false;/,
+    /pieceOfPiWhisper =[\s\S]*?pkgs\.whisper-cpp\.override \{[\s\S]*?coreMLSupport = false;[\s\S]*?withSDL = false;/,
   );
+  assert.match(
+    homeNix,
+    /pieceOfPiWhisper[\s\S]*?overrideAttrs[\s\S]*?grep -q -F 'install\(' "\$target"/,
+  );
+  assert.doesNotMatch(homeNix, /install\(TARGETS whisper\.coreml LIBRARY\)/);
   assert.match(homeNix, /runtimeInputs = \[[\s\S]*?pieceOfPiWhisper/);
   assert.match(homeNix, /PIECE_OF_PI_WHISPER_MODEL/);
 })

@@ -36,10 +36,22 @@ let
     npmRoot = ./ai/pi/extensions;
     inherit (pkgs) nodejs;
   };
-  pieceOfPiWhisper = pkgs.whisper-cpp.override {
-    coreMLSupport = false;
-    withSDL = false;
-  };
+  pieceOfPiWhisper =
+    (pkgs.whisper-cpp.override {
+      coreMLSupport = false;
+      withSDL = false;
+    }).overrideAttrs
+      (_: {
+        # nixpkgs' Darwin postPatch appends an unconditional whisper.coreml
+        # install target. Keep only the example installs when CoreML is disabled.
+        postPatch = ''
+          for target in examples/{bench,command,cli,quantize,server,stream,talk-llama}/CMakeLists.txt; do
+            if ! grep -q -F 'install(' "$target"; then
+              echo 'install(TARGETS ''${TARGET} RUNTIME)' >> "$target"
+            fi
+          done
+        '';
+      });
   pieceOfPiWhisperModel = pkgs.fetchurl {
     url = "https://huggingface.co/ggerganov/whisper.cpp/resolve/main/ggml-base-q5_1.bin";
     hash = "sha256-Qi8a5FKt5vMKAE1+XGpDGV5EM7w3C/I/rJzFkfAaiJg=";
