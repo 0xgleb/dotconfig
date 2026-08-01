@@ -1,5 +1,10 @@
-import { truncateToWidth, visibleWidth } from "@earendil-works/pi-tui";
-import { todoStatusMark, type Todo, type TodoState, type TodoStatus } from "./state.ts";
+import { truncateToWidth, visibleWidth } from "@earendil-works/pi-tui"
+import {
+  todoStatusMark,
+  type Todo,
+  type TodoState,
+  type TodoStatus,
+} from "./state.ts"
 
 /**
  * A rule is a framed edge of the HUD carrying up to two labels. The renderer
@@ -8,13 +13,13 @@ import { todoStatusMark, type Todo, type TodoState, type TodoStatus } from "./st
  * Either half may be empty; the rule then spans the gap with its border run.
  */
 export interface TaskHudRule {
-  readonly left: string;
-  readonly right: string;
+  readonly left: string
+  readonly right: string
 }
 
 export interface TaskHudRow {
-  readonly status: TodoStatus;
-  readonly text: string;
+  readonly status: TodoStatus
+  readonly text: string
 }
 
 /**
@@ -25,66 +30,103 @@ export interface TaskHudRow {
 export type TaskHud =
   | { readonly kind: "idle"; readonly headline: TaskHudRule }
   | {
-      readonly kind: "tracking";
-      readonly headline: TaskHudRule;
-      readonly rows: ReadonlyArray<TaskHudRow>;
-      readonly footer: TaskHudRule;
-    };
+      readonly kind: "tracking"
+      readonly headline: TaskHudRule
+      readonly rows: ReadonlyArray<TaskHudRow>
+      readonly footer: TaskHudRule
+    }
 
 export interface TodoSummary {
-  readonly total: number;
-  readonly completed: number;
-  readonly pending: number;
-  readonly inProgress: number;
-  readonly blocked: number;
-  readonly deferred: number;
-  readonly cancelled: number;
+  readonly total: number
+  readonly completed: number
+  readonly pending: number
+  readonly inProgress: number
+  readonly inReview: number
+  readonly blocked: number
+  readonly deferred: number
+  readonly cancelled: number
 }
 
 export interface KanbanColumns {
-  readonly now: ReadonlyArray<Todo>;
-  readonly next: ReadonlyArray<Todo>;
-  readonly done: ReadonlyArray<Todo>;
+  readonly todo: ReadonlyArray<Todo>
+  readonly inProgress: ReadonlyArray<Todo>
+  readonly inReview: ReadonlyArray<Todo>
+  readonly done: ReadonlyArray<Todo>
 }
 
-export const kanbanColumns: (state: TodoState) => KanbanColumns = (state) => {
-  const inProgress = state.todos.filter(({ status }) => status === "in_progress");
-  const pending = state.todos.filter(({ status }) => status === "pending");
-  const now = inProgress.length > 0 ? inProgress : pending.slice(0, 1);
-  const nowIds = new Set(now.map(({ id }) => id));
-  return {
-    now,
-    next: state.todos.filter(
-      ({ id, status }) => !nowIds.has(id) && (status === "pending" || status === "blocked" || status === "deferred"),
-    ),
-    done: state.todos.filter(({ status }) => status === "completed" || status === "cancelled"),
-  };
-};
+export const kanbanColumns: (state: TodoState) => KanbanColumns = (state) => ({
+  todo: state.todos.filter(
+    ({ status }) =>
+      status === "pending" || status === "blocked" || status === "deferred",
+  ),
+  inProgress: state.todos.filter(({ status }) => status === "in_progress"),
+  inReview: state.todos.filter(({ status }) => status === "in_review"),
+  done: state.todos.filter(
+    ({ status }) => status === "completed" || status === "cancelled",
+  ),
+})
 
 export const todoSummary: (state: TodoState) => TodoSummary = (state) => {
-  const completed = state.todos.filter(({ status }) => status === "completed").length;
-  const inProgress = state.todos.filter(({ status }) => status === "in_progress").length;
-  const pending = state.todos.filter(({ status }) => status === "pending" || status === "in_progress").length;
-  const blocked = state.todos.filter(({ status }) => status === "blocked").length;
-  const deferred = state.todos.filter(({ status }) => status === "deferred").length;
-  const cancelled = state.todos.filter(({ status }) => status === "cancelled").length;
-  return { total: state.todos.length, completed, pending, inProgress, blocked, deferred, cancelled };
-};
+  const completed = state.todos.filter(
+    ({ status }) => status === "completed",
+  ).length
+  const inProgress = state.todos.filter(
+    ({ status }) => status === "in_progress",
+  ).length
+  const inReview = state.todos.filter(
+    ({ status }) => status === "in_review",
+  ).length
+  const pending = state.todos.filter(
+    ({ status }) =>
+      status === "pending" ||
+      status === "in_progress" ||
+      status === "in_review",
+  ).length
+  const blocked = state.todos.filter(
+    ({ status }) => status === "blocked",
+  ).length
+  const deferred = state.todos.filter(
+    ({ status }) => status === "deferred",
+  ).length
+  const cancelled = state.todos.filter(
+    ({ status }) => status === "cancelled",
+  ).length
+  return {
+    total: state.todos.length,
+    completed,
+    pending,
+    inProgress,
+    inReview,
+    blocked,
+    deferred,
+    cancelled,
+  }
+}
 
-export const topPendingTodos: (state: TodoState, limit: number) => ReadonlyArray<Todo> = (state, limit) => {
-  const active = state.todos.filter(({ status }) => status === "in_progress");
-  const queued = state.todos.filter(({ status }) => status === "pending");
-  return [...active, ...queued].slice(0, Math.max(0, limit));
-};
+export const topPendingTodos: (
+  state: TodoState,
+  limit: number,
+) => ReadonlyArray<Todo> = (state, limit) => {
+  const active = state.todos.filter(({ status }) => status === "in_progress")
+  const review = state.todos.filter(({ status }) => status === "in_review")
+  const queued = state.todos.filter(({ status }) => status === "pending")
+  return [...active, ...review, ...queued].slice(0, Math.max(0, limit))
+}
 
-const HUD_SETTLE_DELAY_MS = 10_000;
+const HUD_SETTLE_DELAY_MS = 10_000
 
-const HUD_ROW_LIMIT = 2;
+const HUD_ROW_LIMIT = 2
 
-export const taskHud: (state: TodoState, now?: number) => TaskHud = (state, now = Date.now()) => {
-  const summary = todoSummary(state);
+export const taskHud: (state: TodoState, now?: number) => TaskHud = (
+  state,
+  now = Date.now(),
+) => {
+  const summary = todoSummary(state)
   if (summary.total === 0) {
-    return { kind: "idle", headline: { left: "TASKS  ·  nothing tracked", right: "/kanban" } };
+    return {
+      kind: "idle",
+      headline: { left: "TASKS  ·  nothing tracked", right: "/kanban" },
+    }
   }
   const recent = state.todos
     .filter(
@@ -94,23 +136,26 @@ export const taskHud: (state: TodoState, now?: number) => TaskHud = (state, now 
         now - statusChangedAt < HUD_SETTLE_DELAY_MS,
     )
     .slice(-2)
-    .reverse();
+    .reverse()
   const ordered = [
     ...recent,
     ...state.todos.filter(({ status }) => status === "in_progress"),
+    ...state.todos.filter(({ status }) => status === "in_review"),
     ...state.todos.filter(({ status }) => status === "pending"),
     ...state.todos.filter(({ status }) => status === "blocked"),
     ...state.todos.filter(({ status }) => status === "deferred"),
-  ];
+  ]
   const visible = ordered
-    .filter((todo, index) => ordered.findIndex(({ id }) => id === todo.id) === index)
-    .slice(0, HUD_ROW_LIMIT);
+    .filter(
+      (todo, index) => ordered.findIndex(({ id }) => id === todo.id) === index,
+    )
+    .slice(0, HUD_ROW_LIMIT)
   const metrics = [
     `${summary.pending} active`,
     ...(summary.blocked > 0 ? [`${summary.blocked} blocked`] : []),
     ...(summary.deferred > 0 ? [`${summary.deferred} deferred`] : []),
-  ];
-  const hidden = Math.max(0, ordered.length - visible.length);
+  ]
+  const hidden = Math.max(0, ordered.length - visible.length)
   return {
     kind: "tracking",
     headline: { left: `TASKS  ·  ${metrics.join("  ·  ")}`, right: "/kanban" },
@@ -122,14 +167,14 @@ export const taskHud: (state: TodoState, now?: number) => TaskHud = (state, now 
       left: hidden > 0 ? `+${hidden} hidden` : "",
       right: `${summary.completed}/${summary.total} complete`,
     },
-  };
-};
+  }
+}
 
 /**
  * Every framed line spends the same number of columns on its border, so task
  * text starts in one column across the headline, the rows, and the footer.
  */
-const GUTTER = 3;
+const GUTTER = 3
 
 /**
  * Renders exactly `inner` columns. Each label keeps a blank column between
@@ -141,107 +186,143 @@ const GUTTER = 3;
  * otherwise shrinking the longer one first so a short label is never elided to
  * make room for a long one it already fits beside.
  */
-const share = (head: number, tail: number, budget: number): readonly [number, number] => {
-  if (budget <= 0) return [0, 0];
-  if (head + tail <= budget) return [head, tail];
-  const half = Math.floor(budget / 2);
-  if (head <= half) return [head, budget - head];
-  if (tail <= half) return [budget - tail, tail];
-  return [half, budget - half];
-};
+const share = (
+  head: number,
+  tail: number,
+  budget: number,
+): readonly [number, number] => {
+  if (budget <= 0) return [0, 0]
+  if (head + tail <= budget) return [head, tail]
+  const half = Math.floor(budget / 2)
+  if (head <= half) return [head, budget - head]
+  if (tail <= half) return [budget - tail, tail]
+  return [half, budget - half]
+}
 
 const rule = (inner: number, { left, right }: TaskHudRule): string => {
-  if (inner <= 0) return "";
-  const border = (count: number): string => "─".repeat(Math.max(0, count));
+  if (inner <= 0) return ""
+  const border = (count: number): string => "─".repeat(Math.max(0, count))
   const anchored = (label: string, toLeft: boolean): string => {
-    const only = truncateToWidth(label, Math.max(0, inner - 2), "…");
-    const width = visibleWidth(only);
-    if (width === 0) return border(inner);
-    return toLeft ? `${only} ${border(inner - width - 1)}` : `${border(inner - width - 1)} ${only}`;
-  };
+    const only = truncateToWidth(label, Math.max(0, inner - 2), "…")
+    const width = visibleWidth(only)
+    if (width === 0) return border(inner)
+    return toLeft
+      ? `${only} ${border(inner - width - 1)}`
+      : `${border(inner - width - 1)} ${only}`
+  }
 
-  if (left.length === 0 && right.length === 0) return border(inner);
-  if (right.length === 0) return anchored(left, true);
-  if (left.length === 0) return anchored(right, false);
+  if (left.length === 0 && right.length === 0) return border(inner)
+  if (right.length === 0) return anchored(left, true)
+  if (left.length === 0) return anchored(right, false)
 
   // One blank column beside each label, and at least one border cell between.
-  const [headRoom, tailRoom] = share(visibleWidth(left), visibleWidth(right), inner - 3);
-  const head = truncateToWidth(left, headRoom, "…");
-  const tail = truncateToWidth(right, tailRoom, "…");
-  const headWidth = visibleWidth(head);
-  const tailWidth = visibleWidth(tail);
+  const [headRoom, tailRoom] = share(
+    visibleWidth(left),
+    visibleWidth(right),
+    inner - 3,
+  )
+  const head = truncateToWidth(left, headRoom, "…")
+  const tail = truncateToWidth(right, tailRoom, "…")
+  const headWidth = visibleWidth(head)
+  const tailWidth = visibleWidth(tail)
 
-  if (headWidth === 0) return tailWidth === 0 ? border(inner) : anchored(right, false);
-  if (tailWidth === 0) return anchored(left, true);
-  return `${head} ${border(inner - headWidth - tailWidth - 2)} ${tail}`;
-};
+  if (headWidth === 0)
+    return tailWidth === 0 ? border(inner) : anchored(right, false)
+  if (tailWidth === 0) return anchored(left, true)
+  return `${head} ${border(inner - headWidth - tailWidth - 2)} ${tail}`
+}
 
-export const frameTaskHud: (hud: TaskHud, width: number) => string[] = (hud, width) => {
-  const inner = Math.max(0, width - GUTTER * 2);
-  if (hud.kind === "idle") return [`╶─ ${rule(inner, hud.headline)} ─╴`];
+export const frameTaskHud: (hud: TaskHud, width: number) => string[] = (
+  hud,
+  width,
+) => {
+  const inner = Math.max(0, width - GUTTER * 2)
+  if (hud.kind === "idle") return [`╶─ ${rule(inner, hud.headline)} ─╴`]
 
   const pad = (text: string): string => {
-    const content = truncateToWidth(text, inner, "…");
-    return `${content}${" ".repeat(Math.max(0, inner - visibleWidth(content)))}`;
-  };
+    const content = truncateToWidth(text, inner, "…")
+    return `${content}${" ".repeat(Math.max(0, inner - visibleWidth(content)))}`
+  }
 
   return [
     `╭─ ${rule(inner, hud.headline)} ─╮`,
-    ...hud.rows.map((row) => `│  ${pad(`${todoStatusMark(row.status)} ${row.text}`)}  │`),
+    ...hud.rows.map(
+      (row) => `│  ${pad(`${todoStatusMark(row.status)} ${row.text}`)}  │`,
+    ),
     `╰─ ${rule(inner, hud.footer)} ─╯`,
-  ];
-};
+  ]
+}
 
 /**
  * A section rule for full-width overlays, drawn on the same columns as the HUD
  * frame so the compact and expanded views read as one interface.
  */
-export const overlayRule: (labels: TaskHudRule, width: number) => string = (labels, width) =>
-  `╶─ ${rule(Math.max(0, width - GUTTER * 2), labels)} ─╴`;
+export const overlayRule: (labels: TaskHudRule, width: number) => string = (
+  labels,
+  width,
+) => `╶─ ${rule(Math.max(0, width - GUTTER * 2), labels)} ─╴`
 
 /** The column every framed line starts its content in. */
-export const CONTENT_GUTTER = " ".repeat(GUTTER);
+export const CONTENT_GUTTER = " ".repeat(GUTTER)
 
 const ruleText = ({ left, right }: TaskHudRule): string =>
-  [left, right].filter((part) => part.length > 0).join("  ·  ");
+  [left, right].filter((part) => part.length > 0).join("  ·  ")
 
 /** Flattened HUD text, without the frame — the bounded footprint the editor reserves. */
-export const taskHudLines: (state: TodoState, now?: number) => string[] = (state, now = Date.now()) => {
-  const hud = taskHud(state, now);
-  if (hud.kind === "idle") return [ruleText(hud.headline)];
+export const taskHudLines: (state: TodoState, now?: number) => string[] = (
+  state,
+  now = Date.now(),
+) => {
+  const hud = taskHud(state, now)
+  if (hud.kind === "idle") return [ruleText(hud.headline)]
   return [
     ruleText(hud.headline),
     ...hud.rows.map((row) => `${todoStatusMark(row.status)} ${row.text}`),
     ruleText(hud.footer),
-  ];
-};
+  ]
+}
 
-export const taskWidgetLines: (state: TodoState, limit?: number) => string[] = (state, limit = 5) => {
-  if (state.todos.length === 0) return [];
+export const taskWidgetLines: (state: TodoState, limit?: number) => string[] = (
+  state,
+  limit = 5,
+) => {
+  if (state.todos.length === 0) return []
 
-  const summary = todoSummary(state);
-  const top = topPendingTodos(state, limit);
-  const blocked = state.todos.filter((todo): todo is Extract<Todo, { status: "blocked" }> => todo.status === "blocked");
-  const blockedLabel = summary.blocked > 0 ? ` · ${summary.blocked} blocked` : "";
+  const summary = todoSummary(state)
+  const top = topPendingTodos(state, limit)
+  const blocked = state.todos.filter(
+    (todo): todo is Extract<Todo, { status: "blocked" }> =>
+      todo.status === "blocked",
+  )
+  const blockedLabel =
+    summary.blocked > 0 ? ` · ${summary.blocked} blocked` : ""
   const lines = [
     `Tasks: ${summary.completed}/${summary.total} done · ${summary.pending} active${blockedLabel} · /kanban`,
-  ];
+  ]
 
   if (top.length === 0 && blocked.length === 0) {
-    lines.push("[x] all tracked tasks complete");
-    return lines;
+    lines.push("[x] all tracked tasks complete")
+    return lines
   }
 
-  for (const todo of top) lines.push(`${todoStatusMark(todo.status)} #${todo.id} ${compactTaskText(todo.text)}`);
-  if (summary.pending > top.length) lines.push(`… ${summary.pending - top.length} more active task(s)`);
+  for (const todo of top)
+    lines.push(
+      `${todoStatusMark(todo.status)} #${todo.id} ${compactTaskText(todo.text)}`,
+    )
+  if (summary.pending > top.length)
+    lines.push(`… ${summary.pending - top.length} more active task(s)`)
   for (const todo of blocked.slice(0, Math.max(1, limit - top.length))) {
-    lines.push(`[!] #${todo.id} ${compactTaskText(todo.text)} — blocked: ${compactTaskText(todo.reason)}`);
+    lines.push(
+      `[!] #${todo.id} ${compactTaskText(todo.text)} — blocked: ${compactTaskText(todo.reason)}`,
+    )
   }
   if (blocked.length > Math.max(1, limit - top.length)) {
-    lines.push(`… ${blocked.length - Math.max(1, limit - top.length)} more blocked task(s)`);
+    lines.push(
+      `… ${blocked.length - Math.max(1, limit - top.length)} more blocked task(s)`,
+    )
   }
-  return lines;
-};
+  return lines
+}
 
 const compactTaskText: (text: string) => string = (text) =>
-  text.length <= 96 ? text : `${text.slice(0, 93)}...`;
+  text.length <= 96 ? text : `${text.slice(0, 93)}...`
