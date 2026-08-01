@@ -7,6 +7,7 @@ import {
   boundedBridgeImages,
   boundedBridgeText,
   finalAssistantText,
+  normalizeLegacyRemoteImageContent,
   remoteTurnContent,
   remoteTurnPrompt,
 } from "./protocol.ts";
@@ -34,7 +35,7 @@ test("bridge text rejects control characters and oversized messages", () => {
   );
 });
 
-test("remote image payloads are typed, bounded, and included as image content", () => {
+test("remote image payloads use Pi image content accepted by model providers", () => {
   const image = {
     mediaType: "image/jpeg" as const,
     data: Buffer.from("safe-image-fixture").toString("base64"),
@@ -42,7 +43,8 @@ test("remote image payloads are typed, bounded, and included as image content", 
   assert.deepEqual(boundedBridgeImages([image]), [image]);
   assert.deepEqual(remoteTurnContent("Describe this", [image]).at(-1), {
     type: "image",
-    source: { type: "base64", ...image },
+    data: image.data,
+    mimeType: image.mediaType,
   });
   assert.throws(
     () => boundedBridgeImages([{ ...image, data: "not base64!" }]),
@@ -58,6 +60,37 @@ test("remote image payloads are typed, bounded, and included as image content", 
       ]),
     RemoteBridgeError,
   );
+});
+
+test("legacy remote image turns are normalized before model serialization", () => {
+  const image = {
+    mediaType: "image/jpeg" as const,
+    data: Buffer.from("persisted-telegram-image").toString("base64"),
+  };
+  const messages = [
+    {
+      role: "user" as const,
+      content: [
+        { type: "text" as const, text: "Describe this" },
+        {
+          type: "image" as const,
+          source: { type: "base64" as const, ...image },
+        },
+      ],
+      timestamp: 1,
+    },
+  ];
+
+  assert.deepEqual(normalizeLegacyRemoteImageContent(messages), [
+    {
+      role: "user",
+      content: [
+        { type: "text", text: "Describe this" },
+        { type: "image", data: image.data, mimeType: image.mediaType },
+      ],
+      timestamp: 1,
+    },
+  ]);
 });
 
 test("only bounded final assistant text becomes the bridge response", () => {

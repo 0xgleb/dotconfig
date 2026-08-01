@@ -1,3 +1,9 @@
+import type { AgentMessage } from "@earendil-works/pi-agent-core";
+import type {
+  ImageContent,
+  TextContent,
+  UserMessage,
+} from "@earendil-works/pi-ai";
 import { Data } from "effect";
 
 export const BRIDGE_PROTOCOL_VERSION = 3;
@@ -233,27 +239,58 @@ export const remoteTurnPrompt = (text: string): string =>
     boundedBridgeText("message", text, MAX_REMOTE_MESSAGE_CHARACTERS),
   ].join("\n");
 
-export type RemoteTurnContent =
-  | { readonly type: "text"; readonly text: string }
-  | {
-      readonly type: "image";
-      readonly source: {
-        readonly type: "base64";
-        readonly mediaType: RemoteImageMediaType;
-        readonly data: string;
-      };
-    };
+export type RemoteTurnContent = TextContent | ImageContent;
+
+interface LegacyRemoteImageContent {
+  readonly type: "image";
+  readonly source: {
+    readonly type: "base64";
+    readonly mediaType: RemoteImageMediaType;
+    readonly data: string;
+  };
+}
+
+type LegacyRemoteUserMessage = Omit<UserMessage, "content"> & {
+  readonly content:
+    | string
+    | readonly (
+        | TextContent
+        | ImageContent
+        | LegacyRemoteImageContent
+      )[];
+};
 
 export const remoteTurnContent = (
   text: string,
   images: readonly RemoteImage[],
 ): readonly RemoteTurnContent[] => [
   { type: "text", text: remoteTurnPrompt(text) },
-  ...boundedBridgeImages(images).map((image) => ({
-    type: "image" as const,
-    source: { type: "base64" as const, ...image },
+  ...boundedBridgeImages(images).map((image): ImageContent => ({
+    type: "image",
+    data: image.data,
+    mimeType: image.mediaType,
   })),
 ];
+
+export const normalizeLegacyRemoteImageContent: (
+  messages: readonly (AgentMessage | LegacyRemoteUserMessage)[],
+) => AgentMessage[] = (messages) =>
+  messages.map((message) => {
+    if (message.role !== "user" || typeof message.content === "string") {
+      return message;
+    }
+    return {
+      ...message,
+      content: message.content.map((part): TextContent | ImageContent => {
+        if (!isLegacyRemoteImageContent(part)) return part;
+        return {
+          type: "image",
+          data: part.source.data,
+          mimeType: part.source.mediaType,
+        };
+      }),
+    };
+  });
 
 export const finalAssistantText = (
   messages: readonly unknown[],
@@ -284,4 +321,41 @@ export const finalAssistantText = (
     if (text) return text.slice(0, MAX_REMOTE_RESPONSE_CHARACTERS);
   }
   return undefined;
+};
+
+const isLegacyRemoteImageContent = (
+  value: unknown,
+): value is LegacyRemoteImageContent => {
+  if (
+    typeof value !== "object" ||
+    value === null ||
+    !("type" in value) ||
+    value.type !== "image" ||
+    !("source" in value) ||
+    typeof value.source !== "object" ||
+    value.source === null
+  ) {
+    return false;
+  }
+  const source = value.source;
+  if (
+    !("type" in source) ||
+    source.type !== "base64" ||
+    !("mediaType" in source) ||
+    (source.mediaType !== "image/jpeg" &&
+      source.mediaType !== "image/png" &&
+      source.mediaType !== "image/webp") ||
+    !("data" in source) ||
+    typeof source.data !== "string" ||
+    !source.data ||
+    source.data.length % 4 !== 0 ||
+    !/^[A-Za-z0-9+/]*={0,2}$/u.test(source.data)
+  ) {
+    return false;
+  }
+  const bytes = Buffer.from(source.data, "base64");
+  return (
+    bytes.byteLength <= MAX_REMOTE_IMAGE_BYTES &&
+    bytes.toString("base64") === source.data
+  );
 };

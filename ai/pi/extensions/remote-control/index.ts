@@ -18,6 +18,7 @@ import {
   BRIDGE_AGENT_TTL_MS,
   RemoteBridgeError,
   finalAssistantText,
+  normalizeLegacyRemoteImageContent,
   remoteTurnContent,
   type RemoteFailure,
   type RemoteMessage,
@@ -216,6 +217,10 @@ export default function remoteControl(pi: ExtensionAPI): void {
       syncing = false;
     }
   };
+
+  pi.on("context", (event) => ({
+    messages: normalizeLegacyRemoteImageContent(event.messages),
+  }));
 
   pi.on("session_start", (_event, ctx) => {
     latestCtx = ctx;
