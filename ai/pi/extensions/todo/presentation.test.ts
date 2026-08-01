@@ -4,9 +4,11 @@ import { visibleWidth } from "@earendil-works/pi-tui"
 import {
   frameTaskHud,
   kanbanColumns,
+  taskCompletionPercent,
   taskHud,
   taskHudLines,
   taskProgressBar,
+  taskProgressPulseIndex,
   taskWidgetLines,
   todoSummary,
   topPendingTodos,
@@ -77,10 +79,24 @@ test("kanban columns match Todo, In Progress, In Review, and Done", () => {
   )
 })
 
+test("completion percentage is bounded and defined for an empty board", () => {
+  assert.equal(taskCompletionPercent(1, 5), 20)
+  assert.equal(taskCompletionPercent(0, 0), 0)
+  assert.equal(taskCompletionPercent(8, 5), 100)
+})
+
+test("progress pulse animates without changing semantic completion cells", () => {
+  assert.deepEqual(
+    Array.from({ length: 9 }, (_, frame) => taskProgressPulseIndex(frame)),
+    [0, 1, 2, 3, 4, 5, 6, 7, 6],
+  )
+  assert.equal(taskProgressBar(1, 5), "▰▰▱▱▱▱▱▱")
+})
+
 test("task HUD keeps one preview row and a compact progress bar", () => {
   assert.equal(taskProgressBar(1, 5), "▰▰▱▱▱▱▱▱")
   assert.deepEqual(taskHudLines(state, 100_000), [
-    "TASKS  ·  3 active  ·  1 blocked  ·  ▰▰▱▱▱▱▱▱  1/5  ·  /kanban",
+    "TASKS  ·  3 active  ·  1 blocked  ·  ▰▰▱▱▱▱▱▱  20%  ·  /kanban",
     "[ ] 01  #2  Fix classifier",
   ])
   assert.equal(taskHudLines(state).length, 2)
@@ -140,7 +156,7 @@ test("task HUD frame stays aligned without colored backgrounds or doubled corner
   )
   assert.match(
     (framed[0] ?? "").trim(),
-    /^╭─ TASKS.*▰▰▱▱▱▱▱▱  1\/5  ·  \/kanban ─╮$/,
+    /^╭─ TASKS.*▰▰▱▱▱▱▱▱  20%  ·  \/kanban ─╮$/,
   )
   assert.match(
     (framed[1] ?? "").trim(),

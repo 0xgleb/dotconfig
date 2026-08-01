@@ -38,6 +38,7 @@ import {
   frameTaskHud,
   overlayRule,
   taskHud,
+  taskProgressPulseIndex,
   todoSummary,
 } from "./presentation.ts"
 import {
@@ -123,7 +124,11 @@ class TaskHudComponent {
   private readonly state: TodoState
   private readonly theme: Theme
 
-  constructor(state: TodoState, theme: Theme) {
+  constructor(
+    state: TodoState,
+    theme: Theme,
+    private readonly animationFrame = 0,
+  ) {
     this.state = state
     this.theme = theme
   }
@@ -134,7 +139,18 @@ class TaskHudComponent {
       .split(progressBar)
       .map((part) =>
         progressBar.test(part)
-          ? this.theme.fg("accent", part)
+          ? [...part]
+              .map((cell, index) =>
+                this.theme.fg(
+                  index === taskProgressPulseIndex(this.animationFrame)
+                    ? "success"
+                    : cell === "▰"
+                      ? "accent"
+                      : "muted",
+                  cell,
+                ),
+              )
+              .join("")
           : this.theme.fg("borderAccent", part),
       )
       .join("")
@@ -283,6 +299,7 @@ function failedToolResult(
 const TODO_STATE_ENTRY = "todo.state"
 const TODO_REMINDER_MESSAGE = "todo.reminder"
 const MAX_TIMER_DELAY_MS = 2_147_483_647
+const HUD_ANIMATION_INTERVAL_MS = 180
 
 function restoredState(ctx: ExtensionContext): TodoState {
   const states = ctx.sessionManager.getBranch().flatMap((entry) => {
@@ -303,15 +320,15 @@ function restoredState(ctx: ExtensionContext): TodoState {
 }
 
 export default function todoExtension(pi: ExtensionAPI): void {
-  registerRuntimeVersion(pi, "todo", "2026.08.01.25")
+  registerRuntimeVersion(pi, "todo", "2026.08.01.26")
   const stateRef = Effect.runSync(Ref.make<TodoState>(emptyTodoState))
   let hudExpiry: ReturnType<typeof setTimeout> | undefined
+  let hudAnimation: ReturnType<typeof setInterval> | undefined
+  let hudAnimationFrame = 0
+  let agentRunning = false
   let reminderTimer: ReturnType<typeof setTimeout> | undefined
 
-  const renderTaskWidget = (
-    ctx: ExtensionContext,
-    state = Effect.runSync(Ref.get(stateRef)),
-  ) => {
+  const mountTaskWidget = (ctx: ExtensionContext, state: TodoState): void => {
     if (!ctx.hasUI) return
     const summary = todoSummary(state)
     ctx.ui.setStatus(
@@ -324,11 +341,42 @@ export default function todoExtension(pi: ExtensionAPI): void {
     // sitting side by side keep the same chrome instead of one losing its HUD.
     ctx.ui.setWidget(
       "todo-top-tasks",
-      (_tui, theme) => new TaskHudComponent(state, theme),
+      (_tui, theme) =>
+        new TaskHudComponent(state, theme, hudAnimationFrame),
       {
         placement: "aboveEditor",
       },
     )
+  }
+
+  const syncHudAnimation = (ctx: ExtensionContext, state: TodoState): void => {
+    const summary = todoSummary(state)
+    const shouldAnimate =
+      ctx.hasUI &&
+      agentRunning &&
+      summary.total > 0 &&
+      summary.completed + summary.cancelled < summary.total
+    if (!shouldAnimate) {
+      if (hudAnimation) clearInterval(hudAnimation)
+      hudAnimation = undefined
+      hudAnimationFrame = 0
+      return
+    }
+    if (hudAnimation) return
+    hudAnimation = setInterval(() => {
+      hudAnimationFrame += 1
+      mountTaskWidget(ctx, Effect.runSync(Ref.get(stateRef)))
+    }, HUD_ANIMATION_INTERVAL_MS)
+    hudAnimation.unref()
+  }
+
+  const renderTaskWidget = (
+    ctx: ExtensionContext,
+    state = Effect.runSync(Ref.get(stateRef)),
+  ) => {
+    if (!ctx.hasUI) return
+    mountTaskWidget(ctx, state)
+    syncHudAnimation(ctx, state)
 
     if (hudExpiry) clearTimeout(hudExpiry)
     const now = Date.now()
@@ -430,8 +478,12 @@ export default function todoExtension(pi: ExtensionAPI): void {
   })
   pi.on("session_shutdown", (_event, ctx) => {
     if (hudExpiry) clearTimeout(hudExpiry)
+    if (hudAnimation) clearInterval(hudAnimation)
     if (reminderTimer) clearTimeout(reminderTimer)
     hudExpiry = undefined
+    hudAnimation = undefined
+    hudAnimationFrame = 0
+    agentRunning = false
     reminderTimer = undefined
     ctx.ui.setStatus("todo", undefined)
     ctx.ui.setWidget("todo-top-tasks", undefined)
@@ -790,6 +842,24 @@ export default function todoExtension(pi: ExtensionAPI): void {
             theme,
             () => done(),
             () => tui.requestRender(),
+            async (todo) => {
+              try {
+                const next = await applyUiAction(
+                  { action: "unblock", id: todo.id },
+                  ctx,
+                )
+                ctx.ui.notify(`Todo #${todo.id} unblocked.`, "info")
+                return next
+              } catch (error) {
+                ctx.ui.notify(
+                  error instanceof Error
+                    ? error.message
+                    : `Could not unblock todo #${todo.id}.`,
+                  "error",
+                )
+                return undefined
+              }
+            },
           ),
         {
           overlay: true,
@@ -799,5 +869,14 @@ export default function todoExtension(pi: ExtensionAPI): void {
     },
   })
 
-  pi.on("agent_settled", async (_event, ctx) => wakeDueReminders(ctx))
+  pi.on("agent_start", (_event, ctx) => {
+    agentRunning = true
+    renderTaskWidget(ctx)
+  })
+
+  pi.on("agent_settled", async (_event, ctx) => {
+    agentRunning = false
+    renderTaskWidget(ctx)
+    await wakeDueReminders(ctx)
+  })
 }

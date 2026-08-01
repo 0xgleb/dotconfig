@@ -1,9 +1,15 @@
 import assert from "node:assert/strict"
+import { readFileSync } from "node:fs"
 import test from "node:test"
 import type { Theme } from "@earendil-works/pi-coding-agent"
 import { visibleWidth } from "@earendil-works/pi-tui"
 import { KANBAN_OVERLAY_OPTIONS, KanbanComponent } from "./kanban.ts"
 import type { TodoState } from "./state.ts"
+
+const todoExtensionSource = readFileSync(
+  new URL("./index.ts", import.meta.url),
+  "utf8",
+)
 
 const state: TodoState = {
   nextId: 6,
@@ -49,7 +55,7 @@ test("kanban renders a glass-backed frame in project-status order", () => {
   assert.ok(headings.indexOf("TODO") < headings.indexOf("IN PROGRESS"))
   assert.ok(headings.indexOf("IN PROGRESS") < headings.indexOf("IN REVIEW"))
   assert.ok(headings.indexOf("IN REVIEW") < headings.indexOf("DONE"))
-  assert.match(lines[0] ?? "", /^╭.*KANBAN.*╮$/)
+  assert.match(lines[0] ?? "", /^╭.*KANBAN.*20% done.*╮$/)
   assert.match(lines.at(-1) ?? "", /^╰─+╯$/)
   assert.ok(backgroundCalls >= lines.length - 2)
   for (const line of lines) assert.equal(visibleWidth(line), 90)
@@ -93,6 +99,60 @@ test("kanban supports Vim navigation and wrapped task details", () => {
 
   assert.equal(closed, true)
   assert.ok(changes >= 5)
+})
+
+test("kanban unblocks the selected blocked task directly", async () => {
+  let unblockedId: number | undefined
+  const theme = {
+    fg: (_color: string, text: string) => text,
+    bg: (_color: string, text: string) => text,
+    bold: (text: string) => text,
+  } as unknown as Theme
+  const component = new KanbanComponent(
+    state,
+    theme,
+    () => {},
+    () => {},
+    async (todo) => {
+      unblockedId = todo.id
+      return {
+        ...state,
+        todos: state.todos.map((candidate) =>
+          candidate.id === todo.id
+            ? { id: candidate.id, text: candidate.text, status: "pending" as const }
+            : candidate,
+        ),
+      }
+    },
+  )
+
+  component.handleInput("G")
+  assert.match(component.render(90).join("\n"), /u unblock/)
+  component.handleInput("u")
+  await new Promise((resolve) => setTimeout(resolve, 0))
+
+  assert.equal(unblockedId, 4)
+  assert.match(component.render(90).join("\n"), /\[ \] #4 Blocked/)
+})
+
+test("task progress pulse animates only while an agent is running", () => {
+  assert.match(todoExtensionSource, /HUD_ANIMATION_INTERVAL_MS = 180/)
+  assert.match(
+    todoExtensionSource,
+    /agentRunning &&[\s\S]*?setInterval[\s\S]*?hudAnimationFrame \+= 1/,
+  )
+  assert.match(
+    todoExtensionSource,
+    /pi\.on\("agent_start"[\s\S]*?agentRunning = true/,
+  )
+  assert.match(
+    todoExtensionSource,
+    /pi\.on\("agent_settled"[\s\S]*?agentRunning = false/,
+  )
+  assert.match(
+    todoExtensionSource,
+    /session_shutdown[\s\S]*?clearInterval\(hudAnimation\)/,
+  )
 })
 
 test("kanban reapplies its glass background after nested foreground resets", () => {

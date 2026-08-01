@@ -6,7 +6,12 @@ import {
   visibleWidth,
   wrapTextWithAnsi,
 } from "@earendil-works/pi-tui"
-import { kanbanColumns, overlayRule, todoSummary } from "./presentation.ts"
+import {
+  kanbanColumns,
+  overlayRule,
+  taskCompletionPercent,
+  todoSummary,
+} from "./presentation.ts"
 import { todoStatusMark, type Todo, type TodoState } from "./state.ts"
 
 export const KANBAN_OVERLAY_OPTIONS = {
@@ -18,13 +23,17 @@ export const KANBAN_OVERLAY_OPTIONS = {
 } satisfies OverlayOptions
 
 export class KanbanComponent {
-  private readonly state: TodoState
+  private state: TodoState
   private readonly theme: Theme
   private readonly onClose: () => void
   private readonly onChange: () => void
+  private readonly onUnblock: (
+    todo: Extract<Todo, { status: "blocked" }>,
+  ) => Promise<TodoState | undefined>
   private selectedColumn = 0
   private readonly selectedRows = [0, 0, 0, 0]
   private detailOpen = false
+  private actionPending = false
   private cachedWidth?: number
   private cachedLines?: string[]
 
@@ -33,11 +42,15 @@ export class KanbanComponent {
     theme: Theme,
     onClose: () => void,
     onChange: () => void = () => {},
+    onUnblock: (
+      todo: Extract<Todo, { status: "blocked" }>,
+    ) => Promise<TodoState | undefined> = async () => undefined,
   ) {
     this.state = state
     this.theme = theme
     this.onClose = onClose
     this.onChange = onChange
+    this.onUnblock = onUnblock
   }
 
   handleInput(data: string): void {
@@ -51,6 +64,23 @@ export class KanbanComponent {
         this.changed()
       } else {
         this.onClose()
+      }
+      return
+    }
+    if (data === "u" && !this.actionPending) {
+      const selected = this.selectedTodo()
+      if (selected?.status === "blocked") {
+        this.actionPending = true
+        this.changed()
+        void this.onUnblock(selected)
+          .then((state) => {
+            if (state) this.state = state
+          })
+          .catch(() => undefined)
+          .finally(() => {
+            this.actionPending = false
+            this.changed()
+          })
       }
       return
     }
@@ -148,7 +178,7 @@ export class KanbanComponent {
     const top = overlayRule(
       {
         left: "KANBAN",
-        right: `${summary.completed}/${summary.total} complete  ·  ${summary.pending} active  ·  ${summary.blocked} blocked`,
+        right: `${taskCompletionPercent(summary.completed, summary.total)}% done  ·  ${summary.completed}/${summary.total} complete  ·  ${summary.pending} active  ·  ${summary.blocked} blocked`,
       },
       width,
     )
@@ -203,7 +233,7 @@ export class KanbanComponent {
       this.glassLine(
         this.theme.fg(
           "dim",
-          " h/l columns · j/k tasks · g/G ends · Enter/Space detail · Esc close",
+          ` h/l columns · j/k tasks · g/G ends · Enter/Space detail · ${this.unblockHint()} · Esc close`,
         ),
         innerWidth,
       ),
@@ -322,13 +352,25 @@ export class KanbanComponent {
       this.glassLine("", innerWidth),
       ...details.map((line) => this.glassLine(`  ${line}`, innerWidth)),
       this.glassLine("", innerWidth),
-      this.glassLine(this.theme.fg("dim", " Esc returns to board"), innerWidth),
+      this.glassLine(
+        this.theme.fg(
+          "dim",
+          todo.status === "blocked"
+            ? ` ${this.unblockHint()} · Esc returns to board`
+            : " Esc returns to board",
+        ),
+        innerWidth,
+      ),
       this.glassLine("", innerWidth),
       this.theme.fg("borderMuted", `╰${"─".repeat(innerWidth)}╯`),
     ]
     this.cachedWidth = width
     this.cachedLines = lines
     return lines
+  }
+
+  private unblockHint(): string {
+    return this.actionPending ? "unblocking…" : "u unblock"
   }
 
   private changed(): void {

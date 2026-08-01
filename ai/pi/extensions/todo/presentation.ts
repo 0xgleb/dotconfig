@@ -119,6 +119,26 @@ const HUD_SETTLE_DELAY_MS = 10_000
 const HUD_ROW_LIMIT = 1
 const TASK_PROGRESS_WIDTH = 8
 
+export const taskCompletionPercent = (
+  completed: number,
+  total: number,
+): number =>
+  total <= 0
+    ? 0
+    : Math.round(
+        Math.min(1, Math.max(0, completed / Math.max(1, total))) * 100,
+      )
+
+export const taskProgressPulseIndex = (
+  frame: number,
+  width = TASK_PROGRESS_WIDTH,
+): number => {
+  const boundedWidth = Math.max(1, Math.floor(width))
+  const cycle = Math.max(1, boundedWidth * 2 - 2)
+  const offset = Math.abs(Math.floor(frame)) % cycle
+  return offset < boundedWidth ? offset : cycle - offset
+}
+
 export const taskProgressBar = (completed: number, total: number): string => {
   const boundedTotal = Math.max(0, total)
   const ratio =
@@ -171,7 +191,7 @@ export const taskHud: (state: TodoState, now?: number) => TaskHud = (
     kind: "tracking",
     headline: {
       left: `TASKS  ·  ${metrics.join("  ·  ")}`,
-      right: `${taskProgressBar(summary.completed, summary.total)}  ${summary.completed}/${summary.total}  ·  /kanban`,
+      right: `${taskProgressBar(summary.completed, summary.total)}  ${taskCompletionPercent(summary.completed, summary.total)}%  ·  /kanban`,
     },
     rows: visible.map((todo, index) => ({
       status: todo.status,
