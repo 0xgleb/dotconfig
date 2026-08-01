@@ -53,6 +53,7 @@ test("structured workflow children receive an explicit JSON-only contract", () =
 test("workflow model preflight resolves only authenticated available providers", () => {
   const available = [
     { provider: "openai-codex", id: "gpt-5.6-sol", name: "GPT-5.6 Sol" },
+    { provider: "openai-codex", id: "gpt-5.6-luna", name: "GPT-5.6 Luna" },
     { provider: "anthropic", id: "claude-sonnet-4-6", name: "Claude Sonnet 4.6" },
     { provider: "anthropic", id: "claude-sonnet-4-5-20250929", name: "Claude Sonnet 4.5" },
   ];
@@ -66,13 +67,17 @@ test("workflow model preflight resolves only authenticated available providers",
     () => resolveAgentModel("other/gpt-5.6-sol", "openai-codex", available),
     /unavailable or has no configured authentication/i,
   );
-  assert.throws(
-    () => resolveAgentModel("fable", "openai-codex", available),
-    /external claude -p subscription lane/i,
+  assert.equal(
+    resolveAgentModel("fable", "openai-codex", available),
+    "openai-codex/gpt-5.6-luna",
   );
-  assert.throws(
-    () => resolveAgentModel("sonnet", "openai-codex", available),
-    /external claude -p subscription lane/i,
+  assert.equal(
+    resolveAgentModel("sonnet", "openai-codex", available),
+    "openai-codex/gpt-5.6-luna",
+  );
+  assert.equal(
+    resolveAgentModel("opus", "openai-codex", available),
+    "openai-codex/gpt-5.6-luna",
   );
   assert.throws(
     () => resolveAgentModel("anthropic/claude-sonnet-4-6", "openai-codex", available),
@@ -86,6 +91,13 @@ test("workflow model preflight resolves only authenticated available providers",
   assert.throws(
     () => resolveAgentModel("amazon-bedrock/sonnet", "openai-codex", available),
     /external claude -p subscription lane/i,
+  );
+  assert.throws(
+    () =>
+      resolveAgentModel("fable", "openai-codex", [
+        { provider: "openai-codex", id: "gpt-5.6-sol" },
+      ]),
+    /requires authenticated openai-codex\/gpt-5\.6-luna/i,
   );
   assert.throws(() => resolveAgentModel("nonexistent", "openai-codex", available), /inherit the parent/i);
 });

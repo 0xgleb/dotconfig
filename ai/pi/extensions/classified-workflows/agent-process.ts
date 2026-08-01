@@ -15,6 +15,8 @@ const modelMatches: (model: AvailableAgentModel, pattern: string) => boolean = (
   model.id.toLowerCase().includes(pattern) || model.name?.toLowerCase().includes(pattern) === true;
 const isAlias: (id: string) => boolean = (id) => id.endsWith("-latest") || !/-\d{8}$/.test(id);
 const PROVIDER_ALIASES: Readonly<Record<string, string>> = { openai: "openai-codex" };
+const LEGACY_REVIEW_FOCUS_ALIASES = new Set(["fable", "sonnet", "opus"]);
+const REVIEW_WORKFLOW_MODEL = "openai-codex/gpt-5.6-luna";
 
 export const resolveAgentModel: (
   requestedModel: string | undefined,
@@ -29,6 +31,17 @@ export const resolveAgentModel: (
     return undefined;
   }
   const normalized = requested.toLowerCase();
+  if (LEGACY_REVIEW_FOCUS_ALIASES.has(normalized)) {
+    const reviewModel = availableModels.find(
+      (model) => modelReference(model).toLowerCase() === REVIEW_WORKFLOW_MODEL,
+    );
+    if (!reviewModel) {
+      throw new Error(
+        `Workflow focus label ${requested} requires authenticated ${REVIEW_WORKFLOW_MODEL}`,
+      );
+    }
+    return modelReference(reviewModel);
+  }
   if (/claude|sonnet|opus|fable/.test(normalized)) {
     throw new Error("Claude models cannot run through Pi API providers; use an external claude -p subscription lane");
   }
