@@ -46,7 +46,7 @@ const safeError = (error: RemoteBridgeError): string =>
   `${error.code}: ${error.message}`.slice(0, 160);
 
 export default function remoteControl(pi: ExtensionAPI): void {
-  registerRuntimeVersion(pi, "remote-control", "2026.08.01.14");
+  registerRuntimeVersion(pi, "remote-control", "2026.08.01.15");
   const store = makeRemoteBridgeStore(
     remoteBridgeDatabasePath(process.env.XDG_STATE_HOME, homedir()),
   );
@@ -55,7 +55,7 @@ export default function remoteControl(pi: ExtensionAPI): void {
   let syncing = false;
   let active: ActiveRemoteTurn | undefined;
   let questionState: UserQuestionStateSnapshot = { questions: [] };
-  let questionsDirty = true;
+  let questionsDirty = false;
 
   const run = <A>(
     operation: Effect.Effect<A, RemoteBridgeError>,
@@ -274,7 +274,6 @@ export default function remoteControl(pi: ExtensionAPI): void {
 
   pi.on("session_start", (_event, ctx) => {
     latestCtx = ctx;
-    questionsDirty = true;
     if (timer) clearInterval(timer);
     timer = setInterval(() => void sync(ctx), POLL_MS);
     timer.unref();

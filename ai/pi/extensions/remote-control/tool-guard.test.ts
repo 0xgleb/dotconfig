@@ -73,6 +73,18 @@ test("remote tool restoration fails closed after one recovery attempt", () => {
   });
 });
 
+test("reload cannot sync a synthetic empty question snapshot before restoration", () => {
+  assert.match(remoteControlSource, /let questionsDirty = false/);
+  assert.match(
+    remoteControlSource,
+    /pi\.events\.on\(QUESTION_STATE_EVENT[\s\S]*?questionsDirty = true/,
+  );
+  assert.doesNotMatch(
+    remoteControlSource,
+    /pi\.on\("session_start"[\s\S]{0,200}?questionsDirty = true/,
+  );
+});
+
 test("textless retry and compaction runs cannot prematurely become model_error", () => {
   assert.match(
     remoteControlSource,
