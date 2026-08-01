@@ -100,6 +100,90 @@ export const startReviewWorkflow = (
     ? { ...state, phase: "awaiting_report", completedAt: now }
     : state;
 
+const toolResultText = (message: Record<string, unknown>): string =>
+  typeof message.content === "string"
+    ? message.content
+    : Array.isArray(message.content)
+      ? message.content
+          .filter(
+            (part): part is Record<string, unknown> =>
+              isRecord(part) &&
+              part.type === "text" &&
+              typeof part.text === "string",
+          )
+          .map((part) => String(part.text))
+          .join("\n")
+      : "";
+
+export const preExecutionReviewWorkflowBlockObserved = (
+  entries: readonly unknown[],
+  state: ReviewDutyState,
+): boolean => {
+  if (state.phase !== "awaiting_report") return false;
+  let awaitingStateIndex = -1;
+  for (const [index, entry] of entries.entries()) {
+    if (!isRecord(entry) || entry.type !== "custom") continue;
+    if (entry.customType !== REVIEW_DUTY_STATE_ENTRY || !isRecord(entry.data))
+      continue;
+    if (
+      entry.data.phase === "awaiting_report" &&
+      entry.data.repository === state.repository &&
+      entry.data.pullRequest === state.pullRequest &&
+      entry.data.kind === state.kind &&
+      entry.data.completedAt === state.completedAt
+    ) {
+      awaitingStateIndex = index;
+    }
+  }
+  if (awaitingStateIndex < 0) return false;
+
+  const results = entries.slice(awaitingStateIndex + 1).flatMap((entry) => {
+    if (!isRecord(entry) || entry.type !== "message" || !isRecord(entry.message))
+      return [];
+    const message = entry.message;
+    return message.role === "toolResult" && message.toolName === "workflow"
+      ? [message]
+      : [];
+  });
+  if (results.some((message) => message.isError === false)) return false;
+  return results.some(
+    (message) =>
+      message.isError === true &&
+      /(?:auto-classifier|deterministic policy) verdict|blocked by classified workflow policy/i.test(
+        toolResultText(message),
+      ),
+  );
+};
+
+export const retryBlockedReviewDuty = (
+  state: ReviewDutyState,
+  workflowObserved: boolean,
+  preExecutionBlockObserved: boolean,
+): ReviewDutyTransition => {
+  if (state.phase !== "awaiting_report") {
+    return {
+      ok: false,
+      error: "no pre-execution review-duty workflow block awaits recovery",
+    };
+  }
+  if (!preExecutionBlockObserved) {
+    return {
+      ok: false,
+      error:
+        "no matching pre-execution workflow classifier block is persisted after the awaiting state",
+    };
+  }
+  if (workflowObserved) {
+    return {
+      ok: false,
+      error:
+        "review-duty workflow execution evidence exists; a persisted and relayed verdict question is required",
+    };
+  }
+  const { completedAt: _completedAt, ...active } = state;
+  return { ok: true, state: { ...active, phase: "active" } };
+};
+
 const normalizedOptions = (
   question: ReviewDutyQuestion,
 ): readonly string[] =>

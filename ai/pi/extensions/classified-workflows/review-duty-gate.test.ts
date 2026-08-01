@@ -6,7 +6,9 @@ import {
   beginReviewDuty,
   clearedHistoricalReviewQuestion,
   emptyReviewDutyState,
+  preExecutionReviewWorkflowBlockObserved,
   startReviewWorkflow,
+  retryBlockedReviewDuty,
   reportReviewDuty,
   restoreReviewDutyState,
   reviewWorkflowBlockReason,
@@ -100,6 +102,80 @@ test("blocked review workflow classification cannot consume the active gate", ()
   assert.match(
     handler,
     /terminalWorkflowFailureDisprovesOwnershipBlock[\s\S]*?persistReviewWorkflowStart\(\)/,
+  );
+});
+
+test("pre-execution workflow recovery cannot bypass an observed review workflow", () => {
+  const active = beginReviewDuty(emptyReviewDutyState, job, 10);
+  assert.equal(active.ok, true);
+  if (!active.ok) return;
+  const awaiting = startReviewWorkflow(active.state, 20);
+
+  const stateEntry = {
+    type: "custom",
+    customType: REVIEW_DUTY_STATE_ENTRY,
+    data: awaiting,
+  };
+  const classifierBlock = {
+    type: "message",
+    message: {
+      role: "toolResult",
+      toolName: "workflow",
+      isError: true,
+      content: [
+        {
+          type: "text",
+          text: "Auto-classifier verdict: current begin evidence was missed",
+        },
+      ],
+    },
+  };
+  assert.equal(
+    preExecutionReviewWorkflowBlockObserved(
+      [stateEntry, classifierBlock],
+      awaiting,
+    ),
+    true,
+  );
+  assert.equal(
+    preExecutionReviewWorkflowBlockObserved(
+      [
+        stateEntry,
+        classifierBlock,
+        {
+          type: "message",
+          message: {
+            role: "toolResult",
+            toolName: "workflow",
+            isError: false,
+            content: "workflow completed",
+          },
+        },
+      ],
+      awaiting,
+    ),
+    false,
+  );
+
+  const recovered = retryBlockedReviewDuty(awaiting, false, true);
+  assert.deepEqual(recovered, { ok: true, state: active.state });
+  assert.match(
+    retryBlockedReviewDuty(awaiting, true, true).error ?? "",
+    /execution evidence exists/i,
+  );
+  assert.match(
+    retryBlockedReviewDuty(awaiting, false, false).error ?? "",
+    /no matching pre-execution/i,
+  );
+  assert.match(
+    retryBlockedReviewDuty(active.state, false, true).error ?? "",
+    /no pre-execution/i,
+  );
+
+  assert.match(extensionSource, /Type\.Literal\("retry-blocked"\)/);
+  assert.match(
+    extensionSource,
+    /request\.action === "retry-blocked"[\s\S]*?workflowAudits\.workflows\.some[\s\S]*?backgroundWorkflows\.values\(\)[\s\S]*?retryBlockedReviewDuty/,
   );
 });
 

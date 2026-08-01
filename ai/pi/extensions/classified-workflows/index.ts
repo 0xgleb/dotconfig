@@ -116,7 +116,9 @@ import {
   beginReviewDuty,
   clearedHistoricalReviewQuestion,
   emptyReviewDutyState,
+  preExecutionReviewWorkflowBlockObserved,
   startReviewWorkflow,
+  retryBlockedReviewDuty,
   reportReviewDuty,
   restoreReviewDutyState,
   reviewWorkflowBlockReason,
@@ -772,6 +774,7 @@ const ReviewDutyParameters = Type.Object({
     Type.Literal("begin"),
     Type.Literal("report"),
     Type.Literal("recover"),
+    Type.Literal("retry-blocked"),
   ]),
   repository: Type.Optional(Type.String({ minLength: 1, maxLength: 120 })),
   pullRequest: Type.Optional(Type.Integer({ minimum: 1 })),
@@ -837,7 +840,7 @@ const WorkflowParameters = Type.Object({
 })
 
 export default function classifiedWorkflows(pi: ExtensionAPI): void {
-  registerRuntimeVersion(pi, "classified-workflows", "2026.08.01.122")
+  registerRuntimeVersion(pi, "classified-workflows", "2026.08.01.123")
   const childTokenLimit = workflowChildTokenLimit(
     process.env[WORKFLOW_CHILD_TOKEN_LIMIT_ENV],
   )
@@ -1962,7 +1965,7 @@ export default function classifiedWorkflows(pi: ExtensionAPI): void {
     name: "review_duty",
     label: "Review-duty reporting gate",
     description:
-      "Begin a dedicated ST0x/rainlanguage PR review job, inspect its gate, or prove its typed verdict question is linked to Piece of Pi before advancing.",
+      "Begin a dedicated ST0x/rainlanguage PR review job, inspect its gate, recover a proven pre-execution block, or prove its typed verdict question is linked to Piece of Pi before advancing.",
     promptSnippet:
       "Gate each dedicated PR review on a persisted and Telegram-linked verdict question",
     promptGuidelines: [
@@ -2035,6 +2038,50 @@ export default function classifiedWorkflows(pi: ExtensionAPI): void {
             },
           ],
           details: { outcome: "begun" as const, state: reviewDutyState },
+        }
+      }
+
+      if (request.action === "retry-blocked") {
+        refreshWorkflowAudits(ctx)
+        const completedAt =
+          reviewDutyState.phase === "awaiting_report"
+            ? reviewDutyState.completedAt
+            : Number.MAX_SAFE_INTEGER
+        const workflowObserved =
+          workflowAudits.workflows.some(
+            (workflow) => workflow.startedAt >= completedAt,
+          ) ||
+          [...backgroundWorkflows.values()].some(
+            (workflow) => workflow.startedAt >= completedAt,
+          )
+        const transition = retryBlockedReviewDuty(
+          reviewDutyState,
+          workflowObserved,
+          preExecutionReviewWorkflowBlockObserved(
+            ctx.sessionManager.getBranch(),
+            reviewDutyState,
+          ),
+        )
+        if (!transition.ok) {
+          return {
+            content: [{ type: "text" as const, text: transition.error }],
+            details: { outcome: "error" as const, error: transition.error },
+            isError: true,
+          }
+        }
+        reviewDutyState = transition.state
+        pi.appendEntry(REVIEW_DUTY_STATE_ENTRY, reviewDutyState)
+        return {
+          content: [
+            {
+              type: "text" as const,
+              text: `Recovered pre-execution workflow block for ${reviewDutyState.repository}#${reviewDutyState.pullRequest}; retry the same review without creating a verdict question`,
+            },
+          ],
+          details: {
+            outcome: "retry-blocked" as const,
+            state: reviewDutyState,
+          },
         }
       }
 
