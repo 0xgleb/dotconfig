@@ -26,6 +26,6 @@ test("prompt reserves more content height than the compact task preview", () => 
 
 test("prompt inset is responsive but bounded", () => {
   assert.equal(promptChromeInset(40), 2)
-  assert.equal(promptChromeInset(120), 4)
-  assert.equal(promptChromeInset(240), 6)
+  assert.equal(promptChromeInset(120), 2)
+  assert.equal(promptChromeInset(240), 3)
 })

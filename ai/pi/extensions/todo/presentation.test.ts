@@ -99,10 +99,10 @@ test("a session with nothing tracked reserves the same three HUD rows", () => {
     true,
   )
   assert.match(
-    framed[0] as string,
+    (framed[0] as string).trim(),
     /^╭─ TASKS  ·  nothing tracked ─+ \/kanban ─╮$/,
   )
-  assert.match(framed[1] as string, /^│  No active tasks +│$/)
+  assert.match((framed[1] as string).trim(), /^│  No active tasks +│$/)
 })
 
 test("the HUD occupies the same columns whether or not a session tracks work", () => {
@@ -138,11 +138,17 @@ test("task HUD frame stays aligned without colored backgrounds or doubled corner
     true,
   )
   assert.match(
-    framed[0] ?? "",
+    (framed[0] ?? "").trim(),
     /^╭─ TASKS  ·  3 active  ·  1 blocked ─+ \/kanban ─╮$/,
   )
-  assert.match(framed[1] ?? "", /^│  \[ \] 01 {2}#2 {2}Fix classifier +│$/)
-  assert.match(framed.at(-1) ?? "", /^╰─ \+3 hidden ─+ 1\/5 complete ─╯$/)
+  assert.match(
+    (framed[1] ?? "").trim(),
+    /^│  \[ \] 01 {2}#2 {2}Fix classifier +│$/,
+  )
+  assert.match(
+    (framed.at(-1) ?? "").trim(),
+    /^╰─ \+3 hidden ─+ 1\/5 complete ─╯$/,
+  )
   assert.equal(
     framed.some((line) => /╾╮╯|╮╮|╯╯/.test(line)),
     false,
@@ -154,7 +160,7 @@ test("every framed line opens its content in the same column", () => {
   const columns = new Set(framedAt(64).map(columnOf))
   assert.deepEqual(
     [...columns],
-    [3],
+    [7],
     "headline, rows, and footer must share one content column",
   )
 })
@@ -165,7 +171,7 @@ test("labels never touch the border run that separates them", () => {
   for (const width of [40, 64, 120]) {
     // Drop the fixed corner gutters; the corners legitimately abut their own rule.
     const [headline, , footer] = framedAt(width).map((line) =>
-      plain(line).slice(3, -3),
+      plain(line).trim().slice(3, -3),
     ) as [string, string, string]
     assert.doesNotMatch(
       headline,

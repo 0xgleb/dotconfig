@@ -232,11 +232,23 @@ const rule = (inner: number, { left, right }: TaskHudRule): string => {
   return `${head} ${border(inner - headWidth - tailWidth - 2)} ${tail}`
 }
 
+export const taskHudInset = (width: number): number => {
+  const desired = Math.min(8, Math.max(4, Math.floor(width * 0.05)))
+  const available = Math.max(0, Math.floor((width - GUTTER * 2) / 2))
+
+  return Math.min(desired, available)
+}
+
 export const frameTaskHud: (hud: TaskHud, width: number) => string[] = (
   hud,
   width,
 ) => {
-  const inner = Math.max(0, width - GUTTER * 2)
+  const inset = taskHudInset(width)
+  const frameWidth = Math.max(GUTTER * 2, width - inset * 2)
+  const inner = Math.max(0, frameWidth - GUTTER * 2)
+  const leftMargin = " ".repeat(inset)
+  const rightMargin = " ".repeat(Math.max(0, width - inset - frameWidth))
+  const framed = (line: string): string => `${leftMargin}${line}${rightMargin}`
   const pad = (text: string): string => {
     const content = truncateToWidth(text, inner, "…")
     return `${content}${" ".repeat(Math.max(0, inner - visibleWidth(content)))}`
@@ -244,18 +256,18 @@ export const frameTaskHud: (hud: TaskHud, width: number) => string[] = (
 
   if (hud.kind === "idle") {
     return [
-      `╭─ ${rule(inner, hud.headline)} ─╮`,
-      `│  ${pad("No active tasks")}  │`,
-      `╰─ ${rule(inner, { left: "", right: "" })} ─╯`,
+      framed(`╭─ ${rule(inner, hud.headline)} ─╮`),
+      framed(`│  ${pad("No active tasks")}  │`),
+      framed(`╰─ ${rule(inner, { left: "", right: "" })} ─╯`),
     ]
   }
 
   return [
-    `╭─ ${rule(inner, hud.headline)} ─╮`,
-    ...hud.rows.map(
-      (row) => `│  ${pad(`${todoStatusMark(row.status)} ${row.text}`)}  │`,
+    framed(`╭─ ${rule(inner, hud.headline)} ─╮`),
+    ...hud.rows.map((row) =>
+      framed(`│  ${pad(`${todoStatusMark(row.status)} ${row.text}`)}  │`),
     ),
-    `╰─ ${rule(inner, hud.footer)} ─╯`,
+    framed(`╰─ ${rule(inner, hud.footer)} ─╯`),
   ]
 }
 
