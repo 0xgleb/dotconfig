@@ -85,7 +85,11 @@ test("voice notes authenticate before bounded local transcription", () => {
     `${source}\n${voiceProcessSource}`,
     /exec\([^\n]*whisper|shell:\s*true/,
   );
-  assert.match(homeNix, /pkgs\.whisper-cpp/);
+  assert.match(
+    homeNix,
+    /pieceOfPiWhisper = pkgs\.whisper-cpp\.override \{[\s\S]*?coreMLSupport = false;[\s\S]*?withSDL = false;/,
+  );
+  assert.match(homeNix, /runtimeInputs = \[[\s\S]*?pieceOfPiWhisper/);
   assert.match(homeNix, /PIECE_OF_PI_WHISPER_MODEL/);
 })
 

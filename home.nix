@@ -36,6 +36,10 @@ let
     npmRoot = ./ai/pi/extensions;
     inherit (pkgs) nodejs;
   };
+  pieceOfPiWhisper = pkgs.whisper-cpp.override {
+    coreMLSupport = false;
+    withSDL = false;
+  };
   pieceOfPiWhisperModel = pkgs.fetchurl {
     url = "https://huggingface.co/ggerganov/whisper.cpp/resolve/main/ggml-base-q5_1.bin";
     hash = "sha256-Qi8a5FKt5vMKAE1+XGpDGV5EM7w3C/I/rJzFkfAaiJg=";
@@ -52,7 +56,7 @@ let
     name = "piece-of-pi-telegram";
     runtimeInputs = [
       pkgs.nodejs
-      pkgs.whisper-cpp
+      pieceOfPiWhisper
     ];
     text = ''
       exec node --experimental-strip-types \
