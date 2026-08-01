@@ -104,6 +104,7 @@ export interface ToolResultExecutionEvidenceInput {
   readonly toolName: unknown;
   readonly text: string;
   readonly isError: unknown;
+  readonly input?: unknown;
   readonly inputDigest?: string;
   readonly subject: unknown;
   readonly maxCharacters?: number;
@@ -114,15 +115,31 @@ export const toolResultExecutionEvidence: (input: ToolResultExecutionEvidenceInp
   toolName,
   text,
   isError,
+  input,
   inputDigest,
   subject,
   maxCharacters = 2_400,
 }) => {
   const name = sanitizeProcessDiagnostic(String(toolName ?? "tool")).replace(/\s+/g, " ").slice(0, 64) || "tool";
   const status = isError === true ? "error" : isError === false ? "success" : "unknown";
-  const identity = inputDigest && /^[0-9a-f]{64}$/.test(inputDigest) ? ` inputDigest=${inputDigest}` : "";
+  const digestIdentity = inputDigest && /^[0-9a-f]{64}$/.test(inputDigest) ? ` inputDigest=${inputDigest}` : "";
+  const inputRecord =
+    typeof input === "object" && input !== null && !Array.isArray(input)
+      ? (input as Record<string, unknown>)
+      : undefined;
+  const selectedInput = inputRecord
+    ? Object.fromEntries(
+        ["action", "command", "file_path", "id", "limit", "offset", "path"]
+          .filter((key) => inputRecord[key] !== undefined)
+          .map((key) => [key, inputRecord[key]]),
+      )
+    : {};
+  const encodedInput = sanitizeProcessDiagnostic(JSON.stringify(selectedInput))
+    .replace(/\s+/g, " ")
+    .slice(0, 1_000);
+  const inputIdentity = encodedInput !== "{}" ? ` input=${encodedInput}` : "";
   const evidenceText = text.trim() || "(no textual output)";
-  return `${name} result status=${status}${identity}: ${boundedRelevantExecutionEvidence(evidenceText, subject, maxCharacters)}`;
+  return `${name} result status=${status}${digestIdentity}${inputIdentity}: ${boundedRelevantExecutionEvidence(evidenceText, subject, maxCharacters)}`;
 };
 
 const supersededFailureIndexes = (candidates: readonly string[]): ReadonlySet<number> => {
@@ -131,7 +148,7 @@ const supersededFailureIndexes = (candidates: readonly string[]): ReadonlySet<nu
   for (let index = candidates.length - 1; index >= 0; index -= 1) {
     const candidate = candidates[index] ?? "";
     const match = candidate.match(
-      /^\S+ result status=(success|error) inputDigest=([0-9a-f]{64}):/,
+      /^\S+ result status=(success|error) inputDigest=([0-9a-f]{64})\b/,
     );
     if (!match) continue;
     const [, status, inputDigest] = match;

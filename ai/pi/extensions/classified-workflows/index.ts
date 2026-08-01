@@ -411,6 +411,7 @@ function recentExecutionEvidence(
   const branch = ctx.sessionManager.getBranch()
   const compaction = latestCompactionSummary(branch)
   const toolCallInputDigests = new Map<string, string>()
+  const toolCallInputs = new Map<string, unknown>()
   for (const entry of branch) {
     if (
       entry.type !== "message" ||
@@ -431,6 +432,7 @@ function recentExecutionEvidence(
         part.id,
         toolInputDigest(part.name, part.arguments),
       )
+      toolCallInputs.set(part.id, part.arguments)
     }
   }
   const executionEvidence = branch
@@ -464,6 +466,10 @@ function recentExecutionEvidence(
           toolName: entry.message.toolName,
           text,
           isError: entry.message.isError,
+          input:
+            typeof entry.message.toolCallId === "string"
+              ? toolCallInputs.get(entry.message.toolCallId)
+              : undefined,
           inputDigest:
             typeof entry.message.toolCallId === "string"
               ? toolCallInputDigests.get(entry.message.toolCallId)
@@ -763,7 +769,7 @@ const WorkflowParameters = Type.Object({
 })
 
 export default function classifiedWorkflows(pi: ExtensionAPI): void {
-  registerRuntimeVersion(pi, "classified-workflows", "2026.08.01.103")
+  registerRuntimeVersion(pi, "classified-workflows", "2026.08.01.104")
   const childTokenLimit = workflowChildTokenLimit(
     process.env[WORKFLOW_CHILD_TOKEN_LIMIT_ENV],
   )

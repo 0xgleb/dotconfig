@@ -103,6 +103,21 @@ test("tool-input digests are canonical and distinguish materially new mutation p
   assert.match(first, /^[0-9a-f]{64}$/);
 });
 
+test("successful read evidence retains the verified source path", () => {
+  const path = "/workspace/st0x/st0x.issuance/AGENTS.md";
+  const evidence = toolResultExecutionEvidence({
+    toolName: "read",
+    text: "# Repository instructions\nFollow Graphite workflow.",
+    isError: false,
+    input: { path, offset: 1, limit: 4000 },
+    subject: { toolName: "bash", input: { command: "gt parent" } },
+  });
+
+  assert.match(evidence, /^read result status=success input=/);
+  assert.match(evidence, /st0x\.issuance\/AGENTS\.md/);
+  assert.match(evidence, /Repository instructions/);
+});
+
 test("tool-result evidence preserves authoritative success or error status and input identity", () => {
   const inputDigest = toolInputDigest("edit", { oldText: "pre-transfer Core balance" });
   const failedEdit = toolResultExecutionEvidence({
@@ -151,6 +166,28 @@ test("empty successful tool results retain typed execution status", () => {
     }),
     /^bash result status=success: \(no textual output\)$/,
   );
+});
+
+test("older source-read evidence remains relevant to a sequential review workflow", () => {
+  const agentsEvidence =
+    'read result status=success input={"path":"/workspace/st0x/st0x.liquidity/AGENTS.md"}: repository rules loaded';
+  const candidates = [
+    agentsEvidence,
+    ...Array.from({ length: 10 }, (_, index) => `tool ${index}: unrelated result`),
+  ];
+  const selected = selectRelevantExecutionEvidence(
+    candidates,
+    {
+      toolName: "workflow",
+      input: {
+        code: "Re-review PR1101 using /workspace/st0x/st0x.liquidity/AGENTS.md",
+      },
+    },
+    3,
+    3,
+  );
+
+  assert.ok(selected.includes(agentsEvidence));
 });
 
 test("evidence retrieval keeps recent results and older results sharing concrete subject identifiers", () => {
