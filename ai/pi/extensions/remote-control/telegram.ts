@@ -10,6 +10,17 @@ export interface TelegramBotState {
   readonly ownerUserId?: number;
 }
 
+export const MAX_TELEGRAM_VOICE_SECONDS = 180;
+export const MAX_TELEGRAM_VOICE_BYTES = 8 * 1024 * 1024;
+
+export interface TelegramVoice {
+  readonly fileId: string;
+  readonly messageId: number;
+  readonly durationSeconds: number;
+  readonly mimeType?: "audio/ogg" | "audio/opus";
+  readonly fileSize?: number;
+}
+
 export interface TelegramPhoto {
   readonly fileId: string;
   readonly width: number;
@@ -24,6 +35,7 @@ export interface TelegramMessage {
   readonly username?: string;
   readonly text: string;
   readonly photo?: TelegramPhoto;
+  readonly voice?: TelegramVoice;
   readonly replyToMessageId?: number;
   readonly edited?: true;
 }
@@ -94,7 +106,7 @@ const acknowledgementPool = (
   message: TelegramMessage,
 ): readonly TelegramAcknowledgementEmoji[] => {
   const normalized = message.text.toLowerCase();
-  if (message.photo) return ["👀", "🤓"];
+  if (message.photo || message.voice) return ["👀", "🤓"];
   if (message.text.includes("?")) return ["🤔", "👀"];
   if (
     /\b(?:error|fail|failed|broken|brick|bricked|panic|crash)\b|ошиб|слом|упал/u.test(
@@ -214,6 +226,8 @@ export const coalesceTelegramUpdates = (
       !sameTelegramSender(pending.update.message, update.message) ||
       (pending.update.message.photo !== undefined &&
         update.message.photo !== undefined) ||
+      (pending.update.message.voice !== undefined &&
+        update.message.voice !== undefined) ||
       combinedText.length > MAX_REMOTE_MESSAGE_CHARACTERS
     ) {
       flush();
@@ -222,6 +236,7 @@ export const coalesceTelegramUpdates = (
     }
 
     const photo = update.message.photo ?? pending.update.message.photo;
+    const voice = update.message.voice ?? pending.update.message.voice;
     pending = {
       count: pending.count + 1,
       update: {
@@ -230,6 +245,7 @@ export const coalesceTelegramUpdates = (
           ...update.message,
           text: combinedText,
           ...(photo === undefined ? {} : { photo }),
+          ...(voice === undefined ? {} : { voice }),
         },
       },
     };
@@ -440,6 +456,58 @@ const decodePhoto = (
   );
 };
 
+const decodeVoice = (
+  input: unknown,
+): Effect.Effect<
+  Omit<TelegramVoice, "messageId"> | undefined,
+  TelegramContractError
+> => {
+  if (input === undefined) return Effect.succeed(undefined);
+  if (!isRecord(input)) {
+    return Effect.fail(
+      new TelegramContractError({ message: "Telegram voice is invalid" }),
+    );
+  }
+  const fileId = input.file_id;
+  const fileUniqueId = input.file_unique_id;
+  const durationSeconds = input.duration;
+  const mimeType = input.mime_type;
+  const fileSize = input.file_size;
+  if (
+    typeof fileId !== "string" ||
+    fileId.length < 1 ||
+    fileId.length > 512 ||
+    typeof fileUniqueId !== "string" ||
+    fileUniqueId.length < 1 ||
+    fileUniqueId.length > 512 ||
+    !isSafeInteger(durationSeconds) ||
+    durationSeconds < 1 ||
+    durationSeconds > MAX_TELEGRAM_VOICE_SECONDS ||
+    (mimeType !== undefined &&
+      mimeType !== "audio/ogg" &&
+      mimeType !== "audio/opus") ||
+    (fileSize !== undefined &&
+      (!isSafeInteger(fileSize) ||
+        fileSize < 1 ||
+        fileSize > MAX_TELEGRAM_VOICE_BYTES))
+  ) {
+    return Effect.fail(
+      new TelegramContractError({
+        message: "Telegram voice metadata is invalid",
+      }),
+    );
+  }
+  return Effect.succeed({
+    fileId,
+    durationSeconds,
+    ...(mimeType === undefined ? {} : { mimeType }),
+    ...(fileSize === undefined ? {} : { fileSize }),
+  });
+};
+
+const voiceMarker = (messageId: number): string =>
+  `[Voice message #${messageId}]`;
+
 const decodeMessage = (
   input: Readonly<Record<string, unknown>>,
 ): Effect.Effect<TelegramMessage | undefined, TelegramContractError> => {
@@ -453,8 +521,19 @@ const decodeMessage = (
       }),
     );
   }
-  if (message.text === undefined && message.photo === undefined)
+  if (
+    message.text === undefined &&
+    message.photo === undefined &&
+    message.voice === undefined
+  )
     return Effect.succeed(undefined);
+  if (message.photo !== undefined && message.voice !== undefined) {
+    return Effect.fail(
+      new TelegramContractError({
+        message: "Telegram message media is invalid",
+      }),
+    );
+  }
   if (!isSafeInteger(message.message_id)) {
     return Effect.fail(
       new TelegramContractError({
@@ -509,21 +588,33 @@ const decodeMessage = (
     );
   }
   const replyToMessageId = replyToMessage?.message_id;
+  const mediaFallback =
+    message.voice !== undefined
+      ? voiceMarker(message.message_id)
+      : "Please describe the attached image.";
   const text =
     rawText ??
     (typeof caption === "string" && caption.trim()
-      ? caption
-      : "Please describe the attached image.");
+      ? message.voice === undefined
+        ? caption
+        : `${caption}\n${mediaFallback}`
+      : mediaFallback);
 
-  return decodePhoto(message.photo).pipe(
+  return Effect.all({
+    photo: decodePhoto(message.photo),
+    voice: decodeVoice(message.voice),
+  }).pipe(
     Effect.map(
-      (photo): TelegramMessage => ({
+      ({ photo, voice }): TelegramMessage => ({
         chatId: chat.id,
         messageId: message.message_id,
         userId: sender.id,
         ...(username ? { username } : {}),
         text,
         ...(photo ? { photo } : {}),
+        ...(voice
+          ? { voice: { ...voice, messageId: message.message_id } }
+          : {}),
         ...(isSafeInteger(replyToMessageId) ? { replyToMessageId } : {}),
         ...(edited ? { edited: true as const } : {}),
       }),

@@ -6,6 +6,14 @@ const source = readFileSync(
   new URL("./piece-of-pi.ts", import.meta.url),
   "utf8",
 );
+const voiceProcessSource = readFileSync(
+  new URL("./voice-process.ts", import.meta.url),
+  "utf8",
+);
+const homeNix = readFileSync(
+  new URL("../../../../home.nix", import.meta.url),
+  "utf8",
+);
 
 test("one invalid Telegram message reports failure and cannot wedge later updates", () => {
   assert.match(source, /const handleUpdateFailure/);
@@ -52,6 +60,34 @@ test("Telegram UX uses reactions, recurring activity, commands, batching, and im
   assert.match(source, /command: "kanban"/);
   assert.match(source, /downloadTelegramPhoto/);
 });
+
+test("voice notes authenticate before bounded local transcription", () => {
+  const updateBody = source.slice(source.indexOf("const handleUpdateBody"));
+  const authorization = updateBody.indexOf("authorization.kind === \"rejected\"");
+  const transcription = updateBody.indexOf("transcribeOwnerVoice(runtime, update)");
+  assert.ok(authorization >= 0);
+  assert.ok(transcription > authorization);
+  assert.match(source, /downloadTelegramVoice/);
+  assert.match(source, /telegramVoiceFromBytes/);
+  assert.match(voiceProcessSource, /spawn\("whisper-cli"/);
+  assert.match(source, /mkdtemp[\s\S]*?piece-of-pi-voice-/);
+  assert.match(
+    voiceProcessSource,
+    /rm\(directory, \{ recursive: true, force: true \}\)/,
+  );
+  assert.match(
+    voiceProcessSource,
+    /WHISPER_TIMEOUT_MS[\s\S]*?onClose[\s\S]*?child\.kill\("SIGTERM"\)[\s\S]*?child\.kill\("SIGKILL"\)/,
+  );
+  assert.match(voiceProcessSource, /VOICE_CLEANUP_ATTEMPTS = 3/);
+  assert.match(source, /replaceVoiceMarker[\s\S]*?voice\.messageId/);
+  assert.doesNotMatch(
+    `${source}\n${voiceProcessSource}`,
+    /exec\([^\n]*whisper|shell:\s*true/,
+  );
+  assert.match(homeNix, /pkgs\.whisper-cpp/);
+  assert.match(homeNix, /PIECE_OF_PI_WHISPER_MODEL/);
+})
 
 test("owner reactions become bounded context without authorizing actions", () => {
   assert.match(source, /allowed_updates: \["message", "edited_message", "message_reaction"\]/);

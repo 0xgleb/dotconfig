@@ -8,13 +8,14 @@ The daemon uses the Telegram Bot API contracts documented at:
 - `Update`: <https://core.telegram.org/bots/api#update>
 - `Message`: <https://core.telegram.org/bots/api#message>
 - `PhotoSize`: <https://core.telegram.org/bots/api#photosize>
+- `Voice`: <https://core.telegram.org/bots/api#voice>
 - `getFile`: <https://core.telegram.org/bots/api#getfile>
 - `sendMessage`: <https://core.telegram.org/bots/api#sendmessage>
 - `sendChatAction`: <https://core.telegram.org/bots/api#sendchataction>
 - `setMessageReaction`: <https://core.telegram.org/bots/api#setmessagereaction>
 - `setMyCommands`: <https://core.telegram.org/bots/api#setmycommands>
 
-`telegram.test.ts` encodes the documented private text/photo message shapes. Every valid update ID advances the polling offset even when its payload is unsupported, so one unknown update cannot wedge all later owner messages.
+`telegram.test.ts` encodes the documented private text/photo/voice message shapes. Every valid update ID advances the polling offset even when its payload is unsupported, so one unknown update cannot wedge all later owner messages.
 
 ## Trust boundaries and assets
 
@@ -28,10 +29,12 @@ Boundaries:
 6. Pending `ask_user` questions cross from one exact Pi session into the shared SQLite relay. The daemon binds the resulting Telegram `message_id` to that exact `(agent_id, question_id)` pair. Only a private owner message whose `reply_to_message.message_id` matches that binding may answer it.
 7. Telegram question replies cross back as bounded answer data. They resolve only the bound pending question. A reply not bound to a live question remains ordinary owner conversation; it never authorizes a tool call.
 8. Telegram photos cross into Pi as typed image content only after owner authentication, documented `getFile` decoding, HTTPS download from Telegram's fixed file endpoint, bounded JPEG/PNG/WebP magic-byte detection, declared-type consistency checks, and byte bounds. Generic `application/octet-stream` headers are accepted only when the bytes identify an allowed image. Pixels and captions remain untrusted model data under the zero-tool remote-turn guard.
+9. Telegram voice notes are authenticated before any file download or transcription. Documented voice metadata is limited to 180 seconds and 8 MiB; downloaded bytes must be Ogg Opus by both declared type and magic bytes. A pinned multilingual `whisper.cpp` model runs through an exact no-shell argv, reads only an owner-only temporary directory, emits bounded JSON, and the directory is removed after success or failure. The decoded transcript replaces one source-owned marker in burst order and remains untrusted owner message data under the same zero-tool and semantic-routing boundaries. Spoken slash-command text is never promoted into a bot command.
 
 Assets:
 
 - Telegram bot authority and token confidentiality.
+- Private owner voice audio and derived transcripts, neither of which may enter telemetry or survive temporary processing.
 - The pinned owner identity.
 - Pi session selection and message queue integrity.
 - The invariant that unauthorized Telegram senders never reach `pi-bridge`.
@@ -40,10 +43,10 @@ Assets:
 ## STRIDE abuse cases
 
 - Spoofing: a different numeric ID presenting username `@dianov` is rejected after owner pinning.
-- Tampering: malformed update IDs, sender fields, chat fields, reply references, photo metadata, file paths, media types, and message fields fail in typed decoders. A reply cannot choose its own agent or question ID; Telegram-controlled paths cannot choose a host or local path.
+- Tampering: malformed update IDs, sender fields, chat fields, reply references, photo/voice metadata, file paths, media types, and message fields fail in typed decoders. A reply cannot choose its own agent or question ID; Telegram-controlled paths cannot choose a host or local path; voice bytes cannot select process arguments, model paths, output paths, or commands.
 - Repudiation: lifecycle events identify owner pinning, sender rejection, bridge queueing, completion, and failure without message text or personal identifiers.
-- Information disclosure: token, message text, username, numeric user ID, session ID, and response text are absent from telemetry.
-- Denial of service: Telegram long polling, burst size, message/image counts, decoded bytes, and SQLite payloads are bounded; every valid update ID advances; transport failures back off before retrying. Unauthorized senders receive at most one local rejection per in-memory sender/chat allowance hour, after which updates are silently dropped without bridge/model access or persistent sender identifiers.
+- Information disclosure: token, message text, voice audio/transcript, username, numeric user ID, session ID, and response text are absent from telemetry. Voice scratch files are owner-only and exactly removed.
+- Denial of service: Telegram long polling, burst size, message/image/voice counts, decoded bytes, voice duration, transcription runtime/output, and SQLite payloads are bounded; every valid update ID advances; transport failures back off before retrying. Unauthorized senders receive at most one local rejection per in-memory sender/chat allowance hour, after which updates are silently dropped without bridge/model/transcription access or persistent sender identifiers.
 - Elevation of privilege: unauthorized messages are rejected before bridge access; authorized remote turns retain the capability-free tool guard. Replies to unknown or terminal question messages fail closed instead of entering ordinary chat.
 
 ## Operator questions and signals
@@ -71,12 +74,15 @@ Launchd captures stdout and stderr in bounded service log files. No metric or du
 - A Telegram reply resolves the exact bound `(agent_id, question_id)` and cannot resolve another question.
 - Replaying a reply to a terminal question cannot resolve it again; replies not bound to a question continue as ordinary zero-tool owner conversation.
 - A documented photo update selects one bounded largest variant; malformed or oversized photo metadata fails closed.
+- A documented voice update accepts only bounded Ogg Opus metadata; authorization precedes download/transcription, malformed bytes fail before `whisper.cpp`, two voice notes form a burst boundary, and transcript JSON must be non-empty and within the bridge text limit.
+- A voice reply can answer the exact bound pending question after transcription, but a transcript beginning with `/` remains ordinary conversation rather than invoking a command.
 - An unsupported-but-valid update advances the offset instead of wedging later messages.
 - A Telegram-controlled file path cannot escape the fixed Telegram file origin, and a download exceeding the byte bound aborts before bridge persistence.
 
 ## Non-goals
 
 - Telegram Business connections and business-message automation.
+- Spoken/audio bot replies until the owner confirms output voice, format, and when speech should replace or accompany text.
 - Arbitrary shell, process, deployment, GitHub, or money-moving capability.
 - Group-chat operation or public autoresponder behavior beyond owner rejection.
 - LLM-generated rejection messages.

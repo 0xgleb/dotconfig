@@ -1,7 +1,14 @@
 #!/usr/bin/env node
-import { mkdir, readFile, rename, writeFile } from "node:fs/promises";
-import { homedir } from "node:os";
-import { dirname, join } from "node:path";
+import {
+  mkdir,
+  mkdtemp,
+  readFile,
+  rename,
+  stat,
+  writeFile,
+} from "node:fs/promises";
+import { homedir, tmpdir } from "node:os";
+import { dirname, isAbsolute, join } from "node:path";
 import * as Data from "effect/Data";
 import * as Effect from "effect/Effect";
 import * as Either from "effect/Either";
@@ -38,10 +45,22 @@ import {
   type TelegramAcknowledgementEmoji,
   type TelegramBotState,
   type TelegramContractError,
+  MAX_TELEGRAM_VOICE_BYTES,
   type TelegramMessage,
   type TelegramReaction,
   type TelegramUpdate,
 } from "./telegram.ts";
+import {
+  cleanupVoiceDirectory,
+  runWhisperCli,
+} from "./voice-process.ts";
+import {
+  decodeWhisperTranscript,
+  replaceVoiceMarker,
+  telegramVoiceFromBytes,
+  VoiceTranscriptionError,
+  whisperCliArguments,
+} from "./voice.ts";
 
 const TELEGRAM_LONG_POLL_SECONDS = 25;
 const TELEGRAM_BURST_WINDOW_MS = 3_500;
@@ -65,6 +84,7 @@ interface PieceOfPiConfiguration {
   readonly ownerUsername: string;
   readonly token: string;
   readonly statePath: string;
+  readonly voiceModelPath?: string;
 }
 
 interface PieceOfPiRuntime {
@@ -89,7 +109,8 @@ export type PieceOfPiConfigurationErrorCode =
   | "missing_token_file_environment"
   | "missing_owner_environment"
   | "token_file_unreadable"
-  | "token_shape_invalid";
+  | "token_shape_invalid"
+  | "voice_model_path_invalid";
 
 export class PieceOfPiConfigurationError extends Data.TaggedError(
   "PieceOfPiConfigurationError",
@@ -113,6 +134,7 @@ export class TelegramTransportError extends Data.TaggedError(
 type PieceOfPiUpdateError =
   | TelegramTransportError
   | TelegramContractError
+  | VoiceTranscriptionError
   | PieceOfPiStateError
   | RemoteBridgeError;
 
@@ -182,10 +204,38 @@ const loadConfiguration = Effect.gen(function* () {
   }
   const stateRoot =
     process.env.XDG_STATE_HOME?.trim() || join(homedir(), ".local", "state");
+  const voiceModelPath = process.env.PIECE_OF_PI_WHISPER_MODEL?.trim();
+  if (voiceModelPath && !isAbsolute(voiceModelPath)) {
+    return yield* Effect.fail(
+      new PieceOfPiConfigurationError({
+        code: "voice_model_path_invalid",
+        message: "Whisper model path must be absolute",
+      }),
+    );
+  }
+  if (voiceModelPath) {
+    const metadata = yield* Effect.tryPromise({
+      try: () => stat(voiceModelPath),
+      catch: () =>
+        new PieceOfPiConfigurationError({
+          code: "voice_model_path_invalid",
+          message: "Whisper model path is unreadable",
+        }),
+    });
+    if (!metadata.isFile() || metadata.size < 1) {
+      return yield* Effect.fail(
+        new PieceOfPiConfigurationError({
+          code: "voice_model_path_invalid",
+          message: "Whisper model path is not a file",
+        }),
+      );
+    }
+  }
   return {
     ownerUsername: ownerUsername.replace(/^@/, "").toLowerCase(),
     token,
     statePath: join(stateRoot, "pi", "piece-of-pi-telegram.json"),
+    ...(voiceModelPath ? { voiceModelPath } : {}),
   } satisfies PieceOfPiConfiguration;
 });
 
@@ -438,6 +488,132 @@ const downloadTelegramPhoto = (
       telegramImageFromBytes(contentType, bytes),
     ),
   );
+
+const downloadTelegramVoice = (
+  runtime: PieceOfPiRuntime,
+  fileId: string,
+): Effect.Effect<Uint8Array, TelegramTransportError | TelegramContractError> =>
+  telegramCall(runtime.configuration, "getFile", { file_id: fileId }).pipe(
+    Effect.flatMap(decodeTelegramFilePath),
+    Effect.flatMap((filePath) => {
+      let status: number | undefined;
+      return Effect.tryPromise({
+        try: async () => {
+          const response = await fetch(
+            `https://api.telegram.org/file/bot${runtime.configuration.token}/${filePath}`,
+          );
+          status = response.status;
+          if (!response.ok || !response.body)
+            throw new Error("Telegram voice download failed");
+          const declaredLength = Number(response.headers.get("content-length"));
+          if (
+            Number.isFinite(declaredLength) &&
+            declaredLength > MAX_TELEGRAM_VOICE_BYTES
+          )
+            throw new Error("Telegram voice exceeds byte limit");
+
+          const reader = response.body.getReader();
+          const chunks: Uint8Array[] = [];
+          let totalBytes = 0;
+          for (;;) {
+            const chunk = await reader.read();
+            if (chunk.done) break;
+            totalBytes += chunk.value.byteLength;
+            if (totalBytes > MAX_TELEGRAM_VOICE_BYTES) {
+              await reader.cancel();
+              throw new Error("Telegram voice exceeds byte limit");
+            }
+            chunks.push(chunk.value);
+          }
+          const bytes = new Uint8Array(totalBytes);
+          let offset = 0;
+          for (const chunk of chunks) {
+            bytes.set(chunk, offset);
+            offset += chunk.byteLength;
+          }
+          return {
+            bytes,
+            contentType: response.headers.get("content-type") ?? "",
+          };
+        },
+        catch: () =>
+          new TelegramTransportError({
+            method: "downloadVoice",
+            message: `Telegram voice download failed (maximum ${MAX_TELEGRAM_VOICE_BYTES} bytes)`,
+            ...(status === undefined ? {} : { status }),
+          }),
+      });
+    }),
+    Effect.flatMap(({ bytes, contentType }) =>
+      telegramVoiceFromBytes(contentType, bytes),
+    ),
+  );
+
+const transcribeTelegramVoice = (
+  runtime: PieceOfPiRuntime,
+  fileId: string,
+): Effect.Effect<
+  string,
+  TelegramTransportError | TelegramContractError | VoiceTranscriptionError
+> => {
+  const modelPath = runtime.configuration.voiceModelPath;
+  if (!modelPath) {
+    return Effect.fail(
+      new VoiceTranscriptionError({
+        message: "Voice transcription is not configured",
+      }),
+    );
+  }
+  return downloadTelegramVoice(runtime, fileId).pipe(
+    Effect.flatMap((bytes) =>
+      Effect.acquireUseRelease(
+        Effect.tryPromise({
+          try: () => mkdtemp(join(tmpdir(), "piece-of-pi-voice-")),
+          catch: () =>
+            new VoiceTranscriptionError({
+              message: "Voice transcription workspace could not be created",
+            }),
+        }),
+        (directory) => {
+          const inputPath = join(directory, "voice.ogg");
+          const outputPrefix = join(directory, "transcript");
+          const outputPath = `${outputPrefix}.json`;
+          return Effect.tryPromise({
+            try: () => writeFile(inputPath, bytes, { mode: 0o600 }),
+            catch: () =>
+              new VoiceTranscriptionError({
+                message: "Voice input could not be staged",
+              }),
+          }).pipe(
+            Effect.flatMap(() =>
+              runWhisperCli(
+                whisperCliArguments(modelPath, inputPath, outputPrefix),
+              ),
+            ),
+            Effect.flatMap(() =>
+              Effect.tryPromise({
+                try: async () => {
+                  const metadata = await stat(outputPath);
+                  if (!metadata.isFile() || metadata.size > 1024 * 1024)
+                    throw new Error("Whisper output is invalid");
+                  return JSON.parse(
+                    await readFile(outputPath, "utf8"),
+                  ) as unknown;
+                },
+                catch: () =>
+                  new VoiceTranscriptionError({
+                    message: "Voice transcription output is invalid",
+                  }),
+              }),
+            ),
+            Effect.flatMap(decodeWhisperTranscript),
+          );
+        },
+        cleanupVoiceDirectory,
+      ),
+    ),
+  );
+};
 
 const sendTelegramAction = (
   runtime: PieceOfPiRuntime,
@@ -809,6 +985,30 @@ const clearPendingReactionFeedback = (
     ),
   );
 
+const transcribeOwnerVoice = (
+  runtime: PieceOfPiRuntime,
+  update: TelegramMessageUpdate,
+): Effect.Effect<
+  TelegramMessageUpdate,
+  TelegramTransportError | TelegramContractError | VoiceTranscriptionError
+> => {
+  const voice = update.message.voice;
+  if (!voice) return Effect.succeed(update);
+  return transcribeTelegramVoice(runtime, voice.fileId).pipe(
+    Effect.flatMap((transcript) =>
+      replaceVoiceMarker(
+        update.message.text,
+        voice.messageId,
+        transcript,
+      ),
+    ),
+    Effect.map((text) => ({
+      ...update,
+      message: { ...update.message, text },
+    })),
+  );
+};
+
 const enqueueOwnerMessage = (
   runtime: PieceOfPiRuntime,
   update: TelegramMessageUpdate,
@@ -968,6 +1168,7 @@ const handleOwnerCommand = (
   | PieceOfPiStateError
   | RemoteBridgeError
 > => {
+  if (update.message.voice) return Effect.succeed(false);
   const command = update.message.text.trim();
   if (command === "/start" || command === "/help") {
     return sendText(
@@ -1093,14 +1294,20 @@ const handleUpdateBody = (
             ),
           ),
         ),
-        Effect.flatMap(() => handleQuestionReply(runtime, update)),
-        Effect.flatMap((questionHandled) =>
-          questionHandled
-            ? Effect.succeed(true)
-            : handleOwnerCommand(runtime, update),
-        ),
-        Effect.flatMap((handled) =>
-          handled ? Effect.void : enqueueOwnerMessage(runtime, update),
+        Effect.flatMap(() => transcribeOwnerVoice(runtime, update)),
+        Effect.flatMap((transcribedUpdate) =>
+          handleQuestionReply(runtime, transcribedUpdate).pipe(
+            Effect.flatMap((questionHandled) =>
+              questionHandled
+                ? Effect.succeed(true)
+                : handleOwnerCommand(runtime, transcribedUpdate),
+            ),
+            Effect.flatMap((handled) =>
+              handled
+                ? Effect.void
+                : enqueueOwnerMessage(runtime, transcribedUpdate),
+            ),
+          ),
         ),
       );
     }),

@@ -173,6 +173,79 @@ test("Telegram updates decode only documented private text-message fields", asyn
   }
 });
 
+test("private voice notes decode only bounded documented metadata", async () => {
+  const decoded = await Effect.runPromise(
+    decodeTelegramUpdates({
+      ok: true,
+      result: [
+        {
+          update_id: 125,
+          message: {
+            message_id: 9,
+            from: { id: 1001, is_bot: false, username: "dianov" },
+            chat: { id: 42, type: "private" },
+            voice: {
+              file_id: "voice-file",
+              file_unique_id: "voice-unique",
+              duration: 13,
+              mime_type: "audio/ogg",
+              file_size: 4096,
+            },
+          },
+        },
+      ],
+    }),
+  );
+
+  assert.deepEqual(decoded, [
+    {
+      updateId: 125,
+      message: {
+        chatId: 42,
+        messageId: 9,
+        userId: 1001,
+        username: "dianov",
+        text: "[Voice message #9]",
+        voice: {
+          fileId: "voice-file",
+          messageId: 9,
+          durationSeconds: 13,
+          mimeType: "audio/ogg",
+          fileSize: 4096,
+        },
+      },
+    },
+  ]);
+})
+
+test("malformed or oversized voice metadata fails closed", async () => {
+  for (const voice of [
+    { file_id: "voice", file_unique_id: "unique", duration: 181, mime_type: "audio/ogg" },
+    { file_id: "voice", file_unique_id: "unique", duration: 1, mime_type: "audio/mpeg" },
+    { file_id: "voice", file_unique_id: "unique", duration: 1, mime_type: "audio/ogg", file_size: 8 * 1024 * 1024 + 1 },
+  ]) {
+    const decoded = await Effect.runPromise(
+      Effect.either(
+        decodeTelegramUpdates({
+          ok: true,
+          result: [
+            {
+              update_id: 126,
+              message: {
+                message_id: 10,
+                from: { id: 1001, is_bot: false, username: "dianov" },
+                chat: { id: 42, type: "private" },
+                voice,
+              },
+            },
+          ],
+        }),
+      ),
+    );
+    assert.equal(Either.isLeft(decoded), true);
+  }
+})
+
 test("private photo captions retain only the largest documented photo variant", async () => {
   const decoded = await Effect.runPromise(
     decodeTelegramUpdates({
@@ -347,6 +420,64 @@ test("adjacent owner text bursts coalesce while commands and replies remain boun
     updates[5],
   ]);
 });
+
+test("one voice note keeps its position in a text burst while a second voice is a boundary", () => {
+  const voice = {
+    fileId: "voice-one",
+    messageId: 21,
+    durationSeconds: 7,
+    mimeType: "audio/ogg" as const,
+  }
+  const updates = [
+    {
+      updateId: 260,
+      message: {
+        ...ownerMessage,
+        messageId: 20,
+        text: "before",
+      },
+    },
+    {
+      updateId: 261,
+      message: {
+        ...ownerMessage,
+        messageId: 21,
+        text: "[Voice message #21]",
+        voice,
+      },
+    },
+    {
+      updateId: 262,
+      message: {
+        ...ownerMessage,
+        messageId: 22,
+        text: "after",
+      },
+    },
+    {
+      updateId: 263,
+      message: {
+        ...ownerMessage,
+        messageId: 23,
+        text: "[Voice message #23]",
+        voice: { ...voice, fileId: "voice-two", messageId: 23 },
+      },
+    },
+  ]
+
+  assert.deepEqual(coalesceTelegramUpdates(updates), [
+    {
+      updateId: 262,
+      message: {
+        ...ownerMessage,
+        messageId: 22,
+        text: "before\n\n[Voice message #21]\n\nafter",
+        voice,
+      },
+    },
+    updates[3],
+  ])
+})
 
 test("an edit inside a pending burst replaces its original while a later edit becomes a correction", () => {
   const original = {

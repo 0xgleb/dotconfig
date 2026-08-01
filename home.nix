@@ -36,6 +36,10 @@ let
     npmRoot = ./ai/pi/extensions;
     inherit (pkgs) nodejs;
   };
+  pieceOfPiWhisperModel = pkgs.fetchurl {
+    url = "https://huggingface.co/ggerganov/whisper.cpp/resolve/main/ggml-base-q5_1.bin";
+    hash = "sha256-Qi8a5FKt5vMKAE1+XGpDGV5EM7w3C/I/rJzFkfAaiJg=";
+  };
   piBridge = pkgs.writeShellApplication {
     name = "pi-bridge";
     runtimeInputs = [ pkgs.nodejs ];
@@ -46,7 +50,10 @@ let
   };
   pieceOfPiTelegram = pkgs.writeShellApplication {
     name = "piece-of-pi-telegram";
-    runtimeInputs = [ pkgs.nodejs ];
+    runtimeInputs = [
+      pkgs.nodejs
+      pkgs.whisper-cpp
+    ];
     text = ''
       exec node --experimental-strip-types \
         "$HOME/.config/ai/pi/extensions/remote-control/piece-of-pi.ts" "$@"
@@ -212,6 +219,7 @@ in
           EnvironmentVariables = {
             PIECE_OF_PI_TELEGRAM_OWNER_USERNAME = "dianov";
             PIECE_OF_PI_TELEGRAM_TOKEN_FILE = "/run/agenix/metagenda-telegram-token";
+            PIECE_OF_PI_WHISPER_MODEL = "${pieceOfPiWhisperModel}";
           };
           KeepAlive = true;
           ProcessType = "Background";
