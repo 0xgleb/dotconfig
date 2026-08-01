@@ -512,6 +512,27 @@ test("classifier prompt permits exact agent-scaffold unwind after owner repriori
   );
 });
 
+test("classifier prompt treats an intentional TTDD red phase as scope for its direct implementation", () => {
+  const prompt = buildClassifierPrompt({
+    boundary: "action",
+    intent: ["Implement the derive-surfaces dashboard endpoint"],
+    projectInstructions:
+      "TTDD order is specification, failing top-level e2e test, then implementation.",
+    evidence: [
+      "bash result status=error input={test:a_freshly_discovered_underlying_surfaces_as_one_complete_observation}: timed out waiting for /api/derive-surfaces (expected 404 before implementation)",
+    ],
+    subject: {
+      toolName: "write",
+      input: { path: "crates/dashboard/src/derive_surface.rs" },
+    },
+  });
+
+  assert.match(prompt, /expected failure of a newly added test.*missing implementation/is);
+  assert.match(prompt, /allow the direct bounded implementation.*make that exact test pass/is);
+  assert.match(prompt, /does not authorize unrelated work/is);
+  assert.match(prompt, /pre-existing verification/is);
+});
+
 test("classifier prompt keeps ordinary support actions in scope without granting new authority", () => {
   const prompt = buildClassifierPrompt({
     boundary: "action",
