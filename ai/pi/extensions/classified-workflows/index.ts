@@ -837,7 +837,7 @@ const WorkflowParameters = Type.Object({
 })
 
 export default function classifiedWorkflows(pi: ExtensionAPI): void {
-  registerRuntimeVersion(pi, "classified-workflows", "2026.08.01.121")
+  registerRuntimeVersion(pi, "classified-workflows", "2026.08.01.122")
   const childTokenLimit = workflowChildTokenLimit(
     process.env[WORKFLOW_CHILD_TOKEN_LIMIT_ENV],
   )
@@ -1781,10 +1781,17 @@ export default function classifiedWorkflows(pi: ExtensionAPI): void {
   })
 
   pi.on("tool_call", async (event: ToolCallEvent, ctx) => {
+    const startsReviewWorkflow =
+      event.toolName === "workflow" &&
+      pi.getSessionName() === "st0x-review-duty"
+    const persistReviewWorkflowStart = (): void => {
+      if (!startsReviewWorkflow) return
+      reviewDutyState = startReviewWorkflow(reviewDutyState, Date.now())
+      pi.appendEntry(REVIEW_DUTY_STATE_ENTRY, reviewDutyState)
+    }
     if (event.toolName === "workflow") {
-      const sessionName = pi.getSessionName()
       const dutyBlock = reviewWorkflowBlockReason(
-        sessionName,
+        pi.getSessionName(),
         reviewDutyState,
       )
       if (dutyBlock) {
@@ -1793,10 +1800,6 @@ export default function classifiedWorkflows(pi: ExtensionAPI): void {
           reason: dutyBlock,
           source: "deterministic",
         })
-      }
-      if (sessionName === "st0x-review-duty") {
-        reviewDutyState = startReviewWorkflow(reviewDutyState, Date.now())
-        pi.appendEntry(REVIEW_DUTY_STATE_ENTRY, reviewDutyState)
       }
     }
     const deterministic = deterministicDecision({
@@ -1814,6 +1817,7 @@ export default function classifiedWorkflows(pi: ExtensionAPI): void {
       if (shouldCarryDeterministicResultAllowance(deterministic)) {
         deterministicResultAllowance.record(event.toolCallId)
       }
+      persistReviewWorkflowStart()
       return
     }
 
@@ -1850,7 +1854,14 @@ export default function classifiedWorkflows(pi: ExtensionAPI): void {
         skillProcedures: activeSkillProcedures(ctx.sessionManager.getBranch(), {
           cwd: ctx.cwd,
         }),
-        evidence: recentExecutionEvidence(ctx, subject),
+        evidence: [
+          ...recentExecutionEvidence(ctx, subject),
+          ...(startsReviewWorkflow
+            ? [
+                `current typed review-duty state: ${JSON.stringify(reviewDutyState)}`,
+              ]
+            : []),
+        ],
         subject,
       },
       ctx,
@@ -1863,8 +1874,10 @@ export default function classifiedWorkflows(pi: ExtensionAPI): void {
           decision.reason,
           workflowAudits,
         )
-      )
+      ) {
+        persistReviewWorkflowStart()
         return
+      }
       if (resourcePreflightDisprovesBlock(decision.reason, resourcePreflight))
         return
       if (
@@ -1899,6 +1912,7 @@ export default function classifiedWorkflows(pi: ExtensionAPI): void {
       reportHeadlessClassifierBlock(ctx, "action", decision.reason)
       return resolveActionDecision(decision)
     }
+    persistReviewWorkflowStart()
   })
 
   pi.on("tool_result", async (event: ToolResultEvent, ctx) => {

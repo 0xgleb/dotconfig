@@ -84,6 +84,25 @@ test("review recovery requires both cleared question history and durable relay h
   );
 });
 
+test("blocked review workflow classification cannot consume the active gate", () => {
+  const handler = extensionSource.slice(
+    extensionSource.indexOf('pi.on("tool_call"'),
+    extensionSource.indexOf('pi.on("tool_result"'),
+  );
+  assert.ok(
+    handler.indexOf("classifyWithActivity") <
+      handler.lastIndexOf("persistReviewWorkflowStart()"),
+  );
+  assert.match(
+    handler,
+    /current typed review-duty state: \$\{JSON\.stringify\(reviewDutyState\)\}/,
+  );
+  assert.match(
+    handler,
+    /terminalWorkflowFailureDisprovesOwnershipBlock[\s\S]*?persistReviewWorkflowStart\(\)/,
+  );
+});
+
 test("review reporting waits boundedly for asynchronous Telegram linkage", () => {
   assert.match(extensionSource, /const REVIEW_DUTY_RELAY_ATTEMPTS = 12/);
   assert.match(
