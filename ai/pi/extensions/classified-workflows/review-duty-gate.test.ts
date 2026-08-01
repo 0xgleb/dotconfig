@@ -1,4 +1,5 @@
 import assert from "node:assert/strict";
+import { readFileSync } from "node:fs";
 import test from "node:test";
 import {
   REVIEW_DUTY_STATE_ENTRY,
@@ -9,6 +10,8 @@ import {
   restoreReviewDutyState,
   reviewWorkflowBlockReason,
 } from "./review-duty-gate.ts";
+
+const extensionSource = readFileSync(new URL("./index.ts", import.meta.url), "utf8");
 
 const job = {
   repository: "st0x.liquidity",
@@ -27,6 +30,18 @@ const verdictQuestion = {
     { label: "Inspect first" },
   ],
 };
+
+test("review reporting waits boundedly for asynchronous Telegram linkage", () => {
+  assert.match(extensionSource, /const REVIEW_DUTY_RELAY_ATTEMPTS = 12/);
+  assert.match(
+    extensionSource,
+    /const awaitQuestionRelay[\s\S]*?isQuestionRelayed[\s\S]*?Effect\.sleep\("1 second"\)/,
+  );
+  assert.match(
+    extensionSource,
+    /awaitQuestionRelay\([\s\S]*?ctx\.sessionManager\.getSessionId\(\)[\s\S]*?request\.questionId/,
+  );
+});
 
 test("the dedicated reviewer cannot run a workflow before beginning a typed job", () => {
   assert.match(
