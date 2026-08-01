@@ -329,7 +329,7 @@ test("cross-workspace artifact recording requires semantic authorization", () =>
 });
 
 test("typed review-duty gate actions are locally allowed", () => {
-  for (const action of ["status", "begin", "report"] as const) {
+  for (const action of ["status", "begin", "report", "recover"] as const) {
     assert.deepEqual(
       deterministicDecision({
         boundary: "action",
@@ -344,15 +344,6 @@ test("typed review-duty gate actions are locally allowed", () => {
       },
     );
   }
-  assert.equal(
-    deterministicDecision({
-      boundary: "action",
-      toolName: "review_duty",
-      input: { action: "recover" },
-      cwd: "/workspace/st0x",
-    }),
-    null,
-  );
 });
 
 test("release cadence bookkeeping is locally allowed without granting release authority", () => {

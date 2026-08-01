@@ -89,7 +89,7 @@ const READ_ONLY_TOOLS = new Set([
 const TODO_ACTIONS = new Set(["list", "add", "toggle", "status", "block", "reply", "unblock", "clear"]);
 const QUESTION_ACTIONS = new Set(["list", "ask", "resolve", "clear_resolved"]);
 const ARTIFACT_PROVENANCE_ACTIONS = new Set(["list", "record", "forget"]);
-const REVIEW_DUTY_ACTIONS = new Set(["status", "begin", "report"]);
+const REVIEW_DUTY_ACTIONS = new Set(["status", "begin", "report", "recover"]);
 const RELEASE_CADENCE_ACTIONS = new Set(["status", "enable", "disable", "mark"]);
 const isSkillView = (toolName: string, input: Readonly<Record<string, unknown>>): boolean =>
   toolName === "skill_manage" && input.action === "view";
