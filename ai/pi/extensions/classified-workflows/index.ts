@@ -459,21 +459,19 @@ function recentExecutionEvidence(
                 .map((part) => String(part.text))
                 .join("\n")
             : ""
-      return text
-        ? [
-            toolResultExecutionEvidence({
-              toolName: entry.message.toolName,
-              text,
-              isError: entry.message.isError,
-              inputDigest:
-                typeof entry.message.toolCallId === "string"
-                  ? toolCallInputDigests.get(entry.message.toolCallId)
-                  : undefined,
-              subject,
-              maxCharacters: 2_400,
-            }),
-          ]
-        : []
+      return [
+        toolResultExecutionEvidence({
+          toolName: entry.message.toolName,
+          text,
+          isError: entry.message.isError,
+          inputDigest:
+            typeof entry.message.toolCallId === "string"
+              ? toolCallInputDigests.get(entry.message.toolCallId)
+              : undefined,
+          subject,
+          maxCharacters: 2_400,
+        }),
+      ]
     })
     .slice(-80)
   return [
@@ -765,7 +763,7 @@ const WorkflowParameters = Type.Object({
 })
 
 export default function classifiedWorkflows(pi: ExtensionAPI): void {
-  registerRuntimeVersion(pi, "classified-workflows", "2026.08.01.102")
+  registerRuntimeVersion(pi, "classified-workflows", "2026.08.01.103")
   const childTokenLimit = workflowChildTokenLimit(
     process.env[WORKFLOW_CHILD_TOKEN_LIMIT_ENV],
   )

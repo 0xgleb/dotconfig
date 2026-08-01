@@ -121,7 +121,25 @@ export const toolResultExecutionEvidence: (input: ToolResultExecutionEvidenceInp
   const name = sanitizeProcessDiagnostic(String(toolName ?? "tool")).replace(/\s+/g, " ").slice(0, 64) || "tool";
   const status = isError === true ? "error" : isError === false ? "success" : "unknown";
   const identity = inputDigest && /^[0-9a-f]{64}$/.test(inputDigest) ? ` inputDigest=${inputDigest}` : "";
-  return `${name} result status=${status}${identity}: ${boundedRelevantExecutionEvidence(text, subject, maxCharacters)}`;
+  const evidenceText = text.trim() || "(no textual output)";
+  return `${name} result status=${status}${identity}: ${boundedRelevantExecutionEvidence(evidenceText, subject, maxCharacters)}`;
+};
+
+const supersededFailureIndexes = (candidates: readonly string[]): ReadonlySet<number> => {
+  const laterSuccessfulInputs = new Set<string>();
+  const superseded = new Set<number>();
+  for (let index = candidates.length - 1; index >= 0; index -= 1) {
+    const candidate = candidates[index] ?? "";
+    const match = candidate.match(
+      /^\S+ result status=(success|error) inputDigest=([0-9a-f]{64}):/,
+    );
+    if (!match) continue;
+    const [, status, inputDigest] = match;
+    if (!inputDigest) continue;
+    if (status === "success") laterSuccessfulInputs.add(inputDigest);
+    else if (laterSuccessfulInputs.has(inputDigest)) superseded.add(index);
+  }
+  return superseded;
 };
 
 /** Keep a small recency window plus older evidence that shares concrete identifiers with the proposed boundary. */
@@ -131,10 +149,12 @@ export const selectRelevantExecutionEvidence = (
   recentCount = 8,
   relevantCount = 8,
 ): readonly string[] => {
-  const recentStart = Math.max(0, candidates.length - recentCount);
-  const recent = candidates.slice(recentStart);
+  const superseded = supersededFailureIndexes(candidates);
+  const currentCandidates = candidates.filter((_, index) => !superseded.has(index));
+  const recentStart = Math.max(0, currentCandidates.length - recentCount);
+  const recent = currentCandidates.slice(recentStart);
   const terms = evidenceTerms(subject);
-  const older = candidates
+  const older = currentCandidates
     .slice(0, recentStart)
     .map((candidate, index) => ({
       candidate,

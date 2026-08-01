@@ -123,6 +123,36 @@ test("tool-result evidence preserves authoritative success or error status and i
   assert.match(currentRead, /^read result status=success:/);
 });
 
+test("a newer successful verification supersedes an older failure with the same input identity", () => {
+  const digest = toolInputDigest("bash", {
+    command: "cargo clippy -p yielduck --all-targets -- -D warnings",
+  });
+  const candidates = [
+    `bash result status=error inputDigest=${digest}: derive_surface.rs is too many lines`,
+    "read result status=success: targeted observability source",
+    `bash result status=success inputDigest=${digest}: (no textual output)`,
+  ];
+  const selected = selectRelevantExecutionEvidence(candidates, {
+    toolName: "edit",
+    input: { path: "crates/yielduck/src/derive_surface.rs" },
+  });
+
+  assert.deepEqual(selected, [candidates[1], candidates[2]]);
+  assert.doesNotMatch(selected.join("\n"), /too many lines/);
+});
+
+test("empty successful tool results retain typed execution status", () => {
+  assert.match(
+    toolResultExecutionEvidence({
+      toolName: "bash",
+      text: "",
+      isError: false,
+      subject: { toolName: "edit", input: { path: "derive_surface.rs" } },
+    }),
+    /^bash result status=success: \(no textual output\)$/,
+  );
+});
+
 test("evidence retrieval keeps recent results and older results sharing concrete subject identifiers", () => {
   const candidates = [
     "gh: PR 164 head 87ca2acebed26600fb08ee995c9c3c11fa558a05 verified four findings",
