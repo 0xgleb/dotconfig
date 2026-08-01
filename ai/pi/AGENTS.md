@@ -12,7 +12,10 @@
   credential stores, private keys, and certificates.
 - Use the `pi-delegation` skill for subagents. Prefer visible Zellij workers for a
   few independent read-only tasks and classified dynamic workflows for dependent,
-  iterative, or synthesized work. Never use tmux.
+  iterative, or synthesized work. Never use tmux. If delegated work can proceed
+  independently, run it in a background workflow or isolated worker and keep
+  processing human prompts and foreground work; never block the foreground merely
+  waiting for a child agent.
 - Any Pi host, extension, TUI, auto-classifier, delegation, reload, or operator
   bug encountered outside `~/.config` requires the agent to check `agent_registry`
   and delegate it immediately to project `/Users/0xgleb/.config`, role `pi-support`.

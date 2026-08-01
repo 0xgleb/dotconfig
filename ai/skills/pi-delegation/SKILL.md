@@ -30,6 +30,13 @@ Use a classified dynamic workflow when:
 
 Never use tmux.
 
+Independent delegation must not block the human foreground. If the parent does
+not need a result before it can continue useful work, start the classified
+workflow with `background: true` (or use an isolated visible worker), return
+control immediately, and keep processing human prompts. Await a foreground
+workflow only when its result is a genuine dependency of the very next parent
+action.
+
 ## Claude Code and other non-Pi harnesses
 
 When the current harness does not expose Pi's `workflow` tool and the user asks

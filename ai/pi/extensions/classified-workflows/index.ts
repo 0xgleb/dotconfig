@@ -748,7 +748,7 @@ const WorkflowParameters = Type.Object({
 })
 
 export default function classifiedWorkflows(pi: ExtensionAPI): void {
-  registerRuntimeVersion(pi, "classified-workflows", "2026.08.01.95")
+  registerRuntimeVersion(pi, "classified-workflows", "2026.08.01.96")
   const childTokenLimit = workflowChildTokenLimit(
     process.env[WORKFLOW_CHILD_TOKEN_LIMIT_ENV],
   )
@@ -1880,6 +1880,7 @@ export default function classifiedWorkflows(pi: ExtensionAPI): void {
       'Call agents as agent("focused task", { cwd?, tools?, model?, thinking? }); parallel accepts an array of agent promises or deferred functions.',
       "Always set the smallest sufficient agent, concurrency, timeout, retry, and token limits.",
       "Use read-only agent tools unless isolated mutation is explicitly required.",
+      "Run independent delegated work with background: true so the parent keeps processing human prompts and foreground work; await only workflows whose result is required by the next parent action.",
       "After starting a background workflow, keep the foreground on its primary task and do not duplicate delegated work unless the workflow fails or the user reprioritizes it.",
     ],
     parameters: WorkflowParameters,
