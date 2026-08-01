@@ -25,11 +25,21 @@ export interface TelegramMessage {
   readonly text: string;
   readonly photo?: TelegramPhoto;
   readonly replyToMessageId?: number;
+  readonly edited?: true;
+}
+
+export interface TelegramReaction {
+  readonly chatId: number;
+  readonly messageId: number;
+  readonly userId: number;
+  readonly username?: string;
+  readonly emojis: readonly string[];
 }
 
 export interface TelegramUpdate {
   readonly updateId: number;
   readonly message?: TelegramMessage;
+  readonly reaction?: TelegramReaction;
 }
 
 export type TelegramAcknowledgementEmoji =
@@ -136,6 +146,31 @@ export const coalesceTelegramUpdates = (
   };
 
   for (const update of updates) {
+    if (
+      update.message?.edited === true &&
+      pending &&
+      pending.update.message.messageId === update.message.messageId &&
+      sameTelegramSender(pending.update.message, update.message)
+    ) {
+      const { edited: _edited, ...latestMessage } = update.message;
+      pending = {
+        count: pending.count,
+        update: { ...update, message: latestMessage },
+      };
+      continue;
+    }
+    if (update.message?.edited === true) {
+      flush();
+      const { edited: _edited, ...editedMessage } = update.message;
+      coalesced.push({
+        ...update,
+        message: {
+          ...editedMessage,
+          text: `[Correction to my earlier message #${editedMessage.messageId}]\n${editedMessage.text}`,
+        },
+      });
+      continue;
+    }
     if (!isCoalescibleOwnerUpdate(update)) {
       flush();
       coalesced.push(update);
@@ -381,7 +416,8 @@ const decodePhoto = (
 const decodeMessage = (
   input: Readonly<Record<string, unknown>>,
 ): Effect.Effect<TelegramMessage | undefined, TelegramContractError> => {
-  const message = input.message;
+  const edited = input.message === undefined && input.edited_message !== undefined;
+  const message = input.message ?? input.edited_message;
   if (message === undefined) return Effect.succeed(undefined);
   if (!isRecord(message)) {
     return Effect.fail(
@@ -462,6 +498,7 @@ const decodeMessage = (
         text,
         ...(photo ? { photo } : {}),
         ...(isSafeInteger(replyToMessageId) ? { replyToMessageId } : {}),
+        ...(edited ? { edited: true as const } : {}),
       }),
     ),
   );
@@ -584,6 +621,63 @@ export const decodeTelegramSentMessageId = (
   return Effect.succeed(input.result.message_id);
 };
 
+const decodeReaction = (
+  input: Readonly<Record<string, unknown>>,
+): Effect.Effect<TelegramReaction | undefined, TelegramContractError> => {
+  const reaction = input.message_reaction;
+  if (reaction === undefined) return Effect.succeed(undefined);
+  if (!isRecord(reaction)) {
+    return Effect.fail(
+      new TelegramContractError({ message: "Telegram reaction must be an object" }),
+    );
+  }
+  const chat = reaction.chat;
+  const sender = reaction.user;
+  if (!isRecord(chat) || chat.type !== "private" || !isSafeInteger(chat.id)) {
+    return Effect.succeed(undefined);
+  }
+  if (
+    !isRecord(sender) ||
+    !isSafeInteger(sender.id) ||
+    sender.is_bot !== false ||
+    !isSafeInteger(reaction.message_id) ||
+    !Array.isArray(reaction.new_reaction) ||
+    reaction.new_reaction.length > 4
+  ) {
+    return Effect.fail(
+      new TelegramContractError({ message: "Telegram reaction fields are invalid" }),
+    );
+  }
+  const username = sender.username;
+  if (username !== undefined && typeof username !== "string") {
+    return Effect.fail(
+      new TelegramContractError({ message: "Telegram reaction username is invalid" }),
+    );
+  }
+  const emojis: string[] = [];
+  for (const candidate of reaction.new_reaction) {
+    if (
+      !isRecord(candidate) ||
+      candidate.type !== "emoji" ||
+      typeof candidate.emoji !== "string" ||
+      candidate.emoji.length === 0 ||
+      candidate.emoji.length > 16
+    ) {
+      return Effect.fail(
+        new TelegramContractError({ message: "Telegram reaction emoji is invalid" }),
+      );
+    }
+    emojis.push(candidate.emoji);
+  }
+  return Effect.succeed({
+    chatId: chat.id,
+    messageId: reaction.message_id,
+    userId: sender.id,
+    ...(username ? { username } : {}),
+    emojis,
+  });
+};
+
 export const decodeTelegramUpdates = (
   input: unknown,
 ): Effect.Effect<ReadonlyArray<TelegramUpdate>, TelegramContractError> => {
@@ -602,10 +696,17 @@ export const decodeTelegramUpdates = (
       );
     }
     return decodeMessage(update).pipe(
+      Effect.flatMap((message) =>
+        message
+          ? Effect.succeed({ message })
+          : decodeReaction(update).pipe(
+              Effect.map((reaction) => (reaction ? { reaction } : {})),
+            ),
+      ),
       Effect.map(
-        (message): TelegramUpdate => ({
+        (payload): TelegramUpdate => ({
           updateId: update.update_id as number,
-          ...(message ? { message } : {}),
+          ...payload,
         }),
       ),
     );

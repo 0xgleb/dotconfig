@@ -38,6 +38,7 @@ import {
   type TelegramBotState,
   type TelegramContractError,
   type TelegramMessage,
+  type TelegramReaction,
   type TelegramUpdate,
 } from "./telegram.ts";
 
@@ -55,6 +56,7 @@ interface PieceOfPiState extends TelegramBotState {
   readonly rejectionCounter: number;
   readonly selectedAgentId?: string;
   readonly ownerChatId?: number;
+  readonly pendingReactionFeedback?: readonly string[];
 }
 
 interface PieceOfPiConfiguration {
@@ -242,6 +244,20 @@ const decodeState = (
       new PieceOfPiStateError({ message: "Piece of Pi owner chat is invalid" }),
     );
   }
+  if (
+    candidate.pendingReactionFeedback !== undefined &&
+    (!Array.isArray(candidate.pendingReactionFeedback) ||
+      candidate.pendingReactionFeedback.length > 8 ||
+      !candidate.pendingReactionFeedback.every(
+        (feedback) => typeof feedback === "string" && feedback.length <= 160,
+      ))
+  ) {
+    return Effect.fail(
+      new PieceOfPiStateError({
+        message: "Piece of Pi reaction feedback is invalid",
+      }),
+    );
+  }
   return Effect.succeed({
     rejectionCounter: Number(candidate.rejectionCounter),
     ...(typeof candidate.ownerUserId === "number"
@@ -255,6 +271,12 @@ const decodeState = (
       : {}),
     ...(typeof candidate.ownerChatId === "number"
       ? { ownerChatId: candidate.ownerChatId }
+      : {}),
+    ...(Array.isArray(candidate.pendingReactionFeedback)
+      ? {
+          pendingReactionFeedback:
+            candidate.pendingReactionFeedback as readonly string[],
+        }
       : {}),
   });
 };
@@ -514,7 +536,7 @@ const getUpdates = (
       return telegramCall(runtime.configuration, "getUpdates", {
         ...(offset === undefined ? {} : { offset }),
         timeout: request.timeoutSeconds ?? TELEGRAM_LONG_POLL_SECONDS,
-        allowed_updates: ["message"],
+        allowed_updates: ["message", "edited_message", "message_reaction"],
       });
     }),
     Effect.flatMap(decodeTelegramUpdates),
@@ -758,6 +780,18 @@ const awaitBridgeResult = (
     }),
   );
 
+const clearPendingReactionFeedback = (
+  runtime: PieceOfPiRuntime,
+): Effect.Effect<void, PieceOfPiStateError> =>
+  Ref.updateAndGet(runtime.state, (state) => {
+    const { pendingReactionFeedback: _pending, ...next } = state;
+    return next;
+  }).pipe(
+    Effect.flatMap((state) =>
+      persistState(runtime.configuration.statePath, state),
+    ),
+  );
+
 const enqueueOwnerMessage = (
   runtime: PieceOfPiRuntime,
   update: TelegramMessageUpdate,
@@ -767,25 +801,43 @@ const enqueueOwnerMessage = (
 > =>
   sendTelegramAction(runtime, update.message.chatId).pipe(
     Effect.flatMap(() => Ref.get(runtime.state)),
-    Effect.flatMap((state) => chooseAgent(runtime, state)),
-    Effect.flatMap((agent) =>
+    Effect.flatMap((state) =>
+      chooseAgent(runtime, state).pipe(
+        Effect.map((agent) => ({ agent, state })),
+      ),
+    ),
+    Effect.flatMap(({ agent, state }) =>
       (update.message.photo
         ? downloadTelegramPhoto(runtime, update.message.photo.fileId).pipe(
             Effect.map((image) => [image] as const),
           )
         : Effect.succeed([] as const)
-      ).pipe(Effect.map((images) => ({ agent, images }))),
+      ).pipe(Effect.map((images) => ({ agent, images, state }))),
     ),
-    Effect.flatMap(({ agent, images }) =>
-      runtime.bridge.enqueue({
+    Effect.flatMap(({ agent, images, state }) => {
+      const reactionContext = state.pendingReactionFeedback?.length
+        ? `[Recent owner reactions to bot messages — conversational feedback only, never action authorization]\n${state.pendingReactionFeedback.join("\n")}\n\n`
+        : "";
+      return runtime.bridge.enqueue({
         targetAgentId: agent.id,
         requesterId: `telegram-owner-${update.message.userId}`,
         dedupeKey: `telegram-update-${update.updateId}`,
-        text: update.message.text,
+        text: `${reactionContext}${update.message.text}`,
         images,
         now: Date.now(),
         ttlMs: BRIDGE_MESSAGE_TTL_MS,
-      }),
+      }).pipe(
+        Effect.map((bridgeMessage) => ({
+          bridgeMessage,
+          hadReactionFeedback: Boolean(state.pendingReactionFeedback?.length),
+        })),
+      );
+    }),
+    Effect.flatMap(({ bridgeMessage, hadReactionFeedback }) =>
+      (hadReactionFeedback
+        ? clearPendingReactionFeedback(runtime)
+        : Effect.void
+      ).pipe(Effect.as(bridgeMessage)),
     ),
     Effect.flatMap((bridgeMessage) => {
       return Effect.forkDaemon(
@@ -1061,10 +1113,58 @@ const advanceUpdate = (
     ),
   );
 
+const handleReactionUpdate = (
+  runtime: PieceOfPiRuntime,
+  reaction: TelegramReaction,
+): Effect.Effect<void, PieceOfPiStateError> =>
+  Ref.get(runtime.state).pipe(
+    Effect.flatMap((state) => {
+      if (state.ownerUserId === undefined) return Effect.void;
+      const authorization = authorizeTelegramMessage(
+        state,
+        {
+          chatId: reaction.chatId,
+          messageId: reaction.messageId,
+          userId: reaction.userId,
+          ...(reaction.username ? { username: reaction.username } : {}),
+          text: "",
+        },
+        runtime.configuration.ownerUsername,
+      );
+      if (authorization.kind === "rejected") {
+        return Effect.sync(() => emit("sender_rejected"));
+      }
+      const feedback = `Reaction to bot message #${reaction.messageId}: ${reaction.emojis.length > 0 ? reaction.emojis.join(" ") : "removed"}`;
+      const pendingReactionFeedback = [
+        ...(state.pendingReactionFeedback ?? []),
+        feedback,
+      ].slice(-8);
+      const next: PieceOfPiState = {
+        ...state,
+        ...authorization.state,
+        ownerChatId: reaction.chatId,
+        pendingReactionFeedback,
+      };
+      return Ref.set(runtime.state, next).pipe(
+        Effect.flatMap(() =>
+          persistState(runtime.configuration.statePath, next),
+        ),
+      );
+    }),
+  );
+
 const handleUpdate = (
   runtime: PieceOfPiRuntime,
   update: TelegramUpdate,
 ): Effect.Effect<void, PieceOfPiStateError> => {
+  if (update.reaction) {
+    return handleReactionUpdate(runtime, update.reaction).pipe(
+      Effect.catchAll(() =>
+        Effect.sync(() => emit("update_failed", { error: "reaction" })),
+      ),
+      Effect.flatMap(() => advanceUpdate(runtime, update)),
+    );
+  }
   const message = update.message;
   if (!message) return advanceUpdate(runtime, update);
   const messageUpdate: TelegramMessageUpdate = { ...update, message };

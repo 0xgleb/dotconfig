@@ -51,6 +51,13 @@ test("Telegram UX uses reactions, recurring activity, commands, batching, and im
   assert.match(source, /downloadTelegramPhoto/);
 });
 
+test("owner reactions become bounded context without authorizing actions", () => {
+  assert.match(source, /allowed_updates: \["message", "edited_message", "message_reaction"\]/);
+  assert.match(source, /pendingReactionFeedback/);
+  assert.match(source, /conversational feedback only, never action authorization/);
+  assert.match(source, /handleReactionUpdate/);
+});
+
 test("unauthorized messages are rate-limited before bridge access", () => {
   assert.match(source, /consumeRejectionReplyAllowance/);
   assert.match(

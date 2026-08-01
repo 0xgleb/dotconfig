@@ -21,7 +21,10 @@ test("Home Manager runs the owner-only Telegram bridge from the ragenix token pa
 })
 
 test("Telegram polling remains private-message-only and capability-free", () => {
-  assert.match(daemon, /allowed_updates: \["message"\]/)
+  assert.match(
+    daemon,
+    /allowed_updates: \["message", "edited_message", "message_reaction"\]/,
+  )
   assert.match(daemon, /authorizeTelegramMessage/)
   assert.match(daemon, /makeRemoteBridgeStore/)
   assert.doesNotMatch(daemon, /enterRemoteToolGuard|setActiveTools|child_process|execFile|spawn\(/)

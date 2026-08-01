@@ -223,15 +223,75 @@ test("private photo captions retain only the largest documented photo variant", 
   ]);
 });
 
+test("edited owner messages retain their identity as corrections", async () => {
+  assert.deepEqual(
+    await Effect.runPromise(
+      decodeTelegramUpdates({
+        ok: true,
+        result: [
+          {
+            update_id: 125,
+            edited_message: {
+              message_id: 7,
+              from: { id: 1001, is_bot: false, username: "dianov" },
+              chat: { id: 42, type: "private" },
+              text: "edited text",
+            },
+          },
+        ],
+      }),
+    ),
+    [
+      {
+        updateId: 125,
+        message: { ...ownerMessage, text: "edited text", edited: true },
+      },
+    ],
+  );
+});
+
+test("private owner reactions decode as bounded feedback", async () => {
+  assert.deepEqual(
+    await Effect.runPromise(
+      decodeTelegramUpdates({
+        ok: true,
+        result: [
+          {
+            update_id: 126,
+            message_reaction: {
+              chat: { id: 42, type: "private" },
+              message_id: 77,
+              user: { id: 1001, is_bot: false, username: "dianov" },
+              new_reaction: [{ type: "emoji", emoji: "🔥" }],
+            },
+          },
+        ],
+      }),
+    ),
+    [
+      {
+        updateId: 126,
+        reaction: {
+          chatId: 42,
+          messageId: 77,
+          userId: 1001,
+          username: "dianov",
+          emojis: ["🔥"],
+        },
+      },
+    ],
+  );
+});
+
 test("ignored Telegram updates retain their offset so they cannot wedge polling", async () => {
   assert.deepEqual(
     await Effect.runPromise(
       decodeTelegramUpdates({
         ok: true,
-        result: [{ update_id: 125, edited_message: { untrusted: true } }],
+        result: [{ update_id: 126, channel_post: { untrusted: true } }],
       }),
     ),
-    [{ updateId: 125 }],
+    [{ updateId: 126 }],
   );
 });
 
@@ -283,6 +343,41 @@ test("adjacent owner text bursts coalesce while commands and replies remain boun
     updates[3],
     updates[4],
     updates[5],
+  ]);
+});
+
+test("an edit inside a pending burst replaces its original while a later edit becomes a correction", () => {
+  const original = {
+    updateId: 300,
+    message: { ...ownerMessage, text: "wrong wording" },
+  };
+  const edited = {
+    updateId: 301,
+    message: { ...ownerMessage, text: "right wording", edited: true as const },
+  };
+  const laterEdit = {
+    updateId: 302,
+    message: {
+      ...ownerMessage,
+      messageId: 99,
+      text: "late correction",
+      edited: true as const,
+    },
+  };
+
+  assert.deepEqual(coalesceTelegramUpdates([original, edited, laterEdit]), [
+    {
+      updateId: 301,
+      message: { ...ownerMessage, text: "right wording" },
+    },
+    {
+      updateId: 302,
+      message: {
+        ...ownerMessage,
+        messageId: 99,
+        text: "[Correction to my earlier message #99]\nlate correction",
+      },
+    },
   ]);
 });
 
