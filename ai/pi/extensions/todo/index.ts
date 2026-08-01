@@ -132,25 +132,20 @@ class TaskHudComponent {
     const hud = taskHud(this.state)
     const framed = frameTaskHud(hud, width)
     if (hud.kind === "idle") {
-      const [headline = "", row = "", footer = ""] = framed
+      const [headline = "", row = ""] = framed
       return [
         this.theme.bold(this.theme.fg("borderAccent", headline)),
         this.theme.fg("dim", row),
-        this.theme.fg("borderMuted", footer),
       ]
     }
 
-    const [headline, ...rest] = framed
-    const footer = rest.pop() ?? ""
+    const [headline, ...rows] = framed
 
     return [
-      // Depth reads as a single light source: the top edge catches it, the
-      // bottom edge falls into shadow, and the rows sit lit between them.
       this.theme.bold(this.theme.fg("borderAccent", headline ?? "")),
-      ...rest.map((row, index) =>
+      ...rows.map((row, index) =>
         this.theme.fg(statusColor(hud.rows[index]?.status), row),
       ),
-      this.theme.fg("borderMuted", footer),
     ]
   }
 
@@ -284,7 +279,7 @@ function restoredState(ctx: ExtensionContext): TodoState {
 }
 
 export default function todoExtension(pi: ExtensionAPI): void {
-  registerRuntimeVersion(pi, "todo", "2026.07.23.17")
+  registerRuntimeVersion(pi, "todo", "2026.07.23.18")
   const stateRef = Effect.runSync(Ref.make<TodoState>(emptyTodoState))
   let hudExpiry: ReturnType<typeof setTimeout> | undefined
   let reminderTimer: ReturnType<typeof setTimeout> | undefined

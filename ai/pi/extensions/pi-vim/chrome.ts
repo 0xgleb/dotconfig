@@ -11,7 +11,7 @@ const fillToWidth = (prefix: string, suffix: string, width: number): string => {
 }
 
 export const promptChromeInset = (width: number): number =>
-  Math.min(3, Math.max(2, Math.floor(width * 0.02)))
+  Math.min(1, Math.max(0, Math.floor((width - 4) / 2)))
 
 export const promptChromeTopLine = (width: number): string => {
   const prefix = truncateToWidth("╭─ PROMPT ", Math.max(0, width), "")

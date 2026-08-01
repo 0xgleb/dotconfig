@@ -34,12 +34,14 @@ test("side-by-side sessions reserve identical fixed-height chrome", () => {
     const active = frameTaskHud(activeTasks, width)
     const idle = frameTaskHud(idleTasks, width)
 
-    assert.equal(active.length, 3)
-    assert.equal(idle.length, 3)
+    assert.equal(active.length, 2)
+    assert.equal(idle.length, 2)
     assert.equal(
       [...active, ...idle].every((line) => visibleWidth(line) === width),
       true,
     )
+    assert.match(active.at(-1)?.trim() ?? "", /^│.*│$/)
+    assert.doesNotMatch(active.join("\n"), /╰/)
   }
 
   assert.equal(PROMPT_MIN_CONTENT_ROWS, 3)

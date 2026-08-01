@@ -116,6 +116,16 @@ export const topPendingTodos: (
 const HUD_SETTLE_DELAY_MS = 10_000
 
 const HUD_ROW_LIMIT = 1
+const TASK_PROGRESS_WIDTH = 8
+
+export const taskProgressBar = (completed: number, total: number): string => {
+  const boundedTotal = Math.max(0, total)
+  const ratio =
+    boundedTotal === 0 ? 0 : Math.min(1, Math.max(0, completed / boundedTotal))
+  const filled = Math.round(ratio * TASK_PROGRESS_WIDTH)
+
+  return `${"▰".repeat(filled)}${"▱".repeat(TASK_PROGRESS_WIDTH - filled)}`
+}
 
 export const taskHud: (state: TodoState, now?: number) => TaskHud = (
   state,
@@ -158,7 +168,10 @@ export const taskHud: (state: TodoState, now?: number) => TaskHud = (
   const hidden = Math.max(0, ordered.length - visible.length)
   return {
     kind: "tracking",
-    headline: { left: `TASKS  ·  ${metrics.join("  ·  ")}`, right: "/kanban" },
+    headline: {
+      left: `TASKS  ·  ${metrics.join("  ·  ")}`,
+      right: `${taskProgressBar(summary.completed, summary.total)}  ${summary.completed}/${summary.total}  ·  /kanban`,
+    },
     rows: visible.map((todo, index) => ({
       status: todo.status,
       text: `${String(index + 1).padStart(2, "0")}  #${todo.id}  ${compactTaskText(todo.text)}`,
@@ -258,7 +271,6 @@ export const frameTaskHud: (hud: TaskHud, width: number) => string[] = (
     return [
       framed(`╭─ ${rule(inner, hud.headline)} ─╮`),
       framed(`│  ${pad("No active tasks")}  │`),
-      framed(`╰─ ${rule(inner, { left: "", right: "" })} ─╯`),
     ]
   }
 
@@ -267,7 +279,6 @@ export const frameTaskHud: (hud: TaskHud, width: number) => string[] = (
     ...hud.rows.map((row) =>
       framed(`│  ${pad(`${todoStatusMark(row.status)} ${row.text}`)}  │`),
     ),
-    framed(`╰─ ${rule(inner, hud.footer)} ─╯`),
   ]
 }
 
@@ -292,12 +303,10 @@ export const taskHudLines: (state: TodoState, now?: number) => string[] = (
   now = Date.now(),
 ) => {
   const hud = taskHud(state, now)
-  if (hud.kind === "idle")
-    return [ruleText(hud.headline), "No active tasks", ""]
+  if (hud.kind === "idle") return [ruleText(hud.headline), "No active tasks"]
   return [
     ruleText(hud.headline),
     ...hud.rows.map((row) => `${todoStatusMark(row.status)} ${row.text}`),
-    ruleText(hud.footer),
   ]
 }
 
