@@ -52,6 +52,7 @@
       darwinConfigurations.darwwwin = nix-darwin.lib.darwinSystem {
         specialArgs = { inherit inputs self; };
         modules = [
+          inputs.ragenix.darwinModules.default
           ./common.nix
           ./darwin.nix
           home-manager.darwinModules.home-manager
@@ -64,7 +65,6 @@
               {
                 imports = [
                   inputs.nix-doom-emacs-unstraightened.homeModule
-                  inputs.ragenix.homeManagerModules.default
                   ./home.nix
                 ];
               };
@@ -91,7 +91,6 @@
               {
                 imports = [
                   inputs.nix-doom-emacs-unstraightened.homeModule
-                  inputs.ragenix.homeManagerModules.default
                   ./home.nix
                 ];
               };

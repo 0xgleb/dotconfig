@@ -1,6 +1,6 @@
 let
-  mateiS22Ultra = "ssh-ed25519 AAAAC3NzaC1lZDI1NTE5AAAAIHepyxN9hvXzbCY/z0amzldy7DXjNdyetnVaQexRgDEX";
+  pieceOfPi = "age18hphgt6g7mwsh9vljy9k3tf8lupz07s0r8gccanxfj0rcmyku33sqkuvjk";
 in
 {
-  "secrets/metagenda-telegram-token.age".publicKeys = [ mateiS22Ultra ];
+  "secrets/metagenda-telegram-token.age".publicKeys = [ pieceOfPi ];
 }

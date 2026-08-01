@@ -203,13 +203,6 @@ in
     };
   };
 
-  age.identityPaths = lib.mkIf isDarwin [
-    "${config.home.homeDirectory}/.config/agenix/piece-of-pi.txt"
-  ];
-  age.secrets = lib.mkIf (isDarwin && builtins.pathExists ./secrets/metagenda-telegram-token.age) {
-    metagenda-telegram-token.file = ./secrets/metagenda-telegram-token.age;
-  };
-
   launchd.agents.pieceOfPiTelegram =
     lib.mkIf (isDarwin && builtins.pathExists ./secrets/metagenda-telegram-token.age)
       {
@@ -218,7 +211,7 @@ in
           ProgramArguments = [ "${pieceOfPiTelegram}/bin/piece-of-pi-telegram" ];
           EnvironmentVariables = {
             PIECE_OF_PI_TELEGRAM_OWNER_USERNAME = "dianov";
-            PIECE_OF_PI_TELEGRAM_TOKEN_FILE = config.age.secrets.metagenda-telegram-token.path;
+            PIECE_OF_PI_TELEGRAM_TOKEN_FILE = "/run/agenix/metagenda-telegram-token";
           };
           KeepAlive = true;
           ProcessType = "Background";
