@@ -4,6 +4,7 @@ import test from "node:test";
 import {
   REVIEW_DUTY_STATE_ENTRY,
   beginReviewDuty,
+  clearedHistoricalReviewQuestion,
   emptyReviewDutyState,
   startReviewWorkflow,
   reportReviewDuty,
@@ -30,6 +31,58 @@ const verdictQuestion = {
     { label: "Inspect first" },
   ],
 };
+
+test("cleared verdict recovery requires a resolved historical question absent from latest state", () => {
+  const pending = {
+    questions: [
+      {
+        ...verdictQuestion,
+        status: "pending" as const,
+      },
+    ],
+    nextId: 8,
+  };
+  const resolved = {
+    questions: [
+      {
+        ...verdictQuestion,
+        status: "resolved" as const,
+        answer: "Inspect first",
+      },
+    ],
+    nextId: 8,
+  };
+  const cleared = { questions: [], nextId: 8 };
+  const entry = (data: unknown) => ({
+    type: "custom",
+    customType: "pi.questions.state",
+    data,
+  });
+
+  assert.deepEqual(
+    clearedHistoricalReviewQuestion(
+      [entry(pending), entry(resolved), entry(cleared)],
+      7,
+    ),
+    { ...verdictQuestion, status: "resolved" },
+  );
+  assert.equal(
+    clearedHistoricalReviewQuestion([entry(pending), entry(resolved)], 7),
+    undefined,
+  );
+});
+
+test("review recovery requires both cleared question history and durable relay history", () => {
+  assert.match(extensionSource, /Type\.Literal\("recover"\)/);
+  assert.match(
+    extensionSource,
+    /request\.action === "recover"[\s\S]*?clearedHistoricalReviewQuestion[\s\S]*?isQuestionHistoricallyRelayed/,
+  );
+  assert.match(
+    extensionSource,
+    /Recovered linked user-cleared verdict question/,
+  );
+});
 
 test("review reporting waits boundedly for asynchronous Telegram linkage", () => {
   assert.match(extensionSource, /const REVIEW_DUTY_RELAY_ATTEMPTS = 12/);

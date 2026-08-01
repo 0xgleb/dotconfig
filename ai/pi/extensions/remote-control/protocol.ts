@@ -6,7 +6,7 @@ import type {
 } from "@earendil-works/pi-ai";
 import { Data } from "effect";
 
-export const BRIDGE_PROTOCOL_VERSION = 3;
+export const BRIDGE_PROTOCOL_VERSION = 4;
 export const BRIDGE_AGENT_TTL_MS = 15_000;
 export const BRIDGE_MESSAGE_TTL_MS = 10 * 60_000;
 export const MAX_REMOTE_MESSAGE_CHARACTERS = 4_000;

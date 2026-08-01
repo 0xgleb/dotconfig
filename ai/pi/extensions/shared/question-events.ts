@@ -5,6 +5,7 @@ export const QUESTION_ASK_EVENT = "pi:question-ask"
 export const QUESTION_STATE_EVENT = "pi:question-state"
 export const QUESTION_REMOTE_RESOLUTION_EVENT = "pi:question-remote-resolution"
 export const QUESTION_PENDING_COUNT_EVENT = "pi:question-pending-count"
+export const QUESTION_STATE_ENTRY = "pi.questions.state"
 
 export interface UserQuestionRequest {
   readonly question: string

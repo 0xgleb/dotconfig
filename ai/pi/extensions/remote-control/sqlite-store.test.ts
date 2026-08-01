@@ -196,7 +196,7 @@ test("terminal messages age out so dedupe and capacity do not wedge permanently"
     assert.notEqual(second.id, first.id);
   }));
 
-test("protocol v1 databases migrate additively through image relay v3", async () => {
+test("protocol v1 databases migrate additively through relay history v4", async () => {
   const directory = mkdtempSync(join(tmpdir(), "pi-remote-bridge-v1-"));
   const databasePath = join(directory, "bridge.sqlite");
   try {
@@ -378,6 +378,25 @@ test("Telegram replies resolve only the exact bound agent question", async () =>
         store.takeQuestionResolution({ agentId: "session-1", now: 2_008 }),
       ),
       undefined,
+    );
+
+    await Effect.runPromise(
+      store.syncQuestions({ agentId: "session-1", now: 2_009, questions: [] }),
+    );
+    assert.equal(
+      await Effect.runPromise(
+        store.isQuestionRelayed({ agentId: "session-1", questionId: 1 }),
+      ),
+      false,
+    );
+    assert.equal(
+      await Effect.runPromise(
+        store.isQuestionHistoricallyRelayed({
+          agentId: "session-1",
+          questionId: 1,
+        }),
+      ),
+      true,
     );
   }));
 

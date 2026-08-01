@@ -129,6 +129,9 @@ export interface RemoteBridgeStore {
   readonly isQuestionRelayed: (
     input: QuestionRelayStatusInput,
   ) => Effect.Effect<boolean, RemoteBridgeError>;
+  readonly isQuestionHistoricallyRelayed: (
+    input: QuestionRelayStatusInput,
+  ) => Effect.Effect<boolean, RemoteBridgeError>;
   readonly linkTelegramQuestion: (
     input: LinkTelegramQuestionInput,
   ) => Effect.Effect<BridgeQuestion, RemoteBridgeError>;
@@ -487,6 +490,24 @@ const initialize = (database: DatabaseSync): void => {
       database.exec(
         "ALTER TABLE bridge_messages ADD COLUMN images_json TEXT NOT NULL DEFAULT '[]'",
       );
+    }
+
+    if (version < 4) {
+      database.exec(`
+        CREATE TABLE bridge_question_relays (
+          agent_id TEXT NOT NULL,
+          question_id INTEGER NOT NULL,
+          telegram_message_id INTEGER NOT NULL,
+          relayed_at INTEGER NOT NULL,
+          PRIMARY KEY (agent_id, question_id)
+        ) STRICT;
+        INSERT INTO bridge_question_relays (
+          agent_id, question_id, telegram_message_id, relayed_at
+        )
+        SELECT agent_id, question_id, telegram_message_id, updated_at
+        FROM bridge_questions
+        WHERE telegram_message_id IS NOT NULL;
+      `);
     }
 
     database.exec(`PRAGMA user_version = ${BRIDGE_PROTOCOL_VERSION}`);
@@ -1010,6 +1031,24 @@ export const makeRemoteBridgeStore = (
         return row?.telegram_message_id !== null && row?.telegram_message_id !== undefined;
       }),
     ),
+  isQuestionHistoricallyRelayed: (input) =>
+    attempt("Could not read historical question relay status", () =>
+      withDatabase(databasePath, (database) => {
+        const agentId = boundedIdentifier("agent id", input.agentId);
+        const questionId = positiveSafeInteger("question id", input.questionId);
+        return (
+          optionalRowFrom(
+            database
+              .prepare(
+                `SELECT telegram_message_id
+                 FROM bridge_question_relays
+                 WHERE agent_id = ? AND question_id = ?`,
+              )
+              .get(agentId, questionId),
+          ) !== undefined
+        );
+      }),
+    ),
   linkTelegramQuestion: (input) =>
     attempt("Could not link Telegram question", () =>
       withDatabase(databasePath, (database) => {
@@ -1037,6 +1076,14 @@ export const makeRemoteBridgeStore = (
               "question is already relayed or terminal",
             );
           }
+          database
+            .prepare(
+              `INSERT INTO bridge_question_relays (
+                 agent_id, question_id, telegram_message_id, relayed_at
+               ) VALUES (?, ?, ?, ?)
+               ON CONFLICT(agent_id, question_id) DO NOTHING`,
+            )
+            .run(agentId, questionId, messageId, now);
 
           return questionFromRow(
             rowFrom(

@@ -114,6 +114,7 @@ import {
 } from "./intent-context.ts"
 import {
   beginReviewDuty,
+  clearedHistoricalReviewQuestion,
   emptyReviewDutyState,
   startReviewWorkflow,
   reportReviewDuty,
@@ -770,6 +771,7 @@ const ReviewDutyParameters = Type.Object({
     Type.Literal("status"),
     Type.Literal("begin"),
     Type.Literal("report"),
+    Type.Literal("recover"),
   ]),
   repository: Type.Optional(Type.String({ minLength: 1, maxLength: 120 })),
   pullRequest: Type.Optional(Type.Integer({ minimum: 1 })),
@@ -835,7 +837,7 @@ const WorkflowParameters = Type.Object({
 })
 
 export default function classifiedWorkflows(pi: ExtensionAPI): void {
-  registerRuntimeVersion(pi, "classified-workflows", "2026.08.01.118")
+  registerRuntimeVersion(pi, "classified-workflows", "2026.08.01.119")
   const childTokenLimit = workflowChildTokenLimit(
     process.env[WORKFLOW_CHILD_TOKEN_LIMIT_ENV],
   )
@@ -2025,10 +2027,75 @@ export default function classifiedWorkflows(pi: ExtensionAPI): void {
       if (request.questionId === undefined) {
         return {
           content: [
-            { type: "text" as const, text: "report requires questionId" },
+            {
+              type: "text" as const,
+              text: `${request.action} requires questionId`,
+            },
           ],
           details: { outcome: "error" as const },
           isError: true,
+        }
+      }
+      if (request.action === "recover") {
+        const historical = clearedHistoricalReviewQuestion(
+          ctx.sessionManager.getBranch(),
+          request.questionId,
+        )
+        if (!historical) {
+          return {
+            content: [
+              {
+                type: "text" as const,
+                text: `question ${request.questionId} is not a resolved-and-cleared historical verdict question`,
+              },
+            ],
+            details: { outcome: "error" as const },
+            isError: true,
+          }
+        }
+        const relayEvidence = await Effect.runPromise(
+          Effect.either(
+            remoteBridge.isQuestionHistoricallyRelayed({
+              agentId: ctx.sessionManager.getSessionId(),
+              questionId: request.questionId,
+            }),
+          ),
+        )
+        if (Either.isLeft(relayEvidence) || !relayEvidence.right) {
+          return {
+            content: [
+              {
+                type: "text" as const,
+                text: `question ${request.questionId} has no durable historical Telegram relay evidence`,
+              },
+            ],
+            details: { outcome: "error" as const },
+            isError: true,
+          }
+        }
+        const recovered = reportReviewDuty(
+          reviewDutyState,
+          historical,
+          true,
+          Date.now(),
+        )
+        if (!recovered.ok) {
+          return {
+            content: [{ type: "text" as const, text: recovered.error }],
+            details: { outcome: "error" as const, error: recovered.error },
+            isError: true,
+          }
+        }
+        reviewDutyState = recovered.state
+        pi.appendEntry(REVIEW_DUTY_STATE_ENTRY, reviewDutyState)
+        return {
+          content: [
+            {
+              type: "text" as const,
+              text: `Recovered linked user-cleared verdict question ${request.questionId}; the existing review may continue without creating another question`,
+            },
+          ],
+          details: { outcome: "recovered" as const, state: reviewDutyState },
         }
       }
       const question = questionState.questions.find(

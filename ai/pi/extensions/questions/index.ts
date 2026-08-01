@@ -20,6 +20,7 @@ import {
   QUESTION_PENDING_COUNT_EVENT,
   QUESTION_REMOTE_RESOLUTION_EVENT,
   QUESTION_RESOLVED_EVENT,
+  QUESTION_STATE_ENTRY,
   QUESTION_STATE_EVENT,
   type RemoteUserQuestionResolution,
   type UserQuestionPendingCount,
@@ -31,7 +32,6 @@ import {
 import { registerRuntimeVersion } from "../shared/runtime-version.ts"
 import { pendingQuestionContext, questionListText } from "./presentation.ts"
 
-const QUESTION_ENTRY = "pi.questions.state"
 const QUESTION_MESSAGE = "pi.questions.list"
 const QUESTION_STATUS_KEY = "pi-questions"
 
@@ -89,7 +89,7 @@ const parseAction: (
 }
 
 const questionsExtension: (pi: ExtensionAPI) => void = (pi) => {
-  registerRuntimeVersion(pi, "questions", "2026.08.01.11")
+  registerRuntimeVersion(pi, "questions", "2026.08.01.12")
   let state = emptyQuestionState
   let dialogOpen = false
   let latestCtx: ExtensionContext | undefined
@@ -127,7 +127,7 @@ const questionsExtension: (pi: ExtensionAPI) => void = (pi) => {
       .filter(
         (candidate) =>
           candidate.type === "custom" &&
-          candidate.customType === QUESTION_ENTRY,
+          candidate.customType === QUESTION_STATE_ENTRY,
       )
       .at(-1)
     const restored =
@@ -140,14 +140,14 @@ const questionsExtension: (pi: ExtensionAPI) => void = (pi) => {
         (question, index) => question !== restored.questions[index],
       )
     ) {
-      pi.appendEntry(QUESTION_ENTRY, state)
+      pi.appendEntry(QUESTION_STATE_ENTRY, state)
     }
     render(ctx)
     publishState()
   }
 
   const persist = (ctx: ExtensionContext) => {
-    pi.appendEntry(QUESTION_ENTRY, state)
+    pi.appendEntry(QUESTION_STATE_ENTRY, state)
     render(ctx)
     publishState()
   }

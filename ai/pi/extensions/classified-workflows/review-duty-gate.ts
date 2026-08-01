@@ -1,3 +1,6 @@
+import { QUESTION_STATE_ENTRY } from "../shared/question-events.ts";
+import { decodeQuestionState } from "../questions/state.ts";
+
 export const REVIEW_DUTY_STATE_ENTRY = "classified-workflows.review-duty";
 
 export interface ReviewDutyJob {
@@ -162,6 +165,40 @@ export const reportReviewDuty = (
       },
     },
   };
+};
+
+export const clearedHistoricalReviewQuestion = (
+  entries: readonly unknown[],
+  questionId: number,
+): ReviewDutyQuestion | undefined => {
+  let latestState = undefined as ReturnType<typeof decodeQuestionState>;
+  let lastResolved: ReviewDutyQuestion | undefined;
+  for (const entry of entries) {
+    if (
+      !isRecord(entry) ||
+      entry.type !== "custom" ||
+      entry.customType !== QUESTION_STATE_ENTRY
+    )
+      continue;
+    const decoded = decodeQuestionState(entry.data);
+    if (!decoded) continue;
+    latestState = decoded;
+    const question = decoded.questions.find(({ id }) => id === questionId);
+    if (question?.status === "resolved") {
+      lastResolved = {
+        id: question.id,
+        status: question.status,
+        question: question.question,
+        ...(question.options ? { options: question.options } : {}),
+      };
+    }
+  }
+  if (
+    !lastResolved ||
+    latestState?.questions.some(({ id }) => id === questionId)
+  )
+    return undefined;
+  return lastResolved;
 };
 
 export const reviewWorkflowBlockReason = (

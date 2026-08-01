@@ -344,6 +344,15 @@ test("typed review-duty gate actions are locally allowed", () => {
       },
     );
   }
+  assert.equal(
+    deterministicDecision({
+      boundary: "action",
+      toolName: "review_duty",
+      input: { action: "recover" },
+      cwd: "/workspace/st0x",
+    }),
+    null,
+  );
 });
 
 test("release cadence bookkeeping is locally allowed without granting release authority", () => {
