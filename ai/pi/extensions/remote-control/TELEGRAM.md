@@ -43,7 +43,7 @@ Assets:
 - Tampering: malformed update IDs, sender fields, chat fields, reply references, photo metadata, file paths, media types, and message fields fail in typed decoders. A reply cannot choose its own agent or question ID; Telegram-controlled paths cannot choose a host or local path.
 - Repudiation: lifecycle events identify owner pinning, sender rejection, bridge queueing, completion, and failure without message text or personal identifiers.
 - Information disclosure: token, message text, username, numeric user ID, session ID, and response text are absent from telemetry.
-- Denial of service: Telegram long polling, burst size, message/image counts, decoded bytes, progress messages, and SQLite payloads are bounded; every valid update ID advances; transport failures back off before retrying. Unauthorized senders receive at most one local rejection per in-memory sender/chat allowance hour, after which updates are silently dropped without bridge/model access or persistent sender identifiers.
+- Denial of service: Telegram long polling, burst size, message/image counts, decoded bytes, and SQLite payloads are bounded; every valid update ID advances; transport failures back off before retrying. Unauthorized senders receive at most one local rejection per in-memory sender/chat allowance hour, after which updates are silently dropped without bridge/model access or persistent sender identifiers.
 - Elevation of privilege: unauthorized messages are rejected before bridge access; authorized remote turns retain the capability-free tool guard. Replies to unknown or terminal question messages fail closed instead of entering ordinary chat.
 
 ## Operator questions and signals
@@ -65,7 +65,7 @@ Launchd captures stdout and stderr in bounded service log files. No metric or du
 - A pinned numeric ID without the current `@dianov` username is rejected.
 - Unauthorized messages do not mutate owner state or call the bridge. They receive one locally composed, language-matched clanker rejection per cooldown; later attempts are silently dropped.
 - Adjacent ordinary owner text and one associated image coalesce within the bounded drain window, while commands and Telegram replies remain separate turns.
-- Accepted owner messages get best-effort reaction/typing feedback; slow turns create one delayed progress message, and feedback API failures never fail or wedge the bridge request.
+- Accepted owner messages get best-effort reaction/typing feedback followed by one immutable final response. Placeholder/progress messages are never created or retroactively edited, and feedback API failures never fail or wedge the bridge request.
 - Malformed Telegram envelopes fail through `TelegramContractError`.
 - A private owner reply decodes only the documented `reply_to_message.message_id` reference.
 - A Telegram reply resolves the exact bound `(agent_id, question_id)` and cannot resolve another question.

@@ -44,7 +44,6 @@ const TELEGRAM_BURST_WINDOW_MS = 2_000;
 const TELEGRAM_MESSAGE_LIMIT = 4_000;
 const BRIDGE_RESULT_POLL_INTERVAL = "1 second";
 const BRIDGE_TYPING_REFRESH_MS = 4_000;
-const PROGRESS_MESSAGE_DELAY_MS = 1_500;
 const POLL_RETRY_INTERVAL = "2 seconds";
 
 interface PieceOfPiState extends TelegramBotState {
@@ -430,20 +429,6 @@ const bestEffortTelegramFeedback = <E>(
     ),
   );
 
-const editTelegramMessage = (
-  runtime: PieceOfPiRuntime,
-  chatId: number,
-  messageId: number,
-  text: string,
-  parseMode?: "HTML",
-): Effect.Effect<void, TelegramTransportError | TelegramContractError> =>
-  telegramCall(runtime.configuration, "editMessageText", {
-    chat_id: chatId,
-    message_id: messageId,
-    text: text.slice(0, TELEGRAM_MESSAGE_LIMIT),
-    ...(parseMode ? { parse_mode: parseMode } : {}),
-  }).pipe(Effect.flatMap(decodeTelegramOk));
-
 const registerTelegramCommands = (
   runtime: PieceOfPiRuntime,
 ): Effect.Effect<void, TelegramTransportError | TelegramContractError> =>
@@ -508,26 +493,6 @@ const sendFormattedText = (
       sendTelegramMessage(runtime, chatId, chunk, replyToMessageId, "HTML"),
     { discard: true },
   );
-
-const replaceProgressMessage = (
-  runtime: PieceOfPiRuntime,
-  chatId: number,
-  messageId: number,
-  text: string,
-): Effect.Effect<void, TelegramTransportError | TelegramContractError> => {
-  const chunks = telegramHtmlChunks(text, TELEGRAM_MESSAGE_LIMIT);
-  const first = chunks[0] ?? text;
-  return editTelegramMessage(runtime, chatId, messageId, first, "HTML").pipe(
-    Effect.flatMap(() =>
-      Effect.forEach(
-        chunks.slice(1),
-        (chunk) =>
-          sendTelegramMessage(runtime, chatId, chunk, undefined, "HTML"),
-        { discard: true },
-      ),
-    ),
-  );
-};
 
 interface TelegramUpdateRequest {
   readonly offset?: number;
@@ -676,8 +641,6 @@ const chooseAgent = (
   );
 
 interface BridgeFeedbackState {
-  readonly progressAttempted: boolean;
-  readonly progressMessageId?: number;
   readonly nextTypingAt: number;
 }
 
@@ -685,58 +648,22 @@ const deliverBridgeText = (
   runtime: PieceOfPiRuntime,
   chatId: number,
   ownerMessageId: number,
-  progressMessageId: number | undefined,
   text: string,
 ): Effect.Effect<void, TelegramTransportError | TelegramContractError> =>
-  progressMessageId === undefined
-    ? sendFormattedText(runtime, chatId, text, ownerMessageId)
-    : replaceProgressMessage(runtime, chatId, progressMessageId, text);
+  sendFormattedText(runtime, chatId, text, ownerMessageId);
 
 const advanceBridgeFeedback = (
   runtime: PieceOfPiRuntime,
   chatId: number,
-  ownerMessageId: number,
-  progressText: string,
-  startedAt: number,
   feedback: BridgeFeedbackState,
 ): Effect.Effect<BridgeFeedbackState> => {
   const now = Date.now();
-  const refreshTyping = now >= feedback.nextTypingAt;
-  const showProgress =
-    !feedback.progressAttempted && now - startedAt >= PROGRESS_MESSAGE_DELAY_MS;
-  const activity = refreshTyping
-    ? bestEffortTelegramFeedback(
-        "sendChatAction",
-        sendTelegramAction(runtime, chatId),
-      )
-    : Effect.void;
-  const progressMessageId = showProgress
-    ? sendTelegramMessage(
-        runtime,
-        chatId,
-        progressText,
-        ownerMessageId,
-      ).pipe(
-        Effect.map((messageId): number | undefined => messageId),
-        Effect.catchAll(() =>
-          Effect.sync(() => {
-            emit("feedback_failed", { method: "sendMessage" });
-            return undefined;
-          }),
-        ),
-      )
-    : Effect.succeed(feedback.progressMessageId);
-
-  return Effect.all({ activity, progressMessageId }).pipe(
-    Effect.map(({ progressMessageId: nextProgressMessageId }) => ({
-      progressAttempted: feedback.progressAttempted || showProgress,
-      ...(nextProgressMessageId === undefined
-        ? {}
-        : { progressMessageId: nextProgressMessageId }),
-      nextTypingAt: refreshTyping
-        ? now + BRIDGE_TYPING_REFRESH_MS
-        : feedback.nextTypingAt,
-    })),
+  if (now < feedback.nextTypingAt) return Effect.succeed(feedback);
+  return bestEffortTelegramFeedback(
+    "sendChatAction",
+    sendTelegramAction(runtime, chatId),
+  ).pipe(
+    Effect.as({ nextTypingAt: now + BRIDGE_TYPING_REFRESH_MS }),
   );
 };
 
@@ -745,8 +672,6 @@ const awaitBridgeResult = (
   chatId: number,
   ownerMessageId: number,
   bridgeMessageId: string,
-  progressText: string,
-  startedAt: number,
   feedback: BridgeFeedbackState,
 ): Effect.Effect<
   void,
@@ -759,7 +684,6 @@ const awaitBridgeResult = (
           runtime,
           chatId,
           ownerMessageId,
-          feedback.progressMessageId,
           message.response,
         ).pipe(
           Effect.tap(() =>
@@ -776,7 +700,6 @@ const awaitBridgeResult = (
           runtime,
           chatId,
           ownerMessageId,
-          feedback.progressMessageId,
           `Pi could not complete that message (${message.failure}). Please retry or use /agents to select another agent.`,
         ).pipe(
           Effect.tap(() =>
@@ -795,9 +718,6 @@ const awaitBridgeResult = (
       return advanceBridgeFeedback(
         runtime,
         chatId,
-        ownerMessageId,
-        progressText,
-        startedAt,
         feedback,
       ).pipe(
         Effect.flatMap((nextFeedback) =>
@@ -808,8 +728,6 @@ const awaitBridgeResult = (
                 chatId,
                 ownerMessageId,
                 bridgeMessageId,
-                progressText,
-                startedAt,
                 nextFeedback,
               ),
             ),
@@ -849,28 +767,19 @@ const enqueueOwnerMessage = (
       }),
     ),
     Effect.flatMap((bridgeMessage) => {
-      const startedAt = Date.now();
-      const progressText = update.message.photo
-        ? "Reading the image…"
-        : "Working on it…";
       return Effect.forkDaemon(
         awaitBridgeResult(
           runtime,
           update.message.chatId,
           update.message.messageId,
           bridgeMessage.id,
-          progressText,
-          startedAt,
-          {
-            progressAttempted: false,
-            nextTypingAt: startedAt + BRIDGE_TYPING_REFRESH_MS,
-          },
+          { nextTypingAt: Date.now() + BRIDGE_TYPING_REFRESH_MS },
         ).pipe(
           Effect.catchAll((error) =>
             sendText(
               runtime,
               update.message.chatId,
-              `Piece of Pi could not update the progress message: ${updateFailureText(error)}.`,
+              `Piece of Pi could not deliver the response: ${updateFailureText(error)}.`,
               update.message.messageId,
             ).pipe(
               Effect.catchAll(() => Effect.void),

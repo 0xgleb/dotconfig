@@ -29,17 +29,15 @@ test("replies to ordinary bot messages continue as agent conversation", () => {
   );
 });
 
-test("Telegram UX uses reactions, recurring activity, delayed progress, commands, and images", () => {
-  assert.doesNotMatch(source, /Queued for/);
+test("Telegram UX uses reactions, recurring activity, commands, batching, and images", () => {
+  assert.doesNotMatch(source, /Queued for|Working on it|Reading the image/);
+  assert.doesNotMatch(source, /PROGRESS_MESSAGE_DELAY_MS|editMessageText/);
   assert.match(source, /"setMessageReaction"/);
   assert.match(source, /"👀"/);
   assert.match(source, /"sendChatAction"/);
   assert.match(source, /BRIDGE_TYPING_REFRESH_MS/);
-  assert.match(source, /PROGRESS_MESSAGE_DELAY_MS/);
   assert.match(source, /TELEGRAM_BURST_WINDOW_MS/);
   assert.match(source, /coalesceTelegramUpdates/);
-  assert.match(source, /"Working on it…"/);
-  assert.match(source, /"editMessageText"/);
   assert.match(source, /"setMyCommands"/);
   assert.match(source, /command: "kanban"/);
   assert.match(source, /downloadTelegramPhoto/);
