@@ -108,6 +108,7 @@ import {
   workflowChildTokenLimit,
 } from "./token-cap.ts"
 import { activeSkillProcedures } from "./skill-context.ts"
+import { shouldDetachForegroundWorkflow } from "./foreground-detach.ts"
 import {
   boundedConversationIntentEvidence,
   questionIntentEvidence,
@@ -174,6 +175,10 @@ import {
   wasRunAborted,
 } from "../shared/continuation-pause.ts"
 import {
+  FOREGROUND_WORKFLOW_WAIT_PROBE_EVENT,
+  type ForegroundWorkflowWaitProbe,
+} from "../shared/foreground-wait.ts"
+import {
   ACTIVITY_PHASE_EVENT,
   type ClassifierActivityEvent,
 } from "../shared/activity-events.ts"
@@ -224,6 +229,11 @@ interface PiProcessResult {
 }
 
 type BackgroundWorkflowStatus = "running" | "completed" | "failed" | "cancelled"
+
+interface DetachableForegroundWorkflow {
+  readonly id: string
+  detach(): void
+}
 
 interface BackgroundWorkflow {
   id: string
@@ -844,7 +854,7 @@ const WorkflowParameters = Type.Object({
 })
 
 export default function classifiedWorkflows(pi: ExtensionAPI): void {
-  registerRuntimeVersion(pi, "classified-workflows", "2026.08.01.129")
+  registerRuntimeVersion(pi, "classified-workflows", "2026.08.01.130")
   const childTokenLimit = workflowChildTokenLimit(
     process.env[WORKFLOW_CHILD_TOKEN_LIMIT_ENV],
   )
@@ -899,6 +909,9 @@ export default function classifiedWorkflows(pi: ExtensionAPI): void {
   let latestCtx: ExtensionContext | undefined
   let questionState: UserQuestionStateSnapshot = { questions: [] }
   const backgroundWorkflows = new Map<string, BackgroundWorkflow>()
+  let detachableForegroundWorkflow:
+    | DetachableForegroundWorkflow
+    | undefined
 
   const awaitQuestionRelay = (
     agentId: string,
@@ -1535,6 +1548,35 @@ export default function classifiedWorkflows(pi: ExtensionAPI): void {
         `Scheduled an infinite recurring loop.\n${formatLoopStatus(loopState, now)}`,
       )
     },
+  })
+
+  pi.events.on(
+    FOREGROUND_WORKFLOW_WAIT_PROBE_EVENT,
+    (probe: ForegroundWorkflowWaitProbe) => {
+      probe.waiting = detachableForegroundWorkflow !== undefined
+    },
+  )
+
+  pi.on("input", (event) => {
+    const foregroundWorkflow = detachableForegroundWorkflow
+    if (
+      !shouldDetachForegroundWorkflow(
+        event.streamingBehavior,
+        event.source,
+        foregroundWorkflow !== undefined,
+      ) ||
+      !foregroundWorkflow
+    )
+      return { action: "continue" as const }
+
+    foregroundWorkflow.detach()
+    pi.sendUserMessage(
+      event.images && event.images.length > 0
+        ? [{ type: "text" as const, text: event.text }, ...event.images]
+        : event.text,
+      { deliverAs: "steer" },
+    )
+    return { action: "handled" as const }
   })
 
   pi.on("session_start", (event, ctx) => {
@@ -2597,6 +2639,25 @@ export default function classifiedWorkflows(pi: ExtensionAPI): void {
       const auditLabel = params.label?.trim() || `workflow ${auditId}`
       const auditStartedAt = Date.now()
       const childAudits: ChildAudit[] = []
+      const workflowController = new AbortController()
+      const abortWorkflow = () => workflowController.abort(signal.reason)
+      if (signal.aborted) abortWorkflow()
+      else signal.addEventListener("abort", abortWorkflow, { once: true })
+      let detachedWorkflow: BackgroundWorkflow | undefined
+      const reportProgress = (
+        content: string,
+        details: Readonly<Record<string, unknown>>,
+      ): void => {
+        if (detachedWorkflow) {
+          detachedWorkflow.progress = content
+          renderWorkflowPanel(ctx)
+          return
+        }
+        onUpdate?.({
+          content: [{ type: "text", text: content }],
+          details: { status: "running", auditId, ...details },
+        })
+      }
       const classifiedRunAgent = createClassifiedAgentRunner(
         intent,
         instructions,
@@ -2622,49 +2683,120 @@ export default function classifiedWorkflows(pi: ExtensionAPI): void {
         sanitizeProcessDiagnostic,
         (event) => {
           const progress = childProgressText(event)
-          onUpdate?.({
-            content: [{ type: "text", text: progress }],
-            details: {
-              status: "running",
-              auditId,
-              child: event.kind === "started" ? event.index : event.audit.index,
-              progress,
-            },
+          reportProgress(progress, {
+            child: event.kind === "started" ? event.index : event.audit.index,
+            progress,
           })
         },
       )
 
-      try {
-        const result = await runWorkflowScript(
-          params.code,
-          limits,
-          {
-            prepareAgentRequest: (request) =>
-              prepareWorkflowAgentRequest(
-                request,
-                ctx.model?.provider,
-                ctx.modelRegistry.getAvailable(),
-              ),
-            runAgent,
-            checkpoint: async (message) => {
-              if (!ctx.hasUI) return "denied"
-              return (await ctx.ui.confirm("Workflow checkpoint", message))
-                ? "approved"
-                : "denied"
-            },
-            phase: (title) =>
-              onUpdate?.({
-                content: [{ type: "text", text: `Phase: ${title}` }],
-                details: { status: "running", auditId, phase: title },
-              }),
-            log: (message) =>
-              onUpdate?.({
-                content: [{ type: "text", text: message }],
-                details: { status: "running", auditId },
-              }),
+      let requestDetach = (): void => {}
+      const detachRequested = new Promise<{ readonly kind: "detached" }>(
+        (resolveDetach) => {
+          requestDetach = () => {
+            if (detachableForegroundWorkflow?.id !== auditId) return
+            detachableForegroundWorkflow = undefined
+            resolveDetach({ kind: "detached" })
+          }
+        },
+      )
+      detachableForegroundWorkflow = { id: auditId, detach: requestDetach }
+      const runPromise = runWorkflowScript(
+        params.code,
+        limits,
+        {
+          prepareAgentRequest: (request) =>
+            prepareWorkflowAgentRequest(
+              request,
+              ctx.model?.provider,
+              ctx.modelRegistry.getAvailable(),
+            ),
+          runAgent,
+          checkpoint: async (message) => {
+            if (detachedWorkflow)
+              throw new Error(
+                `Detached workflow ${auditId} reached a checkpoint and stopped: ${message}`,
+              )
+            if (!ctx.hasUI) return "denied"
+            return (await ctx.ui.confirm("Workflow checkpoint", message))
+              ? "approved"
+              : "denied"
           },
-          signal,
-        )
+          phase: (title) => reportProgress(`Phase: ${title}`, { phase: title }),
+          log: (message) => reportProgress(message, {}),
+        },
+        workflowController.signal,
+      ).then(
+        (result) => ({ kind: "completed" as const, result }),
+        (error: unknown) => ({ kind: "failed" as const, error }),
+      )
+
+      try {
+        const outcome = await Promise.race([runPromise, detachRequested])
+        if (outcome.kind === "detached") {
+          detachedWorkflow = {
+            id: auditId,
+            label: auditLabel,
+            params: limits,
+            startedAt: auditStartedAt,
+            status: "running",
+            controller: workflowController,
+          }
+          backgroundWorkflows.set(auditId, detachedWorkflow)
+          renderWorkflowPanel(ctx)
+          void runPromise.then((terminal) => {
+            if (!detachedWorkflow) return
+            detachedWorkflow.finishedAt = Date.now()
+            if (terminal.kind === "completed") {
+              detachedWorkflow.status = "completed"
+              detachedWorkflow.output =
+                workflowOutput(terminal.result) ||
+                "Workflow completed without a result"
+            } else {
+              detachedWorkflow.status = workflowController.signal.aborted
+                ? "cancelled"
+                : "failed"
+              detachedWorkflow.error = unknownErrorMessage(
+                terminal.error,
+                "Workflow failed closed",
+              )
+            }
+            const message =
+              detachedWorkflow.output ??
+              detachedWorkflow.error ??
+              "Workflow completed without a result"
+            persistWorkflowAudit({
+              id: auditId,
+              label: auditLabel,
+              status: detachedWorkflow.status,
+              startedAt: auditStartedAt,
+              finishedAt: detachedWorkflow.finishedAt,
+              limits,
+              children: childAudits,
+              outcome: sanitizeProcessDiagnostic(message).slice(0, 2_000),
+            })
+            showWorkflowMessage(
+              `${detachedWorkflow.status === "completed" ? "✓" : "✕"} ${auditLabel} (${auditId}) ${detachedWorkflow.status}.\n${message}`,
+              {
+                id: auditId,
+                status: detachedWorkflow.status,
+                label: auditLabel,
+              },
+            )
+            renderWorkflowPanel(ctx)
+          })
+          return {
+            content: [
+              {
+                type: "text",
+                text: backgroundWorkflowStartedText(auditId, auditLabel),
+              },
+            ],
+            details: { status: "running", id: auditId, label: auditLabel },
+          }
+        }
+        if (outcome.kind === "failed") throw outcome.error
+        const result = outcome.result
         const output = workflowOutput(result)
         persistWorkflowAudit({
           id: auditId,
@@ -2690,7 +2822,7 @@ export default function classifiedWorkflows(pi: ExtensionAPI): void {
         persistWorkflowAudit({
           id: auditId,
           label: auditLabel,
-          status: signal.aborted ? "cancelled" : "failed",
+          status: workflowController.signal.aborted ? "cancelled" : "failed",
           startedAt: auditStartedAt,
           finishedAt: Date.now(),
           limits,
@@ -2698,6 +2830,10 @@ export default function classifiedWorkflows(pi: ExtensionAPI): void {
           outcome: sanitizeProcessDiagnostic(reason).slice(0, 2_000),
         })
         return blockedResult(reason)
+      } finally {
+        signal.removeEventListener("abort", abortWorkflow)
+        if (detachableForegroundWorkflow?.id === auditId)
+          detachableForegroundWorkflow = undefined
       }
     },
   })

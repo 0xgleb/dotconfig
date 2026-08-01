@@ -12,11 +12,15 @@
 
 import type { ExtensionAPI } from "@earendil-works/pi-coding-agent"
 import type { AutocompleteProvider } from "@earendil-works/pi-tui"
+import {
+  FOREGROUND_WORKFLOW_WAIT_PROBE_EVENT,
+  type ForegroundWorkflowWaitProbe,
+} from "../shared/foreground-wait.ts"
 import { registerRuntimeVersion } from "../shared/runtime-version.ts"
 import { VimEditor } from "./vim-editor.ts"
 
 export default function (pi: ExtensionAPI) {
-  registerRuntimeVersion(pi, "pi-vim", "2026.08.01.14")
+  registerRuntimeVersion(pi, "pi-vim", "2026.08.01.15")
   let wrapAutocomplete:
     | ((provider: AutocompleteProvider) => AutocompleteProvider)
     | undefined
@@ -41,6 +45,11 @@ export default function (pi: ExtensionAPI) {
         new VimEditor(tui, theme, keybindings, undefined, wrapAutocomplete, {
           isStreaming: () => !ctx.isIdle(),
           hasPendingMessages: () => ctx.hasPendingMessages(),
+          isWaitingForSubagent: () => {
+            const probe: ForegroundWorkflowWaitProbe = { waiting: false }
+            pi.events.emit(FOREGROUND_WORKFLOW_WAIT_PROBE_EVENT, probe)
+            return probe.waiting
+          },
           onImmediate: (text) => {
             if (ctx.isIdle()) {
               pi.sendUserMessage(text)

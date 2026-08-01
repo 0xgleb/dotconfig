@@ -37,7 +37,11 @@ import {
   getVisualRange,
   type VisualModeContext,
 } from "./modes/visual.ts"
-import { DoubleEnterSteering, isSlashCommandInput } from "./steering.ts"
+import {
+  DoubleEnterSteering,
+  isSlashCommandInput,
+  shouldSubmitWhileWaitingForSubagent,
+} from "./steering.ts"
 import {
   emptyEditorAttachmentState,
   expandEditorScreenshots,
@@ -54,6 +58,7 @@ import {
 export interface VimSteeringOptions {
   readonly isStreaming: () => boolean
   readonly hasPendingMessages: () => boolean
+  readonly isWaitingForSubagent: () => boolean
   readonly onImmediate: (text: string) => void
   readonly onQueuedImmediate: () => void
 }
@@ -70,6 +75,7 @@ export class VimEditor extends CustomEditor {
     | undefined
   private readonly doubleEnterSteering?: DoubleEnterSteering
   private readonly isStreaming: () => boolean
+  private readonly isWaitingForSubagent: () => boolean
   private attachmentState: EditorAttachmentState = emptyEditorAttachmentState()
   private hardwareCursorSupported = true
 
@@ -93,6 +99,8 @@ export class VimEditor extends CustomEditor {
     this.vimState = createInitialState()
     this.wrapAutocomplete = wrapAutocomplete
     this.isStreaming = steering?.isStreaming ?? (() => false)
+    this.isWaitingForSubagent =
+      steering?.isWaitingForSubagent ?? (() => false)
     this.doubleEnterSteering = steering
       ? new DoubleEnterSteering({
           windowMs: 350,
@@ -196,6 +204,19 @@ export class VimEditor extends CustomEditor {
       isEnter &&
       this.vimState.mode === "insert" &&
       isSlashCommandInput(this.getText())
+    if (
+      isEnter &&
+      !enteringSlashCommand &&
+      shouldSubmitWhileWaitingForSubagent(
+        this.getText(),
+        this.isStreaming(),
+        this.isWaitingForSubagent(),
+      )
+    ) {
+      this.onSubmit?.(this.getText())
+      this.setText("")
+      return
+    }
     if (isEnter && this.doubleEnterSteering && !enteringSlashCommand) {
       const result = this.doubleEnterSteering.handleEnter(
         this.getText(),

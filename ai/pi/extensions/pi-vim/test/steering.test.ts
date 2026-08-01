@@ -1,6 +1,11 @@
 import assert from "node:assert/strict";
 import test from "node:test";
-import { DoubleEnterSteering, isSlashCommandInput, type SteeringScheduler } from "../steering.ts";
+import {
+  DoubleEnterSteering,
+  isSlashCommandInput,
+  shouldSubmitWhileWaitingForSubagent,
+  type SteeringScheduler,
+} from "../steering.ts";
 
 class FakeScheduler implements SteeringScheduler {
   callback?: () => void;
@@ -104,6 +109,26 @@ test("slash command input bypasses streaming double-enter steering", () => {
   assert.equal(isSlashCommandInput("/ques"), true);
   assert.equal(isSlashCommandInput("  /questions"), true);
   assert.equal(isSlashCommandInput("answer the question"), false);
+});
+
+test("foreground subagent waits submit human text immediately", () => {
+  assert.equal(
+    shouldSubmitWhileWaitingForSubagent(
+      "answer the human now",
+      true,
+      true,
+    ),
+    true,
+  );
+  assert.equal(
+    shouldSubmitWhileWaitingForSubagent("/questions", true, true),
+    false,
+  );
+  assert.equal(
+    shouldSubmitWhileWaitingForSubagent("answer the human now", true, false),
+    false,
+  );
+  assert.equal(shouldSubmitWhileWaitingForSubagent("", true, true), false);
 });
 
 test("enter passes through while idle or without text", () => {
