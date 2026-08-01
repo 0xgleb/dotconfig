@@ -139,9 +139,11 @@ test("owner acknowledgements vary locally by context without model calls", () =>
   assert.match(question, /^(?:🤔|👀)$/u);
   assert.match(image, /^(?:👀|🤓)$/u);
   assert.equal(failures.size > 1, true);
-  assert.equal(
-    telegramAcknowledgementReaction(ownerMessage, 7),
-    telegramAcknowledgementReaction(ownerMessage, 7),
+  const previous = telegramAcknowledgementReaction(ownerMessage, 7);
+  assert.equal(previous, telegramAcknowledgementReaction(ownerMessage, 7));
+  assert.notEqual(
+    telegramAcknowledgementReaction(ownerMessage, 7, previous),
+    previous,
   );
 });
 

@@ -35,6 +35,8 @@ test("Telegram UX uses reactions, recurring activity, commands, batching, and im
   assert.doesNotMatch(source, /Please retry or use \/agents to select another agent/);
   assert.match(source, /"setMessageReaction"/);
   assert.match(source, /telegramAcknowledgementReaction/);
+  assert.match(source, /lastAcknowledgementReaction/);
+  assert.match(source, /state\.lastAcknowledgementReaction/);
   assert.doesNotMatch(source, /"👍"|"😢"/);
   assert.match(source, /"sendChatAction"/);
   assert.match(source, /BRIDGE_TYPING_REFRESH_MS/);

@@ -32,6 +32,7 @@ import {
   decodeTelegramSentMessageId,
   decodeTelegramUpdates,
   freshClankerRejection,
+  isTelegramAcknowledgementEmoji,
   telegramAcknowledgementReaction,
   telegramImageFromBytes,
   type TelegramAcknowledgementEmoji,
@@ -57,6 +58,7 @@ interface PieceOfPiState extends TelegramBotState {
   readonly selectedAgentId?: string;
   readonly ownerChatId?: number;
   readonly pendingReactionFeedback?: readonly string[];
+  readonly lastAcknowledgementReaction?: TelegramAcknowledgementEmoji;
 }
 
 interface PieceOfPiConfiguration {
@@ -245,6 +247,16 @@ const decodeState = (
     );
   }
   if (
+    candidate.lastAcknowledgementReaction !== undefined &&
+    !isTelegramAcknowledgementEmoji(candidate.lastAcknowledgementReaction)
+  ) {
+    return Effect.fail(
+      new PieceOfPiStateError({
+        message: "Piece of Pi acknowledgement reaction is invalid",
+      }),
+    );
+  }
+  if (
     candidate.pendingReactionFeedback !== undefined &&
     (!Array.isArray(candidate.pendingReactionFeedback) ||
       candidate.pendingReactionFeedback.length > 8 ||
@@ -276,6 +288,11 @@ const decodeState = (
       ? {
           pendingReactionFeedback:
             candidate.pendingReactionFeedback as readonly string[],
+        }
+      : {}),
+    ...(isTelegramAcknowledgementEmoji(candidate.lastAcknowledgementReaction)
+      ? {
+          lastAcknowledgementReaction: candidate.lastAcknowledgementReaction,
         }
       : {}),
   });
@@ -1050,10 +1067,16 @@ const handleUpdateBody = (
         );
       }
 
+      const acknowledgementReaction = telegramAcknowledgementReaction(
+        update.message,
+        update.updateId,
+        state.lastAcknowledgementReaction,
+      );
       const ownerState: PieceOfPiState = {
         ...state,
         ...authorization.state,
         ownerChatId: update.message.chatId,
+        lastAcknowledgementReaction: acknowledgementReaction,
       };
       return Ref.set(runtime.state, ownerState).pipe(
         Effect.flatMap(() =>
@@ -1066,7 +1089,7 @@ const handleUpdateBody = (
               runtime,
               update.message.chatId,
               update.message.messageId,
-              telegramAcknowledgementReaction(update.message, update.updateId),
+              acknowledgementReaction,
             ),
           ),
         ),

@@ -56,6 +56,27 @@ export type TelegramAcknowledgementEmoji =
   | "💯"
   | "🤣";
 
+const TELEGRAM_ACKNOWLEDGEMENT_EMOJIS: ReadonlySet<string> = new Set([
+  "👀",
+  "🤔",
+  "🫡",
+  "🔥",
+  "👏",
+  "🎉",
+  "🤝",
+  "😢",
+  "🤓",
+  "👨‍💻",
+  "💯",
+  "🤣",
+]);
+
+export const isTelegramAcknowledgementEmoji = (
+  candidate: unknown,
+): candidate is TelegramAcknowledgementEmoji =>
+  typeof candidate === "string" &&
+  TELEGRAM_ACKNOWLEDGEMENT_EMOJIS.has(candidate);
+
 const acknowledgementIndex = (
   text: string,
   updateId: number,
@@ -103,9 +124,15 @@ const acknowledgementPool = (
 export const telegramAcknowledgementReaction = (
   message: TelegramMessage,
   updateId: number,
+  previous?: TelegramAcknowledgementEmoji,
 ): TelegramAcknowledgementEmoji => {
-  const pool = acknowledgementPool(message);
-  return pool[acknowledgementIndex(message.text, updateId, pool.length)] ?? "👀";
+  const contextualPool = acknowledgementPool(message);
+  const pool = contextualPool.filter((candidate) => candidate !== previous);
+  const available = pool.length > 0 ? pool : contextualPool;
+  return (
+    available[acknowledgementIndex(message.text, updateId, available.length)] ??
+    "👀"
+  );
 };
 
 const MAX_COALESCED_TELEGRAM_MESSAGES = 8;
