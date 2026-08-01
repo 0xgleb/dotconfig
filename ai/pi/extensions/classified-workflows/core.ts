@@ -64,6 +64,7 @@ export const MIN_AGENT_TOKEN_RESERVATION = 4_000;
 export const MIN_CLASSIFIED_AGENT_TIMEOUT_MS = 180_000;
 export const MIN_WORKFLOW_FREE_MEMORY_BYTES = 8 * 1024 ** 3;
 export const WORKFLOW_AGENT_MEMORY_RESERVATION_BYTES = 2 * 1024 ** 3;
+const MAX_WORKFLOW_PHASES = 16;
 const RETRY_BACKOFF_BASE_MS = 500;
 const RETRY_BACKOFF_MAX_MS = 5_000;
 const isNonRetryableBudgetFailure = (result: AgentResult): boolean =>
@@ -438,7 +439,9 @@ export async function runWorkflowScript(
   if (signal?.aborted) abortWorkflow();
   else signal?.addEventListener("abort", abortWorkflow, { once: true });
 
-  let agentCount = 0;
+  let phaseAgentCount = 0;
+  let phaseCount = 0;
+  let inFlightAgentCalls = 0;
   let usedTokens = 0;
   let reservedTokens = 0;
   const perAgentTokenLimit = Math.floor(limits.tokenBudget / limits.maxAgents);
@@ -497,7 +500,11 @@ export async function runWorkflowScript(
       }
       if (encodedSchema.length > 16_000) throw new Error("agent schema may contain at most 16,000 characters");
     }
-    if (agentCount >= limits.maxAgents) throw new Error(`Workflow agent limit exceeded (${limits.maxAgents})`);
+    if (phaseAgentCount >= limits.maxAgents) {
+      throw new Error(
+        `Workflow phase agent limit exceeded (${limits.maxAgents}); start a new named phase only after current children settle`,
+      );
+    }
     const availableMemory = dependencies.availableMemoryBytes?.() ?? Number(systemAvailableMemoryBytes());
     const requiredMemory = MIN_WORKFLOW_FREE_MEMORY_BYTES + activeAgents * WORKFLOW_AGENT_MEMORY_RESERVATION_BYTES;
     if (!Number.isFinite(availableMemory) || availableMemory < requiredMemory) {
@@ -508,13 +515,15 @@ export async function runWorkflowScript(
       );
     }
     const availableTokens = limits.tokenBudget - usedTokens - reservedTokens;
-    if (availableTokens < perAgentTokenLimit) {
+    const agentTokenLimit = Math.min(perAgentTokenLimit, availableTokens);
+    if (agentTokenLimit < MIN_AGENT_TOKEN_RESERVATION) {
       throw new Error(
-        `Workflow token budget cannot start another agent: ${Math.max(0, availableTokens)} tokens remain; per-agent limit is ${perAgentTokenLimit}`,
+        `Workflow token budget cannot start another agent: ${Math.max(0, availableTokens)} tokens remain; minimum child reservation is ${MIN_AGENT_TOKEN_RESERVATION}`,
       );
     }
-    agentCount += 1;
-    reservedTokens += perAgentTokenLimit;
+    phaseAgentCount += 1;
+    inFlightAgentCalls += 1;
+    reservedTokens += agentTokenLimit;
 
     let result: AgentResult | undefined;
     let agentUsageTokens = 0;
@@ -522,12 +531,12 @@ export async function runWorkflowScript(
       for (let attempt = 0; attempt <= limits.retries; attempt += 1) {
         if (workflowController.signal.aborted) throw new Error("Workflow aborted");
         try {
-          const remainingAgentTokens = Math.max(0, perAgentTokenLimit - agentUsageTokens);
+          const remainingAgentTokens = Math.max(0, agentTokenLimit - agentUsageTokens);
           if (remainingAgentTokens < MIN_AGENT_TOKEN_RESERVATION) {
             result = {
               status: "failed",
               output: "",
-              reason: `Agent token budget exhausted (${agentUsageTokens}/${perAgentTokenLimit})`,
+              reason: `Agent token budget exhausted (${agentUsageTokens}/${agentTokenLimit})`,
               usageTokens: 0,
             };
             break;
@@ -558,16 +567,17 @@ export async function runWorkflowScript(
         }
       }
     } finally {
-      reservedTokens -= perAgentTokenLimit;
+      reservedTokens -= agentTokenLimit;
+      inFlightAgentCalls -= 1;
     }
 
     if (!result) throw new Error("Agent produced no result");
     usedTokens += agentUsageTokens;
-    const measuredResult: AgentResult = agentUsageTokens > perAgentTokenLimit
+    const measuredResult: AgentResult = agentUsageTokens > agentTokenLimit
       ? {
           status: "failed",
           output: "",
-          reason: `Agent exceeded token limit (${agentUsageTokens}/${perAgentTokenLimit})`,
+          reason: `Agent exceeded token limit (${agentUsageTokens}/${agentTokenLimit})`,
           usageTokens: agentUsageTokens,
         }
       : { ...result, usageTokens: agentUsageTokens };
@@ -594,6 +604,16 @@ export async function runWorkflowScript(
     if (typeof title !== "string" || title.trim() === "" || title.length > 80) {
       throw new Error("phase requires a non-empty title of at most 80 characters");
     }
+    if (inFlightAgentCalls > 0) {
+      throw new Error(
+        `Workflow cannot change phase while ${inFlightAgentCalls} agent call(s) are still active`,
+      );
+    }
+    if (phaseCount >= MAX_WORKFLOW_PHASES) {
+      throw new Error(`Workflow may use at most ${MAX_WORKFLOW_PHASES} named phases`);
+    }
+    phaseCount += 1;
+    phaseAgentCount = 0;
     dependencies.phase?.(title);
   };
 

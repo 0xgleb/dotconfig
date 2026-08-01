@@ -521,7 +521,11 @@ The whole pass — fan-out, dedup, adversarial verification, synthesis — runs 
 **one `Workflow` invocation**. Findings come back schema-validated, so there is
 no markdown parsing and no separate aggregator in the main session.
 
-Invoke `Workflow` with the script below via `script`, and `args`:
+Invoke `Workflow` with the script below via `script`, and `args`. Set
+`maxAgents: 16`; this is a per-named-phase cap, while `tokenBudget` remains a
+whole-workflow cap. The script batches larger lane or finding sets into settled
+named phases, retaining each completed batch in the same invocation before
+synthesis:
 
 ```json
 {
@@ -602,9 +606,11 @@ const { repoRoot, docsPaths, lanes, reportHeader, synthesisExtra,
   sourceAccess, includeAttribution,
   harnessModels = { verify: 'sonnet', synthesis: 'opus' } } = parsedArgs
 
-phase('Review')
+// maxAgents is a per-phase cap. Batch variable lane/finding counts so one
+// workflow retains completed outputs through verification and synthesis.
+const PHASE_AGENT_CAP = 16
 
-const laneResults = await parallel(lanes.map(lane => () => {
+const reviewLane = lane => {
   const context = `The diff is at: ${lane.diffPath}\n` +
     `Project docs: ${docsPaths.join(', ')}\n` +
     `Repo root: ${repoRoot}`
@@ -644,7 +650,17 @@ const laneResults = await parallel(lanes.map(lane => () => {
       diff_path: lane.diffPath,
     })),
   }))
-}))
+}
+
+const laneResults = []
+const reviewBatchCount = Math.max(1, Math.ceil(lanes.length / PHASE_AGENT_CAP))
+for (let offset = 0; offset < lanes.length; offset += PHASE_AGENT_CAP) {
+  const batchNumber = Math.floor(offset / PHASE_AGENT_CAP) + 1
+  phase(`Review ${batchNumber}/${reviewBatchCount}`)
+  laneResults.push(...await parallel(
+    lanes.slice(offset, offset + PHASE_AGENT_CAP).map(lane => () => reviewLane(lane)),
+  ))
+}
 
 const laneErrors = lanes
   .map((lane, index) => {
@@ -678,10 +694,7 @@ for (const finding of raw) {
 log(`${raw.length} raw findings -> ${merged.length} after dedup; ` +
   `lane errors: ${laneErrors.length}`)
 
-phase('Verify')
-
-const verified = await parallel(merged.map(finding => () =>
-  agent(
+const verifyFinding = finding => agent(
     `You are adversarially verifying a single code-review finding. Read the ` +
     `actual code before judging — never judge from the finding text alone.\n\n` +
     `Finding: ${JSON.stringify(finding)}\n\n` +
@@ -697,7 +710,17 @@ const verified = await parallel(merged.map(finding => () =>
     { label: `verify:${finding.file}`, phase: 'Verify', model: 'openai-codex/gpt-5.6-luna',
       schema: VERDICT_SCHEMA },
   ).then(verdict => verdict && ({ ...finding, ...verdict }))
-))
+
+const verified = []
+const verifyBatchCount = Math.max(1, Math.ceil(merged.length / PHASE_AGENT_CAP))
+for (let offset = 0; offset < merged.length; offset += PHASE_AGENT_CAP) {
+  const batchNumber = Math.floor(offset / PHASE_AGENT_CAP) + 1
+  phase(`Verify ${batchNumber}/${verifyBatchCount}`)
+  verified.push(...await parallel(
+    merged.slice(offset, offset + PHASE_AGENT_CAP)
+      .map(finding => () => verifyFinding(finding)),
+  ))
+}
 
 const judged = verified.filter(Boolean)
 const survivors = judged.filter(finding =>

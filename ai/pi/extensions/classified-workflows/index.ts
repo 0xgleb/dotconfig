@@ -728,7 +728,12 @@ const WorkflowParameters = Type.Object({
     description:
       "Task-specific JavaScript. Use agent(), parallel(), and checkpoint(); return the final value.",
   }),
-  maxAgents: Type.Integer({ minimum: 1, maximum: 16 }),
+  maxAgents: Type.Integer({
+    minimum: 1,
+    maximum: 16,
+    description:
+      "Maximum child agents per named phase. phase() resets this bounded allowance only after all current child calls settle.",
+  }),
   concurrency: Type.Integer({ minimum: 1, maximum: 8 }),
   agentTimeoutMs: Type.Integer({
     minimum: MIN_CLASSIFIED_AGENT_TIMEOUT_MS,
@@ -752,7 +757,7 @@ const WorkflowParameters = Type.Object({
 })
 
 export default function classifiedWorkflows(pi: ExtensionAPI): void {
-  registerRuntimeVersion(pi, "classified-workflows", "2026.08.01.99")
+  registerRuntimeVersion(pi, "classified-workflows", "2026.08.01.100")
   const childTokenLimit = workflowChildTokenLimit(
     process.env[WORKFLOW_CHILD_TOKEN_LIMIT_ENV],
   )

@@ -583,6 +583,74 @@ test("workflow JavaScript can fan out and synthesize", async () => {
   );
 });
 
+test("named phases receive independent bounded agent budgets", async () => {
+  const calls: string[] = [];
+  const result = await runWorkflowScript(
+    `phase("Review");
+     const reviewed = await parallel([agent("review-a"), agent("review-b")]);
+     phase("Verify");
+     const verified = await parallel([agent("verify-a"), agent("verify-b")]);
+     phase("Synthesize");
+     const synthesis = await agent("synthesize");
+     return [...reviewed, ...verified, synthesis].map((item) => item.output);`,
+    { ...limits, maxAgents: 2, concurrency: 2, tokenBudget: 50_000 },
+    {
+      async runAgent(request): Promise<AgentResult> {
+        calls.push(request.task);
+        return { status: "completed", output: request.task, usageTokens: 10 };
+      },
+      async checkpoint() {
+        return "approved";
+      },
+    },
+  );
+
+  assert.deepEqual(result, [
+    "review-a",
+    "review-b",
+    "verify-a",
+    "verify-b",
+    "synthesize",
+  ]);
+  assert.equal(calls.length, 5);
+});
+
+test("named phases do not reset the whole-workflow token budget", async () => {
+  await assert.rejects(
+    runWorkflowScript(
+      `phase("Review"); await agent("review"); phase("Synthesize"); return agent("synthesize");`,
+      { ...limits, maxAgents: 1, concurrency: 1, tokenBudget: 4_000 },
+      {
+        async runAgent(): Promise<AgentResult> {
+          return { status: "completed", output: "used", usageTokens: 3_000 };
+        },
+        async checkpoint() {
+          return "approved";
+        },
+      },
+    ),
+    /1000 tokens remain; minimum child reservation is 4000/i,
+  );
+});
+
+test("workflow phases cannot reset a budget while children are active", async () => {
+  await assert.rejects(
+    runWorkflowScript(
+      `const pending = agent("review"); phase("Verify"); return pending;`,
+      limits,
+      {
+        async runAgent(): Promise<AgentResult> {
+          return { status: "completed", output: "late", usageTokens: 10 };
+        },
+        async checkpoint() {
+          return "approved";
+        },
+      },
+    ),
+    /cannot change phase while 1 agent/i,
+  );
+});
+
 test("workflow supports positional agent calls and direct promise fan-out", async () => {
   const calls: AgentRequest[] = [];
   const result = await runWorkflowScript(
