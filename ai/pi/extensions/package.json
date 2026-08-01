@@ -36,6 +36,7 @@
     "extensions": [
       "./activity-status/index.ts",
       "./agent-registry/index.ts",
+      "./agent-workspace/index.ts",
       "./auto-reload/index.ts",
       "./classified-workflows/index.ts",
       "./browser-control/index.ts",
