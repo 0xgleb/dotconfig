@@ -171,17 +171,35 @@ export const selectRelevantExecutionEvidence = (
   const recentStart = Math.max(0, currentCandidates.length - recentCount);
   const recent = currentCandidates.slice(recentStart);
   const terms = evidenceTerms(subject);
-  const older = currentCandidates
-    .slice(0, recentStart)
-    .map((candidate, index) => ({
-      candidate,
-      index,
-      score: [...terms].reduce((score, term) => score + (candidate.toLowerCase().includes(term) ? 1 : 0), 0),
-    }))
-    .filter(({ score }) => score > 0)
-    .sort((left, right) => right.score - left.score || right.index - left.index)
-    .slice(0, relevantCount)
-    .sort((left, right) => left.index - right.index)
-    .map(({ candidate }) => candidate);
+  const olderCandidates = currentCandidates.slice(0, recentStart);
+  const selectedOlderIndexes = new Set(
+    olderCandidates
+      .map((candidate, index) => ({
+        candidate,
+        index,
+        score: [...terms].reduce(
+          (score, term) =>
+            score + (candidate.toLowerCase().includes(term) ? 1 : 0),
+          0,
+        ),
+      }))
+      .filter(({ score }) => score > 0)
+      .sort((left, right) => right.score - left.score || right.index - left.index)
+      .slice(0, relevantCount)
+      .map(({ index }) => index),
+  );
+  const vcsTopologyIndexes = olderCandidates
+    .map((candidate, index) => ({ candidate, index }))
+    .filter(({ candidate }) =>
+      /\b(?:gt parent|git merge-base|git branch --show-current|git rev-parse --abbrev-ref)\b/i.test(
+        candidate,
+      ),
+    )
+    .slice(-4)
+    .map(({ index }) => index);
+  for (const index of vcsTopologyIndexes) selectedOlderIndexes.add(index);
+  const older = olderCandidates.filter((_candidate, index) =>
+    selectedOlderIndexes.has(index),
+  );
   return [...older, ...recent];
 };

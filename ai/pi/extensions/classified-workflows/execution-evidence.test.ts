@@ -190,6 +190,29 @@ test("older source-read evidence remains relevant to a sequential review workflo
   assert.ok(selected.includes(agentsEvidence));
 });
 
+test("Graphite parent evidence survives an unrelated delta-review subject", () => {
+  const parentEvidence =
+    'bash result status=success input={"command":"gt parent --no-interactive"}: main';
+  const candidates = [
+    parentEvidence,
+    ...Array.from({ length: 12 }, (_, index) =>
+      `read result status=success: unrelated source ${index}`,
+    ),
+  ];
+  const selected = selectRelevantExecutionEvidence(
+    candidates,
+    {
+      toolName: "workflow",
+      input: { code: "Review the current delta diff.patch" },
+    },
+    3,
+    2,
+  );
+
+  assert.ok(selected.includes(parentEvidence));
+  assert.equal(selected.at(-1), candidates.at(-1));
+});
+
 test("evidence retrieval keeps recent results and older results sharing concrete subject identifiers", () => {
   const candidates = [
     "gh: PR 164 head 87ca2acebed26600fb08ee995c9c3c11fa558a05 verified four findings",

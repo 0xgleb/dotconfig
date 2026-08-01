@@ -289,6 +289,25 @@ test("classifier prompt treats extension-computed Git boundaries as authoritativ
   assert.match(prompt, /"gitToplevel": "\/workspace\/st0x"/);
 });
 
+test("classifier trusts verified Graphite parent topology for delta scope", () => {
+  const prompt = buildClassifierPrompt({
+    boundary: "spawn",
+    intent: ["Review the current Graphite branch against its exact parent"],
+    projectInstructions: "Scope each review to the current branch parent.",
+    evidence: [
+      'bash result status=success input={"command":"gt parent --no-interactive"}: main',
+    ],
+    subject: {
+      task: "Review diff.patch generated from main to the current branch",
+      cwd: "/workspace/st0x.liquidity",
+      tools: ["read"],
+    },
+  });
+  assert.match(prompt, /successful current VCS topology result is authoritative/i);
+  assert.match(prompt, /returns 'main'.*exactly parent-scoped/i);
+  assert.match(prompt, /do not invent a different intermediate parent/i);
+});
+
 test("classifier prompt resolves human continuation against durable active work without magic reauthorization", () => {
   const prompt = buildClassifierPrompt({
     boundary: "action",
