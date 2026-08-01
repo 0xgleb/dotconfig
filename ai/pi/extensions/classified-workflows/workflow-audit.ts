@@ -85,14 +85,28 @@ export const workflowAuditEvidence = (state: WorkflowAuditState): string[] =>
     return `typed workflow audit: ${workflow.id} status=${workflow.status}; children=${children}${outcome}`;
   });
 
+const latestWorkflowAfter = (
+  state: WorkflowAuditState,
+  startedAt: number,
+): WorkflowAudit | undefined =>
+  state.workflows
+    .filter((workflow) => workflow.startedAt >= startedAt)
+    .sort((left, right) => right.startedAt - left.startedAt)[0];
+
 export const latestFailedWorkflowAfter = (
   state: WorkflowAuditState,
   startedAt: number,
 ): WorkflowAudit | undefined => {
-  const latest = state.workflows
-    .filter((workflow) => workflow.startedAt >= startedAt)
-    .sort((left, right) => right.startedAt - left.startedAt)[0];
+  const latest = latestWorkflowAfter(state, startedAt);
   return latest?.status === "failed" ? latest : undefined;
+};
+
+export const latestCompletedWorkflowAfter = (
+  state: WorkflowAuditState,
+  startedAt: number,
+): WorkflowAudit | undefined => {
+  const latest = latestWorkflowAfter(state, startedAt);
+  return latest?.status === "completed" ? latest : undefined;
 };
 
 export const terminalWorkflowFailureDisprovesOwnershipBlock = (

@@ -2,9 +2,11 @@ import assert from "node:assert/strict";
 import { readFileSync } from "node:fs";
 import test from "node:test";
 import {
+  MAX_REVIEW_DUTY_COMPLETED_PASSES,
   REVIEW_DUTY_STATE_ENTRY,
   beginReviewDuty,
   clearedHistoricalReviewQuestion,
+  continueReviewDuty,
   emptyReviewDutyState,
   preExecutionReviewWorkflowBlockObserved,
   startReviewWorkflow,
@@ -178,6 +180,52 @@ test("pre-execution workflow recovery cannot bypass an observed review workflow"
     extensionSource,
     /request\.action === "retry-blocked"[\s\S]*?workflowAudits\.workflows\.some[\s\S]*?backgroundWorkflows\.values\(\)[\s\S]*?retryBlockedReviewDuty/,
   );
+});
+
+test("completed review passes may continue only the same job within a bounded loop", () => {
+  const active = beginReviewDuty(emptyReviewDutyState, job, 10);
+  assert.equal(active.ok, true);
+  if (!active.ok) return;
+  const awaiting = startReviewWorkflow(active.state, 20);
+
+  const continued = continueReviewDuty(awaiting, true, false, 1);
+  assert.deepEqual(continued, { ok: true, state: active.state });
+  assert.equal(continued.ok, true);
+  if (continued.ok) {
+    assert.match(
+      beginReviewDuty(
+        continued.state,
+        { ...job, pullRequest: 1102 },
+        30,
+      ).error ?? "",
+      /already the active review-duty job/i,
+    );
+  }
+  assert.match(
+    continueReviewDuty(awaiting, false, false, 1).error ?? "",
+    /not proven completed/i,
+  );
+  assert.match(
+    continueReviewDuty(awaiting, true, true, 1).error ?? "",
+    /still running/i,
+  );
+  assert.match(
+    continueReviewDuty(
+      awaiting,
+      true,
+      false,
+      MAX_REVIEW_DUTY_COMPLETED_PASSES,
+    ).error ?? "",
+    /bounded 6-pass limit/i,
+  );
+  assert.match(extensionSource, /Type\.Literal\("continue"\)/);
+  const continueHandler = extensionSource.slice(
+    extensionSource.indexOf('request.action === "continue"'),
+    extensionSource.indexOf('request.action === "retry-failed"'),
+  );
+  assert.match(continueHandler, /latestCompletedWorkflowAfter/);
+  assert.match(continueHandler, /completedPasses/);
+  assert.match(continueHandler, /continueReviewDuty/);
 });
 
 test("failed workflow recovery resumes only the same gated job", () => {

@@ -2,6 +2,7 @@ import { QUESTION_STATE_ENTRY } from "../shared/question-events.ts";
 import { decodeQuestionState } from "../questions/state.ts";
 
 export const REVIEW_DUTY_STATE_ENTRY = "classified-workflows.review-duty";
+export const MAX_REVIEW_DUTY_COMPLETED_PASSES = 6;
 
 export interface ReviewDutyJob {
   readonly repository: string;
@@ -178,6 +179,38 @@ export const retryBlockedReviewDuty = (
       ok: false,
       error:
         "review-duty workflow execution evidence exists; a persisted and relayed verdict question is required",
+    };
+  }
+  const { completedAt: _completedAt, ...active } = state;
+  return { ok: true, state: { ...active, phase: "active" } };
+};
+
+export const continueReviewDuty = (
+  state: ReviewDutyState,
+  completedWorkflowObserved: boolean,
+  workflowRunning: boolean,
+  completedPasses: number,
+): ReviewDutyTransition => {
+  if (state.phase !== "awaiting_report") {
+    return { ok: false, error: "no completed review-duty pass awaits continuation" };
+  }
+  if (workflowRunning) {
+    return { ok: false, error: "the review-duty workflow is still running" };
+  }
+  if (!completedWorkflowObserved) {
+    return {
+      ok: false,
+      error: "the latest review-duty workflow is not proven completed",
+    };
+  }
+  if (
+    !Number.isSafeInteger(completedPasses) ||
+    completedPasses < 1 ||
+    completedPasses >= MAX_REVIEW_DUTY_COMPLETED_PASSES
+  ) {
+    return {
+      ok: false,
+      error: `review-duty reached its bounded ${MAX_REVIEW_DUTY_COMPLETED_PASSES}-pass limit; final reporting or an explicit user decision is required`,
     };
   }
   const { completedAt: _completedAt, ...active } = state;

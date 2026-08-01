@@ -115,6 +115,7 @@ import {
 import {
   beginReviewDuty,
   clearedHistoricalReviewQuestion,
+  continueReviewDuty,
   emptyReviewDutyState,
   preExecutionReviewWorkflowBlockObserved,
   startReviewWorkflow,
@@ -149,6 +150,7 @@ import {
   appendWorkflowAudit,
   auditedAgentRunner,
   emptyWorkflowAuditState,
+  latestCompletedWorkflowAfter,
   latestFailedWorkflowAfter,
   nextWorkflowSequence,
   restoreWorkflowAudits,
@@ -778,6 +780,7 @@ const ReviewDutyParameters = Type.Object({
     Type.Literal("recover"),
     Type.Literal("retry-blocked"),
     Type.Literal("retry-failed"),
+    Type.Literal("continue"),
   ]),
   repository: Type.Optional(Type.String({ minLength: 1, maxLength: 120 })),
   pullRequest: Type.Optional(Type.Integer({ minimum: 1 })),
@@ -843,7 +846,7 @@ const WorkflowParameters = Type.Object({
 })
 
 export default function classifiedWorkflows(pi: ExtensionAPI): void {
-  registerRuntimeVersion(pi, "classified-workflows", "2026.08.01.125")
+  registerRuntimeVersion(pi, "classified-workflows", "2026.08.01.126")
   const childTokenLimit = workflowChildTokenLimit(
     process.env[WORKFLOW_CHILD_TOKEN_LIMIT_ENV],
   )
@@ -1968,7 +1971,7 @@ export default function classifiedWorkflows(pi: ExtensionAPI): void {
     name: "review_duty",
     label: "Review-duty reporting gate",
     description:
-      "Begin a dedicated ST0x/rainlanguage PR review job, inspect its gate, recover a proven pre-execution block or failed execution without advancing the job, or prove its typed verdict question is linked to Piece of Pi before advancing.",
+      "Begin a dedicated ST0x/rainlanguage PR review job, inspect its gate, recover a proven pre-execution block or failed execution, continue a bounded same-PR fix re-review, or prove its typed verdict question is linked to Piece of Pi before advancing.",
     promptSnippet:
       "Gate each dedicated PR review on a persisted and Telegram-linked verdict question",
     promptGuidelines: [
@@ -2084,6 +2087,59 @@ export default function classifiedWorkflows(pi: ExtensionAPI): void {
           details: {
             outcome: "retry-blocked" as const,
             state: reviewDutyState,
+          },
+        }
+      }
+
+      if (request.action === "continue") {
+        refreshWorkflowAudits(ctx)
+        const completedAt =
+          reviewDutyState.phase === "awaiting_report"
+            ? reviewDutyState.completedAt
+            : Number.MAX_SAFE_INTEGER
+        const startedAt =
+          reviewDutyState.phase === "idle"
+            ? Number.MAX_SAFE_INTEGER
+            : reviewDutyState.startedAt
+        const completedWorkflow = latestCompletedWorkflowAfter(
+          workflowAudits,
+          completedAt,
+        )
+        const workflowRunning = [...backgroundWorkflows.values()].some(
+          (workflow) =>
+            workflow.status === "running" && workflow.startedAt >= completedAt,
+        )
+        const completedPasses = workflowAudits.workflows.filter(
+          (workflow) =>
+            workflow.status === "completed" && workflow.startedAt >= startedAt,
+        ).length
+        const transition = continueReviewDuty(
+          reviewDutyState,
+          completedWorkflow !== undefined,
+          workflowRunning,
+          completedPasses,
+        )
+        if (!transition.ok) {
+          return {
+            content: [{ type: "text" as const, text: transition.error }],
+            details: { outcome: "error" as const, error: transition.error },
+            isError: true,
+          }
+        }
+        reviewDutyState = transition.state
+        pi.appendEntry(REVIEW_DUTY_STATE_ENTRY, reviewDutyState)
+        return {
+          content: [
+            {
+              type: "text" as const,
+              text: `Continued ${reviewDutyState.repository}#${reviewDutyState.pullRequest} after completed pass ${completedWorkflow?.id ?? "unknown"} (${completedPasses} completed pass(es)); run only the same PR fix re-review, then complete the consolidated report gate`,
+            },
+          ],
+          details: {
+            outcome: "continued" as const,
+            state: reviewDutyState,
+            priorAuditId: completedWorkflow?.id,
+            completedPasses,
           },
         }
       }

@@ -8,6 +8,7 @@ import {
   appendWorkflowAudit,
   auditedAgentRunner,
   emptyWorkflowAuditState,
+  latestCompletedWorkflowAfter,
   latestFailedWorkflowAfter,
   nextWorkflowSequence,
   restoreWorkflowAudits,
@@ -282,15 +283,14 @@ test("same-job recovery selects only the latest failed audit and preserves parti
     partialFailure,
   );
   for (const status of ["completed", "cancelled"] as const) {
+    const candidate = appendWorkflowAudit(emptyWorkflowAuditState, {
+      ...blockedFailure,
+      status,
+    });
+    assert.equal(latestFailedWorkflowAfter(candidate, 20), undefined);
     assert.equal(
-      latestFailedWorkflowAfter(
-        appendWorkflowAudit(emptyWorkflowAuditState, {
-          ...blockedFailure,
-          status,
-        }),
-        20,
-      ),
-      undefined,
+      latestCompletedWorkflowAfter(candidate, 20)?.id,
+      status === "completed" ? "wf-30" : undefined,
     );
   }
 });
