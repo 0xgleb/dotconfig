@@ -55,6 +55,46 @@ test("kanban renders a glass-backed frame in project-status order", () => {
   for (const line of lines) assert.equal(visibleWidth(line), 90)
 })
 
+test("kanban supports Vim navigation and wrapped task details", () => {
+  let changes = 0
+  let closed = false
+  const theme = {
+    fg: (_color: string, text: string) => text,
+    bg: (_color: string, text: string) => text,
+    bold: (text: string) => text,
+  } as unknown as Theme
+  const component = new KanbanComponent(
+    state,
+    theme,
+    () => {
+      closed = true
+    },
+    () => {
+      changes += 1
+    },
+  )
+
+  assert.match(component.render(90).join("\n"), /› \[ \] #3 Queued/)
+  component.handleInput("G")
+  component.handleInput("\r")
+  const blockedDetail = component.render(90).join("\n")
+  assert.match(blockedDetail, /KANBAN DETAIL/)
+  assert.match(blockedDetail, /#4 · blocked/)
+  assert.match(blockedDetail, /Blocked:/)
+  assert.match(blockedDetail, /Waiting/)
+
+  component.handleInput("\x1b")
+  assert.match(component.render(90).join("\n"), /TODO.*IN PROGRESS/)
+  component.handleInput("l")
+  component.handleInput(" ")
+  assert.match(component.render(90).join("\n"), /#2 · in progress/)
+  component.handleInput("\x1b")
+  component.handleInput("\x1b")
+
+  assert.equal(closed, true)
+  assert.ok(changes >= 5)
+})
+
 test("kanban reapplies its glass background after nested foreground resets", () => {
   const backgroundPrefix = "\x1b[48;2;24;20;58m"
   const backgroundSuffix = "\x1b[49m"

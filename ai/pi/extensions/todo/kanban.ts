@@ -4,6 +4,7 @@ import {
   type OverlayOptions,
   truncateToWidth,
   visibleWidth,
+  wrapTextWithAnsi,
 } from "@earendil-works/pi-tui"
 import { kanbanColumns, overlayRule, todoSummary } from "./presentation.ts"
 import { todoStatusMark, type Todo, type TodoState } from "./state.ts"
@@ -20,24 +21,92 @@ export class KanbanComponent {
   private readonly state: TodoState
   private readonly theme: Theme
   private readonly onClose: () => void
+  private readonly onChange: () => void
+  private selectedColumn = 0
+  private readonly selectedRows = [0, 0, 0, 0]
+  private detailOpen = false
   private cachedWidth?: number
   private cachedLines?: string[]
 
-  constructor(state: TodoState, theme: Theme, onClose: () => void) {
+  constructor(
+    state: TodoState,
+    theme: Theme,
+    onClose: () => void,
+    onChange: () => void = () => {},
+  ) {
     this.state = state
     this.theme = theme
     this.onClose = onClose
+    this.onChange = onChange
   }
 
   handleInput(data: string): void {
-    if (matchesKey(data, "escape") || matchesKey(data, "ctrl+c")) this.onClose()
+    if (matchesKey(data, "ctrl+c")) {
+      this.onClose()
+      return
+    }
+    if (matchesKey(data, "escape")) {
+      if (this.detailOpen) {
+        this.detailOpen = false
+        this.changed()
+      } else {
+        this.onClose()
+      }
+      return
+    }
+    if (this.detailOpen) return
+
+    if (matchesKey(data, "left") || data === "h") {
+      this.selectedColumn = Math.max(0, this.selectedColumn - 1)
+      this.changed()
+      return
+    }
+    if (matchesKey(data, "right") || data === "l") {
+      this.selectedColumn = Math.min(3, this.selectedColumn + 1)
+      this.changed()
+      return
+    }
+
+    const todos = this.columnTodos()[this.selectedColumn] ?? []
+    if (todos.length === 0) return
+    const current = this.selectedRows[this.selectedColumn] ?? 0
+    if (matchesKey(data, "up") || data === "k") {
+      this.selectedRows[this.selectedColumn] = Math.max(0, current - 1)
+      this.changed()
+      return
+    }
+    if (matchesKey(data, "down") || data === "j") {
+      this.selectedRows[this.selectedColumn] = Math.min(
+        todos.length - 1,
+        current + 1,
+      )
+      this.changed()
+      return
+    }
+    if (data === "g" || matchesKey(data, "home")) {
+      this.selectedRows[this.selectedColumn] = 0
+      this.changed()
+      return
+    }
+    if (data === "G" || matchesKey(data, "end")) {
+      this.selectedRows[this.selectedColumn] = todos.length - 1
+      this.changed()
+      return
+    }
+    if (matchesKey(data, "enter") || matchesKey(data, "space")) {
+      this.detailOpen = true
+      this.changed()
+    }
   }
 
   render(width: number): string[] {
     if (this.cachedLines && this.cachedWidth === width) return this.cachedLines
 
+    const selected = this.selectedTodo()
+    if (this.detailOpen && selected) return this.renderDetail(selected, width)
+
     const summary = todoSummary(this.state)
-    const columns = kanbanColumns(this.state)
+    const columns = this.columnTodos()
     const separator = this.theme.fg("borderMuted", " │ ")
     const innerWidth = Math.max(3, width - 2)
     const available = Math.max(4, innerWidth - 9)
@@ -48,21 +117,24 @@ export class KanbanComponent {
       baseWidth,
       available - baseWidth * 3,
     ] as const
-    const todo = this.cardLines(columns.todo, "accent", 18, "Queue clear")
+    const todo = this.cardLines(columns[0], 0, "accent", 18, "Queue clear")
     const inProgress = this.cardLines(
-      columns.inProgress,
+      columns[1],
+      1,
       "warning",
       18,
       "Nothing active",
     )
     const inReview = this.cardLines(
-      columns.inReview,
+      columns[2],
+      2,
       "toolTitle",
       18,
       "Nothing in review",
     )
     const done = this.cardLines(
-      columns.done.slice().reverse(),
+      columns[3],
+      3,
       "success",
       18,
       "Nothing done yet",
@@ -86,10 +158,10 @@ export class KanbanComponent {
       this.glassLine(
         this.row(
           [
-            this.theme.fg("accent", this.theme.bold("TODO")),
-            this.theme.fg("warning", this.theme.bold("IN PROGRESS")),
-            this.theme.fg("toolTitle", this.theme.bold("IN REVIEW")),
-            this.theme.fg("success", this.theme.bold("DONE")),
+            this.columnHeading("TODO", "accent", 0),
+            this.columnHeading("IN PROGRESS", "warning", 1),
+            this.columnHeading("IN REVIEW", "toolTitle", 2),
+            this.columnHeading("DONE", "success", 3),
           ],
           columnWidths,
           separator,
@@ -131,7 +203,7 @@ export class KanbanComponent {
       this.glassLine(
         this.theme.fg(
           "dim",
-          " Esc closes · session remains visible behind this board",
+          " h/l columns · j/k tasks · g/G ends · Enter/Space detail · Esc close",
         ),
         innerWidth,
       ),
@@ -150,22 +222,118 @@ export class KanbanComponent {
 
   private cardLines(
     todos: ReadonlyArray<Todo>,
+    column: number,
     color: "accent" | "success" | "warning" | "toolTitle",
     limit: number,
     emptyLabel: string,
   ): string[] {
     if (todos.length === 0) return [this.theme.fg("dim", emptyLabel)]
-    const visible = todos
-      .slice(0, limit)
-      .map(
-        (todo) =>
-          `${this.theme.fg(color, todoStatusMark(todo.status))} ${this.theme.fg("accent", `#${todo.id}`)} ${this.theme.fg("text", todo.text)}`,
+    const selected = Math.min(todos.length - 1, this.selectedRows[column] ?? 0)
+    this.selectedRows[column] = selected
+    const start = Math.min(
+      Math.max(0, selected - limit + 1),
+      Math.max(0, todos.length - limit),
+    )
+    return todos.slice(start, start + limit).map((todo, visibleIndex) => {
+      const taskIndex = start + visibleIndex
+      const marker =
+        column === this.selectedColumn && taskIndex === selected ? "›" : " "
+      return `${this.theme.fg("accent", marker)} ${this.theme.fg(color, todoStatusMark(todo.status))} ${this.theme.fg("accent", `#${todo.id}`)} ${this.theme.fg("text", todo.text)}`
+    })
+  }
+
+  private columnTodos(): readonly [
+    ReadonlyArray<Todo>,
+    ReadonlyArray<Todo>,
+    ReadonlyArray<Todo>,
+    ReadonlyArray<Todo>,
+  ] {
+    const columns = kanbanColumns(this.state)
+    return [
+      columns.todo,
+      columns.inProgress,
+      columns.inReview,
+      columns.done.slice().reverse(),
+    ]
+  }
+
+  private selectedTodo(): Todo | undefined {
+    const todos = this.columnTodos()[this.selectedColumn] ?? []
+    const selected = this.selectedRows[this.selectedColumn] ?? 0
+    return todos[selected]
+  }
+
+  private columnHeading(
+    label: string,
+    color: "accent" | "success" | "warning" | "toolTitle",
+    column: number,
+  ): string {
+    const heading = this.theme.fg(color, this.theme.bold(label))
+    return column === this.selectedColumn
+      ? this.theme.bg("selectedBg", heading)
+      : heading
+  }
+
+  private renderDetail(todo: Todo, width: number): string[] {
+    const innerWidth = Math.max(3, width - 2)
+    const contentWidth = Math.max(1, innerWidth - 4)
+    const details = [
+      this.theme.fg(
+        "accent",
+        this.theme.bold(`#${todo.id} · ${todo.status.replaceAll("_", " ")}`),
+      ),
+      "",
+      ...wrapTextWithAnsi(this.theme.fg("text", todo.text), contentWidth),
+    ]
+    if (todo.status === "blocked") {
+      details.push(
+        "",
+        this.theme.fg("warning", this.theme.bold("Blocked:")),
+        ...wrapTextWithAnsi(this.theme.fg("text", todo.reason), contentWidth),
       )
-    if (todos.length > visible.length)
-      visible.push(
-        this.theme.fg("dim", `… ${todos.length - visible.length} more`),
+    }
+    if (todo.status === "deferred" && todo.remindAt !== undefined) {
+      details.push(
+        "",
+        this.theme.fg(
+          "muted",
+          `Deferred until ${new Date(todo.remindAt).toISOString()}`,
+        ),
       )
-    return visible
+    }
+    if (todo.replies && todo.replies.length > 0) {
+      details.push("", this.theme.fg("muted", this.theme.bold("Replies:")))
+      for (const reply of todo.replies) {
+        details.push(
+          ...wrapTextWithAnsi(
+            this.theme.fg("text", `• ${reply}`),
+            contentWidth,
+          ),
+        )
+      }
+    }
+
+    const top = overlayRule(
+      { left: "KANBAN DETAIL", right: `#${todo.id}` },
+      width,
+    )
+    const lines = [
+      this.theme.bold(this.theme.fg("borderAccent", `╭${top.slice(1, -1)}╮`)),
+      this.glassLine("", innerWidth),
+      ...details.map((line) => this.glassLine(`  ${line}`, innerWidth)),
+      this.glassLine("", innerWidth),
+      this.glassLine(this.theme.fg("dim", " Esc returns to board"), innerWidth),
+      this.glassLine("", innerWidth),
+      this.theme.fg("borderMuted", `╰${"─".repeat(innerWidth)}╯`),
+    ]
+    this.cachedWidth = width
+    this.cachedLines = lines
+    return lines
+  }
+
+  private changed(): void {
+    this.invalidate()
+    this.onChange()
   }
 
   private glassLine(content: string, width: number): string {

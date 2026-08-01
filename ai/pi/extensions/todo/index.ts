@@ -303,7 +303,7 @@ function restoredState(ctx: ExtensionContext): TodoState {
 }
 
 export default function todoExtension(pi: ExtensionAPI): void {
-  registerRuntimeVersion(pi, "todo", "2026.07.23.22")
+  registerRuntimeVersion(pi, "todo", "2026.08.01.23")
   const stateRef = Effect.runSync(Ref.make<TodoState>(emptyTodoState))
   let hudExpiry: ReturnType<typeof setTimeout> | undefined
   let reminderTimer: ReturnType<typeof setTimeout> | undefined
@@ -784,8 +784,13 @@ export default function todoExtension(pi: ExtensionAPI): void {
       }
       const state = Effect.runSync(Ref.get(stateRef))
       await ctx.ui.custom<void>(
-        (_tui, theme, _kb, done) =>
-          new KanbanComponent(state, theme, () => done()),
+        (tui, theme, _kb, done) =>
+          new KanbanComponent(
+            state,
+            theme,
+            () => done(),
+            () => tui.requestRender(),
+          ),
         {
           overlay: true,
           overlayOptions: KANBAN_OVERLAY_OPTIONS,
