@@ -364,6 +364,9 @@ function visibleIntent(
     ...work.blocked
       .slice(0, 20)
       .map((todo) => `Blocked active todo: ${todo.slice(0, 2_000)}`),
+    ...work.completed
+      .slice(-20)
+      .map((todo) => `Completed todo evidence: ${todo.slice(0, 2_000)}`),
   ]
   return activeGoal
     ? [
@@ -748,7 +751,7 @@ const WorkflowParameters = Type.Object({
 })
 
 export default function classifiedWorkflows(pi: ExtensionAPI): void {
-  registerRuntimeVersion(pi, "classified-workflows", "2026.08.01.96")
+  registerRuntimeVersion(pi, "classified-workflows", "2026.08.01.97")
   const childTokenLimit = workflowChildTokenLimit(
     process.env[WORKFLOW_CHILD_TOKEN_LIMIT_ENV],
   )
