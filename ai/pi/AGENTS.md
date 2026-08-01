@@ -36,6 +36,12 @@
   action was unrelated or over-scoped, return to the real active task through a
   safe path. Never invent `--force` or equivalent bypass flags in response.
 - Run relevant tests and report failures or incomplete work accurately.
+- Do not use ad-hoc Python scripts; prefer dedicated tools. Where an ad-hoc
+  program is genuinely necessary and allowed by the applicable project
+  instructions, prefer Nushell or Haskell. Never launch potentially long work
+  as one opaque blocking tool call: split it into bounded batches with visible
+  milestones, or use an authorized background process with bounded progress
+  polling so the user can see what is happening.
 - PR reviews must never publish a top-level review body, marker, summary, verdict,
   or reviewed-commit text. Review automation may create only an empty-body
   pending review containing verified inline comments; keep the overall assessment

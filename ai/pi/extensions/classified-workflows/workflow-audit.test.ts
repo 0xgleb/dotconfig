@@ -34,7 +34,10 @@ test("audited runner records bounded zero-token timeout diagnostics", async () =
     children,
     (text) => text.replace(/\s+/g, " "),
   );
-  await run({ task: "review", model: "openai-codex/gpt-5.6-luna", tools: ["read"] }, new AbortController().signal);
+  await run(
+    { task: "review", model: "openai-codex/gpt-5.6-luna", tools: ["read"] },
+    new AbortController().signal,
+  );
   assert.deepEqual(children, [
     {
       index: 1,
@@ -48,6 +51,35 @@ test("audited runner records bounded zero-token timeout diagnostics", async () =
       reason: "child timeout raw stack should collapse",
     },
   ]);
+});
+
+test("audited runner emits bounded child start and terminal progress", async () => {
+  const children: ChildAudit[] = [];
+  const events: unknown[] = [];
+  const run = auditedAgentRunner(
+    async (): Promise<AgentResult> => ({
+      status: "completed",
+      output: "done",
+      usageTokens: 42,
+    }),
+    children,
+    String,
+    (event) => events.push(event),
+  );
+
+  await run(
+    { task: "review", model: "openai-codex/gpt-5.6-luna", tools: ["read"] },
+    new AbortController().signal,
+    1_000,
+  );
+
+  assert.deepEqual(events[0], {
+    kind: "started",
+    index: 1,
+    requestedModel: "openai-codex/gpt-5.6-luna",
+    tools: ["read"],
+  });
+  assert.deepEqual(events[1], { kind: "finished", audit: children[0] });
 });
 
 test("workflow audit sequences continue after reload without replacing prior runs", () => {
@@ -118,7 +150,10 @@ test("terminal child failures release duplicate-work ownership for a corrected r
     true,
   );
   assert.equal(
-    terminalWorkflowFailureDisprovesOwnershipBlock("wf-5 violates publication policy", state),
+    terminalWorkflowFailureDisprovesOwnershipBlock(
+      "wf-5 violates publication policy",
+      state,
+    ),
     false,
   );
   assert.deepEqual(workflowAuditEvidence(state), [
@@ -148,7 +183,10 @@ test("completed child work retains ownership", () => {
   });
 
   assert.equal(
-    terminalWorkflowFailureDisprovesOwnershipBlock("wf-6 already owns this task", state),
+    terminalWorkflowFailureDisprovesOwnershipBlock(
+      "wf-6 already owns this task",
+      state,
+    ),
     false,
   );
 });
@@ -165,8 +203,19 @@ test("workflow audits survive reload and compaction state restoration", () => {
     outcome: "timed out",
   });
   assert.deepEqual(
-    restoreWorkflowAudits([{ type: "custom", customType: WORKFLOW_AUDIT_ENTRY, data: state }]),
+    restoreWorkflowAudits([
+      { type: "custom", customType: WORKFLOW_AUDIT_ENTRY, data: state },
+    ]),
     state,
   );
-  assert.deepEqual(restoreWorkflowAudits([{ type: "custom", customType: WORKFLOW_AUDIT_ENTRY, data: { workflows: [null] } }]), emptyWorkflowAuditState);
+  assert.deepEqual(
+    restoreWorkflowAudits([
+      {
+        type: "custom",
+        customType: WORKFLOW_AUDIT_ENTRY,
+        data: { workflows: [null] },
+      },
+    ]),
+    emptyWorkflowAuditState,
+  );
 });

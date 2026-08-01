@@ -43,6 +43,7 @@
       "./compact-footer/index.ts",
       "./compact-read/index.ts",
       "./disk-pressure/index.ts",
+      "./image-summary/index.ts",
       "./input-ergonomics/index.ts",
       "./link-safety/index.ts",
       "./pi-vim/index.ts",

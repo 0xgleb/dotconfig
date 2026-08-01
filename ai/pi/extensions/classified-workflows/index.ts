@@ -122,6 +122,7 @@ import {
   workflowAuditEvidence,
   WORKFLOW_AUDIT_ENTRY,
   type ChildAudit,
+  type ChildAuditEvent,
   type WorkflowAuditState,
 } from "./workflow-audit.ts"
 import {
@@ -190,6 +191,7 @@ interface BackgroundWorkflow {
   controller: AbortController
   output?: string
   error?: string
+  progress?: string
 }
 
 interface WorkflowToolParams extends WorkflowLimits {
@@ -736,7 +738,7 @@ const WorkflowParameters = Type.Object({
 })
 
 export default function classifiedWorkflows(pi: ExtensionAPI): void {
-  registerRuntimeVersion(pi, "classified-workflows", "2026.07.23.93")
+  registerRuntimeVersion(pi, "classified-workflows", "2026.07.31.94")
   const childTokenLimit = workflowChildTokenLimit(
     process.env[WORKFLOW_CHILD_TOKEN_LIMIT_ENV],
   )
@@ -832,6 +834,7 @@ export default function classifiedWorkflows(pi: ExtensionAPI): void {
           elapsed: formatDuration(workflow.startedAt, workflow.finishedAt),
           limits: `${workflow.params.maxAgents}a/${workflow.params.concurrency}c/${workflow.params.tokenBudget}t`,
           ...(outcome ? { outcome } : {}),
+          ...(workflow.progress ? { progress: workflow.progress } : {}),
         }
       })
 
@@ -864,6 +867,18 @@ export default function classifiedWorkflows(pi: ExtensionAPI): void {
 
   const workflowOutput = (result: unknown): string =>
     typeof result === "string" ? result : JSON.stringify(result, null, 2)
+
+  const childProgressText = (event: ChildAuditEvent): string => {
+    if (event.kind === "started") {
+      const model = event.requestedModel ?? "default model"
+      return `child ${event.index} starting · ${model} · tools ${event.tools.join(", ")}`.slice(
+        0,
+        240,
+      )
+    }
+
+    return `child ${event.audit.index} ${event.audit.status} · ${event.audit.usageTokens} tokens`
+  }
 
   const persistWorkflowAudit = (
     audit: Parameters<typeof appendWorkflowAudit>[1],
@@ -922,6 +937,10 @@ export default function classifiedWorkflows(pi: ExtensionAPI): void {
       classifiedRunAgent,
       childAudits,
       sanitizeProcessDiagnostic,
+      (event) => {
+        workflow.progress = childProgressText(event)
+        renderWorkflowPanel(ctx)
+      },
     )
 
     void runWorkflowScript(
@@ -1924,6 +1943,18 @@ export default function classifiedWorkflows(pi: ExtensionAPI): void {
         classifiedRunAgent,
         childAudits,
         sanitizeProcessDiagnostic,
+        (event) => {
+          const progress = childProgressText(event)
+          onUpdate?.({
+            content: [{ type: "text", text: progress }],
+            details: {
+              status: "running",
+              auditId,
+              child: event.kind === "started" ? event.index : event.audit.index,
+              progress,
+            },
+          })
+        },
       )
 
       try {
