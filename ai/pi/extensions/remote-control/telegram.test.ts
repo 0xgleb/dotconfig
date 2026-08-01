@@ -5,15 +5,26 @@ import * as Either from "effect/Either"
 
 import {
   authorizeTelegramMessage,
+  decodeTelegramSentMessageId,
   decodeTelegramUpdates,
   freshClankerRejection,
   initialTelegramBotState,
 } from "./telegram.ts"
 
-const ownerMessage = { chatId: 42, messageId: 7, userId: 1001, username: "dianov", text: "yo" }
+const ownerMessage = {
+  chatId: 42,
+  messageId: 7,
+  userId: 1001,
+  username: "dianov",
+  text: "yo",
+}
 
 test("the first @dianov message pins the immutable owner user id", () => {
-  const authorization = authorizeTelegramMessage(initialTelegramBotState, ownerMessage, "dianov")
+  const authorization = authorizeTelegramMessage(
+    initialTelegramBotState,
+    ownerMessage,
+    "dianov",
+  )
 
   assert.equal(authorization.kind, "owner")
   assert.equal(authorization.ownerPinned, true)
@@ -41,7 +52,11 @@ test("owner authorization requires both the pinned id and current username", () 
 
 test("unauthorized senders never alter owner state and receive fresh clanker rejections", () => {
   const stranger = { ...ownerMessage, userId: 2002, username: "stranger" }
-  const authorization = authorizeTelegramMessage(initialTelegramBotState, stranger, "dianov")
+  const authorization = authorizeTelegramMessage(
+    initialTelegramBotState,
+    stranger,
+    "dianov",
+  )
   const first = freshClankerRejection(0)
   const second = freshClankerRejection(first.nextCounter)
 
@@ -78,11 +93,94 @@ test("Telegram updates decode only documented private text-message fields", asyn
   }
 })
 
-test("malformed Telegram envelopes fail through the typed error channel", async () => {
+test("private replies retain only the referenced Telegram message id", async () => {
   const decoded = await Effect.runPromise(
-    Effect.either(decodeTelegramUpdates({ ok: true, result: [{ update_id: "bad" }] })),
+    decodeTelegramUpdates({
+      ok: true,
+      result: [
+        {
+          update_id: 124,
+          message: {
+            message_id: 8,
+            from: { id: 1001, is_bot: false, username: "dianov" },
+            chat: { id: 42, type: "private" },
+            text: "Ship it",
+            reply_to_message: { message_id: 77, text: "untrusted quoted text" },
+          },
+        },
+      ],
+    }),
+  )
+
+  assert.deepEqual(decoded, [
+    {
+      updateId: 124,
+      message: {
+        ...ownerMessage,
+        messageId: 8,
+        text: "Ship it",
+        replyToMessageId: 77,
+      },
+    },
+  ])
+})
+
+test("malformed Telegram reply references fail through the typed error channel", async () => {
+  const decoded = await Effect.runPromise(
+    Effect.either(
+      decodeTelegramUpdates({
+        ok: true,
+        result: [
+          {
+            update_id: 124,
+            message: {
+              message_id: 8,
+              from: { id: 1001, is_bot: false, username: "dianov" },
+              chat: { id: 42, type: "private" },
+              text: "Ship it",
+              reply_to_message: { message_id: "77" },
+            },
+          },
+        ],
+      }),
+    ),
   )
 
   assert.equal(Either.isLeft(decoded), true)
-  if (Either.isLeft(decoded)) assert.equal(decoded.left._tag, "TelegramContractError")
+  if (Either.isLeft(decoded))
+    assert.equal(decoded.left._tag, "TelegramContractError")
+})
+
+test("sendMessage responses decode only the documented message id", async () => {
+  assert.equal(
+    await Effect.runPromise(
+      decodeTelegramSentMessageId({ ok: true, result: { message_id: 77 } }),
+    ),
+    77,
+  )
+  assert.equal(
+    Either.isLeft(
+      await Effect.runPromise(
+        Effect.either(
+          decodeTelegramSentMessageId({
+            ok: true,
+            result: { message_id: "77" },
+          }),
+        ),
+      ),
+    ),
+    true,
+  )
+})
+
+test("malformed Telegram envelopes fail through the typed error channel", async () => {
+  const decoded = await Effect.runPromise(
+    Effect.either(
+      decodeTelegramUpdates({ ok: true, result: [{ update_id: "bad" }] }),
+    ),
+  )
+
+  assert.equal(Either.isLeft(decoded), true)
+  if (Either.isLeft(decoded))
+    assert.equal(decoded.left._tag, "TelegramContractError")
 })

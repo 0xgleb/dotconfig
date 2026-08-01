@@ -11,11 +11,13 @@ import { remoteBridgeDatabasePath } from "./paths.ts"
 import {
   BRIDGE_MESSAGE_TTL_MS,
   type BridgeAgent,
+  type BridgeQuestion,
   type RemoteBridgeError,
 } from "./protocol.ts"
 import { makeRemoteBridgeStore } from "./sqlite-store.ts"
 import {
   authorizeTelegramMessage,
+  decodeTelegramSentMessageId,
   decodeTelegramUpdates,
   freshClankerRejection,
   type TelegramBotState,
@@ -32,6 +34,7 @@ interface PieceOfPiState extends TelegramBotState {
   readonly nextUpdateId?: number
   readonly rejectionCounter: number
   readonly selectedAgentId?: string
+  readonly ownerChatId?: number
 }
 
 interface PieceOfPiConfiguration {
@@ -52,6 +55,8 @@ type PieceOfPiEvent =
   | "sender_rejected"
   | "bridge_completed"
   | "bridge_failed"
+  | "question_relayed"
+  | "question_answered"
 
 export type PieceOfPiConfigurationErrorCode =
   | "missing_token_file_environment"
@@ -182,6 +187,14 @@ const decodeState = (
       }),
     )
   }
+  if (
+    candidate.ownerChatId !== undefined &&
+    !Number.isSafeInteger(candidate.ownerChatId)
+  ) {
+    return Effect.fail(
+      new PieceOfPiStateError({ message: "Piece of Pi owner chat is invalid" }),
+    )
+  }
   return Effect.succeed({
     rejectionCounter: Number(candidate.rejectionCounter),
     ...(typeof candidate.ownerUserId === "number"
@@ -192,6 +205,9 @@ const decodeState = (
       : {}),
     ...(typeof candidate.selectedAgentId === "string"
       ? { selectedAgentId: candidate.selectedAgentId }
+      : {}),
+    ...(typeof candidate.ownerChatId === "number"
+      ? { ownerChatId: candidate.ownerChatId }
       : {}),
   })
 }
@@ -273,12 +289,26 @@ const telegramCall = (
       }),
   })
 
+const sendTelegramMessage = (
+  runtime: PieceOfPiRuntime,
+  chatId: number,
+  text: string,
+  replyToMessageId?: number,
+): Effect.Effect<number, TelegramTransportError | TelegramContractError> =>
+  telegramCall(runtime.configuration, "sendMessage", {
+    chat_id: chatId,
+    text,
+    ...(replyToMessageId !== undefined
+      ? { reply_parameters: { message_id: replyToMessageId } }
+      : {}),
+  }).pipe(Effect.flatMap(decodeTelegramSentMessageId))
+
 const sendText = (
   runtime: PieceOfPiRuntime,
   chatId: number,
   text: string,
   replyToMessageId?: number,
-): Effect.Effect<void, TelegramTransportError> => {
+): Effect.Effect<void, TelegramTransportError | TelegramContractError> => {
   const chunks = Array.from(
     { length: Math.max(1, Math.ceil(text.length / TELEGRAM_MESSAGE_LIMIT)) },
     (_, index) =>
@@ -289,14 +319,7 @@ const sendText = (
   )
   return Effect.forEach(
     chunks,
-    (chunk) =>
-      telegramCall(runtime.configuration, "sendMessage", {
-        chat_id: chatId,
-        text: chunk,
-        ...(replyToMessageId !== undefined
-          ? { reply_parameters: { message_id: replyToMessageId } }
-          : {}),
-      }),
+    (chunk) => sendTelegramMessage(runtime, chatId, chunk, replyToMessageId),
     { discard: true },
   )
 }
@@ -325,6 +348,80 @@ const agentLabel = (agent: BridgeAgent): string =>
 
 const availableAgents = (runtime: PieceOfPiRuntime) =>
   runtime.bridge.listAgents(Date.now())
+
+const questionRelayText = (
+  question: BridgeQuestion,
+  agent: BridgeAgent,
+): string => {
+  const title = question.header
+    ? `❓ ${question.header}`
+    : "❓ Pi needs your answer"
+  const choices = question.options?.map(
+    (option, index) =>
+      `${index + 1}. ${option.label}${option.description ? ` — ${option.description}` : ""}`,
+  )
+  const body = [
+    title,
+    `Agent: ${agentLabel(agent)}`,
+    `Question q${question.questionId}`,
+    "",
+    question.question,
+    ...(choices ? ["", ...choices] : []),
+    ...(question.guess ? ["", `Suggested: ${question.guess}`] : []),
+  ]
+    .join("\n")
+    .slice(0, TELEGRAM_MESSAGE_LIMIT - 120)
+
+  return `${body}\n\nReply directly to this message to answer only q${question.questionId}.`
+}
+
+const relayPendingQuestions = (
+  runtime: PieceOfPiRuntime,
+): Effect.Effect<
+  void,
+  TelegramTransportError | TelegramContractError | RemoteBridgeError
+> =>
+  Ref.get(runtime.state).pipe(
+    Effect.flatMap((state) => {
+      const ownerChatId = state.ownerChatId
+      if (ownerChatId === undefined) return Effect.void
+
+      const now = Date.now()
+      return Effect.all({
+        agents: availableAgents(runtime),
+        questions: runtime.bridge.listUnrelayedQuestions(now),
+      }).pipe(
+        Effect.flatMap(({ agents, questions }) =>
+          Effect.forEach(
+            questions,
+            (question) => {
+              const agent = agents.find(({ id }) => id === question.agentId)
+              if (!agent) return Effect.void
+
+              return sendTelegramMessage(
+                runtime,
+                ownerChatId,
+                questionRelayText(question, agent),
+              ).pipe(
+                Effect.flatMap((messageId) =>
+                  runtime.bridge.linkTelegramQuestion({
+                    agentId: question.agentId,
+                    questionId: question.questionId,
+                    chatId: ownerChatId,
+                    messageId,
+                    now: Date.now(),
+                  }),
+                ),
+                Effect.tap(() => Effect.sync(() => emit("question_relayed"))),
+                Effect.asVoid,
+              )
+            },
+            { discard: true, concurrency: 1 },
+          ),
+        ),
+      )
+    }),
+  )
 
 const agentListText = (agents: ReadonlyArray<BridgeAgent>): string =>
   agents.length === 0
@@ -370,7 +467,10 @@ const awaitBridgeResult = (
   runtime: PieceOfPiRuntime,
   chatId: number,
   bridgeMessageId: string,
-): Effect.Effect<void, TelegramTransportError | RemoteBridgeError> =>
+): Effect.Effect<
+  void,
+  TelegramTransportError | TelegramContractError | RemoteBridgeError
+> =>
   runtime.bridge.get(bridgeMessageId, Date.now()).pipe(
     Effect.flatMap((message) => {
       if (message.status === "completed") {
@@ -402,7 +502,10 @@ const awaitBridgeResult = (
 const enqueueOwnerMessage = (
   runtime: PieceOfPiRuntime,
   update: TelegramUpdate,
-): Effect.Effect<void, TelegramTransportError | RemoteBridgeError> =>
+): Effect.Effect<
+  void,
+  TelegramTransportError | TelegramContractError | RemoteBridgeError
+> =>
   Ref.get(runtime.state).pipe(
     Effect.flatMap((state) => chooseAgent(runtime, state)),
     Effect.flatMap((agent) =>
@@ -468,12 +571,58 @@ const selectAgent = (
     ),
   )
 
+const handleQuestionReply = (
+  runtime: PieceOfPiRuntime,
+  update: TelegramUpdate,
+): Effect.Effect<
+  boolean,
+  TelegramTransportError | TelegramContractError | RemoteBridgeError
+> => {
+  const replyToMessageId = update.message.replyToMessageId
+  if (replyToMessageId === undefined) return Effect.succeed(false)
+
+  return runtime.bridge
+    .answerTelegramQuestion({
+      chatId: update.message.chatId,
+      messageId: replyToMessageId,
+      answer: update.message.text,
+      now: Date.now(),
+    })
+    .pipe(
+      Effect.flatMap((resolution) =>
+        sendText(
+          runtime,
+          update.message.chatId,
+          `Answered q${resolution.questionId} for Pi agent ${resolution.agentId.slice(0, 8)}.`,
+          update.message.messageId,
+        ),
+      ),
+      Effect.tap(() => Effect.sync(() => emit("question_answered"))),
+      Effect.as(true),
+      Effect.catchTag("RemoteBridgeError", (error) => {
+        if (error.code !== "not_found" && error.code !== "invalid_transition") {
+          return Effect.fail(error)
+        }
+
+        return sendText(
+          runtime,
+          update.message.chatId,
+          "That reply is not attached to a pending Pi question.",
+          update.message.messageId,
+        ).pipe(Effect.as(true))
+      }),
+    )
+}
+
 const handleOwnerCommand = (
   runtime: PieceOfPiRuntime,
   update: TelegramUpdate,
 ): Effect.Effect<
   boolean,
-  TelegramTransportError | PieceOfPiStateError | RemoteBridgeError
+  | TelegramTransportError
+  | TelegramContractError
+  | PieceOfPiStateError
+  | RemoteBridgeError
 > => {
   const command = update.message.text.trim()
   if (command === "/start" || command === "/help") {
@@ -529,7 +678,10 @@ const handleUpdate = (
   update: TelegramUpdate,
 ): Effect.Effect<
   void,
-  TelegramTransportError | PieceOfPiStateError | RemoteBridgeError
+  | TelegramTransportError
+  | TelegramContractError
+  | PieceOfPiStateError
+  | RemoteBridgeError
 > =>
   Ref.get(runtime.state).pipe(
     Effect.flatMap((state) => {
@@ -560,12 +712,21 @@ const handleUpdate = (
         )
       }
 
-      const ownerState = { ...state, ...authorization.state }
+      const ownerState: PieceOfPiState = {
+        ...state,
+        ...authorization.state,
+        ownerChatId: update.message.chatId,
+      }
       return Ref.set(runtime.state, ownerState).pipe(
         Effect.flatMap(() =>
           persistState(runtime.configuration.statePath, ownerState),
         ),
-        Effect.flatMap(() => handleOwnerCommand(runtime, update)),
+        Effect.flatMap(() => handleQuestionReply(runtime, update)),
+        Effect.flatMap((questionHandled) =>
+          questionHandled
+            ? Effect.succeed(true)
+            : handleOwnerCommand(runtime, update),
+        ),
         Effect.flatMap((handled) =>
           handled ? Effect.void : enqueueOwnerMessage(runtime, update),
         ),
@@ -583,7 +744,8 @@ const handleUpdate = (
   )
 
 const poll = (runtime: PieceOfPiRuntime): Effect.Effect<never, never> =>
-  getUpdates(runtime).pipe(
+  relayPendingQuestions(runtime).pipe(
+    Effect.flatMap(() => getUpdates(runtime)),
     Effect.flatMap((updates) =>
       Effect.forEach(updates, (update) => handleUpdate(runtime, update), {
         discard: true,

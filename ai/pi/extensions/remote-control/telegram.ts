@@ -11,6 +11,7 @@ export interface TelegramMessage {
   readonly userId: number
   readonly username?: string
   readonly text: string
+  readonly replyToMessageId?: number
 }
 
 export interface TelegramUpdate {
@@ -43,7 +44,8 @@ export const initialTelegramBotState: TelegramBotState = {}
 const isRecord = (input: unknown): input is Readonly<Record<string, unknown>> =>
   typeof input === "object" && input !== null && !Array.isArray(input)
 
-const isSafeInteger = (input: unknown): input is number => Number.isSafeInteger(input)
+const isSafeInteger = (input: unknown): input is number =>
+  Number.isSafeInteger(input)
 
 const normalizedUsername = (username: string | undefined): string | undefined =>
   username?.trim().replace(/^@/, "").toLowerCase() || undefined
@@ -53,7 +55,8 @@ export const authorizeTelegramMessage = (
   message: TelegramMessage,
   ownerUsername: string,
 ): TelegramAuthorization => {
-  const usernameMatches = normalizedUsername(message.username) === normalizedUsername(ownerUsername)
+  const usernameMatches =
+    normalizedUsername(message.username) === normalizedUsername(ownerUsername)
   if (state.ownerUserId === undefined) {
     return usernameMatches
       ? {
@@ -85,9 +88,13 @@ const rejectionClosings = [
 
 export const freshClankerRejection = (counter: number): ClankerRejection => {
   const nextCounter = counter + 1
-  const opening = rejectionOpenings[counter % rejectionOpenings.length] ?? rejectionOpenings[0]
+  const opening =
+    rejectionOpenings[counter % rejectionOpenings.length] ??
+    rejectionOpenings[0]
   const closingIndex = Math.floor(counter / rejectionOpenings.length) + counter
-  const closing = rejectionClosings[closingIndex % rejectionClosings.length] ?? rejectionClosings[0]
+  const closing =
+    rejectionClosings[closingIndex % rejectionClosings.length] ??
+    rejectionClosings[0]
   return { text: `${opening}, I'm not your clanker. ${closing}`, nextCounter }
 }
 
@@ -97,45 +104,117 @@ const decodeMessage = (
   const message = input.message
   if (message === undefined) return Effect.succeed(undefined)
   if (!isRecord(message)) {
-    return Effect.fail(new TelegramContractError({ message: "Telegram message must be an object" }))
+    return Effect.fail(
+      new TelegramContractError({
+        message: "Telegram message must be an object",
+      }),
+    )
   }
   if (message.text === undefined) return Effect.succeed(undefined)
   if (typeof message.text !== "string" || !isSafeInteger(message.message_id)) {
-    return Effect.fail(new TelegramContractError({ message: "Telegram text message fields are invalid" }))
+    return Effect.fail(
+      new TelegramContractError({
+        message: "Telegram text message fields are invalid",
+      }),
+    )
   }
-  if (!isRecord(message.from) || !isSafeInteger(message.from.id) || message.from.is_bot !== false) {
-    return Effect.fail(new TelegramContractError({ message: "Telegram sender fields are invalid" }))
+  if (
+    !isRecord(message.from) ||
+    !isSafeInteger(message.from.id) ||
+    message.from.is_bot !== false
+  ) {
+    return Effect.fail(
+      new TelegramContractError({
+        message: "Telegram sender fields are invalid",
+      }),
+    )
   }
-  if (message.from.username !== undefined && typeof message.from.username !== "string") {
-    return Effect.fail(new TelegramContractError({ message: "Telegram username is invalid" }))
+  if (
+    message.from.username !== undefined &&
+    typeof message.from.username !== "string"
+  ) {
+    return Effect.fail(
+      new TelegramContractError({ message: "Telegram username is invalid" }),
+    )
   }
-  if (!isRecord(message.chat) || !isSafeInteger(message.chat.id) || message.chat.type !== "private") {
+  if (
+    !isRecord(message.chat) ||
+    !isSafeInteger(message.chat.id) ||
+    message.chat.type !== "private"
+  ) {
     return Effect.succeed(undefined)
   }
+
+  const replyToMessage = message.reply_to_message
+  if (
+    replyToMessage !== undefined &&
+    (!isRecord(replyToMessage) || !isSafeInteger(replyToMessage.message_id))
+  ) {
+    return Effect.fail(
+      new TelegramContractError({
+        message: "Telegram reply reference is invalid",
+      }),
+    )
+  }
+
   return Effect.succeed({
     chatId: message.chat.id,
     messageId: message.message_id,
     userId: message.from.id,
     ...(message.from.username ? { username: message.from.username } : {}),
     text: message.text,
+    ...(replyToMessage
+      ? { replyToMessageId: replyToMessage.message_id as number }
+      : {}),
   })
+}
+
+export const decodeTelegramSentMessageId = (
+  input: unknown,
+): Effect.Effect<number, TelegramContractError> => {
+  if (
+    !isRecord(input) ||
+    input.ok !== true ||
+    !isRecord(input.result) ||
+    !isSafeInteger(input.result.message_id)
+  ) {
+    return Effect.fail(
+      new TelegramContractError({
+        message: "Telegram sendMessage response is invalid",
+      }),
+    )
+  }
+
+  return Effect.succeed(input.result.message_id)
 }
 
 export const decodeTelegramUpdates = (
   input: unknown,
 ): Effect.Effect<ReadonlyArray<TelegramUpdate>, TelegramContractError> => {
   if (!isRecord(input) || input.ok !== true || !Array.isArray(input.result)) {
-    return Effect.fail(new TelegramContractError({ message: "Telegram update envelope is invalid" }))
+    return Effect.fail(
+      new TelegramContractError({
+        message: "Telegram update envelope is invalid",
+      }),
+    )
   }
 
-  return Effect.forEach(input.result, update => {
+  return Effect.forEach(input.result, (update) => {
     if (!isRecord(update) || !isSafeInteger(update.update_id)) {
-      return Effect.fail(new TelegramContractError({ message: "Telegram update id is invalid" }))
+      return Effect.fail(
+        new TelegramContractError({ message: "Telegram update id is invalid" }),
+      )
     }
     return decodeMessage(update).pipe(
-      Effect.map(message => message ? { updateId: update.update_id as number, message } : undefined),
+      Effect.map((message) =>
+        message ? { updateId: update.update_id as number, message } : undefined,
+      ),
     )
   }).pipe(
-    Effect.map(updates => updates.filter((update): update is TelegramUpdate => update !== undefined)),
+    Effect.map((updates) =>
+      updates.filter(
+        (update): update is TelegramUpdate => update !== undefined,
+      ),
+    ),
   )
 }
