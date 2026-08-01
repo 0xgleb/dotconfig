@@ -16,7 +16,7 @@ import { registerRuntimeVersion } from "../shared/runtime-version.ts"
 import { VimEditor } from "./vim-editor.ts"
 
 export default function (pi: ExtensionAPI) {
-  registerRuntimeVersion(pi, "pi-vim", "2026.07.23.11")
+  registerRuntimeVersion(pi, "pi-vim", "2026.07.23.12")
   let wrapAutocomplete:
     | ((provider: AutocompleteProvider) => AutocompleteProvider)
     | undefined

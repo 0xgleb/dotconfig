@@ -17,10 +17,12 @@ import {
 } from "./state.ts"
 import {
   QUESTION_ASK_EVENT,
+  QUESTION_PENDING_COUNT_EVENT,
   QUESTION_REMOTE_RESOLUTION_EVENT,
   QUESTION_RESOLVED_EVENT,
   QUESTION_STATE_EVENT,
   type RemoteUserQuestionResolution,
+  type UserQuestionPendingCount,
   type UserQuestionRequest,
   type UserQuestionResolution,
   type UserQuestionSnapshot,
@@ -87,7 +89,7 @@ const parseAction: (
 }
 
 const questionsExtension: (pi: ExtensionAPI) => void = (pi) => {
-  registerRuntimeVersion(pi, "questions", "2026.07.23.9")
+  registerRuntimeVersion(pi, "questions", "2026.07.23.10")
   let state = emptyQuestionState
   let dialogOpen = false
   let latestCtx: ExtensionContext | undefined
@@ -109,6 +111,8 @@ const questionsExtension: (pi: ExtensionAPI) => void = (pi) => {
 
   const render = (ctx: ExtensionContext) => {
     const pending = pendingQuestions(state).length
+    const pendingCount: UserQuestionPendingCount = { pending }
+    pi.events.emit(QUESTION_PENDING_COUNT_EVENT, pendingCount)
     ctx.ui.setStatus(
       QUESTION_STATUS_KEY,
       pending > 0 ? `awaiting:${pending} · /questions` : undefined,

@@ -47,16 +47,20 @@ test("side-by-side sessions reserve identical fixed-height chrome", () => {
   assert.equal(PROMPT_MIN_CONTENT_ROWS, 3)
   assert.match(
     activityStatus,
-    /const IDLE_PROGRESS_ROW = \["READY · awaiting activity"\] as const/,
+    /const READY_LABEL = "READY · awaiting activity"/,
   )
+  assert.match(activityStatus, /QUESTION_PENDING_COUNT_EVENT/)
   assert.match(
     activityStatus,
-    /setWidget\(TOOL_PROGRESS_WIDGET_KEY, IDLE_PROGRESS_ROW,[\s\S]*?placement: "belowEditor"/,
+    /setWidget\(TOOL_PROGRESS_WIDGET_KEY, \[questionLabel\(\)\],[\s\S]*?placement: "belowEditor"/,
   )
   assert.doesNotMatch(todoExtension, /borderMuted", footer\),\s*""/)
-  assert.match(todoExtension, /theme\.bold\(this\.theme\.fg\("accent", headline/)
-  assert.match(todoExtension, /theme\.fg\("accent", row\)/)
-  assert.doesNotMatch(todoExtension, /theme\.fg\("borderAccent", headline/)
+  assert.match(
+    todoExtension,
+    /theme\.bold\(this\.theme\.fg\("borderAccent", headline/,
+  )
+  assert.match(todoExtension, /theme\.fg\("borderAccent", row\)/)
+  assert.doesNotMatch(todoExtension, /theme\.fg\("accent", headline/)
 })
 
 test("prompt is wider than the task preview at every supported pane width", () => {

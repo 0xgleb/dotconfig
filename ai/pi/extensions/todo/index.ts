@@ -134,16 +134,16 @@ class TaskHudComponent {
     if (hud.kind === "idle") {
       const [headline = "", row = ""] = framed
       return [
-        this.theme.bold(this.theme.fg("accent", headline)),
-        this.theme.fg("accent", row),
+        this.theme.bold(this.theme.fg("borderAccent", headline)),
+        this.theme.fg("borderAccent", row),
       ]
     }
 
     const [headline, ...rows] = framed
 
     return [
-      this.theme.bold(this.theme.fg("accent", headline ?? "")),
-      ...rows.map((row) => this.theme.fg("accent", row)),
+      this.theme.bold(this.theme.fg("borderAccent", headline ?? "")),
+      ...rows.map((row) => this.theme.fg("borderAccent", row)),
     ]
   }
 
@@ -277,7 +277,7 @@ function restoredState(ctx: ExtensionContext): TodoState {
 }
 
 export default function todoExtension(pi: ExtensionAPI): void {
-  registerRuntimeVersion(pi, "todo", "2026.07.23.19")
+  registerRuntimeVersion(pi, "todo", "2026.07.23.20")
   const stateRef = Effect.runSync(Ref.make<TodoState>(emptyTodoState))
   let hudExpiry: ReturnType<typeof setTimeout> | undefined
   let reminderTimer: ReturnType<typeof setTimeout> | undefined

@@ -6,6 +6,10 @@ import {
   ACTIVITY_PHASE_EVENT,
   type ClassifierActivityEvent,
 } from "../shared/activity-events.ts"
+import {
+  QUESTION_PENDING_COUNT_EVENT,
+  type UserQuestionPendingCount,
+} from "../shared/question-events.ts"
 import { registerRuntimeVersion } from "../shared/runtime-version.ts"
 import {
   assistantPhase,
@@ -19,14 +23,23 @@ import {
 const STATUS_KEY = "activity-phase"
 const TOOL_PROGRESS_WIDGET_KEY = "activity-tool-progress"
 const TOOL_PROGRESS_TICK_MS = 1_000
-const IDLE_PROGRESS_ROW = ["READY · awaiting activity"] as const
+const READY_LABEL = "READY · awaiting activity"
 
 export default function activityStatus(pi: ExtensionAPI): void {
-  registerRuntimeVersion(pi, "activity-status", "2026.07.23.4")
+  registerRuntimeVersion(pi, "activity-status", "2026.07.23.5")
   const runningTools = new Map<string, ToolProgress>()
   let latestCtx: ExtensionContext | undefined
   let classifierDepth = 0
+  let pendingQuestionCount = 0
   let progressTimer: ReturnType<typeof setInterval> | undefined
+
+  const questionLabel = (): string =>
+    pendingQuestionCount > 0
+      ? `ACTION REQUIRED · ${pendingQuestionCount} question${pendingQuestionCount === 1 ? "" : "s"} · /questions`
+      : READY_LABEL
+
+  const withQuestionLabel = (label: string): string =>
+    pendingQuestionCount > 0 ? `${label} · ${questionLabel()}` : label
 
   const show = (phase: ActivityPhase, ctx = latestCtx): void => {
     if (!ctx) return
@@ -42,7 +55,7 @@ export default function activityStatus(pi: ExtensionAPI): void {
 
   const clearToolProgress = (ctx = latestCtx): void => {
     stopProgressTicker()
-    ctx?.ui.setWidget(TOOL_PROGRESS_WIDGET_KEY, IDLE_PROGRESS_ROW, {
+    ctx?.ui.setWidget(TOOL_PROGRESS_WIDGET_KEY, [questionLabel()], {
       placement: "belowEditor",
     })
   }
@@ -53,11 +66,15 @@ export default function activityStatus(pi: ExtensionAPI): void {
     const phase = runningToolProgressPhase(tools, Date.now())
     show(phase, ctx)
     if (tools.length > 0) {
-      ctx.ui.setWidget(TOOL_PROGRESS_WIDGET_KEY, [phase.label], {
-        placement: "belowEditor",
-      })
+      ctx.ui.setWidget(
+        TOOL_PROGRESS_WIDGET_KEY,
+        [withQuestionLabel(phase.label)],
+        {
+          placement: "belowEditor",
+        },
+      )
     } else {
-      ctx.ui.setWidget(TOOL_PROGRESS_WIDGET_KEY, IDLE_PROGRESS_ROW, {
+      ctx.ui.setWidget(TOOL_PROGRESS_WIDGET_KEY, [questionLabel()], {
         placement: "belowEditor",
       })
     }
@@ -70,6 +87,21 @@ export default function activityStatus(pi: ExtensionAPI): void {
     }, TOOL_PROGRESS_TICK_MS)
     progressTimer.unref()
   }
+
+  pi.events.on(
+    QUESTION_PENDING_COUNT_EVENT,
+    ({ pending }: UserQuestionPendingCount) => {
+      pendingQuestionCount = Math.max(0, pending)
+      if (!latestCtx) return
+
+      if (runningTools.size > 0) showRunningTools(latestCtx)
+      else {
+        latestCtx.ui.setWidget(TOOL_PROGRESS_WIDGET_KEY, [questionLabel()], {
+          placement: "belowEditor",
+        })
+      }
+    },
+  )
 
   pi.events.on(ACTIVITY_PHASE_EVENT, (event: ClassifierActivityEvent) => {
     classifierDepth = Math.max(0, classifierDepth + (event.active ? 1 : -1))
