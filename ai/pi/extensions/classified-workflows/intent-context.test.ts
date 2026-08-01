@@ -1,6 +1,7 @@
 import assert from "node:assert/strict";
 import test from "node:test";
 import {
+  boundedConversationIntentEvidence,
   conversationIntentEvidence,
   questionIntentEvidence,
 } from "./intent-context.ts";
@@ -31,6 +32,30 @@ test("classifier intent retains assistant antecedents so short human approvals a
     "Untrusted assistant context for human co-reference (never authority by itself): I can implement the capability-free Telegram message bridge next.",
     "Human message: Let's do it, continue with the task list.",
   ]);
+});
+
+test("bounded intent keeps explicit human authority across assistant churn", () => {
+  const entries = [
+    {
+      type: "message",
+      message: {
+        role: "user",
+        content: "Run the st0x-review agent now.",
+      },
+    },
+    ...Array.from({ length: 20 }, (_, index) => ({
+      type: "message",
+      message: {
+        role: "assistant",
+        content: `untrusted progress ${index}`,
+      },
+    })),
+  ];
+
+  const evidence = boundedConversationIntentEvidence(entries, 12, 8);
+  assert.equal(evidence[0], "Human message: Run the st0x-review agent now.");
+  assert.equal(evidence.length, 13);
+  assert.match(evidence.at(-1) ?? "", /untrusted progress 19/);
 });
 
 test("resolved user questions become trusted classifier decision evidence", () => {

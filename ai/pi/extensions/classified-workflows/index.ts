@@ -109,7 +109,7 @@ import {
 } from "./token-cap.ts"
 import { activeSkillProcedures } from "./skill-context.ts"
 import {
-  conversationIntentEvidence,
+  boundedConversationIntentEvidence,
   questionIntentEvidence,
 } from "./intent-context.ts"
 import {
@@ -381,9 +381,9 @@ function visibleIntent(
     report: reportRegistryIntent,
   }
   pi.events.emit(REGISTRY_INTENT_REQUEST_EVENT, registryRequest)
-  const messages = conversationIntentEvidence(branch)
-    .slice(-12)
-    .map((text) => text.slice(0, 4_000))
+  const messages = boundedConversationIntentEvidence(branch).map((text) =>
+    text.slice(0, 4_000),
+  )
   const questionIntent = questionIntentEvidence(questionState).map((text) =>
     text.slice(0, 4_000),
   )
@@ -826,7 +826,7 @@ const WorkflowParameters = Type.Object({
 })
 
 export default function classifiedWorkflows(pi: ExtensionAPI): void {
-  registerRuntimeVersion(pi, "classified-workflows", "2026.08.01.111")
+  registerRuntimeVersion(pi, "classified-workflows", "2026.08.01.112")
   const childTokenLimit = workflowChildTokenLimit(
     process.env[WORKFLOW_CHILD_TOKEN_LIMIT_ENV],
   )

@@ -27,6 +27,28 @@ const messageText = (
   return text || undefined;
 };
 
+export const boundedConversationIntentEvidence = (
+  entries: readonly unknown[],
+  maxRecent = 12,
+  maxHuman = 8,
+): string[] => {
+  const evidence = conversationIntentEvidence(entries);
+  const selected = new Set<number>();
+  for (
+    let index = Math.max(0, evidence.length - maxRecent);
+    index < evidence.length;
+    index += 1
+  ) {
+    selected.add(index);
+  }
+  const humanIndices = evidence
+    .map((item, index) => (item.startsWith("Human message: ") ? index : -1))
+    .filter((index) => index >= 0)
+    .slice(-maxHuman);
+  for (const index of humanIndices) selected.add(index);
+  return evidence.filter((_item, index) => selected.has(index));
+};
+
 export const questionIntentEvidence = (
   snapshot: UserQuestionStateSnapshot,
 ): string[] =>
