@@ -40,7 +40,7 @@ test("review workflow children receive an explicit repository cwd and least-priv
 
 test("semantic safety classification uses Sol and bounded relevant evidence while review support stays on Luna", () => {
   assert.match(classifier, /CLASSIFIER_MODEL = "openai-codex\/gpt-5\.6-sol"/);
-  assert.match(classifier, /conversationIntentEvidence\(branch\)/);
+  assert.match(classifier, /boundedConversationIntentEvidence\(branch\)/);
   assert.match(intentContext, /Human message: \$\{text\}/);
   assert.match(intentContext, /Trusted coordination context: \$\{coordination\}/);
   assert.match(intentContext, /Untrusted assistant context for human co-reference/);

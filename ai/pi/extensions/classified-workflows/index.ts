@@ -667,6 +667,15 @@ async function evaluateGoal(
   }
 }
 
+const prepareWorkflowAgentRequest = (
+  request: AgentRequest,
+  parentProvider: string | undefined,
+  availableModels: readonly AvailableAgentModel[],
+): AgentRequest => {
+  const model = resolveAgentModel(request.model, parentProvider, availableModels)
+  return model && model !== request.model ? { ...request, model } : request
+}
+
 async function executeAgent(
   request: AgentRequest,
   defaultCwd: string,
@@ -675,13 +684,11 @@ async function executeAgent(
   signal?: AbortSignal,
   tokenLimit?: number,
 ): Promise<AgentResult> {
-  const model = resolveAgentModel(
-    request.model,
+  const qualifiedRequest = prepareWorkflowAgentRequest(
+    request,
     parentProvider,
     availableModels,
   )
-  const qualifiedRequest =
-    model && model !== request.model ? { ...request, model } : request
   const result = await runPi(
     buildAgentArguments(qualifiedRequest, CLASSIFIED_WORKFLOWS_EXTENSION),
     request.cwd ?? defaultCwd,
@@ -828,7 +835,7 @@ const WorkflowParameters = Type.Object({
 })
 
 export default function classifiedWorkflows(pi: ExtensionAPI): void {
-  registerRuntimeVersion(pi, "classified-workflows", "2026.08.01.117")
+  registerRuntimeVersion(pi, "classified-workflows", "2026.08.01.118")
   const childTokenLimit = workflowChildTokenLimit(
     process.env[WORKFLOW_CHILD_TOKEN_LIMIT_ENV],
   )
@@ -1083,6 +1090,12 @@ export default function classifiedWorkflows(pi: ExtensionAPI): void {
       params.code,
       limits,
       {
+        prepareAgentRequest: (request) =>
+          prepareWorkflowAgentRequest(
+            request,
+            ctx.model?.provider,
+            ctx.modelRegistry.getAvailable(),
+          ),
         runAgent,
         checkpoint: async (message) => {
           throw new Error(
@@ -2388,6 +2401,12 @@ export default function classifiedWorkflows(pi: ExtensionAPI): void {
           params.code,
           limits,
           {
+            prepareAgentRequest: (request) =>
+              prepareWorkflowAgentRequest(
+                request,
+                ctx.model?.provider,
+                ctx.modelRegistry.getAvailable(),
+              ),
             runAgent,
             checkpoint: async (message) => {
               if (!ctx.hasUI) return "denied"

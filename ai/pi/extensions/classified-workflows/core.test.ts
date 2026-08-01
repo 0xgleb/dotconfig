@@ -622,6 +622,38 @@ test("workflow JavaScript can fan out and synthesize", async () => {
   );
 });
 
+test("workflow model validation fails before any child process starts", async () => {
+  let childRuns = 0;
+  await assert.rejects(
+    runWorkflowScript(
+      `return await parallel([
+        agent("one", { model: "claude-sonnet-4-6" }),
+        agent("two", { model: "claude-sonnet-4-6" })
+      ]);`,
+      limits,
+      {
+        prepareAgentRequest(request) {
+          if (request.model?.startsWith("claude-")) {
+            throw new Error(
+              "Claude workflow models require an external subscription lane",
+            );
+          }
+          return request;
+        },
+        async runAgent(): Promise<AgentResult> {
+          childRuns += 1;
+          return { status: "completed", output: "unexpected", usageTokens: 1 };
+        },
+        async checkpoint() {
+          return "approved";
+        },
+      },
+    ),
+    /external subscription lane/,
+  );
+  assert.equal(childRuns, 0);
+});
+
 test("named phases receive independent bounded agent budgets", async () => {
   const calls: string[] = [];
   const result = await runWorkflowScript(

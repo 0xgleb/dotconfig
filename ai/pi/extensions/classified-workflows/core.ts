@@ -58,6 +58,7 @@ export interface WorkflowLimits {
 }
 
 export interface WorkflowDependencies {
+  prepareAgentRequest?: (request: AgentRequest) => AgentRequest;
   runAgent(request: AgentRequest, signal: AbortSignal, tokenLimit: number): Promise<AgentResult>;
   checkpoint(message: string): Promise<"approved" | "denied">;
   phase?: (title: string) => void;
@@ -512,7 +513,8 @@ export async function runWorkflowScript(
     if (!rawRequest || typeof rawRequest.task !== "string" || rawRequest.task.trim() === "") {
       throw new Error("agent requires a non-empty task");
     }
-    const request = structuredClone(rawRequest);
+    const clonedRequest = structuredClone(rawRequest);
+    const request = dependencies.prepareAgentRequest?.(clonedRequest) ?? clonedRequest;
     if (request.task.length > 32_000) throw new Error("agent tasks may contain at most 32,000 characters");
     if (request.schema !== undefined) {
       if (!isRecord(request.schema)) throw new Error("agent schema must be a JSON Schema object");
