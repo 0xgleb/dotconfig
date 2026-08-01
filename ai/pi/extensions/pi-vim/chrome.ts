@@ -1,4 +1,5 @@
 import { truncateToWidth, visibleWidth } from "@earendil-works/pi-tui"
+import { chromeInset } from "../shared/chrome.ts"
 
 export const PROMPT_MIN_CONTENT_ROWS = 3
 
@@ -10,8 +11,7 @@ const fillToWidth = (prefix: string, suffix: string, width: number): string => {
   return `${prefix}${"─".repeat(available)}${suffix}`
 }
 
-export const promptChromeInset = (width: number): number =>
-  Math.min(1, Math.max(0, Math.floor((width - 4) / 2)))
+export const promptChromeInset = chromeInset
 
 export const promptChromeTopLine = (width: number): string => {
   const prefix = truncateToWidth("╭─ PROMPT ", Math.max(0, width), "")

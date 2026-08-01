@@ -1,7 +1,10 @@
 import assert from "node:assert/strict";
 import test from "node:test";
+import { visibleWidth } from "@earendil-works/pi-tui";
+import { chromeInset } from "../shared/chrome.ts";
 import {
   activeWorkflowLines,
+  activeWorkflowPanelLines,
   backgroundWorkflowStartedText,
   workflowHistoryText,
   type WorkflowUiItem,
@@ -47,6 +50,18 @@ test("persistent workflow UI contains only active work", () => {
     "● wf-1 · inspect · 12s · 2a/2c/1000t · child 2 starting · sonnet",
   ]);
   assert.deepEqual(activeWorkflowLines(workflows.slice(1)), []);
+});
+
+test("active workflow panel shares the pane-relative chrome gutter", () => {
+  for (const width of [40, 80, 120, 180]) {
+    const lines = activeWorkflowPanelLines(workflows, width);
+    assert.equal(lines.length, 2);
+    assert.equal(lines.every((line) => visibleWidth(line) === width), true);
+    assert.equal(
+      lines.every((line) => line.search(/\S/u) === chromeInset(width)),
+      true,
+    );
+  }
 });
 
 test("workflow history explains terminal outcomes", () => {

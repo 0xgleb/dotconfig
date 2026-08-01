@@ -30,7 +30,7 @@ const activeTasks = taskHud({
 const idleTasks = taskHud({ nextId: 1, todos: [] })
 
 test("side-by-side sessions reserve identical fixed-height chrome", () => {
-  for (const width of [80, 120, 180]) {
+  for (const width of [79, 80, 81, 119, 120, 121, 179, 180, 181]) {
     const active = frameTaskHud(activeTasks, width)
     const idle = frameTaskHud(idleTasks, width)
 
@@ -50,10 +50,7 @@ test("side-by-side sessions reserve identical fixed-height chrome", () => {
     /const READY_LABEL = "READY · awaiting activity"/,
   )
   assert.match(activityStatus, /QUESTION_PENDING_COUNT_EVENT/)
-  assert.match(
-    activityStatus,
-    /truncateToWidth\(label, Math\.max\(0, width\), "…"\)/,
-  )
+  assert.match(activityStatus, /alignChromeLine\(label, width\)/)
   assert.match(activityStatus, /setProgressWidget\(questionLabel\(\), ctx\)/)
   assert.doesNotMatch(todoExtension, /borderMuted", footer\),\s*""/)
   assert.match(todoExtension, /private colorTaskHeadline/)
@@ -70,7 +67,7 @@ test("side-by-side sessions reserve identical fixed-height chrome", () => {
 })
 
 test("prompt and task preview share frame edges at every supported pane width", () => {
-  for (const width of [80, 120, 180]) {
+  for (const width of [79, 80, 81, 119, 120, 121, 179, 180, 181]) {
     const promptInset = promptChromeInset(width)
     const taskInset = taskHudInset(width)
     const promptWidth = width - promptInset * 2

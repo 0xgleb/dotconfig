@@ -1,4 +1,5 @@
 import { truncateToWidth, visibleWidth } from "@earendil-works/pi-tui"
+import { chromeInset } from "../shared/chrome.ts"
 import {
   todoStatusMark,
   type Todo,
@@ -245,8 +246,7 @@ const rule = (inner: number, { left, right }: TaskHudRule): string => {
   return `${head} ${border(inner - headWidth - tailWidth - 2)} ${tail}`
 }
 
-export const taskHudInset = (width: number): number =>
-  width <= GUTTER * 2 ? 0 : 1
+export const taskHudInset = chromeInset
 
 export const frameTaskHud: (hud: TaskHud, width: number) => string[] = (
   hud,

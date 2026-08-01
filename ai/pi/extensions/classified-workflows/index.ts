@@ -130,6 +130,7 @@ import {
 } from "./workflow-audit.ts"
 import {
   activeWorkflowLines,
+  activeWorkflowPanelLines,
   backgroundWorkflowStartedText,
   workflowHistoryText,
   type WorkflowUiItem,
@@ -751,7 +752,7 @@ const WorkflowParameters = Type.Object({
 })
 
 export default function classifiedWorkflows(pi: ExtensionAPI): void {
-  registerRuntimeVersion(pi, "classified-workflows", "2026.08.01.98")
+  registerRuntimeVersion(pi, "classified-workflows", "2026.08.01.99")
   const childTokenLimit = workflowChildTokenLimit(
     process.env[WORKFLOW_CHILD_TOKEN_LIMIT_ENV],
   )
@@ -865,7 +866,13 @@ export default function classifiedWorkflows(pi: ExtensionAPI): void {
     )
     ctx.ui.setWidget(
       "classified-workflows",
-      lines.length > 0 ? lines : undefined,
+      lines.length > 0
+        ? () => ({
+            render: (width: number) =>
+              activeWorkflowPanelLines(workflowUiItems(), width),
+            invalidate: () => {},
+          })
+        : undefined,
       { placement: "belowEditor" },
     )
   }

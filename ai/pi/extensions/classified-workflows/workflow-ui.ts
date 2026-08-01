@@ -1,3 +1,5 @@
+import { alignChromeLine } from "../shared/chrome.ts";
+
 export type WorkflowUiStatus = "running" | "completed" | "failed" | "cancelled";
 
 export interface WorkflowUiItem {
@@ -23,6 +25,12 @@ export const activeWorkflowLines: (
     ),
   ];
 };
+
+export const activeWorkflowPanelLines = (
+  items: ReadonlyArray<WorkflowUiItem>,
+  width: number,
+): string[] =>
+  activeWorkflowLines(items).map((line) => alignChromeLine(line, width));
 
 export const backgroundWorkflowStartedText: (
   id: string,
