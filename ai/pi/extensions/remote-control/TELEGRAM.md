@@ -65,7 +65,7 @@ Launchd captures stdout and stderr in bounded service log files. No metric or du
 - A pinned numeric ID without the current `@dianov` username is rejected.
 - Unauthorized messages do not mutate owner state or call the bridge. They receive one locally composed, language-matched clanker rejection per cooldown; later attempts are silently dropped.
 - Adjacent ordinary owner text and one associated image coalesce within the bounded drain window, while commands and Telegram replies remain separate turns.
-- Accepted owner messages get best-effort reaction/typing feedback followed by one immutable final response. Placeholder/progress messages are never created or retroactively edited, and feedback API failures never fail or wedge the bridge request.
+- Accepted owner messages get one best-effort locally selected contextual reaction plus typing feedback, followed by one immutable final response. The initial reaction is never changed later; placeholder/progress messages are never created or retroactively edited, and feedback API failures never fail or wedge the bridge request.
 - Malformed Telegram envelopes fail through `TelegramContractError`.
 - A private owner reply decodes only the documented `reply_to_message.message_id` reference.
 - A Telegram reply resolves the exact bound `(agent_id, question_id)` and cannot resolve another question.

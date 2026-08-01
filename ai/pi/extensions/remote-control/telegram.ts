@@ -32,6 +32,72 @@ export interface TelegramUpdate {
   readonly message?: TelegramMessage;
 }
 
+export type TelegramAcknowledgementEmoji =
+  | "👀"
+  | "🤔"
+  | "🫡"
+  | "🔥"
+  | "👏"
+  | "🎉"
+  | "🤝"
+  | "😢"
+  | "🤓"
+  | "👨‍💻"
+  | "💯"
+  | "🤣";
+
+const acknowledgementIndex = (
+  text: string,
+  updateId: number,
+  length: number,
+): number => {
+  let hash = (updateId ^ 0x811c9dc5) >>> 0;
+  for (const character of text) {
+    hash ^= character.codePointAt(0) ?? 0;
+    hash = Math.imul(hash, 0x01000193) >>> 0;
+  }
+  return hash % length;
+};
+
+const acknowledgementPool = (
+  message: TelegramMessage,
+): readonly TelegramAcknowledgementEmoji[] => {
+  const normalized = message.text.toLowerCase();
+  if (message.photo) return ["👀", "🤓"];
+  if (message.text.includes("?")) return ["🤔", "👀"];
+  if (
+    /\b(?:error|fail|failed|broken|brick|bricked|panic|crash)\b|ошиб|слом|упал/u.test(
+      normalized,
+    )
+  )
+    return ["😢", "🫡", "👨‍💻"];
+  if (
+    /\b(?:ship|shipped|landed|merged|live|done|fixed|epic)\b|готов|почин|ура/u.test(
+      normalized,
+    )
+  )
+    return ["🔥", "🎉", "👏"];
+  if (
+    /\b(?:lol|lmao|funny|joke|based)\b|ахах|смеш|угар|база/u.test(normalized)
+  )
+    return ["🤣", "💯", "🔥"];
+  if (
+    /\b(?:review|pr|code|test|fix|debug|deploy|stack)\b|ревью|код|тест|фикс/u.test(
+      normalized,
+    )
+  )
+    return ["👨‍💻", "🫡", "🤝"];
+  return ["👀", "🫡", "🤔"];
+};
+
+export const telegramAcknowledgementReaction = (
+  message: TelegramMessage,
+  updateId: number,
+): TelegramAcknowledgementEmoji => {
+  const pool = acknowledgementPool(message);
+  return pool[acknowledgementIndex(message.text, updateId, pool.length)] ?? "👀";
+};
+
 const MAX_COALESCED_TELEGRAM_MESSAGES = 8;
 
 const isCoalescibleOwnerUpdate = (

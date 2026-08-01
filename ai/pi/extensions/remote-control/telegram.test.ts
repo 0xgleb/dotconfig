@@ -11,6 +11,7 @@ import {
   decodeTelegramOk,
   decodeTelegramSentMessageId,
   decodeTelegramUpdates,
+  telegramAcknowledgementReaction,
   telegramImageFromBytes,
   freshClankerRejection,
   initialTelegramBotState,
@@ -111,6 +112,37 @@ test("unauthorized rejection replies are bounded per sender without persisted id
   assert.equal(otherSender.allowed, true);
   assert.equal(afterCooldown.allowed, true);
   assert.equal(afterCooldown.nextAllowances.size <= 128, true);
+});
+
+test("owner acknowledgements vary locally by context without model calls", () => {
+  const question = telegramAcknowledgementReaction(
+    { ...ownerMessage, text: "Can you review this?" },
+    1,
+  );
+  const image = telegramAcknowledgementReaction(
+    {
+      ...ownerMessage,
+      text: "look at this",
+      photo: { fileId: "screen", width: 100, height: 100 },
+    },
+    2,
+  );
+  const failures = new Set(
+    Array.from({ length: 20 }, (_, updateId) =>
+      telegramAcknowledgementReaction(
+        { ...ownerMessage, text: "this error bricked the worker" },
+        updateId,
+      ),
+    ),
+  );
+
+  assert.match(question, /^(?:🤔|👀)$/u);
+  assert.match(image, /^(?:👀|🤓)$/u);
+  assert.equal(failures.size > 1, true);
+  assert.equal(
+    telegramAcknowledgementReaction(ownerMessage, 7),
+    telegramAcknowledgementReaction(ownerMessage, 7),
+  );
 });
 
 test("Telegram updates decode only documented private text-message fields", async () => {

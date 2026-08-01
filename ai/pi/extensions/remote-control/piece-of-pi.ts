@@ -32,7 +32,9 @@ import {
   decodeTelegramSentMessageId,
   decodeTelegramUpdates,
   freshClankerRejection,
+  telegramAcknowledgementReaction,
   telegramImageFromBytes,
+  type TelegramAcknowledgementEmoji,
   type TelegramBotState,
   type TelegramContractError,
   type TelegramMessage,
@@ -405,13 +407,11 @@ const sendTelegramAction = (
     action: "typing",
   }).pipe(Effect.flatMap(decodeTelegramOk));
 
-type TelegramReactionEmoji = "👀" | "👍" | "😢";
-
 const sendTelegramReaction = (
   runtime: PieceOfPiRuntime,
   chatId: number,
   messageId: number,
-  emoji: TelegramReactionEmoji,
+  emoji: TelegramAcknowledgementEmoji,
 ): Effect.Effect<void, TelegramTransportError | TelegramContractError> =>
   telegramCall(runtime.configuration, "setMessageReaction", {
     chat_id: chatId,
@@ -686,12 +686,6 @@ const awaitBridgeResult = (
           ownerMessageId,
           message.response,
         ).pipe(
-          Effect.tap(() =>
-            bestEffortTelegramFeedback(
-              "setMessageReaction",
-              sendTelegramReaction(runtime, chatId, ownerMessageId, "👍"),
-            ),
-          ),
           Effect.tap(() => Effect.sync(() => emit("bridge_completed"))),
         );
       }
@@ -700,14 +694,8 @@ const awaitBridgeResult = (
           runtime,
           chatId,
           ownerMessageId,
-          `Pi could not complete that message (${message.failure}). Please retry or use /agents to select another agent.`,
+          `I couldn't finish that response (${message.failure}). Please resend the message.`,
         ).pipe(
-          Effect.tap(() =>
-            bestEffortTelegramFeedback(
-              "setMessageReaction",
-              sendTelegramReaction(runtime, chatId, ownerMessageId, "😢"),
-            ),
-          ),
           Effect.tap(() =>
             Effect.sync(() =>
               emit("bridge_failed", { failure: message.failure }),
@@ -993,7 +981,7 @@ const handleUpdateBody = (
               runtime,
               update.message.chatId,
               update.message.messageId,
-              "👀",
+              telegramAcknowledgementReaction(update.message, update.updateId),
             ),
           ),
         ),

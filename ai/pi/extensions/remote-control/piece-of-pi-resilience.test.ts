@@ -32,8 +32,10 @@ test("replies to ordinary bot messages continue as agent conversation", () => {
 test("Telegram UX uses reactions, recurring activity, commands, batching, and images", () => {
   assert.doesNotMatch(source, /Queued for|Working on it|Reading the image/);
   assert.doesNotMatch(source, /PROGRESS_MESSAGE_DELAY_MS|editMessageText/);
+  assert.doesNotMatch(source, /Please retry or use \/agents to select another agent/);
   assert.match(source, /"setMessageReaction"/);
-  assert.match(source, /"👀"/);
+  assert.match(source, /telegramAcknowledgementReaction/);
+  assert.doesNotMatch(source, /"👍"|"😢"/);
   assert.match(source, /"sendChatAction"/);
   assert.match(source, /BRIDGE_TYPING_REFRESH_MS/);
   assert.match(source, /TELEGRAM_BURST_WINDOW_MS/);
