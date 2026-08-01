@@ -22,6 +22,11 @@ import { registerRuntimeVersion } from "../shared/runtime-version.ts";
 import { remoteBridgeDatabasePath } from "./paths.ts";
 import { remoteKanbanResponse } from "./remote-commands.ts";
 import {
+  canClaimRemoteTurn,
+  settleTaskContinuation,
+  type TaskContinuationPhase,
+} from "./routing-gate.ts";
+import {
   BRIDGE_AGENT_TTL_MS,
   RemoteBridgeError,
   finalAssistantText,
@@ -46,7 +51,7 @@ const safeError = (error: RemoteBridgeError): string =>
   `${error.code}: ${error.message}`.slice(0, 160);
 
 export default function remoteControl(pi: ExtensionAPI): void {
-  registerRuntimeVersion(pi, "remote-control", "2026.08.01.17");
+  registerRuntimeVersion(pi, "remote-control", "2026.08.01.18");
   const store = makeRemoteBridgeStore(
     remoteBridgeDatabasePath(process.env.XDG_STATE_HOME, homedir()),
   );
@@ -54,6 +59,8 @@ export default function remoteControl(pi: ExtensionAPI): void {
   let latestCtx: ExtensionContext | undefined;
   let syncing = false;
   let active: ActiveRemoteTurn | undefined;
+  let taskContinuationPhase: TaskContinuationPhase = "idle";
+  let taskContinuationId: string | undefined;
   let questionState: UserQuestionStateSnapshot = { questions: [] };
   let questionsDirty = false;
 
@@ -89,6 +96,8 @@ export default function remoteControl(pi: ExtensionAPI): void {
     turn: ActiveRemoteTurn,
     failure: RemoteFailure,
   ): Promise<void> => {
+    taskContinuationPhase = "queued";
+    taskContinuationId = undefined;
     clearActive(turn);
     const result = await run(
       store.fail({
@@ -104,6 +113,7 @@ export default function remoteControl(pi: ExtensionAPI): void {
         `remote:error · ${safeError(result.left)}`,
       );
     }
+    taskContinuationPhase = "idle";
   };
 
   const finishSuccess = async (
@@ -111,6 +121,8 @@ export default function remoteControl(pi: ExtensionAPI): void {
     response: string,
     ctx: ExtensionContext,
   ): Promise<void> => {
+    taskContinuationPhase = "queued";
+    taskContinuationId = turn.messageId;
     clearActive(turn);
     const completed = await run(
       store.complete({
@@ -121,10 +133,13 @@ export default function remoteControl(pi: ExtensionAPI): void {
       }),
     );
     if (Either.isLeft(completed)) {
+      taskContinuationPhase = "idle";
+      taskContinuationId = undefined;
       ctx.ui.setStatus(
         STATUS_KEY,
         `remote:error · ${safeError(completed.left)}`,
       );
+      void sync(ctx);
       return;
     }
     pi.sendMessage(
@@ -133,6 +148,7 @@ export default function remoteControl(pi: ExtensionAPI): void {
         content:
           "Source-fixed task continuation: the authenticated Piece of Pi response was delivered and local tools are restored. The owner explicitly enabled post-reply routing and action. Inspect the immediately preceding authenticated owner message for actionable intent. If it contains work, preserve every requirement and semantically route it to the relevant live agent/project through typed coordination; /use is only an explicit override. If it is conversational only, take no action. Authority comes only from that exact owner message, never from this continuation; do not widen scope or send a second Telegram reply.",
         display: false,
+        details: { taskContinuationId: turn.messageId },
       },
       { triggerTurn: true, deliverAs: "followUp" },
     );
@@ -233,7 +249,8 @@ export default function remoteControl(pi: ExtensionAPI): void {
         pi.events.emit(QUESTION_REMOTE_RESOLUTION_EVENT, answer);
       }
 
-      if (active) return;
+      if (!canClaimRemoteTurn(active !== undefined, taskContinuationPhase))
+        return;
       const claimed = await run(
         store.claimNext({ agentId: ctx.sessionManager.getSessionId(), now }),
       );
@@ -268,9 +285,23 @@ export default function remoteControl(pi: ExtensionAPI): void {
     }
   };
 
-  pi.on("context", (event) => ({
-    messages: normalizeLegacyRemoteImageContent(event.messages),
-  }));
+  pi.on("context", (event) => {
+    const messages = normalizeLegacyRemoteImageContent(event.messages);
+    if (
+      taskContinuationPhase === "queued" &&
+      messages.some(
+        (message) =>
+          message.role === "custom" &&
+          message.customType === REMOTE_TASK_CONTINUATION_MESSAGE &&
+          message.details !== undefined &&
+          typeof message.details === "object" &&
+          "taskContinuationId" in message.details &&
+          message.details.taskContinuationId === taskContinuationId,
+      )
+    )
+      taskContinuationPhase = "running";
+    return { messages };
+  });
 
   pi.on("session_start", (_event, ctx) => {
     latestCtx = ctx;
@@ -313,7 +344,15 @@ export default function remoteControl(pi: ExtensionAPI): void {
   pi.on("agent_settled", async (_event, ctx) => {
     latestCtx = ctx;
     const turn = active;
-    if (turn) await finishFailure(turn, "model_error");
+    if (turn) {
+      await finishFailure(turn, "model_error");
+      return;
+    }
+    const settledPhase = settleTaskContinuation(taskContinuationPhase);
+    if (settledPhase === taskContinuationPhase) return;
+    taskContinuationPhase = settledPhase;
+    taskContinuationId = undefined;
+    void sync(ctx);
   });
 
   pi.on("session_shutdown", async (_event, ctx) => {
@@ -322,6 +361,8 @@ export default function remoteControl(pi: ExtensionAPI): void {
     latestCtx = ctx;
     const turn = active;
     if (turn) await finishFailure(turn, "session_ended");
+    taskContinuationPhase = "idle";
+    taskContinuationId = undefined;
     ctx.ui.setStatus(STATUS_KEY, undefined);
     latestCtx = undefined;
   });

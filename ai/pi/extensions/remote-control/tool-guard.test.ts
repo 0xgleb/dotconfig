@@ -96,11 +96,11 @@ test("textless retry and compaction runs cannot prematurely become model_error",
   );
   assert.match(
     remoteControlSource,
-    /pi\.on\("agent_settled"[\s\S]*?if \(turn\) await finishFailure\(turn, "model_error"\)/,
+    /pi\.on\("agent_settled"[\s\S]*?if \(turn\) \{[\s\S]*?finishFailure\(turn, "model_error"\)/,
   );
 });
 
-test("successful remote replies trigger one source-fixed semantic routing continuation", () => {
+test("successful remote replies gate the next claim until their exact routing continuation settles", () => {
   assert.match(remoteControlSource, /REMOTE_TASK_CONTINUATION_MESSAGE/);
   assert.match(
     remoteControlSource,
@@ -113,6 +113,33 @@ test("successful remote replies trigger one source-fixed semantic routing contin
   assert.match(
     remoteControlSource,
     /triggerTurn: true, deliverAs: "followUp"/,
+  );
+  assert.match(
+    remoteControlSource,
+    /const finishSuccess[\s\S]*?taskContinuationPhase = "queued";[\s\S]*?taskContinuationId = turn\.messageId;[\s\S]*?clearActive\(turn\);[\s\S]*?store\.complete[\s\S]*?details: \{ taskContinuationId: turn\.messageId \}/,
+  );
+  assert.match(
+    remoteControlSource,
+    /if \(Either\.isLeft\(completed\)\) \{[\s\S]*?taskContinuationPhase = "idle";[\s\S]*?taskContinuationId = undefined;[\s\S]*?sync\(ctx\)/,
+  );
+  assert.match(
+    remoteControlSource,
+    /canClaimRemoteTurn\(active !== undefined, taskContinuationPhase\)/,
+  );
+  assert.match(
+    remoteControlSource,
+    /message\.details\.taskContinuationId === taskContinuationId[\s\S]*?taskContinuationPhase = "running"/,
+  );
+  assert.match(
+    remoteControlSource,
+    /settleTaskContinuation\(taskContinuationPhase\)[\s\S]*?taskContinuationId = undefined;[\s\S]*?sync\(ctx\)/,
+  );
+});
+
+test("failed remote turns suppress claims until their terminal transition persists", () => {
+  assert.match(
+    remoteControlSource,
+    /const finishFailure[\s\S]*?taskContinuationPhase = "queued";[\s\S]*?clearActive\(turn\);[\s\S]*?store\.fail[\s\S]*?taskContinuationPhase = "idle"/,
   );
 });
 
