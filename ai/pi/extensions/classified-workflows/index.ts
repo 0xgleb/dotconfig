@@ -1,4 +1,5 @@
 import { spawn } from "node:child_process"
+import { homedir } from "node:os"
 import { lstatSync, realpathSync } from "node:fs"
 import { basename, isAbsolute, relative, resolve, sep } from "node:path"
 import { fileURLToPath } from "node:url"
@@ -10,7 +11,7 @@ import type {
   ToolResultEvent,
 } from "@earendil-works/pi-coding-agent"
 import { Text } from "@earendil-works/pi-tui"
-import { Data, Effect } from "effect"
+import { Data, Effect, Either } from "effect"
 import { Type } from "typebox"
 import {
   AGENT_PROCESS_STDIO,
@@ -112,6 +113,16 @@ import {
   questionIntentEvidence,
 } from "./intent-context.ts"
 import {
+  beginReviewDuty,
+  emptyReviewDutyState,
+  startReviewWorkflow,
+  reportReviewDuty,
+  restoreReviewDutyState,
+  reviewWorkflowBlockReason,
+  REVIEW_DUTY_STATE_ENTRY,
+  type ReviewDutyState,
+} from "./review-duty-gate.ts"
+import {
   nestedRepositoryRootForPath,
   repositoryRootForPath,
   runtimeProjectContext,
@@ -173,6 +184,8 @@ import {
   type RegistryIntentRequest,
 } from "../shared/registry-intent-events.ts"
 import { registerRuntimeVersion } from "../shared/runtime-version.ts"
+import { remoteBridgeDatabasePath } from "../remote-control/paths.ts"
+import { makeRemoteBridgeStore } from "../remote-control/sqlite-store.ts"
 
 const CLASSIFIER_MODEL = "openai-codex/gpt-5.6-sol"
 const CLASSIFIER_TIMEOUT_MS = 20_000
@@ -743,6 +756,20 @@ function blockedResult(reason: string): AgentToolResult<{ status: "blocked" }> {
   }
 }
 
+const ReviewDutyParameters = Type.Object({
+  action: Type.Union([
+    Type.Literal("status"),
+    Type.Literal("begin"),
+    Type.Literal("report"),
+  ]),
+  repository: Type.Optional(Type.String({ minLength: 1, maxLength: 120 })),
+  pullRequest: Type.Optional(Type.Integer({ minimum: 1 })),
+  kind: Type.Optional(
+    Type.Union([Type.Literal("own"), Type.Literal("assigned")]),
+  ),
+  questionId: Type.Optional(Type.Integer({ minimum: 1 })),
+})
+
 const ArtifactProvenanceParameters = Type.Object({
   action: Type.Union([
     Type.Literal("list"),
@@ -799,7 +826,7 @@ const WorkflowParameters = Type.Object({
 })
 
 export default function classifiedWorkflows(pi: ExtensionAPI): void {
-  registerRuntimeVersion(pi, "classified-workflows", "2026.08.01.107")
+  registerRuntimeVersion(pi, "classified-workflows", "2026.08.01.108")
   const childTokenLimit = workflowChildTokenLimit(
     process.env[WORKFLOW_CHILD_TOKEN_LIMIT_ENV],
   )
@@ -842,9 +869,13 @@ export default function classifiedWorkflows(pi: ExtensionAPI): void {
   let manualReloadPending = false
   let capabilityCircuit: CapabilityCircuitState = emptyCapabilityCircuit
   let skipNextCapabilityOutcome = false
+  let reviewDutyState: ReviewDutyState = emptyReviewDutyState
   let artifactProvenance: ArtifactProvenanceState = emptyArtifactProvenanceState
   let workflowAudits: WorkflowAuditState = emptyWorkflowAuditState
   const runtimeStartedAt = Date.now()
+  const remoteBridge = makeRemoteBridgeStore(
+    remoteBridgeDatabasePath(process.env.XDG_STATE_HOME, homedir()),
+  )
   const deterministicResultAllowance = createToolResultAllowance()
   let nextWorkflowId = 1
   let latestCtx: ExtensionContext | undefined
@@ -1473,6 +1504,7 @@ export default function classifiedWorkflows(pi: ExtensionAPI): void {
         : undefined
     continuationPaused = latestContinuationPause(branch)?.paused ?? false
     capabilityCircuit = restoreCapabilityCircuit(branch)
+    reviewDutyState = restoreReviewDutyState(branch)
     if (capabilityCircuit.open && pi.getActiveTools().length > 0) {
       capabilityCircuit = {
         consecutiveBlockers: 0,
@@ -1549,6 +1581,7 @@ export default function classifiedWorkflows(pi: ExtensionAPI): void {
 
   pi.on("session_compact", () => {
     pi.appendEntry(CAPABILITY_CIRCUIT_ENTRY, capabilityCircuit)
+    pi.appendEntry(REVIEW_DUTY_STATE_ENTRY, reviewDutyState)
     pi.appendEntry(ARTIFACT_PROVENANCE_ENTRY, artifactProvenance)
     pi.appendEntry(WORKFLOW_AUDIT_ENTRY, workflowAudits)
   })
@@ -1685,6 +1718,24 @@ export default function classifiedWorkflows(pi: ExtensionAPI): void {
   })
 
   pi.on("tool_call", async (event: ToolCallEvent, ctx) => {
+    if (event.toolName === "workflow") {
+      const sessionName = pi.getSessionName()
+      const dutyBlock = reviewWorkflowBlockReason(
+        sessionName,
+        reviewDutyState,
+      )
+      if (dutyBlock) {
+        return resolveActionDecision({
+          verdict: "block",
+          reason: dutyBlock,
+          source: "deterministic",
+        })
+      }
+      if (sessionName === "st0x-review-duty") {
+        reviewDutyState = startReviewWorkflow(reviewDutyState, Date.now())
+        pi.appendEntry(REVIEW_DUTY_STATE_ENTRY, reviewDutyState)
+      }
+    }
     const deterministic = deterministicDecision({
       boundary: "action",
       toolName: event.toolName,
@@ -1828,6 +1879,157 @@ export default function classifiedWorkflows(pi: ExtensionAPI): void {
       // misreported as a pre-execution policy block and blindly retried.
       return withheldExecutedToolResultPatch(event.isError)
     }
+  })
+
+  pi.registerTool({
+    name: "review_duty",
+    label: "Review-duty reporting gate",
+    description:
+      "Begin a dedicated ST0x/rainlanguage PR review job, inspect its gate, or prove its typed verdict question is linked to Piece of Pi before advancing.",
+    promptSnippet:
+      "Gate each dedicated PR review on a persisted and Telegram-linked verdict question",
+    promptGuidelines: [
+      "In the st0x-review-duty session, call review_duty begin before every PR workflow.",
+      "After the workflow, create one ask_user question that identifies the PR, includes assessment/finding status, and offers Approve, Request changes, Inspect first in that order.",
+      "Call review_duty report with the question ID; do not begin the next PR until it confirms the Telegram relay link.",
+    ],
+    parameters: ReviewDutyParameters,
+    async execute(_toolCallId, request, _signal, _onUpdate, ctx) {
+      if (pi.getSessionName() !== "st0x-review-duty") {
+        return {
+          content: [
+            {
+              type: "text" as const,
+              text: "review_duty is available only in the dedicated st0x-review-duty session",
+            },
+          ],
+          details: { outcome: "error" as const },
+          isError: true,
+        }
+      }
+      if (request.action === "status") {
+        return {
+          content: [
+            { type: "text" as const, text: JSON.stringify(reviewDutyState) },
+          ],
+          details: { outcome: "status" as const, state: reviewDutyState },
+        }
+      }
+      if (request.action === "begin") {
+        if (
+          !request.repository ||
+          request.pullRequest === undefined ||
+          request.kind === undefined
+        ) {
+          return {
+            content: [
+              {
+                type: "text" as const,
+                text: "begin requires repository, pullRequest, and kind",
+              },
+            ],
+            details: { outcome: "error" as const },
+            isError: true,
+          }
+        }
+        const transition = beginReviewDuty(
+          reviewDutyState,
+          {
+            repository: request.repository,
+            pullRequest: request.pullRequest,
+            kind: request.kind,
+          },
+          Date.now(),
+        )
+        if (!transition.ok) {
+          return {
+            content: [{ type: "text" as const, text: transition.error }],
+            details: { outcome: "error" as const, error: transition.error },
+            isError: true,
+          }
+        }
+        reviewDutyState = transition.state
+        pi.appendEntry(REVIEW_DUTY_STATE_ENTRY, reviewDutyState)
+        return {
+          content: [
+            {
+              type: "text" as const,
+              text: `Review duty started for ${request.repository}#${request.pullRequest}`,
+            },
+          ],
+          details: { outcome: "begun" as const, state: reviewDutyState },
+        }
+      }
+
+      if (request.questionId === undefined) {
+        return {
+          content: [
+            { type: "text" as const, text: "report requires questionId" },
+          ],
+          details: { outcome: "error" as const },
+          isError: true,
+        }
+      }
+      const question = questionState.questions.find(
+        ({ id }) => id === request.questionId,
+      )
+      if (!question) {
+        return {
+          content: [
+            {
+              type: "text" as const,
+              text: `question ${request.questionId} is not persisted in this session`,
+            },
+          ],
+          details: { outcome: "error" as const },
+          isError: true,
+        }
+      }
+      const relayStatus = await Effect.runPromise(
+        Effect.either(
+          remoteBridge.isQuestionRelayed({
+            agentId: ctx.sessionManager.getSessionId(),
+            questionId: request.questionId,
+          }),
+        ),
+      )
+      if (Either.isLeft(relayStatus)) {
+        return {
+          content: [
+            {
+              type: "text" as const,
+              text: `Could not verify Telegram relay: ${relayStatus.left.message}`,
+            },
+          ],
+          details: { outcome: "error" as const },
+          isError: true,
+        }
+      }
+      const transition = reportReviewDuty(
+        reviewDutyState,
+        question,
+        relayStatus.right,
+        Date.now(),
+      )
+      if (!transition.ok) {
+        return {
+          content: [{ type: "text" as const, text: transition.error }],
+          details: { outcome: "error" as const, error: transition.error },
+          isError: true,
+        }
+      }
+      reviewDutyState = transition.state
+      pi.appendEntry(REVIEW_DUTY_STATE_ENTRY, reviewDutyState)
+      return {
+        content: [
+          {
+            type: "text" as const,
+            text: `Verdict question ${request.questionId} is linked; the next PR may begin`,
+          },
+        ],
+        details: { outcome: "reported" as const, state: reviewDutyState },
+      }
+    },
   })
 
   pi.registerTool({

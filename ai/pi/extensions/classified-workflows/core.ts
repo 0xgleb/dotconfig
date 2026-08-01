@@ -88,6 +88,7 @@ const READ_ONLY_TOOLS = new Set([
 const TODO_ACTIONS = new Set(["list", "add", "toggle", "status", "block", "reply", "unblock", "clear"]);
 const QUESTION_ACTIONS = new Set(["list", "ask", "resolve", "clear_resolved"]);
 const ARTIFACT_PROVENANCE_ACTIONS = new Set(["list", "record", "forget"]);
+const REVIEW_DUTY_ACTIONS = new Set(["status", "begin", "report"]);
 const RELEASE_CADENCE_ACTIONS = new Set(["status", "enable", "disable", "mark"]);
 const isSkillView = (toolName: string, input: Readonly<Record<string, unknown>>): boolean =>
   toolName === "skill_manage" && input.action === "view";
@@ -100,7 +101,7 @@ const REGISTRY_ACTIONS = new Set([
   "claim_request",
   "cancel_request",
 ]);
-const LOCALLY_GENERATED_RESULT_TOOLS = new Set(["edit", "write", "todo", "ask_user", "artifact_provenance", "release_cadence", "reload_pi", "workflow_audit", "safe_compaction_ready"]);
+const LOCALLY_GENERATED_RESULT_TOOLS = new Set(["edit", "write", "todo", "ask_user", "artifact_provenance", "review_duty", "release_cadence", "reload_pi", "workflow_audit", "safe_compaction_ready"]);
 const PATH_KEYS = new Set(["path", "file_path", "cwd", "glob"]);
 const SENSITIVE_PATH =
   /(^|[\\/\s'"])(?:\.env(?!\.example(?:$|[\\/\s'"]))(?:\.[^\\/\s'"]*)?[*?]*|credentials\.json|secrets\.(?:json|ya?ml)|auth\.json|\.npmrc|\.netrc|\.pypirc|id_(?:rsa|dsa|ecdsa|ed25519)(?:\.pub)?|[^\\/\s'"]+\.(?:key|pem|p12|pfx))($|[\\/\s'"])/i;
@@ -309,6 +310,17 @@ export function deterministicDecision(request: ToolRequest): Decision | null {
     return {
       verdict: "allow",
       reason: "Session-local typed agent artifact provenance",
+      source: "deterministic",
+    };
+  }
+
+  if (
+    request.toolName === "review_duty" &&
+    REVIEW_DUTY_ACTIONS.has(String(request.input.action))
+  ) {
+    return {
+      verdict: "allow",
+      reason: "Typed local review-duty reporting gate",
       source: "deterministic",
     };
   }

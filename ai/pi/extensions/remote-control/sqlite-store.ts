@@ -68,6 +68,11 @@ export interface SyncRemoteQuestionsInput {
   readonly now: number;
 }
 
+export interface QuestionRelayStatusInput {
+  readonly agentId: string;
+  readonly questionId: number;
+}
+
 export interface LinkTelegramQuestionInput {
   readonly agentId: string;
   readonly questionId: number;
@@ -121,6 +126,9 @@ export interface RemoteBridgeStore {
   readonly listUnrelayedQuestions: (
     now: number,
   ) => Effect.Effect<readonly BridgeQuestion[], RemoteBridgeError>;
+  readonly isQuestionRelayed: (
+    input: QuestionRelayStatusInput,
+  ) => Effect.Effect<boolean, RemoteBridgeError>;
   readonly linkTelegramQuestion: (
     input: LinkTelegramQuestionInput,
   ) => Effect.Effect<BridgeQuestion, RemoteBridgeError>;
@@ -983,6 +991,23 @@ export const makeRemoteBridgeStore = (
           )
           .all(at)
           .map((row) => questionFromRow(rowFrom(row)));
+      }),
+    ),
+  isQuestionRelayed: (input) =>
+    attempt("Could not read question relay status", () =>
+      withDatabase(databasePath, (database) => {
+        const agentId = boundedIdentifier("agent id", input.agentId);
+        const questionId = positiveSafeInteger("question id", input.questionId);
+        const row = optionalRowFrom(
+          database
+            .prepare(
+              `SELECT telegram_message_id
+               FROM bridge_questions
+               WHERE agent_id = ? AND question_id = ?`,
+            )
+            .get(agentId, questionId),
+        );
+        return row?.telegram_message_id !== null && row?.telegram_message_id !== undefined;
       }),
     ),
   linkTelegramQuestion: (input) =>

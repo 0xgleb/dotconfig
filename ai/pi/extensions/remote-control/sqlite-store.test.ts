@@ -296,6 +296,13 @@ test("Telegram replies resolve only the exact bound agent question", async () =>
       ],
     );
 
+    assert.equal(
+      await Effect.runPromise(
+        store.isQuestionRelayed({ agentId: "session-1", questionId: 1 }),
+      ),
+      false,
+    );
+
     await Effect.runPromise(
       store.linkTelegramQuestion({
         agentId: "session-1",
@@ -304,6 +311,13 @@ test("Telegram replies resolve only the exact bound agent question", async () =>
         messageId: 77,
         now: 2_002,
       }),
+    );
+
+    assert.equal(
+      await Effect.runPromise(
+        store.isQuestionRelayed({ agentId: "session-1", questionId: 1 }),
+      ),
+      true,
     );
 
     const unknown = await Effect.runPromise(
