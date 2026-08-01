@@ -1,6 +1,10 @@
 import assert from "node:assert/strict";
 import test from "node:test";
-import { describeRuntimeProjectContext, nestedRepositoryRootForPath } from "./project-context.ts";
+import {
+  describeRuntimeProjectContext,
+  nestedRepositoryRootForPath,
+  repositoryRootForPath,
+} from "./project-context.ts";
 
 test("runtime project context identifies repository roots and descendants", () => {
   assert.deepEqual(
@@ -26,6 +30,20 @@ test("runtime project context does not invent a repository boundary", () => {
     cwd: "/workspace",
     cwdRelation: "outside-repository",
   });
+});
+
+test("repository root evidence can identify an explicitly authorized external target", () => {
+  const gitToplevelForPath = (path: string): string | undefined =>
+    path.startsWith("/workspace/rainlanguage/raindex")
+      ? "/workspace/rainlanguage/raindex"
+      : undefined;
+  assert.equal(
+    repositoryRootForPath(
+      "/workspace/rainlanguage/raindex/.tmp/reviews/pr-2827",
+      gitToplevelForPath,
+    ),
+    "/workspace/rainlanguage/raindex",
+  );
 });
 
 test("nested repository roots are accepted only beneath the session workspace", () => {

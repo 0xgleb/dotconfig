@@ -3,6 +3,7 @@ import test from "node:test";
 import {
   ARTIFACT_PROVENANCE_ENTRY,
   artifactPaths,
+  canonicalRepositoryScratchArtifactPath,
   canonicalScratchArtifactPath,
   decodeArtifactProvenanceState,
   emptyArtifactProvenanceState,
@@ -33,6 +34,37 @@ test("artifact provenance accepts scratch children beneath an evidenced nested r
       "/workspace",
       "/outside/nested-repo/.tmp/report.json",
       "/outside/nested-repo",
+    ),
+    undefined,
+  );
+});
+
+test("explicit cross-workspace routing accepts only absolute children of the evidenced repository scratch root", () => {
+  assert.equal(
+    canonicalRepositoryScratchArtifactPath(
+      "/workspace/rainlanguage/raindex/.tmp/reviews/pr-2827",
+      "/workspace/rainlanguage/raindex",
+    ),
+    "/workspace/rainlanguage/raindex/.tmp/reviews/pr-2827",
+  );
+  assert.equal(
+    canonicalRepositoryScratchArtifactPath(
+      "/workspace/rainlanguage/raindex/.tmp",
+      "/workspace/rainlanguage/raindex",
+    ),
+    undefined,
+  );
+  assert.equal(
+    canonicalRepositoryScratchArtifactPath(
+      "/workspace/other/.tmp/reviews/pr-2827",
+      "/workspace/rainlanguage/raindex",
+    ),
+    undefined,
+  );
+  assert.equal(
+    canonicalRepositoryScratchArtifactPath(
+      ".tmp/reviews/pr-2827",
+      "/workspace/rainlanguage/raindex",
     ),
     undefined,
   );

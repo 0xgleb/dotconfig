@@ -55,16 +55,29 @@ const isAtOrWithin = (root: string, candidate: string): boolean => {
   return child === "" || (child !== ".." && !child.startsWith(`..${sep}`) && !isAbsolute(child));
 };
 
+export const canonicalRepositoryScratchArtifactPath = (
+  candidate: string,
+  repositoryRoot: string,
+): string | undefined => {
+  if (!isAbsolute(candidate)) return undefined;
+  const scratchRoot = resolve(repositoryRoot, ".tmp");
+  const canonical = resolve(candidate);
+  const child = relative(scratchRoot, canonical);
+  return child && child !== ".." && !child.startsWith(`..${sep}`) && !isAbsolute(child)
+    ? canonical
+    : undefined;
+};
+
 export const canonicalScratchArtifactPath = (
   cwd: string,
   candidate: string,
   repositoryRoot = cwd,
 ): string | undefined => {
   if (!isAtOrWithin(cwd, repositoryRoot)) return undefined;
-  const scratchRoot = resolve(repositoryRoot, ".tmp");
-  const canonical = resolve(cwd, candidate);
-  const child = relative(scratchRoot, canonical);
-  return child && child !== ".." && !child.startsWith(`..${sep}`) && !isAbsolute(child) ? canonical : undefined;
+  return canonicalRepositoryScratchArtifactPath(
+    resolve(cwd, candidate),
+    repositoryRoot,
+  );
 };
 
 export const recordArtifact = (

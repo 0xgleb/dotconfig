@@ -48,6 +48,18 @@ const isAtOrWithin = (root: string, candidate: string): boolean => {
   return child === "" || (child !== ".." && !child.startsWith(`..${sep}`) && !isAbsolute(child));
 };
 
+export const repositoryRootForPath = (
+  candidate: string,
+  gitToplevelForPath: (path: string) => string | undefined = (path) =>
+    runtimeProjectContext(path).gitToplevel,
+): string | undefined => {
+  const resolvedCandidate = resolve(candidate);
+  const repositoryRoot =
+    gitToplevelForPath(resolvedCandidate) ??
+    gitToplevelForPath(dirname(resolvedCandidate));
+  return repositoryRoot ? resolve(repositoryRoot) : undefined;
+};
+
 export const nestedRepositoryRootForPath = (
   cwd: string,
   candidate: string,
@@ -55,6 +67,9 @@ export const nestedRepositoryRootForPath = (
 ): string | undefined => {
   const resolvedCwd = resolve(cwd);
   const resolvedCandidate = resolve(resolvedCwd, candidate);
-  const repositoryRoot = gitToplevelForPath(resolvedCandidate) ?? gitToplevelForPath(dirname(resolvedCandidate));
-  return repositoryRoot && isAtOrWithin(resolvedCwd, repositoryRoot) ? resolve(repositoryRoot) : undefined;
+  const repositoryRoot = repositoryRootForPath(
+    resolvedCandidate,
+    gitToplevelForPath,
+  );
+  return repositoryRoot && isAtOrWithin(resolvedCwd, repositoryRoot) ? repositoryRoot : undefined;
 };

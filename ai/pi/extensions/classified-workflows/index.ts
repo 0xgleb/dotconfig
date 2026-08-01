@@ -1,6 +1,6 @@
 import { spawn } from "node:child_process"
 import { lstatSync, realpathSync } from "node:fs"
-import { basename, relative, resolve, sep } from "node:path"
+import { basename, isAbsolute, relative, resolve, sep } from "node:path"
 import { fileURLToPath } from "node:url"
 import type { AgentToolResult } from "@earendil-works/pi-agent-core"
 import type {
@@ -21,6 +21,7 @@ import {
 import {
   ARTIFACT_PROVENANCE_ENTRY,
   artifactPaths,
+  canonicalRepositoryScratchArtifactPath,
   canonicalScratchArtifactPath,
   emptyArtifactProvenanceState,
   forgetArtifact,
@@ -104,6 +105,7 @@ import {
 } from "./intent-context.ts"
 import {
   nestedRepositoryRootForPath,
+  repositoryRootForPath,
   runtimeProjectContext,
 } from "./project-context.ts"
 import { currentReadDisprovesDuplicateBlock } from "./stale-duplicate.ts"
@@ -714,6 +716,12 @@ const ArtifactProvenanceParameters = Type.Object({
     Type.Literal("forget"),
   ]),
   path: Type.Optional(Type.String({ maxLength: 1_024 })),
+  crossWorkspace: Type.Optional(
+    Type.Boolean({
+      description:
+        "Set only for an absolute artifact path in an explicitly authorized repository outside the session workspace. This route requires semantic authorization.",
+    }),
+  ),
 })
 
 class ArtifactProvenanceError extends Data.TaggedError(
@@ -757,7 +765,7 @@ const WorkflowParameters = Type.Object({
 })
 
 export default function classifiedWorkflows(pi: ExtensionAPI): void {
-  registerRuntimeVersion(pi, "classified-workflows", "2026.08.01.100")
+  registerRuntimeVersion(pi, "classified-workflows", "2026.08.01.101")
   const childTokenLimit = workflowChildTokenLimit(
     process.env[WORKFLOW_CHILD_TOKEN_LIMIT_ENV],
   )
@@ -1720,6 +1728,7 @@ export default function classifiedWorkflows(pi: ExtensionAPI): void {
       "Record newly created project .tmp artifacts before later cleanup",
     promptGuidelines: [
       "Record an artifact immediately after creating it; only current-runtime, non-symlink paths under the repository .tmp directory are accepted.",
+      "For an explicitly authorized repository outside the session workspace, pass its exact absolute artifact path with crossWorkspace=true; this route is semantically classified and never broadens cleanup beyond that recorded path.",
       "Recorded provenance authorizes only exact cleanup operands and never parent directories, globs, chaining, or unrelated paths.",
     ],
     parameters: ArtifactProvenanceParameters,
@@ -1779,21 +1788,34 @@ export default function classifiedWorkflows(pi: ExtensionAPI): void {
           details: { outcome: "forgotten", path: canonical },
         }
       }
-      const repositoryRoot = nestedRepositoryRootForPath(ctx.cwd, candidate)
-      const canonical = repositoryRoot
-        ? canonicalScratchArtifactPath(ctx.cwd, candidate, repositoryRoot)
-        : undefined
+      const localRepositoryRoot = nestedRepositoryRootForPath(
+        ctx.cwd,
+        candidate,
+      )
+      const externalRepositoryRoot =
+        request.crossWorkspace === true && isAbsolute(candidate)
+          ? repositoryRootForPath(candidate)
+          : undefined
+      const repositoryRoot = localRepositoryRoot ?? externalRepositoryRoot
+      const canonical = localRepositoryRoot
+        ? canonicalScratchArtifactPath(ctx.cwd, candidate, localRepositoryRoot)
+        : externalRepositoryRoot
+          ? canonicalRepositoryScratchArtifactPath(
+              candidate,
+              externalRepositoryRoot,
+            )
+          : undefined
       if (!canonical) {
         return {
           content: [
             {
               type: "text",
-              text: "artifact path must be beneath a repository .tmp within the session workspace",
+              text: "artifact path must be beneath a repository .tmp in the session workspace or an explicitly authorized cross-workspace repository",
             },
           ],
           details: {
             outcome: "error",
-            error: "artifact path outside workspace repository .tmp",
+            error: "artifact path outside authorized repository .tmp",
           },
           isError: true,
         }

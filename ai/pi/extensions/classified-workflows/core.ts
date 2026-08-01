@@ -293,7 +293,14 @@ export function deterministicDecision(request: ToolRequest): Decision | null {
     };
   }
 
-  if (request.toolName === "artifact_provenance" && ARTIFACT_PROVENANCE_ACTIONS.has(String(request.input.action))) {
+  if (
+    request.toolName === "artifact_provenance" &&
+    ARTIFACT_PROVENANCE_ACTIONS.has(String(request.input.action)) &&
+    !(
+      request.input.action === "record" &&
+      request.input.crossWorkspace === true
+    )
+  ) {
     return {
       verdict: "allow",
       reason: "Session-local typed agent artifact provenance",

@@ -307,6 +307,27 @@ test("typed local agent registry coordination is locally allowed without grantin
   );
 });
 
+test("cross-workspace artifact recording requires semantic authorization", () => {
+  const local = deterministicDecision({
+    boundary: "action",
+    toolName: "artifact_provenance",
+    input: { action: "record", path: ".tmp/review/report.json" },
+    cwd: "/workspace/st0x",
+  });
+  const external = deterministicDecision({
+    boundary: "action",
+    toolName: "artifact_provenance",
+    input: {
+      action: "record",
+      path: "/workspace/rainlanguage/raindex/.tmp/reviews/pr-2827",
+      crossWorkspace: true,
+    },
+    cwd: "/workspace/st0x",
+  });
+  assert.equal(local?.verdict, "allow");
+  assert.equal(external, null);
+});
+
 test("release cadence bookkeeping is locally allowed without granting release authority", () => {
   for (const action of ["status", "enable", "disable", "mark"]) {
     assert.deepEqual(
