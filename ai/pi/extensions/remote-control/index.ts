@@ -39,7 +39,7 @@ const safeError = (error: RemoteBridgeError): string =>
   `${error.code}: ${error.message}`.slice(0, 160);
 
 export default function remoteControl(pi: ExtensionAPI): void {
-  registerRuntimeVersion(pi, "remote-control", "2026.08.01.8");
+  registerRuntimeVersion(pi, "remote-control", "2026.08.01.9");
   const store = makeRemoteBridgeStore(
     remoteBridgeDatabasePath(process.env.XDG_STATE_HOME, homedir()),
   );
@@ -86,6 +86,27 @@ export default function remoteControl(pi: ExtensionAPI): void {
         `remote:error · ${safeError(result.left)}`,
       );
     }
+  };
+
+  const finishSuccess = async (
+    turn: ActiveRemoteTurn,
+    response: string,
+    ctx: ExtensionContext,
+  ): Promise<void> => {
+    clearActive(turn);
+    const completed = await run(
+      store.complete({
+        messageId: turn.messageId,
+        claimToken: turn.claimToken,
+        response,
+        now: Date.now(),
+      }),
+    );
+    if (Either.isLeft(completed))
+      ctx.ui.setStatus(
+        STATUS_KEY,
+        `remote:error · ${safeError(completed.left)}`,
+      );
   };
 
   const beginTurn = async (
@@ -235,6 +256,22 @@ export default function remoteControl(pi: ExtensionAPI): void {
     active?.toolGuard.enforce();
   });
 
+  pi.on("turn_end", async (event, ctx) => {
+    latestCtx = ctx;
+    const turn = active;
+    if (!turn) return;
+    if (wasRunAborted([event.message])) {
+      await finishFailure(turn, "aborted");
+      return;
+    }
+    const response = finalAssistantText([event.message]);
+    if (!response) {
+      await finishFailure(turn, "model_error");
+      return;
+    }
+    await finishSuccess(turn, response, ctx);
+  });
+
   pi.on("agent_end", async (event, ctx) => {
     latestCtx = ctx;
     const turn = active;
@@ -248,20 +285,7 @@ export default function remoteControl(pi: ExtensionAPI): void {
       await finishFailure(turn, "model_error");
       return;
     }
-    clearActive(turn);
-    const completed = await run(
-      store.complete({
-        messageId: turn.messageId,
-        claimToken: turn.claimToken,
-        response,
-        now: Date.now(),
-      }),
-    );
-    if (Either.isLeft(completed))
-      ctx.ui.setStatus(
-        STATUS_KEY,
-        `remote:error · ${safeError(completed.left)}`,
-      );
+    await finishSuccess(turn, response, ctx);
   });
 
   pi.on("session_shutdown", async (_event, ctx) => {
