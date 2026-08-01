@@ -7,6 +7,11 @@ import * as Effect from "effect/Effect"
 import * as Either from "effect/Either"
 import * as Ref from "effect/Ref"
 
+import {
+  agentListHtml,
+  agentMatchesSelector,
+  preferredAgent,
+} from "./agent-selection.ts"
 import { remoteBridgeDatabasePath } from "./paths.ts"
 import {
   BRIDGE_MESSAGE_TTL_MS,
@@ -294,6 +299,7 @@ const sendTelegramMessage = (
   chatId: number,
   text: string,
   replyToMessageId?: number,
+  parseMode?: "HTML",
 ): Effect.Effect<number, TelegramTransportError | TelegramContractError> =>
   telegramCall(runtime.configuration, "sendMessage", {
     chat_id: chatId,
@@ -301,6 +307,7 @@ const sendTelegramMessage = (
     ...(replyToMessageId !== undefined
       ? { reply_parameters: { message_id: replyToMessageId } }
       : {}),
+    ...(parseMode ? { parse_mode: parseMode } : {}),
   }).pipe(Effect.flatMap(decodeTelegramSentMessageId))
 
 const sendText = (
@@ -308,6 +315,7 @@ const sendText = (
   chatId: number,
   text: string,
   replyToMessageId?: number,
+  parseMode?: "HTML",
 ): Effect.Effect<void, TelegramTransportError | TelegramContractError> => {
   const chunks = Array.from(
     { length: Math.max(1, Math.ceil(text.length / TELEGRAM_MESSAGE_LIMIT)) },
@@ -319,7 +327,8 @@ const sendText = (
   )
   return Effect.forEach(
     chunks,
-    (chunk) => sendTelegramMessage(runtime, chatId, chunk, replyToMessageId),
+    (chunk) =>
+      sendTelegramMessage(runtime, chatId, chunk, replyToMessageId, parseMode),
     { discard: true },
   )
 }
@@ -423,41 +432,20 @@ const relayPendingQuestions = (
     }),
   )
 
-const agentListText = (agents: ReadonlyArray<BridgeAgent>): string =>
-  agents.length === 0
-    ? "No Pi agents are bridge-ready right now."
-    : [
-        "Bridge-ready Pi agents:",
-        ...agents.map(
-          (agent) =>
-            `- ${agentLabel(agent)}${agent.accepting ? "" : " [busy]"}`,
-        ),
-        "Use /use <id-prefix> to select one.",
-      ].join("\n")
-
 const chooseAgent = (
   runtime: PieceOfPiRuntime,
   state: PieceOfPiState,
 ): Effect.Effect<BridgeAgent, TelegramTransportError | RemoteBridgeError> =>
   availableAgents(runtime).pipe(
     Effect.flatMap((agents) => {
-      const selected = state.selectedAgentId
-        ? agents.find((agent) => agent.id === state.selectedAgentId)
-        : undefined
-      const yielduck = agents.find(
-        (agent) =>
-          agent.accepting && agent.label.toLowerCase().includes("yielduck"),
-      )
-      const accepting = agents.filter((agent) => agent.accepting)
-      const onlyAccepting = accepting.length === 1 ? accepting[0] : undefined
-      const agent = selected ?? yielduck ?? onlyAccepting
+      const agent = preferredAgent(agents, state.selectedAgentId)
       return agent
         ? Effect.succeed(agent)
         : Effect.fail(
             new TelegramTransportError({
               method: "chooseAgent",
               message:
-                "Choose a bridge-ready agent with /agents and /use <id-prefix>",
+                "Choose a bridge-ready agent with /agents and /use <label>",
             }),
           )
     }),
@@ -544,7 +532,7 @@ const selectAgent = (
   availableAgents(runtime).pipe(
     Effect.flatMap((agents) => {
       const matches = agents.filter((agent) =>
-        agent.id.startsWith(requestedPrefix),
+        agentMatchesSelector(agent, requestedPrefix),
       )
       return matches.length === 1 && matches[0]
         ? Effect.succeed(matches[0])
@@ -553,8 +541,8 @@ const selectAgent = (
               method: "selectAgent",
               message:
                 matches.length === 0
-                  ? "No agent matches that ID prefix"
-                  : "Agent ID prefix is ambiguous",
+                  ? "No agent matches that label or ID prefix"
+                  : "Agent selector is ambiguous",
             }),
           )
     }),
@@ -629,7 +617,7 @@ const handleOwnerCommand = (
     return sendText(
       runtime,
       update.message.chatId,
-      "Owner authenticated. Commands: /agents, /use <id-prefix>, /bridge. Other text is sent to the selected Pi agent.",
+      "Owner authenticated. Commands: /agents, /use <label>, /bridge. Other text defaults to the .config Pi agent.",
       update.message.messageId,
     ).pipe(Effect.as(true))
   }
@@ -639,8 +627,9 @@ const handleOwnerCommand = (
         sendText(
           runtime,
           update.message.chatId,
-          agentListText(agents),
+          agentListHtml(agents),
           update.message.messageId,
+          "HTML",
         ),
       ),
       Effect.as(true),

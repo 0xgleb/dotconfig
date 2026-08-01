@@ -303,7 +303,7 @@ function restoredState(ctx: ExtensionContext): TodoState {
 }
 
 export default function todoExtension(pi: ExtensionAPI): void {
-  registerRuntimeVersion(pi, "todo", "2026.08.01.23")
+  registerRuntimeVersion(pi, "todo", "2026.08.01.24")
   const stateRef = Effect.runSync(Ref.make<TodoState>(emptyTodoState))
   let hudExpiry: ReturnType<typeof setTimeout> | undefined
   let reminderTimer: ReturnType<typeof setTimeout> | undefined

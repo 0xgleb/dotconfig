@@ -2,6 +2,7 @@ import type {
   ExtensionAPI,
   ExtensionContext,
 } from "@earendil-works/pi-coding-agent"
+import { truncateToWidth } from "@earendil-works/pi-tui"
 import {
   ACTIVITY_PHASE_EVENT,
   type ClassifierActivityEvent,
@@ -26,7 +27,7 @@ const TOOL_PROGRESS_TICK_MS = 1_000
 const READY_LABEL = "READY · awaiting activity"
 
 export default function activityStatus(pi: ExtensionAPI): void {
-  registerRuntimeVersion(pi, "activity-status", "2026.07.23.5")
+  registerRuntimeVersion(pi, "activity-status", "2026.08.01.6")
   const runningTools = new Map<string, ToolProgress>()
   let latestCtx: ExtensionContext | undefined
   let classifierDepth = 0
@@ -53,11 +54,23 @@ export default function activityStatus(pi: ExtensionAPI): void {
     progressTimer = undefined
   }
 
+  const setProgressWidget = (label: string, ctx = latestCtx): void => {
+    if (!ctx) return
+    ctx.ui.setWidget(
+      TOOL_PROGRESS_WIDGET_KEY,
+      () => ({
+        render: (width: number) => [
+          truncateToWidth(label, Math.max(0, width), "…"),
+        ],
+        invalidate: () => {},
+      }),
+      { placement: "belowEditor" },
+    )
+  }
+
   const clearToolProgress = (ctx = latestCtx): void => {
     stopProgressTicker()
-    ctx?.ui.setWidget(TOOL_PROGRESS_WIDGET_KEY, [questionLabel()], {
-      placement: "belowEditor",
-    })
+    setProgressWidget(questionLabel(), ctx)
   }
 
   const showRunningTools = (ctx = latestCtx): void => {
@@ -66,17 +79,9 @@ export default function activityStatus(pi: ExtensionAPI): void {
     const phase = runningToolProgressPhase(tools, Date.now())
     show(phase, ctx)
     if (tools.length > 0) {
-      ctx.ui.setWidget(
-        TOOL_PROGRESS_WIDGET_KEY,
-        [withQuestionLabel(phase.label)],
-        {
-          placement: "belowEditor",
-        },
-      )
+      setProgressWidget(withQuestionLabel(phase.label), ctx)
     } else {
-      ctx.ui.setWidget(TOOL_PROGRESS_WIDGET_KEY, [questionLabel()], {
-        placement: "belowEditor",
-      })
+      setProgressWidget(questionLabel(), ctx)
     }
   }
 
@@ -95,11 +100,7 @@ export default function activityStatus(pi: ExtensionAPI): void {
       if (!latestCtx) return
 
       if (runningTools.size > 0) showRunningTools(latestCtx)
-      else {
-        latestCtx.ui.setWidget(TOOL_PROGRESS_WIDGET_KEY, [questionLabel()], {
-          placement: "belowEditor",
-        })
-      }
+      else setProgressWidget(questionLabel(), latestCtx)
     },
   )
 

@@ -52,8 +52,9 @@ test("side-by-side sessions reserve identical fixed-height chrome", () => {
   assert.match(activityStatus, /QUESTION_PENDING_COUNT_EVENT/)
   assert.match(
     activityStatus,
-    /setWidget\(TOOL_PROGRESS_WIDGET_KEY, \[questionLabel\(\)\],[\s\S]*?placement: "belowEditor"/,
+    /truncateToWidth\(label, Math\.max\(0, width\), "…"\)/,
   )
+  assert.match(activityStatus, /setProgressWidget\(questionLabel\(\), ctx\)/)
   assert.doesNotMatch(todoExtension, /borderMuted", footer\),\s*""/)
   assert.match(todoExtension, /private colorTaskHeadline/)
   assert.match(todoExtension, /private colorTaskRow/)
@@ -68,15 +69,15 @@ test("side-by-side sessions reserve identical fixed-height chrome", () => {
   )
 })
 
-test("prompt is wider than the task preview at every supported pane width", () => {
+test("prompt and task preview share frame edges at every supported pane width", () => {
   for (const width of [80, 120, 180]) {
     const promptInset = promptChromeInset(width)
     const taskInset = taskHudInset(width)
     const promptWidth = width - promptInset * 2
     const taskWidth = width - taskInset * 2
 
-    assert.ok(promptInset < taskInset)
-    assert.ok(promptWidth > taskWidth)
+    assert.equal(promptInset, taskInset)
+    assert.equal(promptWidth, taskWidth)
     assert.equal(visibleWidth(promptChromeTopLine(promptWidth)), promptWidth)
     assert.equal(frameTaskHud(activeTasks, width)[0]?.indexOf("╭"), taskInset)
   }

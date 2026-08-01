@@ -245,12 +245,8 @@ const rule = (inner: number, { left, right }: TaskHudRule): string => {
   return `${head} ${border(inner - headWidth - tailWidth - 2)} ${tail}`
 }
 
-export const taskHudInset = (width: number): number => {
-  const desired = Math.min(6, Math.max(3, Math.floor(width * 0.03)))
-  const available = Math.max(0, Math.floor((width - GUTTER * 2) / 2))
-
-  return Math.min(desired, available)
-}
+export const taskHudInset = (width: number): number =>
+  width <= GUTTER * 2 ? 0 : 1
 
 export const frameTaskHud: (hud: TaskHud, width: number) => string[] = (
   hud,

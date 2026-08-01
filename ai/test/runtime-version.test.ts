@@ -8,11 +8,11 @@ const read = (path: string) =>
 test("fleet diagnostics expose current behavior-bearing component versions", () => {
   assert.match(
     read("../pi/extensions/shared/runtime-version.ts"),
-    /MANAGED_CONFIG_GENERATION = "2026\.07\.23\.128"/,
+    /MANAGED_CONFIG_GENERATION = "2026\.07\.23\.129"/,
   )
   assert.match(
     read("../pi/extensions/activity-status/index.ts"),
-    /activity-status", "2026\.07\.23\.5"/,
+    /activity-status", "2026\.08\.01\.6"/,
   )
   assert.match(
     read("../pi/extensions/agent-registry/index.ts"),
@@ -53,7 +53,7 @@ test("fleet diagnostics expose current behavior-bearing component versions", () 
   )
   assert.match(
     read("../pi/extensions/remote-control/index.ts"),
-    /remote-control", "2026\.07\.23\.3"/,
+    /remote-control", "2026\.08\.01\.4"/,
   )
   assert.match(
     read("../pi/extensions/disk-pressure/index.ts"),
@@ -69,6 +69,6 @@ test("fleet diagnostics expose current behavior-bearing component versions", () 
   )
   assert.match(
     read("../pi/extensions/todo/index.ts"),
-    /todo", "2026\.08\.01\.23"/,
+    /todo", "2026\.08\.01\.24"/,
   )
 })
