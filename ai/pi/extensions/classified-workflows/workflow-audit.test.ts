@@ -3,11 +3,12 @@ import { readFileSync } from "node:fs";
 import test from "node:test";
 import type { AgentResult, WorkflowLimits } from "./core.ts";
 import {
+  MAX_RETAINED_CHILD_OUTPUT_CHARACTERS,
   WORKFLOW_AUDIT_ENTRY,
   appendWorkflowAudit,
   auditedAgentRunner,
   emptyWorkflowAuditState,
-  failedWorkflowWithoutResultAfter,
+  latestFailedWorkflowAfter,
   nextWorkflowSequence,
   restoreWorkflowAudits,
   terminalWorkflowFailureDisprovesOwnershipBlock,
@@ -97,6 +98,33 @@ test("completed review children retain bounded access diagnostics", async () => 
 
   assert.match(children[0]?.reason ?? "", /Child action blocked/);
   assert.match(children[0]?.reason ?? "", /repository source became unavailable/);
+  assert.match(
+    children[0]?.retainedOutput ?? "",
+    /repository source became unavailable/,
+  );
+});
+
+test("completed child outputs are retained only within the audit bound", async () => {
+  const children: ChildAudit[] = [];
+  const run = auditedAgentRunner(
+    async (): Promise<AgentResult> => ({
+      status: "completed",
+      output: "x".repeat(MAX_RETAINED_CHILD_OUTPUT_CHARACTERS + 500),
+      usageTokens: 42,
+    }),
+    children,
+    String,
+  );
+
+  await run({ task: "review", tools: ["read"] }, new AbortController().signal, 1_000);
+  assert.equal(
+    children[0]?.retainedOutput?.length,
+    MAX_RETAINED_CHILD_OUTPUT_CHARACTERS,
+  );
+  assert.equal(
+    children[0]?.outputCharacters,
+    MAX_RETAINED_CHILD_OUTPUT_CHARACTERS + 500,
+  );
 });
 
 test("audited runner emits bounded child start and terminal progress", async () => {
@@ -207,7 +235,7 @@ test("terminal child failures release duplicate-work ownership for a corrected r
   ]);
 });
 
-test("failed review recovery requires the latest terminal audit to contain no result", () => {
+test("same-job recovery selects only the latest failed audit and preserves partial metadata", () => {
   const blockedFailure = {
     id: "wf-30",
     label: "PR307 review",
@@ -230,37 +258,39 @@ test("failed review recovery requires the latest terminal audit to contain no re
     outcome: "token budget preflight failed",
   };
   const state = appendWorkflowAudit(emptyWorkflowAuditState, blockedFailure);
-  assert.equal(failedWorkflowWithoutResultAfter(state, 20), true);
-  assert.equal(failedWorkflowWithoutResultAfter(state, 21), false);
-  assert.equal(
-    failedWorkflowWithoutResultAfter(
-      appendWorkflowAudit(state, {
-        ...blockedFailure,
-        id: "wf-31",
-        startedAt: 31,
-        finishedAt: 32,
-        children: [
-          {
-            ...blockedFailure.children[0],
-            status: "completed",
-            outputCharacters: 80,
-          },
-        ],
-      }),
+  assert.equal(latestFailedWorkflowAfter(state, 20)?.id, "wf-30");
+  assert.equal(latestFailedWorkflowAfter(state, 21), undefined);
+
+  const partialFailure = {
+    ...blockedFailure,
+    id: "wf-31",
+    startedAt: 31,
+    finishedAt: 32,
+    children: [
+      {
+        ...blockedFailure.children[0],
+        status: "completed" as const,
+        outputCharacters: 80,
+      },
+    ],
+  };
+  assert.deepEqual(
+    latestFailedWorkflowAfter(
+      appendWorkflowAudit(state, partialFailure),
       20,
     ),
-    false,
+    partialFailure,
   );
   for (const status of ["completed", "cancelled"] as const) {
     assert.equal(
-      failedWorkflowWithoutResultAfter(
+      latestFailedWorkflowAfter(
         appendWorkflowAudit(emptyWorkflowAuditState, {
           ...blockedFailure,
           status,
         }),
         20,
       ),
-      false,
+      undefined,
     );
   }
 });

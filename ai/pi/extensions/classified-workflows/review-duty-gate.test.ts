@@ -180,19 +180,31 @@ test("pre-execution workflow recovery cannot bypass an observed review workflow"
   );
 });
 
-test("resultless failed workflow recovery remains fail-closed", () => {
+test("failed workflow recovery resumes only the same gated job", () => {
   const active = beginReviewDuty(emptyReviewDutyState, job, 10);
   assert.equal(active.ok, true);
   if (!active.ok) return;
   const awaiting = startReviewWorkflow(active.state, 20);
 
-  assert.deepEqual(retryFailedReviewDuty(awaiting, true, false), {
+  const recovered = retryFailedReviewDuty(awaiting, true, false);
+  assert.deepEqual(recovered, {
     ok: true,
     state: active.state,
   });
+  assert.equal(recovered.ok, true);
+  if (recovered.ok) {
+    assert.match(
+      beginReviewDuty(
+        recovered.state,
+        { ...job, pullRequest: 1102 },
+        30,
+      ).error ?? "",
+      /already the active review-duty job/i,
+    );
+  }
   assert.match(
     retryFailedReviewDuty(awaiting, false, false).error ?? "",
-    /not a proven terminal failure without any review result/i,
+    /not a proven terminal failure/i,
   );
   assert.match(
     retryFailedReviewDuty(awaiting, true, true).error ?? "",
@@ -207,7 +219,8 @@ test("resultless failed workflow recovery remains fail-closed", () => {
     extensionSource.indexOf('request.action === "retry-failed"'),
     extensionSource.indexOf("if (request.questionId === undefined)"),
   );
-  assert.match(retryHandler, /failedWorkflowWithoutResultAfter/);
+  assert.match(retryHandler, /latestFailedWorkflowAfter/);
+  assert.match(retryHandler, /partialChildren/);
   assert.match(retryHandler, /retryFailedReviewDuty/);
 });
 

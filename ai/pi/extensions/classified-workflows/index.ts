@@ -149,7 +149,7 @@ import {
   appendWorkflowAudit,
   auditedAgentRunner,
   emptyWorkflowAuditState,
-  failedWorkflowWithoutResultAfter,
+  latestFailedWorkflowAfter,
   nextWorkflowSequence,
   restoreWorkflowAudits,
   terminalWorkflowFailureDisprovesOwnershipBlock,
@@ -843,7 +843,7 @@ const WorkflowParameters = Type.Object({
 })
 
 export default function classifiedWorkflows(pi: ExtensionAPI): void {
-  registerRuntimeVersion(pi, "classified-workflows", "2026.08.01.124")
+  registerRuntimeVersion(pi, "classified-workflows", "2026.08.01.125")
   const childTokenLimit = workflowChildTokenLimit(
     process.env[WORKFLOW_CHILD_TOKEN_LIMIT_ENV],
   )
@@ -1968,7 +1968,7 @@ export default function classifiedWorkflows(pi: ExtensionAPI): void {
     name: "review_duty",
     label: "Review-duty reporting gate",
     description:
-      "Begin a dedicated ST0x/rainlanguage PR review job, inspect its gate, recover a proven pre-execution block or resultless failed execution, or prove its typed verdict question is linked to Piece of Pi before advancing.",
+      "Begin a dedicated ST0x/rainlanguage PR review job, inspect its gate, recover a proven pre-execution block or failed execution without advancing the job, or prove its typed verdict question is linked to Piece of Pi before advancing.",
     promptSnippet:
       "Gate each dedicated PR review on a persisted and Telegram-linked verdict question",
     promptGuidelines: [
@@ -2098,9 +2098,13 @@ export default function classifiedWorkflows(pi: ExtensionAPI): void {
           (workflow) =>
             workflow.status === "running" && workflow.startedAt >= completedAt,
         )
+        const failedWorkflow = latestFailedWorkflowAfter(
+          workflowAudits,
+          completedAt,
+        )
         const transition = retryFailedReviewDuty(
           reviewDutyState,
-          failedWorkflowWithoutResultAfter(workflowAudits, completedAt),
+          failedWorkflow !== undefined,
           workflowRunning,
         )
         if (!transition.ok) {
@@ -2116,12 +2120,23 @@ export default function classifiedWorkflows(pi: ExtensionAPI): void {
           content: [
             {
               type: "text" as const,
-              text: `Recovered resultless failed workflow for ${reviewDutyState.repository}#${reviewDutyState.pullRequest}; retry the same review without creating a verdict question`,
+              text: `Recovered failed workflow ${failedWorkflow?.id ?? "unknown"} for ${reviewDutyState.repository}#${reviewDutyState.pullRequest}; preserved ${failedWorkflow?.children.filter((child) => child.outputCharacters > 0).length ?? 0} partial child result reference(s) in the workflow audit for final consolidated reporting. Retry only this same review without creating a recovery question`,
             },
           ],
           details: {
             outcome: "retry-failed" as const,
             state: reviewDutyState,
+            recoveredAuditId: failedWorkflow?.id,
+            partialChildren: failedWorkflow?.children
+              .filter((child) => child.outputCharacters > 0)
+              .map((child) => ({
+                index: child.index,
+                status: child.status,
+                outputCharacters: child.outputCharacters,
+                ...(child.retainedOutput
+                  ? { retainedOutput: child.retainedOutput }
+                  : {}),
+              })),
           },
         }
       }

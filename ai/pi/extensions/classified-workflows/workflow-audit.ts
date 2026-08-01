@@ -1,6 +1,7 @@
 import type { AgentRequest, AgentResult, WorkflowLimits } from "./core.ts";
 
 export const WORKFLOW_AUDIT_ENTRY = "classified-workflows.audit";
+export const MAX_RETAINED_CHILD_OUTPUT_CHARACTERS = 2_000;
 
 export interface ChildAudit {
   readonly index: number;
@@ -11,6 +12,7 @@ export interface ChildAudit {
   readonly status: AgentResult["status"];
   readonly usageTokens: number;
   readonly outputCharacters: number;
+  readonly retainedOutput?: string;
   readonly reason?: string;
 }
 
@@ -83,17 +85,14 @@ export const workflowAuditEvidence = (state: WorkflowAuditState): string[] =>
     return `typed workflow audit: ${workflow.id} status=${workflow.status}; children=${children}${outcome}`;
   });
 
-export const failedWorkflowWithoutResultAfter = (
+export const latestFailedWorkflowAfter = (
   state: WorkflowAuditState,
   startedAt: number,
-): boolean => {
+): WorkflowAudit | undefined => {
   const latest = state.workflows
     .filter((workflow) => workflow.startedAt >= startedAt)
     .sort((left, right) => right.startedAt - left.startedAt)[0];
-  if (!latest || latest.status !== "failed") return false;
-  return latest.children.every(
-    (child) => child.status !== "completed" && child.outputCharacters === 0,
-  );
+  return latest?.status === "failed" ? latest : undefined;
 };
 
 export const terminalWorkflowFailureDisprovesOwnershipBlock = (
@@ -148,6 +147,12 @@ const decodeChildAudit = (value: unknown): ChildAudit | undefined => {
     typeof value.requestedModel !== "string"
   )
     return undefined;
+  if (
+    value.retainedOutput !== undefined &&
+    (typeof value.retainedOutput !== "string" ||
+      value.retainedOutput.length > MAX_RETAINED_CHILD_OUTPUT_CHARACTERS)
+  )
+    return undefined;
   if (value.reason !== undefined && typeof value.reason !== "string")
     return undefined;
   return {
@@ -159,6 +164,9 @@ const decodeChildAudit = (value: unknown): ChildAudit | undefined => {
     status: value.status,
     usageTokens: value.usageTokens,
     outputCharacters: value.outputCharacters,
+    ...(value.retainedOutput
+      ? { retainedOutput: value.retainedOutput }
+      : {}),
     ...(value.reason ? { reason: value.reason } : {}),
   };
 };
@@ -316,6 +324,14 @@ export const auditedAgentRunner = (
         status: result.status,
         usageTokens: result.usageTokens,
         outputCharacters: result.output.length,
+        ...(result.output
+          ? {
+              retainedOutput: result.output.slice(
+                0,
+                MAX_RETAINED_CHILD_OUTPUT_CHARACTERS,
+              ),
+            }
+          : {}),
         ...(result.status === "completed"
           ? completedDiagnostic
             ? { reason: sanitize(completedDiagnostic).slice(0, 1_000) }

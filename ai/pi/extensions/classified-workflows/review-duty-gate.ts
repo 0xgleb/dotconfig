@@ -186,7 +186,7 @@ export const retryBlockedReviewDuty = (
 
 export const retryFailedReviewDuty = (
   state: ReviewDutyState,
-  failedWithoutResult: boolean,
+  latestWorkflowFailed: boolean,
   workflowRunning: boolean,
 ): ReviewDutyTransition => {
   if (state.phase !== "awaiting_report") {
@@ -201,11 +201,11 @@ export const retryFailedReviewDuty = (
       error: "the review-duty workflow is still running",
     };
   }
-  if (!failedWithoutResult) {
+  if (!latestWorkflowFailed) {
     return {
       ok: false,
       error:
-        "the latest workflow is not a proven terminal failure without any review result; a persisted and relayed verdict question is required",
+        "the latest workflow is not a proven terminal failure; a persisted and relayed verdict question is required",
     };
   }
   const { completedAt: _completedAt, ...active } = state;
