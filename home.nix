@@ -204,7 +204,7 @@ in
   };
 
   age.identityPaths = lib.mkIf isDarwin [
-    "${config.home.homeDirectory}/.config/agenix/metagenda.txt"
+    "${config.home.homeDirectory}/.config/agenix/piece-of-pi.txt"
   ];
   age.secrets = lib.mkIf (isDarwin && builtins.pathExists ./secrets/metagenda-telegram-token.age) {
     metagenda-telegram-token.file = ./secrets/metagenda-telegram-token.age;
