@@ -2,7 +2,17 @@ import assert from "node:assert/strict"
 import test from "node:test"
 import { visibleWidth } from "@earendil-works/pi-tui"
 
-import { alignChromeLine, chromeInset } from "./chrome.ts"
+import {
+  alignChromeLine,
+  chromeInset,
+  framedChromeInset,
+} from "./chrome.ts"
+
+test("shared Pi chrome compensates framed surfaces for the host's built-in padding", () => {
+  for (const width of [40, 80, 180]) {
+    assert.equal(framedChromeInset(width) + 1, chromeInset(width))
+  }
+})
 
 test("shared Pi chrome uses one symmetric pane-relative gutter", () => {
   for (const width of [4, 40, 80, 180]) {

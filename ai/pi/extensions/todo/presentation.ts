@@ -1,5 +1,5 @@
 import { truncateToWidth, visibleWidth } from "@earendil-works/pi-tui"
-import { chromeInset } from "../shared/chrome.ts"
+import { framedChromeInset } from "../shared/chrome.ts"
 import {
   todoStatusMark,
   type Todo,
@@ -135,7 +135,7 @@ export const taskProgressPulseIndex = (
 ): number => {
   const boundedWidth = Math.max(1, Math.floor(width))
   const cycle = Math.max(1, boundedWidth * 2 - 2)
-  const offset = Math.abs(Math.floor(frame)) % cycle
+  const offset = Math.floor(Math.abs(Math.floor(frame)) / 2) % cycle
   return offset < boundedWidth ? offset : cycle - offset
 }
 
@@ -151,18 +151,19 @@ export const taskProgressBlinkRate = (
   return distance === 0 ? "rapid" : distance === 1 ? "slow" : "steady"
 }
 
-export const taskProgressCellVisible = (
+export type TaskProgressCellIntensity = "dim" | "normal" | "bright"
+
+export const taskProgressCellIntensity = (
   frame: number,
   index: number,
   width = TASK_PROGRESS_WIDTH,
-): boolean => {
+): TaskProgressCellIntensity => {
   const rate = taskProgressBlinkRate(frame, index, width)
   const boundedFrame = Math.abs(Math.floor(frame))
-  return rate === "rapid"
-    ? boundedFrame % 2 === 1
-    : rate === "slow"
-      ? Math.floor(boundedFrame / 2) % 2 === 1
-      : true
+  if (rate === "rapid") return boundedFrame % 2 === 0 ? "bright" : "normal"
+  if (rate === "slow")
+    return Math.floor(boundedFrame / 3) % 2 === 0 ? "dim" : "normal"
+  return "normal"
 }
 
 export const taskProgressBar = (completed: number, total: number): string => {
@@ -292,7 +293,7 @@ const rule = (inner: number, { left, right }: TaskHudRule): string => {
   return `${head} ${border(inner - headWidth - tailWidth - 2)} ${tail}`
 }
 
-export const taskHudInset = chromeInset
+export const taskHudInset = framedChromeInset
 
 export const frameTaskHud: (hud: TaskHud, width: number) => string[] = (
   hud,

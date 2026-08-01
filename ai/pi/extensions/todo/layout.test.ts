@@ -2,6 +2,7 @@ import assert from "node:assert/strict"
 import { readFileSync } from "node:fs"
 import test from "node:test"
 import { visibleWidth } from "@earendil-works/pi-tui"
+import { chromeInset } from "../shared/chrome.ts"
 
 import {
   PROMPT_MIN_CONTENT_ROWS,
@@ -74,6 +75,7 @@ test("prompt and task preview share frame edges at every supported pane width", 
     const taskWidth = width - taskInset * 2
 
     assert.equal(promptInset, taskInset)
+    assert.equal(promptInset + 1, chromeInset(width))
     assert.equal(promptWidth, taskWidth)
     assert.equal(visibleWidth(promptChromeTopLine(promptWidth)), promptWidth)
     assert.equal(frameTaskHud(activeTasks, width)[0]?.indexOf("╭"), taskInset)

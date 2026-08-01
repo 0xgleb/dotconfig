@@ -38,7 +38,7 @@ import {
   frameTaskHud,
   overlayRule,
   taskHud,
-  taskProgressCellVisible,
+  taskProgressCellIntensity,
   todoSummary,
 } from "./presentation.ts"
 import {
@@ -120,6 +120,11 @@ const statusColor = (status: TodoStatus | undefined): StatusColor => {
   }
 }
 
+const DIM_INTENSITY = "\x1b[2m"
+const NORMAL_INTENSITY = "\x1b[22m"
+const dimText = (text: string): string =>
+  `${DIM_INTENSITY}${text}${NORMAL_INTENSITY}`
+
 class TaskHudComponent {
   private readonly state: TodoState
   private readonly theme: Theme
@@ -141,17 +146,22 @@ class TaskHudComponent {
         progressBar.test(part)
           ? [...part]
               .map((cell, index) => {
-                const visible = taskProgressCellVisible(
+                const intensity = taskProgressCellIntensity(
                   this.animationFrame,
                   index,
                 )
-                return this.theme.fg(
+                const hued = this.theme.fg(
                   cell === "▰" ? "accent" : "muted",
-                  visible ? cell : " ",
+                  cell,
                 )
+                return intensity === "bright"
+                  ? this.theme.bold(hued)
+                  : intensity === "dim"
+                    ? dimText(hued)
+                    : hued
               })
               .join("")
-          : this.theme.fg("borderAccent", part),
+          : this.theme.bold(this.theme.fg("borderAccent", part)),
       )
       .join("")
   }
@@ -175,16 +185,13 @@ class TaskHudComponent {
     const framed = frameTaskHud(hud, width)
     if (hud.kind === "idle") {
       const [headline = "", row = ""] = framed
-      return [
-        this.theme.bold(this.colorTaskHeadline(headline)),
-        this.colorTaskRow(row),
-      ]
+      return [this.colorTaskHeadline(headline), this.colorTaskRow(row)]
     }
 
     const [headline, ...rows] = framed
 
     return [
-      this.theme.bold(this.colorTaskHeadline(headline ?? "")),
+      this.colorTaskHeadline(headline ?? ""),
       ...rows.map((row) => this.colorTaskRow(row)),
     ]
   }
@@ -299,7 +306,7 @@ function failedToolResult(
 const TODO_STATE_ENTRY = "todo.state"
 const TODO_REMINDER_MESSAGE = "todo.reminder"
 const MAX_TIMER_DELAY_MS = 2_147_483_647
-const HUD_ANIMATION_INTERVAL_MS = 180
+const HUD_ANIMATION_INTERVAL_MS = 240
 
 function restoredState(ctx: ExtensionContext): TodoState {
   const states = ctx.sessionManager.getBranch().flatMap((entry) => {
@@ -320,7 +327,7 @@ function restoredState(ctx: ExtensionContext): TodoState {
 }
 
 export default function todoExtension(pi: ExtensionAPI): void {
-  registerRuntimeVersion(pi, "todo", "2026.08.01.28")
+  registerRuntimeVersion(pi, "todo", "2026.08.01.29")
   const stateRef = Effect.runSync(Ref.make<TodoState>(emptyTodoState))
   let hudExpiry: ReturnType<typeof setTimeout> | undefined
   let hudAnimation: ReturnType<typeof setInterval> | undefined

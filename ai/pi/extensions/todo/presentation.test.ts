@@ -9,7 +9,7 @@ import {
   taskHudLines,
   taskProgressBar,
   taskProgressBlinkRate,
-  taskProgressCellVisible,
+  taskProgressCellIntensity,
   taskProgressPulseIndex,
   taskWidgetLines,
   todoSummary,
@@ -87,28 +87,34 @@ test("completion percentage is bounded and defined for an empty board", () => {
   assert.equal(taskCompletionPercent(8, 5), 100)
 })
 
-test("progress pulse uses varied blink rates without changing semantic completion cells", () => {
+test("progress pulse uses varied brightness rates without hiding semantic cells", () => {
   assert.deepEqual(
     Array.from({ length: 9 }, (_, frame) => taskProgressPulseIndex(frame)),
-    [0, 1, 2, 3, 4, 5, 6, 7, 6],
+    [0, 0, 1, 1, 2, 2, 3, 3, 4],
   )
   assert.deepEqual(
     Array.from({ length: 8 }, (_, index) =>
-      taskProgressBlinkRate(3, index),
+      taskProgressBlinkRate(6, index),
     ),
     ["steady", "steady", "slow", "rapid", "slow", "steady", "steady", "steady"],
   )
   assert.deepEqual(
     Array.from({ length: 8 }, (_, index) =>
-      taskProgressCellVisible(0, index),
+      taskProgressCellIntensity(0, index),
     ),
-    [false, false, true, true, true, true, true, true],
+    ["bright", "dim", "normal", "normal", "normal", "normal", "normal", "normal"],
   )
   assert.deepEqual(
     Array.from({ length: 8 }, (_, index) =>
-      taskProgressCellVisible(1, index),
+      taskProgressCellIntensity(1, index),
     ),
-    [false, true, false, true, true, true, true, true],
+    ["normal", "dim", "normal", "normal", "normal", "normal", "normal", "normal"],
+  )
+  assert.deepEqual(
+    Array.from({ length: 8 }, (_, index) =>
+      taskProgressCellIntensity(3, index),
+    ),
+    ["normal", "normal", "normal", "normal", "normal", "normal", "normal", "normal"],
   )
   assert.equal(taskProgressBar(1, 5), "▰▰▱▱▱▱▱▱")
 })
@@ -193,7 +199,7 @@ test("every framed line opens its content in the same column", () => {
   const columns = new Set(framedAt(64).map(columnOf))
   assert.deepEqual(
     [...columns],
-    [4],
+    [3],
     "headline and row must share one content column",
   )
 })
