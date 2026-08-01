@@ -76,34 +76,33 @@ test("kanban columns match Todo, In Progress, In Review, and Done", () => {
   )
 })
 
-test("task HUD keeps the visible queue archeofuturist and bounded to four lines", () => {
+test("task HUD keeps one preview row and stays smaller than the prompt", () => {
   assert.deepEqual(taskHudLines(state, 100_000), [
     "TASKS  ·  3 active  ·  1 blocked  ·  /kanban",
     "[ ] 01  #2  Fix classifier",
-    "[ ] 02  #3  Add task overlay",
-    "+2 hidden  ·  1/5 complete",
+    "+3 hidden  ·  1/5 complete",
   ])
-  assert.equal(taskHudLines(state).length <= 4, true)
+  assert.equal(taskHudLines(state).length, 3)
 })
 
 const framedAt = (width: number): string[] =>
   frameTaskHud(taskHud(state, 100_000), width)
 
-test("a session with nothing tracked keeps the HUD as a single rule", () => {
+test("a session with nothing tracked reserves the same three HUD rows", () => {
   const idle = taskHud({ todos: [], nextId: 1 })
   assert.equal(idle.kind, "idle")
 
   const framed = frameTaskHud(idle, 64)
+  assert.equal(framed.length, 3)
   assert.equal(
-    framed.length,
-    1,
-    "an idle session must not spend rows on an empty list",
+    framed.every((line) => visibleWidth(line) === 64),
+    true,
   )
-  assert.equal(visibleWidth(framed[0] as string), 64)
   assert.match(
     framed[0] as string,
-    /^╶─ TASKS  ·  nothing tracked ─+ \/kanban ─╴$/,
+    /^╭─ TASKS  ·  nothing tracked ─+ \/kanban ─╮$/,
   )
+  assert.match(framed[1] as string, /^│  No active tasks +│$/)
 })
 
 test("the HUD occupies the same columns whether or not a session tracks work", () => {
@@ -119,7 +118,7 @@ test("the HUD occupies the same columns whether or not a session tracks work", (
   )
 })
 
-test("the HUD stays within four lines no matter how much work is tracked", () => {
+test("the HUD stays within three lines no matter how much work is tracked", () => {
   const swamped: TodoState = {
     nextId: 61,
     todos: Array.from({ length: 60 }, (_unused, index) => ({
@@ -128,8 +127,8 @@ test("the HUD stays within four lines no matter how much work is tracked", () =>
       status: "pending" as const,
     })),
   }
-  assert.equal(frameTaskHud(taskHud(swamped, 100_000), 64).length <= 4, true)
-  assert.equal(taskHudLines(swamped, 100_000).length <= 4, true)
+  assert.equal(frameTaskHud(taskHud(swamped, 100_000), 64).length <= 3, true)
+  assert.equal(taskHudLines(swamped, 100_000).length <= 3, true)
 })
 
 test("task HUD frame stays aligned without colored backgrounds or doubled corners", () => {
@@ -143,7 +142,7 @@ test("task HUD frame stays aligned without colored backgrounds or doubled corner
     /^╭─ TASKS  ·  3 active  ·  1 blocked ─+ \/kanban ─╮$/,
   )
   assert.match(framed[1] ?? "", /^│  \[ \] 01 {2}#2 {2}Fix classifier +│$/)
-  assert.match(framed.at(-1) ?? "", /^╰─ \+2 hidden ─+ 1\/5 complete ─╯$/)
+  assert.match(framed.at(-1) ?? "", /^╰─ \+3 hidden ─+ 1\/5 complete ─╯$/)
   assert.equal(
     framed.some((line) => /╾╮╯|╮╮|╯╯/.test(line)),
     false,
@@ -165,9 +164,9 @@ const plain = (line: string): string => line.replaceAll(/\[[0-9;]*m/g, "")
 test("labels never touch the border run that separates them", () => {
   for (const width of [40, 64, 120]) {
     // Drop the fixed corner gutters; the corners legitimately abut their own rule.
-    const [headline, , , footer] = framedAt(width).map((line) =>
+    const [headline, , footer] = framedAt(width).map((line) =>
       plain(line).slice(3, -3),
-    ) as [string, string, string, string]
+    ) as [string, string, string]
     assert.doesNotMatch(
       headline,
       /[^ ─]─|─[^ ─]/,
@@ -224,7 +223,7 @@ test("completed and cancelled tasks remain visible briefly before dropping from 
   }
   assert.deepEqual(taskHudLines(settling, 7_000).slice(1, 3), [
     "[-] 01  #2  Cancelled",
-    "[x] 02  #1  Done",
+    "+2 hidden  ·  1/3 complete",
   ])
   assert.equal(taskHudLines(settling, 20_000)[1], "[ ] 01  #3  Next")
   assert.equal(

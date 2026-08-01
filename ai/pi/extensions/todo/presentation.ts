@@ -115,7 +115,7 @@ export const topPendingTodos: (
 
 const HUD_SETTLE_DELAY_MS = 10_000
 
-const HUD_ROW_LIMIT = 2
+const HUD_ROW_LIMIT = 1
 
 export const taskHud: (state: TodoState, now?: number) => TaskHud = (
   state,
@@ -237,11 +237,17 @@ export const frameTaskHud: (hud: TaskHud, width: number) => string[] = (
   width,
 ) => {
   const inner = Math.max(0, width - GUTTER * 2)
-  if (hud.kind === "idle") return [`╶─ ${rule(inner, hud.headline)} ─╴`]
-
   const pad = (text: string): string => {
     const content = truncateToWidth(text, inner, "…")
     return `${content}${" ".repeat(Math.max(0, inner - visibleWidth(content)))}`
+  }
+
+  if (hud.kind === "idle") {
+    return [
+      `╭─ ${rule(inner, hud.headline)} ─╮`,
+      `│  ${pad("No active tasks")}  │`,
+      `╰─ ${rule(inner, { left: "", right: "" })} ─╯`,
+    ]
   }
 
   return [
@@ -274,7 +280,8 @@ export const taskHudLines: (state: TodoState, now?: number) => string[] = (
   now = Date.now(),
 ) => {
   const hud = taskHud(state, now)
-  if (hud.kind === "idle") return [ruleText(hud.headline)]
+  if (hud.kind === "idle")
+    return [ruleText(hud.headline), "No active tasks", ""]
   return [
     ruleText(hud.headline),
     ...hud.rows.map((row) => `${todoStatusMark(row.status)} ${row.text}`),

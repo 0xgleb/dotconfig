@@ -45,7 +45,7 @@ test("fleet diagnostics expose current behavior-bearing component versions", () 
   )
   assert.match(
     read("../pi/extensions/pi-vim/index.ts"),
-    /pi-vim", "2026\.07\.23\.8"/,
+    /pi-vim", "2026\.07\.23\.9"/,
   )
   assert.match(
     read("../pi/extensions/release-cadence/index.ts"),
@@ -65,6 +65,6 @@ test("fleet diagnostics expose current behavior-bearing component versions", () 
   )
   assert.match(
     read("../pi/extensions/todo/index.ts"),
-    /todo", "2026\.07\.23\.14"/,
+    /todo", "2026\.07\.23\.15"/,
   )
 })

@@ -10,6 +10,10 @@ const editor = readFileSync(
 test("Pi Vim renders the prompt inside a pane-local inset rounded frame", () => {
   assert.match(editor, /const inset = promptChromeInset\(width\)/)
   assert.match(editor, /super\.render\(contentWidth\)/)
-  assert.match(editor, /this\.borderColor\("│"\).*content.*this\.borderColor\("│"\)/s)
+  assert.match(
+    editor,
+    /this\.borderColor\("│"\).*content.*this\.borderColor\("│"\)/s,
+  )
+  assert.match(editor, /PROMPT_MIN_CONTENT_ROWS - \(lines\.length - 2\)/)
   assert.match(editor, /leftMargin.*line.*rightMargin/s)
 })
