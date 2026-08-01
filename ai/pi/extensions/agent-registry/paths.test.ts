@@ -11,6 +11,10 @@ test("managed operational roles are scoped to their owning project sessions", ()
     managedOperationalRole("/Users/example/code/dataclique/yielduck", "/Users/example"),
     { project: "/Users/example/code/dataclique/yielduck", role: "operator" },
   );
+  assert.deepEqual(
+    managedOperationalRole("/Users/example/code/st0x", "/Users/example"),
+    { project: "/Users/example/code/st0x", role: "reviewer" },
+  );
   assert.equal(managedOperationalRole("/Users/example/code/other", "/Users/example"), undefined);
 });
 
@@ -41,6 +45,24 @@ test("sessions outside dedicated projects never self-claim their standing roles"
       "/Users/example",
     ),
     false,
+  );
+  assert.equal(
+    shouldSelfClaimUnownedRole(
+      "/Users/example/code/st0x",
+      "reviewer",
+      "/Users/example/code/other",
+      "/Users/example",
+    ),
+    false,
+  );
+  assert.equal(
+    shouldSelfClaimUnownedRole(
+      "/Users/example/code/st0x",
+      "reviewer",
+      "/Users/example/code/st0x",
+      "/Users/example",
+    ),
+    true,
   );
   assert.equal(
     shouldSelfClaimUnownedRole(
