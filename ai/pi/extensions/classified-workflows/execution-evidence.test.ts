@@ -52,6 +52,32 @@ test("subject-aware bounding retains verified draft-comment anchors from the mid
   assert.doesNotMatch(evidence, /finding 0:/);
 });
 
+test("workflow evidence retains assigned-review identity from a large GitHub response", () => {
+  const assignment = JSON.stringify({
+    repository: "rainlanguage/raindex",
+    number: 2827,
+    author: { login: "findolor" },
+    reviewRequests: [{ login: "0xgleb" }],
+  });
+  const evidence = toolResultExecutionEvidence({
+    toolName: "bash",
+    text: `${"unrelated ".repeat(800)}${assignment}${" trailing".repeat(800)}`,
+    isError: false,
+    subject: {
+      toolName: "workflow",
+      input: {
+        code: "Review assigned rainlanguage/raindex PR #2827 read-only",
+      },
+    },
+    maxCharacters: 900,
+  });
+
+  assert.match(evidence, /^bash result status=success:/);
+  assert.match(evidence, /rainlanguage\/raindex/);
+  assert.match(evidence, /reviewRequests/);
+  assert.match(evidence, /0xgleb/);
+});
+
 test("tool-input digests are canonical and distinguish materially new mutation payloads", () => {
   const first = toolInputDigest("skill_manage", {
     action: "patch",

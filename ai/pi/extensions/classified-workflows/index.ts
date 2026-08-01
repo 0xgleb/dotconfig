@@ -765,7 +765,7 @@ const WorkflowParameters = Type.Object({
 })
 
 export default function classifiedWorkflows(pi: ExtensionAPI): void {
-  registerRuntimeVersion(pi, "classified-workflows", "2026.08.01.101")
+  registerRuntimeVersion(pi, "classified-workflows", "2026.08.01.102")
   const childTokenLimit = workflowChildTokenLimit(
     process.env[WORKFLOW_CHILD_TOKEN_LIMIT_ENV],
   )
@@ -927,6 +927,7 @@ export default function classifiedWorkflows(pi: ExtensionAPI): void {
     intent: string[],
     instructions: string,
     skillProcedures: string[],
+    parentEvidence: string[],
   ): BackgroundWorkflow => {
     const id = `wf-${nextWorkflowId++}`
     const limits: WorkflowLimits = {
@@ -966,6 +967,7 @@ export default function classifiedWorkflows(pi: ExtensionAPI): void {
           ),
       },
       skillProcedures,
+      parentEvidence,
     )
     const runAgent = auditedAgentRunner(
       classifiedRunAgent,
@@ -1941,6 +1943,11 @@ export default function classifiedWorkflows(pi: ExtensionAPI): void {
         ctx.sessionManager.getBranch(),
         { cwd: ctx.cwd },
       )
+      const parentEvidence = recentExecutionEvidence(ctx, {
+        toolName: "workflow",
+        input: params,
+        cwd: ctx.cwd,
+      })
       const limits: WorkflowLimits = {
         maxAgents: params.maxAgents,
         concurrency: params.concurrency,
@@ -1957,6 +1964,7 @@ export default function classifiedWorkflows(pi: ExtensionAPI): void {
           intent,
           instructions,
           skillProcedures,
+          parentEvidence,
         )
         return {
           content: [
@@ -1994,6 +2002,7 @@ export default function classifiedWorkflows(pi: ExtensionAPI): void {
             ),
         },
         skillProcedures,
+        parentEvidence,
       )
       const runAgent = auditedAgentRunner(
         classifiedRunAgent,

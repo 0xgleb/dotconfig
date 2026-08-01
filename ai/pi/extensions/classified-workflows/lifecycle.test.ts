@@ -9,6 +9,7 @@ import {
   retainLatestCustomMessages,
   withheldExecutedToolResultPatch,
 } from "./lifecycle.ts";
+import type { ClassificationRequest } from "./lifecycle.ts";
 import type { Decision } from "./core.ts";
 import {
   CONTINUATION_PAUSE_ENTRY,
@@ -146,6 +147,34 @@ test("agent execution is enclosed by spawn and return classification", async () 
     usageTokens: 12,
   });
   assert.deepEqual(boundaries, ["spawn", "execute", "return"]);
+});
+
+test("workflow children inherit bounded parent execution evidence at spawn and return", async () => {
+  const classifications: ClassificationRequest[] = [];
+  const parentEvidence = [
+    "bash result status=success: {\"number\":2827,\"reviewRequests\":[{\"login\":\"0xgleb\"}]}",
+  ];
+  const run = createClassifiedAgentRunner(
+    ["Review assigned rainlanguage pull requests"],
+    "Keep reviews read-only",
+    {
+      async classify(request) {
+        classifications.push(request);
+        return allow;
+      },
+      async execute() {
+        return { status: "completed", output: "reviewed", usageTokens: 12 };
+      },
+    },
+    [],
+    parentEvidence,
+  );
+
+  await run({ task: "Read-only review of rainlanguage/raindex PR #2827" });
+  assert.equal(classifications.length, 2);
+  for (const request of classifications) {
+    assert.deepEqual(request.evidence, parentEvidence);
+  }
 });
 
 test("blocked spawn never executes the agent", async () => {

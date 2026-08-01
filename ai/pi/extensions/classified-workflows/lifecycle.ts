@@ -116,6 +116,7 @@ export function createClassifiedAgentRunner(
   projectInstructions: string,
   dependencies: LifecycleDependencies,
   skillProcedures: string[] = [],
+  parentEvidence: string[] = [],
 ): ClassifiedAgentRunner {
   return async (request, signal, tokenLimit = Number.MAX_SAFE_INTEGER) => {
     const spawnDecision = await dependencies.classify(
@@ -124,6 +125,7 @@ export function createClassifiedAgentRunner(
         intent,
         projectInstructions,
         skillProcedures,
+        evidence: parentEvidence,
         subject: request,
       },
       signal,
@@ -144,6 +146,7 @@ export function createClassifiedAgentRunner(
         intent,
         projectInstructions,
         skillProcedures,
+        evidence: parentEvidence,
         subject: { request, status: result.status, output: result.output },
       },
       signal,
