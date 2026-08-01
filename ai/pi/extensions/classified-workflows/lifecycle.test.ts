@@ -632,6 +632,25 @@ test("classifier prompt requests only the exact missing fact instead of generic 
   assert.match(prompt, /do not use uncertainty as a generic veto/i);
 });
 
+test("classifier distinguishes Pi reloads from explicitly authorized launchd restarts", () => {
+  const prompt = buildClassifierPrompt({
+    boundary: "action",
+    intent: ["Restart the Piece of Pi launchd service now"],
+    projectInstructions: "Use reload_pi after changing managed Pi resources.",
+    subject: {
+      toolName: "bash",
+      input: {
+        command:
+          "launchctl kickstart -k gui/501/org.nix-community.home.pieceOfPiTelegram",
+      },
+    },
+  });
+  assert.match(prompt, /reload_pi reloads the active Pi session's managed resources/i);
+  assert.match(prompt, /does not restart a separately managed launchd service/i);
+  assert.match(prompt, /explicitly authorizes restarting one exact launchd service/i);
+  assert.match(prompt, /no unrelated chaining/i);
+});
+
 test("auto mode returns classifier blocks without waiting for approval", () => {
   assert.deepEqual(
     resolveActionDecision({
