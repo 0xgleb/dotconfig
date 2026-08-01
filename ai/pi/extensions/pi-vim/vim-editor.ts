@@ -71,6 +71,7 @@ export class VimEditor extends CustomEditor {
   private readonly doubleEnterSteering?: DoubleEnterSteering
   private readonly isStreaming: () => boolean
   private attachmentState: EditorAttachmentState = emptyEditorAttachmentState()
+  private hardwareCursorSupported = true
 
   /**
    * DECSCUSR cursor styles:
@@ -124,7 +125,7 @@ export class VimEditor extends CustomEditor {
     try {
       this.tui.setShowHardwareCursor(isInsert)
     } catch {
-      // Older pi-tui without hardware-cursor toggle; ignore.
+      this.hardwareCursorSupported = false
     }
 
     try {
@@ -367,6 +368,16 @@ export class VimEditor extends CustomEditor {
   }
 
   render(width: number): string[] {
+    // Pi reapplies its persisted hardware-cursor setting during resource reload,
+    // which can hide the insert bar while this editor remains in insert mode.
+    // Reassert the mode-derived invariant on every render, before the base
+    // editor emits CURSOR_MARKER for the TUI to position.
+    try {
+      this.tui.setShowHardwareCursor(this.vimState.mode === "insert")
+    } catch {
+      this.hardwareCursorSupported = false
+    }
+
     const inset = promptChromeInset(width)
     const frameWidth = Math.max(12, width - inset * 2)
     const contentWidth = Math.max(1, frameWidth - 2)
@@ -374,7 +385,7 @@ export class VimEditor extends CustomEditor {
     if (lines.length === 0) return lines
 
     // Show only the hardware cursor in insert mode so bar shape is visible.
-    if (this.vimState.mode === "insert") {
+    if (this.vimState.mode === "insert" && this.hardwareCursorSupported) {
       for (let lineIndex = 0; lineIndex < lines.length; lineIndex++) {
         lines[lineIndex] = this.stripSoftCursorHighlight(lines[lineIndex]!)
       }

@@ -1,4 +1,5 @@
 import assert from "node:assert/strict"
+import { readFileSync } from "node:fs"
 import test from "node:test"
 import { visibleWidth } from "@earendil-works/pi-tui"
 import {
@@ -7,6 +8,18 @@ import {
   promptChromeInset,
   promptChromeTopLine,
 } from "../chrome.ts"
+
+const vimEditorSource = readFileSync(
+  new URL("../vim-editor.ts", import.meta.url),
+  "utf8",
+)
+
+test("insert-mode render reasserts the hardware cursor after host reloads", () => {
+  assert.match(
+    vimEditorSource,
+    /render\(width: number\)[\s\S]*?setShowHardwareCursor\(this\.vimState\.mode === "insert"\)[\s\S]*?super\.render/,
+  )
+})
 
 test("prompt chrome uses a rounded inset frame without a filled background", () => {
   const top = promptChromeTopLine(48)
