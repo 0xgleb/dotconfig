@@ -36,10 +36,19 @@ const EVIDENCE_STOP_WORDS = new Set([
 
 const evidenceTerms = (value: unknown): ReadonlySet<string> => {
   const serialized = JSON.stringify(value)?.toLowerCase() ?? "";
+  const terms = (serialized.match(/[a-z0-9_./:#-]{4,}/g) ?? [])
+    .map((term) => term.replace(/^[-./:#]+|[-./:#]+$/g, ""))
+    .filter((term) => term.length >= 4 && !EVIDENCE_STOP_WORDS.has(term));
   return new Set(
-    (serialized.match(/[a-z0-9_./:#-]{4,}/g) ?? [])
-      .map((term) => term.replace(/^[-./:#]+|[-./:#]+$/g, ""))
-      .filter((term) => term.length >= 4 && !EVIDENCE_STOP_WORDS.has(term)),
+    terms.flatMap((term) => [
+      term,
+      ...term
+        .split(/[./:#_-]+/g)
+        .filter(
+          (component) =>
+            component.length >= 4 && !EVIDENCE_STOP_WORDS.has(component),
+        ),
+    ]),
   );
 };
 
@@ -172,22 +181,34 @@ export const selectRelevantExecutionEvidence = (
   const recent = currentCandidates.slice(recentStart);
   const terms = evidenceTerms(subject);
   const olderCandidates = currentCandidates.slice(0, recentStart);
+  const scoredOlderCandidates = olderCandidates.map((candidate, index) => ({
+    candidate,
+    index,
+    score: [...terms].reduce(
+      (score, term) =>
+        score + (candidate.toLowerCase().includes(term) ? 1 : 0),
+      0,
+    ),
+  }));
   const selectedOlderIndexes = new Set(
-    olderCandidates
-      .map((candidate, index) => ({
-        candidate,
-        index,
-        score: [...terms].reduce(
-          (score, term) =>
-            score + (candidate.toLowerCase().includes(term) ? 1 : 0),
-          0,
-        ),
-      }))
+    scoredOlderCandidates
       .filter(({ score }) => score > 0)
       .sort((left, right) => right.score - left.score || right.index - left.index)
       .slice(0, relevantCount)
       .map(({ index }) => index),
   );
+  const ttddRedPhaseIndexes = scoredOlderCandidates
+    .filter(
+      ({ candidate, score }) =>
+        score > 0 &&
+        /^bash result status=error\b/i.test(candidate) &&
+        /\b(?:cargo\s+(?:nextest\s+run|test)|nextest\s+run|bun\s+(?:run\s+)?test|pnpm\s+test|npm\s+test|pytest)\b/i.test(
+          candidate,
+        ),
+    )
+    .slice(-4)
+    .map(({ index }) => index);
+  for (const index of ttddRedPhaseIndexes) selectedOlderIndexes.add(index);
   const vcsTopologyIndexes = olderCandidates
     .map((candidate, index) => ({ candidate, index }))
     .filter(({ candidate }) =>

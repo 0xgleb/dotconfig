@@ -190,6 +190,34 @@ test("older source-read evidence remains relevant to a sequential review workflo
   assert.ok(selected.includes(agentsEvidence));
 });
 
+test("relevant expected TTDD red evidence survives preparatory calls across source paths", () => {
+  const redDigest = toolInputDigest("bash", {
+    command:
+      "cargo nextest run -E 'test(an_unprofitable_loop_market_never_proposes)'",
+  });
+  const red = `bash result status=error inputDigest=${redDigest} input={"command":"cargo nextest run -E 'test(an_unprofitable_loop_market_never_proposes)'"}: /api/loops/opportunity timed out because the endpoint does not exist`;
+  const candidates = [
+    red,
+    "read result status=success: pt loops implementation overview",
+    ...Array.from({ length: 10 }, (_, index) =>
+      `tool ${index}: unrelated preparatory result`,
+    ),
+  ];
+  const subject = {
+    toolName: "edit",
+    input: { path: "crates/yielduck/src/pt_loops.rs" },
+  };
+  const selected = selectRelevantExecutionEvidence(candidates, subject, 3, 1);
+  assert.ok(selected.includes(red));
+
+  const green = `bash result status=success inputDigest=${redDigest}: test passed`;
+  assert.ok(
+    !selectRelevantExecutionEvidence([...candidates, green], subject, 3, 1)
+      .join("\n")
+      .includes("timed out"),
+  );
+});
+
 test("Graphite parent evidence survives an unrelated delta-review subject", () => {
   const parentEvidence =
     'bash result status=success input={"command":"gt parent --no-interactive"}: main';
