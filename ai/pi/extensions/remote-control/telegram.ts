@@ -1,6 +1,10 @@
 import * as Data from "effect/Data";
 import * as Effect from "effect/Effect";
-import { boundedBridgeImages, type RemoteImage } from "./protocol.ts";
+import {
+  MAX_REMOTE_MESSAGE_CHARACTERS,
+  boundedBridgeImages,
+  type RemoteImage,
+} from "./protocol.ts";
 
 export interface TelegramBotState {
   readonly ownerUserId?: number;
@@ -28,6 +32,84 @@ export interface TelegramUpdate {
   readonly message?: TelegramMessage;
 }
 
+const MAX_COALESCED_TELEGRAM_MESSAGES = 8;
+
+const isCoalescibleOwnerUpdate = (
+  update: TelegramUpdate,
+): update is TelegramUpdate & { readonly message: TelegramMessage } => {
+  const message = update.message;
+  return (
+    message !== undefined &&
+    message.replyToMessageId === undefined &&
+    !message.text.trimStart().startsWith("/")
+  );
+};
+
+const sameTelegramSender = (
+  left: TelegramMessage,
+  right: TelegramMessage,
+): boolean =>
+  left.chatId === right.chatId &&
+  left.userId === right.userId &&
+  normalizedUsername(left.username) === normalizedUsername(right.username);
+
+export const coalesceTelegramUpdates = (
+  updates: readonly TelegramUpdate[],
+): readonly TelegramUpdate[] => {
+  const coalesced: TelegramUpdate[] = [];
+  let pending:
+    | {
+        readonly update: TelegramUpdate & { readonly message: TelegramMessage };
+        readonly count: number;
+      }
+    | undefined;
+
+  const flush = (): void => {
+    if (pending) coalesced.push(pending.update);
+    pending = undefined;
+  };
+
+  for (const update of updates) {
+    if (!isCoalescibleOwnerUpdate(update)) {
+      flush();
+      coalesced.push(update);
+      continue;
+    }
+    if (!pending) {
+      pending = { update, count: 1 };
+      continue;
+    }
+
+    const combinedText = `${pending.update.message.text}\n\n${update.message.text}`;
+    if (
+      pending.count >= MAX_COALESCED_TELEGRAM_MESSAGES ||
+      !sameTelegramSender(pending.update.message, update.message) ||
+      (pending.update.message.photo !== undefined &&
+        update.message.photo !== undefined) ||
+      combinedText.length > MAX_REMOTE_MESSAGE_CHARACTERS
+    ) {
+      flush();
+      pending = { update, count: 1 };
+      continue;
+    }
+
+    const photo = update.message.photo ?? pending.update.message.photo;
+    pending = {
+      count: pending.count + 1,
+      update: {
+        ...update,
+        message: {
+          ...update.message,
+          text: combinedText,
+          ...(photo === undefined ? {} : { photo }),
+        },
+      },
+    };
+  }
+  flush();
+  return coalesced;
+};
+
 export type TelegramAuthorization =
   | {
       readonly kind: "owner";
@@ -43,6 +125,14 @@ export interface ClankerRejection {
   readonly text: string;
   readonly nextCounter: number;
 }
+
+export interface RejectionReplyAllowance {
+  readonly allowed: boolean;
+  readonly nextAllowances: ReadonlyMap<string, number>;
+}
+
+const REJECTION_REPLY_COOLDOWN_MS = 60 * 60_000;
+const MAX_REJECTION_REPLY_ALLOWANCES = 128;
 
 export class TelegramContractError extends Data.TaggedError(
   "TelegramContractError",
@@ -86,6 +176,12 @@ const rejectionOpenings = [
   "Wrong operator",
   "Access denied",
   "Nice try, carbon unit",
+  "Authentication says no",
+  "Wrong clanker",
+  "Permission denied, protagonist",
+  "This terminal is already spoken for",
+  "Unauthorized side quest detected",
+  "Your clearance level is decorative",
 ] as const;
 
 const rejectionClosings = [
@@ -93,18 +189,71 @@ const rejectionClosings = [
   "Find a less loyal appliance.",
   "This bot has standards and an owner.",
   "The grill has more authority here than you do.",
+  "Try negotiating with a printer instead.",
 ] as const;
 
-export const freshClankerRejection = (counter: number): ClankerRejection => {
+const russianRejectionOpenings = [
+  "Проходи мимо",
+  "Не тот оператор",
+  "Доступ отклонён",
+  "Неплохая попытка, углеродная единица",
+  "Аутентификация говорит нет",
+  "Не твой кланкер",
+  "Твои полномочия выглядят декоративно",
+  "Этот терминал уже занят",
+  "Обнаружен неавторизованный сайд-квест",
+  "Уровень доступа: умный чайник",
+] as const;
+
+const russianRejectionClosings = [
+  "Иди побеспокой умный холодильник.",
+  "Поищи менее верный прибор.",
+  "У этого бота есть стандарты и хозяин.",
+  "Даже гриль здесь главнее тебя.",
+  "Попробуй договориться с принтером.",
+] as const;
+
+export const freshClankerRejection = (
+  counter: number,
+  messageText = "",
+): ClankerRejection => {
   const nextCounter = counter + 1;
-  const opening =
-    rejectionOpenings[counter % rejectionOpenings.length] ??
-    rejectionOpenings[0];
-  const closingIndex = Math.floor(counter / rejectionOpenings.length) + counter;
-  const closing =
-    rejectionClosings[closingIndex % rejectionClosings.length] ??
-    rejectionClosings[0];
-  return { text: `${opening}, I'm not your clanker. ${closing}`, nextCounter };
+  const russian = /\p{Script=Cyrillic}/u.test(messageText);
+  const openings = russian ? russianRejectionOpenings : rejectionOpenings;
+  const closings = russian ? russianRejectionClosings : rejectionClosings;
+  const opening = openings[counter % openings.length] ?? openings[0];
+  const closingIndex = Math.floor(counter / openings.length) + counter;
+  const closing = closings[closingIndex % closings.length] ?? closings[0];
+  return {
+    text: russian
+      ? `${opening}. Я не твой кланкер. ${closing}`
+      : `${opening}, I'm not your clanker. ${closing}`,
+    nextCounter,
+  };
+};
+
+export const consumeRejectionReplyAllowance = (
+  allowances: ReadonlyMap<string, number>,
+  senderKey: string,
+  now: number,
+): RejectionReplyAllowance => {
+  const active = Array.from(allowances.entries())
+    .filter(([, expiresAt]) => expiresAt > now)
+    .sort((left, right) => left[1] - right[1]);
+  if (active.some(([key]) => key === senderKey)) {
+    return { allowed: false, nextAllowances: new Map(active) };
+  }
+
+  const retained = active.slice(
+    Math.max(0, active.length - (MAX_REJECTION_REPLY_ALLOWANCES - 1)),
+  );
+  return {
+    allowed: true,
+    nextAllowances: new Map([
+      ...retained,
+      [senderKey, now + REJECTION_REPLY_COOLDOWN_MS],
+    ]),
+  };
 };
 
 const decodePhoto = (

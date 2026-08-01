@@ -25,6 +25,8 @@ import { makeRemoteBridgeStore } from "./sqlite-store.ts";
 import { telegramHtmlChunks } from "./telegram-format.ts";
 import {
   authorizeTelegramMessage,
+  coalesceTelegramUpdates,
+  consumeRejectionReplyAllowance,
   decodeTelegramFilePath,
   decodeTelegramOk,
   decodeTelegramSentMessageId,
@@ -38,8 +40,11 @@ import {
 } from "./telegram.ts";
 
 const TELEGRAM_LONG_POLL_SECONDS = 25;
+const TELEGRAM_BURST_WINDOW_MS = 2_000;
 const TELEGRAM_MESSAGE_LIMIT = 4_000;
 const BRIDGE_RESULT_POLL_INTERVAL = "1 second";
+const BRIDGE_TYPING_REFRESH_MS = 4_000;
+const PROGRESS_MESSAGE_DELAY_MS = 1_500;
 const POLL_RETRY_INTERVAL = "2 seconds";
 
 interface PieceOfPiState extends TelegramBotState {
@@ -58,6 +63,7 @@ interface PieceOfPiConfiguration {
 interface PieceOfPiRuntime {
   readonly configuration: PieceOfPiConfiguration;
   readonly state: Ref.Ref<PieceOfPiState>;
+  readonly rejectionReplyAllowances: Ref.Ref<ReadonlyMap<string, number>>;
   readonly bridge: ReturnType<typeof makeRemoteBridgeStore>;
 }
 
@@ -69,6 +75,7 @@ type PieceOfPiEvent =
   | "bridge_failed"
   | "question_relayed"
   | "question_answered"
+  | "feedback_failed"
   | "update_failed";
 
 export type PieceOfPiConfigurationErrorCode =
@@ -117,7 +124,11 @@ const emit = (
   fields: Readonly<Record<string, string | number>> = {},
 ): void => {
   const level =
-    event === "poll_failed" || event === "bridge_failed" ? "error" : "info";
+    event === "poll_failed" ||
+    event === "bridge_failed" ||
+    event === "feedback_failed"
+      ? "error"
+      : "info";
   process.stdout.write(`${JSON.stringify({ level, event, ...fields })}\n`);
 };
 
@@ -395,6 +406,30 @@ const sendTelegramAction = (
     action: "typing",
   }).pipe(Effect.flatMap(decodeTelegramOk));
 
+type TelegramReactionEmoji = "👀" | "👍" | "😢";
+
+const sendTelegramReaction = (
+  runtime: PieceOfPiRuntime,
+  chatId: number,
+  messageId: number,
+  emoji: TelegramReactionEmoji,
+): Effect.Effect<void, TelegramTransportError | TelegramContractError> =>
+  telegramCall(runtime.configuration, "setMessageReaction", {
+    chat_id: chatId,
+    message_id: messageId,
+    reaction: [{ type: "emoji", emoji }],
+  }).pipe(Effect.flatMap(decodeTelegramOk));
+
+const bestEffortTelegramFeedback = <E>(
+  method: string,
+  feedback: Effect.Effect<void, E>,
+): Effect.Effect<void> =>
+  feedback.pipe(
+    Effect.catchAll(() =>
+      Effect.sync(() => emit("feedback_failed", { method })),
+    ),
+  );
+
 const editTelegramMessage = (
   runtime: PieceOfPiRuntime,
   chatId: number,
@@ -461,6 +496,19 @@ const sendText = (
   );
 };
 
+const sendFormattedText = (
+  runtime: PieceOfPiRuntime,
+  chatId: number,
+  text: string,
+  replyToMessageId?: number,
+): Effect.Effect<void, TelegramTransportError | TelegramContractError> =>
+  Effect.forEach(
+    telegramHtmlChunks(text, TELEGRAM_MESSAGE_LIMIT),
+    (chunk) =>
+      sendTelegramMessage(runtime, chatId, chunk, replyToMessageId, "HTML"),
+    { discard: true },
+  );
+
 const replaceProgressMessage = (
   runtime: PieceOfPiRuntime,
   chatId: number,
@@ -481,23 +529,51 @@ const replaceProgressMessage = (
   );
 };
 
+interface TelegramUpdateRequest {
+  readonly offset?: number;
+  readonly timeoutSeconds?: number;
+}
+
 const getUpdates = (
   runtime: PieceOfPiRuntime,
+  request: TelegramUpdateRequest = {},
 ): Effect.Effect<
   ReadonlyArray<TelegramUpdate>,
   TelegramTransportError | TelegramContractError
 > =>
   Ref.get(runtime.state).pipe(
-    Effect.flatMap((state) =>
-      telegramCall(runtime.configuration, "getUpdates", {
-        ...(state.nextUpdateId !== undefined
-          ? { offset: state.nextUpdateId }
-          : {}),
-        timeout: TELEGRAM_LONG_POLL_SECONDS,
+    Effect.flatMap((state) => {
+      const offset = request.offset ?? state.nextUpdateId;
+      return telegramCall(runtime.configuration, "getUpdates", {
+        ...(offset === undefined ? {} : { offset }),
+        timeout: request.timeoutSeconds ?? TELEGRAM_LONG_POLL_SECONDS,
         allowed_updates: ["message"],
-      }),
-    ),
+      });
+    }),
     Effect.flatMap(decodeTelegramUpdates),
+  );
+
+const collectTelegramUpdateBurst = (
+  runtime: PieceOfPiRuntime,
+): Effect.Effect<
+  ReadonlyArray<TelegramUpdate>,
+  TelegramTransportError | TelegramContractError
+> =>
+  getUpdates(runtime).pipe(
+    Effect.flatMap((initialUpdates) => {
+      if (initialUpdates.length === 0) return Effect.succeed(initialUpdates);
+      const nextOffset =
+        Math.max(...initialUpdates.map(({ updateId }) => updateId)) + 1;
+      return Effect.sleep(TELEGRAM_BURST_WINDOW_MS).pipe(
+        Effect.flatMap(() =>
+          getUpdates(runtime, { offset: nextOffset, timeoutSeconds: 0 }),
+        ),
+        Effect.map((additionalUpdates) => [
+          ...initialUpdates,
+          ...additionalUpdates,
+        ]),
+      );
+    }),
   );
 
 const agentLabel = (agent: BridgeAgent): string =>
@@ -599,11 +675,79 @@ const chooseAgent = (
     }),
   );
 
+interface BridgeFeedbackState {
+  readonly progressAttempted: boolean;
+  readonly progressMessageId?: number;
+  readonly nextTypingAt: number;
+}
+
+const deliverBridgeText = (
+  runtime: PieceOfPiRuntime,
+  chatId: number,
+  ownerMessageId: number,
+  progressMessageId: number | undefined,
+  text: string,
+): Effect.Effect<void, TelegramTransportError | TelegramContractError> =>
+  progressMessageId === undefined
+    ? sendFormattedText(runtime, chatId, text, ownerMessageId)
+    : replaceProgressMessage(runtime, chatId, progressMessageId, text);
+
+const advanceBridgeFeedback = (
+  runtime: PieceOfPiRuntime,
+  chatId: number,
+  ownerMessageId: number,
+  progressText: string,
+  startedAt: number,
+  feedback: BridgeFeedbackState,
+): Effect.Effect<BridgeFeedbackState> => {
+  const now = Date.now();
+  const refreshTyping = now >= feedback.nextTypingAt;
+  const showProgress =
+    !feedback.progressAttempted && now - startedAt >= PROGRESS_MESSAGE_DELAY_MS;
+  const activity = refreshTyping
+    ? bestEffortTelegramFeedback(
+        "sendChatAction",
+        sendTelegramAction(runtime, chatId),
+      )
+    : Effect.void;
+  const progressMessageId = showProgress
+    ? sendTelegramMessage(
+        runtime,
+        chatId,
+        progressText,
+        ownerMessageId,
+      ).pipe(
+        Effect.map((messageId): number | undefined => messageId),
+        Effect.catchAll(() =>
+          Effect.sync(() => {
+            emit("feedback_failed", { method: "sendMessage" });
+            return undefined;
+          }),
+        ),
+      )
+    : Effect.succeed(feedback.progressMessageId);
+
+  return Effect.all({ activity, progressMessageId }).pipe(
+    Effect.map(({ progressMessageId: nextProgressMessageId }) => ({
+      progressAttempted: feedback.progressAttempted || showProgress,
+      ...(nextProgressMessageId === undefined
+        ? {}
+        : { progressMessageId: nextProgressMessageId }),
+      nextTypingAt: refreshTyping
+        ? now + BRIDGE_TYPING_REFRESH_MS
+        : feedback.nextTypingAt,
+    })),
+  );
+};
+
 const awaitBridgeResult = (
   runtime: PieceOfPiRuntime,
   chatId: number,
+  ownerMessageId: number,
   bridgeMessageId: string,
-  progressMessageId: number,
+  progressText: string,
+  startedAt: number,
+  feedback: BridgeFeedbackState,
 ): Effect.Effect<
   void,
   TelegramTransportError | TelegramContractError | RemoteBridgeError
@@ -611,20 +755,36 @@ const awaitBridgeResult = (
   runtime.bridge.get(bridgeMessageId, Date.now()).pipe(
     Effect.flatMap((message) => {
       if (message.status === "completed") {
-        return replaceProgressMessage(
+        return deliverBridgeText(
           runtime,
           chatId,
-          progressMessageId,
+          ownerMessageId,
+          feedback.progressMessageId,
           message.response,
-        ).pipe(Effect.tap(() => Effect.sync(() => emit("bridge_completed"))));
+        ).pipe(
+          Effect.tap(() =>
+            bestEffortTelegramFeedback(
+              "setMessageReaction",
+              sendTelegramReaction(runtime, chatId, ownerMessageId, "👍"),
+            ),
+          ),
+          Effect.tap(() => Effect.sync(() => emit("bridge_completed"))),
+        );
       }
       if (message.status === "failed") {
-        return replaceProgressMessage(
+        return deliverBridgeText(
           runtime,
           chatId,
-          progressMessageId,
+          ownerMessageId,
+          feedback.progressMessageId,
           `Pi could not complete that message (${message.failure}). Please retry or use /agents to select another agent.`,
         ).pipe(
+          Effect.tap(() =>
+            bestEffortTelegramFeedback(
+              "setMessageReaction",
+              sendTelegramReaction(runtime, chatId, ownerMessageId, "😢"),
+            ),
+          ),
           Effect.tap(() =>
             Effect.sync(() =>
               emit("bridge_failed", { failure: message.failure }),
@@ -632,13 +792,27 @@ const awaitBridgeResult = (
           ),
         );
       }
-      return Effect.sleep(BRIDGE_RESULT_POLL_INTERVAL).pipe(
-        Effect.flatMap(() =>
-          awaitBridgeResult(
-            runtime,
-            chatId,
-            bridgeMessageId,
-            progressMessageId,
+      return advanceBridgeFeedback(
+        runtime,
+        chatId,
+        ownerMessageId,
+        progressText,
+        startedAt,
+        feedback,
+      ).pipe(
+        Effect.flatMap((nextFeedback) =>
+          Effect.sleep(BRIDGE_RESULT_POLL_INTERVAL).pipe(
+            Effect.flatMap(() =>
+              awaitBridgeResult(
+                runtime,
+                chatId,
+                ownerMessageId,
+                bridgeMessageId,
+                progressText,
+                startedAt,
+                nextFeedback,
+              ),
+            ),
           ),
         ),
       );
@@ -664,38 +838,33 @@ const enqueueOwnerMessage = (
       ).pipe(Effect.map((images) => ({ agent, images }))),
     ),
     Effect.flatMap(({ agent, images }) =>
-      runtime.bridge
-        .enqueue({
-          targetAgentId: agent.id,
-          requesterId: `telegram-owner-${update.message.userId}`,
-          dedupeKey: `telegram-update-${update.updateId}`,
-          text: update.message.text,
-          images,
-          now: Date.now(),
-          ttlMs: BRIDGE_MESSAGE_TTL_MS,
-        })
-        .pipe(Effect.map((bridgeMessage) => ({ bridgeMessage }))),
+      runtime.bridge.enqueue({
+        targetAgentId: agent.id,
+        requesterId: `telegram-owner-${update.message.userId}`,
+        dedupeKey: `telegram-update-${update.updateId}`,
+        text: update.message.text,
+        images,
+        now: Date.now(),
+        ttlMs: BRIDGE_MESSAGE_TTL_MS,
+      }),
     ),
-    Effect.flatMap(({ bridgeMessage }) =>
-      sendTelegramMessage(
-        runtime,
-        update.message.chatId,
-        update.message.photo ? "Reading the image…" : "Working on it…",
-        update.message.messageId,
-      ).pipe(
-        Effect.map((progressMessageId) => ({
-          bridgeMessage,
-          progressMessageId,
-        })),
-      ),
-    ),
-    Effect.flatMap(({ bridgeMessage, progressMessageId }) =>
-      Effect.forkDaemon(
+    Effect.flatMap((bridgeMessage) => {
+      const startedAt = Date.now();
+      const progressText = update.message.photo
+        ? "Reading the image…"
+        : "Working on it…";
+      return Effect.forkDaemon(
         awaitBridgeResult(
           runtime,
           update.message.chatId,
+          update.message.messageId,
           bridgeMessage.id,
-          progressMessageId,
+          progressText,
+          startedAt,
+          {
+            progressAttempted: false,
+            nextTypingAt: startedAt + BRIDGE_TYPING_REFRESH_MS,
+          },
         ).pipe(
           Effect.catchAll((error) =>
             sendText(
@@ -711,8 +880,8 @@ const enqueueOwnerMessage = (
             ),
           ),
         ),
-      ).pipe(Effect.asVoid),
-    ),
+      ).pipe(Effect.asVoid);
+    }),
   );
 
 const selectAgent = (
@@ -862,24 +1031,40 @@ const handleUpdateBody = (
         runtime.configuration.ownerUsername,
       );
       if (authorization.kind === "rejected") {
-        const rejection = freshClankerRejection(state.rejectionCounter);
-        const rejectedState = {
-          ...state,
-          rejectionCounter: rejection.nextCounter,
-        };
-        return Ref.set(runtime.state, rejectedState).pipe(
-          Effect.flatMap(() =>
-            persistState(runtime.configuration.statePath, rejectedState),
-          ),
-          Effect.flatMap(() =>
-            sendText(
-              runtime,
-              update.message.chatId,
-              rejection.text,
-              update.message.messageId,
-            ),
-          ),
-          Effect.tap(() => Effect.sync(() => emit("sender_rejected"))),
+        const senderKey = `${update.message.userId}:${update.message.chatId}`;
+        return Ref.modify(runtime.rejectionReplyAllowances, (allowances) => {
+          const result = consumeRejectionReplyAllowance(
+            allowances,
+            senderKey,
+            Date.now(),
+          );
+          return [result.allowed, result.nextAllowances] as const;
+        }).pipe(
+          Effect.flatMap((allowed) => {
+            if (!allowed) return Effect.void;
+            const rejection = freshClankerRejection(
+              state.rejectionCounter,
+              update.message.text,
+            );
+            const rejectedState = {
+              ...state,
+              rejectionCounter: rejection.nextCounter,
+            };
+            return Ref.set(runtime.state, rejectedState).pipe(
+              Effect.flatMap(() =>
+                persistState(runtime.configuration.statePath, rejectedState),
+              ),
+              Effect.flatMap(() =>
+                sendText(
+                  runtime,
+                  update.message.chatId,
+                  rejection.text,
+                  update.message.messageId,
+                ),
+              ),
+              Effect.tap(() => Effect.sync(() => emit("sender_rejected"))),
+            );
+          }),
         );
       }
 
@@ -891,6 +1076,17 @@ const handleUpdateBody = (
       return Ref.set(runtime.state, ownerState).pipe(
         Effect.flatMap(() =>
           persistState(runtime.configuration.statePath, ownerState),
+        ),
+        Effect.flatMap(() =>
+          bestEffortTelegramFeedback(
+            "setMessageReaction",
+            sendTelegramReaction(
+              runtime,
+              update.message.chatId,
+              update.message.messageId,
+              "👀",
+            ),
+          ),
         ),
         Effect.flatMap(() => handleQuestionReply(runtime, update)),
         Effect.flatMap((questionHandled) =>
@@ -952,7 +1148,8 @@ const handleUpdate = (
 
 const poll = (runtime: PieceOfPiRuntime): Effect.Effect<never, never> =>
   relayPendingQuestions(runtime).pipe(
-    Effect.flatMap(() => getUpdates(runtime)),
+    Effect.flatMap(() => collectTelegramUpdateBurst(runtime)),
+    Effect.map(coalesceTelegramUpdates),
     Effect.flatMap((updates) =>
       Effect.forEach(updates, (update) => handleUpdate(runtime, update), {
         discard: true,
@@ -978,9 +1175,13 @@ const program = Effect.gen(function* () {
   const configuration = yield* loadConfiguration;
   const initialState = yield* loadState(configuration.statePath);
   const state = yield* Ref.make(initialState);
+  const rejectionReplyAllowances = yield* Ref.make<ReadonlyMap<string, number>>(
+    new Map(),
+  );
   const runtime: PieceOfPiRuntime = {
     configuration,
     state,
+    rejectionReplyAllowances,
     bridge: makeRemoteBridgeStore(
       remoteBridgeDatabasePath(process.env.XDG_STATE_HOME, homedir()),
     ),

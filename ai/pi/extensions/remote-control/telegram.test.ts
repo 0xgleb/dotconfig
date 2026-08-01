@@ -5,6 +5,8 @@ import * as Either from "effect/Either";
 
 import {
   authorizeTelegramMessage,
+  coalesceTelegramUpdates,
+  consumeRejectionReplyAllowance,
   decodeTelegramFilePath,
   decodeTelegramOk,
   decodeTelegramSentMessageId,
@@ -53,7 +55,7 @@ test("owner authorization requires both the pinned id and current username", () 
   assert.deepEqual(missingUsername.state, pinned);
 });
 
-test("unauthorized senders never alter owner state and receive fresh clanker rejections", () => {
+test("unauthorized senders never alter owner state and receive local clanker rejections", () => {
   const stranger = { ...ownerMessage, userId: 2002, username: "stranger" };
   const authorization = authorizeTelegramMessage(
     initialTelegramBotState,
@@ -65,9 +67,50 @@ test("unauthorized senders never alter owner state and receive fresh clanker rej
 
   assert.equal(authorization.kind, "rejected");
   assert.deepEqual(authorization.state, initialTelegramBotState);
+  const russian = freshClankerRejection(0, "Привет, кланкер");
+
   assert.notEqual(first.text, second.text);
   assert.match(first.text, /not your clanker/i);
   assert.match(second.text, /not your clanker/i);
+  assert.match(russian.text, /[А-Яа-яЁё]/u);
+});
+
+test("local clanker pools compose fifty unique replies per supported language", () => {
+  const english = Array.from({ length: 50 }, (_, counter) =>
+    freshClankerRejection(counter).text,
+  );
+  const russian = Array.from({ length: 50 }, (_, counter) =>
+    freshClankerRejection(counter, "Привет").text,
+  );
+
+  assert.equal(new Set(english).size, 50);
+  assert.equal(new Set(russian).size, 50);
+  assert.equal(russian.every((text) => /[А-Яа-яЁё]/u.test(text)), true);
+});
+
+test("unauthorized rejection replies are bounded per sender without persisted identifiers", () => {
+  const first = consumeRejectionReplyAllowance(new Map(), "2002:42", 1_000);
+  const repeated = consumeRejectionReplyAllowance(
+    first.nextAllowances,
+    "2002:42",
+    1_001,
+  );
+  const otherSender = consumeRejectionReplyAllowance(
+    repeated.nextAllowances,
+    "3003:42",
+    1_002,
+  );
+  const afterCooldown = consumeRejectionReplyAllowance(
+    otherSender.nextAllowances,
+    "2002:42",
+    3_601_001,
+  );
+
+  assert.equal(first.allowed, true);
+  assert.equal(repeated.allowed, false);
+  assert.equal(otherSender.allowed, true);
+  assert.equal(afterCooldown.allowed, true);
+  assert.equal(afterCooldown.nextAllowances.size <= 128, true);
 });
 
 test("Telegram updates decode only documented private text-message fields", async () => {
@@ -158,6 +201,57 @@ test("ignored Telegram updates retain their offset so they cannot wedge polling"
     ),
     [{ updateId: 125 }],
   );
+});
+
+test("adjacent owner text bursts coalesce while commands and replies remain boundaries", () => {
+  const updates = [
+    { updateId: 200, message: { ...ownerMessage, text: "first" } },
+    {
+      updateId: 201,
+      message: { ...ownerMessage, messageId: 8, text: "second" },
+    },
+    {
+      updateId: 202,
+      message: {
+        ...ownerMessage,
+        messageId: 9,
+        text: "screenshot context",
+        photo: { fileId: "screen", width: 1_200, height: 800 },
+      },
+    },
+    {
+      updateId: 203,
+      message: { ...ownerMessage, messageId: 10, text: "/agents" },
+    },
+    {
+      updateId: 204,
+      message: {
+        ...ownerMessage,
+        messageId: 11,
+        text: "answer",
+        replyToMessageId: 77,
+      },
+    },
+    {
+      updateId: 205,
+      message: { ...ownerMessage, messageId: 12, text: "third" },
+    },
+  ];
+
+  assert.deepEqual(coalesceTelegramUpdates(updates), [
+    {
+      updateId: 202,
+      message: {
+        ...ownerMessage,
+        messageId: 9,
+        text: "first\n\nsecond\n\nscreenshot context",
+        photo: { fileId: "screen", width: 1_200, height: 800 },
+      },
+    },
+    updates[3],
+    updates[4],
+    updates[5],
+  ]);
 });
 
 test("private replies retain only the referenced Telegram message id", async () => {

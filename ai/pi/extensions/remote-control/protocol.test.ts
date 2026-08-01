@@ -14,6 +14,7 @@ import {
 
 test("remote prompts are explicitly communication-only", () => {
   const prompt = remoteTurnPrompt("Give me a concise status update.");
+  assert.match(prompt, /Authenticated Piece of Pi Telegram/i);
   assert.match(prompt, /all tools are disabled/i);
   assert.match(prompt, /Do not execute or approve actions/i);
   assert.match(prompt, /Give me a concise status update/);
