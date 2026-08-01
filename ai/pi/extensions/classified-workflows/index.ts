@@ -472,8 +472,7 @@ function recentExecutionEvidence(
       toolCallInputs.set(part.id, part.arguments)
     }
   }
-  const executionEvidence = branch
-    .flatMap((entry) => {
+  const executionEvidence = branch.flatMap((entry) => {
       if (entry.type !== "message" || !isRecord(entry.message)) return []
       if (entry.message.role === "assistant") {
         const text = messageText(entry.message)
@@ -516,7 +515,6 @@ function recentExecutionEvidence(
         }),
       ]
     })
-    .slice(-80)
   return [
     ...(compaction
       ? [
@@ -846,7 +844,7 @@ const WorkflowParameters = Type.Object({
 })
 
 export default function classifiedWorkflows(pi: ExtensionAPI): void {
-  registerRuntimeVersion(pi, "classified-workflows", "2026.08.01.128")
+  registerRuntimeVersion(pi, "classified-workflows", "2026.08.01.129")
   const childTokenLimit = workflowChildTokenLimit(
     process.env[WORKFLOW_CHILD_TOKEN_LIMIT_ENV],
   )

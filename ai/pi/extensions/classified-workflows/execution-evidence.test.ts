@@ -1,4 +1,5 @@
 import assert from "node:assert/strict";
+import { readFileSync } from "node:fs";
 import test from "node:test";
 import {
   boundedExecutionEvidence,
@@ -7,6 +8,8 @@ import {
   toolInputDigest,
   toolResultExecutionEvidence,
 } from "./execution-evidence.ts";
+
+const extensionSource = readFileSync(new URL("./index.ts", import.meta.url), "utf8");
 
 test("large GraphQL tool results retain bounded thread IDs, authors, and resolution state", () => {
   const threads = Array.from({ length: 20 }, (_, index) => ({
@@ -199,7 +202,7 @@ test("relevant expected TTDD red evidence survives preparatory calls across sour
   const candidates = [
     red,
     "read result status=success: pt loops implementation overview",
-    ...Array.from({ length: 10 }, (_, index) =>
+    ...Array.from({ length: 120 }, (_, index) =>
       `tool ${index}: unrelated preparatory result`,
     ),
   ];
@@ -209,6 +212,12 @@ test("relevant expected TTDD red evidence survives preparatory calls across sour
   };
   const selected = selectRelevantExecutionEvidence(candidates, subject, 3, 1);
   assert.ok(selected.includes(red));
+  const evidenceCollector = extensionSource.slice(
+    extensionSource.indexOf("function recentExecutionEvidence"),
+    extensionSource.indexOf("const classifierBackoff"),
+  );
+  assert.doesNotMatch(evidenceCollector, /\.slice\(-80\)/);
+  assert.match(evidenceCollector, /selectRelevantExecutionEvidence\(executionEvidence, subject\)/);
 
   const green = `bash result status=success inputDigest=${redDigest}: test passed`;
   assert.ok(
