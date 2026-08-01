@@ -249,29 +249,33 @@ test("Telegram file downloads stay on a bounded relative path and allowed image 
     );
   }
 
+  const jpeg = Buffer.from([0xff, 0xd8, 0xff, 0xdb, 0x00]);
   assert.deepEqual(
     await Effect.runPromise(
-      telegramImageFromBytes("image/jpeg", Buffer.from("image-fixture")),
+      telegramImageFromBytes("application/octet-stream", jpeg),
     ),
     {
       mediaType: "image/jpeg",
-      data: Buffer.from("image-fixture").toString("base64"),
+      data: jpeg.toString("base64"),
     },
   );
-  assert.equal(
-    Either.isLeft(
-      await Effect.runPromise(
-        Effect.either(
-          telegramImageFromBytes("text/html", Buffer.from("not-an-image")),
+  for (const [contentType, bytes] of [
+    ["text/html", Buffer.from("not-an-image")],
+    ["image/png", jpeg],
+  ] as const) {
+    assert.equal(
+      Either.isLeft(
+        await Effect.runPromise(
+          Effect.either(telegramImageFromBytes(contentType, bytes)),
         ),
       ),
-    ),
-    true,
-  );
+      true,
+    );
+  }
 });
 
 test("Telegram boolean method responses require an explicit ok envelope", async () => {
-  await Effect.runPromise(decodeTelegramOk({ ok: true, result: true }))
+  await Effect.runPromise(decodeTelegramOk({ ok: true, result: true }));
   assert.equal(
     Either.isLeft(
       await Effect.runPromise(
@@ -285,8 +289,8 @@ test("Telegram boolean method responses require an explicit ok envelope", async 
       ),
     ),
     true,
-  )
-})
+  );
+});
 
 test("sendMessage responses decode only the documented message id", async () => {
   assert.equal(

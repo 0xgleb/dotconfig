@@ -414,6 +414,7 @@ const registerTelegramCommands = (
 ): Effect.Effect<void, TelegramTransportError | TelegramContractError> =>
   telegramCall(runtime.configuration, "setMyCommands", {
     commands: [
+      { command: "kanban", description: "Show the selected agent task board" },
       { command: "agents", description: "List available Pi agents" },
       { command: "use", description: "Select a Pi agent by label or ID" },
       { command: "bridge", description: "Show bridge status" },
@@ -804,7 +805,7 @@ const handleOwnerCommand = (
     return sendText(
       runtime,
       update.message.chatId,
-      "Owner authenticated. Commands: /agents, /use <label>, /bridge. Other text defaults to the .config Pi agent.",
+      "Owner authenticated. Commands: /kanban, /agents, /use <label>, /bridge. Other text defaults to the .config Pi agent.",
       update.message.messageId,
     ).pipe(Effect.as(true));
   }

@@ -35,5 +35,6 @@ test("Telegram UX uses activity, editable progress, commands, and image delivery
   assert.match(source, /"Working on it…"/);
   assert.match(source, /"editMessageText"/);
   assert.match(source, /"setMyCommands"/);
+  assert.match(source, /command: "kanban"/);
   assert.match(source, /downloadTelegramPhoto/);
 });

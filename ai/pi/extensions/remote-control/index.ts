@@ -1,18 +1,19 @@
-import { homedir } from "node:os"
+import { homedir } from "node:os";
 import type {
   ExtensionAPI,
   ExtensionContext,
-} from "@earendil-works/pi-coding-agent"
-import { Effect, Either } from "effect"
-import { wasRunAborted } from "../shared/continuation-pause.ts"
+} from "@earendil-works/pi-coding-agent";
+import { Effect, Either } from "effect";
+import { wasRunAborted } from "../shared/continuation-pause.ts";
 import {
   QUESTION_REMOTE_RESOLUTION_EVENT,
   QUESTION_STATE_EVENT,
   type RemoteUserQuestionResolution,
   type UserQuestionStateSnapshot,
-} from "../shared/question-events.ts"
-import { registerRuntimeVersion } from "../shared/runtime-version.ts"
-import { remoteBridgeDatabasePath } from "./paths.ts"
+} from "../shared/question-events.ts";
+import { registerRuntimeVersion } from "../shared/runtime-version.ts";
+import { remoteBridgeDatabasePath } from "./paths.ts";
+import { remoteKanbanResponse } from "./remote-commands.ts";
 import {
   BRIDGE_AGENT_TTL_MS,
   RemoteBridgeError,
@@ -20,56 +21,56 @@ import {
   remoteTurnContent,
   type RemoteFailure,
   type RemoteMessage,
-} from "./protocol.ts"
-import { makeRemoteBridgeStore } from "./sqlite-store.ts"
-import { enterRemoteToolGuard, type RemoteToolGuard } from "./tool-guard.ts"
+} from "./protocol.ts";
+import { makeRemoteBridgeStore } from "./sqlite-store.ts";
+import { enterRemoteToolGuard, type RemoteToolGuard } from "./tool-guard.ts";
 
-const POLL_MS = 2_000
-const STATUS_KEY = "remote-control"
+const POLL_MS = 2_000;
+const STATUS_KEY = "remote-control";
 
 interface ActiveRemoteTurn {
-  readonly messageId: string
-  readonly claimToken: string
-  readonly toolGuard: RemoteToolGuard
+  readonly messageId: string;
+  readonly claimToken: string;
+  readonly toolGuard: RemoteToolGuard;
 }
 
 const safeError = (error: RemoteBridgeError): string =>
-  `${error.code}: ${error.message}`.slice(0, 160)
+  `${error.code}: ${error.message}`.slice(0, 160);
 
 export default function remoteControl(pi: ExtensionAPI): void {
-  registerRuntimeVersion(pi, "remote-control", "2026.08.01.6")
+  registerRuntimeVersion(pi, "remote-control", "2026.08.01.7");
   const store = makeRemoteBridgeStore(
     remoteBridgeDatabasePath(process.env.XDG_STATE_HOME, homedir()),
-  )
-  let timer: ReturnType<typeof setInterval> | undefined
-  let latestCtx: ExtensionContext | undefined
-  let syncing = false
-  let active: ActiveRemoteTurn | undefined
-  let questionState: UserQuestionStateSnapshot = { questions: [] }
-  let questionsDirty = true
+  );
+  let timer: ReturnType<typeof setInterval> | undefined;
+  let latestCtx: ExtensionContext | undefined;
+  let syncing = false;
+  let active: ActiveRemoteTurn | undefined;
+  let questionState: UserQuestionStateSnapshot = { questions: [] };
+  let questionsDirty = true;
 
   const run = <A>(
     operation: Effect.Effect<A, RemoteBridgeError>,
   ): Promise<Either.Either<A, RemoteBridgeError>> =>
-    Effect.runPromise(Effect.either(operation))
+    Effect.runPromise(Effect.either(operation));
 
   pi.events.on(QUESTION_STATE_EVENT, (snapshot: UserQuestionStateSnapshot) => {
-    questionState = snapshot
-    questionsDirty = true
-  })
+    questionState = snapshot;
+    questionsDirty = true;
+  });
 
   const clearActive = (turn: ActiveRemoteTurn): void => {
-    if (active !== turn) return
-    turn.toolGuard.restore()
-    active = undefined
-    latestCtx?.ui.setStatus(STATUS_KEY, undefined)
-  }
+    if (active !== turn) return;
+    turn.toolGuard.restore();
+    active = undefined;
+    latestCtx?.ui.setStatus(STATUS_KEY, undefined);
+  };
 
   const finishFailure = async (
     turn: ActiveRemoteTurn,
     failure: RemoteFailure,
   ): Promise<void> => {
-    clearActive(turn)
+    clearActive(turn);
     const result = await run(
       store.fail({
         messageId: turn.messageId,
@@ -77,14 +78,14 @@ export default function remoteControl(pi: ExtensionAPI): void {
         failure,
         now: Date.now(),
       }),
-    )
+    );
     if (Either.isLeft(result) && result.left.code !== "invalid_transition") {
       latestCtx?.ui.setStatus(
         STATUS_KEY,
         `remote:error · ${safeError(result.left)}`,
-      )
+      );
     }
-  }
+  };
 
   const beginTurn = async (
     message: Extract<RemoteMessage, { readonly status: "claimed" }>,
@@ -94,16 +95,19 @@ export default function remoteControl(pi: ExtensionAPI): void {
       messageId: message.id,
       claimToken: message.claimToken,
       toolGuard: enterRemoteToolGuard(pi),
-    }
-    active = turn
-    ctx.ui.setStatus(STATUS_KEY, "remote:chat · tools:off")
+    };
+    active = turn;
+    ctx.ui.setStatus(STATUS_KEY, "remote:chat · tools:off");
     const sent = await Effect.runPromise(
       Effect.either(
         Effect.try({
           try: () =>
-            pi.sendUserMessage(remoteTurnContent(message.text, message.images), {
-              deliverAs: "steer",
-            }),
+            pi.sendUserMessage(
+              remoteTurnContent(message.text, message.images),
+              {
+                deliverAs: "steer",
+              },
+            ),
           catch: () =>
             new RemoteBridgeError({
               code: "io",
@@ -111,16 +115,16 @@ export default function remoteControl(pi: ExtensionAPI): void {
             }),
         }),
       ),
-    )
-    if (Either.isLeft(sent)) await finishFailure(turn, "model_error")
-  }
+    );
+    if (Either.isLeft(sent)) await finishFailure(turn, "model_error");
+  };
 
   const sync = async (ctx: ExtensionContext): Promise<void> => {
-    if (syncing) return
-    syncing = true
-    latestCtx = ctx
+    if (syncing) return;
+    syncing = true;
+    latestCtx = ctx;
     try {
-      const now = Date.now()
+      const now = Date.now();
       const heartbeat = await run(
         store.heartbeatAgent({
           id: ctx.sessionManager.getSessionId(),
@@ -130,13 +134,13 @@ export default function remoteControl(pi: ExtensionAPI): void {
           now,
           ttlMs: BRIDGE_AGENT_TTL_MS,
         }),
-      )
+      );
       if (Either.isLeft(heartbeat)) {
         ctx.ui.setStatus(
           STATUS_KEY,
           `remote:error · ${safeError(heartbeat.left)}`,
-        )
-        return
+        );
+        return;
       }
 
       if (questionsDirty) {
@@ -146,15 +150,15 @@ export default function remoteControl(pi: ExtensionAPI): void {
             questions: questionState.questions,
             now,
           }),
-        )
+        );
         if (Either.isLeft(questionSync)) {
           ctx.ui.setStatus(
             STATUS_KEY,
             `remote:error · ${safeError(questionSync.left)}`,
-          )
-          return
+          );
+          return;
         }
-        questionsDirty = false
+        questionsDirty = false;
       }
 
       const resolution = await run(
@@ -162,68 +166,84 @@ export default function remoteControl(pi: ExtensionAPI): void {
           agentId: ctx.sessionManager.getSessionId(),
           now,
         }),
-      )
+      );
       if (Either.isLeft(resolution)) {
         ctx.ui.setStatus(
           STATUS_KEY,
           `remote:error · ${safeError(resolution.left)}`,
-        )
-        return
+        );
+        return;
       }
       if (resolution.right) {
         const answer: RemoteUserQuestionResolution = {
           id: resolution.right.questionId,
           answer: resolution.right.answer,
-        }
-        pi.events.emit(QUESTION_REMOTE_RESOLUTION_EVENT, answer)
+        };
+        pi.events.emit(QUESTION_REMOTE_RESOLUTION_EVENT, answer);
       }
 
-      if (active) return
+      if (active) return;
       const claimed = await run(
         store.claimNext({ agentId: ctx.sessionManager.getSessionId(), now }),
-      )
+      );
       if (Either.isLeft(claimed)) {
         ctx.ui.setStatus(
           STATUS_KEY,
           `remote:error · ${safeError(claimed.left)}`,
-        )
-        return
+        );
+        return;
       }
-      if (claimed.right?.status === "claimed")
-        await beginTurn(claimed.right, ctx)
-      else ctx.ui.setStatus(STATUS_KEY, undefined)
+      if (claimed.right?.status === "claimed") {
+        if (claimed.right.text.trim() === "/kanban") {
+          const completed = await run(
+            store.complete({
+              messageId: claimed.right.id,
+              claimToken: claimed.right.claimToken,
+              response: remoteKanbanResponse(ctx.sessionManager.getBranch()),
+              now: Date.now(),
+            }),
+          );
+          if (Either.isLeft(completed))
+            ctx.ui.setStatus(
+              STATUS_KEY,
+              `remote:error · ${safeError(completed.left)}`,
+            );
+        } else {
+          await beginTurn(claimed.right, ctx);
+        }
+      } else ctx.ui.setStatus(STATUS_KEY, undefined);
     } finally {
-      syncing = false
+      syncing = false;
     }
-  }
+  };
 
   pi.on("session_start", (_event, ctx) => {
-    latestCtx = ctx
-    questionsDirty = true
-    if (timer) clearInterval(timer)
-    timer = setInterval(() => void sync(ctx), POLL_MS)
-    timer.unref()
-    void sync(ctx)
-  })
+    latestCtx = ctx;
+    questionsDirty = true;
+    if (timer) clearInterval(timer);
+    timer = setInterval(() => void sync(ctx), POLL_MS);
+    timer.unref();
+    void sync(ctx);
+  });
 
   pi.on("before_agent_start", () => {
-    active?.toolGuard.enforce()
-  })
+    active?.toolGuard.enforce();
+  });
 
   pi.on("agent_end", async (event, ctx) => {
-    latestCtx = ctx
-    const turn = active
-    if (!turn) return
+    latestCtx = ctx;
+    const turn = active;
+    if (!turn) return;
     if (wasRunAborted(event.messages)) {
-      await finishFailure(turn, "aborted")
-      return
+      await finishFailure(turn, "aborted");
+      return;
     }
-    const response = finalAssistantText(event.messages)
+    const response = finalAssistantText(event.messages);
     if (!response) {
-      await finishFailure(turn, "model_error")
-      return
+      await finishFailure(turn, "model_error");
+      return;
     }
-    clearActive(turn)
+    clearActive(turn);
     const completed = await run(
       store.complete({
         messageId: turn.messageId,
@@ -231,21 +251,21 @@ export default function remoteControl(pi: ExtensionAPI): void {
         response,
         now: Date.now(),
       }),
-    )
+    );
     if (Either.isLeft(completed))
       ctx.ui.setStatus(
         STATUS_KEY,
         `remote:error · ${safeError(completed.left)}`,
-      )
-  })
+      );
+  });
 
   pi.on("session_shutdown", async (_event, ctx) => {
-    if (timer) clearInterval(timer)
-    timer = undefined
-    latestCtx = ctx
-    const turn = active
-    if (turn) await finishFailure(turn, "session_ended")
-    ctx.ui.setStatus(STATUS_KEY, undefined)
-    latestCtx = undefined
-  })
+    if (timer) clearInterval(timer);
+    timer = undefined;
+    latestCtx = ctx;
+    const turn = active;
+    if (turn) await finishFailure(turn, "session_ended");
+    ctx.ui.setStatus(STATUS_KEY, undefined);
+    latestCtx = undefined;
+  });
 }

@@ -26,7 +26,7 @@ Boundaries:
 5. Bridge responses are bounded before crossing back into Telegram.
 6. Pending `ask_user` questions cross from one exact Pi session into the shared SQLite relay. The daemon binds the resulting Telegram `message_id` to that exact `(agent_id, question_id)` pair. Only a private owner message whose `reply_to_message.message_id` matches that binding may answer it.
 7. Telegram question replies cross back as bounded answer data. They resolve only the bound pending question. A reply not bound to a live question remains ordinary owner conversation; it never authorizes a tool call.
-8. Telegram photos cross into Pi as typed image content only after owner authentication, documented `getFile` decoding, HTTPS download from Telegram's fixed file endpoint, media allowlisting, and byte bounds. Pixels and captions remain untrusted model data under the zero-tool remote-turn guard.
+8. Telegram photos cross into Pi as typed image content only after owner authentication, documented `getFile` decoding, HTTPS download from Telegram's fixed file endpoint, bounded JPEG/PNG/WebP magic-byte detection, declared-type consistency checks, and byte bounds. Generic `application/octet-stream` headers are accepted only when the bytes identify an allowed image. Pixels and captions remain untrusted model data under the zero-tool remote-turn guard.
 
 Assets:
 
