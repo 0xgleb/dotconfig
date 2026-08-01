@@ -14,6 +14,10 @@ const activityStatus = readFileSync(
   new URL("../activity-status/index.ts", import.meta.url),
   "utf8",
 )
+const todoExtension = readFileSync(
+  new URL("./index.ts", import.meta.url),
+  "utf8",
+)
 
 const activeTasks = taskHud({
   nextId: 3,
@@ -39,11 +43,15 @@ test("side-by-side sessions reserve identical fixed-height chrome", () => {
   }
 
   assert.equal(PROMPT_MIN_CONTENT_ROWS, 3)
-  assert.match(activityStatus, /const IDLE_PROGRESS_ROW = \[""\] as const/)
+  assert.match(
+    activityStatus,
+    /const IDLE_PROGRESS_ROW = \["READY · awaiting activity"\] as const/,
+  )
   assert.match(
     activityStatus,
     /setWidget\(TOOL_PROGRESS_WIDGET_KEY, IDLE_PROGRESS_ROW,[\s\S]*?placement: "belowEditor"/,
   )
+  assert.doesNotMatch(todoExtension, /borderMuted", footer\),\s*""/)
 })
 
 test("prompt is wider than the task preview at every supported pane width", () => {

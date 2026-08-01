@@ -160,7 +160,7 @@ test("every framed line opens its content in the same column", () => {
   const columns = new Set(framedAt(64).map(columnOf))
   assert.deepEqual(
     [...columns],
-    [7],
+    [6],
     "headline, rows, and footer must share one content column",
   )
 })

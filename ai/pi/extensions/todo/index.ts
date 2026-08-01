@@ -137,7 +137,6 @@ class TaskHudComponent {
         this.theme.bold(this.theme.fg("borderAccent", headline)),
         this.theme.fg("dim", row),
         this.theme.fg("borderMuted", footer),
-        "",
       ]
     }
 
@@ -152,7 +151,6 @@ class TaskHudComponent {
         this.theme.fg(statusColor(hud.rows[index]?.status), row),
       ),
       this.theme.fg("borderMuted", footer),
-      "",
     ]
   }
 
@@ -286,7 +284,7 @@ function restoredState(ctx: ExtensionContext): TodoState {
 }
 
 export default function todoExtension(pi: ExtensionAPI): void {
-  registerRuntimeVersion(pi, "todo", "2026.07.23.16")
+  registerRuntimeVersion(pi, "todo", "2026.07.23.17")
   const stateRef = Effect.runSync(Ref.make<TodoState>(emptyTodoState))
   let hudExpiry: ReturnType<typeof setTimeout> | undefined
   let reminderTimer: ReturnType<typeof setTimeout> | undefined

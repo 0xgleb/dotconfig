@@ -19,10 +19,10 @@ import {
 const STATUS_KEY = "activity-phase"
 const TOOL_PROGRESS_WIDGET_KEY = "activity-tool-progress"
 const TOOL_PROGRESS_TICK_MS = 1_000
-const IDLE_PROGRESS_ROW = [""] as const
+const IDLE_PROGRESS_ROW = ["READY · awaiting activity"] as const
 
 export default function activityStatus(pi: ExtensionAPI): void {
-  registerRuntimeVersion(pi, "activity-status", "2026.07.23.3")
+  registerRuntimeVersion(pi, "activity-status", "2026.07.23.4")
   const runningTools = new Map<string, ToolProgress>()
   let latestCtx: ExtensionContext | undefined
   let classifierDepth = 0

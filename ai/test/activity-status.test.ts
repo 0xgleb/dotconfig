@@ -44,7 +44,10 @@ test("long-running tool UX is transient, elapsed, and content-safe", () => {
     activity,
     /setWidget\(TOOL_PROGRESS_WIDGET_KEY, \[phase\.label\]/,
   )
-  assert.match(activity, /const IDLE_PROGRESS_ROW = \[""\] as const/)
+  assert.match(
+    activity,
+    /const IDLE_PROGRESS_ROW = \["READY · awaiting activity"\] as const/,
+  )
   assert.match(
     activity,
     /setWidget\(TOOL_PROGRESS_WIDGET_KEY, IDLE_PROGRESS_ROW/,

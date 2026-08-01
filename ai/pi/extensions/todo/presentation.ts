@@ -233,7 +233,7 @@ const rule = (inner: number, { left, right }: TaskHudRule): string => {
 }
 
 export const taskHudInset = (width: number): number => {
-  const desired = Math.min(8, Math.max(4, Math.floor(width * 0.05)))
+  const desired = Math.min(6, Math.max(3, Math.floor(width * 0.03)))
   const available = Math.max(0, Math.floor((width - GUTTER * 2) / 2))
 
   return Math.min(desired, available)
