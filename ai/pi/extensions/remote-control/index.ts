@@ -37,7 +37,7 @@ const safeError = (error: RemoteBridgeError): string =>
   `${error.code}: ${error.message}`.slice(0, 160)
 
 export default function remoteControl(pi: ExtensionAPI): void {
-  registerRuntimeVersion(pi, "remote-control", "2026.08.01.4")
+  registerRuntimeVersion(pi, "remote-control", "2026.08.01.5")
   const store = makeRemoteBridgeStore(
     remoteBridgeDatabasePath(process.env.XDG_STATE_HOME, homedir()),
   )
@@ -100,7 +100,10 @@ export default function remoteControl(pi: ExtensionAPI): void {
     const sent = await Effect.runPromise(
       Effect.either(
         Effect.try({
-          try: () => pi.sendUserMessage(remoteTurnPrompt(message.text)),
+          try: () =>
+            pi.sendUserMessage(remoteTurnPrompt(message.text), {
+              deliverAs: "steer",
+            }),
           catch: () =>
             new RemoteBridgeError({
               code: "io",
@@ -123,7 +126,7 @@ export default function remoteControl(pi: ExtensionAPI): void {
           id: ctx.sessionManager.getSessionId(),
           label: pi.getSessionName() ?? ctx.cwd.split("/").at(-1) ?? "Pi agent",
           cwd: ctx.cwd,
-          accepting: ctx.isIdle() && active === undefined,
+          accepting: active === undefined,
           now,
           ttlMs: BRIDGE_AGENT_TTL_MS,
         }),
@@ -175,7 +178,7 @@ export default function remoteControl(pi: ExtensionAPI): void {
         pi.events.emit(QUESTION_REMOTE_RESOLUTION_EVENT, answer)
       }
 
-      if (active || !ctx.isIdle()) return
+      if (active) return
       const claimed = await run(
         store.claimNext({ agentId: ctx.sessionManager.getSessionId(), now }),
       )
