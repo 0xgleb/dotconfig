@@ -826,7 +826,7 @@ const WorkflowParameters = Type.Object({
 })
 
 export default function classifiedWorkflows(pi: ExtensionAPI): void {
-  registerRuntimeVersion(pi, "classified-workflows", "2026.08.01.113")
+  registerRuntimeVersion(pi, "classified-workflows", "2026.08.01.114")
   const childTokenLimit = workflowChildTokenLimit(
     process.env[WORKFLOW_CHILD_TOKEN_LIMIT_ENV],
   )
@@ -1642,11 +1642,31 @@ export default function classifiedWorkflows(pi: ExtensionAPI): void {
     },
   )
 
-  pi.on("agent_end", (event, ctx) => {
+  const performManualReload = async (
+    ctx: ExtensionContext,
+  ): Promise<boolean> => {
+    if (!manualReloadPending) return false
+    manualReloadPending = false
+    if (continuationPaused) setContinuationPaused(false, ctx)
+    ctx.ui.setStatus("manual-reload", undefined)
+    try {
+      await ctx.reload()
+    } catch (error) {
+      manualReloadPending = true
+      ctx.ui.setStatus("manual-reload", "reload:retry")
+      throw error
+    }
+    return true
+  }
+
+  pi.on("agent_end", async (event, ctx) => {
     if (goalState?.status === "active")
       goalRunTokens += assistantUsageTokens(event.messages)
     if (wasRunAborted(event.messages) && !manualReloadPending)
       setContinuationPaused(true, ctx)
+    // An explicit manual reload must overtake queued registry/task follow-ups;
+    // otherwise a continuously operational agent may never become settled.
+    if (await performManualReload(ctx)) return
     if (skipNextCapabilityOutcome) {
       skipNextCapabilityOutcome = false
       return
@@ -1662,13 +1682,8 @@ export default function classifiedWorkflows(pi: ExtensionAPI): void {
   })
 
   pi.on("agent_settled", async (_event, ctx) => {
-    if (manualReloadPending) {
-      manualReloadPending = false
-      if (continuationPaused) setContinuationPaused(false, ctx)
-      ctx.ui.setStatus("manual-reload", undefined)
-      await ctx.reload()
-      return
-    }
+    // Defensive fallback for hosts that settle without an agent_end callback.
+    if (await performManualReload(ctx)) return
     if (continuationPaused || capabilityCircuit.open) return
     const work = todoWorkSnapshot(ctx.sessionManager.getBranch())
     if (goalState?.status !== "active") {

@@ -7,19 +7,23 @@ const read = (path: string): string =>
 const classified = read("../pi/extensions/classified-workflows/index.ts")
 const registry = read("../pi/extensions/agent-registry/index.ts")
 
-test("manual reload overtakes stale pause and reloads before continuation gating", () => {
-  const settled = classified.slice(classified.indexOf('pi.on("agent_settled"'))
-  assert.ok(
-    settled.indexOf("if (manualReloadPending)") <
-      settled.indexOf("if (continuationPaused) return"),
+test("manual reload overtakes stale pause and queued continuation work", () => {
+  const reload = classified.slice(
+    classified.indexOf("const performManualReload"),
+    classified.indexOf('pi.on("agent_end"'),
   )
   assert.match(
-    settled,
+    reload,
     /if \(continuationPaused\) setContinuationPaused\(false, ctx\)/,
   )
+  assert.match(reload, /await ctx\.reload\(\)/)
   assert.match(
     classified,
     /wasRunAborted\(event\.messages\) && !manualReloadPending/,
+  )
+  assert.match(
+    classified,
+    /pi\.on\("agent_end"[\s\S]*await performManualReload\(ctx\)/,
   )
 })
 
