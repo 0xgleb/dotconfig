@@ -89,7 +89,15 @@ const READ_ONLY_TOOLS = new Set([
 const TODO_ACTIONS = new Set(["list", "add", "toggle", "status", "block", "reply", "unblock", "clear"]);
 const QUESTION_ACTIONS = new Set(["list", "ask", "resolve", "clear_resolved"]);
 const ARTIFACT_PROVENANCE_ACTIONS = new Set(["list", "record", "forget"]);
-const REVIEW_DUTY_ACTIONS = new Set(["status", "begin", "report", "recover"]);
+const REVIEW_DUTY_ACTIONS = new Set([
+  "status",
+  "begin",
+  "report",
+  "recover",
+  "retry-blocked",
+  "retry-failed",
+  "continue",
+]);
 const RELEASE_CADENCE_ACTIONS = new Set(["status", "enable", "disable", "mark"]);
 const isSkillView = (toolName: string, input: Readonly<Record<string, unknown>>): boolean =>
   toolName === "skill_manage" && input.action === "view";
@@ -166,6 +174,36 @@ const isRecordedArtifactCleanup = (
   return tokens.every((operand) => {
     const resolved = path.resolve(cwd, operand);
     return recorded.has(resolved);
+  });
+};
+
+const isReadOnlyGitButlerStatusCommand = (command: string): boolean => {
+  if (/[;|`$<>\n\r]/.test(command)) return false;
+  const segments = command.trim().split(/\s*&&\s*/);
+  if (segments.length === 0 || segments.some((segment) => !segment))
+    return false;
+  return segments.every((segment) => {
+    const tokens = segment.trim().split(/\s+/);
+    if (tokens[0] !== "but" || tokens[1] !== "status") return false;
+    let expectsFormat = false;
+    for (const argument of tokens.slice(2)) {
+      if (expectsFormat) {
+        if (!/^(?:human|agent|shell|json|none)$/.test(argument)) return false;
+        expectsFormat = false;
+        continue;
+      }
+      if (argument === "--format") {
+        expectsFormat = true;
+        continue;
+      }
+      if (
+        !/^(?:-[fvruhj]|--(?:verbose|refresh-prs|upstream|no-hint|help)|--format=(?:human|agent|shell|json|none))$/.test(
+          argument,
+        )
+      )
+        return false;
+    }
+    return !expectsFormat;
   });
 };
 
@@ -268,6 +306,18 @@ export function deterministicDecision(request: ToolRequest): Decision | null {
     };
   }
 
+  if (
+    request.toolName === "bash" &&
+    typeof request.input.command === "string" &&
+    isReadOnlyGitButlerStatusCommand(request.input.command)
+  ) {
+    return {
+      verdict: "allow",
+      reason: "Read-only GitButler status inspection",
+      source: "deterministic",
+    };
+  }
+
   if (READ_ONLY_TOOLS.has(request.toolName) || isSkillView(request.toolName, request.input)) {
     return {
       verdict: "allow",
@@ -365,7 +415,16 @@ export const deterministicReadOnlyToolResultDecision = (request: ToolResultReque
   const registryRead =
     request.toolName === "agent_registry" &&
     (request.input.action === "list" || request.input.action === "requests");
-  if (!READ_ONLY_TOOLS.has(request.toolName) && !registryRead && !isSkillView(request.toolName, request.input)) {
+  const gitButlerStatusRead =
+    request.toolName === "bash" &&
+    typeof request.input.command === "string" &&
+    isReadOnlyGitButlerStatusCommand(request.input.command);
+  if (
+    !READ_ONLY_TOOLS.has(request.toolName) &&
+    !registryRead &&
+    !gitButlerStatusRead &&
+    !isSkillView(request.toolName, request.input)
+  ) {
     return null;
   }
   const action = deterministicDecision({
