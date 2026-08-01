@@ -271,6 +271,21 @@ work simultaneously. Tasks should be large and meaningful enough to justify a
 dedicated worktree — don't split into tiny pieces that create coordination
 overhead.
 
+## Defensive Programming
+
+Treat persisted state, external responses, configuration, arithmetic, and
+cross-module inputs as capable of violating assumptions. Enforce invariants in
+types where possible and at the narrowest boundary otherwise. An invariant
+violation returns a specific typed error; it never panics, silently coerces the
+value, invents a fallback, or continues with partially trusted state. Cover the
+malformed or impossible shape with a regression test alongside the valid path.
+
+Small custom macros or generators are appropriate only for genuinely mechanical
+boilerplate when they make the invariant easier to read at every call site. Keep
+the domain operation, control flow, types, and error path visible; if
+understanding the abstraction requires reconstructing hidden behavior, write the
+explicit code instead.
+
 ## Code Style
 
 - Prefer functional programming patterns

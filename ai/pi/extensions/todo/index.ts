@@ -128,16 +128,30 @@ class TaskHudComponent {
     this.theme = theme
   }
 
-  private colorTaskLine(line: string): string {
-    const semanticAccent = /([▰▱]{8}|\[[ x\/~!:\-]\]|#[0-9]+)/u
+  private colorTaskHeadline(line: string): string {
+    const progressBar = /([▰▱]{8})/u
     return line
-      .split(semanticAccent)
+      .split(progressBar)
       .map((part) =>
-        semanticAccent.test(part)
+        progressBar.test(part)
           ? this.theme.fg("accent", part)
           : this.theme.fg("borderAccent", part),
       )
       .join("")
+  }
+
+  private colorTaskRow(line: string): string {
+    const firstBorder = line.indexOf("│")
+    const lastBorder = line.lastIndexOf("│")
+    if (firstBorder < 0 || lastBorder <= firstBorder) {
+      return this.theme.fg("accent", line)
+    }
+
+    return [
+      this.theme.fg("borderAccent", line.slice(0, firstBorder + 1)),
+      this.theme.fg("accent", line.slice(firstBorder + 1, lastBorder)),
+      this.theme.fg("borderAccent", line.slice(lastBorder)),
+    ].join("")
   }
 
   render(width: number): string[] {
@@ -146,16 +160,16 @@ class TaskHudComponent {
     if (hud.kind === "idle") {
       const [headline = "", row = ""] = framed
       return [
-        this.theme.bold(this.colorTaskLine(headline)),
-        this.colorTaskLine(row),
+        this.theme.bold(this.colorTaskHeadline(headline)),
+        this.colorTaskRow(row),
       ]
     }
 
     const [headline, ...rows] = framed
 
     return [
-      this.theme.bold(this.colorTaskLine(headline ?? "")),
-      ...rows.map((row) => this.colorTaskLine(row)),
+      this.theme.bold(this.colorTaskHeadline(headline ?? "")),
+      ...rows.map((row) => this.colorTaskRow(row)),
     ]
   }
 
@@ -289,7 +303,7 @@ function restoredState(ctx: ExtensionContext): TodoState {
 }
 
 export default function todoExtension(pi: ExtensionAPI): void {
-  registerRuntimeVersion(pi, "todo", "2026.07.23.21")
+  registerRuntimeVersion(pi, "todo", "2026.07.23.22")
   const stateRef = Effect.runSync(Ref.make<TodoState>(emptyTodoState))
   let hudExpiry: ReturnType<typeof setTimeout> | undefined
   let reminderTimer: ReturnType<typeof setTimeout> | undefined

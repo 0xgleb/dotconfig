@@ -89,6 +89,16 @@
 - In TypeScript, encode expected failures in the Effect error type. Use
   `Effect.try`/`Effect.tryPromise` at genuinely throwing boundaries and recover
   through typed error handlers rather than untyped `try`/`catch` control flow.
+- Treat persisted state, external responses, configuration, arithmetic, and
+  cross-module inputs as capable of violating assumptions. Enforce invariants in
+  types where possible and at the narrowest boundary otherwise. An invariant
+  violation returns a specific typed error; it never panics, silently coerces the
+  value, invents a fallback, or continues with partially trusted state. Test the
+  malformed or impossible shape alongside the valid path.
+- Use small custom macros or generators only for genuinely mechanical boilerplate
+  when they make the invariant easier to read at every call site. Keep domain
+  operations, control flow, types, and error paths visible; if an abstraction
+  hides those, write the explicit code instead.
 
 ## Cross-session handover
 

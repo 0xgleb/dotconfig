@@ -55,10 +55,17 @@ test("side-by-side sessions reserve identical fixed-height chrome", () => {
     /setWidget\(TOOL_PROGRESS_WIDGET_KEY, \[questionLabel\(\)\],[\s\S]*?placement: "belowEditor"/,
   )
   assert.doesNotMatch(todoExtension, /borderMuted", footer\),\s*""/)
-  assert.match(todoExtension, /private colorTaskLine/)
+  assert.match(todoExtension, /private colorTaskHeadline/)
+  assert.match(todoExtension, /private colorTaskRow/)
   assert.match(todoExtension, /\[▰▱\]\{8\}/)
-  assert.match(todoExtension, /this\.theme\.fg\("accent", part\)/)
-  assert.match(todoExtension, /this\.theme\.fg\("borderAccent", part\)/)
+  assert.match(
+    todoExtension,
+    /theme\.fg\("accent", line\.slice\(firstBorder \+ 1, lastBorder\)\)/,
+  )
+  assert.match(
+    todoExtension,
+    /theme\.fg\("borderAccent", line\.slice\(lastBorder\)\)/,
+  )
 })
 
 test("prompt is wider than the task preview at every supported pane width", () => {

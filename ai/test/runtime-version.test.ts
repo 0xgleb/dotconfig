@@ -65,6 +65,6 @@ test("fleet diagnostics expose current behavior-bearing component versions", () 
   )
   assert.match(
     read("../pi/extensions/todo/index.ts"),
-    /todo", "2026\.07\.23\.21"/,
+    /todo", "2026\.07\.23\.22"/,
   )
 })
