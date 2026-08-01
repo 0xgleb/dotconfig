@@ -73,6 +73,21 @@ test("remote tool restoration fails closed after one recovery attempt", () => {
   });
 });
 
+test("textless retry and compaction runs cannot prematurely become model_error", () => {
+  assert.match(
+    remoteControlSource,
+    /pi\.on\("turn_end"[\s\S]*?const response = finalAssistantText\(\[event\.message\]\);[\s\S]*?if \(!response\) return;[\s\S]*?finishSuccess/,
+  );
+  assert.match(
+    remoteControlSource,
+    /pi\.on\("agent_end"[\s\S]*?const response = finalAssistantText\(event\.messages\);[\s\S]*?if \(!response\) return;[\s\S]*?finishSuccess/,
+  );
+  assert.match(
+    remoteControlSource,
+    /pi\.on\("agent_settled"[\s\S]*?if \(turn\) await finishFailure\(turn, "model_error"\)/,
+  );
+});
+
 test("remote turns restore tools at turn end before automatic follow-ups", () => {
   assert.match(
     remoteControlSource,

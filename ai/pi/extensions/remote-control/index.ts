@@ -45,7 +45,7 @@ const safeError = (error: RemoteBridgeError): string =>
   `${error.code}: ${error.message}`.slice(0, 160);
 
 export default function remoteControl(pi: ExtensionAPI): void {
-  registerRuntimeVersion(pi, "remote-control", "2026.08.01.12");
+  registerRuntimeVersion(pi, "remote-control", "2026.08.01.13");
   const store = makeRemoteBridgeStore(
     remoteBridgeDatabasePath(process.env.XDG_STATE_HOME, homedir()),
   );
@@ -282,10 +282,7 @@ export default function remoteControl(pi: ExtensionAPI): void {
       return;
     }
     const response = finalAssistantText([event.message]);
-    if (!response) {
-      await finishFailure(turn, "model_error");
-      return;
-    }
+    if (!response) return;
     await finishSuccess(turn, response, ctx);
   });
 
@@ -298,11 +295,14 @@ export default function remoteControl(pi: ExtensionAPI): void {
       return;
     }
     const response = finalAssistantText(event.messages);
-    if (!response) {
-      await finishFailure(turn, "model_error");
-      return;
-    }
+    if (!response) return;
     await finishSuccess(turn, response, ctx);
+  });
+
+  pi.on("agent_settled", async (_event, ctx) => {
+    latestCtx = ctx;
+    const turn = active;
+    if (turn) await finishFailure(turn, "model_error");
   });
 
   pi.on("session_shutdown", async (_event, ctx) => {
