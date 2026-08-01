@@ -649,6 +649,9 @@ test("classifier distinguishes Pi reloads from explicitly authorized launchd res
   assert.match(prompt, /does not restart a separately managed launchd service/i);
   assert.match(prompt, /explicitly authorizes restarting one exact launchd service/i);
   assert.match(prompt, /no unrelated chaining/i);
+  assert.match(prompt, /an old PID, success status, or ready marker proves only/i);
+  assert.match(prompt, /source\/config mutation newer than that runtime evidence/i);
+  assert.match(prompt, /fresh post-change runtime marker/i);
 });
 
 test("auto mode returns classifier blocks without waiting for approval", () => {
