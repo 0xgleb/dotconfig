@@ -53,6 +53,33 @@ test("audited runner records bounded zero-token timeout diagnostics", async () =
   ]);
 });
 
+test("completed review children retain bounded access diagnostics", async () => {
+  const children: ChildAudit[] = [];
+  const run = auditedAgentRunner(
+    async (): Promise<AgentResult> => ({
+      status: "completed",
+      output: JSON.stringify({
+        findings: [],
+        reviewer_error: "repository source became unavailable",
+      }),
+      usageTokens: 42,
+      diagnostic:
+        "Child action blocked: source path was not established by current evidence",
+    }),
+    children,
+    (text) => text.replace(/\s+/g, " "),
+  );
+
+  await run(
+    { task: "review", model: "openai-codex/gpt-5.6-luna", tools: ["read"] },
+    new AbortController().signal,
+    1_000,
+  );
+
+  assert.match(children[0]?.reason ?? "", /Child action blocked/);
+  assert.match(children[0]?.reason ?? "", /repository source became unavailable/);
+});
+
 test("audited runner emits bounded child start and terminal progress", async () => {
   const children: ChildAudit[] = [];
   const events: unknown[] = [];

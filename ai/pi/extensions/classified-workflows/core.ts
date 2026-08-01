@@ -35,7 +35,12 @@ export interface AgentRequest {
 export type AgentOptions = Omit<AgentRequest, "task">;
 
 export type AgentResult =
-  | { status: "completed"; output: string; usageTokens: number }
+  | {
+      status: "completed";
+      output: string;
+      usageTokens: number;
+      diagnostic?: string;
+    }
   | {
       status: "blocked" | "failed" | "timed-out";
       output: "";

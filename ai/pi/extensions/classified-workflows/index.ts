@@ -197,6 +197,7 @@ interface PiProcessResult {
   usageTokens: number
   stopReason?: string
   errorMessage?: string
+  diagnostic?: string
   budgetExceeded?: boolean
 }
 
@@ -289,6 +290,7 @@ async function runPi(
         exitCode,
         ...summary,
         ...(errorMessage ? { errorMessage } : {}),
+        ...(diagnostic ? { diagnostic } : {}),
         ...(budgetExceeded ? { budgetExceeded: true } : {}),
       })
     }
@@ -698,6 +700,7 @@ async function executeAgent(
     status: "completed",
     output: result.output,
     usageTokens: result.usageTokens,
+    ...(result.diagnostic ? { diagnostic: result.diagnostic } : {}),
   }
 }
 
@@ -712,6 +715,20 @@ function toolResultSubject(event: ToolResultEvent): unknown {
         part.type === "text" ? part.text.slice(0, 2_000) : "[image omitted]",
       ),
   }
+}
+
+const reportHeadlessClassifierBlock = (
+  ctx: ExtensionContext,
+  boundary: "action" | "tool-result",
+  reason: string,
+): void => {
+  if (ctx.hasUI) return
+  const diagnostic = sanitizeProcessDiagnostic(reason)
+    .replace(/\s+/g, " ")
+    .slice(0, 1_000)
+  process.stderr.write(
+    `[classified-workflows] Child ${boundary} blocked: ${diagnostic}\n`,
+  )
 }
 
 function blockedResult(reason: string): AgentToolResult<{ status: "blocked" }> {
@@ -782,7 +799,7 @@ const WorkflowParameters = Type.Object({
 })
 
 export default function classifiedWorkflows(pi: ExtensionAPI): void {
-  registerRuntimeVersion(pi, "classified-workflows", "2026.08.01.106")
+  registerRuntimeVersion(pi, "classified-workflows", "2026.08.01.107")
   const childTokenLimit = workflowChildTokenLimit(
     process.env[WORKFLOW_CHILD_TOKEN_LIMIT_ENV],
   )
@@ -1675,8 +1692,10 @@ export default function classifiedWorkflows(pi: ExtensionAPI): void {
       cwd: ctx.cwd,
       agentArtifacts: artifactPaths(artifactProvenance),
     })
-    if (deterministic?.verdict === "block")
+    if (deterministic?.verdict === "block") {
+      reportHeadlessClassifierBlock(ctx, "action", deterministic.reason)
       return resolveActionDecision(deterministic)
+    }
     if (deterministic?.verdict === "allow") {
       if (shouldCarryDeterministicResultAllowance(deterministic)) {
         deterministicResultAllowance.record(event.toolCallId)
@@ -1763,6 +1782,7 @@ export default function classifiedWorkflows(pi: ExtensionAPI): void {
         })
       )
         return
+      reportHeadlessClassifierBlock(ctx, "action", decision.reason)
       return resolveActionDecision(decision)
     }
   })
@@ -1802,6 +1822,7 @@ export default function classifiedWorkflows(pi: ExtensionAPI): void {
       ctx.signal,
     )
     if (decision.verdict === "block") {
+      reportHeadlessClassifierBlock(ctx, "tool-result", decision.reason)
       // The extension API emits tool_result only after execution. Redact output,
       // but preserve the original success/error bit so a mutation is never
       // misreported as a pre-execution policy block and blindly retried.

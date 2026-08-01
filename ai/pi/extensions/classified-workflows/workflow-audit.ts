@@ -236,6 +236,31 @@ export const restoreWorkflowAudits = (
   return emptyWorkflowAuditState;
 };
 
+const completedAgentDiagnostic = (
+  result: Extract<AgentResult, { status: "completed" }>,
+): string | undefined => {
+  let reviewerError: string | undefined;
+  try {
+    const parsed: unknown = JSON.parse(result.output);
+    if (
+      typeof parsed === "object" &&
+      parsed !== null &&
+      !Array.isArray(parsed) &&
+      typeof (parsed as Record<string, unknown>).reviewer_error === "string"
+    ) {
+      reviewerError = String(
+        (parsed as Record<string, unknown>).reviewer_error,
+      );
+    }
+  } catch {
+    reviewerError = undefined;
+  }
+  const diagnostics = [result.diagnostic, reviewerError]
+    .map((diagnostic) => diagnostic?.trim())
+    .filter((diagnostic): diagnostic is string => Boolean(diagnostic));
+  return diagnostics.length > 0 ? diagnostics.join("; ") : undefined;
+};
+
 export const auditedAgentRunner = (
   runAgent: (
     request: AgentRequest,
@@ -263,6 +288,10 @@ export const auditedAgentRunner = (
     });
     try {
       const result = await runAgent(request, signal, tokenLimit);
+      const completedDiagnostic =
+        result.status === "completed"
+          ? completedAgentDiagnostic(result)
+          : undefined;
       const audit: ChildAudit = {
         index,
         ...(request.model ? { requestedModel: request.model } : {}),
@@ -273,7 +302,9 @@ export const auditedAgentRunner = (
         usageTokens: result.usageTokens,
         outputCharacters: result.output.length,
         ...(result.status === "completed"
-          ? {}
+          ? completedDiagnostic
+            ? { reason: sanitize(completedDiagnostic).slice(0, 1_000) }
+            : {}
           : { reason: sanitize(result.reason).slice(0, 1_000) }),
       };
       audits.push(audit);

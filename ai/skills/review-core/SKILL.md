@@ -639,6 +639,10 @@ const reviewLane = lane => {
   return agent(prompt, {
     label: `review:${lane.key}`,
     phase: 'Review',
+    cwd: repoRoot,
+    tools: lane.externalCmd
+      ? ['read', 'grep', 'find', 'ls', 'bash']
+      : ['read', 'grep', 'find', 'ls'],
     model: 'openai-codex/gpt-5.6-luna',
     schema: REVIEW_SCHEMA,
   }).then(result => result && ({
@@ -707,7 +711,8 @@ const verifyFinding = finding => agent(
     `with concrete evidence from the code; do not dismiss ` +
     `uncertain-but-plausible findings. Re-score severity and confidence ` +
     `from your own reading (confidence 100 = you verified it yourself).`,
-    { label: `verify:${finding.file}`, phase: 'Verify', model: 'openai-codex/gpt-5.6-luna',
+    { label: `verify:${finding.file}`, phase: 'Verify', cwd: repoRoot,
+      tools: ['read', 'grep', 'find', 'ls'], model: 'openai-codex/gpt-5.6-luna',
       schema: VERDICT_SCHEMA },
   ).then(verdict => verdict && ({ ...finding, ...verdict }))
 
@@ -761,7 +766,8 @@ const synthesis = await agent(
   `your own senior-engineer judgment on merge readiness). No emojis, no ` +
   `apologies, be decisive.` +
   (synthesisExtra ? `\n\n${synthesisExtra}` : ''),
-  { label: 'synthesize', phase: 'Synthesize', model: 'openai-codex/gpt-5.6-luna',
+  { label: 'synthesize', phase: 'Synthesize', cwd: repoRoot,
+    tools: ['read', 'grep', 'find', 'ls'], model: 'openai-codex/gpt-5.6-luna',
     schema: {
       type: 'object',
       required: ['report_markdown'],

@@ -26,6 +26,18 @@ test("Pi workflows never route Claude through API providers", () => {
   assert.match(reviewPr, /Never send `fable`, `sonnet`, `opus`, `claude-\*`, or/i);
 });
 
+test("review workflow children receive an explicit repository cwd and least-privilege tools", () => {
+  assert.match(reviewCore, /cwd: repoRoot/);
+  assert.match(
+    reviewCore,
+    /tools: lane\.externalCmd[\s\S]*?\['read', 'grep', 'find', 'ls', 'bash'\][\s\S]*?: \['read', 'grep', 'find', 'ls'\]/,
+  );
+  assert.match(
+    reviewCore,
+    /label: `verify:\$\{finding\.file\}`[\s\S]*?cwd: repoRoot[\s\S]*?tools: \['read', 'grep', 'find', 'ls'\]/,
+  );
+});
+
 test("semantic safety classification uses Sol and bounded relevant evidence while review support stays on Luna", () => {
   assert.match(classifier, /CLASSIFIER_MODEL = "openai-codex\/gpt-5\.6-sol"/);
   assert.match(classifier, /conversationIntentEvidence\(branch\)/);
