@@ -39,6 +39,12 @@ test("Telegram UX uses reactions, recurring activity, commands, batching, and im
   assert.match(source, /"sendChatAction"/);
   assert.match(source, /BRIDGE_TYPING_REFRESH_MS/);
   assert.match(source, /TELEGRAM_BURST_WINDOW_MS/);
+  assert.match(source, /TELEGRAM_MAX_BURST_WAIT_MS/);
+  assert.match(source, /TELEGRAM_MAX_BURST_UPDATES/);
+  assert.match(
+    source,
+    /collectTelegramUpdateBurstTail[\s\S]*?additionalUpdates\.length === 0[\s\S]*?collectTelegramUpdateBurstTail\(/,
+  );
   assert.match(source, /coalesceTelegramUpdates/);
   assert.match(source, /"setMyCommands"/);
   assert.match(source, /command: "kanban"/);

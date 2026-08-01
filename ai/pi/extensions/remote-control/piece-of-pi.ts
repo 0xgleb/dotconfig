@@ -42,7 +42,9 @@ import {
 } from "./telegram.ts";
 
 const TELEGRAM_LONG_POLL_SECONDS = 25;
-const TELEGRAM_BURST_WINDOW_MS = 2_000;
+const TELEGRAM_BURST_WINDOW_MS = 3_500;
+const TELEGRAM_MAX_BURST_WAIT_MS = 14_000;
+const TELEGRAM_MAX_BURST_UPDATES = 32;
 const TELEGRAM_MESSAGE_LIMIT = 4_000;
 const BRIDGE_RESULT_POLL_INTERVAL = "1 second";
 const BRIDGE_TYPING_REFRESH_MS = 4_000;
@@ -518,6 +520,40 @@ const getUpdates = (
     Effect.flatMap(decodeTelegramUpdates),
   );
 
+const collectTelegramUpdateBurstTail = (
+  runtime: PieceOfPiRuntime,
+  collected: ReadonlyArray<TelegramUpdate>,
+  nextOffset: number,
+  waitedMs: number,
+): Effect.Effect<
+  ReadonlyArray<TelegramUpdate>,
+  TelegramTransportError | TelegramContractError
+> => {
+  if (
+    waitedMs >= TELEGRAM_MAX_BURST_WAIT_MS ||
+    collected.length >= TELEGRAM_MAX_BURST_UPDATES
+  ) {
+    return Effect.succeed(collected);
+  }
+  return Effect.sleep(TELEGRAM_BURST_WINDOW_MS).pipe(
+    Effect.flatMap(() =>
+      getUpdates(runtime, { offset: nextOffset, timeoutSeconds: 0 }),
+    ),
+    Effect.flatMap((additionalUpdates) => {
+      if (additionalUpdates.length === 0) return Effect.succeed(collected);
+      const combined = [...collected, ...additionalUpdates];
+      const followingOffset =
+        Math.max(...additionalUpdates.map(({ updateId }) => updateId)) + 1;
+      return collectTelegramUpdateBurstTail(
+        runtime,
+        combined,
+        followingOffset,
+        waitedMs + TELEGRAM_BURST_WINDOW_MS,
+      );
+    }),
+  );
+};
+
 const collectTelegramUpdateBurst = (
   runtime: PieceOfPiRuntime,
 ): Effect.Effect<
@@ -529,14 +565,11 @@ const collectTelegramUpdateBurst = (
       if (initialUpdates.length === 0) return Effect.succeed(initialUpdates);
       const nextOffset =
         Math.max(...initialUpdates.map(({ updateId }) => updateId)) + 1;
-      return Effect.sleep(TELEGRAM_BURST_WINDOW_MS).pipe(
-        Effect.flatMap(() =>
-          getUpdates(runtime, { offset: nextOffset, timeoutSeconds: 0 }),
-        ),
-        Effect.map((additionalUpdates) => [
-          ...initialUpdates,
-          ...additionalUpdates,
-        ]),
+      return collectTelegramUpdateBurstTail(
+        runtime,
+        initialUpdates,
+        nextOffset,
+        0,
       );
     }),
   );
