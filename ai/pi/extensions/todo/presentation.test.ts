@@ -8,6 +8,7 @@ import {
   taskHud,
   taskHudLines,
   taskProgressBar,
+  taskProgressBlinkRate,
   taskProgressPulseIndex,
   taskWidgetLines,
   todoSummary,
@@ -85,10 +86,16 @@ test("completion percentage is bounded and defined for an empty board", () => {
   assert.equal(taskCompletionPercent(8, 5), 100)
 })
 
-test("progress pulse animates without changing semantic completion cells", () => {
+test("progress pulse uses varied blink rates without changing semantic completion cells", () => {
   assert.deepEqual(
     Array.from({ length: 9 }, (_, frame) => taskProgressPulseIndex(frame)),
     [0, 1, 2, 3, 4, 5, 6, 7, 6],
+  )
+  assert.deepEqual(
+    Array.from({ length: 8 }, (_, index) =>
+      taskProgressBlinkRate(3, index),
+    ),
+    ["steady", "steady", "slow", "rapid", "slow", "steady", "steady", "steady"],
   )
   assert.equal(taskProgressBar(1, 5), "▰▰▱▱▱▱▱▱")
 })

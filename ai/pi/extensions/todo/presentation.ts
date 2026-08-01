@@ -139,6 +139,18 @@ export const taskProgressPulseIndex = (
   return offset < boundedWidth ? offset : cycle - offset
 }
 
+export type TaskProgressBlinkRate = "steady" | "slow" | "rapid"
+
+export const taskProgressBlinkRate = (
+  frame: number,
+  index: number,
+  width = TASK_PROGRESS_WIDTH,
+): TaskProgressBlinkRate => {
+  const pulse = taskProgressPulseIndex(frame, width)
+  const distance = Math.abs(Math.floor(index) - pulse)
+  return distance === 0 ? "rapid" : distance === 1 ? "slow" : "steady"
+}
+
 export const taskProgressBar = (completed: number, total: number): string => {
   const boundedTotal = Math.max(0, total)
   const ratio =
