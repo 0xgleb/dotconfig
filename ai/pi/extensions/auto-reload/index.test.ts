@@ -8,9 +8,14 @@ import { managedGeneration, managedSourcesAreCommitted } from "./index.ts";
 
 const source = readFileSync(new URL("./index.ts", import.meta.url), "utf8");
 
-test("pending managed reload executes as soon as the agent fully settles", () => {
-  assert.match(source, /pi\.on\("agent_settled"/);
+test("pending managed reload executes at agent end before continuous follow-ups can starve idle", () => {
+  const agentEnd = source.indexOf('pi.on("agent_end"');
+  const agentSettled = source.indexOf('pi.on("agent_settled"');
+  assert.ok(agentEnd > 0);
+  assert.ok(agentEnd < agentSettled);
   assert.match(source, /if \(!pending \|\| !isReloadableContext\(ctx\)\) return;/);
+  assert.match(source, /if \(!managedSourcesAreCommitted\(join\(homedir\(\), "\.config"\)\)\) return;/);
+  assert.match(source, /await performReload\(ctx\)/);
   assert.match(source, /await reloadWhenIdle\(ctx\)/);
 });
 

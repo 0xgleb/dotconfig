@@ -62,7 +62,7 @@ export const managedGeneration = (roots: readonly string[]): string => {
 };
 
 const autoReload: (pi: ExtensionAPI) => void = (pi) => {
-  registerRuntimeVersion(pi, "auto-reload", "2026.07.23.6");
+  registerRuntimeVersion(pi, "auto-reload", "2026.08.01.7");
   let watchers: FSWatcher[] = [];
   let timer: ReturnType<typeof setTimeout> | undefined;
   let handoffTimer: ReturnType<typeof setInterval> | undefined;
@@ -85,6 +85,29 @@ const autoReload: (pi: ExtensionAPI) => void = (pi) => {
     watchers = [];
   };
 
+  const performReload = async (ctx: ReloadableContext) => {
+    if (!pending) return;
+    pending = false;
+    if (timer) clearTimeout(timer);
+    timer = undefined;
+    ctx.ui.setStatus(STATUS_KEY, undefined);
+    if (changedLabels.size > 0) {
+      pi.appendEntry(RELOAD_SUMMARY_ENTRY, {
+        labels: [...changedLabels].sort(),
+        createdAt: Date.now(),
+        announced: false,
+      });
+      changedLabels.clear();
+    }
+    try {
+      await ctx.reload();
+    } catch (error) {
+      pending = true;
+      ctx.ui.setStatus(STATUS_KEY, "reload:retry");
+      throw error;
+    }
+  };
+
   const reloadWhenIdle = async (ctx: ReloadableContext) => {
     if (!pending) return;
     if (!managedSourcesAreCommitted(join(homedir(), ".config"))) {
@@ -96,18 +119,7 @@ const autoReload: (pi: ExtensionAPI) => void = (pi) => {
       timer = setTimeout(() => void reloadWhenIdle(ctx), IDLE_RETRY_MS);
       return;
     }
-    pending = false;
-    timer = undefined;
-    ctx.ui.setStatus(STATUS_KEY, undefined);
-    if (changedLabels.size > 0) {
-      pi.appendEntry(RELOAD_SUMMARY_ENTRY, {
-        labels: [...changedLabels].sort(),
-        createdAt: Date.now(),
-        announced: false,
-      });
-      changedLabels.clear();
-    }
-    await ctx.reload();
+    await performReload(ctx);
   };
 
   const scheduleReload = (ctx: ReloadableContext, changedPath: string | null, aiRoot: string) => {
@@ -218,6 +230,12 @@ const autoReload: (pi: ExtensionAPI) => void = (pi) => {
         ctx.ui.notify(`Could not watch Pi handoffs: ${error instanceof Error ? error.message : "unknown error"}`, "warning");
       }
     }
+  });
+
+  pi.on("agent_end", async (_event, ctx) => {
+    if (!pending || !isReloadableContext(ctx)) return;
+    if (!managedSourcesAreCommitted(join(homedir(), ".config"))) return;
+    await performReload(ctx);
   });
 
   pi.on("agent_settled", async (_event, ctx) => {
