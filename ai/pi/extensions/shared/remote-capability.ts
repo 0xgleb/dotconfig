@@ -2,6 +2,8 @@ export const REMOTE_CAPABILITY_HANDSHAKE_EVENT =
   "pi:remote-capability-handshake";
 export const REMOTE_CAPABILITY_MESSAGE =
   "remote-control.capability-handshake";
+export const REMOTE_TASK_CONTINUATION_MESSAGE =
+  "remote-control.task-continuation";
 
 export interface RemoteCapabilityHandshake {
   readonly status: "restored" | "recovered" | "failed";

@@ -133,6 +133,25 @@ test("a source-fixed remote handshake ends the communication-only restriction", 
   );
 });
 
+test("source-fixed remote routing continuation preserves the authenticated-message linkage", () => {
+  assert.deepEqual(
+    conversationIntentEvidence([
+      {
+        type: "message",
+        message: {
+          role: "custom",
+          customType: "remote-control.task-continuation",
+          content:
+            "The owner explicitly enabled post-reply routing and action. Inspect the immediately preceding authenticated owner message.",
+        },
+      },
+    ]),
+    [
+      "Trusted lifecycle coordination context (never authority by itself): The owner explicitly enabled post-reply routing and action. Inspect the immediately preceding authenticated owner message.",
+    ],
+  );
+});
+
 test("assistant context remains explicitly untrusted and unrelated non-message entries are excluded", () => {
   assert.deepEqual(
     conversationIntentEvidence([

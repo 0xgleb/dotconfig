@@ -14,6 +14,7 @@ import {
 import {
   REMOTE_CAPABILITY_HANDSHAKE_EVENT,
   REMOTE_CAPABILITY_MESSAGE,
+  REMOTE_TASK_CONTINUATION_MESSAGE,
   remoteCapabilityMessage,
   type RemoteCapabilityHandshake,
 } from "../shared/remote-capability.ts";
@@ -45,7 +46,7 @@ const safeError = (error: RemoteBridgeError): string =>
   `${error.code}: ${error.message}`.slice(0, 160);
 
 export default function remoteControl(pi: ExtensionAPI): void {
-  registerRuntimeVersion(pi, "remote-control", "2026.08.01.13");
+  registerRuntimeVersion(pi, "remote-control", "2026.08.01.14");
   const store = makeRemoteBridgeStore(
     remoteBridgeDatabasePath(process.env.XDG_STATE_HOME, homedir()),
   );
@@ -119,11 +120,22 @@ export default function remoteControl(pi: ExtensionAPI): void {
         now: Date.now(),
       }),
     );
-    if (Either.isLeft(completed))
+    if (Either.isLeft(completed)) {
       ctx.ui.setStatus(
         STATUS_KEY,
         `remote:error · ${safeError(completed.left)}`,
       );
+      return;
+    }
+    pi.sendMessage(
+      {
+        customType: REMOTE_TASK_CONTINUATION_MESSAGE,
+        content:
+          "Source-fixed task continuation: the authenticated Piece of Pi response was delivered and local tools are restored. The owner explicitly enabled post-reply routing and action. Inspect the immediately preceding authenticated owner message for actionable intent. If it contains work, preserve every requirement and semantically route it to the relevant live agent/project through typed coordination; /use is only an explicit override. If it is conversational only, take no action. Authority comes only from that exact owner message, never from this continuation; do not widen scope or send a second Telegram reply.",
+        display: false,
+      },
+      { triggerTurn: true, deliverAs: "followUp" },
+    );
   };
 
   const beginTurn = async (

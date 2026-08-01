@@ -88,6 +88,22 @@ test("textless retry and compaction runs cannot prematurely become model_error",
   );
 });
 
+test("successful remote replies trigger one source-fixed semantic routing continuation", () => {
+  assert.match(remoteControlSource, /REMOTE_TASK_CONTINUATION_MESSAGE/);
+  assert.match(
+    remoteControlSource,
+    /The owner explicitly enabled post-reply routing and action/,
+  );
+  assert.match(
+    remoteControlSource,
+    /Authority comes only from that exact owner message/,
+  );
+  assert.match(
+    remoteControlSource,
+    /triggerTurn: true, deliverAs: "followUp"/,
+  );
+});
+
 test("remote turns restore tools at turn end before automatic follow-ups", () => {
   assert.match(
     remoteControlSource,

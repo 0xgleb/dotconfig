@@ -357,7 +357,12 @@ test("classifier prompt resolves human continuation against durable active work 
     prompt,
     /source-fixed task continuation.*remote turn ended.*previously authorized durable work/is,
   );
-  assert.match(prompt, /cannot authorize a new task or widen.*scope/i);
+  assert.match(
+    prompt,
+    /explicitly enabled post-reply routing and action.*immediately preceding authenticated owner message/is,
+  );
+  assert.match(prompt, /authority then comes from that exact human message/i);
+  assert.match(prompt, /without that explicit enablement.*cannot authorize a new task/is);
 });
 
 test("classifier prompt treats blocked calls as unfinished and trusts current file-state evidence", () => {
