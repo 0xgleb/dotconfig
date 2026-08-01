@@ -89,7 +89,7 @@ const parseAction: (
 }
 
 const questionsExtension: (pi: ExtensionAPI) => void = (pi) => {
-  registerRuntimeVersion(pi, "questions", "2026.07.23.10")
+  registerRuntimeVersion(pi, "questions", "2026.08.01.11")
   let state = emptyQuestionState
   let dialogOpen = false
   let latestCtx: ExtensionContext | undefined
@@ -103,6 +103,7 @@ const questionsExtension: (pi: ExtensionAPI) => void = (pi) => {
         ...(question.header ? { header: question.header } : {}),
         ...(question.guess ? { guess: question.guess } : {}),
         ...(question.options ? { options: question.options } : {}),
+        ...(question.status === "resolved" ? { answer: question.answer } : {}),
       }),
     )
     const snapshot: UserQuestionStateSnapshot = { questions }

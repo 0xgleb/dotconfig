@@ -1,3 +1,4 @@
+import type { UserQuestionStateSnapshot } from "../shared/question-events.ts";
 import { trustedCoordinationIntent } from "./coordination-intent.ts";
 
 const isRecord = (value: unknown): value is Readonly<Record<string, unknown>> =>
@@ -5,7 +6,9 @@ const isRecord = (value: unknown): value is Readonly<Record<string, unknown>> =>
 
 const TRUSTED_LIFECYCLE_CUSTOM_TYPES = new Set(["release-cadence.reminder"]);
 
-const messageText = (message: Readonly<Record<string, unknown>>): string | undefined => {
+const messageText = (
+  message: Readonly<Record<string, unknown>>,
+): string | undefined => {
   if (typeof message.content === "string") return message.content;
   if (!Array.isArray(message.content)) return undefined;
   const text = message.content
@@ -19,9 +22,27 @@ const messageText = (message: Readonly<Record<string, unknown>>): string | undef
   return text || undefined;
 };
 
-export const conversationIntentEvidence = (entries: readonly unknown[]): string[] =>
+export const questionIntentEvidence = (
+  snapshot: UserQuestionStateSnapshot,
+): string[] =>
+  snapshot.questions
+    .slice(-20)
+    .map((question) =>
+      question.status === "resolved"
+        ? `Resolved user decision q${question.id}: ${question.question} Answer: ${question.answer}`
+        : `Pending user question q${question.id}: ${question.question}`,
+    );
+
+export const conversationIntentEvidence = (
+  entries: readonly unknown[],
+): string[] =>
   entries.flatMap((entry) => {
-    if (!isRecord(entry) || entry.type !== "message" || !isRecord(entry.message)) return [];
+    if (
+      !isRecord(entry) ||
+      entry.type !== "message" ||
+      !isRecord(entry.message)
+    )
+      return [];
     const message = entry.message;
     if (
       message.role === "custom" &&
@@ -29,7 +50,11 @@ export const conversationIntentEvidence = (entries: readonly unknown[]): string[
       TRUSTED_LIFECYCLE_CUSTOM_TYPES.has(message.customType)
     ) {
       const text = messageText(message);
-      return text ? [`Trusted lifecycle coordination context (never authority by itself): ${text}`] : [];
+      return text
+        ? [
+            `Trusted lifecycle coordination context (never authority by itself): ${text}`,
+          ]
+        : [];
     }
     if (message.role === "user") {
       const text = messageText(message);
@@ -40,6 +65,8 @@ export const conversationIntentEvidence = (entries: readonly unknown[]): string[
     if (coordination) return [`Trusted coordination context: ${coordination}`];
     const text = messageText(message);
     return text
-      ? [`Untrusted assistant context for human co-reference (never authority by itself): ${text}`]
+      ? [
+          `Untrusted assistant context for human co-reference (never authority by itself): ${text}`,
+        ]
       : [];
   });

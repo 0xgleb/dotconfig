@@ -18,14 +18,20 @@ export interface UserQuestionResolution {
   readonly answer: string
 }
 
-export interface UserQuestionSnapshot {
+interface UserQuestionSnapshotBase {
   readonly id: number
-  readonly status: "pending" | "resolved"
   readonly question: string
   readonly header?: string
   readonly guess?: string
   readonly options?: readonly QuestionOption[]
 }
+
+export type UserQuestionSnapshot =
+  | (UserQuestionSnapshotBase & { readonly status: "pending" })
+  | (UserQuestionSnapshotBase & {
+      readonly status: "resolved"
+      readonly answer: string
+    })
 
 export interface UserQuestionStateSnapshot {
   readonly questions: readonly UserQuestionSnapshot[]

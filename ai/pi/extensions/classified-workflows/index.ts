@@ -98,7 +98,10 @@ import {
   workflowChildTokenLimit,
 } from "./token-cap.ts"
 import { activeSkillProcedures } from "./skill-context.ts"
-import { conversationIntentEvidence } from "./intent-context.ts"
+import {
+  conversationIntentEvidence,
+  questionIntentEvidence,
+} from "./intent-context.ts"
 import {
   nestedRepositoryRootForPath,
   runtimeProjectContext,
@@ -142,7 +145,9 @@ import {
 } from "../shared/activity-events.ts"
 import {
   QUESTION_RESOLVED_EVENT,
+  QUESTION_STATE_EVENT,
   type UserQuestionResolution,
+  type UserQuestionStateSnapshot,
 } from "../shared/question-events.ts"
 import {
   MANAGED_OPERATIONAL_ROLE_RESUMED_EVENT,
@@ -334,6 +339,7 @@ function visibleIntent(
   pi: ExtensionAPI,
   ctx: ExtensionContext,
   activeGoal?: string,
+  questionState: UserQuestionStateSnapshot = { questions: [] },
 ): string[] {
   const branch = ctx.sessionManager.getBranch()
   const registryIntent: string[] = []
@@ -347,6 +353,9 @@ function visibleIntent(
   const messages = conversationIntentEvidence(branch)
     .slice(-12)
     .map((text) => text.slice(0, 4_000))
+  const questionIntent = questionIntentEvidence(questionState).map((text) =>
+    text.slice(0, 4_000),
+  )
   const work = todoWorkSnapshot(branch)
   const todoIntent = [
     ...work.pending
@@ -360,10 +369,11 @@ function visibleIntent(
     ? [
         ...messages,
         ...registryIntent,
+        ...questionIntent,
         ...todoIntent,
         `Active explicit goal: ${activeGoal}`,
       ]
-    : [...messages, ...registryIntent, ...todoIntent]
+    : [...messages, ...registryIntent, ...questionIntent, ...todoIntent]
 }
 
 function goalTranscript(ctx: ExtensionContext): string[] {
@@ -738,7 +748,7 @@ const WorkflowParameters = Type.Object({
 })
 
 export default function classifiedWorkflows(pi: ExtensionAPI): void {
-  registerRuntimeVersion(pi, "classified-workflows", "2026.07.31.94")
+  registerRuntimeVersion(pi, "classified-workflows", "2026.08.01.95")
   const childTokenLimit = workflowChildTokenLimit(
     process.env[WORKFLOW_CHILD_TOKEN_LIMIT_ENV],
   )
@@ -785,6 +795,7 @@ export default function classifiedWorkflows(pi: ExtensionAPI): void {
   const deterministicResultAllowance = createToolResultAllowance()
   let nextWorkflowId = 1
   let latestCtx: ExtensionContext | undefined
+  let questionState: UserQuestionStateSnapshot = { questions: [] }
   const backgroundWorkflows = new Map<string, BackgroundWorkflow>()
 
   const classifyWithActivity = (
@@ -1460,6 +1471,10 @@ export default function classifiedWorkflows(pi: ExtensionAPI): void {
     }
   })
 
+  pi.events.on(QUESTION_STATE_EVENT, (snapshot: UserQuestionStateSnapshot) => {
+    questionState = snapshot
+  })
+
   pi.events.on(
     QUESTION_RESOLVED_EVENT,
     (_resolution: UserQuestionResolution) => {
@@ -1583,6 +1598,7 @@ export default function classifiedWorkflows(pi: ExtensionAPI): void {
           pi,
           ctx,
           goalState?.status === "active" ? goalState.condition : undefined,
+          questionState,
         ),
         projectInstructions: projectInstructions(ctx),
         skillProcedures: activeSkillProcedures(ctx.sessionManager.getBranch(), {
@@ -1660,6 +1676,7 @@ export default function classifiedWorkflows(pi: ExtensionAPI): void {
           pi,
           ctx,
           goalState?.status === "active" ? goalState.condition : undefined,
+          questionState,
         ),
         projectInstructions: projectInstructions(ctx),
         skillProcedures: activeSkillProcedures(ctx.sessionManager.getBranch(), {
@@ -1879,6 +1896,7 @@ export default function classifiedWorkflows(pi: ExtensionAPI): void {
         pi,
         ctx,
         goalState?.status === "active" ? goalState.condition : undefined,
+        questionState,
       )
       const instructions = projectInstructions(ctx)
       const skillProcedures = activeSkillProcedures(
