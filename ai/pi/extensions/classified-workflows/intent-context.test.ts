@@ -70,6 +70,25 @@ test("source-fixed release reminders preserve lifecycle context without granting
   );
 });
 
+test("source-fixed task continuation marks a settled turn without granting authority", () => {
+  assert.deepEqual(
+    conversationIntentEvidence([
+      {
+        type: "message",
+        message: {
+          role: "custom",
+          customType: "classified-workflows.task-message",
+          content:
+            "The task list is not complete. Continue working without stopping.",
+        },
+      },
+    ]),
+    [
+      "Trusted lifecycle coordination context (never authority by itself): The task list is not complete. Continue working without stopping.",
+    ],
+  );
+});
+
 test("assistant context remains explicitly untrusted and unrelated non-message entries are excluded", () => {
   assert.deepEqual(
     conversationIntentEvidence([

@@ -7,21 +7,26 @@ The daemon uses the Telegram Bot API contracts documented at:
 - `getUpdates`: <https://core.telegram.org/bots/api#getupdates>
 - `Update`: <https://core.telegram.org/bots/api#update>
 - `Message`: <https://core.telegram.org/bots/api#message>
+- `PhotoSize`: <https://core.telegram.org/bots/api#photosize>
+- `getFile`: <https://core.telegram.org/bots/api#getfile>
 - `sendMessage`: <https://core.telegram.org/bots/api#sendmessage>
+- `sendChatAction`: <https://core.telegram.org/bots/api#sendchataction>
+- `setMyCommands`: <https://core.telegram.org/bots/api#setmycommands>
 
-`telegram.test.ts` encodes the documented private text-message response shape. The daemon ignores non-message, non-text, bot-authored, and non-private updates.
+`telegram.test.ts` encodes the documented private text/photo message shapes. Every valid update ID advances the polling offset even when its payload is unsupported, so one unknown update cannot wedge all later owner messages.
 
 ## Trust boundaries and assets
 
 Boundaries:
 
 1. The ragenix token file enters the daemon as secret configuration. It is read only by the service, never logged, returned, or included in process arguments.
-2. Telegram update JSON is untrusted external data. It is decoded into the narrow private-text-message type before routing.
+2. Telegram update JSON and downloaded photo bytes are untrusted external data. Private text/photo metadata is decoded at the boundary; download paths, media types, image counts, and bytes are bounded before entering the bridge.
 3. Sender username and numeric user ID are authentication input. The queued first message must match `@dianov`; its immutable numeric ID is pinned locally. Every later owner message must match both values.
 4. Owner text is untrusted message data. It can enqueue only a capability-free `pi-bridge` chat turn; the existing remote tool guard remains authoritative.
 5. Bridge responses are bounded before crossing back into Telegram.
 6. Pending `ask_user` questions cross from one exact Pi session into the shared SQLite relay. The daemon binds the resulting Telegram `message_id` to that exact `(agent_id, question_id)` pair. Only a private owner message whose `reply_to_message.message_id` matches that binding may answer it.
-7. Telegram question replies cross back as bounded answer data. They resolve only the bound pending question; they never become a general chat turn or authorize a tool call.
+7. Telegram question replies cross back as bounded answer data. They resolve only the bound pending question. A reply not bound to a live question remains ordinary owner conversation; it never authorizes a tool call.
+8. Telegram photos cross into Pi as typed image content only after owner authentication, documented `getFile` decoding, HTTPS download from Telegram's fixed file endpoint, media allowlisting, and byte bounds. Pixels and captions remain untrusted model data under the zero-tool remote-turn guard.
 
 Assets:
 
@@ -34,10 +39,10 @@ Assets:
 ## STRIDE abuse cases
 
 - Spoofing: a different numeric ID presenting username `@dianov` is rejected after owner pinning.
-- Tampering: malformed update IDs, sender fields, chat fields, reply references, and message fields fail in the typed decoder. A reply cannot choose its own agent or question ID.
+- Tampering: malformed update IDs, sender fields, chat fields, reply references, photo metadata, file paths, media types, and message fields fail in typed decoders. A reply cannot choose its own agent or question ID; Telegram-controlled paths cannot choose a host or local path.
 - Repudiation: lifecycle events identify owner pinning, sender rejection, bridge queueing, completion, and failure without message text or personal identifiers.
 - Information disclosure: token, message text, username, numeric user ID, session ID, and response text are absent from telemetry.
-- Denial of service: Telegram long polling and message sizes are bounded; transport failures back off before retrying.
+- Denial of service: Telegram long polling, message/image counts, decoded bytes, progress messages, and SQLite payloads are bounded; every valid update ID advances; transport failures back off before retrying.
 - Elevation of privilege: unauthorized messages are rejected before bridge access; authorized remote turns retain the capability-free tool guard. Replies to unknown or terminal question messages fail closed instead of entering ordinary chat.
 
 ## Operator questions and signals
@@ -61,7 +66,10 @@ Launchd captures stdout and stderr in bounded service log files. No metric or du
 - Malformed Telegram envelopes fail through `TelegramContractError`.
 - A private owner reply decodes only the documented `reply_to_message.message_id` reference.
 - A Telegram reply resolves the exact bound `(agent_id, question_id)` and cannot resolve another question.
-- Replaying a reply or replying to an unknown/terminal Telegram message fails closed.
+- Replaying a reply to a terminal question cannot resolve it again; replies not bound to a question continue as ordinary zero-tool owner conversation.
+- A documented photo update selects one bounded largest variant; malformed or oversized photo metadata fails closed.
+- An unsupported-but-valid update advances the offset instead of wedging later messages.
+- A Telegram-controlled file path cannot escape the fixed Telegram file origin, and a download exceeding the byte bound aborts before bridge persistence.
 
 ## Non-goals
 

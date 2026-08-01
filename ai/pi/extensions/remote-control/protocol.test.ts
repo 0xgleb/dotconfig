@@ -1,10 +1,13 @@
 import assert from "node:assert/strict";
 import test from "node:test";
 import {
+  MAX_REMOTE_IMAGE_BYTES,
   MAX_REMOTE_MESSAGE_CHARACTERS,
   RemoteBridgeError,
+  boundedBridgeImages,
   boundedBridgeText,
   finalAssistantText,
+  remoteTurnContent,
   remoteTurnPrompt,
 } from "./protocol.ts";
 
@@ -16,9 +19,43 @@ test("remote prompts are explicitly communication-only", () => {
 });
 
 test("bridge text rejects control characters and oversized messages", () => {
-  assert.throws(() => boundedBridgeText("message", "bad\u0000text", 100), RemoteBridgeError);
   assert.throws(
-    () => boundedBridgeText("message", "x".repeat(MAX_REMOTE_MESSAGE_CHARACTERS + 1), MAX_REMOTE_MESSAGE_CHARACTERS),
+    () => boundedBridgeText("message", "bad\u0000text", 100),
+    RemoteBridgeError,
+  );
+  assert.throws(
+    () =>
+      boundedBridgeText(
+        "message",
+        "x".repeat(MAX_REMOTE_MESSAGE_CHARACTERS + 1),
+        MAX_REMOTE_MESSAGE_CHARACTERS,
+      ),
+    RemoteBridgeError,
+  );
+});
+
+test("remote image payloads are typed, bounded, and included as image content", () => {
+  const image = {
+    mediaType: "image/jpeg" as const,
+    data: Buffer.from("safe-image-fixture").toString("base64"),
+  };
+  assert.deepEqual(boundedBridgeImages([image]), [image]);
+  assert.deepEqual(remoteTurnContent("Describe this", [image]).at(-1), {
+    type: "image",
+    source: { type: "base64", ...image },
+  });
+  assert.throws(
+    () => boundedBridgeImages([{ ...image, data: "not base64!" }]),
+    RemoteBridgeError,
+  );
+  assert.throws(
+    () =>
+      boundedBridgeImages([
+        {
+          ...image,
+          data: Buffer.alloc(MAX_REMOTE_IMAGE_BYTES + 1).toString("base64"),
+        },
+      ]),
     RemoteBridgeError,
   );
 });
@@ -26,7 +63,10 @@ test("bridge text rejects control characters and oversized messages", () => {
 test("only bounded final assistant text becomes the bridge response", () => {
   assert.equal(
     finalAssistantText([
-      { role: "assistant", content: [{ type: "thinking", thinking: "private" }] },
+      {
+        role: "assistant",
+        content: [{ type: "thinking", thinking: "private" }],
+      },
       {
         role: "assistant",
         content: [
@@ -38,5 +78,8 @@ test("only bounded final assistant text becomes the bridge response", () => {
     ]),
     "first\nsecond",
   );
-  assert.equal(finalAssistantText([{ role: "user", content: "hello" }]), undefined);
+  assert.equal(
+    finalAssistantText([{ role: "user", content: "hello" }]),
+    undefined,
+  );
 });

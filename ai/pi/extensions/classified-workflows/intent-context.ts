@@ -4,7 +4,10 @@ import { trustedCoordinationIntent } from "./coordination-intent.ts";
 const isRecord = (value: unknown): value is Readonly<Record<string, unknown>> =>
   typeof value === "object" && value !== null && !Array.isArray(value);
 
-const TRUSTED_LIFECYCLE_CUSTOM_TYPES = new Set(["release-cadence.reminder"]);
+const TRUSTED_LIFECYCLE_CUSTOM_TYPES = new Set([
+  "release-cadence.reminder",
+  "classified-workflows.task-message",
+]);
 
 const messageText = (
   message: Readonly<Record<string, unknown>>,

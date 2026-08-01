@@ -17,7 +17,7 @@ import {
   BRIDGE_AGENT_TTL_MS,
   RemoteBridgeError,
   finalAssistantText,
-  remoteTurnPrompt,
+  remoteTurnContent,
   type RemoteFailure,
   type RemoteMessage,
 } from "./protocol.ts"
@@ -37,7 +37,7 @@ const safeError = (error: RemoteBridgeError): string =>
   `${error.code}: ${error.message}`.slice(0, 160)
 
 export default function remoteControl(pi: ExtensionAPI): void {
-  registerRuntimeVersion(pi, "remote-control", "2026.08.01.5")
+  registerRuntimeVersion(pi, "remote-control", "2026.08.01.6")
   const store = makeRemoteBridgeStore(
     remoteBridgeDatabasePath(process.env.XDG_STATE_HOME, homedir()),
   )
@@ -101,7 +101,7 @@ export default function remoteControl(pi: ExtensionAPI): void {
       Effect.either(
         Effect.try({
           try: () =>
-            pi.sendUserMessage(remoteTurnPrompt(message.text), {
+            pi.sendUserMessage(remoteTurnContent(message.text, message.images), {
               deliverAs: "steer",
             }),
           catch: () =>
