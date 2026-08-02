@@ -11,6 +11,7 @@ import { decodeHarnessReviewHandoff } from "./harness-protocol.ts"
 import { decodeJobSpec, JobRuntimeError, type Job } from "./job-runtime.ts"
 import type { CanonicalPath } from "./review-duty-profile.ts"
 import {
+  isRegisteredKindFilter,
   JobStoreError,
   type SqliteJobStore,
   type StoredJob,
@@ -287,9 +288,15 @@ const handleClaim = (
     const input = yield* Effect.flatMap(readBody(request), parseJson)
     if (
       !isRecord(input) ||
-      !exactKeys(input, ["workerId", "ttlMs"]) ||
+      !(
+        exactKeys(input, ["workerId", "ttlMs"]) ||
+        exactKeys(input, ["workerId", "ttlMs", "kinds"])
+      ) ||
       typeof input.workerId !== "string" ||
-      typeof input.ttlMs !== "number"
+      typeof input.ttlMs !== "number" ||
+      ("kinds" in input &&
+        (!Array.isArray(input.kinds) ||
+          !isRegisteredKindFilter(input.kinds)))
     ) {
       return yield* Effect.fail(
         serverError("invalid_payload", "worker claim payload is invalid"),
@@ -301,6 +308,9 @@ const handleClaim = (
       randomUUID(),
       now,
       input.ttlMs,
+      "kinds" in input && Array.isArray(input.kinds) && isRegisteredKindFilter(input.kinds)
+        ? input.kinds
+        : undefined,
     )
     if (job === undefined) response.writeHead(204).end()
     else sendJson(response, 200, { job })

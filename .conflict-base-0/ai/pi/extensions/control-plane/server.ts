@@ -237,7 +237,9 @@ const handleClaim = (
         serverError("request_failed", "worker claim payload is invalid"),
       )
     }
-    yield* store.recoverExpired(Date.now(), 0)
+    yield* Effect.catchAll(store.recoverExpired(Date.now(), 0), () =>
+      Effect.void,
+    )
     const job = yield* store.claimDue(
       input.workerId,
       randomUUID(),

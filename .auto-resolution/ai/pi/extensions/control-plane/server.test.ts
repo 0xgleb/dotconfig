@@ -522,6 +522,62 @@ test("completing a job that does not exist reports it as missing", async () =>
     })
   }))
 
+test("kind-filtered worker claims accept only registered bounded kinds", async () =>
+  withServer(async (origin) => {
+    const enqueued = await fetch(`${origin}/v1/jobs`, {
+      method: "POST",
+      headers: { "content-type": "application/json" },
+      body: JSON.stringify({ ...enqueueBody, runAt: 0 }),
+    })
+    assert.equal(enqueued.status, 201)
+
+    const filtered = await fetch(`${origin}/v1/worker/claim`, {
+      method: "POST",
+      headers: { "content-type": "application/json" },
+      body: JSON.stringify({
+        workerId: "harness-supervisor",
+        ttlMs: 90_000,
+        kinds: ["harness.review"],
+      }),
+    })
+    assert.equal(filtered.status, 204)
+
+    for (const kinds of [
+      [],
+      ["unregistered.kind"],
+      [42],
+      ["harness.review", "harness.review"],
+      Array.from({ length: 9 }, () => "harness.review"),
+      "harness.review",
+    ]) {
+      const rejected = await fetch(`${origin}/v1/worker/claim`, {
+        method: "POST",
+        headers: { "content-type": "application/json" },
+        body: JSON.stringify({
+          workerId: "harness-supervisor",
+          ttlMs: 90_000,
+          kinds,
+        }),
+      })
+      assert.equal(rejected.status, 400)
+    }
+
+    const matching = await fetch(`${origin}/v1/worker/claim`, {
+      method: "POST",
+      headers: { "content-type": "application/json" },
+      body: JSON.stringify({
+        workerId: "review-supervisor",
+        ttlMs: 90_000,
+        kinds: ["review-duty.scan"],
+      }),
+    })
+    assert.equal(matching.status, 200)
+    const claimed = (await matching.json()) as {
+      job: { spec: { kind: string } }
+    }
+    assert.equal(claimed.job.spec.kind, "review-duty.scan")
+  }))
+
 test("failed attempts retry through the fail route until attempts are exhausted", async () =>
   withServer(async (origin) => {
     const enqueued = await fetch(`${origin}/v1/jobs`, {

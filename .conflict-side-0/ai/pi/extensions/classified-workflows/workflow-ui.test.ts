@@ -51,7 +51,7 @@ test("background start guidance keeps delegated work out of the foreground", () 
 test("workflow progress names purpose, phase, observed counts, and latest evidence", () => {
   assert.equal(
     workflowProgressText({
-      purpose: "review moneymentum PR #451",
+      purpose: "review example PR #451",
       phase: "verify findings",
       started: 10,
       running: 2,
@@ -60,7 +60,7 @@ test("workflow progress names purpose, phase, observed counts, and latest eviden
       maxAgents: 16,
       latest: "child 10 · model reasoning",
     }),
-    "review moneymentum PR #451 · phase verify findings · progress 8 settled / 2 running / 10 started (7 ok, 1 failed; max 16/phase) · latest child 10 · model reasoning",
+    "review example PR #451 · phase verify findings · progress 8 settled / 2 running / 10 started (7 ok, 1 failed; max 16/phase) · latest child 10 · model reasoning",
   );
 });
 

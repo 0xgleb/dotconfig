@@ -13,7 +13,9 @@ import {
   failJob,
   JobRuntimeError,
   recoverExpiredJob,
+  REGISTERED_JOB_KINDS,
   type Job,
+  type RegisteredJobKind,
   type RegisteredJobResult,
   type RegisteredJobSpec,
 } from "./job-runtime.ts"
@@ -81,6 +83,7 @@ export interface SqliteJobStore {
     leaseToken: string,
     now: number,
     ttlMs: number,
+    kinds?: readonly RegisteredJobKind[],
   ) => Effect.Effect<Job | undefined, JobStoreError | JobRuntimeError>
   readonly complete: (
     id: string,
@@ -400,11 +403,11 @@ const makeStore = (
               .prepare(
                 `SELECT job_id, document FROM jobs
                  WHERE state IN ('scheduled', 'ready', 'retry_wait')
-                   AND run_at <= ?
+                   AND run_at <= ?${kindFilter}
                  ORDER BY run_at, updated_at, job_id
                  LIMIT 1`,
               )
-              .get(now),
+              .get(now, ...(kinds ?? [])),
           "failed to select due job",
         ),
         (value) =>
