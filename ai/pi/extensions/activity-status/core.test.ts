@@ -7,12 +7,31 @@ import {
   runningToolsPhase,
   startToolProgress,
   toolPhase,
+  usageThrottleLabel,
 } from "./core.ts";
 
 test("visible model thinking is explicitly labeled as reasoning with no implied tools", () => {
   assert.deepEqual(
     assistantPhase({ content: [{ type: "thinking", thinking: "Identifying classifier bug" }] }),
     { kind: "reasoning", label: "REASONING · model generation · no tools implied" },
+  );
+});
+
+test("usage throttle is visible only in dotconfig and Yielduck sessions", () => {
+  assert.match(
+    usageThrottleLabel("/Users/example/.config", "/Users/example") ?? "",
+    /THROTTLED · 5m.*human prompts bypass/,
+  );
+  assert.match(
+    usageThrottleLabel(
+      "/Users/example/code/dataclique/yielduck",
+      "/Users/example",
+    ) ?? "",
+    /THROTTLED · 5m/,
+  );
+  assert.equal(
+    usageThrottleLabel("/Users/example/code/st0x", "/Users/example"),
+    undefined,
   );
 });
 

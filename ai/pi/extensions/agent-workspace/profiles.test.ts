@@ -3,8 +3,8 @@ import test from "node:test";
 
 import {
   claudeExecutorLaunchArguments,
+  claudeWorkspaceLaunchArguments,
   workspaceProfile,
-  zellijLaunchArguments,
 } from "./profiles.ts";
 
 const expectedLoop = (instruction: string): string => `/loop 2h ${instruction}`;
@@ -42,16 +42,27 @@ test("st0x review workspace is a Luna supervisor with isolated authority", () =>
     ),
   );
   assert.match(profile.command.at(-1) ?? "", /No automatic merge lane exists/i);
-  assert.deepEqual(zellijLaunchArguments(profile).slice(0, 8), [
+  const workspaceArgs = claudeWorkspaceLaunchArguments(
+    profile,
+    "supervisor-session",
+    "workspace-dedupe",
+  );
+  assert.deepEqual(workspaceArgs.slice(0, 6), [
     "action",
     "new-tab",
     "--name",
     "st0x",
     "--cwd",
     "/Users/example/code/st0x",
-    "--",
-    "pi",
   ]);
+  const jf = workspaceArgs.indexOf("jf");
+  assert.deepEqual(workspaceArgs.slice(jf, jf + 4), [
+    "jf",
+    "clanker",
+    "--claude",
+    "--new",
+  ]);
+  assert.equal(workspaceArgs.includes("pi"), false);
 });
 
 test("DataClique supervisor isolates Yielduck automatic completion", () => {

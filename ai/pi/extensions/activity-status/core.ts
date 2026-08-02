@@ -1,3 +1,16 @@
+import { join, resolve } from "node:path";
+
+export const usageThrottleLabel = (
+  cwd: string,
+  home: string,
+): string | undefined => {
+  const current = resolve(cwd);
+  return current === resolve(home, ".config") ||
+    current === resolve(home, "code", "dataclique", "yielduck")
+    ? "THROTTLED · 5m between model-heavy batches · human prompts bypass"
+    : undefined;
+};
+
 export type ActivityPhase =
   | { readonly kind: "model"; readonly label: string }
   | { readonly kind: "reasoning"; readonly label: string }

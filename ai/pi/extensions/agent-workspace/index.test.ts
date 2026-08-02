@@ -10,10 +10,7 @@ test("dedicated workspace launch is profile-bound and shell-free", () => {
     source,
     /StringEnum\(\s*\["st0x-review", "dataclique-review", "personal-review"\]/,
   );
-  assert.match(
-    source,
-    /pi\.exec\("zellij", \[\.\.\.zellijLaunchArguments\(profile\)\]/,
-  );
+  assert.match(source, /claudeWorkspaceLaunchArguments/);
   assert.doesNotMatch(source, /pi\.exec\("(?:bash|sh|zsh)"/);
   assert.match(source, /query-tab-names/);
   assert.match(source, /existing \? "running" : "stopped"/);
@@ -40,6 +37,7 @@ test("Claude dispatch is source-fixed, profile-bound, and fail-closed", () => {
   assert.match(source, /profile\.additionalRepositoryRoots/);
   assert.match(source, /child\.startsWith\("\.\."\)/);
   assert.match(source, /claudeExecutorLaunchArguments/);
+  assert.match(source, /go-to-tab-name/);
   assert.match(source, /ctx\.sessionManager\.getSessionId\(\)/);
   assert.match(source, /status: "dispatched"/);
 });

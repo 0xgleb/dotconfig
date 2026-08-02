@@ -190,6 +190,32 @@ export const claudeExecutorLaunchArguments = (
   ];
 };
 
+export const claudeWorkspaceLaunchArguments = (
+  profile: AgentWorkspaceProfile,
+  supervisorId: string,
+  dedupeKey: string,
+): readonly string[] => [
+  "action",
+  "new-tab",
+  "--name",
+  profile.tabName,
+  "--cwd",
+  profile.cwd,
+  "--",
+  "env",
+  ...CLAUDE_HARNESS_ENVIRONMENT,
+  "jf",
+  "clanker",
+  "--claude",
+  "--new",
+  claudeExecutorPrompt(
+    profile,
+    { mode: "inventory" },
+    supervisorId,
+    dedupeKey,
+  ),
+];
+
 export const zellijLaunchArguments = (
   profile: AgentWorkspaceProfile,
 ): readonly string[] => [

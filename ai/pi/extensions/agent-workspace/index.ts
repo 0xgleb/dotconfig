@@ -10,8 +10,8 @@ import { registerRuntimeVersion } from "../shared/runtime-version.ts";
 import { restoreReviewDutyState } from "../classified-workflows/review-duty-gate.ts";
 import {
   claudeExecutorLaunchArguments,
+  claudeWorkspaceLaunchArguments,
   workspaceProfile,
-  zellijLaunchArguments,
   type AgentWorkspaceProfile,
   type AgentWorkspaceProfileName,
   type ClaudeReviewDispatch,
@@ -101,7 +101,7 @@ const parseDispatch = (
 };
 
 export default function agentWorkspace(pi: ExtensionAPI): void {
-  registerRuntimeVersion(pi, "agent-workspace", "2026.08.01.5");
+  registerRuntimeVersion(pi, "agent-workspace", "2026.08.01.6");
 
   pi.on("session_start", async (_event, ctx) => {
     const profile = profileForSession(pi.getSessionName());
@@ -150,11 +150,11 @@ export default function agentWorkspace(pi: ExtensionAPI): void {
     name: "agent_workspace",
     label: "Agent workspace",
     description:
-      "Start or inspect a source-fixed narrow Pi review supervisor, or dispatch one source-fixed fresh Claude Code subscription-harness inventory/review executor in its existing Zellij tab. Arbitrary commands and Anthropic API providers are not accepted.",
+      "Start or inspect a source-fixed Claude Code subscription-harness review workspace, or dispatch one fresh source-fixed inventory/review executor into that Zellij tab from its narrow Pi supervisor. Arbitrary commands and Anthropic API providers are not accepted.",
     promptSnippet:
-      "Start or inspect a reviewed supervisor, or dispatch a fresh Claude Code harness review executor",
+      "Start or inspect a Claude Code harness review workspace, or dispatch a fresh executor",
     promptGuidelines: [
-      "Use agent_workspace start only when the user explicitly requests the named dedicated supervisor; role ownership never grants additional authority.",
+      "Use agent_workspace start only when the user explicitly requests the named Claude Code review workspace; role ownership never grants additional authority.",
       "Use agent_workspace dispatch only inside the matching dedicated review-duty session, after review_duty begin for review mode. Dispatch launches `jf clanker --claude --new` and never an Anthropic API provider.",
     ],
     parameters: Type.Object({
@@ -281,6 +281,27 @@ export default function agentWorkspace(pi: ExtensionAPI): void {
               ? `${dispatch.pullRequest}-${dispatch.headSha}`
               : String(Date.now()),
           ].join("-");
+          const focused = yield* Effect.tryPromise({
+            try: () =>
+              pi.exec(
+                "zellij",
+                ["action", "go-to-tab-name", profile.tabName],
+                { timeout: QUERY_TIMEOUT_MS },
+              ),
+            catch: () =>
+              new AgentWorkspaceError({
+                code: "launch_failed",
+                message: "Could not focus the source-fixed Claude review tab",
+              }),
+          });
+          if (focused.code !== 0) {
+            return yield* Effect.fail(
+              new AgentWorkspaceError({
+                code: "launch_failed",
+                message: "Zellij rejected the source-fixed Claude review tab",
+              }),
+            );
+          }
           const launched = yield* Effect.tryPromise({
             try: () =>
               pi.exec(
@@ -315,20 +336,28 @@ export default function agentWorkspace(pi: ExtensionAPI): void {
 
         const launched = yield* Effect.tryPromise({
           try: () =>
-            pi.exec("zellij", [...zellijLaunchArguments(profile)], {
-              timeout: LAUNCH_TIMEOUT_MS,
-            }),
+            pi.exec(
+              "zellij",
+              [
+                ...claudeWorkspaceLaunchArguments(
+                  profile,
+                  ctx.sessionManager.getSessionId(),
+                  `claude-inventory-${profile.name}-${Date.now()}`,
+                ),
+              ],
+              { timeout: LAUNCH_TIMEOUT_MS },
+            ),
           catch: () =>
             new AgentWorkspaceError({
               code: "launch_failed",
-              message: "Could not launch the dedicated agent workspace",
+              message: "Could not launch the Claude Code review workspace",
             }),
         });
         if (launched.code !== 0) {
           return yield* Effect.fail(
             new AgentWorkspaceError({
               code: "launch_failed",
-              message: "Zellij rejected the dedicated agent workspace launch",
+              message: "Zellij rejected the Claude Code review workspace launch",
             }),
           );
         }
