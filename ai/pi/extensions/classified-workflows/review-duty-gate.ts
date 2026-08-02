@@ -524,6 +524,42 @@ const continuedToolResultAfter = (
     return resultState?.phase === "active" && sameJob(resultState, state);
   });
 
+const continuedToolResultBefore = (
+  entries: readonly unknown[],
+  stateIndex: number,
+  state: ReviewDutyState,
+): boolean => {
+  for (let index = stateIndex - 1; index >= 0; index -= 1) {
+    const entry = entries[index];
+    if (
+      !isRecord(entry) ||
+      entry.type !== "message" ||
+      !isRecord(entry.message)
+    )
+      continue;
+    const message = entry.message;
+    if (
+      message.role !== "toolResult" ||
+      message.toolName !== "review_duty" ||
+      !isRecord(message.details)
+    )
+      continue;
+    if (
+      message.details.outcome === "error" ||
+      message.details.outcome === "status"
+    )
+      continue;
+    if (
+      message.details.outcome !== "continued" ||
+      !isRecord(message.details.state)
+    )
+      return false;
+    const resultState = decodeReviewDutyState(message.details.state);
+    return resultState?.phase === "active" && sameJob(resultState, state);
+  }
+  return false;
+};
+
 export const restoreReviewDutyState = (
   entries: readonly unknown[],
 ): ReviewDutyState => {
@@ -535,9 +571,12 @@ export const restoreReviewDutyState = (
       entry.customType === REVIEW_DUTY_STATE_ENTRY
     ) {
       const state = decodeReviewDutyState(entry.data) ?? emptyReviewDutyState;
-      return state.phase === "active" &&
-          state.continuation === undefined &&
-          continuedToolResultAfter(entries, index, state)
+      const migratedContinuation =
+        state.phase !== "idle" &&
+        state.continuation === undefined &&
+        (continuedToolResultAfter(entries, index, state) ||
+          continuedToolResultBefore(entries, index, state));
+      return migratedContinuation
         ? { ...state, continuation: "fix-re-review" }
         : state;
     }

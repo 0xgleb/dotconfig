@@ -319,6 +319,7 @@ test("managed reload cancellation recovers only an auto same-PR fix continuation
   assert.match(extensionSource, /latestManagedReloadCancellationAfter/);
   assert.match(extensionSource, /latestLegacyUnmarkedCancellationAfter/);
   assert.match(extensionSource, /managedReloadCompletionObservedAfterAudit/);
+  assert.match(extensionSource, /auto-reload\.completed/);
   assert.match(extensionSource, /!latestContinuationPause/);
   assert.match(extensionSource, /MANAGED_RELOAD_WORKFLOW_CANCELLATION/);
 });
@@ -522,6 +523,25 @@ test("review duty state survives reload defensively", () => {
       },
     ]),
     continued,
+  );
+  const legacyAwaiting = startReviewWorkflow(active.state, 20);
+  assert.deepEqual(
+    restoreReviewDutyState([
+      {
+        type: "message",
+        message: {
+          role: "toolResult",
+          toolName: "review_duty",
+          details: { outcome: "continued", state: active.state },
+        },
+      },
+      {
+        type: "custom",
+        customType: REVIEW_DUTY_STATE_ENTRY,
+        data: legacyAwaiting,
+      },
+    ]),
+    { ...legacyAwaiting, continuation: "fix-re-review" },
   );
   assert.deepEqual(
     restoreReviewDutyState([
