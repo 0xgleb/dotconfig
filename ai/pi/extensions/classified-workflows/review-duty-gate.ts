@@ -560,8 +560,15 @@ const continuedToolResultBefore = (
       message.details.outcome === "status"
     )
       continue;
+    const continued = message.details.outcome === "continued";
+    const recoveredLegacyAutoContinuation =
+      state.kind === "auto" &&
+      message.details.outcome === "retry-failed" &&
+      /^Recovered managed-reload-cancelled workflow\b/.test(
+        toolResultText(message),
+      );
     if (
-      message.details.outcome !== "continued" ||
+      (!continued && !recoveredLegacyAutoContinuation) ||
       !isRecord(message.details.state)
     )
       return false;

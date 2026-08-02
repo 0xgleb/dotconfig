@@ -578,6 +578,47 @@ test("review duty state survives reload defensively", () => {
     ]),
     continued,
   );
+  const automatic = beginReviewDuty(
+    emptyReviewDutyState,
+    { repository: "0xgleb/dotconfig", pullRequest: 42, kind: "auto" },
+    30,
+  );
+  assert.equal(automatic.ok, true);
+  if (!automatic.ok) return;
+  const recoveredLegacyAutoEntries = [
+    {
+      type: "message",
+      message: {
+        role: "toolResult",
+        toolName: "review_duty",
+        content:
+          "Recovered managed-reload-cancelled workflow wf-10 for 0xgleb/dotconfig#42",
+        details: { outcome: "retry-failed", state: automatic.state },
+      },
+    },
+    {
+      type: "custom",
+      customType: REVIEW_DUTY_STATE_ENTRY,
+      data: automatic.state,
+    },
+  ];
+  assert.deepEqual(restoreReviewDutyState(recoveredLegacyAutoEntries), {
+    ...automatic.state,
+    continuation: "fix-re-review",
+  });
+  assert.deepEqual(
+    restoreReviewDutyState([
+      {
+        ...recoveredLegacyAutoEntries[0],
+        message: {
+          ...recoveredLegacyAutoEntries[0].message,
+          content: "Recovered failed workflow wf-10",
+        },
+      },
+      recoveredLegacyAutoEntries[1],
+    ]),
+    automatic.state,
+  );
   assert.deepEqual(
     restoreReviewDutyState([
       {
