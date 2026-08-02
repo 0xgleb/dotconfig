@@ -31,7 +31,7 @@ const tabNames = (stdout: string): readonly string[] =>
     .filter(Boolean);
 
 export default function agentWorkspace(pi: ExtensionAPI): void {
-  registerRuntimeVersion(pi, "agent-workspace", "2026.08.01.2");
+  registerRuntimeVersion(pi, "agent-workspace", "2026.08.01.3");
 
   pi.registerTool({
     name: "agent_workspace",
@@ -45,7 +45,9 @@ export default function agentWorkspace(pi: ExtensionAPI): void {
     ],
     parameters: Type.Object({
       action: StringEnum(["start", "status"] as const),
-      profile: StringEnum(["st0x-review"] as const),
+      profile: StringEnum(
+        ["st0x-review", "dataclique-review", "personal-review"] as const,
+      ),
     }),
     async execute(_toolCallId, params: AgentWorkspaceParams) {
       const profile = workspaceProfile(params.profile, homedir());

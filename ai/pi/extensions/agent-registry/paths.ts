@@ -16,6 +16,8 @@ export const managedOperationalRole: (cwd: string, home: string) => ManagedOpera
     { project: join(home, ".config"), role: "pi-support" },
     { project: join(home, "code", "dataclique", "yielduck"), role: "operator" },
     { project: join(home, "code", "st0x"), role: "reviewer" },
+    { project: join(home, "code", "dataclique"), role: "reviewer" },
+    { project: join(home, "code", "0xgleb"), role: "reviewer" },
   ];
   return roles.find(({ project }) => project === cwd);
 };
@@ -30,6 +32,8 @@ export const shouldSelfClaimUnownedRole: (
     { project: join(home, ".config"), role: "pi-support" },
     { project: join(home, "code", "dataclique", "yielduck"), role: "operator" },
     { project: join(home, "code", "st0x"), role: "reviewer" },
+    { project: join(home, "code", "dataclique"), role: "reviewer" },
+    { project: join(home, "code", "0xgleb"), role: "reviewer" },
   ].some((candidate) => candidate.project === project && candidate.role === role);
   return !dedicated || cwd === project;
 };

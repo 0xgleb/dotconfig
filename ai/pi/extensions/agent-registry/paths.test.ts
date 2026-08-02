@@ -15,6 +15,14 @@ test("managed operational roles are scoped to their owning project sessions", ()
     managedOperationalRole("/Users/example/code/st0x", "/Users/example"),
     { project: "/Users/example/code/st0x", role: "reviewer" },
   );
+  assert.deepEqual(
+    managedOperationalRole("/Users/example/code/dataclique", "/Users/example"),
+    { project: "/Users/example/code/dataclique", role: "reviewer" },
+  );
+  assert.deepEqual(
+    managedOperationalRole("/Users/example/code/0xgleb", "/Users/example"),
+    { project: "/Users/example/code/0xgleb", role: "reviewer" },
+  );
   assert.equal(managedOperationalRole("/Users/example/code/other", "/Users/example"), undefined);
 });
 
@@ -60,6 +68,42 @@ test("sessions outside dedicated projects never self-claim their standing roles"
       "/Users/example/code/st0x",
       "reviewer",
       "/Users/example/code/st0x",
+      "/Users/example",
+    ),
+    true,
+  );
+  assert.equal(
+    shouldSelfClaimUnownedRole(
+      "/Users/example/code/dataclique",
+      "reviewer",
+      "/Users/example/code/other",
+      "/Users/example",
+    ),
+    false,
+  );
+  assert.equal(
+    shouldSelfClaimUnownedRole(
+      "/Users/example/code/dataclique",
+      "reviewer",
+      "/Users/example/code/dataclique",
+      "/Users/example",
+    ),
+    true,
+  );
+  assert.equal(
+    shouldSelfClaimUnownedRole(
+      "/Users/example/code/0xgleb",
+      "reviewer",
+      "/Users/example/code/other",
+      "/Users/example",
+    ),
+    false,
+  );
+  assert.equal(
+    shouldSelfClaimUnownedRole(
+      "/Users/example/code/0xgleb",
+      "reviewer",
+      "/Users/example/code/0xgleb",
       "/Users/example",
     ),
     true,

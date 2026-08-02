@@ -400,6 +400,7 @@ test("typed review-duty gate actions are locally allowed", () => {
     "retry-blocked",
     "retry-failed",
     "continue",
+    "complete-auto",
   ] as const) {
     assert.deepEqual(
       deterministicDecision({

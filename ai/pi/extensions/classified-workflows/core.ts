@@ -97,6 +97,7 @@ const REVIEW_DUTY_ACTIONS = new Set([
   "retry-blocked",
   "retry-failed",
   "continue",
+  "complete-auto",
 ]);
 const RELEASE_CADENCE_ACTIONS = new Set(["status", "enable", "disable", "mark"]);
 const isSkillView = (toolName: string, input: Readonly<Record<string, unknown>>): boolean =>

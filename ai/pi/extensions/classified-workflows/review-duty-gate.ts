@@ -7,7 +7,7 @@ export const MAX_REVIEW_DUTY_COMPLETED_PASSES = 6;
 export interface ReviewDutyJob {
   readonly repository: string;
   readonly pullRequest: number;
-  readonly kind: "own" | "assigned";
+  readonly kind: "own" | "assigned" | "auto";
 }
 
 interface ActiveReviewDutyJob extends ReviewDutyJob {
@@ -43,14 +43,43 @@ const isRecord = (value: unknown): value is Record<string, unknown> =>
 
 const validRepository = (value: unknown): value is string =>
   typeof value === "string" &&
-  /^[A-Za-z0-9_.-]{1,120}$/.test(value) &&
-  !value.startsWith(".");
+  value.length <= 120 &&
+  /^[A-Za-z0-9_.-]+(?:\/[A-Za-z0-9_.-]+)?$/.test(value) &&
+  value.split("/").every((segment) => !segment.startsWith("."));
 
 const validPullRequest = (value: unknown): value is number =>
   Number.isSafeInteger(value) && Number(value) > 0;
 
 const validKind = (value: unknown): value is ReviewDutyJob["kind"] =>
-  value === "own" || value === "assigned";
+  value === "own" || value === "assigned" || value === "auto";
+
+const REVIEW_DUTY_SESSIONS = [
+  "st0x-review-duty",
+  "dataclique-review-duty",
+  "personal-review-duty",
+] as const;
+
+export const isReviewDutySession = (
+  sessionName: string | undefined,
+): boolean =>
+  REVIEW_DUTY_SESSIONS.some((candidate) => candidate === sessionName);
+
+export const reviewDutyJobAllowed = (
+  sessionName: string | undefined,
+  job: ReviewDutyJob,
+): boolean => {
+  const repository = job.repository.toLowerCase();
+  if (sessionName === "st0x-review-duty") return job.kind !== "auto";
+  if (sessionName === "dataclique-review-duty") {
+    if (!repository.startsWith("dataclique/")) return false;
+    return job.kind !== "auto" || repository === "dataclique/yielduck";
+  }
+  if (sessionName === "personal-review-duty") {
+    if (!repository.startsWith("0xgleb/")) return false;
+    return job.kind !== "auto" || repository === "0xgleb/dotconfig";
+  }
+  return false;
+};
 
 const validTimestamp = (value: unknown): value is number =>
   Number.isSafeInteger(value) && Number(value) >= 0;
@@ -79,7 +108,10 @@ export const beginReviewDuty = (
   if (state.phase === "awaiting_report") {
     return {
       ok: false,
-      error: `${jobLabel(state)} still requires a persisted and relayed verdict question`,
+      error:
+        state.kind === "auto"
+          ? `${jobLabel(state)} still requires verified automatic review completion`
+          : `${jobLabel(state)} still requires a persisted and relayed verdict question`,
     };
   }
   if (state.phase === "active") {
@@ -217,6 +249,33 @@ export const continueReviewDuty = (
   return { ok: true, state: { ...active, phase: "active" } };
 };
 
+export const completeAutoReviewDuty = (
+  state: ReviewDutyState,
+  completedWorkflowObserved: boolean,
+  workflowRunning: boolean,
+  allowedAutoMergeLane: boolean,
+): ReviewDutyTransition => {
+  if (state.phase !== "awaiting_report" || state.kind !== "auto") {
+    return { ok: false, error: "no automatic review-duty job awaits completion" };
+  }
+  if (!allowedAutoMergeLane) {
+    return {
+      ok: false,
+      error: "automatic completion is not allowed for this reviewer repository",
+    };
+  }
+  if (workflowRunning) {
+    return { ok: false, error: "the review-duty workflow is still running" };
+  }
+  if (!completedWorkflowObserved) {
+    return {
+      ok: false,
+      error: "the latest automatic review workflow is not proven completed",
+    };
+  }
+  return { ok: true, state: emptyReviewDutyState };
+};
+
 export const retryFailedReviewDuty = (
   state: ReviewDutyState,
   latestWorkflowFailed: boolean,
@@ -258,6 +317,12 @@ export const reportReviewDuty = (
 ): ReviewDutyTransition => {
   if (state.phase !== "awaiting_report") {
     return { ok: false, error: "no completed review-duty job awaits a report" };
+  }
+  if (state.kind === "auto") {
+    return {
+      ok: false,
+      error: "automatic review-duty jobs complete through complete-auto, not a user verdict",
+    };
   }
   if (!relayed) {
     return {
@@ -350,12 +415,14 @@ export const reviewWorkflowBlockReason = (
   sessionName: string | undefined,
   state: ReviewDutyState,
 ): string | undefined => {
-  if (sessionName !== "st0x-review-duty") return undefined;
+  if (!isReviewDutySession(sessionName)) return undefined;
   if (state.phase === "idle") {
     return "Dedicated review workflows require review_duty begin with repository, pull request, and own/assigned kind";
   }
   if (state.phase === "awaiting_report") {
-    return `${jobLabel(state)} cannot advance until its typed verdict question is persisted and linked to Piece of Pi Telegram relay`;
+    return state.kind === "auto"
+      ? `${jobLabel(state)} cannot advance until its completed automatic review workflow is verified with review_duty complete-auto`
+      : `${jobLabel(state)} cannot advance until its typed verdict question is persisted and linked to Piece of Pi Telegram relay`;
   }
   return undefined;
 };

@@ -6,6 +6,7 @@ import {
   REVIEW_DUTY_STATE_ENTRY,
   beginReviewDuty,
   clearedHistoricalReviewQuestion,
+  completeAutoReviewDuty,
   continueReviewDuty,
   emptyReviewDutyState,
   preExecutionReviewWorkflowBlockObserved,
@@ -13,6 +14,7 @@ import {
   retryBlockedReviewDuty,
   retryFailedReviewDuty,
   reportReviewDuty,
+  reviewDutyJobAllowed,
   restoreReviewDutyState,
   reviewWorkflowBlockReason,
 } from "./review-duty-gate.ts";
@@ -284,15 +286,95 @@ test("review reporting waits boundedly for asynchronous Telegram linkage", () =>
   );
 });
 
-test("the dedicated reviewer cannot run a workflow before beginning a typed job", () => {
-  assert.match(
-    reviewWorkflowBlockReason("st0x-review-duty", emptyReviewDutyState) ?? "",
-    /review_duty begin/i,
+test("review-duty scopes jobs to each owner and exact auto-merge repository", () => {
+  assert.equal(
+    reviewDutyJobAllowed("dataclique-review-duty", {
+      repository: "dataclique/yielduck",
+      pullRequest: 42,
+      kind: "auto",
+    }),
+    true,
   );
+  assert.equal(
+    reviewDutyJobAllowed("dataclique-review-duty", {
+      repository: "dataclique/other",
+      pullRequest: 42,
+      kind: "auto",
+    }),
+    false,
+  );
+  assert.equal(
+    reviewDutyJobAllowed("dataclique-review-duty", {
+      repository: "0xgleb/dotconfig",
+      pullRequest: 42,
+      kind: "own",
+    }),
+    false,
+  );
+  assert.equal(
+    reviewDutyJobAllowed("personal-review-duty", {
+      repository: "0xgleb/dotconfig",
+      pullRequest: 42,
+      kind: "auto",
+    }),
+    true,
+  );
+  assert.equal(
+    reviewDutyJobAllowed("personal-review-duty", {
+      repository: "0xgleb/other",
+      pullRequest: 42,
+      kind: "auto",
+    }),
+    false,
+  );
+});
+
+test("exact auto-merge lanes complete only after a successful review workflow", () => {
+  const active = beginReviewDuty(
+    emptyReviewDutyState,
+    {
+      repository: "dataclique/yielduck",
+      pullRequest: 42,
+      kind: "auto",
+    },
+    10,
+  );
+  assert.equal(active.ok, true);
+  if (!active.ok) return;
+  const awaiting = startReviewWorkflow(active.state, 20);
+  assert.equal(completeAutoReviewDuty(awaiting, false, false, true).ok, false);
+  assert.equal(completeAutoReviewDuty(awaiting, true, true, true).ok, false);
+  assert.equal(completeAutoReviewDuty(awaiting, true, false, false).ok, false);
+  assert.deepEqual(completeAutoReviewDuty(awaiting, true, false, true), {
+    ok: true,
+    state: { phase: "idle" },
+  });
+});
+
+test("complete-auto handler verifies typed scope and terminal workflow evidence", () => {
+  assert.match(
+    extensionSource,
+    /request\.action === "complete-auto"[\s\S]*?latestCompletedWorkflowAfter[\s\S]*?reviewDutyJobAllowed[\s\S]*?completeAutoReviewDuty/,
+  );
+});
+
+test("every dedicated reviewer must begin a typed job before workflow execution", () => {
+  for (const sessionName of [
+    "st0x-review-duty",
+    "dataclique-review-duty",
+    "personal-review-duty",
+  ]) {
+    assert.match(
+      reviewWorkflowBlockReason(sessionName, emptyReviewDutyState) ?? "",
+      /review_duty begin/i,
+    );
+  }
   assert.equal(
     reviewWorkflowBlockReason("ordinary-session", emptyReviewDutyState),
     undefined,
   );
+  assert.match(extensionSource, /dataclique-review-duty/);
+  assert.match(extensionSource, /personal-review-duty/);
 });
 
 test("a completed review workflow must relay a verdict question before another job", () => {

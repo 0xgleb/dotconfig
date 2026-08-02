@@ -6,7 +6,10 @@ const source = readFileSync(new URL("./index.ts", import.meta.url), "utf8");
 
 test("dedicated workspace launch is profile-bound and shell-free", () => {
   assert.match(source, /name: "agent_workspace"/);
-  assert.match(source, /StringEnum\(\["st0x-review"\]/);
+  assert.match(
+    source,
+    /StringEnum\(\s*\["st0x-review", "dataclique-review", "personal-review"\]/,
+  );
   assert.match(
     source,
     /pi\.exec\("zellij", \[\.\.\.zellijLaunchArguments\(profile\)\]/,

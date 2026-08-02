@@ -119,13 +119,16 @@ import {
 import {
   beginReviewDuty,
   clearedHistoricalReviewQuestion,
+  completeAutoReviewDuty,
   continueReviewDuty,
   emptyReviewDutyState,
+  isReviewDutySession,
   preExecutionReviewWorkflowBlockObserved,
   startReviewWorkflow,
   retryBlockedReviewDuty,
   retryFailedReviewDuty,
   reportReviewDuty,
+  reviewDutyJobAllowed,
   restoreReviewDutyState,
   reviewWorkflowBlockReason,
   REVIEW_DUTY_STATE_ENTRY,
@@ -792,11 +795,16 @@ const ReviewDutyParameters = Type.Object({
     Type.Literal("retry-blocked"),
     Type.Literal("retry-failed"),
     Type.Literal("continue"),
+    Type.Literal("complete-auto"),
   ]),
   repository: Type.Optional(Type.String({ minLength: 1, maxLength: 120 })),
   pullRequest: Type.Optional(Type.Integer({ minimum: 1 })),
   kind: Type.Optional(
-    Type.Union([Type.Literal("own"), Type.Literal("assigned")]),
+    Type.Union([
+      Type.Literal("own"),
+      Type.Literal("assigned"),
+      Type.Literal("auto"),
+    ]),
   ),
   questionId: Type.Optional(Type.Integer({ minimum: 1 })),
 })
@@ -857,7 +865,7 @@ const WorkflowParameters = Type.Object({
 })
 
 export default function classifiedWorkflows(pi: ExtensionAPI): void {
-  registerRuntimeVersion(pi, "classified-workflows", "2026.08.01.133")
+  registerRuntimeVersion(pi, "classified-workflows", "2026.08.01.134")
   const childTokenLimit = workflowChildTokenLimit(
     process.env[WORKFLOW_CHILD_TOKEN_LIMIT_ENV],
   )
@@ -1863,8 +1871,7 @@ export default function classifiedWorkflows(pi: ExtensionAPI): void {
 
   pi.on("tool_call", async (event: ToolCallEvent, ctx) => {
     const startsReviewWorkflow =
-      event.toolName === "workflow" &&
-      pi.getSessionName() === "st0x-review-duty"
+      event.toolName === "workflow" && isReviewDutySession(pi.getSessionName())
     const persistReviewWorkflowStart = (): void => {
       if (!startsReviewWorkflow) return
       reviewDutyState = startReviewWorkflow(reviewDutyState, Date.now())
@@ -2042,22 +2049,23 @@ export default function classifiedWorkflows(pi: ExtensionAPI): void {
     name: "review_duty",
     label: "Review-duty reporting gate",
     description:
-      "Begin a dedicated ST0x/rainlanguage PR review job, inspect its gate, recover a proven pre-execution block or failed execution, continue a bounded same-PR fix re-review, or prove its typed verdict question is linked to Piece of Pi before advancing.",
+      "Begin a dedicated PR review job, inspect its gate, recover a proven pre-execution block or failed execution, continue a bounded same-PR fix re-review, complete an exact source-authorized automatic lane, or prove its typed verdict question is linked to Piece of Pi before advancing.",
     promptSnippet:
-      "Gate each dedicated PR review on a persisted and Telegram-linked verdict question",
+      "Gate each dedicated PR review on a relayed verdict question or exact automatic-lane completion",
     promptGuidelines: [
-      "In the st0x-review-duty session, call review_duty begin before every PR workflow.",
-      "After the workflow, create one ask_user question that identifies the PR, includes assessment/finding status, and offers Approve, Request changes, Inspect first in that order.",
+      "In any dedicated *-review-duty session, call review_duty begin before every PR workflow.",
+      "Use kind auto only for dataclique/yielduck in dataclique-review-duty or 0xgleb/dotconfig in personal-review-duty; after a completed clean workflow call complete-auto.",
+      "For every other job, create one ask_user question after the workflow that identifies the PR, includes assessment/finding status, and offers Approve, Request changes, Inspect first in that order.",
       "Call review_duty report with the question ID; do not begin the next PR until it confirms the Telegram relay link.",
     ],
     parameters: ReviewDutyParameters,
     async execute(_toolCallId, request, _signal, _onUpdate, ctx) {
-      if (pi.getSessionName() !== "st0x-review-duty") {
+      if (!isReviewDutySession(pi.getSessionName())) {
         return {
           content: [
             {
               type: "text" as const,
-              text: "review_duty is available only in the dedicated st0x-review-duty session",
+              text: "review_duty is available only in a dedicated review-duty session",
             },
           ],
           details: { outcome: "error" as const },
@@ -2089,15 +2097,24 @@ export default function classifiedWorkflows(pi: ExtensionAPI): void {
             isError: true,
           }
         }
-        const transition = beginReviewDuty(
-          reviewDutyState,
-          {
-            repository: request.repository,
-            pullRequest: request.pullRequest,
-            kind: request.kind,
-          },
-          Date.now(),
-        )
+        const job = {
+          repository: request.repository,
+          pullRequest: request.pullRequest,
+          kind: request.kind,
+        } as const
+        if (!reviewDutyJobAllowed(pi.getSessionName(), job)) {
+          return {
+            content: [
+              {
+                type: "text" as const,
+                text: "review-duty job is outside this dedicated reviewer's source-fixed repository or auto-merge scope",
+              },
+            ],
+            details: { outcome: "error" as const },
+            isError: true,
+          }
+        }
+        const transition = beginReviewDuty(reviewDutyState, job, Date.now())
         if (!transition.ok) {
           return {
             content: [{ type: "text" as const, text: transition.error }],
@@ -2211,6 +2228,53 @@ export default function classifiedWorkflows(pi: ExtensionAPI): void {
             state: reviewDutyState,
             priorAuditId: completedWorkflow?.id,
             completedPasses,
+          },
+        }
+      }
+
+      if (request.action === "complete-auto") {
+        refreshWorkflowAudits(ctx)
+        const completedAt =
+          reviewDutyState.phase === "awaiting_report"
+            ? reviewDutyState.completedAt
+            : Number.MAX_SAFE_INTEGER
+        const completedWorkflow = latestCompletedWorkflowAfter(
+          workflowAudits,
+          completedAt,
+        )
+        const workflowRunning = [...backgroundWorkflows.values()].some(
+          (workflow) =>
+            workflow.status === "running" && workflow.startedAt >= completedAt,
+        )
+        const allowedAutoMergeLane =
+          reviewDutyState.phase !== "idle" &&
+          reviewDutyJobAllowed(pi.getSessionName(), reviewDutyState)
+        const transition = completeAutoReviewDuty(
+          reviewDutyState,
+          completedWorkflow !== undefined,
+          workflowRunning,
+          allowedAutoMergeLane,
+        )
+        if (!transition.ok) {
+          return {
+            content: [{ type: "text" as const, text: transition.error }],
+            details: { outcome: "error" as const, error: transition.error },
+            isError: true,
+          }
+        }
+        reviewDutyState = transition.state
+        pi.appendEntry(REVIEW_DUTY_STATE_ENTRY, reviewDutyState)
+        return {
+          content: [
+            {
+              type: "text" as const,
+              text: `Verified completed automatic review workflow ${completedWorkflow?.id ?? "unknown"}. The exact repository may merge only after separately verifying current CI, mergeability, head SHA, unresolved feedback, and repository delivery gates.`,
+            },
+          ],
+          details: {
+            outcome: "complete-auto" as const,
+            state: reviewDutyState,
+            priorAuditId: completedWorkflow?.id,
           },
         }
       }
