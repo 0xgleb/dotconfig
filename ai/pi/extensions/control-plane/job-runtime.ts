@@ -1,0 +1,368 @@
+import { Data, Effect } from "effect"
+
+export const REVIEW_DUTY_PROFILES = [
+  "st0x-review",
+  "dataclique-review",
+  "personal-review",
+] as const
+
+export type ReviewDutyProfile = (typeof REVIEW_DUTY_PROFILES)[number]
+
+export interface ReviewDutyScanSpec {
+  readonly kind: "review-duty.scan"
+  readonly payload: { readonly profile: ReviewDutyProfile }
+  readonly runAt: number
+  readonly maxAttempts: number
+  readonly recurrence?: {
+    readonly baseMs: number
+    readonly jitterMs: number
+  }
+  readonly idempotencyKey?: string
+}
+
+export type RegisteredJobSpec = ReviewDutyScanSpec
+
+interface JobBase {
+  readonly id: string
+  readonly spec: RegisteredJobSpec
+  readonly attempt: number
+  readonly createdAt: number
+  readonly updatedAt: number
+}
+
+export type Job =
+  | (JobBase & { readonly state: "scheduled" | "ready" | "retry_wait" })
+  | (JobBase & {
+      readonly state: "leased"
+      readonly workerId: string
+      readonly leaseToken: string
+      readonly leaseUntil: number
+      readonly cancelRequestedAt?: number
+    })
+  | (JobBase & {
+      readonly state: "succeeded" | "failed" | "cancelled"
+      readonly finishedAt: number
+      readonly summary?: string
+    })
+
+export class JobRuntimeError extends Data.TaggedError("JobRuntimeError")<{
+  readonly code: "invalid_input" | "invalid_transition" | "stale_lease"
+  readonly message: string
+}> {}
+
+const MAX_TIMESTAMP = Number.MAX_SAFE_INTEGER
+const MAX_ATTEMPTS = 100
+const MAX_LEASE_TTL_MS = 24 * 60 * 60 * 1_000
+const MAX_RETRY_DELAY_MS = 7 * 24 * 60 * 60 * 1_000
+const MIN_RECURRENCE_MS = 60_000
+const MAX_RECURRENCE_MS = 7 * 24 * 60 * 60 * 1_000
+const SAFE_IDENTIFIER = /^[A-Za-z0-9][A-Za-z0-9:._-]*$/u
+const UNSAFE_CONTROL = /[\u0000-\u001f\u007f]/u
+
+const error = (
+  code: JobRuntimeError["code"],
+  message: string,
+): JobRuntimeError => new JobRuntimeError({ code, message })
+
+const invalid = <A>(message: string): Effect.Effect<A, JobRuntimeError> =>
+  Effect.fail(error("invalid_input", message))
+
+const invalidTransition = <A>(message: string): Effect.Effect<A, JobRuntimeError> =>
+  Effect.fail(error("invalid_transition", message))
+
+const staleLease = <A>(): Effect.Effect<A, JobRuntimeError> =>
+  Effect.fail(error("stale_lease", "lease token is no longer current"))
+
+const isRecord = (value: unknown): value is Readonly<Record<string, unknown>> =>
+  typeof value === "object" && value !== null && !Array.isArray(value)
+
+const isTimestamp = (value: unknown): value is number =>
+  Number.isSafeInteger(value) && Number(value) >= 0 && Number(value) <= MAX_TIMESTAMP
+
+const isBoundedInteger = (
+  value: unknown,
+  minimum: number,
+  maximum: number,
+): value is number =>
+  Number.isSafeInteger(value) && Number(value) >= minimum && Number(value) <= maximum
+
+const hasOnlyKeys = (
+  value: Readonly<Record<string, unknown>>,
+  keys: readonly string[],
+): boolean => Object.keys(value).every((key) => keys.includes(key))
+
+const isSafeIdentifier = (value: unknown, maximum = 256): value is string =>
+  typeof value === "string" &&
+  value.length >= 1 &&
+  value.length <= maximum &&
+  SAFE_IDENTIFIER.test(value)
+
+const isSafeSummary = (value: unknown): value is string =>
+  typeof value === "string" &&
+  value.trim().length >= 1 &&
+  value.length <= 4_000 &&
+  !UNSAFE_CONTROL.test(value)
+
+const checkedAdd = (left: number, right: number): number | undefined => {
+  const sum = left + right
+  return isTimestamp(sum) ? sum : undefined
+}
+
+export const decodeJobSpec = (
+  value: unknown,
+): Effect.Effect<RegisteredJobSpec, JobRuntimeError> => {
+  if (
+    !isRecord(value) ||
+    !hasOnlyKeys(value, [
+      "kind",
+      "payload",
+      "runAt",
+      "maxAttempts",
+      "recurrence",
+      "idempotencyKey",
+    ]) ||
+    value.kind !== "review-duty.scan"
+  ) {
+    return invalid("job kind must be a registered bounded kind")
+  }
+  if (
+    !isRecord(value.payload) ||
+    !hasOnlyKeys(value.payload, ["profile"]) ||
+    !REVIEW_DUTY_PROFILES.includes(value.payload.profile as ReviewDutyProfile)
+  ) {
+    return invalid("review-duty.scan requires a registered profile")
+  }
+  if (!isTimestamp(value.runAt)) return invalid("runAt must be a safe timestamp")
+  if (!isBoundedInteger(value.maxAttempts, 1, MAX_ATTEMPTS))
+    return invalid(`maxAttempts must be between 1 and ${MAX_ATTEMPTS}`)
+  if (
+    value.idempotencyKey !== undefined &&
+    !isSafeIdentifier(value.idempotencyKey)
+  ) {
+    return invalid("idempotencyKey must be a bounded safe identifier")
+  }
+
+  let recurrence: ReviewDutyScanSpec["recurrence"]
+  if (value.recurrence !== undefined) {
+    if (
+      !isRecord(value.recurrence) ||
+      !hasOnlyKeys(value.recurrence, ["baseMs", "jitterMs"]) ||
+      !isBoundedInteger(
+        value.recurrence.baseMs,
+        MIN_RECURRENCE_MS,
+        MAX_RECURRENCE_MS,
+      ) ||
+      !isBoundedInteger(value.recurrence.jitterMs, 0, MAX_RECURRENCE_MS) ||
+      value.recurrence.jitterMs >= value.recurrence.baseMs
+    ) {
+      return invalid(
+        "recurrence requires bounded baseMs and smaller non-negative jitterMs",
+      )
+    }
+    recurrence = {
+      baseMs: value.recurrence.baseMs,
+      jitterMs: value.recurrence.jitterMs,
+    }
+  }
+
+  const spec: RegisteredJobSpec = {
+    kind: "review-duty.scan",
+    payload: { profile: value.payload.profile as ReviewDutyProfile },
+    runAt: value.runAt,
+    maxAttempts: value.maxAttempts,
+    ...(recurrence ? { recurrence } : {}),
+    ...(value.idempotencyKey !== undefined
+      ? { idempotencyKey: value.idempotencyKey }
+      : {}),
+  }
+  return Effect.succeed(spec)
+}
+
+export const createJob = (
+  spec: RegisteredJobSpec,
+  id: string,
+  now: number,
+): Effect.Effect<Job, JobRuntimeError> => {
+  if (!isSafeIdentifier(id, 128)) return invalid("job id must be bounded and safe")
+  if (!isTimestamp(now)) return invalid("now must be a safe timestamp")
+  return Effect.map(decodeJobSpec(spec), (decoded) => ({
+    id,
+    spec: decoded,
+    state: decoded.runAt <= now ? "ready" : "scheduled",
+    attempt: 0,
+    createdAt: now,
+    updatedAt: now,
+  }))
+}
+
+export const claimJob = (
+  job: Job,
+  workerId: string,
+  leaseToken: string,
+  now: number,
+  ttlMs: number,
+): Effect.Effect<Job, JobRuntimeError> => {
+  if (!isSafeIdentifier(workerId, 128))
+    return invalid("worker id must be bounded and safe")
+  if (!isSafeIdentifier(leaseToken, 128))
+    return invalid("lease token must be bounded and safe")
+  if (!isTimestamp(now)) return invalid("now must be a safe timestamp")
+  if (!isBoundedInteger(ttlMs, 1, MAX_LEASE_TTL_MS))
+    return invalid("lease ttl must be positive and at most 24 hours")
+  const leaseUntil = checkedAdd(now, ttlMs)
+  if (leaseUntil === undefined) return invalid("lease expiry exceeds safe timestamp range")
+  if (
+    (job.state !== "ready" &&
+      job.state !== "scheduled" &&
+      job.state !== "retry_wait") ||
+    job.spec.runAt > now
+  ) {
+    return invalidTransition("only due unleased jobs may be claimed")
+  }
+  if (job.attempt >= job.spec.maxAttempts)
+    return invalidTransition("job attempt limit is exhausted")
+  return Effect.succeed({
+    ...job,
+    state: "leased",
+    workerId,
+    leaseToken,
+    leaseUntil,
+    attempt: job.attempt + 1,
+    updatedAt: now,
+  })
+}
+
+const currentLease = (
+  job: Job,
+  leaseToken: string,
+): Effect.Effect<Extract<Job, { state: "leased" }>, JobRuntimeError> => {
+  if (job.state !== "leased")
+    return invalidTransition("job does not have an active lease")
+  if (job.leaseToken !== leaseToken) return staleLease()
+  return Effect.succeed(job)
+}
+
+export const completeJob = (
+  job: Job,
+  leaseToken: string,
+  now: number,
+  summary: string,
+): Effect.Effect<Job, JobRuntimeError> => {
+  if (!isTimestamp(now)) return invalid("now must be a safe timestamp")
+  if (!isSafeSummary(summary)) return invalid("summary must be bounded safe text")
+  return Effect.map(currentLease(job, leaseToken), (leased) => ({
+    id: leased.id,
+    spec: leased.spec,
+    state: leased.cancelRequestedAt === undefined ? "succeeded" : "cancelled",
+    attempt: leased.attempt,
+    createdAt: leased.createdAt,
+    updatedAt: now,
+    finishedAt: now,
+    summary,
+  }))
+}
+
+const retryOrFail = (
+  leased: Extract<Job, { state: "leased" }>,
+  now: number,
+  retryDelayMs: number,
+  summary: string,
+): Job => {
+  if (leased.cancelRequestedAt !== undefined) {
+    return {
+      id: leased.id,
+      spec: leased.spec,
+      state: "cancelled",
+      attempt: leased.attempt,
+      createdAt: leased.createdAt,
+      updatedAt: now,
+      finishedAt: now,
+      summary,
+    }
+  }
+  if (leased.attempt >= leased.spec.maxAttempts) {
+    return {
+      id: leased.id,
+      spec: leased.spec,
+      state: "failed",
+      attempt: leased.attempt,
+      createdAt: leased.createdAt,
+      updatedAt: now,
+      finishedAt: now,
+      summary,
+    }
+  }
+  return {
+    id: leased.id,
+    spec: { ...leased.spec, runAt: now + retryDelayMs },
+    state: "retry_wait",
+    attempt: leased.attempt,
+    createdAt: leased.createdAt,
+    updatedAt: now,
+  }
+}
+
+export const failJob = (
+  job: Job,
+  leaseToken: string,
+  now: number,
+  retryDelayMs: number,
+  summary: string,
+): Effect.Effect<Job, JobRuntimeError> => {
+  if (!isTimestamp(now)) return invalid("now must be a safe timestamp")
+  if (!isBoundedInteger(retryDelayMs, 0, MAX_RETRY_DELAY_MS))
+    return invalid("retry delay must be bounded to seven days")
+  if (checkedAdd(now, retryDelayMs) === undefined)
+    return invalid("retry timestamp exceeds safe range")
+  if (!isSafeSummary(summary)) return invalid("summary must be bounded safe text")
+  return Effect.map(currentLease(job, leaseToken), (leased) =>
+    retryOrFail(leased, now, retryDelayMs, summary),
+  )
+}
+
+export const cancelJob = (
+  job: Job,
+  now: number,
+): Effect.Effect<Job, JobRuntimeError> => {
+  if (!isTimestamp(now)) return invalid("now must be a safe timestamp")
+  if (
+    job.state === "succeeded" ||
+    job.state === "failed" ||
+    job.state === "cancelled"
+  ) {
+    return invalidTransition("terminal jobs cannot be cancelled again")
+  }
+  if (job.state === "leased") {
+    return Effect.succeed({
+      ...job,
+      cancelRequestedAt: job.cancelRequestedAt ?? now,
+      updatedAt: now,
+    })
+  }
+  return Effect.succeed({
+    id: job.id,
+    spec: job.spec,
+    state: "cancelled",
+    attempt: job.attempt,
+    createdAt: job.createdAt,
+    updatedAt: now,
+    finishedAt: now,
+  })
+}
+
+export const recoverExpiredJob = (
+  job: Job,
+  now: number,
+  retryDelayMs: number,
+): Effect.Effect<Job, JobRuntimeError> => {
+  if (!isTimestamp(now)) return invalid("now must be a safe timestamp")
+  if (!isBoundedInteger(retryDelayMs, 0, MAX_RETRY_DELAY_MS))
+    return invalid("retry delay must be bounded to seven days")
+  if (checkedAdd(now, retryDelayMs) === undefined)
+    return invalid("retry timestamp exceeds safe range")
+  if (job.state !== "leased" || job.leaseUntil > now)
+    return invalidTransition("only expired leases may be recovered")
+  return Effect.succeed(
+    retryOrFail(job, now, retryDelayMs, "worker lease expired"),
+  )
+}
