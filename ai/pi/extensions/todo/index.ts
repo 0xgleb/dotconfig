@@ -327,12 +327,11 @@ function restoredState(ctx: ExtensionContext): TodoState {
 }
 
 export default function todoExtension(pi: ExtensionAPI): void {
-  registerRuntimeVersion(pi, "todo", "2026.08.01.29")
+  registerRuntimeVersion(pi, "todo", "2026.08.01.30")
   const stateRef = Effect.runSync(Ref.make<TodoState>(emptyTodoState))
   let hudExpiry: ReturnType<typeof setTimeout> | undefined
   let hudAnimation: ReturnType<typeof setInterval> | undefined
   let hudAnimationFrame = 0
-  let agentRunning = false
   let reminderTimer: ReturnType<typeof setTimeout> | undefined
 
   const mountTaskWidget = (ctx: ExtensionContext, state: TodoState): void => {
@@ -360,7 +359,6 @@ export default function todoExtension(pi: ExtensionAPI): void {
     const summary = todoSummary(state)
     const shouldAnimate =
       ctx.hasUI &&
-      agentRunning &&
       summary.total > 0 &&
       summary.completed + summary.cancelled < summary.total
     if (!shouldAnimate) {
@@ -490,7 +488,6 @@ export default function todoExtension(pi: ExtensionAPI): void {
     hudExpiry = undefined
     hudAnimation = undefined
     hudAnimationFrame = 0
-    agentRunning = false
     reminderTimer = undefined
     ctx.ui.setStatus("todo", undefined)
     ctx.ui.setWidget("todo-top-tasks", undefined)
@@ -876,13 +873,7 @@ export default function todoExtension(pi: ExtensionAPI): void {
     },
   })
 
-  pi.on("agent_start", (_event, ctx) => {
-    agentRunning = true
-    renderTaskWidget(ctx)
-  })
-
   pi.on("agent_settled", async (_event, ctx) => {
-    agentRunning = false
     renderTaskWidget(ctx)
     await wakeDueReminders(ctx)
   })

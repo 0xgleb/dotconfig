@@ -147,20 +147,17 @@ test("task progress animation modulates brightness without hiding cells or chang
   assert.match(renderer, /cell === "▰" \? "accent" : "muted"/)
 })
 
-test("task progress pulse animates only while an agent is running", () => {
+test("task progress pulse stays active whenever unfinished work is visible", () => {
   assert.match(todoExtensionSource, /HUD_ANIMATION_INTERVAL_MS = 240/)
   assert.match(
     todoExtensionSource,
-    /agentRunning &&[\s\S]*?setInterval[\s\S]*?hudAnimationFrame \+= 1/,
+    /const shouldAnimate =[\s\S]*?ctx\.hasUI &&[\s\S]*?summary\.total > 0 &&[\s\S]*?summary\.completed \+ summary\.cancelled < summary\.total/,
   )
   assert.match(
     todoExtensionSource,
-    /pi\.on\("agent_start"[\s\S]*?agentRunning = true/,
+    /setInterval[\s\S]*?hudAnimationFrame \+= 1/,
   )
-  assert.match(
-    todoExtensionSource,
-    /pi\.on\("agent_settled"[\s\S]*?agentRunning = false/,
-  )
+  assert.doesNotMatch(todoExtensionSource, /agentRunning/)
   assert.match(
     todoExtensionSource,
     /session_shutdown[\s\S]*?clearInterval\(hudAnimation\)/,
