@@ -696,9 +696,11 @@ test("classifier distinguishes a stopped Claude workspace from its live Pi super
     },
   });
 
-  assert.match(prompt, /Pi review supervisor and its named visible Claude Code review workspace are distinct/i);
-  assert.match(prompt, /status=stopped.*Claude workspace tab is absent/is);
+  assert.match(prompt, /Pi review supervisor and its visible Claude Code review pane are distinct/i);
+  assert.match(prompt, /status=stopped.*Claude pane is absent/is);
   assert.match(prompt, /prior decision not to restart that Pi supervisor does not prohibit/i);
+  assert.match(prompt, /replace that supervisor in-place/i);
+  assert.match(prompt, /preserves the exact pane\/tab\/layout identity/i);
   assert.match(prompt, /jf clanker --claude --new/i);
 });
 

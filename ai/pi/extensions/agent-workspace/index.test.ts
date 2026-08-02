@@ -12,7 +12,7 @@ test("dedicated workspace launch is profile-bound and shell-free", () => {
   );
   assert.match(source, /claudeWorkspaceLaunchArguments/);
   assert.doesNotMatch(source, /pi\.exec\("(?:bash|sh|zsh)"/);
-  assert.match(source, /query-tab-names/);
+  assert.match(source, /query-pane-names/);
   assert.match(source, /existing \? "running" : "stopped"/);
 });
 
@@ -27,7 +27,7 @@ test("review supervisors migrate to Luna without changing unrelated sessions", (
 });
 
 test("Claude dispatch is source-fixed, profile-bound, and fail-closed", () => {
-  assert.match(source, /StringEnum\(\["start", "status", "dispatch"\]/);
+  assert.match(source, /StringEnum\(\["start", "status", "dispatch", "replace"\]/);
   assert.match(source, /pi\.getSessionName\(\) !== profile\.sessionName/);
   assert.match(source, /Invalid or out-of-scope Claude review dispatch/);
   assert.match(source, /restoreReviewDutyState/);
@@ -37,9 +37,16 @@ test("Claude dispatch is source-fixed, profile-bound, and fail-closed", () => {
   assert.match(source, /profile\.additionalRepositoryRoots/);
   assert.match(source, /child\.startsWith\("\.\."\)/);
   assert.match(source, /claudeExecutorLaunchArguments/);
-  assert.match(source, /go-to-tab-name/);
+  assert.doesNotMatch(source, /go-to-tab-name/);
   assert.match(source, /ctx\.sessionManager\.getSessionId\(\)/);
   assert.match(source, /status: "dispatched"/);
+});
+
+test("in-place replacement is matching-session only and never creates a pane or tab", () => {
+  assert.match(source, /params\.action === "replace"/);
+  assert.match(source, /pi\.getSessionName\(\) !== profile\.sessionName/);
+  assert.match(source, /claudeInPlaceLaunchArguments/);
+  assert.match(source, /status: "replaced"/);
 });
 
 test("automatic dispatch accepts only the two existing exact automatic lanes", () => {

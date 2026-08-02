@@ -3,6 +3,7 @@ import test from "node:test";
 
 import {
   claudeExecutorLaunchArguments,
+  claudeInPlaceLaunchArguments,
   claudeWorkspaceLaunchArguments,
   workspaceProfile,
 } from "./profiles.ts";
@@ -49,9 +50,9 @@ test("st0x review workspace is a Luna supervisor with isolated authority", () =>
   );
   assert.deepEqual(workspaceArgs.slice(0, 6), [
     "action",
-    "new-tab",
+    "new-pane",
     "--name",
-    "st0x",
+    "claude-st0x-review",
     "--cwd",
     "/Users/example/code/st0x",
   ]);
@@ -99,6 +100,34 @@ test("personal supervisor isolates dotconfig automatic completion and root", () 
     profile.command.at(-1) ?? "",
     /Kind auto is permitted only for 0xgleb\/dotconfig/i,
   );
+});
+
+test("in-place replacement preserves the existing pane and uses fresh clanker", () => {
+  const profile = workspaceProfile("personal-review", "/Users/example");
+  const args = claudeInPlaceLaunchArguments(
+    profile,
+    "supervisor-session",
+    "replace-dedupe",
+  );
+
+  assert.deepEqual(args.slice(0, 6), [
+    "run",
+    "--in-place",
+    "--name",
+    "claude-personal-review",
+    "--cwd",
+    "/Users/example/code/0xgleb",
+  ]);
+  const jf = args.indexOf("jf");
+  assert.deepEqual(args.slice(jf, jf + 4), [
+    "jf",
+    "clanker",
+    "--claude",
+    "--new",
+  ]);
+  assert.equal(args.includes("action"), false);
+  assert.equal(args.includes("new-pane"), false);
+  assert.equal(args.includes("new-tab"), false);
 });
 
 test("Claude inventory dispatch uses the verified fresh clanker subscription route", () => {

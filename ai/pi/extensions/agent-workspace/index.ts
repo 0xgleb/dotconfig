@@ -10,6 +10,7 @@ import { registerRuntimeVersion } from "../shared/runtime-version.ts";
 import { restoreReviewDutyState } from "../classified-workflows/review-duty-gate.ts";
 import {
   claudeExecutorLaunchArguments,
+  claudeInPlaceLaunchArguments,
   claudeWorkspaceLaunchArguments,
   workspaceProfile,
   type AgentWorkspaceProfile,
@@ -32,7 +33,7 @@ class AgentWorkspaceError extends Data.TaggedError("AgentWorkspaceError")<{
 }> {}
 
 interface AgentWorkspaceParams {
-  readonly action: "start" | "status" | "dispatch";
+  readonly action: "start" | "status" | "dispatch" | "replace";
   readonly profile: AgentWorkspaceProfileName;
   readonly mode?: "inventory" | "review";
   readonly repository?: string;
@@ -101,7 +102,7 @@ const parseDispatch = (
 };
 
 export default function agentWorkspace(pi: ExtensionAPI): void {
-  registerRuntimeVersion(pi, "agent-workspace", "2026.08.01.7");
+  registerRuntimeVersion(pi, "agent-workspace", "2026.08.01.8");
 
   pi.on("session_start", async (_event, ctx) => {
     const profile = profileForSession(pi.getSessionName());
@@ -150,15 +151,16 @@ export default function agentWorkspace(pi: ExtensionAPI): void {
     name: "agent_workspace",
     label: "Agent workspace",
     description:
-      "Start or inspect a source-fixed Claude Code subscription-harness review workspace, or dispatch one fresh source-fixed inventory/review executor into that Zellij tab from its narrow Pi supervisor. Arbitrary commands and Anthropic API providers are not accepted.",
+      "Start or inspect a source-fixed Claude Code subscription-harness review pane in the current Zellij layout, replace the matching live Pi review pane in place, or dispatch one fresh source-fixed executor. Arbitrary commands and Anthropic API providers are not accepted.",
     promptSnippet:
-      "Start or inspect a Claude Code harness review workspace, or dispatch a fresh executor",
+      "Start, inspect, or replace a Claude Code harness review pane, or dispatch a fresh executor",
     promptGuidelines: [
       "Use agent_workspace start only when the user explicitly requests the named Claude Code review workspace; role ownership never grants additional authority.",
+      "Use agent_workspace replace only inside the matching dedicated review-duty session after the user's explicit in-place migration request. It runs `jf clanker --claude --new` in that exact Zellij pane without creating a tab or sibling pane.",
       "Use agent_workspace dispatch only inside the matching dedicated review-duty session, after review_duty begin for review mode. Dispatch launches `jf clanker --claude --new` and never an Anthropic API provider.",
     ],
     parameters: Type.Object({
-      action: StringEnum(["start", "status", "dispatch"] as const),
+      action: StringEnum(["start", "status", "dispatch", "replace"] as const),
       profile: StringEnum(
         ["st0x-review", "dataclique-review", "personal-review"] as const,
       ),
@@ -184,27 +186,68 @@ export default function agentWorkspace(pi: ExtensionAPI): void {
 
         const queried = yield* Effect.tryPromise({
           try: () =>
-            pi.exec("zellij", ["action", "query-tab-names"], {
+            pi.exec("zellij", ["action", "query-pane-names"], {
               timeout: QUERY_TIMEOUT_MS,
             }),
           catch: () =>
             new AgentWorkspaceError({
               code: "query_failed",
-              message: "Could not query Zellij tab names",
+              message: "Could not query Zellij pane names",
             }),
         });
         if (queried.code !== 0) {
           return yield* Effect.fail(
             new AgentWorkspaceError({
               code: "query_failed",
-              message: "Zellij tab query failed",
+              message: "Zellij pane query failed",
             }),
           );
         }
 
-        const existing = tabNames(queried.stdout).includes(profile.tabName);
+        const existing = tabNames(queried.stdout).includes(profile.paneName);
         if (params.action === "status") {
           return { status: existing ? "running" : "stopped" } as const;
+        }
+        if (params.action === "replace") {
+          if (pi.getSessionName() !== profile.sessionName) {
+            return yield* Effect.fail(
+              new AgentWorkspaceError({
+                code: "invalid_dispatch",
+                message:
+                  "In-place Claude replacement requires the matching live Pi review pane",
+              }),
+            );
+          }
+          const launched = yield* Effect.tryPromise({
+            try: () =>
+              pi.exec(
+                "zellij",
+                [
+                  ...claudeInPlaceLaunchArguments(
+                    profile,
+                    ctx.sessionManager.getSessionId(),
+                    `claude-in-place-${profile.name}-${Date.now()}`,
+                  ),
+                ],
+                { timeout: LAUNCH_TIMEOUT_MS },
+              ),
+            catch: () =>
+              new AgentWorkspaceError({
+                code: "launch_failed",
+                message:
+                  "Could not replace the matching Pi review pane with Claude Code",
+              }),
+          });
+          if (launched.code !== 0) {
+            return yield* Effect.fail(
+              new AgentWorkspaceError({
+                code: "launch_failed",
+                message:
+                  "Zellij rejected the in-place Claude Code review replacement",
+              }),
+            );
+          }
+          return { status: "replaced", mode: "inventory" } as const;
         }
         if (params.action === "dispatch") {
           if (!existing || pi.getSessionName() !== profile.sessionName) {
@@ -281,27 +324,6 @@ export default function agentWorkspace(pi: ExtensionAPI): void {
               ? `${dispatch.pullRequest}-${dispatch.headSha}`
               : String(Date.now()),
           ].join("-");
-          const focused = yield* Effect.tryPromise({
-            try: () =>
-              pi.exec(
-                "zellij",
-                ["action", "go-to-tab-name", profile.tabName],
-                { timeout: QUERY_TIMEOUT_MS },
-              ),
-            catch: () =>
-              new AgentWorkspaceError({
-                code: "launch_failed",
-                message: "Could not focus the source-fixed Claude review tab",
-              }),
-          });
-          if (focused.code !== 0) {
-            return yield* Effect.fail(
-              new AgentWorkspaceError({
-                code: "launch_failed",
-                message: "Zellij rejected the source-fixed Claude review tab",
-              }),
-            );
-          }
           const launched = yield* Effect.tryPromise({
             try: () =>
               pi.exec(
@@ -350,14 +372,14 @@ export default function agentWorkspace(pi: ExtensionAPI): void {
           catch: () =>
             new AgentWorkspaceError({
               code: "launch_failed",
-              message: "Could not launch the Claude Code review workspace",
+              message: "Could not launch the Claude Code review pane",
             }),
         });
         if (launched.code !== 0) {
           return yield* Effect.fail(
             new AgentWorkspaceError({
               code: "launch_failed",
-              message: "Zellij rejected the Claude Code review workspace launch",
+              message: "Zellij rejected the Claude Code review pane launch",
             }),
           );
         }
@@ -369,12 +391,12 @@ export default function agentWorkspace(pi: ExtensionAPI): void {
         content: [
           {
             type: "text" as const,
-            text: `${profile.name}: ${outcome.status} in Zellij tab ${profile.tabName}`,
+            text: `${profile.name}: ${outcome.status} in Zellij pane ${profile.paneName}`,
           },
         ],
         details: {
           profile: profile.name,
-          tabName: profile.tabName,
+          paneName: profile.paneName,
           status: outcome.status,
         },
       };

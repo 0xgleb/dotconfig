@@ -8,6 +8,7 @@ export type AgentWorkspaceProfileName =
 export interface AgentWorkspaceProfile {
   readonly name: AgentWorkspaceProfileName;
   readonly tabName: string;
+  readonly paneName: string;
   readonly cwd: string;
   readonly sessionName: string;
   readonly allowedOwners: readonly string[];
@@ -59,6 +60,7 @@ export const workspaceProfile = (
     return {
       name,
       tabName: "st0x",
+      paneName: "claude-st0x-review",
       cwd,
       sessionName: "st0x-review-duty",
       allowedOwners: ["st0x-technology", "rainlanguage"],
@@ -84,6 +86,7 @@ export const workspaceProfile = (
     return {
       name,
       tabName: "dataclique-review",
+      paneName: "claude-dataclique-review",
       cwd,
       sessionName: "dataclique-review-duty",
       allowedOwners: ["dataclique"],
@@ -105,6 +108,7 @@ export const workspaceProfile = (
     return {
       name,
       tabName: "personal-review",
+      paneName: "claude-personal-review",
       cwd,
       sessionName: "personal-review-duty",
       allowedOwners: ["0xgleb"],
@@ -196,9 +200,35 @@ export const claudeWorkspaceLaunchArguments = (
   dedupeKey: string,
 ): readonly string[] => [
   "action",
-  "new-tab",
+  "new-pane",
   "--name",
-  profile.tabName,
+  profile.paneName,
+  "--cwd",
+  profile.cwd,
+  "--",
+  "env",
+  ...CLAUDE_HARNESS_ENVIRONMENT,
+  "jf",
+  "clanker",
+  "--claude",
+  "--new",
+  claudeExecutorPrompt(
+    profile,
+    { mode: "inventory" },
+    supervisorId,
+    dedupeKey,
+  ),
+];
+
+export const claudeInPlaceLaunchArguments = (
+  profile: AgentWorkspaceProfile,
+  supervisorId: string,
+  dedupeKey: string,
+): readonly string[] => [
+  "run",
+  "--in-place",
+  "--name",
+  profile.paneName,
   "--cwd",
   profile.cwd,
   "--",
