@@ -101,7 +101,7 @@ const parseDispatch = (
 };
 
 export default function agentWorkspace(pi: ExtensionAPI): void {
-  registerRuntimeVersion(pi, "agent-workspace", "2026.08.01.6");
+  registerRuntimeVersion(pi, "agent-workspace", "2026.08.01.7");
 
   pi.on("session_start", async (_event, ctx) => {
     const profile = profileForSession(pi.getSessionName());

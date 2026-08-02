@@ -678,6 +678,30 @@ test("classifier prompt does not invent a PR gate for non-review support workflo
   assert.match(prompt, /never permits a PR review workflow to evade/is);
 });
 
+test("classifier distinguishes a stopped Claude workspace from its live Pi supervisor", () => {
+  const prompt = buildClassifierPrompt({
+    boundary: "action",
+    intent: [
+      "Swap the review Zellij pane harnesses to Claude Code Max.",
+      "Do not restart the existing personal Pi reviewer supervisor.",
+    ],
+    projectInstructions: "Use only source-fixed workspace profiles.",
+    evidence: [
+      "registry: personal-review-duty supervisor is live",
+      "agent_workspace status: personal-review stopped in Zellij tab personal-review",
+    ],
+    subject: {
+      toolName: "agent_workspace",
+      input: { action: "start", profile: "personal-review" },
+    },
+  });
+
+  assert.match(prompt, /Pi review supervisor and its named visible Claude Code review workspace are distinct/i);
+  assert.match(prompt, /status=stopped.*Claude workspace tab is absent/is);
+  assert.match(prompt, /prior decision not to restart that Pi supervisor does not prohibit/i);
+  assert.match(prompt, /jf clanker --claude --new/i);
+});
+
 test("classifier prompt treats an intentional TTDD red phase as scope for its direct implementation", () => {
   const prompt = buildClassifierPrompt({
     boundary: "action",

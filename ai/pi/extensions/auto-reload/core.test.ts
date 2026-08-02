@@ -35,13 +35,22 @@ test("managed reloads preempt long-running turns only after a committed grace pe
     managedReloadDecision({
       ...base,
       pendingForMs: 60_000,
+      pendingMessages: true,
+    }),
+    "wait",
+    "queued human/follow-up messages must drain before managed preemption",
+  );
+  assert.equal(
+    managedReloadDecision({
+      ...base,
+      pendingForMs: 60_000,
       preemptRequested: true,
     }),
     "wait",
   );
 });
 
-test("managed reload resumes a preempted generation before preserved follow-ups", () => {
+test("managed reload resumes a preempted generation after newly pending follow-ups", () => {
   const pendingResume = {
     type: "custom",
     customType: "auto-reload.preempted-generation",
@@ -57,6 +66,10 @@ test("managed reload resumes a preempted generation before preserved follow-ups"
   });
   assert.equal(
     managedReloadDelivery("reload", [pendingResume], true),
+    "resumeAfterPending",
+  );
+  assert.equal(
+    managedReloadDelivery("reload", [pendingResume], false),
     "resume",
   );
   assert.equal(managedReloadDelivery("reload", [resumed], true), "display");

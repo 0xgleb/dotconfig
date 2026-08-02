@@ -132,6 +132,8 @@ test("Claude inventory dispatch uses the verified fresh clanker subscription rou
   assert.match(prompt, /subscription-harness inventory executor/i);
   assert.match(prompt, /Do not run a review panel/i);
   assert.match(prompt, /pi-bridge send --agent supervisor-session/i);
+  assert.match(prompt, /status: empty\|clean\|findings_fixed\|findings_pending\|blocked\|failed/i);
+  assert.match(prompt, /never custom values such as assigned-review or selected/i);
   assert.match(prompt, /never use an Anthropic API provider/i);
 });
 

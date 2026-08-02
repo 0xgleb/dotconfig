@@ -145,7 +145,7 @@ const handoffInstruction = (
   supervisorId: string,
   dedupeKey: string,
 ): string =>
-  `At completion, send exactly one bounded CLAUDE_REVIEW_HANDOFF v1 on stdin to: pi-bridge send --agent ${supervisorId} --requester claude-review-duty --dedupe ${dedupeKey}. Include mode, profile, repository, pull_request, kind, input_head_sha, output_head_sha, status, assessment, evidence, and verifier in that order. Never include prompts, reasoning, credentials, diffs, or logs.`;
+  `At completion, send exactly one bounded CLAUDE_REVIEW_HANDOFF v1 on stdin to: pi-bridge send --agent ${supervisorId} --requester claude-review-duty --dedupe ${dedupeKey}. Use exactly these fields in order: mode: inventory|review; profile: st0x-review|dataclique-review|personal-review; repository: owner/repo|none; pull_request: positive integer|none; kind: own|assigned|auto|none; input_head_sha: lowercase hex|none; output_head_sha: lowercase hex|none; status: empty|clean|findings_fixed|findings_pending|blocked|failed; assessment: one factual line; evidence: bounded identifiers or none; verifier: fable-clean|fable-rejected|unavailable|not-applicable. A selected inventory candidate is kind own or assigned and status findings_pending, never custom values such as assigned-review or selected. Never include prompts, reasoning, credentials, diffs, or logs.`;
 
 const claudeExecutorPrompt = (
   profile: AgentWorkspaceProfile,
