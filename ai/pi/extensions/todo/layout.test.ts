@@ -19,6 +19,10 @@ const todoExtension = readFileSync(
   new URL("./index.ts", import.meta.url),
   "utf8",
 )
+const taskHudRenderer = readFileSync(
+  new URL("./task-hud.ts", import.meta.url),
+  "utf8",
+)
 
 const activeTasks = taskHud({
   nextId: 3,
@@ -54,15 +58,15 @@ test("side-by-side sessions reserve identical fixed-height chrome", () => {
   assert.match(activityStatus, /alignChromeLine\(label, width\)/)
   assert.match(activityStatus, /setProgressWidget\(questionLabel\(\), ctx\)/)
   assert.doesNotMatch(todoExtension, /borderMuted", footer\),\s*""/)
-  assert.match(todoExtension, /private colorTaskHeadline/)
-  assert.match(todoExtension, /private colorTaskRow/)
-  assert.match(todoExtension, /\[▰▱\]\{8\}/)
+  assert.match(taskHudRenderer, /private colorTaskHeadline/)
+  assert.match(taskHudRenderer, /private colorTaskRow/)
+  assert.match(taskHudRenderer, /\[▰▱\]\{8\}/)
   assert.match(
-    todoExtension,
+    taskHudRenderer,
     /theme\.fg\("accent", line\.slice\(firstBorder \+ 1, lastBorder\)\)/,
   )
   assert.match(
-    todoExtension,
+    taskHudRenderer,
     /theme\.fg\("borderAccent", line\.slice\(lastBorder\)\)/,
   )
 })

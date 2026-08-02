@@ -3,11 +3,19 @@ import { readFileSync } from "node:fs"
 import test from "node:test"
 import type { Theme } from "@earendil-works/pi-coding-agent"
 import { visibleWidth } from "@earendil-works/pi-tui"
+import {
+  synchronizedTaskHudFrame,
+  TaskHudComponent,
+} from "./task-hud.ts"
 import { KANBAN_OVERLAY_OPTIONS, KanbanComponent } from "./kanban.ts"
 import type { TodoState } from "./state.ts"
 
 const todoExtensionSource = readFileSync(
   new URL("./index.ts", import.meta.url),
+  "utf8",
+)
+const taskHudSource = readFileSync(
+  new URL("./task-hud.ts", import.meta.url),
   "utf8",
 )
 
@@ -135,10 +143,43 @@ test("kanban unblocks the selected blocked task directly", async () => {
   assert.match(component.render(90).join("\n"), /\[ \] #4 Blocked/)
 })
 
+test("task HUD phase is synchronized by wall clock across panes", () => {
+  assert.equal(synchronizedTaskHudFrame(0, 240), 0)
+  assert.equal(synchronizedTaskHudFrame(959, 240), 3)
+  assert.equal(synchronizedTaskHudFrame(960, 240), 4)
+  assert.equal(synchronizedTaskHudFrame(1_199, 240), 4)
+  assert.throws(() => synchronizedTaskHudFrame(-1, 240), /timestamp/i)
+  assert.throws(() => synchronizedTaskHudFrame(1_000, 0), /interval/i)
+})
+
+test("task HUD requests and renders changing ANSI frames until disposed", async () => {
+  const theme = {
+    fg: (color: string, text: string) => `<${color}>${text}</${color}>`,
+    bold: (text: string) => `<bold>${text}</bold>`,
+  } as unknown as Theme
+  const renderedFrames: string[] = []
+  let component: TaskHudComponent
+  component = new TaskHudComponent(
+    state,
+    theme,
+    () => renderedFrames.push(component.render(100).join("\n")),
+    5,
+  )
+
+  await new Promise((resolve) => setTimeout(resolve, 35))
+  assert.ok(renderedFrames.length >= 3)
+  assert.ok(new Set(renderedFrames).size >= 2)
+
+  component.dispose()
+  const settledCount = renderedFrames.length
+  await new Promise((resolve) => setTimeout(resolve, 15))
+  assert.equal(renderedFrames.length, settledCount)
+})
+
 test("task progress animation modulates brightness without hiding cells or changing hue", () => {
-  const renderer = todoExtensionSource.slice(
-    todoExtensionSource.indexOf("private colorTaskHeadline"),
-    todoExtensionSource.indexOf("private colorTaskRow"),
+  const renderer = taskHudSource.slice(
+    taskHudSource.indexOf("private colorTaskHeadline"),
+    taskHudSource.indexOf("private colorTaskRow"),
   )
   assert.doesNotMatch(renderer, /"success"|SLOW_BLINK|RAPID_BLINK|visible \? cell : " "/)
   assert.match(renderer, /taskProgressCellIntensity/)
@@ -147,21 +188,16 @@ test("task progress animation modulates brightness without hiding cells or chang
   assert.match(renderer, /cell === "▰" \? "accent" : "muted"/)
 })
 
-test("task progress pulse stays active whenever unfinished work is visible", () => {
-  assert.match(todoExtensionSource, /HUD_ANIMATION_INTERVAL_MS = 240/)
+test("task progress pulse owns direct TUI invalidation while work is unfinished", () => {
+  assert.match(taskHudSource, /HUD_ANIMATION_INTERVAL_MS = 240/)
   assert.match(
-    todoExtensionSource,
-    /const shouldAnimate =[\s\S]*?ctx\.hasUI &&[\s\S]*?summary\.total > 0 &&[\s\S]*?summary\.completed \+ summary\.cancelled < summary\.total/,
+    taskHudSource,
+    /hasUnfinishedWork[\s\S]*?setInterval[\s\S]*?this\.requestRender\(\)/,
   )
-  assert.match(
-    todoExtensionSource,
-    /setInterval[\s\S]*?hudAnimationFrame \+= 1/,
-  )
-  assert.doesNotMatch(todoExtensionSource, /agentRunning/)
-  assert.match(
-    todoExtensionSource,
-    /session_shutdown[\s\S]*?clearInterval\(hudAnimation\)/,
-  )
+  assert.match(taskHudSource, /dispose[\s\S]*?clearInterval/)
+  assert.match(taskHudSource, /synchronizedTaskHudFrame\([\s\S]*?Date\.now\(\)/)
+  assert.match(todoExtensionSource, /tui\.requestRender\(\)/)
+  assert.doesNotMatch(todoExtensionSource, /hudAnimation|agentRunning/)
 })
 
 test("kanban reapplies its glass background after nested foreground resets", () => {

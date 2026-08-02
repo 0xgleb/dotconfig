@@ -35,12 +35,10 @@ import { registerRuntimeVersion } from "../shared/runtime-version.ts"
 import { KANBAN_OVERLAY_OPTIONS, KanbanComponent } from "./kanban.ts"
 import {
   CONTENT_GUTTER,
-  frameTaskHud,
   overlayRule,
-  taskHud,
-  taskProgressCellIntensity,
   todoSummary,
 } from "./presentation.ts"
+import { TaskHudComponent } from "./task-hud.ts"
 import {
   decodeTodoDetails,
   decodeTodoState,
@@ -118,85 +116,6 @@ const statusColor = (status: TodoStatus | undefined): StatusColor => {
     default:
       return "accent"
   }
-}
-
-const DIM_INTENSITY = "\x1b[2m"
-const NORMAL_INTENSITY = "\x1b[22m"
-const dimText = (text: string): string =>
-  `${DIM_INTENSITY}${text}${NORMAL_INTENSITY}`
-
-class TaskHudComponent {
-  private readonly state: TodoState
-  private readonly theme: Theme
-
-  constructor(
-    state: TodoState,
-    theme: Theme,
-    private readonly animationFrame = 0,
-  ) {
-    this.state = state
-    this.theme = theme
-  }
-
-  private colorTaskHeadline(line: string): string {
-    const progressBar = /([▰▱]{8})/u
-    return line
-      .split(progressBar)
-      .map((part) =>
-        progressBar.test(part)
-          ? [...part]
-              .map((cell, index) => {
-                const intensity = taskProgressCellIntensity(
-                  this.animationFrame,
-                  index,
-                )
-                const hued = this.theme.fg(
-                  cell === "▰" ? "accent" : "muted",
-                  cell,
-                )
-                return intensity === "bright"
-                  ? this.theme.bold(hued)
-                  : intensity === "dim"
-                    ? dimText(hued)
-                    : hued
-              })
-              .join("")
-          : this.theme.bold(this.theme.fg("borderAccent", part)),
-      )
-      .join("")
-  }
-
-  private colorTaskRow(line: string): string {
-    const firstBorder = line.indexOf("│")
-    const lastBorder = line.lastIndexOf("│")
-    if (firstBorder < 0 || lastBorder <= firstBorder) {
-      return this.theme.fg("accent", line)
-    }
-
-    return [
-      this.theme.fg("borderAccent", line.slice(0, firstBorder + 1)),
-      this.theme.fg("accent", line.slice(firstBorder + 1, lastBorder)),
-      this.theme.fg("borderAccent", line.slice(lastBorder)),
-    ].join("")
-  }
-
-  render(width: number): string[] {
-    const hud = taskHud(this.state)
-    const framed = frameTaskHud(hud, width)
-    if (hud.kind === "idle") {
-      const [headline = "", row = ""] = framed
-      return [this.colorTaskHeadline(headline), this.colorTaskRow(row)]
-    }
-
-    const [headline, ...rows] = framed
-
-    return [
-      this.colorTaskHeadline(headline ?? ""),
-      ...rows.map((row) => this.colorTaskRow(row)),
-    ]
-  }
-
-  invalidate(): void {}
 }
 
 class TodoListComponent {
@@ -306,7 +225,6 @@ function failedToolResult(
 const TODO_STATE_ENTRY = "todo.state"
 const TODO_REMINDER_MESSAGE = "todo.reminder"
 const MAX_TIMER_DELAY_MS = 2_147_483_647
-const HUD_ANIMATION_INTERVAL_MS = 240
 
 function restoredState(ctx: ExtensionContext): TodoState {
   const states = ctx.sessionManager.getBranch().flatMap((entry) => {
@@ -327,11 +245,9 @@ function restoredState(ctx: ExtensionContext): TodoState {
 }
 
 export default function todoExtension(pi: ExtensionAPI): void {
-  registerRuntimeVersion(pi, "todo", "2026.08.01.30")
+  registerRuntimeVersion(pi, "todo", "2026.08.01.31")
   const stateRef = Effect.runSync(Ref.make<TodoState>(emptyTodoState))
   let hudExpiry: ReturnType<typeof setTimeout> | undefined
-  let hudAnimation: ReturnType<typeof setInterval> | undefined
-  let hudAnimationFrame = 0
   let reminderTimer: ReturnType<typeof setTimeout> | undefined
 
   const mountTaskWidget = (ctx: ExtensionContext, state: TodoState): void => {
@@ -347,32 +263,12 @@ export default function todoExtension(pi: ExtensionAPI): void {
     // sitting side by side keep the same chrome instead of one losing its HUD.
     ctx.ui.setWidget(
       "todo-top-tasks",
-      (_tui, theme) =>
-        new TaskHudComponent(state, theme, hudAnimationFrame),
+      (tui, theme) =>
+        new TaskHudComponent(state, theme, () => tui.requestRender()),
       {
         placement: "aboveEditor",
       },
     )
-  }
-
-  const syncHudAnimation = (ctx: ExtensionContext, state: TodoState): void => {
-    const summary = todoSummary(state)
-    const shouldAnimate =
-      ctx.hasUI &&
-      summary.total > 0 &&
-      summary.completed + summary.cancelled < summary.total
-    if (!shouldAnimate) {
-      if (hudAnimation) clearInterval(hudAnimation)
-      hudAnimation = undefined
-      hudAnimationFrame = 0
-      return
-    }
-    if (hudAnimation) return
-    hudAnimation = setInterval(() => {
-      hudAnimationFrame += 1
-      mountTaskWidget(ctx, Effect.runSync(Ref.get(stateRef)))
-    }, HUD_ANIMATION_INTERVAL_MS)
-    hudAnimation.unref()
   }
 
   const renderTaskWidget = (
@@ -381,7 +277,6 @@ export default function todoExtension(pi: ExtensionAPI): void {
   ) => {
     if (!ctx.hasUI) return
     mountTaskWidget(ctx, state)
-    syncHudAnimation(ctx, state)
 
     if (hudExpiry) clearTimeout(hudExpiry)
     const now = Date.now()
@@ -483,11 +378,8 @@ export default function todoExtension(pi: ExtensionAPI): void {
   })
   pi.on("session_shutdown", (_event, ctx) => {
     if (hudExpiry) clearTimeout(hudExpiry)
-    if (hudAnimation) clearInterval(hudAnimation)
     if (reminderTimer) clearTimeout(reminderTimer)
     hudExpiry = undefined
-    hudAnimation = undefined
-    hudAnimationFrame = 0
     reminderTimer = undefined
     ctx.ui.setStatus("todo", undefined)
     ctx.ui.setWidget("todo-top-tasks", undefined)
