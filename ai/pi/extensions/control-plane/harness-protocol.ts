@@ -103,6 +103,30 @@ const isCanonicalAbsolutePath = (value: unknown): value is string =>
   isAbsolute(value) &&
   normalize(value) === value
 
+const CREDENTIAL_SEGMENTS = [".ssh", ".gnupg", ".aws"] as const
+
+export const isCredentialBearingPath = (path: string): boolean =>
+  path
+    .split("/")
+    .filter((segment) => segment.length > 0)
+    .some(
+      (segment) =>
+        CREDENTIAL_SEGMENTS.includes(
+          segment as (typeof CREDENTIAL_SEGMENTS)[number],
+        ) || segment.startsWith(".env"),
+    )
+
+const rootMatchesRepository = (root: string, repository: string): boolean => {
+  const name = repository.split("/").at(1)
+  if (name === undefined) return false
+  const segments = root.split("/").filter((segment) => segment.length > 0)
+  return segments.some(
+    (segment, index) =>
+      segment === name &&
+      (index === segments.length - 1 || segments[index + 1] === ".worktrees"),
+  )
+}
+
 const decodeIdentity = (
   value: Readonly<Record<string, unknown>>,
 ): Effect.Effect<HarnessReviewIdentity, HarnessProtocolError> => {
@@ -124,6 +148,12 @@ const decodeIdentity = (
   }
   const profile = value.profile as ReviewDutyProfile
   const repository = value.repository
+  if (
+    isCredentialBearingPath(value.repositoryRoot) ||
+    !rootMatchesRepository(value.repositoryRoot, repository)
+  ) {
+    return invalid("repository root is not bound to the declared repository")
+  }
   if (!repositoryAllowedForProfile(profile, repository))
     return invalid("repository is outside the selected review profile")
   if (
@@ -253,6 +283,10 @@ export const decodeHarnessReviewHandoff = (
     UNSAFE_CONTROL.test(value.assessment) ||
     !Array.isArray(value.evidence) ||
     value.evidence.length > 16 ||
+    ((value.status === "clean" ||
+      value.status === "findings_fixed" ||
+      value.status === "findings_pending") &&
+      value.evidence.length < 1) ||
     !value.evidence.every(
       (item) => typeof item === "string" && SAFE_EVIDENCE.test(item),
     ) ||

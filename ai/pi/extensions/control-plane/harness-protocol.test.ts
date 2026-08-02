@@ -51,6 +51,17 @@ test("registered harness review payloads decode exactly", () => {
     Effect.runSync(decodeHarnessReviewPayload(cursorPayload)),
     cursorPayload,
   )
+  const worktreeRoot =
+    "/Users/example/code/st0x/example/.worktrees/feat/harness"
+  assert.deepEqual(
+    Effect.runSync(
+      decodeHarnessReviewPayload({
+        ...claudePayload,
+        repositoryRoot: worktreeRoot,
+      }),
+    ),
+    { ...claudePayload, repositoryRoot: worktreeRoot },
+  )
 })
 
 test("harness payloads cannot carry executable or prompt injection fields", () => {
@@ -78,6 +89,14 @@ test("harness lane, model, isolation, and identity invariants fail closed", () =
     { ...cursorPayload, kind: "auto" },
     { ...cursorPayload, repositoryRoot: "relative/path" },
     { ...cursorPayload, repositoryRoot: "/Users/example/../escape" },
+    { ...cursorPayload, repositoryRoot: "/" },
+    { ...cursorPayload, repositoryRoot: "/etc" },
+    { ...cursorPayload, repositoryRoot: "/Users/example/.ssh" },
+    { ...cursorPayload, repositoryRoot: "/Users/example/.gnupg/example" },
+    { ...cursorPayload, repositoryRoot: "/Users/example/.aws/example" },
+    { ...cursorPayload, repositoryRoot: "/Users/example/code/0xgleb/.env" },
+    { ...cursorPayload, repositoryRoot: "/Users/example/code/0xgleb/other" },
+    { ...claudePayload, repositoryRoot: "/Users/example/code/st0x" },
     { ...cursorPayload, inputHeadSha: "A".repeat(40) },
     { ...cursorPayload, pullRequest: 0 },
     { ...cursorPayload, profile: "dataclique-review" },
@@ -149,12 +168,25 @@ test("bounded versioned harness handoffs decode and match the live attempt", () 
   )
 })
 
+test("unverified terminal handoffs may carry empty evidence", () => {
+  const blocked = {
+    ...handoff,
+    status: "blocked",
+    verifier: "unavailable",
+    evidence: [],
+  }
+  assert.deepEqual(Effect.runSync(decodeHarnessReviewHandoff(blocked)), blocked)
+})
+
 test("handoffs reject prompt, reasoning, raw logs, and malformed evidence", () => {
   for (const malformed of [
     { ...handoff, protocolVersion: 2 },
     { ...handoff, assessment: "x".repeat(501) },
     { ...handoff, assessment: "line one\nline two" },
     { ...handoff, evidence: Array.from({ length: 17 }, (_, index) => `check:${index}`) },
+    { ...handoff, evidence: [] },
+    { ...handoff, status: "findings_fixed", evidence: [] },
+    { ...handoff, status: "findings_pending", evidence: [] },
     { ...handoff, evidence: ["raw model prose with spaces"] },
     { ...handoff, evidence: ["path:/Users/example/.env"] },
     { ...handoff, reasoning: "hidden chain of thought" },
