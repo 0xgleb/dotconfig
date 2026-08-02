@@ -36,12 +36,17 @@ export class JobStoreError extends Data.TaggedError("JobStoreError")<{
   readonly message: string
 }> {}
 
+export interface EnqueueResult {
+  readonly job: Job
+  readonly created: boolean
+}
+
 export interface SqliteJobStore {
   readonly enqueue: (
     spec: RegisteredJobSpec,
     id?: string,
     now?: number,
-  ) => Effect.Effect<Job, JobStoreError | JobRuntimeError>
+  ) => Effect.Effect<EnqueueResult, JobStoreError | JobRuntimeError>
   readonly get: (id: string) => Effect.Effect<Job, JobStoreError>
   readonly list: () => Effect.Effect<readonly Job[], JobStoreError>
   readonly claimDue: (
@@ -226,7 +231,7 @@ const makeStore = (database: DatabaseSync): SqliteJobStore => {
                     "idempotency key is already bound to a different job payload",
                   ),
                 )
-              return existing
+              return { job: existing, created: false }
             }
 
             const countRow = yield* Effect.flatMap(
@@ -270,7 +275,7 @@ const makeStore = (database: DatabaseSync): SqliteJobStore => {
                   ),
               "failed to insert job",
             )
-            return job
+            return { job, created: true }
           }),
         ),
       ),

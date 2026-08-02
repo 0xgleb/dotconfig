@@ -97,6 +97,63 @@ test("registered enqueue is idempotent and unknown executable kinds fail closed"
     })
   }))
 
+test("concurrent idempotent enqueue reports exactly one creation", async () => {
+  const job = {
+    id: "job-a",
+    spec: enqueueBody,
+    state: "ready",
+    attempt: 0,
+    createdAt: 1_000,
+    updatedAt: 1_000,
+  } as const
+  let enqueueCount = 0
+  let listCount = 0
+  let releaseLists: (() => void) | undefined
+  const listsReleased = new Promise<void>((resolve) => {
+    releaseLists = resolve
+  })
+  const store = {
+    list: () =>
+      Effect.promise(async () => {
+        listCount += 1
+        if (listCount === 2) releaseLists?.()
+        await listsReleased
+        return []
+      }),
+    enqueue: () =>
+      Effect.sync(() => {
+        const created = enqueueCount === 0
+        enqueueCount += 1
+        return { job, created }
+      }),
+  } as unknown as SqliteJobStore
+  const server = await Effect.runPromise(
+    startControlPlaneServer({ host: "127.0.0.1", port: 0, store }),
+  )
+  try {
+    const enqueue = () =>
+      fetch(`${server.origin}/v1/jobs`, {
+        method: "POST",
+        headers: { "content-type": "application/json" },
+        body: JSON.stringify(enqueueBody),
+      })
+    const responses = await Promise.all([enqueue(), enqueue()])
+    assert.deepEqual(
+      responses.map(({ status }) => status).sort(),
+      [200, 201],
+    )
+    const jobs = await Promise.all(
+      responses.map(
+        (response) => response.json() as Promise<{ job: { id: string } }>,
+      ),
+    )
+    assert.equal(jobs[0]?.job.id, jobs[1]?.job.id)
+    assert.equal(listCount, 0, "enqueue status must not depend on a list snapshot")
+  } finally {
+    await Effect.runPromise(server.close)
+  }
+})
+
 test("workers claim due jobs with server-issued leases and stale completion is fenced", async () =>
   withServer(async (origin) => {
     const due = { ...enqueueBody, runAt: Date.now() - 1_000 }

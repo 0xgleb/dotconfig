@@ -8,9 +8,7 @@ export const REVIEW_DUTY_PROFILES = [
 
 export type ReviewDutyProfile = (typeof REVIEW_DUTY_PROFILES)[number]
 
-export interface ReviewDutyScanSpec {
-  readonly kind: "review-duty.scan"
-  readonly payload: { readonly profile: ReviewDutyProfile }
+interface JobSchedule {
   readonly runAt: number
   readonly maxAttempts: number
   readonly recurrence?: {
@@ -20,7 +18,23 @@ export interface ReviewDutyScanSpec {
   readonly idempotencyKey?: string
 }
 
-export type RegisteredJobSpec = ReviewDutyScanSpec
+export interface RegisteredJobPayloads {
+  readonly "review-duty.scan": { readonly profile: ReviewDutyProfile }
+}
+
+export type RegisteredJobKind = keyof RegisteredJobPayloads
+
+export type RegisteredJobSpec = {
+  readonly [Kind in RegisteredJobKind]: JobSchedule & {
+    readonly kind: Kind
+    readonly payload: RegisteredJobPayloads[Kind]
+  }
+}[RegisteredJobKind]
+
+export type ReviewDutyScanSpec = Extract<
+  RegisteredJobSpec,
+  { readonly kind: "review-duty.scan" }
+>
 
 interface JobBase {
   readonly id: string
@@ -108,6 +122,25 @@ const checkedAdd = (left: number, right: number): number | undefined => {
   return isTimestamp(sum) ? sum : undefined
 }
 
+type PayloadDecoder<Kind extends RegisteredJobKind> = (
+  value: unknown,
+) => Effect.Effect<RegisteredJobPayloads[Kind], JobRuntimeError>
+
+const REGISTERED_JOB_PAYLOAD_DECODERS: {
+  readonly [Kind in RegisteredJobKind]: PayloadDecoder<Kind>
+} = {
+  "review-duty.scan": (value) =>
+    isRecord(value) &&
+    hasOnlyKeys(value, ["profile"]) &&
+    REVIEW_DUTY_PROFILES.includes(value.profile as ReviewDutyProfile)
+      ? Effect.succeed({ profile: value.profile as ReviewDutyProfile })
+      : invalid("review-duty.scan requires a registered profile"),
+}
+
+export const REGISTERED_JOB_KINDS = Object.freeze(
+  Object.keys(REGISTERED_JOB_PAYLOAD_DECODERS) as RegisteredJobKind[],
+)
+
 export const decodeJobSpec = (
   value: unknown,
 ): Effect.Effect<RegisteredJobSpec, JobRuntimeError> => {
@@ -121,16 +154,10 @@ export const decodeJobSpec = (
       "recurrence",
       "idempotencyKey",
     ]) ||
-    value.kind !== "review-duty.scan"
+    typeof value.kind !== "string" ||
+    !REGISTERED_JOB_KINDS.includes(value.kind as RegisteredJobKind)
   ) {
     return invalid("job kind must be a registered bounded kind")
-  }
-  if (
-    !isRecord(value.payload) ||
-    !hasOnlyKeys(value.payload, ["profile"]) ||
-    !REVIEW_DUTY_PROFILES.includes(value.payload.profile as ReviewDutyProfile)
-  ) {
-    return invalid("review-duty.scan requires a registered profile")
   }
   if (!isTimestamp(value.runAt)) return invalid("runAt must be a safe timestamp")
   if (!isBoundedInteger(value.maxAttempts, 1, MAX_ATTEMPTS))
@@ -165,17 +192,17 @@ export const decodeJobSpec = (
     }
   }
 
-  const spec: RegisteredJobSpec = {
-    kind: "review-duty.scan",
-    payload: { profile: value.payload.profile as ReviewDutyProfile },
-    runAt: value.runAt,
-    maxAttempts: value.maxAttempts,
+  const kind = value.kind as RegisteredJobKind
+  return Effect.map(REGISTERED_JOB_PAYLOAD_DECODERS[kind](value.payload), (payload) => ({
+    kind,
+    payload,
+    runAt: value.runAt as number,
+    maxAttempts: value.maxAttempts as number,
     ...(recurrence ? { recurrence } : {}),
     ...(value.idempotencyKey !== undefined
-      ? { idempotencyKey: value.idempotencyKey }
+      ? { idempotencyKey: value.idempotencyKey as string }
       : {}),
-  }
-  return Effect.succeed(spec)
+  }) as RegisteredJobSpec)
 }
 
 export const decodeStoredJob = (
@@ -229,14 +256,37 @@ export const decodeStoredJob = (
       createdAt: value.createdAt as number,
       updatedAt: value.updatedAt as number,
     }
+    if (state === "scheduled") {
+      if (base.attempt !== 0 || spec.runAt <= base.updatedAt)
+        return invalid("stored scheduled job fields are inconsistent")
+      return Effect.succeed({ ...base, state })
+    }
+    if (state === "ready") {
+      if (base.attempt !== 0 || spec.runAt > base.updatedAt)
+        return invalid("stored ready job fields are inconsistent")
+      return Effect.succeed({ ...base, state })
+    }
+    if (state === "retry_wait") {
+      if (
+        base.attempt < 1 ||
+        base.attempt >= spec.maxAttempts ||
+        spec.runAt < base.updatedAt
+      )
+        return invalid("stored retrying job fields are inconsistent")
+      return Effect.succeed({ ...base, state })
+    }
     if (state === "leased") {
       if (
         value.attempt < 1 ||
+        spec.runAt > base.updatedAt ||
         !isSafeIdentifier(value.workerId, 128) ||
         !isSafeIdentifier(value.leaseToken, 128) ||
         !isTimestamp(value.leaseUntil) ||
+        value.leaseUntil <= base.createdAt ||
         (value.cancelRequestedAt !== undefined &&
-          !isTimestamp(value.cancelRequestedAt))
+          (!isTimestamp(value.cancelRequestedAt) ||
+            value.cancelRequestedAt < base.createdAt ||
+            value.cancelRequestedAt > base.updatedAt))
       ) {
         return invalid("stored leased job fields are malformed")
       }
@@ -252,10 +302,16 @@ export const decodeStoredJob = (
       })
     }
     if (state === "succeeded" || state === "failed" || state === "cancelled") {
+      const cancelledBeforeClaim = state === "cancelled" && base.attempt === 0
       if (
         !isTimestamp(value.finishedAt) ||
-        value.finishedAt < value.updatedAt ||
-        (value.summary !== undefined && !isSafeSummary(value.summary))
+        value.finishedAt !== base.updatedAt ||
+        (state === "succeeded" && base.attempt < 1) ||
+        (state === "failed" && base.attempt !== spec.maxAttempts) ||
+        ((state === "succeeded" || state === "failed" || base.attempt > 0) &&
+          !isSafeSummary(value.summary)) ||
+        (cancelledBeforeClaim && value.summary !== undefined) ||
+        (!cancelledBeforeClaim && spec.runAt > base.updatedAt)
       ) {
         return invalid("stored terminal job fields are malformed")
       }
@@ -266,7 +322,7 @@ export const decodeStoredJob = (
         ...(value.summary !== undefined ? { summary: value.summary } : {}),
       })
     }
-    return Effect.succeed({ ...base, state })
+    return invalid("stored job state is inconsistent")
   })
 }
 
@@ -299,6 +355,8 @@ export const claimJob = (
   if (!isSafeIdentifier(leaseToken, 128))
     return invalid("lease token must be bounded and safe")
   if (!isTimestamp(now)) return invalid("now must be a safe timestamp")
+  if (now < job.updatedAt)
+    return invalid("now cannot precede the current job state")
   if (!isBoundedInteger(ttlMs, 1, MAX_LEASE_TTL_MS))
     return invalid("lease ttl must be positive and at most 24 hours")
   const leaseUntil = checkedAdd(now, ttlMs)
@@ -327,10 +385,12 @@ export const claimJob = (
 const currentLease = (
   job: Job,
   leaseToken: string,
+  now: number,
 ): Effect.Effect<Extract<Job, { state: "leased" }>, JobRuntimeError> => {
   if (job.state !== "leased")
     return invalidTransition("job does not have an active lease")
-  if (job.leaseToken !== leaseToken) return staleLease()
+  if (job.leaseToken !== leaseToken || job.leaseUntil <= now)
+    return staleLease()
   return Effect.succeed(job)
 }
 
@@ -341,8 +401,10 @@ export const completeJob = (
   summary: string,
 ): Effect.Effect<Job, JobRuntimeError> => {
   if (!isTimestamp(now)) return invalid("now must be a safe timestamp")
+  if (now < job.updatedAt)
+    return invalid("now cannot precede the current job state")
   if (!isSafeSummary(summary)) return invalid("summary must be bounded safe text")
-  return Effect.map(currentLease(job, leaseToken), (leased) => ({
+  return Effect.map(currentLease(job, leaseToken, now), (leased) => ({
     id: leased.id,
     spec: leased.spec,
     state: leased.cancelRequestedAt === undefined ? "succeeded" : "cancelled",
@@ -402,12 +464,14 @@ export const failJob = (
   summary: string,
 ): Effect.Effect<Job, JobRuntimeError> => {
   if (!isTimestamp(now)) return invalid("now must be a safe timestamp")
+  if (now < job.updatedAt)
+    return invalid("now cannot precede the current job state")
   if (!isBoundedInteger(retryDelayMs, 0, MAX_RETRY_DELAY_MS))
     return invalid("retry delay must be bounded to seven days")
   if (checkedAdd(now, retryDelayMs) === undefined)
     return invalid("retry timestamp exceeds safe range")
   if (!isSafeSummary(summary)) return invalid("summary must be bounded safe text")
-  return Effect.map(currentLease(job, leaseToken), (leased) =>
+  return Effect.map(currentLease(job, leaseToken, now), (leased) =>
     retryOrFail(leased, now, retryDelayMs, summary),
   )
 }
@@ -417,6 +481,8 @@ export const cancelJob = (
   now: number,
 ): Effect.Effect<Job, JobRuntimeError> => {
   if (!isTimestamp(now)) return invalid("now must be a safe timestamp")
+  if (now < job.updatedAt)
+    return invalid("now cannot precede the current job state")
   if (
     job.state === "succeeded" ||
     job.state === "failed" ||
@@ -448,6 +514,8 @@ export const recoverExpiredJob = (
   retryDelayMs: number,
 ): Effect.Effect<Job, JobRuntimeError> => {
   if (!isTimestamp(now)) return invalid("now must be a safe timestamp")
+  if (now < job.updatedAt)
+    return invalid("now cannot precede the current job state")
   if (!isBoundedInteger(retryDelayMs, 0, MAX_RETRY_DELAY_MS))
     return invalid("retry delay must be bounded to seven days")
   if (checkedAdd(now, retryDelayMs) === undefined)

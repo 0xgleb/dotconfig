@@ -192,10 +192,8 @@ const handleJobs = (
     const body = yield* readBody(request)
     const input = yield* parseJson(body)
     const spec = yield* decodeJobSpec(input)
-    const existing = yield* store.list()
-    const job = yield* store.enqueue(spec)
-    const alreadyExisted = existing.some(({ id }) => id === job.id)
-    sendJson(response, alreadyExisted ? 200 : 201, { job })
+    const result = yield* store.enqueue(spec)
+    sendJson(response, result.created ? 201 : 200, { job: result.job })
   })
 }
 

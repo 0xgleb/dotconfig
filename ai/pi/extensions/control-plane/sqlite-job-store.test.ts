@@ -51,7 +51,9 @@ test("idempotent enqueue returns the persisted job and rejects payload drift", a
     const duplicate = await Effect.runPromise(
       store.enqueue(reviewSpec(), "job-b", 1_001),
     )
-    assert.equal(duplicate.id, first.id)
+    assert.equal(first.created, true)
+    assert.equal(duplicate.created, false)
+    assert.equal(duplicate.job.id, first.job.id)
     assert.equal(
       await errorCode(
         store.enqueue(

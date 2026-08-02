@@ -7,8 +7,10 @@ import {
   completeJob,
   createJob,
   decodeJobSpec,
+  decodeStoredJob,
   failJob,
   recoverExpiredJob,
+  REGISTERED_JOB_KINDS,
   type Job,
   type RegisteredJobSpec,
 } from "./job-runtime.ts"
@@ -40,6 +42,7 @@ const leasedJob = (): Job =>
   run(claimJob(readyJob(), "worker-a", "lease-a", 1_000, 90_000))
 
 test("the untrusted enqueue boundary accepts only registered bounded job payloads", () => {
+  assert.deepEqual(REGISTERED_JOB_KINDS, ["review-duty.scan"])
   assert.deepEqual(
     run(decodeJobSpec(reviewSpec)),
     reviewSpec,
@@ -83,6 +86,56 @@ test("the untrusted enqueue boundary accepts only registered bounded job payload
   )
 })
 
+test("persisted jobs reject impossible state-specific combinations", () => {
+  const ready = readyJob()
+  const leased = leasedJob()
+  const succeeded = run(completeJob(leased, "lease-a", 2_000, "done"))
+  const failed = run(
+    failJob(
+      { ...leased, attempt: leased.spec.maxAttempts },
+      "lease-a",
+      2_000,
+      0,
+      "failed",
+    ),
+  )
+  const cancelledBeforeClaim = run(cancelJob(ready, 2_000))
+
+  const malformed = [
+    { ...ready, state: "scheduled", attempt: 1 },
+    {
+      ...ready,
+      state: "scheduled",
+      spec: { ...ready.spec, runAt: ready.updatedAt },
+    },
+    {
+      ...ready,
+      state: "ready",
+      spec: { ...ready.spec, runAt: ready.updatedAt + 1 },
+    },
+    { ...ready, state: "retry_wait", attempt: 0 },
+    {
+      ...ready,
+      state: "retry_wait",
+      attempt: 1,
+      spec: { ...ready.spec, runAt: ready.updatedAt - 1 },
+    },
+    { ...leased, leaseUntil: leased.createdAt },
+    { ...succeeded, attempt: 0 },
+    { ...succeeded, summary: undefined },
+    { ...succeeded, finishedAt: succeeded.updatedAt + 1 },
+    { ...failed, attempt: failed.spec.maxAttempts - 1 },
+    { ...cancelledBeforeClaim, attempt: 1 },
+  ]
+
+  for (const stored of malformed)
+    assert.equal(errorCode(decodeStoredJob(stored)), "invalid_input")
+  assert.deepEqual(
+    run(decodeStoredJob(cancelledBeforeClaim)),
+    cancelledBeforeClaim,
+  )
+})
+
 test("only due jobs can be claimed and a lease has bounded positive lifetime", () => {
   const scheduled = run(createJob(reviewSpec, "job-1", 1_000))
   assert.equal(scheduled.state, "scheduled")
@@ -99,7 +152,7 @@ test("only due jobs can be claimed and a lease has bounded positive lifetime", (
   assert.equal(claimed.attempt, 1)
 })
 
-test("a stale lease token cannot publish success or failure", () => {
+test("a stale or expired lease cannot publish success or failure", () => {
   const leased = leasedJob()
   assert.equal(
     errorCode(completeJob(leased, "lease-stale", 2_000, "done")),
@@ -108,6 +161,22 @@ test("a stale lease token cannot publish success or failure", () => {
   assert.equal(
     errorCode(failJob(leased, "lease-stale", 2_000, 60_000, "failed")),
     "stale_lease",
+  )
+  assert.equal(
+    errorCode(completeJob(leased, "lease-a", leased.leaseUntil, "late")),
+    "stale_lease",
+  )
+})
+
+test("state transitions reject backwards external timestamps", () => {
+  const leased = leasedJob()
+  assert.equal(
+    errorCode(completeJob(leased, "lease-a", leased.updatedAt - 1, "done")),
+    "invalid_input",
+  )
+  assert.equal(
+    errorCode(cancelJob(readyJob(), readyJob().updatedAt - 1)),
+    "invalid_input",
   )
 })
 
