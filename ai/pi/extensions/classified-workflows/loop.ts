@@ -1,7 +1,10 @@
+import { randomInt } from "node:crypto";
+
 export interface ActiveLoopState {
   readonly status: "active";
   readonly instruction: string;
   readonly intervalMs: number;
+  readonly jitterMs?: number;
   readonly startedAt: number;
   readonly nextRunAt: number;
   readonly runs: number;
@@ -12,6 +15,7 @@ export interface ClearedLoopState {
   readonly status: "cleared";
   readonly instruction: string;
   readonly intervalMs: number;
+  readonly jitterMs?: number;
   readonly startedAt: number;
   readonly nextRunAt: number;
   readonly runs: number;
@@ -24,7 +28,12 @@ export type LoopState = ActiveLoopState | ClearedLoopState;
 export type LoopCommand =
   | { readonly action: "status" }
   | { readonly action: "clear" }
-  | { readonly action: "set"; readonly instruction: string; readonly intervalMs: number };
+  | {
+      readonly action: "set";
+      readonly instruction: string;
+      readonly intervalMs: number;
+      readonly jitterMs?: number;
+    };
 
 export type LoopDispatch =
   | { readonly kind: "command"; readonly text: "/reload-runtime" }
@@ -32,6 +41,7 @@ export type LoopDispatch =
 
 export const DEFAULT_LOOP_INTERVAL_MS = 60 * 60 * 1_000;
 export const REVIEW_DUTY_LOOP_INTERVAL_MS = 2 * 60 * 60 * 1_000;
+export const REVIEW_DUTY_LOOP_JITTER_MS = 60 * 60 * 1_000;
 const LEGACY_REVIEW_DUTY_LOOP_INTERVAL_MS = 15 * 60 * 1_000;
 const MIN_LOOP_INTERVAL_MS = 60 * 1_000;
 const MAX_LOOP_INTERVAL_MS = 7 * 24 * 60 * 60 * 1_000;
@@ -48,14 +58,26 @@ export const parseLoopCommand: (args: string) => LoopCommand = (args) => {
   if (input.length === 0) return { action: "status" };
   if (input.toLowerCase() === "clear") return { action: "clear" };
 
-  const match = /^(\d+)([smhd])\s+(.+)$/i.exec(input);
-  const intervalMs = match ? parseInterval(Number(match[1]), match[2]?.toLowerCase() ?? "") : DEFAULT_LOOP_INTERVAL_MS;
-  const instruction = (match?.[3] ?? input).trim();
+  const match = /^(\d+)([smhd])(?:\+-(\d+)([smhd]))?\s+(.+)$/i.exec(input);
+  const intervalMs = match
+    ? parseInterval(Number(match[1]), match[2]?.toLowerCase() ?? "")
+    : DEFAULT_LOOP_INTERVAL_MS;
+  const jitterMs = match?.[3]
+    ? parseInterval(Number(match[3]), match[4]?.toLowerCase() ?? "")
+    : undefined;
+  if (jitterMs !== undefined && jitterMs >= intervalMs)
+    throw new Error("Loop jitter must be smaller than the base interval.");
+  const instruction = (match?.[5] ?? input).trim();
   if (instruction.length === 0) throw new Error("Loop instructions must not be empty.");
   if (instruction.length > MAX_INSTRUCTION_LENGTH) {
     throw new Error("Loop instructions may contain at most 4,000 characters.");
   }
-  return { action: "set", instruction, intervalMs };
+  return {
+    action: "set",
+    instruction,
+    intervalMs,
+    ...(jitterMs !== undefined ? { jitterMs } : {}),
+  };
 };
 
 export const parseStoredLoop: (value: unknown) => LoopState | undefined = (value) => {
@@ -68,6 +90,8 @@ export const parseStoredLoop: (value: unknown) => LoopState | undefined = (value
     !isTimestamp(value.nextRunAt) ||
     !isNonNegativeInteger(value.runs) ||
     !isValidInterval(value.intervalMs) ||
+    (value.jitterMs !== undefined &&
+      (!isValidJitter(value.jitterMs) || value.jitterMs >= value.intervalMs)) ||
     (value.lastRunAt !== undefined && !isTimestamp(value.lastRunAt))
   ) {
     return undefined;
@@ -76,6 +100,7 @@ export const parseStoredLoop: (value: unknown) => LoopState | undefined = (value
   const shared = {
     instruction: value.instruction,
     intervalMs: value.intervalMs,
+    ...(value.jitterMs !== undefined ? { jitterMs: value.jitterMs } : {}),
     startedAt: value.startedAt,
     nextRunAt: value.nextRunAt,
     runs: value.runs,
@@ -115,32 +140,55 @@ const REVIEW_DUTY_INSTRUCTIONS = [
   /^Re-scan 0xgleb personal-repository PR duty; process newly actionable own and assigned-review work under the loaded repository and review policies, then remain operational\.$/,
 ] as const;
 
+const sampledJitter = (jitterMs: number | undefined): number =>
+  jitterMs === undefined ? 0 : randomInt(-jitterMs, jitterMs + 1);
+
+export const nextLoopRunAt = (
+  state: Pick<ActiveLoopState, "intervalMs" | "jitterMs">,
+  now: number,
+  jitterOffsetMs = sampledJitter(state.jitterMs),
+): number => {
+  const jitter = state.jitterMs ?? 0;
+  if (!Number.isSafeInteger(jitterOffsetMs) || Math.abs(jitterOffsetMs) > jitter)
+    throw new Error("Loop jitter offset is outside the configured bound.");
+  return now + state.intervalMs + jitterOffsetMs;
+};
+
 export const migrateReviewDutyLoopCadence: (
   state: LoopState | undefined,
   now: number,
-) => ActiveLoopState | undefined = (state, now) => {
+  jitterOffsetMs?: number,
+) => ActiveLoopState | undefined = (state, now, jitterOffsetMs) => {
   if (
     state?.status !== "active" ||
-    state.intervalMs !== LEGACY_REVIEW_DUTY_LOOP_INTERVAL_MS ||
+    (state.intervalMs !== LEGACY_REVIEW_DUTY_LOOP_INTERVAL_MS &&
+      state.intervalMs !== REVIEW_DUTY_LOOP_INTERVAL_MS) ||
+    state.jitterMs === REVIEW_DUTY_LOOP_JITTER_MS ||
     !REVIEW_DUTY_INSTRUCTIONS.some((pattern) => pattern.test(state.instruction))
   ) {
     return undefined;
   }
-  return {
+  const migrated = {
     ...state,
     intervalMs: REVIEW_DUTY_LOOP_INTERVAL_MS,
-    nextRunAt: now + REVIEW_DUTY_LOOP_INTERVAL_MS,
+    jitterMs: REVIEW_DUTY_LOOP_JITTER_MS,
+  };
+  return {
+    ...migrated,
+    nextRunAt: nextLoopRunAt(migrated, now, jitterOffsetMs),
   };
 };
 
-export const advanceLoop: (state: ActiveLoopState, now: number) => ActiveLoopState = (state, now) => {
-  return {
-    ...state,
-    nextRunAt: now + state.intervalMs,
-    runs: state.runs + 1,
-    lastRunAt: now,
-  };
-};
+export const advanceLoop = (
+  state: ActiveLoopState,
+  now: number,
+  jitterOffsetMs?: number,
+): ActiveLoopState => ({
+  ...state,
+  nextRunAt: nextLoopRunAt(state, now, jitterOffsetMs),
+  runs: state.runs + 1,
+  lastRunAt: now,
+});
 
 export const loopDispatch: (state: ActiveLoopState) => LoopDispatch = (state) => {
   return /^\/reload(?:\s|$)/i.test(state.instruction.trim())
@@ -153,7 +201,9 @@ export const loopDispatch: (state: ActiveLoopState) => LoopDispatch = (state) =>
 
 export const formatLoopStatus: (state: LoopState | undefined, now: number) => string = (state, now) => {
   if (!state) return "No recurring loop has been set in this session.";
-  const cadence = formatDuration(state.intervalMs);
+  const cadence = `${formatDuration(state.intervalMs)}${
+    state.jitterMs === undefined ? "" : ` ± ${formatDuration(state.jitterMs)}`
+  }`;
   const next = state.status === "active" ? `next ${formatUntil(state.nextRunAt - now)}` : "stopped";
   return [
     `Loop (${state.status}, infinite): every ${cadence} · ${next} · ${state.runs} runs`,
@@ -198,3 +248,8 @@ const isTimestamp = (value: unknown): value is number => isNonNegativeInteger(va
 
 const isValidInterval = (value: unknown): value is number =>
   isNonNegativeInteger(value) && value >= MIN_LOOP_INTERVAL_MS && value <= MAX_LOOP_INTERVAL_MS;
+
+const isValidJitter = (value: unknown): value is number =>
+  isNonNegativeInteger(value) &&
+  value >= MIN_LOOP_INTERVAL_MS &&
+  value <= MAX_LOOP_INTERVAL_MS;

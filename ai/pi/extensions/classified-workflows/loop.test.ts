@@ -7,7 +7,9 @@ import {
   loopDispatch,
   migrateLegacyReloadLoop,
   migrateReviewDutyLoopCadence,
+  nextLoopRunAt,
   parseLoopCommand,
+  REVIEW_DUTY_LOOP_JITTER_MS,
   parseStoredLoop,
   type ActiveLoopState,
 } from "./loop.ts";
@@ -40,6 +42,16 @@ test("loop defaults to hourly and supports explicit recurring intervals", () => 
     instruction: "review pending tasks",
     intervalMs: 2 * 60 * 60 * 1_000,
   });
+  assert.deepEqual(parseLoopCommand("2h+-1h review pending tasks"), {
+    action: "set",
+    instruction: "review pending tasks",
+    intervalMs: 2 * 60 * 60 * 1_000,
+    jitterMs: 60 * 60 * 1_000,
+  });
+  assert.throws(
+    () => parseLoopCommand("1h+-1h invalid jitter"),
+    /jitter must be smaller/i,
+  );
   assert.throws(() => parseLoopCommand("10s spam"), /at least 1 minute/i);
   assert.throws(() => parseLoopCommand("8d too slow"), /at most 7 days/i);
 });
@@ -57,7 +69,7 @@ test("legacy reload goals migrate at the user's corrected hourly cadence", () =>
   assert.equal(migrateLegacyReloadLoop("/reload once", 5_000), undefined);
 });
 
-test("source-fixed review-duty loops migrate from 15 minutes to two hours", () => {
+test("source-fixed review-duty loops migrate to two hours plus or minus one", () => {
   const reviewLoop: ActiveLoopState = {
     ...active,
     instruction:
@@ -65,11 +77,20 @@ test("source-fixed review-duty loops migrate from 15 minutes to two hours", () =
     intervalMs: 15 * 60 * 1_000,
     nextRunAt: 100_000,
   };
-  assert.deepEqual(migrateReviewDutyLoopCadence(reviewLoop, 5_000), {
+  assert.deepEqual(migrateReviewDutyLoopCadence(reviewLoop, 5_000, 0), {
     ...reviewLoop,
     intervalMs: 2 * 60 * 60 * 1_000,
+    jitterMs: REVIEW_DUTY_LOOP_JITTER_MS,
     nextRunAt: 7_205_000,
   });
+  assert.deepEqual(
+    migrateReviewDutyLoopCadence(
+      { ...reviewLoop, intervalMs: 2 * 60 * 60 * 1_000 },
+      5_000,
+      REVIEW_DUTY_LOOP_JITTER_MS,
+    )?.nextRunAt,
+    10_805_000,
+  );
   assert.equal(
     migrateReviewDutyLoopCadence(
       { ...reviewLoop, instruction: "Re-scan an unrelated service" },
@@ -100,6 +121,17 @@ test("infinite loops advance without an achieved terminal state", () => {
     runs: 3,
     lastRunAt: 7_201_000,
   });
+  const jittered = {
+    ...active,
+    intervalMs: 2 * 60 * 60 * 1_000,
+    jitterMs: 60 * 60 * 1_000,
+  };
+  assert.equal(nextLoopRunAt(jittered, 1_000, -jittered.jitterMs), 3_601_000);
+  assert.equal(nextLoopRunAt(jittered, 1_000, jittered.jitterMs), 10_801_000);
+  assert.throws(
+    () => nextLoopRunAt(jittered, 1_000, jittered.jitterMs + 1),
+    /outside the configured bound/i,
+  );
 });
 
 test("reload loops dispatch a real runtime command while other loops dispatch prompts", () => {
@@ -121,6 +153,10 @@ test("stored loops validate all scheduler fields", () => {
   assert.deepEqual(parseStoredLoop(active), active);
   assert.equal(parseStoredLoop({ ...active, intervalMs: 0 }), undefined);
   assert.equal(parseStoredLoop({ ...active, runs: -1 }), undefined);
+  assert.equal(
+    parseStoredLoop({ ...active, jitterMs: active.intervalMs }),
+    undefined,
+  );
   assert.equal(parseStoredLoop({ ...active, status: "achieved" }), undefined);
 });
 
@@ -132,4 +168,11 @@ test("loop status reports infinite cadence and next run", () => {
   assert.match(status, /next in 30m/i);
   assert.match(status, /2 runs/i);
   assert.match(status, /ingest handovers/i);
+  assert.match(
+    formatLoopStatus(
+      { ...active, intervalMs: 2 * 60 * 60 * 1_000, jitterMs: 60 * 60 * 1_000 },
+      1_000,
+    ),
+    /every 2h ± 1h/i,
+  );
 });

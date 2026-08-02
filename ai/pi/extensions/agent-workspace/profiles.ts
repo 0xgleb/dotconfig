@@ -28,13 +28,13 @@ export type ClaudeReviewDispatch =
     };
 
 const ST0X_REVIEW_LOOP =
-  "/loop 2h Re-scan ST0x-Technology and rainlanguage PR duty; process newly actionable own and assigned-review work under the loaded repository and review policies, then remain operational.";
+  "/loop 2h+-1h Re-scan ST0x-Technology and rainlanguage PR duty; process newly actionable own and assigned-review work under the loaded repository and review policies, then remain operational.";
 
 const DATACLIQUE_REVIEW_LOOP =
-  "/loop 2h Re-scan DataClique PR duty; process newly actionable own and assigned-review work under the loaded repository and review policies, then remain operational.";
+  "/loop 2h+-1h Re-scan DataClique PR duty; process newly actionable own and assigned-review work under the loaded repository and review policies, then remain operational.";
 
 const PERSONAL_REVIEW_LOOP =
-  "/loop 2h Re-scan 0xgleb personal-repository PR duty; process newly actionable own and assigned-review work under the loaded repository and review policies, then remain operational.";
+  "/loop 2h+-1h Re-scan 0xgleb personal-repository PR duty; process newly actionable own and assigned-review work under the loaded repository and review policies, then remain operational.";
 
 const supervisorBootstrap = (
   root: string,

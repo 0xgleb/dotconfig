@@ -92,6 +92,7 @@ import {
   loopDispatch,
   migrateLegacyReloadLoop,
   migrateReviewDutyLoopCadence,
+  nextLoopRunAt,
   parseLoopCommand,
   parseStoredLoop,
   type LoopCommand,
@@ -921,7 +922,7 @@ const WorkflowParameters = Type.Object({
 })
 
 export default function classifiedWorkflows(pi: ExtensionAPI): void {
-  registerRuntimeVersion(pi, "classified-workflows", "2026.08.01.156")
+  registerRuntimeVersion(pi, "classified-workflows", "2026.08.01.157")
   const childTokenLimit = workflowChildTokenLimit(
     process.env[WORKFLOW_CHILD_TOKEN_LIMIT_ENV],
   )
@@ -1412,7 +1413,8 @@ export default function classifiedWorkflows(pi: ExtensionAPI): void {
     const active = loopState?.status === "active" ? loopState : undefined
     if (!active) return
     if (continuationPaused) {
-      loopState = { ...active, nextRunAt: Date.now() + active.intervalMs }
+      const now = Date.now()
+      loopState = { ...active, nextRunAt: nextLoopRunAt(active, now) }
       pi.appendEntry(LOOP_ENTRY, loopState)
       updateLoopStatus(ctx)
       scheduleLoop(ctx)
@@ -1658,7 +1660,7 @@ export default function classifiedWorkflows(pi: ExtensionAPI): void {
 
   pi.registerCommand("loop", {
     description:
-      "Schedule an infinite recurring instruction: /loop [1h] <instruction>; exact 'clear' stops it",
+      "Schedule an infinite recurring instruction: /loop [2h+-1h] <instruction>; exact 'clear' stops it",
     handler(args, ctx) {
       let command: LoopCommand
       try {
@@ -1694,8 +1696,11 @@ export default function classifiedWorkflows(pi: ExtensionAPI): void {
         status: "active",
         instruction: command.instruction,
         intervalMs: command.intervalMs,
+        ...(command.jitterMs !== undefined
+          ? { jitterMs: command.jitterMs }
+          : {}),
         startedAt: now,
-        nextRunAt: now + command.intervalMs,
+        nextRunAt: nextLoopRunAt(command, now),
         runs: 0,
       }
       pi.appendEntry(LOOP_ENTRY, loopState)

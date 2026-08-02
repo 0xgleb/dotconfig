@@ -8,7 +8,8 @@ import {
   workspaceProfile,
 } from "./profiles.ts";
 
-const expectedLoop = (instruction: string): string => `/loop 2h ${instruction}`;
+const expectedLoop = (instruction: string): string =>
+  `/loop 2h+-1h ${instruction}`;
 
 const assertSupervisorProfile = (
   profile: ReturnType<typeof workspaceProfile>,
