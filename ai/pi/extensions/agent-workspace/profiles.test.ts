@@ -15,7 +15,7 @@ test("st0x review workspace is a source-fixed operational profile", () => {
     "st0x-review-duty",
     "--model",
     "openai-codex/gpt-5.6-sol:high",
-    "/loop 15m Re-scan ST0x-Technology and rainlanguage PR duty; process newly actionable own and assigned-review work under the loaded repository and review policies, then remain operational.",
+    "/loop 2h Re-scan ST0x-Technology and rainlanguage PR duty; process newly actionable own and assigned-review work under the loaded repository and review policies, then remain operational.",
   ]);
   assert.match(
     profile.command.at(-1) ?? "",
@@ -53,7 +53,7 @@ test("DataClique review workspace is isolated and auto-merges only Yielduck", ()
     "dataclique-review-duty",
     "--model",
     "openai-codex/gpt-5.6-sol:high",
-    "/loop 15m Re-scan DataClique PR duty; process newly actionable own and assigned-review work under the loaded repository and review policies, then remain operational.",
+    "/loop 2h Re-scan DataClique PR duty; process newly actionable own and assigned-review work under the loaded repository and review policies, then remain operational.",
   ]);
   const bootstrap = profile.command.at(-1) ?? "";
   assert.match(
@@ -71,6 +71,10 @@ test("personal review workspace is isolated and auto-merges only dotconfig", () 
   assert.equal(profile.tabName, "personal-review");
   assert.equal(profile.cwd, "/Users/example/code/0xgleb");
   assert.equal(profile.command[3], "personal-review-duty");
+  assert.equal(
+    profile.command[6],
+    "/loop 2h Re-scan 0xgleb personal-repository PR duty; process newly actionable own and assigned-review work under the loaded repository and review policies, then remain operational.",
+  );
   const bootstrap = profile.command.at(-1) ?? "";
   assert.match(
     bootstrap,

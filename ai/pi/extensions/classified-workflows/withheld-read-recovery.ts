@@ -20,6 +20,36 @@ const messageText = (message: Readonly<Record<string, unknown>>): string => {
     .join("\n")
 }
 
+const hasUnquotedShellControl = (command: string): boolean => {
+  let quote: "single" | "double" | undefined
+  let escaped = false
+  for (let index = 0; index < command.length; index += 1) {
+    const character = command[index]
+    if (character === "\n" || character === "\r") return true
+    if (escaped) {
+      escaped = false
+      continue
+    }
+    if (quote !== "single" && character === "\\") {
+      escaped = true
+      continue
+    }
+    if (character === "'" && quote !== "double") {
+      quote = quote === "single" ? undefined : "single"
+      continue
+    }
+    if (character === '"' && quote !== "single") {
+      quote = quote === "double" ? undefined : "double"
+      continue
+    }
+    if (quote === "single") continue
+    if (character === "`" || (character === "$" && command[index + 1] === "("))
+      return true
+    if (quote === undefined && /[;&|]/.test(character)) return true
+  }
+  return quote !== undefined || escaped
+}
+
 const recoveryOnlyReason = (reason: string): boolean => {
   const recovery =
     /\b(?:previously executed|already executed)\b.*\b(?:withheld|filtered)\b.*\b(?:independent|verify|verification)\b|\b(?:independent|verify|verification)\b.*\b(?:withheld|filtered)\b/i
@@ -30,33 +60,45 @@ const recoveryOnlyReason = (reason: string): boolean => {
 
 const exactPrSearch = (
   value: unknown,
-): { readonly command: string; readonly owner: string } | undefined => {
+):
+  | { readonly command: string; readonly owner: string; readonly author: string }
+  | undefined => {
   if (!isRecord(value) || typeof value.command !== "string") return undefined
   const command = value.command.trim()
-  if (/[;&|`\n]/.test(command) || !/^gh\s+search\s+prs\b/.test(command))
+  if (hasUnquotedShellControl(command) || !/^gh\s+search\s+prs\b/.test(command))
     return undefined
   const owner = command.match(/--owner(?:=|\s+)([A-Za-z0-9_.-]+)/)?.[1]
-  if (
-    !owner ||
-    !/--author(?:=|\s+)@me\b/.test(command) ||
-    !/--state(?:=|\s+)open\b/.test(command)
-  )
+  const author = command.match(/--author(?:=|\s+)(@me|[A-Za-z0-9_.-]+)/i)?.[1]
+  if (!owner || !author || !/--state(?:=|\s+)open\b/.test(command))
     return undefined
-  return { command, owner: owner.toLowerCase() }
+  return {
+    command,
+    owner: owner.toLowerCase(),
+    author: author.toLowerCase(),
+  }
 }
 
 const matchingIndependentApiRead = (
   command: string,
   owner: string,
+  author: string,
+  authenticatedAuthor: string | undefined,
 ): boolean => {
-  if (/[;&|`\n]/.test(command) || !/^gh\s+api\b/.test(command)) return false
+  if (hasUnquotedShellControl(command) || !/^gh\s+api\b/.test(command))
+    return false
   if (!/(?:--method\s+GET|-X\s+GET)\b/i.test(command)) return false
   if (!/\bsearch\/issues\b/.test(command)) return false
   const lower = command.toLowerCase()
+  const apiAuthor = lower.match(/\bauthor:([a-z0-9_.@-]+)\b/)?.[1]
+  const sameAuthor =
+    apiAuthor === author ||
+    (author === "@me" &&
+      authenticatedAuthor !== undefined &&
+      apiAuthor === authenticatedAuthor)
   return (
     lower.includes("is:pr") &&
     lower.includes("is:open") &&
-    lower.includes("author:@me") &&
+    sameAuthor &&
     (lower.includes(`org:${owner}`) || lower.includes(`user:${owner}`))
   )
 }
@@ -70,10 +112,17 @@ export const independentPrInventoryDisprovesWithheldRetryBlock = (input: {
   readonly reason: string
   readonly bash: unknown
   readonly branch: readonly unknown[]
+  readonly authenticatedAuthor?: string
 }): boolean => {
   if (!recoveryOnlyReason(input.reason)) return false
   const proposed = exactPrSearch(input.bash)
   if (!proposed) return false
+  const authenticatedAuthor = input.authenticatedAuthor?.toLowerCase()
+  if (
+    authenticatedAuthor !== undefined &&
+    !/^[a-z0-9_.-]+$/.test(authenticatedAuthor)
+  )
+    return false
 
   const calls = new Map<string, ToolCall>()
   let withheldIndex = -1
@@ -113,7 +162,12 @@ export const independentPrInventoryDisprovesWithheldRetryBlock = (input: {
     }
     if (
       message.isError === false &&
-      matchingIndependentApiRead(command, proposed.owner)
+      matchingIndependentApiRead(
+        command,
+        proposed.owner,
+        proposed.author,
+        authenticatedAuthor,
+      )
     )
       verifiedIndex = index
   })

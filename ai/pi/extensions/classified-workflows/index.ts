@@ -91,6 +91,7 @@ import {
   formatLoopStatus,
   loopDispatch,
   migrateLegacyReloadLoop,
+  migrateReviewDutyLoopCadence,
   parseLoopCommand,
   parseStoredLoop,
   type LoopCommand,
@@ -920,7 +921,7 @@ const WorkflowParameters = Type.Object({
 })
 
 export default function classifiedWorkflows(pi: ExtensionAPI): void {
-  registerRuntimeVersion(pi, "classified-workflows", "2026.08.01.153")
+  registerRuntimeVersion(pi, "classified-workflows", "2026.08.01.154")
   const childTokenLimit = workflowChildTokenLimit(
     process.env[WORKFLOW_CHILD_TOKEN_LIMIT_ENV],
   )
@@ -1771,6 +1772,16 @@ export default function classifiedWorkflows(pi: ExtensionAPI): void {
     nextWorkflowId = nextWorkflowSequence(workflowAudits)
     goalRunTokens = 0
     const now = Date.now()
+    const migratedReviewCadence = isReviewDutySession(pi.getSessionName())
+      ? migrateReviewDutyLoopCadence(loopState, now)
+      : undefined
+    if (migratedReviewCadence) {
+      loopState = migratedReviewCadence
+      pi.appendEntry(LOOP_ENTRY, loopState)
+      showLoopMessage(
+        `Updated review-duty polling cadence.\n${formatLoopStatus(loopState, now)}`,
+      )
+    }
     const goalHistory = goalEntries.flatMap((entry) => {
       if (entry.type !== "custom") return []
       const state = parseStoredGoal(entry.data)
@@ -2129,6 +2140,9 @@ export default function classifiedWorkflows(pi: ExtensionAPI): void {
           reason: decision.reason,
           bash: event.input,
           branch: ctx.sessionManager.getBranch(),
+          authenticatedAuthor: isReviewDutySession(pi.getSessionName())
+            ? "0xgleb"
+            : undefined,
         })
       )
         return

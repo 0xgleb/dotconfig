@@ -31,7 +31,7 @@ const tabNames = (stdout: string): readonly string[] =>
     .filter(Boolean);
 
 export default function agentWorkspace(pi: ExtensionAPI): void {
-  registerRuntimeVersion(pi, "agent-workspace", "2026.08.01.3");
+  registerRuntimeVersion(pi, "agent-workspace", "2026.08.01.4");
 
   pi.registerTool({
     name: "agent_workspace",

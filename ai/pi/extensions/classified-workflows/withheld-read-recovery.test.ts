@@ -27,9 +27,9 @@ const result = (id: string, text: string, isError = false) => ({
 })
 
 const exact =
-  "gh search prs --owner rainlanguage --author @me --state open --json repository,number,title"
+  "gh search prs --owner rainlanguage --author @me --state open --archived=false --limit 10 --sort updated --order desc --json repository,number,updatedAt --jq 'map(.repository.nameWithOwner+\"#\"+(.number|tostring)+\"@\"+.updatedAt)|join(\" \")'"
 const alternate =
-  "gh api --method GET search/issues -f q='is:pr is:open author:@me org:rainlanguage'"
+  "gh api --method GET search/issues -f q='org:rainlanguage is:pr is:open author:0xgleb archived:false' -f sort=updated -f order=desc -f per_page=10 --jq '[.items[] | .repository_url + \"#\" + (.number|tostring) + \"@\" + .updated_at] | map(sub(\"https://api.github.com/repos/\"; \"\")) | join(\" \")'"
 const recoveredBranch = [
   call("withheld", exact),
   result(
@@ -47,12 +47,17 @@ test("alternate GitHub API verification recovers the same withheld PR inventory"
         "This command previously executed with result withheld; independent read-only verification is required before retrying it.",
       bash: { command: exact },
       branch: recoveredBranch,
+      authenticatedAuthor: "0xgleb",
     }),
     true,
   )
   assert.match(
     extensionSource,
     /event\.toolName === "bash"[\s\S]*?independentPrInventoryDisprovesWithheldRetryBlock/,
+  )
+  assert.match(
+    extensionSource,
+    /authenticatedAuthor:\s*isReviewDutySession\(pi\.getSessionName\(\)\)[\s\S]*?"0xgleb"/,
   )
 })
 
@@ -63,7 +68,15 @@ test("recovery requires exact ordering, owner, query semantics, and success", ()
       ...recoveredBranch.slice(0, 2),
       call(
         "alternate",
-        "gh api --method GET search/issues -f q='is:pr is:open author:@me org:ST0x-Technology'",
+        "gh api --method GET search/issues -f q='org:ST0x-Technology is:pr is:open author:0xgleb archived:false'",
+      ),
+      result("alternate", '{"total_count":0,"items":[]}'),
+    ],
+    [
+      ...recoveredBranch.slice(0, 2),
+      call(
+        "alternate",
+        "gh api --method GET search/issues -f q='org:rainlanguage is:pr is:open author:someone-else archived:false'",
       ),
       result("alternate", '{"total_count":0,"items":[]}'),
     ],
@@ -85,6 +98,7 @@ test("recovery requires exact ordering, owner, query semantics, and success", ()
           "This command previously executed with result withheld; independent read-only verification is required before retrying it.",
         bash: { command: exact },
         branch,
+        authenticatedAuthor: "0xgleb",
       }),
       false,
     )
@@ -94,7 +108,18 @@ test("recovery requires exact ordering, owner, query semantics, and success", ()
       reason: "This unrelated command is unauthorized.",
       bash: { command: exact },
       branch: recoveredBranch,
+      authenticatedAuthor: "0xgleb",
     }),
     false,
+  )
+  assert.equal(
+    independentPrInventoryDisprovesWithheldRetryBlock({
+      reason:
+        "This command previously executed with result withheld; independent read-only verification is required before retrying it.",
+      bash: { command: exact },
+      branch: recoveredBranch,
+    }),
+    false,
+    "@me must not equal an explicit author without source-fixed identity evidence",
   )
 })

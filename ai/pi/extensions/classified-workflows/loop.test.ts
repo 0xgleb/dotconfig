@@ -6,6 +6,7 @@ import {
   formatLoopStatus,
   loopDispatch,
   migrateLegacyReloadLoop,
+  migrateReviewDutyLoopCadence,
   parseLoopCommand,
   parseStoredLoop,
   type ActiveLoopState,
@@ -54,6 +55,42 @@ test("legacy reload goals migrate at the user's corrected hourly cadence", () =>
   });
   assert.equal(migrateLegacyReloadLoop("finish all tests", 5_000), undefined);
   assert.equal(migrateLegacyReloadLoop("/reload once", 5_000), undefined);
+});
+
+test("source-fixed review-duty loops migrate from 15 minutes to two hours", () => {
+  const reviewLoop: ActiveLoopState = {
+    ...active,
+    instruction:
+      "Re-scan ST0x-Technology and rainlanguage PR duty; process newly actionable own and assigned-review work under the loaded repository and review policies, then remain operational.",
+    intervalMs: 15 * 60 * 1_000,
+    nextRunAt: 100_000,
+  };
+  assert.deepEqual(migrateReviewDutyLoopCadence(reviewLoop, 5_000), {
+    ...reviewLoop,
+    intervalMs: 2 * 60 * 60 * 1_000,
+    nextRunAt: 7_205_000,
+  });
+  assert.equal(
+    migrateReviewDutyLoopCadence(
+      { ...reviewLoop, instruction: "Re-scan an unrelated service" },
+      5_000,
+    ),
+    undefined,
+  );
+  assert.equal(
+    migrateReviewDutyLoopCadence(
+      { ...reviewLoop, intervalMs: DEFAULT_LOOP_INTERVAL_MS },
+      5_000,
+    ),
+    undefined,
+  );
+  assert.equal(
+    migrateReviewDutyLoopCadence(
+      { ...reviewLoop, status: "cleared", finishedAt: 4_000 },
+      5_000,
+    ),
+    undefined,
+  );
 });
 
 test("infinite loops advance without an achieved terminal state", () => {

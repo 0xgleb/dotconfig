@@ -13,13 +13,13 @@ export interface AgentWorkspaceProfile {
 }
 
 const ST0X_REVIEW_LOOP =
-  "/loop 15m Re-scan ST0x-Technology and rainlanguage PR duty; process newly actionable own and assigned-review work under the loaded repository and review policies, then remain operational.";
+  "/loop 2h Re-scan ST0x-Technology and rainlanguage PR duty; process newly actionable own and assigned-review work under the loaded repository and review policies, then remain operational.";
 
 const DATACLIQUE_REVIEW_LOOP =
-  "/loop 15m Re-scan DataClique PR duty; process newly actionable own and assigned-review work under the loaded repository and review policies, then remain operational.";
+  "/loop 2h Re-scan DataClique PR duty; process newly actionable own and assigned-review work under the loaded repository and review policies, then remain operational.";
 
 const PERSONAL_REVIEW_LOOP =
-  "/loop 15m Re-scan 0xgleb personal-repository PR duty; process newly actionable own and assigned-review work under the loaded repository and review policies, then remain operational.";
+  "/loop 2h Re-scan 0xgleb personal-repository PR duty; process newly actionable own and assigned-review work under the loaded repository and review policies, then remain operational.";
 
 const st0xReviewBootstrap = (st0xRoot: string): string =>
   `You are the dedicated long-running ST0x-Technology and rainlanguage PR-duty agent requested by the user.

@@ -31,6 +31,8 @@ export type LoopDispatch =
   | { readonly kind: "prompt"; readonly text: string };
 
 export const DEFAULT_LOOP_INTERVAL_MS = 60 * 60 * 1_000;
+export const REVIEW_DUTY_LOOP_INTERVAL_MS = 2 * 60 * 60 * 1_000;
+const LEGACY_REVIEW_DUTY_LOOP_INTERVAL_MS = 15 * 60 * 1_000;
 const MIN_LOOP_INTERVAL_MS = 60 * 1_000;
 const MAX_LOOP_INTERVAL_MS = 7 * 24 * 60 * 60 * 1_000;
 const MAX_INSTRUCTION_LENGTH = 4_000;
@@ -105,6 +107,30 @@ export const migrateLegacyReloadLoop: (condition: string, now: number) => Active
   } catch {
     return undefined;
   }
+};
+
+const REVIEW_DUTY_INSTRUCTIONS = [
+  /^Re-scan ST0x-Technology and rainlanguage PR duty; process newly actionable own and assigned-review work under the loaded repository and review policies, then remain operational\.$/,
+  /^Re-scan DataClique PR duty; process newly actionable own and assigned-review work under the loaded repository and review policies, then remain operational\.$/,
+  /^Re-scan 0xgleb personal-repository PR duty; process newly actionable own and assigned-review work under the loaded repository and review policies, then remain operational\.$/,
+] as const;
+
+export const migrateReviewDutyLoopCadence: (
+  state: LoopState | undefined,
+  now: number,
+) => ActiveLoopState | undefined = (state, now) => {
+  if (
+    state?.status !== "active" ||
+    state.intervalMs !== LEGACY_REVIEW_DUTY_LOOP_INTERVAL_MS ||
+    !REVIEW_DUTY_INSTRUCTIONS.some((pattern) => pattern.test(state.instruction))
+  ) {
+    return undefined;
+  }
+  return {
+    ...state,
+    intervalMs: REVIEW_DUTY_LOOP_INTERVAL_MS,
+    nextRunAt: now + REVIEW_DUTY_LOOP_INTERVAL_MS,
+  };
 };
 
 export const advanceLoop: (state: ActiveLoopState, now: number) => ActiveLoopState = (state, now) => {
