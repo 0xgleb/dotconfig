@@ -23,6 +23,12 @@ export type ChildAuditEvent =
       readonly requestedModel?: string;
       readonly tools: readonly string[];
     }
+  | {
+      readonly kind: "progress";
+      readonly index: number;
+      readonly requestedModel?: string;
+      readonly progress: string;
+    }
   | { readonly kind: "finished"; readonly audit: ChildAudit };
 
 export interface WorkflowAudit {
@@ -303,6 +309,7 @@ export const auditedAgentRunner = (
     request: AgentRequest,
     signal: AbortSignal,
     tokenLimit?: number,
+    onProgress?: (progress: string) => void,
   ) => Promise<AgentResult>,
   audits: ChildAudit[],
   sanitize: (text: string) => string,
@@ -324,7 +331,18 @@ export const auditedAgentRunner = (
       tools,
     });
     try {
-      const result = await runAgent(request, signal, tokenLimit);
+      const result = await runAgent(
+        request,
+        signal,
+        tokenLimit,
+        (progress) =>
+          onEvent?.({
+            kind: "progress",
+            index,
+            ...(request.model ? { requestedModel: request.model } : {}),
+            progress: sanitize(progress).replace(/\s+/g, " ").slice(0, 240),
+          }),
+      );
       const completedDiagnostic =
         result.status === "completed"
           ? completedAgentDiagnostic(result)

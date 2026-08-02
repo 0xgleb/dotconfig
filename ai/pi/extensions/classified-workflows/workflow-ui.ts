@@ -18,11 +18,11 @@ export const activeWorkflowLines: (
   const running = items.filter(({ status }) => status === "running");
   if (running.length === 0) return [];
   return [
-    `Workflows: ${running.length} active · /workflows for history`,
-    ...running.map(
-      ({ id, label, elapsed, limits, progress }) =>
-        `● ${id} · ${label} · ${elapsed} · ${limits}${progress ? ` · ${progress}` : ""}`,
-    ),
+    `WORKFLOWS · ${running.length} active · /workflows for history`,
+    ...running.flatMap(({ id, label, elapsed, limits, progress }) => [
+      `● ${id} · ${label} · running ${elapsed}`,
+      `↳ ${progress ?? "initializing"} · ${limits}`,
+    ]),
   ];
 };
 

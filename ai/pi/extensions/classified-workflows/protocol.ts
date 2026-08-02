@@ -54,6 +54,47 @@ export const usageTokensFromPiJsonLine = (line: string): number => {
   return usageTokensFromAssistantMessage(parsed.message);
 };
 
+const progressToolName = (value: unknown): string | undefined =>
+  typeof value === "string" && /^[A-Za-z0-9_-]{1,64}$/.test(value)
+    ? value
+    : undefined;
+
+export const piProcessProgressFromJsonLine = (
+  line: string,
+): string | undefined => {
+  let parsed: unknown;
+  try {
+    parsed = JSON.parse(line);
+  } catch {
+    return undefined;
+  }
+  if (!isRecord(parsed)) return undefined;
+  if (parsed.type === "turn_start") return "model responding";
+  if (
+    parsed.type === "tool_execution_start" ||
+    parsed.type === "tool_execution_update" ||
+    parsed.type === "tool_execution_end"
+  ) {
+    const toolName = progressToolName(parsed.toolName);
+    if (!toolName) return undefined;
+    if (parsed.type === "tool_execution_start")
+      return `tool ${toolName} started`;
+    if (parsed.type === "tool_execution_update")
+      return `tool ${toolName} streaming`;
+    return `tool ${toolName} ${parsed.isError === true ? "failed" : "completed"}`;
+  }
+  if (
+    parsed.type === "message_update" &&
+    isRecord(parsed.assistantMessageEvent)
+  ) {
+    if (parsed.assistantMessageEvent.type === "thinking_delta")
+      return "model reasoning";
+    if (parsed.assistantMessageEvent.type === "text_delta")
+      return "model drafting result";
+  }
+  return undefined;
+};
+
 export function summarizePiJsonLines(lines: string[]): PiProcessSummary {
   let output = "";
   let usageTokens = 0;

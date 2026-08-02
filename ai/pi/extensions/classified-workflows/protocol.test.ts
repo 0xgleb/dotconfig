@@ -3,6 +3,7 @@ import test from "node:test";
 import vm from "node:vm";
 import {
   boundedDiagnosticTail,
+  piProcessProgressFromJsonLine,
   sanitizeProcessDiagnostic,
   summarizePiJsonLines,
   unknownErrorMessage,
@@ -51,6 +52,62 @@ test("assistant usage exposes completed child-turn cost for cumulative provider 
   );
   assert.equal(usageTokensFromAssistantMessage({ role: "user", usage: { totalTokens: 99 } }), 0);
 });
+
+test("child JSON progress exposes phases and tool names without arguments or output", () => {
+  assert.equal(
+    piProcessProgressFromJsonLine(JSON.stringify({ type: "turn_start" })),
+    "model responding",
+  )
+  assert.equal(
+    piProcessProgressFromJsonLine(
+      JSON.stringify({
+        type: "tool_execution_start",
+        toolName: "read",
+        args: { path: "credential-value-must-not-appear" },
+      }),
+    ),
+    "tool read started",
+  )
+  assert.equal(
+    piProcessProgressFromJsonLine(
+      JSON.stringify({
+        type: "tool_execution_update",
+        toolName: "read",
+        partialResult: "credential-value-must-not-appear",
+      }),
+    ),
+    "tool read streaming",
+  )
+  assert.equal(
+    piProcessProgressFromJsonLine(
+      JSON.stringify({
+        type: "tool_execution_end",
+        toolName: "read",
+        isError: false,
+        result: "credential-value-must-not-appear",
+      }),
+    ),
+    "tool read completed",
+  )
+  assert.equal(
+    piProcessProgressFromJsonLine(
+      JSON.stringify({
+        type: "message_update",
+        assistantMessageEvent: {
+          type: "thinking_delta",
+          delta: "hidden chain of thought",
+        },
+      }),
+    ),
+    "model reasoning",
+  )
+  assert.equal(
+    piProcessProgressFromJsonLine(
+      JSON.stringify({ type: "tool_execution_start", toolName: "not valid!" }),
+    ),
+    undefined,
+  )
+})
 
 test("streaming usage reads only completed assistant turns", () => {
   assert.equal(

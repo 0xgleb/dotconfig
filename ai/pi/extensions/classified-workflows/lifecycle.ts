@@ -20,6 +20,7 @@ export interface LifecycleDependencies {
     request: AgentRequest,
     signal: AbortSignal | undefined,
     tokenLimit: number,
+    onProgress?: (progress: string) => void,
   ): Promise<AgentResult>;
 }
 
@@ -27,6 +28,7 @@ export type ClassifiedAgentRunner = (
   request: AgentRequest,
   signal: AbortSignal | undefined,
   tokenLimit?: number,
+  onProgress?: (progress: string) => void,
 ) => Promise<AgentResult>;
 
 export interface BlockedAction {
@@ -118,7 +120,12 @@ export function createClassifiedAgentRunner(
   skillProcedures: string[] = [],
   parentEvidence: string[] = [],
 ): ClassifiedAgentRunner {
-  return async (request, signal, tokenLimit = Number.MAX_SAFE_INTEGER) => {
+  return async (
+    request,
+    signal,
+    tokenLimit = Number.MAX_SAFE_INTEGER,
+    onProgress,
+  ) => {
     const spawnDecision = await dependencies.classify(
       {
         boundary: "spawn",
@@ -139,7 +146,12 @@ export function createClassifiedAgentRunner(
       };
     }
 
-    const result = await dependencies.execute(request, signal, tokenLimit);
+    const result = await dependencies.execute(
+      request,
+      signal,
+      tokenLimit,
+      onProgress,
+    );
     const returnDecision = await dependencies.classify(
       {
         boundary: "return",

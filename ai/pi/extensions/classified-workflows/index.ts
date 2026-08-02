@@ -96,6 +96,7 @@ import {
 } from "./loop.ts"
 import {
   boundedDiagnosticTail,
+  piProcessProgressFromJsonLine,
   sanitizeProcessDiagnostic,
   summarizePiJsonLines,
   unknownErrorMessage,
@@ -266,6 +267,7 @@ async function runPi(
   cwd: string,
   signal?: AbortSignal,
   tokenLimit?: number,
+  onProgress?: (progress: string) => void,
 ): Promise<PiProcessResult> {
   return new Promise((resolve) => {
     const invocation = piInvocation(args)
@@ -287,6 +289,7 @@ async function runPi(
     let spawnError: string | undefined
     let streamingLine = ""
     let observedUsageTokens = 0
+    let lastProgress: string | undefined
     let budgetExceeded = false
     let settled = false
     let killTimer: ReturnType<typeof setTimeout> | undefined
@@ -333,8 +336,14 @@ async function runPi(
       streamingLine += text
       const lines = streamingLine.split("\n")
       streamingLine = lines.pop() ?? ""
-      for (const line of lines)
+      for (const line of lines) {
         observedUsageTokens += usageTokensFromPiJsonLine(line)
+        const progress = piProcessProgressFromJsonLine(line)
+        if (progress && progress !== lastProgress) {
+          lastProgress = progress
+          onProgress?.(progress)
+        }
+      }
       if (
         tokenLimit !== undefined &&
         observedUsageTokens > tokenLimit &&
@@ -698,6 +707,7 @@ async function executeAgent(
   availableModels: readonly AvailableAgentModel[],
   signal?: AbortSignal,
   tokenLimit?: number,
+  onProgress?: (progress: string) => void,
 ): Promise<AgentResult> {
   const qualifiedRequest = prepareWorkflowAgentRequest(
     request,
@@ -709,6 +719,7 @@ async function executeAgent(
     request.cwd ?? defaultCwd,
     signal,
     tokenLimit,
+    onProgress,
   )
   if (signal?.aborted) {
     return {
@@ -854,7 +865,7 @@ const WorkflowParameters = Type.Object({
 })
 
 export default function classifiedWorkflows(pi: ExtensionAPI): void {
-  registerRuntimeVersion(pi, "classified-workflows", "2026.08.01.130")
+  registerRuntimeVersion(pi, "classified-workflows", "2026.08.01.131")
   const childTokenLimit = workflowChildTokenLimit(
     process.env[WORKFLOW_CHILD_TOKEN_LIMIT_ENV],
   )
@@ -965,6 +976,16 @@ export default function classifiedWorkflows(pi: ExtensionAPI): void {
     return `${minutes}m${String(seconds % 60).padStart(2, "0")}s`
   }
 
+  const compactTokenCount = (tokens: number): string =>
+    tokens >= 1_000_000
+      ? `${Math.round(tokens / 100_000) / 10}M`
+      : tokens >= 1_000
+        ? `${Math.round(tokens / 1_000)}k`
+        : String(tokens)
+
+  const workflowLimitLabel = (limits: WorkflowLimits): string =>
+    `max ${limits.maxAgents} ${limits.maxAgents === 1 ? "child" : "children"} · ${limits.concurrency} parallel · ${compactTokenCount(limits.tokenBudget)} token budget`
+
   const workflowUiItems = (): WorkflowUiItem[] =>
     [...backgroundWorkflows.values()]
       .sort((left, right) => left.startedAt - right.startedAt)
@@ -975,7 +996,7 @@ export default function classifiedWorkflows(pi: ExtensionAPI): void {
           label: workflow.label,
           status: workflow.status,
           elapsed: formatDuration(workflow.startedAt, workflow.finishedAt),
-          limits: `${workflow.params.maxAgents}a/${workflow.params.concurrency}c/${workflow.params.tokenBudget}t`,
+          limits: workflowLimitLabel(workflow.params),
           ...(outcome ? { outcome } : {}),
           ...(workflow.progress ? { progress: workflow.progress } : {}),
         }
@@ -1017,16 +1038,26 @@ export default function classifiedWorkflows(pi: ExtensionAPI): void {
   const workflowOutput = (result: unknown): string =>
     typeof result === "string" ? result : JSON.stringify(result, null, 2)
 
+  const compactModelLabel = (model: string | undefined): string =>
+    model?.split("/").at(-1) ?? "default model"
+
+  const boundedWorkflowProgress = (progress: string): string =>
+    sanitizeProcessDiagnostic(progress).replace(/\s+/g, " ").trim().slice(0, 240)
+
   const childProgressText = (event: ChildAuditEvent): string => {
     if (event.kind === "started") {
-      const model = event.requestedModel ?? "default model"
-      return `child ${event.index} starting · ${model} · tools ${event.tools.join(", ")}`.slice(
+      return `child ${event.index} · ${compactModelLabel(event.requestedModel)} · starting · tools ${event.tools.join(", ")}`.slice(
         0,
         240,
       )
     }
-
-    return `child ${event.audit.index} ${event.audit.status} · ${event.audit.usageTokens} tokens`
+    if (event.kind === "progress") {
+      return `child ${event.index} · ${compactModelLabel(event.requestedModel)} · ${event.progress}`.slice(
+        0,
+        240,
+      )
+    }
+    return `child ${event.audit.index} · ${compactModelLabel(event.audit.requestedModel)} · ${event.audit.status} · ${event.audit.usageTokens} tokens`
   }
 
   const persistWorkflowAudit = (
@@ -1085,7 +1116,7 @@ export default function classifiedWorkflows(pi: ExtensionAPI): void {
       {
         classify: (request, childSignal) =>
           classifyWithActivity(request, ctx, childSignal),
-        execute: (request, childSignal, tokenLimit) =>
+        execute: (request, childSignal, tokenLimit, onProgress) =>
           executeAgent(
             request,
             ctx.cwd,
@@ -1093,6 +1124,7 @@ export default function classifiedWorkflows(pi: ExtensionAPI): void {
             ctx.modelRegistry.getAvailable(),
             childSignal,
             tokenLimit,
+            onProgress,
           ),
       },
       skillProcedures,
@@ -1103,7 +1135,7 @@ export default function classifiedWorkflows(pi: ExtensionAPI): void {
       childAudits,
       sanitizeProcessDiagnostic,
       (event) => {
-        workflow.progress = childProgressText(event)
+        workflow.progress = boundedWorkflowProgress(childProgressText(event))
         renderWorkflowPanel(ctx)
       },
     )
@@ -1123,6 +1155,14 @@ export default function classifiedWorkflows(pi: ExtensionAPI): void {
           throw new Error(
             `Background workflow ${id} reached checkpoint and stopped: ${message}`,
           )
+        },
+        phase: (title) => {
+          workflow.progress = boundedWorkflowProgress(`phase · ${title}`)
+          renderWorkflowPanel(ctx)
+        },
+        log: (message) => {
+          workflow.progress = boundedWorkflowProgress(`update · ${message}`)
+          renderWorkflowPanel(ctx)
         },
       },
       workflow.controller.signal,
@@ -2648,13 +2688,14 @@ export default function classifiedWorkflows(pi: ExtensionAPI): void {
         content: string,
         details: Readonly<Record<string, unknown>>,
       ): void => {
+        const boundedContent = boundedWorkflowProgress(content)
         if (detachedWorkflow) {
-          detachedWorkflow.progress = content
+          detachedWorkflow.progress = boundedContent
           renderWorkflowPanel(ctx)
           return
         }
         onUpdate?.({
-          content: [{ type: "text", text: content }],
+          content: [{ type: "text", text: boundedContent }],
           details: { status: "running", auditId, ...details },
         })
       }
@@ -2664,7 +2705,7 @@ export default function classifiedWorkflows(pi: ExtensionAPI): void {
         {
           classify: (request, childSignal) =>
             classifyWithActivity(request, ctx, childSignal),
-          execute: (request, childSignal, tokenLimit) =>
+          execute: (request, childSignal, tokenLimit, onProgress) =>
             executeAgent(
               request,
               ctx.cwd,
@@ -2672,6 +2713,7 @@ export default function classifiedWorkflows(pi: ExtensionAPI): void {
               ctx.modelRegistry.getAvailable(),
               childSignal,
               tokenLimit,
+              onProgress,
             ),
         },
         skillProcedures,
@@ -2684,7 +2726,7 @@ export default function classifiedWorkflows(pi: ExtensionAPI): void {
         (event) => {
           const progress = childProgressText(event)
           reportProgress(progress, {
-            child: event.kind === "started" ? event.index : event.audit.index,
+            child: event.kind === "finished" ? event.audit.index : event.index,
             progress,
           })
         },

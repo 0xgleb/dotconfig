@@ -132,11 +132,14 @@ test("audited runner emits bounded child start and terminal progress", async () 
   const children: ChildAudit[] = [];
   const events: unknown[] = [];
   const run = auditedAgentRunner(
-    async (): Promise<AgentResult> => ({
-      status: "completed",
-      output: "done",
-      usageTokens: 42,
-    }),
+    async (_request, _signal, _tokenLimit, onProgress): Promise<AgentResult> => {
+      onProgress?.("tool read started")
+      return {
+        status: "completed",
+        output: "done",
+        usageTokens: 42,
+      }
+    },
     children,
     String,
     (event) => events.push(event),
@@ -154,7 +157,13 @@ test("audited runner emits bounded child start and terminal progress", async () 
     requestedModel: "openai-codex/gpt-5.6-luna",
     tools: ["read"],
   });
-  assert.deepEqual(events[1], { kind: "finished", audit: children[0] });
+  assert.deepEqual(events[1], {
+    kind: "progress",
+    index: 1,
+    requestedModel: "openai-codex/gpt-5.6-luna",
+    progress: "tool read started",
+  });
+  assert.deepEqual(events[2], { kind: "finished", audit: children[0] });
 });
 
 test("workflow audit sequences continue after reload without replacing prior runs", () => {
