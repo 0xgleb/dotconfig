@@ -178,6 +178,98 @@ export const decodeJobSpec = (
   return Effect.succeed(spec)
 }
 
+export const decodeStoredJob = (
+  value: unknown,
+): Effect.Effect<Job, JobRuntimeError> => {
+  if (!isRecord(value)) return invalid("stored job must be an object")
+  const state = value.state
+  if (
+    state !== "scheduled" &&
+    state !== "ready" &&
+    state !== "retry_wait" &&
+    state !== "leased" &&
+    state !== "succeeded" &&
+    state !== "failed" &&
+    state !== "cancelled"
+  ) {
+    return invalid("stored job state is unknown")
+  }
+  const baseKeys = [
+    "id",
+    "spec",
+    "state",
+    "attempt",
+    "createdAt",
+    "updatedAt",
+  ]
+  const stateKeys =
+    state === "leased"
+      ? ["workerId", "leaseToken", "leaseUntil", "cancelRequestedAt"]
+      : state === "succeeded" || state === "failed" || state === "cancelled"
+        ? ["finishedAt", "summary"]
+        : []
+  if (!hasOnlyKeys(value, [...baseKeys, ...stateKeys]))
+    return invalid("stored job contains unknown fields")
+  if (
+    !isSafeIdentifier(value.id, 128) ||
+    !isBoundedInteger(value.attempt, 0, MAX_ATTEMPTS) ||
+    !isTimestamp(value.createdAt) ||
+    !isTimestamp(value.updatedAt) ||
+    value.updatedAt < value.createdAt
+  ) {
+    return invalid("stored job base fields are malformed")
+  }
+  return Effect.flatMap(decodeJobSpec(value.spec), (spec) => {
+    if (value.attempt > spec.maxAttempts)
+      return invalid("stored job attempt exceeds its limit")
+    const base: JobBase = {
+      id: value.id as string,
+      spec,
+      attempt: value.attempt as number,
+      createdAt: value.createdAt as number,
+      updatedAt: value.updatedAt as number,
+    }
+    if (state === "leased") {
+      if (
+        value.attempt < 1 ||
+        !isSafeIdentifier(value.workerId, 128) ||
+        !isSafeIdentifier(value.leaseToken, 128) ||
+        !isTimestamp(value.leaseUntil) ||
+        (value.cancelRequestedAt !== undefined &&
+          !isTimestamp(value.cancelRequestedAt))
+      ) {
+        return invalid("stored leased job fields are malformed")
+      }
+      return Effect.succeed({
+        ...base,
+        state,
+        workerId: value.workerId,
+        leaseToken: value.leaseToken,
+        leaseUntil: value.leaseUntil,
+        ...(value.cancelRequestedAt !== undefined
+          ? { cancelRequestedAt: value.cancelRequestedAt }
+          : {}),
+      })
+    }
+    if (state === "succeeded" || state === "failed" || state === "cancelled") {
+      if (
+        !isTimestamp(value.finishedAt) ||
+        value.finishedAt < value.updatedAt ||
+        (value.summary !== undefined && !isSafeSummary(value.summary))
+      ) {
+        return invalid("stored terminal job fields are malformed")
+      }
+      return Effect.succeed({
+        ...base,
+        state,
+        finishedAt: value.finishedAt,
+        ...(value.summary !== undefined ? { summary: value.summary } : {}),
+      })
+    }
+    return Effect.succeed({ ...base, state })
+  })
+}
+
 export const createJob = (
   spec: RegisteredJobSpec,
   id: string,
