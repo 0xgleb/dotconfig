@@ -56,26 +56,29 @@ let
     url = "https://huggingface.co/ggerganov/whisper.cpp/resolve/main/ggml-base-q5_1.bin";
     hash = "sha256-Qi8a5FKt5vMKAE1+XGpDGV5EM7w3C/I/rJzFkfAaiJg=";
   };
-  piControlPlaneDashboard = pkgs.runCommandLocal "pi-control-plane-dashboard" {
-    nativeBuildInputs = [ pkgs.esbuild ];
-  } ''
-    mkdir -p "$out" src/dashboard
-    cp ${./ai/pi/extensions/control-plane/dashboard/app.tsx} src/dashboard/app.tsx
-    cp ${./ai/pi/extensions/control-plane/job-runtime.ts} src/job-runtime.ts
-    ln -s ${piExtensionNodeModules}/node_modules src/node_modules
-    cd src
-    node_modules/.bin/babel dashboard/app.tsx \
-      --out-file dashboard/app.js \
-      --presets=@babel/preset-typescript,babel-preset-solid
-    esbuild dashboard/app.js \
-      --bundle \
-      --format=esm \
-      --minify \
-      --outfile="$out/app.js" \
-      --platform=browser
-    cp ${./ai/pi/extensions/control-plane/dashboard/index.html} "$out/index.html"
-    cp ${./ai/pi/extensions/control-plane/dashboard/app.css} "$out/app.css"
-  '';
+  piControlPlaneDashboard =
+    pkgs.runCommandLocal "pi-control-plane-dashboard"
+      {
+        nativeBuildInputs = [ pkgs.esbuild ];
+      }
+      ''
+        mkdir -p "$out" src/dashboard
+        cp ${./ai/pi/extensions/control-plane/dashboard/app.tsx} src/dashboard/app.tsx
+        cp ${./ai/pi/extensions/control-plane/job-runtime.ts} src/job-runtime.ts
+        ln -s ${piExtensionNodeModules}/node_modules src/node_modules
+        cd src
+        node_modules/.bin/babel dashboard/app.tsx \
+          --out-file dashboard/app.js \
+          --presets=@babel/preset-typescript,babel-preset-solid
+        esbuild dashboard/app.js \
+          --bundle \
+          --format=esm \
+          --minify \
+          --outfile="$out/app.js" \
+          --platform=browser
+        cp ${./ai/pi/extensions/control-plane/dashboard/index.html} "$out/index.html"
+        cp ${./ai/pi/extensions/control-plane/dashboard/app.css} "$out/app.css"
+      '';
   piBridge = pkgs.writeShellApplication {
     name = "pi-bridge";
     runtimeInputs = [ pkgs.nodejs ];
@@ -91,6 +94,14 @@ let
       export PI_CONTROL_PLANE_DASHBOARD_DIR=${piControlPlaneDashboard}
       exec node --experimental-strip-types \
         "$HOME/.config/ai/pi/extensions/control-plane/main.ts" "$@"
+    '';
+  };
+  piHarnessWorker = pkgs.writeShellApplication {
+    name = "pi-harness-worker";
+    runtimeInputs = [ pkgs.nodejs ];
+    text = ''
+      exec node --experimental-strip-types \
+        "$HOME/.config/ai/pi/extensions/control-plane/harness-worker-main.ts" "$@"
     '';
   };
   pieceOfPiTelegram = pkgs.writeShellApplication {
@@ -187,6 +198,7 @@ in
         pieceOfPiTelegram
         piBridge
         piControlPlane
+        piHarnessWorker
         piSolReview
         pi-coding-agent-with-reload
       ];
