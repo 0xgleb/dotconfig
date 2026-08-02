@@ -22,6 +22,25 @@ const reviewSpec = (
   idempotencyKey: `review-duty:${profile}`,
 })
 
+const harnessSpec = (): RegisteredJobSpec => ({
+  kind: "harness.review",
+  payload: {
+    lane: "cursor-subscription",
+    task: "review-probe",
+    model: "composer-2.5",
+    profile: "personal-review",
+    repository: "0xgleb/example",
+    pullRequest: 7,
+    kind: "own",
+    inputHeadSha: "a".repeat(40),
+    repositoryRoot: "/Users/example/code/0xgleb/example",
+    isolation: "read-only",
+  },
+  runAt: 2_000,
+  maxAttempts: 2,
+  idempotencyKey: "harness:personal:example:7",
+})
+
 const errorCode = async <A>(effect: Effect.Effect<A, unknown>): Promise<string | undefined> => {
   const result = await Effect.runPromise(Effect.either(effect))
   if (Either.isRight(result)) return undefined
@@ -104,6 +123,36 @@ test("atomic due-job claim allows only one worker and fences stale completion", 
     assert.equal(completed.state, "succeeded")
     first.close()
     second.close()
+  }))
+
+test("kind-filtered claims skip due jobs of other registered kinds", async () =>
+  withStore(async (path) => {
+    const store = await Effect.runPromise(makeSqliteJobStore(path))
+    await Effect.runPromise(store.enqueue(reviewSpec(), "job-a", 1_000))
+    await Effect.runPromise(store.enqueue(harnessSpec(), "job-b", 2_000))
+
+    const filtered = await Effect.runPromise(
+      store.claimDue("worker-a", "lease-a", 3_000, 90_000, ["harness.review"]),
+    )
+    assert.equal(filtered?.spec.kind, "harness.review")
+
+    const remaining = await Effect.runPromise(
+      store.claimDue("worker-a", "lease-b", 3_000, 90_000, ["harness.review"]),
+    )
+    assert.equal(remaining, undefined)
+
+    assert.equal(
+      await errorCode(
+        store.claimDue("worker-a", "lease-c", 3_000, 90_000, []),
+      ),
+      "invalid_input",
+    )
+
+    const unfiltered = await Effect.runPromise(
+      store.claimDue("worker-a", "lease-d", 3_000, 90_000),
+    )
+    assert.equal(unfiltered?.spec.kind, "review-duty.scan")
+    store.close()
   }))
 
 test("expired attempts are recovered transactionally and become claimable after delay", async () =>
