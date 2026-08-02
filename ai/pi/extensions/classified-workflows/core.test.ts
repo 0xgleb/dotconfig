@@ -856,6 +856,30 @@ test("schema agents return validated structured values instead of opaque result 
   assert.deepEqual(result, ["verified"]);
 });
 
+test("schema agents receive one bounded validation repair without weakening enums", async () => {
+  const requests: AgentRequest[] = [];
+  const outputs = [
+    '{"category":"style"}',
+    '{"category":"correctness"}',
+  ];
+  const result = await runWorkflowScript(
+    `return agent("review", { schema: { type: "object", required: ["category"], properties: { category: { type: "string", enum: ["correctness", "security"] } } } });`,
+    limits,
+    dependencies(async (request) => {
+      requests.push(request);
+      return {
+        status: "completed",
+        output: outputs.shift() ?? "",
+        usageTokens: 10,
+      };
+    }),
+  );
+  assert.deepEqual(result, { category: "correctness" });
+  assert.equal(requests.length, 2);
+  assert.match(requests[1]?.task ?? "", /violates enum at \$\.category/);
+  assert.doesNotMatch(requests[1]?.task ?? "", /\"style\"/);
+});
+
 test("schema agents fail closed on timeouts and malformed output", async () => {
   const code = `return agent("review", { schema: { type: "object", required: ["findings"], properties: { findings: { type: "array" } } } });`;
   await assert.rejects(

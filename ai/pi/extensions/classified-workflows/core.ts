@@ -512,6 +512,19 @@ const parseStructuredAgentOutput = (output: string, schema: unknown): unknown =>
   return parsed;
 };
 
+const structuredRepairRequest = (
+  request: AgentRequest,
+  reason: string,
+): AgentRequest => {
+  const instruction =
+    `Your prior structured output failed validation: ${reason.slice(0, 240)}. ` +
+    "Return one replacement JSON value that strictly satisfies the same schema. Do not add prose or markdown.\n\n";
+  return {
+    ...request,
+    task: `${instruction}${request.task.slice(0, Math.max(0, 32_000 - instruction.length))}`,
+  };
+};
+
 export async function runWorkflowScript(
   code: string,
   limits: WorkflowLimits,
@@ -671,7 +684,43 @@ export async function runWorkflowScript(
     if (measuredResult.status !== "completed") {
       throw new Error(`structured agent ${measuredResult.status}: ${measuredResult.reason ?? "no result"}`);
     }
-    return parseStructuredAgentOutput(measuredResult.output, request.schema);
+    try {
+      return parseStructuredAgentOutput(measuredResult.output, request.schema);
+    } catch (error) {
+      const reason =
+        error instanceof Error
+          ? error.message
+          : "structured agent output failed validation";
+      const remainingTokens = Math.max(0, agentTokenLimit - agentUsageTokens);
+      if (remainingTokens < MIN_AGENT_TOKEN_RESERVATION) throw error;
+      const repair = await runOnce(
+        structuredRepairRequest(request, reason),
+        remainingTokens,
+      );
+      agentUsageTokens += Math.max(0, repair.usageTokens);
+      usedTokens += Math.max(0, repair.usageTokens);
+      if (agentUsageTokens > agentTokenLimit) {
+        throw new Error(
+          `structured agent repair exceeded token limit (${agentUsageTokens}/${agentTokenLimit})`,
+        );
+      }
+      if (repair.status !== "completed") {
+        throw new Error(
+          `structured agent repair ${repair.status}: ${repair.reason ?? "no result"}`,
+        );
+      }
+      try {
+        return parseStructuredAgentOutput(repair.output, request.schema);
+      } catch (repairError) {
+        const repairReason =
+          repairError instanceof Error
+            ? repairError.message
+            : "structured agent output failed validation";
+        throw new Error(
+          `structured agent output remained invalid after one bounded repair: ${repairReason}`,
+        );
+      }
+    }
   };
 
   const parallel = async <T>(tasks: Array<PromiseLike<T> | (() => PromiseLike<T>)>): Promise<T[]> => {
