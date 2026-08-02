@@ -313,7 +313,13 @@ test("managed reload cancellation recovers only an auto same-PR fix continuation
       true,
       true,
     ),
-    { ok: true, state: automatic.state },
+    {
+      ok: true,
+      state: {
+        ...automatic.state,
+        continuation: "fix-re-review",
+      },
+    },
   );
   assert.match(
     retryFailedReviewDuty(

@@ -314,7 +314,16 @@ export const retryFailedReviewDuty = (
     };
   }
   const { completedAt: _completedAt, ...active } = state;
-  return { ok: true, state: { ...active, phase: "active" } };
+  return {
+    ok: true,
+    state: {
+      ...active,
+      phase: "active",
+      ...(legacyManagedReloadContinuationMarkerLost
+        ? { continuation: "fix-re-review" as const }
+        : {}),
+    },
+  };
 };
 
 const normalizedOptions = (
