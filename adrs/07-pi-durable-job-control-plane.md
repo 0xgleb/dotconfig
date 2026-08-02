@@ -120,6 +120,41 @@ The existing classifier remains authoritative at every spawn, tool action, tool
 result, and agent return. A job lease proves ownership of work only; it grants no
 project capability or mutation authority.
 
+### Cross-harness executor adapters
+
+External subscription harnesses are executors behind registered adapters, not
+control-plane workers with ambient queue access. A Pi supervisor claims the typed
+job and invokes one source-fixed adapter. The job payload identifies a reviewed
+task family, harness lane, bounded repository/PR/head identity, and resource
+limits; it never contains a shell command, free-form prompt, environment map,
+credential, approval token, or model-authored tool arguments. The adapter builds
+its argv and prompt from trusted local templates.
+
+The first lanes are the existing visible Claude Code Max review harness and
+read-only Cursor review probes. Claude remains reachable only through the
+source-fixed `jf clanker --claude --new` subscription route. Cursor starts only
+after its installed CLI reports the expected subscription-backed identity and
+uses a registered model, plan mode, sandboxing, an exact workspace, and no shared
+working-tree mutation. Cursor mutation remains disabled until an isolated,
+repository-approved worktree contract and cleanup provenance are separately
+proven. API keys, custom endpoints, blanket force/yolo flags, arbitrary plugins,
+and MCP auto-approval are prohibited in both job data and adapter construction.
+
+Executor output is untrusted data. Each adapter returns one bounded versioned
+handoff with input identity, output identity, status, evidence references, and
+executor provenance. The Pi supervisor independently verifies repository state
+and passes consequential review output through native Fable or Sol verification
+before publication, mutation, or merge gates. Missing, malformed, stale, or
+mismatched handoffs fail the attempt; model prose never chooses a lane or grants
+authority.
+
+Lane selection is deterministic from the registered task's required capability,
+repository policy, isolation requirement, verified subscription availability, and
+bounded cost tier. It prefers the cheapest eligible lane but reserves Pi capacity
+for classification, registry, Telegram, and final gates. UI and event records show
+only source-owned task labels, lane/model identity, lifecycle counts, and bounded
+sanitized evidence—not prompts, reasoning, credentials, or raw executor logs.
+
 ### API and dashboard boundary
 
 The service exposes a versioned loopback API with bounded JSON schemas:
@@ -212,6 +247,23 @@ adapters:
 - Rejected because: Pi coordination is local platform infrastructure; Metagenda,
   Yielduck, and Moneymentum should be clients and supervised siblings, not owners
   of the runtime.
+
+### Let each external harness consume the queue directly
+
+- Pros: Fewer supervisor steps and each vendor can manage its own session lifecycle.
+- Cons: Gives vendor processes durable queue credentials, duplicates lease and
+  policy handling, weakens subscription/API provenance, and lets untrusted output
+  sit too close to terminal transitions.
+- Rejected because: External harnesses are execution claims, while Pi owns typed
+  authority, independent verification, and the final fenced transition.
+
+### Store prompts or command lines as generic jobs
+
+- Pros: One generic executor can run every future task without new schemas.
+- Cons: Turns persisted model text into executable control flow, leaks sensitive
+  context into storage/UI, and makes least-privilege review impossible.
+- Rejected because: The control plane exists to centralize typed lifecycle, not to
+  create a durable remote-shell or prompt queue.
 
 ## Consequences
 
