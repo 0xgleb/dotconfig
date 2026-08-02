@@ -790,6 +790,19 @@ test("auto mode returns classifier blocks without waiting for approval", () => {
   );
 });
 
+test("classifier availability failures retain one bounded actionable diagnostic", () => {
+  assert.match(extensionSource, /let lastClassifierFailure/);
+  assert.match(
+    extensionSource,
+    /result\.errorMessage \?\?[\s\S]*?result\.diagnostic \?\?[\s\S]*?`exit code \$\{result\.exitCode\}`/,
+  );
+  assert.match(
+    extensionSource,
+    /Classifier was unavailable after \$\{CLASSIFIER_MAX_ATTEMPTS\} attempts; last failure: \$\{lastClassifierFailure\}/,
+  );
+  assert.match(extensionSource, /sanitizeProcessDiagnostic[\s\S]*?slice\(0, 500\)/);
+});
+
 test("decision reasons identify the policy source", () => {
   assert.equal(
     formatDecisionReason({

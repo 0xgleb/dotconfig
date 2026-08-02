@@ -606,6 +606,7 @@ async function classify(
 ): Promise<Decision> {
   onActivity?.(true)
   try {
+    let lastClassifierFailure = "no classifier process result"
     for (let attempt = 0; attempt < CLASSIFIER_MAX_ATTEMPTS; attempt += 1) {
       const controller = new AbortController()
       const abort = () => controller.abort(signal?.reason)
@@ -648,9 +649,18 @@ async function classify(
           const decision = parseClassifierDecision(result.output)
           if (decision.reason !== "Classifier returned an invalid decision")
             return decision
+          lastClassifierFailure = "classifier returned an invalid decision"
+        } else {
+          lastClassifierFailure = sanitizeProcessDiagnostic(
+            result.errorMessage ??
+              result.diagnostic ??
+              `exit code ${result.exitCode}`,
+          ).slice(0, 500)
         }
-      } catch {
-        // Retry transient classifier process failures below.
+      } catch (error) {
+        lastClassifierFailure = sanitizeProcessDiagnostic(
+          unknownErrorMessage(error, "classifier process failed"),
+        ).slice(0, 500)
       } finally {
         clearTimeout(timer)
         signal?.removeEventListener("abort", abort)
@@ -667,7 +677,7 @@ async function classify(
     }
     return {
       verdict: "block",
-      reason: `Classifier was unavailable after ${CLASSIFIER_MAX_ATTEMPTS} attempts`,
+      reason: `Classifier was unavailable after ${CLASSIFIER_MAX_ATTEMPTS} attempts; last failure: ${lastClassifierFailure}`,
       source: "classifier",
     }
   } finally {
@@ -904,7 +914,7 @@ const WorkflowParameters = Type.Object({
 })
 
 export default function classifiedWorkflows(pi: ExtensionAPI): void {
-  registerRuntimeVersion(pi, "classified-workflows", "2026.08.01.146")
+  registerRuntimeVersion(pi, "classified-workflows", "2026.08.01.147")
   const childTokenLimit = workflowChildTokenLimit(
     process.env[WORKFLOW_CHILD_TOKEN_LIMIT_ENV],
   )
