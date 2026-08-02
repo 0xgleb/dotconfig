@@ -380,6 +380,44 @@ const handleComplete = (
   })
 }
 
+const handleFail = (
+  id: string,
+  request: IncomingMessage,
+  response: ServerResponse,
+  store: SqliteJobStore,
+): Effect.Effect<void, unknown> => {
+  if (request.method !== "POST") {
+    sendError(response, 405, "method_not_allowed", "method is not allowed")
+    return Effect.void
+  }
+  if (!hasJsonContentType(request)) {
+    sendError(response, 415, "unsupported_media_type", "application/json is required")
+    return Effect.void
+  }
+  return Effect.gen(function* () {
+    const input = yield* Effect.flatMap(readBody(request), parseJson)
+    if (
+      !isRecord(input) ||
+      !exactKeys(input, ["leaseToken", "retryDelayMs", "summary"]) ||
+      typeof input.leaseToken !== "string" ||
+      typeof input.retryDelayMs !== "number" ||
+      typeof input.summary !== "string"
+    ) {
+      return yield* Effect.fail(
+        serverError("request_failed", "job failure payload is invalid"),
+      )
+    }
+    const job = yield* store.fail(
+      id,
+      input.leaseToken,
+      Date.now(),
+      input.retryDelayMs,
+      input.summary,
+    )
+    sendJson(response, 200, { job })
+  })
+}
+
 const dashboardAssets: Readonly<Record<string, readonly [string, string]>> = {
   "/": ["index.html", "text/html; charset=utf-8"],
   "/app.js": ["app.js", "text/javascript; charset=utf-8"],
@@ -443,6 +481,8 @@ const handleRequest = (
       const completeMatch = /^\/v1\/jobs\/([A-Za-z0-9][A-Za-z0-9:._-]{0,127})\/complete$/u.exec(path)
       if (completeMatch?.[1])
         return handleComplete(completeMatch[1], request, response, store)
+      const failMatch = /^\/v1\/jobs\/([A-Za-z0-9][A-Za-z0-9:._-]{0,127})\/fail$/u.exec(path)
+      if (failMatch?.[1]) return handleFail(failMatch[1], request, response, store)
       if (dashboardDirectory) {
         return Effect.flatMap(
           handleDashboard(path, request, response, dashboardDirectory),

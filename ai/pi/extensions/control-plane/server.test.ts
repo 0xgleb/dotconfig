@@ -522,6 +522,77 @@ test("completing a job that does not exist reports it as missing", async () =>
     })
   }))
 
+test("failed attempts retry through the fail route until attempts are exhausted", async () =>
+  withServer(async (origin) => {
+    const enqueued = await fetch(`${origin}/v1/jobs`, {
+      method: "POST",
+      headers: { "content-type": "application/json" },
+      body: JSON.stringify(harnessEnqueueBody),
+    })
+    const created = (await enqueued.json()) as { job: { id: string } }
+    const endpoint = `${origin}/v1/jobs/${created.job.id}/fail`
+
+    const claim = async (): Promise<{ leaseToken: string }> => {
+      const response = await fetch(`${origin}/v1/worker/claim`, {
+        method: "POST",
+        headers: { "content-type": "application/json" },
+        body: JSON.stringify({ workerId: "harness-supervisor", ttlMs: 90_000 }),
+      })
+      return ((await response.json()) as { job: { leaseToken: string } }).job
+    }
+
+    const first = await claim()
+    const unknownFields = await fetch(endpoint, {
+      method: "POST",
+      headers: { "content-type": "application/json" },
+      body: JSON.stringify({
+        leaseToken: first.leaseToken,
+        retryDelayMs: 0,
+        summary: "executor failed",
+        command: "rm -rf /",
+      }),
+    })
+    assert.equal(unknownFields.status, 400)
+
+    const stale = await fetch(endpoint, {
+      method: "POST",
+      headers: { "content-type": "application/json" },
+      body: JSON.stringify({
+        leaseToken: "not-the-lease",
+        retryDelayMs: 0,
+        summary: "executor failed",
+      }),
+    })
+    assert.equal(stale.status, 409)
+
+    const retried = await fetch(endpoint, {
+      method: "POST",
+      headers: { "content-type": "application/json" },
+      body: JSON.stringify({
+        leaseToken: first.leaseToken,
+        retryDelayMs: 0,
+        summary: "executor failed",
+      }),
+    })
+    assert.equal(retried.status, 200)
+    const retriedJob = (await retried.json()) as { job: { state: string } }
+    assert.equal(retriedJob.job.state, "retry_wait")
+
+    const second = await claim()
+    const exhausted = await fetch(endpoint, {
+      method: "POST",
+      headers: { "content-type": "application/json" },
+      body: JSON.stringify({
+        leaseToken: second.leaseToken,
+        retryDelayMs: 0,
+        summary: "executor failed again",
+      }),
+    })
+    assert.equal(exhausted.status, 200)
+    const exhaustedJob = (await exhausted.json()) as { job: { state: string } }
+    assert.equal(exhaustedJob.job.state, "failed")
+  }))
+
 test("worker boundaries reject unknown fields and client-supplied lease tokens", async () =>
   withServer(async (origin) => {
     const rejected = await fetch(`${origin}/v1/worker/claim`, {
