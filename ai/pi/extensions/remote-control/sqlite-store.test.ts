@@ -155,6 +155,21 @@ test("expired and disabled messages fail closed", async () =>
     if (disabled._tag === "Left") assert.equal(disabled.left.code, "disabled");
   }));
 
+test("expired messages retain whether an agent had claimed execution", async () =>
+  withStore(async (store) => {
+    await heartbeat(store);
+    const queued = await enqueue(store);
+    const claimed = await Effect.runPromise(
+      store.claimNext({ agentId: "session-1", now: 2_100 }),
+    );
+    assert.ok(claimed);
+    const expired = await Effect.runPromise(
+      store.get(queued.id, 2_000 + BRIDGE_MESSAGE_TTL_MS),
+    );
+    assert.equal(expired.status, "failed");
+    if (expired.status === "failed") assert.equal(expired.claimedAt, 2_100);
+  }));
+
 test("disabled bridge leaves queued work unclaimed", async () =>
   withStore(async (store) => {
     await heartbeat(store);
@@ -311,6 +326,15 @@ test("Telegram replies resolve only the exact bound agent question", async () =>
         messageId: 77,
         now: 2_002,
       }),
+    );
+    assert.deepEqual(
+      (await Effect.runPromise(store.listPendingQuestions(2_003))).map(
+        ({ agentId, questionId }) => ({ agentId, questionId }),
+      ),
+      [
+        { agentId: "session-1", questionId: 1 },
+        { agentId: "session-1", questionId: 2 },
+      ],
     );
 
     assert.equal(

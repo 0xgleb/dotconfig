@@ -12,8 +12,14 @@ const registrySource = readFileSync(
   new URL("../agent-registry/index.ts", import.meta.url),
   "utf8",
 )
-const remoteControlSource = readFileSync(new URL("./index.ts", import.meta.url), "utf8")
-const pieceSource = readFileSync(new URL("./piece-of-pi.ts", import.meta.url), "utf8")
+const remoteControlSource = readFileSync(
+  new URL("./index.ts", import.meta.url),
+  "utf8",
+)
+const pieceSource = readFileSync(
+  new URL("./piece-of-pi.ts", import.meta.url),
+  "utf8",
+)
 
 const agent = (id: string, label: string): BridgeAgent => ({
   id,
@@ -68,7 +74,16 @@ test("duplicate friendly identities receive deterministic instance numbers", () 
     agent("019f-b", "Yielduck · Operator"),
     agent("019f-c", "Dotconfig · Pi Support"),
   ]
-  assert.equal(identifiedAgentLabel(agents[0]!, agents), "Yielduck · Operator · Instance 1")
-  assert.equal(identifiedAgentLabel(agents[1]!, agents), "Yielduck · Operator · Instance 2")
-  assert.equal(identifiedAgentLabel(agents[2]!, agents), "Dotconfig · Pi Support")
+  assert.equal(
+    identifiedAgentLabel(agents[0]!, agents),
+    "Yielduck · Operator · Instance 1",
+  )
+  assert.equal(
+    identifiedAgentLabel(agents[1]!, agents),
+    "Yielduck · Operator · Instance 2",
+  )
+  assert.equal(
+    identifiedAgentLabel(agents[2]!, agents),
+    "Dotconfig · Pi Support",
+  )
 })

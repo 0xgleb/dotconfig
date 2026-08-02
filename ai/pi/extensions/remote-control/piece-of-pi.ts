@@ -15,12 +15,14 @@ import * as Either from "effect/Either";
 import * as Ref from "effect/Ref";
 
 import { identifiedAgentLabel } from "./agent-identity.ts";
+import { bridgeFailureText } from "./bridge-failure.ts";
 import {
   agentListHtml,
   agentMatchesSelector,
   preferredAgent,
 } from "./agent-selection.ts";
 import { remoteBridgeDatabasePath } from "./paths.ts";
+import { globalQuestionsText } from "./question-list.ts";
 import {
   BRIDGE_MESSAGE_TTL_MS,
   MAX_REMOTE_IMAGE_BYTES,
@@ -654,6 +656,7 @@ const registerTelegramCommands = (
     commands: [
       { command: "kanban", description: "Show the selected agent task board" },
       { command: "agents", description: "List available Pi agents" },
+      { command: "questions", description: "List pending questions for all agents" },
       { command: "use", description: "Select a Pi agent by label or ID" },
       { command: "bridge", description: "Show bridge status" },
       { command: "help", description: "Show Piece of Pi help" },
@@ -941,7 +944,7 @@ const awaitBridgeResult = (
           runtime,
           chatId,
           ownerMessageId,
-          `I couldn't finish that response (${message.failure}). Please resend the message.`,
+          bridgeFailureText(message),
         ).pipe(
           Effect.tap(() =>
             Effect.sync(() =>
@@ -1177,6 +1180,22 @@ const handleOwnerCommand = (
 > => {
   if (update.message.voice) return Effect.succeed(false);
   const command = update.message.text.trim();
+  if (command === "/questions") {
+    return Effect.all({
+      agents: availableAgents(runtime),
+      questions: runtime.bridge.listPendingQuestions(Date.now()),
+    }).pipe(
+      Effect.flatMap(({ agents, questions }) =>
+        sendText(
+          runtime,
+          update.message.chatId,
+          globalQuestionsText(questions, agents),
+          update.message.messageId,
+        ),
+      ),
+      Effect.as(true),
+    );
+  }
   if (command === "/start" || command === "/help") {
     return sendText(
       runtime,

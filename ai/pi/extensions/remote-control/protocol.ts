@@ -8,7 +8,7 @@ import { Data } from "effect";
 
 export const BRIDGE_PROTOCOL_VERSION = 4;
 export const BRIDGE_AGENT_TTL_MS = 15_000;
-export const BRIDGE_MESSAGE_TTL_MS = 10 * 60_000;
+export const BRIDGE_MESSAGE_TTL_MS = 60 * 60_000;
 export const MAX_REMOTE_MESSAGE_CHARACTERS = 4_000;
 export const MAX_REMOTE_IMAGE_COUNT = 4;
 export const MAX_REMOTE_IMAGE_BYTES = 8 * 1024 * 1024;
@@ -62,6 +62,7 @@ export type RemoteMessage =
   | (RemoteMessageBase & {
       readonly status: "failed";
       readonly failure: RemoteFailure;
+      readonly claimedAt?: number;
       readonly completedAt: number;
     });
 

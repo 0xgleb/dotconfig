@@ -1,6 +1,7 @@
 import assert from "node:assert/strict";
 import test from "node:test";
 import {
+  BRIDGE_MESSAGE_TTL_MS,
   MAX_REMOTE_IMAGE_BYTES,
   MAX_REMOTE_MESSAGE_CHARACTERS,
   RemoteBridgeError,
@@ -18,6 +19,10 @@ test("remote prompts are explicitly communication-only", () => {
   assert.match(prompt, /all tools are disabled/i);
   assert.match(prompt, /Do not execute or approve actions/i);
   assert.match(prompt, /Give me a concise status update/);
+});
+
+test("owner messages retain a bounded one-hour delivery window", () => {
+  assert.equal(BRIDGE_MESSAGE_TTL_MS, 60 * 60_000);
 });
 
 test("bridge text rejects control characters and oversized messages", () => {

@@ -123,6 +123,9 @@ export interface RemoteBridgeStore {
   readonly syncQuestions: (
     input: SyncRemoteQuestionsInput,
   ) => Effect.Effect<void, RemoteBridgeError>;
+  readonly listPendingQuestions: (
+    now: number,
+  ) => Effect.Effect<readonly BridgeQuestion[], RemoteBridgeError>;
   readonly listUnrelayedQuestions: (
     now: number,
   ) => Effect.Effect<readonly BridgeQuestion[], RemoteBridgeError>;
@@ -273,10 +276,13 @@ const messageFromRow = (row: Row): RemoteMessage => {
     ) {
       throw bridgeError("corrupt_state", "bridge failure is malformed");
     }
+    const claimedAt =
+      row.claimed_at === null ? undefined : numberField(row, "claimed_at");
     return {
       ...base,
       status,
       failure,
+      ...(claimedAt === undefined ? {} : { claimedAt }),
       completedAt: numberField(row, "completed_at"),
     };
   }
@@ -993,6 +999,24 @@ export const makeRemoteBridgeStore = (
               .run(agentId, questionId);
           }
         });
+      }),
+    ),
+  listPendingQuestions: (now) =>
+    attempt("Could not list pending bridge questions", () =>
+      withDatabase(databasePath, (database) => {
+        const at = boundedTimestamp("now", now);
+        return database
+          .prepare(
+            `SELECT question.*
+             FROM bridge_questions AS question
+             INNER JOIN bridge_agents AS agent ON agent.agent_id = question.agent_id
+             WHERE question.status = 'pending'
+               AND agent.expires_at > ?
+             ORDER BY question.created_at, question.agent_id, question.question_id
+             LIMIT 100`,
+          )
+          .all(at)
+          .map((row) => questionFromRow(rowFrom(row)));
       }),
     ),
   listUnrelayedQuestions: (now) =>
