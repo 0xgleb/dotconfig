@@ -73,7 +73,7 @@ export const managedGeneration = (roots: readonly string[]): string => {
 };
 
 const autoReload: (pi: ExtensionAPI) => void = (pi) => {
-  registerRuntimeVersion(pi, "auto-reload", "2026.08.01.10");
+  registerRuntimeVersion(pi, "auto-reload", "2026.08.01.11");
   let watchers: FSWatcher[] = [];
   let timer: ReturnType<typeof setTimeout> | undefined;
   let handoffTimer: ReturnType<typeof setInterval> | undefined;
@@ -146,7 +146,6 @@ const autoReload: (pi: ExtensionAPI) => void = (pi) => {
       pendingForMs: Math.max(0, now - (pendingSince ?? now)),
       forceAfterMs: FORCE_RELOAD_AFTER_MS,
       preemptRequested,
-      pendingMessages: ctx.hasPendingMessages(),
     });
     if (decision === "await-commit") {
       ctx.ui.setStatus(STATUS_KEY, "reload:awaiting-commit");
@@ -211,7 +210,7 @@ const autoReload: (pi: ExtensionAPI) => void = (pi) => {
             : `Pi resources auto-reloaded after managed configuration changed.${changeText} Resume all assigned work now; do not stop while a goal or pending todo remains.`,
         display: true,
       };
-      if (delivery === "resume" || delivery === "resumeAfterPending") {
+      if (delivery === "resume") {
         const requestedAt =
           latestReloadResumeMarker(branch)?.requestedAt ?? Date.now();
         pi.appendEntry(RELOAD_RESUME_ENTRY, {
@@ -220,7 +219,7 @@ const autoReload: (pi: ExtensionAPI) => void = (pi) => {
         });
         pi.sendMessage(message, {
           triggerTurn: true,
-          deliverAs: delivery === "resume" ? "steer" : "followUp",
+          deliverAs: "resume",
         });
       } else if (delivery === "followUp") {
         pi.sendMessage(message, { triggerTurn: true, deliverAs: "followUp" });
@@ -308,7 +307,6 @@ const autoReload: (pi: ExtensionAPI) => void = (pi) => {
 
   pi.on("agent_end", async (_event, ctx) => {
     if (!pending || !isReloadableContext(ctx)) return;
-    if (ctx.hasPendingMessages()) return;
     if (!managedSourcesAreCommitted(join(homedir(), ".config"))) return;
     if (managedWorkIsActive()) {
       await reloadWhenIdle(ctx);

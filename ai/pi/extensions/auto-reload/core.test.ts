@@ -37,8 +37,8 @@ test("managed reloads preempt long-running turns only after a committed grace pe
       pendingForMs: 60_000,
       pendingMessages: true,
     }),
-    "wait",
-    "queued human/follow-up messages must drain before managed preemption",
+    "preempt",
+    "queued messages must survive a bounded reload instead of starving it",
   );
   assert.equal(
     managedReloadDecision({
@@ -50,7 +50,7 @@ test("managed reloads preempt long-running turns only after a committed grace pe
   );
 });
 
-test("managed reload resumes a preempted generation after newly pending follow-ups", () => {
+test("managed reload resumes each interrupted generation before preserved follow-ups", () => {
   const pendingResume = {
     type: "custom",
     customType: "auto-reload.preempted-generation",
@@ -66,13 +66,48 @@ test("managed reload resumes a preempted generation after newly pending follow-u
   });
   assert.equal(
     managedReloadDelivery("reload", [pendingResume], true),
-    "resumeAfterPending",
+    "resume",
   );
   assert.equal(
     managedReloadDelivery("reload", [pendingResume], false),
     "resume",
   );
   assert.equal(managedReloadDelivery("reload", [resumed], true), "display");
+  assert.equal(
+    managedReloadDelivery(
+      "reload",
+      [
+        pendingResume,
+        resumed,
+        {
+          ...pendingResume,
+          data: { requestedAt: 456, status: "pending" },
+        },
+      ],
+      true,
+    ),
+    "resume",
+    "a later reload gets exactly one new resume without replaying the old one",
+  );
+  assert.equal(
+    managedReloadDelivery(
+      "reload",
+      [
+        pendingResume,
+        resumed,
+        {
+          ...pendingResume,
+          data: { requestedAt: 456, status: "pending" },
+        },
+        {
+          ...pendingResume,
+          data: { requestedAt: 456, status: "resumed" },
+        },
+      ],
+      true,
+    ),
+    "display",
+  );
 });
 
 test("reload does not inject a continuation ahead of existing pending messages", () => {

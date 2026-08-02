@@ -33,17 +33,14 @@ test("long-running turns receive one persisted managed preemption before forced 
   );
 });
 
-test("reload never preempts or resumes ahead of preserved follow-ups", () => {
-  assert.match(source, /pendingMessages: ctx\.hasPendingMessages\(\)/);
-  assert.match(
+test("bounded reload resumes the interrupted generation before preserved queues", () => {
+  assert.doesNotMatch(source, /pendingMessages: ctx\.hasPendingMessages\(\)/);
+  assert.doesNotMatch(
     source,
     /agent_end[\s\S]*?if \(ctx\.hasPendingMessages\(\)\) return/,
   );
-  assert.match(source, /delivery === "resumeAfterPending"/);
-  assert.match(
-    source,
-    /deliverAs: delivery === "resume" \? "steer" : "followUp"/,
-  );
+  assert.doesNotMatch(source, /resumeAfterPending/);
+  assert.match(source, /deliverAs: "resume"/);
   assert.match(source, /status: "resumed"/);
 });
 

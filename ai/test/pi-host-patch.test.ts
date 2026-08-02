@@ -9,6 +9,15 @@ test("Pi host patch exposes reload without losing finalized messages on restart"
   assert.match(patch, /reload: \(\) =>/);
   assert.match(patch, /handleReloadCommand\(true\)/);
   assert.match(patch, /Cannot reload while agent is streaming/);
+  assert.match(patch, /queuedBeforeReload/);
+  assert.match(patch, /getSteeringMessages\(\)/);
+  assert.match(patch, /getFollowUpMessages\(\)/);
+  assert.match(patch, /Reload changed queued message order/);
+  assert.match(patch, /pauseQueuedMessagesOnce\(\)/);
+  assert.match(patch, /waitForIdle\(\)\.then/);
+  assert.match(patch, /isolateFromQueuedMessages/);
+  assert.match(patch, /skipInitialSteeringPoll: true/);
+  assert.match(patch, /deliverAs === "resume"/);
   assert.match(patch, /if \(throwOnError\)/);
   assert.match(patch, /typeof item === "object" && item !== null && "type" in item/);
   assert.match(patch, /if \(item === undefined \|\| item === null\)/);

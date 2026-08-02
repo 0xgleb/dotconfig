@@ -20,7 +20,6 @@ export const managedReloadDecision = (input: {
   readonly pendingMessages?: boolean;
 }): ManagedReloadDecision => {
   if (!input.committed) return "await-commit";
-  if (input.pendingMessages) return "wait";
   if (input.idle) return "reload";
   if (input.preemptRequested) return "wait";
   return input.pendingForMs >= input.forceAfterMs ? "preempt" : "wait";
@@ -146,8 +145,7 @@ export const latestReloadResumeMarker = (
 export type ManagedReloadDelivery =
   | "display"
   | "followUp"
-  | "resume"
-  | "resumeAfterPending";
+  | "resume";
 
 export const managedReloadDelivery = (
   reason: string,
@@ -155,8 +153,7 @@ export const managedReloadDelivery = (
   hasPendingMessages: boolean,
 ): ManagedReloadDelivery => {
   if (reason !== "reload") return "display";
-  if (latestReloadResumeMarker(entries)?.status === "pending")
-    return hasPendingMessages ? "resumeAfterPending" : "resume";
+  if (latestReloadResumeMarker(entries)?.status === "pending") return "resume";
   if (hasPendingMessages) return "display";
   return shouldDispatchReloadFollowUp(reason, entries) ? "followUp" : "display";
 };
