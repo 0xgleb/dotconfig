@@ -7,9 +7,10 @@ import {
   taskCompletionPercent,
   taskHud,
   taskHudLines,
-  taskProgressAnimatedCell,
   taskProgressBar,
-  taskProgressPulseIndex,
+  taskProgressCellPulse,
+  taskProgressCompletedPulse,
+  taskProgressFrontierPulse,
   taskWidgetLines,
   todoSummary,
   topPendingTodos,
@@ -86,24 +87,36 @@ test("completion percentage is bounded and defined for an empty board", () => {
   assert.equal(taskCompletionPercent(8, 5), 100)
 })
 
-test("animated progress cells toggle glyphs without changing cell width", () => {
-  const base = [...taskProgressBar(1, 5)] as Array<"▰" | "▱">
-  const frame = (value: number) =>
-    base.map((cell, index) => taskProgressAnimatedCell(cell, value, index)).join("")
+test("frontier and completed region combine two fixed pulse frequencies", () => {
+  const bar = taskProgressBar(1, 5)
+  const frontier = bar.lastIndexOf("▰")
+  const pulse = (frame: number, index: number) =>
+    taskProgressCellPulse(
+      bar[index] as "▰" | "▱",
+      frame,
+      index,
+      frontier,
+    )
 
-  assert.equal(frame(0), "▱▰▱▱▱▱▱▱")
-  assert.equal(frame(1), "▰▰▱▱▱▱▱▱")
-  assert.equal(frame(2), "▰▱▱▱▱▱▱▱")
-  assert.equal(visibleWidth(frame(0)), 8)
-  assert.equal(visibleWidth(frame(2)), 8)
-})
-
-test("progress pulse moves at a stable cadence across fixed-width cells", () => {
   assert.deepEqual(
-    Array.from({ length: 9 }, (_, frame) => taskProgressPulseIndex(frame)),
-    [0, 0, 1, 1, 2, 2, 3, 3, 4],
+    Array.from({ length: 8 }, (_, frame) => taskProgressCompletedPulse(frame)),
+    [true, true, false, false, true, true, false, false],
   )
-  assert.equal(taskProgressBar(1, 5), "▰▰▱▱▱▱▱▱")
+  assert.deepEqual(
+    Array.from({ length: 8 }, (_, frame) => taskProgressFrontierPulse(frame)),
+    [true, false, true, false, true, false, true, false],
+  )
+  assert.deepEqual(
+    Array.from({ length: 4 }, (_, frame) => pulse(frame, frontier)),
+    [true, true, true, false],
+  )
+  assert.deepEqual(
+    Array.from({ length: 4 }, (_, frame) => pulse(frame, 0)),
+    [true, true, false, false],
+  )
+  assert.equal(pulse(0, frontier + 1), false)
+  assert.equal(taskProgressBar(0, 5), "▱▱▱▱▱▱▱▱")
+  assert.equal(visibleWidth(bar), 8)
 })
 
 test("task HUD keeps one preview row and a compact progress bar", () => {

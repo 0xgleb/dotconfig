@@ -129,28 +129,22 @@ export const taskCompletionPercent = (
         Math.min(1, Math.max(0, completed / Math.max(1, total))) * 100,
       )
 
-export const taskProgressPulseIndex = (
-  frame: number,
-  width = TASK_PROGRESS_WIDTH,
-): number => {
-  const boundedWidth = Math.max(1, Math.floor(width))
-  const cycle = Math.max(1, boundedWidth * 2 - 2)
-  const offset = Math.floor(Math.abs(Math.floor(frame)) / 2) % cycle
-  return offset < boundedWidth ? offset : cycle - offset
-}
+export const taskProgressCompletedPulse = (frame: number): boolean =>
+  Math.floor(Math.abs(Math.floor(frame)) / 2) % 2 === 0
 
-export const taskProgressAnimatedCell = (
+export const taskProgressFrontierPulse = (frame: number): boolean =>
+  Math.abs(Math.floor(frame)) % 2 === 0
+
+export const taskProgressCellPulse = (
   baseCell: "▰" | "▱",
   frame: number,
   index: number,
-  width = TASK_PROGRESS_WIDTH,
-): "▰" | "▱" =>
-  Math.abs(Math.floor(frame)) % 2 === 0 &&
-  Math.floor(index) === taskProgressPulseIndex(frame, width)
-    ? baseCell === "▰"
-      ? "▱"
-      : "▰"
-    : baseCell
+  frontierIndex: number,
+): boolean =>
+  baseCell === "▰" &&
+  (taskProgressCompletedPulse(frame) ||
+    (Math.floor(index) === Math.floor(frontierIndex) &&
+      taskProgressFrontierPulse(frame)))
 
 export const taskProgressBar = (completed: number, total: number): string => {
   const boundedTotal = Math.max(0, total)

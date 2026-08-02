@@ -144,11 +144,11 @@ test("kanban unblocks the selected blocked task directly", async () => {
 })
 
 test("task HUD phase is synchronized by wall clock across panes", () => {
-  assert.equal(synchronizedTaskHudFrame(0, 240), 0)
-  assert.equal(synchronizedTaskHudFrame(959, 240), 3)
-  assert.equal(synchronizedTaskHudFrame(960, 240), 4)
-  assert.equal(synchronizedTaskHudFrame(1_199, 240), 4)
-  assert.throws(() => synchronizedTaskHudFrame(-1, 240), /timestamp/i)
+  assert.equal(synchronizedTaskHudFrame(0, 500), 0)
+  assert.equal(synchronizedTaskHudFrame(999, 500), 1)
+  assert.equal(synchronizedTaskHudFrame(1_000, 500), 2)
+  assert.equal(synchronizedTaskHudFrame(1_499, 500), 2)
+  assert.throws(() => synchronizedTaskHudFrame(-1, 500), /timestamp/i)
   assert.throws(() => synchronizedTaskHudFrame(1_000, 0), /interval/i)
 })
 
@@ -176,21 +176,23 @@ test("task HUD requests and renders changing ANSI frames until disposed", async 
   assert.equal(renderedFrames.length, settledCount)
 })
 
-test("task progress animation toggles constant-width glyphs without green", () => {
+test("task progress uses two fixed frequencies without animating unfilled cells", () => {
   const renderer = taskHudSource.slice(
     taskHudSource.indexOf("private colorTaskHeadline"),
     taskHudSource.indexOf("private colorTaskRow"),
   )
   assert.doesNotMatch(
     renderer,
-    /"success"|SLOW_BLINK|RAPID_BLINK|dimText|theme\.bold\(hued\)|" "/,
+    /"success"|SLOW_BLINK|RAPID_BLINK|dimText|" "/,
   )
-  assert.match(renderer, /taskProgressAnimatedCell/)
-  assert.match(renderer, /animated === "▰" \? "accent" : "muted"/)
+  assert.match(renderer, /const frontierIndex = part\.lastIndexOf\("▰"\)/)
+  assert.match(renderer, /taskProgressCellPulse/)
+  assert.match(renderer, /return pulseOn \? this\.theme\.bold\(hued\) : hued/)
+  assert.match(renderer, /cell === "▰" \? "accent" : "muted"/)
 })
 
 test("task progress pulse owns direct TUI invalidation while work is unfinished", () => {
-  assert.match(taskHudSource, /HUD_ANIMATION_INTERVAL_MS = 240/)
+  assert.match(taskHudSource, /HUD_ANIMATION_INTERVAL_MS = 500/)
   assert.match(
     taskHudSource,
     /hasUnfinishedWork[\s\S]*?setInterval[\s\S]*?this\.requestRender\(\)/,

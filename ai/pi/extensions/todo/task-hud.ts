@@ -3,11 +3,11 @@ import type { Theme } from "@earendil-works/pi-coding-agent"
 import {
   frameTaskHud,
   taskHud,
-  taskProgressAnimatedCell,
+  taskProgressCellPulse,
 } from "./presentation.ts"
 import type { TodoState } from "./state.ts"
 
-export const HUD_ANIMATION_INTERVAL_MS = 240
+export const HUD_ANIMATION_INTERVAL_MS = 500
 
 export const synchronizedTaskHudFrame = (
   now: number,
@@ -57,15 +57,18 @@ export class TaskHudComponent {
           ? [...part]
               .map((cell, index) => {
                 if (cell !== "▰" && cell !== "▱") return cell
-                const animated = taskProgressAnimatedCell(
+                const frontierIndex = part.lastIndexOf("▰")
+                const pulseOn = taskProgressCellPulse(
                   cell,
                   animationFrame,
                   index,
+                  frontierIndex,
                 )
-                return this.theme.fg(
-                  animated === "▰" ? "accent" : "muted",
-                  animated,
+                const hued = this.theme.fg(
+                  cell === "▰" ? "accent" : "muted",
+                  cell,
                 )
+                return pulseOn ? this.theme.bold(hued) : hued
               })
               .join("")
           : this.theme.bold(this.theme.fg("borderAccent", part)),
