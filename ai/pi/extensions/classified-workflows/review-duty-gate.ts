@@ -285,6 +285,7 @@ export const retryFailedReviewDuty = (
   latestWorkflowFailed: boolean,
   workflowRunning: boolean,
   latestWorkflowCancelledByManagedReload = false,
+  legacyManagedReloadContinuationMarkerLost = false,
 ): ReviewDutyTransition => {
   if (state.phase !== "awaiting_report") {
     return {
@@ -301,7 +302,8 @@ export const retryFailedReviewDuty = (
   const recoverableManagedReloadCancellation =
     latestWorkflowCancelledByManagedReload &&
     state.kind === "auto" &&
-    state.continuation === "fix-re-review";
+    (state.continuation === "fix-re-review" ||
+      legacyManagedReloadContinuationMarkerLost);
   if (!latestWorkflowFailed && !recoverableManagedReloadCancellation) {
     return {
       ok: false,

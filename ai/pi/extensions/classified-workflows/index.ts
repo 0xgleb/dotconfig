@@ -904,7 +904,7 @@ const WorkflowParameters = Type.Object({
 })
 
 export default function classifiedWorkflows(pi: ExtensionAPI): void {
-  registerRuntimeVersion(pi, "classified-workflows", "2026.08.01.142")
+  registerRuntimeVersion(pi, "classified-workflows", "2026.08.01.143")
   const childTokenLimit = workflowChildTokenLimit(
     process.env[WORKFLOW_CHILD_TOKEN_LIMIT_ENV],
   )
@@ -2433,13 +2433,19 @@ export default function classifiedWorkflows(pi: ExtensionAPI): void {
           latestManagedReloadCancellationAfter(workflowAudits, completedAt)
         const legacyUnmarkedCancellation =
           latestLegacyUnmarkedCancellationAfter(workflowAudits, completedAt)
-        const legacyManagedReloadCancellation =
-          legacyUnmarkedCancellation &&
-          !latestContinuationPause(ctx.sessionManager.getBranch()) &&
+        const manualPause = latestContinuationPause(
+          ctx.sessionManager.getBranch(),
+        )
+        const legacyReloadCompletionObserved =
+          legacyUnmarkedCancellation !== undefined &&
           managedReloadCompletionObservedAfterAudit(
             ctx.sessionManager.getBranch(),
             legacyUnmarkedCancellation.id,
           )
+        const legacyManagedReloadCancellation =
+          legacyUnmarkedCancellation &&
+          !manualPause &&
+          legacyReloadCompletionObserved
             ? legacyUnmarkedCancellation
             : undefined
         const managedReloadCancellation =
@@ -2449,11 +2455,29 @@ export default function classifiedWorkflows(pi: ExtensionAPI): void {
           failedWorkflow !== undefined,
           workflowRunning,
           managedReloadCancellation !== undefined,
+          legacyManagedReloadCancellation !== undefined,
         )
         if (!transition.ok) {
+          const recoveryEvidence = [
+            `failed=${failedWorkflow !== undefined}`,
+            `markedReloadCancellation=${markedManagedReloadCancellation !== undefined}`,
+            `legacyCancellation=${legacyUnmarkedCancellation !== undefined}`,
+            `legacyReloadCompleted=${legacyReloadCompletionObserved}`,
+            `manualPause=${manualPause}`,
+            `continuation=${reviewDutyState.phase === "awaiting_report" ? (reviewDutyState.continuation ?? "missing") : "not-awaiting"}`,
+          ].join(", ")
           return {
-            content: [{ type: "text" as const, text: transition.error }],
-            details: { outcome: "error" as const, error: transition.error },
+            content: [
+              {
+                type: "text" as const,
+                text: `${transition.error}; recovery evidence: ${recoveryEvidence}`,
+              },
+            ],
+            details: {
+              outcome: "error" as const,
+              error: transition.error,
+              recoveryEvidence,
+            },
             isError: true,
           }
         }

@@ -294,10 +294,26 @@ test("managed reload cancellation recovers only an auto same-PR fix continuation
     ok: true,
     state: continued,
   });
+  const legacyAwaitingWithoutMarker = startReviewWorkflow(automatic.state, 20);
   assert.match(
-    retryFailedReviewDuty(startReviewWorkflow(automatic.state, 20), false, false, true)
-      .error ?? "",
+    retryFailedReviewDuty(
+      legacyAwaitingWithoutMarker,
+      false,
+      false,
+      true,
+      false,
+    ).error ?? "",
     /not a proven terminal failure/i,
+  );
+  assert.deepEqual(
+    retryFailedReviewDuty(
+      legacyAwaitingWithoutMarker,
+      false,
+      false,
+      true,
+      true,
+    ),
+    { ok: true, state: automatic.state },
   );
   assert.match(
     retryFailedReviewDuty(
@@ -313,6 +329,7 @@ test("managed reload cancellation recovers only an auto same-PR fix continuation
       false,
       false,
       true,
+      true,
     ).error ?? "",
     /not a proven terminal failure/i,
   );
@@ -320,8 +337,10 @@ test("managed reload cancellation recovers only an auto same-PR fix continuation
   assert.match(extensionSource, /latestLegacyUnmarkedCancellationAfter/);
   assert.match(extensionSource, /managedReloadCompletionObservedAfterAudit/);
   assert.match(extensionSource, /auto-reload\.completed/);
-  assert.match(extensionSource, /!latestContinuationPause/);
+  assert.match(extensionSource, /const manualPause = latestContinuationPause/);
+  assert.match(extensionSource, /!manualPause/);
   assert.match(extensionSource, /MANAGED_RELOAD_WORKFLOW_CANCELLATION/);
+  assert.match(extensionSource, /recovery evidence: \$\{recoveryEvidence\}/);
 });
 
 test("review reporting waits boundedly for asynchronous Telegram linkage", () => {
