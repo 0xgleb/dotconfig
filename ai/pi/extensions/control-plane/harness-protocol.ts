@@ -143,6 +143,9 @@ const decodeIdentity = (
 }
 
 const SAFE_JOB_ID = /^[A-Za-z0-9][A-Za-z0-9:._-]{0,127}$/u
+
+export const isSafeHarnessJobId = (value: string): boolean =>
+  SAFE_JOB_ID.test(value)
 const SAFE_EVIDENCE = /^(?:check|commit|head|pr|review|test|workflow):[A-Za-z0-9][A-Za-z0-9:./_#@-]{0,220}$/u
 const UNSAFE_CONTROL = /[\u0000-\u001f\u007f]/u
 const HANDOFF_KEYS = [
