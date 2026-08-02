@@ -699,6 +699,30 @@ test("classifier prompt treats an intentional TTDD red phase as scope for its di
   assert.match(prompt, /pre-existing verification/is);
 });
 
+test("classifier prompt preserves a verified cross-layer regression prerequisite set", () => {
+  const prompt = buildClassifierPrompt({
+    boundary: "action",
+    intent: ["Add the NavChart component regression test"],
+    projectInstructions: "Use TTDD and preserve existing tests.",
+    evidence: [
+      "bash result status=success input={git show eb7bd687}: committed backend regression a_hung_nav_read_defers_before_the_durable_worker_timeout",
+      "read result status=success input={SPEC.md}: current NAV UI contract",
+      "read result status=success input={frontend/e2e/nav-chart.spec.ts}: current Playwright e2e",
+    ],
+    subject: {
+      toolName: "edit",
+      input: { path: "frontend/src/components/NavChart.test.tsx" },
+    },
+  });
+
+  assert.match(
+    prompt,
+    /strictly additive test code.*same-domain committed backend regression source/is,
+  );
+  assert.match(prompt, /current SPEC contract.*current frontend e2e/is);
+  assert.match(prompt, /does not authorize.*genuinely untested implementation/is);
+});
+
 test("classifier prompt keeps ordinary support actions in scope without granting new authority", () => {
   const prompt = buildClassifierPrompt({
     boundary: "action",

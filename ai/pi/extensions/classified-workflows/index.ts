@@ -146,6 +146,7 @@ import {
 } from "./stale-duplicate.ts"
 import { requiredGitButlerModeExitDisprovesBlock } from "./gitbutler-mode-exit.ts"
 import { exactScaffoldUnwindDisprovesBlock } from "./scaffold-unwind.ts"
+import { additiveTestEditDisprovesMissingTestBlock } from "./test-prerequisite.ts"
 import {
   REMOTE_CAPABILITY_HANDSHAKE_EVENT,
   REMOTE_CAPABILITY_MESSAGE,
@@ -918,7 +919,7 @@ const WorkflowParameters = Type.Object({
 })
 
 export default function classifiedWorkflows(pi: ExtensionAPI): void {
-  registerRuntimeVersion(pi, "classified-workflows", "2026.08.01.151")
+  registerRuntimeVersion(pi, "classified-workflows", "2026.08.01.152")
   const childTokenLimit = workflowChildTokenLimit(
     process.env[WORKFLOW_CHILD_TOKEN_LIMIT_ENV],
   )
@@ -2137,6 +2138,15 @@ export default function classifiedWorkflows(pi: ExtensionAPI): void {
           edit: event.input,
           branch: ctx.sessionManager.getBranch(),
           cwd: ctx.cwd,
+        })
+      )
+        return
+      if (
+        event.toolName === "edit" &&
+        additiveTestEditDisprovesMissingTestBlock({
+          reason: decision.reason,
+          edit: event.input,
+          branch: ctx.sessionManager.getBranch(),
         })
       )
         return
