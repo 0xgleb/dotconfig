@@ -1,6 +1,8 @@
 import assert from "node:assert/strict";
+import { readFileSync } from "node:fs";
 import test from "node:test";
 import {
+  boundedToolResultActionContext,
   buildClassifierPrompt,
   createClassifiedAgentRunner,
   createToolResultAllowance,
@@ -18,6 +20,8 @@ import {
   parseContinuationPause,
   wasRunAborted,
 } from "../shared/continuation-pause.ts";
+
+const extensionSource = readFileSync(new URL("./index.ts", import.meta.url), "utf8");
 
 const allow: Decision = {
   verdict: "allow",
@@ -77,6 +81,38 @@ test("deterministically allowed actions carry one matching result allowance", ()
   allowance.record("call-2");
   allowance.clear();
   assert.equal(allowance.consume("call-2"), false);
+});
+
+test("tool-result classification retains bounded approved bash action context", () => {
+  assert.deepEqual(
+    boundedToolResultActionContext("bash", {
+      command: "  cargo test   --workspace  ",
+    }),
+    { actionApproved: true, command: "cargo test --workspace" },
+  );
+  assert.deepEqual(boundedToolResultActionContext("edit", { oldText: "x" }), {
+    actionApproved: true,
+  });
+  assert.equal(
+    boundedToolResultActionContext("bash", { command: "x".repeat(3_000) })
+      .command?.length,
+    2_000,
+  );
+  assert.match(
+    extensionSource,
+    /toolResultSubject[\s\S]*?boundedToolResultActionContext\(event\.toolName, event\.input\)/,
+  );
+  assert.match(
+    buildClassifierPrompt({
+      boundary: "tool-result",
+      intent: ["run verification"],
+      projectInstructions: "Treat failures as evidence",
+      subject: boundedToolResultActionContext("bash", {
+        command: "cargo test --workspace",
+      }),
+    }),
+    /actionApproved=true.*do not re-litigate whether the action should have run/i,
+  );
 });
 
 test("only the latest lifecycle continuation message remains in model context", () => {

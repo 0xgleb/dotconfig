@@ -58,6 +58,7 @@ import {
   toolResultExecutionEvidence,
 } from "./execution-evidence.ts"
 import {
+  boundedToolResultActionContext,
   buildClassifierPrompt,
   createClassifiedAgentRunner,
   createToolResultAllowance,
@@ -755,6 +756,7 @@ async function executeAgent(
 function toolResultSubject(event: ToolResultEvent): unknown {
   return {
     toolName: event.toolName,
+    ...boundedToolResultActionContext(event.toolName, event.input),
     inputDigest: toolInputDigest(event.toolName, event.input),
     isError: event.isError,
     content: event.content
@@ -865,7 +867,7 @@ const WorkflowParameters = Type.Object({
 })
 
 export default function classifiedWorkflows(pi: ExtensionAPI): void {
-  registerRuntimeVersion(pi, "classified-workflows", "2026.08.01.131")
+  registerRuntimeVersion(pi, "classified-workflows", "2026.08.01.132")
   const childTokenLimit = workflowChildTokenLimit(
     process.env[WORKFLOW_CHILD_TOKEN_LIMIT_ENV],
   )
@@ -2017,7 +2019,6 @@ export default function classifiedWorkflows(pi: ExtensionAPI): void {
       })?.verdict === "allow"
     )
       return
-
     const subject = toolResultSubject(event)
     const decision = await classifyWithActivity(
       {
