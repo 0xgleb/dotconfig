@@ -718,7 +718,6 @@ export async function runWorkflowScript(
       phase,
       log,
       Date: undefined,
-      Math: undefined,
       process: undefined,
       require: undefined,
       fetch: undefined,
@@ -726,6 +725,15 @@ export async function runWorkflowScript(
     },
     { codeGeneration: { strings: false, wasm: false } },
   );
+  const deterministicMath = new vm.Script(
+    `Object.defineProperty(Math, "random", {
+       value: undefined,
+       writable: false,
+       configurable: false
+     });
+     Object.freeze(Math);`,
+  );
+  deterministicMath.runInContext(context, { timeout: 100 });
   const script = new vm.Script(`(async () => { "use strict"; ${code}\n})()`);
   const workflow: Promise<unknown> = script.runInContext(context, { timeout: 1_000 });
   const timer = setTimeout(() => workflowController.abort(new Error("Workflow timed out")), limits.workflowTimeoutMs);

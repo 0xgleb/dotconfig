@@ -668,6 +668,33 @@ test("workflow JavaScript supports review harness phase and log progress hooks",
   assert.deepEqual(progress, ["phase:Review", "log:2 lanes ready", "phase:Verify"]);
 });
 
+test("workflow JavaScript exposes deterministic Math without random", async () => {
+  assert.equal(
+    await runWorkflowScript(
+      "return Math.max(0, Math.min(100, -7 + 120));",
+      limits,
+      dependencies(),
+    ),
+    100,
+  );
+  assert.equal(
+    await runWorkflowScript(
+      'return typeof Math.random;',
+      limits,
+      dependencies(),
+    ),
+    "undefined",
+  );
+  await assert.rejects(
+    runWorkflowScript(
+      'return Math.max.constructor("return process")();',
+      limits,
+      dependencies(),
+    ),
+    /code generation from strings disallowed/i,
+  );
+});
+
 test("workflow JavaScript can fan out and synthesize", async () => {
   const calls: AgentRequest[] = [];
   const result = await runWorkflowScript(
