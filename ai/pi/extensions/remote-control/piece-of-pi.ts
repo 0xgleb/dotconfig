@@ -14,6 +14,7 @@ import * as Effect from "effect/Effect";
 import * as Either from "effect/Either";
 import * as Ref from "effect/Ref";
 
+import { identifiedAgentLabel } from "./agent-identity.ts";
 import {
   agentListHtml,
   agentMatchesSelector,
@@ -789,15 +790,13 @@ const collectTelegramUpdateBurst = (
     }),
   );
 
-const agentLabel = (agent: BridgeAgent): string =>
-  `${agent.label} (${agent.id.slice(0, 8)})`;
-
 const availableAgents = (runtime: PieceOfPiRuntime) =>
   runtime.bridge.listAgents(Date.now());
 
 const questionRelayText = (
   question: BridgeQuestion,
   agent: BridgeAgent,
+  agents: readonly BridgeAgent[],
 ): string => {
   const title = question.header
     ? `❓ ${question.header}`
@@ -808,7 +807,7 @@ const questionRelayText = (
   );
   const body = [
     title,
-    `Agent: ${agentLabel(agent)}`,
+    `Agent: ${identifiedAgentLabel(agent, agents)}`,
     `Question q${question.questionId}`,
     "",
     question.question,
@@ -847,7 +846,7 @@ const relayPendingQuestions = (
               return sendTelegramMessage(
                 runtime,
                 ownerChatId,
-                questionRelayText(question, agent),
+                questionRelayText(question, agent, agents),
               ).pipe(
                 Effect.flatMap((messageId) =>
                   runtime.bridge.linkTelegramQuestion({
@@ -1139,11 +1138,19 @@ const handleQuestionReply = (
     })
     .pipe(
       Effect.flatMap((resolution) =>
-        sendText(
-          runtime,
-          update.message.chatId,
-          `Answered q${resolution.questionId} for Pi agent ${resolution.agentId.slice(0, 8)}.`,
-          update.message.messageId,
+        availableAgents(runtime).pipe(
+          Effect.flatMap((agents) => {
+            const agent = agents.find(({ id }) => id === resolution.agentId);
+            const label = agent
+              ? identifiedAgentLabel(agent, agents)
+              : "the originating Pi agent";
+            return sendText(
+              runtime,
+              update.message.chatId,
+              `Answered q${resolution.questionId} for ${label}.`,
+              update.message.messageId,
+            );
+          }),
         ),
       ),
       Effect.tap(() => Effect.sync(() => emit("question_answered"))),
@@ -1210,7 +1217,7 @@ const handleOwnerCommand = (
         sendText(
           runtime,
           update.message.chatId,
-          `Selected ${agentLabel(agent)}.`,
+          `Selected ${agent.label}.`,
         ),
       ),
       Effect.as(true),

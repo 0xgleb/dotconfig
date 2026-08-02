@@ -13,8 +13,10 @@ import {
 } from "../shared/reload-events.ts"
 import {
   MANAGED_OPERATIONAL_ROLE_RESUMED_EVENT,
+  REGISTRY_IDENTITY_REQUEST_EVENT,
   REGISTRY_INTENT_REQUEST_EVENT,
   type ManagedOperationalRoleResumed,
+  type RegistryIdentityRequest,
   type RegistryIntentRequest,
 } from "../shared/registry-intent-events.ts"
 import {
@@ -108,7 +110,7 @@ const requireText: (label: string, value: string | undefined) => string = (
 }
 
 const registryExtension: (pi: ExtensionAPI) => void = (pi) => {
-  registerRuntimeVersion(pi, "agent-registry", "2026.08.01.20")
+  registerRuntimeVersion(pi, "agent-registry", "2026.08.01.21")
   const runtimeVersions = (): Readonly<Record<string, string>> => {
     const versions: Record<string, string> = {
       "config-generation": MANAGED_CONFIG_GENERATION,
@@ -208,6 +210,25 @@ const registryExtension: (pi: ExtensionAPI) => void = (pi) => {
           }`,
         )
       }
+    },
+  )
+
+  pi.events.on(
+    REGISTRY_IDENTITY_REQUEST_EVENT,
+    (payload: RegistryIdentityRequest) => {
+      if (
+        !latestSnapshot ||
+        typeof payload !== "object" ||
+        payload === null ||
+        typeof payload.agentId !== "string" ||
+        typeof payload.report !== "function"
+      )
+        return
+      for (const lease of latestSnapshot.leases.filter(
+        (lease) =>
+          lease.owner.id === payload.agentId && lease.status === "active",
+      ))
+        payload.report({ role: lease.role, mode: lease.mode })
     },
   )
 

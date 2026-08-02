@@ -18,7 +18,13 @@ import {
   remoteCapabilityMessage,
   type RemoteCapabilityHandshake,
 } from "../shared/remote-capability.ts";
+import {
+  REGISTRY_IDENTITY_REQUEST_EVENT,
+  type RegistryIdentityRequest,
+  type RegistryRoleIdentity,
+} from "../shared/registry-intent-events.ts";
 import { registerRuntimeVersion } from "../shared/runtime-version.ts";
+import { agentDisplayLabel } from "./agent-identity.ts";
 import { remoteBridgeDatabasePath } from "./paths.ts";
 import { remoteKanbanResponse } from "./remote-commands.ts";
 import {
@@ -51,7 +57,7 @@ const safeError = (error: RemoteBridgeError): string =>
   `${error.code}: ${error.message}`.slice(0, 160);
 
 export default function remoteControl(pi: ExtensionAPI): void {
-  registerRuntimeVersion(pi, "remote-control", "2026.08.01.19");
+  registerRuntimeVersion(pi, "remote-control", "2026.08.01.20");
   const store = makeRemoteBridgeStore(
     remoteBridgeDatabasePath(process.env.XDG_STATE_HOME, homedir()),
   );
@@ -186,6 +192,19 @@ export default function remoteControl(pi: ExtensionAPI): void {
     if (Either.isLeft(sent)) await finishFailure(turn, "model_error");
   };
 
+  const bridgeAgentLabel = (ctx: ExtensionContext): string => {
+    const roles: RegistryRoleIdentity[] = [];
+    const request: RegistryIdentityRequest = {
+      agentId: ctx.sessionManager.getSessionId(),
+      report: (identity) => roles.push(identity),
+    };
+    pi.events.emit(REGISTRY_IDENTITY_REQUEST_EVENT, request);
+    return agentDisplayLabel(
+      pi.getSessionName() ?? ctx.cwd.split("/").at(-1) ?? "Pi agent",
+      roles,
+    );
+  };
+
   const sync = async (ctx: ExtensionContext): Promise<void> => {
     if (syncing) return;
     syncing = true;
@@ -195,7 +214,7 @@ export default function remoteControl(pi: ExtensionAPI): void {
       const heartbeat = await run(
         store.heartbeatAgent({
           id: ctx.sessionManager.getSessionId(),
-          label: pi.getSessionName() ?? ctx.cwd.split("/").at(-1) ?? "Pi agent",
+          label: bridgeAgentLabel(ctx),
           cwd: ctx.cwd,
           accepting: active === undefined,
           now,
