@@ -904,7 +904,7 @@ const WorkflowParameters = Type.Object({
 })
 
 export default function classifiedWorkflows(pi: ExtensionAPI): void {
-  registerRuntimeVersion(pi, "classified-workflows", "2026.08.01.143")
+  registerRuntimeVersion(pi, "classified-workflows", "2026.08.01.144")
   const childTokenLimit = workflowChildTokenLimit(
     process.env[WORKFLOW_CHILD_TOKEN_LIMIT_ENV],
   )
@@ -2442,10 +2442,12 @@ export default function classifiedWorkflows(pi: ExtensionAPI): void {
             ctx.sessionManager.getBranch(),
             legacyUnmarkedCancellation.id,
           )
+        // Current managed reloads carry the source-fixed marker. An exact
+        // unmarked abort can therefore be migrated only from an older runtime;
+        // explicit workflow cancellation has a different reason, and a manual
+        // foreground abort persists the pause checked here.
         const legacyManagedReloadCancellation =
-          legacyUnmarkedCancellation &&
-          !manualPause &&
-          legacyReloadCompletionObserved
+          legacyUnmarkedCancellation && !manualPause
             ? legacyUnmarkedCancellation
             : undefined
         const managedReloadCancellation =
