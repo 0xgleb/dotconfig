@@ -1,6 +1,6 @@
 # 05. Launch dedicated operational Pi agents through typed workspace profiles
 
-- Status: Proposed
+- Status: Superseded by [ADR 06](06-claude-harness-review-executors.md)
 - Date: 2026-08-01
 - Issue: None (personal orchestration architecture)
 
