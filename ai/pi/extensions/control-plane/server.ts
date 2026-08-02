@@ -8,6 +8,10 @@ import { readFile } from "node:fs/promises"
 import type { AddressInfo } from "node:net"
 import { isAbsolute, join } from "node:path"
 import { Data, Effect } from "effect"
+import {
+  decodeHarnessReviewHandoff,
+  harnessHandoffMatchesAttempt,
+} from "./harness-protocol.ts"
 import { decodeJobSpec, JobRuntimeError } from "./job-runtime.ts"
 import {
   JobStoreError,
@@ -260,6 +264,48 @@ const handleComplete = (
   }
   return Effect.gen(function* () {
     const input = yield* Effect.flatMap(readBody(request), parseJson)
+    const current = yield* store.get(id)
+    if (current.spec.kind === "harness.review") {
+      if (
+        !isRecord(input) ||
+        !exactKeys(input, ["leaseToken", "handoff"]) ||
+        typeof input.leaseToken !== "string"
+      ) {
+        return yield* Effect.fail(
+          serverError("request_failed", "typed harness handoff is required"),
+        )
+      }
+      const handoff = yield* Effect.mapError(
+        decodeHarnessReviewHandoff(input.handoff),
+        () => serverError("request_failed", "harness handoff is invalid"),
+      )
+      if (
+        !harnessHandoffMatchesAttempt(
+          handoff,
+          current.spec.payload,
+          current.id,
+          current.attempt,
+        )
+      ) {
+        return yield* Effect.fail(
+          serverError("request_failed", "harness handoff does not match the live attempt"),
+        )
+      }
+      if (handoff.status === "blocked" || handoff.status === "failed") {
+        return yield* Effect.fail(
+          serverError("request_failed", "unsuccessful harness handoff cannot complete a job"),
+        )
+      }
+      const job = yield* store.complete(
+        id,
+        input.leaseToken,
+        Date.now(),
+        `harness ${handoff.status}: ${handoff.assessment}`,
+        { kind: "harness.review", handoff },
+      )
+      sendJson(response, 200, { job })
+      return
+    }
     if (
       !isRecord(input) ||
       !exactKeys(input, ["leaseToken", "summary"]) ||

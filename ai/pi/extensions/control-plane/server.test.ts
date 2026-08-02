@@ -38,6 +38,26 @@ const enqueueBody = {
   idempotencyKey: "review-duty:st0x-review",
 }
 
+const harnessHeadSha = "a".repeat(40)
+const harnessEnqueueBody = {
+  kind: "harness.review",
+  payload: {
+    lane: "cursor-subscription",
+    task: "review-probe",
+    model: "grok-4.5",
+    profile: "personal-review",
+    repository: "0xgleb/example",
+    pullRequest: 7,
+    kind: "own",
+    inputHeadSha: harnessHeadSha,
+    repositoryRoot: "/Users/example/code/0xgleb/example",
+    isolation: "read-only",
+  },
+  runAt: 0,
+  maxAttempts: 2,
+  idempotencyKey: "harness:personal:example:7:head",
+}
+
 test("the server refuses non-loopback bind addresses", async () => {
   const result = await Effect.runPromise(
     Effect.either(
@@ -204,6 +224,96 @@ test("workers claim due jobs with server-issued leases and stale completion is f
     })
     assert.equal(complete.status, 200)
     assert.equal(((await complete.json()) as { job: { state: string } }).job.state, "succeeded")
+  }))
+
+test("harness jobs accept only a matching bounded typed handoff", async () =>
+  withServer(async (origin) => {
+    const enqueued = await fetch(`${origin}/v1/jobs`, {
+      method: "POST",
+      headers: { "content-type": "application/json" },
+      body: JSON.stringify(harnessEnqueueBody),
+    })
+    const created = (await enqueued.json()) as { job: { id: string } }
+    const claimedResponse = await fetch(`${origin}/v1/worker/claim`, {
+      method: "POST",
+      headers: { "content-type": "application/json" },
+      body: JSON.stringify({ workerId: "harness-supervisor", ttlMs: 90_000 }),
+    })
+    const claimed = (await claimedResponse.json()) as {
+      job: { leaseToken: string; attempt: number }
+    }
+    const endpoint = `${origin}/v1/jobs/${created.job.id}/complete`
+
+    const legacySummary = await fetch(endpoint, {
+      method: "POST",
+      headers: { "content-type": "application/json" },
+      body: JSON.stringify({ leaseToken: claimed.job.leaseToken, summary: "untyped" }),
+    })
+    assert.equal(legacySummary.status, 400)
+
+    const mismatched = await fetch(endpoint, {
+      method: "POST",
+      headers: { "content-type": "application/json" },
+      body: JSON.stringify({
+        leaseToken: claimed.job.leaseToken,
+        handoff: {
+          protocolVersion: 1,
+          jobId: created.job.id,
+          attempt: claimed.job.attempt,
+          lane: "cursor-subscription",
+          repository: "0xgleb/example",
+          pullRequest: 7,
+          inputHeadSha: "b".repeat(40),
+          outputHeadSha: harnessHeadSha,
+          status: "clean",
+          assessment: "No verified findings.",
+          evidence: ["check:review-core"],
+          verifier: "fable-clean",
+          executorProvenance: "subscription-verified",
+        },
+      }),
+    })
+    assert.equal(mismatched.status, 400)
+
+    const complete = await fetch(endpoint, {
+      method: "POST",
+      headers: { "content-type": "application/json" },
+      body: JSON.stringify({
+        leaseToken: claimed.job.leaseToken,
+        handoff: {
+          protocolVersion: 1,
+          jobId: created.job.id,
+          attempt: claimed.job.attempt,
+          lane: "cursor-subscription",
+          repository: "0xgleb/example",
+          pullRequest: 7,
+          inputHeadSha: harnessHeadSha,
+          outputHeadSha: harnessHeadSha,
+          status: "clean",
+          assessment: "No verified findings.",
+          evidence: ["check:review-core"],
+          verifier: "fable-clean",
+          executorProvenance: "subscription-verified",
+        },
+      }),
+    })
+    assert.equal(complete.status, 200)
+    const completed = (await complete.json()) as {
+      job: {
+        state: string
+        result?: { kind: string; handoff: { jobId: string } }
+      }
+    }
+    assert.equal(completed.job.state, "succeeded")
+    assert.equal(completed.job.result?.kind, "harness.review")
+    assert.equal(completed.job.result?.handoff.jobId, created.job.id)
+
+    const persisted = await fetch(`${origin}/v1/jobs`)
+    assert.equal(persisted.status, 200)
+    const persistedJobs = (await persisted.json()) as {
+      jobs: Array<{ result?: { handoff: { jobId: string } } }>
+    }
+    assert.equal(persistedJobs.jobs[0]?.result?.handoff.jobId, created.job.id)
   }))
 
 test("worker boundaries reject unknown fields and client-supplied lease tokens", async () =>

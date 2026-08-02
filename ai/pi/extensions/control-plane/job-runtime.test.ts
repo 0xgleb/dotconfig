@@ -24,6 +24,25 @@ const reviewSpec: RegisteredJobSpec = {
   idempotencyKey: "review-duty:st0x-review",
 }
 
+const harnessSpec: RegisteredJobSpec = {
+  kind: "harness.review",
+  payload: {
+    lane: "cursor-subscription",
+    task: "review-probe",
+    model: "composer-2.5",
+    profile: "personal-review",
+    repository: "0xgleb/example",
+    pullRequest: 7,
+    kind: "own",
+    inputHeadSha: "a".repeat(40),
+    repositoryRoot: "/Users/example/code/0xgleb/example",
+    isolation: "read-only",
+  },
+  runAt: 2_000,
+  maxAttempts: 2,
+  idempotencyKey: "harness:personal:example:7:head",
+}
+
 const run = <A>(effect: Effect.Effect<A, unknown>): A => Effect.runSync(effect)
 
 const errorCode = <A>(effect: Effect.Effect<A, unknown>): string | undefined => {
@@ -42,11 +61,12 @@ const leasedJob = (): Job =>
   run(claimJob(readyJob(), "worker-a", "lease-a", 1_000, 90_000))
 
 test("the untrusted enqueue boundary accepts only registered bounded job payloads", () => {
-  assert.deepEqual(REGISTERED_JOB_KINDS, ["review-duty.scan"])
-  assert.deepEqual(
-    run(decodeJobSpec(reviewSpec)),
-    reviewSpec,
-  )
+  assert.deepEqual(REGISTERED_JOB_KINDS, [
+    "review-duty.scan",
+    "harness.review",
+  ])
+  assert.deepEqual(run(decodeJobSpec(reviewSpec)), reviewSpec)
+  assert.deepEqual(run(decodeJobSpec(harnessSpec)), harnessSpec)
   assert.equal(
     errorCode(
       decodeJobSpec({
