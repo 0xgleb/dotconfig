@@ -110,9 +110,10 @@ test("in-place replacement preserves the existing pane and uses fresh clanker", 
     "replace-dedupe",
   );
 
-  assert.deepEqual(args.slice(0, 6), [
+  assert.deepEqual(args.slice(0, 7), [
     "run",
     "--in-place",
+    "--close-replaced-pane",
     "--name",
     "claude-personal-review",
     "--cwd",

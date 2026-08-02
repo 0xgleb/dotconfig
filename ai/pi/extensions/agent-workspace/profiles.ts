@@ -227,6 +227,7 @@ export const claudeInPlaceLaunchArguments = (
 ): readonly string[] => [
   "run",
   "--in-place",
+  "--close-replaced-pane",
   "--name",
   profile.paneName,
   "--cwd",

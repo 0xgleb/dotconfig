@@ -49,11 +49,21 @@ const PROFILE_NAMES = [
   "personal-review",
 ] as const;
 
-const tabNames = (stdout: string): readonly string[] =>
-  stdout
-    .split(/\r?\n/u)
-    .map((line) => line.trim())
-    .filter(Boolean);
+export const paneNames = (stdout: string): readonly string[] => {
+  const parsed = Effect.runSync(
+    Effect.try({
+      try: () => JSON.parse(stdout) as unknown,
+      catch: () => undefined,
+    }),
+  );
+  if (!Array.isArray(parsed)) return [];
+  return parsed.flatMap((pane) => {
+    if (typeof pane !== "object" || pane === null) return [];
+    const record = pane as Readonly<Record<string, unknown>>;
+    const name = record.pane_name ?? record.title ?? record.name;
+    return typeof name === "string" && name.trim() ? [name.trim()] : [];
+  });
+};
 
 const profileForSession = (
   sessionName: string | undefined,
@@ -102,7 +112,7 @@ const parseDispatch = (
 };
 
 export default function agentWorkspace(pi: ExtensionAPI): void {
-  registerRuntimeVersion(pi, "agent-workspace", "2026.08.01.8");
+  registerRuntimeVersion(pi, "agent-workspace", "2026.08.01.9");
 
   pi.on("session_start", async (_event, ctx) => {
     const profile = profileForSession(pi.getSessionName());
@@ -186,7 +196,7 @@ export default function agentWorkspace(pi: ExtensionAPI): void {
 
         const queried = yield* Effect.tryPromise({
           try: () =>
-            pi.exec("zellij", ["action", "query-pane-names"], {
+            pi.exec("zellij", ["action", "list-panes", "--json"], {
               timeout: QUERY_TIMEOUT_MS,
             }),
           catch: () =>
@@ -204,7 +214,7 @@ export default function agentWorkspace(pi: ExtensionAPI): void {
           );
         }
 
-        const existing = tabNames(queried.stdout).includes(profile.paneName);
+        const existing = paneNames(queried.stdout).includes(profile.paneName);
         if (params.action === "status") {
           return { status: existing ? "running" : "stopped" } as const;
         }

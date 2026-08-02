@@ -12,7 +12,9 @@ test("dedicated workspace launch is profile-bound and shell-free", () => {
   );
   assert.match(source, /claudeWorkspaceLaunchArguments/);
   assert.doesNotMatch(source, /pi\.exec\("(?:bash|sh|zsh)"/);
-  assert.match(source, /query-pane-names/);
+  assert.match(source, /list-panes/);
+  assert.match(source, /--json/);
+  assert.match(source, /record\.pane_name \?\? record\.title \?\? record\.name/);
   assert.match(source, /existing \? "running" : "stopped"/);
 });
 
@@ -46,6 +48,10 @@ test("in-place replacement is matching-session only and never creates a pane or 
   assert.match(source, /params\.action === "replace"/);
   assert.match(source, /pi\.getSessionName\(\) !== profile\.sessionName/);
   assert.match(source, /claudeInPlaceLaunchArguments/);
+  assert.match(
+    readFileSync(new URL("./profiles.ts", import.meta.url), "utf8"),
+    /--in-place[\s\S]*?--close-replaced-pane[\s\S]*?jf[\s\S]*?clanker[\s\S]*?--claude[\s\S]*?--new/,
+  );
   assert.match(source, /status: "replaced"/);
 });
 
