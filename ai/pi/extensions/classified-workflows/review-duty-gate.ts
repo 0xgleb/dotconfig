@@ -284,6 +284,7 @@ export const retryFailedReviewDuty = (
   state: ReviewDutyState,
   latestWorkflowFailed: boolean,
   workflowRunning: boolean,
+  latestWorkflowCancelledByManagedReload = false,
 ): ReviewDutyTransition => {
   if (state.phase !== "awaiting_report") {
     return {
@@ -297,11 +298,17 @@ export const retryFailedReviewDuty = (
       error: "the review-duty workflow is still running",
     };
   }
-  if (!latestWorkflowFailed) {
+  const recoverableManagedReloadCancellation =
+    latestWorkflowCancelledByManagedReload &&
+    state.kind === "auto" &&
+    state.continuation === "fix-re-review";
+  if (!latestWorkflowFailed && !recoverableManagedReloadCancellation) {
     return {
       ok: false,
       error:
-        "the latest workflow is not a proven terminal failure; a persisted and relayed verdict question is required",
+        state.kind === "auto"
+          ? "the latest automatic workflow is not a proven terminal failure or managed-reload-cancelled fix continuation"
+          : "the latest workflow is not a proven terminal failure; a persisted and relayed verdict question is required",
     };
   }
   const { completedAt: _completedAt, ...active } = state;

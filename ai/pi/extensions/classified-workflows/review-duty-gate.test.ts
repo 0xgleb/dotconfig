@@ -277,6 +277,52 @@ test("failed workflow recovery resumes only the same gated job", () => {
   assert.match(retryHandler, /retryFailedReviewDuty/);
 });
 
+test("managed reload cancellation recovers only an auto same-PR fix continuation", () => {
+  const automatic = beginReviewDuty(
+    emptyReviewDutyState,
+    { repository: "0xgleb/dotconfig", pullRequest: 42, kind: "auto" },
+    10,
+  );
+  assert.equal(automatic.ok, true);
+  if (!automatic.ok) return;
+  const continued = {
+    ...automatic.state,
+    continuation: "fix-re-review" as const,
+  };
+  const awaiting = startReviewWorkflow(continued, 20);
+  assert.deepEqual(retryFailedReviewDuty(awaiting, false, false, true), {
+    ok: true,
+    state: continued,
+  });
+  assert.match(
+    retryFailedReviewDuty(startReviewWorkflow(automatic.state, 20), false, false, true)
+      .error ?? "",
+    /not a proven terminal failure/i,
+  );
+  assert.match(
+    retryFailedReviewDuty(
+      startReviewWorkflow(
+        {
+          phase: "active",
+          ...job,
+          startedAt: 10,
+          continuation: "fix-re-review",
+        },
+        20,
+      ),
+      false,
+      false,
+      true,
+    ).error ?? "",
+    /not a proven terminal failure/i,
+  );
+  assert.match(extensionSource, /latestManagedReloadCancellationAfter/);
+  assert.match(extensionSource, /latestLegacyUnmarkedCancellationAfter/);
+  assert.match(extensionSource, /managedReloadCompletionObservedAfterAudit/);
+  assert.match(extensionSource, /!latestContinuationPause/);
+  assert.match(extensionSource, /MANAGED_RELOAD_WORKFLOW_CANCELLATION/);
+});
+
 test("review reporting waits boundedly for asynchronous Telegram linkage", () => {
   assert.match(extensionSource, /const REVIEW_DUTY_RELAY_ATTEMPTS = 12/);
   assert.match(

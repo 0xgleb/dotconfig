@@ -2,6 +2,8 @@ import type { AgentRequest, AgentResult, WorkflowLimits } from "./core.ts";
 
 export const WORKFLOW_AUDIT_ENTRY = "classified-workflows.audit";
 export const MAX_RETAINED_CHILD_OUTPUT_CHARACTERS = 2_000;
+export const MANAGED_RELOAD_WORKFLOW_CANCELLATION =
+  "Workflow cancelled for managed Pi reload";
 
 export interface ChildAudit {
   readonly index: number;
@@ -113,6 +115,28 @@ export const latestCompletedWorkflowAfter = (
 ): WorkflowAudit | undefined => {
   const latest = latestWorkflowAfter(state, startedAt);
   return latest?.status === "completed" ? latest : undefined;
+};
+
+export const latestManagedReloadCancellationAfter = (
+  state: WorkflowAuditState,
+  startedAt: number,
+): WorkflowAudit | undefined => {
+  const latest = latestWorkflowAfter(state, startedAt);
+  return latest?.status === "cancelled" &&
+    latest.outcome === MANAGED_RELOAD_WORKFLOW_CANCELLATION
+    ? latest
+    : undefined;
+};
+
+export const latestLegacyUnmarkedCancellationAfter = (
+  state: WorkflowAuditState,
+  startedAt: number,
+): WorkflowAudit | undefined => {
+  const latest = latestWorkflowAfter(state, startedAt);
+  return latest?.status === "cancelled" &&
+    latest.outcome === "This operation was aborted"
+    ? latest
+    : undefined;
 };
 
 export const terminalWorkflowFailureDisprovesOwnershipBlock = (

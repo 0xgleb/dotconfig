@@ -80,7 +80,7 @@ test("managed reload preemption persists workflow state without becoming a manua
   );
   assert.match(
     extensionSource,
-    /AUTO_RELOAD_PREEMPT_EVENT[\s\S]*?appendEntry\(WORKFLOW_AUDIT_ENTRY[\s\S]*?workflow\.controller\.abort\(\)[\s\S]*?controller\.abort\(\)/,
+    /AUTO_RELOAD_PREEMPT_EVENT[\s\S]*?appendEntry\(WORKFLOW_AUDIT_ENTRY[\s\S]*?workflow\.controller\.abort\([\s\S]*?MANAGED_RELOAD_WORKFLOW_CANCELLATION[\s\S]*?controller\.abort\(new Error\(MANAGED_RELOAD_WORKFLOW_CANCELLATION\)\)/,
   );
   assert.match(
     extensionSource,

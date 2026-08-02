@@ -159,6 +159,9 @@ import {
   emptyWorkflowAuditState,
   latestCompletedWorkflowAfter,
   latestFailedWorkflowAfter,
+  latestLegacyUnmarkedCancellationAfter,
+  latestManagedReloadCancellationAfter,
+  MANAGED_RELOAD_WORKFLOW_CANCELLATION,
   nextWorkflowSequence,
   restoreWorkflowAudits,
   terminalWorkflowFailureDisprovesOwnershipBlock,
@@ -415,6 +418,24 @@ function messageText(message: unknown): string | undefined {
 
 function isRecord(value: unknown): value is Record<string, unknown> {
   return typeof value === "object" && value !== null && !Array.isArray(value)
+}
+
+function managedReloadCompletionObservedAfterAudit(
+  entries: readonly unknown[],
+  auditId: string,
+): boolean {
+  const auditIndex = entries.findLastIndex((entry) =>
+    restoreWorkflowAudits([entry]).workflows.some(({ id }) => id === auditId),
+  )
+  if (auditIndex < 0) return false
+  return entries.slice(auditIndex + 1).some((entry) => {
+    if (!isRecord(entry) || entry.type !== "message" || !isRecord(entry.message))
+      return false
+    return (
+      entry.message.role === "custom" &&
+      entry.message.customType === "auto-reload.completed"
+    )
+  })
 }
 
 function visibleIntent(
@@ -883,7 +904,7 @@ const WorkflowParameters = Type.Object({
 })
 
 export default function classifiedWorkflows(pi: ExtensionAPI): void {
-  registerRuntimeVersion(pi, "classified-workflows", "2026.08.01.140")
+  registerRuntimeVersion(pi, "classified-workflows", "2026.08.01.141")
   const childTokenLimit = workflowChildTokenLimit(
     process.env[WORKFLOW_CHILD_TOKEN_LIMIT_ENV],
   )
@@ -1816,10 +1837,13 @@ export default function classifiedWorkflows(pi: ExtensionAPI): void {
       pi.appendEntry(ARTIFACT_PROVENANCE_ENTRY, artifactProvenance)
       pi.appendEntry(WORKFLOW_AUDIT_ENTRY, workflowAudits)
       for (const workflow of backgroundWorkflows.values()) {
-        if (workflow.status === "running") workflow.controller.abort()
+        if (workflow.status === "running")
+          workflow.controller.abort(
+            new Error(MANAGED_RELOAD_WORKFLOW_CANCELLATION),
+          )
       }
       for (const controller of activeForegroundWorkflowControllers) {
-        controller.abort()
+        controller.abort(new Error(MANAGED_RELOAD_WORKFLOW_CANCELLATION))
       }
     },
   )
@@ -2405,10 +2429,26 @@ export default function classifiedWorkflows(pi: ExtensionAPI): void {
           workflowAudits,
           completedAt,
         )
+        const markedManagedReloadCancellation =
+          latestManagedReloadCancellationAfter(workflowAudits, completedAt)
+        const legacyUnmarkedCancellation =
+          latestLegacyUnmarkedCancellationAfter(workflowAudits, completedAt)
+        const legacyManagedReloadCancellation =
+          legacyUnmarkedCancellation &&
+          !latestContinuationPause(ctx.sessionManager.getBranch()) &&
+          managedReloadCompletionObservedAfterAudit(
+            ctx.sessionManager.getBranch(),
+            legacyUnmarkedCancellation.id,
+          )
+            ? legacyUnmarkedCancellation
+            : undefined
+        const managedReloadCancellation =
+          markedManagedReloadCancellation ?? legacyManagedReloadCancellation
         const transition = retryFailedReviewDuty(
           reviewDutyState,
           failedWorkflow !== undefined,
           workflowRunning,
+          managedReloadCancellation !== undefined,
         )
         if (!transition.ok) {
           return {
@@ -2419,20 +2459,23 @@ export default function classifiedWorkflows(pi: ExtensionAPI): void {
         }
         reviewDutyState = transition.state
         pi.appendEntry(REVIEW_DUTY_STATE_ENTRY, reviewDutyState)
+        const recoveredWorkflow = failedWorkflow ?? managedReloadCancellation
+        const partialChildren =
+          recoveredWorkflow?.children.filter(
+            (child) => child.outputCharacters > 0,
+          ) ?? []
         return {
           content: [
             {
               type: "text" as const,
-              text: `Recovered failed workflow ${failedWorkflow?.id ?? "unknown"} for ${reviewDutyState.repository}#${reviewDutyState.pullRequest}; preserved ${failedWorkflow?.children.filter((child) => child.outputCharacters > 0).length ?? 0} partial child result reference(s) in the workflow audit for final consolidated reporting. Retry only this same review without creating a recovery question`,
+              text: `Recovered ${managedReloadCancellation ? "managed-reload-cancelled" : "failed"} workflow ${recoveredWorkflow?.id ?? "unknown"} for ${reviewDutyState.repository}#${reviewDutyState.pullRequest}; preserved ${partialChildren.length} partial child result reference(s) in the workflow audit for final consolidated reporting. Retry only this same review without creating a recovery question`,
             },
           ],
           details: {
             outcome: "retry-failed" as const,
             state: reviewDutyState,
-            recoveredAuditId: failedWorkflow?.id,
-            partialChildren: failedWorkflow?.children
-              .filter((child) => child.outputCharacters > 0)
-              .map((child) => ({
+            recoveredAuditId: recoveredWorkflow?.id,
+            partialChildren: partialChildren.map((child) => ({
                 index: child.index,
                 status: child.status,
                 outputCharacters: child.outputCharacters,

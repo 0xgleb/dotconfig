@@ -3,6 +3,7 @@ import { readFileSync } from "node:fs";
 import test from "node:test";
 import type { AgentResult, WorkflowLimits } from "./core.ts";
 import {
+  MANAGED_RELOAD_WORKFLOW_CANCELLATION,
   MAX_RETAINED_CHILD_OUTPUT_CHARACTERS,
   WORKFLOW_AUDIT_ENTRY,
   appendWorkflowAudit,
@@ -10,6 +11,8 @@ import {
   emptyWorkflowAuditState,
   latestCompletedWorkflowAfter,
   latestFailedWorkflowAfter,
+  latestLegacyUnmarkedCancellationAfter,
+  latestManagedReloadCancellationAfter,
   nextWorkflowSequence,
   restoreWorkflowAudits,
   terminalWorkflowFailureDisprovesOwnershipBlock,
@@ -302,6 +305,57 @@ test("same-job recovery selects only the latest failed audit and preserves parti
       status === "completed" ? "wf-30" : undefined,
     );
   }
+});
+
+test("managed reload cancellation is distinct from a manual cancellation", () => {
+  const cancelled = {
+    id: "wf-32",
+    label: "same PR continuation",
+    status: "cancelled" as const,
+    startedAt: 40,
+    finishedAt: 41,
+    limits,
+    children: [],
+    outcome: MANAGED_RELOAD_WORKFLOW_CANCELLATION,
+  };
+  assert.equal(
+    latestManagedReloadCancellationAfter(
+      appendWorkflowAudit(emptyWorkflowAuditState, cancelled),
+      40,
+    )?.id,
+    "wf-32",
+  );
+  assert.equal(
+    latestManagedReloadCancellationAfter(
+      appendWorkflowAudit(emptyWorkflowAuditState, {
+        ...cancelled,
+        outcome: "Cancelled by user",
+      }),
+      40,
+    ),
+    undefined,
+  );
+  assert.equal(
+    latestLegacyUnmarkedCancellationAfter(
+      appendWorkflowAudit(emptyWorkflowAuditState, {
+        ...cancelled,
+        outcome: "This operation was aborted",
+      }),
+      40,
+    )?.id,
+    "wf-32",
+  );
+  assert.equal(
+    latestLegacyUnmarkedCancellationAfter(
+      appendWorkflowAudit(emptyWorkflowAuditState, {
+        ...cancelled,
+        outcome: "Cancelled by user",
+      }),
+      40,
+    ),
+    undefined,
+  );
+  assert.match(extensionSource, /controller\.abort\(new Error\(MANAGED_RELOAD_WORKFLOW_CANCELLATION\)\)/);
 });
 
 test("completed child work retains ownership", () => {
