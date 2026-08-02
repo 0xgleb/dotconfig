@@ -14,6 +14,7 @@ import {
   JobRuntimeError,
   recoverExpiredJob,
   type Job,
+  type RegisteredJobResult,
   type RegisteredJobSpec,
 } from "./job-runtime.ts"
 
@@ -60,6 +61,7 @@ export interface SqliteJobStore {
     leaseToken: string,
     now: number,
     summary: string,
+    result?: RegisteredJobResult,
   ) => Effect.Effect<Job, JobStoreError | JobRuntimeError>
   readonly fail: (
     id: string,
@@ -316,10 +318,14 @@ const makeStore = (database: DatabaseSync): SqliteJobStore => {
     leaseToken,
     now,
     summary,
+    result,
   ) =>
     inTransaction(
       Effect.flatMap(get(id), (job) =>
-        Effect.flatMap(completeJob(job, leaseToken, now, summary), persist),
+        Effect.flatMap(
+          completeJob(job, leaseToken, now, summary, result),
+          persist,
+        ),
       ),
     )
 

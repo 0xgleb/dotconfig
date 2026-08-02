@@ -1,12 +1,20 @@
 import { Data, Effect } from "effect"
+import {
+  decodeHarnessReviewHandoff,
+  decodeHarnessReviewPayload,
+  harnessHandoffMatchesAttempt,
+  type HarnessReviewHandoff,
+  type HarnessReviewPayload,
+} from "./harness-protocol.ts"
+import {
+  REVIEW_DUTY_PROFILES,
+  type ReviewDutyProfile,
+} from "./review-duty-profile.ts"
 
-export const REVIEW_DUTY_PROFILES = [
-  "st0x-review",
-  "dataclique-review",
-  "personal-review",
-] as const
-
-export type ReviewDutyProfile = (typeof REVIEW_DUTY_PROFILES)[number]
+export {
+  REVIEW_DUTY_PROFILES,
+  type ReviewDutyProfile,
+} from "./review-duty-profile.ts"
 
 interface JobSchedule {
   readonly runAt: number
@@ -20,6 +28,7 @@ interface JobSchedule {
 
 export interface RegisteredJobPayloads {
   readonly "review-duty.scan": { readonly profile: ReviewDutyProfile }
+  readonly "harness.review": HarnessReviewPayload
 }
 
 export type RegisteredJobKind = keyof RegisteredJobPayloads
@@ -35,6 +44,13 @@ export type ReviewDutyScanSpec = Extract<
   RegisteredJobSpec,
   { readonly kind: "review-duty.scan" }
 >
+
+export interface HarnessReviewResult {
+  readonly kind: "harness.review"
+  readonly handoff: HarnessReviewHandoff
+}
+
+export type RegisteredJobResult = HarnessReviewResult
 
 interface JobBase {
   readonly id: string
@@ -57,6 +73,7 @@ export type Job =
       readonly state: "succeeded" | "failed" | "cancelled"
       readonly finishedAt: number
       readonly summary?: string
+      readonly result?: RegisteredJobResult
     })
 
 export class JobRuntimeError extends Data.TaggedError("JobRuntimeError")<{
@@ -135,6 +152,10 @@ const REGISTERED_JOB_PAYLOAD_DECODERS: {
     REVIEW_DUTY_PROFILES.includes(value.profile as ReviewDutyProfile)
       ? Effect.succeed({ profile: value.profile as ReviewDutyProfile })
       : invalid("review-duty.scan requires a registered profile"),
+  "harness.review": (value) =>
+    Effect.mapError(decodeHarnessReviewPayload(value), () =>
+      error("invalid_input", "harness.review payload is invalid"),
+    ),
 }
 
 export const REGISTERED_JOB_KINDS = Object.freeze(
@@ -233,7 +254,7 @@ export const decodeStoredJob = (
     state === "leased"
       ? ["workerId", "leaseToken", "leaseUntil", "cancelRequestedAt"]
       : state === "succeeded" || state === "failed" || state === "cancelled"
-        ? ["finishedAt", "summary"]
+        ? ["finishedAt", "summary", "result"]
         : []
   if (!hasOnlyKeys(value, [...baseKeys, ...stateKeys]))
     return invalid("stored job contains unknown fields")
@@ -315,12 +336,44 @@ export const decodeStoredJob = (
       ) {
         return invalid("stored terminal job fields are malformed")
       }
-      return Effect.succeed({
+      const terminal = {
         ...base,
         state,
         finishedAt: value.finishedAt,
         ...(value.summary !== undefined ? { summary: value.summary } : {}),
-      })
+      }
+      if (
+        spec.kind === "harness.review" &&
+        (state === "succeeded" || (state === "cancelled" && base.attempt > 0))
+      ) {
+        if (
+          !isRecord(value.result) ||
+          !hasOnlyKeys(value.result, ["kind", "handoff"]) ||
+          value.result.kind !== "harness.review"
+        ) {
+          return invalid("successful harness job requires a typed result")
+        }
+        return Effect.flatMap(
+          Effect.mapError(decodeHarnessReviewHandoff(value.result.handoff), () =>
+            error("invalid_input", "stored harness result is malformed"),
+          ),
+          (handoff) =>
+            harnessHandoffMatchesAttempt(
+              handoff,
+              spec.payload,
+              base.id,
+              base.attempt,
+            )
+              ? Effect.succeed({
+                  ...terminal,
+                  result: { kind: "harness.review" as const, handoff },
+                })
+              : invalid("stored harness result does not match its job"),
+        )
+      }
+      if (value.result !== undefined)
+        return invalid("stored job result is not valid for this terminal state")
+      return Effect.succeed(terminal)
     }
     return invalid("stored job state is inconsistent")
   })
@@ -399,21 +452,42 @@ export const completeJob = (
   leaseToken: string,
   now: number,
   summary: string,
+  result?: RegisteredJobResult,
 ): Effect.Effect<Job, JobRuntimeError> => {
   if (!isTimestamp(now)) return invalid("now must be a safe timestamp")
   if (now < job.updatedAt)
     return invalid("now cannot precede the current job state")
   if (!isSafeSummary(summary)) return invalid("summary must be bounded safe text")
-  return Effect.map(currentLease(job, leaseToken, now), (leased) => ({
-    id: leased.id,
-    spec: leased.spec,
-    state: leased.cancelRequestedAt === undefined ? "succeeded" : "cancelled",
-    attempt: leased.attempt,
-    createdAt: leased.createdAt,
-    updatedAt: now,
-    finishedAt: now,
-    summary,
-  }))
+  return Effect.flatMap(currentLease(job, leaseToken, now), (leased) => {
+    if (leased.spec.kind === "harness.review") {
+      if (
+        result?.kind !== "harness.review" ||
+        !harnessHandoffMatchesAttempt(
+          result.handoff,
+          leased.spec.payload,
+          leased.id,
+          leased.attempt,
+        )
+      ) {
+        return invalid("harness completion requires a matching typed result")
+      }
+      if (result.handoff.status === "blocked" || result.handoff.status === "failed")
+        return invalidTransition("unsuccessful harness handoff cannot complete a job")
+    } else if (result !== undefined) {
+      return invalid("job kind does not accept a typed harness result")
+    }
+    return Effect.succeed({
+      id: leased.id,
+      spec: leased.spec,
+      state: leased.cancelRequestedAt === undefined ? "succeeded" : "cancelled",
+      attempt: leased.attempt,
+      createdAt: leased.createdAt,
+      updatedAt: now,
+      finishedAt: now,
+      summary,
+      ...(result ? { result } : {}),
+    })
+  })
 }
 
 const retryOrFail = (
