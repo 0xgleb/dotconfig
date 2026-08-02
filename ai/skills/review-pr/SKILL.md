@@ -315,6 +315,28 @@ gap, a broad architectural concern), fold it into the copy-paste assessment bloc
 you print in the conversation (Step 2) rather than the posted `body` — the draft
 `body` stays empty.
 
+## Claude Code review-duty harness adapter
+
+Apply this adapter only when the source-fixed initial prompt identifies a fresh
+Claude Code subscription-harness executor and supplies a
+`CLAUDE_REVIEW_HANDOFF v1` supervisor target. Ordinary `/review-pr` invocations
+remain unchanged.
+
+1. Run this skill and its native Claude Code Workflow lanes normally. Never invoke
+   Claude through Pi, an Anthropic API provider, an SDK, `curl`, or an API key.
+2. Before handoff, run one independent native Fable verifier that re-reads the
+   exact PR head/diff and challenges every finding, inline anchor, draft-review
+   claim, and assessment. Missing subscription auth or Fable is `blocked`, never
+   an API fallback.
+3. Re-read the head SHA after creating the empty-body pending review. A changed
+   head makes the result stale and requires a fresh job.
+4. Send exactly one bounded handoff through the exact `pi-bridge send` command in
+   the launcher prompt. Include only required fields and evidence identifiers;
+   never include prompts, hidden reasoning, credentials, full diffs, or logs.
+5. The Pi supervisor independently verifies the handoff. Do not emulate
+   `review_duty`, ask a verdict, submit the pending review, post a top-level body,
+   or merge.
+
 ## Hard rules
 
 1. Never check out the PR branch. Work off `gh pr diff` and `git show` at the head

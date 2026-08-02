@@ -173,6 +173,7 @@ in
     file = {
       "${nuConfigDir}/fj".source = ./nushell/fj;
       ".agents/skills".source = config.lib.file.mkOutOfStoreSymlink "${aiDir}/skills";
+      ".claude/skills".source = config.lib.file.mkOutOfStoreSymlink "${aiDir}/skills";
       ".cursor/skills".source = config.lib.file.mkOutOfStoreSymlink "${aiDir}/skills";
       ".cursor/hooks".source = config.lib.file.mkOutOfStoreSymlink "${aiDir}/cursor/hooks";
       ".cursor/hooks.json".source = config.lib.file.mkOutOfStoreSymlink "${aiDir}/cursor/hooks.json";

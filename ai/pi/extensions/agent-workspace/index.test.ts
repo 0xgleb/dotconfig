@@ -18,3 +18,35 @@ test("dedicated workspace launch is profile-bound and shell-free", () => {
   assert.match(source, /query-tab-names/);
   assert.match(source, /existing \? "running" : "stopped"/);
 });
+
+test("review supervisors migrate to Luna without changing unrelated sessions", () => {
+  assert.match(source, /profileForSession\(pi\.getSessionName\(\)\)/);
+  assert.match(source, /find\("openai-codex", "gpt-5\.6-luna"\)/);
+  assert.match(source, /pi\.setModel\(luna\)/);
+  assert.match(source, /pi\.setThinkingLevel\("high"\)/);
+  assert.match(source, /SUPERVISOR_POLICY_MESSAGE/);
+  assert.match(source, /Never run a PR review panel or fix pass in Pi/);
+  assert.match(source, /deliverAs: "nextTurn"/);
+});
+
+test("Claude dispatch is source-fixed, profile-bound, and fail-closed", () => {
+  assert.match(source, /StringEnum\(\["start", "status", "dispatch"\]/);
+  assert.match(source, /pi\.getSessionName\(\) !== profile\.sessionName/);
+  assert.match(source, /Invalid or out-of-scope Claude review dispatch/);
+  assert.match(source, /restoreReviewDutyState/);
+  assert.match(source, /requires the exact active review_duty job/);
+  assert.match(source, /\^\[0-9a-f\]\{40,64\}\$/);
+  assert.match(source, /lstatSync\(parsed\.repositoryRoot\)\.isSymbolicLink\(\)/);
+  assert.match(source, /profile\.additionalRepositoryRoots/);
+  assert.match(source, /child\.startsWith\("\.\."\)/);
+  assert.match(source, /claudeExecutorLaunchArguments/);
+  assert.match(source, /ctx\.sessionManager\.getSessionId\(\)/);
+  assert.match(source, /status: "dispatched"/);
+});
+
+test("automatic dispatch accepts only the two existing exact automatic lanes", () => {
+  assert.match(
+    source,
+    /repository !== "dataclique\/yielduck"[\s\S]*?repository !== "0xgleb\/dotconfig"/,
+  );
+});

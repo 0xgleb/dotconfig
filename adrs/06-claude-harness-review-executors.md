@@ -51,8 +51,8 @@ Mode, no continue/resume flag, and a source-fixed review-duty prompt. It never
 selects an Anthropic model through Pi, never supplies an API key, and never falls
 back to Anthropic API billing.
 
-A Claude-compatible `review-duty-claude` skill adapts the existing `review-loop`,
-`review-pr`, and shared review engine to this split. The executor receives one
+Claude-compatible review-duty adapter sections in the existing `review-loop`
+and `review-pr` skills adapt the shared review engine to this split. The executor receives one
 repository/PR/head-SHA contract, uses the repository's normal skills and worktree
 rules, and returns bounded findings, fixes, validation, and terminal status to the
 supervisor. Claude cannot advance Pi review-duty state, infer a user verdict,

@@ -56,6 +56,20 @@ test("review-pr lanes get bounded no-checkout access to the exact PR-head git ob
   assert.match(reviewCore, /credential stores, private keys, or certificates/);
 });
 
+test("Claude review-duty adapters stay inside the subscription harness", () => {
+  for (const [name, contents] of [
+    ["review loop", reviewLoop],
+    ["review PR", reviewPr],
+  ] as const) {
+    assert.match(contents, /Claude Code review-duty harness adapter/);
+    assert.match(contents, /CLAUDE_REVIEW_HANDOFF v1/);
+    assert.match(contents, /independent native Fable verifier/);
+    assert.match(contents, /pi-bridge send/);
+    assert.match(contents, /Never invoke\s+Claude through Pi, an Anthropic API provider/i);
+    assert.match(contents, /Missing subscription auth or Fable is `blocked`/);
+  }
+});
+
 test("semantic safety classification uses Sol and bounded relevant evidence while review support stays on Luna", () => {
   assert.match(classifier, /CLASSIFIER_MODEL = "openai-codex\/gpt-5\.6-sol"/);
   assert.match(classifier, /boundedConversationIntentEvidence\(branch\)/);
