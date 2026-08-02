@@ -13,7 +13,9 @@ import {
   failJob,
   JobRuntimeError,
   recoverExpiredJob,
+  REGISTERED_JOB_KINDS,
   type Job,
+  type RegisteredJobKind,
   type RegisteredJobResult,
   type RegisteredJobSpec,
 } from "./job-runtime.ts"
@@ -55,6 +57,7 @@ export interface SqliteJobStore {
     leaseToken: string,
     now: number,
     ttlMs: number,
+    kinds?: readonly RegisteredJobKind[],
   ) => Effect.Effect<Job | undefined, JobStoreError | JobRuntimeError>
   readonly complete: (
     id: string,
@@ -288,20 +291,33 @@ const makeStore = (database: DatabaseSync): SqliteJobStore => {
     leaseToken,
     now,
     ttlMs,
+    kinds,
   ) =>
     inTransaction(
       Effect.gen(function* () {
+        if (kinds !== undefined && !isRegisteredKindFilter(kinds)) {
+          return yield* Effect.fail(
+            storeError(
+              "invalid_input",
+              "claim kinds must be distinct registered job kinds",
+            ),
+          )
+        }
+        const kindFilter =
+          kinds === undefined
+            ? ""
+            : ` AND kind IN (${kinds.map(() => "?").join(", ")})`
         const value = yield* sql(
           () =>
             database
               .prepare(
                 `SELECT document FROM jobs
                  WHERE state IN ('scheduled', 'ready', 'retry_wait')
-                   AND run_at <= ?
+                   AND run_at <= ?${kindFilter}
                  ORDER BY run_at, updated_at, job_id
                  LIMIT 1`,
               )
-              .get(now),
+              .get(now, ...(kinds ?? [])),
           "failed to select due job",
         )
         if (value === undefined) return undefined
@@ -411,6 +427,16 @@ const makeStore = (database: DatabaseSync): SqliteJobStore => {
     unsafeDatabaseForTests: database,
   }
 }
+
+export const isRegisteredKindFilter = (
+  kinds: readonly unknown[],
+): kinds is readonly RegisteredJobKind[] =>
+  kinds.length >= 1 &&
+  kinds.length <= REGISTERED_JOB_KINDS.length &&
+  new Set(kinds).size === kinds.length &&
+  kinds.every((kind) =>
+    REGISTERED_JOB_KINDS.includes(kind as RegisteredJobKind),
+  )
 
 export const makeSqliteJobStore = (
   path: string,
