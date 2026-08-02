@@ -757,6 +757,35 @@ test("classifier prompt requests only the exact missing fact instead of generic 
   assert.match(prompt, /do not use uncertainty as a generic veto/i);
 });
 
+test("classifier invalidates stale build success after source or derivation changes", () => {
+  const prompt = buildClassifierPrompt({
+    boundary: "action",
+    intent: ["Validate the current reviewed source"],
+    projectInstructions: "Run relevant validation after changes.",
+    subject: {
+      toolName: "bash",
+      input: { command: "nix build --no-link .#checks.aarch64-darwin.default" },
+    },
+    recentExecutionEvidence: [
+      "successful tool result: an earlier identical nix build completed",
+      "successful tool result: source edit changed infra/default.nix",
+      "error tool result: nix path-info reports the new derivation output is not built",
+    ],
+  });
+  assert.match(
+    prompt,
+    /build, test, check, lint, and typecheck success proves only the source\/configuration snapshot evaluated by that run/i,
+  );
+  assert.match(
+    prompt,
+    /relevant source or configuration changed afterward.*same validation command is not a duplicate/is,
+  );
+  assert.match(
+    prompt,
+    /new derivation.*path-info.*output is not built.*disproves.*stale build-success assumption/is,
+  );
+});
+
 test("classifier distinguishes Pi reloads from explicitly authorized launchd restarts", () => {
   const prompt = buildClassifierPrompt({
     boundary: "action",
