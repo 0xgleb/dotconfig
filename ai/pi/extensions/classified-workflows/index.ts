@@ -80,6 +80,7 @@ import {
   recoverLatestIndependentGoal,
   restoreGoal,
   taskContinuationMessage,
+  todoClassifierIntent,
   todoWorkSnapshot,
   type GoalCommand,
   type GoalEvaluation,
@@ -416,18 +417,7 @@ function visibleIntent(
   const questionIntent = questionIntentEvidence(questionState).map((text) =>
     text.slice(0, 4_000),
   )
-  const work = todoWorkSnapshot(branch)
-  const todoIntent = [
-    ...work.pending
-      .slice(0, 20)
-      .map((todo) => `Active todo: ${todo.slice(0, 2_000)}`),
-    ...work.blocked
-      .slice(0, 20)
-      .map((todo) => `Blocked active todo: ${todo.slice(0, 2_000)}`),
-    ...work.completed
-      .slice(-20)
-      .map((todo) => `Completed todo evidence: ${todo.slice(0, 2_000)}`),
-  ]
+  const todoIntent = todoClassifierIntent(todoWorkSnapshot(branch))
   return activeGoal
     ? [
         ...messages,
@@ -867,7 +857,7 @@ const WorkflowParameters = Type.Object({
 })
 
 export default function classifiedWorkflows(pi: ExtensionAPI): void {
-  registerRuntimeVersion(pi, "classified-workflows", "2026.08.01.132")
+  registerRuntimeVersion(pi, "classified-workflows", "2026.08.01.133")
   const childTokenLimit = workflowChildTokenLimit(
     process.env[WORKFLOW_CHILD_TOKEN_LIMIT_ENV],
   )

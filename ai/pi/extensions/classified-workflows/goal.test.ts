@@ -13,6 +13,7 @@ import {
   recoverLatestIndependentGoal,
   restoreGoal,
   taskContinuationMessage,
+  todoClassifierIntent,
   todoWorkSnapshot,
   type GoalState,
 } from "./goal.ts";
@@ -140,6 +141,20 @@ test("latest todo snapshot supplies pending completion evidence", () => {
     ],
   });
   assert.deepEqual(pendingTodoTexts([{ type: "wrong" }]), []);
+});
+
+test("current typed todo intent distinguishes active work from completed history", () => {
+  assert.deepEqual(
+    todoClassifierIntent({
+      pending: ["#49 Annualized return distribution"],
+      blocked: [],
+      completed: ["#4 Chart annotations — live v1.10.97"],
+    }),
+    [
+      "Current typed active todo: #49 Annualized return distribution",
+      "Current typed completed todo (not active scope): #4 Chart annotations — live v1.10.97",
+    ],
+  );
 });
 
 test("durable custom todo state survives compaction for classifier intent", () => {

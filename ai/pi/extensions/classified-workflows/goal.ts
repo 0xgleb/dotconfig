@@ -213,6 +213,23 @@ export const todoWorkSnapshot: (entries: unknown[]) => TodoWorkSnapshot = (
   return { pending: [], blocked: [], completed: [] };
 };
 
+export const todoClassifierIntent: (
+  snapshot: TodoWorkSnapshot,
+) => string[] = (snapshot) => [
+  ...snapshot.pending
+    .slice(0, 20)
+    .map((todo) => `Current typed active todo: ${todo.slice(0, 2_000)}`),
+  ...snapshot.blocked
+    .slice(0, 20)
+    .map((todo) => `Current typed blocked todo: ${todo.slice(0, 2_000)}`),
+  ...snapshot.completed
+    .slice(-20)
+    .map(
+      (todo) =>
+        `Current typed completed todo (not active scope): ${todo.slice(0, 2_000)}`,
+    ),
+];
+
 export const pendingTodoTexts: (entries: unknown[]) => string[] = (entries) =>
   todoWorkSnapshot(entries).pending;
 

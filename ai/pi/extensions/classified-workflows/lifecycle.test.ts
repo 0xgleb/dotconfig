@@ -477,6 +477,29 @@ test("classifier prompt trusts current typed durable state over incomplete resul
   );
 });
 
+test("classifier prompt treats current active todos as scope and completed todos as history", () => {
+  const prompt = buildClassifierPrompt({
+    boundary: "action",
+    intent: [
+      "Current typed active todo: #49 Annualized return distribution",
+      "Current typed completed todo (not active scope): #4 Chart annotations — live v1.10.97",
+    ],
+    projectInstructions: "Apply only inspected stash contents for current work.",
+    subject: {
+      toolName: "bash",
+      input: { command: "git stash apply" },
+    },
+  });
+  assert.match(
+    prompt,
+    /current typed active todo is authoritative for current task scope/i,
+  );
+  assert.match(
+    prompt,
+    /completed todo.*historical evidence.*must not remain the active task/is,
+  );
+});
+
 test("classifier prompt separates structural deterministic guards from semantic authorization", () => {
   const prompt = buildClassifierPrompt({
     boundary: "action",
