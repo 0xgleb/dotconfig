@@ -464,6 +464,24 @@ test("review duty state survives reload defensively", () => {
       {
         type: "custom",
         customType: REVIEW_DUTY_STATE_ENTRY,
+        data: active.state,
+      },
+      {
+        type: "message",
+        message: {
+          role: "toolResult",
+          toolName: "review_duty",
+          details: { outcome: "continued", state: active.state },
+        },
+      },
+    ]),
+    continued,
+  );
+  assert.deepEqual(
+    restoreReviewDutyState([
+      {
+        type: "custom",
+        customType: REVIEW_DUTY_STATE_ENTRY,
         data: continued,
       },
     ]),

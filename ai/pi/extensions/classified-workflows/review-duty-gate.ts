@@ -495,6 +495,28 @@ const decodeReviewDutyState = (value: unknown): ReviewDutyState | undefined => {
   return undefined;
 };
 
+const continuedToolResultAfter = (
+  entries: readonly unknown[],
+  stateIndex: number,
+  state: ReviewDutyState,
+): boolean =>
+  state.phase === "active" &&
+  entries.slice(stateIndex + 1).some((entry) => {
+    if (!isRecord(entry) || entry.type !== "message" || !isRecord(entry.message))
+      return false;
+    const message = entry.message;
+    if (
+      message.role !== "toolResult" ||
+      message.toolName !== "review_duty" ||
+      !isRecord(message.details) ||
+      message.details.outcome !== "continued" ||
+      !isRecord(message.details.state)
+    )
+      return false;
+    const resultState = decodeReviewDutyState(message.details.state);
+    return resultState?.phase === "active" && sameJob(resultState, state);
+  });
+
 export const restoreReviewDutyState = (
   entries: readonly unknown[],
 ): ReviewDutyState => {
@@ -505,7 +527,12 @@ export const restoreReviewDutyState = (
       entry.type === "custom" &&
       entry.customType === REVIEW_DUTY_STATE_ENTRY
     ) {
-      return decodeReviewDutyState(entry.data) ?? emptyReviewDutyState;
+      const state = decodeReviewDutyState(entry.data) ?? emptyReviewDutyState;
+      return state.phase === "active" &&
+          state.continuation === undefined &&
+          continuedToolResultAfter(entries, index, state)
+        ? { ...state, continuation: "fix-re-review" }
+        : state;
     }
   }
   return emptyReviewDutyState;
