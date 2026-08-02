@@ -1,6 +1,7 @@
 import { Data, Effect } from "effect"
 import {
   decodeHarnessReviewPayload,
+  isCredentialBearingPath,
   isSafeHarnessJobId,
   type CursorReviewModel,
   type HarnessLane,
@@ -40,7 +41,7 @@ export const buildHarnessLaunchPlan = (
         }),
     ),
     (decoded) =>
-      isCredentialBearingRoot(decoded.repositoryRoot)
+      isCredentialBearingPath(decoded.repositoryRoot)
         ? invalid("repository root overlaps a credential-bearing location")
         : Effect.succeed(launchPlan(decoded, jobId, attempt)),
   )
@@ -48,21 +49,6 @@ export const buildHarnessLaunchPlan = (
 
 const invalid = <A>(message: string): Effect.Effect<A, HarnessAdapterError> =>
   Effect.fail(new HarnessAdapterError({ code: "invalid_input", message }))
-
-const CREDENTIAL_SEGMENTS = [".ssh", ".gnupg", ".aws"] as const
-
-const isCredentialBearingRoot = (root: string): boolean => {
-  const segments = root.split("/").filter((segment) => segment.length > 0)
-  return (
-    segments.length === 0 ||
-    segments.some(
-      (segment) =>
-        CREDENTIAL_SEGMENTS.includes(
-          segment as (typeof CREDENTIAL_SEGMENTS)[number],
-        ) || segment.startsWith(".env"),
-    )
-  )
-}
 
 const CLAUDE_SCRUBBED_ENVIRONMENT = [
   "ANTHROPIC_API_KEY",
