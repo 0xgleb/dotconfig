@@ -8,11 +8,13 @@ import {
   HANDOFF_GLOBS,
   isSafeHandoffName,
   managedPiChangeLabel,
+  latestReloadResumeMarker,
   managedPiWatchPaths,
   managedReloadDecision,
+  managedReloadDelivery,
   parseManagedReloadSummary,
   parseSeenHandoffNames,
-  shouldDispatchReloadFollowUp,
+  RELOAD_RESUME_ENTRY,
   unseenHandoffNames,
 } from "./core.ts";
 import { isContinuationPaused } from "../shared/continuation-pause.ts";
@@ -71,7 +73,7 @@ export const managedGeneration = (roots: readonly string[]): string => {
 };
 
 const autoReload: (pi: ExtensionAPI) => void = (pi) => {
-  registerRuntimeVersion(pi, "auto-reload", "2026.08.01.8");
+  registerRuntimeVersion(pi, "auto-reload", "2026.08.01.9");
   let watchers: FSWatcher[] = [];
   let timer: ReturnType<typeof setTimeout> | undefined;
   let handoffTimer: ReturnType<typeof setInterval> | undefined;
@@ -154,6 +156,10 @@ const autoReload: (pi: ExtensionAPI) => void = (pi) => {
       preemptRequested = true;
       ctx.ui.setStatus(STATUS_KEY, "reload:preempting");
       const request: AutoReloadPreemptRequest = { requestedAt: now };
+      pi.appendEntry(RELOAD_RESUME_ENTRY, {
+        requestedAt: request.requestedAt,
+        status: "pending",
+      });
       pi.events.emit(AUTO_RELOAD_PREEMPT_EVENT, request);
       ctx.abort();
       timer = setTimeout(() => void reloadWhenIdle(ctx), IDLE_RETRY_MS);
@@ -191,12 +197,28 @@ const autoReload: (pi: ExtensionAPI) => void = (pi) => {
       const changeText = summary && !summary.announced && summary.labels.length > 0
         ? ` Updated: ${summary.labels.join(", ")}.`
         : "";
+      const delivery = managedReloadDelivery(
+        event.reason,
+        branch,
+        ctx.hasPendingMessages(),
+      );
       const message = {
         customType: "auto-reload.completed",
-        content: `Pi resources auto-reloaded after managed configuration changed.${changeText} Resume all assigned work now; do not stop while a goal or pending todo remains.`,
+        content:
+          delivery === "resume"
+            ? `Pi resources auto-reloaded after managed configuration changed.${changeText} Resume the exact generation interrupted by managed reload before processing preserved follow-up messages.`
+            : `Pi resources auto-reloaded after managed configuration changed.${changeText} Resume all assigned work now; do not stop while a goal or pending todo remains.`,
         display: true,
       };
-      if (shouldDispatchReloadFollowUp(event.reason, branch)) {
+      if (delivery === "resume") {
+        const requestedAt =
+          latestReloadResumeMarker(branch)?.requestedAt ?? Date.now();
+        pi.appendEntry(RELOAD_RESUME_ENTRY, {
+          requestedAt,
+          status: "resumed",
+        });
+        pi.sendMessage(message, { triggerTurn: true, deliverAs: "steer" });
+      } else if (delivery === "followUp") {
         pi.sendMessage(message, { triggerTurn: true, deliverAs: "followUp" });
       } else {
         pi.sendMessage(message);

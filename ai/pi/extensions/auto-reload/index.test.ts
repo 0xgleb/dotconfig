@@ -27,6 +27,23 @@ test("long-running turns receive one persisted managed preemption before forced 
   assert.match(source, /idle: ctx\.isIdle\(\) && !managedWorkActive/);
   assert.match(source, /ctx\.abort\(\)/);
   assert.match(source, /preemptRequested = true/);
+  assert.match(
+    source,
+    /appendEntry\(RELOAD_RESUME_ENTRY[\s\S]*?status: "pending"[\s\S]*?ctx\.abort\(\)/,
+  );
+});
+
+test("reload resumes interrupted generation without jumping preserved follow-ups", () => {
+  assert.match(source, /managedReloadDelivery/);
+  assert.match(
+    source,
+    /delivery === "resume"[\s\S]*?deliverAs: "steer"/,
+  );
+  assert.match(
+    source,
+    /ctx\.hasPendingMessages\(\)[\s\S]*?delivery === "followUp"/,
+  );
+  assert.match(source, /status: "resumed"/);
 });
 
 test("managed source events start commit-gated reload immediately instead of waiting on a fixed debounce", () => {

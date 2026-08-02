@@ -9,6 +9,8 @@ import {
   managedPiWatchPaths,
   parseManagedReloadSummary,
   parseSeenHandoffNames,
+  managedReloadDelivery,
+  parseReloadResumeMarker,
   shouldDispatchReloadFollowUp,
   unseenHandoffNames,
 } from "./core.ts";
@@ -37,6 +39,40 @@ test("managed reloads preempt long-running turns only after a committed grace pe
     }),
     "wait",
   );
+});
+
+test("managed reload resumes a preempted generation before preserved follow-ups", () => {
+  const pendingResume = {
+    type: "custom",
+    customType: "auto-reload.preempted-generation",
+    data: { requestedAt: 123, status: "pending" },
+  };
+  const resumed = {
+    ...pendingResume,
+    data: { requestedAt: 123, status: "resumed" },
+  };
+  assert.deepEqual(parseReloadResumeMarker(pendingResume.data), {
+    requestedAt: 123,
+    status: "pending",
+  });
+  assert.equal(
+    managedReloadDelivery("reload", [pendingResume], true),
+    "resume",
+  );
+  assert.equal(managedReloadDelivery("reload", [resumed], true), "display");
+});
+
+test("reload does not inject a continuation ahead of existing pending messages", () => {
+  const pendingTodo = {
+    type: "custom",
+    customType: "todo.state",
+    data: {
+      todos: [{ id: 1, text: "continue", status: "pending", replies: [] }],
+      nextId: 2,
+    },
+  };
+  assert.equal(managedReloadDelivery("reload", [pendingTodo], true), "display");
+  assert.equal(managedReloadDelivery("reload", [pendingTodo], false), "followUp");
 });
 
 test("managed reload summaries identify changed capabilities without exposing full paths", () => {

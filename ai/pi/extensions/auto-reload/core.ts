@@ -3,6 +3,7 @@ import { todoWorkSnapshot } from "../classified-workflows/goal.ts";
 import { isContinuationPaused } from "../shared/continuation-pause.ts";
 
 export const HANDOFF_GLOBS = ["*.md", "handoffs/*.md"] as const;
+export const RELOAD_RESUME_ENTRY = "auto-reload.preempted-generation";
 
 export type ManagedReloadDecision =
   | "await-commit"
@@ -95,6 +96,63 @@ export const shouldDispatchReloadFollowUp: (reason: string, entries: readonly un
     todoWorkSnapshot(entries).blocked.length > 0 ||
     hasActiveWorkflowState(entries, "classified-workflows.goal") ||
     hasActiveWorkflowState(entries, "classified-workflows.loop"));
+
+export interface ReloadResumeMarker {
+  readonly requestedAt: number;
+  readonly status: "pending" | "resumed";
+}
+
+export const parseReloadResumeMarker = (
+  value: unknown,
+): ReloadResumeMarker | undefined => {
+  if (
+    typeof value !== "object" ||
+    value === null ||
+    !("requestedAt" in value) ||
+    !Number.isSafeInteger(value.requestedAt) ||
+    Number(value.requestedAt) < 0 ||
+    !("status" in value) ||
+    (value.status !== "pending" && value.status !== "resumed")
+  )
+    return undefined;
+  return {
+    requestedAt: Number(value.requestedAt),
+    status: value.status,
+  };
+};
+
+export const latestReloadResumeMarker = (
+  entries: readonly unknown[],
+): ReloadResumeMarker | undefined => {
+  for (let index = entries.length - 1; index >= 0; index -= 1) {
+    const entry = entries[index];
+    if (
+      typeof entry !== "object" ||
+      entry === null ||
+      !("type" in entry) ||
+      entry.type !== "custom" ||
+      !("customType" in entry) ||
+      entry.customType !== RELOAD_RESUME_ENTRY ||
+      !("data" in entry)
+    )
+      continue;
+    return parseReloadResumeMarker(entry.data);
+  }
+  return undefined;
+};
+
+export type ManagedReloadDelivery = "display" | "followUp" | "resume";
+
+export const managedReloadDelivery = (
+  reason: string,
+  entries: readonly unknown[],
+  hasPendingMessages: boolean,
+): ManagedReloadDelivery => {
+  if (reason !== "reload") return "display";
+  if (latestReloadResumeMarker(entries)?.status === "pending") return "resume";
+  if (hasPendingMessages) return "display";
+  return shouldDispatchReloadFollowUp(reason, entries) ? "followUp" : "display";
+};
 
 export const managedPiWatchPaths: (aiRoot: string) => string[] = (aiRoot) =>
   isAbsolute(aiRoot)
