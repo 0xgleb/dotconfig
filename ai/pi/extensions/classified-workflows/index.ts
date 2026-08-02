@@ -139,7 +139,10 @@ import {
   repositoryRootForPath,
   runtimeProjectContext,
 } from "./project-context.ts"
-import { currentReadDisprovesDuplicateBlock } from "./stale-duplicate.ts"
+import {
+  currentMissingBuildOutputDisprovesDuplicateBlock,
+  currentReadDisprovesDuplicateBlock,
+} from "./stale-duplicate.ts"
 import { requiredGitButlerModeExitDisprovesBlock } from "./gitbutler-mode-exit.ts"
 import { exactScaffoldUnwindDisprovesBlock } from "./scaffold-unwind.ts"
 import {
@@ -914,7 +917,7 @@ const WorkflowParameters = Type.Object({
 })
 
 export default function classifiedWorkflows(pi: ExtensionAPI): void {
-  registerRuntimeVersion(pi, "classified-workflows", "2026.08.01.148")
+  registerRuntimeVersion(pi, "classified-workflows", "2026.08.01.149")
   const childTokenLimit = workflowChildTokenLimit(
     process.env[WORKFLOW_CHILD_TOKEN_LIMIT_ENV],
   )
@@ -2130,6 +2133,15 @@ export default function classifiedWorkflows(pi: ExtensionAPI): void {
           edit: event.input,
           branch: ctx.sessionManager.getBranch(),
           cwd: ctx.cwd,
+        })
+      )
+        return
+      if (
+        event.toolName === "bash" &&
+        currentMissingBuildOutputDisprovesDuplicateBlock({
+          reason: decision.reason,
+          bash: event.input,
+          branch: ctx.sessionManager.getBranch(),
         })
       )
         return

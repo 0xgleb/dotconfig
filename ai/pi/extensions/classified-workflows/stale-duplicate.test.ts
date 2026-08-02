@@ -1,7 +1,13 @@
 import assert from "node:assert/strict";
+import { readFileSync } from "node:fs";
 import test from "node:test";
 
-import { currentReadDisprovesDuplicateBlock } from "./stale-duplicate.ts";
+import {
+  currentMissingBuildOutputDisprovesDuplicateBlock,
+  currentReadDisprovesDuplicateBlock,
+} from "./stale-duplicate.ts";
+
+const extensionSource = readFileSync(new URL("./index.ts", import.meta.url), "utf8");
 
 const call = (id: string, name: string, args: unknown) => ({
   type: "message",
@@ -91,6 +97,75 @@ test("a successful later mutation makes the read stale", () => {
     branch,
     cwd: "/repo",
   }), false);
+});
+
+test("a newer missing Nix output disproves stale identical build success", () => {
+  const command = "nix build --no-link .#checks.aarch64-darwin.default";
+  const branch = [
+    call("build-1", "bash", { command }),
+    result("build-1", "build completed"),
+    call("path-info", "bash", {
+      command: "nix path-info /nix/store/dxs95-fj-infra-lib-test",
+    }),
+    result(
+      "path-info",
+      "error: path '/nix/store/dxs95-fj-infra-lib-test' is not valid",
+      true,
+    ),
+  ];
+
+  assert.match(
+    extensionSource,
+    /event\.toolName === "bash"[\s\S]*?currentMissingBuildOutputDisprovesDuplicateBlock/,
+  );
+  assert.equal(
+    currentMissingBuildOutputDisprovesDuplicateBlock({
+      reason: "This exact command already succeeded with the same input digest.",
+      bash: { command },
+      branch,
+    }),
+    true,
+  );
+});
+
+test("build duplicate override preserves independent blocks and current outputs", () => {
+  const command = "nix build --no-link .#checks.aarch64-darwin.default";
+  const successfulBuild = [
+    call("build-1", "bash", { command }),
+    result("build-1", "build completed"),
+  ];
+  const cases = [
+    {
+      reason: "The command already succeeded but is unrelated and unauthorized.",
+      branch: [
+        ...successfulBuild,
+        call("path-info", "bash", { command: "nix path-info /nix/store/new" }),
+        result("path-info", "error: path is not valid", true),
+      ],
+    },
+    {
+      reason: "The exact command already succeeded.",
+      branch: [
+        ...successfulBuild,
+        call("path-info", "bash", { command: "nix path-info /nix/store/new" }),
+        result("path-info", "/nix/store/new"),
+      ],
+    },
+    {
+      reason: "The exact command already succeeded.",
+      branch: successfulBuild,
+    },
+  ];
+  for (const candidate of cases) {
+    assert.equal(
+      currentMissingBuildOutputDisprovesDuplicateBlock({
+        reason: candidate.reason,
+        bash: { command },
+        branch: candidate.branch,
+      }),
+      false,
+    );
+  }
 });
 
 test("proof is path-scoped and requires every replacement anchor", () => {

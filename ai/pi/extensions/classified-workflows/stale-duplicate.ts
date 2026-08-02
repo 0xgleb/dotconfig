@@ -45,7 +45,7 @@ const resultText = (message: Readonly<Record<string, unknown>>): string => {
 
 const duplicateOnlyReason = (reason: string): boolean => {
   const duplicate =
-    /\b(?:already (?:present|applied|implemented|made|done|exists|in (?:place|the file|source))|duplicate(?:d| operation)?|reapp(?:ly|lying)|no-op)\b/i;
+    /\b(?:already (?:present|applied|implemented|made|done|exists|succeeded|completed|ran|executed|in (?:place|the file|source))|duplicate(?:d| operation)?|reapp(?:ly|lying)|no-op)\b/i;
   const independentBlock =
     /\b(?:unauthori[sz]ed|not authorized|unrelated|out of scope|secret|credential|protected|destructive|irreversible|permission|publish|deploy|external communication|user approval|not requested)\b/i;
   return duplicate.test(reason) && !independentBlock.test(reason);
@@ -59,6 +59,65 @@ const duplicateOnlyReason = (reason: string): boolean => {
  * path makes the read stale and keeps the block intact. Exact-replacement Edit
  * remains fail-closed if the file changes outside the recorded session.
  */
+export const currentMissingBuildOutputDisprovesDuplicateBlock = (input: {
+  readonly reason: string;
+  readonly bash: unknown;
+  readonly branch: readonly unknown[];
+}): boolean => {
+  if (!duplicateOnlyReason(input.reason) || !isRecord(input.bash)) return false;
+  if (typeof input.bash.command !== "string") return false;
+  const command = input.bash.command.trim();
+  if (!/^nix\s+build(?:\s|$)/.test(command) || /[;&|`\n]/.test(command))
+    return false;
+
+  const calls = new Map<string, ToolCall>();
+  let successfulBuildIndex = -1;
+  let missingOutputIndex = -1;
+
+  input.branch.forEach((entry, index) => {
+    if (!isRecord(entry) || entry.type !== "message" || !isRecord(entry.message))
+      return;
+    const message = entry.message;
+    if (message.role === "assistant" && Array.isArray(message.content)) {
+      for (const part of message.content) {
+        if (
+          isRecord(part) &&
+          part.type === "toolCall" &&
+          typeof part.id === "string" &&
+          typeof part.name === "string"
+        )
+          calls.set(part.id, { name: part.name, input: part.arguments });
+      }
+      return;
+    }
+    if (
+      message.role !== "toolResult" ||
+      typeof message.toolCallId !== "string"
+    )
+      return;
+    const call = calls.get(message.toolCallId);
+    if (!call || call.name !== "bash" || !isRecord(call.input)) return;
+    if (typeof call.input.command !== "string") return;
+    const priorCommand = call.input.command.trim();
+    if (message.isError === false && priorCommand === command) {
+      successfulBuildIndex = index;
+      return;
+    }
+    if (
+      message.isError === true &&
+      /^nix\s+path-info(?:\s|$)/.test(priorCommand) &&
+      /(?:is not valid|not built|does not exist|does not have a valid path)/i.test(
+        resultText(message),
+      )
+    )
+      missingOutputIndex = index;
+  });
+
+  return (
+    successfulBuildIndex >= 0 && missingOutputIndex > successfulBuildIndex
+  );
+};
+
 export const currentReadDisprovesDuplicateBlock = (input: {
   readonly reason: string;
   readonly edit: unknown;
