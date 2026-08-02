@@ -30,12 +30,30 @@ test("review workflow children receive an explicit repository cwd and least-priv
   assert.match(reviewCore, /cwd: repoRoot/);
   assert.match(
     reviewCore,
-    /tools: lane\.externalCmd[\s\S]*?\['read', 'grep', 'find', 'ls', 'bash'\][\s\S]*?: \['read', 'grep', 'find', 'ls'\]/,
+    /tools: lane\.externalCmd[\s\S]*?\['read', 'grep', 'find', 'ls', 'bash'\][\s\S]*?: sourceTools/,
   );
   assert.match(
     reviewCore,
-    /label: `verify:\$\{finding\.file\}`[\s\S]*?cwd: repoRoot[\s\S]*?tools: \['read', 'grep', 'find', 'ls'\]/,
+    /label: `verify:\$\{finding\.file\}`[\s\S]*?cwd: repoRoot[\s\S]*?tools: sourceTools/,
   );
+});
+
+test("review-pr lanes get bounded no-checkout access to the exact PR-head git object", () => {
+  assert.match(reviewPr, /"sourceRevision": "<head_sha>"/);
+  assert.match(reviewCore, /sourceRevision/);
+  assert.match(reviewCore, /\^\[0-9a-f\]\{40,64\}\$/);
+  assert.match(reviewCore, /const sourceTools = gitObjectSource[\s\S]*?'bash'/);
+  assert.match(reviewCore, /tools: lane\.externalCmd[\s\S]*?: sourceTools/);
+  assert.match(
+    reviewCore,
+    /label: `verify:\$\{finding\.file\}`[\s\S]*?tools: sourceTools/,
+  );
+  assert.match(
+    reviewCore,
+    /label: 'synthesize'[\s\S]*?tools: sourceTools/,
+  );
+  assert.match(reviewCore, /Never read `\.env\*`/);
+  assert.match(reviewCore, /credential stores, private keys, or certificates/);
 });
 
 test("semantic safety classification uses Sol and bounded relevant evidence while review support stays on Luna", () => {

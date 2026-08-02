@@ -53,6 +53,7 @@ the steps below reference `{NAME}`:
 | `{PROJECT_DOCS_PATHS}` | Comma-separated `CLAUDE.md`/`AGENTS.md` paths (caller discovers them).  |
 | `{PR_DESCRIPTION}`  | Author-written description, bot footers stripped (or "No description").    |
 | `{SOURCE_ACCESS}`   | One paragraph telling reviewers **how to read source** (working tree vs `git show <sha>:<path>`). See callers. |
+| `{SOURCE_REVISION}` | Exact 40–64 character lowercase hex Git object ID for no-checkout PR-head access, or omitted for working-tree reviews. |
 | `{SCOPE_NOTE}`      | One sentence describing **what the diff is scoped to** (branch vs PR).     |
 | `{INSPECTOR_ARG}`   | The value to substitute for `$ARGUMENTS` in inspector bodies (`""` for a branch, the PR ref for a PR). |
 | `{REPORT_HEADER}`   | Markdown header block placed verbatim atop the synthesized report.         |
@@ -536,6 +537,7 @@ synthesis:
   "reportHeader": "{REPORT_HEADER}",
   "synthesisExtra": "{SYNTHESIS_EXTRA}",
   "sourceAccess": "{SOURCE_ACCESS}",
+  "sourceRevision": "{SOURCE_REVISION}",
   "includeAttribution": {INCLUDE_ATTRIBUTION}
 }
 ```
@@ -548,6 +550,12 @@ be `"opus"`. Never pass `"opus"` or `"fable"` anywhere when the cache says
 The tool result includes a `scriptPath` — the caller keeps it and reuses
 `{scriptPath, args}` for any later full-panel pass instead of resending the
 script.
+
+When `{SOURCE_REVISION}` is present, native lanes receive Bash solely for exact
+read-only `git show '<revision>:<repo-relative-path>'` calls. Never read `.env*`,
+credential stores, private keys, or certificates. The revision is validated
+before Bash is exposed; checkout, worktree creation, mutation, and unrelated
+shell commands remain prohibited and semantically classified.
 
 ```javascript
 export const meta = {
@@ -603,8 +611,24 @@ const VERDICT_SCHEMA = {
 // parsed object — parse defensively before destructuring.
 const parsedArgs = typeof args === 'string' ? JSON.parse(args) : args
 const { repoRoot, docsPaths, lanes, reportHeader, synthesisExtra,
-  sourceAccess, includeAttribution,
+  sourceAccess, sourceRevision, includeAttribution,
   harnessModels = { verify: 'sonnet', synthesis: 'opus' } } = parsedArgs
+
+const gitObjectSource = typeof sourceRevision === 'string' &&
+  /^[0-9a-f]{40,64}$/.test(sourceRevision)
+if (sourceRevision !== undefined && !gitObjectSource) {
+  throw new Error('sourceRevision must be an exact lowercase hexadecimal Git object ID')
+}
+const sourceTools = gitObjectSource
+  ? ['read', 'grep', 'find', 'ls', 'bash']
+  : ['read', 'grep', 'find', 'ls']
+const sourceReadBoundary = gitObjectSource
+  ? `For PR-head source context, use Bash only for exact read-only ` +
+    `git show '${sourceRevision}:<repo-relative-path>' calls. Do not use the ` +
+    `mismatched working-tree copy of a source file. Never read \`.env*\`, ` +
+    `credential stores, private keys, or certificates. Do not use Bash for ` +
+    `checkout, worktree creation, mutation, or unrelated commands.`
+  : ''
 
 // maxAgents is a per-phase cap. Batch variable lane/finding counts so one
 // workflow retains completed outputs through verification and synthesis.
@@ -633,8 +657,8 @@ const reviewLane = lane => {
       `### section into one finding). If all attempts fail, return an empty ` +
       `findings list and set reviewer_error to a summary of each attempt.`
     : `Read the review instructions at ${lane.promptPath} and follow them ` +
-      `exactly.\n${context}\nRead the diff, the project docs, and any ` +
-      `source files referenced by the diff that you need for context.`
+      `exactly.\n${context}\n${sourceReadBoundary}\nRead the diff, the project ` +
+      `docs, and any source files referenced by the diff that you need for context.`
 
   return agent(prompt, {
     label: `review:${lane.key}`,
@@ -642,7 +666,7 @@ const reviewLane = lane => {
     cwd: repoRoot,
     tools: lane.externalCmd
       ? ['read', 'grep', 'find', 'ls', 'bash']
-      : ['read', 'grep', 'find', 'ls'],
+      : sourceTools,
     model: 'openai-codex/gpt-5.6-luna',
     schema: REVIEW_SCHEMA,
   }).then(result => result && ({
@@ -703,7 +727,7 @@ const verifyFinding = finding => agent(
     `actual code before judging — never judge from the finding text alone.\n\n` +
     `Finding: ${JSON.stringify(finding)}\n\n` +
     `The diff is at: ${finding.diff_path}\nRepo root: ${repoRoot}\n` +
-    `${sourceAccess}\n\n` +
+    `${sourceAccess}\n${sourceReadBoundary}\n\n` +
     `Classify the finding: valid (real, you verified it against the code), ` +
     `likely (probably real but needs more context), disputed (evidence is ` +
     `weak), invalid (false positive — the code contradicts the claim), ` +
@@ -712,7 +736,7 @@ const verifyFinding = finding => agent(
     `uncertain-but-plausible findings. Re-score severity and confidence ` +
     `from your own reading (confidence 100 = you verified it yourself).`,
     { label: `verify:${finding.file}`, phase: 'Verify', cwd: repoRoot,
-      tools: ['read', 'grep', 'find', 'ls'], model: 'openai-codex/gpt-5.6-luna',
+      tools: sourceTools, model: 'openai-codex/gpt-5.6-luna',
       schema: VERDICT_SCHEMA },
   ).then(verdict => verdict && ({ ...finding, ...verdict }))
 
@@ -753,7 +777,7 @@ const synthesis = await agent(
   `Verified findings (JSON, pre-sorted): ${JSON.stringify(survivors)}\n\n` +
   `Dismissed findings (JSON): ${JSON.stringify(dismissed)}\n\n` +
   `The diff is at: ${lanes[0].diffPath}. Project docs: ` +
-  `${docsPaths.join(', ')}. ${sourceAccess} Read the diff so your overall ` +
+  `${docsPaths.join(', ')}. ${sourceAccess} ${sourceReadBoundary} Read the diff so your overall ` +
   `assessment reflects the actual change, and call out anything the ` +
   `reviewers collectively missed.\n\n` +
   `Produce a markdown report: the header block, "## Summary" (2-3 sentence ` +
@@ -767,7 +791,7 @@ const synthesis = await agent(
   `apologies, be decisive.` +
   (synthesisExtra ? `\n\n${synthesisExtra}` : ''),
   { label: 'synthesize', phase: 'Synthesize', cwd: repoRoot,
-    tools: ['read', 'grep', 'find', 'ls'], model: 'openai-codex/gpt-5.6-luna',
+    tools: sourceTools, model: 'openai-codex/gpt-5.6-luna',
     schema: {
       type: 'object',
       required: ['report_markdown'],

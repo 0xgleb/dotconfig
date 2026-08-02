@@ -144,12 +144,25 @@ Workflow → after-workflow handling → print findings). Pass the contract inpu
 | `{PROJECT_DOCS_PATHS}`  | the docs paths from step 5                                              |
 | `{PR_DESCRIPTION}`      | the author's description (bot footers stripped) from step 3            |
 | `{SOURCE_ACCESS}`       | `The change was authored against commit <head_sha>. Read source files via 'git show <head_sha>:<path>' — the working tree does not match the change under review.` |
+| `{SOURCE_REVISION}`     | the exact lowercase hexadecimal `<head_sha>` from verified PR metadata    |
 | `{SCOPE_NOTE}`          | `The diff is scoped to exactly the changes on this PR.`                |
 | `{INSPECTOR_ARG}`       | the PR reference (`<pr-ref>`)                                          |
 | `{REPORT_HEADER}`       | `# Review — PR #<n>: <title>\n**Author:** <author>\n**URL:** <url>\n**Branches:** <head> -> <base>\n**Head SHA:** <head_sha>\n**Files changed:** <N> (+<additions>/-<deletions>)` |
 | `{TERMINAL_HEADER}`     | `PR #<n> — <title>\n<author>  ·  <head>..<base>  ·  <N> files, +<add>/-<del> lines\n<url>` |
 | `{SYNTHESIS_EXTRA}`     | `CRITICAL ADAPTATIONS FOR THIS REPORT: (1) No AI references anywhere — no agent attribution, no 'Found by' field, no mention of models, reviewers, lanes, or cross-review. The report must read like a single human senior engineer wrote it. (2) Frame the Overall assessment as advice to the REVIEWER reading this report, not to the PR author — e.g. 'This PR looks ready to merge pending X' or 'I'd push back on Y before approving.'` |
 | `{INCLUDE_ATTRIBUTION}` | `false`                                                                |
+
+Pass the typed source object explicitly in the Workflow args:
+
+```json
+"sourceRevision": "<head_sha>"
+```
+
+The shared engine validates that value as a 40–64 character lowercase hexadecimal
+Git object ID before exposing Bash to native lanes. Those lanes may use Bash only
+for exact read-only `git show '<head_sha>:<repo-relative-path>'` calls. They must
+never read `.env*`, credential stores, private keys, or certificates, and must not
+use Bash for checkout, worktree creation, mutation, or unrelated commands.
 
 `{INCLUDE_ATTRIBUTION}` being `false` makes the engine strip the `Found by` field
 from `review.md` and drop the lane bracket from the terminal output — the on-disk
