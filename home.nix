@@ -224,6 +224,31 @@ in
       ".pi/agent/AGENTS.md".source = config.lib.file.mkOutOfStoreSymlink "${aiDir}/pi/AGENTS.md";
       ".pi/agent/models.json".text = builtins.toJSON {
         providers."openai-codex".modelOverrides."gpt-5.6-sol".contextWindow = 1050000;
+        providers.ollama = {
+          baseUrl = "http://localhost:11434/v1";
+          api = "openai-completions";
+          apiKey = "ollama";
+          models = [
+            {
+              id = "qwen3:32b";
+              name = "Qwen3 32B (local)";
+              reasoning = true;
+              input = [ "text" ];
+              cost = {
+                input = 0;
+                output = 0;
+                cacheRead = 0;
+                cacheWrite = 0;
+              };
+              contextWindow = 40960;
+              maxTokens = 8192;
+              compat = {
+                supportsDeveloperRole = false;
+                supportsReasoningEffort = false;
+              };
+            }
+          ];
+        };
       };
       ".pi/agent/skills".source = emptyPiSkillRoot;
       ".config/ai/pi/extensions/node_modules" = {
