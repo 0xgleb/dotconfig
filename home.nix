@@ -64,6 +64,14 @@ let
         "$HOME/.config/ai/pi/extensions/remote-control/bridge-cli.ts" "$@"
     '';
   };
+  piControlPlane = pkgs.writeShellApplication {
+    name = "pi-control-plane";
+    runtimeInputs = [ pkgs.nodejs ];
+    text = ''
+      exec node --experimental-strip-types \
+        "$HOME/.config/ai/pi/extensions/control-plane/main.ts" "$@"
+    '';
+  };
   pieceOfPiTelegram = pkgs.writeShellApplication {
     name = "piece-of-pi-telegram";
     runtimeInputs = [
@@ -157,6 +165,7 @@ in
         jf
         pieceOfPiTelegram
         piBridge
+        piControlPlane
         piSolReview
         pi-coding-agent-with-reload
       ];
