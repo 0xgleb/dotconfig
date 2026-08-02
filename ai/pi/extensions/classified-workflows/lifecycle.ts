@@ -1,5 +1,6 @@
 import type { AgentRequest, AgentResult, Boundary, Decision } from "./core.ts";
 import type { RuntimeProjectContext } from "./project-context.ts";
+import { sanitizeProcessDiagnostic } from "./protocol.ts";
 
 export interface ClassificationRequest {
   boundary: Boundary;
@@ -115,18 +116,31 @@ export const boundedToolResultActionContext = (
 
 export const withheldExecutedToolResultPatch: (
   isError: boolean,
-) => WithheldExecutedToolResultPatch = (isError) => ({
-  content: [
-    {
-      type: "text",
-      text:
-        `Tool executed before result filtering. Original tool status: ${isError ? "error" : "success"}. ` +
-        "Result content was withheld by classified workflow policy. Do not retry or assume rollback; " +
-        "first verify the exact intended state through an independently authorized read-only action.",
-    },
-  ],
-  details: undefined,
-});
+  decisionReason?: string,
+) => WithheldExecutedToolResultPatch = (isError, decisionReason) => {
+  const classifierDiagnostic =
+    decisionReason?.startsWith("Classifier was unavailable after ") === true
+      ? sanitizeProcessDiagnostic(decisionReason)
+          .replace(/\s+/g, " ")
+          .trim()
+          .slice(0, 500)
+      : undefined;
+  return {
+    content: [
+      {
+        type: "text",
+        text:
+          `Tool executed before result filtering. Original tool status: ${isError ? "error" : "success"}. ` +
+          "Result content was withheld by classified workflow policy. " +
+          (classifierDiagnostic
+            ? `Classifier diagnostic: ${classifierDiagnostic}. `
+            : "") +
+          "Do not retry or assume rollback; first verify the exact intended state through an independently authorized read-only action.",
+      },
+    ],
+    details: undefined,
+  };
+};
 
 export function createClassifiedAgentRunner(
   intent: string[],

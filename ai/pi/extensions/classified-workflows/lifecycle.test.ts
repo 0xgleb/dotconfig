@@ -173,6 +173,18 @@ test("withheld tool results preserve post-execution truth and prohibit blind ret
     withheldExecutedToolResultPatch(true).content[0]?.text ?? "",
     /Do not retry or assume rollback/,
   );
+  assert.match(
+    withheldExecutedToolResultPatch(
+      true,
+      "Classifier was unavailable after 2 attempts; last failure: Child stderr: provider unavailable",
+    ).content[0]?.text ?? "",
+    /Classifier diagnostic: Classifier was unavailable after 2 attempts; last failure: Child stderr: provider unavailable/,
+  );
+  assert.doesNotMatch(
+    withheldExecutedToolResultPatch(true, "arbitrary classifier prose").content[0]
+      ?.text ?? "",
+    /arbitrary classifier prose/,
+  );
 });
 
 test("agent execution is enclosed by spawn and return classification", async () => {

@@ -917,7 +917,7 @@ const WorkflowParameters = Type.Object({
 })
 
 export default function classifiedWorkflows(pi: ExtensionAPI): void {
-  registerRuntimeVersion(pi, "classified-workflows", "2026.08.01.149")
+  registerRuntimeVersion(pi, "classified-workflows", "2026.08.01.150")
   const childTokenLimit = workflowChildTokenLimit(
     process.env[WORKFLOW_CHILD_TOKEN_LIMIT_ENV],
   )
@@ -2199,7 +2199,7 @@ export default function classifiedWorkflows(pi: ExtensionAPI): void {
       // The extension API emits tool_result only after execution. Redact output,
       // but preserve the original success/error bit so a mutation is never
       // misreported as a pre-execution policy block and blindly retried.
-      return withheldExecutedToolResultPatch(event.isError)
+      return withheldExecutedToolResultPatch(event.isError, decision.reason)
     }
   })
 
