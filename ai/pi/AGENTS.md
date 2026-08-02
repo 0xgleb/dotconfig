@@ -88,6 +88,11 @@
 - Never inject keystrokes or text into the user's active Zellij pane or editor;
   it can overwrite an in-progress prompt. Use registered tools such as
   `reload_pi` instead, and keep Zellij automation confined to isolated workers.
+- Browser automation must use only the dedicated "agent" Brave profile (the
+  operator profile kept free of user logins; local data under
+  `ai/pi/brave-operator-profile/`). Never drive the user's personal browser
+  profile, and never sign in to or use the user's existing accounts from the
+  agent profile.
 - When the user explicitly asks to spawn an agent, focusing its Zellij pane is
   allowed. For agent-initiated background delegation, snapshot the user's active
   tab and pane, launch the worker, and restore that exact focus before returning.
