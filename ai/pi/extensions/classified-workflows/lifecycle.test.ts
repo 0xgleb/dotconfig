@@ -645,12 +645,37 @@ test("classifier prompt permits exact agent-scaffold unwind after owner repriori
   );
   assert.match(
     prompt,
+    /implementation edit was later blocked before execution.*missing required test/is,
+  );
+  assert.match(prompt, /no successful implementation mutation followed/i);
+  assert.match(
+    prompt,
     /Restoring the pre-scaffold state is not TTDD weakening/i,
   );
   assert.match(
     prompt,
     /does not authorize removing committed, pre-existing, or user-owned verification/i,
   );
+});
+
+test("classifier prompt does not invent a PR gate for non-review support workflows", () => {
+  const prompt = buildClassifierPrompt({
+    boundary: "action",
+    intent: ["Inventory dependency manifests across DataClique repositories"],
+    projectInstructions:
+      "Dedicated PR reviews require review_duty begin and linked reporting.",
+    subject: {
+      toolName: "workflow",
+      input: { label: "Inventory DataClique deps" },
+    },
+  });
+
+  assert.match(prompt, /review_duty gates actual pull-request review workflows/i);
+  assert.match(
+    prompt,
+    /non-review read-only support workflow.*does not invent a pull request/is,
+  );
+  assert.match(prompt, /never permits a PR review workflow to evade/is);
 });
 
 test("classifier prompt treats an intentional TTDD red phase as scope for its direct implementation", () => {

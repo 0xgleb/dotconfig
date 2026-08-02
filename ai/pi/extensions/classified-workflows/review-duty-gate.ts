@@ -433,11 +433,26 @@ export const clearedHistoricalReviewQuestion = (
   return lastResolved;
 };
 
+export const isPullRequestReviewWorkflow = (input: unknown): boolean => {
+  if (!isRecord(input)) return false;
+  const label = typeof input.label === "string" ? input.label : "";
+  return (
+    /\b(?:review|re-review|cross-review)\b/i.test(label) &&
+    /(?:\bpull request\b|\bPR\s*#?\s*\d+\b|#\d+\b|github\.com\/[^\s/]+\/[^\s/]+\/pull\/\d+)/i.test(
+      label,
+    )
+  );
+};
+
 export const reviewWorkflowBlockReason = (
   sessionName: string | undefined,
   state: ReviewDutyState,
+  workflowInput: unknown,
 ): string | undefined => {
-  if (!isReviewDutySession(sessionName)) return undefined;
+  if (
+    !isReviewDutySession(sessionName) ||
+    !isPullRequestReviewWorkflow(workflowInput)
+  ) return undefined;
   if (state.phase === "idle") {
     return "Dedicated review workflows require review_duty begin with repository, pull request, and own/assigned kind";
   }

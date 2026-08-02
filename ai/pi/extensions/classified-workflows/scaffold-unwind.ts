@@ -54,6 +54,27 @@ const weakeningOnlyReason = (reason: string): boolean => {
 const reprioritization =
   /\b(?:reprioriti[sz](?:e|ed|ing)|defer(?:red|ring)?|postpone(?:d)?|new priority|higher priority|hotfix|instead|focus(?: now)? on|before)\b/i;
 
+const isSpecDocument = (path: string): boolean =>
+  /\.(?:md|mdx|rst|adoc)$/i.test(path);
+
+const isBlockedImplementationPrerequisite = (
+  call: ToolCall,
+  result: Readonly<Record<string, unknown>>,
+  cwd: string,
+  scaffoldTarget: string,
+): boolean => {
+  const blockedTarget = targetPath(cwd, call.input);
+  if (!blockedTarget || blockedTarget === scaffoldTarget || isSpecDocument(blockedTarget))
+    return false;
+  const text = messageText(result);
+  return (
+    /^Auto-classifier verdict:/i.test(text.trim()) &&
+    /\b(?:implementation|source|production code|code change)\b/i.test(text) &&
+    /\b(?:e2e|test|TTDD|test-first)\b/i.test(text) &&
+    /\b(?:before|first|missing|require[ds]?)\b/i.test(text)
+  );
+};
+
 const exactInverse = (proposed: EditInput, prior: ToolCall): boolean => {
   const priorEdit = editInput(prior.input);
   if (prior.name === "edit" && priorEdit) {
@@ -86,6 +107,12 @@ export const exactScaffoldUnwindDisprovesBlock = (input: {
   if (!proposed || !target) return false;
 
   const calls = new Map<string, ToolCall>();
+  const mutationOutcomes: Array<{
+    call: ToolCall;
+    result: Readonly<Record<string, unknown>>;
+    resultIndex: number;
+    successful: boolean;
+  }> = [];
   const successfulMutations: Array<ToolCall & { resultIndex: number }> = [];
 
   input.branch.forEach((entry, index) => {
@@ -102,23 +129,40 @@ export const exactScaffoldUnwindDisprovesBlock = (input: {
       }
       return;
     }
-    if (message.role !== "toolResult" || message.isError !== false || typeof message.toolCallId !== "string") return;
-    const call = calls.get(message.toolCallId);
     if (
-      call &&
-      (call.name === "edit" || call.name === "write") &&
-      targetPath(input.cwd, call.input) === target
-    ) successfulMutations.push({ ...call, resultIndex: index });
+      message.role !== "toolResult" ||
+      typeof message.toolCallId !== "string" ||
+      typeof message.isError !== "boolean"
+    ) return;
+    const call = calls.get(message.toolCallId);
+    if (!call || (call.name !== "edit" && call.name !== "write")) return;
+    const successful = message.isError === false;
+    mutationOutcomes.push({ call, result: message, resultIndex: index, successful });
+    if (successful && targetPath(input.cwd, call.input) === target)
+      successfulMutations.push({ ...call, resultIndex: index });
   });
 
   const latest = successfulMutations.at(-1);
   if (!latest || !exactInverse(proposed, latest)) return false;
 
-  return input.branch.slice(latest.resultIndex + 1).some((entry) =>
-    isRecord(entry) &&
-    entry.type === "message" &&
-    isRecord(entry.message) &&
-    entry.message.role === "user" &&
-    reprioritization.test(messageText(entry.message)),
+  const laterHumanReprioritized = input.branch
+    .slice(latest.resultIndex + 1)
+    .some(
+      (entry) =>
+        isRecord(entry) &&
+        entry.type === "message" &&
+        isRecord(entry.message) &&
+        entry.message.role === "user" &&
+        reprioritization.test(messageText(entry.message)),
+    );
+  if (laterHumanReprioritized) return true;
+  if (!isSpecDocument(target)) return false;
+
+  const laterMutations = mutationOutcomes.filter(
+    ({ resultIndex }) => resultIndex > latest.resultIndex,
+  );
+  if (laterMutations.some(({ successful }) => successful)) return false;
+  return laterMutations.some(({ call, result }) =>
+    isBlockedImplementationPrerequisite(call, result, input.cwd, target),
   );
 };

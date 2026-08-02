@@ -9,6 +9,7 @@ import {
   completeAutoReviewDuty,
   continueReviewDuty,
   emptyReviewDutyState,
+  isPullRequestReviewWorkflow,
   preExecutionReviewWorkflowBlockObserved,
   startReviewWorkflow,
   retryBlockedReviewDuty,
@@ -433,19 +434,80 @@ test("complete-auto handler verifies typed scope and terminal workflow evidence"
   );
 });
 
-test("every dedicated reviewer must begin a typed job before workflow execution", () => {
+test("dedicated review gates apply only to actual PR review workflows", () => {
+  const reviewWorkflow = {
+    label: "Review PR #1101",
+    code: 'return agent("Review the pull request diff and verify findings")',
+  };
+  const inventoryWorkflow = {
+    label: "Inventory DataClique deps",
+    code:
+      'return agent("This is not a PR review; read manifests and list dependency versions")',
+  };
+  assert.equal(isPullRequestReviewWorkflow(reviewWorkflow), true);
+  assert.equal(isPullRequestReviewWorkflow(inventoryWorkflow), false);
+
   for (const sessionName of [
     "st0x-review-duty",
     "dataclique-review-duty",
     "personal-review-duty",
   ]) {
     assert.match(
-      reviewWorkflowBlockReason(sessionName, emptyReviewDutyState) ?? "",
+      reviewWorkflowBlockReason(
+        sessionName,
+        emptyReviewDutyState,
+        reviewWorkflow,
+      ) ?? "",
+      /review_duty begin/i,
+    );
+    assert.equal(
+      reviewWorkflowBlockReason(
+        sessionName,
+        emptyReviewDutyState,
+        inventoryWorkflow,
+      ),
+      undefined,
+    );
+  }
+  assert.equal(
+    reviewWorkflowBlockReason(
+      "ordinary-session",
+      emptyReviewDutyState,
+      reviewWorkflow,
+    ),
+    undefined,
+  );
+  assert.match(
+    extensionSource,
+    /isPullRequestReviewWorkflow\(event\.input\)/,
+  );
+});
+
+test("every dedicated reviewer must begin a typed job before workflow execution", () => {
+  const reviewWorkflow = {
+    label: "Review PR #1101",
+    code: 'return agent("Review the pull request diff")',
+  };
+  for (const sessionName of [
+    "st0x-review-duty",
+    "dataclique-review-duty",
+    "personal-review-duty",
+  ]) {
+    assert.match(
+      reviewWorkflowBlockReason(
+        sessionName,
+        emptyReviewDutyState,
+        reviewWorkflow,
+      ) ?? "",
       /review_duty begin/i,
     );
   }
   assert.equal(
-    reviewWorkflowBlockReason("ordinary-session", emptyReviewDutyState),
+    reviewWorkflowBlockReason(
+      "ordinary-session",
+      emptyReviewDutyState,
+      reviewWorkflow,
+    ),
     undefined,
   );
   assert.match(extensionSource, /dataclique-review-duty/);
@@ -456,12 +518,23 @@ test("a completed review workflow must relay a verdict question before another j
   const active = beginReviewDuty(emptyReviewDutyState, job, 10);
   assert.equal(active.ok, true);
   if (!active.ok) return;
-  assert.equal(reviewWorkflowBlockReason("st0x-review-duty", active.state), undefined);
+  const reviewWorkflow = {
+    label: "Review PR #1101",
+    code: 'return agent("Review the pull request diff")',
+  };
+  assert.equal(
+    reviewWorkflowBlockReason("st0x-review-duty", active.state, reviewWorkflow),
+    undefined,
+  );
 
   const awaiting = startReviewWorkflow(active.state, 20);
   assert.equal(awaiting.phase, "awaiting_report");
   assert.match(
-    reviewWorkflowBlockReason("st0x-review-duty", awaiting) ?? "",
+    reviewWorkflowBlockReason(
+      "st0x-review-duty",
+      awaiting,
+      reviewWorkflow,
+    ) ?? "",
     /persisted and linked/i,
   );
   const next = beginReviewDuty(awaiting, { ...job, pullRequest: 1102 }, 30);

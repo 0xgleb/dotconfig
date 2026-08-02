@@ -122,6 +122,7 @@ import {
   completeAutoReviewDuty,
   continueReviewDuty,
   emptyReviewDutyState,
+  isPullRequestReviewWorkflow,
   isReviewDutySession,
   preExecutionReviewWorkflowBlockObserved,
   startReviewWorkflow,
@@ -917,7 +918,7 @@ const WorkflowParameters = Type.Object({
 })
 
 export default function classifiedWorkflows(pi: ExtensionAPI): void {
-  registerRuntimeVersion(pi, "classified-workflows", "2026.08.01.150")
+  registerRuntimeVersion(pi, "classified-workflows", "2026.08.01.151")
   const childTokenLimit = workflowChildTokenLimit(
     process.env[WORKFLOW_CHILD_TOKEN_LIMIT_ENV],
   )
@@ -2020,7 +2021,9 @@ export default function classifiedWorkflows(pi: ExtensionAPI): void {
 
   pi.on("tool_call", async (event: ToolCallEvent, ctx) => {
     const startsReviewWorkflow =
-      event.toolName === "workflow" && isReviewDutySession(pi.getSessionName())
+      event.toolName === "workflow" &&
+      isReviewDutySession(pi.getSessionName()) &&
+      isPullRequestReviewWorkflow(event.input)
     const persistReviewWorkflowStart = (): void => {
       if (!startsReviewWorkflow) return
       reviewDutyState = startReviewWorkflow(reviewDutyState, Date.now())
@@ -2030,6 +2033,7 @@ export default function classifiedWorkflows(pi: ExtensionAPI): void {
       const dutyBlock = reviewWorkflowBlockReason(
         pi.getSessionName(),
         reviewDutyState,
+        event.input,
       )
       if (dutyBlock) {
         return resolveActionDecision({

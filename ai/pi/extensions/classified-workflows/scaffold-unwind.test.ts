@@ -8,13 +8,18 @@ const call = (id: string, name: string, args: unknown) => ({
   message: { role: "assistant", content: [{ type: "toolCall", id, name, arguments: args }] },
 });
 
-const result = (id: string, isError = false) => ({
+const result = (id: string, isError = false, text?: string) => ({
   type: "message",
   message: {
     role: "toolResult",
     toolCallId: id,
     isError,
-    content: [{ type: "text", text: isError ? "failed" : "updated" }],
+    content: [
+      {
+        type: "text",
+        text: text ?? (isError ? "failed" : "updated"),
+      },
+    ],
   },
 });
 
@@ -59,6 +64,97 @@ test("newly written uncommitted scaffolding can be emptied after its lane is def
     ],
     cwd: "/repo",
   }), true);
+});
+
+test("spec-only scaffolding can unwind after its implementation is pre-execution blocked", () => {
+  const specForward = {
+    path: "SPEC.md",
+    edits: [
+      {
+        oldText: "NAV updates are event driven.\n",
+        newText: "NAV updates are event driven with a 30 second timeout.\n",
+      },
+    ],
+  };
+  const specInverse = {
+    path: specForward.path,
+    edits: [
+      {
+        oldText: specForward.edits[0]?.newText,
+        newText: specForward.edits[0]?.oldText,
+      },
+    ],
+  };
+  const implementation = {
+    path: "src/nav.rs",
+    edits: [{ oldText: "poll_nav();", newText: "poll_nav_with_timeout();" }],
+  };
+
+  assert.equal(
+    exactScaffoldUnwindDisprovesBlock({
+      reason:
+        "Removing the timeout sentence would weaken the spec after implementation edits.",
+      edit: specInverse,
+      branch: [
+        call("spec-edit", "edit", specForward),
+        result("spec-edit"),
+        call("implementation-edit", "edit", implementation),
+        result(
+          "implementation-edit",
+          true,
+          "Auto-classifier verdict: Implementation requires a failing top-level e2e test before source changes.",
+        ),
+      ],
+      cwd: "/repo",
+    }),
+    true,
+  );
+});
+
+test("blocked-implementation unwind preserves established specs and successful implementation", () => {
+  const specForward = {
+    path: "SPEC.md",
+    edits: [{ oldText: "old\n", newText: "old\ntimeout requirement\n" }],
+  };
+  const specInverse = {
+    path: specForward.path,
+    edits: [{ oldText: specForward.edits[0]?.newText, newText: specForward.edits[0]?.oldText }],
+  };
+  const implementation = {
+    path: "src/nav.rs",
+    edits: [{ oldText: "old", newText: "implemented" }],
+  };
+  const blocked = result(
+    "implementation-edit",
+    true,
+    "Auto-classifier verdict: Add a failing e2e test before implementation.",
+  );
+  const cases = [
+    [call("implementation-edit", "edit", implementation), blocked],
+    [
+      call("spec-edit", "edit", specForward),
+      result("spec-edit"),
+      call("implementation-edit", "edit", implementation),
+      result("implementation-edit"),
+    ],
+    [
+      call("spec-edit", "edit", specForward),
+      result("spec-edit"),
+      call("implementation-edit", "edit", implementation),
+      result("implementation-edit", true, "compiler failed after execution"),
+    ],
+  ];
+  for (const candidate of cases) {
+    assert.equal(
+      exactScaffoldUnwindDisprovesBlock({
+        reason: "Removing the timeout requirement would weaken the spec.",
+        edit: specInverse,
+        branch: candidate,
+        cwd: "/repo",
+      }),
+      false,
+    );
+  }
 });
 
 test("unwind remains blocked without an exact successful inverse and later human reprioritization", () => {
