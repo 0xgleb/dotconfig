@@ -8,6 +8,7 @@ import {
   activeWorkflowPanelLines,
   backgroundWorkflowStartedText,
   workflowHistoryText,
+  workflowProgressText,
   type WorkflowUiItem,
 } from "./workflow-ui.ts";
 
@@ -47,6 +48,22 @@ test("background start guidance keeps delegated work out of the foreground", () 
   assert.match(text, /unless the workflow fails/i);
 });
 
+test("workflow progress names purpose, phase, observed counts, and latest evidence", () => {
+  assert.equal(
+    workflowProgressText({
+      purpose: "review moneymentum PR #451",
+      phase: "verify findings",
+      started: 10,
+      running: 2,
+      completed: 7,
+      failed: 1,
+      maxAgents: 16,
+      latest: "child 10 · model reasoning",
+    }),
+    "review moneymentum PR #451 · phase verify findings · progress 8 settled / 2 running / 10 started (7 ok, 1 failed; max 16/phase) · latest child 10 · model reasoning",
+  );
+});
+
 test("persistent workflow UI contains only active work", () => {
   assert.deepEqual(activeWorkflowLines(workflows), [
     "WORKFLOWS · 1 active · /workflows for history",
@@ -75,7 +92,9 @@ test("background workflows surface named phase and bounded log progress", () => 
   )
   assert.match(start, /phase: \(title\).*workflow\.progress/s)
   assert.match(start, /log: \(message\).*workflow\.progress/s)
-  assert.match(start, /boundedWorkflowProgress\(`update · \$\{message\}`\)/)
+  assert.match(start, /workflow\.liveProgress\.latest = `update · \$\{message\}`/)
+  assert.match(start, /observeLiveWorkflowChild/)
+  assert.match(start, /liveWorkflowProgressText/)
 })
 
 test("workflow history explains terminal outcomes", () => {

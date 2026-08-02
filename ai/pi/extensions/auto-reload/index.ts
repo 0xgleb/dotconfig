@@ -9,13 +9,21 @@ import {
   isSafeHandoffName,
   managedPiChangeLabel,
   managedPiWatchPaths,
+  managedReloadDecision,
   parseManagedReloadSummary,
   parseSeenHandoffNames,
   shouldDispatchReloadFollowUp,
   unseenHandoffNames,
 } from "./core.ts";
 import { isContinuationPaused } from "../shared/continuation-pause.ts";
-import { AUTO_RELOAD_PENDING_REQUEST_EVENT, type AutoReloadPendingReporter } from "../shared/reload-events.ts";
+import {
+  AUTO_RELOAD_ACTIVITY_REQUEST_EVENT,
+  AUTO_RELOAD_PENDING_REQUEST_EVENT,
+  AUTO_RELOAD_PREEMPT_EVENT,
+  type AutoReloadActivityReporter,
+  type AutoReloadPendingReporter,
+  type AutoReloadPreemptRequest,
+} from "../shared/reload-events.ts";
 import { registerRuntimeVersion } from "../shared/runtime-version.ts";
 
 const HANDOFF_POLL_MS = 60 * 60 * 1_000;
@@ -24,6 +32,7 @@ const RELOAD_SUMMARY_ENTRY = "auto-reload.managed-change-summary";
 const IDLE_RETRY_MS = 1_000;
 const COMMIT_RETRY_MS = 2_000;
 const GENERATION_POLL_MS = 5_000;
+const FORCE_RELOAD_AFTER_MS = 30_000;
 const STATUS_KEY = "auto-reload";
 
 interface ReloadableContext extends ExtensionContext {
@@ -62,12 +71,14 @@ export const managedGeneration = (roots: readonly string[]): string => {
 };
 
 const autoReload: (pi: ExtensionAPI) => void = (pi) => {
-  registerRuntimeVersion(pi, "auto-reload", "2026.08.01.7");
+  registerRuntimeVersion(pi, "auto-reload", "2026.08.01.8");
   let watchers: FSWatcher[] = [];
   let timer: ReturnType<typeof setTimeout> | undefined;
   let handoffTimer: ReturnType<typeof setInterval> | undefined;
   let generationTimer: ReturnType<typeof setInterval> | undefined;
   let pending = false;
+  let pendingSince: number | undefined;
+  let preemptRequested = false;
   const changedLabels = new Set<string>();
 
   pi.events.on(AUTO_RELOAD_PENDING_REQUEST_EVENT, (report: AutoReloadPendingReporter) => report(pending));
@@ -80,6 +91,8 @@ const autoReload: (pi: ExtensionAPI) => void = (pi) => {
     handoffTimer = undefined;
     generationTimer = undefined;
     pending = false;
+    pendingSince = undefined;
+    preemptRequested = false;
     changedLabels.clear();
     for (const watcher of watchers) watcher.close();
     watchers = [];
@@ -88,6 +101,8 @@ const autoReload: (pi: ExtensionAPI) => void = (pi) => {
   const performReload = async (ctx: ReloadableContext) => {
     if (!pending) return;
     pending = false;
+    pendingSince = undefined;
+    preemptRequested = false;
     if (timer) clearTimeout(timer);
     timer = undefined;
     ctx.ui.setStatus(STATUS_KEY, undefined);
@@ -103,19 +118,48 @@ const autoReload: (pi: ExtensionAPI) => void = (pi) => {
       await ctx.reload();
     } catch (error) {
       pending = true;
+      pendingSince = Date.now();
+      preemptRequested = false;
       ctx.ui.setStatus(STATUS_KEY, "reload:retry");
       throw error;
     }
   };
 
+  const managedWorkIsActive = (): boolean => {
+    let active = false;
+    const reportActivity: AutoReloadActivityReporter = (reported) => {
+      active ||= reported;
+    };
+    pi.events.emit(AUTO_RELOAD_ACTIVITY_REQUEST_EVENT, reportActivity);
+    return active;
+  };
+
   const reloadWhenIdle = async (ctx: ReloadableContext) => {
     if (!pending) return;
-    if (!managedSourcesAreCommitted(join(homedir(), ".config"))) {
+    const now = Date.now();
+    const managedWorkActive = managedWorkIsActive();
+    const decision = managedReloadDecision({
+      committed: managedSourcesAreCommitted(join(homedir(), ".config")),
+      idle: ctx.isIdle() && !managedWorkActive,
+      pendingForMs: Math.max(0, now - (pendingSince ?? now)),
+      forceAfterMs: FORCE_RELOAD_AFTER_MS,
+      preemptRequested,
+    });
+    if (decision === "await-commit") {
       ctx.ui.setStatus(STATUS_KEY, "reload:awaiting-commit");
       timer = setTimeout(() => void reloadWhenIdle(ctx), COMMIT_RETRY_MS);
       return;
     }
-    if (!ctx.isIdle()) {
+    if (decision === "preempt") {
+      preemptRequested = true;
+      ctx.ui.setStatus(STATUS_KEY, "reload:preempting");
+      const request: AutoReloadPreemptRequest = { requestedAt: now };
+      pi.events.emit(AUTO_RELOAD_PREEMPT_EVENT, request);
+      ctx.abort();
+      timer = setTimeout(() => void reloadWhenIdle(ctx), IDLE_RETRY_MS);
+      return;
+    }
+    if (decision === "wait") {
       timer = setTimeout(() => void reloadWhenIdle(ctx), IDLE_RETRY_MS);
       return;
     }
@@ -125,6 +169,10 @@ const autoReload: (pi: ExtensionAPI) => void = (pi) => {
   const scheduleReload = (ctx: ReloadableContext, changedPath: string | null, aiRoot: string) => {
     if (changedPath?.includes("node_modules") || changedPath?.includes("brave-operator-profile")) return;
     if (changedPath) changedLabels.add(managedPiChangeLabel(changedPath, aiRoot));
+    if (!pending) {
+      pendingSince = Date.now();
+      preemptRequested = false;
+    }
     pending = true;
     ctx.ui.setStatus(STATUS_KEY, "reload:pending");
     if (timer) clearTimeout(timer);
@@ -235,6 +283,10 @@ const autoReload: (pi: ExtensionAPI) => void = (pi) => {
   pi.on("agent_end", async (_event, ctx) => {
     if (!pending || !isReloadableContext(ctx)) return;
     if (!managedSourcesAreCommitted(join(homedir(), ".config"))) return;
+    if (managedWorkIsActive()) {
+      await reloadWhenIdle(ctx);
+      return;
+    }
     await performReload(ctx);
   });
 

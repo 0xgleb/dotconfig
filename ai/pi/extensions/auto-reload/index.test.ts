@@ -19,6 +19,16 @@ test("pending managed reload executes at agent end before continuous follow-ups 
   assert.match(source, /await reloadWhenIdle\(ctx\)/);
 });
 
+test("long-running turns receive one persisted managed preemption before forced reload", () => {
+  assert.match(source, /FORCE_RELOAD_AFTER_MS = 30_000/);
+  assert.match(source, /AUTO_RELOAD_ACTIVITY_REQUEST_EVENT/);
+  assert.match(source, /AUTO_RELOAD_PREEMPT_EVENT/);
+  assert.match(source, /managedReloadDecision/);
+  assert.match(source, /idle: ctx\.isIdle\(\) && !managedWorkActive/);
+  assert.match(source, /ctx\.abort\(\)/);
+  assert.match(source, /preemptRequested = true/);
+});
+
 test("managed source events start commit-gated reload immediately instead of waiting on a fixed debounce", () => {
   assert.match(source, /queueMicrotask\(\(\) => void reloadWhenIdle\(ctx\)\)/);
   assert.doesNotMatch(source, /DEBOUNCE_MS/);

@@ -73,6 +73,21 @@ test("manual abort pause state persists defensively and keys off the final assis
   );
 });
 
+test("managed reload preemption persists workflow state without becoming a manual pause", () => {
+  assert.match(
+    extensionSource,
+    /AUTO_RELOAD_ACTIVITY_REQUEST_EVENT[\s\S]*?activeForegroundWorkflowControllers\.size[\s\S]*?status === "running"/,
+  );
+  assert.match(
+    extensionSource,
+    /AUTO_RELOAD_PREEMPT_EVENT[\s\S]*?appendEntry\(WORKFLOW_AUDIT_ENTRY[\s\S]*?workflow\.controller\.abort\(\)[\s\S]*?controller\.abort\(\)/,
+  );
+  assert.match(
+    extensionSource,
+    /wasRunAborted\(event\.messages\)[\s\S]*?!manualReloadPending[\s\S]*?!managedReloadPreemptPending/,
+  );
+});
+
 test("deterministically allowed actions carry one matching result allowance", () => {
   const allowance = createToolResultAllowance();
   allowance.record("call-1");

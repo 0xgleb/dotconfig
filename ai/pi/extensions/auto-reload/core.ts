@@ -4,6 +4,25 @@ import { isContinuationPaused } from "../shared/continuation-pause.ts";
 
 export const HANDOFF_GLOBS = ["*.md", "handoffs/*.md"] as const;
 
+export type ManagedReloadDecision =
+  | "await-commit"
+  | "reload"
+  | "wait"
+  | "preempt";
+
+export const managedReloadDecision = (input: {
+  readonly committed: boolean;
+  readonly idle: boolean;
+  readonly pendingForMs: number;
+  readonly forceAfterMs: number;
+  readonly preemptRequested: boolean;
+}): ManagedReloadDecision => {
+  if (!input.committed) return "await-commit";
+  if (input.idle) return "reload";
+  if (input.preemptRequested) return "wait";
+  return input.pendingForMs >= input.forceAfterMs ? "preempt" : "wait";
+};
+
 export const isSafeHandoffName: (name: string) => boolean = (name) => {
   const segments = name.split("/");
   const fileName = segments.at(-1) ?? "";

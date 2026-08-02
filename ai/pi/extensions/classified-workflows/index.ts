@@ -173,8 +173,15 @@ import {
   activeWorkflowPanelLines,
   backgroundWorkflowStartedText,
   workflowHistoryText,
+  workflowProgressText,
   type WorkflowUiItem,
 } from "./workflow-ui.ts"
+import {
+  AUTO_RELOAD_ACTIVITY_REQUEST_EVENT,
+  AUTO_RELOAD_PREEMPT_EVENT,
+  type AutoReloadActivityReporter,
+  type AutoReloadPreemptRequest,
+} from "../shared/reload-events.ts"
 import {
   CONTINUATION_PAUSE_ENTRY,
   latestContinuationPause,
@@ -241,6 +248,16 @@ interface DetachableForegroundWorkflow {
   detach(): void
 }
 
+interface LiveWorkflowProgress {
+  readonly purpose: string
+  phase?: string
+  latest?: string
+  readonly started: Set<number>
+  readonly running: Set<number>
+  readonly completed: Set<number>
+  readonly failed: Set<number>
+}
+
 interface BackgroundWorkflow {
   id: string
   label: string
@@ -252,6 +269,7 @@ interface BackgroundWorkflow {
   output?: string
   error?: string
   progress?: string
+  liveProgress: LiveWorkflowProgress
 }
 
 interface WorkflowToolParams extends WorkflowLimits {
@@ -865,7 +883,7 @@ const WorkflowParameters = Type.Object({
 })
 
 export default function classifiedWorkflows(pi: ExtensionAPI): void {
-  registerRuntimeVersion(pi, "classified-workflows", "2026.08.01.134")
+  registerRuntimeVersion(pi, "classified-workflows", "2026.08.01.136")
   const childTokenLimit = workflowChildTokenLimit(
     process.env[WORKFLOW_CHILD_TOKEN_LIMIT_ENV],
   )
@@ -906,6 +924,7 @@ export default function classifiedWorkflows(pi: ExtensionAPI): void {
   let loopTimer: ReturnType<typeof setTimeout> | undefined
   let continuationPaused = false
   let manualReloadPending = false
+  let managedReloadPreemptPending = false
   let capabilityCircuit: CapabilityCircuitState = emptyCapabilityCircuit
   let skipNextCapabilityOutcome = false
   let reviewDutyState: ReviewDutyState = emptyReviewDutyState
@@ -920,6 +939,7 @@ export default function classifiedWorkflows(pi: ExtensionAPI): void {
   let latestCtx: ExtensionContext | undefined
   let questionState: UserQuestionStateSnapshot = { questions: [] }
   const backgroundWorkflows = new Map<string, BackgroundWorkflow>()
+  const activeForegroundWorkflowControllers = new Set<AbortController>()
   let detachableForegroundWorkflow:
     | DetachableForegroundWorkflow
     | undefined
@@ -1060,6 +1080,49 @@ export default function classifiedWorkflows(pi: ExtensionAPI): void {
     return `child ${event.audit.index} · ${compactModelLabel(event.audit.requestedModel)} · ${event.audit.status} · ${event.audit.usageTokens} tokens`
   }
 
+  const makeLiveWorkflowProgress = (
+    purpose: string,
+  ): LiveWorkflowProgress => ({
+    purpose,
+    started: new Set<number>(),
+    running: new Set<number>(),
+    completed: new Set<number>(),
+    failed: new Set<number>(),
+  })
+
+  const observeLiveWorkflowChild = (
+    progress: LiveWorkflowProgress,
+    event: ChildAuditEvent,
+  ): void => {
+    const index = event.kind === "finished" ? event.audit.index : event.index
+    progress.started.add(index)
+    progress.latest = childProgressText(event)
+    if (event.kind !== "finished") {
+      progress.running.add(index)
+      return
+    }
+    progress.running.delete(index)
+    if (event.audit.status === "completed") progress.completed.add(index)
+    else progress.failed.add(index)
+  }
+
+  const liveWorkflowProgressText = (
+    progress: LiveWorkflowProgress,
+    maxAgents: number,
+  ): string =>
+    boundedWorkflowProgress(
+      workflowProgressText({
+        purpose: progress.purpose,
+        ...(progress.phase ? { phase: progress.phase } : {}),
+        started: progress.started.size,
+        running: progress.running.size,
+        completed: progress.completed.size,
+        failed: progress.failed.size,
+        maxAgents,
+        ...(progress.latest ? { latest: progress.latest } : {}),
+      }),
+    )
+
   const persistWorkflowAudit = (
     audit: Parameters<typeof appendWorkflowAudit>[1],
   ): void => {
@@ -1105,6 +1168,9 @@ export default function classifiedWorkflows(pi: ExtensionAPI): void {
       startedAt: Date.now(),
       status: "running",
       controller: new AbortController(),
+      liveProgress: makeLiveWorkflowProgress(
+        params.label?.trim() || `workflow ${id}`,
+      ),
     }
     backgroundWorkflows.set(id, workflow)
     renderWorkflowPanel(ctx)
@@ -1135,7 +1201,11 @@ export default function classifiedWorkflows(pi: ExtensionAPI): void {
       childAudits,
       sanitizeProcessDiagnostic,
       (event) => {
-        workflow.progress = boundedWorkflowProgress(childProgressText(event))
+        observeLiveWorkflowChild(workflow.liveProgress, event)
+        workflow.progress = liveWorkflowProgressText(
+          workflow.liveProgress,
+          limits.maxAgents,
+        )
         renderWorkflowPanel(ctx)
       },
     )
@@ -1157,11 +1227,20 @@ export default function classifiedWorkflows(pi: ExtensionAPI): void {
           )
         },
         phase: (title) => {
-          workflow.progress = boundedWorkflowProgress(`phase · ${title}`)
+          workflow.liveProgress.phase = boundedWorkflowProgress(title)
+          workflow.liveProgress.latest = `phase started · ${title}`
+          workflow.progress = liveWorkflowProgressText(
+            workflow.liveProgress,
+            limits.maxAgents,
+          )
           renderWorkflowPanel(ctx)
         },
         log: (message) => {
-          workflow.progress = boundedWorkflowProgress(`update · ${message}`)
+          workflow.liveProgress.latest = `update · ${message}`
+          workflow.progress = liveWorkflowProgressText(
+            workflow.liveProgress,
+            limits.maxAgents,
+          )
           renderWorkflowPanel(ctx)
         },
       },
@@ -1716,6 +1795,35 @@ export default function classifiedWorkflows(pi: ExtensionAPI): void {
     renderWorkflowPanel(ctx)
   })
 
+  pi.events.on(
+    AUTO_RELOAD_ACTIVITY_REQUEST_EVENT,
+    (report: AutoReloadActivityReporter) => {
+      report(
+        activeForegroundWorkflowControllers.size > 0 ||
+          [...backgroundWorkflows.values()].some(
+            ({ status }) => status === "running",
+          ),
+      )
+    },
+  )
+
+  pi.events.on(
+    AUTO_RELOAD_PREEMPT_EVENT,
+    (_request: AutoReloadPreemptRequest) => {
+      managedReloadPreemptPending = true
+      pi.appendEntry(CAPABILITY_CIRCUIT_ENTRY, capabilityCircuit)
+      pi.appendEntry(REVIEW_DUTY_STATE_ENTRY, reviewDutyState)
+      pi.appendEntry(ARTIFACT_PROVENANCE_ENTRY, artifactProvenance)
+      pi.appendEntry(WORKFLOW_AUDIT_ENTRY, workflowAudits)
+      for (const workflow of backgroundWorkflows.values()) {
+        if (workflow.status === "running") workflow.controller.abort()
+      }
+      for (const controller of activeForegroundWorkflowControllers) {
+        controller.abort()
+      }
+    },
+  )
+
   pi.on("session_compact", () => {
     pi.appendEntry(CAPABILITY_CIRCUIT_ENTRY, capabilityCircuit)
     pi.appendEntry(REVIEW_DUTY_STATE_ENTRY, reviewDutyState)
@@ -1799,7 +1907,11 @@ export default function classifiedWorkflows(pi: ExtensionAPI): void {
   pi.on("agent_end", async (event, ctx) => {
     if (goalState?.status === "active")
       goalRunTokens += assistantUsageTokens(event.messages)
-    if (wasRunAborted(event.messages) && !manualReloadPending)
+    if (
+      wasRunAborted(event.messages) &&
+      !manualReloadPending &&
+      !managedReloadPreemptPending
+    )
       setContinuationPaused(true, ctx)
     // An explicit manual reload must overtake queued registry/task follow-ups;
     // otherwise a continuously operational agent may never become settled.
@@ -2665,7 +2777,7 @@ export default function classifiedWorkflows(pi: ExtensionAPI): void {
     promptGuidelines: [
       "Use workflow for fan-out/fan-in, dependent steps, adversarial verification, or synthesis; use direct tools for simple work.",
       'Call agents as agent("focused task", { cwd?, tools?, model?, thinking? }); parallel accepts an array of agent promises or deferred functions.',
-      "Always set the smallest sufficient agent, concurrency, timeout, retry, and token limits.",
+      "Always set a concise purpose label plus the smallest sufficient agent, concurrency, timeout, retry, and token limits; the live panel uses that label to explain what the workflow is doing.",
       "Use read-only agent tools unless isolated mutation is explicitly required.",
       "Run independent delegated work with background: true so the parent keeps processing human prompts and foreground work; await only workflows whose result is required by the next parent action.",
       "After starting a background workflow, keep the foreground on its primary task and do not duplicate delegated work unless the workflow fails or the user reprioritizes it.",
@@ -2735,6 +2847,8 @@ export default function classifiedWorkflows(pi: ExtensionAPI): void {
       const auditStartedAt = Date.now()
       const childAudits: ChildAudit[] = []
       const workflowController = new AbortController()
+      activeForegroundWorkflowControllers.add(workflowController)
+      const liveProgress = makeLiveWorkflowProgress(auditLabel)
       const abortWorkflow = () => workflowController.abort(signal.reason)
       if (signal.aborted) abortWorkflow()
       else signal.addEventListener("abort", abortWorkflow, { once: true })
@@ -2779,7 +2893,11 @@ export default function classifiedWorkflows(pi: ExtensionAPI): void {
         childAudits,
         sanitizeProcessDiagnostic,
         (event) => {
-          const progress = childProgressText(event)
+          observeLiveWorkflowChild(liveProgress, event)
+          const progress = liveWorkflowProgressText(
+            liveProgress,
+            limits.maxAgents,
+          )
           reportProgress(progress, {
             child: event.kind === "finished" ? event.audit.index : event.index,
             progress,
@@ -2819,8 +2937,21 @@ export default function classifiedWorkflows(pi: ExtensionAPI): void {
               ? "approved"
               : "denied"
           },
-          phase: (title) => reportProgress(`Phase: ${title}`, { phase: title }),
-          log: (message) => reportProgress(message, {}),
+          phase: (title) => {
+            liveProgress.phase = boundedWorkflowProgress(title)
+            liveProgress.latest = `phase started · ${title}`
+            reportProgress(
+              liveWorkflowProgressText(liveProgress, limits.maxAgents),
+              { phase: title },
+            )
+          },
+          log: (message) => {
+            liveProgress.latest = `update · ${message}`
+            reportProgress(
+              liveWorkflowProgressText(liveProgress, limits.maxAgents),
+              {},
+            )
+          },
         },
         workflowController.signal,
       ).then(
@@ -2838,6 +2969,11 @@ export default function classifiedWorkflows(pi: ExtensionAPI): void {
             startedAt: auditStartedAt,
             status: "running",
             controller: workflowController,
+            progress: liveWorkflowProgressText(
+              liveProgress,
+              limits.maxAgents,
+            ),
+            liveProgress,
           }
           backgroundWorkflows.set(auditId, detachedWorkflow)
           renderWorkflowPanel(ctx)
@@ -2929,6 +3065,7 @@ export default function classifiedWorkflows(pi: ExtensionAPI): void {
         return blockedResult(reason)
       } finally {
         signal.removeEventListener("abort", abortWorkflow)
+        activeForegroundWorkflowControllers.delete(workflowController)
         if (detachableForegroundWorkflow?.id === auditId)
           detachableForegroundWorkflow = undefined
       }

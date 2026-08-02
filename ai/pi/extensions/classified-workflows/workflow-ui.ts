@@ -2,6 +2,29 @@ import { alignChromeLine } from "../shared/chrome.ts";
 
 export type WorkflowUiStatus = "running" | "completed" | "failed" | "cancelled";
 
+export interface WorkflowProgressSnapshot {
+  readonly purpose: string;
+  readonly phase?: string;
+  readonly started: number;
+  readonly running: number;
+  readonly completed: number;
+  readonly failed: number;
+  readonly maxAgents: number;
+  readonly latest?: string;
+}
+
+export const workflowProgressText = (
+  snapshot: WorkflowProgressSnapshot,
+): string => {
+  const settled = snapshot.completed + snapshot.failed;
+  return [
+    snapshot.purpose,
+    ...(snapshot.phase ? [`phase ${snapshot.phase}`] : []),
+    `progress ${settled} settled / ${snapshot.running} running / ${snapshot.started} started (${snapshot.completed} ok, ${snapshot.failed} failed; max ${snapshot.maxAgents}/phase)`,
+    ...(snapshot.latest ? [`latest ${snapshot.latest}`] : []),
+  ].join(" · ");
+};
+
 export interface WorkflowUiItem {
   readonly id: string;
   readonly label: string;

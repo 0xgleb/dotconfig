@@ -5,6 +5,7 @@ import {
   HANDOFF_GLOBS,
   isSafeHandoffName,
   managedPiChangeLabel,
+  managedReloadDecision,
   managedPiWatchPaths,
   parseManagedReloadSummary,
   parseSeenHandoffNames,
@@ -12,6 +13,31 @@ import {
   unseenHandoffNames,
 } from "./core.ts";
 import { CONTINUATION_PAUSE_ENTRY } from "../shared/continuation-pause.ts";
+
+test("managed reloads preempt long-running turns only after a committed grace period", () => {
+  const base = {
+    committed: true,
+    idle: false,
+    pendingForMs: 29_999,
+    forceAfterMs: 30_000,
+    preemptRequested: false,
+  };
+  assert.equal(managedReloadDecision({ ...base, committed: false }), "await-commit");
+  assert.equal(managedReloadDecision({ ...base, idle: true }), "reload");
+  assert.equal(managedReloadDecision(base), "wait");
+  assert.equal(
+    managedReloadDecision({ ...base, pendingForMs: 30_000 }),
+    "preempt",
+  );
+  assert.equal(
+    managedReloadDecision({
+      ...base,
+      pendingForMs: 60_000,
+      preemptRequested: true,
+    }),
+    "wait",
+  );
+});
 
 test("managed reload summaries identify changed capabilities without exposing full paths", () => {
   const root = "/Users/example/.config/ai";
