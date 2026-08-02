@@ -883,7 +883,7 @@ const WorkflowParameters = Type.Object({
 })
 
 export default function classifiedWorkflows(pi: ExtensionAPI): void {
-  registerRuntimeVersion(pi, "classified-workflows", "2026.08.01.138")
+  registerRuntimeVersion(pi, "classified-workflows", "2026.08.01.139")
   const childTokenLimit = workflowChildTokenLimit(
     process.env[WORKFLOW_CHILD_TOKEN_LIMIT_ENV],
   )
@@ -2056,7 +2056,7 @@ export default function classifiedWorkflows(pi: ExtensionAPI): void {
         }),
         evidence: [
           ...recentExecutionEvidence(ctx, subject),
-          ...(startsReviewWorkflow
+          ...(isReviewDutySession(pi.getSessionName())
             ? [
                 `current typed review-duty state: ${JSON.stringify(reviewDutyState)}`,
               ]

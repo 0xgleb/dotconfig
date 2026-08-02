@@ -12,6 +12,7 @@ export interface ReviewDutyJob {
 
 interface ActiveReviewDutyJob extends ReviewDutyJob {
   readonly startedAt: number;
+  readonly continuation?: "fix-re-review";
 }
 
 interface ReportedReviewDutyJob extends ReviewDutyJob {
@@ -246,7 +247,10 @@ export const continueReviewDuty = (
     };
   }
   const { completedAt: _completedAt, ...active } = state;
-  return { ok: true, state: { ...active, phase: "active" } };
+  return {
+    ok: true,
+    state: { ...active, phase: "active", continuation: "fix-re-review" },
+  };
 };
 
 export const completeAutoReviewDuty = (
@@ -459,8 +463,22 @@ const decodeReviewDutyState = (value: unknown): ReviewDutyState | undefined => {
   }
   const job = decodeJob(value);
   if (!job || !validTimestamp(value.startedAt)) return undefined;
+  if (
+    value.continuation !== undefined &&
+    value.continuation !== "fix-re-review"
+  )
+    return undefined;
+  const continuation =
+    value.continuation === "fix-re-review"
+      ? { continuation: value.continuation }
+      : {};
   if (value.phase === "active") {
-    return { phase: "active", ...job, startedAt: value.startedAt };
+    return {
+      phase: "active",
+      ...job,
+      startedAt: value.startedAt,
+      ...continuation,
+    };
   }
   if (
     value.phase === "awaiting_report" &&
@@ -471,6 +489,7 @@ const decodeReviewDutyState = (value: unknown): ReviewDutyState | undefined => {
       ...job,
       startedAt: value.startedAt,
       completedAt: value.completedAt,
+      ...continuation,
     };
   }
   return undefined;

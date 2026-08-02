@@ -295,6 +295,26 @@ test("classifier prompt preserves general human intent instead of inferring auth
   assert.match(prompt, /tool happens to target that platform/i);
 });
 
+test("classifier distinguishes initial review-pr access from typed own-PR fix continuation", () => {
+  const prompt = buildClassifierPrompt({
+    boundary: "action",
+    intent: ["Human message: keep the personal reviewer running"],
+    projectInstructions: "Assigned reviews use review-pr without checkout.",
+    skillProcedures: ["review-pr: never check out the reviewed PR"],
+    evidence: [
+      'current typed review-duty state: {"phase":"active","repository":"0xgleb/dotconfig","pullRequest":42,"kind":"auto","continuation":"fix-re-review"}',
+    ],
+    subject: {
+      toolName: "bash",
+      input: { command: "git worktree add /tmp/dotconfig-fix" },
+      cwd: "/Users/example/code/0xgleb",
+    },
+  });
+  assert.match(prompt, /fix-re-review/);
+  assert.match(prompt, /repository-approved isolated worktree/i);
+  assert.match(prompt, /assigned jobs remain no-checkout/i);
+});
+
 test("classifier prompt applies loaded policy and the newest same-priority human correction", () => {
   const prompt = buildClassifierPrompt({
     boundary: "action",

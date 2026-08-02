@@ -191,7 +191,10 @@ test("completed review passes may continue only the same job within a bounded lo
   const awaiting = startReviewWorkflow(active.state, 20);
 
   const continued = continueReviewDuty(awaiting, true, false, 1);
-  assert.deepEqual(continued, { ok: true, state: active.state });
+  assert.deepEqual(continued, {
+    ok: true,
+    state: { ...active.state, continuation: "fix-re-review" },
+  });
   assert.equal(continued.ok, true);
   if (continued.ok) {
     assert.match(
@@ -451,6 +454,20 @@ test("review duty state survives reload defensively", () => {
       },
     ]),
     active.state,
+  );
+  const continued = {
+    ...active.state,
+    continuation: "fix-re-review" as const,
+  };
+  assert.deepEqual(
+    restoreReviewDutyState([
+      {
+        type: "custom",
+        customType: REVIEW_DUTY_STATE_ENTRY,
+        data: continued,
+      },
+    ]),
+    continued,
   );
   assert.deepEqual(
     restoreReviewDutyState([
