@@ -11,6 +11,7 @@ export interface ControlPlaneConfig {
   readonly host: typeof LOOPBACK_HOST
   readonly port: number
   readonly databasePath: string
+  readonly dashboardDirectory?: string
 }
 
 export class ControlPlaneConfigError extends Data.TaggedError(
@@ -49,6 +50,16 @@ export const parseControlPlaneConfig = (
   if (!stateRoot)
     return Effect.fail(configError("XDG_STATE_HOME must be an absolute path"))
 
+  const configuredDashboard = environment.PI_CONTROL_PLANE_DASHBOARD_DIR
+  const dashboardDirectory =
+    configuredDashboard === undefined
+      ? undefined
+      : absoluteDirectory(configuredDashboard)
+  if (configuredDashboard !== undefined && !dashboardDirectory)
+    return Effect.fail(
+      configError("PI_CONTROL_PLANE_DASHBOARD_DIR must be an absolute path"),
+    )
+
   const configuredPort = environment.PI_CONTROL_PLANE_PORT
   const port = configuredPort === undefined ? DEFAULT_PORT : Number(configuredPort)
   if (
@@ -66,6 +77,7 @@ export const parseControlPlaneConfig = (
     host: LOOPBACK_HOST,
     port,
     databasePath: join(stateRoot, "pi", "control-plane", "jobs.sqlite"),
+    ...(dashboardDirectory ? { dashboardDirectory } : {}),
   })
 }
 
@@ -91,6 +103,9 @@ export const runControlPlane = (
           host: config.host,
           port: config.port,
           store,
+          ...(config.dashboardDirectory
+            ? { dashboardDirectory: config.dashboardDirectory }
+            : {}),
         }),
         (server) =>
           Effect.zipRight(

@@ -3,7 +3,9 @@ import {
   type IncomingMessage,
   type ServerResponse,
 } from "node:http"
+import { readFile } from "node:fs/promises"
 import type { AddressInfo } from "node:net"
+import { isAbsolute, join } from "node:path"
 import { Data, Effect } from "effect"
 import { decodeJobSpec, JobRuntimeError } from "./job-runtime.ts"
 import {
@@ -25,6 +27,7 @@ export class ControlPlaneServerError extends Data.TaggedError(
     | "body_too_large"
     | "request_failed"
     | "listen_failed"
+    | "invalid_dashboard"
   readonly message: string
 }> {}
 
@@ -32,6 +35,7 @@ export interface ControlPlaneServerOptions {
   readonly host: string
   readonly port: number
   readonly store: SqliteJobStore
+  readonly dashboardDirectory?: string
 }
 
 export interface RunningControlPlaneServer {
@@ -57,6 +61,23 @@ const sendJson = (
     "content-length": Buffer.byteLength(body),
     "content-type": "application/json; charset=utf-8",
     "x-content-type-options": "nosniff",
+  })
+  response.end(body)
+}
+
+const sendAsset = (
+  response: ServerResponse,
+  contentType: string,
+  body: Buffer,
+): void => {
+  response.writeHead(200, {
+    "cache-control": "no-store",
+    "content-length": body.length,
+    "content-security-policy": "default-src 'self'; connect-src 'self'; img-src 'self' data:; object-src 'none'; base-uri 'none'; frame-ancestors 'none'",
+    "content-type": contentType,
+    "referrer-policy": "no-referrer",
+    "x-content-type-options": "nosniff",
+    "x-frame-options": "DENY",
   })
   response.end(body)
 }
@@ -169,10 +190,42 @@ const handleJobs = (
   })
 }
 
+const dashboardAssets: Readonly<Record<string, readonly [string, string]>> = {
+  "/": ["index.html", "text/html; charset=utf-8"],
+  "/app.js": ["app.js", "text/javascript; charset=utf-8"],
+  "/app.css": ["app.css", "text/css; charset=utf-8"],
+}
+
+const handleDashboard = (
+  path: string,
+  request: IncomingMessage,
+  response: ServerResponse,
+  directory: string,
+): Effect.Effect<boolean, ControlPlaneServerError> => {
+  const asset = dashboardAssets[path]
+  if (!asset) return Effect.succeed(false)
+  if (request.method !== "GET") {
+    sendError(response, 405, "method_not_allowed", "method is not allowed")
+    return Effect.succeed(true)
+  }
+  return Effect.map(
+    Effect.tryPromise({
+      try: () => readFile(join(directory, asset[0])),
+      catch: () =>
+        serverError("request_failed", "dashboard asset could not be read"),
+    }),
+    (body) => {
+      sendAsset(response, asset[1], body)
+      return true
+    },
+  )
+}
+
 const handleRequest = (
   request: IncomingMessage,
   response: ServerResponse,
   store: SqliteJobStore,
+  dashboardDirectory?: string,
 ): Effect.Effect<void> => {
   const route = Effect.try({
     try: () => new URL(request.url ?? "/", "http://127.0.0.1").pathname,
@@ -193,6 +246,16 @@ const handleRequest = (
         return Effect.void
       }
       if (path === "/v1/jobs") return handleJobs(request, response, store)
+      if (dashboardDirectory) {
+        return Effect.flatMap(
+          handleDashboard(path, request, response, dashboardDirectory),
+          (handled) => {
+            if (!handled)
+              sendError(response, 404, "not_found", "route was not found")
+            return Effect.void
+          },
+        )
+      }
       sendError(response, 404, "not_found", "route was not found")
       return Effect.void
     }),
@@ -203,7 +266,7 @@ const handleRequest = (
 export const startControlPlaneServer = (
   options: ControlPlaneServerOptions,
 ): Effect.Effect<RunningControlPlaneServer, ControlPlaneServerError> => {
-  if (!LOOPBACK_HOSTS.includes(options.host as (typeof LOOPBACK_HOSTS)[number])) {
+  if (options.host !== LOOPBACK_HOSTS[0] && options.host !== LOOPBACK_HOSTS[1]) {
     return Effect.fail(
       serverError("invalid_bind", "control plane must bind to a loopback address"),
     )
@@ -213,10 +276,29 @@ export const startControlPlaneServer = (
       serverError("invalid_bind", "control plane port must be between 0 and 65535"),
     )
   }
+  if (
+    options.dashboardDirectory !== undefined &&
+    (!isAbsolute(options.dashboardDirectory) ||
+      options.dashboardDirectory.length > 1_024)
+  ) {
+    return Effect.fail(
+      serverError(
+        "invalid_dashboard",
+        "dashboard directory must be a bounded absolute path",
+      ),
+    )
+  }
 
   return Effect.async((resume) => {
     const server = createServer((request, response) => {
-      void Effect.runPromise(handleRequest(request, response, options.store))
+      void Effect.runPromise(
+        handleRequest(
+          request,
+          response,
+          options.store,
+          options.dashboardDirectory,
+        ),
+      )
     })
     let settled = false
     server.once("error", () => {

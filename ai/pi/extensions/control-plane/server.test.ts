@@ -1,5 +1,5 @@
 import assert from "node:assert/strict"
-import { mkdtemp, rm } from "node:fs/promises"
+import { mkdir, mkdtemp, rm, writeFile } from "node:fs/promises"
 import { tmpdir } from "node:os"
 import { join } from "node:path"
 import test from "node:test"
@@ -127,3 +127,47 @@ test("unknown routes and unsupported methods do not fall through", async () =>
       405,
     )
   }))
+
+test("the loopback server exposes only the three reviewed dashboard assets", async () => {
+  const root = await mkdtemp(join(tmpdir(), "pi-control-plane-dashboard-test-"))
+  const dashboardDirectory = join(root, "dashboard")
+  await mkdir(dashboardDirectory)
+  await Promise.all([
+    writeFile(join(dashboardDirectory, "index.html"), "<!doctype html><title>Control plane</title>"),
+    writeFile(join(dashboardDirectory, "app.js"), "console.log('dashboard')"),
+    writeFile(join(dashboardDirectory, "app.css"), "body{background:#07111f}"),
+  ])
+  const store = await Effect.runPromise(
+    makeSqliteJobStore(join(root, "jobs.sqlite")),
+  )
+  const server = await Effect.runPromise(
+    startControlPlaneServer({
+      host: "127.0.0.1",
+      port: 0,
+      store,
+      dashboardDirectory,
+    }),
+  )
+  try {
+    const index = await fetch(`${server.origin}/`)
+    assert.equal(index.status, 200)
+    assert.match(index.headers.get("content-type") ?? "", /text\/html/)
+    assert.match(index.headers.get("content-security-policy") ?? "", /default-src 'self'/)
+    assert.match(await index.text(), /Control plane/)
+
+    assert.match(
+      (await fetch(`${server.origin}/app.js`)).headers.get("content-type") ?? "",
+      /javascript/,
+    )
+    assert.match(
+      (await fetch(`${server.origin}/app.css`)).headers.get("content-type") ?? "",
+      /text\/css/,
+    )
+    assert.equal((await fetch(`${server.origin}/not-an-asset`)).status, 404)
+    assert.equal((await fetch(`${server.origin}/app.js`, { method: "POST" })).status, 405)
+  } finally {
+    await Effect.runPromise(server.close)
+    store.close()
+    await rm(root, { recursive: true, force: true })
+  }
+})

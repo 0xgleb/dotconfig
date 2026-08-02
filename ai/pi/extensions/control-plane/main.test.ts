@@ -16,12 +16,14 @@ test("control-plane config is loopback-only with a state-root database", () => {
         HOME: "/Users/example",
         XDG_STATE_HOME: "/Users/example/state",
         PI_CONTROL_PLANE_PORT: "43121",
+        PI_CONTROL_PLANE_DASHBOARD_DIR: "/nix/store/dashboard",
       }),
     ),
     {
       host: "127.0.0.1",
       port: 43_121,
       databasePath: "/Users/example/state/pi/control-plane/jobs.sqlite",
+      dashboardDirectory: "/nix/store/dashboard",
     },
   )
   assert.deepEqual(
@@ -39,6 +41,13 @@ test("control-plane config rejects malformed external environment values", () =>
   assert.equal(codeOf({ HOME: "relative" }), "invalid_config")
   assert.equal(
     codeOf({ HOME: "/Users/example", XDG_STATE_HOME: "relative" }),
+    "invalid_config",
+  )
+  assert.equal(
+    codeOf({
+      HOME: "/Users/example",
+      PI_CONTROL_PLANE_DASHBOARD_DIR: "relative",
+    }),
     "invalid_config",
   )
   assert.equal(

@@ -6,7 +6,8 @@
     "pi-package"
   ],
   "dependencies": {
-    "effect": "3.22.0"
+    "effect": "3.22.0",
+    "solid-js": "1.9.14"
   },
   "peerDependencies": {
     "@earendil-works/pi-agent-core": "*",
@@ -56,6 +57,10 @@
     ]
   },
   "devDependencies": {
-    "@earendil-works/pi-tui": "0.80.10"
+    "@babel/cli": "7.29.7",
+    "@babel/core": "7.29.7",
+    "@babel/preset-typescript": "7.29.7",
+    "@earendil-works/pi-tui": "0.80.10",
+    "babel-preset-solid": "1.9.12"
   }
 }
