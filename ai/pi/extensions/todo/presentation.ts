@@ -139,32 +139,18 @@ export const taskProgressPulseIndex = (
   return offset < boundedWidth ? offset : cycle - offset
 }
 
-export type TaskProgressBlinkRate = "steady" | "slow" | "rapid"
-
-export const taskProgressBlinkRate = (
+export const taskProgressAnimatedCell = (
+  baseCell: "▰" | "▱",
   frame: number,
   index: number,
   width = TASK_PROGRESS_WIDTH,
-): TaskProgressBlinkRate => {
-  const pulse = taskProgressPulseIndex(frame, width)
-  const distance = Math.abs(Math.floor(index) - pulse)
-  return distance === 0 ? "rapid" : distance === 1 ? "slow" : "steady"
-}
-
-export type TaskProgressCellIntensity = "dim" | "normal" | "bright"
-
-export const taskProgressCellIntensity = (
-  frame: number,
-  index: number,
-  width = TASK_PROGRESS_WIDTH,
-): TaskProgressCellIntensity => {
-  const rate = taskProgressBlinkRate(frame, index, width)
-  const boundedFrame = Math.abs(Math.floor(frame))
-  if (rate === "rapid") return boundedFrame % 2 === 0 ? "bright" : "normal"
-  if (rate === "slow")
-    return Math.floor(boundedFrame / 3) % 2 === 0 ? "dim" : "normal"
-  return "normal"
-}
+): "▰" | "▱" =>
+  Math.abs(Math.floor(frame)) % 2 === 0 &&
+  Math.floor(index) === taskProgressPulseIndex(frame, width)
+    ? baseCell === "▰"
+      ? "▱"
+      : "▰"
+    : baseCell
 
 export const taskProgressBar = (completed: number, total: number): string => {
   const boundedTotal = Math.max(0, total)

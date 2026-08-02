@@ -3,7 +3,7 @@ import type { Theme } from "@earendil-works/pi-coding-agent"
 import {
   frameTaskHud,
   taskHud,
-  taskProgressCellIntensity,
+  taskProgressAnimatedCell,
 } from "./presentation.ts"
 import type { TodoState } from "./state.ts"
 
@@ -19,11 +19,6 @@ export const synchronizedTaskHudFrame = (
     throw new RangeError("task HUD interval must be a positive integer")
   return Math.floor(now / intervalMs)
 }
-
-const DIM_INTENSITY = "\x1b[2m"
-const NORMAL_INTENSITY = "\x1b[22m"
-const dimText = (text: string): string =>
-  `${DIM_INTENSITY}${text}${NORMAL_INTENSITY}`
 
 export class TaskHudComponent {
   private readonly state: TodoState
@@ -61,19 +56,16 @@ export class TaskHudComponent {
         progressBar.test(part)
           ? [...part]
               .map((cell, index) => {
-                const intensity = taskProgressCellIntensity(
+                if (cell !== "▰" && cell !== "▱") return cell
+                const animated = taskProgressAnimatedCell(
+                  cell,
                   animationFrame,
                   index,
                 )
-                const hued = this.theme.fg(
-                  cell === "▰" ? "accent" : "muted",
-                  cell,
+                return this.theme.fg(
+                  animated === "▰" ? "accent" : "muted",
+                  animated,
                 )
-                return intensity === "bright"
-                  ? this.theme.bold(hued)
-                  : intensity === "dim"
-                    ? dimText(hued)
-                    : hued
               })
               .join("")
           : this.theme.bold(this.theme.fg("borderAccent", part)),

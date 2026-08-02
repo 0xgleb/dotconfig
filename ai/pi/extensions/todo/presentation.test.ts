@@ -7,9 +7,8 @@ import {
   taskCompletionPercent,
   taskHud,
   taskHudLines,
+  taskProgressAnimatedCell,
   taskProgressBar,
-  taskProgressBlinkRate,
-  taskProgressCellIntensity,
   taskProgressPulseIndex,
   taskWidgetLines,
   todoSummary,
@@ -87,34 +86,22 @@ test("completion percentage is bounded and defined for an empty board", () => {
   assert.equal(taskCompletionPercent(8, 5), 100)
 })
 
-test("progress pulse uses varied brightness rates without hiding semantic cells", () => {
+test("animated progress cells toggle glyphs without changing cell width", () => {
+  const base = [...taskProgressBar(1, 5)] as Array<"▰" | "▱">
+  const frame = (value: number) =>
+    base.map((cell, index) => taskProgressAnimatedCell(cell, value, index)).join("")
+
+  assert.equal(frame(0), "▱▰▱▱▱▱▱▱")
+  assert.equal(frame(1), "▰▰▱▱▱▱▱▱")
+  assert.equal(frame(2), "▰▱▱▱▱▱▱▱")
+  assert.equal(visibleWidth(frame(0)), 8)
+  assert.equal(visibleWidth(frame(2)), 8)
+})
+
+test("progress pulse moves at a stable cadence across fixed-width cells", () => {
   assert.deepEqual(
     Array.from({ length: 9 }, (_, frame) => taskProgressPulseIndex(frame)),
     [0, 0, 1, 1, 2, 2, 3, 3, 4],
-  )
-  assert.deepEqual(
-    Array.from({ length: 8 }, (_, index) =>
-      taskProgressBlinkRate(6, index),
-    ),
-    ["steady", "steady", "slow", "rapid", "slow", "steady", "steady", "steady"],
-  )
-  assert.deepEqual(
-    Array.from({ length: 8 }, (_, index) =>
-      taskProgressCellIntensity(0, index),
-    ),
-    ["bright", "dim", "normal", "normal", "normal", "normal", "normal", "normal"],
-  )
-  assert.deepEqual(
-    Array.from({ length: 8 }, (_, index) =>
-      taskProgressCellIntensity(1, index),
-    ),
-    ["normal", "dim", "normal", "normal", "normal", "normal", "normal", "normal"],
-  )
-  assert.deepEqual(
-    Array.from({ length: 8 }, (_, index) =>
-      taskProgressCellIntensity(3, index),
-    ),
-    ["normal", "normal", "normal", "normal", "normal", "normal", "normal", "normal"],
   )
   assert.equal(taskProgressBar(1, 5), "▰▰▱▱▱▱▱▱")
 })

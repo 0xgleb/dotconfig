@@ -176,16 +176,17 @@ test("task HUD requests and renders changing ANSI frames until disposed", async 
   assert.equal(renderedFrames.length, settledCount)
 })
 
-test("task progress animation modulates brightness without hiding cells or changing hue", () => {
+test("task progress animation toggles constant-width glyphs without green", () => {
   const renderer = taskHudSource.slice(
     taskHudSource.indexOf("private colorTaskHeadline"),
     taskHudSource.indexOf("private colorTaskRow"),
   )
-  assert.doesNotMatch(renderer, /"success"|SLOW_BLINK|RAPID_BLINK|visible \? cell : " "/)
-  assert.match(renderer, /taskProgressCellIntensity/)
-  assert.match(renderer, /this\.theme\.bold/)
-  assert.match(renderer, /dimText/)
-  assert.match(renderer, /cell === "▰" \? "accent" : "muted"/)
+  assert.doesNotMatch(
+    renderer,
+    /"success"|SLOW_BLINK|RAPID_BLINK|dimText|theme\.bold\(hued\)|" "/,
+  )
+  assert.match(renderer, /taskProgressAnimatedCell/)
+  assert.match(renderer, /animated === "▰" \? "accent" : "muted"/)
 })
 
 test("task progress pulse owns direct TUI invalidation while work is unfinished", () => {
