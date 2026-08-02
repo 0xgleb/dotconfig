@@ -9,6 +9,18 @@ import type { TodoState } from "./state.ts"
 
 export const HUD_ANIMATION_INTERVAL_MS = 500
 
+const brightenTruecolorForeground = (text: string): string | undefined => {
+  const color = /\x1b\[38;2;(\d+);(\d+);(\d+)m/u
+  const match = color.exec(text)
+  if (!match) return undefined
+  const channels = match.slice(1).map(Number)
+  if (channels.some((channel) => channel < 0 || channel > 255)) return undefined
+  const [red = 0, green = 0, blue = 0] = channels.map((channel) =>
+    Math.round(channel + (255 - channel) * 0.35),
+  )
+  return text.replace(color, `\x1b[38;2;${red};${green};${blue}m`)
+}
+
 export const synchronizedTaskHudFrame = (
   now: number,
   intervalMs = HUD_ANIMATION_INTERVAL_MS,
@@ -68,7 +80,10 @@ export class TaskHudComponent {
                   cell === "▰" ? "accent" : "muted",
                   cell,
                 )
-                return pulseOn ? this.theme.bold(hued) : hued
+                if (!pulseOn) return hued
+                return this.theme.bold(
+                  brightenTruecolorForeground(hued) ?? hued,
+                )
               })
               .join("")
           : this.theme.bold(this.theme.fg("borderAccent", part)),

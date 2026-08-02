@@ -142,9 +142,9 @@ export const taskProgressCellPulse = (
   frontierIndex: number,
 ): boolean =>
   baseCell === "▰" &&
-  (taskProgressCompletedPulse(frame) ||
-    (Math.floor(index) === Math.floor(frontierIndex) &&
-      taskProgressFrontierPulse(frame)))
+  (Math.floor(index) === Math.floor(frontierIndex)
+    ? taskProgressFrontierPulse(frame)
+    : taskProgressCompletedPulse(frame))
 
 export const taskProgressBar = (completed: number, total: number): string => {
   const boundedTotal = Math.max(0, total)

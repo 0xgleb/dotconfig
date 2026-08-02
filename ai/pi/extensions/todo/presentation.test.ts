@@ -108,7 +108,7 @@ test("frontier and completed region combine two fixed pulse frequencies", () => 
   )
   assert.deepEqual(
     Array.from({ length: 4 }, (_, frame) => pulse(frame, frontier)),
-    [true, true, true, false],
+    [true, false, true, false],
   )
   assert.deepEqual(
     Array.from({ length: 4 }, (_, frame) => pulse(frame, 0)),

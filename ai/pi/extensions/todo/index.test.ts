@@ -154,7 +154,10 @@ test("task HUD phase is synchronized by wall clock across panes", () => {
 
 test("task HUD requests and renders changing ANSI frames until disposed", async () => {
   const theme = {
-    fg: (color: string, text: string) => `<${color}>${text}</${color}>`,
+    fg: (color: string, text: string) =>
+      color === "accent"
+        ? `\x1b[38;2;100;120;140m${text}\x1b[39m`
+        : `\x1b[38;2;80;80;80m${text}\x1b[39m`,
     bold: (text: string) => `<bold>${text}</bold>`,
   } as unknown as Theme
   const renderedFrames: string[] = []
@@ -169,6 +172,9 @@ test("task HUD requests and renders changing ANSI frames until disposed", async 
   await new Promise((resolve) => setTimeout(resolve, 35))
   assert.ok(renderedFrames.length >= 3)
   assert.ok(new Set(renderedFrames).size >= 2)
+  assert.ok(
+    renderedFrames.some((frame) => frame.includes("\x1b[38;2;154;167;180m")),
+  )
 
   component.dispose()
   const settledCount = renderedFrames.length
@@ -187,7 +193,8 @@ test("task progress uses two fixed frequencies without animating unfilled cells"
   )
   assert.match(renderer, /const frontierIndex = part\.lastIndexOf\("▰"\)/)
   assert.match(renderer, /taskProgressCellPulse/)
-  assert.match(renderer, /return pulseOn \? this\.theme\.bold\(hued\) : hued/)
+  assert.match(renderer, /if \(!pulseOn\) return hued/)
+  assert.match(renderer, /brightenTruecolorForeground\(hued\) \?\? hued/)
   assert.match(renderer, /cell === "▰" \? "accent" : "muted"/)
 })
 
