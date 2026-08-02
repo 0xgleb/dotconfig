@@ -147,6 +147,7 @@ import {
 import { requiredGitButlerModeExitDisprovesBlock } from "./gitbutler-mode-exit.ts"
 import { exactScaffoldUnwindDisprovesBlock } from "./scaffold-unwind.ts"
 import { additiveTestEditDisprovesMissingTestBlock } from "./test-prerequisite.ts"
+import { independentPrInventoryDisprovesWithheldRetryBlock } from "./withheld-read-recovery.ts"
 import {
   REMOTE_CAPABILITY_HANDSHAKE_EVENT,
   REMOTE_CAPABILITY_MESSAGE,
@@ -919,7 +920,7 @@ const WorkflowParameters = Type.Object({
 })
 
 export default function classifiedWorkflows(pi: ExtensionAPI): void {
-  registerRuntimeVersion(pi, "classified-workflows", "2026.08.01.152")
+  registerRuntimeVersion(pi, "classified-workflows", "2026.08.01.153")
   const childTokenLimit = workflowChildTokenLimit(
     process.env[WORKFLOW_CHILD_TOKEN_LIMIT_ENV],
   )
@@ -2121,6 +2122,15 @@ export default function classifiedWorkflows(pi: ExtensionAPI): void {
         return
       }
       if (resourcePreflightDisprovesBlock(decision.reason, resourcePreflight))
+        return
+      if (
+        event.toolName === "bash" &&
+        independentPrInventoryDisprovesWithheldRetryBlock({
+          reason: decision.reason,
+          bash: event.input,
+          branch: ctx.sessionManager.getBranch(),
+        })
+      )
         return
       if (
         event.toolName === "bash" &&

@@ -847,6 +847,29 @@ test("classifier invalidates stale build success after source or derivation chan
   );
 });
 
+test("classifier prompt accepts exact alternate-route withheld-read recovery", () => {
+  const prompt = buildClassifierPrompt({
+    boundary: "action",
+    intent: ["Re-scan my open rainlanguage PRs"],
+    projectInstructions: "Preserve execution truth and do not duplicate mutations.",
+    evidence: [
+      "gh search prs result status=success: Result content was withheld",
+      "gh api result status=success: org=rainlanguage author=@me is:pr is:open total_count=0",
+    ],
+    subject: {
+      toolName: "bash",
+      input: {
+        command:
+          "gh search prs --owner rainlanguage --author @me --state open",
+      },
+    },
+  });
+
+  assert.match(prompt, /alternate API route.*same owner, actor, resource kind/is);
+  assert.match(prompt, /do not insist on replaying the withheld command/i);
+  assert.match(prompt, /do not equate unrelated queries/i);
+});
+
 test("classifier distinguishes Pi reloads from explicitly authorized launchd restarts", () => {
   const prompt = buildClassifierPrompt({
     boundary: "action",
