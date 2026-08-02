@@ -1,3 +1,4 @@
+import { randomUUID } from "node:crypto"
 import {
   createServer,
   type IncomingMessage,
@@ -128,6 +129,9 @@ const readBody = (
     )
   })
 
+const isRecord = (value: unknown): value is Readonly<Record<string, unknown>> =>
+  typeof value === "object" && value !== null && !Array.isArray(value)
+
 const parseJson = (body: string): Effect.Effect<unknown, ControlPlaneServerError> =>
   Effect.try({
     try: () => JSON.parse(body) as unknown,
@@ -146,8 +150,13 @@ const internalFailure = (
     else sendError(response, 400, "invalid_request", "request could not be read")
     return Effect.void
   }
-  if (error instanceof JobRuntimeError && error.code === "invalid_input") {
-    sendError(response, 400, "invalid_input", "job request is invalid")
+  if (error instanceof JobRuntimeError) {
+    if (error.code === "invalid_input")
+      sendError(response, 400, "invalid_input", "job request is invalid")
+    else if (error.code === "stale_lease")
+      sendError(response, 409, "stale_lease", "job lease is stale")
+    else
+      sendError(response, 409, "invalid_transition", "job state has changed")
     return Effect.void
   }
   if (error instanceof JobStoreError) {
@@ -187,6 +196,89 @@ const handleJobs = (
     const job = yield* store.enqueue(spec)
     const alreadyExisted = existing.some(({ id }) => id === job.id)
     sendJson(response, alreadyExisted ? 200 : 201, { job })
+  })
+}
+
+const hasJsonContentType = (request: IncomingMessage): boolean =>
+  request.headers["content-type"]?.split(";", 1)[0]?.trim() ===
+  "application/json"
+
+const exactKeys = (
+  value: Readonly<Record<string, unknown>>,
+  expected: readonly string[],
+): boolean =>
+  Object.keys(value).length === expected.length &&
+  Object.keys(value).every((key) => expected.includes(key))
+
+const handleClaim = (
+  request: IncomingMessage,
+  response: ServerResponse,
+  store: SqliteJobStore,
+): Effect.Effect<void, unknown> => {
+  if (request.method !== "POST") {
+    sendError(response, 405, "method_not_allowed", "method is not allowed")
+    return Effect.void
+  }
+  if (!hasJsonContentType(request)) {
+    sendError(response, 415, "unsupported_media_type", "application/json is required")
+    return Effect.void
+  }
+  return Effect.gen(function* () {
+    const input = yield* Effect.flatMap(readBody(request), parseJson)
+    if (
+      !isRecord(input) ||
+      !exactKeys(input, ["workerId", "ttlMs"]) ||
+      typeof input.workerId !== "string" ||
+      typeof input.ttlMs !== "number"
+    ) {
+      return yield* Effect.fail(
+        serverError("request_failed", "worker claim payload is invalid"),
+      )
+    }
+    const job = yield* store.claimDue(
+      input.workerId,
+      randomUUID(),
+      Date.now(),
+      input.ttlMs,
+    )
+    if (job === undefined) response.writeHead(204).end()
+    else sendJson(response, 200, { job })
+  })
+}
+
+const handleComplete = (
+  id: string,
+  request: IncomingMessage,
+  response: ServerResponse,
+  store: SqliteJobStore,
+): Effect.Effect<void, unknown> => {
+  if (request.method !== "POST") {
+    sendError(response, 405, "method_not_allowed", "method is not allowed")
+    return Effect.void
+  }
+  if (!hasJsonContentType(request)) {
+    sendError(response, 415, "unsupported_media_type", "application/json is required")
+    return Effect.void
+  }
+  return Effect.gen(function* () {
+    const input = yield* Effect.flatMap(readBody(request), parseJson)
+    if (
+      !isRecord(input) ||
+      !exactKeys(input, ["leaseToken", "summary"]) ||
+      typeof input.leaseToken !== "string" ||
+      typeof input.summary !== "string"
+    ) {
+      return yield* Effect.fail(
+        serverError("request_failed", "job completion payload is invalid"),
+      )
+    }
+    const job = yield* store.complete(
+      id,
+      input.leaseToken,
+      Date.now(),
+      input.summary,
+    )
+    sendJson(response, 200, { job })
   })
 }
 
@@ -246,6 +338,11 @@ const handleRequest = (
         return Effect.void
       }
       if (path === "/v1/jobs") return handleJobs(request, response, store)
+      if (path === "/v1/worker/claim")
+        return handleClaim(request, response, store)
+      const completeMatch = /^\/v1\/jobs\/([A-Za-z0-9][A-Za-z0-9:._-]{0,127})\/complete$/u.exec(path)
+      if (completeMatch?.[1])
+        return handleComplete(completeMatch[1], request, response, store)
       if (dashboardDirectory) {
         return Effect.flatMap(
           handleDashboard(path, request, response, dashboardDirectory),

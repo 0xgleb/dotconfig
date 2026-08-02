@@ -97,6 +97,72 @@ test("registered enqueue is idempotent and unknown executable kinds fail closed"
     })
   }))
 
+test("workers claim due jobs with server-issued leases and stale completion is fenced", async () =>
+  withServer(async (origin) => {
+    const due = { ...enqueueBody, runAt: Date.now() - 1_000 }
+    const enqueued = await fetch(`${origin}/v1/jobs`, {
+      method: "POST",
+      headers: { "content-type": "application/json" },
+      body: JSON.stringify(due),
+    })
+    const created = (await enqueued.json()) as { job: { id: string } }
+
+    const claim = await fetch(`${origin}/v1/worker/claim`, {
+      method: "POST",
+      headers: { "content-type": "application/json" },
+      body: JSON.stringify({ workerId: "reviewer-a", ttlMs: 90_000 }),
+    })
+    assert.equal(claim.status, 200)
+    const claimed = (await claim.json()) as {
+      job: { id: string; leaseToken: string; state: string }
+    }
+    assert.equal(claimed.job.id, created.job.id)
+    assert.equal(claimed.job.state, "leased")
+    assert.match(claimed.job.leaseToken, /^[0-9a-f-]{36}$/)
+
+    const noSecondJob = await fetch(`${origin}/v1/worker/claim`, {
+      method: "POST",
+      headers: { "content-type": "application/json" },
+      body: JSON.stringify({ workerId: "reviewer-b", ttlMs: 90_000 }),
+    })
+    assert.equal(noSecondJob.status, 204)
+
+    const stale = await fetch(`${origin}/v1/jobs/${created.job.id}/complete`, {
+      method: "POST",
+      headers: { "content-type": "application/json" },
+      body: JSON.stringify({ leaseToken: "stale-token", summary: "done" }),
+    })
+    assert.equal(stale.status, 409)
+    assert.deepEqual(await stale.json(), {
+      error: { code: "stale_lease", message: "job lease is stale" },
+    })
+
+    const complete = await fetch(`${origin}/v1/jobs/${created.job.id}/complete`, {
+      method: "POST",
+      headers: { "content-type": "application/json" },
+      body: JSON.stringify({
+        leaseToken: claimed.job.leaseToken,
+        summary: "review scan completed",
+      }),
+    })
+    assert.equal(complete.status, 200)
+    assert.equal(((await complete.json()) as { job: { state: string } }).job.state, "succeeded")
+  }))
+
+test("worker boundaries reject unknown fields and client-supplied lease tokens", async () =>
+  withServer(async (origin) => {
+    const rejected = await fetch(`${origin}/v1/worker/claim`, {
+      method: "POST",
+      headers: { "content-type": "application/json" },
+      body: JSON.stringify({
+        workerId: "reviewer-a",
+        ttlMs: 90_000,
+        leaseToken: "caller-chosen",
+      }),
+    })
+    assert.equal(rejected.status, 400)
+  }))
+
 test("oversized and malformed request bodies are rejected without enqueueing", async () =>
   withServer(async (origin, store) => {
     const oversized = await fetch(`${origin}/v1/jobs`, {
