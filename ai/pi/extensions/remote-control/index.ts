@@ -58,7 +58,9 @@ import {
   ownerRelayCompletion,
   parseOutcomeEnvelope,
   parseOwnerRelay,
+  coversProject,
   parseRoutePlan,
+  servesProject,
   routingBatchPrompt,
   remoteTurnContent,
   trimDispatchContext,
@@ -88,6 +90,12 @@ interface ActiveRemoteTurn {
   readonly lane: "conversational" | "routing";
   readonly text: string;
   readonly batch?: readonly ClaimedBridgeMessage[];
+  /**
+   * Projects that can actually take work: live roster entries plus registry
+   * projects whose receiver is merely between polls. Captured when the turn
+   * opens so routing decides against the roster the model was shown.
+   */
+  readonly routable?: readonly string[];
 }
 
 const safeError = (error: RemoteBridgeError): string =>
@@ -278,14 +286,20 @@ export default function remoteControl(pi: ExtensionAPI): void {
     ctx: ExtensionContext,
   ): Promise<void> => {
     const batch = turn.batch ?? [];
-    const plan = parseRoutePlan(response, batch.length);
+    const routable = turn.routable ?? [];
+    const canRoute = (project: string): boolean =>
+      routable.some((candidate) => servesProject(candidate, project));
+    const plan = parseRoutePlan(response, batch.length, routable);
     const routed = new Set(plan.flatMap((directive) => [...directive.indexes]));
     const fallback = batch
       .map((_, position) => position + 1)
       .filter((index) => !routed.has(index));
+    // The dispatcher's own project is the catch-all only when it is itself
+    // owned. Falling back to an unowned cwd is what silently swallowed owner
+    // messages; leaving them unrouted at least reports that immediately.
     const directives = [
       ...plan,
-      ...(fallback.length > 0
+      ...(fallback.length > 0 && canRoute(ctx.cwd)
         ? [{ project: ctx.cwd, indexes: fallback }]
         : []),
     ];
@@ -308,7 +322,9 @@ export default function remoteControl(pi: ExtensionAPI): void {
     }
     clearActive(turn);
     for (const [position, message] of batch.entries()) {
-      const destinations = acks.get(position + 1) ?? ["nowhere - routing plan empty"];
+      const destinations = acks.get(position + 1) ?? [
+        "nowhere - no live agent owns a project for this message",
+      ];
       const completed = await run(
         store.complete({
           messageId: message.id,
@@ -380,11 +396,6 @@ export default function remoteControl(pi: ExtensionAPI): void {
       pi.events.emit(REGISTRY_PROJECTS_REQUEST_EVENT, request);
     });
 
-  const coversProject = (cwd: string, project: string): boolean =>
-    cwd === project ||
-    cwd.startsWith(`${project}/`) ||
-    project.startsWith(`${cwd}/`);
-
   const beginRoutingTurn = async (
     batch: readonly ClaimedBridgeMessage[],
     ctx: ExtensionContext,
@@ -418,6 +429,11 @@ export default function remoteControl(pi: ExtensionAPI): void {
         label: "receiver offline - queued for its next poll",
         cwd: project,
       }));
+    const routingTurn: ActiveRemoteTurn = {
+      ...turn,
+      routable: [...live, ...offline].map(({ cwd }) => cwd),
+    };
+    active = routingTurn;
     const prompt = routingBatchPrompt(
       batch.map((message, position) => ({
         index: position + 1,
@@ -441,7 +457,7 @@ export default function remoteControl(pi: ExtensionAPI): void {
       ),
     );
     if (Either.isLeft(sent)) {
-      await finishRouting(turn, "", ctx);
+      await finishRouting(routingTurn, "", ctx);
     }
   };
 

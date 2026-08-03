@@ -187,6 +187,44 @@ test("route plans split batches across agents and discard everything else", () =
   );
 });
 
+test("route plans drop projects that no agent on the roster owns", () => {
+  const roster = ["/Users/example/.config", "/Users/example/code/st0x"];
+  const plan = parseRoutePlan(
+    [
+      "route: /Users/example/.config | messages: 1",
+      "route: /Users/example | messages: 2",
+      "route: /Users/example/code/other | messages: 3",
+    ].join("\n"),
+    3,
+    roster,
+  );
+  assert.deepEqual(
+    plan,
+    [{ project: "/Users/example/.config", indexes: [1] }],
+    "a home directory nobody owns is not a routing target just because it is an absolute path",
+  );
+});
+
+test("route plans keep a directive naming a subdirectory of an owned project", () => {
+  assert.deepEqual(
+    parseRoutePlan("route: /Users/example/code/st0x/st0x.issuance | messages: 1", 1, [
+      "/Users/example/code/st0x",
+    ]),
+    [{ project: "/Users/example/code/st0x/st0x.issuance", indexes: [1] }],
+  );
+});
+
+test("route plans keep every directive when no roster is supplied", () => {
+  assert.deepEqual(parseRoutePlan("route: /anywhere | messages: 1", 1), [
+    { project: "/anywhere", indexes: [1] },
+  ]);
+  assert.deepEqual(
+    parseRoutePlan("route: /anywhere | messages: 1", 1, []),
+    [],
+    "an empty roster owns nothing, which is not the same as not knowing the roster",
+  );
+});
+
 test("dispatch-lane remote prompts forbid answering and demand routing", () => {
   const prompt = remoteTurnPrompt("ask ~/.config if it knows the song", "dispatch");
   assert.match(prompt, /Authenticated Piece of Pi Telegram/i);

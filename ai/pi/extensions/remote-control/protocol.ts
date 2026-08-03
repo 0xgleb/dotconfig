@@ -426,9 +426,40 @@ export const parseOutcomeEnvelope = (text: string): OutcomeEnvelope | undefined 
 const ROUTE_DIRECTIVE =
   /^route:\s*(\/[^\s|]{1,511})\s*\|\s*messages:\s*([0-9,\s]{1,64}?)\s*(?:\|\s*note:\s*(.{1,300}?)\s*)?$/;
 
+/**
+ * A project covers a route target when either path contains the other. Used to
+ * decide whether a live agent already stands in for a known registry project.
+ */
+export const coversProject = (cwd: string, project: string): boolean =>
+  cwd === project ||
+  cwd.startsWith(`${project}/`) ||
+  project.startsWith(`${cwd}/`);
+
+/**
+ * An agent rooted at `cwd` serves `project` when the project is that root or
+ * lives inside it.
+ *
+ * The direction matters and `coversProject` is the wrong test here: owning
+ * ~/.config does not make ~ a routing target, and ~ is an ancestor of every
+ * project, so a symmetric test makes the home directory look universally
+ * owned. That is how owner messages ended up delegated to a home directory no
+ * agent drains, where they sat until the queue window expired.
+ */
+export const servesProject = (cwd: string, project: string): boolean =>
+  cwd === project || project.startsWith(`${cwd}/`);
+
+/**
+ * Route directives come from the local router model, which can name any
+ * absolute path. `routable` is the set of projects that can actually take
+ * work; a directive naming anything else is dropped rather than enqueued,
+ * because delegating to a project no agent owns reports the message as routed
+ * while nothing ever claims it, and it resurfaces an hour later as an expiry
+ * notice. Omitting `routable` keeps every directive.
+ */
 export const parseRoutePlan = (
   response: string,
   messageCount: number,
+  routable?: readonly string[],
 ): readonly RouteDirective[] => {
   const directives: RouteDirective[] = [];
   for (const line of response.split("\n")) {
@@ -449,6 +480,9 @@ export const parseRoutePlan = (
       ),
     ].sort((left, right) => left - right);
     if (!project || indexes.length === 0) continue;
+    if (routable && !routable.some((cwd) => servesProject(cwd, project))) {
+      continue;
+    }
     const note = match[3]?.trim();
     directives.push({
       project,
