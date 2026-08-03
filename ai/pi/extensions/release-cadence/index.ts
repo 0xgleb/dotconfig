@@ -188,14 +188,29 @@ export default (pi: ExtensionAPI) => {
     ctx.ui.setStatus("release-cadence", undefined);
   });
 
+  // A tool cannot be unregistered once registered, and the extension API hands
+  // the factory no cwd, so the session's own process directory is what decides
+  // whether this project is Yielduck. Everything below that is presentation:
+  // a custom tool with no promptSnippet is left out of the Available tools
+  // section entirely, and guidelines are only appended for a tool that is
+  // active. Outside Yielduck that keeps release wording out of a system prompt
+  // it can never apply to - the dispatch lane in particular runs a minimal
+  // routing charter, and a paragraph about release markers is pure noise to a
+  // router that will never call this.
+  const inYielduckProject = isYielduckProject(process.cwd());
+
   pi.registerTool({
     name: "release_cadence",
     label: "Release cadence",
     description: "Status, enable, disable, or record a verified live Yielduck release marker for durable quarter-hour reminders.",
-    promptSnippet: "Maintain the verified live release marker used by Yielduck quarter-hour cadence reminders",
-    promptGuidelines: [
-      "Use release_cadence mark only after a safe dashboard or live version marker has been verified; never infer a release from a commit or build alone.",
-    ],
+    ...(inYielduckProject
+      ? {
+          promptSnippet: "Maintain the verified live release marker used by Yielduck quarter-hour cadence reminders",
+          promptGuidelines: [
+            "Use release_cadence mark only after a safe dashboard or live version marker has been verified; never infer a release from a commit or build alone.",
+          ],
+        }
+      : {}),
     parameters: CadenceParameters,
     async execute(_toolCallId, request, _signal, _onUpdate, ctx) {
       if (!isYielduckProject(ctx.cwd)) {
