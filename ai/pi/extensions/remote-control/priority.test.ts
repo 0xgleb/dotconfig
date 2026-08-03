@@ -13,3 +13,18 @@ test("Telegram prompts steer an active local turn at the next safe boundary", ()
   )
   assert.doesNotMatch(source, /if \(active \|\| !ctx\.isIdle\(\)\) return/)
 })
+
+test("owner pane input on the dispatch lane is enqueued instead of answered freehand", () => {
+  assert.match(
+    source,
+    /pi\.on\("input", async \(event, ctx\) => \{[\s\S]*?event\.source !== "interactive"/,
+  )
+  assert.match(
+    source,
+    /pi\.on\("input"[\s\S]*?store\.enqueue\(\{[\s\S]*?requesterId: "owner-pane",[\s\S]*?ttlMs: BRIDGE_MESSAGE_TTL_MS,[\s\S]*?\}\),[\s\S]*?return \{ action: "handled" \}/,
+  )
+  assert.match(
+    source,
+    /pi\.on\("input"[\s\S]*?text\.startsWith\("\/"\)\)[\s\S]*?return \{ action: "continue" \}/,
+  )
+})

@@ -43,6 +43,7 @@ import {
 } from "./routing-gate.ts";
 import {
   BRIDGE_AGENT_TTL_MS,
+  BRIDGE_MESSAGE_TTL_MS,
   RemoteBridgeError,
   dispatchSystemPrompt,
   finalAssistantText,
@@ -84,7 +85,7 @@ const safeError = (error: RemoteBridgeError): string =>
   `${error.code}: ${error.message}`.slice(0, 160);
 
 export default function remoteControl(pi: ExtensionAPI): void {
-  registerRuntimeVersion(pi, "remote-control", "2026.08.03.29");
+  registerRuntimeVersion(pi, "remote-control", "2026.08.03.30");
   const store = makeRemoteBridgeStore(
     remoteBridgeDatabasePath(process.env.XDG_STATE_HOME, homedir()),
   );
@@ -621,6 +622,41 @@ export default function remoteControl(pi: ExtensionAPI): void {
     if (isLocalDispatchProvider(ctx.model?.provider))
       return { systemPrompt: dispatchSystemPrompt(ctx.cwd) };
     return undefined;
+  });
+
+  /**
+   * Owner text typed into the pane joins the bridge queue so the dispatch lane
+   * drains it mechanically instead of letting the local model answer freehand.
+   * Only `interactive` input may be intercepted: this extension's own
+   * `sendUserMessage` routing prompts surface as input events too, and
+   * re-enqueuing those would loop.
+   */
+  pi.on("input", async (event, ctx) => {
+    if (!isLocalDispatchProvider(ctx.model?.provider))
+      return { action: "continue" };
+    if (event.source !== "interactive") return { action: "continue" };
+    const text = event.text.trim();
+    if (text.length === 0 || text.startsWith("/"))
+      return { action: "continue" };
+    const enqueued = await run(
+      store.enqueue({
+        targetAgentId: ctx.sessionManager.getSessionId(),
+        requesterId: "owner-pane",
+        dedupeKey: `pane-${Date.now()}`,
+        text,
+        now: Date.now(),
+        ttlMs: BRIDGE_MESSAGE_TTL_MS,
+      }),
+    );
+    if (Either.isLeft(enqueued)) {
+      ctx.ui.setStatus(
+        STATUS_KEY,
+        `remote:error · ${safeError(enqueued.left)}`,
+      );
+      return { action: "continue" };
+    }
+    void sync(ctx);
+    return { action: "handled" };
   });
 
   pi.on("turn_end", async (event, ctx) => {
