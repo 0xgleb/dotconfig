@@ -45,6 +45,11 @@ export type ReviewDutyScanSpec = Extract<
   { readonly kind: "review-duty.scan" }
 >
 
+export type HarnessReviewSpec = Extract<
+  RegisteredJobSpec,
+  { readonly kind: "harness.review" }
+>
+
 export interface HarnessReviewResult {
   readonly kind: "harness.review"
   readonly handoff: HarnessReviewHandoff
@@ -60,20 +65,50 @@ interface JobBase {
   readonly updatedAt: number
 }
 
+/**
+ * Terminal results are correlated with the job kind at the type level: a
+ * successful harness job must carry its typed result, a cancelled harness
+ * job may carry one, and every other state/kind combination rejects the
+ * `result` property outright via `never`.
+ */
 export type Job =
-  | (JobBase & { readonly state: "scheduled" | "ready" | "retry_wait" })
+  | (JobBase & {
+      readonly state: "scheduled" | "ready" | "retry_wait"
+      readonly result?: never
+    })
   | (JobBase & {
       readonly state: "leased"
       readonly workerId: string
       readonly leaseToken: string
       readonly leaseUntil: number
       readonly cancelRequestedAt?: number
+      readonly result?: never
     })
   | (JobBase & {
-      readonly state: "succeeded" | "failed" | "cancelled"
+      readonly state: "failed"
+      readonly finishedAt: number
+      readonly summary: string
+      readonly result?: never
+    })
+  | (JobBase & {
+      readonly state: "cancelled"
       readonly finishedAt: number
       readonly summary?: string
-      readonly result?: RegisteredJobResult
+      readonly result?: never
+    })
+  | (JobBase & {
+      readonly spec: HarnessReviewSpec
+      readonly state: "succeeded" | "cancelled"
+      readonly finishedAt: number
+      readonly summary: string
+      readonly result: HarnessReviewResult
+    })
+  | (JobBase & {
+      readonly spec: ReviewDutyScanSpec
+      readonly state: "succeeded"
+      readonly finishedAt: number
+      readonly summary: string
+      readonly result?: never
     })
 
 export class JobRuntimeError extends Data.TaggedError("JobRuntimeError")<{
@@ -267,16 +302,14 @@ export const decodeStoredJob = (
   ) {
     return invalid("stored job base fields are malformed")
   }
+  const id = value.id
+  const attempt = value.attempt
+  const createdAt = value.createdAt
+  const updatedAt = value.updatedAt
   return Effect.flatMap(decodeJobSpec(value.spec), (spec) => {
-    if (value.attempt > spec.maxAttempts)
+    if (attempt > spec.maxAttempts)
       return invalid("stored job attempt exceeds its limit")
-    const base: JobBase = {
-      id: value.id as string,
-      spec,
-      attempt: value.attempt as number,
-      createdAt: value.createdAt as number,
-      updatedAt: value.updatedAt as number,
-    }
+    const base = { id, spec, attempt, createdAt, updatedAt }
     if (state === "scheduled") {
       if (base.attempt !== 0 || spec.runAt <= base.updatedAt)
         return invalid("stored scheduled job fields are inconsistent")
@@ -298,7 +331,7 @@ export const decodeStoredJob = (
     }
     if (state === "leased") {
       if (
-        value.attempt < 1 ||
+        base.attempt < 1 ||
         spec.runAt > base.updatedAt ||
         !isSafeIdentifier(value.workerId, 128) ||
         !isSafeIdentifier(value.leaseToken, 128) ||
@@ -311,15 +344,16 @@ export const decodeStoredJob = (
       ) {
         return invalid("stored leased job fields are malformed")
       }
+      const cancelRequestedAt = isTimestamp(value.cancelRequestedAt)
+        ? value.cancelRequestedAt
+        : undefined
       return Effect.succeed({
         ...base,
         state,
         workerId: value.workerId,
         leaseToken: value.leaseToken,
         leaseUntil: value.leaseUntil,
-        ...(value.cancelRequestedAt !== undefined
-          ? { cancelRequestedAt: value.cancelRequestedAt }
-          : {}),
+        ...(cancelRequestedAt !== undefined ? { cancelRequestedAt } : {}),
       })
     }
     if (state === "succeeded" || state === "failed" || state === "cancelled") {
@@ -329,36 +363,50 @@ export const decodeStoredJob = (
         value.finishedAt !== base.updatedAt ||
         (state === "succeeded" && base.attempt < 1) ||
         (state === "failed" && base.attempt !== spec.maxAttempts) ||
-        ((state === "succeeded" || state === "failed" || base.attempt > 0) &&
-          !isSafeSummary(value.summary)) ||
         (cancelledBeforeClaim && value.summary !== undefined) ||
         (!cancelledBeforeClaim && spec.runAt > base.updatedAt)
       ) {
         return invalid("stored terminal job fields are malformed")
       }
-      const terminal = {
-        ...base,
-        state,
-        finishedAt: value.finishedAt,
-        ...(value.summary !== undefined ? { summary: value.summary } : {}),
+      const finishedAt = value.finishedAt
+      const summary = isSafeSummary(value.summary) ? value.summary : undefined
+      if (value.result === undefined) {
+        if (state === "succeeded") {
+          if (spec.kind === "harness.review")
+            return invalid("successful harness job requires a typed result")
+          if (summary === undefined)
+            return invalid("stored terminal job fields are malformed")
+          return Effect.succeed({ ...base, spec, state, finishedAt, summary })
+        }
+        if (state === "failed") {
+          if (summary === undefined)
+            return invalid("stored terminal job fields are malformed")
+          return Effect.succeed({ ...base, state, finishedAt, summary })
+        }
+        if (!cancelledBeforeClaim && summary === undefined)
+          return invalid("stored terminal job fields are malformed")
+        return Effect.succeed({
+          ...base,
+          state,
+          finishedAt,
+          ...(summary !== undefined ? { summary } : {}),
+        })
       }
-      const requiresResult = spec.kind === "harness.review" && state === "succeeded"
-      const allowsResult =
-        spec.kind === "harness.review" &&
-        (state === "succeeded" || state === "cancelled")
-      if (requiresResult && value.result === undefined)
-        return invalid("successful harness job requires a typed result")
-      if (value.result !== undefined && !allowsResult)
+      if (
+        spec.kind !== "harness.review" ||
+        (state !== "succeeded" && state !== "cancelled")
+      ) {
         return invalid("stored job result is not valid for this terminal state")
-      if (value.result === undefined) return Effect.succeed(terminal)
+      }
       if (
         !isRecord(value.result) ||
         !hasOnlyKeys(value.result, ["kind", "handoff"]) ||
-        value.result.kind !== "harness.review" ||
-        spec.kind !== "harness.review"
+        value.result.kind !== "harness.review"
       ) {
         return invalid("stored harness result is malformed")
       }
+      if (summary === undefined)
+        return invalid("stored terminal job fields are malformed")
       return Effect.flatMap(
         Effect.mapError(decodeHarnessReviewHandoff(value.result.handoff), () =>
           error("invalid_input", "stored harness result is malformed"),
@@ -373,7 +421,11 @@ export const decodeStoredJob = (
           handoff.status !== "blocked" &&
           handoff.status !== "failed"
             ? Effect.succeed({
-                ...terminal,
+                ...base,
+                spec,
+                state,
+                finishedAt,
+                summary,
                 result: { kind: "harness.review" as const, handoff },
               })
             : invalid("stored harness result does not match its job"),
@@ -463,12 +515,21 @@ export const completeJob = (
     return invalid("now cannot precede the current job state")
   if (!isSafeSummary(summary)) return invalid("summary must be bounded safe text")
   return Effect.flatMap(currentLease(job, leaseToken, now), (leased) => {
+    const finished = {
+      id: leased.id,
+      attempt: leased.attempt,
+      createdAt: leased.createdAt,
+      updatedAt: now,
+      finishedAt: now,
+      summary,
+    }
     if (leased.spec.kind === "harness.review") {
+      const spec = leased.spec
       if (
         result?.kind !== "harness.review" ||
         !harnessHandoffMatchesAttempt(
           result.handoff,
-          leased.spec.payload,
+          spec.payload,
           leased.id,
           leased.attempt,
         )
@@ -477,20 +538,22 @@ export const completeJob = (
       }
       if (result.handoff.status === "blocked" || result.handoff.status === "failed")
         return invalidTransition("unsuccessful harness handoff cannot complete a job")
-    } else if (result !== undefined) {
-      return invalid("job kind does not accept a typed harness result")
+      return Effect.succeed({
+        ...finished,
+        spec,
+        state:
+          leased.cancelRequestedAt === undefined
+            ? ("succeeded" as const)
+            : ("cancelled" as const),
+        result,
+      })
     }
-    return Effect.succeed({
-      id: leased.id,
-      spec: leased.spec,
-      state: leased.cancelRequestedAt === undefined ? "succeeded" : "cancelled",
-      attempt: leased.attempt,
-      createdAt: leased.createdAt,
-      updatedAt: now,
-      finishedAt: now,
-      summary,
-      ...(result ? { result } : {}),
-    })
+    const spec = leased.spec
+    if (result !== undefined)
+      return invalid("job kind does not accept a typed harness result")
+    return leased.cancelRequestedAt === undefined
+      ? Effect.succeed({ ...finished, spec, state: "succeeded" as const })
+      : Effect.succeed({ ...finished, spec, state: "cancelled" as const })
   })
 }
 
