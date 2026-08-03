@@ -89,6 +89,14 @@ def "test clanker dispatcher forwards an explicit prompt instead of the default"
   assert (not ("/loop 10m /dispatcher" in $route.args))
 }
 
+def "test clanker dispatcher forwards an explicit model override after the default" [] {
+  let route = (clanker-route false false --dispatcher --model "ollama/other-local")
+  let indexed = ($route.args | enumerate)
+  let default_index = ($indexed | where item == "ollama/qwen3:32b" | first | get index)
+  let override_index = ($indexed | where item == "ollama/other-local" | first | get index)
+  assert ($override_index > $default_index) "explicit --model must come after the default so pi's last-wins parsing applies it"
+}
+
 def "test clanker claude preserves auto workflows" [] {
   let route = (clanker-route true true --claude)
   assert equal $route.tool "claude"
