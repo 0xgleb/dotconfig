@@ -31,17 +31,71 @@ in the agent Brave profile, mirroring the Claude-in-Chrome shape:
 - A repo-owned MV3 extension (`ai/pi/browser-extension/`) is loaded unpacked
   into the operator profile at provisioning time.
 - Transport: the Pi `browser-control` extension runs a loopback-only
-  WebSocket server with a per-profile token provisioned into the browser
-  extension's storage; the extension's service worker dials out to it. No
+  WebSocket server; the browser extension's service worker dials out to it
+  and authenticates with a per-provisioning token in its hello frame. No
   remote-debugging flag, no open unauthenticated port.
-- The wire protocol is versioned and typed on both ends; actions execute
-  through extension APIs (`chrome.tabs`, `chrome.scripting`) instead of CDP,
-  and every action/result frame is fail-closed validated.
+- The wire protocol is versioned and typed on both ends
+  (`browser-control/extension-protocol.ts`); actions execute through
+  extension APIs instead of CDP, and every frame is fail-closed validated.
 - Visibility: a content script renders an in-page overlay (highlight and
-  action label animation) driven by the same protocol frames, replacing the
-  corner text indicator.
+  action label animation) for tab-targeted actions, replacing the corner
+  text indicator.
 - The host refuses to serve when the connected profile is not the operator
   profile, preserving the existing confinement guarantee.
+
+### Trust boundary and token custody
+
+- The artifact, the operator profile directory, and the Pi host share one
+  local trust root: provisioning installs the extension from the repo
+  checkout and mints the token into the profile in the same step, so host
+  and artifact always come from the same commit. A local attacker who can
+  rewrite `ai/pi/browser-extension/` or the profile directory is already
+  inside the machine boundary — the same class as tampering with the Pi
+  extension itself — and is scoped in `browser-control/THREAT-MODEL.md`,
+  which this work rewrites. The record does not pretend the handshake
+  attests more than that.
+- The token lives only in the service worker's `chrome.storage.session`
+  with access restricted to trusted extension contexts — never
+  `storage.local`, never `storage.sync`, never readable by content scripts.
+  The overlay content script receives only overlay frames over runtime
+  messaging; it can never read the token or emit act results.
+- The host accepts a connection only when all of these hold: the socket is
+  loopback, the HTTP `Origin` is the provisioned extension's
+  `chrome-extension://` identity, the hello token matches the current
+  provisioning, and the hello `profilePath` names the operator profile.
+  Token possession is treated as possession of the provisioned profile,
+  nothing stronger; re-provisioning rotates the token.
+
+### Protocol compatibility
+
+- Exactly one protocol version is supported at a time; an unknown version,
+  kind, field, or bound violation rejects the whole frame (shipped and
+  tested in `extension-protocol.ts`). There is no cross-version
+  negotiation: host and artifact ship from the same repo commit and
+  re-provisioning re-pins both, so a version bump is a deliberate breaking
+  change, not a runtime compatibility case.
+- Every act frame carries a request id and is answered by exactly one
+  result frame; a result for an already-settled or unknown request id is
+  dropped without effect, which is also the replay posture. Payload bounds
+  (text size, tab list length, label and error lengths) are constants of
+  the protocol module.
+
+### Action contract
+
+| Action | Execution | Target | Extension permission | Bounds and failure |
+| --- | --- | --- | --- | --- |
+| `status` | extension, `chrome.tabs.query` | none (profile-wide) | `tabs` | bounded tab list; failure -> failed result |
+| `open` | extension, `chrome.tabs.create`/`update` | the opened tab | `tabs` | loopback-validated URL; overlay start/finish |
+| `text` | extension, `chrome.scripting.executeScript` | active operator tab | `scripting` + loopback host permissions | bounded text; overlay start/finish |
+| `fetch` | Pi host, direct loopback GET (unchanged code path) | none | none (no extension involvement) | GET-only, bounded, redirect-refusing, as today |
+
+- `host_permissions` are exactly the loopback origins the current CDP path
+  already accepts (`http://127.0.0.1/*`, `http://localhost/*`,
+  `https://localhost/*`, `http://[::1]/*`) — never `<all_urls>`; the only
+  other permissions are `tabs`, `scripting`, and `storage`.
+- The protocol reserves a `fetch` act frame so the host may later delegate
+  fetches to the extension without a protocol change, but this decision
+  keeps `fetch` host-side.
 
 ## Alternatives Considered
 
@@ -86,17 +140,21 @@ in the agent Brave profile, mirroring the Claude-in-Chrome shape:
 ## Consequences
 
 - The repo gains a versioned browser-extension artifact and a provisioning
-  step that installs and pins it in the operator profile; profile setup is
-  the only place the extension is trusted from.
-- The action surface becomes whatever the extension APIs express. The
-  current actions (`status`, `open`, `text`, `fetch`) all map; future
-  CDP-only capabilities (e.g. network interception) would need their own
-  decision.
-- The typed wire protocol becomes a real boundary with tests on both sides;
-  `browser-control/THREAT-MODEL.md` must be rewritten for the new surface
-  (token custody, socket origin checks, extension update path).
-- Action visibility becomes first-class: the overlay renders from protocol
-  frames, so every agent action is visibly attributable in-page.
-- Blast radius if wrong: the Pi-side action API is kept stable, so a
-  reversal swaps the transport layer and the extension artifact without
-  rewriting Pi callers.
+  step that installs it and mints the token in one operation; profile
+  setup is the only place the extension and token are trusted from.
+- The action surface becomes whatever the extension APIs express, under the
+  permission matrix above. Future CDP-only capabilities (e.g. network
+  interception) would need their own decision.
+- Tab-targeted actions (`open`, `text`) become visibly attributable through
+  the in-page overlay; `status` and host-side `fetch` have no page target
+  and keep the session activity label as their visibility. The overlay
+  never sees the token, so the visibility layer cannot widen the secret
+  boundary.
+- `browser-control/THREAT-MODEL.md` must be rewritten for the new surface:
+  token custody and rotation on re-provisioning, socket origin checks, the
+  shared local trust root, and the extension update path.
+- Blast radius if wrong: the Pi-side action API (`status`, `open`, `text`,
+  `fetch`) is the stable surface, so a reversal swaps the transport layer
+  and the extension artifact without rewriting Pi callers; the single
+  supported protocol version means a reversal never has to bridge mixed
+  host/extension generations.
