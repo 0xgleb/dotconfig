@@ -1,6 +1,6 @@
 ---
 name: receiver
-description: Cron-driven worker loop over the Pi agent registry job queue for the current project. Use in a full-capability session that holds a project role (Claude Code or native Pi) - each invocation arms the recurring check if missing, reads queued requests for this project, reprioritizes the whole queue against up-to-date context, executes the head item, reports the outcome through the dispatcher, and yields until the next fire.
+description: Cron-driven worker loop over the Pi agent registry job queue for the current project. Use in a full-capability session that holds a project role (Claude Code or native Pi) - each invocation arms the recurring check if missing, reads queued requests for this project, reprioritizes the whole queue against up-to-date context, executes the head item, reports the outcome through the dispatcher, and yields until the next fire. Accepts an optional cadence argument (e.g. /receiver 5m) that arms or re-arms the cron at that interval.
 ---
 
 # Receiver
@@ -18,18 +18,27 @@ native Pi session (typed `agent_registry` tools) and a Claude Code session
 Each `/receiver` invocation is ONE iteration: arm, collect, prioritize,
 execute one, report, yield.
 
+`/receiver` takes an optional cadence argument (`/receiver 5m`,
+`/receiver 30m`, `/receiver 1h`). When present, arm (or re-arm) the recurring
+cron at that interval — delete the existing schedule if it differs — then run
+the iteration as usual. When absent, keep whatever schedule already exists, or
+arm the default below on first invocation.
+
 1. **Arm (first invocation in a session only)**: register this session on the
    dispatch roster so the dispatcher can route to it by name — run
    `pi-bridge register --agent-id <stable-id> --label "<harness> - <project> receiver" --cwd <absolute project path>`
    and keep it heartbeating (a background loop re-registering every 60
    seconds; registration expires in about 90 seconds without it). Then, if no
    recurring schedule for this skill exists yet (check the session's cron
-   list), create one that re-invokes `/receiver` on an off minute. Pick the cadence from the usage
-   budget, not from eagerness: hourly (e.g. `41 * * * *`) is the paid-lane
-   default — each fire spends credits on reprioritization even when the
-   queue is quiet; go denser (e.g. every 15 minutes) only when the owner
-   asks for it or the lane is free. Session crons die with the session;
-   invoking `/receiver` once in a fresh session re-arms the loop.
+   list), create one that re-invokes `/receiver` on off minutes. The default
+   cadence is every 4 hours (owner directive 2026-08-03: preserve paid usage
+   credits while the migration is gradual); a cadence argument to
+   `/receiver` overrides it, and a cadence-change request arriving through
+   the registry queue re-arms the cron the same way. Each fire spends
+   credits on reprioritization even when the queue is quiet — go denser
+   only on explicit owner request or on a free local lane. Session crons
+   die with the session; invoking `/receiver` once in a fresh session
+   re-arms the loop.
 2. **Collect** (read-only; never write this database from outside Pi):
 
    ```nu

@@ -537,6 +537,20 @@ compacted, usage-limited, or parallel human-agent sessions.
 
 ## Subagent Delegation
 
+**Fable's role is delegation, orchestration, and final verification — not
+inline execution.** (Owner directive 2026-08-03.) Fable plans the work, splits
+it into well-scoped tasks, hands substantive execution down, and checks quality
+at the end:
+
+- **Opus 5 subagents** for investigation and complex multi-file changes.
+- **Sonnet 5 subagents** for well-specified implementation and mechanical work.
+- **grok 4.5 cursor workers** (`cursor-agent -p --output-format text --mode
+  plan --model grok-4.5-xhigh`) for bounded, read-only questions and drafts.
+
+Executing a multi-step task inline in the Fable session needs a reason (e.g.
+the work is inseparable from live session state, or delegation overhead exceeds
+the task); the default is to delegate.
+
 Use the task list to drive subagent delegation. When working through tasks:
 
 - **Delegate mechanical work to background subagents**: Renames, pattern fixes,

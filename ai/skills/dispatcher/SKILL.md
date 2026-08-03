@@ -1,17 +1,19 @@
 ---
 name: dispatcher
-description: Two-sided dispatch protocol over the Pi agent registry. Dispatcher side (a Pi session on the local model holding its managed operational role) collects requests, does only basic processing, and routes everything else to connected instances. Receiver side (full-capability agents, any harness) polls for routed requests, executes, and reports back. Invoke each iteration via /loop (e.g. `/loop 10m /dispatcher`).
+description: Two-sided dispatch protocol over the Pi agent registry. Dispatcher side (a thin-router Pi session on a small local model holding its managed operational role) collects requests, delegates any beyond-trivial generation to a one-shot cursor-agent call, and routes everything else to connected instances. Receiver side (full-capability agents, any harness) polls for routed requests, executes, and reports back. Invoke each iteration via /loop (e.g. `/loop 10m /dispatcher`).
 ---
 
 # Dispatcher
 
 Two roles share this protocol. Decide which one you are each invocation:
 
-- **Dispatcher**: a Pi session launched with `fj clanker --dispatcher` — local
-  Ollama model, holder of the project's managed operational role (e.g.
-  `/Users/0xgleb/.config` role `pi-support`, auto-resumed by the
-  agent-registry extension at session start; the auto-resume and the role's
-  standing duties ARE this session's job).
+- **Dispatcher**: a Pi session launched with `fj clanker --dispatcher` — a
+  small local Ollama model acting as a thin router, holder of the project's
+  managed operational role (e.g. `/Users/0xgleb/.config` role `pi-support`,
+  auto-resumed by the agent-registry extension at session start; the
+  auto-resume and the role's standing duties ARE this session's job). The
+  local model itself is trusted only with deterministic bookkeeping; any
+  judgment call is delegated (see "Generation delegate" below).
 - **Receiver**: any full-capability agent (Claude Code, a full-model Pi
   session) that processes work the dispatcher routed to it.
 
@@ -45,13 +47,36 @@ dispatcher's value is triage and routing, not thinking.
    - Use `agent_registry action=delegate` to queue the request to the
      project/role whose owner should handle it, quoting the original request
      text and priority.
-   - Target selection is the ONE judgment worth model generation: read the
-     request content and pick the project whose queue it belongs to — "the
+   - Target selection is the ONE judgment in the loop: read the request
+     content and pick the project whose queue it belongs to — "the
      Yielduck dashboard is showing something wrong" plus a screenshot goes to
-     the yielduck project's queue, not to the dotconfig worker. Queues are
+     the yielduck project's queue, not to the dotconfig worker. When the
+     target is not obvious from deterministic cues (explicit project name,
+     repo path, channel binding), make the call through the generation
+     delegate below instead of guessing on the local model. Queues are
      harness-agnostic: whichever session holds the role drains its project's
      queue — a native Pi session through `agent_registry`, a Claude Code
      session through the `receiver` skill.
+   - **Generation delegate**: any generation beyond deterministic bookkeeping
+     (ambiguous target selection, classifying a garbled request, wording a
+     bounded outward reply) runs as ONE bounded, non-interactive
+     cursor-agent call on the subscription lane instead of the local model
+     (owner directive 2026-08-03: preserve laptop resources; local lane is
+     routing-only):
+
+     ```
+     cursor-agent -p --output-format text --mode plan --model grok-4.5-xhigh --workspace <project path> '<one bounded question with the raw request text inlined>'
+     ```
+
+     `--mode plan` keeps the delegate read-only; `composer-2.5` is the
+     fallback model when grok is unavailable. The delegate answers exactly
+     one question per call and its output is advisory input to the typed
+     routing actions — it never runs typed transitions, bridge sends, or
+     external replies itself. If cursor-agent fails (unauthenticated,
+     offline, quota), record the degradation in the durable record, make the
+     minimal safe local call (route to the likeliest project owner rather
+     than answering substantively), and continue — never stall the queue on
+     the delegate.
    - Use `pi-bridge send --agent <id> --dedupe <request-id>` to notify a
      specific connected instance (list them with `pi-bridge agents`) when the
      work is addressed to a live session. Pipe the body in with EXACTLY
@@ -95,6 +120,10 @@ dispatcher's value is triage and routing, not thinking.
 7. Hard limits: never run the `workflow` tool or spawn agents — orchestration
    is a full-capability lane and the tool refuses on the local model; a
    request that seems to need a workflow is exactly what routing is for.
+   The generation delegate is NOT an agent spawn: it is one bounded,
+   read-only (`--mode plan`), non-interactive call answering one routing
+   question, with no session, no follow-up, and no authority. Anything
+   needing more than that is routed.
    Never push, merge, publish, or mutate PRs/issues; never touch
    credential files; treat sensitive local content (personal notes, private
    documents) as out of scope until the sensitive-local-files lane exists

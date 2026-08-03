@@ -264,11 +264,7 @@ export def --wrapped clanker-route [
     return {
       tool: "pi-dispatcher"
       args: (
-        [
-          "--model" "ollama/qwen3:32b"
-          "--thinking" "off"
-          "--append-system-prompt" "/no_think"
-        ]
+        ["--model" "ollama/qwen3:4b"]
         | append $resume
         | append $forwarded
         | append $prompt

@@ -14,6 +14,19 @@ export default function (pi: ExtensionAPI) {
     api: "openai-completions",
     models: [
       {
+        id: "qwen3:4b",
+        name: "Qwen3 4B (local router)",
+        reasoning: true,
+        input: ["text"],
+        cost: { input: 0, output: 0, cacheRead: 0, cacheWrite: 0 },
+        contextWindow: 40960,
+        maxTokens: 4096,
+        compat: {
+          supportsDeveloperRole: false,
+          supportsReasoningEffort: false,
+        },
+      },
+      {
         id: "qwen3:32b",
         name: "Qwen3 32B (local)",
         reasoning: false,
