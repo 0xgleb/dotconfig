@@ -45,6 +45,13 @@ dispatcher's value is triage and routing, not thinking.
    - Use `agent_registry action=delegate` to queue the request to the
      project/role whose owner should handle it, quoting the original request
      text and priority.
+   - Target selection is the ONE judgment worth model generation: read the
+     request content and pick the project whose queue it belongs to — "the
+     Yielduck dashboard is showing something wrong" plus a screenshot goes to
+     the yielduck project's queue, not to the dotconfig worker. Queues are
+     harness-agnostic: whichever session holds the role drains its project's
+     queue — a native Pi session through `agent_registry`, a Claude Code
+     session through the `receiver` skill.
    - Use `pi-bridge send --agent <id> --dedupe <request-id>` to notify a
      specific connected instance (list them with `pi-bridge agents`) when the
      work is addressed to a live session.
