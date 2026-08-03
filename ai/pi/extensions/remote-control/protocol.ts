@@ -263,9 +263,8 @@ export const routingBatchPrompt = (
   roster: readonly RosterAgent[],
 ): string =>
   [
-    "/no_think",
     "[Authenticated Piece of Pi Telegram message · routing turn · all tools are disabled]",
-    "You are the dispatcher. Do not think or explain. Reply ONLY with route directives, one per line:",
+    "You are the dispatcher. Think as long as you need, then reply ONLY with route directives, one per line:",
     "route: <absolute project path> | messages: <numbers> | note: <short instruction for that agent, optional>",
     "Split multi-topic batches across agents; a message may appear in several directives when its parts belong to different agents.",
     "Roster:",
@@ -320,6 +319,32 @@ export const trimDispatchContext = <Message extends { readonly role: string }>(
   } as unknown as Message;
   return { messages: [marker, ...messages.slice(cut)], dropped };
 };
+
+export interface DispatchCompactionPreparation {
+  readonly firstKeptEntryId: string;
+  readonly tokensBefore: number;
+}
+
+export interface DispatchCompactionResult {
+  readonly summary: string;
+  readonly firstKeptEntryId: string;
+  readonly tokensBefore: number;
+}
+
+/**
+ * Dispatch history is disposable, and the summarization round-trip is
+ * exactly what a small router model fails at. When Pi decides to compact a
+ * dispatch session anyway (threshold or overflow recovery), the compaction
+ * completes mechanically with a fixed bounded summary and no model call.
+ */
+export const mechanicalDispatchCompaction = (
+  preparation: DispatchCompactionPreparation,
+): DispatchCompactionResult => ({
+  summary:
+    "Earlier dispatch turns were compacted mechanically. Durable state lives in the agent registry queue and the bridge inbox; nothing from the dropped turns is needed to route new messages.",
+  firstKeptEntryId: preparation.firstKeptEntryId,
+  tokensBefore: preparation.tokensBefore,
+});
 
 const OWNER_RELAY =
   /^(?:relay-to-owner:|Relay to the owner on Telegram:)\s*([\s\S]{1,2000}?)\s*$/;

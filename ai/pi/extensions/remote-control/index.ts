@@ -45,6 +45,7 @@ import {
   BRIDGE_AGENT_TTL_MS,
   RemoteBridgeError,
   finalAssistantText,
+  mechanicalDispatchCompaction,
   normalizeLegacyRemoteImageContent,
   parseOutcomeEnvelope,
   parseOwnerRelay,
@@ -61,7 +62,7 @@ import { enterRemoteToolGuard, type RemoteToolGuard } from "./tool-guard.ts";
 
 const POLL_MS = 2_000;
 const STATUS_KEY = "remote-control";
-const DISPATCH_CONTEXT_BUDGET_CHARS = 60_000;
+const DISPATCH_CONTEXT_BUDGET_CHARS = 100_000;
 
 interface ClaimedBridgeMessage {
   readonly id: string;
@@ -82,7 +83,7 @@ const safeError = (error: RemoteBridgeError): string =>
   `${error.code}: ${error.message}`.slice(0, 160);
 
 export default function remoteControl(pi: ExtensionAPI): void {
-  registerRuntimeVersion(pi, "remote-control", "2026.08.03.27");
+  registerRuntimeVersion(pi, "remote-control", "2026.08.03.28");
   const store = makeRemoteBridgeStore(
     remoteBridgeDatabasePath(process.env.XDG_STATE_HOME, homedir()),
   );
@@ -599,6 +600,11 @@ export default function remoteControl(pi: ExtensionAPI): void {
       return { messages: [...trimmed.messages] };
     }
     return { messages };
+  });
+
+  pi.on("session_before_compact", (event, ctx) => {
+    if (!isLocalDispatchProvider(ctx.model?.provider)) return undefined;
+    return { compaction: mechanicalDispatchCompaction(event.preparation) };
   });
 
   pi.on("session_start", (_event, ctx) => {

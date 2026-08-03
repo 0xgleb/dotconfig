@@ -8,6 +8,7 @@ import {
   boundedBridgeImages,
   boundedBridgeText,
   finalAssistantText,
+  mechanicalDispatchCompaction,
   normalizeLegacyRemoteImageContent,
   parseOutcomeEnvelope,
   parseOwnerRelay,
@@ -38,7 +39,8 @@ test("routing turns carry the roster and the whole numbered batch", () => {
     ],
   );
   assert.match(prompt, /Authenticated Piece of Pi Telegram/i);
-  assert.match(prompt, /no_think/);
+  assert.doesNotMatch(prompt, /no_think/);
+  assert.match(prompt, /Think as long as you need/);
   assert.match(prompt, /route: <absolute project path> \| messages: <numbers>/);
   assert.match(prompt, /claude-st0x-receiver/);
   assert.match(prompt, /\[1\] ask ~\/\.config if it knows the song/);
@@ -64,6 +66,17 @@ test("dispatch context slides: old turns drop behind a count marker", () => {
   const untouched = trimDispatchContext(messages, 100_000);
   assert.equal(untouched.dropped, 0);
   assert.equal(untouched.messages, messages);
+});
+
+test("dispatch compaction completes mechanically without a summarization call", () => {
+  const result = mechanicalDispatchCompaction({
+    firstKeptEntryId: "entry-42",
+    tokensBefore: 39_000,
+  });
+  assert.equal(result.firstKeptEntryId, "entry-42");
+  assert.equal(result.tokensBefore, 39_000);
+  assert.match(result.summary, /agent registry/);
+  assert.ok(result.summary.length < 400);
 });
 
 test("owner-relay frames deliver outward instead of being routed as work", () => {
