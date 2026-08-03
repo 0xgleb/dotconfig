@@ -1,6 +1,19 @@
 import assert from "node:assert/strict";
 import test from "node:test";
-import { ownerRelayChunks } from "./owner-telegram.ts";
+import { hasMultipleLinks, ownerRelayChunks } from "./owner-telegram.ts";
+
+test("a report pointing at several links suppresses the preview card", () => {
+  const [many] = ownerRelayChunks(
+    "- [237](https://example.com/237)\n- [1091](https://example.com/1091)",
+  );
+  assert.equal(hasMultipleLinks(many ?? ""), true);
+});
+
+test("a report pointing at one link keeps its preview", () => {
+  const [one] = ownerRelayChunks("see [237](https://example.com/237)");
+  assert.equal(hasMultipleLinks(one ?? ""), false);
+  assert.equal(hasMultipleLinks("no links at all"), false);
+});
 
 test("relayed owner reports render structure instead of arriving as prose", () => {
   const [chunk] = ownerRelayChunks(

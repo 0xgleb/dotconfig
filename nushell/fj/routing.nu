@@ -274,27 +274,6 @@ export def --wrapped clanker-route [
   let wants_worker = ("--worker" in $args)
   let start_fresh = ("--new" in $args)
   let forwarded = ($args | where {|arg| $arg not-in ["--claude" "--new" "--dispatcher" "--worker"] })
-  # A worker is a fresh Opus session carrying the standard drain mandate, so
-  # the fleet can be rebuilt one command at a time instead of by pasting a
-  # paragraph per pane. It never resumes: a worker that continues an old
-  # session inherits a stale queue view and a cron it did not arm.
-  if $wants_worker {
-    return {
-      tool: "claude"
-      args: (
-        [
-          "--settings"
-          '{"effortLevel": "high", "enableWorkflows": true, "tui": "fullscreen"}'
-          "--permission-mode"
-          "auto"
-          "--model"
-          "opus"
-        ]
-        | append $forwarded
-        | append [(worker-mandate $project)]
-      )
-    }
-  }
   if $wants_dispatcher {
     let resume = (session-args $pi_has_session $start_fresh ["--continue" "-c" "--resume" "-r" "--session" "--session-id" "--fork"] $forwarded)
     let prompt = if ($forwarded | is-empty) and ($resume | is-empty) {

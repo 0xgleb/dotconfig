@@ -133,6 +133,15 @@ const ownerChatId: Effect.Effect<number, OwnerRelayDeliveryError> =
 export const ownerRelayChunks = (text: string): readonly string[] =>
   telegramHtmlChunks(text, TELEGRAM_MESSAGE_LIMIT);
 
+/**
+ * A preview card is worth its space when a report points at one thing. A
+ * report listing several PRs would otherwise get an unbidden expansion of
+ * whichever link Telegram picked first, pushing the actual content off the
+ * screen it was written to fit.
+ */
+export const hasMultipleLinks = (rendered: string): boolean =>
+  (rendered.match(/<a href=/gu) ?? []).length > 1;
+
 const sendOwnerMessage = (
   token: string,
   chatId: number,
@@ -150,6 +159,9 @@ const sendOwnerMessage = (
             chat_id: chatId,
             text,
             parse_mode: "HTML",
+            ...(hasMultipleLinks(text)
+              ? { link_preview_options: { is_disabled: true } }
+              : {}),
           }),
         },
       );
