@@ -1,3 +1,0 @@
-ancestorEntries = ["ai/pi/extensions/control-plane/harness-adapter.ts"]
-ourEntries = ["ai/pi/extensions/control-plane/harness-adapter.ts"]
-theirEntries = ["ai/pi/extensions/control-plane/harness-adapter.ts"]
