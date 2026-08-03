@@ -1,6 +1,26 @@
 import assert from "node:assert/strict";
 import test from "node:test";
-import { AGENT_PROCESS_STDIO, buildAgentArguments, resolveAgentModel, WORKFLOW_CHILD_SYSTEM_PROMPT } from "./agent-process.ts";
+import {
+  AGENT_PROCESS_STDIO,
+  buildAgentArguments,
+  LOCAL_LANE_PROVIDER,
+  localLaneWorkflowRefusal,
+  resolveAgentModel,
+  WORKFLOW_CHILD_SYSTEM_PROMPT,
+} from "./agent-process.ts";
+
+test("workflow orchestration is refused on the local Ollama lane", () => {
+  const refusal = localLaneWorkflowRefusal(LOCAL_LANE_PROVIDER);
+  assert.ok(refusal, "local lane must receive a refusal message");
+  assert.match(refusal ?? "", /route/i);
+  assert.match(refusal ?? "", /agent_registry/);
+});
+
+test("workflow orchestration stays available to full-capability providers", () => {
+  assert.equal(localLaneWorkflowRefusal("openai-codex"), undefined);
+  assert.equal(localLaneWorkflowRefusal("anthropic"), undefined);
+  assert.equal(localLaneWorkflowRefusal(undefined), undefined);
+});
 
 test("workflow children load only the classified workflow extension explicitly", () => {
   assert.deepEqual(

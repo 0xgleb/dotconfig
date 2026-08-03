@@ -129,7 +129,7 @@ export default function activityStatus(pi: ExtensionAPI): void {
     latestCtx = ctx
     runningTools.clear()
     classifierDepth = 0
-    throttleLabel = usageThrottleLabel(ctx.cwd, homedir())
+    throttleLabel = usageThrottleLabel(ctx.cwd, homedir(), ctx.model?.provider)
     clearToolProgress(ctx)
     ctx.ui.setStatus(STATUS_KEY, throttleLabel)
     ctx.ui.setWorkingMessage()
@@ -138,6 +138,7 @@ export default function activityStatus(pi: ExtensionAPI): void {
   pi.on("agent_start", (_event, ctx) => {
     latestCtx = ctx
     runningTools.clear()
+    throttleLabel = usageThrottleLabel(ctx.cwd, homedir(), ctx.model?.provider)
     clearToolProgress(ctx)
     show({ kind: "model", label: "MODEL · awaiting generation" }, ctx)
   })

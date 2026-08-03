@@ -96,8 +96,10 @@ export def check [] {
 }
 
 # Launch Pi with high thinking and classified workflows. Pass `--claude` for
-# Claude Code's high-effort Auto Mode. Both resume the current project by default
-# when a session exists; `--new` forces a fresh session.
+# Claude Code's high-effort Auto Mode, or `--dispatcher` for a Pi session on the
+# local Ollama model that loops the shared dispatcher skill (ollama serve is
+# started on demand). All modes resume the current project by default when a
+# session exists; `--new` forces a fresh session.
 export def --wrapped clanker [...args: string] {
   let claude_dir = $"($env.HOME)/.claude/projects/(claude-project-dirname $env.PWD)"
   let pi_dir = $"($env.HOME)/.pi/agent/sessions/(pi-project-dirname $env.PWD)"
@@ -113,7 +115,33 @@ export def --wrapped clanker [...args: string] {
   let route = (clanker-route $pi_has_session $claude_has_session --remote-control=$on_nixxxos ...$args)
   match $route.tool {
     "pi" => { ^pi ...$route.args }
+    "pi-dispatcher" => {
+      ensure-ollama
+      ^pi ...$route.args
+    }
     "claude" => { ^claude ...$route.args }
+  }
+}
+
+# Start the local Ollama server on demand and wait until it answers. The
+# daemon is detached from this shell so the dispatcher session survives
+# shell exits; it is a no-op when a server is already listening.
+def ensure-ollama [] {
+  let alive = {||
+    try {
+      http get --max-time 2sec http://127.0.0.1:11434/api/version | ignore
+      true
+    } catch { false }
+  }
+  if (do $alive) { return }
+  ^sh -c "nohup env OLLAMA_CONTEXT_LENGTH=16384 OLLAMA_KEEP_ALIVE=-1 ollama serve >/tmp/ollama-serve.log 2>&1 &"
+  mut ready = false
+  for _attempt in 1..30 {
+    if (do $alive) { $ready = true; break }
+    sleep 500ms
+  }
+  if not $ready {
+    error make {msg: "ollama serve did not become ready; see /tmp/ollama-serve.log"}
   }
 }
 

@@ -18,6 +18,15 @@ const PROVIDER_ALIASES: Readonly<Record<string, string>> = { openai: "openai-cod
 const LEGACY_REVIEW_FOCUS_ALIASES = new Set(["fable", "sonnet", "opus"]);
 const REVIEW_WORKFLOW_MODEL = "openai-codex/gpt-5.6-luna";
 
+export const LOCAL_LANE_PROVIDER = "ollama";
+
+export const localLaneWorkflowRefusal: (parentProvider: string | undefined) => string | undefined = (
+  parentProvider,
+) =>
+  parentProvider === LOCAL_LANE_PROVIDER
+    ? "Workflow orchestration is unavailable on the local Ollama lane: the local model is trusted only with triage and routing. Route this request instead — agent_registry action=delegate to the owning project/role, or pi-bridge send to a connected full-capability instance."
+    : undefined;
+
 export const resolveAgentModel: (
   requestedModel: string | undefined,
   parentProvider: string | undefined,

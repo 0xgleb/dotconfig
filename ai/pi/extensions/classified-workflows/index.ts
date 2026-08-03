@@ -16,6 +16,7 @@ import { Type } from "typebox"
 import {
   AGENT_PROCESS_STDIO,
   buildAgentArguments,
+  localLaneWorkflowRefusal,
   resolveAgentModel,
   type AvailableAgentModel,
 } from "./agent-process.ts"
@@ -2926,6 +2927,14 @@ export default function classifiedWorkflows(pi: ExtensionAPI): void {
       ctx,
     ) {
       latestCtx = ctx
+      const laneRefusal = localLaneWorkflowRefusal(ctx.model?.provider)
+      if (laneRefusal) {
+        return {
+          content: [{ type: "text", text: laneRefusal }],
+          isError: true,
+          details: { outcome: "refused", reason: "local-lane" },
+        }
+      }
       const intent = visibleIntent(
         pi,
         ctx,

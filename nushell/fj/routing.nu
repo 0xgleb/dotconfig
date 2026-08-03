@@ -251,8 +251,30 @@ export def --wrapped clanker-route [
   ...args: string
 ]: nothing -> record<tool: string, args: list<string>> {
   let wants_claude = ("--claude" in $args)
+  let wants_dispatcher = ("--dispatcher" in $args)
   let start_fresh = ("--new" in $args)
-  let forwarded = ($args | where {|arg| $arg not-in ["--claude" "--new"] })
+  let forwarded = ($args | where {|arg| $arg not-in ["--claude" "--new" "--dispatcher"] })
+  if $wants_dispatcher {
+    let resume = (session-args $pi_has_session $start_fresh ["--continue" "-c" "--resume" "-r" "--session" "--session-id" "--fork"] $forwarded)
+    let prompt = if ($forwarded | is-empty) and ($resume | is-empty) {
+      ["/loop 10m /dispatcher"]
+    } else {
+      []
+    }
+    return {
+      tool: "pi-dispatcher"
+      args: (
+        [
+          "--model" "ollama/qwen3:32b"
+          "--thinking" "off"
+          "--append-system-prompt" "/no_think"
+        ]
+        | append $resume
+        | append $forwarded
+        | append $prompt
+      )
+    }
+  }
   if $wants_claude {
     let resume = (session-args $claude_has_session $start_fresh ["--continue" "-c" "--resume" "-r" "--from-pr"] $forwarded)
     let remote = if $remote_control { ["--remote-control"] } else { [] }

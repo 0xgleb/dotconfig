@@ -68,6 +68,27 @@ def "test clanker honours explicit pi session flags" [] {
   assert (("abc123" in $route.args))
 }
 
+def "test clanker dispatcher runs pi on the local model with the loop prompt" [] {
+  let route = (clanker-route false false --dispatcher)
+  assert equal $route.tool "pi-dispatcher"
+  assert (("ollama/qwen3:32b" in $route.args))
+  assert (("/loop 10m /dispatcher" in $route.args))
+  assert (not ("--dispatcher" in $route.args)) "--dispatcher is consumed"
+}
+
+def "test clanker dispatcher resumes without re-sending the loop prompt" [] {
+  let route = (clanker-route true false --dispatcher)
+  assert equal $route.tool "pi-dispatcher"
+  assert (("--continue" in $route.args))
+  assert (not ("/loop 10m /dispatcher" in $route.args))
+}
+
+def "test clanker dispatcher forwards an explicit prompt instead of the default" [] {
+  let route = (clanker-route false false --dispatcher "check the bridge inbox")
+  assert (("check the bridge inbox" in $route.args))
+  assert (not ("/loop 10m /dispatcher" in $route.args))
+}
+
 def "test clanker claude preserves auto workflows" [] {
   let route = (clanker-route true true --claude)
   assert equal $route.tool "claude"
@@ -227,11 +248,11 @@ def "test vcs-backend nested subdir of graphite org is graphite" [] {
 }
 
 def "test vcs-backend other repo managed by gitbutler is but" [] {
-  assert equal (vcs-backend "/home/u/code/data-cartel/moneymentum" "/home/u" true) "but"
+  assert equal (vcs-backend "/home/u/code/data-cartel/example" "/home/u" true) "but"
 }
 
 def "test vcs-backend other repo not gitbutler-managed is git" [] {
-  assert equal (vcs-backend "/home/u/code/data-cartel/moneymentum" "/home/u" false) "git"
+  assert equal (vcs-backend "/home/u/code/data-cartel/example" "/home/u" false) "git"
 }
 
 def "test vcs-backend dotconfig not gitbutler-managed is git" [] {
