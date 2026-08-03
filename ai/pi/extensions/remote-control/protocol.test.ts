@@ -9,8 +9,10 @@ import {
   boundedBridgeText,
   finalAssistantText,
   normalizeLegacyRemoteImageContent,
+  parseRouteLine,
   remoteTurnContent,
   remoteTurnPrompt,
+  routingTurnPrompt,
 } from "./protocol.ts";
 
 test("remote prompts are explicitly communication-only", () => {
@@ -19,6 +21,32 @@ test("remote prompts are explicitly communication-only", () => {
   assert.match(prompt, /all tools are disabled/i);
   assert.match(prompt, /Do not execute or approve actions/i);
   assert.match(prompt, /Give me a concise status update/);
+});
+
+test("routing turns carry the roster and demand a single route line", () => {
+  const prompt = routingTurnPrompt("ask ~/.config if it knows the song", [
+    { id: "claude-config-receiver", label: "Claude Code (Fable) - .config receiver", cwd: "/Users/example/.config" },
+    { id: "019fc7f6", label: "Dotconfig - Pi Support", cwd: "/Users/example/.config" },
+  ]);
+  assert.match(prompt, /Authenticated Piece of Pi Telegram/i);
+  assert.match(prompt, /exactly one line/i);
+  assert.match(prompt, /route: <absolute project path>/);
+  assert.match(prompt, /claude-config-receiver/);
+  assert.match(prompt, /\/Users\/example\/\.config/);
+  assert.match(prompt, /ask ~\/\.config if it knows the song/);
+});
+
+test("route lines are parsed out of arbitrary model output and the rest is discarded", () => {
+  assert.equal(parseRouteLine("route: /Users/example/.config"), "/Users/example/.config");
+  assert.equal(
+    parseRouteLine(
+      "Okay, let me think about this.\nThe target should be the config project.\nroute: /Users/example/code/st0x/st0x.liquidity\nHope that helps!",
+    ),
+    "/Users/example/code/st0x/st0x.liquidity",
+  );
+  assert.equal(parseRouteLine("no routing here"), undefined);
+  assert.equal(parseRouteLine("route: relative/path"), undefined);
+  assert.equal(parseRouteLine(`route: /${"x".repeat(600)}`), undefined);
 });
 
 test("dispatch-lane remote prompts forbid answering and demand routing", () => {

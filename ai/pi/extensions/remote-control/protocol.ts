@@ -233,6 +233,44 @@ export const boundedBridgeImages = (
 
 export type RemoteTurnStyle = "conversational" | "dispatch";
 
+export interface RosterAgent {
+  readonly id: string;
+  readonly label: string;
+  readonly cwd: string;
+}
+
+/**
+ * The dispatch-lane routing turn: the model's entire job is one line naming
+ * the target project; everything else it produces is discarded by the
+ * caller, and the message body is delivered raw to the chosen queue by the
+ * extension - never by the model.
+ */
+export const routingTurnPrompt = (
+  text: string,
+  roster: readonly RosterAgent[],
+): string =>
+  [
+    "[Authenticated Piece of Pi Telegram message · routing turn · all tools are disabled]",
+    "You are the dispatcher. Reply with exactly one line and nothing else:",
+    "route: <absolute project path>",
+    "Choose the project whose agent should handle the message, from this roster:",
+    ...roster.map((agent) => `- ${agent.cwd} · ${agent.label} (${agent.id})`),
+    "Anything else you write is discarded; the message body below is delivered raw to the chosen project queue by the system.",
+    "",
+    boundedBridgeText("message", text, MAX_REMOTE_MESSAGE_CHARACTERS),
+  ].join("\n");
+
+const ROUTE_LINE = /^route:\s*(\/[^\s]{1,511})\s*$/;
+
+export const parseRouteLine = (response: string): string | undefined => {
+  for (const line of response.split("\n")) {
+    const match = ROUTE_LINE.exec(line.trim());
+    const target = match?.[1];
+    if (target) return target;
+  }
+  return undefined;
+};
+
 export const remoteTurnPrompt = (text: string, style: RemoteTurnStyle): string =>
   [
     style === "dispatch"

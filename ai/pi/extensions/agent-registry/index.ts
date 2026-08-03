@@ -13,9 +13,11 @@ import {
 } from "../shared/reload-events.ts"
 import {
   MANAGED_OPERATIONAL_ROLE_RESUMED_EVENT,
+  REGISTRY_DELEGATE_REQUEST_EVENT,
   REGISTRY_IDENTITY_REQUEST_EVENT,
   REGISTRY_INTENT_REQUEST_EVENT,
   type ManagedOperationalRoleResumed,
+  type RegistryDelegateRequest,
   type RegistryIdentityRequest,
   type RegistryIntentRequest,
 } from "../shared/registry-intent-events.ts"
@@ -110,7 +112,7 @@ const requireText: (label: string, value: string | undefined) => string = (
 }
 
 const registryExtension: (pi: ExtensionAPI) => void = (pi) => {
-  registerRuntimeVersion(pi, "agent-registry", "2026.08.01.22")
+  registerRuntimeVersion(pi, "agent-registry", "2026.08.03.23")
   const runtimeVersions = (): Readonly<Record<string, string>> => {
     const versions: Record<string, string> = {
       "config-generation": MANAGED_CONFIG_GENERATION,
@@ -229,6 +231,54 @@ const registryExtension: (pi: ExtensionAPI) => void = (pi) => {
           lease.owner.id === payload.agentId && lease.status === "active",
       ))
         payload.report({ role: lease.role, mode: lease.mode })
+    },
+  )
+
+  pi.events.on(
+    REGISTRY_DELEGATE_REQUEST_EVENT,
+    (payload: RegistryDelegateRequest) => {
+      if (
+        typeof payload !== "object" ||
+        payload === null ||
+        typeof payload.report !== "function" ||
+        typeof payload.project !== "string" ||
+        !payload.project.startsWith("/") ||
+        payload.project.length > 512 ||
+        typeof payload.role !== "string" ||
+        payload.role.length === 0 ||
+        payload.role.length > 64 ||
+        typeof payload.text !== "string" ||
+        payload.text.length === 0 ||
+        payload.text.length > 16_000 ||
+        typeof payload.requesterId !== "string" ||
+        typeof payload.requesterLabel !== "string" ||
+        typeof payload.requesterCwd !== "string"
+      ) {
+        return
+      }
+      void run(
+        store.enqueue({
+          project: payload.project,
+          role: payload.role,
+          requesterId: payload.requesterId,
+          requesterLabel: payload.requesterLabel,
+          requesterCwd: payload.requesterCwd,
+          text: payload.text,
+          now: Date.now(),
+        }),
+      )
+        .then((queued) =>
+          payload.report({ outcome: "queued", requestId: queued.id }),
+        )
+        .catch((error: unknown) =>
+          payload.report({
+            outcome: "failed",
+            reason:
+              error instanceof Error
+                ? error.message.slice(0, 200)
+                : "registry enqueue failed",
+          }),
+        )
     },
   )
 

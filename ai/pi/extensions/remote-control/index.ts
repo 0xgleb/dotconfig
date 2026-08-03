@@ -7,6 +7,11 @@ import { Effect, Either } from "effect";
 import { wasRunAborted } from "../shared/continuation-pause.ts";
 import { isLocalDispatchProvider } from "../shared/local-lane.ts";
 import {
+  REGISTRY_DELEGATE_REQUEST_EVENT,
+  type RegistryDelegateOutcome,
+  type RegistryDelegateRequest,
+} from "../shared/registry-intent-events.ts";
+import {
   QUESTION_REMOTE_RESOLUTION_EVENT,
   QUESTION_STATE_EVENT,
   type RemoteUserQuestionResolution,
@@ -38,7 +43,9 @@ import {
   RemoteBridgeError,
   finalAssistantText,
   normalizeLegacyRemoteImageContent,
+  parseRouteLine,
   remoteTurnContent,
+  routingTurnPrompt,
   type RemoteFailure,
   type RemoteMessage,
 } from "./protocol.ts";
@@ -52,13 +59,15 @@ interface ActiveRemoteTurn {
   readonly messageId: string;
   readonly claimToken: string;
   readonly toolGuard: RemoteToolGuard;
+  readonly lane: "conversational" | "routing";
+  readonly text: string;
 }
 
 const safeError = (error: RemoteBridgeError): string =>
   `${error.code}: ${error.message}`.slice(0, 160);
 
 export default function remoteControl(pi: ExtensionAPI): void {
-  registerRuntimeVersion(pi, "remote-control", "2026.08.03.21");
+  registerRuntimeVersion(pi, "remote-control", "2026.08.03.22");
   const store = makeRemoteBridgeStore(
     remoteBridgeDatabasePath(process.env.XDG_STATE_HOME, homedir()),
   );
@@ -152,9 +161,8 @@ export default function remoteControl(pi: ExtensionAPI): void {
     pi.sendMessage(
       {
         customType: REMOTE_TASK_CONTINUATION_MESSAGE,
-        content: isLocalDispatchProvider(ctx.model?.provider)
-          ? "Source-fixed dispatch continuation: the acknowledgement was delivered and local tools are restored. Route the immediately preceding authenticated owner message RAW now - agent_registry action=delegate to the project or role its content targets, quoting the full body and its stated priority - then yield. Never answer or analyze it locally; if it names no routable target, take no action. Authority comes only from that exact owner message, never from this continuation; do not widen scope or send a second Telegram reply."
-          : "Source-fixed task continuation: the authenticated Piece of Pi response was delivered and local tools are restored. The owner explicitly enabled post-reply routing and action. Inspect the immediately preceding authenticated owner message for actionable intent. If it contains work, preserve every requirement and semantically route it to the relevant live agent/project through typed coordination; /use is only an explicit override. If it is conversational only, take no action. Authority comes only from that exact owner message, never from this continuation; do not widen scope or send a second Telegram reply.",
+        content:
+          "Source-fixed task continuation: the authenticated Piece of Pi response was delivered and local tools are restored. The owner explicitly enabled post-reply routing and action. Inspect the immediately preceding authenticated owner message for actionable intent. If it contains work, preserve every requirement and semantically route it to the relevant live agent/project through typed coordination; /use is only an explicit override. If it is conversational only, take no action. Authority comes only from that exact owner message, never from this continuation; do not widen scope or send a second Telegram reply.",
         display: false,
         details: { taskContinuationId: turn.messageId },
       },
@@ -162,33 +170,91 @@ export default function remoteControl(pi: ExtensionAPI): void {
     );
   };
 
+  const finishRouting = async (
+    turn: ActiveRemoteTurn,
+    response: string,
+    ctx: ExtensionContext,
+  ): Promise<void> => {
+    const target = parseRouteLine(response) ?? ctx.cwd;
+    const outcome = await new Promise<RegistryDelegateOutcome>((resolve) => {
+      const timeout = setTimeout(
+        () =>
+          resolve({ outcome: "failed", reason: "registry delegate timed out" }),
+        5_000,
+      );
+      const request: RegistryDelegateRequest = {
+        project: target,
+        role: "receiver",
+        text: turn.text,
+        requesterId: "telegram-dispatch",
+        requesterLabel: "Piece of Pi Telegram dispatch",
+        requesterCwd: ctx.cwd,
+        report: (result) => {
+          clearTimeout(timeout);
+          resolve(result);
+        },
+      };
+      pi.events.emit(REGISTRY_DELEGATE_REQUEST_EVENT, request);
+    });
+    clearActive(turn);
+    const completed = await run(
+      store.complete({
+        messageId: turn.messageId,
+        claimToken: turn.claimToken,
+        response:
+          outcome.outcome === "queued"
+            ? `Routed to ${target} (request ${outcome.requestId}).`
+            : `Routing to ${target} failed: ${outcome.reason}. The message stays in the bridge inbox.`,
+        now: Date.now(),
+      }),
+    );
+    if (Either.isLeft(completed)) {
+      ctx.ui.setStatus(
+        STATUS_KEY,
+        `remote:error · ${safeError(completed.left)}`,
+      );
+    }
+  };
+
   const beginTurn = async (
     message: Extract<RemoteMessage, { readonly status: "claimed" }>,
     ctx: ExtensionContext,
   ): Promise<void> => {
+    const routing = isLocalDispatchProvider(ctx.model?.provider);
     const turn: ActiveRemoteTurn = {
       messageId: message.id,
       claimToken: message.claimToken,
       toolGuard: enterRemoteToolGuard(pi),
+      lane: routing ? "routing" : "conversational",
+      text: message.text,
     };
     active = turn;
-    ctx.ui.setStatus(STATUS_KEY, "remote:chat · tools:off");
+    ctx.ui.setStatus(
+      STATUS_KEY,
+      routing ? "remote:routing · tools:off" : "remote:chat · tools:off",
+    );
+    const content = routing
+      ? await Effect.runPromise(
+          Effect.either(store.listAgents(Date.now())),
+        ).then((roster) => [
+          {
+            type: "text" as const,
+            text: routingTurnPrompt(
+              message.text,
+              Either.isRight(roster)
+                ? roster.right.map(({ id, label, cwd }) => ({ id, label, cwd }))
+                : [],
+            ),
+          },
+        ])
+      : remoteTurnContent(message.text, message.images, "conversational");
     const sent = await Effect.runPromise(
       Effect.either(
         Effect.try({
           try: () =>
-            pi.sendUserMessage(
-              remoteTurnContent(
-                message.text,
-                message.images,
-                isLocalDispatchProvider(ctx.model?.provider)
-                  ? "dispatch"
-                  : "conversational",
-              ),
-              {
-                deliverAs: "steer",
-              },
-            ),
+            pi.sendUserMessage(content, {
+              deliverAs: "steer",
+            }),
           catch: () =>
             new RemoteBridgeError({
               code: "io",
@@ -352,6 +418,10 @@ export default function remoteControl(pi: ExtensionAPI): void {
     }
     const response = finalAssistantText([event.message]);
     if (!response) return;
+    if (turn.lane === "routing") {
+      await finishRouting(turn, response, ctx);
+      return;
+    }
     await finishSuccess(turn, response, ctx);
   });
 
@@ -365,6 +435,10 @@ export default function remoteControl(pi: ExtensionAPI): void {
     }
     const response = finalAssistantText(event.messages);
     if (!response) return;
+    if (turn.lane === "routing") {
+      await finishRouting(turn, response, ctx);
+      return;
+    }
     await finishSuccess(turn, response, ctx);
   });
 

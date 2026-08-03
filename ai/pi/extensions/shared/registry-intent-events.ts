@@ -23,3 +23,25 @@ export interface ManagedOperationalRoleResumed {
   readonly project: string
   readonly role: string
 }
+
+export const REGISTRY_DELEGATE_REQUEST_EVENT = "pi:registry-delegate-request"
+
+export type RegistryDelegateOutcome =
+  | { readonly outcome: "queued"; readonly requestId: string }
+  | { readonly outcome: "failed"; readonly reason: string }
+
+/**
+ * Mechanical delegate lane used by the dispatch flow: the emitter provides
+ * the raw message and target project, the agent-registry extension performs
+ * the typed enqueue with no model or classifier involvement, and reports the
+ * queued request id (or a bounded failure) through the callback.
+ */
+export interface RegistryDelegateRequest {
+  readonly project: string
+  readonly role: string
+  readonly text: string
+  readonly requesterId: string
+  readonly requesterLabel: string
+  readonly requesterCwd: string
+  readonly report: (outcome: RegistryDelegateOutcome) => void
+}
