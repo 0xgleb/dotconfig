@@ -50,6 +50,7 @@ import {
   parseRoutePlan,
   routingBatchPrompt,
   remoteTurnContent,
+  trimDispatchContext,
   type OutcomeEnvelope,
   type RemoteFailure,
   type RemoteMessage,
@@ -59,6 +60,7 @@ import { enterRemoteToolGuard, type RemoteToolGuard } from "./tool-guard.ts";
 
 const POLL_MS = 2_000;
 const STATUS_KEY = "remote-control";
+const DISPATCH_CONTEXT_BUDGET_CHARS = 60_000;
 
 interface ClaimedBridgeMessage {
   readonly id: string;
@@ -79,7 +81,7 @@ const safeError = (error: RemoteBridgeError): string =>
   `${error.code}: ${error.message}`.slice(0, 160);
 
 export default function remoteControl(pi: ExtensionAPI): void {
-  registerRuntimeVersion(pi, "remote-control", "2026.08.03.24");
+  registerRuntimeVersion(pi, "remote-control", "2026.08.03.26");
   const store = makeRemoteBridgeStore(
     remoteBridgeDatabasePath(process.env.XDG_STATE_HOME, homedir()),
   );
@@ -556,7 +558,7 @@ export default function remoteControl(pi: ExtensionAPI): void {
     }
   };
 
-  pi.on("context", (event) => {
+  pi.on("context", (event, ctx) => {
     const messages = normalizeLegacyRemoteImageContent(event.messages);
     if (
       taskContinuationPhase === "queued" &&
@@ -571,6 +573,13 @@ export default function remoteControl(pi: ExtensionAPI): void {
       )
     )
       taskContinuationPhase = "running";
+    if (isLocalDispatchProvider(ctx.model?.provider)) {
+      const trimmed = trimDispatchContext(
+        messages,
+        DISPATCH_CONTEXT_BUDGET_CHARS,
+      );
+      return { messages: [...trimmed.messages] };
+    }
     return { messages };
   });
 

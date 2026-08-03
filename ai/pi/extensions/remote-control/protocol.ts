@@ -279,6 +279,48 @@ export const routingBatchPrompt = (
     ),
   ].join("\n");
 
+export interface TrimmedDispatchContext<Message> {
+  readonly messages: readonly Message[];
+  readonly dropped: number;
+}
+
+/**
+ * Dispatch sessions never need long memory: durable state lives in the
+ * registry, so the context window just slides. Newest messages are kept
+ * within the character budget, everything older is dropped, and a single
+ * marker message records how many turns fell off - no summarization, no
+ * model involvement.
+ */
+export const trimDispatchContext = <Message extends { readonly role: string }>(
+  messages: readonly Message[],
+  budgetChars: number,
+): TrimmedDispatchContext<Message> => {
+  let used = 0;
+  let cut = messages.length;
+  for (let position = messages.length - 1; position >= 0; position -= 1) {
+    const size = JSON.stringify(messages[position]).length;
+    if (used + size > budgetChars && cut < messages.length) break;
+    if (used + size > budgetChars) {
+      cut = position;
+      break;
+    }
+    used += size;
+    cut = position;
+  }
+  const dropped = cut;
+  if (dropped <= 0) return { messages, dropped: 0 };
+  const marker = {
+    role: "user",
+    content: [
+      {
+        type: "text",
+        text: `[${dropped} earlier dispatch turns trimmed from context]`,
+      },
+    ],
+  } as unknown as Message;
+  return { messages: [marker, ...messages.slice(cut)], dropped };
+};
+
 export interface OutcomeEnvelope {
   readonly requestId: string;
   readonly outcome: "completed" | "failed";

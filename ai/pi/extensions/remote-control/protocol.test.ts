@@ -14,6 +14,7 @@ import {
   remoteTurnContent,
   remoteTurnPrompt,
   routingBatchPrompt,
+  trimDispatchContext,
 } from "./protocol.ts";
 
 test("remote prompts are explicitly communication-only", () => {
@@ -41,6 +42,27 @@ test("routing turns carry the roster and the whole numbered batch", () => {
   assert.match(prompt, /claude-st0x-receiver/);
   assert.match(prompt, /\[1\] ask ~\/\.config if it knows the song/);
   assert.match(prompt, /\[2\] yo ask the st0x agent/);
+});
+
+test("dispatch context slides: old turns drop behind a count marker", () => {
+  const messages = [
+    { role: "user", content: [{ type: "text", text: "a".repeat(400) }] },
+    { role: "assistant", content: [{ type: "text", text: "b".repeat(400) }] },
+    { role: "user", content: [{ type: "text", text: "c".repeat(400) }] },
+    { role: "assistant", content: [{ type: "text", text: "d".repeat(400) }] },
+    { role: "user", content: [{ type: "text", text: "keep me" }] },
+  ];
+  const trimmed = trimDispatchContext(messages, 900);
+  assert.equal(trimmed.dropped, 3);
+  const first = trimmed.messages[0];
+  assert.equal(first?.role, "user");
+  assert.match(JSON.stringify(first), /3 earlier dispatch turns trimmed from context/);
+  assert.equal(trimmed.messages.length, 3);
+  assert.match(JSON.stringify(trimmed.messages.at(-1)), /keep me/);
+
+  const untouched = trimDispatchContext(messages, 100_000);
+  assert.equal(untouched.dropped, 0);
+  assert.equal(untouched.messages, messages);
 });
 
 test("receiver outcome envelopes parse mechanically and never reach the routing turn", () => {
