@@ -145,15 +145,21 @@ export const nextHarnessDelayMs = (
     ? 1_000
     : pollIntervalMs
 
+const MAX_LOG_DETAIL_LENGTH = 300
+const LOG_UNSAFE_CHARACTERS = new RegExp("[\\u0000-\\u001f\\u007f]+", "gu")
+
+const sanitizedDetail = (detail: string): string =>
+  detail.replace(LOG_UNSAFE_CHARACTERS, " ").slice(0, MAX_LOG_DETAIL_LENGTH)
+
 const outcomeLine = (
   outcome: Either.Either<HarnessAttemptOutcome, HarnessWorkerError>,
 ): string => {
   if (Either.isLeft(outcome))
-    return `pi-harness-worker attempt error: ${outcome.left.message}`
+    return `pi-harness-worker attempt error: ${sanitizedDetail(outcome.left.message)}`
   const value = outcome.right
   if (value.outcome === "idle") return "pi-harness-worker idle"
   if (value.outcome === "failed")
-    return `pi-harness-worker ${value.jobId} failed: ${value.reason}`
+    return `pi-harness-worker ${value.jobId} failed: ${sanitizedDetail(value.reason)}`
   return `pi-harness-worker ${value.jobId} ${value.outcome}`
 }
 
@@ -213,8 +219,13 @@ if (isMainModule) {
         log: (line) => console.log(line),
       }),
   )
-  void Effect.runPromise(program).then(
-    () => {},
+  void Effect.runPromise(Effect.either(program)).then(
+    (result) => {
+      if (Either.isLeft(result)) {
+        console.error(`pi-harness-worker stopped: ${result.left.message}`)
+        process.exitCode = 1
+      }
+    },
     () => {
       console.error("pi-harness-worker stopped with an internal error")
       process.exitCode = 1
