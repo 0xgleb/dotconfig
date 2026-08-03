@@ -593,6 +593,36 @@ test("failed attempts retry through the fail route until attempts are exhausted"
     assert.equal(exhaustedJob.job.state, "failed")
   }))
 
+test("expired leases are recovered on the next worker claim", async () =>
+  withServer(async (origin) => {
+    const enqueued = await fetch(`${origin}/v1/jobs`, {
+      method: "POST",
+      headers: { "content-type": "application/json" },
+      body: JSON.stringify(harnessEnqueueBody),
+    })
+    const created = (await enqueued.json()) as { job: { id: string } }
+
+    const first = await fetch(`${origin}/v1/worker/claim`, {
+      method: "POST",
+      headers: { "content-type": "application/json" },
+      body: JSON.stringify({ workerId: "worker-a", ttlMs: 1 }),
+    })
+    assert.equal(first.status, 200)
+
+    await new Promise((resolve) => setTimeout(resolve, 10))
+    const second = await fetch(`${origin}/v1/worker/claim`, {
+      method: "POST",
+      headers: { "content-type": "application/json" },
+      body: JSON.stringify({ workerId: "worker-b", ttlMs: 90_000 }),
+    })
+    assert.equal(second.status, 200)
+    const reclaimed = (await second.json()) as {
+      job: { id: string; attempt: number }
+    }
+    assert.equal(reclaimed.job.id, created.job.id)
+    assert.equal(reclaimed.job.attempt, 2)
+  }))
+
 test("worker boundaries reject unknown fields and client-supplied lease tokens", async () =>
   withServer(async (origin) => {
     const rejected = await fetch(`${origin}/v1/worker/claim`, {

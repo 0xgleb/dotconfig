@@ -62,6 +62,8 @@ let
     mkdir -p "$out" src/dashboard
     cp ${./ai/pi/extensions/control-plane/dashboard/app.tsx} src/dashboard/app.tsx
     cp ${./ai/pi/extensions/control-plane/job-runtime.ts} src/job-runtime.ts
+    cp ${./ai/pi/extensions/control-plane/harness-protocol.ts} src/harness-protocol.ts
+    cp ${./ai/pi/extensions/control-plane/review-duty-profile.ts} src/review-duty-profile.ts
     ln -s ${piExtensionNodeModules}/node_modules src/node_modules
     cd src
     node_modules/.bin/babel dashboard/app.tsx \

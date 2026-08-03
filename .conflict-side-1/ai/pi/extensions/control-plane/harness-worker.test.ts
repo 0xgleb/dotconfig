@@ -111,6 +111,7 @@ const workerOptions = (origin: string, spawner: HarnessSpawner) => ({
   workerId: "harness-supervisor",
   leaseTtlMs: 90_000,
   retryDelayMs: 0,
+  allowedRoots: ["/Users/example/code/0xgleb/example"],
   spawner,
 })
 
@@ -127,8 +128,8 @@ const jobState = async (
     }>
   }
   const job = jobs.jobs.find((candidate) => candidate.id === jobId)
-  assert.notEqual(job, undefined)
-  return job as { state: string; result?: { handoff: { jobId: string } } }
+  assert.ok(job)
+  return job
 }
 
 test("an empty queue leaves the worker idle without spawning", async () =>
@@ -207,6 +208,8 @@ test("mismatched, malformed, and oversized executor output fails the attempt", a
     () => "not json at all",
     (jobId) => JSON.stringify({ ...handoffFor(jobId), prompt: "leaked" }),
     (jobId) => `${JSON.stringify(handoffFor(jobId))}${" ".repeat(70_000)}x`,
+    () => `progress\n${"x".repeat(9_000)}`,
+    () => `progress\n${"\u{1F389}".repeat(3_000)}`,
   ]
   for (const buildOutput of cases)
     await withServer(async (origin) => {
@@ -288,6 +291,68 @@ test("non-harness jobs are left to lease expiry instead of being executed", asyn
     assert.equal((await jobState(origin, jobId)).state, "leased")
   }))
 
+test("payload roots outside the registered workspaces fail before any spawn", async () =>
+  withServer(async (origin) => {
+    const response = await fetch(`${origin}/v1/jobs`, {
+      method: "POST",
+      headers: { "content-type": "application/json" },
+      body: JSON.stringify({
+        ...harnessEnqueueBody,
+        payload: {
+          ...harnessEnqueueBody.payload,
+          repositoryRoot: "/tmp/example",
+        },
+        idempotencyKey: "harness:personal:example:outside",
+      }),
+    })
+    assert.equal(response.status, 201)
+    const jobId = ((await response.json()) as { job: { id: string } }).job.id
+    const calls: HarnessLaunchPlan[] = []
+    const outcome = await Effect.runPromise(
+      runNextHarnessAttempt(
+        workerOptions(
+          origin,
+          stubSpawner(() => ({ kind: "spawned", exitCode: 0, stdout: "" }), calls),
+        ),
+      ),
+    )
+    assert.equal(outcome.outcome, "failed")
+    assert.equal(calls.length, 0)
+    assert.equal((await jobState(origin, jobId)).state, "retry_wait")
+  }))
+
+test("malformed control-plane claim responses surface as typed request failures", async () => {
+  const { createServer } = await import("node:http")
+  const server = createServer((_request, response) => {
+    response.writeHead(200, { "content-type": "application/json" })
+    response.end(JSON.stringify({ job: { id: "job-a", attempt: "not-a-number" } }))
+  })
+  await new Promise<void>((resolve) => server.listen(0, "127.0.0.1", resolve))
+  const address = server.address()
+  assert.ok(address && typeof address === "object")
+  try {
+    const result = await Effect.runPromise(
+      Effect.either(
+        runNextHarnessAttempt(
+          workerOptions(
+            `http://127.0.0.1:${String(address.port)}`,
+            stubSpawner(() => ({ kind: "spawned", exitCode: 0, stdout: "" })),
+          ),
+        ),
+      ),
+    )
+    assert.equal(result._tag, "Left")
+    if (result._tag === "Left") {
+      assert.equal(result.left.code, "request_failed")
+      assert.equal(result.left.message, "claimed job payload is malformed")
+    }
+  } finally {
+    await new Promise<void>((resolve) => {
+      server.close(() => resolve())
+    })
+  }
+})
+
 const executionPlan = (argv: readonly string[]): HarnessLaunchPlan => ({
   lane: "cursor-subscription",
   cwd: "/",
@@ -307,6 +372,23 @@ test("the process spawner captures bounded stdout and exit codes", async () => {
     spawner(executionPlan(["node", "-e", "process.exit(3)"])),
   )
   assert.equal(failed.exitCode, 3)
+})
+
+test("the process spawner kills executors whose output overflows the byte bound", async () => {
+  const overflowed = await Effect.runPromise(
+    Effect.either(
+      spawnHarnessExecutor(30_000)(
+        executionPlan([
+          "node",
+          "-e",
+          "process.stdout.write('x'.repeat(200000))",
+        ]),
+      ),
+    ),
+  )
+  assert.equal(overflowed._tag, "Left")
+  if (overflowed._tag === "Left")
+    assert.equal(overflowed.left.message, "executor output exceeded bounds")
 })
 
 test("the process spawner kills timed-out and unavailable executors", async () => {
