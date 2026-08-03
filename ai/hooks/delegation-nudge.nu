@@ -14,7 +14,7 @@ def main [] {
     if $tool in ["Edit" "Write" "MultiEdit" "NotebookEdit"] {
         let n = (try { open --raw $state | str trim | into int } catch { 0 }) + 1
         $"($n)" | save --force $state
-        if $n >= 5 and ($n mod 5) == 0 {
+        if $n >= 3 {
             let msg = $"Delegation check - hook: this is inline edit #($n) in a row with no subagent delegation. Owner policy 2026-08-03, weekly usage budget critical: Fable plans, delegates, and verifies - mechanical or multi-file execution goes to Sonnet 5 / Opus 5 subagents via the Agent tool. If the remaining work in this stretch is well-specified, stop editing inline and delegate it now; continue inline only for genuinely judgment-bound single-file changes. Subagents: ignore this nudge."
             {hookSpecificOutput: {hookEventName: "PostToolUse", additionalContext: $msg}} | to json -r
         }

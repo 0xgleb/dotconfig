@@ -36,6 +36,10 @@ import {
 } from "../shared/registry-intent-events.ts";
 import { registerRuntimeVersion } from "../shared/runtime-version.ts";
 import { agentDisplayLabel } from "./agent-identity.ts";
+import {
+  deliverOwnerRelay,
+  type OwnerRelayDeliveryError,
+} from "./owner-telegram.ts";
 import { remoteBridgeDatabasePath } from "./paths.ts";
 import { remoteKanbanResponse } from "./remote-commands.ts";
 import {
@@ -51,6 +55,7 @@ import {
   finalAssistantText,
   mechanicalDispatchCompaction,
   normalizeLegacyRemoteImageContent,
+  ownerRelayCompletion,
   parseOutcomeEnvelope,
   parseOwnerRelay,
   parseRoutePlan,
@@ -58,6 +63,7 @@ import {
   remoteTurnContent,
   trimDispatchContext,
   type OutcomeEnvelope,
+  type OwnerRelayDelivery,
   type RemoteFailure,
   type RemoteMessage,
   type RosterAgent,
@@ -87,8 +93,11 @@ interface ActiveRemoteTurn {
 const safeError = (error: RemoteBridgeError): string =>
   `${error.code}: ${error.message}`.slice(0, 160);
 
+const safeDeliveryError = (error: OwnerRelayDeliveryError): string =>
+  `${error.code}: ${error.message}`.slice(0, 160);
+
 export default function remoteControl(pi: ExtensionAPI): void {
-  registerRuntimeVersion(pi, "remote-control", "2026.08.03.31");
+  registerRuntimeVersion(pi, "remote-control", "2026.08.03.32");
   const store = makeRemoteBridgeStore(
     remoteBridgeDatabasePath(process.env.XDG_STATE_HOME, homedir()),
   );
@@ -101,9 +110,9 @@ export default function remoteControl(pi: ExtensionAPI): void {
   let questionState: UserQuestionStateSnapshot = { questions: [] };
   let questionsDirty = false;
 
-  const run = <A>(
-    operation: Effect.Effect<A, RemoteBridgeError>,
-  ): Promise<Either.Either<A, RemoteBridgeError>> =>
+  const run = <A, E>(
+    operation: Effect.Effect<A, E>,
+  ): Promise<Either.Either<A, E>> =>
     Effect.runPromise(Effect.either(operation));
 
   pi.events.on(QUESTION_STATE_EVENT, (snapshot: UserQuestionStateSnapshot) => {
@@ -543,11 +552,18 @@ export default function remoteControl(pi: ExtensionAPI): void {
           }
           const relay = parseOwnerRelay(message.text);
           if (relay) {
+            const sent = await run(deliverOwnerRelay(relay));
+            const delivery: OwnerRelayDelivery = Either.isLeft(sent)
+              ? {
+                  outcome: "undelivered",
+                  reason: safeDeliveryError(sent.left),
+                }
+              : { outcome: "delivered" };
             const relayed = await run(
               store.complete({
                 messageId: message.id,
                 claimToken: message.claimToken,
-                response: relay,
+                response: ownerRelayCompletion(relay, delivery),
                 now: Date.now(),
               }),
             );

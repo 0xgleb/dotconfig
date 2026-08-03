@@ -21,7 +21,7 @@ import {
   agentMatchesSelector,
   preferredAgent,
 } from "./agent-selection.ts";
-import { remoteBridgeDatabasePath } from "./paths.ts";
+import { pieceOfPiStatePath, remoteBridgeDatabasePath } from "./paths.ts";
 import { globalQuestionsText } from "./question-list.ts";
 import {
   BRIDGE_MESSAGE_TTL_MS,
@@ -205,8 +205,6 @@ const loadConfiguration = Effect.gen(function* () {
       }),
     );
   }
-  const stateRoot =
-    process.env.XDG_STATE_HOME?.trim() || join(homedir(), ".local", "state");
   const voiceModelPath = process.env.PIECE_OF_PI_WHISPER_MODEL?.trim();
   if (voiceModelPath && !isAbsolute(voiceModelPath)) {
     return yield* Effect.fail(
@@ -237,7 +235,7 @@ const loadConfiguration = Effect.gen(function* () {
   return {
     ownerUsername: ownerUsername.replace(/^@/, "").toLowerCase(),
     token,
-    statePath: join(stateRoot, "pi", "piece-of-pi-telegram.json"),
+    statePath: pieceOfPiStatePath(process.env.XDG_STATE_HOME, homedir()),
     ...(voiceModelPath ? { voiceModelPath } : {}),
   } satisfies PieceOfPiConfiguration;
 });

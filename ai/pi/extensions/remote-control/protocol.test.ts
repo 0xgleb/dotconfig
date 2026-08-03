@@ -11,6 +11,7 @@ import {
   finalAssistantText,
   mechanicalDispatchCompaction,
   normalizeLegacyRemoteImageContent,
+  ownerRelayCompletion,
   parseOutcomeEnvelope,
   parseOwnerRelay,
   parseRoutePlan,
@@ -114,6 +115,24 @@ test("owner-relay frames deliver outward instead of being routed as work", () =>
   );
   assert.equal(parseOwnerRelay("yo ask the st0x agent something"), undefined);
   assert.equal(parseOwnerRelay("relay-to-owner:"), undefined);
+});
+
+test("owner-relay completions report the outbound send instead of assuming it", () => {
+  assert.equal(
+    ownerRelayCompletion("напоминание - отправить инвойс", { outcome: "delivered" }),
+    "Relayed to owner on Telegram.\n\nнапоминание - отправить инвойс",
+  );
+});
+
+test("an undelivered owner relay names the reason and never claims success", () => {
+  const completion = ownerRelayCompletion("reminder text here", {
+    outcome: "undelivered",
+    reason: "transport_unconfigured: PIECE_OF_PI_TELEGRAM_TOKEN_FILE is not set for this session",
+  });
+  assert.match(completion, /FAILED/);
+  assert.match(completion, /transport_unconfigured/);
+  assert.match(completion, /reminder text here/);
+  assert.doesNotMatch(completion, /Relayed to owner on Telegram\./);
 });
 
 test("receiver outcome envelopes parse mechanically and never reach the routing turn", () => {

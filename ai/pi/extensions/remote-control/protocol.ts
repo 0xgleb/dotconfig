@@ -368,15 +368,34 @@ const OWNER_RELAY =
 
 /**
  * Owner-relay frames are outward notifications from agents (reminders,
- * alerts). They are recognized mechanically in the dispatch claim drain and
- * completed with the text as the response - the bridge completion path
- * delivers it to the owner chat. They never enter the routing turn.
+ * alerts). They are recognized mechanically in the dispatch claim drain, which
+ * pushes them to the owner chat itself: bridge completions only reach Telegram
+ * for messages that originated there, and relay frames originate from the
+ * pi-bridge CLI. They never enter the routing turn.
  */
 export const parseOwnerRelay = (text: string): string | undefined => {
   const match = OWNER_RELAY.exec(text.trim());
   const body = match?.[1]?.trim();
   return body ? body : undefined;
 };
+
+export type OwnerRelayDelivery =
+  | { readonly outcome: "delivered" }
+  | { readonly outcome: "undelivered"; readonly reason: string };
+
+/**
+ * The bridge record is the only trace an owner-relay frame leaves, so its
+ * completion states what the outbound send actually did. An undelivered relay
+ * never reports success: it names the reason and repeats the text so the frame
+ * stays recoverable.
+ */
+export const ownerRelayCompletion = (
+  text: string,
+  delivery: OwnerRelayDelivery,
+): string =>
+  delivery.outcome === "delivered"
+    ? `Relayed to owner on Telegram.\n\n${text}`
+    : `Relay to owner on Telegram FAILED (${delivery.reason}). Undelivered text:\n\n${text}`;
 
 export interface OutcomeEnvelope {
   readonly requestId: string;

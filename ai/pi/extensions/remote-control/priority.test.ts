@@ -31,6 +31,20 @@ test("routing turns roster known projects whose receiver holds no live lease", (
   assert.match(source, /routingBatchPrompt\([\s\S]*?\[\.\.\.live, \.\.\.offline\],/)
 })
 
+test("owner-relay frames reach Telegram before the bridge message completes", () => {
+  assert.match(
+    source,
+    /const relay = parseOwnerRelay\(message\.text\);[\s\S]*?deliverOwnerRelay\(relay\)[\s\S]*?store\.complete\(\{/,
+  )
+  assert.match(
+    source,
+    /Either\.isLeft\(sent\)[\s\S]*?outcome: "undelivered",[\s\S]*?outcome: "delivered"/,
+  )
+  assert.match(source, /response: ownerRelayCompletion\(relay, delivery\),/)
+  assert.doesNotMatch(source, /response: relay,/)
+  assert.doesNotMatch(source, /Relayed to owner on Telegram/)
+})
+
 test("owner pane input on the dispatch lane is enqueued instead of answered freehand", () => {
   assert.match(
     source,
