@@ -54,7 +54,10 @@ dispatcher's value is triage and routing, not thinking.
      session through the `receiver` skill.
    - Use `pi-bridge send --agent <id> --dedupe <request-id>` to notify a
      specific connected instance (list them with `pi-bridge agents`) when the
-     work is addressed to a live session.
+     work is addressed to a live session. Pipe the body in with EXACTLY
+     `printf '%s' '<body>' | pi-bridge send ...` (single-quoted, no
+     apostrophes inside) — that shape is deterministically allowlisted and
+     works even when the model classifier is unavailable.
    - Registry actions stay within the role's constrained tools — a role
      routes work and grants no authority beyond that.
    - Route requests RAW: no validation, no pre-processing, no summarizing of

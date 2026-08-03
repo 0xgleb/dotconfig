@@ -43,6 +43,8 @@ import {
   deterministicDecision,
   deterministicReadOnlyToolResultDecision,
   deterministicToolResultDecision,
+  isLocalDispatchProvider,
+  localDispatchLaneBlock,
   MIN_CLASSIFIED_AGENT_TIMEOUT_MS,
   parseClassifierDecision,
   runWorkflowScript,
@@ -2080,6 +2082,11 @@ export default function classifiedWorkflows(pi: ExtensionAPI): void {
       persistReviewWorkflowStart()
       return
     }
+    if (isLocalDispatchProvider(ctx.model?.provider)) {
+      const laneBlock = localDispatchLaneBlock(event.toolName)
+      reportHeadlessClassifierBlock(ctx, "action", laneBlock.reason)
+      return resolveActionDecision(laneBlock)
+    }
 
     let resourcePreflight: ResourcePreflightSnapshot | undefined
     if (event.toolName === "bash" && typeof event.input.command === "string") {
@@ -2218,6 +2225,11 @@ export default function classifiedWorkflows(pi: ExtensionAPI): void {
       })?.verdict === "allow"
     )
       return
+    if (isLocalDispatchProvider(ctx.model?.provider)) {
+      const laneBlock = localDispatchLaneBlock(event.toolName)
+      reportHeadlessClassifierBlock(ctx, "tool-result", laneBlock.reason)
+      return withheldExecutedToolResultPatch(event.isError, laneBlock.reason)
+    }
     const subject = toolResultSubject(event)
     const decision = await classifyWithActivity(
       {

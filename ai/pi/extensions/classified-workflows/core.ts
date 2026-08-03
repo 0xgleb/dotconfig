@@ -110,7 +110,25 @@ const REGISTRY_ACTIONS = new Set([
   "requests",
   "claim_request",
   "cancel_request",
+  "complete_request",
+  "fail_request",
 ]);
+const PI_BRIDGE_LIST = /^pi-bridge agents$/;
+const PI_BRIDGE_SEND =
+  /^(?:(?:printf '%s'|echo) '[^']{1,2000}' \| )?pi-bridge send(?: --(?:agent|dedupe) [A-Za-z0-9:._-]{1,128}){1,4}$/;
+const isPiBridgeRoutingCommand = (command: string): boolean => {
+  const trimmed = command.trim();
+  return PI_BRIDGE_LIST.test(trimmed) || PI_BRIDGE_SEND.test(trimmed);
+};
+
+export const isLocalDispatchProvider = (provider: string | undefined): boolean =>
+  provider === "ollama";
+
+export const localDispatchLaneBlock = (toolName: string): Decision => ({
+  verdict: "block",
+  reason: `The local dispatch lane permits only typed routing actions without the model classifier; ${toolName} needs a full-capability agent - record the item and route it instead`,
+  source: "deterministic",
+});
 const LOCALLY_GENERATED_RESULT_TOOLS = new Set(["edit", "write", "todo", "ask_user", "artifact_provenance", "review_duty", "release_cadence", "reload_pi", "workflow_audit", "safe_compaction_ready"]);
 const PATH_KEYS = new Set(["path", "file_path", "cwd", "glob"]);
 const SENSITIVE_PATH =
@@ -396,6 +414,18 @@ export function deterministicDecision(request: ToolRequest): Decision | null {
   if (
     request.toolName === "bash" &&
     typeof request.input.command === "string" &&
+    isPiBridgeRoutingCommand(request.input.command)
+  ) {
+    return {
+      verdict: "allow",
+      reason: "Exact dispatcher bridge routing command",
+      source: "deterministic",
+    };
+  }
+
+  if (
+    request.toolName === "bash" &&
+    typeof request.input.command === "string" &&
     isRecordedArtifactCleanup(request.input.command, request.cwd, request.agentArtifacts)
   ) {
     return {
@@ -413,16 +443,21 @@ export const shouldCarryDeterministicResultAllowance: (decision: Decision) => bo
   decision.verdict === "allow" && decision.source === "deterministic" && decision.resultSafe === true;
 
 export const deterministicReadOnlyToolResultDecision = (request: ToolResultRequest): Decision | null => {
-  const registryRead =
+  const registryCoordination =
     request.toolName === "agent_registry" &&
-    (request.input.action === "list" || request.input.action === "requests");
+    REGISTRY_ACTIONS.has(String(request.input.action));
+  const bridgeRouting =
+    request.toolName === "bash" &&
+    typeof request.input.command === "string" &&
+    isPiBridgeRoutingCommand(request.input.command);
   const gitButlerStatusRead =
     request.toolName === "bash" &&
     typeof request.input.command === "string" &&
     isReadOnlyGitButlerStatusCommand(request.input.command);
   if (
     !READ_ONLY_TOOLS.has(request.toolName) &&
-    !registryRead &&
+    !registryCoordination &&
+    !bridgeRouting &&
     !gitButlerStatusRead &&
     !isSkillView(request.toolName, request.input)
   ) {

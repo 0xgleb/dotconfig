@@ -59,13 +59,15 @@ execute one, report, yield.
    reviewable; the next fire reprioritizes again and takes the new head.
 5. **Report** one outcome message through the dispatcher, which owns the
    typed registry transitions and all external-channel replies:
-   `pi-bridge send --agent <dispatcher-id> --dedupe <request-id>` (find the
-   dispatcher with `pi-bridge agents`; its stdin takes the message body),
-   with the body in the envelope the dispatcher's Track step defines:
+   using EXACTLY this command shape (it is deterministically allowlisted;
+   variants fall back to semantic classification):
 
    ```
-   request:<request-id> outcome:<completed|failed> summary:<one bounded line> evidence:<comma-separated refs>
+   printf '%s' 'request:<request-id> outcome:<completed|failed> summary:<one bounded line> evidence:<comma-separated refs>' | pi-bridge send --agent <dispatcher-id> --dedupe <request-id>
    ```
+
+   Find the dispatcher id with `pi-bridge agents`. Keep the body single-quoted
+   with no apostrophes inside.
 
    Include only a bounded summary and evidence references - never
    credentials, prompts, or raw logs, and never reply on the request's
