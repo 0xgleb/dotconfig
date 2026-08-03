@@ -264,7 +264,7 @@ export def --wrapped clanker-route [
     return {
       tool: "pi-dispatcher"
       args: (
-        ["--model" "ollama/qwen3:4b"]
+        ["--model" "ollama/qwen3.5:9b"]
         | append $resume
         | append $forwarded
         | append $prompt

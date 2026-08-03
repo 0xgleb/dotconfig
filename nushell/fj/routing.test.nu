@@ -71,7 +71,7 @@ def "test clanker honours explicit pi session flags" [] {
 def "test clanker dispatcher runs pi on the local model with the loop prompt" [] {
   let route = (clanker-route false false --dispatcher)
   assert equal $route.tool "pi-dispatcher"
-  assert (("ollama/qwen3:4b" in $route.args))
+  assert (("ollama/qwen3.5:9b" in $route.args))
   assert (("/loop 10m /dispatcher" in $route.args))
   assert (not ("--dispatcher" in $route.args)) "--dispatcher is consumed"
 }
@@ -92,7 +92,7 @@ def "test clanker dispatcher forwards an explicit prompt instead of the default"
 def "test clanker dispatcher forwards an explicit model override after the default" [] {
   let route = (clanker-route false false --dispatcher --model "ollama/other-local")
   let indexed = ($route.args | enumerate)
-  let default_index = ($indexed | where item == "ollama/qwen3:4b" | first | get index)
+  let default_index = ($indexed | where item == "ollama/qwen3.5:9b" | first | get index)
   let override_index = ($indexed | where item == "ollama/other-local" | first | get index)
   assert ($override_index > $default_index) "explicit --model must come after the default so pi's last-wins parsing applies it"
 }
