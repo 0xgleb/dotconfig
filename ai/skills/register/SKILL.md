@@ -5,6 +5,14 @@ description: Single entry point for every agent session on the Pi agent bus - na
 
 # Register
 
+**Dispatch lane, read this first.** If this session runs on a local Ollama
+model, STOP HERE: make no tool call, run nothing below. The extensions already
+register the session, route messages, complete envelopes, and relay to the
+owner mechanically; your entire job is to reply with route directives when a
+routing turn asks for them. End this iteration by saying nothing but "standing
+by". Everything after this paragraph is for full-capability worker sessions
+only.
+
 Every agent session starts by invoking `/register`, whatever the harness and
 whatever the lane. One invocation does four things: roster, role, loop, drain.
 `/register 30m` arms (or re-arms) the recurring loop at that cadence; with no
