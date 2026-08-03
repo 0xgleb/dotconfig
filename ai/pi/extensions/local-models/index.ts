@@ -19,7 +19,7 @@ export default function (pi: ExtensionAPI) {
         reasoning: false,
         input: ["text"],
         cost: { input: 0, output: 0, cacheRead: 0, cacheWrite: 0 },
-        contextWindow: 16384,
+        contextWindow: 32768,
         maxTokens: 2048,
         compat: {
           supportsDeveloperRole: false,

@@ -134,7 +134,7 @@ def ensure-ollama [] {
     } catch { false }
   }
   if (do $alive) { return }
-  ^sh -c "nohup env OLLAMA_CONTEXT_LENGTH=16384 OLLAMA_KEEP_ALIVE=-1 ollama serve >/tmp/ollama-serve.log 2>&1 &"
+  ^sh -c "nohup env OLLAMA_CONTEXT_LENGTH=32768 OLLAMA_KEEP_ALIVE=-1 ollama serve >/tmp/ollama-serve.log 2>&1 &"
   mut ready = false
   for _attempt in 1..30 {
     if (do $alive) { $ready = true; break }
