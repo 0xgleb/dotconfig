@@ -93,11 +93,15 @@ test("attempt outcomes drain quickly while idle polls at the configured cadence"
 
 test("the worker loop survives attempt errors and stops on shutdown", async () => {
   const outcomes = [
-    Effect.succeed({ outcome: "completed", jobId: "job-a" } as const),
+    Effect.succeed({
+      outcome: "failed",
+      jobId: "job-a",
+      reason: "executor exited\nforged: second log line",
+    } as const),
     Effect.fail(
       new HarnessWorkerError({
         code: "request_failed",
-        message: "control plane restarting",
+        message: "control plane\nrestarting",
       }),
     ),
     Effect.succeed({ outcome: "idle" } as const),
@@ -124,4 +128,6 @@ test("the worker loop survives attempt errors and stops on shutdown", async () =
   assert.deepEqual(delays, [1_000, 30_000, 30_000])
   assert.equal(lines.length, 3)
   assert.equal(lines.every((line) => !line.includes("\n")), true)
+  assert.equal(lines[0]?.includes("executor exited forged: second log line"), true)
+  assert.equal(lines[1]?.includes("control plane restarting"), true)
 })

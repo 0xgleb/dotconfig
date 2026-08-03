@@ -100,8 +100,7 @@ let
     name = "pi-harness-worker";
     runtimeInputs = [ pkgs.nodejs ];
     text = ''
-      exec node --experimental-strip-types \
-        "$HOME/.config/ai/pi/extensions/control-plane/harness-worker-main.ts" "$@"
+      exec node "$HOME/.config/ai/pi/extensions/control-plane/harness-worker-main.ts" "$@"
     '';
   };
   pieceOfPiTelegram = pkgs.writeShellApplication {
