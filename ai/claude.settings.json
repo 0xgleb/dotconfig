@@ -68,7 +68,7 @@
         "hooks": [
           {
             "type": "command",
-            "command": "/Users/0xgleb/.config/ai/hooks/delegation-nudge.sh",
+            "command": "nu /Users/0xgleb/.config/ai/hooks/delegation-nudge.nu",
             "timeout": 10
           }
         ]
@@ -78,7 +78,7 @@
         "hooks": [
           {
             "type": "command",
-            "command": "/Users/0xgleb/.config/ai/hooks/delegation-nudge.sh",
+            "command": "nu /Users/0xgleb/.config/ai/hooks/delegation-nudge.nu",
             "timeout": 10
           }
         ]
@@ -89,7 +89,7 @@
         "hooks": [
           {
             "type": "command",
-            "command": "/Users/0xgleb/.config/ai/hooks/delegation-nudge.sh",
+            "command": "nu /Users/0xgleb/.config/ai/hooks/delegation-nudge.nu",
             "timeout": 10
           }
         ]
