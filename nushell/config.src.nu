@@ -205,18 +205,12 @@ def fix [context: closure, prompt?: string] {
   ^claude -p ($parts | str join "\n\n")
 }
 
+# Tab names belong to the layout, not to the shell. A tab groups panes by what
+# they are FOR - orchestration, opus workers, grok workers - and renaming the
+# active tab from whichever pane last rendered a prompt overwrites that with
+# the cwd of an unrelated shell.
 $env.PROMPT_COMMAND = {||
   let path = if $env.PWD == $nu.home-dir { "~" } else { $env.PWD | path basename }
-
-  if ("ZELLIJ" in $env) {
-    let common_dir_result = do { git rev-parse --path-format=absolute --git-common-dir } | complete
-    let tab_name = if $common_dir_result.exit_code == 0 {
-      $common_dir_result.stdout | str trim | path dirname | path basename
-    } else {
-      $path
-    }
-    zellij action rename-tab $tab_name
-  }
 
   let who = (whoami)
   if $who == "root" {
