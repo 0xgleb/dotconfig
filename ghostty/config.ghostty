@@ -1,40 +1,4 @@
-# Archeofuturism, sharing the palette with Zellij and Pi.
-#
-# This is what puts color *inside* zellij: shell output, git, diffs, ls, and
-# every TUI that draws with ANSI colors resolve through these 16 slots, so the
-# pane content follows the same palette as the chrome around it.
-#
-# Following the convention the well-regarded community themes use, the normal
-# slots (0-7) are the deeper variants and the bright slots (8-15) are the vivid
-# accents, so bold/bright output reads as emphasis rather than as noise.
-#
-# The background stays pure black on purpose: zellij paints its bars with an
-# explicit fill, and any background tint or image here would show through the
-# panes but not under those bars, which is exactly the light/dark stepping at
-# the edge of zellij that was rejected before.
-background = #000000
-foreground = #E8F6FF
-cursor-color = #29E7FF
-selection-background = #8E3480
-selection-foreground = #E8F6FF
-
-palette = 0=#11182D
-palette = 1=#C93A5C
-palette = 2=#4FCB8B
-palette = 3=#FF9E64
-palette = 4=#5088B8
-palette = 5=#C93AAB
-palette = 6=#1FB8CC
-palette = 7=#8EA7C7
-palette = 8=#607493
-palette = 9=#FF5470
-palette = 10=#7CFFB2
-palette = 11=#FFE66D
-palette = 12=#B79CFF
-palette = 13=#FF4FD8
-palette = 14=#29E7FF
-palette = 15=#E8F6FF
-
+theme = iTerm2 Default
 macos-option-as-alt = left
 clipboard-read = allow
 clipboard-write = allow

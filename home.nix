@@ -36,74 +36,6 @@ let
     npmRoot = ./ai/pi/extensions;
     inherit (pkgs) nodejs;
   };
-  pieceOfPiWhisper =
-    (pkgs.whisper-cpp.override {
-      coreMLSupport = false;
-      withSDL = false;
-    }).overrideAttrs
-      (_: {
-        # nixpkgs' Darwin postPatch appends an unconditional whisper.coreml
-        # install target. Keep only the example installs when CoreML is disabled.
-        postPatch = ''
-          for target in examples/{bench,command,cli,quantize,server,stream,talk-llama}/CMakeLists.txt; do
-            if ! grep -q -F 'install(' "$target"; then
-              echo 'install(TARGETS ''${TARGET} RUNTIME)' >> "$target"
-            fi
-          done
-        '';
-      });
-  pieceOfPiWhisperModel = pkgs.fetchurl {
-    url = "https://huggingface.co/ggerganov/whisper.cpp/resolve/main/ggml-base-q5_1.bin";
-    hash = "sha256-Qi8a5FKt5vMKAE1+XGpDGV5EM7w3C/I/rJzFkfAaiJg=";
-  };
-  piControlPlaneDashboard = pkgs.runCommandLocal "pi-control-plane-dashboard" {
-    nativeBuildInputs = [ pkgs.esbuild ];
-  } ''
-    mkdir -p "$out" src/dashboard
-    cp ${./ai/pi/extensions/control-plane/dashboard/app.tsx} src/dashboard/app.tsx
-    cp ${./ai/pi/extensions/control-plane/job-runtime.ts} src/job-runtime.ts
-    ln -s ${piExtensionNodeModules}/node_modules src/node_modules
-    cd src
-    node_modules/.bin/babel dashboard/app.tsx \
-      --out-file dashboard/app.js \
-      --presets=@babel/preset-typescript,babel-preset-solid
-    esbuild dashboard/app.js \
-      --bundle \
-      --format=esm \
-      --minify \
-      --outfile="$out/app.js" \
-      --platform=browser
-    cp ${./ai/pi/extensions/control-plane/dashboard/index.html} "$out/index.html"
-    cp ${./ai/pi/extensions/control-plane/dashboard/app.css} "$out/app.css"
-  '';
-  piBridge = pkgs.writeShellApplication {
-    name = "pi-bridge";
-    runtimeInputs = [ pkgs.nodejs ];
-    text = ''
-      exec node --experimental-strip-types \
-        "$HOME/.config/ai/pi/extensions/remote-control/bridge-cli.ts" "$@"
-    '';
-  };
-  piControlPlane = pkgs.writeShellApplication {
-    name = "pi-control-plane";
-    runtimeInputs = [ pkgs.nodejs ];
-    text = ''
-      export PI_CONTROL_PLANE_DASHBOARD_DIR=${piControlPlaneDashboard}
-      exec node --experimental-strip-types \
-        "$HOME/.config/ai/pi/extensions/control-plane/main.ts" "$@"
-    '';
-  };
-  pieceOfPiTelegram = pkgs.writeShellApplication {
-    name = "piece-of-pi-telegram";
-    runtimeInputs = [
-      pkgs.nodejs
-      pieceOfPiWhisper
-    ];
-    text = ''
-      exec node --experimental-strip-types \
-        "$HOME/.config/ai/pi/extensions/remote-control/piece-of-pi.ts" "$@"
-    '';
-  };
 
 in
 {
@@ -139,56 +71,17 @@ in
               sha256 = manifest.platforms.${key}.checksum;
             };
           });
-
-        pi-coding-agent-with-reload = unstable.pi-coding-agent.overrideAttrs (old: {
-          postInstall = (old.postInstall or "") + ''
-            patch -p1 -d "$out/lib/node_modules/pi-monorepo" \
-              < ${./ai/pi/patches/extension-context-reload.patch}
-          '';
-        });
-        piSolReview = pkgs.writeShellApplication {
-          name = "pi-sol-review";
-          runtimeInputs = [ pi-coding-agent-with-reload ];
-          text = ''
-            if [ "$#" -gt 0 ]; then
-              prompt="$*"
-            else
-              prompt="$(cat)"
-            fi
-            if [[ ! "$prompt" =~ [^[:space:]] ]]; then
-              echo "usage: pi-sol-review <focused read-only review task>" >&2
-              exit 2
-            fi
-            exec env -u PI_INTERNAL_WORKFLOW_CHILD_TOKEN_LIMIT pi \
-              --print \
-              --no-session \
-              --no-extensions \
-              --extension "$HOME/.config/ai/pi/extensions/classified-workflows/index.ts" \
-              --no-skills \
-              --no-prompt-templates \
-              --tools read,grep,find,ls \
-              --model openai-codex/gpt-5.6-sol \
-              --thinking high \
-              "$prompt"
-          '';
-        };
       in
       (with unstable; [
         codex
         cursor-cli
         graphite-cli
+        pi-coding-agent
       ])
       ++ [
-        inputs.ragenix.packages.${system}.default
-        pkgs.age
         but
         claude-code-latest
         jf
-        pieceOfPiTelegram
-        piBridge
-        piControlPlane
-        piSolReview
-        pi-coding-agent-with-reload
       ];
 
     shell.enableNushellIntegration = true;
@@ -203,7 +96,6 @@ in
     file = {
       "${nuConfigDir}/fj".source = ./nushell/fj;
       ".agents/skills".source = config.lib.file.mkOutOfStoreSymlink "${aiDir}/skills";
-      ".claude/skills".source = config.lib.file.mkOutOfStoreSymlink "${aiDir}/skills";
       ".cursor/skills".source = config.lib.file.mkOutOfStoreSymlink "${aiDir}/skills";
       ".cursor/hooks".source = config.lib.file.mkOutOfStoreSymlink "${aiDir}/cursor/hooks";
       ".cursor/hooks.json".source = config.lib.file.mkOutOfStoreSymlink "${aiDir}/cursor/hooks.json";
@@ -211,9 +103,6 @@ in
       ".cursor/AGENTS.md".source = config.lib.file.mkOutOfStoreSymlink "${aiDir}/AGENTS.md";
       ".cursor/CLAUDE.md".source = config.lib.file.mkOutOfStoreSymlink "${aiDir}/AGENTS.md";
       ".pi/agent/AGENTS.md".source = config.lib.file.mkOutOfStoreSymlink "${aiDir}/pi/AGENTS.md";
-      ".pi/agent/models.json".text = builtins.toJSON {
-        providers."openai-codex".modelOverrides."gpt-5.6-sol".contextWindow = 1050000;
-      };
       ".pi/agent/skills".source = emptyPiSkillRoot;
       ".config/ai/pi/extensions/node_modules" = {
         source = "${piExtensionNodeModules}/node_modules";
@@ -256,26 +145,6 @@ in
       '';
     };
   };
-
-  launchd.agents.pieceOfPiTelegram =
-    lib.mkIf (isDarwin && builtins.pathExists ./secrets/metagenda-telegram-token.age)
-      {
-        enable = true;
-        config = {
-          ProgramArguments = [ "${pieceOfPiTelegram}/bin/piece-of-pi-telegram" ];
-          EnvironmentVariables = {
-            PIECE_OF_PI_TELEGRAM_OWNER_USERNAME = "dianov";
-            PIECE_OF_PI_TELEGRAM_TOKEN_FILE = "/run/agenix/metagenda-telegram-token";
-            PIECE_OF_PI_WHISPER_MODEL = "${pieceOfPiWhisperModel}";
-          };
-          KeepAlive = true;
-          ProcessType = "Background";
-          RunAtLoad = true;
-          StandardErrorPath = "/tmp/piece-of-pi-telegram.err";
-          StandardOutPath = "/tmp/piece-of-pi-telegram.out";
-          ThrottleInterval = 5;
-        };
-      };
 
   # NOTE: this shit doesn't clean up after itself if you enable/disable it
   # services.ollama.enable = false;

@@ -98,13 +98,6 @@ message. Run the unit tests after any routing change:
 nu nushell/fj/routing.test.nu
 ```
 
-# Agent Delivery
-
-Validated changes in this repository must be committed and pushed on the active
-feature branch unless the user explicitly says not to publish them. Committing
-and pushing are routine completion steps here; do not stop to hand them back to
-the user or request redundant authorization.
-
 # Work Tracking
 
 This repo does **not** use Linear. Work here is tracked in GitHub issues/PRs (or

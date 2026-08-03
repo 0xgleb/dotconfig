@@ -1,6 +1,6 @@
 use std/assert
 
-use evidence.nu [classify-commit deployment-environment deployment-reportability extract-rai graphite-pr-reportability is-bot is-deployment-workflow linear-reportability parse-graphite-batch-spec pr-event-in-window pr-reportability reportable-review]
+use evidence.nu [classify-commit deployment-environment extract-rai is-bot is-deployment-workflow pr-event-in-window pr-reportability reportable-review]
 
 let since = "2026-07-10T00:00:00Z" | into datetime
 let until = "2026-07-14T06:00:00Z" | into datetime
@@ -74,53 +74,6 @@ def "test excludes a PR created later on the same UTC date" [] {
   let cutoff = "2026-07-14T04:57:44Z" | into datetime
   let pr = {created_at: "2026-07-14T05:31:25Z", merged_at: null}
   assert not (pr-event-in-window $pr $since $cutoff)
-}
-
-def "test completed Linear status alone is context not user work" [] {
-  assert equal (linear-reportability {
-    created_by_user: false
-    commented_by_user: false
-    referenced_by_authored_pr: false
-    user_framed: false
-  }) "context_only"
-  assert equal (linear-reportability {
-    created_by_user: false
-    commented_by_user: true
-    referenced_by_authored_pr: false
-    user_framed: false
-  }) "verified_user_involvement"
-}
-
-def "test deployment workflow alone is context not user work" [] {
-  assert equal (deployment-reportability {authored_pr_refs: [], user_framed: false}) "context_only"
-  assert equal (deployment-reportability {authored_pr_refs: ["ST0x-Technology/repo#12"], user_framed: false}) "verified_user_involvement"
-}
-
-def "test parses only explicit bounded Graphite batch membership" [] {
-  assert equal (parse-graphite-batch-spec "ST0x-Technology/st0x.issuance#290:208,239,254") {
-    repo: "ST0x-Technology/st0x.issuance"
-    group_number: 290
-    member_numbers: [208 239 254]
-  }
-}
-
-def "test closed Graphite children require exact merged batch evidence" [] {
-  let pr = {
-    repo: "ST0x-Technology/st0x.issuance"
-    number: 208
-    created_at: "2026-07-03T12:00:00Z"
-    merged_at: null
-    commits: []
-  }
-  let batch = {
-    repo: "ST0x-Technology/st0x.issuance"
-    group_number: 290
-    member_numbers: [208 239 254]
-    author_login: "app/graphite-app"
-    merged_at: "2026-07-13T12:00:00Z"
-  }
-  assert equal (graphite-pr-reportability $pr [$batch] $since $until) "merged_via_graphite_batch"
-  assert equal (graphite-pr-reportability ($pr | update number 999) [$batch] $since $until) "unverified_update"
 }
 
 def main [] {

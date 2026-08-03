@@ -10,40 +10,25 @@
  * they are in place regardless of which extension's session_start fires first.
  */
 
-import type { ExtensionAPI } from "@earendil-works/pi-coding-agent"
-import type { AutocompleteProvider } from "@earendil-works/pi-tui"
-import { registerRuntimeVersion } from "../shared/runtime-version.ts"
-import { VimEditor } from "./vim-editor.ts"
+import type { ExtensionAPI } from "@earendil-works/pi-coding-agent";
+import type { AutocompleteProvider } from "@earendil-works/pi-tui";
+import { VimEditor } from "./vim-editor.ts";
 
 export default function (pi: ExtensionAPI) {
-  registerRuntimeVersion(pi, "pi-vim", "2026.08.01.17")
-  let wrapAutocomplete:
-    | ((provider: AutocompleteProvider) => AutocompleteProvider)
-    | undefined
+  let wrapAutocomplete: ((provider: AutocompleteProvider) => AutocompleteProvider) | undefined;
 
   // Ack fzfp's editor check — registered at factory time so it's always ready.
-  pi.events.on("pi-fzfp:check-editor", (ack: () => void) => {
-    ack()
-  })
+  pi.events.on("pi-fzfp:check-editor", (ack: () => void) => { ack(); });
 
   // Capture the provider whenever fzfp announces it (emitted from both fzfp's
   // factory and its session_start to cover both load orderings).
-  pi.events.on(
-    "pi-fzfp:provider",
-    (fn: (provider: AutocompleteProvider) => AutocompleteProvider) => {
-      wrapAutocomplete = fn
-    },
-  )
+  pi.events.on("pi-fzfp:provider", (fn: (provider: AutocompleteProvider) => AutocompleteProvider) => {
+    wrapAutocomplete = fn;
+  });
 
   pi.on("session_start", (_event, ctx) => {
-    ctx.ui.setEditorComponent(
-      (tui, theme, keybindings) =>
-        new VimEditor(tui, theme, keybindings, undefined, wrapAutocomplete, {
-          isStreaming: () => !ctx.isIdle(),
-          onFollowUp: (text) => {
-            pi.sendUserMessage(text, { deliverAs: "followUp" })
-          },
-        }),
-    )
-  })
+    ctx.ui.setEditorComponent((tui, theme, keybindings) =>
+      new VimEditor(tui, theme, keybindings, undefined, wrapAutocomplete)
+    );
+  });
 }

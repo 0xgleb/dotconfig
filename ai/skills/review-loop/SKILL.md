@@ -614,7 +614,7 @@ const [verifications, sweep] = await parallel([
       `have introduced. Report new_issues only for problems caused by or ` +
       `directly adjacent to the fix.`,
       { label: `verify-fix:${finding.title}`, phase: 'Verify fixes',
-        model: 'openai-codex/gpt-5.6-luna', schema: VERIFY_FIX_SCHEMA },
+        model: 'sonnet', schema: VERIFY_FIX_SCHEMA },
     ).then(result => result && ({ finding, ...result })))),
   () => agent(
     `You are a senior staff engineer reviewing a set of fixes applied in ` +
@@ -626,7 +626,7 @@ const [verifications, sweep] = await parallel([
     `project docs. Apply the same bar as a full review — correctness ` +
     `first, no style nits, nothing the compiler or linter would catch. ` +
     `Return findings, or an empty list with clean_reason if clean.`,
-    { label: 'delta-sweep', phase: 'Sweep', model: 'openai-codex/gpt-5.6-luna',
+    { label: 'delta-sweep', phase: 'Sweep', model: 'opus',
       schema: SWEEP_SCHEMA }),
 ])
 
@@ -812,31 +812,6 @@ user decides when to amend and push.
 the wrapper amends the branch (`gt modify -a`) and moves up. Print the per-branch
 summary line, then continue the upstack walk — do not stop here. The stack is
 submitted once at the end of the walk (Stack flow, final step), not per branch.
-
-### Claude Code review-duty harness adapter
-
-Apply this adapter only when the source-fixed initial prompt identifies a fresh
-Claude Code subscription-harness executor and supplies a
-`CLAUDE_REVIEW_HANDOFF v1` supervisor target. Ordinary `/review-loop` invocations
-remain unchanged.
-
-1. Run this skill and its native Claude Code Workflow lanes normally. Never invoke
-   Claude through Pi, an Anthropic API provider, an SDK, `curl`, or an API key.
-2. Before handoff, run one independent native Fable verifier that re-reads the
-   current diff/head and challenges every finding, fix, test, and convergence
-   claim. Missing subscription auth or Fable is `blocked`, never an API fallback.
-3. For this exact source-fixed own/auto PR job only, the harness adapter overrides
-   ordinary single-branch hard rule 4 after clean convergence: follow the loaded
-   repository's commit/stack/push delivery rules so verified fixes reach the
-   existing PR. Never open a new PR, publish a draft, merge, or touch another
-   branch. If repository delivery policy is missing or ambiguous, report blocked.
-4. Re-read the PR head after fixes and distinguish the input head from the output
-   head. An unexpected remote change is stale and requires a fresh job.
-5. Send exactly one bounded handoff through the exact `pi-bridge send` command in
-   the launcher prompt. Include only the required fields and evidence identifiers;
-   never include prompts, hidden reasoning, credentials, full diffs, or logs.
-6. The Pi supervisor independently verifies the handoff. Do not emulate
-   `review_duty`, ask a verdict, publish a top-level review body, or merge.
 
 ---
 

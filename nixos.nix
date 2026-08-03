@@ -21,9 +21,8 @@ in
   # Allow passwordless sudo for wheel group
   security.sudo.wheelNeedsPassword = false;
 
-  # Keep Ghostty's native TERM usable over SSH. The local SSH wrappers still
-  # fall back to xterm-256color so older remote generations remain usable.
-  environment.systemPackages = [ pkgs.ghostty.terminfo ];
+  # NixOS-specific packages
+  environment.systemPackages = [ ];
 
   services.openssh = {
     enable = true;

@@ -89,7 +89,7 @@ keybinds clear-defaults=true {
     scroll {
         bind "Alt left" { MoveFocusOrTab "left"; SwitchToMode "normal"; }
         bind "Alt down" { MoveFocus "down"; SwitchToMode "normal"; }
-        // Alt up is reserved for inner applications such as Pi's queued-message editor.
+        bind "Alt up" { MoveFocus "up"; SwitchToMode "normal"; }
         bind "Alt right" { MoveFocusOrTab "right"; SwitchToMode "normal"; }
         bind "e" { EditScrollback; SwitchToMode "normal"; }
         bind "Alt h" { MoveFocusOrTab "left"; SwitchToMode "normal"; }
@@ -152,7 +152,7 @@ keybinds clear-defaults=true {
     shared_except "locked" "scroll" {
         bind "Alt left" { MoveFocusOrTab "left"; }
         bind "Alt down" { MoveFocus "down"; }
-        // Alt up is reserved for inner applications such as Pi's queued-message editor.
+        bind "Alt up" { MoveFocus "up"; }
         bind "Alt right" { MoveFocusOrTab "right"; }
         bind "Alt h" { MoveFocusOrTab "left"; }
         bind "Alt j" { MoveFocus "down"; }
@@ -272,168 +272,10 @@ load_plugins {
 // 
 // simplified_ui true
 
-// Keep multiplexer chrome on the requested archeofuturist palette.
-//
-// The theme is defined HERE rather than in themes/archeofuturism.kdl on
-// purpose: zellij live-reloads this file, so edits land in already-attached
-// sessions. A theme in the themes/ directory only loads at session start, and
-// a selected-but-missing theme falls back to zellij's light default with no
-// error anywhere -- both verified against 0.44.3.
-//
-// `background` is the FILL of a component and `base` is its TEXT or line.
-// Zellij's own defaults are ribbon_selected { base=BLACK background=GREEN },
-// the familiar green pill with dark text. Reversing them is what turned the
-// top and bottom bars into glare.
-//
-// The mode panels are arrow-tipped ribbons. Zellij draws each tip as a glyph in
-// the ribbon's own fill color ON TOP of the bar, so the arrow silhouette only
-// exists where those two colors visibly differ. Fills too close to the bar do
-// not make the panels look flat, they erase the arrows entirely.
-//
-// So the bar stays black and the panels lift off it far enough to keep their
-// shape, while landing well under the grey that was rejected as too bright:
-//
-//   #000000  the bar itself -- matches the Ghostty background exactly, so the
-//            edge of zellij does not step between two different blacks
-//   #6B3172  an unselected mode panel  (luminance 0.065, contrast 2.3)
-//   #983C8D  the selected panel        (luminance 0.118, contrast 3.4)
-//   #8E3480  a selection highlight     (luminance 0.101, contrast 3.0)
-//
-// For reference, zellij's stock grey panel sits near 0.22.
-//
-// text_selected is NOT just a UI style: zellij-server/src/panes/grid.rs uses
-// text_selected.background and .base to paint mouse selections inside terminal
-// panes. Setting its background to the bar color makes selected text render
-// exactly like unselected text, so selections become invisible.
-theme "archeofuturism"
-theme_dark "archeofuturism"
-theme_light "archeofuturism"
-
-themes {
-    archeofuturism {
-        text_unselected {
-            base "#8EA7C7"
-            background "#000000"
-            emphasis_0 "#FF9E64"
-            emphasis_1 "#29E7FF"
-            emphasis_2 "#7CFFB2"
-            emphasis_3 "#FF4FD8"
-        }
-        // Mouse selections inside terminal panes are painted from this pair.
-        text_selected {
-            base "#E8F6FF"
-            background "#8E3480"
-            emphasis_0 "#FFE66D"
-            emphasis_1 "#86F5FF"
-            emphasis_2 "#7CFFB2"
-            emphasis_3 "#FF78C8"
-        }
-        // The arrow plates. Their fill is what draws the arrow tips against the
-        // bar, so it has to stay clearly visible or the panels read as missing.
-        ribbon_unselected {
-            base "#E8F6FF"
-            background "#6B3172"
-            emphasis_0 "#FF9E64"
-            emphasis_1 "#29E7FF"
-            emphasis_2 "#B79CFF"
-            emphasis_3 "#FF4FD8"
-        }
-        ribbon_selected {
-            base "#E8F6FF"
-            background "#983C8D"
-            emphasis_0 "#FFE66D"
-            emphasis_1 "#29E7FF"
-            emphasis_2 "#7CFFB2"
-            emphasis_3 "#FF4FD8"
-        }
-        // Frames mark focus with steel rather than neon, so the border around
-        // a pane never becomes a glowing outline.
-        frame_selected {
-            base "#5088B8"
-            background "#000000"
-            emphasis_0 "#29E7FF"
-            emphasis_1 "#7184A8"
-            emphasis_2 "#7CFFB2"
-            emphasis_3 "#B79CFF"
-        }
-        frame_highlight {
-            base "#7184A8"
-            background "#000000"
-            emphasis_0 "#B79CFF"
-            emphasis_1 "#5088B8"
-            emphasis_2 "#86F5FF"
-            emphasis_3 "#FF78C8"
-        }
-        table_title {
-            base "#29E7FF"
-            background "#000000"
-            emphasis_0 "#FF4FD8"
-            emphasis_1 "#FFE66D"
-            emphasis_2 "#7CFFB2"
-            emphasis_3 "#B79CFF"
-        }
-        table_cell_selected {
-            base "#E8F6FF"
-            background "#8E3480"
-            emphasis_0 "#FF9E64"
-            emphasis_1 "#29E7FF"
-            emphasis_2 "#7CFFB2"
-            emphasis_3 "#FF4FD8"
-        }
-        table_cell_unselected {
-            base "#8EA7C7"
-            background "#000000"
-            emphasis_0 "#FF9E64"
-            emphasis_1 "#29E7FF"
-            emphasis_2 "#7CFFB2"
-            emphasis_3 "#B79CFF"
-        }
-        list_selected {
-            base "#E8F6FF"
-            background "#8E3480"
-            emphasis_0 "#FF9E64"
-            emphasis_1 "#29E7FF"
-            emphasis_2 "#7CFFB2"
-            emphasis_3 "#FF4FD8"
-        }
-        list_unselected {
-            base "#8EA7C7"
-            background "#000000"
-            emphasis_0 "#FF9E64"
-            emphasis_1 "#29E7FF"
-            emphasis_2 "#7CFFB2"
-            emphasis_3 "#B79CFF"
-        }
-        exit_code_success {
-            base "#7CFFB2"
-            background "#000000"
-            emphasis_0 "#29E7FF"
-            emphasis_1 "#0D1024"
-            emphasis_2 "#B79CFF"
-            emphasis_3 "#5088B8"
-        }
-        exit_code_error {
-            base "#FF5470"
-            background "#000000"
-            emphasis_0 "#FFE66D"
-            emphasis_1 "#0D1024"
-            emphasis_2 "#FF4FD8"
-            emphasis_3 "#B79CFF"
-        }
-        multiplayer_user_colors {
-            player_1 "#FF4FD8"
-            player_2 "#29E7FF"
-            player_3 "#7CFFB2"
-            player_4 "#FFE66D"
-            player_5 "#B79CFF"
-            player_6 "#FF9E64"
-            player_7 "#FF5470"
-            player_8 "#86F5FF"
-            player_9 "#FF78C8"
-            player_10 "#8EA7C7"
-        }
-    }
-}
+// Choose the theme that is specified in the themes section.
+// Default: default
+// 
+// theme "dracula"
 
 // Choose the base input mode of zellij.
 // Default: normal
@@ -484,12 +326,6 @@ default_layout "wayout"
 //   - false
 // 
 pane_frames true
-
-ui {
-    pane_frames {
-        rounded_corners true
-    }
-}
 
 // When attaching to an existing session with other users,
 // should the session be mirrored (true)

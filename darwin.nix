@@ -1,7 +1,6 @@
 {
   pkgs,
   self,
-  inputs,
   userConfig,
   ...
 }:
@@ -13,12 +12,6 @@
   };
 
   networking.hostName = "darwwwin";
-
-  age.identityPaths = [
-    "${userConfig.home}/.config/agenix/piece-of-pi.txt"
-  ];
-  age.secrets.metagenda-telegram-token.file = inputs.self + /secrets/metagenda-telegram-token.age;
-  age.secrets.metagenda-telegram-token.owner = userConfig.name;
 
   nix.enable = true;
   nix.package = pkgs.nix;
@@ -48,6 +41,7 @@
     _1password-gui
     bat
     bottom
+    brave
     lua
     obsidian
     rsync
@@ -57,10 +51,7 @@
   homebrew = {
     enable = true;
 
-    brews = [
-      "schpet/tap/linear"
-      "tkhq/tap/turnkey"
-    ];
+    brews = [ "schpet/tap/linear" ];
     casks = [
       "amethyst"
       "coderabbit"

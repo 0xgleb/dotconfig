@@ -1,4 +1,4 @@
-use evidence.nu [classify-commit deployment-environment deployment-reportability extract-rai graphite-pr-reportability in-window is-bot is-deployment-workflow linear-reportability parse-graphite-batch-spec pr-event-in-window reportable-review]
+use evidence.nu [classify-commit deployment-environment extract-rai in-window is-bot is-deployment-workflow pr-event-in-window pr-reportability reportable-review]
 
 def run-gh-json [args: list<string>]: nothing -> record {
   let result = do { ^gh ...$args } | complete
@@ -115,7 +115,7 @@ def normalize-review [review: record]: nothing -> record {
   }
 }
 
-def collect-authored-pr [candidate: record, graphite_batches: list<record>, since: datetime, until: datetime]: nothing -> record {
+def collect-authored-pr [candidate: record, since: datetime, until: datetime]: nothing -> record {
   let repo = $candidate.repository.nameWithOwner
   let number = $candidate.number | into string
   let detail_result = run-gh-json [
@@ -147,7 +147,7 @@ def collect-authored-pr [candidate: record, graphite_batches: list<record>, sinc
     rai_ids: $rai_ids
     collection_errors: (if $detail_result.ok { [] } else { [$detail_result.error] })
   }
-  $pr | insert reportability (graphite-pr-reportability $pr $graphite_batches $since $until)
+  $pr | insert reportability (pr-reportability $pr $since $until)
 }
 
 def collect-reviews [github_user: string, owners: string, date_range: string, since: datetime, until: datetime]: nothing -> record {
@@ -248,51 +248,6 @@ def unique-candidates [candidates: list<record>]: nothing -> list<record> {
   | each {|candidate| $candidate | insert evidence_key (candidate-key $candidate) }
   | uniq-by evidence_key
   | reject evidence_key
-}
-
-def collect-graphite-batches [specs: list<string>, github_user: string]: nothing -> record {
-  let collections = ($specs | each {|spec|
-    let parsed = parse-graphite-batch-spec $spec
-    let group_result = run-gh-json [
-      "pr" "view" ($parsed.group_number | into string) "--repo" $parsed.repo
-      "--json" "number,title,url,state,mergedAt,author"
-    ]
-    let member_results = ($parsed.member_numbers | each {|number|
-      let result = run-gh-json [
-        "pr" "view" ($number | into string) "--repo" $parsed.repo
-        "--json" "number,title,url,state,isDraft,createdAt,updatedAt,mergedAt,author"
-      ]
-      if $result.ok and (($result.data | get -o author.login) == $github_user) {
-        {status: "available", candidate: ($result.data | insert repository {nameWithOwner: $parsed.repo})}
-      } else if $result.ok {
-        {status: "available", candidate: null}
-      } else {
-        {status: "unavailable", candidate: null}
-      }
-    })
-    let member_failures = $member_results | where status == "unavailable"
-    if $group_result.ok and ($member_failures | is-empty) {
-      {
-        status: "available"
-        batch: ($parsed | merge {
-          title: ($group_result.data.title? | default "")
-          url: ($group_result.data.url? | default "")
-          state: ($group_result.data.state? | default "")
-          merged_at: ($group_result.data.mergedAt? | default null)
-          author_login: ($group_result.data | get -o author.login | default "")
-        })
-        candidates: ($member_results.candidate | compact)
-      }
-    } else {
-      {status: "unavailable", batch: null, candidates: []}
-    }
-  })
-  let failures = $collections | where status == "unavailable"
-  {
-    status: (if ($failures | is-empty) { "available" } else { "partial" })
-    batches: ($collections.batch? | default [] | compact)
-    candidates: (unique-candidates ($collections.candidates? | default [] | flatten))
-  }
 }
 
 def authored-search [github_user: string, owners: string, qualifier: string, date_range: string]: nothing -> record {
@@ -410,7 +365,7 @@ def collect-deployment-candidates [runs: list<record>, github_user: string]: not
   }
 }
 
-def collect-github [git: record, owners: string, deploy_repos: list<string>, graphite_specs: list<string>, since: datetime, until: datetime, since_date: string, until_date: string]: nothing -> record {
+def collect-github [git: record, owners: string, deploy_repos: list<string>, since: datetime, until: datetime, since_date: string, until_date: string]: nothing -> record {
   let user_result = run-gh-json ["api" "user"]
   if not $user_result.ok {
     return {
@@ -427,7 +382,6 @@ def collect-github [git: record, owners: string, deploy_repos: list<string>, gra
   let github_user = $user_result.data.login
   let date_range = $"($since_date)..($until_date)"
   let family_repository_collection = collect-family-repositories $owners
-  let graphite_collection = collect-graphite-batches $graphite_specs $github_user
   let created_result = authored-search $github_user $owners "created" $date_range
   let merged_result = authored-search $github_user $owners "merged-at" $date_range
   if not $created_result.ok or not $merged_result.ok {
@@ -442,10 +396,10 @@ def collect-github [git: record, owners: string, deploy_repos: list<string>, gra
     }
   }
 
-  let initial_candidates = unique-candidates ($created_result.data ++ $merged_result.data ++ $graphite_collection.candidates)
+  let initial_candidates = unique-candidates ($created_result.data ++ $merged_result.data)
   let initial_prs = ($initial_candidates
-    | each {|candidate| collect-authored-pr $candidate $graphite_collection.batches $since $until }
-    | where {|pr| (pr-event-in-window $pr $since $until) or $pr.reportability == "merged_via_graphite_batch" })
+    | each {|candidate| collect-authored-pr $candidate $since $until }
+    | where {|pr| pr-event-in-window $pr $since $until })
   let known_shas = ($initial_prs
     | each {|pr| $pr.commits | get -o sha }
     | flatten
@@ -456,7 +410,7 @@ def collect-github [git: record, owners: string, deploy_repos: list<string>, gra
   let continued_candidates = ($linked_collection.candidates
     | where {|candidate| (candidate-key $candidate) not-in $initial_keys })
   let continued_prs = ($continued_candidates
-    | each {|candidate| collect-authored-pr $candidate $graphite_collection.batches $since $until })
+    | each {|candidate| collect-authored-pr $candidate $since $until })
   let base_authored_prs = $initial_prs ++ $continued_prs
   let review_collection = collect-reviews $github_user $owners $date_range $since $until
   let activity_repos = ($base_authored_prs.repo ++ ($review_collection.reviews.repo? | default []))
@@ -467,18 +421,8 @@ def collect-github [git: record, owners: string, deploy_repos: list<string>, gra
   let deployment_candidates = ($deployment_candidate_collection.candidates
     | where {|candidate| (candidate-key $candidate) not-in $base_keys })
   let deployment_prs = ($deployment_candidates
-    | each {|candidate| collect-authored-pr $candidate $graphite_collection.batches $since $until })
+    | each {|candidate| collect-authored-pr $candidate $since $until })
   let authored_prs = $base_authored_prs ++ $deployment_prs
-  let deployments = ($deployment_collection.runs | each {|run|
-    let refs = ($authored_prs | where {|pr|
-      $pr.repo == $run.repo
-      and ($pr.commits | any {|commit| $commit.sha == ($run.head_sha? | default "") })
-    } | each {|pr| $"($pr.repo)#($pr.number)" })
-    let involvement = {authored_pr_refs: $refs, user_framed: false}
-    $run
-    | insert authored_pr_refs $refs
-    | insert reportability (deployment-reportability $involvement)
-  })
   let collection_failures = ($authored_prs
     | each {|pr| $pr.collection_errors }
     | flatten)
@@ -488,7 +432,6 @@ def collect-github [git: record, owners: string, deploy_repos: list<string>, gra
     and $linked_collection.status == "available"
     and $deployment_collection.status == "available"
     and $deployment_candidate_collection.status == "available"
-    and $graphite_collection.status == "available"
     and ($collection_failures | is-empty)
   ) { "available" } else { "partial" }
 
@@ -511,9 +454,7 @@ def collect-github [git: record, owners: string, deploy_repos: list<string>, gra
     linked_commit_lookup_status: $linked_collection.status
     deployment_collection_status: $deployment_collection.status
     deployment_pr_lookup_status: $deployment_candidate_collection.status
-    graphite_batch_collection_status: $graphite_collection.status
-    graphite_batches: $graphite_collection.batches
-    deployments: $deployments
+    deployments: $deployment_collection.runs
     stats: {
       opened: ($opened | length)
       submitted_for_review: ($submitted | length)
@@ -632,49 +573,15 @@ def collect-linear [linear_repo: path, referenced_ids: list<string>, since: date
     }
   }
 
-  let created_with_evidence = ($created | each {|issue|
-    $issue | insert reportability (linear-reportability {
-      created_by_user: true
-      commented_by_user: false
-      referenced_by_authored_pr: ($issue.identifier in $referenced_ids)
-      user_framed: false
-    })
-  })
-  let commented_ids = $comments | get -o issue.identifier | default [] | uniq
-  let completed_with_evidence = ($completed | each {|issue|
-    $issue | insert reportability (linear-reportability {
-      created_by_user: ($issue.identifier in ($created | get -o identifier | default []))
-      commented_by_user: ($issue.identifier in $commented_ids)
-      referenced_by_authored_pr: ($issue.identifier in $referenced_ids)
-      user_framed: false
-    })
-  })
-  let updated_with_evidence = ($updated | each {|issue|
-    $issue | insert reportability (linear-reportability {
-      created_by_user: ($issue.identifier in ($created | get -o identifier | default []))
-      commented_by_user: ($issue.identifier in $commented_ids)
-      referenced_by_authored_pr: ($issue.identifier in $referenced_ids)
-      user_framed: false
-    })
-  })
-  let referenced_with_evidence = ($referenced_issues | each {|issue|
-    $issue | insert reportability (linear-reportability {
-      created_by_user: ($issue.identifier in ($created | get -o identifier | default []))
-      commented_by_user: ($issue.identifier in $commented_ids)
-      referenced_by_authored_pr: true
-      user_framed: false
-    })
-  })
-
   {
     status: "available"
     error: null
-    created: $created_with_evidence
-    completed: $completed_with_evidence
+    created: $created
+    completed: $completed
     comments: $comments
-    updated_assigned_context: $updated_with_evidence
+    updated_assigned_context: $updated
     referenced_ids: $referenced_ids
-    referenced_issues: $referenced_with_evidence
+    referenced_issues: $referenced_issues
   }
 }
 
@@ -689,7 +596,6 @@ export def main [
     "ST0x-Technology/st0x.liquidity"
     "ST0x-Technology/event-sorcery"
   ]
-  --graphite-batches: list<string> = []
   --output: path
 ] {
   if $since == null or $until == null {
@@ -708,7 +614,7 @@ export def main [
   let until_date = $until_instant | format date "%Y-%m-%d"
 
   let git = collect-git $workspace_path $since_instant $until_instant $since $until
-  let github = collect-github $git $owners $deploy_repos $graphite_batches $since_instant $until_instant $since_date $until_date
+  let github = collect-github $git $owners $deploy_repos $since_instant $until_instant $since_date $until_date
   let referenced_ids = if $github.status != "unavailable" {
     $github.authored_prs.rai_ids | flatten | uniq | sort
   } else {
@@ -728,17 +634,13 @@ export def main [
     github: $github
     linear: $linear
     synthesis_guardrails: {
-      reportable: ["new" "merged" "merged_via_graphite_batch" "verified_continued"]
-      requires_user_context: ["unverified_update" "context_only"]
+      reportable: ["new" "merged" "verified_continued"]
+      requires_user_context: ["unverified_update"]
       forbidden_inferences: [
         "PR updatedAt alone is not work evidence"
         "committer date alone may be restack or amend"
         "PR title, body, and branch name describe scope, not the reporting-window delta"
         "Linear project grouping requires Linear project.name"
-        "Linear Done status alone is context, not evidence of user work"
-        "A deployment workflow alone is context unless linked to user-authored work or canonical user framing"
-        "Graphite child merges require an exact bounded batch spec and merged app/graphite-app group evidence"
-        "Every synthesized count must be adjacent to exact supporting references"
       ]
     }
   }
