@@ -379,6 +379,26 @@ export const decodeStoredJob = (
   })
 }
 
+export const recurringSuccessorSpec = (
+  spec: RegisteredJobSpec,
+  now: number,
+  jitterOffsetMs: number,
+): Effect.Effect<RegisteredJobSpec, JobRuntimeError> => {
+  if (spec.kind !== "review-duty.scan" || spec.recurrence === undefined)
+    return invalid("only recurring specs can schedule a successor")
+  if (!isTimestamp(now)) return invalid("now must be a safe timestamp")
+  if (
+    !Number.isSafeInteger(jitterOffsetMs) ||
+    Math.abs(jitterOffsetMs) > spec.recurrence.jitterMs
+  ) {
+    return invalid("successor jitter must stay within the registered bound")
+  }
+  const runAt = checkedAdd(now, spec.recurrence.baseMs + jitterOffsetMs)
+  if (runAt === undefined)
+    return invalid("successor timestamp exceeds safe range")
+  return Effect.succeed({ ...spec, runAt })
+}
+
 export const createJob = (
   spec: RegisteredJobSpec,
   id: string,

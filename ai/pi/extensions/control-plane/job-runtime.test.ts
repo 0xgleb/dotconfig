@@ -10,6 +10,7 @@ import {
   decodeStoredJob,
   failJob,
   recoverExpiredJob,
+  recurringSuccessorSpec,
   REGISTERED_JOB_KINDS,
   type Job,
   type RegisteredJobSpec,
@@ -237,6 +238,36 @@ test("failed and abandoned attempts retry only within the persisted attempt limi
   const finalLease: Job = { ...leasedJob(), attempt: reviewSpec.maxAttempts }
   const failed = run(failJob(finalLease, "lease-a", 2_000, 60_000, "terminal"))
   assert.equal(failed.state, "failed")
+})
+
+test("recurring specs produce bounded jittered successors and others cannot", () => {
+  const base = reviewSpec.recurrence?.baseMs ?? 0
+  const jitter = reviewSpec.recurrence?.jitterMs ?? 0
+  const early = run(recurringSuccessorSpec(reviewSpec, 10_000, -jitter))
+  const late = run(recurringSuccessorSpec(reviewSpec, 10_000, jitter))
+  assert.deepEqual(early, { ...reviewSpec, runAt: 10_000 + base - jitter })
+  assert.deepEqual(late, { ...reviewSpec, runAt: 10_000 + base + jitter })
+
+  assert.equal(
+    errorCode(recurringSuccessorSpec(reviewSpec, 10_000, jitter + 1)),
+    "invalid_input",
+  )
+  assert.equal(
+    errorCode(recurringSuccessorSpec(reviewSpec, 10_000, -jitter - 1)),
+    "invalid_input",
+  )
+  assert.equal(
+    errorCode(recurringSuccessorSpec(reviewSpec, 10_000, 0.5)),
+    "invalid_input",
+  )
+  assert.equal(
+    errorCode(recurringSuccessorSpec(reviewSpec, -1, 0)),
+    "invalid_input",
+  )
+  assert.equal(
+    errorCode(recurringSuccessorSpec(harnessSpec, 10_000, 0)),
+    "invalid_input",
+  )
 })
 
 test("an unexpired lease cannot be reclaimed", () => {
