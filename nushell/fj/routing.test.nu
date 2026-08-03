@@ -72,7 +72,7 @@ def "test clanker dispatcher runs pi on the local model with the loop prompt" []
   let route = (clanker-route false false --dispatcher)
   assert equal $route.tool "pi-dispatcher"
   assert (("ollama/qwen3.5:9b" in $route.args))
-  assert (("/loop 10m /dispatcher" in $route.args))
+  assert (("/loop 10m /register" in $route.args))
   assert (not ("--dispatcher" in $route.args)) "--dispatcher is consumed"
 }
 
@@ -80,13 +80,13 @@ def "test clanker dispatcher resumes without re-sending the loop prompt" [] {
   let route = (clanker-route true false --dispatcher)
   assert equal $route.tool "pi-dispatcher"
   assert (("--continue" in $route.args))
-  assert (not ("/loop 10m /dispatcher" in $route.args))
+  assert (not ("/loop 10m /register" in $route.args))
 }
 
 def "test clanker dispatcher forwards an explicit prompt instead of the default" [] {
   let route = (clanker-route false false --dispatcher "check the bridge inbox")
   assert (("check the bridge inbox" in $route.args))
-  assert (not ("/loop 10m /dispatcher" in $route.args))
+  assert (not ("/loop 10m /register" in $route.args))
 }
 
 def "test clanker dispatcher forwards an explicit model override after the default" [] {

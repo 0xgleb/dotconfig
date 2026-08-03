@@ -257,7 +257,7 @@ export def --wrapped clanker-route [
   if $wants_dispatcher {
     let resume = (session-args $pi_has_session $start_fresh ["--continue" "-c" "--resume" "-r" "--session" "--session-id" "--fork"] $forwarded)
     let prompt = if ($forwarded | is-empty) and ($resume | is-empty) {
-      ["/loop 10m /dispatcher"]
+      ["/loop 10m /register"]
     } else {
       []
     }
