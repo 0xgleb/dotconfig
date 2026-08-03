@@ -1,0 +1,268 @@
+layout {
+    pane size=1 borderless=true {
+        plugin location="tab-bar"
+    }
+    pane
+    pane size=1 borderless=true {
+        plugin location="status-bar"
+    }
+
+    tab_template name="ui" {
+        pane size=1 borderless=true {
+            plugin location="tab-bar"
+        }
+        children
+        pane size=1 borderless=true {
+            plugin location="status-bar"
+        }
+    }
+
+    // ===========================================================================
+    // GRID  --  the default layout (config.kdl sets default_layout "wayout")
+    //
+    //   Row-major grid, up to 4 columns per row. Panes fill a row left-to-right
+    //   until it holds 4 columns, then a new even-height row starts below. Each
+    //   row splits its own width evenly across however many panes it holds, and
+    //   all rows share height evenly.
+    //     1..4 = one row of N even columns
+    //     5  = [4,1]   6  = [4,2]   7  = [4,3]   8  = [4,4]
+    //     9  = [4,4,1]  10 = [4,4,2]  11 = [4,4,3]  12 = [4,4,4]
+    //   ([a,b,..] = columns per row, top to bottom.)
+    //   Alt n          add a pane; it auto-rebalances into the grid
+    //   Alt e          re-even now (after a manual split/resize broke the spacing)
+    //   Alt ] / Alt [  toggle grid <-> even columns
+    //
+    // >>> TO SUPPORT MORE PANES (>12) <<<
+    //   Copy the last `ui exact_panes=12 { ... }` block, bump the number, and add
+    //   the extra pane to the last (bottom) row, starting a new row once the last
+    //   row holds 4 columns. Each row is a `pane split_direction="vertical"`
+    //   holding its columns. Every terminal cell must be a plain `pane`; the
+    //   `children` insertion point belongs only in the `ui` tab template.
+    //   To change the 4-column cap, change where rows wrap in every variant.
+    //   Verify: `zellij setup --check`  (must report "Well defined.")
+    // ===========================================================================
+    swap_tiled_layout name="grid" {
+        ui exact_panes=1 {
+            pane
+        }
+        ui exact_panes=2 {
+            pane split_direction="vertical" {
+                pane
+                pane
+            }
+        }
+        ui exact_panes=3 {
+            pane split_direction="vertical" {
+                pane
+                pane
+                pane
+            }
+        }
+        ui exact_panes=4 {
+            pane split_direction="vertical" {
+                pane
+                pane
+                pane
+                pane
+            }
+        }
+        ui exact_panes=5 {
+            pane split_direction="vertical" {
+                pane; pane; pane; pane
+            }
+            pane
+        }
+        ui exact_panes=6 {
+            pane split_direction="vertical" {
+                pane; pane; pane; pane
+            }
+            pane split_direction="vertical" {
+                pane
+                pane
+            }
+        }
+        ui exact_panes=7 {
+            pane split_direction="vertical" {
+                pane; pane; pane; pane
+            }
+            pane split_direction="vertical" {
+                pane
+                pane
+                pane
+            }
+        }
+        ui exact_panes=8 {
+            pane split_direction="vertical" {
+                pane; pane; pane; pane
+            }
+            pane split_direction="vertical" {
+                pane
+                pane
+                pane
+                pane
+            }
+        }
+        ui exact_panes=9 {
+            pane split_direction="vertical" {
+                pane; pane; pane; pane
+            }
+            pane split_direction="vertical" {
+                pane; pane; pane; pane
+            }
+            pane
+        }
+        ui exact_panes=10 {
+            pane split_direction="vertical" {
+                pane; pane; pane; pane
+            }
+            pane split_direction="vertical" {
+                pane; pane; pane; pane
+            }
+            pane split_direction="vertical" {
+                pane
+                pane
+            }
+        }
+        ui exact_panes=11 {
+            pane split_direction="vertical" {
+                pane; pane; pane; pane
+            }
+            pane split_direction="vertical" {
+                pane; pane; pane; pane
+            }
+            pane split_direction="vertical" {
+                pane
+                pane
+                pane
+            }
+        }
+        ui exact_panes=12 {
+            pane split_direction="vertical" {
+                pane; pane; pane; pane
+            }
+            pane split_direction="vertical" {
+                pane; pane; pane; pane
+            }
+            pane split_direction="vertical" {
+                pane
+                pane
+                pane
+                pane
+            }
+        }
+    }
+
+    // Alternate: N panes => N even-width columns.
+    // Toggle to/from "grid" with Alt ] / Alt [.
+    swap_tiled_layout name="columns" {
+        ui exact_panes=1 {
+            pane
+        }
+        ui exact_panes=2 {
+            pane split_direction="vertical" {
+                pane
+                pane
+            }
+        }
+        ui exact_panes=3 {
+            pane split_direction="vertical" {
+                pane; pane
+                pane
+            }
+        }
+        ui exact_panes=4 {
+            pane split_direction="vertical" {
+                pane; pane; pane
+                pane
+            }
+        }
+        ui exact_panes=5 {
+            pane split_direction="vertical" {
+                pane; pane; pane; pane
+                pane
+            }
+        }
+        ui exact_panes=6 {
+            pane split_direction="vertical" {
+                pane; pane; pane; pane; pane
+                pane
+            }
+        }
+        ui exact_panes=7 {
+            pane split_direction="vertical" {
+                pane; pane; pane; pane; pane; pane
+                pane
+            }
+        }
+        ui exact_panes=8 {
+            pane split_direction="vertical" {
+                pane; pane; pane; pane; pane; pane; pane
+                pane
+            }
+        }
+        ui exact_panes=9 {
+            pane split_direction="vertical" {
+                pane; pane; pane; pane; pane; pane; pane; pane
+                pane
+            }
+        }
+        ui exact_panes=10 {
+            pane split_direction="vertical" {
+                pane; pane; pane; pane; pane; pane; pane; pane; pane
+                pane
+            }
+        }
+        ui exact_panes=11 {
+            pane split_direction="vertical" {
+                pane; pane; pane; pane; pane; pane; pane; pane; pane; pane
+                pane
+            }
+        }
+        ui exact_panes=12 {
+            pane split_direction="vertical" {
+                pane; pane; pane; pane; pane; pane; pane; pane; pane; pane; pane
+                pane
+            }
+        }
+    }
+
+    swap_floating_layout name="staggered" {
+        floating_panes
+    }
+
+    swap_floating_layout name="enlarged" {
+        floating_panes max_panes=10 {
+            pane { x "5%"; y 1; width "90%"; height "90%"; }
+            pane { x "5%"; y 2; width "90%"; height "90%"; }
+            pane { x "5%"; y 3; width "90%"; height "90%"; }
+            pane { x "5%"; y 4; width "90%"; height "90%"; }
+            pane { x "5%"; y 5; width "90%"; height "90%"; }
+            pane { x "5%"; y 6; width "90%"; height "90%"; }
+            pane { x "5%"; y 7; width "90%"; height "90%"; }
+            pane { x "5%"; y 8; width "90%"; height "90%"; }
+            pane { x "5%"; y 9; width "90%"; height "90%"; }
+            pane { x 10; y 10; width "90%"; height "90%"; }
+        }
+    }
+
+    swap_floating_layout name="spread" {
+        floating_panes max_panes=1 {
+            pane { y "50%"; x "50%"; }
+        }
+        floating_panes max_panes=2 {
+            pane { x "1%"; y "25%"; width "45%"; }
+            pane { x "50%"; y "25%"; width "45%"; }
+        }
+        floating_panes max_panes=3 {
+            pane { y "55%"; width "45%"; height "45%"; }
+            pane { x "1%"; y "1%"; width "45%"; }
+            pane { x "50%"; y "1%"; width "45%"; }
+        }
+        floating_panes max_panes=4 {
+            pane { x "1%"; y "55%"; width "45%"; height "45%"; }
+            pane { x "50%"; y "55%"; width "45%"; height "45%"; }
+            pane { x "1%"; y "1%"; width "45%"; height "45%"; }
+            pane { x "50%"; y "1%"; width "45%"; height "45%"; }
+        }
+    }
+}
