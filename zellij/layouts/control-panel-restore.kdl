@@ -23,12 +23,6 @@ layout {
         pane split_direction="horizontal" {
             pane size="78%" split_direction="vertical" {
                 pane size="25%" split_direction="horizontal" {
-                    pane command="/Users/0xgleb/.nix-profile/bin/direnv" name="grok-1" cwd="/Users/0xgleb/code/st0x" {
-                        args "exec" "." "bash" ".tmp/grok-worker.sh" "grok-1"
-                    }
-                    pane command="/Users/0xgleb/.nix-profile/bin/direnv" name="grok-2" cwd="/Users/0xgleb/code/st0x" {
-                        args "exec" "." "bash" ".tmp/grok-worker.sh" "grok-2"
-                    }
                     pane command="/run/current-system/sw/bin/htop" cwd="/Users/0xgleb/.config"
                 }
                 pane command="/Users/0xgleb/.nix-profile/bin/direnv" name="st0x-fable" cwd="/Users/0xgleb/code/st0x" focus=true size="50%" {
@@ -48,6 +42,58 @@ layout {
             }
             pane command="/Users/0xgleb/.nix-profile/bin/direnv" name="mprocs" cwd="/Users/0xgleb/code/dataclique/yielduck" size="22%" {
                 args "exec" "." "mprocs"
+            }
+        }
+        pane size=1 borderless=true {
+            plugin location="status-bar"
+        }
+    }
+
+    // Opus workers drain the project queues. They were absent from this file,
+    // so a restore brought back the Fables and the dispatcher while the
+    // workers stayed gone - one vanished silently and the rest were relaunched
+    // by hand. `--worker` carries the standard drain mandate, so a pane
+    // definition cannot drift from what a worker is supposed to be.
+    tab name="opus workers" {
+        pane size=1 borderless=true {
+            plugin location="tab-bar"
+        }
+        pane split_direction="vertical" {
+            pane command="/Users/0xgleb/.nix-profile/bin/jf" name="opus-config" cwd="/Users/0xgleb/.config" {
+                args "clanker" "--worker"
+            }
+            pane command="/Users/0xgleb/.nix-profile/bin/direnv" name="opus-st0x-1" cwd="/Users/0xgleb/code/st0x" {
+                args "exec" "." "jf" "clanker" "--worker"
+            }
+            pane command="/Users/0xgleb/.nix-profile/bin/direnv" name="opus-st0x-2" cwd="/Users/0xgleb/code/st0x" {
+                args "exec" "." "jf" "clanker" "--worker"
+            }
+            pane command="/Users/0xgleb/.nix-profile/bin/direnv" name="opus-yielduck" cwd="/Users/0xgleb/code/dataclique/yielduck" {
+                args "exec" "." "jf" "clanker" "--worker"
+            }
+        }
+        pane size=1 borderless=true {
+            plugin location="status-bar"
+        }
+    }
+
+    // Grok research lanes. These previously ran a job-file polling script that
+    // has since been retired; they are ordinary /register sessions now, so a
+    // restore brings them back onto the roster rather than watching a
+    // directory nothing writes to.
+    tab name="grok workers" {
+        pane size=1 borderless=true {
+            plugin location="tab-bar"
+        }
+        pane split_direction="vertical" {
+            pane command="/Users/0xgleb/.nix-profile/bin/cursor-agent" name="grok-config-1" cwd="/Users/0xgleb/.config" {
+                args "--model" "grok-4.5-xhigh" "--auto-review" "--workspace" "/Users/0xgleb/.config" "/register 3m You are grok-config-1, a research worker on the .config project. Register on the bridge roster with the agent id grok-config-1. Take only bounded fully-specified research and drafting items. Never push, commit, merge, comment on GitHub, or submit review verdicts. Report outcomes through the dispatcher."
+            }
+            pane command="/Users/0xgleb/.nix-profile/bin/direnv" name="grok-st0x-1" cwd="/Users/0xgleb/code/st0x" {
+                args "exec" "." "cursor-agent" "--model" "grok-4.5-xhigh" "--auto-review" "--workspace" "/Users/0xgleb/code/st0x" "/register 3m You are grok-st0x-1, a research worker on the st0x project. Register on the bridge roster with the agent id grok-st0x-1. Take only bounded fully-specified research and drafting items. Never push, commit, merge, comment on GitHub, or submit review verdicts. Report outcomes through the dispatcher."
+            }
+            pane command="/Users/0xgleb/.nix-profile/bin/direnv" name="grok-yielduck-1" cwd="/Users/0xgleb/code/dataclique/yielduck" {
+                args "exec" "." "cursor-agent" "--model" "grok-4.5-xhigh" "--auto-review" "--workspace" "/Users/0xgleb/code/dataclique/yielduck" "/register 3m You are grok-yielduck-1, a research worker on the yielduck project. Register on the bridge roster with the agent id grok-yielduck-1. Take only bounded fully-specified research and drafting items. Never push, commit, merge, comment on GitHub, or submit review verdicts. Report outcomes through the dispatcher."
             }
         }
         pane size=1 borderless=true {

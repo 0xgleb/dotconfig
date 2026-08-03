@@ -250,6 +250,14 @@ def session-args [has_session: bool, start_fresh: bool, resume_flags: list<strin
   if $has_session and not ($start_fresh or $steers_session) { ["--continue"] } else { [] }
 }
 
+# The standing mandate every project Opus worker starts with. Kept here rather
+# than in each pane definition so the fleet cannot drift into per-worker
+# variants of the same instruction.
+def worker-mandate [project: string]: nothing -> string {
+  let subject = if ($project | is-empty) { "project" } else { $project }
+  $"/register 15m You are the ($subject) Opus worker. Drain the ($subject) queue per the register skill at 15m cadence. Delegate bounded read-only research to grok 4.5 cursor-agent workers freely."
+}
+
 # The --claude and --new selectors are consumed from the rest args rather than
 # declared as switches: the `clanker` wrapper is --wrapped, so user flags reach
 # this command as runtime strings via spread, which nushell never re-parses
@@ -258,12 +266,35 @@ export def --wrapped clanker-route [
   pi_has_session: bool
   claude_has_session: bool
   --remote-control
+  --project: string = "" # project name the worker mandate is written for
   ...args: string
 ]: nothing -> record<tool: string, args: list<string>> {
   let wants_claude = ("--claude" in $args)
   let wants_dispatcher = ("--dispatcher" in $args)
+  let wants_worker = ("--worker" in $args)
   let start_fresh = ("--new" in $args)
-  let forwarded = ($args | where {|arg| $arg not-in ["--claude" "--new" "--dispatcher"] })
+  let forwarded = ($args | where {|arg| $arg not-in ["--claude" "--new" "--dispatcher" "--worker"] })
+  # A worker is a fresh Opus session carrying the standard drain mandate, so
+  # the fleet can be rebuilt one command at a time instead of by pasting a
+  # paragraph per pane. It never resumes: a worker that continues an old
+  # session inherits a stale queue view and a cron it did not arm.
+  if $wants_worker {
+    return {
+      tool: "claude"
+      args: (
+        [
+          "--settings"
+          '{"effortLevel": "high", "enableWorkflows": true, "tui": "fullscreen"}'
+          "--permission-mode"
+          "auto"
+          "--model"
+          "opus"
+        ]
+        | append $forwarded
+        | append [(worker-mandate $project)]
+      )
+    }
+  }
   if $wants_dispatcher {
     let resume = (session-args $pi_has_session $start_fresh ["--continue" "-c" "--resume" "-r" "--session" "--session-id" "--fork"] $forwarded)
     let prompt = if ($forwarded | is-empty) and ($resume | is-empty) {

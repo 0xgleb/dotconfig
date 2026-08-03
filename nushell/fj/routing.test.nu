@@ -76,6 +76,26 @@ def "test clanker dispatcher runs pi on the local model with the loop prompt" []
   assert (not ("--dispatcher" in $route.args)) "--dispatcher is consumed"
 }
 
+def "test clanker worker starts a fresh opus session carrying the drain mandate" [] {
+  let route = (clanker-route true true --project "st0x" --worker)
+  assert equal $route.tool "claude"
+  assert (("opus" in $route.args))
+  assert (not ("--worker" in $route.args)) "--worker is consumed"
+  let mandate = ($route.args | last)
+  assert ($mandate | str starts-with "/register 15m")
+  assert ($mandate | str contains "st0x Opus worker")
+}
+
+def "test clanker worker never resumes an existing session" [] {
+  let route = (clanker-route true true --project "st0x" --worker)
+  assert (not ("--continue" in $route.args)) "a worker resuming inherits a stale queue view and an unarmed cron"
+}
+
+def "test clanker worker names the project it drains" [] {
+  let route = (clanker-route false false --project "yielduck" --worker)
+  assert (($route.args | last) | str contains "yielduck queue")
+}
+
 def "test clanker dispatcher pins its project root instead of inheriting the launch directory" [] {
   let route = (clanker-route false false --dispatcher)
   assert equal $route.cwd "/Users/0xgleb/.config" "the dispatch lane must not adopt the launching pane's directory as its project"

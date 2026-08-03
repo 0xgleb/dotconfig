@@ -112,7 +112,8 @@ export def --wrapped clanker [...args: string] {
     and ((glob $"($pi_dir)/*.jsonl") | is-not-empty)
   )
   let on_nixxxos = ((^hostname | str trim) == "nixxxos")
-  let route = (clanker-route $pi_has_session $claude_has_session --remote-control=$on_nixxxos ...$args)
+  let project = if $env.PWD == $nu.home-dir { "home" } else { $env.PWD | path basename }
+  let route = (clanker-route $pi_has_session $claude_has_session --remote-control=$on_nixxxos --project=$project ...$args)
   match $route.tool {
     "pi" => { ^pi ...$route.args }
     "pi-dispatcher" => {
