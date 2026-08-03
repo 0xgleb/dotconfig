@@ -2,6 +2,7 @@ import { readFile } from "node:fs/promises";
 import { homedir } from "node:os";
 import { Data, Effect } from "effect";
 import { pieceOfPiStatePath } from "./paths.ts";
+import { telegramHtmlChunks } from "./telegram-format.ts";
 import { decodeTelegramSentMessageId } from "./telegram.ts";
 
 const TELEGRAM_MESSAGE_LIMIT = 4_000;
@@ -121,15 +122,16 @@ const ownerChatId: Effect.Effect<number, OwnerRelayDeliveryError> =
     ),
   );
 
-const ownerRelayChunks = (text: string): readonly string[] =>
-  Array.from(
-    { length: Math.max(1, Math.ceil(text.length / TELEGRAM_MESSAGE_LIMIT)) },
-    (_, index) =>
-      text.slice(
-        index * TELEGRAM_MESSAGE_LIMIT,
-        (index + 1) * TELEGRAM_MESSAGE_LIMIT,
-      ),
-  );
+/**
+ * Relayed reports are the owner's primary view of what the fleet did, and they
+ * arrive as dense prose when the transport cannot render structure. The
+ * command lane already renders a markdown subset into Telegram HTML; the relay
+ * lane is what agents actually report through, so it renders the same way.
+ * Splitting on rendered units also stops a blind character slice from cutting
+ * a tag in half and failing the send.
+ */
+export const ownerRelayChunks = (text: string): readonly string[] =>
+  telegramHtmlChunks(text, TELEGRAM_MESSAGE_LIMIT);
 
 const sendOwnerMessage = (
   token: string,
@@ -144,7 +146,11 @@ const sendOwnerMessage = (
         {
           method: "POST",
           headers: { "content-type": "application/json" },
-          body: JSON.stringify({ chat_id: chatId, text }),
+          body: JSON.stringify({
+            chat_id: chatId,
+            text,
+            parse_mode: "HTML",
+          }),
         },
       );
       status = response.status;
