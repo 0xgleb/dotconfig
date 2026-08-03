@@ -951,10 +951,15 @@ const awaitBridgeResult = (
           ),
         );
       }
-      return advanceBridgeFeedback(
-        runtime,
-        chatId,
-        feedback,
+      // Typing means an agent is working, so it only refreshes while the
+      // message is actually claimed. A queued message is one nobody has
+      // picked up - possibly nobody ever will - and refreshing through the
+      // full one-hour window told the owner work was underway for an hour
+      // when none had started.
+      return (
+        message.status === "claimed"
+          ? advanceBridgeFeedback(runtime, chatId, feedback)
+          : Effect.succeed(feedback)
       ).pipe(
         Effect.flatMap((nextFeedback) =>
           Effect.sleep(BRIDGE_RESULT_POLL_INTERVAL).pipe(
