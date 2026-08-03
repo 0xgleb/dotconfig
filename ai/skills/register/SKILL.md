@@ -156,6 +156,31 @@ session re-arms by invoking `/register` once.
 5. **Yield**: end the iteration and let the schedule fire the next one. Do not
    busy-wait between fires.
 
+## Ask the owner instead of guessing
+
+A guess that survives review costs nothing; a guess that ships costs a rewrite
+and the owner's attention twice. The tiering exists precisely because guess
+quality degrades down it — Fable and GPT-5.6 Sol guess tolerably, and that is
+exactly why work landing below them must ask rather than assume.
+
+Ask whenever a decision would change what gets built and the answer is not
+already in the repo, the issue, or the current instruction: which of several
+designs, which model or identifier, whether to touch something outside the
+stated scope, or which of two readings of an ambiguous request is meant.
+
+- **Pi sessions** call the `ask_user` tool. The question relays to Telegram,
+  binds to that exact `(agent_id, question_id)`, and the owner answers by
+  replying to the card. `/questions` lists everything pending.
+- **Claude Code sessions** use their own question tool. `ask_user` is a Pi tool
+  and `pi-bridge` has no ask verb, so a Claude session cannot put a question on
+  the owner's `/questions` list — do not pretend otherwise, and do not
+  substitute a relayed report for a question.
+
+Offer real options, not a blank prompt: name the choices you actually
+considered and which one you would take. Keep working on everything the answer
+does not block — asking is not a reason to stall the queue. And when the answer
+arrives, follow it rather than the version of it you expected.
+
 ## Dispatcher lane
 
 A session on the local Ollama model is the dispatcher lane: the remote-control
