@@ -14,11 +14,22 @@ import {
 } from "./protocol.ts";
 
 test("remote prompts are explicitly communication-only", () => {
-  const prompt = remoteTurnPrompt("Give me a concise status update.");
+  const prompt = remoteTurnPrompt("Give me a concise status update.", "conversational");
   assert.match(prompt, /Authenticated Piece of Pi Telegram/i);
   assert.match(prompt, /all tools are disabled/i);
   assert.match(prompt, /Do not execute or approve actions/i);
   assert.match(prompt, /Give me a concise status update/);
+});
+
+test("dispatch-lane remote prompts forbid answering and demand routing", () => {
+  const prompt = remoteTurnPrompt("ask ~/.config if it knows the song", "dispatch");
+  assert.match(prompt, /Authenticated Piece of Pi Telegram/i);
+  assert.match(prompt, /all tools are disabled/i);
+  assert.match(prompt, /never answer, analyze, or resolve/i);
+  assert.match(prompt, /one short acknowledgement/i);
+  assert.match(prompt, /routed raw/i);
+  assert.match(prompt, /ask ~\/\.config if it knows the song/);
+  assert.doesNotMatch(prompt, /Reply conversationally/);
 });
 
 test("owner messages retain a bounded one-hour delivery window", () => {
@@ -47,7 +58,7 @@ test("remote image payloads use Pi image content accepted by model providers", (
     data: Buffer.from("safe-image-fixture").toString("base64"),
   };
   assert.deepEqual(boundedBridgeImages([image]), [image]);
-  assert.deepEqual(remoteTurnContent("Describe this", [image]).at(-1), {
+  assert.deepEqual(remoteTurnContent("Describe this", [image], "conversational").at(-1), {
     type: "image",
     data: image.data,
     mimeType: image.mediaType,

@@ -121,8 +121,7 @@ const isPiBridgeRoutingCommand = (command: string): boolean => {
   return PI_BRIDGE_LIST.test(trimmed) || PI_BRIDGE_SEND.test(trimmed);
 };
 
-export const isLocalDispatchProvider = (provider: string | undefined): boolean =>
-  provider === "ollama";
+export { isLocalDispatchProvider } from "../shared/local-lane.ts";
 
 export const localDispatchLaneBlock = (toolName: string): Decision => ({
   verdict: "block",

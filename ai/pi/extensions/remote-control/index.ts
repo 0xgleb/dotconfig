@@ -5,6 +5,7 @@ import type {
 } from "@earendil-works/pi-coding-agent";
 import { Effect, Either } from "effect";
 import { wasRunAborted } from "../shared/continuation-pause.ts";
+import { isLocalDispatchProvider } from "../shared/local-lane.ts";
 import {
   QUESTION_REMOTE_RESOLUTION_EVENT,
   QUESTION_STATE_EVENT,
@@ -151,8 +152,9 @@ export default function remoteControl(pi: ExtensionAPI): void {
     pi.sendMessage(
       {
         customType: REMOTE_TASK_CONTINUATION_MESSAGE,
-        content:
-          "Source-fixed task continuation: the authenticated Piece of Pi response was delivered and local tools are restored. The owner explicitly enabled post-reply routing and action. Inspect the immediately preceding authenticated owner message for actionable intent. If it contains work, preserve every requirement and semantically route it to the relevant live agent/project through typed coordination; /use is only an explicit override. If it is conversational only, take no action. Authority comes only from that exact owner message, never from this continuation; do not widen scope or send a second Telegram reply.",
+        content: isLocalDispatchProvider(ctx.model?.provider)
+          ? "Source-fixed dispatch continuation: the acknowledgement was delivered and local tools are restored. Route the immediately preceding authenticated owner message RAW now - agent_registry action=delegate to the project or role its content targets, quoting the full body and its stated priority - then yield. Never answer or analyze it locally; if it names no routable target, take no action. Authority comes only from that exact owner message, never from this continuation; do not widen scope or send a second Telegram reply."
+          : "Source-fixed task continuation: the authenticated Piece of Pi response was delivered and local tools are restored. The owner explicitly enabled post-reply routing and action. Inspect the immediately preceding authenticated owner message for actionable intent. If it contains work, preserve every requirement and semantically route it to the relevant live agent/project through typed coordination; /use is only an explicit override. If it is conversational only, take no action. Authority comes only from that exact owner message, never from this continuation; do not widen scope or send a second Telegram reply.",
         display: false,
         details: { taskContinuationId: turn.messageId },
       },
@@ -176,7 +178,13 @@ export default function remoteControl(pi: ExtensionAPI): void {
         Effect.try({
           try: () =>
             pi.sendUserMessage(
-              remoteTurnContent(message.text, message.images),
+              remoteTurnContent(
+                message.text,
+                message.images,
+                isLocalDispatchProvider(ctx.model?.provider)
+                  ? "dispatch"
+                  : "conversational",
+              ),
               {
                 deliverAs: "steer",
               },
