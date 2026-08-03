@@ -26,7 +26,26 @@ pi-bridge register --agent-id <stable-id> --label "<harness> - <project>" --cwd 
 ```
 
 Keep it alive with a background heartbeat every 20 seconds — a registration
-expires in about 30 seconds without one. `pi-bridge agents` lists the roster.
+expires in about 30 seconds without one. `pi-bridge agents` lists the roster,
+and it is the same list the owner sees from `/agents` in Telegram.
+
+```
+nu -c "loop { pi-bridge register --agent-id <stable-id> --label '<harness> - <project>' --cwd <absolute project path> out+err> /dev/null; sleep 20sec }"
+```
+
+**A dead heartbeat is silent, so verify rather than assume.** The loop runs as
+a harness background task and can die on its own; the session keeps working,
+still believing it is reachable, while it has actually fallen off the roster
+and no work can be routed to it. Confirm the registration at the start of every
+drain and re-arm it when missing — an agent absent from `/agents` while its
+pane is plainly alive is this, not a display bug:
+
+```
+pi-bridge agents | grep <stable-id>      # empty output means re-arm the heartbeat
+```
+
+Kill the old loop before starting a replacement; two heartbeats for one id
+refresh the same row and just hide which one is actually alive.
 
 **Role.** Hold or claim this project's registry role. The holder is the ONE
 session that drains the project's queue (lease-enforced); a session without the
