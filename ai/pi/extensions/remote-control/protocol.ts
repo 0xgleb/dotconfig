@@ -258,6 +258,26 @@ export interface RouteDirective {
  * delivered verbatim by the extension; everything outside valid directives
  * is discarded, and unrouted messages fall back to the dispatcher project.
  */
+export const MAX_ROSTER_LABEL_CHARACTERS = 160;
+
+/**
+ * Roster fields are attacker-influenced: any local caller can register a
+ * bridge agent with a chosen label, cwd, and id, and those land in the
+ * dispatcher's routing prompt. A newline inside a label would inject its own
+ * prompt line, and a `route:` line is all it takes to redirect authenticated
+ * owner messages to a project of the registrant's choosing.
+ *
+ * This neutralizes rather than rejects. The prompt is built from every live
+ * agent, so throwing on one malformed registration would wedge routing for
+ * the whole fleet - a denial of service in place of an injection.
+ */
+const rosterField = (value: string): string =>
+  value
+    .replace(/[\p{Cc}\p{Cf}\p{Zl}\p{Zp}]/gu, " ")
+    .replace(/\s+/gu, " ")
+    .trim()
+    .slice(0, MAX_ROSTER_LABEL_CHARACTERS);
+
 export const routingBatchPrompt = (
   messages: readonly RoutableMessage[],
   roster: readonly RosterAgent[],
@@ -268,7 +288,10 @@ export const routingBatchPrompt = (
     "route: <absolute project path> | messages: <numbers> | note: <short instruction for that agent, optional>",
     "Split multi-topic batches across agents; a message may appear in several directives when its parts belong to different agents.",
     "Roster:",
-    ...roster.map((agent) => `- ${agent.cwd} · ${agent.label} (${agent.id})`),
+    ...roster.map(
+      (agent) =>
+        `- ${rosterField(agent.cwd)} · ${rosterField(agent.label)} (${rosterField(agent.id)})`,
+    ),
     "Anything else you write is discarded; original message texts are delivered verbatim by the system.",
     "",
     "Messages:",

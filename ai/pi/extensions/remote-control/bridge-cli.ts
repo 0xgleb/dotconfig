@@ -6,8 +6,10 @@ import {
   BRIDGE_AGENT_TTL_MS,
   BRIDGE_MESSAGE_TTL_MS,
   MAX_REMOTE_MESSAGE_CHARACTERS,
+  MAX_ROSTER_LABEL_CHARACTERS,
   RemoteBridgeError,
   type RemoteMessage,
+  boundedBridgeText,
 } from "./protocol.ts";
 import { makeRemoteBridgeStore } from "./sqlite-store.ts";
 
@@ -99,11 +101,36 @@ const command = (args: readonly string[]): Effect.Effect<unknown, RemoteBridgeEr
       const id = yield* requiredOption(args, "--agent-id");
       const label = yield* requiredOption(args, "--label");
       const cwd = yield* requiredOption(args, "--cwd");
+      // Registration is where a bad roster field is cheap to refuse. The
+      // prompt builder neutralizes what reaches it, but a caller that sends a
+      // relative cwd or an unbounded label should learn so here rather than
+      // silently appear on the roster in a mangled form.
+      const boundedLabel = yield* Effect.try({
+        try: () => boundedBridgeText("--label", label, MAX_ROSTER_LABEL_CHARACTERS),
+        catch: (error) => error as RemoteBridgeError,
+      });
+      if (!cwd.startsWith("/")) {
+        return yield* Effect.fail(
+          new RemoteBridgeError({
+            code: "invalid_input",
+            message: "--cwd must be an absolute path",
+          }),
+        );
+      }
+      const accepting = option(args, "--accepting")?.trim();
+      if (accepting !== undefined && accepting !== "true" && accepting !== "false") {
+        return yield* Effect.fail(
+          new RemoteBridgeError({
+            code: "invalid_input",
+            message: "--accepting must be true or false",
+          }),
+        );
+      }
       const agent = yield* store.heartbeatAgent({
         id,
-        label,
+        label: boundedLabel,
         cwd,
-        accepting: option(args, "--accepting")?.trim() !== "false",
+        accepting: accepting !== "false",
         now: Date.now(),
         ttlMs: BRIDGE_AGENT_TTL_MS,
       });
