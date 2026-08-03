@@ -23,3 +23,11 @@ test("request mutations resolve an exact id or unique prefix to the canonical id
   assert.match(source, /const requestId = target\.id/)
   assert.match(source, /request prefix is ambiguous/)
 })
+
+test("registry outcome handler stores the resolved full id, not the requested prefix", () => {
+  assert.match(source, /request\.id\.startsWith\(payload\.requestId\)/)
+  assert.match(source, /request id prefix is ambiguous/)
+  assert.match(source, /store\.claimRequest\(\{\s*requestId: target\.id,/)
+  assert.match(source, /store\.completeRequest\(\{\s*requestId: target\.id,/)
+  assert.match(source, /store\.failRequest\(\{\s*requestId: target\.id,/)
+})

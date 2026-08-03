@@ -114,7 +114,7 @@ const requireText: (label: string, value: string | undefined) => string = (
 }
 
 const registryExtension: (pi: ExtensionAPI) => void = (pi) => {
-  registerRuntimeVersion(pi, "agent-registry", "2026.08.03.25")
+  registerRuntimeVersion(pi, "agent-registry", "2026.08.03.26")
   const runtimeVersions = (): Readonly<Record<string, string>> => {
     const versions: Record<string, string> = {
       "config-generation": MANAGED_CONFIG_GENERATION,
@@ -358,7 +358,7 @@ const registryExtension: (pi: ExtensionAPI) => void = (pi) => {
         if (target.status === "queued") {
           await run(
             store.claimRequest({
-              requestId: payload.requestId,
+              requestId: target.id,
               leaseId: lease.id,
               agentId: agent.id,
               now,
@@ -369,7 +369,7 @@ const registryExtension: (pi: ExtensionAPI) => void = (pi) => {
         if (payload.resolution === "completed") {
           await run(
             store.completeRequest({
-              requestId: payload.requestId,
+              requestId: target.id,
               leaseId: lease.id,
               agentId: agent.id,
               summary,
@@ -379,7 +379,7 @@ const registryExtension: (pi: ExtensionAPI) => void = (pi) => {
         } else {
           await run(
             store.failRequest({
-              requestId: payload.requestId,
+              requestId: target.id,
               leaseId: lease.id,
               agentId: agent.id,
               failure: "error",
