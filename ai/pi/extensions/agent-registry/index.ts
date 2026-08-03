@@ -7,6 +7,7 @@ import type {
 import { Type } from "typebox"
 import type { Effect } from "effect"
 import { isContinuationPaused } from "../shared/continuation-pause.ts"
+import { isLocalDispatchProvider } from "../shared/local-lane.ts"
 import {
   AUTO_RELOAD_PENDING_REQUEST_EVENT,
   type AutoReloadPendingReporter,
@@ -17,11 +18,13 @@ import {
   REGISTRY_IDENTITY_REQUEST_EVENT,
   REGISTRY_INTENT_REQUEST_EVENT,
   REGISTRY_OUTCOME_EVENT,
+  REGISTRY_PROJECTS_REQUEST_EVENT,
   type ManagedOperationalRoleResumed,
   type RegistryDelegateRequest,
   type RegistryIdentityRequest,
   type RegistryIntentRequest,
   type RegistryOutcomeRequest,
+  type RegistryProjectsRequest,
 } from "../shared/registry-intent-events.ts"
 import {
   MANAGED_CONFIG_GENERATION,
@@ -114,7 +117,7 @@ const requireText: (label: string, value: string | undefined) => string = (
 }
 
 const registryExtension: (pi: ExtensionAPI) => void = (pi) => {
-  registerRuntimeVersion(pi, "agent-registry", "2026.08.03.26")
+  registerRuntimeVersion(pi, "agent-registry", "2026.08.03.27")
   const runtimeVersions = (): Readonly<Record<string, string>> => {
     const versions: Record<string, string> = {
       "config-generation": MANAGED_CONFIG_GENERATION,
@@ -402,6 +405,37 @@ const registryExtension: (pi: ExtensionAPI) => void = (pi) => {
     })()
   })
 
+  /**
+   * Roster lane for routing. Live leases expire long before a receiver's next
+   * poll, so the known-project set is drawn from leases and requests alike and
+   * a failure reports an empty list: the caller then falls back to live agents
+   * rather than losing its turn.
+   */
+  pi.events.on(
+    REGISTRY_PROJECTS_REQUEST_EVENT,
+    (payload: RegistryProjectsRequest) => {
+      if (
+        typeof payload !== "object" ||
+        payload === null ||
+        typeof payload.report !== "function"
+      ) {
+        return
+      }
+      void (async () => {
+        try {
+          const snapshot = await run(store.snapshot(Date.now()))
+          const projects = new Set<string>([
+            ...snapshot.leases.map((lease) => lease.project),
+            ...snapshot.requests.map((request) => request.project),
+          ])
+          payload.report([...projects])
+        } catch {
+          payload.report([])
+        }
+      })()
+    },
+  )
+
   const ownedLeases = (
     snapshot: RegistrySnapshot,
     agentId: string,
@@ -554,13 +588,25 @@ const registryExtension: (pi: ExtensionAPI) => void = (pi) => {
       for (const lease of ownedLeases(snapshot, agent.id).filter(
         ({ status }) => status === "active",
       )) {
-        const candidates = snapshot.requests.filter(
-          (request) =>
-            request.project === lease.project &&
-            request.role === lease.role &&
-            (request.status === "queued" ||
-              (request.status === "claimed" && request.leaseId !== lease.id)),
+        /**
+         * The dispatch lane only enqueues requests and records outcomes through
+         * events; it never executes queue work. Claiming there (including
+         * stealing an expired lease) would hide the row from the receiver that
+         * will actually run it, so the whole claim path is skipped on that lane
+         * while the session's own role lease keeps heartbeating above.
+         */
+        const candidates: readonly RegistryRequest[] = isLocalDispatchProvider(
+          ctx.model?.provider,
         )
+          ? []
+          : snapshot.requests.filter(
+              (request) =>
+                request.project === lease.project &&
+                request.role === lease.role &&
+                (request.status === "queued" ||
+                  (request.status === "claimed" &&
+                    request.leaseId !== lease.id)),
+            )
         for (const request of candidates) {
           try {
             const claimed = await run(

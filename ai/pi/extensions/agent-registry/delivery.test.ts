@@ -24,6 +24,25 @@ test("request mutations resolve an exact id or unique prefix to the canonical id
   assert.match(source, /request prefix is ambiguous/)
 })
 
+test("the dispatch lane heartbeats its role but never claims queue requests", () => {
+  assert.match(
+    source,
+    /import \{ isLocalDispatchProvider \} from "\.\.\/shared\/local-lane\.ts"/,
+  )
+  assert.match(
+    source,
+    /const candidates: readonly RegistryRequest\[\] = isLocalDispatchProvider\(\s*ctx\.model\?\.provider,\s*\)\s*\?\s*\[\]\s*:\s*snapshot\.requests\.filter\(/,
+  )
+  assert.match(
+    source,
+    /const candidates: readonly RegistryRequest\[\] = isLocalDispatchProvider[\s\S]*?store\.claimRequest\(\{/,
+  )
+  assert.match(
+    source,
+    /store\.heartbeatAgent\(\{[\s\S]*?store\.heartbeat\(\{[\s\S]*?const candidates: readonly RegistryRequest\[\] = isLocalDispatchProvider/,
+  )
+})
+
 test("registry outcome handler stores the resolved full id, not the requested prefix", () => {
   assert.match(source, /request\.id\.startsWith\(payload\.requestId\)/)
   assert.match(source, /request id prefix is ambiguous/)
