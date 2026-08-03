@@ -109,6 +109,30 @@ session re-arms by invoking `/register` once.
    channel yourself. If the dispatcher is unreachable, keep the outcome in the
    task list and retry next iteration. Backlog items with no request id are
    reported to the project owner in-session.
+
+   **Reaching the owner needs the `relay-to-owner:` prefix.** A bridge send
+   whose text does not match a known frame is treated as routable payload and
+   delegated to a project queue instead of being relayed, so a plain-text
+   report to the owner never arrives — it is filed against some project, and
+   surfaces an hour later as an expiry notice if it is filed against one
+   nothing drains:
+
+   ```
+   printf '%s' 'relay-to-owner: <one bounded report, no apostrophes>' | pi-bridge send --agent <dispatcher-id> --dedupe <key>
+   ```
+
+   The send returns `queued` either way, so a successful call is not evidence
+   of delivery. Confirm before trusting it — the response reads `Relayed to
+   owner on Telegram.` when it landed, and `Routed to <project> (request
+   <id>)` when it did not:
+
+   ```
+   nu -c "open ~/.local/state/pi/remote-control/bridge.sqlite | query db \"SELECT status, response FROM bridge_messages WHERE dedupe_key = '<key>'\" | to json"
+   ```
+
+   A session signing off MUST verify its final reports this way before tearing
+   down. A worker that ends believing it reported takes its context with it,
+   and the report cannot be re-sent by anyone once the session is gone.
 5. **Yield**: end the iteration and let the schedule fire the next one. Do not
    busy-wait between fires.
 
