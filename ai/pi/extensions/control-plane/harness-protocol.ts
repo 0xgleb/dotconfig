@@ -1,4 +1,3 @@
-import { isAbsolute, normalize } from "node:path"
 import { Data, Effect } from "effect"
 import {
   automaticRepositoryForProfile,
@@ -114,8 +113,16 @@ const isCanonicalAbsolutePath = (value: unknown): value is string =>
   typeof value === "string" &&
   value.length >= 1 &&
   value.length <= 1_024 &&
-  isAbsolute(value) &&
-  normalize(value) === value
+  value.startsWith("/") &&
+  (value === "/" ||
+    (!value.endsWith("/") &&
+      value
+        .split("/")
+        .slice(1)
+        .every(
+          (segment) =>
+            segment.length > 0 && segment !== "." && segment !== "..",
+        )))
 
 const CREDENTIAL_SEGMENTS = [".ssh", ".gnupg", ".aws"] as const
 
