@@ -1,3 +1,0 @@
-ancestorEntries = ["ai/pi/extensions/control-plane/sqlite-job-store.test.ts", "ai/pi/extensions/control-plane/sqlite-job-store.ts"]
-ourEntries = ["ai/pi/extensions/control-plane/sqlite-job-store.test.ts", "ai/pi/extensions/control-plane/sqlite-job-store.ts"]
-theirEntries = ["ai/pi/extensions/control-plane/sqlite-job-store.test.ts", "ai/pi/extensions/control-plane/sqlite-job-store.ts"]
