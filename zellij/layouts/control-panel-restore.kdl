@@ -60,16 +60,16 @@ layout {
         }
         pane split_direction="vertical" {
             pane command="/Users/0xgleb/.nix-profile/bin/jf" name="opus-config" cwd="/Users/0xgleb/.config" {
-                args "clanker" "--worker"
+                args "clanker" "--claude" "--worker"
             }
             pane command="/Users/0xgleb/.nix-profile/bin/direnv" name="opus-st0x-1" cwd="/Users/0xgleb/code/st0x" {
-                args "exec" "." "jf" "clanker" "--worker"
+                args "exec" "." "jf" "clanker" "--claude" "--worker"
             }
             pane command="/Users/0xgleb/.nix-profile/bin/direnv" name="opus-st0x-2" cwd="/Users/0xgleb/code/st0x" {
-                args "exec" "." "jf" "clanker" "--worker"
+                args "exec" "." "jf" "clanker" "--claude" "--worker"
             }
             pane command="/Users/0xgleb/.nix-profile/bin/direnv" name="opus-yielduck" cwd="/Users/0xgleb/code/dataclique/yielduck" {
-                args "exec" "." "jf" "clanker" "--worker"
+                args "exec" "." "jf" "clanker" "--claude" "--worker"
             }
         }
         pane size=1 borderless=true {

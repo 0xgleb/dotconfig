@@ -250,12 +250,26 @@ def session-args [has_session: bool, start_fresh: bool, resume_flags: list<strin
   if $has_session and not ($start_fresh or $steers_session) { ["--continue"] } else { [] }
 }
 
-# The standing mandate every project Opus worker starts with. Kept here rather
-# than in each pane definition so the fleet cannot drift into per-worker
-# variants of the same instruction.
-def worker-mandate [project: string]: nothing -> string {
+# The tier a `--worker` session drops to on the Pi harness. Claude Code drops
+# from Fable to Opus; Pi runs GPT-5.6 Sol, which is its own frontier, so the
+# flag names it explicitly rather than inheriting whatever the session default
+# happens to be.
+const pi_worker_model = "openai-codex/gpt-5.6-sol"
+
+# The standing mandate every project worker starts with, kept here rather than
+# in each pane definition so the fleet cannot drift into per-worker variants of
+# the same instruction. A resuming session already has it and would only be
+# re-instructed mid-conversation, so the mandate rides a fresh session only.
+def worker-prompt [
+  wants_worker: bool
+  project: string
+  resume: list<string>
+]: nothing -> list<string> {
+  if not $wants_worker or ($resume | is-not-empty) {
+    return []
+  }
   let subject = if ($project | is-empty) { "project" } else { $project }
-  $"/register 15m You are the ($subject) Opus worker. Drain the ($subject) queue per the register skill at 15m cadence. Delegate bounded read-only research to grok 4.5 cursor-agent workers freely."
+  [$"/register 15m You are the ($subject) worker. Drain the ($subject) queue per the register skill at 15m cadence. Delegate bounded read-only research to grok 4.5 cursor-agent workers freely."]
 }
 
 # The --claude and --new selectors are consumed from the rest args rather than
@@ -295,6 +309,8 @@ export def --wrapped clanker-route [
   if $wants_claude {
     let resume = (session-args $claude_has_session $start_fresh ["--continue" "-c" "--resume" "-r" "--from-pr"] $forwarded)
     let remote = if $remote_control { ["--remote-control"] } else { [] }
+    let tier = if $wants_worker { ["--model" "opus"] } else { [] }
+    let mandate = (worker-prompt $wants_worker $project $resume)
     {
       tool: "claude"
       args: ([
@@ -302,13 +318,15 @@ export def --wrapped clanker-route [
         '{"effortLevel": "high", "enableWorkflows": true, "tui": "fullscreen"}'
         "--permission-mode"
         "auto"
-      ] | append $remote | append $resume | append $forwarded)
+      ] | append $remote | append $tier | append $resume | append $forwarded | append $mandate)
     }
   } else {
     let resume = (session-args $pi_has_session $start_fresh ["--continue" "-c" "--resume" "-r" "--session" "--session-id" "--fork"] $forwarded)
+    let tier = if $wants_worker { ["--model" $pi_worker_model] } else { [] }
+    let mandate = (worker-prompt $wants_worker $project $resume)
     {
       tool: "pi"
-      args: (["--thinking" "high"] | append $resume | append $forwarded)
+      args: (["--thinking" "high"] | append $tier | append $resume | append $forwarded | append $mandate)
     }
   }
 }

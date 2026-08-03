@@ -76,24 +76,34 @@ def "test clanker dispatcher runs pi on the local model with the loop prompt" []
   assert (not ("--dispatcher" in $route.args)) "--dispatcher is consumed"
 }
 
-def "test clanker worker starts a fresh opus session carrying the drain mandate" [] {
-  let route = (clanker-route true true --project "st0x" --worker)
+def "test clanker worker drops claude to the tier behind the frontier" [] {
+  let route = (clanker-route false false --project "st0x" --claude --worker)
   assert equal $route.tool "claude"
   assert (("opus" in $route.args))
   assert (not ("--worker" in $route.args)) "--worker is consumed"
   let mandate = ($route.args | last)
   assert ($mandate | str starts-with "/register 15m")
-  assert ($mandate | str contains "st0x Opus worker")
+  assert ($mandate | str contains "st0x queue")
 }
 
-def "test clanker worker never resumes an existing session" [] {
-  let route = (clanker-route true true --project "st0x" --worker)
-  assert (not ("--continue" in $route.args)) "a worker resuming inherits a stale queue view and an unarmed cron"
-}
-
-def "test clanker worker names the project it drains" [] {
+def "test clanker worker names the pi worker model without --claude" [] {
   let route = (clanker-route false false --project "yielduck" --worker)
+  assert equal $route.tool "pi"
+  assert (("openai-codex/gpt-5.6-sol" in $route.args))
   assert (($route.args | last) | str contains "yielduck queue")
+}
+
+def "test clanker without worker leaves the model unset on both harnesses" [] {
+  let claude_route = (clanker-route false false --claude)
+  assert (not ("opus" in $claude_route.args)) "the tier flag is what selects a model, not the default path"
+  let pi_route = (clanker-route false false)
+  assert (not ("openai-codex/gpt-5.6-sol" in $pi_route.args))
+}
+
+def "test clanker worker resuming does not re-send the mandate" [] {
+  let route = (clanker-route true true --project "st0x" --claude --worker)
+  assert (("--continue" in $route.args))
+  assert (not (($route.args | any {|arg| $arg | str starts-with "/register" })))
 }
 
 def "test clanker dispatcher pins its project root instead of inheriting the launch directory" [] {
