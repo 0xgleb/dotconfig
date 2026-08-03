@@ -44,6 +44,7 @@ import {
 import {
   BRIDGE_AGENT_TTL_MS,
   RemoteBridgeError,
+  dispatchSystemPrompt,
   finalAssistantText,
   mechanicalDispatchCompaction,
   normalizeLegacyRemoteImageContent,
@@ -83,7 +84,7 @@ const safeError = (error: RemoteBridgeError): string =>
   `${error.code}: ${error.message}`.slice(0, 160);
 
 export default function remoteControl(pi: ExtensionAPI): void {
-  registerRuntimeVersion(pi, "remote-control", "2026.08.03.28");
+  registerRuntimeVersion(pi, "remote-control", "2026.08.03.29");
   const store = makeRemoteBridgeStore(
     remoteBridgeDatabasePath(process.env.XDG_STATE_HOME, homedir()),
   );
@@ -615,8 +616,11 @@ export default function remoteControl(pi: ExtensionAPI): void {
     void sync(ctx);
   });
 
-  pi.on("before_agent_start", () => {
+  pi.on("before_agent_start", (_event, ctx) => {
     active?.toolGuard.enforce();
+    if (isLocalDispatchProvider(ctx.model?.provider))
+      return { systemPrompt: dispatchSystemPrompt(ctx.cwd) };
+    return undefined;
   });
 
   pi.on("turn_end", async (event, ctx) => {

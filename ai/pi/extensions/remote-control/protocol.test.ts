@@ -7,6 +7,7 @@ import {
   RemoteBridgeError,
   boundedBridgeImages,
   boundedBridgeText,
+  dispatchSystemPrompt,
   finalAssistantText,
   mechanicalDispatchCompaction,
   normalizeLegacyRemoteImageContent,
@@ -66,6 +67,16 @@ test("dispatch context slides: old turns drop behind a count marker", () => {
   const untouched = trimDispatchContext(messages, 100_000);
   assert.equal(untouched.dropped, 0);
   assert.equal(untouched.messages, messages);
+});
+
+test("dispatch sessions get a minimal routing charter instead of the project system prompt", () => {
+  const prompt = dispatchSystemPrompt("/Users/example/.config");
+  assert.ok(prompt.length < 1500, "charter stays small so the window is spent on messages");
+  assert.match(prompt, /thin router/i);
+  assert.match(prompt, /route/i);
+  assert.match(prompt, /never execute/i);
+  assert.match(prompt, /\/Users\/example\/\.config/);
+  assert.doesNotMatch(prompt, /Never stop while assigned work remains executable/);
 });
 
 test("dispatch compaction completes mechanically without a summarization call", () => {

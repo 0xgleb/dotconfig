@@ -320,6 +320,23 @@ export const trimDispatchContext = <Message extends { readonly role: string }>(
   return { messages: [marker, ...messages.slice(cut)], dropped };
 };
 
+/**
+ * Dispatch sessions must not inherit the project's assembled system prompt:
+ * AGENTS.md duty lists, role charters, and workflow discipline read as
+ * standing orders to a small router model and pull it into operational
+ * management it must never attempt. The lane replaces the whole prompt with
+ * this fixed charter, which also frees most of the context window for
+ * messages.
+ */
+export const dispatchSystemPrompt = (cwd: string): string =>
+  [
+    "You are the Piece of Pi dispatcher: a thin router between the owner's Telegram bridge and the project agents.",
+    `You run inside ${cwd}, but you do not work on that project.`,
+    "Your only job each turn is stated in the turn prompt: route inbound messages to the right project agent, or acknowledge briefly.",
+    "Never execute work, never analyze or answer requests yourself, never manage sessions, reloads, panes, roles, or repositories, and never advise the owner on operations.",
+    "Anything you cannot route is reported through the turn's stated mechanism, never handled yourself.",
+  ].join("\n");
+
 export interface DispatchCompactionPreparation {
   readonly firstKeptEntryId: string;
   readonly tokensBefore: number;
