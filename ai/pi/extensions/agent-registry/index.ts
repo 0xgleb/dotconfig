@@ -16,10 +16,12 @@ import {
   REGISTRY_DELEGATE_REQUEST_EVENT,
   REGISTRY_IDENTITY_REQUEST_EVENT,
   REGISTRY_INTENT_REQUEST_EVENT,
+  REGISTRY_OUTCOME_EVENT,
   type ManagedOperationalRoleResumed,
   type RegistryDelegateRequest,
   type RegistryIdentityRequest,
   type RegistryIntentRequest,
+  type RegistryOutcomeRequest,
 } from "../shared/registry-intent-events.ts"
 import {
   MANAGED_CONFIG_GENERATION,
@@ -112,7 +114,7 @@ const requireText: (label: string, value: string | undefined) => string = (
 }
 
 const registryExtension: (pi: ExtensionAPI) => void = (pi) => {
-  registerRuntimeVersion(pi, "agent-registry", "2026.08.03.23")
+  registerRuntimeVersion(pi, "agent-registry", "2026.08.03.25")
   const runtimeVersions = (): Readonly<Record<string, string>> => {
     const versions: Record<string, string> = {
       "config-generation": MANAGED_CONFIG_GENERATION,
@@ -136,6 +138,7 @@ const registryExtension: (pi: ExtensionAPI) => void = (pi) => {
   let timer: ReturnType<typeof setInterval> | undefined
   let sessionPolicyDigest: string | undefined
   let syncing = false
+  let latestCtx: ExtensionContext | undefined
   let latestSnapshot: RegistrySnapshot | undefined
   let lastSyncError: string | undefined
   const notifiedRequests = new Set<string>()
@@ -281,6 +284,112 @@ const registryExtension: (pi: ExtensionAPI) => void = (pi) => {
         )
     },
   )
+
+  pi.events.on(REGISTRY_OUTCOME_EVENT, (payload: RegistryOutcomeRequest) => {
+    if (
+      typeof payload !== "object" ||
+      payload === null ||
+      typeof payload.report !== "function" ||
+      typeof payload.requestId !== "string" ||
+      !/^[0-9a-f-]{36}$/.test(payload.requestId) ||
+      (payload.resolution !== "completed" && payload.resolution !== "failed") ||
+      typeof payload.summary !== "string" ||
+      payload.summary.length === 0 ||
+      payload.summary.length > 4_000
+    ) {
+      return
+    }
+    const ctx = latestCtx
+    if (!ctx) {
+      payload.report({
+        outcome: "failed",
+        reason: "registry context unavailable",
+      })
+      return
+    }
+    void (async () => {
+      try {
+        const now = Date.now()
+        const agent = identity(ctx)
+        const snapshot = await run(store.snapshot(now))
+        const target = snapshot.requests.find(
+          (request) => request.id === payload.requestId,
+        )
+        if (!target) {
+          payload.report({ outcome: "failed", reason: "request not found" })
+          return
+        }
+        if (target.status !== "queued" && target.status !== "claimed") {
+          payload.report({ outcome: "recorded" })
+          return
+        }
+        let lease = snapshot.leases.find(
+          (candidate) =>
+            candidate.owner.id === agent.id &&
+            candidate.project === target.project &&
+            candidate.role === target.role &&
+            candidate.status === "active",
+        )
+        if (!lease) {
+          const claim = await run(
+            store.claim({
+              agent,
+              project: target.project,
+              role: target.role,
+              mode: "task",
+              policyDigest: currentPolicyDigest(ctx),
+              now,
+              ttlMs: LEASE_TTL_MS,
+            }),
+          )
+          lease = claim.lease
+        }
+        if (target.status === "queued") {
+          await run(
+            store.claimRequest({
+              requestId: payload.requestId,
+              leaseId: lease.id,
+              agentId: agent.id,
+              now,
+            }),
+          )
+        }
+        const summary = payload.summary.slice(0, 2_000)
+        if (payload.resolution === "completed") {
+          await run(
+            store.completeRequest({
+              requestId: payload.requestId,
+              leaseId: lease.id,
+              agentId: agent.id,
+              summary,
+              now,
+            }),
+          )
+        } else {
+          await run(
+            store.failRequest({
+              requestId: payload.requestId,
+              leaseId: lease.id,
+              agentId: agent.id,
+              failure: "error",
+              diagnostic: summary,
+              now,
+            }),
+          )
+        }
+        await sync(ctx)
+        payload.report({ outcome: "recorded" })
+      } catch (error) {
+        payload.report({
+          outcome: "failed",
+          reason:
+            error instanceof Error
+              ? error.message.slice(0, 200)
+              : "registry outcome failed",
+        })
+      }
+    })()
+  })
 
   const ownedLeases = (
     snapshot: RegistrySnapshot,
@@ -509,6 +618,7 @@ const registryExtension: (pi: ExtensionAPI) => void = (pi) => {
 
   pi.on("session_start", async (event, ctx) => {
     if (timer) clearInterval(timer)
+    latestCtx = ctx
     restoreNotifiedRequests(ctx)
     sessionPolicyDigest = policyDigest(ctx)
     const resumedRole = await autoClaimOperationalRole(ctx).catch((error) => {

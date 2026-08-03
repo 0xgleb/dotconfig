@@ -9,7 +9,7 @@ test("Telegram prompts steer an active local turn at the next safe boundary", ()
   assert.doesNotMatch(source, /accepting: ctx\.isIdle\(\)/)
   assert.match(
     source,
-    /remoteTurnContent\(message\.text, message\.images, "conversational"\)[\s\S]*?sendUserMessage\(content, \{[\s\S]*?deliverAs: "steer"/,
+    /remoteTurnContent\([\s\S]*?message\.text,[\s\S]*?message\.images,[\s\S]*?"conversational",[\s\S]*?sendUserMessage\(content, \{[\s\S]*?deliverAs: "steer"/,
   )
   assert.doesNotMatch(source, /if \(active \|\| !ctx\.isIdle\(\)\) return/)
 })

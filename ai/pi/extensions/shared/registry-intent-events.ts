@@ -45,3 +45,22 @@ export interface RegistryDelegateRequest {
   readonly requesterCwd: string
   readonly report: (outcome: RegistryDelegateOutcome) => void
 }
+
+export const REGISTRY_OUTCOME_EVENT = "pi:registry-outcome-request"
+
+export type RegistryOutcomeResult =
+  | { readonly outcome: "recorded" }
+  | { readonly outcome: "failed"; readonly reason: string }
+
+/**
+ * Mechanical completion lane for receiver outcome envelopes: the dispatch
+ * flow parses the envelope, the agent-registry extension performs the typed
+ * claim and completion (or failure) under its own lease with no model or
+ * classifier involvement, and reports through the callback.
+ */
+export interface RegistryOutcomeRequest {
+  readonly requestId: string
+  readonly resolution: "completed" | "failed"
+  readonly summary: string
+  readonly report: (result: RegistryOutcomeResult) => void
+}

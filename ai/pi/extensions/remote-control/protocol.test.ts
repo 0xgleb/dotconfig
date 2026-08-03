@@ -9,10 +9,11 @@ import {
   boundedBridgeText,
   finalAssistantText,
   normalizeLegacyRemoteImageContent,
-  parseRouteLine,
+  parseOutcomeEnvelope,
+  parseRoutePlan,
   remoteTurnContent,
   remoteTurnPrompt,
-  routingTurnPrompt,
+  routingBatchPrompt,
 } from "./protocol.ts";
 
 test("remote prompts are explicitly communication-only", () => {
@@ -23,30 +24,71 @@ test("remote prompts are explicitly communication-only", () => {
   assert.match(prompt, /Give me a concise status update/);
 });
 
-test("routing turns carry the roster and demand a single route line", () => {
-  const prompt = routingTurnPrompt("ask ~/.config if it knows the song", [
-    { id: "claude-config-receiver", label: "Claude Code (Fable) - .config receiver", cwd: "/Users/example/.config" },
-    { id: "019fc7f6", label: "Dotconfig - Pi Support", cwd: "/Users/example/.config" },
-  ]);
+test("routing turns carry the roster and the whole numbered batch", () => {
+  const prompt = routingBatchPrompt(
+    [
+      { index: 1, text: "ask ~/.config if it knows the song" },
+      { index: 2, text: "yo ask the st0x agent to report what PRs are waiting" },
+    ],
+    [
+      { id: "claude-config-receiver", label: "Claude Code (Fable) - .config receiver", cwd: "/Users/example/.config" },
+      { id: "claude-st0x-receiver", label: "Claude Code - st0x receiver", cwd: "/Users/example/code/st0x" },
+    ],
+  );
   assert.match(prompt, /Authenticated Piece of Pi Telegram/i);
-  assert.match(prompt, /exactly one line/i);
-  assert.match(prompt, /route: <absolute project path>/);
-  assert.match(prompt, /claude-config-receiver/);
-  assert.match(prompt, /\/Users\/example\/\.config/);
-  assert.match(prompt, /ask ~\/\.config if it knows the song/);
+  assert.match(prompt, /no_think/);
+  assert.match(prompt, /route: <absolute project path> \| messages: <numbers>/);
+  assert.match(prompt, /claude-st0x-receiver/);
+  assert.match(prompt, /\[1\] ask ~\/\.config if it knows the song/);
+  assert.match(prompt, /\[2\] yo ask the st0x agent/);
 });
 
-test("route lines are parsed out of arbitrary model output and the rest is discarded", () => {
-  assert.equal(parseRouteLine("route: /Users/example/.config"), "/Users/example/.config");
-  assert.equal(
-    parseRouteLine(
-      "Okay, let me think about this.\nThe target should be the config project.\nroute: /Users/example/code/st0x/st0x.liquidity\nHope that helps!",
-    ),
-    "/Users/example/code/st0x/st0x.liquidity",
+test("receiver outcome envelopes parse mechanically and never reach the routing turn", () => {
+  const parsed = parseOutcomeEnvelope(
+    "request:9fd6a20d-1f02-46bc-80d9-3212d829e2f2 outcome:completed summary:Принял напоминание про 20 долларов. evidence:registry-request-9fd6a20d",
   );
-  assert.equal(parseRouteLine("no routing here"), undefined);
-  assert.equal(parseRouteLine("route: relative/path"), undefined);
-  assert.equal(parseRouteLine(`route: /${"x".repeat(600)}`), undefined);
+  assert.deepEqual(parsed, {
+    requestId: "9fd6a20d-1f02-46bc-80d9-3212d829e2f2",
+    outcome: "completed",
+    summary: "Принял напоминание про 20 долларов.",
+  });
+  const failed = parseOutcomeEnvelope(
+    "request:e554a597-ab2f-402e-a8ab-0582aa1881cc outcome:failed summary:dispatcher unreachable",
+  );
+  assert.equal(failed?.outcome, "failed");
+  assert.equal(failed?.summary, "dispatcher unreachable");
+  assert.equal(parseOutcomeEnvelope("yo ask the st0x agent to report to me"), undefined);
+  assert.equal(parseOutcomeEnvelope("request:not-a-uuid outcome:completed summary:x"), undefined);
+  assert.equal(
+    parseOutcomeEnvelope("request:9fd6a20d-1f02-46bc-80d9-3212d829e2f2 outcome:exploded summary:x"),
+    undefined,
+  );
+});
+
+test("route plans split batches across agents and discard everything else", () => {
+  const plan = parseRoutePlan(
+    [
+      "Okay, thinking about this batch.",
+      "route: /Users/example/.config | messages: 1",
+      "route: /Users/example/code/st0x | messages: 2, 3 | note: report the PR part only",
+      "Hope that helps!",
+    ].join("\n"),
+    3,
+  );
+  assert.deepEqual(plan, [
+    { project: "/Users/example/.config", indexes: [1] },
+    {
+      project: "/Users/example/code/st0x",
+      indexes: [2, 3],
+      note: "report the PR part only",
+    },
+  ]);
+  assert.deepEqual(parseRoutePlan("no routing here", 2), []);
+  assert.deepEqual(parseRoutePlan("route: relative | messages: 1", 2), []);
+  assert.deepEqual(
+    parseRoutePlan("route: /Users/example/.config | messages: 7, 1", 2),
+    [{ project: "/Users/example/.config", indexes: [1] }],
+  );
 });
 
 test("dispatch-lane remote prompts forbid answering and demand routing", () => {

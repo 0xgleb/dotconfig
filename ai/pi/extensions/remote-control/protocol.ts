@@ -239,36 +239,106 @@ export interface RosterAgent {
   readonly cwd: string;
 }
 
+export interface RoutableMessage {
+  readonly index: number;
+  readonly text: string;
+}
+
+export interface RouteDirective {
+  readonly project: string;
+  readonly indexes: readonly number[];
+  readonly note?: string;
+}
+
 /**
- * The dispatch-lane routing turn: the model's entire job is one line naming
- * the target project; everything else it produces is discarded by the
- * caller, and the message body is delivered raw to the chosen queue by the
- * extension - never by the model.
+ * The dispatch-lane routing turn: the whole pending batch goes into one
+ * turn, and the model's entire job is a route plan - one directive per
+ * line naming a target project, the message numbers it covers, and an
+ * optional short note for the receiving agent. Original message texts are
+ * delivered verbatim by the extension; everything outside valid directives
+ * is discarded, and unrouted messages fall back to the dispatcher project.
  */
-export const routingTurnPrompt = (
-  text: string,
+export const routingBatchPrompt = (
+  messages: readonly RoutableMessage[],
   roster: readonly RosterAgent[],
 ): string =>
   [
+    "/no_think",
     "[Authenticated Piece of Pi Telegram message · routing turn · all tools are disabled]",
-    "You are the dispatcher. Reply with exactly one line and nothing else:",
-    "route: <absolute project path>",
-    "Choose the project whose agent should handle the message, from this roster:",
+    "You are the dispatcher. Do not think or explain. Reply ONLY with route directives, one per line:",
+    "route: <absolute project path> | messages: <numbers> | note: <short instruction for that agent, optional>",
+    "Split multi-topic batches across agents; a message may appear in several directives when its parts belong to different agents.",
+    "Roster:",
     ...roster.map((agent) => `- ${agent.cwd} · ${agent.label} (${agent.id})`),
-    "Anything else you write is discarded; the message body below is delivered raw to the chosen project queue by the system.",
+    "Anything else you write is discarded; original message texts are delivered verbatim by the system.",
     "",
-    boundedBridgeText("message", text, MAX_REMOTE_MESSAGE_CHARACTERS),
+    "Messages:",
+    ...messages.map(
+      (message) =>
+        `[${message.index}] ${boundedBridgeText("message", message.text, MAX_REMOTE_MESSAGE_CHARACTERS)}`,
+    ),
   ].join("\n");
 
-const ROUTE_LINE = /^route:\s*(\/[^\s]{1,511})\s*$/;
+export interface OutcomeEnvelope {
+  readonly requestId: string;
+  readonly outcome: "completed" | "failed";
+  readonly summary: string;
+}
 
-export const parseRouteLine = (response: string): string | undefined => {
-  for (const line of response.split("\n")) {
-    const match = ROUTE_LINE.exec(line.trim());
-    const target = match?.[1];
-    if (target) return target;
+const OUTCOME_ENVELOPE =
+  /^request:([0-9a-f]{8}-[0-9a-f]{4}-[0-9a-f]{4}-[0-9a-f]{4}-[0-9a-f]{12})\s+outcome:(completed|failed)\s+summary:([\s\S]{1,4000}?)(?:\s+evidence:\S{1,400})?\s*$/;
+
+/**
+ * Receiver outcome reports are protocol frames, not conversation: they are
+ * recognized mechanically before any model turn, trigger the typed registry
+ * completion, and their summary is relayed to the owner. Anything that does
+ * not parse exactly is ordinary message traffic.
+ */
+export const parseOutcomeEnvelope = (text: string): OutcomeEnvelope | undefined => {
+  const match = OUTCOME_ENVELOPE.exec(text.trim());
+  const requestId = match?.[1];
+  const outcome = match?.[2];
+  const summary = match?.[3]?.trim();
+  if (!requestId || !summary || (outcome !== "completed" && outcome !== "failed")) {
+    return undefined;
   }
-  return undefined;
+  return { requestId, outcome, summary };
+};
+
+const ROUTE_DIRECTIVE =
+  /^route:\s*(\/[^\s|]{1,511})\s*\|\s*messages:\s*([0-9,\s]{1,64}?)\s*(?:\|\s*note:\s*(.{1,300}?)\s*)?$/;
+
+export const parseRoutePlan = (
+  response: string,
+  messageCount: number,
+): readonly RouteDirective[] => {
+  const directives: RouteDirective[] = [];
+  for (const line of response.split("\n")) {
+    const match = ROUTE_DIRECTIVE.exec(line.trim());
+    if (!match) continue;
+    const project = match[1];
+    const indexes = [
+      ...new Set(
+        (match[2] ?? "")
+          .split(",")
+          .map((part) => Number.parseInt(part.trim(), 10))
+          .filter(
+            (index) =>
+              Number.isSafeInteger(index) &&
+              index >= 1 &&
+              index <= messageCount,
+          ),
+      ),
+    ].sort((left, right) => left - right);
+    if (!project || indexes.length === 0) continue;
+    const note = match[3]?.trim();
+    directives.push({
+      project,
+      indexes,
+      ...(note ? { note } : {}),
+    });
+  }
+  return directives;
 };
 
 export const remoteTurnPrompt = (text: string, style: RemoteTurnStyle): string =>
