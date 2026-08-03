@@ -4,7 +4,7 @@ Zellij terminal multiplexer config.
 
 | File                 | Purpose                                                 |
 | -------------------- | ------------------------------------------------------- |
-| `config.kdl`         | Keybindings, plugins, options; sets `default_layout`    |
+| `config.kdl`         | Keybindings, plugins, options, `default_layout`, and the `archeofuturism` theme |
 | `layouts/wayout.kdl` | The default layout: row-major grid / even-column swap layouts |
 
 `programs.zellij.enable = true` (in `home.nix`) installs Zellij but does **not**
@@ -51,7 +51,72 @@ cap, change where rows wrap in every variant. Verify with
 The full step-by-step recipe is kept as a comment above the `grid` layout in
 `wayout.kdl`, right where you'll be editing.
 
-## Changes take effect in new sessions
+## Theme
 
-Already-running sessions keep their current layout. Start a fresh Zellij session
-to pick up changes to `default_layout` or the layout file.
+The `archeofuturism` theme is defined **inline in `config.kdl`**, sharing its
+palette with the Pi theme at `ai/pi/themes/archeofuturism.json`.
+
+**Keep it inline.** Zellij watches `config.kdl` and live-reloads it, so edits
+land in sessions that are already attached. A theme in a `themes/` directory is
+read only at session start, which means styling changes appear to do nothing
+until you kill a session you probably don't want to kill. Verified against
+0.44.3 by editing each location under a live session and reading back the
+escape sequences it painted.
+
+Three more things about the format, each of which has already caused visible
+breakage:
+
+- **`background` is the fill; `base` is the text or line.** Zellij's own
+  defaults are `ribbon_selected { base=BLACK background=GREEN }`, which renders
+  as the familiar green pill with dark text. Reversing them turns the top and
+  bottom bars into glare. The docs do not spell this out.
+- **A selected theme with no definition fails silently.** Zellij falls back to
+  its built-in default — whose grey ribbon fill looks white — and
+  `zellij setup --check` still reports `CONFIG FILE: Well defined`.
+- **A mode panel needs real contrast with the bar or its arrow disappears.**
+  Zellij draws each panel as an arrow-tipped ribbon, and renders the tip as a
+  glyph in the panel's *own fill color* on top of the bar:
+
+  ```
+  fg=#000000 bg=#464B6E   left tip, cutting into the panel
+  fg=#E8F6FF bg=#464B6E   the label
+  fg=#464B6E bg=#000000   right tip, pointing into the bar
+  ```
+
+  That last pair is the entire silhouette. A panel fill close to the bar does
+  not make the panels look flat — it erases their shape. `#11182D` on black is
+  only 1.19:1 and vanishes; the fills below are 2.5:1 and 2.9:1.
+
+- **`text_selected` is not just a UI style.** `zellij-server/src/panes/grid.rs`
+  paints mouse selections inside terminal panes from `text_selected.background`
+  and `.base`. Giving it the bar's own background makes selected text render
+  identically to the text around it, so selections become invisible.
+
+The bar stays black while the highlights lift just far enough to be seen:
+
+| Surface   | Color     | Luminance | Contrast | Role                                   |
+| --------- | --------- | --------- | -------- | -------------------------------------- |
+| bar       | `#000000` | 0.000     | —        | matches the Ghostty background exactly |
+| panel     | `#6B3172` | 0.065     | 2.3:1    | an unselected mode panel               |
+| selected  | `#983C8D` | 0.118     | 3.4:1    | the active panel, one step forward     |
+| selection | `#8E3480` | 0.101     | 3.0:1    | selected text, and overlay selections  |
+
+Zellij's stock grey panel sits near `0.22` — the brightness that was rejected.
+Highlights are capped at `0.14` so they cannot drift back toward it.
+
+`ai/test/zellij-theme.test.ts` pins all of it: the theme must be inline, the bar
+must equal the terminal background, the panels must stay distinguishable from
+the bar and form a rising ramp, no fill may be bright, and frames may not go
+neon.
+
+### Going back to stock chrome
+
+Comment out the three `theme` lines in `config.kdl`. The change is live, so no
+restart is needed. Nothing else depends on the theme, and the pre-theme chrome
+is also reachable in git history at `043ff1d` and earlier.
+
+## Layout changes take effect in new sessions
+
+The theme reloads live, but **layouts do not**. Already-running sessions keep
+their current layout, so start a fresh Zellij session to pick up changes to
+`default_layout` or `layouts/wayout.kdl`.

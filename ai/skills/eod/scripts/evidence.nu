@@ -78,6 +78,61 @@ export def pr-reportability [pr: record, since: datetime, until: datetime]: noth
   }
 }
 
+export def linear-reportability [evidence: record]: nothing -> string {
+  if (
+    ($evidence.created_by_user? | default false)
+    or ($evidence.commented_by_user? | default false)
+    or ($evidence.referenced_by_authored_pr? | default false)
+    or ($evidence.user_framed? | default false)
+  ) {
+    "verified_user_involvement"
+  } else {
+    "context_only"
+  }
+}
+
+export def deployment-reportability [evidence: record]: nothing -> string {
+  let refs = $evidence.authored_pr_refs? | default []
+  if (($refs | is-not-empty) or ($evidence.user_framed? | default false)) {
+    "verified_user_involvement"
+  } else {
+    "context_only"
+  }
+}
+
+export def parse-graphite-batch-spec [spec: string]: nothing -> record {
+  let parsed = ($spec
+    | parse --regex '^(?<repo>[^#]+)#(?<group_number>\d+):(?<member_numbers>\d+(?:,\d+)*)$'
+    | get -o 0
+    | default null)
+  if $parsed == null {
+    error make {msg: $"Invalid Graphite batch spec: ($spec)"}
+  }
+  {
+    repo: $parsed.repo
+    group_number: ($parsed.group_number | into int)
+    member_numbers: ($parsed.member_numbers | split row "," | each { into int })
+  }
+}
+
+export def graphite-pr-reportability [pr: record, batches: list<record>, since: datetime, until: datetime]: nothing -> string {
+  let ordinary = pr-reportability $pr $since $until
+  if $ordinary != "unverified_update" {
+    $ordinary
+  } else {
+    let matched = ($batches | any {|batch|
+      let author = $batch.author_login? | default ""
+      (
+        (($batch.repo? | default "") == ($pr.repo? | default ""))
+        and (($pr.number? | default 0) in ($batch.member_numbers? | default []))
+        and ($author in ["graphite-app" "app/graphite-app"])
+        and (in-window ($batch.merged_at? | default null) $since $until)
+      )
+    })
+    if $matched { "merged_via_graphite_batch" } else { "unverified_update" }
+  }
+}
+
 export def deployment-environment [workflow: string]: nothing -> string {
   let normalized = $workflow | str lowercase
   if ($normalized | str contains "prod") {

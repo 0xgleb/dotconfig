@@ -1,9 +1,9 @@
 import type { AssistantMessage } from "@earendil-works/pi-ai";
 import type { ExtensionAPI, ExtensionContext } from "@earendil-works/pi-coding-agent";
-import { truncateToWidth } from "@earendil-works/pi-tui";
 import { homedir } from "node:os";
 import { isAbsolute, relative, resolve, sep } from "node:path";
-import { formatFooter } from "./presentation.ts";
+import { registerRuntimeVersion } from "../shared/runtime-version.ts";
+import { alignFooterLine, formatFooter } from "./presentation.ts";
 import { aggregateUsage } from "./usage.ts";
 
 function compactPath(cwd: string): string {
@@ -30,6 +30,7 @@ function cumulativeUsage(ctx: ExtensionContext): {
 }
 
 export default function compactFooter(pi: ExtensionAPI): void {
+  registerRuntimeVersion(pi, "compact-footer", "2026.08.01.1");
   pi.on("session_start", (_event, ctx) => {
     ctx.ui.setFooter((tui, theme, footerData) => {
       const unsubscribe = footerData.onBranchChange(() => tui.requestRender());
@@ -55,7 +56,7 @@ export default function compactFooter(pi: ExtensionAPI): void {
             outputTokens: usage.outputTokens,
             statuses,
           });
-          return [truncateToWidth(theme.fg("dim", footer), width, theme.fg("dim", "…"))];
+          return [theme.fg("dim", alignFooterLine(footer, width))];
         },
       };
     });

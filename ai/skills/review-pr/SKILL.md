@@ -125,12 +125,14 @@ Keep only the paths — they become `docsPaths` for the engine.
 
 ## 6. Run the review engine
 
-**Limit-blown days:** the review must still complete. Run review-core step 1
-(cache → at most two 15s sentinels → `native-only` + `harness_tier=sonnet-only`
-when composer is out). **Every Workflow lane and `harnessModels` must use
-sonnet — never fable or opus.** Do not walk a long probe chain, do not run
-`agy`, do not stop on usage limit. If a Fable/Opus limit errors anyway, relaunch
-Workflow all-sonnet.
+**Limit-blown days:** the review must still complete. Run review-core step 1,
+but apply its provider constraint first: every native Workflow lane, verifier,
+synthesizer, inspector, and external-command wrapper uses
+`openai-codex/gpt-5.6-luna`. Never send `fable`, `sonnet`, `opus`, `claude-*`, or
+`anthropic/*` through Pi. Claude may appear only as an optional external
+`claude -p --permission-mode plan` subscription lane; cursor-agent is omitted
+while its included allowance is exhausted. If either external CLI is unavailable,
+continue the OpenAI-only panel instead of stopping.
 
 Run the shared engine in `~/.claude/skills/review-core/SKILL.md` (steps 1–7:
 panel mode → reviewer prompts → inspector prompts → lanes → the `review-panel`
@@ -142,12 +144,25 @@ Workflow → after-workflow handling → print findings). Pass the contract inpu
 | `{PROJECT_DOCS_PATHS}`  | the docs paths from step 5                                              |
 | `{PR_DESCRIPTION}`      | the author's description (bot footers stripped) from step 3            |
 | `{SOURCE_ACCESS}`       | `The change was authored against commit <head_sha>. Read source files via 'git show <head_sha>:<path>' — the working tree does not match the change under review.` |
+| `{SOURCE_REVISION}`     | the exact lowercase hexadecimal `<head_sha>` from verified PR metadata    |
 | `{SCOPE_NOTE}`          | `The diff is scoped to exactly the changes on this PR.`                |
 | `{INSPECTOR_ARG}`       | the PR reference (`<pr-ref>`)                                          |
 | `{REPORT_HEADER}`       | `# Review — PR #<n>: <title>\n**Author:** <author>\n**URL:** <url>\n**Branches:** <head> -> <base>\n**Head SHA:** <head_sha>\n**Files changed:** <N> (+<additions>/-<deletions>)` |
 | `{TERMINAL_HEADER}`     | `PR #<n> — <title>\n<author>  ·  <head>..<base>  ·  <N> files, +<add>/-<del> lines\n<url>` |
 | `{SYNTHESIS_EXTRA}`     | `CRITICAL ADAPTATIONS FOR THIS REPORT: (1) No AI references anywhere — no agent attribution, no 'Found by' field, no mention of models, reviewers, lanes, or cross-review. The report must read like a single human senior engineer wrote it. (2) Frame the Overall assessment as advice to the REVIEWER reading this report, not to the PR author — e.g. 'This PR looks ready to merge pending X' or 'I'd push back on Y before approving.'` |
 | `{INCLUDE_ATTRIBUTION}` | `false`                                                                |
+
+Pass the typed source object explicitly in the Workflow args:
+
+```json
+"sourceRevision": "<head_sha>"
+```
+
+The shared engine validates that value as a 40–64 character lowercase hexadecimal
+Git object ID before exposing Bash to native lanes. Those lanes may use Bash only
+for exact read-only `git show '<head_sha>:<repo-relative-path>'` calls. They must
+never read `.env*`, credential stores, private keys, or certificates, and must not
+use Bash for checkout, worktree creation, mutation, or unrelated commands.
 
 `{INCLUDE_ATTRIBUTION}` being `false` makes the engine strip the `Found by` field
 from `review.md` and drop the lane bracket from the terminal output — the on-disk
@@ -285,11 +300,10 @@ summary box when they submit from the GitHub UI:
 in the file.** To find the right line number:
 - Read the diff (`$out_dir/diff.patch`) and identify the `+`-side line number
   within the changed hunk that best matches the finding
-- If the finding points to a line NOT in the diff, use the nearest changed line in
-  the same file, or fall back to creating a top-level review comment instead of an
-  inline one
+- If the finding points to a line NOT in the diff, use the nearest related changed
+  line in the same file. Never fall back to a top-level review body.
 
-**Step 3 — Handle findings without diff lines.** Strongly prefer inline comments
+**Step 3 — Handle findings without diff lines.** Use only inline comments
 over top-level body text. If a finding references unchanged code, look for a
 **related** changed line in the diff where the comment makes sense contextually.
 For example, if a finding is about an interaction between existing code and newly
@@ -300,6 +314,28 @@ related changed code anywhere in the diff (e.g., a missing file, a documentation
 gap, a broad architectural concern), fold it into the copy-paste assessment block
 you print in the conversation (Step 2) rather than the posted `body` — the draft
 `body` stays empty.
+
+## Claude Code review-duty harness adapter
+
+Apply this adapter only when the source-fixed initial prompt identifies a fresh
+Claude Code subscription-harness executor and supplies a
+`CLAUDE_REVIEW_HANDOFF v1` supervisor target. Ordinary `/review-pr` invocations
+remain unchanged.
+
+1. Run this skill and its native Claude Code Workflow lanes normally. Never invoke
+   Claude through Pi, an Anthropic API provider, an SDK, `curl`, or an API key.
+2. Before handoff, run one independent native Fable verifier that re-reads the
+   exact PR head/diff and challenges every finding, inline anchor, draft-review
+   claim, and assessment. Missing subscription auth or Fable is `blocked`, never
+   an API fallback.
+3. Re-read the head SHA after creating the empty-body pending review. A changed
+   head makes the result stale and requires a fresh job.
+4. Send exactly one bounded handoff through the exact `pi-bridge send` command in
+   the launcher prompt. Include only required fields and evidence identifiers;
+   never include prompts, hidden reasoning, credentials, full diffs, or logs.
+5. The Pi supervisor independently verifies the handoff. Do not emulate
+   `review_duty`, ask a verdict, submit the pending review, post a top-level body,
+   or merge.
 
 ## Hard rules
 
@@ -329,7 +365,16 @@ you print in the conversation (Step 2) rather than the posted `body` — the dra
    paste at submit time. Every finding should be an inline comment on a diff line.
    When a finding references unchanged code, place the comment on the nearest
    related changed line.
-9. The review runs as a single `Workflow` invocation (review-core) — never
+9. For ordinary body-only correction, update only the evidenced review's
+   top-level body to the empty string and preserve its inline comments. If the
+   user explicitly identifies the entire agent-created review as accidental and
+   orders full cleanup, delete only the exact evidenced accidental review and its
+   inline comments. Never replace the body with a marker, apology, zero-width
+   text, or other content. Try the exact supported deletion once before reporting
+   it impossible; retain the API error, continue any independently executable
+   cleanup, and identify GitHub support escalation if submitted-review deletion
+   or emptying is rejected.
+10. The review runs as a single `Workflow` invocation (review-core) — never
    hand-roll the fan-out with individual Agent calls. External CLIs run read-only
    (review-core step 4 / hard rules): cursor-agent always `--mode plan`, never
    `-f`/`--yolo`, and `--workspace` spelled out (`-w` is `--worktree`); agy always

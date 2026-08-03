@@ -345,6 +345,9 @@ Reports under: <out_dir root>
 **[Reviewer mode]** Nothing to submit — each branch already has its own draft
 batch of comments. Summarize per PR (count of draft comments + link) so the user
 can inspect and submit each review from the UI. Do not push, modify, or submit.
+Every pending review must have an empty top-level body: never post a marker,
+summary, verdict, reviewed-commit text, or any other PR-level review content.
+Only verified inline findings belong in the draft.
 
 **[Author mode]** Then **submit the fixes** — a stack of review fixes left local
 is worthless. Submit once, at the end, from the start branch:

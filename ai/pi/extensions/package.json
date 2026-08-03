@@ -6,7 +6,8 @@
     "pi-package"
   ],
   "dependencies": {
-    "effect": "3.22.0"
+    "effect": "3.22.0",
+    "solid-js": "1.9.14"
   },
   "peerDependencies": {
     "@earendil-works/pi-agent-core": "*",
@@ -34,14 +35,32 @@
   },
   "pi": {
     "extensions": [
+      "./activity-status/index.ts",
+      "./agent-registry/index.ts",
+      "./agent-workspace/index.ts",
+      "./auto-reload/index.ts",
       "./classified-workflows/index.ts",
+      "./browser-control/index.ts",
+      "./btw/index.ts",
       "./compact-footer/index.ts",
       "./compact-read/index.ts",
+      "./disk-pressure/index.ts",
+      "./input-ergonomics/index.ts",
+      "./image-summary/index.ts",
+      "./link-safety/index.ts",
       "./pi-vim/index.ts",
+      "./questions/index.ts",
+      "./release-cadence/index.ts",
+      "./remote-control/index.ts",
+      "./safe-compaction/index.ts",
       "./todo/index.ts"
     ]
   },
   "devDependencies": {
-    "@earendil-works/pi-tui": "0.80.10"
+    "@babel/cli": "7.29.7",
+    "@babel/core": "7.29.7",
+    "@babel/preset-typescript": "7.29.7",
+    "@earendil-works/pi-tui": "0.80.10",
+    "babel-preset-solid": "1.9.12"
   }
 }

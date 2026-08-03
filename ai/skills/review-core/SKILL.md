@@ -6,6 +6,30 @@ allowed-tools: Bash(cursor-agent:*), Bash(agy:*), Bash(command:*), Bash(cat:*), 
 
 # Review engine (shared)
 
+## Provider constraint (overrides every model cell below)
+
+Anthropic API billing is disabled. Every native Workflow agent, verifier,
+synthesizer, inspector, and external-command wrapper MUST use
+`openai-codex/gpt-5.6-luna`, regardless of legacy lane names such as `fable`,
+`sonnet`, or `opus` and regardless of model values shown in older tables below.
+Those names are focus labels only. Never pass `fable`, `sonnet`, `opus`,
+`claude-*`, or `anthropic/*` as a Workflow `model`.
+
+Claude is optional and may run only through a subscription CLI external lane:
+
+```bash
+claude -p --permission-mode plan --model sonnet --no-session-persistence \
+  --allowedTools "Read,Grep,Glob,Bash(git show *)" \
+  "$(cat \"<promptPath>\") The diff to review is at: <diffPath>"
+```
+
+The Pi wrapper for that external command still uses
+`openai-codex/gpt-5.6-luna`. Cursor-agent Claude lanes are allowed only when the
+included allowance is explicitly confirmed available; it is currently exhausted,
+so omit them. If `claude -p` is unavailable or fails, omit Claude and continue the
+OpenAI-only panel. This constraint supersedes the `sonnet-only`/full-harness model
+assignments below without changing their panel-sizing or focus semantics.
+
 This is **not a user-facing skill**. It is the single source of truth for the
 review engine that `review-loop`, `review-pr`, and `review-sweep` share: turn a
 **diff** into **deduplicated, adversarially verified findings** and a canonical
@@ -29,6 +53,7 @@ the steps below reference `{NAME}`:
 | `{PROJECT_DOCS_PATHS}` | Comma-separated `CLAUDE.md`/`AGENTS.md` paths (caller discovers them).  |
 | `{PR_DESCRIPTION}`  | Author-written description, bot footers stripped (or "No description").    |
 | `{SOURCE_ACCESS}`   | One paragraph telling reviewers **how to read source** (working tree vs `git show <sha>:<path>`). See callers. |
+| `{SOURCE_REVISION}` | Exact 40–64 character lowercase hex Git object ID for no-checkout PR-head access, or omitted for working-tree reviews. |
 | `{SCOPE_NOTE}`      | One sentence describing **what the diff is scoped to** (branch vs PR).     |
 | `{INSPECTOR_ARG}`   | The value to substitute for `$ARGUMENTS` in inspector bodies (`""` for a branch, the PR ref for a PR). |
 | `{REPORT_HEADER}`   | Markdown header block placed verbatim atop the synthesized report.         |
@@ -129,10 +154,10 @@ explicitly asks for it.
 Record `harness_tier` and `harnessModels` for the Workflow args (step 5):
 
 ```json
-{ "verify": "sonnet", "synthesis": "opus" }
+{ "verify": "openai-codex/gpt-5.6-luna", "synthesis": "openai-codex/gpt-5.6-luna" }
 ```
 
-When `harness_tier=sonnet-only`, use `{ "verify": "sonnet", "synthesis": "sonnet" }`
+When `harness_tier=sonnet-only`, use `{ "verify": "openai-codex/gpt-5.6-luna", "synthesis": "openai-codex/gpt-5.6-luna" }`
 for **every** Workflow agent call — review lanes, verify, synthesis. Never pass
 `fable` or `opus` to the Workflow on a limit-blown day.
 
@@ -497,17 +522,22 @@ The whole pass — fan-out, dedup, adversarial verification, synthesis — runs 
 **one `Workflow` invocation**. Findings come back schema-validated, so there is
 no markdown parsing and no separate aggregator in the main session.
 
-Invoke `Workflow` with the script below via `script`, and `args`:
+Invoke `Workflow` with the script below via `script`, and `args`. Set
+`maxAgents: 16`; this is a per-named-phase cap, while `tokenBudget` remains a
+whole-workflow cap. The script batches larger lane or finding sets into settled
+named phases, retaining each completed batch in the same invocation before
+synthesis:
 
 ```json
 {
   "repoRoot": "{REPO_ROOT}",
   "docsPaths": ["{PROJECT_DOCS_PATHS as array}"],
   "lanes": [ ...lane objects — every lane.model must match harness_tier... ],
-  "harnessModels": { "verify": "sonnet", "synthesis": "sonnet" },
+  "harnessModels": { "verify": "openai-codex/gpt-5.6-luna", "synthesis": "openai-codex/gpt-5.6-luna" },
   "reportHeader": "{REPORT_HEADER}",
   "synthesisExtra": "{SYNTHESIS_EXTRA}",
   "sourceAccess": "{SOURCE_ACCESS}",
+  "sourceRevision": "{SOURCE_REVISION}",
   "includeAttribution": {INCLUDE_ATTRIBUTION}
 }
 ```
@@ -520,6 +550,12 @@ be `"opus"`. Never pass `"opus"` or `"fable"` anywhere when the cache says
 The tool result includes a `scriptPath` — the caller keeps it and reuses
 `{scriptPath, args}` for any later full-panel pass instead of resending the
 script.
+
+When `{SOURCE_REVISION}` is present, native lanes receive Bash solely for exact
+read-only `git show '<revision>:<repo-relative-path>'` calls. Never read `.env*`,
+credential stores, private keys, or certificates. The revision is validated
+before Bash is exposed; checkout, worktree creation, mutation, and unrelated
+shell commands remain prohibited and semantically classified.
 
 ```javascript
 export const meta = {
@@ -575,12 +611,30 @@ const VERDICT_SCHEMA = {
 // parsed object — parse defensively before destructuring.
 const parsedArgs = typeof args === 'string' ? JSON.parse(args) : args
 const { repoRoot, docsPaths, lanes, reportHeader, synthesisExtra,
-  sourceAccess, includeAttribution,
+  sourceAccess, sourceRevision, includeAttribution,
   harnessModels = { verify: 'sonnet', synthesis: 'opus' } } = parsedArgs
 
-phase('Review')
+const gitObjectSource = typeof sourceRevision === 'string' &&
+  /^[0-9a-f]{40,64}$/.test(sourceRevision)
+if (sourceRevision !== undefined && !gitObjectSource) {
+  throw new Error('sourceRevision must be an exact lowercase hexadecimal Git object ID')
+}
+const sourceTools = gitObjectSource
+  ? ['read', 'grep', 'find', 'ls', 'bash']
+  : ['read', 'grep', 'find', 'ls']
+const sourceReadBoundary = gitObjectSource
+  ? `For PR-head source context, use Bash only for exact read-only ` +
+    `git show '${sourceRevision}:<repo-relative-path>' calls. Do not use the ` +
+    `mismatched working-tree copy of a source file. Never read \`.env*\`, ` +
+    `credential stores, private keys, or certificates. Do not use Bash for ` +
+    `checkout, worktree creation, mutation, or unrelated commands.`
+  : ''
 
-const laneResults = await parallel(lanes.map(lane => () => {
+// maxAgents is a per-phase cap. Batch variable lane/finding counts so one
+// workflow retains completed outputs through verification and synthesis.
+const PHASE_AGENT_CAP = 16
+
+const reviewLane = lane => {
   const context = `The diff is at: ${lane.diffPath}\n` +
     `Project docs: ${docsPaths.join(', ')}\n` +
     `Repo root: ${repoRoot}`
@@ -603,13 +657,17 @@ const laneResults = await parallel(lanes.map(lane => () => {
       `### section into one finding). If all attempts fail, return an empty ` +
       `findings list and set reviewer_error to a summary of each attempt.`
     : `Read the review instructions at ${lane.promptPath} and follow them ` +
-      `exactly.\n${context}\nRead the diff, the project docs, and any ` +
-      `source files referenced by the diff that you need for context.`
+      `exactly.\n${context}\n${sourceReadBoundary}\nRead the diff, the project ` +
+      `docs, and any source files referenced by the diff that you need for context.`
 
   return agent(prompt, {
     label: `review:${lane.key}`,
     phase: 'Review',
-    model: lane.model ?? 'sonnet',
+    cwd: repoRoot,
+    tools: lane.externalCmd
+      ? ['read', 'grep', 'find', 'ls', 'bash']
+      : sourceTools,
+    model: 'openai-codex/gpt-5.6-luna',
     schema: REVIEW_SCHEMA,
   }).then(result => result && ({
     key: lane.key,
@@ -620,7 +678,17 @@ const laneResults = await parallel(lanes.map(lane => () => {
       diff_path: lane.diffPath,
     })),
   }))
-}))
+}
+
+const laneResults = []
+const reviewBatchCount = Math.max(1, Math.ceil(lanes.length / PHASE_AGENT_CAP))
+for (let offset = 0; offset < lanes.length; offset += PHASE_AGENT_CAP) {
+  const batchNumber = Math.floor(offset / PHASE_AGENT_CAP) + 1
+  phase(`Review ${batchNumber}/${reviewBatchCount}`)
+  laneResults.push(...await parallel(
+    lanes.slice(offset, offset + PHASE_AGENT_CAP).map(lane => () => reviewLane(lane)),
+  ))
+}
 
 const laneErrors = lanes
   .map((lane, index) => {
@@ -654,15 +722,12 @@ for (const finding of raw) {
 log(`${raw.length} raw findings -> ${merged.length} after dedup; ` +
   `lane errors: ${laneErrors.length}`)
 
-phase('Verify')
-
-const verified = await parallel(merged.map(finding => () =>
-  agent(
+const verifyFinding = finding => agent(
     `You are adversarially verifying a single code-review finding. Read the ` +
     `actual code before judging — never judge from the finding text alone.\n\n` +
     `Finding: ${JSON.stringify(finding)}\n\n` +
     `The diff is at: ${finding.diff_path}\nRepo root: ${repoRoot}\n` +
-    `${sourceAccess}\n\n` +
+    `${sourceAccess}\n${sourceReadBoundary}\n\n` +
     `Classify the finding: valid (real, you verified it against the code), ` +
     `likely (probably real but needs more context), disputed (evidence is ` +
     `weak), invalid (false positive — the code contradicts the claim), ` +
@@ -670,10 +735,21 @@ const verified = await parallel(merged.map(finding => () =>
     `with concrete evidence from the code; do not dismiss ` +
     `uncertain-but-plausible findings. Re-score severity and confidence ` +
     `from your own reading (confidence 100 = you verified it yourself).`,
-    { label: `verify:${finding.file}`, phase: 'Verify', model: harnessModels.verify,
+    { label: `verify:${finding.file}`, phase: 'Verify', cwd: repoRoot,
+      tools: sourceTools, model: 'openai-codex/gpt-5.6-luna',
       schema: VERDICT_SCHEMA },
   ).then(verdict => verdict && ({ ...finding, ...verdict }))
-))
+
+const verified = []
+const verifyBatchCount = Math.max(1, Math.ceil(merged.length / PHASE_AGENT_CAP))
+for (let offset = 0; offset < merged.length; offset += PHASE_AGENT_CAP) {
+  const batchNumber = Math.floor(offset / PHASE_AGENT_CAP) + 1
+  phase(`Verify ${batchNumber}/${verifyBatchCount}`)
+  verified.push(...await parallel(
+    merged.slice(offset, offset + PHASE_AGENT_CAP)
+      .map(finding => () => verifyFinding(finding)),
+  ))
+}
 
 const judged = verified.filter(Boolean)
 const survivors = judged.filter(finding =>
@@ -701,7 +777,7 @@ const synthesis = await agent(
   `Verified findings (JSON, pre-sorted): ${JSON.stringify(survivors)}\n\n` +
   `Dismissed findings (JSON): ${JSON.stringify(dismissed)}\n\n` +
   `The diff is at: ${lanes[0].diffPath}. Project docs: ` +
-  `${docsPaths.join(', ')}. ${sourceAccess} Read the diff so your overall ` +
+  `${docsPaths.join(', ')}. ${sourceAccess} ${sourceReadBoundary} Read the diff so your overall ` +
   `assessment reflects the actual change, and call out anything the ` +
   `reviewers collectively missed.\n\n` +
   `Produce a markdown report: the header block, "## Summary" (2-3 sentence ` +
@@ -714,7 +790,8 @@ const synthesis = await agent(
   `your own senior-engineer judgment on merge readiness). No emojis, no ` +
   `apologies, be decisive.` +
   (synthesisExtra ? `\n\n${synthesisExtra}` : ''),
-  { label: 'synthesize', phase: 'Synthesize', model: harnessModels.synthesis,
+  { label: 'synthesize', phase: 'Synthesize', cwd: repoRoot,
+    tools: sourceTools, model: 'openai-codex/gpt-5.6-luna',
     schema: {
       type: 'object',
       required: ['report_markdown'],

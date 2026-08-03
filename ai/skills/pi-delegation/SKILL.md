@@ -1,6 +1,6 @@
 ---
 name: pi-delegation
-description: Delegate Pi work through visible Zellij workers or classified dynamic workflows. Use when the user requests subagents, delegation, parallel investigation, Ultracode-style workflows, independent verification, or multi-agent synthesis.
+description: Delegate work through Pi workflows, visible Zellij workers, or a bounded GPT-5.6 Sol reviewer from Claude Code. Use for subagents, parallel investigation, independent verification, or multi-agent synthesis.
 ---
 
 # Pi delegation
@@ -30,6 +30,29 @@ Use a classified dynamic workflow when:
 
 Never use tmux.
 
+Independent delegation must not block the human foreground. If the parent does
+not need a result before it can continue useful work, start the classified
+workflow with `background: true` (or use an isolated visible worker), return
+control immediately, and keep processing human prompts. Await a foreground
+workflow only when its result is a genuine dependency of the very next parent
+action.
+
+## Claude Code and other non-Pi harnesses
+
+When the current harness does not expose Pi's `workflow` tool and the user asks
+for an independent GPT-5.6 Sol check, run `pi-sol-review` from the repository
+being reviewed. Pass one focused, self-contained task as arguments or stdin. The
+wrapper launches authenticated `openai-codex/gpt-5.6-sol` with the managed Pi
+classifier and only `read`, `grep`, `find`, and `ls`; it has no write or shell
+tools and does not depend on agent-registry integration.
+
+Use this lane to challenge an idea, inspect code, or review evidence before the
+human's own review. It does not attest that the human authorized a mutation and
+its output remains an agent claim until checked against source. If the command
+is unavailable, report that the dotconfig generation needs activation rather
+than replacing it with an unclassified `codex exec`, a writable tool set, or an
+Anthropic API call.
+
 ## Shared safety
 
 - Give every worker a self-contained task, scope, expected result, and stopping
@@ -47,8 +70,14 @@ Never use tmux.
 ## Zellij workers
 
 Require an existing Zellij session. Do not silently create a detached session.
+When the user explicitly asks to spawn an agent, focusing its new tab or pane is
+allowed. For agent-initiated background delegation, snapshot the exact active tab
+and pane IDs before launch and restore both before returning control. Verify the
+restoration from structured Zellij state; if exact restoration is unavailable,
+use a classified background workflow instead.
 
-Create or reuse a tab named `pi-workers`. Start each worker in a named pane with an
+Create or reuse a tab named `pi-workers` under that focus contract. Start each
+worker in a named pane with an
 ephemeral non-interactive Pi process:
 
 `pi --print --no-session --tools read,grep,find,ls`
@@ -57,7 +86,13 @@ Capture the pane ID returned by Zellij. Use structured pane state to determine w
 the process exits and preserve its exit status. Collect the final plain-text output
 with `dump-screen --full`.
 
-Keep completed panes visible so the user can inspect or close them normally.
+Polling, harvesting, and closing background workers must preserve the user's
+current focus and must never send keys to the user's active pane.
+
+Harvest each completed pane's output and exit status promptly, then close the
+pane automatically so finished workers do not linger. Keep failed panes visible
+only long enough to capture diagnostics, then close them too unless the user
+explicitly asks to preserve worker panes.
 
 If a pane exits unsuccessfully or produces no usable result, mark that worker as
 failed. Never infer or invent its answer.
@@ -75,7 +110,9 @@ Every workflow must specify the smallest sufficient:
 
 - total agent limit;
 - concurrency limit;
-- per-agent and whole-workflow timeouts;
+- per-agent and whole-workflow timeouts (classified children require at least
+  180 seconds per agent so spawn classification, child execution, tool-result
+  classification, and return classification all fit);
 - retry limit;
 - total token budget.
 
@@ -85,7 +122,12 @@ agent promises directly to `parallel`, for example
 provide a focused task, working directory when it differs from the parent, tool
 capabilities, and model or thinking level when the default is not appropriate.
 Prefer cheaper models for bounded discovery and stronger models for synthesis or
-difficult verification.
+difficult verification. Never request `fable`, `sonnet`, `opus`, `claude-*`, or an
+`anthropic/*` model from a Pi workflow child: Anthropic API billing is disabled.
+When Claude adds enough value, run it only as a read-only external subscription
+lane with `claude -p --permission-mode plan`; cursor-agent Claude lanes are allowed
+only when their included allowance is confirmed available. If neither subscription
+route is available, omit Claude rather than falling back to an API provider.
 
 Assume every agent spawn, tool action, tool result, and returned result will be
 classified. Handle a blocked boundary as a typed failure. Do not expose blocked

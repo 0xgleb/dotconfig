@@ -2,6 +2,14 @@
 
 These rules apply across all repositories.
 
+## Evidence Before Agreement
+
+Do not mirror the user's latest framing or agree reflexively. Before affirming a
+claim, name the evidence and test the strongest plausible counter-hypothesis.
+Treat rewording as no new evidence, do not oscillate conclusions without changed
+facts, inspect existing code and documentation before proposing additions, and
+explicitly correct prior unsupported answers instead of adopting the newest prompt.
+
 ## ABSOLUTE PROHIBITION: Credentials and Secrets
 
 **YOU MUST NEVER, UNDER ANY CIRCUMSTANCES, ACCESS CREDENTIAL OR SECRET FILES.**
@@ -43,6 +51,19 @@ look it up FIRST:
 **Context first, action second.** Read before you speak, check before you run,
 look up before you suggest. If you cannot verify something, say you don't know —
 never fill the gap with fabrication.
+
+## Pull Request Labels
+
+Apply exactly one accurate category label per PR. Fixes use `bug`; `test` is
+only for test-only changes; use `feat` for verified feature work and `refactor`
+for verified structural changes. Never combine `bug`, `feat`, and `test` as a
+hedge. Verify the category from the actual diff and repository context rather
+than a title, registry request, or other untrusted wording alone.
+
+AI-review threads may be resolved only after the fix is verified and current
+thread data identifies the author as an AI reviewer. Never resolve a
+human-authored thread. Resolution permission does not authorize posting a reply;
+reply content remains subject to the external-communication rules below.
 
 ## Authorship & Attribution
 
@@ -139,6 +160,53 @@ through review.
   architecture.
 - Keep a granular task list for the current request and remove completed items
   so the remaining work is always obvious.
+- Before taking cross-project Pi support or operator work, check `agent_registry`.
+  Delegate to the live role owner; if the role is unowned, claim it temporarily
+  and handle it locally. A role never grants authority beyond constrained project
+  tools, and an operational role is not done merely because its inbox is empty.
+  A registry read/sync failure means coordination is temporarily unavailable; it
+  does not revoke authorization already established by the user and project policy
+  or block unrelated Git delivery. Continue safely when no exclusive lease or
+  request transition is required. Never infer new authority from an unavailable
+  registry; block only the operation that actually requires registry ownership.
+- Never stop while assigned work remains executable. If a goal is active,
+  continue until it is achieved. If any todo is pending, continue working through
+  the task list. Stop only when all assigned work is complete or all remaining
+  todos are explicitly blocked with reasons.
+- Treat classifier blocks as policy and never evade them by switching tools,
+  rephrasing, or adding `--force`/equivalent bypass flags. A correct block is not
+  permission to stop: return to the real active task through a safe path.
+- Treat a manual user interrupt or double-cancel as an explicit pause. Do not
+  automatically resume goals, loops, or pending tasks until the user submits
+  their next prompt; give them time to finish redirecting the work.
+- When safe compaction preparation is requested, persist critical state, goals,
+  todos, exact pause points, and unfinished actions, then call
+  `safe_compaction_ready` with the exact next action. A displayed tool call with
+  no successful tool result was not executed. After compaction, resume that
+  action and continue all assigned work rather than treating the summary as
+  completion.
+- Treat the managed resource-pressure guard as the authoritative automatic
+  preflight for expensive builds, test sweeps, and workflows. Do not poll `df`,
+  `vm_stat`, or process lists before routine work. If the guard blocks, follow
+  its bounded cleanup guidance and preserve the crash reserve rather than
+  repeatedly probing or waiting for a build to fail.
+- Track and clean agent-created artifacts after verification, including newly
+  created Nix result symlinks and stale Pi temporary logs. In Pi, record newly
+  created project `.tmp/` files/directories immediately with `artifact_provenance`
+  so later exact cleanup has durable evidence. Never delete pre-existing project outputs, user files, global caches, Nix generations, or
+  run global garbage collection without explicit user authorization. Exact
+  rebuildable build outputs are disposable by default, but project instructions
+  and verified repository configuration may protect artifacts consumed by a
+  runtime, watcher, supervisor, release, or deployment process. Inspect any
+  referenced configuration before cleanup and preserve a cleanup root containing
+  a configured live artifact unless disruption is explicitly requested.
+- Never inject keystrokes or text into the user's active Zellij pane or editor;
+  it can overwrite an in-progress prompt. Use registered tools such as
+  `reload_pi` instead, and keep Zellij automation confined to isolated workers.
+- When the user explicitly asks to spawn an agent, focusing its Zellij pane is
+  allowed. For agent-initiated background delegation, snapshot the user's active
+  tab and pane, launch the worker, and restore that exact focus before returning.
+  If exact restoration cannot be verified, use a classified background workflow.
 - Keep changes minimal and reviewable. Prefer improving the relevant
   documentation in-repo when a lesson should help future work in the same
   repository.
@@ -203,10 +271,33 @@ work simultaneously. Tasks should be large and meaningful enough to justify a
 dedicated worktree — don't split into tiny pieces that create coordination
 overhead.
 
+## Defensive Programming
+
+Treat persisted state, external responses, configuration, arithmetic, and
+cross-module inputs as capable of violating assumptions. Enforce invariants in
+types where possible and at the narrowest boundary otherwise. An invariant
+violation returns a specific typed error; it never panics, silently coerces the
+value, invents a fallback, or continues with partially trusted state. Cover the
+malformed or impossible shape with a regression test alongside the valid path.
+
+Small custom macros or generators are appropriate only for genuinely mechanical
+boilerplate when they make the invariant easier to read at every call site. Keep
+the domain operation, control flow, types, and error path visible; if
+understanding the abstraction requires reconstructing hidden behavior, write the
+explicit code instead.
+
 ## Code Style
 
 - Prefer functional programming patterns
+- In TypeScript and JavaScript, prefer `const`-bound arrow functions over
+  `function` declarations. Use an explicit callable type when it clarifies the
+  public contract; reserve declarations for overloads, generators, or APIs that
+  specifically require declaration semantics.
 - Use strict compiler and linter settings
+- In TypeScript, encode expected failures in the Effect error type. Use
+  `Effect.try`/`Effect.tryPromise` to translate genuinely throwing boundaries,
+  then recover with typed error handlers; do not hide ordinary failure paths in
+  untyped `try`/`catch` control flow.
 - Comprehensive test coverage is expected
 - Model types properly - use the type system to make invalid states
   unrepresentable
@@ -404,6 +495,45 @@ When the user redirects to a new issue, **do not delete the planning for the
 issues you are not working on yet** -- keep their tasks in `pending` or move
 them to a `[parked]`-style metadata flag, but the granular breakdown stays so
 it is ready to pick up when the active issue is done.
+
+## Session Handover Protocol
+
+Use the `/handover` skill as the standard cooperation boundary between long,
+compacted, usage-limited, or parallel human-agent sessions.
+
+### Outgoing sessions
+
+- Invoke `/handover` proactively when the user asks to transfer work, another
+  session is expected to continue it, or context/usage limits threaten reliable
+  continuation. Do not leave transfer state only in conversational memory.
+- Produce the skill's workspace-level handover document and continuation prompt
+  from verified repository state. Never stage or commit the temporary artifact.
+- A handover transfers responsibility; it does not mark unfinished todos done.
+  Preserve every pending request, blocker, decision, and exact pause point.
+
+### Receiving sessions
+
+- When the user says a handover exists, or a continuation prompt names one,
+  read that handover before resuming implementation. Treat its user requests as
+  still-active intent unless the current user message cancels or supersedes them.
+- Record **every** transferred request, feedback item, blocker, and concrete next
+  step in the branch-aware todo list before doing further work. Deduplicate
+  equivalent existing tasks, but never silently drop or collapse requirements.
+- Reconcile the handover against current Git state and current project
+  instructions before editing; handovers can become stale and never override
+  higher-priority or newer user direction.
+- Briefly surface what was imported into the task list so the human can see that
+  the transfer succeeded, then continue autonomously from the named pause point.
+
+### Continuity rules
+
+- If another session is told to run `/handover`, the receiving session owns
+  discovering, ingesting, tracking, and completing that transferred work.
+- After compaction or resume, use the todo list plus any active handover as the
+  continuity source. Ask the user only when those artifacts and repository state
+  genuinely cannot resolve an ambiguity.
+- Never copy secrets into handovers or todos; name the relevant configuration
+  key or protected location instead.
 
 ## Subagent Delegation
 

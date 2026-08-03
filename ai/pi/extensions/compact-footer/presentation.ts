@@ -1,3 +1,5 @@
+import { alignChromeLine } from "../shared/chrome.ts";
+
 export interface FooterPresentation {
   readonly cwd: string;
   readonly branch?: string;
@@ -22,6 +24,9 @@ function formatTokens(count: number): string {
 function sanitizeStatus(status: string): string {
   return status.replace(/[\r\n\t]/g, " ").replace(/ +/g, " ").trim();
 }
+
+export const alignFooterLine = (footer: string, width: number): string =>
+  alignChromeLine(footer, width);
 
 export function formatFooter(input: FooterPresentation): string {
   const location = input.branch ? `${input.cwd} (${input.branch})` : input.cwd;

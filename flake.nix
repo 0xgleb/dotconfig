@@ -9,7 +9,7 @@
     # binaries ahead of nixpkgs. Bump the version in this URL and run
     # `nix flake update claude-code-manifest` to upgrade.
     claude-code-manifest = {
-      url = "https://downloads.claude.ai/claude-code-releases/2.1.214/manifest.json";
+      url = "https://downloads.claude.ai/claude-code-releases/2.1.220/manifest.json";
       flake = false;
     };
 
@@ -18,6 +18,9 @@
 
     home-manager.url = "github:nix-community/home-manager";
     home-manager.inputs.nixpkgs.follows = "nixpkgs";
+
+    ragenix.url = "github:yaxitech/ragenix";
+    ragenix.inputs.nixpkgs.follows = "nixpkgs";
 
     disko.url = "github:nix-community/disko";
     disko.inputs.nixpkgs.follows = "nixpkgs";
@@ -49,6 +52,7 @@
       darwinConfigurations.darwwwin = nix-darwin.lib.darwinSystem {
         specialArgs = { inherit inputs self; };
         modules = [
+          inputs.ragenix.darwinModules.default
           ./common.nix
           ./darwin.nix
           home-manager.darwinModules.home-manager
