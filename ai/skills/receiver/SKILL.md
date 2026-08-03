@@ -18,9 +18,13 @@ native Pi session (typed `agent_registry` tools) and a Claude Code session
 Each `/receiver` invocation is ONE iteration: arm, collect, prioritize,
 execute one, report, yield.
 
-1. **Arm (first invocation in a session only)**: if no recurring schedule for
-   this skill exists yet (check the session's cron list), create one that
-   re-invokes `/receiver` on an off minute. Pick the cadence from the usage
+1. **Arm (first invocation in a session only)**: register this session on the
+   dispatch roster so the dispatcher can route to it by name — run
+   `pi-bridge register --agent-id <stable-id> --label "<harness> - <project> receiver" --cwd <absolute project path>`
+   and keep it heartbeating (a background loop re-registering every 60
+   seconds; registration expires in about 90 seconds without it). Then, if no
+   recurring schedule for this skill exists yet (check the session's cron
+   list), create one that re-invokes `/receiver` on an off minute. Pick the cadence from the usage
    budget, not from eagerness: hourly (e.g. `41 * * * *`) is the paid-lane
    default — each fire spends credits on reprioritization even when the
    queue is quiet; go denser (e.g. every 15 minutes) only when the owner

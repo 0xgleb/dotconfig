@@ -3,6 +3,7 @@ import { homedir } from "node:os";
 import { Effect, Either } from "effect";
 import { remoteBridgeDatabasePath } from "./paths.ts";
 import {
+  BRIDGE_AGENT_TTL_MS,
   BRIDGE_MESSAGE_TTL_MS,
   MAX_REMOTE_MESSAGE_CHARACTERS,
   RemoteBridgeError,
@@ -93,13 +94,35 @@ const command = (args: readonly string[]): Effect.Effect<unknown, RemoteBridgeEr
       return publicMessage(yield* store.get(id, Date.now()));
     });
   }
+  if (action === "register") {
+    return Effect.gen(function* () {
+      const id = yield* requiredOption(args, "--agent-id");
+      const label = yield* requiredOption(args, "--label");
+      const cwd = yield* requiredOption(args, "--cwd");
+      const agent = yield* store.heartbeatAgent({
+        id,
+        label,
+        cwd,
+        accepting: option(args, "--accepting")?.trim() !== "false",
+        now: Date.now(),
+        ttlMs: BRIDGE_AGENT_TTL_MS,
+      });
+      return {
+        id: agent.id,
+        label: agent.label,
+        accepting: agent.accepting,
+        expiresAt: agent.expiresAt,
+      };
+    });
+  }
   if (action === "enable") return store.setEnabled(true);
   if (action === "disable") return store.setEnabled(false);
   if (action === "status") return store.isEnabled();
   return Effect.fail(
     new RemoteBridgeError({
       code: "invalid_input",
-      message: "usage: pi-bridge agents | send --agent ID --dedupe KEY | result --id ID | enable | disable | status",
+      message:
+        "usage: pi-bridge agents | send --agent ID --dedupe KEY | result --id ID | register --agent-id ID --label LABEL --cwd PATH | enable | disable | status",
     }),
   );
 };

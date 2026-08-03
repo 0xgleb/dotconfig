@@ -40,6 +40,30 @@ test("bridge CLI exposes bounded JSON commands over exact argv and stdin", async
     assert.equal(agentsJson.ok, true);
     assert.equal(agentsJson.result[0]?.id, "session-1");
 
+    const registered = runCli(stateRoot, [
+      "register",
+      "--agent-id",
+      "claude-config-receiver",
+      "--label",
+      "Claude - .config receiver",
+      "--cwd",
+      "/work/config",
+    ]);
+    assert.equal(registered.status, 0, registered.stderr);
+    const registeredJson = JSON.parse(registered.stdout) as {
+      ok: boolean;
+      result: { id: string; accepting: boolean };
+    };
+    assert.equal(registeredJson.ok, true);
+    assert.equal(registeredJson.result.id, "claude-config-receiver");
+    assert.equal(registeredJson.result.accepting, true);
+    const rosterAfter = runCli(stateRoot, ["agents"]);
+    assert.equal(rosterAfter.status, 0, rosterAfter.stderr);
+    const rosterJson = JSON.parse(rosterAfter.stdout) as {
+      result: Array<{ id: string }>;
+    };
+    assert.ok(rosterJson.result.some((agent) => agent.id === "claude-config-receiver"));
+
     const sent = runCli(
       stateRoot,
       ["send", "--agent", "session-1", "--dedupe", "telegram-update-7"],
