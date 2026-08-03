@@ -1,8 +1,13 @@
 import { isAbsolute, join, resolve } from "node:path"
 import { fileURLToPath } from "node:url"
 import { Data, Effect } from "effect"
+import { REVIEW_DUTY_PROFILES } from "./job-runtime.ts"
 import { startControlPlaneServer } from "./server.ts"
-import { makeSqliteJobStore } from "./sqlite-job-store.ts"
+import {
+  JobStoreError,
+  makeSqliteJobStore,
+  type SqliteJobStore,
+} from "./sqlite-job-store.ts"
 
 const DEFAULT_PORT = 43_121
 const LOOPBACK_HOST = "127.0.0.1"
@@ -92,29 +97,66 @@ const waitForShutdown = (): Effect.Effect<void> =>
     })
   })
 
+const REVIEW_DUTY_SCAN_BASE_MS = 2 * 60 * 60 * 1_000
+const REVIEW_DUTY_SCAN_JITTER_MS = 60 * 60 * 1_000
+
+export const seedReviewDutyScans = (
+  store: SqliteJobStore,
+  now: number = Date.now(),
+): Effect.Effect<void, unknown> =>
+  Effect.forEach(
+    REVIEW_DUTY_PROFILES,
+    (profile) =>
+      Effect.catchIf(
+        store.enqueue(
+          {
+            kind: "review-duty.scan",
+            payload: { profile },
+            runAt: now,
+            maxAttempts: 3,
+            recurrence: {
+              baseMs: REVIEW_DUTY_SCAN_BASE_MS,
+              jitterMs: REVIEW_DUTY_SCAN_JITTER_MS,
+            },
+            idempotencyKey: `review-duty:${profile}`,
+          },
+          undefined,
+          now,
+        ),
+        (failure) =>
+          failure instanceof JobStoreError &&
+          failure.code === "idempotency_conflict",
+        () => Effect.void,
+      ),
+    { discard: true },
+  )
+
 export const runControlPlane = (
   config: ControlPlaneConfig,
 ): Effect.Effect<void, unknown> =>
   Effect.acquireUseRelease(
     makeSqliteJobStore(config.databasePath),
     (store) =>
-      Effect.acquireUseRelease(
-        startControlPlaneServer({
-          host: config.host,
-          port: config.port,
-          store,
-          ...(config.dashboardDirectory
-            ? { dashboardDirectory: config.dashboardDirectory }
-            : {}),
-        }),
-        (server) =>
-          Effect.zipRight(
-            Effect.sync(() =>
-              console.log(`pi-control-plane listening on ${server.origin}`),
+      Effect.zipRight(
+        seedReviewDutyScans(store),
+        Effect.acquireUseRelease(
+          startControlPlaneServer({
+            host: config.host,
+            port: config.port,
+            store,
+            ...(config.dashboardDirectory
+              ? { dashboardDirectory: config.dashboardDirectory }
+              : {}),
+          }),
+          (server) =>
+            Effect.zipRight(
+              Effect.sync(() =>
+                console.log(`pi-control-plane listening on ${server.origin}`),
+              ),
+              waitForShutdown(),
             ),
-            waitForShutdown(),
-          ),
-        (server) => server.close,
+          (server) => server.close,
+        ),
       ),
     (store) => Effect.sync(() => store.close()),
   )
