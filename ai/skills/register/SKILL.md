@@ -100,6 +100,17 @@ session re-arms by invoking `/register` once.
    printf '%s' 'request:<full-request-id> outcome:<completed|failed> summary:<one bounded line> evidence:<comma-separated refs>' | pi-bridge send --agent <dispatcher-id> --dedupe <request-id>
    ```
 
+   **An idle drain reports nothing.** No request executed means no envelope —
+   do not announce that the queue was empty, that the roster looked healthy, or
+   that the poll found nothing. A fast lane that reports every idle poll
+   manufactures traffic faster than anything drains it.
+
+   **Never send an envelope with a placeholder request id.** `request:none` and
+   friends do not match the frame, which requires a real UUID, so the send
+   falls through to routing and is filed as work against a project queue. That
+   is how 94 idle-poll reports accumulated in a home-directory queue nothing
+   drains, burying the 22 real messages sitting in there with them.
+
    Use exactly that shape (deterministically allowlisted; variants fall back to
    semantic classification), single-quoted with no apostrophes inside, and
    always the FULL request UUID — prefix ids fail against exact-match store
