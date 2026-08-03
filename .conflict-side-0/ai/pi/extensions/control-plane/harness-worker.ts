@@ -37,6 +37,7 @@ export interface HarnessWorkerOptions {
   readonly workerId: string
   readonly leaseTtlMs: number
   readonly retryDelayMs: number
+  readonly allowedRoots: readonly string[]
   readonly spawner: HarnessSpawner
 }
 
@@ -47,6 +48,12 @@ export class HarnessWorkerError extends Data.TaggedError(
   readonly message: string
 }> {}
 
+const SUCCESSFUL_HANDOFF_STATUSES = [
+  "clean",
+  "findings_fixed",
+  "findings_pending",
+] as const
+
 export const runNextHarnessAttempt = (
   options: HarnessWorkerOptions,
 ): Effect.Effect<HarnessAttemptOutcome, HarnessWorkerError> =>
@@ -55,7 +62,7 @@ export const runNextHarnessAttempt = (
     if (claimed === undefined) return { outcome: "idle" } as const
     if (claimed.kind !== "harness.review")
       return { outcome: "unsupported", jobId: claimed.id } as const
-    const attempt = yield* prepareAttempt(claimed)
+    const attempt = yield* prepareAttempt(claimed, options.allowedRoots)
     if (attempt.kind === "rejected")
       return yield* failAttempt(options, claimed, attempt.reason)
     const execution = yield* Effect.either(options.spawner(attempt.plan))
@@ -68,25 +75,28 @@ export const runNextHarnessAttempt = (
         `executor exited with code ${String(execution.right.exitCode)}`,
       )
     }
-    const handoff = extractHandoff(
-      execution.right.stdout,
-      attempt.payload,
-      claimed.id,
-      claimed.attempt,
+    const handoff = yield* Effect.either(
+      extractHandoff(
+        execution.right.stdout,
+        attempt.payload,
+        claimed.id,
+        claimed.attempt,
+      ),
     )
-    if (handoff.kind === "rejected")
-      return yield* failAttempt(options, claimed, handoff.reason)
+    if (handoff._tag === "Left")
+      return yield* failAttempt(options, claimed, handoff.left.message)
     if (
-      handoff.value.status === "blocked" ||
-      handoff.value.status === "failed"
+      !SUCCESSFUL_HANDOFF_STATUSES.includes(
+        handoff.right.status as (typeof SUCCESSFUL_HANDOFF_STATUSES)[number],
+      )
     ) {
       return yield* failAttempt(
         options,
         claimed,
-        `harness ${handoff.value.status}: ${handoff.value.assessment}`,
+        `harness ${handoff.right.status}: ${handoff.right.assessment}`,
       )
     }
-    yield* completeAttempt(options, claimed, handoff.value)
+    yield* completeAttempt(options, claimed, handoff.right)
     return { outcome: "completed", jobId: claimed.id } as const
   })
 
@@ -100,11 +110,18 @@ export const spawnHarnessExecutor = (timeoutMs: number): HarnessSpawner =>
         resume(executorFailure("executor argv is empty"))
         return
       }
-      const child = spawn(command, args, {
-        cwd: plan.cwd,
-        stdio: ["ignore", "pipe", "ignore"],
-      })
-      let stdout = ""
+      let child
+      try {
+        child = spawn(command, args, {
+          cwd: plan.cwd,
+          stdio: ["ignore", "pipe", "ignore"],
+        })
+      } catch {
+        resume(executorFailure("executor could not be spawned"))
+        return
+      }
+      const chunks: Buffer[] = []
+      let byteLength = 0
       let settled = false
       const settle = (
         exit: Effect.Effect<HarnessExecution, HarnessWorkerError>,
@@ -119,8 +136,9 @@ export const spawnHarnessExecutor = (timeoutMs: number): HarnessSpawner =>
         settle(executorFailure("executor timed out"))
       }, timeoutMs)
       child.stdout.on("data", (chunk: Buffer) => {
-        stdout += chunk.toString("utf8")
-        if (stdout.length > MAX_EXECUTOR_STDOUT_BYTES) {
+        chunks.push(chunk)
+        byteLength += chunk.byteLength
+        if (byteLength > MAX_EXECUTOR_STDOUT_BYTES) {
           child.kill("SIGKILL")
           settle(executorFailure("executor output exceeded bounds"))
         }
@@ -132,7 +150,10 @@ export const spawnHarnessExecutor = (timeoutMs: number): HarnessSpawner =>
         settle(
           code === null
             ? executorFailure("executor terminated without an exit code")
-            : Effect.succeed({ exitCode: code, stdout }),
+            : Effect.succeed({
+                exitCode: code,
+                stdout: Buffer.concat(chunks).toString("utf8"),
+              }),
         ),
       )
     })
@@ -226,6 +247,7 @@ type PreparedAttempt =
 
 const prepareAttempt = (
   claimed: ClaimedJob,
+  allowedRoots: readonly string[],
 ): Effect.Effect<PreparedAttempt, HarnessWorkerError> =>
   Effect.gen(function* () {
     const payload = yield* Effect.either(
@@ -234,7 +256,12 @@ const prepareAttempt = (
     if (payload._tag === "Left")
       return { kind: "rejected", reason: "stored harness payload is invalid" } as const
     const plan = yield* Effect.either(
-      buildHarnessLaunchPlan(claimed.payload, claimed.id, claimed.attempt),
+      buildHarnessLaunchPlan(
+        claimed.payload,
+        claimed.id,
+        claimed.attempt,
+        allowedRoots,
+      ),
     )
     if (plan._tag === "Left")
       return { kind: "rejected", reason: "harness launch plan was refused" } as const
@@ -247,39 +274,50 @@ const prepareAttempt = (
 
 const MAX_HANDOFF_LINE_BYTES = 8_192
 
-type ExtractedHandoff =
-  | { readonly kind: "extracted"; readonly value: HarnessReviewHandoff }
-  | { readonly kind: "rejected"; readonly reason: string }
-
 const extractHandoff = (
   stdout: string,
   payload: HarnessReviewPayload,
   jobId: string,
   attempt: number,
-): ExtractedHandoff => {
-  if (stdout.length > MAX_EXECUTOR_STDOUT_BYTES)
-    return { kind: "rejected", reason: "executor output exceeded bounds" }
+): Effect.Effect<HarnessReviewHandoff, HarnessWorkerError> => {
+  if (Buffer.byteLength(stdout, "utf8") > MAX_EXECUTOR_STDOUT_BYTES)
+    return executorFailure("executor output exceeded bounds")
   const line = stdout
     .split("\n")
     .map((candidate) => candidate.trim())
     .filter((candidate) => candidate.length > 0)
     .at(-1)
-  if (line === undefined || line.length > MAX_HANDOFF_LINE_BYTES)
-    return { kind: "rejected", reason: "executor returned no bounded handoff line" }
-  let parsed: unknown
-  try {
-    parsed = JSON.parse(line)
-  } catch {
-    return { kind: "rejected", reason: "executor handoff is not valid JSON" }
+  if (
+    line === undefined ||
+    Buffer.byteLength(line, "utf8") > MAX_HANDOFF_LINE_BYTES
+  ) {
+    return executorFailure("executor returned no bounded handoff line")
   }
-  const decoded = Effect.runSync(
-    Effect.either(decodeHarnessReviewHandoff(parsed)),
+  return Effect.flatMap(
+    Effect.try({
+      try: () => JSON.parse(line) as unknown,
+      catch: () =>
+        new HarnessWorkerError({
+          code: "executor_failed",
+          message: "executor handoff is not valid JSON",
+        }),
+    }),
+    (parsed) =>
+      Effect.flatMap(
+        Effect.mapError(
+          decodeHarnessReviewHandoff(parsed),
+          () =>
+            new HarnessWorkerError({
+              code: "executor_failed",
+              message: "executor handoff is malformed",
+            }),
+        ),
+        (handoff) =>
+          harnessHandoffMatchesAttempt(handoff, payload, jobId, attempt)
+            ? Effect.succeed(handoff)
+            : executorFailure("executor handoff does not match the attempt"),
+      ),
   )
-  if (decoded._tag === "Left")
-    return { kind: "rejected", reason: "executor handoff is malformed" }
-  if (!harnessHandoffMatchesAttempt(decoded.right, payload, jobId, attempt))
-    return { kind: "rejected", reason: "executor handoff does not match the attempt" }
-  return { kind: "extracted", value: decoded.right }
 }
 
 const failAttempt = (
