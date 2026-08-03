@@ -113,5 +113,7 @@ a shared pool any Fable session uses directly: drop a self-contained `.md` job
 file into `/Users/0xgleb/code/st0x/.tmp/grok-jobs/<worker>/` (workers `grok-1`,
 `grok-2`) and collect the result from
 `/Users/0xgleb/code/st0x/.tmp/grok-results/<jobfile>`. Each job is a one-shot
-read-only plan-mode call with no prompts; results are also reported to the st0x
-receiver through the bridge.
+read-only plan-mode call with no prompts. Results exist only on disk - there is
+no bridge reporting - so a session that dropped a job includes new
+`grok-results/` files in its collect step each drain until it has consumed
+them; a `.failed` suffix marks a failed job.
