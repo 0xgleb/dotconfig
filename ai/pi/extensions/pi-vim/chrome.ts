@@ -1,7 +1,7 @@
 import { truncateToWidth, visibleWidth } from "@earendil-works/pi-tui"
 import { framedChromeInset } from "../shared/chrome.ts"
 
-export const PROMPT_MIN_CONTENT_ROWS = 3
+export const PROMPT_MIN_CONTENT_ROWS = 1
 
 const fillToWidth = (prefix: string, suffix: string, width: number): string => {
   const available = Math.max(

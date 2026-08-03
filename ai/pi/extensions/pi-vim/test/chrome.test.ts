@@ -33,8 +33,8 @@ test("prompt chrome uses a rounded inset frame without a filled background", () 
   assert.equal(bottom.includes("\x1b[4"), false)
 })
 
-test("prompt reserves more content height than the compact task preview", () => {
-  assert.equal(PROMPT_MIN_CONTENT_ROWS, 3)
+test("prompt stays single-row when empty to preserve screen space", () => {
+  assert.equal(PROMPT_MIN_CONTENT_ROWS, 1)
 })
 
 test("prompt frame compensates for the host editor's built-in pane padding", () => {
