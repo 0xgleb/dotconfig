@@ -1,3 +1,4 @@
+import { createHash } from "node:crypto";
 import { homedir } from "node:os";
 import type {
   ExtensionAPI,
@@ -97,6 +98,19 @@ interface ActiveRemoteTurn {
    */
   readonly routable?: readonly string[];
 }
+
+/**
+ * Dedupe only fires when requester and key match exactly, so a timestamp key
+ * meant every pane submission was unique and a retry of the same input queued
+ * a second copy of work already waiting. Keying on the text collapses those.
+ *
+ * Repeating yourself deliberately still works: `enqueue` returns an existing
+ * row only while it is still queued, so identical text merges only when the
+ * earlier copy has not been picked up yet - which is the retry case, and
+ * exactly when a duplicate would have been redundant anyway.
+ */
+const ownerPaneDedupeKey = (sessionId: string, text: string): string =>
+  `pane-${sessionId}-${createHash("sha256").update(text).digest("hex").slice(0, 16)}`;
 
 const safeError = (error: RemoteBridgeError): string =>
   `${error.code}: ${error.message}`.slice(0, 160);
@@ -709,7 +723,7 @@ export default function remoteControl(pi: ExtensionAPI): void {
       store.enqueue({
         targetAgentId: ctx.sessionManager.getSessionId(),
         requesterId: "owner-pane",
-        dedupeKey: `pane-${Date.now()}`,
+        dedupeKey: ownerPaneDedupeKey(ctx.sessionManager.getSessionId(), text),
         text,
         now: Date.now(),
         ttlMs: BRIDGE_MESSAGE_TTL_MS,
