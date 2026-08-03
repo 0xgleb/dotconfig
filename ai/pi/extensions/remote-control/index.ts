@@ -47,6 +47,7 @@ import {
   finalAssistantText,
   normalizeLegacyRemoteImageContent,
   parseOutcomeEnvelope,
+  parseOwnerRelay,
   parseRoutePlan,
   routingBatchPrompt,
   remoteTurnContent,
@@ -81,7 +82,7 @@ const safeError = (error: RemoteBridgeError): string =>
   `${error.code}: ${error.message}`.slice(0, 160);
 
 export default function remoteControl(pi: ExtensionAPI): void {
-  registerRuntimeVersion(pi, "remote-control", "2026.08.03.26");
+  registerRuntimeVersion(pi, "remote-control", "2026.08.03.27");
   const store = makeRemoteBridgeStore(
     remoteBridgeDatabasePath(process.env.XDG_STATE_HOME, homedir()),
   );
@@ -500,6 +501,23 @@ export default function remoteControl(pi: ExtensionAPI): void {
           const envelope = parseOutcomeEnvelope(message.text);
           if (envelope) {
             await finishEnvelope(message, envelope, ctx);
+            continue;
+          }
+          const relay = parseOwnerRelay(message.text);
+          if (relay) {
+            const relayed = await run(
+              store.complete({
+                messageId: message.id,
+                claimToken: message.claimToken,
+                response: relay,
+                now: Date.now(),
+              }),
+            );
+            if (Either.isLeft(relayed))
+              ctx.ui.setStatus(
+                STATUS_KEY,
+                `remote:error · ${safeError(relayed.left)}`,
+              );
             continue;
           }
           if (message.text.trim() === "/kanban") {

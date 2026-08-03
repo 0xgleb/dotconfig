@@ -321,6 +321,21 @@ export const trimDispatchContext = <Message extends { readonly role: string }>(
   return { messages: [marker, ...messages.slice(cut)], dropped };
 };
 
+const OWNER_RELAY =
+  /^(?:relay-to-owner:|Relay to the owner on Telegram:)\s*([\s\S]{1,2000}?)\s*$/;
+
+/**
+ * Owner-relay frames are outward notifications from agents (reminders,
+ * alerts). They are recognized mechanically in the dispatch claim drain and
+ * completed with the text as the response - the bridge completion path
+ * delivers it to the owner chat. They never enter the routing turn.
+ */
+export const parseOwnerRelay = (text: string): string | undefined => {
+  const match = OWNER_RELAY.exec(text.trim());
+  const body = match?.[1]?.trim();
+  return body ? body : undefined;
+};
+
 export interface OutcomeEnvelope {
   readonly requestId: string;
   readonly outcome: "completed" | "failed";
@@ -328,7 +343,7 @@ export interface OutcomeEnvelope {
 }
 
 const OUTCOME_ENVELOPE =
-  /^request:([0-9a-f]{8}-[0-9a-f]{4}-[0-9a-f]{4}-[0-9a-f]{4}-[0-9a-f]{12})\s+outcome:(completed|failed)\s+summary:([\s\S]{1,4000}?)(?:\s+evidence:\S{1,400})?\s*$/;
+  /^request:([0-9a-f][0-9a-f-]{7,35})\s+outcome:(completed|failed)\s+summary:([\s\S]{1,4000}?)(?:\s+evidence:\S{1,400})?\s*$/;
 
 /**
  * Receiver outcome reports are protocol frames, not conversation: they are

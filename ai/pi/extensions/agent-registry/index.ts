@@ -291,7 +291,7 @@ const registryExtension: (pi: ExtensionAPI) => void = (pi) => {
       payload === null ||
       typeof payload.report !== "function" ||
       typeof payload.requestId !== "string" ||
-      !/^[0-9a-f-]{36}$/.test(payload.requestId) ||
+      !/^[0-9a-f][0-9a-f-]{7,35}$/.test(payload.requestId) ||
       (payload.resolution !== "completed" && payload.resolution !== "failed") ||
       typeof payload.summary !== "string" ||
       payload.summary.length === 0 ||
@@ -312,9 +312,20 @@ const registryExtension: (pi: ExtensionAPI) => void = (pi) => {
         const now = Date.now()
         const agent = identity(ctx)
         const snapshot = await run(store.snapshot(now))
-        const target = snapshot.requests.find(
-          (request) => request.id === payload.requestId,
+        const matches = snapshot.requests.filter((request) =>
+          request.id.startsWith(payload.requestId),
         )
+        if (matches.length !== 1) {
+          payload.report({
+            outcome: "failed",
+            reason:
+              matches.length === 0
+                ? "request not found"
+                : "request id prefix is ambiguous",
+          })
+          return
+        }
+        const target = matches[0]
         if (!target) {
           payload.report({ outcome: "failed", reason: "request not found" })
           return

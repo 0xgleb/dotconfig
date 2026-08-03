@@ -10,6 +10,7 @@ import {
   finalAssistantText,
   normalizeLegacyRemoteImageContent,
   parseOutcomeEnvelope,
+  parseOwnerRelay,
   parseRoutePlan,
   remoteTurnContent,
   remoteTurnPrompt,
@@ -65,6 +66,19 @@ test("dispatch context slides: old turns drop behind a count marker", () => {
   assert.equal(untouched.messages, messages);
 });
 
+test("owner-relay frames deliver outward instead of being routed as work", () => {
+  assert.equal(
+    parseOwnerRelay("relay-to-owner: напоминание - отправить инвойс"),
+    "напоминание - отправить инвойс",
+  );
+  assert.equal(
+    parseOwnerRelay("Relay to the owner on Telegram: reminder text here"),
+    "reminder text here",
+  );
+  assert.equal(parseOwnerRelay("yo ask the st0x agent something"), undefined);
+  assert.equal(parseOwnerRelay("relay-to-owner:"), undefined);
+});
+
 test("receiver outcome envelopes parse mechanically and never reach the routing turn", () => {
   const parsed = parseOutcomeEnvelope(
     "request:9fd6a20d-1f02-46bc-80d9-3212d829e2f2 outcome:completed summary:Принял напоминание про 20 долларов. evidence:registry-request-9fd6a20d",
@@ -79,6 +93,10 @@ test("receiver outcome envelopes parse mechanically and never reach the routing 
   );
   assert.equal(failed?.outcome, "failed");
   assert.equal(failed?.summary, "dispatcher unreachable");
+  assert.equal(
+    parseOutcomeEnvelope("request:db3f9039 outcome:completed summary:cadence re-armed")?.requestId,
+    "db3f9039",
+  );
   assert.equal(parseOutcomeEnvelope("yo ask the st0x agent to report to me"), undefined);
   assert.equal(parseOutcomeEnvelope("request:not-a-uuid outcome:completed summary:x"), undefined);
   assert.equal(
