@@ -1,0 +1,44 @@
+// Recreates the working panes lost in the control-panel restart as one tab:
+// left stack = grok workers + htop, center 50% = the st0x Fable session,
+// right stack = yielduck Fable + mprocs.
+//
+// Every project pane launches through `direnv exec .` so it gets the
+// project's flake dev shell (mprocs, for one, comes from yielduck's shell,
+// not the system PATH). Absolute cwds only — relative pane cwds resolve
+// against the caller's directory, not this file (verified live).
+//
+// The dispatcher and the .config Fable already run in the ".config" tab and
+// are deliberately absent here: spawning them again would double-claim the
+// pi-support role and fork a live Claude session.
+layout {
+    tab name="work" {
+        pane size=1 borderless=true {
+            plugin location="tab-bar"
+        }
+        pane split_direction="vertical" {
+            pane size="25%" split_direction="horizontal" {
+                pane command="/Users/0xgleb/.nix-profile/bin/direnv" name="grok-1" cwd="/Users/0xgleb/code/st0x" {
+                    args "exec" "." "bash" ".tmp/grok-worker.sh" "grok-1"
+                }
+                pane command="/Users/0xgleb/.nix-profile/bin/direnv" name="grok-2" cwd="/Users/0xgleb/code/st0x" {
+                    args "exec" "." "bash" ".tmp/grok-worker.sh" "grok-2"
+                }
+                pane command="/run/current-system/sw/bin/htop" cwd="/Users/0xgleb/.config"
+            }
+            pane command="/Users/0xgleb/.nix-profile/bin/direnv" name="st0x-fable" cwd="/Users/0xgleb/code/st0x" focus=true size="50%" {
+                args "exec" "." "jf" "clanker" "--claude"
+            }
+            pane size="25%" split_direction="horizontal" {
+                pane command="/Users/0xgleb/.nix-profile/bin/direnv" name="yielduck-fable" cwd="/Users/0xgleb/code/dataclique/yielduck" {
+                    args "exec" "." "jf" "clanker" "--claude"
+                }
+                pane command="/Users/0xgleb/.nix-profile/bin/direnv" name="mprocs" cwd="/Users/0xgleb/code/dataclique/yielduck" {
+                    args "exec" "." "mprocs"
+                }
+            }
+        }
+        pane size=1 borderless=true {
+            plugin location="status-bar"
+        }
+    }
+}

@@ -1,0 +1,149 @@
+// Full control-panel session layout: one tab, every agent pane resuming its
+// existing session. Shape: left stack (grok workers + htop) | st0x Fable
+// center 50% | right stack (yielduck Fable, dispatcher, .config Fable), with
+// mprocs as a short full-width bottom row.
+//
+// Hard-won rules encoded here:
+//   - absolute cwds only (relative pane cwds resolve against the caller)
+//   - project panes launch via `direnv exec .` so flake dev shells load
+//     (mprocs comes from yielduck's shell, not the system PATH)
+//   - `jf clanker` WITHOUT --new resumes the existing agent sessions
+//   - the swap section below replaces zellij's built-in columns/rows pair,
+//     which otherwise takes over any session started from a swap-less file
+//
+// Usage (from a terminal OUTSIDE zellij):
+//   zellij kill-session control-panel
+//   zellij delete-session control-panel
+//   zellij --session control-panel --new-session-with-layout ~/.config/zellij/layouts/control-panel-restore.kdl
+layout {
+    tab name="work" focus=true {
+        pane size=1 borderless=true {
+            plugin location="tab-bar"
+        }
+        pane split_direction="horizontal" {
+            pane size="78%" split_direction="vertical" {
+                pane size="25%" split_direction="horizontal" {
+                    pane command="/Users/0xgleb/.nix-profile/bin/direnv" name="grok-1" cwd="/Users/0xgleb/code/st0x" {
+                        args "exec" "." "bash" ".tmp/grok-worker.sh" "grok-1"
+                    }
+                    pane command="/Users/0xgleb/.nix-profile/bin/direnv" name="grok-2" cwd="/Users/0xgleb/code/st0x" {
+                        args "exec" "." "bash" ".tmp/grok-worker.sh" "grok-2"
+                    }
+                    pane command="/run/current-system/sw/bin/htop" cwd="/Users/0xgleb/.config"
+                }
+                pane command="/Users/0xgleb/.nix-profile/bin/direnv" name="st0x-fable" cwd="/Users/0xgleb/code/st0x" focus=true size="50%" {
+                    args "exec" "." "jf" "clanker" "--claude"
+                }
+                pane size="25%" split_direction="horizontal" {
+                    pane command="/Users/0xgleb/.nix-profile/bin/direnv" name="yielduck-fable" cwd="/Users/0xgleb/code/dataclique/yielduck" {
+                        args "exec" "." "jf" "clanker" "--claude"
+                    }
+                    pane command="/Users/0xgleb/.nix-profile/bin/jf" name="pi-dispatcher" cwd="/Users/0xgleb/.config" {
+                        args "clanker" "--dispatcher"
+                    }
+                    pane command="/Users/0xgleb/.nix-profile/bin/jf" name="config-fable" cwd="/Users/0xgleb/.config" {
+                        args "clanker" "--claude"
+                    }
+                }
+            }
+            pane command="/Users/0xgleb/.nix-profile/bin/direnv" name="mprocs" cwd="/Users/0xgleb/code/dataclique/yielduck" size="22%" {
+                args "exec" "." "mprocs"
+            }
+        }
+        pane size=1 borderless=true {
+            plugin location="status-bar"
+        }
+    }
+
+    tab_template name="ui" {
+        pane size=1 borderless=true {
+            plugin location="tab-bar"
+        }
+        children
+        pane size=1 borderless=true {
+            plugin location="status-bar"
+        }
+    }
+
+    swap_tiled_layout name="columns" {
+        ui exact_panes=3 {
+            pane split_direction="vertical" {
+                pane
+                pane size="50%"
+                pane
+            }
+        }
+        ui exact_panes=4 {
+            pane split_direction="vertical" {
+                pane
+                pane size="50%"
+                pane split_direction="horizontal" {
+                    pane
+                    pane
+                }
+            }
+        }
+        ui exact_panes=5 {
+            pane split_direction="vertical" {
+                pane split_direction="horizontal" {
+                    pane
+                    pane
+                }
+                pane size="50%"
+                pane split_direction="horizontal" {
+                    pane
+                    pane
+                }
+            }
+        }
+        ui exact_panes=6 {
+            pane split_direction="vertical" {
+                pane split_direction="horizontal" {
+                    pane
+                    pane
+                }
+                pane size="50%"
+                pane split_direction="horizontal" {
+                    pane
+                    pane
+                    pane
+                }
+            }
+        }
+        ui exact_panes=7 {
+            pane split_direction="vertical" {
+                pane split_direction="horizontal" {
+                    pane
+                    pane
+                    pane
+                }
+                pane size="50%"
+                pane split_direction="horizontal" {
+                    pane
+                    pane
+                    pane
+                }
+            }
+        }
+        ui exact_panes=8 {
+            pane split_direction="vertical" {
+                pane split_direction="horizontal" {
+                    pane
+                    pane
+                    pane
+                }
+                pane size="50%"
+                pane split_direction="horizontal" {
+                    pane
+                    pane
+                    pane
+                    pane
+                }
+            }
+        }
+    }
+
+    swap_floating_layout name="staggered" {
+        floating_panes
+    }
+}
