@@ -103,7 +103,8 @@ test("harness lane, model, isolation, and identity invariants fail closed", () =
     {
       ...claudePayload,
       profile: "dataclique-review",
-      repository: "dataclique/moneymentum",
+      repository: "dataclique/other",
+      repositoryRoot: "/Users/example/code/dataclique/other",
       kind: "auto",
       task: "review-loop",
       isolation: "approved-worktree",
@@ -149,17 +150,30 @@ test("bounded versioned harness handoffs decode and match the live attempt", () 
     ),
     false,
   )
+  const cursorHandoff: HarnessReviewHandoff = {
+    ...handoff,
+    lane: "cursor-subscription",
+    repository: cursorPayload.repository,
+    pullRequest: cursorPayload.pullRequest,
+    inputHeadSha: cursorPayload.inputHeadSha,
+    outputHeadSha: cursorPayload.inputHeadSha,
+  }
+  assert.equal(
+    harnessHandoffMatchesAttempt(cursorHandoff, cursorPayload, "job-a", 1),
+    true,
+  )
   assert.equal(
     harnessHandoffMatchesAttempt(
-      {
-        ...handoff,
-        lane: "cursor-subscription",
-        repository: cursorPayload.repository,
-        pullRequest: cursorPayload.pullRequest,
-        inputHeadSha: cursorPayload.inputHeadSha,
-        outputHeadSha: cursorPayload.inputHeadSha,
-        status: "findings_fixed",
-      },
+      { ...cursorHandoff, lane: "claude-code-max" },
+      cursorPayload,
+      "job-a",
+      1,
+    ),
+    false,
+  )
+  assert.equal(
+    harnessHandoffMatchesAttempt(
+      { ...cursorHandoff, status: "findings_fixed" },
       cursorPayload,
       "job-a",
       1,

@@ -160,6 +160,44 @@ test("unknown lanes, task families, and free-form fields never launch", () => {
     assert.equal(planErrorCode(malformed), "invalid_input")
 })
 
+test("registered workspace roots confine launches when supplied", () => {
+  const allowed = ["/Users/example/code/st0x/example"]
+  const registered = Effect.runSync(
+    buildHarnessLaunchPlan(claudePayload, "job-a", 1, allowed),
+  )
+  assert.equal(registered.cwd, claudePayload.repositoryRoot)
+
+  const worktreeRoot =
+    "/Users/example/code/st0x/example/.worktrees/feat/harness"
+  const worktree = Effect.runSync(
+    buildHarnessLaunchPlan(
+      { ...claudePayload, repositoryRoot: worktreeRoot },
+      "job-a",
+      1,
+      allowed,
+    ),
+  )
+  assert.equal(worktree.cwd, worktreeRoot)
+
+  for (const outside of [
+    "/tmp/example",
+    "/Users/example/code/other/example",
+    "/Users/example/code/st0x/example-fork/example",
+  ]) {
+    const result = Effect.runSync(
+      Effect.either(
+        buildHarnessLaunchPlan(
+          { ...claudePayload, repositoryRoot: outside },
+          "job-a",
+          1,
+          allowed,
+        ),
+      ),
+    )
+    assert.equal(result._tag, "Left")
+  }
+})
+
 test("relative and credential-bearing repository roots never launch", () => {
   for (const root of [
     "relative/path",

@@ -26,11 +26,19 @@ interface HarnessReviewIdentity {
 export type HarnessReviewPayload =
   | (HarnessReviewIdentity & {
       readonly lane: "claude-code-max"
-      readonly task: "review-loop" | "review-pr"
-      readonly isolation: "read-only" | "approved-worktree"
+      readonly kind: "assigned"
+      readonly task: "review-pr"
+      readonly isolation: "read-only"
+    })
+  | (HarnessReviewIdentity & {
+      readonly lane: "claude-code-max"
+      readonly kind: "own" | "auto"
+      readonly task: "review-loop"
+      readonly isolation: "approved-worktree"
     })
   | (HarnessReviewIdentity & {
       readonly lane: "cursor-subscription"
+      readonly kind: "own" | "assigned"
       readonly task: "review-probe"
       readonly model: CursorReviewModel
       readonly isolation: "read-only"
@@ -74,6 +82,12 @@ const invalid = <A>(message: string): Effect.Effect<A, HarnessProtocolError> =>
 const isRecord = (value: unknown): value is Readonly<Record<string, unknown>> =>
   typeof value === "object" && value !== null && !Array.isArray(value)
 
+const isOneOf = <T extends string>(
+  candidates: readonly T[],
+  value: unknown,
+): value is T =>
+  typeof value === "string" && (candidates as readonly string[]).includes(value)
+
 const hasExactKeys = (
   value: Readonly<Record<string, unknown>>,
   expected: readonly string[],
@@ -116,10 +130,15 @@ export const isCredentialBearingPath = (path: string): boolean =>
         ) || segment.startsWith(".env"),
     )
 
-const rootMatchesRepository = (root: string, repository: string): boolean => {
-  const name = repository.split("/").at(1)
+const rootMatchesRepository = (identity: {
+  readonly root: string
+  readonly repository: string
+}): boolean => {
+  const name = identity.repository.split("/").at(1)
   if (name === undefined) return false
-  const segments = root.split("/").filter((segment) => segment.length > 0)
+  const segments = identity.root
+    .split("/")
+    .filter((segment) => segment.length > 0)
   return segments.some(
     (segment, index) =>
       segment === name &&
@@ -127,44 +146,45 @@ const rootMatchesRepository = (root: string, repository: string): boolean => {
   )
 }
 
+const REVIEW_KINDS = ["own", "assigned", "auto"] as const
+
 const decodeIdentity = (
   value: Readonly<Record<string, unknown>>,
 ): Effect.Effect<HarnessReviewIdentity, HarnessProtocolError> => {
   if (
-    !REVIEW_DUTY_PROFILES.includes(value.profile as ReviewDutyProfile) ||
+    !isOneOf(REVIEW_DUTY_PROFILES, value.profile) ||
     typeof value.repository !== "string" ||
     !SAFE_REPOSITORY.test(value.repository) ||
     !Number.isSafeInteger(value.pullRequest) ||
     Number(value.pullRequest) < 1 ||
     Number(value.pullRequest) > MAX_PULL_REQUEST ||
-    (value.kind !== "own" &&
-      value.kind !== "assigned" &&
-      value.kind !== "auto") ||
+    !isOneOf(REVIEW_KINDS, value.kind) ||
     typeof value.inputHeadSha !== "string" ||
     !HEAD_SHA.test(value.inputHeadSha) ||
     !isCanonicalAbsolutePath(value.repositoryRoot)
   ) {
     return invalid("harness review identity is malformed")
   }
-  const profile = value.profile as ReviewDutyProfile
-  const repository = value.repository
   if (
     isCredentialBearingPath(value.repositoryRoot) ||
-    !rootMatchesRepository(value.repositoryRoot, repository)
+    !rootMatchesRepository({
+      root: value.repositoryRoot,
+      repository: value.repository,
+    })
   ) {
     return invalid("repository root is not bound to the declared repository")
   }
-  if (!repositoryAllowedForProfile(profile, repository))
+  if (!repositoryAllowedForProfile(value.profile, value.repository))
     return invalid("repository is outside the selected review profile")
   if (
     value.kind === "auto" &&
-    automaticRepositoryForProfile(profile) !== repository
+    automaticRepositoryForProfile(value.profile) !== value.repository
   ) {
     return invalid("automatic review is not registered for this repository")
   }
   return Effect.succeed({
-    profile,
-    repository,
+    profile: value.profile,
+    repository: value.repository,
     pullRequest: Number(value.pullRequest),
     kind: value.kind,
     inputHeadSha: value.inputHeadSha,
@@ -215,16 +235,25 @@ export const decodeHarnessReviewPayload = (
     if (!hasExactKeys(value, COMMON_KEYS))
       return invalid("Claude review payload contains unknown fields")
     return Effect.flatMap(decodeIdentity(value), (identity) => {
-      const expectedTask = identity.kind === "assigned" ? "review-pr" : "review-loop"
-      const expectedIsolation =
-        identity.kind === "assigned" ? "read-only" : "approved-worktree"
-      if (value.task !== expectedTask || value.isolation !== expectedIsolation)
+      if (identity.kind === "assigned") {
+        if (value.task !== "review-pr" || value.isolation !== "read-only")
+          return invalid("Claude review task and isolation do not match its kind")
+        return Effect.succeed<HarnessReviewPayload>({
+          ...identity,
+          kind: identity.kind,
+          lane: "claude-code-max",
+          task: "review-pr",
+          isolation: "read-only",
+        })
+      }
+      if (value.task !== "review-loop" || value.isolation !== "approved-worktree")
         return invalid("Claude review task and isolation do not match its kind")
-      return Effect.succeed({
+      return Effect.succeed<HarnessReviewPayload>({
         ...identity,
+        kind: identity.kind,
         lane: "claude-code-max",
-        task: expectedTask,
-        isolation: expectedIsolation,
+        task: "review-loop",
+        isolation: "approved-worktree",
       })
     })
   }
@@ -236,15 +265,16 @@ export const decodeHarnessReviewPayload = (
         value.task !== "review-probe" ||
         value.isolation !== "read-only" ||
         identity.kind === "auto" ||
-        !CURSOR_REVIEW_MODELS.includes(value.model as CursorReviewModel)
+        !isOneOf(CURSOR_REVIEW_MODELS, value.model)
       ) {
         return invalid("Cursor review lane must be a registered read-only probe")
       }
-      return Effect.succeed({
+      return Effect.succeed<HarnessReviewPayload>({
         ...identity,
+        kind: identity.kind,
         lane: "cursor-subscription",
         task: "review-probe",
-        model: value.model as CursorReviewModel,
+        model: value.model,
         isolation: "read-only",
       })
     })
@@ -257,6 +287,13 @@ export const decodeHarnessReviewHandoff = (
 ): Effect.Effect<HarnessReviewHandoff, HarnessProtocolError> => {
   if (!isRecord(value) || !hasExactKeys(value, HANDOFF_KEYS))
     return invalid("harness handoff must contain exact versioned fields")
+  const evidence: string[] = []
+  if (Array.isArray(value.evidence)) {
+    for (const item of value.evidence) {
+      if (typeof item === "string" && SAFE_EVIDENCE.test(item))
+        evidence.push(item)
+    }
+  }
   if (
     value.protocolVersion !== 1 ||
     typeof value.jobId !== "string" ||
@@ -264,7 +301,7 @@ export const decodeHarnessReviewHandoff = (
     !Number.isSafeInteger(value.attempt) ||
     Number(value.attempt) < 1 ||
     Number(value.attempt) > 100 ||
-    !HARNESS_LANES.includes(value.lane as HarnessLane) ||
+    !isOneOf(HARNESS_LANES, value.lane) ||
     typeof value.repository !== "string" ||
     !SAFE_REPOSITORY.test(value.repository) ||
     !Number.isSafeInteger(value.pullRequest) ||
@@ -274,25 +311,19 @@ export const decodeHarnessReviewHandoff = (
     !HEAD_SHA.test(value.inputHeadSha) ||
     typeof value.outputHeadSha !== "string" ||
     !HEAD_SHA.test(value.outputHeadSha) ||
-    !HANDOFF_STATUSES.includes(
-      value.status as HarnessReviewHandoff["status"],
-    ) ||
+    !isOneOf(HANDOFF_STATUSES, value.status) ||
     typeof value.assessment !== "string" ||
     value.assessment.trim().length < 1 ||
     value.assessment.length > 500 ||
     UNSAFE_CONTROL.test(value.assessment) ||
     !Array.isArray(value.evidence) ||
     value.evidence.length > 16 ||
+    evidence.length !== value.evidence.length ||
     ((value.status === "clean" ||
       value.status === "findings_fixed" ||
       value.status === "findings_pending") &&
-      value.evidence.length < 1) ||
-    !value.evidence.every(
-      (item) => typeof item === "string" && SAFE_EVIDENCE.test(item),
-    ) ||
-    !HANDOFF_VERIFIERS.includes(
-      value.verifier as HarnessReviewHandoff["verifier"],
-    ) ||
+      evidence.length < 1) ||
+    !isOneOf(HANDOFF_VERIFIERS, value.verifier) ||
     value.executorProvenance !== "subscription-verified"
   ) {
     return invalid("harness handoff fields are malformed")
@@ -301,15 +332,15 @@ export const decodeHarnessReviewHandoff = (
     protocolVersion: 1,
     jobId: value.jobId,
     attempt: Number(value.attempt),
-    lane: value.lane as HarnessLane,
+    lane: value.lane,
     repository: value.repository,
     pullRequest: Number(value.pullRequest),
     inputHeadSha: value.inputHeadSha,
     outputHeadSha: value.outputHeadSha,
-    status: value.status as HarnessReviewHandoff["status"],
+    status: value.status,
     assessment: value.assessment,
-    evidence: value.evidence as string[],
-    verifier: value.verifier as HarnessReviewHandoff["verifier"],
+    evidence,
+    verifier: value.verifier,
     executorProvenance: "subscription-verified",
   })
 }

@@ -121,6 +121,43 @@ test("expired attempts are recovered transactionally and become claimable after 
     store.close()
   }))
 
+test("a cancelled harness attempt stays readable through the store", async () =>
+  withStore(async (path) => {
+    const store = await Effect.runPromise(makeSqliteJobStore(path))
+    const spec = {
+      kind: "harness.review",
+      payload: {
+        lane: "cursor-subscription",
+        task: "review-probe",
+        model: "composer-2.5",
+        profile: "personal-review",
+        repository: "0xgleb/example",
+        pullRequest: 7,
+        kind: "own",
+        inputHeadSha: "a".repeat(40),
+        repositoryRoot: "/Users/example/code/0xgleb/example",
+        isolation: "read-only",
+      },
+      runAt: 1_000,
+      maxAttempts: 2,
+      idempotencyKey: "harness:personal:example:7",
+    }
+    await Effect.runPromise(store.enqueue(spec, "job-h", 1_000))
+    await Effect.runPromise(
+      store.claimDue("worker-a", "lease-a", 1_000, 90_000),
+    )
+    await Effect.runPromise(store.cancel("job-h", 2_000))
+    const cancelled = await Effect.runPromise(
+      store.fail("job-h", "lease-a", 3_000, 0, "executor blocked"),
+    )
+    assert.equal(cancelled.state, "cancelled")
+
+    const reloaded = await Effect.runPromise(store.get("job-h"))
+    assert.equal(reloaded.state, "cancelled")
+    assert.equal((await Effect.runPromise(store.list())).length, 1)
+    store.close()
+  }))
+
 test("malformed persisted state fails closed instead of being coerced", async () =>
   withStore(async (path) => {
     const store = await Effect.runPromise(makeSqliteJobStore(path))

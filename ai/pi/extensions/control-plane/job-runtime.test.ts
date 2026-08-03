@@ -239,6 +239,132 @@ test("failed and abandoned attempts retry only within the persisted attempt limi
   assert.equal(failed.state, "failed")
 })
 
+const harnessHeadSha = "a".repeat(40)
+
+const leasedHarnessJob = (): Job =>
+  run(
+    claimJob(
+      run(createJob({ ...harnessSpec, runAt: 1_000 }, "job-h", 1_000)),
+      "worker-a",
+      "lease-a",
+      1_000,
+      90_000,
+    ),
+  )
+
+const matchingHandoff = {
+  protocolVersion: 1,
+  jobId: "job-h",
+  attempt: 1,
+  lane: "cursor-subscription",
+  repository: "0xgleb/example",
+  pullRequest: 7,
+  inputHeadSha: harnessHeadSha,
+  outputHeadSha: harnessHeadSha,
+  status: "clean",
+  assessment: "No verified findings.",
+  evidence: ["check:review-core"],
+  verifier: "fable-clean",
+  executorProvenance: "subscription-verified",
+} as const
+
+test("completeJob accepts only a matching successful typed harness result", () => {
+  assert.equal(
+    errorCode(completeJob(leasedHarnessJob(), "lease-a", 2_000, "done")),
+    "invalid_input",
+  )
+  assert.equal(
+    errorCode(
+      completeJob(leasedHarnessJob(), "lease-a", 2_000, "done", {
+        kind: "harness.review",
+        handoff: { ...matchingHandoff, inputHeadSha: "b".repeat(40) },
+      }),
+    ),
+    "invalid_input",
+  )
+  assert.equal(
+    errorCode(
+      completeJob(leasedHarnessJob(), "lease-a", 2_000, "done", {
+        kind: "harness.review",
+        handoff: {
+          ...matchingHandoff,
+          status: "blocked",
+          verifier: "unavailable",
+          evidence: [],
+        },
+      }),
+    ),
+    "invalid_transition",
+  )
+  const completed = run(
+    completeJob(leasedHarnessJob(), "lease-a", 2_000, "done", {
+      kind: "harness.review",
+      handoff: matchingHandoff,
+    }),
+  )
+  assert.equal(completed.state, "succeeded")
+  if (completed.state !== "succeeded") return
+  assert.deepEqual(completed.result, {
+    kind: "harness.review",
+    handoff: matchingHandoff,
+  })
+})
+
+test("cancelled harness attempts without results survive the stored-job roundtrip", () => {
+  const cancelRequested = run(cancelJob(leasedHarnessJob(), 2_000))
+  const failedAfterCancel = run(
+    failJob(cancelRequested, "lease-a", 3_000, 0, "executor blocked"),
+  )
+  assert.equal(failedAfterCancel.state, "cancelled")
+  assert.deepEqual(run(decodeStoredJob(failedAfterCancel)), failedAfterCancel)
+
+  const expiredAfterCancel = run(
+    recoverExpiredJob(cancelRequested, 100_000, 60_000),
+  )
+  assert.equal(expiredAfterCancel.state, "cancelled")
+  assert.deepEqual(run(decodeStoredJob(expiredAfterCancel)), expiredAfterCancel)
+})
+
+test("stored harness results are revalidated with the same rules as completion", () => {
+  const succeeded = run(
+    completeJob(leasedHarnessJob(), "lease-a", 2_000, "done", {
+      kind: "harness.review",
+      handoff: matchingHandoff,
+    }),
+  )
+  assert.deepEqual(run(decodeStoredJob(succeeded)), succeeded)
+  assert.equal(
+    errorCode(decodeStoredJob({ ...succeeded, result: undefined })),
+    "invalid_input",
+  )
+  assert.equal(
+    errorCode(
+      decodeStoredJob({
+        ...succeeded,
+        result: {
+          kind: "harness.review",
+          handoff: {
+            ...matchingHandoff,
+            status: "blocked",
+            verifier: "unavailable",
+            evidence: [],
+          },
+        },
+      }),
+    ),
+    "invalid_input",
+  )
+  assert.equal(
+    errorCode(
+      decodeStoredJob({
+        ...succeeded,
+        result: { kind: "harness.review", handoff: { forged: true } },
+      }),
+    ),
+    "invalid_input",
+  )
+})
+
 test("an unexpired lease cannot be reclaimed", () => {
   assert.equal(
     errorCode(recoverExpiredJob(leasedJob(), 50_000, 60_000)),

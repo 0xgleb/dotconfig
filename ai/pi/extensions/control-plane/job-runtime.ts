@@ -342,38 +342,42 @@ export const decodeStoredJob = (
         finishedAt: value.finishedAt,
         ...(value.summary !== undefined ? { summary: value.summary } : {}),
       }
-      if (
+      const requiresResult = spec.kind === "harness.review" && state === "succeeded"
+      const allowsResult =
         spec.kind === "harness.review" &&
-        (state === "succeeded" || (state === "cancelled" && base.attempt > 0))
-      ) {
-        if (
-          !isRecord(value.result) ||
-          !hasOnlyKeys(value.result, ["kind", "handoff"]) ||
-          value.result.kind !== "harness.review"
-        ) {
-          return invalid("successful harness job requires a typed result")
-        }
-        return Effect.flatMap(
-          Effect.mapError(decodeHarnessReviewHandoff(value.result.handoff), () =>
-            error("invalid_input", "stored harness result is malformed"),
-          ),
-          (handoff) =>
-            harnessHandoffMatchesAttempt(
-              handoff,
-              spec.payload,
-              base.id,
-              base.attempt,
-            )
-              ? Effect.succeed({
-                  ...terminal,
-                  result: { kind: "harness.review" as const, handoff },
-                })
-              : invalid("stored harness result does not match its job"),
-        )
-      }
-      if (value.result !== undefined)
+        (state === "succeeded" || state === "cancelled")
+      if (requiresResult && value.result === undefined)
+        return invalid("successful harness job requires a typed result")
+      if (value.result !== undefined && !allowsResult)
         return invalid("stored job result is not valid for this terminal state")
-      return Effect.succeed(terminal)
+      if (value.result === undefined) return Effect.succeed(terminal)
+      if (
+        !isRecord(value.result) ||
+        !hasOnlyKeys(value.result, ["kind", "handoff"]) ||
+        value.result.kind !== "harness.review" ||
+        spec.kind !== "harness.review"
+      ) {
+        return invalid("stored harness result is malformed")
+      }
+      return Effect.flatMap(
+        Effect.mapError(decodeHarnessReviewHandoff(value.result.handoff), () =>
+          error("invalid_input", "stored harness result is malformed"),
+        ),
+        (handoff) =>
+          harnessHandoffMatchesAttempt(
+            handoff,
+            spec.payload,
+            base.id,
+            base.attempt,
+          ) &&
+          handoff.status !== "blocked" &&
+          handoff.status !== "failed"
+            ? Effect.succeed({
+                ...terminal,
+                result: { kind: "harness.review" as const, handoff },
+              })
+            : invalid("stored harness result does not match its job"),
+      )
     }
     return invalid("stored job state is inconsistent")
   })
