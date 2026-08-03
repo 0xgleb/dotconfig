@@ -139,49 +139,49 @@ local call, and continue — never stall the queue on the delegate.
 
 ## Grok worker pool
 
-Grok workers are not registered agents and never appear on the roster. They are
-a shared pool any session uses directly: drop a self-contained `.md` job file
-into `/Users/0xgleb/code/st0x/.tmp/grok-jobs/<worker>/` and collect the result
-from `/Users/0xgleb/code/st0x/.tmp/grok-results/<jobfile>`. Each job is a
-one-shot read-only plan-mode call with no prompts. Results exist only on disk -
-there is no bridge reporting - so a session that dropped a job includes new
-`grok-results/` files in its collect step each drain until it has consumed
-them; a `.failed` suffix marks a failed job.
+Grok workers are ordinary agent sessions. One `cursor-agent` runs per worker,
+started with `/register` exactly like every other lane, holding its own roster
+registration and appearing in the owner's `/agents` list. There is no special
+mechanism: a grok worker collects, reprioritizes, executes its head item, and
+reports through the dispatcher per the sections above. It is simply the least
+capable lane in the fleet.
 
-Job files are answered by `~/.config/ai/grok-worker.nu`, one long-running pane
-per worker. A worker polls only its own directory, so dropping a job into a
-directory with no live worker leaves it unanswered forever - check the pane
-exists, or start one.
+**Poll faster than the paid lanes.** Grok 4.5 is cheap and quick, so it takes
+`/register 3m` where an Opus lane takes 15m (owner directive 2026-08-03). The
+credit-preservation reasoning behind the slow default does not apply here.
 
-**Grok panes live in the grok workers tab, always.** `zellij action new-pane`
-splits whatever tab currently has focus, so a spawn without an explicit target
-lands the pane in whichever tab the operator happens to be looking at - that is
-how grok panes end up scattered through the opus workers tab. Resolve the tab
-by NAME rather than hardcoding an index, because ids shift as tabs come and go:
+**`--auto-review` is required, not optional.** It lets a server-side classifier
+auto-run safe tool calls and prompt only for the rest. Without it the session
+stalls on its first tool approval and never registers — it looks alive in its
+pane while being absent from the roster entirely. Do NOT reach for `--force` or
+`--yolo` instead: those hand blanket command approval to the least capable model
+in the fleet, and the harness classifier is right to block spawning them.
 
-```
-zellij action query-tab-names        # find the grok workers tab position
-zellij action new-pane --tab-id <grok tab> --stacked --name <worker> \
-  --cwd <repo root> -- nu ~/.config/ai/grok-worker.nu <worker> --workspace <repo root>
-```
-
-Spawn only a worker that is actually absent. The driver takes a per-name lock,
-so a second pane for a name already held prints that the name is taken and
-exits rather than racing - it costs a pane, not a corrupted result. Confirm what
-is live before spawning:
+**Resolve the grok tab by NAME. Never hardcode a tab index.** `zellij action
+new-pane` with no target splits whichever tab has focus, and indices shift as
+tabs come and go — hardcoding one is how grok panes land in the opus workers
+tab and have to be moved by hand:
 
 ```
-ls /Users/0xgleb/code/st0x/.tmp/grok-locks/     # one directory per live worker
+tab=$(( $(zellij action query-tab-names | grep -n '^grok workers$' | cut -d: -f1) - 1 ))
+zellij action new-pane --tab-id $tab --stacked --name <worker> --cwd <repo root> -- \
+  cursor-agent --model grok-4.5-xhigh --auto-review --workspace <repo root> \
+  '/register 3m You are <worker>, a research worker on <project>. Register on the bridge roster with the agent id <worker>. You are materially less capable than the Opus workers, so take only bounded fully-specified research and drafting items. Never push, commit, merge, comment on GitHub, or submit review verdicts. Report outcomes through the dispatcher.'
 ```
 
-`grok-st0x-1` and `grok-st0x-2` serve `~/code/st0x`. A `stop` file in a worker's
-job directory ends its loop cleanly and releases its name; a hard kill leaves a
-stale lock that the next driver reclaims by checking the recorded pid. Grok 4.5
-is materially less capable than Opus 5: give it bounded, fully-specified jobs
-with the output shape written out, and treat what comes back as advisory input
-to verify, never as a finished answer to forward.
+**Each session owns its own grok workers.** Do not adopt or restart another
+session's. When workers need fixing, close the old panes and open fresh ones
+for the workers you own — a session that starts a worker another session
+already runs just duplicates it, and duplicate workers on one name double-bill
+and overwrite each other.
 
-The sandbox denies network, so a job that needs `gh`, `curl`, or a web fetch
-comes back as an unblock checklist instead of an answer. Fetch what the job
-needs yourself and drop it beside the job file - a PR diff written to
-`grok-jobs/<worker>/pr-<n>.diff` referenced by path from the job body.
+Grok 4.5 is materially less capable than Opus 5: give it bounded,
+fully-specified work with the output shape written out, and treat what comes
+back as advisory input to verify, never as a finished answer to forward.
+
+**Retired: the job-file pool.** `grok-jobs/`, `grok-results/`, `grok-locks/`
+and the `grok-worker.nu` / `grok-worker.sh` polling drivers are superseded by
+the session model above. Do not start a script driver, and do not drop new job
+files. Work reaches a grok worker through the registry queue like it reaches
+any other agent. Existing driver panes are wound down by their owning session;
+collect any results still sitting in `grok-results/` before removing them.
