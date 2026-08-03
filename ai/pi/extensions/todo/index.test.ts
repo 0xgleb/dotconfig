@@ -210,6 +210,34 @@ test("task progress pulse owns direct TUI invalidation while work is unfinished"
   assert.doesNotMatch(todoExtensionSource, /hudAnimation|agentRunning/)
 })
 
+test("the task HUD widget mounts only when shouldShowTaskHud allows it", () => {
+  assert.match(
+    todoExtensionSource,
+    /ctx\.ui\.setWidget\(\s*"todo-top-tasks",\s*shouldShowTaskHud\(summary, hudVisibility\)/,
+  )
+})
+
+test("ctrl+t toggles task HUD visibility through the global terminal input hook", () => {
+  assert.match(todoExtensionSource, /ctx\.ui\.onTerminalInput\(/)
+  assert.match(
+    todoExtensionSource,
+    /matchesKey\(data, "ctrl\+t"\)/,
+  )
+  assert.match(
+    todoExtensionSource,
+    /hudVisibility = toggleTaskHudVisibility\(hudVisibility\)/,
+  )
+})
+
+test("the terminal input hook is released on session shutdown alongside the HUD timers", () => {
+  const shutdown = todoExtensionSource.slice(
+    todoExtensionSource.indexOf('pi.on("session_shutdown"'),
+    todoExtensionSource.indexOf('pi.on("session_shutdown"') + 400,
+  )
+  assert.match(shutdown, /releaseHudToggle\?\.\(\)/)
+  assert.match(shutdown, /releaseHudToggle = undefined/)
+})
+
 test("kanban reapplies its glass background after nested foreground resets", () => {
   const backgroundPrefix = "\x1b[48;2;24;20;58m"
   const backgroundSuffix = "\x1b[49m"
