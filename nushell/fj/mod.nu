@@ -117,6 +117,7 @@ export def --wrapped clanker [...args: string] {
     "pi" => { ^pi ...$route.args }
     "pi-dispatcher" => {
       ensure-ollama
+      cd $route.cwd
       ^pi ...$route.args
     }
     "claude" => { ^claude ...$route.args }

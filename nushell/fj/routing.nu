@@ -6,6 +6,16 @@
 # that actually use it — rainlanguage and st0x. Everywhere else, stack-style
 # commands go to gitbutler (`but`) when it's installed, otherwise plain `git`.
 
+# Where the dispatch lane runs, regardless of where it was launched from.
+#
+# The dispatcher is a router rather than a project worker, but it still files
+# registry rows and resolves its roster project from its working directory.
+# Started from a pane sitting in HOME it adopts HOME as its "project", which is
+# not a real project — unknown project paths fail open and mint a self-claimed
+# drainer role for a path nothing else drains. Pinning the root here means the
+# launching pane's directory cannot decide it.
+const dispatcher_root = "/Users/0xgleb/.config"
+
 # orgs whose repos use graphite for stacked PRs
 const graphite_orgs = [
   rainlanguage
@@ -263,6 +273,7 @@ export def --wrapped clanker-route [
     }
     return {
       tool: "pi-dispatcher"
+      cwd: $dispatcher_root
       args: (
         ["--model" "ollama/qwen3.5:9b"]
         | append $resume

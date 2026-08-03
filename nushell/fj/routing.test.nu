@@ -76,6 +76,11 @@ def "test clanker dispatcher runs pi on the local model with the loop prompt" []
   assert (not ("--dispatcher" in $route.args)) "--dispatcher is consumed"
 }
 
+def "test clanker dispatcher pins its project root instead of inheriting the launch directory" [] {
+  let route = (clanker-route false false --dispatcher)
+  assert equal $route.cwd "/Users/0xgleb/.config" "the dispatch lane must not adopt the launching pane's directory as its project"
+}
+
 def "test clanker dispatcher resumes without re-sending the loop prompt" [] {
   let route = (clanker-route true false --dispatcher)
   assert equal $route.tool "pi-dispatcher"
