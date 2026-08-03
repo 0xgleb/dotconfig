@@ -46,6 +46,17 @@ export interface RegistryDelegateRequest {
   readonly report: (outcome: RegistryDelegateOutcome) => void
 }
 
+export const REGISTRY_PROJECTS_REQUEST_EVENT = "pi:registry-projects-request"
+
+/**
+ * Roster lane for routing: the registry reports every distinct absolute
+ * project path it knows about, including projects whose receiver holds no
+ * live lease right now, so routing can address an agent between polls.
+ */
+export interface RegistryProjectsRequest {
+  readonly report: (projects: readonly string[]) => void
+}
+
 export const REGISTRY_OUTCOME_EVENT = "pi:registry-outcome-request"
 
 export type RegistryOutcomeResult =

@@ -48,6 +48,19 @@ test("routing turns carry the roster and the whole numbered batch", () => {
   assert.match(prompt, /\[2\] yo ask the st0x agent/);
 });
 
+test("projects whose receiver is between polls stay addressable in the roster", () => {
+  const prompt = routingBatchPrompt(
+    [{ index: 1, text: "ask yielduck for the deploy status" }],
+    [
+      { id: "claude-config-receiver", label: "Claude Code (Fable) - .config receiver", cwd: "/Users/example/.config" },
+      { id: "queue", label: "receiver offline - queued for its next poll", cwd: "/Users/example/code/dataclique/yielduck" },
+    ],
+  );
+  assert.match(prompt, /\/Users\/example\/code\/dataclique\/yielduck/);
+  assert.match(prompt, /receiver offline - queued for its next poll \(queue\)/);
+  assert.match(prompt, /\/Users\/example\/\.config/);
+});
+
 test("dispatch context slides: old turns drop behind a count marker", () => {
   const messages = [
     { role: "user", content: [{ type: "text", text: "a".repeat(400) }] },

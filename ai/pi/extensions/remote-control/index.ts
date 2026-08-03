@@ -9,10 +9,12 @@ import { isLocalDispatchProvider } from "../shared/local-lane.ts";
 import {
   REGISTRY_DELEGATE_REQUEST_EVENT,
   REGISTRY_OUTCOME_EVENT,
+  REGISTRY_PROJECTS_REQUEST_EVENT,
   type RegistryDelegateOutcome,
   type RegistryDelegateRequest,
   type RegistryOutcomeRequest,
   type RegistryOutcomeResult,
+  type RegistryProjectsRequest,
 } from "../shared/registry-intent-events.ts";
 import {
   QUESTION_REMOTE_RESOLUTION_EVENT,
@@ -58,6 +60,7 @@ import {
   type OutcomeEnvelope,
   type RemoteFailure,
   type RemoteMessage,
+  type RosterAgent,
 } from "./protocol.ts";
 import { makeRemoteBridgeStore } from "./sqlite-store.ts";
 import { enterRemoteToolGuard, type RemoteToolGuard } from "./tool-guard.ts";
@@ -85,7 +88,7 @@ const safeError = (error: RemoteBridgeError): string =>
   `${error.code}: ${error.message}`.slice(0, 160);
 
 export default function remoteControl(pi: ExtensionAPI): void {
-  registerRuntimeVersion(pi, "remote-control", "2026.08.03.30");
+  registerRuntimeVersion(pi, "remote-control", "2026.08.03.31");
   const store = makeRemoteBridgeStore(
     remoteBridgeDatabasePath(process.env.XDG_STATE_HOME, homedir()),
   );
@@ -350,6 +353,29 @@ export default function remoteControl(pi: ExtensionAPI): void {
     if (Either.isLeft(sent)) await finishFailure(turn, "model_error");
   };
 
+  /**
+   * Registry leases expire in ninety seconds while receivers poll hours apart,
+   * so the live-agent roster alone would hide every project between polls and
+   * the batch would fall back to the dispatcher's own project. A timeout or an
+   * unavailable registry reports nothing and the roster stays live-only.
+   */
+  const knownProjects = (): Promise<readonly string[]> =>
+    new Promise((resolve) => {
+      const timeout = setTimeout(() => resolve([]), 3_000);
+      const request: RegistryProjectsRequest = {
+        report: (projects) => {
+          clearTimeout(timeout);
+          resolve(projects);
+        },
+      };
+      pi.events.emit(REGISTRY_PROJECTS_REQUEST_EVENT, request);
+    });
+
+  const coversProject = (cwd: string, project: string): boolean =>
+    cwd === project ||
+    cwd.startsWith(`${project}/`) ||
+    project.startsWith(`${cwd}/`);
+
   const beginRoutingTurn = async (
     batch: readonly ClaimedBridgeMessage[],
     ctx: ExtensionContext,
@@ -372,14 +398,23 @@ export default function remoteControl(pi: ExtensionAPI): void {
     const roster = await Effect.runPromise(
       Effect.either(store.listAgents(Date.now())),
     );
+    const live: readonly RosterAgent[] = Either.isRight(roster)
+      ? roster.right.map(({ id, label, cwd }) => ({ id, label, cwd }))
+      : [];
+    const known = await knownProjects();
+    const offline: readonly RosterAgent[] = known
+      .filter((project) => !live.some(({ cwd }) => coversProject(cwd, project)))
+      .map((project) => ({
+        id: "queue",
+        label: "receiver offline - queued for its next poll",
+        cwd: project,
+      }));
     const prompt = routingBatchPrompt(
       batch.map((message, position) => ({
         index: position + 1,
         text: message.text,
       })),
-      Either.isRight(roster)
-        ? roster.right.map(({ id, label, cwd }) => ({ id, label, cwd }))
-        : [],
+      [...live, ...offline],
     );
     const sent = await Effect.runPromise(
       Effect.either(
