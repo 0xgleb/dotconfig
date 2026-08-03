@@ -133,6 +133,15 @@ session re-arms by invoking `/register` once.
    A session signing off MUST verify its final reports this way before tearing
    down. A worker that ends believing it reported takes its context with it,
    and the report cannot be re-sent by anyone once the session is gone.
+
+   **Format every owner-facing report with the `report` skill.** The owner
+   reads these on a phone: decisions first, counted sections, one item per
+   line, identifiers leading, PRs and issues as tapped links. A relay is
+   rendered from a markdown SUBSET — `**bold**`, `` `code` ``, links, fenced
+   blocks — and nothing else, so headings, tables and italics arrive as
+   punctuation. A wall of prose buries the one line that needed the owner, and
+   it is the difference between a report that gets acted on and one that gets
+   scrolled past. Read `report` before writing the message, not after.
 5. **Yield**: end the iteration and let the schedule fire the next one. Do not
    busy-wait between fires.
 
