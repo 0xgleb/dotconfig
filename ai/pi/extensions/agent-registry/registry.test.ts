@@ -185,6 +185,33 @@ test("expired leases are reclaimable but stale owners cannot mutate requests", a
   });
 });
 
+test("a lease returned by already_owned cannot be used by the losing agent", async () => {
+  await withStores(async (store) => {
+    const owner = await Effect.runPromise(
+      store.claim({ agent: agent("agent-a"), project: "/workspace/project", role: "operator", mode: "operational", policyDigest: "p1", now: 1_000, ttlMs: 10_000 }),
+    );
+    assert.equal(owner.outcome, "claimed");
+
+    // The losing caller still gets a lease back, and it is the winner's. Using
+    // it with the loser's own agent id is what an unchecked `claim.lease`
+    // assignment does, and the fence has to reject it rather than let a second
+    // session drive another session's role.
+    const loser = await Effect.runPromise(
+      store.claim({ agent: agent("agent-b"), project: "/workspace/project", role: "operator", mode: "operational", policyDigest: "p1", now: 1_001, ttlMs: 10_000 }),
+    );
+    assert.equal(loser.outcome, "already_owned");
+
+    const request = await Effect.runPromise(
+      store.enqueue({ project: "/workspace/project", role: "operator", requesterId: "requester", text: "inspect health", now: 1_010 }),
+    );
+    await assert.rejects(
+      Effect.runPromise(
+        store.claimRequest({ requestId: request.id, leaseId: loser.lease.id, agentId: "agent-b", now: 1_011 }),
+      ),
+    );
+  });
+});
+
 test("policy revision changes suspend rather than silently upgrade a lease", async () => {
   await withStores(async (store) => {
     const claimed = await Effect.runPromise(

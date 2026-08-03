@@ -356,6 +356,18 @@ const registryExtension: (pi: ExtensionAPI) => void = (pi) => {
               ttlMs: LEASE_TTL_MS,
             }),
           )
+          // `already_owned` still carries a lease, but it belongs to whichever
+          // session holds the role. Taking it would pair a foreign lease id
+          // with this agent id, and the fenced store rejects that as a generic
+          // invalid transition - an ownership conflict reported as if the
+          // request itself were malformed. Name the conflict instead.
+          if (claim.outcome !== "claimed") {
+            payload.report({
+              outcome: "failed",
+              reason: `role ${target.role} on ${target.project} is held by another session`,
+            })
+            return
+          }
           lease = claim.lease
         }
         if (target.status === "queued") {
