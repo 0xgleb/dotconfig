@@ -1,10 +1,9 @@
 import assert from "node:assert/strict";
-import { spawnSync } from "node:child_process";
 import { mkdtempSync, readFileSync, rmSync, writeFileSync, mkdirSync } from "node:fs";
 import { tmpdir } from "node:os";
 import { join } from "node:path";
 import test from "node:test";
-import { managedGeneration, managedSourcesAreCommitted } from "./index.ts";
+import { managedGeneration } from "./index.ts";
 
 const source = readFileSync(new URL("./index.ts", import.meta.url), "utf8");
 
@@ -14,7 +13,7 @@ test("pending managed reload executes at agent end before continuous follow-ups 
   assert.ok(agentEnd > 0);
   assert.ok(agentEnd < agentSettled);
   assert.match(source, /if \(!pending \|\| !isReloadableContext\(ctx\)\) return;/);
-  assert.match(source, /if \(!managedSourcesAreCommitted\(join\(homedir\(\), "\.config"\)\)\) return;/);
+  assert.match(source, /if \(Date\.now\(\) - lastChangeAt < SETTLE_MS\) return;/);
   assert.match(source, /await performReload\(ctx\)/);
   assert.match(source, /await reloadWhenIdle\(ctx\)/);
 });
@@ -44,30 +43,21 @@ test("bounded reload resumes the interrupted generation before preserved queues"
   assert.match(source, /status: "resumed"/);
 });
 
-test("managed source events start commit-gated reload immediately instead of waiting on a fixed debounce", () => {
+test("managed source events start settle-gated reload immediately instead of waiting on a fixed debounce", () => {
   assert.match(source, /queueMicrotask\(\(\) => void reloadWhenIdle\(ctx\)\)/);
   assert.doesNotMatch(source, /DEBOUNCE_MS/);
 });
 
-test("automatic reload waits until managed tracked sources are committed", () => {
-  const root = mkdtempSync(join(tmpdir(), "pi-auto-reload-git-"));
-  const git = (...args: string[]) => spawnSync("git", ["-C", root, ...args], { stdio: "ignore" });
-  try {
-    mkdirSync(join(root, "ai"));
-    writeFileSync(join(root, "ai", "AGENTS.md"), "initial\n");
-    assert.equal(git("init").status, 0);
-    assert.equal(git("add", "ai/AGENTS.md").status, 0);
-    assert.equal(git("-c", "user.name=Pi Test", "-c", "user.email=pi@example.invalid", "commit", "-m", "initial").status, 0);
-    assert.equal(managedSourcesAreCommitted(root), true);
-    writeFileSync(join(root, "ai", "AGENTS.md"), "intermediate\n");
-    assert.equal(managedSourcesAreCommitted(root), false);
-    assert.equal(git("add", "ai/AGENTS.md").status, 0);
-    assert.equal(managedSourcesAreCommitted(root), false);
-    assert.equal(git("-c", "user.name=Pi Test", "-c", "user.email=pi@example.invalid", "commit", "-m", "validated").status, 0);
-    assert.equal(managedSourcesAreCommitted(root), true);
-  } finally {
-    rmSync(root, { recursive: true, force: true });
-  }
+test("automatic reload waits for sources to settle, never for a clean working tree", () => {
+  assert.match(source, /SETTLE_MS = 15_000/);
+  assert.match(source, /settled: now - lastChangeAt >= SETTLE_MS/);
+  assert.match(source, /reload:awaiting-settle/);
+  assert.doesNotMatch(
+    source,
+    /managedSourcesAreCommitted/,
+    "the git commit gate never opens under the worktree flow where the main checkout stays dirty",
+  );
+  assert.doesNotMatch(source, /git.*diff/);
 });
 
 test("per-process managed generation detects nested in-place changes missed by directory mtimes", async () => {

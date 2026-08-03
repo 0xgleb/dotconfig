@@ -1,4 +1,3 @@
-import { spawnSync } from "node:child_process";
 import { globSync, lstatSync, readdirSync, statSync, watch, type FSWatcher } from "node:fs";
 import { homedir } from "node:os";
 import { join } from "node:path";
@@ -32,7 +31,8 @@ const HANDOFF_POLL_MS = 60 * 60 * 1_000;
 const HANDOFF_STATE_ENTRY = "auto-reload.seen-pi-handoffs";
 const RELOAD_SUMMARY_ENTRY = "auto-reload.managed-change-summary";
 const IDLE_RETRY_MS = 1_000;
-const COMMIT_RETRY_MS = 2_000;
+const SETTLE_RETRY_MS = 2_000;
+const SETTLE_MS = 15_000;
 const GENERATION_POLL_MS = 5_000;
 const FORCE_RELOAD_AFTER_MS = 30_000;
 const STATUS_KEY = "auto-reload";
@@ -43,15 +43,6 @@ interface ReloadableContext extends ExtensionContext {
 
 const isReloadableContext: (ctx: ExtensionContext) => ctx is ReloadableContext = (ctx) =>
   "reload" in ctx && typeof ctx.reload === "function";
-
-export const managedSourcesAreCommitted = (configRoot: string): boolean => {
-  const isClean = (mode: readonly string[]) =>
-    spawnSync("git", ["-C", configRoot, "diff", ...mode, "--quiet", "--", "ai"], {
-      stdio: "ignore",
-      timeout: 5_000,
-    }).status === 0;
-  return isClean([]) && isClean(["--cached"]);
-};
 
 export const managedGeneration = (roots: readonly string[]): string => {
   const records: string[] = [];
@@ -73,13 +64,14 @@ export const managedGeneration = (roots: readonly string[]): string => {
 };
 
 const autoReload: (pi: ExtensionAPI) => void = (pi) => {
-  registerRuntimeVersion(pi, "auto-reload", "2026.08.01.11");
+  registerRuntimeVersion(pi, "auto-reload", "2026.08.03.12");
   let watchers: FSWatcher[] = [];
   let timer: ReturnType<typeof setTimeout> | undefined;
   let handoffTimer: ReturnType<typeof setInterval> | undefined;
   let generationTimer: ReturnType<typeof setInterval> | undefined;
   let pending = false;
   let pendingSince: number | undefined;
+  let lastChangeAt = 0;
   let preemptRequested = false;
   const changedLabels = new Set<string>();
 
@@ -94,6 +86,7 @@ const autoReload: (pi: ExtensionAPI) => void = (pi) => {
     generationTimer = undefined;
     pending = false;
     pendingSince = undefined;
+    lastChangeAt = 0;
     preemptRequested = false;
     changedLabels.clear();
     for (const watcher of watchers) watcher.close();
@@ -141,15 +134,15 @@ const autoReload: (pi: ExtensionAPI) => void = (pi) => {
     const now = Date.now();
     const managedWorkActive = managedWorkIsActive();
     const decision = managedReloadDecision({
-      committed: managedSourcesAreCommitted(join(homedir(), ".config")),
+      settled: now - lastChangeAt >= SETTLE_MS,
       idle: ctx.isIdle() && !managedWorkActive,
       pendingForMs: Math.max(0, now - (pendingSince ?? now)),
       forceAfterMs: FORCE_RELOAD_AFTER_MS,
       preemptRequested,
     });
-    if (decision === "await-commit") {
-      ctx.ui.setStatus(STATUS_KEY, "reload:awaiting-commit");
-      timer = setTimeout(() => void reloadWhenIdle(ctx), COMMIT_RETRY_MS);
+    if (decision === "await-settle") {
+      ctx.ui.setStatus(STATUS_KEY, "reload:awaiting-settle");
+      timer = setTimeout(() => void reloadWhenIdle(ctx), SETTLE_RETRY_MS);
       return;
     }
     if (decision === "preempt") {
@@ -175,6 +168,7 @@ const autoReload: (pi: ExtensionAPI) => void = (pi) => {
   const scheduleReload = (ctx: ReloadableContext, changedPath: string | null, aiRoot: string) => {
     if (changedPath?.includes("node_modules") || changedPath?.includes("brave-operator-profile")) return;
     if (changedPath) changedLabels.add(managedPiChangeLabel(changedPath, aiRoot));
+    lastChangeAt = Date.now();
     if (!pending) {
       pendingSince = Date.now();
       preemptRequested = false;
@@ -307,7 +301,7 @@ const autoReload: (pi: ExtensionAPI) => void = (pi) => {
 
   pi.on("agent_end", async (_event, ctx) => {
     if (!pending || !isReloadableContext(ctx)) return;
-    if (!managedSourcesAreCommitted(join(homedir(), ".config"))) return;
+    if (Date.now() - lastChangeAt < SETTLE_MS) return;
     if (managedWorkIsActive()) {
       await reloadWhenIdle(ctx);
       return;

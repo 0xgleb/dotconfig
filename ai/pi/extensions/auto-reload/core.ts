@@ -6,20 +6,20 @@ export const HANDOFF_GLOBS = ["*.md", "handoffs/*.md"] as const;
 export const RELOAD_RESUME_ENTRY = "auto-reload.preempted-generation";
 
 export type ManagedReloadDecision =
-  | "await-commit"
+  | "await-settle"
   | "reload"
   | "wait"
   | "preempt";
 
 export const managedReloadDecision = (input: {
-  readonly committed: boolean;
+  readonly settled: boolean;
   readonly idle: boolean;
   readonly pendingForMs: number;
   readonly forceAfterMs: number;
   readonly preemptRequested: boolean;
   readonly pendingMessages?: boolean;
 }): ManagedReloadDecision => {
-  if (!input.committed) return "await-commit";
+  if (!input.settled) return "await-settle";
   if (input.idle) return "reload";
   if (input.preemptRequested) return "wait";
   return input.pendingForMs >= input.forceAfterMs ? "preempt" : "wait";

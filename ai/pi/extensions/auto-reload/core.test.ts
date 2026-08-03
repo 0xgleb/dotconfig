@@ -16,15 +16,15 @@ import {
 } from "./core.ts";
 import { CONTINUATION_PAUSE_ENTRY } from "../shared/continuation-pause.ts";
 
-test("managed reloads preempt long-running turns only after a committed grace period", () => {
+test("managed reloads preempt long-running turns only after sources settle", () => {
   const base = {
-    committed: true,
+    settled: true,
     idle: false,
     pendingForMs: 29_999,
     forceAfterMs: 30_000,
     preemptRequested: false,
   };
-  assert.equal(managedReloadDecision({ ...base, committed: false }), "await-commit");
+  assert.equal(managedReloadDecision({ ...base, settled: false }), "await-settle");
   assert.equal(managedReloadDecision({ ...base, idle: true }), "reload");
   assert.equal(managedReloadDecision(base), "wait");
   assert.equal(
