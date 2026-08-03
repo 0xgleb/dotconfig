@@ -25,20 +25,24 @@ name:
 pi-bridge register --agent-id <stable-id> --label "<harness> - <project>" --cwd <absolute project path>
 ```
 
-Keep it alive with a background heartbeat every 20 seconds — a registration
-expires in about 30 seconds without one. `pi-bridge agents` lists the roster,
-and it is the same list the owner sees from `/agents` in Telegram.
+Keep it alive with a background heartbeat every **5 seconds**. A registration
+lives `BRIDGE_AGENT_TTL_MS` = 15 seconds from its last refresh
+(`remote-control/protocol.ts`), and the row is deleted the moment it lapses —
+so the heartbeat interval must sit comfortably UNDER 15s, never near or above
+it. A 20s heartbeat against a 15s TTL leaves the agent expired for a quarter of
+every cycle, which reads as agents flickering in and out of the roster for no
+reason:
 
 ```
-nu -c "loop { pi-bridge register --agent-id <stable-id> --label '<harness> - <project>' --cwd <absolute project path> out+err> /dev/null; sleep 20sec }"
+nu -c "loop { pi-bridge register --agent-id <stable-id> --label '<harness> - <project>' --cwd <absolute project path> out+err> /dev/null; sleep 5sec }"
 ```
 
-**A dead heartbeat is silent, so verify rather than assume.** The loop runs as
-a harness background task and can die on its own; the session keeps working,
-still believing it is reachable, while it has actually fallen off the roster
-and no work can be routed to it. Confirm the registration at the start of every
-drain and re-arm it when missing — an agent absent from `/agents` while its
-pane is plainly alive is this, not a display bug:
+`pi-bridge agents` lists the roster, and it is the same list the owner sees
+from `/agents` in Telegram (`piece-of-pi.ts` serves it straight from
+`bridge.listAgents`). An agent missing there while its pane is plainly alive is
+a lapsed registration, not a display bug — and a session cannot tell from the
+inside, because it keeps working while unreachable. Verify at the start of
+every drain and re-arm when missing:
 
 ```
 pi-bridge agents | grep <stable-id>      # empty output means re-arm the heartbeat
