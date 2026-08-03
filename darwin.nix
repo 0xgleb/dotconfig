@@ -25,7 +25,10 @@
 
   nixpkgs.hostPlatform = "aarch64-darwin";
   nixpkgs.config.allowUnfree = true;
-  nixpkgs.overlays = [ (import ./graphite-cli-overlay.nix) ];
+  nixpkgs.overlays = [
+    (import ./graphite-cli-overlay.nix)
+    (import ./obsidian-overlay.nix)
+  ];
 
   ids.gids.nixbld = 350;
 
