@@ -24,13 +24,14 @@ export class HarnessAdapterError extends Data.TaggedError(
 /**
  * Builds the source-fixed launch plan for a validated harness review payload.
  *
- * `allowedRoots` is the caller's registry of repository root directories (the
- * supervisor's workspace roots). When provided, the payload's repositoryRoot
- * must equal one of them or live under `<root>/.worktrees/`; a payload naming
- * any other directory — even one whose basename matches the repository — is
- * refused. Omitting it skips this containment check and leaves only the
- * protocol-level segment binding, which callers should treat as a weaker
- * fallback for contexts that have no root registry yet.
+ * `allowedRoots` is the caller's registry of workspace directories (the
+ * supervisor's approved code roots, e.g. `~/code/<org>` or an exact repo
+ * checkout). When provided, the payload's repositoryRoot must equal one of
+ * them or live underneath one; a payload naming any other directory — even
+ * one whose basename matches the repository — is refused. Omitting it skips
+ * this containment check and leaves only the protocol-level segment binding,
+ * which callers should treat as a weaker fallback for contexts that have no
+ * root registry yet.
  */
 export const buildHarnessLaunchPlan = (
   payload: unknown,
@@ -67,7 +68,7 @@ const rootIsRegistered = (
   allowedRoots: readonly string[],
 ): boolean =>
   allowedRoots.some(
-    (allowed) => root === allowed || root.startsWith(`${allowed}/.worktrees/`),
+    (allowed) => root === allowed || root.startsWith(`${allowed}/`),
   )
 
 const CLAUDE_SCRUBBED_ENVIRONMENT = [

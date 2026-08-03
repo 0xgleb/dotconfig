@@ -14,9 +14,13 @@ const codeOf = (value: unknown): string | undefined => {
   return result.left.code
 }
 
+const requiredEnvironment = {
+  PI_HARNESS_ALLOWED_ROOTS: "/Users/example/code/0xgleb",
+}
+
 test("harness worker config is loopback-only with bounded safe defaults", () => {
   assert.deepEqual(
-    Effect.runSync(parseHarnessWorkerConfig({})),
+    Effect.runSync(parseHarnessWorkerConfig(requiredEnvironment)),
     {
       origin: "http://127.0.0.1:43121",
       workerId: "harness-worker",
@@ -24,6 +28,7 @@ test("harness worker config is loopback-only with bounded safe defaults", () => 
       leaseTtlMs: 2_700_000,
       retryDelayMs: 900_000,
       executorTimeoutMs: 2_400_000,
+      allowedRoots: ["/Users/example/code/0xgleb"],
     },
   )
   assert.deepEqual(
@@ -35,6 +40,8 @@ test("harness worker config is loopback-only with bounded safe defaults", () => 
         PI_HARNESS_LEASE_TTL_MS: "600000",
         PI_HARNESS_RETRY_DELAY_MS: "0",
         PI_HARNESS_EXECUTOR_TIMEOUT_MS: "120000",
+        PI_HARNESS_ALLOWED_ROOTS:
+          "/Users/example/code/st0x:/Users/example/.config",
       }),
     ),
     {
@@ -44,27 +51,43 @@ test("harness worker config is loopback-only with bounded safe defaults", () => 
       leaseTtlMs: 600_000,
       retryDelayMs: 0,
       executorTimeoutMs: 120_000,
+      allowedRoots: ["/Users/example/code/st0x", "/Users/example/.config"],
     },
   )
 })
 
 test("harness worker config rejects malformed or unsafe environment values", () => {
   assert.equal(codeOf(undefined), "invalid_config")
-  assert.equal(codeOf({ PI_CONTROL_PLANE_PORT: "0" }), "invalid_config")
-  assert.equal(codeOf({ PI_CONTROL_PLANE_PORT: "70000" }), "invalid_config")
-  assert.equal(codeOf({ PI_HARNESS_WORKER_ID: "bad worker id" }), "invalid_config")
-  assert.equal(codeOf({ PI_HARNESS_WORKER_ID: "" }), "invalid_config")
-  assert.equal(codeOf({ PI_HARNESS_POLL_MS: "999" }), "invalid_config")
-  assert.equal(codeOf({ PI_HARNESS_POLL_MS: "3600001" }), "invalid_config")
-  assert.equal(codeOf({ PI_HARNESS_POLL_MS: "not-a-number" }), "invalid_config")
-  assert.equal(codeOf({ PI_HARNESS_RETRY_DELAY_MS: "-1" }), "invalid_config")
+  assert.equal(codeOf({}), "invalid_config")
+  assert.equal(codeOf({ PI_HARNESS_ALLOWED_ROOTS: "" }), "invalid_config")
   assert.equal(
-    codeOf({ PI_HARNESS_EXECUTOR_TIMEOUT_MS: "9999" }),
+    codeOf({ PI_HARNESS_ALLOWED_ROOTS: "relative/path" }),
     "invalid_config",
   )
-  assert.equal(codeOf({ PI_HARNESS_LEASE_TTL_MS: "86400001" }), "invalid_config")
   assert.equal(
-    codeOf({
+    codeOf({ PI_HARNESS_ALLOWED_ROOTS: "/ok::/double-separator" }),
+    "invalid_config",
+  )
+  const withRoots = (extra: Record<string, string>) =>
+    codeOf({ ...requiredEnvironment, ...extra })
+  assert.equal(withRoots({ PI_CONTROL_PLANE_PORT: "0" }), "invalid_config")
+  assert.equal(withRoots({ PI_CONTROL_PLANE_PORT: "70000" }), "invalid_config")
+  assert.equal(withRoots({ PI_HARNESS_WORKER_ID: "bad worker id" }), "invalid_config")
+  assert.equal(withRoots({ PI_HARNESS_WORKER_ID: "" }), "invalid_config")
+  assert.equal(withRoots({ PI_HARNESS_POLL_MS: "999" }), "invalid_config")
+  assert.equal(withRoots({ PI_HARNESS_POLL_MS: "3600001" }), "invalid_config")
+  assert.equal(withRoots({ PI_HARNESS_POLL_MS: "not-a-number" }), "invalid_config")
+  assert.equal(withRoots({ PI_HARNESS_RETRY_DELAY_MS: "-1" }), "invalid_config")
+  assert.equal(
+    withRoots({ PI_HARNESS_EXECUTOR_TIMEOUT_MS: "9999" }),
+    "invalid_config",
+  )
+  assert.equal(
+    withRoots({ PI_HARNESS_LEASE_TTL_MS: "86400001" }),
+    "invalid_config",
+  )
+  assert.equal(
+    withRoots({
       PI_HARNESS_LEASE_TTL_MS: "120000",
       PI_HARNESS_EXECUTOR_TIMEOUT_MS: "120000",
     }),

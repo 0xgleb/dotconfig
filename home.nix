@@ -102,6 +102,7 @@ let
     name = "pi-harness-worker";
     runtimeInputs = [ pkgs.nodejs ];
     text = ''
+      export PI_HARNESS_ALLOWED_ROOTS="''${PI_HARNESS_ALLOWED_ROOTS:-$HOME/code/st0x:$HOME/code/dataclique:$HOME/code/0xgleb:$HOME/.config}"
       exec node "$HOME/.config/ai/pi/extensions/control-plane/harness-worker-main.ts" "$@"
     '';
   };

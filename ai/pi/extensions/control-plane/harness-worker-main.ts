@@ -15,6 +15,7 @@ export interface HarnessWorkerConfig {
   readonly leaseTtlMs: number
   readonly retryDelayMs: number
   readonly executorTimeoutMs: number
+  readonly allowedRoots: readonly string[]
 }
 
 export interface HarnessWorkerLoopOptions {
@@ -127,6 +128,25 @@ export const parseHarnessWorkerConfig = (
       configError("PI_HARNESS_RETRY_DELAY_MS must be from zero to seven days"),
     )
   }
+  const configuredRoots = environment.PI_HARNESS_ALLOWED_ROOTS
+  const allowedRoots =
+    typeof configuredRoots === "string" && configuredRoots.length > 0
+      ? configuredRoots.split(":")
+      : []
+  if (
+    allowedRoots.length < 1 ||
+    allowedRoots.length > 16 ||
+    !allowedRoots.every(
+      (root) =>
+        root.startsWith("/") && root.length > 1 && root.length <= 1_024,
+    )
+  ) {
+    return Effect.fail(
+      configError(
+        "PI_HARNESS_ALLOWED_ROOTS must be a colon-separated list of absolute workspace roots",
+      ),
+    )
+  }
   return Effect.succeed({
     origin: `http://127.0.0.1:${String(port)}`,
     workerId,
@@ -134,6 +154,7 @@ export const parseHarnessWorkerConfig = (
     leaseTtlMs,
     retryDelayMs,
     executorTimeoutMs,
+    allowedRoots,
   })
 }
 
@@ -211,6 +232,7 @@ if (isMainModule) {
           workerId: config.workerId,
           leaseTtlMs: config.leaseTtlMs,
           retryDelayMs: config.retryDelayMs,
+          allowedRoots: config.allowedRoots,
           spawner: spawnHarnessExecutor(config.executorTimeoutMs),
         }),
         pollIntervalMs: config.pollIntervalMs,
