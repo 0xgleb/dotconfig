@@ -258,7 +258,7 @@ test("spawn errors and nonzero exits fail the attempt within retry policy", asyn
     assert.equal((await jobState(origin, jobId)).state, "failed")
   }))
 
-test("non-harness jobs are left to lease expiry instead of being executed", async () =>
+test("non-harness jobs are never claimed or executed by the harness worker", async () =>
   withServer(async (origin) => {
     const response = await fetch(`${origin}/v1/jobs`, {
       method: "POST",
@@ -283,9 +283,9 @@ test("non-harness jobs are left to lease expiry instead of being executed", asyn
         ),
       ),
     )
-    assert.deepEqual(outcome, { outcome: "unsupported", jobId })
+    assert.deepEqual(outcome, { outcome: "idle" })
     assert.equal(calls.length, 0)
-    assert.equal((await jobState(origin, jobId)).state, "leased")
+    assert.equal((await jobState(origin, jobId)).state, "ready")
   }))
 
 const executionPlan = (argv: readonly string[]): HarnessLaunchPlan => ({

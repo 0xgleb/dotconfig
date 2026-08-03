@@ -187,6 +187,7 @@ const claimDueJob = (
     const response = yield* postJson(options.origin, "/v1/worker/claim", {
       workerId: options.workerId,
       ttlMs: options.leaseTtlMs,
+      kinds: ["harness.review"],
     })
     if (response.status === 204) return undefined
     if (response.status !== 200)
