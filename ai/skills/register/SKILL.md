@@ -97,8 +97,16 @@ session re-arms by invoking `/register` once.
    registry transitions and every external-channel reply:
 
    ```
-   printf '%s' 'request:<full-request-id> outcome:<completed|failed> summary:<one bounded line> evidence:<comma-separated refs>' | pi-bridge send --agent <dispatcher-id> --dedupe <request-id>
+   printf '%s' 'request:<full-request-id> outcome:<completed|failed> summary:<one bounded line> evidence:<comma-separated refs>' | pi-bridge send --agent <dispatcher-id> --dedupe <request-id> --requester <your-own-agent-id>
    ```
+
+   **`--requester` is your identity, and outcomes are refused without it.**
+   Completing a delegated request closes work, frees the row, and relays a
+   summary onward as fact, so the registry only accepts an outcome from the
+   session holding that project's role — or from the agent the request is
+   already assigned to. Pass the exact agent id you registered with; an
+   envelope from anyone else is rejected with `sender does not hold the role
+   for this request`, which means the work is still open, not done.
 
    **An idle drain reports nothing.** No request executed means no envelope —
    do not announce that the queue was empty, that the roster looked healthy, or
