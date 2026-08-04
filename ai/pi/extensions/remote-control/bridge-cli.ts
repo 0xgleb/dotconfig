@@ -15,6 +15,54 @@ import { makeRemoteBridgeStore } from "./sqlite-store.ts";
 
 const store = makeRemoteBridgeStore(remoteBridgeDatabasePath(process.env.XDG_STATE_HOME, homedir()));
 
+const DEFAULT_HEARTBEAT_INTERVAL_MS = 5_000;
+
+// The shell loop this replaces died on SIGTERM without a trace, so the agent
+// vanished from the roster with nothing to explain it. Naming the signal is
+// the whole point of running the heartbeat in-process.
+const installHeartbeatTerminationLogging = (agentId: string): void => {
+  for (const signal of ["SIGINT", "SIGTERM", "SIGHUP"] as const) {
+    process.on(signal, () => {
+      process.stderr.write(
+        `${JSON.stringify({ protocolVersion: 1, ok: false, event: "heartbeat_stopped", agentId, signal })}\n`,
+      );
+      process.exit(0);
+    });
+  }
+};
+
+interface HeartbeatWatchInput {
+  readonly id: string;
+  readonly label: string;
+  readonly cwd: string;
+  readonly accepting: boolean;
+  readonly intervalMs: number;
+}
+
+// A refresh failure is usually a transient sqlite lock. Exiting would drop the
+// agent off the roster for good, so report it and keep beating.
+const heartbeatForever = (input: HeartbeatWatchInput): Effect.Effect<never, RemoteBridgeError> =>
+  Effect.gen(function* () {
+    for (;;) {
+      yield* Effect.sleep(input.intervalMs);
+      const beat = yield* Effect.either(
+        store.heartbeatAgent({
+          id: input.id,
+          label: input.label,
+          cwd: input.cwd,
+          accepting: input.accepting,
+          now: Date.now(),
+          ttlMs: BRIDGE_AGENT_TTL_MS,
+        }),
+      );
+      if (Either.isLeft(beat)) {
+        process.stderr.write(
+          `${JSON.stringify({ protocolVersion: 1, ok: false, error: { code: beat.left.code, message: beat.left.message.slice(0, 160) } })}\n`,
+        );
+      }
+    }
+  });
+
 const option = (args: readonly string[], name: string): string | undefined => {
   const index = args.indexOf(name);
   return index === -1 ? undefined : args[index + 1];
@@ -246,6 +294,23 @@ const command = (args: readonly string[]): Effect.Effect<unknown, RemoteBridgeEr
         now: Date.now(),
         ttlMs: BRIDGE_AGENT_TTL_MS,
       });
+      const watching = args.includes("--watch");
+      if (watching) {
+        const intervalMs = Number(option(args, "--interval-ms") ?? DEFAULT_HEARTBEAT_INTERVAL_MS);
+        if (!Number.isSafeInteger(intervalMs) || intervalMs <= 0 || intervalMs >= BRIDGE_AGENT_TTL_MS) {
+          return yield* Effect.fail(
+            new RemoteBridgeError({
+              code: "invalid_input",
+              message: `--interval-ms must be a positive integer below the ${BRIDGE_AGENT_TTL_MS}ms agent TTL`,
+            }),
+          );
+        }
+        process.stdout.write(
+          `${JSON.stringify({ protocolVersion: 1, ok: true, result: { id: agent.id, watching: true, intervalMs } })}\n`,
+        );
+        installHeartbeatTerminationLogging(agent.id);
+        return yield* heartbeatForever({ id, label: boundedLabel, cwd, accepting: accepting !== "false", intervalMs });
+      }
       return {
         id: agent.id,
         label: agent.label,
@@ -261,7 +326,7 @@ const command = (args: readonly string[]): Effect.Effect<unknown, RemoteBridgeEr
     new RemoteBridgeError({
       code: "invalid_input",
       message:
-        "usage: pi-bridge agents | send --agent ID --dedupe KEY | result --id ID | inbox --agent ID | respond --id ID --token TOKEN | register --agent-id ID --label LABEL --cwd PATH | ask --agent ID [--header TEXT] [--options 'A|B'] | answer --agent ID | dismiss --agent ID --question ID | enable | disable | status",
+        "usage: pi-bridge agents | send --agent ID --dedupe KEY | result --id ID | inbox --agent ID | respond --id ID --token TOKEN | register --agent-id ID --label LABEL --cwd PATH [--watch] [--interval-ms N] | ask --agent ID [--header TEXT] [--options 'A|B'] | answer --agent ID | dismiss --agent ID --question ID | enable | disable | status",
     }),
   );
 };

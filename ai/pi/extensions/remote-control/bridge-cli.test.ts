@@ -2,7 +2,7 @@ import assert from "node:assert/strict";
 import { mkdtempSync, rmSync } from "node:fs";
 import { tmpdir } from "node:os";
 import { join } from "node:path";
-import { spawnSync } from "node:child_process";
+import { spawn, spawnSync } from "node:child_process";
 import test from "node:test";
 import { Effect } from "effect";
 import { BRIDGE_AGENT_TTL_MS } from "./protocol.ts";
@@ -216,6 +216,64 @@ test("an asking agent withdraws its own question card once the answer arrives el
       String(askedJson.result.questionId),
     ]);
     assert.equal(foreign.status, 1);
+  } finally {
+    rmSync(stateRoot, { recursive: true, force: true });
+  }
+});
+
+test("a watched registration heartbeats in one process and says why it stopped", async () => {
+  const stateRoot = mkdtempSync(join(tmpdir(), "pi-bridge-watch-"));
+  try {
+    const rejected = runCli(stateRoot, [
+      "register",
+      "--agent-id",
+      "claude-config-opus-1",
+      "--label",
+      "Claude Code (Opus) - .config worker",
+      "--cwd",
+      "/work/config",
+      "--watch",
+      "--interval-ms",
+      "999999",
+    ]);
+    assert.equal(rejected.status, 1);
+
+    const watcher = spawn(
+      process.execPath,
+      [
+        "--experimental-strip-types",
+        cli,
+        "register",
+        "--agent-id",
+        "claude-config-opus-1",
+        "--label",
+        "Claude Code (Opus) - .config worker",
+        "--cwd",
+        "/work/config",
+        "--watch",
+        "--interval-ms",
+        "50",
+      ],
+      { env: { ...process.env, XDG_STATE_HOME: stateRoot }, stdio: ["ignore", "pipe", "pipe"] },
+    );
+    let stderr = "";
+    watcher.stderr.setEncoding("utf8");
+    watcher.stderr.on("data", (chunk: string) => {
+      stderr += chunk;
+    });
+
+    await new Promise((resolve) => setTimeout(resolve, 600));
+
+    const roster = runCli(stateRoot, ["agents"]);
+    const rosterJson = JSON.parse(roster.stdout) as { result: Array<{ id: string }> };
+    assert.ok(rosterJson.result.some((agent) => agent.id === "claude-config-opus-1"));
+
+    const exited = new Promise<void>((resolve) => watcher.once("exit", () => resolve()));
+    watcher.kill("SIGTERM");
+    await exited;
+
+    assert.match(stderr, /heartbeat_stopped/);
+    assert.match(stderr, /SIGTERM/);
   } finally {
     rmSync(stateRoot, { recursive: true, force: true });
   }
