@@ -115,7 +115,33 @@ test("sessions outside dedicated projects never self-claim their standing roles"
       "/Users/example/code/other",
       "/Users/example",
     ),
+    false,
+    "an unrelated directory is not a reason to appoint yourself drainer of a project",
+  );
+});
+
+test("an org session serves the repos inside it but never everything under home", () => {
+  // Sessions are launched per org and coordinate across the repos in it, so a
+  // session in the org directory has to be able to take a role for a repo
+  // underneath it. Home contains every project without being one.
+  assert.equal(
+    shouldSelfClaimUnownedRole(
+      "/Users/example/code/st0x/st0x.issuance",
+      "reviewer",
+      "/Users/example/code/st0x",
+      "/Users/example",
+    ),
     true,
+  );
+  assert.equal(
+    shouldSelfClaimUnownedRole(
+      "/Users/example/code/st0x/st0x.issuance",
+      "reviewer",
+      "/Users/example",
+      "/Users/example",
+    ),
+    false,
+    "a session sitting in home would otherwise qualify for every role in the fleet",
   );
 });
 

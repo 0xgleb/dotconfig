@@ -23,8 +23,22 @@ export const managedOperationalRole: (cwd: string, home: string) => ManagedOpera
 
 /**
  * A managed role is taken only by the session sitting in its project. A
- * project with no managed role has no designated owner, so any session may
- * pick it up rather than leave its queue stranded.
+ * project with no managed role has no designated owner, so a session may pick
+ * it up rather than leave its queue stranded - but only for a project it
+ * actually contains.
+ *
+ * Containment rather than equality, because sessions are launched per org and
+ * work across the repos inside it: a session in ~/code/st0x serves a request
+ * for ~/code/st0x/st0x.issuance, and requiring an exact match would refuse the
+ * cross-repo coordination that is the point of running it there. Several
+ * sessions sharing one org directory is normal and not a conflict - they hold
+ * different roles, and one holder per project and role is what the lease
+ * already enforces.
+ *
+ * The home directory is excluded because it contains every project without
+ * being one. A session launched from home would otherwise qualify for every
+ * role in the fleet, which is how a dispatcher sitting in home ends up
+ * appointed drainer of a path nothing drains.
  */
 export const shouldSelfClaimUnownedRole: (
   project: string,
@@ -35,5 +49,6 @@ export const shouldSelfClaimUnownedRole: (
   const dedicated = managedRoles(home).some(
     (candidate) => candidate.project === project && candidate.role === role,
   );
-  return !dedicated || cwd === project;
+  const contains = cwd === project || project.startsWith(`${cwd}/`);
+  return contains && cwd !== home && (!dedicated || cwd === project);
 };
