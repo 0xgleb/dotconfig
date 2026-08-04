@@ -4,6 +4,7 @@ import {
   agentListHtml,
   agentMatchesSelector,
   preferredAgent,
+  resolvableSelector,
 } from "./agent-selection.ts"
 import type { BridgeAgent } from "./protocol.ts"
 
@@ -45,4 +46,48 @@ test("agent list exposes copyable Telegram code selectors", () => {
   assert.match(html, /<code>\.config<\/code>/)
   assert.match(html, /<code>019fba03<\/code>/)
   assert.match(html, /<code>\/use \.config<\/code>/)
+})
+
+test("a selector shared by several lanes gives way to the unambiguous agent id", () => {
+  const crowded: BridgeAgent[] = [
+    {
+      id: "claude-config-opus-1",
+      label: "Claude Code (Opus) - .config worker",
+      cwd: "/Users/example/.config",
+      accepting: true,
+      heartbeatAt: 1,
+      expiresAt: 2,
+    },
+    {
+      id: "fable-orchestrator",
+      label: "claude-code - fable orchestrator",
+      cwd: "/Users/example/.config",
+      accepting: true,
+      heartbeatAt: 1,
+      expiresAt: 2,
+    },
+    {
+      id: "claude-yielduck-opus-1",
+      label: "Claude Code (Opus) - yielduck worker",
+      cwd: "/Users/example/code/dataclique/yielduck",
+      accepting: true,
+      heartbeatAt: 1,
+      expiresAt: 2,
+    },
+  ]
+
+  assert.equal(resolvableSelector(crowded[0]!, crowded), "claude-config-opus-1")
+  assert.equal(resolvableSelector(crowded[1]!, crowded), "fable-orchestrator")
+  assert.equal(resolvableSelector(crowded[2]!, crowded), "yielduck")
+
+  for (const agent of crowded) {
+    const selector = resolvableSelector(agent, crowded)
+    const matches = crowded.filter((other) => agentMatchesSelector(other, selector))
+    assert.equal(matches.length, 1)
+    assert.equal(matches[0]!.id, agent.id)
+  }
+
+  const html = agentListHtml(crowded)
+  assert.match(html, /<code>claude-config-opus-1<\/code>/)
+  assert.match(html, /<code>\/use claude-config-opus-1<\/code>/)
 })
