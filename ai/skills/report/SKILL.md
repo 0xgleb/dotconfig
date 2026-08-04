@@ -73,8 +73,8 @@ chronologically and never by which agent produced it.
 
 **Ready to submit** (1)
 
-- [liquidity 1112](https://github.com/org/repo/pull/1112) - review staged,
-  invisible until you submit.
+- [liquidity 1112](https://app.graphite.dev/github/pr/ST0x-Technology/st0x.liquidity/1112) -
+  review staged, invisible until you submit.
 
 **Done, no action** (3)
 - 1004 hooks, 1032/1033 rate limits, 278 already covered.
@@ -88,11 +88,41 @@ Rules that make it scannable:
 - **Lead each item with its identifier**, so the eye lands on `issuance 237`
   and not on the fourth clause of a sentence.
 - **Link PRs and issues** rather than naming bare numbers. A tap beats a
-  search.
+  search. See the shapes below.
 - **Blank line between sections.** It is the only visual separation available.
 - Put the diagnosis on the item, not in a trailing narrative paragraph.
 - Say what is BLOCKED and on what. An unowned item with no blocker reads as
   something the owner must do now, which may be false.
+
+## Links that carry a route
+
+A link is the only interactive element the renderer has, so it is the whole
+budget for getting the owner from the report to the thing. Spend it on the
+destination that answers the question the item raises, and build it from
+identifiers you already hold — never guess a URL.
+
+| Destination | Shape |
+| --- | --- |
+| GitHub PR | `https://github.com/<owner>/<repo>/pull/<number>` |
+| GitHub issue | `https://github.com/<owner>/<repo>/issues/<number>` |
+| Graphite PR | `https://app.graphite.dev/github/pr/<owner>/<repo>/<number>` |
+| Linear issue | the `url` field Linear returned for that issue |
+
+**Linear URLs are never constructed.** They are workspace-scoped and the API
+returns the exact one on the issue; building a URL from an identifier like
+`RAI-1045` produces a plausible link that does not resolve. If the `url` field
+is not to hand, write the bare identifier rather than a guess.
+
+**Prefer Graphite over GitHub when the repo stacks**, which is the
+`~/code/st0x/*` and `~/code/rainlanguage/*` family. A GitHub link opens one PR
+in isolation; the Graphite link opens it inside its stack, which is the context
+that decides whether it can merge. For a repo that does not stack, GitHub is
+the right destination and Graphite has nothing to show.
+
+One caveat that looks like a bug and is not: inside a Pi pane, Graphite
+markdown links are deliberately flattened to their bare URL so the terminal
+shows something copyable. That rewrite is display-only and does not touch the
+relayed report, so keep writing the markdown link form.
 
 ## What to leave out
 
