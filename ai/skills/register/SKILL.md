@@ -83,6 +83,27 @@ session re-arms by invoking `/register` once.
    awaiting an action this session can take (fixes, drafted reviews, never
    verdicts or merges), and any backlog documents the project declares. An empty
    registry table with open issues is a populated queue, not an idle one.
+
+   **Drain the bridge inbox too, first, before anything else.** Roster
+   registration makes a lane addressable, so the owner and the dispatcher both
+   send to it by name — but a bridge message is only ever delivered to the lane
+   that claims it, and a message nobody claims dies at `BRIDGE_MESSAGE_TTL_MS`
+   (one hour). Owner messages have been lost exactly this way. Claim until the
+   inbox is empty, and complete each one:
+
+   ```
+   pi-bridge inbox --agent <your-agent-id>   # {"status":"empty"} when drained
+   printf '%s' '<one bounded reply>' | pi-bridge respond --id <message-id> --token <claim-token>
+   ```
+
+   `respond` is what reaches the sender — for an owner-originated message the
+   response is relayed to their Telegram, so it is a reply to a person and is
+   written as one. Claiming does NOT extend the deadline: `expires_at` is fixed
+   at send time and a claimed message expires on schedule, so handle what you
+   claim in the same iteration rather than holding it. A message addressed to
+   the wrong lane is routed onward and answered with where it went — never
+   dropped, and never silently executed by whichever lane happened to receive
+   it.
 2. **Reprioritize the whole queue, every iteration**, from up-to-date context
    instead of the previous fire's order. Explicit user urgency re-ranks
    everything and the newest statement wins; then operational breakage; then
