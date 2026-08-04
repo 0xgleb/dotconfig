@@ -768,13 +768,16 @@ export const makeRemoteBridgeStore = (
           if (!row) return undefined;
           const id = stringField(row, "message_id") ?? "";
           const claimToken = randomUUID();
+          // `expires_at` is fixed at send time and `expireMessages` kills
+          // claimed rows too, so without this a lane that claims work near the
+          // deadline loses it mid-handling. The claim starts a fresh window.
           database
             .prepare(
               `UPDATE bridge_messages
-               SET status = 'claimed', claim_token = ?, claimed_at = ?, updated_at = ?
+               SET status = 'claimed', claim_token = ?, claimed_at = ?, updated_at = ?, expires_at = ?
                WHERE message_id = ? AND status = 'queued'`,
             )
-            .run(claimToken, now, now, id);
+            .run(claimToken, now, now, now + BRIDGE_MESSAGE_TTL_MS, id);
           return messageFromRow(
             rowFrom(
               database
