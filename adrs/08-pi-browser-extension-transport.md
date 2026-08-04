@@ -7,11 +7,11 @@
 ## Context
 
 Pi's browser control (`ai/pi/extensions/browser-control`) launches the agent
-Brave profile with `--remote-debugging-port` and drives it over raw CDP. The
-owner recorded two objections (issue #47): the connection mechanism is hacky
-compared to Claude-in-Chrome's dedicated browser extension, and action
-visibility is a bare text indicator in a page corner rather than a visible
-overlay while the agent acts.
+Brave profile with `--remote-debugging-port` and drives it over raw CDP. Two
+problems with that arrangement are recorded in issue #47: the connection
+mechanism is ad hoc next to a dedicated browser extension of the
+Claude-in-Chrome kind, and action visibility is a bare text indicator in a page
+corner rather than a visible overlay while the agent acts.
 
 The transport choice is expensive to reverse: it fixes the protocol boundary
 between the Pi host and the browser, the security surface exposed on the
@@ -104,10 +104,10 @@ in the agent Brave profile, mirroring the Claude-in-Chrome shape:
   maintain.
 - Cons: unauthenticated localhost control surface any local process can
   reach; depends on a launch flag Chromium is progressively restricting; no
-  in-page presence to hang an overlay on; explicitly named as the objection
-  in issue #47.
-- Rejected because: the owner directed the rebuild, and the mechanism is the
-  least safe and least durable of the options.
+  in-page presence to hang an overlay on; it is the mechanism issue #47 was
+  filed against.
+- Rejected because: it is the least safe and least durable of the options, and
+  it cannot deliver the in-page visibility the same issue asks for.
 
 ### Native messaging host
 - Pros: Chrome-sanctioned transport with no listening socket; process
