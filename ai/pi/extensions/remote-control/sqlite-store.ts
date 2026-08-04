@@ -88,6 +88,12 @@ export interface AnswerTelegramQuestionInput {
   readonly now: number;
 }
 
+export interface DismissQuestionInput {
+  readonly agentId: string;
+  readonly questionId: number;
+  readonly now: number;
+}
+
 export interface TakeQuestionResolutionInput {
   readonly agentId: string;
   readonly now: number;
@@ -141,6 +147,9 @@ export interface RemoteBridgeStore {
   readonly answerTelegramQuestion: (
     input: AnswerTelegramQuestionInput,
   ) => Effect.Effect<RemoteQuestionResolution, RemoteBridgeError>;
+  readonly dismissQuestion: (
+    input: DismissQuestionInput,
+  ) => Effect.Effect<BridgeQuestion, RemoteBridgeError>;
   readonly takeQuestionResolution: (
     input: TakeQuestionResolutionInput,
   ) => Effect.Effect<RemoteQuestionResolution | undefined, RemoteBridgeError>;
@@ -1191,6 +1200,51 @@ export const makeRemoteBridgeStore = (
             questionId: numberField(row, "question_id"),
             answer,
           };
+        });
+      }),
+    ),
+  dismissQuestion: (input) =>
+    attempt("Could not dismiss bridge question", () =>
+      withDatabase(databasePath, (database) => {
+        const agentId = boundedIdentifier("agent id", input.agentId);
+        const questionId = positiveSafeInteger("question id", input.questionId);
+        const now = boundedTimestamp("now", input.now);
+
+        return transaction(database, () => {
+          const row = optionalRowFrom(
+            database
+              .prepare(
+                "SELECT * FROM bridge_questions WHERE agent_id = ? AND question_id = ?",
+              )
+              .get(agentId, questionId),
+          );
+          if (!row)
+            throw bridgeError("not_found", "question not found for this agent");
+
+          // An answered card is the owner having already replied. Dropping it
+          // would discard their answer before the agent ever collected it.
+          if (stringField(row, "status") === "answered")
+            throw bridgeError(
+              "invalid_transition",
+              "question is answered; collect it with answer instead",
+            );
+
+          database
+            .prepare(
+              `UPDATE bridge_questions
+               SET status = 'resolved', updated_at = ?
+               WHERE agent_id = ? AND question_id = ? AND status = 'pending'`,
+            )
+            .run(now, agentId, questionId);
+          return questionFromRow(
+            rowFrom(
+              database
+                .prepare(
+                  "SELECT * FROM bridge_questions WHERE agent_id = ? AND question_id = ?",
+                )
+                .get(agentId, questionId),
+            ),
+          );
         });
       }),
     ),

@@ -151,3 +151,72 @@ test("a non-Pi lane claims and completes the messages addressed to it", async ()
     rmSync(stateRoot, { recursive: true, force: true });
   }
 });
+
+test("an asking agent withdraws its own question card once the answer arrives elsewhere", async () => {
+  const stateRoot = mkdtempSync(join(tmpdir(), "pi-bridge-dismiss-"));
+  try {
+    const registered = runCli(stateRoot, [
+      "register",
+      "--agent-id",
+      "claude-config-opus-1",
+      "--label",
+      "Claude Code (Opus) - .config worker",
+      "--cwd",
+      "/work/config",
+    ]);
+    assert.equal(registered.status, 0, registered.stderr);
+
+    const asked = runCli(
+      stateRoot,
+      ["ask", "--agent", "claude-config-opus-1", "--header", "Direction"],
+      "which direction should I take?",
+    );
+    assert.equal(asked.status, 0, asked.stderr);
+    const askedJson = JSON.parse(asked.stdout) as {
+      result: { questionId: number };
+    };
+
+    const unparsable = runCli(stateRoot, [
+      "dismiss",
+      "--agent",
+      "claude-config-opus-1",
+      "--question",
+      "not-a-number",
+    ]);
+    assert.equal(unparsable.status, 1);
+
+    const dismissed = runCli(stateRoot, [
+      "dismiss",
+      "--agent",
+      "claude-config-opus-1",
+      "--question",
+      String(askedJson.result.questionId),
+    ]);
+    assert.equal(dismissed.status, 0, dismissed.stderr);
+    const dismissedJson = JSON.parse(dismissed.stdout) as {
+      result: { status: string; questionId: number };
+    };
+    assert.equal(dismissedJson.result.status, "dismissed");
+    assert.equal(dismissedJson.result.questionId, askedJson.result.questionId);
+
+    const repeated = runCli(stateRoot, [
+      "dismiss",
+      "--agent",
+      "claude-config-opus-1",
+      "--question",
+      String(askedJson.result.questionId),
+    ]);
+    assert.equal(repeated.status, 0, repeated.stderr);
+
+    const foreign = runCli(stateRoot, [
+      "dismiss",
+      "--agent",
+      "claude-st0x-opus-1",
+      "--question",
+      String(askedJson.result.questionId),
+    ]);
+    assert.equal(foreign.status, 1);
+  } finally {
+    rmSync(stateRoot, { recursive: true, force: true });
+  }
+});
