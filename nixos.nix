@@ -7,6 +7,7 @@ let
 in
 {
   nixpkgs.config.allowUnfree = true;
+  nixpkgs.overlays = [ (import ./graphite-cli-overlay.nix) ];
 
   users.users.root.openssh.authorizedKeys.keys = authorizedKeys;
 
