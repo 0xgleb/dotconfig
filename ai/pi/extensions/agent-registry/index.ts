@@ -337,6 +337,30 @@ const registryExtension: (pi: ExtensionAPI) => void = (pi) => {
           payload.report({ outcome: "recorded" })
           return
         }
+        // Completing a delegated request is privileged: it closes work, frees
+        // the row, and relays a summary onward as fact. Entitlement is holding
+        // the role - the same lease that makes a session the single drainer -
+        // or already being the request's assigned agent. Rows stay queued
+        // while worked, so the lease is what identifies the worker, not the
+        // row's status.
+        const entitled =
+          payload.senderId !== undefined &&
+          ((target.status === "claimed" &&
+            target.agentId === payload.senderId) ||
+            snapshot.leases.some(
+              (candidate) =>
+                candidate.owner.id === payload.senderId &&
+                candidate.project === target.project &&
+                candidate.role === target.role &&
+                candidate.status === "active",
+            ))
+        if (!entitled) {
+          payload.report({
+            outcome: "failed",
+            reason: "sender does not hold the role for this request",
+          })
+          return
+        }
         let lease = snapshot.leases.find(
           (candidate) =>
             candidate.owner.id === agent.id &&

@@ -263,6 +263,7 @@ export default function remoteControl(pi: ExtensionAPI): void {
         requestId: envelope.requestId,
         resolution: envelope.outcome,
         summary: envelope.summary,
+        senderId: message.requesterId,
         report: (result) => {
           clearTimeout(timeout);
           resolve(result);

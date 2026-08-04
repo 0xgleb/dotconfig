@@ -73,5 +73,14 @@ export interface RegistryOutcomeRequest {
   readonly requestId: string
   readonly resolution: "completed" | "failed"
   readonly summary: string
+  /**
+   * Who is reporting the outcome, taken from the bridge message that carried
+   * the envelope. Completing a delegated request is a privileged act, and
+   * without a sender any bridge actor can close work it was never given -
+   * including work another session is midway through. Undefined means the
+   * envelope arrived with no attributable sender and is not entitled to
+   * complete anything.
+   */
+  readonly senderId: string | undefined
   readonly report: (result: RegistryOutcomeResult) => void
 }
