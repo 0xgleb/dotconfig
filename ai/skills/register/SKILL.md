@@ -62,6 +62,18 @@ pi-bridge agents | grep <stable-id>      # empty output means re-arm the heartbe
 Kill the old loop before starting a replacement; two heartbeats for one id
 refresh the same row and just hide which one is actually alive.
 
+**A healthy registration is not evidence the heartbeat is the right one.** A
+lane still running the retired shell loop looks perfect from the roster, so it
+never trips the re-arm check above and never swaps — which is how a fleet-wide
+saving stays unrealized indefinitely. Check the shape, not just the presence:
+
+```
+ps -eo command | grep "loop { pi-bridge register" | grep <stable-id>
+```
+
+Any output means this lane is still paying a node start every 5 seconds. Kill
+that loop and re-arm with `--watch`, even though nothing looks broken.
+
 **Role.** Hold or claim this project's registry role. The holder is the ONE
 session that drains the project's queue (lease-enforced); a session without the
 role may read the queue but must route, never execute. Rows stay `queued` while
