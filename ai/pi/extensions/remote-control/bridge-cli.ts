@@ -90,6 +90,52 @@ const command = (args: readonly string[]): Effect.Effect<unknown, RemoteBridgeEr
       return publicMessage(message);
     });
   }
+  // `ask_user` is a Pi tool, so until now only a native Pi session could put a
+  // question in front of the owner. Every other lane - Claude Code, cursor -
+  // had to guess or relay a report and hope, which is the opposite of what the
+  // question cards are for. These two verbs are the missing entry point: `ask`
+  // publishes into the same store the relay already drains, and `answer` is
+  // how a lane with no push inbox collects the reply.
+  if (action === "ask") {
+    return Effect.gen(function* () {
+      const agentId = yield* requiredOption(args, "--agent");
+      const header = option(args, "--header")?.trim();
+      const question = yield* readStdin();
+      const options = (option(args, "--options") ?? "")
+        .split("|")
+        .map((label) => label.trim())
+        .filter((label) => label.length > 0)
+        .map((label) => ({ label }));
+      // Telegram binds its card to (agent_id, question_id), so the id has to
+      // be unique per agent and stable once relayed. Seconds since epoch is
+      // both, and stays inside the integer the card round-trips.
+      const questionId = Math.floor(Date.now() / 1_000);
+      yield* store.syncQuestions({
+        agentId,
+        questions: [
+          {
+            id: questionId,
+            status: "pending" as const,
+            question: boundedBridgeText("question", question, MAX_REMOTE_MESSAGE_CHARACTERS),
+            ...(header ? { header } : {}),
+            ...(options.length > 0 ? { options } : {}),
+          },
+        ],
+        now: Date.now(),
+      });
+      return { agentId, questionId, status: "pending" };
+    });
+  }
+  if (action === "answer") {
+    return Effect.gen(function* () {
+      const agentId = yield* requiredOption(args, "--agent");
+      const resolution = yield* store.takeQuestionResolution({
+        agentId,
+        now: Date.now(),
+      });
+      return resolution ?? { agentId, status: "pending" };
+    });
+  }
   if (action === "result") {
     return Effect.gen(function* () {
       const id = yield* requiredOption(args, "--id");
@@ -149,7 +195,7 @@ const command = (args: readonly string[]): Effect.Effect<unknown, RemoteBridgeEr
     new RemoteBridgeError({
       code: "invalid_input",
       message:
-        "usage: pi-bridge agents | send --agent ID --dedupe KEY | result --id ID | register --agent-id ID --label LABEL --cwd PATH | enable | disable | status",
+        "usage: pi-bridge agents | send --agent ID --dedupe KEY | result --id ID | register --agent-id ID --label LABEL --cwd PATH | ask --agent ID [--header TEXT] [--options 'A|B'] | answer --agent ID | enable | disable | status",
     }),
   );
 };
