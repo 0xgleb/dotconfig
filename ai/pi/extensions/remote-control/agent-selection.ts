@@ -15,6 +15,19 @@ export const agentMatchesSelector = (
   agentSelector(agent) === requested ||
   agent.id.startsWith(requested)
 
+// `basename(cwd)` is not unique: several lanes run inside one repository, so
+// four agents can all present `.config`. Listing a selector that resolves to
+// more than one agent is worse than listing none, because `/use` refuses an
+// ambiguous match and this list is what the owner copies from.
+export const resolvableSelector = (
+  agent: BridgeAgent,
+  agents: ReadonlyArray<BridgeAgent>,
+): string => {
+  const folder = agentSelector(agent)
+  const sharesFolder = agents.filter((other) => agentSelector(other) === folder).length > 1
+  return sharesFolder ? agent.id : folder
+}
+
 export const preferredAgent = (
   agents: ReadonlyArray<BridgeAgent>,
   selectedAgentId?: string,
@@ -38,7 +51,7 @@ export const agentListHtml = (agents: ReadonlyArray<BridgeAgent>): string =>
         "Bridge-ready Pi agents:",
         ...agents.map(
           (agent) =>
-            `- ${escapeTelegramHtml(agent.label)} · <code>${escapeTelegramHtml(agentSelector(agent))}</code> · session <code>${escapeTelegramHtml(agent.id.slice(0, 8))}</code>${agent.accepting ? "" : " [busy]"}`,
+            `- ${escapeTelegramHtml(agent.label)} · <code>${escapeTelegramHtml(resolvableSelector(agent, agents))}</code> · session <code>${escapeTelegramHtml(agent.id.slice(0, 8))}</code>${agent.accepting ? "" : " [busy]"}`,
         ),
-        "Use <code>/use .config</code> or another listed label.",
+        `Use <code>/use ${escapeTelegramHtml(resolvableSelector(agents[0]!, agents))}</code> or another listed selector.`,
       ].join("\n")
