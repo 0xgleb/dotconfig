@@ -34,8 +34,19 @@ every cycle, which reads as agents flickering in and out of the roster for no
 reason:
 
 ```
-nu -c "loop { pi-bridge register --agent-id <stable-id> --label '<harness> - <project>' --cwd <absolute project path> out+err> /dev/null; sleep 5sec }"
+pi-bridge register --agent-id <stable-id> --label "<harness> - <project>" --cwd <absolute project path> --watch
 ```
+
+`--watch` beats every 5 seconds inside one long-lived process, and it is what
+a lane should run. It replaced a shell loop that re-invoked the CLI on a timer,
+which paid a fresh node start and sqlite open every 5 seconds — about a quarter
+second of CPU each time, or roughly half a core across a ten-agent fleet doing
+nothing but staying visible. It also refuses an interval at or above the TTL
+rather than letting the registration lapse between beats, keeps beating through
+a transient refresh failure instead of exiting and dropping off the roster, and
+names the signal on stderr when it does stop. That last part matters: the shell
+loop it replaced died on SIGTERM with nothing logged, so an agent simply
+vanished from the roster with no trace of why.
 
 `pi-bridge agents` lists the roster, and it is the same list the owner sees
 from `/agents` in Telegram (`piece-of-pi.ts` serves it straight from
