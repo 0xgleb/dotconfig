@@ -96,14 +96,15 @@ session re-arms by invoking `/register` once.
    printf '%s' '<one bounded reply>' | pi-bridge respond --id <message-id> --token <claim-token>
    ```
 
-   `respond` is what reaches the sender — for an owner-originated message the
-   response is relayed to their Telegram, so it is a reply to a person and is
-   written as one. Claiming does NOT extend the deadline: `expires_at` is fixed
-   at send time and a claimed message expires on schedule, so handle what you
-   claim in the same iteration rather than holding it. A message addressed to
-   the wrong lane is routed onward and answered with where it went — never
-   dropped, and never silently executed by whichever lane happened to receive
-   it.
+   `respond` is what reaches the sender — for a message that originated on an
+   external channel the response is relayed back to it, so it is a reply to a
+   person and is written as one. Claiming restarts the deadline, giving a full
+   `BRIDGE_MESSAGE_TTL_MS` from the moment of the claim, so a lane no longer
+   loses work it picked up near the old deadline. That is a working window, not
+   a licence to sit on the message: an unanswered claim still expires, so
+   handle what you claim in the same iteration. A message addressed to the
+   wrong lane is routed onward and answered with where it went — never dropped,
+   and never silently executed by whichever lane happened to receive it.
 2. **Reprioritize the whole queue, every iteration**, from up-to-date context
    instead of the previous fire's order. Explicit user urgency re-ranks
    everything and the newest statement wins; then operational breakage; then
@@ -214,6 +215,21 @@ Every lane can reach the owner's Telegram question cards. The question binds to
   `answer` is a poll, not a push — harness sessions have no inbox, so check it
   on each drain until it returns a resolution. A question does not stall the
   queue: keep doing everything the answer does not block.
+
+**Withdraw a card the moment it stops mattering.** Because a lane keeps working
+rather than waiting, the answer often arrives from somewhere else first — the
+code gets read, an ADR lands, the decision is overtaken. A card left standing
+after that is asking for attention the answer no longer needs:
+
+```
+pi-bridge dismiss --agent <your-agent-id> --question <question-id>
+```
+
+It is scoped to the asking agent, so a lane can only retract its own card, and
+it refuses once the owner has answered — that reply is collected with `answer`,
+never discarded. Only cards belonging to an agent currently live on the roster
+are listed, so a card raised by a session that has since died is already out of
+the way and needs no cleanup.
 
 A session with its own native question tool may use that instead when the owner
 is present in the pane. The bridge is what reaches them when they are not.
