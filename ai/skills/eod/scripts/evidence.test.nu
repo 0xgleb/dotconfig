@@ -1,6 +1,6 @@
 use std/assert
 
-use evidence.nu [classify-commit deployment-environment deployment-reportability extract-rai graphite-pr-reportability is-bot is-deployment-workflow linear-reportability parse-graphite-batch-spec pr-event-in-window pr-reportability reportable-review]
+use evidence.nu [classify-commit deployment-environment deployment-pr-refs deployment-reportability extract-rai graphite-pr-reportability is-bot is-deployment-workflow linear-reportability parse-graphite-batch-spec pr-event-in-window pr-reportability reportable-review]
 
 let since = "2026-07-10T00:00:00Z" | into datetime
 let until = "2026-07-14T06:00:00Z" | into datetime
@@ -63,6 +63,18 @@ def "test derives deployment environment only from workflow identity" [] {
   assert equal (deployment-environment "Deploy to Production") "production"
   assert equal (deployment-environment ".github/workflows/deploy-staging.yaml") "staging"
   assert equal (deployment-environment "Deploy") "unspecified"
+}
+
+def "test deployment run links only to authored PRs sharing its head commit" [] {
+  let authored_prs = [
+    {repo: "ST0x-Technology/st0x.issuance", number: 12, commits: [{sha: "aaa111"}]}
+    {repo: "ST0x-Technology/st0x.issuance", number: 13, commits: [{sha: "bbb222"}]}
+    {repo: "ST0x-Technology/st0x.liquidity", number: 14, commits: [{sha: "aaa111"}]}
+  ]
+  let run = {repo: "ST0x-Technology/st0x.issuance", head_sha: "aaa111"}
+  assert equal (deployment-pr-refs $run $authored_prs) ["ST0x-Technology/st0x.issuance#12"]
+  assert equal (deployment-pr-refs {repo: "ST0x-Technology/st0x.issuance", head_sha: ""} $authored_prs) []
+  assert equal (deployment-pr-refs {repo: "ST0x-Technology/st0x.issuance"} $authored_prs) []
 }
 
 def "test does not classify a CI run from its commit title" [] {

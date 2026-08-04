@@ -143,3 +143,13 @@ export def deployment-environment [workflow: string]: nothing -> string {
     "unspecified"
   }
 }
+
+export def deployment-pr-refs [run: record, authored_prs: list<record>]: nothing -> list<string> {
+  let head_sha = $run.head_sha? | default ""
+  if ($head_sha | is-empty) {
+    return []
+  }
+  $authored_prs
+  | where {|pr| ($pr.repo == $run.repo) and ($pr.commits | any {|commit| $commit.sha == $head_sha }) }
+  | each {|pr| $"($pr.repo)#($pr.number)" }
+}

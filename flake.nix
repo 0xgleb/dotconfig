@@ -214,6 +214,28 @@
                 ${pkgs.nushell}/bin/nu md-lib.test.nu
                 touch $out
               '';
+
+          eod-scripts =
+            pkgs.runCommand "eod-scripts-test"
+              {
+                nativeBuildInputs = with pkgs; [ nushell ];
+              }
+              ''
+                cp -r ${./ai/skills/eod/scripts} scripts
+                cd scripts
+
+                # `source` fails on parse errors; `--ide-check` does not. This
+                # catches parse errors only -- a bare `and` starting a
+                # continuation line inside a closure parses fine and fails at
+                # runtime, so the behavioural gate is evidence.test.nu below.
+                echo "validating collect.nu parses..."
+                ${pkgs.nushell}/bin/nu --commands 'source collect.nu'
+                echo "collect.nu parses ok"
+
+                ${pkgs.nushell}/bin/nu evidence.test.nu
+                ${pkgs.nushell}/bin/nu report-contract.test.nu
+                touch $out
+              '';
         };
 
       formatter.aarch64-darwin = (import nixpkgs { system = "aarch64-darwin"; }).nixfmt;
