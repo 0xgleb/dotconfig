@@ -440,6 +440,84 @@ test("Telegram replies resolve only the exact bound agent question", async () =>
     );
   }));
 
+test("an agent withdraws its own pending card but never one the owner answered", async () =>
+  withStore(async (store) => {
+    await heartbeat(store);
+    await Effect.runPromise(
+      store.syncQuestions({
+        agentId: "session-1",
+        now: 2_000,
+        questions: [
+          { id: 1, status: "pending", question: "Which direction?" },
+          { id: 2, status: "pending", question: "Superseded out of band." },
+        ],
+      }),
+    );
+
+    const dismissed = await Effect.runPromise(
+      store.dismissQuestion({ agentId: "session-1", questionId: 2, now: 2_001 }),
+    );
+    assert.equal(dismissed.questionId, 2);
+    assert.deepEqual(
+      (await Effect.runPromise(store.listPendingQuestions(2_002))).map(
+        ({ questionId }) => questionId,
+      ),
+      [1],
+    );
+
+    const foreign = await Effect.runPromise(
+      Effect.either(
+        store.dismissQuestion({
+          agentId: "other-session",
+          questionId: 1,
+          now: 2_003,
+        }),
+      ),
+    );
+    assert.equal(foreign._tag, "Left");
+    if (foreign._tag === "Left") assert.equal(foreign.left.code, "not_found");
+
+    await Effect.runPromise(
+      store.linkTelegramQuestion({
+        agentId: "session-1",
+        questionId: 1,
+        chatId: 42,
+        messageId: 77,
+        now: 2_004,
+      }),
+    );
+    await Effect.runPromise(
+      store.answerTelegramQuestion({
+        chatId: 42,
+        messageId: 77,
+        answer: "Inbox verb",
+        now: 2_005,
+      }),
+    );
+
+    const answered = await Effect.runPromise(
+      Effect.either(
+        store.dismissQuestion({
+          agentId: "session-1",
+          questionId: 1,
+          now: 2_006,
+        }),
+      ),
+    );
+    assert.equal(answered._tag, "Left");
+    if (answered._tag === "Left")
+      assert.equal(answered.left.code, "invalid_transition");
+
+    assert.equal(
+      (
+        await Effect.runPromise(
+          store.takeQuestionResolution({ agentId: "session-1", now: 2_007 }),
+        )
+      )?.answer,
+      "Inbox verb",
+    );
+  }));
+
 test("stale agents disappear and cannot receive new messages", async () =>
   withStore(async (store) => {
     await heartbeat(store);

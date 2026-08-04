@@ -136,6 +136,33 @@ const command = (args: readonly string[]): Effect.Effect<unknown, RemoteBridgeEr
       return resolution ?? { agentId, status: "pending" };
     });
   }
+  // The skill tells agents not to stall on a question, so answers routinely
+  // arrive out of band and leave a card the asker cannot retract.
+  if (action === "dismiss") {
+    return Effect.gen(function* () {
+      const agentId = yield* requiredOption(args, "--agent");
+      const questionId = yield* requiredOption(args, "--question");
+      const parsedQuestionId = Number(questionId);
+      if (!Number.isSafeInteger(parsedQuestionId) || parsedQuestionId <= 0) {
+        return yield* Effect.fail(
+          new RemoteBridgeError({
+            code: "invalid_input",
+            message: "--question must be a positive integer",
+          }),
+        );
+      }
+      const question = yield* store.dismissQuestion({
+        agentId,
+        questionId: parsedQuestionId,
+        now: Date.now(),
+      });
+      return {
+        agentId: question.agentId,
+        questionId: question.questionId,
+        status: "dismissed",
+      };
+    });
+  }
   // The roster makes every lane addressable, but `claimNext` was only ever
   // called by the Pi turn loop with the Pi session id, so a message aimed at a
   // Claude Code or cursor lane had no consumer in existence and sat queued
@@ -234,7 +261,7 @@ const command = (args: readonly string[]): Effect.Effect<unknown, RemoteBridgeEr
     new RemoteBridgeError({
       code: "invalid_input",
       message:
-        "usage: pi-bridge agents | send --agent ID --dedupe KEY | result --id ID | inbox --agent ID | respond --id ID --token TOKEN | register --agent-id ID --label LABEL --cwd PATH | ask --agent ID [--header TEXT] [--options 'A|B'] | answer --agent ID | enable | disable | status",
+        "usage: pi-bridge agents | send --agent ID --dedupe KEY | result --id ID | inbox --agent ID | respond --id ID --token TOKEN | register --agent-id ID --label LABEL --cwd PATH | ask --agent ID [--header TEXT] [--options 'A|B'] | answer --agent ID | dismiss --agent ID --question ID | enable | disable | status",
     }),
   );
 };
