@@ -15,10 +15,20 @@
 #   despite the derivation's own comment that the binary must remain
 #   completely unmodified.
 #
-# Linux is left exactly as upstream: completions are generated inside the
-# buildFHSEnv wrapper there and the failure mode does not apply. Remove
-# this overlay once upstream nixpkgs builds a working graphite-cli on
-# darwin again.
+# On Linux the packaging generates completions by RUNNING the freshly
+# built FHS wrapper (`$out/bin/gt completion`), which shells through
+# bubblewrap. That requires creating a user namespace inside the nix
+# build sandbox; GitHub Actions runners (Ubuntu 24.04 AppArmor userns
+# restrictions) deny it, bwrap fails with "setting up uid map: Permission
+# denied", and installShellCompletion fails the whole system build on the
+# resulting zero-size completion file. graphite-cli is unfree, so Hydra
+# never exercises this path — it only works on machines where nested
+# user namespaces happen to be permitted. The Linux branch below keeps
+# upstream's completions when the wrapper can run and skips them when the
+# sandbox says no, instead of failing the build over tab completion.
+#
+# Remove this overlay once upstream nixpkgs builds a working graphite-cli
+# on both platforms again.
 final: prev: {
   graphite-cli =
     if prev.stdenv.hostPlatform.isDarwin then
@@ -27,5 +37,25 @@ final: prev: {
         dontFixup = true;
       })
     else
-      prev.graphite-cli;
+      prev.callPackage (prev.path + "/pkgs/by-name/gr/graphite-cli/package.nix") {
+        buildFHSEnv =
+          args:
+          prev.buildFHSEnv (
+            args
+            // {
+              extraInstallCommands = ''
+                ln -s $out/bin/graphite-cli $out/bin/gt
+                if $out/bin/gt completion > /dev/null 2>&1; then
+                  source ${prev.installShellFiles}/nix-support/setup-hook
+                  installShellCompletion --cmd gt \
+                    --bash <($out/bin/gt completion) \
+                    --zsh <(ZSH_NAME=zsh $out/bin/gt completion) \
+                    --fish <($out/bin/gt fish)
+                else
+                  echo "gt cannot run in this build sandbox (bwrap user namespace denied); skipping shell completions"
+                fi
+              '';
+            }
+          );
+      };
 }
