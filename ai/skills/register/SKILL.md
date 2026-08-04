@@ -176,13 +176,26 @@ already in the repo, the issue, or the current instruction: which of several
 designs, which model or identifier, whether to touch something outside the
 stated scope, or which of two readings of an ambiguous request is meant.
 
-- **Pi sessions** call the `ask_user` tool. The question relays to Telegram,
-  binds to that exact `(agent_id, question_id)`, and the owner answers by
-  replying to the card. `/questions` lists everything pending.
-- **Claude Code sessions** use their own question tool. `ask_user` is a Pi tool
-  and `pi-bridge` has no ask verb, so a Claude session cannot put a question on
-  the owner's `/questions` list — do not pretend otherwise, and do not
-  substitute a relayed report for a question.
+Every lane can reach the owner's Telegram question cards. The question binds to
+`(agent_id, question_id)`, the owner answers by replying to the card, and
+`/questions` lists everything pending.
+
+- **Pi sessions** call the `ask_user` tool.
+- **Every other lane** — Claude Code, cursor — uses the bridge, publishing into
+  the same store the relay drains. Register first: the relay only sends cards
+  for agents that are live on the roster.
+
+  ```
+  printf '%s' '<the question>' | pi-bridge ask --agent <your-agent-id> --header '<=16 chars>' --options 'First option|Second option'
+  pi-bridge answer --agent <your-agent-id>    # status pending until the owner replies
+  ```
+
+  `answer` is a poll, not a push — harness sessions have no inbox, so check it
+  on each drain until it returns a resolution. A question does not stall the
+  queue: keep doing everything the answer does not block.
+
+A session with its own native question tool may use that instead when the owner
+is present in the pane. The bridge is what reaches them when they are not.
 
 Offer real options, not a blank prompt: name the choices you actually
 considered and which one you would take. Keep working on everything the answer
