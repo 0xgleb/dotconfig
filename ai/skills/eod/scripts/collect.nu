@@ -1,4 +1,4 @@
-use evidence.nu [classify-commit deployment-environment deployment-reportability extract-rai graphite-pr-reportability in-window is-bot is-deployment-workflow linear-reportability parse-graphite-batch-spec pr-event-in-window reportable-review]
+use evidence.nu [classify-commit deployment-environment deployment-pr-refs deployment-reportability extract-rai graphite-pr-reportability in-window is-bot is-deployment-workflow linear-reportability parse-graphite-batch-spec pr-event-in-window reportable-review]
 
 def run-gh-json [args: list<string>]: nothing -> record {
   let result = do { ^gh ...$args } | complete
@@ -470,10 +470,7 @@ def collect-github [git: record, owners: string, deploy_repos: list<string>, gra
     | each {|candidate| collect-authored-pr $candidate $graphite_collection.batches $since $until })
   let authored_prs = $base_authored_prs ++ $deployment_prs
   let deployments = ($deployment_collection.runs | each {|run|
-    let refs = ($authored_prs | where {|pr|
-      $pr.repo == $run.repo
-      and ($pr.commits | any {|commit| $commit.sha == ($run.head_sha? | default "") })
-    } | each {|pr| $"($pr.repo)#($pr.number)" })
+    let refs = deployment-pr-refs $run $authored_prs
     let involvement = {authored_pr_refs: $refs, user_framed: false}
     $run
     | insert authored_pr_refs $refs
