@@ -1,9 +1,9 @@
 import assert from "node:assert/strict"
-import { mkdtemp, rm } from "node:fs/promises"
+import { mkdtemp, readFile, rm } from "node:fs/promises"
 import { tmpdir } from "node:os"
 import { join } from "node:path"
 import test from "node:test"
-import { Effect } from "effect"
+import { Effect, Fiber } from "effect"
 import {
   toCanonicalWorkspaceRoot,
   type HarnessLaunchPlan,
@@ -21,9 +21,11 @@ import {
   type JobId,
 } from "./harness-protocol.ts"
 import {
+  harnessWorkerOptions,
   HarnessWorkerError,
   runNextHarnessAttempt,
   spawnHarnessExecutor,
+  type HarnessAttemptOutcome,
   type HarnessSpawner,
 } from "./harness-worker.ts"
 import { canonicalPath, type CanonicalPath } from "./review-duty-profile.ts"
@@ -111,11 +113,14 @@ const harnessEnqueueBody = {
   idempotencyKey: "harness:personal:example:7:head",
 }
 
-const enqueueHarnessJob = async (origin: string): Promise<JobId> => {
+const enqueueHarnessJob = async (
+  origin: string,
+  overrides: Readonly<Record<string, unknown>> = {},
+): Promise<JobId> => {
   const response = await fetch(`${origin}/v1/jobs`, {
     method: "POST",
     headers: { "content-type": "application/json" },
-    body: JSON.stringify(harnessEnqueueBody),
+    body: JSON.stringify({ ...harnessEnqueueBody, ...overrides }),
   })
   assert.equal(response.status, 201)
   return jobIdentifier(
@@ -143,53 +148,85 @@ const handoffFor = (
   ...overrides,
 })
 
+type HarnessExecutionResult =
+  | {
+      readonly kind: "spawned"
+      readonly exitCode: number
+      readonly stdout: string
+      readonly stderr?: string
+    }
+  | { readonly kind: "spawn_error"; readonly message: string }
+
+/**
+ * A spawner whose recording is part of the effect it returns rather than of
+ * the call that built it, so an attempt that describes a launch without
+ * running it records nothing.
+ */
 const stubSpawner = (
   execution: (plan: HarnessLaunchPlan) => HarnessExecutionResult,
   calls: HarnessLaunchPlan[] = [],
 ): HarnessSpawner =>
-  (plan) => {
-    calls.push(plan)
-    const result = execution(plan)
-    return result.kind === "spawned"
-      ? Effect.succeed({ exitCode: result.exitCode, stdout: result.stdout })
-      : Effect.fail(
-          new HarnessWorkerError({
-            code: "executor_failed",
-            message: result.message,
-          }),
-        )
-  }
-
-type HarnessExecutionResult =
-  | { readonly kind: "spawned"; readonly exitCode: number; readonly stdout: string }
-  | { readonly kind: "spawn_error"; readonly message: string }
+  (plan) =>
+    Effect.suspend(() => {
+      calls.push(plan)
+      const result = execution(plan)
+      return result.kind === "spawned"
+        ? Effect.succeed({
+            exitCode: result.exitCode,
+            stdout: result.stdout,
+            stderr: result.stderr ?? "",
+          })
+        : Effect.fail(
+            new HarnessWorkerError({
+              code: "executor_failed",
+              message: result.message,
+            }),
+          )
+    })
 
 const workerOptions = (
   origin: string,
   spawner: HarnessSpawner,
   allowedRoots: RegisteredWorkspaceRoots = workspaceRoot(registeredCheckout),
-) => ({
-  origin,
-  workerId: "harness-supervisor",
-  leaseTtlMs: 90_000,
-  retryDelayMs: 0,
-  allowedRoots,
-  home,
-  environment,
-  spawner,
-})
+) =>
+  harnessWorkerOptions({
+    origin,
+    workerId: "harness-supervisor",
+    leaseTtlMs: 90_000,
+    executorTimeoutMs: 30_000,
+    retryDelayMs: 0,
+    allowedRoots,
+    home,
+    environment,
+    spawner: () => spawner,
+  })
+
+const runAttempt = (
+  origin: string,
+  spawner: HarnessSpawner,
+  allowedRoots?: RegisteredWorkspaceRoots,
+): Promise<HarnessAttemptOutcome> =>
+  Effect.runPromise(
+    Effect.flatMap(
+      workerOptions(origin, spawner, allowedRoots),
+      runNextHarnessAttempt,
+    ),
+  )
+
+interface PersistedJob {
+  readonly state: string
+  readonly lastAttemptSummary?: string
+  readonly summary?: string
+  readonly result?: { readonly handoff: { jobId: string; status: string } }
+}
 
 const jobState = async (
   origin: string,
   jobId: JobId,
-): Promise<{ state: string; result?: { handoff: { jobId: string } } }> => {
+): Promise<PersistedJob> => {
   const response = await fetch(`${origin}/v1/jobs`)
   const jobs = (await response.json()) as {
-    jobs: Array<{
-      id: string
-      state: string
-      result?: { handoff: { jobId: string } }
-    }>
+    jobs: (PersistedJob & { readonly id: string })[]
   }
   const job = jobs.jobs.find((candidate) => candidate.id === jobId)
   assert.ok(job)
@@ -199,13 +236,9 @@ const jobState = async (
 test("an empty queue leaves the worker idle without spawning", async () =>
   withServer(async (origin) => {
     const calls: HarnessLaunchPlan[] = []
-    const outcome = await Effect.runPromise(
-      runNextHarnessAttempt(
-        workerOptions(
-          origin,
-          stubSpawner(() => ({ kind: "spawned", exitCode: 0, stdout: "" }), calls),
-        ),
-      ),
+    const outcome = await runAttempt(
+      origin,
+      stubSpawner(() => ({ kind: "spawned", exitCode: 0, stdout: "" }), calls),
     )
     assert.deepEqual(outcome, { outcome: "idle" })
     assert.equal(calls.length, 0)
@@ -215,19 +248,15 @@ test("a matching executor handoff completes the claimed harness job", async () =
   withServer(async (origin) => {
     const jobId = await enqueueHarnessJob(origin)
     const calls: HarnessLaunchPlan[] = []
-    const outcome = await Effect.runPromise(
-      runNextHarnessAttempt(
-        workerOptions(
-          origin,
-          stubSpawner(
-            () => ({
-              kind: "spawned",
-              exitCode: 0,
-              stdout: `progress line\n${JSON.stringify(handoffFor(jobId))}\n`,
-            }),
-            calls,
-          ),
-        ),
+    const outcome = await runAttempt(
+      origin,
+      stubSpawner(
+        () => ({
+          kind: "spawned",
+          exitCode: 0,
+          stdout: `progress line\n${JSON.stringify(handoffFor(jobId))}\n`,
+        }),
+        calls,
       ),
     )
     assert.deepEqual(outcome, { outcome: "completed", jobId })
@@ -238,91 +267,166 @@ test("a matching executor handoff completes the claimed harness job", async () =
     assert.equal(persisted.result?.handoff.jobId, jobId)
   }))
 
-test("blocked handoffs fail the attempt instead of completing the job", async () =>
+test("a blocked handoff ends the attempt with its evidence kept", async () =>
+  withServer(async (origin) => {
+    const jobId = await enqueueHarnessJob(origin, { maxAttempts: 1 })
+    const outcome = await runAttempt(
+      origin,
+      stubSpawner(() => ({
+        kind: "spawned",
+        exitCode: 0,
+        stdout: JSON.stringify(
+          handoffFor(jobId, {
+            status: "blocked",
+            verifier: "unavailable",
+            evidence: [],
+            assessment: "Subscription auth is unavailable.",
+          }),
+        ),
+      })),
+    )
+    assert.deepEqual(outcome, {
+      outcome: "failed",
+      jobId,
+      reason: "harness blocked: Subscription auth is unavailable.",
+    })
+    const persisted = await jobState(origin, jobId)
+    assert.equal(persisted.state, "failed")
+    assert.equal(persisted.result?.handoff.status, "blocked")
+    assert.equal(
+      persisted.summary,
+      "harness blocked: Subscription auth is unavailable.",
+    )
+  }))
+
+test("a blocked handoff with retries left keeps its evidence on the retry", async () =>
   withServer(async (origin) => {
     const jobId = await enqueueHarnessJob(origin)
-    const outcome = await Effect.runPromise(
-      runNextHarnessAttempt(
-        workerOptions(
-          origin,
-          stubSpawner(() => ({
-            kind: "spawned",
-            exitCode: 0,
-            stdout: JSON.stringify(
-              handoffFor(jobId, {
-                status: "blocked",
-                verifier: "unavailable",
-                evidence: [],
-                assessment: "Subscription auth is unavailable.",
-              }),
-            ),
-          })),
+    const outcome = await runAttempt(
+      origin,
+      stubSpawner(() => ({
+        kind: "spawned",
+        exitCode: 0,
+        stdout: JSON.stringify(
+          handoffFor(jobId, {
+            status: "failed",
+            verifier: "fable-rejected",
+            evidence: [],
+            assessment: "The executor could not finish the review.",
+          }),
         ),
-      ),
+      })),
     )
     assert.equal(outcome.outcome, "failed")
     const persisted = await jobState(origin, jobId)
     assert.equal(persisted.state, "retry_wait")
+    assert.equal(
+      persisted.lastAttemptSummary,
+      "harness failed: The executor could not finish the review.",
+    )
   }))
 
 test("mismatched, malformed, and oversized executor output fails the attempt", async () => {
-  const cases: ReadonlyArray<(jobId: JobId) => string> = [
-    (jobId) =>
-      JSON.stringify(handoffFor(jobId, { inputHeadSha: commit("b".repeat(40)) })),
-    () => "not json at all",
-    (jobId) => JSON.stringify({ ...handoffFor(jobId), prompt: "leaked" }),
-    (jobId) => `${JSON.stringify(handoffFor(jobId))}${" ".repeat(70_000)}x`,
-    () => `progress\n${"x".repeat(9_000)}`,
-    () => `progress\n${"\u{1F389}".repeat(3_000)}`,
+  const cases: ReadonlyArray<{
+    readonly output: (jobId: JobId) => string
+    readonly summary: string
+  }> = [
+    {
+      output: (jobId) =>
+        JSON.stringify(
+          handoffFor(jobId, { inputHeadSha: commit("b".repeat(40)) }),
+        ),
+      summary: "executor handoff does not match the attempt: input-head",
+    },
+    {
+      output: () => "not json at all",
+      summary: "executor handoff is not valid JSON",
+    },
+    {
+      output: (jobId) => JSON.stringify({ ...handoffFor(jobId), prompt: "leaked" }),
+      summary: "executor handoff is malformed",
+    },
+    {
+      output: (jobId) =>
+        `${JSON.stringify(handoffFor(jobId))}${" ".repeat(70_000)}x`,
+      summary: "executor output exceeded bounds",
+    },
+    {
+      output: () => `progress\n${"x".repeat(9_000)}`,
+      summary: "executor returned no bounded handoff line",
+    },
+    {
+      output: () => `progress\n${"\u{1F389}".repeat(3_000)}`,
+      summary: "executor returned no bounded handoff line",
+    },
   ]
-  for (const buildOutput of cases)
+  for (const testCase of cases)
     await withServer(async (origin) => {
       const jobId = await enqueueHarnessJob(origin)
-      const outcome = await Effect.runPromise(
-        runNextHarnessAttempt(
-          workerOptions(
-            origin,
-            stubSpawner(() => ({
-              kind: "spawned",
-              exitCode: 0,
-              stdout: buildOutput(jobId),
-            })),
-          ),
-        ),
+      const outcome = await runAttempt(
+        origin,
+        stubSpawner(() => ({
+          kind: "spawned",
+          exitCode: 0,
+          stdout: testCase.output(jobId),
+        })),
       )
-      assert.equal(outcome.outcome, "failed")
+      assert.deepEqual(outcome, {
+        outcome: "failed",
+        jobId,
+        reason: testCase.summary,
+      })
       const persisted = await jobState(origin, jobId)
       assert.equal(persisted.state, "retry_wait")
+      assert.equal(persisted.lastAttemptSummary, testCase.summary)
     })
 })
 
-test("spawn errors and nonzero exits fail the attempt within retry policy", async () =>
+test("a spawn error fails the attempt within retry policy", async () =>
   withServer(async (origin) => {
     const jobId = await enqueueHarnessJob(origin)
-    const first = await Effect.runPromise(
-      runNextHarnessAttempt(
-        workerOptions(
-          origin,
-          stubSpawner(() => ({
-            kind: "spawn_error",
-            message: "executable is unavailable",
-          })),
-        ),
-      ),
+    const outcome = await runAttempt(
+      origin,
+      stubSpawner(() => ({
+        kind: "spawn_error",
+        message: "executable is unavailable",
+      })),
     )
-    assert.equal(first.outcome, "failed")
-    assert.equal((await jobState(origin, jobId)).state, "retry_wait")
+    assert.deepEqual(outcome, {
+      outcome: "failed",
+      jobId,
+      reason: "executable is unavailable",
+    })
+    const persisted = await jobState(origin, jobId)
+    assert.equal(persisted.state, "retry_wait")
+    assert.equal(persisted.lastAttemptSummary, "executable is unavailable")
+  }))
 
-    const second = await Effect.runPromise(
-      runNextHarnessAttempt(
-        workerOptions(
-          origin,
-          stubSpawner(() => ({ kind: "spawned", exitCode: 1, stdout: "" })),
-        ),
-      ),
+test("a nonzero exit reports a bounded prefix of what the executor said", async () =>
+  withServer(async (origin) => {
+    const jobId = await enqueueHarnessJob(origin, {
+      maxAttempts: 1,
+      idempotencyKey: "harness:personal:example:7:exit",
+    })
+    const outcome = await runAttempt(
+      origin,
+      stubSpawner(() => ({
+        kind: "spawned",
+        exitCode: 1,
+        stdout: "ignored progress",
+        stderr: `subscription auth expired\n${"detail ".repeat(200)}`,
+      })),
     )
-    assert.equal(second.outcome, "failed")
-    assert.equal((await jobState(origin, jobId)).state, "failed")
+    assert.equal(outcome.outcome, "failed")
+    const persisted = await jobState(origin, jobId)
+    assert.equal(persisted.state, "failed")
+    const summary = persisted.summary ?? ""
+    assert.equal(
+      summary.startsWith("executor exited with code 1: subscription auth expired detail"),
+      true,
+    )
+    assert.equal(summary.includes("ignored progress"), false)
+    assert.equal(summary.length <= "executor exited with code 1: ".length + 400, true)
   }))
 
 test("non-harness jobs are left to lease expiry instead of being executed", async () =>
@@ -344,13 +448,9 @@ test("non-harness jobs are left to lease expiry instead of being executed", asyn
       ((await response.json()) as { job: { id: string } }).job.id,
     )
     const calls: HarnessLaunchPlan[] = []
-    const outcome = await Effect.runPromise(
-      runNextHarnessAttempt(
-        workerOptions(
-          origin,
-          stubSpawner(() => ({ kind: "spawned", exitCode: 0, stdout: "" }), calls),
-        ),
-      ),
+    const outcome = await runAttempt(
+      origin,
+      stubSpawner(() => ({ kind: "spawned", exitCode: 0, stdout: "" }), calls),
     )
     assert.deepEqual(outcome, { outcome: "unsupported", jobId })
     assert.equal(calls.length, 0)
@@ -374,22 +474,20 @@ test("payload roots the enqueue boundary does not recognise never become jobs", 
     assert.equal(response.status, 400)
   }))
 
-test("payload roots outside this worker's workspaces fail before any spawn", async () =>
+test("payload roots outside this worker's workspaces spend no attempt", async () =>
   withServer(async (origin) => {
     const jobId = await enqueueHarnessJob(origin)
     const calls: HarnessLaunchPlan[] = []
-    const outcome = await Effect.runPromise(
-      runNextHarnessAttempt(
-        workerOptions(
-          origin,
-          stubSpawner(() => ({ kind: "spawned", exitCode: 0, stdout: "" }), calls),
-          workspaceRoot(`${home}/code/0xgleb/other`),
-        ),
-      ),
+    const outcome = await runAttempt(
+      origin,
+      stubSpawner(() => ({ kind: "spawned", exitCode: 0, stdout: "" }), calls),
+      workspaceRoot(`${home}/code/0xgleb/other`),
     )
-    assert.equal(outcome.outcome, "failed")
+    assert.equal(outcome.outcome, "unsuitable")
     assert.equal(calls.length, 0)
-    assert.equal((await jobState(origin, jobId)).state, "retry_wait")
+    const persisted = await jobState(origin, jobId)
+    assert.equal(persisted.state, "leased")
+    assert.equal(persisted.lastAttemptSummary, undefined)
   }))
 
 test("malformed control-plane claim responses surface as typed request failures", async () => {
@@ -404,11 +502,12 @@ test("malformed control-plane claim responses surface as typed request failures"
   try {
     const result = await Effect.runPromise(
       Effect.either(
-        runNextHarnessAttempt(
+        Effect.flatMap(
           workerOptions(
             `http://127.0.0.1:${String(address.port)}`,
             stubSpawner(() => ({ kind: "spawned", exitCode: 0, stdout: "" })),
           ),
+          runNextHarnessAttempt,
         ),
       ),
     )
@@ -424,6 +523,92 @@ test("malformed control-plane claim responses surface as typed request failures"
   }
 })
 
+test("claimed kinds the job runtime does not register are malformed claims", async () => {
+  const { createServer } = await import("node:http")
+  const server = createServer((_request, response) => {
+    response.writeHead(200, { "content-type": "application/json" })
+    response.end(
+      JSON.stringify({
+        job: {
+          id: "job-a",
+          attempt: 1,
+          leaseToken: "lease-a",
+          spec: { kind: "shell.run", payload: { command: "arbitrary" } },
+        },
+      }),
+    )
+  })
+  await new Promise<void>((resolve) => server.listen(0, "127.0.0.1", resolve))
+  const address = server.address()
+  assert.ok(address && typeof address === "object")
+  try {
+    const result = await Effect.runPromise(
+      Effect.either(
+        Effect.flatMap(
+          workerOptions(
+            `http://127.0.0.1:${String(address.port)}`,
+            stubSpawner(() => ({ kind: "spawned", exitCode: 0, stdout: "" })),
+          ),
+          runNextHarnessAttempt,
+        ),
+      ),
+    )
+    assert.equal(result._tag, "Left")
+    if (result._tag === "Left")
+      assert.equal(result.left.message, "claimed job payload is malformed")
+  } finally {
+    await new Promise<void>((resolve) => {
+      server.close(() => resolve())
+    })
+  }
+})
+
+test("an executor timeout that outlives its lease is refused", async () => {
+  const refused = await Effect.runPromise(
+    Effect.either(
+      harnessWorkerOptions({
+        origin: "http://127.0.0.1:1",
+        workerId: "harness-supervisor",
+        leaseTtlMs: 30_000,
+        executorTimeoutMs: 30_000,
+        retryDelayMs: 0,
+        allowedRoots: workspaceRoot(registeredCheckout),
+        home,
+        environment,
+        spawner: () => stubSpawner(() => ({ kind: "spawned", exitCode: 0, stdout: "" })),
+      }),
+    ),
+  )
+  assert.equal(refused._tag, "Left")
+  if (refused._tag === "Left") {
+    assert.equal(refused.left.code, "invalid_options")
+    assert.equal(
+      refused.left.message,
+      "executor timeout must expire before the lease it runs under",
+    )
+  }
+
+  const admitted = await Effect.runPromise(
+    harnessWorkerOptions({
+      origin: "http://127.0.0.1:1",
+      workerId: "harness-supervisor",
+      leaseTtlMs: 30_000,
+      executorTimeoutMs: 29_999,
+      retryDelayMs: 0,
+      allowedRoots: workspaceRoot(registeredCheckout),
+      home,
+      environment,
+      spawner: (executorTimeoutMs) =>
+        stubSpawner(() => ({
+          kind: "spawned",
+          exitCode: 0,
+          stdout: String(executorTimeoutMs),
+        })),
+    }),
+  )
+  assert.equal(admitted.executorTimeoutMs, 29_999)
+})
+
 const executionPlan = (argv: readonly string[]): HarnessLaunchPlan => ({
   lane: "cursor-subscription",
   cwd: canonical(tmpdir()),
@@ -431,8 +616,14 @@ const executionPlan = (argv: readonly string[]): HarnessLaunchPlan => ({
   environmentAllowlist: LAUNCH_ENVIRONMENT_ALLOWLIST,
 })
 
-test("the process spawner captures bounded stdout and exit codes", async () => {
-  const spawner = spawnHarnessExecutor(10_000)
+/** The launcher environment the spawner tests hand their executors. */
+const spawnEnvironment: LaunchEnvironment = {
+  PATH: process.env.PATH,
+  HOME: process.env.HOME,
+}
+
+test("the process spawner captures bounded stdout, stderr, and exit codes", async () => {
+  const spawner = spawnHarnessExecutor(10_000, spawnEnvironment)
   const succeeded = await Effect.runPromise(
     spawner(executionPlan(["node", "-e", "console.log('handoff-line')"])),
   )
@@ -440,15 +631,47 @@ test("the process spawner captures bounded stdout and exit codes", async () => {
   assert.equal(succeeded.stdout.includes("handoff-line"), true)
 
   const failed = await Effect.runPromise(
-    spawner(executionPlan(["node", "-e", "process.exit(3)"])),
+    spawner(
+      executionPlan([
+        "node",
+        "-e",
+        "console.error('executor diagnostic'); process.exit(3)",
+      ]),
+    ),
   )
   assert.equal(failed.exitCode, 3)
+  assert.equal(failed.stderr.includes("executor diagnostic"), true)
+})
+
+test("the process spawner hands the child only the plan's allowlisted variables", async () => {
+  process.env.PI_HARNESS_SPAWN_PROBE = "ambient-secret"
+  try {
+    const execution = await Effect.runPromise(
+      spawnHarnessExecutor(10_000, {
+        ...spawnEnvironment,
+        ANTHROPIC_API_KEY: "sk-ant-provider-secret",
+      })(
+        executionPlan([
+          "node",
+          "-e",
+          "process.stdout.write(JSON.stringify({probe: process.env.PI_HARNESS_SPAWN_PROBE ?? null, key: process.env.ANTHROPIC_API_KEY ?? null, path: process.env.PATH !== undefined}))",
+        ]),
+      ),
+    )
+    assert.deepEqual(JSON.parse(execution.stdout), {
+      probe: null,
+      key: null,
+      path: true,
+    })
+  } finally {
+    delete process.env.PI_HARNESS_SPAWN_PROBE
+  }
 })
 
 test("the process spawner kills executors whose output overflows the byte bound", async () => {
   const overflowed = await Effect.runPromise(
     Effect.either(
-      spawnHarnessExecutor(30_000)(
+      spawnHarnessExecutor(30_000, spawnEnvironment)(
         executionPlan([
           "node",
           "-e",
@@ -465,7 +688,7 @@ test("the process spawner kills executors whose output overflows the byte bound"
 test("the process spawner kills timed-out and unavailable executors", async () => {
   const timedOut = await Effect.runPromise(
     Effect.either(
-      spawnHarnessExecutor(200)(
+      spawnHarnessExecutor(200, spawnEnvironment)(
         executionPlan(["node", "-e", "setTimeout(() => {}, 60_000)"]),
       ),
     ),
@@ -474,10 +697,65 @@ test("the process spawner kills timed-out and unavailable executors", async () =
 
   const unavailable = await Effect.runPromise(
     Effect.either(
-      spawnHarnessExecutor(1_000)(
+      spawnHarnessExecutor(1_000, spawnEnvironment)(
         executionPlan(["pi-harness-missing-executable"]),
       ),
     ),
   )
   assert.equal(unavailable._tag, "Left")
 })
+
+test("interrupting a launch kills the executor it started", async () => {
+  const root = await mkdtemp(join(tmpdir(), "pi-harness-interrupt-test-"))
+  const pidFile = join(root, "executor.pid")
+  try {
+    const launched = Effect.runFork(
+      spawnHarnessExecutor(30_000, spawnEnvironment)(
+        executionPlan([
+          "node",
+          "-e",
+          `const fs = require("node:fs"); const path = ${JSON.stringify(pidFile)}; fs.writeFileSync(path + ".partial", String(process.pid)); fs.renameSync(path + ".partial", path); setInterval(() => {}, 1000)`,
+        ]),
+      ),
+    )
+    const pid = await reportedPid(pidFile)
+    await Effect.runPromise(Fiber.interrupt(launched))
+    await untilExited(pid)
+  } finally {
+    await rm(root, { recursive: true, force: true })
+  }
+})
+
+/** Attempts of a bounded poll, each a hundredth of the second it may take. */
+const POLL_ATTEMPTS = 500
+const POLL_INTERVAL_MS = 10
+
+const pause = (ms: number): Promise<void> =>
+  new Promise((resolve) => setTimeout(resolve, ms))
+
+const reportedPid = async (pidFile: string): Promise<number> => {
+  for (let attempt = 0; attempt < POLL_ATTEMPTS; attempt += 1) {
+    const reported = await readFile(pidFile, "utf8").catch(() => "")
+    const pid = Number.parseInt(reported, 10)
+    if (Number.isSafeInteger(pid) && pid > 0) return pid
+    await pause(POLL_INTERVAL_MS)
+  }
+  throw new Error("the executor never reported its process identifier")
+}
+
+const untilExited = async (pid: number): Promise<void> => {
+  for (let attempt = 0; attempt < POLL_ATTEMPTS; attempt += 1) {
+    if (!isRunning(pid)) return
+    await pause(POLL_INTERVAL_MS)
+  }
+  throw new Error(`executor ${String(pid)} survived the interruption`)
+}
+
+const isRunning = (pid: number): boolean => {
+  try {
+    process.kill(pid, 0)
+    return true
+  } catch {
+    return false
+  }
+}

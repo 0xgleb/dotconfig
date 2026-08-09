@@ -12,6 +12,7 @@ import {
 } from "./server.ts"
 import { canonicalPath, type CanonicalPath } from "./review-duty-profile.ts"
 import {
+  JobStoreError,
   makeSqliteJobStore,
   type SqliteJobStore,
   type StoredJob,
@@ -61,6 +62,22 @@ const unavailable =
   (operation: string) =>
   (): Effect.Effect<never> =>
     Effect.die(new Error(`the test store does not implement ${operation}`))
+
+/**
+ * A store that judges leases against a clock the test moves. The server samples
+ * one instant per request and hands it to the store, so shifting that instant
+ * here expires a lease deterministically instead of racing a real timer.
+ */
+const aheadOfTime = (
+  store: SqliteJobStore,
+  elapsedMs: () => number,
+): ControlPlaneJobStore => ({
+  ...store,
+  claimDue: (workerId, leaseToken, now, ttlMs) =>
+    store.claimDue(workerId, leaseToken, now + elapsedMs(), ttlMs),
+  recoverExpired: (now, retryDelayMs) =>
+    store.recoverExpired(now + elapsedMs(), retryDelayMs),
+})
 
 const readableJobs = (stored: readonly StoredJob[]): readonly Job[] =>
   stored.flatMap((entry) => (entry.outcome === "readable" ? [entry.job] : []))
@@ -140,16 +157,27 @@ const harnessHandoff = (
 const claimJob = async (
   origin: string,
   workerId: string,
-): Promise<{ leaseToken: string; attempt: number }> => {
+): Promise<{ id: string; leaseToken: string; attempt: number }> => {
   const claimed = await fetch(`${origin}/v1/worker/claim`, {
     method: "POST",
     headers: { "content-type": "application/json" },
     body: JSON.stringify({ workerId, ttlMs: 90_000 }),
   })
   return ((await claimed.json()) as {
-    job: { leaseToken: string; attempt: number }
+    job: { id: string; leaseToken: string; attempt: number }
   }).job
 }
+
+const failJob = async (
+  origin: string,
+  id: string,
+  body: unknown,
+): Promise<Response> =>
+  fetch(`${origin}/v1/jobs/${id}/fail`, {
+    method: "POST",
+    headers: { "content-type": "application/json" },
+    body: JSON.stringify(body),
+  })
 
 const enqueueJob = async (origin: string, body: unknown): Promise<string> => {
   const enqueued = await fetch(`${origin}/v1/jobs`, {
@@ -525,93 +553,115 @@ test("completing a job that does not exist reports it as missing", async () =>
 
 test("failed attempts retry through the fail route until attempts are exhausted", async () =>
   withServer(async (origin) => {
-    const enqueued = await fetch(`${origin}/v1/jobs`, {
-      method: "POST",
-      headers: { "content-type": "application/json" },
-      body: JSON.stringify(harnessEnqueueBody),
-    })
-    const created = (await enqueued.json()) as { job: { id: string } }
-    const endpoint = `${origin}/v1/jobs/${created.job.id}/fail`
+    const id = await enqueueJob(origin, harnessEnqueueBody)
+    const first = await claimJob(origin, "harness-supervisor")
 
-    const claim = async (): Promise<{ leaseToken: string }> => {
-      const response = await fetch(`${origin}/v1/worker/claim`, {
-        method: "POST",
-        headers: { "content-type": "application/json" },
-        body: JSON.stringify({ workerId: "harness-supervisor", ttlMs: 90_000 }),
-      })
-      return ((await response.json()) as { job: { leaseToken: string } }).job
-    }
-
-    const first = await claim()
-    const unknownFields = await fetch(endpoint, {
-      method: "POST",
-      headers: { "content-type": "application/json" },
-      body: JSON.stringify({
-        leaseToken: first.leaseToken,
-        retryDelayMs: 0,
-        summary: "executor failed",
-        command: "rm -rf /",
-      }),
+    const unknownFields = await failJob(origin, id, {
+      leaseToken: first.leaseToken,
+      retryDelayMs: 0,
+      summary: "executor failed",
+      command: "rm -rf /",
     })
     assert.equal(unknownFields.status, 400)
 
-    const stale = await fetch(endpoint, {
-      method: "POST",
-      headers: { "content-type": "application/json" },
-      body: JSON.stringify({
-        leaseToken: "not-the-lease",
-        retryDelayMs: 0,
-        summary: "executor failed",
-      }),
+    const stale = await failJob(origin, id, {
+      leaseToken: "not-the-lease",
+      retryDelayMs: 0,
+      summary: "executor failed",
     })
     assert.equal(stale.status, 409)
 
-    const retried = await fetch(endpoint, {
-      method: "POST",
-      headers: { "content-type": "application/json" },
-      body: JSON.stringify({
-        leaseToken: first.leaseToken,
-        retryDelayMs: 0,
-        summary: "executor failed",
-      }),
+    const retried = await failJob(origin, id, {
+      leaseToken: first.leaseToken,
+      retryDelayMs: 0,
+      summary: "executor failed",
     })
     assert.equal(retried.status, 200)
     const retriedJob = (await retried.json()) as { job: { state: string } }
     assert.equal(retriedJob.job.state, "retry_wait")
 
-    const second = await claim()
-    const exhausted = await fetch(endpoint, {
-      method: "POST",
-      headers: { "content-type": "application/json" },
-      body: JSON.stringify({
-        leaseToken: second.leaseToken,
-        retryDelayMs: 0,
-        summary: "executor failed again",
-      }),
+    // The retrying job is waiting out the harness backoff, so the attempt that
+    // exhausts a budget is reported on a job whose only attempt this is.
+    const lastId = await enqueueJob(origin, {
+      ...harnessEnqueueBody,
+      maxAttempts: 1,
+      idempotencyKey: "harness:personal:example:7:last",
+    })
+    const last = await claimJob(origin, "harness-supervisor")
+    assert.equal(last.id, lastId)
+    const exhausted = await failJob(origin, lastId, {
+      leaseToken: last.leaseToken,
+      retryDelayMs: 0,
+      summary: "executor failed again",
     })
     assert.equal(exhausted.status, 200)
     const exhaustedJob = (await exhausted.json()) as { job: { state: string } }
     assert.equal(exhaustedJob.job.state, "failed")
   }))
 
-test("expired leases are recovered on the next worker claim", async () =>
+test("the fail route backs a harness attempt off by the harness delay, not the caller's", async () =>
   withServer(async (origin) => {
-    const enqueued = await fetch(`${origin}/v1/jobs`, {
-      method: "POST",
-      headers: { "content-type": "application/json" },
-      body: JSON.stringify(harnessEnqueueBody),
+    const harnessId = await enqueueJob(origin, harnessEnqueueBody)
+    const scanId = await enqueueJob(origin, {
+      ...enqueueBody,
+      runAt: 1_000,
     })
-    const created = (await enqueued.json()) as { job: { id: string } }
 
-    const first = await fetch(`${origin}/v1/worker/claim`, {
+    const harnessClaim = await claimJob(origin, "harness-supervisor")
+    assert.equal(harnessClaim.id, harnessId)
+    const reportedAt = Date.now()
+    const harnessFailure = await failJob(origin, harnessId, {
+      leaseToken: harnessClaim.leaseToken,
+      retryDelayMs: 0,
+      summary: "executor exited with code 1",
+    })
+    assert.equal(harnessFailure.status, 200)
+    const backedOff = (await harnessFailure.json()) as {
+      job: { state: string; spec: { runAt: number } }
+    }
+    assert.equal(backedOff.job.state, "retry_wait")
+    assert.equal(backedOff.job.spec.runAt >= reportedAt + 5 * 60 * 1_000, true)
+
+    const scanClaim = await claimJob(origin, "review-duty-worker")
+    assert.equal(scanClaim.id, scanId)
+    const scanFailure = await failJob(origin, scanId, {
+      leaseToken: scanClaim.leaseToken,
+      retryDelayMs: 0,
+      summary: "scan failed",
+    })
+    assert.equal(scanFailure.status, 200)
+    const rescheduled = (await scanFailure.json()) as {
+      job: { state: string; spec: { runAt: number } }
+    }
+    assert.equal(rescheduled.job.state, "retry_wait")
+    assert.equal(rescheduled.job.spec.runAt < reportedAt + 5 * 60 * 1_000, true)
+  }))
+
+test("expired leases are recovered on the next worker claim", async () => {
+  const root = await mkdtemp(join(tmpdir(), "pi-control-plane-lease-test-"))
+  const store = await Effect.runPromise(
+    makeSqliteJobStore(join(root, "jobs.sqlite"), home),
+  )
+  let elapsedMs = 0
+  const server = await Effect.runPromise(
+    startControlPlaneServer({
+      host: "127.0.0.1",
+      port: 0,
+      store: aheadOfTime(store, () => elapsedMs),
+      home,
+    }),
+  )
+  try {
+    const id = await enqueueJob(server.origin, harnessEnqueueBody)
+    const first = await fetch(`${server.origin}/v1/worker/claim`, {
       method: "POST",
       headers: { "content-type": "application/json" },
       body: JSON.stringify({ workerId: "worker-a", ttlMs: 1 }),
     })
     assert.equal(first.status, 200)
 
-    await new Promise((resolve) => setTimeout(resolve, 10))
-    const second = await fetch(`${origin}/v1/worker/claim`, {
+    elapsedMs = 60_000
+    const second = await fetch(`${server.origin}/v1/worker/claim`, {
       method: "POST",
       headers: { "content-type": "application/json" },
       body: JSON.stringify({ workerId: "worker-b", ttlMs: 90_000 }),
@@ -620,9 +670,43 @@ test("expired leases are recovered on the next worker claim", async () =>
     const reclaimed = (await second.json()) as {
       job: { id: string; attempt: number }
     }
-    assert.equal(reclaimed.job.id, created.job.id)
+    assert.equal(reclaimed.job.id, id)
     assert.equal(reclaimed.job.attempt, 2)
-  }))
+  } finally {
+    await Effect.runPromise(server.close)
+    store.close()
+    await rm(root, { recursive: true, force: true })
+  }
+})
+
+test("a claim whose lease recovery fails still reads the queue", async () => {
+  let claims = 0
+  const store = partialStore({
+    recoverExpired: () =>
+      Effect.fail(
+        new JobStoreError({ code: "corrupt_state", message: "recovery failed" }),
+      ),
+    claimDue: () =>
+      Effect.sync(() => {
+        claims += 1
+        return undefined
+      }),
+  })
+  const server = await Effect.runPromise(
+    startControlPlaneServer({ host: "127.0.0.1", port: 0, store, home }),
+  )
+  try {
+    const claimed = await fetch(`${server.origin}/v1/worker/claim`, {
+      method: "POST",
+      headers: { "content-type": "application/json" },
+      body: JSON.stringify({ workerId: "worker-a", ttlMs: 90_000 }),
+    })
+    assert.equal(claimed.status, 204)
+    assert.equal(claims, 1)
+  } finally {
+    await Effect.runPromise(server.close)
+  }
+})
 
 test("worker boundaries reject unknown fields and client-supplied lease tokens", async () =>
   withServer(async (origin) => {

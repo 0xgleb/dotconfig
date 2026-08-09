@@ -266,6 +266,17 @@ const unreadableJob = (stored: StoredJob): readonly UnreadableJobReport[] =>
     ? [{ id: stored.id, reason: stored.reason }]
     : []
 
+/** Characters of a swallowed failure's own words that reach the log. */
+const MAX_LOGGED_REASON_CHARS = 200
+
+/**
+ * A failure's message as one bounded log line. A store failure can carry the
+ * driver's own text, so it is bounded and flattened rather than pasted into
+ * the server's log at whatever length and shape it arrived in.
+ */
+const boundedReason = (message: string): string =>
+  message.split("\n").join(" ").slice(0, MAX_LOGGED_REASON_CHARS)
+
 const hasJsonContentType = (request: IncomingMessage): boolean =>
   request.headers["content-type"]?.split(";", 1)[0]?.trim() ===
   "application/json"
@@ -309,8 +320,16 @@ const handleClaim = (
     // Expired leases are returned to their next attempt before the queue is
     // read, so an abandoned attempt becomes claimable without a separate
     // sweeper. A recovery that fails leaves the queue as it was rather than
-    // failing the claim that only depends on it opportunistically.
-    yield* Effect.catchAll(store.recoverExpired(now, 0), () => Effect.void)
+    // failing the claim that only depends on it opportunistically, but it is
+    // logged: a recovery pass that keeps failing strands every expired lease,
+    // and nothing else in the request would report it.
+    yield* Effect.catchAll(store.recoverExpired(now, 0), (failure) =>
+      Effect.sync(() =>
+        console.error(
+          `pi-control-plane lease recovery failed: ${boundedReason(failure.message)}`,
+        ),
+      ),
+    )
     const job = yield* store.claimDue(
       input.workerId,
       randomUUID(),
@@ -396,10 +415,14 @@ const handleComplete = (
 }
 
 /**
- * Reports an attempt the leased worker could not carry to a handoff. The
- * retry policy is the store's: this route only states that the attempt ended
- * and how long to wait, so an exhausted job fails and a retryable one is
- * rescheduled without the caller deciding which.
+ * Reports an attempt the leased worker could not carry to a handoff. Whether
+ * the job retries or fails is the store's: an exhausted job fails and a
+ * retryable one is rescheduled without the caller deciding which.
+ *
+ * A harness review waits the same source-fixed delay the completion route
+ * applies to a blocked or failed handoff, so the backoff of a lane that talks
+ * to a rate-limited provider does not depend on which route its worker used to
+ * report the attempt. Every other kind waits the delay its worker states.
  */
 const handleFail = (
   id: string,
@@ -428,12 +451,15 @@ const handleFail = (
         serverError("invalid_payload", "job failure payload is invalid"),
       )
     }
+    const current = yield* store.get(id)
     const now = yield* Clock.currentTimeMillis
     const job = yield* store.fail(
       id,
       input.leaseToken,
       now,
-      input.retryDelayMs,
+      current.spec.kind === "harness.review"
+        ? HARNESS_RETRY_DELAY_MS
+        : input.retryDelayMs,
       input.summary,
     )
     sendJson(response, 200, { job })
