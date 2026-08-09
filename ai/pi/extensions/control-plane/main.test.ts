@@ -23,6 +23,7 @@ test("control-plane config is loopback-only with a state-root database", () => {
       host: "127.0.0.1",
       port: 43_121,
       databasePath: "/Users/example/state/pi/control-plane/jobs.sqlite",
+      home: "/Users/example",
       dashboardDirectory: "/nix/store/dashboard",
     },
   )
@@ -32,6 +33,7 @@ test("control-plane config is loopback-only with a state-root database", () => {
       host: "127.0.0.1",
       port: 43_121,
       databasePath: "/Users/example/.local/state/pi/control-plane/jobs.sqlite",
+      home: "/Users/example",
     },
   )
 })
@@ -39,6 +41,7 @@ test("control-plane config is loopback-only with a state-root database", () => {
 test("control-plane config rejects malformed external environment values", () => {
   assert.equal(codeOf({}), "invalid_config")
   assert.equal(codeOf({ HOME: "relative" }), "invalid_config")
+  assert.equal(codeOf({ HOME: "/Users/example/" }), "invalid_config")
   assert.equal(
     codeOf({ HOME: "/Users/example", XDG_STATE_HOME: "relative" }),
     "invalid_config",

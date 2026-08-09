@@ -6,26 +6,58 @@ import type {
 /**
  * Source-fixed launch tables for the subscription harness lanes.
  *
- * Every launcher reads its environment scrub list and command template from
- * this module so each security-relevant table exists exactly once: a provider
- * variable added here is scrubbed by every lane that launches that harness,
- * and no launcher can drift by keeping a private copy.
+ * Every launcher reads its environment allowlist and command template from
+ * this module so each security-relevant table exists exactly once: a variable
+ * absent from the allowlist here is absent from every lane that launches a
+ * harness, and no launcher can drift by keeping a private copy.
  */
 
-export const CLAUDE_SCRUBBED_ENVIRONMENT = [
-  "ANTHROPIC_API_KEY",
-  "ANTHROPIC_AUTH_TOKEN",
-  "ANTHROPIC_BASE_URL",
-  "CLAUDE_CODE_USE_BEDROCK",
-  "CLAUDE_CODE_USE_VERTEX",
-  "CLAUDE_CODE_USE_FOUNDRY",
-  "AWS_BEARER_TOKEN_BEDROCK",
+/** The environment a launcher hands the harness variables from. */
+export type LaunchEnvironment = Readonly<Record<string, string | undefined>>
+
+/**
+ * The only variables a harness process inherits.
+ *
+ * The launch prefix clears the environment and then restores exactly these, so
+ * containment does not depend on having enumerated the provider variables that
+ * exist: an API key, endpoint override, proxy, custom request header, or
+ * certificate bundle the control plane never heard of is gone by
+ * construction, and a variable reaches the executor only because it is named
+ * here.
+ *
+ * HOME carries the subscription credentials each lane authenticates with and
+ * PATH finds its executable. SHELL, TERM, USER, LANG, LC_ALL and TMPDIR are
+ * the account and locale context a terminal program needs to run and to write
+ * a readable handoff.
+ */
+export const LAUNCH_ENVIRONMENT_ALLOWLIST = [
+  "HOME",
+  "PATH",
+  "SHELL",
+  "TERM",
+  "USER",
+  "LANG",
+  "LC_ALL",
+  "TMPDIR",
 ] as const
 
-export const CURSOR_SCRUBBED_ENVIRONMENT = [
-  "CURSOR_API_KEY",
-  "CURSOR_API_ENDPOINT",
-] as const
+/**
+ * Builds the environment prefix every harness argv starts with: `env -i`
+ * clears the launcher's environment, and only the allowlisted variables it
+ * actually defines are restored. An unset variable is omitted rather than
+ * restored as an empty string, so the harness sees the same absence its
+ * launcher saw.
+ */
+export const allowlistedLaunchPrefix = (
+  environment: LaunchEnvironment,
+): readonly string[] => [
+  "env",
+  "-i",
+  ...LAUNCH_ENVIRONMENT_ALLOWLIST.flatMap((name) => {
+    const value = environment[name]
+    return value === undefined ? [] : [`${name}=${value}`]
+  }),
+]
 
 /**
  * Argv for the Claude subscription lane, always headless and always with the
@@ -59,10 +91,6 @@ export const CURSOR_MODEL_ARGUMENTS: Readonly<
   "grok-4.5": "grok-4.5-xhigh",
   "composer-2.5": "composer-2.5",
 }
-
-export const scrubbedLaunchPrefix = (
-  scrubbed: readonly string[],
-): readonly string[] => ["env", ...scrubbed.flatMap((name) => ["-u", name])]
 
 const CLAUDE_HEADLESS_COMMAND = [
   "claude",

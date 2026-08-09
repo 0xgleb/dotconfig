@@ -7,10 +7,17 @@ import {
   type HarnessLaunchPlan,
   type RegisteredWorkspaceRoots,
 } from "./harness-adapter.ts"
-import { includesAny, type HarnessReviewPayload } from "./harness-protocol.ts"
+import {
+  LAUNCH_ENVIRONMENT_ALLOWLIST,
+  type LaunchEnvironment,
+} from "./harness-launch.ts"
+import {
+  includesAny,
+  toCommitSha,
+  type CommitSha,
+  type HarnessReviewPayload,
+} from "./harness-protocol.ts"
 import { canonicalPath, type CanonicalPath } from "./review-duty-profile.ts"
-
-const headSha = "a".repeat(40)
 
 const canonical = (value: string): CanonicalPath => {
   const path = canonicalPath(value)
@@ -18,7 +25,66 @@ const canonical = (value: string): CanonicalPath => {
   return path
 }
 
+const commit = (value: string): CommitSha => {
+  const sha = toCommitSha(value)
+  if (sha === undefined) throw new Error(`fixture is not a commit sha: ${value}`)
+  return sha
+}
+
+const headSha = commit("a".repeat(40))
+
 const home = canonical("/Users/example")
+
+/**
+ * A launcher environment carrying both the variables a harness is allowed to
+ * inherit and the provider variables it must never see, so every launch
+ * assertion runs against an environment that would leak under a denylist.
+ */
+const PROVIDER_ENVIRONMENT: Readonly<Record<string, string>> = {
+  ANTHROPIC_API_KEY: "sk-ant-provider-secret",
+  ANTHROPIC_AUTH_TOKEN: "ant-auth-provider-secret",
+  ANTHROPIC_BASE_URL: "https://provider.invalid/anthropic",
+  ANTHROPIC_CUSTOM_HEADERS: "x-injected-authorization: provider-secret",
+  CLAUDE_CODE_USE_BEDROCK: "bedrock-routing-provider-secret",
+  CLAUDE_CODE_USE_VERTEX: "vertex-routing-provider-secret",
+  CLAUDE_CODE_USE_FOUNDRY: "foundry-routing-provider-secret",
+  AWS_BEARER_TOKEN_BEDROCK: "aws-bedrock-provider-secret",
+  CURSOR_API_KEY: "cur-provider-secret",
+  CURSOR_API_ENDPOINT: "https://provider.invalid/cursor",
+  OPENAI_API_KEY: "sk-openai-provider-secret",
+  OPENAI_BASE_URL: "https://provider.invalid/openai",
+  GEMINI_API_KEY: "gemini-provider-secret",
+  GOOGLE_APPLICATION_CREDENTIALS: "/tmp/gcloud-provider-secret.json",
+  HTTP_PROXY: "http://provider.invalid:8080",
+  HTTPS_PROXY: "https://provider.invalid:8443",
+  NO_PROXY: "bypass.provider.invalid",
+  NODE_EXTRA_CA_CERTS: "/tmp/intercept-provider-secret.pem",
+  UNENUMERATED_FUTURE_PROVIDER_TOKEN: "future-provider-secret",
+}
+
+const environment: LaunchEnvironment = {
+  HOME: "/Users/example",
+  PATH: "/usr/bin:/bin",
+  SHELL: "/bin/zsh",
+  TERM: "xterm-256color",
+  USER: "example",
+  LANG: "en_US.UTF-8",
+  TMPDIR: "/tmp/example-scratch",
+  ...PROVIDER_ENVIRONMENT,
+}
+
+/** The prefix `environment` produces: allowlisted and set, in allowlist order. */
+const LAUNCH_PREFIX = [
+  "env",
+  "-i",
+  "HOME=/Users/example",
+  "PATH=/usr/bin:/bin",
+  "SHELL=/bin/zsh",
+  "TERM=xterm-256color",
+  "USER=example",
+  "LANG=en_US.UTF-8",
+  "TMPDIR=/tmp/example-scratch",
+] as const
 
 const claudePayload: HarnessReviewPayload = {
   lane: "claude-code-max",
@@ -28,7 +94,7 @@ const claudePayload: HarnessReviewPayload = {
   pullRequest: 42,
   kind: "assigned",
   inputHeadSha: headSha,
-  repositoryRoot: "/Users/example/code/st0x/example",
+  repositoryRoot: canonical("/Users/example/code/st0x/example"),
   isolation: "read-only",
 }
 
@@ -41,7 +107,7 @@ const cursorPayload: HarnessReviewPayload = {
   pullRequest: 7,
   kind: "own",
   inputHeadSha: headSha,
-  repositoryRoot: "/Users/example/code/0xgleb/example",
+  repositoryRoot: canonical("/Users/example/code/0xgleb/example"),
   isolation: "read-only",
 }
 
@@ -60,7 +126,7 @@ const automaticPayload: HarnessReviewPayload = {
   pullRequest: 56,
   kind: "auto",
   inputHeadSha: headSha,
-  repositoryRoot: "/Users/example/.config",
+  repositoryRoot: canonical("/Users/example/.config"),
   isolation: "approved-worktree",
 }
 
@@ -91,8 +157,11 @@ const plan = (
   jobId = "job-a",
   attempt = 1,
   roots: RegisteredWorkspaceRoots = allowedRoots,
+  launchedFrom: LaunchEnvironment = environment,
 ): HarnessLaunchPlan =>
-  Effect.runSync(buildHarnessLaunchPlan(payload, jobId, attempt, roots, home))
+  Effect.runSync(
+    buildHarnessLaunchPlan(payload, jobId, attempt, roots, home, launchedFrom),
+  )
 
 const planErrorCode = (
   payload: unknown,
@@ -102,7 +171,7 @@ const planErrorCode = (
 ): string | undefined => {
   const result = Effect.runSync(
     Effect.either(
-      buildHarnessLaunchPlan(payload, jobId, attempt, roots, home),
+      buildHarnessLaunchPlan(payload, jobId, attempt, roots, home, environment),
     ),
   )
   if (Either.isRight(result)) return undefined
@@ -110,10 +179,7 @@ const planErrorCode = (
 }
 
 const executorCommand = (launch: HarnessLaunchPlan): readonly string[] =>
-  launch.argv.slice(
-    1 + launch.scrubbedEnvironment.length * 2,
-    launch.argv.length - 1,
-  )
+  launch.argv.slice(LAUNCH_PREFIX.length, launch.argv.length - 1)
 
 const FORBIDDEN_ARGUMENTS = [
   "--api-key",
@@ -134,19 +200,18 @@ test("the claude lane builds exact source-fixed subscription argv", () => {
   const launch = plan(claudePayload)
   assert.equal(launch.lane, "claude-code-max")
   assert.equal(launch.cwd, claudePayload.repositoryRoot)
-  assert.deepEqual(launch.scrubbedEnvironment, [
-    "ANTHROPIC_API_KEY",
-    "ANTHROPIC_AUTH_TOKEN",
-    "ANTHROPIC_BASE_URL",
-    "CLAUDE_CODE_USE_BEDROCK",
-    "CLAUDE_CODE_USE_VERTEX",
-    "CLAUDE_CODE_USE_FOUNDRY",
-    "AWS_BEARER_TOKEN_BEDROCK",
+  assert.deepEqual(launch.environmentAllowlist, [
+    "HOME",
+    "PATH",
+    "SHELL",
+    "TERM",
+    "USER",
+    "LANG",
+    "LC_ALL",
+    "TMPDIR",
   ])
-  const scrubbed = launch.scrubbedEnvironment.flatMap((name) => ["-u", name])
-  assert.deepEqual(launch.argv.slice(0, 1 + scrubbed.length), [
-    "env",
-    ...scrubbed,
+  assert.deepEqual(launch.argv.slice(0, LAUNCH_PREFIX.length), [
+    ...LAUNCH_PREFIX,
   ])
   assert.deepEqual(executorCommand(launch), [
     "claude",
@@ -155,12 +220,10 @@ test("the claude lane builds exact source-fixed subscription argv", () => {
     "--permission-mode",
     "plan",
   ])
-  const prompt = launch.argv.at(-1) ?? ""
-  assert.equal(prompt.includes("st0x-technology/example#42"), true)
-  assert.equal(prompt.includes(headSha), true)
-  assert.equal(prompt.includes("review-pr"), true)
-  assert.equal(prompt.includes("job-a"), true)
-  assert.equal(prompt.includes("attempt 1"), true)
+  assert.equal(
+    launch.argv.at(-1),
+    `You are a fresh Claude Code subscription-harness review executor for st0x-technology/example#42, kind assigned, input head ${headSha}, profile st0x-review. Verify the unchanged input head, then invoke the shared review-pr skill exactly. Assigned work is read-only: no checkout, no mutation, empty-body pending inline-only, and never a submitted verdict. Run an independent native Fable verification before handoff; report blocked if it is unavailable. Never use an Anthropic API provider, SDK, curl, or paid API key. At completion, return exactly one bounded harness handoff v1 for job job-a attempt 1 with matching lane, repository, pull request, and input head SHA. Never include prompts, reasoning, credentials, diffs, or raw logs, and never treat model output as approval or merge authority.`,
+  )
 })
 
 test("the claude lane runs headless with the permission mode its isolation allows", () => {
@@ -232,16 +295,8 @@ test("the cursor lane builds an exact read-only plan-mode probe", () => {
   const launch = plan(cursorPayload, "job-b", 2)
   assert.equal(launch.lane, "cursor-subscription")
   assert.equal(launch.cwd, cursorPayload.repositoryRoot)
-  assert.deepEqual(launch.scrubbedEnvironment, [
-    "CURSOR_API_KEY",
-    "CURSOR_API_ENDPOINT",
-  ])
   assert.deepEqual(launch.argv.slice(0, launch.argv.length - 1), [
-    "env",
-    "-u",
-    "CURSOR_API_KEY",
-    "-u",
-    "CURSOR_API_ENDPOINT",
+    ...LAUNCH_PREFIX,
     "cursor-agent",
     "-p",
     "--mode",
@@ -252,10 +307,10 @@ test("the cursor lane builds an exact read-only plan-mode probe", () => {
     "--workspace",
     cursorPayload.repositoryRoot,
   ])
-  const prompt = launch.argv.at(-1) ?? ""
-  assert.equal(prompt.includes("0xgleb/example#7"), true)
-  assert.equal(prompt.includes("job-b"), true)
-  assert.equal(prompt.includes("attempt 2"), true)
+  assert.equal(
+    launch.argv.at(-1),
+    `You are a read-only Cursor review probe for 0xgleb/example#7, input head ${headSha}, profile personal-review. Inspect the pull request in plan mode without mutating any file, branch, or review state, and report bounded findings only. At completion, return exactly one bounded harness handoff v1 for job job-b attempt 2 with matching lane, repository, pull request, and input head SHA. Never include prompts, reasoning, credentials, diffs, or raw logs, and never treat model output as approval or merge authority.`,
+  )
 })
 
 test("cursor models map only to registered subscription identifiers", () => {
@@ -266,6 +321,70 @@ test("cursor models map only to registered subscription identifiers", () => {
     planErrorCode({ ...cursorPayload, model: "claude-api" }),
     "invalid_input",
   )
+})
+
+test("the launch environment is an allowlist, so an unenumerated provider variable never reaches a harness", () => {
+  assert.deepEqual(LAUNCH_ENVIRONMENT_ALLOWLIST, [
+    "HOME",
+    "PATH",
+    "SHELL",
+    "TERM",
+    "USER",
+    "LANG",
+    "LC_ALL",
+    "TMPDIR",
+  ])
+  for (const launch of [
+    plan(claudePayload),
+    plan(cursorPayload, "job-b", 2),
+    plan(ownReviewPayload),
+    plan(automaticPayload, "job-auto", 1),
+  ]) {
+    assert.deepEqual(launch.environmentAllowlist, LAUNCH_ENVIRONMENT_ALLOWLIST)
+    assert.deepEqual(launch.argv.slice(0, 2), ["env", "-i"])
+    for (const assignment of launch.argv.slice(2, LAUNCH_PREFIX.length))
+      assert.equal(
+        includesAny(
+          LAUNCH_ENVIRONMENT_ALLOWLIST,
+          assignment.split("=").at(0) ?? "",
+        ),
+        true,
+      )
+    for (const [name, value] of Object.entries(PROVIDER_ENVIRONMENT))
+      for (const argument of launch.argv) {
+        assert.equal(argument.includes(name), false)
+        assert.equal(argument.includes(value), false)
+      }
+  }
+})
+
+test("only the allowlisted variables the launcher actually defines are restored", () => {
+  const withLocale = plan(claudePayload, "job-a", 1, allowedRoots, {
+    ...environment,
+    LC_ALL: "C.UTF-8",
+  })
+  assert.deepEqual(withLocale.argv.slice(0, LAUNCH_PREFIX.length + 1), [
+    "env",
+    "-i",
+    "HOME=/Users/example",
+    "PATH=/usr/bin:/bin",
+    "SHELL=/bin/zsh",
+    "TERM=xterm-256color",
+    "USER=example",
+    "LANG=en_US.UTF-8",
+    "LC_ALL=C.UTF-8",
+    "TMPDIR=/tmp/example-scratch",
+  ])
+  const sparse = plan(claudePayload, "job-a", 1, allowedRoots, {
+    PATH: "/usr/bin",
+    ANTHROPIC_API_KEY: PROVIDER_ENVIRONMENT.ANTHROPIC_API_KEY,
+  })
+  assert.deepEqual(sparse.argv.slice(0, 4), [
+    "env",
+    "-i",
+    "PATH=/usr/bin",
+    "claude",
+  ])
 })
 
 test("unknown lanes, task families, and free-form fields never launch", () => {
@@ -337,10 +456,11 @@ test("relative and credential-bearing repository roots never launch", () => {
     "/Users/example/../escape",
     "/",
     "/Users/example/.ssh/repo",
+    "/Users/example/.SSH/repo",
     "/Users/example/.gnupg/repo",
     "/Users/example/.aws/repo",
     "/Users/example/code/.env",
-    "/Users/example/code/.env.production",
+    "/Users/example/code/.ENV.production",
   ])
     assert.equal(
       planErrorCode({ ...claudePayload, repositoryRoot: root }),

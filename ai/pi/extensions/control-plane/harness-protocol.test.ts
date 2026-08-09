@@ -5,21 +5,42 @@ import {
   decodeHarnessReviewHandoff,
   decodeHarnessReviewPayload,
   harnessHandoffAttemptMatch,
+  isCredentialBearingPath,
   requireHandoffMatchesAttempt,
+  toCommitSha,
+  toJobId,
+  type CommitSha,
   type HarnessHandoffAttemptMatch,
   type HarnessHandoffMismatch,
   type HarnessReviewHandoff,
   type HarnessReviewPayload,
+  type JobId,
 } from "./harness-protocol.ts"
 import { canonicalPath, type CanonicalPath } from "./review-duty-profile.ts"
-
-const headSha = "a".repeat(40)
 
 const canonical = (value: string): CanonicalPath => {
   const path = canonicalPath(value)
   if (path === undefined) throw new Error(`fixture is not canonical: ${value}`)
   return path
 }
+
+const commit = (value: string): CommitSha => {
+  const sha = toCommitSha(value)
+  if (sha === undefined) throw new Error(`fixture is not a commit sha: ${value}`)
+  return sha
+}
+
+const job = (value: string): JobId => {
+  const id = toJobId(value)
+  if (id === undefined)
+    throw new Error(`fixture is not a job identifier: ${value}`)
+  return id
+}
+
+const headSha = commit("a".repeat(40))
+const jobA = job("job-a")
+const jobB = job("job-b")
+const jobAuto = job("job-auto")
 
 const home = canonical("/Users/example")
 
@@ -31,7 +52,7 @@ const claudePayload: HarnessReviewPayload = {
   pullRequest: 42,
   kind: "assigned",
   inputHeadSha: headSha,
-  repositoryRoot: "/Users/example/code/st0x/example",
+  repositoryRoot: canonical("/Users/example/code/st0x/example"),
   isolation: "read-only",
 }
 
@@ -44,7 +65,7 @@ const cursorPayload: HarnessReviewPayload = {
   pullRequest: 7,
   kind: "own",
   inputHeadSha: headSha,
-  repositoryRoot: "/Users/example/code/0xgleb/example",
+  repositoryRoot: canonical("/Users/example/code/0xgleb/example"),
   isolation: "read-only",
 }
 
@@ -56,7 +77,7 @@ const automaticPayload: HarnessReviewPayload = {
   pullRequest: 56,
   kind: "auto",
   inputHeadSha: headSha,
-  repositoryRoot: "/Users/example/.config",
+  repositoryRoot: canonical("/Users/example/.config"),
   isolation: "approved-worktree",
 }
 
@@ -69,7 +90,7 @@ const rainlanguagePayload: HarnessReviewPayload = {
   pullRequest: 12,
   kind: "assigned",
   inputHeadSha: headSha,
-  repositoryRoot: "/Users/example/code/rainlanguage/rain.orderbook",
+  repositoryRoot: canonical("/Users/example/code/rainlanguage/rain.orderbook"),
   isolation: "read-only",
 }
 
@@ -106,6 +127,42 @@ test("st0x review duty reaches the rainlanguage checkout workspace", () => {
     errorCode({
       ...rainlanguagePayload,
       repositoryRoot: "/Users/example/code/rainlanguage/other",
+    }),
+    "invalid_input",
+  )
+})
+
+test("a repository binds to its own organisation's workspace, never another's", () => {
+  for (const root of [
+    "/Users/example/code/rainlanguage/example",
+    "/Users/example/code/rainlanguage/example/.worktrees/feat/harness",
+  ])
+    assert.equal(
+      errorCode({ ...claudePayload, repositoryRoot: root }),
+      "invalid_input",
+    )
+  for (const root of [
+    "/Users/example/code/st0x/rain.orderbook",
+    "/Users/example/code/st0x/rain.orderbook/.worktrees/feat/probe",
+  ])
+    assert.equal(
+      errorCode({ ...rainlanguagePayload, repositoryRoot: root }),
+      "invalid_input",
+    )
+})
+
+test("a repository name shared across organisations keeps its own checkout", () => {
+  const sharedName: HarnessReviewPayload = {
+    ...rainlanguagePayload,
+    repository: "rainlanguage/example",
+    repositoryRoot: canonical("/Users/example/code/rainlanguage/example"),
+  }
+  assert.deepEqual(decoded(sharedName), sharedName)
+  assert.deepEqual(decoded(claudePayload), claudePayload)
+  assert.equal(
+    errorCode({
+      ...sharedName,
+      repositoryRoot: "/Users/example/code/st0x/example",
     }),
     "invalid_input",
   )
@@ -187,6 +244,28 @@ test("repository roots carrying control characters never decode", () => {
     )
 })
 
+test("credential path segments are recognised whatever their case", () => {
+  for (const path of [
+    "/Users/example/.ssh/id_ed25519",
+    "/Users/example/.SSH/id_ed25519",
+    "/Users/example/.Ssh/id_ed25519",
+    "/Users/example/.gnupg/secring",
+    "/Users/example/.GnuPG/secring",
+    "/Users/example/.aws/credentials",
+    "/Users/example/.AWS/credentials",
+    "/Users/example/code/.env",
+    "/Users/example/code/.ENV.production",
+    "/Users/example/code/.Env.local",
+  ])
+    assert.equal(isCredentialBearingPath(path), true)
+  for (const path of [
+    "/Users/example/code/st0x/example",
+    "/Users/example/code/0xgleb/environment",
+    "/Users/example/.config",
+  ])
+    assert.equal(isCredentialBearingPath(path), false)
+})
+
 test("head SHAs must be exactly a SHA-1 or SHA-256 commit identifier", () => {
   const sha256Payload = { ...cursorPayload, inputHeadSha: "b".repeat(64) }
   assert.deepEqual(decoded(sha256Payload), sha256Payload)
@@ -248,7 +327,7 @@ test("harness lane, model, isolation, and identity invariants fail closed", () =
 
 const handoff: HarnessReviewHandoff = {
   protocolVersion: 1,
-  jobId: "job-a",
+  jobId: jobA,
   attempt: 1,
   lane: "claude-code-max",
   repository: claudePayload.repository,
@@ -277,24 +356,24 @@ const mismatched = (
 test("bounded versioned harness handoffs decode and match the live attempt", () => {
   assert.deepEqual(Effect.runSync(decodeHarnessReviewHandoff(handoff)), handoff)
   assert.deepEqual(
-    harnessHandoffAttemptMatch(handoff, claudePayload, "job-a", 1),
+    harnessHandoffAttemptMatch(handoff, claudePayload, jobA, 1),
     matched,
   )
   assert.deepEqual(
     harnessHandoffAttemptMatch(
-      { ...handoff, inputHeadSha: "b".repeat(40) },
+      { ...handoff, inputHeadSha: commit("b".repeat(40)) },
       claudePayload,
-      "job-a",
+      jobA,
       1,
     ),
     mismatched("input-head"),
   )
   assert.deepEqual(
-    harnessHandoffAttemptMatch(handoff, claudePayload, "job-b", 1),
+    harnessHandoffAttemptMatch(handoff, claudePayload, jobB, 1),
     mismatched("job-id"),
   )
   assert.deepEqual(
-    harnessHandoffAttemptMatch(handoff, claudePayload, "job-a", 2),
+    harnessHandoffAttemptMatch(handoff, claudePayload, jobA, 2),
     mismatched("attempt"),
   )
   const cursorHandoff: HarnessReviewHandoff = {
@@ -306,14 +385,14 @@ test("bounded versioned harness handoffs decode and match the live attempt", () 
     outputHeadSha: cursorPayload.inputHeadSha,
   }
   assert.deepEqual(
-    harnessHandoffAttemptMatch(cursorHandoff, cursorPayload, "job-a", 1),
+    harnessHandoffAttemptMatch(cursorHandoff, cursorPayload, jobA, 1),
     matched,
   )
   assert.deepEqual(
     harnessHandoffAttemptMatch(
       { ...cursorHandoff, lane: "claude-code-max" },
       cursorPayload,
-      "job-a",
+      jobA,
       1,
     ),
     mismatched("lane"),
@@ -322,7 +401,7 @@ test("bounded versioned harness handoffs decode and match the live attempt", () 
     harnessHandoffAttemptMatch(
       { ...cursorHandoff, status: "findings_fixed" },
       cursorPayload,
-      "job-a",
+      jobA,
       1,
     ),
     mismatched("read-only-mutation"),
@@ -331,7 +410,7 @@ test("bounded versioned harness handoffs decode and match the live attempt", () 
     harnessHandoffAttemptMatch(
       { ...cursorHandoff, verifier: "unavailable" },
       cursorPayload,
-      "job-a",
+      jobA,
       1,
     ),
     mismatched("unverified"),
@@ -339,10 +418,10 @@ test("bounded versioned harness handoffs decode and match the live attempt", () 
 })
 
 test("approved-worktree work hands back a fixed head under the same attempt", () => {
-  const fixedHeadSha = "c".repeat(40)
+  const fixedHeadSha = commit("c".repeat(40))
   const fixed: HarnessReviewHandoff = {
     ...handoff,
-    jobId: "job-auto",
+    jobId: jobAuto,
     repository: automaticPayload.repository,
     pullRequest: automaticPayload.pullRequest,
     inputHeadSha: automaticPayload.inputHeadSha,
@@ -357,20 +436,20 @@ test("approved-worktree work hands back a fixed head under the same attempt", ()
   }
   assert.deepEqual(Effect.runSync(decodeHarnessReviewHandoff(fixed)), fixed)
   assert.deepEqual(
-    harnessHandoffAttemptMatch(fixed, automaticPayload, "job-auto", 1),
+    harnessHandoffAttemptMatch(fixed, automaticPayload, jobAuto, 1),
     matched,
   )
   assert.deepEqual(
     harnessHandoffAttemptMatch(
       { ...fixed, repository: "0xgleb/example" },
       automaticPayload,
-      "job-auto",
+      jobAuto,
       1,
     ),
     mismatched("repository"),
   )
   assert.deepEqual(
-    harnessHandoffAttemptMatch(fixed, automaticPayload, "job-auto", 2),
+    harnessHandoffAttemptMatch(fixed, automaticPayload, jobAuto, 2),
     mismatched("attempt"),
   )
 })
@@ -378,7 +457,7 @@ test("approved-worktree work hands back a fixed head under the same attempt", ()
 test("fixed findings require a head the review actually moved", () => {
   const unchanged: HarnessReviewHandoff = {
     ...handoff,
-    jobId: "job-auto",
+    jobId: jobAuto,
     repository: automaticPayload.repository,
     pullRequest: automaticPayload.pullRequest,
     status: "findings_fixed",
@@ -388,16 +467,14 @@ test("fixed findings require a head the review actually moved", () => {
     ],
   }
   assert.deepEqual(
-    harnessHandoffAttemptMatch(unchanged, automaticPayload, "job-auto", 1),
+    harnessHandoffAttemptMatch(unchanged, automaticPayload, jobAuto, 1),
     mismatched("unchanged-head"),
   )
 })
 
 test("a rejected handoff names the invariant it violated", () => {
   const result = Effect.runSync(
-    Effect.either(
-      requireHandoffMatchesAttempt(handoff, claudePayload, "job-b", 1),
-    ),
+    Effect.either(requireHandoffMatchesAttempt(handoff, claudePayload, jobB, 1)),
   )
   assert.equal(Either.isLeft(result), true)
   if (Either.isLeft(result)) {
@@ -407,7 +484,7 @@ test("a rejected handoff names the invariant it violated", () => {
   assert.equal(
     Effect.runSync(
       Effect.either(
-        requireHandoffMatchesAttempt(handoff, claudePayload, "job-a", 1),
+        requireHandoffMatchesAttempt(handoff, claudePayload, jobA, 1),
       ),
     )._tag,
     "Right",
@@ -461,6 +538,7 @@ test("a fixed handoff must cite the commit it produced", () => {
 test("handoffs reject prompt, reasoning, raw logs, and malformed evidence", () => {
   for (const malformed of [
     { ...handoff, protocolVersion: 2 },
+    { ...handoff, jobId: "job with spaces" },
     { ...handoff, assessment: "x".repeat(501) },
     { ...handoff, assessment: "line one\nline two" },
     { ...handoff, evidence: Array.from({ length: 17 }, (_, index) => `check:${index}`) },
@@ -481,29 +559,34 @@ test("handoffs reject prompt, reasoning, raw logs, and malformed evidence", () =
 test("handoff evidence never names a credential-bearing path", () => {
   for (const evidence of [
     ["check:Users/example/.ssh/id_ed25519"],
+    ["check:Users/example/.SSH/id_ed25519"],
+    ["check:Users/example/.Ssh/id_ed25519"],
     ["check:home/.env.production"],
+    ["check:home/.ENV.production"],
     ["review:Users/0xgleb/.aws/credentials"],
+    ["review:Users/0xgleb/.AWS/credentials"],
     ["test:home/.gnupg/secring"],
+    ["test:home/.GnuPG/secring"],
     ["check:review-core", "commit:home/.env"],
   ])
     assert.equal(handoffErrorCode({ ...handoff, evidence }), "invalid_input")
 })
 
 test("only fixed findings hand back a head the review moved", () => {
-  const movedHead = "d".repeat(40)
+  const movedHead = commit("d".repeat(40))
   for (const status of ["clean", "findings_pending", "blocked", "failed"] as const)
     assert.deepEqual(
       harnessHandoffAttemptMatch(
         {
           ...handoff,
-          jobId: "job-auto",
+          jobId: jobAuto,
           repository: automaticPayload.repository,
           pullRequest: automaticPayload.pullRequest,
           outputHeadSha: movedHead,
           status,
         },
         automaticPayload,
-        "job-auto",
+        jobAuto,
         1,
       ),
       mismatched("moved-head"),
@@ -511,10 +594,10 @@ test("only fixed findings hand back a head the review moved", () => {
 })
 
 test("a verified terminal status requires a clean Fable verification", () => {
-  const fixedHeadSha = "c".repeat(40)
+  const fixedHeadSha = commit("c".repeat(40))
   const worktreeHandoff: HarnessReviewHandoff = {
     ...handoff,
-    jobId: "job-auto",
+    jobId: jobAuto,
     repository: automaticPayload.repository,
     pullRequest: automaticPayload.pullRequest,
   }
@@ -528,7 +611,7 @@ test("a verified terminal status requires a clean Fable verification", () => {
         harnessHandoffAttemptMatch(
           { ...worktreeHandoff, status, verifier },
           automaticPayload,
-          "job-auto",
+          jobAuto,
           1,
         ),
         mismatched("unverified"),
@@ -543,7 +626,7 @@ test("a verified terminal status requires a clean Fable verification", () => {
           verifier,
         },
         automaticPayload,
-        "job-auto",
+        jobAuto,
         1,
       ),
       mismatched("unverified"),
@@ -553,7 +636,7 @@ test("a verified terminal status requires a clean Fable verification", () => {
         harnessHandoffAttemptMatch(
           { ...worktreeHandoff, status, verifier },
           automaticPayload,
-          "job-auto",
+          jobAuto,
           1,
         ),
         matched,
@@ -571,7 +654,7 @@ test("a disputed handoff decodes and stays unverified", () => {
     disputed,
   )
   assert.deepEqual(
-    harnessHandoffAttemptMatch(disputed, claudePayload, "job-a", 1),
+    harnessHandoffAttemptMatch(disputed, claudePayload, jobA, 1),
     mismatched("unverified"),
   )
 })

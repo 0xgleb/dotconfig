@@ -1,19 +1,20 @@
 import { join } from "node:path"
 import { Data, Effect } from "effect"
 import {
+  allowlistedLaunchPrefix,
   claudeSubscriptionCommand,
-  CLAUDE_SCRUBBED_ENVIRONMENT,
   CURSOR_MODEL_ARGUMENTS,
   CURSOR_PROBE_COMMAND,
-  CURSOR_SCRUBBED_ENVIRONMENT,
-  scrubbedLaunchPrefix,
+  LAUNCH_ENVIRONMENT_ALLOWLIST,
+  type LaunchEnvironment,
 } from "./harness-launch.ts"
 import {
   decodeHarnessReviewPayload,
   includesAny,
-  isSafeHarnessJobId,
+  toJobId,
   type HarnessLane,
   type HarnessReviewPayload,
+  type JobId,
 } from "./harness-protocol.ts"
 import {
   canonicalPath,
@@ -21,6 +22,8 @@ import {
   WORKTREE_DIRECTORY,
   type CanonicalPath,
 } from "./review-duty-profile.ts"
+
+export { toJobId, type JobId, type LaunchEnvironment }
 
 export interface HarnessLaunchPlan {
   readonly lane: HarnessLane
@@ -32,7 +35,12 @@ export interface HarnessLaunchPlan {
    */
   readonly cwd: CanonicalPath
   readonly argv: readonly string[]
-  readonly scrubbedEnvironment: readonly string[]
+  /**
+   * Names of the only variables the launched process inherits. `argv` clears
+   * the environment and restores these, so a variable outside the list cannot
+   * reach the executor.
+   */
+  readonly environmentAllowlist: readonly string[]
 }
 
 /**
@@ -52,22 +60,12 @@ export type CanonicalWorkspaceRoot = string & {
 
 export type RegisteredWorkspaceRoots = readonly CanonicalWorkspaceRoot[]
 
-/**
- * A job identifier bounded by the harness protocol. Branding keeps it from
- * being passed where a directory is expected, and the reverse: both are
- * strings, and both decide where the process runs and what it reports against.
- */
-export type JobId = string & { readonly __brand: "JobId" }
-
 export const toCanonicalWorkspaceRoot = (
   root: string,
 ): CanonicalWorkspaceRoot | undefined =>
   canonicalPath(root) === undefined
     ? undefined
     : (root as CanonicalWorkspaceRoot)
-
-export const toJobId = (value: string): JobId | undefined =>
-  isSafeHarnessJobId(value) ? (value as JobId) : undefined
 
 export class HarnessAdapterError extends Data.TaggedError(
   "HarnessAdapterError",
@@ -84,6 +82,10 @@ export class HarnessAdapterError extends Data.TaggedError(
  * under `<root>/.worktrees/`; a payload naming any other directory — even one
  * whose basename matches the repository — is refused, and so is a derived
  * worktree that would fall outside those roots.
+ *
+ * `environment` is the launcher's own environment. Only its allowlisted
+ * variables reach the plan's argv, so the plan carries no variable the
+ * allowlist does not name.
  */
 export const buildHarnessLaunchPlan = (
   payload: unknown,
@@ -91,6 +93,7 @@ export const buildHarnessLaunchPlan = (
   attempt: number,
   allowedRoots: RegisteredWorkspaceRoots,
   home: CanonicalPath,
+  environment: LaunchEnvironment,
 ): Effect.Effect<HarnessLaunchPlan, HarnessAdapterError> => {
   const id = toJobId(jobId)
   if (id === undefined)
@@ -112,7 +115,9 @@ export const buildHarnessLaunchPlan = (
       rootIsRegistered(decoded.repositoryRoot, allowedRoots)
         ? Effect.flatMap(launchDirectory(decoded, id, attempt), (cwd) =>
             rootIsRegistered(cwd, allowedRoots)
-              ? Effect.succeed(launchPlan(decoded, cwd, id, attempt))
+              ? Effect.succeed(
+                  launchPlan(decoded, cwd, id, attempt, environment),
+                )
               : invalid(
                   "isolated worktree is outside the registered workspace roots",
                 ),
@@ -148,9 +153,7 @@ const launchDirectory = (
   jobId: JobId,
   attempt: number,
 ): Effect.Effect<CanonicalPath, HarnessAdapterError> => {
-  const root = canonicalPath(payload.repositoryRoot)
-  if (root === undefined)
-    return invalid("harness launch requires a canonical repository root")
+  const root = payload.repositoryRoot
   if (payload.isolation === "read-only") return Effect.succeed(root)
   if (includesAny(pathSegments(root), WORKTREE_DIRECTORY))
     return invalid("approved-worktree isolation requires a primary checkout")
@@ -190,14 +193,15 @@ const launchPlan = (
   cwd: CanonicalPath,
   jobId: JobId,
   attempt: number,
+  environment: LaunchEnvironment,
 ): HarnessLaunchPlan =>
   payload.lane === "claude-code-max"
     ? {
         lane: payload.lane,
         cwd,
-        scrubbedEnvironment: CLAUDE_SCRUBBED_ENVIRONMENT,
+        environmentAllowlist: LAUNCH_ENVIRONMENT_ALLOWLIST,
         argv: [
-          ...scrubbedLaunchPrefix(CLAUDE_SCRUBBED_ENVIRONMENT),
+          ...allowlistedLaunchPrefix(environment),
           ...claudeSubscriptionCommand(payload.isolation),
           claudePrompt(payload, cwd, jobId, attempt),
         ],
@@ -205,9 +209,9 @@ const launchPlan = (
     : {
         lane: payload.lane,
         cwd,
-        scrubbedEnvironment: CURSOR_SCRUBBED_ENVIRONMENT,
+        environmentAllowlist: LAUNCH_ENVIRONMENT_ALLOWLIST,
         argv: [
-          ...scrubbedLaunchPrefix(CURSOR_SCRUBBED_ENVIRONMENT),
+          ...allowlistedLaunchPrefix(environment),
           ...CURSOR_PROBE_COMMAND,
           "--model",
           CURSOR_MODEL_ARGUMENTS[payload.model],

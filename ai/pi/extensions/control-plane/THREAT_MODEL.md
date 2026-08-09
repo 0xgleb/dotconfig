@@ -52,9 +52,9 @@
 | Threat | Concrete abuse | Required control and test |
 | --- | --- | --- |
 | Spoofing | An API-backed or custom-endpoint process claims to be a subscription harness. | The handoff's `executorProvenance` field is an executor self-declaration, not proof. The launching supervisor must verify local harness identity/provenance before admission (a required control that lands with the supervisor, not the protocol), scrub API/provider endpoint variables at launch, and fail closed when provenance cannot be established. |
-| Tampering | A job injects flags, paths, prompts, stale head SHAs, or a mismatched handoff. | Exact payload keys and enums, canonical repository/head checks, no free-form prompt/argv fields, versioned handoff decoder, live source verification. |
+| Tampering | A job injects flags, paths, prompts, stale head SHAs, or a mismatched handoff. | Exact payload keys and enums, canonical repository/head-format checks, no free-form prompt/argv fields, versioned handoff decoder that requires the handoff's declared head to match the leased payload's head. Live source verification — resolving the declared head against the repository's actual ref, not just checking its form and self-consistency — is a required control that lands with the supervisor, not the protocol. |
 | Information disclosure | Prompt, raw executor output, credentials, or protected files enter SQLite, events, logs, or the dashboard. | Store only bounded task identity and sanitized evidence references; protected-path exclusions; never persist prompt/reasoning/raw logs. |
-| Denial of service | Expensive lanes, huge outputs, retries, or concurrent executors exhaust subscription/Pi capacity. | Persisted concurrency and attempt limits, output bounds, lane selection bounded by a cost tier that always prefers the cheapest lane meeting the task's requirements, capacity reserved for Pi's own operational work (see Assets), timeouts and cancellation. |
+| Denial of service | Expensive lanes, huge outputs, retries, or concurrent executors exhaust subscription/Pi capacity. | Bounded attempt counts, lease TTLs, and retry delays (`MAX_ATTEMPTS`, `MAX_LEASE_TTL_MS`, `MAX_RETRY_DELAY_MS` in job-runtime.ts) and a single global job-count admission cap (`MAX_JOBS` in sqlite-job-store.ts) shared across every job kind. Open risk, not yet controlled: lane selection carries no cost tier, and the shared job cap has no reservation or partition for Pi's own operational work — a flood of `harness.review` jobs can exhaust it and starve other scheduling. Lands with the supervisor, not the protocol. |
 
 ## First abuse-case tests
 
@@ -72,9 +72,13 @@
 `harness-adapter.test.ts` and `harness-protocol.test.ts` were run red before the
 harness adapter implementation. Together they prove rejection of unknown
 lanes/models/task families, free-form prompt/command/environment fields,
-relative or protected repository paths, invalid/stale head identity, API/custom
-endpoint/force/plugin/MCP flags, malformed or oversized handoffs, and mismatched
-attempt/repository/head provenance. The Cursor payload variant fixes
+relative or protected repository paths, malformed head identity (wrong length,
+non-hex, or wrong case), API/custom endpoint/force/plugin/MCP flags, malformed
+or oversized handoffs, and handoffs whose head, job id, attempt, repository,
+lane, or verification status does not match the leased payload. They do not
+prove rejection of a well-formed but stale head — the head is checked for
+format and for self-consistency against the payload/handoff pair, not against
+the repository's live ref (see the Tampering row above). The Cursor payload variant fixes
 `task: "review-probe"` and `isolation: "read-only"`, so no mutating Cursor
 payload is representable — Cursor mutation is ineligible by construction, not
 merely rejected at runtime. Model output cannot select a lane or terminal

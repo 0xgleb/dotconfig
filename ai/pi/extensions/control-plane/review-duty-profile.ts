@@ -62,22 +62,27 @@ export const repositoryAllowedForProfile = (
 
 export const automaticRepositoryForProfile = (
   profile: ReviewDutyProfile,
-): string | undefined => AUTOMATIC_REPOSITORIES[profile]
+): RepositorySlug | undefined => AUTOMATIC_REPOSITORIES[profile]
 
 /**
  * Home-relative checkout locations registered for a repository under a
- * profile. An unregistered repository yields no location, so callers that
- * bind a directory to a repository fail closed.
+ * profile. A location comes from the workspace of the repository's own owner,
+ * so a repository is bound to its organisation's checkout and never to another
+ * organisation's same-named directory. A repository outside the profile, or an
+ * owner with no registered workspace, yields no location, so callers that bind
+ * a directory to a repository fail closed.
  */
 export const registeredRepositoryRoots = (
   profile: ReviewDutyProfile,
   repository: RepositorySlug,
 ): readonly string[] => {
+  if (!repositoryAllowedForProfile(profile, repository)) return []
   const checkout = REPOSITORY_CHECKOUT_LOCATIONS[repository]
   if (checkout !== undefined) return checkout
-  const name = repository.split("/").at(1)
-  if (name === undefined || name.length < 1) return []
-  return PROFILE_WORKSPACES[profile].map((workspace) => `${workspace}/${name}`)
+  const [owner, name] = repository.split("/")
+  if (owner === undefined || name === undefined || name.length < 1) return []
+  const workspace = OWNER_WORKSPACES[owner]
+  return workspace === undefined ? [] : [`${workspace}/${name}`]
 }
 
 /**
@@ -103,32 +108,44 @@ export const repositoryRootIsRegisteredUnder =
       )
     })
 
+const SAFE_REPOSITORY = /^[a-z0-9][a-z0-9._-]{0,63}\/[a-z0-9][a-z0-9._-]{0,99}$/u
+const CONTROL_CHARACTER = /\p{Cc}/u
+const MAX_PATH_LENGTH = 1_024
+
 const PROFILE_OWNERS: Readonly<Record<ReviewDutyProfile, readonly string[]>> = {
   "st0x-review": ["st0x-technology", "rainlanguage"],
   "dataclique-review": ["dataclique"],
   "personal-review": ["0xgleb"],
 }
 
+/**
+ * Repository each profile reviews without being asked. The literals pass
+ * `repositorySlug` here rather than at the comparison, so a table entry that
+ * is not an `owner/name` identifier is refused where it is written instead of
+ * silently never matching.
+ */
 const AUTOMATIC_REPOSITORIES: Readonly<
-  Partial<Record<ReviewDutyProfile, string>>
+  Partial<Record<ReviewDutyProfile, RepositorySlug>>
 > = {
-  "dataclique-review": "dataclique/yielduck",
-  "personal-review": "0xgleb/dotconfig",
+  "dataclique-review": repositorySlug("dataclique/yielduck"),
+  "personal-review": repositorySlug("0xgleb/dotconfig"),
 }
 
 /**
- * Home-relative workspace directories a profile checks its repositories out
- * into. A repository's registered root is `<workspace>/<repository name>`
- * unless the repository has an explicit checkout location below. A profile
- * that reviews several organisations registers the workspace of each: the
- * st0x duty covers both the st0x and the rainlanguage checkouts.
+ * Home-relative workspace directory each organisation is checked out into. A
+ * repository's registered root is `<its owner's workspace>/<repository name>`
+ * unless the repository has an explicit checkout location below.
+ *
+ * The workspace is keyed by owner rather than by profile because a profile
+ * reviews several organisations — the st0x duty covers both the st0x and the
+ * rainlanguage checkouts — and a profile-keyed table would accept either
+ * organisation's directory for either organisation's repository.
  */
-const PROFILE_WORKSPACES: Readonly<
-  Record<ReviewDutyProfile, readonly string[]>
-> = {
-  "st0x-review": ["code/st0x", "code/rainlanguage"],
-  "dataclique-review": ["code/dataclique"],
-  "personal-review": ["code/0xgleb"],
+const OWNER_WORKSPACES: Readonly<Record<string, string>> = {
+  "st0x-technology": "code/st0x",
+  rainlanguage: "code/rainlanguage",
+  dataclique: "code/dataclique",
+  "0xgleb": "code/0xgleb",
 }
 
 /**
@@ -140,7 +157,3 @@ const REPOSITORY_CHECKOUT_LOCATIONS: Readonly<
 > = {
   "0xgleb/dotconfig": [".config"],
 }
-
-const SAFE_REPOSITORY = /^[a-z0-9][a-z0-9._-]{0,63}\/[a-z0-9][a-z0-9._-]{0,99}$/u
-const CONTROL_CHARACTER = /\p{Cc}/u
-const MAX_PATH_LENGTH = 1_024

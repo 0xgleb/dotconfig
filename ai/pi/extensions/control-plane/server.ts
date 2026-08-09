@@ -5,14 +5,15 @@ import {
   type ServerResponse,
 } from "node:http"
 import { readFile } from "node:fs/promises"
-import type { AddressInfo } from "node:net"
 import { isAbsolute, join } from "node:path"
 import { Clock, Data, Effect } from "effect"
 import { decodeHarnessReviewHandoff } from "./harness-protocol.ts"
-import { decodeJobSpec, JobRuntimeError } from "./job-runtime.ts"
+import { decodeJobSpec, JobRuntimeError, type Job } from "./job-runtime.ts"
+import type { CanonicalPath } from "./review-duty-profile.ts"
 import {
   JobStoreError,
   type SqliteJobStore,
+  type StoredJob,
 } from "./sqlite-job-store.ts"
 
 export const CONTROL_PLANE_PROTOCOL_VERSION = 1
@@ -47,10 +48,22 @@ export type ControlPlaneFailure =
   | JobRuntimeError
   | JobStoreError
 
+/**
+ * The store operations a request can reach. Naming them keeps the routes
+ * honest about what they touch — cancellation, recovery and the raw database
+ * are not among them — and lets a caller supply exactly those.
+ */
+export type ControlPlaneJobStore = Pick<
+  SqliteJobStore,
+  "enqueue" | "get" | "list" | "claimDue" | "complete" | "fail"
+>
+
 export interface ControlPlaneServerOptions {
   readonly host: string
   readonly port: number
-  readonly store: SqliteJobStore
+  readonly store: ControlPlaneJobStore
+  /** Home the harness payloads of enqueued jobs are admitted against. */
+  readonly home: CanonicalPath
   readonly dashboardDirectory?: string
 }
 
@@ -193,13 +206,26 @@ const sendStoreFailure = (
     else sendError(response, 500, "internal_error", "control plane request failed")
   })
 
+/**
+ * Reports the stored jobs and enqueues new ones. A job whose stored document
+ * no longer decodes is listed separately by identifier and reason instead of
+ * failing the read, so one unreadable row cannot blank the dashboard.
+ */
 const handleJobs = (
   request: IncomingMessage,
   response: ServerResponse,
-  store: SqliteJobStore,
+  store: ControlPlaneJobStore,
+  home: CanonicalPath,
 ): Effect.Effect<void, ControlPlaneFailure> => {
   if (request.method === "GET") {
-    return Effect.map(store.list(), (jobs) => sendJson(response, 200, { jobs }))
+    return Effect.flatMap(store.list(), (stored) =>
+      Effect.sync(() =>
+        sendJson(response, 200, {
+          jobs: stored.flatMap(readableJob),
+          unreadable: stored.flatMap(unreadableJob),
+        }),
+      ),
+    )
   }
   if (request.method !== "POST") {
     sendError(response, 405, "method_not_allowed", "method is not allowed")
@@ -213,11 +239,25 @@ const handleJobs = (
   return Effect.gen(function* () {
     const body = yield* readBody(request)
     const input = yield* parseJson(body)
-    const spec = yield* decodeJobSpec(input)
+    const spec = yield* decodeJobSpec(input, home)
     const result = yield* store.enqueue(spec)
     sendJson(response, result.created ? 201 : 200, { job: result.job })
   })
 }
+
+/** A job the store holds but can no longer read, as the API reports it. */
+interface UnreadableJobReport {
+  readonly id: string
+  readonly reason: string
+}
+
+const readableJob = (stored: StoredJob): readonly Job[] =>
+  stored.outcome === "readable" ? [stored.job] : []
+
+const unreadableJob = (stored: StoredJob): readonly UnreadableJobReport[] =>
+  stored.outcome === "unreadable"
+    ? [{ id: stored.id, reason: stored.reason }]
+    : []
 
 const hasJsonContentType = (request: IncomingMessage): boolean =>
   request.headers["content-type"]?.split(";", 1)[0]?.trim() ===
@@ -233,7 +273,7 @@ const exactKeys = (
 const handleClaim = (
   request: IncomingMessage,
   response: ServerResponse,
-  store: SqliteJobStore,
+  store: ControlPlaneJobStore,
 ): Effect.Effect<void, ControlPlaneFailure> => {
   if (request.method !== "POST") {
     sendError(response, 405, "method_not_allowed", "method is not allowed")
@@ -271,13 +311,16 @@ const handleClaim = (
  * Publishes what a leased worker reports. The handler owns only the request
  * shape: which transition a harness handoff drives, and whether it belongs to
  * the live attempt, is decided by the job runtime inside the store
- * transaction, so its typed failures pick the response status.
+ * transaction, so its typed failures pick the response status. The reply is
+ * the record the transition produced, so a blocked attempt that still has
+ * retries answers with the retrying job and the summary it was left with,
+ * rather than reading as a finished one.
  */
 const handleComplete = (
   id: string,
   request: IncomingMessage,
   response: ServerResponse,
-  store: SqliteJobStore,
+  store: ControlPlaneJobStore,
 ): Effect.Effect<void, ControlPlaneFailure> => {
   if (request.method !== "POST") {
     sendError(response, 405, "method_not_allowed", "method is not allowed")
@@ -371,7 +414,8 @@ const handleDashboard = (
 const handleRequest = (
   request: IncomingMessage,
   response: ServerResponse,
-  store: SqliteJobStore,
+  store: ControlPlaneJobStore,
+  home: CanonicalPath,
   dashboardDirectory?: string,
 ): Effect.Effect<void> => {
   const route: Effect.Effect<string, ControlPlaneFailure> = Effect.try({
@@ -392,7 +436,8 @@ const handleRequest = (
         })
         return Effect.void
       }
-      if (path === "/v1/jobs") return handleJobs(request, response, store)
+      if (path === "/v1/jobs")
+        return handleJobs(request, response, store, home)
       if (path === "/v1/worker/claim")
         return handleClaim(request, response, store)
       const completeMatch = /^\/v1\/jobs\/([A-Za-z0-9][A-Za-z0-9:._-]{0,127})\/complete$/u.exec(path)
@@ -453,6 +498,7 @@ export const startControlPlaneServer = (
           request,
           response,
           options.store,
+          options.home,
           options.dashboardDirectory,
         ),
       )
@@ -470,8 +516,8 @@ export const startControlPlaneServer = (
     server.listen(options.port, options.host, () => {
       if (settled) return
       settled = true
-      const address = server.address() as AddressInfo | null
-      if (!address) {
+      const address = server.address()
+      if (address === null || typeof address === "string") {
         server.close()
         resume(
           Effect.fail(

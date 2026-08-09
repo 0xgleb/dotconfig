@@ -17,13 +17,34 @@ export type HarnessLane = (typeof HARNESS_LANES)[number]
 export type CursorReviewModel = (typeof CURSOR_REVIEW_MODELS)[number]
 export type ReviewKind = "own" | "assigned" | "auto"
 
+/**
+ * A job identifier bounded by the harness protocol. Branding keeps it from
+ * being passed where a directory, a lease token, or a summary is expected, and
+ * the reverse: they are all strings, and this one decides which attempt a
+ * handoff answers and where the process runs.
+ */
+export type JobId = string & { readonly __brand: "JobId" }
+
+/**
+ * A commit identifier in the only form the protocol accepts. An input head and
+ * an output head are the same shape and are compared against each other, so
+ * both carry the type that only `toCommitSha` produces.
+ */
+export type CommitSha = string & { readonly __brand: "CommitSha" }
+
+export const toJobId = (value: string): JobId | undefined =>
+  SAFE_JOB_ID.test(value) ? (value as JobId) : undefined
+
+export const toCommitSha = (value: string): CommitSha | undefined =>
+  HEAD_SHA.test(value) ? (value as CommitSha) : undefined
+
 interface HarnessReviewIdentity {
   readonly profile: ReviewDutyProfile
   readonly repository: string
   readonly pullRequest: number
   readonly kind: ReviewKind
-  readonly inputHeadSha: string
-  readonly repositoryRoot: string
+  readonly inputHeadSha: CommitSha
+  readonly repositoryRoot: CanonicalPath
 }
 
 export type HarnessReviewPayload =
@@ -49,13 +70,13 @@ export type HarnessReviewPayload =
 
 export interface HarnessReviewHandoff {
   readonly protocolVersion: 1
-  readonly jobId: string
+  readonly jobId: JobId
   readonly attempt: number
   readonly lane: HarnessLane
   readonly repository: string
   readonly pullRequest: number
-  readonly inputHeadSha: string
-  readonly outputHeadSha: string
+  readonly inputHeadSha: CommitSha
+  readonly outputHeadSha: CommitSha
   readonly status:
     | "clean"
     | "findings_fixed"
@@ -123,10 +144,17 @@ const COMMON_KEYS = [
 
 const CREDENTIAL_SEGMENTS = [".ssh", ".gnupg", ".aws"] as const
 
+/**
+ * Whether any segment of a path names a credential store. Segments are lowered
+ * before they are compared because the account's filesystem is
+ * case-insensitive: `.SSH` and `.ssh` are the same directory, so a differently
+ * cased segment must not read as a different one.
+ */
 export const isCredentialBearingPath = (path: string): boolean =>
   path
     .split("/")
     .filter((segment) => segment.length > 0)
+    .map((segment) => segment.toLowerCase())
     .some(
       (segment) =>
         includesAny(CREDENTIAL_SEGMENTS, segment) ||
@@ -147,6 +175,10 @@ const decodeIdentity = (
     typeof value.repositoryRoot === "string"
       ? canonicalPath(value.repositoryRoot)
       : undefined
+  const inputHeadSha =
+    typeof value.inputHeadSha === "string"
+      ? toCommitSha(value.inputHeadSha)
+      : undefined
   if (
     !isOneOf(REVIEW_DUTY_PROFILES, value.profile) ||
     repository === undefined ||
@@ -154,8 +186,7 @@ const decodeIdentity = (
     Number(value.pullRequest) < 1 ||
     Number(value.pullRequest) > MAX_PULL_REQUEST ||
     !isOneOf(REVIEW_KINDS, value.kind) ||
-    typeof value.inputHeadSha !== "string" ||
-    !HEAD_SHA.test(value.inputHeadSha) ||
+    inputHeadSha === undefined ||
     repositoryRoot === undefined
   ) {
     return invalid("harness review identity is malformed")
@@ -185,15 +216,12 @@ const decodeIdentity = (
     repository,
     pullRequest: Number(value.pullRequest),
     kind: value.kind,
-    inputHeadSha: value.inputHeadSha,
+    inputHeadSha,
     repositoryRoot,
   })
 }
 
 const SAFE_JOB_ID = /^[A-Za-z0-9][A-Za-z0-9:._-]{0,127}$/u
-
-export const isSafeHarnessJobId = (value: string): boolean =>
-  SAFE_JOB_ID.test(value)
 const SAFE_EVIDENCE = /^(?:check|commit|head|pr|review|test|workflow):[A-Za-z0-9][A-Za-z0-9:./_#@-]{0,220}$/u
 const UNSAFE_CONTROL = /[\u0000-\u001f\u007f]/u
 const HANDOFF_KEYS = [
@@ -292,6 +320,16 @@ export const decodeHarnessReviewHandoff = (
 ): Effect.Effect<HarnessReviewHandoff, HarnessProtocolError> => {
   if (!isRecord(value) || !hasExactKeys(value, HANDOFF_KEYS))
     return invalid("harness handoff must contain exact versioned fields")
+  const jobId =
+    typeof value.jobId === "string" ? toJobId(value.jobId) : undefined
+  const inputHeadSha =
+    typeof value.inputHeadSha === "string"
+      ? toCommitSha(value.inputHeadSha)
+      : undefined
+  const outputHeadSha =
+    typeof value.outputHeadSha === "string"
+      ? toCommitSha(value.outputHeadSha)
+      : undefined
   const evidence = Array.isArray(value.evidence)
     ? value.evidence.filter(
         (item): item is string =>
@@ -300,8 +338,7 @@ export const decodeHarnessReviewHandoff = (
     : []
   if (
     value.protocolVersion !== 1 ||
-    typeof value.jobId !== "string" ||
-    !SAFE_JOB_ID.test(value.jobId) ||
+    jobId === undefined ||
     !Number.isSafeInteger(value.attempt) ||
     Number(value.attempt) < 1 ||
     Number(value.attempt) > 100 ||
@@ -311,10 +348,8 @@ export const decodeHarnessReviewHandoff = (
     !Number.isSafeInteger(value.pullRequest) ||
     Number(value.pullRequest) < 1 ||
     Number(value.pullRequest) > MAX_PULL_REQUEST ||
-    typeof value.inputHeadSha !== "string" ||
-    !HEAD_SHA.test(value.inputHeadSha) ||
-    typeof value.outputHeadSha !== "string" ||
-    !HEAD_SHA.test(value.outputHeadSha) ||
+    inputHeadSha === undefined ||
+    outputHeadSha === undefined ||
     !isOneOf(HANDOFF_STATUSES, value.status) ||
     typeof value.assessment !== "string" ||
     value.assessment.trim().length < 1 ||
@@ -341,19 +376,19 @@ export const decodeHarnessReviewHandoff = (
     return invalid("a Fable-verified handoff must carry evidence identifiers")
   if (
     value.status === "findings_fixed" &&
-    !evidence.includes(`commit:${value.outputHeadSha}`)
+    !evidence.includes(`commit:${outputHeadSha}`)
   ) {
     return invalid("a fixed handoff must cite the commit it produced")
   }
   return Effect.succeed({
     protocolVersion: 1,
-    jobId: value.jobId,
+    jobId,
     attempt: Number(value.attempt),
     lane: value.lane,
     repository: value.repository,
     pullRequest: Number(value.pullRequest),
-    inputHeadSha: value.inputHeadSha,
-    outputHeadSha: value.outputHeadSha,
+    inputHeadSha,
+    outputHeadSha,
     status: value.status,
     assessment: value.assessment,
     evidence,
@@ -389,7 +424,7 @@ export type HarnessHandoffAttemptMatch =
 export const harnessHandoffAttemptMatch = (
   handoff: HarnessReviewHandoff,
   payload: HarnessReviewPayload,
-  jobId: string,
+  jobId: JobId,
   attempt: number,
 ): HarnessHandoffAttemptMatch => {
   const mismatch = handoffMismatch(handoff, payload, jobId, attempt)
@@ -401,7 +436,7 @@ export const harnessHandoffAttemptMatch = (
 export const requireHandoffMatchesAttempt = (
   handoff: HarnessReviewHandoff,
   payload: HarnessReviewPayload,
-  jobId: string,
+  jobId: JobId,
   attempt: number,
 ): Effect.Effect<void, HarnessProtocolError> => {
   const match = harnessHandoffAttemptMatch(handoff, payload, jobId, attempt)
@@ -431,7 +466,7 @@ const HANDOFF_MISMATCH_MESSAGES: Readonly<
 const handoffMismatch = (
   handoff: HarnessReviewHandoff,
   payload: HarnessReviewPayload,
-  jobId: string,
+  jobId: JobId,
   attempt: number,
 ): HarnessHandoffMismatch | undefined => {
   if (handoff.jobId !== jobId) return "job-id"
