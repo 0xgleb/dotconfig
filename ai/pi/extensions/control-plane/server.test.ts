@@ -5,8 +5,10 @@ import { join } from "node:path"
 import test from "node:test"
 import { Effect, Either } from "effect"
 import { toJobId, type JobId } from "./harness-protocol.ts"
-import type { Job } from "./job-runtime.ts"
+import { JobRuntimeError, type Job } from "./job-runtime.ts"
 import {
+  boundedReason,
+  MAX_LOGGED_REASON_CHARS,
   startControlPlaneServer,
   type ControlPlaneJobStore,
 } from "./server.ts"
@@ -637,7 +639,7 @@ test("the fail route backs a harness attempt off by the harness delay, not the c
     assert.equal(rescheduled.job.spec.runAt < reportedAt + 5 * 60 * 1_000, true)
   }))
 
-test("expired leases are recovered on the next worker claim", async () => {
+test("a recovered harness lease waits the harness backoff before it is due again", async () => {
   const root = await mkdtemp(join(tmpdir(), "pi-control-plane-lease-test-"))
   const store = await Effect.runPromise(
     makeSqliteJobStore(join(root, "jobs.sqlite"), home),
@@ -651,6 +653,12 @@ test("expired leases are recovered on the next worker claim", async () => {
       home,
     }),
   )
+  const claim = async (workerId: string): Promise<Response> =>
+    fetch(`${server.origin}/v1/worker/claim`, {
+      method: "POST",
+      headers: { "content-type": "application/json" },
+      body: JSON.stringify({ workerId, ttlMs: 90_000 }),
+    })
   try {
     const id = await enqueueJob(server.origin, harnessEnqueueBody)
     const first = await fetch(`${server.origin}/v1/worker/claim`, {
@@ -660,18 +668,19 @@ test("expired leases are recovered on the next worker claim", async () => {
     })
     assert.equal(first.status, 200)
 
+    // The lease has expired, so this claim recovers the attempt — but an
+    // abandoned harness attempt waits the same backoff a reported one does.
     elapsedMs = 60_000
-    const second = await fetch(`${server.origin}/v1/worker/claim`, {
-      method: "POST",
-      headers: { "content-type": "application/json" },
-      body: JSON.stringify({ workerId: "worker-b", ttlMs: 90_000 }),
-    })
-    assert.equal(second.status, 200)
-    const reclaimed = (await second.json()) as {
+    assert.equal((await claim("worker-b")).status, 204)
+
+    elapsedMs = 60_000 + 5 * 60 * 1_000
+    const reclaimed = await claim("worker-b")
+    assert.equal(reclaimed.status, 200)
+    const job = (await reclaimed.json()) as {
       job: { id: string; attempt: number }
     }
-    assert.equal(reclaimed.job.id, id)
-    assert.equal(reclaimed.job.attempt, 2)
+    assert.equal(job.job.id, id)
+    assert.equal(job.job.attempt, 2)
   } finally {
     await Effect.runPromise(server.close)
     store.close()
@@ -679,7 +688,7 @@ test("expired leases are recovered on the next worker claim", async () => {
   }
 })
 
-test("a claim whose lease recovery fails still reads the queue", async () => {
+test("a claim whose lease recovery fails on a tolerated store code still reads the queue", async () => {
   let claims = 0
   const store = partialStore({
     recoverExpired: () =>
@@ -705,6 +714,119 @@ test("a claim whose lease recovery fails still reads the queue", async () => {
     assert.equal(claims, 1)
   } finally {
     await Effect.runPromise(server.close)
+  }
+})
+
+test("a recovery that breaks a runtime invariant fails the claim instead of being swallowed", async () => {
+  const store = partialStore({
+    recoverExpired: () =>
+      Effect.fail(
+        new JobRuntimeError({
+          code: "invalid_input",
+          message: "now cannot precede the current job state",
+        }),
+      ),
+  })
+  const server = await Effect.runPromise(
+    startControlPlaneServer({ host: "127.0.0.1", port: 0, store, home }),
+  )
+  try {
+    const claimed = await fetch(`${server.origin}/v1/worker/claim`, {
+      method: "POST",
+      headers: { "content-type": "application/json" },
+      body: JSON.stringify({ workerId: "worker-a", ttlMs: 90_000 }),
+    })
+    assert.equal(claimed.status, 400)
+  } finally {
+    await Effect.runPromise(server.close)
+  }
+})
+
+test("a swallowed failure reaches the log as one bounded line", () => {
+  assert.equal(boundedReason("first\nsecond\nthird"), "first second third")
+  assert.equal(
+    boundedReason("x".repeat(MAX_LOGGED_REASON_CHARS + 50)),
+    "x".repeat(MAX_LOGGED_REASON_CHARS),
+  )
+  assert.equal(
+    boundedReason(`${"y".repeat(MAX_LOGGED_REASON_CHARS)}\nleaked`).includes(
+      "leaked",
+    ),
+    false,
+  )
+})
+
+test("the fail and completion routes time their transition inside the store", async () => {
+  const leased: Job = {
+    id: jobIdentifier("job-a"),
+    spec: {
+      kind: "review-duty.scan",
+      payload: { profile: "st0x-review" },
+      runAt: 0,
+      maxAttempts: 3,
+      idempotencyKey: "review-duty:st0x-review",
+    },
+    state: "leased",
+    workerId: "worker-a",
+    leaseToken: "lease-a",
+    leaseUntil: 90_000,
+    attempt: 1,
+    createdAt: 0,
+    updatedAt: 0,
+  }
+  const transitioned: Job = {
+    id: leased.id,
+    spec: leased.spec,
+    state: "retry_wait",
+    attempt: 1,
+    createdAt: 0,
+    updatedAt: 0,
+    lastAttemptSummary: "worker reported a failure",
+  }
+  const sampled: Record<string, { started: number; instant: number }> = {}
+  const transition =
+    (route: string) =>
+    (
+      _id: string,
+      _leaseToken: string,
+      now: number | Effect.Effect<number>,
+    ): Effect.Effect<Job> =>
+      Effect.gen(function* () {
+        const started = Date.now()
+        yield* Effect.sleep("25 millis")
+        const instant = typeof now === "number" ? now : yield* now
+        sampled[route] = { started, instant }
+        return transitioned
+      })
+  const store = partialStore({
+    get: () => Effect.succeed(leased),
+    fail: transition("fail"),
+    complete: transition("complete"),
+  })
+  const server = await Effect.runPromise(
+    startControlPlaneServer({ host: "127.0.0.1", port: 0, store, home }),
+  )
+  try {
+    const failed = await failJob(server.origin, "job-a", {
+      leaseToken: "lease-a",
+      retryDelayMs: 0,
+      summary: "worker reported a failure",
+    })
+    assert.equal(failed.status, 200)
+
+    const completed = await fetch(`${server.origin}/v1/jobs/job-a/complete`, {
+      method: "POST",
+      headers: { "content-type": "application/json" },
+      body: JSON.stringify({ leaseToken: "lease-a", summary: "done" }),
+    })
+    assert.equal(completed.status, 200)
+  } finally {
+    await Effect.runPromise(server.close)
+  }
+  for (const route of ["fail", "complete"]) {
+    const record = sampled[route]
+    assert.ok(record, `${route} never reached the store`)
+    assert.equal(record.instant >= record.started, true)
   }
 })
 

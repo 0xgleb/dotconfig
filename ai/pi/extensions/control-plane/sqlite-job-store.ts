@@ -64,6 +64,14 @@ export interface EnqueueResult {
   readonly created: boolean
 }
 
+/**
+ * When a transition is timestamped. A number is an instant the caller already
+ * holds; an effect is sampled inside the transaction the transition runs in,
+ * so a request that waited behind a concurrent writer is judged against the
+ * state that writer committed rather than against an instant read before it.
+ */
+export type TransitionInstant = number | Effect.Effect<number>
+
 export interface SqliteJobStore {
   readonly enqueue: (
     spec: RegisteredJobSpec,
@@ -85,7 +93,7 @@ export interface SqliteJobStore {
   readonly complete: (
     id: string,
     leaseToken: string,
-    now: number,
+    now: TransitionInstant,
     summary: string,
     result?: RegisteredJobResult,
   ) => Effect.Effect<Job, JobStoreError | JobRuntimeError>
@@ -97,7 +105,7 @@ export interface SqliteJobStore {
   readonly fail: (
     id: string,
     leaseToken: string,
-    now: number,
+    now: TransitionInstant,
     retryDelayMs: number,
     summary: string,
     result?: RegisteredJobResult,
@@ -184,6 +192,9 @@ const storedFromRow = (row: Row): Effect.Effect<StoredJob, JobStoreError> =>
       })),
     onSuccess: (job) => Effect.succeed({ outcome: "readable" as const, job }),
   })
+
+const instantOf = (now: TransitionInstant): Effect.Effect<number> =>
+  typeof now === "number" ? Effect.succeed(now) : now
 
 const noJobs: readonly Job[] = []
 const oneJob = (job: Job): readonly Job[] => [job]
@@ -435,12 +446,14 @@ const makeStore = (
     result,
   ) =>
     inTransaction(
-      Effect.flatMap(get(id), (job) =>
-        Effect.flatMap(
-          completeJob(job, leaseToken, now, summary, result),
+      Effect.gen(function* () {
+        const at = yield* instantOf(now)
+        const job = yield* get(id)
+        return yield* Effect.flatMap(
+          completeJob(job, leaseToken, at, summary, result),
           persist,
-        ),
-      ),
+        )
+      }),
     )
 
   const fail: SqliteJobStore["fail"] = (
@@ -452,12 +465,14 @@ const makeStore = (
     result,
   ) =>
     inTransaction(
-      Effect.flatMap(get(id), (job) =>
-        Effect.flatMap(
-          failJob(job, leaseToken, now, retryDelayMs, summary, result),
+      Effect.gen(function* () {
+        const at = yield* instantOf(now)
+        const job = yield* get(id)
+        return yield* Effect.flatMap(
+          failJob(job, leaseToken, at, retryDelayMs, summary, result),
           persist,
-        ),
-      ),
+        )
+      }),
     )
 
   const cancel: SqliteJobStore["cancel"] = (id, now) =>

@@ -21,7 +21,13 @@ export const CONTROL_PLANE_SCHEMA_VERSION = 1
 const MAX_REQUEST_BODY_BYTES = 16 * 1_024
 const LOOPBACK_HOSTS = ["127.0.0.1", "::1"] as const
 
-/** Delay before an unsuccessful harness attempt becomes claimable again. */
+/**
+ * Delay before an unsuccessful harness attempt becomes claimable again. Every
+ * route that returns an attempt to the queue applies it — the completion route
+ * for a blocked or failed handoff, the fail route, and lease recovery — so the
+ * backoff of a lane that talks to a rate-limited provider does not depend on
+ * how the attempt ended.
+ */
 const HARNESS_RETRY_DELAY_MS = 5 * 60 * 1_000
 
 export class ControlPlaneServerError extends Data.TaggedError(
@@ -267,15 +273,35 @@ const unreadableJob = (stored: StoredJob): readonly UnreadableJobReport[] =>
     : []
 
 /** Characters of a swallowed failure's own words that reach the log. */
-const MAX_LOGGED_REASON_CHARS = 200
+export const MAX_LOGGED_REASON_CHARS = 200
 
 /**
  * A failure's message as one bounded log line. A store failure can carry the
  * driver's own text, so it is bounded and flattened rather than pasted into
  * the server's log at whatever length and shape it arrived in.
  */
-const boundedReason = (message: string): string =>
+export const boundedReason = (message: string): string =>
   message.split("\n").join(" ").slice(0, MAX_LOGGED_REASON_CHARS)
+
+/**
+ * Store failures a claim proceeds through when lease recovery hits them.
+ * Recovery is opportunistic: the claim that follows reads the queue itself and
+ * surfaces a store that cannot answer, so a pass that could not return an
+ * expired lease is logged rather than failing a request that does not depend
+ * on it. A failure outside this set — including every runtime failure, which
+ * means the recovery broke an invariant rather than the database — fails the
+ * claim.
+ */
+const TOLERATED_RECOVERY_CODES = [
+  "busy",
+  "corrupt_state",
+  "io",
+  "not_found",
+] as const
+
+const isToleratedRecoveryFailure = (failure: ControlPlaneFailure): boolean =>
+  failure._tag === "JobStoreError" &&
+  TOLERATED_RECOVERY_CODES.some((code) => code === failure.code)
 
 const hasJsonContentType = (request: IncomingMessage): boolean =>
   request.headers["content-type"]?.split(";", 1)[0]?.trim() ===
@@ -319,16 +345,22 @@ const handleClaim = (
     const now = yield* Clock.currentTimeMillis
     // Expired leases are returned to their next attempt before the queue is
     // read, so an abandoned attempt becomes claimable without a separate
-    // sweeper. A recovery that fails leaves the queue as it was rather than
-    // failing the claim that only depends on it opportunistically, but it is
-    // logged: a recovery pass that keeps failing strands every expired lease,
-    // and nothing else in the request would report it.
-    yield* Effect.catchAll(store.recoverExpired(now, 0), (failure) =>
-      Effect.sync(() =>
-        console.error(
-          `pi-control-plane lease recovery failed: ${boundedReason(failure.message)}`,
+    // sweeper. It waits the same backoff a reported failure does: an attempt
+    // abandoned mid-executor is exactly the case where relaunching at once
+    // hammers a provider that is already refusing, and the delay must not
+    // depend on which of the three routes returned the job to the queue.
+    //
+    // A tolerated recovery failure leaves the queue as it was rather than
+    // failing a claim that only depends on it opportunistically, but it is
+    // logged through the runtime: a recovery pass that keeps failing strands
+    // every expired lease, and nothing else in the request would report it.
+    yield* Effect.catchIf(
+      store.recoverExpired(now, HARNESS_RETRY_DELAY_MS),
+      isToleratedRecoveryFailure,
+      (failure) =>
+        Effect.logError(
+          `lease recovery failed: ${boundedReason(failure.message)}`,
         ),
-      ),
     )
     const job = yield* store.claimDue(
       input.workerId,
@@ -340,6 +372,15 @@ const handleClaim = (
     else sendJson(response, 200, { job })
   })
 }
+
+/**
+ * The clock a transition is timestamped by. It is handed to the store unread
+ * so the instant is sampled inside the transaction that performs the
+ * transition: a request that waited behind a concurrent writer is then judged
+ * against the state that writer committed, and loses the race as the conflict
+ * it is rather than as a caller whose clock precedes the stored state.
+ */
+const transitionInstant: Effect.Effect<number> = Clock.currentTimeMillis
 
 /**
  * Publishes what a leased worker reports. The handler owns only the request
@@ -386,14 +427,17 @@ const handleComplete = (
       const leaseToken = input.leaseToken
       const summary = `harness ${handoff.status}: ${handoff.assessment}`
       const result = { kind: "harness.review" as const, handoff }
-      // Sampled against the transaction it is handed to, so a cancellation
-      // that commits while the handoff is being decoded cannot make this
-      // timestamp precede the state the transaction reads.
-      const now = yield* Clock.currentTimeMillis
       const publish =
         handoff.status === "blocked" || handoff.status === "failed"
-          ? store.fail(id, leaseToken, now, HARNESS_RETRY_DELAY_MS, summary, result)
-          : store.complete(id, leaseToken, now, summary, result)
+          ? store.fail(
+              id,
+              leaseToken,
+              transitionInstant,
+              HARNESS_RETRY_DELAY_MS,
+              summary,
+              result,
+            )
+          : store.complete(id, leaseToken, transitionInstant, summary, result)
       const job = yield* publish
       sendJson(response, 200, { job })
       return
@@ -408,8 +452,12 @@ const handleComplete = (
         serverError("invalid_payload", "job completion payload is invalid"),
       )
     }
-    const now = yield* Clock.currentTimeMillis
-    const job = yield* store.complete(id, input.leaseToken, now, input.summary)
+    const job = yield* store.complete(
+      id,
+      input.leaseToken,
+      transitionInstant,
+      input.summary,
+    )
     sendJson(response, 200, { job })
   })
 }
@@ -452,11 +500,10 @@ const handleFail = (
       )
     }
     const current = yield* store.get(id)
-    const now = yield* Clock.currentTimeMillis
     const job = yield* store.fail(
       id,
       input.leaseToken,
-      now,
+      transitionInstant,
       current.spec.kind === "harness.review"
         ? HARNESS_RETRY_DELAY_MS
         : input.retryDelayMs,
