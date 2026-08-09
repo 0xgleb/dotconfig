@@ -4,8 +4,47 @@ import { tmpdir } from "node:os"
 import { join } from "node:path"
 import test from "node:test"
 import { Effect, Either } from "effect"
-import type { RegisteredJobSpec } from "./job-runtime.ts"
+import {
+  controlPlaneHome,
+  jobResult,
+  type RegisteredJobSpec,
+} from "./job-runtime.ts"
 import { makeSqliteJobStore } from "./sqlite-job-store.ts"
+
+const harnessHeadSha = "a".repeat(40)
+
+/**
+ * Harness payloads are decoded against the home the control plane runs as, so
+ * a fixture checkout is built under that home rather than a literal path.
+ */
+const registeredCheckout = (relative: string): string => {
+  const home = controlPlaneHome()
+  if (home === undefined)
+    throw new Error("control plane home is not a canonical absolute path")
+  return `${home}/${relative}`
+}
+
+const harnessSpec = (
+  idempotencyKey: string,
+  maxAttempts: number,
+): RegisteredJobSpec => ({
+  kind: "harness.review",
+  payload: {
+    lane: "cursor-subscription",
+    task: "review-probe",
+    model: "composer-2.5",
+    profile: "personal-review",
+    repository: "0xgleb/example",
+    pullRequest: 7,
+    kind: "own",
+    inputHeadSha: harnessHeadSha,
+    repositoryRoot: registeredCheckout("code/0xgleb/example"),
+    isolation: "read-only",
+  },
+  runAt: 1_000,
+  maxAttempts,
+  idempotencyKey,
+})
 
 const reviewSpec = (
   profile: "st0x-review" | "dataclique-review" | "personal-review" =
@@ -124,24 +163,7 @@ test("expired attempts are recovered transactionally and become claimable after 
 test("a cancelled harness attempt stays readable through the store", async () =>
   withStore(async (path) => {
     const store = await Effect.runPromise(makeSqliteJobStore(path))
-    const spec = {
-      kind: "harness.review",
-      payload: {
-        lane: "cursor-subscription",
-        task: "review-probe",
-        model: "composer-2.5",
-        profile: "personal-review",
-        repository: "0xgleb/example",
-        pullRequest: 7,
-        kind: "own",
-        inputHeadSha: "a".repeat(40),
-        repositoryRoot: "/Users/example/code/0xgleb/example",
-        isolation: "read-only",
-      },
-      runAt: 1_000,
-      maxAttempts: 2,
-      idempotencyKey: "harness:personal:example:7",
-    }
+    const spec = harnessSpec("harness:personal:example:7", 2)
     await Effect.runPromise(store.enqueue(spec, "job-h", 1_000))
     await Effect.runPromise(
       store.claimDue("worker-a", "lease-a", 1_000, 90_000),
@@ -155,6 +177,62 @@ test("a cancelled harness attempt stays readable through the store", async () =>
     const reloaded = await Effect.runPromise(store.get("job-h"))
     assert.equal(reloaded.state, "cancelled")
     assert.equal((await Effect.runPromise(store.list())).length, 1)
+    store.close()
+  }))
+
+test("a blocked harness handoff is stored with the attempt it ended", async () =>
+  withStore(async (path) => {
+    const store = await Effect.runPromise(makeSqliteJobStore(path))
+    await Effect.runPromise(
+      store.enqueue(harnessSpec("harness:personal:example:8", 1), "job-b", 1_000),
+    )
+    const claimed = await Effect.runPromise(
+      store.claimDue("worker-a", "lease-a", 1_000, 90_000),
+    )
+    assert.equal(claimed?.attempt, 1)
+
+    const handoff = {
+      protocolVersion: 1,
+      jobId: "job-b",
+      attempt: 1,
+      lane: "cursor-subscription",
+      repository: "0xgleb/example",
+      pullRequest: 7,
+      inputHeadSha: harnessHeadSha,
+      outputHeadSha: harnessHeadSha,
+      status: "blocked",
+      assessment: "Fable verification is unavailable.",
+      evidence: [],
+      verifier: "unavailable",
+      executorProvenance: "subscription-verified",
+    } as const
+    const failed = await Effect.runPromise(
+      store.fail("job-b", "lease-a", 2_000, 0, "harness blocked", {
+        kind: "harness.review",
+        handoff,
+      }),
+    )
+    assert.equal(failed.state, "failed")
+
+    const reloaded = await Effect.runPromise(store.get("job-b"))
+    assert.equal(reloaded.state, "failed")
+    assert.deepEqual(jobResult(reloaded), { kind: "harness.review", handoff })
+    store.close()
+  }))
+
+test("a harness attempt whose last lease expires is stored as failed without evidence", async () =>
+  withStore(async (path) => {
+    const store = await Effect.runPromise(makeSqliteJobStore(path))
+    await Effect.runPromise(
+      store.enqueue(harnessSpec("harness:personal:example:9", 1), "job-x", 1_000),
+    )
+    await Effect.runPromise(store.claimDue("worker-a", "lease-a", 1_000, 10))
+    const recovered = await Effect.runPromise(store.recoverExpired(1_010, 60_000))
+    assert.deepEqual(recovered.map(({ state }) => state), ["failed"])
+
+    const reloaded = await Effect.runPromise(store.get("job-x"))
+    assert.equal(reloaded.state, "failed")
+    assert.equal(jobResult(reloaded), undefined)
     store.close()
   }))
 

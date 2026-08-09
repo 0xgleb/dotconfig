@@ -1,14 +1,17 @@
 import assert from "node:assert/strict"
 import test from "node:test"
 import { Effect, Either } from "effect"
+import type { HarnessReviewHandoff } from "./harness-protocol.ts"
 import {
   cancelJob,
   claimJob,
   completeJob,
+  controlPlaneHome,
   createJob,
   decodeJobSpec,
   decodeStoredJob,
   failJob,
+  jobResult,
   recoverExpiredJob,
   REGISTERED_JOB_KINDS,
   type Job,
@@ -24,6 +27,17 @@ const reviewSpec: RegisteredJobSpec = {
   idempotencyKey: "review-duty:st0x-review",
 }
 
+/**
+ * Harness payloads are decoded against the home the control plane runs as, so
+ * a fixture checkout is built under that home rather than a literal path.
+ */
+const registeredCheckout = (relative: string): string => {
+  const home = controlPlaneHome()
+  if (home === undefined)
+    throw new Error("control plane home is not a canonical absolute path")
+  return `${home}/${relative}`
+}
+
 const harnessSpec: RegisteredJobSpec = {
   kind: "harness.review",
   payload: {
@@ -35,7 +49,7 @@ const harnessSpec: RegisteredJobSpec = {
     pullRequest: 7,
     kind: "own",
     inputHeadSha: "a".repeat(40),
-    repositoryRoot: "/Users/example/code/0xgleb/example",
+    repositoryRoot: registeredCheckout("code/0xgleb/example"),
     isolation: "read-only",
   },
   runAt: 2_000,
@@ -268,6 +282,20 @@ const matchingHandoff = {
   executorProvenance: "subscription-verified",
 } as const
 
+const blockedHandoff = (attempt: number): HarnessReviewHandoff => ({
+  ...matchingHandoff,
+  attempt,
+  status: "blocked",
+  assessment: "Fable verification is unavailable.",
+  evidence: [],
+  verifier: "unavailable",
+})
+
+const finalHarnessAttempt = (): Job => ({
+  ...leasedHarnessJob(),
+  attempt: harnessSpec.maxAttempts,
+})
+
 test("completeJob accepts only a matching successful typed harness result", () => {
   assert.equal(
     errorCode(completeJob(leasedHarnessJob(), "lease-a", 2_000, "done")),
@@ -303,11 +331,94 @@ test("completeJob accepts only a matching successful typed harness result", () =
     }),
   )
   assert.equal(completed.state, "succeeded")
-  if (completed.state !== "succeeded") return
-  assert.deepEqual(completed.result, {
+  assert.deepEqual(jobResult(completed), {
     kind: "harness.review",
     handoff: matchingHandoff,
   })
+})
+
+test("completeJob decodes the handoff it is handed instead of trusting it", () => {
+  assert.equal(
+    errorCode(
+      completeJob(leasedHarnessJob(), "lease-a", 2_000, "done", {
+        kind: "harness.review",
+        handoff: { ...matchingHandoff, evidence: ["arbitrary reviewer note"] },
+      }),
+    ),
+    "invalid_input",
+  )
+  assert.equal(
+    errorCode(
+      completeJob(leasedHarnessJob(), "lease-a", 2_000, "done", {
+        kind: "harness.review",
+        handoff: { ...matchingHandoff, assessment: "   " },
+      }),
+    ),
+    "invalid_input",
+  )
+})
+
+test("an unsuccessful harness handoff fails the job and keeps its evidence", () => {
+  const handoff = blockedHandoff(harnessSpec.maxAttempts)
+  const failed = run(
+    failJob(
+      finalHarnessAttempt(),
+      "lease-a",
+      2_000,
+      0,
+      "harness blocked: Fable verification is unavailable.",
+      { kind: "harness.review", handoff },
+    ),
+  )
+  assert.equal(failed.state, "failed")
+  assert.deepEqual(jobResult(failed), { kind: "harness.review", handoff })
+  assert.deepEqual(run(decodeStoredJob(failed)), failed)
+})
+
+test("a retried harness attempt hands no evidence to its successor", () => {
+  const retrying = run(
+    failJob(
+      leasedHarnessJob(),
+      "lease-a",
+      2_000,
+      60_000,
+      "harness blocked: Fable verification is unavailable.",
+      { kind: "harness.review", handoff: blockedHandoff(1) },
+    ),
+  )
+  assert.equal(retrying.state, "retry_wait")
+  assert.equal(jobResult(retrying), undefined)
+  assert.deepEqual(run(decodeStoredJob(retrying)), retrying)
+})
+
+test("failJob accepts only an unsuccessful handoff bound to the attempt", () => {
+  assert.equal(
+    errorCode(
+      failJob(finalHarnessAttempt(), "lease-a", 2_000, 0, "done", {
+        kind: "harness.review",
+        handoff: { ...matchingHandoff, attempt: harnessSpec.maxAttempts },
+      }),
+    ),
+    "invalid_transition",
+  )
+  assert.equal(
+    errorCode(
+      failJob(finalHarnessAttempt(), "lease-a", 2_000, 0, "blocked", {
+        kind: "harness.review",
+        handoff: blockedHandoff(1),
+      }),
+    ),
+    "invalid_input",
+  )
+  assert.equal(
+    errorCode(
+      failJob(leasedJob(), "lease-a", 2_000, 0, "blocked", {
+        kind: "harness.review",
+        handoff: blockedHandoff(1),
+      }),
+    ),
+    "invalid_input",
+  )
 })
 
 test("cancelled harness attempts without results survive the stored-job roundtrip", () => {
@@ -323,6 +434,17 @@ test("cancelled harness attempts without results survive the stored-job roundtri
   )
   assert.equal(expiredAfterCancel.state, "cancelled")
   assert.deepEqual(run(decodeStoredJob(expiredAfterCancel)), expiredAfterCancel)
+})
+
+test("a harness attempt abandoned on its last try fails carrying no evidence", () => {
+  const abandoned = run(
+    recoverExpiredJob(finalHarnessAttempt(), 100_000, 60_000),
+  )
+  assert.equal(abandoned.state, "failed")
+  if (abandoned.state !== "failed") assert.fail("expected a failed job")
+  assert.equal(jobResult(abandoned), undefined)
+  assert.equal(abandoned.summary, "worker lease expired")
+  assert.deepEqual(run(decodeStoredJob(abandoned)), abandoned)
 })
 
 test("stored harness results are revalidated with the same rules as completion", () => {
@@ -363,6 +485,42 @@ test("stored harness results are revalidated with the same rules as completion",
     ),
     "invalid_input",
   )
+
+  const handoff = blockedHandoff(harnessSpec.maxAttempts)
+  const failed = run(
+    failJob(finalHarnessAttempt(), "lease-a", 2_000, 0, "harness blocked", {
+      kind: "harness.review",
+      handoff,
+    }),
+  )
+  assert.equal(
+    errorCode(
+      decodeStoredJob({
+        ...failed,
+        result: {
+          kind: "harness.review",
+          handoff: { ...matchingHandoff, attempt: harnessSpec.maxAttempts },
+        },
+      }),
+    ),
+    "invalid_input",
+  )
+})
+
+test("a cancelled harness attempt keeps the handoff that raced the cancellation", () => {
+  const cancelRequested = run(cancelJob(leasedHarnessJob(), 2_000))
+  const cancelled = run(
+    completeJob(cancelRequested, "lease-a", 3_000, "done", {
+      kind: "harness.review",
+      handoff: matchingHandoff,
+    }),
+  )
+  assert.equal(cancelled.state, "cancelled")
+  assert.deepEqual(jobResult(cancelled), {
+    kind: "harness.review",
+    handoff: matchingHandoff,
+  })
+  assert.deepEqual(run(decodeStoredJob(cancelled)), cancelled)
 })
 
 test("an unexpired lease cannot be reclaimed", () => {

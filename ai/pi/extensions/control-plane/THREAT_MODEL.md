@@ -31,7 +31,9 @@
 - Scheduler availability under malformed or excessive input.
 - The user's local session and repository state, which a job payload must never be
   able to mutate directly.
-- Subscription/API billing provenance and the reserved Pi operational-credit pool.
+- Subscription/API billing provenance and the capacity Pi reserves for its own
+  classification, registry, Telegram, and final-gate work, kept separate from
+  what job attempts may spend.
 - The trusted source-fixed adapter templates and isolated worktree boundary.
 
 ## STRIDE controls
@@ -44,10 +46,15 @@
 | Information disclosure | A payload, error, event, or dashboard response carries credentials or raw model/tool output. | Registered payload schemas, protected-path guards, bounded summaries, safe read models, and no arbitrary blobs. |
 | Denial of service | Huge payloads, unbounded attempts, distant schedules, lease overflow, or event growth wedge the service. | Request/body/field limits, maximum attempts and delays, checked timestamp arithmetic, retention policy, busy timeout, and malformed-boundary tests. |
 | Elevation of privilege | A loopback client or leased job runs shell, invokes a tool, selects force/yolo, adds a plugin/MCP, or treats model text as approval. | No executable payload kind; exact adapter/model/task allowlists; source-fixed argv; job lease is routing only; existing classifier and constrained tools re-check authority at action time. |
+
+### Executor boundary (trust boundaries 6-7)
+
+| Threat | Concrete abuse | Required control and test |
+| --- | --- | --- |
 | Spoofing | An API-backed or custom-endpoint process claims to be a subscription harness. | The handoff's `executorProvenance` field is an executor self-declaration, not proof. The launching supervisor must verify local harness identity/provenance before admission (a required control that lands with the supervisor, not the protocol), scrub API/provider endpoint variables at launch, and fail closed when provenance cannot be established. |
 | Tampering | A job injects flags, paths, prompts, stale head SHAs, or a mismatched handoff. | Exact payload keys and enums, canonical repository/head checks, no free-form prompt/argv fields, versioned handoff decoder, live source verification. |
 | Information disclosure | Prompt, raw executor output, credentials, or protected files enter SQLite, events, logs, or the dashboard. | Store only bounded task identity and sanitized evidence references; protected-path exclusions; never persist prompt/reasoning/raw logs. |
-| Denial of service | Expensive lanes, huge outputs, retries, or concurrent executors exhaust subscription/Pi capacity. | Persisted concurrency and attempt limits, output bounds, deterministic cost eligibility, reserved operational capacity, timeouts and cancellation. |
+| Denial of service | Expensive lanes, huge outputs, retries, or concurrent executors exhaust subscription/Pi capacity. | Persisted concurrency and attempt limits, output bounds, lane selection bounded by a cost tier that always prefers the cheapest lane meeting the task's requirements, capacity reserved for Pi's own operational work (see Assets), timeouts and cancellation. |
 
 ## First abuse-case tests
 
@@ -62,13 +69,17 @@
 - retry/abandon behavior bounded by maximum attempts;
 - refusal to reclaim an unexpired lease.
 
-Before a harness adapter is implemented, its red tests must prove rejection of
-unknown lanes/models/task families, free-form prompt/command/environment fields,
+`harness-adapter.test.ts` and `harness-protocol.test.ts` were run red before the
+harness adapter implementation. Together they prove rejection of unknown
+lanes/models/task families, free-form prompt/command/environment fields,
 relative or protected repository paths, invalid/stale head identity, API/custom
 endpoint/force/plugin/MCP flags, malformed or oversized handoffs, and mismatched
-attempt/repository/head provenance. They must also prove that Cursor mutation is
-ineligible without an isolated approved worktree and that model output cannot
-select a lane or terminal transition.
+attempt/repository/head provenance. The Cursor payload variant fixes
+`task: "review-probe"` and `isolation: "read-only"`, so no mutating Cursor
+payload is representable — Cursor mutation is ineligible by construction, not
+merely rejected at runtime. Model output cannot select a lane or terminal
+transition: only the registered decoders and the handoff-matching check drive
+those transitions.
 
 The SQLite adapter and HTTP server must add red tests for concurrent atomic claim,
 duplicate idempotent enqueue, schema corruption/version drift, oversized bodies,

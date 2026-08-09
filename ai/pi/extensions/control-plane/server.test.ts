@@ -4,8 +4,20 @@ import { tmpdir } from "node:os"
 import { join } from "node:path"
 import test from "node:test"
 import { Effect, Either } from "effect"
+import { controlPlaneHome } from "./job-runtime.ts"
 import { startControlPlaneServer } from "./server.ts"
 import { makeSqliteJobStore, type SqliteJobStore } from "./sqlite-job-store.ts"
+
+/**
+ * Harness payloads are decoded against the home the control plane runs as, so
+ * a fixture checkout is built under that home rather than a literal path.
+ */
+const registeredCheckout = (relative: string): string => {
+  const home = controlPlaneHome()
+  if (home === undefined)
+    throw new Error("control plane home is not a canonical absolute path")
+  return `${home}/${relative}`
+}
 
 const withServer = async (
   run: (origin: string, store: SqliteJobStore) => Promise<void>,
@@ -50,12 +62,56 @@ const harnessEnqueueBody = {
     pullRequest: 7,
     kind: "own",
     inputHeadSha: harnessHeadSha,
-    repositoryRoot: "/Users/example/code/0xgleb/example",
+    repositoryRoot: registeredCheckout("code/0xgleb/example"),
     isolation: "read-only",
   },
   runAt: 0,
   maxAttempts: 2,
   idempotencyKey: "harness:personal:example:7:head",
+}
+
+const harnessHandoff = (
+  jobId: string,
+  attempt: number,
+  overrides: Readonly<Record<string, unknown>> = {},
+): Readonly<Record<string, unknown>> => ({
+  protocolVersion: 1,
+  jobId,
+  attempt,
+  lane: "cursor-subscription",
+  repository: "0xgleb/example",
+  pullRequest: 7,
+  inputHeadSha: harnessHeadSha,
+  outputHeadSha: harnessHeadSha,
+  status: "clean",
+  assessment: "No verified findings.",
+  evidence: ["check:review-core"],
+  verifier: "fable-clean",
+  executorProvenance: "subscription-verified",
+  ...overrides,
+})
+
+const claimJob = async (
+  origin: string,
+  workerId: string,
+): Promise<{ leaseToken: string; attempt: number }> => {
+  const claimed = await fetch(`${origin}/v1/worker/claim`, {
+    method: "POST",
+    headers: { "content-type": "application/json" },
+    body: JSON.stringify({ workerId, ttlMs: 90_000 }),
+  })
+  return ((await claimed.json()) as {
+    job: { leaseToken: string; attempt: number }
+  }).job
+}
+
+const enqueueJob = async (origin: string, body: unknown): Promise<string> => {
+  const enqueued = await fetch(`${origin}/v1/jobs`, {
+    method: "POST",
+    headers: { "content-type": "application/json" },
+    body: JSON.stringify(body),
+  })
+  return ((await enqueued.json()) as { job: { id: string } }).job.id
 }
 
 test("the server refuses non-loopback bind addresses", async () => {
@@ -228,77 +284,60 @@ test("workers claim due jobs with server-issued leases and stale completion is f
 
 test("harness jobs accept only a matching bounded typed handoff", async () =>
   withServer(async (origin) => {
-    const enqueued = await fetch(`${origin}/v1/jobs`, {
-      method: "POST",
-      headers: { "content-type": "application/json" },
-      body: JSON.stringify(harnessEnqueueBody),
-    })
-    const created = (await enqueued.json()) as { job: { id: string } }
-    const claimedResponse = await fetch(`${origin}/v1/worker/claim`, {
-      method: "POST",
-      headers: { "content-type": "application/json" },
-      body: JSON.stringify({ workerId: "harness-supervisor", ttlMs: 90_000 }),
-    })
-    const claimed = (await claimedResponse.json()) as {
-      job: { leaseToken: string; attempt: number }
-    }
-    const endpoint = `${origin}/v1/jobs/${created.job.id}/complete`
+    const id = await enqueueJob(origin, harnessEnqueueBody)
+    const claimed = await claimJob(origin, "harness-supervisor")
+    const endpoint = `${origin}/v1/jobs/${id}/complete`
+    const complete = async (body: unknown): Promise<Response> =>
+      fetch(endpoint, {
+        method: "POST",
+        headers: { "content-type": "application/json" },
+        body: JSON.stringify(body),
+      })
 
-    const legacySummary = await fetch(endpoint, {
-      method: "POST",
-      headers: { "content-type": "application/json" },
-      body: JSON.stringify({ leaseToken: claimed.job.leaseToken, summary: "untyped" }),
+    const legacySummary = await complete({
+      leaseToken: claimed.leaseToken,
+      summary: "untyped",
     })
     assert.equal(legacySummary.status, 400)
+    assert.deepEqual(await legacySummary.json(), {
+      error: { code: "invalid_input", message: "request payload is invalid" },
+    })
 
-    const mismatched = await fetch(endpoint, {
-      method: "POST",
-      headers: { "content-type": "application/json" },
-      body: JSON.stringify({
-        leaseToken: claimed.job.leaseToken,
-        handoff: {
-          protocolVersion: 1,
-          jobId: created.job.id,
-          attempt: claimed.job.attempt,
-          lane: "cursor-subscription",
-          repository: "0xgleb/example",
-          pullRequest: 7,
-          inputHeadSha: "b".repeat(40),
-          outputHeadSha: harnessHeadSha,
-          status: "clean",
-          assessment: "No verified findings.",
-          evidence: ["check:review-core"],
-          verifier: "fable-clean",
-          executorProvenance: "subscription-verified",
-        },
+    const undecodable = await complete({
+      leaseToken: claimed.leaseToken,
+      handoff: harnessHandoff(id, claimed.attempt, { protocolVersion: 2 }),
+    })
+    assert.equal(undecodable.status, 400)
+    assert.deepEqual(await undecodable.json(), {
+      error: { code: "invalid_input", message: "request payload is invalid" },
+    })
+
+    const mismatched = await complete({
+      leaseToken: claimed.leaseToken,
+      handoff: harnessHandoff(id, claimed.attempt, {
+        inputHeadSha: "b".repeat(40),
       }),
     })
     assert.equal(mismatched.status, 400)
-
-    const complete = await fetch(endpoint, {
-      method: "POST",
-      headers: { "content-type": "application/json" },
-      body: JSON.stringify({
-        leaseToken: claimed.job.leaseToken,
-        handoff: {
-          protocolVersion: 1,
-          jobId: created.job.id,
-          attempt: claimed.job.attempt,
-          lane: "cursor-subscription",
-          repository: "0xgleb/example",
-          pullRequest: 7,
-          inputHeadSha: harnessHeadSha,
-          outputHeadSha: harnessHeadSha,
-          status: "clean",
-          assessment: "No verified findings.",
-          evidence: ["check:review-core"],
-          verifier: "fable-clean",
-          executorProvenance: "subscription-verified",
-        },
-      }),
+    assert.deepEqual(await mismatched.json(), {
+      error: { code: "invalid_input", message: "job request is invalid" },
     })
-    assert.equal(complete.status, 200)
-    const completed = (await complete.json()) as {
+
+    const staleLease = await complete({
+      leaseToken: "stale-token",
+      handoff: harnessHandoff(id, claimed.attempt),
+    })
+    assert.equal(staleLease.status, 409)
+    assert.deepEqual(await staleLease.json(), {
+      error: { code: "stale_lease", message: "job lease is stale" },
+    })
+
+    const succeeded = await complete({
+      leaseToken: claimed.leaseToken,
+      handoff: harnessHandoff(id, claimed.attempt),
+    })
+    assert.equal(succeeded.status, 200)
+    const completed = (await succeeded.json()) as {
       job: {
         state: string
         result?: { kind: string; handoff: { jobId: string } }
@@ -306,14 +345,62 @@ test("harness jobs accept only a matching bounded typed handoff", async () =>
     }
     assert.equal(completed.job.state, "succeeded")
     assert.equal(completed.job.result?.kind, "harness.review")
-    assert.equal(completed.job.result?.handoff.jobId, created.job.id)
+    assert.equal(completed.job.result?.handoff.jobId, id)
 
     const persisted = await fetch(`${origin}/v1/jobs`)
     assert.equal(persisted.status, 200)
     const persistedJobs = (await persisted.json()) as {
       jobs: Array<{ result?: { handoff: { jobId: string } } }>
     }
-    assert.equal(persistedJobs.jobs[0]?.result?.handoff.jobId, created.job.id)
+    assert.equal(persistedJobs.jobs[0]?.result?.handoff.jobId, id)
+  }))
+
+test("a blocked harness handoff ends the attempt and keeps its evidence", async () =>
+  withServer(async (origin) => {
+    const id = await enqueueJob(origin, {
+      ...harnessEnqueueBody,
+      maxAttempts: 1,
+    })
+    const claimed = await claimJob(origin, "harness-supervisor")
+
+    const blocked = await fetch(`${origin}/v1/jobs/${id}/complete`, {
+      method: "POST",
+      headers: { "content-type": "application/json" },
+      body: JSON.stringify({
+        leaseToken: claimed.leaseToken,
+        handoff: harnessHandoff(id, claimed.attempt, {
+          status: "blocked",
+          assessment: "Fable verification is unavailable.",
+          evidence: [],
+          verifier: "unavailable",
+        }),
+      }),
+    })
+    assert.equal(blocked.status, 200)
+    const failed = (await blocked.json()) as {
+      job: { state: string; result?: { handoff: { status: string } } }
+    }
+    assert.equal(failed.job.state, "failed")
+    assert.equal(failed.job.result?.handoff.status, "blocked")
+
+    const persisted = (await (await fetch(`${origin}/v1/jobs`)).json()) as {
+      jobs: Array<{ state: string; result?: { handoff: { status: string } } }>
+    }
+    assert.equal(persisted.jobs[0]?.state, "failed")
+    assert.equal(persisted.jobs[0]?.result?.handoff.status, "blocked")
+  }))
+
+test("completing a job that does not exist reports it as missing", async () =>
+  withServer(async (origin) => {
+    const missing = await fetch(`${origin}/v1/jobs/absent-job/complete`, {
+      method: "POST",
+      headers: { "content-type": "application/json" },
+      body: JSON.stringify({ leaseToken: "lease-a", summary: "done" }),
+    })
+    assert.equal(missing.status, 404)
+    assert.deepEqual(await missing.json(), {
+      error: { code: "not_found", message: "job was not found" },
+    })
   }))
 
 test("worker boundaries reject unknown fields and client-supplied lease tokens", async () =>
@@ -328,6 +415,9 @@ test("worker boundaries reject unknown fields and client-supplied lease tokens",
       }),
     })
     assert.equal(rejected.status, 400)
+    assert.deepEqual(await rejected.json(), {
+      error: { code: "invalid_input", message: "request payload is invalid" },
+    })
   }))
 
 test("oversized and malformed request bodies are rejected without enqueueing", async () =>

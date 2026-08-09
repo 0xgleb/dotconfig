@@ -63,12 +63,18 @@ export interface SqliteJobStore {
     summary: string,
     result?: RegisteredJobResult,
   ) => Effect.Effect<Job, JobStoreError | JobRuntimeError>
+  /**
+   * Records an attempt its lease holder could not finish. A harness review
+   * passes back the handoff that explains why, and the handoff is stored with
+   * the job when the attempt is its last, so the reason outlives the lease.
+   */
   readonly fail: (
     id: string,
     leaseToken: string,
     now: number,
     retryDelayMs: number,
     summary: string,
+    result?: RegisteredJobResult,
   ) => Effect.Effect<Job, JobStoreError | JobRuntimeError>
   readonly cancel: (
     id: string,
@@ -335,11 +341,12 @@ const makeStore = (database: DatabaseSync): SqliteJobStore => {
     now,
     retryDelayMs,
     summary,
+    result,
   ) =>
     inTransaction(
       Effect.flatMap(get(id), (job) =>
         Effect.flatMap(
-          failJob(job, leaseToken, now, retryDelayMs, summary),
+          failJob(job, leaseToken, now, retryDelayMs, summary, result),
           persist,
         ),
       ),
