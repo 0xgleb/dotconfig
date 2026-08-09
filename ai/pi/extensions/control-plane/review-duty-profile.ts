@@ -1,5 +1,3 @@
-import { isAbsolute, normalize } from "node:path"
-
 export const REVIEW_DUTY_PROFILES = [
   "st0x-review",
   "dataclique-review",
@@ -40,14 +38,21 @@ export type RegisteredCheckoutCheck = (
 export const repositorySlug = (value: string): RepositorySlug | undefined =>
   SAFE_REPOSITORY.test(value) ? (value as RepositorySlug) : undefined
 
+/**
+ * Accepts a path already in canonical form. The form is decided by string
+ * rules rather than by `node:path`, because this module is also bundled into
+ * the browser dashboard, where no platform path builtin resolves.
+ */
 export const canonicalPath = (value: string): CanonicalPath | undefined =>
   value.length > 1 &&
   value.length <= MAX_PATH_LENGTH &&
   !CONTROL_CHARACTER.test(value) &&
-  isAbsolute(value) &&
-  normalize(value) === value &&
+  value.startsWith("/") &&
   !value.endsWith("/") &&
-  pathSegments(value).every((segment) => segment !== "." && segment !== "..")
+  value
+    .slice(1)
+    .split("/")
+    .every((segment) => segment !== "" && segment !== "." && segment !== "..")
     ? (value as CanonicalPath)
     : undefined
 
