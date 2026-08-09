@@ -5,23 +5,24 @@ import {
   type ServerResponse,
 } from "node:http"
 import { readFile } from "node:fs/promises"
-import type { AddressInfo } from "node:net"
 import { isAbsolute, join } from "node:path"
-import { Data, Effect } from "effect"
-import {
-  decodeHarnessReviewHandoff,
-  harnessHandoffMatchesAttempt,
-} from "./harness-protocol.ts"
-import { decodeJobSpec, JobRuntimeError } from "./job-runtime.ts"
+import { Clock, Data, Effect } from "effect"
+import { decodeHarnessReviewHandoff } from "./harness-protocol.ts"
+import { decodeJobSpec, JobRuntimeError, type Job } from "./job-runtime.ts"
+import type { CanonicalPath } from "./review-duty-profile.ts"
 import {
   JobStoreError,
   type SqliteJobStore,
+  type StoredJob,
 } from "./sqlite-job-store.ts"
 
 export const CONTROL_PLANE_PROTOCOL_VERSION = 1
 export const CONTROL_PLANE_SCHEMA_VERSION = 1
 const MAX_REQUEST_BODY_BYTES = 16 * 1_024
 const LOOPBACK_HOSTS = ["127.0.0.1", "::1"] as const
+
+/** Delay before an unsuccessful harness attempt becomes claimable again. */
+const HARNESS_RETRY_DELAY_MS = 5 * 60 * 1_000
 
 export class ControlPlaneServerError extends Data.TaggedError(
   "ControlPlaneServerError",
@@ -30,16 +31,46 @@ export class ControlPlaneServerError extends Data.TaggedError(
     | "invalid_bind"
     | "invalid_json"
     | "body_too_large"
+    | "invalid_payload"
     | "request_failed"
     | "listen_failed"
     | "invalid_dashboard"
   readonly message: string
 }> {}
 
+/**
+ * Every failure a request handler can produce. Naming the union keeps the
+ * translator below exhaustive, so a new failure mode cannot reach a client
+ * without being given a status here.
+ */
+export type ControlPlaneFailure =
+  | ControlPlaneServerError
+  | JobRuntimeError
+  | JobStoreError
+
+/**
+ * The store operations a request can reach. Naming them keeps the routes
+ * honest about what they touch — cancellation and the raw database are not
+ * among them — and lets a caller supply exactly those. Lease recovery is
+ * included because the claim route runs it before reading the queue.
+ */
+export type ControlPlaneJobStore = Pick<
+  SqliteJobStore,
+  | "enqueue"
+  | "get"
+  | "list"
+  | "claimDue"
+  | "complete"
+  | "fail"
+  | "recoverExpired"
+>
+
 export interface ControlPlaneServerOptions {
   readonly host: string
   readonly port: number
-  readonly store: SqliteJobStore
+  readonly store: ControlPlaneJobStore
+  /** Home the harness payloads of enqueued jobs are admitted against. */
+  readonly home: CanonicalPath
   readonly dashboardDirectory?: string
 }
 
@@ -142,46 +173,66 @@ const parseJson = (body: string): Effect.Effect<unknown, ControlPlaneServerError
     catch: () => serverError("invalid_json", "request body is malformed JSON"),
   })
 
-const internalFailure = (
+const sendRequestFailure = (
   response: ServerResponse,
-  error: unknown,
-): Effect.Effect<void> => {
-  if (error instanceof ControlPlaneServerError) {
-    if (error.code === "body_too_large")
+  failure: ControlPlaneServerError,
+): Effect.Effect<void> =>
+  Effect.sync(() => {
+    if (failure.code === "body_too_large")
       sendError(response, 413, "body_too_large", "request body is too large")
-    else if (error.code === "invalid_json")
+    else if (failure.code === "invalid_json")
       sendError(response, 400, "invalid_json", "request body is malformed JSON")
+    else if (failure.code === "invalid_payload")
+      sendError(response, 400, "invalid_input", "request payload is invalid")
     else sendError(response, 400, "invalid_request", "request could not be read")
-    return Effect.void
-  }
-  if (error instanceof JobRuntimeError) {
-    if (error.code === "invalid_input")
+  })
+
+const sendRuntimeFailure = (
+  response: ServerResponse,
+  failure: JobRuntimeError,
+): Effect.Effect<void> =>
+  Effect.sync(() => {
+    if (failure.code === "invalid_input")
       sendError(response, 400, "invalid_input", "job request is invalid")
-    else if (error.code === "stale_lease")
+    else if (failure.code === "stale_lease")
       sendError(response, 409, "stale_lease", "job lease is stale")
-    else
-      sendError(response, 409, "invalid_transition", "job state has changed")
-    return Effect.void
-  }
-  if (error instanceof JobStoreError) {
-    if (error.code === "idempotency_conflict")
+    else sendError(response, 409, "invalid_transition", "job state has changed")
+  })
+
+const sendStoreFailure = (
+  response: ServerResponse,
+  failure: JobStoreError,
+): Effect.Effect<void> =>
+  Effect.sync(() => {
+    if (failure.code === "not_found")
+      sendError(response, 404, "not_found", "job was not found")
+    else if (failure.code === "idempotency_conflict")
       sendError(response, 409, "idempotency_conflict", "job key conflicts with existing input")
-    else if (error.code === "capacity")
+    else if (failure.code === "capacity")
       sendError(response, 503, "capacity", "job store is at capacity")
     else sendError(response, 500, "internal_error", "control plane request failed")
-    return Effect.void
-  }
-  sendError(response, 500, "internal_error", "control plane request failed")
-  return Effect.void
-}
+  })
 
+/**
+ * Reports the stored jobs and enqueues new ones. A job whose stored document
+ * no longer decodes is listed separately by identifier and reason instead of
+ * failing the read, so one unreadable row cannot blank the dashboard.
+ */
 const handleJobs = (
   request: IncomingMessage,
   response: ServerResponse,
-  store: SqliteJobStore,
-): Effect.Effect<void, unknown> => {
+  store: ControlPlaneJobStore,
+  home: CanonicalPath,
+): Effect.Effect<void, ControlPlaneFailure> => {
   if (request.method === "GET") {
-    return Effect.map(store.list(), (jobs) => sendJson(response, 200, { jobs }))
+    return Effect.flatMap(store.list(), (stored) =>
+      Effect.sync(() =>
+        sendJson(response, 200, {
+          jobs: stored.flatMap(readableJob),
+          unreadable: stored.flatMap(unreadableJob),
+        }),
+      ),
+    )
   }
   if (request.method !== "POST") {
     sendError(response, 405, "method_not_allowed", "method is not allowed")
@@ -195,11 +246,25 @@ const handleJobs = (
   return Effect.gen(function* () {
     const body = yield* readBody(request)
     const input = yield* parseJson(body)
-    const spec = yield* decodeJobSpec(input)
+    const spec = yield* decodeJobSpec(input, home)
     const result = yield* store.enqueue(spec)
     sendJson(response, result.created ? 201 : 200, { job: result.job })
   })
 }
+
+/** A job the store holds but can no longer read, as the API reports it. */
+interface UnreadableJobReport {
+  readonly id: string
+  readonly reason: string
+}
+
+const readableJob = (stored: StoredJob): readonly Job[] =>
+  stored.outcome === "readable" ? [stored.job] : []
+
+const unreadableJob = (stored: StoredJob): readonly UnreadableJobReport[] =>
+  stored.outcome === "unreadable"
+    ? [{ id: stored.id, reason: stored.reason }]
+    : []
 
 const hasJsonContentType = (request: IncomingMessage): boolean =>
   request.headers["content-type"]?.split(";", 1)[0]?.trim() ===
@@ -215,8 +280,8 @@ const exactKeys = (
 const handleClaim = (
   request: IncomingMessage,
   response: ServerResponse,
-  store: SqliteJobStore,
-): Effect.Effect<void, unknown> => {
+  store: ControlPlaneJobStore,
+): Effect.Effect<void, ControlPlaneFailure> => {
   if (request.method !== "POST") {
     sendError(response, 405, "method_not_allowed", "method is not allowed")
     return Effect.void
@@ -234,16 +299,22 @@ const handleClaim = (
       typeof input.ttlMs !== "number"
     ) {
       return yield* Effect.fail(
-        serverError("request_failed", "worker claim payload is invalid"),
+        serverError("invalid_payload", "worker claim payload is invalid"),
       )
     }
-    yield* Effect.catchAll(store.recoverExpired(Date.now(), 0), () =>
-      Effect.void,
-    )
+    // Sampled once and used for both steps, so a lease this claim recovers
+    // cannot be judged expired against one instant and re-leased against a
+    // later one.
+    const now = yield* Clock.currentTimeMillis
+    // Expired leases are returned to their next attempt before the queue is
+    // read, so an abandoned attempt becomes claimable without a separate
+    // sweeper. A recovery that fails leaves the queue as it was rather than
+    // failing the claim that only depends on it opportunistically.
+    yield* Effect.catchAll(store.recoverExpired(now, 0), () => Effect.void)
     const job = yield* store.claimDue(
       input.workerId,
       randomUUID(),
-      Date.now(),
+      now,
       input.ttlMs,
     )
     if (job === undefined) response.writeHead(204).end()
@@ -251,12 +322,21 @@ const handleClaim = (
   })
 }
 
+/**
+ * Publishes what a leased worker reports. The handler owns only the request
+ * shape: which transition a harness handoff drives, and whether it belongs to
+ * the live attempt, is decided by the job runtime inside the store
+ * transaction, so its typed failures pick the response status. The reply is
+ * the record the transition produced, so a blocked attempt that still has
+ * retries answers with the retrying job and the summary it was left with,
+ * rather than reading as a finished one.
+ */
 const handleComplete = (
   id: string,
   request: IncomingMessage,
   response: ServerResponse,
-  store: SqliteJobStore,
-): Effect.Effect<void, unknown> => {
+  store: ControlPlaneJobStore,
+): Effect.Effect<void, ControlPlaneFailure> => {
   if (request.method !== "POST") {
     sendError(response, 405, "method_not_allowed", "method is not allowed")
     return Effect.void
@@ -275,37 +355,27 @@ const handleComplete = (
         typeof input.leaseToken !== "string"
       ) {
         return yield* Effect.fail(
-          serverError("request_failed", "typed harness handoff is required"),
+          serverError("invalid_payload", "typed harness handoff is required"),
         )
       }
       const handoff = yield* Effect.mapError(
         decodeHarnessReviewHandoff(input.handoff),
-        () => serverError("request_failed", "harness handoff is invalid"),
+        // The decoder names the field an untrusted caller got wrong, so the
+        // reply stays generic; the job runtime keeps the detail internally.
+        () => serverError("invalid_payload", "harness handoff is invalid"),
       )
-      if (
-        !harnessHandoffMatchesAttempt(
-          handoff,
-          current.spec.payload,
-          current.id,
-          current.attempt,
-        )
-      ) {
-        return yield* Effect.fail(
-          serverError("request_failed", "harness handoff does not match the live attempt"),
-        )
-      }
-      if (handoff.status === "blocked" || handoff.status === "failed") {
-        return yield* Effect.fail(
-          serverError("request_failed", "unsuccessful harness handoff cannot complete a job"),
-        )
-      }
-      const job = yield* store.complete(
-        id,
-        input.leaseToken,
-        Date.now(),
-        `harness ${handoff.status}: ${handoff.assessment}`,
-        { kind: "harness.review", handoff },
-      )
+      const leaseToken = input.leaseToken
+      const summary = `harness ${handoff.status}: ${handoff.assessment}`
+      const result = { kind: "harness.review" as const, handoff }
+      // Sampled against the transaction it is handed to, so a cancellation
+      // that commits while the handoff is being decoded cannot make this
+      // timestamp precede the state the transaction reads.
+      const now = yield* Clock.currentTimeMillis
+      const publish =
+        handoff.status === "blocked" || handoff.status === "failed"
+          ? store.fail(id, leaseToken, now, HARNESS_RETRY_DELAY_MS, summary, result)
+          : store.complete(id, leaseToken, now, summary, result)
+      const job = yield* publish
       sendJson(response, 200, { job })
       return
     }
@@ -316,25 +386,27 @@ const handleComplete = (
       typeof input.summary !== "string"
     ) {
       return yield* Effect.fail(
-        serverError("request_failed", "job completion payload is invalid"),
+        serverError("invalid_payload", "job completion payload is invalid"),
       )
     }
-    const job = yield* store.complete(
-      id,
-      input.leaseToken,
-      Date.now(),
-      input.summary,
-    )
+    const now = yield* Clock.currentTimeMillis
+    const job = yield* store.complete(id, input.leaseToken, now, input.summary)
     sendJson(response, 200, { job })
   })
 }
 
+/**
+ * Reports an attempt the leased worker could not carry to a handoff. The
+ * retry policy is the store's: this route only states that the attempt ended
+ * and how long to wait, so an exhausted job fails and a retryable one is
+ * rescheduled without the caller deciding which.
+ */
 const handleFail = (
   id: string,
   request: IncomingMessage,
   response: ServerResponse,
-  store: SqliteJobStore,
-): Effect.Effect<void, unknown> => {
+  store: ControlPlaneJobStore,
+): Effect.Effect<void, ControlPlaneFailure> => {
   if (request.method !== "POST") {
     sendError(response, 405, "method_not_allowed", "method is not allowed")
     return Effect.void
@@ -353,13 +425,14 @@ const handleFail = (
       typeof input.summary !== "string"
     ) {
       return yield* Effect.fail(
-        serverError("request_failed", "job failure payload is invalid"),
+        serverError("invalid_payload", "job failure payload is invalid"),
       )
     }
+    const now = yield* Clock.currentTimeMillis
     const job = yield* store.fail(
       id,
       input.leaseToken,
-      Date.now(),
+      now,
       input.retryDelayMs,
       input.summary,
     )
@@ -401,14 +474,15 @@ const handleDashboard = (
 const handleRequest = (
   request: IncomingMessage,
   response: ServerResponse,
-  store: SqliteJobStore,
+  store: ControlPlaneJobStore,
+  home: CanonicalPath,
   dashboardDirectory?: string,
 ): Effect.Effect<void> => {
-  const route = Effect.try({
+  const route: Effect.Effect<string, ControlPlaneFailure> = Effect.try({
     try: () => new URL(request.url ?? "/", "http://127.0.0.1").pathname,
     catch: () => serverError("request_failed", "request URL is malformed"),
   })
-  return Effect.catchAll(
+  return Effect.catchTags(
     Effect.flatMap(route, (path) => {
       if (path === "/v1/health") {
         if (request.method !== "GET") {
@@ -422,7 +496,8 @@ const handleRequest = (
         })
         return Effect.void
       }
-      if (path === "/v1/jobs") return handleJobs(request, response, store)
+      if (path === "/v1/jobs")
+        return handleJobs(request, response, store, home)
       if (path === "/v1/worker/claim")
         return handleClaim(request, response, store)
       const completeMatch = /^\/v1\/jobs\/([A-Za-z0-9][A-Za-z0-9:._-]{0,127})\/complete$/u.exec(path)
@@ -443,7 +518,12 @@ const handleRequest = (
       sendError(response, 404, "not_found", "route was not found")
       return Effect.void
     }),
-    (error) => internalFailure(response, error),
+    {
+      ControlPlaneServerError: (failure) =>
+        sendRequestFailure(response, failure),
+      JobRuntimeError: (failure) => sendRuntimeFailure(response, failure),
+      JobStoreError: (failure) => sendStoreFailure(response, failure),
+    },
   )
 }
 
@@ -480,6 +560,7 @@ export const startControlPlaneServer = (
           request,
           response,
           options.store,
+          options.home,
           options.dashboardDirectory,
         ),
       )
@@ -497,8 +578,8 @@ export const startControlPlaneServer = (
     server.listen(options.port, options.host, () => {
       if (settled) return
       settled = true
-      const address = server.address() as AddressInfo | null
-      if (!address) {
+      const address = server.address()
+      if (address === null || typeof address === "string") {
         server.close()
         resume(
           Effect.fail(

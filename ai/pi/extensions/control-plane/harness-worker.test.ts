@@ -4,26 +4,82 @@ import { tmpdir } from "node:os"
 import { join } from "node:path"
 import test from "node:test"
 import { Effect } from "effect"
-import type { HarnessLaunchPlan } from "./harness-adapter.ts"
-import type { HarnessReviewHandoff } from "./harness-protocol.ts"
+import {
+  toCanonicalWorkspaceRoot,
+  type HarnessLaunchPlan,
+  type RegisteredWorkspaceRoots,
+} from "./harness-adapter.ts"
+import {
+  LAUNCH_ENVIRONMENT_ALLOWLIST,
+  type LaunchEnvironment,
+} from "./harness-launch.ts"
+import {
+  toCommitSha,
+  toJobId,
+  type CommitSha,
+  type HarnessReviewHandoff,
+  type JobId,
+} from "./harness-protocol.ts"
 import {
   HarnessWorkerError,
   runNextHarnessAttempt,
   spawnHarnessExecutor,
   type HarnessSpawner,
 } from "./harness-worker.ts"
+import { canonicalPath, type CanonicalPath } from "./review-duty-profile.ts"
 import { startControlPlaneServer } from "./server.ts"
 import { makeSqliteJobStore, type SqliteJobStore } from "./sqlite-job-store.ts"
+
+const canonical = (value: string): CanonicalPath => {
+  const path = canonicalPath(value)
+  if (path === undefined) throw new Error(`fixture is not canonical: ${value}`)
+  return path
+}
+
+const commit = (value: string): CommitSha => {
+  const sha = toCommitSha(value)
+  if (sha === undefined) throw new Error(`fixture is not a commit sha: ${value}`)
+  return sha
+}
+
+const jobIdentifier = (value: string): JobId => {
+  const id = toJobId(value)
+  if (id === undefined)
+    throw new Error(`fixture is not a job identifier: ${value}`)
+  return id
+}
+
+const workspaceRoot = (value: string): RegisteredWorkspaceRoots => {
+  const root = toCanonicalWorkspaceRoot(value)
+  if (root === undefined)
+    throw new Error(`fixture is not a workspace root: ${value}`)
+  return [root]
+}
+
+/**
+ * The home the fixtures' checkout is registered under. It is stated here
+ * rather than read from the machine, so the payloads below name a registered
+ * checkout no matter which account runs the suite.
+ */
+const home = canonical("/Users/example")
+
+const registeredCheckout = `${home}/code/0xgleb/example`
+
+const environment: LaunchEnvironment = {
+  HOME: home,
+  PATH: "/usr/bin:/bin",
+  ANTHROPIC_API_KEY: "sk-ant-provider-secret",
+}
 
 const withServer = async (
   run: (origin: string, store: SqliteJobStore) => Promise<void>,
 ): Promise<void> => {
   const root = await mkdtemp(join(tmpdir(), "pi-harness-worker-test-"))
   const store = await Effect.runPromise(
-    makeSqliteJobStore(join(root, "jobs.sqlite")),
+    makeSqliteJobStore(join(root, "jobs.sqlite"), home),
   )
   const server = await Effect.runPromise(
-    startControlPlaneServer({ host: "127.0.0.1", port: 0, store }),
+    startControlPlaneServer({ host: "127.0.0.1", port: 0, store, home }),
   )
   try {
     await run(server.origin, store)
@@ -34,7 +90,7 @@ const withServer = async (
   }
 }
 
-const headSha = "a".repeat(40)
+const headSha = commit("a".repeat(40))
 
 const harnessEnqueueBody = {
   kind: "harness.review",
@@ -47,7 +103,7 @@ const harnessEnqueueBody = {
     pullRequest: 7,
     kind: "own",
     inputHeadSha: headSha,
-    repositoryRoot: "/Users/example/code/0xgleb/example",
+    repositoryRoot: registeredCheckout,
     isolation: "read-only",
   },
   runAt: 0,
@@ -55,18 +111,20 @@ const harnessEnqueueBody = {
   idempotencyKey: "harness:personal:example:7:head",
 }
 
-const enqueueHarnessJob = async (origin: string): Promise<string> => {
+const enqueueHarnessJob = async (origin: string): Promise<JobId> => {
   const response = await fetch(`${origin}/v1/jobs`, {
     method: "POST",
     headers: { "content-type": "application/json" },
     body: JSON.stringify(harnessEnqueueBody),
   })
   assert.equal(response.status, 201)
-  return ((await response.json()) as { job: { id: string } }).job.id
+  return jobIdentifier(
+    ((await response.json()) as { job: { id: string } }).job.id,
+  )
 }
 
 const handoffFor = (
-  jobId: string,
+  jobId: JobId,
   overrides: Partial<HarnessReviewHandoff> = {},
 ): HarnessReviewHandoff => ({
   protocolVersion: 1,
@@ -106,18 +164,24 @@ type HarnessExecutionResult =
   | { readonly kind: "spawned"; readonly exitCode: number; readonly stdout: string }
   | { readonly kind: "spawn_error"; readonly message: string }
 
-const workerOptions = (origin: string, spawner: HarnessSpawner) => ({
+const workerOptions = (
+  origin: string,
+  spawner: HarnessSpawner,
+  allowedRoots: RegisteredWorkspaceRoots = workspaceRoot(registeredCheckout),
+) => ({
   origin,
   workerId: "harness-supervisor",
   leaseTtlMs: 90_000,
   retryDelayMs: 0,
-  allowedRoots: ["/Users/example/code/0xgleb/example"],
+  allowedRoots,
+  home,
+  environment,
   spawner,
 })
 
 const jobState = async (
   origin: string,
-  jobId: string,
+  jobId: JobId,
 ): Promise<{ state: string; result?: { handoff: { jobId: string } } }> => {
   const response = await fetch(`${origin}/v1/jobs`)
   const jobs = (await response.json()) as {
@@ -202,9 +266,9 @@ test("blocked handoffs fail the attempt instead of completing the job", async ()
   }))
 
 test("mismatched, malformed, and oversized executor output fails the attempt", async () => {
-  const cases: ReadonlyArray<(jobId: string) => string> = [
+  const cases: ReadonlyArray<(jobId: JobId) => string> = [
     (jobId) =>
-      JSON.stringify(handoffFor(jobId, { inputHeadSha: "b".repeat(40) })),
+      JSON.stringify(handoffFor(jobId, { inputHeadSha: commit("b".repeat(40)) })),
     () => "not json at all",
     (jobId) => JSON.stringify({ ...handoffFor(jobId), prompt: "leaked" }),
     (jobId) => `${JSON.stringify(handoffFor(jobId))}${" ".repeat(70_000)}x`,
@@ -276,7 +340,9 @@ test("non-harness jobs are left to lease expiry instead of being executed", asyn
       }),
     })
     assert.equal(response.status, 201)
-    const jobId = ((await response.json()) as { job: { id: string } }).job.id
+    const jobId = jobIdentifier(
+      ((await response.json()) as { job: { id: string } }).job.id,
+    )
     const calls: HarnessLaunchPlan[] = []
     const outcome = await Effect.runPromise(
       runNextHarnessAttempt(
@@ -291,7 +357,7 @@ test("non-harness jobs are left to lease expiry instead of being executed", asyn
     assert.equal((await jobState(origin, jobId)).state, "leased")
   }))
 
-test("payload roots outside the registered workspaces fail before any spawn", async () =>
+test("payload roots the enqueue boundary does not recognise never become jobs", async () =>
   withServer(async (origin) => {
     const response = await fetch(`${origin}/v1/jobs`, {
       method: "POST",
@@ -305,14 +371,19 @@ test("payload roots outside the registered workspaces fail before any spawn", as
         idempotencyKey: "harness:personal:example:outside",
       }),
     })
-    assert.equal(response.status, 201)
-    const jobId = ((await response.json()) as { job: { id: string } }).job.id
+    assert.equal(response.status, 400)
+  }))
+
+test("payload roots outside this worker's workspaces fail before any spawn", async () =>
+  withServer(async (origin) => {
+    const jobId = await enqueueHarnessJob(origin)
     const calls: HarnessLaunchPlan[] = []
     const outcome = await Effect.runPromise(
       runNextHarnessAttempt(
         workerOptions(
           origin,
           stubSpawner(() => ({ kind: "spawned", exitCode: 0, stdout: "" }), calls),
+          workspaceRoot(`${home}/code/0xgleb/other`),
         ),
       ),
     )
@@ -355,9 +426,9 @@ test("malformed control-plane claim responses surface as typed request failures"
 
 const executionPlan = (argv: readonly string[]): HarnessLaunchPlan => ({
   lane: "cursor-subscription",
-  cwd: "/",
+  cwd: canonical(tmpdir()),
   argv,
-  scrubbedEnvironment: [],
+  environmentAllowlist: LAUNCH_ENVIRONMENT_ALLOWLIST,
 })
 
 test("the process spawner captures bounded stdout and exit codes", async () => {

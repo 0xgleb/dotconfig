@@ -3,15 +3,20 @@ import { Data, Effect } from "effect"
 import {
   buildHarnessLaunchPlan,
   type HarnessLaunchPlan,
+  type RegisteredWorkspaceRoots,
 } from "./harness-adapter.ts"
+import type { LaunchEnvironment } from "./harness-launch.ts"
 import {
   decodeHarnessReviewHandoff,
   decodeHarnessReviewPayload,
-  harnessHandoffMatchesAttempt,
-  isSafeHarnessJobId,
+  harnessHandoffAttemptMatch,
+  includesAny,
+  toJobId,
   type HarnessReviewHandoff,
   type HarnessReviewPayload,
+  type JobId,
 } from "./harness-protocol.ts"
+import type { CanonicalPath } from "./review-duty-profile.ts"
 
 export interface HarnessExecution {
   readonly exitCode: number
@@ -24,11 +29,11 @@ export type HarnessSpawner = (
 
 export type HarnessAttemptOutcome =
   | { readonly outcome: "idle" }
-  | { readonly outcome: "unsupported"; readonly jobId: string }
-  | { readonly outcome: "completed"; readonly jobId: string }
+  | { readonly outcome: "unsupported"; readonly jobId: JobId }
+  | { readonly outcome: "completed"; readonly jobId: JobId }
   | {
       readonly outcome: "failed"
-      readonly jobId: string
+      readonly jobId: JobId
       readonly reason: string
     }
 
@@ -37,7 +42,16 @@ export interface HarnessWorkerOptions {
   readonly workerId: string
   readonly leaseTtlMs: number
   readonly retryDelayMs: number
-  readonly allowedRoots: readonly string[]
+  /** Checkout roots this worker is registered to launch a harness in. */
+  readonly allowedRoots: RegisteredWorkspaceRoots
+  /**
+   * Home the claimed payload's checkout is admitted against. The worker is
+   * handed one rather than reading the environment, so the home a payload was
+   * enqueued against is the home it is launched against.
+   */
+  readonly home: CanonicalPath
+  /** The launcher's own environment, filtered to the launch allowlist. */
+  readonly environment: LaunchEnvironment
   readonly spawner: HarnessSpawner
 }
 
@@ -62,7 +76,7 @@ export const runNextHarnessAttempt = (
     if (claimed === undefined) return { outcome: "idle" } as const
     if (claimed.kind !== "harness.review")
       return { outcome: "unsupported", jobId: claimed.id } as const
-    const attempt = yield* prepareAttempt(claimed, options.allowedRoots)
+    const attempt = yield* prepareAttempt(claimed, options)
     if (attempt.kind === "rejected")
       return yield* failAttempt(options, claimed, attempt.reason)
     const execution = yield* Effect.either(options.spawner(attempt.plan))
@@ -85,11 +99,7 @@ export const runNextHarnessAttempt = (
     )
     if (handoff._tag === "Left")
       return yield* failAttempt(options, claimed, handoff.left.message)
-    if (
-      !SUCCESSFUL_HANDOFF_STATUSES.includes(
-        handoff.right.status as (typeof SUCCESSFUL_HANDOFF_STATUSES)[number],
-      )
-    ) {
+    if (!includesAny(SUCCESSFUL_HANDOFF_STATUSES, handoff.right.status)) {
       return yield* failAttempt(
         options,
         claimed,
@@ -159,7 +169,7 @@ export const spawnHarnessExecutor = (timeoutMs: number): HarnessSpawner =>
     })
 
 interface ClaimedJob {
-  readonly id: string
+  readonly id: JobId
   readonly attempt: number
   readonly leaseToken: string
   readonly kind: string
@@ -213,11 +223,14 @@ const claimDueJob = (
     if (response.status !== 200)
       return yield* Effect.fail(requestFailure("worker claim was rejected"))
     const body = yield* readJson(response, "/v1/worker/claim")
+    const id =
+      isRecord(body) && isRecord(body.job) && typeof body.job.id === "string"
+        ? toJobId(body.job.id)
+        : undefined
     if (
       !isRecord(body) ||
       !isRecord(body.job) ||
-      typeof body.job.id !== "string" ||
-      !isSafeHarnessJobId(body.job.id) ||
+      id === undefined ||
       !Number.isSafeInteger(body.job.attempt) ||
       typeof body.job.leaseToken !== "string" ||
       body.job.leaseToken.length < 1 ||
@@ -229,7 +242,7 @@ const claimDueJob = (
       )
     }
     return {
-      id: body.job.id,
+      id,
       attempt: Number(body.job.attempt),
       leaseToken: body.job.leaseToken,
       kind: body.job.spec.kind,
@@ -247,11 +260,11 @@ type PreparedAttempt =
 
 const prepareAttempt = (
   claimed: ClaimedJob,
-  allowedRoots: readonly string[],
+  options: HarnessWorkerOptions,
 ): Effect.Effect<PreparedAttempt, HarnessWorkerError> =>
   Effect.gen(function* () {
     const payload = yield* Effect.either(
-      decodeHarnessReviewPayload(claimed.payload),
+      decodeHarnessReviewPayload(claimed.payload, options.home),
     )
     if (payload._tag === "Left")
       return { kind: "rejected", reason: "stored harness payload is invalid" } as const
@@ -260,7 +273,9 @@ const prepareAttempt = (
         claimed.payload,
         claimed.id,
         claimed.attempt,
-        allowedRoots,
+        options.allowedRoots,
+        options.home,
+        options.environment,
       ),
     )
     if (plan._tag === "Left")
@@ -277,7 +292,7 @@ const MAX_HANDOFF_LINE_BYTES = 8_192
 const extractHandoff = (
   stdout: string,
   payload: HarnessReviewPayload,
-  jobId: string,
+  jobId: JobId,
   attempt: number,
 ): Effect.Effect<HarnessReviewHandoff, HarnessWorkerError> => {
   if (Buffer.byteLength(stdout, "utf8") > MAX_EXECUTOR_STDOUT_BYTES)
@@ -312,10 +327,23 @@ const extractHandoff = (
               message: "executor handoff is malformed",
             }),
         ),
-        (handoff) =>
-          harnessHandoffMatchesAttempt(handoff, payload, jobId, attempt)
+        (handoff) => {
+          const match = harnessHandoffAttemptMatch(
+            handoff,
+            payload,
+            jobId,
+            attempt,
+          )
+          // The matcher names the binding that failed, so a rejected attempt
+          // records which invariant the executor broke rather than a single
+          // undiagnosable refusal. The name is one of a fixed set of literals,
+          // so nothing the executor wrote reaches the summary.
+          return match.outcome === "matched"
             ? Effect.succeed(handoff)
-            : executorFailure("executor handoff does not match the attempt"),
+            : executorFailure(
+                `executor handoff does not match the attempt: ${match.mismatch}`,
+              )
+        },
       ),
   )
 }
