@@ -1,6 +1,7 @@
 import assert from "node:assert/strict";
 import test from "node:test";
 import { hasMultipleLinks, ownerRelayChunks } from "./owner-telegram.ts";
+import { authorizeOwnerRelay } from "./protocol.ts";
 
 test("a report pointing at several links suppresses the preview card", () => {
   const [many] = ownerRelayChunks(
@@ -33,6 +34,30 @@ test("relayed owner reports render structure instead of arriving as prose", () =
     "links must reach Telegram as anchors so a PR is one tap away",
   );
   assert.ok(chunk?.includes("\n- issuance 237 restack is unowned"), "line structure survives");
+});
+
+test("the owner sees which agent produced a relay, rendered rather than as punctuation", () => {
+  const authorization = authorizeOwnerRelay({
+    body: "PR 1091 is green and waiting on you",
+    senderId: "claude-yielduck-receiver",
+    dispatcherId: "pi-dispatch-01",
+    roster: [
+      {
+        id: "claude-yielduck-receiver",
+        label: "Claude Code - yielduck receiver",
+        cwd: "/Users/example/code/dataclique/yielduck",
+      },
+    ],
+  });
+  assert.equal(authorization.outcome, "authorized");
+  const [chunk] = ownerRelayChunks(
+    authorization.outcome === "authorized" ? authorization.text : "",
+  );
+  assert.ok(
+    chunk?.startsWith("Relay from <code>claude-yielduck-receiver</code>:"),
+    "an attributed relay must open with the sender the owner can hold to account",
+  );
+  assert.ok(chunk?.includes("PR 1091 is green and waiting on you"));
 });
 
 test("relayed reports escape owner text that would otherwise be markup", () => {

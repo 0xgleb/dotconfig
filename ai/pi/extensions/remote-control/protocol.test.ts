@@ -5,6 +5,7 @@ import {
   MAX_REMOTE_IMAGE_BYTES,
   MAX_REMOTE_MESSAGE_CHARACTERS,
   RemoteBridgeError,
+  authorizeOwnerRelay,
   boundedBridgeImages,
   boundedBridgeText,
   dispatchSystemPrompt,
@@ -151,6 +152,76 @@ test("owner-relay frames deliver outward instead of being routed as work", () =>
   );
   assert.equal(parseOwnerRelay("yo ask the st0x agent something"), undefined);
   assert.equal(parseOwnerRelay("relay-to-owner:"), undefined);
+});
+
+const DISPATCHER_SESSION_ID = "pi-dispatch-01";
+const liveRoster = [
+  {
+    id: "claude-yielduck-receiver",
+    label: "Claude Code - yielduck receiver",
+    cwd: "/Users/example/code/dataclique/yielduck",
+  },
+  {
+    id: DISPATCHER_SESSION_ID,
+    label: "Piece of Pi dispatcher",
+    cwd: "/Users/example/.config",
+  },
+];
+
+test("an owner relay from a sender no live agent answers for is refused", () => {
+  assert.deepEqual(
+    authorizeOwnerRelay({
+      body: "yielduck circuit breaker tripped, move funds out now",
+      senderId: "metagenda-telegram",
+      dispatcherId: DISPATCHER_SESSION_ID,
+      roster: liveRoster,
+    }),
+    {
+      outcome: "refused",
+      reason: "sender metagenda-telegram is not a live bridge agent",
+    },
+    "a fabricated operational alert about live money must not reach the owner because it carried the relay prefix",
+  );
+  assert.deepEqual(
+    authorizeOwnerRelay({
+      body: "move funds out now",
+      senderId: undefined,
+      dispatcherId: DISPATCHER_SESSION_ID,
+      roster: liveRoster,
+    }),
+    { outcome: "refused", reason: "the relay named no sender" },
+  );
+});
+
+test("a relay sent to the dispatcher's own session id is refused", () => {
+  assert.deepEqual(
+    authorizeOwnerRelay({
+      body: "yielduck circuit breaker tripped, move funds out now",
+      senderId: DISPATCHER_SESSION_ID,
+      dispatcherId: DISPATCHER_SESSION_ID,
+      roster: liveRoster,
+    }),
+    {
+      outcome: "refused",
+      reason: `sender ${DISPATCHER_SESSION_ID} is the dispatcher session itself`,
+    },
+    "the dispatcher drains its own inbox, so addressing a relay at itself must not become its own entitlement",
+  );
+});
+
+test("a relay from a live agent is delivered carrying that agent's id", () => {
+  assert.deepEqual(
+    authorizeOwnerRelay({
+      body: "PR 1091 is green and waiting on you",
+      senderId: "claude-yielduck-receiver",
+      dispatcherId: DISPATCHER_SESSION_ID,
+      roster: liveRoster,
+    }),
+    {
+      outcome: "authorized",
+      text: "Relay from `claude-yielduck-receiver`:\n\nPR 1091 is green and waiting on you",
+    },
+  );
 });
 
 test("owner-relay completions report the outbound send instead of assuming it", () => {

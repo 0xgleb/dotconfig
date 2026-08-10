@@ -38,6 +38,7 @@ Assets protected by this boundary are:
 | Threat | Concrete abuse | Mitigation and evidence |
 | --- | --- | --- |
 | Spoofing | A different Telegram user or stale process impersonates the owner/session. | Metagenda checks the numeric owner ID; the bridge targets an exact live session ID; owner-only filesystem modes protect the local mailbox. |
+| Spoofing | A local process frames a fabricated operational alert as an outward owner relay and the owner reads it as a fleet report. | The dispatch drain delivers a relay only for a sender on the live bridge roster that is not the dispatcher session, and the delivered text names that sender. |
 | Tampering | A duplicate, malformed, oversized, expired, or concurrently claimed message changes lifecycle state. | Bounded decoders, requester/dedupe uniqueness, expiry, transactions, one-time claim tokens, and guarded terminal transitions fail closed. |
 | Repudiation | A message is delivered twice or its outcome cannot be correlated. | Durable message IDs, requester dedupe keys, timestamps, typed terminal outcomes, and one correlated response make lifecycle state inspectable. |
 | Information disclosure | A message obtains tools, credentials, raw registry internals, or unrestricted model output. | The Metagenda-facing CLI exposes only bounded labels/status, remote turns have zero active tools, database rows contain no secrets, and responses are bounded text. |
@@ -53,6 +54,10 @@ Assets protected by this boundary are:
 - Delivery requires an unexpired exact session and an atomic claim token.
 - Duplicate requester/dedupe pairs do not create a second model turn during the
   message retention window.
+- An outward owner relay reaches Telegram only for a claimed message whose
+  requester is a live roster agent other than the dispatcher session, carries
+  that requester's id, and is otherwise completed as a recorded refusal naming
+  the reason rather than dropped or delivered anyway.
 - Disabling the bridge prevents new enqueue/claim operations without changing
   ordinary local Pi behavior.
 - Unknown protocol versions, malformed rows, unsafe characters, and invalid

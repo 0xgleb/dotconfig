@@ -402,6 +402,64 @@ export const parseOwnerRelay = (text: string): string | undefined => {
   return body ? body : undefined;
 };
 
+export interface OwnerRelayRequest {
+  readonly body: string;
+  readonly senderId: string | undefined;
+  readonly dispatcherId: string;
+  readonly roster: readonly RosterAgent[];
+}
+
+export type OwnerRelayAuthorization =
+  | { readonly outcome: "authorized"; readonly text: string }
+  | { readonly outcome: "refused"; readonly reason: string };
+
+/**
+ * Relaying to the owner is privileged: the body lands in the owner's Telegram
+ * as a fleet report and the owner acts on it, so carrying the relay frame
+ * cannot itself be the authority. Any local process can enqueue a bridge
+ * message naming a session id it read off `pi-bridge agents`, which is how a
+ * fabricated operational alert would reach the owner unchallenged.
+ *
+ * Entitlement is being a live roster agent other than the dispatcher. The
+ * dispatcher drains its own inbox, so accepting its own id would let a lane
+ * relay anything by addressing the message to the session about to deliver it.
+ * A relay that clears the gate is attributed, because an authorized sender is
+ * still only one agent speaking and must not read as the system.
+ */
+export const authorizeOwnerRelay = (
+  request: OwnerRelayRequest,
+): OwnerRelayAuthorization => {
+  const senderId = request.senderId?.trim();
+  if (!senderId) {
+    return { outcome: "refused", reason: "the relay named no sender" };
+  }
+  if (senderId === request.dispatcherId) {
+    return {
+      outcome: "refused",
+      reason: `sender ${senderId} is the dispatcher session itself`,
+    };
+  }
+  if (!request.roster.some((agent) => agent.id === senderId)) {
+    return {
+      outcome: "refused",
+      reason: `sender ${senderId} is not a live bridge agent`,
+    };
+  }
+  return {
+    outcome: "authorized",
+    text: attributedOwnerRelay(senderId, request.body),
+  };
+};
+
+/**
+ * The id, never the roster label: labels are chosen by whoever registered the
+ * agent, and a label is exactly what a lane would pick to look like the
+ * system. Roster ids came through `boundedIdentifier`, so an attributed id
+ * holds no backtick and renders as inline code verbatim.
+ */
+const attributedOwnerRelay = (senderId: string, body: string): string =>
+  `Relay from \`${senderId}\`:\n\n${body}`;
+
 export type OwnerRelayDelivery =
   | { readonly outcome: "delivered" }
   | { readonly outcome: "undelivered"; readonly reason: string };

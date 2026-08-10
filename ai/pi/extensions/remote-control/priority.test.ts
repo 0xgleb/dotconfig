@@ -34,7 +34,7 @@ test("routing turns roster known projects whose receiver holds no live lease", (
 test("owner-relay frames reach Telegram before the bridge message completes", () => {
   assert.match(
     source,
-    /const relay = parseOwnerRelay\(message\.text\);[\s\S]*?deliverOwnerRelay\(relay\)[\s\S]*?store\.complete\(\{/,
+    /const relay = parseOwnerRelay\(message\.text\);[\s\S]*?relayToOwner\(authorization\.text\)[\s\S]*?store\.complete\(\{/,
   )
   assert.match(
     source,
@@ -43,6 +43,23 @@ test("owner-relay frames reach Telegram before the bridge message completes", ()
   assert.match(source, /response: ownerRelayCompletion\(relay, delivery\),/)
   assert.doesNotMatch(source, /response: relay,/)
   assert.doesNotMatch(source, /Relayed to owner on Telegram/)
+})
+
+test("an owner relay is only sent for a sender the live roster answers for", () => {
+  assert.match(source, /requesterId: claimed\.right\.requesterId,/)
+  assert.match(
+    source,
+    /const relay = parseOwnerRelay\(message\.text\);[\s\S]*?authorizeOwnerRelay\(\{[\s\S]*?senderId: message\.requesterId,[\s\S]*?dispatcherId: ctx\.sessionManager\.getSessionId\(\),[\s\S]*?roster: roster\.right,/,
+  )
+  assert.match(
+    source,
+    /authorization\.outcome === "refused"[\s\S]*?outcome: "undelivered", reason: authorization\.reason/,
+  )
+  assert.doesNotMatch(
+    source,
+    /deliverOwnerRelay\(relay\)/,
+    "the raw relay body must never reach Telegram unauthorized and unattributed",
+  )
 })
 
 test("owner pane input on the dispatch lane is enqueued instead of answered freehand", () => {

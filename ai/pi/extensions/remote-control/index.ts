@@ -52,6 +52,7 @@ import {
   BRIDGE_AGENT_TTL_MS,
   BRIDGE_MESSAGE_TTL_MS,
   RemoteBridgeError,
+  authorizeOwnerRelay,
   dispatchSystemPrompt,
   finalAssistantText,
   mechanicalDispatchCompaction,
@@ -66,6 +67,7 @@ import {
   remoteTurnContent,
   trimDispatchContext,
   type OutcomeEnvelope,
+  type OwnerRelayAuthorization,
   type OwnerRelayDelivery,
   type RemoteFailure,
   type RemoteMessage,
@@ -81,6 +83,13 @@ const DISPATCH_CONTEXT_BUDGET_CHARS = 100_000;
 interface ClaimedBridgeMessage {
   readonly id: string;
   readonly claimToken: string;
+  /**
+   * Who put the message on the bridge. Both privileged frames the drain acts
+   * on - completing a delegated request and relaying to the owner - are only
+   * as trustworthy as their sender, so the claim result's requester travels
+   * with the message instead of being dropped at the boundary.
+   */
+  readonly requesterId: string;
   readonly text: string;
 }
 
@@ -119,7 +128,7 @@ const safeDeliveryError = (error: OwnerRelayDeliveryError): string =>
   `${error.code}: ${error.message}`.slice(0, 160);
 
 export default function remoteControl(pi: ExtensionAPI): void {
-  registerRuntimeVersion(pi, "remote-control", "2026.08.03.32");
+  registerRuntimeVersion(pi, "remote-control", "2026.08.03.33");
   const store = makeRemoteBridgeStore(
     remoteBridgeDatabasePath(process.env.XDG_STATE_HOME, homedir()),
   );
@@ -489,6 +498,13 @@ export default function remoteControl(pi: ExtensionAPI): void {
     );
   };
 
+  const relayToOwner = async (text: string): Promise<OwnerRelayDelivery> => {
+    const sent = await run(deliverOwnerRelay(text));
+    return Either.isLeft(sent)
+      ? { outcome: "undelivered", reason: safeDeliveryError(sent.left) }
+      : { outcome: "delivered" };
+  };
+
   const sync = async (ctx: ExtensionContext): Promise<void> => {
     if (syncing) return;
     syncing = true;
@@ -574,6 +590,7 @@ export default function remoteControl(pi: ExtensionAPI): void {
           const message: ClaimedBridgeMessage = {
             id: claimed.right.id,
             claimToken: claimed.right.claimToken,
+            requesterId: claimed.right.requesterId,
             text: claimed.right.text,
           };
           const envelope = parseOutcomeEnvelope(message.text);
@@ -583,13 +600,25 @@ export default function remoteControl(pi: ExtensionAPI): void {
           }
           const relay = parseOwnerRelay(message.text);
           if (relay) {
-            const sent = await run(deliverOwnerRelay(relay));
-            const delivery: OwnerRelayDelivery = Either.isLeft(sent)
+            const roster = await run(store.listAgents(Date.now()));
+            // A roster we cannot read entitles nobody. Delivering anyway is the
+            // exact outcome the gate exists to stop, so an unreadable roster is
+            // a refusal that names itself rather than a fallback.
+            const authorization: OwnerRelayAuthorization = Either.isLeft(roster)
               ? {
-                  outcome: "undelivered",
-                  reason: safeDeliveryError(sent.left),
+                  outcome: "refused",
+                  reason: `bridge roster unreadable: ${safeError(roster.left)}`,
                 }
-              : { outcome: "delivered" };
+              : authorizeOwnerRelay({
+                  body: relay,
+                  senderId: message.requesterId,
+                  dispatcherId: ctx.sessionManager.getSessionId(),
+                  roster: roster.right,
+                });
+            const delivery: OwnerRelayDelivery =
+              authorization.outcome === "refused"
+                ? { outcome: "undelivered", reason: authorization.reason }
+                : await relayToOwner(authorization.text);
             const relayed = await run(
               store.complete({
                 messageId: message.id,
