@@ -629,7 +629,9 @@ const registryExtension: (pi: ExtensionAPI) => void = (pi) => {
          * events; it never executes queue work. Claiming there (including
          * stealing an expired lease) would hide the row from the receiver that
          * will actually run it, so the whole claim path is skipped on that lane
-         * while the session's own role lease keeps heartbeating above.
+         * even for a role it was told to hold explicitly. Session start already
+         * declines the managed role there, so this loop is normally empty on the
+         * lane; the guard covers a lease taken through the tool by hand.
          */
         const candidates: readonly RegistryRequest[] = isLocalDispatchProvider(
           ctx.model?.provider,
@@ -691,7 +693,22 @@ const registryExtension: (pi: ExtensionAPI) => void = (pi) => {
     }
   }
 
+  /**
+   * The role lease is what designates the single session that drains a
+   * project's queue, so the dispatch lane must never hold one. That lane runs
+   * pinned to ~/.config, which is a managed operational project, yet it is the
+   * one lane barred from claiming queue rows (see the candidate guard in
+   * `sync`). Holding the lease there gives the queue an owner the registry
+   * reports as live and healthy while nothing drains it: `store.claim` answers
+   * `already_owned` to the full-capability session that would, and requests
+   * carry no expiry, so the row stays queued indefinitely.
+   *
+   * Declining the role does not hide the lane. Fleet presence is published by
+   * `sync` through `store.heartbeatAgent`, which is independent of any lease, so
+   * the lane stays on the roster and remains addressable for routing.
+   */
   const autoClaimOperationalRole = async (ctx: ExtensionContext) => {
+    if (isLocalDispatchProvider(ctx.model?.provider)) return undefined
     const managed = managedOperationalRole(ctx.cwd, homedir())
     if (!managed) return undefined
     await run(
