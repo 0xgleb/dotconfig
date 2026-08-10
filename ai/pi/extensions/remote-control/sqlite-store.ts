@@ -70,6 +70,15 @@ export interface SyncRemoteQuestionsInput {
   readonly now: number;
 }
 
+export interface PublishQuestionInput {
+  readonly agentId: string;
+  readonly question: string;
+  readonly header?: string;
+  readonly guess?: string;
+  readonly options?: readonly RemoteQuestionOption[];
+  readonly now: number;
+}
+
 export interface QuestionRelayStatusInput {
   readonly agentId: string;
   readonly questionId: number;
@@ -128,9 +137,25 @@ export interface RemoteBridgeStore {
     enabled: boolean,
   ) => Effect.Effect<boolean, RemoteBridgeError>;
   readonly isEnabled: () => Effect.Effect<boolean, RemoteBridgeError>;
+  /**
+   * Reconciles the caller's COMPLETE question set for one agent: every row of
+   * that agent which the caller omitted and which is not `answered` is pruned.
+   * Only a caller that holds the whole set may use this.
+   */
   readonly syncQuestions: (
     input: SyncRemoteQuestionsInput,
   ) => Effect.Effect<void, RemoteBridgeError>;
+  /**
+   * Adds one question for an agent and touches no other row of that agent. A
+   * lane that can only name the question it is asking right now uses this;
+   * `syncQuestions` would read the single question as the agent's whole set
+   * and delete every card the lane had already put in front of the owner.
+   *
+   * The question id is allocated by the store, so it is never supplied.
+   */
+  readonly publishQuestion: (
+    input: PublishQuestionInput,
+  ) => Effect.Effect<BridgeQuestion, RemoteBridgeError>;
   readonly listPendingQuestions: (
     now: number,
   ) => Effect.Effect<readonly BridgeQuestion[], RemoteBridgeError>;
@@ -384,9 +409,11 @@ const boundedOptionalText = (
 ): string | undefined =>
   value === undefined ? undefined : boundedBridgeText(label, value, maximum);
 
-const boundedQuestionSnapshot = (
-  question: RemoteQuestionSnapshot,
-): RemoteQuestionSnapshot => {
+type RemoteQuestionDraft = Omit<RemoteQuestionSnapshot, "id" | "status">;
+
+const boundedQuestionDraft = (
+  question: RemoteQuestionDraft,
+): RemoteQuestionDraft => {
   const options = question.options?.map((option) => ({
     label: boundedBridgeText("question option label", option.label, 80),
     ...(option.description === undefined
@@ -407,8 +434,6 @@ const boundedQuestionSnapshot = (
   }
 
   return {
-    id: positiveSafeInteger("question id", question.id),
-    status: question.status,
     question: boundedBridgeText(
       "question",
       question.question,
@@ -423,6 +448,14 @@ const boundedQuestionSnapshot = (
     ...(options ? { options } : {}),
   };
 };
+
+const boundedQuestionSnapshot = (
+  question: RemoteQuestionSnapshot,
+): RemoteQuestionSnapshot => ({
+  id: positiveSafeInteger("question id", question.id),
+  status: question.status,
+  ...boundedQuestionDraft(question),
+});
 
 const initialize = (database: DatabaseSync): void => {
   database.exec(`PRAGMA busy_timeout = ${BUSY_TIMEOUT_MS};`);
@@ -612,6 +645,35 @@ const pruneTerminalMessages = (database: DatabaseSync, now: number): void => {
     )
     .run(Math.max(0, now - BRIDGE_MESSAGE_TTL_MS));
 };
+
+/**
+ * Question ids are allocated by the store rather than by the caller because
+ * the id is the durable half of the Telegram binding: the card round-trips it
+ * as an integer, and `bridge_question_relays` keeps a permanent
+ * (agent_id, question_id) record of every card the agent ever sent. Reusing an
+ * id would bind a fresh question to a retired card's relay history, so the next
+ * id is taken above every id the agent has ever used - live rows and retired
+ * relays alike - and never rewinds when rows are removed.
+ *
+ * Callers run this inside `transaction`, whose `BEGIN IMMEDIATE` makes this
+ * connection the only writer, so the read and the insert that follows it cannot
+ * interleave with another allocation. That is what makes the allocation exact
+ * instead of a guess that needs a retry loop.
+ */
+const nextQuestionId = (database: DatabaseSync, agentId: string): number =>
+  numberField(
+    rowFrom(
+      database
+        .prepare(
+          `SELECT MAX(
+             (SELECT COALESCE(MAX(question_id), 0) FROM bridge_questions WHERE agent_id = ?),
+             (SELECT COALESCE(MAX(question_id), 0) FROM bridge_question_relays WHERE agent_id = ?)
+           ) + 1 AS next_question_id`,
+        )
+        .get(agentId, agentId),
+    ),
+    "next_question_id",
+  );
 
 export const makeRemoteBridgeStore = (
   databasePath: string,
@@ -1020,6 +1082,48 @@ export const makeRemoteBridgeStore = (
               )
               .run(agentId, questionId);
           }
+        });
+      }),
+    ),
+  publishQuestion: (input) =>
+    attempt("Could not publish bridge question", () =>
+      withDatabase(databasePath, (database) => {
+        const agentId = boundedIdentifier("agent id", input.agentId);
+        const now = boundedTimestamp("now", input.now);
+        const draft = boundedQuestionDraft(input);
+        const optionsJson = draft.options
+          ? JSON.stringify(draft.options)
+          : null;
+
+        return transaction(database, () => {
+          const questionId = nextQuestionId(database, agentId);
+          database
+            .prepare(
+              `INSERT INTO bridge_questions (
+                 agent_id, question_id, question_text, header, guess, options_json,
+                 created_at, updated_at, status
+               ) VALUES (?, ?, ?, ?, ?, ?, ?, ?, 'pending')`,
+            )
+            .run(
+              agentId,
+              questionId,
+              draft.question,
+              draft.header ?? null,
+              draft.guess ?? null,
+              optionsJson,
+              now,
+              now,
+            );
+
+          return questionFromRow(
+            rowFrom(
+              database
+                .prepare(
+                  "SELECT * FROM bridge_questions WHERE agent_id = ? AND question_id = ?",
+                )
+                .get(agentId, questionId),
+            ),
+          );
         });
       }),
     ),

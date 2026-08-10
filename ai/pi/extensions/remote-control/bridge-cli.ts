@@ -154,24 +154,28 @@ const command = (args: readonly string[]): Effect.Effect<unknown, RemoteBridgeEr
         .map((label) => label.trim())
         .filter((label) => label.length > 0)
         .map((label) => ({ label }));
-      // Telegram binds its card to (agent_id, question_id), so the id has to
-      // be unique per agent and stable once relayed. Seconds since epoch is
-      // both, and stays inside the integer the card round-trips.
-      const questionId = Math.floor(Date.now() / 1_000);
-      yield* store.syncQuestions({
+      // A lane knows only the question it is asking right now, never the whole
+      // set of cards it has open, so it publishes one row and prunes nothing.
+      // `syncQuestions` is whole-set reconciliation and would read this single
+      // question as the lane's entire set, deleting the earlier cards - and
+      // with them the Telegram binding the owner's live card still points at.
+      //
+      // The store also allocates the id inside the inserting transaction.
+      // Telegram binds its card to (agent_id, question_id) and round-trips the
+      // id as an integer, and a clock-derived id was only as unique as its
+      // resolution: two asks from one lane in the same second landed on one id.
+      const published = yield* store.publishQuestion({
         agentId,
-        questions: [
-          {
-            id: questionId,
-            status: "pending" as const,
-            question: boundedBridgeText("question", question, MAX_REMOTE_MESSAGE_CHARACTERS),
-            ...(header ? { header } : {}),
-            ...(options.length > 0 ? { options } : {}),
-          },
-        ],
+        question,
+        ...(header ? { header } : {}),
+        ...(options.length > 0 ? { options } : {}),
         now: Date.now(),
       });
-      return { agentId, questionId, status: "pending" };
+      return {
+        agentId: published.agentId,
+        questionId: published.questionId,
+        status: "pending",
+      };
     });
   }
   if (action === "answer") {

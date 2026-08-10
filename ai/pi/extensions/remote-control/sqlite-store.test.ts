@@ -54,6 +54,11 @@ const enqueue = (
     }),
   );
 
+const publish = (store: RemoteBridgeStore, question: string, now: number) =>
+  Effect.runPromise(
+    store.publishQuestion({ agentId: "session-1", question, now }),
+  );
+
 test("a live bridge agent accepts one deduplicated durable message", async () =>
   withStore(async (store) => {
     await heartbeat(store);
@@ -516,6 +521,148 @@ test("an agent withdraws its own pending card but never one the owner answered",
       )?.answer,
       "Inbox verb",
     );
+  }));
+
+test("asking a second question leaves the first card standing", async () =>
+  withStore(async (store) => {
+    await heartbeat(store);
+    const first = await publish(store, "Which direction?", 2_000);
+    const second = await publish(store, "Ship the release?", 2_000);
+
+    assert.notEqual(second.questionId, first.questionId);
+    assert.deepEqual(
+      (await Effect.runPromise(store.listPendingQuestions(2_001))).map(
+        ({ questionId, question }) => ({ questionId, question }),
+      ),
+      [
+        { questionId: first.questionId, question: "Which direction?" },
+        { questionId: second.questionId, question: "Ship the release?" },
+      ],
+    );
+  }));
+
+test("publishing never disturbs an answer already delivered to the lane", async () =>
+  withStore(async (store) => {
+    await heartbeat(store);
+    const answered = await publish(store, "Ship the release?", 2_000);
+    await Effect.runPromise(
+      store.linkTelegramQuestion({
+        agentId: "session-1",
+        questionId: answered.questionId,
+        chatId: 42,
+        messageId: 77,
+        now: 2_001,
+      }),
+    );
+    await Effect.runPromise(
+      store.answerTelegramQuestion({
+        chatId: 42,
+        messageId: 77,
+        answer: "Ship",
+        now: 2_002,
+      }),
+    );
+    assert.equal(
+      (
+        await Effect.runPromise(
+          store.takeQuestionResolution({ agentId: "session-1", now: 2_003 }),
+        )
+      )?.answer,
+      "Ship",
+    );
+
+    const later = await publish(store, "Enable alerts?", 2_004);
+    assert.notEqual(later.questionId, answered.questionId);
+    // The delivered row still carries its Telegram binding, so it survived.
+    assert.equal(
+      await Effect.runPromise(
+        store.isQuestionRelayed({
+          agentId: "session-1",
+          questionId: answered.questionId,
+        }),
+      ),
+      true,
+    );
+    assert.deepEqual(
+      (await Effect.runPromise(store.listPendingQuestions(2_005))).map(
+        ({ questionId }) => questionId,
+      ),
+      [later.questionId],
+    );
+  }));
+
+test("a published question id never reuses one the agent has retired", async () =>
+  withStore(async (store) => {
+    await heartbeat(store);
+    const first = await publish(store, "Which direction?", 2_000);
+    await Effect.runPromise(
+      store.linkTelegramQuestion({
+        agentId: "session-1",
+        questionId: first.questionId,
+        chatId: 42,
+        messageId: 77,
+        now: 2_001,
+      }),
+    );
+    // Removing the row leaves the relay history behind; an id that rewound
+    // here would bind the next question to the retired card.
+    await Effect.runPromise(
+      store.syncQuestions({ agentId: "session-1", now: 2_002, questions: [] }),
+    );
+
+    const second = await publish(store, "Ship the release?", 2_003);
+    assert.ok(second.questionId > first.questionId);
+    assert.equal(
+      await Effect.runPromise(
+        store.isQuestionHistoricallyRelayed({
+          agentId: "session-1",
+          questionId: second.questionId,
+        }),
+      ),
+      false,
+    );
+  }));
+
+test("the whole-set caller still prunes the questions it stopped listing", async () =>
+  withStore(async (store) => {
+    await heartbeat(store);
+    await Effect.runPromise(
+      store.syncQuestions({
+        agentId: "session-1",
+        now: 2_000,
+        questions: [
+          { id: 1, status: "pending", question: "Which direction?" },
+          { id: 2, status: "pending", question: "Ship the release?" },
+        ],
+      }),
+    );
+    await Effect.runPromise(
+      store.syncQuestions({
+        agentId: "session-1",
+        now: 2_001,
+        questions: [
+          { id: 2, status: "pending", question: "Ship the release?" },
+        ],
+      }),
+    );
+
+    assert.deepEqual(
+      (await Effect.runPromise(store.listPendingQuestions(2_002))).map(
+        ({ questionId }) => questionId,
+      ),
+      [2],
+    );
+    const pruned = await Effect.runPromise(
+      Effect.either(
+        store.dismissQuestion({
+          agentId: "session-1",
+          questionId: 1,
+          now: 2_003,
+        }),
+      ),
+    );
+    assert.equal(pruned._tag, "Left");
+    if (pruned._tag === "Left") assert.equal(pruned.left.code, "not_found");
   }));
 
 test("stale agents disappear and cannot receive new messages", async () =>

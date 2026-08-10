@@ -176,6 +176,22 @@ test("an asking agent withdraws its own question card once the answer arrives el
       result: { questionId: number };
     };
 
+    // A lane is told not to stall on an unanswered question, so asking again
+    // is the normal path. Both cards must stay live and separately addressable.
+    const askedAgain = runCli(
+      stateRoot,
+      ["ask", "--agent", "claude-config-opus-1", "--header", "Scope"],
+      "should I also cover the relay?",
+    );
+    assert.equal(askedAgain.status, 0, askedAgain.stderr);
+    const askedAgainJson = JSON.parse(askedAgain.stdout) as {
+      result: { questionId: number };
+    };
+    assert.notEqual(
+      askedAgainJson.result.questionId,
+      askedJson.result.questionId,
+    );
+
     const unparsable = runCli(stateRoot, [
       "dismiss",
       "--agent",
@@ -207,6 +223,25 @@ test("an asking agent withdraws its own question card once the answer arrives el
       String(askedJson.result.questionId),
     ]);
     assert.equal(repeated.status, 0, repeated.stderr);
+
+    // Dismissing the first card by id had to find a row the second ask left
+    // untouched; the second card is still there to withdraw on its own.
+    const dismissedAgain = runCli(stateRoot, [
+      "dismiss",
+      "--agent",
+      "claude-config-opus-1",
+      "--question",
+      String(askedAgainJson.result.questionId),
+    ]);
+    assert.equal(dismissedAgain.status, 0, dismissedAgain.stderr);
+    const dismissedAgainJson = JSON.parse(dismissedAgain.stdout) as {
+      result: { status: string; questionId: number };
+    };
+    assert.equal(dismissedAgainJson.result.status, "dismissed");
+    assert.equal(
+      dismissedAgainJson.result.questionId,
+      askedAgainJson.result.questionId,
+    );
 
     const foreign = runCli(stateRoot, [
       "dismiss",
