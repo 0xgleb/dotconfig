@@ -10,6 +10,8 @@ import {
   MAX_REMOTE_MESSAGE_CHARACTERS,
   MAX_REMOTE_QUESTION_CHARACTERS,
   MAX_REMOTE_RESPONSE_CHARACTERS,
+  MAX_ROSTER_CWD_CHARACTERS,
+  MAX_ROSTER_LABEL_CHARACTERS,
   RemoteBridgeError,
   boundedBridgeImages,
   boundedBridgeText,
@@ -618,8 +620,16 @@ export const makeRemoteBridgeStore = (
     attempt("Could not heartbeat bridge agent", () =>
       withDatabase(databasePath, (database) => {
         const id = boundedIdentifier("agent id", input.id);
-        const label = boundedBridgeText("agent label", input.label, 256);
-        const cwd = boundedBridgeText("agent cwd", input.cwd, 1_024);
+        const label = boundedBridgeText(
+          "agent label",
+          input.label,
+          MAX_ROSTER_LABEL_CHARACTERS,
+        );
+        const cwd = boundedBridgeText(
+          "agent cwd",
+          input.cwd,
+          MAX_ROSTER_CWD_CHARACTERS,
+        );
         const now = boundedTimestamp("now", input.now);
         const ttlMs = boundedTtl(input.ttlMs);
         const expiresAt = now + ttlMs;

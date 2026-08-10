@@ -16,6 +16,8 @@ export const MAX_REMOTE_IMAGE_TOTAL_BYTES = 12 * 1024 * 1024;
 export const MAX_REMOTE_RESPONSE_CHARACTERS = 12_000;
 export const MAX_REMOTE_QUESTION_CHARACTERS = 4_000;
 export const MAX_REMOTE_ANSWER_CHARACTERS = 4_000;
+export const MAX_ROSTER_LABEL_CHARACTERS = 256;
+export const MAX_ROSTER_CWD_CHARACTERS = 1_024;
 
 export type RemoteMessageStatus = "queued" | "claimed" | "completed" | "failed";
 
