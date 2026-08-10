@@ -15,17 +15,27 @@ export const agentMatchesSelector = (
   agentSelector(agent) === requested ||
   agent.id.startsWith(requested)
 
-// `basename(cwd)` is not unique: several lanes run inside one repository, so
-// four agents can all present `.config`. Listing a selector that resolves to
+// Neither candidate is unique on its own. `basename(cwd)` is shared whenever
+// several lanes run inside one repository, and it can also collide with another
+// agent's label or with the head of another agent's id, because ids match by
+// prefix -- which is the same reason `claude-config-opus-1` selects
+// `claude-config-opus-10` as well as itself. Listing a selector that resolves to
 // more than one agent is worse than listing none, because `/use` refuses an
-// ambiguous match and this list is what the owner copies from.
+// ambiguous match and this list is what the owner copies from. Uniqueness is
+// therefore decided with `agentMatchesSelector`, the very predicate `/use`
+// resolves with, so the listing and `/use` agree by construction; a narrower
+// folder-only comparison would call selectors unique that `/use` then rejects.
 export const resolvableSelector = (
   agent: BridgeAgent,
   agents: ReadonlyArray<BridgeAgent>,
 ): string => {
-  const folder = agentSelector(agent)
-  const sharesFolder = agents.filter((other) => agentSelector(other) === folder).length > 1
-  return sharesFolder ? agent.id : folder
+  const resolvesToExactlyOneAgent = (candidate: string): boolean =>
+    agents.filter((other) => agentMatchesSelector(other, candidate)).length === 1
+  const candidates = [agentSelector(agent), agent.id]
+  return (
+    candidates.find((candidate) => resolvesToExactlyOneAgent(candidate)) ??
+    agent.id
+  )
 }
 
 export const preferredAgent = (
