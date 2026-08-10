@@ -1,6 +1,7 @@
 import { Data, Effect } from "effect"
 import {
   decodeHarnessReviewPayload,
+  isRegisteredRepositoryRoot,
   isSafeHarnessJobId,
   type CursorReviewModel,
   type HarnessLane,
@@ -27,11 +28,12 @@ export class HarnessAdapterError extends Data.TaggedError(
  * `allowedRoots` is the caller's registry of workspace directories (the
  * supervisor's approved code roots, e.g. `~/code/<org>` or an exact repo
  * checkout). When provided, the payload's repositoryRoot must equal one of
- * them or live underneath one; a payload naming any other directory — even
- * one whose basename matches the repository — is refused. Omitting it skips
- * this containment check and leaves only the protocol-level segment binding,
- * which callers should treat as a weaker fallback for contexts that have no
- * root registry yet.
+ * them, be the checkout sitting directly inside one of them, or be a
+ * `.worktrees/<...>` directory under that checkout; any other directory is
+ * refused, including a deeper clone whose basename matches the repository.
+ * Omitting it skips this containment check and leaves only the protocol-level
+ * segment binding, which callers should treat as a weaker fallback for
+ * contexts that have no root registry yet.
  */
 export const buildHarnessLaunchPlan = (
   payload: unknown,
@@ -54,7 +56,11 @@ export const buildHarnessLaunchPlan = (
     ),
     (decoded) =>
       allowedRoots !== undefined &&
-      !rootIsRegistered(decoded.repositoryRoot, allowedRoots)
+      !isRegisteredRepositoryRoot({
+        root: decoded.repositoryRoot,
+        repository: decoded.repository,
+        allowedRoots,
+      })
         ? invalid("repository root is outside the registered workspace roots")
         : Effect.succeed(launchPlan(decoded, jobId, attempt)),
   )
@@ -62,14 +68,6 @@ export const buildHarnessLaunchPlan = (
 
 const invalid = <A>(message: string): Effect.Effect<A, HarnessAdapterError> =>
   Effect.fail(new HarnessAdapterError({ code: "invalid_input", message }))
-
-const rootIsRegistered = (
-  root: string,
-  allowedRoots: readonly string[],
-): boolean =>
-  allowedRoots.some(
-    (allowed) => root === allowed || root.startsWith(`${allowed}/`),
-  )
 
 const CLAUDE_SCRUBBED_ENVIRONMENT = [
   "ANTHROPIC_API_KEY",

@@ -153,6 +153,56 @@ const rootMatchesRepository = (identity: {
   )
 }
 
+/**
+ * Decides the whole containment question for an executor working directory:
+ * the root must be free of credential-bearing segments, bound to the declared
+ * repository, and shallowly contained by one of the supervisor's registered
+ * workspace roots.
+ *
+ * Containment is deliberately shallow. A registered root may host the
+ * repository only as its direct child (or be that checkout itself), plus a
+ * `.worktrees/<...>` subtree under that checkout. Accepting descendants at
+ * arbitrary depth would let an untrusted loopback caller plant a clone
+ * anywhere below a registered root (`<allowed>/.trash/clone/<name>`) and have
+ * the executor launched inside it.
+ */
+export const isRegisteredRepositoryRoot = (containment: {
+  readonly root: string
+  readonly repository: string
+  readonly allowedRoots: readonly string[]
+}): boolean => {
+  const name = containment.repository.split("/").at(1)
+  if (name === undefined) return false
+  if (isCredentialBearingPath(containment.root)) return false
+  if (
+    !rootMatchesRepository({
+      root: containment.root,
+      repository: containment.repository,
+    })
+  ) {
+    return false
+  }
+  return containment.allowedRoots.some(
+    (allowed) =>
+      containment.root === allowed ||
+      checkoutDirectories(allowed, name).some(
+        (checkout) =>
+          containment.root === checkout ||
+          containment.root.startsWith(`${checkout}/.worktrees/`),
+      ),
+  )
+}
+
+const checkoutDirectories = (
+  allowed: string,
+  name: string,
+): readonly string[] => {
+  const directChild = `${allowed}/${name}`
+  return allowed.split("/").at(-1) === name
+    ? [allowed, directChild]
+    : [directChild]
+}
+
 const REVIEW_KINDS = ["own", "assigned", "auto"] as const
 
 const decodeIdentity = (

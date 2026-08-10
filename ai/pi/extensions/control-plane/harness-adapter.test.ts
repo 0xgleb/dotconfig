@@ -53,6 +53,23 @@ const planErrorCode = (
   return result.left.code
 }
 
+const confinedPlan = (
+  payload: unknown,
+  allowedRoots: readonly string[],
+): HarnessLaunchPlan =>
+  Effect.runSync(buildHarnessLaunchPlan(payload, "job-a", 1, allowedRoots))
+
+const confinedErrorCode = (
+  payload: unknown,
+  allowedRoots: readonly string[],
+): string | undefined => {
+  const result = Effect.runSync(
+    Effect.either(buildHarnessLaunchPlan(payload, "job-a", 1, allowedRoots)),
+  )
+  if (Either.isRight(result)) return undefined
+  return result.left.code
+}
+
 const FORBIDDEN_ARGUMENTS = [
   "--api-key",
   "--endpoint",
@@ -196,6 +213,31 @@ test("registered workspace roots confine launches when supplied", () => {
     )
     assert.equal(result._tag, "Left")
   }
+})
+
+test("a registered workspace admits only its direct checkout and that checkout's worktrees", () => {
+  const workspace = "/Users/example/code/0xgleb"
+  const checkout = `${workspace}/dotconfig`
+  const worktree = `${checkout}/.worktrees/feat/harness`
+  const rootedAt = (repositoryRoot: string) => ({
+    ...cursorPayload,
+    repository: "0xgleb/dotconfig",
+    repositoryRoot,
+  })
+
+  assert.equal(confinedPlan(rootedAt(checkout), [workspace]).cwd, checkout)
+  assert.equal(confinedPlan(rootedAt(worktree), [workspace]).cwd, worktree)
+  assert.equal(confinedPlan(rootedAt(checkout), [checkout]).cwd, checkout)
+
+  for (const refused of [
+    `${workspace}/.trash/attacker-clone/dotconfig`,
+    "/Users/example/code/dataclique/dotconfig",
+    `${workspace}/nested/dotconfig`,
+  ])
+    assert.equal(
+      confinedErrorCode(rootedAt(refused), [workspace]),
+      "invalid_input",
+    )
 })
 
 test("relative and credential-bearing repository roots never launch", () => {
