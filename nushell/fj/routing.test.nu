@@ -71,9 +71,28 @@ def "test clanker honours explicit pi session flags" [] {
 def "test clanker dispatcher runs pi on the local model with the loop prompt" [] {
   let route = (clanker-route false false --dispatcher)
   assert equal $route.tool "pi-dispatcher"
-  assert (("ollama/qwen3.5:9b" in $route.args))
+  assert (($"ollama/($dispatch_model)") in $route.args)
   assert (("/loop 10m /register" in $route.args))
   assert (not ("--dispatcher" in $route.args)) "--dispatcher is consumed"
+}
+
+# The --model flag must be built from the single exported dispatch_model
+# constant rather than a second hardcoded literal, so mod.nu's pull-check and
+# this launch flag cannot silently drift apart (see mod.nu's ensure-ollama).
+def "test clanker dispatcher model flag is derived from the shared dispatch_model constant" [] {
+  assert equal $dispatch_model "qwen3.5:9b"
+  let route = (clanker-route false false --dispatcher)
+  assert (($"ollama/($dispatch_model)") in $route.args)
+}
+
+# Dispatch-lane identity is declared by the launcher (mod.nu's `clanker`
+# exports this env var/value pair around the pinned session's `^pi` call), not
+# inferred by extensions from the model provider — see
+# ai/pi/extensions/shared/local-lane.ts's dispatchLane. These constants are
+# the launcher-side half of that contract, so pin their exact values here.
+def "test the dispatch-lane declaration constants match the contract local-lane.ts reads" [] {
+  assert equal $dispatch_lane_environment "PI_DISPATCH_LANE"
+  assert equal $local_dispatch_lane "local"
 }
 
 def "test clanker worker drops claude to the tier behind the frontier" [] {
@@ -100,10 +119,11 @@ def "test clanker without worker leaves the model unset on both harnesses" [] {
   assert (not ("openai-codex/gpt-5.6-sol" in $pi_route.args))
 }
 
-def "test clanker worker resuming does not re-send the mandate" [] {
+def "test clanker worker resuming re-arms the drain cron with a bare register" [] {
   let route = (clanker-route true true --project "st0x" --claude --worker)
   assert (("--continue" in $route.args))
-  assert (not (($route.args | any {|arg| $arg | str starts-with "/register" })))
+  let mandate = ($route.args | last)
+  assert equal $mandate "/register 15m" "resume must re-arm the cron even though the pane looks alive"
 }
 
 def "test clanker dispatcher pins its project root instead of inheriting the launch directory" [] {

@@ -20,10 +20,12 @@ const assertOnlyClearsPersistentWidget = (source: string, key: string): void => 
 test("persistent detail stays out of the editor while the bounded task HUD remains visible", () => {
   const workflows = read("../pi/extensions/classified-workflows/index.ts");
   const todos = read("../pi/extensions/todo/index.ts");
+  const todoHud = read("../pi/extensions/todo/task-hud.ts");
   const todoPresentation = read("../pi/extensions/todo/presentation.ts");
   const registry = read("../pi/extensions/agent-registry/index.ts");
 
-  assert.match(todos, /taskHud\(this\.state\)/);
+  assert.match(todoHud, /taskHud\(this\.state\)/);
+  assert.match(todos, /new TaskHudComponent\(state, theme/);
   assert.match(todos, /placement: "aboveEditor"/);
   assert.match(todoPresentation, /TASKS  ·/);
   assert.doesNotMatch(todoPresentation, /TASK\/\/GRID/);

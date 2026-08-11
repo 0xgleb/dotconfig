@@ -8,6 +8,11 @@ import {
   TaskHudComponent,
 } from "./task-hud.ts"
 import { KANBAN_OVERLAY_OPTIONS, KanbanComponent } from "./kanban.ts"
+import {
+  shouldShowTaskHud,
+  taskHudToggle,
+  todoSummary,
+} from "./presentation.ts"
 import type { TodoState } from "./state.ts"
 
 const todoExtensionSource = readFileSync(
@@ -210,26 +215,43 @@ test("task progress pulse owns direct TUI invalidation while work is unfinished"
   assert.doesNotMatch(todoExtensionSource, /hudAnimation|agentRunning/)
 })
 
-test("the task HUD widget mounts only when shouldShowTaskHud allows it", () => {
+test("ctrl+t hides a tracked HUD and shows it again", () => {
+  const tracking = todoSummary(state)
+  const hidden = taskHudToggle(tracking, "visible")
+  const hiddenVisibility =
+    hidden.toggle === "applied" ? hidden.visibility : "visible"
+  assert.equal(hiddenVisibility, "hidden")
+  assert.equal(shouldShowTaskHud(tracking, hiddenVisibility), false)
+
+  const shown = taskHudToggle(tracking, hiddenVisibility)
+  const shownVisibility =
+    shown.toggle === "applied" ? shown.visibility : "hidden"
+  assert.equal(shownVisibility, "visible")
+  assert.equal(shouldShowTaskHud(tracking, shownVisibility), true)
+})
+
+test("toggling an empty board leaves the preference untouched", () => {
+  const empty = todoSummary({ nextId: 1, todos: [] })
+  assert.deepEqual(
+    taskHudToggle(empty, "visible"),
+    { toggle: "unaffected" },
+    "there is no widget for the preference to show or hide, so it is not armed for whenever a task next appears",
+  )
+  assert.deepEqual(taskHudToggle(empty, "hidden"), { toggle: "unaffected" })
+})
+
+test("the task HUD is mounted, toggled, and released through the session's UI hooks", () => {
   assert.match(
     todoExtensionSource,
     /ctx\.ui\.setWidget\(\s*"todo-top-tasks",\s*shouldShowTaskHud\(summary, hudVisibility\)/,
+    "emptiness and the operator's preference combine in one place, so an empty board always wins over a stale toggle",
   )
-})
-
-test("ctrl+t toggles task HUD visibility through the global terminal input hook", () => {
   assert.match(todoExtensionSource, /ctx\.ui\.onTerminalInput\(/)
+  assert.match(todoExtensionSource, /matchesKey\(data, "ctrl\+t"\)/)
   assert.match(
     todoExtensionSource,
-    /matchesKey\(data, "ctrl\+t"\)/,
+    /taskHudToggle\(todoSummary\(state\), hudVisibility\)[\s\S]*?hudVisibility = toggled\.visibility/,
   )
-  assert.match(
-    todoExtensionSource,
-    /hudVisibility = toggleTaskHudVisibility\(hudVisibility\)/,
-  )
-})
-
-test("the terminal input hook is released on session shutdown alongside the HUD timers", () => {
   const shutdown = todoExtensionSource.slice(
     todoExtensionSource.indexOf('pi.on("session_shutdown"'),
     todoExtensionSource.indexOf('pi.on("session_shutdown"') + 400,

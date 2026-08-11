@@ -1,6 +1,6 @@
 import assert from "node:assert/strict";
 import test from "node:test";
-import { managedOperationalRole, registryStateRoot, shouldSelfClaimUnownedRole } from "./paths.ts";
+import { managedOperationalRole, registryStateRoot } from "./paths.ts";
 
 test("managed operational roles are scoped to their owning project sessions", () => {
   assert.deepEqual(managedOperationalRole("/Users/example/.config", "/Users/example"), {
@@ -26,122 +26,15 @@ test("managed operational roles are scoped to their owning project sessions", ()
   assert.equal(managedOperationalRole("/Users/example/code/other", "/Users/example"), undefined);
 });
 
-test("sessions outside dedicated projects never self-claim their standing roles", () => {
+test("a managed role is never inferred from a directory that merely contains the project", () => {
+  // Home contains every project without being one, and an org directory
+  // contains the repos under it. A session there holds its own role, not the
+  // standing role of everything beneath it, or one session would end up
+  // appointed drainer of queues it never reads.
+  assert.equal(managedOperationalRole("/Users/example", "/Users/example"), undefined);
   assert.equal(
-    shouldSelfClaimUnownedRole(
-      "/Users/example/.config",
-      "pi-support",
-      "/Users/example/code/project",
-      "/Users/example",
-    ),
-    false,
-  );
-  assert.equal(
-    shouldSelfClaimUnownedRole(
-      "/Users/example/.config",
-      "pi-support",
-      "/Users/example/.config",
-      "/Users/example",
-    ),
-    true,
-  );
-  assert.equal(
-    shouldSelfClaimUnownedRole(
-      "/Users/example/code/dataclique/yielduck",
-      "operator",
-      "/Users/example/code/other",
-      "/Users/example",
-    ),
-    false,
-  );
-  assert.equal(
-    shouldSelfClaimUnownedRole(
-      "/Users/example/code/st0x",
-      "reviewer",
-      "/Users/example/code/other",
-      "/Users/example",
-    ),
-    false,
-  );
-  assert.equal(
-    shouldSelfClaimUnownedRole(
-      "/Users/example/code/st0x",
-      "reviewer",
-      "/Users/example/code/st0x",
-      "/Users/example",
-    ),
-    true,
-  );
-  assert.equal(
-    shouldSelfClaimUnownedRole(
-      "/Users/example/code/dataclique",
-      "reviewer",
-      "/Users/example/code/other",
-      "/Users/example",
-    ),
-    false,
-  );
-  assert.equal(
-    shouldSelfClaimUnownedRole(
-      "/Users/example/code/dataclique",
-      "reviewer",
-      "/Users/example/code/dataclique",
-      "/Users/example",
-    ),
-    true,
-  );
-  assert.equal(
-    shouldSelfClaimUnownedRole(
-      "/Users/example/code/0xgleb",
-      "reviewer",
-      "/Users/example/code/other",
-      "/Users/example",
-    ),
-    false,
-  );
-  assert.equal(
-    shouldSelfClaimUnownedRole(
-      "/Users/example/code/0xgleb",
-      "reviewer",
-      "/Users/example/code/0xgleb",
-      "/Users/example",
-    ),
-    true,
-  );
-  assert.equal(
-    shouldSelfClaimUnownedRole(
-      "/Users/example/code/project",
-      "reviewer",
-      "/Users/example/code/other",
-      "/Users/example",
-    ),
-    false,
-    "an unrelated directory is not a reason to appoint yourself drainer of a project",
-  );
-});
-
-test("an org session serves the repos inside it but never everything under home", () => {
-  // Sessions are launched per org and coordinate across the repos in it, so a
-  // session in the org directory has to be able to take a role for a repo
-  // underneath it. Home contains every project without being one.
-  assert.equal(
-    shouldSelfClaimUnownedRole(
-      "/Users/example/code/st0x/st0x.issuance",
-      "reviewer",
-      "/Users/example/code/st0x",
-      "/Users/example",
-    ),
-    true,
-  );
-  assert.equal(
-    shouldSelfClaimUnownedRole(
-      "/Users/example/code/st0x/st0x.issuance",
-      "reviewer",
-      "/Users/example",
-      "/Users/example",
-    ),
-    false,
-    "a session sitting in home would otherwise qualify for every role in the fleet",
+    managedOperationalRole("/Users/example/code/st0x/st0x.issuance", "/Users/example"),
+    undefined,
   );
 });
 

@@ -37,7 +37,7 @@ import {
   CONTENT_GUTTER,
   overlayRule,
   shouldShowTaskHud,
-  toggleTaskHudVisibility,
+  taskHudToggle,
   todoSummary,
   type TaskHudVisibility,
 } from "./presentation.ts"
@@ -248,7 +248,7 @@ function restoredState(ctx: ExtensionContext): TodoState {
 }
 
 export default function todoExtension(pi: ExtensionAPI): void {
-  registerRuntimeVersion(pi, "todo", "2026.08.03.1")
+  registerRuntimeVersion(pi, "todo", "2026.08.11.1")
   const stateRef = Effect.runSync(Ref.make<TodoState>(emptyTodoState))
   let hudExpiry: ReturnType<typeof setTimeout> | undefined
   let reminderTimer: ReturnType<typeof setTimeout> | undefined
@@ -285,11 +285,9 @@ export default function todoExtension(pi: ExtensionAPI): void {
     releaseHudToggle = ctx.ui.onTerminalInput((data) => {
       if (!matchesKey(data, "ctrl+t")) return undefined
       const state = Effect.runSync(Ref.get(stateRef))
-      // Toggling while the board is empty has nothing to affect — there is no
-      // widget for the preference to show or hide — so it is left untouched
-      // rather than silently armed for whenever a task next appears.
-      if (todoSummary(state).total > 0) {
-        hudVisibility = toggleTaskHudVisibility(hudVisibility)
+      const toggled = taskHudToggle(todoSummary(state), hudVisibility)
+      if (toggled.toggle === "applied") {
+        hudVisibility = toggled.visibility
         renderTaskWidget(ctx, state)
       }
       return { consume: true }

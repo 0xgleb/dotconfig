@@ -5,13 +5,17 @@ description: Single entry point for every agent session on the Pi agent bus - na
 
 # Register
 
-**Dispatch lane, read this first.** If this session runs on a local Ollama
-model, STOP HERE: make no tool call, run nothing below. The extensions already
-register the session, route messages, complete envelopes, and relay to the
-owner mechanically; your entire job is to reply with route directives when a
-routing turn asks for them. End this iteration by saying nothing but "standing
-by". Everything after this paragraph is for full-capability worker sessions
-only.
+**Dispatch lane, read this first.** If `PI_DISPATCH_LANE=local` is set in this
+session's environment, STOP HERE: make no tool call, run nothing below. That
+declared variable, not the model this session happens to run, is what makes a
+session the dispatch lane — it is normally paired with a local Ollama model,
+but the declaration is what governs, so an ordinary worker session picking a
+local model for one offline pass never silently becomes a dispatcher. The
+extensions already register the session, route messages, complete envelopes,
+and relay to the owner mechanically; your entire job is to reply with route
+directives when a routing turn asks for them. End this iteration by saying
+nothing but "standing by". Everything after this paragraph is for
+full-capability worker sessions only.
 
 Every agent session starts by invoking `/register`, whatever the harness and
 whatever the lane. One invocation does four things: roster, role, loop, drain.
@@ -25,8 +29,8 @@ name:
 pi-bridge register --agent-id <stable-id> --label "<harness> - <project>" --cwd <absolute project path>
 ```
 
-Keep it alive with a background heartbeat every 20 seconds — a registration
-expires in about 30 seconds without one. `pi-bridge agents` lists the roster.
+Keep it alive with a background heartbeat every 5 seconds — a registration
+expires in 15 seconds without one. `pi-bridge agents` lists the roster.
 
 **Role.** Hold or claim this project's registry role. The holder is the ONE
 session that drains the project's queue (lease-enforced); a session without the
@@ -74,10 +78,14 @@ session re-arms by invoking `/register` once.
    registry transitions and every external-channel reply:
 
    ```
-   printf '%s' 'request:<full-request-id> outcome:<completed|failed> summary:<one bounded line> evidence:<comma-separated refs>' | pi-bridge send --agent <dispatcher-id> --dedupe <request-id>
+   printf '%s' 'request:<full-request-id> outcome:<completed|failed> summary:<one bounded line> evidence:<comma-separated refs>' | pi-bridge send --agent <dispatcher-id> --requester <this-session's-agent-id> --dedupe <request-id>
    ```
 
-   Use exactly that shape (deterministically allowlisted; variants fall back to
+   `--requester` must be the same `--agent-id` this session registered under in
+   the Roster step — routing records that id as the request's assigned agent,
+   and the registry compares the envelope's sender against it to decide who may
+   close the row. Omitting it, or sending a different id, closes nothing. Use
+   exactly that shape (deterministically allowlisted; variants fall back to
    semantic classification), single-quoted with no apostrophes inside, and
    always the FULL request UUID — prefix ids fail against exact-match store
    code. `summary` is mandatory and carries the failure reason on failure.
@@ -91,13 +99,15 @@ session re-arms by invoking `/register` once.
 
 ## Dispatcher lane
 
-A session on the local Ollama model is the dispatcher lane: the remote-control
-and agent-registry extensions handle routing, envelopes, owner relays, and
-compaction mechanically, and the deterministic policy clamps its tools. Such a
-session just runs `/loop 10m /register` and touches nothing else — it never
-answers substantive requests, pushes, merges, mutates PRs or issues, spawns
-agents, or touches credential files. Full-capability sessions are worker lanes
-and run the drain above.
+A session with `PI_DISPATCH_LANE=local` set is the dispatcher lane — a
+declared deployment role, not an inference from whichever model is running.
+It normally runs a local Ollama model, and the remote-control and
+agent-registry extensions handle routing, envelopes, owner relays, and
+compaction mechanically, with the deterministic policy clamping its tools by
+the same declaration. Such a session just runs `/loop 10m /register` and
+touches nothing else — it never answers substantive requests, pushes, merges,
+mutates PRs or issues, spawns agents, or touches credential files.
+Full-capability sessions are worker lanes and run the drain above.
 
 Generation beyond deterministic bookkeeping (an ambiguous routing target, a
 garbled request, wording a bounded outward reply) runs as ONE bounded read-only
@@ -116,12 +126,11 @@ local call, and continue — never stall the queue on the delegate.
 
 ## Grok worker pool
 
-Grok workers are not registered agents and never appear on the roster. They are
-a shared pool any Fable session uses directly: drop a self-contained `.md` job
-file into `/Users/0xgleb/code/st0x/.tmp/grok-jobs/<worker>/` (workers `grok-1`,
-`grok-2`) and collect the result from
-`/Users/0xgleb/code/st0x/.tmp/grok-results/<jobfile>`. Each job is a one-shot
-read-only plan-mode call with no prompts. Results exist only on disk - there is
-no bridge reporting - so a session that dropped a job includes new
-`grok-results/` files in its collect step each drain until it has consumed
-them; a `.failed` suffix marks a failed job.
+Grok workers are ordinary `/register` sessions on `cursor-agent --model
+grok-4.5-xhigh`, not a separate mechanism: they register on the bridge roster
+under their own agent id, drain their project's queue with bounded
+fully-specified research and drafting items, and report outcomes through the
+dispatcher exactly like any other worker lane. They never push, commit, merge,
+comment on GitHub, or submit review verdicts. The earlier job-file pool
+(dropping a `.md` file into `grok-jobs/` and polling `grok-results/`) is
+retired — nothing polls that directory anymore, so do not use it.

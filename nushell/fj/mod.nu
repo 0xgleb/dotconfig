@@ -6,6 +6,9 @@ use routing.nu [
   clanker-route
   claude-project-dirname
   pi-project-dirname
+  dispatch_model
+  dispatch_lane_environment
+  local_dispatch_lane
 ]
 use check.nu
 use workflow.nu
@@ -119,15 +122,100 @@ export def --wrapped clanker [...args: string] {
     "pi-dispatcher" => {
       ensure-ollama
       cd $route.cwd
-      ^pi ...$route.args
+      # The launcher DECLARES dispatch-lane identity for the pinned session
+      # rather than letting extensions infer it from `--model ollama/...`,
+      # which any session could pick (see routing.nu's dispatch_lane_* consts
+      # and ai/pi/extensions/shared/local-lane.ts's dispatchLane). Built via
+      # `insert` rather than a record literal since the column name is a
+      # variable, not a bare identifier.
+      let dispatch_env = ({} | insert $dispatch_lane_environment $local_dispatch_lane)
+      with-env $dispatch_env {
+        ^pi ...$route.args
+      }
     }
     "claude" => { ^claude ...$route.args }
   }
 }
 
+# Assert the dispatch-lane model tag is actually pulled. `ensure-ollama`'s
+# readiness probe only confirms the daemon answers `/api/version`, which it
+# does identically whether or not the tag exists — a missing tag then 404s on
+# every completion the dispatch lane tries to route, and since that lane is
+# the only drainer of the bridge inbox, the failure would otherwise surface an
+# hour later as a silent expiry instead of here.
+#
+# Both callers run this immediately after the `alive` probe succeeds, but a
+# daemon that answered `/api/version` can still stop responding, hang, or
+# error before this request completes (it may be the Ollama app, a login
+# item, or an earlier shell rather than the process this function just
+# started) — so the request is wrapped the same way `alive` wraps its own
+# probe, and a request failure raises the same crafted, actionable error
+# rather than a raw HTTP exception.
+def ensure-ollama-model [model: string] {
+  let tags = (
+    try {
+      http get --max-time 5sec http://127.0.0.1:11434/api/tags
+    } catch {
+      error make --unspanned {
+        msg: "could not reach ollama serve at http://127.0.0.1:11434 to verify the pulled model — is a server actually listening?"
+      }
+    }
+  )
+  let names = ($tags.models? | default [] | each {|entry|
+    $entry.model? | default ($entry.name? | default "")
+  })
+  if $model not-in $names {
+    error make --unspanned {
+      msg: $"ollama does not have '($model)' pulled — run `ollama pull ($model)` and retry `fj clanker --dispatcher`."
+    }
+  }
+}
+
+# Ollama's OpenAI-compatible endpoint takes no per-request context length, so
+# the routing prompt's fate depends entirely on the OLLAMA_CONTEXT_LENGTH the
+# server was launched with. This function can only set that when it starts the
+# daemon itself (below); a server already running — the Ollama app, a login
+# item, an earlier shell — may be short. `/api/ps` reports the context window
+# a loaded model is actually served with (see
+# ai/pi/extensions/local-models/core.ts's `runningModels`/`parseServedContext`,
+# which reads the same field), so this checks that before warning instead of
+# assuming every already-running server is unverifiable: only a model that
+# genuinely isn't loaded yet, or is loaded short, gets the warning.
+def warn-ollama-context-unverified [model: string] {
+  let served = (
+    try {
+      let ps = (http get --max-time 2sec http://127.0.0.1:11434/api/ps)
+      let matches = ($ps.models? | default [] | where {|entry|
+        ($entry.model? | default ($entry.name? | default "")) == $model
+      })
+      $matches.0.context_length?
+    } catch { null }
+  )
+  if ($served != null) and ($served >= 40960) {
+    return
+  }
+  print --stderr (
+    $"(ansi yellow)warning(ansi reset): ollama serve was already running and its"
+    + " served context window for the dispatch model could not be confirmed as"
+    + " at least 40960 tokens. `fj clanker --dispatcher` needs that much context"
+    + " for the dispatch model; if routing looks degraded (messages dropped,"
+    + " wrong project), restart ollama serve with OLLAMA_CONTEXT_LENGTH=40960."
+  )
+}
+
 # Start the local Ollama server on demand and wait until it answers. The
 # daemon is detached from this shell so the dispatcher session survives
-# shell exits; it is a no-op when a server is already listening.
+# shell exits. When a server is already listening this is a no-op beyond
+# checking the dispatch model is pulled and warning about its context window,
+# since only the branch that starts the daemon can set that window.
+#
+# The daemon this starts is launched with `OLLAMA_KEEP_ALIVE=-1`, which keeps
+# the dispatch model resident in memory indefinitely rather than unloading it
+# after Ollama's usual idle timeout — closing the dispatcher pane does not
+# stop it or release the model. This function has no stop path (no
+# `fj clanker --dispatcher-stop` or equivalent); that is out of scope here.
+# Stopping the daemon and freeing the memory is a manual `pkill ollama` (or
+# equivalent) outside this tool, and nothing in this file does it for you.
 def ensure-ollama [] {
   let alive = {||
     try {
@@ -135,16 +223,19 @@ def ensure-ollama [] {
       true
     } catch { false }
   }
-  if (do $alive) { return }
-  ^sh -c "nohup env OLLAMA_CONTEXT_LENGTH=40960 OLLAMA_KEEP_ALIVE=-1 ollama serve >/tmp/ollama-serve.log 2>&1 &"
-  mut ready = false
-  for _attempt in 1..30 {
-    if (do $alive) { $ready = true; break }
-    sleep 500ms
+  if (do $alive) {
+    ensure-ollama-model $dispatch_model
+    warn-ollama-context-unverified $dispatch_model
+    return
   }
+  ^sh -c "nohup env OLLAMA_CONTEXT_LENGTH=40960 OLLAMA_KEEP_ALIVE=-1 ollama serve >/tmp/ollama-serve.log 2>&1 &"
+  let ready = (seq 1 30 | any {|_|
+    if (do $alive) { true } else { sleep 500ms; false }
+  })
   if not $ready {
     error make {msg: "ollama serve did not become ready; see /tmp/ollama-serve.log"}
   }
+  ensure-ollama-model $dispatch_model
 }
 
 # list github issues

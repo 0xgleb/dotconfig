@@ -27,6 +27,29 @@ const requiredOption = (args: readonly string[], name: string): Effect.Effect<st
     : Effect.fail(new RemoteBridgeError({ code: "invalid_input", message: `${name} required` }));
 };
 
+/**
+ * `boundedBridgeText` throws so the store can use it inside a transaction. On
+ * this side the throw is the CLI's only exit path, so it is narrowed into the
+ * declared error channel here: an unchecked cast would let any other defect
+ * reach the reporter, which reads `code` and slices `message` off whatever it
+ * is handed.
+ */
+const boundedInput = (
+  label: string,
+  text: string,
+  maximum: number,
+): Effect.Effect<string, RemoteBridgeError> =>
+  Effect.try({
+    try: () => boundedBridgeText(label, text, maximum),
+    catch: (error) =>
+      error instanceof RemoteBridgeError
+        ? error
+        : new RemoteBridgeError({
+            code: "invalid_input",
+            message: `${label} must contain 1-${maximum} safe characters`,
+          }),
+  });
+
 const readStdin = (): Effect.Effect<string, RemoteBridgeError> =>
   Effect.async<string, RemoteBridgeError>((resume) => {
     let text = "";
@@ -106,24 +129,25 @@ const command = (args: readonly string[]): Effect.Effect<unknown, RemoteBridgeEr
         .map((label) => label.trim())
         .filter((label) => label.length > 0)
         .map((label) => ({ label }));
-      // Telegram binds its card to (agent_id, question_id), so the id has to
-      // be unique per agent and stable once relayed. Seconds since epoch is
-      // both, and stays inside the integer the card round-trips.
-      const questionId = Math.floor(Date.now() / 1_000);
-      yield* store.syncQuestions({
+      const text = yield* boundedInput("question", question, MAX_REMOTE_MESSAGE_CHARACTERS);
+      // One open question per agent, enforced inside the store's transaction
+      // rather than here: each CLI invocation is its own process, so a check
+      // made on this side would let two asks both see an empty queue and both
+      // write. The second write would delete the question still waiting on the
+      // owner along with the Telegram card bound to it, and the owner's
+      // eventual tap would answer a question that no longer exists.
+      const published = yield* store.askQuestion({
         agentId,
-        questions: [
-          {
-            id: questionId,
-            status: "pending" as const,
-            question: boundedBridgeText("question", question, MAX_REMOTE_MESSAGE_CHARACTERS),
-            ...(header ? { header } : {}),
-            ...(options.length > 0 ? { options } : {}),
-          },
-        ],
+        question: text,
+        ...(header ? { header } : {}),
+        ...(options.length > 0 ? { options } : {}),
         now: Date.now(),
       });
-      return { agentId, questionId, status: "pending" };
+      return {
+        agentId,
+        questionId: published.questionId,
+        status: "pending",
+      };
     });
   }
   if (action === "answer") {
@@ -151,10 +175,7 @@ const command = (args: readonly string[]): Effect.Effect<unknown, RemoteBridgeEr
       // prompt builder neutralizes what reaches it, but a caller that sends a
       // relative cwd or an unbounded label should learn so here rather than
       // silently appear on the roster in a mangled form.
-      const boundedLabel = yield* Effect.try({
-        try: () => boundedBridgeText("--label", label, MAX_ROSTER_LABEL_CHARACTERS),
-        catch: (error) => error as RemoteBridgeError,
-      });
+      const boundedLabel = yield* boundedInput("--label", label, MAX_ROSTER_LABEL_CHARACTERS);
       if (!cwd.startsWith("/")) {
         return yield* Effect.fail(
           new RemoteBridgeError({

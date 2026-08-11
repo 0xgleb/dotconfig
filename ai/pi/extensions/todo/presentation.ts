@@ -76,6 +76,26 @@ export const shouldShowTaskHud: (
 ) => boolean = (summary, visibility) =>
   summary.total > 0 && visibility === "visible"
 
+/**
+ * What a ctrl+t press does to the HUD preference.
+ *
+ * A press against an empty board is `unaffected`: there is no widget for the
+ * preference to show or hide, so it is left as it was rather than silently
+ * armed for whenever a task next appears. Every other press flips the
+ * preference and asks the caller to re-render with it.
+ */
+export type TaskHudToggle =
+  | { readonly toggle: "unaffected" }
+  | { readonly toggle: "applied"; readonly visibility: TaskHudVisibility }
+
+export const taskHudToggle: (
+  summary: TodoSummary,
+  visibility: TaskHudVisibility,
+) => TaskHudToggle = (summary, visibility) =>
+  summary.total > 0
+    ? { toggle: "applied", visibility: toggleTaskHudVisibility(visibility) }
+    : { toggle: "unaffected" }
+
 export interface KanbanColumns {
   readonly todo: ReadonlyArray<Todo>
   readonly inProgress: ReadonlyArray<Todo>

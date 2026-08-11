@@ -7,7 +7,7 @@ const source = readFileSync(new URL("../pi/extensions/agent-registry/index.ts", 
 test("registry request notifications survive reload and compaction", () => {
   assert.match(source, /NOTIFIED_REQUESTS_ENTRY = "agent-registry\.notified-requests"/);
   assert.match(source, /restoreNotifiedRequests\(ctx\)/);
-  assert.match(source, /notifiedRequests\.add\(fresh\.id\);\s*persistNotifiedRequests\(\)/);
+  assert.match(source, /notifiedRequests\.add\(fresh\.id\);?\s*persistNotifiedRequests\(\)/);
   assert.match(source, /pi\.on\("session_compact", \(\) => persistNotifiedRequests\(\)\)/);
 });
 
@@ -17,14 +17,22 @@ test("notification epoch replays pre-trigger claimed backlog once after upgrade"
   assert.match(source, /epoch: NOTIFICATION_EPOCH,[\s\S]*ids:/);
 });
 
+/**
+ * Idleness gates the turn-triggering claimed-request notification, which is
+ * `notifyRequest`: it must hold both before the revalidating snapshot and
+ * again after it, so a request that stopped being ours while the read was in
+ * flight never wakes the agent. The passive terminal-outcome delivery in
+ * `sync` is deliberately not idle-gated - it queues a non-triggering follow-up
+ * mid-turn, pinned by agent-registry/delivery.test.ts.
+ */
 test("registry notifications revalidate claimed status only while the agent is idle", () => {
-  assert.match(source, /notifiedRequests\.has\(request\.id\) \|\| !ctx\.isIdle\(\) \|\| ctx\.hasPendingMessages\(\) \|\| autoReloadPending\(\)/);
+  assert.match(source, /notifiedRequests\.has\(request\.id\) \|\|\s*!ctx\.isIdle\(\) \|\|\s*ctx\.hasPendingMessages\(\) \|\|\s*autoReloadPending\(\)/);
   assert.match(source, /store\.snapshot\(Date\.now\(\)\)/);
   assert.match(source, /fresh\.status !== "claimed"/);
   assert.match(source, /fresh\.leaseId !== request\.leaseId/);
   assert.match(source, /fresh\.agentId !== identity\(ctx\)\.id/);
-  assert.match(source, /notificationsEnabled && ctx\.isIdle\(\) && !ctx\.hasPendingMessages\(\) && !autoReloadPending\(\)/);
-  assert.match(source, /await notifyRequest\(ctx, claimed\)/);
+  assert.match(source, /fresh\.agentId !== identity\(ctx\)\.id \|\|\s*!ctx\.isIdle\(\) \|\|\s*ctx\.hasPendingMessages\(\) \|\|\s*autoReloadPending\(\)/);
+  assert.match(source, /if \(notificationsEnabled && !notificationSent\)\s*notificationSent = await notifyRequest\(ctx, claimed\)/);
 });
 
 test("registry inbox wakes one idle owner without preempting human prompts", () => {

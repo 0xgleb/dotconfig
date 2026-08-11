@@ -29,7 +29,7 @@ const TOOL_PROGRESS_TICK_MS = 1_000
 const READY_LABEL = "READY · awaiting activity"
 
 export default function activityStatus(pi: ExtensionAPI): void {
-  registerRuntimeVersion(pi, "activity-status", "2026.08.01.8")
+  registerRuntimeVersion(pi, "activity-status", "2026.08.11.1")
   const runningTools = new Map<string, ToolProgress>()
   let latestCtx: ExtensionContext | undefined
   let classifierDepth = 0

@@ -152,7 +152,8 @@
                 nativeBuildInputs = with pkgs; [ nushell ];
               }
               ''
-                cp ${./nushell/fj/workflow.test.nu} workflow.test.nu
+                cp -r ${./nushell/fj} fj
+                cd fj
                 ${pkgs.nushell}/bin/nu workflow.test.nu
                 touch $out
               '';

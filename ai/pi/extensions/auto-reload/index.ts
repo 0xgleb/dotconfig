@@ -1,20 +1,27 @@
-import { globSync, lstatSync, readdirSync, statSync, watch, type FSWatcher } from "node:fs";
+import { globSync, lstatSync, readFileSync, readdirSync, statSync, watch, type FSWatcher } from "node:fs";
 import { homedir } from "node:os";
-import { join } from "node:path";
+import { dirname, join } from "node:path";
 import type { ExtensionAPI, ExtensionContext } from "@earendil-works/pi-coding-agent";
 
 import {
+  coherenceDiagnostic,
   HANDOFF_GLOBS,
   isSafeHandoffName,
+  MANAGED_SETTLE_GATE_START,
   managedPiChangeLabel,
   latestReloadResumeMarker,
   managedPiWatchPaths,
   managedReloadDecision,
   managedReloadDelivery,
+  managedSettleGateChanged,
+  managedSettleGateObserve,
   parseManagedReloadSummary,
   parseSeenHandoffNames,
   RELOAD_RESUME_ENTRY,
   unseenHandoffNames,
+  type ManagedExtensionSet,
+  type ManagedSettleGate,
+  type ManagedSourceState,
 } from "./core.ts";
 import { isContinuationPaused } from "../shared/continuation-pause.ts";
 import {
@@ -35,6 +42,7 @@ const SETTLE_RETRY_MS = 2_000;
 const SETTLE_MS = 15_000;
 const GENERATION_POLL_MS = 5_000;
 const FORCE_RELOAD_AFTER_MS = 30_000;
+const COHERENCE_NOTICE_AFTER_MS = 4 * FORCE_RELOAD_AFTER_MS;
 const STATUS_KEY = "auto-reload";
 
 interface ReloadableContext extends ExtensionContext {
@@ -63,16 +71,52 @@ export const managedGeneration = (roots: readonly string[]): string => {
   return records.sort().join("\n");
 };
 
+/**
+ * Reports whether the extension set the manifest declares holds together on
+ * disk: every declared entrypoint, and every module reachable from one through
+ * a relative import, resolves to a file. A change set that lands a consumer
+ * before the module it imports leaves the tree quiet and inconsistent, and
+ * loading it there turns a mid-flight edit into a session that throws on
+ * import. Only relative specifiers are followed; packages are the host's.
+ */
+export const managedExtensionSet = (extensionsRoot: string): ManagedExtensionSet => {
+  const manifest = join(extensionsRoot, "package.json");
+  const declared = declaredExtensions(manifest);
+  if (declared === undefined) return { resolution: "incomplete", unresolved: manifest };
+  const unvisited = declared.map((entry) => join(extensionsRoot, entry));
+  const visited = new Set<string>();
+  while (unvisited.length > 0) {
+    const file = unvisited.pop();
+    if (file === undefined || visited.has(file)) continue;
+    visited.add(file);
+    const contents = readManagedSource(file);
+    if (contents === undefined) return { resolution: "incomplete", unresolved: file };
+    for (const specifier of relativeImports(contents)) {
+      const resolved = resolveManagedImport(dirname(file), specifier);
+      if (resolved === undefined) {
+        return { resolution: "incomplete", unresolved: `${specifier} imported by ${file}` };
+      }
+      if (MANAGED_MODULE.test(resolved)) unvisited.push(resolved);
+    }
+  }
+  return { resolution: "complete" };
+};
+
 const autoReload: (pi: ExtensionAPI) => void = (pi) => {
-  registerRuntimeVersion(pi, "auto-reload", "2026.08.03.12");
+  registerRuntimeVersion(pi, "auto-reload", "2026.08.11.1");
   let watchers: FSWatcher[] = [];
   let timer: ReturnType<typeof setTimeout> | undefined;
   let handoffTimer: ReturnType<typeof setInterval> | undefined;
   let generationTimer: ReturnType<typeof setInterval> | undefined;
   let pending = false;
   let pendingSince: number | undefined;
-  let lastChangeAt = 0;
+  let settleGate: ManagedSettleGate = MANAGED_SETTLE_GATE_START;
+  let watchPaths: string[] = [];
+  let extensionsRoot: string | undefined;
+  let completeSnapshot: string | undefined;
   let preemptRequested = false;
+  let unresolvedManaged: string | undefined;
+  let coherenceAnnounced = false;
   const changedLabels = new Set<string>();
 
   pi.events.on(AUTO_RELOAD_PENDING_REQUEST_EVENT, (report: AutoReloadPendingReporter) => report(pending));
@@ -86,11 +130,43 @@ const autoReload: (pi: ExtensionAPI) => void = (pi) => {
     generationTimer = undefined;
     pending = false;
     pendingSince = undefined;
-    lastChangeAt = 0;
+    settleGate = MANAGED_SETTLE_GATE_START;
+    watchPaths = [];
+    extensionsRoot = undefined;
+    completeSnapshot = undefined;
     preemptRequested = false;
+    unresolvedManaged = undefined;
+    coherenceAnnounced = false;
     changedLabels.clear();
     for (const watcher of watchers) watcher.close();
     watchers = [];
+  };
+
+  /**
+   * Reads the managed tree through the settle gate, remembering the snapshot
+   * the gate settled on so a write that never reached the watcher shows up as
+   * a snapshot that moved. The extension set is only walked for a snapshot
+   * that has not already been verified.
+   */
+  const readManagedSources = (now: number): ManagedSourceState => {
+    const root = extensionsRoot;
+    if (watchPaths.length === 0 || root === undefined) return "changing";
+    const snapshot = managedGeneration(watchPaths);
+    const reading = managedSettleGateObserve(settleGate, {
+      now,
+      settleMs: SETTLE_MS,
+      snapshot,
+      extensionSet: () => {
+        if (snapshot === completeSnapshot) return { resolution: "complete" };
+        const set = managedExtensionSet(root);
+        unresolvedManaged =
+          set.resolution === "incomplete" ? set.unresolved : undefined;
+        return set;
+      },
+    });
+    settleGate = reading.gate;
+    if (reading.source === "settled") completeSnapshot = snapshot;
+    return reading.source;
   };
 
   const performReload = async (ctx: ReloadableContext) => {
@@ -133,15 +209,35 @@ const autoReload: (pi: ExtensionAPI) => void = (pi) => {
     if (!pending) return;
     const now = Date.now();
     const managedWorkActive = managedWorkIsActive();
+    const source = readManagedSources(now);
+    const pendingForMs = Math.max(0, now - (pendingSince ?? now));
     const decision = managedReloadDecision({
-      settled: now - lastChangeAt >= SETTLE_MS,
+      source,
       idle: ctx.isIdle() && !managedWorkActive,
-      pendingForMs: Math.max(0, now - (pendingSince ?? now)),
+      pendingForMs,
       forceAfterMs: FORCE_RELOAD_AFTER_MS,
       preemptRequested,
     });
+    if (source !== "incoherent") coherenceAnnounced = false;
     if (decision === "await-settle") {
-      ctx.ui.setStatus(STATUS_KEY, "reload:awaiting-settle");
+      ctx.ui.setStatus(
+        STATUS_KEY,
+        source === "incoherent" ? "reload:awaiting-coherence" : "reload:awaiting-settle",
+      );
+      if (
+        coherenceDiagnostic({
+          source,
+          pendingForMs,
+          noticeAfterMs: COHERENCE_NOTICE_AFTER_MS,
+          announced: coherenceAnnounced,
+        }) === "report"
+      ) {
+        coherenceAnnounced = true;
+        ctx.ui.notify(
+          `Automatic Pi reload is held: the managed extension set does not resolve (${unresolvedManaged ?? "the declared manifest"}). Reloading resumes on its own once that module is on disk.`,
+          "warning",
+        );
+      }
       timer = setTimeout(() => void reloadWhenIdle(ctx), SETTLE_RETRY_MS);
       return;
     }
@@ -168,7 +264,7 @@ const autoReload: (pi: ExtensionAPI) => void = (pi) => {
   const scheduleReload = (ctx: ReloadableContext, changedPath: string | null, aiRoot: string) => {
     if (changedPath?.includes("node_modules") || changedPath?.includes("brave-operator-profile")) return;
     if (changedPath) changedLabels.add(managedPiChangeLabel(changedPath, aiRoot));
-    lastChangeAt = Date.now();
+    settleGate = managedSettleGateChanged(Date.now());
     if (!pending) {
       pendingSince = Date.now();
       preemptRequested = false;
@@ -230,7 +326,8 @@ const autoReload: (pi: ExtensionAPI) => void = (pi) => {
     }
     const configRoot = join(homedir(), ".config");
     const aiRoot = join(configRoot, "ai");
-    const watchPaths = managedPiWatchPaths(aiRoot);
+    watchPaths = managedPiWatchPaths(aiRoot);
+    extensionsRoot = join(aiRoot, "pi", "extensions");
     let generation = managedGeneration(watchPaths);
     for (const path of watchPaths) {
       try {
@@ -301,7 +398,7 @@ const autoReload: (pi: ExtensionAPI) => void = (pi) => {
 
   pi.on("agent_end", async (_event, ctx) => {
     if (!pending || !isReloadableContext(ctx)) return;
-    if (Date.now() - lastChangeAt < SETTLE_MS) return;
+    if (readManagedSources(Date.now()) !== "settled") return;
     if (managedWorkIsActive()) {
       await reloadWhenIdle(ctx);
       return;
@@ -318,6 +415,62 @@ const autoReload: (pi: ExtensionAPI) => void = (pi) => {
     closeWatchers();
     ctx.ui.setStatus(STATUS_KEY, undefined);
   });
+};
+
+const MANAGED_IMPORT = /(?:from|import)\s*\(?\s*["'](\.[^"']+)["']/gu;
+const MANAGED_MODULE = /\.tsx?$/u;
+
+const declaredExtensions = (manifestPath: string): string[] | undefined => {
+  const contents = readManagedSource(manifestPath);
+  if (contents === undefined) return undefined;
+  try {
+    const manifest: unknown = JSON.parse(contents);
+    const declared =
+      typeof manifest === "object" && manifest !== null && "pi" in manifest
+        ? (manifest as { readonly pi?: unknown }).pi
+        : undefined;
+    const entries =
+      typeof declared === "object" && declared !== null && "extensions" in declared
+        ? (declared as { readonly extensions?: unknown }).extensions
+        : undefined;
+    return Array.isArray(entries) && entries.every((entry) => typeof entry === "string")
+      ? entries
+      : undefined;
+  } catch {
+    return undefined;
+  }
+};
+
+const readManagedSource = (file: string): string | undefined => {
+  try {
+    return readFileSync(file, "utf8");
+  } catch {
+    return undefined;
+  }
+};
+
+const relativeImports = (source: string): string[] =>
+  [...source.matchAll(MANAGED_IMPORT)]
+    .map((match) => match[1] ?? "")
+    .filter((specifier) => specifier.length > 0);
+
+const resolveManagedImport = (fromDirectory: string, specifier: string): string | undefined => {
+  const base = join(fromDirectory, specifier);
+  return [
+    base,
+    `${base}.ts`,
+    `${base}.tsx`,
+    join(base, "index.ts"),
+    join(base, "index.tsx"),
+  ].find(isManagedFile);
+};
+
+const isManagedFile = (candidate: string): boolean => {
+  try {
+    return statSync(candidate).isFile();
+  } catch {
+    return false;
+  }
 };
 
 export default autoReload;

@@ -16,39 +16,18 @@ const managedRoles: (home: string) => readonly ManagedOperationalRole[] = (home)
   { project: join(home, "code", "0xgleb"), role: "reviewer" },
 ];
 
+/**
+ * The standing role a session sitting in this directory holds, if any. A
+ * managed role is taken only by the session in its own project: it designates
+ * the one session that drains that project's queue, so it is never inferred
+ * from a directory that merely contains the project.
+ *
+ * Taking any other unowned role is an explicit act - `agent_registry
+ * action=claim` - rather than something delegating a request does on a
+ * session's behalf. A queued request with no owner waits for the session that
+ * claims the role instead of appointing a drainer that never runs it.
+ */
 export const managedOperationalRole: (cwd: string, home: string) => ManagedOperationalRole | undefined = (
   cwd,
   home,
 ) => managedRoles(home).find(({ project }) => project === cwd);
-
-/**
- * A managed role is taken only by the session sitting in its project. A
- * project with no managed role has no designated owner, so a session may pick
- * it up rather than leave its queue stranded - but only for a project it
- * actually contains.
- *
- * Containment rather than equality, because sessions are launched per org and
- * work across the repos inside it: a session in ~/code/st0x serves a request
- * for ~/code/st0x/st0x.issuance, and requiring an exact match would refuse the
- * cross-repo coordination that is the point of running it there. Several
- * sessions sharing one org directory is normal and not a conflict - they hold
- * different roles, and one holder per project and role is what the lease
- * already enforces.
- *
- * The home directory is excluded because it contains every project without
- * being one. A session launched from home would otherwise qualify for every
- * role in the fleet, which is how a dispatcher sitting in home ends up
- * appointed drainer of a path nothing drains.
- */
-export const shouldSelfClaimUnownedRole: (
-  project: string,
-  role: string,
-  cwd: string,
-  home: string,
-) => boolean = (project, role, cwd, home) => {
-  const dedicated = managedRoles(home).some(
-    (candidate) => candidate.project === project && candidate.role === role,
-  );
-  const contains = cwd === project || project.startsWith(`${cwd}/`);
-  return contains && cwd !== home && (!dedicated || cwd === project);
-};

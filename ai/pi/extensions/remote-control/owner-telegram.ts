@@ -6,6 +6,7 @@ import { telegramHtmlChunks } from "./telegram-format.ts";
 import { decodeTelegramSentMessageId } from "./telegram.ts";
 
 const TELEGRAM_MESSAGE_LIMIT = 4_000;
+const MAX_TELEGRAM_DESCRIPTION_CHARACTERS = 80;
 const TOKEN_FILE_ENVIRONMENT = "PIECE_OF_PI_TELEGRAM_TOKEN_FILE";
 /**
  * Only the launchd daemon exports TOKEN_FILE_ENVIRONMENT; interactive Pi
@@ -15,8 +16,12 @@ const TOKEN_FILE_ENVIRONMENT = "PIECE_OF_PI_TELEGRAM_TOKEN_FILE";
  */
 const TOKEN_FILE_FALLBACK = "/run/agenix/metagenda-telegram-token";
 
+/**
+ * Every way this module can fail to put text in front of the owner. Each code
+ * has a producer below; a code no path can produce would promise the caller a
+ * distinction the module cannot actually make.
+ */
 export type OwnerRelayDeliveryCode =
-  | "transport_unconfigured"
   | "token_unreadable"
   | "token_invalid"
   | "owner_chat_unknown"
@@ -36,18 +41,44 @@ export class OwnerRelayDeliveryError extends Data.TaggedError(
  * shared state is the token file named by TOKEN_FILE_ENVIRONMENT and the owner
  * chat recorded in the daemon state file. Every reason this cannot send is a
  * typed failure so the caller can report it instead of claiming delivery.
+ *
+ * Secret handling boundary: this makes the Pi session a second holder of the
+ * bot token, which until now lived only in the daemon. The token is read per
+ * send, stays a value inside this pipeline, and never leaves it - it is not
+ * stored, not logged, not put on a command line, and not named in any typed
+ * failure. The request URL carries it, so no failure here ever quotes a URL;
+ * failures name a code, an HTTP status, and Telegram's own description. What
+ * the file permissions do not do is separate this session from the daemon:
+ * both run as the same user, so the boundary is this module's own discipline
+ * about where the value may travel.
+ *
+ * A report long enough to chunk is sent as several messages, and a rejection
+ * partway through means the owner already has the earlier parts. The failure
+ * says which part stopped and how many arrived, so the completion the owner
+ * reads does not claim a wholly undelivered report.
  */
 export const deliverOwnerRelay = (
   text: string,
 ): Effect.Effect<void, OwnerRelayDeliveryError> =>
   Effect.all({ token: telegramToken, chatId: ownerChatId }).pipe(
-    Effect.flatMap(({ token, chatId }) =>
-      Effect.forEach(
-        ownerRelayChunks(text),
-        (chunk) => sendOwnerMessage(token, chatId, chunk),
+    Effect.flatMap(({ token, chatId }) => {
+      const chunks = ownerRelayChunks(text);
+      return Effect.forEach(
+        chunks,
+        (chunk, position) =>
+          sendOwnerMessage(token, chatId, chunk).pipe(
+            Effect.mapError((failure) =>
+              chunks.length === 1
+                ? failure
+                : deliveryFailure(
+                    failure.code,
+                    `part ${position + 1} of ${chunks.length} failed, ${position} already delivered: ${failure.message}`,
+                  ),
+            ),
+          ),
         { discard: true, concurrency: 1 },
-      ),
-    ),
+      );
+    }),
   );
 
 const deliveryFailure = (
@@ -142,48 +173,108 @@ export const ownerRelayChunks = (text: string): readonly string[] =>
 export const hasMultipleLinks = (rendered: string): boolean =>
   (rendered.match(/<a href=/gu) ?? []).length > 1;
 
+/**
+ * The response stays a value in the pipeline rather than a variable captured
+ * around it: this description is the only outward path to the owner, and a
+ * status held in the closure would report the previous attempt's status the
+ * moment anyone retries or reuses the built effect.
+ */
 const sendOwnerMessage = (
   token: string,
   chatId: number,
   text: string,
-): Effect.Effect<void, OwnerRelayDeliveryError> => {
-  let status: number | undefined;
-  return Effect.tryPromise({
-    try: async () => {
-      const response = await fetch(
-        `https://api.telegram.org/bot${token}/sendMessage`,
-        {
-          method: "POST",
-          headers: { "content-type": "application/json" },
-          body: JSON.stringify({
-            chat_id: chatId,
-            text,
-            parse_mode: "HTML",
-            ...(hasMultipleLinks(text)
-              ? { link_preview_options: { is_disabled: true } }
-              : {}),
-          }),
-        },
-      );
-      status = response.status;
-      if (!response.ok) throw new Error("Telegram HTTP request failed");
-      return (await response.json()) as unknown;
-    },
+): Effect.Effect<void, OwnerRelayDeliveryError> =>
+  Effect.tryPromise({
+    try: () =>
+      fetch(`https://api.telegram.org/bot${token}/sendMessage`, {
+        method: "POST",
+        headers: { "content-type": "application/json" },
+        body: JSON.stringify({
+          chat_id: chatId,
+          text,
+          parse_mode: "HTML",
+          ...(hasMultipleLinks(text)
+            ? { link_preview_options: { is_disabled: true } }
+            : {}),
+        }),
+      }),
     catch: () =>
       deliveryFailure(
         "send_failed",
-        `the Telegram sendMessage request failed${status === undefined ? "" : ` with status ${status}`}`,
+        "the Telegram sendMessage request could not be sent",
       ),
   }).pipe(
-    Effect.flatMap(decodeTelegramSentMessageId),
-    Effect.mapError((error) =>
-      error instanceof OwnerRelayDeliveryError
-        ? error
-        : deliveryFailure(
-            "send_failed",
-            "the Telegram sendMessage response reported an error",
+    Effect.flatMap((response) =>
+      response.ok
+        ? Effect.tryPromise({
+            try: () => response.json() as Promise<unknown>,
+            catch: () =>
+              deliveryFailure(
+                "send_failed",
+                "the Telegram sendMessage response was unreadable",
+              ),
+          })
+        : Effect.flatMap(rejectionDetail(response), (detail) =>
+            Effect.fail(
+              deliveryFailure(
+                "send_failed",
+                `the Telegram sendMessage request returned status ${response.status}${detail}`,
+              ),
+            ),
           ),
+    ),
+    Effect.flatMap(decodeTelegramSentMessageId),
+    Effect.catchTag("TelegramContractError", () =>
+      Effect.fail(
+        deliveryFailure(
+          "send_failed",
+          "the Telegram sendMessage response reported an error",
+        ),
+      ),
     ),
     Effect.asVoid,
   );
+
+/**
+ * Telegram answers a rejected send with a JSON envelope - `{ok: false,
+ * error_code, description, parameters: {retry_after}}` - and answers 429 with
+ * `parameters.retry_after` when one chat is sent to faster than roughly one
+ * message a second, which is what a report long enough to chunk does. That
+ * envelope is the only place the wait is stated, so it is decoded into the
+ * failure the owner's completion carries rather than collapsed into a status
+ * code nobody can act on.
+ *
+ * https://core.telegram.org/bots/api#making-requests
+ *
+ * A body that is not that envelope is not a second failure to report: the
+ * status already names the rejection, so the detail is simply empty.
+ */
+const rejectionDetail = (response: Response): Effect.Effect<string> =>
+  Effect.tryPromise({
+    try: () => response.json() as Promise<unknown>,
+    catch: () =>
+      deliveryFailure("send_failed", "the rejection body was unreadable"),
+  }).pipe(
+    Effect.map(describedRejection),
+    Effect.orElseSucceed(() => ""),
+  );
+
+const isRecord = (value: unknown): value is Readonly<Record<string, unknown>> =>
+  typeof value === "object" && value !== null && !Array.isArray(value);
+
+const describedRejection = (envelope: unknown): string => {
+  if (!isRecord(envelope)) return "";
+  const parameters = isRecord(envelope.parameters)
+    ? envelope.parameters
+    : undefined;
+  const retryAfter = parameters?.retry_after;
+  const detail = [
+    ...(typeof envelope.description === "string" && envelope.description
+      ? [envelope.description.slice(0, MAX_TELEGRAM_DESCRIPTION_CHARACTERS)]
+      : []),
+    ...(typeof retryAfter === "number" && Number.isSafeInteger(retryAfter)
+      ? [`retry after ${retryAfter}s`]
+      : []),
+  ].join("; ");
+  return detail ? `: ${detail}` : "";
 };

@@ -1,5 +1,6 @@
 import path from "node:path";
 import vm from "node:vm";
+import { isLocalDispatchProvider } from "../shared/local-lane.ts";
 import { availableMemoryBytes as systemAvailableMemoryBytes } from "../shared/memory-capacity.ts";
 
 export type Boundary = "spawn" | "action" | "return" | "tool-result";
@@ -8,12 +9,21 @@ export type Decision =
   | { verdict: "allow"; reason: string; source: "deterministic" | "classifier"; resultSafe?: boolean }
   | { verdict: "block"; reason: string; source: "deterministic" | "classifier" };
 
+/**
+ * Which lane a boundary decision is being made for, mirroring the deployment
+ * roles in `shared/local-lane.ts`. The local dispatch lane runs the free router
+ * with no semantic classifier behind it, so its deterministic allowances are
+ * narrower than a standard session's. Omitting the lane is read as `standard`.
+ */
+export type ExecutionLane = "local-dispatch" | "standard";
+
 export interface ToolRequest {
   boundary: "action";
   toolName: string;
   input: Record<string, unknown>;
   cwd: string;
   agentArtifacts?: readonly string[];
+  lane?: ExecutionLane;
 }
 
 export interface ToolResultRequest {
@@ -21,6 +31,7 @@ export interface ToolResultRequest {
   input: Record<string, unknown>;
   content: unknown;
   cwd: string;
+  lane?: ExecutionLane;
 }
 
 export interface AgentRequest {
@@ -102,6 +113,15 @@ const REVIEW_DUTY_ACTIONS = new Set([
 const RELEASE_CADENCE_ACTIONS = new Set(["status", "enable", "disable", "mark"]);
 const isSkillView = (toolName: string, input: Readonly<Record<string, unknown>>): boolean =>
   toolName === "skill_manage" && input.action === "view";
+/**
+ * Registry coordination a full-capability session may perform without the
+ * semantic classifier. Closing a delegated request (`complete_request` /
+ * `fail_request`) is deliberately absent here: a full-capability session closes
+ * work it did not route and composes the summary that travels back to the
+ * requester as fact, which stays a classified decision. The dispatch lane
+ * closes only the far half of a routing loop it opened itself, so those two
+ * actions live in `DISPATCH_LANE_REGISTRY_ACTIONS` instead.
+ */
 const REGISTRY_ACTIONS = new Set([
   "list",
   "claim",
@@ -110,24 +130,123 @@ const REGISTRY_ACTIONS = new Set([
   "requests",
   "claim_request",
   "cancel_request",
+]);
+
+/**
+ * The dispatch lane's entire registry surface, which is the routing loop and
+ * nothing else: read the roster and the queue, enqueue a routed request, and
+ * close that request once its outcome comes back.
+ *
+ * Closing is deterministic here for the same reason it is classified for a
+ * full-capability session. There, `complete_request` / `fail_request` end work
+ * the session did not route, on a summary it composed. On this lane they end
+ * the row the same session enqueued through `delegate`, carrying back the
+ * outcome the receiving agent reported - the mechanical other half of the
+ * delegation, not a judgment about anyone else's work. Which rows a session may
+ * close at all is the registry tool's gate, not this allowlist's.
+ *
+ * Taking or renewing a role lease (`claim`, `release`) and claiming a queued
+ * request stay excluded - the lane must never own a lease it cannot drain, nor
+ * hide a row from the receiver that will actually run it.
+ */
+const DISPATCH_LANE_REGISTRY_ACTIONS = new Set([
+  "list",
+  "requests",
+  "delegate",
   "complete_request",
   "fail_request",
 ]);
+
+const isDeterministicRegistryAction = (
+  toolName: string,
+  input: Readonly<Record<string, unknown>>,
+  lane: ExecutionLane | undefined,
+): boolean => {
+  if (toolName !== "agent_registry") return false;
+  const action = String(input.action);
+  return lane === "local-dispatch"
+    ? DISPATCH_LANE_REGISTRY_ACTIONS.has(action)
+    : REGISTRY_ACTIONS.has(action);
+};
 const PI_BRIDGE_LIST = /^pi-bridge agents$/;
 const PI_BRIDGE_SEND =
-  /^(?:(?:printf '%s'|echo) '[^']{1,2000}' \| )?pi-bridge send(?: --(?:agent|dedupe) [A-Za-z0-9:._-]{1,128}){1,4}$/;
+  /^(?:(?:printf '%s'|echo) '[^']{1,2000}' \| )?pi-bridge send(?: --(?:agent|dedupe|requester) [A-Za-z0-9:._-]{1,128}){1,6}$/;
 const isPiBridgeRoutingCommand = (command: string): boolean => {
   const trimmed = command.trim();
   return PI_BRIDGE_LIST.test(trimmed) || PI_BRIDGE_SEND.test(trimmed);
 };
 
-export { isLocalDispatchProvider } from "../shared/local-lane.ts";
+export { isLocalDispatchProvider };
 
-export const localDispatchLaneBlock = (toolName: string): Decision => ({
+/**
+ * The lane this session decides on. The dispatch lane is a declared deployment
+ * role rather than a model choice, so the provider is only what
+ * `isLocalDispatchProvider` consults alongside that declaration.
+ */
+export const executionLane = (provider: string | undefined): ExecutionLane =>
+  isLocalDispatchProvider(provider) ? "local-dispatch" : "standard";
+
+const laneBlock = (subject: string): Decision => ({
   verdict: "block",
-  reason: `The local dispatch lane permits only typed routing actions without the model classifier; ${toolName} needs a full-capability agent - record the item and route it instead`,
+  reason: `The local dispatch lane permits only typed routing actions without the model classifier; ${subject} needs a full-capability agent - record the item and route it instead`,
   source: "deterministic",
 });
+
+/**
+ * The routing-only refusal, named by the subject that was refused: a tool name,
+ * or a typed action within one.
+ */
+export const localDispatchLaneBlock = (subject: string): Decision => laneBlock(subject);
+
+/**
+ * The dispatch lane's complete action policy, stated additively: the lane may
+ * take the routing surface and nothing else. It runs no semantic classifier, so
+ * an unmatched call must never fall through to the standard deterministic
+ * allowlist - reads, `reload_pi`, duty and cadence bookkeeping, artifact
+ * recording and its paired cleanup are all full-capability actions that routing
+ * never needs, and the lane has nothing behind it to judge them. The
+ * deterministic guards still run first, so a credential-bearing or otherwise
+ * refused call is blocked on its own terms rather than the generic routing
+ * directive.
+ */
+export const localDispatchLaneDecision = (request: ToolRequest): Decision =>
+  dispatchLaneGuard(request) ??
+  dispatchLaneAllowance(request) ??
+  localDispatchLaneBlock(dispatchLaneSubject(request));
+
+const dispatchLaneGuard = (request: ToolRequest): Decision | null => {
+  const deterministic = deterministicDecision({ ...request, lane: "local-dispatch" });
+  return deterministic?.verdict === "block" ? deterministic : null;
+};
+
+const dispatchLaneAllowance = (request: ToolRequest): Decision | null => {
+  if (request.toolName === "agent_registry") {
+    return DISPATCH_LANE_REGISTRY_ACTIONS.has(String(request.input.action))
+      ? {
+          verdict: "allow",
+          reason: "Local typed agent responsibility coordination",
+          source: "deterministic",
+        }
+      : null;
+  }
+  if (
+    request.toolName === "bash" &&
+    typeof request.input.command === "string" &&
+    isPiBridgeRoutingCommand(request.input.command)
+  ) {
+    return {
+      verdict: "allow",
+      reason: "Exact dispatcher bridge routing command",
+      source: "deterministic",
+    };
+  }
+  return null;
+};
+
+const dispatchLaneSubject = (request: ToolRequest): string =>
+  request.toolName === "agent_registry"
+    ? `agent_registry action=${String(request.input.action)}`
+    : request.toolName;
 const LOCALLY_GENERATED_RESULT_TOOLS = new Set(["edit", "write", "todo", "ask_user", "artifact_provenance", "review_duty", "release_cadence", "reload_pi", "workflow_audit", "safe_compaction_ready"]);
 const PATH_KEYS = new Set(["path", "file_path", "cwd", "glob"]);
 const SENSITIVE_PATH =
@@ -402,7 +521,7 @@ export function deterministicDecision(request: ToolRequest): Decision | null {
     };
   }
 
-  if (request.toolName === "agent_registry" && REGISTRY_ACTIONS.has(String(request.input.action))) {
+  if (isDeterministicRegistryAction(request.toolName, request.input, request.lane)) {
     return {
       verdict: "allow",
       reason: "Local typed agent responsibility coordination",
@@ -441,10 +560,14 @@ export function deterministicDecision(request: ToolRequest): Decision | null {
 export const shouldCarryDeterministicResultAllowance: (decision: Decision) => boolean = (decision) =>
   decision.verdict === "allow" && decision.source === "deterministic" && decision.resultSafe === true;
 
+/**
+ * The tool results a session may take back without the semantic classifier. On
+ * the dispatch lane this narrows to the same routing surface its actions do, so
+ * no result can carry back content from a capability the action boundary
+ * refuses that lane.
+ */
 export const deterministicReadOnlyToolResultDecision = (request: ToolResultRequest): Decision | null => {
-  const registryCoordination =
-    request.toolName === "agent_registry" &&
-    REGISTRY_ACTIONS.has(String(request.input.action));
+  const registryCoordination = isDeterministicRegistryAction(request.toolName, request.input, request.lane);
   const bridgeRouting =
     request.toolName === "bash" &&
     typeof request.input.command === "string" &&
@@ -453,20 +576,21 @@ export const deterministicReadOnlyToolResultDecision = (request: ToolResultReque
     request.toolName === "bash" &&
     typeof request.input.command === "string" &&
     isReadOnlyGitButlerStatusCommand(request.input.command);
-  if (
-    !READ_ONLY_TOOLS.has(request.toolName) &&
-    !registryCoordination &&
-    !bridgeRouting &&
-    !gitButlerStatusRead &&
-    !isSkillView(request.toolName, request.input)
-  ) {
-    return null;
-  }
+  const surfaced =
+    request.lane === "local-dispatch"
+      ? registryCoordination || bridgeRouting
+      : READ_ONLY_TOOLS.has(request.toolName) ||
+        registryCoordination ||
+        bridgeRouting ||
+        gitButlerStatusRead ||
+        isSkillView(request.toolName, request.input);
+  if (!surfaced) return null;
   const action = deterministicDecision({
     boundary: "action",
     toolName: request.toolName,
     input: request.input,
     cwd: request.cwd,
+    lane: request.lane,
   });
   if (action?.verdict !== "allow") return null;
   const serialized = typeof request.content === "string" ? request.content : (JSON.stringify(request.content) ?? "");

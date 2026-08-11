@@ -2,29 +2,49 @@ import assert from "node:assert/strict";
 import test from "node:test";
 
 import {
+  coherenceDiagnostic,
   HANDOFF_GLOBS,
   isSafeHandoffName,
+  MANAGED_SETTLE_GATE_START,
   managedPiChangeLabel,
   managedReloadDecision,
   managedPiWatchPaths,
+  managedSettleGateChanged,
+  managedSettleGateObserve,
   parseManagedReloadSummary,
   parseSeenHandoffNames,
   managedReloadDelivery,
   parseReloadResumeMarker,
   shouldDispatchReloadFollowUp,
   unseenHandoffNames,
+  type ManagedExtensionSet,
+  type ManagedSettleGate,
 } from "./core.ts";
 import { CONTINUATION_PAUSE_ENTRY } from "../shared/continuation-pause.ts";
 
 test("managed reloads preempt long-running turns only after sources settle", () => {
   const base = {
-    settled: true,
+    source: "settled" as const,
     idle: false,
     pendingForMs: 29_999,
     forceAfterMs: 30_000,
     preemptRequested: false,
   };
-  assert.equal(managedReloadDecision({ ...base, settled: false }), "await-settle");
+  assert.equal(managedReloadDecision({ ...base, source: "changing" }), "await-settle");
+  assert.equal(
+    managedReloadDecision({ ...base, source: "incoherent", idle: true }),
+    "await-settle",
+    "an idle session must not load a tree that does not hold together",
+  );
+  assert.equal(
+    managedReloadDecision({
+      ...base,
+      source: "incoherent",
+      pendingForMs: 60_000,
+    }),
+    "await-settle",
+    "the forced-reload deadline must never override the coherence gate",
+  );
   assert.equal(managedReloadDecision({ ...base, idle: true }), "reload");
   assert.equal(managedReloadDecision(base), "wait");
   assert.equal(
@@ -48,6 +68,96 @@ test("managed reloads preempt long-running turns only after sources settle", () 
     }),
     "wait",
   );
+});
+
+test("a tree held incoherent past the deadline is explained once instead of silently", () => {
+  const held = {
+    source: "incoherent" as const,
+    pendingForMs: 120_000,
+    noticeAfterMs: 120_000,
+    announced: false,
+  };
+  assert.equal(coherenceDiagnostic(held), "report");
+  assert.equal(
+    coherenceDiagnostic({ ...held, announced: true }),
+    "withhold",
+    "a wedged tree is named once, not on every retry",
+  );
+  assert.equal(
+    coherenceDiagnostic({ ...held, pendingForMs: 119_999 }),
+    "withhold",
+    "a change set still landing is not a stuck one",
+  );
+  assert.equal(coherenceDiagnostic({ ...held, source: "changing" }), "withhold");
+  assert.equal(coherenceDiagnostic({ ...held, source: "settled" }), "withhold");
+});
+
+test("a reload waits for a quiet window whose snapshot re-reads unchanged", () => {
+  const settleMs = 15_000;
+  const observe = (
+    gate: ManagedSettleGate,
+    now: number,
+    snapshot: string,
+    extensionSet: ManagedExtensionSet = { resolution: "complete" },
+  ) =>
+    managedSettleGateObserve(gate, {
+      now,
+      settleMs,
+      snapshot,
+      extensionSet: () => extensionSet,
+    });
+
+  const changed = managedSettleGateChanged(1_000);
+  assert.equal(observe(changed, 10_000, "a").source, "changing");
+
+  const firstQuiet = observe(changed, 16_000, "a");
+  assert.equal(
+    firstQuiet.source,
+    "changing",
+    "the first reading after the window closes only records the snapshot to compare against",
+  );
+  assert.equal(observe(firstQuiet.gate, 18_000, "a").source, "settled");
+
+  const moved = observe(firstQuiet.gate, 18_000, "b");
+  assert.equal(
+    moved.source,
+    "changing",
+    "a snapshot that moved is a write the watcher never reported, not a settled tree",
+  );
+  assert.equal(observe(moved.gate, 20_000, "b").source, "settled");
+
+  assert.equal(
+    observe(firstQuiet.gate, 18_000, "a", {
+      resolution: "incomplete",
+      unresolved: "./shared/lane.ts imported by /extensions/sample/index.ts",
+    }).source,
+    "incoherent",
+    "a quiet tree that does not resolve is a half-written change set",
+  );
+
+  const reopened = observe(managedSettleGateChanged(19_000), 20_000, "a");
+  assert.equal(reopened.source, "changing");
+  assert.equal(reopened.gate.settleSnapshot, undefined);
+  assert.equal(MANAGED_SETTLE_GATE_START.settleSnapshot, undefined);
+});
+
+test("the extension set is only walked once the quiet window has closed on a stable snapshot", () => {
+  let walks = 0;
+  const extensionSet = (): ManagedExtensionSet => {
+    walks += 1;
+    return { resolution: "complete" };
+  };
+  const observation = { settleMs: 15_000, snapshot: "a", extensionSet };
+  const changed = managedSettleGateChanged(1_000);
+  const early = managedSettleGateObserve(changed, { ...observation, now: 5_000 });
+  assert.equal(walks, 0);
+  const firstQuiet = managedSettleGateObserve(early.gate, { ...observation, now: 17_000 });
+  assert.equal(walks, 0);
+  assert.equal(
+    managedSettleGateObserve(firstQuiet.gate, { ...observation, now: 19_000 }).source,
+    "settled",
+  );
+  assert.equal(walks, 1);
 });
 
 test("managed reload resumes each interrupted generation before preserved follow-ups", () => {

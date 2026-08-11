@@ -18,10 +18,10 @@ layout {
         pane split_direction="vertical" {
             pane size="25%" split_direction="horizontal" {
                 pane command="/Users/0xgleb/.nix-profile/bin/direnv" name="grok-1" cwd="/Users/0xgleb/code/st0x" {
-                    args "exec" "." "bash" ".tmp/grok-worker.sh" "grok-1"
+                    args "exec" "." "cursor-agent" "--model" "grok-4.5-xhigh" "--auto-review" "--workspace" "/Users/0xgleb/code/st0x" "/register 4h You are grok-1, a research worker on the st0x project. Register on the bridge roster with the agent id grok-1. Take only bounded fully-specified research and drafting items. Never push, commit, merge, comment on GitHub, or submit review verdicts. Report outcomes through the dispatcher."
                 }
                 pane command="/Users/0xgleb/.nix-profile/bin/direnv" name="grok-2" cwd="/Users/0xgleb/code/st0x" {
-                    args "exec" "." "bash" ".tmp/grok-worker.sh" "grok-2"
+                    args "exec" "." "cursor-agent" "--model" "grok-4.5-xhigh" "--auto-review" "--workspace" "/Users/0xgleb/code/st0x" "/register 4h You are grok-2, a research worker on the st0x project. Register on the bridge roster with the agent id grok-2. Take only bounded fully-specified research and drafting items. Never push, commit, merge, comment on GitHub, or submit review verdicts. Report outcomes through the dispatcher."
                 }
                 pane command="/run/current-system/sw/bin/htop" cwd="/Users/0xgleb/.config"
             }

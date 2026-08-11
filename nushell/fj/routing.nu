@@ -16,6 +16,21 @@
 # launching pane's directory cannot decide it.
 const dispatcher_root = "/Users/0xgleb/.config"
 
+# The dispatch-lane Ollama model tag. A single source of truth so mod.nu's
+# `ensure-ollama` can assert the tag is actually pulled before routing a turn
+# through it — nothing else in this file or the Pi provider registration may
+# hardcode this string.
+export const dispatch_model = "qwen3.5:9b"
+
+# The dispatch lane's identity is DECLARED by the launcher, not inferred from
+# the model it happens to run — see ai/pi/extensions/shared/local-lane.ts's
+# `dispatchLane`, which reads this exact environment variable/value pair.
+# mod.nu's `clanker` exports it around the `^pi` invocation for the pinned
+# dispatcher session so extensions never have to guess the role from
+# `--model ollama/...`, which any session could pick.
+export const dispatch_lane_environment = "PI_DISPATCH_LANE"
+export const local_dispatch_lane = "local"
+
 # orgs whose repos use graphite for stacked PRs
 const graphite_orgs = [
   rainlanguage
@@ -258,15 +273,24 @@ const pi_worker_model = "openai-codex/gpt-5.6-sol"
 
 # The standing mandate every project worker starts with, kept here rather than
 # in each pane definition so the fleet cannot drift into per-worker variants of
-# the same instruction. A resuming session already has it and would only be
-# re-instructed mid-conversation, so the mandate rides a fresh session only.
+# the same instruction. A resuming session already has the mandate's prose in
+# its transcript, but its session-scoped `/register` cron died with the
+# process that created it (ai/skills/register/SKILL.md: "session crons die
+# with the session, so a fresh session re-arms by invoking /register once") —
+# so every relaunch, fresh or resumed, must re-invoke `/register` or the
+# drain loop silently stops while the pane looks alive. A resume gets the
+# bare re-arm only, since re-sending the full charter mid-conversation would
+# read as a re-instruction rather than idempotent cron upkeep.
 def worker-prompt [
   wants_worker: bool
   project: string
   resume: list<string>
 ]: nothing -> list<string> {
-  if not $wants_worker or ($resume | is-not-empty) {
+  if not $wants_worker {
     return []
+  }
+  if ($resume | is-not-empty) {
+    return ["/register 15m"]
   }
   let subject = if ($project | is-empty) { "project" } else { $project }
   [$"/register 15m You are the ($subject) worker. Drain the ($subject) queue per the register skill at 15m cadence. Delegate bounded read-only research to grok 4.5 cursor-agent workers freely."]
@@ -299,7 +323,7 @@ export def --wrapped clanker-route [
       tool: "pi-dispatcher"
       cwd: $dispatcher_root
       args: (
-        ["--model" "ollama/qwen3.5:9b"]
+        ["--model" $"ollama/($dispatch_model)"]
         | append $resume
         | append $forwarded
         | append $prompt

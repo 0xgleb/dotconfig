@@ -1,25 +1,58 @@
 import assert from "node:assert/strict";
 import test from "node:test";
+import { LOCAL_DISPATCH_PROVIDER } from "../shared/local-lane.ts";
 import {
   AGENT_PROCESS_STDIO,
   buildAgentArguments,
-  LOCAL_LANE_PROVIDER,
   localLaneWorkflowRefusal,
   resolveAgentModel,
   WORKFLOW_CHILD_SYSTEM_PROMPT,
 } from "./agent-process.ts";
 
-test("workflow orchestration is refused on the local Ollama lane", () => {
-  const refusal = localLaneWorkflowRefusal(LOCAL_LANE_PROVIDER);
-  assert.ok(refusal, "local lane must receive a refusal message");
-  assert.match(refusal ?? "", /route/i);
-  assert.match(refusal ?? "", /agent_registry/);
+const withDispatchLaneDeclaration = <Result>(
+  declaration: string | undefined,
+  body: () => Result,
+): Result => {
+  const previous = process.env.PI_DISPATCH_LANE;
+  if (declaration === undefined) delete process.env.PI_DISPATCH_LANE;
+  else process.env.PI_DISPATCH_LANE = declaration;
+  try {
+    return body();
+  } finally {
+    if (previous === undefined) delete process.env.PI_DISPATCH_LANE;
+    else process.env.PI_DISPATCH_LANE = previous;
+  }
+};
+
+test("workflow orchestration is refused on the declared dispatch lane", () => {
+  withDispatchLaneDeclaration("local", () => {
+    const refusal = localLaneWorkflowRefusal(LOCAL_DISPATCH_PROVIDER);
+    assert.ok(refusal, "the declared lane must receive a refusal message");
+    assert.match(refusal ?? "", /route/i);
+    assert.match(refusal ?? "", /agent_registry/);
+    assert.doesNotMatch(refusal ?? "", /declared the dispatch lane while running/);
+  });
 });
 
-test("workflow orchestration stays available to full-capability providers", () => {
-  assert.equal(localLaneWorkflowRefusal("openai-codex"), undefined);
-  assert.equal(localLaneWorkflowRefusal("anthropic"), undefined);
-  assert.equal(localLaneWorkflowRefusal(undefined), undefined);
+test("a declared lane on an unexpected provider is refused and the mismatch is surfaced", () => {
+  withDispatchLaneDeclaration("local", () => {
+    const refusal = localLaneWorkflowRefusal("openai-codex");
+    assert.ok(refusal, "the declaration governs the lane, not the provider");
+    assert.match(refusal ?? "", /declared the dispatch lane while running on openai-codex/);
+    assert.match(refusal ?? "", new RegExp(`rather than ${LOCAL_DISPATCH_PROVIDER}`));
+  });
+});
+
+test("an undeclared session keeps workflow orchestration on any provider", () => {
+  withDispatchLaneDeclaration(undefined, () => {
+    assert.equal(localLaneWorkflowRefusal(LOCAL_DISPATCH_PROVIDER), undefined);
+    assert.equal(localLaneWorkflowRefusal("openai-codex"), undefined);
+    assert.equal(localLaneWorkflowRefusal("anthropic"), undefined);
+    assert.equal(localLaneWorkflowRefusal(undefined), undefined);
+  });
+  withDispatchLaneDeclaration("standard", () => {
+    assert.equal(localLaneWorkflowRefusal(LOCAL_DISPATCH_PROVIDER), undefined);
+  });
 });
 
 test("workflow children load only the classified workflow extension explicitly", () => {

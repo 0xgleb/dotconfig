@@ -87,13 +87,13 @@ layout {
         }
         pane split_direction="vertical" {
             pane command="/Users/0xgleb/.nix-profile/bin/cursor-agent" name="grok-config-1" cwd="/Users/0xgleb/.config" {
-                args "--model" "grok-4.5-xhigh" "--auto-review" "--workspace" "/Users/0xgleb/.config" "/register 3m You are grok-config-1, a research worker on the .config project. Register on the bridge roster with the agent id grok-config-1. Take only bounded fully-specified research and drafting items. Never push, commit, merge, comment on GitHub, or submit review verdicts. Report outcomes through the dispatcher."
+                args "--model" "grok-4.5-xhigh" "--auto-review" "--workspace" "/Users/0xgleb/.config" "/register 4h You are grok-config-1, a research worker on the .config project. Register on the bridge roster with the agent id grok-config-1. Take only bounded fully-specified research and drafting items. Never push, commit, merge, comment on GitHub, or submit review verdicts. Report outcomes through the dispatcher."
             }
             pane command="/Users/0xgleb/.nix-profile/bin/direnv" name="grok-st0x-1" cwd="/Users/0xgleb/code/st0x" {
-                args "exec" "." "cursor-agent" "--model" "grok-4.5-xhigh" "--auto-review" "--workspace" "/Users/0xgleb/code/st0x" "/register 3m You are grok-st0x-1, a research worker on the st0x project. Register on the bridge roster with the agent id grok-st0x-1. Take only bounded fully-specified research and drafting items. Never push, commit, merge, comment on GitHub, or submit review verdicts. Report outcomes through the dispatcher."
+                args "exec" "." "cursor-agent" "--model" "grok-4.5-xhigh" "--auto-review" "--workspace" "/Users/0xgleb/code/st0x" "/register 4h You are grok-st0x-1, a research worker on the st0x project. Register on the bridge roster with the agent id grok-st0x-1. Take only bounded fully-specified research and drafting items. Never push, commit, merge, comment on GitHub, or submit review verdicts. Report outcomes through the dispatcher."
             }
             pane command="/Users/0xgleb/.nix-profile/bin/direnv" name="grok-yielduck-1" cwd="/Users/0xgleb/code/dataclique/yielduck" {
-                args "exec" "." "cursor-agent" "--model" "grok-4.5-xhigh" "--auto-review" "--workspace" "/Users/0xgleb/code/dataclique/yielduck" "/register 3m You are grok-yielduck-1, a research worker on the yielduck project. Register on the bridge roster with the agent id grok-yielduck-1. Take only bounded fully-specified research and drafting items. Never push, commit, merge, comment on GitHub, or submit review verdicts. Report outcomes through the dispatcher."
+                args "exec" "." "cursor-agent" "--model" "grok-4.5-xhigh" "--auto-review" "--workspace" "/Users/0xgleb/code/dataclique/yielduck" "/register 4h You are grok-yielduck-1, a research worker on the yielduck project. Register on the bridge roster with the agent id grok-yielduck-1. Take only bounded fully-specified research and drafting items. Never push, commit, merge, comment on GitHub, or submit review verdicts. Report outcomes through the dispatcher."
             }
         }
         pane size=1 borderless=true {

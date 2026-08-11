@@ -4,8 +4,10 @@ import {
   deterministicDecision,
   deterministicReadOnlyToolResultDecision,
   deterministicToolResultDecision,
+  executionLane,
   isLocalDispatchProvider,
   localDispatchLaneBlock,
+  localDispatchLaneDecision,
   MIN_AGENT_TOKEN_RESERVATION,
   MIN_CLASSIFIED_AGENT_TIMEOUT_MS,
   MIN_WORKFLOW_FREE_MEMORY_BYTES,
@@ -16,6 +18,7 @@ import {
   shouldCarryDeterministicResultAllowance,
   type AgentRequest,
   type AgentResult,
+  type ExecutionLane,
   type WorkflowDependencies,
   type WorkflowLimits,
 } from "./core.ts";
@@ -341,17 +344,7 @@ test("non-blocking user questions are locally allowed", () => {
 });
 
 test("typed local agent registry coordination is locally allowed without granting project tools", () => {
-  for (const action of [
-    "list",
-    "claim",
-    "release",
-    "delegate",
-    "requests",
-    "claim_request",
-    "cancel_request",
-    "complete_request",
-    "fail_request",
-  ]) {
+  for (const action of ["list", "claim", "release", "delegate", "requests", "claim_request", "cancel_request"]) {
     assert.deepEqual(
       deterministicDecision({ boundary: "action", toolName: "agent_registry", input: { action }, cwd: "/repo" }),
       {
@@ -359,6 +352,7 @@ test("typed local agent registry coordination is locally allowed without grantin
         reason: "Local typed agent responsibility coordination",
         source: "deterministic",
       },
+      action,
     );
   }
   assert.equal(
@@ -372,12 +366,180 @@ test("typed local agent registry coordination is locally allowed without grantin
   );
 });
 
+test("closing a delegated request stays classified off the dispatch lane", () => {
+  for (const action of ["complete_request", "fail_request"]) {
+    assert.equal(
+      deterministicDecision({ boundary: "action", toolName: "agent_registry", input: { action }, cwd: "/repo" }),
+      null,
+      action,
+    );
+    assert.equal(
+      deterministicDecision({
+        boundary: "action",
+        toolName: "agent_registry",
+        input: { action },
+        cwd: "/repo",
+        lane: "standard",
+      }),
+      null,
+      action,
+    );
+    assert.equal(
+      deterministicReadOnlyToolResultDecision({
+        toolName: "agent_registry",
+        input: { action },
+        content: [{ type: "text", text: "Recorded outcome for req-123" }],
+        cwd: "/repo",
+      }),
+      null,
+      action,
+    );
+  }
+});
+
+test("the dispatch lane may only enqueue routed requests and record their outcomes", () => {
+  const laneDecision = (action: string) =>
+    localDispatchLaneDecision({
+      boundary: "action",
+      toolName: "agent_registry",
+      input: { action, project: "/Users/example/.config", role: "pi-support" },
+      cwd: "/Users/example/.config",
+    });
+  for (const action of ["list", "requests", "delegate", "complete_request", "fail_request"]) {
+    assert.equal(laneDecision(action).verdict, "allow", action);
+  }
+  for (const action of ["claim", "release", "claim_request", "cancel_request", "purge"]) {
+    const decision = laneDecision(action);
+    assert.equal(decision.verdict, "block", action);
+    assert.equal(decision.source, "deterministic", action);
+    assert.match(decision.reason, /route it instead/, action);
+    assert.match(decision.reason, new RegExp(`agent_registry action=${action}`), action);
+  }
+});
+
+test("the dispatch lane refusal outranks the deterministic allowlist", () => {
+  for (const action of ["claim", "claim_request"]) {
+    const request = {
+      boundary: "action" as const,
+      toolName: "agent_registry",
+      input: { action, project: "/Users/example/code/st0x", role: "reviewer" },
+      cwd: "/Users/example/.config",
+    };
+    assert.equal(deterministicDecision(request)?.verdict, "allow", action);
+    assert.equal(localDispatchLaneDecision(request).verdict, "block", action);
+  }
+});
+
+test("the dispatch lane holds no capability outside the routing surface", () => {
+  const inheritedAllowances: ReadonlyArray<readonly [string, Record<string, unknown>]> = [
+    ["reload_pi", {}],
+    ["todo", { action: "list" }],
+    ["ask_user", { action: "ask", question: "which project owns this?" }],
+    ["artifact_provenance", { action: "record", path: ".tmp/routing/report.json" }],
+    ["review_duty", { action: "complete-auto" }],
+    ["release_cadence", { action: "mark" }],
+    ["browser", { url: "https://example.com/thread" }],
+    ["read", { path: "/repo/notes.md" }],
+    ["skill_manage", { action: "view", name: "register" }],
+  ];
+  for (const [toolName, input] of inheritedAllowances) {
+    const request = { boundary: "action" as const, toolName, input, cwd: "/repo" };
+    assert.equal(deterministicDecision(request)?.verdict, "allow", toolName);
+    const lane = localDispatchLaneDecision(request);
+    assert.equal(lane.verdict, "block", toolName);
+    assert.equal(lane.source, "deterministic", toolName);
+    assert.match(lane.reason, new RegExp(`${toolName} needs a full-capability agent`), toolName);
+  }
+  const cleanup = {
+    boundary: "action" as const,
+    toolName: "bash",
+    input: { command: "rm -f .tmp/routing/report.json" },
+    cwd: "/repo",
+    agentArtifacts: ["/repo/.tmp/routing/report.json"],
+  };
+  assert.equal(deterministicDecision(cleanup)?.verdict, "allow");
+  assert.equal(localDispatchLaneDecision(cleanup).verdict, "block");
+});
+
+test("the dispatch lane keeps the routing surface and the credential guards ahead of it", () => {
+  for (const input of [
+    { action: "delegate", project: "/Users/example/code/st0x", role: "receiver" },
+    { action: "complete_request", requestId: "req-123", summary: "routed and closed" },
+  ]) {
+    assert.equal(
+      localDispatchLaneDecision({ boundary: "action", toolName: "agent_registry", input, cwd: "/repo" }).verdict,
+      "allow",
+      String(input.action),
+    );
+  }
+  assert.equal(
+    localDispatchLaneDecision({
+      boundary: "action",
+      toolName: "bash",
+      input: { command: "pi-bridge send --agent 019fc63f --dedupe req-123" },
+      cwd: "/repo",
+    }).verdict,
+    "allow",
+  );
+  const credentialBearing = localDispatchLaneDecision({
+    boundary: "action",
+    toolName: "bash",
+    input: { command: "printf '%s' 'read .env.production first' | pi-bridge send --agent 019fc63f --dedupe req-9" },
+    cwd: "/repo",
+  });
+  assert.equal(credentialBearing.verdict, "block");
+  assert.match(credentialBearing.reason, /credential or secret-bearing path/i);
+});
+
+test("dispatch-lane tool results narrow to the same surface as its actions", () => {
+  const laneResult = (toolName: string, input: Record<string, unknown>) =>
+    deterministicReadOnlyToolResultDecision({
+      toolName,
+      input,
+      content: [{ type: "text", text: "Roster: one live agent" }],
+      cwd: "/repo",
+      lane: "local-dispatch",
+    });
+  assert.equal(laneResult("read", { path: "/repo/notes.md" }), null);
+  assert.equal(laneResult("browser", { url: "https://example.com/thread" }), null);
+  assert.equal(laneResult("skill_manage", { action: "view", name: "register" }), null);
+  assert.equal(laneResult("bash", { command: "but status --format json" }), null);
+  assert.equal(laneResult("bash", { command: "pi-bridge agents" })?.verdict, "allow");
+  assert.equal(laneResult("agent_registry", { action: "requests" })?.verdict, "allow");
+  assert.equal(
+    deterministicReadOnlyToolResultDecision({
+      toolName: "read",
+      input: { path: "/repo/notes.md" },
+      content: [{ type: "text", text: "Roster: one live agent" }],
+      cwd: "/repo",
+      lane: "standard",
+    })?.verdict,
+    "allow",
+  );
+});
+
+test("dispatch-lane registry results narrow to the actions the lane may take", () => {
+  const resultDecision = (action: string, lane: ExecutionLane) =>
+    deterministicReadOnlyToolResultDecision({
+      toolName: "agent_registry",
+      input: { action },
+      content: [{ type: "text", text: "Registry acknowledged req-123" }],
+      cwd: "/repo",
+      lane,
+    });
+  assert.equal(resultDecision("complete_request", "local-dispatch")?.verdict, "allow");
+  assert.equal(resultDecision("delegate", "local-dispatch")?.verdict, "allow");
+  assert.equal(resultDecision("claim", "local-dispatch"), null);
+  assert.equal(resultDecision("claim", "standard")?.verdict, "allow");
+});
+
 test("exact dispatcher bridge routing commands are locally allowed", () => {
   for (const command of [
     "pi-bridge agents",
     "pi-bridge send --agent 019fc63f --dedupe req-123",
     "printf '%s' 'request:req-123 outcome:completed summary:done evidence:pr-62' | pi-bridge send --agent 019fc63f --dedupe req-123",
     "echo 'request:req-9 outcome:failed summary:dispatcher unreachable' | pi-bridge send --agent 019fc63f --dedupe req-9",
+    "printf '%s' 'request:req-123 outcome:completed summary:done evidence:pr-62' | pi-bridge send --agent 019fc63f --requester 019fc7a1 --dedupe req-123",
   ]) {
     assert.equal(
       deterministicDecision({ boundary: "action", toolName: "bash", input: { command }, cwd: "/repo" })?.verdict,
@@ -401,13 +563,38 @@ test("exact dispatcher bridge routing commands are locally allowed", () => {
 });
 
 test("the local dispatch lane decides deterministically without the model classifier", () => {
-  assert.equal(isLocalDispatchProvider("ollama"), true);
-  assert.equal(isLocalDispatchProvider("anthropic"), false);
-  assert.equal(isLocalDispatchProvider(undefined), false);
+  const declaration = process.env.PI_DISPATCH_LANE;
+  try {
+    process.env.PI_DISPATCH_LANE = "local";
+    assert.equal(isLocalDispatchProvider("ollama"), true);
+    assert.equal(executionLane("ollama"), "local-dispatch");
+    delete process.env.PI_DISPATCH_LANE;
+    assert.equal(isLocalDispatchProvider("anthropic"), false);
+    assert.equal(isLocalDispatchProvider(undefined), false);
+    assert.equal(executionLane("anthropic"), "standard");
+    assert.equal(executionLane(undefined), "standard");
+  } finally {
+    if (declaration === undefined) delete process.env.PI_DISPATCH_LANE;
+    else process.env.PI_DISPATCH_LANE = declaration;
+  }
   const block = localDispatchLaneBlock("bash");
   assert.equal(block.verdict, "block");
   assert.equal(block.source, "deterministic");
   assert.match(block.reason, /route/i);
+  assert.equal(
+    localDispatchLaneDecision({
+      boundary: "action",
+      toolName: "bash",
+      input: { command: "pi-bridge agents" },
+      cwd: "/repo",
+    }).verdict,
+    "allow",
+  );
+  assert.equal(
+    localDispatchLaneDecision({ boundary: "action", toolName: "bash", input: { command: "ssh prod" }, cwd: "/repo" })
+      .verdict,
+    "block",
+  );
 });
 
 test("typed registry mutation acknowledgements stay behind local content guards", () => {

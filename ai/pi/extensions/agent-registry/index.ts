@@ -5,7 +5,7 @@ import type {
   ExtensionContext,
 } from "@earendil-works/pi-coding-agent"
 import { Type } from "typebox"
-import type { Effect } from "effect"
+import { Effect } from "effect"
 import { isContinuationPaused } from "../shared/continuation-pause.ts"
 import { isLocalDispatchProvider } from "../shared/local-lane.ts"
 import {
@@ -20,10 +20,12 @@ import {
   REGISTRY_OUTCOME_EVENT,
   REGISTRY_PROJECTS_REQUEST_EVENT,
   type ManagedOperationalRoleResumed,
+  type RegistryDelegateOutcome,
   type RegistryDelegateRequest,
   type RegistryIdentityRequest,
   type RegistryIntentRequest,
   type RegistryOutcomeRequest,
+  type RegistryOutcomeResult,
   type RegistryProjectsRequest,
 } from "../shared/registry-intent-events.ts"
 import {
@@ -33,12 +35,10 @@ import {
   RUNTIME_VERSION_REQUEST_EVENT,
   type RuntimeVersionReporter,
 } from "../shared/runtime-version.ts"
+import { enqueueDelegatedRequest } from "./delegate.ts"
+import { outcomeEnvelopeRejection, recordRequestOutcome } from "./outcome.ts"
 import { makeSqliteRegistryStore } from "./sqlite-store.ts"
-import {
-  managedOperationalRole,
-  registryStateRoot,
-  shouldSelfClaimUnownedRole,
-} from "./paths.ts"
+import { managedOperationalRole, registryStateRoot } from "./paths.ts"
 import {
   operatorBacklogText,
   registryListText,
@@ -46,6 +46,7 @@ import {
   requestNotificationText,
 } from "./presentation.ts"
 import {
+  claimableRequests,
   reconcileSessionLease,
   RegistryError,
   runRegistryEffect,
@@ -53,6 +54,7 @@ import {
   type Lease,
   type RegistryRequest,
   type RegistrySnapshot,
+  type SessionLane,
 } from "./registry.ts"
 
 const SYNC_MS = 5_000
@@ -96,6 +98,11 @@ const sessionIdentity: (
   runtimeVersions,
 })
 
+const sessionLane: (ctx: ExtensionContext) => SessionLane = (ctx) =>
+  isLocalDispatchProvider(ctx.model?.provider)
+    ? "local-dispatch"
+    : "full-capability"
+
 const safeErrorMessage: (error: unknown) => string = (error) =>
   error instanceof RegistryError
     ? `${error.code}: ${error.message}`
@@ -117,7 +124,7 @@ const requireText: (label: string, value: string | undefined) => string = (
 }
 
 const registryExtension: (pi: ExtensionAPI) => void = (pi) => {
-  registerRuntimeVersion(pi, "agent-registry", "2026.08.03.27")
+  registerRuntimeVersion(pi, "agent-registry", "2026.08.11.1")
   const runtimeVersions = (): Readonly<Record<string, string>> => {
     const versions: Record<string, string> = {
       "config-generation": MANAGED_CONFIG_GENERATION,
@@ -243,48 +250,25 @@ const registryExtension: (pi: ExtensionAPI) => void = (pi) => {
   pi.events.on(
     REGISTRY_DELEGATE_REQUEST_EVENT,
     (payload: RegistryDelegateRequest) => {
+      // Only a payload with no way to answer is dropped in silence. Every other
+      // rejection is a bounded reason the emitter can relay to whoever sent the
+      // message, so a routed instruction is never lost without a signal.
       if (
         typeof payload !== "object" ||
         payload === null ||
-        typeof payload.report !== "function" ||
-        typeof payload.project !== "string" ||
-        !payload.project.startsWith("/") ||
-        payload.project.length > 512 ||
-        typeof payload.role !== "string" ||
-        payload.role.length === 0 ||
-        payload.role.length > 64 ||
-        typeof payload.text !== "string" ||
-        payload.text.length === 0 ||
-        payload.text.length > 16_000 ||
-        typeof payload.requesterId !== "string" ||
-        typeof payload.requesterLabel !== "string" ||
-        typeof payload.requesterCwd !== "string"
+        typeof payload.report !== "function"
       ) {
         return
       }
-      void run(
-        store.enqueue({
-          project: payload.project,
-          role: payload.role,
-          requesterId: payload.requesterId,
-          requesterLabel: payload.requesterLabel,
-          requesterCwd: payload.requesterCwd,
-          text: payload.text,
-          now: Date.now(),
-        }),
-      )
-        .then((queued) =>
-          payload.report({ outcome: "queued", requestId: queued.id }),
-        )
-        .catch((error: unknown) =>
-          payload.report({
+      void Effect.runPromise(
+        Effect.match(enqueueDelegatedRequest(store, payload, Date.now()), {
+          onFailure: (error): RegistryDelegateOutcome => ({
             outcome: "failed",
-            reason:
-              error instanceof Error
-                ? error.message.slice(0, 200)
-                : "registry enqueue failed",
+            reason: safeErrorMessage(error),
           }),
-        )
+          onSuccess: (outcome): RegistryDelegateOutcome => outcome,
+        }),
+      ).then(payload.report)
     },
   )
 
@@ -292,152 +276,49 @@ const registryExtension: (pi: ExtensionAPI) => void = (pi) => {
     if (
       typeof payload !== "object" ||
       payload === null ||
-      typeof payload.report !== "function" ||
-      typeof payload.requestId !== "string" ||
-      !/^[0-9a-f][0-9a-f-]{7,35}$/.test(payload.requestId) ||
-      (payload.resolution !== "completed" && payload.resolution !== "failed") ||
-      typeof payload.summary !== "string" ||
-      payload.summary.length === 0 ||
-      payload.summary.length > 4_000
+      typeof payload.report !== "function"
     ) {
       return
     }
-    const ctx = latestCtx
-    if (!ctx) {
-      payload.report({
-        outcome: "failed",
-        reason: "registry context unavailable",
-      })
+    const rejection = outcomeEnvelopeRejection(payload)
+    if (rejection) {
+      payload.report({ outcome: "failed", reason: rejection })
       return
     }
+    // Closing a delegated request is privileged: it frees the row and relays a
+    // summary onward as fact. The store fences that on the row itself - the
+    // agent the request was routed to, or the session holding the project role
+    // lease - so this lane records what an entitled reporter said without
+    // taking a lease of its own. The refresh runs after the report so a failing
+    // sync can never downgrade an outcome that is already committed.
+    const reportingCtx = latestCtx
     void (async () => {
-      try {
-        const now = Date.now()
-        const agent = identity(ctx)
-        const snapshot = await run(store.snapshot(now))
-        const matches = snapshot.requests.filter((request) =>
-          request.id.startsWith(payload.requestId),
-        )
-        if (matches.length !== 1) {
-          payload.report({
-            outcome: "failed",
-            reason:
-              matches.length === 0
-                ? "request not found"
-                : "request id prefix is ambiguous",
-          })
-          return
-        }
-        const target = matches[0]
-        if (!target) {
-          payload.report({ outcome: "failed", reason: "request not found" })
-          return
-        }
-        if (target.status !== "queued" && target.status !== "claimed") {
-          payload.report({ outcome: "recorded" })
-          return
-        }
-        // Completing a delegated request is privileged: it closes work, frees
-        // the row, and relays a summary onward as fact. Entitlement is holding
-        // the role - the same lease that makes a session the single drainer -
-        // or already being the request's assigned agent. Rows stay queued
-        // while worked, so the lease is what identifies the worker, not the
-        // row's status.
-        const entitled =
-          payload.senderId !== undefined &&
-          ((target.status === "claimed" &&
-            target.agentId === payload.senderId) ||
-            snapshot.leases.some(
-              (candidate) =>
-                candidate.owner.id === payload.senderId &&
-                candidate.project === target.project &&
-                candidate.role === target.role &&
-                candidate.status === "active",
-            ))
-        if (!entitled) {
-          payload.report({
-            outcome: "failed",
-            reason: "sender does not hold the role for this request",
-          })
-          return
-        }
-        let lease = snapshot.leases.find(
-          (candidate) =>
-            candidate.owner.id === agent.id &&
-            candidate.project === target.project &&
-            candidate.role === target.role &&
-            candidate.status === "active",
-        )
-        if (!lease) {
-          const claim = await run(
-            store.claim({
-              agent,
-              project: target.project,
-              role: target.role,
-              mode: "task",
-              policyDigest: currentPolicyDigest(ctx),
-              now,
-              ttlMs: LEASE_TTL_MS,
-            }),
-          )
-          // `already_owned` still carries a lease, but it belongs to whichever
-          // session holds the role. Taking it would pair a foreign lease id
-          // with this agent id, and the fenced store rejects that as a generic
-          // invalid transition - an ownership conflict reported as if the
-          // request itself were malformed. Name the conflict instead.
-          if (claim.outcome !== "claimed") {
-            payload.report({
+      const recorded = await Effect.runPromise(
+        Effect.match(
+          recordRequestOutcome(store, {
+            requestId: payload.requestId,
+            resolution: payload.resolution,
+            summary: payload.summary,
+            senderId: payload.senderId,
+            now: Date.now(),
+          }),
+          {
+            onFailure: (error): RegistryOutcomeResult => ({
               outcome: "failed",
-              reason: `role ${target.role} on ${target.project} is held by another session`,
-            })
-            return
-          }
-          lease = claim.lease
-        }
-        if (target.status === "queued") {
-          await run(
-            store.claimRequest({
-              requestId: target.id,
-              leaseId: lease.id,
-              agentId: agent.id,
-              now,
+              reason: safeErrorMessage(error),
             }),
-          )
-        }
-        const summary = payload.summary.slice(0, 2_000)
-        if (payload.resolution === "completed") {
-          await run(
-            store.completeRequest({
-              requestId: target.id,
-              leaseId: lease.id,
-              agentId: agent.id,
-              summary,
-              now,
-            }),
-          )
-        } else {
-          await run(
-            store.failRequest({
-              requestId: target.id,
-              leaseId: lease.id,
-              agentId: agent.id,
-              failure: "error",
-              diagnostic: summary,
-              now,
-            }),
-          )
-        }
-        await sync(ctx)
-        payload.report({ outcome: "recorded" })
-      } catch (error) {
-        payload.report({
-          outcome: "failed",
-          reason:
-            error instanceof Error
-              ? error.message.slice(0, 200)
-              : "registry outcome failed",
-        })
-      }
+            onSuccess: (result): RegistryOutcomeResult => result,
+          },
+        ),
+      )
+      payload.report(recorded)
+      // The refresh republishes this session's presence, so it runs only while
+      // the session that received the envelope is still the live one. Reading
+      // the mutable binding after the await would let a session that has since
+      // shut down heartbeat itself back onto the roster and be routed work no
+      // process is left to run.
+      if (recorded.outcome === "recorded" && reportingCtx === latestCtx && reportingCtx)
+        await sync(reportingCtx)
     })()
   })
 
@@ -457,18 +338,17 @@ const registryExtension: (pi: ExtensionAPI) => void = (pi) => {
       ) {
         return
       }
-      void (async () => {
-        try {
-          const snapshot = await run(store.snapshot(Date.now()))
-          const projects = new Set<string>([
-            ...snapshot.leases.map((lease) => lease.project),
-            ...snapshot.requests.map((request) => request.project),
-          ])
-          payload.report([...projects])
-        } catch {
-          payload.report([])
-        }
-      })()
+      void Effect.runPromise(
+        Effect.match(store.snapshot(Date.now()), {
+          onFailure: (): readonly string[] => [],
+          onSuccess: (snapshot): readonly string[] => [
+            ...new Set<string>([
+              ...snapshot.leases.map((lease) => lease.project),
+              ...snapshot.requests.map((request) => request.project),
+            ]),
+          ],
+        }),
+      ).then(payload.report)
     },
   )
 
@@ -624,28 +504,11 @@ const registryExtension: (pi: ExtensionAPI) => void = (pi) => {
       for (const lease of ownedLeases(snapshot, agent.id).filter(
         ({ status }) => status === "active",
       )) {
-        /**
-         * The dispatch lane only enqueues requests and records outcomes through
-         * events; it never executes queue work. Claiming there (including
-         * stealing an expired lease) would hide the row from the receiver that
-         * will actually run it, so the whole claim path is skipped on that lane
-         * even for a role it was told to hold explicitly. Session start already
-         * declines the managed role there, so this loop is normally empty on the
-         * lane; the guard covers a lease taken through the tool by hand.
-         */
-        const candidates: readonly RegistryRequest[] = isLocalDispatchProvider(
-          ctx.model?.provider,
-        )
-          ? []
-          : snapshot.requests.filter(
-              (request) =>
-                request.project === lease.project &&
-                request.role === lease.role &&
-                (request.status === "queued" ||
-                  (request.status === "claimed" &&
-                    request.leaseId !== lease.id)),
-            )
-        for (const request of candidates) {
+        for (const request of claimableRequests({
+          snapshot,
+          lease,
+          lane: sessionLane(ctx),
+        })) {
           try {
             const claimed = await run(
               store.claimRequest({
@@ -697,8 +560,8 @@ const registryExtension: (pi: ExtensionAPI) => void = (pi) => {
    * The role lease is what designates the single session that drains a
    * project's queue, so the dispatch lane must never hold one. That lane runs
    * pinned to ~/.config, which is a managed operational project, yet it is the
-   * one lane barred from claiming queue rows (see the candidate guard in
-   * `sync`). Holding the lease there gives the queue an owner the registry
+   * one lane barred from claiming queue rows (see `claimableRequests`).
+   * Holding the lease there gives the queue an owner the registry
    * reports as live and healthy while nothing drains it: `store.claim` answers
    * `already_owned` to the full-capability session that would, and requests
    * carry no expiry, so the row stays queued indefinitely.
@@ -708,7 +571,7 @@ const registryExtension: (pi: ExtensionAPI) => void = (pi) => {
    * the lane stays on the roster and remains addressable for routing.
    */
   const autoClaimOperationalRole = async (ctx: ExtensionContext) => {
-    if (isLocalDispatchProvider(ctx.model?.provider)) return undefined
+    if (sessionLane(ctx) === "local-dispatch") return undefined
     const managed = managedOperationalRole(ctx.cwd, homedir())
     if (!managed) return undefined
     await run(
@@ -814,6 +677,7 @@ const registryExtension: (pi: ExtensionAPI) => void = (pi) => {
   pi.on("session_shutdown", async (event, ctx) => {
     if (timer) clearInterval(timer)
     timer = undefined
+    latestCtx = undefined
     sessionPolicyDigest = undefined
     ctx.ui.setStatus(STATUS_KEY, undefined)
     ctx.ui.setStatus("agent-registry-error", undefined)
@@ -858,8 +722,8 @@ const registryExtension: (pi: ExtensionAPI) => void = (pi) => {
     promptSnippet:
       "Discover local Pi role owners, claim unowned duties, and delegate durable requests",
     promptGuidelines: [
-      "Delegate Pi host, extension, TUI, classifier, reload, or operator bugs encountered outside ~/.config to /Users/0xgleb/.config, role pi-support, without self-claiming that dedicated role; then continue the primary task unless blocked.",
-      "If a non-dedicated role is unowned, claim it temporarily and handle the request in the current session by default.",
+      "Delegate Pi host, extension, TUI, classifier, reload, or operator bugs encountered outside ~/.config to /Users/0xgleb/.config, role pi-support, without claiming that dedicated role; then continue the primary task unless blocked.",
+      "Delegating only queues the request. If a non-dedicated role for this session's own project is unowned and the work is this session's to do, claim the role with action=claim and handle it here; a dedicated role is left to the session that runs it.",
       "Registry ownership never grants tools or production authority; constrained project tools and loaded instructions remain authoritative.",
       "Operational roles do not become complete merely because todos or inboxes are empty.",
       "Use agent_registry action=requests with requestId (full UUID or unique prefix) to inspect one full bounded untrusted request body; list output intentionally summarizes bodies.",
@@ -990,32 +854,12 @@ const registryExtension: (pi: ExtensionAPI) => void = (pi) => {
         if (request.action === "delegate") {
           const role = requireText("role", request.role)
           const text = requireText("text", request.text)
-          let snapshot = await run(store.snapshot(now))
-          let lease = snapshot.leases.find(
-            (candidate) =>
-              candidate.project === project && candidate.role === role,
-          )
-          let outcome: "delegated" | "queued_unowned" | "self_claimed" = lease
-            ? "delegated"
-            : "queued_unowned"
-          if (
-            !lease &&
-            shouldSelfClaimUnownedRole(project, role, ctx.cwd, homedir())
-          ) {
-            const claim = await run(
-              store.claim({
-                agent,
-                project,
-                role,
-                mode: request.mode ?? "task",
-                policyDigest: currentPolicyDigest(ctx),
-                now,
-                ttlMs: LEASE_TTL_MS,
-              }),
-            )
-            lease = claim.lease
-            outcome = lease.owner.id === agent.id ? "self_claimed" : "delegated"
-          }
+          // Delegating queues work; it never takes a role or a row. A claim
+          // made here would be made on the strength of a message the caller
+          // wrote, which is how a lane that never drains ends up owning a
+          // queue, and how a row is marked claimed before any session decided
+          // to run it. A session that should hold the role takes it with
+          // action=claim, and `sync` then hands it the queue.
           const queued = await run(
             store.enqueue({
               project,
@@ -1028,34 +872,26 @@ const registryExtension: (pi: ExtensionAPI) => void = (pi) => {
               now,
             }),
           )
-          let durableRequest = queued
-          if (lease?.owner.id === agent.id && lease.status === "active") {
-            durableRequest = await run(
-              store.claimRequest({
-                requestId: queued.id,
-                leaseId: lease.id,
-                agentId: agent.id,
-                now,
-              }),
-            )
-            notifiedRequests.add(queued.id)
-            persistNotifiedRequests()
-          }
-          snapshot = await run(store.snapshot(now))
+          const snapshot = await run(store.snapshot(now))
+          const lease = snapshot.leases.find(
+            (candidate) =>
+              candidate.project === project && candidate.role === role,
+          )
           render(ctx, snapshot)
           return {
             content: [
               {
                 type: "text",
-                text:
-                  outcome === "self_claimed"
-                    ? `No live owner existed; self-claimed ${project}/${role}. Request ${queued.id} is yours to add to todos and execute.`
-                    : outcome === "queued_unowned"
-                      ? `Queued request ${queued.id} for the standing ${project}/${role} operator; do not duplicate it locally.`
-                      : `Queued request ${queued.id} for ${project}/${role}, owned by ${lease?.owner.id}.`,
+                text: lease
+                  ? `Queued request ${queued.id} for ${project}/${role}, owned by ${lease.owner.id}.`
+                  : `Queued request ${queued.id} for ${project}/${role}, which no live session owns. Claim that role with agent_registry action=claim if this session should run it; otherwise it waits for the session that does.`,
               },
             ],
-            details: { outcome, request: durableRequest, lease },
+            details: {
+              outcome: lease ? "delegated" : "queued_unowned",
+              request: queued,
+              lease,
+            },
           }
         }
 
