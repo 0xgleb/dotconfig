@@ -16,6 +16,7 @@ import { Type } from "typebox"
 import {
   AGENT_PROCESS_STDIO,
   buildAgentArguments,
+  localLaneWorkflowRefusal,
   resolveAgentModel,
   type AvailableAgentModel,
 } from "./agent-process.ts"
@@ -42,6 +43,9 @@ import {
   deterministicDecision,
   deterministicReadOnlyToolResultDecision,
   deterministicToolResultDecision,
+  executionLane,
+  localDispatchLaneBlock,
+  localDispatchLaneDecision,
   MIN_CLASSIFIED_AGENT_TIMEOUT_MS,
   parseClassifierDecision,
   runWorkflowScript,
@@ -49,6 +53,7 @@ import {
   type AgentRequest,
   type AgentResult,
   type Decision,
+  type ToolRequest,
   type WorkflowLimits,
 } from "./core.ts"
 import {
@@ -922,7 +927,7 @@ const WorkflowParameters = Type.Object({
 })
 
 export default function classifiedWorkflows(pi: ExtensionAPI): void {
-  registerRuntimeVersion(pi, "classified-workflows", "2026.08.01.157")
+  registerRuntimeVersion(pi, "classified-workflows", "2026.08.11.1")
   const childTokenLimit = workflowChildTokenLimit(
     process.env[WORKFLOW_CHILD_TOKEN_LIMIT_ENV],
   )
@@ -2061,13 +2066,26 @@ export default function classifiedWorkflows(pi: ExtensionAPI): void {
         })
       }
     }
-    const deterministic = deterministicDecision({
+    const request: ToolRequest = {
       boundary: "action",
       toolName: event.toolName,
       input: event.input,
       cwd: ctx.cwd,
       agentArtifacts: artifactPaths(artifactProvenance),
-    })
+    }
+    if (executionLane(ctx.model?.provider) === "local-dispatch") {
+      const laneDecision = localDispatchLaneDecision(request)
+      if (laneDecision.verdict === "block") {
+        reportHeadlessClassifierBlock(ctx, "action", laneDecision.reason)
+        return resolveActionDecision(laneDecision)
+      }
+      if (shouldCarryDeterministicResultAllowance(laneDecision)) {
+        deterministicResultAllowance.record(event.toolCallId)
+      }
+      persistReviewWorkflowStart()
+      return
+    }
+    const deterministic = deterministicDecision(request)
     if (deterministic?.verdict === "block") {
       reportHeadlessClassifierBlock(ctx, "action", deterministic.reason)
       return resolveActionDecision(deterministic)
@@ -2208,15 +2226,22 @@ export default function classifiedWorkflows(pi: ExtensionAPI): void {
     if (deterministicResultAllowance.consume(event.toolCallId)) return
     if (deterministicToolResultDecision(event.toolName)?.verdict === "allow")
       return
+    const lane = executionLane(ctx.model?.provider)
     if (
       deterministicReadOnlyToolResultDecision({
         toolName: event.toolName,
         input: event.input,
         content: event.content,
         cwd: ctx.cwd,
+        lane,
       })?.verdict === "allow"
     )
       return
+    if (lane === "local-dispatch") {
+      const laneBlock = localDispatchLaneBlock(event.toolName)
+      reportHeadlessClassifierBlock(ctx, "tool-result", laneBlock.reason)
+      return withheldExecutedToolResultPatch(event.isError, laneBlock.reason)
+    }
     const subject = toolResultSubject(event)
     const decision = await classifyWithActivity(
       {
@@ -2926,6 +2951,14 @@ export default function classifiedWorkflows(pi: ExtensionAPI): void {
       ctx,
     ) {
       latestCtx = ctx
+      const laneRefusal = localLaneWorkflowRefusal(ctx.model?.provider)
+      if (laneRefusal) {
+        return {
+          content: [{ type: "text", text: laneRefusal }],
+          isError: true,
+          details: { outcome: "refused", reason: "local-lane" },
+        }
+      }
       const intent = visibleIntent(
         pi,
         ctx,

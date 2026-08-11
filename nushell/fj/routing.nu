@@ -6,6 +6,31 @@
 # that actually use it — rainlanguage and st0x. Everywhere else, stack-style
 # commands go to gitbutler (`but`) when it's installed, otherwise plain `git`.
 
+# Where the dispatch lane runs, regardless of where it was launched from.
+#
+# The dispatcher is a router rather than a project worker, but it still files
+# registry rows and resolves its roster project from its working directory.
+# Started from a pane sitting in HOME it adopts HOME as its "project", which is
+# not a real project — unknown project paths fail open and mint a self-claimed
+# drainer role for a path nothing else drains. Pinning the root here means the
+# launching pane's directory cannot decide it.
+const dispatcher_root = "/Users/0xgleb/.config"
+
+# The dispatch-lane Ollama model tag. A single source of truth so mod.nu's
+# `ensure-ollama` can assert the tag is actually pulled before routing a turn
+# through it — nothing else in this file or the Pi provider registration may
+# hardcode this string.
+export const dispatch_model = "qwen3.5:9b"
+
+# The dispatch lane's identity is DECLARED by the launcher, not inferred from
+# the model it happens to run — see ai/pi/extensions/shared/local-lane.ts's
+# `dispatchLane`, which reads this exact environment variable/value pair.
+# mod.nu's `clanker` exports it around the `^pi` invocation for the pinned
+# dispatcher session so extensions never have to guess the role from
+# `--model ollama/...`, which any session could pick.
+export const dispatch_lane_environment = "PI_DISPATCH_LANE"
+export const local_dispatch_lane = "local"
+
 # orgs whose repos use graphite for stacked PRs
 const graphite_orgs = [
   rainlanguage
@@ -240,6 +265,37 @@ def session-args [has_session: bool, start_fresh: bool, resume_flags: list<strin
   if $has_session and not ($start_fresh or $steers_session) { ["--continue"] } else { [] }
 }
 
+# The tier a `--worker` session drops to on the Pi harness. Claude Code drops
+# from Fable to Opus; Pi runs GPT-5.6 Sol, which is its own frontier, so the
+# flag names it explicitly rather than inheriting whatever the session default
+# happens to be.
+const pi_worker_model = "openai-codex/gpt-5.6-sol"
+
+# The standing mandate every project worker starts with, kept here rather than
+# in each pane definition so the fleet cannot drift into per-worker variants of
+# the same instruction. A resuming session already has the mandate's prose in
+# its transcript, but its session-scoped `/register` cron died with the
+# process that created it (ai/skills/register/SKILL.md: "session crons die
+# with the session, so a fresh session re-arms by invoking /register once") —
+# so every relaunch, fresh or resumed, must re-invoke `/register` or the
+# drain loop silently stops while the pane looks alive. A resume gets the
+# bare re-arm only, since re-sending the full charter mid-conversation would
+# read as a re-instruction rather than idempotent cron upkeep.
+def worker-prompt [
+  wants_worker: bool
+  project: string
+  resume: list<string>
+]: nothing -> list<string> {
+  if not $wants_worker {
+    return []
+  }
+  if ($resume | is-not-empty) {
+    return ["/register 15m"]
+  }
+  let subject = if ($project | is-empty) { "project" } else { $project }
+  [$"/register 15m You are the ($subject) worker. Drain the ($subject) queue per the register skill at 15m cadence. Delegate bounded read-only research to grok 4.5 cursor-agent workers freely."]
+}
+
 # The --claude and --new selectors are consumed from the rest args rather than
 # declared as switches: the `clanker` wrapper is --wrapped, so user flags reach
 # this command as runtime strings via spread, which nushell never re-parses
@@ -248,14 +304,37 @@ export def --wrapped clanker-route [
   pi_has_session: bool
   claude_has_session: bool
   --remote-control
+  --project: string = "" # project name the worker mandate is written for
   ...args: string
 ]: nothing -> record<tool: string, args: list<string>> {
   let wants_claude = ("--claude" in $args)
+  let wants_dispatcher = ("--dispatcher" in $args)
+  let wants_worker = ("--worker" in $args)
   let start_fresh = ("--new" in $args)
-  let forwarded = ($args | where {|arg| $arg not-in ["--claude" "--new"] })
+  let forwarded = ($args | where {|arg| $arg not-in ["--claude" "--new" "--dispatcher" "--worker"] })
+  if $wants_dispatcher {
+    let resume = (session-args $pi_has_session $start_fresh ["--continue" "-c" "--resume" "-r" "--session" "--session-id" "--fork"] $forwarded)
+    let prompt = if ($forwarded | is-empty) and ($resume | is-empty) {
+      ["/loop 10m /register"]
+    } else {
+      []
+    }
+    return {
+      tool: "pi-dispatcher"
+      cwd: $dispatcher_root
+      args: (
+        ["--model" $"ollama/($dispatch_model)"]
+        | append $resume
+        | append $forwarded
+        | append $prompt
+      )
+    }
+  }
   if $wants_claude {
     let resume = (session-args $claude_has_session $start_fresh ["--continue" "-c" "--resume" "-r" "--from-pr"] $forwarded)
     let remote = if $remote_control { ["--remote-control"] } else { [] }
+    let tier = if $wants_worker { ["--model" "opus"] } else { [] }
+    let mandate = (worker-prompt $wants_worker $project $resume)
     {
       tool: "claude"
       args: ([
@@ -263,13 +342,15 @@ export def --wrapped clanker-route [
         '{"effortLevel": "high", "enableWorkflows": true, "tui": "fullscreen"}'
         "--permission-mode"
         "auto"
-      ] | append $remote | append $resume | append $forwarded)
+      ] | append $remote | append $tier | append $resume | append $forwarded | append $mandate)
     }
   } else {
     let resume = (session-args $pi_has_session $start_fresh ["--continue" "-c" "--resume" "-r" "--session" "--session-id" "--fork"] $forwarded)
+    let tier = if $wants_worker { ["--model" $pi_worker_model] } else { [] }
+    let mandate = (worker-prompt $wants_worker $project $resume)
     {
       tool: "pi"
-      args: (["--thinking" "high"] | append $resume | append $forwarded)
+      args: (["--thinking" "high"] | append $tier | append $resume | append $forwarded | append $mandate)
     }
   }
 }

@@ -68,6 +68,90 @@ def "test clanker honours explicit pi session flags" [] {
   assert (("abc123" in $route.args))
 }
 
+def "test clanker dispatcher runs pi on the local model with the loop prompt" [] {
+  let route = (clanker-route false false --dispatcher)
+  assert equal $route.tool "pi-dispatcher"
+  assert (($"ollama/($dispatch_model)") in $route.args)
+  assert (("/loop 10m /register" in $route.args))
+  assert (not ("--dispatcher" in $route.args)) "--dispatcher is consumed"
+}
+
+# The --model flag must be built from the single exported dispatch_model
+# constant rather than a second hardcoded literal, so mod.nu's pull-check and
+# this launch flag cannot silently drift apart (see mod.nu's ensure-ollama).
+def "test clanker dispatcher model flag is derived from the shared dispatch_model constant" [] {
+  assert equal $dispatch_model "qwen3.5:9b"
+  let route = (clanker-route false false --dispatcher)
+  assert (($"ollama/($dispatch_model)") in $route.args)
+}
+
+# Dispatch-lane identity is declared by the launcher (mod.nu's `clanker`
+# exports this env var/value pair around the pinned session's `^pi` call), not
+# inferred by extensions from the model provider — see
+# ai/pi/extensions/shared/local-lane.ts's dispatchLane. These constants are
+# the launcher-side half of that contract, so pin their exact values here.
+def "test the dispatch-lane declaration constants match the contract local-lane.ts reads" [] {
+  assert equal $dispatch_lane_environment "PI_DISPATCH_LANE"
+  assert equal $local_dispatch_lane "local"
+}
+
+def "test clanker worker drops claude to the tier behind the frontier" [] {
+  let route = (clanker-route false false --project "st0x" --claude --worker)
+  assert equal $route.tool "claude"
+  assert (("opus" in $route.args))
+  assert (not ("--worker" in $route.args)) "--worker is consumed"
+  let mandate = ($route.args | last)
+  assert ($mandate | str starts-with "/register 15m")
+  assert ($mandate | str contains "st0x queue")
+}
+
+def "test clanker worker names the pi worker model without --claude" [] {
+  let route = (clanker-route false false --project "yielduck" --worker)
+  assert equal $route.tool "pi"
+  assert (("openai-codex/gpt-5.6-sol" in $route.args))
+  assert (($route.args | last) | str contains "yielduck queue")
+}
+
+def "test clanker without worker leaves the model unset on both harnesses" [] {
+  let claude_route = (clanker-route false false --claude)
+  assert (not ("opus" in $claude_route.args)) "the tier flag is what selects a model, not the default path"
+  let pi_route = (clanker-route false false)
+  assert (not ("openai-codex/gpt-5.6-sol" in $pi_route.args))
+}
+
+def "test clanker worker resuming re-arms the drain cron with a bare register" [] {
+  let route = (clanker-route true true --project "st0x" --claude --worker)
+  assert (("--continue" in $route.args))
+  let mandate = ($route.args | last)
+  assert equal $mandate "/register 15m" "resume must re-arm the cron even though the pane looks alive"
+}
+
+def "test clanker dispatcher pins its project root instead of inheriting the launch directory" [] {
+  let route = (clanker-route false false --dispatcher)
+  assert equal $route.cwd "/Users/0xgleb/.config" "the dispatch lane must not adopt the launching pane's directory as its project"
+}
+
+def "test clanker dispatcher resumes without re-sending the loop prompt" [] {
+  let route = (clanker-route true false --dispatcher)
+  assert equal $route.tool "pi-dispatcher"
+  assert (("--continue" in $route.args))
+  assert (not ("/loop 10m /register" in $route.args))
+}
+
+def "test clanker dispatcher forwards an explicit prompt instead of the default" [] {
+  let route = (clanker-route false false --dispatcher "check the bridge inbox")
+  assert (("check the bridge inbox" in $route.args))
+  assert (not ("/loop 10m /register" in $route.args))
+}
+
+def "test clanker dispatcher forwards an explicit model override after the default" [] {
+  let route = (clanker-route false false --dispatcher --model "ollama/other-local")
+  let indexed = ($route.args | enumerate)
+  let default_index = ($indexed | where item == "ollama/qwen3.5:9b" | first | get index)
+  let override_index = ($indexed | where item == "ollama/other-local" | first | get index)
+  assert ($override_index > $default_index) "explicit --model must come after the default so pi's last-wins parsing applies it"
+}
+
 def "test clanker claude preserves auto workflows" [] {
   let route = (clanker-route true true --claude)
   assert equal $route.tool "claude"
@@ -227,11 +311,11 @@ def "test vcs-backend nested subdir of graphite org is graphite" [] {
 }
 
 def "test vcs-backend other repo managed by gitbutler is but" [] {
-  assert equal (vcs-backend "/home/u/code/data-cartel/moneymentum" "/home/u" true) "but"
+  assert equal (vcs-backend "/home/u/code/data-cartel/example" "/home/u" true) "but"
 }
 
 def "test vcs-backend other repo not gitbutler-managed is git" [] {
-  assert equal (vcs-backend "/home/u/code/data-cartel/moneymentum" "/home/u" false) "git"
+  assert equal (vcs-backend "/home/u/code/data-cartel/example" "/home/u" false) "git"
 }
 
 def "test vcs-backend dotconfig not gitbutler-managed is git" [] {

@@ -47,10 +47,27 @@ a process sandbox, or a source of production credentials.
 ## Security invariants
 
 - Exactly one unexpired lease may exist per canonical project-role key.
+- A routed request is closed only by the agent it was assigned to when it was
+  routed, or by the session holding its project role lease. The assignment is a
+  bridge agent id, compared against the sender of a bridge message when the row
+  is closed and against the reading session's own id when claimability is
+  decided; Pi sessions register on the bridge under their registry session ids,
+  so an assignment can name a session that also holds a lease, and it is never
+  matched against any other session's id. A lane that merely relays an outcome
+  closes nothing on its own identity
+  and never claims a lease to record one. The sender id is self-asserted: the
+  bridge relays the requester id its local caller declared, so this fence is
+  scoped to the local machine trust boundary and bounds honest lanes, not a
+  process that can already run the bridge CLI.
+- A routed request is claimed by nothing but the receiver it names. The session
+  holding the role claims an assigned row only when the assignment names that
+  same session, which is the case where claiming is the delivery rather than a
+  second one; every other assigned row is left queued for the agent it names, so
+  one instruction is never delivered to two executors.
 - A lease is valid only for its owner, lease ID, policy digest, and TTL.
 - Model identity never affects authority.
-- Unowned roles self-claim in the current session; the registry never launches a
-  process automatically.
+- An unowned role is taken by an explicit claim, never as a side effect of
+  delegating a request; the registry never launches a process automatically.
 - Operational leases have no automatic completed state.
 - Manual interruption pauses work without silently releasing ownership.
 - Unknown schema versions and malformed rows fail closed. Corrupt state is never

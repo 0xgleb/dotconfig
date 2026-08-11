@@ -68,6 +68,14 @@ export interface SyncRemoteQuestionsInput {
   readonly now: number;
 }
 
+export interface AskBridgeQuestionInput {
+  readonly agentId: string;
+  readonly question: string;
+  readonly header?: string;
+  readonly options?: readonly RemoteQuestionOption[];
+  readonly now: number;
+}
+
 export interface QuestionRelayStatusInput {
   readonly agentId: string;
   readonly questionId: number;
@@ -123,6 +131,16 @@ export interface RemoteBridgeStore {
   readonly syncQuestions: (
     input: SyncRemoteQuestionsInput,
   ) => Effect.Effect<void, RemoteBridgeError>;
+  /**
+   * Publish one question for an agent that has none outstanding. The refusal,
+   * the id, and the insert are one transaction: a caller that checked first and
+   * wrote second would let two processes both see an empty queue and both
+   * write, and the second write deletes the first question along with the
+   * Telegram card already in front of the owner.
+   */
+  readonly askQuestion: (
+    input: AskBridgeQuestionInput,
+  ) => Effect.Effect<BridgeQuestion, RemoteBridgeError>;
   readonly listPendingQuestions: (
     now: number,
   ) => Effect.Effect<readonly BridgeQuestion[], RemoteBridgeError>;
@@ -998,6 +1016,101 @@ export const makeRemoteBridgeStore = (
               )
               .run(agentId, questionId);
           }
+        });
+      }),
+    ),
+  askQuestion: (input) =>
+    attempt("Could not publish bridge question", () =>
+      withDatabase(databasePath, (database) => {
+        const agentId = boundedIdentifier("agent id", input.agentId);
+        const now = boundedTimestamp("now", input.now);
+        const asked = boundedQuestionSnapshot({
+          id: Math.max(Math.floor(now / 1_000), 1),
+          status: "pending",
+          question: input.question,
+          ...(input.header === undefined ? {} : { header: input.header }),
+          ...(input.options === undefined ? {} : { options: input.options }),
+        });
+
+        return transaction(database, () => {
+          // The pending check deliberately ignores the agent lease: a lapsed
+          // heartbeat is not an empty question queue, and reading it through
+          // the live-agent join is what let a stale asker overwrite the
+          // question the owner was already looking at.
+          const outstanding = optionalRowFrom(
+            database
+              .prepare(
+                `SELECT question_id FROM bridge_questions
+                 WHERE agent_id = ? AND status = 'pending'
+                 ORDER BY question_id
+                 LIMIT 1`,
+              )
+              .get(agentId),
+          );
+          if (outstanding) {
+            throw bridgeError(
+              "invalid_transition",
+              `question ${numberField(outstanding, "question_id")} is still pending for ${agentId}; collect its answer before asking another`,
+            );
+          }
+          // Relay and answer collection both join on a live agent row, so a
+          // question published by an expired registration can never surface in
+          // Telegram and the asker would block on an answer nobody can give.
+          const live = optionalRowFrom(
+            database
+              .prepare(
+                "SELECT 1 FROM bridge_agents WHERE agent_id = ? AND expires_at > ?",
+              )
+              .get(agentId, now),
+          );
+          if (!live) {
+            throw bridgeError(
+              "stale_agent",
+              `${agentId} has no live registration, so its question would never reach the owner`,
+            );
+          }
+          const latest = optionalRowFrom(
+            database
+              .prepare(
+                "SELECT MAX(question_id) AS latest FROM bridge_questions WHERE agent_id = ?",
+              )
+              .get(agentId),
+          );
+          // Seconds since epoch keeps the id inside the integer the Telegram
+          // card round-trips, but two asks in the same second would collide on
+          // the primary key and rewrite each other. Taking the next id after
+          // the agent's highest keeps it unique whatever the clock says.
+          const previous =
+            latest === undefined || latest.latest === null
+              ? 0
+              : numberField(latest, "latest");
+          const questionId = Math.max(asked.id, previous + 1);
+          database
+            .prepare(
+              `INSERT INTO bridge_questions (
+                 agent_id, question_id, question_text, header, guess, options_json,
+                 created_at, updated_at, status
+               ) VALUES (?, ?, ?, ?, ?, ?, ?, ?, 'pending')`,
+            )
+            .run(
+              agentId,
+              questionId,
+              asked.question,
+              asked.header ?? null,
+              asked.guess ?? null,
+              asked.options ? JSON.stringify(asked.options) : null,
+              now,
+              now,
+            );
+          return questionFromRow(
+            rowFrom(
+              database
+                .prepare(
+                  "SELECT * FROM bridge_questions WHERE agent_id = ? AND question_id = ?",
+                )
+                .get(agentId, questionId),
+            ),
+          );
         });
       }),
     ),

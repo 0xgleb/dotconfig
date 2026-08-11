@@ -18,6 +18,7 @@ const command_help = {
     fj clanker --new                   force a fresh Pi session
     fj clanker --session <id>          select a specific Pi session
     fj clanker --claude                launch Claude Code instead
+    fj clanker --dispatcher            Pi on the local Ollama model, looping the dispatcher skill
   Any other args pass straight through to the selected agent."
 
   check: "fj check — run repo-specific checks

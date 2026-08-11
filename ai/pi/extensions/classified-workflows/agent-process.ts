@@ -1,3 +1,4 @@
+import { dispatchLane, LOCAL_DISPATCH_PROVIDER } from "../shared/local-lane.ts";
 import type { AgentRequest } from "./core.ts";
 
 export const AGENT_PROCESS_STDIO = ["ignore", "pipe", "pipe"] as const;
@@ -17,6 +18,35 @@ const isAlias: (id: string) => boolean = (id) => id.endsWith("-latest") || !/-\d
 const PROVIDER_ALIASES: Readonly<Record<string, string>> = { openai: "openai-codex" };
 const LEGACY_REVIEW_FOCUS_ALIASES = new Set(["fable", "sonnet", "opus"]);
 const REVIEW_WORKFLOW_MODEL = "openai-codex/gpt-5.6-luna";
+
+const DISPATCH_LANE_WORKFLOW_REFUSAL =
+  "Workflow orchestration is unavailable on the local dispatch lane: this session is trusted only with triage and routing. Route this request instead - agent_registry action=delegate to the owning project/role, or pi-bridge send to a connected full-capability instance.";
+
+const MAX_REPORTED_PROVIDER_CHARACTERS = 64;
+
+const unexpectedProviderNotice = (parentProvider: string | undefined): string =>
+  ` This session is declared the dispatch lane while running on ${
+    parentProvider?.slice(0, MAX_REPORTED_PROVIDER_CHARACTERS) ?? "no provider"
+  } rather than ${LOCAL_DISPATCH_PROVIDER}; the declaration governs, so the lane's containment holds and a paid provider is being spent on route directives.`;
+
+/**
+ * Why this session may not orchestrate workflows, or `undefined` when it may.
+ * The dispatch lane is the declared deployment role from `shared/local-lane.ts`,
+ * never the model a session happens to run: an ordinary session that picks the
+ * local model for an offline pass keeps full workflow orchestration, and a
+ * declared lane switched to a paid model stays fenced away from it. A
+ * declaration the provider does not match is otherwise invisible, so it is
+ * reported here, on a refusal that session's operator does read.
+ */
+export const localLaneWorkflowRefusal: (parentProvider: string | undefined) => string | undefined = (
+  parentProvider,
+) => {
+  const lane = dispatchLane(parentProvider);
+  if (lane.lane !== "local-dispatch") return undefined;
+  return lane.declaration === "unexpected-provider"
+    ? `${DISPATCH_LANE_WORKFLOW_REFUSAL}${unexpectedProviderNotice(parentProvider)}`
+    : DISPATCH_LANE_WORKFLOW_REFUSAL;
+};
 
 export const resolveAgentModel: (
   requestedModel: string | undefined,

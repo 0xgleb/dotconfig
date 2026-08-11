@@ -446,3 +446,122 @@ test("stale agents disappear and cannot receive new messages", async () =>
     assert.equal(result._tag, "Left");
     if (result._tag === "Left") assert.equal(result.left.code, "stale_agent");
   }));
+
+test("publishing a question refuses a second one inside the same transaction", async () =>
+  withStore(async (store) => {
+    await heartbeat(store);
+    const first = await Effect.runPromise(
+      store.askQuestion({
+        agentId: "session-1",
+        question: "which stack should I land first?",
+        header: "restack",
+        options: [{ label: "the base one" }, { label: "the top one" }],
+        now: 2_000,
+      }),
+    );
+    assert.equal(first.question, "which stack should I land first?");
+
+    const second = await Effect.runPromise(
+      Effect.either(
+        store.askQuestion({
+          agentId: "session-1",
+          question: "and the other one?",
+          now: 2_100,
+        }),
+      ),
+    );
+    assert.equal(second._tag, "Left");
+    if (second._tag === "Left") {
+      assert.equal(second.left.code, "invalid_transition");
+      assert.match(second.left.message, new RegExp(String(first.questionId)));
+    }
+
+    assert.deepEqual(
+      (await Effect.runPromise(store.listPendingQuestions(2_200))).map(
+        ({ questionId, question }) => ({ questionId, question }),
+      ),
+      [
+        {
+          questionId: first.questionId,
+          question: "which stack should I land first?",
+        },
+      ],
+      "the question the owner is already looking at must survive a second ask",
+    );
+  }));
+
+test("questions asked within the same second do not collide on one id", async () =>
+  withStore(async (store) => {
+    await heartbeat(store);
+    const first = await Effect.runPromise(
+      store.askQuestion({
+        agentId: "session-1",
+        question: "which stack should I land first?",
+        now: 2_000,
+      }),
+    );
+    await Effect.runPromise(
+      store.linkTelegramQuestion({
+        agentId: "session-1",
+        questionId: first.questionId,
+        chatId: 42,
+        messageId: 77,
+        now: 2_001,
+      }),
+    );
+    await Effect.runPromise(
+      store.answerTelegramQuestion({
+        chatId: 42,
+        messageId: 77,
+        answer: "the base one",
+        now: 2_002,
+      }),
+    );
+    await Effect.runPromise(
+      store.takeQuestionResolution({ agentId: "session-1", now: 2_003 }),
+    );
+
+    const second = await Effect.runPromise(
+      store.askQuestion({
+        agentId: "session-1",
+        question: "and the other one?",
+        now: 2_100,
+      }),
+    );
+    assert.notEqual(
+      second.questionId,
+      first.questionId,
+      "a reused id rewrites the earlier question under a card the owner may still hold",
+    );
+    assert.equal(
+      await Effect.runPromise(
+        store.isQuestionHistoricallyRelayed({
+          agentId: "session-1",
+          questionId: first.questionId,
+        }),
+      ),
+      true,
+      "the answered question keeps its own relay history",
+    );
+  }));
+
+test("a question from an agent with no live registration is refused, not stranded", async () =>
+  withStore(async (store) => {
+    await heartbeat(store);
+    const asked = await Effect.runPromise(
+      Effect.either(
+        store.askQuestion({
+          agentId: "session-1",
+          question: "which stack should I land first?",
+          now: 20_000,
+        }),
+      ),
+    );
+    assert.equal(asked._tag, "Left");
+    if (asked._tag === "Left") assert.equal(asked.left.code, "stale_agent");
+    assert.deepEqual(
+      await Effect.runPromise(store.listPendingQuestions(20_001)),
+      [],
+      "a question relaying and answering both hide from is worse than a refusal",
+    );
+  }));

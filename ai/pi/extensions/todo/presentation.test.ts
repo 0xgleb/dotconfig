@@ -4,6 +4,7 @@ import { visibleWidth } from "@earendil-works/pi-tui"
 import {
   frameTaskHud,
   kanbanColumns,
+  shouldShowTaskHud,
   taskCompletionPercent,
   taskHud,
   taskHudLines,
@@ -13,6 +14,7 @@ import {
   taskProgressFrontierPulse,
   taskWidgetLines,
   todoSummary,
+  toggleTaskHudVisibility,
   topPendingTodos,
 } from "./presentation.ts"
 import type { TodoState } from "./state.ts"
@@ -283,4 +285,23 @@ test("task widget lines show compact top active tasks", () => {
 
 test("empty task widget stays hidden", () => {
   assert.deepEqual(taskWidgetLines({ todos: [], nextId: 1 }), [])
+})
+
+test("toggling task HUD visibility flips between visible and hidden", () => {
+  assert.equal(toggleTaskHudVisibility("visible"), "hidden")
+  assert.equal(toggleTaskHudVisibility("hidden"), "visible")
+})
+
+test("task HUD shows only when tracking work and not manually hidden", () => {
+  const tracking = todoSummary(state)
+
+  assert.equal(shouldShowTaskHud(tracking, "visible"), true)
+  assert.equal(shouldShowTaskHud(tracking, "hidden"), false)
+})
+
+test("an empty board never shows the HUD regardless of the toggle", () => {
+  const empty = todoSummary({ todos: [], nextId: 1 })
+
+  assert.equal(shouldShowTaskHud(empty, "visible"), false)
+  assert.equal(shouldShowTaskHud(empty, "hidden"), false)
 })

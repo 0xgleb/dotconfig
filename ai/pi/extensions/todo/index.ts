@@ -36,7 +36,10 @@ import { KANBAN_OVERLAY_OPTIONS, KanbanComponent } from "./kanban.ts"
 import {
   CONTENT_GUTTER,
   overlayRule,
+  shouldShowTaskHud,
+  taskHudToggle,
   todoSummary,
+  type TaskHudVisibility,
 } from "./presentation.ts"
 import { TaskHudComponent } from "./task-hud.ts"
 import {
@@ -245,10 +248,12 @@ function restoredState(ctx: ExtensionContext): TodoState {
 }
 
 export default function todoExtension(pi: ExtensionAPI): void {
-  registerRuntimeVersion(pi, "todo", "2026.08.01.34")
+  registerRuntimeVersion(pi, "todo", "2026.08.11.1")
   const stateRef = Effect.runSync(Ref.make<TodoState>(emptyTodoState))
   let hudExpiry: ReturnType<typeof setTimeout> | undefined
   let reminderTimer: ReturnType<typeof setTimeout> | undefined
+  let hudVisibility: TaskHudVisibility = "visible"
+  let releaseHudToggle: (() => void) | undefined
 
   const mountTaskWidget = (ctx: ExtensionContext, state: TodoState): void => {
     if (!ctx.hasUI) return
@@ -259,16 +264,34 @@ export default function todoExtension(pi: ExtensionAPI): void {
         ? `tasks:${summary.pending}/${summary.total}`
         : undefined,
     )
-    // Always mounted: a session with no tasks collapses to one rule so panes
-    // sitting side by side keep the same chrome instead of one losing its HUD.
+    // Unmounted whenever there is nothing tracked, or the operator hid it
+    // with ctrl+t; shouldShowTaskHud is the one place these two conditions
+    // combine so emptiness always wins over a stale toggle.
     ctx.ui.setWidget(
       "todo-top-tasks",
-      (tui, theme) =>
-        new TaskHudComponent(state, theme, () => tui.requestRender()),
+      shouldShowTaskHud(summary, hudVisibility)
+        ? (tui, theme) =>
+            new TaskHudComponent(state, theme, () => tui.requestRender())
+        : undefined,
       {
         placement: "aboveEditor",
       },
     )
+  }
+
+  const registerHudToggle = (ctx: ExtensionContext): void => {
+    if (!ctx.hasUI) return
+    releaseHudToggle?.()
+    releaseHudToggle = ctx.ui.onTerminalInput((data) => {
+      if (!matchesKey(data, "ctrl+t")) return undefined
+      const state = Effect.runSync(Ref.get(stateRef))
+      const toggled = taskHudToggle(todoSummary(state), hudVisibility)
+      if (toggled.toggle === "applied") {
+        hudVisibility = toggled.visibility
+        renderTaskWidget(ctx, state)
+      }
+      return { consume: true }
+    })
   }
 
   const renderTaskWidget = (
@@ -363,6 +386,7 @@ export default function todoExtension(pi: ExtensionAPI): void {
     await Effect.runPromise(reconstructState(ctx))
     const state = Effect.runSync(Ref.get(stateRef))
     pi.appendEntry(TODO_STATE_ENTRY, state)
+    registerHudToggle(ctx)
     renderTaskWidget(ctx, state)
     scheduleReminder(ctx, state)
     await wakeDueReminders(ctx)
@@ -372,6 +396,7 @@ export default function todoExtension(pi: ExtensionAPI): void {
   pi.on("session_compact", async (_event, ctx) => {
     const state = Effect.runSync(Ref.get(stateRef))
     pi.appendEntry(TODO_STATE_ENTRY, state)
+    registerHudToggle(ctx)
     renderTaskWidget(ctx, state)
     scheduleReminder(ctx, state)
     await wakeDueReminders(ctx)
@@ -381,6 +406,8 @@ export default function todoExtension(pi: ExtensionAPI): void {
     if (reminderTimer) clearTimeout(reminderTimer)
     hudExpiry = undefined
     reminderTimer = undefined
+    releaseHudToggle?.()
+    releaseHudToggle = undefined
     ctx.ui.setStatus("todo", undefined)
     ctx.ui.setWidget("todo-top-tasks", undefined)
   })

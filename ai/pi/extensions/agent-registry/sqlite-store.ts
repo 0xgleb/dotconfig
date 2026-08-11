@@ -4,6 +4,7 @@ import { randomUUID } from "node:crypto";
 import { DatabaseSync } from "node:sqlite";
 import { Effect } from "effect";
 import {
+  NOT_ENTITLED_TO_CLOSE,
   RegistryError,
   type AcknowledgeRequestInput,
   type AgentHeartbeatInput,
@@ -23,16 +24,21 @@ import {
   type RegistrySnapshot,
   type RegistryStore,
   type ReleaseLeaseInput,
+  type RequestClosure,
+  type ResolveRequestInput,
 } from "./registry.ts";
 
-// Source-identity columns are an additive v2 extension so sessions still running
-// the v2 adapter can coexist during rolling Pi reloads.
+// The column addition is additive, but terminal rows closed by an unleased
+// reporter carry NULL lease_id, which pre-2026.08.11 adapters reject as
+// corrupt until they reload; the managed auto-reload converges the fleet, and
+// the transient window only affects snapshot reads, never writes.
 const SCHEMA_VERSION = 2;
 const MAX_LEASES = 1_024;
 const MAX_REQUESTS = 10_000;
 const MAX_REQUEST_TEXT = 8_000;
 const MAX_SUMMARY_TEXT = 4_000;
 const BUSY_TIMEOUT_MS = 2_000;
+export const WITHHELD_OUTCOME_TEXT = "outcome text withheld: credential-shaped path";
 const SENSITIVE_TEXT =
   /(^|[\\/\s'"])(?:\.env(?:\.[^\\/\s'"]*)?|credentials\.json|secrets\.(?:json|ya?ml)|auth\.json|\.npmrc|\.netrc|\.pypirc|id_(?:rsa|dsa|ecdsa|ed25519)(?:\.pub)?|[^\\/\s'"]+\.(?:key|pem|p12|pfx))($|[\\/\s'"])/i;
 const SQL_JSONPATH_DOT_QUOTED_KEY = /\."(?:[^"\\]|\\.)*"/g;
@@ -97,6 +103,22 @@ const persistedText: (label: string, text: string, maximum: number) => string = 
   return bounded;
 };
 
+/**
+ * The text a reported outcome may be closed with.
+ *
+ * A rejected summary is not an option at this boundary: the reporter is a
+ * bridge agent whose retry carries the same words, and the lease paths filter
+ * identically, so refusing an ordinary diagnostic that happens to name a
+ * credential-shaped file ("blocked on a missing deploy.pem") would leave the
+ * row open with no actor able to close it. The credential-shaped text is
+ * withheld and the transition still commits, which the reporter sees in the
+ * request the store returns.
+ */
+const reportedOutcomeText: (label: string, text: string) => string = (label, text) => {
+  const bounded = boundedText(label, text, MAX_SUMMARY_TEXT);
+  return containsSensitiveText(bounded) ? WITHHELD_OUTCOME_TEXT : bounded;
+};
+
 const canonicalProject: (project: string) => string = (project) => {
   const trimmed = project.trim();
   if (!isAbsolute(trimmed) || trimmed.length > 1_024 || hasUnsafeControlCharacters(trimmed)) {
@@ -152,12 +174,19 @@ const expiresAt: (now: number, ttlMs: number) => number = (now, ttlMs) => {
   return expiration;
 };
 
-const stringField: (row: Row, key: string, optional?: boolean) => string | undefined = (row, key, optional = false) => {
+const stringField: (row: Row, key: string) => string = (row, key) => {
   const value = row[key];
-  if (optional && value === null) return undefined;
   if (typeof value !== "string") throw registryError("corrupt_state", `registry column ${key} is malformed`);
   return value;
 };
+
+/**
+ * A nullable column: SQL NULL is the column being unset, which is a value the
+ * domain models rather than corruption. Anything else that is not text still
+ * fails closed.
+ */
+const optionalStringField: (row: Row, key: string) => string | undefined = (row, key) =>
+  row[key] === null ? undefined : stringField(row, key);
 
 const numberField: (row: Row, key: string) => number = (row, key) => {
   const value = row[key];
@@ -174,7 +203,7 @@ const optionalNumberField: (row: Row, key: string) => number | undefined = (row,
 };
 
 const runtimeVersionsFromRow = (row: Row): Readonly<Record<string, string>> | undefined => {
-  const encoded = stringField(row, "runtime_versions", true);
+  const encoded = optionalStringField(row, "runtime_versions");
   if (!encoded) return undefined;
   let decoded: unknown;
   try {
@@ -202,25 +231,26 @@ const leaseFromRow: (row: Row) => Lease = (row) => {
     throw registryError("corrupt_state", "registry lease mode is malformed");
   }
   const runtimeVersions = runtimeVersionsFromRow(row);
+  const ownerModel = optionalStringField(row, "owner_model");
   const owner: AgentIdentity = {
-    id: stringField(row, "owner_id") ?? "",
+    id: stringField(row, "owner_id"),
     pid: numberField(row, "owner_pid"),
-    ...(stringField(row, "owner_model", true) ? { model: stringField(row, "owner_model", true) } : {}),
+    ...(ownerModel ? { model: ownerModel } : {}),
     ...(runtimeVersions ? { runtimeVersions } : {}),
   };
   const base = {
-    id: stringField(row, "lease_id") ?? "",
-    project: stringField(row, "project") ?? "",
-    role: stringField(row, "role") ?? "",
+    id: stringField(row, "lease_id"),
+    project: stringField(row, "project"),
+    role: stringField(row, "role"),
     mode,
     owner,
-    policyDigest: stringField(row, "policy_digest") ?? "",
+    policyDigest: stringField(row, "policy_digest"),
     acquiredAt: numberField(row, "acquired_at"),
     heartbeatAt: numberField(row, "heartbeat_at"),
     expiresAt: numberField(row, "expires_at"),
   };
   if (status === "suspended") {
-    if (stringField(row, "reason", true) !== "policy_changed") {
+    if (optionalStringField(row, "reason") !== "policy_changed") {
       throw registryError("corrupt_state", "registry lease suspension reason is malformed");
     }
     return { ...base, status, reason: "policy_changed" };
@@ -230,41 +260,61 @@ const leaseFromRow: (row: Row) => Lease = (row) => {
 
 const registeredAgentFromRow = (row: Row): RegisteredAgent => {
   const runtimeVersions = runtimeVersionsFromRow(row);
+  const model = optionalStringField(row, "model");
   return {
     identity: {
-      id: stringField(row, "agent_id") ?? "",
+      id: stringField(row, "agent_id"),
       pid: numberField(row, "pid"),
-      ...(stringField(row, "model", true) ? { model: stringField(row, "model", true) } : {}),
+      ...(model ? { model } : {}),
       ...(runtimeVersions ? { runtimeVersions } : {}),
     },
-    cwd: stringField(row, "cwd") ?? "",
-    label: stringField(row, "label") ?? "",
+    cwd: stringField(row, "cwd"),
+    label: stringField(row, "label"),
     heartbeatAt: numberField(row, "heartbeat_at"),
     expiresAt: numberField(row, "expires_at"),
   };
 };
 
+/**
+ * The closing identity a terminal row carries. A row closed by the session that
+ * claimed it names its lease; a routed row closed by its assigned bridge agent
+ * was never claimed, so it names only the reporter and its lease column stays
+ * NULL. An unset column is therefore a modelled state, not corruption.
+ */
+const requestClosureFromRow: (row: Row) => RequestClosure | undefined = (row) => {
+  const agentId = optionalStringField(row, "agent_id");
+  if (agentId === undefined) return undefined;
+  const leaseId = optionalStringField(row, "lease_id");
+  return leaseId === undefined ? { party: "reporter", agentId } : { party: "lease_holder", leaseId, agentId };
+};
+
 const requestFromRow: (row: Row) => RegistryRequest = (row) => {
   const status = stringField(row, "status");
   const requesterAcknowledgedAt = optionalNumberField(row, "requester_acknowledged_at");
+  const requesterLabel = optionalStringField(row, "requester_label");
+  const requesterCwd = optionalStringField(row, "requester_cwd");
+  const assignedAgentId = optionalStringField(row, "assigned_agent_id");
   const base = {
-    id: stringField(row, "request_id") ?? "",
-    project: stringField(row, "project") ?? "",
-    role: stringField(row, "role") ?? "",
-    requesterId: stringField(row, "requester_id") ?? "",
-    ...(stringField(row, "requester_label", true) ? { requesterLabel: stringField(row, "requester_label", true) } : {}),
-    ...(stringField(row, "requester_cwd", true) ? { requesterCwd: stringField(row, "requester_cwd", true) } : {}),
-    text: stringField(row, "text") ?? "",
+    id: stringField(row, "request_id"),
+    project: stringField(row, "project"),
+    role: stringField(row, "role"),
+    requesterId: stringField(row, "requester_id"),
+    ...(requesterLabel ? { requesterLabel } : {}),
+    ...(requesterCwd ? { requesterCwd } : {}),
+    ...(assignedAgentId ? { assignedAgentId } : {}),
+    text: stringField(row, "text"),
     createdAt: numberField(row, "created_at"),
     updatedAt: numberField(row, "updated_at"),
     ...(requesterAcknowledgedAt !== undefined ? { requesterAcknowledgedAt } : {}),
   };
   if (status === "queued" || status === "cancelled") return { ...base, status };
-  const leaseId = stringField(row, "lease_id") ?? "";
-  const agentId = stringField(row, "agent_id") ?? "";
-  if (status === "claimed") return { ...base, status, leaseId, agentId };
+  if (status === "claimed") {
+    return { ...base, status, leaseId: stringField(row, "lease_id"), agentId: stringField(row, "agent_id") };
+  }
+  const closure = requestClosureFromRow(row);
+  const closedBy = closure ? { closedBy: closure } : {};
   if (status === "completed") {
-    return { ...base, status, leaseId, agentId, summary: stringField(row, "summary") ?? "" };
+    return { ...base, status, ...closedBy, summary: stringField(row, "summary") };
   }
   if (status === "failed") {
     const failure = stringField(row, "failure");
@@ -274,10 +324,9 @@ const requestFromRow: (row: Row) => RegistryRequest = (row) => {
     return {
       ...base,
       status,
-      leaseId,
-      agentId,
+      ...closedBy,
       failure,
-      diagnostic: stringField(row, "diagnostic") ?? "",
+      diagnostic: stringField(row, "diagnostic"),
     };
   }
   throw registryError("corrupt_state", "registry request status is malformed");
@@ -287,14 +336,16 @@ const schemaVersion: (database: DatabaseSync) => number = (database) =>
   numberField(rowFrom(database.prepare("PRAGMA user_version").get()), "user_version");
 
 const tableColumns = (database: DatabaseSync, table: string): ReadonlySet<string> =>
-  new Set(database.prepare(`PRAGMA table_info(${table})`).all().map((row) => stringField(rowFrom(row), "name") ?? ""));
+  new Set(database.prepare(`PRAGMA table_info(${table})`).all().map((row) => stringField(rowFrom(row), "name")));
 
 const currentAdditiveSchemaInstalled = (database: DatabaseSync): boolean => {
   const requests = tableColumns(database, "requests");
   const leases = tableColumns(database, "leases");
   const agents = tableColumns(database, "agents");
   return (
-    ["requester_acknowledged_at", "requester_label", "requester_cwd"].every((column) => requests.has(column)) &&
+    ["requester_acknowledged_at", "requester_label", "requester_cwd", "assigned_agent_id"].every((column) =>
+      requests.has(column),
+    ) &&
     leases.has("runtime_versions") &&
     ["agent_id", "runtime_versions", "cwd", "label", "expires_at"].every((column) => agents.has(column))
   );
@@ -363,6 +414,7 @@ const initialize: (database: DatabaseSync, databasePath: string) => void = (data
           created_at INTEGER NOT NULL,
           updated_at INTEGER NOT NULL,
           requester_acknowledged_at INTEGER,
+          assigned_agent_id TEXT,
           status TEXT NOT NULL,
           lease_id TEXT,
           agent_id TEXT,
@@ -402,6 +454,7 @@ const initialize: (database: DatabaseSync, databasePath: string) => void = (data
       if (currentVersion === 1) addColumn("requester_acknowledged_at", "requester_acknowledged_at INTEGER");
       addColumn("requester_label", "requester_label TEXT");
       addColumn("requester_cwd", "requester_cwd TEXT");
+      addColumn("assigned_agent_id", "assigned_agent_id TEXT");
       database.exec(`PRAGMA user_version = ${SCHEMA_VERSION};`);
     }
     database.exec("COMMIT");
@@ -462,6 +515,21 @@ const currentLease: (
   }
   return lease;
 };
+
+const holdsRoleLease: (
+  database: DatabaseSync,
+  project: string,
+  role: string,
+  ownerId: string,
+  now: number,
+) => boolean = (database, project, role, ownerId, now) =>
+  optionalRowFrom(
+    database
+      .prepare(
+        "SELECT lease_id FROM leases WHERE project = ? AND role = ? AND owner_id = ? AND status = 'active' AND expires_at > ?",
+      )
+      .get(project, role, ownerId, now),
+  ) !== undefined;
 
 const requestRow: (database: DatabaseSync, requestId: string) => Row = (database, requestId) => {
   const row = optionalRowFrom(database.prepare("SELECT * FROM requests WHERE request_id = ?").get(requestId));
@@ -695,13 +763,16 @@ export const makeSqliteRegistryStore: (root: string) => RegistryStore = (root) =
               requesterId: boundedText("requester id", input.requesterId, 128),
               ...(input.requesterLabel ? { requesterLabel: boundedText("requester label", input.requesterLabel, 160) } : {}),
               ...(input.requesterCwd ? { requesterCwd: canonicalProject(input.requesterCwd) } : {}),
+              ...(input.assignedAgentId
+                ? { assignedAgentId: boundedText("assigned agent id", input.assignedAgentId, 128) }
+                : {}),
               text: persistedText("request", input.text, MAX_REQUEST_TEXT),
               createdAt: now,
               updatedAt: now,
               status: "queued",
             };
             database
-              .prepare("INSERT INTO requests (request_id, project, role, requester_id, requester_label, requester_cwd, text, created_at, updated_at, status) VALUES (?, ?, ?, ?, ?, ?, ?, ?, ?, ?)")
+              .prepare("INSERT INTO requests (request_id, project, role, requester_id, requester_label, requester_cwd, assigned_agent_id, text, created_at, updated_at, status) VALUES (?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?)")
               .run(
                 request.id,
                 request.project,
@@ -709,6 +780,7 @@ export const makeSqliteRegistryStore: (root: string) => RegistryStore = (root) =
                 request.requesterId,
                 request.requesterLabel ?? null,
                 request.requesterCwd ?? null,
+                request.assignedAgentId ?? null,
                 request.text,
                 request.createdAt,
                 request.updatedAt,
@@ -799,7 +871,13 @@ export const makeSqliteRegistryStore: (root: string) => RegistryStore = (root) =
               .prepare("UPDATE requests SET status = 'completed', summary = ?, updated_at = ? WHERE request_id = ? AND status = 'claimed' AND lease_id = ?")
               .run(summary, now, request.id, lease.id);
             if (Number(result.changes) !== 1) throw registryError("invalid_transition", "request terminal transition lost race");
-            return { ...request, status: "completed", summary, updatedAt: now };
+            return {
+              ...request,
+              status: "completed",
+              closedBy: { party: "lease_holder", leaseId: lease.id, agentId: lease.owner.id },
+              summary,
+              updatedAt: now,
+            };
           }),
         ),
       ),
@@ -819,7 +897,78 @@ export const makeSqliteRegistryStore: (root: string) => RegistryStore = (root) =
               .prepare("UPDATE requests SET status = 'failed', failure = ?, diagnostic = ?, updated_at = ? WHERE request_id = ? AND status = 'claimed' AND lease_id = ?")
               .run(input.failure, diagnostic, now, request.id, lease.id);
             if (Number(result.changes) !== 1) throw registryError("invalid_transition", "request terminal transition lost race");
-            return { ...request, status: "failed", failure: input.failure, diagnostic, updatedAt: now };
+            return {
+              ...request,
+              status: "failed",
+              closedBy: { party: "lease_holder", leaseId: lease.id, agentId: lease.owner.id },
+              failure: input.failure,
+              diagnostic,
+              updatedAt: now,
+            };
+          }),
+        ),
+      ),
+
+    /**
+     * Record the outcome an entitled agent reported for a routed request.
+     * Entitlement is a property of the row, not of the caller: the reporter is
+     * either the agent the request was assigned to when it was routed, or the
+     * session holding the project role lease. A lane that only relays the
+     * report therefore never claims a lease of its own to close the row.
+     *
+     * The terminal row records who closed it. A reporter closing its own claim
+     * closes under that lease; anyone else closes as the reporter alone, and a
+     * routed request that was never claimed has no lease to name at all - its
+     * lease column stays NULL and the row still decodes.
+     */
+    resolveRequest: (input: ResolveRequestInput) =>
+      effect("Could not record request outcome", () =>
+        withDatabase(databasePath, (database) =>
+          transaction(database, (): RegistryRequest => {
+            const now = validateTime("now", input.now);
+            const reporterId = boundedText("reporter id", input.reporterId, 128);
+            const request = requestFromRow(requestRow(database, input.requestId));
+            if (request.status !== "queued" && request.status !== "claimed") {
+              throw registryError("invalid_transition", "request is already terminal");
+            }
+            if (
+              request.assignedAgentId !== reporterId &&
+              !holdsRoleLease(database, request.project, request.role, reporterId, now)
+            ) {
+              throw registryError("not_entitled", NOT_ENTITLED_TO_CLOSE);
+            }
+            const closedBy: RequestClosure =
+              request.status === "claimed" && request.agentId === reporterId
+                ? { party: "lease_holder", leaseId: request.leaseId, agentId: reporterId }
+                : { party: "reporter", agentId: reporterId };
+            const closingLeaseId = closedBy.party === "lease_holder" ? closedBy.leaseId : null;
+            const result =
+              input.outcome.resolution === "completed"
+                ? database
+                    .prepare(
+                      "UPDATE requests SET status = 'completed', lease_id = ?, agent_id = ?, summary = ?, failure = NULL, diagnostic = NULL, updated_at = ? WHERE request_id = ? AND status IN ('queued', 'claimed')",
+                    )
+                    .run(
+                      closingLeaseId,
+                      closedBy.agentId,
+                      reportedOutcomeText("summary", input.outcome.summary),
+                      now,
+                      request.id,
+                    )
+                : database
+                    .prepare(
+                      "UPDATE requests SET status = 'failed', lease_id = ?, agent_id = ?, failure = ?, diagnostic = ?, summary = NULL, updated_at = ? WHERE request_id = ? AND status IN ('queued', 'claimed')",
+                    )
+                    .run(
+                      closingLeaseId,
+                      closedBy.agentId,
+                      input.outcome.failure,
+                      reportedOutcomeText("diagnostic", input.outcome.diagnostic),
+                      now,
+                      request.id,
+                    );
+            if (Number(result.changes) !== 1) throw registryError("invalid_transition", "request terminal transition lost race");
+            return requestFromRow(requestRow(database, request.id));
           }),
         ),
       ),

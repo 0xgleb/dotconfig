@@ -19,7 +19,7 @@ test("manual reload overtakes stale pause and queued continuation work", () => {
   assert.match(reload, /await ctx\.reload\(\)/)
   assert.match(
     classified,
-    /wasRunAborted\(event\.messages\) && !manualReloadPending/,
+    /wasRunAborted\(event\.messages\) &&\s*!manualReloadPending &&\s*!managedReloadPreemptPending/,
   )
   assert.match(
     classified,

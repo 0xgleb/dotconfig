@@ -61,6 +61,41 @@
     "defaultMode": "acceptEdits"
   },
   "model": "claude-fable-5[1m]",
+  "hooks": {
+    "PostToolUse": [
+      {
+        "matcher": "Edit|Write|MultiEdit|NotebookEdit",
+        "hooks": [
+          {
+            "type": "command",
+            "command": "nu /Users/0xgleb/.config/ai/hooks/delegation-nudge.nu",
+            "timeout": 10
+          }
+        ]
+      },
+      {
+        "matcher": "Agent|Task",
+        "hooks": [
+          {
+            "type": "command",
+            "command": "nu /Users/0xgleb/.config/ai/hooks/delegation-nudge.nu",
+            "timeout": 10
+          }
+        ]
+      }
+    ],
+    "UserPromptSubmit": [
+      {
+        "hooks": [
+          {
+            "type": "command",
+            "command": "nu /Users/0xgleb/.config/ai/hooks/delegation-nudge.nu",
+            "timeout": 10
+          }
+        ]
+      }
+    ]
+  },
   "disableClaudeAiConnectors": true,
   "enableWorkflows": true,
   "statusLine": {

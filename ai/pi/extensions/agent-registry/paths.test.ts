@@ -1,6 +1,6 @@
 import assert from "node:assert/strict";
 import test from "node:test";
-import { managedOperationalRole, registryStateRoot, shouldSelfClaimUnownedRole } from "./paths.ts";
+import { managedOperationalRole, registryStateRoot } from "./paths.ts";
 
 test("managed operational roles are scoped to their owning project sessions", () => {
   assert.deepEqual(managedOperationalRole("/Users/example/.config", "/Users/example"), {
@@ -26,96 +26,15 @@ test("managed operational roles are scoped to their owning project sessions", ()
   assert.equal(managedOperationalRole("/Users/example/code/other", "/Users/example"), undefined);
 });
 
-test("sessions outside dedicated projects never self-claim their standing roles", () => {
+test("a managed role is never inferred from a directory that merely contains the project", () => {
+  // Home contains every project without being one, and an org directory
+  // contains the repos under it. A session there holds its own role, not the
+  // standing role of everything beneath it, or one session would end up
+  // appointed drainer of queues it never reads.
+  assert.equal(managedOperationalRole("/Users/example", "/Users/example"), undefined);
   assert.equal(
-    shouldSelfClaimUnownedRole(
-      "/Users/example/.config",
-      "pi-support",
-      "/Users/example/code/project",
-      "/Users/example",
-    ),
-    false,
-  );
-  assert.equal(
-    shouldSelfClaimUnownedRole(
-      "/Users/example/.config",
-      "pi-support",
-      "/Users/example/.config",
-      "/Users/example",
-    ),
-    true,
-  );
-  assert.equal(
-    shouldSelfClaimUnownedRole(
-      "/Users/example/code/dataclique/yielduck",
-      "operator",
-      "/Users/example/code/other",
-      "/Users/example",
-    ),
-    false,
-  );
-  assert.equal(
-    shouldSelfClaimUnownedRole(
-      "/Users/example/code/st0x",
-      "reviewer",
-      "/Users/example/code/other",
-      "/Users/example",
-    ),
-    false,
-  );
-  assert.equal(
-    shouldSelfClaimUnownedRole(
-      "/Users/example/code/st0x",
-      "reviewer",
-      "/Users/example/code/st0x",
-      "/Users/example",
-    ),
-    true,
-  );
-  assert.equal(
-    shouldSelfClaimUnownedRole(
-      "/Users/example/code/dataclique",
-      "reviewer",
-      "/Users/example/code/other",
-      "/Users/example",
-    ),
-    false,
-  );
-  assert.equal(
-    shouldSelfClaimUnownedRole(
-      "/Users/example/code/dataclique",
-      "reviewer",
-      "/Users/example/code/dataclique",
-      "/Users/example",
-    ),
-    true,
-  );
-  assert.equal(
-    shouldSelfClaimUnownedRole(
-      "/Users/example/code/0xgleb",
-      "reviewer",
-      "/Users/example/code/other",
-      "/Users/example",
-    ),
-    false,
-  );
-  assert.equal(
-    shouldSelfClaimUnownedRole(
-      "/Users/example/code/0xgleb",
-      "reviewer",
-      "/Users/example/code/0xgleb",
-      "/Users/example",
-    ),
-    true,
-  );
-  assert.equal(
-    shouldSelfClaimUnownedRole(
-      "/Users/example/code/project",
-      "reviewer",
-      "/Users/example/code/other",
-      "/Users/example",
-    ),
-    true,
+    managedOperationalRole("/Users/example/code/st0x/st0x.issuance", "/Users/example"),
+    undefined,
   );
 });
 

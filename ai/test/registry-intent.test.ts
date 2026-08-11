@@ -7,9 +7,16 @@ const workflows = readFileSync(new URL("../pi/extensions/classified-workflows/in
 
 test("classifier receives live registry assignment metadata without request bodies", () => {
   assert.match(registry, /REGISTRY_INTENT_REQUEST_EVENT[\s\S]*claimed request IDs/);
-  assert.match(registry, /request\.status === "claimed" && request\.leaseId === lease\.id/);
+  assert.match(
+    registry,
+    /request\.status === "claimed" &&\s*request\.leaseId === lease\.id &&\s*request\.agentId === payload\.agentId/,
+  );
+  assert.match(registry, /\.map\(\(request\) => request\.id\)/);
   assert.match(workflows, /const registryRequest: RegistryIntentRequest =/);
   assert.match(workflows, /pi\.events\.emit\(REGISTRY_INTENT_REQUEST_EVENT, registryRequest\)/);
   assert.match(registry, /typeof payload\.report !== "function"/);
-  assert.match(workflows, /\.\.\.registryIntent, \.\.\.todoIntent/);
+  assert.match(
+    workflows,
+    /\.\.\.registryIntent,\s*\.\.\.questionIntent,\s*\.\.\.todoIntent/,
+  );
 });

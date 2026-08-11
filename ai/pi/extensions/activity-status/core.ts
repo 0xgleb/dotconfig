@@ -1,9 +1,12 @@
 import { join, resolve } from "node:path";
+import { LOCAL_DISPATCH_PROVIDER } from "../shared/local-lane.ts";
 
 export const usageThrottleLabel = (
   cwd: string,
   home: string,
+  provider?: string,
 ): string | undefined => {
+  if (provider === LOCAL_DISPATCH_PROVIDER) return undefined;
   const current = resolve(cwd);
   return current === resolve(home, ".config") ||
     current === resolve(home, "code", "dataclique", "yielduck")

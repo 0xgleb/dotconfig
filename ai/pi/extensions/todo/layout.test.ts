@@ -49,7 +49,7 @@ test("side-by-side sessions reserve identical fixed-height chrome", () => {
     assert.doesNotMatch(active.join("\n"), /╰/)
   }
 
-  assert.equal(PROMPT_MIN_CONTENT_ROWS, 3)
+  assert.equal(PROMPT_MIN_CONTENT_ROWS, 1)
   assert.match(
     activityStatus,
     /const READY_LABEL = "READY · awaiting activity"/,

@@ -24,9 +24,10 @@ export interface TaskHudRow {
 }
 
 /**
- * The HUD is always present so every session shows the same fixture; a session
- * with nothing tracked collapses to a single rule rather than disappearing and
- * leaving neighbouring panes looking like different programs.
+ * A rendered HUD collapses to a single "idle" rule rather than a full frame
+ * when there is nothing tracked. The live per-session widget goes further and
+ * unmounts entirely in that case (see `shouldShowTaskHud`); the idle rule
+ * here remains for any caller that renders a `TaskHud` directly.
  */
 export type TaskHud =
   | { readonly kind: "idle"; readonly headline: TaskHudRule }
@@ -47,6 +48,53 @@ export interface TodoSummary {
   readonly deferred: number
   readonly cancelled: number
 }
+
+/**
+ * Manual operator preference for the HUD, flipped by ctrl+t. Tracked
+ * independently of task counts: `shouldShowTaskHud` is the one place that
+ * combines "is there anything to show" with "did the operator hide it", so
+ * an empty board always wins over a stale "visible" or "hidden" preference
+ * left over from before it emptied or filled.
+ */
+export type TaskHudVisibility = "visible" | "hidden"
+
+export const toggleTaskHudVisibility: (
+  visibility: TaskHudVisibility,
+) => TaskHudVisibility = (visibility) =>
+  visibility === "visible" ? "hidden" : "visible"
+
+/**
+ * The HUD widget mounts only when both hold: at least one tracked task
+ * exists, and the operator has not hidden it with ctrl+t. An empty board is
+ * never shown regardless of the toggle; toggling while empty has nothing to
+ * affect until a task exists, so callers leave the preference untouched in
+ * that case rather than arming it for later.
+ */
+export const shouldShowTaskHud: (
+  summary: TodoSummary,
+  visibility: TaskHudVisibility,
+) => boolean = (summary, visibility) =>
+  summary.total > 0 && visibility === "visible"
+
+/**
+ * What a ctrl+t press does to the HUD preference.
+ *
+ * A press against an empty board is `unaffected`: there is no widget for the
+ * preference to show or hide, so it is left as it was rather than silently
+ * armed for whenever a task next appears. Every other press flips the
+ * preference and asks the caller to re-render with it.
+ */
+export type TaskHudToggle =
+  | { readonly toggle: "unaffected" }
+  | { readonly toggle: "applied"; readonly visibility: TaskHudVisibility }
+
+export const taskHudToggle: (
+  summary: TodoSummary,
+  visibility: TaskHudVisibility,
+) => TaskHudToggle = (summary, visibility) =>
+  summary.total > 0
+    ? { toggle: "applied", visibility: toggleTaskHudVisibility(visibility) }
+    : { toggle: "unaffected" }
 
 export interface KanbanColumns {
   readonly todo: ReadonlyArray<Todo>

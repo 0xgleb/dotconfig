@@ -42,15 +42,16 @@ test("long-running tool UX is transient, elapsed, and content-safe", () => {
   assert.match(activity, /event\.partialResult/)
   assert.match(
     activity,
-    /setWidget\([\s\S]*?TOOL_PROGRESS_WIDGET_KEY,[\s\S]*?\[withQuestionLabel\(phase\.label\)\]/,
+    /setWidget\(\s*TOOL_PROGRESS_WIDGET_KEY,[\s\S]*?alignChromeLine\(label, width\)/,
+  )
+  assert.match(
+    activity,
+    /setProgressWidget\(withQuestionLabel\(phase\.label\), ctx\)/,
   )
   assert.match(activity, /const READY_LABEL = "READY · awaiting activity"/)
   assert.match(activity, /QUESTION_PENDING_COUNT_EVENT/)
   assert.match(activity, /ACTION REQUIRED.*\/questions/)
-  assert.match(
-    activity,
-    /setWidget\(TOOL_PROGRESS_WIDGET_KEY, \[questionLabel\(\)\]/,
-  )
+  assert.match(activity, /setProgressWidget\(questionLabel\(\), ctx\)/)
   assert.match(activityCore, /bufferedLineCount/)
   assert.match(activityCore, /elapsedSeconds/)
   assert.doesNotMatch(activity, /event\.args/)

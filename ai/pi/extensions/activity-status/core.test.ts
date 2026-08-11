@@ -35,6 +35,21 @@ test("usage throttle is visible only in dotconfig and Yielduck sessions", () => 
   );
 });
 
+test("free local providers are never throttled, even in throttled directories", () => {
+  assert.equal(
+    usageThrottleLabel("/Users/example/.config", "/Users/example", "ollama"),
+    undefined,
+  );
+  assert.match(
+    usageThrottleLabel(
+      "/Users/example/.config",
+      "/Users/example",
+      "openai-codex",
+    ) ?? "",
+    /THROTTLED · 5m/,
+  );
+});
+
 test("assistant text and tool argument generation have distinct phases", () => {
   assert.deepEqual(assistantPhase({ content: [{ type: "text", text: "Here is the result" }] }), {
     kind: "response",
