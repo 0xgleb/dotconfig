@@ -363,6 +363,17 @@ test("stored harness results are revalidated with the same rules as completion",
     ),
     "invalid_input",
   )
+  assert.equal(
+    errorCode(
+      decodeStoredJob({
+        ...succeeded,
+        state: "cancelled",
+        attempt: 0,
+        summary: undefined,
+      }),
+    ),
+    "invalid_input",
+  )
 })
 
 test("an unexpired lease cannot be reclaimed", () => {
