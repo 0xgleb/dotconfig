@@ -12,6 +12,7 @@ import { decodeJobSpec, JobRuntimeError, type Job } from "./job-runtime.ts"
 import type { CanonicalPath } from "./review-duty-profile.ts"
 import {
   JobStoreError,
+  type RecoveryRetryDelays,
   type SqliteJobStore,
   type StoredJob,
 } from "./sqlite-job-store.ts"
@@ -29,6 +30,12 @@ const LOOPBACK_HOSTS = ["127.0.0.1", "::1"] as const
  * how the attempt ended.
  */
 const HARNESS_RETRY_DELAY_MS = 5 * 60 * 1_000
+
+/** Source-fixed abandoned-attempt policy for every registered job kind. */
+const RECOVERY_RETRY_DELAYS: RecoveryRetryDelays = {
+  "harness.review": HARNESS_RETRY_DELAY_MS,
+  "review-duty.scan": 0,
+}
 
 export class ControlPlaneServerError extends Data.TaggedError(
   "ControlPlaneServerError",
@@ -355,7 +362,7 @@ const handleClaim = (
     // logged through the runtime: a recovery pass that keeps failing strands
     // every expired lease, and nothing else in the request would report it.
     yield* Effect.catchIf(
-      store.recoverExpired(now, HARNESS_RETRY_DELAY_MS),
+      store.recoverExpired(now, RECOVERY_RETRY_DELAYS),
       isToleratedRecoveryFailure,
       (failure) =>
         Effect.logError(

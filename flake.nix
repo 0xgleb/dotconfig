@@ -152,6 +152,10 @@
                 nativeBuildInputs = with pkgs; [ nushell ];
               }
               ''
+                cp ${./nushell/fj/check.nu} check.nu
+                cp ${./nushell/fj/log.nu} log.nu
+                cp ${./nushell/fj/routing.nu} routing.nu
+                cp ${./nushell/fj/workflow.nu} workflow.nu
                 cp ${./nushell/fj/workflow.test.nu} workflow.test.nu
                 ${pkgs.nushell}/bin/nu workflow.test.nu
                 touch $out

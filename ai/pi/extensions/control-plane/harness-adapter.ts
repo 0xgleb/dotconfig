@@ -28,10 +28,9 @@ export { toJobId, type JobId, type LaunchEnvironment }
 export interface HarnessLaunchPlan {
   readonly lane: HarnessLane
   /**
-   * Directory the harness process runs in. Read-only work runs in the
-   * validated checkout; approved-worktree work runs in a job-scoped worktree
-   * under the checkout's `.worktrees/` directory, which the launcher creates
-   * before spawning the process.
+   * Directory selected by the source-fixed adapter. Approved-worktree work is
+   * already job-scoped here; the worker replaces a read-only checkout with its
+   * commit-pinned job worktree after it validates the live claim deadline.
    */
   readonly cwd: CanonicalPath
   readonly argv: readonly string[]

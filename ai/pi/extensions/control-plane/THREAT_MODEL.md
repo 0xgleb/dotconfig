@@ -34,7 +34,7 @@
 - Subscription/API billing provenance and the capacity Pi reserves for its own
   classification, registry, Telegram, and final-gate work, kept separate from
   what job attempts may spend.
-- The trusted source-fixed adapter templates and isolated worktree boundary.
+- The trusted source-fixed adapter templates and job-scoped worktree boundary.
 
 ## STRIDE controls
 
@@ -45,7 +45,7 @@
 | Repudiation | A worker denies claiming, abandoning, retrying, or cancelling work. | Transactional Attempt rows and append-only bounded Events tied to worker and lease token. |
 | Information disclosure | A payload, error, event, or dashboard response carries credentials or raw model/tool output. | Registered payload schemas, protected-path guards, bounded summaries, safe read models, and no arbitrary blobs. |
 | Denial of service | Huge payloads, unbounded attempts, distant schedules, lease overflow, or event growth wedge the service. | Request/body/field limits, maximum attempts and delays, checked timestamp arithmetic, retention policy, busy timeout, and malformed-boundary tests. |
-| Elevation of privilege | A loopback client or leased job runs shell, invokes a tool, selects force/yolo, adds a plugin/MCP, or treats model text as approval. | No executable payload kind; exact adapter/model/task allowlists; source-fixed argv; job lease is routing only; existing classifier and constrained tools re-check authority at action time. |
+| Elevation of privilege | A loopback client or leased job runs shell, invokes a tool, selects force/yolo, adds a plugin/MCP, or treats model text as approval. | No executable payload kind; exact adapter/model/task allowlists; source-fixed argv; job lease is routing only; existing classifier and constrained tools re-check authority at action time. The detached worktree pins and separates repository state; it is not an OS sandbox, so access outside it remains governed by those existing tool boundaries rather than by `cwd`. |
 
 ### Executor boundary (trust boundaries 6-7)
 

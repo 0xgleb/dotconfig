@@ -33,6 +33,11 @@ const commit = (value: string): CommitSha => {
 
 const harnessHeadSha = commit("a".repeat(40))
 
+const recoveryRetryDelays = {
+  "harness.review": 60_000,
+  "review-duty.scan": 0,
+} as const
+
 /**
  * The home a payload is admitted against is stated by the fixture rather than
  * read from the machine, so a checkout the tests describe is registered no
@@ -193,16 +198,18 @@ test("atomic due-job claim allows only one worker and fences stale completion", 
     second.close()
   }))
 
-test("expired attempts are recovered transactionally and become claimable after delay", async () =>
+test("expired attempts are recovered with their job-kind retry delay", async () =>
   withStore(async (path) => {
     const store = await Effect.runPromise(makeSqliteJobStore(path, home))
     await Effect.runPromise(store.enqueue(reviewSpec(), "job-a", 1_000))
     await Effect.runPromise(store.claimDue("worker-a", "lease-a", 1_000, 10))
-    const recovered = await Effect.runPromise(store.recoverExpired(1_010, 60_000))
+    const recovered = await Effect.runPromise(
+      store.recoverExpired(1_010, recoveryRetryDelays),
+    )
     assert.deepEqual(recovered.map(({ id }) => id), ["job-a"])
-    assert.equal(await Effect.runPromise(store.claimDue("worker-b", "lease-b", 61_009, 10)), undefined)
+    assert.equal(await Effect.runPromise(store.claimDue("worker-b", "lease-b", 1_009, 10)), undefined)
     assert.equal(
-      (await Effect.runPromise(store.claimDue("worker-b", "lease-b", 61_010, 10)))?.id,
+      (await Effect.runPromise(store.claimDue("worker-b", "lease-b", 1_010, 10)))?.id,
       "job-a",
     )
     store.close()
@@ -278,7 +285,9 @@ test("a harness attempt whose last lease expires is stored as failed without evi
       store.enqueue(harnessSpec("harness:personal:example:9", 1), "job-x", 1_000),
     )
     await Effect.runPromise(store.claimDue("worker-a", "lease-a", 1_000, 10))
-    const recovered = await Effect.runPromise(store.recoverExpired(1_010, 60_000))
+    const recovered = await Effect.runPromise(
+      store.recoverExpired(1_010, recoveryRetryDelays),
+    )
     assert.deepEqual(recovered.map(({ state }) => state), ["failed"])
 
     const reloaded = await Effect.runPromise(store.get("job-x"))
@@ -337,7 +346,9 @@ test("an unreadable expired lease is quarantined and the others still recover", 
     await Effect.runPromise(store.claimDue("worker-b", "lease-b", 1_000, 10))
     poison(store, "job-a")
 
-    const recovered = await Effect.runPromise(store.recoverExpired(1_010, 60_000))
+    const recovered = await Effect.runPromise(
+      store.recoverExpired(1_010, recoveryRetryDelays),
+    )
     assert.deepEqual(recovered.map(({ id }) => id), ["job-b"])
     assert.equal(stateOf(store, "job-a"), "corrupt")
     assert.equal(stateOf(store, "job-b"), "retry_wait")

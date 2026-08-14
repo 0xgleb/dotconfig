@@ -77,8 +77,8 @@ const aheadOfTime = (
   ...store,
   claimDue: (workerId, leaseToken, now, ttlMs) =>
     store.claimDue(workerId, leaseToken, now + elapsedMs(), ttlMs),
-  recoverExpired: (now, retryDelayMs) =>
-    store.recoverExpired(now + elapsedMs(), retryDelayMs),
+  recoverExpired: (now, retryDelays) =>
+    store.recoverExpired(now + elapsedMs(), retryDelays),
 })
 
 const readableJobs = (stored: readonly StoredJob[]): readonly Job[] =>
@@ -685,6 +685,35 @@ test("a recovered harness lease waits the harness backoff before it is due again
     await Effect.runPromise(server.close)
     store.close()
     await rm(root, { recursive: true, force: true })
+  }
+})
+
+test("lease recovery receives a retry delay for each registered job kind", async () => {
+  let observed: Readonly<Record<string, number>> | undefined
+  const store = partialStore({
+    recoverExpired: (_now, retryDelays) =>
+      Effect.sync(() => {
+        observed = retryDelays
+        return []
+      }),
+    claimDue: () => Effect.succeed(undefined),
+  })
+  const server = await Effect.runPromise(
+    startControlPlaneServer({ host: "127.0.0.1", port: 0, store, home }),
+  )
+  try {
+    const claimed = await fetch(`${server.origin}/v1/worker/claim`, {
+      method: "POST",
+      headers: { "content-type": "application/json" },
+      body: JSON.stringify({ workerId: "worker-a", ttlMs: 90_000 }),
+    })
+    assert.equal(claimed.status, 204)
+    assert.deepEqual(observed, {
+      "harness.review": 5 * 60 * 1_000,
+      "review-duty.scan": 0,
+    })
+  } finally {
+    await Effect.runPromise(server.close)
   }
 })
 

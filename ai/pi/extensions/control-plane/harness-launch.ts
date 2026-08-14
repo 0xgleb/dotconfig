@@ -99,10 +99,12 @@ const CLAUDE_HEADLESS_COMMAND = [
 ] as const
 
 /**
- * Permission mode each isolation launches with. Read-only work plans and never
- * writes; approved-worktree work accepts edits confined to the worktree the
- * adapter created for the attempt. No lane launches with a mode that skips
- * permissions or approves tools on the executor's own say-so.
+ * Permission mode each isolation launches with. Read-only work plans and its
+ * worker rejects any resulting worktree mutation; approved-worktree work may
+ * leave edits in the job-scoped checkout. The detached checkout pins source
+ * state but is not an OS sandbox: existing classifier and constrained-tool
+ * boundaries still re-check any filesystem action outside it. No lane launches
+ * with a mode that skips permissions or approves tools on the executor's say-so.
  */
 const CLAUDE_PERMISSION_MODES: Readonly<
   Record<HarnessReviewPayload["isolation"], "plan" | "acceptEdits">

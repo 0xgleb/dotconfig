@@ -14,6 +14,7 @@ import {
   JobRuntimeError,
   recoverExpiredJob,
   type Job,
+  type RegisteredJobKind,
   type RegisteredJobResult,
   type RegisteredJobSpec,
 } from "./job-runtime.ts"
@@ -72,6 +73,11 @@ export interface EnqueueResult {
  */
 export type TransitionInstant = number | Effect.Effect<number>
 
+/** Retry delay applied when an expired lease of each registered kind recovers. */
+export type RecoveryRetryDelays = Readonly<
+  Record<RegisteredJobKind, number>
+>
+
 export interface SqliteJobStore {
   readonly enqueue: (
     spec: RegisteredJobSpec,
@@ -116,7 +122,7 @@ export interface SqliteJobStore {
   ) => Effect.Effect<Job, JobStoreError | JobRuntimeError>
   readonly recoverExpired: (
     now: number,
-    retryDelayMs: number,
+    retryDelays: RecoveryRetryDelays,
   ) => Effect.Effect<readonly Job[], JobStoreError | JobRuntimeError>
   readonly close: () => void
   readonly unsafeDatabaseForTests: DatabaseSync
@@ -489,7 +495,7 @@ const makeStore = (
    */
   const recoverExpired: SqliteJobStore["recoverExpired"] = (
     now,
-    retryDelayMs,
+    retryDelays,
   ) =>
     inTransaction(
       Effect.gen(function* () {
@@ -514,7 +520,7 @@ const makeStore = (
             onSuccess: (job) =>
               Effect.map(
                 Effect.flatMap(
-                  recoverExpiredJob(job, now, retryDelayMs),
+                  recoverExpiredJob(job, now, retryDelays[job.spec.kind]),
                   persist,
                 ),
                 oneJob,

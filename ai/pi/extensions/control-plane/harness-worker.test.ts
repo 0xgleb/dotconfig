@@ -1,7 +1,7 @@
 import assert from "node:assert/strict"
 import { execFile } from "node:child_process"
 import { existsSync } from "node:fs"
-import { mkdir, mkdtemp, readFile, rm } from "node:fs/promises"
+import { mkdir, mkdtemp, readFile, rm, writeFile } from "node:fs/promises"
 import { tmpdir } from "node:os"
 import { join } from "node:path"
 import test from "node:test"
@@ -24,6 +24,8 @@ import {
   type JobId,
 } from "./harness-protocol.ts"
 import {
+  ATTEMPT_SETUP_MARGIN_MS,
+  CONTROL_PLANE_REQUEST_TIMEOUT_MS,
   ExecutorFailed,
   gitRepository,
   harnessWorkerOptions,
@@ -233,6 +235,10 @@ const recordingRepository = (
   addWorktree: (_repositoryRoot, worktree) =>
     Effect.sync(() => {
       log.push(`add ${worktree}`)
+    }),
+  verifyUnchanged: (_worktree) =>
+    Effect.sync(() => {
+      log.push("clean")
     }),
   removeWorktree: (_repositoryRoot, worktree) =>
     Effect.sync(() => {
@@ -577,6 +583,90 @@ test("an approved-worktree launch runs in a worktree created for it and removed 
     ])
   }))
 
+test("approved worktree outcomes are reported before teardown", async () =>
+  withServer(async (origin) => {
+    const jobId = await enqueueHarnessJob(origin, worktreeEnqueueBody)
+    let stateAtRemoval: string | undefined
+    const repository: HarnessRepository = {
+      ...recordingRepository(),
+      removeWorktree: (_repositoryRoot, _worktree) =>
+        Effect.promise(async () => {
+          stateAtRemoval = (await jobState(origin, jobId)).state
+        }),
+    }
+    const outcome = await runAttempt(
+      origin,
+      stubSpawner(() => ({
+        kind: "spawned",
+        exitCode: 0,
+        stdout: JSON.stringify(handoffFor(jobId, { lane: "claude-code-max" })),
+      })),
+      undefined,
+      repository,
+    )
+    assert.deepEqual(outcome, { outcome: "completed", jobId })
+    assert.equal(stateAtRemoval, "succeeded")
+  }))
+
+test("read-only launches run from a pinned clean worktree", async () =>
+  withServer(async (origin) => {
+    const jobId = await enqueueHarnessJob(origin)
+    const log: string[] = []
+    const outcome = await runAttempt(
+      origin,
+      stubSpawner((plan) => {
+        log.push(`spawn ${plan.cwd}`)
+        const workspaceIndex = plan.argv.indexOf("--workspace")
+        assert.equal(plan.argv[workspaceIndex + 1], plan.cwd)
+        return {
+          kind: "spawned",
+          exitCode: 0,
+          stdout: JSON.stringify(handoffFor(jobId)),
+        }
+      }),
+      undefined,
+      recordingRepository(log),
+    )
+    const worktree = `${registeredCheckout}/${WORKTREE_DIRECTORY}/${jobId}-1`
+    assert.deepEqual(outcome, { outcome: "completed", jobId })
+    assert.deepEqual(log, [
+      `add ${worktree}`,
+      `spawn ${worktree}`,
+      "clean",
+      `remove ${worktree}`,
+    ])
+  }))
+
+test("read-only launches fail when the executor mutates its worktree", async () =>
+  withServer(async (origin) => {
+    const jobId = await enqueueHarnessJob(origin)
+    const repository: HarnessRepository = {
+      ...recordingRepository(),
+      verifyUnchanged: () =>
+        Effect.fail(
+          new ExecutorFailed({
+            message: "read-only executor mutated its worktree",
+          }),
+        ),
+    }
+    const outcome = await runAttempt(
+      origin,
+      stubSpawner(() => ({
+        kind: "spawned",
+        exitCode: 0,
+        stdout: JSON.stringify(handoffFor(jobId)),
+      })),
+      undefined,
+      repository,
+    )
+    assert.deepEqual(outcome, {
+      outcome: "failed",
+      jobId,
+      reason: "read-only executor mutated its worktree",
+    })
+    assert.equal((await jobState(origin, jobId)).state, "retry_wait")
+  }))
+
 test("a launch is refused unless the checkout resolves the head it declares", async () => {
   await withServer(async (origin) => {
     const jobId = await enqueueHarnessJob(origin)
@@ -639,6 +729,7 @@ const claimedHarnessSpec = {
  */
 const attemptAgainstClaim = async (
   job: unknown,
+  calls: HarnessLaunchPlan[] = [],
 ): Promise<ClaimAttemptResult> => {
   const { createServer } = await import("node:http")
   const server = createServer((_request, response) => {
@@ -654,7 +745,10 @@ const attemptAgainstClaim = async (
         Effect.flatMap(
           workerOptions(
             `http://127.0.0.1:${String(address.port)}`,
-            stubSpawner(() => ({ kind: "spawned", exitCode: 0, stdout: "" })),
+            stubSpawner(
+              () => ({ kind: "spawned", exitCode: 0, stdout: "" }),
+              calls,
+            ),
           ),
           runNextHarnessAttempt,
         ),
@@ -699,9 +793,65 @@ test("attempt numbers at the bounds of the protocol's range are claimed", async 
       id: "job-a",
       attempt,
       leaseToken: "lease-a",
+      leaseUntil: Date.now() + 60_000,
       spec: claimedHarnessSpec,
     })
     assert.equal(result.kind, "reported")
+  }
+})
+
+test("a claim without enough remaining lease never launches an executor", async () => {
+  const calls: HarnessLaunchPlan[] = []
+  const result = await attemptAgainstClaim(
+    {
+      id: "job-a",
+      attempt: 1,
+      leaseToken: "lease-a",
+      leaseUntil: Date.now() + REPORTING_MARGIN_MS - 1,
+      spec: claimedHarnessSpec,
+    },
+    calls,
+  )
+  assert.deepEqual(result, {
+    kind: "reported",
+    reported: {
+      outcome: "failed",
+      jobId: jobIdentifier("job-a"),
+      reason: "attempt has insufficient lease remaining",
+    },
+  })
+  assert.equal(calls.length, 0)
+})
+
+test("control-plane requests fail within their bounded timeout", async () => {
+  const { createServer } = await import("node:http")
+  const server = createServer(() => undefined)
+  await new Promise<void>((resolve) => server.listen(0, "127.0.0.1", resolve))
+  const address = server.address()
+  assert.ok(address && typeof address === "object")
+  const started = Date.now()
+  try {
+    const result = await Effect.runPromise(
+      Effect.either(
+        Effect.flatMap(
+          workerOptions(
+            `http://127.0.0.1:${String(address.port)}`,
+            stubSpawner(() => ({ kind: "spawned", exitCode: 0, stdout: "" })),
+          ),
+          runNextHarnessAttempt,
+        ),
+      ),
+    )
+    assert.equal(result._tag, "Left")
+    if (result._tag === "Right") assert.fail("expected request timeout")
+    assert.equal(result.left.message, "control plane request to /v1/worker/claim failed")
+    assert.equal(
+      Date.now() - started < CONTROL_PLANE_REQUEST_TIMEOUT_MS + 2_000,
+      true,
+    )
+  } finally {
+    server.closeAllConnections()
+    await new Promise<void>((resolve) => server.close(() => resolve()))
   }
 })
 
@@ -711,18 +861,21 @@ test("claimed kinds the job runtime does not register are malformed claims", asy
       id: "job-a",
       attempt: 1,
       leaseToken: "lease-a",
+      leaseUntil: Date.now() + 60_000,
       spec: { kind: "shell.run", payload: { command: "arbitrary" } },
     }),
     { kind: "refused", message: "claimed job payload is malformed" },
   )
 })
 
-test("an executor timeout that leaves the lease no reporting margin is refused", async () => {
+test("an executor timeout that leaves no setup and reporting margin is refused", async () => {
+  const leaseTtlMs = 60_000
+  const requiredMarginMs = ATTEMPT_SETUP_MARGIN_MS + REPORTING_MARGIN_MS
   const timeoutOptions = (executorTimeoutMs: number) =>
     harnessWorkerOptions({
       origin: "http://127.0.0.1:1",
       workerId: "harness-supervisor",
-      leaseTtlMs: 30_000,
+      leaseTtlMs,
       executorTimeoutMs,
       allowedRoots: workspaceRoot(registeredCheckout),
       home,
@@ -736,9 +889,13 @@ test("an executor timeout that leaves the lease no reporting margin is refused",
         })),
     })
 
-  // A timeout inside the lease by less than the reporting margin still leaves
-  // the report to land after the lease it is published against.
-  for (const executorTimeoutMs of [30_000, 29_999, 20_001]) {
+  // A timeout inside the lease by less than the bounded setup and reporting
+  // margin still allows the report to land after its lease.
+  for (const executorTimeoutMs of [
+    leaseTtlMs,
+    leaseTtlMs - 1,
+    leaseTtlMs - requiredMarginMs + 1,
+  ]) {
     const refused = await Effect.runPromise(
       Effect.either(timeoutOptions(executorTimeoutMs)),
     )
@@ -747,16 +904,17 @@ test("an executor timeout that leaves the lease no reporting margin is refused",
     assert.equal(refused.left._tag, "InvalidWorkerOptions")
     assert.equal(
       refused.left.message,
-      `executor timeout must leave the lease ${String(REPORTING_MARGIN_MS)}ms to report the attempt`,
+      `executor timeout must leave the lease ${String(requiredMarginMs)}ms for setup and reporting`,
     )
   }
 
-  const admitted = await Effect.runPromise(timeoutOptions(20_000))
-  assert.equal(admitted.executorTimeoutMs, 20_000)
+  const admittedTimeoutMs = leaseTtlMs - requiredMarginMs
+  const admitted = await Effect.runPromise(timeoutOptions(admittedTimeoutMs))
+  assert.equal(admitted.executorTimeoutMs, admittedTimeoutMs)
   const launched = await Effect.runPromise(
     admitted.spawner(executionPlan(["node", "-e", ""])),
   )
-  assert.equal(launched.stdout, "20000")
+  assert.equal(launched.stdout, String(admittedTimeoutMs))
 })
 
 const executionPlan = (argv: readonly string[]): HarnessLaunchPlan => ({
@@ -859,18 +1017,27 @@ test("the process spawner kills timed-out and unavailable executors", async () =
     assert.equal(unavailable.left.message, "executor could not be spawned")
 })
 
-test("an executor that exits while a descendant holds its pipe is still reported", async () => {
-  const execution = await Effect.runPromise(
-    spawnHarnessExecutor(5_000, spawnEnvironment)(
-      executionPlan([
-        "node",
-        "-e",
-        'const { spawn } = require("node:child_process"); spawn(process.execPath, ["-e", "setTimeout(() => {}, 30000)"], { stdio: ["ignore", "inherit", "ignore"] }).unref(); console.log("handoff-line")',
-      ]),
-    ),
-  )
-  assert.equal(execution.exitCode, 0)
-  assert.equal(execution.stdout.includes("handoff-line"), true)
+test("an executor that exits terminates descendants before it is reported", async () => {
+  const root = await mkdtemp(join(tmpdir(), "pi-harness-exit-test-"))
+  const pidFile = join(root, "descendant.pid")
+  try {
+    const execution = await Effect.runPromise(
+      spawnHarnessExecutor(5_000, spawnEnvironment)(
+        executionPlan([
+          "node",
+          "-e",
+          `const fs = require("node:fs"); const { spawn } = require("node:child_process"); const child = spawn(process.execPath, ["-e", "setInterval(() => {}, 1000)"], { stdio: ["ignore", "inherit", "ignore"] }); fs.writeFileSync(${JSON.stringify(pidFile)}, String(child.pid)); child.unref(); console.log("handoff-line")`,
+        ]),
+      ),
+    )
+    const pid = Number((await readFile(pidFile, "utf8")).trim())
+    assert.equal(Number.isSafeInteger(pid) && pid > 0, true)
+    assert.equal(execution.exitCode, 0)
+    assert.equal(execution.stdout.includes("handoff-line"), true)
+    assert.equal(isRunning(pid), false)
+  } finally {
+    await rm(root, { recursive: true, force: true })
+  }
 })
 
 test("interrupting a launch kills the executor and the subprocesses it started", async () => {
@@ -936,6 +1103,14 @@ test("the git repository verifies a head and builds the worktree a launch runs i
     const worktree = canonical(join(checkout, WORKTREE_DIRECTORY, "job-a-1"))
     await Effect.runPromise(gitRepository.addWorktree(checkout, worktree, head))
     assert.equal(existsSync(worktree), true)
+    await Effect.runPromise(gitRepository.verifyUnchanged(worktree))
+    await writeFile(join(worktree, "mutated.txt"), "changed")
+    const mutated = await Effect.runPromise(
+      Effect.either(gitRepository.verifyUnchanged(worktree)),
+    )
+    assert.equal(mutated._tag, "Left")
+    if (mutated._tag === "Left")
+      assert.equal(mutated.left.message, "read-only executor mutated its worktree")
     await Effect.runPromise(gitRepository.removeWorktree(checkout, worktree))
     assert.equal(existsSync(worktree), false)
   } finally {
