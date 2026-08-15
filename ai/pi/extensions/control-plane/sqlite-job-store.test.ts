@@ -362,6 +362,38 @@ test("expired attempts are recovered with their job-kind retry delay", async () 
     store.close()
   }))
 
+test("malformed retry delays and summaries are rejected without a transition", async () =>
+  withStore(async path => {
+    const store = await Effect.runPromise(makeSqliteJobStore(path, home))
+    await Effect.runPromise(store.enqueue(reviewSpec(), "job-a", 1_000))
+    await Effect.runPromise(
+      store.claimDue("worker-a", "lease-a", 1_000, 90_000),
+    )
+    const weekMs = 7 * 24 * 60 * 60 * 1_000
+    for (const retryDelayMs of [-1, 0.5, Number.NaN, weekMs + 1])
+      assert.equal(
+        await errorCode(
+          store.fail("job-a", "lease-a", 2_000, retryDelayMs, "attempt failed"),
+        ),
+        "invalid_input",
+      )
+    for (const summary of ["", "   ", "line\nbreak", "x".repeat(4_001)]) {
+      assert.equal(
+        await errorCode(store.fail("job-a", "lease-a", 2_000, 0, summary)),
+        "invalid_input",
+      )
+      assert.equal(
+        await errorCode(store.complete("job-a", "lease-a", 2_000, summary)),
+        "invalid_input",
+      )
+    }
+    const failed = await Effect.runPromise(
+      store.fail("job-a", "lease-a", 2_000, 0, "attempt failed"),
+    )
+    assert.equal(failed.state, "retry_wait")
+    store.close()
+  }))
+
 test("a cancelled harness attempt stays readable through the store", async () =>
   withStore(async path => {
     const store = await Effect.runPromise(makeSqliteJobStore(path, home))
