@@ -4,7 +4,12 @@ import { tmpdir } from "node:os"
 import { join } from "node:path"
 import test from "node:test"
 import { Effect, Either } from "effect"
-import { toCommitSha, type CommitSha } from "./harness-protocol.ts"
+import {
+  toCommitSha,
+  toJobId,
+  type CommitSha,
+  type JobId,
+} from "./harness-protocol.ts"
 import {
   jobResult,
   JobRuntimeError,
@@ -27,8 +32,16 @@ const canonical = (value: string): CanonicalPath => {
 
 const commit = (value: string): CommitSha => {
   const sha = toCommitSha(value)
-  if (sha === undefined) throw new Error(`fixture is not a commit sha: ${value}`)
+  if (sha === undefined)
+    throw new Error(`fixture is not a commit sha: ${value}`)
   return sha
+}
+
+const jobIdentifier = (value: string): JobId => {
+  const id = toJobId(value)
+  if (id === undefined)
+    throw new Error(`fixture is not a job identifier: ${value}`)
+  return id
 }
 
 const harnessHeadSha = commit("a".repeat(40))
@@ -68,8 +81,8 @@ const harnessSpec = (
 })
 
 const reviewSpec = (
-  profile: "st0x-review" | "dataclique-review" | "personal-review" =
-    "st0x-review",
+  profile:
+    "st0x-review" | "dataclique-review" | "personal-review" = "st0x-review",
 ): RegisteredJobSpec => ({
   kind: "review-duty.scan",
   payload: { profile },
@@ -102,10 +115,10 @@ const errorCode = async <A>(
 }
 
 const readableJobs = (stored: readonly StoredJob[]): readonly Job[] =>
-  stored.flatMap((entry) => (entry.outcome === "readable" ? [entry.job] : []))
+  stored.flatMap(entry => (entry.outcome === "readable" ? [entry.job] : []))
 
 const unreadableIds = (stored: readonly StoredJob[]): readonly string[] =>
-  stored.flatMap((entry) => (entry.outcome === "unreadable" ? [entry.id] : []))
+  stored.flatMap(entry => (entry.outcome === "unreadable" ? [entry.id] : []))
 
 /** Replaces a stored document with one the runtime can no longer decode. */
 const poison = (store: SqliteJobStore, id: string): void => {
@@ -135,7 +148,7 @@ const withStore = async (
 }
 
 test("idempotent enqueue returns the persisted job and rejects payload drift", async () =>
-  withStore(async (path) => {
+  withStore(async path => {
     const store = await Effect.runPromise(makeSqliteJobStore(path, home))
     const first = await Effect.runPromise(
       store.enqueue(reviewSpec(), "job-a", 1_000),
@@ -148,11 +161,7 @@ test("idempotent enqueue returns the persisted job and rejects payload drift", a
     assert.equal(duplicate.job.id, first.job.id)
     assert.equal(
       await errorCode(
-        store.enqueue(
-          { ...reviewSpec(), maxAttempts: 4 },
-          "job-c",
-          1_002,
-        ),
+        store.enqueue({ ...reviewSpec(), maxAttempts: 4 }, "job-c", 1_002),
       ),
       "idempotency_conflict",
     )
@@ -160,7 +169,7 @@ test("idempotent enqueue returns the persisted job and rejects payload drift", a
   }))
 
 test("jobs survive closing and reopening the SQLite adapter", async () =>
-  withStore(async (path) => {
+  withStore(async path => {
     const first = await Effect.runPromise(makeSqliteJobStore(path, home))
     await Effect.runPromise(first.enqueue(reviewSpec(), "job-a", 1_000))
     first.close()
@@ -170,8 +179,43 @@ test("jobs survive closing and reopening the SQLite adapter", async () =>
     reopened.close()
   }))
 
+test("get and transitions reject inconsistent row discriminators and identifiers", async () => {
+  const corruptions: ReadonlyArray<{
+    readonly sql: string
+    readonly value: string
+  }> = [
+    {
+      sql: "UPDATE jobs SET state = ? WHERE job_id = 'job-a'",
+      value: "retry_wait",
+    },
+    {
+      sql: "UPDATE jobs SET kind = ? WHERE job_id = 'job-a'",
+      value: "harness.review",
+    },
+    {
+      sql: "UPDATE jobs SET document = json_set(document, '$.id', ?) WHERE job_id = 'job-a'",
+      value: "job-other",
+    },
+  ]
+  for (const corruption of corruptions)
+    await withStore(async path => {
+      const store = await Effect.runPromise(makeSqliteJobStore(path, home))
+      await Effect.runPromise(store.enqueue(reviewSpec(), "job-a", 1_000))
+      store.unsafeDatabaseForTests.prepare(corruption.sql).run(corruption.value)
+
+      assert.equal(await errorCode(store.get("job-a")), "corrupt_state")
+      assert.equal(
+        await errorCode(
+          store.complete("job-a", "lease-a", 2_000, "must not persist"),
+        ),
+        "corrupt_state",
+      )
+      store.close()
+    })
+})
+
 test("atomic due-job claim allows only one worker and fences stale completion", async () =>
-  withStore(async (path) => {
+  withStore(async path => {
     const first = await Effect.runPromise(makeSqliteJobStore(path, home))
     const second = await Effect.runPromise(makeSqliteJobStore(path, home))
     await Effect.runPromise(first.enqueue(reviewSpec(), "job-a", 1_000))
@@ -183,6 +227,7 @@ test("atomic due-job claim allows only one worker and fences stale completion", 
     assert.equal([left, right].filter(Boolean).length, 1)
     const claimed = left ?? right
     assert.ok(claimed)
+    if (claimed.state !== "leased") assert.fail("claim must return a lease")
     const currentStore = claimed.leaseToken === "lease-a" ? first : second
     assert.equal(
       await errorCode(
@@ -198,25 +243,127 @@ test("atomic due-job claim allows only one worker and fences stale completion", 
     second.close()
   }))
 
+test("kind-scoped claims do not lease another worker's due job", async () =>
+  withStore(async path => {
+    const store = await Effect.runPromise(makeSqliteJobStore(path, home))
+    await Effect.runPromise(store.enqueue(reviewSpec(), "job-a", 1_000))
+    await Effect.runPromise(
+      store.enqueue(
+        harnessSpec("harness:personal:example:7:scoped", 2),
+        "job-h",
+        1_000,
+      ),
+    )
+
+    const harness = await Effect.runPromise(
+      store.claimDue(
+        "harness-worker",
+        "lease-h",
+        1_000,
+        90_000,
+        "harness.review",
+      ),
+    )
+    assert.equal(harness?.id, "job-h")
+    const review = await Effect.runPromise(
+      store.claimDue(
+        "review-worker",
+        "lease-r",
+        1_000,
+        90_000,
+        "review-duty.scan",
+      ),
+    )
+    assert.equal(review?.id, "job-a")
+    store.close()
+  }))
+
+test("unfiltered claims quarantine a mismatched SQL kind discriminator", async () =>
+  withStore(async path => {
+    const store = await Effect.runPromise(makeSqliteJobStore(path, home))
+    await Effect.runPromise(store.enqueue(reviewSpec(), "job-a", 1_000))
+    await Effect.runPromise(
+      store.enqueue(reviewSpec("dataclique-review"), "job-b", 1_000),
+    )
+    store.unsafeDatabaseForTests
+      .prepare("UPDATE jobs SET kind = ? WHERE job_id = ?")
+      .run("harness.review", "job-a")
+
+    const claimed = await Effect.runPromise(
+      store.claimDue("worker-a", "lease-a", 1_000, 90_000),
+    )
+    assert.equal(claimed?.id, "job-b")
+    assert.equal(stateOf(store, "job-a"), "corrupt")
+    assert.deepEqual(unreadableIds(await Effect.runPromise(store.list())), [
+      "job-a",
+    ])
+    store.close()
+  }))
+
+test("kind-scoped claims quarantine hidden discriminator mismatches", async () =>
+  withStore(async path => {
+    const store = await Effect.runPromise(makeSqliteJobStore(path, home))
+    await Effect.runPromise(store.enqueue(reviewSpec(), "job-a", 1_000))
+    await Effect.runPromise(
+      store.enqueue(
+        harnessSpec("harness:personal:example:7:filtered", 2),
+        "job-b",
+        1_000,
+      ),
+    )
+    await Effect.runPromise(
+      store.enqueue(reviewSpec("dataclique-review"), "job-c", 1_000),
+    )
+    store.unsafeDatabaseForTests
+      .prepare("UPDATE jobs SET kind = ? WHERE job_id = ?")
+      .run("harness.review", "job-a")
+
+    const claimed = await Effect.runPromise(
+      store.claimDue(
+        "review-worker",
+        "lease-r",
+        1_000,
+        90_000,
+        "review-duty.scan",
+      ),
+    )
+    assert.equal(claimed?.id, "job-c")
+    assert.equal(stateOf(store, "job-a"), "corrupt")
+    assert.deepEqual(unreadableIds(await Effect.runPromise(store.list())), [
+      "job-a",
+    ])
+    store.close()
+  }))
+
 test("expired attempts are recovered with their job-kind retry delay", async () =>
-  withStore(async (path) => {
+  withStore(async path => {
     const store = await Effect.runPromise(makeSqliteJobStore(path, home))
     await Effect.runPromise(store.enqueue(reviewSpec(), "job-a", 1_000))
     await Effect.runPromise(store.claimDue("worker-a", "lease-a", 1_000, 10))
     const recovered = await Effect.runPromise(
       store.recoverExpired(1_010, recoveryRetryDelays),
     )
-    assert.deepEqual(recovered.map(({ id }) => id), ["job-a"])
-    assert.equal(await Effect.runPromise(store.claimDue("worker-b", "lease-b", 1_009, 10)), undefined)
+    assert.deepEqual(
+      recovered.map(({ id }) => id),
+      ["job-a"],
+    )
     assert.equal(
-      (await Effect.runPromise(store.claimDue("worker-b", "lease-b", 1_010, 10)))?.id,
+      await Effect.runPromise(store.claimDue("worker-b", "lease-b", 1_009, 10)),
+      undefined,
+    )
+    assert.equal(
+      (
+        await Effect.runPromise(
+          store.claimDue("worker-b", "lease-b", 1_010, 10),
+        )
+      )?.id,
       "job-a",
     )
     store.close()
   }))
 
 test("a cancelled harness attempt stays readable through the store", async () =>
-  withStore(async (path) => {
+  withStore(async path => {
     const store = await Effect.runPromise(makeSqliteJobStore(path, home))
     const spec = harnessSpec("harness:personal:example:7", 2)
     await Effect.runPromise(store.enqueue(spec, "job-h", 1_000))
@@ -239,10 +386,14 @@ test("a cancelled harness attempt stays readable through the store", async () =>
   }))
 
 test("a blocked harness handoff is stored with the attempt it ended", async () =>
-  withStore(async (path) => {
+  withStore(async path => {
     const store = await Effect.runPromise(makeSqliteJobStore(path, home))
     await Effect.runPromise(
-      store.enqueue(harnessSpec("harness:personal:example:8", 1), "job-b", 1_000),
+      store.enqueue(
+        harnessSpec("harness:personal:example:8", 1),
+        "job-b",
+        1_000,
+      ),
     )
     const claimed = await Effect.runPromise(
       store.claimDue("worker-a", "lease-a", 1_000, 90_000),
@@ -251,7 +402,7 @@ test("a blocked harness handoff is stored with the attempt it ended", async () =
 
     const handoff = {
       protocolVersion: 1,
-      jobId: "job-b",
+      jobId: jobIdentifier("job-b"),
       attempt: 1,
       lane: "cursor-subscription",
       repository: "0xgleb/example",
@@ -279,16 +430,23 @@ test("a blocked harness handoff is stored with the attempt it ended", async () =
   }))
 
 test("a harness attempt whose last lease expires is stored as failed without evidence", async () =>
-  withStore(async (path) => {
+  withStore(async path => {
     const store = await Effect.runPromise(makeSqliteJobStore(path, home))
     await Effect.runPromise(
-      store.enqueue(harnessSpec("harness:personal:example:9", 1), "job-x", 1_000),
+      store.enqueue(
+        harnessSpec("harness:personal:example:9", 1),
+        "job-x",
+        1_000,
+      ),
     )
     await Effect.runPromise(store.claimDue("worker-a", "lease-a", 1_000, 10))
     const recovered = await Effect.runPromise(
       store.recoverExpired(1_010, recoveryRetryDelays),
     )
-    assert.deepEqual(recovered.map(({ state }) => state), ["failed"])
+    assert.deepEqual(
+      recovered.map(({ state }) => state),
+      ["failed"],
+    )
 
     const reloaded = await Effect.runPromise(store.get("job-x"))
     assert.equal(reloaded.state, "failed")
@@ -297,7 +455,7 @@ test("a harness attempt whose last lease expires is stored as failed without evi
   }))
 
 test("malformed persisted state fails closed instead of being coerced", async () =>
-  withStore(async (path) => {
+  withStore(async path => {
     const store = await Effect.runPromise(makeSqliteJobStore(path, home))
     await Effect.runPromise(store.enqueue(reviewSpec(), "job-a", 1_000))
     poison(store, "job-a")
@@ -306,7 +464,7 @@ test("malformed persisted state fails closed instead of being coerced", async ()
   }))
 
 test("an unreadable job is quarantined instead of blocking the jobs behind it", async () =>
-  withStore(async (path) => {
+  withStore(async path => {
     const store = await Effect.runPromise(makeSqliteJobStore(path, home))
     await Effect.runPromise(store.enqueue(reviewSpec(), "job-a", 1_000))
     await Effect.runPromise(
@@ -321,7 +479,10 @@ test("an unreadable job is quarantined instead of blocking the jobs behind it", 
     assert.equal(stateOf(store, "job-a"), "corrupt")
 
     const listed = await Effect.runPromise(store.list())
-    assert.deepEqual(readableJobs(listed).map(({ id }) => id), ["job-b"])
+    assert.deepEqual(
+      readableJobs(listed).map(({ id }) => id),
+      ["job-b"],
+    )
     assert.deepEqual(unreadableIds(listed), ["job-a"])
 
     const completed = await Effect.runPromise(
@@ -329,14 +490,16 @@ test("an unreadable job is quarantined instead of blocking the jobs behind it", 
     )
     assert.equal(completed.state, "succeeded")
     assert.equal(
-      await Effect.runPromise(store.claimDue("worker-b", "lease-b", 3_000, 90_000)),
+      await Effect.runPromise(
+        store.claimDue("worker-b", "lease-b", 3_000, 90_000),
+      ),
       undefined,
     )
     store.close()
   }))
 
 test("an unreadable expired lease is quarantined and the others still recover", async () =>
-  withStore(async (path) => {
+  withStore(async path => {
     const store = await Effect.runPromise(makeSqliteJobStore(path, home))
     await Effect.runPromise(store.enqueue(reviewSpec(), "job-a", 1_000))
     await Effect.runPromise(
@@ -349,7 +512,10 @@ test("an unreadable expired lease is quarantined and the others still recover", 
     const recovered = await Effect.runPromise(
       store.recoverExpired(1_010, recoveryRetryDelays),
     )
-    assert.deepEqual(recovered.map(({ id }) => id), ["job-b"])
+    assert.deepEqual(
+      recovered.map(({ id }) => id),
+      ["job-b"],
+    )
     assert.equal(stateOf(store, "job-a"), "corrupt")
     assert.equal(stateOf(store, "job-b"), "retry_wait")
     store.close()

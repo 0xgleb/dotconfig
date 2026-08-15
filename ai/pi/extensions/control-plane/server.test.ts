@@ -73,13 +73,32 @@ const unavailable =
 const aheadOfTime = (
   store: SqliteJobStore,
   elapsedMs: () => number,
-): ControlPlaneJobStore => ({
-  ...store,
-  claimDue: (workerId, leaseToken, now, ttlMs) =>
-    store.claimDue(workerId, leaseToken, now + elapsedMs(), ttlMs),
-  recoverExpired: (now, retryDelays) =>
-    store.recoverExpired(now + elapsedMs(), retryDelays),
-})
+): ControlPlaneJobStore => {
+  const shifted = (
+    instant: number | Effect.Effect<number>,
+  ): number | Effect.Effect<number> =>
+    typeof instant === "number"
+      ? instant + elapsedMs()
+      : Effect.map(instant, (now) => now + elapsedMs())
+  return {
+    ...store,
+    claimDue: (workerId, leaseToken, now, ttlMs, kind) =>
+      store.claimDue(workerId, leaseToken, now + elapsedMs(), ttlMs, kind),
+    complete: (id, leaseToken, now, summary, result) =>
+      store.complete(id, leaseToken, shifted(now), summary, result),
+    fail: (id, leaseToken, now, retryDelayMs, summary, result) =>
+      store.fail(
+        id,
+        leaseToken,
+        shifted(now),
+        retryDelayMs,
+        summary,
+        result,
+      ),
+    recoverExpired: (now, retryDelays) =>
+      store.recoverExpired(now + elapsedMs(), retryDelays),
+  }
+}
 
 const readableJobs = (stored: readonly StoredJob[]): readonly Job[] =>
   stored.flatMap((entry) => (entry.outcome === "readable" ? [entry.job] : []))
@@ -159,11 +178,12 @@ const harnessHandoff = (
 const claimJob = async (
   origin: string,
   workerId: string,
+  kind: "harness.review" | "review-duty.scan" = "harness.review",
 ): Promise<{ id: string; leaseToken: string; attempt: number }> => {
   const claimed = await fetch(`${origin}/v1/worker/claim`, {
     method: "POST",
     headers: { "content-type": "application/json" },
-    body: JSON.stringify({ workerId, ttlMs: 90_000 }),
+    body: JSON.stringify({ workerId, ttlMs: 90_000, kind }),
   })
   return ((await claimed.json()) as {
     job: { id: string; leaseToken: string; attempt: number }
@@ -327,7 +347,11 @@ test("workers claim due jobs with server-issued leases and stale completion is f
     const claim = await fetch(`${origin}/v1/worker/claim`, {
       method: "POST",
       headers: { "content-type": "application/json" },
-      body: JSON.stringify({ workerId: "reviewer-a", ttlMs: 90_000 }),
+      body: JSON.stringify({
+        workerId: "reviewer-a",
+        ttlMs: 90_000,
+        kind: "review-duty.scan",
+      }),
     })
     assert.equal(claim.status, 200)
     const claimed = (await claim.json()) as {
@@ -340,7 +364,11 @@ test("workers claim due jobs with server-issued leases and stale completion is f
     const noSecondJob = await fetch(`${origin}/v1/worker/claim`, {
       method: "POST",
       headers: { "content-type": "application/json" },
-      body: JSON.stringify({ workerId: "reviewer-b", ttlMs: 90_000 }),
+      body: JSON.stringify({
+        workerId: "reviewer-b",
+        ttlMs: 90_000,
+        kind: "review-duty.scan",
+      }),
     })
     assert.equal(noSecondJob.status, 204)
 
@@ -364,6 +392,21 @@ test("workers claim due jobs with server-issued leases and stale completion is f
     })
     assert.equal(complete.status, 200)
     assert.equal(((await complete.json()) as { job: { state: string } }).job.state, "succeeded")
+  }))
+
+test("worker claims select only their requested registered job kind", async () =>
+  withServer(async (origin) => {
+    const reviewId = await enqueueJob(origin, { ...enqueueBody, runAt: 0 })
+    const harnessId = await enqueueJob(origin, harnessEnqueueBody)
+
+    const harness = await claimJob(origin, "harness-supervisor")
+    assert.equal(harness.id, harnessId)
+    const review = await claimJob(
+      origin,
+      "review-duty-worker",
+      "review-duty.scan",
+    )
+    assert.equal(review.id, reviewId)
   }))
 
 test("harness jobs accept only a matching bounded typed handoff", async () =>
@@ -624,7 +667,11 @@ test("the fail route backs a harness attempt off by the harness delay, not the c
     assert.equal(backedOff.job.state, "retry_wait")
     assert.equal(backedOff.job.spec.runAt >= reportedAt + 5 * 60 * 1_000, true)
 
-    const scanClaim = await claimJob(origin, "review-duty-worker")
+    const scanClaim = await claimJob(
+      origin,
+      "review-duty-worker",
+      "review-duty.scan",
+    )
     assert.equal(scanClaim.id, scanId)
     const scanFailure = await failJob(origin, scanId, {
       leaseToken: scanClaim.leaseToken,
@@ -657,16 +704,23 @@ test("a recovered harness lease waits the harness backoff before it is due again
     fetch(`${server.origin}/v1/worker/claim`, {
       method: "POST",
       headers: { "content-type": "application/json" },
-      body: JSON.stringify({ workerId, ttlMs: 90_000 }),
+      body: JSON.stringify({ workerId, ttlMs: 90_000, kind: "harness.review" }),
     })
   try {
     const id = await enqueueJob(server.origin, harnessEnqueueBody)
     const first = await fetch(`${server.origin}/v1/worker/claim`, {
       method: "POST",
       headers: { "content-type": "application/json" },
-      body: JSON.stringify({ workerId: "worker-a", ttlMs: 1 }),
+      body: JSON.stringify({
+        workerId: "worker-a",
+        ttlMs: 1,
+        kind: "harness.review",
+      }),
     })
     assert.equal(first.status, 200)
+    const firstJob = (await first.json()) as {
+      job: { leaseToken: string; attempt: number }
+    }
 
     // The lease has expired, so this claim recovers the attempt — but an
     // abandoned harness attempt waits the same backoff a reported one does.
@@ -681,6 +735,26 @@ test("a recovered harness lease waits the harness backoff before it is due again
     }
     assert.equal(job.job.id, id)
     assert.equal(job.job.attempt, 2)
+
+    const stale = await fetch(`${server.origin}/v1/jobs/${id}/complete`, {
+      method: "POST",
+      headers: { "content-type": "application/json" },
+      body: JSON.stringify({
+        leaseToken: firstJob.job.leaseToken,
+        handoff: harnessHandoff(id, job.job.attempt),
+      }),
+    })
+    assert.equal(stale.status, 409)
+    assert.deepEqual(await stale.json(), {
+      error: { code: "stale_lease", message: "job lease is stale" },
+    })
+    const persisted = await fetch(`${server.origin}/v1/jobs`)
+    const jobs = (await persisted.json()) as {
+      jobs: Array<{ id: string; state: string; attempt: number }>
+    }
+    const recoveredJob = jobs.jobs.find(({ id: jobId }) => jobId === id)
+    assert.equal(recoveredJob?.state, "leased")
+    assert.equal(recoveredJob?.attempt, 2)
   } finally {
     await Effect.runPromise(server.close)
     store.close()
@@ -705,7 +779,11 @@ test("lease recovery receives a retry delay for each registered job kind", async
     const claimed = await fetch(`${server.origin}/v1/worker/claim`, {
       method: "POST",
       headers: { "content-type": "application/json" },
-      body: JSON.stringify({ workerId: "worker-a", ttlMs: 90_000 }),
+      body: JSON.stringify({
+        workerId: "worker-a",
+        ttlMs: 90_000,
+        kind: "review-duty.scan",
+      }),
     })
     assert.equal(claimed.status, 204)
     assert.deepEqual(observed, {
@@ -737,7 +815,11 @@ test("a claim whose lease recovery fails on a tolerated store code still reads t
     const claimed = await fetch(`${server.origin}/v1/worker/claim`, {
       method: "POST",
       headers: { "content-type": "application/json" },
-      body: JSON.stringify({ workerId: "worker-a", ttlMs: 90_000 }),
+      body: JSON.stringify({
+        workerId: "worker-a",
+        ttlMs: 90_000,
+        kind: "review-duty.scan",
+      }),
     })
     assert.equal(claimed.status, 204)
     assert.equal(claims, 1)
@@ -763,7 +845,11 @@ test("a recovery that breaks a runtime invariant fails the claim instead of bein
     const claimed = await fetch(`${server.origin}/v1/worker/claim`, {
       method: "POST",
       headers: { "content-type": "application/json" },
-      body: JSON.stringify({ workerId: "worker-a", ttlMs: 90_000 }),
+      body: JSON.stringify({
+        workerId: "worker-a",
+        ttlMs: 90_000,
+        kind: "review-duty.scan",
+      }),
     })
     assert.equal(claimed.status, 400)
   } finally {
@@ -867,6 +953,7 @@ test("worker boundaries reject unknown fields and client-supplied lease tokens",
       body: JSON.stringify({
         workerId: "reviewer-a",
         ttlMs: 90_000,
+        kind: "review-duty.scan",
         leaseToken: "caller-chosen",
       }),
     })

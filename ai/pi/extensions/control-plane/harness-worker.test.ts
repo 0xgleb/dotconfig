@@ -6,7 +6,7 @@ import { tmpdir } from "node:os"
 import { join } from "node:path"
 import test from "node:test"
 import { promisify } from "node:util"
-import { Effect, Fiber } from "effect"
+import { Clock, Effect, Fiber } from "effect"
 import {
   toCanonicalWorkspaceRoot,
   type HarnessLaunchPlan,
@@ -26,15 +26,20 @@ import {
 import {
   ATTEMPT_SETUP_MARGIN_MS,
   CONTROL_PLANE_REQUEST_TIMEOUT_MS,
+  EXECUTOR_CLEANUP_MARGIN_MS,
   ExecutorFailed,
   gitRepository,
   harnessWorkerOptions,
+  MAX_CONTROL_PLANE_RESPONSE_BYTES,
+  MAX_EXECUTOR_STDERR_BYTES,
   ProvenanceUnverified,
+  READ_ONLY_VERIFICATION_MARGIN_MS,
   REPORTING_MARGIN_MS,
   runNextHarnessAttempt,
   spawnHarnessExecutor,
   type HarnessAttemptOutcome,
   type HarnessRepository,
+  WORKTREE_SETUP_MARGIN_MS,
   type HarnessSpawner,
 } from "./harness-worker.ts"
 import {
@@ -53,7 +58,8 @@ const canonical = (value: string): CanonicalPath => {
 
 const commit = (value: string): CommitSha => {
   const sha = toCommitSha(value)
-  if (sha === undefined) throw new Error(`fixture is not a commit sha: ${value}`)
+  if (sha === undefined)
+    throw new Error(`fixture is not a commit sha: ${value}`)
   return sha
 }
 
@@ -197,11 +203,12 @@ type HarnessExecutionResult =
  * the call that built it, so an attempt that describes a launch without
  * running it records nothing.
  */
-const stubSpawner = (
-  execution: (plan: HarnessLaunchPlan) => HarnessExecutionResult,
-  calls: HarnessLaunchPlan[] = [],
-): HarnessSpawner =>
-  (plan) =>
+const stubSpawner =
+  (
+    execution: (plan: HarnessLaunchPlan) => HarnessExecutionResult,
+    calls: HarnessLaunchPlan[] = [],
+  ): HarnessSpawner =>
+  plan =>
     Effect.suspend(() => {
       calls.push(plan)
       const result = execution(plan)
@@ -236,9 +243,13 @@ const recordingRepository = (
     Effect.sync(() => {
       log.push(`add ${worktree}`)
     }),
-  verifyUnchanged: (_worktree) =>
+  verifyUnchanged: (_worktree, _expectedHead) =>
     Effect.sync(() => {
       log.push("clean")
+    }),
+  verifyOutputHead: (_worktree, expectedHead) =>
+    Effect.sync(() => {
+      log.push(`head ${expectedHead}`)
     }),
   removeWorktree: (_repositoryRoot, worktree) =>
     Effect.sync(() => {
@@ -255,7 +266,7 @@ const workerOptions = (
   harnessWorkerOptions({
     origin,
     workerId: "harness-supervisor",
-    leaseTtlMs: 90_000,
+    leaseTtlMs: 120_000,
     executorTimeoutMs: 30_000,
     allowedRoots,
     home,
@@ -292,13 +303,13 @@ const jobState = async (
   const jobs = (await response.json()) as {
     jobs: (PersistedJob & { readonly id: string })[]
   }
-  const job = jobs.jobs.find((candidate) => candidate.id === jobId)
+  const job = jobs.jobs.find(candidate => candidate.id === jobId)
   assert.ok(job)
   return job
 }
 
 test("an empty queue leaves the worker idle without spawning", async () =>
-  withServer(async (origin) => {
+  withServer(async origin => {
     const calls: HarnessLaunchPlan[] = []
     const outcome = await runAttempt(
       origin,
@@ -309,7 +320,7 @@ test("an empty queue leaves the worker idle without spawning", async () =>
   }))
 
 test("a matching executor handoff completes the claimed harness job", async () =>
-  withServer(async (origin) => {
+  withServer(async origin => {
     const jobId = await enqueueHarnessJob(origin)
     const calls: HarnessLaunchPlan[] = []
     const outcome = await runAttempt(
@@ -332,7 +343,7 @@ test("a matching executor handoff completes the claimed harness job", async () =
   }))
 
 test("a blocked handoff ends the attempt with its evidence kept", async () =>
-  withServer(async (origin) => {
+  withServer(async origin => {
     const jobId = await enqueueHarnessJob(origin, { maxAttempts: 1 })
     const outcome = await runAttempt(
       origin,
@@ -364,7 +375,7 @@ test("a blocked handoff ends the attempt with its evidence kept", async () =>
   }))
 
 test("a failed handoff with retries left records its summary and drops the handoff", async () =>
-  withServer(async (origin) => {
+  withServer(async origin => {
     const jobId = await enqueueHarnessJob(origin)
     const outcome = await runAttempt(
       origin,
@@ -397,7 +408,7 @@ test("mismatched, malformed, and oversized executor output fails the attempt", a
     readonly summary: string
   }> = [
     {
-      output: (jobId) =>
+      output: jobId =>
         JSON.stringify(
           handoffFor(jobId, { inputHeadSha: commit("b".repeat(40)) }),
         ),
@@ -408,11 +419,12 @@ test("mismatched, malformed, and oversized executor output fails the attempt", a
       summary: "executor handoff is not valid JSON",
     },
     {
-      output: (jobId) => JSON.stringify({ ...handoffFor(jobId), prompt: "leaked" }),
+      output: jobId =>
+        JSON.stringify({ ...handoffFor(jobId), prompt: "leaked" }),
       summary: "executor handoff is malformed",
     },
     {
-      output: (jobId) =>
+      output: jobId =>
         `${JSON.stringify(handoffFor(jobId))}${" ".repeat(70_000)}x`,
       summary: "executor output exceeded bounds",
     },
@@ -426,7 +438,7 @@ test("mismatched, malformed, and oversized executor output fails the attempt", a
     },
   ]
   for (const testCase of cases)
-    await withServer(async (origin) => {
+    await withServer(async origin => {
       const jobId = await enqueueHarnessJob(origin)
       const outcome = await runAttempt(
         origin,
@@ -448,7 +460,7 @@ test("mismatched, malformed, and oversized executor output fails the attempt", a
 })
 
 test("a spawn error fails the attempt within retry policy", async () =>
-  withServer(async (origin) => {
+  withServer(async origin => {
     const jobId = await enqueueHarnessJob(origin)
     const outcome = await runAttempt(
       origin,
@@ -468,7 +480,7 @@ test("a spawn error fails the attempt within retry policy", async () =>
   }))
 
 test("a nonzero exit reports a bounded prefix of what the executor said", async () =>
-  withServer(async (origin) => {
+  withServer(async origin => {
     const jobId = await enqueueHarnessJob(origin, {
       maxAttempts: 1,
       idempotencyKey: "harness:personal:example:7:exit",
@@ -487,15 +499,20 @@ test("a nonzero exit reports a bounded prefix of what the executor said", async 
     assert.equal(persisted.state, "failed")
     const summary = persisted.summary ?? ""
     assert.equal(
-      summary.startsWith("executor exited with code 1: subscription auth expired detail"),
+      summary.startsWith(
+        "executor exited with code 1: subscription auth expired detail",
+      ),
       true,
     )
     assert.equal(summary.includes("ignored progress"), false)
-    assert.equal(summary.length <= "executor exited with code 1: ".length + 400, true)
+    assert.equal(
+      summary.length <= "executor exited with code 1: ".length + 400,
+      true,
+    )
   }))
 
-test("non-harness jobs are left to lease expiry instead of being executed", async () =>
-  withServer(async (origin) => {
+test("the harness worker leaves another job kind unclaimed", async () =>
+  withServer(async origin => {
     const response = await fetch(`${origin}/v1/jobs`, {
       method: "POST",
       headers: { "content-type": "application/json" },
@@ -517,13 +534,13 @@ test("non-harness jobs are left to lease expiry instead of being executed", asyn
       origin,
       stubSpawner(() => ({ kind: "spawned", exitCode: 0, stdout: "" }), calls),
     )
-    assert.deepEqual(outcome, { outcome: "unsupported", jobId })
+    assert.deepEqual(outcome, { outcome: "idle" })
     assert.equal(calls.length, 0)
-    assert.equal((await jobState(origin, jobId)).state, "leased")
+    assert.equal((await jobState(origin, jobId)).state, "ready")
   }))
 
 test("payload roots the enqueue boundary does not recognise never become jobs", async () =>
-  withServer(async (origin) => {
+  withServer(async origin => {
     const response = await fetch(`${origin}/v1/jobs`, {
       method: "POST",
       headers: { "content-type": "application/json" },
@@ -540,7 +557,7 @@ test("payload roots the enqueue boundary does not recognise never become jobs", 
   }))
 
 test("payload roots outside this worker's workspaces spend no attempt", async () =>
-  withServer(async (origin) => {
+  withServer(async origin => {
     const jobId = await enqueueHarnessJob(origin)
     const calls: HarnessLaunchPlan[] = []
     const outcome = await runAttempt(
@@ -556,18 +573,20 @@ test("payload roots outside this worker's workspaces spend no attempt", async ()
   }))
 
 test("an approved-worktree launch runs in a worktree created for it and removed after", async () =>
-  withServer(async (origin) => {
+  withServer(async origin => {
     const jobId = await enqueueHarnessJob(origin, worktreeEnqueueBody)
     const log: string[] = []
     const calls: HarnessLaunchPlan[] = []
     const outcome = await runAttempt(
       origin,
-      stubSpawner((plan) => {
+      stubSpawner(plan => {
         log.push(`spawn ${plan.cwd}`)
         return {
           kind: "spawned",
           exitCode: 0,
-          stdout: JSON.stringify(handoffFor(jobId, { lane: "claude-code-max" })),
+          stdout: JSON.stringify(
+            handoffFor(jobId, { lane: "claude-code-max" }),
+          ),
         }
       }, calls),
       undefined,
@@ -579,12 +598,13 @@ test("an approved-worktree launch runs in a worktree created for it and removed 
     assert.deepEqual(log, [
       `add ${worktree}`,
       `spawn ${worktree}`,
+      `head ${headSha}`,
       `remove ${worktree}`,
     ])
   }))
 
 test("approved worktree outcomes are reported before teardown", async () =>
-  withServer(async (origin) => {
+  withServer(async origin => {
     const jobId = await enqueueHarnessJob(origin, worktreeEnqueueBody)
     let stateAtRemoval: string | undefined
     const repository: HarnessRepository = {
@@ -608,13 +628,82 @@ test("approved worktree outcomes are reported before teardown", async () =>
     assert.equal(stateAtRemoval, "succeeded")
   }))
 
+test("an unconfirmed executor cleanup quarantines its worktree", async () =>
+  withServer(async origin => {
+    const jobId = await enqueueHarnessJob(origin, worktreeEnqueueBody)
+    const log: string[] = []
+    const spawner: HarnessSpawner = (_plan, quarantineWorktree) =>
+      Effect.sync(() => {
+        quarantineWorktree?.()
+        return {
+          exitCode: 0,
+          stdout: JSON.stringify(
+            handoffFor(jobId, { lane: "claude-code-max" }),
+          ),
+          stderr: "",
+        }
+      })
+    const outcome = await runAttempt(
+      origin,
+      spawner,
+      undefined,
+      recordingRepository(log),
+    )
+    assert.deepEqual(outcome, { outcome: "completed", jobId })
+    assert.equal(
+      log.some(entry => entry.startsWith("remove ")),
+      false,
+    )
+  }))
+
+test("approved worktree handoffs must match the commit actually produced", async () =>
+  withServer(async origin => {
+    const jobId = await enqueueHarnessJob(origin, worktreeEnqueueBody)
+    const outputHead = commit("b".repeat(40))
+    let verifiedHead: CommitSha | undefined
+    const repository: HarnessRepository = {
+      ...recordingRepository(),
+      verifyOutputHead: (_worktree, expectedHead) => {
+        verifiedHead = expectedHead
+        return Effect.fail(
+          new ExecutorFailed({
+            message: "executor output head does not match its worktree",
+          }),
+        )
+      },
+    }
+    const outcome = await runAttempt(
+      origin,
+      stubSpawner(() => ({
+        kind: "spawned",
+        exitCode: 0,
+        stdout: JSON.stringify(
+          handoffFor(jobId, {
+            lane: "claude-code-max",
+            status: "findings_fixed",
+            outputHeadSha: outputHead,
+            evidence: [`commit:${outputHead}`],
+          }),
+        ),
+      })),
+      undefined,
+      repository,
+    )
+    assert.deepEqual(outcome, {
+      outcome: "failed",
+      jobId,
+      reason: "executor output head does not match its worktree",
+    })
+    assert.equal(verifiedHead, outputHead)
+  }))
+
 test("read-only launches run from a pinned clean worktree", async () =>
-  withServer(async (origin) => {
+  withServer(async origin => {
     const jobId = await enqueueHarnessJob(origin)
     const log: string[] = []
     const outcome = await runAttempt(
       origin,
-      stubSpawner((plan) => {
+      stubSpawner(plan => {
         log.push(`spawn ${plan.cwd}`)
         const workspaceIndex = plan.argv.indexOf("--workspace")
         assert.equal(plan.argv[workspaceIndex + 1], plan.cwd)
@@ -638,7 +727,7 @@ test("read-only launches run from a pinned clean worktree", async () =>
   }))
 
 test("read-only launches fail when the executor mutates its worktree", async () =>
-  withServer(async (origin) => {
+  withServer(async origin => {
     const jobId = await enqueueHarnessJob(origin)
     const repository: HarnessRepository = {
       ...recordingRepository(),
@@ -668,7 +757,7 @@ test("read-only launches fail when the executor mutates its worktree", async () 
   }))
 
 test("a launch is refused unless the checkout resolves the head it declares", async () => {
-  await withServer(async (origin) => {
+  await withServer(async origin => {
     const jobId = await enqueueHarnessJob(origin)
     const calls: HarnessLaunchPlan[] = []
     const outcome = await runAttempt(
@@ -691,7 +780,7 @@ test("a launch is refused unless the checkout resolves the head it declares", as
     )
   })
 
-  await withServer(async (origin) => {
+  await withServer(async origin => {
     const jobId = await enqueueHarnessJob(origin)
     const calls: HarnessLaunchPlan[] = []
     const outcome = await runAttempt(
@@ -727,42 +816,71 @@ const claimedHarnessSpec = {
  * given job, so a claim the real store could not produce can be handed to the
  * worker's own boundary.
  */
-const attemptAgainstClaim = async (
-  job: unknown,
+interface ClaimRuntime {
+  readonly spawner?: HarnessSpawner
+  readonly repository?: HarnessRepository
+  readonly clock?: Clock.Clock
+}
+
+const attemptAgainstClaimResponse = async (
+  responseChunks: readonly string[],
   calls: HarnessLaunchPlan[] = [],
+  requests: string[] = [],
+  runtime: ClaimRuntime = {},
 ): Promise<ClaimAttemptResult> => {
   const { createServer } = await import("node:http")
-  const server = createServer((_request, response) => {
+  const server = createServer((request, response) => {
+    requests.push(request.url ?? "")
     response.writeHead(200, { "content-type": "application/json" })
-    response.end(JSON.stringify({ job }))
+    for (const chunk of responseChunks) response.write(chunk)
+    response.end()
   })
-  await new Promise<void>((resolve) => server.listen(0, "127.0.0.1", resolve))
+  await new Promise<void>(resolve => server.listen(0, "127.0.0.1", resolve))
   const address = server.address()
   assert.ok(address && typeof address === "object")
   try {
+    const attempt = Effect.flatMap(
+      workerOptions(
+        `http://127.0.0.1:${String(address.port)}`,
+        runtime.spawner ??
+          stubSpawner(
+            () => ({ kind: "spawned", exitCode: 0, stdout: "" }),
+            calls,
+          ),
+        undefined,
+        runtime.repository,
+      ),
+      runNextHarnessAttempt,
+    )
     const result = await Effect.runPromise(
       Effect.either(
-        Effect.flatMap(
-          workerOptions(
-            `http://127.0.0.1:${String(address.port)}`,
-            stubSpawner(
-              () => ({ kind: "spawned", exitCode: 0, stdout: "" }),
-              calls,
-            ),
-          ),
-          runNextHarnessAttempt,
-        ),
+        runtime.clock === undefined
+          ? attempt
+          : Effect.provideService(attempt, Clock.Clock, runtime.clock),
       ),
     )
     return result._tag === "Left"
       ? { kind: "refused", message: result.left.message }
       : { kind: "reported", reported: result.right }
   } finally {
-    await new Promise<void>((resolve) => {
+    await new Promise<void>(resolve => {
       server.close(() => resolve())
     })
   }
 }
+
+const attemptAgainstClaim = async (
+  job: unknown,
+  calls: HarnessLaunchPlan[] = [],
+  requests: string[] = [],
+  runtime: ClaimRuntime = {},
+): Promise<ClaimAttemptResult> =>
+  attemptAgainstClaimResponse(
+    [JSON.stringify({ job })],
+    calls,
+    requests,
+    runtime,
+  )
 
 test("malformed control-plane claim responses surface as typed request failures", async () => {
   const malformed: readonly unknown[] = [
@@ -779,12 +897,117 @@ test("malformed control-plane claim responses surface as typed request failures"
       leaseToken: "lease-a",
       spec: claimedHarnessSpec,
     },
+    {
+      id: "job-a",
+      attempt: 1,
+      leaseToken: "lease-a",
+      leaseUntil: Date.now() + 60_000,
+      spec: {
+        ...claimedHarnessSpec,
+        payload: { ...harnessEnqueueBody.payload, pullRequest: "seven" },
+      },
+    },
   ]
-  for (const job of malformed)
-    assert.deepEqual(await attemptAgainstClaim(job), {
+  for (const job of malformed) {
+    const calls: HarnessLaunchPlan[] = []
+    assert.deepEqual(await attemptAgainstClaim(job, calls), {
       kind: "refused",
       message: "claimed job payload is malformed",
     })
+    assert.equal(calls.length, 0)
+  }
+})
+
+test("control-plane claim responses are bounded before JSON decoding", async () => {
+  const claim = JSON.stringify({
+    job: {
+      id: "job-a",
+      attempt: 1,
+      leaseToken: "lease-a",
+      leaseUntil: Date.now() + 120_000,
+      spec: claimedHarnessSpec,
+    },
+  })
+  assert.equal(
+    Buffer.byteLength(claim) < MAX_CONTROL_PLANE_RESPONSE_BYTES,
+    true,
+  )
+
+  const admittedCalls: HarnessLaunchPlan[] = []
+  const admittedBody =
+    claim +
+    " ".repeat(MAX_CONTROL_PLANE_RESPONSE_BYTES - Buffer.byteLength(claim))
+  const admitted = await attemptAgainstClaimResponse(
+    [admittedBody],
+    admittedCalls,
+  )
+  assert.equal(admitted.kind, "reported")
+  assert.equal(admittedCalls.length, 1)
+
+  const refusedCalls: HarnessLaunchPlan[] = []
+  const refused = await attemptAgainstClaimResponse(
+    [admittedBody, " "],
+    refusedCalls,
+  )
+  assert.deepEqual(refused, {
+    kind: "refused",
+    message: "control plane response from /v1/worker/claim exceeded bounds",
+  })
+  assert.equal(refusedCalls.length, 0)
+})
+
+test("aborting a response read handles reader cancellation failures", async () => {
+  const originalFetch = globalThis.fetch
+  const unhandled: unknown[] = []
+  const onUnhandled = (failure: unknown): void => {
+    unhandled.push(failure)
+  }
+  let pulled!: () => void
+  const readerPulled = new Promise<void>(resolve => {
+    pulled = resolve
+  })
+  let cancelCalls = 0
+  const body = new ReadableStream<Uint8Array>({
+    pull: () => {
+      pulled()
+    },
+    cancel: () => {
+      cancelCalls += 1
+      return Promise.reject(new Error("cancel failed"))
+    },
+  })
+  globalThis.fetch = (async () =>
+    new Response(body, {
+      status: 200,
+      headers: { "content-type": "application/json" },
+    })) as typeof fetch
+  process.on("unhandledRejection", onUnhandled)
+  try {
+    const attempt = Effect.flatMap(
+      workerOptions(
+        "http://127.0.0.1:1",
+        stubSpawner(() => ({ kind: "spawned", exitCode: 0, stdout: "" })),
+      ),
+      runNextHarnessAttempt,
+    )
+    const fiber = Effect.runFork(attempt)
+    await Promise.race([
+      readerPulled,
+      new Promise<never>((_resolve, reject) =>
+        setTimeout(
+          () => reject(new Error("response reader did not start")),
+          1_000,
+        ),
+      ),
+    ])
+    await Effect.runPromise(Fiber.interrupt(fiber))
+    await new Promise(resolve => setTimeout(resolve, 0))
+    assert.equal(cancelCalls, 1)
+    assert.deepEqual(unhandled, [])
+  } finally {
+    process.off("unhandledRejection", onUnhandled)
+    globalThis.fetch = originalFetch
+  }
 })
 
 test("attempt numbers at the bounds of the protocol's range are claimed", async () => {
@@ -793,15 +1016,16 @@ test("attempt numbers at the bounds of the protocol's range are claimed", async 
       id: "job-a",
       attempt,
       leaseToken: "lease-a",
-      leaseUntil: Date.now() + 60_000,
+      leaseUntil: Date.now() + 120_000,
       spec: claimedHarnessSpec,
     })
     assert.equal(result.kind, "reported")
   }
 })
 
-test("a claim without enough remaining lease never launches an executor", async () => {
+test("a claim without enough remaining lease never launches or reports", async () => {
   const calls: HarnessLaunchPlan[] = []
+  const requests: string[] = []
   const result = await attemptAgainstClaim(
     {
       id: "job-a",
@@ -811,22 +1035,170 @@ test("a claim without enough remaining lease never launches an executor", async 
       spec: claimedHarnessSpec,
     },
     calls,
+    requests,
   )
   assert.deepEqual(result, {
-    kind: "reported",
-    reported: {
-      outcome: "failed",
-      jobId: jobIdentifier("job-a"),
-      reason: "attempt has insufficient lease remaining",
-    },
+    kind: "refused",
+    message: "attempt has insufficient lease remaining",
   })
   assert.equal(calls.length, 0)
+  assert.deepEqual(requests, ["/v1/worker/claim"])
+})
+
+test("worker admission reserves every bounded Git phase", async () => {
+  assert.equal(
+    ATTEMPT_SETUP_MARGIN_MS,
+    WORKTREE_SETUP_MARGIN_MS + READ_ONLY_VERIFICATION_MARGIN_MS,
+  )
+  const options = await Effect.runPromise(
+    Effect.either(
+      harnessWorkerOptions({
+        origin: "http://127.0.0.1:1",
+        workerId: "harness-supervisor",
+        leaseTtlMs:
+          30_000 +
+          ATTEMPT_SETUP_MARGIN_MS +
+          EXECUTOR_CLEANUP_MARGIN_MS +
+          REPORTING_MARGIN_MS -
+          1,
+        executorTimeoutMs: 30_000,
+        allowedRoots: workspaceRoot(registeredCheckout),
+        home,
+        environment,
+        repository: recordingRepository(),
+        spawner: () =>
+          stubSpawner(() => ({ kind: "spawned", exitCode: 0, stdout: "" })),
+      }),
+    ),
+  )
+  assert.equal(options._tag, "Left")
+})
+
+test("verification failure after bounded executor cleanup and lease exhaustion never reaches the fail route", async () => {
+  let now = 1_000_000
+  const liveClock = Clock.make()
+  const clock: Clock.Clock = {
+    ...liveClock,
+    unsafeCurrentTimeMillis: () => now,
+    currentTimeMillis: Effect.sync(() => now),
+  }
+  const elapse = (milliseconds: number): Effect.Effect<void> =>
+    Effect.sync(() => {
+      now += milliseconds
+    })
+  const repository: HarnessRepository = {
+    verifyHead: () => elapse(WORKTREE_SETUP_MARGIN_MS / 2),
+    addWorktree: () => elapse(WORKTREE_SETUP_MARGIN_MS / 2),
+    verifyUnchanged: () =>
+      Effect.andThen(
+        elapse(READ_ONLY_VERIFICATION_MARGIN_MS + 1),
+        Effect.fail(
+          new ExecutorFailed({
+            message: "read-only executor mutated its worktree",
+          }),
+        ),
+      ),
+    verifyOutputHead: () => Effect.void,
+    removeWorktree: () => Effect.void,
+  }
+  const spawner: HarnessSpawner = () =>
+    Effect.andThen(
+      elapse(30_000 + EXECUTOR_CLEANUP_MARGIN_MS),
+      Effect.succeed({ exitCode: 1, stdout: "", stderr: "failed" }),
+    )
+  const requests: string[] = []
+  const result = await attemptAgainstClaim(
+    {
+      id: "job-a",
+      attempt: 1,
+      leaseToken: "lease-a",
+      leaseUntil:
+        now +
+        30_000 +
+        ATTEMPT_SETUP_MARGIN_MS +
+        EXECUTOR_CLEANUP_MARGIN_MS +
+        REPORTING_MARGIN_MS,
+      spec: claimedHarnessSpec,
+    },
+    [],
+    requests,
+    { spawner, repository, clock },
+  )
+  assert.deepEqual(result, {
+    kind: "refused",
+    message: "attempt has insufficient lease remaining",
+  })
+  assert.deepEqual(requests, ["/v1/worker/claim"])
+})
+
+test("status-only control-plane responses are cancelled", async () => {
+  const { createServer } = await import("node:http")
+  const jobId = jobIdentifier("job-a")
+  for (const route of ["claim", "complete"] as const) {
+    let responseClosed = false
+    const server = createServer((request, response) => {
+      if (route === "complete" && request.url === "/v1/worker/claim") {
+        response.writeHead(200, { "content-type": "application/json" })
+        response.end(
+          JSON.stringify({
+            job: {
+              id: jobId,
+              attempt: 1,
+              leaseToken: "lease-a",
+              leaseUntil: Date.now() + 120_000,
+              spec: claimedHarnessSpec,
+            },
+          }),
+        )
+        return
+      }
+      response.on("close", () => {
+        responseClosed = true
+      })
+      response.writeHead(route === "claim" ? 503 : 200, {
+        "content-type": "application/json",
+      })
+      response.write("x".repeat(MAX_CONTROL_PLANE_RESPONSE_BYTES + 1))
+    })
+    await new Promise<void>(resolve => server.listen(0, "127.0.0.1", resolve))
+    const address = server.address()
+    assert.ok(address && typeof address === "object")
+    try {
+      const result = await Effect.runPromise(
+        Effect.either(
+          Effect.flatMap(
+            workerOptions(
+              `http://127.0.0.1:${String(address.port)}`,
+              stubSpawner(() => ({
+                kind: "spawned",
+                exitCode: 0,
+                stdout: JSON.stringify(handoffFor(jobId)),
+              })),
+            ),
+            runNextHarnessAttempt,
+          ),
+        ),
+      )
+      if (route === "claim") {
+        assert.equal(result._tag, "Left")
+      } else {
+        if (result._tag === "Left") assert.fail(result.left.message)
+        assert.deepEqual(result.right, { outcome: "completed", jobId })
+      }
+      for (let attempt = 0; attempt < 50 && !responseClosed; attempt += 1)
+        await new Promise(resolve => setTimeout(resolve, 10))
+      assert.equal(responseClosed, true)
+    } finally {
+      server.closeAllConnections()
+      await new Promise<void>(resolve => server.close(() => resolve()))
+    }
+  }
 })
 
 test("control-plane requests fail within their bounded timeout", async () => {
   const { createServer } = await import("node:http")
   const server = createServer(() => undefined)
-  await new Promise<void>((resolve) => server.listen(0, "127.0.0.1", resolve))
+  await new Promise<void>(resolve => server.listen(0, "127.0.0.1", resolve))
   const address = server.address()
   assert.ok(address && typeof address === "object")
   const started = Date.now()
@@ -842,16 +1214,18 @@ test("control-plane requests fail within their bounded timeout", async () => {
         ),
       ),
     )
-    assert.equal(result._tag, "Left")
     if (result._tag === "Right") assert.fail("expected request timeout")
-    assert.equal(result.left.message, "control plane request to /v1/worker/claim failed")
+    assert.equal(
+      result.left.message,
+      "control plane request to /v1/worker/claim failed",
+    )
     assert.equal(
       Date.now() - started < CONTROL_PLANE_REQUEST_TIMEOUT_MS + 2_000,
       true,
     )
   } finally {
     server.closeAllConnections()
-    await new Promise<void>((resolve) => server.close(() => resolve()))
+    await new Promise<void>(resolve => server.close(() => resolve()))
   }
 })
 
@@ -868,9 +1242,10 @@ test("claimed kinds the job runtime does not register are malformed claims", asy
   )
 })
 
-test("an executor timeout that leaves no setup and reporting margin is refused", async () => {
-  const leaseTtlMs = 60_000
-  const requiredMarginMs = ATTEMPT_SETUP_MARGIN_MS + REPORTING_MARGIN_MS
+test("an executor timeout that leaves no setup, cleanup, verification, and reporting margin is refused", async () => {
+  const leaseTtlMs = 90_000
+  const requiredMarginMs =
+    ATTEMPT_SETUP_MARGIN_MS + EXECUTOR_CLEANUP_MARGIN_MS + REPORTING_MARGIN_MS
   const timeoutOptions = (executorTimeoutMs: number) =>
     harnessWorkerOptions({
       origin: "http://127.0.0.1:1",
@@ -881,7 +1256,7 @@ test("an executor timeout that leaves no setup and reporting margin is refused",
       home,
       environment,
       repository: recordingRepository(),
-      spawner: (timeout) =>
+      spawner: timeout =>
         stubSpawner(() => ({
           kind: "spawned",
           exitCode: 0,
@@ -889,8 +1264,8 @@ test("an executor timeout that leaves no setup and reporting margin is refused",
         })),
     })
 
-  // A timeout inside the lease by less than the bounded setup and reporting
-  // margin still allows the report to land after its lease.
+  // A timeout inside the lease by less than the bounded setup, cleanup,
+  // verification, and reporting margin can outlive the lease.
   for (const executorTimeoutMs of [
     leaseTtlMs,
     leaseTtlMs - 1,
@@ -899,12 +1274,11 @@ test("an executor timeout that leaves no setup and reporting margin is refused",
     const refused = await Effect.runPromise(
       Effect.either(timeoutOptions(executorTimeoutMs)),
     )
-    assert.equal(refused._tag, "Left")
     if (refused._tag === "Right") assert.fail("expected refused options")
     assert.equal(refused.left._tag, "InvalidWorkerOptions")
     assert.equal(
       refused.left.message,
-      `executor timeout must leave the lease ${String(requiredMarginMs)}ms for setup and reporting`,
+      `executor timeout must leave the lease ${String(requiredMarginMs)}ms for setup, cleanup, verification, and reporting`,
     )
   }
 
@@ -949,6 +1323,17 @@ test("the process spawner captures bounded stdout, stderr, and exit codes", asyn
   )
   assert.equal(failed.exitCode, 3)
   assert.equal(failed.stderr.includes("executor diagnostic"), true)
+
+  const truncated = await Effect.runPromise(
+    spawner(
+      executionPlan([
+        "node",
+        "-e",
+        `process.stderr.write("x".repeat(${String(MAX_EXECUTOR_STDERR_BYTES + 1)})); process.exit(3)`,
+      ]),
+    ),
+  )
+  assert.equal(Buffer.byteLength(truncated.stderr), MAX_EXECUTOR_STDERR_BYTES)
 })
 
 test("the process spawner hands the child only the plan's allowlisted variables", async () => {
@@ -979,7 +1364,10 @@ test("the process spawner hands the child only the plan's allowlisted variables"
 test("the process spawner kills executors whose output overflows the byte bound", async () => {
   const overflowed = await Effect.runPromise(
     Effect.either(
-      spawnHarnessExecutor(30_000, spawnEnvironment)(
+      spawnHarnessExecutor(
+        30_000,
+        spawnEnvironment,
+      )(
         executionPlan([
           "node",
           "-e",
@@ -996,25 +1384,48 @@ test("the process spawner kills executors whose output overflows the byte bound"
 test("the process spawner kills timed-out and unavailable executors", async () => {
   const timedOut = await Effect.runPromise(
     Effect.either(
-      spawnHarnessExecutor(200, spawnEnvironment)(
-        executionPlan(["node", "-e", "setTimeout(() => {}, 60_000)"]),
-      ),
+      spawnHarnessExecutor(
+        200,
+        spawnEnvironment,
+      )(executionPlan(["node", "-e", "setTimeout(() => {}, 60_000)"])),
     ),
   )
   assert.equal(timedOut._tag, "Left")
   if (timedOut._tag === "Left")
     assert.equal(timedOut.left.message, "executor timed out")
 
+  let unavailableQuarantined = false
   const unavailable = await Effect.runPromise(
     Effect.either(
       spawnHarnessExecutor(1_000, spawnEnvironment)(
         executionPlan(["pi-harness-missing-executable"]),
+        () => {
+          unavailableQuarantined = true
+        },
       ),
     ),
   )
   assert.equal(unavailable._tag, "Left")
   if (unavailable._tag === "Left")
     assert.equal(unavailable.left.message, "executor could not be spawned")
+  assert.equal(unavailableQuarantined, false)
+})
+
+test("an exited executor cannot time out while its inherited pipe drains", async () => {
+  const execution = await Effect.runPromise(
+    spawnHarnessExecutor(
+      100,
+      spawnEnvironment,
+    )(
+      executionPlan([
+        "node",
+        "-e",
+        `const { spawn } = require("node:child_process"); const child = spawn(process.execPath, ["-e", "setTimeout(() => {}, 180)"], { detached: true, stdio: ["ignore", "inherit", "ignore"] }); child.unref(); console.log("handoff-line")`,
+      ]),
+    ),
+  )
+  assert.equal(execution.exitCode, 0)
+  assert.equal(execution.stdout.includes("handoff-line"), true)
 })
 
 test("an executor that exits terminates descendants before it is reported", async () => {
@@ -1022,7 +1433,10 @@ test("an executor that exits terminates descendants before it is reported", asyn
   const pidFile = join(root, "descendant.pid")
   try {
     const execution = await Effect.runPromise(
-      spawnHarnessExecutor(5_000, spawnEnvironment)(
+      spawnHarnessExecutor(
+        5_000,
+        spawnEnvironment,
+      )(
         executionPlan([
           "node",
           "-e",
@@ -1040,12 +1454,44 @@ test("an executor that exits terminates descendants before it is reported", asyn
   }
 })
 
+test("an unobservable process group is quarantined rather than treated as absent", async () => {
+  let quarantined = false
+  const denyGroupSignals = ((pid: number, signal?: NodeJS.Signals | number) => {
+    if (pid < 0) {
+      const denied = new Error(
+        "operation not permitted",
+      ) as NodeJS.ErrnoException
+      denied.code = "EPERM"
+      throw denied
+    }
+    return process.kill(pid, signal)
+  }) as typeof process.kill
+  const result = await Effect.runPromise(
+    Effect.either(
+      spawnHarnessExecutor(
+        50,
+        spawnEnvironment,
+        denyGroupSignals,
+      )(executionPlan(["node", "-e", "setTimeout(() => {}, 60_000)"]), () => {
+        quarantined = true
+      }),
+    ),
+  )
+  assert.equal(result._tag, "Left")
+  if (result._tag === "Left")
+    assert.equal(result.left.message, "executor descendants did not terminate")
+  assert.equal(quarantined, true)
+})
+
 test("interrupting a launch kills the executor and the subprocesses it started", async () => {
   const root = await mkdtemp(join(tmpdir(), "pi-harness-interrupt-test-"))
   const pidFile = join(root, "executor.pid")
   try {
     const launched = Effect.runFork(
-      spawnHarnessExecutor(30_000, spawnEnvironment)(
+      spawnHarnessExecutor(
+        30_000,
+        spawnEnvironment,
+      )(
         executionPlan([
           "node",
           "-e",
@@ -1089,8 +1535,13 @@ test("the git repository verifies a head and builds the worktree a launch runs i
     const checkout = canonical(join(root, "checkout"))
     await mkdir(checkout)
     await gitFixture(checkout, ["init", "-b", "main"])
-    await gitFixture(checkout, ["commit", "--allow-empty", "-m", "fixture"])
-    const head = commit((await gitFixture(checkout, ["rev-parse", "HEAD"])).trim())
+    await writeFile(join(checkout, ".gitignore"), "ignored.txt\n")
+    await writeFile(join(checkout, "tracked.txt"), "original\n")
+    await gitFixture(checkout, ["add", ".gitignore", "tracked.txt"])
+    await gitFixture(checkout, ["commit", "-m", "fixture"])
+    const head = commit(
+      (await gitFixture(checkout, ["rev-parse", "HEAD"])).trim(),
+    )
 
     await Effect.runPromise(gitRepository.verifyHead(checkout, head))
     const unresolved = await Effect.runPromise(
@@ -1103,14 +1554,78 @@ test("the git repository verifies a head and builds the worktree a launch runs i
     const worktree = canonical(join(checkout, WORKTREE_DIRECTORY, "job-a-1"))
     await Effect.runPromise(gitRepository.addWorktree(checkout, worktree, head))
     assert.equal(existsSync(worktree), true)
-    await Effect.runPromise(gitRepository.verifyUnchanged(worktree))
-    await writeFile(join(worktree, "mutated.txt"), "changed")
-    const mutated = await Effect.runPromise(
-      Effect.either(gitRepository.verifyUnchanged(worktree)),
+    await Effect.runPromise(gitRepository.verifyUnchanged(worktree, head))
+    await Effect.runPromise(gitRepository.verifyOutputHead(worktree, head))
+
+    await writeFile(join(worktree, "ignored.txt"), "hidden mutation")
+    const ignored = await Effect.runPromise(
+      Effect.either(gitRepository.verifyUnchanged(worktree, head)),
     )
-    assert.equal(mutated._tag, "Left")
-    if (mutated._tag === "Left")
-      assert.equal(mutated.left.message, "read-only executor mutated its worktree")
+    assert.equal(ignored._tag, "Left")
+    if (ignored._tag === "Left")
+      assert.equal(
+        ignored.left.message,
+        "read-only executor mutated its worktree",
+      )
+    await rm(join(worktree, "ignored.txt"))
+
+    await gitFixture(worktree, [
+      "update-index",
+      "--assume-unchanged",
+      "tracked.txt",
+    ])
+    await writeFile(
+      join(worktree, "tracked.txt"),
+      "hidden by assume-unchanged\n",
+    )
+    const assumed = await Effect.runPromise(
+      Effect.either(gitRepository.verifyUnchanged(worktree, head)),
+    )
+    assert.equal(assumed._tag, "Left")
+    if (assumed._tag === "Left")
+      assert.equal(
+        assumed.left.message,
+        "read-only executor mutated its worktree",
+      )
+    await gitFixture(worktree, [
+      "update-index",
+      "--no-assume-unchanged",
+      "tracked.txt",
+    ])
+    await gitFixture(worktree, ["checkout", "--", "tracked.txt"])
+
+    await gitFixture(worktree, [
+      "update-index",
+      "--skip-worktree",
+      "tracked.txt",
+    ])
+    await writeFile(join(worktree, "tracked.txt"), "hidden by skip-worktree\n")
+    const skipped = await Effect.runPromise(
+      Effect.either(gitRepository.verifyUnchanged(worktree, head)),
+    )
+    assert.equal(skipped._tag, "Left")
+    if (skipped._tag === "Left")
+      assert.equal(
+        skipped.left.message,
+        "read-only executor mutated its worktree",
+      )
+    await gitFixture(worktree, [
+      "update-index",
+      "--no-skip-worktree",
+      "tracked.txt",
+    ])
+    await gitFixture(worktree, ["checkout", "--", "tracked.txt"])
+
+    await gitFixture(worktree, ["commit", "--allow-empty", "-m", "moved"])
+    const moved = await Effect.runPromise(
+      Effect.either(gitRepository.verifyUnchanged(worktree, head)),
+    )
+    assert.equal(moved._tag, "Left")
+    if (moved._tag === "Left")
+      assert.equal(
+        moved.left.message,
+        "read-only executor moved its worktree head",
+      )
     await Effect.runPromise(gitRepository.removeWorktree(checkout, worktree))
     assert.equal(existsSync(worktree), false)
   } finally {
@@ -1123,11 +1638,9 @@ const POLL_ATTEMPTS = 500
 const POLL_INTERVAL_MS = 10
 
 const pause = (ms: number): Promise<void> =>
-  new Promise((resolve) => setTimeout(resolve, ms))
+  new Promise(resolve => setTimeout(resolve, ms))
 
-const reportedPids = async (
-  pidFile: string,
-): Promise<readonly number[]> => {
+const reportedPids = async (pidFile: string): Promise<readonly number[]> => {
   for (let attempt = 0; attempt < POLL_ATTEMPTS; attempt += 1) {
     const reported = await readFile(pidFile, "utf8").catch(() => "")
     const pids = parsePids(reported)
@@ -1142,7 +1655,7 @@ const parsePids = (reported: string): readonly number[] | undefined => {
   const parsed: unknown = JSON.parse(reported)
   return Array.isArray(parsed) &&
     parsed.every(
-      (pid) => typeof pid === "number" && Number.isSafeInteger(pid) && pid > 0,
+      pid => typeof pid === "number" && Number.isSafeInteger(pid) && pid > 0,
     )
     ? (parsed as readonly number[])
     : undefined

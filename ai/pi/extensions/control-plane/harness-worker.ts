@@ -1,9 +1,6 @@
-import {
-  execFile,
-  spawn,
-  type ChildProcessWithoutNullStreams,
-} from "node:child_process"
+import { execFile, spawn, type ChildProcessByStdio } from "node:child_process"
 import { join } from "node:path"
+import type { Readable } from "node:stream"
 import { promisify } from "node:util"
 import { Clock, Data, Effect } from "effect"
 import {
@@ -17,6 +14,7 @@ import {
   decodeHarnessReviewPayload,
   harnessHandoffAttemptMatch,
   includesAny,
+  toCommitSha,
   toJobId,
   type CommitSha,
   type HarnessReviewHandoff,
@@ -29,6 +27,8 @@ import {
   WORKTREE_DIRECTORY,
   type CanonicalPath,
 } from "./review-duty-profile.ts"
+
+type HarnessChildProcess = ChildProcessByStdio<null, Readable, Readable>
 
 export interface HarnessExecution {
   readonly exitCode: number
@@ -62,8 +62,10 @@ export class ProvenanceUnverified extends Data.TaggedError(
 }> {}
 
 /**
- * A control-plane request that did not complete. It says nothing about the
- * executor, so it is never reported as a spent attempt.
+ * A control-plane exchange that cannot safely complete. This includes a
+ * failed or malformed request/response and a claim whose lease no longer
+ * covers the next phase. It says nothing chargeable about the executor, so it
+ * is never reported as a spent attempt.
  */
 export class ControlPlaneRequestFailed extends Data.TaggedError(
   "ControlPlaneRequestFailed",
@@ -80,6 +82,7 @@ export class InvalidWorkerOptions extends Data.TaggedError(
 
 export type HarnessSpawner = (
   plan: HarnessLaunchPlan,
+  quarantineWorktree?: () => void,
 ) => Effect.Effect<HarnessExecution, ExecutorFailed>
 
 /**
@@ -116,9 +119,15 @@ export interface HarnessRepository {
     worktree: CanonicalPath,
     head: CommitSha,
   ) => Effect.Effect<void, ExecutorFailed>
-  /** Refuses a read-only result if its pinned worktree was mutated. */
+  /** Refuses a read-only result if its pinned head or files were mutated. */
   readonly verifyUnchanged: (
     worktree: CanonicalPath,
+    expectedHead: CommitSha,
+  ) => Effect.Effect<void, ExecutorFailed>
+  /** Binds an approved-worktree handoff to the commit it actually produced. */
+  readonly verifyOutputHead: (
+    worktree: CanonicalPath,
+    expectedHead: CommitSha,
   ) => Effect.Effect<void, ExecutorFailed>
   /**
    * Removes that worktree once the attempt is over. A removal that fails is
@@ -200,11 +209,31 @@ export const REPORTING_MARGIN_MS = 10_000
 /** Maximum wall time of one loopback control-plane request. */
 export const CONTROL_PLANE_REQUEST_TIMEOUT_MS = 1_000
 
+/** Maximum bytes accepted from one loopback control-plane response. */
+export const MAX_CONTROL_PLANE_RESPONSE_BYTES = 16_384
+
 /** How long a git invocation the launcher makes may take. */
 const GIT_TIMEOUT_MS = 10_000
 
-/** Worst-case head verification, worktree creation, and read-only check. */
-export const ATTEMPT_SETUP_MARGIN_MS = 3 * GIT_TIMEOUT_MS
+/** Grace a finished executor's pipes get to deliver what it already wrote. */
+const STDIO_DRAIN_MS = 250
+
+/** Maximum wait for a process group after it receives SIGKILL. */
+const FORCED_TERMINATION_WAIT_MS = 1_000
+
+/** Worst-case post-execution drain and descendant-cleanup wall time. */
+export const EXECUTOR_CLEANUP_MARGIN_MS =
+  STDIO_DRAIN_MS + FORCED_TERMINATION_WAIT_MS
+
+/** Head verification plus creation of the commit-pinned attempt worktree. */
+export const WORKTREE_SETUP_MARGIN_MS = 2 * GIT_TIMEOUT_MS
+
+/** Index flags, pinned HEAD, and complete worktree-state verification. */
+export const READ_ONLY_VERIFICATION_MARGIN_MS = 3 * GIT_TIMEOUT_MS
+
+/** Worst-case bounded Git work from setup through read-only verification. */
+export const ATTEMPT_SETUP_MARGIN_MS =
+  WORKTREE_SETUP_MARGIN_MS + READ_ONLY_VERIFICATION_MARGIN_MS
 
 /**
  * Claims the next due job and carries one attempt of it to a reported outcome.
@@ -247,11 +276,14 @@ export const harnessWorkerOptions = (
   if (!isBoundedDuration(settings.leaseTtlMs, 1))
     return optionsFailure("lease ttl must be a positive bounded duration")
   if (!isBoundedDuration(settings.executorTimeoutMs, 1))
-    return optionsFailure("executor timeout must be a positive bounded duration")
-  const requiredMarginMs = ATTEMPT_SETUP_MARGIN_MS + REPORTING_MARGIN_MS
+    return optionsFailure(
+      "executor timeout must be a positive bounded duration",
+    )
+  const requiredMarginMs =
+    ATTEMPT_SETUP_MARGIN_MS + EXECUTOR_CLEANUP_MARGIN_MS + REPORTING_MARGIN_MS
   if (settings.executorTimeoutMs + requiredMarginMs > settings.leaseTtlMs)
     return optionsFailure(
-      `executor timeout must leave the lease ${String(requiredMarginMs)}ms for setup and reporting`,
+      `executor timeout must leave the lease ${String(requiredMarginMs)}ms for setup, cleanup, verification, and reporting`,
     )
   const options: HarnessWorkerOptions = {
     ...settings,
@@ -269,17 +301,20 @@ export const MAX_EXECUTOR_STDOUT_BYTES = 65_536
  * The child is given an environment built from the plan's allowlist rather
  * than the launcher's own: a variable the allowlist does not name is absent
  * from the process the supervisor creates, not only from the executor that
- * plan's argv eventually execs. The child leads its own process group, so
- * every kill path here reaches the tool subprocesses an agent CLI starts
- * rather than only the process the supervisor spawned. An interrupted launch
- * takes that whole group with it.
+ * plan's argv eventually execs. The child leads its own process group, so kill
+ * paths reach ordinary tool subprocesses that remain in that group rather than
+ * only the process the supervisor spawned. This is a lifecycle boundary, not
+ * an OS sandbox: deliberate new sessions remain governed by the existing
+ * constrained-tool authority model rather than this group signal.
  */
-export const spawnHarnessExecutor = (
-  executorTimeoutMs: number,
-  environment: LaunchEnvironment,
-): HarnessSpawner =>
-  (plan) =>
-    Effect.async<HarnessExecution, ExecutorFailed>((resume) => {
+export const spawnHarnessExecutor =
+  (
+    executorTimeoutMs: number,
+    environment: LaunchEnvironment,
+    processKill: typeof process.kill = process.kill,
+  ): HarnessSpawner =>
+  (plan, quarantineWorktree = ignoreStreamFailure) =>
+    Effect.async<HarnessExecution, ExecutorFailed>(resume => {
       const child = spawnChild(plan, environment)
       if (child === undefined) {
         resume(executorFailure("executor could not be spawned"))
@@ -329,72 +364,87 @@ export const spawnHarnessExecutor = (
         clearTimeout(timer)
         if (drain !== undefined) clearTimeout(drain)
         releasePipes()
-        terminateProcessGroup(child, signal, (terminated) =>
+        terminateProcessGroup(child, signal, processKill, terminated => {
+          if (!terminated) quarantineWorktree()
           settle(
             terminated
               ? exit
               : executorFailure("executor descendants did not terminate"),
-          ),
-        )
+          )
+        })
       }
       const timer = setTimeout(
         () =>
-          terminateAndSettle(
-            "SIGKILL",
-            executorFailure("executor timed out"),
-          ),
+          terminateAndSettle("SIGKILL", executorFailure("executor timed out")),
         executorTimeoutMs,
       )
       child.stdout.on("data", (chunk: Buffer) => {
+        if (byteLength + chunk.byteLength > MAX_EXECUTOR_STDOUT_BYTES) {
+          // The kill is asynchronous, so a listener left attached would keep
+          // buffering output the refusal has already decided to discard.
+          child.stdout.removeAllListeners("data")
+          terminateAndSettle(
+            "SIGKILL",
+            executorFailure("executor output exceeded bounds"),
+          )
+          return
+        }
         chunks.push(chunk)
         byteLength += chunk.byteLength
-        if (byteLength <= MAX_EXECUTOR_STDOUT_BYTES) return
-        // The kill is asynchronous, so a listener left attached would keep
-        // buffering output the refusal has already decided to discard.
-        child.stdout.removeAllListeners("data")
-        terminateAndSettle(
-          "SIGKILL",
-          executorFailure("executor output exceeded bounds"),
-        )
       })
       child.stderr.on("data", (chunk: Buffer) => {
-        if (diagnosticBytes >= MAX_EXECUTOR_STDERR_BYTES) return
-        diagnostics.push(chunk)
-        diagnosticBytes += chunk.byteLength
+        const remaining = MAX_EXECUTOR_STDERR_BYTES - diagnosticBytes
+        if (remaining <= 0) return
+        const bounded =
+          chunk.byteLength <= remaining ? chunk : chunk.subarray(0, remaining)
+        diagnostics.push(bounded)
+        diagnosticBytes += bounded.byteLength
       })
       // A pipe that fails after its process was killed says nothing the
       // attempt's outcome does not already say, and an unhandled stream error
       // would take the supervisor down with it.
       child.stdout.on("error", ignoreStreamFailure)
       child.stderr.on("error", ignoreStreamFailure)
-      child.on("error", () =>
-        terminateAndSettle(
-          "SIGKILL",
-          executorFailure("executor could not be spawned"),
-        ),
-      )
+      child.on("error", () => {
+        const failure = executorFailure<HarnessExecution>(
+          "executor could not be spawned",
+        )
+        if (child.pid === undefined) {
+          settle(failure)
+          return
+        }
+        terminateAndSettle("SIGKILL", failure)
+      })
       // The attempt ends when the executor does. Waiting only for `close`
       // would wait for every descendant that inherited its stdout, so a
       // finished review whose tool subprocess still holds the pipe is reported
       // after a bounded drain instead of being lost to the timeout.
-      child.on("exit", (code) => {
+      child.on("exit", code => {
         exitObserved = true
+        // The executor itself has finished. From here only bounded pipe drain
+        // and descendant cleanup remain; the execution timeout must not
+        // relabel that post-exit bookkeeping as an executor timeout.
+        clearTimeout(timer)
+        // Signal immediately while the just-observed leader still identifies
+        // its process group; never wait through the stdio drain before using
+        // the numeric PGID, when it could have been recycled.
+        killGroup(child, "SIGKILL", processKill)
         drain = setTimeout(() => {
           if (settled || terminating) return
           terminating = true
           releasePipes()
-          // The parent already exited. Kill and await the detached group so a
-          // tool subprocess cannot race worktree verification or teardown.
-          terminateProcessGroup(child, "SIGKILL", (terminated) =>
-            terminated
-              ? settleExit(code)
-              : settle(
-                  executorFailure("executor descendants did not terminate"),
-                ),
-          )
+          // The parent already exited and its group was signalled immediately.
+          // Await that group so an ordinary tool subprocess cannot race
+          // worktree verification or teardown.
+          terminateProcessGroup(child, undefined, processKill, terminated => {
+            if (!terminated) quarantineWorktree()
+            if (terminated) settleExit(code)
+            else
+              settle(executorFailure("executor descendants did not terminate"))
+          })
         }, STDIO_DRAIN_MS)
       })
-      child.on("close", (code) => {
+      child.on("close", code => {
         if (exitObserved) return
         terminateAndSettle(
           "SIGKILL",
@@ -409,7 +459,7 @@ export const spawnHarnessExecutor = (
       })
       // Interrupting the attempt takes the executor with it: without this the
       // supervisor's own shutdown would abandon a running harness process.
-      return Effect.async<void>((cleanupResume) => {
+      return Effect.async<void>(cleanupResume => {
         if (settled) {
           cleanupResume(Effect.void)
           return
@@ -418,9 +468,10 @@ export const spawnHarnessExecutor = (
         clearTimeout(timer)
         if (drain !== undefined) clearTimeout(drain)
         releasePipes()
-        terminateProcessGroup(child, "SIGTERM", () =>
-          cleanupResume(Effect.void),
-        )
+        terminateProcessGroup(child, "SIGTERM", processKill, terminated => {
+          if (!terminated) quarantineWorktree()
+          cleanupResume(Effect.void)
+        })
       })
     })
 
@@ -449,21 +500,62 @@ export const gitRepository: HarnessRepository = {
   addWorktree: (repositoryRoot, worktree, head) =>
     Effect.mapError(
       git(repositoryRoot, ["worktree", "add", "--detach", worktree, head]),
-      () => new ExecutorFailed({ message: "job worktree could not be created" }),
+      () =>
+        new ExecutorFailed({ message: "job worktree could not be created" }),
     ),
-  verifyUnchanged: (worktree) =>
-    Effect.flatMap(
-      Effect.mapError(
-        gitOutput(worktree, ["status", "--porcelain=v1", "--untracked-files=all"]),
-        () =>
-          new ExecutorFailed({
-            message: "read-only worktree state could not be verified",
-          }),
+  verifyUnchanged: (worktree, expectedHead) =>
+    Effect.andThen(
+      Effect.flatMap(
+        Effect.mapError(
+          gitOutput(worktree, ["ls-files", "-v", "-z"]),
+          () =>
+            new ExecutorFailed({
+              message: "read-only worktree state could not be verified",
+            }),
+        ),
+        output =>
+          output
+            .split("\0")
+            .some(
+              entry =>
+                entry.startsWith("h ") ||
+                entry.startsWith("s ") ||
+                entry.startsWith("S "),
+            )
+            ? executorFailure("read-only executor mutated its worktree")
+            : Effect.void,
       ),
-      (output) =>
-        output.length === 0
-          ? Effect.void
-          : executorFailure("read-only executor mutated its worktree"),
+      Effect.andThen(
+        verifyWorktreeHead(
+          worktree,
+          expectedHead,
+          "read-only executor moved its worktree head",
+        ),
+        Effect.flatMap(
+          Effect.mapError(
+            gitOutput(worktree, [
+              "status",
+              "--porcelain=v1",
+              "--untracked-files=all",
+              "--ignored=matching",
+            ]),
+            () =>
+              new ExecutorFailed({
+                message: "read-only worktree state could not be verified",
+              }),
+          ),
+          output =>
+            output.length === 0
+              ? Effect.void
+              : executorFailure("read-only executor mutated its worktree"),
+        ),
+      ),
+    ),
+  verifyOutputHead: (worktree, expectedHead) =>
+    verifyWorktreeHead(
+      worktree,
+      expectedHead,
+      "executor output head does not match its worktree",
     ),
   removeWorktree: (repositoryRoot, worktree) =>
     Effect.catchAll(
@@ -476,16 +568,13 @@ export const gitRepository: HarnessRepository = {
 }
 
 /** Stderr kept for a failing run, beyond which further output is dropped. */
-const MAX_EXECUTOR_STDERR_BYTES = 8_192
+export const MAX_EXECUTOR_STDERR_BYTES = 8_192
 
 /** Diagnostic characters a failure summary carries from the executor. */
 const MAX_EXECUTOR_DIAGNOSTIC_CHARS = 400
 
 /** Grace an interrupted executor gets to exit before it is killed outright. */
 const INTERRUPT_GRACE_MS = 2_000
-
-/** Grace a finished executor's pipes get to deliver what it already wrote. */
-const STDIO_DRAIN_MS = 250
 
 /** Output a git invocation may produce before it is treated as a failure. */
 const MAX_GIT_OUTPUT_BYTES = 64 * 1_024
@@ -528,7 +617,7 @@ const gitOutput = (
     Effect.tryPromise({
       // The signal the runtime hands the callback is aborted when the fiber is
       // interrupted, so an abandoned attempt leaves no git process behind.
-      try: (signal) =>
+      try: signal =>
         runGit("git", ["-C", repositoryRoot, ...args], {
           maxBuffer: MAX_GIT_OUTPUT_BYTES,
           signal,
@@ -547,6 +636,23 @@ const git = (
   args: readonly string[],
 ): Effect.Effect<void, GitInvocationFailed> =>
   Effect.asVoid(gitOutput(repositoryRoot, args))
+
+const verifyWorktreeHead = (
+  worktree: CanonicalPath,
+  expectedHead: CommitSha,
+  mismatchMessage: string,
+): Effect.Effect<void, ExecutorFailed> =>
+  Effect.flatMap(
+    Effect.mapError(
+      gitOutput(worktree, ["rev-parse", "--verify", "HEAD"]),
+      () =>
+        new ExecutorFailed({ message: "worktree head could not be verified" }),
+    ),
+    output =>
+      toCommitSha(output.trim()) === expectedHead
+        ? Effect.void
+        : executorFailure(mismatchMessage),
+  )
 
 interface ClaimedJob {
   readonly id: JobId
@@ -581,14 +687,14 @@ type PreparedLaunch = Extract<PreparedAttempt, { readonly kind: "prepared" }>
 const ignoreStreamFailure = (): void => undefined
 
 /**
- * Signals the executor's whole process group. The child leads one, so the tool
- * subprocesses an agent CLI starts stop with it instead of outliving the lease
- * their parent held. A group that is already gone is signalled directly, which
- * is a no-op on a reaped child.
+ * Signals the executor's process group. Ordinary tool subprocesses inherit it
+ * and stop with the parent; deliberate new sessions are outside this liveness
+ * mechanism and remain subject to the harness's constrained-tool boundary.
  */
 const killGroup = (
-  child: ChildProcessWithoutNullStreams,
+  child: HarnessChildProcess,
   signal: "SIGTERM" | "SIGKILL",
+  processKill: typeof process.kill,
 ): void => {
   const pid = child.pid
   if (pid === undefined) {
@@ -596,46 +702,58 @@ const killGroup = (
     return
   }
   try {
-    process.kill(-pid, signal)
+    processKill(-pid, signal)
   } catch {
     child.kill(signal)
   }
 }
 
 const PROCESS_GROUP_POLL_MS = 10
-const FORCED_TERMINATION_WAIT_MS = 1_000
+
+const isErrnoWithCode = (failure: unknown, code: string): boolean =>
+  failure instanceof Error &&
+  "code" in failure &&
+  (failure as NodeJS.ErrnoException).code === code
 
 const processGroupIsRunning = (
-  child: ChildProcessWithoutNullStreams,
+  child: HarnessChildProcess,
+  processKill: typeof process.kill,
 ): boolean => {
   const pid = child.pid
   if (pid === undefined) return child.exitCode === null
   try {
-    process.kill(-pid, 0)
+    processKill(-pid, 0)
     return true
-  } catch {
-    return false
+  } catch (failure) {
+    // ESRCH alone proves the group is absent. EPERM and unknown failures leave
+    // liveness uncertain and therefore must run out the bounded quarantine
+    // path rather than silently authorising worktree reuse.
+    return !isErrnoWithCode(failure, "ESRCH")
   }
 }
 
 /** Signals the detached group and calls back only once it is gone or bounded. */
 const terminateProcessGroup = (
-  child: ChildProcessWithoutNullStreams,
-  initialSignal: "SIGTERM" | "SIGKILL",
+  child: HarnessChildProcess,
+  initialSignal: "SIGTERM" | "SIGKILL" | undefined,
+  processKill: typeof process.kill,
   done: (terminated: boolean) => void,
 ): void => {
   const startedAt = Date.now()
-  let forcedAt = initialSignal === "SIGKILL" ? startedAt : undefined
-  killGroup(child, initialSignal)
+  let forcedAt =
+    initialSignal === "SIGKILL" || initialSignal === undefined
+      ? startedAt
+      : undefined
+  if (initialSignal !== undefined) killGroup(child, initialSignal, processKill)
   const poll = (): void => {
-    if (!processGroupIsRunning(child)) {
+    if (!processGroupIsRunning(child, processKill)) {
       done(true)
       return
     }
     const now = Date.now()
     if (forcedAt === undefined && now - startedAt >= INTERRUPT_GRACE_MS) {
       forcedAt = now
-      killGroup(child, "SIGKILL")
+      killGroup(child, "SIGKILL", processKill)
     }
     if (
       forcedAt !== undefined &&
@@ -652,7 +770,7 @@ const terminateProcessGroup = (
 const spawnChild = (
   plan: HarnessLaunchPlan,
   environment: LaunchEnvironment,
-): ChildProcessWithoutNullStreams | undefined => {
+): HarnessChildProcess | undefined => {
   const [command, ...args] = plan.argv
   if (command === undefined) return undefined
   try {
@@ -672,52 +790,59 @@ const runPreparedAttempt = (
   claimed: ClaimedJob,
   attempt: PreparedLaunch,
 ): Effect.Effect<HarnessAttemptOutcome, ControlPlaneRequestFailed> => {
-  const lifecycle = Effect.flatMap(
-    pinnedLaunch(claimed, attempt),
-    (pinned) =>
-      Effect.acquireUseRelease(
-        Effect.gen(function* () {
-          yield* ensureLeaseRemaining(
-            claimed,
-            options.executorTimeoutMs +
-              ATTEMPT_SETUP_MARGIN_MS +
-              REPORTING_MARGIN_MS,
-          )
-          yield* options.repository.verifyHead(
-            pinned.payload.repositoryRoot,
-            pinned.payload.inputHeadSha,
-          )
-          yield* options.repository.addWorktree(
-            pinned.payload.repositoryRoot,
-            pinned.plan.cwd,
-            pinned.payload.inputHeadSha,
-          )
-        }),
-        () =>
-          Effect.catchTags(
-            runPinnedAttempt(options, claimed, pinned),
-            {
-              ExecutorFailed: (failure) =>
-                failAttempt(options, claimed, failure.message),
-              ProvenanceUnverified: (failure) =>
-                failAttempt(options, claimed, failure.message),
-            },
-          ),
-        () =>
-          options.repository.removeWorktree(
-            pinned.payload.repositoryRoot,
-            pinned.plan.cwd,
-          ),
-      ),
+  let worktreeQuarantined = false
+  const quarantineWorktree = (): void => {
+    worktreeQuarantined = true
+  }
+  const lifecycle = Effect.flatMap(pinnedLaunch(claimed, attempt), pinned =>
+    Effect.acquireUseRelease(
+      Effect.gen(function* () {
+        yield* ensureLeaseRemaining(
+          claimed,
+          options.executorTimeoutMs +
+            ATTEMPT_SETUP_MARGIN_MS +
+            EXECUTOR_CLEANUP_MARGIN_MS +
+            REPORTING_MARGIN_MS,
+        )
+        yield* options.repository.verifyHead(
+          pinned.payload.repositoryRoot,
+          pinned.payload.inputHeadSha,
+        )
+        yield* options.repository.addWorktree(
+          pinned.payload.repositoryRoot,
+          pinned.plan.cwd,
+          pinned.payload.inputHeadSha,
+        )
+      }),
+      () =>
+        Effect.catchTags(
+          runPinnedAttempt(options, claimed, pinned, quarantineWorktree),
+          {
+            ExecutorFailed: failure =>
+              reportAttemptFailure(options, claimed, failure.message),
+            ProvenanceUnverified: failure =>
+              reportAttemptFailure(options, claimed, failure.message),
+          },
+        ),
+      () =>
+        worktreeQuarantined
+          ? Effect.logError(
+              `pi-control-plane quarantined live executor worktree ${pinned.plan.cwd}`,
+            )
+          : options.repository.removeWorktree(
+              pinned.payload.repositoryRoot,
+              pinned.plan.cwd,
+            ),
+    ),
   )
   // Acquisition failures have no worktree to release. Failures after
   // acquisition are reported inside `use`, before the release finalizer runs,
   // so teardown cannot consume the live lease before its outcome is durable.
   return Effect.catchTags(lifecycle, {
-    ExecutorFailed: (failure) =>
-      failAttempt(options, claimed, failure.message),
-    ProvenanceUnverified: (failure) =>
-      failAttempt(options, claimed, failure.message),
+    ExecutorFailed: failure =>
+      reportAttemptFailure(options, claimed, failure.message),
+    ProvenanceUnverified: failure =>
+      reportAttemptFailure(options, claimed, failure.message),
   })
 }
 
@@ -760,31 +885,44 @@ const runPinnedAttempt = (
   options: HarnessWorkerOptions,
   claimed: ClaimedJob,
   attempt: PreparedLaunch,
+  quarantineWorktree: () => void,
 ): Effect.Effect<
   HarnessAttemptOutcome,
   ExecutorFailed | ProvenanceUnverified | ControlPlaneRequestFailed
 > =>
   Effect.gen(function* () {
-    const postExecutionMarginMs =
+    const verificationMarginMs =
       attempt.payload.isolation === "read-only"
-        ? GIT_TIMEOUT_MS + REPORTING_MARGIN_MS
-        : REPORTING_MARGIN_MS
+        ? READ_ONLY_VERIFICATION_MARGIN_MS
+        : GIT_TIMEOUT_MS
+    const postExecutionMarginMs =
+      EXECUTOR_CLEANUP_MARGIN_MS + verificationMarginMs + REPORTING_MARGIN_MS
     yield* ensureLeaseRemaining(
       claimed,
       options.executorTimeoutMs + postExecutionMarginMs,
     )
-    const execution = yield* options.spawner(attempt.plan)
+    const execution = yield* options.spawner(attempt.plan, quarantineWorktree)
     if (attempt.payload.isolation === "read-only")
-      yield* options.repository.verifyUnchanged(attempt.plan.cwd)
-    yield* ensureLeaseRemaining(claimed, REPORTING_MARGIN_MS)
-    if (execution.exitCode !== 0)
+      yield* options.repository.verifyUnchanged(
+        attempt.plan.cwd,
+        attempt.payload.inputHeadSha,
+      )
+    if (execution.exitCode !== 0) {
+      yield* ensureLeaseRemaining(claimed, REPORTING_MARGIN_MS)
       return yield* failAttempt(options, claimed, exitFailureSummary(execution))
+    }
     const handoff = yield* extractHandoff(
       execution.stdout,
       attempt.payload,
       claimed.id,
       claimed.attempt,
     )
+    if (attempt.payload.isolation === "approved-worktree")
+      yield* options.repository.verifyOutputHead(
+        attempt.plan.cwd,
+        handoff.outputHeadSha,
+      )
+    yield* ensureLeaseRemaining(claimed, REPORTING_MARGIN_MS)
     // Every decoded handoff is published through the completion route,
     // including a blocked or failed one: the route stores the typed handoff
     // with the attempt and owns the harness backoff, so the evidence and the
@@ -820,7 +958,7 @@ const executorDiagnostic = (execution: HarnessExecution): string =>
     .trim()
 
 const printableText = (value: string): string =>
-  Array.from(value, (character) =>
+  Array.from(value, character =>
     isControlCharacter(character) ? " " : character,
   ).join("")
 
@@ -876,11 +1014,11 @@ const executorFailure = <A>(
 const ensureLeaseRemaining = (
   claimed: ClaimedJob,
   minimumMs: number,
-): Effect.Effect<void, ExecutorFailed> =>
-  Effect.flatMap(Clock.currentTimeMillis, (now) =>
+): Effect.Effect<void, ControlPlaneRequestFailed> =>
+  Effect.flatMap(Clock.currentTimeMillis, now =>
     claimed.leaseUntil - now >= minimumMs
       ? Effect.void
-      : executorFailure("attempt has insufficient lease remaining"),
+      : Effect.fail(requestFailure("attempt has insufficient lease remaining")),
   )
 
 const isRecord = (value: unknown): value is Readonly<Record<string, unknown>> =>
@@ -897,7 +1035,7 @@ const postJson = (
   Effect.tryPromise({
     // The signal the runtime hands the callback is aborted when the fiber is
     // interrupted, so an abandoned attempt leaves no request in flight.
-    try: (signal) =>
+    try: signal =>
       fetch(`${origin}${path}`, {
         method: "POST",
         headers: { "content-type": "application/json" },
@@ -910,14 +1048,67 @@ const postJson = (
     catch: () => requestFailure(`control plane request to ${path} failed`),
   })
 
+class ResponseBodyTooLarge extends Error {}
+
 const readJson = (
   response: Response,
   path: string,
 ): Effect.Effect<unknown, ControlPlaneRequestFailed> =>
   Effect.tryPromise({
-    try: () => response.json() as Promise<unknown>,
-    catch: () => requestFailure(`control plane response from ${path} is not JSON`),
+    try: async signal => {
+      const body = response.body
+      if (body === null) return JSON.parse("") as unknown
+      const reader = body.getReader()
+      const chunks: Buffer[] = []
+      let byteLength = 0
+      const cancel = (): void => {
+        void reader.cancel().catch(ignoreStreamFailure)
+      }
+      signal.addEventListener("abort", cancel, { once: true })
+      try {
+        while (true) {
+          const next = await reader.read()
+          if (next.done) break
+          if (
+            byteLength + next.value.byteLength >
+            MAX_CONTROL_PLANE_RESPONSE_BYTES
+          ) {
+            await reader.cancel()
+            throw new ResponseBodyTooLarge()
+          }
+          const chunk = Buffer.from(next.value)
+          chunks.push(chunk)
+          byteLength += chunk.byteLength
+        }
+      } finally {
+        signal.removeEventListener("abort", cancel)
+        reader.releaseLock()
+      }
+      return JSON.parse(
+        Buffer.concat(chunks, byteLength).toString("utf8"),
+      ) as unknown
+    },
+    catch: failure =>
+      requestFailure(
+        failure instanceof ResponseBodyTooLarge
+          ? `control plane response from ${path} exceeded bounds`
+          : `control plane response from ${path} is not JSON`,
+      ),
   })
+
+const cancelResponseBody = (
+  response: Response,
+  path: string,
+): Effect.Effect<void, ControlPlaneRequestFailed> =>
+  response.body === null
+    ? Effect.void
+    : Effect.tryPromise({
+        try: () => response.body?.cancel() ?? Promise.resolve(),
+        catch: () =>
+          requestFailure(
+            `control plane response from ${path} could not be cancelled`,
+          ),
+      })
 
 const claimDueJob = (
   options: HarnessWorkerOptions,
@@ -926,10 +1117,16 @@ const claimDueJob = (
     const response = yield* postJson(options.origin, "/v1/worker/claim", {
       workerId: options.workerId,
       ttlMs: options.leaseTtlMs,
+      kind: "harness.review",
     })
-    if (response.status === 204) return undefined
-    if (response.status !== 200)
+    if (response.status === 204) {
+      yield* cancelResponseBody(response, "/v1/worker/claim")
+      return undefined
+    }
+    if (response.status !== 200) {
+      yield* cancelResponseBody(response, "/v1/worker/claim")
       return yield* Effect.fail(requestFailure("worker claim was rejected"))
+    }
     const body = yield* readJson(response, "/v1/worker/claim")
     const job = isRecord(body) && isRecord(body.job) ? body.job : undefined
     const spec = job !== undefined && isRecord(job.spec) ? job.spec : undefined
@@ -958,13 +1155,20 @@ const claimDueJob = (
         requestFailure("claimed job payload is malformed"),
       )
     }
+    const payload =
+      kind === "harness.review"
+        ? yield* Effect.mapError(
+            decodeHarnessReviewPayload(spec.payload, options.home),
+            () => requestFailure("claimed job payload is malformed"),
+          )
+        : spec.payload
     return {
       id,
       attempt: Number(job.attempt),
       leaseToken: job.leaseToken,
       leaseUntil: Number(job.leaseUntil),
       kind,
-      payload: spec.payload,
+      payload,
     }
   })
 
@@ -988,7 +1192,7 @@ const prepareAttempt = (
       )
       return { kind: "prepared", payload, plan } as const
     }),
-    (failure) =>
+    failure =>
       Effect.succeed({ kind: "unsuitable", reason: failure.message } as const),
   )
 
@@ -1002,8 +1206,8 @@ const extractHandoff = (
     return executorFailure("executor output exceeded bounds")
   const line = stdout
     .split("\n")
-    .map((candidate) => candidate.trim())
-    .filter((candidate) => candidate.length > 0)
+    .map(candidate => candidate.trim())
+    .filter(candidate => candidate.length > 0)
     .at(-1)
   if (
     line === undefined ||
@@ -1027,13 +1231,28 @@ const extractHandoff = (
     // undiagnosable refusal. The name is one of a fixed set of literals,
     // so nothing the executor wrote reaches the summary.
     if (match.outcome !== "matched") {
-      return yield* executorFailure(
+      return yield* executorFailure<HarnessReviewHandoff>(
         `executor handoff does not match the attempt: ${match.mismatch}`,
       )
     }
     return handoff
   })
 }
+
+/**
+ * Reports a local attempt failure only while its lease can still cover the
+ * bounded control-plane request. A stale claim is left to normal lease recovery
+ * instead of sending an outcome the compare-and-set route must reject.
+ */
+const reportAttemptFailure = (
+  options: HarnessWorkerOptions,
+  claimed: ClaimedJob,
+  reason: string,
+): Effect.Effect<HarnessAttemptOutcome, ControlPlaneRequestFailed> =>
+  Effect.andThen(
+    ensureLeaseRemaining(claimed, REPORTING_MARGIN_MS),
+    failAttempt(options, claimed, reason),
+  )
 
 /**
  * Reports an attempt that produced no handoff: an executor that could not run,
@@ -1055,6 +1274,7 @@ const failAttempt = (
         summary: reason,
       },
     )
+    yield* cancelResponseBody(response, `/v1/jobs/${claimed.id}/fail`)
     if (response.status !== 200)
       return yield* Effect.fail(requestFailure("attempt failure was rejected"))
     return { outcome: "failed", jobId: claimed.id, reason } as const
@@ -1071,6 +1291,7 @@ const publishHandoff = (
       `/v1/jobs/${claimed.id}/complete`,
       { leaseToken: claimed.leaseToken, handoff },
     )
+    yield* cancelResponseBody(response, `/v1/jobs/${claimed.id}/complete`)
     if (response.status !== 200)
       return yield* Effect.fail(requestFailure("attempt handoff was rejected"))
   })

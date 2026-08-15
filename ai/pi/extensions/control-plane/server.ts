@@ -8,7 +8,13 @@ import { readFile } from "node:fs/promises"
 import { isAbsolute, join } from "node:path"
 import { Clock, Data, Effect } from "effect"
 import { decodeHarnessReviewHandoff } from "./harness-protocol.ts"
-import { decodeJobSpec, JobRuntimeError, type Job } from "./job-runtime.ts"
+import {
+  decodeJobSpec,
+  JobRuntimeError,
+  REGISTERED_JOB_KINDS,
+  type Job,
+  type RegisteredJobKind,
+} from "./job-runtime.ts"
 import type { CanonicalPath } from "./review-duty-profile.ts"
 import {
   JobStoreError,
@@ -180,6 +186,10 @@ const readBody = (
 const isRecord = (value: unknown): value is Readonly<Record<string, unknown>> =>
   typeof value === "object" && value !== null && !Array.isArray(value)
 
+const isRegisteredJobKind = (value: unknown): value is RegisteredJobKind =>
+  typeof value === "string" &&
+  REGISTERED_JOB_KINDS.some((kind) => kind === value)
+
 const parseJson = (body: string): Effect.Effect<unknown, ControlPlaneServerError> =>
   Effect.try({
     try: () => JSON.parse(body) as unknown,
@@ -338,9 +348,10 @@ const handleClaim = (
     const input = yield* Effect.flatMap(readBody(request), parseJson)
     if (
       !isRecord(input) ||
-      !exactKeys(input, ["workerId", "ttlMs"]) ||
+      !exactKeys(input, ["workerId", "ttlMs", "kind"]) ||
       typeof input.workerId !== "string" ||
-      typeof input.ttlMs !== "number"
+      typeof input.ttlMs !== "number" ||
+      !isRegisteredJobKind(input.kind)
     ) {
       return yield* Effect.fail(
         serverError("invalid_payload", "worker claim payload is invalid"),
@@ -374,6 +385,7 @@ const handleClaim = (
       randomUUID(),
       now,
       input.ttlMs,
+      input.kind,
     )
     if (job === undefined) response.writeHead(204).end()
     else sendJson(response, 200, { job })
