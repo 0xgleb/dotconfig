@@ -14,6 +14,7 @@ import {
   JobRuntimeError,
   recoverExpiredJob,
   type Job,
+  type RegisteredJobKind,
   type RegisteredJobResult,
   type RegisteredJobSpec,
 } from "./job-runtime.ts"
@@ -64,6 +65,17 @@ export interface EnqueueResult {
   readonly created: boolean
 }
 
+/**
+ * When a transition is timestamped. A number is an instant the caller already
+ * holds; an effect is sampled inside the transaction the transition runs in,
+ * so a request that waited behind a concurrent writer is judged against the
+ * state that writer committed rather than against an instant read before it.
+ */
+export type TransitionInstant = number | Effect.Effect<number>
+
+/** Retry delay applied when an expired lease of each registered kind recovers. */
+export type RecoveryRetryDelays = Readonly<Record<RegisteredJobKind, number>>
+
 export interface SqliteJobStore {
   readonly enqueue: (
     spec: RegisteredJobSpec,
@@ -81,11 +93,12 @@ export interface SqliteJobStore {
     leaseToken: string,
     now: number,
     ttlMs: number,
+    kind?: RegisteredJobKind,
   ) => Effect.Effect<Job | undefined, JobStoreError | JobRuntimeError>
   readonly complete: (
     id: string,
     leaseToken: string,
-    now: number,
+    now: TransitionInstant,
     summary: string,
     result?: RegisteredJobResult,
   ) => Effect.Effect<Job, JobStoreError | JobRuntimeError>
@@ -97,7 +110,7 @@ export interface SqliteJobStore {
   readonly fail: (
     id: string,
     leaseToken: string,
-    now: number,
+    now: TransitionInstant,
     retryDelayMs: number,
     summary: string,
     result?: RegisteredJobResult,
@@ -108,7 +121,7 @@ export interface SqliteJobStore {
   ) => Effect.Effect<Job, JobStoreError | JobRuntimeError>
   readonly recoverExpired: (
     now: number,
-    retryDelayMs: number,
+    retryDelays: RecoveryRetryDelays,
   ) => Effect.Effect<readonly Job[], JobStoreError | JobRuntimeError>
   readonly close: () => void
   readonly unsafeDatabaseForTests: DatabaseSync
@@ -124,9 +137,7 @@ const sqliteError = (message: string, error: unknown): JobStoreError => {
   const detail = error instanceof Error ? error.message : ""
   return storeError(
     /busy|locked/i.test(detail) ? "busy" : "io",
-    /busy|locked/i.test(detail)
-      ? `${message}: database is busy`
-      : message,
+    /busy|locked/i.test(detail) ? `${message}: database is busy` : message,
   )
 }
 
@@ -136,7 +147,7 @@ const sql = <A>(
 ): Effect.Effect<A, JobStoreError> =>
   Effect.try({
     try: operation,
-    catch: (cause) => sqliteError(message, cause),
+    catch: cause => sqliteError(message, cause),
   })
 
 const isRecord = (value: unknown): value is Row =>
@@ -145,22 +156,32 @@ const isRecord = (value: unknown): value is Row =>
 const rowFrom = (value: unknown): Effect.Effect<Row, JobStoreError> =>
   isRecord(value)
     ? Effect.succeed(value)
-    : Effect.fail(storeError("corrupt_state", "job query returned a malformed row"))
+    : Effect.fail(
+        storeError("corrupt_state", "job query returned a malformed row"),
+      )
 
-const rowsFrom = (value: unknown): Effect.Effect<readonly Row[], JobStoreError> =>
+const rowsFrom = (
+  value: unknown,
+): Effect.Effect<readonly Row[], JobStoreError> =>
   Array.isArray(value)
     ? Effect.forEach(value, rowFrom)
-    : Effect.fail(storeError("corrupt_state", "job query returned malformed rows"))
+    : Effect.fail(
+        storeError("corrupt_state", "job query returned malformed rows"),
+      )
 
 const documentFromRow = (row: Row): Effect.Effect<Job, JobStoreError> => {
-  if (typeof row.document !== "string")
-    return Effect.fail(storeError("corrupt_state", "job document column is malformed"))
+  const document = row.document
+  if (typeof document !== "string")
+    return Effect.fail(
+      storeError("corrupt_state", "job document column is malformed"),
+    )
   return Effect.flatMap(
     Effect.try({
-      try: () => JSON.parse(row.document) as unknown,
-      catch: () => storeError("corrupt_state", "job document is malformed JSON"),
+      try: () => JSON.parse(document) as unknown,
+      catch: () =>
+        storeError("corrupt_state", "job document is malformed JSON"),
     }),
-    (decoded) =>
+    decoded =>
       Effect.mapError(decodeStoredJob(decoded), () =>
         storeError("corrupt_state", "job document violates runtime invariants"),
       ),
@@ -174,16 +195,34 @@ const identifierFromRow = (row: Row): Effect.Effect<string, JobStoreError> =>
         storeError("corrupt_state", "job identifier column is malformed"),
       )
 
+const consistentJobFromRow = (row: Row): Effect.Effect<Job, JobStoreError> =>
+  Effect.flatMap(identifierFromRow(row), id =>
+    Effect.flatMap(documentFromRow(row), job =>
+      id === job.id && row.state === job.state && row.kind === job.spec.kind
+        ? Effect.succeed(job)
+        : Effect.fail(
+            storeError(
+              "corrupt_state",
+              "job columns do not match its document",
+            ),
+          ),
+    ),
+  )
+
 const storedFromRow = (row: Row): Effect.Effect<StoredJob, JobStoreError> =>
-  Effect.matchEffect(documentFromRow(row), {
-    onFailure: (failure) =>
-      Effect.map(identifierFromRow(row), (id) => ({
+  Effect.matchEffect(consistentJobFromRow(row), {
+    onFailure: failure =>
+      Effect.map(identifierFromRow(row), id => ({
         outcome: "unreadable" as const,
         id,
         reason: failure.message,
       })),
-    onSuccess: (job) => Effect.succeed({ outcome: "readable" as const, job }),
+    onSuccess: (job): Effect.Effect<StoredJob, JobStoreError> =>
+      Effect.succeed({ outcome: "readable" as const, job }),
   })
+
+const instantOf = (now: TransitionInstant): Effect.Effect<number> =>
+  typeof now === "number" ? Effect.succeed(now) : now
 
 const noJobs: readonly Job[] = []
 const oneJob = (job: Job): readonly Job[] => [job]
@@ -196,7 +235,9 @@ const exactSpec = (
 const validateId = (id: string): Effect.Effect<string, JobStoreError> =>
   /^[A-Za-z0-9][A-Za-z0-9:._-]{0,127}$/u.test(id)
     ? Effect.succeed(id)
-    : Effect.fail(storeError("invalid_input", "job id must be bounded and safe"))
+    : Effect.fail(
+        storeError("invalid_input", "job id must be bounded and safe"),
+      )
 
 const makeStore = (
   database: DatabaseSync,
@@ -206,15 +247,24 @@ const makeStore = (
     operation: Effect.Effect<A, E>,
   ): Effect.Effect<A, E | JobStoreError> =>
     Effect.acquireUseRelease(
-      sql(() => database.exec("BEGIN IMMEDIATE"), "failed to begin job transaction"),
+      sql(
+        () => database.exec("BEGIN IMMEDIATE"),
+        "failed to begin job transaction",
+      ),
       () =>
         Effect.tap(operation, () =>
-          sql(() => database.exec("COMMIT"), "failed to commit job transaction"),
+          sql(
+            () => database.exec("COMMIT"),
+            "failed to commit job transaction",
+          ),
         ),
       (_void, exit) =>
         Exit.isFailure(exit)
           ? Effect.catchAll(
-              sql(() => database.exec("ROLLBACK"), "failed to roll back job transaction"),
+              sql(
+                () => database.exec("ROLLBACK"),
+                "failed to roll back job transaction",
+              ),
               () => Effect.void,
             )
           : Effect.void,
@@ -240,7 +290,7 @@ const makeStore = (
             ),
         "failed to persist job transition",
       ),
-      (result) =>
+      result =>
         result.changes === 1
           ? Effect.succeed(job)
           : Effect.fail(storeError("not_found", "job no longer exists")),
@@ -256,7 +306,7 @@ const makeStore = (
     row: Row,
     reason: string,
   ): Effect.Effect<void, JobStoreError> =>
-    Effect.flatMap(identifierFromRow(row), (id) =>
+    Effect.flatMap(identifierFromRow(row), id =>
       Effect.flatMap(
         sql(
           () =>
@@ -265,7 +315,7 @@ const makeStore = (
               .run(QUARANTINED_STATE, id),
           "failed to quarantine a corrupt job",
         ),
-        (result) =>
+        result =>
           result.changes === 1
             ? Effect.sync(() =>
                 console.error(
@@ -282,16 +332,21 @@ const makeStore = (
     )
 
   const get = (id: string): Effect.Effect<Job, JobStoreError> =>
-    Effect.flatMap(validateId(id), (jobId) =>
+    Effect.flatMap(validateId(id), jobId =>
       Effect.flatMap(
         sql(
-          () => database.prepare("SELECT document FROM jobs WHERE job_id = ?").get(jobId),
+          () =>
+            database
+              .prepare(
+                "SELECT job_id, state, kind, document FROM jobs WHERE job_id = ?",
+              )
+              .get(jobId),
           "failed to read job",
         ),
-        (value) =>
+        value =>
           value === undefined
             ? Effect.fail(storeError("not_found", "job was not found"))
-            : Effect.flatMap(rowFrom(value), documentFromRow),
+            : Effect.flatMap(rowFrom(value), consistentJobFromRow),
       ),
     )
 
@@ -300,25 +355,27 @@ const makeStore = (
     id = randomUUID(),
     now = Date.now(),
   ) =>
-    Effect.flatMap(decodeJobSpec(spec, home), (decodedSpec) =>
-      Effect.flatMap(validateId(id), (jobId) =>
+    Effect.flatMap(decodeJobSpec(spec, home), decodedSpec =>
+      Effect.flatMap(validateId(id), jobId =>
         inTransaction(
           Effect.gen(function* () {
-            const existingValue = decodedSpec.idempotencyKey
+            const idempotencyKey = decodedSpec.idempotencyKey
+            const existingValue = idempotencyKey
               ? yield* sql(
                   () =>
                     database
                       .prepare(
-                        "SELECT document FROM jobs WHERE kind = ? AND idempotency_key = ?",
+                        `SELECT job_id, state, kind, document FROM jobs
+                         WHERE kind = ? AND idempotency_key = ?`,
                       )
-                      .get(decodedSpec.kind, decodedSpec.idempotencyKey),
+                      .get(decodedSpec.kind, idempotencyKey),
                   "failed to resolve idempotent job",
                 )
               : undefined
             if (existingValue !== undefined) {
               const existing = yield* Effect.flatMap(
                 rowFrom(existingValue),
-                documentFromRow,
+                consistentJobFromRow,
               )
               if (!exactSpec(existing.spec, decodedSpec))
                 return yield* Effect.fail(
@@ -332,7 +389,8 @@ const makeStore = (
 
             const countRow = yield* Effect.flatMap(
               sql(
-                () => database.prepare("SELECT COUNT(*) AS count FROM jobs").get(),
+                () =>
+                  database.prepare("SELECT COUNT(*) AS count FROM jobs").get(),
                 "failed to count jobs",
               ),
               rowFrom,
@@ -388,43 +446,45 @@ const makeStore = (
     leaseToken,
     now,
     ttlMs,
+    kind,
   ) => {
-    const claimNextDue = (): Effect.Effect<
-      Job | undefined,
-      JobStoreError | JobRuntimeError
-    > =>
+    const selectDue = (): Effect.Effect<readonly Row[], JobStoreError> =>
       Effect.flatMap(
         sql(
           () =>
             database
               .prepare(
-                `SELECT job_id, document FROM jobs
+                `SELECT job_id, state, kind, document FROM jobs
                  WHERE state IN ('scheduled', 'ready', 'retry_wait')
                    AND run_at <= ?
-                 ORDER BY run_at, updated_at, job_id
-                 LIMIT 1`,
+                 ORDER BY run_at, updated_at, job_id`,
               )
-              .get(now),
-          "failed to select due job",
+              .all(now),
+          "failed to select due jobs",
         ),
-        (value) =>
-          value === undefined
-            ? Effect.succeed(undefined)
-            : Effect.flatMap(rowFrom(value), (row) =>
-                Effect.matchEffect(documentFromRow(row), {
-                  onFailure: (failure) =>
-                    Effect.flatMap(quarantine(row, failure.message), () =>
-                      claimNextDue(),
-                    ),
-                  onSuccess: (job) =>
-                    Effect.flatMap(
-                      claimJob(job, workerId, leaseToken, now, ttlMs),
-                      persist,
-                    ),
-                }),
-              ),
+        rowsFrom,
       )
-    return inTransaction(claimNextDue())
+    const claimFromRows = (
+      rows: readonly Row[],
+      index = 0,
+    ): Effect.Effect<Job | undefined, JobStoreError | JobRuntimeError> => {
+      const row = rows[index]
+      if (row === undefined) return Effect.succeed(undefined)
+      return Effect.matchEffect(consistentJobFromRow(row), {
+        onFailure: failure =>
+          Effect.flatMap(quarantine(row, failure.message), () =>
+            claimFromRows(rows, index + 1),
+          ),
+        onSuccess: job =>
+          kind !== undefined && job.spec.kind !== kind
+            ? claimFromRows(rows, index + 1)
+            : Effect.flatMap(
+                claimJob(job, workerId, leaseToken, now, ttlMs),
+                persist,
+              ),
+      })
+    }
+    return inTransaction(Effect.flatMap(selectDue(), claimFromRows))
   }
 
   const complete: SqliteJobStore["complete"] = (
@@ -435,12 +495,14 @@ const makeStore = (
     result,
   ) =>
     inTransaction(
-      Effect.flatMap(get(id), (job) =>
-        Effect.flatMap(
-          completeJob(job, leaseToken, now, summary, result),
+      Effect.gen(function* () {
+        const at = yield* instantOf(now)
+        const job = yield* get(id)
+        return yield* Effect.flatMap(
+          completeJob(job, leaseToken, at, summary, result),
           persist,
-        ),
-      ),
+        )
+      }),
     )
 
   const fail: SqliteJobStore["fail"] = (
@@ -452,17 +514,19 @@ const makeStore = (
     result,
   ) =>
     inTransaction(
-      Effect.flatMap(get(id), (job) =>
-        Effect.flatMap(
-          failJob(job, leaseToken, now, retryDelayMs, summary, result),
+      Effect.gen(function* () {
+        const at = yield* instantOf(now)
+        const job = yield* get(id)
+        return yield* Effect.flatMap(
+          failJob(job, leaseToken, at, retryDelayMs, summary, result),
           persist,
-        ),
-      ),
+        )
+      }),
     )
 
   const cancel: SqliteJobStore["cancel"] = (id, now) =>
     inTransaction(
-      Effect.flatMap(get(id), (job) =>
+      Effect.flatMap(get(id), job =>
         Effect.flatMap(cancelJob(job, now), persist),
       ),
     )
@@ -472,10 +536,7 @@ const makeStore = (
    * longer decodes is quarantined and left out of the batch instead of failing
    * the recovery of the leases beside it.
    */
-  const recoverExpired: SqliteJobStore["recoverExpired"] = (
-    now,
-    retryDelayMs,
-  ) =>
+  const recoverExpired: SqliteJobStore["recoverExpired"] = (now, retryDelays) =>
     inTransaction(
       Effect.gen(function* () {
         const rows = yield* Effect.flatMap(
@@ -483,7 +544,7 @@ const makeStore = (
             () =>
               database
                 .prepare(
-                  `SELECT job_id, document FROM jobs
+                  `SELECT job_id, state, kind, document FROM jobs
                    WHERE state = 'leased' AND lease_until <= ?
                    ORDER BY lease_until, job_id`,
                 )
@@ -492,14 +553,14 @@ const makeStore = (
           ),
           rowsFrom,
         )
-        const recovered = yield* Effect.forEach(rows, (row) =>
-          Effect.matchEffect(documentFromRow(row), {
-            onFailure: (failure) =>
+        const recovered = yield* Effect.forEach(rows, row =>
+          Effect.matchEffect(consistentJobFromRow(row), {
+            onFailure: failure =>
               Effect.as(quarantine(row, failure.message), noJobs),
-            onSuccess: (job) =>
+            onSuccess: job =>
               Effect.map(
                 Effect.flatMap(
-                  recoverExpiredJob(job, now, retryDelayMs),
+                  recoverExpiredJob(job, now, retryDelays[job.spec.kind]),
                   persist,
                 ),
                 oneJob,
@@ -516,13 +577,13 @@ const makeStore = (
         () =>
           database
             .prepare(
-              "SELECT job_id, document FROM jobs ORDER BY updated_at DESC, job_id",
+              "SELECT job_id, state, kind, document FROM jobs ORDER BY updated_at DESC, job_id",
             )
             .all(),
         "failed to list jobs",
       ),
-      (value) =>
-        Effect.flatMap(rowsFrom(value), (rows) =>
+      value =>
+        Effect.flatMap(rowsFrom(value), rows =>
           Effect.forEach(rows, storedFromRow),
         ),
     )
@@ -553,7 +614,10 @@ export const makeSqliteJobStore = (
 ): Effect.Effect<SqliteJobStore, JobStoreError> => {
   if (!isAbsolute(path) || path.length > 1_024)
     return Effect.fail(
-      storeError("invalid_input", "job database path must be a bounded absolute path"),
+      storeError(
+        "invalid_input",
+        "job database path must be a bounded absolute path",
+      ),
     )
   return Effect.flatMap(
     sql(() => {
@@ -572,7 +636,10 @@ export const makeSqliteJobStore = (
         database.close()
         throw storeError("corrupt_state", "job schema version is malformed")
       }
-      if (version.user_version !== 0 && version.user_version !== SCHEMA_VERSION) {
+      if (
+        version.user_version !== 0 &&
+        version.user_version !== SCHEMA_VERSION
+      ) {
         database.close()
         throw storeError(
           "schema_mismatch",
@@ -598,6 +665,6 @@ export const makeSqliteJobStore = (
       chmodSync(path, 0o600)
       return database
     }, "failed to initialize job database"),
-    (database) => Effect.succeed(makeStore(database, home)),
+    database => Effect.succeed(makeStore(database, home)),
   )
 }

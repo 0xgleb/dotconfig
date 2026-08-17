@@ -8,10 +8,17 @@ import { readFile } from "node:fs/promises"
 import { isAbsolute, join } from "node:path"
 import { Clock, Data, Effect } from "effect"
 import { decodeHarnessReviewHandoff } from "./harness-protocol.ts"
-import { decodeJobSpec, JobRuntimeError, type Job } from "./job-runtime.ts"
+import {
+  decodeJobSpec,
+  JobRuntimeError,
+  REGISTERED_JOB_KINDS,
+  type Job,
+  type RegisteredJobKind,
+} from "./job-runtime.ts"
 import type { CanonicalPath } from "./review-duty-profile.ts"
 import {
   JobStoreError,
+  type RecoveryRetryDelays,
   type SqliteJobStore,
   type StoredJob,
 } from "./sqlite-job-store.ts"
@@ -21,8 +28,20 @@ export const CONTROL_PLANE_SCHEMA_VERSION = 1
 const MAX_REQUEST_BODY_BYTES = 16 * 1_024
 const LOOPBACK_HOSTS = ["127.0.0.1", "::1"] as const
 
-/** Delay before an unsuccessful harness attempt becomes claimable again. */
+/**
+ * Delay before an unsuccessful harness attempt becomes claimable again. Every
+ * route that returns an attempt to the queue applies it — the completion route
+ * for a blocked or failed handoff, the fail route, and lease recovery — so the
+ * backoff of a lane that talks to a rate-limited provider does not depend on
+ * how the attempt ended.
+ */
 const HARNESS_RETRY_DELAY_MS = 5 * 60 * 1_000
+
+/** Source-fixed abandoned-attempt policy for every registered job kind. */
+const RECOVERY_RETRY_DELAYS: RecoveryRetryDelays = {
+  "harness.review": HARNESS_RETRY_DELAY_MS,
+  "review-duty.scan": 0,
+}
 
 export class ControlPlaneServerError extends Data.TaggedError(
   "ControlPlaneServerError",
@@ -50,12 +69,19 @@ export type ControlPlaneFailure =
 
 /**
  * The store operations a request can reach. Naming them keeps the routes
- * honest about what they touch — cancellation, recovery and the raw database
- * are not among them — and lets a caller supply exactly those.
+ * honest about what they touch — cancellation and the raw database are not
+ * among them — and lets a caller supply exactly those. Lease recovery is
+ * included because the claim route runs it before reading the queue.
  */
 export type ControlPlaneJobStore = Pick<
   SqliteJobStore,
-  "enqueue" | "get" | "list" | "claimDue" | "complete" | "fail"
+  | "enqueue"
+  | "get"
+  | "list"
+  | "claimDue"
+  | "complete"
+  | "fail"
+  | "recoverExpired"
 >
 
 export interface ControlPlaneServerOptions {
@@ -160,6 +186,10 @@ const readBody = (
 const isRecord = (value: unknown): value is Readonly<Record<string, unknown>> =>
   typeof value === "object" && value !== null && !Array.isArray(value)
 
+const isRegisteredJobKind = (value: unknown): value is RegisteredJobKind =>
+  typeof value === "string" &&
+  REGISTERED_JOB_KINDS.some((kind) => kind === value)
+
 const parseJson = (body: string): Effect.Effect<unknown, ControlPlaneServerError> =>
   Effect.try({
     try: () => JSON.parse(body) as unknown,
@@ -259,6 +289,37 @@ const unreadableJob = (stored: StoredJob): readonly UnreadableJobReport[] =>
     ? [{ id: stored.id, reason: stored.reason }]
     : []
 
+/** Characters of a swallowed failure's own words that reach the log. */
+export const MAX_LOGGED_REASON_CHARS = 200
+
+/**
+ * A failure's message as one bounded log line. A store failure can carry the
+ * driver's own text, so it is bounded and flattened rather than pasted into
+ * the server's log at whatever length and shape it arrived in.
+ */
+export const boundedReason = (message: string): string =>
+  message.split("\n").join(" ").slice(0, MAX_LOGGED_REASON_CHARS)
+
+/**
+ * Store failures a claim proceeds through when lease recovery hits them.
+ * Recovery is opportunistic: the claim that follows reads the queue itself and
+ * surfaces a store that cannot answer, so a pass that could not return an
+ * expired lease is logged rather than failing a request that does not depend
+ * on it. A failure outside this set — including every runtime failure, which
+ * means the recovery broke an invariant rather than the database — fails the
+ * claim.
+ */
+const TOLERATED_RECOVERY_CODES = [
+  "busy",
+  "corrupt_state",
+  "io",
+  "not_found",
+] as const
+
+const isToleratedRecoveryFailure = (failure: ControlPlaneFailure): boolean =>
+  failure._tag === "JobStoreError" &&
+  TOLERATED_RECOVERY_CODES.some((code) => code === failure.code)
+
 const hasJsonContentType = (request: IncomingMessage): boolean =>
   request.headers["content-type"]?.split(";", 1)[0]?.trim() ===
   "application/json"
@@ -287,25 +348,58 @@ const handleClaim = (
     const input = yield* Effect.flatMap(readBody(request), parseJson)
     if (
       !isRecord(input) ||
-      !exactKeys(input, ["workerId", "ttlMs"]) ||
+      !exactKeys(input, ["workerId", "ttlMs", "kind"]) ||
       typeof input.workerId !== "string" ||
-      typeof input.ttlMs !== "number"
+      typeof input.ttlMs !== "number" ||
+      !isRegisteredJobKind(input.kind)
     ) {
       return yield* Effect.fail(
         serverError("invalid_payload", "worker claim payload is invalid"),
       )
     }
+    // Sampled once and used for both steps, so a lease this claim recovers
+    // cannot be judged expired against one instant and re-leased against a
+    // later one.
     const now = yield* Clock.currentTimeMillis
+    // Expired leases are returned to their next attempt before the queue is
+    // read, so an abandoned attempt becomes claimable without a separate
+    // sweeper. It waits the same backoff a reported failure does: an attempt
+    // abandoned mid-executor is exactly the case where relaunching at once
+    // hammers a provider that is already refusing, and the delay must not
+    // depend on which of the three routes returned the job to the queue.
+    //
+    // A tolerated recovery failure leaves the queue as it was rather than
+    // failing a claim that only depends on it opportunistically, but it is
+    // logged through the runtime: a recovery pass that keeps failing strands
+    // every expired lease, and nothing else in the request would report it.
+    yield* Effect.catchIf(
+      store.recoverExpired(now, RECOVERY_RETRY_DELAYS),
+      isToleratedRecoveryFailure,
+      (failure) =>
+        Effect.logError(
+          `lease recovery failed: ${boundedReason(failure.message)}`,
+        ),
+    )
     const job = yield* store.claimDue(
       input.workerId,
       randomUUID(),
       now,
       input.ttlMs,
+      input.kind,
     )
     if (job === undefined) response.writeHead(204).end()
     else sendJson(response, 200, { job })
   })
 }
+
+/**
+ * The clock a transition is timestamped by. It is handed to the store unread
+ * so the instant is sampled inside the transaction that performs the
+ * transition: a request that waited behind a concurrent writer is then judged
+ * against the state that writer committed, and loses the race as the conflict
+ * it is rather than as a caller whose clock precedes the stored state.
+ */
+const transitionInstant: Effect.Effect<number> = Clock.currentTimeMillis
 
 /**
  * Publishes what a leased worker reports. The handler owns only the request
@@ -352,14 +446,17 @@ const handleComplete = (
       const leaseToken = input.leaseToken
       const summary = `harness ${handoff.status}: ${handoff.assessment}`
       const result = { kind: "harness.review" as const, handoff }
-      // Sampled against the transaction it is handed to, so a cancellation
-      // that commits while the handoff is being decoded cannot make this
-      // timestamp precede the state the transaction reads.
-      const now = yield* Clock.currentTimeMillis
       const publish =
         handoff.status === "blocked" || handoff.status === "failed"
-          ? store.fail(id, leaseToken, now, HARNESS_RETRY_DELAY_MS, summary, result)
-          : store.complete(id, leaseToken, now, summary, result)
+          ? store.fail(
+              id,
+              leaseToken,
+              transitionInstant,
+              HARNESS_RETRY_DELAY_MS,
+              summary,
+              result,
+            )
+          : store.complete(id, leaseToken, transitionInstant, summary, result)
       const job = yield* publish
       sendJson(response, 200, { job })
       return
@@ -374,8 +471,63 @@ const handleComplete = (
         serverError("invalid_payload", "job completion payload is invalid"),
       )
     }
-    const now = yield* Clock.currentTimeMillis
-    const job = yield* store.complete(id, input.leaseToken, now, input.summary)
+    const job = yield* store.complete(
+      id,
+      input.leaseToken,
+      transitionInstant,
+      input.summary,
+    )
+    sendJson(response, 200, { job })
+  })
+}
+
+/**
+ * Reports an attempt the leased worker could not carry to a handoff. Whether
+ * the job retries or fails is the store's: an exhausted job fails and a
+ * retryable one is rescheduled without the caller deciding which.
+ *
+ * A harness review waits the same source-fixed delay the completion route
+ * applies to a blocked or failed handoff, so the backoff of a lane that talks
+ * to a rate-limited provider does not depend on which route its worker used to
+ * report the attempt. Every other kind waits the delay its worker states.
+ */
+const handleFail = (
+  id: string,
+  request: IncomingMessage,
+  response: ServerResponse,
+  store: ControlPlaneJobStore,
+): Effect.Effect<void, ControlPlaneFailure> => {
+  if (request.method !== "POST") {
+    sendError(response, 405, "method_not_allowed", "method is not allowed")
+    return Effect.void
+  }
+  if (!hasJsonContentType(request)) {
+    sendError(response, 415, "unsupported_media_type", "application/json is required")
+    return Effect.void
+  }
+  return Effect.gen(function* () {
+    const input = yield* Effect.flatMap(readBody(request), parseJson)
+    if (
+      !isRecord(input) ||
+      !exactKeys(input, ["leaseToken", "retryDelayMs", "summary"]) ||
+      typeof input.leaseToken !== "string" ||
+      typeof input.retryDelayMs !== "number" ||
+      typeof input.summary !== "string"
+    ) {
+      return yield* Effect.fail(
+        serverError("invalid_payload", "job failure payload is invalid"),
+      )
+    }
+    const current = yield* store.get(id)
+    const job = yield* store.fail(
+      id,
+      input.leaseToken,
+      transitionInstant,
+      current.spec.kind === "harness.review"
+        ? HARNESS_RETRY_DELAY_MS
+        : input.retryDelayMs,
+      input.summary,
+    )
     sendJson(response, 200, { job })
   })
 }
@@ -443,6 +595,8 @@ const handleRequest = (
       const completeMatch = /^\/v1\/jobs\/([A-Za-z0-9][A-Za-z0-9:._-]{0,127})\/complete$/u.exec(path)
       if (completeMatch?.[1])
         return handleComplete(completeMatch[1], request, response, store)
+      const failMatch = /^\/v1\/jobs\/([A-Za-z0-9][A-Za-z0-9:._-]{0,127})\/fail$/u.exec(path)
+      if (failMatch?.[1]) return handleFail(failMatch[1], request, response, store)
       if (dashboardDirectory) {
         return Effect.flatMap(
           handleDashboard(path, request, response, dashboardDirectory),
