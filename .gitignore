@@ -14,7 +14,9 @@ direnv/
 /.direnv/
 /.tmp/
 /ai/pi/extensions/node_modules
+/ai/pi/brave-operator-profile/
 /cagent/
+/cabal/
 /doom/custom.el
 /emacs/
 /gcloud/
@@ -37,6 +39,12 @@ direnv/
 /op/
 /opencode/
 /result
+/.worktrees/
+/1Password/
+/agenix/
+/mprocs.log
+/secrets/
+/turnkey/
 
 solana/id.json
 configstore/update-notifier-create-solana-dapp.json
