@@ -12,67 +12,75 @@ test("fleet diagnostics expose current behavior-bearing component versions", () 
   )
   assert.match(
     read("../pi/extensions/activity-status/index.ts"),
-    /activity-status", "2026\.08\.01\.8"/,
+    /activity-status", "2026\.08\.20\.1"/,
   )
   assert.match(
     read("../pi/extensions/agent-registry/index.ts"),
-    /agent-registry", "2026\.08\.01\.22"/,
+    /agent-registry", "2026\.08\.23\.1"/,
   )
   assert.match(
     read("../pi/extensions/agent-workspace/index.ts"),
-    /agent-workspace", "2026\.08\.01\.10"/,
+    /agent-workspace", "2026\.08\.09\.13"/,
   )
   assert.match(
     read("../pi/extensions/auto-reload/index.ts"),
-    /auto-reload", "2026\.08\.01\.11"/,
+    /auto-reload", "2026\.08\.23\.1"/,
   )
   assert.match(
     read("../pi/extensions/browser-control/index.ts"),
-    /browser-control", "2026\.07\.23\.1"/,
+    /browser-control", "2026\.08\.13\.2"/,
   )
   assert.match(read("../pi/extensions/btw/index.ts"), /btw", "2026\.07\.23\.1"/)
   assert.match(
     read("../pi/extensions/classified-workflows/index.ts"),
-    /classified-workflows", "2026\.08\.01\.157"/,
+    /classified-workflows", "2026\.08\.23\.9"/,
   )
   assert.match(
     read("../pi/extensions/compact-read/index.ts"),
-    /compact-read", "2026\.07\.31\.2"/,
+    /compact-read", "2026\.08\.09\.1"/,
   )
   assert.match(
     read("../pi/extensions/link-safety/index.ts"),
     /link-safety", "2026\.07\.23\.1"/,
   )
   assert.match(
+    read("../pi/extensions/nushell-default/index.ts"),
+    /nushell-default", "2026\.08\.23\.2"/,
+  )
+  assert.match(
     read("../pi/extensions/questions/index.ts"),
-    /questions", "2026\.08\.01\.12"/,
+    /questions", "2026\.08\.15\.2"/,
   )
   assert.match(
     read("../pi/extensions/pi-vim/index.ts"),
-    /pi-vim", "2026\.08\.01\.17"/,
+    /pi-vim", "2026\.08\.14\.4"/,
   )
   assert.match(
     read("../pi/extensions/release-cadence/index.ts"),
-    /release-cadence", "2026\.07\.23\.2"/,
+    /release-cadence", "2026\.08\.09\.4"/,
   )
   assert.match(
     read("../pi/extensions/remote-control/index.ts"),
-    /remote-control", "2026\.08\.01\.20"/,
+    /remote-control", "2026\.08\.21\.1"/,
   )
   assert.match(
     read("../pi/extensions/disk-pressure/index.ts"),
-    /resource-pressure", "2026\.07\.23\.8"/,
+    /resource-pressure", "2026\.08\.17\.1"/,
   )
   assert.match(
     read("../pi/extensions/image-summary/index.ts"),
-    /image-summary", "2026\.08\.01\.2"/,
+    /image-summary", "2026\.08\.14\.2"/,
   )
   assert.match(
     read("../pi/extensions/safe-compaction/index.ts"),
-    /safe-compaction", "2026\.07\.23\.2"/,
+    /safe-compaction", "2026\.08\.23\.1"/,
   )
   assert.match(
     read("../pi/extensions/todo/index.ts"),
-    /todo", "2026\.08\.01\.34"/,
+    /todo", "2026\.08\.15\.1"/,
+  )
+  assert.match(
+    read("../pi/extensions/usage-governor/index.ts"),
+    /usage-governor", "2026\.08\.20\.1"/,
   )
 })
