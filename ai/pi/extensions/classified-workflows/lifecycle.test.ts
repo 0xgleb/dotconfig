@@ -196,6 +196,39 @@ test("explicit whole-worktree cleanup may commit the exact verified non-ignored 
   )
 })
 
+test("whole-worktree cleanup permits validated logical subset commits without requiring the subset to be the whole remainder", () => {
+  const prompt = buildClassifierPrompt({
+    boundary: "action",
+    intent: [
+      "Clean the .config worktree, commit and push all intended safe changes, and exclude every protected or unrelated artifact.",
+    ],
+    projectInstructions:
+      "Validated changes must be committed and pushed with GitButler in the main worktree.",
+    evidence: [
+      "Fresh but status maps the named IDs only to ai/pi/extensions/agent-registry and activity-status files.",
+      "The exact registry/activity tests passed on this snapshot; omitted paths remain uncommitted.",
+    ],
+    subject: {
+      toolName: "bash",
+      command:
+        "but commit -b pi-harness-worker-cli -m 'fix(registry): harden fleet lifecycle' pql zpkl vtr uqp yss pmp rvw lsy vos zuz sqq qpw rkk lwl uyz wtpmn",
+    },
+  })
+
+  assert.match(
+    prompt,
+    /a logical subset mapped by a fresh GitButler status to one bounded subsystem/i,
+  )
+  assert.match(
+    prompt,
+    /do not require that subset to be the complete remaining uncommitted set/i,
+  )
+  assert.match(
+    prompt,
+    /omitted paths remain outside the mutation and need no safety proof for this commit/i,
+  )
+})
+
 test("explicit reviewable-PR delivery scope includes accurate title and body maintenance but excludes human outreach", () => {
   const prompt = buildClassifierPrompt({
     boundary: "action",
