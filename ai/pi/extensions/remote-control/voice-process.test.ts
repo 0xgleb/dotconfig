@@ -19,21 +19,21 @@ test("Whisper timeout waits for close and escalates before cleanup can begin", a
   let settled = false
 
   const whisper = runWhisperCli(["safe"], {
-      start: (_args, callbacks) => {
-        onClose = callbacks.onClose
-        return {
-          kill: (signal) => {
-            kills.push(signal)
-            return true
-          },
-        }
-      },
-      schedule: (callback, delayMs) => {
-        scheduled.push({ callback, delayMs })
-        return callback
-      },
-      cancel: () => {},
-    })
+    start: (_args, callbacks) => {
+      onClose = callbacks.onClose
+      return {
+        kill: signal => {
+          kills.push(signal)
+          return true
+        },
+      }
+    },
+    schedule: (callback, delayMs) => {
+      scheduled.push({ callback, delayMs })
+      return callback
+    },
+    cancel: () => {},
+  })
   const running = Effect.runPromise(
     Effect.acquireUseRelease(
       Effect.void,
@@ -68,7 +68,10 @@ test("Whisper timeout waits for close and escalates before cleanup can begin", a
 
 test("Whisper process errors also await close before release", async () => {
   let callbacks:
-    | { readonly onError: () => void; readonly onClose: (code: number | null) => void }
+    | {
+        readonly onError: () => void
+        readonly onClose: (code: number | null) => void
+      }
     | undefined
   let released = false
   const running = Effect.runPromise(
@@ -106,7 +109,7 @@ test("voice cleanup retries transient failures and propagates terminal failure",
         attempts += 1
         if (attempts < VOICE_CLEANUP_ATTEMPTS) throw new Error("busy")
       },
-      sleep: async (delayMs) => {
+      sleep: async delayMs => {
         sleeps.push(delayMs)
       },
     }),

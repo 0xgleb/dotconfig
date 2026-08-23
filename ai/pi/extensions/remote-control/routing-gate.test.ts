@@ -1,10 +1,7 @@
 import assert from "node:assert/strict"
 import test from "node:test"
 
-import {
-  canClaimRemoteTurn,
-  settleTaskContinuation,
-} from "./routing-gate.ts"
+import { canClaimRemoteTurn, settleTaskContinuation } from "./routing-gate.ts"
 
 test("the next remote message waits for post-reply routing to settle", () => {
   assert.equal(canClaimRemoteTurn(false, "idle"), true)

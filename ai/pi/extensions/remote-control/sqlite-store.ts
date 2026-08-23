@@ -1,8 +1,8 @@
-import { randomUUID } from "node:crypto";
-import { chmodSync, mkdirSync } from "node:fs";
-import { dirname } from "node:path";
-import { DatabaseSync } from "node:sqlite";
-import { Effect } from "effect";
+import { randomUUID } from "node:crypto"
+import { chmodSync, mkdirSync } from "node:fs"
+import { dirname } from "node:path"
+import { DatabaseSync } from "node:sqlite"
+import { Effect } from "effect"
 import {
   BRIDGE_MESSAGE_TTL_MS,
   BRIDGE_PROTOCOL_VERSION,
@@ -24,156 +24,156 @@ import {
   type RemoteQuestionOption,
   type RemoteQuestionResolution,
   type RemoteQuestionSnapshot,
-} from "./protocol.ts";
+} from "./protocol.ts"
 
-const BUSY_TIMEOUT_MS = 2_000;
-const MAX_AGENTS = 1_024;
-const MAX_MESSAGES = 10_000;
+const BUSY_TIMEOUT_MS = 2_000
+const MAX_AGENTS = 1_024
+const MAX_MESSAGES = 10_000
 
-type Row = Readonly<Record<string, unknown>>;
+type Row = Readonly<Record<string, unknown>>
 
 export interface HeartbeatBridgeAgentInput {
-  readonly id: string;
-  readonly label: string;
-  readonly cwd: string;
-  readonly accepting: boolean;
-  readonly now: number;
-  readonly ttlMs: number;
+  readonly id: string
+  readonly label: string
+  readonly cwd: string
+  readonly accepting: boolean
+  readonly now: number
+  readonly ttlMs: number
 }
 
 export interface EnqueueRemoteMessageInput {
-  readonly targetAgentId: string;
-  readonly requesterId: string;
-  readonly dedupeKey: string;
-  readonly text: string;
-  readonly images?: readonly RemoteImage[];
-  readonly now: number;
-  readonly ttlMs: number;
+  readonly targetAgentId: string
+  readonly requesterId: string
+  readonly dedupeKey: string
+  readonly text: string
+  readonly images?: readonly RemoteImage[]
+  readonly now: number
+  readonly ttlMs: number
 }
 
 export interface ClaimRemoteMessageInput {
-  readonly agentId: string;
-  readonly now: number;
+  readonly agentId: string
+  readonly now: number
 }
 
 export interface FinishRemoteMessageInput {
-  readonly messageId: string;
-  readonly claimToken: string;
-  readonly now: number;
+  readonly messageId: string
+  readonly claimToken: string
+  readonly now: number
 }
 
 export interface SyncRemoteQuestionsInput {
-  readonly agentId: string;
-  readonly questions: readonly RemoteQuestionSnapshot[];
-  readonly now: number;
+  readonly agentId: string
+  readonly questions: readonly RemoteQuestionSnapshot[]
+  readonly now: number
 }
 
 export interface QuestionRelayStatusInput {
-  readonly agentId: string;
-  readonly questionId: number;
+  readonly agentId: string
+  readonly questionId: number
 }
 
 export interface LinkTelegramQuestionInput {
-  readonly agentId: string;
-  readonly questionId: number;
-  readonly chatId: number;
-  readonly messageId: number;
-  readonly now: number;
+  readonly agentId: string
+  readonly questionId: number
+  readonly chatId: number
+  readonly messageId: number
+  readonly now: number
 }
 
 export interface AnswerTelegramQuestionInput {
-  readonly chatId: number;
-  readonly messageId: number;
-  readonly answer: string;
-  readonly now: number;
+  readonly chatId: number
+  readonly messageId: number
+  readonly answer: string
+  readonly now: number
 }
 
 export interface DismissQuestionInput {
-  readonly agentId: string;
-  readonly questionId: number;
-  readonly now: number;
+  readonly agentId: string
+  readonly questionId: number
+  readonly now: number
 }
 
 export interface TakeQuestionResolutionInput {
-  readonly agentId: string;
-  readonly now: number;
+  readonly agentId: string
+  readonly now: number
 }
 
 export interface RemoteBridgeStore {
   readonly heartbeatAgent: (
     input: HeartbeatBridgeAgentInput,
-  ) => Effect.Effect<BridgeAgent, RemoteBridgeError>;
+  ) => Effect.Effect<BridgeAgent, RemoteBridgeError>
   readonly listAgents: (
     now: number,
-  ) => Effect.Effect<readonly BridgeAgent[], RemoteBridgeError>;
+  ) => Effect.Effect<readonly BridgeAgent[], RemoteBridgeError>
   readonly enqueue: (
     input: EnqueueRemoteMessageInput,
-  ) => Effect.Effect<RemoteMessage, RemoteBridgeError>;
+  ) => Effect.Effect<RemoteMessage, RemoteBridgeError>
   readonly claimNext: (
     input: ClaimRemoteMessageInput,
-  ) => Effect.Effect<RemoteMessage | undefined, RemoteBridgeError>;
+  ) => Effect.Effect<RemoteMessage | undefined, RemoteBridgeError>
   readonly complete: (
     input: FinishRemoteMessageInput & { readonly response: string },
-  ) => Effect.Effect<RemoteMessage, RemoteBridgeError>;
+  ) => Effect.Effect<RemoteMessage, RemoteBridgeError>
   readonly fail: (
     input: FinishRemoteMessageInput & { readonly failure: RemoteFailure },
-  ) => Effect.Effect<RemoteMessage, RemoteBridgeError>;
+  ) => Effect.Effect<RemoteMessage, RemoteBridgeError>
   readonly get: (
     messageId: string,
     now: number,
-  ) => Effect.Effect<RemoteMessage, RemoteBridgeError>;
+  ) => Effect.Effect<RemoteMessage, RemoteBridgeError>
   readonly setEnabled: (
     enabled: boolean,
-  ) => Effect.Effect<boolean, RemoteBridgeError>;
-  readonly isEnabled: () => Effect.Effect<boolean, RemoteBridgeError>;
+  ) => Effect.Effect<boolean, RemoteBridgeError>
+  readonly isEnabled: () => Effect.Effect<boolean, RemoteBridgeError>
   readonly syncQuestions: (
     input: SyncRemoteQuestionsInput,
-  ) => Effect.Effect<void, RemoteBridgeError>;
+  ) => Effect.Effect<void, RemoteBridgeError>
   readonly listPendingQuestions: (
     now: number,
-  ) => Effect.Effect<readonly BridgeQuestion[], RemoteBridgeError>;
+  ) => Effect.Effect<readonly BridgeQuestion[], RemoteBridgeError>
   readonly listUnrelayedQuestions: (
     now: number,
-  ) => Effect.Effect<readonly BridgeQuestion[], RemoteBridgeError>;
+  ) => Effect.Effect<readonly BridgeQuestion[], RemoteBridgeError>
   readonly isQuestionRelayed: (
     input: QuestionRelayStatusInput,
-  ) => Effect.Effect<boolean, RemoteBridgeError>;
+  ) => Effect.Effect<boolean, RemoteBridgeError>
   readonly isQuestionHistoricallyRelayed: (
     input: QuestionRelayStatusInput,
-  ) => Effect.Effect<boolean, RemoteBridgeError>;
+  ) => Effect.Effect<boolean, RemoteBridgeError>
   readonly linkTelegramQuestion: (
     input: LinkTelegramQuestionInput,
-  ) => Effect.Effect<BridgeQuestion, RemoteBridgeError>;
+  ) => Effect.Effect<BridgeQuestion, RemoteBridgeError>
   readonly answerTelegramQuestion: (
     input: AnswerTelegramQuestionInput,
-  ) => Effect.Effect<RemoteQuestionResolution, RemoteBridgeError>;
+  ) => Effect.Effect<RemoteQuestionResolution, RemoteBridgeError>
   readonly dismissQuestion: (
     input: DismissQuestionInput,
-  ) => Effect.Effect<BridgeQuestion, RemoteBridgeError>;
+  ) => Effect.Effect<BridgeQuestion, RemoteBridgeError>
   readonly takeQuestionResolution: (
     input: TakeQuestionResolutionInput,
-  ) => Effect.Effect<RemoteQuestionResolution | undefined, RemoteBridgeError>;
+  ) => Effect.Effect<RemoteQuestionResolution | undefined, RemoteBridgeError>
 }
 
 const bridgeError = (
   code: RemoteBridgeError["code"],
   message: string,
-): RemoteBridgeError => new RemoteBridgeError({ code, message });
+): RemoteBridgeError => new RemoteBridgeError({ code, message })
 
 const asBridgeError = (error: unknown, fallback: string): RemoteBridgeError => {
-  if (error instanceof RemoteBridgeError) return error;
-  const message = error instanceof Error ? error.message : "";
+  if (error instanceof RemoteBridgeError) return error
+  const message = error instanceof Error ? error.message : ""
   const code =
     typeof error === "object" &&
     error !== null &&
     "code" in error &&
     typeof error.code === "string"
       ? error.code
-      : "";
+      : ""
   if (/busy|locked/i.test(message) || /BUSY|LOCKED/i.test(code))
-    return bridgeError("busy", `${fallback}: busy`);
-  return bridgeError("io", fallback);
-};
+    return bridgeError("busy", `${fallback}: busy`)
+  return bridgeError("io", fallback)
+}
 
 const attempt = <T>(
   fallback: string,
@@ -181,45 +181,47 @@ const attempt = <T>(
 ): Effect.Effect<T, RemoteBridgeError> =>
   Effect.try({
     try: operation,
-    catch: (error) => asBridgeError(error, fallback),
-  });
+    catch: error => asBridgeError(error, fallback),
+  })
 
 const rowFrom = (value: unknown): Row => {
   if (typeof value !== "object" || value === null || Array.isArray(value)) {
-    throw bridgeError("corrupt_state", "bridge query returned a malformed row");
+    throw bridgeError("corrupt_state", "bridge query returned a malformed row")
   }
-  return value;
-};
+  return value as Row
+}
 
 const optionalRowFrom = (value: unknown): Row | undefined =>
-  value === undefined ? undefined : rowFrom(value);
+  value === undefined ? undefined : rowFrom(value)
 
-const stringField = (
+function stringField(row: Row, key: string): string
+function stringField(row: Row, key: string, optional: true): string | undefined
+function stringField(
   row: Row,
   key: string,
   optional = false,
-): string | undefined => {
-  const value = row[key];
-  if (optional && value === null) return undefined;
+): string | undefined {
+  const value = row[key]
+  if (optional && value === null) return undefined
   if (typeof value !== "string")
-    throw bridgeError("corrupt_state", `bridge column ${key} is malformed`);
-  return value;
-};
+    throw bridgeError("corrupt_state", `bridge column ${key} is malformed`)
+  return value
+}
 
 const numberField = (row: Row, key: string): number => {
-  const value = row[key];
+  const value = row[key]
   if (typeof value !== "number" || !Number.isSafeInteger(value)) {
-    throw bridgeError("corrupt_state", `bridge column ${key} is malformed`);
+    throw bridgeError("corrupt_state", `bridge column ${key} is malformed`)
   }
-  return value;
-};
+  return value
+}
 
 const booleanField = (row: Row, key: string): boolean => {
-  const value = numberField(row, key);
+  const value = numberField(row, key)
   if (value !== 0 && value !== 1)
-    throw bridgeError("corrupt_state", `bridge column ${key} is malformed`);
-  return value === 1;
-};
+    throw bridgeError("corrupt_state", `bridge column ${key} is malformed`)
+  return value === 1
+}
 
 const agentFromRow = (row: Row): BridgeAgent => ({
   id: stringField(row, "agent_id") ?? "",
@@ -228,24 +230,24 @@ const agentFromRow = (row: Row): BridgeAgent => ({
   heartbeatAt: numberField(row, "heartbeat_at"),
   expiresAt: numberField(row, "expires_at"),
   accepting: booleanField(row, "accepting"),
-});
+})
 
 const imagesFromRow = (row: Row): readonly RemoteImage[] => {
-  const encoded = stringField(row, "images_json") ?? "";
+  const encoded = stringField(row, "images_json") ?? ""
   try {
-    const decoded: unknown = JSON.parse(encoded);
+    const decoded: unknown = JSON.parse(encoded)
     if (!Array.isArray(decoded))
-      throw bridgeError("corrupt_state", "bridge images are malformed");
-    return boundedBridgeImages(decoded as RemoteImage[]);
+      throw bridgeError("corrupt_state", "bridge images are malformed")
+    return boundedBridgeImages(decoded as RemoteImage[])
   } catch (error) {
     if (error instanceof RemoteBridgeError && error.code === "corrupt_state")
-      throw error;
-    throw bridgeError("corrupt_state", "bridge images are malformed");
+      throw error
+    throw bridgeError("corrupt_state", "bridge images are malformed")
   }
-};
+}
 
 const messageFromRow = (row: Row): RemoteMessage => {
-  const status = stringField(row, "status");
+  const status = stringField(row, "status")
   const base = {
     id: stringField(row, "message_id") ?? "",
     targetAgentId: stringField(row, "target_agent_id") ?? "",
@@ -256,15 +258,15 @@ const messageFromRow = (row: Row): RemoteMessage => {
     createdAt: numberField(row, "created_at"),
     expiresAt: numberField(row, "expires_at"),
     updatedAt: numberField(row, "updated_at"),
-  };
-  if (status === "queued") return { ...base, status };
+  }
+  if (status === "queued") return { ...base, status }
   if (status === "claimed") {
     return {
       ...base,
       status,
       claimToken: stringField(row, "claim_token") ?? "",
       claimedAt: numberField(row, "claimed_at"),
-    };
+    }
   }
   if (status === "completed") {
     return {
@@ -272,10 +274,10 @@ const messageFromRow = (row: Row): RemoteMessage => {
       status,
       response: stringField(row, "response") ?? "",
       completedAt: numberField(row, "completed_at"),
-    };
+    }
   }
   if (status === "failed") {
-    const failure = stringField(row, "failure");
+    const failure = stringField(row, "failure")
     if (
       failure !== "aborted" &&
       failure !== "bridge_disabled" &&
@@ -283,39 +285,39 @@ const messageFromRow = (row: Row): RemoteMessage => {
       failure !== "model_error" &&
       failure !== "session_ended"
     ) {
-      throw bridgeError("corrupt_state", "bridge failure is malformed");
+      throw bridgeError("corrupt_state", "bridge failure is malformed")
     }
     const claimedAt =
-      row.claimed_at === null ? undefined : numberField(row, "claimed_at");
+      row.claimed_at === null ? undefined : numberField(row, "claimed_at")
     return {
       ...base,
       status,
       failure,
       ...(claimedAt === undefined ? {} : { claimedAt }),
       completedAt: numberField(row, "completed_at"),
-    };
+    }
   }
-  throw bridgeError("corrupt_state", "bridge message status is malformed");
-};
+  throw bridgeError("corrupt_state", "bridge message status is malformed")
+}
 
 const positiveSafeInteger = (label: string, value: number): number => {
   if (!Number.isSafeInteger(value) || value < 1) {
     throw bridgeError(
       "invalid_input",
       `${label} must be a positive safe integer`,
-    );
+    )
   }
 
-  return value;
-};
+  return value
+}
 
 const isRecord = (value: unknown): value is Readonly<Record<string, unknown>> =>
-  typeof value === "object" && value !== null && !Array.isArray(value);
+  typeof value === "object" && value !== null && !Array.isArray(value)
 
 const questionOptionsFromJson = (
   value: string | undefined,
 ): readonly RemoteQuestionOption[] | undefined => {
-  if (value === undefined) return undefined;
+  if (value === undefined) return undefined
 
   const decodedResult = Effect.runSync(
     Effect.either(
@@ -325,16 +327,16 @@ const questionOptionsFromJson = (
           bridgeError("corrupt_state", "bridge question options are malformed"),
       }),
     ),
-  );
-  if (decodedResult._tag === "Left") throw decodedResult.left;
-  const decoded = decodedResult.right;
+  )
+  if (decodedResult._tag === "Left") throw decodedResult.left
+  const decoded = decodedResult.right
 
   if (
     !Array.isArray(decoded) ||
     decoded.length < 2 ||
     decoded.length > 4 ||
     !decoded.every(
-      (option) =>
+      option =>
         isRecord(option) &&
         typeof option.label === "string" &&
         option.label.length > 0 &&
@@ -344,18 +346,18 @@ const questionOptionsFromJson = (
             option.description.length <= 160)),
     )
   ) {
-    throw bridgeError("corrupt_state", "bridge question options are malformed");
+    throw bridgeError("corrupt_state", "bridge question options are malformed")
   }
 
-  return decoded as unknown as readonly RemoteQuestionOption[];
-};
+  return decoded as unknown as readonly RemoteQuestionOption[]
+}
 
 const questionFromRow = (row: Row): BridgeQuestion => {
-  const header = stringField(row, "header", true);
-  const guess = stringField(row, "guess", true);
+  const header = stringField(row, "header", true)
+  const guess = stringField(row, "guess", true)
   const options = questionOptionsFromJson(
     stringField(row, "options_json", true),
-  );
+  )
 
   return {
     agentId: stringField(row, "agent_id") ?? "",
@@ -366,26 +368,26 @@ const questionFromRow = (row: Row): BridgeQuestion => {
     ...(options ? { options } : {}),
     createdAt: numberField(row, "created_at"),
     updatedAt: numberField(row, "updated_at"),
-  };
-};
+  }
+}
 
 const resolutionFromRow = (row: Row): RemoteQuestionResolution => ({
   agentId: stringField(row, "agent_id") ?? "",
   questionId: numberField(row, "question_id"),
   answer: stringField(row, "answer") ?? "",
-});
+})
 
 const boundedOptionalText = (
   label: string,
   value: string | undefined,
   maximum: number,
 ): string | undefined =>
-  value === undefined ? undefined : boundedBridgeText(label, value, maximum);
+  value === undefined ? undefined : boundedBridgeText(label, value, maximum)
 
 const boundedQuestionSnapshot = (
   question: RemoteQuestionSnapshot,
 ): RemoteQuestionSnapshot => {
-  const options = question.options?.map((option) => ({
+  const options = question.options?.map(option => ({
     label: boundedBridgeText("question option label", option.label, 80),
     ...(option.description === undefined
       ? {}
@@ -396,13 +398,15 @@ const boundedQuestionSnapshot = (
             160,
           ),
         }),
-  }));
+  }))
   if (options !== undefined && (options.length < 2 || options.length > 4)) {
     throw bridgeError(
       "invalid_input",
       "question options must contain 2-4 choices",
-    );
+    )
   }
+  const header = boundedOptionalText("question header", question.header, 16)
+  const guess = boundedOptionalText("question guess", question.guess, 2_000)
 
   return {
     id: positiveSafeInteger("question id", question.id),
@@ -412,32 +416,28 @@ const boundedQuestionSnapshot = (
       question.question,
       MAX_REMOTE_QUESTION_CHARACTERS,
     ),
-    ...(boundedOptionalText("question header", question.header, 16)
-      ? { header: boundedOptionalText("question header", question.header, 16) }
-      : {}),
-    ...(boundedOptionalText("question guess", question.guess, 2_000)
-      ? { guess: boundedOptionalText("question guess", question.guess, 2_000) }
-      : {}),
+    ...(header === undefined ? {} : { header }),
+    ...(guess === undefined ? {} : { guess }),
     ...(options ? { options } : {}),
-  };
-};
+  }
+}
 
 const initialize = (database: DatabaseSync): void => {
-  database.exec(`PRAGMA busy_timeout = ${BUSY_TIMEOUT_MS};`);
-  database.prepare("PRAGMA journal_mode = WAL").get();
-  database.exec("PRAGMA synchronous = NORMAL;");
+  database.exec(`PRAGMA busy_timeout = ${BUSY_TIMEOUT_MS};`)
+  database.prepare("PRAGMA journal_mode = WAL").get()
+  database.exec("PRAGMA synchronous = NORMAL;")
   const version = numberField(
     rowFrom(database.prepare("PRAGMA user_version").get()),
     "user_version",
-  );
+  )
   if (version < 0 || version > BRIDGE_PROTOCOL_VERSION) {
     throw bridgeError(
       "corrupt_state",
       `unsupported bridge protocol version ${version}`,
-    );
+    )
   }
-  if (version === BRIDGE_PROTOCOL_VERSION) return;
-  database.exec("BEGIN IMMEDIATE");
+  if (version === BRIDGE_PROTOCOL_VERSION) return
+  database.exec("BEGIN IMMEDIATE")
   try {
     if (version === 0) {
       database.exec(`
@@ -473,7 +473,7 @@ const initialize = (database: DatabaseSync): void => {
           value TEXT NOT NULL
         ) STRICT;
         INSERT INTO bridge_settings (key, value) VALUES ('enabled', '1');
-      `);
+      `)
     }
 
     if (version < 2) {
@@ -498,13 +498,13 @@ const initialize = (database: DatabaseSync): void => {
           ON bridge_questions (status, telegram_message_id, created_at);
         CREATE INDEX bridge_questions_agent_status
           ON bridge_questions (agent_id, status, updated_at);
-      `);
+      `)
     }
 
     if (version < 3) {
       database.exec(
         "ALTER TABLE bridge_messages ADD COLUMN images_json TEXT NOT NULL DEFAULT '[]'",
-      );
+      )
     }
 
     if (version < 4) {
@@ -522,53 +522,53 @@ const initialize = (database: DatabaseSync): void => {
         SELECT agent_id, question_id, telegram_message_id, updated_at
         FROM bridge_questions
         WHERE telegram_message_id IS NOT NULL;
-      `);
+      `)
     }
 
-    database.exec(`PRAGMA user_version = ${BRIDGE_PROTOCOL_VERSION}`);
-    database.exec("COMMIT");
+    database.exec(`PRAGMA user_version = ${BRIDGE_PROTOCOL_VERSION}`)
+    database.exec("COMMIT")
   } catch (error) {
     try {
-      database.exec("ROLLBACK");
+      database.exec("ROLLBACK")
     } catch {
       // Preserve the original failure.
     }
-    throw error;
+    throw error
   }
-};
+}
 
 const withDatabase = <T>(
   databasePath: string,
   use: (database: DatabaseSync) => T,
 ): T => {
-  const directory = dirname(databasePath);
-  mkdirSync(directory, { recursive: true, mode: 0o700 });
-  chmodSync(directory, 0o700);
-  const database = new DatabaseSync(databasePath);
-  chmodSync(databasePath, 0o600);
+  const directory = dirname(databasePath)
+  mkdirSync(directory, { recursive: true, mode: 0o700 })
+  chmodSync(directory, 0o700)
+  const database = new DatabaseSync(databasePath)
+  chmodSync(databasePath, 0o600)
   try {
-    initialize(database);
-    return use(database);
+    initialize(database)
+    return use(database)
   } finally {
-    database.close();
+    database.close()
   }
-};
+}
 
 const transaction = <T>(database: DatabaseSync, mutate: () => T): T => {
-  database.exec("BEGIN IMMEDIATE");
+  database.exec("BEGIN IMMEDIATE")
   try {
-    const result = mutate();
-    database.exec("COMMIT");
-    return result;
+    const result = mutate()
+    database.exec("COMMIT")
+    return result
   } catch (error) {
     try {
-      database.exec("ROLLBACK");
+      database.exec("ROLLBACK")
     } catch {
       // Preserve the original failure.
     }
-    throw error;
+    throw error
   }
-};
+}
 
 const count = (
   database: DatabaseSync,
@@ -577,21 +577,21 @@ const count = (
   numberField(
     rowFrom(database.prepare(`SELECT COUNT(*) AS count FROM ${table}`).get()),
     "count",
-  );
+  )
 
 const enabled = (database: DatabaseSync): boolean => {
   const row = optionalRowFrom(
     database
       .prepare("SELECT value FROM bridge_settings WHERE key = 'enabled'")
       .get(),
-  );
+  )
   if (!row)
-    throw bridgeError("corrupt_state", "bridge enabled setting is missing");
-  const value = stringField(row, "value");
+    throw bridgeError("corrupt_state", "bridge enabled setting is missing")
+  const value = stringField(row, "value")
   if (value !== "0" && value !== "1")
-    throw bridgeError("corrupt_state", "bridge enabled setting is malformed");
-  return value === "1";
-};
+    throw bridgeError("corrupt_state", "bridge enabled setting is malformed")
+  return value === "1"
+}
 
 const expireMessages = (database: DatabaseSync, now: number): void => {
   database
@@ -600,41 +600,41 @@ const expireMessages = (database: DatabaseSync, now: number): void => {
        SET status = 'failed', failure = 'expired', completed_at = ?, updated_at = ?, claim_token = NULL
        WHERE status IN ('queued', 'claimed') AND expires_at <= ?`,
     )
-    .run(now, now, now);
-};
+    .run(now, now, now)
+}
 
 const pruneTerminalMessages = (database: DatabaseSync, now: number): void => {
   database
     .prepare(
       "DELETE FROM bridge_messages WHERE status IN ('completed', 'failed') AND updated_at <= ?",
     )
-    .run(Math.max(0, now - BRIDGE_MESSAGE_TTL_MS));
-};
+    .run(Math.max(0, now - BRIDGE_MESSAGE_TTL_MS))
+}
 
 export const makeRemoteBridgeStore = (
   databasePath: string,
 ): RemoteBridgeStore => ({
-  heartbeatAgent: (input) =>
+  heartbeatAgent: input =>
     attempt("Could not heartbeat bridge agent", () =>
-      withDatabase(databasePath, (database) => {
-        const id = boundedIdentifier("agent id", input.id);
-        const label = boundedBridgeText("agent label", input.label, 256);
-        const cwd = boundedBridgeText("agent cwd", input.cwd, 1_024);
-        const now = boundedTimestamp("now", input.now);
-        const ttlMs = boundedTtl(input.ttlMs);
-        const expiresAt = now + ttlMs;
+      withDatabase(databasePath, database => {
+        const id = boundedIdentifier("agent id", input.id)
+        const label = boundedBridgeText("agent label", input.label, 256)
+        const cwd = boundedBridgeText("agent cwd", input.cwd, 1_024)
+        const now = boundedTimestamp("now", input.now)
+        const ttlMs = boundedTtl(input.ttlMs)
+        const expiresAt = now + ttlMs
         if (!Number.isSafeInteger(expiresAt))
-          throw bridgeError("invalid_input", "agent expiry exceeds time range");
+          throw bridgeError("invalid_input", "agent expiry exceeds time range")
         return transaction(database, () => {
           database
             .prepare("DELETE FROM bridge_agents WHERE expires_at <= ?")
-            .run(now);
+            .run(now)
           if (count(database, "bridge_agents") >= MAX_AGENTS) {
             const exists = database
               .prepare("SELECT 1 FROM bridge_agents WHERE agent_id = ?")
-              .get(id);
+              .get(id)
             if (!exists)
-              throw bridgeError("capacity", "bridge agent capacity reached");
+              throw bridgeError("capacity", "bridge agent capacity reached")
           }
           database
             .prepare(
@@ -647,88 +647,85 @@ export const makeRemoteBridgeStore = (
                  expires_at = excluded.expires_at,
                  accepting = excluded.accepting`,
             )
-            .run(id, label, cwd, now, expiresAt, input.accepting ? 1 : 0);
+            .run(id, label, cwd, now, expiresAt, input.accepting ? 1 : 0)
           return agentFromRow(
             rowFrom(
               database
                 .prepare("SELECT * FROM bridge_agents WHERE agent_id = ?")
                 .get(id),
             ),
-          );
-        });
+          )
+        })
       }),
     ),
-  listAgents: (now) =>
+  listAgents: now =>
     attempt("Could not list bridge agents", () =>
-      withDatabase(databasePath, (database) => {
-        const at = boundedTimestamp("now", now);
+      withDatabase(databasePath, database => {
+        const at = boundedTimestamp("now", now)
         database
           .prepare("DELETE FROM bridge_agents WHERE expires_at <= ?")
-          .run(at);
+          .run(at)
         return database
           .prepare(
             "SELECT * FROM bridge_agents WHERE expires_at > ? ORDER BY label, agent_id",
           )
           .all(at)
-          .map((row) => agentFromRow(rowFrom(row)));
+          .map(row => agentFromRow(rowFrom(row)))
       }),
     ),
-  enqueue: (input) =>
+  enqueue: input =>
     attempt("Could not enqueue remote message", () =>
-      withDatabase(databasePath, (database) => {
+      withDatabase(databasePath, database => {
         const targetAgentId = boundedIdentifier(
           "target agent id",
           input.targetAgentId,
-        );
-        const requesterId = boundedIdentifier(
-          "requester id",
-          input.requesterId,
-        );
-        const dedupeKey = boundedIdentifier("dedupe key", input.dedupeKey, 256);
+        )
+        const requesterId = boundedIdentifier("requester id", input.requesterId)
+        const dedupeKey = boundedIdentifier("dedupe key", input.dedupeKey, 256)
         const text = boundedBridgeText(
           "message",
           input.text,
           MAX_REMOTE_MESSAGE_CHARACTERS,
-        );
-        const images = boundedBridgeImages(input.images ?? []);
-        const imagesJson = JSON.stringify(images);
-        const now = boundedTimestamp("now", input.now);
-        const ttlMs = boundedTtl(input.ttlMs);
-        const expiresAt = now + ttlMs;
+        )
+        const images = boundedBridgeImages(input.images ?? [])
+        const imagesJson = JSON.stringify(images)
+        const now = boundedTimestamp("now", input.now)
+        const ttlMs = boundedTtl(input.ttlMs)
+        const expiresAt = now + ttlMs
         if (!Number.isSafeInteger(expiresAt))
           throw bridgeError(
             "invalid_input",
             "message expiry exceeds time range",
-          );
+          )
         return transaction(database, () => {
-          expireMessages(database, now);
-          pruneTerminalMessages(database, now);
+          expireMessages(database, now)
+          pruneTerminalMessages(database, now)
           if (!enabled(database))
-            throw bridgeError("disabled", "remote message bridge is disabled");
+            throw bridgeError("disabled", "remote message bridge is disabled")
           const agent = optionalRowFrom(
             database
               .prepare(
                 "SELECT * FROM bridge_agents WHERE agent_id = ? AND expires_at > ?",
               )
               .get(targetAgentId, now),
-          );
+          )
           if (!agent)
             throw bridgeError(
               "stale_agent",
               "target session is not bridge-ready",
-            );
+            )
           const existing = optionalRowFrom(
             database
               .prepare(
                 "SELECT * FROM bridge_messages WHERE requester_id = ? AND dedupe_key = ?",
               )
               .get(requesterId, dedupeKey),
-          );
-          if (existing) return messageFromRow(existing);
+          )
+          if (existing) return messageFromRow(existing)
           if (count(database, "bridge_messages") >= MAX_MESSAGES) {
-            throw bridgeError("capacity", "bridge message capacity reached");
+            throw bridgeError("capacity", "bridge message capacity reached")
           }
-          const id = randomUUID();
+          const id = randomUUID()
           database
             .prepare(
               `INSERT INTO bridge_messages (
@@ -746,25 +743,25 @@ export const makeRemoteBridgeStore = (
               now,
               expiresAt,
               now,
-            );
+            )
           return messageFromRow(
             rowFrom(
               database
                 .prepare("SELECT * FROM bridge_messages WHERE message_id = ?")
                 .get(id),
             ),
-          );
-        });
+          )
+        })
       }),
     ),
-  claimNext: (input) =>
+  claimNext: input =>
     attempt("Could not claim remote message", () =>
-      withDatabase(databasePath, (database) => {
-        const agentId = boundedIdentifier("agent id", input.agentId);
-        const now = boundedTimestamp("now", input.now);
+      withDatabase(databasePath, database => {
+        const agentId = boundedIdentifier("agent id", input.agentId)
+        const now = boundedTimestamp("now", input.now)
         return transaction(database, () => {
-          expireMessages(database, now);
-          if (!enabled(database)) return undefined;
+          expireMessages(database, now)
+          if (!enabled(database)) return undefined
           const row = optionalRowFrom(
             database
               .prepare(
@@ -773,10 +770,10 @@ export const makeRemoteBridgeStore = (
                  ORDER BY created_at, message_id LIMIT 1`,
               )
               .get(agentId, now),
-          );
-          if (!row) return undefined;
-          const id = stringField(row, "message_id") ?? "";
-          const claimToken = randomUUID();
+          )
+          if (!row) return undefined
+          const id = stringField(row, "message_id") ?? ""
+          const claimToken = randomUUID()
           // `expires_at` is fixed at send time and `expireMessages` kills
           // claimed rows too, so without this a lane that claims work near the
           // deadline loses it mid-handling. The claim starts a fresh window.
@@ -786,28 +783,28 @@ export const makeRemoteBridgeStore = (
                SET status = 'claimed', claim_token = ?, claimed_at = ?, updated_at = ?, expires_at = ?
                WHERE message_id = ? AND status = 'queued'`,
             )
-            .run(claimToken, now, now, now + BRIDGE_MESSAGE_TTL_MS, id);
+            .run(claimToken, now, now, now + BRIDGE_MESSAGE_TTL_MS, id)
           return messageFromRow(
             rowFrom(
               database
                 .prepare("SELECT * FROM bridge_messages WHERE message_id = ?")
                 .get(id),
             ),
-          );
-        });
+          )
+        })
       }),
     ),
-  complete: (input) =>
+  complete: input =>
     attempt("Could not complete remote message", () =>
-      withDatabase(databasePath, (database) => {
-        const messageId = boundedIdentifier("message id", input.messageId);
-        const claimToken = boundedIdentifier("claim token", input.claimToken);
+      withDatabase(databasePath, database => {
+        const messageId = boundedIdentifier("message id", input.messageId)
+        const claimToken = boundedIdentifier("claim token", input.claimToken)
         const response = boundedBridgeText(
           "response",
           input.response,
           MAX_REMOTE_RESPONSE_CHARACTERS,
-        );
-        const now = boundedTimestamp("now", input.now);
+        )
+        const now = boundedTimestamp("now", input.now)
         return transaction(database, () => {
           const result = database
             .prepare(
@@ -815,28 +812,28 @@ export const makeRemoteBridgeStore = (
                SET status = 'completed', response = ?, completed_at = ?, updated_at = ?, claim_token = NULL
                WHERE message_id = ? AND status = 'claimed' AND claim_token = ? AND expires_at > ?`,
             )
-            .run(response, now, now, messageId, claimToken, now);
+            .run(response, now, now, messageId, claimToken, now)
           if (result.changes !== 1)
             throw bridgeError(
               "invalid_transition",
               "stale remote message claim",
-            );
+            )
           return messageFromRow(
             rowFrom(
               database
                 .prepare("SELECT * FROM bridge_messages WHERE message_id = ?")
                 .get(messageId),
             ),
-          );
-        });
+          )
+        })
       }),
     ),
-  fail: (input) =>
+  fail: input =>
     attempt("Could not fail remote message", () =>
-      withDatabase(databasePath, (database) => {
-        const messageId = boundedIdentifier("message id", input.messageId);
-        const claimToken = boundedIdentifier("claim token", input.claimToken);
-        const now = boundedTimestamp("now", input.now);
+      withDatabase(databasePath, database => {
+        const messageId = boundedIdentifier("message id", input.messageId)
+        const claimToken = boundedIdentifier("claim token", input.claimToken)
+        const now = boundedTimestamp("now", input.now)
         return transaction(database, () => {
           const result = database
             .prepare(
@@ -844,57 +841,57 @@ export const makeRemoteBridgeStore = (
                SET status = 'failed', failure = ?, completed_at = ?, updated_at = ?, claim_token = NULL
                WHERE message_id = ? AND status = 'claimed' AND claim_token = ?`,
             )
-            .run(input.failure, now, now, messageId, claimToken);
+            .run(input.failure, now, now, messageId, claimToken)
           if (result.changes !== 1)
             throw bridgeError(
               "invalid_transition",
               "stale remote message claim",
-            );
+            )
           return messageFromRow(
             rowFrom(
               database
                 .prepare("SELECT * FROM bridge_messages WHERE message_id = ?")
                 .get(messageId),
             ),
-          );
-        });
+          )
+        })
       }),
     ),
   get: (messageId, now) =>
     attempt("Could not read remote message", () =>
-      withDatabase(databasePath, (database) => {
-        const id = boundedIdentifier("message id", messageId);
-        const at = boundedTimestamp("now", now);
-        expireMessages(database, at);
+      withDatabase(databasePath, database => {
+        const id = boundedIdentifier("message id", messageId)
+        const at = boundedTimestamp("now", now)
+        expireMessages(database, at)
         const row = optionalRowFrom(
           database
             .prepare("SELECT * FROM bridge_messages WHERE message_id = ?")
             .get(id),
-        );
-        if (!row) throw bridgeError("not_found", "remote message not found");
-        return messageFromRow(row);
+        )
+        if (!row) throw bridgeError("not_found", "remote message not found")
+        return messageFromRow(row)
       }),
     ),
-  setEnabled: (value) =>
+  setEnabled: value =>
     attempt("Could not update bridge state", () =>
-      withDatabase(databasePath, (database) => {
+      withDatabase(databasePath, database => {
         database
           .prepare("UPDATE bridge_settings SET value = ? WHERE key = 'enabled'")
-          .run(value ? "1" : "0");
-        return value;
+          .run(value ? "1" : "0")
+        return value
       }),
     ),
   isEnabled: () =>
     attempt("Could not read bridge state", () =>
       withDatabase(databasePath, enabled),
     ),
-  syncQuestions: (input) =>
+  syncQuestions: input =>
     attempt("Could not sync bridge questions", () =>
-      withDatabase(databasePath, (database) => {
-        const agentId = boundedIdentifier("agent id", input.agentId);
-        const now = boundedTimestamp("now", input.now);
-        const questions = input.questions.map(boundedQuestionSnapshot);
-        const questionIds = new Set(questions.map(({ id }) => id));
+      withDatabase(databasePath, database => {
+        const agentId = boundedIdentifier("agent id", input.agentId)
+        const now = boundedTimestamp("now", input.now)
+        const questions = input.questions.map(boundedQuestionSnapshot)
+        const questionIds = new Set(questions.map(({ id }) => id))
 
         transaction(database, () => {
           for (const question of questions) {
@@ -904,20 +901,20 @@ export const makeRemoteBridgeStore = (
                   "SELECT status FROM bridge_questions WHERE agent_id = ? AND question_id = ?",
                 )
                 .get(agentId, question.id),
-            );
+            )
             const existingStatus = existing
               ? stringField(existing, "status")
-              : undefined;
+              : undefined
             const optionsJson = question.options
               ? JSON.stringify(question.options)
-              : null;
+              : null
 
             if (question.status === "pending") {
               if (
                 existingStatus === "answered" ||
                 existingStatus === "delivered"
               )
-                continue;
+                continue
 
               if (existingStatus === undefined) {
                 database
@@ -936,11 +933,11 @@ export const makeRemoteBridgeStore = (
                     optionsJson,
                     now,
                     now,
-                  );
-                continue;
+                  )
+                continue
               }
 
-              const reopened = existingStatus === "resolved";
+              const reopened = existingStatus === "resolved"
               database
                 .prepare(
                   `UPDATE bridge_questions
@@ -960,8 +957,8 @@ export const makeRemoteBridgeStore = (
                   reopened ? 1 : 0,
                   agentId,
                   question.id,
-                );
-              continue;
+                )
+              continue
             }
 
             database
@@ -988,7 +985,7 @@ export const makeRemoteBridgeStore = (
                 optionsJson,
                 now,
                 now,
-              );
+              )
           }
 
           const existing = database
@@ -996,27 +993,27 @@ export const makeRemoteBridgeStore = (
               "SELECT question_id, status FROM bridge_questions WHERE agent_id = ?",
             )
             .all(agentId)
-            .map(rowFrom);
+            .map(rowFrom)
           for (const row of existing) {
-            const questionId = numberField(row, "question_id");
+            const questionId = numberField(row, "question_id")
             if (
               questionIds.has(questionId) ||
               stringField(row, "status") === "answered"
             )
-              continue;
+              continue
             database
               .prepare(
                 "DELETE FROM bridge_questions WHERE agent_id = ? AND question_id = ?",
               )
-              .run(agentId, questionId);
+              .run(agentId, questionId)
           }
-        });
+        })
       }),
     ),
-  listPendingQuestions: (now) =>
+  listPendingQuestions: now =>
     attempt("Could not list pending bridge questions", () =>
-      withDatabase(databasePath, (database) => {
-        const at = boundedTimestamp("now", now);
+      withDatabase(databasePath, database => {
+        const at = boundedTimestamp("now", now)
         return database
           .prepare(
             `SELECT question.*
@@ -1028,13 +1025,13 @@ export const makeRemoteBridgeStore = (
              LIMIT 100`,
           )
           .all(at)
-          .map((row) => questionFromRow(rowFrom(row)));
+          .map(row => questionFromRow(rowFrom(row)))
       }),
     ),
-  listUnrelayedQuestions: (now) =>
+  listUnrelayedQuestions: now =>
     attempt("Could not list unrelayed bridge questions", () =>
-      withDatabase(databasePath, (database) => {
-        const at = boundedTimestamp("now", now);
+      withDatabase(databasePath, database => {
+        const at = boundedTimestamp("now", now)
         return database
           .prepare(
             `SELECT question.*
@@ -1047,14 +1044,14 @@ export const makeRemoteBridgeStore = (
              LIMIT 100`,
           )
           .all(at)
-          .map((row) => questionFromRow(rowFrom(row)));
+          .map(row => questionFromRow(rowFrom(row)))
       }),
     ),
-  isQuestionRelayed: (input) =>
+  isQuestionRelayed: input =>
     attempt("Could not read question relay status", () =>
-      withDatabase(databasePath, (database) => {
-        const agentId = boundedIdentifier("agent id", input.agentId);
-        const questionId = positiveSafeInteger("question id", input.questionId);
+      withDatabase(databasePath, database => {
+        const agentId = boundedIdentifier("agent id", input.agentId)
+        const questionId = positiveSafeInteger("question id", input.questionId)
         const row = optionalRowFrom(
           database
             .prepare(
@@ -1063,15 +1060,18 @@ export const makeRemoteBridgeStore = (
                WHERE agent_id = ? AND question_id = ?`,
             )
             .get(agentId, questionId),
-        );
-        return row?.telegram_message_id !== null && row?.telegram_message_id !== undefined;
+        )
+        return (
+          row?.telegram_message_id !== null &&
+          row?.telegram_message_id !== undefined
+        )
       }),
     ),
-  isQuestionHistoricallyRelayed: (input) =>
+  isQuestionHistoricallyRelayed: input =>
     attempt("Could not read historical question relay status", () =>
-      withDatabase(databasePath, (database) => {
-        const agentId = boundedIdentifier("agent id", input.agentId);
-        const questionId = positiveSafeInteger("question id", input.questionId);
+      withDatabase(databasePath, database => {
+        const agentId = boundedIdentifier("agent id", input.agentId)
+        const questionId = positiveSafeInteger("question id", input.questionId)
         return (
           optionalRowFrom(
             database
@@ -1082,20 +1082,20 @@ export const makeRemoteBridgeStore = (
               )
               .get(agentId, questionId),
           ) !== undefined
-        );
+        )
       }),
     ),
-  linkTelegramQuestion: (input) =>
+  linkTelegramQuestion: input =>
     attempt("Could not link Telegram question", () =>
-      withDatabase(databasePath, (database) => {
-        const agentId = boundedIdentifier("agent id", input.agentId);
-        const questionId = positiveSafeInteger("question id", input.questionId);
-        const chatId = positiveSafeInteger("Telegram chat id", input.chatId);
+      withDatabase(databasePath, database => {
+        const agentId = boundedIdentifier("agent id", input.agentId)
+        const questionId = positiveSafeInteger("question id", input.questionId)
+        const chatId = positiveSafeInteger("Telegram chat id", input.chatId)
         const messageId = positiveSafeInteger(
           "Telegram message id",
           input.messageId,
-        );
-        const now = boundedTimestamp("now", input.now);
+        )
+        const now = boundedTimestamp("now", input.now)
 
         return transaction(database, () => {
           const result = database
@@ -1105,12 +1105,12 @@ export const makeRemoteBridgeStore = (
                WHERE agent_id = ? AND question_id = ?
                  AND status = 'pending' AND telegram_message_id IS NULL`,
             )
-            .run(chatId, messageId, now, agentId, questionId);
+            .run(chatId, messageId, now, agentId, questionId)
           if (result.changes !== 1) {
             throw bridgeError(
               "invalid_transition",
               "question is already relayed or terminal",
-            );
+            )
           }
           database
             .prepare(
@@ -1119,7 +1119,7 @@ export const makeRemoteBridgeStore = (
                ) VALUES (?, ?, ?, ?)
                ON CONFLICT(agent_id, question_id) DO NOTHING`,
             )
-            .run(agentId, questionId, messageId, now);
+            .run(agentId, questionId, messageId, now)
 
           return questionFromRow(
             rowFrom(
@@ -1129,24 +1129,24 @@ export const makeRemoteBridgeStore = (
                 )
                 .get(agentId, questionId),
             ),
-          );
-        });
+          )
+        })
       }),
     ),
-  answerTelegramQuestion: (input) =>
+  answerTelegramQuestion: input =>
     attempt("Could not answer Telegram question", () =>
-      withDatabase(databasePath, (database) => {
-        const chatId = positiveSafeInteger("Telegram chat id", input.chatId);
+      withDatabase(databasePath, database => {
+        const chatId = positiveSafeInteger("Telegram chat id", input.chatId)
         const messageId = positiveSafeInteger(
           "Telegram message id",
           input.messageId,
-        );
+        )
         const rawAnswer = boundedBridgeText(
           "question answer",
           input.answer,
           MAX_REMOTE_ANSWER_CHARACTERS,
-        );
-        const now = boundedTimestamp("now", input.now);
+        )
+        const now = boundedTimestamp("now", input.now)
 
         return transaction(database, () => {
           const row = optionalRowFrom(
@@ -1156,26 +1156,26 @@ export const makeRemoteBridgeStore = (
                  WHERE telegram_chat_id = ? AND telegram_message_id = ?`,
               )
               .get(chatId, messageId),
-          );
+          )
           if (!row)
             throw bridgeError(
               "not_found",
               "Telegram question binding not found",
-            );
+            )
           if (stringField(row, "status") !== "pending") {
             throw bridgeError(
               "invalid_transition",
               "Telegram question is already terminal",
-            );
+            )
           }
 
           const options = questionOptionsFromJson(
             stringField(row, "options_json", true),
-          );
+          )
           const optionIndex = /^[1-4]$/.test(rawAnswer)
             ? Number(rawAnswer) - 1
-            : -1;
-          const answer = options?.[optionIndex]?.label ?? rawAnswer;
+            : -1
+          const answer = options?.[optionIndex]?.label ?? rawAnswer
           const result = database
             .prepare(
               `UPDATE bridge_questions
@@ -1187,28 +1187,28 @@ export const makeRemoteBridgeStore = (
               now,
               stringField(row, "agent_id"),
               numberField(row, "question_id"),
-            );
+            )
           if (result.changes !== 1) {
             throw bridgeError(
               "invalid_transition",
               "Telegram question answer raced",
-            );
+            )
           }
 
           return {
             agentId: stringField(row, "agent_id") ?? "",
             questionId: numberField(row, "question_id"),
             answer,
-          };
-        });
+          }
+        })
       }),
     ),
-  dismissQuestion: (input) =>
+  dismissQuestion: input =>
     attempt("Could not dismiss bridge question", () =>
-      withDatabase(databasePath, (database) => {
-        const agentId = boundedIdentifier("agent id", input.agentId);
-        const questionId = positiveSafeInteger("question id", input.questionId);
-        const now = boundedTimestamp("now", input.now);
+      withDatabase(databasePath, database => {
+        const agentId = boundedIdentifier("agent id", input.agentId)
+        const questionId = positiveSafeInteger("question id", input.questionId)
+        const now = boundedTimestamp("now", input.now)
 
         return transaction(database, () => {
           const row = optionalRowFrom(
@@ -1217,9 +1217,9 @@ export const makeRemoteBridgeStore = (
                 "SELECT * FROM bridge_questions WHERE agent_id = ? AND question_id = ?",
               )
               .get(agentId, questionId),
-          );
+          )
           if (!row)
-            throw bridgeError("not_found", "question not found for this agent");
+            throw bridgeError("not_found", "question not found for this agent")
 
           // An answered card is the owner having already replied. Dropping it
           // would discard their answer before the agent ever collected it.
@@ -1227,7 +1227,7 @@ export const makeRemoteBridgeStore = (
             throw bridgeError(
               "invalid_transition",
               "question is answered; collect it with answer instead",
-            );
+            )
 
           database
             .prepare(
@@ -1235,7 +1235,7 @@ export const makeRemoteBridgeStore = (
                SET status = 'resolved', updated_at = ?
                WHERE agent_id = ? AND question_id = ? AND status = 'pending'`,
             )
-            .run(now, agentId, questionId);
+            .run(now, agentId, questionId)
           return questionFromRow(
             rowFrom(
               database
@@ -1244,15 +1244,15 @@ export const makeRemoteBridgeStore = (
                 )
                 .get(agentId, questionId),
             ),
-          );
-        });
+          )
+        })
       }),
     ),
-  takeQuestionResolution: (input) =>
+  takeQuestionResolution: input =>
     attempt("Could not take bridge question resolution", () =>
-      withDatabase(databasePath, (database) => {
-        const agentId = boundedIdentifier("agent id", input.agentId);
-        const now = boundedTimestamp("now", input.now);
+      withDatabase(databasePath, database => {
+        const agentId = boundedIdentifier("agent id", input.agentId)
+        const now = boundedTimestamp("now", input.now)
 
         return transaction(database, () => {
           const row = optionalRowFrom(
@@ -1264,26 +1264,26 @@ export const makeRemoteBridgeStore = (
                  LIMIT 1`,
               )
               .get(agentId),
-          );
-          if (!row) return undefined;
+          )
+          if (!row) return undefined
 
-          const questionId = numberField(row, "question_id");
+          const questionId = numberField(row, "question_id")
           const result = database
             .prepare(
               `UPDATE bridge_questions
                SET status = 'delivered', updated_at = ?
                WHERE agent_id = ? AND question_id = ? AND status = 'answered'`,
             )
-            .run(now, agentId, questionId);
+            .run(now, agentId, questionId)
           if (result.changes !== 1) {
             throw bridgeError(
               "invalid_transition",
               "question resolution delivery raced",
-            );
+            )
           }
 
-          return resolutionFromRow(row);
-        });
+          return resolutionFromRow(row)
+        })
       }),
     ),
-});
+})

@@ -2,10 +2,7 @@ import assert from "node:assert/strict"
 import { readFileSync } from "node:fs"
 import test from "node:test"
 
-import {
-  agentDisplayLabel,
-  identifiedAgentLabel,
-} from "./agent-identity.ts"
+import { agentDisplayLabel, identifiedAgentLabel } from "./agent-identity.ts"
 import type { BridgeAgent } from "./protocol.ts"
 
 const registrySource = readFileSync(

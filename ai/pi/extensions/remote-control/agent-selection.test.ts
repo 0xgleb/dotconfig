@@ -5,6 +5,7 @@ import {
   agentMatchesSelector,
   preferredAgent,
   resolvableSelector,
+  telegramRoutableAgents,
 } from "./agent-selection.ts"
 import type { BridgeAgent } from "./protocol.ts"
 
@@ -27,6 +28,30 @@ const agents: BridgeAgent[] = [
   },
 ]
 
+test("Telegram chat routing excludes monitor-only external harness heartbeats", () => {
+  const roster: BridgeAgent[] = [
+    {
+      ...agents[0]!,
+      id: "019fe002-8c63-7c1e-aa67-3fe29611a242",
+    },
+    {
+      ...agents[1]!,
+      id: "external-research-monitor",
+      label: "External research monitor",
+    },
+    {
+      ...agents[1]!,
+      id: "claude-review-duty",
+      label: "Claude review duty",
+    },
+  ]
+
+  assert.deepEqual(
+    telegramRoutableAgents(roster).map(({ id }) => id),
+    ["019fe002-8c63-7c1e-aa67-3fe29611a242"],
+  )
+})
+
 test("human-readable labels and ID prefixes both select agents", () => {
   assert.equal(agentMatchesSelector(agents[0]!, ".config"), true)
   assert.equal(agentMatchesSelector(agents[0]!, "Dotconfig · Pi Support"), true)
@@ -37,7 +62,10 @@ test("human-readable labels and ID prefixes both select agents", () => {
 
 test("dotconfig is the default unless an explicit selection remains live", () => {
   assert.equal(preferredAgent(agents)?.label, "Dotconfig · Pi Support")
-  assert.equal(preferredAgent(agents, agents[1]!.id)?.label, "Yielduck · Operator")
+  assert.equal(
+    preferredAgent(agents, agents[1]!.id)?.label,
+    "Yielduck · Operator",
+  )
 })
 
 test("agent list exposes copyable Telegram code selectors", () => {
@@ -82,7 +110,9 @@ test("a selector shared by several lanes gives way to the unambiguous agent id",
 
   for (const agent of crowded) {
     const selector = resolvableSelector(agent, crowded)
-    const matches = crowded.filter((other) => agentMatchesSelector(other, selector))
+    const matches = crowded.filter(other =>
+      agentMatchesSelector(other, selector),
+    )
     assert.equal(matches.length, 1)
     assert.equal(matches[0]!.id, agent.id)
   }

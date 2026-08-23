@@ -1,7 +1,7 @@
-import assert from "node:assert/strict";
-import test from "node:test";
-import * as Effect from "effect/Effect";
-import * as Either from "effect/Either";
+import assert from "node:assert/strict"
+import test from "node:test"
+import * as Effect from "effect/Effect"
+import * as Either from "effect/Either"
 
 import {
   authorizeTelegramMessage,
@@ -11,11 +11,12 @@ import {
   decodeTelegramOk,
   decodeTelegramSentMessageId,
   decodeTelegramUpdates,
+  groupChatRegistration,
   telegramAcknowledgementReaction,
   telegramImageFromBytes,
   freshClankerRejection,
   initialTelegramBotState,
-} from "./telegram.ts";
+} from "./telegram.ts"
 
 const ownerMessage = {
   chatId: 42,
@@ -23,102 +24,107 @@ const ownerMessage = {
   userId: 1001,
   username: "dianov",
   text: "yo",
-};
+}
 
 test("the first @dianov message pins the immutable owner user id", () => {
   const authorization = authorizeTelegramMessage(
     initialTelegramBotState,
     ownerMessage,
     "dianov",
-  );
+  )
 
-  assert.equal(authorization.kind, "owner");
-  assert.equal(authorization.ownerPinned, true);
-  assert.equal(authorization.state.ownerUserId, 1001);
-});
+  assert.equal(authorization.kind, "owner")
+  assert.equal(authorization.ownerPinned, true)
+  assert.equal(authorization.state.ownerUserId, 1001)
+})
 
 test("owner authorization requires both the pinned id and current username", () => {
-  const pinned = { ...initialTelegramBotState, ownerUserId: 1001 };
+  const pinned = { ...initialTelegramBotState, ownerUserId: 1001 }
   const wrongId = authorizeTelegramMessage(
     pinned,
     { ...ownerMessage, userId: 9999 },
     "dianov",
-  );
+  )
   const missingUsername = authorizeTelegramMessage(
     pinned,
     { ...ownerMessage, username: undefined },
     "dianov",
-  );
+  )
 
-  assert.equal(wrongId.kind, "rejected");
-  assert.equal(missingUsername.kind, "rejected");
-  assert.deepEqual(wrongId.state, pinned);
-  assert.deepEqual(missingUsername.state, pinned);
-});
+  assert.equal(wrongId.kind, "rejected")
+  assert.equal(missingUsername.kind, "rejected")
+  assert.deepEqual(wrongId.state, pinned)
+  assert.deepEqual(missingUsername.state, pinned)
+})
 
 test("unauthorized senders never alter owner state and receive local clanker rejections", () => {
-  const stranger = { ...ownerMessage, userId: 2002, username: "stranger" };
+  const stranger = { ...ownerMessage, userId: 2002, username: "stranger" }
   const authorization = authorizeTelegramMessage(
     initialTelegramBotState,
     stranger,
     "dianov",
-  );
-  const first = freshClankerRejection(0);
-  const second = freshClankerRejection(first.nextCounter);
+  )
+  const first = freshClankerRejection(0)
+  const second = freshClankerRejection(first.nextCounter)
 
-  assert.equal(authorization.kind, "rejected");
-  assert.deepEqual(authorization.state, initialTelegramBotState);
-  const russian = freshClankerRejection(0, "Привет, кланкер");
+  assert.equal(authorization.kind, "rejected")
+  assert.deepEqual(authorization.state, initialTelegramBotState)
+  const russian = freshClankerRejection(0, "Привет, кланкер")
 
-  assert.notEqual(first.text, second.text);
-  assert.match(first.text, /not your clanker/i);
-  assert.match(second.text, /not your clanker/i);
-  assert.match(russian.text, /[А-Яа-яЁё]/u);
-});
+  assert.notEqual(first.text, second.text)
+  assert.match(first.text, /not your clanker/i)
+  assert.match(second.text, /not your clanker/i)
+  assert.match(russian.text, /[А-Яа-яЁё]/u)
+})
 
 test("local clanker pools compose fifty unique replies per supported language", () => {
-  const english = Array.from({ length: 50 }, (_, counter) =>
-    freshClankerRejection(counter).text,
-  );
-  const russian = Array.from({ length: 50 }, (_, counter) =>
-    freshClankerRejection(counter, "Привет").text,
-  );
+  const english = Array.from(
+    { length: 50 },
+    (_, counter) => freshClankerRejection(counter).text,
+  )
+  const russian = Array.from(
+    { length: 50 },
+    (_, counter) => freshClankerRejection(counter, "Привет").text,
+  )
 
-  assert.equal(new Set(english).size, 50);
-  assert.equal(new Set(russian).size, 50);
-  assert.equal(russian.every((text) => /[А-Яа-яЁё]/u.test(text)), true);
-});
+  assert.equal(new Set(english).size, 50)
+  assert.equal(new Set(russian).size, 50)
+  assert.equal(
+    russian.every(text => /[А-Яа-яЁё]/u.test(text)),
+    true,
+  )
+})
 
 test("unauthorized rejection replies are bounded per sender without persisted identifiers", () => {
-  const first = consumeRejectionReplyAllowance(new Map(), "2002:42", 1_000);
+  const first = consumeRejectionReplyAllowance(new Map(), "2002:42", 1_000)
   const repeated = consumeRejectionReplyAllowance(
     first.nextAllowances,
     "2002:42",
     1_001,
-  );
+  )
   const otherSender = consumeRejectionReplyAllowance(
     repeated.nextAllowances,
     "3003:42",
     1_002,
-  );
+  )
   const afterCooldown = consumeRejectionReplyAllowance(
     otherSender.nextAllowances,
     "2002:42",
     3_601_001,
-  );
+  )
 
-  assert.equal(first.allowed, true);
-  assert.equal(repeated.allowed, false);
-  assert.equal(otherSender.allowed, true);
-  assert.equal(afterCooldown.allowed, true);
-  assert.equal(afterCooldown.nextAllowances.size <= 128, true);
-});
+  assert.equal(first.allowed, true)
+  assert.equal(repeated.allowed, false)
+  assert.equal(otherSender.allowed, true)
+  assert.equal(afterCooldown.allowed, true)
+  assert.equal(afterCooldown.nextAllowances.size <= 128, true)
+})
 
 test("owner acknowledgements vary locally by context without model calls", () => {
   const question = telegramAcknowledgementReaction(
     { ...ownerMessage, text: "Can you review this?" },
     1,
-  );
+  )
   const image = telegramAcknowledgementReaction(
     {
       ...ownerMessage,
@@ -126,7 +132,7 @@ test("owner acknowledgements vary locally by context without model calls", () =>
       photo: { fileId: "screen", width: 100, height: 100 },
     },
     2,
-  );
+  )
   const failures = new Set(
     Array.from({ length: 20 }, (_, updateId) =>
       telegramAcknowledgementReaction(
@@ -134,18 +140,18 @@ test("owner acknowledgements vary locally by context without model calls", () =>
         updateId,
       ),
     ),
-  );
+  )
 
-  assert.match(question, /^(?:🤔|👀)$/u);
-  assert.match(image, /^(?:👀|🤓)$/u);
-  assert.equal(failures.size > 1, true);
-  const previous = telegramAcknowledgementReaction(ownerMessage, 7);
-  assert.equal(previous, telegramAcknowledgementReaction(ownerMessage, 7));
+  assert.match(question, /^(?:🤔|👀)$/u)
+  assert.match(image, /^(?:👀|🤓)$/u)
+  assert.equal(failures.size > 1, true)
+  const previous = telegramAcknowledgementReaction(ownerMessage, 7)
+  assert.equal(previous, telegramAcknowledgementReaction(ownerMessage, 7))
   assert.notEqual(
     telegramAcknowledgementReaction(ownerMessage, 7, previous),
     previous,
-  );
-});
+  )
+})
 
 test("Telegram updates decode only documented private text-message fields", async () => {
   const decoded = await Effect.runPromise(
@@ -165,13 +171,74 @@ test("Telegram updates decode only documented private text-message fields", asyn
         ],
       }),
     ),
-  );
+  )
 
-  assert.equal(Either.isRight(decoded), true);
+  assert.equal(Either.isRight(decoded), true)
   if (Either.isRight(decoded)) {
-    assert.deepEqual(decoded.right, [{ updateId: 123, message: ownerMessage }]);
+    assert.deepEqual(decoded.right, [{ updateId: 123, message: ownerMessage }])
   }
-});
+})
+
+test("private callback queries decode only bounded CABA controls", async () => {
+  const decoded = await Effect.runPromise(
+    decodeTelegramUpdates({
+      ok: true,
+      result: [
+        {
+          update_id: 124,
+          callback_query: {
+            id: "callback-1",
+            from: { id: 1001, is_bot: false, username: "dianov" },
+            message: {
+              message_id: 77,
+              chat: { id: 42, type: "private" },
+            },
+            data: "caba:plus",
+          },
+        },
+      ],
+    }),
+  )
+
+  assert.deepEqual(decoded, [
+    {
+      updateId: 124,
+      callbackQuery: {
+        id: "callback-1",
+        chatId: 42,
+        messageId: 77,
+        userId: 1001,
+        username: "dianov",
+        data: "caba:plus",
+      },
+    },
+  ])
+})
+
+test("callback queries reject unknown actions", async () => {
+  const decoded = await Effect.runPromise(
+    Effect.either(
+      decodeTelegramUpdates({
+        ok: true,
+        result: [
+          {
+            update_id: 124,
+            callback_query: {
+              id: "callback-1",
+              from: { id: 1001, is_bot: false, username: "dianov" },
+              message: {
+                message_id: 77,
+                chat: { id: 42, type: "private" },
+              },
+              data: "caba:arbitrary",
+            },
+          },
+        ],
+      }),
+    ),
+  )
+  assert.equal(Either.isLeft(decoded), true)
+})
 
 test("private voice notes decode only bounded documented metadata", async () => {
   const decoded = await Effect.runPromise(
@@ -195,7 +262,7 @@ test("private voice notes decode only bounded documented metadata", async () => 
         },
       ],
     }),
-  );
+  )
 
   assert.deepEqual(decoded, [
     {
@@ -215,14 +282,30 @@ test("private voice notes decode only bounded documented metadata", async () => 
         },
       },
     },
-  ]);
+  ])
 })
 
 test("malformed or oversized voice metadata fails closed", async () => {
   for (const voice of [
-    { file_id: "voice", file_unique_id: "unique", duration: 181, mime_type: "audio/ogg" },
-    { file_id: "voice", file_unique_id: "unique", duration: 1, mime_type: "audio/mpeg" },
-    { file_id: "voice", file_unique_id: "unique", duration: 1, mime_type: "audio/ogg", file_size: 8 * 1024 * 1024 + 1 },
+    {
+      file_id: "voice",
+      file_unique_id: "unique",
+      duration: 181,
+      mime_type: "audio/ogg",
+    },
+    {
+      file_id: "voice",
+      file_unique_id: "unique",
+      duration: 1,
+      mime_type: "audio/mpeg",
+    },
+    {
+      file_id: "voice",
+      file_unique_id: "unique",
+      duration: 1,
+      mime_type: "audio/ogg",
+      file_size: 8 * 1024 * 1024 + 1,
+    },
   ]) {
     const decoded = await Effect.runPromise(
       Effect.either(
@@ -241,8 +324,8 @@ test("malformed or oversized voice metadata fails closed", async () => {
           ],
         }),
       ),
-    );
-    assert.equal(Either.isLeft(decoded), true);
+    )
+    assert.equal(Either.isLeft(decoded), true)
   }
 })
 
@@ -278,7 +361,7 @@ test("private photo captions retain only the largest documented photo variant", 
         },
       ],
     }),
-  );
+  )
 
   assert.deepEqual(decoded, [
     {
@@ -295,8 +378,8 @@ test("private photo captions retain only the largest documented photo variant", 
         },
       },
     },
-  ]);
-});
+  ])
+})
 
 test("edited owner messages retain their identity as corrections", async () => {
   assert.deepEqual(
@@ -322,8 +405,8 @@ test("edited owner messages retain their identity as corrections", async () => {
         message: { ...ownerMessage, text: "edited text", edited: true },
       },
     ],
-  );
-});
+  )
+})
 
 test("private owner reactions decode as bounded feedback", async () => {
   assert.deepEqual(
@@ -355,8 +438,8 @@ test("private owner reactions decode as bounded feedback", async () => {
         },
       },
     ],
-  );
-});
+  )
+})
 
 test("ignored Telegram updates retain their offset so they cannot wedge polling", async () => {
   assert.deepEqual(
@@ -367,8 +450,8 @@ test("ignored Telegram updates retain their offset so they cannot wedge polling"
       }),
     ),
     [{ updateId: 126 }],
-  );
-});
+  )
+})
 
 test("adjacent owner text bursts coalesce while commands and replies remain boundaries", () => {
   const updates = [
@@ -403,7 +486,7 @@ test("adjacent owner text bursts coalesce while commands and replies remain boun
       updateId: 205,
       message: { ...ownerMessage, messageId: 12, text: "third" },
     },
-  ];
+  ]
 
   assert.deepEqual(coalesceTelegramUpdates(updates), [
     {
@@ -418,8 +501,8 @@ test("adjacent owner text bursts coalesce while commands and replies remain boun
     updates[3],
     updates[4],
     updates[5],
-  ]);
-});
+  ])
+})
 
 test("one voice note keeps its position in a text burst while a second voice is a boundary", () => {
   const voice = {
@@ -483,11 +566,11 @@ test("an edit inside a pending burst replaces its original while a later edit be
   const original = {
     updateId: 300,
     message: { ...ownerMessage, text: "wrong wording" },
-  };
+  }
   const edited = {
     updateId: 301,
     message: { ...ownerMessage, text: "right wording", edited: true as const },
-  };
+  }
   const laterEdit = {
     updateId: 302,
     message: {
@@ -496,7 +579,7 @@ test("an edit inside a pending burst replaces its original while a later edit be
       text: "late correction",
       edited: true as const,
     },
-  };
+  }
 
   assert.deepEqual(coalesceTelegramUpdates([original, edited, laterEdit]), [
     {
@@ -511,8 +594,8 @@ test("an edit inside a pending burst replaces its original while a later edit be
         text: "[Correction to my earlier message #99]\nlate correction",
       },
     },
-  ]);
-});
+  ])
+})
 
 test("private replies retain only the referenced Telegram message id", async () => {
   const decoded = await Effect.runPromise(
@@ -531,7 +614,7 @@ test("private replies retain only the referenced Telegram message id", async () 
         },
       ],
     }),
-  );
+  )
 
   assert.deepEqual(decoded, [
     {
@@ -543,8 +626,8 @@ test("private replies retain only the referenced Telegram message id", async () 
         replyToMessageId: 77,
       },
     },
-  ]);
-});
+  ])
+})
 
 test("malformed Telegram reply references fail through the typed error channel", async () => {
   const decoded = await Effect.runPromise(
@@ -565,12 +648,12 @@ test("malformed Telegram reply references fail through the typed error channel",
         ],
       }),
     ),
-  );
+  )
 
-  assert.equal(Either.isLeft(decoded), true);
+  assert.equal(Either.isLeft(decoded), true)
   if (Either.isLeft(decoded))
-    assert.equal(decoded.left._tag, "TelegramContractError");
-});
+    assert.equal(decoded.left._tag, "TelegramContractError")
+})
 
 test("Telegram file downloads stay on a bounded relative path and allowed image media", async () => {
   assert.equal(
@@ -581,7 +664,7 @@ test("Telegram file downloads stay on a bounded relative path and allowed image 
       }),
     ),
     "photos/file_1.jpg",
-  );
+  )
   for (const filePath of [
     "https://attacker.invalid/file.jpg",
     "../secret",
@@ -600,10 +683,10 @@ test("Telegram file downloads stay on a bounded relative path and allowed image 
         ),
       ),
       true,
-    );
+    )
   }
 
-  const jpeg = Buffer.from([0xff, 0xd8, 0xff, 0xdb, 0x00]);
+  const jpeg = Buffer.from([0xff, 0xd8, 0xff, 0xdb, 0x00])
   assert.deepEqual(
     await Effect.runPromise(
       telegramImageFromBytes("application/octet-stream", jpeg),
@@ -612,7 +695,7 @@ test("Telegram file downloads stay on a bounded relative path and allowed image 
       mediaType: "image/jpeg",
       data: jpeg.toString("base64"),
     },
-  );
+  )
   for (const [contentType, bytes] of [
     ["text/html", Buffer.from("not-an-image")],
     ["image/png", jpeg],
@@ -624,12 +707,12 @@ test("Telegram file downloads stay on a bounded relative path and allowed image 
         ),
       ),
       true,
-    );
+    )
   }
-});
+})
 
 test("Telegram boolean method responses require an explicit ok envelope", async () => {
-  await Effect.runPromise(decodeTelegramOk({ ok: true, result: true }));
+  await Effect.runPromise(decodeTelegramOk({ ok: true, result: true }))
   assert.equal(
     Either.isLeft(
       await Effect.runPromise(
@@ -643,8 +726,8 @@ test("Telegram boolean method responses require an explicit ok envelope", async 
       ),
     ),
     true,
-  );
-});
+  )
+})
 
 test("sendMessage responses decode only the documented message id", async () => {
   assert.equal(
@@ -652,7 +735,7 @@ test("sendMessage responses decode only the documented message id", async () => 
       decodeTelegramSentMessageId({ ok: true, result: { message_id: 77 } }),
     ),
     77,
-  );
+  )
   assert.equal(
     Either.isLeft(
       await Effect.runPromise(
@@ -665,17 +748,181 @@ test("sendMessage responses decode only the documented message id", async () => 
       ),
     ),
     true,
-  );
-});
+  )
+})
 
 test("malformed Telegram envelopes fail through the typed error channel", async () => {
   const decoded = await Effect.runPromise(
     Effect.either(
       decodeTelegramUpdates({ ok: true, result: [{ update_id: "bad" }] }),
     ),
-  );
+  )
 
-  assert.equal(Either.isLeft(decoded), true);
+  assert.equal(Either.isLeft(decoded), true)
   if (Either.isLeft(decoded))
-    assert.equal(decoded.left._tag, "TelegramContractError");
-});
+    assert.equal(decoded.left._tag, "TelegramContractError")
+})
+
+const groupUpdate = (
+  chat: Readonly<Record<string, unknown>>,
+  from: Readonly<Record<string, unknown>> = {
+    id: 1001,
+    is_bot: false,
+    username: "dianov",
+  },
+) => ({
+  ok: true,
+  result: [
+    {
+      update_id: 300,
+      message: { message_id: 11, from, chat, text: "morning" },
+    },
+  ],
+})
+
+test("a group message is discovered as a chat and never as owner input", async () => {
+  const decoded = await Effect.runPromise(
+    decodeTelegramUpdates(
+      groupUpdate({
+        id: -1001234567890,
+        type: "supergroup",
+        title: "St0x Core Team",
+      }),
+    ),
+  )
+
+  assert.deepEqual(decoded, [
+    {
+      updateId: 300,
+      groupChat: {
+        chatId: -1001234567890,
+        title: "St0x Core Team",
+        userId: 1001,
+        username: "dianov",
+      },
+    },
+  ])
+})
+
+test("being added to a group discovers it without any message text", async () => {
+  const decoded = await Effect.runPromise(
+    decodeTelegramUpdates({
+      ok: true,
+      result: [
+        {
+          update_id: 301,
+          message: {
+            message_id: 12,
+            from: { id: 1001, is_bot: false, username: "dianov" },
+            chat: { id: -400, type: "group", title: "Lab" },
+            new_chat_members: [
+              { id: 5, is_bot: true, username: "piece_of_pi" },
+            ],
+          },
+        },
+      ],
+    }),
+  )
+
+  assert.deepEqual(decoded, [
+    {
+      updateId: 301,
+      groupChat: {
+        chatId: -400,
+        title: "Lab",
+        userId: 1001,
+        username: "dianov",
+      },
+    },
+  ])
+})
+
+test("a chat that is not a titled group is not discovered", async () => {
+  for (const chat of [
+    { id: 42, type: "private" },
+    { id: 42, type: "group", title: "Positive id" },
+    { id: -400, type: "group" },
+    { id: -400, type: "channel", title: "Broadcast" },
+    { id: -400, type: "group", title: "x".repeat(129) },
+  ]) {
+    const decoded = await Effect.runPromise(
+      Effect.either(decodeTelegramUpdates(groupUpdate(chat))),
+    )
+    assert.equal(Either.isRight(decoded), true)
+    if (!Either.isRight(decoded)) continue
+    assert.equal(decoded.right[0]?.groupChat, undefined)
+  }
+})
+
+test("only the pinned owner turns a group into a delivery target", () => {
+  const groupChat = {
+    chatId: -1001234567890,
+    title: "St0x Core Team",
+    userId: 1001,
+    username: "dianov",
+  }
+
+  const recorded = groupChatRegistration(
+    { ownerUserId: 1001 },
+    groupChat,
+    "dianov",
+  )
+  assert.equal(recorded.outcome, "recorded")
+  if (recorded.outcome === "recorded") {
+    assert.deepEqual(recorded.chats, {
+      "st0x-core-team": { id: -1001234567890, title: "St0x Core Team" },
+    })
+  }
+
+  assert.deepEqual(
+    groupChatRegistration(
+      { ownerUserId: 1001 },
+      { ...groupChat, userId: 66, username: "stranger" },
+      "dianov",
+    ),
+    { outcome: "unchanged" },
+  )
+  assert.deepEqual(
+    groupChatRegistration(
+      { ownerUserId: 1001 },
+      { ...groupChat, userId: 66 },
+      "dianov",
+    ),
+    { outcome: "unchanged" },
+  )
+  assert.deepEqual(
+    groupChatRegistration(
+      { ownerUserId: 1001 },
+      { ...groupChat, userId: 66, username: "dianov" },
+      "dianov",
+    ),
+    { outcome: "unchanged" },
+  )
+})
+
+test("a group can never pin the owner the way a private chat does", () => {
+  assert.deepEqual(
+    groupChatRegistration(
+      initialTelegramBotState,
+      {
+        chatId: -400,
+        title: "Lab",
+        userId: 1001,
+        username: "dianov",
+      },
+      "dianov",
+    ),
+    { outcome: "unchanged" },
+  )
+})
+
+test("a private chat id can never be recorded as a group target", () => {
+  assert.deepEqual(
+    groupChatRegistration(
+      { ownerUserId: 1001 },
+      { chatId: 42, title: "Owner DM", userId: 1001, username: "dianov" },
+      "dianov",
+    ),
+    { outcome: "unchanged" },
+  )
+})

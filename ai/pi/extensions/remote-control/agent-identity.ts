@@ -9,7 +9,9 @@ const titleWord = (word: string): string => {
   const normalized = word.toLowerCase()
   if (normalized === "pi") return "Pi"
   if (normalized === "st0x") return "ST0x"
-  return normalized ? `${normalized[0]?.toUpperCase()}${normalized.slice(1)}` : ""
+  return normalized
+    ? `${normalized[0]?.toUpperCase()}${normalized.slice(1)}`
+    : ""
 }
 
 const titleLabel = (label: string): string =>

@@ -47,9 +47,7 @@ const codeWrapper = (
   language: string,
   maximum: number,
 ): { readonly opening: string; readonly closing: string } => {
-  const safeLanguage = /^[A-Za-z0-9_+-]{1,32}$/u.test(language)
-    ? language
-    : ""
+  const safeLanguage = /^[A-Za-z0-9_+-]{1,32}$/u.test(language) ? language : ""
   const withLanguage = safeLanguage
     ? `<pre><code class="language-${safeLanguage}">`
     : "<pre><code>"
@@ -67,7 +65,7 @@ const renderCodeBlock = (
   const { opening, closing } = codeWrapper(language, maximum)
   const contentMaximum = Math.max(1, maximum - opening.length - closing.length)
   return splitEscapedPlainText(code, contentMaximum).map(
-    (content) => `${opening}${content}${closing}`,
+    content => `${opening}${content}${closing}`,
   )
 }
 

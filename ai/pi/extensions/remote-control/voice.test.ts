@@ -58,9 +58,7 @@ const oggOpus = (): Uint8Array => {
   return stampOggChecksum(bytes)
 }
 
-const mutateValidOgg = (
-  mutation: (bytes: Uint8Array) => void,
-): Uint8Array => {
+const mutateValidOgg = (mutation: (bytes: Uint8Array) => void): Uint8Array => {
   const bytes = oggOpus()
   mutation(bytes)
   return stampOggChecksum(bytes)
@@ -82,28 +80,28 @@ test("Telegram voice bytes require bounded Ogg Opus content", async () => {
     {
       name: "Ogg version",
       contentType: "audio/ogg",
-      bytes: mutateValidOgg((bytes) => {
+      bytes: mutateValidOgg(bytes => {
         bytes[4] = 1
       }),
     },
     {
       name: "BOS flag",
       contentType: "audio/ogg",
-      bytes: mutateValidOgg((bytes) => {
+      bytes: mutateValidOgg(bytes => {
         bytes[5] = 0
       }),
     },
     {
       name: "segment table",
       contentType: "audio/ogg",
-      bytes: mutateValidOgg((bytes) => {
+      bytes: mutateValidOgg(bytes => {
         bytes[27] = 18
       }),
     },
     {
       name: "OpusHead packet",
       contentType: "audio/ogg",
-      bytes: mutateValidOgg((bytes) => {
+      bytes: mutateValidOgg(bytes => {
         bytes[28] = 0
       }),
     },
@@ -124,9 +122,7 @@ test("Telegram voice bytes require bounded Ogg Opus content", async () => {
   ] as const
   for (const invalid of invalidCases) {
     const result = await Effect.runPromise(
-      Effect.either(
-        telegramVoiceFromBytes(invalid.contentType, invalid.bytes),
-      ),
+      Effect.either(telegramVoiceFromBytes(invalid.contentType, invalid.bytes)),
     )
     assert.equal(Either.isLeft(result), true, invalid.name)
   }
@@ -136,7 +132,10 @@ test("Whisper JSON decodes only a bounded non-empty transcript", async () => {
   assert.equal(
     await Effect.runPromise(
       decodeWhisperTranscript({
-        transcription: [{ text: "  Shit, I want to reply " }, { text: " with voice. " }],
+        transcription: [
+          { text: "  Shit, I want to reply " },
+          { text: " with voice. " },
+        ],
       }),
     ),
     "Shit, I want to reply with voice.",

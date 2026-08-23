@@ -2,10 +2,7 @@ import * as Data from "effect/Data"
 import * as Effect from "effect/Effect"
 
 import { MAX_REMOTE_MESSAGE_CHARACTERS } from "./protocol.ts"
-import {
-  MAX_TELEGRAM_VOICE_BYTES,
-  TelegramContractError,
-} from "./telegram.ts"
+import { MAX_TELEGRAM_VOICE_BYTES, TelegramContractError } from "./telegram.ts"
 
 export class VoiceTranscriptionError extends Data.TaggedError(
   "VoiceTranscriptionError",

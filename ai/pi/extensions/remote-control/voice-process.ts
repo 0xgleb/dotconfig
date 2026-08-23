@@ -34,10 +34,10 @@ const defaultProcessDependencies: VoiceProcessDependencies = {
     })
     child.once("error", callbacks.onError)
     child.once("close", callbacks.onClose)
-    return { kill: (signal) => child.kill(signal) }
+    return { kill: signal => child.kill(signal) }
   },
   schedule: (callback, delayMs) => setTimeout(callback, delayMs),
-  cancel: (handle) => clearTimeout(handle as ReturnType<typeof setTimeout>),
+  cancel: handle => clearTimeout(handle as ReturnType<typeof setTimeout>),
 }
 
 export const runWhisperCli = (
@@ -65,7 +65,7 @@ export const runWhisperCli = (
           onError: () => {
             processFailed = true
           },
-          onClose: (code) =>
+          onClose: code =>
             finish(
               timedOut
                 ? new Error("Whisper transcription timed out")
@@ -96,9 +96,8 @@ interface VoiceCleanupDependencies {
 }
 
 const defaultCleanupDependencies: VoiceCleanupDependencies = {
-  remove: (directory) => rm(directory, { recursive: true, force: true }),
-  sleep: (delayMs) =>
-    new Promise((resolve) => setTimeout(resolve, delayMs)),
+  remove: directory => rm(directory, { recursive: true, force: true }),
+  sleep: delayMs => new Promise(resolve => setTimeout(resolve, delayMs)),
 }
 
 export const cleanupVoiceDirectory = (
@@ -114,8 +113,7 @@ export const cleanupVoiceDirectory = (
           return
         } catch (error) {
           lastError = error
-          if (attempt + 1 < VOICE_CLEANUP_ATTEMPTS)
-            await dependencies.sleep(50)
+          if (attempt + 1 < VOICE_CLEANUP_ATTEMPTS) await dependencies.sleep(50)
         }
       }
       throw lastError
