@@ -29,7 +29,7 @@ const TOOL_PROGRESS_TICK_MS = 1_000
 const READY_LABEL = "READY · awaiting activity"
 
 export default function activityStatus(pi: ExtensionAPI): void {
-  registerRuntimeVersion(pi, "activity-status", "2026.08.01.8")
+  registerRuntimeVersion(pi, "activity-status", "2026.08.20.1")
   const runningTools = new Map<string, ToolProgress>()
   let latestCtx: ExtensionContext | undefined
   let classifierDepth = 0
@@ -50,7 +50,9 @@ export default function activityStatus(pi: ExtensionAPI): void {
       throttleLabel,
       pendingQuestionCount > 0 ? actionLabel() : undefined,
     ].filter(Boolean)
-    return persistent.length > 0 ? `${label} · ${persistent.join(" · ")}` : label
+    return persistent.length > 0
+      ? `${label} · ${persistent.join(" · ")}`
+      : label
   }
 
   const show = (phase: ActivityPhase, ctx = latestCtx): void => {
@@ -129,15 +131,17 @@ export default function activityStatus(pi: ExtensionAPI): void {
     latestCtx = ctx
     runningTools.clear()
     classifierDepth = 0
-    throttleLabel = usageThrottleLabel(ctx.cwd, homedir())
+    throttleLabel = usageThrottleLabel(ctx.cwd, homedir(), ctx.model?.provider)
     clearToolProgress(ctx)
     ctx.ui.setStatus(STATUS_KEY, throttleLabel)
+    ctx.ui.setWorkingIndicator({ frames: ["●"] })
     ctx.ui.setWorkingMessage()
   })
 
   pi.on("agent_start", (_event, ctx) => {
     latestCtx = ctx
     runningTools.clear()
+    throttleLabel = usageThrottleLabel(ctx.cwd, homedir(), ctx.model?.provider)
     clearToolProgress(ctx)
     show({ kind: "model", label: "MODEL · awaiting generation" }, ctx)
   })
@@ -207,6 +211,7 @@ export default function activityStatus(pi: ExtensionAPI): void {
     runningTools.clear()
     clearToolProgress(ctx)
     ctx.ui.setStatus(STATUS_KEY, undefined)
+    ctx.ui.setWorkingIndicator()
     ctx.ui.setWorkingMessage()
     throttleLabel = undefined
     latestCtx = undefined
