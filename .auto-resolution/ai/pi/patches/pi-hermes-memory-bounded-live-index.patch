@@ -1,0 +1,39 @@
+--- a/src/store/session-indexer.ts
++++ b/src/store/session-indexer.ts
+@@ -4,6 +4,7 @@
+ 
+ export const LAST_SESSION_BACKFILL_KEY = 'last_session_backfill';
+ export const SESSION_BACKFILL_INTERVAL_MS = 24 * 60 * 60 * 1000;
++export const MAX_LIVE_SESSION_ENTRIES = 512;
+ 
+ /**
+  * Index result for a single session.
+@@ -194,6 +195,7 @@
+   if (!header?.id || !header.cwd || !header.timestamp) return null;
+ 
+   const messages = sessionManager.getEntries()
++    .slice(-MAX_LIVE_SESSION_ENTRIES)
+     .map(parseMessageEntry)
+     .filter((msg): msg is ParsedSession['messages'][number] => msg !== null);
+ 
+@@ -218,16 +220,11 @@
+ }
+ 
+ function indexLiveSessionOnce(dbManager: DatabaseManager, sessionManager: SessionManagerSnapshot): IndexResult | null {
+-  const sessionFile = sessionManager.getSessionFile?.();
+-  if (sessionFile && fs.existsSync(sessionFile)) {
+-    const session = parseSessionFile(sessionFile);
+-    if (session) {
+-      const result = indexSession(dbManager, session);
+-      upsertSessionFileMetadata(dbManager, sessionFile, session.id);
+-      return result;
+-    }
+-  }
+-
++  // Never re-read the growing JSONL file on message_end. A long-running session
++  // can exceed V8's maximum string length, and parsing the full file after every
++  // message makes indexing quadratic. The bounded recent in-memory tail is
++  // sufficient because inserts are idempotent; startup/shutdown backfill owns
++  // full on-disk reconciliation.
+   return indexCurrentSession(dbManager, sessionManager);
+ }

@@ -1,0 +1,246 @@
+diff --git a/dist/core/auth-storage.js b/dist/core/auth-storage.js
+--- a/dist/core/auth-storage.js
++++ b/dist/core/auth-storage.js
+@@ -9,6 +9,7 @@ import { setTimeout as sleep } from "timers/promises";
+ import { getAgentDir } from "../config.js";
+ import { raceWithAbortSignal } from "../utils/abort.js";
+ import { getFileRevision, normalizePath } from "../utils/paths.js";
++import { currentRequestLifecycle, publishRequestLifecycle, RequestLifecyclePhase, } from "./request-lifecycle.js";
+ import { isCommandConfigValue, resolveConfigValue } from "./resolve-config-value.js";
+ const AUTH_FILE_WRITE_OPTIONS = { encoding: "utf-8", mode: 0o600 };
+ let sharedAuthFileReadState;
+@@ -117,6 +118,7 @@ export class FileAuthStorageBackend {
+         options?.signal?.throwIfAborted();
+         this.ensureParentDir();
+         this.ensureFileExists();
++        const lifecycle = currentRequestLifecycle();
+         let release;
+         let lockCompromised = false;
+         let lockCompromisedError;
+@@ -126,10 +128,12 @@ export class FileAuthStorageBackend {
+             }
+         };
+         try {
++            publishRequestLifecycle(lifecycle, RequestLifecyclePhase.AuthLockWait);
+             release = await this.acquireLockAsync(options?.signal, (error) => {
+                 lockCompromised = true;
+                 lockCompromisedError = error;
+             });
++            publishRequestLifecycle(lifecycle, RequestLifecyclePhase.AuthLockAcquired);
+             throwIfCompromised();
+             options?.signal?.throwIfAborted();
+             const current = existsSync(this.authPath) ? readFileSync(this.authPath, "utf-8") : undefined;
+@@ -151,6 +155,7 @@ export class FileAuthStorageBackend {
+                 catch {
+                     // Ignore unlock errors when lock is compromised.
+                 }
++                publishRequestLifecycle(lifecycle, RequestLifecyclePhase.AuthLockReleased);
+             }
+         }
+     }
+diff --git a/dist/core/model-runtime.js b/dist/core/model-runtime.js
+--- a/dist/core/model-runtime.js
++++ b/dist/core/model-runtime.js
+@@ -7,6 +7,7 @@ import { AuthStorage as DefaultAuthStorage } from "./auth-storage.js";
+ import { ModelConfig } from "./model-config.js";
+ import { FileModelsStore, InMemoryCodingAgentModelsStore } from "./models-store.js";
+ import { composeModelProvider, configuredRequestAuthStatus, resolveCompatibilityRequestConfig, resolveConfiguredModelHeaders, validateExtensionProvider, } from "./provider-composer.js";
++import { classifyRequestFailure, currentRequestLifecycle, publishRequestLifecycle, RequestLifecyclePhase, withRequestLifecycle, } from "./request-lifecycle.js";
+ import { withRemoteCatalog } from "./remote-catalog-provider.js";
+ import { RuntimeCredentials } from "./runtime-credentials.js";
+ /** Credentials changed successfully, but the local model/auth snapshot could not be synchronized. */
+@@ -423,13 +424,25 @@ export class ModelRuntime {
+         const provider = this.models.getProvider(model.provider);
+         if (!provider)
+             throw new ModelsError("provider", `Unknown provider: ${model.provider}`);
+-        const resolution = await this.getAuth(model, {
+-            apiKey: options?.apiKey,
+-            env: options?.env,
+-            signal: options?.signal,
+-        });
+-        if (!resolution)
+-            throw new ModelsError("auth", `Provider is not configured: ${model.provider}`);
++        const lifecycle = currentRequestLifecycle();
++        publishRequestLifecycle(lifecycle, RequestLifecyclePhase.AuthStarted);
++        let resolution;
++        try {
++            resolution = await this.getAuth(model, {
++                apiKey: options?.apiKey,
++                env: options?.env,
++                signal: options?.signal,
++            });
++            if (!resolution)
++                throw new ModelsError("auth", `Provider is not configured: ${model.provider}`);
++            publishRequestLifecycle(lifecycle, RequestLifecyclePhase.AuthCompleted);
++        }
++        catch (error) {
++            publishRequestLifecycle(lifecycle, RequestLifecyclePhase.AuthFailed, {
++                failureClass: classifyRequestFailure(error, options?.signal),
++            });
++            throw error;
++        }
+         const { transformHeaders, ...rawProviderOptions } = options ?? {};
+         const providerOptions = rawProviderOptions;
+         let headers = mergeHeaders(resolution.auth.headers, providerOptions.headers);
+@@ -459,10 +472,21 @@ export class ModelRuntime {
+         return this.stream(model, context, options).result();
+     }
+     streamSimple(model, context, options) {
+-        return lazyStream(model, async () => {
+-            const prepared = await this.prepareRequest(model, options);
+-            return prepared.provider.streamSimple(prepared.model, context, prepared.options);
+-        });
++        return lazyStream(model, async () => withRequestLifecycle(model, async (lifecycle) => {
++            publishRequestLifecycle(lifecycle, RequestLifecyclePhase.RequestStarted);
++            try {
++                const prepared = await this.prepareRequest(model, options);
++                return prepared.provider.streamSimple(prepared.model, context, prepared.options);
++            }
++            catch (error) {
++                const aborted = options?.signal?.aborted;
++                publishRequestLifecycle(lifecycle, aborted ? RequestLifecyclePhase.RequestAborted : RequestLifecyclePhase.RequestFailed, {
++                    outcome: aborted ? "aborted" : "failed",
++                    failureClass: classifyRequestFailure(error, options?.signal),
++                });
++                throw error;
++            }
++        }));
+     }
+     completeSimple(model, context, options) {
+         return this.streamSimple(model, context, options).result();
+diff --git a/node_modules/@earendil-works/pi-ai/dist/api/openai-codex-responses.js b/node_modules/@earendil-works/pi-ai/dist/api/openai-codex-responses.js
+--- a/node_modules/@earendil-works/pi-ai/dist/api/openai-codex-responses.js
++++ b/node_modules/@earendil-works/pi-ai/dist/api/openai-codex-responses.js
+@@ -9,6 +9,7 @@ import { headersToRecord } from "../utils/headers.js";
+ import { resolveHttpProxyUrlForTarget } from "../utils/node-http-proxy.js";
+ import { getPiUserAgent } from "../utils/pi-user-agent.js";
+ import { uuidv7 } from "../utils/uuid.js";
++import { classifyRequestFailure, currentRequestLifecycle, publishRequestLifecycle, RequestLifecyclePhase, } from "../observability/request-lifecycle.js";
+ import { createGrammarToolInputProperties } from "./constrained-sampling.js";
+ import { clampOpenAIPromptCacheKey } from "./openai-prompt-cache.js";
+ import { convertResponsesMessages, convertResponsesTools, processResponsesStream } from "./openai-responses-shared.js";
+@@ -142,6 +143,7 @@ function compressRequestBodyZstd(bodyJson) {
+ export const stream = (model, context, options) => {
+     const stream = new AssistantMessageEventStream();
+     (async () => {
++        const lifecycle = currentRequestLifecycle();
+         const output = {
+             role: "assistant",
+             content: [],
+@@ -168,8 +170,11 @@ export const stream = (model, context, options) => {
+             const grammarToolInputProperties = createGrammarToolInputProperties(context.tools, model.compat?.supportsOpenAIGrammarTools ?? false);
+             const cacheSessionId = options?.cacheRetention === "none" ? undefined : options?.sessionId;
+             const codexSessionId = clampOpenAIPromptCacheKey(cacheSessionId);
++            publishRequestLifecycle(lifecycle, RequestLifecyclePhase.PayloadStarted);
+             let body = buildRequestBody(model, context, options, codexSessionId, grammarToolInputProperties);
++            publishRequestLifecycle(lifecycle, RequestLifecyclePhase.AdmissionStarted);
+             const nextBody = await options?.onPayload?.(body, model);
++            publishRequestLifecycle(lifecycle, RequestLifecyclePhase.AdmissionCompleted);
+             if (nextBody !== undefined) {
+                 body = nextBody;
+             }
+@@ -192,10 +197,12 @@ export const stream = (model, context, options) => {
+                 while (true) {
+                     websocketStarted = false;
+                     try {
++                        publishRequestLifecycle(lifecycle, RequestLifecyclePhase.TransportStarted);
+                         await processWebSocketStream(resolveCodexWebSocketUrl(model.baseUrl), body, websocketHeaders, output, stream, model, () => {
+                             websocketStarted = true;
+                             if (!startEmitted) {
+                                 startEmitted = true;
++                                publishRequestLifecycle(lifecycle, RequestLifecyclePhase.ResponseStarted);
+                                 stream.push({ type: "start", partial: output });
+                             }
+                         }, httpTimeoutMs, websocketConnectTimeoutMs, cacheSessionId, accountId, grammarToolInputProperties, options);
+@@ -208,6 +215,7 @@ export const stream = (model, context, options) => {
+                             reason: output.stopReason,
+                             message: output,
+                         });
++                        publishRequestLifecycle(lifecycle, RequestLifecyclePhase.RequestCompleted, { outcome: "completed" });
+                         stream.end();
+                         return;
+                     }
+@@ -262,6 +270,7 @@ export const stream = (model, context, options) => {
+                     const headerTimeoutSignal = httpTimeoutMs !== undefined && httpTimeoutMs > 0 ? AbortSignal.timeout(httpTimeoutMs) : undefined;
+                     const combinedSignal = combineAbortSignals([options?.signal, headerTimeoutSignal]);
+                     try {
++                        publishRequestLifecycle(lifecycle, RequestLifecyclePhase.TransportStarted);
+                         response = await (options?.fetch ?? globalThis.fetch)(resolveCodexUrl(model.baseUrl), {
+                             method: "POST",
+                             headers: sseHeaders,
+@@ -327,6 +336,7 @@ export const stream = (model, context, options) => {
+             }
+             if (!startEmitted) {
+                 startEmitted = true;
++                publishRequestLifecycle(lifecycle, RequestLifecyclePhase.ResponseStarted);
+                 stream.push({ type: "start", partial: output });
+             }
+             await processStream(response, output, stream, model, grammarToolInputProperties, options);
+@@ -335,6 +345,7 @@ export const stream = (model, context, options) => {
+             }
+             assertSuccessfulOutput(output);
+             stream.push({ type: "done", reason: output.stopReason, message: output });
++            publishRequestLifecycle(lifecycle, RequestLifecyclePhase.RequestCompleted, { outcome: "completed" });
+             stream.end();
+         }
+         catch (error) {
+@@ -344,6 +355,10 @@ export const stream = (model, context, options) => {
+                 delete block.customInput;
+             }
+             output.stopReason = options?.signal?.aborted ? "aborted" : "error";
++            publishRequestLifecycle(lifecycle, options?.signal?.aborted ? RequestLifecyclePhase.RequestAborted : RequestLifecyclePhase.RequestFailed, {
++                outcome: options?.signal?.aborted ? "aborted" : "failed",
++                failureClass: classifyRequestFailure(error, options?.signal),
++            });
+             output.errorMessage = formatProviderError(normalizeProviderError(error));
+             stream.push({ type: "error", reason: output.stopReason, error: output });
+             stream.end();
+diff --git a/node_modules/@earendil-works/pi-ai/dist/auth/resolve.js b/node_modules/@earendil-works/pi-ai/dist/auth/resolve.js
+--- a/node_modules/@earendil-works/pi-ai/dist/auth/resolve.js
++++ b/node_modules/@earendil-works/pi-ai/dist/auth/resolve.js
+@@ -1,5 +1,6 @@
+ import { operationSignal, raceWithAbortSignal } from "../utils/abort.js";
+ import { formatThrownValue } from "../utils/diagnostics.js";
++import { currentRequestLifecycle, publishRequestLifecycle, RequestLifecyclePhase, } from "../observability/request-lifecycle.js";
+ export class ModelsError extends Error {
+     code;
+     constructor(code, message, options) {
+@@ -67,6 +68,7 @@ const DEFAULT_OAUTH_REFRESH_TIMEOUT_MS = 15_000;
+  * globally, and persist the rotated credential before release.
+  */
+ async function resolveStoredOAuth(credentials, providerId, oauth, stored, signal, minOAuthValidityMs) {
++    const lifecycle = currentRequestLifecycle();
+     const minimumValidityMs = Math.max(DEFAULT_OAUTH_MINIMUM_VALIDITY_MS, minOAuthValidityMs ?? 0);
+     const expiresSoon = (credential) => Date.now() + minimumValidityMs >= credential.expires;
+     let credential = stored;
+@@ -84,9 +86,13 @@ async function resolveStoredOAuth(credentials, providerId, oauth, stored, signal
+                 if (!expiresSoon(current))
+                     return undefined; // another process/request refreshed
+                 try {
+-                    return await raceWithAbortSignal(oauth.refresh(current, refreshSignal), refreshSignal);
++                    publishRequestLifecycle(lifecycle, RequestLifecyclePhase.OAuthRefreshStarted);
++                    const refreshed = await raceWithAbortSignal(oauth.refresh(current, refreshSignal), refreshSignal);
++                    publishRequestLifecycle(lifecycle, RequestLifecyclePhase.OAuthRefreshCompleted);
++                    return refreshed;
+                 }
+                 catch (error) {
++                    publishRequestLifecycle(lifecycle, RequestLifecyclePhase.OAuthRefreshFailed);
+                     throw new ModelsError("oauth", `OAuth refresh failed for ${providerId}`, { cause: error });
+                 }
+             }, { signal: refreshSignal });
+@@ -122,11 +128,15 @@ async function resolveApiKey(authContext, apiKey, providerId, credential, signal
+     }
+ }
+ async function readCredential(credentials, providerId, signal) {
++    const lifecycle = currentRequestLifecycle();
++    publishRequestLifecycle(lifecycle, RequestLifecyclePhase.CredentialReadStarted);
+     try {
+-        return await credentials.read(providerId, { signal });
++        const credential = await credentials.read(providerId, { signal });
++        publishRequestLifecycle(lifecycle, RequestLifecyclePhase.CredentialReadCompleted);
++        return credential;
+     }
+     catch (error) {
+         throw new ModelsError("auth", `Credential store read failed for ${providerId}`, { cause: error });
+     }
+ }

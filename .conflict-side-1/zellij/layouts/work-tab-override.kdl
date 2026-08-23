@@ -1,0 +1,28 @@
+// Override target for the work tab: left stack (grok-1, grok-2, htop),
+// center 50% st0x fable, right stack (yielduck fable, dispatcher), and
+// mprocs as a short full-width bottom row.
+layout {
+    tab name="work" {
+        pane size=1 borderless=true {
+            plugin location="tab-bar"
+        }
+        pane split_direction="horizontal" {
+            pane size="78%" split_direction="vertical" {
+                pane size="25%" split_direction="horizontal" {
+                    pane
+                    pane
+                    pane
+                }
+                pane size="50%"
+                pane size="25%" split_direction="horizontal" {
+                    pane
+                    pane
+                }
+            }
+            pane size="22%"
+        }
+        pane size=1 borderless=true {
+            plugin location="status-bar"
+        }
+    }
+}

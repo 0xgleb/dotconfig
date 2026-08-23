@@ -1,0 +1,67 @@
+--- a/src/store/session-parser.ts
++++ b/src/store/session-parser.ts
+@@ -1,6 +1,9 @@
+ import fs from 'node:fs';
+ import path from 'node:path';
+ 
++export const MAX_SESSION_HEADER_READ_BYTES = 64 * 1024;
++export const MAX_SESSION_TAIL_READ_BYTES = 16 * 1024 * 1024;
++
+ /**
+  * Parsed session data from a JSONL file.
+  */
+@@ -75,6 +78,45 @@
+   return toolNames.length > 0 ? toolNames : undefined;
+ }
+ 
++/**
++ * Read enough of a session to recover its immutable header and newest messages
++ * without turning an unbounded, long-running JSONL file into one V8 string.
++ * Live indexing already writes recent messages idempotently; startup backfill
++ * only needs a bounded tail to reconcile messages missed around shutdown.
++ */
++function readBoundedSessionText(filePath: string): string {
++  const fd = fs.openSync(filePath, 'r');
++  try {
++    const size = fs.fstatSync(fd).size;
++    if (size <= MAX_SESSION_TAIL_READ_BYTES) {
++      return fs.readFileSync(fd, 'utf-8');
++    }
++
++    const headerBytes = Math.min(size, MAX_SESSION_HEADER_READ_BYTES);
++    const header = Buffer.allocUnsafe(headerBytes);
++    const headerRead = fs.readSync(fd, header, 0, headerBytes, 0);
++    const headerText = header.subarray(0, headerRead).toString('utf-8');
++    const headerBoundary = headerText.indexOf('\n');
++    const sessionHeader = headerBoundary >= 0
++      ? headerText.slice(0, headerBoundary)
++      : headerText;
++
++    const tailBytes = Math.min(size, MAX_SESSION_TAIL_READ_BYTES);
++    const tailOffset = size - tailBytes;
++    const tail = Buffer.allocUnsafe(tailBytes);
++    const tailRead = fs.readSync(fd, tail, 0, tailBytes, tailOffset);
++    const tailText = tail.subarray(0, tailRead).toString('utf-8');
++    const firstBoundary = tailText.indexOf('\n');
++    const completeTail = firstBoundary >= 0
++      ? tailText.slice(firstBoundary + 1)
++      : '';
++
++    return `${sessionHeader}\n${completeTail}`;
++  } finally {
++    fs.closeSync(fd);
++  }
++}
++
+ /**
+  * Parse a Pi session JSONL file.
+  *
+@@ -83,7 +125,7 @@
+  * @returns Parsed session data, or null if the file is invalid
+  */
+ export function parseSessionFile(filePath: string): ParsedSession | null {
+-  const content = fs.readFileSync(filePath, 'utf-8');
++  const content = readBoundedSessionText(filePath);
+   const lines = content.split('\n').filter(line => line.trim());
+ 
+   if (lines.length === 0) return null;

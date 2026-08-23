@@ -1,0 +1,24 @@
+{
+  "memoryMode": "policy-only",
+  "memoryPolicyStyle": "compact",
+  "memoryCharLimit": 5000,
+  "userCharLimit": 5000,
+  "projectCharLimit": 5000,
+  "sessionSearch": {
+    "variant": "anchors"
+  },
+  "llmModelOverride": "openai-codex/gpt-5.6-luna",
+  "llmThinkingOverride": "off",
+  "nudgeInterval": 20,
+  "nudgeToolCalls": 30,
+  "reviewRecentMessages": 24,
+  "reviewEnabled": true,
+  "reviewTransport": "direct",
+  "memoryOverflowStrategy": "auto-consolidate",
+  "correctionDetection": true,
+  "failureInjectionEnabled": false,
+  "flushOnCompact": true,
+  "flushOnShutdown": true,
+  "flushMinTurns": 6,
+  "flushRecentMessages": 24
+}

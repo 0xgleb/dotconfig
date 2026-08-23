@@ -1,0 +1,35 @@
+diff --git a/node_modules/@earendil-works/pi-ai/dist/auth/resolve.js b/node_modules/@earendil-works/pi-ai/dist/auth/resolve.js
+index 70bd796..a8db649 100644
+--- a/node_modules/@earendil-works/pi-ai/dist/auth/resolve.js
++++ b/node_modules/@earendil-works/pi-ai/dist/auth/resolve.js
+@@ -72,25 +72,25 @@ async function resolveStoredOAuth(credentials, providerId, oauth, stored, signal
+     let credential = stored;
+     if (expiresSoon(credential)) {
+         // Optimistic check said expired; the authoritative check runs under the lock.
+         let post;
++        const refreshSignal = AbortSignal.any([
++            signal,
++            AbortSignal.timeout(DEFAULT_OAUTH_REFRESH_TIMEOUT_MS),
++        ]);
+         try {
+             post = await credentials.modify(providerId, async (current) => {
+                 if (current?.type !== "oauth")
+                     return undefined; // logged out meanwhile
+                 if (!expiresSoon(current))
+                     return undefined; // another process/request refreshed
+                 try {
+-                    const refreshSignal = AbortSignal.any([
+-                        signal,
+-                        AbortSignal.timeout(DEFAULT_OAUTH_REFRESH_TIMEOUT_MS),
+-                    ]);
+-                    return await oauth.refresh(current, refreshSignal);
++                    return await raceWithAbortSignal(oauth.refresh(current, refreshSignal), refreshSignal);
+                 }
+                 catch (error) {
+                     throw new ModelsError("oauth", `OAuth refresh failed for ${providerId}`, { cause: error });
+                 }
+-            }, { signal });
++            }, { signal: refreshSignal });
+         }
+         catch (error) {
+             if (error instanceof ModelsError)

@@ -1,0 +1,129 @@
+name: CI
+
+on:
+  push:
+    branches: [master]
+  pull_request:
+    branches-ignore: ["graphite-base/**"]
+
+jobs:
+  check:
+    runs-on: ubuntu-latest
+    steps:
+      - uses: actions/checkout@34e114876b0b11c390a56381ad16ebd13914f8d5 # v4
+        with:
+          persist-credentials: false
+      - uses: cachix/install-nix-action@ba0dd844c9180cbf77aa72a116d6fbc515d0e87b # v27
+        with:
+          extra_nix_config: |
+            experimental-features = nix-command flakes
+      - run: nix flake check
+
+  build-nixos:
+    runs-on: ubuntu-latest
+    steps:
+      - uses: actions/checkout@34e114876b0b11c390a56381ad16ebd13914f8d5 # v4
+        with:
+          persist-credentials: false
+      - name: Free disk space
+        run: |
+          sudo rm -rf /usr/share/dotnet /usr/local/lib/android /opt/ghc /opt/hostedtoolcache/CodeQL
+          sudo docker image prune --all --force || true
+          df -h /
+      - uses: cachix/install-nix-action@ba0dd844c9180cbf77aa72a116d6fbc515d0e87b # v27
+        with:
+          extra_nix_config: |
+            experimental-features = nix-command flakes
+      - run: nix build .#nixosConfigurations.nixxxos.config.system.build.toplevel
+
+  # Build on the runner and push the closure to nixxxos over the tailnet, then
+  # activate. Only runs for pushes to master, after check + build pass.
+  # Requires repository secrets TS_AUTHKEY (Tailscale ephemeral auth key, from
+  # `terraform -chdir=infra output -raw tailscale_ci_authkey`) and DEPLOY_SSH_KEY
+  # (private half of keys.nix `ci`, authorized for root on the box).
+  # Bootstrap: this job fails until `ci` is set in keys.nix AND that config has
+  # been applied to the box once out-of-band (e.g. `nix run .#provision`) — CI
+  # cannot install its own deploy key.
+  deploy:
+    needs: [check, build-nixos]
+    if: github.ref == 'refs/heads/master' && github.event_name == 'push'
+    runs-on: ubuntu-latest
+    concurrency:
+      group: deploy-nixxxos
+      cancel-in-progress: false
+    steps:
+      - uses: actions/checkout@34e114876b0b11c390a56381ad16ebd13914f8d5 # v4
+        with:
+          persist-credentials: false
+      - name: Free disk space
+        run: |
+          sudo rm -rf /usr/share/dotnet /usr/local/lib/android /opt/ghc /opt/hostedtoolcache/CodeQL
+          sudo docker image prune --all --force || true
+          df -h /
+      - uses: cachix/install-nix-action@ba0dd844c9180cbf77aa72a116d6fbc515d0e87b # v27
+        with:
+          extra_nix_config: |
+            experimental-features = nix-command flakes
+      # Bootstrap gate: until both secrets are set (and the `ci` key is applied to
+      # the box out-of-band), there is nothing to deploy. Decide here so the
+      # secret-dependent steps below skip cleanly — the job stays green rather
+      # than failing every push to master. A job-level `if:` cannot read secrets,
+      # so the gate is a step that exports a plain boolean output.
+      - name: Bootstrap gate
+        id: gate
+        env:
+          TS_AUTHKEY: ${{ secrets.TS_AUTHKEY }}
+          DEPLOY_SSH_KEY: ${{ secrets.DEPLOY_SSH_KEY }}
+        run: |
+          set -euo pipefail
+          if [ -n "$TS_AUTHKEY" ] && [ -n "$DEPLOY_SSH_KEY" ]; then
+            echo "ready=true" >> "$GITHUB_OUTPUT"
+          else
+            echo "ready=false" >> "$GITHUB_OUTPUT"
+            echo "TS_AUTHKEY/DEPLOY_SSH_KEY not both set — skipping deploy (bootstrap incomplete)."
+          fi
+      - name: Join tailnet
+        if: steps.gate.outputs.ready == 'true'
+        uses: tailscale/github-action@306e68a486fd2350f2bfc3b19fcd143891a4a2d8 # v4
+        with:
+          authkey: ${{ secrets.TS_AUTHKEY }}
+      - name: Deploy to nixxxos
+        if: steps.gate.outputs.ready == 'true'
+        env:
+          DEPLOY_SSH_KEY: ${{ secrets.DEPLOY_SSH_KEY }}
+          NIXXXOS_KNOWN_HOSTS: ${{ secrets.NIXXXOS_KNOWN_HOSTS }}
+        run: |
+          set -euo pipefail
+          install -d -m700 ~/.ssh
+          # Write the private key with restrictive perms from the start (umask 177
+          # -> mode 600) so it is never briefly world-readable on the runner.
+          (umask 177; printf '%s\n' "$DEPLOY_SSH_KEY" > ~/.ssh/deploy)
+          # Resolve via tailscaled (works without host DNS / a MagicDNS search
+          # domain, which the runner's resolver does not get on Linux). The runner
+          # just joined the tailnet, so nixxxos may take a few seconds to appear in
+          # the peer list — retry before giving up.
+          target=""
+          for _ in $(seq 1 20); do
+            target="$(tailscale ip -4 nixxxos 2>/dev/null || true)"
+            [ -n "$target" ] && break
+            sleep 3
+          done
+          if [ -z "$target" ]; then
+            echo "nixxxos did not appear on the tailnet after ~60s of retries" >&2
+            exit 1
+          fi
+          # The tailnet (WireGuard) already binds this IP to nixxxos's node key,
+          # so the transport is authenticated. If a pinned host key is provided
+          # via the NIXXXOS_KNOWN_HOSTS secret, verify against it; otherwise fall
+          # back to trust-on-first-use rather than disabling verification.
+          if [ -n "$NIXXXOS_KNOWN_HOSTS" ]; then
+            (umask 177; printf '%s\n' "$NIXXXOS_KNOWN_HOSTS" > ~/.ssh/known_hosts)
+            hostkey="-o StrictHostKeyChecking=yes"
+          else
+            hostkey="-o StrictHostKeyChecking=accept-new"
+          fi
+          export NIX_SSHOPTS="-i $HOME/.ssh/deploy -o UserKnownHostsFile=$HOME/.ssh/known_hosts $hostkey"
+          nix run nixpkgs#nixos-rebuild -- switch \
+            --flake .#nixxxos \
+            --target-host "root@$target" \
+            --no-reexec

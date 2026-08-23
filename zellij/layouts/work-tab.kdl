@@ -1,0 +1,44 @@
+// Recreates the working panes lost in the control-panel restart as one tab:
+// left stack = grok workers + htop, center 50% = the st0x Fable session,
+// right stack = yielduck Fable + mprocs.
+//
+// Project agent panes launch through `direnv exec .` so they get each flake
+// dev shell. The shared DataClique mprocs panel uses the system package and
+// organization-level config directly. Absolute cwds only — relative pane cwds
+// resolve against the caller's directory, not this file (verified live).
+//
+// The dispatcher and the .config Fable already run in the ".config" tab and
+// are deliberately absent here: spawning them again would double-claim the
+// pi-support role and fork a live Claude session.
+layout {
+    tab name="work" {
+        pane size=1 borderless=true {
+            plugin location="tab-bar"
+        }
+        pane split_direction="vertical" {
+            pane size="25%" split_direction="horizontal" {
+                pane command="/Users/0xgleb/.nix-profile/bin/direnv" name="grok-1" cwd="/Users/0xgleb/code/st0x" {
+                    args "exec" "." "bash" ".tmp/grok-worker.sh" "grok-1"
+                }
+                pane command="/Users/0xgleb/.nix-profile/bin/direnv" name="grok-2" cwd="/Users/0xgleb/code/st0x" {
+                    args "exec" "." "bash" ".tmp/grok-worker.sh" "grok-2"
+                }
+                pane command="/run/current-system/sw/bin/htop" cwd="/Users/0xgleb/.config"
+            }
+            pane command="/Users/0xgleb/.nix-profile/bin/direnv" name="st0x-fable" cwd="/Users/0xgleb/code/st0x" focus=true size="50%" {
+                args "exec" "." "jf" "clanker" "--claude"
+            }
+            pane size="25%" split_direction="horizontal" {
+                pane command="/Users/0xgleb/.nix-profile/bin/direnv" name="yielduck-fable" cwd="/Users/0xgleb/code/dataclique/yielduck" {
+                    args "exec" "." "jf" "clanker" "--claude"
+                }
+                pane command="/run/current-system/sw/bin/mprocs" name="mprocs" cwd="/Users/0xgleb/code/dataclique" {
+                    args "--config" "/Users/0xgleb/code/dataclique/mprocs.yaml"
+                }
+            }
+        }
+        pane size=1 borderless=true {
+            plugin location="status-bar"
+        }
+    }
+}
