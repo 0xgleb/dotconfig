@@ -2,43 +2,54 @@
  * Vim state machine - tracks current mode, pending operations, and repeat info.
  */
 
-export type VimMode = "normal" | "insert" | "replace" | "visual" | "visual-line" | "command-line" | "operator-pending";
+export type VimMode =
+  | "normal"
+  | "insert"
+  | "replace"
+  | "visual"
+  | "visual-line"
+  | "command-line"
+  | "operator-pending"
+export type StableVimMode = "normal" | "insert"
+
+export const stableVimMode = (mode: VimMode): StableVimMode =>
+  mode === "insert" ? "insert" : "normal"
 
 export interface RecordedChange {
   /** The keys that triggered this change */
-  keys: string[];
+  keys: string[]
   /** Text inserted during insert mode (for dot-repeat) */
-  insertedText: string;
+  insertedText: string
 }
 
 export interface VimState {
-  mode: VimMode;
+  mode: VimMode
   /** Numeric prefix accumulator (0 = none) */
-  count: number;
+  count: number
   /** Pending operator: 'd', 'c', 'y', '>', '<', etc. */
-  pendingOperator: string | null;
+  pendingOperator: string | null
   /** Count supplied before the pending operator (multiplied by motion count). */
-  pendingOperatorCount: number;
+  pendingOperatorCount: number
   /** Current register ('"' = default) */
-  register: string;
+  register: string
   /** Last recorded change for dot-repeat */
-  lastChange: RecordedChange | null;
+  lastChange: RecordedChange | null
   /** Anchor position for visual mode */
-  visualAnchor: { line: number; col: number } | null;
+  visualAnchor: { line: number; col: number } | null
   /** Whether we're accumulating digits for a count */
-  countStarted: boolean;
+  countStarted: boolean
   /** Pending character motion: 'f', 'F', 't', 'T', or 'r' (waiting for next char) */
-  pendingCharMotion: string | null;
+  pendingCharMotion: string | null
   /** Whether we're waiting for the second key after 'g' (e.g., gg) */
-  pendingG: boolean;
+  pendingG: boolean
   /** Pending text object prefix: 'i' or 'a' (waiting for object key like w, ", (, etc.) */
-  pendingTextObjectPrefix: string | null;
+  pendingTextObjectPrefix: string | null
   /** Whether we're waiting for a register name after `"` */
-  pendingRegister: boolean;
+  pendingRegister: boolean
   /** Whether we're replaying a dot-repeat (suppress recording) */
-  isReplaying: boolean;
+  isReplaying: boolean
   /** Remaining copies for a counted `O` insertion. */
-  openLineRepeatCount: number;
+  openLineRepeatCount: number
 }
 
 export function createInitialState(): VimState {
@@ -57,29 +68,36 @@ export function createInitialState(): VimState {
     pendingRegister: false,
     isReplaying: false,
     openLineRepeatCount: 1,
-  };
+  }
 }
 
 export function resetOperatorState(state: VimState): void {
-  state.count = 0;
-  state.countStarted = false;
-  state.pendingOperator = null;
-  state.pendingOperatorCount = 1;
-  state.pendingCharMotion = null;
-  state.pendingG = false;
-  state.pendingTextObjectPrefix = null;
-  state.pendingRegister = false;
-  state.register = '"';
+  state.count = 0
+  state.countStarted = false
+  state.pendingOperator = null
+  state.pendingOperatorCount = 1
+  state.pendingCharMotion = null
+  state.pendingG = false
+  state.pendingTextObjectPrefix = null
+  state.pendingRegister = false
+  state.register = '"'
 }
 
 export function modeDisplayName(mode: VimMode): string {
   switch (mode) {
-    case "normal": return "NORMAL";
-    case "insert": return "INSERT";
-    case "replace": return "REPLACE";
-    case "visual": return "VISUAL";
-    case "visual-line": return "V-LINE";
-    case "command-line": return "COMMAND";
-    case "operator-pending": return "OP-PENDING";
+    case "normal":
+      return "NORMAL"
+    case "insert":
+      return "INSERT"
+    case "replace":
+      return "REPLACE"
+    case "visual":
+      return "VISUAL"
+    case "visual-line":
+      return "V-LINE"
+    case "command-line":
+      return "COMMAND"
+    case "operator-pending":
+      return "OP-PENDING"
   }
 }

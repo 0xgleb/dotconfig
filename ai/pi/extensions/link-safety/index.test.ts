@@ -1,13 +1,15 @@
-import assert from "node:assert/strict";
-import test from "node:test";
-import { exposeGraphiteUrls } from "./index.ts";
+import assert from "node:assert/strict"
+import test from "node:test"
+import { exposeGraphiteUrls } from "./index.ts"
 
 test("Graphite Markdown links render as unambiguous raw remote URLs", () => {
   assert.equal(
-    exposeGraphiteUrls("Review [PR 1044](https://app.graphite.dev/github/pr/ST0x-Technology/st0x.liquidity/1044)."),
+    exposeGraphiteUrls(
+      "Review [PR 1044](https://app.graphite.dev/github/pr/ST0x-Technology/st0x.liquidity/1044).",
+    ),
     "Review https://app.graphite.dev/github/pr/ST0x-Technology/st0x.liquidity/1044.",
-  );
-});
+  )
+})
 
 test("other links and code examples remain unchanged", () => {
   const source = [
@@ -16,6 +18,6 @@ test("other links and code examples remain unchanged", () => {
     "```md",
     "[PR](https://app.graphite.dev/github/pr/o/r/2)",
     "```",
-  ].join("\n");
-  assert.equal(exposeGraphiteUrls(source), source);
-});
+  ].join("\n")
+  assert.equal(exposeGraphiteUrls(source), source)
+})

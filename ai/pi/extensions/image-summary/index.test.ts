@@ -4,7 +4,10 @@ import test from "node:test"
 
 import { imageSummarySystemPrompt } from "./core.ts"
 
-const extensionSource = readFileSync(new URL("./index.ts", import.meta.url), "utf8")
+const extensionSource = readFileSync(
+  new URL("./index.ts", import.meta.url),
+  "utf8",
+)
 const packageDefinition = JSON.parse(
   readFileSync(new URL("../package.json", import.meta.url), "utf8"),
 ) as { readonly pi: { readonly extensions: readonly string[] } }

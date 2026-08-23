@@ -8,10 +8,10 @@
  */
 
 export interface EditorLike {
-  state: { lines: string[]; cursorLine: number; cursorCol: number };
-  lastAction: unknown;
-  preferredVisualCol?: number | null;
-  setCursorCol?: (col: number) => void;
+  state: { lines: string[]; cursorLine: number; cursorCol: number }
+  lastAction: unknown
+  preferredVisualCol?: number | null
+  setCursorCol?: (col: number) => void
 }
 
 export function logicalVerticalPosition(
@@ -20,9 +20,12 @@ export function logicalVerticalPosition(
   direction: -1 | 1,
   count: number,
 ): { line: number; col: number } {
-  const line = Math.max(0, Math.min(lines.length - 1, cursor.line + direction * count));
-  const lastCol = Math.max(0, (lines[line] || "").length - 1);
-  return { line, col: Math.min(cursor.col, lastCol) };
+  const line = Math.max(
+    0,
+    Math.min(lines.length - 1, cursor.line + direction * count),
+  )
+  const lastCol = Math.max(0, (lines[line] || "").length - 1)
+  return { line, col: Math.min(cursor.col, lastCol) }
 }
 
 /**
@@ -35,15 +38,15 @@ export function moveEditorCursorTo(
   targetLine: number,
   targetCol: number,
 ): void {
-  const lines = editor.state.lines ?? [""];
-  const line = Math.max(0, Math.min(targetLine, lines.length - 1));
-  const col = Math.max(0, Math.min(targetCol, (lines[line] ?? "").length));
-  editor.lastAction = null;
-  editor.state.cursorLine = line;
+  const lines = editor.state.lines ?? [""]
+  const line = Math.max(0, Math.min(targetLine, lines.length - 1))
+  const col = Math.max(0, Math.min(targetCol, (lines[line] ?? "").length))
+  editor.lastAction = null
+  editor.state.cursorLine = line
   if (typeof editor.setCursorCol === "function") {
-    editor.setCursorCol(col);
+    editor.setCursorCol(col)
   } else {
-    editor.state.cursorCol = col;
-    editor.preferredVisualCol = null;
+    editor.state.cursorCol = col
+    editor.preferredVisualCol = null
   }
 }

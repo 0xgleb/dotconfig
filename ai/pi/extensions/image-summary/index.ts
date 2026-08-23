@@ -18,7 +18,7 @@ const CAPTION_SYSTEM_PROMPT = `Caption the supplied images for compact terminal 
 
 const responseText = (content: readonly unknown[]): string =>
   content
-    .flatMap((block) =>
+    .flatMap(block =>
       block &&
       typeof block === "object" &&
       "type" in block &&
@@ -30,7 +30,7 @@ const responseText = (content: readonly unknown[]): string =>
     )
     .join("")
 
-const generatedImageCaptions = async (
+export const generatedImageCaptions = async (
   images: readonly ImageContent[],
   ctx: ExtensionContext,
 ): Promise<readonly string[] | undefined> => {
@@ -50,14 +50,17 @@ const generatedImageCaptions = async (
     ],
     timestamp: Date.now(),
   }
-  const signals = [AbortSignal.timeout(12_000), ...(ctx.signal ? [ctx.signal] : [])]
+  const signals = [
+    AbortSignal.timeout(12_000),
+    ...(ctx.signal ? [ctx.signal] : []),
+  ]
   const response = await completeSimple(
     ctx.model,
     { systemPrompt: CAPTION_SYSTEM_PROMPT, messages: [message] },
     {
       apiKey: auth.apiKey,
-      headers: auth.headers,
-      env: auth.env,
+      ...(auth.headers === undefined ? {} : { headers: auth.headers }),
+      ...(auth.env === undefined ? {} : { env: auth.env }),
       signal: AbortSignal.any(signals),
       reasoning: "minimal",
       maxTokens: 512,
@@ -66,7 +69,10 @@ const generatedImageCaptions = async (
     },
   )
   if (response.stopReason === "aborted") return undefined
-  return decodeImageCaptions(responseText(response.content), boundedImages.length)
+  return decodeImageCaptions(
+    responseText(response.content),
+    boundedImages.length,
+  )
 }
 
 export const captionedInputText = async (
@@ -88,7 +94,7 @@ export const captionedInputText = async (
 }
 
 const imageSummaryExtension = (pi: ExtensionAPI): void => {
-  registerRuntimeVersion(pi, "image-summary", "2026.08.01.2")
+  registerRuntimeVersion(pi, "image-summary", "2026.08.14.2")
 
   pi.on("input", async (event, ctx) => {
     const images = event.images ?? []
@@ -100,7 +106,7 @@ const imageSummaryExtension = (pi: ExtensionAPI): void => {
     }
   })
 
-  pi.on("before_agent_start", (event) => ({
+  pi.on("before_agent_start", event => ({
     systemPrompt: imageSummarySystemPrompt(event.systemPrompt),
   }))
 }

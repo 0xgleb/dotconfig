@@ -1069,7 +1069,7 @@ function replayLastChange(ctx: NormalModeContext, countOverride: number): void {
 
   try {
     resetOperatorState(state)
-    const firstCommand = change.keys.findIndex((key) => !/^\d$/.test(key))
+    const firstCommand = change.keys.findIndex(key => !/^\d$/.test(key))
     const keys =
       countOverride > 0
         ? [

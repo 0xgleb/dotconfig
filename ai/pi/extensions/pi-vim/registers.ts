@@ -12,29 +12,29 @@
  */
 
 export interface RegisterContent {
-  text: string;
-  linewise: boolean;
+  text: string
+  linewise: boolean
 }
 
-const registers: Map<string, RegisterContent> = new Map();
+const registers: Map<string, RegisterContent> = new Map()
 
 /**
  * Check if a register name is valid.
  */
 export function isValidRegister(name: string): boolean {
-  if (name === '"' || name === "_") return true;
-  if (name >= "0" && name <= "9") return true;
-  if (name >= "a" && name <= "z") return true;
-  if (name >= "A" && name <= "Z") return true;
-  if (name === "+" || name === "*") return true;
-  return false;
+  if (name === '"' || name === "_") return true
+  if (name >= "0" && name <= "9") return true
+  if (name >= "a" && name <= "z") return true
+  if (name >= "A" && name <= "Z") return true
+  if (name === "+" || name === "*") return true
+  return false
 }
 
 /**
  * Get the content of a register.
  */
 export function getRegister(name: string): RegisterContent | undefined {
-  return registers.get(name);
+  return registers.get(name)
 }
 
 /**
@@ -46,48 +46,48 @@ export function yankToRegister(
   text: string,
   linewise: boolean,
 ): void {
-  if (name === "_") return; // black hole
+  if (name === "_") return // black hole
 
   // Handle uppercase registers (append to lowercase)
   if (name >= "A" && name <= "Z") {
-    const lower = name.toLowerCase();
-    const existing = registers.get(lower);
+    const lower = name.toLowerCase()
+    const existing = registers.get(lower)
     if (existing) {
-      const separator = existing.linewise || linewise ? "\n" : "";
+      const separator = existing.linewise || linewise ? "\n" : ""
       const content: RegisterContent = {
         text: existing.text + separator + text,
         linewise: existing.linewise || linewise,
-      };
-      registers.set(lower, content);
-      registers.set('"', content);
+      }
+      registers.set(lower, content)
+      registers.set('"', content)
     } else {
-      const content: RegisterContent = { text, linewise };
-      registers.set(lower, content);
-      registers.set('"', content);
+      const content: RegisterContent = { text, linewise }
+      registers.set(lower, content)
+      registers.set('"', content)
     }
-    return;
+    return
   }
 
   // Handle clipboard registers
   if (name === "+" || name === "*") {
-    const content: RegisterContent = { text, linewise };
-    registers.set("+", content);
-    registers.set("*", content);
-    registers.set('"', content);
-    registers.set("0", content);
-    return;
+    const content: RegisterContent = { text, linewise }
+    registers.set("+", content)
+    registers.set("*", content)
+    registers.set('"', content)
+    registers.set("0", content)
+    return
   }
 
-  const content: RegisterContent = { text, linewise };
+  const content: RegisterContent = { text, linewise }
 
   if (name === '"') {
     // Unnamed register: also update register 0
-    registers.set('"', content);
-    registers.set("0", content);
+    registers.set('"', content)
+    registers.set("0", content)
   } else {
     // Named register
-    registers.set(name, content);
-    registers.set('"', content);
+    registers.set(name, content)
+    registers.set('"', content)
   }
 }
 
@@ -100,52 +100,52 @@ export function deleteToRegister(
   text: string,
   linewise: boolean,
 ): void {
-  if (name === "_") return; // black hole
+  if (name === "_") return // black hole
 
   // Handle uppercase registers (append to lowercase)
   if (name >= "A" && name <= "Z") {
-    const lower = name.toLowerCase();
-    const existing = registers.get(lower);
+    const lower = name.toLowerCase()
+    const existing = registers.get(lower)
     if (existing) {
-      const separator = existing.linewise || linewise ? "\n" : "";
+      const separator = existing.linewise || linewise ? "\n" : ""
       const content: RegisterContent = {
         text: existing.text + separator + text,
         linewise: existing.linewise || linewise,
-      };
-      registers.set(lower, content);
-      registers.set('"', content);
+      }
+      registers.set(lower, content)
+      registers.set('"', content)
     } else {
-      const content: RegisterContent = { text, linewise };
-      registers.set(lower, content);
-      registers.set('"', content);
+      const content: RegisterContent = { text, linewise }
+      registers.set(lower, content)
+      registers.set('"', content)
     }
-    return;
+    return
   }
 
   // Handle clipboard registers
   if (name === "+" || name === "*") {
-    const content: RegisterContent = { text, linewise };
-    registers.set("+", content);
-    registers.set("*", content);
-    registers.set('"', content);
-    return;
+    const content: RegisterContent = { text, linewise }
+    registers.set("+", content)
+    registers.set("*", content)
+    registers.set('"', content)
+    return
   }
 
-  const content: RegisterContent = { text, linewise };
+  const content: RegisterContent = { text, linewise }
 
   if (name === '"') {
     // Shift numbered registers 9 <- 8 <- ... <- 2 <- 1
     for (let i = 9; i >= 2; i--) {
-      const prev = registers.get(String(i - 1));
+      const prev = registers.get(String(i - 1))
       if (prev) {
-        registers.set(String(i), prev);
+        registers.set(String(i), prev)
       }
     }
-    registers.set("1", content);
-    registers.set('"', content);
+    registers.set("1", content)
+    registers.set('"', content)
   } else {
     // Named register
-    registers.set(name, content);
-    registers.set('"', content);
+    registers.set(name, content)
+    registers.set('"', content)
   }
 }

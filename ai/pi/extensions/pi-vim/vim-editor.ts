@@ -16,7 +16,12 @@ import type {
   EditorTheme,
   AutocompleteProvider,
 } from "@earendil-works/pi-tui"
-import { createInitialState, modeDisplayName, type VimState } from "./state.ts"
+import {
+  createInitialState,
+  modeDisplayName,
+  type StableVimMode,
+  type VimState,
+} from "./state.ts"
 import {
   PROMPT_MIN_CONTENT_ROWS,
   promptChromeBottomLine,
@@ -41,8 +46,12 @@ import { streamingSubmissionMode } from "./steering.ts"
 import {
   emptyEditorAttachmentState,
   expandEditorScreenshots,
+  isCurrentEditorAttachment,
+  pendingEditorAttachments,
   redactEditorScreenshot,
+  resolveEditorAttachmentCaption,
   type EditorAttachmentState,
+  type PendingEditorAttachment,
 } from "./attachments.ts"
 import {
   handleSearchInput,
@@ -54,6 +63,10 @@ import {
 export interface VimSteeringOptions {
   readonly isStreaming: () => boolean
   readonly onFollowUp: (text: string) => void
+  readonly onAttachment?: (
+    attachment: PendingEditorAttachment,
+  ) => Promise<string | undefined>
+  readonly initialMode?: StableVimMode
 }
 
 export class VimEditor extends CustomEditor {
@@ -67,7 +80,10 @@ export class VimEditor extends CustomEditor {
     | ((provider: AutocompleteProvider) => AutocompleteProvider)
     | undefined
   private readonly isStreaming: () => boolean
-  private readonly onFollowUp?: (text: string) => void
+  private readonly onFollowUp: ((text: string) => void) | undefined
+  private readonly onAttachment:
+    | ((attachment: PendingEditorAttachment) => Promise<string | undefined>)
+    | undefined
   private attachmentState: EditorAttachmentState = emptyEditorAttachmentState()
   private hardwareCursorSupported = true
 
@@ -89,9 +105,11 @@ export class VimEditor extends CustomEditor {
   ) {
     super(tui, theme, keybindings, options)
     this.vimState = createInitialState()
+    this.vimState.mode = steering?.initialMode ?? "insert"
     this.wrapAutocomplete = wrapAutocomplete
     this.isStreaming = steering?.isStreaming ?? (() => false)
     this.onFollowUp = steering?.onFollowUp
+    this.onAttachment = steering?.onAttachment
     this.applyCursorShapeForMode(this.vimState.mode)
   }
 
@@ -169,35 +187,37 @@ export class VimEditor extends CustomEditor {
     }
   }
 
-  handleInput(data: string): void {
+  override handleInput(data: string): void {
     const isEnter = matchesKey(data, "enter")
     const isCtrlEnter = matchesKey(data, "ctrl+enter")
-    if (isEnter || isCtrlEnter) {
-      const expanded = expandEditorScreenshots(
-        this.getText(),
-        this.attachmentState,
-      )
-      if (expanded !== this.getText()) this.setText(expanded)
-      this.attachmentState = emptyEditorAttachmentState()
-    }
+    const displayText = this.getText()
+    const expandedText = this.getExpandedText()
+    const submittedText =
+      isEnter || isCtrlEnter
+        ? expandEditorScreenshots(expandedText, this.attachmentState)
+        : expandedText
     const submissionMode = streamingSubmissionMode({
-      text: this.getText(),
+      text: displayText,
       isStreaming: this.isStreaming(),
       isEnter,
       isCtrlEnter,
     })
     if (submissionMode === "followUp" && this.onFollowUp) {
-      const text = this.getText()
-      this.addToHistory(text)
+      this.attachmentState = emptyEditorAttachmentState()
+      this.addToHistory(displayText)
       this.setText("")
-      this.onFollowUp(text)
+      this.onFollowUp(submittedText)
       return
     }
     if (submissionMode === "steer" || submissionMode === "immediate") {
-      const text = this.getText()
+      this.attachmentState = emptyEditorAttachmentState()
       this.setText("")
-      this.onSubmit?.(text)
+      this.onSubmit?.(submittedText)
       return
+    }
+    if (isEnter && displayText.trim().length > 0) {
+      this.attachmentState = emptyEditorAttachmentState()
+      if (submittedText !== displayText) this.setText(submittedText)
     }
 
     const { vimState } = this
@@ -236,12 +256,18 @@ export class VimEditor extends CustomEditor {
     // Clear redo stack when text changes from a non-undo/redo action.
     // If the redo stack changed size, it was an undo/redo operation — don't clear.
     if (!isEnter && this.getText() !== textBefore) {
+      const previousAttachments = this.attachmentState
       const redacted = redactEditorScreenshot(
         this.getText(),
-        this.attachmentState,
+        previousAttachments,
       )
       if (redacted.text !== this.getText()) this.setText(redacted.text)
       this.attachmentState = redacted.state
+      for (const attachment of pendingEditorAttachments(
+        previousAttachments,
+        redacted.state,
+      ))
+        void this.describeAttachment(attachment)
     }
     if (this.getText() === "")
       this.attachmentState = emptyEditorAttachmentState()
@@ -258,14 +284,48 @@ export class VimEditor extends CustomEditor {
     }
   }
 
+  private async describeAttachment(
+    attachment: PendingEditorAttachment,
+  ): Promise<void> {
+    if (!this.onAttachment) return
+    let caption: string | undefined
+    try {
+      caption = await this.onAttachment(attachment)
+    } catch {
+      caption = undefined
+    }
+    if (
+      !caption ||
+      !isCurrentEditorAttachment(this.attachmentState, attachment)
+    )
+      return
+
+    const currentText = this.getText()
+    if (currentText.includes(attachment.marker)) {
+      const cursor = this.getCursor()
+      const resolved = resolveEditorAttachmentCaption(
+        currentText,
+        this.attachmentState,
+        attachment.marker,
+        caption,
+      )
+      if (resolved.text !== currentText) {
+        this.setText(resolved.text)
+        this.attachmentState = resolved.state
+        this.moveCursorTo(cursor.line, cursor.col)
+      }
+    }
+    this.tui.requestRender()
+  }
+
   private handleInsert(data: string): void {
     const ctx: InsertModeContext = {
       state: this.vimState,
       getCursor: () => this.getCursor(),
       getText: () => this.getText(),
-      setText: (text) => this.setText(text),
+      setText: text => this.setText(text),
       moveCursorTo: (line, col) => this.moveCursorTo(line, col),
-      superHandleInput: (d) => super.handleInput(d),
+      superHandleInput: d => super.handleInput(d),
     }
     handleInsertMode(data, ctx)
   }
@@ -275,9 +335,9 @@ export class VimEditor extends CustomEditor {
       state: this.vimState,
       getCursor: () => this.getCursor(),
       getText: () => this.getText(),
-      setText: (text) => this.setText(text),
+      setText: text => this.setText(text),
       moveCursorTo: (line, col) => this.moveCursorTo(line, col),
-      superHandleInput: (d) => super.handleInput(d),
+      superHandleInput: d => super.handleInput(d),
     }
     handleReplaceMode(data, ctx)
   }
@@ -291,10 +351,10 @@ export class VimEditor extends CustomEditor {
 
     const ctx: NormalModeContext = {
       state: this.vimState,
-      superHandleInput: (d) => super.handleInput(d),
+      superHandleInput: d => super.handleInput(d),
       getText: () => this.getText(),
       getCursor: () => this.getCursor(),
-      setText: (text) => this.setText(text),
+      setText: text => this.setText(text),
       moveCursorTo: (line, col) => this.moveCursorTo(line, col),
       undo: () => this.vimUndo(),
       redo: () => this.vimRedo(),
@@ -324,10 +384,10 @@ export class VimEditor extends CustomEditor {
   private handleVisual(data: string): void {
     const ctx: VisualModeContext = {
       state: this.vimState,
-      superHandleInput: (d) => super.handleInput(d),
+      superHandleInput: d => super.handleInput(d),
       getText: () => this.getText(),
       getCursor: () => this.getCursor(),
-      setText: (text) => this.setText(text),
+      setText: text => this.setText(text),
       moveCursorTo: (line, col) => this.moveCursorTo(line, col),
     }
     handleVisualMode(data, ctx)
@@ -362,7 +422,7 @@ export class VimEditor extends CustomEditor {
     return before + strippedAfter
   }
 
-  render(width: number): string[] {
+  override render(width: number): string[] {
     // Pi reapplies its persisted hardware-cursor setting during resource reload,
     // which can hide the insert bar while this editor remains in insert mode.
     // Reassert the mode-derived invariant on every render, before the base
@@ -438,7 +498,7 @@ export class VimEditor extends CustomEditor {
 
     const leftMargin = " ".repeat(inset)
     const rightMargin = " ".repeat(Math.max(0, width - inset - frameWidth))
-    return lines.map((line) => `${leftMargin}${line}${rightMargin}`)
+    return lines.map(line => `${leftMargin}${line}${rightMargin}`)
   }
 
   /**

@@ -66,7 +66,7 @@ function editor(initial: string, line = 0, col = 0) {
     superHandleInput: input,
     getText: () => text,
     getCursor: () => ({ ...cursor }),
-    setText: (value) => {
+    setText: value => {
       text = value
       cursor = {
         line: value.split("\n").length - 1,
@@ -407,7 +407,7 @@ test("counted O repeats the inserted line like Vim", () => {
 test("normal-mode k recalls the latest prompt only when the editor is empty", () => {
   const empty = editor("")
   let delegated: string | undefined
-  empty.normal.superHandleInput = (data) => {
+  empty.normal.superHandleInput = data => {
     delegated = data
   }
   empty.key("k")

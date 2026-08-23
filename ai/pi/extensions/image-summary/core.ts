@@ -77,10 +77,11 @@ export const renderCaptionedImageText = (
   captions.forEach((caption, index) => {
     const marker = `[Image ${index + 1}]`
     const replacement = `[img: ${caption}]`
-    if (rendered.includes(marker)) rendered = rendered.replaceAll(marker, replacement)
+    if (rendered.includes(marker))
+      rendered = rendered.replaceAll(marker, replacement)
     else missing.push(replacement)
   })
   return [...missing, rendered.trim()]
-    .filter((part) => part.length > 0)
+    .filter(part => part.length > 0)
     .join("\n")
 }
