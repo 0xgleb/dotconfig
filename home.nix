@@ -550,6 +550,7 @@ in
     # TODO: replace with a better one
     atuin.enable = true;
     atuin.enableNushellIntegration = true;
+    atuin.flags = [ "--disable-up-arrow" ];
 
     # Carapace — completions for git, docker, gh, and hundreds more
     carapace.enable = true;

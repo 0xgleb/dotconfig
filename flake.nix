@@ -117,6 +117,8 @@
             system = "aarch64-darwin";
             config.allowUnfree = true;
           };
+          atuinFlags =
+            self.darwinConfigurations.darwwwin.config.home-manager.users."0xgleb".programs.atuin.flags;
         in
         {
           md-sync =
@@ -177,7 +179,10 @@
           nushell-config =
             pkgs.runCommand "nushell-config-test"
               {
-                nativeBuildInputs = with pkgs; [ nushell ];
+                nativeBuildInputs = with pkgs; [
+                  atuin
+                  nushell
+                ];
               }
               ''
                 export HOME=$(mktemp -d)
@@ -185,8 +190,9 @@
                 cp -r ${./nushell/fj} "$HOME/.config/nushell/fj"
                 cp ${./nushell/env.src.nu} "$HOME/.config/nushell/env.src.nu"
                 cp ${./nushell/config.src.nu} "$HOME/.config/nushell/config.src.nu"
+                atuin init nu ${pkgs.lib.escapeShellArgs atuinFlags} > "$HOME/.config/nushell/atuin.nu"
                 echo "validating nushell config sources..."
-                ${pkgs.nushell}/bin/nu --commands 'source ~/.config/nushell/env.src.nu; source ~/.config/nushell/config.src.nu'
+                ${pkgs.nushell}/bin/nu --commands 'source ~/.config/nushell/env.src.nu; source ~/.config/nushell/config.src.nu; source ~/.config/nushell/atuin.nu; let names = ($env.config.keybindings | get name); if (($names | uniq | length) != ($names | length)) { error make { msg: "duplicate Nushell keybinding names" } }'
                 echo "nushell config sources ok"
                 touch $out
               '';
