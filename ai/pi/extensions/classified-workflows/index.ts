@@ -46,6 +46,16 @@ import {
   type CapabilityCircuitState,
 } from "./capability-circuit.ts"
 import {
+  ACTION_REMEDIATION_ENTRY,
+  reconcileActionRemediation,
+  remediationContinuationMessage,
+  remediationForDecision,
+  remediationInterruption,
+  restorePendingActionRemediation,
+  type ActionRemediationState,
+  type PendingActionRemediation,
+} from "./action-remediation.ts"
+import {
   deterministicDecision,
   deterministicReadOnlyToolResultDecision,
   deterministicToolResultDecision,
@@ -1079,6 +1089,7 @@ export default function classifiedWorkflows(pi: ExtensionAPI): void {
   let loopState: LoopState | undefined
   let loopTimer: ReturnType<typeof setTimeout> | undefined
   let taskContinuationTimer: ReturnType<typeof setTimeout> | undefined
+  let pendingActionRemediation: PendingActionRemediation | undefined
   let loopWakePending = false
   let continuationPaused = false
   let managedReloadPreemptPending = false
@@ -1556,10 +1567,18 @@ export default function classifiedWorkflows(pi: ExtensionAPI): void {
     taskContinuationTimer = undefined
   }
 
+  const setPendingActionRemediation = (state: ActionRemediationState): void => {
+    pendingActionRemediation = state.status === "pending" ? state : undefined
+    pi.appendEntry(ACTION_REMEDIATION_ENTRY, state)
+  }
+
   const scheduleTaskContinuation = (ctx: ExtensionContext): void => {
     clearTaskContinuationTimer()
     const work = todoWorkSnapshot(ctx.sessionManager.getBranch())
-    if (!taskContinuationMessage(work)) return
+    const pendingMessage = pendingActionRemediation
+      ? remediationContinuationMessage(pendingActionRemediation)
+      : taskContinuationMessage(work)
+    if (!pendingMessage) return
     taskContinuationTimer = setTimeout(() => {
       taskContinuationTimer = undefined
       if (
@@ -1572,7 +1591,9 @@ export default function classifiedWorkflows(pi: ExtensionAPI): void {
         return
       }
       const currentWork = todoWorkSnapshot(ctx.sessionManager.getBranch())
-      const content = taskContinuationMessage(currentWork)
+      const content = pendingActionRemediation
+        ? remediationContinuationMessage(pendingActionRemediation)
+        : taskContinuationMessage(currentWork)
       if (!content) return
       pi.sendMessage(
         { customType: TASK_MESSAGE, content, display: true },
@@ -2180,6 +2201,7 @@ export default function classifiedWorkflows(pi: ExtensionAPI): void {
         ? parseStoredLoop(storedLoop.data)
         : undefined
     continuationPaused = latestContinuationPause(branch)?.paused ?? false
+    pendingActionRemediation = restorePendingActionRemediation(branch)
     capabilityCircuit = restoreCapabilityCircuit(branch)
     reviewDutyState = restoreReviewDutyState(branch)
     if (capabilityCircuit.open && pi.getActiveTools().length > 0) {
@@ -2559,6 +2581,15 @@ export default function classifiedWorkflows(pi: ExtensionAPI): void {
       ctx,
       ctx.signal,
     )
+    const remediation = remediationForDecision(
+      event.toolName,
+      decision,
+      Date.now(),
+    )
+    if (remediation) {
+      setPendingActionRemediation(remediation)
+      return remediationInterruption(remediation)
+    }
     if (decision.verdict === "block") {
       if (
         event.toolName === "workflow" &&
@@ -2647,6 +2678,15 @@ export default function classifiedWorkflows(pi: ExtensionAPI): void {
   })
 
   pi.on("tool_result", async (event: ToolResultEvent, ctx) => {
+    const resolvedRemediation = reconcileActionRemediation(
+      pendingActionRemediation,
+      {
+        toolName: event.toolName,
+        outcome: event.isError ? "failed" : "succeeded",
+        finishedAt: Date.now(),
+      },
+    )
+    if (resolvedRemediation) setPendingActionRemediation(resolvedRemediation)
     if (deterministicResultAllowance.consume(event.toolCallId)) return
     if (deterministicToolResultDecision(event.toolName)?.verdict === "allow")
       return

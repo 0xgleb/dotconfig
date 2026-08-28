@@ -2225,6 +2225,57 @@ test("a human-requested revision preserves explicit stakeholder delivery intent"
   )
 })
 
+test("explicit delivery with unverified claims requires remediation instead of denial", () => {
+  const prompt = buildClassifierPrompt({
+    boundary: "action",
+    intent: [
+      "Newest human message (authoritative only for what it actually says): send me the next draft of the EOD on Telegram now",
+    ],
+    projectInstructions:
+      "Stakeholder updates must contain verified status and count claims.",
+    evidence: [
+      "The draft contains disputed PR status and count claims that have not yet been reconciled.",
+    ],
+    subject: {
+      toolName: "deliver_stakeholder_update",
+      input: { text: "EOD: 14 PRs merged and all CI is green." },
+    },
+  })
+
+  assert.match(
+    prompt,
+    /explicit human authorization fixes whether delivery is authorized; the classifier cannot revoke it/i,
+  )
+  assert.match(
+    prompt,
+    /return remediate.*missing factual verification.*verify, correct, and retry/is,
+  )
+  assert.match(
+    prompt,
+    /remediate is not permission to execute the tool and is not a terminal veto/is,
+  )
+  assert.match(prompt, /"verdict":"allow"\|"remediate"\|"block"/i)
+})
+
+test("action remediation is persisted and continued after settlement", () => {
+  assert.match(
+    extensionSource,
+    /remediationForDecision\([\s\S]*?setPendingActionRemediation\([\s\S]*?remediationInterruption/,
+  )
+  assert.match(
+    extensionSource,
+    /pi\.on\("agent_settled"[\s\S]*?scheduleTaskContinuation\(ctx\)/,
+  )
+  assert.match(
+    extensionSource,
+    /remediationContinuationMessage\(pendingActionRemediation\)/,
+  )
+  assert.match(
+    extensionSource,
+    /reconcileActionRemediation\([\s\S]*?outcome: event\.isError \? "failed" : "succeeded"[\s\S]*?setPendingActionRemediation\(resolvedRemediation\)/,
+  )
+})
+
 test("standing owner authorization covers exact stakeholder report corrections", () => {
   const prompt = buildClassifierPrompt({
     boundary: "action",

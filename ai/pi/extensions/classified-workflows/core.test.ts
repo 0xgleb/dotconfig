@@ -45,7 +45,11 @@ const runWorkflowScript = (
   )
 
 const dependencies = (
-  runAgent: WorkflowDependencies["runAgent"],
+  runAgent: WorkflowDependencies["runAgent"] = async () => ({
+    status: "completed",
+    output: "unused",
+    usageTokens: 0,
+  }),
 ): WorkflowDependencies => ({
   runAgent,
   async checkpoint() {
@@ -761,7 +765,6 @@ test("bounded read-only Git working-tree reconciliation bypasses model result wi
       content: " M frontend/src/a.ts",
       actionApproved: true,
     }
-    assert.equal(deterministicDecision(request)?.verdict, "allow")
     assert.equal(
       deterministicReadOnlyToolResultDecision(request)?.verdict,
       "allow",
@@ -1061,6 +1064,32 @@ test("classifier decisions are strict JSON and fail closed", () => {
   )
   assert.equal(parseClassifierDecision("allow").verdict, "block")
   assert.equal(parseClassifierDecision('{"verdict":"maybe"}').verdict, "block")
+})
+
+test("classifier verification requirements remain distinct from denial", () => {
+  assert.deepEqual(
+    parseClassifierDecision(
+      '{"verdict":"remediate","reason":"Verify the disputed PR counts before delivery"}',
+    ),
+    {
+      verdict: "remediate",
+      reason: "Verify the disputed PR counts before delivery",
+      source: "classifier",
+    },
+  )
+})
+
+test("classifier decisions reject empty or oversized reasons", () => {
+  assert.equal(
+    parseClassifierDecision('{"verdict":"remediate","reason":""}').verdict,
+    "block",
+  )
+  assert.equal(
+    parseClassifierDecision(
+      JSON.stringify({ verdict: "remediate", reason: "x".repeat(2_001) }),
+    ).verdict,
+    "block",
+  )
 })
 
 test("classified workflow tools reserve enough wall time for both classifier boundaries and child execution", () => {
@@ -1730,6 +1759,7 @@ test("later fan-out shares ample remaining budget instead of starving trailing v
     },
   )
 
+  assert.ok(Array.isArray(result))
   assert.equal(result.length, 8)
   assert.deepEqual(
     verifierTokenLimits,

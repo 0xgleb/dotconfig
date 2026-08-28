@@ -12,6 +12,11 @@ export type Decision =
       source: "deterministic" | "classifier"
       resultSafe?: boolean
     }
+  | {
+      verdict: "remediate"
+      reason: string
+      source: "classifier"
+    }
   | { verdict: "block"; reason: string; source: "deterministic" | "classifier" }
 
 export interface ToolRequest {
@@ -453,9 +458,13 @@ const isSafeCredentialExcludedGitDiff: (
   )
     return false
   if (segments.length === 1)
-    return isSafeCredentialExcludedGitDiffSegment(segments[0])
+    return segments[0]
+      ? isSafeCredentialExcludedGitDiffSegment(segments[0])
+      : false
   return (
     segments.length === 2 &&
+    typeof segments[0] === "string" &&
+    typeof segments[1] === "string" &&
     isSafeGitObjectTypeCheck(segments[0]) &&
     isSafeCredentialExcludedGitDiffSegment(segments[1])
   )
@@ -469,6 +478,8 @@ const isSafeFixedExactHeadGitShowRange: (
   )
   if (!match) return false
   const sourcePath = match[2]
+  const startText = match[3]
+  if (!sourcePath || !startText) return false
   const segments = sourcePath.split("/")
   if (
     segments.some(
@@ -477,8 +488,8 @@ const isSafeFixedExactHeadGitShowRange: (
   )
     return false
   if (containsSensitivePath(sourcePath)) return false
-  const start = Number(match[3])
-  const end = Number(match[4] ?? match[3])
+  const start = Number(startText)
+  const end = Number(match[4] ?? startText)
   return end >= start && end - start + 1 <= 2_000
 }
 
@@ -866,11 +877,17 @@ export function parseClassifierDecision(text: string): Decision {
     const parsed: unknown = JSON.parse(text.trim())
     if (isRecord(parsed)) {
       const { verdict, reason } = parsed
+      const normalizedReason =
+        typeof reason === "string" ? reason.trim() : undefined
       if (
-        (verdict === "allow" || verdict === "block") &&
-        typeof reason === "string"
+        (verdict === "allow" ||
+          verdict === "remediate" ||
+          verdict === "block") &&
+        normalizedReason !== undefined &&
+        normalizedReason.length > 0 &&
+        normalizedReason.length <= 2_000
       ) {
-        return { verdict, reason, source: "classifier" }
+        return { verdict, reason: normalizedReason, source: "classifier" }
       }
     }
   } catch {
@@ -1092,9 +1109,20 @@ export async function runWorkflowScript(
   ): Promise<unknown> => {
     if (options !== undefined && !isRecord(options))
       throw new Error("agent options must be an object")
-    const rawRequest =
+    const rawRequest: AgentRequest =
       typeof requestOrTask === "string"
-        ? { ...options, task: requestOrTask }
+        ? {
+            task: requestOrTask,
+            ...(options?.cwd === undefined ? {} : { cwd: options.cwd }),
+            ...(options?.tools === undefined ? {} : { tools: options.tools }),
+            ...(options?.model === undefined ? {} : { model: options.model }),
+            ...(options?.thinking === undefined
+              ? {}
+              : { thinking: options.thinking }),
+            ...(options?.schema === undefined
+              ? {}
+              : { schema: options.schema }),
+          }
         : requestOrTask
     if (
       !rawRequest ||
@@ -1104,12 +1132,12 @@ export async function runWorkflowScript(
       throw new Error("agent requires a non-empty task")
     }
     const clonedRequest = structuredClone(rawRequest)
-    const normalizedRequest = {
-      ...clonedRequest,
-      ...(clonedRequest.tools === undefined
-        ? {}
-        : { tools: normalizeAgentTools(clonedRequest.tools) }),
-    }
+    const { tools, ...requestWithoutTools } = clonedRequest
+    const normalizedTools = normalizeAgentTools(tools)
+    const normalizedRequest: AgentRequest =
+      normalizedTools === undefined
+        ? requestWithoutTools
+        : { ...requestWithoutTools, tools: normalizedTools }
     const request =
       dependencies.prepareAgentRequest?.(normalizedRequest) ?? normalizedRequest
     if (request.task.length > 32_000)
