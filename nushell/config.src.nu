@@ -156,6 +156,7 @@ def evolve [] {
   let config_root = ($env.HOME | path join ".config")
   let pi_bin = ($env.HOME | path join ".pi" "agent" "bin" "pi")
   # `nix` stays unprefixed on purpose — it is aliased to add --accept-flake-config.
+  run-evolve-step "Nix store GC" {|| nix -v store gc }
   run-evolve-step "sudo refresh" {|| ^sudo -v }
   run-evolve-step "flake update" {|| nix -v flake update --flake $config_root }
   run-evolve-step "Darwin switch" {|| ^sudo darwin-rebuild switch -v --flake $config_root }
@@ -163,7 +164,6 @@ def evolve [] {
   # Verify the stable managed entrypoint directly: the generic user profile can
   # retain an older build with the same semantic version.
   run-evolve-step "Pi host verification" {|| ^$pi_bin --version }
-  run-evolve-step "Nix store GC" {|| nix -v store gc }
 }
 
 def ask [context: closure, question: string] {

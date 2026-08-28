@@ -42,7 +42,7 @@ test("evolve fails at the first unsuccessful external step", () => {
       evolve.indexOf('run-evolve-step "Darwin switch"'),
   )
   assert.ok(
-    evolve.indexOf('run-evolve-step "Nix store GC"') >
-      evolve.indexOf('run-evolve-step "Pi host verification"'),
+    evolve.indexOf('run-evolve-step "Nix store GC"') <
+      evolve.indexOf('run-evolve-step "flake update"'),
   )
 })
