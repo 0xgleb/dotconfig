@@ -33,11 +33,7 @@ import {
 } from "../shared/reload-events.ts"
 import { registerRuntimeVersion } from "../shared/runtime-version.ts"
 import { KANBAN_OVERLAY_OPTIONS, KanbanComponent } from "./kanban.ts"
-import {
-  CONTENT_GUTTER,
-  overlayRule,
-  todoSummary,
-} from "./presentation.ts"
+import { CONTENT_GUTTER, overlayRule, todoSummary } from "./presentation.ts"
 import { TaskHudComponent } from "./task-hud.ts"
 import {
   decodeTodoDetails,
@@ -69,7 +65,9 @@ const TodoParams = Type.Object({
   text: Type.Optional(
     Type.String({ description: "Todo text (for add or reply)" }),
   ),
-  id: Type.Optional(Type.Number({ description: "Todo ID" })),
+  id: Type.Optional(
+    Type.Number({ description: "Todo ID; forbidden for clear" }),
+  ),
   status: Type.Optional(
     StringEnum([
       "pending",
@@ -227,7 +225,7 @@ const TODO_REMINDER_MESSAGE = "todo.reminder"
 const MAX_TIMER_DELAY_MS = 2_147_483_647
 
 function restoredState(ctx: ExtensionContext): TodoState {
-  const states = ctx.sessionManager.getBranch().flatMap((entry) => {
+  const states = ctx.sessionManager.getBranch().flatMap(entry => {
     if (entry.type === "custom" && entry.customType === TODO_STATE_ENTRY) {
       return Option.toArray(decodeTodoState(entry.data))
     }
@@ -245,7 +243,7 @@ function restoredState(ctx: ExtensionContext): TodoState {
 }
 
 export default function todoExtension(pi: ExtensionAPI): void {
-  registerRuntimeVersion(pi, "todo", "2026.08.01.34")
+  registerRuntimeVersion(pi, "todo", "2026.08.28.2")
   const stateRef = Effect.runSync(Ref.make<TodoState>(emptyTodoState))
   let hudExpiry: ReturnType<typeof setTimeout> | undefined
   let reminderTimer: ReturnType<typeof setTimeout> | undefined
@@ -300,7 +298,7 @@ export default function todoExtension(pi: ExtensionAPI): void {
 
   const autoReloadPending = (): boolean => {
     let pending = false
-    const report: AutoReloadPendingReporter = (value) => {
+    const report: AutoReloadPendingReporter = value => {
       pending ||= value
     }
     pi.events.emit(AUTO_RELOAD_PENDING_REQUEST_EVENT, report)
@@ -435,13 +433,13 @@ export default function todoExtension(pi: ExtensionAPI): void {
           { value: "cancel", label: "Cancel" },
         ]
         const list = new SelectList(items, items.length, {
-          selectedPrefix: (text) => theme.fg("accent", text),
-          selectedText: (text) => theme.fg("accent", text),
-          description: (text) => theme.fg("muted", text),
-          scrollInfo: (text) => theme.fg("dim", text),
-          noMatch: (text) => theme.fg("warning", text),
+          selectedPrefix: text => theme.fg("accent", text),
+          selectedText: text => theme.fg("accent", text),
+          description: text => theme.fg("muted", text),
+          scrollInfo: text => theme.fg("dim", text),
+          noMatch: text => theme.fg("warning", text),
         })
-        list.onSelect = (item) =>
+        list.onSelect = item =>
           done(item.value === "cancel" ? null : item.value)
         list.onCancel = () => done(null)
         const container = new Container()
@@ -461,7 +459,7 @@ export default function todoExtension(pi: ExtensionAPI): void {
         if (todo.replies && todo.replies.length > 0) {
           container.addChild(
             new Text(
-              `${theme.bold("Replies")}\n${todo.replies.map((reply) => theme.fg("muted", `↳ ${reply}`)).join("\n")}`,
+              `${theme.bold("Replies")}\n${todo.replies.map(reply => theme.fg("muted", `↳ ${reply}`)).join("\n")}`,
               1,
               0,
             ),
@@ -501,18 +499,18 @@ export default function todoExtension(pi: ExtensionAPI): void {
     name: "todo",
     label: "Todo",
     description:
-      "Manage a branch-aware todo list. Actions: list, add, toggle, status (id + status; optional remindAt for deferred), block (id + reason), reply (id + text), unblock, clear",
+      "Manage a branch-aware todo list. Actions: list, add, toggle, status (id + status; optional remindAt for deferred), block (id + reason), reply (id + text), unblock, clear (all todos; rejects id)",
     parameters: TodoParams,
 
     async execute(_toolCallId, params, _signal, _onUpdate, ctx) {
       const program = Ref.get(stateRef).pipe(
-        Effect.flatMap((state) =>
+        Effect.flatMap(state =>
           parseTodoAction(params, Date.now()).pipe(
-            Effect.flatMap((action) =>
+            Effect.flatMap(action =>
               transitionTodoState(state, action, Date.now()),
             ),
             Effect.tap(({ state: nextState }) => Ref.set(stateRef, nextState)),
-            Effect.map((transition) =>
+            Effect.map(transition =>
               successfulToolResult(
                 transition.action,
                 transition.state,
@@ -520,11 +518,11 @@ export default function todoExtension(pi: ExtensionAPI): void {
               ),
             ),
             Effect.catchTags({
-              TodoInputError: (error) =>
+              TodoInputError: error =>
                 Effect.succeed(
                   failedToolResult(error.action, state, error.message),
                 ),
-              TodoNotFoundError: (error) =>
+              TodoNotFoundError: error =>
                 Effect.succeed(
                   failedToolResult(error.action, state, error.message),
                 ),
@@ -591,9 +589,7 @@ export default function todoExtension(pi: ExtensionAPI): void {
               : todo.text
           const replies =
             todo.replies
-              ?.map(
-                (reply) => `\n    ${theme.fg("accent", "↳ reply:")} ${reply}`,
-              )
+              ?.map(reply => `\n    ${theme.fg("accent", "↳ reply:")} ${reply}`)
               .join("") ?? ""
           text += `\n${check} ${theme.fg("accent", `#${todo.id}`)} ${theme.fg(completed ? "dim" : "muted", label)}${replies}`
         }
@@ -646,8 +642,7 @@ export default function todoExtension(pi: ExtensionAPI): void {
         return
       }
       const choices = blocked.map(
-        (todo) =>
-          `#${todo.id}  ${todo.text.replace(/\s+/g, " ").slice(0, 100)}`,
+        todo => `#${todo.id}  ${todo.text.replace(/\s+/g, " ").slice(0, 100)}`,
       )
       const selected = await ctx.ui.select(
         "Blocked todos · select one to triage",
@@ -738,7 +733,7 @@ export default function todoExtension(pi: ExtensionAPI): void {
             theme,
             () => done(),
             () => tui.requestRender(),
-            async (todo) => {
+            async todo => {
               try {
                 const next = await applyUiAction(
                   { action: "unblock", id: todo.id },

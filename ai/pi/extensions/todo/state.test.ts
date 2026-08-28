@@ -294,6 +294,16 @@ test("invalid add, toggle, and status inputs fail through the typed channel", as
     assert.equal(missingStatus.left.message, "status required for status")
 })
 
+test("clear rejects an id instead of silently clearing every todo", async () => {
+  const parsed = await Effect.runPromise(
+    Effect.either(parseTodoAction({ action: "clear", id: 16 })),
+  )
+
+  assert.equal(Either.isLeft(parsed), true)
+  if (Either.isLeft(parsed))
+    assert.equal(parsed.left.message, "id is not valid for clear")
+})
+
 test("clear resets todos and identifiers", async () => {
   const result = await Effect.runPromise(
     transitionTodoState(

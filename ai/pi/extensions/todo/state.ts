@@ -41,7 +41,7 @@ export type TodoRequest =
   | { readonly action: "block"; readonly id?: number; readonly reason?: string }
   | { readonly action: "reply"; readonly id?: number; readonly text?: string }
   | { readonly action: "unblock"; readonly id?: number }
-  | { readonly action: "clear" }
+  | { readonly action: "clear"; readonly id?: number }
 
 export type TodoAction =
   | { readonly action: "list" }
@@ -151,13 +151,14 @@ const TodoDetailsSchema = Schema.Union(
   }),
 )
 
-export const decodeTodoState: (value: unknown) => Option.Option<TodoState> = (
-  value,
-) => Schema.decodeUnknownOption(TodoStateSchema)(value)
+export const decodeTodoState: (
+  value: unknown,
+) => Option.Option<TodoState> = value =>
+  Schema.decodeUnknownOption(TodoStateSchema)(value)
 
 export const decodeTodoDetails: (
   value: unknown,
-) => Option.Option<TodoDetails> = (value) =>
+) => Option.Option<TodoDetails> = value =>
   Schema.decodeUnknownOption(TodoDetailsSchema)(value)
 
 const todoWithStatus: (
@@ -179,7 +180,7 @@ const todoWithStatus: (
     : { ...base, status }
 }
 
-const pendingTodo: (todo: Todo) => Todo = (todo) =>
+const pendingTodo: (todo: Todo) => Todo = todo =>
   todoWithStatus(todo, "pending")
 
 export const transitionTodoState: (
@@ -229,7 +230,7 @@ export const transitionTodoState: (
       return Effect.succeed({
         action: "toggle",
         state: {
-          todos: state.todos.map((todo) =>
+          todos: state.todos.map(todo =>
             todo.id === target.id ? replacement : todo,
           ),
           nextId: state.nextId,
@@ -265,7 +266,7 @@ export const transitionTodoState: (
       return Effect.succeed({
         action: "status",
         state: {
-          todos: state.todos.map((todo) =>
+          todos: state.todos.map(todo =>
             todo.id === target.id ? replacement : todo,
           ),
           nextId: state.nextId,
@@ -296,7 +297,7 @@ export const transitionTodoState: (
       return Effect.succeed({
         action: "block",
         state: {
-          todos: state.todos.map((todo) =>
+          todos: state.todos.map(todo =>
             todo.id === target.id ? replacement : todo,
           ),
           nextId: state.nextId,
@@ -322,7 +323,7 @@ export const transitionTodoState: (
       return Effect.succeed({
         action: "reply",
         state: {
-          todos: state.todos.map((todo) =>
+          todos: state.todos.map(todo =>
             todo.id === target.id ? replacement : todo,
           ),
           nextId: state.nextId,
@@ -344,7 +345,7 @@ export const transitionTodoState: (
       return Effect.succeed({
         action: "unblock",
         state: {
-          todos: state.todos.map((todo) =>
+          todos: state.todos.map(todo =>
             todo.id === target.id ? pendingTodo(todo) : todo,
           ),
           nextId: state.nextId,
@@ -366,7 +367,7 @@ export const transitionTodoState: (
 
 export const nextDeferredReminderAt: (
   state: TodoState,
-) => number | undefined = (state) =>
+) => number | undefined = state =>
   state.todos
     .filter(
       (todo): todo is Extract<Todo, { status: "deferred" }> =>
@@ -394,7 +395,7 @@ export const wakeDueDeferredTodos: (
   const dueIds = new Set(woken.map(({ id }) => id))
   return {
     state: {
-      todos: state.todos.map((todo) =>
+      todos: state.todos.map(todo =>
         dueIds.has(todo.id) ? pendingTodo(todo) : todo,
       ),
       nextId: state.nextId,
@@ -538,11 +539,18 @@ export const parseTodoAction: (
           )
         : Effect.succeed({ action: "unblock", id: request.id })
     case "clear":
-      return Effect.succeed(request)
+      return request.id === undefined
+        ? Effect.succeed({ action: "clear" })
+        : Effect.fail(
+            new TodoInputError({
+              action: "clear",
+              message: "id is not valid for clear",
+            }),
+          )
   }
 }
 
-export const todoStatusMark: (status: TodoStatus) => string = (status) =>
+export const todoStatusMark: (status: TodoStatus) => string = status =>
   ({
     pending: "[ ]",
     in_progress: "[/]",
@@ -553,11 +561,11 @@ export const todoStatusMark: (status: TodoStatus) => string = (status) =>
     deferred: "[:]",
   })[status]
 
-const formatTodoList: (todos: ReadonlyArray<Todo>) => string = (todos) =>
+const formatTodoList: (todos: ReadonlyArray<Todo>) => string = todos =>
   todos.length === 0
     ? "No todos"
     : todos
-        .map((todo) => {
+        .map(todo => {
           const detail =
             todo.status === "blocked"
               ? ` — blocked: ${todo.reason}`
@@ -565,8 +573,7 @@ const formatTodoList: (todos: ReadonlyArray<Todo>) => string = (todos) =>
                 ? ` — deferred until ${new Date(todo.remindAt).toISOString()}`
                 : ""
           const replies =
-            todo.replies?.map((reply) => `\n    ↳ reply: ${reply}`).join("") ??
-            ""
+            todo.replies?.map(reply => `\n    ↳ reply: ${reply}`).join("") ?? ""
           return `${todoStatusMark(todo.status)} #${todo.id}: ${todo.text}${detail}${replies}`
         })
         .join("\n")
