@@ -3,8 +3,8 @@
   "private": true,
   "type": "module",
   "scripts": {
-    "format": "prettier --write --config ../../../prettier.config.mjs ../../../ai/**/*.{ts,tsx,mts,cts}",
-    "format:check": "prettier --check --config ../../../prettier.config.mjs ../../../ai/**/*.{ts,tsx,mts,cts}",
+    "format": "prettier --write --no-error-on-unmatched-pattern --config ../../../prettier.config.mjs ../../../ai/**/*.{ts,tsx,mts,cts}",
+    "format:check": "prettier --check --no-error-on-unmatched-pattern --config ../../../prettier.config.mjs ../../../ai/**/*.{ts,tsx,mts,cts}",
     "typecheck": "tsc --noEmit -p tsconfig.json"
   },
   "keywords": [

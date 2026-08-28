@@ -887,7 +887,7 @@ export const makeSqliteRegistryStore: (
             requests: rowsFrom(
               database
                 .prepare(
-                  "SELECT * FROM requests ORDER BY created_at, request_id",
+                  "SELECT * FROM requests WHERE requester_acknowledged_at IS NULL ORDER BY created_at, request_id",
                 )
                 .all(),
             ).map(requestFromRow),

@@ -825,8 +825,8 @@ test("a live lease cannot receive a request for another role", async () => {
   })
 })
 
-test("request lifecycle is durable and terminal transitions require the current lease", async () => {
-  await withStores(async store => {
+test("acknowledged request history stays durable without entering operational snapshots", async () => {
+  await withStores(async (store, _second, root) => {
     const claimedLease = await Effect.runPromise(
       store.claim({
         agent: agent("agent-a"),
@@ -872,6 +872,14 @@ test("request lifecycle is durable and terminal transitions require the current 
       }),
     )
     assert.equal(completed.status, "completed")
+    const awaitingAcknowledgement = await Effect.runPromise(
+      store.snapshot(1_030),
+    )
+    assert.equal(awaitingAcknowledgement.requests[0]?.status, "completed")
+    assert.equal(
+      awaitingAcknowledgement.requests[0]?.requesterAcknowledgedAt,
+      undefined,
+    )
     const acknowledged = await Effect.runPromise(
       store.acknowledgeRequest({
         requestId: queued.id,
@@ -881,10 +889,19 @@ test("request lifecycle is durable and terminal transitions require the current 
     )
     assert.equal(acknowledged.requesterAcknowledgedAt, 1_040)
     const snapshot = await Effect.runPromise(store.snapshot(1_040))
-    assert.equal(snapshot.requests[0]?.status, "completed")
-    assert.equal(snapshot.requests[0]?.requesterAcknowledgedAt, 1_040)
-    assert.equal(snapshot.requests[0]?.requesterLabel, "st0x PR reviewer")
-    assert.equal(snapshot.requests[0]?.requesterCwd, "/workspace/st0x.rest.api")
+    assert.deepEqual(snapshot.requests, [])
+
+    const persisted = new DatabaseSync(join(root, "registry.sqlite"), {
+      readOnly: true,
+    })
+      .prepare(
+        "SELECT status, requester_acknowledged_at, requester_label, requester_cwd FROM requests WHERE request_id = ?",
+      )
+      .get(queued.id)
+    assert.equal(persisted?.status, "completed")
+    assert.equal(persisted?.requester_acknowledged_at, 1_040)
+    assert.equal(persisted?.requester_label, "st0x PR reviewer")
+    assert.equal(persisted?.requester_cwd, "/workspace/st0x.rest.api")
   })
 })
 

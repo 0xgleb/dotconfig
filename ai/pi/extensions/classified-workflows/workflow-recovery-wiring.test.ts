@@ -38,6 +38,24 @@ test("background workflows persist a running snapshot before their process start
   assert.ok(executed > persisted)
 })
 
+test("foreground checkpoints continue without exposing workflow mechanics to the user", () => {
+  const tool = extensionSource.indexOf('name: "workflow"')
+  const checkpoint = extensionSource.slice(
+    extensionSource.indexOf("checkpoint: async message =>", tool),
+    extensionSource.indexOf("phase: title =>", tool),
+  )
+  assert.doesNotMatch(
+    extensionSource,
+    /ctx\.ui\.confirm\("Workflow checkpoint"/,
+  )
+  assert.match(checkpoint, /if \(detachedWorkflow\)/)
+  assert.match(checkpoint, /return "approved"/)
+  assert.doesNotMatch(
+    extensionSource,
+    /Use agent\(\), parallel\(\), and checkpoint\(\)/,
+  )
+})
+
 test("startup and managed reload restore interrupted background workflows", () => {
   assert.match(
     extensionSource,

@@ -55,6 +55,7 @@ const ADMISSION_TIMEOUT_MS = 2_000
 const ADMISSION_RETRY_MS = 1_000
 const MAX_ADMISSION_DELAY_MS = 60_000
 const THROTTLE_REFRESH_MS = 60_000
+const throttlingMode = (): "disabled" | "enabled" => "disabled"
 
 class UsageControlError extends Data.TaggedError("UsageControlError")<{
   readonly code: "invalid_config" | "request_failed" | "invalid_response"
@@ -706,6 +707,10 @@ export default function usageGovernor(pi: ExtensionAPI): void {
   pi.registerCommand("throttle", {
     description: "Toggle detailed fleet-throttle HUD and refresh its state",
     handler: async (_args, ctx) => {
+      if (throttlingMode() === "disabled") {
+        ctx.ui.notify("Throttling is disabled", "info")
+        return
+      }
       throttleExpanded = !throttleExpanded
       await refreshThrottle(ctx)
       requestThrottleRender?.()
@@ -759,6 +764,12 @@ export default function usageGovernor(pi: ExtensionAPI): void {
     if (throttleTimer) clearInterval(throttleTimer)
     throttleControl = undefined
     throttleExpanded = false
+    requestThrottleRender = undefined
+    if (throttlingMode() === "disabled") {
+      ctx.ui.setStatus("usage-throttle", undefined)
+      ctx.ui.setWidget("usage-throttle", undefined)
+      return
+    }
     ctx.ui.setStatus(
       "usage-throttle",
       ctx.mode === "tui" ? undefined : "throttle:loading",
@@ -813,7 +824,7 @@ export default function usageGovernor(pi: ExtensionAPI): void {
 
   pi.on("before_provider_request", async (event, ctx) => {
     await awaitPreferredModel(ctx)
-    await awaitProviderCallReservation(ctx)
+    if (throttlingMode() === "enabled") await awaitProviderCallReservation(ctx)
     return event.payload
   })
 
@@ -851,7 +862,7 @@ export default function usageGovernor(pi: ExtensionAPI): void {
   })
 
   pi.on("tool_call", async (event, ctx) => {
-    if (event.toolName !== "workflow") return
+    if (throttlingMode() === "disabled" || event.toolName !== "workflow") return
     const requestedTokens = event.input.tokenBudget
     if (
       typeof requestedTokens !== "number" ||
@@ -878,13 +889,6 @@ export default function usageGovernor(pi: ExtensionAPI): void {
       turn.lane === "human" ? (latestOwnerInputAt ?? Date.now()) : undefined
 
     await awaitPreferredModel(ctx)
-    ctx.ui.setStatus(
-      "usage-governor",
-      turn.lane === "human"
-        ? "usage:provider-budgeted · interactive"
-        : turn.lane === "responsive"
-          ? "usage:provider-budgeted · responsive"
-          : "usage:provider-budgeted",
-    )
+    ctx.ui.setStatus("usage-governor", "usage:unthrottled")
   })
 }
