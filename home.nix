@@ -117,6 +117,7 @@ let
       grep -qF 'applyTuiCanvasBackground(line, width)' "$main_screen"
       if ! grep -qF 'loadBoundedSessionEntriesSync(resolvedFilePath)' "$session_manager" ||
          ! grep -qF 'MAX_SESSION_ENTRY_BYTES = 16 * 1024 * 1024' "$bounded_session_reader" ||
+         ! grep -qF 'MAX_SESSION_LOAD_BYTES = 32 * 1024 * 1024' "$bounded_session_reader" ||
          ! grep -qF 'customType: "oversized_session_entry"' "$bounded_session_reader"; then
         echo "bounded session entry loading missing" >&2
         exit 1
