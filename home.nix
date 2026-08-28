@@ -44,11 +44,17 @@ let
         < ${./ai/pi/patches/oauth-refresh-abort.patch}
       install -Dm644 ${./ai/pi/host/request-lifecycle.js} \
         "$out/lib/node_modules/pi-monorepo/dist/core/request-lifecycle.js"
+      install -Dm644 ${./ai/pi/host/bounded-session-reader.js} \
+        "$out/lib/node_modules/pi-monorepo/dist/core/bounded-session-reader.js"
+      install -Dm644 ${./ai/pi/host/bounded-session-reader.d.ts} \
+        "$out/lib/node_modules/pi-monorepo/dist/core/bounded-session-reader.d.ts"
       mkdir -p "$out/lib/node_modules/pi-monorepo/node_modules/@earendil-works/pi-ai/dist/observability"
       ln -s ../../../../../dist/core/request-lifecycle.js \
         "$out/lib/node_modules/pi-monorepo/node_modules/@earendil-works/pi-ai/dist/observability/request-lifecycle.js"
       patch -p1 -d "$out/lib/node_modules/pi-monorepo" \
         < ${./ai/pi/patches/request-observability.patch}
+      patch -p1 -d "$out/lib/node_modules/pi-monorepo" \
+        < ${./ai/pi/patches/bounded-session-reader.patch}
       # GNU patch exits 0 even when it silently drops the trailing hunks
       # of a malformed section. That once installed a host whose
       # _runAgentPrompt compared string continuation states while
@@ -56,6 +62,7 @@ let
       # completed turn with "Cannot continue from message role:
       # assistant". Assert both sides of the contract in the artifact.
       session="$out/lib/node_modules/pi-monorepo/dist/core/agent-session.js"
+      session_manager="$out/lib/node_modules/pi-monorepo/dist/core/session-manager.js"
       interactive="$out/lib/node_modules/pi-monorepo/dist/modes/interactive/interactive-mode.js"
       assistant_message="$out/lib/node_modules/pi-monorepo/dist/modes/interactive/components/assistant-message.js"
       wrapper="$out/lib/node_modules/pi-monorepo/dist/core/extensions/wrapper.js"
@@ -68,6 +75,7 @@ let
       codex_provider="$out/lib/node_modules/pi-monorepo/node_modules/@earendil-works/pi-ai/dist/api/openai-codex-responses.js"
       request_lifecycle="$out/lib/node_modules/pi-monorepo/dist/core/request-lifecycle.js"
       request_lifecycle_bridge="$out/lib/node_modules/pi-monorepo/node_modules/@earendil-works/pi-ai/dist/observability/request-lifecycle.js"
+      bounded_session_reader="$out/lib/node_modules/pi-monorepo/dist/core/bounded-session-reader.js"
       grep -qF 'continuation === "none"' "$session"
       grep -qF 'return "recovery"' "$session"
       grep -qF 'return this.agent.hasQueuedMessages() ? "queued" : "none";' "$session"
@@ -107,6 +115,12 @@ let
       grep -qF 'const DEFAULT_CANVAS_BACKGROUND = "#080B1A";' "$canvas"
       grep -qF 'applyTuiCanvasBackground(line, width)' "$alt_screen"
       grep -qF 'applyTuiCanvasBackground(line, width)' "$main_screen"
+      if ! grep -qF 'loadBoundedSessionEntriesSync(resolvedFilePath)' "$session_manager" ||
+         ! grep -qF 'MAX_SESSION_ENTRY_BYTES = 16 * 1024 * 1024' "$bounded_session_reader" ||
+         ! grep -qF 'customType: "oversized_session_entry"' "$bounded_session_reader"; then
+        echo "bounded session entry loading missing" >&2
+        exit 1
+      fi
       if ! grep -qF 'raceWithAbortSignal(oauth.refresh(current, refreshSignal), refreshSignal)' "$oauth_resolver" ||
          ! grep -qF '}, { signal: refreshSignal });' "$oauth_resolver"; then
         echo "OAuth refresh abort enforcement missing" >&2

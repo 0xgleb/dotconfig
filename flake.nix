@@ -227,8 +227,10 @@
               ''
                 cp -r ${./ai} ai
                 chmod -R u+w ai
+                cp ${./flake.nix} flake.nix
                 cp ${./home.nix} home.nix
                 node --test ai/test/pi-host-patch.test.ts
+                node --test ai/test/pi-bounded-session-reader.test.ts
                 node --test ai/pi/extensions/classified-workflows/loop.test.ts
                 touch $out
               '';
