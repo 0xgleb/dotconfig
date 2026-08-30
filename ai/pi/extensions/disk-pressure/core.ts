@@ -59,7 +59,7 @@ const TARGETED_BUN_TEST =
 
 export const isExpensiveCommand: (command: string) => boolean = command =>
   !TARGETED_BUN_TEST.test(command) &&
-  /(?:^|[;&|()]|\bsudo\s+)(?:\s*)(?:darwin-rebuild\s+(?:build|switch)|nixos-rebuild\s+(?:build|switch)|nix\s+(?:build|develop|flake\s+check)|cargo\s+(?:build|test|clippy|nextest)|(?:npm|pnpm|yarn|bun)\s+(?:run\s+)?(?:build|test)|forge\s+(?:build|test)|docker\s+build|terraform\s+(?:plan|apply)|make(?:\s|$))/i.test(
+  /(?:^|[\n\r;&|(){}]|\bsudo\s+)\s*\^?(?:darwin-rebuild\s+(?:build|switch)|nixos-rebuild\s+(?:build|switch)|nix\s+(?:build|develop|run|flake\s+check)|cargo\s+(?:build|test|clippy|nextest)|(?:npm|pnpm|yarn|bun)\s+(?:run\s+)?(?:build|test)|forge\s+(?:build|test)|docker\s+build|terraform\s+(?:plan|apply)|make(?:\s|$))/i.test(
     command,
   )
 
@@ -69,7 +69,7 @@ export const resourcePressureDecision: (
   freeMemoryBytes: bigint,
 ) => ResourcePressureDecision = (command, freeDiskBytes, freeMemoryBytes) => {
   if (!isExpensiveCommand(command)) return { verdict: "allow" }
-  if (freeDiskBytes < CRITICAL_FREE_BYTES)
+  if (freeDiskBytes < WARNING_FREE_BYTES)
     return { verdict: "block", reason: "disk pressure" }
   if (freeMemoryBytes < CRITICAL_FREE_MEMORY_BYTES)
     return { verdict: "block", reason: "memory pressure" }

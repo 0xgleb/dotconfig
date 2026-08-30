@@ -96,7 +96,7 @@ const processAggregateText = (): string => {
 }
 
 export default (pi: ExtensionAPI) => {
-  registerRuntimeVersion(pi, "resource-pressure", "2026.08.17.1")
+  registerRuntimeVersion(pi, "resource-pressure", "2026.08.30.1")
   const pendingBuilds = new Map<string, PendingBuild>()
   const reportIncident = (
     severity: "error" | "warning",
@@ -127,7 +127,7 @@ export default (pi: ExtensionAPI) => {
       verdict: decision.verdict,
       ...(decision.verdict === "block" ? { reason: decision.reason } : {}),
       diskAvailableBytes: String(diskAvailable),
-      diskReserveBytes: String(CRITICAL_FREE_BYTES),
+      diskReserveBytes: String(WARNING_FREE_BYTES),
       memoryAvailableBytes: String(memoryAvailable),
       memoryReserveBytes: String(CRITICAL_FREE_MEMORY_BYTES),
       checkedAt: Date.now(),
@@ -253,7 +253,7 @@ export default (pi: ExtensionAPI) => {
         return decision.reason === "disk pressure"
           ? {
               block: true,
-              reason: `Disk pressure guard: only ${formatFreeBytes(available)} free; reserve ${formatFreeBytes(CRITICAL_FREE_BYTES)} before expensive builds. Follow standing exact cleanup authority: inspect candidate roots with dust or Nushell \`du\`, preserve configured live outputs, remove only verified inactive rebuildable or agent-owned artifacts, independently verify the exact path after uncertain execution, then continue the blocked gate. Do not poll repeatedly, delete unrelated data, or ask again for authority already granted.`,
+              reason: `Disk pressure guard: only ${formatFreeBytes(available)} free; admission reserve ${formatFreeBytes(WARNING_FREE_BYTES)} before expensive builds, preserving the ${formatFreeBytes(CRITICAL_FREE_BYTES)} crash reserve. Follow standing exact cleanup authority: inspect candidate roots with dust or Nushell \`du\`, preserve configured live outputs, remove only verified inactive rebuildable or agent-owned artifacts, independently verify the exact path after uncertain execution, then continue the blocked gate. Do not poll repeatedly, delete unrelated data, or ask again for authority already granted.`,
             }
           : {
               block: true,
