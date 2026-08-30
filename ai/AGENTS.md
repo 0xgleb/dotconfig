@@ -708,6 +708,18 @@ What/Why/How:
      relationships and any trade-offs or follow-ups. -->
 ```
 
+**Transport Markdown as real bytes, never shell-style escape text.** Do not pass
+PR or issue prose containing literal `\n` sequences in a command argument. In
+Pi, command text is parsed by Nushell; shell forms such as `$'Title\n\nBody'`
+do not create line breaks. Write the actual multiline Markdown to an
+agent-owned file under the repository's sanctioned `.tmp/` area (record its
+provenance when Pi exposes that tool), then use `gh pr create/edit --body-file`,
+`gh issue create/edit --body-file`, or GitButler's `-F` file input. After every
+create or body edit, read the remote body back with
+`gh pr view <number-or-url> --json body --jq .body` (or the issue equivalent),
+inspect the rendered structure, and repair it from the file before claiming
+success if any literal `\n` remains.
+
 **Don't journal.** A PR description is not your work narrative.
 
 - No "Finishing in-progress work" / "First half of the refactor" /

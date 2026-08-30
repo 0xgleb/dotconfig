@@ -262,16 +262,26 @@ gt submit --no-interactive
 
 After submitting, use `gh pr edit` to set proper titles and descriptions.
 
-**IMPORTANT:** Never use Bash heredocs for PR descriptions - shell escaping
-breaks markdown tables, code blocks, etc. Instead:
+**IMPORTANT:** Never use heredocs or inline escaped strings for PR
+descriptions. In Pi, command text is Nushell: `$'Title\n\nBody'` preserves the
+backslash characters instead of creating Markdown line breaks. Instead:
 
-1. Use the `Write` tool to create `/tmp/pr-body.md` with the full markdown
-   content
+1. Create a real multiline Markdown file under the repository's sanctioned
+   `.tmp/` area (record its provenance when Pi exposes that tool).
 2. Use `gh pr edit` with `--body-file`:
 
 ```bash
-gh pr edit <PR_NUMBER> --title "stack-name: description" --body-file /tmp/pr-body.md
+gh pr edit <PR_NUMBER> --title "stack-name: description" --body-file .tmp/pr-body.md
 ```
+
+3. Read the remote body back and inspect the rendered structure before claiming
+   success:
+
+```bash
+gh pr view <PR_NUMBER> --json body --jq .body
+```
+
+If the result contains literal `\n`, repair it immediately from the body file.
 
 PR descriptions must include:
 

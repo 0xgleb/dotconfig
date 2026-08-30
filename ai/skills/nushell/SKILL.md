@@ -63,6 +63,36 @@ Two things that look like nushell problems but are not:
   `some-cmd > .tmp/out.json` then `nu -c 'open .tmp/out.json | ...'`. This is
   more robust than piping and lets you re-inspect the raw bytes.
 
+## Publishing multiline Markdown
+
+Nushell does not implement Bash's ANSI-C `$'...'` quoting. In Nu, a value such
+as `$'Title\n\nBody'` preserves the backslashes, so passing it to `gh --body` or
+`but pr -m` publishes literal `\n` text. Build real multiline content and pass a
+file instead:
+
+```nu
+let body = ([
+  "## Motivation"
+  ""
+  "Explain the problem."
+  ""
+  "## Solution"
+  ""
+  "Explain the change."
+] | str join (char newline))
+$body | save --force .tmp/pr-body.md
+^gh pr edit $pr --body-file .tmp/pr-body.md
+let remote = (^gh pr view $pr --json body | from json | get body)
+if ($remote | str contains '\n') {
+  error make { msg: "remote PR body contains literal newline escapes" }
+}
+```
+
+Create the `.tmp/` file through the harness's provenance path when available.
+Use `gh issue ... --body-file` for issues and `but pr new ... -F <file>` for
+GitButler PRs. Always read the remote body back after publishing; command
+success proves transport, not correct Markdown rendering.
+
 ## Parsing JSON / structured output (the primary use case)
 
 ```bash
@@ -223,6 +253,9 @@ nu -c 'let r = (do { ^my-tool --json } | complete)
 5. Verify constructs against `https://www.nushell.sh/book/` when unsure rather
    than guessing syntax — the language differs sharply from bash and from older
    nushell versions.
+6. Never publish multiline issue or PR prose through escaped `\n` command text.
+   Write real Markdown to a file, use the CLI's file flag, then read the remote
+   body back and reject literal escape sequences.
 
 ## Failure modes
 
