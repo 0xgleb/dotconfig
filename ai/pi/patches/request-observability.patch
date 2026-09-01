@@ -1,10 +1,11 @@
 diff --git a/dist/core/auth-storage.js b/dist/core/auth-storage.js
 --- a/dist/core/auth-storage.js
 +++ b/dist/core/auth-storage.js
-@@ -9,6 +9,7 @@ import { setTimeout as sleep } from "timers/promises";
+@@ -9,7 +9,8 @@ import { setTimeout as sleep } from "timers/promises";
  import { getAgentDir } from "../config.js";
  import { raceWithAbortSignal } from "../utils/abort.js";
  import { getFileRevision, normalizePath } from "../utils/paths.js";
+ import { stripBom } from "../utils/text.js";
 +import { currentRequestLifecycle, publishRequestLifecycle, RequestLifecyclePhase, } from "./request-lifecycle.js";
  import { isCommandConfigValue, resolveConfigValue } from "./resolve-config-value.js";
  const AUTH_FILE_WRITE_OPTIONS = { encoding: "utf-8", mode: 0o600 };

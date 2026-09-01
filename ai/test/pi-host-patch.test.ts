@@ -62,6 +62,17 @@ const assertHunkHeaderCounts = (candidate: string) => {
   assert.ok(hunks > 0, "patch contains no hunks")
 }
 
+test("request observability patch tracks the Pi 0.84.4 auth-storage import boundary", () => {
+  const requestObservabilityPatch = readFileSync(
+    requestObservabilityPatchUrl,
+    "utf8",
+  )
+  assert.match(
+    requestObservabilityPatch,
+    /import \{ getFileRevision, normalizePath \} from "\.\.\/utils\/paths\.js";\n import \{ stripBom \} from "\.\.\/utils\/text\.js";\n\+import \{ currentRequestLifecycle, publishRequestLifecycle, RequestLifecyclePhase, \} from "\.\/request-lifecycle\.js";/u,
+  )
+})
+
 test("Pi host publishes correlated request lifecycle phases", () => {
   assert.ok(
     existsSync(requestObservabilityPatchUrl),
