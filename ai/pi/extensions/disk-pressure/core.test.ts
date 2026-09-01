@@ -78,6 +78,13 @@ test("expensive build commands are blocked before consuming the crash reserve", 
       reason: "disk pressure",
     },
   )
+  assert.deepEqual(
+    diskPressureDecision(
+      "nix build --no-link --impure --expr '(import (builtins.getFlake (toString ./.)).inputs.nixpkgs { system = builtins.currentSystem; }).deno'",
+      WARNING_FREE_BYTES - 1n,
+    ),
+    { verdict: "block", reason: "disk pressure" },
+  )
   assert.deepEqual(diskPressureDecision("nix build .", WARNING_FREE_BYTES), {
     verdict: "allow",
   })
