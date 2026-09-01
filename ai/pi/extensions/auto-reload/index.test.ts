@@ -15,12 +15,14 @@ import {
   createManagedGenerationReconciler,
   createManagedGenerationTracker,
   managedGeneration,
+  runGuardedBackground,
 } from "./index.ts"
 
 const source = readFileSync(new URL("./index.ts", import.meta.url), "utf8")
 
 test("post-reload continuation waits for a later idle macrotask without owning the composer", () => {
-  assert.match(source, /setTimeout\(deliverWhenSettled, 0\)/)
+  assert.match(source, /setTimeout\(runContinuation, 0\)/)
+  assert.match(source, /runGuardedBackground\(deliverWhenSettled, error =>/)
   assert.match(
     source,
     /agentRunActive \|\| !ctx\.isIdle\(\) \|\| managedWorkIsActive\(\)/,
@@ -45,6 +47,37 @@ test("post-reload continuation waits for a later idle macrotask without owning t
   )
 })
 
+test("detached reload failures never escape to the process boundary", () => {
+  assert.match(source, /export const runGuardedBackground/)
+  assert.match(source, /Effect\.tryPromise\(/)
+  assert.match(source, /void Effect\.runPromise\(operationAttempt\)\.then/)
+  assert.match(source, /reload:blocked-by-disk/)
+  assert.match(source, /errorCode\(error\) === "ENOSPC"/)
+  assert.doesNotMatch(source, /setTimeout\(\(\) => void reload/)
+  assert.doesNotMatch(source, /queueMicrotask\(\(\) => void reload/)
+})
+
+test("filesystem watcher and lifecycle callback failures are contained", () => {
+  assert.match(source, /watcher\.on\("error", error =>/)
+  assert.match(source, /handoffWatcher\.on\("error", error =>/)
+  assert.match(
+    source,
+    /pi\.on\("session_start", \(event, ctx\) => \{\s*activeContext = ctx\s*runGuardedBackground\(\s*async \(\) =>/,
+  )
+  assert.match(
+    source,
+    /pi\.on\("agent_end"[\s\S]*?runGuardedBackground\([\s\S]*?"handle agent end"/,
+  )
+  assert.match(
+    source,
+    /pi\.on\("agent_settled"[\s\S]*?runGuardedBackground\([\s\S]*?"handle agent settled"/,
+  )
+  assert.match(
+    source,
+    /MANUAL_RELOAD_REQUEST_EVENT[\s\S]*?runGuardedBackground\([\s\S]*?"handle manual reload"/,
+  )
+})
+
 test("reload degradation is automatically routed as an agentops incident", () => {
   assert.match(source, /AGENTOPS_INCIDENT_EVENT/)
   assert.match(
@@ -55,8 +88,8 @@ test("reload degradation is automatically routed as an agentops incident", () =>
     source,
     /reportIncident\([\s\S]*?"error",[\s\S]*?"refresh model catalog after reload"/,
   )
-  assert.match(source, /"automatic extension reload"/)
-  assert.match(source, /Automatic Pi reload failed/)
+  assert.match(source, /"automatic extension reload boundary"/)
+  assert.match(source, /background operation failed safely/)
   assert.match(source, /reportIncident\("warning", "reload context preflight"/)
   assert.match(
     source,
@@ -88,10 +121,13 @@ test("reload waits until the current extension event dispatch has completed", as
   const reloaded = new Promise<void>(resolve => {
     resolveReloaded = resolve
   })
-  const scheduler = createReloadExecutionScheduler(async (ctx: string) => {
-    events.push(`reload ${ctx}`)
-    resolveReloaded?.()
-  })
+  const scheduler = createReloadExecutionScheduler(
+    async (ctx: string) => {
+      events.push(`reload ${ctx}`)
+      resolveReloaded?.()
+    },
+    error => assert.fail(error),
+  )
 
   scheduler.request("context")
   events.push("later extension handler")
@@ -103,6 +139,45 @@ test("reload waits until the current extension event dispatch has completed", as
     "later extension handler",
     "reload context",
   ])
+  scheduler.close()
+})
+
+test("guarded background operations report synchronous throws without escaping", async () => {
+  let resolveHandled: ((error: unknown) => void) | undefined
+  const handled = new Promise<unknown>(resolve => {
+    resolveHandled = resolve
+  })
+  const diskError = Object.assign(new Error("no space left"), {
+    code: "ENOSPC",
+  })
+
+  runGuardedBackground(
+    () => {
+      throw diskError
+    },
+    error => resolveHandled?.(error),
+  )
+
+  assert.equal(await handled, diskError)
+})
+
+test("reload scheduler handles rejected detached operations without an unhandled rejection", async () => {
+  let resolveHandled: ((error: unknown) => void) | undefined
+  const handled = new Promise<unknown>(resolve => {
+    resolveHandled = resolve
+  })
+  const diskError = Object.assign(new Error("no space left"), {
+    code: "ENOSPC",
+  })
+  const scheduler = createReloadExecutionScheduler(
+    async () => {
+      throw diskError
+    },
+    error => resolveHandled?.(error),
+  )
+
+  scheduler.request("context")
+  assert.equal(await handled, diskError)
   scheduler.close()
 })
 
@@ -125,7 +200,7 @@ test("reload cannot invalidate a live agent, draft, queue, or compaction", () =>
 test("deferred reload rechecks idle admission after a new agent run wins the scheduling race", () => {
   const performReload = source.indexOf("const performReload")
   const clearPending = source.indexOf("pending = false", performReload)
-  const reload = source.indexOf("await ctx.reload()", performReload)
+  const reload = source.indexOf("try: () => ctx.reload()", performReload)
 
   assert.ok(performReload > 0)
   assert.match(
@@ -201,7 +276,7 @@ test("managed reload refreshes active model metadata before resuming preserved w
 })
 
 test("managed source events start settle-gated reload immediately instead of waiting on a fixed debounce", () => {
-  assert.match(source, /queueMicrotask\(\(\) => void reloadWhenIdle\(ctx\)\)/)
+  assert.match(source, /queueMicrotask\(\(\) => runReloadWhenIdle\(ctx\)\)/)
   assert.doesNotMatch(source, /DEBOUNCE_MS/)
 })
 
@@ -266,6 +341,7 @@ test("managed generation coalesces a realistic watcher event burst into one reco
     },
     settleMs: 10,
     onContentChange: changedPath => changedPaths.push(changedPath),
+    onError: error => assert.fail(error),
   })
 
   reconciler.request("/managed/extensions/first.ts")

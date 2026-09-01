@@ -15,6 +15,20 @@ export class ResourceIncidentError extends Data.TaggedError(
   readonly message: string
 }> {}
 
+export class ResourceIncidentDeliveryError extends Data.TaggedError(
+  "ResourceIncidentDeliveryError",
+)<{
+  readonly cause: unknown
+}> {}
+
+export const deliverResourceIncident = (
+  delivery: () => void,
+): Effect.Effect<void, ResourceIncidentDeliveryError> =>
+  Effect.try({
+    try: delivery,
+    catch: cause => new ResourceIncidentDeliveryError({ cause }),
+  })
+
 const errorCode = (error: unknown): string | undefined =>
   typeof error === "object" &&
   error !== null &&

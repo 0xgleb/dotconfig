@@ -45,6 +45,14 @@ test("critical memory incidents steer the active session instead of waiting pass
   )
 })
 
+test("critical disk incidents proactively assign cleanup before another build", () => {
+  assert.match(source, /const reconcileDiskIncident/)
+  assert.match(source, /reconcileDiskIncident\(ctx, available\)/)
+  assert.match(source, /Critical disk-pressure incident/)
+  assert.match(source, /Clean only verified inactive rebuildable/)
+  assert.match(source, /triggerTurn: true, deliverAs: "steer"/)
+})
+
 test("disk blocks direct standing-authority cleanup and exact uncertain-state verification", () => {
   assert.match(source, /standing exact cleanup authority/)
   assert.match(source, /dust or Nushell/)
@@ -54,6 +62,28 @@ test("disk blocks direct standing-authority cleanup and exact uncertain-state ve
     /independently verify the exact path after uncertain execution/,
   )
   assert.match(source, /continue the blocked gate/)
+})
+
+test("failed remediation delivery releases its incident lease", () => {
+  assert.match(source, /deliverResourceIncident/)
+  assert.match(
+    source,
+    /Either\.isLeft\(delivery\)[\s\S]*?clearResourceIncident\(DISK_INCIDENT_PATH\)[\s\S]*?deliver disk remediation/,
+  )
+  assert.match(
+    source,
+    /Either\.isLeft\(delivery\)[\s\S]*?clearResourceIncident\(MEMORY_INCIDENT_PATH\)[\s\S]*?deliver memory remediation/,
+  )
+})
+
+test("concurrent builds cannot claim each other's result symlinks", () => {
+  assert.match(source, /pending => pending\.cwd === ctx\.cwd/)
+  assert.match(source, /concurrent\.cleanupResultLinks = false/)
+  assert.match(source, /cleanupResultLinks: concurrentBuilds\.length === 0/)
+  assert.match(
+    source,
+    /pending\.cleanupResultLinks[\s\S]*?cleanupNewResultSymlinks/,
+  )
 })
 
 test("classified expensive commands use a fresh authoritative resource preflight", () => {

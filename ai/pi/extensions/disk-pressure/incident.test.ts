@@ -4,7 +4,11 @@ import { tmpdir } from "node:os"
 import { join } from "node:path"
 import test from "node:test"
 import { Effect } from "effect"
-import { claimResourceIncident, clearResourceIncident } from "./incident.ts"
+import {
+  claimResourceIncident,
+  clearResourceIncident,
+  deliverResourceIncident,
+} from "./incident.ts"
 
 test("only one session claims a fresh resource-pressure incident", () => {
   const root = mkdtempSync(join(tmpdir(), "pi-resource-incident-"))
@@ -22,6 +26,19 @@ test("only one session claims a fresh resource-pressure incident", () => {
   } finally {
     rmSync(root, { recursive: true, force: true })
   }
+})
+
+test("remediation delivery failures remain typed for lease release", () => {
+  const failure = Object.assign(new Error("no space left"), { code: "ENOSPC" })
+  const result = Effect.runSync(
+    Effect.either(
+      deliverResourceIncident(() => {
+        throw failure
+      }),
+    ),
+  )
+  assert.equal(result._tag, "Left")
+  if (result._tag === "Left") assert.equal(result.left.cause, failure)
 })
 
 test("stale incidents can be reclaimed and healthy state clears the lease", () => {

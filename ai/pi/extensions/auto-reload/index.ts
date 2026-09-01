@@ -84,8 +84,45 @@ export interface ReloadExecutionScheduler<Context> {
   close(): void
 }
 
+interface ManagedBackgroundError {
+  readonly cause: unknown
+}
+
+const managedBackgroundError = (cause: unknown): ManagedBackgroundError => ({
+  cause,
+})
+
+const backgroundFailureFallback = (error: unknown): void => {
+  console.error(
+    `[auto-reload] Background failure handler failed safely: ${error instanceof Error ? error.message : "unknown error"}`,
+  )
+}
+
+export const runGuardedBackground = (
+  operation: () => void | Promise<void>,
+  onError: (error: unknown) => void,
+): void => {
+  const report = (error: unknown): void => {
+    const attempt = Effect.runSync(
+      Effect.try({
+        try: () => onError(error),
+        catch: managedBackgroundError,
+      }).pipe(Effect.either),
+    )
+    if (attempt._tag === "Left") backgroundFailureFallback(attempt.left.cause)
+  }
+  const operationAttempt = Effect.tryPromise({
+    try: async () => await operation(),
+    catch: managedBackgroundError,
+  }).pipe(Effect.either)
+  void Effect.runPromise(operationAttempt).then(result => {
+    if (result._tag === "Left") report(result.left.cause)
+  }, backgroundFailureFallback)
+}
+
 export const createReloadExecutionScheduler = <Context>(
   reload: (ctx: Context) => Promise<void>,
+  onError: (error: unknown, ctx: Context) => void,
 ): ReloadExecutionScheduler<Context> => {
   let scheduled: { readonly timer: ReturnType<typeof setTimeout> } | undefined
 
@@ -94,7 +131,10 @@ export const createReloadExecutionScheduler = <Context>(
       if (scheduled) return
       const timer = setTimeout(() => {
         scheduled = undefined
-        void reload(ctx)
+        runGuardedBackground(
+          () => reload(ctx),
+          error => onError(error, ctx),
+        )
       }, 0)
       timer.unref?.()
       scheduled = { timer }
@@ -151,6 +191,7 @@ export const createManagedGenerationReconciler = (input: {
   readonly tracker: ManagedGenerationTracker
   readonly settleMs: number
   readonly onContentChange: (changedPath: string | null) => void
+  readonly onError: (error: unknown) => void
 }): ManagedGenerationReconciler => {
   let timer: ReturnType<typeof setTimeout> | undefined
   let latestChangedPath: string | null = null
@@ -167,7 +208,10 @@ export const createManagedGenerationReconciler = (input: {
     request: changedPath => {
       latestChangedPath = changedPath ?? latestChangedPath
       if (timer) clearTimeout(timer)
-      timer = setTimeout(reconcile, input.settleMs)
+      timer = setTimeout(
+        () => runGuardedBackground(reconcile, input.onError),
+        input.settleMs,
+      )
       timer.unref?.()
     },
     poll: changedPath => {
@@ -223,7 +267,7 @@ const managedTreeGeneration = (
 }
 
 const autoReload: (pi: ExtensionAPI) => void = pi => {
-  registerRuntimeVersion(pi, "auto-reload", "2026.08.23.1")
+  registerRuntimeVersion(pi, "auto-reload", "2026.08.31.1")
   pi.registerMessageRenderer(
     COMPLETED_MESSAGE_TYPE,
     (message, options, theme) => {
@@ -258,6 +302,7 @@ const autoReload: (pi: ExtensionAPI) => void = pi => {
   let reloadExecutionScheduler:
     | ReloadExecutionScheduler<ReloadableContext>
     | undefined
+  let activeContext: ExtensionContext | undefined
   let agentRunActive = false
   let pending = false
   let pendingSince: number | undefined
@@ -265,26 +310,113 @@ const autoReload: (pi: ExtensionAPI) => void = pi => {
   let lastChangeAt = 0
   const changedLabels = new Set<string>()
 
+  const errorCode = (error: unknown): string | undefined =>
+    typeof error === "object" &&
+    error !== null &&
+    "code" in error &&
+    typeof error.code === "string"
+      ? error.code
+      : undefined
+
+  const reportBackgroundFailure = (
+    ctx: ExtensionContext,
+    operation: string,
+    error: unknown,
+  ): void => {
+    const message = error instanceof Error ? error.message : "unknown error"
+    const reportAttempt = Effect.runSync(
+      Effect.try({
+        try: () =>
+          reportIncident(
+            "error",
+            operation,
+            `Automatic Pi reload background operation failed safely: ${message}`,
+          ),
+        catch: managedBackgroundError,
+      }).pipe(Effect.either),
+    )
+    if (reportAttempt._tag === "Left")
+      backgroundFailureFallback(reportAttempt.left.cause)
+    const notifyAttempt = Effect.runSync(
+      Effect.try({
+        try: () =>
+          ctx.ui.notify(
+            `Automatic reload paused after a handled failure: ${message}`,
+            "warning",
+          ),
+        catch: managedBackgroundError,
+      }).pipe(Effect.either),
+    )
+    if (notifyAttempt._tag === "Left")
+      backgroundFailureFallback(notifyAttempt.left.cause)
+  }
+
+  const handleReloadBoundaryFailure = (
+    ctx: ReloadableContext,
+    error: unknown,
+  ): void => {
+    pending = true
+    pendingSince ??= Date.now()
+    composerSafeSince = undefined
+    const statusAttempt = Effect.runSync(
+      Effect.try({
+        try: () =>
+          ctx.ui.setStatus(
+            STATUS_KEY,
+            errorCode(error) === "ENOSPC"
+              ? "reload:blocked-by-disk"
+              : "reload:failed-safely",
+          ),
+        catch: managedBackgroundError,
+      }).pipe(Effect.either),
+    )
+    if (statusAttempt._tag === "Left")
+      backgroundFailureFallback(statusAttempt.left.cause)
+    reportBackgroundFailure(ctx, "automatic extension reload boundary", error)
+  }
+
+  const runReloadWhenIdle = (ctx: ReloadableContext): void =>
+    runGuardedBackground(
+      () => reloadWhenIdle(ctx),
+      error => handleReloadBoundaryFailure(ctx, error),
+    )
+
+  const scheduleReloadWhenIdle = (
+    ctx: ReloadableContext,
+    delayMs: number,
+  ): void => {
+    timer = setTimeout(() => runReloadWhenIdle(ctx), delayMs)
+  }
+
   pi.events.on(
     AUTO_RELOAD_PENDING_REQUEST_EVENT,
     (report: AutoReloadPendingReporter) => report(pending),
   )
 
   pi.events.on(MANUAL_RELOAD_REQUEST_EVENT, () => {
-    if (timer) clearTimeout(timer)
-    reloadExecutionScheduler?.close()
-    timer = undefined
-    if (changedLabels.size > 0) {
-      pi.appendEntry(RELOAD_SUMMARY_ENTRY, {
-        labels: [...changedLabels].sort(),
-        createdAt: Date.now(),
-        announced: false,
-      })
-      changedLabels.clear()
-    }
-    pending = false
-    pendingSince = undefined
-    composerSafeSince = undefined
+    runGuardedBackground(
+      () => {
+        if (timer) clearTimeout(timer)
+        reloadExecutionScheduler?.close()
+        timer = undefined
+        if (changedLabels.size > 0) {
+          pi.appendEntry(RELOAD_SUMMARY_ENTRY, {
+            labels: [...changedLabels].sort(),
+            createdAt: Date.now(),
+            announced: false,
+          })
+          changedLabels.clear()
+        }
+        pending = false
+        pendingSince = undefined
+        composerSafeSince = undefined
+      },
+      error => {
+        if (activeContext)
+          reportBackgroundFailure(activeContext, "handle manual reload", error)
+        else backgroundFailureFallback(error)
+      },
+    )
   })
 
   const closeWatchers = () => {
@@ -328,7 +460,7 @@ const autoReload: (pi: ExtensionAPI) => void = pi => {
       Date.now() - composerSafeSince < COMPOSER_QUIET_MS
     ) {
       if (!composerSafe) composerSafeSince = undefined
-      timer = setTimeout(() => void reloadWhenIdle(ctx), IDLE_RETRY_MS)
+      scheduleReloadWhenIdle(ctx, IDLE_RETRY_MS)
       return
     }
     pending = false
@@ -345,21 +477,20 @@ const autoReload: (pi: ExtensionAPI) => void = pi => {
       })
       changedLabels.clear()
     }
-    try {
-      await ctx.reload()
-    } catch (error) {
-      reportIncident(
-        "error",
-        "automatic extension reload",
-        `Automatic Pi reload failed: ${error instanceof Error ? error.message : "unknown error"}`,
-      )
-      pending = true
-      pendingSince = Date.now()
-      composerSafeSince = undefined
-    }
+    const reloadAttempt = await Effect.runPromise(
+      Effect.tryPromise({
+        try: () => ctx.reload(),
+        catch: managedBackgroundError,
+      }).pipe(Effect.either),
+    )
+    if (reloadAttempt._tag === "Left")
+      handleReloadBoundaryFailure(ctx, reloadAttempt.left.cause)
   }
 
-  reloadExecutionScheduler = createReloadExecutionScheduler(performReload)
+  reloadExecutionScheduler = createReloadExecutionScheduler(
+    performReload,
+    (error, ctx) => handleReloadBoundaryFailure(ctx, error),
+  )
 
   const managedWorkIsActive = (): boolean => {
     let active = false
@@ -394,7 +525,7 @@ const autoReload: (pi: ExtensionAPI) => void = pi => {
     })
     if (decision === "await-settle") {
       ctx.ui.setStatus(STATUS_KEY, "reload:awaiting-settle")
-      timer = setTimeout(() => void reloadWhenIdle(ctx), SETTLE_RETRY_MS)
+      scheduleReloadWhenIdle(ctx, SETTLE_RETRY_MS)
       return
     }
     if (decision === "wait") {
@@ -402,7 +533,7 @@ const autoReload: (pi: ExtensionAPI) => void = pi => {
         STATUS_KEY,
         composerSafe ? "reload:waiting-for-quiet" : "reload:waiting-for-editor",
       )
-      timer = setTimeout(() => void reloadWhenIdle(ctx), IDLE_RETRY_MS)
+      scheduleReloadWhenIdle(ctx, IDLE_RETRY_MS)
       return
     }
     reloadExecutionScheduler.request(ctx)
@@ -427,288 +558,366 @@ const autoReload: (pi: ExtensionAPI) => void = pi => {
     ctx.ui.setStatus(STATUS_KEY, "reload:pending")
     if (timer) clearTimeout(timer)
     timer = undefined
-    queueMicrotask(() => void reloadWhenIdle(ctx))
+    queueMicrotask(() => runReloadWhenIdle(ctx))
   }
 
-  pi.on("session_start", async (event, ctx) => {
-    closeWatchers()
-    const branch = ctx.sessionManager.getBranch()
-    const summaryEntry = branch
-      .filter(
-        entry =>
-          entry.type === "custom" && entry.customType === RELOAD_SUMMARY_ENTRY,
-      )
-      .at(-1)
-    const summary =
-      summaryEntry?.type === "custom"
-        ? parseManagedReloadSummary(summaryEntry.data)
-        : undefined
-    let modelRefreshFailure: string | undefined
-    if (event.reason === "reload" && ctx.model) {
-      const activeModel = ctx.model
-      const refreshAttempt = await Effect.runPromise(
-        Effect.tryPromise({
-          try: () =>
-            ctx.modelRegistry.refresh({
-              allowNetwork: false,
-              providers: [activeModel.provider],
-              signal: AbortSignal.timeout(MODEL_REFRESH_TIMEOUT_MS),
-            }),
-          catch: () => new Error("model catalog refresh threw"),
-        }).pipe(Effect.either),
-      )
-      if (refreshAttempt._tag === "Left") {
-        modelRefreshFailure = "model catalog refresh failed"
-      } else if (refreshAttempt.right.aborted) {
-        modelRefreshFailure = "model catalog refresh timed out"
-      } else if (
-        refreshAttempt.right.errors.size > 0 ||
-        ctx.modelRegistry.getError()
-      ) {
-        modelRefreshFailure = "model catalog refresh returned errors"
-      } else {
-        const refreshedModel = ctx.modelRegistry.find(
-          activeModel.provider,
-          activeModel.id,
-        )
-        if (!refreshedModel) {
-          modelRefreshFailure = `active model ${activeModel.provider}/${activeModel.id} disappeared after refresh`
-        } else {
-          const selectionAttempt = await Effect.runPromise(
-            Effect.tryPromise({
-              try: async () => await pi.setModel(refreshedModel),
-              catch: () => new Error("refreshed model selection threw"),
-            }).pipe(Effect.either),
-          )
-          if (selectionAttempt._tag === "Left" || !selectionAttempt.right) {
-            modelRefreshFailure = `active model ${activeModel.provider}/${activeModel.id} could not be rebound`
-          }
-        }
-      }
-    }
-    if (event.reason === "reload") {
-      const changedLabels = summary && !summary.announced ? summary.labels : []
-      const delivery = managedReloadDelivery(
-        event.reason,
-        branch,
-        ctx.hasPendingMessages(),
-      )
-      const displayText = managedReloadDisplayText(
-        changedLabels,
-        modelRefreshFailure,
-      )
-      const message = {
-        customType: COMPLETED_MESSAGE_TYPE,
-        content: modelRefreshFailure
-          ? `${displayText}. Preserved work remains paused to avoid stale model limits.`
-          : delivery === "resume"
-            ? `${displayText}. Resuming interrupted work.`
-            : delivery === "followUp"
-              ? `${displayText}. Resuming preserved work now.`
-              : displayText,
-        display: true,
-        details: { displayText },
-      }
-      const scheduleContinuation = (deliverAs: "resume" | "followUp"): void => {
-        const deliverWhenSettled = (): void => {
-          reloadContinuationTimer = undefined
-          const requestedAt =
-            latestReloadResumeMarker(branch)?.requestedAt ?? Date.now()
-          const recordDelivery = (): void => {
-            if (deliverAs === "resume") {
-              pi.appendEntry(RELOAD_RESUME_ENTRY, {
-                requestedAt,
-                status: "resumed",
-              })
-            } else {
-              pi.appendEntry(RELOAD_FOLLOW_UP_ENTRY, { requestedAt })
-            }
-          }
-          if (ctx.ui.getEditorText().length > 0 || ctx.hasPendingMessages()) {
-            recordDelivery()
-            try {
-              pi.sendMessage(message, { deliverAs: "nextTurn" })
-            } catch {
-              reportIncident(
-                "warning",
-                "defer reload continuation",
-                "Reload continuation could not be queued passively; user input remains available",
-              )
-            }
-            return
-          }
-          if (agentRunActive || !ctx.isIdle() || managedWorkIsActive()) {
-            reloadContinuationTimer = setTimeout(
-              deliverWhenSettled,
-              IDLE_RETRY_MS,
-            )
-            reloadContinuationTimer.unref?.()
-            return
-          }
-          recordDelivery()
-          try {
-            pi.sendMessage(message, { triggerTurn: true, deliverAs })
-          } catch {
-            reportIncident(
-              "warning",
-              "deliver reload continuation",
-              "Reload continuation delivery failed without blocking user input",
-            )
-          }
-        }
-        reloadContinuationTimer = setTimeout(deliverWhenSettled, 0)
-        reloadContinuationTimer.unref?.()
-      }
-      if (modelRefreshFailure) {
-        reportIncident(
-          "error",
-          "refresh model catalog after reload",
-          modelRefreshFailure,
-        )
-        pi.sendMessage(message)
-        ctx.ui.notify(modelRefreshFailure, "error")
-      } else if (delivery === "resume") {
-        scheduleContinuation("resume")
-      } else if (delivery === "followUp") {
-        scheduleContinuation("followUp")
-      } else {
-        if (delivery === "displayAndConsumeResume") {
-          const requestedAt = latestReloadResumeMarker(branch)?.requestedAt
-          if (requestedAt !== undefined)
-            pi.appendEntry(RELOAD_RESUME_ENTRY, {
-              requestedAt,
-              status: "resumed",
-            })
-        }
-        pi.sendMessage(message)
-      }
-      if (summary && !summary.announced) {
-        pi.appendEntry(RELOAD_SUMMARY_ENTRY, { ...summary, announced: true })
-      }
-    }
-    if (!isReloadableContext(ctx)) {
-      const summary =
-        "Automatic Pi reload requires the managed reload-context host patch"
-      reportIncident("warning", "reload context preflight", summary)
-      ctx.ui.notify(
-        "Automatic Pi reload requires the managed reload-context host patch; restart after applying the Nix generation.",
-        "warning",
-      )
-      return
-    }
-    const configRoot = join(homedir(), ".config")
-    const aiRoot = join(configRoot, "ai")
-    const watchPaths = managedPiWatchPaths(aiRoot)
-    generationReconciler = createManagedGenerationReconciler({
-      tracker: createManagedGenerationTracker(watchPaths),
-      settleMs: GENERATION_RECONCILE_MS,
-      onContentChange: changedPath => scheduleReload(ctx, changedPath, aiRoot),
-    })
-    for (const path of watchPaths) {
-      try {
-        const recursive = statSync(path).isDirectory()
-        watchers.push(
-          watch(path, { recursive }, (_eventType, filename) =>
-            generationReconciler?.request(
-              recursive && filename ? join(path, String(filename)) : path,
-            ),
-          ),
-        )
-      } catch (error) {
-        const summary = `Could not watch managed Pi path: ${error instanceof Error ? error.message : "unknown error"}`
-        reportIncident("warning", "watch managed Pi resources", summary)
-        ctx.ui.notify(
-          `Could not watch ${path}: ${error instanceof Error ? error.message : "unknown error"}`,
-          "warning",
-        )
-      }
-    }
-
-    generationTimer = setInterval(() => {
-      generationReconciler?.poll(aiRoot)
-    }, GENERATION_POLL_MS)
-    generationTimer.unref?.()
-
-    ctx.ui.setStatus(STATUS_KEY, "reload:auto")
-
-    if (ctx.cwd === configRoot) {
-      ctx.ui.setStatus(STATUS_KEY, "reload:auto · requests:hourly")
-      const handoffRoot = join(configRoot, ".tmp")
-      try {
-        const storedEntry = ctx.sessionManager
-          .getBranch()
+  pi.on("session_start", (event, ctx) => {
+    activeContext = ctx
+    runGuardedBackground(
+      async () => {
+        closeWatchers()
+        const branch = ctx.sessionManager.getBranch()
+        const summaryEntry = branch
           .filter(
             entry =>
               entry.type === "custom" &&
-              entry.customType === HANDOFF_STATE_ENTRY,
+              entry.customType === RELOAD_SUMMARY_ENTRY,
           )
           .at(-1)
-        const persisted =
-          storedEntry?.type === "custom"
-            ? parseSeenHandoffNames(storedEntry.data)
-            : []
-        const current = globSync(HANDOFF_GLOBS, { cwd: handoffRoot }).filter(
-          isSafeHandoffName,
-        )
-        const seen = new Set(storedEntry ? persisted : current)
-        if (!storedEntry)
-          pi.appendEntry(HANDOFF_STATE_ENTRY, { names: [...seen].sort() })
-
-        const reconcileHandoffs = () => {
-          if (isContinuationPaused(ctx.sessionManager.getBranch())) return
-          const unseen = unseenHandoffNames(
-            globSync(HANDOFF_GLOBS, { cwd: handoffRoot }),
-            seen,
+        const summary =
+          summaryEntry?.type === "custom"
+            ? parseManagedReloadSummary(summaryEntry.data)
+            : undefined
+        let modelRefreshFailure: string | undefined
+        if (event.reason === "reload" && ctx.model) {
+          const activeModel = ctx.model
+          const refreshAttempt = await Effect.runPromise(
+            Effect.tryPromise({
+              try: () =>
+                ctx.modelRegistry.refresh({
+                  allowNetwork: false,
+                  providers: [activeModel.provider],
+                  signal: AbortSignal.timeout(MODEL_REFRESH_TIMEOUT_MS),
+                }),
+              catch: () => new Error("model catalog refresh threw"),
+            }).pipe(Effect.either),
           )
-          if (unseen.length === 0) return
-          for (const name of unseen) seen.add(name)
-          pi.appendEntry(HANDOFF_STATE_ENTRY, { names: [...seen].sort() })
-          pi.sendMessage(
-            {
-              customType: "auto-reload.pi-handoff",
-              content: `New Pi bug handoff${unseen.length === 1 ? "" : "s"}:\n${unseen.map(name => join(handoffRoot, name)).join("\n")}\nRead each file, add every request to the todo list, and continue the work.`,
-              display: true,
-            },
-            { deliverAs: "followUp" },
+          if (refreshAttempt._tag === "Left") {
+            modelRefreshFailure = "model catalog refresh failed"
+          } else if (refreshAttempt.right.aborted) {
+            modelRefreshFailure = "model catalog refresh timed out"
+          } else if (
+            refreshAttempt.right.errors.size > 0 ||
+            ctx.modelRegistry.getError()
+          ) {
+            modelRefreshFailure = "model catalog refresh returned errors"
+          } else {
+            const refreshedModel = ctx.modelRegistry.find(
+              activeModel.provider,
+              activeModel.id,
+            )
+            if (!refreshedModel) {
+              modelRefreshFailure = `active model ${activeModel.provider}/${activeModel.id} disappeared after refresh`
+            } else {
+              const selectionAttempt = await Effect.runPromise(
+                Effect.tryPromise({
+                  try: async () => await pi.setModel(refreshedModel),
+                  catch: () => new Error("refreshed model selection threw"),
+                }).pipe(Effect.either),
+              )
+              if (selectionAttempt._tag === "Left" || !selectionAttempt.right) {
+                modelRefreshFailure = `active model ${activeModel.provider}/${activeModel.id} could not be rebound`
+              }
+            }
+          }
+        }
+        if (event.reason === "reload") {
+          const changedLabels =
+            summary && !summary.announced ? summary.labels : []
+          const delivery = managedReloadDelivery(
+            event.reason,
+            branch,
+            ctx.hasPendingMessages(),
           )
+          const displayText = managedReloadDisplayText(
+            changedLabels,
+            modelRefreshFailure,
+          )
+          const message = {
+            customType: COMPLETED_MESSAGE_TYPE,
+            content: modelRefreshFailure
+              ? `${displayText}. Preserved work remains paused to avoid stale model limits.`
+              : delivery === "resume"
+                ? `${displayText}. Resuming interrupted work.`
+                : delivery === "followUp"
+                  ? `${displayText}. Resuming preserved work now.`
+                  : displayText,
+            display: true,
+            details: { displayText },
+          }
+          const scheduleContinuation = (
+            deliverAs: "resume" | "followUp",
+          ): void => {
+            const deliverWhenSettled = (): void => {
+              reloadContinuationTimer = undefined
+              const requestedAt =
+                latestReloadResumeMarker(branch)?.requestedAt ?? Date.now()
+              const recordDelivery = (): void => {
+                if (deliverAs === "resume") {
+                  pi.appendEntry(RELOAD_RESUME_ENTRY, {
+                    requestedAt,
+                    status: "resumed",
+                  })
+                } else {
+                  pi.appendEntry(RELOAD_FOLLOW_UP_ENTRY, { requestedAt })
+                }
+              }
+              if (
+                ctx.ui.getEditorText().length > 0 ||
+                ctx.hasPendingMessages()
+              ) {
+                recordDelivery()
+                try {
+                  pi.sendMessage(message, { deliverAs: "nextTurn" })
+                } catch {
+                  reportIncident(
+                    "warning",
+                    "defer reload continuation",
+                    "Reload continuation could not be queued passively; user input remains available",
+                  )
+                }
+                return
+              }
+              if (agentRunActive || !ctx.isIdle() || managedWorkIsActive()) {
+                reloadContinuationTimer = setTimeout(
+                  runContinuation,
+                  IDLE_RETRY_MS,
+                )
+                reloadContinuationTimer.unref?.()
+                return
+              }
+              recordDelivery()
+              try {
+                pi.sendMessage(message, { triggerTurn: true, deliverAs })
+              } catch {
+                reportIncident(
+                  "warning",
+                  "deliver reload continuation",
+                  "Reload continuation delivery failed without blocking user input",
+                )
+              }
+            }
+            const runContinuation = (): void =>
+              runGuardedBackground(deliverWhenSettled, error =>
+                reportBackgroundFailure(
+                  ctx,
+                  "deliver managed reload continuation",
+                  error,
+                ),
+              )
+            reloadContinuationTimer = setTimeout(runContinuation, 0)
+            reloadContinuationTimer.unref?.()
+          }
+          if (modelRefreshFailure) {
+            reportIncident(
+              "error",
+              "refresh model catalog after reload",
+              modelRefreshFailure,
+            )
+            pi.sendMessage(message)
+            ctx.ui.notify(modelRefreshFailure, "error")
+          } else if (delivery === "resume") {
+            scheduleContinuation("resume")
+          } else if (delivery === "followUp") {
+            scheduleContinuation("followUp")
+          } else {
+            if (delivery === "displayAndConsumeResume") {
+              const requestedAt = latestReloadResumeMarker(branch)?.requestedAt
+              if (requestedAt !== undefined)
+                pi.appendEntry(RELOAD_RESUME_ENTRY, {
+                  requestedAt,
+                  status: "resumed",
+                })
+            }
+            pi.sendMessage(message)
+          }
+          if (summary && !summary.announced) {
+            pi.appendEntry(RELOAD_SUMMARY_ENTRY, {
+              ...summary,
+              announced: true,
+            })
+          }
+        }
+        if (!isReloadableContext(ctx)) {
+          const summary =
+            "Automatic Pi reload requires the managed reload-context host patch"
+          reportIncident("warning", "reload context preflight", summary)
+          ctx.ui.notify(
+            "Automatic Pi reload requires the managed reload-context host patch; restart after applying the Nix generation.",
+            "warning",
+          )
+          return
+        }
+        const configRoot = join(homedir(), ".config")
+        const aiRoot = join(configRoot, "ai")
+        const watchPaths = managedPiWatchPaths(aiRoot)
+        generationReconciler = createManagedGenerationReconciler({
+          tracker: createManagedGenerationTracker(watchPaths),
+          settleMs: GENERATION_RECONCILE_MS,
+          onContentChange: changedPath =>
+            scheduleReload(ctx, changedPath, aiRoot),
+          onError: error =>
+            reportBackgroundFailure(
+              ctx,
+              "reconcile managed Pi generation",
+              error,
+            ),
+        })
+        for (const path of watchPaths) {
+          try {
+            const recursive = statSync(path).isDirectory()
+            const watcher = watch(path, { recursive }, (_eventType, filename) =>
+              runGuardedBackground(
+                () =>
+                  generationReconciler?.request(
+                    recursive && filename ? join(path, String(filename)) : path,
+                  ),
+                error =>
+                  reportBackgroundFailure(
+                    ctx,
+                    "handle managed Pi filesystem event",
+                    error,
+                  ),
+              ),
+            )
+            watcher.on("error", error =>
+              reportBackgroundFailure(ctx, "watch managed Pi resources", error),
+            )
+            watchers.push(watcher)
+          } catch (error) {
+            const summary = `Could not watch managed Pi path: ${error instanceof Error ? error.message : "unknown error"}`
+            reportIncident("warning", "watch managed Pi resources", summary)
+            ctx.ui.notify(
+              `Could not watch ${path}: ${error instanceof Error ? error.message : "unknown error"}`,
+              "warning",
+            )
+          }
         }
 
-        reconcileHandoffs()
-        watchers.push(
-          watch(handoffRoot, { recursive: true }, (_eventType, filename) => {
-            if (!filename || !isSafeHandoffName(filename)) return
-            reconcileHandoffs()
-          }),
+        generationTimer = setInterval(
+          () =>
+            runGuardedBackground(
+              () => generationReconciler?.poll(aiRoot),
+              error =>
+                reportBackgroundFailure(
+                  ctx,
+                  "poll managed Pi generation",
+                  error,
+                ),
+            ),
+          GENERATION_POLL_MS,
         )
-        handoffTimer = setInterval(reconcileHandoffs, HANDOFF_POLL_MS)
-        handoffTimer.unref?.()
-      } catch (error) {
-        const summary = `Could not watch Pi handoffs: ${error instanceof Error ? error.message : "unknown error"}`
-        reportIncident("warning", "watch Pi handoffs", summary)
-        ctx.ui.notify(summary, "warning")
-      }
-    }
+        generationTimer.unref?.()
+
+        ctx.ui.setStatus(STATUS_KEY, "reload:auto")
+
+        if (ctx.cwd === configRoot) {
+          ctx.ui.setStatus(STATUS_KEY, "reload:auto · requests:hourly")
+          const handoffRoot = join(configRoot, ".tmp")
+          try {
+            const storedEntry = ctx.sessionManager
+              .getBranch()
+              .filter(
+                entry =>
+                  entry.type === "custom" &&
+                  entry.customType === HANDOFF_STATE_ENTRY,
+              )
+              .at(-1)
+            const persisted =
+              storedEntry?.type === "custom"
+                ? parseSeenHandoffNames(storedEntry.data)
+                : []
+            const current = globSync(HANDOFF_GLOBS, {
+              cwd: handoffRoot,
+            }).filter(isSafeHandoffName)
+            const seen = new Set(storedEntry ? persisted : current)
+            if (!storedEntry)
+              pi.appendEntry(HANDOFF_STATE_ENTRY, { names: [...seen].sort() })
+
+            const reconcileHandoffs = () => {
+              if (isContinuationPaused(ctx.sessionManager.getBranch())) return
+              const unseen = unseenHandoffNames(
+                globSync(HANDOFF_GLOBS, { cwd: handoffRoot }),
+                seen,
+              )
+              if (unseen.length === 0) return
+              for (const name of unseen) seen.add(name)
+              pi.appendEntry(HANDOFF_STATE_ENTRY, { names: [...seen].sort() })
+              pi.sendMessage(
+                {
+                  customType: "auto-reload.pi-handoff",
+                  content: `New Pi bug handoff${unseen.length === 1 ? "" : "s"}:\n${unseen.map(name => join(handoffRoot, name)).join("\n")}\nRead each file, add every request to the todo list, and continue the work.`,
+                  display: true,
+                },
+                { deliverAs: "followUp" },
+              )
+            }
+
+            reconcileHandoffs()
+            const handoffWatcher = watch(
+              handoffRoot,
+              { recursive: true },
+              (_eventType, filename) => {
+                if (!filename || !isSafeHandoffName(filename)) return
+                runGuardedBackground(reconcileHandoffs, error =>
+                  reportBackgroundFailure(ctx, "reconcile Pi handoffs", error),
+                )
+              },
+            )
+            handoffWatcher.on("error", error =>
+              reportBackgroundFailure(ctx, "watch Pi handoffs", error),
+            )
+            watchers.push(handoffWatcher)
+            handoffTimer = setInterval(
+              () =>
+                runGuardedBackground(reconcileHandoffs, error =>
+                  reportBackgroundFailure(ctx, "reconcile Pi handoffs", error),
+                ),
+              HANDOFF_POLL_MS,
+            )
+            handoffTimer.unref?.()
+          } catch (error) {
+            const summary = `Could not watch Pi handoffs: ${error instanceof Error ? error.message : "unknown error"}`
+            reportIncident("warning", "watch Pi handoffs", summary)
+            ctx.ui.notify(summary, "warning")
+          }
+        }
+      },
+      error =>
+        reportBackgroundFailure(ctx, "initialize managed auto-reload", error),
+    )
   })
 
   pi.on("agent_start", () => {
     agentRunActive = true
   })
 
-  pi.on("agent_end", async (_event, ctx) => {
+  pi.on("agent_end", (_event, ctx) => {
     agentRunActive = false
-    if (!pending || !isReloadableContext(ctx)) return
-    if (Date.now() - lastChangeAt < SETTLE_MS) return
-    await reloadWhenIdle(ctx)
+    runGuardedBackground(
+      async () => {
+        if (!pending || !isReloadableContext(ctx)) return
+        if (Date.now() - lastChangeAt < SETTLE_MS) return
+        await reloadWhenIdle(ctx)
+      },
+      error => reportBackgroundFailure(ctx, "handle agent end", error),
+    )
   })
 
-  pi.on("agent_settled", async (_event, ctx) => {
+  pi.on("agent_settled", (_event, ctx) => {
     agentRunActive = false
-    if (!pending || !isReloadableContext(ctx)) return
-    await reloadWhenIdle(ctx)
+    runGuardedBackground(
+      async () => {
+        if (!pending || !isReloadableContext(ctx)) return
+        await reloadWhenIdle(ctx)
+      },
+      error => reportBackgroundFailure(ctx, "handle agent settled", error),
+    )
   })
 
   pi.on("session_shutdown", (_event, ctx) => {
     closeWatchers()
+    if (activeContext === ctx) activeContext = undefined
     ctx.ui.setStatus(STATUS_KEY, undefined)
   })
 }

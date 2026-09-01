@@ -12,8 +12,8 @@ import { join } from "node:path"
 import test from "node:test"
 
 import {
-  CRITICAL_FREE_BYTES,
   CRITICAL_FREE_MEMORY_BYTES,
+  WARNING_FREE_BYTES,
   aggregateProcessRss,
   cleanupNewResultSymlinks,
   cleanupStalePiTempLogs,
@@ -32,6 +32,33 @@ test("expensive build commands are blocked before consuming the crash reserve", 
     true,
   )
   assert.equal(isExpensiveCommand("cargo nextest run"), true)
+  assert.equal(
+    isExpensiveCommand("direnv exec . cargo check --tests --locked"),
+    true,
+  )
+  assert.equal(
+    isExpensiveCommand(
+      "direnv exec /Users/example/project cargo check --workspace",
+    ),
+    true,
+  )
+  assert.equal(
+    isExpensiveCommand("^direnv exec . cargo check --tests --locked"),
+    true,
+  )
+  assert.equal(
+    isExpensiveCommand(
+      "cd /Users/example/project\n^direnv exec . cargo check --workspace",
+    ),
+    true,
+  )
+  assert.equal(
+    isExpensiveCommand("cd /Users/example/project\n^cargo check --workspace"),
+    true,
+  )
+  assert.equal(isExpensiveCommand('print "cargo check --workspace"'), false)
+  assert.equal(isExpensiveCommand("^nix run .#ci"), true)
+  assert.equal(isExpensiveCommand('print "nix run .#ci"'), false)
   assert.equal(isExpensiveCommand("bun test"), true)
   assert.equal(
     isExpensiveCommand("bun test bot/test/control-panel.test.ts"),
@@ -45,12 +72,15 @@ test("expensive build commands are blocked before consuming the crash reserve", 
   )
   assert.equal(isExpensiveCommand("git status"), false)
   assert.deepEqual(
-    diskPressureDecision("nix build .", CRITICAL_FREE_BYTES - 1n),
+    diskPressureDecision("nix build .", WARNING_FREE_BYTES - 1n),
     {
       verdict: "block",
       reason: "disk pressure",
     },
   )
+  assert.deepEqual(diskPressureDecision("nix build .", WARNING_FREE_BYTES), {
+    verdict: "allow",
+  })
   assert.deepEqual(diskPressureDecision("git status", 1n), { verdict: "allow" })
 })
 
@@ -68,7 +98,7 @@ test("macOS memory-pressure capacity counts reclaimable available memory instead
   assert.deepEqual(
     resourcePressureDecision(
       "cargo test --workspace",
-      CRITICAL_FREE_BYTES,
+      WARNING_FREE_BYTES,
       capacity?.availableBytes ?? 0n,
     ),
     { verdict: "allow" },
@@ -86,7 +116,7 @@ test("expensive builds fail closed before consuming the memory crash reserve", (
   assert.deepEqual(
     resourcePressureDecision(
       "cargo test --workspace",
-      CRITICAL_FREE_BYTES,
+      WARNING_FREE_BYTES,
       CRITICAL_FREE_MEMORY_BYTES - 1n,
     ),
     { verdict: "block", reason: "memory pressure" },
