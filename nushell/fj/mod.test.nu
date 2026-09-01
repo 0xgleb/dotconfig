@@ -73,6 +73,26 @@ def "test fj untrack does not error as unknown" [] {
   }
 }
 
+def "test clanker never continues an already-live Pi session" [] {
+  let fj_dir = ($env.CURRENT_FILE | path dirname)
+  let source = (open ($fj_dir | path join "mod.nu"))
+  let routing = (open ($fj_dir | path join "routing.nu"))
+  let package = (open ($fj_dir | path dirname | path join "jf.nix"))
+  assert ($source | str contains "active-pi-session-ids")
+  assert ($source | str contains "expires_at >")
+  assert ($source | str contains "SELECT agent_id, pid")
+  assert ($source | str contains "process-is-alive")
+  assert ($source | str contains "^kill -0")
+  assert ($source | str contains "live-safe-pi-resume-route")
+  assert ($routing | str contains "the most recent Pi session is already live")
+  assert ($package | str contains "    sqlite") "managed jf must provide sqlite3 for active-session admission"
+}
+
+def "test crashed Pi PID is not treated as a live session" [] {
+  assert (fj process-is-alive $nu.pid) "the current Nu process must be live"
+  assert (not (fj process-is-alive 2_147_483_647)) "an impossible PID must be inactive"
+}
+
 def "test local dispatcher unloads idle model weights" [] {
   let source = (open ($env.CURRENT_FILE | path dirname | path join "mod.nu"))
   assert ($source | str contains "OLLAMA_KEEP_ALIVE=5m")

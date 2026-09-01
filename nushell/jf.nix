@@ -24,6 +24,7 @@ let
     gh
     graphite-cli
     gitui
+    sqlite
   ];
 
   # No `--` before "$@": nushell passes it through as a literal arg rather than

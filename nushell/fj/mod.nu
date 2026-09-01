@@ -6,6 +6,9 @@ use routing.nu [
   clanker-route
   claude-project-dirname
   pi-project-dirname
+  pi-session-id-from-path
+  live-pi-session-ids
+  live-safe-pi-resume-route
 ]
 use check.nu
 use workflow.nu
@@ -112,6 +115,49 @@ export def check [] {
   check run
 }
 
+export def process-is-alive [pid: int]: nothing -> bool {
+  (do { ^kill -0 $pid } | complete).exit_code == 0
+}
+
+def active-pi-session-ids [cwd: string, home: string]: nothing -> list<string> {
+  let database = $"($home)/.local/state/pi/agent-registry/registry.sqlite"
+  if not ($database | path exists) { return [] }
+  let escaped_cwd = ($cwd | str replace --all "'" "''")
+  let now_ms = ((date now | format date "%s" | into int) * 1_000)
+  let query = $"SELECT agent_id, pid FROM agents WHERE cwd = '($escaped_cwd)' AND expires_at > ($now_ms) ORDER BY agent_id;"
+  let result = (do { ^sqlite3 -readonly -json $database $query } | complete)
+  if $result.exit_code != 0 {
+    error make { msg: "cannot verify active Pi sessions before resume" }
+  }
+  let output = ($result.stdout | str trim)
+  if ($output | is-empty) { return [] }
+  let agents = ($output | from json)
+  let live_pids = (
+    $agents
+    | where {|agent| process-is-alive ($agent.pid | into int) }
+    | get pid
+    | each {|pid| $pid | into int }
+  )
+  live-pi-session-ids $agents $live_pids
+}
+
+def pi-session-ids-newest-first [pi_dir: string]: nothing -> list<string> {
+  if not ($pi_dir | path exists) { return [] }
+  let paths = (glob $"($pi_dir)/*.jsonl")
+  if ($paths | is-empty) { return [] }
+  ls ...$paths
+  | sort-by modified --reverse
+  | get name
+  | each {|path| pi-session-id-from-path $path }
+}
+
+def live-safe-pi-resume [route: record, pi_dir: string, cwd: string, home: string]: nothing -> record {
+  if ($route.tool != "pi") or (not ("--continue" in $route.args)) { return $route }
+  live-safe-pi-resume-route (
+    $route
+  ) (pi-session-ids-newest-first $pi_dir) (active-pi-session-ids $cwd $home)
+}
+
 # Launch Pi with high thinking and classified workflows. Pass `--claude` for
 # Claude Code's high-effort Auto Mode, or `--dispatcher` for a Pi session on the
 # local Ollama model that loops the shared dispatcher skill (ollama serve is
@@ -129,7 +175,8 @@ export def --wrapped clanker [...args: string] {
     and ((glob $"($pi_dir)/*.jsonl") | is-not-empty)
   )
   let on_nixxxos = ((^hostname | str trim) == "nixxxos")
-  let route = (clanker-route $pi_has_session $claude_has_session --remote-control=$on_nixxxos --cwd $env.PWD --home $env.HOME ...$args)
+  let routed = (clanker-route $pi_has_session $claude_has_session --remote-control=$on_nixxxos --cwd $env.PWD --home $env.HOME ...$args)
+  let route = (live-safe-pi-resume $routed $pi_dir $env.PWD $env.HOME)
   match $route.tool {
     "pi" => { ^pi ...$route.args }
     "pi-dispatcher" => { run-local-dispatcher $route.cwd $route.args }

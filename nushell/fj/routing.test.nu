@@ -34,6 +34,59 @@ def "test pi-project-dirname matches pi session storage" [] {
   assert equal (pi-project-dirname "/Users/0xgleb/.config") "--Users-0xgleb-.config--"
 }
 
+def "test pi session id parses from a saved session path" [] {
+  assert equal (
+    pi-session-id-from-path "/sessions/2026-09-01T00-00-00_shared-session.jsonl"
+  ) "shared-session"
+}
+
+def "test crashed Pi PID is excluded from live session IDs" [] {
+  let agents = [
+    { agent_id: "live:pid:42", pid: 42 }
+    { agent_id: "crashed:pid:77", pid: 77 }
+    { agent_id: "legacy", pid: 99 }
+  ]
+  assert equal (live-pi-session-ids $agents [42 99]) [live legacy]
+}
+
+def "test inactive Pi session selection skips every live session" [] {
+  assert equal (
+    select-inactive-pi-session [newest active-other recoverable] [newest active-other]
+  ) [recoverable]
+  assert equal (select-inactive-pi-session [newest] [newest]) []
+}
+
+def "test Pi continue becomes an exact inactive session selection" [] {
+  assert equal (
+    replace-pi-continue [--thinking high --continue "resume work"] "recoverable"
+  ) [--thinking high --session recoverable "resume work"]
+}
+
+def "test live-safe Pi resume selects the newest inactive session" [] {
+  let route = { tool: pi, args: [--thinking high --continue] }
+  assert equal (
+    live-safe-pi-resume-route $route [live recoverable older] [live]
+  ) { tool: pi, args: [--thinking high --session recoverable] }
+}
+
+def "test live-safe Pi resume preserves continue when the newest session is inactive" [] {
+  let route = { tool: pi, args: [--thinking high --continue] }
+  assert equal (
+    live-safe-pi-resume-route $route [recoverable older] [older]
+  ) $route
+}
+
+def "test live-safe Pi resume refuses to duplicate the only live session" [] {
+  let route = { tool: pi, args: [--thinking high --continue] }
+  try {
+    live-safe-pi-resume-route $route [live] [live]
+    assert false "duplicate live resume should have failed"
+  } catch {|error|
+    assert ($error.msg | str contains "already live")
+    assert ($error.msg | str contains "jf clanker --new")
+  }
+}
+
 # --- clanker-route: Pi by default, Claude by opt-in ---
 
 def "test clanker defaults to pi and resumes" [] {

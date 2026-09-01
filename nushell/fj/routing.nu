@@ -253,6 +253,69 @@ def session-args [has_session: bool, start_fresh: bool, resume_flags: list<strin
   if $has_session and not ($start_fresh or $steers_session) { ["--continue"] } else { [] }
 }
 
+export def pi-session-id-from-path [path: path]: nothing -> string {
+  $path
+  | path parse
+  | get stem
+  | split row "_"
+  | last
+}
+
+export def live-pi-session-ids [
+  agents: list<record>
+  live_pids: list<int>
+]: nothing -> list<string> {
+  $agents
+  | where {|agent| ($agent.pid | into int) in $live_pids }
+  | get agent_id
+  | each {|agent_id| $agent_id | str replace --regex ':pid:[1-9][0-9]*$' '' }
+  | uniq
+}
+
+export def select-inactive-pi-session [
+  ordered_session_ids: list<string>
+  active_session_ids: list<string>
+]: nothing -> list<string> {
+  $ordered_session_ids
+  | where {|session_id| $session_id not-in $active_session_ids }
+  | first 1
+}
+
+export def replace-pi-continue [
+  args: list<string>
+  session_id: string
+]: nothing -> list<string> {
+  $args
+  | each {|arg|
+      if $arg == "--continue" {
+        ["--session" $session_id]
+      } else {
+        [$arg]
+      }
+    }
+  | flatten
+}
+
+export def live-safe-pi-resume-route [
+  route: record
+  ordered_session_ids: list<string>
+  active_session_ids: list<string>
+]: nothing -> record {
+  if ($route.tool != "pi") or (not ("--continue" in $route.args)) { return $route }
+  let latest = ($ordered_session_ids | get 0?)
+  if ($latest == null) or ($latest not-in $active_session_ids) { return $route }
+  let selected = (
+    select-inactive-pi-session $ordered_session_ids $active_session_ids
+    | get 0?
+  )
+  if $selected == null {
+    error make {
+      msg: "the most recent Pi session is already live and no inactive saved session is available; use jf clanker --new"
+    }
+  }
+  $route | upsert args (replace-pi-continue $route.args $selected)
+}
+
 # The --claude and --new selectors are consumed from the rest args rather than
 # declared as switches: the `clanker` wrapper is --wrapped, so user flags reach
 # this command as runtime strings via spread, which nushell never re-parses
