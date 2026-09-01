@@ -1,0 +1,284 @@
+--- a/node_modules/@earendil-works/pi-tui/src/tui.ts
++++ b/node_modules/@earendil-works/pi-tui/src/tui.ts
+@@ -342,0 +343,4 @@
++	private renderFailureActive = false;
++	private handlingTerminalInput = false;
++	private focusedInputRenderTarget: Component | undefined;
++	private renderMutationGeneration = 0;
+@@ -763,0 +768,20 @@
++	private renderSafely(): void {
++		try {
++			this.doRender();
++			this.renderFailureActive = false;
++		} catch (error) {
++			this.renderRequested = false;
++			this.focusedInputRenderTarget = undefined;
++			if (this.renderFailureActive) return;
++			this.renderFailureActive = true;
++			let description = "Unknown render failure";
++			try {
++				description = error instanceof Error ? `${error.name}: ${error.message}` : String(error);
++				description = description.replace(/[\u0000-\u001f\u007f-\u009f]/g, " ").slice(0, 500);
++			} catch {}
++			try {
++				this.terminal.write(`\x1b[?2026l\r\n\x1b[31mPi render error contained: ${description}\x1b[0m\r\n`);
++			} catch {}
++		}
++	}
++
+@@ -764,0 +789 @@
++		this.focusedInputRenderTarget = undefined;
+@@ -769 +794 @@
+-		this.doRender();
++		this.renderSafely();
+@@ -772,0 +798,4 @@
++		if (!this.handlingTerminalInput) {
++			this.focusedInputRenderTarget = undefined;
++			this.renderMutationGeneration += 1;
++		}
+@@ -782,0 +812,6 @@
++	protected consumeFocusedInputRenderTarget(): Component | undefined {
++		const target = this.focusedInputRenderTarget;
++		this.focusedInputRenderTarget = undefined;
++		return target;
++	}
++
+@@ -796 +831 @@
+-			this.doRender();
++			this.renderSafely();
+@@ -819 +854 @@
+-			this.doRender();
++			this.renderSafely();
+@@ -826,0 +862 @@
++		const renderGenerationAtInput = this.renderMutationGeneration;
+@@ -897 +933,10 @@
+-			this.focusedComponent.handleInput(data);
++			this.handlingTerminalInput = true;
++			try {
++				this.focusedComponent.handleInput(data);
++				this.focusedInputRenderTarget =
++					this.renderMutationGeneration === renderGenerationAtInput
++						? this.focusedComponent
++						: undefined;
++			} finally {
++				this.handlingTerminalInput = false;
++			}
+--- a/node_modules/@earendil-works/pi-tui/src/tui-main-screen.ts
++++ b/node_modules/@earendil-works/pi-tui/src/tui-main-screen.ts
+@@ -4 +4 @@
+-import { type TUI, TuiBase, type TuiStopOptions } from "./tui.ts";
++import { type Component, Container, type TUI, TuiBase, type TuiStopOptions } from "./tui.ts";
+@@ -66,0 +67,7 @@
++	private rootRenderCache:
++		| {
++				readonly width: number;
++				readonly children: readonly Component[];
++				readonly lines: ReadonlyMap<Component, readonly string[]>;
++		  }
++		| undefined;
+@@ -67,0 +75,38 @@
++	private rootContains(root: Component, target: Component): boolean {
++		const pending = [root];
++		const visited = new Set<Component>();
++		while (pending.length > 0) {
++			const candidate = pending.pop();
++			if (!candidate || visited.has(candidate)) continue;
++			if (candidate === target) return true;
++			visited.add(candidate);
++			if (!(candidate instanceof Container)) continue;
++			for (const child of candidate.children) pending.push(child);
++		}
++		return false;
++	}
++
++	private renderRootChildren(width: number, focusedTarget: Component | undefined): string[] {
++		const children = [...this.children];
++		const cache = this.rootRenderCache;
++		const cacheValid =
++			cache?.width === width &&
++			cache.children.length === children.length &&
++			cache.children.every((child, index) => child === children[index]);
++		const focusedRoot =
++			focusedTarget && cacheValid
++				? children.find((child) => this.rootContains(child, focusedTarget))
++				: undefined;
++		const nextLines = new Map<Component, readonly string[]>();
++		const combined: string[] = [];
++		for (const child of children) {
++			const lines =
++				focusedRoot && child !== focusedRoot ? cache?.lines.get(child) : child.render(width);
++			const resolved = lines ?? child.render(width);
++			nextLines.set(child, resolved);
++			for (const line of resolved) combined.push(line);
++		}
++		this.rootRenderCache = { width, children, lines: nextLines };
++		return combined;
++	}
++
+@@ -88,0 +134,5 @@
++	}
++
++	override invalidate(): void {
++		super.invalidate();
++		this.rootRenderCache = undefined;
+@@ -91,0 +142 @@
++		this.rootRenderCache = undefined;
+@@ -196,2 +247,7 @@
+-		// Render all components to get new lines
+-		let newLines = this.render(width);
++		// A focused keyboard edit cannot mutate sibling roots. Reuse their last
++		// rendered output so a long transcript is not rebuilt for every key.
++		const focusedInputTarget = this.consumeFocusedInputRenderTarget();
++		let newLines = this.hasOverlayEntries
++			? this.render(width)
++			: this.renderRootChildren(width, focusedInputTarget);
++		if (this.hasOverlayEntries) this.rootRenderCache = undefined;
+@@ -462,3 +517,0 @@
+-				// Clean up terminal state before throwing
+-				this.stop();
+-
+--- a/node_modules/@earendil-works/pi-tui/dist/tui.js
++++ b/node_modules/@earendil-works/pi-tui/dist/tui.js
+@@ -126,0 +127,4 @@
++    renderFailureActive = false;
++    handlingTerminalInput = false;
++    focusedInputRenderTarget;
++    renderMutationGeneration = 0;
+@@ -506,0 +511,23 @@
++    }
++    renderSafely() {
++        try {
++            this.doRender();
++            this.renderFailureActive = false;
++        }
++        catch (error) {
++            this.renderRequested = false;
++            this.focusedInputRenderTarget = undefined;
++            if (this.renderFailureActive)
++                return;
++            this.renderFailureActive = true;
++            let description = "Unknown render failure";
++            try {
++                description = error instanceof Error ? `${error.name}: ${error.message}` : String(error);
++                description = description.replace(/[\u0000-\u001f\u007f-\u009f]/g, " ").slice(0, 500);
++            }
++            catch { }
++            try {
++                this.terminal.write(`\x1b[?2026l\r\n\x1b[31mPi render error contained: ${description}\x1b[0m\r\n`);
++            }
++            catch { }
++        }
+@@ -508,0 +536 @@
++        this.focusedInputRenderTarget = undefined;
+@@ -514 +542 @@
+-        this.doRender();
++        this.renderSafely();
+@@ -516,0 +545,4 @@
++        if (!this.handlingTerminalInput) {
++            this.focusedInputRenderTarget = undefined;
++            this.renderMutationGeneration += 1;
++        }
+@@ -526,0 +559,5 @@
++    consumeFocusedInputRenderTarget() {
++        const target = this.focusedInputRenderTarget;
++        this.focusedInputRenderTarget = undefined;
++        return target;
++    }
+@@ -542 +579 @@
+-            this.doRender();
++            this.renderSafely();
+@@ -564 +601 @@
+-            this.doRender();
++            this.renderSafely();
+@@ -570,0 +608 @@
++        const renderGenerationAtInput = this.renderMutationGeneration;
+@@ -638 +676,10 @@
+-            this.focusedComponent.handleInput(data);
++            this.handlingTerminalInput = true;
++            try {
++                this.focusedComponent.handleInput(data);
++                this.focusedInputRenderTarget = this.renderMutationGeneration === renderGenerationAtInput
++                    ? this.focusedComponent
++                    : undefined;
++            }
++            finally {
++                this.handlingTerminalInput = false;
++            }
+--- a/node_modules/@earendil-works/pi-tui/dist/tui-main-screen.js
++++ b/node_modules/@earendil-works/pi-tui/dist/tui-main-screen.js
+@@ -4 +4 @@
+-import { applyTuiCanvasBackground, TuiBase } from "./tui.js";
++import { applyTuiCanvasBackground, Container, TuiBase } from "./tui.js";
+@@ -50,0 +51,39 @@
++    rootRenderCache;
++    rootContains(root, target) {
++        const pending = [root];
++        const visited = new Set();
++        while (pending.length > 0) {
++            const candidate = pending.pop();
++            if (!candidate || visited.has(candidate))
++                continue;
++            if (candidate === target)
++                return true;
++            visited.add(candidate);
++            if (!(candidate instanceof Container))
++                continue;
++            for (const child of candidate.children)
++                pending.push(child);
++        }
++        return false;
++    }
++    renderRootChildren(width, focusedTarget) {
++        const children = [...this.children];
++        const cache = this.rootRenderCache;
++        const cacheValid = cache?.width === width &&
++            cache.children.length === children.length &&
++            cache.children.every((child, index) => child === children[index]);
++        const focusedRoot = focusedTarget && cacheValid
++            ? children.find((child) => this.rootContains(child, focusedTarget))
++            : undefined;
++        const nextLines = new Map();
++        const combined = [];
++        for (const child of children) {
++            const lines = focusedRoot && child !== focusedRoot ? cache?.lines.get(child) : undefined;
++            const resolved = lines ?? this.applyLineResets(child.render(width)).map((line) => applyTuiCanvasBackground(line, width));
++            nextLines.set(child, resolved);
++            for (const line of resolved)
++                combined.push(line);
++        }
++        this.rootRenderCache = { width, children, lines: nextLines };
++        return combined;
++    }
+@@ -71,0 +111,4 @@
++    invalidate() {
++        super.invalidate();
++        this.rootRenderCache = undefined;
++    }
+@@ -72,0 +116 @@
++        this.rootRenderCache = undefined;
+@@ -169,3 +213,4 @@
+-        // Render all components to get new lines
+-        let newLines = this.render(width);
+-        // Composite overlays into the rendered lines (before differential compare)
++        // A focused keyboard edit cannot mutate sibling roots. Reuse their last
++        // rendered output so a long transcript is not rebuilt for every key.
++        const focusedInputTarget = this.consumeFocusedInputRenderTarget();
++        let newLines;
+@@ -172,0 +218,3 @@
++            this.rootRenderCache = undefined;
++            newLines = this.render(width);
++            // Composite overlays before terminal normalization.
+@@ -173,0 +222 @@
++            newLines = this.applyLineResets(newLines).map((line) => applyTuiCanvasBackground(line, width));
+@@ -175 +224,5 @@
+-        // Extract cursor position before applying line resets (marker must be found first)
++        else {
++            newLines = this.renderRootChildren(width, focusedInputTarget);
++        }
++        // The cursor marker survives terminal normalization and is stripped only
++        // from the combined copy, never from cached sibling-root lines.
+@@ -177 +229,0 @@
+-        newLines = this.applyLineResets(newLines).map((line) => applyTuiCanvasBackground(line, width));
+@@ -420,2 +471,0 @@
+-                // Clean up terminal state before throwing
+-                this.stop();

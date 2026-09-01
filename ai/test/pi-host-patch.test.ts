@@ -10,6 +10,10 @@ const canvasPatch = readFileSync(
   new URL("../pi/patches/canvas-background.patch", import.meta.url),
   "utf8",
 )
+const focusedInputRenderCachePatch = readFileSync(
+  new URL("../pi/patches/focused-input-render-cache.patch", import.meta.url),
+  "utf8",
+)
 const oauthRefreshPatchUrl = new URL(
   "../pi/patches/oauth-refresh-abort.patch",
   import.meta.url,
@@ -145,6 +149,34 @@ test("stable agent Pi entrypoint targets the activated patched host", () => {
     sessionPath.indexOf('"$HOME/.pi/agent/bin"') <
       sessionPath.indexOf('"$HOME/.nix-profile/bin"'),
   )
+})
+
+test("Pi host contains large-transcript and component render failures", () => {
+  assert.match(home, /patches\/focused-input-render-cache\.patch/u)
+  assert.match(focusedInputRenderCachePatch, /consumeFocusedInputRenderTarget/u)
+  assert.match(focusedInputRenderCachePatch, /renderMutationGeneration/u)
+  assert.match(focusedInputRenderCachePatch, /rootRenderCache/u)
+  assert.match(focusedInputRenderCachePatch, /renderSafely/u)
+  assert.match(
+    focusedInputRenderCachePatch,
+    /^\+\s+for \(const line of resolved\) combined\.push\(line\);/mu,
+  )
+  assert.match(
+    focusedInputRenderCachePatch,
+    /focusedRoot && child !== focusedRoot/u,
+  )
+  assert.match(
+    focusedInputRenderCachePatch,
+    /this\.renderMutationGeneration === renderGenerationAtInput/u,
+  )
+  assert.match(
+    home,
+    /focused input render cache or render containment missing/u,
+  )
+  assert.match(home, /--input-type=module/u)
+  assert.match(home, /length: 200000/u)
+  assert.match(home, /Pi render error contained/u)
+  assertHunkHeaderCounts(focusedInputRenderCachePatch)
 })
 
 test("Pi host owns an archeofuturist canvas without changing terminal configuration", () => {

@@ -41,6 +41,8 @@ let
       patch -p1 -d "$out/lib/node_modules/pi-monorepo" \
         < ${./ai/pi/patches/canvas-background.patch}
       patch -p1 -d "$out/lib/node_modules/pi-monorepo" \
+        < ${./ai/pi/patches/focused-input-render-cache.patch}
+      patch -p1 -d "$out/lib/node_modules/pi-monorepo" \
         < ${./ai/pi/patches/oauth-refresh-abort.patch}
       install -Dm644 ${./ai/pi/host/request-lifecycle.js} \
         "$out/lib/node_modules/pi-monorepo/dist/core/request-lifecycle.js"
@@ -115,6 +117,48 @@ let
       grep -qF 'const DEFAULT_CANVAS_BACKGROUND = "#080B1A";' "$canvas"
       grep -qF 'applyTuiCanvasBackground(line, width)' "$alt_screen"
       grep -qF 'applyTuiCanvasBackground(line, width)' "$main_screen"
+      if ! grep -qF 'consumeFocusedInputRenderTarget()' "$canvas" ||
+         ! grep -qF 'renderMutationGeneration' "$canvas" ||
+         ! grep -qF 'renderSafely()' "$canvas" ||
+         ! grep -qF 'this.renderSafely();' "$canvas" ||
+         [ "$(grep -cF 'this.doRender();' "$canvas")" -ne 1 ] ||
+         ! grep -qF 'rootRenderCache' "$main_screen" ||
+         ! grep -qF 'renderRootChildren(width, focusedTarget)' "$main_screen" ||
+         ! grep -qF 'for (const line of resolved)' "$main_screen" ||
+         grep -qF 'combined.push(...resolved)' "$main_screen"; then
+        echo "focused input render cache or render containment missing" >&2
+        exit 1
+      fi
+      ${pkgs.nodejs}/bin/node --input-type=module - \
+        "$out/lib/node_modules/pi-monorepo/node_modules/@earendil-works/pi-tui" <<'EOF'
+      import assert from "node:assert/strict";
+      import { pathToFileURL } from "node:url";
+      const root = process.argv[2];
+      const { TuiMainScreen } = await import(pathToFileURL(root + "/dist/tui-main-screen.js").href);
+      const { Container } = await import(pathToFileURL(root + "/dist/tui.js").href);
+      const terminal = {
+        columns: 120,
+        rows: 40,
+        writes: [],
+        write(value) { this.writes.push(value); },
+        hideCursor() {},
+        showCursor() {},
+        start() {},
+        stop() {},
+      };
+      const hugeRoot = new Container();
+      hugeRoot.addChild({
+        invalidate() {},
+        render() { return Array.from({ length: 200000 }, (_, index) => "history " + index); },
+      });
+      const hugeTui = new TuiMainScreen(terminal);
+      hugeTui.addChild(hugeRoot);
+      assert.doesNotThrow(() => hugeTui.renderRootChildren(120, undefined));
+      const failingTui = new TuiMainScreen(terminal);
+      failingTui.addChild({ invalidate() {}, render() { throw new Error("component render failed"); } });
+      assert.doesNotThrow(() => failingTui.renderNow());
+      assert.match(terminal.writes.join(""), /Pi render error contained/);
+      EOF
       if ! grep -qF 'loadBoundedSessionEntriesSync(resolvedFilePath)' "$session_manager" ||
          ! grep -qF 'MAX_SESSION_ENTRY_BYTES = 16 * 1024 * 1024' "$bounded_session_reader" ||
          ! grep -qF 'MAX_SESSION_LOAD_BYTES = 32 * 1024 * 1024' "$bounded_session_reader" ||
