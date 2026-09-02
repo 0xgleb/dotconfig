@@ -4,6 +4,7 @@ import {
   lstatSync,
   readFileSync,
   readdirSync,
+  realpathSync,
   statSync,
   watch,
   type FSWatcher,
@@ -44,6 +45,16 @@ import {
   type AutoReloadPendingReporter,
 } from "../shared/reload-events.ts"
 import { registerRuntimeVersion } from "../shared/runtime-version.ts"
+import {
+  HOST_MIGRATION_DRAFT_ENV,
+  HOST_MIGRATION_RESUME_ENV,
+  hostMigrationArgv,
+  hostMigrationEnvironment,
+  isInteractiveHostRuntime,
+  needsManagedHostMigration,
+  piPackageRoot,
+  verifiedHostArtifacts,
+} from "./host-migration.ts"
 
 const HANDOFF_POLL_MS = 60 * 60 * 1_000
 const COMPLETED_MESSAGE_TYPE = "auto-reload.completed"
@@ -56,7 +67,13 @@ const COMPOSER_QUIET_MS = 2_000
 const GENERATION_POLL_MS = 5_000
 const GENERATION_RECONCILE_MS = SETTLE_RETRY_MS
 const MODEL_REFRESH_TIMEOUT_MS = 10_000
+const HOST_MIGRATION_RETRY_MS = 250
 const STATUS_KEY = "auto-reload"
+
+interface HostMigrationPlan {
+  readonly stableEntrypoint: string
+  readonly sessionFile: string
+}
 
 interface ReloadableContext extends ExtensionContext {
   reload(): Promise<void>
@@ -223,7 +240,7 @@ const managedTreeGeneration = (
 }
 
 const autoReload: (pi: ExtensionAPI) => void = pi => {
-  registerRuntimeVersion(pi, "auto-reload", "2026.08.23.1")
+  registerRuntimeVersion(pi, "auto-reload", "2026.09.02.2")
   pi.registerMessageRenderer(
     COMPLETED_MESSAGE_TYPE,
     (message, options, theme) => {
@@ -254,10 +271,10 @@ const autoReload: (pi: ExtensionAPI) => void = pi => {
   let handoffTimer: ReturnType<typeof setInterval> | undefined
   let generationTimer: ReturnType<typeof setInterval> | undefined
   let reloadContinuationTimer: ReturnType<typeof setTimeout> | undefined
+  let hostMigrationTimer: ReturnType<typeof setTimeout> | undefined
   let generationReconciler: ManagedGenerationReconciler | undefined
   let reloadExecutionScheduler:
-    | ReloadExecutionScheduler<ReloadableContext>
-    | undefined
+    ReloadExecutionScheduler<ReloadableContext> | undefined
   let agentRunActive = false
   let pending = false
   let pendingSince: number | undefined
@@ -287,17 +304,149 @@ const autoReload: (pi: ExtensionAPI) => void = pi => {
     composerSafeSince = undefined
   })
 
+  const resolveHostMigrationPlan = (
+    ctx: ExtensionContext,
+  ): HostMigrationPlan | undefined => {
+    const currentEntrypoint = process.argv[1]
+    const sessionFile = ctx.sessionManager.getSessionFile()
+    if (
+      !isInteractiveHostRuntime({
+        mode: ctx.mode,
+        stdinIsTTY: process.stdin.isTTY,
+        stdoutIsTTY: process.stdout.isTTY,
+      }) ||
+      !currentEntrypoint ||
+      !sessionFile
+    )
+      return undefined
+
+    const stablePiPath = join(homedir(), ".pi", "agent", "bin", "pi")
+    try {
+      const stableEntrypoint = realpathSync(stablePiPath)
+      if (
+        !needsManagedHostMigration({
+          currentEntrypoint,
+          stableEntrypoint,
+        })
+      )
+        return undefined
+      const stableRoot = piPackageRoot(stableEntrypoint)
+      const expectedWrappedEntrypoint = join(stableRoot, "bin", ".pi-wrapped")
+      const tuiRoot = join(
+        stableRoot,
+        "lib",
+        "node_modules",
+        "pi-monorepo",
+        "node_modules",
+        "@earendil-works",
+        "pi-tui",
+        "dist",
+      )
+      const verified = verifiedHostArtifacts({
+        launcher: readFileSync(stableEntrypoint, "utf8"),
+        expectedWrappedEntrypoint,
+        tui: readFileSync(join(tuiRoot, "tui.js"), "utf8"),
+        mainScreen: readFileSync(join(tuiRoot, "tui-main-screen.js"), "utf8"),
+      })
+      if (!verified) throw new Error("stable host markers do not match")
+      return { stableEntrypoint, sessionFile }
+    } catch (error) {
+      reportIncident(
+        "error",
+        "verify replacement Pi host",
+        `Could not verify the activated Pi host for live migration: ${error instanceof Error ? error.message : "unknown error"}`,
+      )
+      return undefined
+    }
+  }
+
+  const scheduleHostMigration = (
+    ctx: ExtensionContext,
+    plan: HostMigrationPlan,
+  ): void => {
+    const migrateWhenIdle = (): void => {
+      hostMigrationTimer = undefined
+      if (agentRunActive || !ctx.isIdle() || ctx.hasPendingMessages()) {
+        hostMigrationTimer = setTimeout(
+          migrateWhenIdle,
+          HOST_MIGRATION_RETRY_MS,
+        )
+        hostMigrationTimer.unref?.()
+        return
+      }
+      const editorDraft = ctx.ui.getEditorText()
+      const delivery = managedReloadDelivery(
+        "reload",
+        ctx.sessionManager.getBranch(),
+        false,
+      )
+      try {
+        process.execve(
+          plan.stableEntrypoint,
+          hostMigrationArgv(plan.stableEntrypoint, plan.sessionFile),
+          hostMigrationEnvironment(
+            process.env,
+            editorDraft,
+            delivery === "resume" || delivery === "followUp",
+          ),
+        )
+      } catch (error) {
+        reportIncident(
+          "error",
+          "replace running Pi host",
+          `Could not replace the running Pi host: ${error instanceof Error ? error.message : "unknown error"}`,
+        )
+        ctx.ui.setStatus(STATUS_KEY, "reload:host-migration-failed")
+      }
+    }
+
+    ctx.ui.setStatus(STATUS_KEY, "reload:restarting-host")
+    hostMigrationTimer = setTimeout(migrateWhenIdle, 0)
+    hostMigrationTimer.unref?.()
+  }
+
+  const restoreHostMigration = (ctx: ExtensionContext): void => {
+    const editorDraft = process.env[HOST_MIGRATION_DRAFT_ENV]
+    const shouldResume = process.env[HOST_MIGRATION_RESUME_ENV] === "1"
+    delete process.env[HOST_MIGRATION_DRAFT_ENV]
+    delete process.env[HOST_MIGRATION_RESUME_ENV]
+    if (editorDraft === undefined) return
+    ctx.ui.setEditorText(editorDraft)
+    if (!shouldResume || editorDraft.length > 0) return
+
+    const resumeWhenIdle = (): void => {
+      hostMigrationTimer = undefined
+      if (!ctx.isIdle() || ctx.hasPendingMessages()) {
+        hostMigrationTimer = setTimeout(resumeWhenIdle, HOST_MIGRATION_RETRY_MS)
+        hostMigrationTimer.unref?.()
+        return
+      }
+      pi.sendMessage(
+        {
+          customType: "auto-reload.host-migrated",
+          content: "Resuming preserved work after Pi host migration.",
+          display: true,
+        },
+        { triggerTurn: true, deliverAs: "followUp" },
+      )
+    }
+    hostMigrationTimer = setTimeout(resumeWhenIdle, 0)
+    hostMigrationTimer.unref?.()
+  }
+
   const closeWatchers = () => {
     if (timer) clearTimeout(timer)
     if (handoffTimer) clearInterval(handoffTimer)
     if (generationTimer) clearInterval(generationTimer)
     if (reloadContinuationTimer) clearTimeout(reloadContinuationTimer)
+    if (hostMigrationTimer) clearTimeout(hostMigrationTimer)
     generationReconciler?.close()
     reloadExecutionScheduler?.close()
     timer = undefined
     handoffTimer = undefined
     generationTimer = undefined
     reloadContinuationTimer = undefined
+    hostMigrationTimer = undefined
     generationReconciler = undefined
     agentRunActive = false
     pending = false
@@ -432,7 +581,9 @@ const autoReload: (pi: ExtensionAPI) => void = pi => {
 
   pi.on("session_start", async (event, ctx) => {
     closeWatchers()
+    restoreHostMigration(ctx)
     const branch = ctx.sessionManager.getBranch()
+    const hostMigrationPlan = resolveHostMigrationPlan(ctx)
     const summaryEntry = branch
       .filter(
         entry =>
@@ -486,7 +637,7 @@ const autoReload: (pi: ExtensionAPI) => void = pi => {
         }
       }
     }
-    if (event.reason === "reload") {
+    if (event.reason === "reload" && !hostMigrationPlan) {
       const changedLabels = summary && !summary.announced ? summary.labels : []
       const delivery = managedReloadDelivery(
         event.reason,
@@ -586,6 +737,21 @@ const autoReload: (pi: ExtensionAPI) => void = pi => {
         pi.appendEntry(RELOAD_SUMMARY_ENTRY, { ...summary, announced: true })
       }
     }
+    if (event.reason === "reload" && hostMigrationPlan) {
+      pi.sendMessage({
+        customType: "auto-reload.host-migration",
+        content:
+          "Activated Pi host verified; replacing this running process in place.",
+        display: true,
+      })
+      if (summary && !summary.announced) {
+        pi.appendEntry(RELOAD_SUMMARY_ENTRY, { ...summary, announced: true })
+      }
+    }
+    if (hostMigrationPlan) {
+      scheduleHostMigration(ctx, hostMigrationPlan)
+      return
+    }
     if (!isReloadableContext(ctx)) {
       const summary =
         "Automatic Pi reload requires the managed reload-context host patch"
@@ -626,6 +792,9 @@ const autoReload: (pi: ExtensionAPI) => void = pi => {
 
     generationTimer = setInterval(() => {
       generationReconciler?.poll(aiRoot)
+      if (hostMigrationTimer) return
+      const hostMigrationPlan = resolveHostMigrationPlan(ctx)
+      if (hostMigrationPlan) scheduleHostMigration(ctx, hostMigrationPlan)
     }, GENERATION_POLL_MS)
     generationTimer.unref?.()
 

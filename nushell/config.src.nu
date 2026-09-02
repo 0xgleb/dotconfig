@@ -152,18 +152,87 @@ def run-evolve-step [label: string, command: closure] {
   do $command
 }
 
+def is-github-api-rate-limit [output: string] {
+  (($output | str contains "api.github.com/repos/") and
+    ($output | str contains "HTTP error 403") and
+    ($output | str contains "API rate limit exceeded"))
+}
+
+def run-evolve-flake-update [config_root: string] {
+  print "evolve: flake update"
+  let lock_path = ($config_root | path join "flake.lock")
+  let prior_lock = if ($lock_path | path exists) {
+    open --raw $lock_path
+  }
+  let result = (do { nix -v flake update --flake $config_root } | complete)
+
+  if not ($result.stdout | is-empty) {
+    print --raw --no-newline $result.stdout
+  }
+  if $result.exit_code == 0 {
+    if not ($result.stderr | is-empty) {
+      print --raw --stderr --no-newline $result.stderr
+    }
+    return
+  }
+
+  let output = [$result.stdout $result.stderr] | str join "\n"
+  let lock_is_unchanged = (
+    ($prior_lock | is-not-empty) and
+      ($lock_path | path exists) and
+      ((open --raw $lock_path) == $prior_lock)
+  )
+  if (is-github-api-rate-limit $output) and $lock_is_unchanged {
+    print --stderr "evolve: GitHub API rate-limited the flake update; continuing with the existing flake.lock"
+    return
+  }
+
+  if not ($result.stderr | is-empty) {
+    print --raw --stderr --no-newline $result.stderr
+  }
+  error make { msg: $"flake update failed with exit code ($result.exit_code)" }
+}
+
+def verify-pi-host [pi_bin: string] {
+  ^$pi_bin --version
+  let resolved_entry = (readlink -f $pi_bin)
+  let bin_dir = ($resolved_entry | path dirname)
+  let package_root = ($bin_dir | path join ".." | path expand)
+  let expected_wrapped = ($package_root | path join "bin" ".pi-wrapped")
+  let launcher = (open --raw $resolved_entry)
+  if not ($launcher | str contains $expected_wrapped) {
+    error make { msg: "managed Pi entrypoint executes a different host package" }
+  }
+  let tui_root = (
+    $package_root
+    | path join "lib" "node_modules" "pi-monorepo" "node_modules" "@earendil-works" "pi-tui" "dist"
+  )
+  let tui = (open --raw ($tui_root | path join "tui.js"))
+  let main_screen = (open --raw ($tui_root | path join "tui-main-screen.js"))
+  if not (
+    ($tui | str contains "renderSafely()")
+    and ($tui | str contains "this.renderSafely();")
+    and ($main_screen | str contains "const pending = [root];")
+  ) {
+    error make { msg: "managed Pi entrypoint does not contain render containment" }
+  }
+}
+
 def evolve [] {
   let config_root = ($env.HOME | path join ".config")
   let pi_bin = ($env.HOME | path join ".pi" "agent" "bin" "pi")
   # `nix` stays unprefixed on purpose — it is aliased to add --accept-flake-config.
-  run-evolve-step "Nix store GC" {|| nix -v store gc }
   run-evolve-step "sudo refresh" {|| ^sudo -v }
-  run-evolve-step "flake update" {|| nix -v flake update --flake $config_root }
+  run-evolve-flake-update $config_root
   run-evolve-step "Darwin switch" {|| ^sudo darwin-rebuild switch -v --flake $config_root }
-  # The package build asserts both sides of the patched Pi continuation contract.
-  # Verify the stable managed entrypoint directly: the generic user profile can
-  # retain an older build with the same semantic version.
-  run-evolve-step "Pi host verification" {|| ^$pi_bin --version }
+  # Verify behavior-bearing markers through the stable managed entrypoint.
+  # A copied Nix wrapper can retain an absolute exec path to an older host even
+  # when the copied package tree itself contains newer patched modules.
+  run-evolve-step "Pi host verification" {|| verify-pi-host $pi_bin }
+  # Collect only after activation has rooted the verified package in the new
+  # Home Manager profile. Pre-activation GC can delete an unrooted emergency
+  # host and leave the stable entrypoint dangling if a later update fails.
+  run-evolve-step "Nix store GC" {|| nix -v store gc }
 }
 
 def ask [context: closure, question: string] {
