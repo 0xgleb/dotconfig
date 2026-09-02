@@ -18,6 +18,32 @@ export type RuntimeVersionReporter = (
   version: string,
 ) => void
 
+const dottedNumericVersion = /^[0-9]+(?:\.[0-9]+)+$/
+
+export const latestRuntimeVersion = (
+  current: string | undefined,
+  candidate: string,
+): string => {
+  if (!current || current === "unknown") return candidate
+  if (candidate === "unknown" || candidate === current) return current
+  if (
+    dottedNumericVersion.test(current) &&
+    dottedNumericVersion.test(candidate)
+  ) {
+    const currentParts = current.split(".").map(Number)
+    const candidateParts = candidate.split(".").map(Number)
+    const length = Math.max(currentParts.length, candidateParts.length)
+    for (let index = 0; index < length; index += 1) {
+      const currentPart = currentParts[index] ?? 0
+      const candidatePart = candidateParts[index] ?? 0
+      if (candidatePart > currentPart) return candidate
+      if (candidatePart < currentPart) return current
+    }
+    return current
+  }
+  return candidate
+}
+
 const isRuntimeVersionReporter = (
   value: unknown,
 ): value is RuntimeVersionReporter => typeof value === "function"

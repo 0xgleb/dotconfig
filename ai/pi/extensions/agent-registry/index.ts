@@ -45,6 +45,7 @@ import {
   type OwnerInterventionRelay,
 } from "../shared/usage-governor-events.ts"
 import {
+  latestRuntimeVersion,
   MANAGED_CONFIG_GENERATION,
   piHostRuntimeVersions,
   registerRuntimeVersion,
@@ -201,7 +202,7 @@ const receiptDetails = (
 }
 
 const registryExtension: (pi: ExtensionAPI) => void = pi => {
-  registerRuntimeVersion(pi, "agent-registry", "2026.08.23.1")
+  registerRuntimeVersion(pi, "agent-registry", "2026.09.02.12")
   pi.registerMessageRenderer(MESSAGE_TYPE, (message, options, theme) => {
     const details = receiptDetails(message.details)
     if (!details)
@@ -235,7 +236,7 @@ const registryExtension: (pi: ExtensionAPI) => void = pi => {
       ...piHostRuntimeVersions(process.argv[1]),
     }
     const report: RuntimeVersionReporter = (component, version) => {
-      versions[component] = version
+      versions[component] = latestRuntimeVersion(versions[component], version)
     }
     pi.events.emit(RUNTIME_VERSION_REQUEST_EVENT, report)
     return Object.fromEntries(
