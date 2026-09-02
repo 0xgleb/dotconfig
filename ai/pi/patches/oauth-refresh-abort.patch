@@ -2,10 +2,7 @@ diff --git a/node_modules/@earendil-works/pi-ai/dist/auth/resolve.js b/node_modu
 index 70bd796..a8db649 100644
 --- a/node_modules/@earendil-works/pi-ai/dist/auth/resolve.js
 +++ b/node_modules/@earendil-works/pi-ai/dist/auth/resolve.js
-@@ -72,25 +72,25 @@ async function resolveStoredOAuth(credentials, providerId, oauth, stored, signal
-     let credential = stored;
-     if (expiresSoon(credential)) {
-         // Optimistic check said expired; the authoritative check runs under the lock.
+@@ -75,3 +75,7 @@
          let post;
 +        const refreshSignal = AbortSignal.any([
 +            signal,
@@ -13,10 +10,7 @@ index 70bd796..a8db649 100644
 +        ]);
          try {
              post = await credentials.modify(providerId, async (current) => {
-                 if (current?.type !== "oauth")
-                     return undefined; // logged out meanwhile
-                 if (!expiresSoon(current))
-                     return undefined; // another process/request refreshed
+@@ -82,13 +86,9 @@
                  try {
 -                    const refreshSignal = AbortSignal.any([
 -                        signal,
@@ -32,4 +26,3 @@ index 70bd796..a8db649 100644
 +            }, { signal: refreshSignal });
          }
          catch (error) {
-             if (error instanceof ModelsError)

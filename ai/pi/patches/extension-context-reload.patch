@@ -1,6 +1,6 @@
 --- a/dist/core/agent-session.js
 +++ b/dist/core/agent-session.js
-@@ -85,6 +85,9 @@
+@@ -83,6 +83,9 @@
      _unsubscribeAgent;
      _eventListeners = [];
      _isAgentRunActive = false;
@@ -10,7 +10,7 @@
      _idleWaitPromise;
      _resolveIdleWait;
      /** Tracks pending steering messages for UI display. Removed when delivered. */
-@@ -362,9 +365,15 @@
+@@ -382,9 +385,15 @@
          }
          // Emit to extensions first
          await this._emitExtensionEvent(event);
@@ -29,16 +29,16 @@
          if (event.type === "message_end") {
              // Check if this is a custom message from extensions
              if (event.message.role === "custom") {
-@@ -397,6 +397,8 @@
+@@ -417,6 +426,8 @@
                  }
              }
          }
 +        // Notify all listeners only after synchronous message persistence.
 +        this._emit(event.type === "agent_end" ? { ...event, willRetry: this._willRetryAfterAgentEnd(event) } : event);
-     };
-     _willRetryAfterAgentEnd(event) {
-         const settings = this.settingsManager.getRetrySettings();
-@@ -741,28 +743,57 @@
+         // A turn ends after its assistant message and every tool result has been appended,
+         // so this is the first point in the run where a context-only custom message can be
+         // inserted without landing between a tool call and its result. Flushing after the
+@@ -769,29 +780,59 @@
      // =========================================================================
      // Prompting
      // =========================================================================
@@ -80,13 +80,16 @@
          finally {
              this._systemPromptOverride = undefined;
 -            this._flushPendingBashMessages();
+-            this._flushPendingCustomMessages();
 -            await this._emitAgentSettled();
 +            try {
 +                this._flushPendingBashMessages();
-+                await this._emitAgentSettled();
++                this._flushPendingCustomMessages();
 +            }
 +            finally {
++                this._isAgentRunActive = false;
 +                releaseAdmission();
++                await this._emitAgentSettled();
 +            }
          }
      }
@@ -103,7 +106,7 @@
          }
          if (msg.stopReason === "error" && this._retryAttempt > 0) {
              this._emit({
-@@ -774,11 +805,11 @@
+@@ -803,11 +844,11 @@
              this._retryAttempt = 0;
          }
          if (await this._checkCompaction(msg)) {
@@ -117,19 +120,20 @@
      }
      /**
       * Send a prompt to the agent.
-@@ -1087,7 +1118,7 @@
+@@ -1118,7 +1159,7 @@
              }
          }
          else if (options?.triggerTurn) {
 -            await this._runAgentPrompt(appMessage);
 +            await this._runAgentPrompt(appMessage, options?.deliverAs === "resume");
          }
-         else {
-             this.agent.state.messages.push(appMessage);
-@@ -1151,6 +1182,14 @@
+         else if (this.isStreaming) {
+             // Appending now would put the message between an assistant tool call and its
+@@ -1204,6 +1245,14 @@
+     /** Number of pending messages (includes both steering and follow-up) */
      get pendingMessageCount() {
          return this._steeringMessages.length + this._followUpMessages.length;
-     }
++    }
 +    /** Preserve queued messages until a managed reload can run at the current agent boundary. */
 +    pauseQueuedMessagesOnce() {
 +        if (!this._isAgentRunActive) {
@@ -137,11 +141,10 @@
 +        }
 +        this._pauseQueuedMessagesOnce = true;
 +        return true;
-+    }
+     }
      /** Get pending steering messages (read-only) */
      getSteeringMessages() {
-         return this._steeringMessages;
-@@ -1170,7 +1209,8 @@
+@@ -1219,7 +1268,8 @@
      /**
       * Abort current operation and wait for agent to become idle.
       */
@@ -151,7 +154,92 @@
          this.abortRetry();
          this.agent.abort();
          await this.waitForIdle();
-@@ -1979,14 +2019,13 @@
+@@ -1734,6 +1784,10 @@
+         const settings = this.settingsManager.getCompactionSettings();
+         let started = false;
+         let fromExtension = false;
++        if (this._autoCompactionAbortController)
++            return false;
++        const autoCompactionController = new AbortController();
++        this._autoCompactionAbortController = autoCompactionController;
+         try {
+             if (!this.model) {
+                 return false;
+@@ -1745,7 +1799,6 @@
+                 return false;
+             }
+             this._emit({ type: "compaction_start", reason });
+-            this._autoCompactionAbortController = new AbortController();
+             started = true;
+             let extensionCompaction;
+             if (this._extensionRunner.hasHandlers("session_before_compact")) {
+@@ -1756,7 +1809,7 @@
+                     customInstructions: undefined,
+                     reason,
+                     willRetry,
+-                    signal: this._autoCompactionAbortController.signal,
++                    signal: autoCompactionController.signal,
+                 }));
+                 if (extensionResult?.cancel) {
+                     this._emit({
+@@ -1794,14 +1847,14 @@
+             }
+             else {
+                 // Shared default summary generator, also used by manual compaction.
+-                const compactResult = await this._runDefaultCompaction(preparation, requestModel, apiKey, headers, undefined, this._autoCompactionAbortController.signal, env, reason);
++                const compactResult = await this._runDefaultCompaction(preparation, requestModel, apiKey, headers, undefined, autoCompactionController.signal, env, reason);
+                 summary = compactResult.summary;
+                 firstKeptEntryId = compactResult.firstKeptEntryId;
+                 tokensBefore = compactResult.tokensBefore;
+                 usage = compactResult.usage;
+                 details = compactResult.details;
+             }
+-            if (this._autoCompactionAbortController.signal.aborted) {
++            if (autoCompactionController.signal.aborted) {
+                 this._emit({
+                     type: "compaction_end",
+                     reason,
+@@ -1861,21 +1914,24 @@
+         catch (error) {
+             const errorMessage = error instanceof Error ? error.message : "compaction failed";
+             if (started) {
+-                const formattedErrorMessage = reason === "overflow"
+-                    ? `Context overflow recovery failed: ${errorMessage}`
+-                    : `Auto-compaction failed: ${errorMessage}`;
++                const aborted = autoCompactionController.signal.aborted;
++                const formattedErrorMessage = aborted
++                    ? undefined
++                    : reason === "overflow"
++                      ? `Context overflow recovery failed: ${errorMessage}`
++                      : `Auto-compaction failed: ${errorMessage}`;
+                 this._emit({
+                     type: "compaction_end",
+                     reason,
+                     result: undefined,
+-                    aborted: false,
++                    aborted,
+                     willRetry: false,
+                     errorMessage: formattedErrorMessage,
+                 });
+                 await this._emitSessionCompactFailed({
+                     reason,
+                     errorMessage: formattedErrorMessage,
+-                    aborted: false,
++                    aborted,
+                     willRetry: false,
+                     fromExtension,
+                 });
+@@ -1883,7 +1939,8 @@
+             return false;
+         }
+         finally {
+-            this._autoCompactionAbortController = undefined;
++            if (this._autoCompactionAbortController === autoCompactionController)
++                this._autoCompactionAbortController = undefined;
+         }
+     }
+     /**
+@@ -2137,14 +2194,13 @@
              return guidelines.length > 0 ? [definition.name, guidelines] : undefined;
          })
              .filter((entry) => entry !== undefined));
@@ -258,9 +346,7 @@
      deliverAs?: "steer" | "followUp";
 --- a/dist/modes/interactive/interactive-mode.js
 +++ b/dist/modes/interactive/interactive-mode.js
-@@ -89,7 +89,17 @@
-     }
- }
+@@ -92,4 +92,14 @@
  function isCustomSessionEntry(item) {
 -    return "type" in item && item.type === "custom";
 +    return typeof item === "object" && item !== null && "type" in item && item.type === "custom";
@@ -275,8 +361,7 @@
 +        editor.setText(`${userInput}\n\n${currentDraft}`);
 +    }
  }
- const DEAD_TERMINAL_ERROR_CODES = new Set(["EIO", "EPIPE", "ENOTCONN"]);
- function isDeadTerminalError(error) {
+ function isCompactionCostNotice(item) {
 @@ -298,6 +308,7 @@
      retryEscapeHandler;
      // Messages queued while compaction is running
@@ -571,22 +656,22 @@
                          throw error;
 --- a/dist/core/extensions/loader.js
 +++ b/dist/core/extensions/loader.js
-@@ -204,6 +204,7 @@
-  * Action methods delegate to the shared runtime.
-  */
- function createExtensionAPI(extension, runtime, cwd, eventBus) {
+@@ -249,6 +249,7 @@
+         }
+         runtime.assertActive();
+     };
 +    const isStaleExtensionContextError = (error) => error instanceof Error && error.message.startsWith("This extension ctx is stale after session replacement or reload.");
-     const api = {
-         // Registration methods - write to extension
-         on(event, handler) {
-@@ -261,12 +262,24 @@
+     const applyRuntimeChange = (change) => {
+         if (state === "loading")
+             pendingRuntimeChanges.push(change);
+@@ -353,12 +354,24 @@
          },
          // Action methods - delegate to shared runtime
          sendMessage(message, options) {
--            runtime.assertActive();
+-            assertActive();
 -            runtime.sendMessage(message, options);
 +            try {
-+                runtime.assertActive();
++                assertActive();
 +                runtime.sendMessage(message, options);
 +            }
 +            catch (error) {
@@ -595,10 +680,10 @@
 +            }
          },
          sendUserMessage(content, options) {
--            runtime.assertActive();
+-            assertActive();
 -            runtime.sendUserMessage(content, options);
 +            try {
-+                runtime.assertActive();
++                assertActive();
 +                runtime.sendUserMessage(content, options);
 +            }
 +            catch (error) {
@@ -607,4 +692,4 @@
 +            }
          },
          appendEntry(customType, data) {
-             runtime.assertActive();
+             assertActive();

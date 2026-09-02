@@ -4,6 +4,21 @@ import { StringDecoder } from "node:string_decoder"
 export const MAX_SESSION_ENTRY_BYTES = 16 * 1024 * 1024
 export const MAX_SESSION_LOAD_BYTES = 32 * 1024 * 1024
 
+export const sessionFileNeedsTrailingNewlineSync = filePath => {
+  const fd = openSync(filePath, "r")
+  try {
+    const fileSize = fstatSync(fd).size
+    if (fileSize === 0) return false
+    const lastByte = Buffer.allocUnsafe(1)
+    const bytesRead = readSync(fd, lastByte, 0, 1, fileSize - 1)
+    if (bytesRead !== 1)
+      throw new Error("Could not inspect the final session-file byte")
+    return lastByte[0] !== 0x0a
+  } finally {
+    closeSync(fd)
+  }
+}
+
 export function loadBoundedSessionEntriesSync(filePath) {
   const fd = openSync(filePath, "r")
   try {

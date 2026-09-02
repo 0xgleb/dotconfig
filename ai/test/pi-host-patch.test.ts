@@ -10,6 +10,10 @@ const canvasPatch = readFileSync(
   new URL("../pi/patches/canvas-background.patch", import.meta.url),
   "utf8",
 )
+const focusedInputRenderCachePatch = readFileSync(
+  new URL("../pi/patches/focused-input-render-cache.patch", import.meta.url),
+  "utf8",
+)
 const oauthRefreshPatchUrl = new URL(
   "../pi/patches/oauth-refresh-abort.patch",
   import.meta.url,
@@ -17,6 +21,10 @@ const oauthRefreshPatchUrl = new URL(
 const requestObservabilityPatchUrl = new URL(
   "../pi/patches/request-observability.patch",
   import.meta.url,
+)
+const boundedSessionReaderPatch = readFileSync(
+  new URL("../pi/patches/bounded-session-reader.patch", import.meta.url),
+  "utf8",
 )
 const home = readFileSync(new URL("../../home.nix", import.meta.url), "utf8")
 
@@ -35,7 +43,7 @@ const assertHunkHeaderCounts = (candidate: string) => {
     let cursor = index + 1
     while (cursor < lines.length) {
       const line = lines[cursor]
-      if (line.startsWith(" ") || line === "") {
+      if (line.startsWith(" ")) {
         oldCount += 1
         newCount += 1
       } else if (line.startsWith("-") && !line.startsWith("---")) {
@@ -45,7 +53,6 @@ const assertHunkHeaderCounts = (candidate: string) => {
       } else if (!line.startsWith("\\")) {
         break
       }
-      if (oldCount >= declaredOld && newCount >= declaredNew) break
       cursor += 1
     }
     assert.equal(
@@ -62,6 +69,25 @@ const assertHunkHeaderCounts = (candidate: string) => {
   assert.ok(hunks > 0, "patch contains no hunks")
 }
 
+test("Pi host drops orphaned OpenAI tool outputs without dropping paired results", () => {
+  assert.ok(
+    existsSync(requestObservabilityPatchUrl),
+    "the request observability host patch must exist",
+  )
+  const requestObservabilityPatch = readFileSync(
+    requestObservabilityPatchUrl,
+    "utf8",
+  )
+  assert.match(home, /patches\/request-observability\.patch/u)
+  assert.match(
+    requestObservabilityPatch,
+    /pendingToolCalls\.some\(\(toolCall\) => toolCall\.id === msg\.toolCallId\)/u,
+  )
+  assert.match(requestObservabilityPatch, /if \(!matchesPendingToolCall\)/u)
+  assert.match(requestObservabilityPatch, /continue/u)
+  assertHunkHeaderCounts(requestObservabilityPatch)
+})
+
 test("request observability patch tracks the Pi 0.84.4 auth-storage import boundary", () => {
   const requestObservabilityPatch = readFileSync(
     requestObservabilityPatchUrl,
@@ -69,7 +95,7 @@ test("request observability patch tracks the Pi 0.84.4 auth-storage import bound
   )
   assert.match(
     requestObservabilityPatch,
-    /import \{ getFileRevision, normalizePath \} from "\.\.\/utils\/paths\.js";\n import \{ stripBom \} from "\.\.\/utils\/text\.js";\n\+import \{ currentRequestLifecycle, publishRequestLifecycle, RequestLifecyclePhase, \} from "\.\/request-lifecycle\.js";/u,
+    /@@ -9,8 \+9,9 @@[\s\S]*?import \{ stripBom \} from "\.\.\/utils\/text\.js";\n\+import \{ currentRequestLifecycle, publishRequestLifecycle, RequestLifecyclePhase, \} from "\.\/request-lifecycle\.js";\n import \{ isCommandConfigValue, resolveConfigValue \} from "\.\/resolve-config-value\.js";\n \/\/ The mode applies only on creation so administrator-managed modes and ACLs remain intact\./u,
   )
 })
 
@@ -138,8 +164,14 @@ test("OAuth refresh abort releases the shared credential lock", () => {
 
 test("stale extension action callbacks fail closed without terminating Pi", () => {
   assert.match(patch, /isStaleExtensionContextError/)
+  assert.match(
+    patch,
+    /runtime\.assertActive\(\);\n\s*\};\n\+\s+const isStaleExtensionContextError/,
+  )
   assert.match(patch, /sendMessage\(message, options\)/)
+  assert.match(patch, /\+\s+assertActive\(\);/)
   assert.match(patch, /if \(isStaleExtensionContextError\(error\)\) return/)
+  assert.doesNotMatch(patch, /\+\s+runtime\.assertActive\(\);/)
 })
 
 test("stable agent Pi entrypoint targets the activated patched host", () => {
@@ -156,6 +188,36 @@ test("stable agent Pi entrypoint targets the activated patched host", () => {
     sessionPath.indexOf('"$HOME/.pi/agent/bin"') <
       sessionPath.indexOf('"$HOME/.nix-profile/bin"'),
   )
+})
+
+test("Pi host keeps transcript roots out of focused keystroke renders", () => {
+  assert.match(home, /patches\/focused-input-render-cache\.patch/u)
+  assert.match(focusedInputRenderCachePatch, /consumeFocusedInputRenderTarget/u)
+  assert.match(focusedInputRenderCachePatch, /renderMutationGeneration/u)
+  assert.match(focusedInputRenderCachePatch, /rootRenderCache/u)
+  assert.match(focusedInputRenderCachePatch, /renderSafely/u)
+  assert.match(
+    focusedInputRenderCachePatch,
+    /^\+\s+for \(const line of resolved\) combined\.push\(line\);/mu,
+  )
+  assert.match(
+    focusedInputRenderCachePatch,
+    /focusedRoot && child !== focusedRoot/u,
+  )
+  assert.match(
+    focusedInputRenderCachePatch,
+    /this\.renderMutationGeneration === renderGenerationAtInput/u,
+  )
+  assert.match(
+    home,
+    /focused input render cache or render containment missing/u,
+  )
+  assert.match(home, /--input-type=module/u)
+  assert.match(home, /length: 200000/u)
+  assert.match(home, /cyclicRoot\.addChild\(cyclicRoot\)/u)
+  assert.match(home, /rootContains\(cyclicRoot, hugeRoot\)/u)
+  assert.match(home, /Pi render error contained/u)
+  assertHunkHeaderCounts(focusedInputRenderCachePatch)
 })
 
 test("Pi host owns an archeofuturist canvas without changing terminal configuration", () => {
@@ -235,7 +297,10 @@ test("Pi host patch exposes reload without losing finalized messages on restart"
   assert.match(patch, /_promptAdmissionTail = Promise\.resolve\(\)/)
   assert.match(patch, /const previousAdmission = this\._promptAdmissionTail/)
   assert.match(patch, /await previousAdmission/)
-  assert.match(patch, /^\+\s+finally \{\n\+\s+releaseAdmission\(\)/m)
+  assert.match(
+    patch,
+    /^\+\s+finally \{\n\+\s+this\._isAgentRunActive = false;\n\+\s+releaseAdmission\(\);\n\+\s+await this\._emitAgentSettled\(\)/m,
+  )
   assert.match(patch, /this\._runAgentPrompt\(appMessage/)
   assert.doesNotMatch(patch, /^\+.*_queueFollowUp\(expandedText/m)
   assert.match(
@@ -271,6 +336,42 @@ test("explicit user interruption is persisted and rendered as neutral cancellati
   assert.match(
     patch,
     /theme\.fg\("dim", abortMessage\)[\s\S]*theme\.fg\("error", abortMessage\)/,
+  )
+})
+
+test("auto-compaction keeps one owned abort controller and reports interruption as cancellation", () => {
+  assert.match(
+    patch,
+    /^\+\s+if \(this\._autoCompactionAbortController\)\n\+\s+return false;$/m,
+  )
+  assert.match(
+    patch,
+    /^\+\s+const autoCompactionController = new AbortController\(\);$/m,
+  )
+  assert.match(
+    patch,
+    /^\+\s+this\._autoCompactionAbortController = autoCompactionController;$/m,
+  )
+  assert.match(patch, /autoCompactionController\.signal\.aborted/)
+  assert.match(
+    patch,
+    /const aborted = autoCompactionController\.signal\.aborted/,
+  )
+  assert.match(
+    home,
+    /const aborted = autoCompactionController\.signal\.aborted/,
+  )
+  assert.match(patch, /this\._flushPendingCustomMessages\(\)/)
+  assert.match(patch, /let fromExtension = false/)
+  assert.match(patch, /this\._runDefaultCompaction\(/)
+  assert.match(patch, /this\._emitSessionCompactFailed\(/)
+  assert.match(
+    patch,
+    /const formattedErrorMessage = aborted[\s\S]*\? undefined/,
+  )
+  assert.match(
+    patch,
+    /this\._autoCompactionAbortController === autoCompactionController/,
   )
 })
 
@@ -312,8 +413,12 @@ test("submitted prompts remain visibly pending until admission is durable", () =
 })
 
 test("patched prompt admission serializes overlapping turns and releases after failure", async () => {
-  const hunkStart = patch.indexOf("@@ -741,28 +743,57 @@")
-  assert.ok(hunkStart >= 0, "prompt admission hunk must exist")
+  const methodMarker =
+    "+    async _runAgentPrompt(messages, isolateFromQueuedMessages = false) {"
+  const methodMarkerOffset = patch.indexOf(methodMarker)
+  assert.ok(methodMarkerOffset >= 0, "prompt admission hunk must exist")
+  const hunkStart = patch.lastIndexOf("\n@@", methodMarkerOffset) + 1
+  assert.ok(hunkStart > 0, "prompt admission hunk header must exist")
   const hunkEnd = patch.indexOf("\n@@", hunkStart + 1)
   assert.ok(hunkEnd > hunkStart, "prompt admission hunk must be bounded")
   const finalLines = patch
@@ -347,10 +452,12 @@ test("patched prompt admission serializes overlapping turns and releases after f
       _promptAdmissionTail = Promise.resolve()
       _pauseQueuedMessagesOnce = false
       _systemPromptOverride = undefined
+      onSettled = undefined
       constructor(agent) { this.agent = agent }
       async _handlePostAgentRun() { return "none" }
       _flushPendingBashMessages() {}
-      async _emitAgentSettled() {}
+      _flushPendingCustomMessages() {}
+      async _emitAgentSettled() { await this.onSettled?.() }
       ${method}
     }
   `)() as new (agent: {
@@ -362,6 +469,7 @@ test("patched prompt admission serializes overlapping turns and releases after f
     continue(): Promise<void>
   }) => {
     _runAgentPrompt(messages: unknown, isolate?: boolean): Promise<void>
+    onSettled?: () => Promise<void>
   }
 
   const releases: Array<() => void> = []
@@ -403,6 +511,31 @@ test("patched prompt admission serializes overlapping turns and releases after f
   assert.equal(starts.at(-1), "after-failure")
   releases.shift()?.()
   await afterFailure
+
+  const reentrantStarts: string[] = []
+  const reentrantHarness = new createHarness({
+    prompt: async (messages: unknown) => {
+      reentrantStarts.push(String((messages as readonly string[])[0]))
+    },
+    runPromptMessages: async () => {},
+    continue: async () => {},
+  })
+  let nestedTurnStarted = false
+  reentrantHarness.onSettled = async () => {
+    if (nestedTurnStarted) return
+    nestedTurnStarted = true
+    await reentrantHarness._runAgentPrompt(["nested"])
+  }
+  await Promise.race([
+    reentrantHarness._runAgentPrompt(["outer"]),
+    new Promise<never>((_resolve, reject) =>
+      setTimeout(
+        () => reject(new Error("agent_settled re-entrant prompt deadlocked")),
+        100,
+      ),
+    ),
+  ])
+  assert.deepEqual(reentrantStarts, ["outer", "nested"])
 })
 
 test("Pi host patch hunk headers match their body line counts", () => {
@@ -411,7 +544,15 @@ test("Pi host patch hunk headers match their body line counts", () => {
   // _runAgentPrompt compared string states while _handlePostAgentRun still
   // returned booleans, crashing every completed turn with
   // "Cannot continue from message role: assistant". Validate every hunk.
-  assertHunkHeaderCounts(patch)
+  for (const candidate of [
+    patch,
+    canvasPatch,
+    focusedInputRenderCachePatch,
+    readFileSync(oauthRefreshPatchUrl, "utf8"),
+    readFileSync(requestObservabilityPatchUrl, "utf8"),
+    boundedSessionReaderPatch,
+  ])
+    assertHunkHeaderCounts(candidate)
 })
 
 test("Pi host patch keeps post-agent continuation states consistent on both sides", () => {

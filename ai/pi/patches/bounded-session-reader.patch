@@ -1,14 +1,14 @@
 --- a/dist/core/session-manager.js
 +++ b/dist/core/session-manager.js
-@@ -7,6 +7,7 @@ import { createInterface } from "readline";
+@@ -7,6 +7,7 @@
  import { StringDecoder } from "string_decoder";
  import { APP_NAME, getAgentDir as getDefaultAgentDir, getSessionsDir } from "../config.js";
  import { normalizePath, resolvePath } from "../utils/paths.js";
-+import { loadBoundedSessionEntriesSync } from "./bounded-session-reader.js";
++import { loadBoundedSessionEntriesSync, sessionFileNeedsTrailingNewlineSync } from "./bounded-session-reader.js";
  import { createBranchSummaryMessage, createCompactionSummaryMessage, createCustomMessage, } from "./messages.js";
  export const CURRENT_SESSION_VERSION = 3;
  function createSessionId() {
-@@ -252,7 +253,6 @@ export function getDefaultSessionDir(cwd, agentDir = getDefaultAgentDir()) {
+@@ -252,7 +253,6 @@
      }
      return sessionDir;
  }
@@ -16,16 +16,16 @@
  const SESSION_HEADER_READ_BUFFER_SIZE = 4096;
  /** Bound synchronous header discovery while allowing large cwd and custom metadata fields. */
  const MAX_SESSION_HEADER_SCAN_BYTES = 1024 * 1024;
-@@ -278,36 +278,7 @@ export function loadEntriesFromFile(filePath) {
+@@ -278,36 +278,7 @@
      const resolvedFilePath = normalizePath(filePath);
      if (!existsSync(resolvedFilePath))
          return [];
 -    const entries = [];
+-    let pending = "";
 -    const fd = openSync(resolvedFilePath, "r");
 -    try {
 -        const decoder = new StringDecoder("utf8");
 -        const buffer = Buffer.allocUnsafe(SESSION_READ_BUFFER_SIZE);
--        let pending = "";
 -        while (true) {
 -            const bytesRead = readSync(fd, buffer, 0, buffer.length, null);
 -            if (bytesRead === 0)
@@ -51,6 +51,15 @@
 -        closeSync(fd);
 -    }
 +    const entries = loadBoundedSessionEntriesSync(resolvedFilePath);
-     // Validate session header
+     // Validate session header before repairing the file.
      if (entries.length === 0)
          return entries;
+@@ -315,7 +286,7 @@
+     if (header.type !== "session" || typeof header.id !== "string") {
+         return [];
+     }
+-    if (pending)
++    if (sessionFileNeedsTrailingNewlineSync(resolvedFilePath))
+         appendFileSync(resolvedFilePath, "\n");
+     return entries;
+ }

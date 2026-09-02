@@ -1,24 +1,48 @@
 --- a/node_modules/@earendil-works/pi-tui/src/tui.ts
 +++ b/node_modules/@earendil-works/pi-tui/src/tui.ts
-@@ -340,6 +340,9 @@
+@@ -340,6 +340,10 @@
  	private immediateRenderScheduled = false;
  	private renderTimer: NodeJS.Timeout | undefined;
  	private lastRenderAt = 0;
++	private renderFailureActive = false;
 +	private handlingTerminalInput = false;
 +	private focusedInputRenderTarget: Component | undefined;
 +	private renderMutationGeneration = 0;
  	private static readonly MIN_RENDER_INTERVAL_MS = 16;
  	private showHardwareCursor = process.env.PI_HARDWARE_CURSOR === "1";
  	private clearOnShrink = process.env.PI_CLEAR_ON_SHRINK === "1";
-@@ -762,6 +765,7 @@
+@@ -761,15 +765,40 @@
+ 		this.afterTerminalStop(options);
  	}
  
++	private renderSafely(): void {
++		try {
++			this.doRender();
++			this.renderFailureActive = false;
++		} catch (error) {
++			this.renderRequested = false;
++			this.focusedInputRenderTarget = undefined;
++			if (this.renderFailureActive) return;
++			this.renderFailureActive = true;
++			let description = "Unknown render failure";
++			try {
++				description = error instanceof Error ? `${error.name}: ${error.message}` : String(error);
++				description = description.replace(/[\u0000-\u001f\u007f-\u009f]/g, " ").slice(0, 500);
++			} catch {}
++			try {
++				this.terminal.write(`\x1b[?2026l\r\n\x1b[31mPi render error contained: ${description}\x1b[0m\r\n`);
++			} catch {}
++		}
++	}
++
  	renderNow(force = false): void {
 +		this.focusedInputRenderTarget = undefined;
  		if (force) this.resetRenderState();
  		this.renderRequested = false;
  		this.cancelRenderTimer();
-@@ -770,6 +774,10 @@
+ 		this.lastRenderAt = performance.now();
+-		this.doRender();
++		this.renderSafely();
  	}
  
  	requestRender(force = false): void {
@@ -29,20 +53,38 @@
  		if (force) {
  			this.resetRenderState();
  			this.requestImmediateRender();
-@@ -778,6 +786,12 @@
- 		if (this.renderRequested) return;
- 		this.renderRequested = true;
+@@ -780,6 +809,12 @@
  		process.nextTick(() => this.scheduleRender());
-+	}
-+
+ 	}
+ 
 +	protected consumeFocusedInputRenderTarget(): Component | undefined {
 +		const target = this.focusedInputRenderTarget;
 +		this.focusedInputRenderTarget = undefined;
 +		return target;
++	}
++
+ 	private requestImmediateRender(): void {
+ 		this.cancelRenderTimer();
+ 		this.renderRequested = true;
+@@ -793,7 +828,7 @@
+ 			this.cancelRenderTimer();
+ 			this.renderRequested = false;
+ 			this.lastRenderAt = performance.now();
+-			this.doRender();
++			this.renderSafely();
+ 		});
  	}
  
- 	private requestImmediateRender(): void {
-@@ -824,6 +838,7 @@
+@@ -816,7 +851,7 @@
+ 			}
+ 			this.renderRequested = false;
+ 			this.lastRenderAt = performance.now();
+-			this.doRender();
++			this.renderSafely();
+ 			if (this.renderRequested) {
+ 				this.scheduleRender();
+ 			}
+@@ -824,6 +859,7 @@
  	}
  
  	private handleTerminalInput(data: string): void {
@@ -50,7 +92,7 @@
  		if (this.consumeOsc11BackgroundResponse(data)) {
  			return;
  		}
-@@ -894,7 +909,16 @@
+@@ -894,7 +930,16 @@
  			if (isKeyRelease(data) && !this.focusedComponent.wantsKeyRelease) {
  				return;
  			}
@@ -79,7 +121,7 @@
  import { visibleWidth } from "./utils.ts";
  
  const KITTY_SEQUENCE_PREFIX = "\x1b_G";
-@@ -64,6 +64,43 @@
+@@ -130,7 +130,51 @@
  	private hardwareCursorRow = 0;
  	private maxLinesRendered = 0;
  	private previousViewportTop = 0;
@@ -90,11 +132,19 @@
 +				readonly lines: ReadonlyMap<Component, readonly string[]>;
 +		  }
 +		| undefined;
-+
+ 
 +	private rootContains(root: Component, target: Component): boolean {
-+		if (root === target) return true;
-+		if (!(root instanceof Container)) return false;
-+		return root.children.some((child) => this.rootContains(child, target));
++		const pending = [root];
++		const visited = new Set<Component>();
++		while (pending.length > 0) {
++			const candidate = pending.pop();
++			if (!candidate || visited.has(candidate)) continue;
++			if (candidate === target) return true;
++			visited.add(candidate);
++			if (!(candidate instanceof Container)) continue;
++			for (const child of candidate.children) pending.push(child);
++		}
++		return false;
 +	}
 +
 +	private renderRootChildren(width: number, focusedTarget: Component | undefined): string[] {
@@ -111,22 +161,23 @@
 +		const nextLines = new Map<Component, readonly string[]>();
 +		const combined: string[] = [];
 +		for (const child of children) {
-+			const lines =
-+				focusedRoot && child !== focusedRoot ? cache?.lines.get(child) : child.render(width);
++			const lines = focusedRoot && child !== focusedRoot ? cache?.lines.get(child) : child.render(width);
 +			const resolved = lines ?? child.render(width);
 +			nextLines.set(child, resolved);
-+			combined.push(...resolved);
++			for (const line of resolved) combined.push(line);
 +		}
 +		this.rootRenderCache = { width, children, lines: nextLines };
 +		return combined;
 +	}
- 
++
  	captureRenderState(): TuiMainScreenRenderState {
  		return {
-@@ -86,9 +123,15 @@
+ 			previousLines: [...this.previousLines],
+@@ -152,6 +196,12 @@
  		this.hardwareCursorRow = state.hardwareCursorRow;
  		this.maxLinesRendered = state.maxLinesRendered;
  		this.previousViewportTop = state.previousViewportTop;
++		this.rootRenderCache = undefined;
 +	}
 +
 +	override invalidate(): void {
@@ -135,48 +186,96 @@
  	}
  
  	protected override resetRenderState(): void {
+@@ -162,6 +212,7 @@
+ 		this.hardwareCursorRow = 0;
+ 		this.maxLinesRendered = 0;
+ 		this.previousViewportTop = 0;
 +		this.rootRenderCache = undefined;
- 		this.previousLines = [];
- 		this.previousWidth = -1;
- 		this.previousHeight = -1;
-@@ -193,8 +236,13 @@
+ 	}
+ 
+ 	protected override beforeTerminalStop(options: TuiStopOptions): void {
+@@ -259,12 +310,17 @@
  			return targetScreenRow - currentScreenRow;
  		};
  
 -		// Render all components to get new lines
 -		let newLines = this.render(width);
+-
+-		// Composite overlays into the rendered lines (before differential compare)
 +		// A focused keyboard edit cannot mutate sibling roots. Reuse their last
 +		// rendered output so a long transcript is not rebuilt for every key.
 +		const focusedInputTarget = this.consumeFocusedInputRenderTarget();
-+		let newLines = this.hasOverlayEntries
-+			? this.render(width)
-+			: this.renderRootChildren(width, focusedInputTarget);
-+		if (this.hasOverlayEntries) this.rootRenderCache = undefined;
- 
- 		// Composite overlays into the rendered lines (before differential compare)
++		let newLines: string[];
  		if (this.hasOverlayEntries) {
++			this.rootRenderCache = undefined;
++			newLines = this.render(width);
++			// Composite overlays before terminal normalization.
+ 			newLines = this.compositeOverlays(newLines, width, height);
++		} else {
++			newLines = this.renderRootChildren(width, focusedInputTarget);
+ 		}
+ 
+ 		// Extract cursor position before applying line resets (marker must be found first)
+@@ -528,9 +584,6 @@
+ 				fs.mkdirSync(path.dirname(crashLogPath), { recursive: true });
+ 				fs.writeFileSync(crashLogPath, crashData);
+ 
+-				// Clean up terminal state before throwing
+-				this.stop();
+-
+ 				const errorMsg = [
+ 					`Rendered line ${i} exceeds terminal width (${visibleWidth(line)} > ${width}).`,
+ 					"",
 --- a/node_modules/@earendil-works/pi-tui/dist/tui.js
 +++ b/node_modules/@earendil-works/pi-tui/dist/tui.js
-@@ -124,6 +124,9 @@
+@@ -124,6 +124,10 @@
      immediateRenderScheduled = false;
      renderTimer;
      lastRenderAt = 0;
++    renderFailureActive = false;
 +    handlingTerminalInput = false;
 +    focusedInputRenderTarget;
 +    renderMutationGeneration = 0;
      static MIN_RENDER_INTERVAL_MS = 16;
      showHardwareCursor = process.env.PI_HARDWARE_CURSOR === "1";
      clearOnShrink = process.env.PI_CLEAR_ON_SHRINK === "1";
-@@ -506,6 +509,7 @@
+@@ -504,16 +508,44 @@
+         this.terminal.showCursor();
+         this.terminal.stop();
          this.afterTerminalStop(options);
++    }
++    renderSafely() {
++        try {
++            this.doRender();
++            this.renderFailureActive = false;
++        }
++        catch (error) {
++            this.renderRequested = false;
++            this.focusedInputRenderTarget = undefined;
++            if (this.renderFailureActive)
++                return;
++            this.renderFailureActive = true;
++            let description = "Unknown render failure";
++            try {
++                description = error instanceof Error ? `${error.name}: ${error.message}` : String(error);
++                description = description.replace(/[\u0000-\u001f\u007f-\u009f]/g, " ").slice(0, 500);
++            }
++            catch { }
++            try {
++                this.terminal.write(`\x1b[?2026l\r\n\x1b[31mPi render error contained: ${description}\x1b[0m\r\n`);
++            }
++            catch { }
++        }
      }
      renderNow(force = false) {
 +        this.focusedInputRenderTarget = undefined;
          if (force)
              this.resetRenderState();
          this.renderRequested = false;
-@@ -514,6 +518,10 @@
-         this.doRender();
+         this.cancelRenderTimer();
+         this.lastRenderAt = performance.now();
+-        this.doRender();
++        this.renderSafely();
      }
      requestRender(force = false) {
 +        if (!this.handlingTerminalInput) {
@@ -186,7 +285,7 @@
          if (force) {
              this.resetRenderState();
              this.requestImmediateRender();
-@@ -524,6 +532,11 @@
+@@ -524,6 +556,11 @@
          this.renderRequested = true;
          process.nextTick(() => this.scheduleRender());
      }
@@ -198,7 +297,24 @@
      requestImmediateRender() {
          this.cancelRenderTimer();
          this.renderRequested = true;
-@@ -568,6 +581,7 @@
+@@ -539,7 +576,7 @@
+             this.cancelRenderTimer();
+             this.renderRequested = false;
+             this.lastRenderAt = performance.now();
+-            this.doRender();
++            this.renderSafely();
+         });
+     }
+     cancelRenderTimer() {
+@@ -561,13 +598,14 @@
+             }
+             this.renderRequested = false;
+             this.lastRenderAt = performance.now();
+-            this.doRender();
++            this.renderSafely();
+             if (this.renderRequested) {
+                 this.scheduleRender();
+             }
          }, delay);
      }
      handleTerminalInput(data) {
@@ -206,7 +322,7 @@
          if (this.consumeOsc11BackgroundResponse(data)) {
              return;
          }
-@@ -635,7 +649,16 @@
+@@ -635,7 +673,17 @@
              if (isKeyRelease(data) && !this.focusedComponent.wantsKeyRelease) {
                  return;
              }
@@ -214,9 +330,10 @@
 +            this.handlingTerminalInput = true;
 +            try {
 +                this.focusedComponent.handleInput(data);
-+                this.focusedInputRenderTarget = this.renderMutationGeneration === renderGenerationAtInput
-+                    ? this.focusedComponent
-+                    : undefined;
++                this.focusedInputRenderTarget =
++                    this.renderMutationGeneration === renderGenerationAtInput
++                        ? this.focusedComponent
++                        : undefined;
 +            }
 +            finally {
 +                this.handlingTerminalInput = false;
@@ -234,18 +351,28 @@
 +import { applyTuiCanvasBackground, Container, TuiBase } from "./tui.js";
  import { visibleWidth } from "./utils.js";
  const KITTY_SEQUENCE_PREFIX = "\x1b_G";
- function parseKittyImageHeader(line) {
-@@ -48,6 +48,34 @@
+ const MAX_RENDER_WRITE_CHARS = 1024 * 1024;
+@@ -106,6 +106,45 @@
      hardwareCursorRow = 0;
      maxLinesRendered = 0;
      previousViewportTop = 0;
 +    rootRenderCache;
 +    rootContains(root, target) {
-+        if (root === target)
-+            return true;
-+        if (!(root instanceof Container))
-+            return false;
-+        return root.children.some((child) => this.rootContains(child, target));
++        const pending = [root];
++        const visited = new Set();
++        while (pending.length > 0) {
++            const candidate = pending.pop();
++            if (!candidate || visited.has(candidate))
++                continue;
++            if (candidate === target)
++                return true;
++            visited.add(candidate);
++            if (!(candidate instanceof Container))
++                continue;
++            for (const child of candidate.children)
++                pending.push(child);
++        }
++        return false;
 +    }
 +    renderRootChildren(width, focusedTarget) {
 +        const children = [...this.children];
@@ -259,10 +386,11 @@
 +        const nextLines = new Map();
 +        const combined = [];
 +        for (const child of children) {
-+            const lines = focusedRoot && child !== focusedRoot ? cache?.lines.get(child) : undefined;
++            const lines = focusedRoot && child !== focusedRoot ? cache?.lines.get(child) : child.render(width);
 +            const resolved = lines ?? this.applyLineResets(child.render(width)).map((line) => applyTuiCanvasBackground(line, width));
 +            nextLines.set(child, resolved);
-+            combined.push(...resolved);
++            for (const line of resolved)
++                combined.push(line);
 +        }
 +        this.rootRenderCache = { width, children, lines: nextLines };
 +        return combined;
@@ -270,20 +398,28 @@
      captureRenderState() {
          return {
              previousLines: [...this.previousLines],
-@@ -69,7 +97,12 @@
+@@ -126,7 +165,12 @@
+         this.hardwareCursorRow = state.hardwareCursorRow;
          this.maxLinesRendered = state.maxLinesRendered;
          this.previousViewportTop = state.previousViewportTop;
++        this.rootRenderCache = undefined;
      }
 +    invalidate() {
 +        super.invalidate();
 +        this.rootRenderCache = undefined;
 +    }
      resetRenderState() {
-+        this.rootRenderCache = undefined;
          this.previousLines = [];
          this.previousWidth = -1;
-         this.previousHeight = -1;
-@@ -166,15 +199,23 @@
+@@ -135,6 +179,7 @@
+         this.hardwareCursorRow = 0;
+         this.maxLinesRendered = 0;
+         this.previousViewportTop = 0;
++        this.rootRenderCache = undefined;
+     }
+     beforeTerminalStop(options) {
+         if (options.preserveScreen || this.previousLines.length === 0)
+@@ -224,15 +269,23 @@
              const targetScreenRow = targetRow - viewportTop;
              return targetScreenRow - currentScreenRow;
          };
@@ -312,3 +448,12 @@
          // Helper to clear scrollback and viewport and render all new lines
          const fullRender = (clear) => {
              this.fullRedrawCount += 1;
+@@ -478,8 +531,6 @@
+                 ].join("\n");
+                 fs.mkdirSync(path.dirname(crashLogPath), { recursive: true });
+                 fs.writeFileSync(crashLogPath, crashData);
+-                // Clean up terminal state before throwing
+-                this.stop();
+                 const errorMsg = [
+                     `Rendered line ${i} exceeds terminal width (${visibleWidth(line)} > ${width}).`,
+                     "",

@@ -15,6 +15,7 @@ import {
   loadBoundedSessionEntriesSync,
   MAX_SESSION_ENTRY_BYTES,
   MAX_SESSION_LOAD_BYTES,
+  sessionFileNeedsTrailingNewlineSync,
 } from "../pi/host/bounded-session-reader.js"
 
 const sessionEntry = (entry: unknown): string => `${JSON.stringify(entry)}\n`
@@ -160,6 +161,21 @@ test("an oversized malformed final entry is discarded without losing the session
     )
 
     assert.deepEqual(loadBoundedSessionEntriesSync(sessionFile), [header])
+  } finally {
+    rmSync(directory, { recursive: true, force: true })
+  }
+})
+
+test("detects a non-empty session file that needs trailing-newline repair", () => {
+  const directory = mkdtempSync(join(tmpdir(), "pi-bounded-session-reader-"))
+  const sessionFile = join(directory, "session.jsonl")
+  try {
+    writeFileSync(sessionFile, "")
+    assert.equal(sessionFileNeedsTrailingNewlineSync(sessionFile), false)
+    writeFileSync(sessionFile, "{}\n")
+    assert.equal(sessionFileNeedsTrailingNewlineSync(sessionFile), false)
+    writeFileSync(sessionFile, "{}")
+    assert.equal(sessionFileNeedsTrailingNewlineSync(sessionFile), true)
   } finally {
     rmSync(directory, { recursive: true, force: true })
   }
