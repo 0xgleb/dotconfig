@@ -41,6 +41,8 @@ let
       patch -p1 -d "$out/lib/node_modules/pi-monorepo" \
         < ${./ai/pi/patches/canvas-background.patch}
       patch -p1 -d "$out/lib/node_modules/pi-monorepo" \
+        < ${./ai/pi/patches/focused-input-render-cache.patch}
+      patch -p1 -d "$out/lib/node_modules/pi-monorepo" \
         < ${./ai/pi/patches/oauth-refresh-abort.patch}
       install -Dm644 ${./ai/pi/host/request-lifecycle.js} \
         "$out/lib/node_modules/pi-monorepo/dist/core/request-lifecycle.js"
@@ -73,6 +75,7 @@ let
       model_runtime="$out/lib/node_modules/pi-monorepo/dist/core/model-runtime.js"
       auth_storage="$out/lib/node_modules/pi-monorepo/dist/core/auth-storage.js"
       codex_provider="$out/lib/node_modules/pi-monorepo/node_modules/@earendil-works/pi-ai/dist/api/openai-codex-responses.js"
+      responses_transform="$out/lib/node_modules/pi-monorepo/node_modules/@earendil-works/pi-ai/dist/api/transform-messages.js"
       request_lifecycle="$out/lib/node_modules/pi-monorepo/dist/core/request-lifecycle.js"
       request_lifecycle_bridge="$out/lib/node_modules/pi-monorepo/node_modules/@earendil-works/pi-ai/dist/observability/request-lifecycle.js"
       bounded_session_reader="$out/lib/node_modules/pi-monorepo/dist/core/bounded-session-reader.js"
@@ -84,6 +87,12 @@ let
          ! grep -qF 'await previousAdmission;' "$session" ||
          ! grep -qF 'releaseAdmission();' "$session"; then
         echo "extension-triggered prompt admission serialization missing" >&2
+        exit 1
+      fi
+      if ! grep -qF 'const autoCompactionController = new AbortController();' "$session" ||
+         ! grep -qF 'const aborted = autoCompactionController.signal.aborted;' "$session" ||
+         ! grep -qF 'this._autoCompactionAbortController === autoCompactionController' "$session"; then
+        echo "owned auto-compaction cancellation missing" >&2
         exit 1
       fi
       if [ "$(grep -cF 'await this._queueFollowUp(expandedText, currentImages);' "$session")" -ne 1 ]; then
@@ -115,6 +124,51 @@ let
       grep -qF 'const DEFAULT_CANVAS_BACKGROUND = "#080B1A";' "$canvas"
       grep -qF 'applyTuiCanvasBackground(line, width)' "$alt_screen"
       grep -qF 'applyTuiCanvasBackground(line, width)' "$main_screen"
+      if ! grep -qF 'consumeFocusedInputRenderTarget()' "$canvas" ||
+         ! grep -qF 'renderMutationGeneration' "$canvas" ||
+         ! grep -qF 'renderSafely()' "$canvas" ||
+         ! grep -qF 'this.renderSafely();' "$canvas" ||
+         [ "$(grep -cF 'this.doRender();' "$canvas")" -ne 1 ] ||
+         ! grep -qF 'rootRenderCache' "$main_screen" ||
+         ! grep -qF 'renderRootChildren(width, focusedTarget)' "$main_screen" ||
+         ! grep -qF 'for (const line of resolved)' "$main_screen" ||
+         grep -qF 'combined.push(...resolved)' "$main_screen"; then
+        echo "focused input render cache or render containment missing" >&2
+        exit 1
+      fi
+      ${pkgs.nodejs}/bin/node --input-type=module - \
+        "$out/lib/node_modules/pi-monorepo/node_modules/@earendil-works/pi-tui" <<'EOF'
+      import assert from "node:assert/strict";
+      import { pathToFileURL } from "node:url";
+      const root = process.argv[2];
+      const { TuiMainScreen } = await import(pathToFileURL(root + "/dist/tui-main-screen.js").href);
+      const { Container } = await import(pathToFileURL(root + "/dist/tui.js").href);
+      const terminal = {
+        columns: 120,
+        rows: 40,
+        writes: [],
+        write(value) { this.writes.push(value); },
+        hideCursor() {},
+        showCursor() {},
+        start() {},
+        stop() {},
+      };
+      const hugeRoot = new Container();
+      hugeRoot.addChild({
+        invalidate() {},
+        render() { return Array.from({ length: 200000 }, (_, index) => "history " + index); },
+      });
+      const hugeTui = new TuiMainScreen(terminal);
+      hugeTui.addChild(hugeRoot);
+      assert.doesNotThrow(() => hugeTui.renderRootChildren(120, undefined));
+      const cyclicRoot = new Container();
+      cyclicRoot.addChild(cyclicRoot);
+      assert.equal(hugeTui.rootContains(cyclicRoot, hugeRoot), false);
+      const failingTui = new TuiMainScreen(terminal);
+      failingTui.addChild({ invalidate() {}, render() { throw new Error("component render failed"); } });
+      assert.doesNotThrow(() => failingTui.renderNow());
+      assert.match(terminal.writes.join(""), /Pi render error contained/);
+      EOF
       if ! grep -qF 'loadBoundedSessionEntriesSync(resolvedFilePath)' "$session_manager" ||
          ! grep -qF 'MAX_SESSION_ENTRY_BYTES = 16 * 1024 * 1024' "$bounded_session_reader" ||
          ! grep -qF 'MAX_SESSION_LOAD_BYTES = 32 * 1024 * 1024' "$bounded_session_reader" ||
@@ -125,6 +179,11 @@ let
       if ! grep -qF 'raceWithAbortSignal(oauth.refresh(current, refreshSignal), refreshSignal)' "$oauth_resolver" ||
          ! grep -qF '}, { signal: refreshSignal });' "$oauth_resolver"; then
         echo "OAuth refresh abort enforcement missing" >&2
+        exit 1
+      fi
+      if ! grep -qF 'const matchesPendingToolCall = pendingToolCalls.some((toolCall) => toolCall.id === msg.toolCallId);' "$responses_transform" ||
+         ! grep -qF 'if (!matchesPendingToolCall) {' "$responses_transform"; then
+        echo "orphan OpenAI tool-result replay guard missing" >&2
         exit 1
       fi
       if ! test -f "$request_lifecycle" ||
@@ -145,6 +204,16 @@ let
       fi
       if find "$out/lib/node_modules/pi-monorepo" -name '*.rej' | grep -q .; then
         echo "Pi host patch left reject files" >&2
+        exit 1
+      fi
+    '';
+    postFixup = (old.postFixup or "") + ''
+      pi_wrapped="$out/bin/.pi-wrapped"
+      substituteInPlace "$pi_wrapped" \
+        --replace-fail '/dist/bundle/cli.js' '/dist/cli.js'
+      if grep -qF '/dist/bundle/cli.js' "$pi_wrapped" ||
+         ! grep -qF '/dist/cli.js' "$pi_wrapped"; then
+        echo "Pi executable still targets the unpatched bundle" >&2
         exit 1
       fi
     '';

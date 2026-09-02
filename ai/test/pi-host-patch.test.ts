@@ -190,6 +190,14 @@ test("stable agent Pi entrypoint targets the activated patched host", () => {
   )
 })
 
+test("Pi executable runs the patched module tree instead of the unpatched bundle", () => {
+  assert.match(
+    home,
+    /substituteInPlace "\$pi_wrapped"[\s\S]*?--replace-fail '\/dist\/bundle\/cli\.js' '\/dist\/cli\.js'/u,
+  )
+  assert.match(home, /Pi executable still targets the unpatched bundle/u)
+})
+
 test("Pi host keeps transcript roots out of focused keystroke renders", () => {
   assert.match(home, /patches\/focused-input-render-cache\.patch/u)
   assert.match(focusedInputRenderCachePatch, /consumeFocusedInputRenderTarget/u)
