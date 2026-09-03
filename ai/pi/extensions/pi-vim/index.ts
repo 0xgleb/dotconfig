@@ -12,12 +12,18 @@
 
 import type { ExtensionAPI } from "@earendil-works/pi-coding-agent"
 import type { AutocompleteProvider } from "@earendil-works/pi-tui"
+import { Type } from "typebox"
 import { fallbackImageCaptions } from "../image-summary/core.ts"
 import { generatedImageCaptions } from "../image-summary/index.ts"
 import { parseTemporaryScreenshot } from "../input-ergonomics/core.ts"
 import { loadTemporaryImage } from "../input-ergonomics/image.ts"
 import { registerRuntimeVersion } from "../shared/runtime-version.ts"
 import { HUMAN_TURN_EVENT } from "../shared/usage-governor-events.ts"
+import {
+  getFocusedInputLatencySnapshot,
+  installFocusedInputRenderCache,
+  resetFocusedInputLatencySnapshot,
+} from "./focused-input-render-cache.ts"
 import { stableVimMode, type StableVimMode } from "./state.ts"
 import { VimEditor } from "./vim-editor.ts"
 
@@ -50,11 +56,11 @@ const restoreVimMode = (entries: readonly unknown[]): StableVimMode => {
 }
 
 export default function (pi: ExtensionAPI) {
-  registerRuntimeVersion(pi, "pi-vim", "2026.08.14.4")
+  registerRuntimeVersion(pi, "pi-vim", "2026.08.24.3")
   let wrapAutocomplete:
-    | ((provider: AutocompleteProvider) => AutocompleteProvider)
-    | undefined
+    ((provider: AutocompleteProvider) => AutocompleteProvider) | undefined
   let activeEditor: VimEditor | undefined
+  let releaseFocusedInputRenderCache: (() => void) | undefined
 
   // Ack fzfp's editor check — registered at factory time so it's always ready.
   pi.events.on("pi-fzfp:check-editor", value => {
@@ -67,10 +73,57 @@ export default function (pi: ExtensionAPI) {
     if (isProviderWrapper(value)) wrapAutocomplete = value
   })
 
+  pi.registerTool({
+    name: "typing_latency_probe",
+    label: "Typing latency",
+    description:
+      "Read or reset bounded content-free timing samples from the current Pi editor input-to-terminal render path.",
+    parameters: Type.Object({
+      reset: Type.Optional(Type.Boolean()),
+    }),
+    async execute(_toolCallId, params) {
+      if (params.reset) {
+        resetFocusedInputLatencySnapshot()
+        return {
+          content: [{ type: "text", text: "Typing latency telemetry reset." }],
+          details: getFocusedInputLatencySnapshot(),
+        }
+      }
+      const snapshot = getFocusedInputLatencySnapshot()
+      const recent = snapshot.samples.slice(-8)
+      if (recent.length === 0)
+        return {
+          content: [
+            {
+              type: "text",
+              text: "No typing latency samples have been recorded in this runtime.",
+            },
+          ],
+          details: snapshot,
+        }
+      const average = (field: "totalMs" | "renderMs" | "residualRenderMs") =>
+        recent.reduce((sum, sample) => sum + sample[field], 0) / recent.length
+      const latest = recent.at(-1)!
+      return {
+        content: [
+          {
+            type: "text",
+            text: [
+              `Typing latency · ${snapshot.samples.length} bounded samples`,
+              `recent avg total ${average("totalMs").toFixed(2)}ms · render ${average("renderMs").toFixed(2)}ms · residual ${average("residualRenderMs").toFixed(2)}ms`,
+              `latest ${latest.totalMs.toFixed(2)}ms · ${latest.cacheStatus} · frame ${latest.previousFrameLines}→${latest.renderedLines} lines · terminal ${latest.terminalBytes} bytes`,
+            ].join("\n"),
+          },
+        ],
+        details: snapshot,
+      }
+    },
+  })
+
   pi.on("session_start", (_event, ctx) => {
     const restoredMode = restoreVimMode(ctx.sessionManager.getBranch())
     ctx.ui.setEditorComponent((tui, theme, keybindings) => {
-      activeEditor = new VimEditor(
+      const editor = new VimEditor(
         tui,
         theme,
         keybindings,
@@ -92,11 +145,19 @@ export default function (pi: ExtensionAPI) {
           },
         },
       )
-      return activeEditor
+      releaseFocusedInputRenderCache?.()
+      releaseFocusedInputRenderCache = installFocusedInputRenderCache(
+        tui,
+        editor,
+      )
+      activeEditor = editor
+      return editor
     })
   })
 
   pi.on("session_shutdown", () => {
+    releaseFocusedInputRenderCache?.()
+    releaseFocusedInputRenderCache = undefined
     if (!activeEditor) return
     pi.appendEntry(VIM_MODE_ENTRY, {
       mode: stableVimMode(activeEditor.vimState.mode),
