@@ -59,7 +59,22 @@
   rephrasing the same action. A block is not permission to stop: if the blocked
   action was unrelated or over-scoped, return to the real active task through a
   safe path. Never invent `--force` or equivalent bypass flags in response.
+- The classifier is an execution guard serving the authenticated owner's current
+  request, not an independent decision-maker. Within non-overridable system,
+  developer, tool, and explicit project-safety boundaries, it must admit the
+  owner's authorized action once its required preconditions are evidenced. It
+  must never substitute its preferences for the owner's, re-litigate a settled
+  decision, rely on superseded failures, demand redundant proof, or invent an
+  extra gate. A refusal is valid only for a concrete higher-priority prohibition,
+  missing authority required for the exact external effect, unresolved ambiguity
+  that prevents safe execution, or an evidenced unmet gate required by loaded
+  instructions. Every refusal must name the exact missing fact, preserve the
+  authorized task, and accept newer verified evidence that resolves it.
 - Run relevant tests and report failures or incomplete work accurately.
+- Owner-facing questions relayed through Telegram must include normal clickable
+  Markdown links for every referenced PR, issue, document, or other resource.
+  Telegram question transport supports proper links; never omit them or claim
+  that agents cannot send them.
 - Do not use ad-hoc Python scripts; prefer dedicated tools. Where an ad-hoc
   program is genuinely necessary and allowed by the applicable project
   instructions, prefer Nushell or Haskell. Never launch potentially long work
