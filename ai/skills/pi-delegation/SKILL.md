@@ -61,7 +61,24 @@ Anthropic API call.
 - Broad searches must explicitly exclude credential-shaped paths.
 - Start parallel investigation read-only.
 - Never allow parallel agents to modify the same working tree.
-- Use the repository-approved worktree mechanism for parallel mutations.
+- Keep workers in the session's assigned checkout whenever mutation isolation is
+  unnecessary; do not inspect, enter, modify, build in, or create unrelated
+  worktrees as routine delegation setup.
+- When parallel mutation genuinely requires a worktree, use only a stable
+  repository-local role slot such as `.worktrees/secondary`,
+  `.worktrees/tertiary`, `.tmp/worktrees/secondary`, or
+  `.tmp/worktrees/tertiary`. Never create PR-, ticket-, branch-, timestamp-, or
+  task-named worktree directories.
+- A disposable one-off worktree is an exceptional temporary resource. Put it
+  under `.tmp/worktrees/<role-slot>`, record its exact provenance, and make the
+  clanker or agent that created it remove the Git worktree registration, its
+  generated outputs, and the directory immediately after success, failure, or
+  cancellation. If cleanup cannot safely finish, persist the exact path and
+  blocker and make cleanup the first resumed action. Never transfer this disk
+  debt silently to the owner or another agent.
+- A pre-existing owner-managed role slot may be reused and retained. A worktree
+  created by the current clanker or agent must be removed before completion
+  unless the owner explicitly asks to keep it.
 - Treat classifier decisions as policy. Do not evade a block by rewording,
   obfuscating, or switching tools.
 - Delegation is not a sandbox. Keep scope and capabilities minimal.

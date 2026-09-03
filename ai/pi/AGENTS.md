@@ -49,6 +49,21 @@
   cross-project mutation authority.
 - Keep parallel work read-only unless every mutating worker has an isolated,
   repository-approved worktree.
+- Work in the session's assigned checkout by default. Do not inspect, enter,
+  modify, build in, or create other worktrees merely to avoid local state or as
+  routine agent setup; use one only when the task has a concrete isolation or
+  concurrency requirement. When a non-main worktree is necessary, use a stable
+  repository-local role slot such as `.worktrees/secondary`,
+  `.worktrees/tertiary`, `.tmp/worktrees/secondary`, or
+  `.tmp/worktrees/tertiary`; never mint PR-, ticket-, branch-, timestamp-, or
+  task-named worktree directories. Disposable one-off worktrees are exceptional
+  and must live under `.tmp/worktrees/<role-slot>`. The clanker or agent that
+  creates any worktree owns it and must remove it, its generated outputs, and
+  its registration immediately after the isolated operation succeeds, fails, or
+  is cancelled. A pre-existing owner-managed role slot may remain; a slot made
+  by the current agent may remain only with an explicit owner instruction. If
+  immediate cleanup is unsafe, block completion on the exact path and reason and
+  make cleanup the first resumed action rather than leaving disk debt behind.
 - GitButler is valid only in a repository's main worktree. Detect the current
   Git topology before invoking `but`; in every linked, isolated, scratch, or
   otherwise non-main worktree, use plain Git for both reads and writes and never
