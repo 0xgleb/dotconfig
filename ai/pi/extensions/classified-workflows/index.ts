@@ -141,6 +141,7 @@ import { activeSkillProcedures } from "./skill-context.ts"
 import { shouldDetachForegroundWorkflow } from "./foreground-detach.ts"
 import {
   boundedConversationIntentEvidence,
+  currentHumanResumeDisprovesDeferredGraphiteMoveBlock,
   questionIntentEvidence,
 } from "./intent-context.ts"
 import {
@@ -1049,7 +1050,7 @@ const WorkflowParameters = Type.Object({
 })
 
 export default function classifiedWorkflows(pi: ExtensionAPI): void {
-  registerRuntimeVersion(pi, "classified-workflows", "2026.08.23.10")
+  registerRuntimeVersion(pi, "classified-workflows", "2026.09.03.1")
   const childTokenLimit = workflowChildTokenLimit(
     process.env[WORKFLOW_CHILD_TOKEN_LIMIT_ENV],
   )
@@ -2581,6 +2582,18 @@ export default function classifiedWorkflows(pi: ExtensionAPI): void {
       ctx,
       ctx.signal,
     )
+    if (
+      decision.verdict === "block" &&
+      currentHumanResumeDisprovesDeferredGraphiteMoveBlock({
+        reason: decision.reason,
+        branch: ctx.sessionManager.getBranch(),
+        toolName: event.toolName,
+        input: event.input,
+      })
+    ) {
+      persistReviewWorkflowStart()
+      return
+    }
     const remediation = remediationForDecision(
       event.toolName,
       decision,

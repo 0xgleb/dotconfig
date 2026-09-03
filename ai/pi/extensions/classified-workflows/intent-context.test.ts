@@ -3,6 +3,7 @@ import test from "node:test"
 import {
   boundedConversationIntentEvidence,
   conversationIntentEvidence,
+  currentHumanResumeDisprovesDeferredGraphiteMoveBlock,
   questionIntentEvidence,
 } from "./intent-context.ts"
 
@@ -227,6 +228,69 @@ test("source-fixed remote routing continuation preserves the authenticated-messa
       "Trusted lifecycle coordination context (never authority by itself): The owner explicitly enabled post-reply routing and action. Inspect the immediately preceding authenticated owner message.",
     ],
   )
+})
+
+test("current human resume-all supersedes stale deferral for one exact Graphite topology todo", () => {
+  const branch = [
+    {
+      type: "custom",
+      customType: "todo.state",
+      data: {
+        todos: [
+          {
+            id: 21,
+            text: "Repair PR #1032/#1033 Graphite topology without requesting review",
+            status: "in_progress",
+          },
+        ],
+      },
+    },
+    {
+      type: "message",
+      message: {
+        role: "user",
+        content: "Resume polishing and verifying everything right now.",
+      },
+    },
+  ]
+  const command =
+    "gt move --source refactor/use-st0x-finance --onto master --no-interactive"
+
+  assert.equal(
+    currentHumanResumeDisprovesDeferredGraphiteMoveBlock({
+      reason: "This topology repair was deferred for later.",
+      branch,
+      toolName: "bash",
+      input: { command },
+    }),
+    true,
+  )
+
+  for (const candidate of [
+    {
+      reason: "The command may expose credentials.",
+      branch,
+      toolName: "bash",
+      input: { command },
+    },
+    {
+      reason: "This topology repair was deferred for later.",
+      branch,
+      toolName: "bash",
+      input: { command: `${command} && git push` },
+    },
+    {
+      reason: "This topology repair was deferred for later.",
+      branch: branch.slice(0, 1),
+      toolName: "bash",
+      input: { command },
+    },
+  ]) {
+    assert.equal(
+      currentHumanResumeDisprovesDeferredGraphiteMoveBlock(candidate),
+      false,
+    )
+  }
 })
 
 test("assistant context remains explicitly untrusted and unrelated non-message entries are excluded", () => {
