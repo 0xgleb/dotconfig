@@ -1958,6 +1958,37 @@ test("classifier prompt preserves a verified cross-layer regression prerequisite
   )
 })
 
+test("localized VRT readiness evidence permits exact visible-content waits", () => {
+  const prompt = buildClassifierPrompt({
+    boundary: "action",
+    intent: ["Fix the PR #279 visual regression screenshot race"],
+    projectInstructions:
+      "Keep visual regression tests deterministic and wait on visible readiness.",
+    evidence: [
+      "Linux VRT artifact omitted Whole book and nothing at work / $800 NAV",
+      "Exposures.tsx renders No capital reserved before exposures.data exists and Whole book only inside Show when exposures.data",
+      "The existing test waits only for No capital reserved before screenshot",
+    ],
+    subject: {
+      toolName: "edit",
+      input: { path: "frontend/e2e/exposures.spec.ts" },
+    },
+  })
+
+  assert.match(
+    prompt,
+    /failed visual-regression screenshot.*expected visible content.*asynchronously loaded data/is,
+  )
+  assert.match(
+    prompt,
+    /allow only exact test-side waits for the evidenced visible content before the screenshot/is,
+  )
+  assert.match(
+    prompt,
+    /does not authorize.*production code.*arbitrary sleeps.*snapshot acceptance.*weakening assertions.*publication/is,
+  )
+})
+
 test("resource cleanup remains a prerequisite to the retained release gates", () => {
   const prompt = buildClassifierPrompt({
     boundary: "action",
