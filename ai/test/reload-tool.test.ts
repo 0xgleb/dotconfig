@@ -31,9 +31,16 @@ test("reload_pi queues the documented terminal reload command", () => {
     /const request = reloadCommandRequest\(args, randomUUID\)/,
   )
   assert.match(source, /await ctx\.reload\(\)[\s\S]*return/)
-  assert.doesNotMatch(source, /manualReloadPending/)
-  assert.doesNotMatch(source, /createManualReloadExecutionScheduler/)
-  assert.doesNotMatch(source, /scheduleManualReload/)
+  assert.match(
+    source,
+    /name: "reload_pi"[\s\S]*armManualReload\(ctx\)[\s\S]*pi\.sendUserMessage\(`\/reload-runtime tool:/,
+  )
+  assert.match(
+    source,
+    /pi\.on\("agent_settled"[\s\S]*if \(manualReloadPending\) return/,
+  )
+  assert.match(source, /MANUAL_RELOAD_FAILSAFE_MS/)
+  assert.match(source, /clearManualReloadPending\(\)/)
 })
 
 test("manual reload claims and cancels any pending automatic reload", () => {
@@ -104,7 +111,22 @@ test("reload command reports a typed diagnostic instead of rethrowing an anonymo
     source.indexOf('pi.registerTool({\n    name: "reload_pi"'),
   )
   assert.match(command, /reloadFailureDiagnostic\(request, error\)/)
+  assert.match(
+    command,
+    /clearManualReloadPending\(\)[\s\S]*reloadFailureDiagnostic/,
+  )
   assert.match(command, /ctx\.ui\.notify\(diagnostic, "error"\)/)
   assert.match(command, /process\.stderr\.write/)
   assert.doesNotMatch(command, /throw error/)
+})
+
+test("manual reload pending state is bounded and cleared during shutdown", () => {
+  assert.match(
+    source,
+    /manualReloadPending = true[\s\S]*manualReloadFailsafeTimer = setTimeout\([\s\S]*manualReloadPending = false[\s\S]*scheduleTaskContinuation\(ctx\)[\s\S]*MANUAL_RELOAD_FAILSAFE_MS/,
+  )
+  assert.match(
+    source,
+    /pi\.on\("session_shutdown"[\s\S]*clearManualReloadPending\(\)/,
+  )
 })

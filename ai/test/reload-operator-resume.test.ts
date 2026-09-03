@@ -18,7 +18,11 @@ test("manual reload uses the documented command boundary without stale lifecycle
     classified,
     /wasRunAborted\(event\.messages\)[\s\S]*!managedReloadPreemptPending/,
   )
-  assert.doesNotMatch(classified, /manualReloadPending/)
+  assert.match(
+    classified,
+    /pi\.on\("agent_settled"[\s\S]*if \(manualReloadPending\) return/,
+  )
+  assert.match(classified, /MANUAL_RELOAD_FAILSAFE_MS/)
   assert.doesNotMatch(classified, /scheduleManualReload/)
   assert.doesNotMatch(classified, /manualReloadExecutionScheduler/)
   assert.match(
