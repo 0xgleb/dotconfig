@@ -1056,7 +1056,7 @@ const WorkflowParameters = Type.Object({
 })
 
 export default function classifiedWorkflows(pi: ExtensionAPI): void {
-  registerRuntimeVersion(pi, "classified-workflows", "2026.09.03.14")
+  registerRuntimeVersion(pi, "classified-workflows", "2026.09.03.15")
   const childTokenLimit = workflowChildTokenLimit(
     process.env[WORKFLOW_CHILD_TOKEN_LIMIT_ENV],
   )
