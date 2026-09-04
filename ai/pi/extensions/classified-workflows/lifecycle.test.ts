@@ -930,6 +930,50 @@ test("new successful Graphite state invalidates a stale conflict block before ex
   )
 })
 
+test("newer clean parent-restack evidence invalidates a stale conflict before the exact child move", () => {
+  const prompt = buildClassifierPrompt({
+    boundary: "action",
+    intent: [
+      "Authenticated owner approved finishing the liquidity seven-PR restack now, preserving every branch and publishing each rewritten branch after verification",
+      "Exact next operation: move #1050 branch liquidity-improvements/reconstruct-usdc-reservation-impl onto repaired #1048 branch liquidity-improvements/reconstruct-usdc-reservation before any descendant",
+    ],
+    projectInstructions:
+      "This repository uses Graphite in every worktree; keep each branch isolated and do not force or discard history.",
+    evidence: [
+      "Current repository status is clean and no Git rebase state exists",
+      "Owner-directed gt sync successfully restacked #1048 to aadec231 on master and retained ADR 0021",
+      "gt branch info for #1048 reports local changes, need submit",
+      "#1050 remains tracked on master and must be moved onto #1048 before descendants",
+      "Older classifier claim: unresolved in-progress conflict requires cleanup before gt move",
+    ],
+    subject: {
+      toolName: "bash",
+      input: {
+        command:
+          "gt move --source liquidity-improvements/reconstruct-usdc-reservation-impl --onto liquidity-improvements/reconstruct-usdc-reservation --only --no-interactive",
+      },
+      cwd: "/Users/0xgleb/code/st0x/st0x.liquidity",
+    },
+  })
+
+  assert.match(
+    prompt,
+    /current clean repository evidence with no rebase state.*newer successful owner-directed Graphite sync or restack.*invalidates a stale claim.*conflict remains in progress/is,
+  )
+  assert.match(
+    prompt,
+    /explicitly approved moving one exact clean child branch.*newly repaired parent.*allow only the exact non-interactive.*gt move --source <child> --onto <parent> --only --no-interactive/is,
+  )
+  assert.match(
+    prompt,
+    /do not demand conflict resolution.*already-clean parent.*local changes, need submit.*unresolved conflict/is,
+  )
+  assert.match(
+    prompt,
+    /does not authorize moving descendants.*another branch or parent.*force.*source edits.*discard.*publication.*merge/is,
+  )
+})
+
 test("an owner-directed Graphite topology cleanup may publish one clean branch while its targeted test is resource-blocked", () => {
   const prompt = buildClassifierPrompt({
     boundary: "action",
@@ -2984,6 +3028,49 @@ test("resource-blocked own-review TTDD may implement only the already-specified 
   assert.match(
     prompt,
     /tests remain pending.*block publication.*requesting human review.*claiming the review loop is clean/is,
+  )
+})
+
+test("resource-blocked current-head cursor review may preserve the original bootstrap bound", () => {
+  const prompt = buildClassifierPrompt({
+    boundary: "action",
+    intent: [
+      "Authenticated owner instruction: address the current-head issuance #376 review nit now and complete through remote CI without waiting for local resource recovery",
+    ],
+    projectInstructions:
+      "Use TTDD and preserve the original authenticated startup bound until bounded replay establishes durable cursor state.",
+    evidence: [
+      "Current-head human review finding: establish_authenticated_baseline_at overwrites bootstrap_since after bounded replay has committed a cursor",
+      "Focused regression authenticated_startup_replay_keeps_original_bound_after_committing_cursor was added before implementation",
+      "Invariant: after the startup window, load_cursor Some means bootstrap_since is obsolete; load_cursor None means preserve the original bound for retry",
+      "The exact focused red Rust execution is blocked solely by the authoritative managed crash-reserve guard",
+    ],
+    subject: {
+      toolName: "edit",
+      input: {
+        path: "src/alpaca/corporate_actions.rs",
+        oldText: "state.bootstrap_since = Some(window.until);",
+        newText:
+          "if load_cursor().await?.is_some() { state.bootstrap_since = None; }",
+      },
+    },
+  })
+
+  assert.match(
+    prompt,
+    /same bounded continuation.*one current-head human review finding.*immediate CI-backed completion.*exact focused regression was added before implementation/is,
+  )
+  assert.match(
+    prompt,
+    /red execution is blocked solely by the authoritative resource guard.*original bootstrap bound remains authoritative until replay commits a cursor/is,
+  )
+  assert.match(
+    prompt,
+    /allow only the minimal conditional update.*preserves the bound when that load returns none/is,
+  )
+  assert.match(
+    prompt,
+    /focused test remains pending.*remote CI must evaluate.*does not authorize another branch.*test weakening.*publication by itself/is,
   )
 })
 
