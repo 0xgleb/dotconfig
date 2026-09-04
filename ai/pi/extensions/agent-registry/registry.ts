@@ -1,4 +1,4 @@
-import { Context, Data, Effect, Either } from "effect"
+import { Context, Data, Effect } from "effect"
 import type { AgentTokenUsage } from "./usage.ts"
 
 export type LeaseMode = "task" | "operational"
@@ -184,6 +184,11 @@ export interface ClaimRequestInput {
   readonly now: number
 }
 
+export interface AdvanceRequestBacklogInput extends ClaimRequestInput {
+  readonly phase: "implementation" | "review" | "publication"
+  readonly evidenceRef: string
+}
+
 export interface CompleteRequestInput extends ClaimRequestInput {
   readonly summary: string
 }
@@ -259,6 +264,9 @@ export interface RegistryStore {
   readonly claimRequest: (
     input: ClaimRequestInput,
   ) => Effect.Effect<RegistryRequest, RegistryError>
+  readonly advanceRequestBacklog: (
+    input: AdvanceRequestBacklogInput,
+  ) => Effect.Effect<RegistryRequest, RegistryError>
   readonly completeRequest: (
     input: CompleteRequestInput,
   ) => Effect.Effect<RegistryRequest, RegistryError>
@@ -273,11 +281,7 @@ export const RegistryStore = Context.GenericTag<RegistryStore>(
 
 export const runRegistryEffect: <T>(
   operation: Effect.Effect<T, RegistryError>,
-) => Promise<T> = async operation => {
-  const result = await Effect.runPromise(Effect.either(operation))
-  if (Either.isLeft(result)) throw result.left
-  return result.right
-}
+) => Promise<T> = operation => Effect.runPromise(operation)
 
 export const reconcileSessionLease: (
   input: ReconcileLeaseInput,

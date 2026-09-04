@@ -4,6 +4,25 @@ import test from "node:test"
 
 const source = readFileSync(new URL("./index.ts", import.meta.url), "utf8")
 
+test("runtime registration identity is process-scoped while request ownership remains session-scoped", () => {
+  assert.match(
+    source,
+    /id: runtimeAgentId\(ctx\.sessionManager\.getSessionId\(\), process\.pid\)/u,
+  )
+  assert.match(
+    source,
+    /requestedAgentId === ctx\.sessionManager\.getSessionId\(\)[\s\S]*?identity\(ctx\)\.id/u,
+  )
+  assert.match(
+    source,
+    /const requesterId = ctx\.sessionManager\.getSessionId\(\)/u,
+  )
+  assert.match(
+    source,
+    /terminalOutcomeBelongsToContext\(\s*candidate,\s*requesterId,\s*ctx\.cwd,\s*\)/u,
+  )
+})
+
 test("real Pi failures automatically become deduplicated pi-support incidents", () => {
   assert.match(source, /pi\.on\("tool_result"[\s\S]*?event\.isError/)
   assert.match(source, /pi\.on\("agent_end"[\s\S]*?stopReason !== "error"/)
@@ -46,6 +65,27 @@ test("cross-project terminal outcomes stay out of unrelated model context", () =
   assert.doesNotMatch(outcomeSource, /pi\.sendMessage\(/)
 })
 
+test("request work phases use one typed implementation-review-publication pipeline", () => {
+  assert.match(source, /Type\.Literal\("start_request"\)/)
+  assert.match(source, /Type\.Literal\("review_request"\)/)
+  assert.match(source, /Type\.Literal\("publish_request"\)/)
+  assert.match(
+    source,
+    /evidenceRef: Type\.Optional\([\s\S]*?Type\.String\(\{ minLength: 1, maxLength: 1_024 \}\)/,
+  )
+  assert.match(
+    source,
+    /store\.advanceRequestBacklog\(\{[\s\S]*?requestId,[\s\S]*?leaseId: lease\.id,[\s\S]*?agentId: agent\.id,[\s\S]*?phase,[\s\S]*?evidenceRef:/,
+  )
+})
+
+test("request mutation shortcuts require an active owned lease", () => {
+  assert.match(
+    source,
+    /ownedLeases\(snapshot, agent\.id\)\.find\([\s\S]*?candidate\.status === "active"[\s\S]*?candidate\.project === target\.project[\s\S]*?candidate\.role === target\.role/,
+  )
+})
+
 test("request mutations resolve an exact id or unique prefix to the canonical id", () => {
   assert.match(
     source,
@@ -67,7 +107,7 @@ test("all receipts remain passive even when the request is urgent", () => {
   assert.match(syncSource, /!autoReloadPending\(\)/)
   assert.match(syncSource, /requestNotificationText\(/)
   assert.match(syncSource, /requestNotificationDetails\(/)
-  assert.match(syncSource, /store\.receiveRequest\(/)
+  assert.match(syncSource, /store\s*\.\s*receiveRequest\(/)
   assert.match(syncSource, /newest\.priority === "urgent"/)
   assert.match(
     syncSource,
@@ -139,6 +179,10 @@ test("startup and sync abandon captured contexts when reload shuts down their ru
   assert.match(
     source,
     /pi\.on\("session_shutdown"[\s\S]*?activeLifecycleEpoch = undefined/,
+  )
+  assert.match(
+    source,
+    /pi\.on\("session_shutdown"[\s\S]*?finally \{[\s\S]*?store\.close\(\)/,
   )
 })
 

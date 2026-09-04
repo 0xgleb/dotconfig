@@ -1,36 +1,42 @@
 import assert from "node:assert/strict"
 import { spawn } from "node:child_process"
+import { existsSync } from "node:fs"
 import { mkdtemp, rm, writeFile } from "node:fs/promises"
 import { tmpdir } from "node:os"
 import { join } from "node:path"
 import test from "node:test"
 import { DatabaseSync } from "node:sqlite"
-import { Effect } from "effect"
-import { makeSqliteRegistryStore } from "./sqlite-store.ts"
+import { Cause, Effect, Option, Runtime } from "effect"
+import {
+  makeSqliteRegistryStore,
+  type SqliteRegistryStore,
+} from "./sqlite-store.ts"
 import {
   reconcileSessionLease,
   RegistryError,
   registrySyncNotification,
   runRegistryEffect,
+  type AgentActivity,
   type AgentIdentity,
-  type RegistryStore,
 } from "./registry.ts"
+import { runtimeAgentId } from "./runtime-identity.ts"
+import type { AgentTokenUsage } from "./usage.ts"
 
 const withStores: (
   run: (
-    first: RegistryStore,
-    second: RegistryStore,
+    first: SqliteRegistryStore,
+    second: SqliteRegistryStore,
     root: string,
   ) => Promise<void>,
 ) => Promise<void> = async run => {
   const root = await mkdtemp(join(tmpdir(), "pi-agent-registry-test-"))
+  const first = makeSqliteRegistryStore(root)
+  const second = makeSqliteRegistryStore(root)
   try {
-    await run(
-      makeSqliteRegistryStore(root),
-      makeSqliteRegistryStore(root),
-      root,
-    )
+    await run(first, second, root)
   } finally {
+    first.close()
+    second.close()
     await rm(root, { recursive: true, force: true })
   }
 }
@@ -87,10 +93,11 @@ test("registry Effect runner preserves typed operational failures", async () => 
     code: "busy",
     message: "registry is busy",
   })
-  await assert.rejects(
-    runRegistryEffect(Effect.fail(failure)),
-    error => error === failure,
-  )
+  await assert.rejects(runRegistryEffect(Effect.fail(failure)), error => {
+    if (!Runtime.isFiberFailure(error)) return false
+    const cause = error[Runtime.FiberFailureCauseId]
+    return Option.getOrUndefined(Cause.failureOption(cause)) === failure
+  })
 })
 
 test("registry sync failures notify once per outage and report recovery", () => {
@@ -113,6 +120,14 @@ test("registry uses WAL so fleet readers do not contend with ordinary writers", 
     } finally {
       database.close()
     }
+  })
+})
+
+test("a live Pi registry store keeps its WAL connection open between sync operations", async () => {
+  await withStores(async (store, _second, root) => {
+    await Effect.runPromise(store.snapshot(0))
+    assert.equal(existsSync(join(root, "registry.sqlite-wal")), true)
+    assert.equal(existsSync(join(root, "registry.sqlite-shm")), true)
   })
 })
 
@@ -642,6 +657,77 @@ test("every Pi session publishes ephemeral fleet presence without claiming a rol
   })
 })
 
+test("two live processes resumed from one session keep distinct presence and migrate the original lease owner", async () => {
+  await withStores(async store => {
+    const sessionId = "shared-session"
+    const firstLegacy = { id: sessionId, pid: 111 }
+    const secondLegacy = { id: sessionId, pid: 222 }
+    const firstRuntimeId = runtimeAgentId(sessionId, firstLegacy.pid)
+    const secondRuntimeId = runtimeAgentId(sessionId, secondLegacy.pid)
+    const heartbeat = async (identity: AgentIdentity, now: number) =>
+      Effect.runPromise(
+        store.heartbeatAgent({
+          agent: identity,
+          cwd: "/workspace/st0x",
+          label: "st0x",
+          usage,
+          now,
+          ttlMs: 10_000,
+        }),
+      )
+
+    await heartbeat(firstLegacy, 1_000)
+    const claimed = await Effect.runPromise(
+      store.claim({
+        agent: firstLegacy,
+        project: "/workspace/st0x",
+        role: "reviewer",
+        mode: "operational",
+        policyDigest: "p1",
+        now: 1_001,
+        ttlMs: 10_000,
+      }),
+    )
+    const lease =
+      claimed.outcome === "claimed"
+        ? claimed.lease
+        : assert.fail("missing lease")
+    const queued = await Effect.runPromise(
+      store.enqueue({
+        project: "/workspace/st0x",
+        role: "reviewer",
+        requesterId: "requester-session",
+        text: "review current PR",
+        now: 1_002,
+      }),
+    )
+    await Effect.runPromise(
+      store.claimRequest({
+        requestId: queued.id,
+        leaseId: lease.id,
+        agentId: sessionId,
+        now: 1_003,
+      }),
+    )
+
+    await heartbeat(secondLegacy, 1_004)
+    await heartbeat({ id: secondRuntimeId, pid: secondLegacy.pid }, 1_005)
+    await heartbeat({ id: firstRuntimeId, pid: firstLegacy.pid }, 1_006)
+
+    const snapshot = await Effect.runPromise(store.snapshot(1_007))
+    assert.deepEqual(
+      snapshot.agents.map(({ identity }) => identity.id).sort(),
+      [firstRuntimeId, secondRuntimeId].sort(),
+    )
+    assert.equal(snapshot.leases[0]?.owner.id, firstRuntimeId)
+    assert.equal(snapshot.requests[0]?.status, "claimed")
+    if (snapshot.requests[0]?.status !== "claimed")
+      assert.fail("request must remain claimed")
+    assert.equal(snapshot.requests[0].agentId, firstRuntimeId)
+    assert.equal(snapshot.requests[0].requesterId, "requester-session")
+  })
+})
+
 test("lease heartbeats publish bounded component versions for fleet diagnostics", async () => {
   await withStores(async store => {
     const claimed = await Effect.runPromise(
@@ -1062,10 +1148,14 @@ test("store construction defers filesystem failures into the Effect error channe
   await writeFile(root, "occupied")
   try {
     const store = makeSqliteRegistryStore(root)
-    await assert.rejects(
-      Effect.runPromise(store.snapshot(0)),
-      /Could not read registry/i,
-    )
+    try {
+      await assert.rejects(
+        Effect.runPromise(store.snapshot(0)),
+        /Could not read registry/i,
+      )
+    } finally {
+      store.close()
+    }
   } finally {
     await rm(parent, { recursive: true, force: true })
   }
@@ -1074,6 +1164,7 @@ test("store construction defers filesystem failures into the Effect error channe
 test("legacy v1 databases migrate requester acknowledgements and source identity before sync", async () => {
   await withStores(async (store, _second, root) => {
     await Effect.runPromise(store.snapshot(0))
+    store.close()
     const legacy = new DatabaseSync(join(root, "registry.sqlite"))
     legacy.exec(`
       ALTER TABLE requests DROP COLUMN requester_acknowledged_at;
@@ -1087,7 +1178,7 @@ test("legacy v1 databases migrate requester acknowledgements and source identity
     const migrated = new DatabaseSync(join(root, "registry.sqlite"), {
       readOnly: true,
     })
-    assert.equal(migrated.prepare("PRAGMA user_version").get()?.user_version, 4)
+    assert.equal(migrated.prepare("PRAGMA user_version").get()?.user_version, 5)
     const columns = migrated
       .prepare("PRAGMA table_info(requests)")
       .all()
@@ -1118,6 +1209,7 @@ test("legacy v1 databases migrate requester acknowledgements and source identity
 test("rolling v3 state migrates additively to agent activities", async () => {
   await withStores(async (store, _second, root) => {
     await Effect.runPromise(store.snapshot(0))
+    store.close()
     const transitional = new DatabaseSync(join(root, "registry.sqlite"))
     transitional.exec("PRAGMA user_version = 3;")
     transitional.close()
@@ -1128,7 +1220,7 @@ test("rolling v3 state migrates additively to agent activities", async () => {
     })
     assert.equal(
       compatible.prepare("PRAGMA user_version").get()?.user_version,
-      4,
+      5,
     )
     const columns = compatible
       .prepare("PRAGMA table_info(requests)")
@@ -1223,6 +1315,40 @@ test("malformed input and unknown schema versions fail closed", async () => {
     )
     await assert.rejects(
       Effect.runPromise(
+        store.claim({
+          agent: null as unknown as AgentIdentity,
+          project: "/workspace/project",
+          role: "operator",
+          mode: "task",
+          policyDigest: "p1",
+          now: 1_000,
+          ttlMs: 10_000,
+        }),
+      ),
+      /agent identity is malformed/i,
+    )
+    await assert.rejects(
+      Effect.runPromise(
+        store.heartbeatAgent({
+          agent: agent("agent-a"),
+          cwd: "/workspace/project",
+          label: "agent-a",
+          usage: {
+            wrong: 1,
+            fields: 2,
+            can: 3,
+            still: 4,
+            pass: 5,
+          } as unknown as AgentTokenUsage,
+          activities: {} as unknown as readonly AgentActivity[],
+          now: 1_000,
+          ttlMs: 10_000,
+        }),
+      ),
+      /token usage is malformed/i,
+    )
+    await assert.rejects(
+      Effect.runPromise(
         store.enqueue({
           project: "/workspace/project",
           role: "operator",
@@ -1247,6 +1373,7 @@ test("malformed input and unknown schema versions fail closed", async () => {
       /priority is malformed/i,
     )
     await Effect.runPromise(store.snapshot(1_000))
+    store.close()
     const database = new DatabaseSync(join(root, "registry.sqlite"))
     database.exec("PRAGMA user_version = 99")
     database.close()
@@ -1276,7 +1403,7 @@ test("SQLite adapter commits complete versioned state", async () => {
     try {
       assert.equal(
         database.prepare("PRAGMA user_version").get()?.user_version,
-        4,
+        5,
       )
       assert.equal(
         database.prepare("SELECT COUNT(*) AS count FROM leases").get()?.count,

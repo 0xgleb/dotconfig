@@ -1,14 +1,26 @@
 import { createHash } from "node:crypto"
 import { homedir } from "node:os"
 import { join } from "node:path"
-import type {
-  ExtensionAPI,
-  ExtensionContext,
+import {
+  CONFIG_DIR_NAME,
+  type ExtensionAPI,
+  type ExtensionContext,
 } from "@earendil-works/pi-coding-agent"
 import { Text } from "@earendil-works/pi-tui"
 import { Type } from "typebox"
-import { Option } from "effect"
-import type { Effect } from "effect"
+import { Cause, Effect, Either, Option, Runtime } from "effect"
+import {
+  BACKLOG_PROJECTION_EVENT,
+  backlogRequirementsFromText,
+  BRANCH_TODO_BACKLOG_EVENT,
+  CANONICAL_BACKLOG_EVENT,
+  decodeBranchTodoBacklogSnapshot,
+  decodeCanonicalBacklogSnapshot,
+  decodeMessageBacklogRecord,
+  MESSAGE_BACKLOG_EVENT,
+  type ExternalBacklogProjection,
+  type MessageBacklogRecord,
+} from "../shared/backlog-events.ts"
 import { isContinuationPaused } from "../shared/continuation-pause.ts"
 import {
   AGENTOPS_INCIDENT_EVENT,
@@ -17,6 +29,7 @@ import {
   hasOpenAgentopsIncident,
   isExplicitUserCancellation,
   shouldRouteToolFailureToAgentops,
+  type AgentopsIncident,
 } from "../shared/agentops-events.ts"
 import {
   AUTO_RELOAD_PENDING_REQUEST_EVENT,
@@ -52,7 +65,21 @@ import {
   RUNTIME_VERSION_REQUEST_EVENT,
   type RuntimeVersionReporter,
 } from "../shared/runtime-version.ts"
+import { externalBacklogProjection, type BacklogState } from "./backlog.ts"
+import { makeBacklogCoverageTracker } from "./backlog-coverage.ts"
+import {
+  BACKLOG_COLLECTION_TIMEOUT_MS,
+  collectDeclaredBacklogSources,
+  collectDeclaredGitHubBacklog,
+  makeDeclaredBacklogCommandRunner,
+  makeDeclaredBacklogFileReader,
+} from "./backlog-collector.ts"
+import {
+  backlogSnapshotFromToolRequest,
+  type BacklogIngestToolRequest,
+} from "./backlog-ingest-tool.ts"
 import { makeSqliteRegistryStore } from "./sqlite-store.ts"
+import { runtimeAgentId } from "./runtime-identity.ts"
 import { decodeTodoState } from "../todo/state.ts"
 import { sessionTokenUsage } from "./usage.ts"
 import {
@@ -81,7 +108,6 @@ import {
   type AgentActivity,
   type AgentIdentity,
   type Lease,
-  type RegistryRequest,
   type RegistryRequestPriority,
   type RegistrySnapshot,
 } from "./registry.ts"
@@ -103,6 +129,9 @@ interface RegistryToolRequest {
     | "delegate"
     | "requests"
     | "claim_request"
+    | "start_request"
+    | "review_request"
+    | "publish_request"
     | "complete_request"
     | "fail_request"
     | "cancel_request"
@@ -113,9 +142,12 @@ interface RegistryToolRequest {
   readonly requestId?: string
   readonly text?: string
   readonly summary?: string
+  readonly evidenceRef?: string
   readonly failure?: "blocked" | "cancelled" | "error" | "timed_out"
   readonly diagnostic?: string
 }
+
+type AgentRegistryToolRequest = RegistryToolRequest | BacklogIngestToolRequest
 
 const policyDigest: (ctx: ExtensionContext) => string = ctx =>
   createHash("sha256").update(ctx.getSystemPrompt()).digest("hex")
@@ -124,18 +156,29 @@ const sessionIdentity: (
   ctx: ExtensionContext,
   runtimeVersions: Readonly<Record<string, string>>,
 ) => AgentIdentity = (ctx, runtimeVersions) => ({
-  id: ctx.sessionManager.getSessionId(),
+  id: runtimeAgentId(ctx.sessionManager.getSessionId(), process.pid),
   pid: process.pid,
   ...(ctx.model ? { model: `${ctx.model.provider}/${ctx.model.id}` } : {}),
   runtimeVersions,
 })
 
-const safeErrorMessage: (error: unknown) => string = error =>
-  error instanceof RegistryError
-    ? `${error.code}: ${error.message}`
+const registryFailureFrom = (error: unknown): RegistryError | undefined => {
+  if (error instanceof RegistryError) return error
+  if (!Runtime.isFiberFailure(error)) return undefined
+  const failure = Option.getOrUndefined(
+    Cause.failureOption(error[Runtime.FiberFailureCauseId]),
+  )
+  return failure instanceof RegistryError ? failure : undefined
+}
+
+const safeErrorMessage: (error: unknown) => string = error => {
+  const failure = registryFailureFrom(error)
+  return failure
+    ? `${failure.code}: ${failure.message}`
         .replace(/[\u0000-\u001f\u007f]/g, " ")
         .slice(0, 240)
     : "Agent registry operation failed"
+}
 
 const boundedIncidentSummary = (content: unknown): string | undefined => {
   if (!Array.isArray(content)) return undefined
@@ -168,17 +211,19 @@ const currentOwnerIntervention = (pi: ExtensionAPI): number | undefined => {
   return ownerInteractionAt
 }
 
-const requireText: (label: string, value: string | undefined) => string = (
-  label,
-  value,
-) => {
+const requireText = (
+  label: string,
+  value: string | undefined,
+): Effect.Effect<string, RegistryError> => {
   const trimmed = value?.trim()
-  if (!trimmed)
-    throw new RegistryError({
-      code: "invalid_input",
-      message: `${label} required`,
-    })
   return trimmed
+    ? Effect.succeed(trimmed)
+    : Effect.fail(
+        new RegistryError({
+          code: "invalid_input",
+          message: `${label} required`,
+        }),
+      )
 }
 
 const receiptDetails = (
@@ -202,7 +247,7 @@ const receiptDetails = (
 }
 
 const registryExtension: (pi: ExtensionAPI) => void = pi => {
-  registerRuntimeVersion(pi, "agent-registry", "2026.09.02.12")
+  registerRuntimeVersion(pi, "agent-registry", "2026.09.04.1")
   pi.registerMessageRenderer(MESSAGE_TYPE, (message, options, theme) => {
     const details = receiptDetails(message.details)
     if (!details)
@@ -283,6 +328,7 @@ const registryExtension: (pi: ExtensionAPI) => void = pi => {
   let latestCtx: ExtensionContext | undefined
   let latestSnapshot: RegistrySnapshot | undefined
   let registryFailureActive = false
+  let backlogCollectorAbort: AbortController | undefined
   let compactionInterruptionPending = false
   const notifiedRequests = new Set<string>()
 
@@ -322,6 +368,104 @@ const registryExtension: (pi: ExtensionAPI) => void = pi => {
 
   const run = <T>(operation: Effect.Effect<T, RegistryError>): Promise<T> =>
     runRegistryEffect(operation)
+  const backlogCoverage = makeBacklogCoverageTracker()
+  let localMessageSequence = 0
+  const emitBacklogProjection = async (
+    state: BacklogState,
+    project: string,
+    observedAt: number,
+  ): Promise<void> => {
+    const backlog = await run(
+      externalBacklogProjection(state, project).pipe(
+        Effect.mapError(
+          cause =>
+            new RegistryError({
+              code: "invalid_input",
+              message: cause.message,
+            }),
+        ),
+      ),
+    )
+    const backlogEvent: ExternalBacklogProjection = {
+      project,
+      ...backlog,
+      unreconciledSources: backlogCoverage.unreconciledSources(project),
+      observedAt,
+    }
+    pi.events.emit(BACKLOG_PROJECTION_EVENT, backlogEvent)
+  }
+
+  const ingestMessageBacklog = async (
+    message: MessageBacklogRecord,
+  ): Promise<void> => {
+    const state = await run(store.ingestMessage(message))
+    backlogCoverage.markSource(message.project, message.source, true)
+    if (latestCtx?.cwd === message.project)
+      await emitBacklogProjection(state, message.project, Date.now())
+  }
+
+  pi.events.on(MESSAGE_BACKLOG_EVENT, (value: unknown) => {
+    const message = decodeMessageBacklogRecord(value)
+    if (!message) return
+    void ingestMessageBacklog(message).catch(error => {
+      const ctx = latestCtx
+      if (ctx?.cwd !== message.project) return
+      const detail = safeErrorMessage(error)
+      ctx.ui.setStatus("agent-registry-error", "registry:backlog")
+      if (ctx.hasUI)
+        ctx.ui.notify(`Message backlog ingestion failed: ${detail}`, "error")
+    })
+  })
+
+  pi.events.on(CANONICAL_BACKLOG_EVENT, (value: unknown) => {
+    const snapshot = decodeCanonicalBacklogSnapshot(value)
+    if (!snapshot) return
+    void run(store.reconcileCanonicalBacklog(snapshot))
+      .then(async state => {
+        backlogCoverage.markSource(
+          snapshot.project,
+          snapshot.source,
+          snapshot.coverage === "complete",
+        )
+        if (latestCtx?.cwd === snapshot.project)
+          await emitBacklogProjection(state, snapshot.project, Date.now())
+      })
+      .catch(error => {
+        backlogCoverage.markSource(snapshot.project, snapshot.source, false)
+        const ctx = latestCtx
+        if (ctx?.cwd !== snapshot.project) return
+        const detail = safeErrorMessage(error)
+        ctx.ui.setStatus("agent-registry-error", "registry:backlog")
+        if (ctx.hasUI)
+          ctx.ui.notify(
+            `Canonical backlog reconciliation failed: ${detail}`,
+            "error",
+          )
+      })
+  })
+
+  pi.events.on(BRANCH_TODO_BACKLOG_EVENT, (value: unknown) => {
+    const snapshot = decodeBranchTodoBacklogSnapshot(value)
+    if (!snapshot) return
+    void run(store.reconcileBranchTodos(snapshot))
+      .then(async state => {
+        backlogCoverage.markBranchTodos(snapshot.project, true)
+        if (latestCtx?.cwd === snapshot.project)
+          await emitBacklogProjection(state, snapshot.project, Date.now())
+      })
+      .catch(error => {
+        backlogCoverage.markBranchTodos(snapshot.project, false)
+        const ctx = latestCtx
+        if (ctx?.cwd !== snapshot.project) return
+        const message = safeErrorMessage(error)
+        ctx.ui.setStatus("agent-registry-error", "registry:backlog")
+        if (ctx.hasUI)
+          ctx.ui.notify(
+            `Branch todo backlog reconciliation failed: ${message}`,
+            "error",
+          )
+      })
+  })
 
   const currentPolicyDigest = (ctx: ExtensionContext): string =>
     sessionPolicyDigest ?? policyDigest(ctx)
@@ -336,12 +480,11 @@ const registryExtension: (pi: ExtensionAPI) => void = pi => {
     const snapshot = await run(store.snapshot(now))
     if (hasOpenAgentopsIncident(snapshot.requests, incident)) return
 
-    const agent = identity(ctx)
     await run(
       store.enqueue({
         project: join(homedir(), ".config"),
         role: "pi-support",
-        requesterId: agent.id,
+        requesterId: ctx.sessionManager.getSessionId(),
         requesterLabel: pi.getSessionName() ?? "Pi agent",
         requesterCwd: ctx.cwd,
         text: agentopsRequestText(
@@ -409,6 +552,13 @@ const registryExtension: (pi: ExtensionAPI) => void = pi => {
     })
   })
 
+  const resolveRuntimeAgentId = (requestedAgentId: string): string => {
+    const ctx = latestCtx
+    return ctx && requestedAgentId === ctx.sessionManager.getSessionId()
+      ? identity(ctx).id
+      : requestedAgentId
+  }
+
   pi.events.on(
     REGISTRY_INTENT_REQUEST_EVENT,
     (payload: RegistryIntentRequest) => {
@@ -421,8 +571,9 @@ const registryExtension: (pi: ExtensionAPI) => void = pi => {
       ) {
         return
       }
+      const agentId = resolveRuntimeAgentId(payload.agentId)
       const leases = latestSnapshot.leases.filter(
-        lease => lease.owner.id === payload.agentId,
+        lease => lease.owner.id === agentId,
       )
       for (const lease of leases) {
         const requestIds = latestSnapshot.requests
@@ -430,7 +581,7 @@ const registryExtension: (pi: ExtensionAPI) => void = pi => {
             request =>
               request.status === "claimed" &&
               request.leaseId === lease.id &&
-              request.agentId === payload.agentId,
+              request.agentId === agentId,
           )
           .map(request => request.id)
         payload.report(
@@ -464,9 +615,9 @@ const registryExtension: (pi: ExtensionAPI) => void = pi => {
         typeof payload.report !== "function"
       )
         return
+      const agentId = resolveRuntimeAgentId(payload.agentId)
       for (const lease of latestSnapshot.leases.filter(
-        lease =>
-          lease.owner.id === payload.agentId && lease.status === "active",
+        lease => lease.owner.id === agentId && lease.status === "active",
       ))
         payload.report({ role: lease.role, mode: lease.mode })
     },
@@ -707,6 +858,7 @@ const registryExtension: (pi: ExtensionAPI) => void = pi => {
     syncing = true
     const now = Date.now()
     const agent = identity(ctx)
+    const requesterId = ctx.sessionManager.getSessionId()
     const digest = currentPolicyDigest(ctx)
     try {
       await run(
@@ -726,7 +878,11 @@ const registryExtension: (pi: ExtensionAPI) => void = pi => {
       for (const request of notificationsEnabled
         ? snapshot.requests.filter(
             candidate =>
-              terminalOutcomeBelongsToContext(candidate, agent.id, ctx.cwd) &&
+              terminalOutcomeBelongsToContext(
+                candidate,
+                requesterId,
+                ctx.cwd,
+              ) &&
               candidate.requesterAcknowledgedAt === undefined &&
               (candidate.status === "completed" ||
                 candidate.status === "failed" ||
@@ -740,7 +896,7 @@ const registryExtension: (pi: ExtensionAPI) => void = pi => {
         await run(
           store.acknowledgeRequest({
             requestId: request.id,
-            requesterId: agent.id,
+            requesterId,
             now,
           }),
         )
@@ -748,38 +904,40 @@ const registryExtension: (pi: ExtensionAPI) => void = pi => {
       snapshot = await run(store.snapshot(now))
       for (const lease of ownedLeases(snapshot, agent.id)) {
         const paused = isContinuationPaused(ctx.sessionManager.getBranch())
-        try {
-          if (paused && lease.status === "active") {
-            await run(
-              store.pause({ leaseId: lease.id, agentId: agent.id, now }),
-            )
-          } else if (!paused && lease.status === "paused") {
-            await run(
-              store.resume({
-                leaseId: lease.id,
-                agentId: agent.id,
-                policyDigest: digest,
-                runtimeVersions: agent.runtimeVersions,
-                now,
-                ttlMs: LEASE_TTL_MS,
-              }),
-            )
-          } else if (!paused && lease.status === "active") {
-            await run(
-              store.heartbeat({
-                leaseId: lease.id,
-                agentId: agent.id,
-                policyDigest: digest,
-                runtimeVersions: agent.runtimeVersions,
-                now,
-                ttlMs: LEASE_TTL_MS,
-              }),
-            )
-          }
-        } catch (error) {
-          if (!(error instanceof RegistryError) || error.code !== "stale_lease")
-            throw error
-        }
+        const operation =
+          paused && lease.status === "active"
+            ? store.pause({ leaseId: lease.id, agentId: agent.id, now })
+            : !paused && lease.status === "paused"
+              ? store.resume({
+                  leaseId: lease.id,
+                  agentId: agent.id,
+                  policyDigest: digest,
+                  ...(agent.runtimeVersions
+                    ? { runtimeVersions: agent.runtimeVersions }
+                    : {}),
+                  now,
+                  ttlMs: LEASE_TTL_MS,
+                })
+              : !paused && lease.status === "active"
+                ? store.heartbeat({
+                    leaseId: lease.id,
+                    agentId: agent.id,
+                    policyDigest: digest,
+                    ...(agent.runtimeVersions
+                      ? { runtimeVersions: agent.runtimeVersions }
+                      : {}),
+                    now,
+                    ttlMs: LEASE_TTL_MS,
+                  })
+                : Effect.void
+        await run(
+          operation.pipe(
+            Effect.catchIf(
+              error => error.code === "stale_lease",
+              () => Effect.void,
+            ),
+          ),
+        )
       }
 
       snapshot = await run(store.snapshot(now))
@@ -823,22 +981,21 @@ const registryExtension: (pi: ExtensionAPI) => void = pi => {
             { deliverAs: "followUp" },
           )
           for (const request of requests) {
-            try {
-              await run(
-                store.receiveRequest({
+            await run(
+              store
+                .receiveRequest({
                   requestId: request.id,
                   leaseId: lease.id,
                   agentId: agent.id,
                   now,
-                }),
-              )
-            } catch (error) {
-              if (
-                !(error instanceof RegistryError) ||
-                error.code !== "invalid_transition"
-              )
-                throw error
-            }
+                })
+                .pipe(
+                  Effect.catchIf(
+                    error => error.code === "invalid_transition",
+                    () => Effect.void,
+                  ),
+                ),
+            )
             notifiedRequests.add(request.id)
           }
           persistNotifiedRequests()
@@ -848,6 +1005,11 @@ const registryExtension: (pi: ExtensionAPI) => void = pi => {
       }
       if (expectedEpoch !== activeLifecycleEpoch) return
       latestSnapshot = snapshot
+      await emitBacklogProjection(
+        await run(store.backlogSnapshot(ctx.cwd)),
+        ctx.cwd,
+        now,
+      )
       render(ctx, snapshot)
       const recoveryNotification = registrySyncNotification(
         registryFailureActive,
@@ -858,9 +1020,10 @@ const registryExtension: (pi: ExtensionAPI) => void = pi => {
     } catch (error) {
       if (expectedEpoch !== activeLifecycleEpoch) return
       const message = safeErrorMessage(error)
+      const failure = registryFailureFrom(error)
       ctx.ui.setStatus(
         "agent-registry-error",
-        `registry:${error instanceof RegistryError ? error.code : "error"}`,
+        `registry:${failure?.code ?? "error"}`,
       )
       const failureNotification = registrySyncNotification(
         registryFailureActive,
@@ -891,12 +1054,72 @@ const registryExtension: (pi: ExtensionAPI) => void = pi => {
     return managed
   }
 
+  const collectDeclaredBacklog = async (
+    ctx: ExtensionContext,
+    epoch: number,
+    signal: AbortSignal,
+  ) => {
+    const observedAt = Date.now()
+    backlogCoverage.invalidateDeclared(ctx.cwd)
+    const result = await Effect.runPromise(
+      Effect.either(
+        collectDeclaredBacklogSources({
+          project: ctx.cwd,
+          configDirName: CONFIG_DIR_NAME,
+          trusted: ctx.isProjectTrusted(),
+          observedAt,
+          readFile: makeDeclaredBacklogFileReader(ctx.cwd, signal),
+          collectGitHub: declared =>
+            collectDeclaredGitHubBacklog({
+              project: ctx.cwd,
+              declared,
+              observedAt,
+              runCommand: makeDeclaredBacklogCommandRunner(
+                signal,
+                observedAt + BACKLOG_COLLECTION_TIMEOUT_MS,
+              ),
+            }),
+        }),
+      ),
+    )
+    if (epoch !== activeLifecycleEpoch || signal.aborted) return
+    if (Either.isLeft(result)) {
+      ctx.ui.setStatus("backlog-collector", `backlog:${result.left.code}`)
+      await emitBacklogProjection(
+        await run(store.backlogSnapshot(ctx.cwd)),
+        ctx.cwd,
+        observedAt,
+      )
+      return
+    }
+    ctx.ui.setStatus("backlog-collector", undefined)
+    let state: BacklogState | undefined
+    for (const snapshot of result.right.snapshots) {
+      state = await run(store.reconcileCanonicalBacklog(snapshot))
+      if (epoch !== activeLifecycleEpoch || signal.aborted) return
+      backlogCoverage.markSource(
+        snapshot.project,
+        snapshot.source,
+        snapshot.coverage === "complete",
+      )
+    }
+    await emitBacklogProjection(
+      state ?? (await run(store.backlogSnapshot(ctx.cwd))),
+      ctx.cwd,
+      observedAt,
+    )
+  }
+
   pi.on("session_start", async (event, ctx) => {
     const epoch = ++lifecycleEpoch
     activeLifecycleEpoch = epoch
+    backlogCollectorAbort?.abort()
+    const collectorAbort = new AbortController()
+    backlogCollectorAbort = collectorAbort
     if (timer) clearInterval(timer)
     latestCtx = ctx
     registryFailureActive = false
+    backlogCoverage.reset()
     restoreNotifiedRequests(ctx)
     sessionPolicyDigest = policyDigest(ctx)
     const resumedRole = await autoClaimOperationalRole(ctx).catch(error => {
@@ -910,6 +1133,10 @@ const registryExtension: (pi: ExtensionAPI) => void = pi => {
     if (epoch !== activeLifecycleEpoch) return
     await sync(ctx, false, epoch)
     if (epoch !== activeLifecycleEpoch) return
+    void collectDeclaredBacklog(ctx, epoch, collectorAbort.signal).catch(() => {
+      if (epoch === activeLifecycleEpoch && !collectorAbort.signal.aborted)
+        ctx.ui.setStatus("backlog-collector", "backlog:error")
+    })
     if (resumedRole && event.reason !== "reload") {
       ctx.ui.notify(
         `Managed operational role held for the next polling tick: ${resumedRole.project}/${resumedRole.role}`,
@@ -947,13 +1174,45 @@ const registryExtension: (pi: ExtensionAPI) => void = pi => {
   }
 
   pi.on("input", async (event, ctx) => {
-    if (event.text.trim() === "/agents") {
+    const trimmed = event.text.trim()
+    if (trimmed === "/agents") {
       await showRegistry(ctx)
       return { action: "handled" }
     }
-    if (event.text.trim() === "/operator") {
+    if (trimmed === "/operator") {
       await showOperatorBacklog(ctx)
       return { action: "handled" }
+    }
+    if (event.source === "interactive" && trimmed && !trimmed.startsWith("/")) {
+      const observedAt = Date.now()
+      localMessageSequence += 1
+      const requirements = backlogRequirementsFromText(event.text)
+      if (requirements.length > 0 && requirements.length <= 32) {
+        const messageId = createHash("sha256")
+          .update(ctx.sessionManager.getSessionId())
+          .update("\u0000")
+          .update(String(observedAt))
+          .update("\u0000")
+          .update(String(localMessageSequence))
+          .update("\u0000")
+          .update(event.text)
+          .digest("hex")
+        await ingestMessageBacklog({
+          project: ctx.cwd,
+          messageId,
+          observedAt,
+          source: "owner-message",
+          authority: "authenticated-owner",
+          requirements,
+        }).catch(error => {
+          pi.events.emit(AGENTOPS_INCIDENT_EVENT, {
+            severity: "error",
+            component: "agent-registry",
+            operation: "local owner message backlog ingestion",
+            summary: safeErrorMessage(error),
+          })
+        })
+      }
     }
     queueMicrotask(() => void sync(ctx))
   })
@@ -979,27 +1238,34 @@ const registryExtension: (pi: ExtensionAPI) => void = pi => {
   pi.on("session_shutdown", async (event, ctx) => {
     lifecycleEpoch += 1
     activeLifecycleEpoch = undefined
+    backlogCollectorAbort?.abort()
+    backlogCollectorAbort = undefined
     if (timer) clearInterval(timer)
     timer = undefined
     sessionPolicyDigest = undefined
     registryFailureActive = false
     ctx.ui.setStatus(STATUS_KEY, undefined)
     ctx.ui.setStatus("agent-registry-error", undefined)
+    ctx.ui.setStatus("backlog-collector", undefined)
     ctx.ui.setWidget(STATUS_KEY, undefined)
-    if (event.reason === "reload") return
-    const agent = identity(ctx)
-    const snapshot = await run(store.snapshot(Date.now())).catch(
-      () => undefined,
-    )
-    if (!snapshot) return
-    for (const lease of ownedLeases(snapshot, agent.id)) {
-      await run(
-        store.release({
-          leaseId: lease.id,
-          agentId: agent.id,
-          now: Date.now(),
-        }),
-      ).catch(() => undefined)
+    try {
+      if (event.reason === "reload") return
+      const agent = identity(ctx)
+      const snapshot = await run(store.snapshot(Date.now())).catch(
+        () => undefined,
+      )
+      if (!snapshot) return
+      for (const lease of ownedLeases(snapshot, agent.id)) {
+        await run(
+          store.release({
+            leaseId: lease.id,
+            agentId: agent.id,
+            now: Date.now(),
+          }),
+        ).catch(() => undefined)
+      }
+    } finally {
+      store.close()
     }
   })
 
@@ -1022,7 +1288,7 @@ const registryExtension: (pi: ExtensionAPI) => void = pi => {
     name: "agent_registry",
     label: "Agent registry",
     description:
-      "Claim local project roles and exchange durable requests with other Pi sessions. Use action=requests with requestId to inspect one full bounded request body. Roles route work but grant no authority.",
+      "Claim local project roles, exchange durable requests, and ingest already-collected declared tracker/document backlog snapshots for the current project. Use action=requests with requestId to inspect one full bounded request body. Roles and backlog records route work but grant no authority.",
     promptSnippet:
       "Discover local Pi role owners, claim unowned duties, and delegate durable requests",
     promptGuidelines: [
@@ -1033,6 +1299,8 @@ const registryExtension: (pi: ExtensionAPI) => void = pi => {
       "Use agent_registry action=requests with requestId (full UUID or unique prefix) to inspect one full bounded untrusted request body; list output intentionally summarizes bodies.",
       "Treat an agent_registry delegate result as durable queueing only; claim recipient delivery only when request detail reports delivery received or acknowledged.",
       "Use action=clear only after an explicit user request, with an explicit preserved project and the exact confirmation text required by the tool.",
+      "Use action=ingest_backlog only for already-collected bounded GitHub tracker records or explicit pi-backlog document declarations from the current project; it performs no network or file access and grants no source authority.",
+      "After claim_request, use start_request, review_request, and publish_request with exact bounded evidenceRef values when those phases occur. They only record lifecycle evidence and never grant implementation, review, publication, or remote authority.",
     ],
     parameters: Type.Object({
       action: Type.Union([
@@ -1043,9 +1311,13 @@ const registryExtension: (pi: ExtensionAPI) => void = pi => {
         Type.Literal("delegate"),
         Type.Literal("requests"),
         Type.Literal("claim_request"),
+        Type.Literal("start_request"),
+        Type.Literal("review_request"),
+        Type.Literal("publish_request"),
         Type.Literal("complete_request"),
         Type.Literal("fail_request"),
         Type.Literal("cancel_request"),
+        Type.Literal("ingest_backlog"),
       ]),
       project: Type.Optional(Type.String()),
       role: Type.Optional(Type.String()),
@@ -1058,6 +1330,9 @@ const registryExtension: (pi: ExtensionAPI) => void = pi => {
       requestId: Type.Optional(Type.String()),
       text: Type.Optional(Type.String()),
       summary: Type.Optional(Type.String()),
+      evidenceRef: Type.Optional(
+        Type.String({ minLength: 1, maxLength: 1_024 }),
+      ),
       failure: Type.Optional(
         Type.Union([
           Type.Literal("blocked"),
@@ -1067,6 +1342,53 @@ const registryExtension: (pi: ExtensionAPI) => void = pi => {
         ]),
       ),
       diagnostic: Type.Optional(Type.String()),
+      sourceKind: Type.Optional(
+        Type.Union([Type.Literal("github"), Type.Literal("document")]),
+      ),
+      repository: Type.Optional(Type.String({ maxLength: 201 })),
+      coverage: Type.Optional(
+        Type.Union([Type.Literal("partial"), Type.Literal("complete")]),
+      ),
+      trackerItems: Type.Optional(
+        Type.Array(
+          Type.Object(
+            {
+              kind: Type.Union([
+                Type.Literal("issue"),
+                Type.Literal("pull-request"),
+              ]),
+              number: Type.Integer({ minimum: 1, maximum: 1_000_000_000 }),
+              title: Type.String({ minLength: 1, maxLength: 4_000 }),
+              body: Type.Optional(Type.String({ maxLength: 124_000 })),
+              state: Type.Union([
+                Type.Literal("open"),
+                Type.Literal("closed"),
+                Type.Literal("merged"),
+              ]),
+              stateReason: Type.Optional(
+                Type.Union([
+                  Type.Literal("completed"),
+                  Type.Literal("not-planned"),
+                ]),
+              ),
+              labels: Type.Array(
+                Type.String({ minLength: 1, maxLength: 256 }),
+                {
+                  maxItems: 100,
+                },
+              ),
+              blockedReason: Type.Optional(
+                Type.String({ minLength: 1, maxLength: 4_000 }),
+              ),
+              updatedAt: Type.String({ minLength: 1, maxLength: 80 }),
+            },
+            { additionalProperties: false },
+          ),
+          { maxItems: 5_000 },
+        ),
+      ),
+      documentId: Type.Optional(Type.String({ minLength: 1, maxLength: 80 })),
+      content: Type.Optional(Type.String({ maxLength: 4 * 1_024 * 1_024 })),
     }),
     renderResult(result, { expanded, isPartial }, theme, context) {
       if (isPartial)
@@ -1089,25 +1411,68 @@ const registryExtension: (pi: ExtensionAPI) => void = pi => {
     },
     async execute(
       _toolCallId,
-      request: RegistryToolRequest,
+      request: AgentRegistryToolRequest,
       _signal,
       _onUpdate,
       ctx,
     ) {
       const now = Date.now()
       const agent = identity(ctx)
+      const requesterId = ctx.sessionManager.getSessionId()
       const project = request.project?.trim() || ctx.cwd
       try {
+        if (request.action === "ingest_backlog") {
+          const snapshot = await run(
+            backlogSnapshotFromToolRequest(request, ctx.cwd, now).pipe(
+              Effect.mapError(
+                error =>
+                  new RegistryError({
+                    code: "invalid_input",
+                    message: error.message,
+                  }),
+              ),
+            ),
+          )
+          const state = await run(store.reconcileCanonicalBacklog(snapshot))
+          backlogCoverage.markSource(
+            snapshot.project,
+            snapshot.source,
+            snapshot.coverage === "complete",
+          )
+          await emitBacklogProjection(state, snapshot.project, now)
+          return {
+            content: [
+              {
+                type: "text",
+                text: `Reconciled ${snapshot.items.length} ${snapshot.source} record(s) for ${snapshot.project}; coverage ${snapshot.coverage}.`,
+              },
+            ],
+            details: {
+              outcome: "reconciled",
+              source: snapshot.source,
+              scopeId: snapshot.scopeId,
+              coverage: snapshot.coverage,
+              itemCount: snapshot.items.length,
+            },
+          }
+        }
+
         if (request.action === "clear") {
-          const preservedProject = requireText("project", request.project)
+          const preservedProject = await run(
+            requireText("project", request.project),
+          )
           if (
             request.text?.trim() !==
             "clear all registry state except preserved project"
           )
-            throw new RegistryError({
-              code: "invalid_input",
-              message: "exact clear confirmation required",
-            })
+            await run(
+              Effect.fail(
+                new RegistryError({
+                  code: "invalid_input",
+                  message: "exact clear confirmation required",
+                }),
+              ),
+            )
           const cleared = await run(
             store.clearExceptProject({ preservedProject, now }),
           )
@@ -1134,15 +1499,18 @@ const registryExtension: (pi: ExtensionAPI) => void = pi => {
           const listedSnapshot = request.project?.trim()
             ? registrySnapshotForProject(snapshot, project)
             : snapshot
-          if (requested && matches.length !== 1) {
-            throw new RegistryError({
-              code: matches.length === 0 ? "not_found" : "invalid_input",
-              message:
-                matches.length === 0
-                  ? "request not found"
-                  : "request prefix is ambiguous",
-            })
-          }
+          if (requested && matches.length !== 1)
+            await run(
+              Effect.fail(
+                new RegistryError({
+                  code: matches.length === 0 ? "not_found" : "invalid_input",
+                  message:
+                    matches.length === 0
+                      ? "request not found"
+                      : "request prefix is ambiguous",
+                }),
+              ),
+            )
           return {
             content: [
               {
@@ -1161,7 +1529,7 @@ const registryExtension: (pi: ExtensionAPI) => void = pi => {
         }
 
         if (request.action === "claim") {
-          const role = requireText("role", request.role)
+          const role = await run(requireText("role", request.role))
           const result = await run(
             store.claim({
               agent,
@@ -1189,17 +1557,21 @@ const registryExtension: (pi: ExtensionAPI) => void = pi => {
         }
 
         if (request.action === "release") {
-          const role = requireText("role", request.role)
+          const role = await run(requireText("role", request.role))
           const snapshot = await run(store.snapshot(now))
           const lease = ownedLeases(snapshot, agent.id).find(
             candidate =>
               candidate.project === project && candidate.role === role,
           )
           if (!lease)
-            throw new RegistryError({
-              code: "stale_lease",
-              message: "this session does not own the requested role",
-            })
+            await run(
+              Effect.fail(
+                new RegistryError({
+                  code: "stale_lease",
+                  message: "this session does not own the requested role",
+                }),
+              ),
+            )
           await run(
             store.release({ leaseId: lease.id, agentId: agent.id, now }),
           )
@@ -1213,8 +1585,8 @@ const registryExtension: (pi: ExtensionAPI) => void = pi => {
         }
 
         if (request.action === "delegate") {
-          const role = requireText("role", request.role)
-          const text = requireText("text", request.text)
+          const role = await run(requireText("role", request.role))
+          const text = await run(requireText("text", request.text))
           const ownerInteractionAt = currentOwnerIntervention(pi)
           let snapshot = await run(store.snapshot(now))
           let lease = snapshot.leases.find(
@@ -1246,7 +1618,7 @@ const registryExtension: (pi: ExtensionAPI) => void = pi => {
             store.enqueue({
               project,
               role,
-              requesterId: agent.id,
+              requesterId,
               requesterLabel:
                 pi.getSessionName() ?? ctx.cwd.split("/").at(-1) ?? "Pi agent",
               requesterCwd: ctx.cwd,
@@ -1299,35 +1671,44 @@ const registryExtension: (pi: ExtensionAPI) => void = pi => {
           }
         }
 
-        const requestedRequestId = requireText("requestId", request.requestId)
+        const requestedRequestId = await run(
+          requireText("requestId", request.requestId),
+        )
         const snapshot = await run(store.snapshot(now))
         const matchingRequests = snapshot.requests.filter(
           ({ id }) =>
             id === requestedRequestId || id.startsWith(requestedRequestId),
         )
         if (matchingRequests.length !== 1)
-          throw new RegistryError({
-            code: matchingRequests.length === 0 ? "not_found" : "invalid_input",
-            message:
-              matchingRequests.length === 0
-                ? "request not found"
-                : "request prefix is ambiguous",
-          })
+          await run(
+            Effect.fail(
+              new RegistryError({
+                code:
+                  matchingRequests.length === 0 ? "not_found" : "invalid_input",
+                message:
+                  matchingRequests.length === 0
+                    ? "request not found"
+                    : "request prefix is ambiguous",
+              }),
+            ),
+          )
         const target = matchingRequests[0]
         if (!target)
-          throw new RegistryError({
-            code: "not_found",
-            message: "request not found",
-          })
+          return await run(
+            Effect.fail(
+              new RegistryError({
+                code: "not_found",
+                message: "request not found",
+              }),
+            ),
+          )
         const requestId = target.id
 
         if (request.action === "cancel_request") {
           const cancelled = await run(
-            store.cancelRequest({ requestId, requesterId: agent.id, now }),
+            store.cancelRequest({ requestId, requesterId, now }),
           )
-          await run(
-            store.acknowledgeRequest({ requestId, requesterId: agent.id, now }),
-          )
+          await run(store.acknowledgeRequest({ requestId, requesterId, now }))
           await sync(ctx)
           return {
             content: [{ type: "text", text: `Cancelled request ${requestId}` }],
@@ -1337,14 +1718,19 @@ const registryExtension: (pi: ExtensionAPI) => void = pi => {
 
         const lease = ownedLeases(snapshot, agent.id).find(
           candidate =>
+            candidate.status === "active" &&
             candidate.project === target.project &&
             candidate.role === target.role,
         )
         if (!lease)
-          throw new RegistryError({
-            code: "stale_lease",
-            message: "this session does not own the request role",
-          })
+          return await run(
+            Effect.fail(
+              new RegistryError({
+                code: "stale_lease",
+                message: "this session does not own the request role",
+              }),
+            ),
+          )
 
         if (request.action === "claim_request") {
           if (
@@ -1378,21 +1764,55 @@ const registryExtension: (pi: ExtensionAPI) => void = pi => {
             details: { outcome: "claimed", request: claimed },
           }
         }
+        if (
+          request.action === "start_request" ||
+          request.action === "review_request" ||
+          request.action === "publish_request"
+        ) {
+          const phase =
+            request.action === "start_request"
+              ? "implementation"
+              : request.action === "review_request"
+                ? "review"
+                : "publication"
+          const advanced = await run(
+            store.advanceRequestBacklog({
+              requestId,
+              leaseId: lease.id,
+              agentId: agent.id,
+              phase,
+              evidenceRef: await run(
+                requireText("evidenceRef", request.evidenceRef),
+              ),
+              now,
+            }),
+          )
+          await sync(ctx)
+          return {
+            content: [
+              {
+                type: "text",
+                text: `Advanced request ${requestId} to ${phase}`,
+              },
+            ],
+            details: { outcome: "advanced", phase, request: advanced },
+          }
+        }
         if (request.action === "complete_request") {
           const completed = await run(
             store.completeRequest({
               requestId,
               leaseId: lease.id,
               agentId: agent.id,
-              summary: requireText("summary", request.summary),
+              summary: await run(requireText("summary", request.summary)),
               now,
             }),
           )
-          if (completed.requesterId === agent.id) {
+          if (completed.requesterId === requesterId) {
             await run(
               store.acknowledgeRequest({
                 requestId,
-                requesterId: agent.id,
+                requesterId,
                 now,
               }),
             )
@@ -1410,15 +1830,17 @@ const registryExtension: (pi: ExtensionAPI) => void = pi => {
               leaseId: lease.id,
               agentId: agent.id,
               failure: request.failure ?? "error",
-              diagnostic: requireText("diagnostic", request.diagnostic),
+              diagnostic: await run(
+                requireText("diagnostic", request.diagnostic),
+              ),
               now,
             }),
           )
-          if (failed.requesterId === agent.id) {
+          if (failed.requesterId === requesterId) {
             await run(
               store.acknowledgeRequest({
                 requestId,
-                requesterId: agent.id,
+                requesterId,
                 now,
               }),
             )
@@ -1429,10 +1851,14 @@ const registryExtension: (pi: ExtensionAPI) => void = pi => {
             details: { outcome: "failed", request: failed },
           }
         }
-        throw new RegistryError({
-          code: "invalid_input",
-          message: "unsupported registry action",
-        })
+        return await run(
+          Effect.fail(
+            new RegistryError({
+              code: "invalid_input",
+              message: "unsupported registry action",
+            }),
+          ),
+        )
       } catch (error) {
         const message = safeErrorMessage(error)
         return {
