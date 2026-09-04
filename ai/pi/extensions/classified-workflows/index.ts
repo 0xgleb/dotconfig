@@ -140,9 +140,14 @@ import {
 import { activeSkillProcedures } from "./skill-context.ts"
 import { shouldDetachForegroundWorkflow } from "./foreground-detach.ts"
 import {
+  applyQuestionResolutionSnapshot,
   boundedConversationIntentEvidence,
+  currentHumanContinuationDisprovesSpecScopeBlock,
   currentHumanResumeDisprovesDeferredGraphiteMoveBlock,
+  eodSessionSearchDisprovesMissingQuestionScopeBlock,
   questionIntentEvidence,
+  resolvedQuestionDisprovesUnresolvedBlock,
+  restoredCapabilityDisprovesCommunicationOnlyBlock,
 } from "./intent-context.ts"
 import {
   beginReviewDuty,
@@ -1051,7 +1056,7 @@ const WorkflowParameters = Type.Object({
 })
 
 export default function classifiedWorkflows(pi: ExtensionAPI): void {
-  registerRuntimeVersion(pi, "classified-workflows", "2026.09.03.12")
+  registerRuntimeVersion(pi, "classified-workflows", "2026.09.03.13")
   const childTokenLimit = workflowChildTokenLimit(
     process.env[WORKFLOW_CHILD_TOKEN_LIMIT_ENV],
   )
@@ -2402,7 +2407,8 @@ export default function classifiedWorkflows(pi: ExtensionAPI): void {
 
   pi.events.on(
     QUESTION_RESOLVED_EVENT,
-    (_resolution: UserQuestionResolution) => {
+    (resolution: UserQuestionResolution) => {
+      questionState = applyQuestionResolutionSnapshot(questionState, resolution)
       if (continuationPaused && latestCtx)
         setContinuationPaused(false, latestCtx)
     },
@@ -2609,12 +2615,30 @@ export default function classifiedWorkflows(pi: ExtensionAPI): void {
       ctx.signal,
     )
     if (
-      decision.verdict === "block" &&
-      currentHumanResumeDisprovesDeferredGraphiteMoveBlock({
+      restoredCapabilityDisprovesCommunicationOnlyBlock({
+        reason: decision.reason,
+        branch: ctx.sessionManager.getBranch(),
+      })
+    ) {
+      persistReviewWorkflowStart()
+      return
+    }
+    if (
+      resolvedQuestionDisprovesUnresolvedBlock({
+        reason: decision.reason,
+        snapshot: questionState,
+      })
+    ) {
+      persistReviewWorkflowStart()
+      return
+    }
+    if (
+      eodSessionSearchDisprovesMissingQuestionScopeBlock({
         reason: decision.reason,
         branch: ctx.sessionManager.getBranch(),
         toolName: event.toolName,
         input: event.input,
+        cwd: ctx.cwd,
       })
     ) {
       persistReviewWorkflowStart()
@@ -2630,6 +2654,29 @@ export default function classifiedWorkflows(pi: ExtensionAPI): void {
       return remediationInterruption(remediation)
     }
     if (decision.verdict === "block") {
+      if (
+        currentHumanContinuationDisprovesSpecScopeBlock({
+          reason: decision.reason,
+          branch: ctx.sessionManager.getBranch(),
+          toolName: event.toolName,
+          input: event.input,
+          cwd: ctx.cwd,
+        })
+      ) {
+        persistReviewWorkflowStart()
+        return
+      }
+      if (
+        currentHumanResumeDisprovesDeferredGraphiteMoveBlock({
+          reason: decision.reason,
+          branch: ctx.sessionManager.getBranch(),
+          toolName: event.toolName,
+          input: event.input,
+        })
+      ) {
+        persistReviewWorkflowStart()
+        return
+      }
       if (
         event.toolName === "workflow" &&
         terminalWorkflowFailureDisprovesOwnershipBlock(

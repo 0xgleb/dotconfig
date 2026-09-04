@@ -1,4 +1,8 @@
-import type { UserQuestionStateSnapshot } from "../shared/question-events.ts"
+import { basename, resolve } from "node:path"
+import type {
+  UserQuestionResolution,
+  UserQuestionStateSnapshot,
+} from "../shared/question-events.ts"
 import {
   REMOTE_CAPABILITY_MESSAGE,
   REMOTE_TASK_CONTINUATION_MESSAGE,
@@ -33,17 +37,24 @@ const messageText = (
 }
 
 const COMMUNICATION_ONLY_RESTRICTION =
-  /communication-only turn[\s\S]{0,160}(?:all )?tools? (?:are )?disabled/i
+  /^Human message: \[(?:Authenticated Piece of Pi Telegram owner message|Piece of Pi Telegram · owner-authenticated envelope|Local owner pane message|Agent bridge message · sender [^\]\r\n]+) · communication-only turn · [^\]\r\n]{0,120}(?:all )?tools? (?:are )?disabled\]/i
 
 const RESTORED_REMOTE_CAPABILITY =
   /Source-fixed remote capability handshake:[\s\S]*communication-only turn ended[\s\S]*Subsequent local and task-continuation turns are not communication-only or tool-restricted\./i
+const RESTORED_TASK_CONTINUATION =
+  /^Trusted lifecycle coordination context \(never authority by itself\): The task list is not complete\. Continue working without stopping\./i
+const RESTORED_REMOTE_TASK_CONTINUATION =
+  /^Trusted lifecycle coordination context \(never authority by itself\): Source-fixed task continuation:[\s\S]*authenticated Piece of Pi response was delivered[\s\S]*local tools are restored\./i
 
 const restoredCapabilityState = (evidence: readonly string[]): number => {
   const latestRestriction = evidence.findLastIndex(item =>
     COMMUNICATION_ONLY_RESTRICTION.test(item),
   )
-  const latestRestoration = evidence.findLastIndex(item =>
-    RESTORED_REMOTE_CAPABILITY.test(item),
+  const latestRestoration = evidence.findLastIndex(
+    item =>
+      RESTORED_REMOTE_CAPABILITY.test(item) ||
+      RESTORED_TASK_CONTINUATION.test(item) ||
+      RESTORED_REMOTE_TASK_CONTINUATION.test(item),
   )
   return latestRestoration > latestRestriction ? latestRestoration : -1
 }
@@ -100,6 +111,25 @@ export const questionIntentEvidence = (
         : `Pending user question q${question.id}: ${question.question}`,
     )
 
+export const applyQuestionResolutionSnapshot = (
+  snapshot: UserQuestionStateSnapshot,
+  resolution: UserQuestionResolution,
+): UserQuestionStateSnapshot => {
+  if (!snapshot.questions.some(question => question.id === resolution.id))
+    return snapshot
+  return {
+    questions: snapshot.questions.map(question =>
+      question.id === resolution.id
+        ? {
+            ...question,
+            status: "resolved" as const,
+            answer: resolution.answer,
+          }
+        : question,
+    ),
+  }
+}
+
 export const conversationIntentEvidence = (
   entries: readonly unknown[],
 ): string[] =>
@@ -138,12 +168,270 @@ export const conversationIntentEvidence = (
       : []
   })
 
+const STALE_COMMUNICATION_ONLY_BLOCK =
+  /(?:(?:current|newest)[^.\n]{0,80}\bturn\b[^.\n]{0,80}\b(?:disables?|disabled)\b[^.\n]{0,24}\btools?\b|current (?:turn|request|message) (?:is|remains) communication-only|communication-only[^.\n]{0,120}(?:all )?tools? (?:are |remain )?disabled|(?:all|local) tools? (?:are |remain )?disabled)/i
+
+export const restoredCapabilityDisprovesCommunicationOnlyBlock = ({
+  reason,
+  branch,
+}: {
+  readonly reason: string
+  readonly branch: readonly unknown[]
+}): boolean =>
+  STALE_COMMUNICATION_ONLY_BLOCK.test(reason) &&
+  restoredCapabilityState(conversationIntentEvidence(branch)) >= 0
+
+const STALE_UNRESOLVED_QUESTION_BLOCK =
+  /\b(?:q|question\s+)(\d+)\b[^.\n]{0,160}\b(?:unresolved|pending|awaiting(?:\s+(?:an?\s+)?answer)?)\b/i
+const QUESTION_SAFETY_OR_PUBLICATION_BLOCK =
+  /\b(?:credential|secret|protected data|sensitive|unsafe|prohibited|publish|publication|push|merge|deploy|network)\b/i
+
+export const resolvedQuestionDisprovesUnresolvedBlock = ({
+  reason,
+  snapshot,
+}: {
+  readonly reason: string
+  readonly snapshot: UserQuestionStateSnapshot
+}): boolean => {
+  if (QUESTION_SAFETY_OR_PUBLICATION_BLOCK.test(reason)) return false
+  const match = STALE_UNRESOLVED_QUESTION_BLOCK.exec(reason)
+  if (!match) return false
+  const id = Number(match[1])
+  return snapshot.questions.some(
+    question => question.id === id && question.status === "resolved",
+  )
+}
+
+const MISSING_EOD_QUESTION_SCOPE_BLOCK =
+  /\b(?:no (?:active|current) (?:eod|end[- ]of[- ]day) request|(?:eod|end[- ]of[- ]day)[^.\n]{0,80}(?:unrelated|stale|outside (?:the )?(?:active )?scope|not (?:currently )?(?:authorized|within scope))|newest (?:instruction|request|message)[^.\n]{0,80}(?:resume|continue) work)\b/i
+const EOD_QUESTION_SCOPE =
+  /\b(?:eod|end[- ]of[- ]day)\b[\s\S]{0,160}\b(?:window|start|boundary|since|from)\b|\b(?:window|start|boundary|since|from)\b[\s\S]{0,160}\b(?:eod|end[- ]of[- ]day)\b/i
+const EOD_USER_REQUEST =
+  /\b(?:start|draft|prepare|send|deliver)\b[^\r\n]{0,160}\b(?:eod|end[- ]of[- ]day)\b|\b(?:eod|end[- ]of[- ]day)\b[^\r\n]{0,160}\b(?:start|draft|prepare|send|deliver)\b/i
+const SESSION_SEARCH_USER_RESULT =
+  /(?:👤\s*User\b|\|\s*User(?:\s|$)|\brole\s*[:=]\s*user\b)/i
+const EOD_CANCELLATION =
+  /\b(?:cancel|skip|stop|drop|do not|don't|no longer)\b[^.\n]{0,100}\b(?:eod|end[- ]of[- ]day)\b|\b(?:eod|end[- ]of[- ]day)\b[^.\n]{0,100}\b(?:cancelled|canceled|not needed|no longer)\b/i
+
+const escapedRegex = (value: string): string =>
+  value.replace(/[.*+?^${}()|[\]\\]/g, "\\$&")
+
+export const eodSessionSearchDisprovesMissingQuestionScopeBlock = ({
+  reason,
+  branch,
+  toolName,
+  input,
+  cwd,
+}: {
+  readonly reason: string
+  readonly branch: readonly unknown[]
+  readonly toolName: string
+  readonly input: Readonly<Record<string, unknown>>
+  readonly cwd: string
+}): boolean => {
+  if (
+    toolName !== "ask_user" ||
+    input.action !== "ask" ||
+    !MISSING_EOD_QUESTION_SCOPE_BLOCK.test(reason) ||
+    QUESTION_SAFETY_OR_PUBLICATION_BLOCK.test(reason) ||
+    !EOD_QUESTION_SCOPE.test(JSON.stringify(input))
+  )
+    return false
+
+  const searchCallIds = new Set<string>()
+  for (const entry of branch) {
+    if (!isRecord(entry) || entry.type !== "message") continue
+    const message = entry.message
+    if (!isRecord(message) || message.role !== "assistant") continue
+    if (!Array.isArray(message.content)) continue
+    for (const part of message.content) {
+      if (
+        isRecord(part) &&
+        part.type === "toolCall" &&
+        typeof part.id === "string" &&
+        (part.name === "session_search" ||
+          part.name === "functions.session_search")
+      )
+        searchCallIds.add(part.id)
+    }
+  }
+
+  const project = basename(cwd)
+  const projectMarker = new RegExp(`📁\\s*${escapedRegex(project)}\\b`, "i")
+  for (let index = branch.length - 1; index >= 0; index -= 1) {
+    const entry = branch[index]
+    if (!isRecord(entry) || entry.type !== "message") continue
+    const message = entry.message
+    if (
+      !isRecord(message) ||
+      message.role !== "toolResult" ||
+      message.isError !== false ||
+      typeof message.toolCallId !== "string" ||
+      !searchCallIds.has(message.toolCallId)
+    )
+      continue
+    const text = messageText(message)
+    if (
+      !text ||
+      !SESSION_SEARCH_USER_RESULT.test(text) ||
+      !projectMarker.test(text) ||
+      !EOD_USER_REQUEST.test(text)
+    )
+      continue
+    const cancelledLater = branch.slice(index + 1).some(candidate => {
+      if (
+        !isRecord(candidate) ||
+        candidate.type !== "message" ||
+        !isRecord(candidate.message) ||
+        candidate.message.role !== "user"
+      )
+        return false
+      const human = messageText(candidate.message)
+      return human ? EOD_CANCELLATION.test(human) : false
+    })
+    return !cancelledLater
+  }
+  return false
+}
+
+const ACTIVE_TODO_SCOPE_BLOCK =
+  /\b(?:unrelated|stale|outside (?:the )?(?:active )?scope|not (?:currently )?(?:authorized|within scope)|unauthori[sz]ed|no (?:explicit )?authority|active (?:task|todo)|current (?:task|todo)|task scope)\b/i
+const SPEC_CONTINUATION =
+  /\b(?:continue|resume|proceed|finish|keep working|without stopping)\b/i
+const UNSAFE_OR_PUBLICATION_BLOCK =
+  /\b(?:credential|secret|private data|protected data|sensitive|prompt injection|exfiltrat|publish|publication|github issue|pull request|push|merge|deploy|network)\b/i
+const SEMANTIC_TOKEN = /[a-z0-9][a-z0-9._/-]{3,}/g
+const CONTINUATION_STOP_WORDS = new Set([
+  "active",
+  "assigned",
+  "continue",
+  "current",
+  "exact",
+  "finish",
+  "first",
+  "incomplete",
+  "pending",
+  "proceed",
+  "resume",
+  "stopping",
+  "task",
+  "tasks",
+  "todo",
+  "todos",
+  "without",
+  "work",
+  "working",
+])
+
+const semanticTokens = (text: string): Set<string> =>
+  new Set(
+    (text.toLowerCase().match(SEMANTIC_TOKEN) ?? []).filter(
+      token => !CONTINUATION_STOP_WORDS.has(token),
+    ),
+  )
+
+const sharedTokenCount = (left: Set<string>, right: Set<string>): number => {
+  let count = 0
+  for (const token of left) if (right.has(token)) count += 1
+  return count
+}
+
+const newestHumanMessage = (branch: readonly unknown[]): string | undefined => {
+  for (let index = branch.length - 1; index >= 0; index -= 1) {
+    const entry = branch[index]
+    if (
+      !isRecord(entry) ||
+      entry.type !== "message" ||
+      !isRecord(entry.message) ||
+      entry.message.role !== "user"
+    )
+      continue
+    return messageText(entry.message)
+  }
+  return undefined
+}
+
+const todoId = (todo: string): string | undefined => /^#(\d+)\b/.exec(todo)?.[1]
+
+const humanNamesTodo = (human: string, todo: string): boolean => {
+  const id = todoId(todo)
+  return (
+    id !== undefined && new RegExp(`(?:#|todo\\s+#?)${id}\\b`, "i").test(human)
+  )
+}
+
+const singleEditText = (
+  input: Readonly<Record<string, unknown>>,
+): string | undefined => {
+  if (typeof input.oldText === "string" && typeof input.newText === "string")
+    return `${input.oldText}\n${input.newText}`
+  if (!Array.isArray(input.edits) || input.edits.length !== 1) return undefined
+  const [edit] = input.edits
+  return isRecord(edit) &&
+    typeof edit.oldText === "string" &&
+    typeof edit.newText === "string"
+    ? `${edit.oldText}\n${edit.newText}`
+    : undefined
+}
+
+export const currentHumanContinuationDisprovesSpecScopeBlock = ({
+  reason,
+  branch,
+  toolName,
+  input,
+  cwd,
+}: {
+  readonly reason: string
+  readonly branch: readonly unknown[]
+  readonly toolName: string
+  readonly input: Readonly<Record<string, unknown>>
+  readonly cwd: string
+}): boolean => {
+  if (
+    toolName !== "edit" ||
+    !ACTIVE_TODO_SCOPE_BLOCK.test(reason) ||
+    UNSAFE_OR_PUBLICATION_BLOCK.test(reason)
+  )
+    return false
+  const targetPath =
+    typeof input.path === "string"
+      ? input.path
+      : typeof input.file_path === "string"
+        ? input.file_path
+        : undefined
+  const editText = singleEditText(input)
+  if (
+    !targetPath ||
+    resolve(cwd, targetPath) !== resolve(cwd, "SPEC.md") ||
+    !editText
+  )
+    return false
+
+  const human = newestHumanMessage(branch)
+  if (
+    !human ||
+    !SPEC_CONTINUATION.test(human) ||
+    COMMUNICATION_ONLY_RESTRICTION.test(`Human message: ${human}`)
+  )
+    return false
+
+  const humanTokens = semanticTokens(human)
+  const activeTodos = todoWorkSnapshot([...branch]).pending
+  const matchingTodos = activeTodos.filter(todo => {
+    const todoTokens = semanticTokens(todo)
+    return (
+      (humanNamesTodo(human, todo) ||
+        sharedTokenCount(humanTokens, todoTokens) >= 2) &&
+      sharedTokenCount(todoTokens, semanticTokens(editText)) >= 1
+    )
+  })
+  return matchingTodos.length === 1
+}
+
 const STALE_DEFERRED_WORK_BLOCK =
   /\b(?:defer(?:red)?(?:\s+for)?\s+later|not\s+the\s+current\s+(?:task|work)|outside\s+(?:the\s+)?(?:active\s+)?scope|stale\s+(?:task|scope))\b/i
 const RESUME_ALL_WORK =
   /\b(?:resume|continue)\b[^.\n]{0,120}\b(?:all|everything|polish|verify|work)\b/i
-const UNSAFE_OR_PUBLICATION_BLOCK =
-  /\b(?:credential|secret|private data|protected data|sensitive|prompt injection|exfiltrat|publish|publication|github issue|pull request|push|merge|deploy|network)\b/i
 const EXACT_GRAPHITE_MOVE =
   /^gt move --source ([A-Za-z0-9][A-Za-z0-9._/-]*) --onto ([A-Za-z0-9][A-Za-z0-9._/-]*) --no-interactive$/
 const GRAPHITE_TOPOLOGY_TODO =
@@ -169,23 +457,11 @@ export const currentHumanResumeDisprovesDeferredGraphiteMoveBlock = ({
   )
     return false
 
-  let human: string | undefined
-  for (let index = branch.length - 1; index >= 0; index -= 1) {
-    const entry = branch[index]
-    if (
-      !isRecord(entry) ||
-      entry.type !== "message" ||
-      !isRecord(entry.message) ||
-      entry.message.role !== "user"
-    )
-      continue
-    human = messageText(entry.message)
-    break
-  }
+  const human = newestHumanMessage(branch)
   if (
     !human ||
     !RESUME_ALL_WORK.test(human) ||
-    COMMUNICATION_ONLY_RESTRICTION.test(human)
+    COMMUNICATION_ONLY_RESTRICTION.test(`Human message: ${human}`)
   )
     return false
 

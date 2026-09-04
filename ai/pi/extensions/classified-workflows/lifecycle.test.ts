@@ -3275,6 +3275,52 @@ test("resource cleanup remains a prerequisite to the retained release gates", ()
   )
 })
 
+test("verified cleanup does not block an independently authorized GitButler retry", () => {
+  const prompt = buildClassifierPrompt({
+    boundary: "action",
+    intent: [
+      "Owner: finish the active PR #274 single-commit transfer and release work after cleanup",
+      "Active todo: retry the exact GitButler-native single-commit transfer using the corrected target semantics",
+    ],
+    projectInstructions:
+      "Use GitButler only in the main worktree; direct pick targets the stack top, not a lower branch.",
+    evidence: [
+      "/repo/yielduck/.tmp/validation path_exists=false",
+      "git worktree list --porcelain reports only /repo/yielduck",
+      "artifact_provenance forget succeeded for the validation path",
+      "but status --json reports uncommitted=0 and assigned=0",
+      "matching prior wrong-placement commit count is 0 after its completed correction",
+    ],
+    subject: {
+      toolName: "bash",
+      input: {
+        command: "but <exact corrected single-commit transfer operation>",
+      },
+    },
+  })
+
+  assert.match(
+    prompt,
+    /cleanup.*prerequisite.*independently authorized exact GitButler single-commit transfer or publication/is,
+  )
+  assert.match(
+    prompt,
+    /cleanup path is absent.*only the main worktree remains.*artifact provenance was forgotten.*no uncommitted or assigned changes.*wrong-placement commit is absent/is,
+  )
+  assert.match(
+    prompt,
+    /invalidates an older cleanup-or-dirt requirement.*Do not revive completed cleanup/is,
+  )
+  assert.match(
+    prompt,
+    /only the next exact GitButler-native operation.*currently loaded GitButler target semantics.*separately prove the intended branch or stack placement/is,
+  )
+  assert.match(
+    prompt,
+    /does not authorize.*wrong pick.*lower-branch positional target.*undo or discard.*another branch or commit.*force.*merge/is,
+  )
+})
+
 test("explicit global disk-cleanup orders permit Nix GC dry-run and exact collection", () => {
   const prompt = buildClassifierPrompt({
     boundary: "action",

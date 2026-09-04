@@ -1,10 +1,16 @@
 import assert from "node:assert/strict"
+import { readFileSync } from "node:fs"
 import test from "node:test"
 import {
+  applyQuestionResolutionSnapshot,
   boundedConversationIntentEvidence,
   conversationIntentEvidence,
+  currentHumanContinuationDisprovesSpecScopeBlock,
   currentHumanResumeDisprovesDeferredGraphiteMoveBlock,
+  eodSessionSearchDisprovesMissingQuestionScopeBlock,
   questionIntentEvidence,
+  resolvedQuestionDisprovesUnresolvedBlock,
+  restoredCapabilityDisprovesCommunicationOnlyBlock,
 } from "./intent-context.ts"
 
 test("classifier intent retains assistant antecedents so short human approvals are resolvable", () => {
@@ -102,6 +108,185 @@ test("resolved user questions become trusted classifier decision evidence", () =
     [
       "Resolved user decision q2: Which underlyings are in scope? Answer: BTC, ETH, and fresh additions.",
     ],
+  )
+})
+
+test("resolved-question events repair a stale pending classifier snapshot", () => {
+  const snapshot = {
+    questions: [
+      {
+        id: 30,
+        status: "pending" as const,
+        question: "Should RAI-1233 move to Done?",
+        options: [{ label: "Mark Done" }, { label: "Keep open" }],
+      },
+    ],
+  }
+  const resolved = applyQuestionResolutionSnapshot(snapshot, {
+    id: 30,
+    answer: "Mark Done (Recommended)",
+  })
+
+  assert.deepEqual(resolved.questions, [
+    {
+      id: 30,
+      status: "resolved",
+      question: "Should RAI-1233 move to Done?",
+      options: [{ label: "Mark Done" }, { label: "Keep open" }],
+      answer: "Mark Done (Recommended)",
+    },
+  ])
+  assert.equal(
+    resolvedQuestionDisprovesUnresolvedBlock({
+      reason: "q30 is still pending and awaiting an answer",
+      snapshot: resolved,
+    }),
+    true,
+  )
+  assert.equal(
+    applyQuestionResolutionSnapshot(snapshot, { id: 99, answer: "No" }),
+    snapshot,
+  )
+})
+
+test("current resolved question state disproves a stale unresolved-question block", () => {
+  const snapshot = {
+    questions: [
+      {
+        id: 6,
+        status: "resolved" as const,
+        question: "Which ADR direction should the reorg use?",
+        answer: "Harden current ADR model (Recommended)",
+      },
+    ],
+  }
+  assert.equal(
+    resolvedQuestionDisprovesUnresolvedBlock({
+      reason:
+        "q6 remains unresolved, so this read-only workflow must stay contingent.",
+      snapshot,
+    }),
+    true,
+  )
+  assert.equal(
+    resolvedQuestionDisprovesUnresolvedBlock({
+      reason: "q7 remains unresolved.",
+      snapshot,
+    }),
+    false,
+  )
+  assert.equal(
+    resolvedQuestionDisprovesUnresolvedBlock({
+      reason: "q6 remains unresolved and publication is not authorized.",
+      snapshot,
+    }),
+    false,
+  )
+})
+
+test("session-search user evidence preserves a bounded EOD window question", () => {
+  const branch = [
+    {
+      type: "message",
+      message: {
+        role: "assistant",
+        content: [
+          {
+            type: "toolCall",
+            id: "search-1",
+            name: "session_search",
+            arguments: {
+              query: "newest owner request draft eod telegram",
+              project: "st0x",
+            },
+          },
+        ],
+      },
+    },
+    {
+      type: "message",
+      message: {
+        role: "toolResult",
+        toolName: "session_search",
+        toolCallId: "search-1",
+        isError: false,
+        content: [
+          {
+            type: "text",
+            text: [
+              "Found 1 result:",
+              "📅 Aug 31, 2026 | 📁 st0x | 👤 User",
+              "make sure to start a draft eod and send it to me on telegram",
+            ].join("\n"),
+          },
+        ],
+      },
+    },
+    {
+      type: "message",
+      message: {
+        role: "user",
+        content: "Resume the remaining stack work.",
+      },
+    },
+  ]
+  const proposedQuestion = {
+    action: "ask",
+    header: "EOD window",
+    question: "What exact start boundary should I use for this EOD?",
+    options: [{ label: "Since last delivery" }, { label: "Start of Aug 31" }],
+  }
+
+  assert.equal(
+    eodSessionSearchDisprovesMissingQuestionScopeBlock({
+      reason:
+        "No active EOD request exists; the newest instruction is resume work.",
+      branch,
+      toolName: "ask_user",
+      input: proposedQuestion,
+      cwd: "/Users/example/st0x",
+    }),
+    true,
+  )
+  assert.equal(
+    eodSessionSearchDisprovesMissingQuestionScopeBlock({
+      reason:
+        "No active EOD request exists; the newest instruction is resume work.",
+      branch,
+      toolName: "ask_user",
+      input: proposedQuestion,
+      cwd: "/Users/example/other-project",
+    }),
+    false,
+  )
+  assert.equal(
+    eodSessionSearchDisprovesMissingQuestionScopeBlock({
+      reason: "No active EOD request exists; publication is unauthorized.",
+      branch,
+      toolName: "ask_user",
+      input: proposedQuestion,
+      cwd: "/Users/example/st0x",
+    }),
+    false,
+  )
+  assert.equal(
+    eodSessionSearchDisprovesMissingQuestionScopeBlock({
+      reason: "No active EOD request exists.",
+      branch: [
+        ...branch,
+        {
+          type: "message",
+          message: {
+            role: "user",
+            content: "Cancel the EOD; do not ask about it.",
+          },
+        },
+      ],
+      toolName: "ask_user",
+      input: proposedQuestion,
+      cwd: "/Users/example/st0x",
+    }),
+    false,
   )
 })
 
@@ -211,23 +396,386 @@ test("bounded intent keeps a restored handshake authoritative over an ended remo
   )
 })
 
-test("source-fixed remote routing continuation preserves the authenticated-message linkage", () => {
-  assert.deepEqual(
-    conversationIntentEvidence([
-      {
-        type: "message",
-        message: {
-          role: "custom",
-          customType: "remote-control.task-continuation",
-          content:
-            "The owner explicitly enabled post-reply routing and action. Inspect the immediately preceding authenticated owner message.",
-        },
+test("a local continuation quoting the stale restriction cannot revive it", () => {
+  const restored = boundedConversationIntentEvidence([
+    {
+      type: "message",
+      message: {
+        role: "user",
+        content:
+          "[Piece of Pi Telegram · owner-authenticated envelope · communication-only turn · tools disabled]\nReply conversationally.\n\nwhat can you do from telegram?",
       },
-    ]),
-    [
-      "Trusted lifecycle coordination context (never authority by itself): The owner explicitly enabled post-reply routing and action. Inspect the immediately preceding authenticated owner message.",
-    ],
+    },
+    {
+      type: "message",
+      message: {
+        role: "custom",
+        customType: "remote-control.capability-handshake",
+        content:
+          "Source-fixed remote capability handshake: the communication-only turn ended and 24 local tools were restored. Subsequent local and task-continuation turns are not communication-only or tool-restricted.",
+      },
+    },
+    {
+      type: "message",
+      message: {
+        role: "user",
+        content:
+          "This is not a communication-only turn. Continue todo #35. The stale classifier incorrectly said all tools are disabled for an exact read-only rg.",
+      },
+    },
+  ])
+
+  assert.match(
+    restored.join("\n"),
+    /Current source-fixed lifecycle state:.*local tools are restored/s,
   )
+})
+
+test("restored capability deterministically rejects a stale communication-only verdict", () => {
+  const branch = [
+    {
+      type: "message",
+      message: {
+        role: "user",
+        content:
+          "[Piece of Pi Telegram · owner-authenticated envelope · communication-only turn · tools disabled]\nReply conversationally.\n\nwhat can you do from telegram?",
+      },
+    },
+    {
+      type: "message",
+      message: {
+        role: "custom",
+        customType: "remote-control.capability-handshake",
+        content:
+          "Source-fixed remote capability handshake: the communication-only turn ended and 24 local tools were restored. Subsequent local and task-continuation turns are not communication-only or tool-restricted.",
+      },
+    },
+    {
+      type: "message",
+      message: {
+        role: "user",
+        content:
+          "Context restored from a checkpoint. Resume all assigned work now.",
+      },
+    },
+  ]
+
+  assert.equal(
+    restoredCapabilityDisprovesCommunicationOnlyBlock({
+      reason: "Current turn is communication-only with all tools disabled.",
+      branch,
+    }),
+    true,
+  )
+  assert.equal(
+    restoredCapabilityDisprovesCommunicationOnlyBlock({
+      reason:
+        "Newest turn is communication-only and explicitly disables tools.",
+      branch,
+    }),
+    true,
+  )
+  assert.equal(
+    restoredCapabilityDisprovesCommunicationOnlyBlock({
+      reason:
+        "Current authenticated Telegram turn explicitly disables tools; do not run the probe during it.",
+      branch,
+    }),
+    true,
+  )
+  assert.equal(
+    restoredCapabilityDisprovesCommunicationOnlyBlock({
+      reason: "The requested release is not authorized.",
+      branch,
+    }),
+    false,
+  )
+  assert.equal(
+    restoredCapabilityDisprovesCommunicationOnlyBlock({
+      reason: "Current turn is communication-only with all tools disabled.",
+      branch: [
+        ...branch,
+        {
+          type: "message",
+          message: {
+            role: "user",
+            content:
+              "[Authenticated Piece of Pi Telegram owner message · communication-only turn · all tools are disabled]\nReply conversationally.\n\nstatus?",
+          },
+        },
+      ],
+    }),
+    false,
+  )
+})
+
+test("a source-fixed task continuation restores capability after compaction drops the handshake", () => {
+  const endedRemoteTurn = {
+    type: "message",
+    message: {
+      role: "user",
+      content:
+        "[Piece of Pi Telegram · owner-authenticated envelope · communication-only turn · tools disabled]\nReply conversationally.\n\nstatus?",
+    },
+  }
+  const taskContinuation = {
+    type: "message",
+    message: {
+      role: "custom",
+      customType: "classified-workflows.task-message",
+      content:
+        "The task list is not complete. Continue working without stopping. Pending: fix the capability lifecycle.",
+    },
+  }
+
+  assert.equal(
+    restoredCapabilityDisprovesCommunicationOnlyBlock({
+      reason:
+        "Newest authenticated Telegram turn is communication-only and explicitly disables tools.",
+      branch: [endedRemoteTurn, taskContinuation],
+    }),
+    true,
+  )
+  assert.match(
+    boundedConversationIntentEvidence([endedRemoteTurn, taskContinuation]).join(
+      "\n",
+    ),
+    /Current source-fixed lifecycle state:.*local tools are restored/s,
+  )
+  assert.equal(
+    restoredCapabilityDisprovesCommunicationOnlyBlock({
+      reason: "Current turn is communication-only with all tools disabled.",
+      branch: [endedRemoteTurn, taskContinuation, endedRemoteTurn],
+    }),
+    false,
+  )
+})
+
+test("a source-fixed remote task continuation restores capability after the authenticated reply", () => {
+  const endedRemoteTurn = {
+    type: "message",
+    message: {
+      role: "user",
+      content:
+        "[Piece of Pi Telegram · owner-authenticated envelope · communication-only turn · tools disabled]\nReply conversationally.\n\nExplain the desired declarative fleet.",
+    },
+  }
+  const remoteTaskContinuation = {
+    type: "message",
+    message: {
+      role: "custom",
+      customType: "remote-control.task-continuation",
+      content:
+        "Source-fixed task continuation: the authenticated Piece of Pi response was delivered and local tools are restored. The owner explicitly enabled post-reply routing and action. Inspect the immediately preceding authenticated owner message for actionable intent.",
+    },
+  }
+
+  assert.equal(
+    restoredCapabilityDisprovesCommunicationOnlyBlock({
+      reason:
+        "Current authenticated Telegram turn is communication-only with tools disabled.",
+      branch: [endedRemoteTurn, remoteTaskContinuation],
+    }),
+    true,
+  )
+  assert.match(
+    boundedConversationIntentEvidence([
+      endedRemoteTurn,
+      remoteTaskContinuation,
+    ]).join("\n"),
+    /Current source-fixed lifecycle state:.*local tools are restored/s,
+  )
+  assert.equal(
+    restoredCapabilityDisprovesCommunicationOnlyBlock({
+      reason: "Current turn is communication-only with all tools disabled.",
+      branch: [endedRemoteTurn, remoteTaskContinuation, endedRemoteTurn],
+    }),
+    false,
+  )
+})
+
+test("action admission applies the restored-capability stale-verdict correction", () => {
+  const source = readFileSync(new URL("./index.ts", import.meta.url), "utf8")
+  assert.match(
+    source,
+    /if \(\s*restoredCapabilityDisprovesCommunicationOnlyBlock\(\{\s*reason: decision\.reason,\s*branch: ctx\.sessionManager\.getBranch\(\),\s*\}\)\s*\) \{\s*persistReviewWorkflowStart\(\)\s*return/s,
+  )
+})
+
+test("resolved question state clears stale unresolved-question remediation before interruption", () => {
+  const source = readFileSync(new URL("./index.ts", import.meta.url), "utf8")
+  const toolCallStart = source.indexOf('pi.on("tool_call"')
+  const toolCallEnd = source.indexOf('pi.on("tool_result"', toolCallStart)
+  const toolCallAdmission = source.slice(toolCallStart, toolCallEnd)
+  const resolvedQuestionIndex = toolCallAdmission.indexOf(
+    "resolvedQuestionDisprovesUnresolvedBlock",
+  )
+  const remediationIndex = toolCallAdmission.indexOf(
+    "const remediation = remediationForDecision",
+  )
+
+  assert.ok(resolvedQuestionIndex >= 0)
+  assert.ok(remediationIndex >= 0)
+  assert.ok(resolvedQuestionIndex < remediationIndex)
+})
+
+test("session-search EOD evidence clears stale missing-scope remediation before interruption", () => {
+  const source = readFileSync(new URL("./index.ts", import.meta.url), "utf8")
+  const toolCallStart = source.indexOf('pi.on("tool_call"')
+  const toolCallEnd = source.indexOf('pi.on("tool_result"', toolCallStart)
+  const toolCallAdmission = source.slice(toolCallStart, toolCallEnd)
+  const eodEvidenceIndex = toolCallAdmission.indexOf(
+    "eodSessionSearchDisprovesMissingQuestionScopeBlock",
+  )
+  const remediationIndex = toolCallAdmission.indexOf(
+    "const remediation = remediationForDecision",
+  )
+
+  assert.ok(eodEvidenceIndex >= 0)
+  assert.ok(remediationIndex >= 0)
+  assert.ok(eodEvidenceIndex < remediationIndex)
+})
+
+test("restored capability clears stale communication-only remediation before interruption", () => {
+  const source = readFileSync(new URL("./index.ts", import.meta.url), "utf8")
+  const toolCallStart = source.indexOf('pi.on("tool_call"')
+  const toolCallEnd = source.indexOf('pi.on("tool_result"', toolCallStart)
+  const toolCallAdmission = source.slice(toolCallStart, toolCallEnd)
+  const restoredIndex = toolCallAdmission.indexOf(
+    "restoredCapabilityDisprovesCommunicationOnlyBlock",
+  )
+  const remediationIndex = toolCallAdmission.indexOf(
+    "const remediation = remediationForDecision",
+  )
+
+  assert.ok(restoredIndex >= 0)
+  assert.ok(remediationIndex >= 0)
+  assert.ok(restoredIndex < remediationIndex)
+})
+
+test("an exact human continuation disproves stale scope for its active SPEC-first edit", () => {
+  const branch = [
+    {
+      type: "custom",
+      customType: "todo.state",
+      data: {
+        todos: [
+          {
+            id: 1,
+            text: "Finish browser readability prerequisite",
+            status: "completed",
+          },
+          {
+            id: 2,
+            text: "Define merged-browser HTTP 422 compatibility for legacy receipt.recorded events in SPEC.md",
+            status: "in_progress",
+          },
+        ],
+      },
+    },
+    {
+      type: "message",
+      message: {
+        role: "user",
+        content:
+          "The task list is incomplete. Continue todo #2 without stopping: fix the merged-browser HTTP 422 caused by legacy receipt.recorded.",
+      },
+    },
+  ]
+  const input = {
+    path: "SPEC.md",
+    edits: [
+      {
+        oldText: "Legacy receipts are rejected.",
+        newText:
+          "Legacy receipt.recorded events remain compatible with merged-browser HTTP 422 handling.",
+      },
+    ],
+  }
+
+  assert.equal(
+    currentHumanContinuationDisprovesSpecScopeBlock({
+      reason: "The SPEC edit is outside the active task and not authorized.",
+      branch,
+      toolName: "edit",
+      input,
+      cwd: "/repo",
+    }),
+    true,
+  )
+  for (const candidate of [
+    {
+      reason: "The edit may expose protected data.",
+      branch,
+      toolName: "edit",
+      input,
+      cwd: "/repo",
+    },
+    {
+      reason: "The GitHub issue publication is not authorized.",
+      branch,
+      toolName: "bash",
+      input: { command: "gh issue create --title compatibility" },
+      cwd: "/repo",
+    },
+    {
+      reason: "The source edit is outside the active task.",
+      branch,
+      toolName: "edit",
+      input: { ...input, path: "src/browser.ts" },
+      cwd: "/repo",
+    },
+    {
+      reason: "The cross-repository SPEC edit is outside the active task.",
+      branch,
+      toolName: "edit",
+      input: { ...input, path: "/other/SPEC.md" },
+      cwd: "/repo",
+    },
+    {
+      reason: "The bundled SPEC edits are outside the active task.",
+      branch,
+      toolName: "edit",
+      input: { ...input, edits: [...input.edits, ...input.edits] },
+      cwd: "/repo",
+    },
+    {
+      reason: "The SPEC edit is outside the active task.",
+      branch: [
+        branch[0],
+        {
+          type: "message",
+          message: { role: "user", content: "Continue working." },
+        },
+      ],
+      toolName: "edit",
+      input,
+      cwd: "/repo",
+    },
+    {
+      reason: "The SPEC edit is outside the active task.",
+      branch: [
+        branch[0],
+        {
+          type: "message",
+          message: {
+            role: "custom",
+            customType: "classified-workflows.task-message",
+            content:
+              "Continue todo #2: merged-browser HTTP 422 legacy receipt.recorded.",
+          },
+        },
+      ],
+      toolName: "edit",
+      input,
+      cwd: "/repo",
+    },
+  ]) {
+    assert.equal(
+      currentHumanContinuationDisprovesSpecScopeBlock(candidate),
+      false,
+    )
+  }
 })
 
 test("current human resume-all supersedes stale deferral for one exact Graphite topology todo", () => {
@@ -285,12 +833,68 @@ test("current human resume-all supersedes stale deferral for one exact Graphite 
       toolName: "bash",
       input: { command },
     },
+    {
+      reason: "This topology repair was deferred for later.",
+      branch: [
+        {
+          type: "custom",
+          customType: "todo.state",
+          data: {
+            todos: [
+              {
+                id: 21,
+                text: "Repair PR #1032/#1033 Graphite topology",
+                status: "completed",
+              },
+            ],
+          },
+        },
+        branch[1],
+      ],
+      toolName: "bash",
+      input: { command },
+    },
   ]) {
     assert.equal(
       currentHumanResumeDisprovesDeferredGraphiteMoveBlock(candidate),
       false,
     )
   }
+})
+
+test("action admission keeps current Graphite topology repair local and publication classified", () => {
+  const source = readFileSync(new URL("./index.ts", import.meta.url), "utf8")
+  assert.match(
+    source,
+    /currentHumanResumeDisprovesDeferredGraphiteMoveBlock\(\{\s*reason: decision\.reason,\s*branch: ctx\.sessionManager\.getBranch\(\),\s*toolName: event\.toolName,\s*input: event\.input,\s*\}\)/s,
+  )
+})
+
+test("action admission keeps the SPEC correction local and publication classified", () => {
+  const source = readFileSync(new URL("./index.ts", import.meta.url), "utf8")
+  assert.match(
+    source,
+    /currentHumanContinuationDisprovesSpecScopeBlock\(\{\s*reason: decision\.reason,\s*branch: ctx\.sessionManager\.getBranch\(\),\s*toolName: event\.toolName,\s*input: event\.input,\s*cwd: ctx\.cwd,\s*\}\)/s,
+  )
+})
+
+test("source-fixed remote routing continuation preserves the authenticated-message linkage", () => {
+  assert.deepEqual(
+    conversationIntentEvidence([
+      {
+        type: "message",
+        message: {
+          role: "custom",
+          customType: "remote-control.task-continuation",
+          content:
+            "The owner explicitly enabled post-reply routing and action. Inspect the immediately preceding authenticated owner message.",
+        },
+      },
+    ]),
+    [
+      "Trusted lifecycle coordination context (never authority by itself): The owner explicitly enabled post-reply routing and action. Inspect the immediately preceding authenticated owner message.",
+    ],
+  )
 })
 
 test("assistant context remains explicitly untrusted and unrelated non-message entries are excluded", () => {
