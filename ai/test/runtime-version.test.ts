@@ -33,7 +33,7 @@ test("fleet diagnostics expose current behavior-bearing component versions", () 
   assert.match(read("../pi/extensions/btw/index.ts"), /btw", "2026\.07\.23\.1"/)
   assert.match(
     read("../pi/extensions/classified-workflows/index.ts"),
-    /classified-workflows", "2026\.09\.03\.13"/,
+    /classified-workflows", "2026\.09\.03\.14"/,
   )
   assert.match(
     read("../pi/extensions/compact-read/index.ts"),
