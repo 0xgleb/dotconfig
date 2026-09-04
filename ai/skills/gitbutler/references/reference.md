@@ -140,16 +140,23 @@ but branch show <id> -r       # Fetch and display review information
 
 ### `but pick <source> [target]`
 
-Cherry-pick commits from unapplied branches into applied branches.
+Cherry-pick commits from an unapplied branch into an applied stack's top branch.
 
 ```bash
-but pick <commit-sha> <branch>       # Pick specific commit into branch
-but pick <cli-id> <branch>           # Pick using CLI ID (e.g., "nn")
+but status                                      # Identify the stack and its top branch
+but pick <commit-sha> <top-branch> --status-after
+but pick <cli-id> <top-branch> --status-after  # Source CLI ID, e.g. "nn"
 ```
 
-Name both the source commit and the target branch. Passing a branch as the source opens an
-interactive commit picker, and omitting the target prompts for one when several branches exist —
-both block. The source can be a commit SHA (full or short) or a CLI ID from `but status`.
+Name both the source commit and target. Passing a branch as the source opens an interactive commit
+picker, and omitting the target prompts when several stacks exist — both block. The source can be a
+commit SHA (full or short) or a CLI ID from `but status`.
+
+**GitButler 0.22.0 target semantics:** the positional target selects an applied stack. The
+implementation resolves a branch name or branch CLI ID to its containing stack, then always picks
+onto that stack's first/top branch. Naming a lower branch does not place the commit there. Use
+`but pick` only when the desired destination is the stack's top branch; otherwise stop and plan a
+separately verified history move. Do not use `but undo` as a placement workaround.
 
 ## Committing
 
@@ -178,13 +185,14 @@ but commit --empty -b <branch> -m "message"  # Insert an empty commit
 `but commit` is not supported from linked worktrees. Use Git directly for the worktree-local commit, and do not run `but setup` there.
 
 **Committing specific files or hunks:** Start with `but diff` for selective dirty commits, then pass CLI IDs as positional arguments:
+
 - **File IDs** from `but diff` or `but status -fv`: commits entire files
 - **Hunk IDs** (`<file-id>:<hunk-id>`) from `but diff`: commits individual hunks
 - IDs are space-separated (`<id> <id>`). Commas are not separators — `a1,b2` is parsed as a single ID and fails to resolve.
 
 **Placing commits:** Use `--above <target>` or `--below <target>` when the new commit should be inserted at a specific position in existing history. Change-ID refs of existing commits remain valid after an insertion; sha and `#N`-suffixed refs may go stale — add `--status-after` when subsequent history edits need fresh refs.
 
-**Several commits from one diff:** Chain `but commit` calls with `&&` to split a broad uncommitted change into several semantic commits: `but commit -b <branch> -m "msg1" a1 b2 && but commit -b <branch> -m "msg2" c3 d4`. Mutation output is concise by default. Add `--status-after` only when the next step needs workspace IDs or details that the mutation result does not provide. The commits stack in the order you write them — the first `but commit` is the oldest of the new commits and each later one goes on top (newest). File/hunk IDs copied from the original output generally remain usable across commits; if an ID stops resolving, re-read the diff and continue. History edits (`amend`, `squash`, `move`, `uncommit`, `reword`) may run in sequence off one status read when every commit ref involved is a change-ID ref; run them one at a time with `--status-after` when a ref is sha-based or `#N`-suffixed, or when the next command needs freshly issued IDs. Bare `but diff` needs no ID from the preceding command, so `but uncommit <id> && but diff` is safe. If commits from that branch must stay *above* the new ones, see "Split an existing commit" in SKILL.md: commit the replacements, then move the preserved block together with `but move <preserved-id> [<preserved-id>...] -b <branch>` so its internal order stays intact.
+**Several commits from one diff:** Chain `but commit` calls with `&&` to split a broad uncommitted change into several semantic commits: `but commit -b <branch> -m "msg1" a1 b2 && but commit -b <branch> -m "msg2" c3 d4`. Mutation output is concise by default. Add `--status-after` only when the next step needs workspace IDs or details that the mutation result does not provide. The commits stack in the order you write them — the first `but commit` is the oldest of the new commits and each later one goes on top (newest). File/hunk IDs copied from the original output generally remain usable across commits; if an ID stops resolving, re-read the diff and continue. History edits (`amend`, `squash`, `move`, `uncommit`, `reword`) may run in sequence off one status read when every commit ref involved is a change-ID ref; run them one at a time with `--status-after` when a ref is sha-based or `#N`-suffixed, or when the next command needs freshly issued IDs. Bare `but diff` needs no ID from the preceding command, so `but uncommit <id> && but diff` is safe. If commits from that branch must stay _above_ the new ones, see "Split an existing commit" in SKILL.md: commit the replacements, then move the preserved block together with `but move <preserved-id> [<preserved-id>...] -b <branch>` so its internal order stays intact.
 
 Example: `but commit -b my-branch -m "Fix bug" ab cd` commits files/hunks `ab` and `cd`.
 

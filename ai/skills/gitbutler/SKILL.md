@@ -145,6 +145,12 @@ Use this when an existing commit should be replaced by selected smaller commits.
 3. For an adjacent block, run ONE move, anchored either way: `but move <block-id> <block-id> --below <following-commit-id>` or `but move <block-id> <block-id> --above <preceding-commit-id>`. Pick an anchor outside the block; source order does not matter and the block keeps its internal order. Add `--status-after` when you need to inspect the resulting order; do not move the anchor or block members again.
 4. For other reorders, make the smallest set of moves.
 
+### Pick a commit from an unapplied branch
+
+`but pick <source> <target>` targets an applied **stack**, not an arbitrary branch within that stack. GitButler 0.22.0's `crates/but/src/command/legacy/pick.rs` resolves the selector to a stack and `pick_target` always returns that stack's first/top branch. Naming a lower branch therefore still inserts the picked commit on the stack's top branch.
+
+Run `but status` once and use `but pick` only when the desired destination is the selected stack's top branch. If the desired destination is lower in that stack, stop: do not run `but pick`, do not claim the positional target guarantees branch placement, and do not use `but undo` as a target-correction shortcut. Plan any subsequent history move separately from current IDs and verified placement semantics.
+
 ### Squash commits
 
 1. `but status` for commit IDs and order.
