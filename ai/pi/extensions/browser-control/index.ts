@@ -4,12 +4,15 @@ import type {
   ExtensionAPI,
   ExtensionContext,
 } from "@earendil-works/pi-coding-agent"
+import { Effect, Option } from "effect"
 import { Type } from "typebox"
 import { registerRuntimeVersion } from "../shared/runtime-version.ts"
 import {
   BROWSER_TARGET_ENTRY,
   browserActivityLabel,
+  BrowserControlError,
   collectBoundedResponseBytes,
+  createSerialActivityUpdater,
   latestBrowserTargetId,
   launchServicesRequest,
   parseCdpResponse,
@@ -58,17 +61,50 @@ let activeTargetId: string | undefined
 
 const debugBase: () => string = () => `http://127.0.0.1:${DEBUG_PORT}`
 
+const failBrowser = (
+  code: BrowserControlError["code"],
+  message: string,
+): Promise<never> =>
+  Effect.runPromise(Effect.fail(new BrowserControlError({ code, message })))
+
 const requestJson: (
   path: string,
   init?: RequestInit,
 ) => Promise<unknown> = async (path, init) => {
-  const response = await fetch(`${debugBase()}${path}`, {
-    ...init,
-    signal: AbortSignal.timeout(REQUEST_TIMEOUT_MS),
-  })
+  const requestSignal = AbortSignal.timeout(REQUEST_TIMEOUT_MS)
+  const response = await Effect.runPromise(
+    Effect.tryPromise({
+      try: () =>
+        fetch(`${debugBase()}${path}`, {
+          ...init,
+          signal: requestSignal,
+        }),
+      catch: () =>
+        new BrowserControlError({
+          code: requestSignal.aborted ? "timeout" : "unavailable",
+          message: requestSignal.aborted
+            ? `Brave debug request timed out after ${REQUEST_TIMEOUT_MS}ms.`
+            : "Brave debug endpoint request failed",
+        }),
+    }),
+  )
   if (!response.ok)
-    throw new Error(`Brave debug endpoint returned HTTP ${response.status}`)
-  return response.json()
+    return failBrowser(
+      "unavailable",
+      `Brave debug endpoint returned HTTP ${response.status}`,
+    )
+  return Effect.runPromise(
+    Effect.tryPromise({
+      try: () => response.json(),
+      catch: () =>
+        new BrowserControlError({
+          code: requestSignal.aborted ? "timeout" : "protocol",
+          message: requestSignal.aborted
+            ? `Brave debug response timed out after ${REQUEST_TIMEOUT_MS}ms.`
+            : "Brave debug endpoint returned malformed JSON",
+        }),
+    }),
+  )
 }
 
 const isDebugEndpointReady: () => Promise<boolean> = async () => {
@@ -81,7 +117,9 @@ const isDebugEndpointReady: () => Promise<boolean> = async () => {
 }
 
 const listTargets: () => Promise<readonly DebugTarget[]> = async () =>
-  parseDebugTargets(await requestJson("/json/list"), DEBUG_PORT)
+  Effect.runPromise(
+    parseDebugTargets(await requestJson("/json/list"), DEBUG_PORT),
+  )
 
 const discoverOpenedTarget: (
   url: LocalPageUrl,
@@ -109,7 +147,7 @@ const openTarget: (
   readonly url: LocalPageUrl
   readonly target?: DebugTarget
 }> = async (pi, input) => {
-  const url = parseLocalPageUrl(input)
+  const url = await Effect.runPromise(parseLocalPageUrl(input))
   const debugReady = await isDebugEndpointReady()
   if (debugReady) {
     const existing = selectReusableTarget(
@@ -121,27 +159,37 @@ const openTarget: (
       activeTargetId = existing.id
       return { url, target: existing }
     }
-    const opened = parseDebugTargets(
-      [
-        await requestJson(`/json/new?${encodeURIComponent(url)}`, {
-          method: "PUT",
-        }),
-      ],
-      DEBUG_PORT,
+    const opened = (
+      await Effect.runPromise(
+        parseDebugTargets(
+          [
+            await requestJson(`/json/new?${encodeURIComponent(url)}`, {
+              method: "PUT",
+            }),
+          ],
+          DEBUG_PORT,
+        ),
+      )
     )[0]
     if (!opened || opened.url !== url)
-      throw new Error("Brave opened an unexpected operator target.")
+      return failBrowser(
+        "protocol",
+        "Brave opened an unexpected operator target.",
+      )
     activeTargetId = opened.id
     return { url, target: opened }
   }
 
   const previousTargetIds = new Set<string>()
-  const request = launchServicesRequest(url, OPERATOR_PROFILE_PATH, DEBUG_PORT)
+  const request = await Effect.runPromise(
+    launchServicesRequest(url, OPERATOR_PROFILE_PATH, DEBUG_PORT),
+  )
   const result = await pi.exec(request.command, [...request.args], {
     timeout: REQUEST_TIMEOUT_MS,
   })
   if (result.code !== 0)
-    throw new Error(
+    return failBrowser(
+      "unavailable",
       "macOS LaunchServices could not open the isolated Brave operator profile.",
     )
   const target = await discoverOpenedTarget(url, previousTargetIds)
@@ -150,15 +198,21 @@ const openTarget: (
 }
 
 const activeTarget: () => Promise<DebugTarget> = async () => {
-  if (!(await isDebugEndpointReady())) throw new Error(DEBUG_SETUP_MESSAGE)
-  return selectActiveTarget(await listTargets(), activeTargetId)
+  if (!(await isDebugEndpointReady()))
+    return failBrowser("unavailable", DEBUG_SETUP_MESSAGE)
+  return Effect.runPromise(
+    selectActiveTarget(await listTargets(), activeTargetId),
+  )
 }
 
 class CdpClient {
   private nextId = 1
   private readonly pending = new Map<number, PendingCall>()
 
-  private constructor(private readonly socket: WebSocket) {
+  private readonly socket: WebSocket
+
+  private constructor(socket: WebSocket) {
+    this.socket = socket
     socket.addEventListener("message", event =>
       this.receive(String(event.data)),
     )
@@ -173,7 +227,10 @@ class CdpClient {
   static connect(webSocketDebuggerUrl: string): Promise<CdpClient> {
     const WebSocketCtor = globalThis.WebSocket
     if (!WebSocketCtor)
-      throw new Error("This Node runtime does not expose WebSocket.")
+      return failBrowser(
+        "unavailable",
+        "This Node runtime does not expose WebSocket.",
+      )
 
     return new Promise((resolve, reject) => {
       const socket = new WebSocketCtor(webSocketDebuggerUrl)
@@ -232,25 +289,35 @@ class CdpClient {
   }
 
   private receive(data: string): void {
-    let response: CdpResponse | undefined
-    try {
-      response = parseCdpResponse(data)
-    } catch (error) {
-      this.failAll(
-        error instanceof Error
-          ? error
-          : new Error("Brave returned an invalid CDP response."),
-      )
-      this.socket.close()
-      return
-    }
-    if (!response) return
-    const pending = this.pending.get(response.id)
-    if (!pending) return
-    clearTimeout(pending.timeout)
-    this.pending.delete(response.id)
-    if (response.kind === "error") pending.reject(new Error(response.message))
-    else pending.resolve(response.result)
+    void Effect.runPromise(parseCdpResponse(data)).then(
+      parsed => {
+        const response = Option.getOrUndefined(parsed)
+        if (!response) return
+        const pending = this.pending.get(response.id)
+        if (!pending) return
+        clearTimeout(pending.timeout)
+        this.pending.delete(response.id)
+        if (response.kind === "error")
+          pending.reject(
+            new BrowserControlError({
+              code: "protocol",
+              message: response.message,
+            }),
+          )
+        else pending.resolve(response.result)
+      },
+      error => {
+        this.failAll(
+          error instanceof Error
+            ? error
+            : new BrowserControlError({
+                code: "protocol",
+                message: "Brave returned an invalid CDP response.",
+              }),
+        )
+        this.socket.close()
+      },
+    )
   }
 
   private failAll(error: Error): void {
@@ -287,55 +354,112 @@ const fetchLoopbackText = async (
   readonly url: LocalPageUrl
   readonly text: string
 }> => {
-  const url = parseLocalPageUrl(input)
+  const url = await Effect.runPromise(parseLocalPageUrl(input))
   const requestSignal = AbortSignal.any([
     AbortSignal.timeout(REQUEST_TIMEOUT_MS),
     ...(signal ? [signal] : []),
   ])
-  const response = await fetch(url, {
-    method: "GET",
-    redirect: "manual",
-    signal: requestSignal,
-  })
-  if (response.status >= 300 && response.status < 400) {
-    throw new Error("Loopback API redirects are not followed.")
-  }
+  const response = await Effect.runPromise(
+    Effect.tryPromise({
+      try: () =>
+        fetch(url, {
+          method: "GET",
+          redirect: "manual",
+          signal: requestSignal,
+        }),
+      catch: cause =>
+        new BrowserControlError({
+          code: signal?.aborted
+            ? "cancelled"
+            : cause instanceof DOMException && cause.name === "TimeoutError"
+              ? "timeout"
+              : "unavailable",
+          message: signal?.aborted
+            ? "Loopback API request was cancelled."
+            : cause instanceof DOMException && cause.name === "TimeoutError"
+              ? `Loopback API request timed out after ${REQUEST_TIMEOUT_MS}ms.`
+              : "Loopback API request failed.",
+        }),
+    }),
+  )
+  if (response.status >= 300 && response.status < 400)
+    return failBrowser("protocol", "Loopback API redirects are not followed.")
   if (!response.ok)
-    throw new Error(`Loopback API returned HTTP ${response.status}`)
+    return failBrowser(
+      "unavailable",
+      `Loopback API returned HTTP ${response.status}`,
+    )
   const contentType = response.headers.get("content-type")?.toLowerCase() ?? ""
-  if (
-    contentType &&
-    !contentType.startsWith("text/") &&
-    !contentType.includes("json")
-  ) {
-    throw new Error("Loopback API returned a non-text response.")
-  }
+  if (!contentType)
+    return failBrowser(
+      "protocol",
+      "Loopback API response content type is required.",
+    )
+  if (!contentType.startsWith("text/") && !contentType.includes("json"))
+    return failBrowser("protocol", "Loopback API returned a non-text response.")
   const reader = response.body?.getReader()
   if (!reader) return { status: response.status, url, text: "" }
   const chunks: Uint8Array[] = []
   let totalBytes = 0
   try {
     while (true) {
-      const { done, value } = await reader.read()
+      const { done, value } = await Effect.runPromise(
+        Effect.tryPromise({
+          try: () => reader.read(),
+          catch: () =>
+            new BrowserControlError({
+              code: signal?.aborted
+                ? "cancelled"
+                : requestSignal.aborted
+                  ? "timeout"
+                  : "unavailable",
+              message: signal?.aborted
+                ? "Loopback API request was cancelled."
+                : requestSignal.aborted
+                  ? `Loopback API response timed out after ${REQUEST_TIMEOUT_MS}ms.`
+                  : "Loopback API response stream failed.",
+            }),
+        }),
+      )
       if (done) break
       totalBytes += value.byteLength
       if (totalBytes > MAX_LOOPBACK_RESPONSE_BYTES) {
-        await reader.cancel()
-        throw new Error(
+        await Effect.runPromise(
+          Effect.tryPromise({
+            try: () => reader.cancel(),
+            catch: () =>
+              new BrowserControlError({
+                code: "unavailable",
+                message: "Could not cancel oversized loopback response.",
+              }),
+          }).pipe(Effect.ignore),
+        )
+        return failBrowser(
+          "response_limit",
           `Loopback response exceeded the ${MAX_LOOPBACK_RESPONSE_BYTES}-byte limit.`,
         )
       }
       chunks.push(value)
     }
   } finally {
-    reader.releaseLock()
+    void Effect.runPromise(
+      Effect.try({
+        try: () => reader.releaseLock(),
+        catch: () =>
+          new BrowserControlError({
+            code: "unavailable",
+            message: "Could not release loopback response reader.",
+          }),
+      }).pipe(Effect.ignore),
+    )
   }
+  const bytes = await Effect.runPromise(
+    collectBoundedResponseBytes(chunks, MAX_LOOPBACK_RESPONSE_BYTES),
+  )
   return {
     status: response.status,
     url,
-    text: new TextDecoder().decode(
-      collectBoundedResponseBytes(chunks, MAX_LOOPBACK_RESPONSE_BYTES),
-    ),
+    text: new TextDecoder().decode(bytes),
   }
 }
 
@@ -351,7 +475,7 @@ const pageText: () => Promise<string> = async () => {
       returnByValue: true,
       timeout: REQUEST_TIMEOUT_MS,
     })
-    return resultText(parseEvaluationResult(result))
+    return resultText(await Effect.runPromise(parseEvaluationResult(result)))
   })
 }
 
@@ -389,11 +513,12 @@ const setPageActivityIndicator: (
       returnByValue: true,
       timeout: REQUEST_TIMEOUT_MS,
     })
-    parseEvaluationResult(result)
+    await Effect.runPromise(parseEvaluationResult(result))
   })
 }
 
 let activeBrowserOperations = 0
+let activePageOperations = 0
 
 const setPageActivityBestEffort: (
   active: boolean,
@@ -405,31 +530,38 @@ const setPageActivityBestEffort: (
   }
 }
 
+const queuePageActivity = createSerialActivityUpdater(setPageActivityBestEffort)
+
 const withBrowserActivity: <T>(
   ctx: ExtensionContext,
   action: BrowserAction,
   callback: () => Promise<T>,
 ) => Promise<T> = async (ctx, action, callback) => {
+  const pageVisibleActivity = action === "open" || action === "text"
   activeBrowserOperations += 1
+  if (pageVisibleActivity) activePageOperations += 1
   ctx.ui.setStatus(BROWSER_STATUS_KEY, browserActivityLabel("active", action))
-  await setPageActivityBestEffort(true)
+  if (pageVisibleActivity) await queuePageActivity(true)
   try {
     return await callback()
   } finally {
     activeBrowserOperations = Math.max(0, activeBrowserOperations - 1)
+    if (pageVisibleActivity)
+      activePageOperations = Math.max(0, activePageOperations - 1)
     if (activeBrowserOperations === 0) {
-      await setPageActivityBestEffort(false)
+      if (pageVisibleActivity) await queuePageActivity(false)
       ctx.ui.setStatus(BROWSER_STATUS_KEY, browserActivityLabel("idle"))
-    }
+    } else if (pageVisibleActivity && activePageOperations === 0)
+      await queuePageActivity(false)
   }
 }
 
 const browserControl: (pi: ExtensionAPI) => void = pi => {
-  registerRuntimeVersion(pi, "browser-control", "2026.08.13.2")
+  registerRuntimeVersion(pi, "browser-control", "2026.09.04.1")
   pi.on("session_start", (_event, ctx) => {
     activeTargetId = latestBrowserTargetId(ctx.sessionManager.getBranch())
     ctx.ui.setStatus(BROWSER_STATUS_KEY, browserActivityLabel("idle"))
-    void setPageActivityBestEffort(false)
+    void queuePageActivity(false)
   })
 
   pi.on("session_shutdown", (_event, ctx) => {
@@ -445,7 +577,7 @@ const browserControl: (pi: ExtensionAPI) => void = pi => {
           const opened = await openTarget(pi, url)
           if (opened.target)
             pi.appendEntry(BROWSER_TARGET_ENTRY, { targetId: opened.target.id })
-          await setPageActivityBestEffort(true)
+          await queuePageActivity(true)
           ctx.ui.notify(
             opened.target
               ? `Brave operator page ready: ${opened.target.title || opened.target.url}`
@@ -520,7 +652,10 @@ const browserControl: (pi: ExtensionAPI) => void = pi => {
 
           if (params.action === "fetch") {
             if (!params.url)
-              throw new Error("Browser fetch requires a loopback URL.")
+              return failBrowser(
+                "invalid_input",
+                "Browser fetch requires a loopback URL.",
+              )
             const result = await fetchLoopbackText(params.url, signal)
             return {
               content: [
@@ -544,7 +679,7 @@ const browserControl: (pi: ExtensionAPI) => void = pi => {
               pi.appendEntry(BROWSER_TARGET_ENTRY, {
                 targetId: opened.target.id,
               })
-            await setPageActivityBestEffort(true)
+            await queuePageActivity(true)
             const visibleTarget = opened.target
               ? publicTarget(opened.target)
               : undefined
@@ -570,9 +705,16 @@ const browserControl: (pi: ExtensionAPI) => void = pi => {
             details: { status: "ok" },
           }
         } catch (error) {
-          throw error instanceof Error
-            ? error
-            : new Error("Browser action failed")
+          return Effect.runPromise(
+            Effect.fail(
+              error instanceof Error
+                ? error
+                : new BrowserControlError({
+                    code: "unavailable",
+                    message: "Browser action failed",
+                  }),
+            ),
+          )
         }
       })
     },
