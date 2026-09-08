@@ -22,6 +22,7 @@ export interface ResolvedQuestion {
   readonly guess?: string
   readonly options?: readonly QuestionOption[]
   readonly answer: string
+  readonly withdrawn?: true
 }
 
 export type Question = PendingQuestion | ResolvedQuestion
@@ -41,14 +42,26 @@ export type QuestionAction =
       readonly options?: readonly QuestionOption[]
     }
   | { readonly action: "resolve"; readonly id: number; readonly answer: string }
+  | {
+      readonly action: "withdraw"
+      readonly id: number
+      readonly reason: string
+    }
+  | {
+      readonly action: "replace"
+      readonly id: number
+      readonly reason: string
+      readonly question: string
+      readonly header?: string
+      readonly guess?: string
+      readonly options?: readonly QuestionOption[]
+    }
   | { readonly action: "reopen"; readonly id: number }
   | { readonly action: "clear_resolved" }
 
 export const emptyQuestionState: QuestionState = { questions: [], nextId: 1 }
 
-const isRecord: (
-  value: unknown,
-) => value is Readonly<Record<string, unknown>> = value =>
+const isRecord = (value: unknown): value is Readonly<Record<string, unknown>> =>
   typeof value === "object" && value !== null && !Array.isArray(value)
 
 export const decodeQuestionState: (
@@ -76,7 +89,8 @@ export const decodeQuestionState: (
               typeof option.label === "string" &&
               (option.description === undefined ||
                 typeof option.description === "string"),
-          )))
+          ))) ||
+      (candidate.withdrawn !== undefined && candidate.withdrawn !== true)
     ) {
       return []
     }
@@ -94,7 +108,14 @@ export const decodeQuestionState: (
       candidate.status === "resolved" &&
       typeof candidate.answer === "string"
     ) {
-      return [{ ...base, status: "resolved", answer: candidate.answer }]
+      return [
+        {
+          ...base,
+          status: "resolved",
+          answer: candidate.answer,
+          ...(candidate.withdrawn === true ? { withdrawn: true as const } : {}),
+        },
+      ]
     }
     return []
   })
@@ -134,6 +155,46 @@ export const applyQuestionAction: (
             : question,
         ),
         nextId: state.nextId,
+      }
+    case "withdraw":
+      return {
+        questions: state.questions.map(question =>
+          question.id === action.id
+            ? {
+                ...question,
+                status: "resolved" as const,
+                answer: action.reason.trim(),
+                withdrawn: true as const,
+              }
+            : question,
+        ),
+        nextId: state.nextId,
+      }
+    case "replace":
+      return {
+        questions: [
+          ...state.questions.map(question =>
+            question.id === action.id
+              ? {
+                  ...question,
+                  status: "resolved" as const,
+                  answer: action.reason.trim(),
+                  withdrawn: true as const,
+                }
+              : question,
+          ),
+          {
+            id: state.nextId,
+            status: "pending" as const,
+            question: action.question.trim(),
+            ...(action.header?.trim() ? { header: action.header.trim() } : {}),
+            ...(action.guess?.trim() ? { guess: action.guess.trim() } : {}),
+            ...(action.options && action.options.length > 0
+              ? { options: action.options }
+              : {}),
+          },
+        ],
+        nextId: state.nextId + 1,
       }
     case "reopen":
       return {
@@ -236,6 +297,7 @@ export const repeatedQuestion: (
   const normalizedCandidate = normalizedQuestion(candidate)
   const candidateTokens = significantQuestionTokens(candidate)
   return state.questions.find(question => {
+    if (question.status === "resolved" && question.withdrawn) return false
     if (normalizedQuestion(question.question) === normalizedCandidate)
       return true
     const existingTokens = significantQuestionTokens(question.question)

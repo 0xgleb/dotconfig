@@ -140,6 +140,66 @@ test("resolved decisions suppress exact and narrowly reworded repeat questions",
   )
 })
 
+test("explicit withdrawal permits a corrected question without weakening answered dedupe", () => {
+  const asked = applyQuestionAction(emptyQuestionState, {
+    action: "ask",
+    question: "Should RAI-1214 remain in progress?",
+  })
+  const withdrawn = applyQuestionAction(asked, {
+    action: "withdraw",
+    id: 1,
+    reason: "Malformed card omitted the required options.",
+  })
+
+  assert.equal(
+    repeatedQuestion(withdrawn, "Should RAI-1214 remain in progress?"),
+    undefined,
+  )
+  assert.deepEqual(decodeQuestionState(withdrawn), withdrawn)
+  assert.equal(withdrawn.questions[0]?.status, "resolved")
+  assert.equal(
+    withdrawn.questions[0]?.status === "resolved"
+      ? withdrawn.questions[0].withdrawn
+      : undefined,
+    true,
+  )
+})
+
+test("explicit replacement atomically withdraws the old card and queues the corrected one", () => {
+  const asked = applyQuestionAction(emptyQuestionState, {
+    action: "ask",
+    question: "Should RAI-1214 remain in progress?",
+  })
+  const replaced = applyQuestionAction(asked, {
+    action: "replace",
+    id: 1,
+    reason: "Owner requested a corrected decision card.",
+    question: "Should RAI-1214 be closed as duplicate?",
+    header: "RAI-1214",
+    guess: "Keep it open.",
+    options: [{ label: "Keep open" }, { label: "Close duplicate" }],
+  })
+
+  assert.equal(replaced.nextId, 3)
+  assert.equal(replaced.questions[0]?.status, "resolved")
+  assert.equal(
+    replaced.questions[0]?.status === "resolved"
+      ? replaced.questions[0].withdrawn
+      : undefined,
+    true,
+  )
+  assert.deepEqual(pendingQuestions(replaced), [
+    {
+      id: 2,
+      status: "pending",
+      question: "Should RAI-1214 be closed as duplicate?",
+      header: "RAI-1214",
+      guess: "Keep it open.",
+      options: [{ label: "Keep open" }, { label: "Close duplicate" }],
+    },
+  ])
+})
+
 test("short unrelated questions require exact equality before suppression", () => {
   const asked = applyQuestionAction(emptyQuestionState, {
     action: "ask",

@@ -4,6 +4,7 @@ import {
   type ExtensionContext,
 } from "@earendil-works/pi-coding-agent"
 import { Container, Input, matchesKey, Text } from "@earendil-works/pi-tui"
+import { Data, Effect } from "effect"
 import { Type } from "typebox"
 import {
   applyQuestionAction,
@@ -37,75 +38,157 @@ const QUESTION_MESSAGE = "pi.questions.list"
 const QUESTION_STATUS_KEY = "pi-questions"
 
 interface QuestionRequest {
-  readonly action: "list" | "ask" | "resolve" | "reopen" | "clear_resolved"
+  readonly action:
+    | "list"
+    | "ask"
+    | "resolve"
+    | "withdraw"
+    | "replace"
+    | "reopen"
+    | "clear_resolved"
   readonly question?: string
   readonly header?: string
   readonly guess?: string
   readonly options?: readonly QuestionOption[]
   readonly id?: number
   readonly answer?: string
+  readonly reason?: string
 }
 
-const parseAction: (
+class QuestionActionError extends Data.TaggedError("QuestionActionError")<{
+  readonly message: string
+}> {}
+
+const invalidQuestionAction = (
+  message: string,
+): Effect.Effect<never, QuestionActionError> =>
+  Effect.fail(new QuestionActionError({ message }))
+
+const parseAction = (
   request: QuestionRequest,
   state: QuestionState,
-) => QuestionAction = (request, state) => {
-  switch (request.action) {
-    case "list":
-      return { action: "list" }
-    case "clear_resolved":
-      return { action: "clear_resolved" }
-    case "ask": {
-      const question = request.question?.trim()
-      if (!question) throw new Error("question required for ask")
-      return {
-        action: "ask",
-        question,
-        ...(request.header?.trim() ? { header: request.header.trim() } : {}),
-        ...(request.guess?.trim() ? { guess: request.guess.trim() } : {}),
-        ...(request.options && request.options.length > 0
-          ? { options: request.options }
-          : {}),
+): Effect.Effect<QuestionAction, QuestionActionError> =>
+  Effect.gen(function* () {
+    switch (request.action) {
+      case "list":
+        return { action: "list" }
+      case "clear_resolved":
+        return { action: "clear_resolved" }
+      case "ask": {
+        const question = request.question?.trim()
+        if (!question)
+          return yield* invalidQuestionAction("question required for ask")
+        return {
+          action: "ask",
+          question,
+          ...(request.header?.trim() ? { header: request.header.trim() } : {}),
+          ...(request.guess?.trim() ? { guess: request.guess.trim() } : {}),
+          ...(request.options && request.options.length > 0
+            ? { options: request.options }
+            : {}),
+        }
+      }
+      case "resolve": {
+        if (request.id === undefined)
+          return yield* invalidQuestionAction("id required for resolve")
+        const answer = request.answer?.trim()
+        if (!answer)
+          return yield* invalidQuestionAction("answer required for resolve")
+        const target = state.questions.find(({ id }) => id === request.id)
+        if (!target)
+          return yield* invalidQuestionAction(
+            `Question q${request.id} not found`,
+          )
+        if (target.status !== "pending")
+          return yield* invalidQuestionAction(
+            `Question q${request.id} is already resolved`,
+          )
+        return { action: "resolve", id: request.id, answer }
+      }
+      case "withdraw": {
+        if (request.id === undefined)
+          return yield* invalidQuestionAction("id required for withdraw")
+        const reason = request.reason?.trim()
+        if (!reason)
+          return yield* invalidQuestionAction("reason required for withdraw")
+        const target = state.questions.find(({ id }) => id === request.id)
+        if (!target)
+          return yield* invalidQuestionAction(
+            `Question q${request.id} not found`,
+          )
+        if (target.status === "resolved" && target.withdrawn)
+          return yield* invalidQuestionAction(
+            `Question q${request.id} is already withdrawn`,
+          )
+        return { action: "withdraw", id: request.id, reason }
+      }
+      case "replace": {
+        if (request.id === undefined)
+          return yield* invalidQuestionAction("id required for replace")
+        const reason = request.reason?.trim()
+        if (!reason)
+          return yield* invalidQuestionAction("reason required for replace")
+        const question = request.question?.trim()
+        if (!question)
+          return yield* invalidQuestionAction("question required for replace")
+        const target = state.questions.find(({ id }) => id === request.id)
+        if (!target)
+          return yield* invalidQuestionAction(
+            `Question q${request.id} not found`,
+          )
+        if (target.status === "resolved" && target.withdrawn)
+          return yield* invalidQuestionAction(
+            `Question q${request.id} is already withdrawn`,
+          )
+        return {
+          action: "replace",
+          id: request.id,
+          reason,
+          question,
+          ...(request.header?.trim() ? { header: request.header.trim() } : {}),
+          ...(request.guess?.trim() ? { guess: request.guess.trim() } : {}),
+          ...(request.options && request.options.length > 0
+            ? { options: request.options }
+            : {}),
+        }
+      }
+      case "reopen": {
+        if (request.id === undefined)
+          return yield* invalidQuestionAction("id required for reopen")
+        const target = state.questions.find(({ id }) => id === request.id)
+        if (!target)
+          return yield* invalidQuestionAction(
+            `Question q${request.id} not found`,
+          )
+        if (target.status !== "resolved")
+          return yield* invalidQuestionAction(
+            `Question q${request.id} is already pending`,
+          )
+        return { action: "reopen", id: request.id }
       }
     }
-    case "resolve": {
-      if (request.id === undefined) throw new Error("id required for resolve")
-      const answer = request.answer?.trim()
-      if (!answer) throw new Error("answer required for resolve")
-      const target = state.questions.find(({ id }) => id === request.id)
-      if (!target) throw new Error(`Question q${request.id} not found`)
-      if (target.status !== "pending")
-        throw new Error(`Question q${request.id} is already resolved`)
-      return { action: "resolve", id: request.id, answer }
-    }
-    case "reopen": {
-      if (request.id === undefined) throw new Error("id required for reopen")
-      const target = state.questions.find(({ id }) => id === request.id)
-      if (!target) throw new Error(`Question q${request.id} not found`)
-      if (target.status !== "resolved")
-        throw new Error(`Question q${request.id} is already pending`)
-      return { action: "reopen", id: request.id }
-    }
-  }
-}
+  })
 
 const questionsExtension: (pi: ExtensionAPI) => void = pi => {
-  registerRuntimeVersion(pi, "questions", "2026.08.15.2")
+  registerRuntimeVersion(pi, "questions", "2026.09.03.1")
   let state = emptyQuestionState
   let dialogOpen = false
   let latestCtx: ExtensionContext | undefined
 
   const publishState = (): void => {
     const questions: readonly UserQuestionSnapshot[] = state.questions.map(
-      question => ({
-        id: question.id,
-        status: question.status,
-        question: question.question,
-        ...(question.header ? { header: question.header } : {}),
-        ...(question.guess ? { guess: question.guess } : {}),
-        ...(question.options ? { options: question.options } : {}),
-        ...(question.status === "resolved" ? { answer: question.answer } : {}),
-      }),
+      (question): UserQuestionSnapshot => {
+        const snapshot = {
+          id: question.id,
+          question: question.question,
+          ...(question.header ? { header: question.header } : {}),
+          ...(question.guess ? { guess: question.guess } : {}),
+          ...(question.options ? { options: question.options } : {}),
+        }
+        return question.status === "resolved"
+          ? { ...snapshot, status: "resolved", answer: question.answer }
+          : { ...snapshot, status: "pending" }
+      },
     )
     const snapshot: UserQuestionStateSnapshot = { questions }
     pi.events.emit(QUESTION_STATE_EVENT, snapshot)
@@ -335,6 +418,9 @@ const questionsExtension: (pi: ExtensionAPI) => void = pi => {
     latestCtx = ctx
     restore(ctx)
   })
+  pi.on("session_compact", () => {
+    pi.appendEntry(QUESTION_STATE_ENTRY, state)
+  })
   pi.on("session_shutdown", (_event, ctx) => {
     latestCtx = undefined
     ctx.ui.setStatus(QUESTION_STATUS_KEY, undefined)
@@ -399,17 +485,89 @@ const questionsExtension: (pi: ExtensionAPI) => void = pi => {
     },
   })
 
+  const executeQuestionAction = (
+    request: QuestionRequest,
+    ctx: ExtensionContext,
+  ) =>
+    Effect.gen(function* () {
+      const action = yield* parseAction(request, state)
+      if (action.action === "ask" || action.action === "replace") {
+        const dedupeState =
+          action.action === "replace"
+            ? {
+                ...state,
+                questions: state.questions.filter(
+                  question => question.id !== action.id,
+                ),
+              }
+            : state
+        const repeated = repeatedQuestion(dedupeState, action.question)
+        if (repeated) {
+          const text =
+            repeated.status === "resolved"
+              ? `Not queued: q${repeated.id} already resolved this decision. Answer: ${repeated.answer}`
+              : `Not queued: q${repeated.id} already asks this decision.`
+          return {
+            content: [{ type: "text" as const, text }],
+            details: {
+              outcome: "duplicate",
+              action: action.action,
+              duplicateQuestionId: repeated.id,
+              state,
+            },
+          }
+        }
+      }
+      const priorState = state
+      return yield* Effect.try({
+        try: () => {
+          state = applyQuestionAction(priorState, action)
+          if (action.action !== "list") persist(ctx)
+          const text =
+            action.action === "ask"
+              ? `Queued question q${state.nextId - 1}. The user can answer it explicitly with /questions.`
+              : action.action === "resolve"
+                ? `Resolved question q${action.id}`
+                : action.action === "withdraw"
+                  ? `Withdrew question q${action.id}`
+                  : action.action === "replace"
+                    ? `Replaced question q${action.id} with q${state.nextId - 1}`
+                    : action.action === "reopen"
+                      ? `Reopened question q${action.id}`
+                      : questionListText(state)
+          if (action.action === "ask" || action.action === "replace")
+            ctx.ui.notify(text, "info")
+          return {
+            content: [{ type: "text" as const, text }],
+            details: {
+              outcome: "success",
+              action: action.action,
+              state,
+            },
+          }
+        },
+        catch: cause => {
+          state = priorState
+          return new QuestionActionError({
+            message:
+              cause instanceof Error ? cause.message : "Question action failed",
+          })
+        },
+      })
+    })
+
   pi.registerTool({
     name: "ask_user",
     label: "Question queue",
     description:
-      "Queue, list, resolve, or reopen persistent non-blocking questions for the user.",
+      "Queue, list, resolve, withdraw, replace, or reopen persistent non-blocking questions for the user.",
     promptSnippet:
       "Queue a persistent question for the user without blocking unrelated work",
     promptGuidelines: [
       "Use ask_user when a user decision is required but independent work remains executable.",
       "Before ask_user action=ask, inspect current user messages, ask_user list, and active todos; when prior work may already answer the decision, inspect memory_search and session_search first.",
       "Never use ask_user to repeat a pending, resolved, or otherwise already-answered decision unless newer human input explicitly reopens it.",
+      "Use withdraw for an explicitly withdrawn card, replace to atomically withdraw and correct one, and reopen only when the original card remains accurate.",
       "Include a short header, the current best guess, and 2-4 concise options when the decision has bounded choices.",
       "Continue independent work after asking; resolve the question with a concise answer summary when the user responds.",
       "Queued questions stay passive until the user explicitly opens /questions; never treat ordinary prompt input as an answer.",
@@ -419,6 +577,8 @@ const questionsExtension: (pi: ExtensionAPI) => void = pi => {
         Type.Literal("list"),
         Type.Literal("ask"),
         Type.Literal("resolve"),
+        Type.Literal("withdraw"),
+        Type.Literal("replace"),
         Type.Literal("reopen"),
         Type.Literal("clear_resolved"),
       ]),
@@ -436,6 +596,7 @@ const questionsExtension: (pi: ExtensionAPI) => void = pi => {
       ),
       id: Type.Optional(Type.Integer({ minimum: 1 })),
       answer: Type.Optional(Type.String()),
+      reason: Type.Optional(Type.String()),
     }),
     async execute(
       _toolCallId,
@@ -445,54 +606,22 @@ const questionsExtension: (pi: ExtensionAPI) => void = pi => {
       ctx,
     ) {
       restore(ctx)
-      try {
-        const action = parseAction(request, state)
-        if (action.action === "ask") {
-          const repeated = repeatedQuestion(state, action.question)
-          if (repeated) {
-            const text =
-              repeated.status === "resolved"
-                ? `Not queued: q${repeated.id} already resolved this decision. Answer: ${repeated.answer}`
-                : `Not queued: q${repeated.id} already asks this decision.`
-            return {
-              content: [{ type: "text", text }],
+      return Effect.runPromise(
+        executeQuestionAction(request, ctx).pipe(
+          Effect.match({
+            onFailure: error => ({
+              content: [{ type: "text" as const, text: error.message }],
               details: {
-                outcome: "duplicate",
-                action: action.action,
-                duplicateQuestionId: repeated.id,
+                outcome: "error",
+                action: request.action,
                 state,
+                error: error.message,
               },
-            }
-          }
-        }
-        state = applyQuestionAction(state, action)
-        if (action.action !== "list") persist(ctx)
-        const text =
-          action.action === "ask"
-            ? `Queued question q${state.nextId - 1}. The user can answer it explicitly with /questions.`
-            : action.action === "resolve"
-              ? `Resolved question q${action.id}`
-              : action.action === "reopen"
-                ? `Reopened question q${action.id}`
-                : questionListText(state)
-        if (action.action === "ask") ctx.ui.notify(text, "info")
-        return {
-          content: [{ type: "text", text }],
-          details: { outcome: "success", action: action.action, state },
-        }
-      } catch (error) {
-        const message =
-          error instanceof Error ? error.message : "Question action failed"
-        return {
-          content: [{ type: "text", text: message }],
-          details: {
-            outcome: "error",
-            action: request.action,
-            state,
-            error: message,
-          },
-        }
-      }
+            }),
+            onSuccess: result => result,
+          }),
+        ),
+      )
     },
   })
 }
