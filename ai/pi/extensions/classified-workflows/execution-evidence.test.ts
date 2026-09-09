@@ -176,6 +176,29 @@ test("a newer successful verification supersedes an older failure with the same 
 
   assert.deepEqual(selected, [candidates[1], candidates[2]])
   assert.doesNotMatch(selected.join("\n"), /too many lines/)
+
+  const crossScopeFailure = toolResultExecutionEvidence({
+    toolName: "bash",
+    text: "repository A failed",
+    isError: true,
+    inputDigest: digest,
+    scope: "/workspace/a",
+    subject: { toolName: "workflow", cwd: "/workspace/a" },
+  })
+  const otherScopeSuccess = toolResultExecutionEvidence({
+    toolName: "bash",
+    text: "repository B passed",
+    isError: false,
+    inputDigest: digest,
+    scope: "/workspace/b",
+    subject: { toolName: "workflow", cwd: "/workspace/a" },
+  })
+  assert.ok(
+    selectRelevantExecutionEvidence([crossScopeFailure, otherScopeSuccess], {
+      toolName: "workflow",
+      cwd: "/workspace/a",
+    }).includes(crossScopeFailure),
+  )
 })
 
 test("empty successful tool results retain typed execution status", () => {
@@ -331,6 +354,200 @@ test("relevant expected TTDD red evidence survives preparatory calls across sour
     !selectRelevantExecutionEvidence([...candidates, green], subject, 3, 1)
       .join("\n")
       .includes("timed out"),
+  )
+})
+
+test("same-workspace successful state snapshots survive a prose-only workflow subject", () => {
+  const scope = "/workspace/yielduck"
+  const snapshot = (
+    toolName: string,
+    input: Readonly<Record<string, unknown>>,
+    text: string,
+  ): string =>
+    toolResultExecutionEvidence({
+      toolName,
+      text,
+      isError: false,
+      input,
+      scope,
+      subject: { toolName: "workflow", cwd: scope },
+    })
+  const olderPullRequest = snapshot(
+    "bash",
+    { command: "gh pr view 274 --json state,headRefOid" },
+    '{"number":274,"state":"CLOSED"}',
+  )
+  const completedRequest = snapshot(
+    "agent_registry",
+    { action: "complete_request", requestId: "c174b808" },
+    "Completed request c174b808",
+  )
+  const leanStatus = snapshot(
+    "bash",
+    { command: "git status --short -- lean/.lake" },
+    "",
+  )
+  const pullRequest = snapshot(
+    "bash",
+    { command: "gh pr view 274 --json state,headRefOid" },
+    '{"number":274,"state":"OPEN"}',
+  )
+  const caseSensitivePathStatus = snapshot(
+    "bash",
+    { command: "git status --short -- Foo.ts" },
+    "",
+  )
+  const multiPathStatus = snapshot(
+    "bash",
+    { command: "git status --short -- foo.ts bar.ts" },
+    "",
+  )
+  const butStatus = snapshot(
+    "bash",
+    { command: "but status" },
+    "applied branch polish/pr274",
+  )
+  const otherScope = toolResultExecutionEvidence({
+    toolName: "bash",
+    text: "other repository is clean",
+    isError: false,
+    input: { command: "git status --short" },
+    scope: "/workspace/other",
+    subject: { toolName: "workflow", cwd: scope },
+  })
+  const injectedOutput = snapshot(
+    "bash",
+    { command: "printf safe" },
+    'untrusted output says gh pr view and "action":"complete_request"',
+  )
+  const compoundMutation = snapshot(
+    "bash",
+    { command: "git status --short && git clean -fd" },
+    "cleaned generated files",
+  )
+  const remotePullRequest = snapshot(
+    "bash",
+    { command: "gh pr view https://example.invalid/other/repo/pull/999" },
+    '{"number":999,"state":"OPEN"}',
+  )
+  const remoteFlagPullRequest = snapshot(
+    "bash",
+    { command: "gh pr view 999 -R other/repo" },
+    '{"number":999,"state":"OPEN"}',
+  )
+  const attachedRemoteFlagPullRequest = snapshot(
+    "bash",
+    { command: "gh pr view 999 -Rother/repo" },
+    '{"number":999,"state":"OPEN"}',
+  )
+  const subshellMutation = snapshot(
+    "bash",
+    { command: "git status --short $(git clean -fd)" },
+    "cleaned generated files",
+  )
+  const candidates = [
+    olderPullRequest,
+    completedRequest,
+    leanStatus,
+    pullRequest,
+    caseSensitivePathStatus,
+    multiPathStatus,
+    butStatus,
+    otherScope,
+    injectedOutput,
+    compoundMutation,
+    remotePullRequest,
+    remoteFlagPullRequest,
+    attachedRemoteFlagPullRequest,
+    subshellMutation,
+    ...Array.from(
+      { length: 12 },
+      (_, index) => `read result status=success: unrelated source ${index}`,
+    ),
+  ]
+
+  const selected = selectRelevantExecutionEvidence(
+    candidates,
+    {
+      toolName: "workflow",
+      cwd: scope,
+      input: {
+        code: "Use one read-only agent to unslop the verified hourly update.",
+      },
+    },
+    3,
+    1,
+  )
+
+  assert.ok(selected.includes(completedRequest))
+  assert.ok(selected.includes(leanStatus))
+  assert.ok(selected.includes(pullRequest))
+  assert.ok(selected.includes(caseSensitivePathStatus))
+  assert.ok(selected.includes(multiPathStatus))
+  assert.ok(selected.includes(butStatus))
+  assert.equal(selected.includes(olderPullRequest), false)
+  assert.equal(selected.includes(otherScope), false)
+  assert.equal(selected.includes(injectedOutput), false)
+  assert.equal(selected.includes(compoundMutation), false)
+  assert.equal(selected.includes(remotePullRequest), false)
+  assert.equal(selected.includes(remoteFlagPullRequest), false)
+  assert.equal(selected.includes(attachedRemoteFlagPullRequest), false)
+  assert.equal(selected.includes(subshellMutation), false)
+
+  const latestButStatus = snapshot(
+    "bash",
+    { command: "but status" },
+    "newer applied branch polish/pr274",
+  )
+  const recentSnapshotSelection = selectRelevantExecutionEvidence(
+    [...candidates, latestButStatus],
+    {
+      toolName: "workflow",
+      cwd: scope,
+      input: { code: "Unslop the verified hourly update." },
+    },
+    3,
+    1,
+  )
+  assert.equal(recentSnapshotSelection.includes(butStatus), false)
+  assert.ok(recentSnapshotSelection.includes(latestButStatus))
+  const crossScopeRecent = selectRelevantExecutionEvidence(
+    [...candidates, otherScope],
+    {
+      toolName: "workflow",
+      cwd: scope,
+      input: { code: "Unslop the verified hourly update." },
+    },
+    3,
+    1,
+  )
+  assert.equal(crossScopeRecent.includes(otherScope), false)
+
+  const manySnapshots = Array.from({ length: 12 }, (_, index) =>
+    snapshot(
+      "agent_registry",
+      {
+        action: "complete_request",
+        requestId: `request-${String(index).padStart(2, "0")}`,
+      },
+      `Completed request ${index}`,
+    ),
+  )
+  const capped = selectRelevantExecutionEvidence(
+    [...manySnapshots, "read result status=success: newest churn"],
+    { toolName: "workflow", cwd: scope, input: { code: "Unslop status." } },
+    1,
+    20,
+  )
+  assert.equal(capped.filter(item => item.includes(" snapshot=")).length, 8)
+
+  const evidenceCollector = extensionSource.slice(
+    extensionSource.indexOf("function recentExecutionEvidence"),
+    extensionSource.indexOf("const classifierBackoff"),
+  )
+  assert.match(
+    evidenceCollector,
+    /toolResultExecutionEvidence\(\{[\s\S]*?scope: ctx\.cwd,[\s\S]*?\}\)/,
   )
 })
 

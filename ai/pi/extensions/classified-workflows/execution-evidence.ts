@@ -205,8 +205,62 @@ export interface ToolResultExecutionEvidenceInput {
   readonly input?: unknown
   readonly inputDigest?: string
   readonly subject: unknown
+  readonly scope?: string
   readonly maxCharacters?: number
 }
+
+interface StateSnapshotIdentity {
+  readonly kind:
+    | "git-status"
+    | "gitbutler-status"
+    | "pull-request-view"
+    | "registry-completion"
+  readonly anchor?: string
+}
+
+const stateSnapshotIdentity = (
+  toolName: string,
+  input: Readonly<Record<string, unknown>> | undefined,
+): StateSnapshotIdentity | undefined => {
+  const normalizedToolName = toolName.replace(/^functions\./, "")
+  if (
+    normalizedToolName === "agent_registry" &&
+    input?.action === "complete_request" &&
+    typeof input.requestId === "string" &&
+    /^[a-z0-9-]{4,80}$/i.test(input.requestId)
+  )
+    return {
+      kind: "registry-completion",
+      anchor: `request:${input.requestId.toLowerCase()}`,
+    }
+  if (normalizedToolName !== "bash" || typeof input?.command !== "string")
+    return undefined
+  const command = input.command.trim()
+  if (!/^[a-z0-9_./,:#= -]+$/i.test(command)) return undefined
+  if (/^(?:\^)?git\s+status(?:\s+[^;&|`<>\n]+)?$/i.test(command)) {
+    const pathspec = /\s--\s+(.+)$/i.exec(command)?.[1]?.trim()
+    return {
+      kind: "git-status",
+      ...(pathspec
+        ? {
+            anchor: `paths:${createHash("sha256").update(pathspec).digest("hex").slice(0, 16)}`,
+          }
+        : {}),
+    }
+  }
+  if (/^(?:\^)?but\s+status(?:\s+[^;&|`<>\n]+)?$/i.test(command))
+    return { kind: "gitbutler-status" }
+  const pullRequest = /^(?:\^)?gh\s+pr\s+view\s+#?(\d+)\b([^;&|`<>\n]*)$/i.exec(
+    command,
+  )
+  return pullRequest &&
+    !/(?:^|\s)(?:--repo(?:\s|=)|-R(?:\s|=|\S))/i.test(pullRequest[2] ?? "")
+    ? { kind: "pull-request-view", anchor: `pr:${pullRequest[1]}` }
+    : undefined
+}
+
+const evidenceScopeDigest = (scope: string): string =>
+  createHash("sha256").update(scope).digest("hex").slice(0, 16)
 
 /** Preserve execution status separately from untrusted result wording. */
 export const toolResultExecutionEvidence: (
@@ -218,6 +272,7 @@ export const toolResultExecutionEvidence: (
   input,
   inputDigest,
   subject,
+  scope,
   maxCharacters = 2_400,
 }) => {
   const name =
@@ -236,7 +291,16 @@ export const toolResultExecutionEvidence: (
       : undefined
   const selectedInput = inputRecord
     ? Object.fromEntries(
-        ["action", "command", "file_path", "id", "limit", "offset", "path"]
+        [
+          "action",
+          "command",
+          "file_path",
+          "id",
+          "limit",
+          "offset",
+          "path",
+          "requestId",
+        ]
           .filter(key => inputRecord[key] !== undefined)
           .map(key => [key, inputRecord[key]]),
       )
@@ -245,8 +309,14 @@ export const toolResultExecutionEvidence: (
     .replace(/\s+/g, " ")
     .slice(0, 1_000)
   const inputIdentity = encodedInput !== "{}" ? ` input=${encodedInput}` : ""
+  const snapshot =
+    status === "success" ? stateSnapshotIdentity(name, inputRecord) : undefined
+  const scopeIdentity = scope ? ` scope=${evidenceScopeDigest(scope)}` : ""
+  const snapshotMarker = snapshot
+    ? ` snapshot=${snapshot.kind}${snapshot.anchor ? ` anchor=${snapshot.anchor}` : ""}`
+    : ""
   const evidenceText = text.trim() || "(no textual output)"
-  return `${name} result status=${status}${digestIdentity}${inputIdentity}: ${boundedRelevantExecutionEvidence(evidenceText, subject, maxCharacters)}`
+  return `${name} result status=${status}${digestIdentity}${scopeIdentity}${snapshotMarker}${inputIdentity}: ${boundedRelevantExecutionEvidence(evidenceText, subject, maxCharacters)}`
 }
 
 const supersededFailureIndexes = (
@@ -257,15 +327,37 @@ const supersededFailureIndexes = (
   for (let index = candidates.length - 1; index >= 0; index -= 1) {
     const candidate = candidates[index] ?? ""
     const match = candidate.match(
-      /^\S+ result status=(success|error) inputDigest=([0-9a-f]{64})\b/,
+      /^\S+ result status=(success|error) inputDigest=([0-9a-f]{64})(?: scope=([0-9a-f]{16}))?\b/,
     )
     if (!match) continue
-    const [, status, inputDigest] = match
+    const [, status, inputDigest, scope] = match
     if (!inputDigest) continue
-    if (status === "success") laterSuccessfulInputs.add(inputDigest)
-    else if (laterSuccessfulInputs.has(inputDigest)) superseded.add(index)
+    const identity = `${inputDigest}:${scope ?? "legacy"}`
+    if (status === "success") laterSuccessfulInputs.add(identity)
+    else if (laterSuccessfulInputs.has(identity)) superseded.add(index)
   }
   return superseded
+}
+
+const STATE_SNAPSHOT_MARKER =
+  /^(?:functions\.)?\S+ result status=success(?: inputDigest=[0-9a-f]{64})? scope=([0-9a-f]{16}) snapshot=(git-status|gitbutler-status|pull-request-view|registry-completion)(?: anchor=([a-z0-9_./:-]{1,128}))?\b/i
+
+interface StateSnapshotMarker {
+  readonly kind: string
+  readonly scope: string
+  readonly anchor?: string
+}
+
+const stateSnapshotMarker = (
+  candidate: string,
+): StateSnapshotMarker | undefined => {
+  const match = STATE_SNAPSHOT_MARKER.exec(candidate)
+  if (!match?.[1] || !match[2]) return undefined
+  return {
+    kind: match[2],
+    scope: match[1],
+    ...(match[3] ? { anchor: match[3] } : {}),
+  }
 }
 
 /** Keep a small recency window plus older evidence that shares concrete identifiers with the proposed boundary. */
@@ -276,8 +368,33 @@ export const selectRelevantExecutionEvidence = (
   relevantCount = 8,
 ): readonly string[] => {
   const superseded = supersededFailureIndexes(candidates)
-  const currentCandidates = candidates.filter(
+  const nonSupersededCandidates = candidates.filter(
     (_, index) => !superseded.has(index),
+  )
+  const workflowScope =
+    isRecord(subject) &&
+    subject.toolName === "workflow" &&
+    typeof subject.cwd === "string"
+      ? evidenceScopeDigest(subject.cwd)
+      : undefined
+  const supersededSnapshotIndexes = new Set<number>()
+  if (workflowScope) {
+    const latestSnapshotIndexes = new Map<string, number>()
+    nonSupersededCandidates.forEach((candidate, index) => {
+      const marker = stateSnapshotMarker(candidate)
+      if (!marker || marker.scope !== workflowScope) return
+      const identity = `${marker.kind}:${marker.anchor ?? "scope"}`
+      const prior = latestSnapshotIndexes.get(identity)
+      if (prior !== undefined) supersededSnapshotIndexes.add(prior)
+      latestSnapshotIndexes.set(identity, index)
+    })
+  }
+  const currentCandidates = nonSupersededCandidates.filter(
+    (candidate, index) => {
+      if (supersededSnapshotIndexes.has(index)) return false
+      const marker = stateSnapshotMarker(candidate)
+      return !workflowScope || !marker || marker.scope === workflowScope
+    },
   )
   const recentStart = Math.max(0, currentCandidates.length - recentCount)
   const recent = currentCandidates.slice(recentStart)
@@ -332,8 +449,34 @@ export const selectRelevantExecutionEvidence = (
     .slice(-4)
     .map(({ index }) => index)
   for (const index of instructionReadIndexes) selectedOlderIndexes.add(index)
+  if (workflowScope) {
+    const stateSnapshotIndexes = olderCandidates
+      .map((candidate, index) => ({
+        index,
+        marker: stateSnapshotMarker(candidate),
+      }))
+      .filter(({ marker }) => marker?.scope === workflowScope)
+      .slice(-8)
+      .map(({ index }) => index)
+    for (const index of stateSnapshotIndexes) selectedOlderIndexes.add(index)
+  }
   const older = olderCandidates.filter((_candidate, index) =>
     selectedOlderIndexes.has(index),
   )
-  return [...older, ...recent]
+  const retainedSnapshotIndexes = new Set(
+    older
+      .map((candidate, index) => ({
+        index,
+        marker: stateSnapshotMarker(candidate),
+      }))
+      .filter(({ marker }) => marker !== undefined)
+      .slice(-8)
+      .map(({ index }) => index),
+  )
+  const boundedOlder = older.filter(
+    (candidate, index) =>
+      stateSnapshotMarker(candidate) === undefined ||
+      retainedSnapshotIndexes.has(index),
+  )
+  return [...boundedOlder, ...recent]
 }
