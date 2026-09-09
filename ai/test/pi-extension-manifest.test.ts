@@ -15,6 +15,7 @@ test("managed Pi package loads coordination extensions in normal sessions", () =
   assert.equal(extensions.includes("./activity-status/index.ts"), true)
   assert.equal(extensions.includes("./agent-registry/index.ts"), true)
   assert.equal(extensions.includes("./btw/index.ts"), true)
+  assert.equal(extensions.includes("./lsp/index.ts"), true)
   assert.equal(extensions.includes("./nushell-default/index.ts"), true)
   assert.equal(extensions.includes("./questions/index.ts"), true)
   assert.equal(extensions.includes("./safe-compaction/index.ts"), true)

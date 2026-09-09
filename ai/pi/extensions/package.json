@@ -60,6 +60,7 @@
       "./image-summary/index.ts",
       "./link-safety/index.ts",
       "./local-models/index.ts",
+      "./lsp/index.ts",
       "./pi-vim/index.ts",
       "./questions/index.ts",
       "./release-cadence/index.ts",

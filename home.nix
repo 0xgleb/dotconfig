@@ -410,8 +410,11 @@ in
         piHarnessWorker
         piSolReview
         pi-coding-agent-with-reload
+        pkgs.nixd
         pkgs.prek
         pkgs.prettier
+        pkgs.rust-analyzer
+        pkgs.typescript-language-server
       ];
 
     shell.enableNushellIntegration = true;

@@ -43,6 +43,7 @@ test("fleet diagnostics expose current behavior-bearing component versions", () 
     read("../pi/extensions/link-safety/index.ts"),
     /link-safety", "2026\.07\.23\.1"/,
   )
+  assert.match(read("../pi/extensions/lsp/index.ts"), /lsp", "2026\.09\.04\.1"/)
   assert.match(
     read("../pi/extensions/nushell-default/index.ts"),
     /nushell-default", "2026\.08\.23\.2"/,
