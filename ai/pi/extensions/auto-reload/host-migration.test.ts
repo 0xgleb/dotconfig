@@ -126,6 +126,10 @@ test("auto reload defers in-place host migration until idle and restores the com
   assert.match(extensionSource, /ctx\.ui\.getEditorText\(\)/)
   assert.match(extensionSource, /ctx\.hasPendingMessages\(\)/)
   assert.match(extensionSource, /ctx\.isIdle\(\)/)
+  assert.match(
+    extensionSource,
+    /sessionStartActive \|\|[\s\S]*?!ctx\.isIdle\(\)[\s\S]*?ctx\.ui\.getEditorText\(\)\.length > 0/,
+  )
   assert.match(extensionSource, /process\.execve/)
   assert.match(extensionSource, /hostMigrationArgv/)
   assert.match(extensionSource, /hostMigrationEnvironment/)
@@ -142,10 +146,18 @@ test("auto reload defers in-place host migration until idle and restores the com
     extensionSource,
     /pi\.sendMessage[\s\S]*?Resuming preserved work after Pi host migration/,
   )
+  assert.match(
+    extensionSource,
+    /pi\.sendMessage\([\s\S]*?auto-reload\.host-migrated[\s\S]*?\)[\s\S]*?recordHostMigrationDelivery\(delivery, branch\)/,
+  )
+  assert.doesNotMatch(
+    extensionSource,
+    /recordHostMigrationDelivery\(delivery, branch\)[\s\S]{0,500}?pi\.sendMessage\([\s\S]*?auto-reload\.host-migrated/,
+  )
   assert.match(extensionSource, /clearTimeout\(hostMigrationTimer\)/)
   const preflight = extensionSource.indexOf("if (!isReloadableContext(ctx))")
   const migration = extensionSource.indexOf(
-    "if (hostMigrationPlan) {\n      scheduleHostMigration(ctx, hostMigrationPlan)",
+    "if (hostMigrationPlan) scheduleHostMigration(ctx, hostMigrationPlan)",
   )
   assert.ok(migration > 0)
   assert.ok(migration < preflight)

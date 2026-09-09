@@ -19,6 +19,28 @@ import {
 
 const source = readFileSync(new URL("./index.ts", import.meta.url), "utf8")
 
+test("post-reload continuation records consumption only after successful delivery", () => {
+  const continuationStart = source.indexOf("const scheduleContinuation")
+  const continuationEnd = source.indexOf(
+    "if (modelRefreshFailure)",
+    continuationStart,
+  )
+  const continuation = source.slice(continuationStart, continuationEnd)
+
+  assert.match(
+    continuation,
+    /pi\.sendMessage\(message, \{ deliverAs: "nextTurn" \}\)\s*recordDelivery\(\)/,
+  )
+  assert.match(
+    continuation,
+    /pi\.sendMessage\(message, \{ triggerTurn: true, deliverAs \}\)\s*recordDelivery\(\)/,
+  )
+  assert.doesNotMatch(
+    continuation,
+    /recordDelivery\(\)[\s\S]{0,160}?pi\.sendMessage/,
+  )
+})
+
 test("post-reload continuation waits for a later idle macrotask without owning the composer", () => {
   assert.match(source, /setTimeout\(deliverWhenSettled, 0\)/)
   assert.match(
@@ -61,6 +83,49 @@ test("reload degradation is automatically routed as an agentops incident", () =>
   assert.match(
     source,
     /reportIncident\([\s\S]*?"warning",[\s\S]*?"watch managed Pi resources"/,
+  )
+})
+
+test("manual reload cancels a continuation from the superseded generation", () => {
+  const manualStart = source.indexOf("pi.events.on(MANUAL_RELOAD_REQUEST_EVENT")
+  const manualEnd = source.indexOf(
+    "const resolveHostMigrationPlan",
+    manualStart,
+  )
+  const manualHandler = source.slice(manualStart, manualEnd)
+
+  assert.match(
+    manualHandler,
+    /if \(reloadContinuationTimer\) clearTimeout\(reloadContinuationTimer\)/,
+  )
+  assert.match(
+    manualHandler,
+    /if \(hostMigrationTimer\) clearTimeout\(hostMigrationTimer\)/,
+  )
+  assert.match(manualHandler, /reloadContinuationTimer = undefined/)
+  assert.match(manualHandler, /hostMigrationTimer = undefined/)
+})
+
+test("failed host replacement keeps watchers active and retries without incident spam", () => {
+  assert.match(source, /HOST_MIGRATION_FAILURE_RETRY_MS/)
+  assert.match(
+    source,
+    /catch \(error\) \{[\s\S]*?if \(!failureReported\)[\s\S]*?hostMigrationTimer = setTimeout\([\s\S]*?migrateWhenIdle,[\s\S]*?HOST_MIGRATION_FAILURE_RETRY_MS/,
+  )
+  assert.doesNotMatch(
+    source,
+    /if \(hostMigrationPlan\) \{\s*scheduleHostMigration\(ctx, hostMigrationPlan\)\s*return/,
+  )
+})
+
+test("failed automatic reload schedules a bounded retry", () => {
+  const performReload = source.indexOf("const performReload")
+  const reloadWhenIdle = source.indexOf("const reloadWhenIdle", performReload)
+  const handler = source.slice(performReload, reloadWhenIdle)
+
+  assert.match(
+    handler,
+    /catch \(error\) \{[\s\S]*?pending = true[\s\S]*?timer = setTimeout\(\(\) => void reloadWhenIdle\(ctx\), IDLE_RETRY_MS\)/,
   )
 })
 
@@ -146,6 +211,17 @@ test("long-running turns wait for an idle boundary without managed preemption", 
   assert.doesNotMatch(source, /ctx\.abort\(\)/)
 })
 
+test("host migration notices stay out of model context", () => {
+  assert.match(
+    source,
+    /ctx\.ui\.notify\(\s*"Activated Pi host verified; replacing this running process in place\.",\s*"info",?\s*\)/,
+  )
+  assert.doesNotMatch(
+    source,
+    /pi\.sendMessage\(\{\s*customType: "auto-reload\.host-migration"/,
+  )
+})
+
 test("completed reloads render one terse change-dominant line", () => {
   assert.match(source, /registerMessageRenderer\(\s*COMPLETED_MESSAGE_TYPE/)
   assert.match(source, /managedReloadDisplayText\(/)
@@ -153,6 +229,26 @@ test("completed reloads render one terse change-dominant line", () => {
   assert.doesNotMatch(
     source,
     /content: `Pi resources auto-reloaded after managed configuration changed/,
+  )
+})
+
+test("passive reload notices stay out of model context", () => {
+  assert.match(
+    source,
+    /else \{[\s\S]*?ctx\.ui\.notify\(displayText, "info"\)[\s\S]*?\}/,
+  )
+  assert.doesNotMatch(
+    source,
+    /else \{[\s\S]{0,500}?pi\.sendMessage\(message\)[\s\S]{0,100}?\}/,
+  )
+})
+
+test("only trusted human inputs rearm reload continuation delivery", () => {
+  assert.match(source, /HUMAN_TURN_EVENT/)
+  assert.match(source, /RELOAD_HUMAN_INPUT_ENTRY/)
+  assert.match(
+    source,
+    /pi\.on\("input", event => \{[\s\S]*?event\.source !== "extension"[\s\S]*?recordHumanInput/,
   )
 })
 
@@ -174,6 +270,17 @@ test("pending user gates consume stale interrupted-generation resumes without in
     source,
     /latestReloadResumeMarker\(branch\)\?\.requestedAt[\s\S]*?status: "resumed"/,
   )
+})
+
+test("source changes during model refresh are reconciled after watchers restart", () => {
+  const sessionStart = source.indexOf('pi.on("session_start"')
+  const refresh = source.indexOf("ctx.modelRegistry.refresh({", sessionStart)
+  const tracker = source.indexOf("createManagedGenerationTracker", sessionStart)
+  const reconcile = source.indexOf("generationReconciler.poll(aiRoot)", tracker)
+
+  assert.ok(tracker > sessionStart)
+  assert.ok(tracker < refresh)
+  assert.ok(reconcile > refresh)
 })
 
 test("managed reload refreshes active model metadata before resuming preserved work", () => {

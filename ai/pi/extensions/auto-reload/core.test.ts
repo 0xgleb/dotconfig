@@ -13,6 +13,8 @@ import {
   reloadComposerIsSafe,
   managedReloadDelivery,
   RELOAD_FOLLOW_UP_ENTRY,
+  RELOAD_HUMAN_INPUT_ENTRY,
+  RELOAD_RESUME_ENTRY,
   parseReloadResumeMarker,
   shouldDispatchReloadFollowUp,
   unseenHandoffNames,
@@ -68,6 +70,29 @@ test("managed reloads wait for active turns and never preempt queued work", () =
       preemptRequested: true,
     }),
     "wait",
+  )
+})
+
+test("malformed newer resume state cannot hide an older valid pending marker", () => {
+  const validPending = {
+    type: "custom",
+    customType: "auto-reload.preempted-generation",
+    data: { requestedAt: 123, status: "pending" },
+  }
+  const malformedNewer = {
+    type: "custom",
+    customType: "auto-reload.preempted-generation",
+    data: { requestedAt: "later", status: "resumed" },
+  }
+
+  assert.deepEqual(
+    parseReloadResumeMarker(validPending.data),
+    validPending.data,
+  )
+  assert.equal(parseReloadResumeMarker(malformedNewer.data), undefined)
+  assert.equal(
+    managedReloadDelivery("reload", [validPending, malformedNewer], false),
+    "resume",
   )
 })
 
@@ -157,9 +182,28 @@ test("reload does not duplicate a queued or unanswered managed continuation", ()
     customType: RELOAD_FOLLOW_UP_ENTRY,
     data: { requestedAt: 123 },
   }
+  const priorReloadResume = {
+    type: "custom",
+    customType: RELOAD_RESUME_ENTRY,
+    data: { requestedAt: 123, status: "resumed" },
+  }
+  const extensionLoopContinuation = {
+    type: "message",
+    id: "loop-user-message",
+    message: {
+      role: "user",
+      content: "Recurring loop run #7 (infinite):\n/register",
+    },
+  }
   const humanContinuation = {
     type: "message",
+    id: "human-user-message",
     message: { role: "user", content: "Continue" },
+  }
+  const humanInputMarker = {
+    type: "custom",
+    customType: RELOAD_HUMAN_INPUT_ENTRY,
+    data: { observedAt: 456 },
   }
   assert.equal(managedReloadDelivery("reload", [pendingTodo], true), "display")
   assert.equal(
@@ -172,13 +216,45 @@ test("reload does not duplicate a queued or unanswered managed continuation", ()
     "a later source generation must not inject another turn before new human input",
   )
   assert.equal(
+    managedReloadDelivery("reload", [pendingTodo, priorReloadResume], false),
+    "display",
+    "a completed interrupted-generation resume suppresses later reload wakes",
+  )
+  assert.equal(
+    managedReloadDelivery(
+      "reload",
+      [pendingTodo, priorReloadWake, extensionLoopContinuation],
+      false,
+    ),
+    "display",
+    "extension-generated user messages must not rearm reload continuations",
+  )
+  assert.equal(
     managedReloadDelivery(
       "reload",
       [pendingTodo, priorReloadWake, humanContinuation],
       false,
     ),
+    "display",
+    "untyped user-shaped session entries cannot prove human input",
+  )
+  assert.equal(
+    managedReloadDelivery(
+      "reload",
+      [pendingTodo, humanInputMarker, priorReloadWake],
+      false,
+    ),
+    "display",
+    "a human input already consumed by the prior wake cannot rearm it again",
+  )
+  assert.equal(
+    managedReloadDelivery(
+      "reload",
+      [pendingTodo, priorReloadWake, humanContinuation, humanInputMarker],
+      false,
+    ),
     "followUp",
-    "a later human turn rearms one managed continuation",
+    "a trusted later human-input marker rearms one managed continuation",
   )
 })
 
@@ -225,6 +301,30 @@ test("managed reload summaries identify changed capabilities without exposing fu
   )
 })
 
+test("malformed question items fail closed before reload continuation", () => {
+  const pendingTodo = {
+    type: "custom",
+    customType: "todo.state",
+    data: {
+      todos: [{ id: 1, text: "Continue", status: "pending" }],
+      nextId: 2,
+    },
+  }
+  const malformedQuestionState = {
+    type: "custom",
+    customType: "pi.questions.state",
+    data: { questions: [null] },
+  }
+
+  assert.equal(
+    shouldDispatchReloadFollowUp("reload", [
+      pendingTodo,
+      malformedQuestionState,
+    ]),
+    false,
+  )
+})
+
 test("auto reload triggers turns for active work and blockers that the new generation may resolve", () => {
   const pendingTodo = {
     type: "custom",
@@ -259,6 +359,16 @@ test("auto reload triggers turns for active work and blockers that the new gener
       nextId: 8,
     },
   }
+  const malformedNewerQuestionState = {
+    type: "custom",
+    customType: "pi.questions.state",
+    data: { questions: "unknown" },
+  }
+  const malformedQuestionItemState = {
+    type: "custom",
+    customType: "pi.questions.state",
+    data: { questions: [null] },
+  }
   assert.equal(shouldDispatchReloadFollowUp("reload", []), false)
   assert.equal(shouldDispatchReloadFollowUp("reload", [pendingTodo]), true)
   assert.equal(
@@ -275,6 +385,23 @@ test("auto reload triggers turns for active work and blockers that the new gener
     shouldDispatchReloadFollowUp("reload", [pendingTodo, pendingQuestion]),
     false,
     "the typed user gate suppresses generic todo and goal wakes until answered",
+  )
+  assert.equal(
+    shouldDispatchReloadFollowUp("reload", [
+      pendingTodo,
+      pendingQuestion,
+      malformedNewerQuestionState,
+    ]),
+    false,
+    "malformed newer question state must fail closed instead of hiding a pending gate",
+  )
+  assert.equal(
+    shouldDispatchReloadFollowUp("reload", [
+      pendingTodo,
+      malformedQuestionItemState,
+    ]),
+    false,
+    "malformed question items must fail closed",
   )
   assert.equal(shouldDispatchReloadFollowUp("resume", [pendingTodo]), false)
   assert.equal(

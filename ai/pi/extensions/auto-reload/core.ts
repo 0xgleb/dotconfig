@@ -5,6 +5,7 @@ import { isContinuationPaused } from "../shared/continuation-pause.ts"
 export const HANDOFF_GLOBS = ["*.md", "handoffs/*.md"] as const
 export const RELOAD_RESUME_ENTRY = "auto-reload.preempted-generation"
 export const RELOAD_FOLLOW_UP_ENTRY = "auto-reload.follow-up-dispatched"
+export const RELOAD_HUMAN_INPUT_ENTRY = "auto-reload.human-input"
 
 export const reloadComposerIsSafe = (input: {
   readonly editorText: string
@@ -16,10 +17,7 @@ export const reloadComposerIsSafe = (input: {
   !input.compactionActive
 
 export type ManagedReloadDecision =
-  | "await-settle"
-  | "reload"
-  | "wait"
-  | "preempt"
+  "await-settle" | "reload" | "wait" | "preempt"
 
 export const managedReloadDecision = (input: {
   readonly settled: boolean
@@ -174,57 +172,77 @@ const hasPendingUserQuestion = (entries: readonly unknown[]): boolean => {
       !("questions" in data) ||
       !Array.isArray(data.questions)
     )
-      return false
-    return data.questions.some(
-      question =>
-        typeof question === "object" &&
-        question !== null &&
-        "status" in question &&
-        question.status === "pending",
+      return true
+    const statuses = data.questions.map(question =>
+      typeof question === "object" &&
+      question !== null &&
+      "status" in question &&
+      (question.status === "pending" || question.status === "resolved")
+        ? question.status
+        : undefined,
     )
+    if (statuses.some(status => status === undefined)) return true
+    return statuses.some(status => status === "pending")
   }
   return false
 }
 
-const hasHumanUserMessageAfterLastReloadFollowUp = (
+const isReloadHumanInputMarker = (entry: unknown): boolean =>
+  typeof entry === "object" &&
+  entry !== null &&
+  "type" in entry &&
+  entry.type === "custom" &&
+  "customType" in entry &&
+  entry.customType === RELOAD_HUMAN_INPUT_ENTRY &&
+  "data" in entry &&
+  typeof entry.data === "object" &&
+  entry.data !== null &&
+  "observedAt" in entry.data &&
+  Number.isSafeInteger(entry.data.observedAt) &&
+  Number(entry.data.observedAt) >= 0
+
+const isReloadFollowUpMarker = (entry: unknown): boolean =>
+  typeof entry === "object" &&
+  entry !== null &&
+  "type" in entry &&
+  entry.type === "custom" &&
+  "customType" in entry &&
+  entry.customType === RELOAD_FOLLOW_UP_ENTRY &&
+  "data" in entry &&
+  typeof entry.data === "object" &&
+  entry.data !== null &&
+  "requestedAt" in entry.data &&
+  Number.isSafeInteger(entry.data.requestedAt) &&
+  Number(entry.data.requestedAt) >= 0
+
+const hasHumanInputAfterLastReloadContinuation = (
   entries: readonly unknown[],
 ): boolean => {
-  let followUpIndex = -1
+  let deliveryIndex = -1
   for (let index = entries.length - 1; index >= 0; index -= 1) {
     const entry = entries[index]
+    if (isReloadFollowUpMarker(entry)) {
+      deliveryIndex = index
+      break
+    }
     if (
-      typeof entry !== "object" ||
-      entry === null ||
-      !("type" in entry) ||
-      entry.type !== "custom" ||
-      !("customType" in entry) ||
-      entry.customType !== RELOAD_FOLLOW_UP_ENTRY ||
-      !("data" in entry) ||
-      typeof entry.data !== "object" ||
-      entry.data === null ||
-      !("requestedAt" in entry.data) ||
-      !Number.isSafeInteger(entry.data.requestedAt) ||
-      Number(entry.data.requestedAt) < 0
-    )
-      continue
-    followUpIndex = index
-    break
+      typeof entry === "object" &&
+      entry !== null &&
+      "type" in entry &&
+      entry.type === "custom" &&
+      "customType" in entry &&
+      entry.customType === RELOAD_RESUME_ENTRY &&
+      "data" in entry
+    ) {
+      const resume = parseReloadResumeMarker(entry.data)
+      if (resume?.status === "resumed") {
+        deliveryIndex = index
+        break
+      }
+    }
   }
-  if (followUpIndex < 0) return true
-  return entries
-    .slice(followUpIndex + 1)
-    .some(
-      entry =>
-        typeof entry === "object" &&
-        entry !== null &&
-        "type" in entry &&
-        entry.type === "message" &&
-        "message" in entry &&
-        typeof entry.message === "object" &&
-        entry.message !== null &&
-        "role" in entry.message &&
-        entry.message.role === "user",
-    )
+  if (deliveryIndex < 0) return true
+  return entries.slice(deliveryIndex + 1).some(isReloadHumanInputMarker)
 }
 
 export const shouldDispatchReloadFollowUp: (
@@ -235,7 +253,7 @@ export const shouldDispatchReloadFollowUp: (
     reason !== "reload" ||
     isContinuationPaused(entries) ||
     hasPendingUserQuestion(entries) ||
-    !hasHumanUserMessageAfterLastReloadFollowUp(entries)
+    !hasHumanInputAfterLastReloadContinuation(entries)
   )
     return false
   const todos = todoWorkSnapshot(entries as unknown[])
@@ -285,16 +303,14 @@ export const latestReloadResumeMarker = (
       !("data" in entry)
     )
       continue
-    return parseReloadResumeMarker(entry.data)
+    const marker = parseReloadResumeMarker(entry.data)
+    if (marker) return marker
   }
   return undefined
 }
 
 export type ManagedReloadDelivery =
-  | "display"
-  | "displayAndConsumeResume"
-  | "followUp"
-  | "resume"
+  "display" | "displayAndConsumeResume" | "followUp" | "resume"
 
 export const managedReloadDelivery = (
   reason: string,

@@ -31,6 +31,7 @@ import {
   parseManagedReloadSummary,
   parseSeenHandoffNames,
   RELOAD_FOLLOW_UP_ENTRY,
+  RELOAD_HUMAN_INPUT_ENTRY,
   RELOAD_RESUME_ENTRY,
   reloadComposerIsSafe,
   unseenHandoffNames,
@@ -45,6 +46,7 @@ import {
   type AutoReloadPendingReporter,
 } from "../shared/reload-events.ts"
 import { registerRuntimeVersion } from "../shared/runtime-version.ts"
+import { HUMAN_TURN_EVENT } from "../shared/usage-governor-events.ts"
 import {
   HOST_MIGRATION_DRAFT_ENV,
   HOST_MIGRATION_RESUME_ENV,
@@ -68,6 +70,7 @@ const GENERATION_POLL_MS = 5_000
 const GENERATION_RECONCILE_MS = SETTLE_RETRY_MS
 const MODEL_REFRESH_TIMEOUT_MS = 10_000
 const HOST_MIGRATION_RETRY_MS = 250
+const HOST_MIGRATION_FAILURE_RETRY_MS = 30_000
 const STATUS_KEY = "auto-reload"
 
 interface HostMigrationPlan {
@@ -240,7 +243,7 @@ const managedTreeGeneration = (
 }
 
 const autoReload: (pi: ExtensionAPI) => void = pi => {
-  registerRuntimeVersion(pi, "auto-reload", "2026.09.04.1")
+  registerRuntimeVersion(pi, "auto-reload", "2026.09.04.2")
   pi.registerMessageRenderer(
     COMPLETED_MESSAGE_TYPE,
     (message, options, theme) => {
@@ -276,11 +279,22 @@ const autoReload: (pi: ExtensionAPI) => void = pi => {
   let reloadExecutionScheduler:
     ReloadExecutionScheduler<ReloadableContext> | undefined
   let agentRunActive = false
+  let sessionStartActive = false
   let pending = false
   let pendingSince: number | undefined
   let composerSafeSince: number | undefined
   let lastChangeAt = 0
   const changedLabels = new Set<string>()
+
+  const recordHumanInput = (): void => {
+    pi.appendEntry(RELOAD_HUMAN_INPUT_ENTRY, { observedAt: Date.now() })
+  }
+
+  pi.events.on(HUMAN_TURN_EVENT, recordHumanInput)
+
+  pi.on("input", event => {
+    if (event.source !== "extension") recordHumanInput()
+  })
 
   pi.events.on(
     AUTO_RELOAD_PENDING_REQUEST_EVENT,
@@ -289,8 +303,12 @@ const autoReload: (pi: ExtensionAPI) => void = pi => {
 
   pi.events.on(MANUAL_RELOAD_REQUEST_EVENT, () => {
     if (timer) clearTimeout(timer)
+    if (reloadContinuationTimer) clearTimeout(reloadContinuationTimer)
+    if (hostMigrationTimer) clearTimeout(hostMigrationTimer)
     reloadExecutionScheduler?.close()
     timer = undefined
+    reloadContinuationTimer = undefined
+    hostMigrationTimer = undefined
     if (changedLabels.size > 0) {
       pi.appendEntry(RELOAD_SUMMARY_ENTRY, {
         labels: [...changedLabels].sort(),
@@ -367,10 +385,32 @@ const autoReload: (pi: ExtensionAPI) => void = pi => {
     }
   }
 
+  const recordReloadContinuationDelivery = (
+    delivery: "resume" | "followUp",
+    branch: readonly unknown[],
+  ): void => {
+    const requestedAt =
+      latestReloadResumeMarker(branch)?.requestedAt ?? Date.now()
+    if (delivery === "resume") {
+      pi.appendEntry(RELOAD_RESUME_ENTRY, {
+        requestedAt,
+        status: "resumed",
+      })
+    } else {
+      pi.appendEntry(RELOAD_FOLLOW_UP_ENTRY, { requestedAt })
+    }
+  }
+
+  const recordHostMigrationDelivery = (
+    delivery: "resume" | "followUp",
+    branch: readonly unknown[],
+  ): void => recordReloadContinuationDelivery(delivery, branch)
+
   const scheduleHostMigration = (
     ctx: ExtensionContext,
     plan: HostMigrationPlan,
   ): void => {
+    let failureReported = false
     const migrateWhenIdle = (): void => {
       hostMigrationTimer = undefined
       if (agentRunActive || !ctx.isIdle() || ctx.hasPendingMessages()) {
@@ -398,12 +438,20 @@ const autoReload: (pi: ExtensionAPI) => void = pi => {
           ),
         )
       } catch (error) {
-        reportIncident(
-          "error",
-          "replace running Pi host",
-          `Could not replace the running Pi host: ${error instanceof Error ? error.message : "unknown error"}`,
+        if (!failureReported) {
+          failureReported = true
+          reportIncident(
+            "error",
+            "replace running Pi host",
+            `Could not replace the running Pi host: ${error instanceof Error ? error.message : "unknown error"}`,
+          )
+        }
+        ctx.ui.setStatus(STATUS_KEY, "reload:host-migration-retrying")
+        hostMigrationTimer = setTimeout(
+          migrateWhenIdle,
+          HOST_MIGRATION_FAILURE_RETRY_MS,
         )
-        ctx.ui.setStatus(STATUS_KEY, "reload:host-migration-failed")
+        hostMigrationTimer.unref?.()
       }
     }
 
@@ -420,22 +468,39 @@ const autoReload: (pi: ExtensionAPI) => void = pi => {
     if (editorDraft === undefined) return
     ctx.ui.setEditorText(editorDraft)
     if (!shouldResume || editorDraft.length > 0) return
+    const branch = ctx.sessionManager.getBranch()
+    const delivery = managedReloadDelivery("reload", branch, false)
+    if (delivery !== "resume" && delivery !== "followUp") return
 
     const resumeWhenIdle = (): void => {
       hostMigrationTimer = undefined
-      if (!ctx.isIdle() || ctx.hasPendingMessages()) {
+      if (
+        sessionStartActive ||
+        !ctx.isIdle() ||
+        ctx.hasPendingMessages() ||
+        ctx.ui.getEditorText().length > 0
+      ) {
         hostMigrationTimer = setTimeout(resumeWhenIdle, HOST_MIGRATION_RETRY_MS)
         hostMigrationTimer.unref?.()
         return
       }
-      pi.sendMessage(
-        {
-          customType: "auto-reload.host-migrated",
-          content: "Resuming preserved work after Pi host migration.",
-          display: true,
-        },
-        { triggerTurn: true, deliverAs: "followUp" },
-      )
+      try {
+        pi.sendMessage(
+          {
+            customType: "auto-reload.host-migrated",
+            content: "Resuming preserved work after Pi host migration.",
+            display: true,
+          },
+          { triggerTurn: true, deliverAs: "followUp" },
+        )
+        recordHostMigrationDelivery(delivery, branch)
+      } catch {
+        reportIncident(
+          "warning",
+          "resume after host migration",
+          "Preserved work could not be resumed after host migration",
+        )
+      }
     }
     hostMigrationTimer = setTimeout(resumeWhenIdle, 0)
     hostMigrationTimer.unref?.()
@@ -456,6 +521,7 @@ const autoReload: (pi: ExtensionAPI) => void = pi => {
     hostMigrationTimer = undefined
     generationReconciler = undefined
     agentRunActive = false
+    sessionStartActive = false
     pending = false
     pendingSince = undefined
     composerSafeSince = undefined
@@ -512,6 +578,9 @@ const autoReload: (pi: ExtensionAPI) => void = pi => {
       pending = true
       pendingSince = Date.now()
       composerSafeSince = undefined
+      ctx.ui.setStatus(STATUS_KEY, "reload:retrying")
+      timer = setTimeout(() => void reloadWhenIdle(ctx), IDLE_RETRY_MS)
+      timer.unref?.()
     }
   }
 
@@ -588,9 +657,16 @@ const autoReload: (pi: ExtensionAPI) => void = pi => {
 
   pi.on("session_start", async (event, ctx) => {
     closeWatchers()
+    sessionStartActive = true
     restoreHostMigration(ctx)
     const branch = ctx.sessionManager.getBranch()
     const hostMigrationPlan = resolveHostMigrationPlan(ctx)
+    const configRoot = join(homedir(), ".config")
+    const aiRoot = join(configRoot, "ai")
+    const watchPaths = managedPiWatchPaths(aiRoot)
+    const generationTracker = isReloadableContext(ctx)
+      ? createManagedGenerationTracker(watchPaths)
+      : undefined
     const summaryEntry = branch
       .filter(
         entry =>
@@ -670,22 +746,12 @@ const autoReload: (pi: ExtensionAPI) => void = pi => {
       const scheduleContinuation = (deliverAs: "resume" | "followUp"): void => {
         const deliverWhenSettled = (): void => {
           reloadContinuationTimer = undefined
-          const requestedAt =
-            latestReloadResumeMarker(branch)?.requestedAt ?? Date.now()
-          const recordDelivery = (): void => {
-            if (deliverAs === "resume") {
-              pi.appendEntry(RELOAD_RESUME_ENTRY, {
-                requestedAt,
-                status: "resumed",
-              })
-            } else {
-              pi.appendEntry(RELOAD_FOLLOW_UP_ENTRY, { requestedAt })
-            }
-          }
+          const recordDelivery = (): void =>
+            recordReloadContinuationDelivery(deliverAs, branch)
           if (ctx.ui.getEditorText().length > 0 || ctx.hasPendingMessages()) {
-            recordDelivery()
             try {
               pi.sendMessage(message, { deliverAs: "nextTurn" })
+              recordDelivery()
             } catch {
               reportIncident(
                 "warning",
@@ -703,9 +769,9 @@ const autoReload: (pi: ExtensionAPI) => void = pi => {
             reloadContinuationTimer.unref?.()
             return
           }
-          recordDelivery()
           try {
             pi.sendMessage(message, { triggerTurn: true, deliverAs })
+            recordDelivery()
           } catch {
             reportIncident(
               "warning",
@@ -723,8 +789,7 @@ const autoReload: (pi: ExtensionAPI) => void = pi => {
           "refresh model catalog after reload",
           modelRefreshFailure,
         )
-        pi.sendMessage(message)
-        ctx.ui.notify(modelRefreshFailure, "error")
+        ctx.ui.notify(displayText, "error")
       } else if (delivery === "resume") {
         scheduleContinuation("resume")
       } else if (delivery === "followUp") {
@@ -738,27 +803,22 @@ const autoReload: (pi: ExtensionAPI) => void = pi => {
               status: "resumed",
             })
         }
-        pi.sendMessage(message)
+        ctx.ui.notify(displayText, "info")
       }
       if (summary && !summary.announced) {
         pi.appendEntry(RELOAD_SUMMARY_ENTRY, { ...summary, announced: true })
       }
     }
     if (event.reason === "reload" && hostMigrationPlan) {
-      pi.sendMessage({
-        customType: "auto-reload.host-migration",
-        content:
-          "Activated Pi host verified; replacing this running process in place.",
-        display: true,
-      })
+      ctx.ui.notify(
+        "Activated Pi host verified; replacing this running process in place.",
+        "info",
+      )
       if (summary && !summary.announced) {
         pi.appendEntry(RELOAD_SUMMARY_ENTRY, { ...summary, announced: true })
       }
     }
-    if (hostMigrationPlan) {
-      scheduleHostMigration(ctx, hostMigrationPlan)
-      return
-    }
+    if (hostMigrationPlan) scheduleHostMigration(ctx, hostMigrationPlan)
     if (!isReloadableContext(ctx)) {
       const summary =
         "Automatic Pi reload requires the managed reload-context host patch"
@@ -767,13 +827,11 @@ const autoReload: (pi: ExtensionAPI) => void = pi => {
         "Automatic Pi reload requires the managed reload-context host patch; restart after applying the Nix generation.",
         "warning",
       )
+      sessionStartActive = false
       return
     }
-    const configRoot = join(homedir(), ".config")
-    const aiRoot = join(configRoot, "ai")
-    const watchPaths = managedPiWatchPaths(aiRoot)
     generationReconciler = createManagedGenerationReconciler({
-      tracker: createManagedGenerationTracker(watchPaths),
+      tracker: generationTracker ?? createManagedGenerationTracker(watchPaths),
       settleMs: GENERATION_RECONCILE_MS,
       onContentChange: changedPath => scheduleReload(ctx, changedPath, aiRoot),
     })
@@ -797,6 +855,7 @@ const autoReload: (pi: ExtensionAPI) => void = pi => {
       }
     }
 
+    generationReconciler.poll(aiRoot)
     generationTimer = setInterval(() => {
       generationReconciler?.poll(aiRoot)
       if (hostMigrationTimer) return
@@ -864,6 +923,7 @@ const autoReload: (pi: ExtensionAPI) => void = pi => {
         ctx.ui.notify(summary, "warning")
       }
     }
+    sessionStartActive = false
   })
 
   pi.on("agent_start", () => {
