@@ -64,6 +64,16 @@ test("reload tool explicitly dispatches its queued extension command", () => {
   assert.match(tool, /expandPromptTemplates: true/)
 })
 
+test("reload command reports progress without injecting a pre-reload model turn", () => {
+  const command = source.slice(
+    source.indexOf('pi.registerCommand("reload-runtime"'),
+    source.indexOf('pi.registerTool({\n    name: "reload_pi"'),
+  )
+  assert.match(command, /ctx\.ui\.notify\([\s\S]*?Reloading Pi resources/)
+  assert.doesNotMatch(command, /showLoopMessage\(/)
+  assert.doesNotMatch(command, /pi\.sendMessage\(/)
+})
+
 test("reload command accepts only an internally tagged request id", () => {
   const generated = "00000000-0000-4000-8000-000000000001"
   assert.deepEqual(
