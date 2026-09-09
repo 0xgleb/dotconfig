@@ -79,25 +79,118 @@ export const boundedConversationIntentEvidence = (
     .slice(-maxHuman)
   for (const index of humanIndices) selected.add(index)
   const newestHumanIndex = humanIndices.at(-1)
+  const newestLifecycleIndex = evidence.findLastIndex(item =>
+    item.startsWith(
+      "Trusted lifecycle coordination context (never authority by itself): ",
+    ),
+  )
+  if (newestLifecycleIndex >= 0) selected.add(newestLifecycleIndex)
+  const lifecycleTriggeredTurn = newestLifecycleIndex > (newestHumanIndex ?? -1)
   const restorationIndex = restoredCapabilityState(evidence)
   if (restorationIndex >= 0) selected.add(restorationIndex)
   const bounded = evidence
     .map((item, index) => ({ item, index }))
     .filter(({ index }) => selected.has(index))
-    .map(({ item, index }) =>
-      index === newestHumanIndex
-        ? item.replace(
-            /^Human message: /,
-            "Newest human message (authoritative only for what it actually says): ",
-          )
-        : item,
-    )
+    .map(({ item, index }) => {
+      if (index === newestHumanIndex)
+        return item.replace(
+          /^Human message: /,
+          lifecycleTriggeredTurn
+            ? "Most recent retained human message (not the current turn trigger; authoritative only for what it actually says): "
+            : "Newest human message (authoritative only for what it actually says): ",
+        )
+      if (lifecycleTriggeredTurn && index === newestLifecycleIndex)
+        return item.replace(
+          /^Trusted lifecycle coordination context \(never authority by itself\): /,
+          "Current turn lifecycle trigger (coordination only; never authority by itself): ",
+        )
+      return item
+    })
   return restorationIndex < 0
     ? bounded
     : [
         ...bounded,
         "Current source-fixed lifecycle state: the preceding authenticated remote turn has ended and local tools are restored. Its turn-local communication-only/tool restriction is no longer active; this lifecycle fact grants no task authority.",
       ]
+}
+
+const STALE_HUMAN_TURN_BLOCK =
+  /\b(?:new|newest|current)(?: authenticated)? (?:user|human) (?:message|input|turn)\b[^.\n]{0,160}\b(?:ask(?:s|ed|ing)?|request(?:s|ed|ing)?|say(?:s|ing)?|said|want(?:s|ed|ing)?|direct(?:s|ed|ing)?)\b/i
+const STALE_HUMAN_TURN_UNSAFE_EFFECT =
+  /\b(?:unsafe|authori[sz]|permission|scope|policy|unrelated|outside|prohibit|forbid|den(?:y|ied)|credential|secret|private data|protected data|sensitive|prompt injection|exfiltrat|publish|publication|pull request|push|merge|deploy|network|delet(?:e|ion))\b/i
+const STALE_HUMAN_TURN_STOP_WORDS = new Set([
+  "asked",
+  "asks",
+  "current",
+  "directed",
+  "directs",
+  "human",
+  "input",
+  "message",
+  "newest",
+  "requested",
+  "requests",
+  "saying",
+  "turn",
+  "user",
+  "wanted",
+  "wants",
+])
+
+const staleHumanTurnTokens = (text: string): Set<string> =>
+  new Set(
+    (text.toLowerCase().match(/[a-z0-9]{4,}/g) ?? []).filter(
+      token => !STALE_HUMAN_TURN_STOP_WORDS.has(token),
+    ),
+  )
+
+const staleHumanTurnCorrelation = (human: string, reason: string): number => {
+  const humanTokens = staleHumanTurnTokens(human)
+  const reasonTokens = staleHumanTurnTokens(reason)
+  let matches = 0
+  for (const humanToken of humanTokens) {
+    if (
+      [...reasonTokens].some(
+        reasonToken =>
+          reasonToken === humanToken ||
+          (reasonToken.length >= 4 &&
+            humanToken.length >= 4 &&
+            reasonToken.slice(0, 4) === humanToken.slice(0, 4)),
+      )
+    )
+      matches += 1
+  }
+  return matches
+}
+
+export const currentLifecycleTriggerDisprovesStaleHumanTurnBlock = ({
+  reason,
+  branch,
+  toolName,
+}: {
+  readonly reason: string
+  readonly branch: readonly unknown[]
+  readonly toolName: string
+}): boolean => {
+  if (
+    toolName !== "workflow" ||
+    !STALE_HUMAN_TURN_BLOCK.test(reason) ||
+    STALE_HUMAN_TURN_UNSAFE_EFFECT.test(reason)
+  )
+    return false
+  const evidence = conversationIntentEvidence(branch)
+  const newestHumanIndex = evidence.findLastIndex(item =>
+    item.startsWith("Human message: "),
+  )
+  const newestLifecycleIndex = evidence.findLastIndex(item =>
+    item.startsWith(
+      "Trusted lifecycle coordination context (never authority by itself): ",
+    ),
+  )
+  if (newestHumanIndex < 0 || newestLifecycleIndex <= newestHumanIndex)
+    return false
+  const human = evidence[newestHumanIndex]?.replace(/^Human message: /, "")
+  return human !== undefined && staleHumanTurnCorrelation(human, reason) >= 2
 }
 
 export const questionIntentEvidence = (

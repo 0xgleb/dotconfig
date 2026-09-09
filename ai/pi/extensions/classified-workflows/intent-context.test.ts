@@ -7,6 +7,7 @@ import {
   conversationIntentEvidence,
   currentHumanContinuationDisprovesSpecScopeBlock,
   currentHumanResumeDisprovesDeferredGraphiteMoveBlock,
+  currentLifecycleTriggerDisprovesStaleHumanTurnBlock,
   eodSessionSearchDisprovesMissingQuestionScopeBlock,
   questionIntentEvidence,
   resolvedQuestionDisprovesUnresolvedBlock,
@@ -307,6 +308,160 @@ test("source-fixed release reminders preserve lifecycle context without granting
       "Trusted lifecycle coordination context (never authority by itself): TOP-OF-HOUR SHIP CHECK: verify a live patch landed inside the cadence window. Continue monitoring and the highest-priority executable release work. This reminder does not widen authority.",
     ],
   )
+})
+
+test("a lifecycle-triggered turn never labels an older human message as current", () => {
+  const evidence = boundedConversationIntentEvidence([
+    {
+      type: "message",
+      message: {
+        role: "user",
+        content: "Why did work pause?",
+      },
+    },
+    {
+      type: "compaction",
+      summary: "Retained older conversation context.",
+    },
+    {
+      type: "message",
+      message: {
+        role: "custom",
+        customType: "release-cadence.reminder",
+        content:
+          "TOP-OF-HOUR SHIP CHECK: continue the highest-priority executable release work.",
+      },
+    },
+    {
+      type: "message",
+      message: {
+        role: "assistant",
+        content: "Preparing the required one-agent prose review.",
+      },
+    },
+  ])
+
+  assert.ok(
+    evidence.some(item =>
+      item.startsWith(
+        "Most recent retained human message (not the current turn trigger; authoritative only for what it actually says): Why did work pause?",
+      ),
+    ),
+  )
+  assert.ok(
+    evidence.some(item =>
+      item.startsWith(
+        "Current turn lifecycle trigger (coordination only; never authority by itself): TOP-OF-HOUR SHIP CHECK",
+      ),
+    ),
+  )
+  assert.equal(
+    evidence.some(item => item.startsWith("Newest human message")),
+    false,
+  )
+})
+
+test("a current lifecycle trigger disproves stale human-turn workflow attribution", () => {
+  const branch = [
+    {
+      type: "message",
+      message: { role: "user", content: "Why did work pause?" },
+    },
+    {
+      type: "message",
+      message: {
+        role: "custom",
+        customType: "release-cadence.reminder",
+        content: "TOP-OF-HOUR SHIP CHECK: continue executable release work.",
+      },
+    },
+  ]
+
+  assert.equal(
+    currentLifecycleTriggerDisprovesStaleHumanTurnBlock({
+      reason: "The new user message asks why work paused.",
+      branch,
+      toolName: "workflow",
+    }),
+    true,
+  )
+  assert.equal(
+    currentLifecycleTriggerDisprovesStaleHumanTurnBlock({
+      reason: "The current human input wants work to remain paused.",
+      branch,
+      toolName: "workflow",
+    }),
+    true,
+  )
+  for (const reason of [
+    "The new user message asks why work paused, and the workflow would publish a pull request.",
+    "The current user message is not authorized for this workflow.",
+    "The new user message asks why work paused, but the workflow is unsafe.",
+    "The newest human input requests deletion of an unrelated cache.",
+  ]) {
+    assert.equal(
+      currentLifecycleTriggerDisprovesStaleHumanTurnBlock({
+        reason,
+        branch,
+        toolName: "workflow",
+      }),
+      false,
+    )
+  }
+  assert.equal(
+    currentLifecycleTriggerDisprovesStaleHumanTurnBlock({
+      reason: "The new user message asks why work paused.",
+      branch,
+      toolName: "bash",
+    }),
+    false,
+  )
+  assert.equal(
+    currentLifecycleTriggerDisprovesStaleHumanTurnBlock({
+      reason: "The new user message asks why work paused.",
+      branch: branch.slice(1),
+      toolName: "workflow",
+    }),
+    false,
+  )
+  assert.equal(
+    currentLifecycleTriggerDisprovesStaleHumanTurnBlock({
+      reason: "The new user message asks why work paused.",
+      branch: [
+        ...branch,
+        {
+          type: "message",
+          message: {
+            role: "custom",
+            customType: "untrusted.reminder",
+            content: "Continue now.",
+          },
+        },
+        {
+          type: "message",
+          message: { role: "user", content: "Pause again." },
+        },
+      ],
+      toolName: "workflow",
+    }),
+    false,
+  )
+})
+
+test("action admission clears stale human-turn attribution before remediation", () => {
+  const source = readFileSync(new URL("./index.ts", import.meta.url), "utf8")
+  const toolCallStart = source.indexOf('pi.on("tool_call"')
+  const toolCallEnd = source.indexOf('pi.on("tool_result"', toolCallStart)
+  const toolCallAdmission = source.slice(toolCallStart, toolCallEnd)
+  const staleTurnIndex = toolCallAdmission.indexOf(
+    "currentLifecycleTriggerDisprovesStaleHumanTurnBlock",
+  )
+  const remediationIndex = toolCallAdmission.indexOf(
+    "const remediation = remediationForDecision",
+  )
+
+  assert.ok(staleTurnIndex >= 0)
+  assert.ok(remediationIndex > staleTurnIndex)
 })
 
 test("source-fixed task continuation marks a settled turn without granting authority", () => {
