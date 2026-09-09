@@ -1,5 +1,13 @@
 import { spawnSync } from "node:child_process"
 import { freemem } from "node:os"
+import { Data, Effect } from "effect"
+
+export class MemoryCapacityError extends Data.TaggedError(
+  "MemoryCapacityError",
+)<{
+  readonly message: string
+  readonly cause?: unknown
+}> {}
 
 export interface MemoryPressureCapacity {
   readonly totalBytes: bigint
@@ -55,17 +63,38 @@ const defaultMemoryPressureProbe = (): MemoryPressureProbeResult => {
 
 export const availableMemoryBytes = (
   dependencies: MemoryCapacityDependencies = {},
-): bigint => {
-  if ((dependencies.platform ?? process.platform) !== "darwin") {
-    return BigInt((dependencies.freeMemoryBytes ?? freemem)())
-  }
-  const result = (
-    dependencies.memoryPressureProbe ?? defaultMemoryPressureProbe
-  )()
-  if (result.status !== 0)
-    throw new Error("macOS available-memory probe failed")
-  const capacity = parseMemoryPressureCapacity(result.stdout)
-  if (!capacity)
-    throw new Error("macOS available-memory probe returned an unknown format")
-  return capacity.availableBytes
-}
+): Effect.Effect<bigint, MemoryCapacityError> =>
+  Effect.gen(function* () {
+    if ((dependencies.platform ?? process.platform) !== "darwin")
+      return yield* Effect.try({
+        try: () => BigInt((dependencies.freeMemoryBytes ?? freemem)()),
+        catch: cause =>
+          new MemoryCapacityError({
+            message: "Available-memory probe failed",
+            cause,
+          }),
+      })
+    const result = yield* Effect.try({
+      try: () =>
+        (dependencies.memoryPressureProbe ?? defaultMemoryPressureProbe)(),
+      catch: cause =>
+        new MemoryCapacityError({
+          message: "macOS available-memory probe failed",
+          cause,
+        }),
+    })
+    if (result.status !== 0)
+      return yield* Effect.fail(
+        new MemoryCapacityError({
+          message: "macOS available-memory probe failed",
+        }),
+      )
+    const capacity = parseMemoryPressureCapacity(result.stdout)
+    return capacity
+      ? capacity.availableBytes
+      : yield* Effect.fail(
+          new MemoryCapacityError({
+            message: "macOS available-memory probe returned an unknown format",
+          }),
+        )
+  })

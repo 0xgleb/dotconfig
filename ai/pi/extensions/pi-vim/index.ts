@@ -56,7 +56,7 @@ const restoreVimMode = (entries: readonly unknown[]): StableVimMode => {
 }
 
 export default function (pi: ExtensionAPI) {
-  registerRuntimeVersion(pi, "pi-vim", "2026.08.24.3")
+  registerRuntimeVersion(pi, "pi-vim", "2026.09.04.1")
   let wrapAutocomplete:
     ((provider: AutocompleteProvider) => AutocompleteProvider) | undefined
   let activeEditor: VimEditor | undefined

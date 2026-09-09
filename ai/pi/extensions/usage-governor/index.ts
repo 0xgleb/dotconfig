@@ -391,7 +391,7 @@ const restoredModel = (
 }
 
 export default function usageGovernor(pi: ExtensionAPI): void {
-  registerRuntimeVersion(pi, "usage-governor", "2026.08.20.1")
+  registerRuntimeVersion(pi, "usage-governor", "2026.09.04.1")
   let turnLaneState = emptyTurnLaneState()
   let preferredModel: PersistedModelRef | undefined
   let managedSwitch = false
@@ -651,12 +651,31 @@ export default function usageGovernor(pi: ExtensionAPI): void {
       const checkpoint = parseAllowanceCheckpointInput(
         `${request.remainingPercent} ${request.resetAt ?? "refill"} ${request.capturedAt}`,
       )
-      if (!checkpoint) throw new Error("usage checkpoint input is invalid")
+      if (!checkpoint)
+        return {
+          content: [
+            {
+              type: "text" as const,
+              text: "Usage checkpoint input is invalid.",
+            },
+          ],
+          isError: true,
+          details: { outcome: "invalid-input" },
+        }
       const result = await Effect.runPromise(
         Effect.either(recordAllowanceCheckpoint(checkpoint, request.pool)),
       )
       if (Either.isLeft(result))
-        throw new Error("control plane rejected the usage checkpoint")
+        return {
+          content: [
+            {
+              type: "text" as const,
+              text: "Control plane rejected the usage checkpoint.",
+            },
+          ],
+          isError: true,
+          details: { outcome: "rejected" },
+        }
       return {
         content: [
           {

@@ -20,11 +20,11 @@ test("fleet diagnostics expose current behavior-bearing component versions", () 
   )
   assert.match(
     read("../pi/extensions/agent-workspace/index.ts"),
-    /agent-workspace", "2026\.08\.09\.13"/,
+    /agent-workspace", "2026\.09\.04\.1"/,
   )
   assert.match(
     read("../pi/extensions/auto-reload/index.ts"),
-    /auto-reload", "2026\.09\.02\.2"/,
+    /auto-reload", "2026\.09\.04\.1"/,
   )
   assert.match(
     read("../pi/extensions/write-result-inspector/index.ts"),
@@ -50,7 +50,7 @@ test("fleet diagnostics expose current behavior-bearing component versions", () 
   assert.match(read("../pi/extensions/lsp/index.ts"), /lsp", "2026\.09\.04\.1"/)
   assert.match(
     read("../pi/extensions/nushell-default/index.ts"),
-    /nushell-default", "2026\.08\.23\.2"/,
+    /nushell-default", "2026\.09\.04\.1"/,
   )
   assert.match(
     read("../pi/extensions/questions/index.ts"),
@@ -58,7 +58,7 @@ test("fleet diagnostics expose current behavior-bearing component versions", () 
   )
   assert.match(
     read("../pi/extensions/pi-vim/index.ts"),
-    /pi-vim", "2026\.08\.24\.3"/,
+    /pi-vim", "2026\.09\.04\.1"/,
   )
   assert.match(
     read("../pi/extensions/release-cadence/index.ts"),
@@ -70,7 +70,7 @@ test("fleet diagnostics expose current behavior-bearing component versions", () 
   )
   assert.match(
     read("../pi/extensions/disk-pressure/index.ts"),
-    /resource-pressure", "2026\.08\.17\.1"/,
+    /resource-pressure", "2026\.09\.04\.1"/,
   )
   assert.match(
     read("../pi/extensions/image-summary/index.ts"),
@@ -82,10 +82,10 @@ test("fleet diagnostics expose current behavior-bearing component versions", () 
   )
   assert.match(
     read("../pi/extensions/todo/index.ts"),
-    /todo", "2026\.08\.15\.1"/,
+    /todo", "2026\.09\.04\.1"/,
   )
   assert.match(
     read("../pi/extensions/usage-governor/index.ts"),
-    /usage-governor", "2026\.08\.20\.1"/,
+    /usage-governor", "2026\.09\.04\.1"/,
   )
 })

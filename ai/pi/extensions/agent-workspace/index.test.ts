@@ -38,9 +38,10 @@ test("Claude dispatch is source-fixed, profile-bound, and fail-closed", () => {
   assert.match(source, /restoreReviewDutyState/)
   assert.match(source, /requires the exact active review_duty job/)
   assert.match(source, /\^\[0-9a-f\]\{40,64\}\$/)
+  assert.match(source, /try: \(\) => lstatSync\(parsed\.repositoryRoot\)/)
   assert.match(
     source,
-    /lstatSync\(parsed\.repositoryRoot\)\.isSymbolicLink\(\)/,
+    /metadata\.isSymbolicLink\(\)[\s\S]*?Effect\.fail\(invalidRepositoryRoot\(\)\)/,
   )
   assert.match(source, /profile\.additionalRepositoryRoots/)
   assert.match(source, /child\.startsWith\("\.\."\)/)

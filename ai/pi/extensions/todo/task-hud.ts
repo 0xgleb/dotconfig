@@ -1,4 +1,5 @@
 import type { Theme } from "@earendil-works/pi-coding-agent"
+import { Data, Effect } from "effect"
 
 import {
   frameTaskHud,
@@ -32,15 +33,41 @@ const brightenTruecolorForeground = (text: string): string | undefined => {
   return text.replace(color, `\x1b[38;2;${red};${green};${blue}m`)
 }
 
+export class TaskHudFrameError extends Data.TaggedError("TaskHudFrameError")<{
+  readonly message: string
+}> {}
+
+type TaskHudFrameResult =
+  | { readonly ok: true; readonly value: number }
+  | { readonly ok: false; readonly error: TaskHudFrameError }
+
+const taskHudFrameResult = (
+  now: number,
+  intervalMs: number,
+): TaskHudFrameResult => {
+  if (!Number.isSafeInteger(now) || now < 0)
+    return {
+      ok: false,
+      error: new TaskHudFrameError({
+        message: "task HUD timestamp must be a non-negative integer",
+      }),
+    }
+  return !Number.isSafeInteger(intervalMs) || intervalMs < 1
+    ? {
+        ok: false,
+        error: new TaskHudFrameError({
+          message: "task HUD interval must be a positive integer",
+        }),
+      }
+    : { ok: true, value: Math.floor(now / intervalMs) }
+}
+
 export const synchronizedTaskHudFrame = (
   now: number,
   intervalMs = HUD_ANIMATION_INTERVAL_MS,
-): number => {
-  if (!Number.isSafeInteger(now) || now < 0)
-    throw new RangeError("task HUD timestamp must be a non-negative integer")
-  if (!Number.isSafeInteger(intervalMs) || intervalMs < 1)
-    throw new RangeError("task HUD interval must be a positive integer")
-  return Math.floor(now / intervalMs)
+): Effect.Effect<number, TaskHudFrameError> => {
+  const result = taskHudFrameResult(now, intervalMs)
+  return result.ok ? Effect.succeed(result.value) : Effect.fail(result.error)
 }
 
 export class TaskHudComponent {
@@ -121,10 +148,13 @@ export class TaskHudComponent {
   }
 
   render(width: number): string[] {
-    const animationFrame = synchronizedTaskHudFrame(
+    const animationFrameResult = taskHudFrameResult(
       Date.now(),
       this.animationIntervalMs,
     )
+    if (!animationFrameResult.ok)
+      return [this.theme.fg("warning", animationFrameResult.error.message)]
+    const animationFrame = animationFrameResult.value
     const hud = taskHud(this.state, Date.now(), width)
     const framed = frameTaskHud(hud, width)
     if (hud.kind === "idle") {

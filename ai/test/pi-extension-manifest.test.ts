@@ -21,5 +21,5 @@ test("managed Pi package loads coordination extensions in normal sessions", () =
   assert.equal(extensions.includes("./questions/index.ts"), true)
   assert.equal(extensions.includes("./safe-compaction/index.ts"), true)
   assert.equal(extensions.includes("./classified-workflows/index.ts"), true)
-  assert.equal(extensions.includes("./usage-governor/index.ts"), false)
+  assert.equal(extensions.includes("./usage-governor/index.ts"), true)
 })

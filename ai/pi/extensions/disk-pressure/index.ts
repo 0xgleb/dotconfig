@@ -96,7 +96,7 @@ const processAggregateText = (): string => {
 }
 
 export default (pi: ExtensionAPI) => {
-  registerRuntimeVersion(pi, "resource-pressure", "2026.08.17.1")
+  registerRuntimeVersion(pi, "resource-pressure", "2026.09.04.1")
   const pendingBuilds = new Map<string, PendingBuild>()
   const reportIncident = (
     severity: "error" | "warning",
@@ -111,13 +111,17 @@ export default (pi: ExtensionAPI) => {
     })
   }
 
-  const resourcePressureSnapshot = (
+  const resourcePressureSnapshot = async (
     cwd: string,
     command: string,
-  ): ResourcePreflightSnapshot | undefined => {
+  ): Promise<ResourcePreflightSnapshot | undefined> => {
     if (!isExpensiveCommand(command)) return undefined
     const diskAvailable = freeBytes(cwd)
-    const memoryAvailable = availableMemoryBytes()
+    const memory = await Effect.runPromise(
+      Effect.either(availableMemoryBytes()),
+    )
+    if (Either.isLeft(memory)) return undefined
+    const memoryAvailable = memory.right
     const decision = resourcePressureDecision(
       command,
       diskAvailable,
@@ -137,11 +141,10 @@ export default (pi: ExtensionAPI) => {
   pi.events.on(
     RESOURCE_PREFLIGHT_REQUEST_EVENT,
     (request: ResourcePreflightRequest) => {
-      try {
-        request.report(resourcePressureSnapshot(request.cwd, request.command))
-      } catch {
-        request.report(undefined)
-      }
+      void resourcePressureSnapshot(request.cwd, request.command).then(
+        request.report,
+        () => request.report(undefined),
+      )
     },
   )
 
@@ -204,11 +207,20 @@ export default (pi: ExtensionAPI) => {
     )
   }
 
-  pi.on("session_start", (_event, ctx) => {
+  pi.on("session_start", async (_event, ctx) => {
     try {
       const removed = cleanupStalePiTempLogs(tmpdir())
       const available = freeBytes(ctx.cwd)
-      const memoryAvailable = availableMemoryBytes()
+      const memory = await Effect.runPromise(
+        Effect.either(availableMemoryBytes()),
+      )
+      if (Either.isLeft(memory)) {
+        const summary = `Resource-pressure check failed safely: ${memory.left.message}`
+        reportIncident("error", "resource capacity preflight", summary)
+        ctx.ui.notify(summary, "warning")
+        return
+      }
+      const memoryAvailable = memory.right
       updateStatus(ctx, available, memoryAvailable)
       reconcileMemoryIncident(ctx, memoryAvailable)
       if (removed.length > 0)
@@ -233,7 +245,7 @@ export default (pi: ExtensionAPI) => {
     }
   })
 
-  pi.on("tool_call", (event, ctx) => {
+  pi.on("tool_call", async (event, ctx) => {
     if (
       !isToolCallEventType("bash", event) ||
       !isExpensiveCommand(event.input.command)
@@ -241,7 +253,15 @@ export default (pi: ExtensionAPI) => {
       return
     try {
       const available = freeBytes(ctx.cwd)
-      const memoryAvailable = availableMemoryBytes()
+      const memory = await Effect.runPromise(
+        Effect.either(availableMemoryBytes()),
+      )
+      if (Either.isLeft(memory)) {
+        const summary = `Disk pressure guard could not verify safe build capacity: ${memory.left.message}`
+        reportIncident("error", "expensive-command capacity preflight", summary)
+        return { block: true, reason: `${summary}.` }
+      }
+      const memoryAvailable = memory.right
       updateStatus(ctx, available, memoryAvailable)
       reconcileMemoryIncident(ctx, memoryAvailable)
       const decision = resourcePressureDecision(
@@ -274,7 +294,7 @@ export default (pi: ExtensionAPI) => {
     }
   })
 
-  pi.on("tool_result", (event, ctx) => {
+  pi.on("tool_result", async (event, ctx) => {
     const pending = pendingBuilds.get(event.toolCallId)
     if (!pending) return
     pendingBuilds.delete(event.toolCallId)
@@ -284,7 +304,16 @@ export default (pi: ExtensionAPI) => {
         pending.resultLinksBefore,
       )
       const available = freeBytes(ctx.cwd)
-      const memoryAvailable = availableMemoryBytes()
+      const memory = await Effect.runPromise(
+        Effect.either(availableMemoryBytes()),
+      )
+      if (Either.isLeft(memory)) {
+        const summary = `Post-build cleanup failed safely: ${memory.left.message}`
+        reportIncident("error", "post-build cleanup", summary)
+        ctx.ui.notify(summary, "warning")
+        return
+      }
+      const memoryAvailable = memory.right
       updateStatus(ctx, available, memoryAvailable)
       reconcileMemoryIncident(ctx, memoryAvailable)
       if (removed.length > 0) {

@@ -1,8 +1,11 @@
 import { existsSync } from "node:fs"
+import { Data, Effect } from "effect"
 
-export class NushellUnavailableError extends Error {
-  readonly name = "NushellUnavailableError"
-}
+export class NushellUnavailableError extends Data.TaggedError(
+  "NushellUnavailableError",
+)<{
+  readonly message: string
+}> {}
 
 export type PathExists = (path: string) => boolean
 
@@ -97,12 +100,17 @@ export const nushellToolPreviewLines = (
 export const resolveNushellPath = (
   home: string | undefined,
   pathExists: PathExists = existsSync,
-): string => {
+): Effect.Effect<string, NushellUnavailableError> => {
   const managedPaths = [
     "/run/current-system/sw/bin/nu",
     ...(home ? [`${home}/.nix-profile/bin/nu`] : []),
   ]
   const nushellPath = managedPaths.find(pathExists)
-  if (nushellPath) return nushellPath
-  throw new NushellUnavailableError("Nushell executable was not found")
+  return nushellPath
+    ? Effect.succeed(nushellPath)
+    : Effect.fail(
+        new NushellUnavailableError({
+          message: "Nushell executable was not found",
+        }),
+      )
 }

@@ -81,7 +81,7 @@ tokens are theirs — anything you publish through them lands under their name.
 Without an explicit in-session instruction to post that exact content, **never**:
 
 - Reply to PR review comments (`gh api .../pulls/comments/<id>/replies`, `gh pr
-  review --comment`, `gh pr comment`).
+review --comment`, `gh pr comment`).
 - Comment on issues (`gh issue comment`, Linear `linear issue comment`, etc.).
 - Send messages on chat platforms (Slack, telegram, Discord, etc.).
 - Post on social or public threads under their identity.
@@ -328,10 +328,13 @@ explicit code instead.
   public contract; reserve declarations for overloads, generators, or APIs that
   specifically require declaration semantics.
 - Use strict compiler and linter settings
-- In TypeScript, encode expected failures in the Effect error type. Use
-  `Effect.try`/`Effect.tryPromise` to translate genuinely throwing boundaries,
-  then recover with typed error handlers; do not hide ordinary failure paths in
-  untyped `try`/`catch` control flow.
+- In TypeScript, never use `throw` in production code, including inside
+  `Effect.try` callbacks or for invariant validation. Return domain and expected
+  failures directly with `Effect.fail` and recover through typed Effect handlers.
+  Use `Effect.try`/`Effect.tryPromise` only to translate a genuinely throwing
+  external API boundary; its callback must not throw agent-authored domain
+  errors. Explicit throws are permitted only in tests for assertion/framework
+  mechanics.
 - Comprehensive test coverage is expected
 - Model types properly - use the type system to make invalid states
   unrepresentable
@@ -681,7 +684,7 @@ violations, and fix any problems before considering the task complete.
   incremental commits pushed regularly make progress visible, reviewable, and
   safe from local failures. Never wait for the user to ask you to commit or
   push. Use plain `git commit` + `git push` by default; only use Graphite (`gt
-  modify` / `gt ss`) in repos that have explicitly opted in (see "Version
+modify` / `gt ss`) in repos that have explicitly opted in (see "Version
   Control" below).
 
 - **Branch immediately when stacking**: When told to stack changes (e.g., "put
@@ -754,6 +757,18 @@ What/Why/How:
      relationships and any trade-offs or follow-ups. -->
 ```
 
+**Transport Markdown as real bytes, never shell-style escape text.** Do not pass
+PR or issue prose containing literal `\n` sequences in a command argument. In
+Pi, command text is parsed by Nushell; shell forms such as `$'Title\n\nBody'`
+do not create line breaks. Write the actual multiline Markdown to an
+agent-owned file under the repository's sanctioned `.tmp/` area (record its
+provenance when Pi exposes that tool), then use `gh pr create/edit --body-file`,
+`gh issue create/edit --body-file`, or GitButler's `-F` file input. After every
+create or body edit, read the remote body back with
+`gh pr view <number-or-url> --json body --jq .body` (or the issue equivalent),
+inspect the rendered structure, and repair it from the file before claiming
+success if any literal `\n` remains.
+
 **Don't journal.** A PR description is not your work narrative.
 
 - No "Finishing in-progress work" / "First half of the refactor" /
@@ -797,7 +812,7 @@ on every repository — not just the one currently in focus.
 
 - When the **scope of work changes** (a reviewer comment gets folded in,
   rebase brings in new code that needs treatment, a related sub-task surfaces
-  that the PR now handles), update the issue and PR descriptions *before*
+  that the PR now handles), update the issue and PR descriptions _before_
   resubmitting / closing — never leave a stale "What" or "How" section
   describing the diff from three iterations ago.
 - When a **decision is made or reversed** during implementation that changes
@@ -806,7 +821,7 @@ on every repository — not just the one currently in focus.
   was opened with.
 - When **dependencies, milestones, or cross-links change** (new linked
   issue, new milestone attached, sub-issue absorbed), update the metadata
-  *and* the description so the prose matches the structure.
+  _and_ the description so the prose matches the structure.
 - When something **moves out of scope and into another issue**, say so
   explicitly in the original issue/PR so reviewers don't waste time
   hunting for it.
@@ -824,6 +839,7 @@ repo has explicitly opted into Graphite.
 
 **A repo is opted into Graphite only if** at least one of the following is
 true:
+
 - A `.graphite_repo_config` file exists at the repo root.
 - A repo-level CLAUDE.md or AGENTS.md tells you to use Graphite for that repo.
 - The user has told you (in this session or via memory) to use Graphite here.

@@ -240,7 +240,7 @@ const managedTreeGeneration = (
 }
 
 const autoReload: (pi: ExtensionAPI) => void = pi => {
-  registerRuntimeVersion(pi, "auto-reload", "2026.09.02.2")
+  registerRuntimeVersion(pi, "auto-reload", "2026.09.04.1")
   pi.registerMessageRenderer(
     COMPLETED_MESSAGE_TYPE,
     (message, options, theme) => {
@@ -348,7 +348,14 @@ const autoReload: (pi: ExtensionAPI) => void = pi => {
         tui: readFileSync(join(tuiRoot, "tui.js"), "utf8"),
         mainScreen: readFileSync(join(tuiRoot, "tui-main-screen.js"), "utf8"),
       })
-      if (!verified) throw new Error("stable host markers do not match")
+      if (!verified) {
+        reportIncident(
+          "error",
+          "verify replacement Pi host",
+          "Stable Pi host rejected before migration: stable host markers do not match",
+        )
+        return undefined
+      }
       return { stableEntrypoint, sessionFile }
     } catch (error) {
       reportIncident(

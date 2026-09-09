@@ -90,12 +90,7 @@ const TodoParams = Type.Object({
 })
 
 type StatusColor =
-  | "success"
-  | "warning"
-  | "accent"
-  | "toolTitle"
-  | "dim"
-  | "muted"
+  "success" | "warning" | "accent" | "toolTitle" | "dim" | "muted"
 
 const statusColor = (status: TodoStatus | undefined): StatusColor => {
   switch (status) {
@@ -242,7 +237,7 @@ function restoredState(ctx: ExtensionContext): TodoState {
 }
 
 export default function todoExtension(pi: ExtensionAPI): void {
-  registerRuntimeVersion(pi, "todo", "2026.08.15.1")
+  registerRuntimeVersion(pi, "todo", "2026.09.04.1")
   const stateRef = Effect.runSync(Ref.make<TodoState>(emptyTodoState))
   let hudExpiry: ReturnType<typeof setTimeout> | undefined
   let reminderTimer: ReturnType<typeof setTimeout> | undefined

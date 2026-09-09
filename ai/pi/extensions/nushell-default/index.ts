@@ -5,6 +5,7 @@ import {
   type Theme,
 } from "@earendil-works/pi-coding-agent"
 import { wrapTextWithAnsi, type Component } from "@earendil-works/pi-tui"
+import { Effect, Either } from "effect"
 
 import { registerRuntimeVersion } from "../shared/runtime-version.ts"
 import {
@@ -57,10 +58,24 @@ export const renderNushellCall = (
 }
 
 export default function nushellDefault(pi: ExtensionAPI): void {
-  registerRuntimeVersion(pi, "nushell-default", "2026.08.23.2")
-  const shellPath = resolveNushellPath(process.env.HOME)
+  registerRuntimeVersion(pi, "nushell-default", "2026.09.04.1")
+  const shellPathResult = Effect.runSync(
+    Effect.either(resolveNushellPath(process.env.HOME)),
+  )
+  if (Either.isLeft(shellPathResult)) {
+    process.stderr.write(`[nushell-default] ${shellPathResult.left.message}\n`)
+    return
+  }
+  const shellPath = shellPathResult.right
+  const direnvPathResult = Effect.runSync(
+    Effect.either(resolveDirenvPath(process.env.HOME)),
+  )
+  if (Either.isLeft(direnvPathResult)) {
+    process.stderr.write(`[nushell-default] ${direnvPathResult.left.message}\n`)
+    return
+  }
   const direnvLoader = createDirenvEnvironmentLoader({
-    direnvPath: resolveDirenvPath(process.env.HOME),
+    direnvPath: direnvPathResult.right,
     runExport: runDirenvExportProcess,
   })
   const definition = createBashToolDefinition(process.cwd(), { shellPath })
@@ -87,10 +102,19 @@ export default function nushellDefault(pi: ExtensionAPI): void {
         { command: params.command, cwd: ctx.cwd, env: process.env },
         signal,
       )
-      if (!environment.ok) {
-        if (signal?.aborted) throw new Error("Command aborted")
-        throw new Error(environment.reason)
-      }
+      if (!environment.ok)
+        return {
+          content: [
+            {
+              type: "text" as const,
+              text: signal?.aborted ? "Command aborted" : environment.reason,
+            },
+          ],
+          isError: true,
+          details: {
+            outcome: signal?.aborted ? "cancelled" : "environment-error",
+          },
+        }
       const exported = environment.exported
       return createBashToolDefinition(ctx.cwd, {
         shellPath,

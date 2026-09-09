@@ -1,9 +1,14 @@
 import assert from "node:assert/strict"
 import test from "node:test"
+import { Effect } from "effect"
 import {
-  availableMemoryBytes,
+  availableMemoryBytes as availableMemoryBytesEffect,
   parseMemoryPressureCapacity,
 } from "./memory-capacity.ts"
+
+const availableMemoryBytes = (
+  ...args: Parameters<typeof availableMemoryBytesEffect>
+) => Effect.runSync(availableMemoryBytesEffect(...args))
 
 const pressureOutput = (availablePercent: number): string =>
   [

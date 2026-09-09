@@ -3,6 +3,7 @@ import { spawn } from "node:child_process"
 import { dirname, join } from "node:path"
 
 import type { BashSpawnContext } from "@earendil-works/pi-coding-agent"
+import { Data, Effect } from "effect"
 
 export type DirenvExport = Readonly<Record<string, string | null>>
 
@@ -67,21 +68,28 @@ const ENVIRONMENT_KEY = /^[A-Za-z_][A-Za-z0-9_]*$/
 const OBJECT_META_KEYS = new Set(["__proto__", "constructor", "prototype"])
 const PROTECTED_ENVIRONMENT_KEYS = new Set(["PWD", "OLDPWD", "SHLVL", "_"])
 
-export class DirenvUnavailableError extends Error {
-  readonly name = "DirenvUnavailableError"
-}
+export class DirenvUnavailableError extends Data.TaggedError(
+  "DirenvUnavailableError",
+)<{
+  readonly message: string
+}> {}
 
 export const resolveDirenvPath = (
   home: string | undefined,
   pathExists: (path: string) => boolean = existsSync,
-): string => {
+): Effect.Effect<string, DirenvUnavailableError> => {
   const managedPaths = [
     "/run/current-system/sw/bin/direnv",
     ...(home ? [`${home}/.nix-profile/bin/direnv`] : []),
   ]
   const path = managedPaths.find(pathExists)
-  if (path) return path
-  throw new DirenvUnavailableError("direnv executable was not found")
+  return path
+    ? Effect.succeed(path)
+    : Effect.fail(
+        new DirenvUnavailableError({
+          message: "direnv executable was not found",
+        }),
+      )
 }
 
 const defaultPathIsFile: PathIsFile = path => {

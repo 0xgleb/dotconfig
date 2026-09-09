@@ -2,14 +2,19 @@ import assert from "node:assert/strict"
 import { spawnSync } from "node:child_process"
 import { readFileSync } from "node:fs"
 import test from "node:test"
+import { Effect } from "effect"
 
 import {
   nushellCommandPreviewLines,
   nushellTableWidthPrefix,
   nushellToolPreviewLines,
-  resolveNushellPath,
+  resolveNushellPath as resolveNushellPathEffect,
   resolveNushellTableWidth,
 } from "./core.ts"
+
+const resolveNushellPath = (
+  ...args: Parameters<typeof resolveNushellPathEffect>
+) => Effect.runSync(resolveNushellPathEffect(...args))
 
 const source = readFileSync(new URL("./index.ts", import.meta.url), "utf8")
 

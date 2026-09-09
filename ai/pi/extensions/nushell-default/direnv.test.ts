@@ -1,5 +1,6 @@
 import assert from "node:assert/strict"
 import test from "node:test"
+import { Effect } from "effect"
 
 import {
   applyDirenvEnvironment,
@@ -8,8 +9,12 @@ import {
   decodeDirenvExport,
   findNearestEnvrcDirectory,
   findNearestGitRoot,
-  resolveDirenvPath,
+  resolveDirenvPath as resolveDirenvPathEffect,
 } from "./direnv.ts"
+
+const resolveDirenvPath = (
+  ...args: Parameters<typeof resolveDirenvPathEffect>
+) => Effect.runSync(resolveDirenvPathEffect(...args))
 
 test("direnv executable resolution accepts only managed absolute paths", () => {
   assert.equal(

@@ -28,6 +28,10 @@ import {
   type RegisteredJobSpec,
 } from "./job-runtime.ts"
 import type { CanonicalPath } from "./review-duty-profile.ts"
+import {
+  isAllowanceRemainingPercent,
+  MAX_ALLOWANCE_PERCENT,
+} from "./usage-policy.ts"
 
 const SCHEMA_VERSION = 7
 const BUSY_TIMEOUT_MS = 2_000
@@ -49,6 +53,35 @@ const PROVIDER_RETRY_MAX_JITTER_MS = 30_000
 const QUARANTINED_STATE = "corrupt"
 
 type Row = Readonly<Record<string, unknown>>
+
+const providerRetryJitterMs = (
+  reservationId: string,
+  maximumMs: number,
+): number => {
+  const hash = [...reservationId].reduce(
+    (current, character) =>
+      ((current * 33) ^ (character.codePointAt(0) ?? 0)) >>> 0,
+    5_381,
+  )
+
+  return hash % (maximumMs + 1)
+}
+
+const jitteredProviderRetryAt = (
+  retryAt: number,
+  now: number,
+  reservationId: string,
+): number => {
+  const delayMs = Math.max(1, retryAt - now)
+  const maximumJitterMs = Math.min(
+    PROVIDER_RETRY_MAX_JITTER_MS,
+    Math.max(250, Math.floor(delayMs / 10)),
+  )
+  const candidate =
+    retryAt + providerRetryJitterMs(reservationId, maximumJitterMs)
+
+  return Number.isSafeInteger(candidate) ? candidate : retryAt
+}
 
 /**
  * A stored row as it reads back. A document that no longer decodes is reported
@@ -247,13 +280,23 @@ const sql = <A>(
     catch: cause => sqliteError(message, cause),
   })
 
+const closeDatabaseBestEffort = (database: DatabaseSync): void => {
+  try {
+    database.close()
+  } catch {
+    // Preserve the typed failure that caused initialization to stop.
+  }
+}
+
 const isRecord = (value: unknown): value is Row =>
   typeof value === "object" && value !== null && !Array.isArray(value)
 
 const rowFrom = (value: unknown): Effect.Effect<Row, JobStoreError> =>
   isRecord(value)
     ? Effect.succeed(value)
-    : Effect.fail(storeError("corrupt_state", "job query returned a malformed row"))
+    : Effect.fail(
+        storeError("corrupt_state", "job query returned a malformed row"),
+      )
 
 const rowsFrom = (
   value: unknown,
@@ -292,13 +335,13 @@ const identifierFromRow = (row: Row): Effect.Effect<string, JobStoreError> =>
 
 const storedFromRow = (row: Row): Effect.Effect<StoredJob, JobStoreError> =>
   Effect.matchEffect(documentFromRow(row), {
-    onFailure: (failure) =>
-      Effect.map(identifierFromRow(row), (id) => ({
+    onFailure: failure =>
+      Effect.map(identifierFromRow(row), id => ({
         outcome: "unreadable" as const,
         id,
         reason: failure.message,
       })),
-    onSuccess: (job) => Effect.succeed({ outcome: "readable" as const, job }),
+    onSuccess: job => Effect.succeed({ outcome: "readable" as const, job }),
   })
 
 const noJobs: readonly Job[] = []
@@ -529,7 +572,7 @@ const makeStore = (
     row: Row,
     reason: string,
   ): Effect.Effect<void, JobStoreError> =>
-    Effect.flatMap(identifierFromRow(row), (id) =>
+    Effect.flatMap(identifierFromRow(row), id =>
       Effect.flatMap(
         sql(
           () =>
@@ -538,7 +581,7 @@ const makeStore = (
               .run(QUARANTINED_STATE, id),
           "failed to quarantine a corrupt job",
         ),
-        (result) =>
+        result =>
           result.changes === 1
             ? Effect.sync(() =>
                 console.error(
@@ -576,8 +619,8 @@ const makeStore = (
     id = randomUUID(),
     now = Date.now(),
   ) =>
-    Effect.flatMap(decodeJobSpec(spec, home), (decodedSpec) =>
-      Effect.flatMap(validateId(id), (jobId) =>
+    Effect.flatMap(decodeJobSpec(spec, home), decodedSpec =>
+      Effect.flatMap(validateId(id), jobId =>
         inTransaction(
           Effect.gen(function* () {
             const idempotencyKey = decodedSpec.idempotencyKey
@@ -666,7 +709,12 @@ const makeStore = (
     leaseToken,
     now,
     ttlMs,
+    kinds,
   ) => {
+    if (kinds?.length === 0) return Effect.succeed(undefined)
+    const kindFilter = kinds
+      ? ` AND kind IN (${kinds.map(() => "?").join(", ")})`
+      : ""
     const claimNextDue = (): Effect.Effect<
       Job | undefined,
       JobStoreError | JobRuntimeError
@@ -685,16 +733,16 @@ const makeStore = (
               .get(now, ...(kinds ?? [])),
           "failed to select due job",
         ),
-        (value) =>
+        value =>
           value === undefined
             ? Effect.succeed(undefined)
-            : Effect.flatMap(rowFrom(value), (row) =>
+            : Effect.flatMap(rowFrom(value), row =>
                 Effect.matchEffect(documentFromRow(row), {
-                  onFailure: (failure) =>
+                  onFailure: failure =>
                     Effect.flatMap(quarantine(row, failure.message), () =>
                       claimNextDue(),
                     ),
-                  onSuccess: (job) =>
+                  onSuccess: job =>
                     Effect.flatMap(
                       claimJob(job, workerId, leaseToken, now, ttlMs),
                       persist,
@@ -805,11 +853,11 @@ const makeStore = (
           ),
           rowsFrom,
         )
-        const recovered = yield* Effect.forEach(rows, (row) =>
+        const recovered = yield* Effect.forEach(rows, row =>
           Effect.matchEffect(documentFromRow(row), {
-            onFailure: (failure) =>
+            onFailure: failure =>
               Effect.as(quarantine(row, failure.message), noJobs),
-            onSuccess: (job) =>
+            onSuccess: job =>
               Effect.map(
                 Effect.flatMap(
                   recoverExpiredJob(job, now, retryDelayMs),
@@ -834,8 +882,8 @@ const makeStore = (
             .all(),
         "failed to list jobs",
       ),
-      (value) =>
-        Effect.flatMap(rowsFrom(value), (rows) =>
+      value =>
+        Effect.flatMap(rowsFrom(value), rows =>
           Effect.forEach(rows, storedFromRow),
         ),
     )
@@ -1682,17 +1730,23 @@ export const makeSqliteJobStore = (
         !("user_version" in version) ||
         typeof version.user_version !== "number"
       ) {
-        database.close()
-        throw storeError("corrupt_state", "job schema version is malformed")
+        closeDatabaseBestEffort(database)
+        return {
+          status: "failed" as const,
+          error: storeError("corrupt_state", "job schema version is malformed"),
+        }
       }
       if (
         ![0, 1, 2, 3, 4, 5, 6, SCHEMA_VERSION].includes(version.user_version)
       ) {
-        database.close()
-        throw storeError(
-          "schema_mismatch",
-          `unsupported job schema version ${version.user_version}`,
-        )
+        closeDatabaseBestEffort(database)
+        return {
+          status: "failed" as const,
+          error: storeError(
+            "schema_mismatch",
+            `unsupported job schema version ${version.user_version}`,
+          ),
+        }
       }
       const hasLegacyAllowanceTable =
         database
@@ -1872,12 +1926,18 @@ export const makeSqliteJobStore = (
         try {
           database.exec("ROLLBACK")
         } catch {}
-        database.close()
-        throw error
+        closeDatabaseBestEffort(database)
+        return {
+          status: "failed" as const,
+          error: sqliteError("failed to initialize job database", error),
+        }
       }
       chmodSync(path, 0o600)
-      return database
+      return { status: "opened" as const, database }
     }, "failed to initialize job database"),
-    (database) => Effect.succeed(makeStore(database, home)),
+    outcome =>
+      outcome.status === "opened"
+        ? Effect.succeed(makeStore(outcome.database, home))
+        : Effect.fail(outcome.error),
   )
 }

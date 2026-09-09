@@ -1,16 +1,21 @@
 import assert from "node:assert/strict"
 import { readFileSync } from "node:fs"
 import test from "node:test"
+import { Effect } from "effect"
 import type { Theme } from "@earendil-works/pi-coding-agent"
 import { visibleWidth } from "@earendil-works/pi-tui"
 import {
   HUD_ANIMATION_INTERVAL_MS,
   HUD_IDLE_ANIMATION_INTERVAL_MS,
-  synchronizedTaskHudFrame,
+  synchronizedTaskHudFrame as synchronizedTaskHudFrameEffect,
   TaskHudComponent,
 } from "./task-hud.ts"
 import { KANBAN_OVERLAY_OPTIONS, KanbanComponent } from "./kanban.ts"
 import type { TodoState } from "./state.ts"
+
+const synchronizedTaskHudFrame = (
+  ...args: Parameters<typeof synchronizedTaskHudFrameEffect>
+) => Effect.runSync(synchronizedTaskHudFrameEffect(...args))
 
 const todoExtensionSource = readFileSync(
   new URL("./index.ts", import.meta.url),
@@ -215,7 +220,7 @@ test("task progress animation never owns TUI invalidation", () => {
     /options\.idle[\s\S]*?HUD_IDLE_ANIMATION_INTERVAL_MS[\s\S]*?HUD_ANIMATION_INTERVAL_MS/,
   )
   assert.doesNotMatch(taskHudSource, /setInterval/)
-  assert.match(taskHudSource, /synchronizedTaskHudFrame\([\s\S]*?Date\.now\(\)/)
+  assert.match(taskHudSource, /taskHudFrameResult\([\s\S]*?Date\.now\(\)/)
   assert.match(todoExtensionSource, /idle: ctx\.isIdle\(\)/)
   assert.match(
     todoExtensionSource,

@@ -146,9 +146,13 @@
 - In TypeScript and JavaScript, prefer `const`-bound arrow functions over
   `function` declarations, with explicit callable types when they clarify the
   contract. Keep declarations for overloads, generators, or required semantics.
-- In TypeScript, encode expected failures in the Effect error type. Use
-  `Effect.try`/`Effect.tryPromise` at genuinely throwing boundaries and recover
-  through typed error handlers rather than untyped `try`/`catch` control flow.
+- In TypeScript, never use `throw` in production code, including inside
+  `Effect.try` callbacks or for invariant validation. Return domain and expected
+  failures directly with `Effect.fail` and recover through typed Effect handlers.
+  Use `Effect.try`/`Effect.tryPromise` only to translate a genuinely throwing
+  external API boundary; its callback must not throw agent-authored domain
+  errors. Explicit throws are permitted only in tests for assertion/framework
+  mechanics.
 - Treat persisted state, external responses, configuration, arithmetic, and
   cross-module inputs as capable of violating assumptions. Enforce invariants in
   types where possible and at the narrowest boundary otherwise. An invariant

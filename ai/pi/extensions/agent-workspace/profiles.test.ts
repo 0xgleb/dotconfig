@@ -238,12 +238,11 @@ test("Claude PR dispatch invokes shared skills and mandatory native Fable verifi
 })
 
 test("unknown workspace profiles fail closed", () => {
-  assert.throws(
-    () =>
-      workspaceProfile(
-        "unknown" as "st0x-review" | "dataclique-review" | "personal-review",
-        "/Users/example",
-      ),
-    /unknown agent workspace profile/i,
+  assert.equal(
+    workspaceProfile(
+      "unknown" as "st0x-review" | "dataclique-review" | "personal-review",
+      "/Users/example",
+    ),
+    undefined,
   )
 })

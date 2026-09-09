@@ -7,9 +7,7 @@
     "format:check": "prettier --check --no-error-on-unmatched-pattern --config ../../../prettier.config.mjs ../../../ai/**/*.{ts,tsx,mts,cts}",
     "typecheck": "tsc --noEmit -p tsconfig.json"
   },
-  "keywords": [
-    "pi-package"
-  ],
+  "keywords": ["pi-package"],
   "dependencies": {
     "@babel/cli": "7.29.7",
     "@babel/core": "7.29.7",
@@ -68,7 +66,8 @@
       "./request-observability/index.ts",
       "./remote-control/index.ts",
       "./safe-compaction/index.ts",
-      "./todo/index.ts"
+      "./todo/index.ts",
+      "./usage-governor/index.ts"
     ]
   },
   "devDependencies": {

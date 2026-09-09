@@ -68,9 +68,10 @@ export const paneNames = (stdout: string): readonly string[] => {
 const profileForSession = (
   sessionName: string | undefined,
 ): AgentWorkspaceProfile | undefined =>
-  PROFILE_NAMES.map(name => workspaceProfile(name, homedir())).find(
-    profile => profile.sessionName === sessionName,
-  )
+  PROFILE_NAMES.flatMap(name => {
+    const profile = workspaceProfile(name, homedir())
+    return profile ? [profile] : []
+  }).find(profile => profile.sessionName === sessionName)
 
 const parseDispatch = (
   profile: AgentWorkspaceProfile,
@@ -112,7 +113,7 @@ const parseDispatch = (
 }
 
 export default function agentWorkspace(pi: ExtensionAPI): void {
-  registerRuntimeVersion(pi, "agent-workspace", "2026.08.09.13")
+  registerRuntimeVersion(pi, "agent-workspace", "2026.09.04.1")
 
   pi.on("session_start", async (_event, ctx) => {
     const profile = profileForSession(pi.getSessionName())
@@ -195,8 +196,15 @@ export default function agentWorkspace(pi: ExtensionAPI): void {
       _onUpdate,
       ctx,
     ) {
-      const profile = workspaceProfile(params.profile, homedir())
       const operation = Effect.gen(function* () {
+        const profile = workspaceProfile(params.profile, homedir())
+        if (!profile)
+          return yield* Effect.fail(
+            new AgentWorkspaceError({
+              code: "invalid_dispatch",
+              message: "Unknown agent workspace profile",
+            }),
+          )
         if (!process.env.ZELLIJ_SESSION_NAME) {
           return yield* Effect.fail(
             new AgentWorkspaceError({
@@ -311,40 +319,48 @@ export default function agentWorkspace(pi: ExtensionAPI): void {
               )
             }
           }
+          const invalidRepositoryRoot = () =>
+            new AgentWorkspaceError({
+              code: "invalid_dispatch",
+              message:
+                "Claude review repository root is unavailable or outside the source-fixed profile",
+            })
           const dispatch =
             parsed.mode === "inventory"
               ? parsed
-              : yield* Effect.try({
-                  try: () => {
-                    if (lstatSync(parsed.repositoryRoot).isSymbolicLink())
-                      throw new Error("symlink repository root")
-                    const canonicalCandidate = realpathSync(
-                      parsed.repositoryRoot,
+              : yield* Effect.gen(function* () {
+                  const metadata = yield* Effect.try({
+                    try: () => lstatSync(parsed.repositoryRoot),
+                    catch: invalidRepositoryRoot,
+                  })
+                  if (metadata.isSymbolicLink())
+                    return yield* Effect.fail(invalidRepositoryRoot())
+                  const canonicalCandidate = yield* Effect.try({
+                    try: () => realpathSync(parsed.repositoryRoot),
+                    catch: invalidRepositoryRoot,
+                  })
+                  const allowedRoots = profile.allowedRepositoryRoots ?? [
+                    profile.cwd,
+                    ...profile.additionalRepositoryRoots,
+                  ]
+                  const canonicalRoots = yield* Effect.forEach(
+                    allowedRoots,
+                    root =>
+                      Effect.try({
+                        try: () => realpathSync(root),
+                        catch: invalidRepositoryRoot,
+                      }),
+                  )
+                  const allowed = canonicalRoots.some(root => {
+                    const child = relative(root, canonicalCandidate)
+                    return (
+                      child === "" ||
+                      (!child.startsWith("..") && !isAbsolute(child))
                     )
-                    const allowedRoots = profile.allowedRepositoryRoots ?? [
-                      profile.cwd,
-                      ...profile.additionalRepositoryRoots,
-                    ]
-                    const allowed = allowedRoots.some(root => {
-                      const child = relative(
-                        realpathSync(root),
-                        canonicalCandidate,
-                      )
-                      return (
-                        child === "" ||
-                        (!child.startsWith("..") && !isAbsolute(child))
-                      )
-                    })
-                    if (!allowed)
-                      throw new Error("repository root outside profile")
-                    return { ...parsed, repositoryRoot: canonicalCandidate }
-                  },
-                  catch: () =>
-                    new AgentWorkspaceError({
-                      code: "invalid_dispatch",
-                      message:
-                        "Claude review repository root is unavailable or outside the source-fixed profile",
-                    }),
+                  })
+                  if (!allowed)
+                    return yield* Effect.fail(invalidRepositoryRoot())
+                  return { ...parsed, repositoryRoot: canonicalCandidate }
                 })
           const dedupeKey = [
             "claude-review",
