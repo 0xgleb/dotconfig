@@ -4,7 +4,7 @@ import type {
   ExtensionAPI,
   ExtensionContext,
 } from "@earendil-works/pi-coding-agent"
-import { Effect, Option } from "effect"
+import { Cause, Effect, Option, Runtime } from "effect"
 import { Type } from "typebox"
 import { registerRuntimeVersion } from "../shared/runtime-version.ts"
 import {
@@ -60,6 +60,17 @@ interface PendingCall {
 let activeTargetId: string | undefined
 
 const debugBase: () => string = () => `http://127.0.0.1:${DEBUG_PORT}`
+
+const browserFailureFrom = (
+  error: unknown,
+): BrowserControlError | undefined => {
+  if (error instanceof BrowserControlError) return error
+  if (!Runtime.isFiberFailure(error)) return undefined
+  const failure = Option.getOrUndefined(
+    Cause.failureOption(error[Runtime.FiberFailureCauseId]),
+  )
+  return failure instanceof BrowserControlError ? failure : undefined
+}
 
 const failBrowser = (
   code: BrowserControlError["code"],
@@ -557,7 +568,7 @@ const withBrowserActivity: <T>(
 }
 
 const browserControl: (pi: ExtensionAPI) => void = pi => {
-  registerRuntimeVersion(pi, "browser-control", "2026.09.04.1")
+  registerRuntimeVersion(pi, "browser-control", "2026.09.04.2")
   pi.on("session_start", (_event, ctx) => {
     activeTargetId = latestBrowserTargetId(ctx.sessionManager.getBranch())
     ctx.ui.setStatus(BROWSER_STATUS_KEY, browserActivityLabel("idle"))
@@ -705,15 +716,9 @@ const browserControl: (pi: ExtensionAPI) => void = pi => {
             details: { status: "ok" },
           }
         } catch (error) {
+          const browserFailure = browserFailureFrom(error)
           return Effect.runPromise(
-            Effect.fail(
-              error instanceof Error
-                ? error
-                : new BrowserControlError({
-                    code: "unavailable",
-                    message: "Browser action failed",
-                  }),
-            ),
+            browserFailure ? Effect.fail(browserFailure) : Effect.die(error),
           )
         }
       })

@@ -3,6 +3,8 @@ import { readFileSync } from "node:fs"
 import { createServer, type RequestListener } from "node:http"
 import test from "node:test"
 import type { ExtensionAPI } from "@earendil-works/pi-coding-agent"
+import { Cause, Option, Runtime } from "effect"
+import { BrowserControlError } from "./core.ts"
 import browserControl from "./index.ts"
 
 const browserSource = readFileSync(
@@ -61,6 +63,47 @@ const withLoopbackServer = async (
     await new Promise<void>(resolve => server.close(() => resolve()))
   }
 }
+
+test("typed browser failures survive the Promise host boundary", async () => {
+  await assert.rejects(
+    tool.execute(
+      "remote-url",
+      { action: "fetch", url: "https://example.com" },
+      undefined,
+      undefined,
+      context,
+    ),
+    error => {
+      assert.ok(Runtime.isFiberFailure(error))
+      const failure = Option.getOrUndefined(
+        Cause.failureOption(error[Runtime.FiberFailureCauseId]),
+      )
+      assert.ok(failure instanceof BrowserControlError)
+      assert.equal(failure.code, "invalid_input")
+      return true
+    },
+  )
+})
+
+test("unexpected browser failures remain defects", async () => {
+  const defect = new Error("unexpected parameter defect")
+  const params = {
+    action: "fetch" as const,
+    get url(): string {
+      throw defect
+    },
+  }
+  await assert.rejects(
+    tool.execute("defect", params, undefined, undefined, context),
+    error => {
+      assert.ok(Runtime.isFiberFailure(error))
+      const cause = error[Runtime.FiberFailureCauseId]
+      assert.equal(Option.getOrUndefined(Cause.dieOption(cause)), defect)
+      assert.ok(Option.isNone(Cause.failureOption(cause)))
+      return true
+    },
+  )
+})
 
 test("hung loopback fetch bypasses page-indicator CDP preflight", () => {
   assert.match(
