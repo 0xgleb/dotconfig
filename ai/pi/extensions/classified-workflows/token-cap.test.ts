@@ -1,17 +1,32 @@
 import assert from "node:assert/strict"
 import test from "node:test"
+import { Effect } from "effect"
 import {
-  assertExecutableWorkflowBudget,
-  capProviderOutputTokens,
-  workflowChildTokenLimit,
+  assertExecutableWorkflowBudget as assertExecutableWorkflowBudgetEffect,
+  capProviderOutputTokens as capProviderOutputTokensEffect,
+  workflowChildTokenLimit as workflowChildTokenLimitEffect,
 } from "./token-cap.ts"
 
-test("workflow budget rejects an impossible multi-agent envelope before launch", () => {
+const assertExecutableWorkflowBudget = (
+  ...args: Parameters<typeof assertExecutableWorkflowBudgetEffect>
+) => Effect.runSync(assertExecutableWorkflowBudgetEffect(...args))
+const capProviderOutputTokens = (
+  ...args: Parameters<typeof capProviderOutputTokensEffect>
+) => Effect.runSync(capProviderOutputTokensEffect(...args))
+const workflowChildTokenLimit = (
+  ...args: Parameters<typeof workflowChildTokenLimitEffect>
+) => Effect.runSync(workflowChildTokenLimitEffect(...args))
+
+test("workflow budget rejects prompt-starved 64k slots before launch", () => {
   assert.throws(
     () => assertExecutableWorkflowBudget(24_000, 2),
-    /minimum executable allocation is 64000 tokens per configured agent; 12000 available/i,
+    /minimum executable allocation is 80000 tokens per configured agent; 12000 available/i,
   )
-  assert.doesNotThrow(() => assertExecutableWorkflowBudget(128_000, 2))
+  assert.throws(
+    () => assertExecutableWorkflowBudget(192_000, 3),
+    /minimum executable allocation is 80000 tokens per configured agent; 64000 available.*at least 240000/i,
+  )
+  assert.doesNotThrow(() => assertExecutableWorkflowBudget(240_000, 3))
 })
 
 test("workflow child token limits are activated only by a valid bounded internal environment value", () => {

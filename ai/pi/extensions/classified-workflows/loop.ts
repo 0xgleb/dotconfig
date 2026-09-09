@@ -1,4 +1,5 @@
 import { randomInt } from "node:crypto"
+import { Data, Effect } from "effect"
 
 export interface ActiveLoopState {
   readonly status: "active"
@@ -53,33 +54,95 @@ const INTERVAL_MULTIPLIERS: Readonly<Record<string, number>> = {
   d: 86_400_000,
 }
 
-export const parseLoopCommand: (args: string) => LoopCommand = args => {
+export class LoopCommandError extends Data.TaggedError("LoopCommandError")<{
+  readonly message: string
+}> {}
+
+const loopFailure = (message: string): LoopCommandError =>
+  new LoopCommandError({ message })
+
+export type LoopCommandResult =
+  | { readonly ok: true; readonly value: LoopCommand }
+  | { readonly ok: false; readonly error: LoopCommandError }
+
+const parseIntervalResult = (
+  amount: number,
+  unit: string,
+):
+  | { readonly ok: true; readonly value: number }
+  | {
+      readonly ok: false
+      readonly error: LoopCommandError
+    } => {
+  const multiplier = INTERVAL_MULTIPLIERS[unit]
+  if (multiplier === undefined)
+    return {
+      ok: false,
+      error: loopFailure("Loop interval unit must be s, m, h, or d."),
+    }
+  const intervalMs = amount * multiplier
+  if (!Number.isSafeInteger(intervalMs) || intervalMs < MIN_LOOP_INTERVAL_MS)
+    return {
+      ok: false,
+      error: loopFailure("Loop intervals must be at least 1 minute."),
+    }
+  return intervalMs > MAX_LOOP_INTERVAL_MS
+    ? {
+        ok: false,
+        error: loopFailure("Loop intervals may be at most 7 days."),
+      }
+    : { ok: true, value: intervalMs }
+}
+
+export const parseLoopCommandResult = (args: string): LoopCommandResult => {
   const input = args.trim()
   if (input.length === 0 || input.toLowerCase() === "status")
-    return { action: "status" }
-  if (input.toLowerCase() === "clear") return { action: "clear" }
-
+    return { ok: true, value: { action: "status" } }
+  if (input.toLowerCase() === "clear")
+    return { ok: true, value: { action: "clear" } }
   const match = /^(\d+)([smhd])(?:\+-(\d+)([smhd]))?\s+(.+)$/i.exec(input)
-  const intervalMs = match
-    ? parseInterval(Number(match[1]), match[2]?.toLowerCase() ?? "")
-    : DEFAULT_LOOP_INTERVAL_MS
-  const jitterMs = match?.[3]
-    ? parseInterval(Number(match[3]), match[4]?.toLowerCase() ?? "")
-    : undefined
-  if (jitterMs !== undefined && jitterMs >= intervalMs)
-    throw new Error("Loop jitter must be smaller than the base interval.")
+  const interval = match
+    ? parseIntervalResult(Number(match[1]), match[2]?.toLowerCase() ?? "")
+    : { ok: true as const, value: DEFAULT_LOOP_INTERVAL_MS }
+  if (!interval.ok) return interval
+  const jitter = match?.[3]
+    ? parseIntervalResult(Number(match[3]), match[4]?.toLowerCase() ?? "")
+    : { ok: true as const, value: undefined }
+  if (!jitter.ok) return jitter
+  if (jitter.value !== undefined && jitter.value >= interval.value)
+    return {
+      ok: false,
+      error: loopFailure("Loop jitter must be smaller than the base interval."),
+    }
   const instruction = (match?.[5] ?? input).trim()
   if (instruction.length === 0)
-    throw new Error("Loop instructions must not be empty.")
-  if (instruction.length > MAX_INSTRUCTION_LENGTH) {
-    throw new Error("Loop instructions may contain at most 4,000 characters.")
-  }
+    return {
+      ok: false,
+      error: loopFailure("Loop instructions must not be empty."),
+    }
+  if (instruction.length > MAX_INSTRUCTION_LENGTH)
+    return {
+      ok: false,
+      error: loopFailure(
+        "Loop instructions may contain at most 4,000 characters.",
+      ),
+    }
   return {
-    action: "set",
-    instruction,
-    intervalMs,
-    ...(jitterMs !== undefined ? { jitterMs } : {}),
+    ok: true,
+    value: {
+      action: "set",
+      instruction,
+      intervalMs: interval.value,
+      ...(jitter.value !== undefined ? { jitterMs: jitter.value } : {}),
+    },
   }
+}
+
+export const parseLoopCommand = (
+  args: string,
+): Effect.Effect<LoopCommand, LoopCommandError> => {
+  const result = parseLoopCommandResult(args)
+  return result.ok ? Effect.succeed(result.value) : Effect.fail(result.error)
 }
 
 export const parseStoredLoop: (
@@ -122,19 +185,15 @@ export const migrateLegacyReloadLoop: (
   now: number,
 ) => ActiveLoopState | undefined = (condition, now) => {
   if (!/^\d+[smhd]\s+\/reload(?:\s|$)/i.test(condition.trim())) return undefined
-  try {
-    const command = parseLoopCommand(condition)
-    if (command.action !== "set") return undefined
-    return {
-      status: "active",
-      instruction: command.instruction,
-      intervalMs: DEFAULT_LOOP_INTERVAL_MS,
-      startedAt: now,
-      nextRunAt: now + DEFAULT_LOOP_INTERVAL_MS,
-      runs: 0,
-    }
-  } catch {
-    return undefined
+  const parsed = parseLoopCommandResult(condition)
+  if (!parsed.ok || parsed.value.action !== "set") return undefined
+  return {
+    status: "active",
+    instruction: parsed.value.instruction,
+    intervalMs: DEFAULT_LOOP_INTERVAL_MS,
+    startedAt: now,
+    nextRunAt: now + DEFAULT_LOOP_INTERVAL_MS,
+    runs: 0,
   }
 }
 
@@ -151,51 +210,52 @@ export const nextLoopRunAt = (
   state: Pick<ActiveLoopState, "intervalMs" | "jitterMs">,
   now: number,
   jitterOffsetMs = sampledJitter(state.jitterMs),
-): number => {
+): Effect.Effect<number, LoopCommandError> => {
   const jitter = state.jitterMs ?? 0
-  if (
-    !Number.isSafeInteger(jitterOffsetMs) ||
+  return !Number.isSafeInteger(jitterOffsetMs) ||
     Math.abs(jitterOffsetMs) > jitter
-  )
-    throw new Error("Loop jitter offset is outside the configured bound.")
-  return now + state.intervalMs + jitterOffsetMs
+    ? Effect.fail(
+        loopFailure("Loop jitter offset is outside the configured bound."),
+      )
+    : Effect.succeed(now + state.intervalMs + jitterOffsetMs)
 }
 
-export const migrateReviewDutyLoopCadence: (
+export const migrateReviewDutyLoopCadence = (
   state: LoopState | undefined,
   now: number,
   jitterOffsetMs?: number,
-) => ActiveLoopState | undefined = (state, now, jitterOffsetMs) => {
-  if (
-    state?.status !== "active" ||
-    (state.intervalMs !== LEGACY_REVIEW_DUTY_LOOP_INTERVAL_MS &&
-      state.intervalMs !== REVIEW_DUTY_LOOP_INTERVAL_MS) ||
-    state.jitterMs === REVIEW_DUTY_LOOP_JITTER_MS ||
-    !REVIEW_DUTY_INSTRUCTIONS.some(pattern => pattern.test(state.instruction))
-  ) {
-    return undefined
-  }
-  const migrated = {
-    ...state,
-    intervalMs: REVIEW_DUTY_LOOP_INTERVAL_MS,
-    jitterMs: REVIEW_DUTY_LOOP_JITTER_MS,
-  }
-  return {
-    ...migrated,
-    nextRunAt: nextLoopRunAt(migrated, now, jitterOffsetMs),
-  }
-}
+): Effect.Effect<ActiveLoopState | undefined, LoopCommandError> =>
+  Effect.gen(function* () {
+    if (
+      state?.status !== "active" ||
+      (state.intervalMs !== LEGACY_REVIEW_DUTY_LOOP_INTERVAL_MS &&
+        state.intervalMs !== REVIEW_DUTY_LOOP_INTERVAL_MS) ||
+      state.jitterMs === REVIEW_DUTY_LOOP_JITTER_MS ||
+      !REVIEW_DUTY_INSTRUCTIONS.some(pattern => pattern.test(state.instruction))
+    )
+      return undefined
+    const migrated = {
+      ...state,
+      intervalMs: REVIEW_DUTY_LOOP_INTERVAL_MS,
+      jitterMs: REVIEW_DUTY_LOOP_JITTER_MS,
+    }
+    return {
+      ...migrated,
+      nextRunAt: yield* nextLoopRunAt(migrated, now, jitterOffsetMs),
+    }
+  })
 
 export const advanceLoop = (
   state: ActiveLoopState,
   now: number,
   jitterOffsetMs?: number,
-): ActiveLoopState => ({
-  ...state,
-  nextRunAt: nextLoopRunAt(state, now, jitterOffsetMs),
-  runs: state.runs + 1,
-  lastRunAt: now,
-})
+): Effect.Effect<ActiveLoopState, LoopCommandError> =>
+  Effect.map(nextLoopRunAt(state, now, jitterOffsetMs), nextRunAt => ({
+    ...state,
+    nextRunAt,
+    runs: state.runs + 1,
+    lastRunAt: now,
+  }))
 
 export const loopDispatch: (state: ActiveLoopState) => LoopDispatch = state => {
   return /^\/reload(?:\s|$)/i.test(state.instruction.trim())
@@ -222,22 +282,6 @@ export const formatLoopStatus: (
     `Loop (${state.status}, infinite): every ${cadence} · ${next} · ${state.runs} runs`,
     state.instruction,
   ].join("\n")
-}
-
-const parseInterval: (amount: number, unit: string) => number = (
-  amount,
-  unit,
-) => {
-  const multiplier = INTERVAL_MULTIPLIERS[unit]
-  if (multiplier === undefined)
-    throw new Error("Loop interval unit must be s, m, h, or d.")
-  const intervalMs = amount * multiplier
-  if (!Number.isSafeInteger(intervalMs) || intervalMs < MIN_LOOP_INTERVAL_MS) {
-    throw new Error("Loop intervals must be at least 1 minute.")
-  }
-  if (intervalMs > MAX_LOOP_INTERVAL_MS)
-    throw new Error("Loop intervals may be at most 7 days.")
-  return intervalMs
 }
 
 const formatUntil: (milliseconds: number) => string = milliseconds =>

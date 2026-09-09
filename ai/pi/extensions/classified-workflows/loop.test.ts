@@ -1,19 +1,30 @@
 import assert from "node:assert/strict"
 import { readFileSync } from "node:fs"
 import test from "node:test"
+import { Effect } from "effect"
 import {
-  advanceLoop,
+  advanceLoop as advanceLoopEffect,
   DEFAULT_LOOP_INTERVAL_MS,
   formatLoopStatus,
   loopDispatch,
   migrateLegacyReloadLoop,
-  migrateReviewDutyLoopCadence,
-  nextLoopRunAt,
-  parseLoopCommand,
+  migrateReviewDutyLoopCadence as migrateReviewDutyLoopCadenceEffect,
+  nextLoopRunAt as nextLoopRunAtEffect,
+  parseLoopCommand as parseLoopCommandEffect,
   REVIEW_DUTY_LOOP_JITTER_MS,
   parseStoredLoop,
   type ActiveLoopState,
 } from "./loop.ts"
+
+const advanceLoop = (...args: Parameters<typeof advanceLoopEffect>) =>
+  Effect.runSync(advanceLoopEffect(...args))
+const migrateReviewDutyLoopCadence = (
+  ...args: Parameters<typeof migrateReviewDutyLoopCadenceEffect>
+) => Effect.runSync(migrateReviewDutyLoopCadenceEffect(...args))
+const nextLoopRunAt = (...args: Parameters<typeof nextLoopRunAtEffect>) =>
+  Effect.runSync(nextLoopRunAtEffect(...args))
+const parseLoopCommand = (...args: Parameters<typeof parseLoopCommandEffect>) =>
+  Effect.runSync(parseLoopCommandEffect(...args))
 
 const extensionSource = readFileSync(
   new URL("./index.ts", import.meta.url),
@@ -38,7 +49,10 @@ test("loop control is available as a typed tool without injecting editor input",
 
 test("scheduled loop turns coalesce while one wake is queued or running", () => {
   assert.match(extensionSource, /let loopWakePending = false/)
-  assert.match(extensionSource, /if \(loopWakePending \|\| !ctx\.isIdle\(\)\)/)
+  assert.match(
+    extensionSource,
+    /if \(loopWakePending \|\| !ctx\.isIdle\(\) \|\| continuationPaused\)/,
+  )
   assert.match(extensionSource, /loopWakePending = true/)
   assert.match(
     extensionSource,

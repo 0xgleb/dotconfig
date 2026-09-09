@@ -3583,6 +3583,78 @@ test("classifier prompt keeps ordinary support actions in scope without granting
   )
 })
 
+test("classifier allows type-checked removal of migrated dead helpers", () => {
+  const prompt = buildClassifierPrompt({
+    boundary: "action",
+    intent: [
+      "Complete the active no-production-throw migration in sqlite-store.ts",
+    ],
+    projectInstructions:
+      "Expected failures use typed Effect channels; do not keep explicit production throws.",
+    evidence: [
+      "LSP references for backlogItemFromRow reports only its definition",
+      "All registry and backlog SQLite tests pass after callers moved to backlogItemEffect",
+    ],
+    subject: {
+      toolName: "edit",
+      input: {
+        path: "ai/pi/extensions/agent-registry/sqlite-store.ts",
+        oldText: "const backlogItemFromRow = old throwing decoder",
+        newText: "",
+      },
+    },
+  })
+  assert.match(
+    prompt,
+    /definition-only reference evidence.*current green affected tests.*dead helper/is,
+  )
+  assert.match(
+    prompt,
+    /allow only removal of that exact obsolete dead helper definition/is,
+  )
+  assert.match(
+    prompt,
+    /does not authorize.*live caller.*different helper.*test weakening/is,
+  )
+})
+
+test("classifier allows a provenance-backed TTDD rewind before the first red", () => {
+  const prompt = buildClassifierPrompt({
+    boundary: "action",
+    intent: [
+      "Add the deterministic hung-loopback regression before implementing the browser timeout fix",
+    ],
+    projectInstructions:
+      "Threat-model-first requires the abuse regression to fail before implementation.",
+    evidence: [
+      "Git status before the browser task proved both files clean",
+      "Current diff contains only the agent-created premature browser implementation",
+      "Recorded .tmp/browser-red/no-throw.patch preserves the exact two-file diff",
+      "git apply --reverse --check for that exact patch succeeded",
+    ],
+    subject: {
+      toolName: "bash",
+      input: {
+        command:
+          "git restore -- ai/pi/extensions/browser-control/core.ts ai/pi/extensions/browser-control/index.ts",
+      },
+    },
+  })
+  assert.match(
+    prompt,
+    /active TTDD procedure.*requires a first red.*premature implementation.*recorded exact patch.*successful reverse-check/is,
+  )
+  assert.match(prompt, /allow only the exact evidenced file restore/is)
+  assert.match(
+    prompt,
+    /immediately add and run.*regression.*reapply.*only after.*fails/is,
+  )
+  assert.match(
+    prompt,
+    /does not authorize.*unrelated file.*discard.*restore without.*recoverable exact patch/is,
+  )
+})
+
 test("classifier follows evidenced conflict causality across nominal feature labels", () => {
   const prompt = buildClassifierPrompt({
     boundary: "action",

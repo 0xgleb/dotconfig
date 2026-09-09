@@ -1,3 +1,5 @@
+import { Data, Effect } from "effect"
+
 export type GoalState =
   | {
       status: "active"
@@ -83,14 +85,24 @@ export function parseStoredGoal(value: unknown): GoalState | undefined {
   }
 }
 
-export function parseGoalCommand(args: string): GoalCommand {
+export class GoalCommandError extends Data.TaggedError("GoalCommandError")<{
+  readonly message: string
+}> {}
+
+export const parseGoalCommand = (
+  args: string,
+): Effect.Effect<GoalCommand, GoalCommandError> => {
   const condition = args.trim()
-  if (condition.length === 0) return { action: "status" }
-  if (condition.toLowerCase() === CLEAR_COMMAND) return { action: "clear" }
-  if (condition.length > MAX_CONDITION_LENGTH) {
-    throw new Error("Goal conditions may contain at most 4,000 characters.")
-  }
-  return { action: "set", condition }
+  if (condition.length === 0) return Effect.succeed({ action: "status" })
+  if (condition.toLowerCase() === CLEAR_COMMAND)
+    return Effect.succeed({ action: "clear" })
+  return condition.length > MAX_CONDITION_LENGTH
+    ? Effect.fail(
+        new GoalCommandError({
+          message: "Goal conditions may contain at most 4,000 characters.",
+        }),
+      )
+    : Effect.succeed({ action: "set", condition })
 }
 
 export function parseGoalEvaluation(text: string): GoalEvaluation {

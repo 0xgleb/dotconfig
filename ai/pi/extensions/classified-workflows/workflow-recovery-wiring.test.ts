@@ -38,6 +38,17 @@ test("background workflows persist a running snapshot before their process start
   assert.ok(executed > persisted)
 })
 
+test("background checkpoints abort through the owned controller without throwing", () => {
+  const start = extensionSource.indexOf("const startBackgroundWorkflow")
+  const checkpoint = extensionSource.slice(
+    extensionSource.indexOf("checkpoint: async message =>", start),
+    extensionSource.indexOf("phase: title =>", start),
+  )
+  assert.match(checkpoint, /workflow\.controller\.abort\(error\)/)
+  assert.match(checkpoint, /return "approved"/)
+  assert.doesNotMatch(checkpoint, /throw new Error/)
+})
+
 test("foreground checkpoints continue without exposing workflow mechanics to the user", () => {
   const tool = extensionSource.indexOf('name: "workflow"')
   const checkpoint = extensionSource.slice(
@@ -70,7 +81,7 @@ test("startup and managed reload restore interrupted background workflows", () =
 test("recovered workflows fail closed before mutation-capable child replay", () => {
   assert.match(
     extensionSource,
-    /return recoveredRun \? readOnlyRecoveryRequest\(prepared\) : prepared/,
+    /return recoveredRun[\s\S]*?prepared\.pipe\(Effect\.flatMap\(readOnlyRecoveryRequest\)\)[\s\S]*?: prepared/,
   )
 })
 

@@ -1,14 +1,20 @@
 import assert from "node:assert/strict"
 import test from "node:test"
+import { Effect } from "effect"
 import {
   AGENT_PROCESS_STDIO,
   buildAgentArguments,
   LOCAL_LANE_PROVIDER,
   localLaneWorkflowRefusal,
-  resolveAgentModel,
+  resolveAgentModel as resolveAgentModelEffect,
   resolveWorkflowThinking,
   WORKFLOW_CHILD_SYSTEM_PROMPT,
 } from "./agent-process.ts"
+
+const run = <T>(effect: Effect.Effect<T, unknown>): T => Effect.runSync(effect)
+const resolveAgentModel = (
+  ...args: Parameters<typeof resolveAgentModelEffect>
+): string | undefined => run(resolveAgentModelEffect(...args))
 
 test("workflow orchestration is refused on the local Ollama lane", () => {
   const refusal = localLaneWorkflowRefusal(LOCAL_LANE_PROVIDER)
@@ -25,14 +31,16 @@ test("workflow orchestration stays available to full-capability providers", () =
 
 test("workflow children load only the classified workflow extension explicitly", () => {
   assert.deepEqual(
-    buildAgentArguments(
-      {
-        task: "inspect",
-        tools: ["read", "bash"],
-        model: "reviewer",
-        thinking: "high",
-      },
-      "/repo/classified-workflows/index.ts",
+    run(
+      buildAgentArguments(
+        {
+          task: "inspect",
+          tools: ["read", "bash"],
+          model: "reviewer",
+          thinking: "high",
+        },
+        "/repo/classified-workflows/index.ts",
+      ),
     ),
     [
       "--mode",
@@ -60,7 +68,7 @@ test("workflow children load only the classified workflow extension explicitly",
 })
 
 test("workflow children receive a bounded isolated prompt contract", () => {
-  const args = buildAgentArguments({ task: "inspect" }, "/repo/index.ts")
+  const args = run(buildAgentArguments({ task: "inspect" }, "/repo/index.ts"))
   assert.ok(args.includes("--no-context-files"))
   assert.ok(args.includes("--system-prompt"))
   assert.match(WORKFLOW_CHILD_SYSTEM_PROMPT, /batch independent reads/i)
@@ -72,9 +80,11 @@ test("workflow children receive a bounded isolated prompt contract", () => {
 })
 
 test("workflow children activate only requested source tools and not extension control-plane tools", () => {
-  const args = buildAgentArguments(
-    { task: "inspect one source", tools: ["read"] },
-    "/repo/classified-workflows/index.ts",
+  const args = run(
+    buildAgentArguments(
+      { task: "inspect one source", tools: ["read"] },
+      "/repo/classified-workflows/index.ts",
+    ),
   )
   assert.equal(args[args.indexOf("--tools") + 1], "read")
   for (const tool of [
@@ -91,9 +101,11 @@ test("workflow children activate only requested source tools and not extension c
 })
 
 test("structured workflow children receive an explicit JSON-only contract", () => {
-  const args = buildAgentArguments(
-    { task: "inspect", schema: { type: "object", required: ["findings"] } },
-    "/repo/index.ts",
+  const args = run(
+    buildAgentArguments(
+      { task: "inspect", schema: { type: "object", required: ["findings"] } },
+      "/repo/index.ts",
+    ),
   )
   assert.match(
     args.at(-1) ?? "",
@@ -221,15 +233,19 @@ test("workflow reasoning defaults follow the selected model tier", () => {
 test("JSON workflow children stay hidden behind captured pipes", () => {
   assert.deepEqual(AGENT_PROCESS_STDIO, ["ignore", "pipe", "pipe"])
   assert.equal(
-    buildAgentArguments({ task: "inspect" }, "/repo/index.ts").includes("json"),
+    run(buildAgentArguments({ task: "inspect" }, "/repo/index.ts")).includes(
+      "json",
+    ),
     true,
   )
 })
 
 test("workflow children normalize comma-delimited tools at the process boundary", () => {
-  const args = buildAgentArguments(
-    { task: "inspect", tools: "read,grep,find,ls" },
-    "/repo/index.ts",
+  const args = run(
+    buildAgentArguments(
+      { task: "inspect", tools: "read,grep,find,ls" },
+      "/repo/index.ts",
+    ),
   )
   assert.equal(args[args.indexOf("--tools") + 1], "read,grep,find,ls")
 })
@@ -237,9 +253,11 @@ test("workflow children normalize comma-delimited tools at the process boundary"
 test("workflow children reject unsupported tools", () => {
   assert.throws(
     () =>
-      buildAgentArguments(
-        { task: "inspect", tools: ["read", "unknown"] },
-        "/repo/index.ts",
+      run(
+        buildAgentArguments(
+          { task: "inspect", tools: ["read", "unknown"] },
+          "/repo/index.ts",
+        ),
       ),
     /unsupported tool/i,
   )

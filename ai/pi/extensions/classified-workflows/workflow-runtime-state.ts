@@ -1,13 +1,15 @@
-import type { AgentRequest, WorkflowLimits } from "./core.ts"
+import { Effect } from "effect"
+import {
+  WorkflowScriptError,
+  type AgentRequest,
+  type WorkflowLimits,
+} from "./core.ts"
 
 export const WORKFLOW_RUNTIME_ENTRY = "classified-workflows.runtime"
 export const MAX_WORKFLOW_RECOVERIES = 3
 
 export type PersistedWorkflowStatus =
-  | "running"
-  | "completed"
-  | "failed"
-  | "cancelled"
+  "running" | "completed" | "failed" | "cancelled"
 
 export interface PersistedWorkflowRun {
   readonly id: string
@@ -238,15 +240,15 @@ export const recoverableWorkflowRuns = (
 
 export const readOnlyRecoveryRequest = (
   request: AgentRequest,
-): AgentRequest => {
+): Effect.Effect<AgentRequest, WorkflowScriptError> => {
   const tools = request.tools ?? ["read", "grep", "find", "ls"]
-  if (
-    tools.length === 0 ||
+  return tools.length === 0 ||
     tools.some(tool => !READ_ONLY_RECOVERY_TOOLS.has(tool))
-  ) {
-    throw new Error(
-      "Recovered workflow cannot replay mutation-capable child tools; restart it explicitly after inspecting persisted workflow evidence",
-    )
-  }
-  return request
+    ? Effect.fail(
+        new WorkflowScriptError({
+          message:
+            "Recovered workflow cannot replay mutation-capable child tools; restart it explicitly after inspecting persisted workflow evidence",
+        }),
+      )
+    : Effect.succeed(request)
 }

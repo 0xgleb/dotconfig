@@ -1,6 +1,7 @@
 import assert from "node:assert/strict"
 import { readFileSync } from "node:fs"
 import test from "node:test"
+import { QUESTION_STATE_ENTRY } from "../shared/question-events.ts"
 import {
   MAX_REVIEW_DUTY_COMPLETED_PASSES,
   REVIEW_DUTY_STATE_ENTRY,
@@ -9,8 +10,11 @@ import {
   completeAutoReviewDuty,
   continueReviewDuty,
   emptyReviewDutyState,
+  inConversationReviewQuestionAuthorized,
   isPullRequestReviewWorkflow,
   preExecutionReviewWorkflowBlockObserved,
+  recoverCompletedReviewDuty,
+  releaseUnusableReviewDuty,
   startReviewWorkflow,
   retryBlockedReviewDuty,
   retryFailedReviewDuty,
@@ -31,6 +35,8 @@ const job = {
   pullRequest: 1101,
   kind: "own" as const,
 }
+
+const assignedJob = { ...job, kind: "assigned" as const }
 
 const verdictQuestion = {
   id: 7,
@@ -272,6 +278,88 @@ test("failed workflow recovery resumes only the same gated job", () => {
   assert.match(retryHandler, /retryFailedReviewDuty/)
 })
 
+test("usable completed evidence restores the matching completion gate without discarding the old review", () => {
+  const active = beginReviewDuty(emptyReviewDutyState, job, 10)
+  assert.equal(active.ok, true)
+  if (!active.ok) return
+
+  assert.deepEqual(recoverCompletedReviewDuty(active.state, 20, true, false), {
+    ok: true,
+    state: { ...active.state, phase: "awaiting_report", completedAt: 20 },
+  })
+  assert.match(
+    recoverCompletedReviewDuty(active.state, 20, false, false).error ?? "",
+    /no usable completed review evidence/i,
+  )
+  assert.match(
+    recoverCompletedReviewDuty(active.state, 20, true, true).error ?? "",
+    /still running/i,
+  )
+  assert.match(
+    recoverCompletedReviewDuty(
+      startReviewWorkflow(active.state, 20),
+      20,
+      true,
+      false,
+    ).error ?? "",
+    /no active review-duty job/i,
+  )
+  assert.match(
+    recoverCompletedReviewDuty(active.state, 9, true, false).error ?? "",
+    /predates the active review-duty job/i,
+  )
+
+  assert.match(extensionSource, /Type\.Literal\("recover-evidence"\)/)
+  assert.match(
+    extensionSource,
+    /request\.action === "recover-evidence"[\s\S]*?child\.status === "completed"[\s\S]*?child\.outputCharacters > 0[\s\S]*?recoverCompletedReviewDuty/,
+  )
+  assert.match(
+    extensionSource,
+    /preserved its usable output; create or reuse the exact verdict question/,
+  )
+})
+
+test("an unusable or wrongly begun review job can be released without inventing a verdict", () => {
+  const active = beginReviewDuty(emptyReviewDutyState, job, 10)
+  assert.equal(active.ok, true)
+  if (!active.ok) return
+  const awaiting = startReviewWorkflow(active.state, 20)
+
+  assert.deepEqual(releaseUnusableReviewDuty(active.state, false, false), {
+    ok: true,
+    state: emptyReviewDutyState,
+  })
+  assert.deepEqual(releaseUnusableReviewDuty(awaiting, false, false), {
+    ok: true,
+    state: emptyReviewDutyState,
+  })
+  assert.match(
+    releaseUnusableReviewDuty(awaiting, true, false).error ?? "",
+    /complete-auto after a clean own-review pass.*remains required/i,
+  )
+  assert.match(
+    releaseUnusableReviewDuty(awaiting, false, true).error ?? "",
+    /still running/i,
+  )
+  assert.match(
+    releaseUnusableReviewDuty(emptyReviewDutyState, false, false).error ?? "",
+    /no active review-duty job/i,
+  )
+
+  const releaseHandler = extensionSource.slice(
+    extensionSource.indexOf('request.action === "release-unusable"'),
+    extensionSource.indexOf("if (request.questionId === undefined)"),
+  )
+  assert.match(releaseHandler, /workflow\.status === "completed"/)
+  assert.match(releaseHandler, /child\.status === "completed"/)
+  assert.match(releaseHandler, /child\.outputCharacters > 0/)
+  assert.match(
+    releaseHandler,
+    /grants no review, mutation, or publication authority/,
+  )
+})
+
 test("managed reload cancellation recovers only an auto same-PR fix continuation", () => {
   const automatic = beginReviewDuty(
     emptyReviewDutyState,
@@ -435,7 +523,7 @@ test("review-duty scopes jobs to each owner and exact auto-merge repository", ()
   )
 })
 
-test("exact auto-merge lanes complete only after a successful review workflow", () => {
+test("automatic and own review loops complete without an owner verdict only after a successful workflow", () => {
   const active = beginReviewDuty(
     emptyReviewDutyState,
     {
@@ -455,12 +543,47 @@ test("exact auto-merge lanes complete only after a successful review workflow", 
     ok: true,
     state: { phase: "idle" },
   })
+
+  const ownActive = beginReviewDuty(emptyReviewDutyState, job, 30)
+  assert.equal(ownActive.ok, true)
+  if (!ownActive.ok) return
+  const ownAwaiting = startReviewWorkflow(ownActive.state, 40)
+  assert.equal(
+    completeAutoReviewDuty(ownAwaiting, false, false, true).ok,
+    false,
+  )
+  assert.equal(completeAutoReviewDuty(ownAwaiting, true, true, true).ok, false)
+  assert.deepEqual(completeAutoReviewDuty(ownAwaiting, true, false, true), {
+    ok: true,
+    state: { phase: "idle" },
+  })
+
+  const assignedActive = beginReviewDuty(emptyReviewDutyState, assignedJob, 50)
+  assert.equal(assignedActive.ok, true)
+  if (!assignedActive.ok) return
+  assert.match(
+    completeAutoReviewDuty(
+      startReviewWorkflow(assignedActive.state, 60),
+      true,
+      false,
+      true,
+    ).error ?? "",
+    /no automatic or own review-duty job/i,
+  )
 })
 
 test("complete-auto handler verifies typed scope and terminal workflow evidence", () => {
   assert.match(
     extensionSource,
     /request\.action === "complete-auto"[\s\S]*?latestCompletedWorkflowAfter[\s\S]*?reviewDutyJobAllowed[\s\S]*?completeAutoReviewDuty/,
+  )
+  assert.match(
+    extensionSource,
+    /For kind own, never create or request an Approve\/Request changes verdict/,
+  )
+  assert.match(
+    extensionSource,
+    /failed workflow call retry-failed[\s\S]*?actionable findings call continue[\s\S]*?completed clean workflow call complete-auto/,
   )
 })
 
@@ -540,8 +663,8 @@ test("every dedicated reviewer must begin a typed job before workflow execution"
   assert.match(extensionSource, /personal-review-duty/)
 })
 
-test("a completed review workflow must relay a verdict question before another job", () => {
-  const active = beginReviewDuty(emptyReviewDutyState, job, 10)
+test("a completed assigned review workflow must link a verdict question before another job", () => {
+  const active = beginReviewDuty(emptyReviewDutyState, assignedJob, 10)
   assert.equal(active.ok, true)
   if (!active.ok) return
   const reviewWorkflow = {
@@ -558,17 +681,35 @@ test("a completed review workflow must relay a verdict question before another j
   assert.match(
     reviewWorkflowBlockReason("st0x-review-duty", awaiting, reviewWorkflow) ??
       "",
-    /persisted and linked/i,
+    /persisted verdict question with an owner-authorized delivery channel/i,
   )
-  const next = beginReviewDuty(awaiting, { ...job, pullRequest: 1102 }, 30)
+  const next = beginReviewDuty(
+    awaiting,
+    { ...assignedJob, pullRequest: 1102 },
+    30,
+  )
   assert.deepEqual(next, {
     ok: false,
-    error: "PR #1101 still requires a persisted and relayed verdict question",
+    error:
+      "PR #1101 still requires a persisted verdict question with an owner-authorized delivery channel",
   })
 })
 
-test("reporting fails until the exact bounded verdict question is linked", () => {
-  const active = beginReviewDuty(emptyReviewDutyState, job, 10)
+test("only assigned review reporting accepts an exact linked verdict question", () => {
+  const ownActive = beginReviewDuty(emptyReviewDutyState, job, 1)
+  assert.equal(ownActive.ok, true)
+  if (!ownActive.ok) return
+  assert.match(
+    reportReviewDuty(
+      startReviewWorkflow(ownActive.state, 2),
+      verdictQuestion,
+      true,
+      3,
+    ).error ?? "",
+    /own review-duty jobs complete without a user verdict/i,
+  )
+
+  const active = beginReviewDuty(emptyReviewDutyState, assignedJob, 10)
   assert.equal(active.ok, true)
   if (!active.ok) return
   const awaiting = startReviewWorkflow(active.state, 20)
@@ -602,11 +743,140 @@ test("reporting fails until the exact bounded verdict question is linked", () =>
   assert.deepEqual(reported.state, {
     phase: "idle",
     lastReported: {
-      ...job,
+      ...assignedJob,
       questionId: 7,
       reportedAt: 30,
     },
   })
+})
+
+test("an explicit current-job owner instruction can link an assigned verdict question in conversation", () => {
+  const active = beginReviewDuty(emptyReviewDutyState, assignedJob, 10)
+  assert.equal(active.ok, true)
+  if (!active.ok) return
+  const awaiting = startReviewWorkflow(active.state, 20)
+  const gateEntry = {
+    type: "custom",
+    customType: REVIEW_DUTY_STATE_ENTRY,
+    data: awaiting,
+  }
+  const questionEntry = {
+    type: "custom",
+    customType: QUESTION_STATE_ENTRY,
+    data: { questions: [verdictQuestion], nextId: verdictQuestion.id + 1 },
+  }
+  const ownerInstruction = {
+    type: "message",
+    message: { role: "user", content: "just ask here now" },
+  }
+
+  assert.equal(
+    inConversationReviewQuestionAuthorized(
+      [gateEntry, ownerInstruction, questionEntry],
+      awaiting,
+      verdictQuestion,
+    ),
+    true,
+  )
+  const ownActive = beginReviewDuty(emptyReviewDutyState, job, 30)
+  assert.equal(ownActive.ok, true)
+  if (!ownActive.ok) return
+  const ownAwaiting = startReviewWorkflow(ownActive.state, 40)
+  assert.equal(
+    inConversationReviewQuestionAuthorized(
+      [
+        {
+          type: "custom",
+          customType: REVIEW_DUTY_STATE_ENTRY,
+          data: ownAwaiting,
+        },
+        ownerInstruction,
+        questionEntry,
+      ],
+      ownAwaiting,
+      verdictQuestion,
+    ),
+    false,
+  )
+  assert.equal(
+    inConversationReviewQuestionAuthorized(
+      [gateEntry, questionEntry, ownerInstruction],
+      awaiting,
+      verdictQuestion,
+    ),
+    true,
+  )
+  assert.equal(
+    inConversationReviewQuestionAuthorized(
+      [
+        gateEntry,
+        {
+          type: "message",
+          message: { role: "assistant", content: "just ask here now" },
+        },
+        questionEntry,
+      ],
+      awaiting,
+      verdictQuestion,
+    ),
+    false,
+  )
+  assert.equal(
+    inConversationReviewQuestionAuthorized(
+      [ownerInstruction, gateEntry, questionEntry],
+      awaiting,
+      verdictQuestion,
+    ),
+    true,
+  )
+  assert.equal(
+    inConversationReviewQuestionAuthorized(
+      [
+        ownerInstruction,
+        {
+          type: "message",
+          message: { role: "user", content: "send the verdict on Telegram" },
+        },
+        gateEntry,
+        questionEntry,
+      ],
+      awaiting,
+      verdictQuestion,
+    ),
+    false,
+  )
+  assert.equal(
+    inConversationReviewQuestionAuthorized(
+      [gateEntry, ownerInstruction, questionEntry],
+      awaiting,
+      { ...verdictQuestion, id: verdictQuestion.id + 1 },
+    ),
+    false,
+  )
+  assert.match(
+    extensionSource,
+    /inConversationReviewQuestionAuthorized\([\s\S]*?ctx\.sessionManager\.getBranch\(\)[\s\S]*?reviewDutyState[\s\S]*?question/,
+  )
+  assert.match(
+    extensionSource,
+    /inConversationAuthorized \|\| relayStatus\.right/,
+  )
+})
+
+test("in-conversation verdict delivery is persisted before the next-PR gate is released", () => {
+  assert.match(
+    extensionSource,
+    /awaitConversationQuestionDelivery[\s\S]*?markQuestionDeliveredInConversation[\s\S]*?error\.code === "not_found"[\s\S]*?Effect\.sleep/,
+  )
+  assert.match(
+    extensionSource,
+    /inConversationAuthorized[\s\S]*?awaitConversationQuestionDelivery[\s\S]*?reviewDutyState = transition\.state/,
+  )
+  assert.doesNotMatch(extensionSource, /remoteBridge\.syncQuestions/)
+  assert.match(
+    extensionSource,
+    /Could not persist in-conversation verdict-question delivery/,
+  )
 })
 
 test("review duty state survives reload defensively", () => {

@@ -56,6 +56,7 @@ import {
   type PendingActionRemediation,
 } from "./action-remediation.ts"
 import {
+  approvedSuccessfulResultBlockIsOnlyScopeRelitigation,
   deterministicDecision,
   deterministicReadOnlyToolResultDecision,
   deterministicToolResultDecision,
@@ -65,6 +66,7 @@ import {
   parseClassifierDecision,
   runWorkflowScript,
   shouldCarryDeterministicResultAllowance,
+  WorkflowScriptError,
   type AgentRequest,
   type AgentResult,
   type Decision,
@@ -92,6 +94,7 @@ import {
   reloadCommandRequest,
   reloadFailureDiagnostic,
 } from "./manual-reload.ts"
+import { redactProtectedGitButlerResult } from "./protected-result.ts"
 import {
   applyGoalEvaluation,
   assistantUsageTokens,
@@ -155,9 +158,12 @@ import {
   completeAutoReviewDuty,
   continueReviewDuty,
   emptyReviewDutyState,
+  inConversationReviewQuestionAuthorized,
   isPullRequestReviewWorkflow,
   isReviewDutySession,
   preExecutionReviewWorkflowBlockObserved,
+  recoverCompletedReviewDuty,
+  releaseUnusableReviewDuty,
   startReviewWorkflow,
   retryBlockedReviewDuty,
   retryFailedReviewDuty,
@@ -457,11 +463,20 @@ async function runPi(
       }
     })
     child.stderr.on("data", chunk => {
-      stderr = boundedDiagnosticTail(
-        stderr,
-        chunk.toString(),
-        MAX_CHILD_STDERR_CHARACTERS,
+      const bounded = Effect.runSync(
+        Effect.either(
+          boundedDiagnosticTail(
+            stderr,
+            chunk.toString(),
+            MAX_CHILD_STDERR_CHARACTERS,
+          ),
+        ),
       )
+      if (Either.isRight(bounded)) stderr = bounded.right
+      else {
+        stderr = bounded.left.message
+        abort()
+      }
     })
     child.on("error", error => {
       spawnError = sanitizeProcessDiagnostic(error.message)
@@ -871,19 +886,20 @@ const prepareWorkflowAgentRequest = (
   request: AgentRequest,
   parentProvider: string | undefined,
   availableModels: readonly AvailableAgentModel[],
-): AgentRequest => {
-  const model = resolveAgentModel(
-    request.model,
-    parentProvider,
-    availableModels,
-  )
-  const thinking = resolveWorkflowThinking(request.thinking, model)
-  return {
-    ...request,
-    ...(model ? { model } : {}),
-    thinking,
-  }
-}
+) =>
+  Effect.gen(function* () {
+    const model = yield* resolveAgentModel(
+      request.model,
+      parentProvider,
+      availableModels,
+    )
+    const thinking = resolveWorkflowThinking(request.thinking, model)
+    return {
+      ...request,
+      ...(model ? { model } : {}),
+      thinking,
+    } satisfies AgentRequest
+  })
 
 async function executeAgent(
   request: AgentRequest,
@@ -894,13 +910,13 @@ async function executeAgent(
   tokenLimit?: number,
   onProgress?: (progress: string) => void,
 ): Promise<AgentResult> {
-  const qualifiedRequest = prepareWorkflowAgentRequest(
-    request,
-    parentProvider,
-    availableModels,
+  const qualifiedRequest = await Effect.runPromise(
+    prepareWorkflowAgentRequest(request, parentProvider, availableModels),
   )
   const result = await runPi(
-    buildAgentArguments(qualifiedRequest, CLASSIFIED_WORKFLOWS_EXTENSION),
+    await Effect.runPromise(
+      buildAgentArguments(qualifiedRequest, CLASSIFIED_WORKFLOWS_EXTENSION),
+    ),
     request.cwd ?? defaultCwd,
     signal,
     tokenLimit,
@@ -937,13 +953,16 @@ async function executeAgent(
   }
 }
 
-function toolResultSubject(event: ToolResultEvent): unknown {
+function toolResultSubject(
+  event: ToolResultEvent,
+  content: ToolResultEvent["content"] = event.content,
+): unknown {
   return {
     toolName: event.toolName,
     ...boundedToolResultActionContext(event.toolName, event.input),
     inputDigest: toolInputDigest(event.toolName, event.input),
     isError: event.isError,
-    content: event.content
+    content: content
       .slice(0, 8)
       .map(part =>
         part.type === "text" ? part.text.slice(0, 2_000) : "[image omitted]",
@@ -983,8 +1002,10 @@ const ReviewDutyParameters = Type.Object({
     Type.Literal("begin"),
     Type.Literal("report"),
     Type.Literal("recover"),
+    Type.Literal("recover-evidence"),
     Type.Literal("retry-blocked"),
     Type.Literal("retry-failed"),
+    Type.Literal("release-unusable"),
     Type.Literal("continue"),
     Type.Literal("complete-auto"),
   ]),
@@ -1039,7 +1060,7 @@ const WorkflowParameters = Type.Object({
     minimum: 4_000,
     maximum: 5_000_000,
     description:
-      "Aggregate child envelope. Runtime admission requires at least 64,000 executable tokens per configured maxAgents slot after allowance scaling.",
+      "Aggregate child envelope. Runtime admission requires at least 80,000 tokens per configured maxAgents slot after allowance scaling so inherited prompt and tool-schema overhead cannot starve accepted children.",
   }),
   background: Type.Optional(
     Type.Boolean({
@@ -1056,38 +1077,46 @@ const WorkflowParameters = Type.Object({
 })
 
 export default function classifiedWorkflows(pi: ExtensionAPI): void {
-  registerRuntimeVersion(pi, "classified-workflows", "2026.09.03.15")
-  const childTokenLimit = workflowChildTokenLimit(
-    process.env[WORKFLOW_CHILD_TOKEN_LIMIT_ENV],
+  registerRuntimeVersion(pi, "classified-workflows", "2026.09.04.2")
+  const childTokenLimitResult = Effect.runSync(
+    Effect.either(
+      workflowChildTokenLimit(process.env[WORKFLOW_CHILD_TOKEN_LIMIT_ENV]),
+    ),
   )
   let childUsageTokens = 0
-  if (childTokenLimit !== undefined) {
+  if (Either.isLeft(childTokenLimitResult)) {
+    process.stderr.write(
+      `[classified-workflows] ${childTokenLimitResult.left.message}\n`,
+    )
+    pi.on("before_provider_request", (event, ctx) => {
+      ctx.abort()
+      return event.payload
+    })
+  } else if (childTokenLimitResult.right !== undefined) {
+    const childTokenLimit = childTokenLimitResult.right
     pi.on("message_end", event => {
       childUsageTokens += usageTokensFromAssistantMessage(event.message)
     })
     pi.on("before_provider_request", (event, ctx) => {
       const remaining = childTokenLimit - childUsageTokens
-      try {
-        return capProviderOutputTokens(event.payload, remaining, {
-          // The authenticated Codex endpoint rejects max_output_tokens. Its
-          // child output is enforced by runPi's measured process budget.
-          allowProcessMeasuredOutput:
-            ctx.model?.api === "openai-codex-responses",
-          consumedTokens: childUsageTokens,
-        }).payload
-      } catch (error) {
-        const diagnostic = sanitizeProcessDiagnostic(
-          unknownErrorMessage(
-            error,
-            "Workflow child provider guard failed closed",
-          ),
-        )
-          .replace(/\s+/g, " ")
-          .slice(0, 1_000)
-        process.stderr.write(`[classified-workflows] ${diagnostic}\n`)
-        ctx.abort()
-        return event.payload
-      }
+      const capped = Effect.runSync(
+        Effect.either(
+          capProviderOutputTokens(event.payload, remaining, {
+            // The authenticated Codex endpoint rejects max_output_tokens. Its
+            // child output is enforced by runPi's measured process budget.
+            allowProcessMeasuredOutput:
+              ctx.model?.api === "openai-codex-responses",
+            consumedTokens: childUsageTokens,
+          }),
+        ),
+      )
+      if (Either.isRight(capped)) return capped.right.payload
+      const diagnostic = sanitizeProcessDiagnostic(capped.left.message)
+        .replace(/\s+/g, " ")
+        .slice(0, 1_000)
+      process.stderr.write(`[classified-workflows] ${diagnostic}\n`)
+      ctx.abort()
+      return event.payload
     })
   }
   let goalState: GoalState | undefined
@@ -1140,6 +1169,33 @@ export default function classifiedWorkflows(pi: ExtensionAPI): void {
                   awaitQuestionRelay(agentId, questionId, attempt + 1),
                 ),
               ),
+        ),
+      )
+
+  const awaitConversationQuestionDelivery = (
+    agentId: string,
+    questionId: number,
+    attempt = 1,
+  ): Effect.Effect<void, RemoteBridgeError> =>
+    remoteBridge
+      .markQuestionDeliveredInConversation({
+        agentId,
+        questionId,
+        now: Date.now(),
+      })
+      .pipe(
+        Effect.catchAll(error =>
+          error.code === "not_found" && attempt < REVIEW_DUTY_RELAY_ATTEMPTS
+            ? Effect.sleep("1 second").pipe(
+                Effect.flatMap(() =>
+                  awaitConversationQuestionDelivery(
+                    agentId,
+                    questionId,
+                    attempt + 1,
+                  ),
+                ),
+              )
+            : Effect.fail(error),
         ),
       )
 
@@ -1480,13 +1536,20 @@ export default function classifiedWorkflows(pi: ExtensionAPI): void {
             ctx.model?.provider,
             ctx.modelRegistry.getAvailable(),
           )
-          return recoveredRun ? readOnlyRecoveryRequest(prepared) : prepared
+          return recoveredRun
+            ? prepared.pipe(Effect.flatMap(readOnlyRecoveryRequest))
+            : prepared
         },
         runAgent,
         checkpoint: async message => {
-          throw new Error(
+          // Workflow scripts may omit `await checkpoint(...)`. Abort through the
+          // owned signal and resolve this callback so no rejected promise can
+          // escape; runWorkflowScript observes the abort and persists it.
+          const error = new Error(
             `Background workflow ${id} reached checkpoint and stopped: ${message}`,
           )
+          workflow.controller.abort(error)
+          return "approved"
         },
         phase: title => {
           workflow.liveProgress.phase = boundedWorkflowProgress(title)
@@ -1689,30 +1752,36 @@ export default function classifiedWorkflows(pi: ExtensionAPI): void {
     clearLoopTimer()
     if (loopState?.status !== "active") return
     const delay = Math.max(0, loopState.nextRunAt - Date.now())
-    loopTimer = setTimeout(() => runScheduledLoop(ctx), delay)
+    loopTimer = setTimeout(() => void runScheduledLoop(ctx), delay)
     loopTimer.unref()
   }
 
-  const runScheduledLoop = (ctx: ExtensionContext) => {
+  const runScheduledLoop = async (ctx: ExtensionContext): Promise<void> => {
     const active = loopState?.status === "active" ? loopState : undefined
     if (!active) return
-    if (loopWakePending || !ctx.isIdle()) {
+    if (loopWakePending || !ctx.isIdle() || continuationPaused) {
       const now = Date.now()
-      loopState = { ...active, nextRunAt: nextLoopRunAt(active, now) }
+      const scheduled = await Effect.runPromise(
+        Effect.either(nextLoopRunAt(active, now)),
+      )
+      if (Either.isLeft(scheduled)) {
+        showLoopMessage(scheduled.left.message)
+        return
+      }
+      loopState = { ...active, nextRunAt: scheduled.right }
       pi.appendEntry(LOOP_ENTRY, loopState)
       updateLoopStatus(ctx)
       scheduleLoop(ctx)
       return
     }
-    if (continuationPaused) {
-      const now = Date.now()
-      loopState = { ...active, nextRunAt: nextLoopRunAt(active, now) }
-      pi.appendEntry(LOOP_ENTRY, loopState)
-      updateLoopStatus(ctx)
-      scheduleLoop(ctx)
+    const advanced = await Effect.runPromise(
+      Effect.either(advanceLoop(active, Date.now())),
+    )
+    if (Either.isLeft(advanced)) {
+      showLoopMessage(advanced.left.message)
       return
     }
-    loopState = advanceLoop(active, Date.now())
+    loopState = advanced.right
     pi.appendEntry(LOOP_ENTRY, loopState)
     updateLoopStatus(ctx)
     scheduleLoop(ctx)
@@ -1867,15 +1936,14 @@ export default function classifiedWorkflows(pi: ExtensionAPI): void {
   })
 
   const handleGoalCommand = async (args: string, ctx: ExtensionContext) => {
-    let command: GoalCommand
-    try {
-      command = parseGoalCommand(args)
-    } catch (error) {
-      showGoalMessage(
-        error instanceof Error ? error.message : "Invalid goal condition.",
-      )
+    const parsed = await Effect.runPromise(
+      Effect.either(parseGoalCommand(args)),
+    )
+    if (Either.isLeft(parsed)) {
+      showGoalMessage(parsed.left.message)
       return
     }
+    const command: GoalCommand = parsed.right
 
     if (command.action === "status") {
       showGoalMessage(formatGoalStatus(goalState, Date.now()))
@@ -1992,16 +2060,15 @@ export default function classifiedWorkflows(pi: ExtensionAPI): void {
   pi.registerCommand("loop", {
     description:
       "Schedule an infinite recurring instruction: /loop [2h+-1h] <instruction>; exact 'clear' stops it",
-    handler(args, ctx) {
-      let command: LoopCommand
-      try {
-        command = parseLoopCommand(args)
-      } catch (error) {
-        showLoopMessage(
-          error instanceof Error ? error.message : "Invalid loop instruction.",
-        )
+    async handler(args, ctx) {
+      const parsed = await Effect.runPromise(
+        Effect.either(parseLoopCommand(args)),
+      )
+      if (Either.isLeft(parsed)) {
+        showLoopMessage(parsed.left.message)
         return
       }
+      const command: LoopCommand = parsed.right
 
       if (command.action === "status") {
         showLoopMessage(formatLoopStatus(loopState, Date.now()))
@@ -2023,6 +2090,13 @@ export default function classifiedWorkflows(pi: ExtensionAPI): void {
       }
 
       const now = Date.now()
+      const nextRun = await Effect.runPromise(
+        Effect.either(nextLoopRunAt(command, now)),
+      )
+      if (Either.isLeft(nextRun)) {
+        showLoopMessage(nextRun.left.message)
+        return
+      }
       loopState = {
         status: "active",
         instruction: command.instruction,
@@ -2031,7 +2105,7 @@ export default function classifiedWorkflows(pi: ExtensionAPI): void {
           ? { jitterMs: command.jitterMs }
           : {}),
         startedAt: now,
-        nextRunAt: nextLoopRunAt(command, now),
+        nextRunAt: nextRun.right,
         runs: 0,
       }
       pi.appendEntry(LOOP_ENTRY, loopState)
@@ -2057,18 +2131,16 @@ export default function classifiedWorkflows(pi: ExtensionAPI): void {
       args: Type.String({ maxLength: 4_100 }),
     }),
     async execute(_toolCallId, params, _signal, _onUpdate, ctx) {
-      let command: LoopCommand
-      try {
-        command = parseLoopCommand(params.args)
-      } catch (error) {
-        const text =
-          error instanceof Error ? error.message : "Invalid loop instruction."
+      const parsed = await Effect.runPromise(
+        Effect.either(parseLoopCommand(params.args)),
+      )
+      if (Either.isLeft(parsed))
         return {
-          content: [{ type: "text", text }],
+          content: [{ type: "text", text: parsed.left.message }],
           isError: true,
           details: { outcome: "error" },
         }
-      }
+      const command: LoopCommand = parsed.right
       if (command.action === "status")
         return {
           content: [
@@ -2095,6 +2167,15 @@ export default function classifiedWorkflows(pi: ExtensionAPI): void {
         }
       }
       const now = Date.now()
+      const nextRun = await Effect.runPromise(
+        Effect.either(nextLoopRunAt(command, now)),
+      )
+      if (Either.isLeft(nextRun))
+        return {
+          content: [{ type: "text", text: nextRun.left.message }],
+          isError: true,
+          details: { outcome: "error" },
+        }
       loopState = {
         status: "active",
         instruction: command.instruction,
@@ -2103,7 +2184,7 @@ export default function classifiedWorkflows(pi: ExtensionAPI): void {
           ? { jitterMs: command.jitterMs }
           : {}),
         startedAt: now,
-        nextRunAt: nextLoopRunAt(command, now),
+        nextRunAt: nextRun.right,
         runs: 0,
       }
       pi.appendEntry(LOOP_ENTRY, loopState)
@@ -2210,7 +2291,7 @@ export default function classifiedWorkflows(pi: ExtensionAPI): void {
     }
   }
 
-  pi.on("session_start", (event, ctx) => {
+  pi.on("session_start", async (event, ctx) => {
     latestCtx = ctx
     const branch = ctx.sessionManager.getBranch()
     const goalEntries = branch.filter(
@@ -2260,11 +2341,22 @@ export default function classifiedWorkflows(pi: ExtensionAPI): void {
     )
     goalRunTokens = 0
     const now = Date.now()
-    const migratedReviewCadence = isReviewDutySession(
+    const migratedReviewCadenceResult = isReviewDutySession(
       reviewDutySessionName(ctx),
     )
-      ? migrateReviewDutyLoopCadence(loopState, now)
+      ? await Effect.runPromise(
+          Effect.either(migrateReviewDutyLoopCadence(loopState, now)),
+        )
       : undefined
+    if (
+      migratedReviewCadenceResult &&
+      Either.isLeft(migratedReviewCadenceResult)
+    )
+      showLoopMessage(migratedReviewCadenceResult.left.message)
+    const migratedReviewCadence =
+      migratedReviewCadenceResult && Either.isRight(migratedReviewCadenceResult)
+        ? migratedReviewCadenceResult.right
+        : undefined
     if (migratedReviewCadence) {
       loopState = migratedReviewCadence
       pi.appendEntry(LOOP_ENTRY, loopState)
@@ -2773,24 +2865,33 @@ export default function classifiedWorkflows(pi: ExtensionAPI): void {
       },
     )
     if (resolvedRemediation) setPendingActionRemediation(resolvedRemediation)
-    if (deterministicResultAllowance.consume(event.toolCallId)) return
+    const protectedResult = redactProtectedGitButlerResult({
+      toolName: event.toolName,
+      input: event.input,
+      content: event.content,
+    })
+    const protectedPatch = protectedResult.redacted
+      ? { content: protectedResult.content }
+      : undefined
+    if (deterministicResultAllowance.consume(event.toolCallId))
+      return protectedPatch
     if (deterministicToolResultDecision(event.toolName)?.verdict === "allow")
-      return
+      return protectedPatch
     if (
       deterministicReadOnlyToolResultDecision({
         toolName: event.toolName,
         input: event.input,
-        content: event.content,
+        content: protectedResult.content,
         cwd: ctx.cwd,
       })?.verdict === "allow"
     )
-      return
+      return protectedPatch
     if (isLocalDispatchProvider(ctx.model?.provider)) {
       const laneBlock = localDispatchLaneBlock(event.toolName)
       reportHeadlessClassifierBlock(ctx, "tool-result", laneBlock.reason)
       return withheldExecutedToolResultPatch(event.isError, laneBlock.reason)
     }
-    const subject = toolResultSubject(event)
+    const subject = toolResultSubject(event, protectedResult.content)
     const decision = await classifyWithActivity(
       {
         boundary: "tool-result",
@@ -2811,26 +2912,39 @@ export default function classifiedWorkflows(pi: ExtensionAPI): void {
       ctx.signal,
     )
     if (decision.verdict === "block") {
+      if (
+        approvedSuccessfulResultBlockIsOnlyScopeRelitigation({
+          reason: decision.reason,
+          content: protectedResult.content,
+          isError: event.isError,
+        })
+      )
+        return protectedPatch
       reportHeadlessClassifierBlock(ctx, "tool-result", decision.reason)
       // The extension API emits tool_result only after execution. Redact output,
       // but preserve the original success/error bit so a mutation is never
       // misreported as a pre-execution policy block and blindly retried.
       return withheldExecutedToolResultPatch(event.isError, decision.reason)
     }
+    return protectedPatch
   })
 
   pi.registerTool({
     name: "review_duty",
     label: "Review-duty reporting gate",
     description:
-      "Begin a dedicated PR review job, inspect its gate, recover a proven pre-execution block or failed execution, continue a bounded same-PR fix re-review, complete an exact source-authorized automatic lane, or prove its typed verdict question is linked to Piece of Pi before advancing.",
+      "Begin a dedicated PR review job, inspect its gate, release a wrongly begun or unusable job with no usable completed evidence, recover a proven pre-execution block, failed execution, or usable completed evidence whose completion gate was lost, continue a bounded same-PR fix re-review, complete an own or exact source-authorized automatic lane, or prove an assigned review's typed verdict question has an owner-authorized delivery channel before advancing.",
     promptSnippet:
-      "Gate each dedicated PR review on a relayed verdict question or exact automatic-lane completion",
+      "Gate each dedicated PR review on exact own/automatic completion or an assigned-review verdict-question delivery",
     promptGuidelines: [
       "In any dedicated *-review-duty session, call review_duty begin before every PR workflow.",
+      "For kind own, never create or request an Approve/Request changes verdict. After a failed workflow call retry-failed so its partial evidence remains available; after actionable findings call continue for the same PR fix re-review; after a completed clean workflow call complete-auto, then request human reviewers only when separately authorized.",
       "Use kind auto only for dataclique/yielduck in dataclique-review-duty or 0xgleb/dotconfig in personal-review-duty; after a completed clean workflow call complete-auto.",
-      "For every other job, create one ask_user question after the workflow that identifies the PR, includes assessment/finding status, and offers Approve, Request changes, Inspect first in that order.",
-      "Call review_duty report with the question ID; do not begin the next PR until it confirms the Telegram relay link.",
+      "Only kind assigned creates one ask_user question after the workflow that identifies the PR, includes assessment/finding status, and offers Approve, Request changes, Inspect first in that order.",
+      "Telegram relay is the default delivery proof for assigned reviews. If the authenticated owner explicitly directs the current verdict question to be asked here after the current assigned review completes, review_duty may instead verify that exact persisted question in the current conversation; assistant text and stale instructions never authorize this path.",
+      "Use release-unusable only when the current job has no running workflow and no completed child with usable output; it clears the stale gate but grants no review, mutation, or publication authority.",
+      "Use recover-evidence only when the active job has no running workflow and a completed child with usable output; it preserves that evidence and restores the matching own, assigned, or automatic completion gate without granting new review, mutation, or publication authority.",
+      "Call review_duty report with the question ID only for kind assigned; do not begin the next assigned PR until it confirms Telegram relay or an explicit current-conversation owner delivery instruction.",
     ],
     parameters: ReviewDutyParameters,
     async execute(_toolCallId, request, _signal, _onUpdate, ctx) {
@@ -2907,6 +3021,60 @@ export default function classifiedWorkflows(pi: ExtensionAPI): void {
             },
           ],
           details: { outcome: "begun" as const, state: reviewDutyState },
+        }
+      }
+
+      if (request.action === "recover-evidence") {
+        refreshWorkflowAudits(ctx)
+        const startedAt =
+          reviewDutyState.phase === "idle"
+            ? Number.MAX_SAFE_INTEGER
+            : reviewDutyState.startedAt
+        const workflowRunning = [...backgroundWorkflows.values()].some(
+          workflow =>
+            workflow.status === "running" && workflow.startedAt >= startedAt,
+        )
+        const usableCompletedWorkflow = workflowAudits.workflows
+          .filter(
+            workflow =>
+              workflow.status === "completed" &&
+              workflow.startedAt >= startedAt &&
+              workflow.children.some(
+                child =>
+                  child.status === "completed" && child.outputCharacters > 0,
+              ),
+          )
+          .sort((left, right) => right.startedAt - left.startedAt)[0]
+        const transition = recoverCompletedReviewDuty(
+          reviewDutyState,
+          usableCompletedWorkflow?.startedAt ?? 0,
+          usableCompletedWorkflow !== undefined,
+          workflowRunning,
+        )
+        if (!transition.ok) {
+          return {
+            content: [{ type: "text" as const, text: transition.error }],
+            details: { outcome: "error" as const, error: transition.error },
+            isError: true,
+          }
+        }
+        reviewDutyState = transition.state
+        pi.appendEntry(REVIEW_DUTY_STATE_ENTRY, reviewDutyState)
+        return {
+          content: [
+            {
+              type: "text" as const,
+              text:
+                reviewDutyState.kind === "assigned"
+                  ? `Recovered completed review evidence ${usableCompletedWorkflow?.id ?? "unknown"} for ${reviewDutyState.repository}#${reviewDutyState.pullRequest} and preserved its usable output; create or reuse the exact verdict question, then call review_duty report before beginning another PR`
+                  : `Recovered completed review evidence ${usableCompletedWorkflow?.id ?? "unknown"} for ${reviewDutyState.repository}#${reviewDutyState.pullRequest} and preserved its usable output; call review_duty continue after actionable findings or complete-auto only after a clean ${reviewDutyState.kind} pass`,
+            },
+          ],
+          details: {
+            outcome: "recovered-evidence" as const,
+            state: reviewDutyState,
+            priorAuditId: usableCompletedWorkflow?.id,
+          },
         }
       }
 
@@ -2995,7 +3163,7 @@ export default function classifiedWorkflows(pi: ExtensionAPI): void {
           content: [
             {
               type: "text" as const,
-              text: `Continued ${reviewDutyState.repository}#${reviewDutyState.pullRequest} after completed pass ${completedWorkflow?.id ?? "unknown"} (${completedPasses} completed pass(es)); run only the same PR fix re-review, then complete the consolidated report gate`,
+              text: `Continued ${reviewDutyState.repository}#${reviewDutyState.pullRequest} after completed pass ${completedWorkflow?.id ?? "unknown"} (${completedPasses} completed pass(es)); run only the same PR fix re-review, then ${reviewDutyState.kind === "own" ? "call complete-auto after the clean pass without creating a verdict question" : "complete the consolidated report gate"}`,
             },
           ],
           details: {
@@ -3021,14 +3189,16 @@ export default function classifiedWorkflows(pi: ExtensionAPI): void {
           workflow =>
             workflow.status === "running" && workflow.startedAt >= completedAt,
         )
-        const allowedAutoMergeLane =
+        const completingKind =
+          reviewDutyState.phase === "idle" ? undefined : reviewDutyState.kind
+        const allowedCompletionLane =
           reviewDutyState.phase !== "idle" &&
           reviewDutyJobAllowed(dutySessionName, reviewDutyState)
         const transition = completeAutoReviewDuty(
           reviewDutyState,
           completedWorkflow !== undefined,
           workflowRunning,
-          allowedAutoMergeLane,
+          allowedCompletionLane,
         )
         if (!transition.ok) {
           return {
@@ -3043,7 +3213,10 @@ export default function classifiedWorkflows(pi: ExtensionAPI): void {
           content: [
             {
               type: "text" as const,
-              text: `Verified completed automatic review workflow ${completedWorkflow?.id ?? "unknown"}. The exact repository may merge only after separately verifying current CI, mergeability, head SHA, unresolved feedback, and repository delivery gates.`,
+              text:
+                completingKind === "own"
+                  ? `Verified completed clean own-review workflow ${completedWorkflow?.id ?? "unknown"}; the gate is clear without an owner verdict. Requesting human reviewers remains a separate authorized action.`
+                  : `Verified completed automatic review workflow ${completedWorkflow?.id ?? "unknown"}. The exact repository may merge only after separately verifying current CI, mergeability, head SHA, unresolved feedback, and repository delivery gates.`,
             },
           ],
           details: {
@@ -3152,6 +3325,57 @@ export default function classifiedWorkflows(pi: ExtensionAPI): void {
         }
       }
 
+      if (request.action === "release-unusable") {
+        refreshWorkflowAudits(ctx)
+        const startedAt =
+          reviewDutyState.phase === "idle"
+            ? Number.MAX_SAFE_INTEGER
+            : reviewDutyState.startedAt
+        const workflowRunning = [...backgroundWorkflows.values()].some(
+          workflow =>
+            workflow.status === "running" && workflow.startedAt >= startedAt,
+        )
+        const usableCompletedWorkflowObserved = workflowAudits.workflows.some(
+          workflow =>
+            workflow.status === "completed" &&
+            workflow.startedAt >= startedAt &&
+            workflow.children.some(
+              child =>
+                child.status === "completed" && child.outputCharacters > 0,
+            ),
+        )
+        const releasedJob =
+          reviewDutyState.phase === "idle"
+            ? undefined
+            : `${reviewDutyState.repository}#${reviewDutyState.pullRequest}`
+        const transition = releaseUnusableReviewDuty(
+          reviewDutyState,
+          usableCompletedWorkflowObserved,
+          workflowRunning,
+        )
+        if (!transition.ok) {
+          return {
+            content: [{ type: "text" as const, text: transition.error }],
+            details: { outcome: "error" as const, error: transition.error },
+            isError: true,
+          }
+        }
+        reviewDutyState = transition.state
+        pi.appendEntry(REVIEW_DUTY_STATE_ENTRY, reviewDutyState)
+        return {
+          content: [
+            {
+              type: "text" as const,
+              text: `Released unusable review-duty job ${releasedJob}; this clears only the stale gate and grants no review, mutation, or publication authority`,
+            },
+          ],
+          details: {
+            outcome: "released-unusable" as const,
+            state: reviewDutyState,
+          },
+        }
+      }
+
       if (request.questionId === undefined) {
         return {
           content: [
@@ -3241,30 +3465,40 @@ export default function classifiedWorkflows(pi: ExtensionAPI): void {
           isError: true,
         }
       }
-      const relayStatus = await Effect.runPromise(
-        Effect.either(
-          awaitQuestionRelay(
-            ctx.sessionManager.getSessionId(),
-            request.questionId,
-          ),
-        ),
+      const inConversationAuthorized = inConversationReviewQuestionAuthorized(
+        ctx.sessionManager.getBranch(),
+        reviewDutyState,
+        question,
       )
+      const relayStatus = inConversationAuthorized
+        ? Either.right(false)
+        : await Effect.runPromise(
+            Effect.either(
+              awaitQuestionRelay(
+                ctx.sessionManager.getSessionId(),
+                request.questionId,
+              ),
+            ),
+          )
       if (Either.isLeft(relayStatus)) {
         return {
           content: [
             {
               type: "text" as const,
-              text: `Could not verify Telegram relay: ${relayStatus.left.message}`,
+              text: `Could not verify an owner-authorized verdict-question delivery channel: ${relayStatus.left.message}`,
             },
           ],
           details: { outcome: "error" as const },
           isError: true,
         }
       }
+      const deliveryChannel = inConversationAuthorized
+        ? "current-conversation"
+        : "telegram"
       const transition = reportReviewDuty(
         reviewDutyState,
         question,
-        relayStatus.right,
+        inConversationAuthorized || relayStatus.right,
         Date.now(),
       )
       if (!transition.ok) {
@@ -3274,16 +3508,42 @@ export default function classifiedWorkflows(pi: ExtensionAPI): void {
           isError: true,
         }
       }
+      if (inConversationAuthorized) {
+        const persistedDelivery = await Effect.runPromise(
+          Effect.either(
+            awaitConversationQuestionDelivery(
+              ctx.sessionManager.getSessionId(),
+              request.questionId,
+            ),
+          ),
+        )
+        if (Either.isLeft(persistedDelivery)) {
+          return {
+            content: [
+              {
+                type: "text" as const,
+                text: `Could not persist in-conversation verdict-question delivery: ${persistedDelivery.left.message}`,
+              },
+            ],
+            details: { outcome: "error" as const },
+            isError: true,
+          }
+        }
+      }
       reviewDutyState = transition.state
       pi.appendEntry(REVIEW_DUTY_STATE_ENTRY, reviewDutyState)
       return {
         content: [
           {
             type: "text" as const,
-            text: `Verdict question ${request.questionId} is linked; the next PR may begin`,
+            text: `Verdict question ${request.questionId} is linked through ${deliveryChannel}; the next PR may begin`,
           },
         ],
-        details: { outcome: "reported" as const, state: reviewDutyState },
+        details: {
+          outcome: "reported" as const,
+          state: reviewDutyState,
+          deliveryChannel,
+        },
       }
     },
   })
@@ -3573,19 +3833,17 @@ export default function classifiedWorkflows(pi: ExtensionAPI): void {
         retries: params.retries,
         tokenBudget: params.tokenBudget,
       }
-      try {
-        assertExecutableWorkflowBudget(limits.tokenBudget, limits.maxAgents)
-      } catch (error) {
-        const reason = unknownErrorMessage(
-          error,
-          "Workflow token budget is not executable",
-        )
+      const executableBudget = await Effect.runPromise(
+        Effect.either(
+          assertExecutableWorkflowBudget(limits.tokenBudget, limits.maxAgents),
+        ),
+      )
+      if (Either.isLeft(executableBudget))
         return {
-          content: [{ type: "text", text: reason }],
+          content: [{ type: "text", text: executableBudget.left.message }],
           details: { outcome: "refused", reason: "token-budget" },
           isError: true,
         }
-      }
 
       if (params.background) {
         const workflow = startBackgroundWorkflow(
@@ -3699,8 +3957,12 @@ export default function classifiedWorkflows(pi: ExtensionAPI): void {
           runAgent,
           checkpoint: async message => {
             if (detachedWorkflow)
-              throw new Error(
-                `Detached workflow ${auditId} reached a checkpoint and stopped: ${message}`,
+              return Effect.runPromise(
+                Effect.fail(
+                  new WorkflowScriptError({
+                    message: `Detached workflow ${auditId} reached a checkpoint and stopped: ${message}`,
+                  }),
+                ),
               )
             return "approved"
           },
@@ -3814,7 +4076,8 @@ export default function classifiedWorkflows(pi: ExtensionAPI): void {
             details: { status: "running", id: auditId, label: auditLabel },
           }
         }
-        if (outcome.kind === "failed") throw outcome.error
+        if (outcome.kind === "failed")
+          return Effect.runPromise(Effect.fail(outcome.error))
         const result = outcome.result
         const output = workflowOutput(result)
         persistWorkflowAudit({

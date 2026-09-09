@@ -1,8 +1,9 @@
 import assert from "node:assert/strict"
 import test from "node:test"
 import vm from "node:vm"
+import { Effect } from "effect"
 import {
-  boundedDiagnosticTail,
+  boundedDiagnosticTail as boundedDiagnosticTailEffect,
   piProcessProgressFromJsonLine,
   sanitizeProcessDiagnostic,
   summarizePiJsonLines,
@@ -10,6 +11,10 @@ import {
   usageTokensFromAssistantMessage,
   usageTokensFromPiJsonLine,
 } from "./protocol.ts"
+
+const boundedDiagnosticTail = (
+  ...args: Parameters<typeof boundedDiagnosticTailEffect>
+) => Effect.runSync(boundedDiagnosticTailEffect(...args))
 
 test("JSON event summaries use the last assistant text and aggregate usage", () => {
   const summary = summarizePiJsonLines([

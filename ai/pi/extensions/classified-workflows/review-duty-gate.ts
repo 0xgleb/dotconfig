@@ -131,6 +131,13 @@ const sameJob = (left: ReviewDutyJob, right: ReviewDutyJob): boolean =>
 const jobLabel = (job: Pick<ReviewDutyJob, "pullRequest">): string =>
   `PR #${job.pullRequest}`
 
+const awaitingReviewDutyRequirement = (job: ReviewDutyJob): string =>
+  job.kind === "auto"
+    ? "verified automatic review completion"
+    : job.kind === "own"
+      ? "retry-failed after a failed pass, continue after actionable findings, or complete-auto after a clean own-review pass"
+      : "a persisted verdict question with an owner-authorized delivery channel"
+
 export const beginReviewDuty = (
   state: ReviewDutyState,
   job: ReviewDutyJob,
@@ -147,10 +154,7 @@ export const beginReviewDuty = (
   if (state.phase === "awaiting_report") {
     return {
       ok: false,
-      error:
-        state.kind === "auto"
-          ? `${jobLabel(state)} still requires verified automatic review completion`
-          : `${jobLabel(state)} still requires a persisted and relayed verdict question`,
+      error: `${jobLabel(state)} still requires ${awaitingReviewDutyRequirement(state)}`,
     }
   }
   if (state.phase === "active") {
@@ -252,12 +256,51 @@ export const retryBlockedReviewDuty = (
   if (workflowObserved) {
     return {
       ok: false,
-      error:
-        "review-duty workflow execution evidence exists; a persisted and relayed verdict question is required",
+      error: `review-duty workflow execution evidence exists; ${awaitingReviewDutyRequirement(state)} is required`,
     }
   }
   const { completedAt: _completedAt, ...active } = state
   return { ok: true, state: { ...active, phase: "active" } }
+}
+
+export const recoverCompletedReviewDuty = (
+  state: ReviewDutyState,
+  completedWorkflowStartedAt: number,
+  usableCompletedWorkflowObserved: boolean,
+  workflowRunning: boolean,
+): ReviewDutyTransition => {
+  if (state.phase !== "active") {
+    return {
+      ok: false,
+      error: "no active review-duty job can recover completed evidence",
+    }
+  }
+  if (workflowRunning) {
+    return { ok: false, error: "the review-duty workflow is still running" }
+  }
+  if (!usableCompletedWorkflowObserved) {
+    return {
+      ok: false,
+      error: "no usable completed review evidence awaits verdict recovery",
+    }
+  }
+  if (
+    !validTimestamp(completedWorkflowStartedAt) ||
+    completedWorkflowStartedAt < state.startedAt
+  ) {
+    return {
+      ok: false,
+      error: "completed review evidence predates the active review-duty job",
+    }
+  }
+  return {
+    ok: true,
+    state: {
+      ...state,
+      phase: "awaiting_report",
+      completedAt: completedWorkflowStartedAt,
+    },
+  }
 }
 
 export const continueReviewDuty = (
@@ -302,18 +345,22 @@ export const completeAutoReviewDuty = (
   state: ReviewDutyState,
   completedWorkflowObserved: boolean,
   workflowRunning: boolean,
-  allowedAutoMergeLane: boolean,
+  allowedCompletionLane: boolean,
 ): ReviewDutyTransition => {
-  if (state.phase !== "awaiting_report" || state.kind !== "auto") {
+  if (
+    state.phase !== "awaiting_report" ||
+    (state.kind !== "auto" && state.kind !== "own")
+  ) {
     return {
       ok: false,
-      error: "no automatic review-duty job awaits completion",
+      error: "no automatic or own review-duty job awaits completion",
     }
   }
-  if (!allowedAutoMergeLane) {
+  if (!allowedCompletionLane) {
     return {
       ok: false,
-      error: "automatic completion is not allowed for this reviewer repository",
+      error:
+        "automatic or own completion is not allowed for this reviewer repository",
     }
   }
   if (workflowRunning) {
@@ -323,6 +370,26 @@ export const completeAutoReviewDuty = (
     return {
       ok: false,
       error: "the latest automatic review workflow is not proven completed",
+    }
+  }
+  return { ok: true, state: emptyReviewDutyState }
+}
+
+export const releaseUnusableReviewDuty = (
+  state: ReviewDutyState,
+  usableCompletedWorkflowObserved: boolean,
+  workflowRunning: boolean,
+): ReviewDutyTransition => {
+  if (state.phase === "idle") {
+    return { ok: false, error: "no active review-duty job can be released" }
+  }
+  if (workflowRunning) {
+    return { ok: false, error: "the review-duty workflow is still running" }
+  }
+  if (usableCompletedWorkflowObserved) {
+    return {
+      ok: false,
+      error: `usable completed review evidence exists; ${awaitingReviewDutyRequirement(state)} remains required`,
     }
   }
   return { ok: true, state: emptyReviewDutyState }
@@ -358,7 +425,7 @@ export const retryFailedReviewDuty = (
       error:
         state.kind === "auto"
           ? "the latest automatic workflow is not a proven terminal failure or managed-reload-cancelled fix continuation"
-          : "the latest workflow is not a proven terminal failure; a persisted and relayed verdict question is required",
+          : `the latest workflow is not a proven terminal failure; ${awaitingReviewDutyRequirement(state)} is required`,
     }
   }
   const { completedAt: _completedAt, ...active } = state
@@ -380,7 +447,7 @@ const normalizedOptions = (question: ReviewDutyQuestion): readonly string[] =>
 export const reportReviewDuty = (
   state: ReviewDutyState,
   question: ReviewDutyQuestion,
-  relayed: boolean,
+  deliveryAuthorized: boolean,
   now: number,
 ): ReviewDutyTransition => {
   if (state.phase !== "awaiting_report") {
@@ -393,10 +460,17 @@ export const reportReviewDuty = (
         "automatic review-duty jobs complete through complete-auto, not a user verdict",
     }
   }
-  if (!relayed) {
+  if (state.kind === "own") {
     return {
       ok: false,
-      error: `question ${question.id} is not linked to Piece of Pi Telegram relay`,
+      error:
+        "own review-duty jobs complete without a user verdict through continue, retry-failed, or complete-auto",
+    }
+  }
+  if (!deliveryAuthorized) {
+    return {
+      ok: false,
+      error: `question ${question.id} is not linked to an owner-authorized delivery channel`,
     }
   }
   if (!Number.isSafeInteger(question.id) || question.id <= 0) {
@@ -505,9 +579,7 @@ export const reviewWorkflowBlockReason = (
     return "Dedicated review workflows require review_duty begin with repository, pull request, and own/assigned kind"
   }
   if (state.phase === "awaiting_report") {
-    return state.kind === "auto"
-      ? `${jobLabel(state)} cannot advance until its completed automatic review workflow is verified with review_duty complete-auto`
-      : `${jobLabel(state)} cannot advance until its typed verdict question is persisted and linked to Piece of Pi Telegram relay`
+    return `${jobLabel(state)} cannot advance until ${awaitingReviewDutyRequirement(state)}`
   }
   return undefined
 }
@@ -573,6 +645,99 @@ const decodeReviewDutyState = (value: unknown): ReviewDutyState | undefined => {
     }
   }
   return undefined
+}
+
+const messageText = (
+  message: Readonly<Record<string, unknown>>,
+): string | undefined => {
+  if (typeof message.content === "string") return message.content.trim()
+  if (!Array.isArray(message.content)) return undefined
+  const text = message.content
+    .filter(
+      (part): part is Readonly<Record<string, unknown>> =>
+        isRecord(part) && part.type === "text" && typeof part.text === "string",
+    )
+    .map(part => String(part.text))
+    .join("\n")
+    .trim()
+  return text || undefined
+}
+
+const IN_CONVERSATION_VERDICT_AUTHORIZATION =
+  /^\s*(?:(?:please|actually|just|okay|ok|then)[,\s]+)*(?:(?:can|could|would)\s+you\s+)?(?:ask|show|present)\b[^\r\n.!?]{0,120}\b(?:here|in (?:this|the) (?:chat|conversation|pane))\b/i
+const TELEGRAM_VERDICT_AUTHORIZATION =
+  /^\s*(?:(?:please|actually|just|okay|ok|then)[,\s]+)*(?:(?:can|could|would)\s+you\s+)?(?:ask|show|present|send|relay)\b[^\r\n.!?]{0,120}\btelegram\b/i
+
+export const inConversationReviewQuestionAuthorized = (
+  entries: readonly unknown[],
+  state: ReviewDutyState,
+  question: ReviewDutyQuestion,
+): boolean => {
+  if (state.phase !== "awaiting_report" || state.kind !== "assigned")
+    return false
+  const options = normalizedOptions(question)
+  if (
+    !Number.isSafeInteger(question.id) ||
+    question.id <= 0 ||
+    options.length !== 3 ||
+    options[0] !== "approve" ||
+    options[1] !== "request changes" ||
+    options[2] !== "inspect first" ||
+    !question.question.includes(`#${state.pullRequest}`) ||
+    !/(?:assessment|finding|clean|blocked)/i.test(question.question)
+  )
+    return false
+
+  const gateIndex = entries.findLastIndex(entry => {
+    if (
+      !isRecord(entry) ||
+      entry.type !== "custom" ||
+      entry.customType !== REVIEW_DUTY_STATE_ENTRY
+    )
+      return false
+    const candidate = decodeReviewDutyState(entry.data)
+    return (
+      candidate?.phase === "awaiting_report" &&
+      sameJob(candidate, state) &&
+      candidate.startedAt === state.startedAt &&
+      candidate.completedAt === state.completedAt
+    )
+  })
+  if (gateIndex < 0) return false
+
+  let latestOwnerDelivery: "conversation" | "telegram" | undefined
+  for (const entry of entries) {
+    if (
+      !isRecord(entry) ||
+      entry.type !== "message" ||
+      !isRecord(entry.message) ||
+      entry.message.role !== "user"
+    )
+      continue
+    const text = messageText(entry.message)
+    if (!text) continue
+    if (IN_CONVERSATION_VERDICT_AUTHORIZATION.test(text))
+      latestOwnerDelivery = "conversation"
+    else if (TELEGRAM_VERDICT_AUTHORIZATION.test(text))
+      latestOwnerDelivery = "telegram"
+  }
+
+  const exactQuestionPersisted = entries.slice(gateIndex + 1).some(entry => {
+    if (
+      !isRecord(entry) ||
+      entry.type !== "custom" ||
+      entry.customType !== QUESTION_STATE_ENTRY
+    )
+      return false
+    const persisted = decodeQuestionState(entry.data)?.questions.find(
+      ({ id }) => id === question.id,
+    )
+    return (
+      persisted?.question === question.question &&
+      normalizedOptions(persisted).join("\n") === options.join("\n")
+    )
+  })
+  return latestOwnerDelivery === "conversation" && exactQuestionPersisted
 }
 
 const continuedToolResultAfter = (

@@ -1,3 +1,5 @@
+import { Data, Effect } from "effect"
+
 export interface PiProcessSummary {
   output: string
   usageTokens: number
@@ -5,16 +7,24 @@ export interface PiProcessSummary {
   errorMessage?: string
 }
 
-export const boundedDiagnosticTail: (
+export class ProcessProtocolError extends Data.TaggedError(
+  "ProcessProtocolError",
+)<{
+  readonly message: string
+}> {}
+
+export const boundedDiagnosticTail = (
   current: string,
   chunk: string,
   maxCharacters: number,
-) => string = (current, chunk, maxCharacters) => {
-  if (!Number.isSafeInteger(maxCharacters) || maxCharacters < 1) {
-    throw new Error("Diagnostic limit must be a positive integer.")
-  }
-  return `${current}${chunk}`.slice(-maxCharacters)
-}
+): Effect.Effect<string, ProcessProtocolError> =>
+  !Number.isSafeInteger(maxCharacters) || maxCharacters < 1
+    ? Effect.fail(
+        new ProcessProtocolError({
+          message: "Diagnostic limit must be a positive integer.",
+        }),
+      )
+    : Effect.succeed(`${current}${chunk}`.slice(-maxCharacters))
 
 export const sanitizeProcessDiagnostic: (input: string) => string = input =>
   input

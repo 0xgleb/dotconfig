@@ -1,16 +1,20 @@
 import assert from "node:assert/strict"
 import test from "node:test"
+import { Effect } from "effect"
 import type { AgentRequest, WorkflowLimits } from "./core.ts"
 import {
   WORKFLOW_RUNTIME_ENTRY,
   emptyWorkflowRuntimeState,
   finishWorkflowRun,
   markWorkflowRunRecovered,
-  readOnlyRecoveryRequest,
+  readOnlyRecoveryRequest as readOnlyRecoveryRequestEffect,
   recoverableWorkflowRuns,
   restoreWorkflowRuntimeState,
   startWorkflowRun,
 } from "./workflow-runtime-state.ts"
+
+const readOnlyRecoveryRequest = (request: AgentRequest): AgentRequest =>
+  Effect.runSync(readOnlyRecoveryRequestEffect(request))
 
 const limits: WorkflowLimits = {
   maxAgents: 1,

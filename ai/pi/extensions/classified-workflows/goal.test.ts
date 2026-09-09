@@ -1,12 +1,13 @@
 import assert from "node:assert/strict"
 import test from "node:test"
+import { Effect } from "effect"
 import {
   applyGoalEvaluation,
   assistantUsageTokens,
   buildGoalEvaluatorPrompt,
   formatGoalStatus,
   latestCompactionSummary,
-  parseGoalCommand,
+  parseGoalCommand as parseGoalCommandEffect,
   parseGoalEvaluation,
   parseStoredGoal,
   pendingTodoTexts,
@@ -17,6 +18,9 @@ import {
   todoWorkSnapshot,
   type GoalState,
 } from "./goal.ts"
+
+const parseGoalCommand = (args: string) =>
+  Effect.runSync(parseGoalCommandEffect(args))
 
 const active: GoalState & { status: "active" } = {
   status: "active",

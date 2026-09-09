@@ -1,3 +1,4 @@
+import { Effect } from "effect"
 import {
   normalizeAgentTools,
   type AgentRequest,
@@ -364,12 +365,9 @@ export const auditedAgentRunner = (
   return async (request, signal, tokenLimit) => {
     const index = nextIndex++
     const startedAt = Date.now()
-    const tools = normalizeAgentTools(request.tools) ?? [
-      "read",
-      "grep",
-      "find",
-      "ls",
-    ]
+    const tools = (await Effect.runPromise(
+      normalizeAgentTools(request.tools),
+    )) ?? ["read", "grep", "find", "ls"]
     const task = sanitize(request.task).replace(/\s+/g, " ").slice(0, 240)
     onEvent?.({
       kind: "started",
@@ -448,7 +446,7 @@ export const auditedAgentRunner = (
       }
       audits.push(audit)
       onEvent?.({ kind: "finished", audit })
-      throw error
+      return Effect.runPromise(Effect.fail(error))
     }
   }
 }

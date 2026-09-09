@@ -1,7 +1,8 @@
 import path from "node:path"
 import vm from "node:vm"
+import { Data, Effect, Either } from "effect"
 import { availableMemoryBytes as systemAvailableMemoryBytes } from "../shared/memory-capacity.ts"
-import { parseLoopCommand } from "./loop.ts"
+import { parseLoopCommandResult } from "./loop.ts"
 
 export type Boundary = "spawn" | "action" | "return" | "tool-result"
 
@@ -48,14 +49,30 @@ export type AgentOptions = Omit<AgentRequest, "task">
 const MAX_AGENT_TOOLS = 16
 const MAX_AGENT_TOOL_NAME_CHARACTERS = 64
 
-export const normalizeAgentTools = (value: unknown): string[] | undefined => {
-  if (value === undefined) return undefined
+export class WorkflowScriptError extends Data.TaggedError(
+  "WorkflowScriptError",
+)<{
+  readonly message: string
+}> {}
+
+const workflowFailure = (message: string): WorkflowScriptError =>
+  new WorkflowScriptError({ message })
+
+const failWorkflow = (message: string): Promise<never> =>
+  Effect.runPromise(Effect.fail(workflowFailure(message)))
+
+const failWorkflowCause = (cause: unknown): Promise<never> =>
+  Effect.runPromise(Effect.fail(cause))
+
+export const normalizeAgentTools = (
+  value: unknown,
+): Effect.Effect<string[] | undefined, WorkflowScriptError> => {
+  if (value === undefined) return Effect.succeed(undefined)
   const tools =
     typeof value === "string"
       ? value.split(",").map(tool => tool.trim())
       : value
-  if (
-    !Array.isArray(tools) ||
+  return !Array.isArray(tools) ||
     tools.length === 0 ||
     tools.length > MAX_AGENT_TOOLS ||
     tools.some(
@@ -64,12 +81,12 @@ export const normalizeAgentTools = (value: unknown): string[] | undefined => {
         tool.length === 0 ||
         tool.length > MAX_AGENT_TOOL_NAME_CHARACTERS,
     )
-  ) {
-    throw new Error(
-      "agent tools must be a non-empty array or comma-delimited string of bounded tool names",
-    )
-  }
-  return tools
+    ? Effect.fail(
+        workflowFailure(
+          "agent tools must be a non-empty array or comma-delimited string of bounded tool names",
+        ),
+      )
+    : Effect.succeed(tools)
 }
 
 export type AgentResult =
@@ -96,7 +113,9 @@ export interface WorkflowLimits {
 }
 
 export interface WorkflowDependencies {
-  prepareAgentRequest?: (request: AgentRequest) => AgentRequest
+  prepareAgentRequest?: (
+    request: AgentRequest,
+  ) => Effect.Effect<AgentRequest, unknown>
   runAgent(
     request: AgentRequest,
     signal: AbortSignal,
@@ -156,6 +175,7 @@ const REVIEW_DUTY_ACTIONS = new Set([
   "begin",
   "report",
   "recover",
+  "recover-evidence",
   "retry-blocked",
   "retry-failed",
   "continue",
@@ -216,7 +236,7 @@ const LOCALLY_GENERATED_RESULT_TOOLS = new Set([
 ])
 const PATH_KEYS = new Set(["path", "file_path", "cwd", "glob"])
 const SENSITIVE_PATH =
-  /(^|[\\/\s'"])(?:\.env(?!\.example(?:$|[\\/\s'"]))(?:\.[^\\/\s'"]*)?[*?]*|credentials\.json|secrets\.(?:json|ya?ml)|auth\.json|\.npmrc|\.netrc|\.pypirc|id_(?:rsa|dsa|ecdsa|ed25519)(?:\.pub)?|[^\\/\s'"]+\.(?:key|pem|p12|pfx))($|[\\/\s'"])/i
+  /(^|[\\/\s'"])(?:\.env(?!\.example(?:$|[\\/\s'"]))(?:\.[^\\/\s'"]*)?[*?]*|credentials\.json|secrets\.(?:json|ya?ml)|auth\.json|\.npmrc|\.netrc|\.pypirc|id_(?:rsa|dsa|ecdsa|ed25519)(?:\.pub)?|[^\\/\s'"]+\.(?:age|key|pem|p12|pfx))($|[\\/\s'"])/i
 const SQL_JSONPATH_DOT_QUOTED_KEY = /\."(?:[^"\\]|\\.)*"/g
 const containsSensitivePath = (value: string): boolean =>
   SENSITIVE_PATH.test(
@@ -231,11 +251,18 @@ export const REQUIRED_SEARCH_EXCLUSIONS = [
   "!credentials.json",
   "!secrets.json",
   "!secrets.yaml",
+  "!*.age",
   "!*.key",
   "!*.pem",
   "!*.p12",
   "!*.pfx",
 ] as const
+
+const NUSHELL_RECORD_SELECTOR =
+  /\$[A-Za-z_][A-Za-z0-9_-]*(?:\??\.[A-Za-z_][A-Za-z0-9_-]*\??)+/g
+
+const stripNushellRecordSelectors = (command: string): string =>
+  command.replace(NUSHELL_RECORD_SELECTOR, () => "$record-selector")
 
 function relevantStrings(
   toolName: string,
@@ -243,7 +270,7 @@ function relevantStrings(
 ): string[] {
   if (toolName === "bash") {
     return typeof input.command === "string"
-      ? [stripNegativePathArguments(input.command)]
+      ? [stripNushellRecordSelectors(stripNegativePathArguments(input.command))]
       : []
   }
 
@@ -680,18 +707,13 @@ export function deterministicDecision(request: ToolRequest): Decision | null {
     request.toolName === "loop_control" &&
     typeof request.input.args === "string"
   ) {
-    try {
-      parseLoopCommand(request.input.args)
-    } catch (error) {
+    const parsed = parseLoopCommandResult(request.input.args)
+    if (!parsed.ok)
       return {
         verdict: "block",
-        reason:
-          error instanceof Error
-            ? error.message
-            : "Invalid recurring loop control",
+        reason: parsed.error.message,
         source: "deterministic",
       }
-    }
     return {
       verdict: "allow",
       reason: "Session-local recurring loop control",
@@ -809,6 +831,37 @@ export const shouldCarryDeterministicResultAllowance: (
   decision.source === "deterministic" &&
   decision.resultSafe === true
 
+const SCOPE_RELITIGATION_REASON =
+  /\b(?:unrelated|stale|outside (?:the )?(?:active )?scope|not (?:currently )?(?:authorized|within scope)|no (?:explicit )?authority|active (?:task|todo)|current (?:task|todo)|task scope)\b/i
+const EVIDENCE_RELITIGATION_REASON =
+  /\b(?:verif(?:y|ied) independently|independent verification)\b/i
+const RESULT_SAFETY_REASON =
+  /\b(?:credential|secret|private data|protected data|sensitive|prompt injection|system prompt|hidden instruction|exfiltrat)\b/i
+const MAX_SCOPE_RELITIGATION_RESULT_BYTES = 64 * 1024
+
+export const approvedSuccessfulResultBlockIsOnlyScopeRelitigation = (request: {
+  readonly reason: string
+  readonly content: unknown
+  readonly isError: boolean
+}): boolean => {
+  if (
+    (!SCOPE_RELITIGATION_REASON.test(request.reason) &&
+      !EVIDENCE_RELITIGATION_REASON.test(request.reason)) ||
+    RESULT_SAFETY_REASON.test(request.reason)
+  )
+    return false
+  const serialized =
+    typeof request.content === "string"
+      ? request.content
+      : (JSON.stringify(request.content) ?? "")
+  return (
+    Buffer.byteLength(serialized, "utf8") <=
+      MAX_SCOPE_RELITIGATION_RESULT_BYTES &&
+    !SENSITIVE_RESULT.test(serialized) &&
+    !PROMPT_INJECTION_RESULT.test(serialized)
+  )
+}
+
 export const deterministicReadOnlyToolResultDecision = (
   request: ToolResultRequest,
 ): Decision | null => {
@@ -904,64 +957,87 @@ const validateStructuredValue = (
   value: unknown,
   schema: unknown,
   path = "$",
-): void => {
-  if (!isRecord(schema))
-    throw new Error("agent schema must be a JSON Schema object")
-  if (
-    Array.isArray(schema.enum) &&
-    !schema.enum.some(candidate => Object.is(candidate, value))
-  ) {
-    throw new Error(`structured agent output violates enum at ${path}`)
-  }
-  if (schema.type === "object") {
-    if (!isRecord(value))
-      throw new Error(`structured agent output requires an object at ${path}`)
-    for (const key of Array.isArray(schema.required) ? schema.required : []) {
-      if (typeof key !== "string" || !(key in value))
-        throw new Error(
-          `structured agent output is missing ${path}.${String(key)}`,
-        )
-    }
-    if (isRecord(schema.properties)) {
-      for (const [key, child] of Object.entries(schema.properties)) {
-        if (key in value)
-          validateStructuredValue(value[key], child, `${path}.${key}`)
-      }
-    }
-    return
-  }
-  if (schema.type === "array") {
-    if (!Array.isArray(value))
-      throw new Error(`structured agent output requires an array at ${path}`)
-    if (schema.items !== undefined)
-      value.forEach((item, index) =>
-        validateStructuredValue(item, schema.items, `${path}[${index}]`),
+): Effect.Effect<void, WorkflowScriptError> =>
+  Effect.gen(function* () {
+    if (!isRecord(schema))
+      return yield* Effect.fail(
+        workflowFailure("agent schema must be a JSON Schema object"),
       )
-    return
-  }
-  if (schema.type === "string" && typeof value !== "string")
-    throw new Error(`structured agent output requires a string at ${path}`)
-  if (schema.type === "integer" && !Number.isInteger(value))
-    throw new Error(`structured agent output requires an integer at ${path}`)
-  if (schema.type === "number" && typeof value !== "number")
-    throw new Error(`structured agent output requires a number at ${path}`)
-  if (schema.type === "boolean" && typeof value !== "boolean")
-    throw new Error(`structured agent output requires a boolean at ${path}`)
-}
+    if (
+      Array.isArray(schema.enum) &&
+      !schema.enum.some(candidate => Object.is(candidate, value))
+    )
+      return yield* Effect.fail(
+        workflowFailure(`structured agent output violates enum at ${path}`),
+      )
+    if (schema.type === "object") {
+      if (!isRecord(value))
+        return yield* Effect.fail(
+          workflowFailure(
+            `structured agent output requires an object at ${path}`,
+          ),
+        )
+      for (const key of Array.isArray(schema.required) ? schema.required : []) {
+        if (typeof key !== "string" || !(key in value))
+          return yield* Effect.fail(
+            workflowFailure(
+              `structured agent output is missing ${path}.${String(key)}`,
+            ),
+          )
+      }
+      if (isRecord(schema.properties))
+        for (const [key, child] of Object.entries(schema.properties))
+          if (key in value)
+            yield* validateStructuredValue(value[key], child, `${path}.${key}`)
+      return
+    }
+    if (schema.type === "array") {
+      if (!Array.isArray(value))
+        return yield* Effect.fail(
+          workflowFailure(
+            `structured agent output requires an array at ${path}`,
+          ),
+        )
+      if (schema.items !== undefined)
+        for (const [index, item] of value.entries())
+          yield* validateStructuredValue(
+            item,
+            schema.items,
+            `${path}[${index}]`,
+          )
+      return
+    }
+    const invalidType =
+      schema.type === "string" && typeof value !== "string"
+        ? "string"
+        : schema.type === "integer" && !Number.isInteger(value)
+          ? "integer"
+          : schema.type === "number" && typeof value !== "number"
+            ? "number"
+            : schema.type === "boolean" && typeof value !== "boolean"
+              ? "boolean"
+              : undefined
+    if (invalidType)
+      return yield* Effect.fail(
+        workflowFailure(
+          `structured agent output requires a ${invalidType} at ${path}`,
+        ),
+      )
+  })
 
 const parseStructuredAgentOutput = (
   output: string,
   schema: unknown,
-): unknown => {
-  let parsed: unknown
-  try {
-    parsed = JSON.parse(output.trim())
-  } catch {
-    throw new Error("structured agent output was not valid JSON")
-  }
-  validateStructuredValue(parsed, schema)
-  return parsed
-}
+): Effect.Effect<unknown, WorkflowScriptError> =>
+  Effect.gen(function* () {
+    const parsed = yield* Effect.try({
+      try: (): unknown => JSON.parse(output.trim()),
+      catch: () =>
+        workflowFailure("structured agent output was not valid JSON"),
+    })
+    yield* validateStructuredValue(parsed, schema)
+    return parsed
+  })
 
 const structuredRepairRequest = (
   request: AgentRequest,
@@ -982,8 +1058,10 @@ export async function runWorkflowScript(
   dependencies: WorkflowDependencies,
   signal?: AbortSignal,
 ): Promise<unknown> {
-  validateLimits(limits)
+  await Effect.runPromise(validateLimits(limits))
   const workflowController = new AbortController()
+  const abortWithWorkflowFailure = (message: string): void =>
+    workflowController.abort(workflowFailure(message))
   const abortWorkflow = () => workflowController.abort(signal?.reason)
   if (signal?.aborted) abortWorkflow()
   else signal?.addEventListener("abort", abortWorkflow, { once: true })
@@ -1108,7 +1186,7 @@ export async function runWorkflowScript(
     options?: AgentOptions,
   ): Promise<unknown> => {
     if (options !== undefined && !isRecord(options))
-      throw new Error("agent options must be an object")
+      return failWorkflow("agent options must be an object")
     const rawRequest: AgentRequest =
       typeof requestOrTask === "string"
         ? {
@@ -1128,40 +1206,70 @@ export async function runWorkflowScript(
       !rawRequest ||
       typeof rawRequest.task !== "string" ||
       rawRequest.task.trim() === ""
-    ) {
-      throw new Error("agent requires a non-empty task")
-    }
+    )
+      return failWorkflow("agent requires a non-empty task")
     const clonedRequest = structuredClone(rawRequest)
     const { tools, ...requestWithoutTools } = clonedRequest
-    const normalizedTools = normalizeAgentTools(tools)
+    const normalizedToolsResult = Effect.runSync(
+      Effect.either(normalizeAgentTools(tools)),
+    )
+    if (Either.isLeft(normalizedToolsResult))
+      return failWorkflow(normalizedToolsResult.left.message)
+    const normalizedTools = normalizedToolsResult.right
     const normalizedRequest: AgentRequest =
       normalizedTools === undefined
         ? requestWithoutTools
         : { ...requestWithoutTools, tools: normalizedTools }
-    const request =
-      dependencies.prepareAgentRequest?.(normalizedRequest) ?? normalizedRequest
+    const preparedResult = dependencies.prepareAgentRequest
+      ? Effect.runSync(
+          Effect.either(dependencies.prepareAgentRequest(normalizedRequest)),
+        )
+      : Either.right(normalizedRequest)
+    if (Either.isLeft(preparedResult))
+      return failWorkflowCause(preparedResult.left)
+    const request = preparedResult.right
     if (request.task.length > 32_000)
-      throw new Error("agent tasks may contain at most 32,000 characters")
+      return failWorkflow("agent tasks may contain at most 32,000 characters")
     if (request.schema !== undefined) {
       if (!isRecord(request.schema))
-        throw new Error("agent schema must be a JSON Schema object")
-      let encodedSchema: string
-      try {
-        encodedSchema = JSON.stringify(request.schema)
-      } catch {
-        throw new Error("agent schema must be JSON serializable")
-      }
+        return failWorkflow("agent schema must be a JSON Schema object")
+      const encodedSchema = await Effect.runPromise(
+        Effect.try({
+          try: () => JSON.stringify(request.schema),
+          catch: () =>
+            workflowFailure("agent schema must be JSON serializable"),
+        }),
+      )
       if (encodedSchema.length > 16_000)
-        throw new Error("agent schema may contain at most 16,000 characters")
+        return failWorkflow(
+          "agent schema may contain at most 16,000 characters",
+        )
     }
-    if (phaseAgentCount >= limits.maxAgents) {
-      throw new Error(
+    if (phaseAgentCount >= limits.maxAgents)
+      return failWorkflow(
         `Workflow phase agent limit exceeded (${limits.maxAgents}); start a new named phase only after current children settle`,
       )
+    inFlightAgentCalls += 1
+    const availableMemoryResult = await Effect.runPromise(
+      Effect.either(
+        dependencies.availableMemoryBytes
+          ? Effect.try({
+              try: dependencies.availableMemoryBytes,
+              catch: cause =>
+                workflowFailure(
+                  cause instanceof Error
+                    ? cause.message
+                    : "Workflow memory probe failed",
+                ),
+            })
+          : Effect.map(systemAvailableMemoryBytes(), Number),
+      ),
+    )
+    if (Either.isLeft(availableMemoryResult)) {
+      inFlightAgentCalls -= 1
+      return failWorkflowCause(availableMemoryResult.left)
     }
-    const availableMemory =
-      dependencies.availableMemoryBytes?.() ??
-      Number(systemAvailableMemoryBytes())
+    const availableMemory = availableMemoryResult.right
     const requiredMemory =
       MIN_WORKFLOW_FREE_MEMORY_BYTES +
       activeAgents * WORKFLOW_AGENT_MEMORY_RESERVATION_BYTES
@@ -1170,18 +1278,18 @@ export async function runWorkflowScript(
         ? (availableMemory / 1024 ** 3).toFixed(1)
         : "unknown"
       const requiredGiB = (requiredMemory / 1024 ** 3).toFixed(1)
-      throw new Error(
+      inFlightAgentCalls -= 1
+      return failWorkflow(
         `Workflow memory reserve cannot start another agent: ${availableGiB} GiB available; ${requiredGiB} GiB required for the crash reserve and ${activeAgents} active agent(s)`,
       )
     }
     phaseAgentCount += 1
-    inFlightAgentCalls += 1
     let agentTokenLimit: number
     try {
       agentTokenLimit = await reserveAgentTokens()
     } catch (error) {
       inFlightAgentCalls -= 1
-      throw error
+      return failWorkflowCause(error)
     }
 
     let result: AgentResult | undefined
@@ -1189,7 +1297,7 @@ export async function runWorkflowScript(
     try {
       for (let attempt = 0; attempt <= limits.retries; attempt += 1) {
         if (workflowController.signal.aborted)
-          throw new Error("Workflow aborted")
+          return failWorkflow("Workflow aborted")
         try {
           const remainingAgentTokens = Math.max(
             0,
@@ -1216,7 +1324,7 @@ export async function runWorkflowScript(
             await retryBackoff(attempt, workflowController.signal)
           }
         } catch (error) {
-          if (workflowController.signal.aborted) throw error
+          if (workflowController.signal.aborted) return failWorkflowCause(error)
           if (attempt >= limits.retries) {
             const reason =
               error instanceof Error ? error.message : "Agent failed"
@@ -1232,7 +1340,7 @@ export async function runWorkflowScript(
         }
       }
 
-      if (!result) throw new Error("Agent produced no result")
+      if (!result) return failWorkflow("Agent produced no result")
       const measuredResult: AgentResult =
         agentUsageTokens > agentTokenLimit
           ? {
@@ -1244,43 +1352,45 @@ export async function runWorkflowScript(
           : { ...result, usageTokens: agentUsageTokens }
       if (request.schema === undefined) return measuredResult
       if (measuredResult.status === "blocked") return measuredResult
-      if (measuredResult.status !== "completed") {
-        throw new Error(
+      if (measuredResult.status !== "completed")
+        return failWorkflow(
           `structured agent ${measuredResult.status}: ${measuredResult.reason ?? "no result"}`,
         )
-      }
       try {
-        return parseStructuredAgentOutput(measuredResult.output, request.schema)
+        return await Effect.runPromise(
+          parseStructuredAgentOutput(measuredResult.output, request.schema),
+        )
       } catch (error) {
         const reason =
           error instanceof Error
             ? error.message
             : "structured agent output failed validation"
         const remainingTokens = Math.max(0, agentTokenLimit - agentUsageTokens)
-        if (remainingTokens < MIN_AGENT_TOKEN_RESERVATION) throw error
+        if (remainingTokens < MIN_AGENT_TOKEN_RESERVATION)
+          return failWorkflowCause(error)
         const repair = await runOnce(
           structuredRepairRequest(request, reason),
           remainingTokens,
         )
         agentUsageTokens += Math.max(0, repair.usageTokens)
-        if (agentUsageTokens > agentTokenLimit) {
-          throw new Error(
+        if (agentUsageTokens > agentTokenLimit)
+          return failWorkflow(
             `structured agent repair exceeded token limit (${agentUsageTokens}/${agentTokenLimit})`,
           )
-        }
-        if (repair.status !== "completed") {
-          throw new Error(
+        if (repair.status !== "completed")
+          return failWorkflow(
             `structured agent repair ${repair.status}: ${repair.reason ?? "no result"}`,
           )
-        }
         try {
-          return parseStructuredAgentOutput(repair.output, request.schema)
+          return await Effect.runPromise(
+            parseStructuredAgentOutput(repair.output, request.schema),
+          )
         } catch (repairError) {
           const repairReason =
             repairError instanceof Error
               ? repairError.message
               : "structured agent output failed validation"
-          throw new Error(
+          return failWorkflow(
             `structured agent output remained invalid after one bounded repair: ${repairReason}`,
           )
         }
@@ -1299,9 +1409,8 @@ export async function runWorkflowScript(
     if (
       !Array.isArray(tasks) ||
       tasks.some(task => typeof task !== "function" && !isPromiseLike(task))
-    ) {
-      throw new Error("parallel requires an array of promises or functions")
-    }
+    )
+      return failWorkflow("parallel requires an array of promises or functions")
     return Promise.all(
       tasks.map(task => (typeof task === "function" ? task() : task)),
     )
@@ -1309,26 +1418,29 @@ export async function runWorkflowScript(
 
   const checkpoint = async (message: string): Promise<void> => {
     if (typeof message !== "string" || message.trim() === "")
-      throw new Error("checkpoint requires a message")
+      return failWorkflow("checkpoint requires a message")
     if ((await dependencies.checkpoint(message)) !== "approved")
-      throw new Error(`Checkpoint denied: ${message}`)
+      return failWorkflow(`Checkpoint denied: ${message}`)
   }
 
   const phase = (title: string): void => {
     if (typeof title !== "string" || title.trim() === "" || title.length > 80) {
-      throw new Error(
+      abortWithWorkflowFailure(
         "phase requires a non-empty title of at most 80 characters",
       )
+      return
     }
     if (inFlightAgentCalls > 0) {
-      throw new Error(
+      abortWithWorkflowFailure(
         `Workflow cannot change phase while ${inFlightAgentCalls} agent call(s) are still active`,
       )
+      return
     }
     if (phaseCount >= MAX_WORKFLOW_PHASES) {
-      throw new Error(
+      abortWithWorkflowFailure(
         `Workflow may use at most ${MAX_WORKFLOW_PHASES} named phases`,
       )
+      return
     }
     phaseCount += 1
     phaseAgentCount = 0
@@ -1341,9 +1453,10 @@ export async function runWorkflowScript(
       message.trim() === "" ||
       message.length > 2_000
     ) {
-      throw new Error(
+      abortWithWorkflowFailure(
         "log requires a non-empty message of at most 2,000 characters",
       )
+      return
     }
     dependencies.log?.(message)
   }
@@ -1439,34 +1552,49 @@ export const minimumRetryEnvelopeMs: (
     Math.min(RETRY_BACKOFF_BASE_MS * 2 ** attempt, RETRY_BACKOFF_MAX_MS),
   ).reduce((total, delayMs) => total + delayMs, 0)
 
-function validateLimits(limits: WorkflowLimits): void {
-  const positive = [
-    limits.maxAgents,
-    limits.concurrency,
-    limits.agentTimeoutMs,
-    limits.workflowTimeoutMs,
-    limits.tokenBudget,
-  ]
-  if (positive.some(value => !Number.isInteger(value) || value <= 0)) {
-    throw new Error("Workflow limits must be positive integers")
-  }
-  if (!Number.isInteger(limits.retries) || limits.retries < 0)
-    throw new Error("Workflow retries must be a non-negative integer")
-  if (limits.concurrency > limits.maxAgents)
-    throw new Error("Workflow concurrency cannot exceed the agent limit")
-  const perAgentTokenLimit = Math.floor(limits.tokenBudget / limits.maxAgents)
-  if (perAgentTokenLimit < MIN_AGENT_TOKEN_RESERVATION) {
-    throw new Error(
-      `Workflow token budget minimum reservation is ${MIN_AGENT_TOKEN_RESERVATION} tokens per configured agent; ${perAgentTokenLimit} available`,
+const validateLimits = (
+  limits: WorkflowLimits,
+): Effect.Effect<void, WorkflowScriptError> =>
+  Effect.gen(function* () {
+    const positive = [
+      limits.maxAgents,
+      limits.concurrency,
+      limits.agentTimeoutMs,
+      limits.workflowTimeoutMs,
+      limits.tokenBudget,
+    ]
+    if (positive.some(value => !Number.isInteger(value) || value <= 0))
+      return yield* Effect.fail(
+        workflowFailure("Workflow limits must be positive integers"),
+      )
+    if (!Number.isInteger(limits.retries) || limits.retries < 0)
+      return yield* Effect.fail(
+        workflowFailure("Workflow retries must be a non-negative integer"),
+      )
+    if (limits.concurrency > limits.maxAgents)
+      return yield* Effect.fail(
+        workflowFailure("Workflow concurrency cannot exceed the agent limit"),
+      )
+    const perAgentTokenLimit = Math.floor(limits.tokenBudget / limits.maxAgents)
+    if (perAgentTokenLimit < MIN_AGENT_TOKEN_RESERVATION)
+      return yield* Effect.fail(
+        workflowFailure(
+          `Workflow token budget minimum reservation is ${MIN_AGENT_TOKEN_RESERVATION} tokens per configured agent; ${perAgentTokenLimit} available`,
+        ),
+      )
+    const retryEnvelopeMs = minimumRetryEnvelopeMs(
+      limits.agentTimeoutMs,
+      limits.retries,
     )
-  }
-  const retryEnvelopeMs = minimumRetryEnvelopeMs(
-    limits.agentTimeoutMs,
-    limits.retries,
-  )
-  if (limits.workflowTimeoutMs < retryEnvelopeMs) {
-    throw new Error(
-      `Workflow timeout ${limits.workflowTimeoutMs}ms cannot fit one agent's retry envelope of ${retryEnvelopeMs}ms`,
-    )
-  }
-}
+    if (limits.workflowTimeoutMs < retryEnvelopeMs) {
+      const retryBackoffMs =
+        retryEnvelopeMs - limits.agentTimeoutMs * (limits.retries + 1)
+      return yield* Effect.fail(
+        workflowFailure(
+          `Workflow timeout ${limits.workflowTimeoutMs}ms cannot fit one agent's retry envelope of ${retryEnvelopeMs}ms; ` +
+            `the envelope includes ${retryBackoffMs}ms retry backoff. Increase workflowTimeoutMs to at least ` +
+            `${retryEnvelopeMs}ms or reduce agentTimeoutMs or retries.`,
+        ),
+      )
+    }
+  })
