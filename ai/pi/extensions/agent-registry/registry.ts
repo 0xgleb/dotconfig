@@ -220,6 +220,35 @@ export const registrySyncNotification = (
   return failureActive ? "Agent registry recovered." : undefined
 }
 
+export interface RegistryReceiptAvailability {
+  readonly notificationsEnabled: boolean
+  readonly idle: boolean
+  readonly pendingMessages: boolean
+  readonly editorText: string
+  readonly autoReloadPending: boolean
+}
+
+export const registryReceiptAvailable = (
+  availability: RegistryReceiptAvailability,
+): boolean =>
+  availability.notificationsEnabled &&
+  availability.idle &&
+  !availability.pendingMessages &&
+  availability.editorText.length === 0 &&
+  !availability.autoReloadPending
+
+export const prioritizedActiveReceiptLeases = (
+  snapshot: RegistrySnapshot,
+  agentId: string,
+): readonly Lease[] =>
+  snapshot.leases
+    .filter(lease => lease.owner.id === agentId && lease.status === "active")
+    .sort(
+      (left, right) =>
+        Number(right.mode === "operational") -
+        Number(left.mode === "operational"),
+    )
+
 export interface ReconcileLeaseInput extends ClaimLeaseInput {
   readonly store: RegistryStore
 }

@@ -95,31 +95,34 @@ test("request mutations resolve an exact id or unique prefix to the canonical id
   assert.match(source, /request prefix is ambiguous/)
 })
 
-test("all receipts remain passive even when the request is urgent", () => {
+test("operational receipts wake one safe turn while task-role receipts remain passive", () => {
   const syncStart = source.indexOf("  const sync = async")
   const syncEnd = source.indexOf("  const autoClaimOperationalRole", syncStart)
   assert.ok(syncStart >= 0 && syncEnd > syncStart)
   const syncSource = source.slice(syncStart, syncEnd)
   assert.match(syncSource, /store\.heartbeatAgent\(/)
   assert.match(syncSource, /store\.heartbeat\(/)
-  assert.match(syncSource, /ctx\.isIdle\(\)/)
-  assert.match(syncSource, /!ctx\.hasPendingMessages\(\)/)
-  assert.match(syncSource, /!autoReloadPending\(\)/)
+  assert.match(syncSource, /registryReceiptAvailable\(\{/)
+  assert.match(syncSource, /idle: ctx\.isIdle\(\)/)
+  assert.match(syncSource, /pendingMessages: ctx\.hasPendingMessages\(\)/)
+  assert.match(syncSource, /editorText: ctx\.ui\.getEditorText\(\)/)
+  assert.match(syncSource, /autoReloadPending: autoReloadPending\(\)/)
   assert.match(syncSource, /requestNotificationText\(/)
   assert.match(syncSource, /requestNotificationDetails\(/)
   assert.match(syncSource, /store\s*\.\s*receiveRequest\(/)
-  assert.match(syncSource, /newest\.priority === "urgent"/)
+  assert.match(syncSource, /lease\.mode === "operational"/)
+  assert.match(syncSource, /triggerTurn: true/)
   assert.match(
     syncSource,
-    /This urgent registry receipt remains passive until the next polling or human turn/,
+    /This operational receipt started a turn to inspect and prioritize the request/,
   )
-  assert.doesNotMatch(syncSource, /triggerTurn: true/)
   assert.match(
     syncSource,
-    /This passive receipt waits for the next polling tick/,
+    /This task-role receipt remains passive until the next polling or human turn/,
   )
   assert.match(syncSource, /notifiedRequests\.add\(request\.id\)/)
   assert.match(syncSource, /persistNotifiedRequests\(\)/)
+  assert.doesNotMatch(syncSource, /candidate\.recipientLeaseId/)
   assert.doesNotMatch(syncSource, /store\.claimRequest\(/)
   assert.doesNotMatch(syncSource, /dispatchOperationalTriage/)
 })
@@ -183,6 +186,18 @@ test("startup and sync abandon captured contexts when reload shuts down their ru
   assert.match(
     source,
     /pi\.on\("session_shutdown"[\s\S]*?finally \{[\s\S]*?store\.close\(\)/,
+  )
+  assert.match(
+    source,
+    /pi\.on\("agent_settled"[\s\S]*?const epoch = activeLifecycleEpoch[\s\S]*?ctx !== latestCtx \|\| epoch === undefined[\s\S]*?sync\(ctx, true, epoch\)/,
+  )
+  assert.match(
+    source,
+    /snapshot = await run\(store\.snapshot\(now\)\)\s*if \(expectedEpoch !== activeLifecycleEpoch \|\| ctx !== latestCtx\) return\s*if \(\s*registryReceiptAvailable/,
+  )
+  assert.match(
+    source,
+    /store\s*\.\s*receiveRequest\([\s\S]*?if \(expectedEpoch !== activeLifecycleEpoch \|\| ctx !== latestCtx\)\s*return\s*notifiedRequests\.add/,
   )
 })
 

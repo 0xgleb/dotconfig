@@ -24,7 +24,7 @@ test("registry request receipts survive reload and compaction", () => {
 })
 
 test("notification epoch replays pre-receipt backlog once after upgrade", () => {
-  assert.match(source, /NOTIFICATION_EPOCH = 4/)
+  assert.match(source, /NOTIFICATION_EPOCH = 5/)
   assert.match(source, /entry\.data\.epoch !== NOTIFICATION_EPOCH/)
   assert.match(source, /epoch: NOTIFICATION_EPOCH,[\s\S]*ids:/)
 })
@@ -32,29 +32,41 @@ test("notification epoch replays pre-receipt backlog once after upgrade", () => 
 test("registry receipts target only queued work for the current active lease", () => {
   assert.match(
     source,
-    /ownedLeases\(snapshot, agent\.id\)\.filter\([\s\S]*status === "active"/,
+    /prioritizedActiveReceiptLeases\(\s*snapshot,\s*agent\.id,?\s*\)/,
   )
   assert.match(source, /candidate\.project === lease\.project/)
   assert.match(source, /candidate\.role === lease\.role/)
   assert.match(source, /candidate\.status === "queued"/)
-  assert.match(source, /candidate\.recipientLeaseId !== lease\.id/)
+  assert.doesNotMatch(source, /candidate\.recipientLeaseId !== lease\.id/)
   assert.match(source, /MAX_RECEIPTS_PER_NOTIFICATION = 64/)
   assert.match(source, /\.slice\(0, MAX_RECEIPTS_PER_NOTIFICATION\)/)
-  assert.match(source, /store\.receiveRequest\(\{/)
+  assert.match(source, /store\s*\.\s*receiveRequest\(\{/)
 })
 
-test("registry inbox passively receives normal and urgent work", () => {
+test("registry inbox wakes operational roles without preempting active input", () => {
+  assert.match(source, /registryReceiptAvailable\(\{/)
+  assert.match(source, /notificationsEnabled,/)
+  assert.match(source, /idle: ctx\.isIdle\(\)/)
+  assert.match(source, /pendingMessages: ctx\.hasPendingMessages\(\)/)
+  assert.match(source, /editorText: ctx\.ui\.getEditorText\(\)/)
+  assert.match(source, /autoReloadPending: autoReloadPending\(\)/)
   assert.match(
     source,
-    /notificationsEnabled &&[\s\S]*ctx\.isIdle\(\) &&[\s\S]*!ctx\.hasPendingMessages\(\) &&[\s\S]*!autoReloadPending\(\)/,
+    /requests\.find\(\(\{ priority \}\) => priority === "urgent"\)/,
   )
-  assert.match(source, /newest\.priority === "urgent"/)
-  assert.match(source, /This passive receipt waits for the next polling tick/)
+  assert.match(source, /const operational = lease\.mode === "operational"/)
   assert.match(
     source,
-    /This urgent registry receipt remains passive until the next polling or human turn/,
+    /This operational receipt started a turn to inspect and prioritize the request/,
   )
-  assert.doesNotMatch(source, /triggerTurn: true/)
+  assert.match(
+    source,
+    /This task-role receipt remains passive until the next polling or human turn/,
+  )
+  assert.match(
+    source,
+    /operational\s*\? \{ triggerTurn: true, deliverAs: "followUp" \}\s*: \{ deliverAs: "followUp" \}/,
+  )
   assert.match(source, /let notificationSent = false/)
   assert.match(source, /if \(!newest \|\| notificationSent\) continue/)
   assert.match(

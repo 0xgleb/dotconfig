@@ -12,12 +12,16 @@ import {
   type SqliteRegistryStore,
 } from "./sqlite-store.ts"
 import {
+  prioritizedActiveReceiptLeases,
   reconcileSessionLease,
   RegistryError,
+  registryReceiptAvailable,
   registrySyncNotification,
   runRegistryEffect,
   type AgentActivity,
   type AgentIdentity,
+  type Lease,
+  type RegistrySnapshot,
 } from "./registry.ts"
 import { runtimeAgentId } from "./runtime-identity.ts"
 import type { AgentTokenUsage } from "./usage.ts"
@@ -108,6 +112,68 @@ test("registry sync failures notify once per outage and report recovery", () => 
   assert.equal(registrySyncNotification(true, "io: disk I/O error"), undefined)
   assert.equal(registrySyncNotification(true), "Agent registry recovered.")
   assert.equal(registrySyncNotification(false), undefined)
+})
+
+test("registry receipt availability preserves active input and reload work", () => {
+  const available = {
+    notificationsEnabled: true,
+    idle: true,
+    pendingMessages: false,
+    editorText: "",
+    autoReloadPending: false,
+  } as const
+  assert.equal(registryReceiptAvailable(available), true)
+  assert.equal(
+    registryReceiptAvailable({ ...available, editorText: "owner draft" }),
+    false,
+  )
+  assert.equal(
+    registryReceiptAvailable({ ...available, pendingMessages: true }),
+    false,
+  )
+  assert.equal(registryReceiptAvailable({ ...available, idle: false }), false)
+  assert.equal(
+    registryReceiptAvailable({ ...available, autoReloadPending: true }),
+    false,
+  )
+  assert.equal(
+    registryReceiptAvailable({ ...available, notificationsEnabled: false }),
+    false,
+  )
+})
+
+test("operational receipt leases are selected before task leases", () => {
+  const lease = (
+    id: string,
+    mode: "task" | "operational",
+    ownerId = "agent-a",
+    status: "active" | "paused" = "active",
+  ): Lease => ({
+    id,
+    project: "/project",
+    role: id,
+    mode,
+    owner: agent(ownerId),
+    policyDigest: "policy",
+    acquiredAt: 1,
+    heartbeatAt: 1,
+    expiresAt: 100,
+    status,
+  })
+  const snapshot: RegistrySnapshot = {
+    version: 1,
+    leases: [
+      lease("task", "task"),
+      lease("operational", "operational"),
+      lease("paused", "operational", "agent-a", "paused"),
+      lease("other-owner", "operational", "agent-b"),
+    ],
+    requests: [],
+  }
+  assert.deepEqual(
+    prioritizedActiveReceiptLeases(snapshot, "agent-a").map(({ id }) => id),
+    ["operational", "task"],
+  )
 })
 
 test("registry uses WAL so fleet readers do not contend with ordinary writers", async () => {
