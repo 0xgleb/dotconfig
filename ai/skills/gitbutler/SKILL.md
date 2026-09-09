@@ -189,6 +189,12 @@ If that recovery command fails, do NOT try `uncommit`, `squash`, or `undo` as a 
 4. `but resolve finish` reports leftover markers, surviving uncommitted changes, every remaining conflicted commit, and the exact current `but resolve <id>` command. Add `--status-after` to the finish you expect to clear the last conflict only when the task needs the complete resulting workspace. When it says no conflicted commits remain, stop; do not run a verification status.
 5. Repeat for remaining conflicted commits, oldest first — finishing a lower commit rebases the ones above it.
 
+### A conflicted applied stack can block unrelated mutations
+
+GitButler 0.22.0 rebuilds a workspace-wide graph during mutations. When any applied stack contains an unresolved conflicted commit, an unrelated parallel commit that fails with `Failed to merge bases while cherry picking commit` and in-memory “new bases” is consistent with a known upstream workspace-graph failure. A related broken resolution state can make `but resolve <id>` fail because object ID `0000000000000000000000000000000000000000` does not exist. This does not prove that the unrelated files or target branch are wrong; see GitButler issues [#15112](https://github.com/gitbutlerapp/gitbutler/issues/15112) and [#12065](https://github.com/gitbutlerapp/gitbutler/issues/12065).
+
+Do not retry the failed mutation while the workspace state remains unresolved, use raw Git to repair the main worktree, discard or undo the conflicted commit, or claim a partial commit succeeded. Preserve the conflicted commit and its order. Resolve or safely unapply it only when that exact operation is independently authorized; consider a retry only after that recovery and verification of a clean graph. If the unrelated task already authorizes an isolated linked/non-main worktree from a verified clean live head, use plain Git there and leave the poisoned GitButler workspace untouched; do not create isolation merely as an unrequested fallback.
+
 ### Conflicts in uncommitted files
 
 `but status` marks uncommitted files with unresolved merge conflicts `{conflicted}`; they are excluded from committable changes and outside `but resolve` mode. Choose the desired contents or delete the file, then `git add -- <path>` to mark it resolved (the one permitted `git add`).

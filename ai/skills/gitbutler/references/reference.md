@@ -367,6 +367,12 @@ but resolve cancel --force
 
 **Important:** Never use `git add`, `git commit`, or other git write commands during conflict resolution. Only use `but resolve` commands and edit files directly.
 
+### Workspace-graph failure while another commit is conflicted
+
+GitButler 0.22.0 rebuilds a workspace-wide graph during mutations. When any applied stack contains an unresolved conflicted commit, an unrelated parallel commit that fails with `Failed to merge bases while cherry picking commit` and in-memory “new bases” is consistent with a known upstream workspace-graph failure. A related broken resolution state can make `but resolve <id>` report that object ID `0000000000000000000000000000000000000000` does not exist. This does not prove that the unrelated changes or requested branch are invalid; see GitButler issues [#15112](https://github.com/gitbutlerapp/gitbutler/issues/15112) and [#12065](https://github.com/gitbutlerapp/gitbutler/issues/12065).
+
+Do not retry the mutation while the workspace state remains unresolved, repair the main worktree with raw Git, discard or undo the conflicted commit, or claim a partial commit. Preserve the conflicted commit and its order; resolve or safely unapply it only when that exact operation is independently authorized. Consider a retry only after that recovery and verification of a clean graph. When the unrelated task already authorizes an isolated linked/non-main worktree from a verified clean live head, use plain Git there and leave the poisoned GitButler workspace untouched. Do not create a worktree solely as an unrequested fallback.
+
 ## Remote Operations
 
 ### `but push <branch>`
