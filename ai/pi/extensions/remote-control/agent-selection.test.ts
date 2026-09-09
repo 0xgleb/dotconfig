@@ -3,6 +3,7 @@ import test from "node:test"
 import {
   agentListHtml,
   agentMatchesSelector,
+  bridgeQueueRoutableAgents,
   preferredAgent,
   resolvableSelector,
   telegramRoutableAgents,
@@ -15,6 +16,8 @@ const agents: BridgeAgent[] = [
     label: "Dotconfig · Pi Support",
     cwd: "/Users/example/.config",
     accepting: true,
+    workDelivery: "native-pi",
+    queuedMessages: 0,
     heartbeatAt: 1,
     expiresAt: 2,
   },
@@ -23,32 +26,47 @@ const agents: BridgeAgent[] = [
     label: "Yielduck · Operator",
     cwd: "/Users/example/code/dataclique/yielduck",
     accepting: true,
+    workDelivery: "native-pi",
+    queuedMessages: 0,
     heartbeatAt: 1,
     expiresAt: 2,
   },
 ]
 
-test("Telegram chat routing excludes monitor-only external harness heartbeats", () => {
+test("Telegram chat routing uses typed delivery capability, never agent-id shape", () => {
   const roster: BridgeAgent[] = [
     {
       ...agents[0]!,
-      id: "019fe002-8c63-7c1e-aa67-3fe29611a242",
+      id: "native-pi-without-uuid-shape",
+      workDelivery: "native-pi",
     },
     {
       ...agents[1]!,
-      id: "external-research-monitor",
-      label: "External research monitor",
+      id: "019fe002-8c63-7c1e-aa67-3fe29611a242",
+      label: "Misleading UUID monitor",
+      workDelivery: "monitor-only",
     },
     {
       ...agents[1]!,
       id: "claude-review-duty",
       label: "Claude review duty",
+      workDelivery: "cli-poll",
+    },
+    {
+      ...agents[1]!,
+      id: "cursor-inline-worker",
+      label: "Cursor inline worker",
+      workDelivery: "inline-only",
     },
   ]
 
   assert.deepEqual(
     telegramRoutableAgents(roster).map(({ id }) => id),
-    ["019fe002-8c63-7c1e-aa67-3fe29611a242"],
+    ["native-pi-without-uuid-shape"],
+  )
+  assert.deepEqual(
+    bridgeQueueRoutableAgents(roster).map(({ id }) => id),
+    ["native-pi-without-uuid-shape", "claude-review-duty"],
   )
 })
 
@@ -83,6 +101,8 @@ test("a selector shared by several lanes gives way to the unambiguous agent id",
       label: "Claude Code (Opus) - .config worker",
       cwd: "/Users/example/.config",
       accepting: true,
+      workDelivery: "cli-poll",
+      queuedMessages: 0,
       heartbeatAt: 1,
       expiresAt: 2,
     },
@@ -91,6 +111,8 @@ test("a selector shared by several lanes gives way to the unambiguous agent id",
       label: "claude-code - fable orchestrator",
       cwd: "/Users/example/.config",
       accepting: true,
+      workDelivery: "cli-poll",
+      queuedMessages: 0,
       heartbeatAt: 1,
       expiresAt: 2,
     },
@@ -99,6 +121,8 @@ test("a selector shared by several lanes gives way to the unambiguous agent id",
       label: "Claude Code (Opus) - yielduck worker",
       cwd: "/Users/example/code/dataclique/yielduck",
       accepting: true,
+      workDelivery: "cli-poll",
+      queuedMessages: 0,
       heartbeatAt: 1,
       expiresAt: 2,
     },

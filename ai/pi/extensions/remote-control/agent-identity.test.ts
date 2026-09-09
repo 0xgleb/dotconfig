@@ -23,6 +23,8 @@ const agent = (id: string, label: string): BridgeAgent => ({
   label,
   cwd: "/Users/example/code/dataclique/yielduck",
   accepting: true,
+  workDelivery: "native-pi",
+  queuedMessages: 0,
   heartbeatAt: 1,
   expiresAt: 2,
 })
@@ -42,7 +44,7 @@ test("agent display labels combine a friendly project and operational role", () 
 test("registry-owned roles feed the bridge heartbeat through a typed identity event", () => {
   assert.match(
     registrySource,
-    /REGISTRY_IDENTITY_REQUEST_EVENT[\s\S]*?lease\.owner\.id === payload\.agentId[\s\S]*?lease\.status === "active"[\s\S]*?payload\.report\(\{ role: lease\.role, mode: lease\.mode \}\)/,
+    /REGISTRY_IDENTITY_REQUEST_EVENT[\s\S]*?resolveRuntimeAgentId\(payload\.agentId\)[\s\S]*?lease\.owner\.id === agentId && lease\.status === "active"[\s\S]*?payload\.report\(\{ role: lease\.role, mode: lease\.mode \}\)/,
   )
   assert.match(
     remoteControlSource,
@@ -63,6 +65,16 @@ test("question relays and confirmations use friendly identities without raw sess
   assert.doesNotMatch(relay, /id\.slice/)
   assert.match(reply, /identifiedAgentLabel/)
   assert.doesNotMatch(reply, /agentId\.slice/)
+})
+
+test("a direct numbered owner message tries the sole pending delivered question without guessing", () => {
+  const reply = pieceSource.slice(
+    pieceSource.indexOf("const handleQuestionReply"),
+    pieceSource.indexOf("const handleOwnerCommand"),
+  )
+  assert.match(reply, /answerSolePendingTelegramQuestion/)
+  assert.match(reply, /replyToMessageId === undefined/)
+  assert.match(reply, /resolution === undefined/)
 })
 
 test("duplicate friendly identities receive deterministic instance numbers", () => {

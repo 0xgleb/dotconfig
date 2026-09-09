@@ -13,6 +13,7 @@ import {
   ownerRelayChunks,
   stakeholderUpdateText,
 } from "./owner-telegram.ts"
+import { parseOwnerRelay } from "./protocol.ts"
 
 test("CABA relay payload is the real interactive HTML card without an agent banner", () => {
   const payload = cabaCardRelayPayload(1_000)
@@ -177,5 +178,17 @@ test("a report longer than one Telegram message splits on rendered lines", () =>
       "every chunk stays inside the Telegram limit",
     )
     assert.ok(!chunk.startsWith("x"), "a chunk boundary must not fall mid-line")
+  }
+})
+
+test("legacy owner relays decode then use the same bounded report chunker", () => {
+  for (const length of [1_950, 2_000, 4_001]) {
+    const parsed = parseOwnerRelay(`relay-to-owner: ${"x".repeat(length)}`)
+    assert.equal(parsed?.frame, "owner-relay")
+    if (parsed?.frame !== "owner-relay") continue
+
+    const chunks = ownerRelayChunks(agentReportText(parsed.body, "legacy"))
+    assert.ok(chunks.every(chunk => chunk.length <= 4_000))
+    assert.equal(chunks.length > 1, length > 4_000)
   }
 })

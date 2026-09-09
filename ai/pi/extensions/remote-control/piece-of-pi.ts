@@ -57,6 +57,7 @@ import {
   isTelegramAcknowledgementEmoji,
   telegramAcknowledgementReaction,
   telegramImageFromBytes,
+  telegramOwnerConversationText,
   type TelegramAcknowledgementEmoji,
   type TelegramBotState,
   type TelegramCallbackQuery,
@@ -77,6 +78,8 @@ import {
 } from "./voice.ts"
 
 const TELEGRAM_LONG_POLL_SECONDS = 25
+const TELEGRAM_CALL_TIMEOUT_MS = 30_000
+const TELEGRAM_LONG_POLL_GRACE_MS = 10_000
 const TELEGRAM_BURST_WINDOW_MS = 3_500
 const TELEGRAM_MAX_BURST_WAIT_MS = 14_000
 const TELEGRAM_MAX_BURST_UPDATES = 32
@@ -429,34 +432,126 @@ const persistState = (
       }),
   })
 
+const telegramCallTimeoutMilliseconds = (
+  method: string,
+  body: Readonly<Record<string, unknown>>,
+): number => {
+  const requestedLongPollSeconds = body.timeout
+  const longPollTimeoutMilliseconds =
+    method === "getUpdates" &&
+    typeof requestedLongPollSeconds === "number" &&
+    Number.isFinite(requestedLongPollSeconds) &&
+    requestedLongPollSeconds >= 0
+      ? requestedLongPollSeconds * 1_000 + TELEGRAM_LONG_POLL_GRACE_MS
+      : 0
+  return Math.max(TELEGRAM_CALL_TIMEOUT_MS, longPollTimeoutMilliseconds)
+}
+
 const telegramCall = (
   configuration: PieceOfPiConfiguration,
   method: string,
   body: Readonly<Record<string, unknown>>,
 ): Effect.Effect<unknown, TelegramTransportError> => {
   let status: number | undefined
-  return Effect.tryPromise({
-    try: async () => {
-      const response = await fetch(
-        `https://api.telegram.org/bot${configuration.token}/${method}`,
-        {
+  const transportError = () =>
+    new TelegramTransportError({
+      method,
+      message: `Telegram ${method} request failed`,
+      ...(status === undefined ? {} : { status }),
+    })
+
+  return Effect.gen(function* () {
+    const response = yield* Effect.tryPromise({
+      try: signal =>
+        fetch(`https://api.telegram.org/bot${configuration.token}/${method}`, {
           method: "POST",
           headers: { "content-type": "application/json" },
           body: JSON.stringify(body),
-        },
-      )
-      status = response.status
-      if (!response.ok) throw new Error("Telegram HTTP request failed")
-      return (await response.json()) as unknown
-    },
-    catch: () =>
+          signal,
+        }),
+      catch: transportError,
+    })
+    status = response.status
+    if (!response.ok) return yield* Effect.fail(transportError())
+    return yield* Effect.tryPromise({
+      try: (): Promise<unknown> => response.json(),
+      catch: transportError,
+    })
+  }).pipe(
+    Effect.timeout(telegramCallTimeoutMilliseconds(method, body)),
+    Effect.mapError(error =>
+      error instanceof TelegramTransportError ? error : transportError(),
+    ),
+  )
+}
+
+const downloadTelegramBytes = (
+  url: string,
+  maximumBytes: number,
+  method: "downloadPhoto" | "downloadVoice",
+): Effect.Effect<
+  { readonly bytes: Uint8Array; readonly contentType: string },
+  TelegramTransportError
+> =>
+  Effect.gen(function* () {
+    let status: number | undefined
+    const failure = () =>
       new TelegramTransportError({
         method,
-        message: `Telegram ${method} request failed`,
+        message: `Telegram ${method === "downloadPhoto" ? "photo" : "voice"} download failed (maximum ${maximumBytes} bytes)`,
         ...(status === undefined ? {} : { status }),
-      }),
+      })
+    const response = yield* Effect.tryPromise({
+      try: signal => fetch(url, { signal }),
+      catch: failure,
+    })
+    status = response.status
+    if (!response.ok || !response.body) return yield* Effect.fail(failure())
+    const declaredLength = Number(response.headers.get("content-length"))
+    if (Number.isFinite(declaredLength) && declaredLength > maximumBytes)
+      return yield* Effect.fail(failure())
+
+    const reader = response.body.getReader()
+    const chunks: Uint8Array[] = []
+    let totalBytes = 0
+    yield* Effect.acquireUseRelease(
+      Effect.succeed(reader),
+      activeReader =>
+        Effect.gen(function* () {
+          for (;;) {
+            const chunk = yield* Effect.tryPromise({
+              try: () => activeReader.read(),
+              catch: failure,
+            })
+            if (chunk.done) break
+            totalBytes += chunk.value.byteLength
+            if (totalBytes > maximumBytes) {
+              yield* Effect.tryPromise({
+                try: () => activeReader.cancel(),
+                catch: failure,
+              }).pipe(Effect.ignore)
+              return yield* Effect.fail(failure())
+            }
+            chunks.push(chunk.value)
+          }
+        }),
+      activeReader =>
+        Effect.try({
+          try: () => activeReader.releaseLock(),
+          catch: failure,
+        }).pipe(Effect.ignore),
+    )
+    const bytes = new Uint8Array(totalBytes)
+    let offset = 0
+    for (const chunk of chunks) {
+      bytes.set(chunk, offset)
+      offset += chunk.byteLength
+    }
+    return {
+      bytes,
+      contentType: response.headers.get("content-type") ?? "",
+    }
   })
-}
 
 const downloadTelegramPhoto = (
   runtime: PieceOfPiRuntime,
@@ -464,55 +559,13 @@ const downloadTelegramPhoto = (
 ): Effect.Effect<RemoteImage, TelegramTransportError | TelegramContractError> =>
   telegramCall(runtime.configuration, "getFile", { file_id: fileId }).pipe(
     Effect.flatMap(decodeTelegramFilePath),
-    Effect.flatMap(filePath => {
-      let status: number | undefined
-      return Effect.tryPromise({
-        try: async () => {
-          const response = await fetch(
-            `https://api.telegram.org/file/bot${runtime.configuration.token}/${filePath}`,
-          )
-          status = response.status
-          if (!response.ok || !response.body)
-            throw new Error("Telegram file download failed")
-          const declaredLength = Number(response.headers.get("content-length"))
-          if (
-            Number.isFinite(declaredLength) &&
-            declaredLength > MAX_REMOTE_IMAGE_BYTES
-          )
-            throw new Error("Telegram image exceeds byte limit")
-
-          const reader = response.body.getReader()
-          const chunks: Uint8Array[] = []
-          let totalBytes = 0
-          for (;;) {
-            const chunk = await reader.read()
-            if (chunk.done) break
-            totalBytes += chunk.value.byteLength
-            if (totalBytes > MAX_REMOTE_IMAGE_BYTES) {
-              await reader.cancel()
-              throw new Error("Telegram image exceeds byte limit")
-            }
-            chunks.push(chunk.value)
-          }
-          const bytes = new Uint8Array(totalBytes)
-          let offset = 0
-          for (const chunk of chunks) {
-            bytes.set(chunk, offset)
-            offset += chunk.byteLength
-          }
-          return {
-            bytes,
-            contentType: response.headers.get("content-type") ?? "",
-          }
-        },
-        catch: () =>
-          new TelegramTransportError({
-            method: "downloadPhoto",
-            message: `Telegram photo download failed (maximum ${MAX_REMOTE_IMAGE_BYTES} bytes)`,
-            ...(status === undefined ? {} : { status }),
-          }),
-      })
-    }),
+    Effect.flatMap(filePath =>
+      downloadTelegramBytes(
+        `https://api.telegram.org/file/bot${runtime.configuration.token}/${filePath}`,
+        MAX_REMOTE_IMAGE_BYTES,
+        "downloadPhoto",
+      ),
+    ),
     Effect.flatMap(({ bytes, contentType }) =>
       telegramImageFromBytes(contentType, bytes),
     ),
@@ -524,55 +577,13 @@ const downloadTelegramVoice = (
 ): Effect.Effect<Uint8Array, TelegramTransportError | TelegramContractError> =>
   telegramCall(runtime.configuration, "getFile", { file_id: fileId }).pipe(
     Effect.flatMap(decodeTelegramFilePath),
-    Effect.flatMap(filePath => {
-      let status: number | undefined
-      return Effect.tryPromise({
-        try: async () => {
-          const response = await fetch(
-            `https://api.telegram.org/file/bot${runtime.configuration.token}/${filePath}`,
-          )
-          status = response.status
-          if (!response.ok || !response.body)
-            throw new Error("Telegram voice download failed")
-          const declaredLength = Number(response.headers.get("content-length"))
-          if (
-            Number.isFinite(declaredLength) &&
-            declaredLength > MAX_TELEGRAM_VOICE_BYTES
-          )
-            throw new Error("Telegram voice exceeds byte limit")
-
-          const reader = response.body.getReader()
-          const chunks: Uint8Array[] = []
-          let totalBytes = 0
-          for (;;) {
-            const chunk = await reader.read()
-            if (chunk.done) break
-            totalBytes += chunk.value.byteLength
-            if (totalBytes > MAX_TELEGRAM_VOICE_BYTES) {
-              await reader.cancel()
-              throw new Error("Telegram voice exceeds byte limit")
-            }
-            chunks.push(chunk.value)
-          }
-          const bytes = new Uint8Array(totalBytes)
-          let offset = 0
-          for (const chunk of chunks) {
-            bytes.set(chunk, offset)
-            offset += chunk.byteLength
-          }
-          return {
-            bytes,
-            contentType: response.headers.get("content-type") ?? "",
-          }
-        },
-        catch: () =>
-          new TelegramTransportError({
-            method: "downloadVoice",
-            message: `Telegram voice download failed (maximum ${MAX_TELEGRAM_VOICE_BYTES} bytes)`,
-            ...(status === undefined ? {} : { status }),
-          }),
-      })
-    }),
+    Effect.flatMap(filePath =>
+      downloadTelegramBytes(
+        `https://api.telegram.org/file/bot${runtime.configuration.token}/${filePath}`,
+        MAX_TELEGRAM_VOICE_BYTES,
+        "downloadVoice",
+      ),
+    ),
     Effect.flatMap(({ bytes, contentType }) =>
       telegramVoiceFromBytes(contentType, bytes),
     ),
@@ -620,19 +631,25 @@ const transcribeTelegramVoice = (
               ),
             ),
             Effect.flatMap(() =>
-              Effect.tryPromise({
-                try: async () => {
-                  const metadata = await stat(outputPath)
-                  if (!metadata.isFile() || metadata.size > 1024 * 1024)
-                    throw new Error("Whisper output is invalid")
-                  return JSON.parse(
-                    await readFile(outputPath, "utf8"),
-                  ) as unknown
-                },
-                catch: () =>
+              Effect.gen(function* () {
+                const invalidOutput = () =>
                   new VoiceTranscriptionError({
                     message: "Voice transcription output is invalid",
-                  }),
+                  })
+                const metadata = yield* Effect.tryPromise({
+                  try: () => stat(outputPath),
+                  catch: invalidOutput,
+                })
+                if (!metadata.isFile() || metadata.size > 1024 * 1024)
+                  return yield* Effect.fail(invalidOutput())
+                const output = yield* Effect.tryPromise({
+                  try: () => readFile(outputPath, "utf8"),
+                  catch: invalidOutput,
+                })
+                return yield* Effect.try({
+                  try: (): unknown => JSON.parse(output),
+                  catch: invalidOutput,
+                })
               }),
             ),
             Effect.flatMap(decodeWhisperTranscript),
@@ -1062,12 +1079,26 @@ const transcribeOwnerVoice = (
   if (!voice) return Effect.succeed(update)
   return transcribeTelegramVoice(runtime, voice.fileId).pipe(
     Effect.flatMap(transcript =>
-      replaceVoiceMarker(update.message.text, voice.messageId, transcript),
+      replaceVoiceMarker(update.message.text, voice.messageId, transcript).pipe(
+        Effect.map(text => ({ text, transcript })),
+      ),
     ),
-    Effect.map(text => ({
-      ...update,
-      message: { ...update.message, text },
-    })),
+    Effect.map(({ text, transcript }) => {
+      const marker = `[Voice message #${voice.messageId}]`
+      const conversationParts = update.message.conversationParts?.map(part =>
+        part.text.includes(marker)
+          ? { ...part, text: part.text.replace(marker, transcript) }
+          : part,
+      )
+      return {
+        ...update,
+        message: {
+          ...update.message,
+          text,
+          ...(conversationParts ? { conversationParts } : {}),
+        },
+      }
+    }),
   )
 }
 
@@ -1100,7 +1131,7 @@ const enqueueOwnerMessage = (
           targetAgentId: agent.id,
           requesterId: `telegram-owner-${update.message.userId}`,
           dedupeKey: `telegram-update-${update.updateId}`,
-          text: `${reactionContext}${update.message.text}`,
+          text: `${reactionContext}${telegramOwnerConversationText(update.message, update.message.userId)}`,
           images,
           now: Date.now(),
           ttlMs: BRIDGE_MESSAGE_TTL_MS,
@@ -1190,47 +1221,55 @@ const handleQuestionReply = (
   TelegramTransportError | TelegramContractError | RemoteBridgeError
 > => {
   const replyToMessageId = update.message.replyToMessageId
-  if (replyToMessageId === undefined) return Effect.succeed(false)
+  const resolutionEffect =
+    replyToMessageId === undefined
+      ? runtime.bridge.answerSolePendingTelegramQuestion({
+          chatId: update.message.chatId,
+          answer: update.message.text,
+          now: Date.now(),
+        })
+      : runtime.bridge.answerTelegramQuestion({
+          chatId: update.message.chatId,
+          messageId: replyToMessageId,
+          answer: update.message.text,
+          now: Date.now(),
+        })
 
-  return runtime.bridge
-    .answerTelegramQuestion({
-      chatId: update.message.chatId,
-      messageId: replyToMessageId,
-      answer: update.message.text,
-      now: Date.now(),
-    })
-    .pipe(
-      Effect.flatMap(resolution =>
-        availableAgents(runtime).pipe(
-          Effect.flatMap(agents => {
-            const agent = agents.find(({ id }) => id === resolution.agentId)
-            const label = agent
-              ? identifiedAgentLabel(agent, agents)
-              : "the originating Pi agent"
-            return sendText(
-              runtime,
-              update.message.chatId,
-              `Answered q${resolution.questionId} for ${label}.`,
-              update.message.messageId,
-            )
-          }),
-        ),
-      ),
-      Effect.tap(() => Effect.sync(() => emit("question_answered"))),
-      Effect.as(true),
-      Effect.catchTag("RemoteBridgeError", error => {
-        if (error.code === "invalid_transition") {
+  return resolutionEffect.pipe(
+    Effect.flatMap(resolution => {
+      if (resolution === undefined) return Effect.succeed(false)
+      return availableAgents(runtime).pipe(
+        Effect.flatMap(agents => {
+          const agent = agents.find(({ id }) => id === resolution.agentId)
+          const label = agent
+            ? identifiedAgentLabel(agent, agents)
+            : "the originating Pi agent"
           return sendText(
             runtime,
             update.message.chatId,
-            "That Pi question was already resolved. Your reply was not queued as a new agent request.",
+            `Answered q${resolution.questionId} for ${label}.`,
             update.message.messageId,
-          ).pipe(Effect.as(true))
-        }
-        if (error.code !== "not_found") return Effect.fail(error)
-        return Effect.succeed(false)
-      }),
-    )
+          )
+        }),
+        Effect.as(true),
+      )
+    }),
+    Effect.tap(answered =>
+      answered ? Effect.sync(() => emit("question_answered")) : Effect.void,
+    ),
+    Effect.catchTag("RemoteBridgeError", error => {
+      if (error.code === "invalid_transition") {
+        return sendText(
+          runtime,
+          update.message.chatId,
+          "That Pi question was already resolved. Your reply was not queued as a new agent request.",
+          update.message.messageId,
+        ).pipe(Effect.as(true))
+      }
+      if (error.code !== "not_found") return Effect.fail(error)
+      return Effect.succeed(false)
+    }),
+  )
 }
 
 const ensureCabaSession = (

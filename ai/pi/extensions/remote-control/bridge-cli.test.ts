@@ -3,6 +3,7 @@ import { mkdtempSync, readFileSync, rmSync } from "node:fs"
 import { tmpdir } from "node:os"
 import { join } from "node:path"
 import { spawn, spawnSync } from "node:child_process"
+import { DatabaseSync } from "node:sqlite"
 import test from "node:test"
 import { Effect } from "effect"
 import { BRIDGE_AGENT_TTL_MS } from "./protocol.ts"
@@ -30,7 +31,7 @@ test("non-Pi agents have a distinct exact-content stakeholder update command", (
   assert.match(cliSource, /deliverStakeholderUpdate\(update\)/)
   assert.match(
     cliSource,
-    /outcome: "delivered", sender: boundedSender, mode: "stakeholder_update"/,
+    /outcome: "delivered",[\s\S]*?sender: boundedSender,[\s\S]*?mode: "stakeholder_update"/,
   )
 })
 
@@ -54,6 +55,7 @@ test("bridge CLI exposes bounded JSON commands over exact argv and stdin", async
         label: "config",
         cwd: "/work/config",
         accepting: true,
+        workDelivery: "native-pi",
         now: Date.now(),
         ttlMs: BRIDGE_AGENT_TTL_MS,
       }),
@@ -80,19 +82,84 @@ test("bridge CLI exposes bounded JSON commands over exact argv and stdin", async
     assert.equal(registered.status, 0, registered.stderr)
     const registeredJson = JSON.parse(registered.stdout) as {
       ok: boolean
-      result: { id: string; accepting: boolean }
+      result: {
+        id: string
+        accepting: boolean
+        workDelivery: string
+      }
     }
     assert.equal(registeredJson.ok, true)
     assert.equal(registeredJson.result.id, "claude-config-receiver")
     assert.equal(registeredJson.result.accepting, true)
+    assert.equal(registeredJson.result.workDelivery, "monitor-only")
+
+    const spoofedNative = runCli(stateRoot, [
+      "register",
+      "--agent-id",
+      "spoofed-native",
+      "--label",
+      "External monitor",
+      "--cwd",
+      "/work/config",
+      "--work-delivery",
+      "native-pi",
+    ])
+    assert.equal(spoofedNative.status, 1)
+    assert.match(spoofedNative.stderr, /invalid_input/)
+
+    const undrainable = runCli(
+      stateRoot,
+      [
+        "send",
+        "--agent",
+        "claude-config-receiver",
+        "--dedupe",
+        "must-fail-closed",
+      ],
+      "do not strand this",
+    )
+    assert.equal(undrainable.status, 1)
+    assert.match(undrainable.stderr, /undrainable_agent/)
+
+    const database = new DatabaseSync(
+      remoteBridgeDatabasePath(stateRoot, "/unused"),
+    )
+    const now = Date.now()
+    database
+      .prepare(
+        `INSERT INTO bridge_messages (
+           message_id, target_agent_id, requester_id, dedupe_key, text,
+           images_json, created_at, expires_at, updated_at, status
+         ) VALUES (?, ?, ?, ?, ?, '[]', ?, ?, ?, 'queued')`,
+      )
+      .run(
+        "legacy-stranded",
+        "claude-config-receiver",
+        "legacy-dispatch",
+        "legacy-stranded",
+        "stranded before typed admission",
+        now,
+        now + 60_000,
+        now,
+      )
+    database.close()
+
     const rosterAfter = runCli(stateRoot, ["agents"])
     assert.equal(rosterAfter.status, 0, rosterAfter.stderr)
     const rosterJson = JSON.parse(rosterAfter.stdout) as {
-      result: Array<{ id: string }>
+      result: Array<{
+        id: string
+        workDelivery: string
+        queuedMessages: number
+        queueState: string
+      }>
     }
-    assert.ok(
-      rosterJson.result.some(agent => agent.id === "claude-config-receiver"),
+    const monitor = rosterJson.result.find(
+      agent => agent.id === "claude-config-receiver",
     )
+    assert.equal(monitor?.workDelivery, "monitor-only")
+    assert.equal(monitor?.queuedMessages, 1)
+    assert.equal(monitor?.queueState, "queued-undrainable")
 
     const spoofedOwner = runCli(
       stateRoot,
@@ -149,6 +216,8 @@ test("a non-Pi lane claims and completes the messages addressed to it", async ()
       "Claude Code (Opus) - .config worker",
       "--cwd",
       "/work/config",
+      "--work-delivery",
+      "cli-poll",
     ])
     assert.equal(registered.status, 0, registered.stderr)
 

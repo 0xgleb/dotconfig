@@ -18,6 +18,8 @@ const agents: BridgeAgent[] = [
     heartbeatAt: 1,
     expiresAt: 2,
     accepting: true,
+    workDelivery: "native-pi",
+    queuedMessages: 0,
   },
   {
     id: "agent-d",
@@ -26,6 +28,8 @@ const agents: BridgeAgent[] = [
     heartbeatAt: 1,
     expiresAt: 2,
     accepting: true,
+    workDelivery: "native-pi",
+    queuedMessages: 0,
   },
 ]
 

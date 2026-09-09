@@ -88,11 +88,11 @@ test("reload cannot sync a synthetic empty question snapshot before restoration"
 test("textless retry and compaction runs cannot prematurely become model_error", () => {
   assert.match(
     remoteControlSource,
-    /pi\.on\("turn_end"[\s\S]*?const response = finalAssistantText\(\[event\.message\]\);[\s\S]*?if \(!response\) return;[\s\S]*?finishSuccess/,
+    /pi\.on\("turn_end"[\s\S]*?const response = finalAssistantText\(\[event\.message\]\)[\s\S]*?if \(!response\) return[\s\S]*?finishSuccess/,
   )
   assert.match(
     remoteControlSource,
-    /pi\.on\("agent_end"[\s\S]*?const response = finalAssistantText\(event\.messages\);[\s\S]*?if \(!response\) return;[\s\S]*?finishSuccess/,
+    /pi\.on\("agent_end"[\s\S]*?const response = finalAssistantText\(event\.messages\)[\s\S]*?if \(!response\) return[\s\S]*?finishSuccess/,
   )
   assert.match(
     remoteControlSource,
@@ -113,11 +113,11 @@ test("successful remote replies gate the next claim until their exact routing co
   assert.match(remoteControlSource, /triggerTurn: true, deliverAs: "followUp"/)
   assert.match(
     remoteControlSource,
-    /const finishSuccess[\s\S]*?taskContinuationPhase = "queued";[\s\S]*?taskContinuationId = turn\.messageId;[\s\S]*?clearActive\(turn\);[\s\S]*?store\.complete[\s\S]*?details: \{ taskContinuationId: turn\.messageId \}/,
+    /const finishSuccess[\s\S]*?taskContinuationPhase = "queued"[\s\S]*?taskContinuationId = turn\.messageId[\s\S]*?clearActive\(turn\)[\s\S]*?store\.complete[\s\S]*?details: \{ taskContinuationId: turn\.messageId \}/,
   )
   assert.match(
     remoteControlSource,
-    /if \(Either\.isLeft\(completed\)\) \{[\s\S]*?taskContinuationPhase = "idle";[\s\S]*?taskContinuationId = undefined;[\s\S]*?sync\(ctx\)/,
+    /if \(Either\.isLeft\(completed\)\) \{[\s\S]*?taskContinuationPhase = "idle"[\s\S]*?taskContinuationId = undefined[\s\S]*?sync\(ctx\)/,
   )
   assert.match(
     remoteControlSource,
@@ -129,14 +129,14 @@ test("successful remote replies gate the next claim until their exact routing co
   )
   assert.match(
     remoteControlSource,
-    /settleTaskContinuation\(taskContinuationPhase\)[\s\S]*?taskContinuationId = undefined;[\s\S]*?sync\(ctx\)/,
+    /settleTaskContinuation\(taskContinuationPhase\)[\s\S]*?taskContinuationId = undefined[\s\S]*?sync\(ctx\)/,
   )
 })
 
 test("failed remote turns suppress claims until their terminal transition persists", () => {
   assert.match(
     remoteControlSource,
-    /const finishFailure[\s\S]*?taskContinuationPhase = "queued";[\s\S]*?clearActive\(turn\);[\s\S]*?store\.fail[\s\S]*?taskContinuationPhase = "idle"/,
+    /const finishFailure[\s\S]*?taskContinuationPhase = "queued"[\s\S]*?clearActive\(turn\)[\s\S]*?store\.fail[\s\S]*?taskContinuationPhase = "idle"/,
   )
 })
 

@@ -297,13 +297,11 @@ const sendOwnerMessage = (
   chatId: number,
   text: string,
   replyMarkup?: ReturnType<typeof cabaSessionCard>["replyMarkup"],
-): Effect.Effect<number, OwnerRelayDeliveryError> => {
-  let status: number | undefined
-  return Effect.tryPromise({
-    try: async () => {
-      const response = await fetch(
-        `https://api.telegram.org/bot${token}/sendMessage`,
-        {
+): Effect.Effect<number, OwnerRelayDeliveryError> =>
+  Effect.gen(function* () {
+    const response = yield* Effect.tryPromise({
+      try: () =>
+        fetch(`https://api.telegram.org/bot${token}/sendMessage`, {
           method: "POST",
           headers: { "content-type": "application/json" },
           body: JSON.stringify({
@@ -315,26 +313,27 @@ const sendOwnerMessage = (
               ? { link_preview_options: { is_disabled: true } }
               : {}),
           }),
-        },
+        }),
+      catch: () =>
+        deliveryFailure(
+          "send_failed",
+          "the Telegram sendMessage request failed",
+        ),
+    })
+    if (!response.ok)
+      return yield* Effect.fail(
+        deliveryFailure(
+          "send_failed",
+          `the Telegram sendMessage request failed with status ${response.status}`,
+        ),
       )
-      status = response.status
-      if (!response.ok) throw new Error("Telegram HTTP request failed")
-      return (await response.json()) as unknown
-    },
-    catch: () =>
-      deliveryFailure(
-        "send_failed",
-        `the Telegram sendMessage request failed${status === undefined ? "" : ` with status ${status}`}`,
-      ),
-  }).pipe(
-    Effect.flatMap(decodeTelegramSentMessageId),
-    Effect.mapError(error =>
-      error instanceof OwnerRelayDeliveryError
-        ? error
-        : deliveryFailure(
-            "send_failed",
-            "the Telegram sendMessage response reported an error",
-          ),
-    ),
-  )
-}
+    const payload = yield* Effect.tryPromise({
+      try: (): Promise<unknown> => response.json(),
+      catch: () =>
+        deliveryFailure(
+          "send_failed",
+          "the Telegram sendMessage response was not valid JSON",
+        ),
+    })
+    return yield* decodeTelegramSentMessageId(payload)
+  })

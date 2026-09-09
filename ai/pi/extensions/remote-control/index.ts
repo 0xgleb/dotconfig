@@ -5,6 +5,10 @@ import type {
 } from "@earendil-works/pi-coding-agent"
 import { Effect, Either } from "effect"
 import { Type } from "typebox"
+import {
+  backlogRequirementsFromText,
+  MESSAGE_BACKLOG_EVENT,
+} from "../shared/backlog-events.ts"
 import { wasRunAborted } from "../shared/continuation-pause.ts"
 import { isLocalDispatchProvider } from "../shared/local-lane.ts"
 import {
@@ -38,6 +42,7 @@ import {
 import { registerRuntimeVersion } from "../shared/runtime-version.ts"
 import { HUMAN_TURN_EVENT } from "../shared/usage-governor-events.ts"
 import { agentDisplayLabel } from "./agent-identity.ts"
+import { bridgeQueueRoutableAgents } from "./agent-selection.ts"
 import {
   deliverCabaCardRelay,
   deliverChatRelay,
@@ -61,6 +66,7 @@ import {
   mechanicalDispatchCompaction,
   normalizeLegacyRemoteImageContent,
   chatRelayCompletion,
+  malformedOwnerRelayCompletion,
   ownerRelayCompletion,
   parseChatRelay,
   parseOutcomeEnvelope,
@@ -117,7 +123,7 @@ const safeDeliveryError = (error: OwnerRelayDeliveryError): string =>
   `${error.code}: ${error.message}`.slice(0, 160)
 
 export default function remoteControl(pi: ExtensionAPI): void {
-  registerRuntimeVersion(pi, "remote-control", "2026.08.21.1")
+  registerRuntimeVersion(pi, "remote-control", "2026.09.04.1")
   const store = makeRemoteBridgeStore(
     remoteBridgeDatabasePath(process.env.XDG_STATE_HOME, homedir()),
   )
@@ -500,15 +506,33 @@ export default function remoteControl(pi: ExtensionAPI): void {
     }
     active = turn
     ctx.ui.setStatus(STATUS_KEY, "remote:chat · tools:off")
-    const content = remoteTurnContent(
-      message.text,
-      message.images,
-      "conversational",
-      source,
+    const contentResult = await Effect.runPromise(
+      Effect.either(
+        remoteTurnContent(
+          message.text,
+          message.images,
+          "conversational",
+          source,
+        ),
+      ),
     )
+    if (Either.isLeft(contentResult)) {
+      await finishFailure(turn, "model_error")
+      return
+    }
+    const content = contentResult.right
     const prompt = content[0]
-    if (remoteSourceCarriesOwnerAuthority(source) && prompt?.type === "text")
+    const authenticatedOwner = remoteSourceCarriesOwnerAuthority(source)
+    if (authenticatedOwner && prompt?.type === "text")
       pi.events.emit(HUMAN_TURN_EVENT, prompt.text)
+    pi.events.emit(MESSAGE_BACKLOG_EVENT, {
+      project: ctx.cwd,
+      messageId: message.id,
+      observedAt: message.createdAt,
+      source: authenticatedOwner ? "owner-message" : "bridge-message",
+      authority: authenticatedOwner ? "authenticated-owner" : "routing-only",
+      requirements: backlogRequirementsFromText(message.text),
+    })
     const sent = await Effect.runPromise(
       Effect.either(
         Effect.try({
@@ -568,7 +592,11 @@ export default function remoteControl(pi: ExtensionAPI): void {
       Effect.either(store.listAgents(Date.now())),
     )
     const live: readonly RosterAgent[] = Either.isRight(roster)
-      ? roster.right.map(({ id, label, cwd }) => ({ id, label, cwd }))
+      ? bridgeQueueRoutableAgents(roster.right).map(({ id, label, cwd }) => ({
+          id,
+          label,
+          cwd,
+        }))
       : []
     const known = await knownProjects()
     const offline: readonly RosterAgent[] = known
@@ -583,14 +611,23 @@ export default function remoteControl(pi: ExtensionAPI): void {
       routable: [...live, ...offline].map(({ cwd }) => cwd),
     }
     active = routingTurn
-    const prompt = routingBatchPrompt(
-      batch.map((message, position) => ({
-        index: position + 1,
-        text: message.text,
-        source: remoteMessageSource(message.requesterId),
-      })),
-      [...live, ...offline],
+    const promptResult = await Effect.runPromise(
+      Effect.either(
+        routingBatchPrompt(
+          batch.map((message, position) => ({
+            index: position + 1,
+            text: message.text,
+            source: remoteMessageSource(message.requesterId),
+          })),
+          [...live, ...offline],
+        ),
+      ),
     )
+    if (Either.isLeft(promptResult)) {
+      await finishFailure(routingTurn, "model_error")
+      return
+    }
+    const prompt = promptResult.right
     const sent = await Effect.runPromise(
       Effect.either(
         Effect.try({
@@ -653,6 +690,7 @@ export default function remoteControl(pi: ExtensionAPI): void {
           label: bridgeAgentLabel(ctx),
           cwd: ctx.cwd,
           accepting: active === undefined,
+          workDelivery: "native-pi",
           now,
           ttlMs: BRIDGE_AGENT_TTL_MS,
         }),
@@ -736,20 +774,25 @@ export default function remoteControl(pi: ExtensionAPI): void {
           }
           const relay = parseOwnerRelay(message.text)
           if (relay) {
-            const sent = await run(
-              deliverOwnerRelay(relay, message.requesterId),
-            )
-            const delivery: OwnerRelayDelivery = Either.isLeft(sent)
-              ? {
-                  outcome: "undelivered",
-                  reason: safeDeliveryError(sent.left),
-                }
-              : { outcome: "delivered" }
+            const response =
+              relay.frame === "malformed-owner-relay"
+                ? malformedOwnerRelayCompletion(relay.reason)
+                : await run(
+                    deliverOwnerRelay(relay.body, message.requesterId),
+                  ).then(sent => {
+                    const delivery: OwnerRelayDelivery = Either.isLeft(sent)
+                      ? {
+                          outcome: "undelivered",
+                          reason: safeDeliveryError(sent.left),
+                        }
+                      : { outcome: "delivered" }
+                    return ownerRelayCompletion(relay.body, delivery)
+                  })
             const relayed = await run(
               store.complete({
                 messageId: message.id,
                 claimToken: message.claimToken,
-                response: ownerRelayCompletion(relay, delivery),
+                response,
                 now: Date.now(),
               }),
             )

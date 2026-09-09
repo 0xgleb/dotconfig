@@ -35,6 +35,23 @@ test("Telegram chat lists and routes only native Pi inbox agents", () => {
   )
 })
 
+test("a hung Telegram request times out without exposing the bot token", () => {
+  const boundary = source.slice(
+    source.indexOf("const telegramCall ="),
+    source.indexOf("const downloadTelegramPhoto ="),
+  )
+  assert.match(source, /const telegramCallTimeoutMilliseconds =/)
+  assert.match(source, /Math\.max\(TELEGRAM_CALL_TIMEOUT_MS/)
+  assert.match(boundary, /try: (?:async )?signal =>/)
+  assert.match(boundary, /body: JSON\.stringify\(body\),[\s\S]*?signal,/)
+  assert.match(
+    boundary,
+    /Effect\.timeout\(telegramCallTimeoutMilliseconds\(method, body\)\)/,
+  )
+  assert.match(boundary, /message: `Telegram \$\{method\} request failed`/)
+  assert.doesNotMatch(boundary, /configuration\.token[^\n]*message/)
+})
+
 test("one invalid Telegram message reports failure and cannot wedge later updates", () => {
   assert.match(source, /const handleUpdateFailure/)
   assert.match(source, /could not handle that message/i)
@@ -122,6 +139,17 @@ test("voice notes authenticate before bounded local transcription", () => {
   assert.doesNotMatch(homeNix, /install\(TARGETS whisper\.coreml LIBRARY\)/)
   assert.match(homeNix, /runtimeInputs = \[[\s\S]*?pieceOfPiWhisper/)
   assert.match(homeNix, /PIECE_OF_PI_WHISPER_MODEL/)
+})
+
+test("forwarded Telegram conversations keep typed attribution through bridge enqueue", () => {
+  assert.match(
+    source,
+    /text: `\$\{reactionContext\}\$\{telegramOwnerConversationText\(update\.message, update\.message\.userId\)\}`/,
+  )
+  assert.match(
+    source,
+    /conversationParts = update\.message\.conversationParts\?\.map/,
+  )
 })
 
 test("owner reactions become bounded context without authorizing actions", () => {

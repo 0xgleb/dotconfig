@@ -104,22 +104,26 @@ export const cleanupVoiceDirectory = (
   directory: string,
   dependencies: VoiceCleanupDependencies = defaultCleanupDependencies,
 ): Effect.Effect<void, VoiceTranscriptionError> =>
-  Effect.tryPromise({
-    try: async () => {
-      let lastError: unknown
-      for (let attempt = 0; attempt < VOICE_CLEANUP_ATTEMPTS; attempt += 1) {
-        try {
-          await dependencies.remove(directory)
-          return
-        } catch (error) {
-          lastError = error
-          if (attempt + 1 < VOICE_CLEANUP_ATTEMPTS) await dependencies.sleep(50)
-        }
-      }
-      throw lastError
-    },
-    catch: () =>
-      new VoiceTranscriptionError({
-        message: "Voice transcription workspace cleanup failed",
-      }),
+  Effect.gen(function* () {
+    for (let attempt = 0; attempt < VOICE_CLEANUP_ATTEMPTS; attempt += 1) {
+      const removed = yield* Effect.either(
+        Effect.tryPromise({
+          try: () => dependencies.remove(directory),
+          catch: () =>
+            new VoiceTranscriptionError({
+              message: "Voice transcription workspace cleanup failed",
+            }),
+        }),
+      )
+      if (removed._tag === "Right") return
+      if (attempt + 1 < VOICE_CLEANUP_ATTEMPTS)
+        yield* Effect.tryPromise({
+          try: () => dependencies.sleep(50),
+          catch: () =>
+            new VoiceTranscriptionError({
+              message: "Voice transcription cleanup retry failed",
+            }),
+        })
+      else return yield* Effect.fail(removed.left)
+    }
   })

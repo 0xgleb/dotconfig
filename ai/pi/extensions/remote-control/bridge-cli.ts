@@ -13,8 +13,11 @@ import {
   MAX_REMOTE_MESSAGE_CHARACTERS,
   MAX_ROSTER_LABEL_CHARACTERS,
   RemoteBridgeError,
+  boundedBridgeTextEffect,
+  isBridgeWorkDelivery,
+  workDeliveryAcceptsInbox,
+  type BridgeWorkDelivery,
   type RemoteMessage,
-  boundedBridgeText,
 } from "./protocol.ts"
 import { makeRemoteBridgeStore } from "./sqlite-store.ts"
 
@@ -43,6 +46,7 @@ interface HeartbeatWatchInput {
   readonly label: string
   readonly cwd: string
   readonly accepting: boolean
+  readonly workDelivery: BridgeWorkDelivery
   readonly intervalMs: number
 }
 
@@ -60,6 +64,7 @@ const heartbeatForever = (
           label: input.label,
           cwd: input.cwd,
           accepting: input.accepting,
+          workDelivery: input.workDelivery,
           now: Date.now(),
           ttlMs: BRIDGE_AGENT_TTL_MS,
         }),
@@ -152,12 +157,29 @@ const command = (
   const [action] = args
   if (action === "agents") {
     return Effect.map(store.listAgents(Date.now()), agents =>
-      agents.map(({ id, label, accepting, expiresAt }) => ({
-        id,
-        label,
-        accepting,
-        expiresAt,
-      })),
+      agents.map(
+        ({
+          id,
+          label,
+          accepting,
+          expiresAt,
+          workDelivery,
+          queuedMessages,
+        }) => ({
+          id,
+          label,
+          accepting,
+          expiresAt,
+          workDelivery,
+          queuedMessages,
+          queueState:
+            queuedMessages > 0 && !workDeliveryAcceptsInbox(workDelivery)
+              ? "queued-undrainable"
+              : workDeliveryAcceptsInbox(workDelivery)
+                ? "drainable"
+                : "no-inbox",
+        }),
+      ),
     )
   }
   if (action === "send") {
@@ -197,18 +219,14 @@ const command = (
   if (action === "owner-report") {
     return Effect.gen(function* () {
       const sender = yield* requiredOption(args, "--sender")
-      const boundedSender = yield* Effect.try({
-        try: () =>
-          boundedBridgeText("--sender", sender, MAX_ROSTER_LABEL_CHARACTERS),
-        catch: error => error as RemoteBridgeError,
-      })
+      const boundedSender = yield* boundedBridgeTextEffect(
+        "--sender",
+        sender,
+        MAX_ROSTER_LABEL_CHARACTERS,
+      )
       const report = yield* readStdin(MAX_OWNER_REPORT_CHARACTERS).pipe(
         Effect.flatMap(text =>
-          Effect.try({
-            try: () =>
-              boundedBridgeText("report", text, MAX_OWNER_REPORT_CHARACTERS),
-            catch: error => error as RemoteBridgeError,
-          }),
+          boundedBridgeTextEffect("report", text, MAX_OWNER_REPORT_CHARACTERS),
         ),
       )
       yield* deliverOwnerRelay(report, boundedSender).pipe(
@@ -226,22 +244,18 @@ const command = (
   if (action === "stakeholder-update") {
     return Effect.gen(function* () {
       const sender = yield* requiredOption(args, "--sender")
-      const boundedSender = yield* Effect.try({
-        try: () =>
-          boundedBridgeText("--sender", sender, MAX_ROSTER_LABEL_CHARACTERS),
-        catch: error => error as RemoteBridgeError,
-      })
+      const boundedSender = yield* boundedBridgeTextEffect(
+        "--sender",
+        sender,
+        MAX_ROSTER_LABEL_CHARACTERS,
+      )
       const update = yield* readStdin(MAX_OWNER_REPORT_CHARACTERS).pipe(
         Effect.flatMap(text =>
-          Effect.try({
-            try: () =>
-              boundedBridgeText(
-                "stakeholder update",
-                text,
-                MAX_OWNER_REPORT_CHARACTERS,
-              ),
-            catch: error => error as RemoteBridgeError,
-          }),
+          boundedBridgeTextEffect(
+            "stakeholder update",
+            text,
+            MAX_OWNER_REPORT_CHARACTERS,
+          ),
         ),
       )
       yield* deliverStakeholderUpdate(update).pipe(
@@ -280,17 +294,18 @@ const command = (
       // be unique per agent and stable once relayed. Seconds since epoch is
       // both, and stays inside the integer the card round-trips.
       const questionId = Math.floor(Date.now() / 1_000)
+      const boundedQuestion = yield* boundedBridgeTextEffect(
+        "question",
+        question,
+        MAX_REMOTE_MESSAGE_CHARACTERS,
+      )
       yield* store.syncQuestions({
         agentId,
         questions: [
           {
             id: questionId,
             status: "pending" as const,
-            question: boundedBridgeText(
-              "question",
-              question,
-              MAX_REMOTE_MESSAGE_CHARACTERS,
-            ),
+            question: boundedQuestion,
             ...(header ? { header } : {}),
             ...(options.length > 0 ? { options } : {}),
           },
@@ -391,11 +406,11 @@ const command = (
       // prompt builder neutralizes what reaches it, but a caller that sends a
       // relative cwd or an unbounded label should learn so here rather than
       // silently appear on the roster in a mangled form.
-      const boundedLabel = yield* Effect.try({
-        try: () =>
-          boundedBridgeText("--label", label, MAX_ROSTER_LABEL_CHARACTERS),
-        catch: error => error as RemoteBridgeError,
-      })
+      const boundedLabel = yield* boundedBridgeTextEffect(
+        "--label",
+        label,
+        MAX_ROSTER_LABEL_CHARACTERS,
+      )
       if (!cwd.startsWith("/")) {
         return yield* Effect.fail(
           new RemoteBridgeError({
@@ -417,11 +432,27 @@ const command = (
           }),
         )
       }
+      const requestedWorkDelivery =
+        option(args, "--work-delivery")?.trim() ?? "monitor-only"
+      if (
+        !isBridgeWorkDelivery(requestedWorkDelivery) ||
+        requestedWorkDelivery === "native-pi"
+      ) {
+        return yield* Effect.fail(
+          new RemoteBridgeError({
+            code: "invalid_input",
+            message:
+              "--work-delivery must be cli-poll, inline-only, or monitor-only",
+          }),
+        )
+      }
+      const workDelivery: BridgeWorkDelivery = requestedWorkDelivery
       const agent = yield* store.heartbeatAgent({
         id,
         label: boundedLabel,
         cwd,
         accepting: accepting !== "false",
+        workDelivery,
         now: Date.now(),
         ttlMs: BRIDGE_AGENT_TTL_MS,
       })
@@ -451,6 +482,7 @@ const command = (
           label: boundedLabel,
           cwd,
           accepting: accepting !== "false",
+          workDelivery,
           intervalMs,
         })
       }
@@ -458,6 +490,8 @@ const command = (
         id: agent.id,
         label: agent.label,
         accepting: agent.accepting,
+        workDelivery: agent.workDelivery,
+        queuedMessages: agent.queuedMessages,
         expiresAt: agent.expiresAt,
       }
     })
@@ -469,7 +503,7 @@ const command = (
     new RemoteBridgeError({
       code: "invalid_input",
       message:
-        "usage: pi-bridge agents | send --agent ID --dedupe KEY | owner-report --sender ID | stakeholder-update --sender ID | result --id ID | inbox --agent ID | respond --id ID --token TOKEN | register --agent-id ID --label LABEL --cwd PATH [--watch] [--interval-ms N] | ask --agent ID [--header TEXT] [--options 'A|B'] | answer --agent ID | dismiss --agent ID --question ID | enable | disable | status",
+        "usage: pi-bridge agents | send --agent ID --dedupe KEY | owner-report --sender ID | stakeholder-update --sender ID | result --id ID | inbox --agent ID | respond --id ID --token TOKEN | register --agent-id ID --label LABEL --cwd PATH [--work-delivery cli-poll|inline-only|monitor-only] [--watch] [--interval-ms N] | ask --agent ID [--header TEXT] [--options 'A|B'] | answer --agent ID | dismiss --agent ID --question ID | enable | disable | status",
     }),
   )
 }

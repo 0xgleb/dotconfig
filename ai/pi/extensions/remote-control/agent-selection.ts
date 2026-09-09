@@ -1,18 +1,21 @@
 import { basename } from "node:path"
-import type { BridgeAgent } from "./protocol.ts"
+import { workDeliveryAcceptsInbox, type BridgeAgent } from "./protocol.ts"
 
 const escapeTelegramHtml = (value: string): string =>
   value.replaceAll("&", "&amp;").replaceAll("<", "&lt;").replaceAll(">", "&gt;")
 
-const PI_SESSION_ID =
-  /^[0-9a-f]{8}-[0-9a-f]{4}-[0-9a-f]{4}-[0-9a-f]{4}-[0-9a-f]{12}$/iu
-
-// External harnesses publish monitor heartbeats into the same bridge store for
-// dashboard liveness, but they do not drain arbitrary Telegram chat turns.
-// Native Pi sessions use UUID session IDs and own the remote-control inbox.
+// Registration states delivery capability explicitly. Agent-id shape is only
+// identity and can never imply that a lane drains inboxes or is safe to expose
+// as an owner chat target.
 export const telegramRoutableAgents = (
   agents: ReadonlyArray<BridgeAgent>,
-): readonly BridgeAgent[] => agents.filter(({ id }) => PI_SESSION_ID.test(id))
+): readonly BridgeAgent[] =>
+  agents.filter(({ workDelivery }) => workDelivery === "native-pi")
+
+export const bridgeQueueRoutableAgents = (
+  agents: ReadonlyArray<BridgeAgent>,
+): readonly BridgeAgent[] =>
+  agents.filter(({ workDelivery }) => workDeliveryAcceptsInbox(workDelivery))
 
 export const agentSelector = (agent: BridgeAgent): string =>
   basename(agent.cwd) || agent.label

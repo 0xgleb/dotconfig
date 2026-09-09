@@ -61,7 +61,7 @@ test("fleet diagnostics expose current behavior-bearing component versions", () 
   )
   assert.match(
     read("../pi/extensions/remote-control/index.ts"),
-    /remote-control", "2026\.08\.21\.1"/,
+    /remote-control", "2026\.09\.04\.1"/,
   )
   assert.match(
     read("../pi/extensions/disk-pressure/index.ts"),
