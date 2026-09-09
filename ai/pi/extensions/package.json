@@ -49,6 +49,7 @@
       "./agent-registry/index.ts",
       "./agent-workspace/index.ts",
       "./auto-reload/index.ts",
+      "./write-result-inspector/index.ts",
       "./classified-workflows/index.ts",
       "./browser-control/index.ts",
       "./btw/index.ts",

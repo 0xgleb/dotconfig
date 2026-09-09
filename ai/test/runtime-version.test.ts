@@ -27,6 +27,10 @@ test("fleet diagnostics expose current behavior-bearing component versions", () 
     /auto-reload", "2026\.09\.02\.2"/,
   )
   assert.match(
+    read("../pi/extensions/write-result-inspector/index.ts"),
+    /write-result-inspector", "2026\.09\.04\.1"/,
+  )
+  assert.match(
     read("../pi/extensions/browser-control/index.ts"),
     /browser-control", "2026\.09\.04\.1"/,
   )
