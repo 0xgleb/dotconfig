@@ -2298,6 +2298,31 @@ test("completed readability work cannot defer the current SPEC-first PT-loop tod
   )
 })
 
+test("typed Cargo verification coverage retires only covered TTDD failures", () => {
+  const prompt = buildClassifierPrompt({
+    boundary: "spawn",
+    intent: [
+      "Authenticated owner requires the final durable-notification re-review",
+    ],
+    evidence: [
+      "Current same-workspace Cargo Clippy and focused notification suites are green",
+    ],
+    subject: {
+      toolName: "workflow",
+      input: { code: "Re-review durable notification delivery" },
+    },
+  })
+
+  assert.match(
+    prompt,
+    /typed Cargo verification coverage may also retire an older TTDD failure.*same workspace.*same verifier kind.*covers every failed package, target mode, feature mode, and focused test family/is,
+  )
+  assert.match(
+    prompt,
+    /narrower package, target, feature, or test selection never supersedes a broader failure.*cross-workspace evidence never transfers.*post-verification mutation requires a fresh gate/is,
+  )
+})
+
 test("current green evidence prevents an unrelated blocked todo from projecting a stale failure", () => {
   const prompt = buildClassifierPrompt({
     boundary: "action",

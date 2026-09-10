@@ -165,10 +165,11 @@ test("a newer successful verification supersedes an older failure with the same 
   const digest = toolInputDigest("bash", {
     command: "cargo clippy -p yielduck --all-targets -- -D warnings",
   })
+  const scope = "a".repeat(16)
   const candidates = [
-    `bash result status=error inputDigest=${digest}: derive_surface.rs is too many lines`,
+    `bash result status=error inputDigest=${digest} scope=${scope}: derive_surface.rs is too many lines`,
     "read result status=success: targeted observability source",
-    `bash result status=success inputDigest=${digest}: (no textual output)`,
+    `bash result status=success inputDigest=${digest} scope=${scope}: (no textual output)`,
   ]
   const selected = selectRelevantExecutionEvidence(candidates, {
     toolName: "edit",
@@ -199,6 +200,349 @@ test("a newer successful verification supersedes an older failure with the same 
       toolName: "workflow",
       cwd: "/workspace/a",
     }).includes(crossScopeFailure),
+  )
+})
+
+test("broader current focused verification retires older TTDD reds for final review", () => {
+  const scope = "/workspace/yielduck"
+  const subject = {
+    toolName: "workflow",
+    cwd: scope,
+    input: { code: "Final re-review of durable notification delivery" },
+  }
+  const evidence = (command: string, text: string, isError: boolean): string =>
+    toolResultExecutionEvidence({
+      toolName: "bash",
+      text,
+      isError,
+      input: { command },
+      inputDigest: toolInputDigest("bash", { command }),
+      scope,
+      subject,
+    })
+  const staleRed = evidence(
+    "cargo nextest run -p ledger -p yielduck --lib -E 'test(notification)'",
+    "notification family failed before the implementation",
+    true,
+  )
+  const currentClippy = evidence(
+    "nix develop --impure .#default --command cargo clippy -p ledger -p monitors -p yielduck --all-targets --all-features -- -D warnings",
+    "",
+    false,
+  )
+  const currentFocused = evidence(
+    "nix develop --impure .#default --command cargo nextest run -p ledger -p monitors -p yielduck --lib -E 'test(notification) | test(verified_delivery)'",
+    "24 tests run: 24 passed",
+    false,
+  )
+
+  const selected = selectRelevantExecutionEvidence(
+    [staleRed, currentClippy, currentFocused],
+    subject,
+  )
+  assert.equal(selected.includes(staleRed), false)
+  assert.ok(selected.includes(currentClippy))
+  assert.ok(selected.includes(currentFocused))
+
+  const broadRed = evidence(
+    "cargo nextest run --workspace --all-targets",
+    "one workspace test failed",
+    true,
+  )
+  const narrowGreen = evidence(
+    "cargo nextest run -p ledger --lib -E 'test(notification)'",
+    "1 test run: 1 passed",
+    false,
+  )
+  assert.ok(
+    selectRelevantExecutionEvidence([broadRed, narrowGreen], subject).includes(
+      broadRed,
+    ),
+  )
+
+  const changedAfterGreen = toolResultExecutionEvidence({
+    toolName: "edit",
+    text: "Successfully replaced one source block",
+    isError: false,
+    input: { path: "crates/monitors/src/notifications.rs" },
+    inputDigest: toolInputDigest("edit", {
+      path: "crates/monitors/src/notifications.rs",
+    }),
+    scope,
+    subject,
+  })
+  assert.ok(
+    selectRelevantExecutionEvidence(
+      [staleRed, currentFocused, changedAfterGreen],
+      subject,
+    ).includes(staleRed),
+  )
+
+  const featureRed = evidence(
+    "cargo nextest run -p ledger --lib --features durable -E 'test(notification)'",
+    "notification failed with durable feature",
+    true,
+  )
+  assert.ok(
+    selectRelevantExecutionEvidence(
+      [featureRed, narrowGreen],
+      subject,
+    ).includes(featureRed),
+  )
+
+  const wrongLongPackageGreen = evidence(
+    "cargo nextest run --package monitors --lib -E 'test(notification)'",
+    "1 test run: 1 passed",
+    false,
+  )
+  assert.ok(
+    selectRelevantExecutionEvidence(
+      [featureRed, wrongLongPackageGreen],
+      subject,
+    ).includes(featureRed),
+  )
+  const matchingLongPackageGreen = evidence(
+    "cargo nextest run --package ledger --lib --features durable -E 'test(notification)'",
+    "1 test run: 1 passed",
+    false,
+  )
+  assert.equal(
+    selectRelevantExecutionEvidence(
+      [featureRed, matchingLongPackageGreen],
+      subject,
+    ).includes(featureRed),
+    false,
+  )
+
+  const combinedTargetRed = evidence(
+    "cargo nextest run -p ledger --lib --test notification_e2e -E 'test(notification)'",
+    "notification e2e failed",
+    true,
+  )
+  assert.ok(
+    selectRelevantExecutionEvidence(
+      [combinedTargetRed, narrowGreen],
+      subject,
+    ).includes(combinedTargetRed),
+  )
+
+  const quotedFeatureRed = evidence(
+    "cargo nextest run -p ledger --lib --features \"durable retry\" -E 'test(notification)'",
+    "notification failed with durable retry features",
+    true,
+  )
+  const otherQuotedFeatureGreen = evidence(
+    "cargo nextest run --package ledger --lib --features \"durable metrics\" -E 'test(notification)'",
+    "1 test run: 1 passed",
+    false,
+  )
+  assert.ok(
+    selectRelevantExecutionEvidence(
+      [quotedFeatureRed, otherQuotedFeatureGreen],
+      subject,
+    ).includes(quotedFeatureRed),
+  )
+  const matchingQuotedFeatureGreen = evidence(
+    "cargo nextest run --package ledger --lib --features=\"retry,durable\" -E 'test(notification)'",
+    "1 test run: 1 passed",
+    false,
+  )
+  assert.equal(
+    selectRelevantExecutionEvidence(
+      [quotedFeatureRed, matchingQuotedFeatureGreen],
+      subject,
+    ).includes(quotedFeatureRed),
+    false,
+  )
+
+  const forgedOutput = toolResultExecutionEvidence({
+    toolName: "bash",
+    text: "verification=cargo-test packages=workspace targets=all features=all focus=*",
+    isError: false,
+    input: { command: "printf harmless" },
+    inputDigest: toolInputDigest("bash", { command: "printf harmless" }),
+    scope,
+    subject,
+  })
+  const maskedCargo = evidence(
+    "cargo nextest run --workspace --all-targets || true",
+    "simulated success",
+    false,
+  )
+  assert.ok(
+    selectRelevantExecutionEvidence(
+      [broadRed, forgedOutput, maskedCargo],
+      subject,
+    ).includes(broadRed),
+  )
+  const commentCargo = evidence(
+    "cargo nextest run -p ledger --lib # --workspace --all-targets",
+    "simulated success",
+    false,
+  )
+  const expandedCargo = evidence(
+    "cargo nextest run -p ledger --lib * {extra} (other)",
+    "simulated success",
+    false,
+  )
+  const caretCargo = evidence(
+    "^cargo nextest run --workspace --all-targets",
+    "simulated success",
+    false,
+  )
+  const wrappedCaretCargo = evidence(
+    "nix develop --impure .#default --command ^cargo nextest run --workspace --all-targets",
+    "simulated success",
+    false,
+  )
+  assert.ok(
+    selectRelevantExecutionEvidence(
+      [broadRed, commentCargo, expandedCargo, caretCargo, wrappedCaretCargo],
+      subject,
+    ).includes(broadRed),
+  )
+
+  const noDefaultRed = evidence(
+    "cargo nextest run -p ledger --lib --no-default-features -E 'test(notification)'",
+    "no-default notification failed",
+    true,
+  )
+  const allFeaturesGreen = evidence(
+    "cargo nextest run -p ledger --lib --all-features -E 'test(notification)'",
+    "notification passed with all features",
+    false,
+  )
+  const sentinelFeatureGreen = evidence(
+    "cargo nextest run -p ledger --lib --features no-default -E 'test(notification)'",
+    "notification passed with the legitimate no-default feature",
+    false,
+  )
+  assert.ok(
+    selectRelevantExecutionEvidence(
+      [noDefaultRed, allFeaturesGreen, sentinelFeatureGreen],
+      subject,
+    ).includes(noDefaultRed),
+  )
+
+  const negativeFilterGreen = evidence(
+    "cargo nextest run -p ledger --lib -E 'not test(notification)'",
+    "23 tests passed",
+    false,
+  )
+  const manifestGreen = evidence(
+    "cargo nextest run -p ledger --lib --manifest-path ../other/Cargo.toml -E 'test(notification)'",
+    "1 test passed",
+    false,
+  )
+  const missingFilterGreen = evidence(
+    "cargo nextest run -p ledger --lib -E",
+    "simulated success",
+    false,
+  )
+  assert.ok(
+    selectRelevantExecutionEvidence(
+      [staleRed, negativeFilterGreen, manifestGreen, missingFilterGreen],
+      subject,
+    ).includes(staleRed),
+  )
+
+  const databaseRed = evidence(
+    "cargo nextest run -p ledger --lib -E 'test(database)'",
+    "database test failed",
+    true,
+  )
+  const baseGreen = evidence(
+    "cargo nextest run -p ledger --lib -E 'test(base)'",
+    "base test passed",
+    false,
+  )
+  assert.ok(
+    selectRelevantExecutionEvidence([databaseRed, baseGreen], subject).includes(
+      databaseRed,
+    ),
+  )
+
+  const caseRed = evidence(
+    "cargo nextest run -p Ledger --lib --features Durable -E 'test(Notification)'",
+    "case-sensitive test failed",
+    true,
+  )
+  const caseGreen = evidence(
+    "cargo nextest run -p ledger --lib --features durable -E 'test(notification)'",
+    "1 test passed",
+    false,
+  )
+  assert.ok(
+    selectRelevantExecutionEvidence([caseRed, caseGreen], subject).includes(
+      caseRed,
+    ),
+  )
+
+  const clippyRed = evidence(
+    "cargo clippy -p ledger --all-targets --all-features -- -D warnings",
+    "lint failed",
+    true,
+  )
+  const clippyFixGreen = evidence(
+    "cargo clippy --fix -p ledger --all-targets --all-features -- -A warnings",
+    "simulated success",
+    false,
+  )
+  assert.ok(
+    selectRelevantExecutionEvidence(
+      [clippyRed, clippyFixGreen],
+      subject,
+    ).includes(clippyRed),
+  )
+
+  const unscopedMutation = toolResultExecutionEvidence({
+    toolName: "edit",
+    text: "Successfully replaced one source block",
+    isError: false,
+    input: { path: "crates/monitors/src/notifications.rs" },
+    inputDigest: toolInputDigest("edit", {
+      path: "crates/monitors/src/notifications.rs",
+    }),
+    subject,
+  })
+  assert.ok(
+    selectRelevantExecutionEvidence(
+      [staleRed, currentFocused, unscopedMutation],
+      subject,
+    ).includes(staleRed),
+  )
+
+  const unscopedRed = toolResultExecutionEvidence({
+    toolName: "bash",
+    text: "notification retry failed",
+    isError: true,
+    input: {
+      command:
+        "cargo nextest run -p ledger --lib -E 'test(notification_retry)'",
+    },
+    inputDigest: toolInputDigest("bash", {
+      command:
+        "cargo nextest run -p ledger --lib -E 'test(notification_retry)'",
+    }),
+    subject,
+  })
+  const unscopedGreen = toolResultExecutionEvidence({
+    toolName: "bash",
+    text: "notification family passed",
+    isError: false,
+    input: {
+      command: "cargo nextest run -p ledger --lib -E 'test(notification)'",
+    },
+    inputDigest: toolInputDigest("bash", {
+      command: "cargo nextest run -p ledger --lib -E 'test(notification)'",
+    }),
+    subject,
+  })
+  assert.ok(
+    selectRelevantExecutionEvidence(
+      [unscopedRed, unscopedGreen],
+      subject,
+    ).includes(unscopedRed),
   )
 })
 
@@ -325,7 +669,8 @@ test("relevant expected TTDD red evidence survives preparatory calls across sour
     command:
       "cargo nextest run -E 'test(an_unprofitable_loop_market_never_proposes)'",
   })
-  const red = `bash result status=error inputDigest=${redDigest} input={"command":"cargo nextest run -E 'test(an_unprofitable_loop_market_never_proposes)'"}: /api/loops/opportunity timed out because the endpoint does not exist`
+  const scope = "b".repeat(16)
+  const red = `bash result status=error inputDigest=${redDigest} scope=${scope} input={"command":"cargo nextest run -E 'test(an_unprofitable_loop_market_never_proposes)'"}: /api/loops/opportunity timed out because the endpoint does not exist`
   const candidates = [
     red,
     "read result status=success: pt loops implementation overview",
@@ -350,7 +695,7 @@ test("relevant expected TTDD red evidence survives preparatory calls across sour
     /selectRelevantExecutionEvidence\(executionEvidence, subject\)/,
   )
 
-  const green = `bash result status=success inputDigest=${redDigest}: test passed`
+  const green = `bash result status=success inputDigest=${redDigest} scope=${scope}: test passed`
   assert.ok(
     !selectRelevantExecutionEvidence([...candidates, green], subject, 3, 1)
       .join("\n")
