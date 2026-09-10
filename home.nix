@@ -349,23 +349,6 @@ in
 
     packages =
       let
-        # Track Anthropic's prebuilt Claude Code binary ahead of nixpkgs by
-        # pinning the release manifest as a flake input. The binary checksums
-        # live in the manifest (verified by fetchurl); the manifest itself is
-        # pinned in flake.lock. Bump via the claude-code-manifest input.
-        claude-code-latest =
-          let
-            manifest = builtins.fromJSON (builtins.readFile inputs.claude-code-manifest);
-            key = "${pkgs.stdenv.hostPlatform.node.platform}-${pkgs.stdenv.hostPlatform.node.arch}";
-          in
-          unstable.claude-code.overrideAttrs (_: {
-            version = manifest.version;
-            src = pkgs.fetchurl {
-              url = "https://downloads.claude.ai/claude-code-releases/${manifest.version}/${key}/claude";
-              sha256 = manifest.platforms.${key}.checksum;
-            };
-          });
-
         piSolReview = pkgs.writeShellApplication {
           name = "pi-sol-review";
           runtimeInputs = [ pi-coding-agent-with-reload ];
@@ -401,7 +384,6 @@ in
         pkgs.ragenix
         pkgs.age
         but
-        claude-code-latest
         jf
         pieceOfPiTelegram
         piBridge

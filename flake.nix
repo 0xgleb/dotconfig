@@ -5,14 +5,6 @@
     nixpkgs.url = "github:NixOS/nixpkgs/nixos-unstable";
     nixpkgs-unstable.url = "github:NixOS/nixpkgs/nixos-unstable";
 
-    # Pins the Claude Code release manifest so we can track Anthropic's prebuilt
-    # binaries ahead of nixpkgs. Bump the version in this URL and run
-    # `nix flake update claude-code-manifest` to upgrade.
-    claude-code-manifest = {
-      url = "https://downloads.claude.ai/claude-code-releases/2.1.220/manifest.json";
-      flake = false;
-    };
-
     nix-darwin.url = "github:LnL7/nix-darwin";
     nix-darwin.inputs.nixpkgs.follows = "nixpkgs";
 

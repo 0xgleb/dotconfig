@@ -45,18 +45,6 @@
         "type": "github"
       }
     },
-    "claude-code-manifest": {
-      "flake": false,
-      "locked": {
-        "narHash": "sha256-ZGsftJ+4/k2W4POYtI/7grMly7IjVWpHWoCiyWzh2pY=",
-        "type": "file",
-        "url": "https://downloads.claude.ai/claude-code-releases/2.1.220/manifest.json"
-      },
-      "original": {
-        "type": "file",
-        "url": "https://downloads.claude.ai/claude-code-releases/2.1.220/manifest.json"
-      }
-    },
     "crane": {
       "locked": {
         "lastModified": 1760924934,
@@ -478,7 +466,6 @@
     "root": {
       "inputs": {
         "but-nix": "but-nix",
-        "claude-code-manifest": "claude-code-manifest",
         "disko": "disko",
         "home-manager": "home-manager",
         "nix-darwin": "nix-darwin",
