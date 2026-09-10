@@ -730,6 +730,29 @@ test("background workflows give every child classifier exact typed launch eviden
   }
 })
 
+test("runner omits absent workflow context from classifier requests", async () => {
+  const classifications: ClassificationRequest[] = []
+  const run = createClassifiedAgentRunner(
+    ["Review one bounded source file"],
+    "Use only read-only tools",
+    {
+      async classify(request) {
+        classifications.push(request)
+        return allow
+      },
+      async execute() {
+        return { status: "completed", output: "reviewed", usageTokens: 1 }
+      },
+    },
+  )
+
+  await run({ task: "Inspect one file" })
+  assert.equal(classifications.length, 2)
+  for (const request of classifications) {
+    assert.equal("runtimeWorkflowContext" in request, false)
+  }
+})
+
 test("blocked spawn never executes the agent", async () => {
   let executed = false
   const run = createClassifiedAgentRunner(["read only"], "Do not publish", {
