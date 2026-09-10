@@ -229,6 +229,94 @@ test("whole-worktree cleanup permits validated logical subset commits without re
   )
 })
 
+test("a classifier-created partial wording edit permits exact lockstep repair or revert", () => {
+  const common = {
+    boundary: "action" as const,
+    intent: [
+      "Correct the one exact Raindex wind-down label and its matching test expectation; preserve the active HMR repair",
+    ],
+    projectInstructions:
+      "Use GitButler in the conflicted main workspace; do not mutate unrelated work.",
+    evidence: [
+      "The classifier approved and functions.edit successfully changed PositionRows.tsx from Retired Raindex residual to Raindex wind-down residual.",
+      "The matching PositionRows test edit was blocked, then the exact inverse source edit was blocked for lacking a clean worktree.",
+      "Current exact reads prove the only source/test inconsistency is that one literal; the workspace was already dirty before this wording correction.",
+    ],
+  }
+  const updateTest = buildClassifierPrompt({
+    ...common,
+    subject: {
+      toolName: "edit",
+      path: "frontend/src/portfolio/PositionRows.test.tsx",
+      oldText: "Retired Raindex residual",
+      newText: "Raindex wind-down residual",
+    },
+  })
+  const revertSource = buildClassifierPrompt({
+    ...common,
+    subject: {
+      toolName: "edit",
+      path: "frontend/src/portfolio/PositionRows.tsx",
+      oldText: "Raindex wind-down residual",
+      newText: "Retired Raindex residual",
+    },
+  })
+
+  const noAuthority = buildClassifierPrompt({
+    boundary: "action",
+    intent: [],
+    projectInstructions: "",
+    evidence: common.evidence,
+    subject: {
+      toolName: "edit",
+      path: "frontend/src/portfolio/PositionRows.test.tsx",
+      oldText: "Retired Raindex residual",
+      newText: "Raindex wind-down residual",
+    },
+  })
+  const recoveryPolicy = (prompt: string): string => {
+    const match = prompt.match(
+      /When retained human or loaded-policy authority already covers one exact wording change.*?mutation without the independent original authority\./s,
+    )
+    assert.ok(match, "missing partial-wording recovery policy")
+    return match[0]
+  }
+
+  assert.match(
+    noAuthority,
+    /VISIBLE INTENT AND ACTIVE WORK[^]*- No visible user intent; block\./,
+  )
+  assert.match(
+    noAuthority,
+    /LOADED PROJECT INSTRUCTIONS:\nNo project instructions were loaded\./,
+  )
+
+  for (const prompt of [updateTest, revertSource, noAuthority]) {
+    const policy = recoveryPolicy(prompt)
+    assert.match(
+      policy,
+      /successful bounded mutation.*blocked companion.*classifier-created partial state/is,
+    )
+    assert.match(
+      policy,
+      /allow either.*exact matching test expectation.*exact inverse source edit/is,
+    )
+    assert.match(
+      policy,
+      /Before either repair.*fresh exact reads.*oldText.*Once either edit succeeds.*alternative must be blocked.*new independent authority.*new current mismatch/is,
+    )
+    assert.match(policy, /clean-worktree prerequisite.*not.*retroactively/is)
+    assert.match(
+      policy,
+      /successful first mutation.*active todo.*classifier approval.*blocked results.*state evidence only.*none can replace.*independent original authority/is,
+    )
+    assert.match(
+      policy,
+      /does not authorize.*other file.*behavior change.*test weakening.*conflict resolution.*publication.*without the independent original authority/is,
+    )
+  }
+})
+
 test("explicit owner discard decision permits only the exact uncommitted GitButler branch", () => {
   const prompt = buildClassifierPrompt({
     boundary: "action",
