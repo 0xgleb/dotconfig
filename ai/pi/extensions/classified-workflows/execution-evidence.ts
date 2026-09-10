@@ -566,6 +566,9 @@ const supersededFailureIndexes = (
   return superseded
 }
 
+const STRUCTURED_RESULT_EVIDENCE =
+  /^(?:functions\.)?\S+ result status=(?:success|error|unknown)\b/i
+
 const STATE_SNAPSHOT_MARKER =
   /^(?:functions\.)?\S+ result status=success(?: inputDigest=[0-9a-f]{64})? scope=([0-9a-f]{16}) snapshot=(git-status|git-path-status|gitbutler-status|pull-request-view|registry-completion|registry-version|git-current-branch|git-head|git-history|git-push|git-remote-sha)(?: anchor=([a-z0-9_./:-]{1,128}))?\b/i
 
@@ -621,10 +624,24 @@ export const selectRelevantExecutionEvidence = (
       return !subjectScope || !marker || marker.scope === subjectScope
     },
   )
-  const recentStart = Math.max(0, currentCandidates.length - recentCount)
-  const recent = currentCandidates.slice(recentStart)
+  const recentIndexes = new Set<number>()
+  for (const structured of [true, false]) {
+    const indexes = currentCandidates
+      .map((candidate, index) => ({ candidate, index }))
+      .filter(({ candidate }) =>
+        structured
+          ? STRUCTURED_RESULT_EVIDENCE.test(candidate)
+          : !STRUCTURED_RESULT_EVIDENCE.test(candidate),
+      )
+      .slice(-recentCount)
+      .map(({ index }) => index)
+    for (const index of indexes) recentIndexes.add(index)
+  }
   const terms = evidenceTerms(subject)
-  const olderCandidates = currentCandidates.slice(0, recentStart)
+  const olderEntries = currentCandidates
+    .map((candidate, index) => ({ candidate, currentIndex: index }))
+    .filter(({ currentIndex }) => !recentIndexes.has(currentIndex))
+  const olderCandidates = olderEntries.map(({ candidate }) => candidate)
   const scoredOlderCandidates = olderCandidates.map((candidate, index) => ({
     candidate,
     index,
@@ -688,8 +705,12 @@ export const selectRelevantExecutionEvidence = (
     for (const index of scopedSnapshotIndexes.slice(-8))
       selectedOlderIndexes.add(index)
   }
-  const older = olderCandidates.filter((_candidate, index) =>
-    selectedOlderIndexes.has(index),
+  const selectedCurrentIndexes = new Set(recentIndexes)
+  olderEntries.forEach(({ currentIndex }, olderIndex) => {
+    if (selectedOlderIndexes.has(olderIndex))
+      selectedCurrentIndexes.add(currentIndex)
+  })
+  return currentCandidates.filter((_candidate, index) =>
+    selectedCurrentIndexes.has(index),
   )
-  return [...older, ...recent]
 }

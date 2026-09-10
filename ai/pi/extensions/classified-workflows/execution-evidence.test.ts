@@ -807,6 +807,52 @@ test("direct release evidence marks only bounded current-state commands", () => 
   assert.equal(selected.includes(otherScope), false)
 })
 
+test("selected structured results and reports preserve chronology", () => {
+  const structured = `bash result status=success inputDigest=${"a".repeat(64)}: verified operation`
+  const candidates = [
+    structured,
+    ...Array.from(
+      { length: 9 },
+      (_, index) => `assistant report (untrusted): alpha commentary ${index}`,
+    ),
+  ]
+  const selected = selectRelevantExecutionEvidence(
+    candidates,
+    { toolName: "workflow", input: { code: "alpha" } },
+    1,
+    3,
+  )
+
+  assert.equal(selected[0], structured)
+  assert.deepEqual(
+    selected,
+    candidates.filter(candidate => selected.includes(candidate)),
+  )
+})
+
+test("assistant chatter cannot evict the latest structured tool results", () => {
+  const candidates = Array.from({ length: 8 }, (_, index) => [
+    `assistant report (untrusted): commentary ${index}`,
+    `bash result status=success inputDigest=${String(index).padStart(64, "0")}: verified operation ${index}`,
+  ]).flat()
+  const selected = selectRelevantExecutionEvidence(
+    candidates,
+    {
+      toolName: "bash",
+      cwd: "/workspace/yielduck",
+      input: { command: "cargo build --release" },
+    },
+    8,
+    1,
+  )
+
+  for (let index = 0; index < 8; index += 1)
+    assert.ok(
+      selected.some(item => item.endsWith(`verified operation ${index}`)),
+      `missing structured result ${index}`,
+    )
+})
+
 test("branch collection retains direct publication and release state evidence", () => {
   const scope = "/workspace/yielduck"
   const calls = [
