@@ -62,6 +62,41 @@ test("artifact provenance accepts scratch children beneath an evidenced nested r
   )
 })
 
+test("an existing nested worktree is owned by the repository scratch root containing it", async () => {
+  const artifactModule = (await import("./artifact-provenance.ts")) as Record<
+    string,
+    unknown
+  >
+  const resolveOwner = artifactModule.repositoryRootOwningScratchArtifact
+  assert.equal(
+    typeof resolveOwner,
+    "function",
+    "scratch-owner resolution must not mistake an existing worktree for its own artifact root",
+  )
+  if (typeof resolveOwner !== "function") return
+
+  const repositoryRoot = "/workspace/project"
+  const worktree = `${repositoryRoot}/.tmp/worktrees/secondary`
+  assert.equal(
+    resolveOwner(worktree, (candidate: string) =>
+      candidate === repositoryRoot ? repositoryRoot : worktree,
+    ),
+    repositoryRoot,
+  )
+  assert.equal(
+    resolveOwner(`${worktree}/.tmp/review`, (candidate: string) =>
+      candidate === worktree ? worktree : repositoryRoot,
+    ),
+    worktree,
+    "artifacts inside the worktree's own .tmp remain owned by that worktree",
+  )
+  assert.equal(
+    resolveOwner(worktree, () => "/workspace"),
+    undefined,
+    "the .tmp owner itself must be the evidenced repository root",
+  )
+})
+
 test("explicit cross-workspace routing accepts only absolute children of the evidenced repository scratch root", () => {
   assert.equal(
     canonicalRepositoryScratchArtifactPath(

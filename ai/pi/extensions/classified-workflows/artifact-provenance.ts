@@ -125,6 +125,23 @@ export const repositoryRootCandidateForScratchArtifact = (
   return undefined
 }
 
+export const repositoryRootOwningScratchArtifact = (
+  candidate: string,
+  repositoryRootForCandidate: (candidate: string) => string | undefined,
+): string | undefined => {
+  const ownerCandidate = repositoryRootCandidateForScratchArtifact(candidate)
+  if (!ownerCandidate) return undefined
+  const repositoryRoot = repositoryRootForCandidate(ownerCandidate)
+  if (
+    !repositoryRoot ||
+    resolve(repositoryRoot) !== resolve(ownerCandidate) ||
+    !canonicalRepositoryScratchArtifactPath(candidate, repositoryRoot)
+  ) {
+    return undefined
+  }
+  return resolve(repositoryRoot)
+}
+
 export type ArtifactDirectoryCreationValidation =
   | { readonly ok: true; readonly path: string }
   | { readonly ok: false; readonly error: string }

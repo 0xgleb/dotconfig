@@ -33,7 +33,7 @@ import {
   emptyArtifactProvenanceState,
   forgetArtifact,
   recordArtifact,
-  repositoryRootCandidateForScratchArtifact,
+  repositoryRootOwningScratchArtifact,
   restoreArtifactProvenance,
   validateExistingArtifact,
   type ArtifactProvenanceState,
@@ -180,7 +180,6 @@ import {
   type ReviewDutyState,
 } from "./review-duty-gate.ts"
 import {
-  nestedRepositoryRootForPath,
   repositoryRootForPath,
   runtimeProjectContext,
 } from "./project-context.ts"
@@ -1019,7 +1018,7 @@ const WorkflowParameters = Type.Object({
 })
 
 export default function classifiedWorkflows(pi: ExtensionAPI): void {
-  registerRuntimeVersion(pi, "classified-workflows", "2026.09.04.13")
+  registerRuntimeVersion(pi, "classified-workflows", "2026.09.04.14")
   const childTokenLimitResult = Effect.runSync(
     Effect.either(
       workflowChildTokenLimit(process.env[WORKFLOW_CHILD_TOKEN_LIMIT_ENV]),
@@ -3589,33 +3588,22 @@ export default function classifiedWorkflows(pi: ExtensionAPI): void {
         }
       }
       const absoluteCandidate = resolve(ctx.cwd, candidate)
-      const creationRepositoryCandidate =
-        request.action === "create_directory"
-          ? repositoryRootCandidateForScratchArtifact(absoluteCandidate)
-          : undefined
-      const creationRepositoryRoot = creationRepositoryCandidate
-        ? repositoryRootForPath(creationRepositoryCandidate)
-        : undefined
-      const existingLocalRepositoryRoot = nestedRepositoryRootForPath(
-        ctx.cwd,
-        candidate,
+      const scratchRepositoryRoot = repositoryRootOwningScratchArtifact(
+        absoluteCandidate,
+        repositoryRootForPath,
       )
       const localRepositoryRoot =
-        request.action === "create_directory"
-          ? creationRepositoryRoot &&
-            canonicalScratchArtifactPath(
-              ctx.cwd,
-              absoluteCandidate,
-              creationRepositoryRoot,
-            )
-            ? creationRepositoryRoot
-            : undefined
-          : existingLocalRepositoryRoot
+        scratchRepositoryRoot &&
+        canonicalScratchArtifactPath(
+          ctx.cwd,
+          absoluteCandidate,
+          scratchRepositoryRoot,
+        )
+          ? scratchRepositoryRoot
+          : undefined
       const externalRepositoryRoot =
         request.crossWorkspace === true && isAbsolute(candidate)
-          ? request.action === "create_directory"
-            ? creationRepositoryRoot
-            : repositoryRootForPath(candidate)
+          ? scratchRepositoryRoot
           : undefined
       const repositoryRoot = localRepositoryRoot ?? externalRepositoryRoot
       const canonical = localRepositoryRoot
