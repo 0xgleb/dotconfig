@@ -1,3 +1,5 @@
+import { realpathSync, statSync } from "node:fs"
+import { isAbsolute, resolve } from "node:path"
 import { Data, Effect } from "effect"
 import {
   normalizeAgentTools,
@@ -26,6 +28,57 @@ const failure = (
   message: string,
 ): Effect.Effect<never, AgentProcessError> =>
   Effect.fail(new AgentProcessError({ code, message }))
+
+export type EffectiveAgentRequest = AgentRequest & { readonly cwd: string }
+export type AgentRequestWithUnknownCwd = Omit<AgentRequest, "cwd"> & {
+  readonly cwd?: unknown
+}
+
+export const agentRequestWithEffectiveCwd = (
+  request: AgentRequestWithUnknownCwd,
+  defaultCwd: string,
+): Effect.Effect<EffectiveAgentRequest, AgentProcessError> =>
+  Effect.gen(function* () {
+    const requestedCwd: unknown = request.cwd
+    if (
+      typeof defaultCwd !== "string" ||
+      defaultCwd.trim() === "" ||
+      defaultCwd.length > 4_096 ||
+      defaultCwd.includes("\0") ||
+      (requestedCwd !== undefined &&
+        (typeof requestedCwd !== "string" ||
+          requestedCwd.trim() === "" ||
+          requestedCwd.length > 4_096 ||
+          requestedCwd.includes("\0")))
+    )
+      return yield* failure(
+        "invalid_input",
+        "Agent cwd must be a non-empty bounded path without NUL bytes",
+      )
+    const candidate =
+      typeof requestedCwd === "string"
+        ? isAbsolute(requestedCwd)
+          ? requestedCwd
+          : resolve(defaultCwd, requestedCwd)
+        : defaultCwd
+    const resolved = yield* Effect.try({
+      try: () => {
+        const canonical = realpathSync(candidate)
+        return { canonical, isDirectory: statSync(canonical).isDirectory() }
+      },
+      catch: () =>
+        new AgentProcessError({
+          code: "invalid_input",
+          message: "Agent cwd must resolve to an existing directory",
+        }),
+    })
+    if (!resolved.isDirectory)
+      return yield* failure(
+        "invalid_input",
+        "Agent cwd must resolve to an existing directory",
+      )
+    return { ...request, cwd: resolved.canonical }
+  })
 
 export interface AvailableAgentModel {
   readonly provider: string
@@ -225,6 +278,20 @@ export const buildAgentArguments = (
         "invalid_input",
         "Agent requires the classified workflow extension path",
       )
+    if (
+      request.cwd !== undefined &&
+      (typeof request.cwd !== "string" ||
+        request.cwd.trim() === "" ||
+        request.cwd.length > 4_096)
+    )
+      return yield* failure(
+        "invalid_input",
+        "Agent cwd must be a non-empty bounded path",
+      )
+    const childSystemPrompt =
+      request.cwd === undefined
+        ? WORKFLOW_CHILD_SYSTEM_PROMPT
+        : `${WORKFLOW_CHILD_SYSTEM_PROMPT} Source-fixed effective child working directory: ${JSON.stringify(request.cwd)}. Resolve every relative task and tool path from exactly this directory. Do not rebase it to the repository root or the parent session working directory.`
 
     const args = [
       "--mode",
@@ -239,7 +306,7 @@ export const buildAgentArguments = (
       "--no-themes",
       "--no-context-files",
       "--system-prompt",
-      WORKFLOW_CHILD_SYSTEM_PROMPT,
+      childSystemPrompt,
       "--tools",
       tools.join(","),
     ]
@@ -251,6 +318,35 @@ export const buildAgentArguments = (
         : `${request.task}\n\nReturn only valid JSON matching this JSON Schema. Do not wrap it in Markdown fences:\n${JSON.stringify(request.schema)}`
     args.push(task)
     return args
+  })
+
+export interface AgentExecutionPlan {
+  readonly request: EffectiveAgentRequest
+  readonly args: readonly string[]
+  readonly cwd: string
+}
+
+export const runAgentExecutionPlan = <Result>(
+  plan: AgentExecutionPlan,
+  run: (args: string[], cwd: string) => Promise<Result>,
+): Promise<Result> => run([...plan.args], plan.cwd)
+
+export const buildAgentExecutionPlan = (
+  request: AgentRequest,
+  defaultCwd: string,
+  extensionPath: string,
+): Effect.Effect<AgentExecutionPlan, AgentProcessError> =>
+  Effect.gen(function* () {
+    const effectiveRequest = yield* agentRequestWithEffectiveCwd(
+      request,
+      defaultCwd,
+    )
+    const args = yield* buildAgentArguments(effectiveRequest, extensionPath)
+    return {
+      request: effectiveRequest,
+      args,
+      cwd: effectiveRequest.cwd,
+    }
   })
 
 const AGENT_TOOLS = new Set([

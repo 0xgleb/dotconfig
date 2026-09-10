@@ -17,8 +17,9 @@ import { Effect, Either } from "effect"
 import { Type } from "typebox"
 import {
   AGENT_PROCESS_STDIO,
-  buildAgentArguments,
+  buildAgentExecutionPlan,
   localLaneWorkflowRefusal,
+  runAgentExecutionPlan,
   resolveAgentModel,
   resolveWorkflowThinking,
   type AvailableAgentModel,
@@ -916,14 +917,15 @@ async function executeAgent(
   const qualifiedRequest = await Effect.runPromise(
     prepareWorkflowAgentRequest(request, parentProvider, availableModels),
   )
-  const result = await runPi(
-    await Effect.runPromise(
-      buildAgentArguments(qualifiedRequest, CLASSIFIED_WORKFLOWS_EXTENSION),
+  const execution = await Effect.runPromise(
+    buildAgentExecutionPlan(
+      qualifiedRequest,
+      defaultCwd,
+      CLASSIFIED_WORKFLOWS_EXTENSION,
     ),
-    request.cwd ?? defaultCwd,
-    signal,
-    tokenLimit,
-    onProgress,
+  )
+  const result = await runAgentExecutionPlan(execution, (args, cwd) =>
+    runPi(args, cwd, signal, tokenLimit, onProgress),
   )
   if (signal?.aborted) {
     return {
@@ -1080,7 +1082,7 @@ const WorkflowParameters = Type.Object({
 })
 
 export default function classifiedWorkflows(pi: ExtensionAPI): void {
-  registerRuntimeVersion(pi, "classified-workflows", "2026.09.04.10")
+  registerRuntimeVersion(pi, "classified-workflows", "2026.09.04.11")
   const childTokenLimitResult = Effect.runSync(
     Effect.either(
       workflowChildTokenLimit(process.env[WORKFLOW_CHILD_TOKEN_LIMIT_ENV]),

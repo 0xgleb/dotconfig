@@ -1,13 +1,27 @@
 import assert from "node:assert/strict"
+import {
+  mkdirSync,
+  mkdtempSync,
+  realpathSync,
+  rmSync,
+  symlinkSync,
+  writeFileSync,
+} from "node:fs"
+import { tmpdir } from "node:os"
+import { join } from "node:path"
 import test from "node:test"
 import { Effect } from "effect"
 import {
   AGENT_PROCESS_STDIO,
+  AgentProcessError,
+  agentRequestWithEffectiveCwd,
   buildAgentArguments,
+  buildAgentExecutionPlan,
   LOCAL_LANE_PROVIDER,
   localLaneWorkflowRefusal,
   resolveAgentModel as resolveAgentModelEffect,
   resolveWorkflowThinking,
+  runAgentExecutionPlan,
   WORKFLOW_CHILD_SYSTEM_PROMPT,
 } from "./agent-process.ts"
 
@@ -77,6 +91,105 @@ test("workflow children receive a bounded isolated prompt contract", () => {
     /native grep\/find\/ls.*cwd root.*exact.*path.*bash rg/i,
   )
   assert.match(WORKFLOW_CHILD_SYSTEM_PROMPT, /return.*before exhausting/i)
+})
+
+test("workflow execution uses one canonical cwd for the prompt and process", async () => {
+  const root = mkdtempSync(join(tmpdir(), "pi-workflow-cwd-"))
+  const repository = join(root, "repository")
+  const worktree = join(repository, "worktree")
+  const linkedWorktree = join(root, "linked-worktree")
+  try {
+    mkdirSync(worktree, { recursive: true })
+    symlinkSync(worktree, linkedWorktree)
+    const plan = run(
+      buildAgentExecutionPlan(
+        { task: "Read .tmp/review/pipeline.diff", cwd: linkedWorktree },
+        repository,
+        "/repo/classified-workflows/index.ts",
+      ),
+    )
+    const systemPrompt =
+      plan.args[plan.args.indexOf("--system-prompt") + 1] ?? ""
+    assert.equal(plan.cwd, realpathSync(worktree))
+    assert.equal(plan.request.cwd, plan.cwd)
+    assert.match(
+      systemPrompt,
+      /source-fixed effective child working directory/i,
+    )
+    assert.ok(systemPrompt.includes(JSON.stringify(plan.cwd)))
+    assert.match(
+      systemPrompt,
+      /resolve every relative task and tool path from exactly this directory/i,
+    )
+    assert.match(systemPrompt, /do not rebase.*repository root/i)
+    assert.equal(plan.args.at(-1), "Read .tmp/review/pipeline.diff")
+    let spawnedArgs: string[] | undefined
+    let spawnedCwd: string | undefined
+    const result = await runAgentExecutionPlan(plan, async (args, cwd) => {
+      spawnedArgs = args
+      spawnedCwd = cwd
+      return "completed"
+    })
+    assert.equal(result, "completed")
+    assert.equal(spawnedCwd, plan.cwd)
+    assert.ok(spawnedArgs)
+    assert.equal(
+      spawnedArgs[spawnedArgs.indexOf("--system-prompt") + 1],
+      systemPrompt,
+    )
+  } finally {
+    rmSync(root, { recursive: true, force: true })
+  }
+})
+
+test("workflow cwd validation rejects malformed and nonexistent boundaries", () => {
+  const root = mkdtempSync(join(tmpdir(), "pi-workflow-cwd-invalid-"))
+  const file = join(root, "not-a-directory")
+  writeFileSync(file, "data")
+  try {
+    for (const cwd of [
+      null,
+      "",
+      "bad\0cwd",
+      "x".repeat(4_097),
+      file,
+      join(root, "missing"),
+    ]) {
+      const error = run(
+        Effect.flip(
+          agentRequestWithEffectiveCwd({ task: "inspect", cwd }, root),
+        ),
+      )
+      assert.ok(error instanceof AgentProcessError)
+      assert.equal(error.code, "invalid_input")
+    }
+    const oversizedDefaultError = run(
+      Effect.flip(
+        agentRequestWithEffectiveCwd({ task: "inspect" }, "x".repeat(4_097)),
+      ),
+    )
+    assert.ok(oversizedDefaultError instanceof AgentProcessError)
+    assert.equal(oversizedDefaultError.code, "invalid_input")
+  } finally {
+    rmSync(root, { recursive: true, force: true })
+  }
+})
+
+test("workflow relative cwd resolves against the parent cwd before canonicalization", () => {
+  const root = mkdtempSync(join(tmpdir(), "pi-workflow-cwd-relative-"))
+  const worktree = join(root, "nested", "worktree")
+  try {
+    mkdirSync(worktree, { recursive: true })
+    const request = run(
+      agentRequestWithEffectiveCwd(
+        { task: "inspect", cwd: "nested/other/../worktree" },
+        root,
+      ),
+    )
+    assert.equal(request.cwd, realpathSync(worktree))
+  } finally {
+    rmSync(root, { recursive: true, force: true })
+  }
 })
 
 test("workflow children activate only requested source tools and not extension control-plane tools", () => {
