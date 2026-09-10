@@ -34,6 +34,42 @@ const limits: WorkflowLimits = {
   tokenBudget: 10_000,
 }
 
+test("a stale UI progress observer cannot escape a child socket callback", async () => {
+  const audits: ChildAudit[] = []
+  let escaped: unknown
+  const runner = auditedAgentRunner(
+    async (_request, _signal, _limit, progress) => {
+      await new Promise<void>(resolve =>
+        setImmediate(() => {
+          try {
+            progress?.("child progress after reload")
+          } catch (error) {
+            escaped = error
+          }
+          resolve()
+        }),
+      )
+      return { status: "completed", output: "child result", usageTokens: 1 }
+    },
+    audits,
+    text => text,
+    event => {
+      if (event.kind === "progress")
+        throw new Error(
+          "This extension ctx is stale after session replacement or reload",
+        )
+    },
+  )
+  const result = await runner(
+    { task: "read source", tools: ["read"] },
+    new AbortController().signal,
+    1000,
+  )
+  assert.equal(escaped, undefined)
+  assert.equal(result.status, "failed")
+  assert.match(audits[0]?.reason ?? "", /observer.*stale/i)
+})
+
 test("workflow allocation and audit reads reconcile late persisted snapshots", () => {
   assert.match(
     extensionSource,

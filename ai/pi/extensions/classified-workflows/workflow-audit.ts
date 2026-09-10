@@ -249,14 +249,12 @@ const decodeWorkflowAudit = (value: unknown): WorkflowAudit | undefined => {
     return undefined
   const limits = value.limits
   if (
-    ![
-      limits.maxAgents,
-      limits.concurrency,
-      limits.agentTimeoutMs,
-      limits.workflowTimeoutMs,
-      limits.retries,
-      limits.tokenBudget,
-    ].every(finiteInteger)
+    !finiteInteger(limits.maxAgents) ||
+    !finiteInteger(limits.concurrency) ||
+    !finiteInteger(limits.agentTimeoutMs) ||
+    !finiteInteger(limits.workflowTimeoutMs) ||
+    !finiteInteger(limits.retries) ||
+    !finiteInteger(limits.tokenBudget)
   )
     return undefined
   if (!Array.isArray(value.children) || value.children.length > 256)
@@ -369,7 +367,18 @@ export const auditedAgentRunner = (
       normalizeAgentTools(request.tools),
     )) ?? ["read", "grep", "find", "ls"]
     const task = sanitize(request.task).replace(/\s+/g, " ").slice(0, 240)
-    onEvent?.({
+    let observerFailure: string | undefined
+    const observerController = new AbortController()
+    const notify = (event: ChildAuditEvent): void => {
+      if (observerFailure) return
+      try {
+        onEvent?.(event)
+      } catch (error) {
+        observerFailure = `Workflow observer failed: ${error instanceof Error ? error.message : "unknown callback failure"}`
+        observerController.abort()
+      }
+    }
+    notify({
       kind: "started",
       index,
       task,
@@ -377,15 +386,26 @@ export const auditedAgentRunner = (
       tools,
     })
     try {
-      const result = await runAgent(request, signal, tokenLimit, progress =>
-        onEvent?.({
-          kind: "progress",
-          index,
-          task,
-          ...(request.model ? { requestedModel: request.model } : {}),
-          progress: sanitize(progress).replace(/\s+/g, " ").slice(0, 240),
-        }),
-      )
+      const result: AgentResult = observerFailure
+        ? {
+            status: "failed",
+            output: "",
+            usageTokens: 0,
+            reason: observerFailure,
+          }
+        : await runAgent(
+            request,
+            AbortSignal.any([signal, observerController.signal]),
+            tokenLimit,
+            progress =>
+              notify({
+                kind: "progress",
+                index,
+                task,
+                ...(request.model ? { requestedModel: request.model } : {}),
+                progress: sanitize(progress).replace(/\s+/g, " ").slice(0, 240),
+              }),
+          )
       const reviewerError =
         result.status === "completed"
           ? completedAgentReviewerError(result.output)
@@ -394,14 +414,21 @@ export const auditedAgentRunner = (
         result.status === "completed"
           ? completedAgentDiagnostic(result, reviewerError)
           : undefined
-      const normalizedResult: AgentResult = reviewerError
+      const normalizedResult: AgentResult = observerFailure
         ? {
             status: "failed",
             output: "",
-            reason: completedDiagnostic ?? reviewerError,
             usageTokens: result.usageTokens,
+            reason: observerFailure,
           }
-        : result
+        : reviewerError
+          ? {
+              status: "failed",
+              output: "",
+              reason: completedDiagnostic ?? reviewerError,
+              usageTokens: result.usageTokens,
+            }
+          : result
       const audit: ChildAudit = {
         index,
         ...(task ? { task } : {}),
@@ -426,8 +453,17 @@ export const auditedAgentRunner = (
             : {}
           : { reason: sanitize(normalizedResult.reason).slice(0, 1_000) }),
       }
+      notify({ kind: "finished", audit })
+      if (observerFailure) {
+        audits.push({ ...audit, status: "failed", reason: observerFailure })
+        return {
+          status: "failed",
+          output: "",
+          usageTokens: result.usageTokens,
+          reason: observerFailure,
+        }
+      }
       audits.push(audit)
-      onEvent?.({ kind: "finished", audit })
       return normalizedResult
     } catch (error) {
       const audit: ChildAudit = {
@@ -441,11 +477,19 @@ export const auditedAgentRunner = (
         usageTokens: 0,
         outputCharacters: 0,
         reason: sanitize(
-          error instanceof Error ? error.message : "Agent failed",
+          observerFailure ??
+            (error instanceof Error ? error.message : "Agent failed"),
         ).slice(0, 1_000),
       }
       audits.push(audit)
-      onEvent?.({ kind: "finished", audit })
+      notify({ kind: "finished", audit })
+      if (observerFailure)
+        return {
+          status: "failed",
+          output: "",
+          usageTokens: 0,
+          reason: observerFailure,
+        }
       return Effect.runPromise(Effect.fail(error))
     }
   }
