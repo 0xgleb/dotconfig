@@ -668,6 +668,7 @@ interface StateSnapshotIdentity {
     | "git-index-blobs"
     | "git-object-hashes"
     | "gitbutler-status"
+    | "gitbutler-uncommitted"
     | "pull-request-view"
     | "registry-completion"
     | "registry-version"
@@ -801,6 +802,11 @@ const stateSnapshotIdentity = (
   )
     return undefined
   const command = input.command.trim()
+  if (
+    command ===
+    "but status --json | from json | get uncommittedChanges | to json"
+  )
+    return { kind: "gitbutler-uncommitted" }
   if (!/^[a-z0-9_./,:#= -]+$/i.test(command)) return undefined
   const statusPaths = gitStatusPaths(command)
   if (statusPaths === null) return { kind: "git-status" }
@@ -1096,7 +1102,7 @@ const STRUCTURED_RESULT_EVIDENCE =
   /^(?:functions\.)?\S+ result status=(?:success|error|unknown)\b/i
 
 const STATE_SNAPSHOT_MARKER =
-  /^(?:functions\.)?\S+ result status=success(?: inputDigest=[0-9a-f]{64})? scope=([0-9a-f]{16}) snapshot=(git-status|git-path-status|git-index-paths|git-index-blobs|git-object-hashes|gitbutler-status|pull-request-view|registry-completion|registry-version|git-current-branch|git-head|git-history|git-push|git-remote-sha)(?: anchor=([a-z0-9_./:-]{1,128}))?\b/i
+  /^(?:functions\.)?\S+ result status=success(?: inputDigest=[0-9a-f]{64})? scope=([0-9a-f]{16}) snapshot=(git-status|git-path-status|git-index-paths|git-index-blobs|git-object-hashes|gitbutler-status|gitbutler-uncommitted|pull-request-view|registry-completion|registry-version|git-current-branch|git-head|git-history|git-push|git-remote-sha)(?: anchor=([a-z0-9_./:-]{1,128}))?\b/i
 
 interface StateSnapshotMarker {
   readonly kind: string
@@ -1180,6 +1186,12 @@ export const selectRelevantExecutionEvidence = (
     nonSupersededCandidates.forEach((candidate, index) => {
       const marker = stateSnapshotMarker(candidate)
       if (!marker || marker.scope !== subjectScope) return
+      if (marker.kind === "gitbutler-status") {
+        const projectionKey = "gitbutler-uncommitted:scope"
+        const projection = latestSnapshotIndexes.get(projectionKey)
+        if (projection !== undefined) supersededSnapshotIndexes.add(projection)
+        latestSnapshotIndexes.delete(projectionKey)
+      }
       const identity = `${marker.kind}:${marker.anchor ?? "scope"}`
       const prior = latestSnapshotIndexes.get(identity)
       if (prior !== undefined) supersededSnapshotIndexes.add(prior)
@@ -1190,6 +1202,11 @@ export const selectRelevantExecutionEvidence = (
     (candidate, index) => {
       if (supersededSnapshotIndexes.has(index)) return false
       const marker = stateSnapshotMarker(candidate)
+      if (
+        marker?.kind === "gitbutler-uncommitted" &&
+        marker.scope !== subjectScope
+      )
+        return false
       const hasVcsCommandResult =
         /^(?:functions\.)?bash result\b.*\b(?:git|gt|but)\b/i.test(candidate)
       const verifiedCommandScope =
