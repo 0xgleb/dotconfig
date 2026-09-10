@@ -88,6 +88,68 @@ export interface DebugTarget {
   readonly webSocketDebuggerUrl: string
 }
 
+export interface TargetDiscoveryDependencies {
+  readonly listTargets: (
+    remainingMs: number,
+  ) => Effect.Effect<readonly DebugTarget[], BrowserControlError>
+  readonly now: () => number
+  readonly sleep: (milliseconds: number) => Effect.Effect<void>
+}
+
+export const debugEndpointReadiness = (
+  request: Effect.Effect<unknown, BrowserControlError>,
+): Effect.Effect<boolean, BrowserControlError> =>
+  Effect.matchEffect(request, {
+    onFailure: error =>
+      error.code === "timeout" || error.code === "unavailable"
+        ? Effect.succeed(false)
+        : Effect.fail(error),
+    onSuccess: () => Effect.succeed(true),
+  })
+
+export const discoverOpenedTarget = (
+  url: LocalPageUrl,
+  previousTargetIds: ReadonlySet<string>,
+  timeoutMs: number,
+  retryIntervalMs: number,
+  dependencies: TargetDiscoveryDependencies,
+): Effect.Effect<DebugTarget | undefined, BrowserControlError> =>
+  Effect.gen(function* () {
+    if (!Number.isSafeInteger(timeoutMs) || timeoutMs < 1)
+      return yield* failure(
+        "invalid_input",
+        "Target discovery timeout must be positive.",
+      )
+    if (!Number.isSafeInteger(retryIntervalMs) || retryIntervalMs < 1)
+      return yield* failure(
+        "invalid_input",
+        "Target discovery retry interval must be positive.",
+      )
+
+    const deadline = dependencies.now() + timeoutMs
+    while (dependencies.now() < deadline) {
+      const remainingBeforeRequestMs = deadline - dependencies.now()
+      const targetsResult = yield* Effect.either(
+        dependencies.listTargets(remainingBeforeRequestMs),
+      )
+      if (Either.isLeft(targetsResult)) {
+        const error = targetsResult.left
+        if (error.code !== "timeout" && error.code !== "unavailable")
+          return yield* Effect.fail(error)
+      } else if (dependencies.now() < deadline) {
+        const freshTarget = targetsResult.right.find(
+          target => target.url === url && !previousTargetIds.has(target.id),
+        )
+        if (freshTarget && dependencies.now() < deadline) return freshTarget
+      }
+
+      const remainingMs = deadline - dependencies.now()
+      if (remainingMs > 0)
+        yield* dependencies.sleep(Math.min(retryIntervalMs, remainingMs))
+    }
+    return undefined
+  })
+
 export interface LaunchServicesRequest {
   readonly command: "/usr/bin/open"
   readonly args: readonly [
@@ -216,17 +278,22 @@ const validateDebuggerUrl = (
         message: "Brave returned an invalid debugging endpoint.",
       }),
   }).pipe(
-    Effect.flatMap(url =>
-      url.protocol === "ws:" &&
-      LOOPBACK_HOSTS.has(url.hostname) &&
-      url.port === String(debugPort) &&
-      url.pathname === `/devtools/page/${targetId}`
+    Effect.flatMap(url => {
+      if (url.username || url.password)
+        return failure(
+          "protocol",
+          "Brave returned a debugging endpoint containing credentials.",
+        )
+      return url.protocol === "ws:" &&
+        LOOPBACK_HOSTS.has(url.hostname) &&
+        url.port === String(debugPort) &&
+        url.pathname === `/devtools/page/${targetId}`
         ? Effect.void
         : failure(
             "protocol",
             "Brave returned an unexpected debugging endpoint.",
-          ),
-    ),
+          )
+    }),
   )
 
 const parseDebugTarget = (
@@ -249,6 +316,19 @@ const parseDebugTarget = (
       return yield* failure(
         "protocol",
         "Brave returned a malformed page target.",
+      )
+    const candidateUrl = yield* Effect.try({
+      try: () => new URL(value.url),
+      catch: () =>
+        new BrowserControlError({
+          code: "protocol",
+          message: "Brave returned an invalid page target URL.",
+        }),
+    })
+    if (candidateUrl.username || candidateUrl.password)
+      return yield* failure(
+        "protocol",
+        "Brave returned a page target URL containing credentials.",
       )
     const parsedUrl = yield* Effect.either(parseLocalPageUrl(value.url))
     if (Either.isLeft(parsedUrl)) return Option.none()

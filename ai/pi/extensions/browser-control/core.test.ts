@@ -5,9 +5,12 @@ import { Effect, Option } from "effect"
 import {
   BROWSER_ACTIONS,
   BROWSER_TARGET_ENTRY,
+  BrowserControlError,
   browserActivityLabel,
   collectBoundedResponseBytes,
   createSerialActivityUpdater,
+  debugEndpointReadiness,
+  discoverOpenedTarget,
   launchServicesRequest,
   parseCdpResponse,
   parseDebugTargets,
@@ -106,6 +109,147 @@ test("browser actions expose no arbitrary script evaluation", () => {
   assert.equal(BROWSER_ACTIONS.includes("eval" as never), false)
 })
 
+test("opened-target discovery retries transient debug startup failures", async () => {
+  const url = run(parseLocalPageUrl(recordedTarget.url))
+  const target = run(parseDebugTargets([recordedTarget], 9222))[0]
+  if (!target) assert.fail("expected one valid debug target")
+
+  let attempts = 0
+  let now = 0
+  const opened = await Effect.runPromise(
+    discoverOpenedTarget(url, new Set(), 1_000, 100, {
+      listTargets: () => {
+        attempts += 1
+        if (attempts === 1)
+          return Effect.fail(
+            new BrowserControlError({
+              code: "unavailable",
+              message: "debug endpoint is starting",
+            }),
+          )
+        if (attempts === 2)
+          return Effect.fail(
+            new BrowserControlError({
+              code: "timeout",
+              message: "debug endpoint is not ready",
+            }),
+          )
+        return Effect.succeed([target])
+      },
+      now: () => now,
+      sleep: milliseconds =>
+        Effect.sync(() => {
+          now += milliseconds
+        }),
+    }),
+  )
+
+  assert.equal(attempts, 3)
+  assert.equal(opened?.id, target.id)
+})
+
+test("opened-target discovery fails closed on protocol errors", async () => {
+  const url = run(parseLocalPageUrl(recordedTarget.url))
+  let attempts = 0
+  const result = await Effect.runPromise(
+    Effect.either(
+      discoverOpenedTarget(url, new Set(), 1_000, 100, {
+        listTargets: () => {
+          attempts += 1
+          return Effect.fail(
+            new BrowserControlError({
+              code: "protocol",
+              message: "malformed debug response",
+            }),
+          )
+        },
+        now: () => 0,
+        sleep: () => Effect.void,
+      }),
+    ),
+  )
+  assert.equal(result._tag, "Left")
+  if (result._tag === "Left") assert.equal(result.left.code, "protocol")
+  assert.equal(attempts, 1)
+})
+
+test("opened-target discovery preserves late protocol failures", async () => {
+  const url = run(parseLocalPageUrl(recordedTarget.url))
+  let now = 0
+  const result = await Effect.runPromise(
+    Effect.either(
+      discoverOpenedTarget(url, new Set(), 100, 25, {
+        listTargets: () =>
+          Effect.flatMap(
+            Effect.sync(() => {
+              now = 100
+            }),
+            () =>
+              Effect.fail(
+                new BrowserControlError({
+                  code: "protocol",
+                  message: "late malformed debug response",
+                }),
+              ),
+          ),
+        now: () => now,
+        sleep: () => Effect.void,
+      }),
+    ),
+  )
+  assert.equal(result._tag, "Left")
+  if (result._tag === "Left") assert.equal(result.left.code, "protocol")
+})
+
+test("opened-target discovery ignores stale and post-deadline targets", async () => {
+  const url = run(parseLocalPageUrl(recordedTarget.url))
+  const target = run(parseDebugTargets([recordedTarget], 9222))[0]
+  if (!target) assert.fail("expected one valid debug target")
+
+  let now = 0
+  const opened = await Effect.runPromise(
+    discoverOpenedTarget(url, new Set([target.id]), 100, 25, {
+      listTargets: () =>
+        Effect.sync(() => {
+          now = 100
+          return [target]
+        }),
+      now: () => now,
+      sleep: () => Effect.void,
+    }),
+  )
+  assert.equal(opened, undefined)
+})
+
+test("debug endpoint readiness retries only transient failures", () => {
+  assert.equal(
+    run(
+      debugEndpointReadiness(
+        Effect.fail(
+          new BrowserControlError({
+            code: "timeout",
+            message: "debug endpoint is starting",
+          }),
+        ),
+      ),
+    ),
+    false,
+  )
+  const protocol = run(
+    Effect.either(
+      debugEndpointReadiness(
+        Effect.fail(
+          new BrowserControlError({
+            code: "protocol",
+            message: "malformed debug response",
+          }),
+        ),
+      ),
+    ),
+  )
+  assert.equal(protocol._tag, "Left")
+})
+
 test("browser pages use an isolated operator profile through the Brave app identity", () => {
   const url = run(parseLocalPageUrl("http://127.0.0.1:5173/"))
   const request = run(
@@ -199,6 +343,37 @@ test("debug target decoder accepts the documented Chromium response and rejects 
         ),
       ),
     /debugging endpoint/i,
+  )
+  assert.throws(
+    () =>
+      run(
+        parseDebugTargets(
+          [
+            {
+              ...recordedTarget,
+              webSocketDebuggerUrl:
+                "ws://user:password@127.0.0.1:9222/devtools/page/DAB7",
+            },
+          ],
+          9222,
+        ),
+      ),
+    /credentials/i,
+  )
+  assert.throws(
+    () =>
+      run(
+        parseDebugTargets(
+          [
+            {
+              ...recordedTarget,
+              url: "http://user:password@127.0.0.1:5173/health",
+            },
+          ],
+          9222,
+        ),
+      ),
+    /credentials/i,
   )
 })
 

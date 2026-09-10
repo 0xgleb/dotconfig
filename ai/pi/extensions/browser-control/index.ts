@@ -13,6 +13,8 @@ import {
   BrowserControlError,
   collectBoundedResponseBytes,
   createSerialActivityUpdater,
+  debugEndpointReadiness,
+  discoverOpenedTarget,
   latestBrowserTargetId,
   launchServicesRequest,
   parseCdpResponse,
@@ -58,6 +60,7 @@ interface PendingCall {
 }
 
 let activeTargetId: string | undefined
+let knownTargetIds = new Set<string>()
 
 const debugBase: () => string = () => `http://127.0.0.1:${DEBUG_PORT}`
 
@@ -81,20 +84,22 @@ const failBrowser = (
 const requestJson: (
   path: string,
   init?: RequestInit,
-) => Promise<unknown> = async (path, init) => {
-  const requestSignal = AbortSignal.timeout(REQUEST_TIMEOUT_MS)
+  timeoutMs?: number,
+) => Promise<unknown> = async (path, init, timeoutMs = REQUEST_TIMEOUT_MS) => {
+  const requestSignal = AbortSignal.timeout(timeoutMs)
   const response = await Effect.runPromise(
     Effect.tryPromise({
       try: () =>
         fetch(`${debugBase()}${path}`, {
           ...init,
+          redirect: "manual",
           signal: requestSignal,
         }),
       catch: () =>
         new BrowserControlError({
           code: requestSignal.aborted ? "timeout" : "unavailable",
           message: requestSignal.aborted
-            ? `Brave debug request timed out after ${REQUEST_TIMEOUT_MS}ms.`
+            ? `Brave debug request timed out after ${timeoutMs}ms.`
             : "Brave debug endpoint request failed",
         }),
     }),
@@ -111,45 +116,52 @@ const requestJson: (
         new BrowserControlError({
           code: requestSignal.aborted ? "timeout" : "protocol",
           message: requestSignal.aborted
-            ? `Brave debug response timed out after ${REQUEST_TIMEOUT_MS}ms.`
+            ? `Brave debug response timed out after ${timeoutMs}ms.`
             : "Brave debug endpoint returned malformed JSON",
         }),
     }),
   )
 }
 
-const isDebugEndpointReady: () => Promise<boolean> = async () => {
-  try {
-    await requestJson("/json/version")
-    return true
-  } catch {
-    return false
-  }
+const requestJsonEffect = (
+  path: string,
+  init?: RequestInit,
+  timeoutMs = REQUEST_TIMEOUT_MS,
+): Effect.Effect<unknown, BrowserControlError> =>
+  Effect.tryPromise({
+    try: () => requestJson(path, init, timeoutMs),
+    catch: error =>
+      browserFailureFrom(error) ??
+      new BrowserControlError({
+        code: "protocol",
+        message: "Unexpected Brave debug endpoint failure.",
+      }),
+  })
+
+const isDebugEndpointReady = (): Effect.Effect<boolean, BrowserControlError> =>
+  debugEndpointReadiness(requestJsonEffect("/json/version"))
+
+const rememberTargets = (
+  targets: readonly DebugTarget[],
+): readonly DebugTarget[] => {
+  for (const target of targets) knownTargetIds.add(target.id)
+  return targets
 }
 
 const listTargets: () => Promise<readonly DebugTarget[]> = async () =>
-  Effect.runPromise(
-    parseDebugTargets(await requestJson("/json/list"), DEBUG_PORT),
+  rememberTargets(
+    await Effect.runPromise(
+      parseDebugTargets(await requestJson("/json/list"), DEBUG_PORT),
+    ),
   )
 
-const discoverOpenedTarget: (
-  url: LocalPageUrl,
-  previousTargetIds: ReadonlySet<string>,
-) => Promise<DebugTarget | undefined> = async (url, previousTargetIds) => {
-  const deadline = Date.now() + TARGET_DISCOVERY_TIMEOUT_MS
-  let matchingTarget: DebugTarget | undefined
-  while (Date.now() < deadline) {
-    const targets = await listTargets()
-    const freshTarget = targets.find(
-      target => target.url === url && !previousTargetIds.has(target.id),
-    )
-    if (freshTarget) return freshTarget
-    matchingTarget =
-      targets.find(target => target.url === url) ?? matchingTarget
-    await new Promise(resolve => setTimeout(resolve, 250))
-  }
-  return matchingTarget
-}
+const listTargetsEffect = (
+  remainingMs: number,
+): Effect.Effect<readonly DebugTarget[], BrowserControlError> =>
+  requestJsonEffect("/json/list", undefined, remainingMs).pipe(
+    Effect.flatMap(value => parseDebugTargets(value, DEBUG_PORT)),
+    Effect.map(rememberTargets),
+  )
 
 const openTarget: (
   pi: ExtensionAPI,
@@ -159,7 +171,7 @@ const openTarget: (
   readonly target?: DebugTarget
 }> = async (pi, input) => {
   const url = await Effect.runPromise(parseLocalPageUrl(input))
-  const debugReady = await isDebugEndpointReady()
+  const debugReady = await Effect.runPromise(isDebugEndpointReady())
   if (debugReady) {
     const existing = selectReusableTarget(
       await listTargets(),
@@ -191,7 +203,7 @@ const openTarget: (
     return { url, target: opened }
   }
 
-  const previousTargetIds = new Set<string>()
+  const previousTargetIds = new Set(knownTargetIds)
   const request = await Effect.runPromise(
     launchServicesRequest(url, OPERATOR_PROFILE_PATH, DEBUG_PORT),
   )
@@ -203,13 +215,25 @@ const openTarget: (
       "unavailable",
       "macOS LaunchServices could not open the isolated Brave operator profile.",
     )
-  const target = await discoverOpenedTarget(url, previousTargetIds)
+  const target = await Effect.runPromise(
+    discoverOpenedTarget(
+      url,
+      previousTargetIds,
+      TARGET_DISCOVERY_TIMEOUT_MS,
+      250,
+      {
+        listTargets: listTargetsEffect,
+        now: Date.now,
+        sleep: milliseconds => Effect.sleep(milliseconds),
+      },
+    ),
+  )
   activeTargetId = target?.id
   return { url, ...(target ? { target } : {}) }
 }
 
 const activeTarget: () => Promise<DebugTarget> = async () => {
-  if (!(await isDebugEndpointReady()))
+  if (!(await Effect.runPromise(isDebugEndpointReady())))
     return failBrowser("unavailable", DEBUG_SETUP_MESSAGE)
   return Effect.runPromise(
     selectActiveTarget(await listTargets(), activeTargetId),
@@ -568,9 +592,10 @@ const withBrowserActivity: <T>(
 }
 
 const browserControl: (pi: ExtensionAPI) => void = pi => {
-  registerRuntimeVersion(pi, "browser-control", "2026.09.04.2")
+  registerRuntimeVersion(pi, "browser-control", "2026.09.04.3")
   pi.on("session_start", (_event, ctx) => {
     activeTargetId = latestBrowserTargetId(ctx.sessionManager.getBranch())
+    knownTargetIds = new Set(activeTargetId ? [activeTargetId] : [])
     ctx.ui.setStatus(BROWSER_STATUS_KEY, browserActivityLabel("idle"))
     void queuePageActivity(false)
   })
@@ -636,7 +661,7 @@ const browserControl: (pi: ExtensionAPI) => void = pi => {
       return withBrowserActivity(ctx, params.action, async () => {
         try {
           if (params.action === "status") {
-            const ready = await isDebugEndpointReady()
+            const ready = await Effect.runPromise(isDebugEndpointReady())
             if (!ready) {
               return {
                 content: [{ type: "text", text: DEBUG_SETUP_MESSAGE }],
