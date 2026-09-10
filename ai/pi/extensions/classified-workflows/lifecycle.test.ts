@@ -317,6 +317,49 @@ test("a classifier-created partial wording edit permits exact lockstep repair or
   }
 })
 
+test("authoritative contract source invalidates raw-calldata order-ID derivation", () => {
+  const prompt = buildClassifierPrompt({
+    boundary: "action",
+    intent: [
+      "Replace the disproven DLN calldata-derived order ID with the exact pre-broadcast source-chain eth_call bytes32 return; correct SPEC and test first",
+    ],
+    projectInstructions:
+      "Use SPEC-first TTDD and bind cancellation recovery to the canonical source-chain order ID.",
+    evidence: [
+      "Pinned authoritative dln-contracts source at d54e94f2: createSaltedOrder returns _createSaltedOrder.",
+      "_createSaltedOrder validates with tx.origin and salt, subtracts globalTransferFeeBps and affiliate from giveAmount, then computes getOrderId(_order) and returns bytes32.",
+      "Current local implementation and test hash raw createSaltedOrder calldata, so they cannot derive the post-fee canonical order ID.",
+    ],
+    subject: {
+      toolName: "edit",
+      path: "crates/ledger/tests/dln_order_id.rs",
+      oldText: "derive_order_id_from_create_calldata(calldata)",
+      newText: "decode_create_salted_order_return(simulated_return)",
+    },
+  })
+
+  assert.match(
+    prompt,
+    /pinned authoritative external contract source.*mutates the order before computing and returning its canonical ID/is,
+  )
+  assert.match(
+    prompt,
+    /raw creation calldata.*cannot prove the returned post-mutation order ID/is,
+  )
+  assert.match(
+    prompt,
+    /allow the exact additive red regression.*source-chain `eth_call` bytes32 return.*before broadcast/is,
+  )
+  assert.match(
+    prompt,
+    /matching implementation and SPEC correction.*remove the contradicted raw-calldata derivation/is,
+  )
+  assert.match(
+    prompt,
+    /does not authorize.*broadcast.*unverified RPC.*fallback.*unrelated ABI.*publication/is,
+  )
+})
+
 test("explicit owner discard decision permits only the exact uncommitted GitButler branch", () => {
   const prompt = buildClassifierPrompt({
     boundary: "action",
