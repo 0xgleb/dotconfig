@@ -4,6 +4,7 @@ import test from "node:test"
 import {
   boundedExecutionEvidence,
   boundedRelevantExecutionEvidence,
+  branchExecutionEvidence,
   currentInstructionReadDisprovesMissingReadBlock,
   selectRelevantExecutionEvidence,
   toolInputDigest,
@@ -547,8 +548,381 @@ test("same-workspace successful state snapshots survive a prose-only workflow su
   )
   assert.match(
     evidenceCollector,
-    /toolResultExecutionEvidence\(\{[\s\S]*?scope: ctx\.cwd,[\s\S]*?\}\)/,
+    /branchExecutionEvidence\(\{[\s\S]*?scope: ctx\.cwd,[\s\S]*?\}\)/,
   )
+})
+
+test("same-workspace state snapshots survive direct release actions", () => {
+  const scope = "/workspace/yielduck"
+  const gitStatus = toolResultExecutionEvidence({
+    toolName: "bash",
+    text: "",
+    isError: false,
+    input: { command: "git status --short" },
+    scope,
+    subject: { toolName: "bash", cwd: scope },
+  })
+  const registryVersion = toolResultExecutionEvidence({
+    toolName: "agent_registry",
+    text: "classified-workflows@2026.09.04.11",
+    isError: false,
+    input: { action: "list", project: scope },
+    scope,
+    subject: { toolName: "bash", cwd: scope },
+  })
+  const churn = Array.from(
+    { length: 12 },
+    (_, index) => `read result status=success: unrelated source ${index}`,
+  )
+
+  for (const subject of [
+    {
+      toolName: "agent_registry",
+      cwd: scope,
+      input: {
+        action: "publish_request",
+        requestId: "85c18141",
+        evidenceRef: "push:d8a01f218a5de6e093fee5fd9ab955ea23baa741",
+      },
+    },
+    {
+      toolName: "bash",
+      cwd: scope,
+      input: { command: "cargo build --release" },
+    },
+  ]) {
+    const selected = selectRelevantExecutionEvidence(
+      [gitStatus, registryVersion, ...churn],
+      subject,
+      3,
+      1,
+    )
+    assert.ok(selected.includes(gitStatus))
+    assert.ok(selected.includes(registryVersion))
+  }
+})
+
+test("direct release evidence marks only bounded current-state commands", () => {
+  const scope = "/workspace/yielduck"
+  const evidence = (
+    toolName: string,
+    input: Readonly<Record<string, unknown>>,
+    text: string,
+  ): string =>
+    toolResultExecutionEvidence({
+      toolName,
+      text,
+      isError: false,
+      input,
+      scope,
+      subject: { toolName: "bash", cwd: scope },
+    })
+
+  assert.match(
+    evidence("bash", { command: "git branch --show-current" }, "release"),
+    / snapshot=git-current-branch\b/,
+  )
+  assert.match(
+    evidence("bash", { command: "git rev-parse HEAD" }, "d8a01f21"),
+    / snapshot=git-head\b/,
+  )
+  assert.match(
+    evidence("bash", { command: "git log -2 --oneline" }, "commits"),
+    / snapshot=git-history\b/,
+  )
+  assert.match(
+    evidence(
+      "bash",
+      { command: "git push -u origin fix/raindex-retirement-starvation" },
+      "pushed",
+    ),
+    / snapshot=git-push anchor=command:[0-9a-f]{16}\b/,
+  )
+  assert.match(
+    evidence(
+      "bash",
+      { command: "git push origin fix/raindex-retirement-starvation" },
+      "pushed",
+    ),
+    / snapshot=git-push anchor=command:[0-9a-f]{16}\b/,
+  )
+  assert.doesNotMatch(
+    evidence("bash", { command: "git push -u origin --force" }, "pushed"),
+    / snapshot=/,
+  )
+  assert.doesNotMatch(
+    evidence(
+      "bash",
+      {
+        command:
+          "git push --force-with-lease origin fix/raindex-retirement-starvation",
+      },
+      "pushed",
+    ),
+    / snapshot=/,
+  )
+  assert.match(
+    evidence(
+      "bash",
+      {
+        command:
+          "git ls-remote origin refs/heads/fix/raindex-retirement-starvation",
+      },
+      "d8a01f218a5de6e093fee5fd9ab955ea23baa741",
+    ),
+    / snapshot=git-remote-sha anchor=command:[0-9a-f]{16}\b/,
+  )
+  assert.match(
+    evidence(
+      "agent_registry",
+      { action: "list", project: scope },
+      "classified-workflows@2026.09.04.11",
+    ),
+    / snapshot=registry-version anchor=project:[0-9a-f]{16}\b.*project/,
+  )
+  assert.doesNotMatch(
+    evidence(
+      "agent_registry",
+      { action: "list", project: "/workspace/other" },
+      "other runtime",
+    ),
+    / snapshot=/,
+  )
+  assert.doesNotMatch(
+    evidence("agent_registry", { action: "list" }, "global runtimes"),
+    / snapshot=/,
+  )
+  assert.match(
+    evidence("bash", { command: "git status --short -- Foo.ts" }, ""),
+    / snapshot=git-path-status anchor=paths:[0-9a-f]{16}\b/,
+  )
+  assert.match(
+    evidence("bash", { command: "git status --short Foo.ts" }, ""),
+    / snapshot=git-path-status anchor=paths:[0-9a-f]{16}\b/,
+  )
+  for (const command of [
+    "git status --short -- ../other",
+    "git status --short ../other",
+    "git status --short /workspace/other",
+  ])
+    assert.doesNotMatch(evidence("bash", { command }, ""), / snapshot=/)
+  assert.notEqual(
+    evidence(
+      "bash",
+      { command: "git push -u origin Fix/Release" },
+      "pushed",
+    ).match(/anchor=(command:[0-9a-f]{16})/)?.[1],
+    evidence(
+      "bash",
+      { command: "git push -u origin fix/release" },
+      "pushed",
+    ).match(/anchor=(command:[0-9a-f]{16})/)?.[1],
+  )
+  assert.doesNotMatch(
+    evidence("bash", { command: "git log -2 --patch" }, "diff body"),
+    / snapshot=/,
+  )
+  assert.doesNotMatch(
+    evidence(
+      "bash",
+      { command: "git log -1 --max-count=99 --oneline" },
+      "too much history",
+    ),
+    / snapshot=/,
+  )
+  assert.doesNotMatch(
+    evidence(
+      "bash",
+      { command: "git rev-parse HEAD && git clean -fd" },
+      "mutated",
+    ),
+    / snapshot=/,
+  )
+  assert.doesNotMatch(
+    evidence(
+      "bash",
+      { command: "cargo check -p yielduck; rm generated.rs" },
+      "mutated",
+    ),
+    / snapshot=/,
+  )
+
+  const releaseSnapshots = [
+    evidence("bash", { command: "git status --short" }, ""),
+    evidence("bash", { command: "git branch --show-current" }, "release"),
+    evidence("bash", { command: "git rev-parse HEAD" }, "d8a01f21"),
+    evidence("bash", { command: "git log -2 --oneline" }, "commits"),
+    evidence(
+      "bash",
+      { command: "git push -u origin fix/raindex-retirement-starvation" },
+      "pushed",
+    ),
+    evidence(
+      "bash",
+      {
+        command:
+          "git ls-remote origin refs/heads/fix/raindex-retirement-starvation",
+      },
+      "d8a01f218a5de6e093fee5fd9ab955ea23baa741",
+    ),
+    evidence(
+      "agent_registry",
+      { action: "list", project: scope },
+      "classified-workflows@2026.09.04.11",
+    ),
+    evidence("bash", { command: "but status" }, "applied release branch"),
+    evidence(
+      "bash",
+      { command: "gh pr view 274 --json state,headRefOid" },
+      '{"number":274,"state":"OPEN"}',
+    ),
+  ]
+  const otherScope = toolResultExecutionEvidence({
+    toolName: "bash",
+    text: "other branch",
+    isError: false,
+    input: { command: "git branch --show-current" },
+    scope: "/workspace/other",
+    subject: { toolName: "bash", cwd: scope },
+  })
+  const selected = selectRelevantExecutionEvidence(
+    [
+      ...releaseSnapshots,
+      otherScope,
+      ...Array.from(
+        { length: 12 },
+        (_, index) => `read result status=success: unrelated source ${index}`,
+      ),
+    ],
+    {
+      toolName: "bash",
+      cwd: scope,
+      input: { command: "cargo build --release" },
+    },
+    3,
+    1,
+  )
+  for (const snapshot of releaseSnapshots)
+    assert.ok(selected.includes(snapshot))
+  assert.equal(selected.includes(otherScope), false)
+})
+
+test("branch collection retains direct publication and release state evidence", () => {
+  const scope = "/workspace/yielduck"
+  const calls = [
+    {
+      id: "status",
+      toolName: "bash",
+      input: { command: "git status --short" },
+      text: "",
+    },
+    {
+      id: "branch",
+      toolName: "bash",
+      input: { command: "git branch --show-current" },
+      text: "fix/raindex-retirement-starvation",
+    },
+    {
+      id: "head",
+      toolName: "bash",
+      input: { command: "git rev-parse HEAD" },
+      text: "d8a01f218a5de6e093fee5fd9ab955ea23baa741",
+    },
+    {
+      id: "history",
+      toolName: "bash",
+      input: { command: "git log -2 --oneline" },
+      text: "d8a01f21 release\n6e01a93a behavior",
+    },
+    {
+      id: "push",
+      toolName: "bash",
+      input: {
+        command: "git push -u origin fix/raindex-retirement-starvation",
+      },
+      text: "pushed",
+    },
+    {
+      id: "remote",
+      toolName: "bash",
+      input: {
+        command:
+          "git ls-remote origin refs/heads/fix/raindex-retirement-starvation",
+      },
+      text: "d8a01f218a5de6e093fee5fd9ab955ea23baa741",
+    },
+    {
+      id: "runtime",
+      toolName: "agent_registry",
+      input: { action: "list", project: scope },
+      text: "classified-workflows@2026.09.04.11",
+    },
+    ...Array.from({ length: 12 }, (_, index) => ({
+      id: `read-${index}`,
+      toolName: "read",
+      input: { path: `src/unrelated-${index}.rs` },
+      text: `unrelated source ${index}`,
+    })),
+  ]
+  const branch = calls.flatMap(call => [
+    {
+      type: "message",
+      message: {
+        role: "assistant",
+        content: [
+          {
+            type: "toolCall",
+            id: call.id,
+            name: call.toolName,
+            arguments: call.input,
+          },
+        ],
+      },
+    },
+    {
+      type: "message",
+      message: {
+        role: "toolResult",
+        toolCallId: call.id,
+        toolName: call.toolName,
+        isError: false,
+        content: [{ type: "text", text: call.text }],
+      },
+    },
+  ])
+
+  for (const subject of [
+    {
+      toolName: "agent_registry",
+      cwd: scope,
+      input: {
+        action: "publish_request",
+        requestId: "85c18141",
+        evidenceRef: "push:d8a01f218a5de6e093fee5fd9ab955ea23baa741",
+      },
+    },
+    {
+      toolName: "bash",
+      cwd: scope,
+      input: { command: "cargo build --release" },
+    },
+  ]) {
+    const collected = branchExecutionEvidence({ branch, subject, scope })
+    const selected = selectRelevantExecutionEvidence(collected, subject, 3, 1)
+    for (const kind of [
+      "git-status",
+      "git-current-branch",
+      "git-head",
+      "git-history",
+      "git-push",
+      "git-remote-sha",
+      "registry-version",
+    ])
+      assert.ok(
+        selected.some(item => item.includes(` snapshot=${kind}`)),
+        `missing ${kind} for ${subject.toolName}`,
+      )
+  }
 })
 
 test("Graphite parent evidence survives an unrelated delta-review subject", () => {

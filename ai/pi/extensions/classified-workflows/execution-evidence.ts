@@ -43,7 +43,12 @@ const EVIDENCE_STOP_WORDS = new Set([
   "content",
   "false",
   "input",
+  "inputdigest",
   "result",
+  "scope",
+  "snapshot",
+  "status",
+  "success",
   "toolname",
   "true",
 ])
@@ -212,44 +217,170 @@ export interface ToolResultExecutionEvidenceInput {
 interface StateSnapshotIdentity {
   readonly kind:
     | "git-status"
+    | "git-path-status"
     | "gitbutler-status"
     | "pull-request-view"
     | "registry-completion"
+    | "registry-version"
+    | "git-current-branch"
+    | "git-head"
+    | "git-history"
+    | "git-push"
+    | "git-remote-sha"
   readonly anchor?: string
+}
+
+const hashedSnapshotAnchor = (label: string, value: string): string =>
+  `${label}:${createHash("sha256").update(value).digest("hex").slice(0, 16)}`
+
+const boundedOnelineHistoryCount = (command: string): number | undefined => {
+  const tokens = command.split(/\s+/)
+  if (!/^(?:\^)?git$/i.test(tokens[0] ?? "") || tokens[1] !== "log")
+    return undefined
+  let oneline = false
+  const counts: number[] = []
+  for (let index = 2; index < tokens.length; index += 1) {
+    const token = tokens[index] ?? ""
+    if (token === "--oneline" && !oneline) {
+      oneline = true
+      continue
+    }
+    const shortCount = /^-(\d{1,2})$/.exec(token)?.[1]
+    const equalsCount = /^--max-count=(\d{1,2})$/.exec(token)?.[1]
+    if (shortCount || equalsCount) {
+      counts.push(Number(shortCount ?? equalsCount))
+      continue
+    }
+    if (token === "--max-count" && /^\d{1,2}$/.test(tokens[index + 1] ?? "")) {
+      counts.push(Number(tokens[index + 1]))
+      index += 1
+      continue
+    }
+    return undefined
+  }
+  return oneline && counts.length === 1 && (counts[0] ?? 0) <= 50
+    ? counts[0]
+    : undefined
+}
+
+const safeRelativeStatusPaths = (
+  pathspec: string,
+): readonly string[] | undefined => {
+  const paths = pathspec.split(/\s+/).filter(Boolean)
+  return paths.length > 0 &&
+    paths.every(
+      path =>
+        !path.startsWith("-") &&
+        !path.startsWith("/") &&
+        !path.split("/").includes(".."),
+    )
+    ? paths
+    : undefined
+}
+
+const GIT_STATUS_OPTIONS = new Set([
+  "--short",
+  "-s",
+  "--branch",
+  "-b",
+  "--porcelain",
+  "--porcelain=v1",
+  "--porcelain=v2",
+  "--untracked-files=no",
+  "--untracked-files=normal",
+  "--untracked-files=all",
+  "--ignore-submodules=none",
+  "--ignore-submodules=untracked",
+  "--ignore-submodules=dirty",
+  "--ignore-submodules=all",
+])
+
+const gitStatusPaths = (
+  command: string,
+): readonly string[] | null | undefined => {
+  const tokens = command.split(/\s+/)
+  if (!/^(?:\^)?git$/i.test(tokens[0] ?? "") || tokens[1] !== "status")
+    return undefined
+  const paths: string[] = []
+  let readingPaths = false
+  for (const token of tokens.slice(2)) {
+    if (!readingPaths && token === "--") {
+      readingPaths = true
+      continue
+    }
+    if (!readingPaths && GIT_STATUS_OPTIONS.has(token)) continue
+    if (token.startsWith("-")) return undefined
+    readingPaths = true
+    paths.push(token)
+  }
+  if (paths.length === 0) return null
+  return safeRelativeStatusPaths(paths.join(" "))
 }
 
 const stateSnapshotIdentity = (
   toolName: string,
   input: Readonly<Record<string, unknown>> | undefined,
+  scope: string | undefined,
 ): StateSnapshotIdentity | undefined => {
   const normalizedToolName = toolName.replace(/^functions\./, "")
-  if (
-    normalizedToolName === "agent_registry" &&
-    input?.action === "complete_request" &&
-    typeof input.requestId === "string" &&
-    /^[a-z0-9-]{4,80}$/i.test(input.requestId)
-  )
-    return {
-      kind: "registry-completion",
-      anchor: `request:${input.requestId.toLowerCase()}`,
-    }
+  if (normalizedToolName === "agent_registry") {
+    if (
+      input?.action === "complete_request" &&
+      typeof input.requestId === "string" &&
+      /^[a-z0-9-]{4,80}$/i.test(input.requestId)
+    )
+      return {
+        kind: "registry-completion",
+        anchor: `request:${input.requestId.toLowerCase()}`,
+      }
+    if (
+      input?.action === "list" &&
+      typeof input.project === "string" &&
+      input.project === scope
+    )
+      return {
+        kind: "registry-version",
+        anchor: hashedSnapshotAnchor("project", input.project),
+      }
+    return undefined
+  }
   if (normalizedToolName !== "bash" || typeof input?.command !== "string")
     return undefined
   const command = input.command.trim()
   if (!/^[a-z0-9_./,:#= -]+$/i.test(command)) return undefined
-  if (/^(?:\^)?git\s+status(?:\s+[^;&|`<>\n]+)?$/i.test(command)) {
-    const pathspec = /\s--\s+(.+)$/i.exec(command)?.[1]?.trim()
+  const statusPaths = gitStatusPaths(command)
+  if (statusPaths === null) return { kind: "git-status" }
+  if (statusPaths)
     return {
-      kind: "git-status",
-      ...(pathspec
-        ? {
-            anchor: `paths:${createHash("sha256").update(pathspec).digest("hex").slice(0, 16)}`,
-          }
-        : {}),
+      kind: "git-path-status",
+      anchor: `paths:${createHash("sha256").update(statusPaths.join("\0")).digest("hex").slice(0, 16)}`,
     }
-  }
   if (/^(?:\^)?but\s+status(?:\s+[^;&|`<>\n]+)?$/i.test(command))
     return { kind: "gitbutler-status" }
+  if (/^(?:\^)?git\s+branch\s+--show-current$/i.test(command))
+    return { kind: "git-current-branch" }
+  if (/^(?:\^)?git\s+rev-parse(?:\s+--verify)?\s+HEAD$/i.test(command))
+    return { kind: "git-head" }
+  if (boundedOnelineHistoryCount(command) !== undefined)
+    return { kind: "git-history" }
+  if (
+    /^(?:\^)?git\s+push(?:\s+(?:-u|--set-upstream))?\s+[a-z0-9_][a-z0-9_.-]*\s+[a-z0-9_][a-z0-9_./-]*$/i.test(
+      command,
+    )
+  )
+    return {
+      kind: "git-push",
+      anchor: hashedSnapshotAnchor("command", command),
+    }
+  if (
+    /^(?:\^)?git\s+ls-remote\s+[a-z0-9_.-]+\s+refs\/heads\/[a-z0-9_./-]+$/i.test(
+      command,
+    )
+  )
+    return {
+      kind: "git-remote-sha",
+      anchor: hashedSnapshotAnchor("command", command),
+    }
   const pullRequest = /^(?:\^)?gh\s+pr\s+view\s+#?(\d+)\b([^;&|`<>\n]*)$/i.exec(
     command,
   )
@@ -299,6 +430,7 @@ export const toolResultExecutionEvidence: (
           "limit",
           "offset",
           "path",
+          "project",
           "requestId",
         ]
           .filter(key => inputRecord[key] !== undefined)
@@ -310,13 +442,108 @@ export const toolResultExecutionEvidence: (
     .slice(0, 1_000)
   const inputIdentity = encodedInput !== "{}" ? ` input=${encodedInput}` : ""
   const snapshot =
-    status === "success" ? stateSnapshotIdentity(name, inputRecord) : undefined
+    status === "success"
+      ? stateSnapshotIdentity(name, inputRecord, scope)
+      : undefined
   const scopeIdentity = scope ? ` scope=${evidenceScopeDigest(scope)}` : ""
   const snapshotMarker = snapshot
     ? ` snapshot=${snapshot.kind}${snapshot.anchor ? ` anchor=${snapshot.anchor}` : ""}`
     : ""
   const evidenceText = text.trim() || "(no textual output)"
   return `${name} result status=${status}${digestIdentity}${scopeIdentity}${snapshotMarker}${inputIdentity}: ${boundedRelevantExecutionEvidence(evidenceText, subject, maxCharacters)}`
+}
+
+export const branchExecutionEvidence = ({
+  branch,
+  subject,
+  scope,
+  maxCharacters = 2_400,
+}: {
+  readonly branch: readonly unknown[]
+  readonly subject: unknown
+  readonly scope: string
+  readonly maxCharacters?: number
+}): readonly string[] => {
+  const toolCalls = new Map<
+    string,
+    { readonly input: unknown; readonly digest: string }
+  >()
+  for (const entry of branch) {
+    if (!isRecord(entry) || entry.type !== "message") continue
+    const message = entry.message
+    if (!isRecord(message) || message.role !== "assistant") continue
+    if (!Array.isArray(message.content)) continue
+    for (const part of message.content) {
+      if (
+        !isRecord(part) ||
+        part.type !== "toolCall" ||
+        typeof part.id !== "string" ||
+        typeof part.name !== "string"
+      )
+        continue
+      toolCalls.set(part.id, {
+        input: part.arguments,
+        digest: toolInputDigest(part.name, part.arguments),
+      })
+    }
+  }
+
+  return branch.flatMap(entry => {
+    if (!isRecord(entry) || entry.type !== "message") return []
+    const message = entry.message
+    if (!isRecord(message)) return []
+    if (message.role === "assistant") {
+      const text = Array.isArray(message.content)
+        ? message.content
+            .flatMap(part =>
+              isRecord(part) &&
+              part.type === "text" &&
+              typeof part.text === "string"
+                ? [part.text]
+                : [],
+            )
+            .join("\n")
+        : typeof message.content === "string"
+          ? message.content
+          : ""
+      return text
+        ? [
+            `assistant report (untrusted): ${boundedRelevantExecutionEvidence(text, subject, maxCharacters)}`,
+          ]
+        : []
+    }
+    if (message.role !== "toolResult") return []
+    const text =
+      typeof message.content === "string"
+        ? message.content
+        : Array.isArray(message.content)
+          ? message.content
+              .flatMap(part =>
+                isRecord(part) &&
+                part.type === "text" &&
+                typeof part.text === "string"
+                  ? [part.text]
+                  : [],
+              )
+              .join("\n")
+          : ""
+    const toolCall =
+      typeof message.toolCallId === "string"
+        ? toolCalls.get(message.toolCallId)
+        : undefined
+    return [
+      toolResultExecutionEvidence({
+        toolName: message.toolName,
+        text,
+        isError: message.isError,
+        input: toolCall?.input,
+        inputDigest: toolCall?.digest,
+        subject,
+        scope,
+        maxCharacters,
+      }),
+    ]
+  })
 }
 
 const supersededFailureIndexes = (
@@ -340,7 +567,7 @@ const supersededFailureIndexes = (
 }
 
 const STATE_SNAPSHOT_MARKER =
-  /^(?:functions\.)?\S+ result status=success(?: inputDigest=[0-9a-f]{64})? scope=([0-9a-f]{16}) snapshot=(git-status|gitbutler-status|pull-request-view|registry-completion)(?: anchor=([a-z0-9_./:-]{1,128}))?\b/i
+  /^(?:functions\.)?\S+ result status=success(?: inputDigest=[0-9a-f]{64})? scope=([0-9a-f]{16}) snapshot=(git-status|git-path-status|gitbutler-status|pull-request-view|registry-completion|registry-version|git-current-branch|git-head|git-history|git-push|git-remote-sha)(?: anchor=([a-z0-9_./:-]{1,128}))?\b/i
 
 interface StateSnapshotMarker {
   readonly kind: string
@@ -371,18 +598,16 @@ export const selectRelevantExecutionEvidence = (
   const nonSupersededCandidates = candidates.filter(
     (_, index) => !superseded.has(index),
   )
-  const workflowScope =
-    isRecord(subject) &&
-    subject.toolName === "workflow" &&
-    typeof subject.cwd === "string"
+  const subjectScope =
+    isRecord(subject) && typeof subject.cwd === "string"
       ? evidenceScopeDigest(subject.cwd)
       : undefined
   const supersededSnapshotIndexes = new Set<number>()
-  if (workflowScope) {
+  if (subjectScope) {
     const latestSnapshotIndexes = new Map<string, number>()
     nonSupersededCandidates.forEach((candidate, index) => {
       const marker = stateSnapshotMarker(candidate)
-      if (!marker || marker.scope !== workflowScope) return
+      if (!marker || marker.scope !== subjectScope) return
       const identity = `${marker.kind}:${marker.anchor ?? "scope"}`
       const prior = latestSnapshotIndexes.get(identity)
       if (prior !== undefined) supersededSnapshotIndexes.add(prior)
@@ -393,7 +618,7 @@ export const selectRelevantExecutionEvidence = (
     (candidate, index) => {
       if (supersededSnapshotIndexes.has(index)) return false
       const marker = stateSnapshotMarker(candidate)
-      return !workflowScope || !marker || marker.scope === workflowScope
+      return !subjectScope || !marker || marker.scope === subjectScope
     },
   )
   const recentStart = Math.max(0, currentCandidates.length - recentCount)
@@ -449,34 +674,22 @@ export const selectRelevantExecutionEvidence = (
     .slice(-4)
     .map(({ index }) => index)
   for (const index of instructionReadIndexes) selectedOlderIndexes.add(index)
-  if (workflowScope) {
-    const stateSnapshotIndexes = olderCandidates
-      .map((candidate, index) => ({
-        index,
-        marker: stateSnapshotMarker(candidate),
-      }))
-      .filter(({ marker }) => marker?.scope === workflowScope)
-      .slice(-8)
-      .map(({ index }) => index)
-    for (const index of stateSnapshotIndexes) selectedOlderIndexes.add(index)
+  if (subjectScope) {
+    const latestSnapshotByKind = new Map<string, number>()
+    const scopedSnapshotIndexes: number[] = []
+    olderCandidates.forEach((candidate, index) => {
+      const marker = stateSnapshotMarker(candidate)
+      if (marker?.scope !== subjectScope) return
+      latestSnapshotByKind.set(marker.kind, index)
+      scopedSnapshotIndexes.push(index)
+    })
+    for (const index of latestSnapshotByKind.values())
+      selectedOlderIndexes.add(index)
+    for (const index of scopedSnapshotIndexes.slice(-8))
+      selectedOlderIndexes.add(index)
   }
   const older = olderCandidates.filter((_candidate, index) =>
     selectedOlderIndexes.has(index),
   )
-  const retainedSnapshotIndexes = new Set(
-    older
-      .map((candidate, index) => ({
-        index,
-        marker: stateSnapshotMarker(candidate),
-      }))
-      .filter(({ marker }) => marker !== undefined)
-      .slice(-8)
-      .map(({ index }) => index),
-  )
-  const boundedOlder = older.filter(
-    (candidate, index) =>
-      stateSnapshotMarker(candidate) === undefined ||
-      retainedSnapshotIndexes.has(index),
-  )
-  return [...boundedOlder, ...recent]
+  return [...older, ...recent]
 }

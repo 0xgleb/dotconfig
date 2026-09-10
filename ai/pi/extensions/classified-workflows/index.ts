@@ -75,10 +75,10 @@ import {
 } from "./core.ts"
 import {
   boundedRelevantExecutionEvidence,
+  branchExecutionEvidence,
   currentInstructionReadDisprovesMissingReadBlock,
   selectRelevantExecutionEvidence,
   toolInputDigest,
-  toolResultExecutionEvidence,
 } from "./execution-evidence.ts"
 import {
   boundedToolResultActionContext,
@@ -640,74 +640,11 @@ function recentExecutionEvidence(
 ): string[] {
   const branch = ctx.sessionManager.getBranch()
   const compaction = latestCompactionSummary(branch)
-  const toolCallInputDigests = new Map<string, string>()
-  const toolCallInputs = new Map<string, unknown>()
-  for (const entry of branch) {
-    if (
-      entry.type !== "message" ||
-      !isRecord(entry.message) ||
-      entry.message.role !== "assistant"
-    )
-      continue
-    if (!Array.isArray(entry.message.content)) continue
-    for (const part of entry.message.content) {
-      if (
-        !isRecord(part) ||
-        part.type !== "toolCall" ||
-        typeof part.id !== "string" ||
-        typeof part.name !== "string"
-      )
-        continue
-      toolCallInputDigests.set(
-        part.id,
-        toolInputDigest(part.name, part.arguments),
-      )
-      toolCallInputs.set(part.id, part.arguments)
-    }
-  }
-  const executionEvidence = branch.flatMap(entry => {
-    if (entry.type !== "message" || !isRecord(entry.message)) return []
-    if (entry.message.role === "assistant") {
-      const text = messageText(entry.message)
-      return text
-        ? [
-            `assistant report (untrusted): ${boundedRelevantExecutionEvidence(text, subject, 2_400)}`,
-          ]
-        : []
-    }
-    if (entry.message.role !== "toolResult") return []
-    const text =
-      typeof entry.message.content === "string"
-        ? entry.message.content
-        : Array.isArray(entry.message.content)
-          ? entry.message.content
-              .filter(
-                (part): part is Record<string, unknown> =>
-                  isRecord(part) &&
-                  part.type === "text" &&
-                  typeof part.text === "string",
-              )
-              .map(part => String(part.text))
-              .join("\n")
-          : ""
-    return [
-      toolResultExecutionEvidence({
-        toolName: entry.message.toolName,
-        text,
-        isError: entry.message.isError,
-        input:
-          typeof entry.message.toolCallId === "string"
-            ? toolCallInputs.get(entry.message.toolCallId)
-            : undefined,
-        inputDigest:
-          typeof entry.message.toolCallId === "string"
-            ? toolCallInputDigests.get(entry.message.toolCallId)
-            : undefined,
-        subject,
-        scope: ctx.cwd,
-        maxCharacters: 2_400,
-      }),
-    ]
+  const executionEvidence = branchExecutionEvidence({
+    branch,
+    subject,
+    scope: ctx.cwd,
+    maxCharacters: 2_400,
   })
   return [
     ...(compaction
@@ -1082,7 +1019,7 @@ const WorkflowParameters = Type.Object({
 })
 
 export default function classifiedWorkflows(pi: ExtensionAPI): void {
-  registerRuntimeVersion(pi, "classified-workflows", "2026.09.04.11")
+  registerRuntimeVersion(pi, "classified-workflows", "2026.09.04.12")
   const childTokenLimitResult = Effect.runSync(
     Effect.either(
       workflowChildTokenLimit(process.env[WORKFLOW_CHILD_TOKEN_LIMIT_ENV]),
