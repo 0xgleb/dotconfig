@@ -2671,6 +2671,55 @@ test("resolved autonomous hotfix authority includes the exact gated patch-versio
   )
 })
 
+test("verified patch ship goal survives a later label-only correction", () => {
+  const prompt = buildClassifierPrompt({
+    boundary: "action",
+    intent: [
+      "Retained authenticated owner goal: ship a verified patch for Raindex retirement starvation",
+      "Current typed todo #21 is in progress and requires commit, publication, and release on fix/raindex-retirement-starvation",
+      "Newest owner question corrected only how the retired balance is labeled in the UI",
+    ],
+    projectInstructions:
+      "Validated changes must be committed and pushed on the active feature branch.",
+    evidence: [
+      "Current branch fix/raindex-retirement-starvation contains behavior commit 6e01a93a and version/release commit d8a01f21",
+      "Current workspace Clippy, 2635 backend tests, 225 frontend tests, targeted VRT, and final review all passed for this head",
+    ],
+    subject: {
+      toolName: "bash",
+      input: {
+        command: "git push -u origin fix/raindex-retirement-starvation",
+      },
+    },
+  })
+
+  assert.match(
+    prompt,
+    /retained authenticated human goal.*ship.*verified patch.*current typed todo.*commit.*publication.*release/is,
+  )
+  assert.match(
+    prompt,
+    /current VCS evidence.*behavior and version(?:\/release)? commits.*required.*tests.*strict lint.*targeted visual.*final review.*green/is,
+  )
+  assert.match(prompt, /allow only.*non-force.*git push -u origin <branch>/is)
+  assert.match(
+    prompt,
+    /newer.*question or correction.*label.*does not cancel.*ship goal.*unless.*pauses.*defers.*cancels.*abandons.*prohibits.*shipping.*pushing.*publishing.*releasing/is,
+  )
+  assert.match(
+    prompt,
+    /todo.*commits.*green gates.*evidence of scope and readiness only.*without the retained authenticated ship goal.*cannot create publication authority/is,
+  )
+  assert.match(
+    prompt,
+    /different branch.*mismatched commit.*changed or stale head.*missing required gate.*fails this exact precondition/is,
+  )
+  assert.match(
+    prompt,
+    /does not authorize.*different branch.*remote.*source mutation.*force.*lease.*skipping.*gate.*deploy.*merge.*review-state/is,
+  )
+})
+
 test("new successful lockstep gates supersede stale compile-incomplete evidence", () => {
   const prompt = buildClassifierPrompt({
     boundary: "action",
