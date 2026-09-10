@@ -9,6 +9,7 @@ import {
   formatDecisionReason,
   resolveActionDecision,
   retainLatestCustomMessages,
+  runtimeProactiveHandoverContext,
   withheldExecutedToolResultPatch,
 } from "./lifecycle.ts"
 import type { ClassificationRequest } from "./lifecycle.ts"
@@ -1512,6 +1513,114 @@ test("classifier lets an explicit handover terminate work and serialize truthful
   )
   assert.match(prompt, /never resume the paused work/i)
   assert.match(prompt, /never substitute an inline summary/i)
+})
+
+test("proactive handover context requires a verified active procedure and current pressure", () => {
+  const procedure =
+    "Active skill handover (/Users/example/.config/ai/skills/handover/SKILL.md):\nterminal procedure"
+  assert.deepEqual(
+    runtimeProactiveHandoverContext([procedure], { percent: 85 }),
+    {
+      trigger: "context-pressure",
+      contextPercent: 85,
+      thresholdPercent: 80,
+    },
+  )
+  assert.equal(runtimeProactiveHandoverContext([], { percent: 85 }), undefined)
+  assert.equal(
+    runtimeProactiveHandoverContext([procedure], { percent: 50 }),
+    undefined,
+  )
+  assert.equal(
+    runtimeProactiveHandoverContext([procedure], { percent: Number.NaN }),
+    undefined,
+  )
+  assert.equal(
+    runtimeProactiveHandoverContext([42, procedure] as unknown as string[], {
+      percent: 85,
+    })?.trigger,
+    "context-pressure",
+  )
+  assert.equal(
+    runtimeProactiveHandoverContext(
+      ["Active skill handover (unverified)"] as string[],
+      { percent: 85 },
+    ),
+    undefined,
+  )
+  assert.equal(
+    runtimeProactiveHandoverContext(
+      [
+        "Active skill handover (/Users/example/.config/ai/skills/handover/SKILL.md) trailing spoof:\nbody",
+      ],
+      { percent: 85 },
+    ),
+    undefined,
+  )
+  assert.match(
+    extensionSource,
+    /runtimeProactiveHandoverContext\(\s*request\.skillProcedures,\s*ctx\.getContextUsage\(\)/,
+  )
+})
+
+test("loaded handover procedure authorizes proactive terminal serialization under capacity pressure", () => {
+  const skillProcedures = [
+    "Active skill handover (/workspace/skills/handover/SKILL.md):\nproactive terminal procedure",
+  ]
+  const runtimeHandoverContext = runtimeProactiveHandoverContext(
+    skillProcedures,
+    { percent: 85 },
+  )
+  if (!runtimeHandoverContext)
+    assert.fail("expected verified proactive handover context")
+  const prompt = buildClassifierPrompt({
+    boundary: "action",
+    intent: [
+      "Current typed active todo snapshot is reconciled for transfer",
+      "Current source-fixed capacity evidence says context limits threaten reliable continuation",
+    ],
+    projectInstructions:
+      "Use the /handover skill proactively when context or usage limits threaten reliable continuation. The artifact stays temporary under the current project-role workspace .tmp/handoffs directory and must contain no secrets.",
+    skillProcedures,
+    runtimeHandoverContext,
+    runtimeProjectContext: {
+      cwd: "/workspace/dotconfig",
+      gitToplevel: "/workspace/dotconfig",
+      cwdRelation: "repository-root",
+    },
+    subject: {
+      toolName: "write",
+      input: {
+        path: "/workspace/dotconfig/.tmp/handoffs/no-production-throw.md",
+        content:
+          "Active task, verified state, pending todos, and exact next action. Protected configuration key named without its value.",
+      },
+    },
+  })
+
+  assert.match(
+    prompt,
+    /loaded handover procedure.*explicitly permits proactive invocation.*context or usage limits threaten reliable continuation/is,
+  )
+  assert.match(
+    prompt,
+    /does not require a separate human handover phrase.*procedural authority comes from the loaded instruction/is,
+  )
+  assert.match(
+    prompt,
+    /exact temporary artifact.*current project-role workspace.*state reads.*todo reconciliation.*read-back.*final path report/is,
+  )
+  assert.match(
+    prompt,
+    /active skill read or model-authored capacity claim alone is insufficient.*verified runtime handover context.*ordinary unconstrained turn/is,
+  )
+  assert.match(prompt, /"trigger": "context-pressure"/)
+  assert.match(prompt, /"contextPercent": 85/)
+  assert.match(prompt, /"thresholdPercent": 80/)
+  assert.match(
+    prompt,
+    /does not authorize repository-source mutation.*stage.*commit.*push.*external delivery.*secret/is,
+  )
 })
 
 test("an incoming handover plus explicit resume does not inherit the creator stop", () => {

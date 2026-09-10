@@ -87,6 +87,7 @@ import {
   formatDecisionReason,
   resolveActionDecision,
   retainLatestCustomMessages,
+  runtimeProactiveHandoverContext,
   withheldExecutedToolResultPatch,
   type ClassificationRequest,
 } from "./lifecycle.ts"
@@ -1079,7 +1080,7 @@ const WorkflowParameters = Type.Object({
 })
 
 export default function classifiedWorkflows(pi: ExtensionAPI): void {
-  registerRuntimeVersion(pi, "classified-workflows", "2026.09.04.8")
+  registerRuntimeVersion(pi, "classified-workflows", "2026.09.04.9")
   const childTokenLimitResult = Effect.runSync(
     Effect.either(
       workflowChildTokenLimit(process.env[WORKFLOW_CHILD_TOKEN_LIMIT_ENV]),
@@ -1203,7 +1204,7 @@ export default function classifiedWorkflows(pi: ExtensionAPI): void {
 
   const classifyWithActivity = (
     request: ClassificationRequest,
-    ctx: Pick<ExtensionContext, "cwd">,
+    ctx: Pick<ExtensionContext, "cwd" | "getContextUsage">,
     signal?: AbortSignal,
   ): Promise<Decision> => {
     const subject = isRecord(request.subject)
@@ -1211,6 +1212,10 @@ export default function classifiedWorkflows(pi: ExtensionAPI): void {
           request.subject.toolName ?? request.subject.task ?? "policy boundary",
         ).slice(0, 80)
       : "policy boundary"
+    const runtimeHandoverContext = runtimeProactiveHandoverContext(
+      request.skillProcedures,
+      ctx.getContextUsage(),
+    )
     return classify(
       {
         ...request,
@@ -1218,6 +1223,7 @@ export default function classifiedWorkflows(pi: ExtensionAPI): void {
         runtimeReviewDutyContext: runtimeReviewDutyContext(
           reviewDutySessionName(ctx),
         ),
+        ...(runtimeHandoverContext ? { runtimeHandoverContext } : {}),
       },
       ctx,
       signal,
