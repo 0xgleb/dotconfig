@@ -81,6 +81,7 @@ import {
   toolInputDigest,
 } from "./execution-evidence.ts"
 import {
+  boundedProjectInstructions,
   boundedToolResultActionContext,
   buildClassifierPrompt,
   createClassifiedAgentRunner,
@@ -89,6 +90,7 @@ import {
   resolveActionDecision,
   retainLatestCustomMessages,
   runtimeProactiveHandoverContext,
+  runtimeProjectPolicyContext,
   withheldExecutedToolResultPatch,
   type ClassificationRequest,
 } from "./lifecycle.ts"
@@ -180,8 +182,13 @@ import {
   type ReviewDutyState,
 } from "./review-duty-gate.ts"
 import {
+  gitEnvironmentOverrideBlockReason,
+  hardenedGitPushCommandForSubject,
   repositoryRootForPath,
-  runtimeProjectContext,
+  runtimeClassificationProjectContexts,
+  runtimeClassificationProjectContextsMatch,
+  unsafeRuntimeCommandLocationBlockReason,
+  type RuntimeClassificationProjectContexts,
 } from "./project-context.ts"
 import {
   currentMissingBuildOutputDisprovesDuplicateBlock,
@@ -630,7 +637,7 @@ function goalTranscript(ctx: ExtensionContext): string[] {
 }
 
 function projectInstructions(ctx: ExtensionContext): string {
-  return ctx.getSystemPrompt().slice(0, 64_000)
+  return boundedProjectInstructions(ctx.getSystemPrompt())
 }
 
 function recentExecutionEvidence(
@@ -1018,7 +1025,7 @@ const WorkflowParameters = Type.Object({
 })
 
 export default function classifiedWorkflows(pi: ExtensionAPI): void {
-  registerRuntimeVersion(pi, "classified-workflows", "2026.09.04.15")
+  registerRuntimeVersion(pi, "classified-workflows", "2026.09.04.30")
   const childTokenLimitResult = Effect.runSync(
     Effect.either(
       workflowChildTokenLimit(process.env[WORKFLOW_CHILD_TOKEN_LIMIT_ENV]),
@@ -1072,6 +1079,7 @@ export default function classifiedWorkflows(pi: ExtensionAPI): void {
   let continuationPaused = false
   let manualReloadPending = false
   let managedReloadPreemptPending = false
+  let workflowLifecycleActive = true
   let capabilityCircuit: CapabilityCircuitState = emptyCapabilityCircuit
   let skipNextCapabilityOutcome = false
   let reviewDutyState: ReviewDutyState = emptyReviewDutyState
@@ -1142,8 +1150,12 @@ export default function classifiedWorkflows(pi: ExtensionAPI): void {
 
   const classifyWithActivity = (
     request: ClassificationRequest,
-    ctx: Pick<ExtensionContext, "cwd" | "getContextUsage">,
+    ctx: Pick<ExtensionContext, "cwd" | "getContextUsage" | "getSystemPrompt">,
     signal?: AbortSignal,
+    projectContexts: RuntimeClassificationProjectContexts = runtimeClassificationProjectContexts(
+      ctx.cwd,
+      request.subject,
+    ),
   ): Promise<Decision> => {
     const subject = isRecord(request.subject)
       ? String(
@@ -1154,10 +1166,17 @@ export default function classifiedWorkflows(pi: ExtensionAPI): void {
       request.skillProcedures,
       ctx.getContextUsage(),
     )
+    const runtimePolicyContext = runtimeProjectPolicyContext(
+      ctx.getSystemPrompt(),
+      projectContexts,
+    )
     return classify(
       {
         ...request,
-        runtimeProjectContext: runtimeProjectContext(ctx.cwd),
+        ...projectContexts,
+        ...(runtimePolicyContext
+          ? { runtimeProjectPolicyContext: runtimePolicyContext }
+          : {}),
         runtimeReviewDutyContext: runtimeReviewDutyContext(
           reviewDutySessionName(ctx),
         ),
@@ -1231,6 +1250,7 @@ export default function classifiedWorkflows(pi: ExtensionAPI): void {
     workflowHistoryText(workflowUiItems())
 
   const renderWorkflowPanel = (ctx = latestCtx): void => {
+    if (!workflowLifecycleActive) return
     latestCtx = ctx
     if (!ctx?.hasUI) return
     const lines = activeWorkflowLines(workflowUiItems())
@@ -1248,6 +1268,7 @@ export default function classifiedWorkflows(pi: ExtensionAPI): void {
   }
 
   const showWorkflowMessage = (content: string, details?: unknown) => {
+    if (!workflowLifecycleActive) return
     pi.sendMessage({
       customType: WORKFLOW_MESSAGE,
       content,
@@ -1518,6 +1539,7 @@ export default function classifiedWorkflows(pi: ExtensionAPI): void {
       workflow.controller.signal,
     )
       .then(result => {
+        if (!workflowLifecycleActive) return
         workflow.status = "completed"
         workflow.finishedAt = Date.now()
         workflow.result = result
@@ -1544,6 +1566,7 @@ export default function classifiedWorkflows(pi: ExtensionAPI): void {
         })
       })
       .catch(error => {
+        if (!workflowLifecycleActive) return
         const status = workflow.controller.signal.aborted
           ? ("cancelled" as const)
           : ("failed" as const)
@@ -1569,6 +1592,14 @@ export default function classifiedWorkflows(pi: ExtensionAPI): void {
         )
       })
       .finally(() => renderWorkflowPanel())
+      .catch(error => {
+        console.error(
+          "Workflow completion callback failed:",
+          sanitizeProcessDiagnostic(
+            unknownErrorMessage(error, "unknown callback failure"),
+          ),
+        )
+      })
 
     return workflow
   }
@@ -1600,13 +1631,19 @@ export default function classifiedWorkflows(pi: ExtensionAPI): void {
     taskContinuationTimer = setTimeout(() => {
       taskContinuationTimer = undefined
       if (
+        !workflowLifecycleActive ||
         continuationPaused ||
         capabilityCircuit.open ||
-        manualReloadPending ||
+        manualReloadPending
+      ) {
+        return
+      }
+      if (
         !ctx.isIdle() ||
         ctx.ui.getEditorText().trim().length > 0 ||
         ctx.hasPendingMessages()
       ) {
+        scheduleTaskContinuation(ctx)
         return
       }
       const currentWork = todoWorkSnapshot(ctx.sessionManager.getBranch())
@@ -2417,6 +2454,16 @@ export default function classifiedWorkflows(pi: ExtensionAPI): void {
   })
 
   pi.on("session_shutdown", (_event, ctx) => {
+    workflowLifecycleActive = false
+    latestCtx = undefined
+    for (const workflow of backgroundWorkflows.values()) {
+      if (workflow.status === "running")
+        workflow.controller.abort(
+          new Error(MANAGED_RELOAD_WORKFLOW_CANCELLATION),
+        )
+    }
+    for (const controller of activeForegroundWorkflowControllers)
+      controller.abort(new Error(MANAGED_RELOAD_WORKFLOW_CANCELLATION))
     clearLoopTimer()
     clearTaskContinuationTimer()
     clearManualReloadPending()
@@ -2622,6 +2669,34 @@ export default function classifiedWorkflows(pi: ExtensionAPI): void {
         ? { verifiedResourcePreflight: resourcePreflight }
         : {}),
     }
+    const commandLocationBlock = unsafeRuntimeCommandLocationBlockReason(
+      ctx.cwd,
+      subject,
+    )
+    if (commandLocationBlock) {
+      reportHeadlessClassifierBlock(ctx, "action", commandLocationBlock)
+      return resolveActionDecision({
+        verdict: "block",
+        source: "deterministic",
+        reason: commandLocationBlock,
+      })
+    }
+    const actionProjectContexts = runtimeClassificationProjectContexts(
+      ctx.cwd,
+      subject,
+    )
+    const gitEnvironmentBlock = gitEnvironmentOverrideBlockReason(
+      actionProjectContexts,
+      subject,
+    )
+    if (gitEnvironmentBlock) {
+      reportHeadlessClassifierBlock(ctx, "action", gitEnvironmentBlock)
+      return resolveActionDecision({
+        verdict: "block",
+        source: "deterministic",
+        reason: gitEnvironmentBlock,
+      })
+    }
     const decision = await classifyWithActivity(
       {
         boundary: "action",
@@ -2652,7 +2727,27 @@ export default function classifiedWorkflows(pi: ExtensionAPI): void {
       },
       ctx,
       ctx.signal,
+      actionProjectContexts,
     )
+    const currentActionProjectContexts = runtimeClassificationProjectContexts(
+      ctx.cwd,
+      subject,
+    )
+    if (
+      !runtimeClassificationProjectContextsMatch(
+        actionProjectContexts,
+        currentActionProjectContexts,
+      )
+    ) {
+      const runtimeChangeBlock: Decision = {
+        verdict: "block",
+        source: "deterministic",
+        reason:
+          "Runtime project, command, target, Git snapshot, or canonical path context changed during classification; inspect the current action boundary and retry only from fresh evidence.",
+      }
+      reportHeadlessClassifierBlock(ctx, "action", runtimeChangeBlock.reason)
+      return resolveActionDecision(runtimeChangeBlock)
+    }
     if (
       restoredCapabilityDisprovesCommunicationOnlyBlock({
         reason: decision.reason,
@@ -2808,6 +2903,26 @@ export default function classifiedWorkflows(pi: ExtensionAPI): void {
         return
       reportHeadlessClassifierBlock(ctx, "action", decision.reason)
       return resolveActionDecision(decision)
+    }
+    if (event.toolName === "bash") {
+      const hardenedPush = hardenedGitPushCommandForSubject(
+        ctx.cwd,
+        subject,
+        actionProjectContexts.runtimeCommandProjectContext?.project
+          .gitPushRemoteSnapshotSha256,
+      )
+      if (hardenedPush && "reason" in hardenedPush) {
+        reportHeadlessClassifierBlock(ctx, "action", hardenedPush.reason)
+        return resolveActionDecision({
+          verdict: "block",
+          source: "deterministic",
+          reason: hardenedPush.reason,
+        })
+      }
+      if (hardenedPush && "command" in hardenedPush) {
+        event.input.command = hardenedPush.command
+        deterministicResultAllowance.record(event.toolCallId)
+      }
     }
     persistReviewWorkflowStart()
   })

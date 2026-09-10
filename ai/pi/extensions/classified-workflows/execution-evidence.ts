@@ -1,5 +1,10 @@
 import { createHash } from "node:crypto"
 import { sanitizeProcessDiagnostic } from "./protocol.ts"
+import {
+  runtimeCommandLocationForSubject,
+  unsafeRuntimeCommandLocationBlockReason,
+  type RuntimeCommandLocation,
+} from "./project-context.ts"
 
 const FIELD_PATTERN =
   /"(id|login|isResolved|databaseId|number|url)"\s*:\s*("(?:[^"\\]|\\.)*"|true|false|null|-?\d+)/gi
@@ -659,6 +664,9 @@ interface StateSnapshotIdentity {
   readonly kind:
     | "git-status"
     | "git-path-status"
+    | "git-index-paths"
+    | "git-index-blobs"
+    | "git-object-hashes"
     | "gitbutler-status"
     | "pull-request-view"
     | "registry-completion"
@@ -713,6 +721,7 @@ const safeRelativeStatusPaths = (
       path =>
         !path.startsWith("-") &&
         !path.startsWith("/") &&
+        !/^[a-z]:/i.test(path) &&
         !path.split("/").includes(".."),
     )
     ? paths
@@ -785,7 +794,11 @@ const stateSnapshotIdentity = (
       }
     return undefined
   }
-  if (normalizedToolName !== "bash" || typeof input?.command !== "string")
+  if (
+    normalizedToolName !== "bash" ||
+    typeof input?.command !== "string" ||
+    !scope
+  )
     return undefined
   const command = input.command.trim()
   if (!/^[a-z0-9_./,:#= -]+$/i.test(command)) return undefined
@@ -795,6 +808,20 @@ const stateSnapshotIdentity = (
     return {
       kind: "git-path-status",
       anchor: `paths:${createHash("sha256").update(statusPaths.join("\0")).digest("hex").slice(0, 16)}`,
+    }
+  if (/^git\s+diff\s+--(?:cached|staged)\s+--name-only$/i.test(command))
+    return { kind: "git-index-paths" }
+  if (
+    /^git\s+diff\s+--(?:cached|staged)\s+--raw\s+--abbrev=(?:40|64)$/i.test(
+      command,
+    )
+  )
+    return { kind: "git-index-blobs" }
+  const hashPaths = /^git\s+hash-object\s+(.+)$/i.exec(command)?.[1]
+  if (hashPaths && safeRelativeStatusPaths(hashPaths))
+    return {
+      kind: "git-object-hashes",
+      anchor: hashedSnapshotAnchor("paths", hashPaths),
     }
   if (/^(?:\^)?but\s+status(?:\s+[^;&|`<>\n]+)?$/i.test(command))
     return { kind: "gitbutler-status" }
@@ -837,16 +864,24 @@ const evidenceScopeDigest = (scope: string): string =>
 /** Preserve execution status separately from untrusted result wording. */
 export const toolResultExecutionEvidence: (
   input: ToolResultExecutionEvidenceInput,
-) => string = ({
-  toolName,
-  text,
-  isError,
-  input,
-  inputDigest,
-  subject,
-  scope,
-  maxCharacters = 2_400,
-}) => {
+) => string = input => renderToolResultExecutionEvidence(input)
+
+const renderToolResultExecutionEvidence: (
+  input: ToolResultExecutionEvidenceInput,
+  commandLocation?: RuntimeCommandLocation,
+) => string = (
+  {
+    toolName,
+    text,
+    isError,
+    input,
+    inputDigest,
+    subject,
+    scope,
+    maxCharacters = 2_400,
+  },
+  commandLocation,
+) => {
   const name =
     sanitizeProcessDiagnostic(String(toolName ?? "tool"))
       .replace(/\s+/g, " ")
@@ -891,8 +926,12 @@ export const toolResultExecutionEvidence: (
   const snapshotMarker = snapshot
     ? ` snapshot=${snapshot.kind}${snapshot.anchor ? ` anchor=${snapshot.anchor}` : ""}`
     : ""
+  const commandScopeMarker =
+    commandLocation && scope === commandLocation.commandCwd
+      ? " commandScope=verified"
+      : ""
   const evidenceText = text.trim() || "(no textual output)"
-  return `${name} result status=${status}${digestIdentity}${scopeIdentity}${snapshotMarker}${verification}${inputIdentity}: ${boundedRelevantExecutionEvidence(evidenceText, subject, maxCharacters)}`
+  return `${name} result status=${status}${digestIdentity}${scopeIdentity}${snapshotMarker}${commandScopeMarker}${verification}${inputIdentity}: ${boundedRelevantExecutionEvidence(evidenceText, subject, maxCharacters)}`
 }
 
 export const branchExecutionEvidence = ({
@@ -973,17 +1012,35 @@ export const branchExecutionEvidence = ({
       typeof message.toolCallId === "string"
         ? toolCalls.get(message.toolCallId)
         : undefined
+    const input = isRecord(toolCall?.input) ? toolCall.input : undefined
+    const commandSubject = {
+      toolName: message.toolName,
+      input,
+    }
+    if (unsafeRuntimeCommandLocationBlockReason(scope, commandSubject))
+      return []
+    const commandLocation = runtimeCommandLocationForSubject(
+      scope,
+      commandSubject,
+    )
+    const snapshotInput =
+      input && commandLocation
+        ? { ...input, command: commandLocation.command }
+        : input
     return [
-      toolResultExecutionEvidence({
-        toolName: message.toolName,
-        text,
-        isError: message.isError,
-        input: toolCall?.input,
-        inputDigest: toolCall?.digest,
-        subject,
-        scope,
-        maxCharacters,
-      }),
+      renderToolResultExecutionEvidence(
+        {
+          toolName: message.toolName,
+          text,
+          isError: message.isError,
+          input: snapshotInput,
+          ...(toolCall?.digest ? { inputDigest: toolCall.digest } : {}),
+          subject,
+          scope: commandLocation?.commandCwd ?? scope,
+          maxCharacters,
+        },
+        commandLocation,
+      ),
     ]
   })
 }
@@ -1039,7 +1096,7 @@ const STRUCTURED_RESULT_EVIDENCE =
   /^(?:functions\.)?\S+ result status=(?:success|error|unknown)\b/i
 
 const STATE_SNAPSHOT_MARKER =
-  /^(?:functions\.)?\S+ result status=success(?: inputDigest=[0-9a-f]{64})? scope=([0-9a-f]{16}) snapshot=(git-status|git-path-status|gitbutler-status|pull-request-view|registry-completion|registry-version|git-current-branch|git-head|git-history|git-push|git-remote-sha)(?: anchor=([a-z0-9_./:-]{1,128}))?\b/i
+  /^(?:functions\.)?\S+ result status=success(?: inputDigest=[0-9a-f]{64})? scope=([0-9a-f]{16}) snapshot=(git-status|git-path-status|git-index-paths|git-index-blobs|git-object-hashes|gitbutler-status|pull-request-view|registry-completion|registry-version|git-current-branch|git-head|git-history|git-push|git-remote-sha)(?: anchor=([a-z0-9_./:-]{1,128}))?\b/i
 
 interface StateSnapshotMarker {
   readonly kind: string
@@ -1070,9 +1127,52 @@ export const selectRelevantExecutionEvidence = (
   const nonSupersededCandidates = candidates.filter(
     (_, index) => !superseded.has(index),
   )
+  const subjectRecord = isRecord(subject) ? subject : undefined
+  const subjectCwd =
+    typeof subjectRecord?.cwd === "string" ? subjectRecord.cwd : undefined
+  const originalSubjectInput = isRecord(subjectRecord?.input)
+    ? subjectRecord.input
+    : undefined
+  const normalizedToolName =
+    typeof subjectRecord?.toolName === "string"
+      ? subjectRecord.toolName.replace(/^functions\./, "")
+      : undefined
+  const subjectCommand =
+    typeof originalSubjectInput?.command === "string"
+      ? originalSubjectInput.command
+      : typeof subjectRecord?.command === "string"
+        ? subjectRecord.command
+        : undefined
+  const isBashSubject =
+    normalizedToolName === "bash" ||
+    (normalizedToolName === undefined && subjectCommand !== undefined)
+  const normalizedSubject =
+    subjectRecord && isBashSubject && subjectCommand !== undefined
+      ? {
+          ...subjectRecord,
+          toolName: "bash",
+          input: { ...originalSubjectInput, command: subjectCommand },
+        }
+      : subject
+  const subjectHasGitCommand =
+    isBashSubject &&
+    typeof subjectCommand === "string" &&
+    /(?:^|[\s;&|($`])\^?(?:git|(?:[^\s;&|$()]+\/)+git)(?=[\s;&|$()]|$)/i.test(
+      subjectCommand.replace(/["'\\]/g, ""),
+    )
+  const subjectHasUnsafeGitLocation =
+    (subjectHasGitCommand && !subjectCwd) ||
+    Boolean(
+      subjectCwd &&
+      unsafeRuntimeCommandLocationBlockReason(subjectCwd, normalizedSubject),
+    )
+  const subjectCommandLocation =
+    subjectCwd && !subjectHasUnsafeGitLocation
+      ? runtimeCommandLocationForSubject(subjectCwd, normalizedSubject)
+      : undefined
   const subjectScope =
-    isRecord(subject) && typeof subject.cwd === "string"
-      ? evidenceScopeDigest(subject.cwd)
+    subjectCwd && !subjectHasUnsafeGitLocation
+      ? evidenceScopeDigest(subjectCommandLocation?.commandCwd ?? subjectCwd)
       : undefined
   const supersededSnapshotIndexes = new Set<number>()
   if (subjectScope) {
@@ -1090,6 +1190,25 @@ export const selectRelevantExecutionEvidence = (
     (candidate, index) => {
       if (supersededSnapshotIndexes.has(index)) return false
       const marker = stateSnapshotMarker(candidate)
+      const hasVcsCommandResult =
+        /^(?:functions\.)?bash result\b.*\b(?:git|gt|but)\b/i.test(candidate)
+      const verifiedCommandScope =
+        /^(?:functions\.)?bash result status=(?:success|error|unknown)(?: inputDigest=[0-9a-f]{64})? scope=([0-9a-f]{16})(?: snapshot=[a-z-]+(?: anchor=[a-z0-9_./:-]{1,128})?)? commandScope=verified\b/i.exec(
+          candidate,
+        )?.[1]
+      if (
+        subjectHasUnsafeGitLocation &&
+        (marker?.kind.startsWith("git") || hasVcsCommandResult)
+      )
+        return false
+      if (
+        subjectHasGitCommand &&
+        hasVcsCommandResult &&
+        (!subjectScope ||
+          (marker?.scope !== subjectScope &&
+            verifiedCommandScope !== subjectScope))
+      )
+        return false
       return !subjectScope || !marker || marker.scope === subjectScope
     },
   )

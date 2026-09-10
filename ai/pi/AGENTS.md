@@ -39,6 +39,15 @@
   block unrelated Git delivery. Continue safely when no exclusive lease or request
   transition is required. Never infer new authority from an unavailable registry;
   block only the operation that actually requires registry ownership.
+- The authenticated owner has established this standing rule for documented
+  operational duties: when a role's loaded workflow requires a routine version
+  bump, branch publication, release build, or live-marker verification, perform
+  those exact duties after their required gates pass without asking whether to do
+  the job. Authority comes from this owner directive and the loaded workflow, not
+  from registry ownership alone. This does not authorize major version bumps,
+  force operations, merges, secret access, deployment outside the documented role
+  workflow, bypassing gates, another repository or branch, or claiming success
+  before current verification.
 - Treat an explicit user interruption as control flow, not a Pi failure: record it
   as quiet `cancelled:user`, preserve recoverable input, and never render it as a
   red error or escalate it as a first-priority support incident. Every genuine Pi

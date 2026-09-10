@@ -7,6 +7,33 @@ const extensionSource = readFileSync(
   "utf8",
 )
 
+test("shutdown retires workflow callbacks before touching or aborting contexts", () => {
+  const start = extensionSource.indexOf('pi.on("session_shutdown"')
+  assert.ok(start >= 0)
+  const shutdown = extensionSource.slice(
+    start,
+    extensionSource.indexOf('pi.on("agent_start"', start),
+  )
+  assert.match(shutdown, /workflowLifecycleActive = false/)
+  assert.match(shutdown, /latestCtx = undefined/)
+  const render = extensionSource.slice(
+    extensionSource.indexOf("const renderWorkflowPanel"),
+    extensionSource.indexOf("const showWorkflowMessage"),
+  )
+  assert.ok(
+    render.indexOf("if (!workflowLifecycleActive)") <
+      render.indexOf("ctx?.hasUI"),
+  )
+  assert.match(
+    extensionSource,
+    /\.then\(result => \{\s*if \(!workflowLifecycleActive\) return/,
+  )
+  assert.match(
+    extensionSource,
+    /\.catch\(error => \{\s*if \(!workflowLifecycleActive\) return/,
+  )
+})
+
 test("provider-infeasible budgets fail before foreground or background workflow launch", () => {
   const tool = extensionSource.indexOf('name: "workflow"')
   const execute = extensionSource.indexOf("async execute(", tool)
