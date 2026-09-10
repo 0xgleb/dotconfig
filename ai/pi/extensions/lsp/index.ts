@@ -84,6 +84,8 @@ const renderSummary = (details: LspResultDetails | undefined): string => {
   if (!details) return "LSP completed"
   if (details.rejection)
     return `Rename preview unavailable · ${details.rejection.message}`
+  if (details.pending)
+    return "Diagnostics pending · retry after server analysis"
   if (details.preview)
     return `${details.preview.kind === "rename" ? "Rename" : "Code action"} preview · ${details.preview.editCount} edit(s) · ${details.preview.files.length} file(s)`
   if (details.applied)
@@ -102,7 +104,7 @@ const renderSummary = (details: LspResultDetails | undefined): string => {
 }
 
 export default function lspExtension(pi: ExtensionAPI): void {
-  registerRuntimeVersion(pi, "lsp", "2026.09.04.2")
+  registerRuntimeVersion(pi, "lsp", "2026.09.04.3")
   const clients = new LanguageClientPool()
   const core = createLspCore({
     clients,

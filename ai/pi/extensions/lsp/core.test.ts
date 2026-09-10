@@ -355,6 +355,51 @@ test("code actions list commands but only preview edit-only actions", async () =
   assert.equal(preview.details.preview?.files[0]?.path, "source.ts")
 })
 
+test("diagnostics report an unpublished snapshot as typed pending, never clean", async () => {
+  const { cwd, file } = await workspace()
+  const core = createLspCore({
+    clients: provider(
+      fakeClient({
+        diagnostics: () => Effect.succeed(undefined),
+      }),
+    ),
+  })
+
+  const result = await Effect.runPromise(
+    core.execute({ action: "diagnostics", file }, cwd),
+  )
+  assert.deepEqual(result.details.pending, {
+    code: "diagnostics_not_published",
+    retryable: true,
+  })
+  assert.equal(Object.hasOwn(result.details, "diagnostics"), false)
+  assert.match(result.text, /pending/iu)
+  assert.doesNotMatch(result.text, /no diagnostics/iu)
+})
+
+test("malformed diagnostic publications remain typed protocol failures", async () => {
+  const { cwd, file } = await workspace()
+  const core = createLspCore({
+    clients: provider(
+      fakeClient({
+        diagnostics: () =>
+          Effect.fail(
+            new LspClientError({
+              code: "malformed_notification",
+              message: "Language server published malformed diagnostics",
+            }),
+          ),
+      }),
+    ),
+  })
+
+  const result = await Effect.runPromise(
+    Effect.either(core.execute({ action: "diagnostics", file }, cwd)),
+  )
+  assert.ok(Either.isLeft(result))
+  assert.equal(result.left.code, "malformed_server_response")
+})
+
 test("diagnostics reject malformed entries instead of reporting false clean", async () => {
   const { cwd, file } = await workspace()
   const core = createLspCore({

@@ -11,7 +11,7 @@ import { JsonRpcConnection, LspRpcError } from "./json-rpc.ts"
 import type { ServerProfile } from "./servers.ts"
 import { readBoundedRegularText } from "./workspace-edit.ts"
 
-const DIAGNOSTICS_WAIT_MS = 1_500
+const DIAGNOSTICS_WAIT_MS = 5_000
 const MAX_DIAGNOSTICS = 200
 const MAX_OPEN_DOCUMENTS = 64
 const MAX_SYNC_BYTES = 4 * 1024 * 1024
@@ -41,6 +41,7 @@ export class LspClientError extends Data.TaggedError("LspClientError")<{
     | "unsupported_capability"
     | "request_rejected"
     | "request_failed"
+    | "malformed_notification"
     | "closed"
   readonly message: string
   readonly cause?: unknown
@@ -203,6 +204,20 @@ const documentEnd = (text: string): LspPoint => {
   return { line: lines.length - 1, character: logicalLast.length }
 }
 
+type DiagnosticSnapshot =
+  | {
+      readonly status: "published"
+      readonly version: number
+      readonly documentVersion: number
+      readonly value: unknown
+    }
+  | {
+      readonly status: "malformed"
+      readonly version: number
+      readonly documentVersion: number
+      readonly error: LspClientError
+    }
+
 class ManagedLanguageClient implements LanguageClient {
   readonly profile: ServerProfile
   readonly root: string
@@ -211,16 +226,10 @@ class ManagedLanguageClient implements LanguageClient {
   readonly #rpc: JsonRpcConnection
   readonly #syncPolicy: TextDocumentSyncPolicy
   readonly #onClosed: (() => void) | undefined
+  readonly #diagnosticsWaitMs: number
   readonly #openDocuments = new Map<string, OpenDocument>()
   readonly #documentSyncTails = new Map<string, Promise<void>>()
-  readonly #diagnostics = new Map<
-    string,
-    {
-      readonly version: number
-      readonly documentVersion: number
-      readonly value: unknown
-    }
-  >()
+  readonly #diagnostics = new Map<string, DiagnosticSnapshot>()
   readonly #diagnosticWaiters = new Map<string, Set<() => void>>()
   #disposed = false
   #closedNotified = false
@@ -232,6 +241,7 @@ class ManagedLanguageClient implements LanguageClient {
     readonly rpc: JsonRpcConnection
     readonly capabilities: Readonly<Record<string, unknown>>
     readonly onClosed?: () => void
+    readonly diagnosticsWaitMs?: number
   }) {
     this.profile = input.profile
     this.root = input.root
@@ -240,6 +250,7 @@ class ManagedLanguageClient implements LanguageClient {
     this.capabilities = input.capabilities
     this.#syncPolicy = textDocumentSyncPolicy(input.capabilities)
     this.#onClosed = input.onClosed
+    this.#diagnosticsWaitMs = input.diagnosticsWaitMs ?? DIAGNOSTICS_WAIT_MS
   }
 
   static start(input: {
@@ -247,8 +258,10 @@ class ManagedLanguageClient implements LanguageClient {
     readonly root: string
     readonly processFactory?: LspProcessFactory
     readonly onClosed?: () => void
+    readonly diagnosticsWaitMs?: number
   }): Effect.Effect<ManagedLanguageClient, LspClientError> {
     const factory = input.processFactory ?? defaultProcessFactory
+    const diagnosticsWaitMs = input.diagnosticsWaitMs ?? DIAGNOSTICS_WAIT_MS
     let child: ChildProcessWithoutNullStreams | undefined
     let rpc: JsonRpcConnection | undefined
     let client: ManagedLanguageClient | undefined
@@ -261,6 +274,17 @@ class ManagedLanguageClient implements LanguageClient {
         catch: asClientError,
       }).pipe(Effect.ignore)
     return Effect.gen(function* () {
+      if (
+        !Number.isSafeInteger(diagnosticsWaitMs) ||
+        diagnosticsWaitMs < 1 ||
+        diagnosticsWaitMs > DIAGNOSTICS_WAIT_MS
+      )
+        return yield* Effect.fail(
+          clientError(
+            "initialize_failed",
+            `Diagnostics wait must be an integer from 1 to ${DIAGNOSTICS_WAIT_MS}ms`,
+          ),
+        )
       child = yield* Effect.try({
         try: () =>
           factory.spawn(input.profile.command, input.profile.args, {
@@ -347,6 +371,7 @@ class ManagedLanguageClient implements LanguageClient {
         rpc,
         capabilities: initialize.capabilities,
         ...(input.onClosed ? { onClosed: input.onClosed } : {}),
+        diagnosticsWaitMs,
       })
       yield* rpc.notify("initialized", {}).pipe(Effect.mapError(asClientError))
       return client
@@ -408,8 +433,11 @@ class ManagedLanguageClient implements LanguageClient {
       if (
         current?.documentVersion === documentVersion &&
         (current.version > beforeDiagnosticsVersion || documentUnchanged)
-      )
+      ) {
+        if (current.status === "malformed")
+          return yield* Effect.fail(current.error)
         return current.value
+      }
       return yield* this.#waitForDiagnostics(
         uri,
         beforeDiagnosticsVersion,
@@ -510,24 +538,57 @@ class ManagedLanguageClient implements LanguageClient {
   handleNotification(method: string, params: unknown): void {
     if (method !== "textDocument/publishDiagnostics" || !isRecord(params))
       return
-    if (typeof params.uri !== "string" || !Array.isArray(params.diagnostics))
-      return
+    if (typeof params.uri !== "string") return
     const document = this.#openDocuments.get(params.uri)
     if (!document) return
-    if (
-      params.version !== undefined &&
-      (typeof params.version !== "number" ||
-        !Number.isSafeInteger(params.version) ||
-        params.version !== document.version)
-    )
+    if (params.version !== undefined) {
+      if (
+        typeof params.version !== "number" ||
+        !Number.isSafeInteger(params.version)
+      ) {
+        this.#recordDiagnostics(params.uri, document.version, {
+          status: "malformed",
+          error: clientError(
+            "malformed_notification",
+            "Language server published diagnostics with an invalid version",
+          ),
+        })
+        return
+      }
+      if (params.version !== document.version) return
+    }
+    if (!Array.isArray(params.diagnostics)) {
+      this.#recordDiagnostics(params.uri, document.version, {
+        status: "malformed",
+        error: clientError(
+          "malformed_notification",
+          "Language server published a malformed diagnostics collection",
+        ),
+      })
       return
-    const previous = this.#diagnostics.get(params.uri)?.version ?? 0
-    this.#diagnostics.set(params.uri, {
-      version: previous + 1,
-      documentVersion: document.version,
+    }
+    this.#recordDiagnostics(params.uri, document.version, {
+      status: "published",
       value: params.diagnostics.slice(0, MAX_DIAGNOSTICS),
     })
-    const waiters = this.#diagnosticWaiters.get(params.uri)
+  }
+
+  #recordDiagnostics(
+    uri: string,
+    documentVersion: number,
+    publication:
+      | {
+          readonly status: "published"
+          readonly value: unknown
+        }
+      | {
+          readonly status: "malformed"
+          readonly error: LspClientError
+        },
+  ): void {
+    const version = (this.#diagnostics.get(uri)?.version ?? 0) + 1
+    this.#diagnostics.set(uri, { version, documentVersion, ...publication })
+    const waiters = this.#diagnosticWaiters.get(uri)
     if (!waiters) return
     for (const waiter of [...waiters]) waiter()
   }
@@ -567,13 +628,17 @@ class ManagedLanguageClient implements LanguageClient {
           latest.version > beforeDiagnosticsVersion &&
           latest.documentVersion === documentVersion
         )
-          settle(Effect.succeed(latest.value))
+          settle(
+            latest.status === "malformed"
+              ? Effect.fail(latest.error)
+              : Effect.succeed(latest.value),
+          )
       }
       waiters.add(finish)
       this.#diagnosticWaiters.set(uri, waiters)
       timeout = setTimeout(
         () => settle(Effect.succeed(undefined)),
-        DIAGNOSTICS_WAIT_MS,
+        this.#diagnosticsWaitMs,
       )
       finish()
       return Effect.sync(cleanup)
@@ -724,7 +789,10 @@ class ManagedLanguageClient implements LanguageClient {
     const current = this.#diagnostics.get(uri)
     const documentVersion = this.#openDocuments.get(uri)?.version
     const value =
-      current?.documentVersion === documentVersion ? current.value : undefined
+      current?.status === "published" &&
+      current.documentVersion === documentVersion
+        ? current.value
+        : undefined
     return Array.isArray(value) ? value : []
   }
 }
@@ -734,6 +802,7 @@ export const startLanguageClient = (input: {
   readonly root: string
   readonly processFactory?: LspProcessFactory
   readonly onClosed?: () => void
+  readonly diagnosticsWaitMs?: number
 }): Effect.Effect<LanguageClient, LspClientError> =>
   ManagedLanguageClient.start(input)
 

@@ -111,6 +111,10 @@ export interface LspResultDetails {
     readonly message: string
     readonly serverCode?: number
   }
+  readonly pending?: {
+    readonly code: "diagnostics_not_published"
+    readonly retryable: true
+  }
   readonly locations?: readonly LspLocationDetails[]
   readonly diagnostics?: readonly LspDiagnosticDetails[]
   readonly actions?: readonly LspActionDetails[]
@@ -513,6 +517,12 @@ const mapUnknownError = (cause: unknown): LspCoreError => {
         String(cause.message ?? cause.code),
         cause,
       )
+    if (cause.code === "malformed_notification")
+      return coreError(
+        "malformed_server_response",
+        String(cause.message),
+        cause,
+      )
     if (cause.code === "preview_mismatch")
       return coreError("preview_mismatch", String(cause.message), cause)
     if (cause.code === "stale_preview")
@@ -696,6 +706,18 @@ export const createLspCore = (options: LspCoreOptions) => {
         const raw = yield* client
           .diagnostics(selection.file)
           .pipe(Effect.mapError(mapUnknownError))
+        if (raw === undefined)
+          return {
+            text: "Diagnostics pending · the language server is still analyzing this document; retry after it publishes a snapshot",
+            details: {
+              action: input.action,
+              server,
+              pending: {
+                code: "diagnostics_not_published" as const,
+                retryable: true as const,
+              },
+            },
+          }
         const decoded = yield* decodeDiagnostics(raw, relativeFile)
         const text =
           decoded.diagnostics.length === 0

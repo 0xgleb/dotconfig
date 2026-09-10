@@ -367,6 +367,149 @@ test("returns only bounded published diagnostics after didOpen", async () => {
   await client.dispose()
 })
 
+test("initial diagnostics wait through ordinary project analysis latency", async () => {
+  const { root, file } = await workspace()
+  const expected = [
+    {
+      range: {
+        start: { line: 0, character: 0 },
+        end: { line: 0, character: 5 },
+      },
+      message: "delayed diagnostic",
+    },
+  ]
+  const fake = fakeProcessFactory((message, send) => {
+    if (message.method === "initialize")
+      send({
+        jsonrpc: "2.0",
+        id: message.id,
+        result: {
+          capabilities: { textDocumentSync: 1, definitionProvider: true },
+        },
+      })
+    if (message.method === "textDocument/didOpen") {
+      const params = message.params as { textDocument: { uri: string } }
+      setTimeout(
+        () =>
+          send({
+            jsonrpc: "2.0",
+            method: "textDocument/publishDiagnostics",
+            params: {
+              uri: params.textDocument.uri,
+              diagnostics: expected,
+            },
+          }),
+        1_750,
+      )
+    }
+    if (message.method === "shutdown")
+      send({ jsonrpc: "2.0", id: message.id, result: null })
+  })
+  const client = await Effect.runPromise(
+    startLanguageClient({
+      profile: typescript,
+      root,
+      processFactory: fake.factory,
+    }),
+  )
+
+  const result = await Effect.runPromise(client.diagnostics(file))
+  await client.dispose()
+  assert.deepEqual(result, expected)
+})
+
+test("malformed diagnostics publications fail instead of appearing pending", async () => {
+  const { root, file } = await workspace()
+  const fake = fakeProcessFactory((message, send) => {
+    if (message.method === "initialize")
+      send({
+        jsonrpc: "2.0",
+        id: message.id,
+        result: {
+          capabilities: { textDocumentSync: 1, definitionProvider: true },
+        },
+      })
+    if (message.method === "textDocument/didOpen") {
+      const params = message.params as { textDocument: { uri: string } }
+      send({
+        jsonrpc: "2.0",
+        method: "textDocument/publishDiagnostics",
+        params: { uri: params.textDocument.uri, diagnostics: {} },
+      })
+    }
+    if (message.method === "shutdown")
+      send({ jsonrpc: "2.0", id: message.id, result: null })
+  })
+  const client = await Effect.runPromise(
+    startLanguageClient({
+      profile: typescript,
+      root,
+      processFactory: fake.factory,
+      diagnosticsWaitMs: 20,
+    }),
+  )
+
+  const result = await Effect.runPromise(
+    Effect.either(client.diagnostics(file)),
+  )
+  await client.dispose()
+  assert.ok(Either.isLeft(result))
+  assert.equal(result.left.code, "malformed_notification")
+})
+
+test("late diagnostics remain cached for a retry after pending", async () => {
+  const { root, file } = await workspace()
+  const expected = [
+    {
+      range: {
+        start: { line: 0, character: 0 },
+        end: { line: 0, character: 5 },
+      },
+      message: "late diagnostic",
+    },
+  ]
+  const fake = fakeProcessFactory((message, send) => {
+    if (message.method === "initialize")
+      send({
+        jsonrpc: "2.0",
+        id: message.id,
+        result: {
+          capabilities: { textDocumentSync: 1, definitionProvider: true },
+        },
+      })
+    if (message.method === "textDocument/didOpen") {
+      const params = message.params as { textDocument: { uri: string } }
+      setTimeout(
+        () =>
+          send({
+            jsonrpc: "2.0",
+            method: "textDocument/publishDiagnostics",
+            params: {
+              uri: params.textDocument.uri,
+              diagnostics: expected,
+            },
+          }),
+        35,
+      )
+    }
+    if (message.method === "shutdown")
+      send({ jsonrpc: "2.0", id: message.id, result: null })
+  })
+  const client = await Effect.runPromise(
+    startLanguageClient({
+      profile: typescript,
+      root,
+      processFactory: fake.factory,
+      diagnosticsWaitMs: 20,
+    }),
+  )
+
+  assert.equal(await Effect.runPromise(client.diagnostics(file)), undefined)
+  await new Promise(resolve => setTimeout(resolve, 30))
+  assert.deepEqual(await Effect.runPromise(client.diagnostics(file)), expected)
+  await client.dispose()
+})
+
 test("unversioned diagnostics after didChange satisfy the next generation", async () => {
   const { root, file } = await workspace()
   const fake = fakeProcessFactory((message, send) => {

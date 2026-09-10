@@ -99,7 +99,7 @@ Dependencies point from Pi/tool glue toward the protocol and validation core. Th
 2. The client pool lazily spawns one stdio process per profile/root.
 3. Initialization advertises text-document synchronization and workspace-edit support, but server-initiated `workspace/applyEdit` is always rejected with a typed response. Mutations only enter through a tool preview.
 4. `didOpen`/`didChange` synchronize current disk text before each request.
-5. Read actions return bounded typed locations or diagnostics.
+5. Read actions return bounded typed locations or diagnostics. Diagnostics wait through a bounded ordinary analysis window; if the server still has not published a snapshot, the tool returns an explicit retryable pending state with no diagnostics field rather than reporting false clean or misclassifying absence as malformed protocol data.
 6. Mutating actions store a prepared preview in the current extension instance. Reload invalidates it.
 7. `apply` requires the exact preview ID, reacquires canonical file queues in sorted order, rechecks every digest and file identity, computes every output before writing, uses no-follow file descriptors, verifies each write, and rolls back the executed prefix if a write fails.
 8. `session_shutdown` aborts pending requests and terminates every owned process. No process starts in the extension factory.
@@ -119,8 +119,8 @@ The first slice is not process-crash-atomic across multiple files. An ordinary w
 - protocol framing: fragmented and combined frames, malformed headers, oversized messages, exit with pending requests;
 - path/range/edit validation: outside-root URI, symlink escape, overlap, out-of-range positions, snippets, resource operations, count/byte caps;
 - mutation: preview required, stale digest rejection, sorted queues, all outputs computed before first write, rollback after an injected write failure;
-- lifecycle: lazy spawn, reuse, shutdown, timeout cancellation, server-initiated edit rejection;
-- behavior: fake server definition/references/diagnostics, rename preview/apply, code-action preview/apply, unsupported capability;
+- lifecycle: lazy spawn, reuse, shutdown, timeout cancellation, delayed initial diagnostics, server-initiated edit rejection;
+- behavior: fake server definition/references/diagnostics, typed pending diagnostics without false-clean claims, rename preview/apply, code-action preview/apply, unsupported capability;
 - TUI: narrow/wide bounded rendering and collapsed/expanded preview.
 
 ### Falsification
