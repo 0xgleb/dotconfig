@@ -67,6 +67,7 @@ import {
   type RuntimeVersionReporter,
 } from "../shared/runtime-version.ts"
 import { externalBacklogProjection, type BacklogState } from "./backlog.ts"
+import { makeBacklogWakeController } from "./backlog-wake.ts"
 import { makeBacklogCoverageTracker } from "./backlog-coverage.ts"
 import {
   BACKLOG_COLLECTION_TIMEOUT_MS,
@@ -250,7 +251,7 @@ const receiptDetails = (
 }
 
 const registryExtension: (pi: ExtensionAPI) => void = pi => {
-  registerRuntimeVersion(pi, "agent-registry", "2026.09.04.4")
+  registerRuntimeVersion(pi, "agent-registry", "2026.09.04.5")
   pi.registerMessageRenderer(MESSAGE_TYPE, (message, options, theme) => {
     const details = receiptDetails(message.details)
     if (!details)
@@ -334,6 +335,7 @@ const registryExtension: (pi: ExtensionAPI) => void = pi => {
   let backlogCollectorAbort: AbortController | undefined
   let compactionInterruptionPending = false
   let pendingAgentTurnIncident: AgentopsIncident | undefined
+  const backlogWake = makeBacklogWakeController(pi)
   const notifiedRequests = new Set<string>()
 
   const restoreNotifiedRequests = (ctx: ExtensionContext) => {
@@ -956,6 +958,7 @@ const registryExtension: (pi: ExtensionAPI) => void = pi => {
         if (expectedEpoch !== activeLifecycleEpoch || ctx !== latestCtx) return
       }
 
+      let notificationSent = false
       snapshot = await run(store.snapshot(now))
       if (expectedEpoch !== activeLifecycleEpoch || ctx !== latestCtx) return
       if (
@@ -967,7 +970,6 @@ const registryExtension: (pi: ExtensionAPI) => void = pi => {
           autoReloadPending: autoReloadPending(),
         })
       ) {
-        let notificationSent = false
         for (const lease of prioritizedActiveReceiptLeases(
           snapshot,
           agent.id,
@@ -1032,6 +1034,26 @@ const registryExtension: (pi: ExtensionAPI) => void = pi => {
       const backlog = await run(store.backlogSnapshot(ctx.cwd))
       if (expectedEpoch !== activeLifecycleEpoch || ctx !== latestCtx) return
       await emitBacklogProjection(backlog, ctx.cwd, now)
+      if (expectedEpoch !== activeLifecycleEpoch || ctx !== latestCtx) return
+      await run(
+        backlogWake.reconcile({
+          state: backlog,
+          snapshot,
+          agentId: agent.id,
+          project: ctx.cwd,
+          now: Date.now(),
+          lifecycle: "active",
+          availability: {
+            notificationsEnabled: notificationsEnabled && !notificationSent,
+            idle: ctx.isIdle(),
+            pendingMessages: ctx.hasPendingMessages(),
+            editorText: ctx.ui.getEditorText(),
+            autoReloadPending: autoReloadPending(),
+          },
+          entries: ctx.sessionManager.getBranch(),
+          toolsAvailable: pi.getActiveTools().length > 0,
+        }),
+      )
       if (expectedEpoch !== activeLifecycleEpoch || ctx !== latestCtx) return
       render(ctx, snapshot)
       const recoveryNotification = registrySyncNotification(

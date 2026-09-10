@@ -1,19 +1,17 @@
-export const CAPABILITY_CIRCUIT_ENTRY =
-  "classified-workflows.capability-circuit"
-
-export interface CapabilityCircuitState {
-  readonly consecutiveBlockers: number
-  readonly open: boolean
-  readonly updatedAt: number
-}
+import {
+  CAPABILITY_CIRCUIT_ENTRY,
+  decodeCapabilityCircuit,
+  emptyCapabilityCircuit,
+  type CapabilityCircuitState,
+} from "../shared/capability-state.ts"
+export {
+  CAPABILITY_CIRCUIT_ENTRY,
+  decodeCapabilityCircuit,
+  emptyCapabilityCircuit,
+  type CapabilityCircuitState,
+} from "../shared/capability-state.ts"
 
 export type CapabilityOutcome = "tool-used" | "capability-blocked" | "other"
-
-export const emptyCapabilityCircuit: CapabilityCircuitState = {
-  consecutiveBlockers: 0,
-  open: false,
-  updatedAt: 0,
-}
 
 const isRecord = (value: unknown): value is Record<string, unknown> =>
   typeof value === "object" && value !== null && !Array.isArray(value)
@@ -69,29 +67,6 @@ export const advanceCapabilityCircuit = (
     }
   }
   return state
-}
-
-const decodeCapabilityCircuit = (
-  value: unknown,
-): CapabilityCircuitState | undefined => {
-  if (
-    !isRecord(value) ||
-    !Number.isSafeInteger(value.consecutiveBlockers) ||
-    Number(value.consecutiveBlockers) < 0 ||
-    Number(value.consecutiveBlockers) > 2 ||
-    typeof value.open !== "boolean" ||
-    !Number.isSafeInteger(value.updatedAt) ||
-    Number(value.updatedAt) < 0
-  ) {
-    return undefined
-  }
-  const consecutiveBlockers = Number(value.consecutiveBlockers)
-  if (value.open !== consecutiveBlockers >= 2) return undefined
-  return {
-    consecutiveBlockers,
-    open: value.open,
-    updatedAt: Number(value.updatedAt),
-  }
 }
 
 export const restoreCapabilityCircuit = (
