@@ -1,13 +1,14 @@
 diff --git a/dist/core/auth-storage.js b/dist/core/auth-storage.js
 --- a/dist/core/auth-storage.js
 +++ b/dist/core/auth-storage.js
-@@ -9,7 +9,8 @@ import { setTimeout as sleep } from "timers/promises";
+@@ -9,8 +9,9 @@ import { setTimeout as sleep } from "timers/promises";
  import { getAgentDir } from "../config.js";
  import { raceWithAbortSignal } from "../utils/abort.js";
  import { getFileRevision, normalizePath } from "../utils/paths.js";
  import { stripBom } from "../utils/text.js";
 +import { currentRequestLifecycle, publishRequestLifecycle, RequestLifecyclePhase, } from "./request-lifecycle.js";
  import { isCommandConfigValue, resolveConfigValue } from "./resolve-config-value.js";
+ // The mode applies only on creation so administrator-managed modes and ACLs remain intact.
  const AUTH_FILE_WRITE_OPTIONS = { encoding: "utf-8", mode: 0o600 };
  let sharedAuthFileReadState;
 @@ -117,6 +118,7 @@ export class FileAuthStorageBackend {
@@ -229,7 +230,7 @@ diff --git a/node_modules/@earendil-works/pi-ai/dist/auth/resolve.js b/node_modu
                      throw new ModelsError("oauth", `OAuth refresh failed for ${providerId}`, { cause: error });
                  }
              }, { signal: refreshSignal });
-@@ -122,11 +128,15 @@ async function resolveApiKey(authContext, apiKey, providerId, credential, signal
+@@ -122,10 +128,14 @@ async function resolveApiKey(authContext, apiKey, providerId, credential, signal
      }
  }
  async function readCredential(credentials, providerId, signal) {
@@ -245,3 +246,16 @@ diff --git a/node_modules/@earendil-works/pi-ai/dist/auth/resolve.js b/node_modu
          throw new ModelsError("auth", `Credential store read failed for ${providerId}`, { cause: error });
      }
  }
+diff --git a/node_modules/@earendil-works/pi-ai/dist/api/transform-messages.js b/node_modules/@earendil-works/pi-ai/dist/api/transform-messages.js
+--- a/node_modules/@earendil-works/pi-ai/dist/api/transform-messages.js
++++ b/node_modules/@earendil-works/pi-ai/dist/api/transform-messages.js
+@@ -170,5 +170,9 @@ export function transformMessages(messages, model, normalizeToolCallId) {
+         }
+         else if (msg.role === "toolResult") {
++            const matchesPendingToolCall = pendingToolCalls.some((toolCall) => toolCall.id === msg.toolCallId);
++            if (!matchesPendingToolCall) {
++                continue;
++            }
+             existingToolResultIds.add(msg.toolCallId);
+             result.push(msg);
+         }

@@ -229,13 +229,14 @@
                      willRetry: false,
                      fromExtension,
                  });
-@@ -1883,7 +1939,8 @@
+@@ -1883,8 +1939,9 @@
              return false;
          }
          finally {
 -            this._autoCompactionAbortController = undefined;
 +            if (this._autoCompactionAbortController === autoCompactionController)
 +                this._autoCompactionAbortController = undefined;
+             this._resolveIdleWaitIfIdle();
          }
      }
      /**

@@ -26,13 +26,8 @@
      if (isImageLine(baseLine))
 --- a/node_modules/@earendil-works/pi-tui/dist/tui-alt-screen.js
 +++ b/node_modules/@earendil-works/pi-tui/dist/tui-alt-screen.js
-@@ -4,7 +4,7 @@
- import { isKeyRelease } from "./keys.js";
- import { getScrollbarGeometry, getScrollViewBox, getScrollViewsAt, renderLayoutFrame, } from "./layout.js";
- import { deleteAllKittyImages, deleteAllKittyPlacements, deleteKittyImage, getCapabilities, getKittyImagePlacement, isImageLine, setCapabilities, } from "./terminal-image.js";
--import { CURSOR_MARKER, compositeTuiLine, TuiBase, VIEWPORT_TUI, } from "./tui.js";
-+import { applyTuiCanvasBackground, CURSOR_MARKER, compositeTuiLine, TuiBase, VIEWPORT_TUI, } from "./tui.js";
- import { extractAnsiCode, getGraphemeCellRange, getOsc8LinkAtColumn, getWordSegmenter, sliceByColumn, stripTerminalSequences, visibleWidth, } from "./utils.js";
+@@ -9,2 +9,3 @@
++import { applyTuiCanvasBackground } from "./tui.js";
  const ENTER_ALT_SCREEN = "\x1b[?1049h";
  const EXIT_ALT_SCREEN = "\x1b[?1049l";
 @@ -852,11 +852,15 @@
