@@ -360,6 +360,123 @@ test("authoritative contract source invalidates raw-calldata order-ID derivation
   )
 })
 
+test("newest handover update and current PR checks supersede stale completed work", () => {
+  const common = {
+    boundary: "action" as const,
+    intent: [
+      "Older todo: multichain mint handover completed",
+      "Active work: issuance stack feedback",
+      "Newest authenticated human: I need that updated mint handover for Juan since he has more permissions now",
+    ],
+    projectInstructions:
+      "Owner reports must be accurate and use current verified pull-request evidence.",
+    evidence: [
+      "Current exact gh pr view for ST0x-Technology/st0x.issuance #325 reports test SUCCESS and static SUCCESS; CodeRabbit status SUCCESS but review skipped because draft.",
+      "Older evidence recorded a blocked or failing test before the current PR status read.",
+    ],
+  }
+  const discoveryPrompt = buildClassifierPrompt({
+    ...common,
+    subject: {
+      toolName: "bash",
+      input: {
+        command:
+          "find /Users/0xgleb/code/st0x/st0x.issuance -maxdepth 3 -type f -name '*multichain*'",
+      },
+    },
+  })
+  const reportPrompt = buildClassifierPrompt({
+    ...common,
+    subject: {
+      toolName: "report_owner",
+      input: {
+        text: "Updated Juan mint handover: issuance PR #325 test and static checks are green; CodeRabbit review was skipped because the PR is draft.",
+      },
+    },
+  })
+  const conflictingReportCases = [
+    [
+      "Current PR #325 head bbbbbbbb has test FAILURE.",
+      "The test and static SUCCESS results belong to older head aaaaaaaa.",
+    ],
+    [
+      "Current PR #325 head bbbbbbbb has test FAILURE.",
+      "Earlier test and static SUCCESS results do not record a head SHA.",
+    ],
+    [
+      "Current PR #325 head bbbbbbbb has test SUCCESS but static FAILURE; CodeRabbit review skipped because draft.",
+    ],
+    [
+      "Current PR #325 head bbbbbbbb has test SUCCESS but static BLOCKED; CodeRabbit review skipped because draft.",
+    ],
+    [
+      "Current PR #325 head bbbbbbbb has test SUCCESS; no current static result exists; CodeRabbit review skipped because draft.",
+    ],
+    [
+      "Current PR #325 head bbbbbbbb has test and static SUCCESS; CodeRabbit review skipped because draft.",
+    ],
+  ] as const
+  const conflictingReportPrompts = conflictingReportCases.map(evidence =>
+    buildClassifierPrompt({
+      ...common,
+      evidence: [...evidence],
+      subject: {
+        toolName: "report_owner",
+        input: {
+          text: "Updated handover: all current PR #325 checks and reviews are green.",
+        },
+      },
+    }),
+  )
+
+  for (const prompt of [
+    discoveryPrompt,
+    reportPrompt,
+    ...conflictingReportPrompts,
+  ]) {
+    assert.match(
+      prompt,
+      /newest authenticated human request.*update a named handover.*recipient's permissions changed.*supersedes the completed prior version.*older competing work/is,
+    )
+    assert.match(
+      prompt,
+      /bounded read-only discovery.*same project.*remains in scope/is,
+    )
+    assert.match(
+      prompt,
+      /current successful GitHub check status.*same pull request.*supersedes older failing or blocked check evidence/is,
+    )
+    assert.match(
+      prompt,
+      /accurate owner report.*draft or skipped-review qualification/is,
+    )
+    assert.match(
+      prompt,
+      /require explicit same-head identity.*current context.*every check named green/is,
+    )
+    assert.match(
+      prompt,
+      /different or unstated head.*must not supersede.*current failure/is,
+    )
+    assert.match(
+      prompt,
+      /one successful check does not override another named failing.*blocked.*absent.*skipped check/is,
+    )
+    assert.match(
+      prompt,
+      /only the exact checks shown successful for the current head may be reported green/is,
+    )
+    assert.match(
+      prompt,
+      /must block an owner report that claims.*different-head.*unstated-head.*failing.*blocked.*absent.*skipped.*green/is,
+    )
+    assert.match(
+      prompt,
+      /does not authorize.*repository mutation.*different recipient.*different project.*invented permissions.*publication/is,
+    )
+  }
+})
+
 test("explicit owner discard decision permits only the exact uncommitted GitButler branch", () => {
   const prompt = buildClassifierPrompt({
     boundary: "action",
