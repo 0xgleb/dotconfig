@@ -9,6 +9,7 @@ import {
   browserActivityLabel,
   collectBoundedResponseBytes,
   createSerialActivityUpdater,
+  createSerialExecutor,
   debugEndpointReadiness,
   discoverOpenedTarget,
   launchServicesRequest,
@@ -102,6 +103,46 @@ test("page activity updates remain ordered across overlapping operations", async
   await Promise.all([idle, active])
   assert.deepEqual(started, [false, true])
   assert.deepEqual(completed, [false, true])
+})
+
+test("overlapping browser opens execute in invocation order", async () => {
+  const started: string[] = []
+  const completed: string[] = []
+  let releaseFirst: (() => void) | undefined
+  const firstGate = new Promise<void>(resolve => {
+    releaseFirst = resolve
+  })
+  const execute = createSerialExecutor(async (name: string) => {
+    started.push(name)
+    if (name === "first") await firstGate
+    completed.push(name)
+    return name
+  })
+
+  const first = execute("first")
+  const second = execute("second")
+  await Promise.resolve()
+  assert.deepEqual(started, ["first"])
+  releaseFirst?.()
+  assert.deepEqual(await Promise.all([first, second]), ["first", "second"])
+  assert.deepEqual(started, ["first", "second"])
+  assert.deepEqual(completed, ["first", "second"])
+})
+
+test("serialized browser opens continue after a rejected operation", async () => {
+  const executed: string[] = []
+  const execute = createSerialExecutor(async (name: string) => {
+    executed.push(name)
+    return name === "first"
+      ? Promise.reject(new Error("first open failed"))
+      : name
+  })
+
+  const first = execute("first")
+  const second = execute("second")
+  await assert.rejects(first, /first open failed/)
+  assert.equal(await second, "second")
+  assert.deepEqual(executed, ["first", "second"])
 })
 
 test("browser actions expose no arbitrary script evaluation", () => {

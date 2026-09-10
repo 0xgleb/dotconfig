@@ -13,6 +13,7 @@ import {
   BrowserControlError,
   collectBoundedResponseBytes,
   createSerialActivityUpdater,
+  createSerialExecutor,
   debugEndpointReadiness,
   discoverOpenedTarget,
   latestBrowserTargetId,
@@ -163,7 +164,7 @@ const listTargetsEffect = (
     Effect.map(rememberTargets),
   )
 
-const openTarget: (
+const openTargetNow: (
   pi: ExtensionAPI,
   input: string,
 ) => Promise<{
@@ -231,6 +232,8 @@ const openTarget: (
   activeTargetId = target?.id
   return { url, ...(target ? { target } : {}) }
 }
+
+const openTarget = createSerialExecutor(openTargetNow)
 
 const activeTarget: () => Promise<DebugTarget> = async () => {
   if (!(await Effect.runPromise(isDebugEndpointReady())))
@@ -592,7 +595,7 @@ const withBrowserActivity: <T>(
 }
 
 const browserControl: (pi: ExtensionAPI) => void = pi => {
-  registerRuntimeVersion(pi, "browser-control", "2026.09.04.3")
+  registerRuntimeVersion(pi, "browser-control", "2026.09.04.4")
   pi.on("session_start", (_event, ctx) => {
     activeTargetId = latestBrowserTargetId(ctx.sessionManager.getBranch())
     knownTargetIds = new Set(activeTargetId ? [activeTargetId] : [])

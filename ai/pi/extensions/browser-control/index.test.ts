@@ -18,6 +18,16 @@ test("startup discovery bounds debug requests and excludes known targets", () =>
   assert.match(source, /knownTargetIds\.add\(target\.id\)/)
 })
 
+test("browser opens are serialized before committing active target state", () => {
+  assert.match(
+    source,
+    /const openTarget = createSerialExecutor\(openTargetNow\)/,
+  )
+  assert.match(source, /const openTargetNow:/)
+  assert.doesNotMatch(source, /await openTargetNow\(/)
+  assert.equal(source.match(/await openTarget\(/g)?.length, 2)
+})
+
 test("status and fetch never wait for page-indicator CDP work", () => {
   assert.match(
     source,

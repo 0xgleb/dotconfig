@@ -77,6 +77,23 @@ export const createSerialActivityUpdater = (
   }
 }
 
+export const createSerialExecutor = <
+  Arguments extends readonly unknown[],
+  Result,
+>(
+  execute: (...args: Arguments) => Promise<Result>,
+): ((...args: Arguments) => Promise<Result>) => {
+  let pending = Promise.resolve()
+  return (...args) => {
+    const next = pending.then(() => execute(...args))
+    pending = next.then(
+      () => undefined,
+      () => undefined,
+    )
+    return next
+  }
+}
+
 declare const localPageUrlBrand: unique symbol
 export type LocalPageUrl = string & { readonly [localPageUrlBrand]: true }
 
