@@ -25,6 +25,7 @@ import { isContinuationPaused } from "../shared/continuation-pause.ts"
 import {
   AGENTOPS_INCIDENT_EVENT,
   agentopsRequestText,
+  agentTurnIncidentAfterRun,
   decodeAgentopsIncident,
   hasOpenAgentopsIncident,
   isExplicitUserCancellation,
@@ -249,7 +250,7 @@ const receiptDetails = (
 }
 
 const registryExtension: (pi: ExtensionAPI) => void = pi => {
-  registerRuntimeVersion(pi, "agent-registry", "2026.09.04.3")
+  registerRuntimeVersion(pi, "agent-registry", "2026.09.04.4")
   pi.registerMessageRenderer(MESSAGE_TYPE, (message, options, theme) => {
     const details = receiptDetails(message.details)
     if (!details)
@@ -332,6 +333,7 @@ const registryExtension: (pi: ExtensionAPI) => void = pi => {
   let registryFailureActive = false
   let backlogCollectorAbort: AbortController | undefined
   let compactionInterruptionPending = false
+  let pendingAgentTurnIncident: AgentopsIncident | undefined
   const notifiedRequests = new Set<string>()
 
   const restoreNotifiedRequests = (ctx: ExtensionContext) => {
@@ -475,11 +477,18 @@ const registryExtension: (pi: ExtensionAPI) => void = pi => {
   const routeAgentopsIncident = async (payload: unknown): Promise<void> => {
     const incident = decodeAgentopsIncident(payload)
     const ctx = latestCtx
-    if (!incident || !ctx || isExplicitUserCancellation(incident.summary))
+    const epoch = activeLifecycleEpoch
+    if (
+      !incident ||
+      !ctx ||
+      epoch === undefined ||
+      isExplicitUserCancellation(incident.summary)
+    )
       return
 
     const now = Date.now()
     const snapshot = await run(store.snapshot(now))
+    if (epoch !== activeLifecycleEpoch || ctx !== latestCtx) return
     if (hasOpenAgentopsIncident(snapshot.requests, incident)) return
 
     await run(
@@ -512,7 +521,7 @@ const registryExtension: (pi: ExtensionAPI) => void = pi => {
   })
 
   pi.on("tool_result", event => {
-    if (!event.isError) return
+    if (activeLifecycleEpoch === undefined || !event.isError) return
     const summary = boundedIncidentSummary(event.content)
     if (
       !summary ||
@@ -529,6 +538,7 @@ const registryExtension: (pi: ExtensionAPI) => void = pi => {
   })
 
   pi.on("agent_end", event => {
+    if (activeLifecycleEpoch === undefined) return
     const assistant = event.messages
       .filter(message => message.role === "assistant")
       .at(-1)
@@ -538,20 +548,20 @@ const registryExtension: (pi: ExtensionAPI) => void = pi => {
       (assistant.errorMessage === "This operation was aborted" ||
         assistant.errorMessage === "terminated")
     compactionInterruptionPending = false
-    if (
-      !assistant ||
-      assistant.stopReason !== "error" ||
-      !assistant.errorMessage ||
-      isExplicitUserCancellation(assistant.errorMessage) ||
-      expectedCompactionInterruption
-    )
+    if (!assistant) {
+      pendingAgentTurnIncident = undefined
       return
-    pi.events.emit(AGENTOPS_INCIDENT_EVENT, {
-      severity: "error",
-      component: "pi-host",
-      operation: "agent turn",
-      summary: assistant.errorMessage,
-    })
+    }
+    pendingAgentTurnIncident = agentTurnIncidentAfterRun(
+      assistant,
+      expectedCompactionInterruption,
+    )
+  })
+
+  pi.on("agent_settled", () => {
+    const incident = pendingAgentTurnIncident
+    pendingAgentTurnIncident = undefined
+    if (incident) pi.events.emit(AGENTOPS_INCIDENT_EVENT, incident)
   })
 
   const resolveRuntimeAgentId = (requestedAgentId: string): string => {
@@ -1251,6 +1261,8 @@ const registryExtension: (pi: ExtensionAPI) => void = pi => {
   })
 
   pi.on("session_shutdown", async (event, ctx) => {
+    pendingAgentTurnIncident = undefined
+    latestCtx = undefined
     lifecycleEpoch += 1
     activeLifecycleEpoch = undefined
     backlogCollectorAbort?.abort()

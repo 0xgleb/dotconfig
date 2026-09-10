@@ -14,6 +14,11 @@ export interface AgentopsOpenRequest {
   readonly text: string
 }
 
+export interface AgentTurnOutcome {
+  readonly stopReason?: string
+  readonly errorMessage?: string
+}
+
 const AGENT_CORRECTABLE_TOOL_NAMES = new Set([
   "bash",
   "edit",
@@ -26,6 +31,20 @@ const AGENT_CORRECTABLE_TOOL_NAMES = new Set([
 
 const PI_RUNTIME_FAILURE =
   /(?:classifier (?:became )?unavailable|internal (?:pi|tool|extension) error|stale (?:extension )?context|this operation was aborted|agent is already processing a prompt|expandedText is not defined)/i
+
+const TRANSIENT_PROVIDER_OVERLOAD =
+  /(?:servers? (?:are )?currently overloaded|overloaded_error)/i
+
+const PROVIDER_USAGE_LIMIT =
+  /^You have hit your (?:ChatGPT|Codex) usage limit\b/i
+
+const incidentKeySummary = (incident: AgentopsIncident): string =>
+  PROVIDER_USAGE_LIMIT.test(incident.summary)
+    ? incident.summary.replace(
+        /try again in\s+~?\d+\s*(?:minutes?|mins?|hours?|h|m)(?:\s+(?:and\s+)?\d+\s*(?:minutes?|mins?|hours?|h|m))*\.?$/i,
+        "try again later",
+      )
+    : incident.summary
 
 const boundedField = (value: unknown, maximum: number): string | undefined => {
   if (typeof value !== "string") return undefined
@@ -56,6 +75,35 @@ export const isExplicitUserCancellation = (summary: string): boolean =>
     summary.trim(),
   )
 
+export const agentTurnIncidentAfterRun = (
+  assistant: AgentTurnOutcome,
+  expectedCompactionInterruption: boolean,
+): AgentopsIncident | undefined => {
+  if (
+    assistant.stopReason !== "error" ||
+    !assistant.errorMessage ||
+    isExplicitUserCancellation(assistant.errorMessage) ||
+    expectedCompactionInterruption
+  )
+    return undefined
+  if (
+    TRANSIENT_PROVIDER_OVERLOAD.test(assistant.errorMessage) ||
+    PROVIDER_USAGE_LIMIT.test(assistant.errorMessage)
+  )
+    return {
+      severity: "warning",
+      component: "provider",
+      operation: "agent turn",
+      summary: assistant.errorMessage,
+    }
+  return {
+    severity: "error",
+    component: "pi-host",
+    operation: "agent turn",
+    summary: assistant.errorMessage,
+  }
+}
+
 export const shouldRouteToolFailureToAgentops = (
   toolName: string,
   summary: string,
@@ -66,7 +114,7 @@ export const shouldRouteToolFailureToAgentops = (
 export const agentopsIncidentKey = (incident: AgentopsIncident): string =>
   createHash("sha256")
     .update(
-      `${incident.severity}\u0000${incident.component}\u0000${incident.operation}\u0000${incident.summary}`,
+      `${incident.severity}\u0000${incident.component}\u0000${incident.operation}\u0000${incidentKeySummary(incident)}`,
     )
     .digest("hex")
     .slice(0, 20)

@@ -25,7 +25,16 @@ test("runtime registration identity is process-scoped while request ownership re
 
 test("real Pi failures automatically become deduplicated pi-support incidents", () => {
   assert.match(source, /pi\.on\("tool_result"[\s\S]*?event\.isError/)
-  assert.match(source, /pi\.on\("agent_end"[\s\S]*?stopReason !== "error"/)
+  const agentEndStart = source.indexOf('pi.on("agent_end"')
+  const agentSettledStart = source.indexOf('pi.on("agent_settled"')
+  assert.ok(agentEndStart >= 0 && agentSettledStart > agentEndStart)
+  const agentEndSource = source.slice(agentEndStart, agentSettledStart)
+  assert.match(agentEndSource, /agentTurnIncidentAfterRun/)
+  assert.doesNotMatch(agentEndSource, /AGENTOPS_INCIDENT_EVENT/)
+  assert.match(
+    source.slice(agentSettledStart),
+    /pendingAgentTurnIncident[\s\S]*?AGENTOPS_INCIDENT_EVENT/,
+  )
   assert.match(source, /isExplicitUserCancellation/)
   assert.match(source, /shouldRouteToolFailureToAgentops/)
   assert.match(

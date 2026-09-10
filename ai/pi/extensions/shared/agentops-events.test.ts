@@ -2,7 +2,9 @@ import assert from "node:assert/strict"
 import test from "node:test"
 
 import {
+  agentopsIncidentKey,
   agentopsRequestText,
+  agentTurnIncidentAfterRun,
   decodeAgentopsIncident,
   hasOpenAgentopsIncident,
   isExplicitUserCancellation,
@@ -46,6 +48,109 @@ test("agentops incidents are bounded, sanitized, and deduplicated while open", (
   assert.equal(
     hasOpenAgentopsIncident([{ status: "completed", text }], incident),
     false,
+  )
+})
+
+test("agent turn incidents wait for the final settled low-level run", () => {
+  const providerFailure =
+    "Codex error: An error occurred while processing your request. Please include the request ID 3c1f222a-82d9-4736-9482-47d73d6fe352"
+
+  assert.deepEqual(
+    agentTurnIncidentAfterRun(
+      { stopReason: "error", errorMessage: providerFailure },
+      false,
+    ),
+    {
+      severity: "error",
+      component: "pi-host",
+      operation: "agent turn",
+      summary: providerFailure,
+    },
+  )
+  assert.deepEqual(
+    agentTurnIncidentAfterRun(
+      {
+        stopReason: "error",
+        errorMessage:
+          "Codex error: Our servers are currently overloaded. Please try again later.",
+      },
+      false,
+    ),
+    {
+      severity: "warning",
+      component: "provider",
+      operation: "agent turn",
+      summary:
+        "Codex error: Our servers are currently overloaded. Please try again later.",
+    },
+  )
+  const firstUsageLimit = agentTurnIncidentAfterRun(
+    {
+      stopReason: "error",
+      errorMessage:
+        "You have hit your ChatGPT usage limit (pro plan). Try again in ~7257 min.",
+    },
+    false,
+  )
+  const secondUsageLimit = agentTurnIncidentAfterRun(
+    {
+      stopReason: "error",
+      errorMessage:
+        "You have hit your ChatGPT usage limit (pro plan). Try again in ~7256 min.",
+    },
+    false,
+  )
+  assert.deepEqual(firstUsageLimit, {
+    severity: "warning",
+    component: "provider",
+    operation: "agent turn",
+    summary:
+      "You have hit your ChatGPT usage limit (pro plan). Try again in ~7257 min.",
+  })
+  assert.ok(firstUsageLimit)
+  assert.ok(secondUsageLimit)
+  assert.equal(
+    agentopsIncidentKey(firstUsageLimit),
+    agentopsIncidentKey(secondUsageLimit),
+  )
+  assert.equal(
+    agentTurnIncidentAfterRun(
+      { stopReason: "error", errorMessage: "Local tool usage limit exceeded" },
+      false,
+    )?.severity,
+    "error",
+  )
+  for (const countdown of ["1 hour and 30 minutes", "2h 15m"]) {
+    const incident = agentTurnIncidentAfterRun(
+      {
+        stopReason: "error",
+        errorMessage: `You have hit your ChatGPT usage limit (pro plan). Try again in ${countdown}.`,
+      },
+      false,
+    )
+    assert.ok(incident)
+    assert.equal(
+      agentopsIncidentKey(incident),
+      agentopsIncidentKey(firstUsageLimit),
+    )
+  }
+  assert.equal(
+    agentTurnIncidentAfterRun({ stopReason: "stop" }, false),
+    undefined,
+  )
+  assert.equal(
+    agentTurnIncidentAfterRun(
+      { stopReason: "error", errorMessage: "Cancelled by user" },
+      false,
+    ),
+    undefined,
+  )
+  assert.equal(
+    agentTurnIncidentAfterRun(
+      { stopReason: "error", errorMessage: "This operation was aborted" },
+      true,
+    ),
+    undefined,
   )
 })
 
