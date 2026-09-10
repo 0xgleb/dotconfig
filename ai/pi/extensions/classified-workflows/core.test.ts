@@ -1145,6 +1145,50 @@ test("broad searches require explicit credential exclusions", () => {
   assert.equal(spoofed?.verdict, "block")
 })
 
+test("literal hidden-subdirectory listings reach semantic review without becoming root searches", () => {
+  for (const command of [
+    "ls .tmp/workspace-preservation",
+    "ls .tmp/todo-80",
+    "ls ./ai",
+  ]) {
+    assert.equal(
+      deterministicDecision({
+        boundary: "action",
+        toolName: "bash",
+        input: { command },
+        cwd: "/repo",
+      }),
+      null,
+      command,
+    )
+  }
+  for (const command of [
+    "ls",
+    "ls .",
+    "ls .*",
+    "ls .tmp/*",
+    "ls ..",
+    "ls .tmp/..",
+    "ls .tmp/../../other",
+    "ls .tmp/todo-80; pwd",
+    "ls .tmp/todo-80\nls .",
+    "ls\n.tmp/todo-80",
+    "ls\r.tmp/todo-80",
+    "ls .tmp/auth.json",
+  ]) {
+    assert.equal(
+      deterministicDecision({
+        boundary: "action",
+        toolName: "bash",
+        input: { command },
+        cwd: "/repo",
+      })?.verdict,
+      "block",
+      command,
+    )
+  }
+})
+
 test("only deterministic actions with intrinsically safe output carry result allowance", () => {
   const cleanup = deterministicDecision({
     boundary: "action",
