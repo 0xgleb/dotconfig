@@ -2,7 +2,7 @@ import { chmodSync, mkdirSync } from "node:fs"
 import { dirname, isAbsolute, join, normalize, relative, sep } from "node:path"
 import { randomUUID } from "node:crypto"
 import { DatabaseSync } from "node:sqlite"
-import { Effect, Either } from "effect"
+import { Effect, Either, Exit } from "effect"
 import {
   BacklogError,
   ingestBacklogSource,
@@ -147,34 +147,39 @@ const dbCall = <T>(label: string, operation: () => T): RegistryEffect<T> =>
     catch: error => asRegistryError(error, label),
   })
 
-const rollbackAndFail = <T>(
+const rollbackEffect = (
   database: DatabaseSync,
-  error: RegistryError,
-): RegistryEffect<T> =>
+  retire: (database: DatabaseSync) => RegistryEffect<void>,
+): RegistryEffect<void> =>
   dbCall("Could not roll back registry transaction", () =>
     database.exec("ROLLBACK"),
   ).pipe(
-    Effect.catchAll(() => Effect.void),
-    Effect.andThen(Effect.fail(error)),
+    Effect.catchAll(error =>
+      retire(database).pipe(Effect.ignore, Effect.andThen(Effect.fail(error))),
+    ),
   )
 
-const transactionEffect = <T>(
+const databaseTransactionEffect = <T>(
   database: DatabaseSync,
   work: RegistryEffect<T>,
+  afterBegin: RegistryEffect<void> = Effect.void,
+  retire: (database: DatabaseSync) => RegistryEffect<void> = () => Effect.void,
 ): RegistryEffect<T> =>
-  dbCall("Could not begin registry transaction", () =>
-    database.exec("BEGIN IMMEDIATE"),
-  ).pipe(
-    Effect.flatMap(() =>
-      work.pipe(
+  Effect.acquireUseRelease(
+    dbCall("Could not begin registry transaction", () =>
+      database.exec("BEGIN IMMEDIATE"),
+    ),
+    () =>
+      afterBegin.pipe(
+        Effect.andThen(work),
         Effect.flatMap(result =>
           dbCall("Could not commit registry transaction", () =>
             database.exec("COMMIT"),
           ).pipe(Effect.as(result)),
         ),
-        Effect.catchAll(error => rollbackAndFail(database, error)),
       ),
-    ),
+    (_transaction, exit) =>
+      Exit.isSuccess(exit) ? Effect.void : rollbackEffect(database, retire),
   )
 
 const hasUnsafeControlCharacters: (text: string) => boolean = text =>
@@ -2041,7 +2046,7 @@ const initializeEffect = (
         `unsupported agent registry schema version ${observedVersion}`,
       )
 
-    yield* transactionEffect(
+    yield* databaseTransactionEffect(
       database,
       Effect.gen(function* () {
         const currentVersion = yield* schemaVersionEffect(database)
@@ -2231,11 +2236,16 @@ interface DatabaseAccess {
     label: string,
     operation: (database: DatabaseSync) => RegistryEffect<T>,
   ) => RegistryEffect<T>
+  readonly retire: (database: DatabaseSync) => RegistryEffect<void>
   readonly close: () => void
 }
 
 const makeDatabaseAccess = (databasePath: string): DatabaseAccess => {
   let database: DatabaseSync | undefined
+  let closed = false
+  const accessGate = Effect.unsafeMakeSemaphore(1)
+  const closedEffect = (label: string): RegistryEffect<never> =>
+    failRegistry("io", `${label}: registry store is closed`)
 
   const openEffect = (label: string): RegistryEffect<DatabaseSync> => {
     if (database) return Effect.succeed(database)
@@ -2266,16 +2276,40 @@ const makeDatabaseAccess = (databasePath: string): DatabaseAccess => {
 
   return {
     use: (label, operation) =>
-      openEffect(label).pipe(Effect.flatMap(operation)),
-    close: () => {
-      const active = database
-      database = undefined
-      if (active)
-        void Effect.runPromise(
-          dbCall("Could not close registry", () => active.close()).pipe(
-            Effect.ignore,
-          ),
+      Effect.suspend(() =>
+        closed
+          ? closedEffect(label)
+          : accessGate.withPermits(1)(
+              Effect.suspend(() =>
+                closed
+                  ? closedEffect(label)
+                  : openEffect(label).pipe(Effect.flatMap(operation)),
+              ),
+            ),
+      ),
+    retire: candidate =>
+      Effect.suspend(() => {
+        if (database === candidate) database = undefined
+        return dbCall("Could not retire invalid registry", () =>
+          candidate.close(),
         )
+      }),
+    close: () => {
+      if (closed) return
+      closed = true
+      void Effect.runPromise(
+        accessGate.withPermits(1)(
+          Effect.suspend(() => {
+            const active = database
+            database = undefined
+            return active
+              ? dbCall("Could not close registry", () => active.close()).pipe(
+                  Effect.ignore,
+                )
+              : Effect.void
+          }),
+        ),
+      )
     },
   }
 }
@@ -2631,12 +2665,29 @@ const effect: <T>(
 ) => Effect.Effect<T, RegistryError> = (label, operation) =>
   Effect.try({ try: operation, catch: error => asRegistryError(error, label) })
 
+export interface SqliteRegistryStoreOptions {
+  // Optional deterministic barrier for transaction interruption/concurrency tests.
+  readonly transactionBeginSignal?: Effect.Effect<void, RegistryError>
+}
+
 export const makeSqliteRegistryStore: (
   root: string,
-) => SqliteRegistryStore = root => {
+  options?: SqliteRegistryStoreOptions,
+) => SqliteRegistryStore = (root, options = {}) => {
   const databasePath = join(root, "registry.sqlite")
   const databaseAccess = makeDatabaseAccess(databasePath)
   const withDatabase = databaseAccess.use
+  const transactionBeginSignal = options.transactionBeginSignal ?? Effect.void
+  const transactionEffect = <T>(
+    database: DatabaseSync,
+    work: RegistryEffect<T>,
+  ): RegistryEffect<T> =>
+    databaseTransactionEffect(
+      database,
+      work,
+      transactionBeginSignal,
+      databaseAccess.retire,
+    )
 
   return {
     close: databaseAccess.close,

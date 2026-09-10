@@ -6,7 +6,7 @@ import { tmpdir } from "node:os"
 import { join } from "node:path"
 import test from "node:test"
 import { DatabaseSync } from "node:sqlite"
-import { Cause, Effect, Option, Runtime } from "effect"
+import { Cause, Deferred, Effect, Fiber, Option, Runtime } from "effect"
 import {
   makeSqliteRegistryStore,
   type SqliteRegistryStore,
@@ -197,6 +197,22 @@ test("a live Pi registry store keeps its WAL connection open between sync operat
   })
 })
 
+test("concurrent first use retains one closeable SQLite connection", async () => {
+  const root = await mkdtemp(join(tmpdir(), "pi-registry-first-use-"))
+  const store = makeSqliteRegistryStore(root)
+  try {
+    const reads = [store.snapshot(0), store.snapshot(0)] as const
+    await Effect.runPromise(Effect.all(reads, { concurrency: "unbounded" }))
+    assert.equal(existsSync(join(root, "registry.sqlite-wal")), true)
+    store.close()
+    await new Promise(resolve => setTimeout(resolve, 0))
+    assert.equal(existsSync(join(root, "registry.sqlite-wal")), false)
+  } finally {
+    store.close()
+    await rm(root, { recursive: true, force: true })
+  }
+})
+
 test("current schema reads do not acquire write locks during fleet heartbeats", async () => {
   await withStores(async (store, _second, root) => {
     await Effect.runPromise(store.snapshot(0))
@@ -259,6 +275,124 @@ test("separate Pi processes serialize concurrent claims", async () => {
     ])
     const outcomes = outputs.map(output => JSON.parse(output).outcome).sort()
     assert.deepEqual(outcomes, ["already_owned", "claimed"])
+  })
+})
+
+test("one registry connection serializes concurrent lifecycle mutations", async () => {
+  const root = await mkdtemp(join(tmpdir(), "pi-registry-concurrency-"))
+  const began = await Effect.runPromise(Deferred.make<void>())
+  const release = await Effect.runPromise(Deferred.make<void>())
+  let barrierArmed = false
+  const transactionBeginSignal = Effect.suspend(() => {
+    if (!barrierArmed) return Effect.void
+    barrierArmed = false
+    return Deferred.succeed(began, undefined).pipe(
+      Effect.andThen(Deferred.await(release)),
+    )
+  })
+  const store = makeSqliteRegistryStore(root, { transactionBeginSignal })
+  try {
+    await Effect.runPromise(store.snapshot(0))
+    barrierArmed = true
+    const first = Effect.runPromise(
+      store.enqueue({
+        project: "/workspace/project",
+        role: "operator",
+        requesterId: "requester",
+        text: "first parallel lifecycle mutation",
+        now: 1_000,
+      }),
+    )
+    await Effect.runPromise(Deferred.await(began))
+    const second = Effect.runPromise(
+      store.enqueue({
+        project: "/workspace/project",
+        role: "operator",
+        requesterId: "requester",
+        text: "second parallel lifecycle mutation",
+        now: 1_001,
+      }),
+    )
+    await Effect.runPromise(Deferred.succeed(release, undefined))
+    const requests = await Promise.all([first, second])
+    assert.deepEqual(
+      requests.map(request => request.status),
+      ["queued", "queued"],
+    )
+    const persisted = await Effect.runPromise(store.snapshot(2_000))
+    assert.deepEqual(
+      persisted.requests.map(request => request.id).sort(),
+      requests.map(request => request.id).sort(),
+    )
+  } finally {
+    await Effect.runPromise(
+      Deferred.succeed(release, undefined).pipe(Effect.ignore),
+    )
+    store.close()
+    await rm(root, { recursive: true, force: true })
+  }
+})
+
+test("interrupting a registry transaction rolls back before releasing access", async () => {
+  const root = await mkdtemp(join(tmpdir(), "pi-registry-interruption-"))
+  const began = await Effect.runPromise(Deferred.make<void>())
+  const release = await Effect.runPromise(Deferred.make<void>())
+  let barrierArmed = false
+  const transactionBeginSignal = Effect.suspend(() => {
+    if (!barrierArmed) return Effect.void
+    barrierArmed = false
+    return Deferred.succeed(began, undefined).pipe(
+      Effect.andThen(Deferred.await(release)),
+    )
+  })
+  const store = makeSqliteRegistryStore(root, { transactionBeginSignal })
+  try {
+    await Effect.runPromise(store.snapshot(0))
+    barrierArmed = true
+    const interrupted = Effect.runFork(
+      store.enqueue({
+        project: "/workspace/project",
+        role: "operator",
+        requesterId: "requester",
+        text: "interrupted mutation",
+        now: 1_000,
+      }),
+    )
+    await Effect.runPromise(Deferred.await(began))
+    await Effect.runPromise(Fiber.interrupt(interrupted))
+
+    const request = await Effect.runPromise(
+      store.enqueue({
+        project: "/workspace/project",
+        role: "operator",
+        requesterId: "requester",
+        text: "after interruption",
+        now: 2_000,
+      }),
+    )
+    assert.equal(request.status, "queued")
+    const persisted = await Effect.runPromise(store.snapshot(2_001))
+    assert.deepEqual(
+      persisted.requests.map(({ text }) => text),
+      ["after interruption"],
+    )
+  } finally {
+    await Effect.runPromise(
+      Deferred.succeed(release, undefined).pipe(Effect.ignore),
+    )
+    store.close()
+    await rm(root, { recursive: true, force: true })
+  }
+})
+
+test("closing a registry store is terminal", async () => {
+  await withStores(async store => {
+    await Effect.runPromise(store.snapshot(0))
+    store.close()
+    await assert.rejects(
+      Effect.runPromise(store.snapshot(1)),
+      /registry store is closed/i,
+    )
   })
 })
 
@@ -1240,35 +1374,43 @@ test("legacy v1 databases migrate requester acknowledgements and source identity
     `)
     legacy.close()
 
-    await Effect.runPromise(store.snapshot(1))
-    const migrated = new DatabaseSync(join(root, "registry.sqlite"), {
-      readOnly: true,
-    })
-    assert.equal(migrated.prepare("PRAGMA user_version").get()?.user_version, 5)
-    const columns = migrated
-      .prepare("PRAGMA table_info(requests)")
-      .all()
-      .map(column => column.name)
-    assert.ok(columns.includes("requester_acknowledged_at"))
-    assert.ok(columns.includes("requester_label"))
-    assert.ok(columns.includes("requester_cwd"))
-    assert.ok(columns.includes("recipient_received_at"))
-    assert.ok(columns.includes("recipient_agent_id"))
-    assert.ok(columns.includes("recipient_lease_id"))
-    assert.ok(columns.includes("priority"))
-    const leaseColumns = migrated
-      .prepare("PRAGMA table_info(leases)")
-      .all()
-      .map(column => column.name)
-    assert.ok(leaseColumns.includes("runtime_versions"))
-    assert.ok(
-      migrated
-        .prepare(
-          "SELECT name FROM sqlite_master WHERE type = 'table' AND name = 'agents'",
-        )
-        .get(),
-    )
-    migrated.close()
+    const reopened = makeSqliteRegistryStore(root)
+    try {
+      await Effect.runPromise(reopened.snapshot(1))
+      const migrated = new DatabaseSync(join(root, "registry.sqlite"), {
+        readOnly: true,
+      })
+      assert.equal(
+        migrated.prepare("PRAGMA user_version").get()?.user_version,
+        5,
+      )
+      const columns = migrated
+        .prepare("PRAGMA table_info(requests)")
+        .all()
+        .map(column => column.name)
+      assert.ok(columns.includes("requester_acknowledged_at"))
+      assert.ok(columns.includes("requester_label"))
+      assert.ok(columns.includes("requester_cwd"))
+      assert.ok(columns.includes("recipient_received_at"))
+      assert.ok(columns.includes("recipient_agent_id"))
+      assert.ok(columns.includes("recipient_lease_id"))
+      assert.ok(columns.includes("priority"))
+      const leaseColumns = migrated
+        .prepare("PRAGMA table_info(leases)")
+        .all()
+        .map(column => column.name)
+      assert.ok(leaseColumns.includes("runtime_versions"))
+      assert.ok(
+        migrated
+          .prepare(
+            "SELECT name FROM sqlite_master WHERE type = 'table' AND name = 'agents'",
+          )
+          .get(),
+      )
+      migrated.close()
+    } finally {
+      reopened.close()
+    }
   })
 })
 
@@ -1280,26 +1422,31 @@ test("rolling v3 state migrates additively to agent activities", async () => {
     transitional.exec("PRAGMA user_version = 3;")
     transitional.close()
 
-    await Effect.runPromise(store.snapshot(1))
-    const compatible = new DatabaseSync(join(root, "registry.sqlite"), {
-      readOnly: true,
-    })
-    assert.equal(
-      compatible.prepare("PRAGMA user_version").get()?.user_version,
-      5,
-    )
-    const columns = compatible
-      .prepare("PRAGMA table_info(requests)")
-      .all()
-      .map(column => column.name)
-    assert.ok(columns.includes("requester_label"))
-    assert.ok(columns.includes("requester_cwd"))
-    const agentColumns = compatible
-      .prepare("PRAGMA table_info(agents)")
-      .all()
-      .map(column => column.name)
-    assert.ok(agentColumns.includes("activities"))
-    compatible.close()
+    const reopened = makeSqliteRegistryStore(root)
+    try {
+      await Effect.runPromise(reopened.snapshot(1))
+      const compatible = new DatabaseSync(join(root, "registry.sqlite"), {
+        readOnly: true,
+      })
+      assert.equal(
+        compatible.prepare("PRAGMA user_version").get()?.user_version,
+        5,
+      )
+      const columns = compatible
+        .prepare("PRAGMA table_info(requests)")
+        .all()
+        .map(column => column.name)
+      assert.ok(columns.includes("requester_label"))
+      assert.ok(columns.includes("requester_cwd"))
+      const agentColumns = compatible
+        .prepare("PRAGMA table_info(agents)")
+        .all()
+        .map(column => column.name)
+      assert.ok(agentColumns.includes("activities"))
+      compatible.close()
+    } finally {
+      reopened.close()
+    }
   })
 })
 
@@ -1443,10 +1590,15 @@ test("malformed input and unknown schema versions fail closed", async () => {
     const database = new DatabaseSync(join(root, "registry.sqlite"))
     database.exec("PRAGMA user_version = 99")
     database.close()
-    await assert.rejects(
-      Effect.runPromise(store.snapshot(1_000)),
-      /schema version 99/i,
-    )
+    const reopened = makeSqliteRegistryStore(root)
+    try {
+      await assert.rejects(
+        Effect.runPromise(reopened.snapshot(1_000)),
+        /schema version 99/i,
+      )
+    } finally {
+      reopened.close()
+    }
   })
 })
 
