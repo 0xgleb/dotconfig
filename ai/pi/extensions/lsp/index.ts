@@ -102,7 +102,7 @@ const renderSummary = (details: LspResultDetails | undefined): string => {
 }
 
 export default function lspExtension(pi: ExtensionAPI): void {
-  registerRuntimeVersion(pi, "lsp", "2026.09.04.1")
+  registerRuntimeVersion(pi, "lsp", "2026.09.04.2")
   const clients = new LanguageClientPool()
   const core = createLspCore({
     clients,

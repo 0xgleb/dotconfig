@@ -1,5 +1,5 @@
 import assert from "node:assert/strict"
-import { mkdtemp, readFile, writeFile } from "node:fs/promises"
+import { mkdir, mkdtemp, readFile, writeFile } from "node:fs/promises"
 import { tmpdir } from "node:os"
 import { join } from "node:path"
 import test from "node:test"
@@ -152,6 +152,61 @@ test("rename is preview-first and apply requires the returned preview ID", async
     await readFile(file, "utf8"),
     "const nextName = 1\nconsole.log(nextName)\n",
   )
+})
+
+test("apply accepts a preview prepared by a nested managed server root", async () => {
+  const cwd = await mkdtemp(join(tmpdir(), "pi-lsp-core-nested-"))
+  const root = join(cwd, "package")
+  const file = join(root, "source.ts")
+  await mkdir(root)
+  await writeFile(join(root, "tsconfig.json"), "{}\n", "utf8")
+  await writeFile(file, "const oldName = 1\n", "utf8")
+  const core = createLspCore({
+    clients: provider(
+      fakeClient({
+        root,
+        rename: () =>
+          Effect.succeed({
+            changes: {
+              [new URL(`file://${file}`).href]: [
+                {
+                  range: {
+                    start: { line: 0, character: 6 },
+                    end: { line: 0, character: 13 },
+                  },
+                  newText: "nextName",
+                },
+              ],
+            },
+          }),
+      }),
+    ),
+  })
+
+  const preview = await Effect.runPromise(
+    core.execute(
+      {
+        action: "rename_preview",
+        file,
+        line: 1,
+        symbol: "oldName",
+        newName: "nextName",
+      },
+      cwd,
+    ),
+  )
+  const previewId = preview.details.preview?.id
+  if (!previewId) assert.fail("expected rename preview")
+
+  const otherWorkspace = await mkdtemp(join(tmpdir(), "pi-lsp-core-other-"))
+  const wrongWorkspace = await Effect.runPromise(
+    Effect.either(core.execute({ action: "apply", previewId }, otherWorkspace)),
+  )
+  assert.ok(Either.isLeft(wrongWorkspace))
+  assert.equal(wrongWorkspace.left.code, "preview_not_found")
+
+  await Effect.runPromise(core.execute({ action: "apply", previewId }, cwd))
+  assert.equal(await readFile(file, "utf8"), "const nextName = 1\n")
 })
 
 test("rename preview returns a bounded no-op when the server rejects a non-renamable position", async () => {

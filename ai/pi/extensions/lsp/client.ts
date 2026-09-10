@@ -74,6 +74,7 @@ export interface LanguageClient {
   codeActions(
     file: string,
     point: LspPoint,
+    symbolLength: number,
   ): Effect.Effect<unknown, LspClientError>
   isClosed(): boolean
   dispose(): Promise<void>
@@ -214,7 +215,11 @@ class ManagedLanguageClient implements LanguageClient {
   readonly #documentSyncTails = new Map<string, Promise<void>>()
   readonly #diagnostics = new Map<
     string,
-    { readonly version: number; readonly value: unknown }
+    {
+      readonly version: number
+      readonly documentVersion: number
+      readonly value: unknown
+    }
   >()
   readonly #diagnosticWaiters = new Map<string, Set<() => void>>()
   #disposed = false
@@ -389,37 +394,28 @@ class ManagedLanguageClient implements LanguageClient {
     const uri = pathToFileURL(file).href
     const beforeDiagnosticsVersion = this.#diagnostics.get(uri)?.version ?? 0
     const beforeDocumentVersion = this.#openDocuments.get(uri)?.version
-    return Effect.flatMap(this.#sync(file), () =>
-      Effect.tryPromise({
-        try: async () => {
-          const current = this.#diagnostics.get(uri)
-          const documentVersion = this.#openDocuments.get(uri)?.version
-          const documentUnchanged =
-            beforeDocumentVersion !== undefined &&
-            documentVersion === beforeDocumentVersion
-          if (
-            current &&
-            (current.version > beforeDiagnosticsVersion || documentUnchanged)
-          )
-            return current.value
-          await new Promise<void>(resolve => {
-            const waiters = this.#diagnosticWaiters.get(uri) ?? new Set()
-            waiters.add(resolve)
-            this.#diagnosticWaiters.set(uri, waiters)
-            setTimeout(() => {
-              waiters.delete(resolve)
-              if (waiters.size === 0) this.#diagnosticWaiters.delete(uri)
-              resolve()
-            }, DIAGNOSTICS_WAIT_MS)
-          })
-          const latest = this.#diagnostics.get(uri)
-          return latest && latest.version > beforeDiagnosticsVersion
-            ? latest.value
-            : undefined
-        },
-        catch: asClientError,
-      }),
-    )
+    return Effect.gen(this, function* () {
+      yield* this.#sync(file)
+      const documentVersion = this.#openDocuments.get(uri)?.version
+      if (documentVersion === undefined)
+        return yield* Effect.fail(
+          clientError("closed", "Language server document is not open"),
+        )
+      const current = this.#diagnostics.get(uri)
+      const documentUnchanged =
+        beforeDocumentVersion !== undefined &&
+        documentVersion === beforeDocumentVersion
+      if (
+        current?.documentVersion === documentVersion &&
+        (current.version > beforeDiagnosticsVersion || documentUnchanged)
+      )
+        return current.value
+      return yield* this.#waitForDiagnostics(
+        uri,
+        beforeDiagnosticsVersion,
+        documentVersion,
+      )
+    })
   }
 
   rename(
@@ -444,6 +440,7 @@ class ManagedLanguageClient implements LanguageClient {
   codeActions(
     file: string,
     point: LspPoint,
+    symbolLength: number,
   ): Effect.Effect<unknown, LspClientError> {
     return Effect.flatMap(this.#sync(file), uri =>
       Effect.flatMap(
@@ -452,7 +449,13 @@ class ManagedLanguageClient implements LanguageClient {
           Effect.mapError(
             this.#rpc.request("textDocument/codeAction", {
               textDocument: { uri },
-              range: { start: point, end: point },
+              range: {
+                start: point,
+                end: {
+                  line: point.line,
+                  character: point.character + symbolLength,
+                },
+              },
               context: {
                 diagnostics: this.#diagnosticsForUri(uri),
                 triggerKind: 1,
@@ -511,7 +514,6 @@ class ManagedLanguageClient implements LanguageClient {
       return
     const document = this.#openDocuments.get(params.uri)
     if (!document) return
-    if (params.version === undefined && document.version > 1) return
     if (
       params.version !== undefined &&
       (typeof params.version !== "number" ||
@@ -522,12 +524,60 @@ class ManagedLanguageClient implements LanguageClient {
     const previous = this.#diagnostics.get(params.uri)?.version ?? 0
     this.#diagnostics.set(params.uri, {
       version: previous + 1,
+      documentVersion: document.version,
       value: params.diagnostics.slice(0, MAX_DIAGNOSTICS),
     })
     const waiters = this.#diagnosticWaiters.get(params.uri)
     if (!waiters) return
-    this.#diagnosticWaiters.delete(params.uri)
-    for (const waiter of waiters) waiter()
+    for (const waiter of [...waiters]) waiter()
+  }
+
+  #waitForDiagnostics(
+    uri: string,
+    beforeDiagnosticsVersion: number,
+    documentVersion: number,
+  ): Effect.Effect<unknown, LspClientError> {
+    return Effect.async<unknown, LspClientError>(resume => {
+      const waiters = this.#diagnosticWaiters.get(uri) ?? new Set()
+      let settled = false
+      let timeout: ReturnType<typeof setTimeout> | undefined
+      const cleanup = (): void => {
+        if (timeout) clearTimeout(timeout)
+        waiters.delete(finish)
+        if (waiters.size === 0) this.#diagnosticWaiters.delete(uri)
+      }
+      const settle = (result: Effect.Effect<unknown, LspClientError>): void => {
+        if (settled) return
+        settled = true
+        cleanup()
+        resume(result)
+      }
+      const finish = (): void => {
+        if (this.#disposed) {
+          settle(
+            Effect.fail(
+              clientError("closed", "Language server client is closed"),
+            ),
+          )
+          return
+        }
+        const latest = this.#diagnostics.get(uri)
+        if (
+          latest &&
+          latest.version > beforeDiagnosticsVersion &&
+          latest.documentVersion === documentVersion
+        )
+          settle(Effect.succeed(latest.value))
+      }
+      waiters.add(finish)
+      this.#diagnosticWaiters.set(uri, waiters)
+      timeout = setTimeout(
+        () => settle(Effect.succeed(undefined)),
+        DIAGNOSTICS_WAIT_MS,
+      )
+      finish()
+      return Effect.sync(cleanup)
+    })
   }
 
   #positionRequest(
@@ -671,7 +721,10 @@ class ManagedLanguageClient implements LanguageClient {
   }
 
   #diagnosticsForUri(uri: string): readonly unknown[] {
-    const value = this.#diagnostics.get(uri)?.value
+    const current = this.#diagnostics.get(uri)
+    const documentVersion = this.#openDocuments.get(uri)?.version
+    const value =
+      current?.documentVersion === documentVersion ? current.value : undefined
     return Array.isArray(value) ? value : []
   }
 }

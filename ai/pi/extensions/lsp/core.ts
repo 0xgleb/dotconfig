@@ -145,6 +145,11 @@ interface LspCoreOptions {
   readonly workspaceEditIo?: Partial<WorkspaceEditIo>
 }
 
+interface ResolvedPoint {
+  readonly point: LspPoint
+  readonly symbolLength: number
+}
+
 interface DecodedCodeAction {
   readonly index: number
   readonly title: string
@@ -176,7 +181,7 @@ const isContainedByOrEqual = (root: string, candidate: string): boolean => {
 const pointInput = (
   file: string,
   input: LspToolInput,
-): Effect.Effect<LspPoint, LspCoreError> =>
+): Effect.Effect<ResolvedPoint, LspCoreError> =>
   Effect.gen(function* () {
     const line = input.line
     const symbol = input.symbol
@@ -225,7 +230,10 @@ const pointInput = (
         )
       from = found + symbol.length
     }
-    return { line: line - 1, character: found }
+    return {
+      point: { line: line - 1, character: found },
+      symbolLength: symbol.length,
+    }
   })
 
 const decodedPosition = (
@@ -570,7 +578,11 @@ const locationText = (
 export const createLspCore = (options: LspCoreOptions) => {
   const previews = new Map<
     string,
-    { readonly prepared: PreparedWorkspaceEdit; readonly bytes: number }
+    {
+      readonly prepared: PreparedWorkspaceEdit
+      readonly bytes: number
+      readonly workspace: string
+    }
   >()
   let previewCacheBytes = 0
 
@@ -581,7 +593,10 @@ export const createLspCore = (options: LspCoreOptions) => {
     previews.delete(previewId)
   }
 
-  const rememberPreview = (prepared: PreparedWorkspaceEdit): void => {
+  const rememberPreview = (
+    prepared: PreparedWorkspaceEdit,
+    workspace: string,
+  ): void => {
     const bytes = prepared.files.reduce(
       (total, file) =>
         total +
@@ -590,7 +605,7 @@ export const createLspCore = (options: LspCoreOptions) => {
       0,
     )
     forgetPreview(prepared.previewId)
-    previews.set(prepared.previewId, { prepared, bytes })
+    previews.set(prepared.previewId, { prepared, bytes, workspace })
     previewCacheBytes += bytes
     while (
       previews.size > MAX_PREVIEWS ||
@@ -636,14 +651,11 @@ export const createLspCore = (options: LspCoreOptions) => {
           )
         const cachedPreview = previews.get(input.previewId)
         const prepared = cachedPreview?.prepared
-        if (
-          !prepared ||
-          prepared.cwd !==
-            (yield* Effect.tryPromise({
-              try: () => realpath(resolve(cwd)),
-              catch: mapUnknownError,
-            }))
-        )
+        const workspace = yield* Effect.tryPromise({
+          try: () => realpath(resolve(cwd)),
+          catch: mapUnknownError,
+        })
+        if (!prepared || cachedPreview.workspace !== workspace)
           return yield* Effect.fail(
             coreError(
               "preview_not_found",
@@ -667,6 +679,10 @@ export const createLspCore = (options: LspCoreOptions) => {
         return yield* Effect.fail(
           coreError("invalid_input", `${input.action} requires file`),
         )
+      const workspace = yield* Effect.tryPromise({
+        try: () => realpath(resolve(cwd)),
+        catch: mapUnknownError,
+      })
       const selection = yield* selectServer({ cwd, file: input.file }).pipe(
         Effect.mapError(mapUnknownError),
       )
@@ -704,7 +720,8 @@ export const createLspCore = (options: LspCoreOptions) => {
         }
       }
 
-      const point = yield* pointInput(selection.file, input)
+      const resolvedPoint = yield* pointInput(selection.file, input)
+      const point = resolvedPoint.point
 
       if (input.action === "definition" || input.action === "references") {
         const raw = yield* client[input.action](selection.file, point).pipe(
@@ -778,7 +795,7 @@ export const createLspCore = (options: LspCoreOptions) => {
           edit,
           ...(options.workspaceEditIo ? { io: options.workspaceEditIo } : {}),
         }).pipe(Effect.mapError(mapUnknownError))
-        rememberPreview(prepared)
+        rememberPreview(prepared, workspace)
         const preview = previewDetails(prepared, "rename")
         return {
           text: `Rename preview ${preview.id}\n${preview.editCount} edit(s) across ${preview.files.length} file(s)\n${preview.files.map(file => `- ${file.path} · ${file.edits} edit(s)`).join("\n")}`,
@@ -787,7 +804,7 @@ export const createLspCore = (options: LspCoreOptions) => {
       }
 
       const rawActions = yield* client
-        .codeActions(selection.file, point)
+        .codeActions(selection.file, point, resolvedPoint.symbolLength)
         .pipe(Effect.mapError(mapUnknownError))
       const actions = yield* decodeCodeActions(rawActions)
       if (input.action === "code_actions") {
@@ -857,7 +874,7 @@ export const createLspCore = (options: LspCoreOptions) => {
         edit: selected.edit,
         ...(options.workspaceEditIo ? { io: options.workspaceEditIo } : {}),
       }).pipe(Effect.mapError(mapUnknownError))
-      rememberPreview(prepared)
+      rememberPreview(prepared, workspace)
       const preview = previewDetails(prepared, "code_action")
       return {
         text: `Code action preview ${preview.id}\n${selected.title}\n${preview.editCount} edit(s) across ${preview.files.length} file(s)`,

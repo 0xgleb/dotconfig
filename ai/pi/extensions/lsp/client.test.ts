@@ -197,6 +197,50 @@ test("initializes, synchronizes a document, and requests definition", async () =
   assert.equal(fake.killed, true)
 })
 
+test("code actions request a non-empty UTF-16 symbol range", async () => {
+  const { root, file } = await workspace()
+  let observedParams: unknown
+  const fake = fakeProcessFactory((message, send) => {
+    if (message.method === "initialize")
+      send({
+        jsonrpc: "2.0",
+        id: message.id,
+        result: {
+          capabilities: { textDocumentSync: 1, codeActionProvider: true },
+        },
+      })
+    if (message.method === "textDocument/codeAction") {
+      observedParams = message.params
+      send({ jsonrpc: "2.0", id: message.id, result: [] })
+    }
+    if (message.method === "shutdown")
+      send({ jsonrpc: "2.0", id: message.id, result: null })
+  })
+  const client = await Effect.runPromise(
+    startLanguageClient({
+      profile: typescript,
+      root,
+      processFactory: fake.factory,
+    }),
+  )
+
+  assert.deepEqual(
+    await Effect.runPromise(
+      client.codeActions(file, { line: 0, character: 6 }, 5),
+    ),
+    [],
+  )
+  assert.deepEqual(observedParams, {
+    textDocument: { uri: new URL(`file://${file}`).href },
+    range: {
+      start: { line: 0, character: 6 },
+      end: { line: 0, character: 11 },
+    },
+    context: { diagnostics: [], triggerKind: 1 },
+  })
+  await client.dispose()
+})
+
 test("classifies standard rename rejection responses without losing metadata", async () => {
   const { root, file } = await workspace()
   const fake = fakeProcessFactory((message, send) => {
@@ -323,7 +367,7 @@ test("returns only bounded published diagnostics after didOpen", async () => {
   await client.dispose()
 })
 
-test("unversioned diagnostics after didChange cannot satisfy freshness", async () => {
+test("unversioned diagnostics after didChange satisfy the next generation", async () => {
   const { root, file } = await workspace()
   const fake = fakeProcessFactory((message, send) => {
     if (message.method === "initialize")
@@ -360,8 +404,91 @@ test("unversioned diagnostics after didChange cannot satisfy freshness", async (
   )
   assert.deepEqual(await Effect.runPromise(client.diagnostics(file)), [])
   await writeFile(file, "const changed = 2\n", "utf8")
-  assert.equal(await Effect.runPromise(client.diagnostics(file)), undefined)
+  assert.deepEqual(await Effect.runPromise(client.diagnostics(file)), [])
   await client.dispose()
+})
+
+test("code actions omit diagnostics from an older document version", async () => {
+  const { root, file } = await workspace()
+  let observedDiagnostics: unknown
+  const fake = fakeProcessFactory((message, send) => {
+    if (message.method === "initialize")
+      send({
+        jsonrpc: "2.0",
+        id: message.id,
+        result: {
+          capabilities: {
+            textDocumentSync: 1,
+            codeActionProvider: true,
+          },
+        },
+      })
+    if (message.method === "textDocument/didOpen") {
+      const params = message.params as { textDocument: { uri: string } }
+      send({
+        jsonrpc: "2.0",
+        method: "textDocument/publishDiagnostics",
+        params: {
+          uri: params.textDocument.uri,
+          diagnostics: [{ message: "old diagnostic" }],
+        },
+      })
+    }
+    if (message.method === "textDocument/codeAction") {
+      const params = message.params as {
+        context: { diagnostics: unknown }
+      }
+      observedDiagnostics = params.context.diagnostics
+      send({ jsonrpc: "2.0", id: message.id, result: [] })
+    }
+    if (message.method === "shutdown")
+      send({ jsonrpc: "2.0", id: message.id, result: null })
+  })
+  const client = await Effect.runPromise(
+    startLanguageClient({
+      profile: typescript,
+      root,
+      processFactory: fake.factory,
+    }),
+  )
+
+  assert.deepEqual(await Effect.runPromise(client.diagnostics(file)), [
+    { message: "old diagnostic" },
+  ])
+  await writeFile(file, "const changed = 2\n", "utf8")
+  await Effect.runPromise(
+    client.codeActions(file, { line: 0, character: 6 }, 7),
+  )
+  assert.deepEqual(observedDiagnostics, [])
+  await client.dispose()
+})
+
+test("closing a client fails a pending diagnostics wait", async () => {
+  const { root, file } = await workspace()
+  const fake = fakeProcessFactory((message, send) => {
+    if (message.method === "initialize")
+      send({
+        jsonrpc: "2.0",
+        id: message.id,
+        result: {
+          capabilities: { textDocumentSync: 1, definitionProvider: true },
+        },
+      })
+    if (message.method === "textDocument/didOpen")
+      queueMicrotask(() => fake.exit())
+  })
+  const client = await Effect.runPromise(
+    startLanguageClient({
+      profile: typescript,
+      root,
+      processFactory: fake.factory,
+    }),
+  )
+  const result = await Effect.runPromise(
+    Effect.either(client.diagnostics(file)),
+  )
+  assert.ok(Either.isLeft(result))
+  assert.equal(result.left.code, "closed")
 })
 
 test("serializes concurrent synchronization for one document", async () => {
