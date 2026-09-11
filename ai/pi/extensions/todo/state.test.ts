@@ -328,6 +328,39 @@ test("persisted state is decoded instead of cast", () => {
   assert.equal(Option.isNone(invalid), true)
 })
 
+test("persisted optional todo fields require omission rather than explicit undefined", () => {
+  for (const status of ["pending", "deferred", "blocked"] as const) {
+    const base = {
+      id: 1,
+      text: "Saved",
+      status,
+      ...(status === "blocked" ? { reason: "Waiting" } : {}),
+    }
+    for (const field of [
+      "replies",
+      "statusChangedAt",
+      ...(status === "deferred" ? ["remindAt"] : []),
+    ]) {
+      const state = { todos: [{ ...base, [field]: undefined }], nextId: 2 }
+      assert.equal(
+        Option.isNone(decodeTodoState(state)),
+        true,
+        `${status}.${field}`,
+      )
+      assert.equal(
+        Option.isNone(
+          decodeTodoDetails({ outcome: "success", action: "list", state }),
+        ),
+        true,
+      )
+    }
+    assert.equal(
+      Option.isSome(decodeTodoState({ todos: [base], nextId: 2 })),
+      true,
+    )
+  }
+})
+
 test("persisted tool details validate action and state together", () => {
   const valid = decodeTodoDetails({
     outcome: "success",

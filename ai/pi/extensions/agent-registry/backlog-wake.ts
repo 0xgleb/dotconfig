@@ -37,10 +37,10 @@ export interface BacklogWakePlan {
 }
 
 export interface BacklogWakeHost {
-  readonly on: (
-    event: "session_start" | "session_shutdown",
-    handler: () => void,
-  ) => void
+  readonly on: {
+    (event: "session_start", handler: () => void): void
+    (event: "session_shutdown", handler: () => void): void
+  }
   readonly sendMessage: (
     message: {
       customType: string

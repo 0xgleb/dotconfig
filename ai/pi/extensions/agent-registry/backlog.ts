@@ -101,7 +101,7 @@ export interface BacklogTransitionRecord {
   readonly itemId: string
   readonly revision: number
   readonly actor: string
-  readonly event: BacklogTransitionEvent["kind"]
+  readonly event: BacklogTransitionEvent["kind"] | "rebind"
   readonly from: BacklogItemState["kind"]
   readonly to: BacklogItemState["kind"]
   readonly at: number

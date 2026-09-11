@@ -333,6 +333,74 @@ test("one registry connection serializes concurrent lifecycle mutations", async 
   }
 })
 
+test("rollback failure retains both typed causes and retires the connection", async t => {
+  const root = await mkdtemp(join(tmpdir(), "pi-registry-rollback-failure-"))
+  const originalExec = DatabaseSync.prototype.exec
+  let failRollback = false
+  t.mock.method(
+    DatabaseSync.prototype,
+    "exec",
+    function (this: DatabaseSync, sql: string) {
+      if (failRollback && sql === "ROLLBACK") {
+        failRollback = false
+        throw new Error("injected rollback failure")
+      }
+      return originalExec.call(this, sql)
+    },
+  )
+  const original = new RegistryError({
+    code: "invalid_input",
+    message: "injected work failure",
+  })
+  let failWork = true
+  const store = makeSqliteRegistryStore(root, {
+    transactionBeginSignal: Effect.suspend(() => {
+      if (!failWork) return Effect.void
+      failWork = false
+      failRollback = true
+      return Effect.fail(original)
+    }),
+  })
+  try {
+    const exit = await Effect.runPromiseExit(
+      store.enqueue({
+        project: "/repo",
+        role: "operator",
+        requesterId: "sender",
+        text: "first",
+        now: 1,
+      }),
+    )
+    assert.equal(exit._tag, "Failure")
+    if (exit._tag !== "Failure")
+      assert.fail("expected typed transaction failure")
+    assert.deepEqual(
+      Array.from(Cause.failures(exit.cause)).map(error => error.code),
+      ["invalid_input", "io"],
+    )
+    assert.equal(Array.from(Cause.defects(exit.cause)).length, 0)
+    const next = await Effect.runPromise(
+      store.enqueue({
+        project: "/repo",
+        role: "operator",
+        requesterId: "sender",
+        text: "second",
+        now: 2,
+      }),
+    )
+    assert.equal(next.text, "second")
+    assert.deepEqual(
+      (await Effect.runPromise(store.snapshot(2))).requests.map(
+        request => request.text,
+      ),
+      ["second"],
+    )
+  } finally {
+    store.close()
+    await rm(root, { recursive: true, force: true })
+  }
+})
+
 test("interrupting a registry transaction rolls back before releasing access", async () => {
   const root = await mkdtemp(join(tmpdir(), "pi-registry-interruption-"))
   const began = await Effect.runPromise(Deferred.make<void>())

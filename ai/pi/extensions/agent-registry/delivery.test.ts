@@ -211,7 +211,7 @@ test("destructive clear requires explicit confirmation and preserves one project
 })
 
 test("registry outcome handler stores the resolved full id, not the requested prefix", () => {
-  assert.match(source, /request\.id\.startsWith\(payload\.requestId\)/)
+  assert.match(source, /request\.id\.startsWith\(requestId\)/)
   assert.match(source, /request id prefix is ambiguous/)
   assert.match(source, /store\.claimRequest\(\{\s*requestId: target\.id,/)
   assert.match(source, /store\.completeRequest\(\{\s*requestId: target\.id,/)

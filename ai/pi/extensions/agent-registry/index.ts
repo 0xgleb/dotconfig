@@ -47,8 +47,6 @@ import {
   REGISTRY_OUTCOME_EVENT,
   REGISTRY_PROJECTS_REQUEST_EVENT,
   type RegistryDelegateRequest,
-  type RegistryIdentityRequest,
-  type RegistryIntentRequest,
   type RegistryOutcomeRequest,
   type RegistryProjectsRequest,
 } from "../shared/registry-intent-events.ts"
@@ -255,7 +253,7 @@ const receiptDetails = (
 }
 
 const registryExtension: (pi: ExtensionAPI) => void = pi => {
-  registerRuntimeVersion(pi, "agent-registry", "2026.09.04.7")
+  registerRuntimeVersion(pi, "agent-registry", "2026.09.11.1")
   pi.registerMessageRenderer(MESSAGE_TYPE, (message, options, theme) => {
     const details = receiptDetails(message.details)
     if (!details)
@@ -577,139 +575,157 @@ const registryExtension: (pi: ExtensionAPI) => void = pi => {
       : requestedAgentId
   }
 
-  pi.events.on(
-    REGISTRY_INTENT_REQUEST_EVENT,
-    (payload: RegistryIntentRequest) => {
-      if (
-        !latestSnapshot ||
-        typeof payload !== "object" ||
-        payload === null ||
-        typeof payload.agentId !== "string" ||
-        typeof payload.report !== "function"
-      ) {
-        return
-      }
-      const agentId = resolveRuntimeAgentId(payload.agentId)
-      const leases = latestSnapshot.leases.filter(
-        lease => lease.owner.id === agentId,
+  pi.events.on(REGISTRY_INTENT_REQUEST_EVENT, (payload: unknown) => {
+    if (
+      !latestSnapshot ||
+      typeof payload !== "object" ||
+      payload === null ||
+      !("agentId" in payload) ||
+      typeof payload.agentId !== "string" ||
+      !("report" in payload) ||
+      typeof payload.report !== "function"
+    ) {
+      return
+    }
+    const agentId = resolveRuntimeAgentId(payload.agentId)
+    const leases = latestSnapshot.leases.filter(
+      lease => lease.owner.id === agentId,
+    )
+    for (const lease of leases) {
+      const requestIds = latestSnapshot.requests
+        .filter(
+          request =>
+            request.status === "claimed" &&
+            request.leaseId === lease.id &&
+            request.agentId === agentId,
+        )
+        .map(request => request.id)
+      payload.report(
+        `Trusted live registry assignment: ${lease.project}/${lease.role} (${lease.mode}, ${lease.status})${
+          requestIds.length > 0
+            ? `; claimed request IDs: ${requestIds.join(", ")}`
+            : ""
+        }`,
       )
-      for (const lease of leases) {
-        const requestIds = latestSnapshot.requests
-          .filter(
-            request =>
-              request.status === "claimed" &&
-              request.leaseId === lease.id &&
-              request.agentId === agentId,
-          )
-          .map(request => request.id)
+      for (const requestId of requestIds) {
+        const request = latestSnapshot.requests.find(
+          ({ id }) => id === requestId,
+        )
+        if (!request) continue
         payload.report(
-          `Trusted live registry assignment: ${lease.project}/${lease.role} (${lease.mode}, ${lease.status})${
-            requestIds.length > 0
-              ? `; claimed request IDs: ${requestIds.join(", ")}`
-              : ""
-          }`,
+          `Trusted current claimed registry request ${request.id} full bounded body: ${request.text.slice(0, 4_000)}`,
         )
-        for (const requestId of requestIds) {
-          const request = latestSnapshot.requests.find(
-            ({ id }) => id === requestId,
-          )
-          if (!request) continue
-          payload.report(
-            `Trusted current claimed registry request ${request.id} full bounded body: ${request.text.slice(0, 4_000)}`,
-          )
-        }
       }
-    },
-  )
+    }
+  })
 
-  pi.events.on(
-    REGISTRY_IDENTITY_REQUEST_EVENT,
-    (payload: RegistryIdentityRequest) => {
-      if (
-        !latestSnapshot ||
-        typeof payload !== "object" ||
-        payload === null ||
-        typeof payload.agentId !== "string" ||
-        typeof payload.report !== "function"
-      )
-        return
-      const agentId = resolveRuntimeAgentId(payload.agentId)
-      for (const lease of latestSnapshot.leases.filter(
-        lease => lease.owner.id === agentId && lease.status === "active",
-      ))
-        payload.report({ role: lease.role, mode: lease.mode })
-    },
-  )
+  pi.events.on(REGISTRY_IDENTITY_REQUEST_EVENT, (payload: unknown) => {
+    if (
+      !latestSnapshot ||
+      typeof payload !== "object" ||
+      payload === null ||
+      !("agentId" in payload) ||
+      typeof payload.agentId !== "string" ||
+      !("report" in payload) ||
+      typeof payload.report !== "function"
+    )
+      return
+    const agentId = resolveRuntimeAgentId(payload.agentId)
+    for (const lease of latestSnapshot.leases.filter(
+      lease => lease.owner.id === agentId && lease.status === "active",
+    ))
+      payload.report({ role: lease.role, mode: lease.mode })
+  })
 
-  pi.events.on(
-    REGISTRY_DELEGATE_REQUEST_EVENT,
-    (payload: RegistryDelegateRequest) => {
-      if (
-        typeof payload !== "object" ||
-        payload === null ||
-        typeof payload.report !== "function" ||
-        typeof payload.project !== "string" ||
-        !payload.project.startsWith("/") ||
-        payload.project.length > 512 ||
-        typeof payload.role !== "string" ||
-        payload.role.length === 0 ||
-        payload.role.length > 64 ||
-        typeof payload.text !== "string" ||
-        payload.text.length === 0 ||
-        payload.text.length > 16_000 ||
-        typeof payload.requesterId !== "string" ||
-        typeof payload.requesterLabel !== "string" ||
-        typeof payload.requesterCwd !== "string" ||
-        (payload.priority !== undefined &&
-          payload.priority !== "normal" &&
-          payload.priority !== "urgent")
-      ) {
-        return
-      }
-      void run(
-        store.enqueue({
-          project: payload.project,
-          role: payload.role,
-          requesterId: payload.requesterId,
-          requesterLabel: payload.requesterLabel,
-          requesterCwd: payload.requesterCwd,
-          text: payload.text,
-          priority: payload.priority ?? "normal",
-          now: Date.now(),
-        }),
-      )
-        .then(queued =>
-          payload.report({ outcome: "queued", requestId: queued.id }),
-        )
-        .catch((error: unknown) =>
-          payload.report({
-            outcome: "failed",
-            reason:
-              error instanceof Error
-                ? error.message.slice(0, 200)
-                : "registry enqueue failed",
-          }),
-        )
-    },
-  )
-
-  pi.events.on(REGISTRY_OUTCOME_EVENT, (payload: RegistryOutcomeRequest) => {
+  pi.events.on(REGISTRY_DELEGATE_REQUEST_EVENT, (payload: unknown) => {
     if (
       typeof payload !== "object" ||
       payload === null ||
+      !("report" in payload) ||
       typeof payload.report !== "function" ||
+      !("project" in payload) ||
+      typeof payload.project !== "string" ||
+      !payload.project.startsWith("/") ||
+      payload.project.length > 512 ||
+      !("role" in payload) ||
+      typeof payload.role !== "string" ||
+      payload.role.length === 0 ||
+      payload.role.length > 64 ||
+      !("text" in payload) ||
+      typeof payload.text !== "string" ||
+      payload.text.length === 0 ||
+      payload.text.length > 16_000 ||
+      !("requesterId" in payload) ||
+      typeof payload.requesterId !== "string" ||
+      !("requesterLabel" in payload) ||
+      typeof payload.requesterLabel !== "string" ||
+      !("requesterCwd" in payload) ||
+      typeof payload.requesterCwd !== "string" ||
+      ("priority" in payload &&
+        payload.priority !== undefined &&
+        payload.priority !== "normal" &&
+        payload.priority !== "urgent")
+    ) {
+      return
+    }
+    const callback = payload.report
+    const report: RegistryDelegateRequest["report"] = outcome =>
+      callback(outcome)
+    void run(
+      store.enqueue({
+        project: payload.project,
+        role: payload.role,
+        requesterId: payload.requesterId,
+        requesterLabel: payload.requesterLabel,
+        requesterCwd: payload.requesterCwd,
+        text: payload.text,
+        priority:
+          "priority" in payload && payload.priority === "urgent"
+            ? "urgent"
+            : "normal",
+        now: Date.now(),
+      }),
+    )
+      .then(queued => report({ outcome: "queued", requestId: queued.id }))
+      .catch((error: unknown) =>
+        report({
+          outcome: "failed",
+          reason:
+            error instanceof Error
+              ? error.message.slice(0, 200)
+              : "registry enqueue failed",
+        }),
+      )
+  })
+
+  pi.events.on(REGISTRY_OUTCOME_EVENT, (payload: unknown) => {
+    if (
+      typeof payload !== "object" ||
+      payload === null ||
+      !("report" in payload) ||
+      typeof payload.report !== "function" ||
+      !("requestId" in payload) ||
       typeof payload.requestId !== "string" ||
       !/^[0-9a-f][0-9a-f-]{7,35}$/.test(payload.requestId) ||
+      !("resolution" in payload) ||
       (payload.resolution !== "completed" && payload.resolution !== "failed") ||
+      !("summary" in payload) ||
       typeof payload.summary !== "string" ||
       payload.summary.length === 0 ||
       payload.summary.length > 4_000
     ) {
       return
     }
+    const {
+      report: callback,
+      requestId,
+      resolution,
+      summary: originalSummary,
+    } = payload
+    const report: RegistryOutcomeRequest["report"] = result => callback(result)
     const ctx = latestCtx
     if (!ctx) {
-      payload.report({
+      report({
         outcome: "failed",
         reason: "registry context unavailable",
       })
@@ -721,10 +737,10 @@ const registryExtension: (pi: ExtensionAPI) => void = pi => {
         const agent = identity(ctx)
         const snapshot = await run(store.snapshot(now))
         const matches = snapshot.requests.filter(request =>
-          request.id.startsWith(payload.requestId),
+          request.id.startsWith(requestId),
         )
         if (matches.length !== 1) {
-          payload.report({
+          report({
             outcome: "failed",
             reason:
               matches.length === 0
@@ -735,11 +751,11 @@ const registryExtension: (pi: ExtensionAPI) => void = pi => {
         }
         const target = matches[0]
         if (!target) {
-          payload.report({ outcome: "failed", reason: "request not found" })
+          report({ outcome: "failed", reason: "request not found" })
           return
         }
         if (target.status !== "queued" && target.status !== "claimed") {
-          payload.report({ outcome: "recorded" })
+          report({ outcome: "recorded" })
           return
         }
         let lease = snapshot.leases.find(
@@ -773,8 +789,8 @@ const registryExtension: (pi: ExtensionAPI) => void = pi => {
             }),
           )
         }
-        const summary = payload.summary.slice(0, 2_000)
-        if (payload.resolution === "completed") {
+        const summary = originalSummary.slice(0, 2_000)
+        if (resolution === "completed") {
           await run(
             store.completeRequest({
               requestId: target.id,
@@ -797,9 +813,9 @@ const registryExtension: (pi: ExtensionAPI) => void = pi => {
           )
         }
         await sync(ctx)
-        payload.report({ outcome: "recorded" })
+        report({ outcome: "recorded" })
       } catch (error) {
-        payload.report({
+        report({
           outcome: "failed",
           reason:
             error instanceof Error
@@ -816,30 +832,31 @@ const registryExtension: (pi: ExtensionAPI) => void = pi => {
    * a failure reports an empty list: the caller then falls back to live agents
    * rather than losing its turn.
    */
-  pi.events.on(
-    REGISTRY_PROJECTS_REQUEST_EVENT,
-    (payload: RegistryProjectsRequest) => {
-      if (
-        typeof payload !== "object" ||
-        payload === null ||
-        typeof payload.report !== "function"
-      ) {
-        return
+  pi.events.on(REGISTRY_PROJECTS_REQUEST_EVENT, (payload: unknown) => {
+    if (
+      typeof payload !== "object" ||
+      payload === null ||
+      !("report" in payload) ||
+      typeof payload.report !== "function"
+    ) {
+      return
+    }
+    const callback = payload.report
+    const report: RegistryProjectsRequest["report"] = projects =>
+      callback(projects)
+    void (async () => {
+      try {
+        const snapshot = await run(store.snapshot(Date.now()))
+        const projects = new Set<string>([
+          ...snapshot.leases.map(lease => lease.project),
+          ...snapshot.requests.map(request => request.project),
+        ])
+        report([...projects])
+      } catch {
+        report([])
       }
-      void (async () => {
-        try {
-          const snapshot = await run(store.snapshot(Date.now()))
-          const projects = new Set<string>([
-            ...snapshot.leases.map(lease => lease.project),
-            ...snapshot.requests.map(request => request.project),
-          ])
-          payload.report([...projects])
-        } catch {
-          payload.report([])
-        }
-      })()
-    },
-  )
+    })()
+  })
 
   const ownedLeases = (
     snapshot: RegistrySnapshot,
@@ -925,7 +942,7 @@ const registryExtension: (pi: ExtensionAPI) => void = pi => {
       if (expectedEpoch !== activeLifecycleEpoch || ctx !== latestCtx) return
       for (const lease of ownedLeases(snapshot, agent.id)) {
         const paused = isContinuationPaused(ctx.sessionManager.getBranch())
-        const operation =
+        const operation: Effect.Effect<Lease | void, RegistryError> =
           paused && lease.status === "active"
             ? store.pause({ leaseId: lease.id, agentId: agent.id, now })
             : !paused && lease.status === "paused"
@@ -1604,7 +1621,7 @@ const registryExtension: (pi: ExtensionAPI) => void = pi => {
               candidate.project === project && candidate.role === role,
           )
           if (!lease)
-            await run(
+            return await run(
               Effect.fail(
                 new RegistryError({
                   code: "stale_lease",

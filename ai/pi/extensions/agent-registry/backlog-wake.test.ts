@@ -1,5 +1,6 @@
 import assert from "node:assert/strict"
 import { readFileSync } from "node:fs"
+import { stripTypeScriptTypes } from "node:module"
 import test from "node:test"
 import { Effect, Either } from "effect"
 import { makeBacklogWakeController } from "./backlog-wake.ts"
@@ -24,9 +25,7 @@ const source = readFileSync(new URL("./index.ts", import.meta.url), "utf8")
 const start = source.indexOf("  const sync = async")
 const end = source.indexOf("  const autoClaimOperationalRole", start)
 assert.ok(start >= 0 && end > start)
-const syncSource = source
-  .slice(start, end)
-  .replace("ctx: ExtensionContext,", "ctx,")
+const syncSource = stripTypeScriptTypes(source.slice(start, end))
 const agent = { id: "agent-1", pid: 1 }
 const snapshot: RegistrySnapshot = {
   version: 1,

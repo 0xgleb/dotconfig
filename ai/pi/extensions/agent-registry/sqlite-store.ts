@@ -2,7 +2,7 @@ import { chmodSync, mkdirSync } from "node:fs"
 import { dirname, isAbsolute, join, normalize, relative, sep } from "node:path"
 import { randomUUID } from "node:crypto"
 import { DatabaseSync } from "node:sqlite"
-import { Effect, Either, Exit } from "effect"
+import { Cause, Effect, Either, Exit } from "effect"
 import {
   BacklogError,
   ingestBacklogSource,
@@ -165,21 +165,31 @@ const databaseTransactionEffect = <T>(
   afterBegin: RegistryEffect<void> = Effect.void,
   retire: (database: DatabaseSync) => RegistryEffect<void> = () => Effect.void,
 ): RegistryEffect<T> =>
-  Effect.acquireUseRelease(
-    dbCall("Could not begin registry transaction", () =>
-      database.exec("BEGIN IMMEDIATE"),
-    ),
-    () =>
-      afterBegin.pipe(
-        Effect.andThen(work),
-        Effect.flatMap(result =>
-          dbCall("Could not commit registry transaction", () =>
-            database.exec("COMMIT"),
-          ).pipe(Effect.as(result)),
+  Effect.uninterruptibleMask(restore =>
+    Effect.gen(function* () {
+      yield* dbCall("Could not begin registry transaction", () =>
+        database.exec("BEGIN IMMEDIATE"),
+      )
+      const exit = yield* Effect.exit(
+        restore(
+          afterBegin.pipe(
+            Effect.andThen(work),
+            Effect.flatMap(result =>
+              dbCall("Could not commit registry transaction", () =>
+                database.exec("COMMIT"),
+              ).pipe(Effect.as(result)),
+            ),
+          ),
         ),
-      ),
-    (_transaction, exit) =>
-      Exit.isSuccess(exit) ? Effect.void : rollbackEffect(database, retire),
+      )
+      if (Exit.isSuccess(exit)) return exit.value
+      const rollback = yield* Effect.exit(rollbackEffect(database, retire))
+      return yield* Effect.failCause(
+        Exit.isFailure(rollback)
+          ? Cause.sequential(exit.cause, rollback.cause)
+          : exit.cause,
+      )
+    }),
   )
 
 const hasUnsafeControlCharacters: (text: string) => boolean = text =>
@@ -284,7 +294,7 @@ const requestFromRow = (row: Row): RegistryEffect<RegistryRequest> =>
   requestRowEffect(row)
 
 const rowEffect = (value: unknown): RegistryEffect<Row> =>
-  typeof value === "object" && value !== null && !Array.isArray(value)
+  isRecordValue(value)
     ? Effect.succeed(value)
     : failRegistry("corrupt_state", "registry query returned a malformed row")
 
@@ -448,7 +458,11 @@ const validateRuntimeVersionsEffect = (
         "runtime versions are malformed",
       )
     const entries = Object.entries(runtimeVersions)
-    if (entries.some(([, version]) => typeof version !== "string"))
+    if (
+      !entries.every(
+        (entry): entry is [string, string] => typeof entry[1] === "string",
+      )
+    )
       return yield* failRegistry(
         "invalid_input",
         "runtime versions are malformed",
@@ -538,41 +552,43 @@ const validateActivitiesEffect = (
         "invalid_input",
         "agent activities exceed display limit",
       )
-    return yield* Effect.forEach(activities, activity =>
-      Effect.gen(function* () {
-        if (
-          !isRecordValue(activity) ||
-          typeof activity.todoId !== "number" ||
-          typeof activity.text !== "string"
-        )
-          return yield* failRegistry(
-            "invalid_input",
-            "agent activity is malformed",
+    return yield* Effect.forEach(
+      activities,
+      (activity): RegistryEffect<AgentActivity> =>
+        Effect.gen(function* () {
+          if (
+            !isRecordValue(activity) ||
+            typeof activity.todoId !== "number" ||
+            typeof activity.text !== "string"
           )
-        if (!Number.isSafeInteger(activity.todoId) || activity.todoId < 1)
-          return yield* failRegistry(
-            "invalid_input",
-            "agent activity todo id is malformed",
+            return yield* failRegistry(
+              "invalid_input",
+              "agent activity is malformed",
+            )
+          if (!Number.isSafeInteger(activity.todoId) || activity.todoId < 1)
+            return yield* failRegistry(
+              "invalid_input",
+              "agent activity todo id is malformed",
+            )
+          if (
+            activity.status !== "in_progress" &&
+            activity.status !== "in_review" &&
+            activity.status !== "pending"
           )
-        if (
-          activity.status !== "in_progress" &&
-          activity.status !== "in_review" &&
-          activity.status !== "pending"
-        )
-          return yield* failRegistry(
-            "invalid_input",
-            "agent activity status is malformed",
-          )
-        return {
-          todoId: activity.todoId,
-          status: activity.status,
-          text: yield* boundedTextEffect(
-            "agent activity text",
-            activity.text,
-            MAX_AGENT_ACTIVITY_TEXT,
-          ),
-        }
-      }),
+            return yield* failRegistry(
+              "invalid_input",
+              "agent activity status is malformed",
+            )
+          return {
+            todoId: activity.todoId,
+            status: activity.status,
+            text: yield* boundedTextEffect(
+              "agent activity text",
+              activity.text,
+              MAX_AGENT_ACTIVITY_TEXT,
+            ),
+          }
+        }),
     )
   })
 
@@ -585,7 +601,7 @@ const jsonObjectEffect = (
     catch: () => registryError("corrupt_state", `${label} is malformed JSON`),
   }).pipe(
     Effect.flatMap(decoded =>
-      typeof decoded === "object" && decoded !== null && !Array.isArray(decoded)
+      isRecordValue(decoded)
         ? Effect.succeed(decoded)
         : failRegistry("corrupt_state", `${label} is malformed`),
     ),
@@ -761,7 +777,7 @@ const leaseRowEffect = (row: Row): RegistryEffect<Lease> =>
       ...(model ? { model } : {}),
       ...(runtimeVersions ? { runtimeVersions } : {}),
     }
-    const base = {
+    const base: Omit<Lease, "status"> = {
       id: yield* requiredStringField(row, "lease_id"),
       project: yield* requiredStringField(row, "project"),
       role: yield* requiredStringField(row, "role"),
@@ -1520,12 +1536,15 @@ const transitionRegistryRequestBacklogEffect = (
         candidate.kind === "registry-request" && candidate.id === request.id,
     )
     if (!source) return
-    let item = state.items.find(candidate => candidate.id === source.itemId)
-    if (!item)
+    const initialItem = state.items.find(
+      candidate => candidate.id === source.itemId,
+    )
+    if (!initialItem)
       return yield* failRegistry(
         "corrupt_state",
         "linked backlog item is missing",
       )
+    let item: BacklogItem = initialItem
 
     const transition = (
       event: Parameters<typeof transitionBacklogItem>[1]["event"],
@@ -1763,7 +1782,9 @@ const advanceRegistryRequestBacklogEffect = (
       )
     if (
       item.state.kind !== "ready" &&
-      (item.state.agentId !== input.agentId ||
+      (!("agentId" in item.state) ||
+        !("leaseId" in item.state) ||
+        item.state.agentId !== input.agentId ||
         item.state.leaseId !== input.leaseId)
     )
       return yield* failRegistry(
