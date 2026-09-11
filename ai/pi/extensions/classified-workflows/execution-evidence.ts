@@ -802,6 +802,14 @@ const stateSnapshotIdentity = (
   )
     return undefined
   const command = input.command.trim()
+  const pinnedButStatus =
+    /^\/nix\/store\/[0-9abcdfghijklmnpqrsvwxyz]{32}-gitbutler-cli-\d+\.\d+\.\d+\/bin\/but status --json( \| from json \| get uncommittedChanges \| to json)?$/.exec(
+      command,
+    )
+  if (pinnedButStatus)
+    return {
+      kind: pinnedButStatus[1] ? "gitbutler-uncommitted" : "gitbutler-status",
+    }
   if (
     command ===
     "but status --json | from json | get uncommittedChanges | to json"
