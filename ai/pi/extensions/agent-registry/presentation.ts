@@ -239,7 +239,8 @@ export const registryListText: (
   snapshot: RegistrySnapshot,
   currentAgentId: string,
   now: number,
-) => string = (snapshot, currentAgentId, now) => {
+  selection?: "open" | "all",
+) => string = (snapshot, currentAgentId, now, selection = "open") => {
   if (
     (snapshot.agents?.length ?? 0) === 0 &&
     snapshot.leases.length === 0 &&
@@ -262,10 +263,13 @@ export const registryListText: (
     return `● ${lease.project}/${lease.role} · ${lease.mode} · ${state} · owner ${ownerLabel(lease, currentAgentId)} · ${runtimeLabel(lease.owner)} · ttl ${seconds}s`
   })
   const requestLines = snapshot.requests
-    .filter(({ status }) => status === "queued" || status === "claimed")
+    .filter(
+      ({ status }) =>
+        selection === "all" || status === "queued" || status === "claimed",
+    )
     .map(
       request =>
-        `? ${request.id.slice(0, 8)} · from ${request.requesterLabel ?? compact(request.requesterId, 18)}${
+        `? ${request.id} · from ${request.requesterLabel ?? compact(request.requesterId, 18)}${
           request.requesterCwd ? ` (${basename(request.requesterCwd)})` : ""
         } · ${request.project}/${request.role} · ${request.priority} · ${request.status} · delivery ${requestDeliveryStatus(request)} · ${compact(request.text)}`,
     )
@@ -275,10 +279,26 @@ export const registryListText: (
     ...(requestLines.length > 0
       ? [
           "",
-          "Open requests:",
+          selection === "open" ? "Open requests:" : "Requests:",
           ...requestLines,
           "Inspect exact body: agent_registry requests requestId=<full UUID or unique prefix>.",
         ]
       : []),
-  ].join("\n")
+  ]
+    .map(boundedRegistryLine)
+    .join("\n")
+}
+
+const boundedRegistryLine = (text: string): string => {
+  const line = text.replace(/[\u0000-\u001f\u007f]/gu, " ")
+  if (Buffer.byteLength(line, "utf8") <= 512) return line
+  let result = ""
+  let bytes = 0
+  for (const character of line) {
+    const size = Buffer.byteLength(character, "utf8")
+    if (bytes + size > 509) break
+    result += character
+    bytes += size
+  }
+  return `${result}...`
 }

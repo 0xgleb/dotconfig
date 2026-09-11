@@ -1,5 +1,7 @@
 import assert from "node:assert/strict"
 import test from "node:test"
+import { Effect } from "effect"
+import { registryListingResult } from "./listing.ts"
 import {
   boundedRegistryRequestPreview,
   operatorBacklogText,
@@ -304,6 +306,27 @@ test("operator backlog shows request age and runtime drift with navigation", () 
     text,
     /\/agents for fleet detail.*\/blocked for blocker triage.*\/questions/is,
   )
+})
+
+test("registry listing bounds a large open inbox and reports omitted rows", () => {
+  const crowded = {
+    ...snapshot,
+    requests: Array.from({ length: 455 }, (_, index) => ({
+      ...snapshot.requests[0]!,
+      id: `request-${String(index).padStart(8, "0")}`,
+      text: `request body ${index}`,
+    })),
+  }
+  const text = Effect.runSync(
+    registryListingResult(crowded, { action: "list" }, "agent-a", 61_000),
+  ).content[0].text
+  assert.equal(
+    text.split("\n").filter(line => line.startsWith("? ")).length,
+    20,
+  )
+  assert.match(text, /20 of 455/)
+  assert.match(text, /partial/i)
+  assert.doesNotMatch(text, /request body 454/)
 })
 
 test("registry listing shows safe owner and request lifecycle details", () => {

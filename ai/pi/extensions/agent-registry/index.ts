@@ -105,7 +105,6 @@ import {
   reconcileSessionLease,
   RegistryError,
   registryReceiptAvailable,
-  registrySnapshotForProject,
   registrySyncNotification,
   runRegistryEffect,
   terminalOutcomeBelongsToContext,
@@ -115,6 +114,8 @@ import {
   type RegistryRequestPriority,
   type RegistrySnapshot,
 } from "./registry.ts"
+
+import { registryListingResult, type RegistryListQuery } from "./listing.ts"
 
 const SYNC_MS = 5_000
 const LEASE_TTL_MS = 90_000
@@ -144,6 +145,9 @@ interface RegistryToolRequest {
   readonly mode?: "task" | "operational"
   readonly priority?: RegistryRequestPriority
   readonly requestId?: string
+  readonly requestStatus?: NonNullable<RegistryListQuery["requestStatus"]>
+  readonly limit?: number
+  readonly offset?: number
   readonly text?: string
   readonly summary?: string
   readonly evidenceRef?: string
@@ -251,7 +255,7 @@ const receiptDetails = (
 }
 
 const registryExtension: (pi: ExtensionAPI) => void = pi => {
-  registerRuntimeVersion(pi, "agent-registry", "2026.09.04.6")
+  registerRuntimeVersion(pi, "agent-registry", "2026.09.04.7")
   pi.registerMessageRenderer(MESSAGE_TYPE, (message, options, theme) => {
     const details = receiptDetails(message.details)
     if (!details)
@@ -1337,7 +1341,7 @@ const registryExtension: (pi: ExtensionAPI) => void = pi => {
     name: "agent_registry",
     label: "Agent registry",
     description:
-      "Claim local project roles, exchange durable requests, and ingest already-collected declared tracker/document backlog snapshots for the current project. Use action=requests with requestId to inspect one full bounded request body. Roles and backlog records route work but grant no authority.",
+      "Claim local project roles, exchange durable requests, and ingest already-collected declared backlog snapshots. list/requests return at most 20 rows per section (512 bytes per row), with project/role/requestStatus filters and limit/offset pagination. Omitted project means all projects; requestStatus defaults to open. Counts are matching registry rows, not total external backlog. Use requests with requestId for one full bounded body. Roles and records grant no authority.",
     promptSnippet:
       "Discover local Pi role owners, claim unowned duties, and delegate durable requests",
     promptGuidelines: [
@@ -1377,6 +1381,21 @@ const registryExtension: (pi: ExtensionAPI) => void = pi => {
         Type.Union([Type.Literal("normal"), Type.Literal("urgent")]),
       ),
       requestId: Type.Optional(Type.String()),
+      requestStatus: Type.Optional(
+        Type.Union([
+          Type.Literal("open"),
+          Type.Literal("all"),
+          Type.Literal("queued"),
+          Type.Literal("claimed"),
+          Type.Literal("completed"),
+          Type.Literal("failed"),
+          Type.Literal("cancelled"),
+        ]),
+      ),
+      limit: Type.Optional(Type.Integer({ minimum: 1, maximum: 20 })),
+      offset: Type.Optional(
+        Type.Integer({ minimum: 0, maximum: Number.MAX_SAFE_INTEGER }),
+      ),
       text: Type.Optional(Type.String()),
       summary: Type.Optional(Type.String()),
       evidenceRef: Type.Optional(
@@ -1539,42 +1558,14 @@ const registryExtension: (pi: ExtensionAPI) => void = pi => {
 
         if (request.action === "list" || request.action === "requests") {
           const snapshot = await run(store.snapshot(now))
-          const requested = request.requestId?.trim()
-          const matches = requested
-            ? snapshot.requests.filter(
-                ({ id }) => id === requested || id.startsWith(requested),
-              )
-            : []
-          const listedSnapshot = request.project?.trim()
-            ? registrySnapshotForProject(snapshot, project)
-            : snapshot
-          if (requested && matches.length !== 1)
-            await run(
-              Effect.fail(
-                new RegistryError({
-                  code: matches.length === 0 ? "not_found" : "invalid_input",
-                  message:
-                    matches.length === 0
-                      ? "request not found"
-                      : "request prefix is ambiguous",
-                }),
-              ),
-            )
-          return {
-            content: [
-              {
-                type: "text",
-                text: matches[0]
-                  ? registryRequestDetailText(matches[0])
-                  : registryListText(listedSnapshot, agent.id, now),
-              },
-            ],
-            details: {
-              outcome: "success",
-              action: request.action,
-              snapshot: listedSnapshot,
-            },
-          }
+          return await run(
+            registryListingResult(
+              snapshot,
+              { ...request, action: request.action },
+              agent.id,
+              now,
+            ),
+          )
         }
 
         if (request.action === "claim") {

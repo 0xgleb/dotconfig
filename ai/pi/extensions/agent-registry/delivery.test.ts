@@ -136,15 +136,6 @@ test("operational receipts wake one safe turn while task-role receipts remain pa
   assert.doesNotMatch(syncSource, /dispatchOperationalTriage/)
 })
 
-test("project-scoped listings filter the returned snapshot before rendering", () => {
-  assert.match(source, /registrySnapshotForProject\(snapshot, project\)/)
-  assert.match(source, /registryListText\(listedSnapshot, agent\.id, now\)/)
-  assert.match(
-    source,
-    /details: \{[\s\S]*?outcome: "success",[\s\S]*?action: request\.action,[\s\S]*?snapshot: listedSnapshot,[\s\S]*?\}/,
-  )
-})
-
 test("delegate results show bounded request content instead of only queue metadata", () => {
   assert.match(
     source,
