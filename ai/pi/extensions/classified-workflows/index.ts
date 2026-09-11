@@ -290,8 +290,8 @@ import { RemoteBridgeError } from "../remote-control/protocol.ts"
 import { makeRemoteBridgeStore } from "../remote-control/sqlite-store.ts"
 
 const CLASSIFIER_MODEL = "openai-codex/gpt-5.6-terra"
-const CLASSIFIER_TIMEOUT_MS = 20_000
-const CLASSIFIER_MAX_ATTEMPTS = 2
+const CLASSIFIER_TIMEOUT_MS = 60_000
+const CLASSIFIER_MAX_ATTEMPTS = 3
 const CLASSIFIER_RETRY_BASE_MS = 1_000
 const REVIEW_DUTY_RELAY_ATTEMPTS = 12
 const MAX_CHILD_STDERR_CHARACTERS = 12_000
@@ -1025,7 +1025,7 @@ const WorkflowParameters = Type.Object({
 })
 
 export default function classifiedWorkflows(pi: ExtensionAPI): void {
-  registerRuntimeVersion(pi, "classified-workflows", "2026.09.04.34")
+  registerRuntimeVersion(pi, "classified-workflows", "2026.09.11.1")
   const childTokenLimitResult = Effect.runSync(
     Effect.either(
       workflowChildTokenLimit(process.env[WORKFLOW_CHILD_TOKEN_LIMIT_ENV]),
@@ -1179,6 +1179,7 @@ export default function classifiedWorkflows(pi: ExtensionAPI): void {
           : {}),
         runtimeReviewDutyContext: runtimeReviewDutyContext(
           reviewDutySessionName(ctx),
+          reviewDutyState,
         ),
         ...(runtimeHandoverContext ? { runtimeHandoverContext } : {}),
       },
@@ -3218,7 +3219,11 @@ export default function classifiedWorkflows(pi: ExtensionAPI): void {
         ).length
         const transition = continueReviewDuty(
           reviewDutyState,
-          completedWorkflow !== undefined,
+          completedWorkflow !== undefined &&
+            completedWorkflow.children.some(
+              child =>
+                child.status === "completed" && child.outputCharacters > 0,
+            ),
           workflowRunning,
           completedPasses,
         )
@@ -3268,7 +3273,11 @@ export default function classifiedWorkflows(pi: ExtensionAPI): void {
           reviewDutyJobAllowed(dutySessionName, reviewDutyState)
         const transition = completeAutoReviewDuty(
           reviewDutyState,
-          completedWorkflow !== undefined,
+          completedWorkflow !== undefined &&
+            completedWorkflow.children.some(
+              child =>
+                child.status === "completed" && child.outputCharacters > 0,
+            ),
           workflowRunning,
           allowedCompletionLane,
         )

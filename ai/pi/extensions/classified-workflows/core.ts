@@ -1,7 +1,10 @@
 import path from "node:path"
 import vm from "node:vm"
 import { Data, Effect, Either } from "effect"
-import { availableMemoryBytes as systemAvailableMemoryBytes } from "../shared/memory-capacity.ts"
+import {
+  availableMemoryBytes as systemAvailableMemoryBytes,
+  type MemoryCapacityError,
+} from "../shared/memory-capacity.ts"
 import { parseLoopCommandResult } from "./loop.ts"
 
 export type Boundary = "spawn" | "action" | "return" | "tool-result"
@@ -1258,20 +1261,22 @@ export async function runWorkflowScript(
         `Workflow phase agent limit exceeded (${limits.maxAgents}); start a new named phase only after current children settle`,
       )
     inFlightAgentCalls += 1
+    const memoryProbe: Effect.Effect<
+      number,
+      WorkflowScriptError | MemoryCapacityError
+    > = dependencies.availableMemoryBytes
+      ? Effect.try({
+          try: dependencies.availableMemoryBytes,
+          catch: cause =>
+            workflowFailure(
+              cause instanceof Error
+                ? cause.message
+                : "Workflow memory probe failed",
+            ),
+        })
+      : Effect.map(systemAvailableMemoryBytes(), Number)
     const availableMemoryResult = await Effect.runPromise(
-      Effect.either(
-        dependencies.availableMemoryBytes
-          ? Effect.try({
-              try: dependencies.availableMemoryBytes,
-              catch: cause =>
-                workflowFailure(
-                  cause instanceof Error
-                    ? cause.message
-                    : "Workflow memory probe failed",
-                ),
-            })
-          : Effect.map(systemAvailableMemoryBytes(), Number),
-      ),
+      Effect.either(memoryProbe),
     )
     if (Either.isLeft(availableMemoryResult)) {
       inFlightAgentCalls -= 1

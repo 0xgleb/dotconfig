@@ -1352,6 +1352,42 @@ export const selectRelevantExecutionEvidence = (
       .slice(0, relevantCount)
       .map(({ index }) => index),
   )
+  // Identical command text is not an identical source snapshot. Keep bounded
+  // later mutation evidence beside the latest matching success, even when its
+  // path shares fewer query terms than the command itself. This is chronology
+  // evidence only: mutations in the caller workspace may be unrelated, and the
+  // classifier must still establish relevance and independent authority.
+  const subjectInputDigest = subjectRecord?.inputDigest
+  if (
+    subjectScope &&
+    subjectCwd &&
+    typeof subjectInputDigest === "string" &&
+    /^[0-9a-f]{64}$/.test(subjectInputDigest)
+  ) {
+    let latestMatchingSuccessIndex = -1
+    currentCandidates.forEach((candidate, index) => {
+      const success =
+        /^\S+ result status=success inputDigest=([0-9a-f]{64}) scope=([0-9a-f]{16})\b/.exec(
+          candidate,
+        )
+      if (success?.[1] === subjectInputDigest && success[2] === subjectScope)
+        latestMatchingSuccessIndex = index
+    })
+    if (latestMatchingSuccessIndex >= 0) {
+      const callerScope = evidenceScopeDigest(subjectCwd)
+      const mutationWitnesses = olderEntries
+        .map((entry, index) => ({ ...entry, index }))
+        .filter(({ candidate, currentIndex }) => {
+          const mutationScope = successfulMutationScope(candidate)
+          return (
+            currentIndex > latestMatchingSuccessIndex &&
+            (mutationScope === subjectScope || mutationScope === callerScope)
+          )
+        })
+        .slice(-8)
+      for (const { index } of mutationWitnesses) selectedOlderIndexes.add(index)
+    }
+  }
   const ttddRedPhaseIndexes = scoredOlderCandidates
     .filter(
       ({ candidate, score }) =>

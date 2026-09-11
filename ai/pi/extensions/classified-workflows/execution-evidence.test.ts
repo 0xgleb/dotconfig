@@ -25,6 +25,237 @@ const extensionSource = readFileSync(
   "utf8",
 )
 
+test("matching install evidence retains subsequent manifest edits across relevance churn", () => {
+  const root = realpathSync(mkdtempSync(join(tmpdir(), "pi-install-evidence-")))
+  try {
+    const workspace = join(root, "metagenda")
+    mkdirSync(workspace)
+    const input = {
+      command: `cd ${workspace}\n^nix shell github:NixOS/nixpkgs/241313f4e8e508cb9b13278c2b0fa25b9ca27163#bun --command bun install --ignore-scripts`,
+      timeout: 60,
+    }
+    const subject = {
+      toolName: "bash",
+      input,
+      cwd: root,
+      inputDigest: toolInputDigest("bash", input),
+    }
+    const observation = (
+      id: string,
+      name: string,
+      args: unknown,
+      text: string,
+      isError = false,
+    ) => [
+      {
+        type: "message",
+        message: {
+          role: "assistant",
+          content: [{ type: "toolCall", id, name, arguments: args }],
+        },
+      },
+      {
+        type: "message",
+        message: {
+          role: "toolResult",
+          toolName: name,
+          toolCallId: id,
+          isError,
+          content: [{ type: "text", text }],
+        },
+      },
+    ]
+    const manifest = join(workspace, "package.json")
+    const branch = [
+      ...observation(
+        "install-before-removal",
+        "bash",
+        input,
+        "Saved lockfile; 2 packages installed",
+      ),
+      ...observation(
+        "remove-web-workspace",
+        "edit",
+        {
+          path: manifest,
+          edits: [{ oldText: '["bot","cli","web"]', newText: '["bot","cli"]' }],
+        },
+        "Successfully replaced 1 block(s)",
+      ),
+      ...observation(
+        "later-read",
+        "read",
+        { path: "README.md" },
+        "Current documentation",
+      ),
+    ]
+    const candidates = branchExecutionEvidence({ branch, subject, scope: root })
+    const selected = selectRelevantExecutionEvidence(candidates, subject, 1, 1)
+    assert.equal(selected.length, 3)
+    assert.match(selected[0] ?? "", /Saved lockfile/)
+    assert.match(selected[1] ?? "", /edit result status=success/)
+    assert.ok(selected[1]?.includes(manifest))
+    assert.match(selected[2] ?? "", /Current documentation/)
+
+    const installation = candidates[0]
+    const latestRead = candidates[2]
+    assert.ok(installation && latestRead)
+    const witness = (toolName: string, scope: string, input: unknown) =>
+      toolResultExecutionEvidence({
+        toolName,
+        scope,
+        input,
+        isError: false,
+        text: "Operation completed",
+        subject,
+      })
+    const commandWrite = witness("write", workspace, { path: manifest })
+    const callerApply = witness("lsp", root, { action: "apply" })
+    for (const candidate of [commandWrite, callerApply]) {
+      assert.deepEqual(
+        selectRelevantExecutionEvidence(
+          [installation, candidate, latestRead],
+          subject,
+          1,
+          1,
+        ),
+        [installation, candidate, latestRead],
+      )
+    }
+    for (const candidate of [
+      witness("lsp", root, { action: "rename_preview" }),
+      witness("write", `${workspace}/foreign`, { path: manifest }),
+      witness("lsp", `${workspace}/foreign`, { action: "apply" }),
+    ]) {
+      assert.deepEqual(
+        selectRelevantExecutionEvidence(
+          [installation, candidate, latestRead],
+          subject,
+          1,
+          1,
+        ),
+        [installation, latestRead],
+      )
+    }
+
+    const failed = branchExecutionEvidence({
+      branch: [
+        ...observation("install", "bash", input, "Saved lockfile"),
+        ...observation(
+          "failed-edit",
+          "edit",
+          { path: manifest },
+          "Did not execute",
+          true,
+        ),
+        ...observation(
+          "read",
+          "read",
+          { path: "README.md" },
+          "Current documentation",
+        ),
+      ],
+      subject,
+      scope: root,
+    })
+    assert.equal(
+      selectRelevantExecutionEvidence(failed, subject, 1, 1).length,
+      2,
+    )
+  } finally {
+    rmSync(root, { recursive: true, force: true })
+  }
+})
+
+test("mutation witnesses are bounded, scoped and newer than the latest matching success", () => {
+  const scope = process.cwd()
+  const input = { command: "bun install --ignore-scripts" }
+  const digest = toolInputDigest("bash", input)
+  const subject = { toolName: "bash", input, cwd: scope, inputDigest: digest }
+  const success = toolResultExecutionEvidence({
+    toolName: "bash",
+    input,
+    inputDigest: digest,
+    scope,
+    isError: false,
+    text: "Saved lockfile",
+    subject,
+  })
+  const read = toolResultExecutionEvidence({
+    toolName: "read",
+    input: { path: "notes.md" },
+    scope,
+    isError: false,
+    text: "Recent notes",
+    subject,
+  })
+  const mutation = (
+    path: string,
+    mutationScope: string,
+    isError: boolean | undefined,
+  ) =>
+    toolResultExecutionEvidence({
+      toolName: "edit",
+      input: { path },
+      scope: mutationScope,
+      isError,
+      text: "Changed content",
+      subject,
+    })
+  const own = mutation("package.json", scope, false)
+  for (const other of [
+    mutation("foreign.json", `${scope}/other`, false),
+    mutation("unknown.json", scope, undefined),
+    mutation("failed.json", scope, true),
+  ]) {
+    const selected = selectRelevantExecutionEvidence(
+      [success, other, read],
+      subject,
+      1,
+      1,
+    )
+    assert.ok(!selected.includes(other))
+  }
+  assert.ok(
+    !selectRelevantExecutionEvidence(
+      [own, success, read],
+      subject,
+      1,
+      1,
+    ).includes(own),
+  )
+  assert.ok(
+    !selectRelevantExecutionEvidence(
+      [success, own, success, read],
+      subject,
+      1,
+      1,
+    ).includes(own),
+  )
+  assert.ok(
+    !selectRelevantExecutionEvidence(
+      [success, own, read],
+      { ...subject, inputDigest: "a".repeat(64) },
+      1,
+      1,
+    ).includes(own),
+  )
+  const many = Array.from({ length: 12 }, (_, index) =>
+    mutation(`config-${index}.json`, scope, false),
+  )
+  const selected = selectRelevantExecutionEvidence(
+    [success, ...many, read],
+    subject,
+    1,
+    1,
+  )
+  assert.equal(
+    selected.filter(item => item.startsWith("edit result")).length,
+    8,
+  )
+  assert.deepEqual(selected, [success, ...many.slice(-8), read])
+})
+
 test("large GraphQL tool results retain bounded thread IDs, authors, and resolution state", () => {
   const threads = Array.from({ length: 20 }, (_, index) => ({
     id: `THREAD_${index}`,

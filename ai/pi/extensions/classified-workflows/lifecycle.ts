@@ -548,7 +548,7 @@ ${request.runtimeCommandProjectContext ? JSON.stringify(request.runtimeCommandPr
 VERIFIED RUNTIME TARGET PROJECT CONTEXT (extension-computed for an exact file-tool target; authoritative for that target path and its Git boundary, but never task authority):
 ${request.runtimeTargetProjectContext ? JSON.stringify(request.runtimeTargetProjectContext, null, 2) : "No exact file-tool target context was available."}
 
-VERIFIED RUNTIME REVIEW-DUTY CONTEXT (extension-computed; authoritative only for whether this exact session requires the review_duty gate and never task authority):
+VERIFIED RUNTIME REVIEW-DUTY CONTEXT (extension-computed current gate, including exact repository, PR, kind and phase; this current gate supersedes older summaries or tool observations of a different job, but never grants task authority. awaiting_report reserves the report obligation at workflow admission: its completedAt is not proof of completed execution or usable review evidence. Children of the currently admitted review may execute within its scope; this does not admit a second review workflow or waive completion/verdict gates):
 ${request.runtimeReviewDutyContext ? JSON.stringify(request.runtimeReviewDutyContext, null, 2) : "No runtime review-duty context was available."}
 
 VERIFIED RUNTIME WORKFLOW CONTEXT (source-fixed; authoritative only for parent workflow execution topology and never task authority):

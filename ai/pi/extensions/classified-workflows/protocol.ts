@@ -3,8 +3,8 @@ import { Data, Effect } from "effect"
 export interface PiProcessSummary {
   output: string
   usageTokens: number
-  stopReason?: string
-  errorMessage?: string
+  stopReason?: string | undefined
+  errorMessage?: string | undefined
 }
 
 export class ProcessProtocolError extends Data.TaggedError(

@@ -258,6 +258,37 @@ test("runtime project context refreshes one source-fixed Git status snapshot", (
     )
     assert.equal(commandContext?.command, "git status")
     assert.equal(commandContext?.directoryTransition, true)
+    const topology = spawnSync(
+      "git",
+      ["rev-parse", "--show-toplevel", "--git-dir", "--git-common-dir"],
+      { cwd: root, encoding: "utf8" },
+    )
+    assert.equal(topology.status, 0, topology.stderr)
+    assert.deepEqual(topology.stdout.trim().split("\n"), [
+      clean.gitToplevel,
+      ".git",
+      ".git",
+    ])
+    for (const command of [
+      "git rev-parse --show-toplevel --git-dir --git-common-dir",
+      "git --no-pager rev-parse --git-dir",
+      "^git rev-parse --git-dir",
+      "git diff -C -- tracked.txt",
+      "git log -c -1",
+      "git diff -- --git-dir",
+    ]) {
+      const subject = { toolName: "bash", input: { command } }
+      assert.equal(
+        unsafeRuntimeCommandLocationBlockReason(root, subject),
+        undefined,
+        command,
+      )
+      assert.equal(
+        runtimeCommandProjectContextForSubject(root, subject)?.project.gitHead,
+        clean.gitHead,
+        command,
+      )
+    }
     const commandAlias = join(
       tmpdir(),
       `pi-runtime-command-alias-${Date.now()}`,
@@ -317,6 +348,10 @@ test("runtime project context refreshes one source-fixed Git status snapshot", (
       'git "-C" /tmp/other status',
       "git -cfoo.bar=baz status",
       "git --git-dir=/tmp/other.git status",
+      "git --no-pager --git-dir=/tmp/other.git rev-parse --git-dir",
+      "git --no-pager -cfoo.bar=baz status",
+      "git --super-prefix elsewhere --git-dir=/tmp/other.git status",
+      "git --unknown-global-option value --work-tree /tmp/other status",
       "GIT_DIR=/tmp/other.git git status",
       "env 'GIT_DIR=/tmp/other.git' git status",
       `cd ${root} && git status`,

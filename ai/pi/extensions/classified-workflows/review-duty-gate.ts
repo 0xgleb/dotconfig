@@ -14,6 +14,7 @@ export interface ReviewDutyJob {
 export interface RuntimeReviewDutyContext {
   readonly sessionName: string | null
   readonly gateRequired: boolean
+  readonly gateState: ReviewDutyState | null
 }
 
 interface ActiveReviewDutyJob extends ReviewDutyJob {
@@ -98,9 +99,11 @@ export const resolveReviewDutySessionName = (
 
 export const runtimeReviewDutyContext = (
   sessionName: string | undefined,
+  state: ReviewDutyState,
 ): RuntimeReviewDutyContext => ({
   sessionName: sessionName ?? null,
   gateRequired: isReviewDutySession(sessionName),
+  gateState: isReviewDutySession(sessionName) ? state : null,
 })
 
 export const reviewDutyJobAllowed = (
@@ -623,7 +626,7 @@ const decodeReviewDutyState = (value: unknown): ReviewDutyState | undefined => {
     value.continuation !== "fix-re-review"
   )
     return undefined
-  const continuation =
+  const continuation: Pick<ActiveReviewDutyJob, "continuation"> =
     value.continuation === "fix-re-review"
       ? { continuation: value.continuation }
       : {}
@@ -769,7 +772,7 @@ const continuedToolResultAfter = (
 const continuedToolResultBefore = (
   entries: readonly unknown[],
   stateIndex: number,
-  state: ReviewDutyState,
+  state: ReviewDutyJob,
 ): boolean => {
   for (let index = stateIndex - 1; index >= 0; index -= 1) {
     const entry = entries[index]

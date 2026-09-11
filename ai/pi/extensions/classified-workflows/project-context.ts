@@ -412,13 +412,28 @@ export const runtimeProjectContextForTarget = (
 }
 
 const literalAbsoluteCommandPath = /^\/[A-Za-z0-9._@+,=\/-]+$/
-const gitRepositorySelectors = new Set([
-  "--git-dir",
-  "--work-tree",
-  "--namespace",
-  "--bare",
-  "--config-env",
-  "--exec-path",
+// Only known valueless global options can precede the subcommand. Unknown
+// options may consume a value, so guessing their arity could hide a selector.
+const gitGlobalOptionsWithoutValues = new Set([
+  "-v",
+  "--version",
+  "-h",
+  "--help",
+  "--html-path",
+  "--man-path",
+  "--info-path",
+  "-p",
+  "--paginate",
+  "-P",
+  "--no-pager",
+  "--no-replace-objects",
+  "--no-lazy-fetch",
+  "--no-optional-locks",
+  "--no-advice",
+  "--literal-pathspecs",
+  "--glob-pathspecs",
+  "--noglob-pathspecs",
+  "--icase-pathspecs",
 ])
 const safeGitPushRemote =
   /^(?:https:\/\/[A-Za-z0-9.-]+(?::\d+)?\/[A-Za-z0-9._~+\/%-]+|ssh:\/\/[A-Za-z0-9._-]+@[A-Za-z0-9.-]+(?::\d+)?\/[A-Za-z0-9._~+\/%-]+|[A-Za-z0-9._-]+@[A-Za-z0-9.-]+:[A-Za-z0-9._~+\/-]+)$/
@@ -502,15 +517,13 @@ const unsafeGitTokens = (words: readonly string[]): boolean => {
   const gitIndex = words.findIndex(word => word === "git" || word === "^git")
   if (gitIndex < 0) return false
   if (gitIndex > 0) return true
-  return words.slice(gitIndex + 1).some((word, index, gitArguments) => {
-    if (word === "-C" || word.startsWith("-C")) return true
-    if (word === "-c" || word.startsWith("-c")) return true
-    const [option] = word.split("=", 1)
-    if (option && gitRepositorySelectors.has(option)) return true
-    return (
-      index > 0 && gitRepositorySelectors.has(gitArguments[index - 1] ?? "")
-    )
-  })
+  for (const word of words.slice(gitIndex + 1)) {
+    // Git parses global options before the subcommand. For example, --git-dir
+    // after rev-parse reports a path; it does not select another repository.
+    if (!word.startsWith("-")) return false
+    if (!gitGlobalOptionsWithoutValues.has(word)) return true
+  }
+  return false
 }
 
 export const runtimeCommandLocationForSubject = (
