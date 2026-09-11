@@ -163,7 +163,11 @@ export const registryRequestDetailText: (
 ) => string = request =>
   `Request ${request.id}\nSource agent: ${request.requesterLabel ?? request.requesterId}${
     request.requesterCwd ? ` · ${request.requesterCwd}` : ""
-  }\nTarget: ${request.project}/${request.role}\nPriority: ${request.priority}\nStatus: ${request.status}\nDelivery: ${requestDeliveryStatus(request)}${requestOutcomeText(request)}\n\n${request.text}`
+  }\nTarget: ${request.project}/${request.role}\nPriority: ${request.priority}\nStatus: ${request.status}\nDelivery: ${requestDeliveryStatus(request)}${requestOutcomeText(request)}${
+    request.status === "claimed"
+      ? `\nAssigned agent: ${request.agentId}\nAssigned lease: ${request.leaseId}\nRecorded assignment is not proof of current lease validity.`
+      : ""
+  }\n\n${request.text}`
 
 export const registryWidgetLines: (
   snapshot: RegistrySnapshot,

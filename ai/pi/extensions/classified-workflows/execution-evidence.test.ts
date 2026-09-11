@@ -734,8 +734,11 @@ test("same-workspace successful state snapshots survive a prose-only workflow su
   )
   const completedRequest = snapshot(
     "agent_registry",
-    { action: "complete_request", requestId: "c174b808" },
-    "Completed request c174b808",
+    {
+      action: "complete_request",
+      requestId: "11111111-1111-4111-8111-111111111111",
+    },
+    "Completed request 11111111-1111-4111-8111-111111111111",
   )
   const leanStatus = snapshot(
     "bash",
@@ -883,7 +886,7 @@ test("same-workspace successful state snapshots survive a prose-only workflow su
       "agent_registry",
       {
         action: "complete_request",
-        requestId: `request-${String(index).padStart(2, "0")}`,
+        requestId: `11111111-1111-4111-8111-${String(index).padStart(12, "0")}`,
       },
       `Completed request ${index}`,
     ),

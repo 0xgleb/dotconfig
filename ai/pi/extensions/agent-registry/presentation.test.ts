@@ -230,6 +230,26 @@ test("request detail exposes full bounded coordination text with source identity
   assert.match(text, /fix workflow retries/)
 })
 
+test("claimed request detail exposes its recorded assignment without claiming a live lease", () => {
+  const request = snapshot.requests[0]
+  assert.ok(request)
+  const text = registryRequestDetailText({
+    ...request,
+    status: "claimed",
+    agentId: "session-1:pid:123",
+    leaseId: "lease-new",
+  })
+  assert.match(
+    text,
+    /Assigned agent: session-1:pid:123\nAssigned lease: lease-new/,
+  )
+  assert.match(
+    text,
+    /Recorded assignment is not proof of current lease validity/,
+  )
+  assert.doesNotMatch(registryRequestDetailText(request), /Assigned lease:/)
+})
+
 test("request detail exposes bounded terminal outcomes as factual evidence", () => {
   const request = snapshot.requests[0]
   assert.ok(request)

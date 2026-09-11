@@ -671,6 +671,9 @@ interface StateSnapshotIdentity {
     | "gitbutler-uncommitted"
     | "pull-request-view"
     | "registry-completion"
+    | "registry-claim"
+    | "registry-phase"
+    | "registry-terminal"
     | "registry-version"
     | "git-current-branch"
     | "git-head"
@@ -679,6 +682,15 @@ interface StateSnapshotIdentity {
     | "git-remote-sha"
   readonly anchor?: string
 }
+
+const FULL_REGISTRY_REQUEST_ID =
+  /^[0-9a-f]{8}-[0-9a-f]{4}-[0-9a-f]{4}-[0-9a-f]{4}-[0-9a-f]{12}$/i
+
+const isRegistryRequestSnapshotKind = (kind: string): boolean =>
+  kind === "registry-claim" ||
+  kind === "registry-phase" ||
+  kind === "registry-terminal" ||
+  kind === "registry-completion"
 
 const hashedSnapshotAnchor = (label: string, value: string): string =>
   `${label}:${createHash("sha256").update(value).digest("hex").slice(0, 16)}`
@@ -776,9 +788,30 @@ const stateSnapshotIdentity = (
   const normalizedToolName = toolName.replace(/^functions\./, "")
   if (normalizedToolName === "agent_registry") {
     if (
+      scope &&
+      typeof input?.requestId === "string" &&
+      FULL_REGISTRY_REQUEST_ID.test(input.requestId) &&
+      (input.action === "claim_request" ||
+        input.action === "start_request" ||
+        input.action === "review_request" ||
+        input.action === "publish_request" ||
+        input.action === "fail_request" ||
+        input.action === "cancel_request")
+    )
+      return {
+        kind:
+          input.action === "claim_request"
+            ? "registry-claim"
+            : input.action === "fail_request" ||
+                input.action === "cancel_request"
+              ? "registry-terminal"
+              : "registry-phase",
+        anchor: `request:${input.requestId.toLowerCase()}`,
+      }
+    if (
       input?.action === "complete_request" &&
       typeof input.requestId === "string" &&
-      /^[a-z0-9-]{4,80}$/i.test(input.requestId)
+      FULL_REGISTRY_REQUEST_ID.test(input.requestId)
     )
       return {
         kind: "registry-completion",
@@ -1110,7 +1143,7 @@ const STRUCTURED_RESULT_EVIDENCE =
   /^(?:functions\.)?\S+ result status=(?:success|error|unknown)\b/i
 
 const STATE_SNAPSHOT_MARKER =
-  /^(?:functions\.)?\S+ result status=success(?: inputDigest=[0-9a-f]{64})? scope=([0-9a-f]{16}) snapshot=(git-status|git-path-status|git-index-paths|git-index-blobs|git-object-hashes|gitbutler-status|gitbutler-uncommitted|pull-request-view|registry-completion|registry-version|git-current-branch|git-head|git-history|git-push|git-remote-sha)(?: anchor=([a-z0-9_./:-]{1,128}))?\b/i
+  /^(?:functions\.)?\S+ result status=success(?: inputDigest=[0-9a-f]{64})? scope=([0-9a-f]{16}) snapshot=(git-status|git-path-status|git-index-paths|git-index-blobs|git-object-hashes|gitbutler-status|gitbutler-uncommitted|pull-request-view|registry-completion|registry-claim|registry-phase|registry-terminal|registry-version|git-current-branch|git-head|git-history|git-push|git-remote-sha)(?: anchor=([a-z0-9_./:-]{1,128}))?\b/i
 
 interface StateSnapshotMarker {
   readonly kind: string
@@ -1123,10 +1156,24 @@ const stateSnapshotMarker = (
 ): StateSnapshotMarker | undefined => {
   const match = STATE_SNAPSHOT_MARKER.exec(candidate)
   if (!match?.[1] || !match[2]) return undefined
+  const kind = match[2].toLowerCase()
+  if (
+    isRegistryRequestSnapshotKind(kind) &&
+    (!match[3]?.startsWith("request:") ||
+      !FULL_REGISTRY_REQUEST_ID.test(match[3].slice("request:".length)) ||
+      !/^(?:\s|$)/.test(candidate.slice(match[0].length)))
+  )
+    return undefined
   return {
-    kind: match[2],
-    scope: match[1],
-    ...(match[3] ? { anchor: match[3] } : {}),
+    kind,
+    scope: match[1].toLowerCase(),
+    ...(match[3]
+      ? {
+          anchor: isRegistryRequestSnapshotKind(kind)
+            ? match[3].toLowerCase()
+            : match[3],
+        }
+      : {}),
   }
 }
 
@@ -1191,9 +1238,32 @@ export const selectRelevantExecutionEvidence = (
   const supersededSnapshotIndexes = new Set<number>()
   if (subjectScope) {
     const latestSnapshotIndexes = new Map<string, number>()
+    const terminalRequestAnchors = new Set<string>()
     nonSupersededCandidates.forEach((candidate, index) => {
       const marker = stateSnapshotMarker(candidate)
       if (!marker || marker.scope !== subjectScope) return
+      if (
+        (marker.kind === "registry-claim" ||
+          marker.kind === "registry-phase") &&
+        marker.anchor !== undefined &&
+        terminalRequestAnchors.has(marker.anchor)
+      ) {
+        supersededSnapshotIndexes.add(index)
+        return
+      }
+      if (
+        (marker.kind === "registry-completion" ||
+          marker.kind === "registry-terminal") &&
+        marker.anchor !== undefined
+      ) {
+        terminalRequestAnchors.add(marker.anchor)
+        for (const kind of ["registry-claim", "registry-phase"]) {
+          const key = `${kind}:${marker.anchor ?? "scope"}`
+          const prior = latestSnapshotIndexes.get(key)
+          if (prior !== undefined) supersededSnapshotIndexes.add(prior)
+          latestSnapshotIndexes.delete(key)
+        }
+      }
       if (marker.kind === "gitbutler-status") {
         const projectionKey = "gitbutler-uncommitted:scope"
         const projection = latestSnapshotIndexes.get(projectionKey)
@@ -1210,8 +1280,18 @@ export const selectRelevantExecutionEvidence = (
     (candidate, index) => {
       if (supersededSnapshotIndexes.has(index)) return false
       const marker = stateSnapshotMarker(candidate)
+      const declaredKind =
+        STATE_SNAPSHOT_MARKER.exec(candidate)?.[2]?.toLowerCase()
       if (
-        marker?.kind === "gitbutler-uncommitted" &&
+        declaredKind &&
+        isRegistryRequestSnapshotKind(declaredKind) &&
+        !marker
+      )
+        return false
+      if (
+        marker &&
+        (marker.kind === "gitbutler-uncommitted" ||
+          isRegistryRequestSnapshotKind(marker.kind)) &&
         marker.scope !== subjectScope
       )
         return false
