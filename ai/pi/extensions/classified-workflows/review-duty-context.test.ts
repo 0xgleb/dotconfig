@@ -12,6 +12,7 @@ import {
 import { latestCompletedWorkflowAfter } from "./workflow-audit.ts"
 import {
   selectReviewWorkflowAudit,
+  selectReviewContinuationAudit,
   workflowMatchesReviewJob,
 } from "./review-workflow.ts"
 
@@ -97,7 +98,7 @@ for (const action of ["complete-auto", "continue"] as const)
     const invoke = new Function(
       "dependencies",
       `
-    const { completeAutoReviewDuty, continueReviewDuty, reviewDutyJobAllowed, latestCompletedWorkflowAfter, selectReviewWorkflowAudit, workflowMatchesReviewJob, children, job, action } = dependencies;
+    const { completeAutoReviewDuty, continueReviewDuty, reviewDutyJobAllowed, latestCompletedWorkflowAfter, selectReviewWorkflowAudit, selectReviewContinuationAudit, workflowMatchesReviewJob, children, job, action } = dependencies;
     const request = { action };
     const ctx = {};
     const refreshWorkflowAudits = () => {};
@@ -121,6 +122,7 @@ for (const action of ["complete-auto", "continue"] as const)
         reviewDutyJobAllowed,
         latestCompletedWorkflowAfter,
         selectReviewWorkflowAudit,
+        selectReviewContinuationAudit,
         workflowMatchesReviewJob,
         children,
         job,

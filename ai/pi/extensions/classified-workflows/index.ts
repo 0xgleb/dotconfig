@@ -182,6 +182,7 @@ import {
 } from "./review-duty-gate.ts"
 import {
   selectReviewWorkflowAudit,
+  selectReviewContinuationAudit,
   workflowMatchesReviewJob,
 } from "./review-workflow.ts"
 import {
@@ -1028,7 +1029,7 @@ const WorkflowParameters = Type.Object({
 })
 
 export default function classifiedWorkflows(pi: ExtensionAPI): void {
-  registerRuntimeVersion(pi, "classified-workflows", "2026.09.12.5")
+  registerRuntimeVersion(pi, "classified-workflows", "2026.09.12.6")
   const childTokenLimitResult = Effect.runSync(
     Effect.either(
       workflowChildTokenLimit(process.env[WORKFLOW_CHILD_TOKEN_LIMIT_ENV]),
@@ -3189,9 +3190,10 @@ export default function classifiedWorkflows(pi: ExtensionAPI): void {
 
       if (request.action === "continue") {
         refreshWorkflowAudits(ctx)
-        const selection = selectReviewWorkflowAudit(
+        const selection = selectReviewContinuationAudit(
           reviewDutyState,
           workflowAudits,
+          [...backgroundWorkflows.values()],
         )
         if (selection.kind !== "selected")
           return {
@@ -3241,6 +3243,7 @@ export default function classifiedWorkflows(pi: ExtensionAPI): void {
             ),
           workflowRunning,
           completedPasses,
+          selection.evidenceKind,
         )
         if (!transition.ok) {
           return {
@@ -3255,7 +3258,10 @@ export default function classifiedWorkflows(pi: ExtensionAPI): void {
           content: [
             {
               type: "text" as const,
-              text: `Continued ${reviewDutyState.repository}#${reviewDutyState.pullRequest} after completed pass ${completedWorkflow?.id ?? "unknown"} (${completedPasses} completed pass(es)); run only the same PR fix re-review, then ${reviewDutyState.kind === "own" ? "call complete-auto after the clean pass without creating a verdict question" : "complete the consolidated report gate"}`,
+              text:
+                selection.evidenceKind === "repair"
+                  ? `Continued ${reviewDutyState.repository}#${reviewDutyState.pullRequest} using scoped repair evidence ${selection.workflow.id}; this is not a completed whole-PR review. Resume only the same PR fixes, then complete the required full review gate`
+                  : `Continued ${reviewDutyState.repository}#${reviewDutyState.pullRequest} after completed pass ${completedWorkflow?.id ?? "unknown"} (${completedPasses} completed pass(es)); run only the same PR fix re-review, then ${reviewDutyState.kind === "own" ? "call complete-auto after the clean pass without creating a verdict question" : "complete the consolidated report gate"}`,
             },
           ],
           details: {
@@ -3263,6 +3269,7 @@ export default function classifiedWorkflows(pi: ExtensionAPI): void {
             state: reviewDutyState,
             priorAuditId: completedWorkflow?.id,
             completedPasses,
+            evidenceKind: selection.evidenceKind,
           },
         }
       }

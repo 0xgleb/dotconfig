@@ -33,7 +33,7 @@ const invoke = (
     "dependencies",
     `
     const {
-      action, workflows, running, job, selectReviewWorkflowAudit, workflowMatchesReviewJob,
+      action, workflows, running, job, selectReviewWorkflowAudit, selectReviewContinuationAudit, workflowMatchesReviewJob,
       retryFailedReviewDuty, completeAutoReviewDuty, continueReviewDuty, releaseUnusableReviewDuty, reviewDutyJobAllowed,
       latestFailedWorkflowAfter, latestCompletedWorkflowAfter,
       latestManagedReloadCancellationAfter, latestLegacyUnmarkedCancellationAfter,
@@ -218,6 +218,155 @@ test("managed cancellation recovery belongs to the selected review, not incident
       ],
       [],
       automatic,
+    ).isError,
+    true,
+  )
+})
+
+const continuedJob: gate.ReviewDutyState = {
+  ...job,
+  continuation: "fix-re-review",
+  startedAt: 1789162410348,
+  completedAt: 1789168238416,
+}
+const scopedRepair = {
+  ...failedReview,
+  id: "wf-12",
+  label: "Challenge YT repair scope and expiry settlement",
+  status: "completed",
+  startedAt: 1789168238416,
+  finishedAt: 1789168599543,
+  children: [1, 2].map(index => ({
+    index,
+    task: "Same continued OWN PR274 fix/re-review at clean detached head89418f43a3508af56aaa37bbe1c1a19a2bddb834, base336fe932f972c72ead81b7bcb8df9e9013ba664c. Read AGENTS.md and relevant SPEC/ROADMAP/ADR/source. Read-only: no edits, tests, builds, li",
+    status: "completed",
+    outputCharacters: 1000,
+  })),
+}
+
+test("actual continuation preserves explicitly scoped repair evidence despite a descriptive workflow label", () => {
+  const result = invoke("continue", [scopedRepair], [], continuedJob)
+  assert.equal(result.details.outcome, "continued")
+  assert.equal(result.details.priorAuditId, "wf-12")
+  assert.equal(result.details.completedPasses, 0)
+  assert.equal(result.details.evidenceKind, "repair")
+  assert.equal(result.details.state.phase, "active")
+})
+
+test("PR-bearing labels cannot upgrade repair children into full review evidence", () => {
+  const labelledRepair = { ...scopedRepair, label: "Review PR274" }
+  assert.equal(
+    invoke("complete-auto", [labelledRepair], [], continuedJob).isError,
+    true,
+  )
+  assert.equal(
+    invoke("continue", [labelledRepair], [], continuedJob).details.evidenceKind,
+    "repair",
+  )
+})
+
+test("mixed review and repair evidence is ambiguous within one admission", () => {
+  const fullReview = {
+    ...scopedRepair,
+    id: "wf-13",
+    label: "Review PR274",
+    children: [{ status: "completed", outputCharacters: 1000 }],
+  }
+  assert.equal(
+    invoke("continue", [scopedRepair, fullReview], [], continuedJob).isError,
+    true,
+  )
+})
+
+test("repair scope rejects unbound prefixes and differently expressed foreign repositories", () => {
+  for (const task of [
+    "OWN PR274 fix/re-review",
+    "Same continued OWN PR274 fix/re-review in other/repo",
+    "Same continued OWN PR274 fix/re-review other/repo",
+    "Same continued OWN PR274 fix/re-review:evil/repo",
+    "Same continued OWN PR274 fix/re-review github.com/dataclique/yielduck/pull/274evil",
+    "Same continued OWN PR274 fix/re-review notgithub.com/dataclique/yielduck/pull/274",
+  ]) {
+    const workflow = {
+      ...scopedRepair,
+      children: [{ ...scopedRepair.children[0], task }],
+    }
+    assert.equal(invoke("continue", [workflow], [], continuedJob).isError, true)
+  }
+})
+
+test("scoped repair accepts matching schemeless GitHub PR identity", () => {
+  const workflow = {
+    ...scopedRepair,
+    children: [
+      {
+        ...scopedRepair.children[0],
+        task: "Same continued OWN PR274 fix/re-review github.com/dataclique/yielduck/pull/274",
+      },
+    ],
+  }
+  assert.equal(
+    invoke("continue", [workflow], [], continuedJob).details.outcome,
+    "continued",
+  )
+})
+
+test("scoped repair evidence never substitutes for a clean full review", () => {
+  assert.equal(
+    invoke("complete-auto", [scopedRepair], [], continuedJob).isError,
+    true,
+  )
+})
+
+test("repair continuation rejects missing, foreign, stale, ambiguous and running evidence", () => {
+  for (const workflows of [
+    [{ ...scopedRepair, children: [] }],
+    [{ ...scopedRepair, startedAt: continuedJob.completedAt - 1 }],
+    [{ ...scopedRepair, label: "Challenge PR275 repair" }],
+    [
+      {
+        ...scopedRepair,
+        children: [
+          {
+            ...scopedRepair.children[0],
+            task: "Same continued OWN PR275 fix/re-review",
+          },
+        ],
+      },
+    ],
+    [
+      {
+        ...scopedRepair,
+        children: [
+          {
+            ...scopedRepair.children[0],
+            task: "Same continued AUTO PR274 fix/re-review",
+          },
+        ],
+      },
+    ],
+    [
+      {
+        ...scopedRepair,
+        children: [
+          {
+            ...scopedRepair.children[0],
+            task: "Same continued OWN PR274 fix/re-review for dataclique/other",
+          },
+        ],
+      },
+    ],
+    [scopedRepair, { ...scopedRepair, id: "wf-13" }],
+  ]) {
+    assert.equal(invoke("continue", workflows, [], continuedJob).isError, true)
+  }
+  assert.equal(invoke("continue", [scopedRepair], [], job).isError, true)
+  assert.equal(
+    invoke(
+      "continue",
+      [scopedRepair],
+      [{ ...scopedRepair, status: "running" }],
+      continuedJob,
     ).isError,
     true,
   )

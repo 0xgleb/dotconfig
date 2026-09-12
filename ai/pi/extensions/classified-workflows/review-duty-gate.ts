@@ -42,8 +42,10 @@ export interface ReviewDutyQuestion {
   readonly options?: readonly { readonly label: string }[]
 }
 
-export type ReviewDutyTransition =
-  | { readonly ok: true; readonly state: ReviewDutyState }
+export type ReviewDutyTransition<
+  State extends ReviewDutyState = ReviewDutyState,
+> =
+  | { readonly ok: true; readonly state: State }
   | { readonly ok: false; readonly error: string }
 
 export const emptyReviewDutyState: ReviewDutyState = { phase: "idle" }
@@ -311,7 +313,10 @@ export const continueReviewDuty = (
   completedWorkflowObserved: boolean,
   workflowRunning: boolean,
   completedPasses: number,
-): ReviewDutyTransition => {
+  evidenceKind: "review" | "repair" = "review",
+): ReviewDutyTransition<
+  Extract<ReviewDutyState, { readonly phase: "active" }>
+> => {
   if (state.phase !== "awaiting_report") {
     return {
       ok: false,
@@ -327,9 +332,16 @@ export const continueReviewDuty = (
       error: "the latest review-duty workflow is not proven completed",
     }
   }
+  if (evidenceKind === "repair" && state.continuation !== "fix-re-review") {
+    return {
+      ok: false,
+      error:
+        "scoped repair evidence requires an existing same-PR fix continuation",
+    }
+  }
   if (
     !Number.isSafeInteger(completedPasses) ||
-    completedPasses < 1 ||
+    completedPasses < (evidenceKind === "repair" ? 0 : 1) ||
     completedPasses >= MAX_REVIEW_DUTY_COMPLETED_PASSES
   ) {
     return {
