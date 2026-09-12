@@ -32,8 +32,7 @@ reached by Claude through the `~/.claude/skills` symlink and by Cursor through
 ~/.config/                      # git repo (source of truth)
   ai/skills/                     # shared agent skills — one subdirectory + SKILL.md each
     eod/SKILL.md
-    graphite/SKILL.md
-    linear/SKILL.md
+    gitbutler/SKILL.md
     review-loop/SKILL.md
     worktree/SKILL.md
   ai/AGENTS.md                   # global agent guidelines
@@ -72,7 +71,7 @@ Skills are the only agent surface in this repo — what used to be slash command
 ## Step 1 — Determine the name
 
 Parse `$ARGUMENTS` for the skill name (kebab-case, e.g. `deploy`, `run-tests`,
-`linear-api`). This becomes the subdirectory name. If not provided, ask the
+`github-api`). This becomes the subdirectory name. If not provided, ask the
 user with `AskUserQuestion`.
 
 Before going further, check the name is free:
@@ -94,8 +93,8 @@ Batch these into one `AskUserQuestion` where possible:
    derivation only rewrites `->`, not every bracket.
 2. **User-invocable** — should the user be able to invoke it explicitly
    (`user-invocable: true`), or is it auto-trigger only? Most explicit
-   workflow skills here (`eod`, `linear`) set `user-invocable: true`;
-   auto-context skills (`graphite`) omit it.
+   workflow skills here (`eod`, `eow`) set `user-invocable: true`;
+   skills intended only for automatic context selection may omit it.
 3. **Allowed tools** — what the skill needs. Suggest based on its job:
    - Read-only research: `Read, Grep, Glob`
    - Code modification: `Read, Edit, Write, Grep, Glob`

@@ -99,8 +99,8 @@ stranding liquidity?"
    replacement } }` (or the Solidity equivalent) so the cutover deadline and
    replacement are unrepresentable-when-absent for compulsory removals.
 
-10. **Migrate one consumer per commit/PR, with test parity.** On a `gt` stack
-    (in opted-in repos) land one consumer per branch, each keeping its tests
+10. **Migrate one consumer per commit/PR, with test parity.** Follow the
+    repository's existing branch workflow, keeping each consumer's tests
     green against the new surface. For on-chain or financial cutovers use the
     strangler pattern: stand the new path up alongside the old, shift liquidity
     or traffic in staged increments with reconciliation between each step, or

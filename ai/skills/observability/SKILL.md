@@ -20,7 +20,7 @@ or an indexer will ask, then answer each with exactly one well-chosen signal.
 1. **Name the questions first.** Before adding a single `tracing::info!`,
    metric, or `event`, write the 2-4 questions an on-call engineer (for a
    service) or an indexer / subgraph author (for a contract) will ask FIRST when
-   something is wrong. Put them in the Linear issue, the PR body, or an
+   something is wrong. Put them in the GitHub issue, the PR body, or an
    `adrs/NN-name.md` if the decision is significant. If you cannot name the
    questions, you are not ready to instrument. Examples: "Did the settlement
    loop fall behind the chain head?" "How long does an order spend between

@@ -1,7 +1,7 @@
 ---
 name: but
 version: 0.22.0
-description: "Use `but` only in a GitButler-managed repository's main worktree for commit, push, branch, diff, PR, and history operations; in every linked/non-main worktree use plain Git instead, while Graphite remains valid in all worktrees."
+description: "Prefer `but` in an existing GitButler-managed main worktree for commit, push, branch, diff, PR, and history operations; use plain Git in linked and other worktrees unless explicit repository-local workflow instructions select another tool."
 author: GitButler Team
 ---
 
@@ -18,7 +18,7 @@ In a linked, isolated, scratch, or otherwise non-main worktree:
 - do not run `but status`, `but diff`, `but setup`, or any other GitButler command;
 - use plain Git for both reads and writes, including add, commit, branch, merge, rebase, and push when independently authorized;
 - keep all operations bounded to that worktree;
-- continue using Graphite normally when the repository is Graphite-managed, because Graphite supports worktrees.
+- honor explicit repository-local workflow instructions when they select another tool, without invoking GitButler in a non-main worktree.
 
 This is a routing rule, not a fallback after GitButler fails. Do not let a parent repository's GitButler setup override the current worktree topology.
 
