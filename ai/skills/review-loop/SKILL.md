@@ -1,7 +1,7 @@
 ---
 name: review-loop
 user-invocable: true
-allowed-tools: Bash(gt:*), Bash(but:*), Bash(direnv:*), Bash(git:*), Bash(gh:*), Bash(agy:*), Bash(command:*), Bash(linear:*), Bash(cargo:*), Bash(nix:*), Bash(mkdir:*), Bash(cat:*), Bash(mktemp:*), Bash(rm:*), Bash(test:*), Bash(grep:*), Bash(wc:*), Bash(date:*), Bash(basename:*), Bash(find:*), Read, Write, Edit, Agent, Workflow, AskUserQuestion
+allowed-tools: Bash(gt:*), Bash(but:*), Bash(direnv:*), Bash(git:*), Bash(gh:*), Bash(agy:*), Bash(command:*), Bash(cargo:*), Bash(nix:*), Bash(mkdir:*), Bash(cat:*), Bash(mktemp:*), Bash(rm:*), Bash(test:*), Bash(grep:*), Bash(wc:*), Bash(date:*), Bash(basename:*), Bash(find:*), Read, Write, Edit, Agent, Workflow, AskUserQuestion
 description: Cross-review the current branch with a multi-model Workflow panel, auto-fix findings, and re-review until clean. Re-review passes use fast delta verification. Pass `stack` for the whole upstack.
 argument-hint: [stack]
 ---
@@ -86,7 +86,7 @@ single-branch loop), and stop — do not amend or advance.
 
 The rest of this section branches on `$tool`. Each branch gets its own review
 directory (the step-2 `out_dir` is branch-named), its own diff against its own
-parent, and its own 4-pass cap. The Defer-to-Linear step (10) still applies per
+parent, and its own 4-pass cap. The Defer-to-GitHub step (10) still applies per
 branch.
 
 ### Stack adapter
@@ -365,7 +365,7 @@ fix is massive enough to warrant its own stacked PR.
 **Discuss**: the evidence is weak or reviewers disagree. Show the user the full
 finding and ask what to do. Default to fixing unless it's massive.
 
-**Defer to Linear** is NOT a default action. Only use it when:
+**Defer to GitHub** is NOT a default action. Only use it when:
 - The user explicitly asks to defer a specific finding, OR
 - A fix is large enough that it should be a separate stacked PR (e.g., a
   multi-file refactor or new feature, not a surgical bug fix)
@@ -688,19 +688,21 @@ When an escalated full pass re-runs the engine, treat any external pool that
 errored earlier in this invocation as exhausted and re-resolve the lane
 assignment **without re-probing** it.
 
-## 10. Defer-to-Linear loop (only if user explicitly deferred findings)
+## 10. Defer-to-GitHub loop (only if user explicitly deferred findings)
 
 This step only runs if the user chose "Defer" for any discuss finding. Skip
 entirely if no findings were deferred.
 
-For each "defer" finding, invoke the `linear` skill. For each one:
+Every deferred review finding requires exact per-issue approval. Routine
+planning has separate authority and public-content checks; this skill grants
+no planning-issue creation authority.
 
-1. **Draft the issue** in a tempfile, following the linear skill's "Drafting
-   issues from review findings" pattern:
+For each deferred finding:
 
-   - **Title:** a concise imperative summary derived from the finding title. Lead
-     with the action, not the problem. Example: "Add retry on transient HTTP
-     errors in broker client" not "Missing retry".
+1. **Draft the issue** in the repository's approved `.tmp/` area and record
+   artifact provenance. Follow the repository's issue template and public-content
+   rules; never copy private correspondence or internal logs into the draft.
+   - **Title:** describe the concrete problem in the repository's issue style.
    - **Body** (in the tempfile):
 
      ```markdown
@@ -715,34 +717,27 @@ For each "defer" finding, invoke the `linear` skill. For each one:
      - Severity: <severity>
      - Found during review of branch `<branch>` (commit `<sha>`)
 
-     ## Proposed fix
-
-     <recommended_fix from the finding>
-
      ## Verification rationale
 
-     <the verifier's rationale from the finding>
+     <public-safe summary of the verifier's rationale; no private context>
 
      ---
 
-     Deferred from review `<path to review.md>`.
+     <verified public PR or commit link, when available>
      ```
 
-2. **Choose metadata**: priority by severity (critical -> urgent, high -> high,
-   medium -> medium, low -> low, nit -> low). Labels: prefer `bug` for
-   correctness/security, `tech-debt` for maintainability or doc-coherence, `test`
-   for test-coverage findings. Project and team come from the repo's
-   `.linear.toml` — let `linear` pick them up automatically. Do not pass `--team`
-   or `--project` unless the user tells you which ones.
+2. **Choose only verified metadata.** Use labels that exist in the repository
+   and match its conventions. GitHub issues have no universal CLI priority
+   field; do not invent priority flags or infer an assignee's availability.
 
-3. **Show the draft to the user** before running any `linear` command. Format:
+3. **Show the exact draft to the user** before creating the issue. Format:
 
    ```
    ━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━
-   Draft Linear issue — [#N] <finding title>
+   Draft GitHub issue — [#N] <finding title>
    ━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━
    Title:    <draft title>
-   Priority: <severity-derived>
+   Severity: <finding severity, not a GitHub priority field>
    Labels:   <labels>
 
    <body contents>
@@ -752,7 +747,7 @@ For each "defer" finding, invoke the `linear` skill. For each one:
 4. **Ask for confirmation**, using `AskUserQuestion`:
 
    ```
-   Q: Create this Linear issue for finding #N?
+   Q: Create this GitHub issue for finding #N?
      options:
        - "Create"    (Recommended)
        - "Edit"      — tell me what to change
@@ -763,21 +758,15 @@ For each "defer" finding, invoke the `linear` skill. For each one:
 
 5. **Create the issue** only after explicit confirmation:
 
-   ```bash
-   body_file=$(mktemp -t linear-issue.XXXXXX.md)
-   cat > "$body_file" <<'EOF'
-   <approved body>
-   EOF
-   linear issue create \
-     --title "<approved title>" \
-     --description-file "$body_file" \
-     --priority <severity-derived> \
-     --label <labels>
-   rm "$body_file"
-   ```
+   Use the exact approved file with `gh issue create --repo <owner/repo>
+--title <approved-title> --body-file <approved-file>`, adding only approved
+   metadata. Inspect CLI help before unfamiliar flags. Reuse an existing exact
+   approval instead of asking the same question again.
 
-6. **Print the issue URL** returned by `linear issue create` and record the issue
-   ID — you'll reference them in the summary.
+6. **Verify and record the returned issue URL/number** for the summary and
+   associated local task. Retain the draft when creation fails or the outcome
+   is uncertain; reconcile remote state before retries to avoid duplicates.
+   Clean only the exact agent-created draft after successful verification.
 
 You can batch the confirmation step: if there are multiple "defer" findings, draft
 all of them first, show all drafts, ask in one `AskUserQuestion` call (up to 4 at a
@@ -786,7 +775,7 @@ any issue is created.
 
 ## 11. Summarize
 
-After all review iterations converge (no new findings) and any deferred Linear
+After all review iterations converge (no new findings) and any deferred GitHub
 issues are created (or skipped), print a final summary:
 
 ```
@@ -799,8 +788,8 @@ Fixed (3):
   #2  high      Missing auth check on /admin            <file>:<line>
   #4  medium    Lock contention in hot path             <file>:<line>
 
-Deferred to Linear (1):
-  #3  medium    Add retry on transient errors           <linear url>
+Deferred to GitHub (1):
+  #3  medium    Add retry on transient errors           <GitHub issue URL>
 
 Dismissed (1):
   #5  nit       Rename variable for clarity
@@ -856,7 +845,7 @@ remain unchanged.
 - **The workflow itself fails mid-run:** relaunch with `{scriptPath, args,
   resumeFromRunId}` — completed lanes return cached results instantly; only the
   failed part re-runs.
-- **A Linear issue fails to create:** report the exact `linear` error, leave the
+- **A GitHub issue fails to create:** report the exact `gh` error, leave the
   draft tempfile in place, and continue with the rest of the deferred items. Ask
   the user whether to retry the failed one at the end.
 - **The user says "stop" mid-loop:** immediately stop, then print the summary with
@@ -866,10 +855,10 @@ remain unchanged.
 
 1. **Auto-fix without asking** for findings that match auto-fix criteria. Only ask
    the user about "discuss" findings.
-2. **Bias toward fixing now.** Defer to Linear only when the user explicitly asks
+2. **Bias toward fixing now.** Defer to GitHub only when the user explicitly asks
    or the fix is too large for the current PR.
-3. Never create Linear issues without explicit per-issue user confirmation of the
-   exact draft content.
+3. Never create GitHub issues for deferred review findings without explicit
+   per-issue user confirmation of the exact draft content.
 4. **Single-branch mode:** never amend, commit, or push — leave the fixes
    uncommitted for the user to review (the safe default). **Stack mode:** `gt
    modify -a` to amend fixes into each branch is expected, and once the walk
@@ -877,8 +866,8 @@ remain unchanged.
    the PRs. Submitting existing-PR code is the job; never `--publish`, flip
    draft→ready, open a NEW PR, post/resolve PR comments, or override branch
    protection.
-5. Always use `--description-file` with `linear issue create`, never inline
-   `--description`.
+5. Use `gh issue create --body-file` with the approved body file, not inline
+   escaped Markdown.
 6. Always re-verify findings against the current source before applying fixes —
    the code may have changed since the review.
 7. Keep fixes surgical. No "while I'm here" cleanups.
