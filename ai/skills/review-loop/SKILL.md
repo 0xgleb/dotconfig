@@ -1,13 +1,13 @@
 ---
 name: review-loop
 user-invocable: true
-allowed-tools: Bash(gt:*), Bash(but:*), Bash(direnv:*), Bash(git:*), Bash(gh:*), Bash(agy:*), Bash(command:*), Bash(cargo:*), Bash(nix:*), Bash(mkdir:*), Bash(cat:*), Bash(mktemp:*), Bash(rm:*), Bash(test:*), Bash(grep:*), Bash(wc:*), Bash(date:*), Bash(basename:*), Bash(find:*), Read, Write, Edit, Agent, Workflow, AskUserQuestion
-description: Cross-review the current branch with a multi-model Workflow panel, auto-fix findings, and re-review until clean. Re-review passes use fast delta verification. Pass `stack` for the whole upstack.
+allowed-tools: Bash(but:*), Bash(direnv:*), Bash(git:*), Bash(gh:*), Bash(agy:*), Bash(command:*), Bash(cargo:*), Bash(nix:*), Bash(mkdir:*), Bash(cat:*), Bash(mktemp:*), Bash(rm:*), Bash(test:*), Bash(grep:*), Bash(wc:*), Bash(date:*), Bash(basename:*), Bash(find:*), Read, Write, Edit, Agent, Workflow, AskUserQuestion
+description: Review and fix the current branch until clean; use stack for an existing GitButler stack. Use review-pr for read-only PR assessment.
 argument-hint: [stack]
 ---
 
 Run a full self-review loop on the current branch: review → auto-fix → CI →
-re-review → repeat until clean. Use this right before you `gt submit` something
+re-review → repeat until clean. Use this right before you push something
 you wrote yourself, to catch issues before reviewers do.
 
 The **review engine** (panel, probes, prompts, the `review-panel` Workflow,
@@ -34,10 +34,10 @@ a full independent panel pass** when the fix delta is large, scope grew, or it
 touched security-sensitive paths. On an escalated full pass, the project's check
 command overlaps the panel concurrently.
 
-**Argument:** with no argument, the loop runs on the **current branch only** and
-never touches version control (the safe default). With `stack`, it runs across
-the **entire upstack** — current branch and every branch above it — amending each
-branch as it goes (see **Stack mode** below).
+**Argument:** with no argument, the loop runs on the **current branch only**;
+publication requires independent repository or owner authority. With `stack`,
+it walks every branch in the applied GitButler series sequentially, bottom to
+top, absorbing each branch's verified fixes (see **Stack mode** below).
 
 Follow these steps precisely.
 
@@ -49,10 +49,10 @@ When invoked with the `stack` argument, wrap the single-branch loop (steps 1–1
 in an upstack walk: review-loop a branch, fold the fixes into its commit, advance
 to the next branch, and repeat to the top of the stack. Passing `stack` is an
 explicit opt-in to the amend-and-advance flow, so in stack mode **hard rule #4 is
-relaxed**: you MAY amend fixes into the current branch before moving up (`gt
-modify -a` under Graphite, `but absorb` under GitButler). When the walk finishes
-converged, **submit the modified stack** (`gt ss` / `but push`) so the fixes
-reach the PRs — see the Stack flow's final step. Submitting is not publishing:
+relaxed**: you MAY absorb fixes into the current branch before advancing
+(`but absorb`). When the walk finishes converged, **push only the modified
+branches** with `but push <branch-name>` so the fixes reach the PRs — see the
+Stack flow's final step. Submitting is not publishing:
 never `--publish`, flip draft→ready, open new PRs, or post PR comments.
 
 With no `stack` argument, skip this section entirely and run steps 1–11 once on
@@ -60,24 +60,31 @@ the current branch.
 
 ### Detect the stacking tool
 
-Stack mode is tool-specific — the user runs Graphite on some repos, GitButler on
-others, and plain git on the rest. Detect which (same detection as
-`/review-sweep`):
+Prefer GitButler in existing managed main worktrees and plain Git elsewhere,
+subject to explicit repository-local workflow instructions. Detect topology
+before selecting stack mode (same detection as `/review-sweep`):
 
 ```bash
 repo_root=$(git rev-parse --show-toplevel)
 git_common_dir=$(git rev-parse --path-format=absolute --git-common-dir)
 main_root=$(git worktree list --porcelain | sed -n 's/^worktree //p' | head -n1)
-if [ -f "$git_common_dir/.graphite_repo_config" ]; then tool=graphite
-elif [ "$repo_root" != "$main_root" ]; then tool=none
-elif [ -d "$git_common_dir/gitbutler" ]; then tool=gitbutler
+if [ "$repo_root" != "$main_root" ]; then tool=none
+elif [ -d "$git_common_dir/gitbutler" ]; then
+  current_branch=$(git symbolic-ref --quiet --short HEAD) || {
+    echo "Cannot establish the current branch; stop before choosing a workflow."
+    exit 1
+  }
+  case "$current_branch" in
+    gitbutler/*) tool=gitbutler ;;
+    *) tool=none ;;
+  esac
 else tool=none
 fi
 echo "stacking tool: $tool"
 ```
 
-Graphite remains valid in linked worktrees. GitButler does not: a linked,
-isolated, or scratch worktree routes to plain Git without probing `but`, even
+GitButler is main-worktree-only: a linked, isolated, or scratch worktree
+routes to plain Git without probing `but`, even
 when its common Git directory belongs to a GitButler-managed main workspace.
 
 **`tool=none` (plain git):** there is no stack to walk. Tell the user this repo
@@ -91,52 +98,17 @@ branch.
 
 ### Stack adapter
 
-| Adapter operation         | Graphite                                              | GitButler                                              |
-| ------------------------- | ----------------------------------------------------- | ------------------------------------------------------ |
-| ready check               | working tree clean                                    | verified main worktree on a `gitbutler/*` workspace branch (`but status` ok) |
-| advance to next branch    | `gt up`                                               | none — all virtual branches are applied at once        |
-| scope one branch's diff   | `git diff $(gt parent)`                               | `but branch show <branch>` (commits ahead of its base) |
-| amend fixes into a branch | `gt modify -a` (restacks descendants; NEVER `gt fold`) | `but absorb <branch>` (`--dry-run` first)             |
-| return to start           | `gt checkout <start-branch>`                          | none                                                   |
+| Adapter operation          | GitButler managed main worktree                                                    |
+| -------------------------- | ---------------------------------------------------------------------------------- |
+| ready check                | verified main worktree on a `gitbutler/*` workspace branch (`but status` succeeds) |
+| advance to next branch     | none — virtual branches are applied together                                       |
+| scope one branch's diff    | Git diff between verified parent/head SHAs                                         |
+| absorb fixes into a branch | `but absorb <branch>` (`--dry-run` first)                                          |
+| return to start            | none                                                                               |
 
 `but` is provided by the repo's flake/devenv — if it is not on `PATH`, invoke it
 as `direnv exec "$repo_root" but …` for every `but` call. Never run `but setup` /
 `but teardown` or otherwise change GitButler mode yourself.
-
-### Stack flow — [Graphite]
-
-`gt up` walks a single child. On a **tree** stack (a branch with multiple
-children) it is ambiguous — for those, point the user at `/review-sweep`, which
-traverses the tree properly. This linear walk covers the common single-child
-upstack.
-
-1. Record the starting branch: `git branch --show-current`. You return here at
-   the very end.
-2. Run the full single-branch loop (**steps 1–11**) on the current branch.
-   - **Relax the step-1 clean-tree gate after the first branch**: `gt up`
-     restacks descendants, so a non-empty tree from that is expected. Still stop
-     if there are unrelated uncommitted edits you did not make.
-3. After the loop converges clean and the project's check command has passed, if
-   any files were modified on this branch (by fixes or by the check command),
-   amend them into the branch's commit with `gt modify -a` (invoke the `graphite`
-   skill). This also restacks descendants. If nothing was modified, skip.
-4. Move up the stack with `gt up` (via the `graphite` skill):
-   - If `gt up` succeeds and the branch changed, print `"Moving up stack ->
-     <new branch>"` and repeat from step 2.
-   - If `gt up` fails or the branch did not change, you are at the top. Print
-     `"Reached top of stack."` and end the stack walk.
-5. If the single-branch loop **fails to converge** on any branch (hits the 4-pass
-   cap), stop on that branch — do **NOT** continue up the stack. Report which
-   branch is stuck and follow the normal non-convergence flow.
-6. When done, return to the starting branch (`gt checkout <starting-branch>`). If
-   the walk **converged** (did not stop on a stuck branch) and amended any
-   branch, **submit the stack**: `gt ss` from the start branch so the fixes reach
-   the PRs — review fixes left local are worthless. When a *lower* PR is already
-   approved, `gt submit --stack --dry-run` first to see which approvals the
-   resubmit disturbs. Submitting is NOT publishing: never `--publish`, flip
-   draft→ready, open a NEW PR, post/resolve PR comments, or override branch
-   protection. Then print the per-branch summary below. (If the walk stopped on a
-   stuck branch, do not submit — report and let the user decide.)
 
 ### Stack flow — [GitButler]
 
@@ -148,22 +120,28 @@ iterate the applied series in place.
    tell the user to enter GitButler workspace mode first**.
 2. Enumerate the applied series bottom→top from JSON (`but status -j`); confirm
    field names with `but status -h` before relying on them — do not guess.
-3. For each branch, scope its diff with `but branch show <branch>` (its commits
-   ahead of base) into that branch's `out_dir`, then run the full single-branch
-   loop (**steps 1–11**) against that diff.
+3. For each branch, resolve its current name, head SHA and parent SHA from
+   current GitButler metadata and verify those identities with Git. The parent
+   is the preceding series entry or the verified stack base; never guess trunk
+   or use the combined workspace HEAD. Refresh these identities after a prior
+   absorb. `but branch show <branch>` is metadata, not a patch. Save the initial
+   parent/head SHA diff and name-status manifest in this branch's `out_dir`;
+   reviewers read committed source with `git show <head_sha>:<path>`.
+   Run steps 1–11 using the stack-specific scope rules in step 2 below.
 4. After the loop converges clean and the project's check command has passed,
    fold the fixes into that branch with `but absorb <branch>` — run `but absorb
    <branch> --dry-run` first and confirm it targets the intended branch. If
    nothing was modified, skip.
 5. Same non-convergence rule: if a branch hits the 4-pass cap, stop on it — do
    **NOT** advance to the next series. Report which branch is stuck.
-6. When done, if the walk converged (did not stop on a stuck branch) and absorbed
-   any fixes, **push the modified series** (`but push`) so the fixes reach the
-   PRs — never `but` mode changes, never `--publish`/draft-flip, never new PRs or
-   PR comments. Then print the per-branch summary below. No return-to-start
-   checkout is needed (nothing was checked out).
+6. When the entire walk converges, use `but push <branch-name>` for each
+   recorded modified branch. Verify its current selector and effective remote
+   scope before pushing. Never use bare `but push`: non-interactive mode pushes
+   all branches. If installed selector semantics differ, inspect help and stop
+   rather than broaden the push. No mode changes, draft flips, new PRs or PR
+   comments. If a branch is stuck, do not push. No checkout restoration is needed.
 
-Per-branch summary (either tool):
+Per-branch summary:
 
 ```
 Stack review-loop summary:
@@ -182,14 +160,12 @@ Verify prerequisites before doing anything:
    ```bash
    git rev-parse --show-toplevel
    ```
-   Single-branch mode (the default) works on **any** git repo — Graphite,
-   GitButler, or plain git alike. Only `stack` mode needs a stacking tool; it
-   detects which one in the **Stack mode** section above (and bails to a
-   single-branch run under plain git). Under Graphite, `gt log short` shows the
-   current stack; skip it elsewhere.
 
-2. `gt` is on PATH **only if** this is a Graphite repo running in `stack` mode
-   (`command -v gt`). Plain-git and GitButler repos do not need it.
+   Single-branch mode works on any Git repository. Only `stack` mode needs
+   managed series; plain-Git worktrees run the single-branch loop.
+
+2. For GitButler stack mode, confirm the tool is available in the authorized
+   project environment, but only after verifying a managed main worktree.
 
 3. The working tree is clean or stashed. A dirty tree pollutes the diff and
    confuses reviewers:
@@ -204,17 +180,46 @@ review-core step 1. Cursor lanes are retired and must not be probed or launched.
 ## 2. Resolve scope & prepare workspace
 
 Determine what to review. On a stacked branch, **always diff against the branch's
+**Stack mode overrides the generic commands below.** Use the current virtual
+branch's verified name, parent SHA and head SHA from the sequential adapter,
+not the combined workspace branch or HEAD. Generate the initial diff and file
+manifest from that immutable parent/head range. Keep those review artifacts.
+
+Before fixing that branch, record a clean tracked/index workspace baseline and
+serialize writers. Record each fix's exact paths and content changes, including
+agent-created new files. Only that recorded delta belongs to this fix pass;
+timing or presence in the workspace alone does not establish ownership.
+Unexpected index, workspace, branch-head or base changes stop the pass.
+
+For re-review, supply the committed branch patch plus its separately recorded
+owned fix delta, with committed source and the exact overlay changes. Do not
+regenerate branch evidence with `git diff "$parent"` against the combined
+workspace, or concatenate two patches and call them one branch snapshot.
+If the delta cannot be mapped to the selected branch without another branch's
+changes, stop before absorbing it and resolve the scope under existing authority.
+A combined-workspace check is not proof of isolated branch validation.
+
+After convergence and required checks, inspect the targeted absorb dry-run.
+Absorb only this branch's owned fixes; verify no owned delta remains and the
+workspace is clean before advancing. Refresh descendant identities afterward.
+
+**Single-branch mode only:** the commands below resolve a plain-Git branch and
+include its uncommitted fixes. If the current checkout is a combined managed
+workspace, do not treat it as one feature branch; resolve an explicit branch
+scope or use the stack adapter before proceeding.
+
 own parent**, not trunk — reviewing against trunk would include ancestor PRs and
-drown the reviewers in unrelated changes. Resolve the parent per stacking tool:
-Graphite → `gt parent`; GitButler stack mode → the base from `but branch show
-<branch>` (set `parent` to that base SHA); plain git → the merge-base with the
-default branch. The command below tries `gt parent` and falls back to merge-base,
-which is correct for plain git and for Graphite; in GitButler `stack` mode,
-override `parent` with the branch's base from the adapter.
+drown the reviewers in unrelated changes. In GitButler stack mode, use the base
+from `but branch show <branch>`. For plain Git, use the merge-base with the
+verified default branch. In stack mode, override `parent` below with the
+branch's base from the adapter.
 
 ```bash
-default_branch=$(git symbolic-ref refs/remotes/origin/HEAD --short 2>/dev/null || echo origin/master)
-parent=$(gt parent 2>/dev/null || git merge-base "$default_branch" HEAD)
+default_branch=$(git symbolic-ref refs/remotes/origin/HEAD --short) || {
+  echo "No verified default branch; resolve it before generating a review diff."
+  exit 1
+}
+parent=$(git merge-base "$default_branch" HEAD)
 branch=$(git rev-parse --abbrev-ref HEAD)
 head_sha=$(git rev-parse HEAD)
 parent_sha=$(git rev-parse "$parent")
@@ -320,6 +325,14 @@ Workflow → after-workflow handling → print findings). Pass the contract inpu
 | `{SYNTHESIS_EXTRA}`     | empty string                                                           |
 | `{INCLUDE_ATTRIBUTION}` | `true`                                                                 |
 
+
+**Stack-mode contract override, for every initial, delta and escalated pass:**
+`{SOURCE_ACCESS}` names committed source at the selected branch head plus the
+exact owned overlay artifact, never the combined workspace as branch source.
+`{SCOPE_NOTE}` identifies the parent/head range and the separately owned delta;
+headers name those verified SHAs and distinguish combined-workspace checks from
+isolated branch checks. Supply both artifact paths to reviewers. Preserve the
+initial patch rather than replacing it with a combined-workspace diff.
 Keep the `scriptPath` the workflow returns — re-review escalation (step 9) reuses
 it for later full-panel passes. The engine writes `$out_dir/review.md` and
 `$out_dir/findings.json` and prints the terminal summary; this skill triages the
@@ -519,8 +532,13 @@ after convergence, and if it makes changes, you re-enter the loop.
 
 ### Choose the re-review mode
 
-Compute the fix delta (everything the loop has changed so far — fixes are
-uncommitted, so this is the working-tree diff against HEAD):
+**Stack mode:** use the already recorded owned fix-delta artifact and immutable
+parent/head patch from step 2. Export the scoped committed source to an
+agent-owned review directory for read-only reviewers; provide the owned overlay
+separately. Do not execute the shell block below in stack mode. Unknown changes
+or unavailable branch-source/overlay evidence block re-review, not count as clean.
+
+**Single-branch mode only:** compute the uncommitted fix delta against HEAD:
 
 ```bash
 git diff HEAD > "$out_dir/delta-iter${N}.patch"
@@ -548,8 +566,13 @@ the workflow `scriptPath` from step 4) when any of:
 **Otherwise run delta mode** — the default and fast path. One small workflow: a
 fix-verifier per fixed finding plus one Opus broad sweep of the fix delta. Pass
 `args`: `{fixedFindings: <findings fixed this loop so far>, deltaDiffPath,
-fullDiffPath, repoRoot, docsPaths}`. Reuse the returned `scriptPath` on later
-delta passes.
+fullDiffPath, repoRoot, docsPaths, reviewSource}`. `reviewSource` must contain
+`mode` (`single` or `stack`), `branch`, `parentSha`, `headSha`, `sourceRoot`, and
+`ownedDeltaPath`, all resolved from step 2. In stack mode `sourceRoot` is the
+exported committed branch source, never the combined workspace; in single mode
+it is the current source root. Both modes name the exact owned delta artifact.
+Missing scope is blocked, not a clean review. Reuse the returned `scriptPath`
+only with refreshed scope and artifact inputs on later passes.
 
 ```javascript
 export const meta = {
@@ -601,17 +624,25 @@ const SWEEP_SCHEMA = {
 // The harness may deliver args as a JSON-encoded string instead of a
 // parsed object — parse defensively before destructuring.
 const parsedArgs = typeof args === 'string' ? JSON.parse(args) : args
-const { fixedFindings, deltaDiffPath, fullDiffPath, repoRoot, docsPaths } = parsedArgs
+const { fixedFindings, deltaDiffPath, fullDiffPath, repoRoot, docsPaths, reviewSource } = parsedArgs
+const scopeFields = ["branch", "parentSha", "headSha", "sourceRoot", "ownedDeltaPath"]
+if (!reviewSource || !["single", "stack"].includes(reviewSource.mode) ||
+    scopeFields.some(key => typeof reviewSource[key] !== "string" || !reviewSource[key].trim())) {
+  return { status: "blocked", reason: "Missing explicit review source identity" }
+}
+const sourceContext = `Review source identity: ${JSON.stringify(reviewSource)}. ` +
+  `Read only the named sourceRoot plus ownedDeltaPath. In stack mode this is ` +
+  `committed branch source plus its owned overlay, never the combined workspace. `
 
 const [verifications, sweep] = await parallel([
   () => parallel(fixedFindings.map(finding => () =>
     agent(
-      `A code review flagged this finding and a fix was applied:\n` +
+      sourceContext + `A code review flagged this finding and a fix was applied:\n` +
       `${JSON.stringify(finding)}\n\n` +
       `The fix delta (uncommitted changes) is at: ${deltaDiffPath}\n` +
       `The full PR diff (context) is at: ${fullDiffPath}\n` +
       `Repo root: ${repoRoot}\n\n` +
-      `Read the current source at the finding's location. Confirm the fix ` +
+      `Read the scoped source and owned overlay at the finding's location. Confirm the fix ` +
       `fully resolves the finding — not partially, not by suppressing the ` +
       `symptom — and check the surrounding code for issues the fix may ` +
       `have introduced. Report new_issues only for problems caused by or ` +
@@ -620,7 +651,7 @@ const [verifications, sweep] = await parallel([
         model: 'openai-codex/gpt-5.6-luna', schema: VERIFY_FIX_SCHEMA },
     ).then(result => result && ({ finding, ...result })))),
   () => agent(
-    `You are a senior staff engineer reviewing a set of fixes applied in ` +
+    sourceContext + `You are a senior staff engineer reviewing a set of fixes applied in ` +
     `response to a code review. The fix delta is at: ${deltaDiffPath}. ` +
     `The full PR diff (context) is at: ${fullDiffPath}. Project docs: ` +
     `${docsPaths.join(', ')}. Repo root: ${repoRoot}.\n\n` +
@@ -797,11 +828,13 @@ Dismissed (1):
 Reports: <paths to review.md and delta-iter*.json>
 ```
 
-Then stop. Do not auto-run `gt modify`, `gt submit`, or any other mutation — the
-user decides when to amend and push.
+In single-branch mode, follow the repository's publication rules; this skill
+alone does not authorize an amend, commit, or push.
 
 **In stack mode**, this is where the single-branch loop returns to the Stack flow:
-the wrapper amends the branch (`gt modify -a`) and moves up. Print the per-branch
+the GitButler wrapper, only in a verified managed main worktree, absorbs fixes
+with `but absorb` and advances through the series. Plain-Git and linked
+worktrees remain in single-branch mode. Print the per-branch
 summary line, then continue the upstack walk — do not stop here. The stack is
 submitted once at the end of the walk (Stack flow, final step), not per branch.
 
@@ -860,9 +893,13 @@ remain unchanged.
 3. Never create GitHub issues for deferred review findings without explicit
    per-issue user confirmation of the exact draft content.
 4. **Single-branch mode:** never amend, commit, or push — leave the fixes
-   uncommitted for the user to review (the safe default). **Stack mode:** `gt
-   modify -a` to amend fixes into each branch is expected, and once the walk
-   converges you **submit the stack** (`gt ss` / `but push`) so the fixes reach
+   uncommitted for the user to review unless repository policy independently
+   authorizes publication. **Stack mode, only in a verified GitButler-managed
+   main worktree:** `but absorb` into each branch is expected; once the walk
+   converges, `but push <branch-name>` sends only recorded modified branches
+   after selector/remote-scope verification. Never use bare `but push`.
+   Linked and other plain-Git
+   worktrees remain in single-branch mode. The fixes must reach
    the PRs. Submitting existing-PR code is the job; never `--publish`, flip
    draft→ready, open a NEW PR, post/resolve PR comments, or override branch
    protection.
