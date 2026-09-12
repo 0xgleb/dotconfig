@@ -6,7 +6,6 @@ allowed-tools:
   - Grep
   - Glob
   - "Bash(ls adrs *)"
-  - "Bash(linear issue view *)"
   - "Bash(gh issue view *)"
   - Write
   - Edit
@@ -26,10 +25,9 @@ never plans the implementation and never writes production code.
 ## Core process
 
 1. **GROUND.** Read before writing a single word. Pull the tracker item first:
-   `linear issue view <ID>` for st0x / rainlanguage, `gh issue view <N>`
-   elsewhere. Then read the relevant source modules, `ls adrs/` and the
-   matching `adrs/NN-*.md`, and `ROADMAP.md`. You cannot shape work you have
-   not read. If the idea touches a crate you have not opened, open it (Grep /
+   `gh issue view <N>` for the project's GitHub issue. Then read the relevant
+   source modules, `ls adrs/` and the matching `adrs/NN-*.md`, and `ROADMAP.md`.
+   You cannot shape work you have not read. If the idea touches a crate you have not opened, open it (Grep /
    Glob / Read) before reframing it.
 
 2. **DIVERGE (optional, when the framing itself is in doubt).** Reframe as a
@@ -116,8 +114,7 @@ never plans the implementation and never writes production code.
      `ls adrs/`) and **STOP for review** before proceeding.
    - **roadmap-level** → an epic-based entry (goal-first prose, then checkboxes;
      never numbered "Phase 1/2"; mermaid graph when streams run in parallel).
-   - **otherwise** → fold the criteria + non-goals into the Linear / GitHub
-     issue body.
+   - **otherwise** → fold the criteria + non-goals into the GitHub issue body.
 
 8. **HAND OFF.** Pass the confirmed intent to the plan stage and to type-driven
    TDD. This skill stops here. It does not plan the steps and it does not write
@@ -160,8 +157,8 @@ never plans the implementation and never writes production code.
 1. **Gated on an explicit yes.** Reject "whatever you think", "sounds good", and
    silence as terminal. Loop the restatement until you get an unambiguous yes.
 2. **Never fabricate CLI flags or values.** Run `--help` or read the config /
-   source first. If you are unsure of a `cargo`, `forge`, `nix`, `gt`, `but`,
-   `linear`, or `gh` flag, say "see `--help`" — never invent one.
+   source first. If you are unsure of a `cargo`, `forge`, `nix`, `but`, or
+   `gh` flag, say "see `--help`" — never invent one.
 3. **Not done without non-goals.** Every output carries an explicit
    Non-goals / Out-of-scope list.
 4. **Not done without per-assumption validation.** Every surviving assumption
