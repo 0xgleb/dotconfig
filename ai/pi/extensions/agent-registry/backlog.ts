@@ -242,12 +242,15 @@ const boundedText = (
     : Effect.succeed(text)
 }
 
+export const isBacklogIdentifier = (value: string): boolean =>
+  value.length <= MAX_ID_CHARACTERS && /^[A-Za-z0-9._:/-]+$/u.test(value)
+
 const identifier = (
   label: string,
   value: unknown,
 ): Effect.Effect<string, BacklogError> =>
   Effect.flatMap(boundedText(label, value, MAX_ID_CHARACTERS), text =>
-    /^[A-Za-z0-9._:/-]+$/u.test(text)
+    isBacklogIdentifier(text)
       ? Effect.succeed(text)
       : Effect.fail(error("invalid_input", `${label} has invalid characters`)),
   )
@@ -829,14 +832,19 @@ export const backlogProjection = (
 ): Effect.Effect<BacklogProjection, BacklogError> =>
   projectBacklogProjection(state, project, () => true)
 
+export const isExternalWorkSource = (source: BacklogSourceRecord): boolean =>
+  source.kind === "registry-request" ||
+  source.kind === "tracker-item" ||
+  source.kind === "backlog-document"
+
+// Project-wide inventory, not work available to a particular agent.
+// Operational wakes additionally require live ownership of assigned work.
 export const externalBacklogProjection = (
   state: BacklogState,
   project: string,
 ): Effect.Effect<BacklogProjection, BacklogError> => {
   const externalItemIds = new Set(
-    state.sources
-      .filter(source => source.kind !== "branch-todo")
-      .map(source => source.itemId),
+    state.sources.filter(isExternalWorkSource).map(source => source.itemId),
   )
   return projectBacklogProjection(state, project, item =>
     externalItemIds.has(item.id),

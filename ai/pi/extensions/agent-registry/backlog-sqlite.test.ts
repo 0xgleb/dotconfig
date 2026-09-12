@@ -225,6 +225,127 @@ test("branch todo snapshots preserve requirements and terminalize only previousl
   }
 })
 
+test("ready declared work promotes matching unreconciled conversation captures", async () => {
+  for (const source of [
+    "tracker-item",
+    "backlog-document",
+    "branch-todo",
+  ] as const) {
+    const root = mkdtempSync(join(tmpdir(), "pi-backlog-message-ready-"))
+    const store = makeSqliteRegistryStore(root)
+    try {
+      const requirements = ["Implement the declared task"]
+      await run(
+        store.ingestMessage({
+          project: "/repo/a",
+          messageId: "message-1",
+          observedAt: 1_000,
+          source: "owner-message",
+          authority: "authenticated-owner",
+          requirements,
+        }),
+      )
+      const captured = await run(store.backlogSnapshot("/repo/a"))
+      assert.equal(captured.items[0]?.state.kind, "unreconciled")
+      if (source === "branch-todo") {
+        await run(
+          store.reconcileBranchTodos({
+            project: "/repo/a",
+            sessionId: "session-1",
+            observedAt: 2_000,
+            todos: [
+              {
+                canonicalId: "session-1:todo-1",
+                sourceId: "session-1:todo-1:v1",
+                requirements,
+                status: "pending",
+              },
+            ],
+          }),
+        )
+      } else {
+        await run(
+          store.reconcileCanonicalBacklog({
+            project: "/repo/a",
+            source,
+            scopeId: "declared:tasks",
+            coverage: "partial",
+            observedAt: 2_000,
+            items: [
+              {
+                canonicalId: "task-1",
+                sourceId: "task-1:v1",
+                requirements,
+                status: "ready",
+                priority: "normal",
+              },
+            ],
+          }),
+        )
+      }
+      const reconciled = await run(store.backlogSnapshot("/repo/a"))
+      assert.equal(reconciled.items.length, 1)
+      assert.equal(reconciled.items[0]?.id, captured.items[0]?.id)
+      assert.equal(reconciled.items[0]?.state.kind, "ready")
+      assert.deepEqual(
+        reconciled.sources.map(value => value.kind),
+        ["owner-message", source],
+      )
+    } finally {
+      store.close()
+      rmSync(root, { recursive: true, force: true })
+    }
+  }
+})
+
+test("persisted wake source identifiers obey the domain identifier contract", async () => {
+  for (const sourceId of [
+    "x".repeat(257),
+    "invalid identifier",
+    "line\nbreak",
+  ]) {
+    const root = mkdtempSync(join(tmpdir(), "pi-backlog-source-id-"))
+    try {
+      const initial = makeSqliteRegistryStore(root)
+      await run(
+        initial.enqueue({
+          project: "/repo/a",
+          role: "worker",
+          requesterId: "requester-1",
+          text: "Declared task",
+          now: 1_000,
+        }),
+      )
+      initial.close()
+      const database = new DatabaseSync(join(root, "registry.sqlite"))
+      try {
+        database.exec("BEGIN")
+        database.exec("PRAGMA defer_foreign_keys = ON")
+        database
+          .prepare("UPDATE backlog_sources SET source_id = ?")
+          .run(sourceId)
+        database
+          .prepare("UPDATE backlog_requirements SET source_id = ?")
+          .run(sourceId)
+        database.exec("COMMIT")
+      } finally {
+        database.close()
+      }
+      const reopened = makeSqliteRegistryStore(root)
+      try {
+        await assert.rejects(
+          run(reopened.backlogSnapshot("/repo/a")),
+          /source_id.*malformed/,
+        )
+      } finally {
+        reopened.close()
+      }
+    } finally {
+      rmSync(root, { recursive: true, force: true })
+    }
+  }
+})
+
 test("owner and bridge messages deduplicate without upgrading source-local authority", async () => {
   const root = mkdtempSync(join(tmpdir(), "pi-backlog-messages-"))
   try {
@@ -253,6 +374,7 @@ test("owner and bridge messages deduplicate without upgrading source-local autho
     const snapshot = await run(store.backlogSnapshot("/repo/a"))
     assert.equal(snapshot.items.length, 1)
     assert.equal(snapshot.sources.length, 2)
+    assert.equal(snapshot.items[0]?.state.kind, "unreconciled")
     assert.deepEqual(
       snapshot.sources.map(source => source.authority.kind),
       ["authenticated-owner", "routing-only"],

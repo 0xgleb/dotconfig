@@ -6,6 +6,7 @@ import { Cause, Effect, Either, Exit } from "effect"
 import {
   BacklogError,
   ingestBacklogSource,
+  isBacklogIdentifier,
   transitionBacklogItem,
   type BacklogAuthority,
   type BacklogEvidencePhase,
@@ -1127,6 +1128,16 @@ const backlogItemStateEffect = (row: Row): RegistryEffect<BacklogItemState> =>
     return { kind, outcome, evidence }
   })
 
+const backlogIdentifierField = (
+  row: Row,
+  key: string,
+): RegistryEffect<string> =>
+  Effect.flatMap(requiredStringField(row, key), value =>
+    isBacklogIdentifier(value)
+      ? Effect.succeed(value)
+      : failRegistry("corrupt_state", `backlog ${key} is malformed`),
+  )
+
 const backlogItemEffect = (row: Row): RegistryEffect<BacklogItem> =>
   Effect.gen(function* () {
     const priority = yield* requiredStringField(row, "priority")
@@ -1161,7 +1172,7 @@ const backlogItemEffect = (row: Row): RegistryEffect<BacklogItem> =>
         "backlog revision or timestamp is malformed",
       )
     return {
-      id: yield* persistedStringField(row, "item_id", 512),
+      id: yield* backlogIdentifierField(row, "item_id"),
       project,
       priority,
       state: yield* backlogItemStateEffect(row),
@@ -1185,8 +1196,8 @@ const backlogSourceEffect = (row: Row): RegistryEffect<BacklogSourceRecord> =>
       kind: yield* backlogSourceKindEffect(
         yield* persistedStringField(row, "source_kind", 64),
       ),
-      id: yield* persistedStringField(row, "source_id", 1_024),
-      itemId: yield* persistedStringField(row, "item_id", 512),
+      id: yield* backlogIdentifierField(row, "source_id"),
+      itemId: yield* backlogIdentifierField(row, "item_id"),
       authority: yield* backlogAuthorityEffect(row),
       observedAt,
       contentDigest,
@@ -2453,7 +2464,7 @@ const persistMessageBacklogEffect = (
             ? { kind: "authenticated-owner", ref: message.messageId }
             : { kind: "routing-only" },
         dedupe: { kind: "exact-content" },
-        initialState: "ready",
+        initialState: "unreconciled",
       }),
     )
     return yield* persistBacklogIngestionEffect(database, prior, result)
@@ -2550,7 +2561,11 @@ const reconcileCanonicalBacklogEffect = (
           )
         if (item.state.kind !== "blocked" || item.state.reason !== reason)
           event = { kind: "block", reason }
-      } else if (item.state.kind === "blocked") event = { kind: "ready" }
+      } else if (
+        item.state.kind === "blocked" ||
+        item.state.kind === "unreconciled"
+      )
+        event = { kind: "ready" }
 
       if (!event) continue
       const result = yield* backlogDomainEffect(
@@ -2651,7 +2666,11 @@ const reconcileBranchTodoBacklogEffect = (
           )
         if (item.state.kind !== "blocked" || item.state.reason !== reason)
           event = { kind: "block", reason }
-      } else if (item.state.kind === "blocked") event = { kind: "ready" }
+      } else if (
+        item.state.kind === "blocked" ||
+        item.state.kind === "unreconciled"
+      )
+        event = { kind: "ready" }
 
       if (!event) continue
       const result = yield* backlogDomainEffect(

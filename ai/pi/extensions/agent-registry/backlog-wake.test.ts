@@ -6,6 +6,7 @@ import { Effect, Either } from "effect"
 import { makeBacklogWakeController } from "./backlog-wake.ts"
 import {
   emptyBacklogState,
+  externalBacklogProjection,
   ingestBacklogSource,
   type BacklogState,
 } from "./backlog.ts"
@@ -203,6 +204,113 @@ test("actual registry sync wakes an operational owner for existing external back
     1,
     "unchanged backlog must not create a polling loop",
   )
+})
+
+test("raw conversation sources do not become external work even in legacy ready state", async () => {
+  for (const kind of ["owner-message", "bridge-message"] as const) {
+    const captured: BacklogState = {
+      ...backlog,
+      sources: backlog.sources.map(source => ({ ...source, kind })),
+    }
+    const app = runtime({ backlog: captured })
+    await app.sync()
+    assert.deepEqual(app.errors, [])
+    assert.deepEqual(app.messages, [])
+    assert.equal(
+      (
+        await Effect.runPromise(
+          externalBacklogProjection(captured, "/workspace"),
+        )
+      ).actionable,
+      0,
+    )
+  }
+})
+
+test("a declared work source remains actionable when conversation provenance is attached", async () => {
+  const captured: BacklogState = {
+    ...backlog,
+    sources: [
+      ...backlog.sources,
+      ...backlog.sources.map(source => ({
+        ...source,
+        kind: "owner-message" as const,
+        id: "owner-1",
+      })),
+    ],
+  }
+  const app = runtime({ backlog: captured })
+  await app.sync()
+  assert.equal(app.messages.length, 1)
+  assert.equal(
+    (await Effect.runPromise(externalBacklogProjection(captured, "/workspace")))
+      .actionable,
+    1,
+  )
+  const content = app.messages[0]?.[0].content
+  assert.ok(content)
+  assert.match(content, /item-1/)
+  assert.match(content, /tracker-item/)
+  assert.match(content, /issue:42/)
+  assert.doesNotMatch(content, /owner-1|Inspect the declared task/)
+})
+
+test("changed selected source references refresh the wake without observation-only churn", async () => {
+  const app = runtime()
+  await app.sync()
+  const attach = (state: BacklogState, observedAt: number) =>
+    Effect.runSync(
+      ingestBacklogSource(state, {
+        newItemId: "unused",
+        project: "/workspace",
+        source: { kind: "registry-request", id: "request-1" },
+        observedAt,
+        priority: "normal",
+        requirements: [{ text: "Inspect the declared task" }],
+        authority: { kind: "routing-only" },
+        dedupe: { kind: "item-id", itemId: "item-1" },
+        initialState: "ready",
+      }),
+    ).state
+  app.controls.backlog = attach(app.controls.backlog, 2)
+  await app.sync()
+  assert.equal(app.messages.length, 2)
+  assert.match(app.messages[1]?.[0].content ?? "", /request-1/)
+  app.controls.backlog = attach(app.controls.backlog, 3)
+  await app.sync()
+  assert.equal(app.messages.length, 2)
+})
+
+test("wake diagnostics bound references while retaining the full actionable count", async () => {
+  const many = Array.from(
+    { length: 7 },
+    (_, index) => index,
+  ).reduce<BacklogState>(
+    (state, index) =>
+      Effect.runSync(
+        ingestBacklogSource(state, {
+          newItemId: `item-${index}`,
+          project: "/workspace",
+          source: { kind: "tracker-item", id: `issue:${index}` },
+          observedAt: index + 1,
+          priority: "normal",
+          requirements: [{ text: `DO_NOT_RENDER_REQUIREMENT_${index}` }],
+          authority: { kind: "routing-only" },
+          dedupe: { kind: "source-only" },
+          initialState: "ready",
+        }),
+      ).state,
+    emptyBacklogState,
+  )
+  const app = runtime({ backlog: many })
+  await app.sync()
+  assert.equal(app.messages.length, 1)
+  const content = app.messages[0]?.[0].content ?? ""
+  assert.match(content, /7 external actionable/)
+  assert.equal(content.match(/"itemId":/g)?.length, 5)
+  assert.match(content, /item-0/)
+  assert.match(content, /item-4/)
+  assert.doesNotMatch(content, /item-5|item-6|DO_NOT_RENDER_REQUIREMENT/)
 })
 
 test("transient busy, queue, draft and reload guards defer rather than consume the wake", async () => {
