@@ -1,3 +1,14 @@
+export def github-failure-kind [args: list<string>, stderr: string]: nothing -> string {
+  let endpoint = $args | get -o 1 | default ""
+  let commit_pulls_lookup = (($args | get -o 0 | default "") == "api") and ($endpoint =~ '^repos/[^/]+/[^/]+/commits/[^/]+/pulls$')
+  let normalized = $stderr | str trim
+  if $commit_pulls_lookup and ($normalized =~ '(?i)HTTP 422') and ($normalized =~ '(?i)No commit found') {
+    "unpublished_commit"
+  } else {
+    "other"
+  }
+}
+
 export def in-window [timestamp: any, since: datetime, until: datetime]: nothing -> bool {
   if $timestamp == null or ($timestamp | into string | str trim | is-empty) {
     false
@@ -27,20 +38,6 @@ export def is-bot [login: any]: nothing -> bool {
       "graphite-app"
       "github-actions"
     ])
-  }
-}
-
-export def extract-rai [text: any]: nothing -> list<string> {
-  if $text == null {
-    []
-  } else {
-    $text
-    | into string
-    | parse --regex '(?i)(?<identifier>RAI-\d+)'
-    | get identifier
-    | each { str uppercase }
-    | uniq
-    | sort
   }
 }
 
@@ -78,19 +75,6 @@ export def pr-reportability [pr: record, since: datetime, until: datetime]: noth
   }
 }
 
-export def linear-reportability [evidence: record]: nothing -> string {
-  if (
-    ($evidence.created_by_user? | default false)
-    or ($evidence.commented_by_user? | default false)
-    or ($evidence.referenced_by_authored_pr? | default false)
-    or ($evidence.user_framed? | default false)
-  ) {
-    "verified_user_involvement"
-  } else {
-    "context_only"
-  }
-}
-
 export def deployment-reportability [evidence: record]: nothing -> string {
   let refs = $evidence.authored_pr_refs? | default []
   if (($refs | is-not-empty) or ($evidence.user_framed? | default false)) {
@@ -119,6 +103,8 @@ export def graphite-pr-reportability [pr: record, batches: list<record>, since: 
   let ordinary = pr-reportability $pr $since $until
   if $ordinary != "unverified_update" {
     $ordinary
+  } else if ($pr.state? | default "") != "CLOSED" {
+    "unverified_update"
   } else {
     let matched = ($batches | any {|batch|
       let author = $batch.author_login? | default ""
@@ -126,6 +112,7 @@ export def graphite-pr-reportability [pr: record, batches: list<record>, since: 
         (($batch.repo? | default "") == ($pr.repo? | default ""))
         and (($pr.number? | default 0) in ($batch.member_numbers? | default []))
         and ($author in ["graphite-app" "app/graphite-app"])
+        and (($batch.state? | default "") == "MERGED")
         and (in-window ($batch.merged_at? | default null) $since $until)
       )
     })
@@ -150,6 +137,12 @@ export def deployment-pr-refs [run: record, authored_prs: list<record>]: nothing
     return []
   }
   $authored_prs
-  | where {|pr| ($pr.repo == $run.repo) and ($pr.commits | any {|commit| $commit.sha == $head_sha }) }
+  | where {|pr|
+    (
+      ($pr.repo == $run.repo)
+      and (($pr.reportability? | default "") in ["new" "merged" "merged_via_graphite_batch" "verified_continued"])
+      and ($pr.commits | any {|commit| $commit.sha == $head_sha })
+    )
+  }
   | each {|pr| $"($pr.repo)#($pr.number)" }
 }

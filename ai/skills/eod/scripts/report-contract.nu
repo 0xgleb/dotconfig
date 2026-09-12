@@ -72,7 +72,7 @@ export def render-report [report: record, evidence: list<record>]: nothing -> st
     let items = ($section.items | each {|item|
       let references = ($item.evidence_ids | each {|id|
         let source = $evidence | where id == $id | get 0
-        $"[($source.label)](($source.url))"
+        ["[" $source.label "](" $source.url ")"] | str join
       } | str join ", ")
       $"- ($item.text): ($references)"
     } | str join (char newline))
@@ -81,23 +81,10 @@ export def render-report [report: record, evidence: list<record>]: nothing -> st
   $"($report.summary)\n\n($sections)\n"
 }
 
-export def apply-report [initial_note: string, live_note: string, anchor: string, rendered: string]: nothing -> string {
-  if ($rendered | str trim | is-empty) {
-    error make {msg: "rendered report is empty"}
-  }
-  if ($live_note | is-empty) {
-    if ($initial_note | is-not-empty) {
-      error make {msg: "live note changed after the initial read"}
-    }
-    return $rendered
-  }
-  let parts = $live_note | split row $anchor
-  if ($parts | length) != 2 {
-    error make {msg: "live note must contain the exact requested anchor once"}
-  }
-  $parts | str join $rendered
+export def approval-matches [approved: string, payload: string]: nothing -> bool {
+  ($approved | str trim | is-not-empty) and $approved == $payload
 }
 
-export def completion-verified [applied: string, reread: string]: nothing -> bool {
-  ($applied | str trim | is-not-empty) and $applied == $reread
+export def delivery-verified [approved: string, payload: string, outcome: string]: nothing -> bool {
+  (approval-matches $approved $payload) and $outcome == "delivered"
 }

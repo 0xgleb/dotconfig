@@ -1,9 +1,16 @@
 use std/assert
 
-use evidence.nu [classify-commit deployment-environment deployment-pr-refs deployment-reportability extract-rai graphite-pr-reportability is-bot is-deployment-workflow linear-reportability parse-graphite-batch-spec pr-event-in-window pr-reportability reportable-review]
+use evidence.nu [classify-commit deployment-environment deployment-pr-refs deployment-reportability github-failure-kind graphite-pr-reportability is-bot is-deployment-workflow parse-graphite-batch-spec pr-event-in-window pr-reportability reportable-review]
 
 let since = "2026-07-10T00:00:00Z" | into datetime
 let until = "2026-07-14T06:00:00Z" | into datetime
+
+def "test only a missing commit pulls lookup is classified as unpublished local evidence" [] {
+  let args = ["api" "repos/example/service/commits/abc123/pulls"]
+  assert equal (github-failure-kind $args "gh: No commit found for SHA abc123 (HTTP 422)") "unpublished_commit"
+  assert equal (github-failure-kind $args "gh: Validation Failed (HTTP 422)") "other"
+  assert equal (github-failure-kind ["pr" "view" "123"] "gh: No commit found (HTTP 422)") "other"
+}
 
 def "test classifies a newly authored commit as substantive evidence" [] {
   let commit = {
@@ -46,17 +53,13 @@ def "test excludes self-authored PR comments from reviews" [] {
 
 def "test includes a timestamped review on teammate work" [] {
   let review = {user_login: "0xgleb", submitted_at: "2026-07-13T12:00:00Z"}
-  assert (reportable-review $review "0xgleb" "JuaniRios" $since $until)
+  assert (reportable-review $review "0xgleb" "teammate" $since $until)
 }
 
 def "test bot detection handles bracketed and named bots" [] {
   assert (is-bot "coderabbitai[bot]")
   assert (is-bot "graphite-app")
-  assert not (is-bot "JuaniRios")
-}
-
-def "test extracts and normalizes Linear identifiers" [] {
-  assert equal (extract-rai "Fixes rai-1241 and RAI-370; rai-1241 again") ["RAI-1241" "RAI-370"]
+  assert not (is-bot "teammate")
 }
 
 def "test derives deployment environment only from workflow identity" [] {
@@ -67,19 +70,21 @@ def "test derives deployment environment only from workflow identity" [] {
 
 def "test deployment run links only to authored PRs sharing its head commit" [] {
   let authored_prs = [
-    {repo: "ST0x-Technology/st0x.issuance", number: 12, commits: [{sha: "aaa111"}]}
-    {repo: "ST0x-Technology/st0x.issuance", number: 13, commits: [{sha: "bbb222"}]}
-    {repo: "ST0x-Technology/st0x.liquidity", number: 14, commits: [{sha: "aaa111"}]}
+    {repo: "example/service", number: 12, reportability: "verified_continued", commits: [{sha: "aaa111"}]}
+    {repo: "example/service", number: 13, reportability: "new", commits: [{sha: "bbb222"}]}
+    {repo: "example/other", number: 14, reportability: "merged", commits: [{sha: "aaa111"}]}
+    {repo: "example/service", number: 15, reportability: "unverified_update", commits: [{sha: "aaa111"}]}
+    {repo: "example/service", number: 16, commits: [{sha: "aaa111"}]}
   ]
-  let run = {repo: "ST0x-Technology/st0x.issuance", head_sha: "aaa111"}
-  assert equal (deployment-pr-refs $run $authored_prs) ["ST0x-Technology/st0x.issuance#12"]
-  assert equal (deployment-pr-refs {repo: "ST0x-Technology/st0x.issuance", head_sha: ""} $authored_prs) []
-  assert equal (deployment-pr-refs {repo: "ST0x-Technology/st0x.issuance"} $authored_prs) []
+  let run = {repo: "example/service", head_sha: "aaa111"}
+  assert equal (deployment-pr-refs $run $authored_prs) ["example/service#12"]
+  assert equal (deployment-pr-refs {repo: "example/service", head_sha: ""} $authored_prs) []
+  assert equal (deployment-pr-refs {repo: "example/service"} $authored_prs) []
 }
 
 def "test does not classify a CI run from its commit title" [] {
   assert (is-deployment-workflow "Deploy to Production")
-  assert not (is-deployment-workflow "Rainix CI")
+  assert not (is-deployment-workflow "Project CI")
 }
 
 def "test excludes a PR created later on the same UTC date" [] {
@@ -88,29 +93,14 @@ def "test excludes a PR created later on the same UTC date" [] {
   assert not (pr-event-in-window $pr $since $cutoff)
 }
 
-def "test completed Linear status alone is context not user work" [] {
-  assert equal (linear-reportability {
-    created_by_user: false
-    commented_by_user: false
-    referenced_by_authored_pr: false
-    user_framed: false
-  }) "context_only"
-  assert equal (linear-reportability {
-    created_by_user: false
-    commented_by_user: true
-    referenced_by_authored_pr: false
-    user_framed: false
-  }) "verified_user_involvement"
-}
-
 def "test deployment workflow alone is context not user work" [] {
   assert equal (deployment-reportability {authored_pr_refs: [], user_framed: false}) "context_only"
-  assert equal (deployment-reportability {authored_pr_refs: ["ST0x-Technology/repo#12"], user_framed: false}) "verified_user_involvement"
+  assert equal (deployment-reportability {authored_pr_refs: ["example/service#12"], user_framed: false}) "verified_user_involvement"
 }
 
 def "test parses only explicit bounded Graphite batch membership" [] {
-  assert equal (parse-graphite-batch-spec "ST0x-Technology/st0x.issuance#290:208,239,254") {
-    repo: "ST0x-Technology/st0x.issuance"
+  assert equal (parse-graphite-batch-spec "example/service#290:208,239,254") {
+    repo: "example/service"
     group_number: 290
     member_numbers: [208 239 254]
   }
@@ -118,21 +108,27 @@ def "test parses only explicit bounded Graphite batch membership" [] {
 
 def "test closed Graphite children require exact merged batch evidence" [] {
   let pr = {
-    repo: "ST0x-Technology/st0x.issuance"
+    repo: "example/service"
     number: 208
+    state: "CLOSED"
     created_at: "2026-07-03T12:00:00Z"
     merged_at: null
     commits: []
   }
   let batch = {
-    repo: "ST0x-Technology/st0x.issuance"
+    repo: "example/service"
     group_number: 290
     member_numbers: [208 239 254]
     author_login: "app/graphite-app"
+    state: "MERGED"
     merged_at: "2026-07-13T12:00:00Z"
   }
   assert equal (graphite-pr-reportability $pr [$batch] $since $until) "merged_via_graphite_batch"
   assert equal (graphite-pr-reportability ($pr | update number 999) [$batch] $since $until) "unverified_update"
+  assert equal (graphite-pr-reportability ($pr | update state "OPEN") [$batch] $since $until) "unverified_update"
+  assert equal (graphite-pr-reportability ($pr | reject state) [$batch] $since $until) "unverified_update"
+  assert equal (graphite-pr-reportability $pr [($batch | update state "OPEN")] $since $until) "unverified_update"
+  assert equal (graphite-pr-reportability $pr [($batch | reject state)] $since $until) "unverified_update"
 }
 
 def main [] {

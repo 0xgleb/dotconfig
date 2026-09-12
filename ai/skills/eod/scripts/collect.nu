@@ -1,9 +1,15 @@
-use evidence.nu [classify-commit deployment-environment deployment-pr-refs deployment-reportability extract-rai graphite-pr-reportability in-window is-bot is-deployment-workflow linear-reportability parse-graphite-batch-spec pr-event-in-window reportable-review]
+use evidence.nu [classify-commit deployment-environment deployment-pr-refs deployment-reportability github-failure-kind graphite-pr-reportability in-window is-bot is-deployment-workflow parse-graphite-batch-spec pr-event-in-window reportable-review]
 
 def run-gh-json [args: list<string>]: nothing -> record {
   let result = do { ^gh ...$args } | complete
   if $result.exit_code != 0 {
-    {ok: false, data: null, error: "GitHub command failed", exit_code: $result.exit_code}
+    {
+      ok: false
+      data: null
+      error: "GitHub command failed"
+      error_kind: (github-failure-kind $args $result.stderr)
+      exit_code: $result.exit_code
+    }
   } else {
     let output = $result.stdout | str trim
     if ($output | is-empty) {
@@ -13,24 +19,6 @@ def run-gh-json [args: list<string>]: nothing -> record {
         {ok: true, data: ($output | from json), error: null, exit_code: 0}
       } catch {
         {ok: false, data: null, error: "GitHub returned invalid JSON", exit_code: 0}
-      }
-    }
-  }
-}
-
-def run-linear-json [linear_repo: path, args: list<string>]: nothing -> record {
-  let result = do { ^direnv exec $linear_repo linear ...$args } | complete
-  if $result.exit_code != 0 {
-    {ok: false, data: null, error: "Linear command failed", exit_code: $result.exit_code}
-  } else {
-    let output = $result.stdout | str trim
-    if ($output | is-empty) {
-      {ok: false, data: null, error: "Linear returned no data", exit_code: 0}
-    } else {
-      try {
-        {ok: true, data: ($output | from json), error: null, exit_code: 0}
-      } catch {
-        {ok: false, data: null, error: "Linear returned invalid JSON", exit_code: 0}
       }
     }
   }
@@ -57,7 +45,7 @@ def collect-git [workspace: path, since: datetime, until: datetime, since_text: 
 
   let activity = ($repos | each {|repo|
     let log_result = (do {
-      ^git -C $repo log --all $"--since=($since_text)" $"--until=($until_text)" $"--author=($git_email)" '--pretty=format:%H%x09%s%x09%aI%x09%cI%x09%D'
+      ^git -C $repo log '--exclude=refs/stash' --all $"--since=($since_text)" $"--until=($until_text)" $"--author=($git_email)" '--pretty=format:%H%x09%s%x09%aI%x09%cI%x09%D'
     } | complete)
 
     let commits = if $log_result.exit_code != 0 {
@@ -129,7 +117,6 @@ def collect-authored-pr [candidate: record, graphite_batches: list<record>, sinc
   let reviews = ($detail.reviews? | default []
     | each {|review| normalize-review $review }
     | where {|review| in-window $review.submitted_at $since $until })
-  let rai_ids = extract-rai $"($detail.title? | default '')\n($detail.body? | default '')"
   let pr = {
     repo: $repo
     number: $candidate.number
@@ -144,7 +131,6 @@ def collect-authored-pr [candidate: record, graphite_batches: list<record>, sinc
     merged_at: ($detail.mergedAt? | default null)
     commits: $commits
     reviews_received: $reviews
-    rai_ids: $rai_ids
     collection_errors: (if $detail_result.ok { [] } else { [$detail_result.error] })
   }
   $pr | insert reportability (graphite-pr-reportability $pr $graphite_batches $since $until)
@@ -321,7 +307,7 @@ def collect-family-repositories [owners: string]: nothing -> record {
   }
 }
 
-def collect-candidates-for-commits [commits: list<record>, github_user: string]: nothing -> record {
+def collect-candidates-for-commits [commits: list<record>, github_user: string, allow_unpublished: bool]: nothing -> record {
   let lookups = ($commits | each {|commit|
     let result = run-gh-json ["api" $"repos/($commit.repo)/commits/($commit.sha)/pulls"]
     if $result.ok {
@@ -341,6 +327,8 @@ def collect-candidates-for-commits [commits: list<record>, github_user: string]:
           }
         })
       {status: "available", candidates: $candidates}
+    } else if $allow_unpublished and (($result.error_kind? | default "other") == "unpublished_commit") {
+      {status: "available", candidates: []}
     } else {
       {status: "unavailable", candidates: []}
     }
@@ -369,7 +357,7 @@ def collect-linked-candidates [git: record, github_user: string, family_reposito
     | uniq-by evidence_key
     | reject evidence_key)
 
-  collect-candidates-for-commits $commits $github_user
+  collect-candidates-for-commits $commits $github_user true
 }
 
 def collect-deployment-candidates [runs: list<record>, github_user: string]: nothing -> record {
@@ -378,7 +366,7 @@ def collect-deployment-candidates [runs: list<record>, github_user: string]: not
     | each {|run| {repo: $run.repo, sha: $run.head_sha, evidence_key: $"($run.repo)#($run.head_sha)"} }
     | uniq-by evidence_key
     | reject evidence_key)
-  let commit_collection = collect-candidates-for-commits $commits $github_user
+  let commit_collection = collect-candidates-for-commits $commits $github_user false
   let branches = ($runs
     | where {|run|
       let branch = $run.head_branch? | default ""
@@ -521,171 +509,12 @@ def collect-github [git: record, owners: string, deploy_repos: list<string>, gra
   }
 }
 
-def normalize-linear-issue [issue: record]: nothing -> record {
-  {
-    identifier: ($issue.identifier? | default "")
-    title: ($issue.title? | default "")
-    url: ($issue.url? | default "")
-    created_at: ($issue.createdAt? | default null)
-    updated_at: ($issue.updatedAt? | default null)
-    completed_at: ($issue.completedAt? | default null)
-    state: ($issue | get -o state.name)
-    state_type: ($issue | get -o state.type)
-    project: ($issue | get -o project.name)
-  }
-}
-
-def collect-linear [linear_repo: path, referenced_ids: list<string>, since: datetime, until: datetime, since_text: string]: nothing -> record {
-  let viewer_result = run-linear-json $linear_repo ["api" "query { viewer { id displayName } }"]
-  if not $viewer_result.ok {
-    return {
-      status: "unavailable"
-      error: $viewer_result.error
-      created: []
-      completed: []
-      comments: []
-      updated_assigned_context: []
-      referenced_ids: $referenced_ids
-      referenced_issues: []
-    }
-  }
-
-  let viewer_id = $viewer_result.data.data.viewer.id
-  let activity_query = "query($u: ID!, $a: DateTimeOrDuration!) {
-    created: issues(filter: { creator: { id: { eq: $u } }, createdAt: { gte: $a } }, first: 100) {
-      nodes { identifier title url createdAt updatedAt completedAt state { name type } project { name } }
-    }
-    completed: issues(filter: { assignee: { id: { eq: $u } }, completedAt: { gte: $a } }, first: 100) {
-      nodes { identifier title url createdAt updatedAt completedAt state { name type } project { name } }
-    }
-    updated: issues(filter: { assignee: { id: { eq: $u } }, updatedAt: { gte: $a } }, first: 100) {
-      nodes { identifier title url createdAt updatedAt completedAt state { name type } project { name } }
-    }
-    comments(filter: { user: { id: { eq: $u } }, createdAt: { gte: $a } }, first: 100) {
-      nodes { body createdAt issue { identifier title url state { name type } project { name } } }
-    }
-  }"
-  let activity_result = run-linear-json $linear_repo [
-    "api" $activity_query "--variable" $"u=($viewer_id)" "--variable" $"a=($since_text)"
-  ]
-  if not $activity_result.ok {
-    return {
-      status: "unavailable"
-      error: $activity_result.error
-      created: []
-      completed: []
-      comments: []
-      updated_assigned_context: []
-      referenced_ids: $referenced_ids
-      referenced_issues: []
-    }
-  }
-
-  let activity = $activity_result.data.data
-  let created = ($activity.created.nodes
-    | where {|issue| in-window $issue.createdAt $since $until }
-    | each {|issue| normalize-linear-issue $issue })
-  let completed = ($activity.completed.nodes
-    | where {|issue| in-window $issue.completedAt $since $until }
-    | each {|issue| normalize-linear-issue $issue })
-  let updated = ($activity.updated.nodes
-    | where {|issue| in-window $issue.updatedAt $since $until }
-    | each {|issue| normalize-linear-issue $issue })
-  let comments = ($activity.comments.nodes
-    | where {|comment| in-window $comment.createdAt $since $until }
-    | each {|comment|
-      {
-        created_at: $comment.createdAt
-        body: $comment.body
-        issue: (normalize-linear-issue $comment.issue)
-      }
-    })
-
-  let referenced_issues = if ($referenced_ids | is-empty) {
-    []
-  } else {
-    let quote = char dq
-    let fields = ($referenced_ids | enumerate | each {|entry|
-      [
-        "i"
-        ($entry.index | into string)
-        ": issue(id: "
-        $quote
-        $entry.item
-        $quote
-        ") { identifier title url createdAt updatedAt completedAt state { name type } project { name } }"
-      ] | str join
-    } | str join (char newline))
-    let reference_query = $"query { ($fields) }"
-    let reference_result = run-linear-json $linear_repo ["api" $reference_query]
-    if $reference_result.ok {
-      $reference_result.data.data
-      | transpose alias issue
-      | get issue
-      | compact
-      | each {|issue| normalize-linear-issue $issue }
-    } else {
-      []
-    }
-  }
-
-  let created_with_evidence = ($created | each {|issue|
-    $issue | insert reportability (linear-reportability {
-      created_by_user: true
-      commented_by_user: false
-      referenced_by_authored_pr: ($issue.identifier in $referenced_ids)
-      user_framed: false
-    })
-  })
-  let commented_ids = $comments | get -o issue.identifier | default [] | uniq
-  let completed_with_evidence = ($completed | each {|issue|
-    $issue | insert reportability (linear-reportability {
-      created_by_user: ($issue.identifier in ($created | get -o identifier | default []))
-      commented_by_user: ($issue.identifier in $commented_ids)
-      referenced_by_authored_pr: ($issue.identifier in $referenced_ids)
-      user_framed: false
-    })
-  })
-  let updated_with_evidence = ($updated | each {|issue|
-    $issue | insert reportability (linear-reportability {
-      created_by_user: ($issue.identifier in ($created | get -o identifier | default []))
-      commented_by_user: ($issue.identifier in $commented_ids)
-      referenced_by_authored_pr: ($issue.identifier in $referenced_ids)
-      user_framed: false
-    })
-  })
-  let referenced_with_evidence = ($referenced_issues | each {|issue|
-    $issue | insert reportability (linear-reportability {
-      created_by_user: ($issue.identifier in ($created | get -o identifier | default []))
-      commented_by_user: ($issue.identifier in $commented_ids)
-      referenced_by_authored_pr: true
-      user_framed: false
-    })
-  })
-
-  {
-    status: "available"
-    error: null
-    created: $created_with_evidence
-    completed: $completed_with_evidence
-    comments: $comments
-    updated_assigned_context: $updated_with_evidence
-    referenced_ids: $referenced_ids
-    referenced_issues: $referenced_with_evidence
-  }
-}
-
 export def main [
   --since: string
   --until: string
-  --workspace: path = "/Users/0xgleb/code/st0x"
-  --linear-repo: path = "/Users/0xgleb/code/st0x/st0x.issuance"
-  --owners: string = "ST0x-Technology,rainlanguage"
-  --deploy-repos: list<string> = [
-    "ST0x-Technology/st0x.issuance"
-    "ST0x-Technology/st0x.liquidity"
-    "ST0x-Technology/event-sorcery"
-  ]
+  --workspace: path
+  --owners: string # Comma-separated GitHub organization logins
+  --deploy-repos: list<string> = []
   --graphite-batches: list<string> = []
   --output: path
 ] {
@@ -699,31 +528,39 @@ export def main [
     error make {msg: "--until must be later than --since"}
   }
 
+  if $workspace == null or ($workspace | into string | str trim | is-empty) {
+    error make {msg: "--workspace is required; select the reporting workspace explicitly"}
+  }
+  if $owners == null or ($owners | str trim | is-empty) {
+    error make {msg: "--owners is required; select the reporting repository owners explicitly"}
+  }
+
+  let owner_names = $owners | split row "," | each { str trim }
+  if ($owner_names | any {|owner| not ($owner =~ '^[A-Za-z0-9][A-Za-z0-9-]*$') }) {
+    error make {msg: "--owners contains an invalid owner"}
+  }
+  let selected_owners = $owner_names | str join ","
   let workspace_path = $workspace | path expand
-  let linear_repo_path = $linear_repo | path expand
+  if not ($workspace_path | path exists) or ($workspace_path | path type) != "dir" {
+    error make {msg: "--workspace must be an existing directory"}
+  }
   let since_date = $since_instant | format date "%Y-%m-%d"
   let until_date = $until_instant | format date "%Y-%m-%d"
 
+  $graphite_batches | each {|spec| parse-graphite-batch-spec $spec } | ignore
+
   let git = collect-git $workspace_path $since_instant $until_instant $since $until
-  let github = collect-github $git $owners $deploy_repos $graphite_batches $since_instant $until_instant $since_date $until_date
-  let referenced_ids = if $github.status != "unavailable" {
-    $github.authored_prs.rai_ids | flatten | uniq | sort
-  } else {
-    []
-  }
-  let linear = collect-linear $linear_repo_path $referenced_ids $since_instant $until_instant $since
+  let github = collect-github $git $selected_owners $deploy_repos $graphite_batches $since_instant $until_instant $since_date $until_date
 
   let result = {
     window: {since: $since, until: $until}
-    scope: {workspace: $workspace_path, owners: ($owners | split row ",")}
+    scope: {workspace: $workspace_path, owners: $owner_names}
     source_status: {
       git: $git.status
       github: $github.status
-      linear: $linear.status
     }
     git: $git
     github: $github
-    linear: $linear
     synthesis_guardrails: {
       reportable: ["new" "merged" "merged_via_graphite_batch" "verified_continued"]
       requires_user_context: ["unverified_update" "context_only"]
@@ -731,8 +568,8 @@ export def main [
         "PR updatedAt alone is not work evidence"
         "committer date alone may be restack or amend"
         "PR title, body, and branch name describe scope, not the reporting-window delta"
-        "Linear project grouping requires Linear project.name"
-        "Linear Done status alone is context, not evidence of user work"
+        "GitHub issue activity is not collected by this script; verify issue evidence separately"
+        "Issue closure alone is context, not evidence of user work"
         "A deployment workflow alone is context unless linked to user-authored work or canonical user framing"
         "Graphite child merges require an exact bounded batch spec and merged app/graphite-app group evidence"
         "Every synthesized count must be adjacent to exact supporting references"
