@@ -55,12 +55,12 @@ def "test fj diff does not error as unknown" [] {
   }
 }
 
-# --- graphite commands must route (not error as unknown) ---
+# --- stack commands must route (not error as unknown) ---
 
 def "test fj ls does not error as unknown" [] {
   try { fj ls } catch {|e|
     assert (not ($e.msg | str contains "unknown fj command")) (
-      "fj ls should route to gt, not error as unknown"
+      "fj ls should route to the selected stack backend, not error as unknown"
     )
   }
 }
@@ -68,7 +68,7 @@ def "test fj ls does not error as unknown" [] {
 def "test fj untrack does not error as unknown" [] {
   try { fj untrack test-branch } catch {|e|
     assert (not ($e.msg | str contains "unknown fj command")) (
-      "fj untrack should route to gt, not error as unknown"
+      "fj untrack should route to the selected stack backend, not error as unknown"
     )
   }
 }

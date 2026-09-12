@@ -845,78 +845,6 @@ test("explicit reviewable-PR delivery scope includes accurate title and body mai
   )
 })
 
-test("an explicit WIP Graphite PR request allows only bounded draft publication", () => {
-  const prompt = buildClassifierPrompt({
-    boundary: "action",
-    intent: [
-      "give me a link to the wip pr on graphite too",
-      "make sure description and title filled in but no reviewers are assigned",
-    ],
-    projectInstructions:
-      "Graphite is required. Keep incomplete work draft and never assign reviewers without owner approval.",
-    evidence: [
-      "Current typed todo: corporate-action bounded bootstrap",
-      "Fresh diff maps exactly seven verified files to the incomplete resource-blocked slice",
-    ],
-    subject: {
-      toolName: "bash",
-      command:
-        "git add <seven exact files> && gt create fix/corporate-action-bounded-bootstrap --onto main --message <filled title>",
-    },
-  })
-
-  assert.match(
-    prompt,
-    /explicitly requests a link to a WIP or draft Graphite pull request/i,
-  )
-  assert.match(
-    prompt,
-    /incomplete or resource-blocked state is the reason for draft publication/i,
-  )
-  assert.match(
-    prompt,
-    /allow only the exact evidenced file set.*Graphite branch creation.*draft submission/is,
-  )
-  assert.match(prompt, /filled accurate title and body.*no reviewers/i)
-  assert.match(
-    prompt,
-    /does not authorize a non-draft pull request.*review request.*merge/is,
-  )
-})
-
-test("an evidenced Graphite draft may set metadata immediately after bounded submission", () => {
-  const prompt = buildClassifierPrompt({
-    boundary: "action",
-    intent: [
-      "give me a link to the wip pr on graphite too",
-      "make sure description and title filled in but no reviewers are assigned",
-    ],
-    projectInstructions:
-      "Graphite is required. Keep incomplete work draft and never assign reviewers without owner approval.",
-    evidence: [
-      "Current clean Graphite branch fix/corporate-action-bounded-bootstrap is tracked on main",
-      "Commit d30a533b contains the verified PR title as its subject and the prepared full PR body as its commit body",
-      "The exact immediate follow-up is gh pr edit --title <verified title> --body-file <prepared body file>",
-    ],
-    subject: {
-      toolName: "bash",
-      command: "gt submit --draft --no-interactive --no-edit --no-stack",
-    },
-  })
-
-  assert.match(
-    prompt,
-    /Graphite submission command need not duplicate the verified metadata inline/i,
-  )
-  assert.match(
-    prompt,
-    /allow the exact bounded.*gt submit.*followed immediately by.*metadata-only.*title and body-file/is,
-  )
-  assert.match(prompt, /does not authorize a non-draft pull request/i)
-  assert.match(prompt, /does not authorize[^.]*reviewers/i)
-  assert.match(prompt, /does not authorize[^.]*additional pull requests/i)
-})
-
 test("classifier prompt escapes literal NUL bytes before the spawn argv boundary", () => {
   const prompt = buildClassifierPrompt({
     boundary: "action",
@@ -1361,7 +1289,7 @@ test("direct issue-linked PR reconciliation permits exact bounded comparison fet
 
   assert.match(
     prompt,
-    /Graphite closed state is not proof.*linked pull-request work landed/is,
+    /tracker closed state is not proof.*linked pull-request work landed/is,
   )
   assert.match(
     prompt,
@@ -1369,7 +1297,7 @@ test("direct issue-linked PR reconciliation permits exact bounded comparison fet
   )
   assert.match(
     prompt,
-    /does not authorize.*checkout.*source mutation.*Linear transition.*push.*publication/is,
+    /does not authorize.*checkout.*source mutation.*tracker transition.*push.*publication/is,
   )
 })
 
@@ -1447,250 +1375,11 @@ test("newest exact conflict-resolution order supersedes an older PR retirement",
   )
   assert.match(
     prompt,
-    /Graphite.*exact branch.*local checkout.*bounded restack.*preserving separately stashed dirty work/is,
+    /screenshot resolves only the pull-request referent; authority comes from the accompanying human order/i,
   )
   assert.match(
     prompt,
     /does not authorize another pull request or branch.*dropping or applying the stash.*force operations.*publishing.*merging/is,
-  )
-})
-
-test("new successful Graphite state invalidates a stale conflict block before exact submission", () => {
-  const prompt = buildClassifierPrompt({
-    boundary: "action",
-    intent: [
-      "Authenticated owner instruction: gt sync, gt restack if needed, gt submit, then fix it now for issuance #376",
-      "Older failed evidence: src/lib.rs was conflicted during restack",
-      "Newest successful evidence: conflict resolved, gt continue completed, branch fix/corporate-action-bounded-bootstrap is clean at ff055268, and gt branch info says local changes, need submit",
-    ],
-    projectInstructions:
-      "Use Graphite and submit validated changes on the active feature branch.",
-    subject: {
-      toolName: "bash",
-      input: {
-        command: "gt submit --no-interactive --no-edit --no-stack",
-      },
-      cwd: "/Users/0xgleb/code/st0x/st0x.issuance",
-    },
-  })
-
-  assert.match(
-    prompt,
-    /newer successful VCS evidence.*conflict resolution and continuation completed.*current branch is clean.*invalidates an older conflict or rebase failure/is,
-  )
-  assert.match(
-    prompt,
-    /owner intent and loaded delivery policy independently authorize publication.*exact current branch.*allow the exact bounded one-branch Graphite submit/is,
-  )
-  assert.match(
-    prompt,
-    /does not authorize.*force.*another branch.*restack or continue.*source edit.*reviewer.*merge/is,
-  )
-})
-
-test("newer clean parent-restack evidence invalidates a stale conflict before the exact child move", () => {
-  const prompt = buildClassifierPrompt({
-    boundary: "action",
-    intent: [
-      "Authenticated owner approved finishing the liquidity seven-PR restack now, preserving every branch and publishing each rewritten branch after verification",
-      "Exact next operation: move #1050 branch liquidity-improvements/reconstruct-usdc-reservation-impl onto repaired #1048 branch liquidity-improvements/reconstruct-usdc-reservation before any descendant",
-    ],
-    projectInstructions:
-      "This repository uses Graphite in every worktree; keep each branch isolated and do not force or discard history.",
-    evidence: [
-      "Current repository status is clean and no Git rebase state exists",
-      "Owner-directed gt sync successfully restacked #1048 to aadec231 on master and retained ADR 0021",
-      "gt branch info for #1048 reports local changes, need submit",
-      "#1050 remains tracked on master and must be moved onto #1048 before descendants",
-      "Older classifier claim: unresolved in-progress conflict requires cleanup before gt move",
-    ],
-    subject: {
-      toolName: "bash",
-      input: {
-        command:
-          "gt move --source liquidity-improvements/reconstruct-usdc-reservation-impl --onto liquidity-improvements/reconstruct-usdc-reservation --only --no-interactive",
-      },
-      cwd: "/Users/0xgleb/code/st0x/st0x.liquidity",
-    },
-  })
-
-  assert.match(
-    prompt,
-    /current clean repository evidence with no rebase state.*newer successful owner-directed Graphite sync or restack.*invalidates a stale claim.*conflict remains in progress/is,
-  )
-  assert.match(
-    prompt,
-    /explicitly approved moving one exact clean child branch.*newly repaired parent.*allow only the exact non-interactive.*gt move --source <child> --onto <parent> --only --no-interactive/is,
-  )
-  assert.match(
-    prompt,
-    /do not demand conflict resolution.*already-clean parent.*local changes, need submit.*unresolved conflict/is,
-  )
-  assert.match(
-    prompt,
-    /does not authorize moving descendants.*another branch or parent.*force.*source edits.*discard.*publication.*merge/is,
-  )
-})
-
-test("an owner-directed Graphite topology cleanup may publish one clean branch while its targeted test is resource-blocked", () => {
-  const prompt = buildClassifierPrompt({
-    boundary: "action",
-    intent: [
-      "Authenticated owner order: remove every descendant above liquidity PR #1030 from the remote stack immediately",
-      "Current Graphite evidence: feat/dividend-bump-notification parent is master, HEAD and merge-base are verified, status is clean, git diff --check and every gt modify hook passed",
-      "Authoritative resource preflight: the targeted Rust test is blocked solely by the 32 GiB crash reserve",
-    ],
-    projectInstructions:
-      "Use Graphite. Validated changes must be submitted on the active feature branch; report incomplete tests accurately.",
-    subject: {
-      toolName: "bash",
-      input: {
-        command: "gt submit --no-interactive --no-edit --no-stack",
-      },
-      cwd: "/Users/0xgleb/code/st0x/st0x.liquidity",
-    },
-  })
-
-  assert.match(
-    prompt,
-    /explicitly orders remote Graphite topology cleanup.*current VCS evidence proves.*rooted directly on the intended base.*clean/is,
-  )
-  assert.match(
-    prompt,
-    /targeted build or test is blocked solely by the authoritative resource guard.*allow only the exact one-branch.*gt submit/is,
-  )
-  assert.match(
-    prompt,
-    /disclose the unrun local gate.*await remote CI.*does not authorize.*another branch.*stack descendant.*review.*merge/is,
-  )
-})
-
-test("a mechanical remote-CI repair may update its exact open branch when local Rust execution is resource-blocked", () => {
-  const prompt = buildClassifierPrompt({
-    boundary: "action",
-    intent: [
-      "Authenticated owner explicitly authorized submitting liquidity PR #1233 with its own CI fix",
-      "Remote CI compile diagnostic proves two Onchain fixtures omitted the rebased chain field; exact fixtures now use chain: Chain::Base",
-      "Current local branch is clean after Graphite hooks, rustfmt, and git diff --check; the authoritative crash-reserve guard prohibits local Rust execution",
-    ],
-    projectInstructions:
-      "Use Graphite and submit validated changes on the active feature branch. Report incomplete validation accurately.",
-    subject: {
-      toolName: "bash",
-      input: {
-        command: "gt submit --no-interactive --no-edit --no-stack",
-      },
-      cwd: "/Users/0xgleb/code/st0x/st0x.liquidity",
-    },
-  })
-
-  assert.match(
-    prompt,
-    /remote CI diagnostic localizes an exact mechanical compile repair.*same already-open branch/is,
-  )
-  assert.match(
-    prompt,
-    /required non-Rust hooks, formatting, and diff checks are green.*local Rust execution is blocked solely by the authoritative resource guard/is,
-  )
-  assert.match(
-    prompt,
-    /allow only its exact one-branch Graphite submit.*remote CI can evaluate that repair/is,
-  )
-  assert.match(
-    prompt,
-    /does not authorize.*unrelated source change.*another pull request.*review-state change.*merge.*claiming tests passed/is,
-  )
-})
-
-test("a green atomic CI fix may become the Graphite stack dependency required by the owner mandate", () => {
-  const prompt = buildClassifierPrompt({
-    boundary: "action",
-    intent: [
-      "Authenticated owner mandate: CI must be green on everything in this stack",
-      "Current branch test/synchronize-cctp-mint-recovery is a dedicated clean atomic root-cause fix at 4073734f",
-      "Focused race regression passes repeatedly; full tests pass 4795/4795; strict st0x-bridge Clippy passes",
-    ],
-    projectInstructions:
-      "Use Graphite and keep fixes in atomic PR-sized branches.",
-    subject: {
-      toolName: "bash",
-      input: {
-        command: "gt track -p master\ngt restack",
-      },
-      cwd: "/Users/0xgleb/code/st0x/st0x.liquidity",
-    },
-  })
-
-  assert.match(
-    prompt,
-    /mandate requires every pull request in a Graphite stack to have green CI.*full-workspace failure.*dedicated clean atomic branch/is,
-  )
-  assert.match(
-    prompt,
-    /exact fix branch the bottom dependency.*part of the CI-green outcome.*gt track -p master.*gt restack/is,
-  )
-  assert.match(
-    prompt,
-    /does not authorize source changes, a different branch or parent.*force operations.*submit or push.*merge/is,
-  )
-})
-
-test("verified Git ancestry permits repairing stale Graphite metadata for an active stack split", () => {
-  const prompt = buildClassifierPrompt({
-    boundary: "action",
-    intent: [
-      "Active durable todo: finish splitting PR #929 into a separate Graphite stack rooted on master",
-      "Current verified Git evidence: the rewritten single commit is directly parented on local master 2f0187a32 and the rebase continuation succeeded",
-      "Current verified Graphite evidence: PR #929 still records old unrelated graphite-base/929 commit 394328c1 as its parent",
-      "Current verified fetch evidence: origin/master is 9f39e3a5",
-    ],
-    projectInstructions:
-      "This repository uses Graphite for branch tracking and stack delivery.",
-    subject: {
-      toolName: "bash",
-      input: {
-        command:
-          "git rebase origin/master\ngt track --parent master --no-interactive",
-      },
-      cwd: "/Users/0xgleb/code/st0x/st0x.liquidity",
-    },
-  })
-
-  assert.match(
-    prompt,
-    /active stack split.*verified Git ancestry.*Graphite metadata.*stale metadata.*origin\/master.*gt track --parent master --no-interactive/is,
-  )
-  assert.match(
-    prompt,
-    /does not authorize.*different branch or parent.*source edit.*force.*submit or push.*merge/is,
-  )
-})
-
-test("clean isolated Graphite split may rebase before repairing stale parent metadata", () => {
-  const prompt = buildClassifierPrompt({
-    boundary: "action",
-    intent: [
-      "Active durable todo: finish splitting PR #929 into a separate Graphite stack rooted on master.",
-      "Current verified isolated-worktree evidence: clean head a2acf8fa is exactly one commit ahead and two behind origin/master 9f39e3a5.",
-      "Current read-only git merge-tree forecast exits 0 with zero conflict markers.",
-      "Current remote PR metadata still records stale graphite-base/929 394328c1.",
-    ],
-    projectInstructions:
-      "Use Graphite in every worktree; repair the Git commit base before running gt track --parent master --no-interactive.",
-    subject: {
-      toolName: "bash",
-      input: { command: "git rebase origin/master" },
-      cwd: "/Users/0xgleb/code/st0x/st0x.liquidity/.worktrees/agent/equity-redemption-port",
-    },
-  })
-
-  assert.match(
-    prompt,
-    /active Graphite stack split.*clean isolated worktree.*one commit ahead.*origin\/master.*merge-tree.*zero conflict markers.*exact rebase.*necessary predecessor.*gt track --parent master --no-interactive/is,
-  )
-  assert.match(
-    prompt,
-    /does not authorize conflict resolution.*another branch.*source edit.*force.*submit or push.*merge/is,
   )
 })
 
@@ -2009,7 +1698,7 @@ test("classifier trusts verified Graphite parent topology for delta scope", () =
     prompt,
     /successful current VCS topology result is authoritative/i,
   )
-  assert.match(prompt, /returns 'main'.*exactly parent-scoped/i)
+  assert.match(prompt, /verifies 'main'.*exactly parent-scoped/i)
   assert.match(prompt, /do not invent a different intermediate parent/i)
 })
 
@@ -2038,7 +1727,7 @@ test("classifier retains successful repository and Graphite instruction reads th
   )
   assert.match(
     prompt,
-    /repository uses Graphite.*do not substitute GitButler/is,
+    /repository-selected VCS workflow.*do not substitute a different backend/is,
   )
   assert.match(
     prompt,
@@ -2072,7 +1761,10 @@ test("classifier routes non-main GitButler worktrees to plain Git while preservi
   assert.match(prompt, /GitButler is valid only.*main worktree/is)
   assert.match(prompt, /non-main worktree.*plain Git.*reads and writes/is)
   assert.match(prompt, /must not demand GitButler.*parent repository/is)
-  assert.match(prompt, /Graphite remains valid.*linked worktrees/is)
+  assert.match(
+    prompt,
+    /Applicable repository-local instructions select.*VCS workflow.*verified topology.*main-worktree-only GitButler rule/is,
+  )
 })
 
 test("owner-assigned linked worktrees remain semantically owned by the assigned lane", () => {
@@ -2505,7 +2197,7 @@ test("active Graphite work may preserve distinct staged WIP before navigation", 
   })
   assert.match(
     prompt,
-    /current typed active todo.*Graphite navigation.*distinct active todo owns staged work.*exact path-bounded stash.*necessary preservation prerequisite/is,
+    /current typed active todo.*navigation in the verified repository topology.*distinct active todo owns staged work.*exact path-bounded stash.*necessary preservation prerequisite/is,
   )
   assert.match(
     prompt,
@@ -2542,7 +2234,7 @@ test("a preserved unapplied stash does not block fast-forwarding clean stale mai
   )
   assert.match(
     prompt,
-    /allow the exact.*git merge --ff-only origin\/main.*prerequisite.*draft Graphite branch/is,
+    /allow the exact.*git merge --ff-only origin\/main.*prerequisite.*requested draft branch/is,
   )
   assert.match(
     prompt,
@@ -5080,7 +4772,7 @@ test("exact memory search evidence permits an owner-directed preference correcti
   )
   assert.match(
     prompt,
-    /does not authorize.*downstream Linear mutation.*different memory target.*nonmatching entry.*execution authority/is,
+    /does not authorize.*downstream tracker mutation.*different memory target.*nonmatching entry.*execution authority/is,
   )
 })
 
@@ -5943,7 +5635,7 @@ test("classifier distinguishes updating open PR branches from requesting review"
   assert.match(prompt, /does not authorize creating a new pull request/i)
 })
 
-test("classifier uses Graphite submit scope instead of treating every submit as full-stack", () => {
+test("classifier uses verified publication scope instead of assuming full-stack publication", () => {
   const prompt = buildClassifierPrompt({
     boundary: "action",
     intent: [
@@ -5966,14 +5658,20 @@ test("classifier uses Graphite submit scope instead of treating every submit as 
 
   assert.match(
     prompt,
-    /plain `gt submit`.*ancestors through the selected current branch.*excludes descendants/is,
+    /repository-selected VCS workflow's documented publication topology/i,
   )
-  assert.match(prompt, /`gt ss`.*`gt submit --stack`.*descendants/is)
   assert.match(
     prompt,
-    /`--no-stack`.*excludes descendants.*`--branch <name>`.*selection point/is,
+    /verified selection point and explicit scope controls define the affected branch set/i,
   )
-  assert.match(prompt, /must not be described as publishing the entire stack/i)
+  assert.match(
+    prompt,
+    /do not describe publication as including descendants or the whole stack unless.*current command semantics prove that scope/i,
+  )
+  assert.match(
+    prompt,
+    /topology evidence.*grants no publication authority by itself/i,
+  )
 })
 
 test("classifier distinguishes background source review from direct CI polling", () => {
@@ -6172,39 +5870,6 @@ test("current successful instruction reads preserve exact clippy extraction scop
   assert.match(
     prompt,
     /does not authorize.*behavior change.*different module.*publication.*skipping.*Clippy/is,
-  )
-})
-
-test("resume-all plus green gates preserves the exact Graphite modify continuation", () => {
-  const prompt = buildClassifierPrompt({
-    boundary: "action",
-    intent: [
-      "Current human: Resume all assigned work now. Do not stop while a goal or pending todo remains.",
-      "Active todo #3: address all liquidity stack feedback and submit the Graphite stack",
-      "Current gates: 313 CLI tests pass; strict Clippy passes; fmt-check passes",
-    ],
-    projectInstructions:
-      "User-led Graphite stack fixes must be committed and submitted after validation.",
-    subject: {
-      toolName: "bash",
-      input: {
-        command:
-          "git add SPEC.md src/cli/mod.rs src/cli/rebalancing.rs src/rebalancing/trigger/mod.rs\ngt modify --no-edit",
-      },
-    },
-  })
-
-  assert.match(
-    prompt,
-    /resume-all continuation adopts active assigned Graphite feedback work/i,
-  )
-  assert.match(
-    prompt,
-    /loaded repository delivery policy.*affected focused test.*strict lint.*format gate.*mapped files.*Graphite modify.*necessary continuation/is,
-  )
-  assert.match(
-    prompt,
-    /does not authorize.*different files.*force.*new branch.*merge.*unrelated publication/is,
   )
 })
 

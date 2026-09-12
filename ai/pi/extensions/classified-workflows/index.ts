@@ -150,7 +150,6 @@ import {
   applyQuestionResolutionSnapshot,
   boundedConversationIntentEvidence,
   currentHumanContinuationDisprovesSpecScopeBlock,
-  currentHumanResumeDisprovesDeferredGraphiteMoveBlock,
   currentLifecycleTriggerDisprovesStaleHumanTurnBlock,
   eodSessionSearchDisprovesMissingQuestionScopeBlock,
   questionIntentEvidence,
@@ -1029,7 +1028,7 @@ const WorkflowParameters = Type.Object({
 })
 
 export default function classifiedWorkflows(pi: ExtensionAPI): void {
-  registerRuntimeVersion(pi, "classified-workflows", "2026.09.12.3")
+  registerRuntimeVersion(pi, "classified-workflows", "2026.09.12.5")
   const childTokenLimitResult = Effect.runSync(
     Effect.either(
       workflowChildTokenLimit(process.env[WORKFLOW_CHILD_TOKEN_LIMIT_ENV]),
@@ -2810,17 +2809,6 @@ export default function classifiedWorkflows(pi: ExtensionAPI): void {
           toolName: event.toolName,
           input: event.input,
           cwd: ctx.cwd,
-        })
-      ) {
-        persistReviewWorkflowStart()
-        return
-      }
-      if (
-        currentHumanResumeDisprovesDeferredGraphiteMoveBlock({
-          reason: decision.reason,
-          branch: ctx.sessionManager.getBranch(),
-          toolName: event.toolName,
-          input: event.input,
         })
       ) {
         persistReviewWorkflowStart()

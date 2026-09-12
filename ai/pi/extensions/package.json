@@ -57,7 +57,6 @@
       "./input-ergonomics/index.ts",
       "./nushell-default/index.ts",
       "./image-summary/index.ts",
-      "./link-safety/index.ts",
       "./local-models/index.ts",
       "./lsp/index.ts",
       "./pi-vim/index.ts",

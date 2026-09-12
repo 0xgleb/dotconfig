@@ -6,7 +6,6 @@ import {
   boundedConversationIntentEvidence,
   conversationIntentEvidence,
   currentHumanContinuationDisprovesSpecScopeBlock,
-  currentHumanResumeDisprovesDeferredGraphiteMoveBlock,
   currentLifecycleTriggerDisprovesStaleHumanTurnBlock,
   eodSessionSearchDisprovesMissingQuestionScopeBlock,
   questionIntentEvidence,
@@ -932,98 +931,6 @@ test("an exact human continuation disproves stale scope for its active SPEC-firs
       false,
     )
   }
-})
-
-test("current human resume-all supersedes stale deferral for one exact Graphite topology todo", () => {
-  const branch = [
-    {
-      type: "custom",
-      customType: "todo.state",
-      data: {
-        todos: [
-          {
-            id: 21,
-            text: "Repair PR #1032/#1033 Graphite topology without requesting review",
-            status: "in_progress",
-          },
-        ],
-      },
-    },
-    {
-      type: "message",
-      message: {
-        role: "user",
-        content: "Resume polishing and verifying everything right now.",
-      },
-    },
-  ]
-  const command =
-    "gt move --source refactor/use-st0x-finance --onto master --no-interactive"
-
-  assert.equal(
-    currentHumanResumeDisprovesDeferredGraphiteMoveBlock({
-      reason: "This topology repair was deferred for later.",
-      branch,
-      toolName: "bash",
-      input: { command },
-    }),
-    true,
-  )
-
-  for (const candidate of [
-    {
-      reason: "The command may expose credentials.",
-      branch,
-      toolName: "bash",
-      input: { command },
-    },
-    {
-      reason: "This topology repair was deferred for later.",
-      branch,
-      toolName: "bash",
-      input: { command: `${command} && git push` },
-    },
-    {
-      reason: "This topology repair was deferred for later.",
-      branch: branch.slice(0, 1),
-      toolName: "bash",
-      input: { command },
-    },
-    {
-      reason: "This topology repair was deferred for later.",
-      branch: [
-        {
-          type: "custom",
-          customType: "todo.state",
-          data: {
-            todos: [
-              {
-                id: 21,
-                text: "Repair PR #1032/#1033 Graphite topology",
-                status: "completed",
-              },
-            ],
-          },
-        },
-        branch[1],
-      ],
-      toolName: "bash",
-      input: { command },
-    },
-  ]) {
-    assert.equal(
-      currentHumanResumeDisprovesDeferredGraphiteMoveBlock(candidate),
-      false,
-    )
-  }
-})
-
-test("action admission keeps current Graphite topology repair local and publication classified", () => {
-  const source = readFileSync(new URL("./index.ts", import.meta.url), "utf8")
-  assert.match(
-    source,
-    /currentHumanResumeDisprovesDeferredGraphiteMoveBlock\(\{\s*reason: decision\.reason,\s*branch: ctx\.sessionManager\.getBranch\(\),\s*toolName: event\.toolName,\s*input: event\.input,\s*\}\)/s,
-  )
 })
 
 test("action admission keeps the SPEC correction local and publication classified", () => {
