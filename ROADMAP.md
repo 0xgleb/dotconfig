@@ -1,5 +1,46 @@
 # Roadmap
 
+## Tooling retirement
+
+Use GitHub tracking and the verified existing VCS workflow. Preserve historical records and unrelated work. This cleanup is independent of planning implementation, not a prerequisite for it.
+
+- [ ] Finish active dependency, skill, routing, and guidance retirement ([#76](https://github.com/0xgleb/dotconfig/issues/76))
+
+## Shared cross-project planning
+
+Maintain one shared weekly plan and daily planned-versus-actual view across project roles. Use flexible capacity targets without depending on provider throttling. Keep SPEC/ROADMAP, GitHub issues, and linked local tasks as the work hierarchy; notes and memories remain supporting context.
+
+Draft behavior and acceptance criteria: [team planning spec](ai/pi/TEAM-PLANNING-SPEC.md). Tracking: [#75](https://github.com/0xgleb/dotconfig/issues/75).
+
+This remains a design draft; no schedules or delivery are activated.
+
+- [ ] Confirm the planning spec and coordinator
+- [ ] Select durable plan representation and delivery adapter before implementation
+- [ ] Configure participant-local delivery settings before activation
+- [ ] Preserve weekly/daily commitments and revisions across restarts
+- [ ] Produce one evidence-backed daily update and weekly retrospective/plan
+- [ ] Apply authenticated priority corrections with role acknowledgment
+- [ ] Reconcile substantive local work to GitHub issues, with explicit one-off exceptions
+
+## Shared read-only plans
+
+After owner-only planning works, expose a team-safe projection in a group chat without granting another human AI control. Remote hosting and multi-user authorization follow separately.
+
+- [ ] Confirm the group destination and team-visible information boundary
+- [ ] Deliver plan revisions without mirroring private owner or agent traffic
+- [ ] Verify non-owner messages and callbacks cannot trigger AI work or mutate plans
+- [ ] Spec remote multiplayer hosting and authorization before granting employee control
+- [ ] Define shared cross-machine task claims before introducing a separate remote team bot
+
+## Resilient private planning
+
+After team planning, support private weekly and daily goals alongside agreed work commitments. Prefer flexible priorities and recovery from disruption over exhaustive timeboxing; preserve the boundary between team-visible commitments and private activities.
+
+- [ ] Define fixed commitments, flexible goals, and explicit rescheduling proposals
+- [ ] Import team commitments without leaking personal context back to the team
+- [ ] Select the calendar and reminder integration before granting write access
+- [ ] Apply only approved adjustments with conflict detection, idempotent retries, and visible partial failures
+
 ## Remote Claude Code instances
 
 On-demand provisioned cloud instances running Claude Code with remote control
