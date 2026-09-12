@@ -1,9 +1,9 @@
 ---
 name: eow
-description: Write the weekly update (end-of-week summary) in the Obsidian vault — high-level outcomes per workstream across the st0x/Rain family repos, sourced from Linear and GitHub. A reference for the weekly dev sync whether or not you attend the call.
+description: Write a weekly outcome summary for explicitly selected project repositories, using verified GitHub evidence and recorded priorities. Keep this reporting workflow separate from the planning scheduler.
 user-invocable: true
 allowed-tools:
-  - "Bash(linear api *)"
+  - "Bash(gh search issues *)"
   - "Bash(gh search prs *)"
   - "Bash(ls *)"
   - "Bash(date *)"
@@ -33,20 +33,19 @@ allowed-tools:
 
 ## Hard rules
 
-- **Scope: the st0x / Rain family of orgs** — ST0x-Technology, rainlanguage, and
-  sibling family orgs. NEVER the user's own personal / side-project orgs (outside
-  the st0x / Rain family) — those belong in a separate update.
-- **Tools: `linear`, `gh`, `gt` only.** No `git`, no `cat`, no ad-hoc scripts.
-  Read files with `Read`.
-- **Never fabricate.** Plans = only what the user states; don't invent next
-  steps and don't assign the user tasks.
+- **Scope:** use the explicitly selected project repositories and intended
+  audience. Do not infer scope from former organizations or include private
+  personal work in a team update.
+- **Evidence:** use bounded GitHub queries and the recorded plan. Read files
+  with the available read tool; do not create ad-hoc collectors.
+- **Never fabricate.** Distinguish recorded priorities and agent proposals from
+  human commitments; do not invent assignments or personal availability.
 - **If unclear, ask** while the user is in the chat. If they stepped away, leave
   the section blank rather than guess.
 - **It's a stakeholder doc, not a transcript of the chat.** Never paste the
   user's feedback or your own corrections into the note (e.g. "none of it new",
   "not just what merged"). Don't borrow a tool's reserved words for loose
-  meaning ("initiative", "project", "epic", "cycle" are Linear primitives;
-  "stack" is Graphite). Read every sentence for sense and grammar before
+  meaning: name the actual goal, issue, repository, or branch. Read every sentence for sense and grammar before
   finishing.
 
 ## The cardinal rule: cover the WHOLE week, every workstream
@@ -55,11 +54,11 @@ A week is mostly **in-flight work** (open PRs in review + draft), not merged.
 "What merged" is a small slice. Reducing the week to the one stack that happened
 to merge is the #1 failure mode of this skill.
 
-- Gather every PR you **touched** in the week across the family orgs, bucket by
+- Gather every PR you **touched** in the week across the selected repositories, bucket by
   **workstream/goal**, and give each its own section. In-review and draft work
   gets the same billing as merged work — just tag the status.
-- A goal can span repos (one "auto-recovery" workstream across liquidity +
-  issuance) and a repo can hold several goals — bucket by goal, not only by repo.
+- A goal can span repositories and a repository can hold several goals —
+  group by goal, not only by repository.
 - Don't mislabel in-flight execution as "planning": if a refactor/migration has
   open PRs this week, it's done work in progress, not a future plan.
 
@@ -73,12 +72,12 @@ to merge is the #1 failure mode of this skill.
 2. **Read the last 1–2 weekly notes** for house style.
 3. **Determine the reporting week:** the most recent completed Mon–Sun (or
    week-to-date if run mid-week). Confirm if ambiguous. Use `START..END` (ISO).
-4. **Gather across the family orgs by activity** (queries below) and bucket the
+4. **Gather across the selected repositories by activity** (queries below) and bucket the
    PRs by workstream/goal.
 5. **Draft high-level** (see Structure). With a brain dump, the user's framing
    is canonical, but still reconcile against the data so no workstream is
    omitted — a TLDR is not the full inventory.
-6. **Plans:** only the priorities the user states.
+6. **Plans:** use recorded priorities and distinguish proposals from commitments.
 
 ## Structure
 
@@ -93,7 +92,7 @@ to merge is the #1 failure mode of this skill.
   - `**Planning.**` issues filed for genuinely **future** work — not anything
     already in-flight above.
 - `## Plans for this week`
-  - Only the priorities the user states; phrase as goals.
+  - Recorded priorities, phrased as goals; identify any unconfirmed proposals.
 
 ## Style
 
@@ -102,48 +101,39 @@ to merge is the #1 failure mode of this skill.
 - Each workstream is its own section with a status tag; **in-flight work is
   first-class**, not a footnote.
 - **Reviews are a stat** in the numbers line, not prose about others' work.
-- High-level repo/area labels for orientation (`st0x.liquidity`, `raindex`);
+- High-level repo/area labels for orientation;
   never full `org/name` paths.
 - No emoji. No "I"/"we" — drop the subject. ISO dates only.
 
 ## Data queries (week range)
 
-Cache `viewer.id` once (`linear api 'query { viewer { id displayName email } }'`).
-Substitute `START` / `END` as the week's Monday / Sunday `YYYY-MM-DD`. For Linear
-use ISO datetimes: `gte` = START `T00:00:00Z`, `lt` = the day after END.
+Run bounded queries separately for each explicitly selected `OWNER/REPO`.
+Substitute the recorded reporting interval for `START..END`. Search dates select
+candidates; inspect exact event timestamps before attributing work to a local
+reporting window. An updated PR is not proof of a substantive contribution.
 
 ```bash
-# Master list -- every PR you touched this week across the family orgs; bucket by workstream
-gh search prs --author=@me --owner=ST0x-Technology,rainlanguage --updated=START..END \
-  --json number,title,repository,state,isDraft,createdAt,updatedAt --limit 200
+# Authored PR candidates updated during the reporting window
+gh search prs --author=@me --repo=OWNER/REPO --updated=START..END --json number,title,repository,state,isDraft,createdAt,updatedAt --limit 200
 
-# Merged this week (use --merged-at; the bare --merged flag is a boolean, not a date)
-gh search prs --author=@me --owner=ST0x-Technology,rainlanguage --merged-at=START..END --json number --jq length
+# Authored PRs merged during the window
+gh search prs --author=@me --repo=OWNER/REPO --merged-at=START..END --json number,title,url --limit 200
 
-# Opened this week, split into in-review vs draft (the in-flight breakdown)
-gh search prs --author=@me --owner=ST0x-Technology,rainlanguage --created=START..END --json number --jq length
-gh search prs --author=@me --owner=ST0x-Technology,rainlanguage --state=open --created=START..END \
-  --json number,isDraft --jq '[.[] | select(.isDraft==false)] | length'   # in review
-gh search prs --author=@me --owner=ST0x-Technology,rainlanguage --state=open --created=START..END \
-  --json number,isDraft --jq '[.[] | select(.isDraft==true)] | length'    # draft
+# Newly opened PRs; inspect draft/review state rather than treating them as merged
+gh search prs --author=@me --repo=OWNER/REPO --created=START..END --json number,title,isDraft,state,url --limit 200
 
-# Issues created this week (linear api has NO --jq -- fetch identifiers and count the nodes)
-linear api 'query($u: ID!, $a: DateTimeOrDuration!, $b: DateTimeOrDuration!) {
-  issues(filter: { creator: { id: { eq: $u } }, createdAt: { gte: $a, lt: $b } }, first: 250) {
-    nodes { identifier }
-  }
-}' --variable u=<id> --variable a=<START-iso> --variable b=<END+1-iso>
+# Issues filed during the window
+gh search issues --author=@me --repo=OWNER/REPO --created=START..END --json number,title,createdAt,url --limit 200
 
-# Issues completed this week
-linear api 'query($u: ID!, $a: DateTimeOrDuration!, $b: DateTimeOrDuration!) {
-  issues(filter: { assignee: { id: { eq: $u } }, completedAt: { gte: $a, lt: $b } }, first: 250) {
-    nodes { identifier title }
-  }
-}' --variable u=<id> --variable a=<START-iso> --variable b=<END+1-iso>
+# Closed issue candidates; closure alone does not prove implementation or authorship
+gh search issues --assignee=@me --repo=OWNER/REPO --state=closed --closed=START..END --json number,title,closedAt,url --limit 200
 
-# Reviews: count only (stat). NOISY -- verify before citing (see /eod review-noise note).
-gh search prs --reviewed-by=@me --owner=ST0x-Technology,rainlanguage --updated=START..END --json number --jq length
+# Review candidates: verify review timestamps and substantive content before counting
+gh search prs --reviewed-by=@me --repo=OWNER/REPO --updated=START..END --json number,title,url --limit 200
 ```
 
-(`--owner` takes comma-separated orgs; add sibling family orgs as needed, never
-the user's own personal orgs.)
+Record source coverage and deduplicate by repository and number. A result at the
+limit is potentially truncated: narrow the query or report partial coverage
+instead of presenting its length as a complete total. Issue closure, PR merge,
+and live deployment are distinct outcomes. Do not infer an individual's work
+from assignment alone.
