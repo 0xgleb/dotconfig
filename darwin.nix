@@ -25,10 +25,7 @@
 
   nixpkgs.hostPlatform = "aarch64-darwin";
   nixpkgs.config.allowUnfree = true;
-  nixpkgs.overlays = [
-    (import ./graphite-cli-overlay.nix)
-    (import ./obsidian-overlay.nix)
-  ];
+  nixpkgs.overlays = [ (import ./obsidian-overlay.nix) ];
 
   ids.gids.nixbld = 350;
 
@@ -60,16 +57,12 @@
   homebrew = {
     enable = true;
 
-    brews = [
-      "schpet/tap/linear"
-      "tkhq/tap/turnkey"
-    ];
+    brews = [ "tkhq/tap/turnkey" ];
     casks = [
       "amethyst"
       "coderabbit"
       "font-jetbrains-mono-nerd-font"
       "karabiner-elements"
-      "homebrew/cask/linear"
       "tailscale-app"
     ];
 

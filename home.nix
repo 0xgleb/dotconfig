@@ -32,7 +32,6 @@ let
   unstable = import inputs.nixpkgs-unstable {
     inherit system;
     config.allowUnfree = true;
-    overlays = [ (import ./graphite-cli-overlay.nix) ];
   };
   pi-coding-agent-with-reload = unstable.pi-coding-agent.overrideAttrs (old: {
     postInstall = (old.postInstall or "") + ''
@@ -378,7 +377,6 @@ in
       in
       (with unstable; [
         codex
-        graphite-cli
       ])
       ++ [
         pkgs.ragenix
@@ -659,7 +657,6 @@ in
           export PATH="$PATH:/opt/homebrew/bin"
           set -o vi
           fastfetch
-          eval "$(gt completion --shell zsh)"
         '';
       };
   };
