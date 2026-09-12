@@ -351,7 +351,11 @@ test("an unusable or wrongly begun review job can be released without inventing 
     extensionSource.indexOf('request.action === "release-unusable"'),
     extensionSource.indexOf("if (request.questionId === undefined)"),
   )
-  assert.match(releaseHandler, /workflow\.status === "completed"/)
+  assert.doesNotMatch(releaseHandler, /workflow\.status === "completed"/)
+  assert.match(
+    releaseHandler,
+    /workflowMatchesReviewJob\(reviewDutyState, workflow\)/,
+  )
   assert.match(releaseHandler, /child\.status === "completed"/)
   assert.match(releaseHandler, /child\.outputCharacters > 0/)
   assert.match(

@@ -10,6 +10,10 @@ import {
   type ReviewDutyState,
 } from "./review-duty-gate.ts"
 import { latestCompletedWorkflowAfter } from "./workflow-audit.ts"
+import {
+  selectReviewWorkflowAudit,
+  workflowMatchesReviewJob,
+} from "./review-workflow.ts"
 
 const source = readFileSync(new URL("./index.ts", import.meta.url), "utf8")
 const job: ReviewDutyState = {
@@ -93,13 +97,13 @@ for (const action of ["complete-auto", "continue"] as const)
     const invoke = new Function(
       "dependencies",
       `
-    const { completeAutoReviewDuty, continueReviewDuty, reviewDutyJobAllowed, latestCompletedWorkflowAfter, children, job, action } = dependencies;
+    const { completeAutoReviewDuty, continueReviewDuty, reviewDutyJobAllowed, latestCompletedWorkflowAfter, selectReviewWorkflowAudit, workflowMatchesReviewJob, children, job, action } = dependencies;
     const request = { action };
     const ctx = {};
     const refreshWorkflowAudits = () => {};
     const dutySessionName = "dataclique-review-duty";
     let reviewDutyState = job;
-    const workflowAudits = { workflows: [{ id: "wf-5", status: "completed", startedAt: 21, finishedAt: 30, children }] };
+    const workflowAudits = { workflows: [{ id: "wf-5", label: "Review PR274", status: "completed", startedAt: 21, finishedAt: 30, children }] };
     const backgroundWorkflows = new Map();
     const pi = { appendEntry: () => {} };
     const REVIEW_DUTY_STATE_ENTRY = "review-duty";
@@ -116,6 +120,8 @@ for (const action of ["complete-auto", "continue"] as const)
         continueReviewDuty,
         reviewDutyJobAllowed,
         latestCompletedWorkflowAfter,
+        selectReviewWorkflowAudit,
+        workflowMatchesReviewJob,
         children,
         job,
       })

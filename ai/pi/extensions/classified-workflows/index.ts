@@ -182,6 +182,10 @@ import {
   type ReviewDutyState,
 } from "./review-duty-gate.ts"
 import {
+  selectReviewWorkflowAudit,
+  workflowMatchesReviewJob,
+} from "./review-workflow.ts"
+import {
   gitEnvironmentOverrideBlockReason,
   hardenedGitPushCommandForSubject,
   repositoryRootForPath,
@@ -1025,7 +1029,7 @@ const WorkflowParameters = Type.Object({
 })
 
 export default function classifiedWorkflows(pi: ExtensionAPI): void {
-  registerRuntimeVersion(pi, "classified-workflows", "2026.09.11.1")
+  registerRuntimeVersion(pi, "classified-workflows", "2026.09.11.2")
   const childTokenLimitResult = Effect.runSync(
     Effect.either(
       workflowChildTokenLimit(process.env[WORKFLOW_CHILD_TOKEN_LIMIT_ENV]),
@@ -3197,6 +3201,21 @@ export default function classifiedWorkflows(pi: ExtensionAPI): void {
 
       if (request.action === "continue") {
         refreshWorkflowAudits(ctx)
+        const selection = selectReviewWorkflowAudit(
+          reviewDutyState,
+          workflowAudits,
+        )
+        if (selection.kind !== "selected")
+          return {
+            content: [{ type: "text" as const, text: selection.reason }],
+            details: {
+              outcome: "error" as const,
+              error: selection.reason,
+              selection,
+            },
+            isError: true,
+          }
+        const reviewAudits = { workflows: [selection.workflow] }
         const completedAt =
           reviewDutyState.phase === "awaiting_report"
             ? reviewDutyState.completedAt
@@ -3206,16 +3225,24 @@ export default function classifiedWorkflows(pi: ExtensionAPI): void {
             ? Number.MAX_SAFE_INTEGER
             : reviewDutyState.startedAt
         const completedWorkflow = latestCompletedWorkflowAfter(
-          workflowAudits,
+          reviewAudits,
           completedAt,
         )
         const workflowRunning = [...backgroundWorkflows.values()].some(
           workflow =>
-            workflow.status === "running" && workflow.startedAt >= completedAt,
+            workflow.status === "running" &&
+            workflow.startedAt >= completedAt &&
+            workflowMatchesReviewJob(reviewDutyState, workflow),
         )
         const completedPasses = workflowAudits.workflows.filter(
           workflow =>
-            workflow.status === "completed" && workflow.startedAt >= startedAt,
+            workflow.status === "completed" &&
+            workflow.startedAt >= startedAt &&
+            workflowMatchesReviewJob(reviewDutyState, workflow) &&
+            workflow.children.some(
+              child =>
+                child.status === "completed" && child.outputCharacters > 0,
+            ),
         ).length
         const transition = continueReviewDuty(
           reviewDutyState,
@@ -3254,17 +3281,34 @@ export default function classifiedWorkflows(pi: ExtensionAPI): void {
 
       if (request.action === "complete-auto") {
         refreshWorkflowAudits(ctx)
+        const selection = selectReviewWorkflowAudit(
+          reviewDutyState,
+          workflowAudits,
+        )
+        if (selection.kind !== "selected")
+          return {
+            content: [{ type: "text" as const, text: selection.reason }],
+            details: {
+              outcome: "error" as const,
+              error: selection.reason,
+              selection,
+            },
+            isError: true,
+          }
+        const reviewAudits = { workflows: [selection.workflow] }
         const completedAt =
           reviewDutyState.phase === "awaiting_report"
             ? reviewDutyState.completedAt
             : Number.MAX_SAFE_INTEGER
         const completedWorkflow = latestCompletedWorkflowAfter(
-          workflowAudits,
+          reviewAudits,
           completedAt,
         )
         const workflowRunning = [...backgroundWorkflows.values()].some(
           workflow =>
-            workflow.status === "running" && workflow.startedAt >= completedAt,
+            workflow.status === "running" &&
+            workflow.startedAt >= completedAt &&
+            workflowMatchesReviewJob(reviewDutyState, workflow),
         )
         const completingKind =
           reviewDutyState.phase === "idle" ? undefined : reviewDutyState.kind
@@ -3310,22 +3354,39 @@ export default function classifiedWorkflows(pi: ExtensionAPI): void {
 
       if (request.action === "retry-failed") {
         refreshWorkflowAudits(ctx)
+        const selection = selectReviewWorkflowAudit(
+          reviewDutyState,
+          workflowAudits,
+        )
+        if (selection.kind !== "selected")
+          return {
+            content: [{ type: "text" as const, text: selection.reason }],
+            details: {
+              outcome: "error" as const,
+              error: selection.reason,
+              selection,
+            },
+            isError: true,
+          }
+        const reviewAudits = { workflows: [selection.workflow] }
         const completedAt =
           reviewDutyState.phase === "awaiting_report"
             ? reviewDutyState.completedAt
             : Number.MAX_SAFE_INTEGER
         const workflowRunning = [...backgroundWorkflows.values()].some(
           workflow =>
-            workflow.status === "running" && workflow.startedAt >= completedAt,
+            workflow.status === "running" &&
+            workflow.startedAt >= completedAt &&
+            workflowMatchesReviewJob(reviewDutyState, workflow),
         )
         const failedWorkflow = latestFailedWorkflowAfter(
-          workflowAudits,
+          reviewAudits,
           completedAt,
         )
         const markedManagedReloadCancellation =
-          latestManagedReloadCancellationAfter(workflowAudits, completedAt)
+          latestManagedReloadCancellationAfter(reviewAudits, completedAt)
         const legacyUnmarkedCancellation =
-          latestLegacyUnmarkedCancellationAfter(workflowAudits, completedAt)
+          latestLegacyUnmarkedCancellationAfter(reviewAudits, completedAt)
         const manualPause = latestContinuationPause(
           ctx.sessionManager.getBranch(),
         )
@@ -3414,11 +3475,13 @@ export default function classifiedWorkflows(pi: ExtensionAPI): void {
             : reviewDutyState.startedAt
         const workflowRunning = [...backgroundWorkflows.values()].some(
           workflow =>
-            workflow.status === "running" && workflow.startedAt >= startedAt,
+            workflow.status === "running" &&
+            workflow.startedAt >= startedAt &&
+            workflowMatchesReviewJob(reviewDutyState, workflow),
         )
         const usableCompletedWorkflowObserved = workflowAudits.workflows.some(
           workflow =>
-            workflow.status === "completed" &&
+            workflowMatchesReviewJob(reviewDutyState, workflow) &&
             workflow.startedAt >= startedAt &&
             workflow.children.some(
               child =>
