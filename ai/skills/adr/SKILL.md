@@ -63,9 +63,8 @@ message, not in `adrs/`.
    (settlement atomicity, on-chain finality, nix purity / import-from-derivation,
    the type-level invariant at stake), not generic platitudes.
 
-5. **Link the tracker issue.** For st0x / rainlanguage work, link the Linear issue
-   (see the `linear` skill). Everywhere else, link the GitHub issue. If no issue
-   exists yet and the decision warrants one, say so rather than inventing a link.
+5. **Link the GitHub issue.** If no issue exists yet and the decision warrants
+   one, say so rather than inventing a link.
 
 6. **Surface the review point; whether to pause depends on the model.**
    Summarize the decision and rejected alternatives and point the user at
@@ -89,15 +88,16 @@ message, not in `adrs/`.
    `Status:` line to `Superseded by adrs/MM-name.md`. The historical rationale
    stays intact.
 
-8. **Commit as a small increment** with plain git, on a branch (never straight to a
-   protected master). Match the repo's commit style first.
+8. **Commit as a small increment** on the active feature branch using the
+   verified repository workflow. Match the repo's commit style first.
+   The following example applies only to plain-Git checkouts:
    ```bash
    git log --oneline -10
    git add adrs/NN-name.md
    git commit -m "<message matching repo style>"
    ```
-   Use `gt` only in Graphite-opted-in repos (st0x / rainlanguage); plain `git`
-   everywhere else.
+   Prefer GitButler in an existing managed main worktree and plain Git
+   elsewhere, subject to explicit repository-local workflow instructions.
 
 ## ADR template
 
@@ -106,7 +106,7 @@ message, not in `adrs/`.
 
 - Status: Proposed
 - Date: YYYY-MM-DD
-- Issue: <Linear ID for st0x/rainlanguage, else GitHub issue link>
+- Issue: <GitHub issue link>
 
 ## Context
 
@@ -176,8 +176,8 @@ carries, follow-up work, and the blast radius if this turns out wrong.>
 5. Every alternative carries Pros, Cons, and an explicit "Rejected because".
 6. No numbered "Phase" framing — describe the decision and its consequences, not a
    rollout sequence.
-7. Commit on a branch with plain git (`gt` only in opted-in repos); never push to a
-   protected branch without an explicit instruction.
+7. Commit on the active feature branch using the verified repository workflow;
+   never push to a protected branch without an explicit instruction.
 
 ## Failure modes
 
