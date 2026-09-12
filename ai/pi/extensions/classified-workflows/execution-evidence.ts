@@ -308,6 +308,13 @@ const cargoArguments = (command: string): readonly string[] | undefined => {
   if (!words) return undefined
   const executable = words[0] ?? ""
   if (executable === "cargo") return words.slice(1)
+  if (
+    executable === "direnv" &&
+    words[1] === "exec" &&
+    words[2] === "." &&
+    words[3] === "cargo"
+  )
+    return words.slice(4)
   if (executable !== "nix" || words[1] !== "develop") return undefined
   const commandIndex = words.indexOf("--command", 2)
   if (commandIndex < 2 || words[commandIndex + 1] !== "cargo") return undefined
@@ -659,6 +666,19 @@ const verificationCovers = (
   targetCoverageIncludes(successful.targets, failed.targets) &&
   featureCoverageIncludes(successful.features, failed.features) &&
   focusCovers(successful.focus, failed.focus)
+
+const sameVerificationSuite = (
+  left: VerificationDescriptor,
+  right: VerificationDescriptor,
+): boolean =>
+  left.scope === right.scope &&
+  left.kind === right.kind &&
+  left.targets === right.targets &&
+  left.features === right.features &&
+  (left.packages === "workspace" || right.packages === "workspace"
+    ? left.packages === right.packages
+    : left.packages.length === right.packages.length &&
+      left.packages.every(packageName => right.packages.includes(packageName)))
 
 interface StateSnapshotIdentity {
   readonly kind:
@@ -1373,14 +1393,43 @@ export const selectRelevantExecutionEvidence = (
       if (success?.[1] === subjectInputDigest && success[2] === subjectScope)
         latestMatchingSuccessIndex = index
     })
-    if (latestMatchingSuccessIndex >= 0) {
+    // A retained pass with a different filter/wrapper still needs its later
+    // edits visible. Coverage identifies the suite, not unchanged source or
+    // permission to omit the project's required execution environment.
+    const requestedVerification =
+      isBashSubject && subjectCommand
+        ? cargoVerificationDescriptor(
+            subjectCommandLocation?.command ?? subjectCommand,
+            subjectScope,
+          )
+        : undefined
+    // Different later focuses do not revalidate an older focus after edits.
+    // Preserve chronology for the earliest retained suite pass; an exact
+    // current-command success still takes precedence above it.
+    const retainedSuitePass = requestedVerification
+      ? olderEntries.find(({ candidate }, index) => {
+          if (
+            !selectedOlderIndexes.has(index) ||
+            !/^\S+ result status=success\b/.test(candidate)
+          )
+            return false
+          const observed = verificationDescriptor(candidate)
+          if (!observed) return false
+          return sameVerificationSuite(observed, requestedVerification)
+        })
+      : undefined
+    const mutationAnchorIndex =
+      latestMatchingSuccessIndex >= 0
+        ? latestMatchingSuccessIndex
+        : (retainedSuitePass?.currentIndex ?? -1)
+    if (mutationAnchorIndex >= 0) {
       const callerScope = evidenceScopeDigest(subjectCwd)
       const mutationWitnesses = olderEntries
         .map((entry, index) => ({ ...entry, index }))
         .filter(({ candidate, currentIndex }) => {
           const mutationScope = successfulMutationScope(candidate)
           return (
-            currentIndex > latestMatchingSuccessIndex &&
+            currentIndex > mutationAnchorIndex &&
             (mutationScope === subjectScope || mutationScope === callerScope)
           )
         })

@@ -256,6 +256,221 @@ test("mutation witnesses are bounded, scoped and newer than the latest matching 
   assert.deepEqual(selected, [success, ...many.slice(-8), read])
 })
 
+test("changed verification filters retain edits after an older same-suite pass", () => {
+  const scope = process.cwd()
+  const input = {
+    command:
+      "cargo nextest run -p service --test exit -E 'test(partial_fill) | test(partial_expiry)'",
+    timeout: 120,
+  }
+  const subject = {
+    toolName: "bash",
+    input,
+    cwd: scope,
+    inputDigest: toolInputDigest("bash", input),
+  }
+  const result = (
+    toolName: string,
+    args: Record<string, unknown>,
+    text: string,
+    resultScope = scope,
+    isError = false,
+  ) =>
+    toolResultExecutionEvidence({
+      toolName,
+      input: args,
+      inputDigest: toolInputDigest(toolName, args),
+      scope: resultScope,
+      text,
+      isError,
+      subject,
+    })
+  const changed = result(
+    "edit",
+    {
+      path: "src/sampling.rs",
+      edits: [{ oldText: "sampler", newText: "observed_sampler" }],
+    },
+    "Successfully replaced 1 block",
+  )
+  const recent = result("read", { path: "notes.md" }, "Recent notes")
+  for (const prefix of [
+    "cargo",
+    "direnv exec . cargo",
+    "nix develop . --command cargo",
+  ]) {
+    const passed = result(
+      "bash",
+      {
+        command: `${prefix} nextest run -p service --test exit -E 'test(partial_fill)'`,
+        timeout: 90,
+      },
+      "partial_fill passed",
+    )
+    const selected = selectRelevantExecutionEvidence(
+      [passed, changed, recent],
+      subject,
+      1,
+      1,
+    )
+    assert.deepEqual(
+      selected,
+      [passed, changed, recent],
+      `lost chronology for ${prefix}`,
+    )
+    assert.ok(
+      !selectRelevantExecutionEvidence(
+        [changed, passed, recent],
+        subject,
+        1,
+        1,
+      ).includes(changed),
+    )
+    const currentPass = result("bash", input, "Both current cases passed")
+    assert.ok(
+      !selectRelevantExecutionEvidence(
+        [passed, changed, currentPass, recent],
+        subject,
+        1,
+        1,
+      ).includes(changed),
+    )
+    const failedEdit = result(
+      "edit",
+      { path: "src/sampling.rs" },
+      "Edit denied",
+      scope,
+      true,
+    )
+    assert.ok(
+      !selectRelevantExecutionEvidence(
+        [passed, failedEdit, recent],
+        subject,
+        1,
+        1,
+      ).includes(failedEdit),
+    )
+  }
+  for (const command of [
+    "cargo nextest run -p other --test exit -E 'test(partial_fill)'",
+    "cargo nextest run -p service --test other -E 'test(partial_fill)'",
+    "cargo nextest run -p service --test exit --all-features -E 'test(partial_fill)'",
+    "direnv exec /another-project cargo nextest run -p service --test exit -E 'test(partial_fill)'",
+    "echo 'cargo nextest run -p service --test exit'",
+  ]) {
+    const unrelated = result("bash", { command }, "partial_fill passed")
+    assert.ok(
+      !selectRelevantExecutionEvidence(
+        [unrelated, changed, recent],
+        subject,
+        1,
+        1,
+      ).includes(changed),
+      `unrelated suite retained edits: ${command}`,
+    )
+  }
+  const oldInput = {
+    command:
+      "direnv exec . cargo nextest run -p service --test exit -E 'test(partial_fill)'",
+  }
+  const foreign = result(
+    "bash",
+    oldInput,
+    "partial_fill passed",
+    `${scope}/other`,
+  )
+  assert.ok(
+    !selectRelevantExecutionEvidence(
+      [foreign, changed, recent],
+      subject,
+      1,
+      1,
+    ).includes(changed),
+  )
+  const sameSuitePass = result("bash", oldInput, "partial_fill passed")
+  const many = Array.from({ length: 12 }, (_, index) =>
+    result("edit", { path: `src/config-${index}.rs` }, "Changed source"),
+  )
+  assert.deepEqual(
+    selectRelevantExecutionEvidence(
+      [sameSuitePass, ...many, recent],
+      subject,
+      1,
+      1,
+    ),
+    [sameSuitePass, ...many.slice(-8), recent],
+  )
+})
+
+test("verification chronology does not equate asymmetric suites or erase another focus's edits", () => {
+  const scope = process.cwd()
+  const collect = (
+    oldCommand: string,
+    newCommand: string,
+    laterCommand?: string,
+  ) => {
+    const input = { command: newCommand }
+    const subject = {
+      toolName: "bash",
+      input,
+      cwd: scope,
+      inputDigest: toolInputDigest("bash", input),
+    }
+    const result = (toolName: string, args: Record<string, unknown>) =>
+      toolResultExecutionEvidence({
+        toolName,
+        input: args,
+        inputDigest: toolInputDigest(toolName, args),
+        scope,
+        text: "Operation completed",
+        isError: false,
+        subject,
+      })
+    const olderPass = result("bash", { command: oldCommand })
+    const edit = result("edit", { path: "src/sampling.rs" })
+    const laterPass = laterCommand
+      ? [result("bash", { command: laterCommand })]
+      : []
+    const recent = result("read", { path: "notes.md" })
+    const candidates = [olderPass, edit, ...laterPass, recent]
+    return {
+      edit,
+      candidates,
+      selected: selectRelevantExecutionEvidence(
+        candidates,
+        subject,
+        1,
+        laterCommand ? 2 : 1,
+      ),
+    }
+  }
+  for (const [oldArgs, newArgs] of [
+    ["-p service --lib", "--workspace --lib"],
+    ["--workspace --lib", "-p service --lib"],
+    ["-p service --lib", "-p service"],
+    ["-p service", "-p service --lib"],
+  ]) {
+    const { edit, selected } = collect(
+      `cargo nextest run ${oldArgs}`,
+      `cargo nextest run ${newArgs}`,
+    )
+    assert.ok(
+      !selected.includes(edit),
+      `different suite dimensions: ${oldArgs} / ${newArgs}`,
+    )
+  }
+  const partial = collect(
+    "direnv exec . cargo nextest run -p service --test exit -E 'test(partial_fill)'",
+    "cargo nextest run -p service --test exit -E 'test(partial_fill) | test(partial_expiry)'",
+    "cargo nextest run -p service --test exit -E 'test(partial_expiry)'",
+  )
+  assert.deepEqual(
+    partial.selected,
+    partial.candidates,
+    "a different later focus does not revalidate the earlier focus after its edit",
+  )
+})
+
 test("large GraphQL tool results retain bounded thread IDs, authors, and resolution state", () => {
   const threads = Array.from({ length: 20 }, (_, index) => ({
     id: `THREAD_${index}`,
