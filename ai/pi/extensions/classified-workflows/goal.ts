@@ -158,12 +158,10 @@ export const recoverLatestIndependentGoal: (
   states,
   isLegacyLoopCondition,
 ) => {
-  for (let index = states.length - 1; index >= 0; index -= 1) {
-    const state = states[index]
-    if (isLegacyLoopCondition(state.condition)) continue
-    return state.status === "active" ? state : undefined
-  }
-  return undefined
+  const state = states.findLast(
+    value => !isLegacyLoopCondition(value.condition),
+  )
+  return state?.status === "active" ? state : undefined
 }
 
 export interface TodoWorkSnapshot {
@@ -205,8 +203,16 @@ export const todoWorkSnapshot: (
               (reply): reply is string => typeof reply === "string",
             )
           : []
-        const evidence = replies.length > 0 ? ` — ${replies.join("; ")}` : ""
-        if (todo.status === "pending" || todo.status === "in_progress") {
+        const evidence =
+          replies.length > 0
+            ? ` — Replies (newest first): ${replies
+                .toReversed()
+                .map((reply, index) => `[${replies.length - index}] ${reply}`)
+                .join("; ")}`
+            : ""
+        if (todo.status === "in_progress") {
+          snapshot.pending.unshift(`#${todo.id} ${todo.text}${evidence}`)
+        } else if (todo.status === "pending") {
           snapshot.pending.push(`#${todo.id} ${todo.text}${evidence}`)
         }
         if (todo.status === "blocked" && typeof todo.reason === "string") {

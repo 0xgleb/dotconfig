@@ -31,6 +31,33 @@ const active: GoalState & { status: "active" } = {
   lastReason: "one test still fails",
 }
 
+test("bounded classifier intent retains in-progress work after more than twenty older pending tasks", () => {
+  const snapshot = todoWorkSnapshot([
+    {
+      type: "custom",
+      customType: "todo.state",
+      data: {
+        todos: [
+          ...Array.from({ length: 25 }, (_, index) => ({
+            id: index + 1,
+            text: `Queued task ${index + 1}`,
+            status: "pending",
+          })),
+          {
+            id: 136,
+            text: "Fix literal argument path classification",
+            status: "in_progress",
+          },
+        ],
+      },
+    },
+  ])
+  const intent = todoClassifierIntent(snapshot)
+  assert.equal(snapshot.pending.length, 26, "projection must not discard tasks")
+  assert.equal(intent.length, 20, "classifier context remains bounded")
+  assert.match(intent[0] ?? "", /#136 Fix literal argument path classification/)
+})
+
 test("goal command sets, reports, and clears only by exact clear command", () => {
   assert.deepEqual(parseGoalCommand(""), { action: "status" })
   assert.deepEqual(parseGoalCommand("clear"), { action: "clear" })
@@ -141,10 +168,38 @@ test("latest todo snapshot supplies pending completion evidence", () => {
     pending: ["#2 Finish handover"],
     blocked: ["#3 Deploy — No production access"],
     completed: [
-      "#1 Repair return distribution — 29 focused tests, typecheck, lint, and localhost VRT pass",
+      "#1 Repair return distribution — Replies (newest first): [1] 29 focused tests, typecheck, lint, and localhost VRT pass",
     ],
   })
   assert.deepEqual(pendingTodoTexts([{ type: "wrong" }]), [])
+})
+
+test("bounded classifier todo intent retains the latest correction after long historical replies", () => {
+  const snapshot = todoWorkSnapshot([
+    {
+      type: "custom",
+      customType: "todo.state",
+      data: {
+        todos: [
+          {
+            id: 1,
+            text: "Repair the registry typecheck",
+            status: "in_progress",
+            replies: [
+              "Compiler unavailable. ".repeat(150),
+              "Current compiler is green; the history record and wake host overload changes belong to this repair.",
+            ],
+          },
+        ],
+      },
+    },
+  ])
+  const intent = todoClassifierIntent(snapshot)
+  assert.equal(intent.length, 1)
+  assert.ok(intent[0]?.includes("Current compiler is green"))
+  assert.ok(
+    intent[0]?.includes("wake host overload changes belong to this repair"),
+  )
 })
 
 test("current typed todo intent distinguishes active work from completed history", () => {
