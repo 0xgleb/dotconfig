@@ -68,14 +68,10 @@ export def --wrapped main [...args: string@fj-complete] {
     "status" => {
       match $backend {
         "but" => { try { ^but status } catch { ^git status } }
-        _ => {
-          ^git status
-          if $backend == "gt" { try { ^gt ls -a } }
-        }
+        _ => { ^git status }
       }
     }
     "gitui" => { ^gitui ...$route.args }
-    "gt" => { ^gt ...$route.args }
     "but" => { ^but ...$route.args }
     "git" => { ^git ...$route.args }
     "unsupported" => {
@@ -85,7 +81,7 @@ export def --wrapped main [...args: string@fj-complete] {
         msg: $"`fj ($verb)` has no equivalent on the ($be) backend in this repo"
       }
     }
-    "do" => { workflow run }
+    "do" => { workflow execute }
     "help" => {
       let topic = if ($route.args | is-empty) { null } else { $route.args | first }
       help show $topic
@@ -112,7 +108,7 @@ export def take [
 
 # run repo-specific checks
 export def check [] {
-  check run
+  check execute
 }
 
 export def process-is-alive [pid: int]: nothing -> bool {

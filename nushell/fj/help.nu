@@ -92,9 +92,9 @@ auto-init, tfvars decrypt/re-encrypt, and identity resolution (default
   mut: "fj mut [-a] — stack modify (amend)
 
   Shorthand for the stack backend's modify/amend. Pass -a to stage all files.
-  Backend depends on repo and worktree topology: gt in graphite orgs
-  (rainlanguage, st0x) in every worktree; gitbutler-cli (but) only in another
-  managed repo's main worktree; plain git in every non-main worktree."
+  Backend depends on repo and worktree topology: gitbutler-cli (but) only in
+  a managed repo's main worktree; plain git in all other repositories and
+  every linked worktree."
 
   help: "fj help [command] — show help
 
@@ -124,7 +124,7 @@ def overview [] {
     "  fj <command> [args]"
     ""
     "COMMANDS"
-    "  (no args)       git status (+ gt ls in graphite repos)"
+    "  (no args)       but status in managed main worktrees, otherwise git status"
     "  do              check -> commit on pass, claude on fail"
     "  clanker         launch Pi, resume by default (--claude for Claude Code)"
     "  check           run repo-specific checks"
@@ -144,17 +144,17 @@ def overview [] {
     "  take <v> <path> resolve conflict (ours/theirs) and stage"
     "  cheatsheet      shell quick reference (`fj cheatsheet [topic]`)"
     "  ui              gitui"
-    "  mut [-a]        stack modify (gt/but/git by repo — see STACK)"
+    "  mut [-a]        amend (but/git by repo — see STACK)"
     "  help [cmd]      show help"
     ""
     "STACK (repo-dependent backend, verbs translated)"
     "  ss, create, sync, co, ls, ll, restack, absorb, untrack, squash, mut, ..."
-    "  routed to:  gt   in ~/code/rainlanguage/* and ~/code/st0x/* (all worktrees)"
-    "              but  in another GitButler-managed repo's main worktree"
-    "              git  in every non-main worktree and otherwise"
-    "  e.g. mut -> gt modify / but amend / git commit --amend;"
-    "       co  -> gt co     / but apply / git checkout"
-    "  graphite-only verbs (up/down/top/bottom, ...) error on but/git"
+    "  routed to:  but  in a GitButler-managed repo's main worktree"
+    "              git  in every linked worktree and otherwise"
+    "  e.g. mut -> but amend / git commit --amend"
+    "       co  -> but apply / git checkout"
+    "  verbs without an equivalent on the selected backend error explicitly"
+    "  ss uses git push --force-with-lease / but push all; blocked on main/master"
     ""
     "GIT"
     "  diff, add, status, stash, push, pull, show, blame, branch,"
