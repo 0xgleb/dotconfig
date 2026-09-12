@@ -76,9 +76,21 @@
 - GitButler is valid only in a repository's main worktree. Detect the current
   Git topology before invoking `but`; in every linked, isolated, scratch, or
   otherwise non-main worktree, use plain Git for both reads and writes and never
-  probe or initialize GitButler. Graphite remains valid in main and linked
-  worktrees. The classifier must not demand GitButler or reject plain Git solely
-  because the parent repository is GitButler-managed.
+  probe or initialize GitButler. Prefer GitButler in existing managed main
+  worktrees and plain Git elsewhere; explicit repository-local workflow rules
+  may override these shared defaults. Use GitHub for current project tracking.
+  The classifier must not demand GitButler or reject plain Git solely because
+  the parent repository is GitButler-managed.
+- Routine GitHub issue creation within authorized planning scope does not need
+  approval of exact phrasing. Check the complete payload for audience-appropriate
+  content before publication: exclude personal details, private conversation
+  quotes/attribution, credentials, and raw internal logs. Private repository
+  visibility is not permission to copy private correspondence. Notify the owner
+  on Telegram after creation with the issue link and verified originating-agent
+  identity; authenticated replies may request amendments. Keep the separate
+  per-issue approval gate for filing deferred review findings. Deterministic
+  validation, deduplication, delivery, and retry mechanics belong in tested code,
+  while drafting and semantic privacy judgment remain agent work.
 - Treat classifier blocks as policy. Do not evade them by switching tools or
   rephrasing the same action. A block is not permission to stop: if the blocked
   action was unrelated or over-scoped, return to the real active task through a

@@ -7,6 +7,7 @@
   tool name appears in `allowed-tools`, and never treat that substitution as evasion.
 - **Flatten small attribute sets**: When an attrset has fewer than 3 items (1 or
   2), use dotted paths instead of nesting:
+
   ```nix
   # Good
   fzf.enable = true;
@@ -18,6 +19,7 @@
     enableZshIntegration = true;
   };
   ```
+
 - **Group related attrs**: Consolidate repeated top-level keys into a single
   block (e.g. one `programs = { ... };` instead of many `programs.foo = ...;`
   blocks)
@@ -53,50 +55,51 @@ Common mistakes to avoid:
 
 `fj` (aliases `f`, `j`) is a nushell module at `nushell/fj/` that is the
 user's single entry point for day-to-day version control and dev chores. It
-dispatches a subcommand to the right underlying tool: `git`, a stacking backend
-(`gt`/`but`), `gh`, or an internal workflow (`do`, `check`, `take`, `md`,
+dispatches a subcommand to the right underlying tool: `git`, `but`, `gh`,
+or an internal workflow (`do`, `check`, `take`, `md`,
 `infra`). Run `fj help` for the full command list.
 
 ## VCS backend routing
 
-Only a few orgs use Graphite, so stack-style commands (`ss`, `create`, `sync`,
-`co`, `restack`, `mut`, …) are routed per repository:
+Prefer GitButler for managed main worktrees and plain Git elsewhere. Stack-style
+commands (`ss`, `create`, `sync`, `co`, `restack`, `mut`, …) retain compatible
+aliases and route by verified topology:
 
-- `~/code/rainlanguage/*` and `~/code/st0x/*` → **`gt`** (Graphite), in both main and linked worktrees
-- another GitButler-managed repo's verified **main worktree** → **`but`**
+- a GitButler-managed repo's verified **main worktree** → **`but`**
 - every linked/non-main worktree, including those attached to a GitButler-managed repo → plain **`git`**
 - otherwise → plain **`git`**
 
 GitButler must never be invoked outside the main worktree; detect topology before routing instead of waiting for `but` to fail. Plain git commands (`add`, `commit`, `push`, `status`, `diff`, `log`, …) always route to `git` regardless of backend. `gh`-backed commands (`issue`, `pr`) and internal workflows are backend-independent.
 
 The stack **verbs are translated**, not passed through — gitbutler has a
-different vocabulary and no stack cursor. For example `fj mut` → `gt modify` /
-`but amend` / `git commit --amend`; `fj co` → `gt co` / `but apply` / `git
-checkout`; `fj create` → `gt create` / `but branch new` / `git checkout -b`.
-Graphite-only verbs with no equivalent (the `up`/`down`/`top`/`bottom` cursor
+different vocabulary and no stack cursor. For example `fj mut` → `but amend` /
+`git commit --amend`; `fj co` → `but apply` / `git checkout`; `fj create` →
+`but branch new` / `git checkout -b`.
+Legacy verbs with no equivalent (the `up`/`down`/`top`/`bottom` cursor
 moves, and on git also `squash`/`absorb`/`move`/…) error with a clear message
 instead of being guessed at. The translation tables are `but_translations` and
 `git_translations` in `routing.nu`.
 
-To change which orgs use Graphite, edit `graphite_orgs` in
-`nushell/fj/routing.nu`.
+These are shared defaults, not organization-specific rules. Explicit repository
+instructions may select another workflow. Do not migrate repositories, change
+branches, or rewrite history merely to select a backend.
 
 ## Routing internals
 
 `nushell/fj/routing.nu` holds the pure, testable routing logic:
 
 - `fj-route ...args` — maps the invocation to `{ tool, args }` (logical routing;
-  stack commands carry tool `"gt"`)
-- `vcs-backend cwd home gitbutler_available` — resolves `"gt" | "but" | "git"`
-  for a working directory
-- `resolve-stack route backend` — translates a stack route (tool `"gt"`) to the
+  stack commands carry tool `"stack"`)
+- `vcs-backend cwd home gitbutler_managed is_main_worktree` — resolves `"but" | "git"`;
+  the path arguments remain for compatibility, not organization-based routing
+- `resolve-stack route backend` — translates a stack route (tool `"stack"`) to the
   active backend, mapping both the tool and the verb; returns tool
   `"unsupported"` (carrying `[verb, backend]`) when there is no equivalent.
   Non-stack routes pass through unchanged.
 
-`mod.nu` wires them together (`vcs-backend $env.PWD $env.HOME (which but |
-is-not-empty)`), then dispatches; an `"unsupported"` route errors with a clear
-message. Run the unit tests after any routing change:
+`mod.nu` verifies Git topology and management evidence, resolves the backend,
+and dispatches; an `"unsupported"` route errors with a clear message. Run the
+unit tests after any routing change:
 
 ```bash
 nu nushell/fj/routing.test.nu
@@ -111,10 +114,13 @@ the user or request redundant authorization.
 
 # Work Tracking
 
-This repo does **not** use Linear. Work here is tracked in GitHub issues/PRs (or
-nowhere) — never create or defer findings to Linear for dotconfig. Linear is the
-tracker only for the `~/code/st0x/*` and `~/code/rainlanguage/*` repos (the same
-orgs that route stacks to Graphite). The `linear` skill applies there, not here.
+Use GitHub issues/PRs for current project tracking. Preserve historical tracker
+records; changing the current toolchain does not authorize external cleanup.
+
+Keep SPEC/ROADMAP → GitHub issues → local execution tasks as the planning
+hierarchy. Aim for approximately 95% of substantive local tasks to link to an
+issue, with explicit short-lived one-off exceptions. Notes and memories provide
+context rather than a competing backlog.
 
 # Agents and Services
 
