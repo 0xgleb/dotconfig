@@ -1,10 +1,9 @@
 ---
 name: worktree
-description: Use `/worktree` only when a concrete isolation requirement justifies creating, inspecting, verifying, repairing, or immediately disposing a standardized git worktree; do not use it for ordinary work, branch, PR, Graphite, or GitButler navigation.
+description: Use `/worktree` only when a concrete isolation requirement justifies creating, inspecting, verifying, repairing, or immediately disposing a standardized git worktree; do not use it for ordinary work, branch, PR, or GitButler navigation.
 user-invocable: true
 allowed-tools:
   - "Bash(git *)"
-  - "Bash(gt init *)"
   - "Bash(mkdir *)"
   - "Bash(fix-worktree-submodules *)"
   - "Bash(ln -sfn *)"
@@ -22,7 +21,7 @@ Manage git worktrees with multiple subcommands.
 
 ## VCS Routing Invariant
 
-GitButler operates only in the repository's main worktree. Inside every linked, isolated, scratch, or otherwise non-main worktree, use plain Git for reads and writes and never probe or initialize GitButler. For Graphite-managed repositories, Graphite CLI remains valid in both the main worktree and linked worktrees. Detect topology before selecting a backend; the parent repository's GitButler state does not make a linked worktree GitButler-capable.
+GitButler operates only in the repository's main worktree. Inside every linked, isolated, scratch, or otherwise non-main worktree, use plain Git for reads and writes and never probe or initialize GitButler. Explicit repository-local instructions may select another workflow; that does not make GitButler valid outside its managed main worktree. Detect topology before selecting a backend; the parent repository's GitButler state does not make a linked worktree GitButler-capable.
 
 ## Worktree necessity and ownership
 
@@ -82,7 +81,7 @@ recommend or resolve as appropriate.
      standardized role slot.
 
 3. **If in a worktree:**
-   - Select plain Git for all non-Graphite VCS operations; never run GitButler there.
+   - Use plain Git by default, subject to explicit repository-local workflow rules; never run GitButler there.
    - Inspect only the current worktree, not its siblings.
    - Verify that its path is a standardized role slot under `.worktrees/` or
      `.tmp/worktrees/`. A role-slot path is intentionally independent of the
@@ -100,9 +99,9 @@ recommend or resolve as appropriate.
 1. **Determine location:**
 
    ```bash
-   git_dir=$(git rev-parse --git-dir)
-   common_dir=$(git rev-parse --git-common-dir)
-   is_worktree=$([ "$git_dir" != "$common_dir/.git" ] && echo true || echo false)
+   git_dir=$(git rev-parse --path-format=absolute --git-dir)
+   common_dir=$(git rev-parse --path-format=absolute --git-common-dir)
+   is_worktree=$([ "$git_dir" != "$common_dir" ] && echo true || echo false)
    ```
 
 2. **If main repo:** Report the current workspace status. Run `verify` only
@@ -163,9 +162,9 @@ isolation requirement.
    git -C <main-repo-root> worktree add <worktree-path> origin/<main-branch>
    ```
 
-5. **Initialize only what the isolated task actually needs.** Initialize
-   Graphite only in a Graphite repository when the task needs Graphite. Repair
-   submodules only when the task reads or builds them. Allow direnv or initialize
+5. **Initialize only what the isolated task actually needs.** Do not initialize
+   or migrate a VCS tool as routine setup. Repair submodules only when the task
+   reads or builds them. Allow direnv or initialize
    databases only when the task requires that environment. Do not eagerly create
    caches, build outputs, profiles, or databases as generic worktree setup.
 

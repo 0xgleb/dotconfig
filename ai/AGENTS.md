@@ -75,14 +75,14 @@ credit. You are an engineer's tool, not a co-author.
 what you see in the repository — do not invent your own format.
 
 **CRITICAL: NEVER speak on the user's behalf via any account or channel you can
-authenticate as them.** Their `gh`, `linear`, `slack`, telegram, gmail, etc.
+authenticate as them.** Their `gh`, `slack`, telegram, gmail, etc.
 tokens are theirs — anything you publish through them lands under their name.
 
 Without an explicit in-session instruction to post that exact content, **never**:
 
 - Reply to PR review comments (`gh api .../pulls/comments/<id>/replies`, `gh pr
 review --comment`, `gh pr comment`).
-- Comment on issues (`gh issue comment`, Linear `linear issue comment`, etc.).
+- Comment on issues (`gh issue comment`, etc.).
 - Send messages on chat platforms (Slack, telegram, Discord, etc.).
 - Post on social or public threads under their identity.
 - React, resolve, or otherwise emit any user-visible signal downstream readers
@@ -94,8 +94,8 @@ review --comment`, `gh pr comment`).
   human and resets approval state under the user's name. NEVER run a review
   submission (`gh pr review --approve` / `--comment` / `--request-changes`, or any
   reviews-API call carrying an `event`) and never touch reviewer state. This is
-  about review-API calls, NOT pushing code — a `gt ss`/stack submit does not touch
-  review state.
+  about review-API calls, NOT pushing code — a Git push does not submit a review
+  or request reviewers; branch protection may independently dismiss approvals.
 
   **Drafting a review is the allowed assist; submitting it is never yours.** You
   may help the user review — draft the findings and (when that's the task) post
@@ -111,11 +111,15 @@ If you disagree with PR feedback, an issue/chat comment, or any other input,
 **surface it to the user and let them decide whether and how to respond.** Hold
 your assessment as an opinion you bring to them, not something you post outward.
 
-Exceptions are scoped, mechanical surfaces where impersonation isn't the risk
-(opening/editing PRs you were told to open, creating/editing Linear issues you
-were told to create, committing code you wrote). Even there, default to "act
-under instruction", not "decide for them". Violating this rule means the user
-has to apologise for words they didn't say.
+Exceptions are scoped work artifacts: opening/editing PRs you were told to
+open, creating GitHub issues during authorized planning, and committing code
+you wrote. Routine planning issue creation does not require approval of exact
+phrasing: first check the complete public payload for private/personal content,
+then notify the owner on Telegram with the issue link and originating agent.
+The owner can request amendments by replying. Filing deferred review findings
+retains its separate per-issue approval gate. None of these exceptions permits
+posting private conversations, speaking socially for the user, assigning
+another person's time, or expanding the authorized project scope.
 
 ## Private Comms Never Become Public Artifacts
 
@@ -135,9 +139,8 @@ record of who said what.
 **Publish the substance instead.** Every private message that motivates work
 contains a technical fact underneath it. Extract that fact, state it in your
 own neutral words, and cite the code or behaviour rather than the conversation.
-A terse complaint that a report format is too plain and should link out to the
-stack and the tracker becomes "the relay renderer supports only four markdown
-constructs and cannot emit Graphite or Linear links". The issue is more useful
+A request to make report references easier to follow becomes "render PR and
+issue references as clickable links". The issue is more useful
 for the change, and it carries no one's voice.
 
 Note that this paragraph is itself the test: the restatement above names no
@@ -164,7 +167,7 @@ for the policy that applies. Two cross-repo invariants stay regardless:
   override is the only way to do harm here; do not exercise it
   unprompted.
 - **No new PRs, no state flips, no comments without instruction.** Push
-  policy covers `git push` / `gt ss` / `gt submit` on feature branches,
+  policy covers authorized Git or GitButler pushes on feature branches,
   not `gh pr create`, `gh pr ready`, `gh pr merge`, draft-to-ready
   flips, or PR/issue comments. Those still require an explicit
   per-session instruction (and PR/issue comments fall under the
@@ -172,16 +175,13 @@ for the policy that applies. Two cross-repo invariants stay regardless:
 
 ## PR Assignment
 
-**Always assign newly opened PRs to the user (self).** `gh pr create` and
-`gt submit` do NOT auto-assign; empty assignees means the PR won't show up on
-the user's "my PRs" boards and they have to find it manually. After creating or
-submitting any PR, run `gh pr edit <PR_NUMBER> --add-assignee @me` (assign each
-PR in a `gt submit` stack).
+**Always assign newly opened PRs to the user (self).** PR creation does not
+necessarily assign the author; empty assignees omit the PR from assigned-work
+views. After creating an authorized PR, run
+`gh pr edit <PR_NUMBER> --add-assignee @me`.
 
-**This is the opposite of the Linear-issue rule:** Linear issues default to
-unassigned unless you're actively working on them (someone else may pick them
-up); PRs default to assigned-to-self because if you opened it, you're driving it
-through review.
+Issue assignment follows the project's ownership policy; do not assign another
+person or claim their availability merely because their work appears in a plan.
 
 ## Execution Discipline
 
@@ -299,11 +299,10 @@ prose description of the goal before the task list.
 
 **Maximize parallelizability.** Structure epics and tasks so independent work
 streams are visually obvious. Use mermaid graphs to show what can run in
-parallel vs what has sequential dependencies. Each independent work stream
-becomes a git worktree with its own graphite stack, enabling multiple agents to
-work simultaneously. Tasks should be large and meaningful enough to justify a
-dedicated worktree — don't split into tiny pieces that create coordination
-overhead.
+parallel vs what has sequential dependencies. Keep delegated investigation
+read-only by default. Concurrent mutation requires a concrete isolation need
+and an approved worktree; do not create worktrees for ordinary task setup or
+split work into tiny pieces that create coordination overhead.
 
 ## Defensive Programming
 
@@ -516,7 +515,7 @@ requests get lost when context is compressed.
 ### Granularity: more is better, not less
 
 The task list is **downstream of the issue / spec, not a substitute for it**.
-For each Linear issue (or equivalent) you are actively working on, break it
+For each GitHub issue you are actively working on, break it
 down into the concrete implementation steps it will take -- the failing test,
 the type-level changes, the implementation, the cleanup pass, the description
 update, the assignment. Each of those is a task.
@@ -683,16 +682,15 @@ violations, and fix any problems before considering the task complete.
   accumulate uncommitted or unpushed work across multiple tasks — small,
   incremental commits pushed regularly make progress visible, reviewable, and
   safe from local failures. Never wait for the user to ask you to commit or
-  push. Use plain `git commit` + `git push` by default; only use Graphite (`gt
-modify` / `gt ss`) in repos that have explicitly opted in (see "Version
-  Control" below).
+  push. Use plain `git commit` + `git push` unless the current checkout is a
+  GitButler-managed main worktree (see "Version Control" below).
 
 - **Branch immediately when stacking**: When told to stack changes (e.g., "put
   this on the stack", "stack a PR for this"), IMMEDIATELY create a branch
   before making any edits. Do not accumulate changes on master or an unrelated
-  branch. Use `git checkout -b` by default; use `gt create` only in
-  Graphite-opted-in repos. The user should never have to ask "why aren't we
-  on a branch yet?"
+  branch. Use `git checkout -b` outside existing GitButler-managed main
+  worktrees; use the existing GitButler branch workflow within one. The user
+  should never have to ask "why aren't we on a branch yet?"
 
 ## Diff Review (Before Handing Over)
 
@@ -807,7 +805,7 @@ subcommand. If unsure, check `nix --help` (top-level flags) vs
 ## Keeping Issues and PRs Fresh
 
 **CRITICAL: Issue and PR descriptions must stay in sync with reality.** This
-applies to every issue and every PR, in every tracker (Linear, GitHub, etc.),
+applies to every issue and every PR, regardless of tracker,
 on every repository — not just the one currently in focus.
 
 - When the **scope of work changes** (a reviewer comment gets folded in,
@@ -833,90 +831,34 @@ shipped.
 
 ## Version Control
 
-**Default to plain `git`.** Use `git checkout -b`, `git commit`, `git push`,
-`git pull`, `git rebase` — the standard tools. Do not invoke `gt` unless the
-repo has explicitly opted into Graphite.
+**Prefer GitButler in an existing managed main worktree; use plain Git
+elsewhere.** Verify topology before invoking `but`; every linked, isolated,
+or scratch worktree uses plain Git for both reads and writes.
 
-**A repo is opted into Graphite only if** at least one of the following is
-true:
+Explicit repository-local instructions may select another workflow instead of
+these shared defaults. Do not migrate repositories or rewrite branch history
+as part of tooling selection. Compatible `fj` aliases remain available through
+the verified GitButler/plain-Git routing.
 
-- A `.graphite_repo_config` file exists at the repo root.
-- A repo-level CLAUDE.md or AGENTS.md tells you to use Graphite for that repo.
-- The user has told you (in this session or via memory) to use Graphite here.
-
-If none of those hold, treat the repo as plain-git and never run `gt init`,
-`gt create`, `gt modify`, `gt ss`, etc. — including not running them
-"speculatively" to check state. `gt ls` will silently initialize Graphite if
-not present, so do not use it as a probe; check for `.graphite_repo_config`
-instead.
-
-### Graphite (only in opted-in repos)
-
-Graphite manages stacked PRs on top of git. Each branch = one PR. PRs stack on
-top of each other for incremental review.
-
-**Docs:** https://graphite.com/docs/cli-quick-start **Command reference:**
-https://graphite.com/docs/command-reference
-
-### Core commands
-
-| Command                     | Purpose                                                          |
-| --------------------------- | ---------------------------------------------------------------- |
-| `gt init`                   | Initialize graphite tracking in a repo                           |
-| `gt create <name> -m "msg"` | Create a new stacked branch/PR from staged changes               |
-| `gt modify`                 | Amend current branch commit, auto-restacks descendants           |
-| `gt modify -a`              | Stage all + amend                                                |
-| `gt modify --into <branch>` | Amend into a downstack branch without checking it out            |
-| `gt ss`                     | Submit the entire stack to remote (force push)                   |
-| `gt ss --publish`           | Submit and publish (non-draft)                                   |
-| `gt co`                     | Interactive checkout                                             |
-| `gt sync`                   | Sync state with remote, clean merged branches                    |
-| `gt get <branch>`           | Fetch an existing graphite branch from remote                    |
-| `gt restack`                | Resolve conflicts after moving PRs around                        |
-| `gt reorder`                | Change the order of PRs in the stack                             |
-| `gt move`                   | Move current PR on top of another                                |
-| `gt absorb`                 | Distribute uncommitted changes to their respective PRs downstack |
-| `gt ls`                     | Show current stack (short)                                       |
-| `gt ll`                     | Show current stack (long, with commit graph)                     |
-
-### Workflow
-
-1. Stage files with `git add` (graphite sits on top of git)
-2. `gt create <branch-name> -m "commit message"` to create a PR
-3. Stack more PRs with additional `gt create` calls
-4. `gt ss --publish` to push everything
-5. `gt sync` to pull latest and clean up merged branches
-
-### Rules
-
-- **Do NOT run `gt` commands in subagents.** Only the orchestrating agent or the
-  user runs graphite commands.
-- Use `gt modify` to amend, NOT `git commit --amend`
-- Use `gt sync` to pull, NOT `git pull`
-- Read-only git commands (`git status`, `git diff`, `git log`) are fine
-- **A stack submit (`gt ss`) is review-state-neutral.** It force-pushes commits
-  like any push and does NOT re-request reviewers or dismiss approvals on its own
-  — approval dismissal is a GitHub branch-protection setting ("dismiss stale
-  approvals on push"), tool-agnostic, and only affects PRs targeting a protected
-  branch. The reason to scope a submit is noise, not review state: `gt ss`
-  submits the WHOLE stack, so when you changed one branch, push just that branch
-  (or run `gt submit --dry-run` first to see No-op vs Update) instead of
-  re-pushing branches you didn't touch.
-- When the user needs to run a graphite command, **stop and tell them the
-  intent** (e.g., "we need to submit the stack"). If they don't know the
-  command, then provide it.
+Use the appropriate existing workflow to stage only the intended changes,
+commit, and push the active feature branch after validation. Keep unrelated
+working-tree and index changes intact. Publishing code does not grant permission
+to create PRs, change review verdicts, or request reviewers; those retain their
+separate authorization rules.
 
 ## Git Worktrees
 
-Use a `.worktrees/` directory (gitignored) inside the repo for parallel work
-without stashing or switching branches. Each worktree gets its own working
-directory and branch, sharing the `.git` object store (no extra disk for
-history); `.worktrees/` is gitignored so worktree state is local-only.
+Use `/worktree` only for a concrete isolation or concurrency requirement.
+The assigned checkout remains the default; a dirty tree alone is not a reason
+for another worktree. Use stable repository-local role slots such as
+`.worktrees/secondary` or, for exceptional disposable work,
+`.tmp/worktrees/secondary`. Verify the required base and existing ownership
+before creating or reusing a slot; do not derive its path from a branch or task.
 
-**Setup:** Add `.worktrees/` to `.gitignore`, then
-`git worktree add .worktrees/feat/my-feature -b feat/my-feature`.
-
-**Cleanup:** `git worktree remove .worktrees/feat/my-feature`.
+The creating agent owns immediate cleanup after success, failure, or
+cancellation. Preserve pre-existing owner-managed slots and unrelated work.
+If safe cleanup is blocked, record the exact path and reason rather than
+silently leaving it behind.
 
 **Submodules in worktrees:** Git worktrees don't share submodule checkouts. If a
 project has submodules (e.g., `lib/`), the worktree will have broken gitlinks.
@@ -924,10 +866,10 @@ Fix by creating a **real directory** with individual symlinks inside (Git 2.45+
 rejects symlinks in intermediate path components per CVE-2024-32002):
 
 ```bash
-# From the worktree root (e.g., .worktrees/category/name/)
+# From the worktree root (e.g., .worktrees/secondary/)
 mkdir lib
-ln -s ../../../../lib/forge-std lib/forge-std
-ln -s ../../../../lib/other-sub lib/other-sub
+ln -s ../../../lib/forge-std lib/forge-std
+ln -s ../../../lib/other-sub lib/other-sub
 # Adjust ../ depth to match worktree nesting: one ../ per directory level
 # to reach the main repo root, then append lib/<submodule>
 
@@ -937,9 +879,9 @@ git update-index --assume-unchanged lib/forge-std lib/other-sub ...
 
 The individual symlinks make builds work while keeping `lib/` a real directory
 (satisfying git's security checks); `--assume-unchanged` keeps `git status`
-clean. The `gt modify -a` flag won't work (it runs `git add --all` which fails
-on broken submodule refs) — always stage specific files with `git add <files>`
-then `gt modify`.
+clean. In a linked worktree, stage only the intended paths with plain Git and
+use the repository's authorized commit workflow. Do not blanket-stage unrelated
+files or invoke GitButler outside its main worktree.
 
 ## This Repository (dotconfig)
 
@@ -1044,14 +986,8 @@ Shared skills live in `~/.config/ai/skills/` and are symlinked into both harness
 - Claude: `~/.claude/skills` → `~/.config/ai/skills`
 - Cursor: `~/.cursor/skills` → `~/.config/ai/skills`
 
-- Linear is the work tracker for the **st0x** and **rainlanguage** repos
-  (`~/code/st0x/*`, `~/code/rainlanguage/*`) — the same orgs that use Graphite.
-  Other repos do **not** use Linear: this dotconfig repo, and any repo outside
-  those orgs, track work in GitHub issues (or nowhere). Don't reach for Linear,
-  defer review findings to Linear, or assume issues live there unless you're in
-  a Linear-tracked repo.
-- For Linear work (in those repos), use
-  `/Users/0xgleb/.config/ai/skills/linear/SKILL.md`. Default to read-only
-  operations first, inspect `linear --help` before using unfamiliar commands,
-  and treat `linear api` mutations as high-risk until the exact payload has been
-  reviewed.
+- Use GitHub issues/PRs for current project tracking. Preserve historical
+  records; changing tool defaults does not authorize external cleanup.
+- Keep SPEC/ROADMAP → GitHub issues → local execution tasks as the hierarchy,
+  with explicit one-off exceptions to issue linkage. Before unfamiliar GitHub
+  operations, inspect the CLI help and preserve the exact mutation boundary.
