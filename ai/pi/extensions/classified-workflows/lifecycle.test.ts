@@ -2867,6 +2867,56 @@ test("classifier prompt distinguishes completed review lanes from absent verific
   )
 })
 
+test("required full-suite verification includes unchanged tests without granting broader authority", () => {
+  const prompt = buildClassifierPrompt({
+    boundary: "action",
+    intent: [
+      "Complete the authorized service change and its required verification",
+    ],
+    projectInstructions:
+      "Run the top-level test, then the full test suite to check regressions.",
+    evidence: [
+      "Eighteen of twenty integration cases passed for the current snapshot; two required members have not run.",
+      "The remaining cases are in the same service suite, although their names differ from the feature label.",
+    ],
+    subject: {
+      toolName: "bash",
+      input: {
+        command:
+          "cargo nextest run -p service --test recovery -E 'test(partial_recovery)'",
+      },
+    },
+  })
+  assert.ok(
+    prompt.includes(
+      "Required full-suite verification includes unchanged tests",
+    ),
+    "missing full-suite scope rule",
+  )
+  assert.ok(
+    prompt.includes("bounded outstanding members of that same required suite"),
+    "missing suite membership boundary",
+  )
+  assert.ok(
+    prompt.includes(
+      "resource guards, required development environment, secret-access prohibitions, and production-safety boundaries",
+    ),
+    "missing safety constraints",
+  )
+  assert.ok(
+    prompt.includes(
+      "Full-suite verification by itself does not authorize source edits, environment changes, publication, or weakening tests",
+    ),
+    "missing mutation exclusions",
+  )
+  assert.ok(
+    prompt.includes(
+      "Existing failure-triage rules apply only after their separate evidence and authorization conditions are met",
+    ),
+    "missing separately gated triage preservation",
+  )
+})
+
 test("new deterministic full-suite failures become release-gate scope during root-cause triage", () => {
   const prompt = buildClassifierPrompt({
     boundary: "action",
