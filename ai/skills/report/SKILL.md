@@ -102,21 +102,16 @@ chunks is a report that should have been shorter.
 Lead with what needs the owner. Sort by what they must do, never
 chronologically and never by which agent produced it.
 
+Example structure; verify current status before reusing any item:
+
 ```
-**Needs you** (2)
+**Needs you** (1)
 
-1. issuance 237 restack - unowned. 29 rustc errors inherited from 236.
-   Blocked: your checkout is on `feat/freeze-hold-guard`, ahead 2 behind 2.
-2. liquidity 1091 - `ci.yaml` pins nix 2.31.2, action ships 2.31.5.
-   Lands on a dependabot branch, needs an owner.
+- [#75](https://github.com/0xgleb/dotconfig/issues/75) - confirm remaining design choices.
 
-**Ready to submit** (1)
+**In progress** (1)
 
-- [liquidity 1112](https://app.graphite.dev/github/pr/ST0x-Technology/st0x.liquidity/1112) -
-  review staged, invisible until you submit.
-
-**Done, no action** (3)
-- 1004 hooks, 1032/1033 rate limits, 278 already covered.
+- [#76](https://github.com/0xgleb/dotconfig/issues/76) - finish scoped tooling retirement.
 ```
 
 Rules that make it scannable:
@@ -124,12 +119,11 @@ Rules that make it scannable:
 - **Count every section.** `Needs you (2)` tells them the size before reading.
 - **One item per line.** A line that wraps three times on a phone is a
   paragraph wearing a list's clothes.
-- **Lead each item with its identifier**, so the eye lands on `issuance 237`
+- **Lead each item with its identifier**, so the eye lands on `#75`
   and not on the fourth clause of a sentence.
 - **Link every external reference**, not only PR and issue identifiers. A tap
-  beats a search. Use Graphite PR links for stacked orgs, GitHub PR/issue links
-  for non-Graphite repos, Linear's returned `url` for Linear issues, and a
-  verified destination for external docs or other references. See below.
+  beats a search. Use verified GitHub PR/issue links and a verified destination
+  for external docs or other references. See below.
 - **Blank line between sections.** It is the only visual separation available.
 - Put the diagnosis on the item, not in a trailing narrative paragraph.
 - Say what is BLOCKED and on what. An unowned item with no blocker reads as
@@ -142,36 +136,22 @@ budget for getting the owner from the report to the thing. Spend it on the
 destination that answers the question the item raises, and build it from
 identifiers you already hold — never guess a URL.
 
-| Destination | Shape |
-| --- | --- |
-| GitHub PR | `https://github.com/<owner>/<repo>/pull/<number>` |
-| GitHub issue | `https://github.com/<owner>/<repo>/issues/<number>` |
-| Graphite PR | `https://app.graphite.dev/github/pr/<owner>/<repo>/<number>` |
-| Linear issue | the `url` field Linear returned for that issue |
-| External doc/reference | its verified canonical or source-provided URL |
+| Destination            | Shape                                               |
+| ---------------------- | --------------------------------------------------- |
+| GitHub PR              | `https://github.com/<owner>/<repo>/pull/<number>`   |
+| GitHub issue           | `https://github.com/<owner>/<repo>/issues/<number>` |
+| External doc/reference | its verified canonical or source-provided URL       |
 
 **Every external reference must carry its corresponding verified link.** This
-includes PRs, issues, Linear issues, external docs, specifications, dashboards,
+includes PRs, issues, external docs, specifications, dashboards,
 and any other outside destination mentioned in the report. If a verified link
 is unavailable, omit the external reference or state that its link is
 unverified without inventing one.
 
-**Linear URLs are never constructed.** They are workspace-scoped and the API
-returns the exact one on the issue; building a URL from an identifier like
-`RAI-1045` produces a plausible link that does not resolve. Use only Linear's
-returned `url`; if it is not to hand, do not guess or present the issue as a
-linked external reference.
-
-**Prefer Graphite over GitHub when the repo stacks**, which is the
-`~/code/st0x/*` and `~/code/rainlanguage/*` family. A GitHub link opens one PR
-in isolation; the Graphite link opens it inside its stack, which is the context
-that decides whether it can merge. For a repo that does not stack, GitHub is
-the right destination and Graphite has nothing to show.
-
-One caveat that looks like a bug and is not: inside a Pi pane, Graphite
-markdown links are deliberately flattened to their bare URL so the terminal
-shows something copyable. That rewrite is display-only and does not touch the
-relayed report, so keep writing the markdown link form.
+Use GitHub links for PRs and issues, including when branches have dependencies.
+Link dependent PRs explicitly when that context matters. Use only identifiers
+verified from source or tool output; do not invent an owner, repository, or
+issue number to complete a plausible-looking link.
 
 ## What to leave out
 
