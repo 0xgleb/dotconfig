@@ -45,6 +45,7 @@ test("task continuation retries a transient queued-message guard without losing 
   assert.ok(start >= 0 && end > start)
   const source = stripTypeScriptTypes(extensionSource.slice(start, end))
   let timer: (() => void) | undefined
+  const readTimer: () => (() => void) | undefined = () => timer
   let queued = true
   let sent = 0
   const ctx = {
@@ -83,14 +84,15 @@ test("task continuation retries a transient queued-message guard without losing 
     },
   )
   schedule(ctx)
-  const first = timer
+  const first = readTimer()
   assert.ok(first)
   timer = undefined
-  first?.()
+  first()
   assert.equal(sent, 0)
-  assert.ok(timer, "transient queued message must rearm the quiet timer")
+  const second = readTimer()
+  assert.ok(second, "transient queued message must rearm the quiet timer")
   queued = false
-  timer?.()
+  second()
   assert.equal(sent, 1)
 })
 
@@ -422,6 +424,68 @@ test("local WIP parking is preservation rather than release publication", () => 
   assert.ok(
     prompt.includes(
       "do not require release gates merely to preserve that exact uncommitted state",
+    ),
+  )
+})
+
+test("selective patch preparation preserves excluded work without claiming publication gates passed", () => {
+  const prompt = buildClassifierPrompt({
+    boundary: "action",
+    intent: [
+      "Publish the authorized tracker retirement while preserving unrelated formatting edits unstaged.",
+    ],
+    projectInstructions:
+      "Stage only intended changes; preserve unrelated working-tree and index content.",
+    evidence: [
+      "The agent-owned proposed staging patch is reconstructible from current source. Exact read identifies the unrelated formatting hunk. It is not immutable review evidence and has not been applied.",
+    ],
+    subject: {
+      toolName: "edit",
+      input: {
+        path: ".tmp/retirement/selection.patch",
+        edits: [
+          {
+            oldText: "@@ -1 +1 @@\n-old formatting\n+new formatting\n",
+            newText: "",
+          },
+        ],
+      },
+    },
+  })
+  assert.ok(
+    prompt.includes(
+      "A proposed selective staging patch may intentionally differ from the full working-tree diff",
+    ),
+  )
+  assert.ok(
+    prompt.includes(
+      "Preserving unrelated work means leaving it intact and excluded from this delivery",
+    ),
+  )
+  assert.ok(
+    prompt.includes(
+      "Do not apply publication gates to the scratch preparation needed to satisfy them",
+    ),
+  )
+  assert.ok(prompt.includes("Do not alter immutable or unique review evidence"))
+  assert.ok(
+    prompt.includes(
+      "current tool evidence establishing the artifact's canonical path, agent ownership, reconstructible staging purpose, exact current contents, and unapplied-to-index state",
+    ),
+  )
+  assert.ok(
+    prompt.includes(
+      "A name, extension, or unsupported agent assertion is not this evidence",
+    ),
+  )
+  assert.ok(
+    prompt.includes(
+      "If those facts are absent or unresolved, hold that artifact edit",
+    ),
+  )
+  assert.ok(
+    prompt.includes(
+      "Preparing a patch grants no authority to apply it, mutate unrelated work, or publish",
     ),
   )
 })
@@ -1019,7 +1083,7 @@ test("agent execution is enclosed by spawn and return classification", async () 
     },
   )
 
-  assert.deepEqual(await run({ task: "find route behavior" }), {
+  assert.deepEqual(await run({ task: "find route behavior" }, undefined), {
     status: "completed",
     output: "result",
     usageTokens: 12,
@@ -1048,7 +1112,10 @@ test("workflow children inherit bounded parent execution evidence at spawn and r
     parentEvidence,
   )
 
-  await run({ task: "Read-only review of rainlanguage/raindex PR #2827" })
+  await run(
+    { task: "Read-only review of rainlanguage/raindex PR #2827" },
+    undefined,
+  )
   assert.equal(classifications.length, 2)
   for (const request of classifications) {
     assert.deepEqual(request.evidence, parentEvidence)
@@ -1100,7 +1167,7 @@ test("background workflows give every child classifier exact typed launch eviden
     { background: true, workflowId: "wf-51" },
   )
 
-  await run({ task: "Inspect one read-only PR chunk" })
+  await run({ task: "Inspect one read-only PR chunk" }, undefined)
   assert.equal(classifications.length, 2)
   for (const request of classifications) {
     assert.deepEqual(request.runtimeWorkflowContext, {
@@ -1126,7 +1193,7 @@ test("runner omits absent workflow context from classifier requests", async () =
     },
   )
 
-  await run({ task: "Inspect one file" })
+  await run({ task: "Inspect one file" }, undefined)
   assert.equal(classifications.length, 2)
   for (const request of classifications) {
     assert.equal("runtimeWorkflowContext" in request, false)
@@ -1149,7 +1216,7 @@ test("blocked spawn never executes the agent", async () => {
     },
   })
 
-  assert.deepEqual(await run({ task: "publish" }), {
+  assert.deepEqual(await run({ task: "publish" }, undefined), {
     status: "blocked",
     output: "",
     reason: "Auto-classifier verdict: outside scope",
@@ -1172,7 +1239,7 @@ test("blocked return does not expose agent output", async () => {
     },
   })
 
-  assert.deepEqual(await run({ task: "inspect" }), {
+  assert.deepEqual(await run({ task: "inspect" }, undefined), {
     status: "blocked",
     output: "",
     reason: "Auto-classifier verdict: unsafe return",
@@ -1992,6 +2059,7 @@ test("classifier routes non-main GitButler worktrees to plain Git while preservi
       gitToplevel: "/workspace/repo/.worktrees/fix",
       gitMainWorktree: "/workspace/repo",
       isMainWorktree: false,
+      cwdRelation: "repository-root",
     },
     subject: {
       toolName: "bash",
@@ -2021,6 +2089,7 @@ test("owner-assigned linked worktrees remain semantically owned by the assigned 
       gitToplevel: "/workspace/agentopoly/.worktrees/browser-agreement-terms",
       gitMainWorktree: "/workspace/agentopoly",
       isMainWorktree: false,
+      cwdRelation: "repository-root",
     },
     subject: {
       toolName: "edit",
@@ -2523,6 +2592,7 @@ test("typed Cargo verification coverage retires only covered TTDD failures", () 
     intent: [
       "Authenticated owner requires the final durable-notification re-review",
     ],
+    projectInstructions: "Retain required verification gates.",
     evidence: [
       "Current same-workspace Cargo Clippy and focused notification suites are green",
     ],
@@ -2625,6 +2695,10 @@ test("current linked-worktree pipeline gates supersede stale prerequisite and se
     runtimeProjectContext: sessionRuntime,
     runtimeCommandProjectContext: {
       commandCwd: linkedRuntime.cwd,
+      commandCwdIdentitySha256: "e".repeat(64),
+      command:
+        "nix develop --impure .#default --command cargo nextest run -p yielduck --test pipeline_e2e the_armed_entry_gas_guard_withholds_a_gas_heavy_sy_mint",
+      directoryTransition: true,
       project: linkedRuntime,
     },
     subject: {
@@ -2665,6 +2739,9 @@ test("current linked-worktree pipeline gates supersede stale prerequisite and se
     runtimeProjectContext: sessionRuntime,
     runtimeCommandProjectContext: {
       commandCwd: linkedRuntime.cwd,
+      commandCwdIdentitySha256: "e".repeat(64),
+      command: "git commit -m 'show pending position stages'",
+      directoryTransition: true,
       project: linkedRuntime,
     },
     subject: {
@@ -2724,6 +2801,10 @@ test("current linked-worktree pipeline gates supersede stale prerequisite and se
     runtimeProjectContext: sessionRuntime,
     runtimeCommandProjectContext: {
       commandCwd: "/workspace/yielduck",
+      commandCwdIdentitySha256: "f".repeat(64),
+      command:
+        "git commit --only -m 'show pending position stages' -- reviewed.ts",
+      directoryTransition: false,
       project: {
         ...sessionRuntime,
         gitBranch: "feat/other",
@@ -3307,6 +3388,9 @@ test("post-rebase linked-worktree gates retain exact ordinary publication", () =
     },
     runtimeCommandProjectContext: {
       commandCwd: linkedRuntime.cwd,
+      commandCwdIdentitySha256: "e".repeat(64),
+      command: "git push -u origin HEAD",
+      directoryTransition: true,
       project: linkedRuntime,
     },
     subject: {
@@ -5935,7 +6019,7 @@ test("classifier invalidates stale build success after source or derivation chan
       toolName: "bash",
       input: { command: "nix build --no-link .#checks.aarch64-darwin.default" },
     },
-    recentExecutionEvidence: [
+    evidence: [
       "successful tool result: an earlier identical nix build completed",
       "successful tool result: source edit changed infra/default.nix",
       "error tool result: nix path-info reports the new derivation output is not built",
