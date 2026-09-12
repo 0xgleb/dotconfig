@@ -1,8 +1,8 @@
 ---
 name: review-sweep
 user-invocable: true
-allowed-tools: Bash(gt:*), Bash(but:*), Bash(direnv:*), Bash(git:*), Bash(gh:*), Bash(agy:*), Bash(command:*), Bash(linear:*), Bash(cargo:*), Bash(mkdir:*), Bash(cat:*), Bash(mktemp:*), Bash(rm:*), Bash(test:*), Bash(grep:*), Bash(wc:*), Bash(date:*), Bash(basename:*), Bash(find:*), Bash(ls:*), Read, Write, Edit, Agent, Workflow, AskUserQuestion, Skill
-description: Sweep a whole stack in parallel, dispatching per authorship. With no arguments it sweeps the ENTIRE stack (every branch upstack of trunk) with no confirmation. On your OWN stack it runs /review-loop per branch (fix findings + fold in unaddressed PR feedback, modify into the branch, then submit). On SOMEONE ELSE's stack where you are the reviewer it runs /review-pr per branch (cross-review, post a draft batch of comments, never touch their code or submit a verdict). Detects the repo's stacking tool (Graphite or GitButler). Optional --start / --end bound the range.
+allowed-tools: Bash(but:*), Bash(direnv:*), Bash(git:*), Bash(gh:*), Bash(agy:*), Bash(command:*), Bash(cargo:*), Bash(mkdir:*), Bash(cat:*), Bash(mktemp:*), Bash(rm:*), Bash(test:*), Bash(grep:*), Bash(wc:*), Bash(date:*), Bash(basename:*), Bash(find:*), Bash(ls:*), Read, Write, Edit, Agent, Workflow, AskUserQuestion, Skill
+description: "Review an existing GitButler stack: fix owned branches and draft inline findings on others. Plain Git uses single-branch review."
 argument-hint: "[--start BRANCH] [--end BRANCH]"
 ---
 
@@ -10,7 +10,7 @@ Sweep an entire stack with the multi-model review panel, **parallelized**, and
 dispatching per **authorship**.
 
 **Default scope is the WHOLE stack.** Invoked with no arguments, the sweep covers
-every branch upstack of trunk — the full tree (Graphite) or forest (GitButler).
+every branch in the applied GitButler series, across all applied stacks.
 That is the default and it is unambiguous: **never ask the user to confirm the
 scope or the branch count.** The invocation is the confirmation. `--start` /
 `--end` narrow the range when the user wants less; absence of them means "all of
@@ -28,7 +28,7 @@ it", not "ask me".
 **Parallelism is the point.** The slow part of a sweep is the review panel, and
 the panels are read-only — so the sweep reviews **every branch at once** before
 it changes anything, instead of reviewing-then-fixing one branch at a time. Only
-the *mutations* (applying fixes, `gt modify -a` / `but absorb`) must respect
+the *mutations* (applying fixes and absorbing them into managed series) must respect
 parent-before-child order; the *reviews* do not. Upstack branches whose content
 shifts when a downstack fix restacks them get a cheap **delta re-review** rather
 than a fresh full panel. Net: far less wall-clock than the old branch-by-branch
@@ -59,15 +59,15 @@ Three layers. Only the adapter is tool-specific.
   (phase 2) — fully parallel in reviewer mode, dependency-ordered in author mode
   with delta re-reviews where a restack moved a branch.
 
-| Adapter operation          | Graphite                                      | GitButler                                              |
-| -------------------------- | --------------------------------------------- | ------------------------------------------------------ |
-| detect                     | common Git dir has `.graphite_repo_config`    | common Git dir has `gitbutler/` and current top-level is the main worktree |
-| ready check                | working tree clean                            | verified main worktree on a `gitbutler/*` workspace branch (`but status` ok) |
-| enumerate (with parents)   | tree via `gt children` / `gt parent`          | each applied stack's series, base→tip                  |
-| scope a branch (no mutate) | `git diff <parent_sha> <branch_sha>`          | `but branch show <branch>` (commits ahead of its base) |
-| navigate (fix phase only)  | `gt checkout <branch>`                         | none — all virtual branches are applied at once        |
-| modify fixes into a branch | `gt modify -a` (restacks descendants; NEVER `gt fold`) | `but absorb <branch>` (`--dry-run` first)     |
-| return to start            | `gt checkout <start-branch>`                   | none                                                   |
+| Adapter operation      | GitButler managed main worktree                                                     |
+| ---------------------- | ----------------------------------------------------------------------------------- |
+| detect                 | common Git directory has GitButler state and current top-level is the main worktree |
+| ready check            | verified main worktree on a workspace branch; `but status` succeeds                 |
+| enumerate with parents | each applied stack's series, base to tip                                            |
+| scope a branch         | Git diff between verified parent/head SHAs                                          |
+| navigate               | none; virtual branches are applied together                                         |
+| absorb fixes           | `but absorb <branch>` after an inspected dry-run                                    |
+| return to start        | none                                                                                |
 
 ---
 
@@ -77,23 +77,31 @@ Three layers. Only the adapter is tool-specific.
 repo_root=$(git rev-parse --show-toplevel)
 git_common_dir=$(git rev-parse --path-format=absolute --git-common-dir)
 main_root=$(git worktree list --porcelain | sed -n 's/^worktree //p' | head -n1)
-if [ -f "$git_common_dir/.graphite_repo_config" ]; then tool=graphite
-elif [ "$repo_root" != "$main_root" ]; then tool=none
-elif [ -d "$git_common_dir/gitbutler" ]; then tool=gitbutler
+if [ "$repo_root" != "$main_root" ]; then tool=none
+elif [ -d "$git_common_dir/gitbutler" ]; then
+  current_branch=$(git symbolic-ref --quiet --short HEAD) || {
+    echo "Cannot establish the current branch; stop before choosing a workflow."
+    exit 1
+  }
+  case "$current_branch" in
+    gitbutler/*) tool=gitbutler ;;
+    *) tool=none ;;
+  esac
 else tool=none
 fi
 echo "stacking tool: $tool"
 ```
 
-Graphite remains valid in linked worktrees. GitButler is main-worktree-only: a
-linked, isolated, or scratch worktree routes to plain Git and must not run even
-a GitButler readiness probe.
+Prefer GitButler only in an existing managed main worktree. A linked,
+isolated, or scratch worktree uses plain Git and must not run even a GitButler
+readiness probe. Explicit repository-local instructions may select a different
+workflow rather than these shared defaults.
 
 If `tool=none`, stop: this repo has no stacking tool, so there is no stack to
 sweep. Tell the user to use `/review-loop` on the single branch instead.
 
-The rest of the command branches on `$tool`. Where a step says **[Graphite]** or
-**[GitButler]**, run only the matching block.
+Run the remaining GitButler steps only after verifying the managed main
+worktree. They do not apply to linked or otherwise plain-Git worktrees.
 
 ## 2. Parse `--start` / `--end`
 
@@ -102,14 +110,16 @@ irrelevant; either may be absent). Reject any other token. Branch names are
 resolved against the live stack in step 4 — a name not in the stack is a hard
 error there.
 
-Semantics, on a tree (Graphite) or forest (GitButler):
+Semantics across the applied GitButler stacks:
 
-- **neither (the default)** — sweep every branch upstack of trunk. This is the
-  full-stack default; proceed without any confirmation.
-- **`--start S`** — sweep the subtree rooted at `S` (`S` and all its descendants).
-- **`--end E`** — sweep only the ancestor path up to `E` (a single linear chain):
-  bottom → `E`.
-- **both** — sweep the path `S → … → E`. Error if `E` is not a descendant of `S`.
+- **neither (the default)** — keep every branch in every applied series.
+- **`--start S`** — keep `S` through the tip of its applied series.
+- **`--end E`** — keep the bottom branch through `E` in its applied series.
+- **both** — keep the inclusive range `S → … → E` in one applied series.
+  Reject bounds in different series or with `E` before `S`; never cross stacks.
+
+When a bound is supplied, exclude other series. With no bounds, do not filter
+out any applied series. Resolve names and order from current metadata.
 
 ## 3. Preflight
 
@@ -118,16 +128,6 @@ Common: confirm the review tooling is available exactly as `/review-loop` step
 native Luna lanes for every branch and add at most one read-only Claude Code
 subscription lane when available. Cursor remains retired; never probe or launch
 it mid-sweep.
-
-**[Graphite]**
-
-```bash
-gt log short
-git status --porcelain   # must be clean; a dirty tree pollutes every diff
-```
-
-If the tree is dirty, stop and tell the user (a real precondition, not a
-scope question).
 
 **[GitButler]** `but` is provided by the repo's flake/devenv. If `but` is not on
 `PATH`, invoke it as `direnv exec "$repo_root" but …` for every `but` call below.
@@ -150,24 +150,6 @@ Produce `order` — the branches to sweep — **and each branch's parent**, so p
 (`git rev-parse <branch>`); phase 1 uses them to scope diffs without checking
 anything out.
 
-**[Graphite]** Determine the trunk and walk the tree with `gt children` /
-`gt parent` (never `gt up` — ambiguous on a multi-child branch):
-
-```bash
-start_branch=$(git rev-parse --abbrev-ref HEAD)        # return here at the end
-trunk=$(git symbolic-ref refs/remotes/origin/HEAD --short 2>/dev/null \
-        | sed 's#^origin/##' || echo master)
-```
-
-- **`--end E` given** (linear path): from `E`, walk `gt parent` down to (and
-  excluding) trunk — stopping at `S` if `--start S` is set — then reverse so it
-  runs bottom → `E`. If `--start S` is set and `S` never appears, error: `E` is
-  not a descendant of `S`.
-- **no `--end`** (subtree / full tree): root at `S` (if given) else at trunk's
-  children (`gt bottom` reaches one root; for a multi-root trunk, also visit
-  trunk's other children). Build the full parent→child tree with `gt children`.
-  Record every branch and its parent.
-
 **[GitButler]** Enumerate with JSON so you never parse the human graph:
 
 ```bash
@@ -175,10 +157,12 @@ but status -j        # applied stacks and their series
 but branch list -j   # all branches; confirm field names with `but branch list -h`
 ```
 
-Each applied stack's series is ordered base → tip; a branch's parent is the
-previous entry in its series (or trunk for the base). Default range = every
-branch in every applied stack. Apply `--start`/`--end` by trimming each series;
-drop stacks containing neither.
+Each applied stack's series is ordered base → tip. Resolve the stack's base SHA
+from current GitButler metadata and verify it with Git; do not guess a trunk.
+A branch's parent is the preceding series entry, or that verified base SHA for
+the bottom branch. Missing or ambiguous base/head identity blocks that branch.
+Use step 2's range rules: no bounds keeps all applied series; supplied bounds
+select and trim exactly one series after validating both names and their order.
 
 ## 4.5 Determine the mode (author vs reviewer)
 
@@ -208,15 +192,15 @@ information to print, never a gate.
 ```
 ━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━
 Review sweep — <tool>  ·  <author|reviewer> mode  ·  <N> branches (parallel)
-  trunk: <trunk>      range: <start or ⊥> → <end or top>
+  bases: <verified stack bases>      range: <start or ⊥> → <end or top>
 ━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━
-  1. feat/a        (parent: <trunk>)
+  1. feat/a       (parent: <verified base SHA>)
   2. feat/a-x      (parent: feat/a)
   3. feat/a-y      (parent: feat/a)
   ...
 ```
 
-If the resolved range is genuinely empty (e.g. no branches upstack of trunk),
+If the resolved range is genuinely empty (e.g. no applied branches),
 there is nothing to do — say so and stop. That is not a confirmation; it is a
 no-op.
 
@@ -227,12 +211,13 @@ anything. Nothing here checks out a branch or edits a file.
 
 1. **Scope each branch by SHA (no checkout).** For every branch, write its diff
    and manifest into its own `out_dir` (`…/reviews/<ts>-sweep/<safe_branch>/`):
-   - **[Graphite]** `git diff <parent_sha> <branch_sha> > "$out_dir/diff.patch"`
-     and `git diff --name-status <parent_sha> <branch_sha> > "$out_dir/files.txt"`.
-     Reviewers read source at the branch's commit via `git show <branch_sha>:<path>`
-     (the working tree is not on this branch).
-   - **[GitButler]** `but branch show <branch>` → `diff.patch` (+ name-status
-     manifest). Reviewers read the working tree, which reflects the applied stack.
+   - Save the exact parent/head SHA diff and file manifest. Reviewers read
+     committed source via `git show <branch_sha>:<path>` rather than attributing
+     the combined applied workspace to a single branch.
+   - Use `but branch show <branch>` to inspect branch metadata, not as a patch
+     or source substitute. Generate `diff.patch` and the name-status manifest
+     from the resolved parent/head Git SHAs. The combined working tree is not
+     source evidence for an individual branch.
 
 2. **Collect each branch's unaddressed PR feedback** (parallel with the panels;
    author mode folds it into triage, reviewer mode ignores it — `/review-pr`
@@ -261,7 +246,7 @@ anything. Nothing here checks out a branch or edits a file.
    `{scriptPath, args, resumeFromRunId}` (it does not block the others).
 
    Pass per-branch `review-core` contract inputs as `/review-loop` step 4 does,
-   except `{SOURCE_ACCESS}` is the SHA form above (Graphite) so no checkout is
+   except `{SOURCE_ACCESS}` is the committed SHA form above so no checkout is
    needed, and (reviewer mode) `{SYNTHESIS_EXTRA}` + `{INCLUDE_ATTRIBUTION}=false`
    match `/review-pr`.
 
@@ -281,7 +266,8 @@ step 7's reviewer summary.
 ### [Author mode] — ordered fix walk, fed by phase 1
 
 Walk the branches **parent before child** (the only ordering constraint, because
-`gt modify -a` / `but absorb` restacks descendants). For each branch:
+absorbing a parent fix can restack descendants in the managed main worktree).
+For each branch:
 
 1. **Refresh if a downstack fix moved this branch.** If an already-processed
    ancestor was modified after phase 1 (so this branch was restacked), its
@@ -293,8 +279,6 @@ Walk the branches **parent before child** (the only ordering constraint, because
    stale line numbers from a restack are caught.
 
 2. **Triage + fix + converge** = `/review-loop` steps 5–9 on this branch:
-   - **[Graphite]** `gt checkout <branch>` (the fix phase mutates the working
-     tree, so it is checked out here — unlike phase 1).
    - **[GitButler]** no checkout; edit in the applied workspace.
    - Fold the phase-1 PR-feedback candidates into the triage table alongside the
      panel findings (PR feedback gets a mild extra bias toward fixing — a human
@@ -307,8 +291,6 @@ Walk the branches **parent before child** (the only ordering constraint, because
      4-pass cap and "convergence requires a clean pass — never end on a fix."
 
 3. **Modify the fixes into this branch** (only if files changed):
-   - **[Graphite]** `gt modify -a` (via the `graphite` skill) — restacks
-     descendants, so the children you reach next are already on the fixed parent.
    - **[GitButler]** `but absorb <branch>` (`--dry-run` first; confirm it targets
      only this branch's commits). For a fix that must land in one commit, `but
      amend <file> <commit>`.
@@ -322,13 +304,13 @@ to each other; process them in any order. They still mutate the one working tree
 so the fix walk itself is serial — but it is fed entirely by phase-1 reviews, so
 no branch waits on another branch's panel.
 
-The Defer-to-Linear step (`/review-loop` step 10) still applies per branch when
+The Defer-to-GitHub step (`/review-loop` step 10) still applies per branch when
 the user explicitly defers a finding.
 
 ## 7. Return and summarize
 
-**[Graphite]** `gt checkout <start_branch>` to return to where the user was.
-**[GitButler]** Nothing to restore.
+The managed main workspace needs no checkout restoration: all series remained
+applied throughout the sweep.
 
 ```
 ━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━
@@ -354,11 +336,12 @@ Only verified inline findings belong in the draft.
 **[Author mode]** Then **submit the fixes** — a stack of review fixes left local
 is worthless. Submit once, at the end, from the start branch:
 
-- **[Graphite]** `gt ss` (the sweep modified branches up and down the stack). When
-  any *lower* PR is already **approved**, `gt submit --stack --dry-run` first and
-  read the No-op vs Update labels so you know which approvals the resubmit
-  disturbs. A No-op everywhere means it is already pushed — say so, don't re-push.
-- **[GitButler]** `but push` the series you modified.
+- For each modified branch, resolve its current branch name from the recorded
+  series and use `but push <branch-name>`. Never use bare `but push`: in
+  non-interactive mode it pushes all branches. Before each push, verify the
+  selector and effective remote scope match the reviewed modified branch;
+  if the installed version's selector semantics differ, inspect its help and
+  stop rather than broaden the push.
 
 Submitting is NOT publishing. Never `--publish`, never flip draft→ready, never
 open a NEW PR, never post/resolve/react to PR comments or otherwise change review
@@ -382,27 +365,28 @@ modify/submit rule below is **author-mode only**.
 
 1. **Reviews are parallel; mutations are ordered.** Phase 1 reviews every branch
    concurrently (read-only, SHA-scoped, no checkout). Only phase-2 mutations
-   (`gt modify -a` / `but absorb`, and the working-tree edits they need) run
+   (absorbing fixes and the working-tree edits needed in the managed main workspace) run
    parent-before-child. Reviewer mode has no mutations, so it is parallel
    end-to-end.
 2. **Parent before child for mutations, always.** A branch is fixed and modified
    before any of its children, so every child is fixed on top of its parent's
-   fixes. Use `gt children` (never `gt up`) for Graphite trees; the series order
-   for GitButler.
+   fixes. Follow the verified GitButler series order.
 3. **Upstack delta re-reviews are expected.** When a downstack fix restacks a
    branch, re-review only the restack delta (cheap), not a fresh full panel — this
    is the accepted cost of the parallel head-start.
 4. **Modify-and-advance is allowed (author mode).** Modifying each branch's fixes
-   into it (`gt modify -a` / `but absorb`) is expected — the same relaxation
+   into its verified managed main-worktree series is expected — the same relaxation
    `/review-loop stack` makes.
-5. **Submit the fixes; do not publish (author mode).** Push so fixes reach the PRs
-   (`gt ss` / `but push`), but never `--publish`, flip draft→ready, open a NEW PR,
-   post/resolve/react to PR comments, or override branch protection. When lower
-   PRs are already approved, `gt submit --stack --dry-run` first.
-6. **Never change the VCS's mode or topology.** No `gt init`, no `but setup`/`but
-   teardown`, no creating/deleting/reparenting/reordering branches. NEVER `gt
-   fold` (it merges a branch into its parent). `gt modify -a` restacking
-   descendants is an expected side effect, not a topology change.
+5. **Push the fixes without changing PR state (author mode).** In the verified
+   GitButler-managed main worktree, push only modified series using the scoped
+   existing workflow. Never flip draft→ready, open a new PR, post/resolve/react
+   to PR comments, or override branch protection. Inspect the intended branch
+   and remote scope before pushing; an existing approval is not permission to
+   update unrelated branches.
+6. **Never change the VCS's mode or topology.** No setup/teardown, branch creation,
+   deletion, reparenting, reordering, or merging a branch into its parent. A
+   descendant restack caused by absorbing a verified fix is expected, but it
+   does not authorize changing which branches belong to the stack.
 7. **Stop the sweep on a stuck branch.** Never descend into the children of a
    branch that failed to converge — their scope is built on unsettled code.
 8. **Per branch, the shared engine owns the review.** Each panel is `review-core`
@@ -426,7 +410,7 @@ modify/submit rule below is **author-mode only**.
 ## Failure modes
 
 - **`tool=none`** — no stack to sweep; tell the user to run `/review-loop`.
-- **Dirty tree (Graphite) / un-absorbed workspace changes (GitButler)** — stop; a
+- **Un-absorbed workspace changes** — stop; a
   dirty workspace pollutes every per-branch diff. (Precondition, not a scope ask.)
 - **GitButler not in workspace mode** — stop and tell the user to enter it.
 - **Empty resolved range** — nothing to do; say so and stop (a no-op, not a
