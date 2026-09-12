@@ -6,6 +6,7 @@ import {
   type MemoryCapacityError,
 } from "../shared/memory-capacity.ts"
 import { parseLoopCommandResult } from "./loop.ts"
+import { maskLiteralNonPathArguments } from "./non-path-arguments.ts"
 
 export type Boundary = "spawn" | "action" | "return" | "tool-result"
 
@@ -243,7 +244,9 @@ const SENSITIVE_PATH =
 const SQL_JSONPATH_DOT_QUOTED_KEY = /\."(?:[^"\\]|\\.)*"/g
 const containsSensitivePath = (value: string): boolean =>
   SENSITIVE_PATH.test(
-    value.replace(SQL_JSONPATH_DOT_QUOTED_KEY, "$.[json-key]"),
+    value
+      .replace(SQL_JSONPATH_DOT_QUOTED_KEY, "$.[json-key]")
+      .replace(/[=;&|<>(){}\[\]]/g, " "),
   )
 const SENSITIVE_RESULT =
   /-----BEGIN(?: [A-Z]+)? PRIVATE KEY-----|\b(?:AKIA|ASIA)[A-Z0-9]{16}\b|\bgh[pousr]_[A-Za-z0-9_]{20,}\b|\b(?:api[_-]?key|access[_-]?token|secret|password)\s*[:=]\s*["']?[^\s"']{8,}|\bBearer\s+[A-Za-z0-9._~+/=-]{16,}/i
@@ -273,7 +276,13 @@ function relevantStrings(
 ): string[] {
   if (toolName === "bash") {
     return typeof input.command === "string"
-      ? [stripNushellRecordSelectors(stripNegativePathArguments(input.command))]
+      ? [
+          stripNushellRecordSelectors(
+            stripNegativePathArguments(
+              maskLiteralNonPathArguments(input.command),
+            ),
+          ),
+        ]
       : []
   }
 
