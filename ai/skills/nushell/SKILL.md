@@ -31,7 +31,8 @@ scripts, which are forbidden.
 
 Do **not** use it for plain file search/read — the dedicated tools (Grep, Glob,
 Read) are better for that. Use nushell for the structured step, not as a generic
-shell. A bare `cargo`/`git`/`gh`/`linear` invocation stays plain bash.
+shell. Invoke `cargo`, `git`, or `gh` directly in the harness's native shell;
+Pi's bash-named tool parses Nushell, not Bash.
 
 ## Invocation and the quoting trap
 
@@ -57,7 +58,7 @@ Two things that look like nushell problems but are not:
   `nu -c '...'`. Using `print` as a separator in a plain bash line fails with
   `print: command not found`. Keep nu code inside `nu -c`/a `.nu` file.
 - **Piping another command's stdout into `nu` can deliver empty input.** Many
-  CLIs (e.g. `linear`, some `gh` paths) suppress or reformat stdout when not a
+  CLIs (e.g. some `gh` paths) suppress or reformat stdout when not a
   TTY, so `some-cmd | nu -c 'from json | ...'` hits `from json` with empty input
   and errors `Pipeline empty`. **Fix:** redirect to a file first, then open it —
   `some-cmd > .tmp/out.json` then `nu -c 'open .tmp/out.json | ...'`. This is
