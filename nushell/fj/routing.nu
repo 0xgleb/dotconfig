@@ -1,18 +1,11 @@
 # fj routing logic — returns { tool: string, args: list<string> }
 # Extracted for testability; mod.nu resolves the vcs backend, calls fj-route,
-# maps the tool through resolve-tool, then executes.
+# maps stack verbs through resolve-stack, then executes.
 #
-# VCS backend policy (see vcs-backend): graphite (`gt`) is only used in the orgs
-# that actually use it — rainlanguage and st0x. Everywhere else, stack-style
-# commands go to gitbutler (`but`) when it's installed, otherwise plain `git`.
+# Stack-style commands use GitButler only in a verified managed main worktree.
+# All other repositories and linked worktrees use plain Git.
 
-# orgs whose repos use graphite for stacked PRs
-const graphite_orgs = [
-  rainlanguage
-  st0x
-]
-
-const gt_commands = [
+const stack_commands = [
   absorb
   bottom
   checkout
@@ -78,8 +71,8 @@ const git_commands = [
 #   <empty>           -> status
 #   ui                -> gitui
 #   do                -> the check/commit workflow
-#   mut [..]          -> gt modify [..]   (stack verb, translated per backend)
-#   <gt verb> [..]    -> gt
+#   mut [..]          -> stack modify [..] (translated per backend)
+#   <stack verb> [..] -> stack
 #   <git verb> [..]   -> git
 #   help | --help|-h  -> help
 #   anything else     -> unknown
@@ -94,9 +87,9 @@ export def fj-route [...args: string]: nothing -> record<tool: string, args: lis
   match $verb {
     "ui" => { tool: "gitui", args: $rest }
     "do" => { tool: "do", args: $rest }
-    "mut" => { tool: "gt", args: (["modify"] | append $rest) }
+    "mut" => { tool: "stack", args: (["modify"] | append $rest) }
     "help" | "--help" | "-h" => { tool: "help", args: $rest }
-    _ if $verb in $gt_commands => { tool: "gt", args: $args }
+    _ if $verb in $stack_commands => { tool: "stack", args: $args }
     _ if $verb in $git_commands => { tool: "git", args: $args }
     _ => { tool: "unknown", args: $args }
   }
@@ -104,36 +97,31 @@ export def fj-route [...args: string]: nothing -> record<tool: string, args: lis
 
 # Resolve the version-control backend tool for a working directory.
 #
-#   "gt"  — repos under a graphite org (~/code/rainlanguage/*, ~/code/st0x/*)
-#   "but" — any other repo currently managed by gitbutler (on a gitbutler/*
-#           branch, which is the only state where the `but` CLI operates)
-#   "git" — fallback when neither applies
+#   "but" — a repo currently managed by GitButler, from its main worktree
+#   "git" — every other repository and all linked worktrees
 #
-# `but` being on PATH is NOT enough to pick the gitbutler backend: it's
-# installed globally, so keying off availability routes every repo to `but`,
-# and `but` then nags to run setup in repos it doesn't manage. The real signal
-# is the one `but` itself gates on — HEAD sitting on a gitbutler/* branch.
+# `but` being on PATH is NOT enough to pick the GitButler backend: it is
+# installed globally. A gitbutler/* branch identifies management only after the
+# current top-level is proven to be the first/main worktree. Linked, isolated,
+# and scratch worktrees always route to plain Git.
 #
-# Pure: callers pass the cwd, the home prefix, and whether the repo is currently
-# gitbutler-managed, so this stays testable without touching the environment.
+# Pure: callers pass topology evidence so this stays testable without touching
+# the environment. Retain cwd/home arguments for caller compatibility; paths no
+# longer select a special organization-specific backend.
 export def vcs-backend [
   cwd: string               # absolute working directory
   home: string              # home directory prefix (e.g. $env.HOME)
   gitbutler_managed: bool   # whether HEAD is on a gitbutler/* branch
+  is_main_worktree: bool    # whether current top-level is the first worktree
 ]: nothing -> string {
-  let under_graphite_org = ($graphite_orgs | any {|org|
-    $cwd | str starts-with $"($home)/code/($org)/"
-  })
-  if $under_graphite_org {
-    "gt"
-  } else if $gitbutler_managed {
+  if $gitbutler_managed and $is_main_worktree {
     "but"
   } else {
     "git"
   }
 }
 
-# Verb translations from fj's graphite-flavoured stack commands to the
+# Verb translations from fj's stack-style commands to the
 # equivalent gitbutler (`but`) command. GitButler has no stack cursor and a
 # different vocabulary, so each entry replaces the leading verb with one or more
 # tokens; trailing args are preserved. Verbs absent here have no faithful
@@ -159,8 +147,8 @@ const but_translations = {
   init: [setup]
 }
 
-# Verb translations for the plain-git fallback ("neither" graphite nor
-# gitbutler). Only stack verbs with an unambiguous git equivalent are listed;
+# Verb translations for the plain-Git fallback. Only stack verbs with an
+# unambiguous Git equivalent are listed;
 # the rest are unsupported on git.
 const git_translations = {
   modify: [commit --amend]
@@ -173,10 +161,9 @@ const git_translations = {
   rename: [branch -m]
 }
 
-# Translate a routed stack command (tool "gt") to the active backend, mapping
-# both the tool and the verb. Non-stack routes pass through unchanged.
+# Translate a logical stack command to the active backend, mapping both the
+# tool and the verb. Non-stack routes pass through unchanged.
 #
-#   backend "gt"  -> route unchanged (graphite already speaks these verbs)
 #   backend "but" -> { tool: "but", args: <translated> } or "unsupported"
 #   backend "git" -> { tool: "git", args: <translated> } or "unsupported"
 #
@@ -185,11 +172,14 @@ export def resolve-stack [
   route: record<tool: string, args: list<string>>
   backend: string
 ]: nothing -> record<tool: string, args: list<string>> {
-  if $route.tool != "gt" or $backend == "gt" {
+  if $route.tool != "stack" {
     return $route
   }
 
   let verb = ($route.args | first)
+  if $backend not-in ["but" "git"] {
+    return { tool: "unsupported", args: [$verb $backend] }
+  }
   let rest = ($route.args | skip 1)
   let table = if $backend == "but" { $but_translations } else { $git_translations }
   let mapped = ($table | get -o $verb)
@@ -201,19 +191,16 @@ export def resolve-stack [
   }
 }
 
-# Whether a routed command would force-push a protected branch on the non-graphite
-# backends. `fj ss` translates to `git push --force-with-lease` (git) / `but push
-# all` (but); on master/main that rewrites a protected branch, which the global
-# rules forbid and which `ss` ("submit") does not advertise. Graphite manages its
-# own stack branches, so the `gt` backend is left alone. Pure: the caller passes
-# the current branch.
+# Preserve the protected-branch guard for `fj ss`, which translates to
+# `git push --force-with-lease` (git) / `but push all` (but).
+# Pure: the caller passes the current branch.
 export def protected-push-blocked [
   raw: record<tool: string, args: list<string>>
   backend: string
   current_branch: string
 ]: nothing -> bool {
   let verb = ($raw.args | first | default "")
-  ($raw.tool == "gt") and ($verb == "ss") and ($backend in ["git" "but"]) and ($current_branch in ["master" "main"])
+  ($raw.tool == "stack") and ($verb == "ss") and ($backend in ["git" "but"]) and ($current_branch in ["master" "main"])
 }
 
 # Encode an absolute path the way Claude Code names its per-directory

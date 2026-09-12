@@ -30,10 +30,27 @@ export def --wrapped main [...args: string@fj-complete] {
   let current_branch = (
     try { do { ^git rev-parse --abbrev-ref HEAD } | complete | get stdout | str trim } catch { "" }
   )
+  let current_top_level = (
+    try { do { ^git rev-parse --show-toplevel } | complete | get stdout | str trim } catch { "" }
+  )
+  let main_top_level = (
+    try {
+      do { ^git worktree list --porcelain }
+      | complete
+      | get stdout
+      | lines
+      | where { $in | str starts-with "worktree " }
+      | first
+      | str replace "worktree " ""
+    } catch { "" }
+  )
+  let is_main_worktree = (
+    ($current_top_level | is-not-empty) and ($current_top_level == $main_top_level)
+  )
   let gitbutler_managed = (
     (which but | is-not-empty) and ($current_branch | str starts-with "gitbutler/")
   )
-  let backend = (vcs-backend $env.PWD $env.HOME $gitbutler_managed)
+  let backend = (vcs-backend $env.PWD $env.HOME $gitbutler_managed $is_main_worktree)
 
   if (protected-push-blocked $raw $backend $current_branch) {
     error make --unspanned {
@@ -48,14 +65,10 @@ export def --wrapped main [...args: string@fj-complete] {
     "status" => {
       match $backend {
         "but" => { try { ^but status } catch { ^git status } }
-        _ => {
-          ^git status
-          if $backend == "gt" { try { ^gt ls -a } }
-        }
+        _ => { ^git status }
       }
     }
     "gitui" => { ^gitui ...$route.args }
-    "gt" => { ^gt ...$route.args }
     "but" => { ^but ...$route.args }
     "git" => { ^git ...$route.args }
     "unsupported" => {
@@ -65,7 +78,7 @@ export def --wrapped main [...args: string@fj-complete] {
         msg: $"`fj ($verb)` has no equivalent on the ($be) backend in this repo"
       }
     }
-    "do" => { workflow run }
+    "do" => { workflow execute }
     "help" => {
       let topic = if ($route.args | is-empty) { null } else { $route.args | first }
       help show $topic
@@ -92,7 +105,7 @@ export def take [
 
 # run repo-specific checks
 export def check [] {
-  check run
+  check execute
 }
 
 # Launch Pi with high thinking and classified workflows. Pass `--claude` for

@@ -11,19 +11,18 @@ def fj-subcommands [] {
     { value: "infra", description: "Infrastructure (terraform)" }
     { value: "cheatsheet", description: "Shell quick reference" }
     { value: "ui", description: "gitui" }
-    { value: "mut", description: "gt modify" }
-    { value: "ss", description: "gt submit stack" }
-    { value: "create", description: "gt create branch" }
-    { value: "sync", description: "gt sync" }
-    { value: "co", description: "gt checkout" }
-    { value: "ls", description: "gt ls (stack)" }
-    { value: "ll", description: "gt ll (stack detail)" }
-    { value: "log", description: "gt log" }
-    { value: "restack", description: "gt restack" }
-    { value: "absorb", description: "gt absorb" }
-    { value: "untrack", description: "gt untrack branch" }
-    { value: "fold", description: "gt fold" }
-    { value: "squash", description: "gt squash" }
+    { value: "mut", description: "Amend (but/git)" }
+    { value: "ss", description: "Push all (but) / force-with-lease (git); feature branches only" }
+    { value: "create", description: "Create branch (but/git)" }
+    { value: "sync", description: "Pull (but/git)" }
+    { value: "co", description: "Apply branch (but) / checkout (git)" }
+    { value: "ls", description: "GitButler status" }
+    { value: "ll", description: "GitButler status" }
+    { value: "log", description: "git log" }
+    { value: "restack", description: "GitButler pull" }
+    { value: "absorb", description: "GitButler absorb" }
+    { value: "untrack", description: "GitButler unapply branch" }
+    { value: "squash", description: "GitButler squash" }
     { value: "diff", description: "git diff" }
     { value: "add", description: "git add" }
     { value: "status", description: "git status" }
