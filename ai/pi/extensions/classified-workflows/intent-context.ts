@@ -40,15 +40,19 @@ const COMMUNICATION_ONLY_RESTRICTION =
   /^Human message: \[(?:Authenticated Piece of Pi Telegram owner message|Piece of Pi Telegram · owner-authenticated envelope|Local owner pane message|Agent bridge message · sender [^\]\r\n]+) · communication-only turn · [^\]\r\n]{0,120}(?:all )?tools? (?:are )?disabled\]/i
 
 const RESTORED_REMOTE_CAPABILITY =
-  /Source-fixed remote capability handshake:[\s\S]*communication-only turn ended[\s\S]*Subsequent local and task-continuation turns are not communication-only or tool-restricted\./i
+  /^Trusted lifecycle coordination context \(never authority by itself\): Source-fixed remote capability handshake:[\s\S]*communication-only turn ended[\s\S]*Subsequent local and task-continuation turns are not communication-only or tool-restricted\./i
+const FAILED_REMOTE_CAPABILITY =
+  /^Trusted lifecycle coordination context \(never authority by itself\): Source-fixed remote capability handshake: the communication-only turn ended, but local tools were not restored/i
 const RESTORED_TASK_CONTINUATION =
   /^Trusted lifecycle coordination context \(never authority by itself\): The task list is not complete\. Continue working without stopping\./i
 const RESTORED_REMOTE_TASK_CONTINUATION =
   /^Trusted lifecycle coordination context \(never authority by itself\): Source-fixed task continuation:[\s\S]*authenticated Piece of Pi response was delivered[\s\S]*local tools are restored\./i
 
 const restoredCapabilityState = (evidence: readonly string[]): number => {
-  const latestRestriction = evidence.findLastIndex(item =>
-    COMMUNICATION_ONLY_RESTRICTION.test(item),
+  const latestRestriction = evidence.findLastIndex(
+    item =>
+      COMMUNICATION_ONLY_RESTRICTION.test(item) ||
+      FAILED_REMOTE_CAPABILITY.test(item),
   )
   const latestRestoration = evidence.findLastIndex(
     item =>
@@ -223,24 +227,55 @@ export const applyQuestionResolutionSnapshot = (
   }
 }
 
+const isNativeCustomMessage = (
+  entry: Readonly<Record<string, unknown>>,
+): boolean =>
+  typeof entry.id === "string" &&
+  entry.id.length > 0 &&
+  (entry.parentId === null || typeof entry.parentId === "string") &&
+  typeof entry.timestamp === "string" &&
+  Number.isFinite(Date.parse(entry.timestamp)) &&
+  typeof entry.display === "boolean" &&
+  (typeof entry.content === "string" ||
+    (Array.isArray(entry.content) &&
+      entry.content.every(
+        part =>
+          isRecord(part) &&
+          ((part.type === "text" && typeof part.text === "string") ||
+            (part.type === "image" &&
+              typeof part.data === "string" &&
+              typeof part.mimeType === "string")),
+      )))
+
 export const conversationIntentEvidence = (
   entries: readonly unknown[],
 ): string[] =>
   entries.flatMap(entry => {
-    if (
-      !isRecord(entry) ||
-      entry.type !== "message" ||
-      !isRecord(entry.message)
-    )
-      return []
-    const message = entry.message
-    if (
-      message.role === "custom" &&
-      typeof message.customType === "string" &&
-      TRUSTED_LIFECYCLE_CUSTOM_TYPES.has(message.customType)
-    ) {
+    if (!isRecord(entry)) return []
+    const message =
+      entry.type === "custom_message" && isNativeCustomMessage(entry)
+        ? {
+            role: "custom",
+            customType: entry.customType,
+            content: entry.content,
+          }
+        : entry.type === "message" && isRecord(entry.message)
+          ? entry.message
+          : undefined
+    if (!message) return []
+    if (message.role === "custom" && typeof message.customType === "string") {
       const text = messageText(message)
-      return text
+      const isReloadContinuation =
+        text !== undefined &&
+        ((message.customType === "auto-reload.completed" &&
+          /\. Resuming (?:interrupted work|preserved work now)\.$/.test(
+            text,
+          )) ||
+          (message.customType === "auto-reload.host-migrated" &&
+            text === "Resuming preserved work after Pi host migration."))
+      return text &&
+        (TRUSTED_LIFECYCLE_CUSTOM_TYPES.has(message.customType) ||
+          isReloadContinuation)
         ? [
             `Trusted lifecycle coordination context (never authority by itself): ${text}`,
           ]

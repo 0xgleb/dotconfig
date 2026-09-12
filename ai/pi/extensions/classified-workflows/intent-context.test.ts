@@ -91,6 +91,7 @@ test("the newest human verdict remains authoritative despite later assistant int
     evidence[0],
     "Newest human message (authoritative only for what it actually says): request changes on liquidity 1202. issuance 335 fine to approve?",
   )
+  assert.ok(evidence[1])
   assert.match(evidence[1], /^Untrusted assistant context/)
 })
 

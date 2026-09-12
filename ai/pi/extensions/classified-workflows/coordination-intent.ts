@@ -1,6 +1,6 @@
 const REGISTRY_MESSAGE_TYPE = "agent-registry.message"
 
-const isRecord: (value: unknown) => value is Record<string, unknown> = value =>
+const isRecord = (value: unknown): value is Record<string, unknown> =>
   typeof value === "object" && value !== null && !Array.isArray(value)
 
 const textContent: (content: unknown) => string | undefined = content => {
