@@ -1,8 +1,8 @@
 ---
 name: audit
 user-invocable: true
-allowed-tools: Bash(git:*), Bash(gh:*), Bash(gt:*), Bash(but:*), Bash(direnv:*), Bash(linear:*), Bash(agy:*), Bash(command:*), Bash(cargo:*), Bash(nix:*), Bash(mkdir:*), Bash(cat:*), Bash(mktemp:*), Bash(rm:*), Bash(test:*), Bash(grep:*), Bash(wc:*), Bash(date:*), Bash(basename:*), Bash(find:*), Read, Write, Edit, Agent, Workflow, AskUserQuestion, Skill
-description: Use to audit a whole codebase (the entire repository by default, or a specified package or path) with the multi-model review panel, then fix the actionable findings and put them up as pull requests using the project's version control or stacking tool (Graphite, GitButler, or plain git). Triggers on requests to audit the repo or a crate or package and open fixes for what it finds. Like review-loop, but scoped to standing code and shipping the fixes as PRs.
+allowed-tools: Bash(git:*), Bash(gh:*), Bash(but:*), Bash(direnv:*), Bash(agy:*), Bash(command:*), Bash(cargo:*), Bash(nix:*), Bash(mkdir:*), Bash(cat:*), Bash(mktemp:*), Bash(rm:*), Bash(test:*), Bash(grep:*), Bash(wc:*), Bash(date:*), Bash(basename:*), Bash(find:*), Read, Write, Edit, Agent, Workflow, AskUserQuestion, Skill
+description: Use to audit a whole codebase (the entire repository by default, or a specified package or path) with the multi-model review panel, then fix the actionable findings and put them up as pull requests using the project's version control or stacking tool (GitButler or plain git). Triggers on requests to audit the repo or a crate or package and open fixes for what it finds. Like review-loop, but scoped to standing code and shipping the fixes as PRs.
 argument-hint: [package-or-path]
 ---
 
@@ -47,8 +47,7 @@ and require a clean tree.
 ```bash
 git_common_dir=$(git -C "$repo_root" rev-parse --path-format=absolute --git-common-dir)
 main_root=$(git -C "$repo_root" worktree list --porcelain | sed -n 's/^worktree //p' | head -n1)
-if [ -f "$git_common_dir/.graphite_repo_config" ]; then tool=graphite
-elif [ "$repo_root" != "$main_root" ]; then tool=git
+if [ "$repo_root" != "$main_root" ]; then tool=git
 elif [ -d "$git_common_dir/gitbutler" ]; then tool=gitbutler
 else tool=git
 fi
@@ -58,7 +57,7 @@ start_branch=$(git -C "$repo_root" rev-parse --abbrev-ref HEAD)   # return here 
 ```
 
 If the tree is dirty, stop and tell the user (uncommitted work would leak into
-the fix branches). Graphite remains valid in linked worktrees. GitButler is
+the fix branches). GitButler is
 main-worktree-only; every linked, isolated, or scratch worktree uses plain Git
 without probing `but`. In a verified GitButler main worktree, confirm workspace
 mode (`but status` ok) as `/review-sweep` does.
@@ -178,8 +177,7 @@ issues instead, or stop. Do not create PRs until the user picks.
 
 For each confirmed cluster (return to `trunk`/start between clusters):
 
-1. **Branch off trunk.** Graphite: `gt create <name> -m "<msg>"` from trunk (via
-   the `graphite` skill). GitButler: create a new virtual branch. Plain git:
+1. **Branch off trunk.** GitButler: create a new virtual branch. Plain Git:
    `git checkout "$trunk"` then `git checkout -b <name>`.
 2. **Apply the cluster's fixes** with `/review-loop`'s fix discipline: read the
    source, re-verify each finding against current code, apply a surgical fix, add
@@ -190,8 +188,6 @@ For each confirmed cluster (return to `trunk`/start between clusters):
    none) until green. Never open a PR whose fixes do not compile or fail the
    project check.
 4. **Commit and open a DRAFT PR, assigned to you.** Commit the cluster. Then:
-   - Graphite: `gt submit` for this branch (draft — never `--publish`; confirm
-     draft behavior with `gt submit --help`).
    - GitButler: `but push` the branch, then `gh pr create --draft`.
    - Plain git: `git push -u origin <name>`, then `gh pr create --draft`.
    Then `gh pr edit <number> --add-assignee @me` (PRs default to no assignee).
@@ -204,8 +200,8 @@ draft to ready, never `--publish`, never merge, never override branch protection
 
 ## 9. Return and summarize
 
-Return to `start_branch` (Graphite/git: `git checkout`/`gt checkout`; GitButler:
-nothing to restore). Print the summary:
+Return to `start_branch` (plain Git: `git checkout`; GitButler: nothing to
+restore). Print the summary:
 
 ```
 ━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━
@@ -218,10 +214,9 @@ Deferred (not fixed): 6 findings — say the word to file them as issues.
 Full report: <path to review.md>
 ```
 
-For deferred findings the user wants filed: Linear for st0x / rainlanguage
-(invoke the `linear` skill, one issue per finding, draft shown and confirmed
-first), GitHub issues elsewhere (`gh issue create`, problem-only per the
-issue-writing rule). Always confirm drafts before creating.
+For deferred findings the user wants filed, use GitHub issues (`gh issue
+create`), one issue per finding with a problem-only description. Show each
+exact draft and obtain confirmation before creating it.
 
 ## Hard rules
 
@@ -244,7 +239,7 @@ issue-writing rule). Always confirm drafts before creating.
    never hand-roll the fan-out. External CLIs run read-only (review-core step 4):
    agy `--sandbox` and never `--dangerously-skip-permissions`.
 8. **Filing deferred findings is gated**: show drafts, confirm, then create.
-   Linear for st0x / rainlanguage, GitHub issues elsewhere; problem-only.
+   Use GitHub issues with problem-only descriptions.
 9. Never silently modify `.gitignore` — ask before adding `.tmp/` if missing.
 
 ## Failure modes
