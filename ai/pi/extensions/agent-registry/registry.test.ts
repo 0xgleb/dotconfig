@@ -1,7 +1,8 @@
 import assert from "node:assert/strict"
 import { spawn } from "node:child_process"
-import { existsSync } from "node:fs"
+import { existsSync, readFileSync } from "node:fs"
 import { mkdtemp, rm, writeFile } from "node:fs/promises"
+import { stripTypeScriptTypes } from "node:module"
 import { tmpdir } from "node:os"
 import { join } from "node:path"
 import test from "node:test"
@@ -25,6 +26,8 @@ import {
 } from "./registry.ts"
 import { runtimeAgentId } from "./runtime-identity.ts"
 import type { AgentTokenUsage } from "./usage.ts"
+import { decodeTodoState } from "../todo/state.ts"
+import { boundedRegistryRequestPreview } from "./presentation.ts"
 
 const withStores: (
   run: (
@@ -880,6 +883,117 @@ test("administrative clear does not preserve lookalike path prefixes", async () 
   })
 })
 
+const activityProjection = (text: string): readonly AgentActivity[] => {
+  const source = readFileSync(new URL("./index.ts", import.meta.url), "utf8")
+  const start = source.indexOf("  const activities =")
+  const end = source.indexOf("  const store = makeSqliteRegistryStore", start)
+  assert.ok(start >= 0 && end > start, "actual activity producer must be found")
+  const create = new Function(
+    "Option",
+    "decodeTodoState",
+    "boundedRegistryRequestPreview",
+    `${stripTypeScriptTypes(source.slice(start, end))}\nreturn activities`,
+  )
+  const project: (context: unknown) => readonly AgentActivity[] = create(
+    Option,
+    decodeTodoState,
+    boundedRegistryRequestPreview,
+  )
+  const state = Object.freeze({
+    nextId: 2,
+    todos: Object.freeze([Object.freeze({ id: 1, status: "in_review", text })]),
+  })
+  const result = project({
+    sessionManager: {
+      getBranch: () => [
+        { type: "custom", customType: "todo.state", data: state },
+      ],
+    },
+  })
+  assert.equal(
+    state.todos[0]?.text,
+    text,
+    "projection must preserve the full todo",
+  )
+  return result
+}
+
+test("valid todo activity summaries cannot prevent presence and lease renewal", async () => {
+  for (const text of [
+    "Prepare verified changes ".repeat(30),
+    "Review\n  two\trows",
+    "x".repeat(508) + "😀" + "tail".repeat(60),
+  ]) {
+    await withStores(async store => {
+      const identity = agent("agent-a")
+      const claimed = await Effect.runPromise(
+        store.claim({
+          agent: identity,
+          project: "/workspace/project",
+          role: "operator",
+          mode: "operational",
+          policyDigest: "p1",
+          now: 1_000,
+          ttlMs: 10_000,
+        }),
+      )
+      assert.equal(claimed.outcome, "claimed")
+      const activities = activityProjection(text)
+      const presence = await Effect.runPromise(
+        store.heartbeatAgent({
+          agent: identity,
+          cwd: "/workspace/project",
+          label: "activity regression",
+          usage,
+          activities,
+          now: 9_000,
+          ttlMs: 10_000,
+        }),
+      )
+      await Effect.runPromise(
+        store.heartbeat({
+          leaseId: claimed.lease.id,
+          agentId: identity.id,
+          policyDigest: "p1",
+          now: 9_000,
+          ttlMs: 10_000,
+        }),
+      )
+      const displayed = presence.activities?.[0]?.text
+      assert.ok(typeof displayed === "string")
+      assert.ok(displayed.length > 0 && displayed.length <= 512)
+      assert.equal(Buffer.from(displayed).toString("utf8"), displayed)
+      if (text.length > 512) assert.ok(displayed.endsWith("..."))
+      else assert.equal(displayed, "Review two rows")
+      const snapshot = await Effect.runPromise(store.snapshot(11_001))
+      assert.equal(snapshot.agents?.length, 1)
+      assert.equal(snapshot.leases[0]?.id, claimed.lease.id)
+      assert.equal(snapshot.leases[0]?.status, "active")
+    })
+  }
+})
+
+test("activity projection does not weaken the store text bound", async () => {
+  await withStores(async store => {
+    await assert.rejects(
+      Effect.runPromise(
+        store.heartbeatAgent({
+          agent: agent("agent-a"),
+          cwd: "/workspace/project",
+          label: "invalid activity",
+          usage,
+          activities: [
+            { todoId: 1, status: "in_review", text: "x".repeat(513) },
+          ],
+          now: 1_000,
+          ttlMs: 10_000,
+        }),
+      ),
+      /agent activity text must contain 1-512 safe characters/,
+    )
+  })
+})
+
 test("every Pi session publishes ephemeral fleet presence without claiming a role", async () => {
   await withStores(async store => {
     const presence = await Effect.runPromise(
@@ -983,6 +1097,7 @@ test("two live processes resumed from one session keep distinct presence and mig
     await heartbeat({ id: firstRuntimeId, pid: firstLegacy.pid }, 1_006)
 
     const snapshot = await Effect.runPromise(store.snapshot(1_007))
+    assert.ok(snapshot.agents)
     assert.deepEqual(
       snapshot.agents.map(({ identity }) => identity.id).sort(),
       [firstRuntimeId, secondRuntimeId].sort(),
@@ -1305,6 +1420,7 @@ test("dot-quoted SQL JSONPath keys remain relayable while credential file paths 
         now: 1_030,
       }),
     )
+    assert.ok(completed.status === "completed")
     assert.equal(completed.summary, diagnostic)
   })
 })

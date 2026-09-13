@@ -11,9 +11,9 @@ const compact: (text: string, limit?: number) => string = (
   limit = 120,
 ) => {
   const singleLine = text.replace(/\s+/g, " ").trim()
-  return singleLine.length <= limit
-    ? singleLine
-    : `${singleLine.slice(0, limit - 3)}...`
+  if (singleLine.length <= limit) return singleLine
+  const prefix = singleLine.slice(0, limit - 3).replace(/[\uD800-\uDBFF]$/u, "")
+  return `${prefix}...`
 }
 
 export const boundedRegistryRequestPreview = (

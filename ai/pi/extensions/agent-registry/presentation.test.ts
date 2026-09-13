@@ -19,6 +19,14 @@ import {
   type RegistrySnapshot,
 } from "./registry.ts"
 
+const emptyUsage = {
+  input: 0,
+  output: 0,
+  cacheRead: 0,
+  cacheWrite: 0,
+  totalTokens: 0,
+}
+
 const snapshot: RegistrySnapshot = {
   version: 1,
   agents: [
@@ -34,6 +42,7 @@ const snapshot: RegistrySnapshot = {
       },
       cwd: "/Users/example/.config",
       label: "dotconfig",
+      usage: emptyUsage,
       heartbeatAt: 60_000,
       expiresAt: 121_000,
     },
@@ -48,6 +57,7 @@ const snapshot: RegistrySnapshot = {
       },
       cwd: "/Users/example/code/st0x/st0x.rest.api",
       label: "st0x PR reviewer",
+      usage: emptyUsage,
       heartbeatAt: 60_000,
       expiresAt: 121_000,
     },
@@ -224,7 +234,9 @@ test("delivery state distinguishes persisted, received, and explicitly acknowled
 })
 
 test("request detail exposes full bounded coordination text with source identity", () => {
-  const text = registryRequestDetailText(snapshot.requests[0])
+  const request = snapshot.requests[0]
+  assert.ok(request)
+  const text = registryRequestDetailText(request)
   assert.match(text, /Request request-12345678/)
   assert.match(text, /Source agent: st0x PR reviewer.*st0x\.rest\.api/)
   assert.match(text, /Priority: normal/)
@@ -258,8 +270,9 @@ test("request detail exposes bounded terminal outcomes as factual evidence", () 
   const completed = registryRequestDetailText({
     ...request,
     status: "completed",
+    agentId: "agent-a",
+    leaseId: "lease-1",
     summary: "A",
-    completedAt: 3_000,
     updatedAt: 3_000,
   })
   assert.match(
@@ -269,9 +282,10 @@ test("request detail exposes bounded terminal outcomes as factual evidence", () 
   const failed = registryRequestDetailText({
     ...request,
     status: "failed",
+    agentId: "agent-a",
+    leaseId: "lease-1",
     failure: "blocked",
     diagnostic: "Awaiting exact evidence",
-    completedAt: 3_000,
     updatedAt: 3_000,
   })
   assert.match(
