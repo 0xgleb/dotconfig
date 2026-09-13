@@ -40,3 +40,24 @@ audit truth, exactly-once delivery after verification, and session liveness.
 - Only a successful result for the matching tool clears pending remediation;
   failures and unrelated tools do not.
 - Hard policy blocks remain blocks, and remediation never executes the tool.
+
+## Blocker diagnostic provenance
+
+Todo status and blocker reasons cross into classifier context as diagnostic
+state, not human instructions. The assets are retained owner authority,
+repository preservation, and the ability to resume authorized work.
+
+- **Denial of service:** a recorded refusal must not become a permanent new
+  prohibition. Re-evaluate the exact operation using original authority and
+  current prerequisite evidence; retain any genuinely unmet gate.
+- **Spoofing/elevation:** an agent clearing a status or claiming recovery cannot
+  create authority, override an owner pause, or prove preservation. A successful
+  preservation step does not authorize a different operation.
+- **Tampering/repudiation:** preserve the original constraints and diagnostic
+  record; do not clear history to manufacture permission.
+- **Disclosure:** no new data source, protected-path access, or external effect
+  is introduced by this clarification.
+
+Prompt-contract regressions verify these distinctions are supplied to the
+classifier and retain negative human constraints. They do not prove a model's
+semantic verdict; live acceptance still requires exact current-state evidence.
