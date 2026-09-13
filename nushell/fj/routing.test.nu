@@ -130,12 +130,12 @@ def --wrapped fixture-git [...args: string] {
 
 def "test full fj dispatch respects real main and linked worktrees" [] {
   let module_dir = ($env.CURRENT_FILE | path dirname)
-  let root = ($module_dir | path dirname | path dirname | path join .tmp fj-routing-integration)
+  let container = ($module_dir | path dirname | path dirname | path join .tmp fj-routing-integration)
+  mkdir $container
+  let root = (mktemp --directory --tmpdir-path $container run.XXXXXXXXXX)
   let main_dir = ($root | path join main)
   let bin_dir = ($root | path join bin)
   let linked_dir = ($main_dir | path join .tmp worktrees secondary)
-  assert (not ($main_dir | path exists)) "fixture main already exists; preserve it"
-  assert (not ($bin_dir | path exists)) "fixture bin already exists; preserve it"
   let outcome = (try {
     mkdir $main_dir $bin_dir
     let spy = ($bin_dir | path join but)
@@ -173,11 +173,21 @@ def "test full fj dispatch respects real main and linked worktrees" [] {
     {ok: true}
   } catch {|err| {ok: false, message: $err.msg}})
   # The fixture repository contains its linked slot and its registration; none
-  # is registered in the source repository. Dispose both success/failure paths.
-  for path in [$main_dir $bin_dir] {
-    if ($path | path exists) { rm -r $path }
-  }
+  # is registered in the source repository. Dispose this invocation's root on
+  # success/failure; never remove the shared container or another run's files.
+  rm -r $root
   if not $outcome.ok { error make {msg: $outcome.message} }
+}
+
+def "test topology fixtures support concurrent runs" [] {
+  let results = (1..2 | par-each --threads 2 { |_|
+    try {
+      test full fj dispatch respects real main and linked worktrees
+      {ok: true, message: ""}
+    } catch {|err| {ok: false, message: $err.msg}}
+  })
+  assert equal ($results | length) 2
+  for result in $results { assert $result.ok $result.message }
 }
 
 # --- mut: stack modify ---
