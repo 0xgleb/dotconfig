@@ -8,8 +8,9 @@ import {
   rmSync,
   symlinkSync,
 } from "node:fs"
+import { stripTypeScriptTypes } from "node:module"
 import { tmpdir } from "node:os"
-import { join } from "node:path"
+import { join, resolve } from "node:path"
 import test from "node:test"
 import {
   ARTIFACT_PROVENANCE_ENTRY,
@@ -28,6 +29,66 @@ const extensionSource = readFileSync(
   new URL("./index.ts", import.meta.url),
   "utf8",
 )
+
+test("artifact forgetting accepts an absent signal and preserves explicit cancellation", async () => {
+  const start = extensionSource.indexOf(
+    '  pi.registerTool({\n    name: "artifact_provenance",',
+  )
+  const end = extensionSource.indexOf(
+    '  pi.registerTool({\n    name: "workflow_audit",',
+    start,
+  )
+  assert.ok(start >= 0 && end > start)
+  const registration = stripTypeScriptTypes(extensionSource.slice(start, end), {
+    mode: "strip",
+  })
+  const path = "/workspace/project/.tmp/report.json"
+  const aborted = new AbortController()
+  aborted.abort()
+  for (const signal of [undefined, aborted.signal]) {
+    const entries: unknown[] = []
+    type Execute = (
+      id: string,
+      request: { action: "forget"; path: string },
+      signal: AbortSignal | undefined,
+      update: undefined,
+      ctx: { cwd: string },
+    ) => Promise<{ details: { outcome: string } }>
+    const pi = {
+      registerTool: (definition: { execute: Execute }) => definition.execute,
+      appendEntry: (_type: string, state: unknown) => {
+        entries.push(state)
+      },
+    }
+    const execute: Execute = new Function(
+      "pi",
+      "ArtifactProvenanceParameters",
+      "artifactPaths",
+      "artifactProvenance",
+      "forgetArtifact",
+      "resolve",
+      "ARTIFACT_PROVENANCE_ENTRY",
+      `return ${registration}`,
+    )(
+      pi,
+      {},
+      artifactPaths,
+      recordArtifact(emptyArtifactProvenanceState, { path, recordedAt: 1 }),
+      forgetArtifact,
+      resolve,
+      ARTIFACT_PROVENANCE_ENTRY,
+    )
+    const result = await execute(
+      "test",
+      { action: "forget", path },
+      signal,
+      undefined,
+      { cwd: "/workspace/project" },
+    )
+    assert.equal(result.details.outcome, signal ? "cancelled" : "forgotten")
+    assert.equal(entries.length, signal ? 0 : 1)
+  }
+})
 
 test("artifact provenance accepts only canonical project scratch children", () => {
   const cwd = "/workspace/project"
@@ -228,11 +289,11 @@ test("artifact tool checks cancellation after async queue admission and persists
   )
   assert.match(
     artifactTool,
-    /withFileMutationQueue[\s\S]*if \(signal\.aborted\) return cancelledResult\(\)[\s\S]*createArtifactDirectory/,
+    /withFileMutationQueue[\s\S]*if \(signal\?\.aborted\) return cancelledResult\(\)[\s\S]*createArtifactDirectory/,
   )
   assert.match(
     artifactTool,
-    /if \(signal\.aborted\) return cancelledResult\(\)[\s\S]*validateExistingArtifact[\s\S]*pi\.appendEntry/,
+    /if \(signal\?\.aborted\) return cancelledResult\(\)[\s\S]*validateExistingArtifact[\s\S]*pi\.appendEntry/,
   )
   assert.doesNotMatch(artifactTool, /Effect\.runPromise/)
 })

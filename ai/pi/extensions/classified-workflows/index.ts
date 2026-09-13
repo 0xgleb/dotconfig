@@ -7,6 +7,7 @@ import type { AgentToolResult } from "@earendil-works/pi-agent-core"
 import {
   withFileMutationQueue,
   type ExtensionAPI,
+  type ExtensionCommandContext,
   type ExtensionContext,
   type Theme,
   type ToolCallEvent,
@@ -259,18 +260,13 @@ import {
   AUTO_RELOAD_ACTIVITY_REQUEST_EVENT,
   AUTO_RELOAD_PREEMPT_EVENT,
   MANUAL_RELOAD_REQUEST_EVENT,
-  type AutoReloadActivityReporter,
-  type AutoReloadPreemptRequest,
 } from "../shared/reload-events.ts"
 import {
   CONTINUATION_PAUSE_ENTRY,
   latestContinuationPause,
   wasRunAborted,
 } from "../shared/continuation-pause.ts"
-import {
-  FOREGROUND_WORKFLOW_WAIT_PROBE_EVENT,
-  type ForegroundWorkflowWaitProbe,
-} from "../shared/foreground-wait.ts"
+import { FOREGROUND_WORKFLOW_WAIT_PROBE_EVENT } from "../shared/foreground-wait.ts"
 import {
   ACTIVITY_PHASE_EVENT,
   type ClassifierActivityEvent,
@@ -279,16 +275,17 @@ import {
   QUESTION_RESOLVED_EVENT,
   QUESTION_STATE_EVENT,
   type UserQuestionResolution,
+  type UserQuestionSnapshot,
   type UserQuestionStateSnapshot,
 } from "../shared/question-events.ts"
 import {
   MANAGED_OPERATIONAL_ROLE_RESUMED_EVENT,
   REGISTRY_INTENT_REQUEST_EVENT,
-  type ManagedOperationalRoleResumed,
   type RegistryIntentReporter,
   type RegistryIntentRequest,
 } from "../shared/registry-intent-events.ts"
 import { registerRuntimeVersion } from "../shared/runtime-version.ts"
+import { AGENTOPS_INCIDENT_EVENT } from "../shared/agentops-events.ts"
 import { remoteBridgeDatabasePath } from "../remote-control/paths.ts"
 import { RemoteBridgeError } from "../remote-control/protocol.ts"
 import { makeRemoteBridgeStore } from "../remote-control/sqlite-store.ts"
@@ -404,7 +401,7 @@ async function runPi(
       cwd,
       env,
       shell: false,
-      stdio: AGENT_PROCESS_STDIO,
+      stdio: [...AGENT_PROCESS_STDIO],
     })
     let stdout = ""
     let stderr = ""
@@ -445,8 +442,12 @@ async function runPi(
               : undefined))
       resolve({
         exitCode,
-        ...summary,
-        ...(errorMessage ? { errorMessage } : {}),
+        output: summary.output,
+        usageTokens: summary.usageTokens,
+        ...(summary.stopReason !== undefined
+          ? { stopReason: summary.stopReason }
+          : {}),
+        ...(errorMessage !== undefined ? { errorMessage } : {}),
         ...(diagnostic ? { diagnostic } : {}),
         ...(budgetExceeded ? { budgetExceeded: true } : {}),
       })
@@ -1029,7 +1030,7 @@ const WorkflowParameters = Type.Object({
 })
 
 export default function classifiedWorkflows(pi: ExtensionAPI): void {
-  registerRuntimeVersion(pi, "classified-workflows", "2026.09.13.1")
+  registerRuntimeVersion(pi, "classified-workflows", "2026.09.13.2")
   const childTokenLimitResult = Effect.runSync(
     Effect.either(
       workflowChildTokenLimit(process.env[WORKFLOW_CHILD_TOKEN_LIMIT_ENV]),
@@ -1840,7 +1841,7 @@ export default function classifiedWorkflows(pi: ExtensionAPI): void {
   pi.registerCommand("workflows", {
     description:
       "Show, cancel, fetch, or clear background classified workflows",
-    handler(args, ctx) {
+    async handler(args, ctx) {
       latestCtx = ctx
       const [action = "status", id] = args.trim().split(/\s+/, 2)
 
@@ -1923,7 +1924,10 @@ export default function classifiedWorkflows(pi: ExtensionAPI): void {
     },
   })
 
-  const handleGoalCommand = async (args: string, ctx: ExtensionContext) => {
+  const handleGoalCommand = async (
+    args: string,
+    ctx: ExtensionCommandContext,
+  ) => {
     const parsed = await Effect.runPromise(
       Effect.either(parseGoalCommand(args)),
     )
@@ -2025,7 +2029,7 @@ export default function classifiedWorkflows(pi: ExtensionAPI): void {
     async execute(_toolCallId, _params, _signal, _onUpdate, ctx) {
       const requestId = randomUUID()
       armManualReload(ctx)
-      pi.events.emit(MANUAL_RELOAD_REQUEST_EVENT)
+      pi.events.emit(MANUAL_RELOAD_REQUEST_EVENT, undefined)
       pi.sendUserMessage(`/reload-runtime tool:${requestId}`, {
         deliverAs: "followUp",
         expandPromptTemplates: true,
@@ -2191,12 +2195,13 @@ export default function classifiedWorkflows(pi: ExtensionAPI): void {
     },
   })
 
-  pi.events.on(
-    FOREGROUND_WORKFLOW_WAIT_PROBE_EVENT,
-    (probe: ForegroundWorkflowWaitProbe) => {
-      probe.waiting = detachableForegroundWorkflow !== undefined
-    },
-  )
+  pi.events.on(FOREGROUND_WORKFLOW_WAIT_PROBE_EVENT, probe => {
+    if (!isRecord(probe) || typeof probe.waiting !== "boolean") {
+      rejectWorkflowEvent(FOREGROUND_WORKFLOW_WAIT_PROBE_EVENT)
+      return
+    }
+    probe.waiting = detachableForegroundWorkflow !== undefined
+  })
 
   pi.on("input", event => {
     if (
@@ -2207,6 +2212,7 @@ export default function classifiedWorkflows(pi: ExtensionAPI): void {
       loopWakePending = false
     const foregroundWorkflow = detachableForegroundWorkflow
     if (
+      event.streamingBehavior === undefined ||
       !shouldDetachForegroundWorkflow(
         event.streamingBehavior,
         event.source,
@@ -2417,38 +2423,36 @@ export default function classifiedWorkflows(pi: ExtensionAPI): void {
     }
   })
 
-  pi.events.on(
-    AUTO_RELOAD_ACTIVITY_REQUEST_EVENT,
-    (report: AutoReloadActivityReporter) => {
-      report(
-        activeForegroundWorkflowControllers.size > 0 ||
-          [...backgroundWorkflows.values()].some(
-            ({ status }) => status === "running",
-          ),
-      )
-    },
-  )
+  pi.events.on(AUTO_RELOAD_ACTIVITY_REQUEST_EVENT, report => {
+    if (typeof report !== "function") {
+      rejectWorkflowEvent(AUTO_RELOAD_ACTIVITY_REQUEST_EVENT)
+      return
+    }
+    report(
+      activeForegroundWorkflowControllers.size > 0 ||
+        [...backgroundWorkflows.values()].some(
+          ({ status }) => status === "running",
+        ),
+    )
+  })
 
-  pi.events.on(
-    AUTO_RELOAD_PREEMPT_EVENT,
-    (_request: AutoReloadPreemptRequest) => {
-      managedReloadPreemptPending = true
-      pi.appendEntry(CAPABILITY_CIRCUIT_ENTRY, capabilityCircuit)
-      pi.appendEntry(REVIEW_DUTY_STATE_ENTRY, reviewDutyState)
-      pi.appendEntry(ARTIFACT_PROVENANCE_ENTRY, artifactProvenance)
-      pi.appendEntry(WORKFLOW_AUDIT_ENTRY, workflowAudits)
-      pi.appendEntry(WORKFLOW_RUNTIME_ENTRY, workflowRuntime)
-      for (const workflow of backgroundWorkflows.values()) {
-        if (workflow.status === "running")
-          workflow.controller.abort(
-            new Error(MANAGED_RELOAD_WORKFLOW_CANCELLATION),
-          )
-      }
-      for (const controller of activeForegroundWorkflowControllers) {
-        controller.abort(new Error(MANAGED_RELOAD_WORKFLOW_CANCELLATION))
-      }
-    },
-  )
+  pi.events.on(AUTO_RELOAD_PREEMPT_EVENT, () => {
+    managedReloadPreemptPending = true
+    pi.appendEntry(CAPABILITY_CIRCUIT_ENTRY, capabilityCircuit)
+    pi.appendEntry(REVIEW_DUTY_STATE_ENTRY, reviewDutyState)
+    pi.appendEntry(ARTIFACT_PROVENANCE_ENTRY, artifactProvenance)
+    pi.appendEntry(WORKFLOW_AUDIT_ENTRY, workflowAudits)
+    pi.appendEntry(WORKFLOW_RUNTIME_ENTRY, workflowRuntime)
+    for (const workflow of backgroundWorkflows.values()) {
+      if (workflow.status === "running")
+        workflow.controller.abort(
+          new Error(MANAGED_RELOAD_WORKFLOW_CANCELLATION),
+        )
+    }
+    for (const controller of activeForegroundWorkflowControllers) {
+      controller.abort(new Error(MANAGED_RELOAD_WORKFLOW_CANCELLATION))
+    }
+  })
 
   pi.on("session_compact", () => {
     pi.appendEntry(CAPABILITY_CIRCUIT_ENTRY, capabilityCircuit)
@@ -2492,41 +2496,102 @@ export default function classifiedWorkflows(pi: ExtensionAPI): void {
     }
   })
 
-  pi.events.on(QUESTION_STATE_EVENT, (snapshot: UserQuestionStateSnapshot) => {
+  const validWorkflowQuestionId = (value: unknown): value is number =>
+    typeof value === "number" && Number.isSafeInteger(value) && value > 0
+
+  const isWorkflowQuestion = (value: unknown): value is UserQuestionSnapshot =>
+    isRecord(value) &&
+    validWorkflowQuestionId(value.id) &&
+    typeof value.question === "string" &&
+    (!("header" in value) || typeof value.header === "string") &&
+    (!("guess" in value) || typeof value.guess === "string") &&
+    (!("options" in value) ||
+      (Array.isArray(value.options) &&
+        value.options.every(
+          option =>
+            isRecord(option) &&
+            typeof option.label === "string" &&
+            (!("description" in option) ||
+              typeof option.description === "string"),
+        ))) &&
+    (value.status === "pending" ||
+      (value.status === "resolved" && typeof value.answer === "string"))
+
+  const isWorkflowQuestionState = (
+    value: unknown,
+  ): value is UserQuestionStateSnapshot =>
+    isRecord(value) &&
+    Array.isArray(value.questions) &&
+    value.questions.every(isWorkflowQuestion)
+
+  const isWorkflowResolution = (
+    value: unknown,
+  ): value is UserQuestionResolution =>
+    isRecord(value) &&
+    validWorkflowQuestionId(value.id) &&
+    typeof value.answer === "string"
+
+  const isWorkflowHandshake = (
+    value: unknown,
+  ): value is RemoteCapabilityHandshake =>
+    isRecord(value) &&
+    (value.status === "restored" ||
+      value.status === "recovered" ||
+      value.status === "failed") &&
+    (value.recoveryAttempts === 0 || value.recoveryAttempts === 1) &&
+    Array.isArray(value.expectedTools) &&
+    value.expectedTools.every(tool => typeof tool === "string") &&
+    Array.isArray(value.activeTools) &&
+    value.activeTools.every(tool => typeof tool === "string")
+
+  const rejectWorkflowEvent = (eventName: string): void => {
+    const error = new WorkflowScriptError({
+      message: `Invalid workflow event payload: ${eventName}`,
+    })
+    pi.events.emit(AGENTOPS_INCIDENT_EVENT, {
+      severity: "error",
+      component: "classified-workflows",
+      operation: "decode internal event",
+      summary: error.message,
+    })
+  }
+
+  pi.events.on(QUESTION_STATE_EVENT, snapshot => {
+    if (!isWorkflowQuestionState(snapshot)) {
+      rejectWorkflowEvent(QUESTION_STATE_EVENT)
+      return
+    }
     questionState = snapshot
   })
 
-  pi.events.on(
-    QUESTION_RESOLVED_EVENT,
-    (resolution: UserQuestionResolution) => {
-      questionState = applyQuestionResolutionSnapshot(questionState, resolution)
-      if (continuationPaused && latestCtx)
-        setContinuationPaused(false, latestCtx)
-    },
-  )
+  pi.events.on(QUESTION_RESOLVED_EVENT, resolution => {
+    if (!isWorkflowResolution(resolution)) {
+      rejectWorkflowEvent(QUESTION_RESOLVED_EVENT)
+      return
+    }
+    questionState = applyQuestionResolutionSnapshot(questionState, resolution)
+    if (continuationPaused && latestCtx) setContinuationPaused(false, latestCtx)
+  })
 
-  pi.events.on(
-    MANAGED_OPERATIONAL_ROLE_RESUMED_EVENT,
-    (_resumed: ManagedOperationalRoleResumed) => {
-      if (continuationPaused && latestCtx)
-        setContinuationPaused(false, latestCtx)
-    },
-  )
+  pi.events.on(MANAGED_OPERATIONAL_ROLE_RESUMED_EVENT, () => {
+    if (continuationPaused && latestCtx) setContinuationPaused(false, latestCtx)
+  })
 
-  pi.events.on(
-    REMOTE_CAPABILITY_HANDSHAKE_EVENT,
-    (handshake: RemoteCapabilityHandshake) => {
-      if (!latestCtx) return
-      skipNextCapabilityOutcome = true
-      const now = Date.now()
-      setCapabilityCircuit(
-        handshake.status === "failed"
-          ? { consecutiveBlockers: 2, open: true, updatedAt: now }
-          : { consecutiveBlockers: 0, open: false, updatedAt: now },
-        latestCtx,
-      )
-    },
-  )
+  pi.events.on(REMOTE_CAPABILITY_HANDSHAKE_EVENT, handshake => {
+    if (!isWorkflowHandshake(handshake)) {
+      rejectWorkflowEvent(REMOTE_CAPABILITY_HANDSHAKE_EVENT)
+      return
+    }
+    if (!latestCtx) return
+    skipNextCapabilityOutcome = true
+    const now = Date.now()
+    setCapabilityCircuit(
+      handshake.status === "failed"
+        ? { consecutiveBlockers: 2, open: true, updatedAt: now }
+        : { consecutiveBlockers: 0, open: false, updatedAt: now },
+      latestCtx,
+    )
+  })
 
   pi.on("agent_start", () => {
     clearTaskContinuationTimer()
@@ -2663,7 +2728,11 @@ export default function classifiedWorkflows(pi: ExtensionAPI): void {
     const resourceBlock = resourcePreflightBlockMessage(resourcePreflight)
     if (resourceBlock) {
       reportHeadlessClassifierBlock(ctx, "action", resourceBlock)
-      return resolveActionDecision({ verdict: "block", reason: resourceBlock })
+      return resolveActionDecision({
+        verdict: "block",
+        reason: resourceBlock,
+        source: "deterministic",
+      })
     }
     const subject = {
       toolName: event.toolName,
@@ -2842,9 +2911,9 @@ export default function classifiedWorkflows(pi: ExtensionAPI): void {
           reason: decision.reason,
           bash: event.input,
           branch: ctx.sessionManager.getBranch(),
-          authenticatedAuthor: isReviewDutySession(dutySessionName)
-            ? "0xgleb"
-            : undefined,
+          ...(isReviewDutySession(dutySessionName)
+            ? { authenticatedAuthor: "0xgleb" }
+            : {}),
         })
       )
         return
@@ -3755,7 +3824,7 @@ export default function classifiedWorkflows(pi: ExtensionAPI): void {
             isError: true,
           }
         }
-        if (signal.aborted) return cancelledResult()
+        if (signal?.aborted) return cancelledResult()
         const nextProvenance = forgetArtifact(artifactProvenance, canonical)
         pi.appendEntry(ARTIFACT_PROVENANCE_ENTRY, nextProvenance)
         artifactProvenance = nextProvenance
@@ -3812,7 +3881,7 @@ export default function classifiedWorkflows(pi: ExtensionAPI): void {
         }
       }
       const validateAndRecordArtifact = () => {
-        if (signal.aborted) return cancelledResult()
+        if (signal?.aborted) return cancelledResult()
         const validation = validateExistingArtifact(
           canonical,
           repositoryRoot,
@@ -3828,7 +3897,7 @@ export default function classifiedWorkflows(pi: ExtensionAPI): void {
             isError: true,
           }
         }
-        if (signal.aborted) return cancelledResult()
+        if (signal?.aborted) return cancelledResult()
         const nextProvenance = recordArtifact(artifactProvenance, {
           path: validation.path,
           recordedAt: Date.now(),
@@ -3858,7 +3927,7 @@ export default function classifiedWorkflows(pi: ExtensionAPI): void {
         return validateAndRecordArtifact()
       }
       return withFileMutationQueue(canonical, async () => {
-        if (signal.aborted) return cancelledResult()
+        if (signal?.aborted) return cancelledResult()
         const creation = createArtifactDirectory(canonical, repositoryRoot)
         if (!creation.ok) {
           return {
@@ -4005,9 +4074,9 @@ export default function classifiedWorkflows(pi: ExtensionAPI): void {
       const workflowController = new AbortController()
       activeForegroundWorkflowControllers.add(workflowController)
       const liveProgress = makeLiveWorkflowProgress(auditLabel)
-      const abortWorkflow = () => workflowController.abort(signal.reason)
-      if (signal.aborted) abortWorkflow()
-      else signal.addEventListener("abort", abortWorkflow, { once: true })
+      const abortWorkflow = () => workflowController.abort(signal?.reason)
+      if (signal?.aborted) abortWorkflow()
+      else signal?.addEventListener("abort", abortWorkflow, { once: true })
       let detachedWorkflow: BackgroundWorkflow | undefined
       const reportProgress = (
         content: string,
@@ -4162,10 +4231,7 @@ export default function classifiedWorkflows(pi: ExtensionAPI): void {
               detachedWorkflow.output ??
               detachedWorkflow.error ??
               "Workflow completed without a result"
-            if (
-              detachedWorkflow.status !== "running" &&
-              message !== MANAGED_RELOAD_WORKFLOW_CANCELLATION
-            ) {
+            if (message !== MANAGED_RELOAD_WORKFLOW_CANCELLATION) {
               finishPersistedWorkflow(
                 auditId,
                 detachedWorkflow.status,
@@ -4246,7 +4312,7 @@ export default function classifiedWorkflows(pi: ExtensionAPI): void {
         })
         return blockedResult(reason)
       } finally {
-        signal.removeEventListener("abort", abortWorkflow)
+        signal?.removeEventListener("abort", abortWorkflow)
         activeForegroundWorkflowControllers.delete(workflowController)
         if (detachableForegroundWorkflow?.id === auditId)
           detachableForegroundWorkflow = undefined

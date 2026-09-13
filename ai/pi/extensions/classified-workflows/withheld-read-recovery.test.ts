@@ -52,13 +52,17 @@ test("alternate GitHub API verification recovers the same withheld PR inventory"
     }),
     true,
   )
-  assert.match(
-    extensionSource,
-    /event\.toolName === "bash"[\s\S]*?independentPrInventoryDisprovesWithheldRetryBlock/,
+  assert.ok(
+    /event\.toolName === "bash"[\s\S]*?independentPrInventoryDisprovesWithheldRetryBlock/.test(
+      extensionSource,
+    ),
+    "Only bash subjects enter the inventory-recovery check",
   )
-  assert.match(
-    extensionSource,
-    /authenticatedAuthor:\s*isReviewDutySession\(dutySessionName\)[\s\S]*?"0xgleb"/,
+  assert.ok(
+    /isReviewDutySession\(dutySessionName\)\s*\?\s*\{ authenticatedAuthor: "0xgleb" \}\s*:\s*\{\}/.test(
+      extensionSource,
+    ),
+    "The owner is supplied only for a dedicated review-duty session; otherwise the field is omitted",
   )
 })
 

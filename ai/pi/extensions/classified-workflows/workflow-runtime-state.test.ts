@@ -83,6 +83,22 @@ test("the latest malformed snapshot fails closed instead of resurrecting an olde
   assert.deepEqual(restored, emptyWorkflowRuntimeState)
 })
 
+test("recovery validates comma-delimited tools before applying its read-only boundary", async () => {
+  const request: AgentRequest = { task: "inspect", tools: "read, grep" }
+  assert.deepEqual(
+    await Effect.runPromise(readOnlyRecoveryRequestEffect(request)),
+    request,
+  )
+  for (const tools of ["read,edit", "bash", "read,browser", "read,"]) {
+    const result = await Effect.runPromise(
+      Effect.either(readOnlyRecoveryRequestEffect({ task: "inspect", tools })),
+    )
+    assert.equal(result._tag, "Left")
+    if (result._tag === "Left")
+      assert.equal(result.left._tag, "WorkflowScriptError")
+  }
+})
+
 test("recovered attempts allow only read-only child tools", () => {
   const implicitReadOnly: AgentRequest = { task: "inspect" }
   const explicitReadOnly: AgentRequest = {

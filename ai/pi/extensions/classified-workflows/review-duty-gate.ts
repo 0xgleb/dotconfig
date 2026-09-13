@@ -244,7 +244,9 @@ export const retryBlockedReviewDuty = (
   state: ReviewDutyState,
   workflowObserved: boolean,
   preExecutionBlockObserved: boolean,
-): ReviewDutyTransition => {
+): ReviewDutyTransition<
+  Extract<ReviewDutyState, { readonly phase: "active" }>
+> => {
   if (state.phase !== "awaiting_report") {
     return {
       ok: false,
@@ -273,7 +275,9 @@ export const recoverCompletedReviewDuty = (
   completedWorkflowStartedAt: number,
   usableCompletedWorkflowObserved: boolean,
   workflowRunning: boolean,
-): ReviewDutyTransition => {
+): ReviewDutyTransition<
+  Extract<ReviewDutyState, { readonly phase: "awaiting_report" }>
+> => {
   if (state.phase !== "active") {
     return {
       ok: false,
@@ -416,7 +420,9 @@ export const retryFailedReviewDuty = (
   workflowRunning: boolean,
   latestWorkflowCancelledByManagedReload = false,
   legacyManagedReloadContinuationMarkerLost = false,
-): ReviewDutyTransition => {
+): ReviewDutyTransition<
+  Extract<ReviewDutyState, { readonly phase: "active" }>
+> => {
   if (state.phase !== "awaiting_report") {
     return {
       ok: false,

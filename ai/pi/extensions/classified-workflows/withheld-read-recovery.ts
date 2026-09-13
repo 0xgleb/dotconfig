@@ -22,7 +22,7 @@ const hasUnquotedShellControl = (command: string): boolean => {
   let quote: "single" | "double" | undefined
   let escaped = false
   for (let index = 0; index < command.length; index += 1) {
-    const character = command[index]
+    const character = command.charAt(index)
     if (character === "\n" || character === "\r") return true
     if (escaped) {
       escaped = false

@@ -163,7 +163,9 @@ export const workflowStructuredResultTableLines = (
   width: number,
 ): string[] => {
   const safeWidth = Math.max(1, Math.floor(width))
-  const rows = Array.isArray(result)
+  const rows: readonly Readonly<Record<string, unknown>>[] = Array.isArray(
+    result,
+  )
     ? result.map(value => (isRecord(value) ? value : { value }))
     : isRecord(result)
       ? Object.entries(result).map(([key, value]) => ({ key, value }))

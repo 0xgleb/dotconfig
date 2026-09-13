@@ -1,14 +1,11 @@
 import assert from "node:assert/strict"
 import { readFileSync } from "node:fs"
 import test from "node:test"
-import { buildClassifierPrompt } from "../pi/extensions/classified-workflows/lifecycle.ts"
+import { buildClassifierPrompt } from "../classified-workflows/lifecycle.ts"
 
 test("managed package omits the retired tracker-specific message transformer", () => {
   const manifest = JSON.parse(
-    readFileSync(
-      new URL("../pi/extensions/package.json", import.meta.url),
-      "utf8",
-    ),
+    readFileSync(new URL("../package.json", import.meta.url), "utf8"),
   )
   const extensions: unknown = manifest.pi?.extensions
   assert.ok(Array.isArray(extensions))

@@ -1,5 +1,6 @@
 import { Effect } from "effect"
 import {
+  normalizeAgentTools,
   WorkflowScriptError,
   type AgentRequest,
   type WorkflowLimits,
@@ -240,15 +241,15 @@ export const recoverableWorkflowRuns = (
 
 export const readOnlyRecoveryRequest = (
   request: AgentRequest,
-): Effect.Effect<AgentRequest, WorkflowScriptError> => {
-  const tools = request.tools ?? ["read", "grep", "find", "ls"]
-  return tools.length === 0 ||
-    tools.some(tool => !READ_ONLY_RECOVERY_TOOLS.has(tool))
-    ? Effect.fail(
-        new WorkflowScriptError({
-          message:
-            "Recovered workflow cannot replay mutation-capable child tools; restart it explicitly after inspecting persisted workflow evidence",
-        }),
-      )
-    : Effect.succeed(request)
-}
+): Effect.Effect<AgentRequest, WorkflowScriptError> =>
+  Effect.flatMap(normalizeAgentTools(request.tools), normalized => {
+    const tools = normalized ?? ["read", "grep", "find", "ls"]
+    return tools.some(tool => !READ_ONLY_RECOVERY_TOOLS.has(tool))
+      ? Effect.fail(
+          new WorkflowScriptError({
+            message:
+              "Recovered workflow cannot replay mutation-capable child tools; restart it explicitly after inspecting persisted workflow evidence",
+          }),
+        )
+      : Effect.succeed(request)
+  })
