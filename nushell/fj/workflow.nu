@@ -29,7 +29,7 @@ export def strip-comments [
     | str trim
 }
 
-export def run [] {
+export def execute [] {
   try {
     let result = (check run-captured)
 

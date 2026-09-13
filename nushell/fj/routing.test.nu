@@ -112,47 +112,125 @@ def "test clanker new selector starts fresh when spread as runtime args" [] {
   assert (not ("--new" in $route.args)) "--new is consumed"
 }
 
-# --- mut: gt modify ---
+def "test full fj module loads and renders help" [] {
+  let module_path = $env.CURRENT_FILE | path dirname | to nuon
+  let command = [$"use ($module_path)" "fj help"] | str join (char newline)
+  let result = (do { ^nu --commands $command } | complete)
+  assert ($result.exit_code == 0) $result.stderr
+  assert ($result.stdout | str contains "fj — unified dev command")
+}
 
-def "test fj mut routes to gt modify" [] {
-  assert equal (fj-route mut) { tool: "gt", args: ["modify"] }
+# Exercise real Git discovery through the full module; But itself is an inert
+# test executable, so a routing failure cannot mutate a GitButler workspace.
+def --wrapped fixture-git [...args: string] {
+  let result = (do { ^git ...$args } | complete)
+  assert equal $result.exit_code 0 $result.stderr
+  $result.stdout
+}
+
+def "test full fj dispatch respects real main and linked worktrees" [] {
+  let module_dir = ($env.CURRENT_FILE | path dirname)
+  let container = ($module_dir | path dirname | path dirname | path join .tmp fj-routing-integration)
+  mkdir $container
+  let root = (mktemp --directory --tmpdir-path $container run.XXXXXXXXXX)
+  let main_dir = ($root | path join main)
+  let bin_dir = ($root | path join bin)
+  let linked_dir = ($main_dir | path join .tmp worktrees secondary)
+  let outcome = (try {
+    mkdir $main_dir $bin_dir
+    let spy = ($bin_dir | path join but)
+    "#!/usr/bin/env nu\ndef main [...args: string] { print 'FJ_TEST_BUT' }\n" | save $spy
+    ^chmod +x $spy
+    assert equal $env.LAST_EXIT_CODE 0
+    do {
+      cd $main_dir
+      fixture-git init --initial-branch=gitbutler/workspace | ignore
+      fixture-git config user.name fj-test | ignore
+      fixture-git config user.email fj-test@example.invalid | ignore
+      fixture-git config status.short "false" | ignore
+      fixture-git config status.branch "true" | ignore
+      fixture-git commit --allow-empty -m fixture | ignore
+      fixture-git worktree add -b gitbutler/linked $linked_dir | ignore
+    }
+    let command = ([$"use ($module_dir | to nuon)" "fj"] | str join (char newline))
+    let main_result = (do {
+      with-env {PATH: ($env.PATH | prepend $bin_dir)} {
+        cd $main_dir
+        ^nu --commands $command
+      }
+    } | complete)
+    assert equal $main_result.exit_code 0 $main_result.stderr
+    assert ($main_result.stdout | str contains "FJ_TEST_BUT")
+    let linked_result = (do {
+      with-env {PATH: ($env.PATH | prepend $bin_dir)} {
+        cd $linked_dir
+        ^nu --commands $command
+      }
+    } | complete)
+    assert equal $linked_result.exit_code 0 $linked_result.stderr
+    assert (not ($linked_result.stdout | str contains "FJ_TEST_BUT"))
+    assert ($linked_result.stdout | str contains "gitbutler/linked")
+    {ok: true}
+  } catch {|err| {ok: false, message: $err.msg}})
+  # The fixture repository contains its linked slot and its registration; none
+  # is registered in the source repository. Dispose this invocation's root on
+  # success/failure; never remove the shared container or another run's files.
+  rm -r $root
+  if not $outcome.ok { error make {msg: $outcome.message} }
+}
+
+def "test topology fixtures support concurrent runs" [] {
+  let results = (1..2 | par-each --threads 2 { |_|
+    try {
+      test full fj dispatch respects real main and linked worktrees
+      {ok: true, message: ""}
+    } catch {|err| {ok: false, message: $err.msg}}
+  })
+  assert equal ($results | length) 2
+  for result in $results { assert $result.ok $result.message }
+}
+
+# --- mut: stack modify ---
+
+def "test fj mut routes to stack modify" [] {
+  assert equal (fj-route mut) { tool: "stack", args: ["modify"] }
 }
 
 def "test fj mut passes flags" [] {
-  assert equal (fj-route ...[mut -a]) { tool: "gt", args: ["modify", "-a"] }
+  assert equal (fj-route ...[mut -a]) { tool: "stack", args: ["modify", "-a"] }
 }
 
-# --- graphite commands ---
+# --- stack-style commands ---
 
-def "test fj ss routes to gt" [] {
-  assert equal (fj-route ss) { tool: "gt", args: ["ss"] }
+def "test fj ss routes to stack" [] {
+  assert equal (fj-route ss) { tool: "stack", args: ["ss"] }
 }
 
-def "test fj create routes to gt" [] {
+def "test fj create routes to stack" [] {
   assert equal (fj-route ...[create my-branch -m msg]) {
-    tool: "gt", args: ["create", "my-branch", "-m", "msg"]
+    tool: "stack", args: ["create", "my-branch", "-m", "msg"]
   }
 }
 
-def "test fj sync routes to gt" [] {
-  assert equal (fj-route sync) { tool: "gt", args: ["sync"] }
+def "test fj sync routes to stack" [] {
+  assert equal (fj-route sync) { tool: "stack", args: ["sync"] }
 }
 
-def "test fj co routes to gt" [] {
-  assert equal (fj-route co) { tool: "gt", args: ["co"] }
+def "test fj co routes to stack" [] {
+  assert equal (fj-route co) { tool: "stack", args: ["co"] }
 }
 
-def "test fj fold routes to gt" [] {
-  assert equal (fj-route fold) { tool: "gt", args: ["fold"] }
+def "test fj fold routes to stack" [] {
+  assert equal (fj-route fold) { tool: "stack", args: ["fold"] }
 }
 
-def "test fj squash routes to gt" [] {
-  assert equal (fj-route squash) { tool: "gt", args: ["squash"] }
+def "test fj squash routes to stack" [] {
+  assert equal (fj-route squash) { tool: "stack", args: ["squash"] }
 }
 
-def "test fj untrack routes to gt" [] {
+def "test fj untrack routes to stack" [] {
   assert equal (fj-route ...[untrack 03-14-nvim_life]) {
-    tool: "gt", args: ["untrack", "03-14-nvim_life"]
+    tool: "stack", args: ["untrack", "03-14-nvim_life"]
   }
 }
 
@@ -214,38 +292,50 @@ def "test fj garbage returns unknown" [] {
 
 # --- vcs backend detection ---
 
-def "test vcs-backend rainlanguage repo is graphite" [] {
-  assert equal (vcs-backend "/home/u/code/rainlanguage/rain.cli" "/home/u" true) "gt"
+def "test vcs-backend organization linked worktree is plain git" [] {
+  assert equal (vcs-backend "/home/u/code/example-org/service/.worktrees/secondary" "/home/u" true false) "git"
 }
 
-def "test vcs-backend st0x repo is graphite even when not gitbutler-managed" [] {
-  assert equal (vcs-backend "/home/u/code/st0x/st0x.liquidity" "/home/u" false) "gt"
+def "test vcs-backend organization unmanaged main worktree is plain git" [] {
+  assert equal (vcs-backend "/home/u/code/example-org/service" "/home/u" false true) "git"
 }
 
-def "test vcs-backend nested subdir of graphite org is graphite" [] {
-  assert equal (vcs-backend "/home/u/code/st0x/st0x.liquidity/dashboard/src" "/home/u" false) "gt"
+def "test vcs-backend nested organization path has no special backend" [] {
+  assert equal (vcs-backend "/home/u/code/example-org/service/dashboard/src" "/home/u" false false) "git"
 }
 
-def "test vcs-backend other repo managed by gitbutler is but" [] {
-  assert equal (vcs-backend "/home/u/code/data-cartel/moneymentum" "/home/u" true) "but"
+def "test vcs-backend managed organization main worktree uses gitbutler" [] {
+  assert equal (vcs-backend "/home/u/code/example-org/service" "/home/u" true true) "but"
+}
+
+def "test vcs-backend other main repo managed by gitbutler is but" [] {
+  assert equal (vcs-backend "/home/u/code/example-team/service" "/home/u" true true) "but"
+}
+
+def "test vcs-backend gitbutler-managed linked worktree is plain git" [] {
+  assert equal (vcs-backend "/home/u/code/example-team/service/.worktrees/secondary" "/home/u" true false) "git"
 }
 
 def "test vcs-backend other repo not gitbutler-managed is git" [] {
-  assert equal (vcs-backend "/home/u/code/data-cartel/moneymentum" "/home/u" false) "git"
+  assert equal (vcs-backend "/home/u/code/example-team/service" "/home/u" false true) "git"
 }
 
 def "test vcs-backend dotconfig not gitbutler-managed is git" [] {
-  assert equal (vcs-backend "/home/u/.config" "/home/u" false) "git"
+  assert equal (vcs-backend "/home/u/.config" "/home/u" false true) "git"
 }
 
-def "test vcs-backend org name outside code dir does not match" [] {
-  assert equal (vcs-backend "/home/u/work/rainlanguage/x" "/home/u" false) "git"
+def "test vcs-backend path outside code dir does not change backend" [] {
+  assert equal (vcs-backend "/home/u/work/example-org/service" "/home/u" false false) "git"
 }
 
 # --- resolve-stack: backend + verb translation ---
 
-def "test resolve-stack keeps graphite route unchanged" [] {
-  assert equal (resolve-stack { tool: "gt", args: ["ss"] } "gt") { tool: "gt", args: ["ss"] }
+def "test resolve-stack rejects retired and unknown backends" [] {
+  for backend in ["gt" "unknown"] {
+    assert equal (resolve-stack { tool: "stack", args: ["ss"] } $backend) {
+      tool: "unsupported", args: ["ss", $backend]
+    }
+  }
 }
 
 def "test resolve-stack passes through non-stack git route" [] {
@@ -259,41 +349,41 @@ def "test resolve-stack passes through internal route" [] {
 # gitbutler verb translation
 
 def "test resolve-stack but translates modify to amend keeping flags" [] {
-  assert equal (resolve-stack { tool: "gt", args: ["modify", "-a"] } "but") {
+  assert equal (resolve-stack { tool: "stack", args: ["modify", "-a"] } "but") {
     tool: "but", args: ["amend", "-a"]
   }
 }
 
 def "test resolve-stack but translates ss to push all" [] {
-  assert equal (resolve-stack { tool: "gt", args: ["ss"] } "but") {
+  assert equal (resolve-stack { tool: "stack", args: ["ss"] } "but") {
     tool: "but", args: ["push", "all"]
   }
 }
 
 def "test resolve-stack but translates sync to pull" [] {
-  assert equal (resolve-stack { tool: "gt", args: ["sync"] } "but") { tool: "but", args: ["pull"] }
+  assert equal (resolve-stack { tool: "stack", args: ["sync"] } "but") { tool: "but", args: ["pull"] }
 }
 
 def "test resolve-stack but translates co to apply with branch arg" [] {
-  assert equal (resolve-stack { tool: "gt", args: ["co", "feature"] } "but") {
+  assert equal (resolve-stack { tool: "stack", args: ["co", "feature"] } "but") {
     tool: "but", args: ["apply", "feature"]
   }
 }
 
 def "test resolve-stack but translates create to branch new" [] {
-  assert equal (resolve-stack { tool: "gt", args: ["create", "my-branch"] } "but") {
+  assert equal (resolve-stack { tool: "stack", args: ["create", "my-branch"] } "but") {
     tool: "but", args: ["branch", "new", "my-branch"]
   }
 }
 
 def "test resolve-stack but translates untrack to unapply" [] {
-  assert equal (resolve-stack { tool: "gt", args: ["untrack", "br"] } "but") {
+  assert equal (resolve-stack { tool: "stack", args: ["untrack", "br"] } "but") {
     tool: "but", args: ["unapply", "br"]
   }
 }
 
 def "test resolve-stack but reports cursor-move verb as unsupported" [] {
-  assert equal (resolve-stack { tool: "gt", args: ["up"] } "but") {
+  assert equal (resolve-stack { tool: "stack", args: ["up"] } "but") {
     tool: "unsupported", args: ["up", "but"]
   }
 }
@@ -301,55 +391,55 @@ def "test resolve-stack but reports cursor-move verb as unsupported" [] {
 # plain-git fallback translation
 
 def "test resolve-stack git translates modify to commit amend" [] {
-  assert equal (resolve-stack { tool: "gt", args: ["modify"] } "git") {
+  assert equal (resolve-stack { tool: "stack", args: ["modify"] } "git") {
     tool: "git", args: ["commit", "--amend"]
   }
 }
 
 def "test resolve-stack git translates create to checkout dash b" [] {
-  assert equal (resolve-stack { tool: "gt", args: ["create", "br"] } "git") {
+  assert equal (resolve-stack { tool: "stack", args: ["create", "br"] } "git") {
     tool: "git", args: ["checkout", "-b", "br"]
   }
 }
 
 def "test resolve-stack git reports squash as unsupported" [] {
-  assert equal (resolve-stack { tool: "gt", args: ["squash"] } "git") {
+  assert equal (resolve-stack { tool: "stack", args: ["squash"] } "git") {
     tool: "unsupported", args: ["squash", "git"]
   }
 }
 
 def "test resolve-stack git translates ss to force-with-lease push" [] {
-  assert equal (resolve-stack { tool: "gt", args: ["ss"] } "git") {
+  assert equal (resolve-stack { tool: "stack", args: ["ss"] } "git") {
     tool: "git", args: ["push", "--force-with-lease"]
   }
 }
 
 def "test resolve-stack git translates submit to push" [] {
-  assert equal (resolve-stack { tool: "gt", args: ["submit"] } "git") {
+  assert equal (resolve-stack { tool: "stack", args: ["submit"] } "git") {
     tool: "git", args: ["push"]
   }
 }
 
 def "test resolve-stack git translates sync to pull" [] {
-  assert equal (resolve-stack { tool: "gt", args: ["sync"] } "git") {
+  assert equal (resolve-stack { tool: "stack", args: ["sync"] } "git") {
     tool: "git", args: ["pull"]
   }
 }
 
 def "test resolve-stack git translates co preserving branch arg" [] {
-  assert equal (resolve-stack { tool: "gt", args: ["co", "feature"] } "git") {
+  assert equal (resolve-stack { tool: "stack", args: ["co", "feature"] } "git") {
     tool: "git", args: ["checkout", "feature"]
   }
 }
 
 def "test resolve-stack git translates checkout preserving branch arg" [] {
-  assert equal (resolve-stack { tool: "gt", args: ["checkout", "feature"] } "git") {
+  assert equal (resolve-stack { tool: "stack", args: ["checkout", "feature"] } "git") {
     tool: "git", args: ["checkout", "feature"]
   }
 }
 
 def "test resolve-stack git translates rename preserving branch name" [] {
-  assert equal (resolve-stack { tool: "gt", args: ["rename", "new-name"] } "git") {
+  assert equal (resolve-stack { tool: "stack", args: ["rename", "new-name"] } "git") {
     tool: "git", args: ["branch", "-m", "new-name"]
   }
 }
@@ -357,23 +447,24 @@ def "test resolve-stack git translates rename preserving branch name" [] {
 # --- protected-branch force-push guard ---
 
 def "test protected-push-blocked blocks ss on master git backend" [] {
-  assert (protected-push-blocked { tool: "gt", args: ["ss"] } "git" "master")
+  assert (protected-push-blocked { tool: "stack", args: ["ss"] } "git" "master")
 }
 
 def "test protected-push-blocked blocks ss on main but backend" [] {
-  assert (protected-push-blocked { tool: "gt", args: ["ss"] } "but" "main")
+  assert (protected-push-blocked { tool: "stack", args: ["ss"] } "but" "main")
 }
 
 def "test protected-push-blocked allows ss on a feature branch" [] {
-  assert (not (protected-push-blocked { tool: "gt", args: ["ss"] } "git" "feat/x"))
+  assert (not (protected-push-blocked { tool: "stack", args: ["ss"] } "git" "feat/x"))
 }
 
-def "test protected-push-blocked leaves the graphite backend alone" [] {
-  assert (not (protected-push-blocked { tool: "gt", args: ["ss"] } "gt" "master"))
+def "test default route still blocks protected branch submission" [] {
+  let backend = (vcs-backend "/home/u/code/example-org/service" "/home/u" false true)
+  assert (protected-push-blocked (fj-route ss) $backend "master")
 }
 
 def "test protected-push-blocked ignores non-ss verbs on master" [] {
-  assert (not (protected-push-blocked { tool: "gt", args: ["sync"] } "git" "master"))
+  assert (not (protected-push-blocked { tool: "stack", args: ["sync"] } "git" "master"))
 }
 
 # --- test runner ---
@@ -385,9 +476,10 @@ def main [] {
     | get name)
 
   let test_commands = ($tests
-    | each {|test_name| $"($test_name); print '  ok ($test_name)'" }
-    | str join "; ")
+    | each {|test_name| [$test_name $"print '  ok ($test_name)'"] | str join (char newline) }
+    | str join (char newline))
 
-  nu --commands $"source ($env.CURRENT_FILE); ($test_commands)"
+  ^nu --commands ([ $"source ($env.CURRENT_FILE)" $test_commands ] | str join (char newline))
+  if $env.LAST_EXIT_CODE != 0 { exit $env.LAST_EXIT_CODE }
   print $"(ansi green)All ($tests | length) tests passed(ansi reset)"
 }

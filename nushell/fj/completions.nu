@@ -11,19 +11,18 @@ def fj-subcommands [] {
     { value: "infra", description: "Infrastructure (terraform)" }
     { value: "cheatsheet", description: "Shell quick reference" }
     { value: "ui", description: "gitui" }
-    { value: "mut", description: "gt modify" }
-    { value: "ss", description: "gt submit stack" }
-    { value: "create", description: "gt create branch" }
-    { value: "sync", description: "gt sync" }
-    { value: "co", description: "gt checkout" }
-    { value: "ls", description: "gt ls (stack)" }
-    { value: "ll", description: "gt ll (stack detail)" }
-    { value: "log", description: "gt log" }
-    { value: "restack", description: "gt restack" }
-    { value: "absorb", description: "gt absorb" }
-    { value: "untrack", description: "gt untrack branch" }
-    { value: "fold", description: "gt fold" }
-    { value: "squash", description: "gt squash" }
+    { value: "mut", description: "Amend (but/git)" }
+    { value: "ss", description: "Push all (but) / force-with-lease (git); feature branches only" }
+    { value: "create", description: "Create branch (but/git)" }
+    { value: "sync", description: "Pull (but/git)" }
+    { value: "co", description: "Apply branch (but) / checkout (git)" }
+    { value: "ls", description: "Status (but only; unsupported on git)" }
+    { value: "ll", description: "Status (but only; unsupported on git)" }
+    { value: "log", description: "git log" }
+    { value: "restack", description: "Pull (but only; unsupported on git)" }
+    { value: "absorb", description: "Absorb (but only; unsupported on git)" }
+    { value: "untrack", description: "Unapply branch (but only; unsupported on git)" }
+    { value: "squash", description: "Squash (but only; unsupported on git)" }
     { value: "diff", description: "git diff" }
     { value: "add", description: "git add" }
     { value: "status", description: "git status" }

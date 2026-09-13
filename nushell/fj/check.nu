@@ -130,7 +130,7 @@ export def skill-issue []: nothing -> string {
   $skill_issues | shuffle | first
 }
 
-export def run [] {
+export def execute [] {
   let start_pwd = $env.PWD
   try {
     dispatch-check
