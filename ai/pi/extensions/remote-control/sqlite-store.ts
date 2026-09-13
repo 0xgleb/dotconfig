@@ -206,7 +206,7 @@ const isRecord = (value: unknown): value is Readonly<Record<string, unknown>> =>
 const rowFromEffect = (
   value: unknown,
 ): Effect.Effect<Row, RemoteBridgeError> =>
-  typeof value === "object" && value !== null && !Array.isArray(value)
+  isRecord(value)
     ? Effect.succeed(value)
     : Effect.fail(
         bridgeError("corrupt_state", "bridge query returned a malformed row"),
@@ -806,15 +806,6 @@ const countEffect = (
   ).pipe(
     Effect.flatMap(rowFromEffect),
     Effect.flatMap(row => numberFieldEffect(row, "count")),
-  )
-
-const count = (
-  database: DatabaseSync,
-  table: "bridge_agents" | "bridge_messages",
-): number =>
-  numberField(
-    rowFrom(database.prepare(`SELECT COUNT(*) AS count FROM ${table}`).get()),
-    "count",
   )
 
 const expireMessages = (database: DatabaseSync, now: number): void => {
