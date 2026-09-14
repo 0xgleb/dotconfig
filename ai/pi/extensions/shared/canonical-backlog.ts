@@ -4,7 +4,12 @@ const SAFE_IDENTIFIER = /^[A-Za-z0-9._:/-]{1,256}$/u
 const UNSAFE_CONTROL_CHARACTERS =
   /[\u0000-\u0008\u000b\u000c\u000e-\u001f\u007f]/u
 const canonicalProject = (value: unknown): value is string => {
-  if (typeof value !== "string" || !isAbsolute(value)) return false
+  if (
+    typeof value !== "string" ||
+    value.includes("\u0000") ||
+    !isAbsolute(value)
+  )
+    return false
   return (normalize(value).replace(/\/$/u, "") || "/") === value
 }
 const safeRequirement = (value: unknown): value is string =>

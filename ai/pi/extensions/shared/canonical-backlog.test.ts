@@ -1,5 +1,5 @@
 import assert from "node:assert/strict"
-import { readFileSync } from "node:fs"
+import { readFileSync, realpathSync } from "node:fs"
 import test from "node:test"
 import * as canonical from "./canonical-backlog.ts"
 import * as normalizers from "./backlog-normalization.ts"
@@ -62,6 +62,14 @@ test("canonical snapshots reject malformed identities, coverage and conflicting 
   ]) {
     assert.equal(canonical.decodeCanonicalBacklogSnapshot(value), undefined)
   }
+})
+
+test("canonical project paths reject NUL values that filesystem APIs cannot represent", () => {
+  const value = { ...snapshot, project: "/repo/\u0000" }
+  assert.throws(() => realpathSync(value.project), {
+    code: "ERR_INVALID_ARG_VALUE",
+  })
+  assert.equal(canonical.decodeCanonicalBacklogSnapshot(value), undefined)
 })
 
 test("requirement splitting preserves bounded text and rejects unsafe content", () => {
