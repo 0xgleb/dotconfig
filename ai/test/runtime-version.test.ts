@@ -36,10 +36,10 @@ test("fleet diagnostics expose current behavior-bearing component versions", () 
   )
   assert.match(read("../pi/extensions/btw/index.ts"), /btw", "2026\.07\.23\.1"/)
   assert.ok(
-    /classified-workflows", "2026\.09\.13\.2"/.test(
+    /classified-workflows", "2026\.09\.13\.3"/.test(
       read("../pi/extensions/classified-workflows/index.ts"),
     ),
-    "classified-workflows marker must match 2026.09.13.2",
+    "classified-workflows marker must match 2026.09.13.3",
   )
   assert.match(
     read("../pi/extensions/compact-read/index.ts"),

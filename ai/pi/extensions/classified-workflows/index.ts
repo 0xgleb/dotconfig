@@ -1030,7 +1030,7 @@ const WorkflowParameters = Type.Object({
 })
 
 export default function classifiedWorkflows(pi: ExtensionAPI): void {
-  registerRuntimeVersion(pi, "classified-workflows", "2026.09.13.2")
+  registerRuntimeVersion(pi, "classified-workflows", "2026.09.13.3")
   const childTokenLimitResult = Effect.runSync(
     Effect.either(
       workflowChildTokenLimit(process.env[WORKFLOW_CHILD_TOKEN_LIMIT_ENV]),
