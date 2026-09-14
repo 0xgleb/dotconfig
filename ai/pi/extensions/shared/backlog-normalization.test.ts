@@ -1,10 +1,12 @@
 import assert from "node:assert/strict"
 import test from "node:test"
-import { Effect } from "effect"
+import { Effect, Either } from "effect"
 
 import {
+  BacklogSourceAdapterError,
   backlogDocumentSnapshot,
   githubTrackerSnapshot,
+  type GitHubTrackerItemInput,
 } from "./backlog-normalization.ts"
 
 const run = <A>(effect: Effect.Effect<A, unknown>): Promise<A> =>
@@ -294,5 +296,215 @@ test("backlog document adapter fails closed on malformed declarations", async ()
       }),
     ),
     /documentId/,
+  )
+})
+
+const trackerItem: GitHubTrackerItemInput = {
+  kind: "issue",
+  number: 1,
+  title: "Retain supplied work",
+  state: "open",
+  labels: [],
+  updatedAt: "2026-09-14T00:00:00Z",
+}
+
+const trackerInput = (items: readonly GitHubTrackerItemInput[]) => ({
+  project: "/repo",
+  repository: "org/repo",
+  observedAt: 1,
+  coverage: "complete" as const,
+  items,
+})
+
+const expectAdapterError = async <A>(
+  effect: Effect.Effect<A, BacklogSourceAdapterError>,
+  code: BacklogSourceAdapterError["code"],
+) => {
+  const result = await Effect.runPromise(Effect.either(effect))
+  assert.ok(Either.isLeft(result), "expected a typed adapter failure")
+  assert.ok(result.left instanceof BacklogSourceAdapterError)
+  assert.equal(result.left.code, code)
+}
+
+const forbidSuppliedMethods = (array: unknown[]) => {
+  for (const key of ["map", Symbol.iterator])
+    Object.defineProperty(array, key, {
+      value: () => {
+        throw new Error("supplied collection method must not run")
+      },
+    })
+}
+
+test("tracker normalization preserves supplied labels without invoking collection methods", async () => {
+  const labels = ["blocked", "p1"]
+  const items = [{ ...trackerItem, labels }]
+  forbidSuppliedMethods(labels)
+  forbidSuppliedMethods(items)
+  const snapshot = await run(githubTrackerSnapshot(trackerInput(items)))
+  assert.equal(snapshot.items.length, 1)
+  assert.equal(snapshot.items[0]?.status, "blocked")
+  assert.equal(snapshot.items[0]?.priority, "urgent")
+  assert.equal(snapshot.items[0]?.reason, "GitHub label: blocked")
+})
+
+test("a supplied map cannot hide duplicate tracker identities", async () => {
+  const items = [trackerItem, trackerItem]
+  Object.defineProperty(items, "map", { value: () => [] })
+  await expectAdapterError(
+    githubTrackerSnapshot(trackerInput(items)),
+    "invalid_input",
+  )
+})
+
+test("sparse tracker items and labels fail through the typed error channel", async () => {
+  for (const items of [
+    new Array<GitHubTrackerItemInput>(1),
+    [{ ...trackerItem, labels: new Array<string>(1) }],
+  ])
+    await expectAdapterError(
+      githubTrackerSnapshot(trackerInput(items)),
+      "invalid_input",
+    )
+})
+
+test("tracker body budgeting preserves whitespace filtering and bounded Unicode content", async () => {
+  const body = " ".repeat(200_000) + "🙂".repeat(2_001)
+  const snapshot = await run(
+    githubTrackerSnapshot(trackerInput([{ ...trackerItem, body }])),
+  )
+  assert.deepEqual(snapshot.items[0]?.requirements, [
+    trackerItem.title,
+    "🙂".repeat(2_000),
+    "🙂",
+  ])
+  await expectAdapterError(
+    githubTrackerSnapshot(
+      trackerInput([{ ...trackerItem, body: "x".repeat(128_000) }]),
+    ),
+    "invalid_input",
+  )
+})
+
+test("closed issues retain completed and not-planned lifecycle mapping", async () => {
+  const snapshot = await run(
+    githubTrackerSnapshot(
+      trackerInput([
+        { ...trackerItem, number: 1, state: "closed" },
+        {
+          ...trackerItem,
+          number: 2,
+          state: "closed",
+          stateReason: "completed",
+        },
+        {
+          ...trackerItem,
+          number: 3,
+          state: "closed",
+          stateReason: "not-planned",
+        },
+      ]),
+    ),
+  )
+  assert.deepEqual(
+    snapshot.items.map(item => [item.canonicalId, item.status]),
+    [
+      ["issue:1", "completed"],
+      ["issue:2", "completed"],
+      ["issue:3", "cancelled"],
+    ],
+  )
+})
+
+test("invalid lifecycle combinations keep their typed input failure", async () => {
+  for (const item of [
+    { ...trackerItem, state: "merged" as const },
+    { ...trackerItem, stateReason: "completed" as const },
+    { ...trackerItem, blockedReason: "not blocked" },
+  ])
+    await expectAdapterError(
+      githubTrackerSnapshot(trackerInput([item])),
+      "invalid_input",
+    )
+})
+
+test("throwing input accessors use the typed adapter error channel", async () => {
+  const input = trackerInput([trackerItem])
+  Object.defineProperty(input, "project", {
+    get: () => {
+      throw new Error("private input detail")
+    },
+  })
+  await expectAdapterError(githubTrackerSnapshot(input), "invalid_input")
+  const item = { ...trackerItem }
+  Object.defineProperty(item, "title", {
+    get: () => {
+      throw new Error("private input detail")
+    },
+  })
+  await expectAdapterError(
+    githubTrackerSnapshot(trackerInput([item])),
+    "invalid_input",
+  )
+  const document = {
+    project: "/repo",
+    documentId: "ROADMAP.md",
+    observedAt: 1,
+    content: "",
+  }
+  Object.defineProperty(document, "content", {
+    get: () => {
+      throw new Error("private input detail")
+    },
+  })
+  await expectAdapterError(backlogDocumentSnapshot(document), "invalid_input")
+})
+
+test("throwing array slots and revoked array proxies fail as typed input errors", async () => {
+  const items = [trackerItem]
+  Object.defineProperty(items, 0, {
+    get: () => {
+      throw new Error("bad slot")
+    },
+  })
+  await expectAdapterError(
+    githubTrackerSnapshot(trackerInput(items)),
+    "invalid_input",
+  )
+  const revoked = Proxy.revocable([trackerItem], {})
+  revoked.revoke()
+  await expectAdapterError(
+    githubTrackerSnapshot(trackerInput(revoked.proxy)),
+    "invalid_input",
+  )
+})
+
+test("document failure codes remain distinct without changing the declaration contract", async () => {
+  const input = { project: "/repo", documentId: "ROADMAP.md", observedAt: 1 }
+  await expectAdapterError(
+    backlogDocumentSnapshot({ ...input, content: "```pi-backlog\n{" }),
+    "malformed_declaration",
+  )
+  await expectAdapterError(
+    backlogDocumentSnapshot({
+      ...input,
+      documentId: "../ROADMAP.md",
+      content: "",
+    }),
+    "invalid_input",
+  )
+  await expectAdapterError(
+    backlogDocumentSnapshot({
+      ...input,
+      content:
+        "```pi-backlog\n" +
+        JSON.stringify({
+          id: "",
+          status: "ready",
+          priority: "normal",
+          requirements: ["work"],
+        }) +
+        "\n```",
+    }),
+    "invalid_input",
   )
 })

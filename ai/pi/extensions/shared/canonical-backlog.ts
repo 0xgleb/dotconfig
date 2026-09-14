@@ -15,15 +15,25 @@ const safeRequirement = (value: unknown): value is string =>
 
 export const backlogRequirementsFromText = (
   text: string,
+  maximumRequirements: number = Number.MAX_SAFE_INTEGER,
 ): readonly string[] => {
-  if (UNSAFE_CONTROL_CHARACTERS.test(text)) return []
+  if (
+    typeof text !== "string" ||
+    !Number.isSafeInteger(maximumRequirements) ||
+    maximumRequirements < 0 ||
+    UNSAFE_CONTROL_CHARACTERS.test(text)
+  )
+    return []
   const requirements: string[] = []
   for (let offset = 0; offset < text.length;) {
     let end = Math.min(offset + 4_000, text.length)
     if (end < text.length && /[\uD800-\uDBFF]/u.test(text.charAt(end - 1)))
       end -= 1
     const requirement = text.slice(offset, end)
-    if (requirement.trim().length > 0) requirements.push(requirement)
+    if (requirement.trim().length > 0) {
+      if (requirements.length === maximumRequirements) return []
+      requirements.push(requirement)
+    }
     offset = end
   }
   return requirements
@@ -118,9 +128,92 @@ const canonicalBacklogItems = (
   return true
 }
 
-export const decodeCanonicalBacklogSnapshot = (
+const recordFields = (
   value: unknown,
+  keys: readonly string[],
+): Record<string, unknown> | undefined => {
+  if (typeof value !== "object" || value === null) return undefined
+  const result: Record<string, unknown> = {}
+  for (const key of keys) {
+    // Reflective access is an external boundary: getters and proxy traps may throw.
+    try {
+      if (Array.isArray(value)) return undefined
+      if (Reflect.has(value, key)) result[key] = Reflect.get(value, key)
+    } catch {
+      return undefined
+    }
+  }
+  return result
+}
+
+const arrayElements = (
+  value: unknown,
+  maximum: number,
+): unknown[] | undefined => {
+  let length: unknown
+  try {
+    if (!Array.isArray(value)) return undefined
+    length = value.length
+  } catch {
+    return undefined
+  }
+  if (
+    typeof length !== "number" ||
+    !Number.isSafeInteger(length) ||
+    length < 0 ||
+    length > maximum ||
+    typeof value !== "object" ||
+    value === null
+  )
+    return undefined
+  const elements: unknown[] = []
+  for (let index = 0; index < length; index += 1) {
+    try {
+      if (!Object.hasOwn(value, index)) return undefined
+      elements.push(Reflect.get(value, String(index)))
+    } catch {
+      return undefined
+    }
+  }
+  return elements
+}
+
+const snapshotFields = (
+  input: unknown,
+): Record<string, unknown> | undefined => {
+  const value = recordFields(input, [
+    "project",
+    "source",
+    "scopeId",
+    "coverage",
+    "observedAt",
+    "items",
+  ])
+  if (!value) return undefined
+  const rawItems = arrayElements(value.items, 5_000)
+  if (!rawItems) return undefined
+  const items: Record<string, unknown>[] = []
+  for (const raw of rawItems) {
+    const item = recordFields(raw, [
+      "canonicalId",
+      "sourceId",
+      "requirements",
+      "status",
+      "priority",
+      "reason",
+    ])
+    if (!item) return undefined
+    const requirements = arrayElements(item.requirements, 32)
+    if (!requirements) return undefined
+    items.push({ ...item, requirements })
+  }
+  return { ...value, items }
+}
+
+export const decodeCanonicalBacklogSnapshot = (
+  input: unknown,
 ): CanonicalBacklogSnapshot | undefined => {
+  const value = snapshotFields(input)
   if (
     typeof value !== "object" ||
     value === null ||
