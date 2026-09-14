@@ -17,9 +17,16 @@ export const backlogRequirementsFromText = (
   text: string,
 ): readonly string[] => {
   if (UNSAFE_CONTROL_CHARACTERS.test(text)) return []
-  return (text.match(/[\s\S]{1,4000}/gu) ?? []).filter(
-    requirement => requirement.trim().length > 0,
-  )
+  const requirements: string[] = []
+  for (let offset = 0; offset < text.length;) {
+    let end = Math.min(offset + 4_000, text.length)
+    if (end < text.length && /[\uD800-\uDBFF]/u.test(text.charAt(end - 1)))
+      end -= 1
+    const requirement = text.slice(offset, end)
+    if (requirement.trim().length > 0) requirements.push(requirement)
+    offset = end
+  }
+  return requirements
 }
 
 export type CanonicalBacklogSource = "tracker-item" | "backlog-document"
@@ -44,6 +51,14 @@ export interface CanonicalBacklogSnapshot {
   readonly items: readonly CanonicalBacklogItemRecord[]
 }
 
+const safeRequirements = (values: readonly unknown[]): boolean => {
+  for (let index = 0; index < values.length; index += 1) {
+    if (!Object.hasOwn(values, index) || !safeRequirement(values[index]))
+      return false
+  }
+  return true
+}
+
 const canonicalBacklogItem = (
   scopeId: string,
   value: unknown,
@@ -65,7 +80,7 @@ const canonicalBacklogItem = (
     !Array.isArray(value.requirements) ||
     value.requirements.length === 0 ||
     value.requirements.length > 32 ||
-    !value.requirements.every(safeRequirement) ||
+    !safeRequirements(value.requirements) ||
     (value.status !== "ready" &&
       value.status !== "blocked" &&
       value.status !== "completed" &&
@@ -80,6 +95,27 @@ const canonicalBacklogItem = (
       safeRequirement(value.reason)
     )
   return !("reason" in value) || value.reason === undefined
+}
+
+const canonicalBacklogItems = (
+  scopeId: string,
+  items: readonly unknown[],
+): items is readonly CanonicalBacklogItemRecord[] => {
+  const sourceIds = new Set<string>()
+  const canonicalIds = new Set<string>()
+  for (let index = 0; index < items.length; index += 1) {
+    if (!Object.hasOwn(items, index)) return false
+    const item = items[index]
+    if (
+      !canonicalBacklogItem(scopeId, item) ||
+      sourceIds.has(item.sourceId) ||
+      canonicalIds.has(item.canonicalId)
+    )
+      return false
+    sourceIds.add(item.sourceId)
+    canonicalIds.add(item.canonicalId)
+  }
+  return true
 }
 
 export const decodeCanonicalBacklogSnapshot = (
@@ -108,15 +144,7 @@ export const decodeCanonicalBacklogSnapshot = (
   )
     return undefined
   const scopeId = value.scopeId
-  if (!value.items.every(item => canonicalBacklogItem(scopeId, item)))
-    return undefined
-  const sourceIds = value.items.map(item => item.sourceId)
-  const canonicalIds = value.items.map(item => item.canonicalId)
-  if (
-    new Set(sourceIds).size !== sourceIds.length ||
-    new Set(canonicalIds).size !== canonicalIds.length
-  )
-    return undefined
+  if (!canonicalBacklogItems(scopeId, value.items)) return undefined
   return {
     project: value.project,
     source: value.source,
