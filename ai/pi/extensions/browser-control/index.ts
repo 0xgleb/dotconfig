@@ -595,7 +595,7 @@ const withBrowserActivity: <T>(
 }
 
 const browserControl: (pi: ExtensionAPI) => void = pi => {
-  registerRuntimeVersion(pi, "browser-control", "2026.09.04.4")
+  registerRuntimeVersion(pi, "browser-control", "2026.09.14.1")
   pi.on("session_start", (_event, ctx) => {
     activeTargetId = latestBrowserTargetId(ctx.sessionManager.getBranch())
     knownTargetIds = new Set(activeTargetId ? [activeTargetId] : [])
@@ -667,7 +667,12 @@ const browserControl: (pi: ExtensionAPI) => void = pi => {
             const ready = await Effect.runPromise(isDebugEndpointReady())
             if (!ready) {
               return {
-                content: [{ type: "text", text: DEBUG_SETUP_MESSAGE }],
+                content: [
+                  {
+                    type: "text",
+                    text: "Brave DevTools inspection is not ready.",
+                  },
+                ],
                 details: { ready },
               }
             }

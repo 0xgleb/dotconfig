@@ -324,10 +324,11 @@ const parseDebugTarget = (
         "Brave returned a malformed debug target.",
       )
     if (value.type !== "page") return Option.none()
+    const pageUrl = value.url
     if (
       typeof value.id !== "string" ||
       typeof value.title !== "string" ||
-      typeof value.url !== "string" ||
+      typeof pageUrl !== "string" ||
       typeof value.webSocketDebuggerUrl !== "string"
     )
       return yield* failure(
@@ -335,7 +336,7 @@ const parseDebugTarget = (
         "Brave returned a malformed page target.",
       )
     const candidateUrl = yield* Effect.try({
-      try: () => new URL(value.url),
+      try: () => new URL(pageUrl),
       catch: () =>
         new BrowserControlError({
           code: "protocol",
@@ -347,7 +348,7 @@ const parseDebugTarget = (
         "protocol",
         "Brave returned a page target URL containing credentials.",
       )
-    const parsedUrl = yield* Effect.either(parseLocalPageUrl(value.url))
+    const parsedUrl = yield* Effect.either(parseLocalPageUrl(pageUrl))
     if (Either.isLeft(parsedUrl)) return Option.none()
     yield* validateDebuggerUrl(value.webSocketDebuggerUrl, value.id, debugPort)
     return Option.some({

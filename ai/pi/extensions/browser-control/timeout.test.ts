@@ -15,16 +15,21 @@ const browserSource = readFileSync(
 interface CapturedBrowserTool {
   readonly execute: (
     toolCallId: string,
-    params: { readonly action: "fetch"; readonly url: string },
+    params:
+      | { readonly action: "fetch"; readonly url: string }
+      | { readonly action: "status" },
     signal: AbortSignal | undefined,
     onUpdate: undefined,
     context: unknown,
   ) => Promise<unknown>
 }
 
-const captureBrowserTool = (): CapturedBrowserTool => {
+const captureBrowserTool = (
+  exec?: ExtensionAPI["exec"],
+): CapturedBrowserTool => {
   let captured: CapturedBrowserTool | undefined
   const pi = {
+    exec,
     events: { on: () => {}, emit: () => {} },
     on: () => {},
     registerCommand: () => {},
@@ -44,6 +49,35 @@ const context = {
   ui: { setStatus: () => {} },
   sessionManager: { getBranch: () => [] },
 }
+
+test("unavailable browser status neither claims nor attempts a launch", async t => {
+  const exec = t.mock.fn(async () => {
+    assert.fail("status must not launch the browser")
+  })
+  const fetch = t.mock.method(globalThis, "fetch", async () => {
+    throw new TypeError("fetch failed")
+  })
+  const statusTool = captureBrowserTool(exec)
+  const result = await statusTool.execute(
+    "status-unavailable",
+    { action: "status" },
+    undefined,
+    undefined,
+    context,
+  )
+  assert.deepEqual(result, {
+    content: [
+      { type: "text", text: "Brave DevTools inspection is not ready." },
+    ],
+    details: { ready: false },
+  })
+  assert.equal(fetch.mock.callCount(), 1)
+  assert.equal(
+    fetch.mock.calls[0]?.arguments[0],
+    "http://127.0.0.1:9222/json/version",
+  )
+  assert.equal(exec.mock.callCount(), 0)
+})
 
 const withLoopbackServer = async (
   listener: RequestListener,
