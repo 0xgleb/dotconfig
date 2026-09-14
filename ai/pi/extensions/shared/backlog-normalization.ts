@@ -501,8 +501,25 @@ const documentDeclarations = (
 > =>
   Effect.gen(function* () {
     const declarations: BacklogDocumentDeclaration[] = []
-    const matches = [...content.matchAll(DOCUMENT_FENCE)]
     const starts = [...content.matchAll(DOCUMENT_FENCE_START)]
+    if (starts.length === 0) return declarations
+    const lastStart = starts.at(-1)?.index
+    if (lastStart === undefined)
+      return yield* Effect.fail(
+        adapterError(
+          "internal_failure",
+          "backlog fence position is unavailable",
+        ),
+      )
+    // Failed suffix searches otherwise repeat for every unmatched opening.
+    if (content.lastIndexOf("\n```") <= lastStart)
+      return yield* Effect.fail(
+        adapterError(
+          "malformed_declaration",
+          "document contains an unterminated backlog fence",
+        ),
+      )
+    const matches = [...content.matchAll(DOCUMENT_FENCE)]
     if (matches.length !== starts.length)
       return yield* Effect.fail(
         adapterError(

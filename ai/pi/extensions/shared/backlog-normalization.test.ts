@@ -1,5 +1,6 @@
 import assert from "node:assert/strict"
 import test from "node:test"
+import { Worker } from "node:worker_threads"
 import { Effect, Either } from "effect"
 
 import {
@@ -297,6 +298,87 @@ test("backlog document adapter fails closed on malformed declarations", async ()
     ),
     /documentId/,
   )
+})
+
+test("fence scan preflight preserves prefix, suffix, CRLF and overlapping-marker behavior", async () => {
+  const declaration = {
+    id: "one",
+    status: "ready",
+    priority: "normal",
+    requirements: ["work"],
+  }
+  const fence = "```pi-backlog\n" + JSON.stringify(declaration) + "\n```"
+  const input = { project: "/repo", documentId: "ROADMAP.md", observedAt: 1 }
+  const original = await run(
+    backlogDocumentSnapshot({ ...input, content: fence }),
+  )
+  for (const content of [
+    "prose " + fence + "suffix",
+    fence.replaceAll("\n", "\r\n"),
+  ])
+    assert.deepEqual(
+      await run(backlogDocumentSnapshot({ ...input, content })),
+      original,
+    )
+  for (const content of [
+    " ```pi-backlog\n{}\n```pi-backlog\n{}",
+    fence + "\nx```pi-backlog\n{}",
+    fence + "\nx```pi-backlog",
+    "```pi-backlog\n```",
+  ]) {
+    const result = await Effect.runPromise(
+      Effect.either(backlogDocumentSnapshot({ ...input, content })),
+    )
+    assert.ok(Either.isLeft(result))
+    assert.equal(result.left.code, "malformed_declaration")
+    assert.equal(
+      result.left.message,
+      "document contains an unterminated backlog fence",
+    )
+  }
+})
+
+test("maximum-size unterminated fences fail within a bounded worker lifetime", async () => {
+  const worker = new Worker(
+    [
+      "const { parentPort, workerData } = require('node:worker_threads')",
+      "Promise.all([import(workerData.normalizer), import(workerData.effect)]).then(async ([{ backlogDocumentSnapshot }, { Effect, Either }]) => {",
+      "  const prefix = 'x```pi-backlog\\n'",
+      "  const result = await Effect.runPromise(Effect.either(backlogDocumentSnapshot({",
+      "    project: '/repo', documentId: 'ROADMAP.md', observedAt: 1,",
+      "    content: prefix.repeat(Math.floor((4 * 1024 * 1024) / prefix.length))",
+      "  })))",
+      "  parentPort.postMessage(Either.isLeft(result) ? { tag: result.left._tag, code: result.left.code } : { unexpectedSuccess: true })",
+      "})",
+    ].join("\n"),
+    {
+      eval: true,
+      workerData: {
+        normalizer: new URL("./backlog-normalization.ts", import.meta.url).href,
+        effect: import.meta.resolve("effect"),
+      },
+    },
+  )
+  try {
+    const result = await new Promise<unknown>(resolve => {
+      const finish = (value: unknown) => {
+        clearTimeout(timer)
+        resolve(value)
+      }
+      const timer = setTimeout(() => finish({ timedOut: true }), 3_000)
+      worker.once("message", finish)
+      worker.once("error", (error: Error) =>
+        finish({ workerError: error.message }),
+      )
+      worker.once("exit", code => finish({ unexpectedExit: code }))
+    })
+    assert.deepEqual(result, {
+      tag: "BacklogSourceAdapterError",
+      code: "malformed_declaration",
+    })
+  } finally {
+    await worker.terminate()
+  }
 })
 
 const trackerItem: GitHubTrackerItemInput = {
