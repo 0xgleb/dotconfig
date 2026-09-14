@@ -18,6 +18,7 @@ export interface BranchTodoBacklogRecord {
   readonly requirements: readonly string[]
   readonly status: BranchTodoBacklogStatus
   readonly reason?: string
+  readonly page?: { readonly index: number; readonly count: number }
 }
 
 export interface BranchTodoBacklogSnapshot {
@@ -62,6 +63,23 @@ export const backlogRequirementsFromText = (
   )
 }
 
+const branchTodoPage = (
+  value: unknown,
+): value is NonNullable<BranchTodoBacklogRecord["page"]> =>
+  typeof value === "object" &&
+  value !== null &&
+  !Array.isArray(value) &&
+  "index" in value &&
+  "count" in value &&
+  typeof value.index === "number" &&
+  Number.isSafeInteger(value.index) &&
+  typeof value.count === "number" &&
+  Number.isSafeInteger(value.count) &&
+  value.count > 0 &&
+  value.count <= 5_000 &&
+  value.index >= 0 &&
+  value.index < value.count
+
 const branchTodoRecord = (value: unknown): value is BranchTodoBacklogRecord => {
   if (typeof value !== "object" || value === null || Array.isArray(value))
     return false
@@ -78,8 +96,9 @@ const branchTodoRecord = (value: unknown): value is BranchTodoBacklogRecord => {
     !Array.isArray(value.requirements) ||
     value.requirements.length === 0 ||
     value.requirements.length > 32 ||
-    !value.requirements.every(safeRequirement) ||
-    !branchTodoStatus(value.status)
+    !Array.from(value.requirements).every(safeRequirement) ||
+    !branchTodoStatus(value.status) ||
+    ("page" in value && !branchTodoPage(value.page))
   )
     return false
   if (value.status === "blocked")
@@ -109,22 +128,46 @@ export const decodeBranchTodoBacklogSnapshot = (
     !Number.isSafeInteger(value.observedAt) ||
     value.observedAt < 0 ||
     !Array.isArray(value.todos) ||
-    value.todos.length > 5_000 ||
-    !value.todos.every(branchTodoRecord)
+    value.todos.length > 5_000
   )
     return undefined
-  const sourceIds = value.todos.map(todo => todo.sourceId)
-  const canonicalIds = value.todos.map(todo => todo.canonicalId)
-  if (
-    new Set(sourceIds).size !== sourceIds.length ||
-    new Set(canonicalIds).size !== canonicalIds.length
-  )
-    return undefined
+  const todos = Array.from(value.todos)
+  if (!todos.every(branchTodoRecord)) return undefined
+  const sourceIds = todos.map(todo => todo.sourceId)
+  if (new Set(sourceIds).size !== sourceIds.length) return undefined
+  const groups = new Map<string, BranchTodoBacklogRecord[]>()
+  for (const todo of todos) {
+    const records = groups.get(todo.canonicalId)
+    if (records) records.push(todo)
+    else groups.set(todo.canonicalId, [todo])
+  }
+  for (const records of groups.values()) {
+    const first = records[0]
+    if (!first) return undefined
+    if (!first.page) {
+      if (records.length !== 1) return undefined
+      continue
+    }
+    if (records.length !== first.page.count) return undefined
+    const indexes = new Set<number>()
+    for (const record of records) {
+      const page = record.page
+      if (
+        !page ||
+        page.count !== first.page.count ||
+        record.status !== first.status ||
+        record.reason !== first.reason ||
+        indexes.has(page.index)
+      )
+        return undefined
+      indexes.add(page.index)
+    }
+  }
   return {
     project: value.project,
     sessionId: value.sessionId,
     observedAt: value.observedAt,
-    todos: value.todos,
+    todos,
   }
 }
 

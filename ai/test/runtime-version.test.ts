@@ -16,7 +16,7 @@ test("fleet diagnostics expose current behavior-bearing component versions", () 
   )
   assert.match(
     read("../pi/extensions/agent-registry/index.ts"),
-    /agent-registry", "2026\.09\.13\.1"/,
+    /agent-registry", "2026\.09\.13\.2"/,
   )
   assert.match(
     read("../pi/extensions/agent-workspace/index.ts"),
@@ -80,7 +80,7 @@ test("fleet diagnostics expose current behavior-bearing component versions", () 
   )
   assert.match(
     read("../pi/extensions/todo/index.ts"),
-    /todo", "2026\.09\.04\.1"/,
+    /todo", "2026\.09\.13\.1"/,
   )
   assert.match(
     read("../pi/extensions/usage-governor/index.ts"),

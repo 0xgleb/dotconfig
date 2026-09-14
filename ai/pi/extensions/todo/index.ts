@@ -22,6 +22,8 @@ import {
 } from "@earendil-works/pi-tui"
 import { Effect, Option, Ref } from "effect"
 import { Type } from "typebox"
+import { BRANCH_TODO_BACKLOG_EVENT } from "../shared/backlog-events.ts"
+import { branchTodoBacklogSnapshot } from "./backlog-adapter.ts"
 import {
   QUESTION_ASK_EVENT,
   type UserQuestionRequest,
@@ -112,8 +114,8 @@ const statusColor = (status: TodoStatus | undefined): StatusColor => {
 }
 
 class TodoListComponent {
-  private cachedWidth?: number
-  private cachedLines?: string[]
+  private cachedWidth: number | undefined
+  private cachedLines: string[] | undefined
 
   constructor(
     private readonly todos: ReadonlyArray<Todo>,
@@ -237,12 +239,27 @@ function restoredState(ctx: ExtensionContext): TodoState {
 }
 
 export default function todoExtension(pi: ExtensionAPI): void {
-  registerRuntimeVersion(pi, "todo", "2026.09.04.1")
+  registerRuntimeVersion(pi, "todo", "2026.09.13.1")
   const stateRef = Effect.runSync(Ref.make<TodoState>(emptyTodoState))
   let hudExpiry: ReturnType<typeof setTimeout> | undefined
   let reminderTimer: ReturnType<typeof setTimeout> | undefined
   let hudVisibility: TaskHudVisibility = "visible"
   let releaseHudToggle: (() => void) | undefined
+
+  const publishBranchTodos = (
+    ctx: ExtensionContext,
+    state: TodoState,
+  ): void => {
+    pi.events.emit(
+      BRANCH_TODO_BACKLOG_EVENT,
+      branchTodoBacklogSnapshot(
+        ctx.cwd,
+        ctx.sessionManager.getSessionId(),
+        state,
+        Date.now(),
+      ),
+    )
+  }
 
   const mountTaskWidget = (ctx: ExtensionContext, state: TodoState): void => {
     if (!ctx.hasUI) return
@@ -338,6 +355,7 @@ export default function todoExtension(pi: ExtensionAPI): void {
     }
     Effect.runSync(Ref.set(stateRef, wake.state))
     pi.appendEntry(TODO_STATE_ENTRY, wake.state)
+    publishBranchTodos(ctx, wake.state)
     renderTaskWidget(ctx, wake.state)
     scheduleReminder(ctx, wake.state)
     if (ctx.hasUI)
@@ -353,6 +371,7 @@ export default function todoExtension(pi: ExtensionAPI): void {
     await Effect.runPromise(reconstructState(ctx))
     const state = Effect.runSync(Ref.get(stateRef))
     pi.appendEntry(TODO_STATE_ENTRY, state)
+    publishBranchTodos(ctx, state)
     registerHudToggle(ctx)
     renderTaskWidget(ctx, state)
     scheduleReminder(ctx, state)
@@ -363,6 +382,7 @@ export default function todoExtension(pi: ExtensionAPI): void {
   pi.on("session_compact", async (_event, ctx) => {
     const state = Effect.runSync(Ref.get(stateRef))
     pi.appendEntry(TODO_STATE_ENTRY, state)
+    publishBranchTodos(ctx, state)
     registerHudToggle(ctx)
     renderTaskWidget(ctx, state)
     scheduleReminder(ctx, state)
@@ -389,6 +409,7 @@ export default function todoExtension(pi: ExtensionAPI): void {
     )
     await Effect.runPromise(Ref.set(stateRef, transition.state))
     pi.appendEntry(TODO_STATE_ENTRY, transition.state)
+    publishBranchTodos(ctx, transition.state)
     renderTaskWidget(ctx, transition.state)
     scheduleReminder(ctx, transition.state)
     return transition.state
@@ -527,8 +548,10 @@ export default function todoExtension(pi: ExtensionAPI): void {
         ),
       )
       const result = await Effect.runPromise(program)
-      if (result.details.outcome === "success")
+      if (result.details.outcome === "success") {
         pi.appendEntry(TODO_STATE_ENTRY, result.details.state)
+        publishBranchTodos(ctx, result.details.state)
+      }
       renderTaskWidget(ctx, result.details.state)
       scheduleReminder(ctx, result.details.state)
       return result

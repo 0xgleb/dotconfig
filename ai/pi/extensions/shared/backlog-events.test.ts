@@ -60,6 +60,91 @@ test("branch todo backlog snapshot preserves bounded source requirements and lif
   )
 })
 
+test("branch todo pages require complete, consistent groups without changing task identity", () => {
+  const page = (index: number, count = 2) => ({
+    canonicalId: "session-1:todo-1",
+    sourceId: `session-1:todo-1:page-${index}:snapshot-${index}`,
+    requirements: [`Requirement ${index}`],
+    status: "blocked" as const,
+    reason: "Waiting for evidence",
+    page: { index, count },
+  })
+  const snapshot = {
+    project: "/repo/a",
+    sessionId: "session-1",
+    observedAt: 1_000,
+    todos: [page(0), page(1)],
+  }
+  assert.deepEqual(decodeBranchTodoBacklogSnapshot(snapshot), snapshot)
+  const single = { ...snapshot, todos: [page(0, 1)] }
+  assert.deepEqual(decodeBranchTodoBacklogSnapshot(single), single)
+  const reversed = { ...snapshot, todos: [...snapshot.todos].reverse() }
+  assert.deepEqual(decodeBranchTodoBacklogSnapshot(reversed), reversed)
+
+  const { page: _page, ...legacy } = page(1)
+  const invalidGroups = [
+    [page(0)],
+    [page(0), page(1, 3)],
+    [page(0), { ...page(1), page: { index: 0, count: 2 } }],
+    [page(0), { ...page(1), page: { index: 2, count: 2 } }],
+    [page(0), legacy],
+    [page(0), { ...page(1), sourceId: page(0).sourceId }],
+    [page(0), { ...page(1), reason: "Different blocker" }],
+    [page(0), { ...page(1), status: "pending", reason: undefined }],
+    [
+      page(0),
+      {
+        ...page(1),
+        canonicalId: "session-1:todo-2",
+        sourceId: "session-1:todo-2:page-1",
+      },
+    ],
+    [page(-1, 1)],
+    [page(0, 0)],
+    [page(0, 5_001)],
+    [page(0.5, 1)],
+    [page(0, Number.NaN)],
+    [{ ...page(0, 1), page: null }],
+    [{ ...page(0, 1), page: undefined }],
+    [{ ...page(0, 1), page: { index: "0", count: 1 } }],
+  ]
+  for (const todos of invalidGroups) {
+    assert.equal(
+      decodeBranchTodoBacklogSnapshot({ ...snapshot, todos }),
+      undefined,
+    )
+  }
+})
+
+test("branch todo validation rejects sparse records and requirements", () => {
+  const snapshot = {
+    project: "/repo/a",
+    sessionId: "session-1",
+    observedAt: 1_000,
+  }
+  assert.equal(
+    decodeBranchTodoBacklogSnapshot({
+      ...snapshot,
+      todos: new Array<unknown>(1),
+    }),
+    undefined,
+  )
+  assert.equal(
+    decodeBranchTodoBacklogSnapshot({
+      ...snapshot,
+      todos: [
+        {
+          canonicalId: "session-1:todo-1",
+          sourceId: "session-1:todo-1:v1",
+          status: "pending",
+          requirements: new Array<unknown>(1),
+        },
+      ],
+    }),
+    undefined,
+  )
+})
+
 test("canonical tracker and backlog-document snapshots preserve lifecycle evidence", () => {
   const tracker = decodeCanonicalBacklogSnapshot({
     project: "/repo/a",

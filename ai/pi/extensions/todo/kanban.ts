@@ -34,8 +34,8 @@ export class KanbanComponent {
   private readonly selectedRows = [0, 0, 0, 0]
   private detailOpen = false
   private actionPending = false
-  private cachedWidth?: number
-  private cachedLines?: string[]
+  private cachedWidth: number | undefined
+  private cachedLines: string[] | undefined
 
   constructor(
     state: TodoState,
