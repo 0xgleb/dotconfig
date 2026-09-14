@@ -10,6 +10,14 @@
 - Never access, list, search, or expose credential or secret-bearing files. Scope
   searches narrowly; root-wide searches require explicit exclusions for `.env*`,
   credential stores, private keys, and certificates.
+- Treat environment values as secret-capable. Never enumerate the environment
+  (`env`, unscoped `printenv`, bare `$env`, or `PI_*` prefix filters) for
+  inspection. Filtering or redacting after retrieval is too late. For Pi
+  session/model metadata, prefer managed metadata tools or direct lookup of only
+  the documented injected keys `PI_SESSION_ID`, `PI_PROVIDER`, `PI_MODEL`, and
+  `PI_REASONING_LEVEL`. A `PI_` prefix is not a credential-safety guarantee. For
+  other keys, first establish from source or documentation that the exact key is
+  non-secret and needed. Never read credential-bearing variable values.
 - Before following a skill's named tool procedure, verify that tool exists in the
   current Pi tool set. Shared-skill `allowed-tools` entries are cross-harness
   portability metadata, not proof that Pi exposes those tools. If a named tool is
