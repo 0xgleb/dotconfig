@@ -253,7 +253,7 @@ const receiptDetails = (
 }
 
 const registryExtension: (pi: ExtensionAPI) => void = pi => {
-  registerRuntimeVersion(pi, "agent-registry", "2026.09.13.3")
+  registerRuntimeVersion(pi, "agent-registry", "2026.09.13.4")
   pi.registerMessageRenderer(MESSAGE_TYPE, (message, options, theme) => {
     const details = receiptDetails(message.details)
     if (!details)

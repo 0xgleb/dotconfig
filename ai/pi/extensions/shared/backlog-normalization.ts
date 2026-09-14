@@ -69,10 +69,63 @@ const adapterError = (
   message: string,
 ): BacklogSourceAdapterError => new BacklogSourceAdapterError({ code, message })
 
-const field = (value: unknown, key: string): unknown =>
-  typeof value === "object" && value !== null
-    ? Reflect.get(value, key)
-    : undefined
+const field = (
+  value: unknown,
+  key: string,
+): Effect.Effect<unknown, BacklogSourceAdapterError> =>
+  Effect.try({
+    try: (): unknown =>
+      typeof value === "object" && value !== null
+        ? Reflect.get(value, key)
+        : undefined,
+    catch: () => adapterError("invalid_input", "input property cannot be read"),
+  })
+
+const inputElements = (
+  value: unknown,
+  maximum: number,
+): Effect.Effect<readonly unknown[], BacklogSourceAdapterError> =>
+  Effect.gen(function* () {
+    const shape = yield* Effect.try({
+      try: ():
+        | { readonly values: readonly unknown[]; readonly length: unknown }
+        | undefined =>
+        Array.isArray(value)
+          ? { values: value, length: value.length }
+          : undefined,
+      catch: () => adapterError("invalid_input", "input array cannot be read"),
+    })
+    if (
+      !shape ||
+      typeof shape.length !== "number" ||
+      !Number.isSafeInteger(shape.length) ||
+      shape.length < 0 ||
+      shape.length > maximum
+    )
+      return yield* Effect.fail(
+        adapterError("invalid_input", "input array size is invalid"),
+      )
+    const elements: unknown[] = []
+    for (let index = 0; index < shape.length; index += 1) {
+      const slot = yield* Effect.try({
+        try: () =>
+          Object.hasOwn(shape.values, index)
+            ? { value: shape.values[index] }
+            : undefined,
+        catch: () =>
+          adapterError("invalid_input", "input array element cannot be read"),
+      })
+      if (!slot)
+        return yield* Effect.fail(
+          adapterError(
+            "invalid_input",
+            "input array contains a missing element",
+          ),
+        )
+      elements.push(slot.value)
+    }
+    return elements
+  })
 
 const boundedSafeText = (
   label: string,
@@ -155,7 +208,7 @@ const requirementPages = (
     const bodyRequirements =
       body === undefined || body.trim().length === 0
         ? []
-        : backlogRequirementsFromText(body)
+        : backlogRequirementsFromText(body, MAX_REQUIREMENTS - 1)
     if (
       body !== undefined &&
       body.trim().length > 0 &&
@@ -220,11 +273,11 @@ const githubTrackerItem = (
   scopeId: string,
 ): Effect.Effect<CanonicalBacklogItemRecord, BacklogSourceAdapterError> =>
   Effect.gen(function* () {
-    const kind = field(value, "kind")
-    const number = field(value, "number")
-    const state = field(value, "state")
-    const stateReason = field(value, "stateReason")
-    const rawLabels = field(value, "labels")
+    const kind = yield* field(value, "kind")
+    const number = yield* field(value, "number")
+    const state = yield* field(value, "state")
+    const stateReason = yield* field(value, "stateReason")
+    const rawLabels = yield* field(value, "labels")
     if (
       (kind !== "issue" && kind !== "pull-request") ||
       typeof number !== "number" ||
@@ -234,20 +287,19 @@ const githubTrackerItem = (
       (state !== "open" && state !== "closed" && state !== "merged") ||
       (stateReason !== undefined &&
         stateReason !== "completed" &&
-        stateReason !== "not-planned") ||
-      !Array.isArray(rawLabels) ||
-      rawLabels.length > 100
+        stateReason !== "not-planned")
     )
       return yield* Effect.fail(
         adapterError("invalid_input", "tracker item is malformed"),
       )
     const updatedAt = yield* boundedSafeText(
       "updatedAt",
-      field(value, "updatedAt"),
+      yield* field(value, "updatedAt"),
       80,
     )
+    const labelValues = yield* inputElements(rawLabels, 100)
     const normalizedLabels = yield* Effect.all(
-      rawLabels.map(label =>
+      labelValues.map(label =>
         Effect.map(boundedSafeText("tracker label", label, 256), text =>
           text.toLowerCase(),
         ),
@@ -261,7 +313,7 @@ const githubTrackerItem = (
           "stateReason applies only to a closed issue",
         ),
       )
-    const blockedReason = field(value, "blockedReason")
+    const blockedReason = yield* field(value, "blockedReason")
     if (
       blockedReason !== undefined &&
       (state !== "open" || !labels.has("blocked"))
@@ -273,8 +325,8 @@ const githubTrackerItem = (
         ),
       )
     const requirements = yield* requirementPages(
-      field(value, "title"),
-      field(value, "body"),
+      yield* field(value, "title"),
+      yield* field(value, "body"),
     )
     const canonicalId = `${kind}:${String(number)}`
     const lifecycle = yield* trackerStatus(
@@ -306,30 +358,29 @@ export const githubTrackerSnapshot = (
   input: GitHubTrackerSnapshotInput,
 ): Effect.Effect<CanonicalBacklogSnapshot, BacklogSourceAdapterError> =>
   Effect.gen(function* () {
-    const project = yield* validProject(field(input, "project"))
+    const project = yield* validProject(yield* field(input, "project"))
     const repository = yield* boundedSafeText(
       "repository",
-      field(input, "repository"),
+      yield* field(input, "repository"),
       201,
     )
     if (!SAFE_REPOSITORY.test(repository))
       return yield* Effect.fail(
         adapterError("invalid_input", "repository must be owner/name"),
       )
-    const coverage = field(input, "coverage")
+    const coverage = yield* field(input, "coverage")
     if (coverage !== "partial" && coverage !== "complete")
       return yield* Effect.fail(
         adapterError("invalid_input", "coverage is invalid"),
       )
-    const rawItems = field(input, "items")
-    if (!Array.isArray(rawItems) || rawItems.length > MAX_ITEMS)
-      return yield* Effect.fail(
-        adapterError("invalid_input", "tracker item count is invalid"),
-      )
-    const observedAt = yield* validObservedAt(field(input, "observedAt"))
+    const itemValues = yield* inputElements(
+      yield* field(input, "items"),
+      MAX_ITEMS,
+    )
+    const observedAt = yield* validObservedAt(yield* field(input, "observedAt"))
     const scopeId = `github:${repository}`
     const items = yield* Effect.all(
-      rawItems.map(item => githubTrackerItem(item, scopeId)),
+      itemValues.map(item => githubTrackerItem(item, scopeId)),
     )
     if (new Set(items.map(item => item.canonicalId)).size !== items.length)
       return yield* Effect.fail(
@@ -368,12 +419,16 @@ const decodeDocumentDeclaration = (
           "declaration contains an unknown field",
         ),
       )
-    const id = yield* boundedSafeText("declaration id", field(value, "id"), 128)
+    const id = yield* boundedSafeText(
+      "declaration id",
+      yield* field(value, "id"),
+      128,
+    )
     if (!SAFE_IDENTIFIER.test(id) || id.includes("/") || id.includes(":"))
       return yield* Effect.fail(
         adapterError("malformed_declaration", "declaration id is invalid"),
       )
-    const status = field(value, "status")
+    const status = yield* field(value, "status")
     if (
       status !== "ready" &&
       status !== "blocked" &&
@@ -383,7 +438,7 @@ const decodeDocumentDeclaration = (
       return yield* Effect.fail(
         adapterError("malformed_declaration", "declaration status is invalid"),
       )
-    const priority = field(value, "priority")
+    const priority = yield* field(value, "priority")
     if (priority !== "normal" && priority !== "urgent")
       return yield* Effect.fail(
         adapterError(
@@ -391,7 +446,7 @@ const decodeDocumentDeclaration = (
           "declaration priority is invalid",
         ),
       )
-    const requirementValues = field(value, "requirements")
+    const requirementValues = yield* field(value, "requirements")
     if (
       !Array.isArray(requirementValues) ||
       requirementValues.length === 0 ||
@@ -412,7 +467,7 @@ const decodeDocumentDeclaration = (
         ),
       ),
     )
-    const reasonValue = field(value, "reason")
+    const reasonValue = yield* field(value, "reason")
     if (status === "blocked") {
       const reason = yield* boundedSafeText(
         "blocked declaration reason",
@@ -484,10 +539,10 @@ export const backlogDocumentSnapshot = (
   input: BacklogDocumentSnapshotInput,
 ): Effect.Effect<CanonicalBacklogSnapshot, BacklogSourceAdapterError> =>
   Effect.gen(function* () {
-    const project = yield* validProject(field(input, "project"))
+    const project = yield* validProject(yield* field(input, "project"))
     const documentId = yield* boundedSafeText(
       "documentId",
-      field(input, "documentId"),
+      yield* field(input, "documentId"),
       80,
     )
     if (
@@ -498,7 +553,7 @@ export const backlogDocumentSnapshot = (
       return yield* Effect.fail(
         adapterError("invalid_input", "documentId is invalid"),
       )
-    const content = field(input, "content")
+    const content = yield* field(input, "content")
     if (
       typeof content !== "string" ||
       content.length > MAX_DOCUMENT_CHARACTERS ||
@@ -507,7 +562,7 @@ export const backlogDocumentSnapshot = (
       return yield* Effect.fail(
         adapterError("invalid_input", "document content is invalid"),
       )
-    const observedAt = yield* validObservedAt(field(input, "observedAt"))
+    const observedAt = yield* validObservedAt(yield* field(input, "observedAt"))
     const scopeId = `document:${documentId}`
     const declarations = yield* documentDeclarations(content)
     if (
