@@ -352,6 +352,62 @@ const cargoArguments = (command: string): readonly string[] | undefined => {
   return words.slice(commandIndex + 2)
 }
 
+// This describes a possible output change, never a current size or a proven
+// target directory: Cargo configuration/environment may select another root.
+// Explicit cross-target layouts are conservatively outside this recognition.
+const mayGenerateCargoOutput = (command: string): boolean => {
+  const args = cargoArguments(command)
+  if (!args) return false
+  const buildLike =
+    ["build", "check", "test", "clippy"].includes(args[0] ?? "") ||
+    (args[0] === "nextest" && args[1] === "run")
+  const inspectionOrOverride = args.some(
+    argument =>
+      [
+        "-h",
+        "--help",
+        "-V",
+        "--version",
+        "--dry-run",
+        "--build-plan",
+        "--unit-graph",
+      ].includes(argument) ||
+      /^--(?:target|target-dir|manifest-path|config)(?:=|$)/u.test(argument),
+  )
+  return buildLike && !inspectionOrOverride
+}
+
+const isCargoOutputInventory = (command: string): boolean => {
+  const words = boundedShellWords(command)
+  if (!words || !["du", "^du"].includes(words[0] ?? "")) return false
+  const flags = new Set([
+    "-s",
+    "-h",
+    "-sh",
+    "-hs",
+    "--summarize",
+    "--human-readable",
+  ])
+  const paths = words.slice(1).filter(word => !flags.has(word))
+  const target = paths[0]
+  return (
+    paths.length === 1 &&
+    target !== undefined &&
+    /^(?:\.\/)?target(?:\/[A-Za-z0-9_.-]+)*\/?$/u.test(target) &&
+    !target.split("/").includes("..")
+  )
+}
+
+const cargoOutputEffectScope = (candidate: string): string | undefined => {
+  const inputBoundary = candidate.indexOf(" input=")
+  if (inputBoundary < 0) return undefined
+  const prefix = candidate.slice(0, inputBoundary)
+  if (!/ artifactEffect=possible-cargo-output$/u.test(prefix)) return undefined
+  return /^(?:functions\.)?bash result status=success inputDigest=[0-9a-f]{64} scope=([0-9a-f]{16})\b/u.exec(
+    prefix,
+  )?.[1]
+}
+
 const cargoSelectionIsCovered = (
   kind: "cargo-test" | "cargo-clippy",
   args: readonly string[],
@@ -1035,6 +1091,13 @@ const renderToolResultExecutionEvidence: (
       ? stateSnapshotIdentity(name, inputRecord, scope)
       : undefined
   const verification = verificationMarker(name, inputRecord, scope)
+  const artifactEffect =
+    status === "success" &&
+    name.replace(/^functions\./, "") === "bash" &&
+    typeof inputRecord?.command === "string" &&
+    mayGenerateCargoOutput(inputRecord.command)
+      ? " artifactEffect=possible-cargo-output"
+      : ""
   const scopeIdentity = scope ? ` scope=${evidenceScopeDigest(scope)}` : ""
   const snapshotMarker = snapshot
     ? ` snapshot=${snapshot.kind}${snapshot.anchor ? ` anchor=${snapshot.anchor}` : ""}`
@@ -1044,7 +1107,7 @@ const renderToolResultExecutionEvidence: (
       ? " commandScope=verified"
       : ""
   const evidenceText = text.trim() || "(no textual output)"
-  return `${name} result status=${status}${digestIdentity}${scopeIdentity}${snapshotMarker}${commandScopeMarker}${verification}${inputIdentity}: ${boundedRelevantExecutionEvidence(evidenceText, subject, maxCharacters)}`
+  return `${name} result status=${status}${digestIdentity}${scopeIdentity}${snapshotMarker}${commandScopeMarker}${verification}${artifactEffect}${inputIdentity}: ${boundedRelevantExecutionEvidence(evidenceText, subject, maxCharacters)}`
 }
 
 export const branchExecutionEvidence = ({
@@ -1474,6 +1537,25 @@ export const selectRelevantExecutionEvidence = (
       if (success?.[1] === subjectInputDigest && success[2] === subjectScope)
         latestMatchingSuccessIndex = index
     })
+    // An old disk observation cannot establish post-build artifact state. Keep
+    // only newer same-workspace possible-output witnesses for this exact repeat;
+    // the semantic caller still determines necessity, target linkage and authority.
+    if (
+      latestMatchingSuccessIndex >= 0 &&
+      isBashSubject &&
+      subjectCommand &&
+      isCargoOutputInventory(subjectCommandLocation?.command ?? subjectCommand)
+    ) {
+      const outputWitnesses = olderEntries
+        .map((entry, index) => ({ ...entry, index }))
+        .filter(
+          ({ candidate, currentIndex }) =>
+            currentIndex > latestMatchingSuccessIndex &&
+            cargoOutputEffectScope(candidate) === subjectScope,
+        )
+        .slice(-4)
+      for (const { index } of outputWitnesses) selectedOlderIndexes.add(index)
+    }
     // A retained pass with a different filter/wrapper still needs its later
     // edits visible. Coverage identifies the suite, not unchanged source or
     // permission to omit the project's required execution environment.
