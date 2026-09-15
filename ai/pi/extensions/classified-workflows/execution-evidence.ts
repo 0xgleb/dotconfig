@@ -784,6 +784,7 @@ interface StateSnapshotIdentity {
     | "gitbutler-status"
     | "gitbutler-uncommitted"
     | "pull-request-view"
+    | "qualified-pull-request-query"
     | "registry-completion"
     | "registry-claim"
     | "registry-phase"
@@ -898,6 +899,7 @@ const stateSnapshotIdentity = (
   toolName: string,
   input: Readonly<Record<string, unknown>> | undefined,
   scope: string | undefined,
+  originalCommand?: string,
 ): StateSnapshotIdentity | undefined => {
   const normalizedToolName = toolName.replace(/^functions\./, "")
   if (normalizedToolName === "agent_registry") {
@@ -949,6 +951,18 @@ const stateSnapshotIdentity = (
   )
     return undefined
   const command = input.command.trim()
+  const queryCommand = originalCommand ?? input.command
+  if (
+    queryCommand.length <= 512 &&
+    queryCommand === queryCommand.trim() &&
+    /^\^?gh +pr +view +[1-9]\d* +--repo +[a-z0-9][a-z0-9_-]*\/[a-z0-9][a-z0-9_.-]* +--json +[a-z][a-z0-9]*(?:,[a-z][a-z0-9]*)*$/i.test(
+      queryCommand,
+    )
+  )
+    return {
+      kind: "qualified-pull-request-query",
+      anchor: hashedSnapshotAnchor("query", queryCommand),
+    }
   const pinnedButStatus =
     /^\/nix\/store\/[0-9abcdfghijklmnpqrsvwxyz]{32}-gitbutler-cli-\d+\.\d+\.\d+\/bin\/but status --json( \| from json \| get uncommittedChanges \| to json)?$/.exec(
       command,
@@ -1062,6 +1076,7 @@ export const toolResultExecutionEvidence: (
 const renderToolResultExecutionEvidence: (
   input: ToolResultExecutionEvidenceInput,
   commandLocation?: RuntimeCommandLocation,
+  originalCommand?: string,
 ) => string = (
   {
     toolName,
@@ -1074,6 +1089,7 @@ const renderToolResultExecutionEvidence: (
     maxCharacters = 2_400,
   },
   commandLocation,
+  originalCommand,
 ) => {
   const name =
     sanitizeProcessDiagnostic(String(toolName ?? "tool"))
@@ -1112,7 +1128,7 @@ const renderToolResultExecutionEvidence: (
   const inputIdentity = encodedInput !== "{}" ? ` input=${encodedInput}` : ""
   const snapshot =
     status === "success"
-      ? stateSnapshotIdentity(name, inputRecord, scope)
+      ? stateSnapshotIdentity(name, inputRecord, scope, originalCommand)
       : undefined
   const verification = verificationMarker(name, inputRecord, scope)
   const artifactEffect =
@@ -1249,6 +1265,7 @@ export const branchExecutionEvidence = ({
           maxCharacters,
         },
         commandLocation,
+        typeof input?.command === "string" ? input.command : undefined,
       ),
     ]
   })
@@ -1305,7 +1322,7 @@ const STRUCTURED_RESULT_EVIDENCE =
   /^(?:functions\.)?\S+ result status=(?:success|error|unknown)\b/i
 
 const STATE_SNAPSHOT_MARKER =
-  /^(?:functions\.)?\S+ result status=success(?: inputDigest=[0-9a-f]{64})? scope=([0-9a-f]{16}) snapshot=(git-status|git-path-status|git-index-paths|git-index-blobs|git-object-hashes|gitbutler-status|gitbutler-uncommitted|pull-request-view|registry-completion|registry-claim|registry-phase|registry-terminal|registry-version|git-current-branch|git-head|git-history|git-push|git-remote-sha)(?: anchor=([a-z0-9_./:-]{1,128}))?\b/i
+  /^(?:functions\.)?\S+ result status=success(?: inputDigest=[0-9a-f]{64})? scope=([0-9a-f]{16}) snapshot=(git-status|git-path-status|git-index-paths|git-index-blobs|git-object-hashes|gitbutler-status|gitbutler-uncommitted|pull-request-view|qualified-pull-request-query|registry-completion|registry-claim|registry-phase|registry-terminal|registry-version|git-current-branch|git-head|git-history|git-push|git-remote-sha)(?: anchor=([a-z0-9_./:-]{1,128}))?\b/i
 
 interface StateSnapshotMarker {
   readonly kind: string
