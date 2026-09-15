@@ -271,7 +271,7 @@ export const buildAgentArguments = (
     if (tools.length !== requestedTools.length)
       return yield* failure(
         "invalid_input",
-        "Agent requested an unsupported tool",
+        `Agent requested an unsupported tool; supported child tools: ${[...AGENT_TOOLS].join(", ")}. Parent extension tools are not inherited.`,
       )
     if (extensionPath.trim() === "")
       return yield* failure(

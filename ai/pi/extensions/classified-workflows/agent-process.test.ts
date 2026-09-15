@@ -199,17 +199,16 @@ test("workflow children activate only requested source tools and not extension c
       "/repo/classified-workflows/index.ts",
     ),
   )
-  assert.equal(args[args.indexOf("--tools") + 1], "read")
+  const selectedTools = args[args.indexOf("--tools") + 1]
+  assert.ok(selectedTools)
+  assert.equal(selectedTools, "read")
   for (const tool of [
     "workflow",
     "workflow_audit",
     "review_duty",
     "artifact_provenance",
   ]) {
-    assert.equal(
-      args[args.indexOf("--tools") + 1].split(",").includes(tool),
-      false,
-    )
+    assert.equal(selectedTools.split(",").includes(tool), false)
   }
 })
 
@@ -363,15 +362,24 @@ test("workflow children normalize comma-delimited tools at the process boundary"
   assert.equal(args[args.indexOf("--tools") + 1], "read,grep,find,ls")
 })
 
-test("workflow children reject unsupported tools", () => {
-  assert.throws(
-    () =>
-      run(
-        buildAgentArguments(
-          { task: "inspect", tools: ["read", "unknown"] },
-          "/repo/index.ts",
+test("workflow children reject unsupported tools and enumerate their actual capabilities", () => {
+  const supported = ["read", "grep", "find", "ls", "bash", "edit", "write"]
+  for (const unsupported of ["unknown", "browser"]) {
+    assert.throws(
+      () =>
+        run(
+          buildAgentArguments(
+            { task: "inspect", tools: ["read", unsupported] },
+            "/repo/index.ts",
+          ),
         ),
-      ),
-    /unsupported tool/i,
-  )
+      /unsupported tool; supported child tools: read, grep, find, ls, bash, edit, write\. Parent extension tools are not inherited\./,
+    )
+  }
+  for (const tool of supported) {
+    const args = run(
+      buildAgentArguments({ task: "inspect", tools: [tool] }, "/repo/index.ts"),
+    )
+    assert.equal(args[args.indexOf("--tools") + 1], tool)
+  }
 })

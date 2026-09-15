@@ -36,7 +36,7 @@ const TRANSIENT_PROVIDER_OVERLOAD =
   /(?:servers? (?:are )?currently overloaded|overloaded_error)/i
 
 const PROVIDER_USAGE_LIMIT =
-  /^You have hit your (?:ChatGPT|Codex) usage limit\b/i
+  /^(?:You have hit your (?:ChatGPT|Codex) usage limit\b|Codex error: The usage limit has been reached\.?$)/i
 
 const incidentKeySummary = (incident: AgentopsIncident): string =>
   PROVIDER_USAGE_LIMIT.test(incident.summary)
