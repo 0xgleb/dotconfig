@@ -391,7 +391,7 @@ before Bash is exposed; checkout, worktree creation, mutation, and unrelated
 shell commands remain prohibited and semantically classified.
 
 ```javascript
-export const meta = {
+const meta = {
   name: 'review-panel',
   description: 'Multi-model review panel: parallel review, dedup, adversarial verify, synthesize',
   phases: [
@@ -504,7 +504,7 @@ const reviewLane = lane => {
     schema: REVIEW_SCHEMA,
   }).then(result => result && ({
     key: lane.key,
-    error: result.reviewer_error || null,
+    error: result.status === 'blocked' ? result.reason : result.reviewer_error || null,
     findings: (result.findings || []).map(finding => ({
       ...finding,
       found_by: [lane.key],
@@ -555,6 +555,23 @@ for (const finding of raw) {
 log(`${raw.length} raw findings -> ${merged.length} after dedup; ` +
   `lane errors: ${laneErrors.length}`)
 
+const reviewIncomplete = lanes.some(
+  (lane, index) =>
+    !lane.externalCmd && (!laneResults[index] || laneResults[index].error),
+)
+if (reviewIncomplete) {
+  return {
+    status: 'incomplete',
+    findings: [],
+    dismissed: [],
+    laneErrors,
+    verificationErrors: [],
+    unverifiedFindings: merged,
+    synthesisError: null,
+    report: null,
+  }
+}
+
 const verifyFinding = finding => agent(
     `You are adversarially verifying a single code-review finding. Read the ` +
     `actual code before judging — never judge from the finding text alone.\n\n` +
@@ -574,7 +591,11 @@ const verifyFinding = finding => agent(
     { label: `verify:${finding.file}`, phase: 'Verify', cwd: repoRoot,
       tools: sourceTools, model: 'openai-codex/gpt-5.6-luna',
       schema: VERDICT_SCHEMA },
-  ).then(verdict => verdict && ({ ...finding, ...verdict }))
+  ).then(verdict =>
+    verdict?.status === 'blocked'
+      ? { ...finding, verificationError: verdict.reason }
+      : { ...finding, ...verdict },
+  )
 
 const verified = []
 const verifyBatchCount = Math.max(1, Math.ceil(merged.length / PHASE_AGENT_CAP))
@@ -587,7 +608,15 @@ for (let offset = 0; offset < merged.length; offset += PHASE_AGENT_CAP) {
   ))
 }
 
-const judged = verified.filter(Boolean)
+const verificationErrors = verified
+  .filter(finding => Object.hasOwn(finding, 'verificationError'))
+  .map(({ verificationError, ...finding }) => ({
+    finding,
+    reason: verificationError,
+  }))
+const judged = verified.filter(
+  finding => !Object.hasOwn(finding, 'verificationError'),
+)
 const survivors = judged.filter(finding =>
   finding.verdict === 'valid' || finding.verdict === 'likely' ||
   finding.verdict === 'disputed')
@@ -600,6 +629,19 @@ survivors.sort((first, second) =>
   sevRank[first.severity] - sevRank[second.severity] ||
   verdictRank[first.verdict] - verdictRank[second.verdict] ||
   second.confidence - first.confidence)
+
+if (verificationErrors.length > 0) {
+  return {
+    status: 'incomplete',
+    findings: survivors,
+    dismissed,
+    laneErrors,
+    verificationErrors,
+    unverifiedFindings: verificationErrors.map(error => error.finding),
+    synthesisError: null,
+    report: null,
+  }
+}
 
 phase('Synthesize')
 
@@ -639,25 +681,36 @@ const synthesis = await agent(
     } },
 )
 
+const synthesisBlocked = synthesis?.status === 'blocked'
 return {
+  status: synthesisBlocked ? 'incomplete' : 'completed',
   findings: survivors,
   dismissed,
   laneErrors,
-  report: synthesis ? synthesis.report_markdown : null,
+  verificationErrors,
+  unverifiedFindings: [],
+  synthesisError: synthesisBlocked ? synthesis.reason : null,
+  report: synthesisBlocked ? null : synthesis.report_markdown,
 }
 ```
 
 ## 6. After the workflow returns
 
-The workflow returns `{findings, dismissed, laneErrors, report}`.
+The workflow returns `{status, findings, dismissed, laneErrors,
+verificationErrors, unverifiedFindings, synthesisError, report}`. Required
+native reviewer or inspector failures and blocked verifiers prevent synthesis;
+blocked synthesis prevents completion. Actual failed or timed-out schema agents
+reject the workflow instead of returning a verdict.
 
-1. Write `report` to `$out_dir/review.md` and the findings JSON to
-   `$out_dir/findings.json` (audit trail). `findings.json` keeps the `found_by`
-   attribution even when `{INCLUDE_ATTRIBUTION}` is false — only `review.md` and
-   the terminal output drop it.
-2. If `laneErrors` is non-empty, tell the user which lanes errored. If **all
-   reviewer lanes** errored, stop. Inspector lanes erroring is non-fatal.
-3. If `findings` is empty, the pass is clean.
+1. Save the full result to `$out_dir/result.json`, preserving errors and
+   unverified candidates, and the verified findings to `$out_dir/findings.json`.
+   Write `$out_dir/review.md` only when `report` is non-null. Keep `found_by`
+   attribution in JSON even when `{INCLUDE_ATTRIBUTION}` is false.
+2. Report every incomplete phase and its retained reason. An incomplete result
+   is never clean, even with empty `findings`. Preserve successful evidence and
+   continue only the missing work under the caller's authority and gates. An
+   optional Claude lane error alone does not make the native panel incomplete.
+3. Only `status: "completed"` with empty `findings` is a clean pass.
 
 ## 7. Print findings to the terminal
 
@@ -694,9 +747,10 @@ what happens when there are no findings and what to do next.
 
 ## Engine failure modes
 
-- **All reviewer lanes error:** stop only if every native
-  `openai-codex/gpt-5.6-luna` Workflow lane failed. An optional Claude lane
-  failure is never fatal.
+- **Required evidence is blocked:** return an incomplete result with the
+  affected lane or candidate and reason; never synthesize a clean verdict from
+  unavailable evidence. Every selected native reviewer and inspector is required.
+  An optional Claude lane failure alone is non-fatal.
 - **The workflow itself fails mid-run:** relaunch with `{scriptPath, args,
   resumeFromRunId}` — completed lanes return cached results instantly; only the
   failed part re-runs.
@@ -711,10 +765,11 @@ what happens when there are no findings and what to do next.
    session (context pollution).
 3. **The optional Claude subscription CLI runs read-only** with
    `--permission-mode plan`; never use an Anthropic API provider.
-4. Never fabricate findings when a lane errors — record the failure from
-   `laneErrors`.
+4. Never fabricate or silently discard findings when a lane is blocked. Retain
+   `laneErrors`, `verificationErrors`, `unverifiedFindings`, and `synthesisError`;
+   incomplete evidence never supports a clean pass.
 5. The Review→Verify and Verify→Synthesize barriers are **intentional** (dedup
    needs all lanes; synthesis needs all survivors). Within each phase everything
    runs in parallel; do not collapse the phases.
-6. Save `review.md` and `findings.json` to `$out_dir` before printing to the
-   terminal.
+6. Save the structured result and `findings.json` to `$out_dir` before printing
+   to the terminal; save `review.md` only when the workflow produced a report.

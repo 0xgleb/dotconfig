@@ -303,6 +303,28 @@ const boundedShellWords = (command: string): readonly string[] | undefined => {
   return quote || !finishWord() ? undefined : words
 }
 
+// Recognition preserves evidence, not coverage or authority. Only literal,
+// relative Node test-file invocations qualify; wrappers and extra flags remain
+// ordinary evidence until their execution semantics are modeled separately.
+const isLiteralNodeTestCommand = (command: string): boolean => {
+  const words = boundedShellWords(command)
+  return Boolean(
+    words &&
+    (words[0] === "node" || words[0] === "^node") &&
+    words[1] === "--test" &&
+    words.length > 2 &&
+    words
+      .slice(2)
+      .every(
+        argument =>
+          /^[A-Za-z0-9_./-]+\.[cm]?[jt]s$/u.test(argument) &&
+          !argument.startsWith("-") &&
+          !argument.startsWith("/") &&
+          !argument.split("/").includes(".."),
+      ),
+  )
+}
+
 const cargoArguments = (command: string): readonly string[] | undefined => {
   const words = boundedShellWords(command)
   if (!words) return undefined
@@ -565,6 +587,7 @@ const verificationMarker = (
     !scope
   )
     return ""
+  if (isLiteralNodeTestCommand(input.command)) return " verification=node-test"
   const descriptor = cargoVerificationDescriptor(
     input.command,
     evidenceScopeDigest(scope),
@@ -617,6 +640,21 @@ const verificationDescriptor = (
     focus: marker[5] === "*" ? [] : marker[5].split(","),
     scope,
   }
+}
+
+const successfulVerificationScope = (candidate: string): string | undefined => {
+  const inputBoundary = candidate.indexOf(" input=")
+  if (inputBoundary < 0) return undefined
+  const prefix = candidate.slice(0, inputBoundary)
+  const scope =
+    /^(?:functions\.)?bash result status=success inputDigest=[0-9a-f]{64} scope=([0-9a-f]{16})\b/u.exec(
+      prefix,
+    )?.[1]
+  if (!scope) return undefined
+  return verificationDescriptor(candidate) ||
+    /\bverification=node-test$/u.test(prefix)
+    ? scope
+    : undefined
 }
 
 const packagesCover = (
@@ -884,6 +922,14 @@ const stateSnapshotIdentity = (
     )
   )
     return { kind: "git-index-blobs" }
+  const indexPaths = /^git\s+ls-files\s+--stage\s+--\s+(.+)$/i.exec(
+    command,
+  )?.[1]
+  if (indexPaths && safeRelativeStatusPaths(indexPaths))
+    return {
+      kind: "git-index-blobs",
+      anchor: hashedSnapshotAnchor("paths", indexPaths),
+    }
   const hashPaths = /^git\s+hash-object\s+(.+)$/i.exec(command)?.[1]
   if (hashPaths && safeRelativeStatusPaths(hashPaths))
     return {
@@ -1315,7 +1361,14 @@ export const selectRelevantExecutionEvidence = (
         marker.scope !== subjectScope
       )
         return false
+      // A source-produced Node marker identifies the command; Git words in
+      // its filenames or untrusted stdout do not make it a VCS observation.
+      const inputBoundary = candidate.indexOf(" input=")
+      const isNodeVerification =
+        inputBoundary >= 0 &&
+        /\bverification=node-test$/u.test(candidate.slice(0, inputBoundary))
       const hasVcsCommandResult =
+        !isNodeVerification &&
         /^(?:functions\.)?bash result\b.*\b(?:git|gt|but)\b/i.test(candidate)
       const verifiedCommandScope =
         /^(?:functions\.)?bash result status=(?:success|error|unknown)(?: inputDigest=[0-9a-f]{64})? scope=([0-9a-f]{16})(?: snapshot=[a-z-]+(?: anchor=[a-z0-9_./:-]{1,128})?)? commandScope=verified\b/i.exec(
@@ -1372,6 +1425,34 @@ export const selectRelevantExecutionEvidence = (
       .slice(0, relevantCount)
       .map(({ index }) => index),
   )
+  // A generic Git subject need not share words with its test command. Keep
+  // bounded same-workspace passes even after recency churn, with subsequent
+  // mutations so retaining a pass cannot imply that its source stayed unchanged.
+  // Non-Git verification subjects retain their existing suite/focus matching.
+  if (subjectHasGitCommand && subjectScope) {
+    const passes = olderEntries
+      .map((entry, index) => ({ ...entry, index }))
+      .filter(
+        ({ candidate }) =>
+          successfulVerificationScope(candidate) === subjectScope,
+      )
+      .slice(-4)
+    for (const { index } of passes) selectedOlderIndexes.add(index)
+    const earliestPassIndex = passes[0]?.currentIndex
+    if (earliestPassIndex !== undefined) {
+      const mutations = olderEntries
+        .map((entry, index) => ({ ...entry, index }))
+        .filter(({ candidate, currentIndex }) => {
+          const scope = successfulMutationScope(candidate)
+          return (
+            currentIndex > earliestPassIndex &&
+            (scope === subjectScope || scope === "*")
+          )
+        })
+        .slice(-8)
+      for (const { index } of mutations) selectedOlderIndexes.add(index)
+    }
+  }
   // Identical command text is not an identical source snapshot. Keep bounded
   // later mutation evidence beside the latest matching success, even when its
   // path shares fewer query terms than the command itself. This is chronology
