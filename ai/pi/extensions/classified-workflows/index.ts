@@ -1030,7 +1030,7 @@ const WorkflowParameters = Type.Object({
 })
 
 export default function classifiedWorkflows(pi: ExtensionAPI): void {
-  registerRuntimeVersion(pi, "classified-workflows", "2026.09.13.3")
+  registerRuntimeVersion(pi, "classified-workflows", "2026.09.14.1")
   const childTokenLimitResult = Effect.runSync(
     Effect.either(
       workflowChildTokenLimit(process.env[WORKFLOW_CHILD_TOKEN_LIMIT_ENV]),
@@ -1468,6 +1468,11 @@ export default function classifiedWorkflows(pi: ExtensionAPI): void {
       intent,
       instructions,
       {
+        workflowEvidence: () =>
+          workflowAuditEvidence(emptyWorkflowAuditState, {
+            id,
+            children: childAudits,
+          }),
         classify: (request, childSignal) =>
           classifyWithActivity(request, ctx, childSignal),
         execute: (request, childSignal, tokenLimit, onProgress) =>
@@ -4097,6 +4102,11 @@ export default function classifiedWorkflows(pi: ExtensionAPI): void {
         intent,
         instructions,
         {
+          workflowEvidence: () =>
+            workflowAuditEvidence(emptyWorkflowAuditState, {
+              id: auditId,
+              children: childAudits,
+            }),
           classify: (request, childSignal) =>
             classifyWithActivity(request, ctx, childSignal),
           execute: (request, childSignal, tokenLimit, onProgress) =>

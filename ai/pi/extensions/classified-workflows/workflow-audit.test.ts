@@ -100,6 +100,7 @@ test("audited runner records bounded zero-token timeout diagnostics", async () =
   await run(
     { task: "review", model: "openai-codex/gpt-5.6-luna", tools: ["read"] },
     new AbortController().signal,
+    1_000,
   )
   assert.deepEqual(children, [
     {
@@ -330,6 +331,7 @@ test("same-job recovery selects only the latest failed audit and preserves parti
   assert.equal(latestFailedWorkflowAfter(state, 20)?.id, "wf-30")
   assert.equal(latestFailedWorkflowAfter(state, 21), undefined)
 
+  assert.ok(blockedFailure.children[0])
   const partialFailure = {
     ...blockedFailure,
     id: "wf-31",

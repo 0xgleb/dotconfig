@@ -78,6 +78,7 @@ export interface ClassificationRequest {
 }
 
 export interface LifecycleDependencies {
+  workflowEvidence?(): readonly string[]
   classify(
     request: ClassificationRequest,
     signal?: AbortSignal,
@@ -217,6 +218,11 @@ export function createClassifiedAgentRunner(
   parentEvidence: string[] = [],
   runtimeWorkflowContext?: RuntimeWorkflowContext,
 ): ClassifiedAgentRunner {
+  const inheritedEvidence = [...parentEvidence]
+  const currentEvidence = (): string[] => [
+    ...inheritedEvidence,
+    ...(dependencies.workflowEvidence?.() ?? []),
+  ]
   return async (
     request,
     signal,
@@ -230,7 +236,7 @@ export function createClassifiedAgentRunner(
         projectInstructions,
         ...(runtimeWorkflowContext ? { runtimeWorkflowContext } : {}),
         skillProcedures,
-        evidence: parentEvidence,
+        evidence: currentEvidence(),
         subject: request,
       },
       signal,
@@ -257,7 +263,7 @@ export function createClassifiedAgentRunner(
         projectInstructions,
         ...(runtimeWorkflowContext ? { runtimeWorkflowContext } : {}),
         skillProcedures,
-        evidence: parentEvidence,
+        evidence: currentEvidence(),
         subject: { request, status: result.status, output: result.output },
       },
       signal,

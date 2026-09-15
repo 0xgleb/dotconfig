@@ -8,6 +8,7 @@ import {
 
 export const WORKFLOW_AUDIT_ENTRY = "classified-workflows.audit"
 export const MAX_RETAINED_CHILD_OUTPUT_CHARACTERS = 2_000
+const MAX_LIVE_CHILD_EVIDENCE_RECORDS = 64
 export const MANAGED_RELOAD_WORKFLOW_CANCELLATION =
   "Workflow cancelled for managed Pi reload"
 
@@ -57,6 +58,11 @@ export interface WorkflowAuditState {
   readonly workflows: readonly WorkflowAudit[]
 }
 
+export interface LiveWorkflowAudit {
+  readonly id: string
+  readonly children: readonly ChildAudit[]
+}
+
 export const emptyWorkflowAuditState: WorkflowAuditState = { workflows: [] }
 
 export const nextWorkflowSequence = (state: WorkflowAuditState): number =>
@@ -83,8 +89,11 @@ export const appendWorkflowAudit = (
 const boundedEvidenceText = (text: string, limit: number): string =>
   text.replace(/\s+/g, " ").trim().slice(0, limit)
 
-export const workflowAuditEvidence = (state: WorkflowAuditState): string[] =>
-  state.workflows.slice(-8).map(workflow => {
+export const workflowAuditEvidence = (
+  state: WorkflowAuditState,
+  live?: LiveWorkflowAudit,
+): string[] => {
+  const terminalEvidence = state.workflows.slice(-8).map(workflow => {
     const children =
       workflow.children.length === 0
         ? "none"
@@ -101,6 +110,18 @@ export const workflowAuditEvidence = (state: WorkflowAuditState): string[] =>
       : ""
     return `typed workflow audit: ${workflow.id} status=${workflow.status}; children=${children}${outcome}`
   })
+  if (!live) return terminalEvidence
+  const children = live.children.slice(-MAX_LIVE_CHILD_EVIDENCE_RECORDS)
+  const id = boundedEvidenceText(live.id, 80)
+  return [
+    ...terminalEvidence,
+    `typed live workflow ${id}: terminalStatus=not-attested; settled=${live.children.length}; shown=${children.length}`,
+    ...children.map(
+      child =>
+        `typed settled child ${id}#${child.index}: status=${child.status}; usageTokens=${child.usageTokens}; outputCharacters=${child.outputCharacters}`,
+    ),
+  ]
+}
 
 const latestWorkflowAfter = (
   state: WorkflowAuditState,
