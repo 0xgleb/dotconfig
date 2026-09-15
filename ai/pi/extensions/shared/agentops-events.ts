@@ -32,6 +32,9 @@ const AGENT_CORRECTABLE_TOOL_NAMES = new Set([
 const PI_RUNTIME_FAILURE =
   /(?:classifier (?:became )?unavailable|internal (?:pi|tool|extension) error|stale (?:extension )?context|this operation was aborted|agent is already processing a prompt|expandedText is not defined)/i
 
+const PROVIDER_SAFETY_REFUSAL =
+  /^Codex error: This content was flagged for possible cybersecurity risk\./i
+
 const TRANSIENT_PROVIDER_OVERLOAD =
   /(?:servers? (?:are )?currently overloaded|overloaded_error)/i
 
@@ -86,6 +89,13 @@ export const agentTurnIncidentAfterRun = (
     expectedCompactionInterruption
   )
     return undefined
+  if (PROVIDER_SAFETY_REFUSAL.test(assistant.errorMessage))
+    return {
+      severity: "error",
+      component: "provider",
+      operation: "agent turn",
+      summary: assistant.errorMessage,
+    }
   if (
     TRANSIENT_PROVIDER_OVERLOAD.test(assistant.errorMessage) ||
     PROVIDER_USAGE_LIMIT.test(assistant.errorMessage)
