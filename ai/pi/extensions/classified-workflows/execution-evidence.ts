@@ -1030,6 +1030,30 @@ const stateSnapshotIdentity = (
 const evidenceScopeDigest = (scope: string): string =>
   createHash("sha256").update(scope).digest("hex").slice(0, 16)
 
+// Requested test names can occur many times before a fail-fast summary. Keep a
+// bounded terminal excerpt as untrusted output, not as inferred pass coverage.
+const boundedNextestEvidence = (
+  text: string,
+  subject: unknown,
+  maxCharacters: number,
+): string => {
+  const sanitized = sanitizeProcessDiagnostic(text).replace(/\s+/g, " ").trim()
+  if (
+    sanitized.length <= maxCharacters ||
+    !Number.isSafeInteger(maxCharacters) ||
+    maxCharacters < 128
+  )
+    return boundedRelevantExecutionEvidence(text, subject, maxCharacters)
+  const terminal = sanitized.slice(-Math.floor(maxCharacters / 2))
+  const separator = " …[terminal output; untrusted] "
+  const focused = boundedRelevantExecutionEvidence(
+    text,
+    subject,
+    maxCharacters - terminal.length - separator.length,
+  )
+  return `${focused}${separator}${terminal}`
+}
+
 /** Preserve execution status separately from untrusted result wording. */
 export const toolResultExecutionEvidence: (
   input: ToolResultExecutionEvidenceInput,
@@ -1107,7 +1131,16 @@ const renderToolResultExecutionEvidence: (
       ? " commandScope=verified"
       : ""
   const evidenceText = text.trim() || "(no textual output)"
-  return `${name} result status=${status}${digestIdentity}${scopeIdentity}${snapshotMarker}${commandScopeMarker}${verification}${artifactEffect}${inputIdentity}: ${boundedRelevantExecutionEvidence(evidenceText, subject, maxCharacters)}`
+  const cargo =
+    name.replace(/^functions\./, "") === "bash" &&
+    typeof inputRecord?.command === "string"
+      ? cargoArguments(inputRecord.command)
+      : undefined
+  const boundedText =
+    cargo?.[0] === "nextest" && cargo[1] === "run"
+      ? boundedNextestEvidence(evidenceText, subject, maxCharacters)
+      : boundedRelevantExecutionEvidence(evidenceText, subject, maxCharacters)
+  return `${name} result status=${status}${digestIdentity}${scopeIdentity}${snapshotMarker}${commandScopeMarker}${verification}${artifactEffect}${inputIdentity}: ${boundedText}`
 }
 
 export const branchExecutionEvidence = ({
