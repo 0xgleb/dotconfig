@@ -104,7 +104,7 @@ const statusText = (state: ReleaseCadenceState): string => {
 }
 
 export default (pi: ExtensionAPI) => {
-  registerRuntimeVersion(pi, "release-cadence", "2026.08.09.4")
+  registerRuntimeVersion(pi, "release-cadence", "2026.09.15.2")
   let active = false
   let state = initialReleaseCadenceState(Date.now())
   let timer: ReturnType<typeof setTimeout> | undefined
@@ -181,7 +181,11 @@ export default (pi: ExtensionAPI) => {
     )
   }
 
-  const reconstruct = async (ctx: ExtensionContext) => {
+  const reconstruct = async (
+    ctx: ExtensionContext,
+    reason: "session" | "settled",
+  ) => {
+    const wasActive = active
     active = isYielduckProject(ctx.cwd) && ownsYielduckOperatorRole(ctx)
     if (!active) {
       if (timer) clearTimeout(timer)
@@ -189,15 +193,16 @@ export default (pi: ExtensionAPI) => {
       ctx.ui.setStatus("release-cadence", undefined)
       return
     }
-    state = restoredState(ctx, Date.now())
+    if (reason === "session" || !wasActive)
+      state = restoredState(ctx, Date.now())
     persist()
     renderStatus(ctx)
     schedule(ctx)
     await wakeDueReminder(ctx)
   }
 
-  pi.on("session_start", async (_event, ctx) => reconstruct(ctx))
-  pi.on("session_tree", async (_event, ctx) => reconstruct(ctx))
+  pi.on("session_start", async (_event, ctx) => reconstruct(ctx, "session"))
+  pi.on("session_tree", async (_event, ctx) => reconstruct(ctx, "session"))
   pi.on("session_compact", async (_event, ctx) => {
     if (!active) return
     persist()
@@ -205,7 +210,7 @@ export default (pi: ExtensionAPI) => {
     schedule(ctx)
     await wakeDueReminder(ctx)
   })
-  pi.on("agent_settled", async (_event, ctx) => reconstruct(ctx))
+  pi.on("agent_settled", async (_event, ctx) => reconstruct(ctx, "settled"))
   pi.on("session_shutdown", (_event, ctx) => {
     if (timer) clearTimeout(timer)
     timer = undefined
@@ -302,11 +307,15 @@ export default (pi: ExtensionAPI) => {
 
   pi.registerCommand("release-cadence", {
     description: "Show, enable, or disable Yielduck hourly release reminders",
-    handler(args, ctx) {
+    handler: async (args, ctx) => {
       const action = args.trim() || "status"
-      if (!active || !isYielduckProject(ctx.cwd)) {
+      if (
+        !active ||
+        !isYielduckProject(ctx.cwd) ||
+        !ownsYielduckOperatorRole(ctx)
+      ) {
         ctx.ui.notify(
-          "Release cadence is available only in the Yielduck repository.",
+          "Release cadence is available only to the live Yielduck operator.",
           "warning",
         )
         return
