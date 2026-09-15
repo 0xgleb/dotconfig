@@ -108,6 +108,56 @@ test("loop defaults to hourly and supports explicit recurring intervals", () => 
   assert.throws(() => parseLoopCommand("8d too slow"), /at most 7 days/i)
 })
 
+test("explicit cadence preserves the complete multiline instruction", () => {
+  for (const separator of ["\n", "\r\n", "\u2028", "\u2029"]) {
+    const instruction = `/register${separator}Include bounded alert intake`
+    assert.deepEqual(parseLoopCommand(`5m ${instruction}`), {
+      action: "set",
+      instruction,
+      intervalMs: 5 * 60 * 1_000,
+    })
+    assert.deepEqual(parseLoopCommand(`2h+-1h ${instruction}`), {
+      action: "set",
+      instruction,
+      intervalMs: 2 * 60 * 60 * 1_000,
+      jitterMs: 60 * 60 * 1_000,
+    })
+    assert.deepEqual(parseLoopCommand(instruction), {
+      action: "set",
+      instruction,
+      intervalMs: DEFAULT_LOOP_INTERVAL_MS,
+    })
+  }
+})
+
+test("multiline instructions cannot bypass interval and jitter validation", () => {
+  for (const [cadence, error] of [
+    ["10s", /at least 1 minute/i],
+    ["8d", /at most 7 days/i],
+    ["1h+-1h", /jitter must be smaller/i],
+    ["2h+-10s", /at least 1 minute/i],
+  ] as const) {
+    assert.throws(
+      () =>
+        parseLoopCommand(`${cadence} /register\nInclude bounded alert intake`),
+      error,
+    )
+  }
+})
+
+test("multiline instruction length excludes the parsed cadence prefix", () => {
+  const instruction = `/register\n${"a".repeat(3_990)}`
+  assert.deepEqual(parseLoopCommand(`5m ${instruction}`), {
+    action: "set",
+    instruction,
+    intervalMs: 5 * 60 * 1_000,
+  })
+  assert.throws(
+    () => parseLoopCommand(`5m ${instruction}a`),
+    /at most 4,000 characters/i,
+  )
+})
+
 test("legacy reload goals migrate at the user's corrected hourly cadence", () => {
   assert.deepEqual(
     migrateLegacyReloadLoop(

@@ -100,7 +100,7 @@ export const parseLoopCommandResult = (args: string): LoopCommandResult => {
     return { ok: true, value: { action: "status" } }
   if (input.toLowerCase() === "clear")
     return { ok: true, value: { action: "clear" } }
-  const match = /^(\d+)([smhd])(?:\+-(\d+)([smhd]))?\s+(.+)$/i.exec(input)
+  const match = /^(\d+)([smhd])(?:\+-(\d+)([smhd]))?\s+(.+)$/is.exec(input)
   const interval = match
     ? parseIntervalResult(Number(match[1]), match[2]?.toLowerCase() ?? "")
     : { ok: true as const, value: DEFAULT_LOOP_INTERVAL_MS }
