@@ -170,7 +170,7 @@ export const inspectSuccessfulMutation = async (
 }
 
 export default (pi: ExtensionAPI): void => {
-  registerRuntimeVersion(pi, "write-result-inspector", "2026.09.04.1")
+  registerRuntimeVersion(pi, "write-result-inspector", "2026.09.15.2")
 
   let runtime: InspectorRuntime | undefined
 

@@ -5,6 +5,7 @@ import {
   deterministicCheckPlan,
   isProtectedWorkspacePath,
   type InspectionBatchFile,
+  type DeterministicCheckPlan,
 } from "./core.ts"
 
 const DETERMINISTIC_TIMEOUT_MS = 4_000
@@ -97,6 +98,32 @@ const findingMessage = (
   if (command === "nu")
     return "The configured Nushell syntax check failed for this changed file."
   return "The configured rustfmt syntax/format check failed for this changed file."
+}
+
+const contextPrefix = (value: string, maximum: number): string =>
+  value.length > maximum ? `${value.slice(0, maximum)}…` : value
+
+const findingContext = (
+  plan: DeterministicCheckPlan,
+  cwd: string,
+  exitCode: number | null,
+): string => {
+  const context = JSON.stringify({
+    exitCode,
+    command: plan.command,
+    args: plan.args,
+    cwd,
+  })
+  return context.length > 1_600
+    ? JSON.stringify({
+        exitCode,
+        command: plan.command,
+        args: plan.args.slice(0, 3).map(arg => contextPrefix(arg, 48)),
+        cwd: contextPrefix(cwd, 64),
+        argumentCount: plan.args.length,
+        truncated: true,
+      })
+    : context
 }
 
 const changedSourceText = (file: InspectionBatchFile): string =>
@@ -282,7 +309,7 @@ export const runDeterministicChecks = async (
           inspector: plan.kind,
           severity: "error" as const,
           code: "deterministic-check-failed" as const,
-          message: findingMessage(plan.command),
+          message: `${findingMessage(plan.command)}\nCheck context: ${findingContext(plan, dependencies.cwd, result.code)}`,
         },
       }
     }),

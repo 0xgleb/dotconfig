@@ -72,7 +72,7 @@ test("Nushell IDE diagnostics fail only on typed error records", async () => {
       severity: "error",
       code: "deterministic-check-failed",
       message:
-        "The configured Nushell syntax check failed for this changed file.",
+        'The configured Nushell syntax check failed for this changed file.\nCheck context: {"exitCode":0,"command":"nu","args":["--ide-check","100","scripts/check.nu"],"cwd":"/repo"}',
     },
   ])
   assert.doesNotMatch(JSON.stringify(failed), /source content/)
@@ -90,7 +90,7 @@ test("deterministic failure returns a generic typed finding and prevents Luna", 
       severity: "error",
       code: "deterministic-check-failed",
       message:
-        "The configured Prettier syntax/format check failed for this changed file.",
+        'The configured Prettier syntax/format check failed for this changed file.\nCheck context: {"exitCode":1,"command":"prettier","args":["--check","--ignore-unknown","src/value.ts"],"cwd":"/repo"}',
     },
   ])
   assert.doesNotMatch(JSON.stringify(result), /source content/)

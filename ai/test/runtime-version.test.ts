@@ -8,7 +8,7 @@ const read = (path: string) =>
 test("fleet diagnostics expose current behavior-bearing component versions", () => {
   assert.match(
     read("../pi/extensions/shared/runtime-version.ts"),
-    /MANAGED_CONFIG_GENERATION = "2026\.07\.23\.136"/,
+    /MANAGED_CONFIG_GENERATION = "2026\.07\.23\.150"/,
   )
   assert.match(
     read("../pi/extensions/activity-status/index.ts"),
@@ -16,7 +16,7 @@ test("fleet diagnostics expose current behavior-bearing component versions", () 
   )
   assert.match(
     read("../pi/extensions/agent-registry/index.ts"),
-    /agent-registry", "2026\.09\.13\.5"/,
+    /agent-registry", "2026\.09\.15\.2"/,
   )
   assert.match(
     read("../pi/extensions/agent-workspace/index.ts"),
@@ -28,7 +28,7 @@ test("fleet diagnostics expose current behavior-bearing component versions", () 
   )
   assert.match(
     read("../pi/extensions/write-result-inspector/index.ts"),
-    /write-result-inspector", "2026\.09\.04\.1"/,
+    /write-result-inspector", "2026\.09\.15\.2"/,
   )
   assert.match(
     read("../pi/extensions/browser-control/index.ts"),
@@ -36,10 +36,10 @@ test("fleet diagnostics expose current behavior-bearing component versions", () 
   )
   assert.match(read("../pi/extensions/btw/index.ts"), /btw", "2026\.07\.23\.1"/)
   assert.ok(
-    /classified-workflows", "2026\.09\.14\.1"/.test(
+    /classified-workflows", "2026\.09\.15\.7"/.test(
       read("../pi/extensions/classified-workflows/index.ts"),
     ),
-    "classified-workflows marker must match 2026.09.14.1",
+    "classified-workflows marker must match 2026.09.15.7",
   )
   assert.match(
     read("../pi/extensions/compact-read/index.ts"),
@@ -60,7 +60,7 @@ test("fleet diagnostics expose current behavior-bearing component versions", () 
   )
   assert.match(
     read("../pi/extensions/release-cadence/index.ts"),
-    /release-cadence", "2026\.08\.09\.4"/,
+    /release-cadence", "2026\.09\.15\.2"/,
   )
   assert.match(
     read("../pi/extensions/remote-control/index.ts"),

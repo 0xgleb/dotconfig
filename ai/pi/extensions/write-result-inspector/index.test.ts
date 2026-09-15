@@ -52,6 +52,6 @@ test("deterministic checks precede one bounded Luna call and usage is patched", 
   assert.match(source, /MutationBatcher/)
   assert.match(
     source,
-    /registerRuntimeVersion\(pi, "write-result-inspector", "2026\.09\.04\.1"\)/,
+    /registerRuntimeVersion\(pi, "write-result-inspector", "2026\.09\.15\.2"\)/,
   )
 })
