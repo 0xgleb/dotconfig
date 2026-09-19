@@ -1189,6 +1189,47 @@ test("literal hidden-subdirectory listings reach semantic review without becomin
   }
 })
 
+test("exact hidden-path metadata projections reach semantic review without widening search scope", () => {
+  for (const command of [
+    "ls .tmp/rebalancing-rebuild/live-weth-orders.json | select name size",
+    "ls ./reports/result.json | select name size",
+  ]) {
+    assert.equal(
+      deterministicDecision({
+        boundary: "action",
+        toolName: "bash",
+        input: { command },
+        cwd: "/repo",
+      }),
+      null,
+      command,
+    )
+  }
+  for (const command of [
+    "ls . | select name size",
+    "ls .tmp/* | select name size",
+    "ls .tmp/../.. | select name size",
+    "ls .tmp/auth.json | select name size",
+    "ls .tmp/result.json | select name size; ls .",
+    "ls .tmp/result.json | select name size\nls .",
+    "ls .tmp/result.json | select name size | save out.json",
+    "ls .tmp/result.json | select name size other",
+    "ls .tmp/result.json | each { open $in.name }",
+    "ls .tmp/result.json | select name (ls .)",
+  ]) {
+    assert.equal(
+      deterministicDecision({
+        boundary: "action",
+        toolName: "bash",
+        input: { command },
+        cwd: "/repo",
+      })?.verdict,
+      "block",
+      command,
+    )
+  }
+})
+
 test("only deterministic actions with intrinsically safe output carry result allowance", () => {
   const cleanup = deterministicDecision({
     boundary: "action",

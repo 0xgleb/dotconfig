@@ -376,9 +376,10 @@ function isBroadRootSearch(request: ToolRequest): boolean {
   if (request.toolName === "bash") {
     const command = request.input.command
     if (typeof command !== "string") return false
-    const listingPath = /^ls[ \t]+(\.[A-Za-z0-9_./-]+)$/.exec(
-      command.trim(),
-    )?.[1]
+    const listingPath =
+      /^ls[ \t]+(\.[A-Za-z0-9_./-]+)(?:[ \t]+\|[ \t]+select[ \t]+name[ \t]+size)?$/.exec(
+        command.trim(),
+      )?.[1]
     if (listingPath && !listingPath.split("/").includes("..")) {
       const root = path.resolve(request.cwd)
       const target = path.resolve(root, listingPath)
