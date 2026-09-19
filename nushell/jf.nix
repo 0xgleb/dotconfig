@@ -1,4 +1,4 @@
-{ pkgs }:
+{ pkgs, metagendaFj }:
 let
   inherit (pkgs) lib;
 
@@ -13,6 +13,7 @@ let
       mkdir -p $out/fj
       cp -r $src/* $out/fj/
       chmod -R u+w $out
+      substituteInPlace $out/fj/mod.nu --replace-fail '@metagendaFj@' '${metagendaFj}'
       find $out -name '*.test.nu' -delete
     '';
   };
@@ -38,6 +39,7 @@ in
 pkgs.symlinkJoin {
   name = "jf";
   paths = [ wrapper ];
+  passthru.fjLib = fjLib;
   nativeBuildInputs = [ pkgs.makeWrapper ];
   postBuild = ''
     wrapProgram $out/bin/jf \

@@ -7,7 +7,10 @@
 }:
 
 let
-  jf = import ./nushell/jf.nix { inherit pkgs; };
+  jf = import ./nushell/jf.nix {
+    inherit pkgs;
+    metagendaFj = inputs.metagenda.packages.${pkgs.stdenv.hostPlatform.system}.fj;
+  };
   isDarwin = pkgs.stdenv.hostPlatform.isDarwin;
   aiDir = "${config.home.homeDirectory}/.config/ai";
   cursorDir = "${config.home.homeDirectory}/.cursor";
@@ -408,7 +411,7 @@ in
       "/usr/local/bin"
     ];
     file = {
-      "${nuConfigDir}/fj".source = ./nushell/fj;
+      "${nuConfigDir}/fj".source = "${jf.fjLib}/fj";
       ".agents/skills".source = config.lib.file.mkOutOfStoreSymlink "${aiDir}/skills";
       ".claude/skills".source = config.lib.file.mkOutOfStoreSymlink "${aiDir}/skills";
       ".cursor/skills".source = config.lib.file.mkOutOfStoreSymlink "${aiDir}/skills";

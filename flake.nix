@@ -27,6 +27,8 @@
 
     but-nix.url = "github:data-cartel/but.nix";
     but-nix.inputs.nixpkgs.follows = "nixpkgs";
+
+    metagenda.url = "github:dataclique/metagenda/919209da7649e4475a42258ebcd941f423805062";
   };
 
   outputs =
@@ -53,7 +55,7 @@
             home-manager.backupFileExtension = ".home-manager.bak";
             home-manager.extraSpecialArgs = { inherit inputs; };
             home-manager.users."0xgleb" =
-              { pkgs, inputs, ... }:
+              { inputs, ... }:
               {
                 imports = [
                   inputs.nix-doom-emacs-unstraightened.homeModule
@@ -79,7 +81,7 @@
             home-manager.useUserPackages = true;
             home-manager.extraSpecialArgs = { inherit inputs; };
             home-manager.users."0xgleb" =
-              { pkgs, inputs, ... }:
+              { inputs, ... }:
               {
                 imports = [
                   inputs.nix-doom-emacs-unstraightened.homeModule
@@ -98,7 +100,10 @@
           };
         in
         {
-          jf = import ./nushell/jf.nix { inherit pkgs; };
+          jf = import ./nushell/jf.nix {
+            inherit pkgs;
+            metagendaFj = inputs.metagenda.packages.${pkgs.stdenv.hostPlatform.system}.fj;
+          };
         }
         // import ./infra { inherit pkgs inputs; };
 
@@ -153,6 +158,11 @@
                 ${pkgs.nushell}/bin/nu workflow.test.nu
                 touch $out
               '';
+
+          fj-consumer = import ./nushell/jf-consumer.test.nix {
+            inherit pkgs;
+            metagendaFj = inputs.metagenda.packages.${pkgs.stdenv.hostPlatform.system}.fj;
+          };
 
           fj-module =
             pkgs.runCommand "fj-module-test"

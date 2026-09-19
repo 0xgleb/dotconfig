@@ -13,8 +13,10 @@ use routing.nu [
 use check.nu
 use workflow.nu
 use completions.nu [fj-complete issue-complete pr-complete]
-use gh.nu
 use help.nu
+
+const portable_fj = "@metagendaFj@/bin/fj"
+
 export use md.nu
 export use infra.nu
 export use cheatsheet.nu
@@ -224,12 +226,12 @@ pi "$@"
 
 # list github issues
 export def --wrapped "issue list" [...args: string] {
-  gh issue-list ...$args
+  ^$portable_fj issue list ...$args
 }
 
 # view issue in markdown format
 export def "issue view" [id: string, --web (-w), --comments (-c)] {
-  gh issue-view $id --web=$web --comments=$comments
+  ^$portable_fj issue view $id ...(if $web { [--web] } else { [] }) ...(if $comments { [--comments] } else { [] })
 }
 
 # github issues (other subcommands pass through to gh)
@@ -239,12 +241,13 @@ export def --wrapped issue [...args: string@issue-complete] {
 
 # list pull requests
 export def --wrapped "pr list" [...args: string] {
-  gh pr-list ...$args
+  ^$portable_fj pr list ...$args
 }
 
 # view PR in markdown format
 export def "pr view" [id?: string, --web (-w), --comments (-c)] {
-  gh pr-view $id --web=$web --comments=$comments
+  let id_args = if $id == null { [] } else { [$id] }
+  ^$portable_fj pr view ...$id_args ...(if $web { [--web] } else { [] }) ...(if $comments { [--comments] } else { [] })
 }
 
 # pull requests (other subcommands pass through to gh)
