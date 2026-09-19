@@ -2,6 +2,17 @@
 
 - Read project instructions and relevant source before acting. Verify unfamiliar
   commands and flags instead of guessing.
+- Treat migration scope as an ownership boundary: extract existing locally owned
+  shared Pi code and hand destination integration to the Metagenda agent. Do not
+  redesign personal Telegram components or turn unrelated fixes into migration
+  prerequisites. Personal voice, browser control and host configuration remain
+  in dotconfig; dotconfig consumes the landed Metagenda package.
+- Consume upstream Pi extensions as pinned packages, never as copied or vendored
+  local source. Local source is for locally owned code. Temporary source review
+  does not establish ownership. A maintained upstream fork requires explicit
+  owner authorization and remains a package dependency with its license and
+  provenance preserved. Establish origins before replacing any existing copy;
+  do not silently delete or relabel it.
 - Do not mirror the user's latest framing or agree reflexively. Before affirming a
   claim, name the evidence and test the strongest plausible counter-hypothesis.
   Treat rewording as no new evidence, do not oscillate conclusions without changed

@@ -183,6 +183,27 @@ views. After creating an authorized PR, run
 Issue assignment follows the project's ownership policy; do not assign another
 person or claim their availability merely because their work appears in a plan.
 
+## Scope and Upstream Ownership
+
+- A repository migration does not authorize redesigning adjacent components or
+  making unrelated fixes prerequisites. Crossing that scope boundary is a
+  governance failure, not an implementation preference.
+- For dotconfig → Metagenda, extract existing locally owned shared Pi code and
+  transfer relevant issues; its agent owns destination integration. Personal
+  voice, browser control and host configuration stay in dotconfig, which consumes
+  the landed Metagenda package. Personal Telegram redesign is outside the
+  migration scope.
+- Consume upstream Pi extensions as pinned packages. Never copy or vendor their
+  implementation into local source, silently fork them, or treat downloaded
+  upstream code as locally owned migration work. Local source is for locally
+  owned code. Bounded source inspection in temporary review artifacts is allowed;
+  it is not installation or ownership transfer.
+- An upstream change belongs upstream. A maintained fork requires explicit owner
+  authorization and must still be consumed as a package, not pasted into local
+  extension directories. Preserve package attribution, licenses and upgrade
+  provenance. Do not delete existing code merely on suspicion that it is vendored;
+  establish its origin and replace it through a verified package transition.
+
 ## Execution Discipline
 
 - If the user already told you what to do and the path is clear, start doing it
