@@ -60,7 +60,7 @@
     brews = [ "tkhq/tap/turnkey" ];
     casks = [
       "amethyst"
-      "chatgpt-atlas"
+      "chatgpt"
       "coderabbit"
       "font-jetbrains-mono-nerd-font"
       "karabiner-elements"
