@@ -71,6 +71,7 @@ import {
   WorkflowScriptError,
   type AgentRequest,
   type AgentResult,
+  type AgentUsageObserver,
   type Decision,
   type WorkflowLimits,
 } from "./core.ts"
@@ -387,6 +388,7 @@ async function runPi(
   signal?: AbortSignal,
   tokenLimit?: number,
   onProgress?: (progress: string) => void,
+  onUsage?: AgentUsageObserver,
 ): Promise<PiProcessResult> {
   return new Promise(resolve => {
     const invocation = piInvocation(args)
@@ -423,8 +425,10 @@ async function runPi(
       settled = true
       if (killTimer) clearTimeout(killTimer)
       signal?.removeEventListener("abort", abort)
-      if (streamingLine)
+      if (streamingLine) {
         observedUsageTokens += usageTokensFromPiJsonLine(streamingLine)
+        onUsage?.(observedUsageTokens)
+      }
       if (tokenLimit !== undefined && observedUsageTokens > tokenLimit)
         budgetExceeded = true
       const summary = summarizePiJsonLines(stdout.split("\n"))
@@ -461,6 +465,7 @@ async function runPi(
       streamingLine = lines.pop() ?? ""
       for (const line of lines) {
         observedUsageTokens += usageTokensFromPiJsonLine(line)
+        onUsage?.(observedUsageTokens)
         const progress = piProcessProgressFromJsonLine(line)
         if (progress && progress !== lastProgress) {
           lastProgress = progress
@@ -861,6 +866,7 @@ async function executeAgent(
   signal?: AbortSignal,
   tokenLimit?: number,
   onProgress?: (progress: string) => void,
+  onUsage?: AgentUsageObserver,
 ): Promise<AgentResult> {
   const qualifiedRequest = await Effect.runPromise(
     prepareWorkflowAgentRequest(request, parentProvider, availableModels),
@@ -873,7 +879,7 @@ async function executeAgent(
     ),
   )
   const result = await runAgentExecutionPlan(execution, (args, cwd) =>
-    runPi(args, cwd, signal, tokenLimit, onProgress),
+    runPi(args, cwd, signal, tokenLimit, onProgress, onUsage),
   )
   if (signal?.aborted) {
     return {
@@ -1030,7 +1036,7 @@ const WorkflowParameters = Type.Object({
 })
 
 export default function classifiedWorkflows(pi: ExtensionAPI): void {
-  registerRuntimeVersion(pi, "classified-workflows", "2026.09.19.2")
+  registerRuntimeVersion(pi, "classified-workflows", "2026.09.19.3")
   const childTokenLimitResult = Effect.runSync(
     Effect.either(
       workflowChildTokenLimit(process.env[WORKFLOW_CHILD_TOKEN_LIMIT_ENV]),
@@ -1475,7 +1481,7 @@ export default function classifiedWorkflows(pi: ExtensionAPI): void {
           }),
         classify: (request, childSignal) =>
           classifyWithActivity(request, ctx, childSignal),
-        execute: (request, childSignal, tokenLimit, onProgress) =>
+        execute: (request, childSignal, tokenLimit, onProgress, onUsage) =>
           executeAgent(
             request,
             ctx.cwd,
@@ -1484,6 +1490,7 @@ export default function classifiedWorkflows(pi: ExtensionAPI): void {
             childSignal,
             tokenLimit,
             onProgress,
+            onUsage,
           ),
       },
       skillProcedures,
@@ -4109,7 +4116,7 @@ export default function classifiedWorkflows(pi: ExtensionAPI): void {
             }),
           classify: (request, childSignal) =>
             classifyWithActivity(request, ctx, childSignal),
-          execute: (request, childSignal, tokenLimit, onProgress) =>
+          execute: (request, childSignal, tokenLimit, onProgress, onUsage) =>
             executeAgent(
               request,
               ctx.cwd,
@@ -4118,6 +4125,7 @@ export default function classifiedWorkflows(pi: ExtensionAPI): void {
               childSignal,
               tokenLimit,
               onProgress,
+              onUsage,
             ),
         },
         skillProcedures,

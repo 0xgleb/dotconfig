@@ -3,6 +3,7 @@ import {
   normalizeAgentTools,
   type AgentRequest,
   type AgentResult,
+  type AgentUsageObserver,
   type WorkflowLimits,
 } from "./core.ts"
 
@@ -371,6 +372,7 @@ export const auditedAgentRunner = (
     signal: AbortSignal,
     tokenLimit?: number,
     onProgress?: (progress: string) => void,
+    onUsage?: AgentUsageObserver,
   ) => Promise<AgentResult>,
   audits: ChildAudit[],
   sanitize: (text: string) => string,
@@ -379,9 +381,10 @@ export const auditedAgentRunner = (
   request: AgentRequest,
   signal: AbortSignal,
   tokenLimit: number,
+  onUsage?: AgentUsageObserver,
 ) => Promise<AgentResult>) => {
   let nextIndex = 1
-  return async (request, signal, tokenLimit) => {
+  return async (request, signal, tokenLimit, onUsage) => {
     const index = nextIndex++
     const startedAt = Date.now()
     const tools = (await Effect.runPromise(
@@ -426,6 +429,7 @@ export const auditedAgentRunner = (
                 ...(request.model ? { requestedModel: request.model } : {}),
                 progress: sanitize(progress).replace(/\s+/g, " ").slice(0, 240),
               }),
+            onUsage,
           )
       const reviewerError =
         result.status === "completed"

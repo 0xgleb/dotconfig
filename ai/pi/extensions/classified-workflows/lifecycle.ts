@@ -1,5 +1,11 @@
 import { createHash } from "node:crypto"
-import type { AgentRequest, AgentResult, Boundary, Decision } from "./core.ts"
+import type {
+  AgentRequest,
+  AgentResult,
+  AgentUsageObserver,
+  Boundary,
+  Decision,
+} from "./core.ts"
 import type {
   RuntimeCommandProjectContext,
   RuntimeProjectContext,
@@ -88,6 +94,7 @@ export interface LifecycleDependencies {
     signal: AbortSignal | undefined,
     tokenLimit: number,
     onProgress?: (progress: string) => void,
+    onUsage?: AgentUsageObserver,
   ): Promise<AgentResult>
 }
 
@@ -96,6 +103,7 @@ export type ClassifiedAgentRunner = (
   signal: AbortSignal | undefined,
   tokenLimit?: number,
   onProgress?: (progress: string) => void,
+  onUsage?: AgentUsageObserver,
 ) => Promise<AgentResult>
 
 export interface BlockedAction {
@@ -228,6 +236,7 @@ export function createClassifiedAgentRunner(
     signal,
     tokenLimit = Number.MAX_SAFE_INTEGER,
     onProgress,
+    onUsage,
   ) => {
     const spawnDecision = await dependencies.classify(
       {
@@ -255,6 +264,7 @@ export function createClassifiedAgentRunner(
       signal,
       tokenLimit,
       onProgress,
+      onUsage,
     )
     const returnDecision = await dependencies.classify(
       {

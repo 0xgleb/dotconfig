@@ -107,6 +107,9 @@ export type AgentResult =
       usageTokens: number
     }
 
+/** Cumulative process-observed usage for one attempt, not provider billing. */
+export type AgentUsageObserver = (usageTokens: number) => void
+
 export interface WorkflowLimits {
   maxAgents: number
   concurrency: number
@@ -124,6 +127,7 @@ export interface WorkflowDependencies {
     request: AgentRequest,
     signal: AbortSignal,
     tokenLimit: number,
+    onUsage?: AgentUsageObserver,
   ): Promise<AgentResult>
   checkpoint(message: string): Promise<"approved" | "denied">
   phase?: (title: string) => void
@@ -1175,6 +1179,28 @@ export async function runWorkflowScript(
   ): Promise<AgentResult> => {
     await acquire()
     const controller = new AbortController()
+    let observedUsageTokens = 0
+    let observationState: "open" | "closed" = "open"
+    const onUsage: AgentUsageObserver = usageTokens => {
+      if (observationState === "closed" || controller.signal.aborted) return
+      if (
+        !Number.isSafeInteger(usageTokens) ||
+        usageTokens < observedUsageTokens
+      ) {
+        controller.abort(workflowFailure("Invalid agent usage observation"))
+        return
+      }
+      observedUsageTokens = usageTokens
+    }
+    const failedAttempt = (error: unknown): AgentResult => {
+      const reason = error instanceof Error ? error.message : "Agent failed"
+      return {
+        status: /timed out/i.test(reason) ? "timed-out" : "failed",
+        output: "",
+        reason,
+        usageTokens: observedUsageTokens,
+      }
+    }
     const abortAgent = () => controller.abort(workflowController.signal.reason)
     workflowController.signal.addEventListener("abort", abortAgent, {
       once: true,
@@ -1191,11 +1217,25 @@ export async function runWorkflowScript(
         controller.signal.addEventListener("abort", rejectAbort, { once: true })
     })
     try {
-      return await Promise.race([
-        dependencies.runAgent(request, controller.signal, tokenLimit),
+      const result = await Promise.race([
+        dependencies.runAgent(request, controller.signal, tokenLimit, onUsage),
         aborted,
       ])
+      if (workflowController.signal.aborted)
+        return failWorkflowCause(workflowController.signal.reason)
+      if (controller.signal.aborted)
+        return failedAttempt(controller.signal.reason)
+      if (
+        !Number.isSafeInteger(result.usageTokens) ||
+        result.usageTokens < observedUsageTokens
+      )
+        return failedAttempt(workflowFailure("Invalid agent usage result"))
+      return result
+    } catch (error) {
+      if (workflowController.signal.aborted) return failWorkflowCause(error)
+      return failedAttempt(error)
     } finally {
+      observationState = "closed"
       clearTimeout(timer)
       workflowController.signal.removeEventListener("abort", abortAgent)
       release()
