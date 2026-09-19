@@ -14,6 +14,7 @@
   },
   "packages": [
     "/Users/0xgleb/.config/ai/pi/extensions",
-    "npm:pi-hermes-memory@0.8.1"
+    "npm:pi-hermes-memory@0.8.1",
+    "npm:pi-live-codex@0.1.7"
   ]
 }
