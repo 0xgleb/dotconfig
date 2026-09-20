@@ -170,6 +170,7 @@ export const latestLegacyUnmarkedCancellationAfter = (
     : undefined
 }
 
+/** A reclassification candidate only: neither child settlement nor action authority is proved. */
 export const terminalWorkflowFailureDisprovesOwnershipBlock = (
   reason: string,
   state: WorkflowAuditState,

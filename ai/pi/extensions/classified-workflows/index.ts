@@ -1,5 +1,5 @@
 import { spawn } from "node:child_process"
-import { randomUUID } from "node:crypto"
+import { createHash, randomUUID } from "node:crypto"
 import { homedir } from "node:os"
 import { basename, isAbsolute, resolve } from "node:path"
 import { fileURLToPath } from "node:url"
@@ -1036,7 +1036,7 @@ const WorkflowParameters = Type.Object({
 })
 
 export default function classifiedWorkflows(pi: ExtensionAPI): void {
-  registerRuntimeVersion(pi, "classified-workflows", "2026.09.19.4")
+  registerRuntimeVersion(pi, "classified-workflows", "2026.09.19.6")
   const childTokenLimitResult = Effect.runSync(
     Effect.either(
       workflowChildTokenLimit(process.env[WORKFLOW_CHILD_TOKEN_LIMIT_ENV]),
@@ -1421,6 +1421,100 @@ export default function classifiedWorkflows(pi: ExtensionAPI): void {
       nextWorkflowId,
       nextWorkflowSequence(workflowAudits),
     )
+  }
+
+  const terminalOwnershipRecheckEvidence = (
+    reason: string,
+  ): string | undefined => {
+    if (!terminalWorkflowFailureDisprovesOwnershipBlock(reason, workflowAudits))
+      return undefined
+    const ids = [
+      ...new Set(
+        reason.match(/\bwf-\d+\b/gi)?.map(id => id.toLowerCase()) ?? [],
+      ),
+    ]
+    if (ids.length === 0 || ids.length > 4) return undefined
+    const observations = []
+    for (const id of ids) {
+      const workflow = backgroundWorkflows.get(id)
+      const audit = workflowAudits.workflows.find(
+        candidate => candidate.id === id,
+      )
+      if (
+        !workflow ||
+        !audit ||
+        workflow.id !== id ||
+        workflow.status === "running" ||
+        workflow.status !== audit.status ||
+        workflow.startedAt !== audit.startedAt ||
+        workflow.finishedAt !== audit.finishedAt ||
+        !Number.isSafeInteger(workflow.startedAt) ||
+        workflow.startedAt < 0 ||
+        workflow.finishedAt === undefined ||
+        !Number.isSafeInteger(workflow.finishedAt) ||
+        workflow.finishedAt < workflow.startedAt
+      )
+        return undefined
+      const progress = workflow.liveProgress
+      const children = [...progress.children.values()]
+      if (
+        progress.running.size !== 0 ||
+        children.length > 64 ||
+        children.length !== progress.started.size ||
+        audit.children.length !== children.length ||
+        new Set(audit.children.map(child => child.index)).size !==
+          children.length ||
+        audit.children.some(child => {
+          const live = progress.children.get(child.index)
+          return (
+            !live ||
+            live.status !== child.status ||
+            live.startedAt !== child.startedAt ||
+            live.finishedAt !== child.finishedAt
+          )
+        }) ||
+        progress.completed.size + progress.failed.size !==
+          progress.started.size ||
+        [...progress.children].some(
+          ([index, child]) =>
+            index !== child.index ||
+            !progress.started.has(child.index) ||
+            child.status === "running" ||
+            !Number.isSafeInteger(child.startedAt) ||
+            child.startedAt < workflow.startedAt ||
+            child.finishedAt === undefined ||
+            !Number.isSafeInteger(child.finishedAt) ||
+            child.finishedAt < child.startedAt ||
+            (child.status === "completed"
+              ? !progress.completed.has(child.index) ||
+                progress.failed.has(child.index)
+              : !progress.failed.has(child.index) ||
+                progress.completed.has(child.index)),
+        )
+      )
+        return undefined
+      observations.push({
+        id,
+        startedAt: workflow.startedAt,
+        finishedAt: workflow.finishedAt,
+        status: workflow.status,
+        completedChildren: progress.completed.size,
+        failedChildren: progress.failed.size,
+        childrenSha256: createHash("sha256")
+          .update(
+            JSON.stringify(
+              children.map(child => ({
+                index: child.index,
+                status: child.status,
+                startedAt: child.startedAt,
+                finishedAt: child.finishedAt,
+              })),
+            ),
+          )
+          .digest("hex"),
+      })
+    }
+    return JSON.stringify(observations)
   }
 
   const startBackgroundWorkflow = (
@@ -2783,34 +2877,40 @@ export default function classifiedWorkflows(pi: ExtensionAPI): void {
         reason: gitEnvironmentBlock,
       })
     }
+    const buildActionRequest = (): ClassificationRequest => ({
+      boundary: "action",
+      runtimeReviewDutyContext: runtimeReviewDutyContext(
+        reviewDutySessionName(ctx),
+        reviewDutyState,
+      ),
+      intent: visibleIntent(
+        pi,
+        ctx,
+        goalState?.status === "active" ? goalState.condition : undefined,
+        questionState,
+      ),
+      projectInstructions: projectInstructions(ctx),
+      skillProcedures: activeSkillProcedures(ctx.sessionManager.getBranch(), {
+        cwd: ctx.cwd,
+      }),
+      evidence: [
+        ...recentExecutionEvidence(ctx, subject),
+        ...(artifactPaths(artifactProvenance).length > 0
+          ? [
+              `current typed artifact provenance: ${JSON.stringify(artifactPaths(artifactProvenance))}`,
+            ]
+          : []),
+        ...(isReviewDutySession(dutySessionName)
+          ? [
+              `current typed review-duty state: ${JSON.stringify(reviewDutyState)}`,
+            ]
+          : []),
+      ],
+      subject,
+    })
+    const actionRequest = buildActionRequest()
     const decision = await classifyWithActivity(
-      {
-        boundary: "action",
-        intent: visibleIntent(
-          pi,
-          ctx,
-          goalState?.status === "active" ? goalState.condition : undefined,
-          questionState,
-        ),
-        projectInstructions: projectInstructions(ctx),
-        skillProcedures: activeSkillProcedures(ctx.sessionManager.getBranch(), {
-          cwd: ctx.cwd,
-        }),
-        evidence: [
-          ...recentExecutionEvidence(ctx, subject),
-          ...(artifactPaths(artifactProvenance).length > 0
-            ? [
-                `current typed artifact provenance: ${JSON.stringify(artifactPaths(artifactProvenance))}`,
-              ]
-            : []),
-          ...(isReviewDutySession(dutySessionName)
-            ? [
-                `current typed review-duty state: ${JSON.stringify(reviewDutyState)}`,
-              ]
-            : []),
-        ],
-        subject,
-      },
+      actionRequest,
       ctx,
       ctx.signal,
       actionProjectContexts,
@@ -2896,13 +2996,61 @@ export default function classifiedWorkflows(pi: ExtensionAPI): void {
         persistReviewWorkflowStart()
         return
       }
-      if (
-        event.toolName === "workflow" &&
-        terminalWorkflowFailureDisprovesOwnershipBlock(
-          decision.reason,
-          workflowAudits,
+      const ownershipEvidence =
+        event.toolName === "workflow"
+          ? terminalOwnershipRecheckEvidence(decision.reason)
+          : undefined
+      if (ownershipEvidence !== undefined && !ctx.signal?.aborted) {
+        const recheckRequest = buildActionRequest()
+        const recheckSnapshot = JSON.stringify(recheckRequest)
+        const reconsidered = await classifyWithActivity(
+          {
+            ...recheckRequest,
+            evidence: [
+              ...(recheckRequest.evidence ?? []),
+              `Previous classifier refusal (not authority): ${decision.reason}`,
+              `Current same-session observed terminal children: ${ownershipEvidence}. This is execution evidence only. Reassess the original action against every independent gate; retain completed child evidence and reject unchanged duplicate work. Missing review evidence is not permission to repeat it.`,
+            ],
+          },
+          ctx,
+          ctx.signal,
+          actionProjectContexts,
         )
-      ) {
+        if (
+          ctx.signal?.aborted ||
+          JSON.stringify(buildActionRequest()) !== recheckSnapshot ||
+          terminalOwnershipRecheckEvidence(decision.reason) !==
+            ownershipEvidence ||
+          !runtimeClassificationProjectContextsMatch(
+            actionProjectContexts,
+            runtimeClassificationProjectContexts(
+              ctx.cwd,
+              actionRequest.subject,
+            ),
+          )
+        ) {
+          const changed: Decision = {
+            verdict: "block",
+            source: "deterministic",
+            reason:
+              "Action cancelled or runtime project, authority, or ownership evidence changed during reclassification; inspect current state before retrying.",
+          }
+          reportHeadlessClassifierBlock(ctx, "action", changed.reason)
+          return resolveActionDecision(changed)
+        }
+        const recheckRemediation = remediationForDecision(
+          event.toolName,
+          reconsidered,
+          Date.now(),
+        )
+        if (recheckRemediation) {
+          setPendingActionRemediation(recheckRemediation)
+          return remediationInterruption(recheckRemediation)
+        }
+        if (reconsidered.verdict !== "allow") {
+          reportHeadlessClassifierBlock(ctx, "action", reconsidered.reason)
+          return resolveActionDecision(reconsidered)
+        }
         persistReviewWorkflowStart()
         return
       }

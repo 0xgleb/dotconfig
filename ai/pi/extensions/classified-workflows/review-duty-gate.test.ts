@@ -3,6 +3,7 @@ import { readFileSync } from "node:fs"
 import test from "node:test"
 import { QUESTION_STATE_ENTRY } from "../shared/question-events.ts"
 import {
+  type ReviewDutyTransition,
   MAX_REVIEW_DUTY_COMPLETED_PASSES,
   REVIEW_DUTY_STATE_ENTRY,
   beginReviewDuty,
@@ -29,6 +30,11 @@ const extensionSource = readFileSync(
   new URL("./index.ts", import.meta.url),
   "utf8",
 )
+
+const rejectionReason = (result: ReviewDutyTransition): string => {
+  assert.ok(!result.ok, "expected a rejected review-duty transition")
+  return result.error
+}
 
 const job = {
   repository: "st0x.liquidity",
@@ -115,9 +121,11 @@ test("blocked review workflow classification cannot consume the active gate", ()
     handler,
     /current typed review-duty state: \$\{JSON\.stringify\(reviewDutyState\)\}/,
   )
-  assert.match(
-    handler,
-    /terminalWorkflowFailureDisprovesOwnershipBlock[\s\S]*?persistReviewWorkflowStart\(\)/,
+  assert.ok(
+    /terminalOwnershipRecheckEvidence[\s\S]*?const reconsidered = await classifyWithActivity[\s\S]*?if \(reconsidered.verdict !== "allow"\)[\s\S]*?return resolveActionDecision\(reconsidered\)[\s\S]*?persistReviewWorkflowStart\(\)/.test(
+      handler,
+    ),
+    "ownership reclassification must preserve a fresh refusal before consuming the review gate",
   )
 })
 
@@ -176,15 +184,15 @@ test("pre-execution workflow recovery cannot bypass an observed review workflow"
   const recovered = retryBlockedReviewDuty(awaiting, false, true)
   assert.deepEqual(recovered, { ok: true, state: active.state })
   assert.match(
-    retryBlockedReviewDuty(awaiting, true, true).error ?? "",
+    rejectionReason(retryBlockedReviewDuty(awaiting, true, true)),
     /execution evidence exists/i,
   )
   assert.match(
-    retryBlockedReviewDuty(awaiting, false, false).error ?? "",
+    rejectionReason(retryBlockedReviewDuty(awaiting, false, false)),
     /no matching pre-execution/i,
   )
   assert.match(
-    retryBlockedReviewDuty(active.state, false, true).error ?? "",
+    rejectionReason(retryBlockedReviewDuty(active.state, false, true)),
     /no pre-execution/i,
   )
 
@@ -209,22 +217,29 @@ test("completed review passes may continue only the same job within a bounded lo
   assert.equal(continued.ok, true)
   if (continued.ok) {
     assert.match(
-      beginReviewDuty(continued.state, { ...job, pullRequest: 1102 }, 30)
-        .error ?? "",
+      rejectionReason(
+        beginReviewDuty(continued.state, { ...job, pullRequest: 1102 }, 30),
+      ),
       /already the active review-duty job/i,
     )
   }
   assert.match(
-    continueReviewDuty(awaiting, false, false, 1).error ?? "",
+    rejectionReason(continueReviewDuty(awaiting, false, false, 1)),
     /not proven completed/i,
   )
   assert.match(
-    continueReviewDuty(awaiting, true, true, 1).error ?? "",
+    rejectionReason(continueReviewDuty(awaiting, true, true, 1)),
     /still running/i,
   )
   assert.match(
-    continueReviewDuty(awaiting, true, false, MAX_REVIEW_DUTY_COMPLETED_PASSES)
-      .error ?? "",
+    rejectionReason(
+      continueReviewDuty(
+        awaiting,
+        true,
+        false,
+        MAX_REVIEW_DUTY_COMPLETED_PASSES,
+      ),
+    ),
     /bounded 6-pass limit/i,
   )
   assert.match(extensionSource, /Type\.Literal\("continue"\)/)
@@ -251,21 +266,22 @@ test("failed workflow recovery resumes only the same gated job", () => {
   assert.equal(recovered.ok, true)
   if (recovered.ok) {
     assert.match(
-      beginReviewDuty(recovered.state, { ...job, pullRequest: 1102 }, 30)
-        .error ?? "",
+      rejectionReason(
+        beginReviewDuty(recovered.state, { ...job, pullRequest: 1102 }, 30),
+      ),
       /already the active review-duty job/i,
     )
   }
   assert.match(
-    retryFailedReviewDuty(awaiting, false, false).error ?? "",
+    rejectionReason(retryFailedReviewDuty(awaiting, false, false)),
     /not a proven terminal failure/i,
   )
   assert.match(
-    retryFailedReviewDuty(awaiting, true, true).error ?? "",
+    rejectionReason(retryFailedReviewDuty(awaiting, true, true)),
     /still running/i,
   )
   assert.match(
-    retryFailedReviewDuty(active.state, true, false).error ?? "",
+    rejectionReason(retryFailedReviewDuty(active.state, true, false)),
     /no failed review-duty workflow/i,
   )
   assert.match(extensionSource, /Type\.Literal\("retry-failed"\)/)
@@ -288,24 +304,26 @@ test("usable completed evidence restores the matching completion gate without di
     state: { ...active.state, phase: "awaiting_report", completedAt: 20 },
   })
   assert.match(
-    recoverCompletedReviewDuty(active.state, 20, false, false).error ?? "",
+    rejectionReason(recoverCompletedReviewDuty(active.state, 20, false, false)),
     /no usable completed review evidence/i,
   )
   assert.match(
-    recoverCompletedReviewDuty(active.state, 20, true, true).error ?? "",
+    rejectionReason(recoverCompletedReviewDuty(active.state, 20, true, true)),
     /still running/i,
   )
   assert.match(
-    recoverCompletedReviewDuty(
-      startReviewWorkflow(active.state, 20),
-      20,
-      true,
-      false,
-    ).error ?? "",
+    rejectionReason(
+      recoverCompletedReviewDuty(
+        startReviewWorkflow(active.state, 20),
+        20,
+        true,
+        false,
+      ),
+    ),
     /no active review-duty job/i,
   )
   assert.match(
-    recoverCompletedReviewDuty(active.state, 9, true, false).error ?? "",
+    rejectionReason(recoverCompletedReviewDuty(active.state, 9, true, false)),
     /predates the active review-duty job/i,
   )
 
@@ -335,15 +353,17 @@ test("an unusable or wrongly begun review job can be released without inventing 
     state: emptyReviewDutyState,
   })
   assert.match(
-    releaseUnusableReviewDuty(awaiting, true, false).error ?? "",
+    rejectionReason(releaseUnusableReviewDuty(awaiting, true, false)),
     /complete-auto after a clean own-review pass.*remains required/i,
   )
   assert.match(
-    releaseUnusableReviewDuty(awaiting, false, true).error ?? "",
+    rejectionReason(releaseUnusableReviewDuty(awaiting, false, true)),
     /still running/i,
   )
   assert.match(
-    releaseUnusableReviewDuty(emptyReviewDutyState, false, false).error ?? "",
+    rejectionReason(
+      releaseUnusableReviewDuty(emptyReviewDutyState, false, false),
+    ),
     /no active review-duty job/i,
   )
 
@@ -383,13 +403,15 @@ test("managed reload cancellation recovers only an auto same-PR fix continuation
   })
   const legacyAwaitingWithoutMarker = startReviewWorkflow(automatic.state, 20)
   assert.match(
-    retryFailedReviewDuty(
-      legacyAwaitingWithoutMarker,
-      false,
-      false,
-      true,
-      false,
-    ).error ?? "",
+    rejectionReason(
+      retryFailedReviewDuty(
+        legacyAwaitingWithoutMarker,
+        false,
+        false,
+        true,
+        false,
+      ),
+    ),
     /not a proven terminal failure/i,
   )
   assert.deepEqual(
@@ -409,21 +431,23 @@ test("managed reload cancellation recovers only an auto same-PR fix continuation
     },
   )
   assert.match(
-    retryFailedReviewDuty(
-      startReviewWorkflow(
-        {
-          phase: "active",
-          ...job,
-          startedAt: 10,
-          continuation: "fix-re-review",
-        },
-        20,
+    rejectionReason(
+      retryFailedReviewDuty(
+        startReviewWorkflow(
+          {
+            phase: "active",
+            ...job,
+            startedAt: 10,
+            continuation: "fix-re-review",
+          },
+          20,
+        ),
+        false,
+        false,
+        true,
+        true,
       ),
-      false,
-      false,
-      true,
-      true,
-    ).error ?? "",
+    ),
     /not a proven terminal failure/i,
   )
   assert.match(extensionSource, /latestManagedReloadCancellationAfter/)
@@ -566,12 +590,14 @@ test("automatic and own review loops complete without an owner verdict only afte
   assert.equal(assignedActive.ok, true)
   if (!assignedActive.ok) return
   assert.match(
-    completeAutoReviewDuty(
-      startReviewWorkflow(assignedActive.state, 60),
-      true,
-      false,
-      true,
-    ).error ?? "",
+    rejectionReason(
+      completeAutoReviewDuty(
+        startReviewWorkflow(assignedActive.state, 60),
+        true,
+        false,
+        true,
+      ),
+    ),
     /no automatic or own review-duty job/i,
   )
 })
@@ -704,12 +730,14 @@ test("only assigned review reporting accepts an exact linked verdict question", 
   assert.equal(ownActive.ok, true)
   if (!ownActive.ok) return
   assert.match(
-    reportReviewDuty(
-      startReviewWorkflow(ownActive.state, 2),
-      verdictQuestion,
-      true,
-      3,
-    ).error ?? "",
+    rejectionReason(
+      reportReviewDuty(
+        startReviewWorkflow(ownActive.state, 2),
+        verdictQuestion,
+        true,
+        3,
+      ),
+    ),
     /own review-duty jobs complete without a user verdict/i,
   )
 
@@ -719,25 +747,29 @@ test("only assigned review reporting accepts an exact linked verdict question", 
   const awaiting = startReviewWorkflow(active.state, 20)
 
   assert.match(
-    reportReviewDuty(awaiting, verdictQuestion, false, 30).error ?? "",
+    rejectionReason(reportReviewDuty(awaiting, verdictQuestion, false, 30)),
     /not linked/i,
   )
   assert.match(
-    reportReviewDuty(
-      awaiting,
-      { ...verdictQuestion, options: [{ label: "Approve" }] },
-      true,
-      30,
-    ).error ?? "",
+    rejectionReason(
+      reportReviewDuty(
+        awaiting,
+        { ...verdictQuestion, options: [{ label: "Approve" }] },
+        true,
+        30,
+      ),
+    ),
     /three verdict options/i,
   )
   assert.match(
-    reportReviewDuty(
-      awaiting,
-      { ...verdictQuestion, question: "PR #999 is clean" },
-      true,
-      30,
-    ).error ?? "",
+    rejectionReason(
+      reportReviewDuty(
+        awaiting,
+        { ...verdictQuestion, question: "PR #999 is clean" },
+        true,
+        30,
+      ),
+    ),
     /PR #1101/i,
   )
 
@@ -971,7 +1003,7 @@ test("review duty state survives reload defensively", () => {
       customType: REVIEW_DUTY_STATE_ENTRY,
       data: automatic.state,
     },
-  ]
+  ] as const
   assert.deepEqual(restoreReviewDutyState(recoveredLegacyAutoEntries), {
     ...automatic.state,
     continuation: "fix-re-review",
