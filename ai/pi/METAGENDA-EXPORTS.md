@@ -88,7 +88,7 @@ landed package. Keeping the runtime here while exporting only domain helpers
 is insufficient.
 
 The next published source candidate is
-[`3b3dc588b9bf195bd3a5e818d6e069b3356c0c70`](https://github.com/0xgleb/dotconfig/commit/3b3dc588b9bf195bd3a5e818d6e069b3356c0c70),
+[`609c8164d86a6fede902a00017186d1739e2f82d`](https://github.com/0xgleb/dotconfig/commit/609c8164d86a6fede902a00017186d1739e2f82d),
 not an approved source-master baseline. Preserve unrelated feature-branch and
 working-tree changes; do not merge the whole branch or export dirty files.
 
@@ -103,13 +103,18 @@ Runtime inventory, relative to `ai/pi/extensions/`:
 
 This inventory is **not yet a verified self-contained transfer allowlist**:
 
-- Classifier `index.ts` imports bridge `paths.ts`, `protocol.ts` and
-  `sqlite-store.ts`; the protocol also needs `chat-registry.ts` and
-  `bridge-contract.ts`. Preserve this closure, without personal Telegram clients.
+- Classifier `index.ts` imports bridge `paths.ts` and `sqlite-store.ts`, plus
+  the error type directly from `bridge-contract.ts`. It no longer imports the
+  transport protocol or its chat-registry dependency. The dependency-only caller
+  change passed strict full-index checking and 81 protocol/store/review-duty
+  tests; this does not verify the entire receiving package.
 - Registry `index.ts` imports `todo/state.ts`, an upstream-origin boundary.
   Do not silently label that dependency locally owned.
-- Classifier `core.ts` and `loop.ts` still contain personal policy exceptions;
-  retain their behavior through the local policy boundary during relocation.
+- Classifier `core.ts` contains an exact personal publication exception; preserve
+  it through the local policy boundary during relocation. In contrast, the
+  repository-named patterns in `loop.ts` recognize legacy persisted review-duty
+  instructions for cadence migration. They are compatibility data, not a new
+  authorization source or personal adapter: migrate that logic unchanged.
 - Control-plane source/UI has unfinished working-tree changes. The immutable
   revision does not include or approve that WIP.
 - `btw` is loaded locally but its ownership audit remains incomplete. Its
