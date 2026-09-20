@@ -1145,6 +1145,18 @@ const renderToolResultExecutionEvidence: (
       ? stateSnapshotIdentity(name, inputRecord, scope, originalCommand)
       : undefined
   const verification = verificationMarker(name, inputRecord, scope)
+  // Identify only the first literal executable of a source-fixed command.
+  // A verified leading cd is already separated from that command and scope.
+  // Unknown syntax keeps legacy filtering; absent never proves no VCS effects.
+  const literalExecutable = commandLocation?.command.match(
+    /^\^?([A-Za-z0-9_./@+,-]+)(?=\s|$)/,
+  )?.[1]
+  const commandVcsToken =
+    name.replace(/^functions\./, "") === "bash" && literalExecutable
+      ? /^(?:.*\/)?(?:git|gt|but)$/i.test(literalExecutable)
+        ? " commandVcsToken=present"
+        : " commandVcsToken=absent"
+      : ""
   const artifactEffect =
     status === "success" &&
     name.replace(/^functions\./, "") === "bash" &&
@@ -1170,7 +1182,7 @@ const renderToolResultExecutionEvidence: (
     cargo?.[0] === "nextest" && cargo[1] === "run"
       ? boundedNextestEvidence(evidenceText, subject, maxCharacters)
       : boundedRelevantExecutionEvidence(evidenceText, subject, maxCharacters)
-  return `${name} result status=${status}${digestIdentity}${scopeIdentity}${snapshotMarker}${commandScopeMarker}${verification}${artifactEffect}${inputIdentity}: ${boundedText}`
+  return `${name} result status=${status}${digestIdentity}${scopeIdentity}${snapshotMarker}${commandScopeMarker}${commandVcsToken}${verification}${artifactEffect}${inputIdentity}: ${boundedText}`
 }
 
 export const branchExecutionEvidence = ({
@@ -1494,9 +1506,19 @@ export const selectRelevantExecutionEvidence = (
       const isNodeVerification =
         inputBoundary >= 0 &&
         /\bverification=node-test$/u.test(candidate.slice(0, inputBoundary))
+      const commandVcsToken =
+        inputBoundary >= 0
+          ? /\bcommandVcsToken=(present|absent)\b/u.exec(
+              candidate.slice(0, inputBoundary),
+            )?.[1]
+          : undefined
       const hasVcsCommandResult =
         !isNodeVerification &&
-        /^(?:functions\.)?bash result\b.*\b(?:git|gt|but)\b/i.test(candidate)
+        (commandVcsToken === undefined
+          ? /^(?:functions\.)?bash result\b.*\b(?:git|gt|but)\b/i.test(
+              candidate,
+            )
+          : commandVcsToken === "present")
       const verifiedCommandScope =
         /^(?:functions\.)?bash result status=(?:success|error|unknown)(?: inputDigest=[0-9a-f]{64})? scope=([0-9a-f]{16})(?: snapshot=[a-z-]+(?: anchor=[a-z0-9_./:-]{1,128})?)? commandScope=verified\b/i.exec(
           candidate,

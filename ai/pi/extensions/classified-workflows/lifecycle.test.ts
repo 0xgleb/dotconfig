@@ -2522,7 +2522,7 @@ test("current linked-worktree pipeline gates supersede stale prerequisite and se
   )
   assert.match(
     prompt,
-    /every gate and review must identify that exact head and status snapshot.*cached-path inventory.*exactly the reviewed paths.*source-fixed count/is,
+    /every gate and review must be bound to that exact head and reviewed file contents.*index-only staging transition.*current status snapshot.*complete reviewed path, mode, and blob identities.*cached-path inventory.*exactly the reviewed paths.*source-fixed count/is,
   )
   assert.match(
     prompt,
@@ -2534,7 +2534,7 @@ test("current linked-worktree pipeline gates supersede stale prerequisite and se
   )
   assert.match(
     prompt,
-    /proof is absent, stale, incomplete, mismatched, or shows mutation, block commit.*block any command or hook that could add or commit them.*do not use --no-verify to bypass hook policy/is,
+    /proof is absent, stale, incomplete, mismatched, or shows an unapproved mutation, block commit.*block any command or hook that could add or commit them.*do not use --no-verify to bypass hook policy/is,
   )
   assert.match(
     prompt,
@@ -2593,13 +2593,13 @@ test("current linked-worktree pipeline gates supersede stale prerequisite and se
   )
   assert.match(
     mismatchPrompt,
-    /unreviewed staged path, changed status snapshot, unstaged tracked content, stale head, or mismatched gate or review blocks commit/is,
+    /unreviewed staged path, status snapshot that differs from the newly verified binding, unstaged tracked content, stale head, or mismatched gate or review blocks commit/is,
   )
   assert.match(mismatchPrompt, /"gitHasUnstagedTrackedChanges": true/)
   assert.match(mismatchPrompt, /"gitCachedPathCount": 4/)
   assert.match(
     mismatchPrompt,
-    /if that proof is absent, stale, incomplete, mismatched, or shows mutation, block commit/is,
+    /if that proof is absent, stale, incomplete, mismatched, or shows an unapproved mutation, block commit/is,
   )
 })
 
