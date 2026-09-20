@@ -1,6 +1,6 @@
 import type { ExtensionAPI } from "@earendil-works/pi-coding-agent"
 
-export const MANAGED_CONFIG_GENERATION = "2026.07.23.157"
+export const MANAGED_CONFIG_GENERATION = "2026.07.23.158"
 export const RUNTIME_VERSION_REQUEST_EVENT = "pi:runtime-version-request"
 
 export const piHostRuntimeVersions = (

@@ -1105,7 +1105,7 @@ const renderToolResultExecutionEvidence: (
     typeof input === "object" && input !== null && !Array.isArray(input)
       ? (input as Record<string, unknown>)
       : undefined
-  const selectedInput = inputRecord
+  const selectedFields = inputRecord
     ? Object.fromEntries(
         [
           "action",
@@ -1122,6 +1122,20 @@ const renderToolResultExecutionEvidence: (
           .map(key => [key, inputRecord[key]]),
       )
     : {}
+  const selectedInput =
+    (name === "workflow" || name === "functions.workflow") &&
+    typeof inputRecord?.code === "string"
+      ? {
+          workflowLaunchInputEvidence:
+            "untrusted launch input; not executed-child ownership; excerpts cannot prove disjointness",
+          workflowLaunchCodeExcerpt: boundedRelevantExecutionEvidence(
+            inputRecord.code,
+            subject,
+            640,
+          ),
+          ...selectedFields,
+        }
+      : selectedFields
   const encodedInput = sanitizeProcessDiagnostic(JSON.stringify(selectedInput))
     .replace(/\s+/g, " ")
     .slice(0, 1_000)
