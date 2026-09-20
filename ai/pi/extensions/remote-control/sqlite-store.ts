@@ -27,7 +27,7 @@ import {
   type RemoteQuestionOption,
   type RemoteQuestionResolution,
   type RemoteQuestionSnapshot,
-} from "./bridge-contract.ts"
+} from "./protocol.ts"
 
 const BUSY_TIMEOUT_MS = 2_000
 const MAX_AGENTS = 1_024
