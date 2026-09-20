@@ -288,7 +288,7 @@ import {
 import { registerRuntimeVersion } from "../shared/runtime-version.ts"
 import { AGENTOPS_INCIDENT_EVENT } from "../shared/agentops-events.ts"
 import { remoteBridgeDatabasePath } from "../remote-control/paths.ts"
-import { RemoteBridgeError } from "../remote-control/protocol.ts"
+import type { RemoteBridgeError } from "../remote-control/bridge-contract.ts"
 import { makeRemoteBridgeStore } from "../remote-control/sqlite-store.ts"
 
 const CLASSIFIER_MODEL = "openai-codex/gpt-5.6-terra"
