@@ -61,15 +61,23 @@ or an internal workflow (`do`, `check`, `take`, `md`,
 
 ## VCS backend routing
 
-Prefer GitButler for managed main worktrees and plain Git elsewhere. Stack-style
-commands (`ss`, `create`, `sync`, `co`, `restack`, `mut`, …) retain compatible
-aliases and route by verified topology:
+Prefer GitButler for managed main worktrees and plain Git elsewhere.
+Stack-style commands (`ss`, `create`, `sync`, `co`, `restack`, `mut`, …)
+retain compatible aliases and route by verified topology:
 
-- a GitButler-managed repo's verified **main worktree** → **`but`**
-- every linked/non-main worktree, including those attached to a GitButler-managed repo → plain **`git`**
+- a GitButler-managed repository's verified main worktree → **`but`**
+- every linked/non-main worktree → plain **`git`**
 - otherwise → plain **`git`**
 
-GitButler must never be invoked outside the main worktree; detect topology before routing instead of waiting for `but` to fail. Plain git commands (`add`, `commit`, `push`, `status`, `diff`, `log`, …) always route to `git` regardless of backend. `gh`-backed commands (`issue`, `pr`) and internal workflows are backend-independent.
+Never invoke GitButler outside the main worktree; detect topology before
+routing instead of waiting for `but` to fail. These are shared defaults, not
+organization-specific rules; explicit repository-local workflows may override
+them. Do not migrate repositories, change branches, or rewrite history merely
+to select a backend.
+
+Plain git commands (`add`, `commit`, `push`, `status`, `diff`, `log`, …) always
+route to `git` regardless of backend. `gh`-backed commands (`issue`, `pr`) and
+internal workflows are backend-independent.
 
 The stack **verbs are translated**, not passed through — gitbutler has a
 different vocabulary and no stack cursor. For example `fj mut` → `but amend` /
@@ -80,18 +88,14 @@ moves, and on git also `squash`/`absorb`/`move`/…) error with a clear message
 instead of being guessed at. The translation tables are `but_translations` and
 `git_translations` in `routing.nu`.
 
-These are shared defaults, not organization-specific rules. Explicit repository
-instructions may select another workflow. Do not migrate repositories, change
-branches, or rewrite history merely to select a backend.
-
 ## Routing internals
 
 `nushell/fj/routing.nu` holds the pure, testable routing logic:
 
 - `fj-route ...args` — maps the invocation to `{ tool, args }` (logical routing;
   stack commands carry tool `"stack"`)
-- `vcs-backend cwd home gitbutler_managed is_main_worktree` — resolves `"but" | "git"`;
-  the path arguments remain for compatibility, not organization-based routing
+- `vcs-backend cwd home gitbutler_managed is_main_worktree` — resolves
+  `"but" | "git"`; path arguments remain for compatibility, not organization-based routing
 - `resolve-stack route backend` — translates a stack route (tool `"stack"`) to the
   active backend, mapping both the tool and the verb; returns tool
   `"unsupported"` (carrying `[verb, backend]`) when there is no equivalent.

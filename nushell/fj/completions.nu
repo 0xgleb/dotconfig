@@ -16,13 +16,13 @@ def fj-subcommands [] {
     { value: "create", description: "Create branch (but/git)" }
     { value: "sync", description: "Pull (but/git)" }
     { value: "co", description: "Apply branch (but) / checkout (git)" }
-    { value: "ls", description: "GitButler status" }
-    { value: "ll", description: "GitButler status" }
+    { value: "ls", description: "Status (but only; unsupported on git)" }
+    { value: "ll", description: "Status (but only; unsupported on git)" }
     { value: "log", description: "git log" }
-    { value: "restack", description: "GitButler pull" }
-    { value: "absorb", description: "GitButler absorb" }
-    { value: "untrack", description: "GitButler unapply branch" }
-    { value: "squash", description: "GitButler squash" }
+    { value: "restack", description: "Pull (but only; unsupported on git)" }
+    { value: "absorb", description: "Absorb (but only; unsupported on git)" }
+    { value: "untrack", description: "Unapply branch (but only; unsupported on git)" }
+    { value: "squash", description: "Squash (but only; unsupported on git)" }
     { value: "diff", description: "git diff" }
     { value: "add", description: "git add" }
     { value: "status", description: "git status" }

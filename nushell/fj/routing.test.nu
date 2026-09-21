@@ -220,6 +220,76 @@ def "test full fj module loads and renders help" [] {
   assert ($result.stdout | str contains "fj — unified dev command")
 }
 
+# Exercise real Git discovery through the full module; But itself is an inert
+# test executable, so a routing failure cannot mutate a GitButler workspace.
+def --wrapped fixture-git [...args: string] {
+  let result = (do { ^git ...$args } | complete)
+  assert equal $result.exit_code 0 $result.stderr
+  $result.stdout
+}
+
+def "test full fj dispatch respects real main and linked worktrees" [] {
+  let module_dir = ($env.CURRENT_FILE | path dirname)
+  let container = ($module_dir | path dirname | path dirname | path join .tmp fj-routing-integration)
+  mkdir $container
+  let root = (mktemp --directory --tmpdir-path $container run.XXXXXXXXXX)
+  let main_dir = ($root | path join main)
+  let bin_dir = ($root | path join bin)
+  let linked_dir = ($main_dir | path join .tmp worktrees secondary)
+  let outcome = (try {
+    mkdir $main_dir $bin_dir
+    let spy = ($bin_dir | path join but)
+    "#!/usr/bin/env nu\ndef main [...args: string] { print 'FJ_TEST_BUT' }\n" | save $spy
+    ^chmod +x $spy
+    assert equal $env.LAST_EXIT_CODE 0
+    do {
+      cd $main_dir
+      fixture-git init --initial-branch=gitbutler/workspace | ignore
+      fixture-git config user.name fj-test | ignore
+      fixture-git config user.email fj-test@example.invalid | ignore
+      fixture-git config status.short "false" | ignore
+      fixture-git config status.branch "true" | ignore
+      fixture-git commit --allow-empty -m fixture | ignore
+      fixture-git worktree add -b gitbutler/linked $linked_dir | ignore
+    }
+    let command = ([$"use ($module_dir | to nuon)" "fj"] | str join (char newline))
+    let main_result = (do {
+      with-env {PATH: ($env.PATH | prepend $bin_dir)} {
+        cd $main_dir
+        ^nu --commands $command
+      }
+    } | complete)
+    assert equal $main_result.exit_code 0 $main_result.stderr
+    assert ($main_result.stdout | str contains "FJ_TEST_BUT")
+    let linked_result = (do {
+      with-env {PATH: ($env.PATH | prepend $bin_dir)} {
+        cd $linked_dir
+        ^nu --commands $command
+      }
+    } | complete)
+    assert equal $linked_result.exit_code 0 $linked_result.stderr
+    assert (not ($linked_result.stdout | str contains "FJ_TEST_BUT"))
+    assert ($linked_result.stdout | str contains "gitbutler/linked")
+    {ok: true}
+  } catch {|err| {ok: false, message: $err.msg}})
+  # The fixture repository contains its linked slot and its registration; none
+  # is registered in the source repository. Dispose this invocation's root on
+  # success/failure; never remove the shared container or another run's files.
+  rm -r $root
+  if not $outcome.ok { error make {msg: $outcome.message} }
+}
+
+def "test topology fixtures support concurrent runs" [] {
+  let results = (1..2 | par-each --threads 2 { |_|
+    try {
+      test full fj dispatch respects real main and linked worktrees
+      {ok: true, message: ""}
+    } catch {|err| {ok: false, message: $err.msg}}
+  })
+  assert equal ($results | length) 2
+  for result in $results { assert $result.ok $result.message }
+}
+
 # --- mut: stack modify ---
 
 def "test fj mut routes to stack modify" [] {
@@ -339,15 +409,15 @@ def "test vcs-backend managed organization main worktree uses gitbutler" [] {
 }
 
 def "test vcs-backend other main repo managed by gitbutler is but" [] {
-  assert equal (vcs-backend "/home/u/code/data-cartel/example" "/home/u" true true) "but"
+  assert equal (vcs-backend "/home/u/code/example-team/service" "/home/u" true true) "but"
 }
 
 def "test vcs-backend gitbutler-managed linked worktree is plain git" [] {
-  assert equal (vcs-backend "/home/u/code/data-cartel/example/.worktrees/fix" "/home/u" true false) "git"
+  assert equal (vcs-backend "/home/u/code/example-team/service/.worktrees/secondary" "/home/u" true false) "git"
 }
 
 def "test vcs-backend other repo not gitbutler-managed is git" [] {
-  assert equal (vcs-backend "/home/u/code/data-cartel/example" "/home/u" false true) "git"
+  assert equal (vcs-backend "/home/u/code/example-team/service" "/home/u" false true) "git"
 }
 
 def "test vcs-backend dotconfig not gitbutler-managed is git" [] {
