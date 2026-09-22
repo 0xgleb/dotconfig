@@ -1,4 +1,4 @@
-import { randomUUID } from "node:crypto"
+import { randomInt, randomUUID } from "node:crypto"
 import { chmodSync, mkdirSync } from "node:fs"
 import { dirname, isAbsolute } from "node:path"
 import { DatabaseSync } from "node:sqlite"
@@ -13,6 +13,7 @@ import {
   failJob,
   JobRuntimeError,
   recoverExpiredJob,
+  recurringSuccessorSpec,
   REGISTERED_JOB_KINDS,
   type Job,
   type RegisteredJobKind,
@@ -20,7 +21,7 @@ import {
   type RegisteredJobSpec,
 } from "./job-runtime.ts"
 
-const SCHEMA_VERSION = 1
+const SCHEMA_VERSION = 2
 const BUSY_TIMEOUT_MS = 2_000
 const MAX_JOBS = 10_000
 
@@ -190,6 +191,75 @@ const makeStore = (database: DatabaseSync): SqliteJobStore => {
           : Effect.fail(storeError("not_found", "job no longer exists")),
     )
 
+  const insertNewJob = (
+    job: Job,
+  ): Effect.Effect<Job, JobStoreError | JobRuntimeError> =>
+    Effect.gen(function* () {
+      const countRow = yield* Effect.flatMap(
+        sql(
+          () => database.prepare("SELECT COUNT(*) AS count FROM jobs").get(),
+          "failed to count jobs",
+        ),
+        rowFrom,
+      )
+      if (
+        typeof countRow.count !== "number" ||
+        !Number.isSafeInteger(countRow.count)
+      ) {
+        return yield* Effect.fail(
+          storeError("corrupt_state", "job count is malformed"),
+        )
+      }
+      if (countRow.count >= MAX_JOBS)
+        return yield* Effect.fail(
+          storeError("capacity", "job store capacity is exhausted"),
+        )
+      yield* sql(
+        () =>
+          database
+            .prepare(
+              `INSERT INTO jobs (
+                 job_id, kind, idempotency_key, state, run_at,
+                 lease_until, updated_at, document
+               ) VALUES (?, ?, ?, ?, ?, NULL, ?, ?)`,
+            )
+            .run(
+              job.id,
+              job.spec.kind,
+              job.spec.idempotencyKey ?? null,
+              job.state,
+              job.spec.runAt,
+              job.updatedAt,
+              JSON.stringify(job),
+            ),
+        "failed to insert job",
+      )
+      return job
+    })
+
+  const scheduleRecurrence = (
+    job: Job,
+    now: number,
+  ): Effect.Effect<Job, JobStoreError | JobRuntimeError> => {
+    if (
+      (job.state !== "succeeded" &&
+        job.state !== "failed" &&
+        job.state !== "cancelled") ||
+      job.spec.kind !== "review-duty.scan" ||
+      job.spec.recurrence === undefined
+    ) {
+      return Effect.succeed(job)
+    }
+    const jitterMs = job.spec.recurrence.jitterMs
+    const offset = jitterMs === 0 ? 0 : randomInt(-jitterMs, jitterMs + 1)
+    return Effect.gen(function* () {
+      const spec = yield* recurringSuccessorSpec(job.spec, now, offset)
+      const successor = yield* createJob(spec, randomUUID(), now)
+      yield* insertNewJob(successor)
+      return job
+    })
+  }
+
   const get = (id: string): Effect.Effect<Job, JobStoreError> =>
     Effect.flatMap(validateId(id), (jobId) =>
       Effect.flatMap(
@@ -218,7 +288,9 @@ const makeStore = (database: DatabaseSync): SqliteJobStore => {
                   () =>
                     database
                       .prepare(
-                        "SELECT document FROM jobs WHERE kind = ? AND idempotency_key = ?",
+                        `SELECT document FROM jobs
+                         WHERE kind = ? AND idempotency_key = ?
+                           AND state NOT IN ('succeeded', 'failed', 'cancelled')`,
                       )
                       .get(decodedSpec.kind, decodedSpec.idempotencyKey),
                   "failed to resolve idempotent job",
@@ -239,47 +311,8 @@ const makeStore = (database: DatabaseSync): SqliteJobStore => {
               return { job: existing, created: false }
             }
 
-            const countRow = yield* Effect.flatMap(
-              sql(
-                () => database.prepare("SELECT COUNT(*) AS count FROM jobs").get(),
-                "failed to count jobs",
-              ),
-              rowFrom,
-            )
-            if (
-              typeof countRow.count !== "number" ||
-              !Number.isSafeInteger(countRow.count)
-            ) {
-              return yield* Effect.fail(
-                storeError("corrupt_state", "job count is malformed"),
-              )
-            }
-            if (countRow.count >= MAX_JOBS)
-              return yield* Effect.fail(
-                storeError("capacity", "job store capacity is exhausted"),
-              )
-
             const job = yield* createJob(decodedSpec, jobId, now)
-            yield* sql(
-              () =>
-                database
-                  .prepare(
-                    `INSERT INTO jobs (
-                       job_id, kind, idempotency_key, state, run_at,
-                       lease_until, updated_at, document
-                     ) VALUES (?, ?, ?, ?, ?, NULL, ?, ?)`,
-                  )
-                  .run(
-                    job.id,
-                    job.spec.kind,
-                    job.spec.idempotencyKey ?? null,
-                    job.state,
-                    job.spec.runAt,
-                    job.updatedAt,
-                    JSON.stringify(job),
-                  ),
-              "failed to insert job",
-            )
+            yield* insertNewJob(job)
             return { job, created: true }
           }),
         ),
@@ -339,8 +372,11 @@ const makeStore = (database: DatabaseSync): SqliteJobStore => {
     inTransaction(
       Effect.flatMap(get(id), (job) =>
         Effect.flatMap(
-          completeJob(job, leaseToken, now, summary, result),
-          persist,
+          Effect.flatMap(
+            completeJob(job, leaseToken, now, summary, result),
+            persist,
+          ),
+          (terminal) => scheduleRecurrence(terminal, now),
         ),
       ),
     )
@@ -355,8 +391,11 @@ const makeStore = (database: DatabaseSync): SqliteJobStore => {
     inTransaction(
       Effect.flatMap(get(id), (job) =>
         Effect.flatMap(
-          failJob(job, leaseToken, now, retryDelayMs, summary),
-          persist,
+          Effect.flatMap(
+            failJob(job, leaseToken, now, retryDelayMs, summary),
+            persist,
+          ),
+          (transitioned) => scheduleRecurrence(transitioned, now),
         ),
       ),
     )
@@ -364,7 +403,9 @@ const makeStore = (database: DatabaseSync): SqliteJobStore => {
   const cancel: SqliteJobStore["cancel"] = (id, now) =>
     inTransaction(
       Effect.flatMap(get(id), (job) =>
-        Effect.flatMap(cancelJob(job, now), persist),
+        Effect.flatMap(Effect.flatMap(cancelJob(job, now), persist), (transitioned) =>
+          scheduleRecurrence(transitioned, now),
+        ),
       ),
     )
 
@@ -391,8 +432,11 @@ const makeStore = (database: DatabaseSync): SqliteJobStore => {
         return yield* Effect.forEach(rows, (row) =>
           Effect.flatMap(documentFromRow(row), (job) =>
             Effect.flatMap(
-              recoverExpiredJob(job, now, retryDelayMs),
-              persist,
+              Effect.flatMap(
+                recoverExpiredJob(job, now, retryDelayMs),
+                persist,
+              ),
+              (transitioned) => scheduleRecurrence(transitioned, now),
             ),
           ),
         )
@@ -462,12 +506,39 @@ export const makeSqliteJobStore = (
         database.close()
         throw storeError("corrupt_state", "job schema version is malformed")
       }
-      if (version.user_version !== 0 && version.user_version !== SCHEMA_VERSION) {
+      if (
+        version.user_version !== 0 &&
+        version.user_version !== 1 &&
+        version.user_version !== SCHEMA_VERSION
+      ) {
         database.close()
         throw storeError(
           "schema_mismatch",
           `unsupported job schema version ${version.user_version}`,
         )
+      }
+      if (version.user_version === 1) {
+        database.exec(`
+          BEGIN IMMEDIATE;
+          DROP INDEX IF EXISTS jobs_due_idx;
+          ALTER TABLE jobs RENAME TO jobs_schema_v1;
+          CREATE TABLE jobs (
+            job_id TEXT PRIMARY KEY,
+            kind TEXT NOT NULL,
+            idempotency_key TEXT,
+            state TEXT NOT NULL,
+            run_at INTEGER NOT NULL,
+            lease_until INTEGER,
+            updated_at INTEGER NOT NULL,
+            document TEXT NOT NULL
+          );
+          INSERT INTO jobs
+            SELECT job_id, kind, idempotency_key, state, run_at,
+                   lease_until, updated_at, document
+            FROM jobs_schema_v1;
+          DROP TABLE jobs_schema_v1;
+          COMMIT;
+        `)
       }
       database.exec(`
         CREATE TABLE IF NOT EXISTS jobs (
@@ -478,11 +549,14 @@ export const makeSqliteJobStore = (
           run_at INTEGER NOT NULL,
           lease_until INTEGER,
           updated_at INTEGER NOT NULL,
-          document TEXT NOT NULL,
-          UNIQUE (kind, idempotency_key)
+          document TEXT NOT NULL
         );
         CREATE INDEX IF NOT EXISTS jobs_due_idx
           ON jobs (state, run_at, updated_at);
+        CREATE UNIQUE INDEX IF NOT EXISTS jobs_live_idempotency_idx
+          ON jobs (kind, idempotency_key)
+          WHERE idempotency_key IS NOT NULL
+            AND state NOT IN ('succeeded', 'failed', 'cancelled');
         PRAGMA user_version = ${SCHEMA_VERSION};
       `)
       chmodSync(path, 0o600)
