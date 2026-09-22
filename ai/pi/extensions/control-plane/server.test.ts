@@ -372,6 +372,56 @@ test("kind-filtered worker claims accept only registered bounded kinds", async (
     assert.equal(claimed.job.spec.kind, "review-duty.scan")
   }))
 
+test("idempotency-key claim filters pass through the worker claim route", async () =>
+  withServer(async (origin) => {
+    const enqueued = await fetch(`${origin}/v1/jobs`, {
+      method: "POST",
+      headers: { "content-type": "application/json" },
+      body: JSON.stringify({ ...enqueueBody, runAt: 0 }),
+    })
+    assert.equal(enqueued.status, 201)
+
+    const scoped = await fetch(`${origin}/v1/worker/claim`, {
+      method: "POST",
+      headers: { "content-type": "application/json" },
+      body: JSON.stringify({
+        workerId: "st0x-supervisor",
+        ttlMs: 90_000,
+        kinds: ["review-duty.scan"],
+        idempotencyKeys: ["review-duty:personal-review"],
+      }),
+    })
+    assert.equal(scoped.status, 204)
+
+    for (const idempotencyKeys of [[], ["bad key with spaces"], [42], "key"]) {
+      const rejected = await fetch(`${origin}/v1/worker/claim`, {
+        method: "POST",
+        headers: { "content-type": "application/json" },
+        body: JSON.stringify({
+          workerId: "st0x-supervisor",
+          ttlMs: 90_000,
+          idempotencyKeys,
+        }),
+      })
+      assert.equal(rejected.status, 400)
+    }
+
+    const matching = await fetch(`${origin}/v1/worker/claim`, {
+      method: "POST",
+      headers: { "content-type": "application/json" },
+      body: JSON.stringify({
+        workerId: "st0x-supervisor",
+        ttlMs: 90_000,
+        idempotencyKeys: ["review-duty:st0x-review"],
+      }),
+    })
+    assert.equal(matching.status, 200)
+    const claimed = (await matching.json()) as {
+      job: { spec: { idempotencyKey?: string } }
+    }
+    assert.equal(claimed.job.spec.idempotencyKey, "review-duty:st0x-review")
+  }))
+
 test("failed attempts retry through the fail route until attempts are exhausted", async () =>
   withServer(async (origin) => {
     const enqueued = await fetch(`${origin}/v1/jobs`, {

@@ -14,6 +14,7 @@ import {
 } from "./harness-protocol.ts"
 import { decodeJobSpec, JobRuntimeError } from "./job-runtime.ts"
 import {
+  isIdempotencyKeyFilter,
   isRegisteredKindFilter,
   JobStoreError,
   type SqliteJobStore,
@@ -228,17 +229,18 @@ const handleClaim = (
   }
   return Effect.gen(function* () {
     const input = yield* Effect.flatMap(readBody(request), parseJson)
+    const CLAIM_KEYS = ["workerId", "ttlMs", "kinds", "idempotencyKeys"]
     if (
       !isRecord(input) ||
-      !(
-        exactKeys(input, ["workerId", "ttlMs"]) ||
-        exactKeys(input, ["workerId", "ttlMs", "kinds"])
-      ) ||
+      !Object.keys(input).every((key) => CLAIM_KEYS.includes(key)) ||
       typeof input.workerId !== "string" ||
       typeof input.ttlMs !== "number" ||
       ("kinds" in input &&
         (!Array.isArray(input.kinds) ||
-          !isRegisteredKindFilter(input.kinds)))
+          !isRegisteredKindFilter(input.kinds))) ||
+      ("idempotencyKeys" in input &&
+        (!Array.isArray(input.idempotencyKeys) ||
+          !isIdempotencyKeyFilter(input.idempotencyKeys)))
     ) {
       return yield* Effect.fail(
         serverError("request_failed", "worker claim payload is invalid"),
@@ -251,6 +253,11 @@ const handleClaim = (
       input.ttlMs,
       "kinds" in input && Array.isArray(input.kinds) && isRegisteredKindFilter(input.kinds)
         ? input.kinds
+        : undefined,
+      "idempotencyKeys" in input &&
+        Array.isArray(input.idempotencyKeys) &&
+        isIdempotencyKeyFilter(input.idempotencyKeys)
+        ? input.idempotencyKeys
         : undefined,
     )
     if (job === undefined) response.writeHead(204).end()

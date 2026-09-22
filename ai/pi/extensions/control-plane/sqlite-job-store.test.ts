@@ -156,6 +156,50 @@ test("kind-filtered claims skip due jobs of other registered kinds", async () =>
     store.close()
   }))
 
+test("idempotency-key claim filters scope workers to their own series", async () =>
+  withStore(async (path) => {
+    const store = await Effect.runPromise(makeSqliteJobStore(path))
+    await Effect.runPromise(store.enqueue(reviewSpec(), "job-a", 1_000))
+    await Effect.runPromise(
+      store.enqueue(reviewSpec("dataclique-review"), "job-b", 1_000),
+    )
+
+    const missed = await Effect.runPromise(
+      store.claimDue("worker-a", "lease-a", 2_000, 90_000, undefined, [
+        "review-duty:personal-review",
+      ]),
+    )
+    assert.equal(missed, undefined)
+
+    const scoped = await Effect.runPromise(
+      store.claimDue(
+        "worker-a",
+        "lease-b",
+        2_000,
+        90_000,
+        ["review-duty.scan"],
+        ["review-duty:dataclique-review"],
+      ),
+    )
+    assert.equal(scoped?.id, "job-b")
+
+    assert.equal(
+      await errorCode(
+        store.claimDue("worker-a", "lease-c", 2_000, 90_000, undefined, []),
+      ),
+      "invalid_input",
+    )
+    assert.equal(
+      await errorCode(
+        store.claimDue("worker-a", "lease-d", 2_000, 90_000, undefined, [
+          "bad key with spaces",
+        ]),
+      ),
+      "invalid_input",
+    )
+    store.close()
+  }))
+
 test("terminal recurring scans transactionally schedule one jittered successor", async () =>
   withStore(async (path) => {
     const store = await Effect.runPromise(makeSqliteJobStore(path))

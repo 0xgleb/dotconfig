@@ -59,6 +59,7 @@ export interface SqliteJobStore {
     now: number,
     ttlMs: number,
     kinds?: readonly RegisteredJobKind[],
+    idempotencyKeys?: readonly string[],
   ) => Effect.Effect<Job | undefined, JobStoreError | JobRuntimeError>
   readonly complete: (
     id: string,
@@ -325,6 +326,7 @@ const makeStore = (database: DatabaseSync): SqliteJobStore => {
     now,
     ttlMs,
     kinds,
+    idempotencyKeys,
   ) =>
     inTransaction(
       Effect.gen(function* () {
@@ -336,21 +338,36 @@ const makeStore = (database: DatabaseSync): SqliteJobStore => {
             ),
           )
         }
+        if (
+          idempotencyKeys !== undefined &&
+          !isIdempotencyKeyFilter(idempotencyKeys)
+        ) {
+          return yield* Effect.fail(
+            storeError(
+              "invalid_input",
+              "claim idempotency keys must be distinct bounded identifiers",
+            ),
+          )
+        }
         const kindFilter =
           kinds === undefined
             ? ""
             : ` AND kind IN (${kinds.map(() => "?").join(", ")})`
+        const keyFilter =
+          idempotencyKeys === undefined
+            ? ""
+            : ` AND idempotency_key IN (${idempotencyKeys.map(() => "?").join(", ")})`
         const value = yield* sql(
           () =>
             database
               .prepare(
                 `SELECT document FROM jobs
                  WHERE state IN ('scheduled', 'ready', 'retry_wait')
-                   AND run_at <= ?${kindFilter}
+                   AND run_at <= ?${kindFilter}${keyFilter}
                  ORDER BY run_at, updated_at, job_id
                  LIMIT 1`,
               )
-              .get(now, ...(kinds ?? [])),
+              .get(now, ...(kinds ?? []), ...(idempotencyKeys ?? [])),
           "failed to select due job",
         )
         if (value === undefined) return undefined
@@ -471,6 +488,19 @@ const makeStore = (database: DatabaseSync): SqliteJobStore => {
     unsafeDatabaseForTests: database,
   }
 }
+
+const SAFE_IDEMPOTENCY_KEY = /^[A-Za-z0-9][A-Za-z0-9:._-]{0,127}$/u
+const MAX_CLAIM_KEY_FILTER = 16
+
+export const isIdempotencyKeyFilter = (
+  keys: readonly unknown[],
+): keys is readonly string[] =>
+  keys.length >= 1 &&
+  keys.length <= MAX_CLAIM_KEY_FILTER &&
+  new Set(keys).size === keys.length &&
+  keys.every(
+    (key) => typeof key === "string" && SAFE_IDEMPOTENCY_KEY.test(key),
+  )
 
 export const isRegisteredKindFilter = (
   kinds: readonly unknown[],
