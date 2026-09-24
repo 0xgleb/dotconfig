@@ -86,6 +86,20 @@ let
     inherit (pkgs) nodejs;
     derivationArgs.npmInstallFlags = "--legacy-peer-deps --omit=dev";
   };
+  piExtensionRuntime =
+    pkgs.runCommand "local-pi-extensions-runtime"
+      {
+        nativeBuildInputs = [ pkgs.nodejs ];
+      }
+      ''
+        mkdir -p "$out"
+        cp -R "${metagendaPiExtensions}/." "$out/"
+        chmod -R u+w "$out"
+        cp -R ${./ai/pi/extension-overlays/remote-control}/. "$out/remote-control/"
+        ln -s "${piExtensionNodeModules}/node_modules" "$out/node_modules"
+        node --input-type=module --eval "import { pathToFileURL } from 'node:url'; await import(pathToFileURL('$out/shared/memory-capacity.ts').href)"
+        node --input-type=module --eval "import { pathToFileURL } from 'node:url'; await import(pathToFileURL('$out/remote-control/owner-telegram.ts').href)"
+      '';
   pieceOfPiWhisper =
     (pkgs.whisper-cpp.override {
       coreMLSupport = false;
@@ -294,7 +308,7 @@ in
     // (builtins.listToAttrs (
       builtins.map (directory: {
         name = ".config/ai/pi/extensions/${directory}";
-        value.source = "${metagendaPiExtensions}/${directory}";
+        value.source = "${piExtensionRuntime}/${directory}";
       }) metagendaPiExtensionDirectories
     ))
     // lib.optionalAttrs isDarwin darwinFiles;
