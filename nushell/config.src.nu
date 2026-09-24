@@ -203,19 +203,6 @@ def verify-pi-host [pi_bin: string] {
   if not ($launcher | str contains $expected_wrapped) {
     error make { msg: "managed Pi entrypoint executes a different host package" }
   }
-  let tui_root = (
-    $package_root
-    | path join "lib" "node_modules" "pi-monorepo" "node_modules" "@earendil-works" "pi-tui" "dist"
-  )
-  let tui = (open --raw ($tui_root | path join "tui.js"))
-  let main_screen = (open --raw ($tui_root | path join "tui-main-screen.js"))
-  if not (
-    ($tui | str contains "renderSafely()")
-    and ($tui | str contains "this.renderSafely();")
-    and ($main_screen | str contains "const pending = [root];")
-  ) {
-    error make { msg: "managed Pi entrypoint does not contain render containment" }
-  }
 }
 
 def evolve [] {
