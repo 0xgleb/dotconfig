@@ -66,190 +66,6 @@ let
     inherit system;
     config.allowUnfree = true;
   };
-  pi-coding-agent-with-reload = unstable.pi-coding-agent.overrideAttrs (old: {
-    postInstall = (old.postInstall or "") + ''
-      patch -p1 -d "$out/lib/node_modules/pi-monorepo" \
-        < ${./ai/pi/patches/extension-context-reload.patch}
-      patch -p1 -d "$out/lib/node_modules/pi-monorepo" \
-        < ${./ai/pi/patches/canvas-background.patch}
-      patch -p1 -d "$out/lib/node_modules/pi-monorepo" \
-        < ${./ai/pi/patches/focused-input-render-cache.patch}
-      patch -p1 -d "$out/lib/node_modules/pi-monorepo" \
-        < ${./ai/pi/patches/oauth-refresh-abort.patch}
-      install -Dm644 ${./ai/pi/host/request-lifecycle.js} \
-        "$out/lib/node_modules/pi-monorepo/dist/core/request-lifecycle.js"
-      install -Dm644 ${./ai/pi/host/bounded-session-reader.js} \
-        "$out/lib/node_modules/pi-monorepo/dist/core/bounded-session-reader.js"
-      install -Dm644 ${./ai/pi/host/bounded-session-reader.d.ts} \
-        "$out/lib/node_modules/pi-monorepo/dist/core/bounded-session-reader.d.ts"
-      mkdir -p "$out/lib/node_modules/pi-monorepo/node_modules/@earendil-works/pi-ai/dist/observability"
-      ln -s ../../../../../dist/core/request-lifecycle.js \
-        "$out/lib/node_modules/pi-monorepo/node_modules/@earendil-works/pi-ai/dist/observability/request-lifecycle.js"
-      patch -p1 -d "$out/lib/node_modules/pi-monorepo" \
-        < ${./ai/pi/patches/request-observability.patch}
-      patch -p1 -d "$out/lib/node_modules/pi-monorepo" \
-        < ${./ai/pi/patches/bounded-session-reader.patch}
-      # GNU patch exits 0 even when it silently drops the trailing hunks
-      # of a malformed section. That once installed a host whose
-      # _runAgentPrompt compared string continuation states while
-      # _handlePostAgentRun still returned booleans, crashing every
-      # completed turn with "Cannot continue from message role:
-      # assistant". Assert both sides of the contract in the artifact.
-      session="$out/lib/node_modules/pi-monorepo/dist/core/agent-session.js"
-      session_manager="$out/lib/node_modules/pi-monorepo/dist/core/session-manager.js"
-      interactive="$out/lib/node_modules/pi-monorepo/dist/modes/interactive/interactive-mode.js"
-      assistant_message="$out/lib/node_modules/pi-monorepo/dist/modes/interactive/components/assistant-message.js"
-      wrapper="$out/lib/node_modules/pi-monorepo/dist/core/extensions/wrapper.js"
-      canvas="$out/lib/node_modules/pi-monorepo/node_modules/@earendil-works/pi-tui/dist/tui.js"
-      alt_screen="$out/lib/node_modules/pi-monorepo/node_modules/@earendil-works/pi-tui/dist/tui-alt-screen.js"
-      main_screen="$out/lib/node_modules/pi-monorepo/node_modules/@earendil-works/pi-tui/dist/tui-main-screen.js"
-      oauth_resolver="$out/lib/node_modules/pi-monorepo/node_modules/@earendil-works/pi-ai/dist/auth/resolve.js"
-      model_runtime="$out/lib/node_modules/pi-monorepo/dist/core/model-runtime.js"
-      auth_storage="$out/lib/node_modules/pi-monorepo/dist/core/auth-storage.js"
-      codex_provider="$out/lib/node_modules/pi-monorepo/node_modules/@earendil-works/pi-ai/dist/api/openai-codex-responses.js"
-      responses_transform="$out/lib/node_modules/pi-monorepo/node_modules/@earendil-works/pi-ai/dist/api/transform-messages.js"
-      request_lifecycle="$out/lib/node_modules/pi-monorepo/dist/core/request-lifecycle.js"
-      request_lifecycle_bridge="$out/lib/node_modules/pi-monorepo/node_modules/@earendil-works/pi-ai/dist/observability/request-lifecycle.js"
-      bounded_session_reader="$out/lib/node_modules/pi-monorepo/dist/core/bounded-session-reader.js"
-      grep -qF 'continuation === "none"' "$session"
-      grep -qF 'return "recovery"' "$session"
-      grep -qF 'return this.agent.hasQueuedMessages() ? "queued" : "none";' "$session"
-      grep -qF 'pauseQueuedMessagesOnce() {' "$session"
-      if ! grep -qF '_promptAdmissionTail = Promise.resolve();' "$session" ||
-         ! grep -qF 'await previousAdmission;' "$session" ||
-         ! grep -qF 'releaseAdmission();' "$session"; then
-        echo "extension-triggered prompt admission serialization missing" >&2
-        exit 1
-      fi
-      if ! grep -qF 'const autoCompactionController = new AbortController();' "$session" ||
-         ! grep -qF 'const aborted = autoCompactionController.signal.aborted;' "$session" ||
-         ! grep -qF 'this._autoCompactionAbortController === autoCompactionController' "$session"; then
-        echo "owned auto-compaction cancellation missing" >&2
-        exit 1
-      fi
-      if [ "$(grep -cF 'await this._queueFollowUp(expandedText, currentImages);' "$session")" -ne 1 ]; then
-        echo "out-of-scope prompt reconstruction survived" >&2
-        exit 1
-      fi
-      if ! grep -qF 'restoreFailedUserInput(this.editor, userInput);' "$interactive" ||
-         ! grep -qF '.slice(userInputEntryCount)' "$interactive" ||
-         ! grep -qF 'Pending submission: ''${this.pendingPromptAdmission}' "$interactive"; then
-        echo "failed prompt input restoration or pending-state visibility missing" >&2
-        exit 1
-      fi
-      if grep -qF 'const reloadBox = new Container();' "$interactive" ||
-         grep -qF 'this.ui.setFocus(reloadBox);' "$interactive" ||
-         ! grep -qF 'this.showStatus("Reloading keybindings, extensions, skills, prompts, themes, and context files...");' "$interactive" ||
-         ! grep -qF 'this.ui.setFocus(this.editor);' "$interactive"; then
-        echo "reload replaced or unfocused the interactive editor" >&2
-        exit 1
-      fi
-      if ! grep -qF 'event.message.errorMessage = "Cancelled by user";' "$session" ||
-         ! grep -qF 'void this.session.abort("user");' "$interactive" ||
-         ! grep -qF 'abortMessage === "Cancelled by user"' "$assistant_message"; then
-        echo "typed user-interruption rendering missing" >&2
-        exit 1
-      fi
-      grep -qF 'typeof runner === "function"' "$wrapper"
-      grep -qF 'activeRunner.createContext()' "$wrapper"
-      grep -qF '() => this._extensionRunner' "$session"
-      grep -qF 'const DEFAULT_CANVAS_BACKGROUND = "#080B1A";' "$canvas"
-      grep -qF 'applyTuiCanvasBackground(line, width)' "$alt_screen"
-      grep -qF 'applyTuiCanvasBackground(line, width)' "$main_screen"
-      if ! grep -qF 'consumeFocusedInputRenderTarget()' "$canvas" ||
-         ! grep -qF 'renderMutationGeneration' "$canvas" ||
-         ! grep -qF 'renderSafely()' "$canvas" ||
-         ! grep -qF 'this.renderSafely();' "$canvas" ||
-         [ "$(grep -cF 'this.doRender();' "$canvas")" -ne 1 ] ||
-         ! grep -qF 'rootRenderCache' "$main_screen" ||
-         ! grep -qF 'renderRootChildren(width, focusedTarget)' "$main_screen" ||
-         ! grep -qF 'for (const line of resolved)' "$main_screen" ||
-         grep -qF 'combined.push(...resolved)' "$main_screen"; then
-        echo "focused input render cache or render containment missing" >&2
-        exit 1
-      fi
-      ${pkgs.nodejs}/bin/node --input-type=module - \
-        "$out/lib/node_modules/pi-monorepo/node_modules/@earendil-works/pi-tui" <<'EOF'
-      import assert from "node:assert/strict";
-      import { pathToFileURL } from "node:url";
-      const root = process.argv[2];
-      const { TuiMainScreen } = await import(pathToFileURL(root + "/dist/tui-main-screen.js").href);
-      const { Container } = await import(pathToFileURL(root + "/dist/tui.js").href);
-      const terminal = {
-        columns: 120,
-        rows: 40,
-        writes: [],
-        write(value) { this.writes.push(value); },
-        hideCursor() {},
-        showCursor() {},
-        start() {},
-        stop() {},
-      };
-      const hugeRoot = new Container();
-      hugeRoot.addChild({
-        invalidate() {},
-        render() { return Array.from({ length: 200000 }, (_, index) => "history " + index); },
-      });
-      const hugeTui = new TuiMainScreen(terminal);
-      hugeTui.addChild(hugeRoot);
-      assert.doesNotThrow(() => hugeTui.renderRootChildren(120, undefined));
-      const cyclicRoot = new Container();
-      cyclicRoot.addChild(cyclicRoot);
-      assert.equal(hugeTui.rootContains(cyclicRoot, hugeRoot), false);
-      const failingTui = new TuiMainScreen(terminal);
-      failingTui.addChild({ invalidate() {}, render() { throw new Error("component render failed"); } });
-      assert.doesNotThrow(() => failingTui.renderNow());
-      assert.match(terminal.writes.join(""), /Pi render error contained/);
-      EOF
-      if ! grep -qF 'loadBoundedSessionEntriesSync(resolvedFilePath)' "$session_manager" ||
-         ! grep -qF 'MAX_SESSION_ENTRY_BYTES = 16 * 1024 * 1024' "$bounded_session_reader" ||
-         ! grep -qF 'MAX_SESSION_LOAD_BYTES = 32 * 1024 * 1024' "$bounded_session_reader" ||
-         ! grep -qF 'customType: "oversized_session_entry"' "$bounded_session_reader"; then
-        echo "bounded session entry loading missing" >&2
-        exit 1
-      fi
-      if ! grep -qF 'raceWithAbortSignal(oauth.refresh(current, refreshSignal), refreshSignal)' "$oauth_resolver" ||
-         ! grep -qF '}, { signal: refreshSignal });' "$oauth_resolver"; then
-        echo "OAuth refresh abort enforcement missing" >&2
-        exit 1
-      fi
-      if ! grep -qF 'const matchesPendingToolCall = pendingToolCalls.some((toolCall) => toolCall.id === msg.toolCallId);' "$responses_transform" ||
-         ! grep -qF 'if (!matchesPendingToolCall) {' "$responses_transform"; then
-        echo "orphan OpenAI tool-result replay guard missing" >&2
-        exit 1
-      fi
-      if ! test -f "$request_lifecycle" ||
-         ! test -L "$request_lifecycle_bridge" ||
-         ! test -f "$request_lifecycle_bridge" ||
-         ! grep -qF 'withRequestLifecycle(model' "$model_runtime" ||
-         ! grep -qF 'RequestLifecyclePhase.AuthLockWait' "$auth_storage" ||
-         ! grep -qF 'RequestLifecyclePhase.OAuthRefreshStarted' "$oauth_resolver" ||
-         ! grep -qF 'RequestLifecyclePhase.AdmissionStarted' "$codex_provider" ||
-         ! grep -qF 'RequestLifecyclePhase.TransportStarted' "$codex_provider" ||
-         ! grep -qF 'RequestLifecyclePhase.RequestFailed' "$codex_provider"; then
-        echo "Pi request lifecycle observability missing" >&2
-        exit 1
-      fi
-      if grep -qF 'while (await this._handlePostAgentRun())' "$session"; then
-        echo "half-applied Pi host patch: boolean continuation loop survived" >&2
-        exit 1
-      fi
-      if find "$out/lib/node_modules/pi-monorepo" -name '*.rej' | grep -q .; then
-        echo "Pi host patch left reject files" >&2
-        exit 1
-      fi
-    '';
-    postFixup = (old.postFixup or "") + ''
-      pi_wrapped="$out/bin/.pi-wrapped"
-      substituteInPlace "$pi_wrapped" \
-        --replace-fail '/dist/bundle/cli.js' '/dist/cli.js'
-      if grep -qF '/dist/bundle/cli.js' "$pi_wrapped" ||
-         ! grep -qF '/dist/cli.js' "$pi_wrapped"; then
-        echo "Pi executable still targets the unpatched bundle" >&2
-        exit 1
-      fi
-    '';
-  });
   nuConfigDir =
     if isDarwin && !config.xdg.enable then
       "Library/Application Support/nushell"
@@ -383,7 +199,7 @@ in
       let
         piSolReview = pkgs.writeShellApplication {
           name = "pi-sol-review";
-          runtimeInputs = [ pi-coding-agent-with-reload ];
+          runtimeInputs = [ unstable.pi-coding-agent ];
           text = ''
             if [ "$#" -gt 0 ]; then
               prompt="$*"
@@ -422,7 +238,7 @@ in
         piControlPlaneWatch
         piHarnessWorker
         piSolReview
-        pi-coding-agent-with-reload
+        unstable.pi-coding-agent
         pkgs.nixd
         pkgs.prek
         pkgs.prettier
@@ -454,7 +270,7 @@ in
       ".pi/agent/AGENTS.md".source = config.lib.file.mkOutOfStoreSymlink "${aiDir}/pi/AGENTS.md";
       ".pi/agent/bin/but".source = "${but}/bin/but";
       ".pi/agent/bin/but".force = true;
-      ".pi/agent/bin/pi".source = "${pi-coding-agent-with-reload}/bin/pi";
+      ".pi/agent/bin/pi".source = "${unstable.pi-coding-agent}/bin/pi";
       ".pi/agent/bin/pi".force = true;
       ".pi/agent/bin/pi-control-plane".source = "${piControlPlane}/bin/pi-control-plane";
       ".pi/agent/bin/pi-control-plane".force = true;
@@ -514,34 +330,6 @@ in
           $DRY_RUN_CMD ${pkgs.jq}/bin/jq '.' "$managed_settings" > "$pi_settings.tmp"
         fi
         $DRY_RUN_CMD mv "$pi_settings.tmp" "$pi_settings"
-      '';
-
-      patchPiHermesMemory = lib.hm.dag.entryAfter [ "mergePiConfig" ] ''
-        package_root="${piDir}/npm/node_modules/pi-hermes-memory"
-        package_manifest="$package_root/package.json"
-        live_patch="${aiDir}/pi/patches/pi-hermes-memory-bounded-live-index.patch"
-        backfill_patch="${aiDir}/pi/patches/pi-hermes-memory-bounded-session-backfill.patch"
-        indexer_source="$package_root/src/store/session-indexer.ts"
-        parser_source="$package_root/src/store/session-parser.ts"
-
-        if [ ! -f "$indexer_source" ] || [ ! -f "$parser_source" ]; then
-          exit 0
-        fi
-        if ${pkgs.gnugrep}/bin/grep -q 'MAX_LIVE_SESSION_ENTRIES' "$indexer_source" \
-          && ${pkgs.gnugrep}/bin/grep -q 'MAX_SESSION_TAIL_READ_BYTES' "$parser_source"; then
-          exit 0
-        fi
-        package_version="$(${pkgs.jq}/bin/jq -r '.version // empty' "$package_manifest")"
-        if [ "$package_version" != "0.8.1" ]; then
-          echo "Refusing to patch unsupported pi-hermes-memory $package_version" >&2
-          exit 1
-        fi
-        if ! ${pkgs.gnugrep}/bin/grep -q 'MAX_LIVE_SESSION_ENTRIES' "$indexer_source"; then
-          $DRY_RUN_CMD ${pkgs.patch}/bin/patch --batch --forward --directory="$package_root" --strip=1 < "$live_patch"
-        fi
-        if ! ${pkgs.gnugrep}/bin/grep -q 'MAX_SESSION_TAIL_READ_BYTES' "$parser_source"; then
-          $DRY_RUN_CMD ${pkgs.patch}/bin/patch --batch --forward --directory="$package_root" --strip=1 < "$backfill_patch"
-        fi
       '';
     };
   };
