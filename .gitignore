@@ -14,6 +14,16 @@ direnv/
 /.direnv/
 /.tmp/
 /ai/pi/extensions/node_modules
+/ai/pi/extensions/*
+!/ai/pi/extensions/browser-control/
+!/ai/pi/extensions/local-models/
+!/ai/pi/extensions/pi-vim/
+!/ai/pi/extensions/todo/
+!/ai/pi/extensions/package.json
+!/ai/pi/extensions/package-lock.json
+!/ai/pi/extensions/tsconfig.json
+!/ai/pi/extensions/tsconfig.registry.json
+/billion-context/
 /ai/pi/brave-operator-profile/
 /cagent/
 /cabal/
