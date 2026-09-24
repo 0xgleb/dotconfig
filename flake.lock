@@ -540,17 +540,16 @@
         "systems": "systems_2"
       },
       "locked": {
-        "lastModified": 1789796074,
-        "narHash": "sha256-G+xpH8paPeluxvK8X2u2HNWPQF4ohVHmOMfiI/VGzqc=",
+        "lastModified": 1790103075,
+        "narHash": "sha256-n692AwvbhO4kgksnXtdNcqIsBgVg59o6CXciV9FOQ8g=",
         "owner": "dataclique",
         "repo": "metagenda",
-        "rev": "919209da7649e4475a42258ebcd941f423805062",
+        "rev": "dbc2b23ab8d7c7b528fe5ab0c52e3d13b6499929",
         "type": "github"
       },
       "original": {
         "owner": "dataclique",
         "repo": "metagenda",
-        "rev": "919209da7649e4475a42258ebcd941f423805062",
         "type": "github"
       }
     },

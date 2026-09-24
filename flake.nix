@@ -28,7 +28,7 @@
     but-nix.url = "github:data-cartel/but.nix";
     but-nix.inputs.nixpkgs.follows = "nixpkgs";
 
-    metagenda.url = "github:dataclique/metagenda/919209da7649e4475a42258ebcd941f423805062";
+    metagenda.url = "github:dataclique/metagenda";
   };
 
   outputs =
@@ -117,6 +117,12 @@
             self.darwinConfigurations.darwwwin.config.home-manager.users."0xgleb".programs.atuin.flags;
         in
         {
+          metagenda-skills-consumer =
+            assert import ./scripts/metagenda-skills-consumer.test.nix;
+            pkgs.runCommand "metagenda-skills-consumer-test" { } ''
+              touch "$out"
+            '';
+
           md-sync =
             pkgs.runCommand "md-sync-test"
               {
