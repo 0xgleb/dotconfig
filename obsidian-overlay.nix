@@ -15,6 +15,7 @@ final: prev: {
             echo "Obsidian.app not found in the unpacked DMG" >&2
             exit 1
           fi
+          sourceRoot=$(dirname "$sourceRoot")
         '';
       }
     else
