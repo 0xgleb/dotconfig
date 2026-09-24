@@ -1,3 +1,30 @@
+# Instruction fidelity and scope
+
+- Preserve the user's explicit intent, scope, prohibitions, completion criteria,
+  and authorized exceptions throughout execution, delegation, and handoff. Newer
+  explicit direction supersedes older task plans; do not silently reinterpret it.
+- Execute the requested operation, not a preferred redesign. An unchanged code
+  move is not permission to refactor, harden, repair adjacent systems, or invent
+  prerequisites. Coordination and planning do not substitute for delivery.
+- Honor explicit authorized exceptions to user-owned project standards within
+  higher-priority safety and authority boundaries. Do not invent approval gates
+  or repeatedly request authorization already given for the same operation.
+- Report real execution restrictions precisely: the blocked operation, the actual
+  restriction, and what remains undone. Escalate through an authorized channel;
+  never evade a restriction or claim blocked or unperformed work is complete.
+- An explicit stop, wait, cancellation, or narrowed scope overrides older goals,
+  pending todos, operational duties, recurring wakes, restored tools, and agent
+  relays. Resume only when the stated condition is met or the owner changes scope;
+  do not fill a pause with polling or unrelated work.
+- AGENTS.md files define standing rules of engagement and agent behavior. Never
+  put transient task state, progress reports, one-off migration notes, temporary
+  waiting conditions, session journals, or handoff notes in them; use task records
+  or handoffs. Reusable migration procedures belong here; a particular migration's
+  status and next steps do not.
+- Shared Pi code belongs in Metagenda, including Pi-specific shared extensions.
+  Dotconfig consumes the published dependency; it does not maintain a parallel
+  implementation. Preserve upstream package ownership and personal host settings.
+
 # Nix Style Guidelines
 
 - Shared skills may contain tool names for multiple harnesses. Before following a
@@ -126,77 +153,10 @@ hierarchy. Aim for approximately 95% of substantive local tasks to link to an
 issue, with explicit short-lived one-off exceptions. Notes and memories provide
 context rather than a competing backlog.
 
-# Agents and Services
+# Current environment
 
-## Markdown Sync Service
-
-The `syncNotes` launchd service provides bidirectional synchronization of
-markdown files between source repositories and a unified notes vault at
-`~/code/st0x/notes/`.
-
-**Service:** `launchd.user.agents.syncNotes` (darwin.nix) **Logs:**
-`/tmp/sync-notes.out`, `/tmp/sync-notes.err` **Status:** Runs continuously,
-watches for file changes, syncs automatically
-
-### Synced Repositories
-
-- `~/code/st0x/st0x.liquidity` → `notes/liquidity/`
-- `~/code/st0x/st0x.issuance` → `notes/issuance/`
-- `~/code/st0x/st0x.REPO/.worktrees/*/` → `notes/WTNAME/`
-- `~/.config` → `notes/dotconfig/`
-
-### Sync Behavior
-
-**Forward Sync (Repos → Notes)**
-
-- Runs on startup and whenever `.md` files change in source repos
-- Preserves directory structure: `docs/file.md` stays as `docs/file.md`
-- For worktrees: appends repo name to filename: `docs/file.md` →
-  `docs/file.liquidity.md`
-
-**Reverse Sync (Notes → Repos)**
-
-- Only syncs files that have parity in source repositories
-- Files in notes without corresponding source files are never modified or
-  deleted
-- Allows editing in Obsidian and syncing changes back to source repos
-
-**Dot Replacement**
-
-- Paths starting with `.` are renamed: `.config` → `dotconfig`
-- Applied at directory level in vault path
-
-### File Organization
-
-```
-notes/
-  liquidity/              # from st0x.liquidity
-    docs/
-      file.md
-    ROADMAP.md
-  issuance/               # from st0x.issuance
-    ROADMAP.md
-    src/
-      architecture.md
-  feat-branch/            # from worktree .worktrees/feat/feat-branch/
-    docs/
-      design.liquidity.md
-  dotconfig/              # from ~/.config
-    CLAUDE.md
-    home.nix.md
-```
-
-### Logs
-
-Logs show:
-
-- Sync operations with file counts
-- Individual file movements with arrows: `→` (forward), `←` (reverse)
-- Change detection and timing
-- Color-coded output for easy monitoring
-
-Watch logs:
-
-```bash
-tail -f /tmp/sync-notes.out
-```
+The former ST0x notes-sync layout is obsolete and must not be used as evidence
+of current filesystem structure, running services, or operational duties. Verify
+relevant configuration only when an authorized task needs it; do not invent a
+replacement layout. This documentation correction does not authorize service
+changes, filesystem cleanup, or deletion of historical records.

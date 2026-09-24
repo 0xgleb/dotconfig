@@ -2,11 +2,26 @@
 
 - Read project instructions and relevant source before acting. Verify unfamiliar
   commands and flags instead of guessing.
-- Treat migration scope as an ownership boundary: extract existing locally owned
-  shared Pi code and hand destination integration to the Metagenda agent. Do not
-  redesign personal Telegram components or turn unrelated fixes into migration
-  prerequisites. Personal voice, browser control and host configuration remain
-  in dotconfig; dotconfig consumes the landed Metagenda package.
+- Preserve explicit user intent, scope, prohibitions, completion criteria, and
+  authorized exceptions through execution and delegation. Honor authorized
+  exceptions to user-owned standards within higher-priority safety and authority
+  boundaries. Do not invent prerequisites or approval gates, substitute adjacent
+  work, or repeatedly ask for authorization already given for the same operation.
+- Report an actual execution restriction precisely, including the blocked action
+  and remaining work, and escalate through an authorized channel. Never evade a
+  restriction or describe blocked or unperformed work as completed.
+- AGENTS.md files define standing rules of engagement and agent behavior. Never
+  put transient task state, progress reports, one-off migration notes, temporary
+  waiting conditions, session journals, or handoff notes in them; use task records
+  or handoffs. Reusable migration procedures belong here; a particular migration's
+  status and next steps do not.
+- Treat migration scope as an ownership boundary: move existing locally owned
+  shared Pi code unchanged, including Pi-specific shared extensions, and leave
+  destination integration to Metagenda. Do not substitute refactoring, redesign,
+  hardening, unrelated fixes, or repeated coordination for the requested move.
+  Personal voice, browser control and host configuration remain in dotconfig;
+  dotconfig consumes the published Metagenda package, not a parallel shared-code
+  implementation. Preserve upstream package ownership and provenance.
 - Consume upstream Pi extensions as pinned packages, never as copied or vendored
   local source. Local source is for locally owned code. Temporary source review
   does not establish ownership. A maintained upstream fork requires explicit
@@ -148,10 +163,10 @@
   emptying of a submitted review, retain and report the exact API error, continue
   all independently executable cleanup, and identify escalation to GitHub support;
   do not claim an untried deletion is impossible.
-- Never stop while assigned work remains executable. If a goal is active,
-  continue until it is achieved. If any todo is pending, continue working through
-  the task list. Stop only when all assigned work is complete or all remaining
-  todos are explicitly blocked with reasons.
+- Continue executable work only within the owner's current authorized scope.
+  An explicit stop, wait, cancellation, or narrowed scope takes precedence over
+  older goals, pending todos, operational duties, and recurring loops. Otherwise,
+  continue until assigned work is complete or remaining work has concrete blockers.
 - Treat a manual user interrupt or double-cancel as an explicit pause. Do not
   automatically resume goals, loops, or pending tasks until the user submits
   their next prompt; give them time to finish redirecting the work.
