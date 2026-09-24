@@ -14,6 +14,33 @@ let
   metagendaSkills = "${
     inputs.metagenda.packages.${pkgs.stdenv.hostPlatform.system}.pi-skills
   }/share/metagenda/pi-skills/skills";
+  metagendaPiExtensions = "${
+    inputs.metagenda.packages.${pkgs.stdenv.hostPlatform.system}.pi-source
+  }/extensions";
+  metagendaPiExtensionDirectories = [
+    "activity-status"
+    "agent-registry"
+    "agent-workspace"
+    "auto-reload"
+    "btw"
+    "classified-workflows"
+    "compact-footer"
+    "compact-read"
+    "control-plane"
+    "disk-pressure"
+    "image-summary"
+    "input-ergonomics"
+    "lsp"
+    "nushell-default"
+    "questions"
+    "release-cadence"
+    "remote-control"
+    "request-observability"
+    "safe-compaction"
+    "shared"
+    "usage-governor"
+    "write-result-inspector"
+  ];
   isDarwin = pkgs.stdenv.hostPlatform.isDarwin;
   aiDir = "${config.home.homeDirectory}/.config/ai";
   cursorDir = "${config.home.homeDirectory}/.cursor";
@@ -448,6 +475,12 @@ in
         force = true;
       };
     }
+    // (builtins.listToAttrs (
+      builtins.map (directory: {
+        name = ".config/ai/pi/extensions/${directory}";
+        value.source = "${metagendaPiExtensions}/${directory}";
+      }) metagendaPiExtensionDirectories
+    ))
     // lib.optionalAttrs isDarwin darwinFiles;
 
     activation = {

@@ -117,9 +117,27 @@
             self.darwinConfigurations.darwwwin.config.home-manager.users."0xgleb".programs.atuin.flags;
         in
         {
+          obsidian-packaging =
+            let
+              obsidian = self.legacyPackages.aarch64-darwin.obsidian;
+            in
+            pkgs.runCommand "obsidian-packaging-test" { } ''
+              test -x ${obsidian}/Applications/Obsidian.app/Contents/MacOS/Obsidian
+              test -x ${obsidian}/Applications/Obsidian.app/Contents/MacOS/obsidian-cli
+              test -x ${obsidian}/bin/obsidian
+              test -x ${obsidian}/bin/obsidian-cli
+              touch "$out"
+            '';
+
           metagenda-skills-consumer =
             assert import ./scripts/metagenda-skills-consumer.test.nix;
             pkgs.runCommand "metagenda-skills-consumer-test" { } ''
+              touch "$out"
+            '';
+
+          metagenda-pi-extensions-consumer =
+            assert import ./scripts/metagenda-pi-extensions-consumer.test.nix;
+            pkgs.runCommand "metagenda-pi-extensions-consumer-test" { } ''
               touch "$out"
             '';
 
