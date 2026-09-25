@@ -2,24 +2,9 @@ import assert from "node:assert/strict"
 import { readFileSync } from "node:fs"
 import test from "node:test"
 
-const agentProcess = readFileSync(
-  new URL(
-    "../pi/extensions/classified-workflows/agent-process.ts",
-    import.meta.url,
-  ),
-  "utf8",
-)
-const classifier = readFileSync(
-  new URL("../pi/extensions/classified-workflows/index.ts", import.meta.url),
-  "utf8",
-)
-const intentContext = readFileSync(
-  new URL(
-    "../pi/extensions/classified-workflows/intent-context.ts",
-    import.meta.url,
-  ),
-  "utf8",
-)
+// Extension-source content assertions (classifier tiers, Claude routing in
+// agent-process) live with their owning repo (dataclique/metagenda) after the
+// pi-source migration. This file pins only the dotconfig-owned review skills.
 const reviewCore = readFileSync(
   new URL("../skills/review-core/SKILL.md", import.meta.url),
   "utf8",
@@ -34,11 +19,6 @@ const reviewPr = readFileSync(
 )
 
 test("Pi workflows never route Claude through API providers", () => {
-  assert.match(
-    agentProcess,
-    /Claude models cannot run through Pi API providers/i,
-  )
-  assert.match(agentProcess, /external claude -p subscription lane/i)
   assert.match(reviewCore, /Anthropic API billing is disabled/i)
   assert.match(reviewCore, /claude -p --permission-mode plan/i)
   assert.match(
@@ -91,27 +71,7 @@ test("Claude review-duty adapters stay inside the subscription harness", () => {
   }
 })
 
-test("semantic safety classification uses Sol and bounded relevant evidence while review support stays on Luna", () => {
-  assert.match(classifier, /CLASSIFIER_MODEL = "openai-codex\/gpt-5\.6-sol"/)
-  assert.match(classifier, /boundedConversationIntentEvidence\(branch\)/)
-  assert.match(intentContext, /Human message: \$\{text\}/)
-  assert.match(
-    intentContext,
-    /Trusted coordination context: \$\{coordination\}/,
-  )
-  assert.match(
-    intentContext,
-    /Untrusted assistant context for human co-reference/,
-  )
-  assert.match(classifier, /assistant report \(untrusted\)/)
-  assert.match(
-    classifier,
-    /selectRelevantExecutionEvidence\(executionEvidence, subject\)/,
-  )
-  assert.doesNotMatch(
-    classifier,
-    /CLASSIFIER_MODEL = "openai-codex\/gpt-5\.6-luna"/,
-  )
+test("review lanes resolve through provider tiers instead of one hardcoded provider", () => {
   for (const [name, contents] of [
     ["review core", reviewCore],
     ["review loop", reviewLoop],
@@ -122,10 +82,23 @@ test("semantic safety classification uses Sol and bounded relevant evidence whil
       /gpt-5\.4-mini/,
       `${name} must not regress below GPT-5.6`,
     )
-    assert.match(
+    assert.doesNotMatch(
       contents,
-      /gpt-5\.6-luna/,
-      `${name} must use GPT-5.6 Luna for bounded support work`,
+      /model: 'openai-codex\/gpt-5\.6-luna'/,
+      `${name} must not hardcode one provider's model in a lane cell`,
+    )
+    assert.doesNotMatch(
+      contents,
+      /model: "openai-codex\/gpt-5\.6-luna"/,
+      `${name} must not hardcode one provider's model in a lane cell`,
     )
   }
+  assert.match(reviewCore, /provider tier/)
+  assert.match(reviewCore, /PI_PROVIDER/)
+  assert.match(reviewCore, /zai\/glm-5\.3-flash/)
+  assert.match(reviewCore, /gpt-5\.6-luna/)
+  assert.match(reviewCore, /model: lightModel/)
+  assert.match(reviewCore, /model: midModel/)
+  assert.match(reviewLoop, /tierModels\?\.light/)
+  assert.match(reviewLoop, /tierModels/)
 })

@@ -566,7 +566,9 @@ the workflow `scriptPath` from step 4) when any of:
 **Otherwise run delta mode** — the default and fast path. One small workflow: a
 fix-verifier per fixed finding plus one Opus broad sweep of the fix delta. Pass
 `args`: `{fixedFindings: <findings fixed this loop so far>, deltaDiffPath,
-fullDiffPath, repoRoot, docsPaths, reviewSource}`. `reviewSource` must contain
+fullDiffPath, repoRoot, docsPaths, reviewSource, tierModels}`. `tierModels`
+carries the provider-tier resolution from the engine's provider constraint
+(`{ light, mid }` resolved ids, or null on an unknown provider). `reviewSource` must contain
 `mode` (`single` or `stack`), `branch`, `parentSha`, `headSha`, `sourceRoot`, and
 `ownedDeltaPath`, all resolved from step 2. In stack mode `sourceRoot` is the
 exported committed branch source, never the combined workspace; in single mode
@@ -624,7 +626,10 @@ const SWEEP_SCHEMA = {
 // The harness may deliver args as a JSON-encoded string instead of a
 // parsed object — parse defensively before destructuring.
 const parsedArgs = typeof args === 'string' ? JSON.parse(args) : args
-const { fixedFindings, deltaDiffPath, fullDiffPath, repoRoot, docsPaths, reviewSource } = parsedArgs
+const { fixedFindings, deltaDiffPath, fullDiffPath, repoRoot, docsPaths, reviewSource, tierModels } = parsedArgs
+// Tier-resolved light model from the provider constraint section; undefined
+// on an unknown provider, so lanes inherit the session model.
+const lightModel = tierModels?.light
 const scopeFields = ["branch", "parentSha", "headSha", "sourceRoot", "ownedDeltaPath"]
 if (!reviewSource || !["single", "stack"].includes(reviewSource.mode) ||
     scopeFields.some(key => typeof reviewSource[key] !== "string" || !reviewSource[key].trim())) {
@@ -648,7 +653,7 @@ const [verifications, sweep] = await parallel([
       `have introduced. Report new_issues only for problems caused by or ` +
       `directly adjacent to the fix.`,
       { label: `verify-fix:${finding.title}`, phase: 'Verify fixes',
-        model: 'openai-codex/gpt-5.6-luna', schema: VERIFY_FIX_SCHEMA },
+        model: lightModel, schema: VERIFY_FIX_SCHEMA },
     ).then(result => result && ({ finding, ...result })))),
   () => agent(
     sourceContext + `You are a senior staff engineer reviewing a set of fixes applied in ` +
@@ -660,7 +665,7 @@ const [verifications, sweep] = await parallel([
     `project docs. Apply the same bar as a full review — correctness ` +
     `first, no style nits, nothing the compiler or linter would catch. ` +
     `Return findings, or an empty list with clean_reason if clean.`,
-    { label: 'delta-sweep', phase: 'Sweep', model: 'openai-codex/gpt-5.6-luna',
+    { label: 'delta-sweep', phase: 'Sweep', model: lightModel,
       schema: SWEEP_SCHEMA }),
 ])
 

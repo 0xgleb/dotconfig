@@ -127,8 +127,8 @@ Keep only the paths — they become `docsPaths` for the engine.
 
 **Limit-blown days:** the review must still complete. Run review-core step 1,
 but apply its provider constraint first: every native Workflow lane, verifier,
-synthesizer, inspector, and external-command wrapper uses
-`openai-codex/gpt-5.6-luna`. Never send `fable`, `sonnet`, `opus`, `claude-*`, or
+inspector, and external-command wrapper uses the tier-resolved `{LIGHT_MODEL}`
+(and synthesis `{MID_MODEL}`) for the session's provider. Never send `fable`, `sonnet`, `opus`, `claude-*`, or
 `anthropic/*` through Pi. Claude may appear only as an optional external
 `claude -p --permission-mode plan` subscription lane. Cursor is retired and
 must not be probed or launched. If the Claude CLI is unavailable, continue the

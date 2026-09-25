@@ -8,12 +8,31 @@ allowed-tools: Bash(claude:*), Bash(command:*), Bash(cat:*), Bash(find:*), Bash(
 
 ## Provider constraint (overrides every model cell below)
 
-Anthropic API billing is disabled. Every native Workflow agent, verifier,
-synthesizer, inspector, and external-command wrapper MUST use
-`openai-codex/gpt-5.6-luna`, regardless of legacy lane names such as `fable`,
-`sonnet`, or `opus` and regardless of model values shown in older tables below.
-Those names are focus labels only. Never pass `fable`, `sonnet`, `opus`,
-`claude-*`, or `anthropic/*` as a Workflow `model`.
+Anthropic API billing is disabled. Never pass `fable`, `sonnet`, `opus`,
+`claude-*`, or `anthropic/*` as a Workflow `model` — those legacy lane names
+below are focus labels only.
+
+Every native Workflow lane resolves its model through the **provider tier
+system** at invocation time. No lane hardcodes one provider's model: a
+hardcoded pin kills the whole panel whenever that provider's auth or quota is
+down. Resolve once, before step 1:
+
+1. Read the session provider from the documented non-secret `PI_PROVIDER`
+   environment key (or the session model's `provider/id` prefix).
+2. Map it through the current tier table (mirror of
+   `pi/extensions/shared/model-tiers.ts` — keep in sync with that source):
+   - `openai-codex`: light `openai-codex/gpt-5.6-luna`, mid
+     `openai-codex/gpt-5.6-terra`, top `openai-codex/gpt-5.6-sol`
+   - `zai`: light `zai/glm-5.3-flash`, mid `zai/glm-5.3`, top `zai/glm-5.3`
+3. Substitute the resolved ids for `{LIGHT_MODEL}` / `{MID_MODEL}` everywhere
+   below.
+4. Unknown provider: omit the `model` field on those lanes (children inherit
+   the session model) and note the fallback in the report header.
+
+Lane→tier mapping: reviewer focus lanes, inspectors, adversarial verifiers,
+delta sweeps, fix agents, and external-command wrappers run `{LIGHT_MODEL}`
+(the lightest authenticated tier — review lanes stay cheap); the synthesis
+lane runs `{MID_MODEL}`.
 
 Claude is optional and may run only through a subscription CLI external lane:
 
@@ -23,11 +42,11 @@ claude -p --permission-mode plan --model sonnet --no-session-persistence \
   "$(cat \"<promptPath>\") The diff to review is at: <diffPath>"
 ```
 
-The Pi wrapper for that external command still uses
-`openai-codex/gpt-5.6-luna`. Cursor is retired and must never be probed or
-launched. If `claude -p` is unavailable or fails, omit Claude and continue the
-OpenAI-only panel. Legacy lane names below are focus labels only; every native
-Workflow lane uses the provider constraint above.
+The Pi wrapper for that external command also uses `{LIGHT_MODEL}`. Cursor is
+retired and must never be probed or launched. If `claude -p` is unavailable or
+fails, omit Claude and continue the native panel. Legacy lane names below are
+focus labels only; every native Workflow lane uses the tier-resolved model
+from the provider constraint above.
 
 This is **not a user-facing skill**. It is the single source of truth for the
 review engine that `review-loop`, `review-pr`, and `review-sweep` share: turn a
@@ -62,9 +81,10 @@ the steps below reference `{NAME}`:
 
 ## 1. Resolve the available review lanes
 
-The native Workflow panel is always available and every native lane uses
-`openai-codex/gpt-5.6-luna` under the provider constraint above. Cursor is
-retired: never probe it, cache its availability, or launch a Cursor lane.
+The native Workflow panel is always available and every native lane uses the
+tier-resolved `{LIGHT_MODEL}` from the provider constraint above (synthesis
+uses `{MID_MODEL}`). Cursor is retired: never probe it, cache its
+availability, or launch a Cursor lane.
 
 Optionally add one read-only Claude Code subscription lane when `claude -p` is
 available. Its failure is non-fatal: omit it and continue the OpenAI-only panel.
@@ -283,7 +303,7 @@ Higher-level trigger checks are explicit:
 - Forecast, signal, strategy, backtest, optimizer, allocation, or pacing-model
   changes select `quantitative-research-inspector`.
 
-Every inspector lane uses `openai-codex/gpt-5.6-luna` under the provider
+Every inspector lane uses the tier-resolved `{LIGHT_MODEL}` under the provider
 constraint. Inspector lanes never invoke a retired external harness.
 
 For each **selected** inspector, write `$out_dir/prompt-<inspector>.txt` =
@@ -305,7 +325,7 @@ Repo root: {REPO_ROOT}
 
 Build native reviewer lanes for the required focus prompts plus every selected
 inspector. Each native lane object is `{key, model, promptPath, diffPath}` and
-sets `model` to `openai-codex/gpt-5.6-luna`. Normally all lanes share
+sets `model` to the tier-resolved `{LIGHT_MODEL}`. Normally all lanes share
 `{DIFF_PATH}`; chunked runs differ as described below.
 
 When available, add at most one read-only Claude Code subscription lane using
@@ -365,8 +385,8 @@ synthesis:
 {
   "repoRoot": "{REPO_ROOT}",
   "docsPaths": ["{PROJECT_DOCS_PATHS as array}"],
-  "lanes": [ ...lane objects — every lane.model must match harness_tier... ],
-  "harnessModels": { "verify": "openai-codex/gpt-5.6-luna", "synthesis": "openai-codex/gpt-5.6-luna" },
+  "lanes": [ ...lane objects — every lane.model must match the resolved light tier... ],
+  "tierModels": { "light": "{LIGHT_MODEL}", "mid": "{MID_MODEL}" },
   "reportHeader": "{REPORT_HEADER}",
   "synthesisExtra": "{SYNTHESIS_EXTRA}",
   "sourceAccess": "{SOURCE_ACCESS}",
@@ -375,10 +395,9 @@ synthesis:
 }
 ```
 
-`harnessModels` comes from step 1d. **`native-only` / `sonnet-only`:** both
-`verify` and `synthesis` must be `"sonnet"`. **`full` harness:** synthesis may
-be `"opus"`. Never pass `"opus"` or `"fable"` anywhere when the cache says
-`sonnet-only`.
+`tierModels` carries the provider-tier resolution from the provider constraint
+section. On an unknown provider, pass `"light"` and `"mid"` as `null` so the
+workflow omits lane models and children inherit the session model.
 
 The tool result includes a `scriptPath` — the caller keeps it and reuses
 `{scriptPath, args}` for any later full-panel pass instead of resending the
@@ -444,8 +463,11 @@ const VERDICT_SCHEMA = {
 // parsed object — parse defensively before destructuring.
 const parsedArgs = typeof args === 'string' ? JSON.parse(args) : args
 const { repoRoot, docsPaths, lanes, reportHeader, synthesisExtra,
-  sourceAccess, sourceRevision, includeAttribution,
-  harnessModels = { verify: 'sonnet', synthesis: 'opus' } } = parsedArgs
+  sourceAccess, sourceRevision, includeAttribution, tierModels } = parsedArgs
+// Tier-resolved models from the provider constraint section. Undefined on an
+// unknown provider: lanes then inherit the session model.
+const lightModel = tierModels?.light
+const midModel = tierModels?.mid
 
 const gitObjectSource = typeof sourceRevision === 'string' &&
   /^[0-9a-f]{40,64}$/.test(sourceRevision)
@@ -500,7 +522,7 @@ const reviewLane = lane => {
     tools: lane.externalCmd
       ? ['read', 'grep', 'find', 'ls', 'bash']
       : sourceTools,
-    model: 'openai-codex/gpt-5.6-luna',
+    model: lightModel,
     schema: REVIEW_SCHEMA,
   }).then(result => result && ({
     key: lane.key,
@@ -589,7 +611,7 @@ const verifyFinding = finding => agent(
     `line is locally valid. Re-score severity and confidence from your own ` +
     `reading (confidence 100 = you verified it yourself).`,
     { label: `verify:${finding.file}`, phase: 'Verify', cwd: repoRoot,
-      tools: sourceTools, model: 'openai-codex/gpt-5.6-luna',
+      tools: sourceTools, model: lightModel,
       schema: VERDICT_SCHEMA },
   ).then(verdict =>
     verdict?.status === 'blocked'
@@ -673,7 +695,7 @@ const synthesis = await agent(
   `apologies, be decisive.` +
   (synthesisExtra ? `\n\n${synthesisExtra}` : ''),
   { label: 'synthesize', phase: 'Synthesize', cwd: repoRoot,
-    tools: sourceTools, model: 'openai-codex/gpt-5.6-luna',
+    tools: sourceTools, model: midModel,
     schema: {
       type: 'object',
       required: ['report_markdown'],
