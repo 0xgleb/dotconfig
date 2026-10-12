@@ -1,6 +1,6 @@
 ---
 name: pi-delegation
-description: Delegate work through Pi workflows, visible Zellij workers, or a bounded GPT-5.6 Sol reviewer from Claude Code. Use for subagents, parallel investigation, independent verification, or multi-agent synthesis.
+description: Delegate work through Pi workflows, visible Zellij workers, or a bounded GPT-6.1 Sol reviewer from Claude Code. Use for subagents, parallel investigation, independent verification, or multi-agent synthesis.
 ---
 
 # Pi delegation
@@ -40,9 +40,9 @@ action.
 ## Claude Code and other non-Pi harnesses
 
 When the current harness does not expose Pi's `workflow` tool and the user asks
-for an independent GPT-5.6 Sol check, run `pi-sol-review` from the repository
+for an independent GPT-6.1 Sol check, run `pi-sol-review` from the repository
 being reviewed. Pass one focused, self-contained task as arguments or stdin. The
-wrapper launches authenticated `openai-codex/gpt-5.6-sol` with the managed Pi
+wrapper launches authenticated `openai-codex/gpt-6.1-sol` with the managed Pi
 classifier and only `read`, `grep`, `find`, and `ls`; it has no write or shell
 tools and does not depend on agent-registry integration.
 
@@ -60,11 +60,15 @@ Anthropic API call.
 - Never access, search, list, expose, or return credential or secret-bearing files.
 - Broad searches must explicitly exclude credential-shaped paths.
 - Start parallel investigation read-only.
-- Never allow parallel agents to modify the same working tree.
-- Keep workers in the session's assigned checkout whenever mutation isolation is
-  unnecessary; do not inspect, enter, modify, build in, or create unrelated
-  worktrees as routine delegation setup.
-- When parallel mutation genuinely requires a worktree, use only a stable
+- Never allow parallel agents to modify the same working tree. Agent-initiated
+  fan-out remains read-only; separate mutating worktrees require the owner or
+  another agent launched by the owner to be working on that repository concurrently.
+- Keep agent-initiated workers read-only in the session's assigned checkout.
+  Worktrees are permitted ONLY when the owner or another agent launched by the
+  owner is concurrently working on the same repository as an agent. Isolation
+  alone, dirty local state, ordinary setup, review, builds, and agent-initiated
+  fan-out never justify worktrees.
+- When that owner-authorized concurrency requires a worktree, use only a stable
   repository-local role slot such as `.worktrees/secondary`,
   `.worktrees/tertiary`, `.tmp/worktrees/secondary`, or
   `.tmp/worktrees/tertiary`. Never create PR-, ticket-, branch-, timestamp-, or
@@ -149,8 +153,9 @@ Assume every agent spawn, tool action, tool result, and returned result will be
 classified. Handle a blocked boundary as a typed failure. Do not expose blocked
 result content to later workflow steps.
 
-Use read-only fan-out by default. Apply edits centrally unless agents have separate
-repository-approved worktrees.
+Use read-only fan-out. Apply edits centrally unless the owner or another agent
+launched by the owner is concurrently working on the same repository and the
+mutating workers have separate repository-approved worktrees.
 
 For high-impact mutations, insert an explicit checkpoint. Non-interactive
 checkpoints deny rather than approve automatically.
