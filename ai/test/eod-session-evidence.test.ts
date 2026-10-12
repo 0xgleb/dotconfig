@@ -190,14 +190,13 @@ test("EOD excludes local stash commits from linked GitHub evidence", () => {
   assert.doesNotMatch(collector, /git\s+-C\s+\$repo\s+log\s+--all/)
 })
 
-test("EOD uses bounded Pi session framing without trusting assistant claims", () => {
-  assert.match(eod, /bounded `session_search`/i)
+test("EOD uses current framing without persistent retrieval or trusting assistant claims", () => {
+  assert.doesNotMatch(eod, /session_search|SessionSearch/)
+  assert.match(eod, /current conversation and explicit handoffs/i)
   assert.match(
     eod,
-    /user_framing.*user_correction.*verified_tool_result.*assistant_claim/is,
+    /Assistant\s+summaries and claims are discovery hints, not proof/i,
   )
-  assert.match(eod, /Assistant summaries and claims are discovery hints only/i)
-  assert.match(eod, /future event-log\s+adapter/i)
-  assert.match(eod, /do not add an\s+event-log dependency now/i)
+  assert.match(eod, /do not\s+retrieve old sessions or create a new event log/i)
   assert.match(eod, /never read raw.*Pi transcript files/is)
 })

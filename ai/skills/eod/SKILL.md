@@ -7,7 +7,6 @@ allowed-tools:
   - "Bash(date *)"
   - "Read"
   - "AskUserQuestion"
-  - "SessionSearch"
   - "deliver_stakeholder_update"
 ---
 
@@ -25,10 +24,10 @@ not override the user's account.
   old organization default.
 - Cover everything from the most recent prior EOD through one captured `now`.
   This is not a calendar-day or rolling-24-hour report.
-- Never read raw Claude, Codex, or Pi transcript files, credential files, secret
-  files, or raw environment files. Pi session history may be queried only through
-  bounded `session_search` calls as described below. If deterministic evidence is
-  insufficient, ask the user.
+- Never read raw Claude, Codex, or Pi transcript files, credentials, secrets, or
+  raw environment files. Do not query persistent memory or session-history
+  providers. Use the current conversation and verified Git/GitHub evidence.
+  Ask the user when required facts are missing.
 - Never infer work from a PR title, body, branch name, `updatedAt`, or committer
   date. These describe context or can be changed by a history rewrite.
 - Group by verified repository or canonical user framing, not a guessed project
@@ -43,15 +42,15 @@ not override the user's account.
 
 ## Establish the reporting window
 
-1. Use bounded `session_search` to find the latest successful prior EOD delivery
-   and its verified reporting boundary. A typed `deliver_stakeholder_update`
-   result with `outcome=delivered` is the preferred boundary; assistant claims
+1. Use the latest successful prior EOD delivery and verified reporting boundary
+   shown in the current conversation or an explicit handoff. Prefer a typed
+   `deliver_stakeholder_update` result with `outcome=delivered`. Assistant claims
    alone are not evidence.
 2. If no prior verified boundary is available, use an explicit starting point
    supplied by the user. If neither exists, ask for the starting point rather
    than inventing a calendar-day or rolling-24-hour window.
 3. Capture `until` once with `date -u +%Y-%m-%dT%H:%M:%SZ`. Use the same exact
-   `since` and `until` timestamps for collection, session searches, drafting,
+   `since` and `until` timestamps for collection, drafting,
    corrections, and final verification.
 4. Treat any user brain dump, correction, ordering, and attribution in the
    current conversation as canonical framing. Preserve its meaning and emphasis;
@@ -97,36 +96,14 @@ The collector deliberately distinguishes:
 It also collects exact submitted review timestamps, review states, reviewer
 identities, and Actions workflows whose identity says they are deployments.
 
-### Recover framing from Pi sessions
+### Reconcile current framing
 
-After the collector succeeds, use bounded `session_search` queries for the same
-reporting window and only the selected repositories. Search by repository,
-workstream, PR/issue identifiers found by the collector, and terms from the user's
-current framing. Do not search raw transcript files.
-
-Normalize useful hits conceptually as compact evidence records with these fields:
-`timestamp`, `project`, `session`, `kind` (`user_framing`, `user_correction`,
-`verified_tool_result`, or `assistant_claim`), `summary`, `references`, and
-`confidence`. Keep this shape at the procedure boundary so a future event-log
-adapter can replace `session_search` without changing drafting rules; do not add an
-event-log dependency now and do not persist a new event log.
-
-Use session evidence as follows:
-
-- User requests, corrections, sequencing, attribution, and explicit status
-  statements are canonical framing, just like the user's brain dump.
-- Verified tool results may identify candidate commits, PRs, reviews, deploys, or
-  tests to cross-check against collector evidence.
-- Assistant summaries and claims are discovery hints only. They never prove work
-  happened and must be corroborated by user statements or deterministic evidence.
-- Conflicting session statements require the latest user correction, not the
-  assistant's latest interpretation.
-- Keep only compact extracted facts; never paste conversation excerpts into the
-  stakeholder update.
-
-If session search is unavailable, continue with the existing deterministic sources
-and say that session framing was omitted. This is not equivalent to Git/GitHub
-being unavailable and does not fail the evidence gate.
+Reconcile the collector with the current conversation and explicit handoffs.
+User requests, corrections, sequencing, attribution, and status statements define
+the framing. Verified tool results provide facts to cross-check. Assistant
+summaries and claims are discovery hints, not proof that work happened. Do not
+retrieve old sessions or create a new event log. Keep private conversation
+excerpts out of stakeholder updates.
 
 ## Evidence gate
 
@@ -209,8 +186,9 @@ Slack, email, GitHub, or any other stakeholder channel.
 Verify the exact draft once more:
 
 - every claimed delta has user confirmation or reportable evidence;
-- relevant same-day Pi session framing was reconciled when available, and no
-  assistant-only session claim became a work claim;
+- relevant framing from the current conversation was reconciled; missing
+  historical framing was not invented, and no assistant-only claim became a
+  work claim;
 - deployment work is present when deployment runs are present;
 - workstream ordering and attribution match the user's checkpoint correction;
 - no `unverified_update`, `context_only`, or committer-date-only event became a
