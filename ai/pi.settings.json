@@ -3,9 +3,7 @@
   "defaultModel": "gpt-6-astra",
   "defaultThinkingLevel": "high",
   "theme": "archeofuturism",
-  "themes": [
-    "/Users/0xgleb/.config/ai/pi/themes"
-  ],
+  "themes": ["/Users/0xgleb/.config/ai/pi/themes"],
   "enableInstallTelemetry": false,
   "retry": {
     "enabled": true,
@@ -14,7 +12,6 @@
   },
   "packages": [
     "/Users/0xgleb/.config/ai/pi/extensions",
-    "npm:pi-hermes-memory@0.8.1",
     "npm:pi-live-codex@0.1.7"
   ]
 }

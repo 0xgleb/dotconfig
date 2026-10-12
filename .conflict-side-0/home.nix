@@ -405,33 +405,6 @@ in
         $DRY_RUN_CMD mv "$pi_settings.tmp" "$pi_settings"
       '';
 
-      patchPiHermesMemory = lib.hm.dag.entryAfter [ "mergePiConfig" ] ''
-        package_root="${piDir}/npm/node_modules/pi-hermes-memory"
-        package_manifest="$package_root/package.json"
-        live_patch="${aiDir}/pi/patches/pi-hermes-memory-bounded-live-index.patch"
-        backfill_patch="${aiDir}/pi/patches/pi-hermes-memory-bounded-session-backfill.patch"
-        indexer_source="$package_root/src/store/session-indexer.ts"
-        parser_source="$package_root/src/store/session-parser.ts"
-
-        if [ ! -f "$indexer_source" ] || [ ! -f "$parser_source" ]; then
-          exit 0
-        fi
-        if ${pkgs.gnugrep}/bin/grep -q 'MAX_LIVE_SESSION_ENTRIES' "$indexer_source" \
-          && ${pkgs.gnugrep}/bin/grep -q 'MAX_SESSION_TAIL_READ_BYTES' "$parser_source"; then
-          exit 0
-        fi
-        package_version="$(${pkgs.jq}/bin/jq -r '.version // empty' "$package_manifest")"
-        if [ "$package_version" != "0.8.1" ]; then
-          echo "Refusing to patch unsupported pi-hermes-memory $package_version" >&2
-          exit 1
-        fi
-        if ! ${pkgs.gnugrep}/bin/grep -q 'MAX_LIVE_SESSION_ENTRIES' "$indexer_source"; then
-          $DRY_RUN_CMD ${pkgs.patch}/bin/patch --batch --forward --directory="$package_root" --strip=1 < "$live_patch"
-        fi
-        if ! ${pkgs.gnugrep}/bin/grep -q 'MAX_SESSION_TAIL_READ_BYTES' "$parser_source"; then
-          $DRY_RUN_CMD ${pkgs.patch}/bin/patch --batch --forward --directory="$package_root" --strip=1 < "$backfill_patch"
-        fi
-      '';
     };
   };
 
