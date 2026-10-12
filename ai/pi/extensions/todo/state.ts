@@ -15,6 +15,7 @@ interface TodoBase {
   readonly id: number
   readonly text: string
   readonly replies?: ReadonlyArray<string>
+  readonly parentId?: number
   readonly statusChangedAt?: number
 }
 
@@ -30,7 +31,11 @@ export interface TodoState {
 
 export type TodoRequest =
   | { readonly action: "list" }
-  | { readonly action: "add"; readonly text?: string }
+  | {
+      readonly action: "add"
+      readonly text?: string
+      readonly parentId?: number
+    }
   | { readonly action: "toggle"; readonly id?: number }
   | {
       readonly action: "status"
@@ -45,7 +50,11 @@ export type TodoRequest =
 
 export type TodoAction =
   | { readonly action: "list" }
-  | { readonly action: "add"; readonly text: string }
+  | {
+      readonly action: "add"
+      readonly text: string
+      readonly parentId?: number
+    }
   | { readonly action: "toggle"; readonly id: number }
   | {
       readonly action: "status"
@@ -80,7 +89,11 @@ export type TodoDetails =
 export class TodoInputError extends Data.TaggedError("TodoInputError")<{
   action: TodoRequest["action"]
   message: string
+  code?: "reply_limit" | "reply_length" | "invalid_parent" | "invalid_state"
 }> {}
+
+export const MAX_TODO_REPLIES = 3
+export const MAX_TODO_REPLY_LENGTH = 300
 
 export class TodoNotFoundError extends Data.TaggedError("TodoNotFoundError")<{
   action: "toggle" | "status" | "block" | "reply" | "unblock"
@@ -93,6 +106,7 @@ const TodoSchema = Schema.Union(
   Schema.Struct({
     id: Schema.Number,
     text: Schema.String,
+    parentId: Schema.optionalWith(Schema.Number, { exact: true }),
     status: Schema.Literal(
       "pending",
       "in_progress",
@@ -106,6 +120,7 @@ const TodoSchema = Schema.Union(
   Schema.Struct({
     id: Schema.Number,
     text: Schema.String,
+    parentId: Schema.optionalWith(Schema.Number, { exact: true }),
     status: Schema.Literal("deferred"),
     remindAt: Schema.optionalWith(Schema.Number, { exact: true }),
     replies: Schema.optionalWith(Schema.Array(Schema.String), { exact: true }),
@@ -114,6 +129,7 @@ const TodoSchema = Schema.Union(
   Schema.Struct({
     id: Schema.Number,
     text: Schema.String,
+    parentId: Schema.optionalWith(Schema.Number, { exact: true }),
     status: Schema.Literal("blocked"),
     reason: Schema.String,
     replies: Schema.optionalWith(Schema.Array(Schema.String), { exact: true }),
@@ -161,6 +177,52 @@ export const decodeTodoDetails: (
 ) => Option.Option<TodoDetails> = value =>
   Schema.decodeUnknownOption(TodoDetailsSchema)(value)
 
+const todoStateError = (
+  state: TodoState,
+  action: TodoAction["action"],
+): TodoInputError | undefined => {
+  const ids = state.todos.map(todo => todo.id)
+  const maxId = ids.reduce((max, id) => Math.max(max, id), 0)
+  if (
+    ids.some(id => !Number.isSafeInteger(id) || id < 1) ||
+    new Set(ids).size !== ids.length ||
+    !Number.isSafeInteger(state.nextId) ||
+    state.nextId <= maxId
+  ) {
+    return new TodoInputError({
+      action,
+      code: "invalid_state",
+      message:
+        "Todo state requires unique positive safe-integer IDs and a nextId greater than every existing ID",
+    })
+  }
+  const invalid = state.todos.find(todo => {
+    if (todo.parentId === undefined) return false
+    const parent = state.todos.find(candidate => candidate.id === todo.parentId)
+    return (
+      !Number.isSafeInteger(todo.parentId) ||
+      todo.parentId < 1 ||
+      todo.parentId === todo.id ||
+      !parent ||
+      parent.parentId !== undefined
+    )
+  })
+  return invalid === undefined
+    ? undefined
+    : new TodoInputError({
+        action,
+        code: "invalid_parent",
+        message: `Todo #${invalid.id} has an invalid parent; only existing root tasks can have one level of subtasks`,
+      })
+}
+
+export const validateTodoState = (
+  state: TodoState,
+): Effect.Effect<TodoState, TodoInputError> => {
+  const error = todoStateError(state, "list")
+  return error ? Effect.fail(error) : Effect.succeed(state)
+}
+
 const todoWithStatus: (
   todo: Todo,
   status: SettableTodoStatus,
@@ -170,6 +232,7 @@ const todoWithStatus: (
   const base: TodoBase = {
     id: todo.id,
     text: todo.text,
+    ...(todo.parentId === undefined ? {} : { parentId: todo.parentId }),
     ...(todo.replies && todo.replies.length > 0
       ? { replies: todo.replies }
       : {}),
@@ -187,11 +250,13 @@ export const transitionTodoState: (
   state: TodoState,
   action: TodoAction,
   now?: number,
-) => Effect.Effect<TodoTransition, TodoNotFoundError> = (
+) => Effect.Effect<TodoTransition, TodoNotFoundError | TodoInputError> = (
   state,
   action,
   now,
 ) => {
+  const stateError = todoStateError(state, action.action)
+  if (stateError) return Effect.fail(stateError)
   switch (action.action) {
     case "list":
       return Effect.succeed({
@@ -201,15 +266,43 @@ export const transitionTodoState: (
       })
 
     case "add": {
+      if (state.nextId >= Number.MAX_SAFE_INTEGER) {
+        return Effect.fail(
+          new TodoInputError({
+            action: "add",
+            code: "invalid_state",
+            message: "Cannot allocate another safe-integer todo ID",
+          }),
+        )
+      }
+      if (action.parentId !== undefined) {
+        const parent = state.todos.find(todo => todo.id === action.parentId)
+        if (
+          !Number.isSafeInteger(action.parentId) ||
+          !parent ||
+          parent.parentId !== undefined ||
+          action.parentId === state.nextId
+        ) {
+          return Effect.fail(
+            new TodoInputError({
+              action: "add",
+              code: "invalid_parent",
+              message:
+                "A subtask requires an existing root task; only one level of subtasks is allowed",
+            }),
+          )
+        }
+      }
       const todo: Todo = {
         id: state.nextId,
         text: action.text,
         status: "pending",
+        ...(action.parentId === undefined ? {} : { parentId: action.parentId }),
       }
       return Effect.succeed({
         action: "add",
         state: { todos: [...state.todos, todo], nextId: state.nextId + 1 },
-        message: `Added todo #${todo.id}: ${todo.text}`,
+        message: `Added todo ${todoIdentityLabel(todo)}: ${todo.text}`,
       })
     }
 
@@ -290,6 +383,7 @@ export const transitionTodoState: (
         text: target.text,
         status: "blocked",
         reason: action.reason,
+        ...(target.parentId === undefined ? {} : { parentId: target.parentId }),
         ...(target.replies && target.replies.length > 0
           ? { replies: target.replies }
           : {}),
@@ -313,6 +407,24 @@ export const transitionTodoState: (
           new TodoNotFoundError({
             action: "reply",
             message: `Todo #${action.id} not found`,
+          }),
+        )
+      }
+      if (action.text.length > MAX_TODO_REPLY_LENGTH) {
+        return Effect.fail(
+          new TodoInputError({
+            action: "reply",
+            code: "reply_length",
+            message: `Replies must be at most ${MAX_TODO_REPLY_LENGTH} characters; put executable work in tasks or subtasks`,
+          }),
+        )
+      }
+      if ((target.replies?.length ?? 0) >= MAX_TODO_REPLIES) {
+        return Effect.fail(
+          new TodoInputError({
+            action: "reply",
+            code: "reply_limit",
+            message: `Todo #${target.id} has reached ${MAX_TODO_REPLIES} replies; restructure the work into executable tasks or one-level subtasks instead of appending another update`,
           }),
         )
       }
@@ -418,8 +530,26 @@ export const parseTodoAction: (
       return Effect.succeed(request)
     case "add": {
       const text = request.text?.trim()
+      if (
+        request.parentId !== undefined &&
+        (!Number.isSafeInteger(request.parentId) || request.parentId < 1)
+      ) {
+        return Effect.fail(
+          new TodoInputError({
+            action: "add",
+            code: "invalid_parent",
+            message: "parentId must identify an existing root task",
+          }),
+        )
+      }
       return text
-        ? Effect.succeed({ action: "add", text })
+        ? Effect.succeed({
+            action: "add",
+            text,
+            ...(request.parentId === undefined
+              ? {}
+              : { parentId: request.parentId }),
+          })
         : Effect.fail(
             new TodoInputError({
               action: "add",
@@ -520,6 +650,15 @@ export const parseTodoAction: (
         )
       }
       const text = request.text?.trim()
+      if (text && text.length > MAX_TODO_REPLY_LENGTH) {
+        return Effect.fail(
+          new TodoInputError({
+            action: "reply",
+            code: "reply_length",
+            message: `Replies must be at most ${MAX_TODO_REPLY_LENGTH} characters`,
+          }),
+        )
+      }
       return text
         ? Effect.succeed({ action: "reply", id: request.id, text })
         : Effect.fail(
@@ -554,6 +693,11 @@ export const todoStatusMark: (status: TodoStatus) => string = status =>
     deferred: "[:]",
   })[status]
 
+export const todoIdentityLabel = (todo: Todo): string =>
+  todo.parentId === undefined
+    ? `#${todo.id}`
+    : `#${todo.id} (subtask of #${todo.parentId})`
+
 const formatTodoList: (todos: ReadonlyArray<Todo>) => string = todos =>
   todos.length === 0
     ? "No todos"
@@ -567,6 +711,6 @@ const formatTodoList: (todos: ReadonlyArray<Todo>) => string = todos =>
                 : ""
           const replies =
             todo.replies?.map(reply => `\n    ↳ reply: ${reply}`).join("") ?? ""
-          return `${todoStatusMark(todo.status)} #${todo.id}: ${todo.text}${detail}${replies}`
+          return `${todoStatusMark(todo.status)} ${todoIdentityLabel(todo)}: ${todo.text}${detail}${replies}`
         })
         .join("\n")

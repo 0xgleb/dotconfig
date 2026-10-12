@@ -27,6 +27,9 @@ const requirementChunks = (value: string): readonly string[] => {
 
 const todoRequirements = (todo: Todo): readonly string[] => [
   ...requirementChunks(todo.text),
+  ...(todo.parentId === undefined
+    ? []
+    : [`Subtask of root todo #${todo.parentId}`]),
   ...(todo.replies ?? []).flatMap(reply =>
     requirementChunks(`Owner or agent reply: ${reply}`),
   ),

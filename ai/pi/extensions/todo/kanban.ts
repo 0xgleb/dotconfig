@@ -12,7 +12,12 @@ import {
   taskCompletionPercent,
   todoSummary,
 } from "./presentation.ts"
-import { todoStatusMark, type Todo, type TodoState } from "./state.ts"
+import {
+  todoStatusMark,
+  todoIdentityLabel,
+  type Todo,
+  type TodoState,
+} from "./state.ts"
 
 export const KANBAN_OVERLAY_OPTIONS = {
   anchor: "center",
@@ -260,16 +265,28 @@ export class KanbanComponent {
     if (todos.length === 0) return [this.theme.fg("dim", emptyLabel)]
     const selected = Math.min(todos.length - 1, this.selectedRows[column] ?? 0)
     this.selectedRows[column] = selected
+    const linked = todos.some(todo => todo.parentId !== undefined)
+    const cardLimit = linked ? Math.max(1, Math.floor(limit / 2)) : limit
     const start = Math.min(
-      Math.max(0, selected - limit + 1),
-      Math.max(0, todos.length - limit),
+      Math.max(0, selected - cardLimit + 1),
+      Math.max(0, todos.length - cardLimit),
     )
-    return todos.slice(start, start + limit).map((todo, visibleIndex) => {
-      const taskIndex = start + visibleIndex
-      const marker =
-        column === this.selectedColumn && taskIndex === selected ? "›" : " "
-      return `${this.theme.fg("accent", marker)} ${this.theme.fg(color, todoStatusMark(todo.status))} ${this.theme.fg("accent", `#${todo.id}`)} ${this.theme.fg("text", todo.text)}`
-    })
+    return todos
+      .slice(start, start + cardLimit)
+      .flatMap((todo, visibleIndex) => {
+        const taskIndex = start + visibleIndex
+        const marker =
+          column === this.selectedColumn && taskIndex === selected ? "›" : " "
+        const card = `${this.theme.fg("accent", marker)} ${this.theme.fg(color, todoStatusMark(todo.status))} ${this.theme.fg("accent", `#${todo.id}`)} ${this.theme.fg("text", todo.text)}`
+        return linked
+          ? [
+              card,
+              todo.parentId === undefined
+                ? ""
+                : this.theme.fg("muted", `   ↳ #${todo.parentId}`),
+            ]
+          : [card]
+      })
   }
 
   private columnTodos(): readonly [
@@ -310,7 +327,9 @@ export class KanbanComponent {
     const details = [
       this.theme.fg(
         "accent",
-        this.theme.bold(`#${todo.id} · ${todo.status.replaceAll("_", " ")}`),
+        this.theme.bold(
+          `${todoIdentityLabel(todo)} · ${todo.status.replaceAll("_", " ")}`,
+        ),
       ),
       "",
       ...wrapTextWithAnsi(this.theme.fg("text", todo.text), contentWidth),
