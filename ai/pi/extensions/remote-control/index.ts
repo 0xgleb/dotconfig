@@ -122,7 +122,10 @@ const safeError = (error: RemoteBridgeError): string =>
 const safeDeliveryError = (error: OwnerRelayDeliveryError): string =>
   `${error.code}: ${error.message}`.slice(0, 160)
 
-export default function remoteControl(pi: ExtensionAPI): void {
+export default function remoteControl(
+  pi: ExtensionAPI,
+  onAuthenticatedOwnerMessage?: (receivedAt: number) => void,
+): void {
   registerRuntimeVersion(pi, "remote-control", "2026.09.04.1")
   const store = makeRemoteBridgeStore(
     remoteBridgeDatabasePath(process.env.XDG_STATE_HOME, homedir()),
@@ -523,6 +526,7 @@ export default function remoteControl(pi: ExtensionAPI): void {
     const content = contentResult.right
     const prompt = content[0]
     const authenticatedOwner = remoteSourceCarriesOwnerAuthority(source)
+    if (authenticatedOwner) onAuthenticatedOwnerMessage?.(message.createdAt)
     if (authenticatedOwner && prompt?.type === "text")
       pi.events.emit(HUMAN_TURN_EVENT, prompt.text)
     pi.events.emit(MESSAGE_BACKLOG_EVENT, {

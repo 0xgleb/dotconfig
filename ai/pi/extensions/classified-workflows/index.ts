@@ -17,6 +17,11 @@ import { Text, wrapTextWithAnsi, type Component } from "@earendil-works/pi-tui"
 import { Effect, Either } from "effect"
 import { Type } from "typebox"
 import { registerGitHookAuthority } from "./hook-authority.ts"
+import { registerOwnerAllowance } from "./owner-allowance-extension.ts"
+import {
+  OWNER_PARENT_DEADLINE_ENV,
+  type OwnerAllowance,
+} from "./owner-allowance.ts"
 import {
   AGENT_PROCESS_STDIO,
   buildAgentExecutionPlan,
@@ -411,16 +416,27 @@ async function runPi(
   tokenLimit?: number,
   onProgress?: (progress: string) => void,
   onUsage?: AgentUsageObserver,
+  owner?: OwnerAllowance,
 ): Promise<PiProcessResult> {
+  const admission = owner?.admit()
+  if (!owner || !admission || Either.isLeft(admission) || signal?.aborted)
+    return {
+      exitCode: 1,
+      output: "",
+      usageTokens: 0,
+      stopReason: "aborted",
+      errorMessage: "Owner allowance does not admit a child process.",
+    }
+  const deadlineAt = admission.right.deadlineAt
   return new Promise(resolve => {
     const invocation = piInvocation(args)
-    const env =
-      tokenLimit === undefined
-        ? process.env
-        : {
-            ...process.env,
-            [WORKFLOW_CHILD_TOKEN_LIMIT_ENV]: String(tokenLimit),
-          }
+    const env = {
+      ...process.env,
+      [OWNER_PARENT_DEADLINE_ENV]: String(deadlineAt),
+      ...(tokenLimit === undefined
+        ? {}
+        : { [WORKFLOW_CHILD_TOKEN_LIMIT_ENV]: String(tokenLimit) }),
+    }
     const child = spawn(invocation.command, invocation.args, {
       cwd,
       env,
@@ -436,8 +452,10 @@ async function runPi(
     let budgetExceeded = false
     let settled = false
     let killTimer: ReturnType<typeof setTimeout> | undefined
+    let untrackOwner = () => {}
 
     const abort = () => {
+      if (settled || killTimer) return
       child.kill("SIGTERM")
       killTimer = setTimeout(() => child.kill("SIGKILL"), 1_000)
     }
@@ -445,6 +463,7 @@ async function runPi(
     const finish = (exitCode: number) => {
       if (settled) return
       settled = true
+      untrackOwner()
       if (killTimer) clearTimeout(killTimer)
       signal?.removeEventListener("abort", abort)
       if (streamingLine) {
@@ -525,6 +544,7 @@ async function runPi(
     })
     child.on("close", code => finish(code ?? 1))
 
+    untrackOwner = owner.track(abort)
     if (signal?.aborted) abort()
     else signal?.addEventListener("abort", abort, { once: true })
   })
@@ -720,6 +740,7 @@ async function classify(
   ctx: Pick<ExtensionContext, "cwd" | "getModel">,
   signal?: AbortSignal,
   onActivity?: (active: boolean) => void,
+  owner?: OwnerAllowance,
 ): Promise<Decision> {
   onActivity?.(true)
   try {
@@ -775,6 +796,10 @@ async function classify(
           ],
           ctx.cwd,
           controller.signal,
+          undefined,
+          undefined,
+          undefined,
+          owner,
         )
         if (
           result.exitCode === 0 &&
@@ -835,6 +860,7 @@ async function evaluateGoal(
   condition: string,
   transcript: string[],
   ctx: Pick<ExtensionContext, "cwd" | "getModel">,
+  owner: OwnerAllowance,
 ): Promise<GoalEvaluation> {
   const controller = new AbortController()
   const timer = setTimeout(
@@ -864,6 +890,10 @@ async function evaluateGoal(
       ],
       ctx.cwd,
       controller.signal,
+      undefined,
+      undefined,
+      undefined,
+      owner,
     )
     if (
       result.exitCode !== 0 ||
@@ -908,6 +938,7 @@ async function executeAgent(
   tokenLimit?: number,
   onProgress?: (progress: string) => void,
   onUsage?: AgentUsageObserver,
+  owner?: OwnerAllowance,
 ): Promise<AgentResult> {
   const qualifiedRequest = await Effect.runPromise(
     prepareWorkflowAgentRequest(request, parentProvider, availableModels),
@@ -920,7 +951,7 @@ async function executeAgent(
     ),
   )
   const result = await runAgentExecutionPlan(execution, (args, cwd) =>
-    runPi(args, cwd, signal, tokenLimit, onProgress, onUsage),
+    runPi(args, cwd, signal, tokenLimit, onProgress, onUsage, owner),
   )
   if (signal?.aborted) {
     return {
@@ -1076,9 +1107,12 @@ const WorkflowParameters = Type.Object({
   ),
 })
 
-export default function classifiedWorkflows(pi: ExtensionAPI): void {
+export default function classifiedWorkflows(
+  pi: ExtensionAPI,
+  onOwnerAllowance?: (guard: OwnerAllowance) => void,
+): void {
   const withGitHookAuthority = registerGitHookAuthority(pi)
-  registerRuntimeVersion(pi, "classified-workflows", "2026.09.19.11")
+  registerRuntimeVersion(pi, "classified-workflows", "2026.10.17.12")
   const childTokenLimitResult = Effect.runSync(
     Effect.either(
       workflowChildTokenLimit(process.env[WORKFLOW_CHILD_TOKEN_LIMIT_ENV]),
@@ -1154,6 +1188,14 @@ export default function classifiedWorkflows(pi: ExtensionAPI): void {
   const backgroundWorkflows = new Map<string, BackgroundWorkflow>()
   const activeForegroundWorkflowControllers = new Set<AbortController>()
   let detachableForegroundWorkflow: DetachableForegroundWorkflow | undefined
+  const ownerAllowance = registerOwnerAllowance(pi, reason => {
+    clearLoopTimer()
+    clearTaskContinuationTimer()
+    for (const workflow of backgroundWorkflows.values())
+      if (workflow.status === "running") workflow.controller.abort(reason)
+    for (const controller of activeForegroundWorkflowControllers)
+      controller.abort(reason)
+  })
 
   const awaitQuestionRelay = (
     agentId: string,
@@ -1240,14 +1282,20 @@ export default function classifiedWorkflows(pi: ExtensionAPI): void {
         ...(runtimeHandoverContext ? { runtimeHandoverContext } : {}),
       },
       checkedRequest =>
-        classify(checkedRequest, ctx, signal, active => {
-          const event: ClassifierActivityEvent = {
-            active,
-            boundary: request.boundary,
-            subject,
-          }
-          pi.events.emit(ACTIVITY_PHASE_EVENT, event)
-        }),
+        classify(
+          checkedRequest,
+          ctx,
+          signal,
+          active => {
+            const event: ClassifierActivityEvent = {
+              active,
+              boundary: request.boundary,
+              subject,
+            }
+            pi.events.emit(ACTIVITY_PHASE_EVENT, event)
+          },
+          ownerAllowance,
+        ),
     )
   }
 
@@ -1629,6 +1677,7 @@ export default function classifiedWorkflows(pi: ExtensionAPI): void {
             tokenLimit,
             onProgress,
             onUsage,
+            ownerAllowance,
           ),
       },
       skillProcedures,
@@ -1779,6 +1828,7 @@ export default function classifiedWorkflows(pi: ExtensionAPI): void {
 
   const scheduleTaskContinuation = (ctx: ExtensionContext): void => {
     clearTaskContinuationTimer()
+    if (Either.isLeft(ownerAllowance.admit())) return
     const work = todoWorkSnapshot(ctx.sessionManager.getBranch())
     const pendingMessage = pendingActionRemediation
       ? remediationContinuationMessage(pendingActionRemediation)
@@ -1787,6 +1837,7 @@ export default function classifiedWorkflows(pi: ExtensionAPI): void {
     taskContinuationTimer = setTimeout(() => {
       taskContinuationTimer = undefined
       if (
+        Either.isLeft(ownerAllowance.admit()) ||
         !workflowLifecycleActive ||
         continuationPaused ||
         capabilityCircuit.open ||
@@ -1889,13 +1940,15 @@ export default function classifiedWorkflows(pi: ExtensionAPI): void {
 
   const scheduleLoop = (ctx: ExtensionContext) => {
     clearLoopTimer()
-    if (loopState?.status !== "active") return
+    if (Either.isLeft(ownerAllowance.admit()) || loopState?.status !== "active")
+      return
     const delay = Math.max(0, loopState.nextRunAt - Date.now())
     loopTimer = setTimeout(() => void runScheduledLoop(ctx), delay)
     loopTimer.unref()
   }
 
   const runScheduledLoop = async (ctx: ExtensionContext): Promise<void> => {
+    if (Either.isLeft(ownerAllowance.admit())) return
     const active = loopState?.status === "active" ? loopState : undefined
     if (!active) return
     if (loopWakePending || !ctx.isIdle() || continuationPaused) {
@@ -2385,6 +2438,7 @@ export default function classifiedWorkflows(pi: ExtensionAPI): void {
   const recoverInterruptedBackgroundWorkflows = (
     ctx: ExtensionContext,
   ): void => {
+    if (Either.isLeft(ownerAllowance.admit())) return
     if (localLaneWorkflowRefusal(ctx.model?.provider)) return
     const exhausted = workflowRuntime.runs.filter(
       ({ status, recoveryCount }) =>
@@ -2767,6 +2821,7 @@ export default function classifiedWorkflows(pi: ExtensionAPI): void {
   })
 
   pi.on("agent_settled", async (_event, ctx) => {
+    if (Either.isLeft(ownerAllowance.admit())) return
     if (manualReloadPending) return
     if (continuationPaused || capabilityCircuit.open) return
     if (goalState?.status !== "active") {
@@ -2783,6 +2838,7 @@ export default function classifiedWorkflows(pi: ExtensionAPI): void {
       evaluating.condition,
       goalTranscript(ctx),
       ctx,
+      ownerAllowance,
     )
     goalEvaluating = false
 
@@ -4306,6 +4362,7 @@ export default function classifiedWorkflows(pi: ExtensionAPI): void {
               tokenLimit,
               onProgress,
               onUsage,
+              ownerAllowance,
             ),
         },
         skillProcedures,
@@ -4533,4 +4590,5 @@ export default function classifiedWorkflows(pi: ExtensionAPI): void {
       return new Text(workflowResultText(result.content), 0, 0)
     },
   })
+  onOwnerAllowance?.(ownerAllowance)
 }

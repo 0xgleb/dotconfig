@@ -12,6 +12,7 @@ import {
   type WorkflowLimits,
 } from "./core.ts"
 import { createClassifiedAgentRunner } from "./lifecycle.ts"
+import { createOwnerAllowance, type OwnerAllowance } from "./owner-allowance.ts"
 import { auditedAgentRunner, type ChildAudit } from "./workflow-audit.ts"
 import {
   boundedDiagnosticTail,
@@ -77,6 +78,7 @@ test("the real process adapter reports parsed streaming usage before process clo
     tokenLimit?: number,
     onProgress?: (progress: string) => void,
     onUsage?: AgentUsageObserver,
+    owner?: OwnerAllowance,
   ) => Promise<{ usageTokens: number; exitCode: number }>
   const runPi: RunPi = new Function(
     "dependencies",
@@ -87,6 +89,7 @@ test("the real process adapter reports parsed streaming usage before process clo
       usageTokensFromPiJsonLine } = dependencies;
     const AGENT_PROCESS_STDIO = ['ignore', 'pipe', 'pipe'];
     const WORKFLOW_CHILD_TOKEN_LIMIT_ENV = 'synthetic-token-limit';
+    const OWNER_PARENT_DEADLINE_ENV = 'synthetic-deadline';
     const MAX_CHILD_STDERR_CHARACTERS = 1000;
     ${stripTypeScriptTypes(source.slice(start, end))}
     return runPi;
@@ -103,9 +106,24 @@ test("the real process adapter reports parsed streaming usage before process clo
     summarizePiJsonLines,
     usageTokensFromPiJsonLine,
   })
+  const owner = createOwnerAllowance({
+    now: () => Date.now(),
+    schedule: () => 0,
+    clear: () => {},
+    persist: () => {},
+    cancel: () => {},
+  })
+  owner.ownerInput(Date.now())
+  t.after(() => owner.dispose())
   const observations: number[] = []
-  const pending = runPi([], "/synthetic", undefined, 7, undefined, value =>
-    observations.push(value),
+  const pending = runPi(
+    [],
+    "/synthetic",
+    undefined,
+    7,
+    undefined,
+    value => observations.push(value),
+    owner,
   )
   t.after(async () => {
     child.emit("close", 0)
