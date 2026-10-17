@@ -60,7 +60,25 @@ test("real registered hooks enforce tools, provider starts, automation and watch
     if (!callback) assert.fail(`missing actual handler ${name}`)
     return Reflect.apply(callback, undefined, [event, ctx])
   }
+  const summary = {
+    preparation: {
+      targetId: "target",
+      oldLeafId: null,
+      commonAncestorId: null,
+      entriesToSummarize: [],
+      userWantsSummary: true,
+    },
+  }
   emit("session_start")
+  assert.deepEqual(emit("session_before_compact"), { cancel: true })
+  assert.deepEqual(emit("session_before_tree", summary), { cancel: true })
+  assert.equal(
+    emit("session_before_tree", {
+      preparation: { ...summary.preparation, userWantsSummary: false },
+    }),
+    undefined,
+    "passive history navigation remains available",
+  )
   assert.deepEqual(emit("tool_call"), {
     block: true,
     reason:
@@ -80,6 +98,8 @@ test("real registered hooks enforce tools, provider starts, automation and watch
     "the SDK warmer cannot escape via its separate cancellation controller",
   )
   assert.equal(entries.length, 1)
+  assert.equal(emit("session_before_compact"), undefined)
+  assert.equal(emit("session_before_tree", summary), undefined)
   const before = aborts
   const workersBefore = workersCancelled
   t.mock.timers.tick(OWNER_ALLOWANCE_MS)
@@ -94,6 +114,17 @@ test("real registered hooks enforce tools, provider starts, automation and watch
   assert.ok(emit("tool_call"), "unauthenticated RPC must not renew")
   emit("session_start")
   assert.ok(emit("tool_call"), "reload must not mint time")
+  const images = [{ type: "image", mimeType: "image/png", data: "AA==" }]
+  emit("input", { source: "extension", text: "", images })
+  assert.ok(emit("tool_call"), "automated attachments cannot renew")
+  emit("input", { source: "interactive", text: "", images })
+  assert.equal(
+    emit("tool_call"),
+    undefined,
+    "an authenticated image-only owner message renews",
+  )
+  t.mock.timers.tick(OWNER_ALLOWANCE_MS)
+  assert.ok(emit("tool_call"))
   const publicReceipt = bus.get("pi:authenticated-owner-message-received")
   if (publicReceipt)
     Reflect.apply(publicReceipt, undefined, [{ receivedAt: Date.now() }])

@@ -61,7 +61,11 @@ export const registerOwnerAllowance = (
   })
   pi.on("input", (event, ctx) => {
     context = ctx
-    if (event.source === "interactive" && event.text.trim()) {
+    if (
+      event.source === "interactive" &&
+      (event.text.trim() ||
+        (Array.isArray(event.images) && event.images.length > 0))
+    ) {
       const granted = guard.ownerInput(Date.now())
       if (Either.isRight(granted))
         ctx.ui.setStatus(
@@ -84,6 +88,13 @@ export const registerOwnerAllowance = (
   pi.on("before_provider_request", (event, ctx) => {
     if (Either.isLeft(allowed(ctx))) ctx.abort()
     return event.payload
+  })
+  pi.on("session_before_compact", (_event, ctx) => {
+    if (Either.isLeft(allowed(ctx))) return { cancel: true }
+  })
+  pi.on("session_before_tree", (event, ctx) => {
+    if (event.preparation.userWantsSummary && Either.isLeft(allowed(ctx)))
+      return { cancel: true }
   })
   pi.on("cache_warming_decision", (_event, ctx) => {
     // The SDK warmer owns a separate controller that ctx.abort() does not
