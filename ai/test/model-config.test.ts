@@ -45,6 +45,12 @@ test("retired Cursor workers are absent from the managed installation", () => {
   )
 })
 
+test("the default Codex model uses the verified configured latest tier without lowering thinking", () => {
+  assert.equal(settings.defaultProvider, "openai-codex")
+  assert.equal(settings.defaultModel, "gpt-6.1-sol")
+  assert.equal(settings.defaultThinkingLevel, "high")
+})
+
 test("parent Codex turns use bounded sustained-overload retries", () => {
   assert.deepEqual(settings.retry, {
     enabled: true,

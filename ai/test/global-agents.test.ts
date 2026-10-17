@@ -214,9 +214,9 @@ test("Pi-global instructions delegate Pi infrastructure bugs to the standing sup
   assert.match(pi, /continue.*primary project task.*without duplicating/is)
 })
 
-test("Pi-global instructions keep the Yielduck operational owner alive while implementation is blocked", () => {
-  assert.match(pi, /dataclique\/yielduck.*managed `operator` role/is)
-  assert.match(pi, /monitoring even when every.*todo is blocked/is)
+test("Pi-global instructions do not assign Yielduck project duties", () => {
+  assert.doesNotMatch(pi, /dataclique\/yielduck.*managed `operator` role/is)
+  assert.doesNotMatch(pi, /monitoring even when every.*todo is blocked/is)
 })
 
 test("shared and Pi-global instructions prohibit overwriting the active editor", () => {

@@ -9,38 +9,9 @@
 let
   jf = import ./nushell/jf.nix {
     inherit pkgs;
-    metagendaFj = inputs.metagenda.packages.${pkgs.stdenv.hostPlatform.system}.fj;
+    metagendaFj = pkgs.callPackage ./nushell/fj/portable { };
   };
-  metagendaSkills = "${
-    inputs.metagenda.packages.${pkgs.stdenv.hostPlatform.system}.pi-skills
-  }/share/metagenda/pi-skills/skills";
-  metagendaPiExtensions = "${
-    inputs.metagenda.packages.${pkgs.stdenv.hostPlatform.system}.pi-source
-  }/extensions";
-  metagendaPiExtensionDirectories = [
-    "activity-status"
-    "agent-registry"
-    "agent-workspace"
-    "auto-reload"
-    "btw"
-    "classified-workflows"
-    "compact-footer"
-    "compact-read"
-    "control-plane"
-    "disk-pressure"
-    "image-summary"
-    "input-ergonomics"
-    "lsp"
-    "nushell-default"
-    "questions"
-    "release-cadence"
-    "remote-control"
-    "request-observability"
-    "safe-compaction"
-    "shared"
-    "usage-governor"
-    "write-result-inspector"
-  ];
+  skills = config.lib.file.mkOutOfStoreSymlink "${aiDir}/skills";
   isDarwin = pkgs.stdenv.hostPlatform.isDarwin;
   aiDir = "${config.home.homeDirectory}/.config/ai";
   cursorDir = "${config.home.homeDirectory}/.cursor";
@@ -86,20 +57,6 @@ let
     inherit (pkgs) nodejs;
     derivationArgs.npmInstallFlags = "--legacy-peer-deps --omit=dev";
   };
-  piExtensionRuntime =
-    pkgs.runCommand "local-pi-extensions-runtime"
-      {
-        nativeBuildInputs = [ pkgs.nodejs ];
-      }
-      ''
-        mkdir -p "$out"
-        cp -R "${metagendaPiExtensions}/." "$out/"
-        chmod -R u+w "$out"
-        cp -R ${./ai/pi/extension-overlays/remote-control}/. "$out/remote-control/"
-        ln -s "${piExtensionNodeModules}/node_modules" "$out/node_modules"
-        node --input-type=module --eval "import { pathToFileURL } from 'node:url'; await import(pathToFileURL('$out/shared/memory-capacity.ts').href)"
-        node --input-type=module --eval "import { pathToFileURL } from 'node:url'; await import(pathToFileURL('$out/remote-control/owner-telegram.ts').href)"
-      '';
   pieceOfPiWhisper =
     (pkgs.whisper-cpp.override {
       coreMLSupport = false;
@@ -272,10 +229,9 @@ in
     ];
     file = {
       "${nuConfigDir}/fj".source = "${jf.fjLib}/fj";
-      ".agents/skills".source = metagendaSkills;
-      ".claude/skills".source = metagendaSkills;
-      ".codex/AGENTS.md".source = config.lib.file.mkOutOfStoreSymlink "${aiDir}/AGENTS.md";
-      ".cursor/skills".source = metagendaSkills;
+      ".agents/skills".source = skills;
+      ".claude/skills".source = skills;
+      ".cursor/skills".source = skills;
       ".cursor/hooks".source = config.lib.file.mkOutOfStoreSymlink "${aiDir}/cursor/hooks";
       ".cursor/hooks.json".source = config.lib.file.mkOutOfStoreSymlink "${aiDir}/cursor/hooks.json";
       ".cursor/agent-env.sh".source = config.lib.file.mkOutOfStoreSymlink "${aiDir}/cursor/agent-env.sh";
@@ -297,7 +253,7 @@ in
           "gpt-5.6-luna".maxTokens = 16000;
         };
       };
-      ".pi/agent/skills".source = metagendaSkills;
+      ".pi/agent/skills".source = skills;
       ".local/share/nvim/site/parser/move.so".source = "${moveTreeSitter}/parser/move.so";
       ".local/share/nvim/site/queries/move".source = "${moveTreeSitter}/queries/move";
       ".config/ai/pi/extensions/node_modules" = {
@@ -305,12 +261,6 @@ in
         force = true;
       };
     }
-    // (builtins.listToAttrs (
-      builtins.map (directory: {
-        name = ".config/ai/pi/extensions/${directory}";
-        value.source = "${piExtensionRuntime}/${directory}";
-      }) metagendaPiExtensionDirectories
-    ))
     // lib.optionalAttrs isDarwin darwinFiles;
 
     activation = {

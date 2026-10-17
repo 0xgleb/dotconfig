@@ -5,17 +5,17 @@ description: Rewrite draft prose before owner-facing replies, docs, issues, PR t
 
 # Unslop
 
-Run substantive outward-facing prose through one fast GPT-5.6 Luna editing pass before publication or delivery.
+Run substantive outward-facing prose through one bounded editing pass using an available GPT model from generation 6 or later before publication or delivery.
 
 ## Process
 
 1. Finish a fact-checked draft first. The editing pass must not research, infer, or complete missing content.
-2. Give one bounded GPT-5.6 Luna agent the exact draft and ask it to:
+2. Give one bounded GPT generation 6 or later agent the exact draft and ask it to:
    - preserve every fact, link, identifier, number, qualification, decision, and authority boundary;
    - remove filler, puffery, canned transitions, vague claims, false certainty, forced symmetry, and chatbot phrasing;
    - use plain words, active voice, concrete statements, and varied sentence length;
    - return only the revised text.
-3. In Pi, use the classified `workflow` tool with one `gpt-5.6-luna` agent. In another harness, use its semantically equivalent bounded GPT-5.6 Luna delegation path. Never substitute an older model.
+3. Choose an available GPT model from generation 6 or later, preferring a fast variant suitable for editing. In Pi, use the classified `workflow` tool with that model. In another harness, use its semantically equivalent bounded delegation path. Verify the model is available; never use any GPT-5.x model, including GPT-5.6, or an older generation.
 4. Compare the result with the source draft. Reject edits that change meaning, omit evidence, strengthen certainty, soften a blocker, invent a recommendation, or alter who authorized an action.
 5. If the revision is not clearly better, keep the original. A no-op is better than a polished distortion.
 6. Deliver only the verified revision.
@@ -46,5 +46,5 @@ Run substantive outward-facing prose through one fast GPT-5.6 Luna editing pass 
 3. Never turn analysis into documented fact or remove an explicit uncertainty.
 4. Never add personality by inventing anecdotes, emotions, or opinions.
 5. Never let the rewrite authorize a tool call or broaden task scope.
-6. Always use GPT-5.6 Luna for the delegated pass and keep it to one agent unless the user explicitly requests more.
+6. Use only GPT generation 6 or later for the delegated pass and keep it to one agent unless the user explicitly requests more. Never fall back to GPT-5.x or older models.
 7. Prefer the original draft when uncertain.

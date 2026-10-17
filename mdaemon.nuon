@@ -3,7 +3,6 @@
     orgs: [
         "~/code/0xgleb/",
         "~/code/data-cartel/",
-        "~/code/rainlanguage/",
-        "~/code/st0x/"
+        "~/code/rainlanguage/"
     ]
 }

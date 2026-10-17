@@ -592,15 +592,12 @@ export const runtimeCommandLocationForSubject = (
   const input = isRecord(subject.input) ? subject.input : undefined
   if (typeof input?.command !== "string") return undefined
   const rawCommand = input.command.trim()
-  const match = rawCommand.match(
-    /^cd[ \t]+(?:"([^"\r\n]+)"|'([^'\r\n]+)'|([^\s;&|<>\\]+))[ \t]*\r?\n([^\r\n]+?)[ \t]*$/,
+  const lines = rawCommand.split(/\r?\n/)
+  const match = lines[0]?.match(
+    /^cd[ \t]+(?:"([^"\r\n]+)"|'([^'\r\n]+)'|([^\s;&|<>\\]+))[ \t]*$/,
   )
-  const candidate = match
-    ? (match[1] ?? match[2] ?? match[3])
-    : rawCommand.includes("\n") || rawCommand.includes("\r")
-      ? undefined
-      : cwd
-  const command = (match ? match[4] : rawCommand)?.trim()
+  const candidate = match ? (match[1] ?? match[2] ?? match[3]) : cwd
+  const command = (match ? lines.slice(1).join("\n") : rawCommand).trim()
   const directoryTransition = Boolean(match)
   if (
     !candidate ||
@@ -609,8 +606,20 @@ export const runtimeCommandLocationForSubject = (
     (directoryTransition && !literalAbsoluteCommandPath.test(candidate))
   )
     return undefined
-  const words = shellWords(command)
-  if (!words || unsafeGitTokens(words)) return undefined
+  // Extend attribution only to literal Git sequences: external Git cannot
+  // change the parent shell directory. Unknown commands may source code or
+  // alter shell state, so a batch containing them remains unattributed.
+  // This records observations; it grants no command permission.
+  const commands = command.split(/\r?\n/).filter(line => line.trim())
+  for (const line of commands) {
+    const words = shellWords(line)
+    if (!words || unsafeGitTokens(words)) return undefined
+    if (
+      commands.length > 1 &&
+      (words[0]?.quoted || !/^(?:\^)?git$/.test(words[0]?.text ?? ""))
+    )
+      return undefined
+  }
   const directory = commandDirectoryIdentity(candidate)
   return directory ? { ...directory, command, directoryTransition } : undefined
 }

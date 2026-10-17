@@ -8,6 +8,11 @@ final: prev: {
   obsidian =
     if prev.stdenv.hostPlatform.isDarwin then
       prev.obsidian.overrideAttrs {
+        version = "1.14.4";
+        src = prev.fetchurl {
+          url = "https://github.com/obsidianmd/obsidian-releases/releases/download/v1.14.4/Obsidian-1.14.4.dmg";
+          hash = "sha256-3PgY3SDuXZ3T54Lu4MDExHzCJTg7BRwvya99V3L1n3A=";
+        };
         sourceRoot = null;
         setSourceRoot = ''
           sourceRoot=$(find . -maxdepth 2 -type d -name 'Obsidian.app' -print -quit)

@@ -25,7 +25,22 @@
 
   nixpkgs.hostPlatform = "aarch64-darwin";
   nixpkgs.config.allowUnfree = true;
-  nixpkgs.overlays = [ (import ./obsidian-overlay.nix) ];
+  nixpkgs.overlays = [
+    (import ./obsidian-overlay.nix)
+    (_final: prev: {
+      # Upstream Darwin-only test workaround; retain all other checks.
+      # https://github.com/NixOS/nixpkgs/issues/573527#issuecomment-6144195587
+      atuin = prev.atuin.overrideAttrs (old: {
+        checkFlags = old.checkFlags ++ [ "--skip=filtered_commands_leave_no_captured_output" ];
+      });
+      # The pinned 6.0.2 pnpm dependency fetch has an incorrect Darwin hash.
+      typescript-language-server = prev.typescript-language-server.overrideAttrs (old: {
+        pnpmDeps = old.pnpmDeps.overrideAttrs {
+          outputHash = "sha256-PmyJb8090pEPc09Tbv8RgdvQpzpba2L8ve87+aVncQU=";
+        };
+      });
+    })
+  ];
 
   ids.gids.nixbld = 350;
 

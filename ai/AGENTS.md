@@ -2,6 +2,21 @@
 
 These rules apply across all repositories.
 
+## Standing Rules and Task State
+
+Do not install or use persistent-memory extensions, memory-writing/search tools,
+automated learning, or memory-injected prompts. Correct standing rules directly
+in the applicable AGENTS.md. Keep task state in todos or handoffs and reusable
+procedures in tracked skills, not a separate memory store.
+
+## Browser Session Isolation
+
+- Always use the browser session assigned to the current chat.
+- Never take over, activate, transfer, or continue an application session that is open in another browser window or browser session.
+- If a site reports that it is active elsewhere, including prompts such as "Use here," do not accept the prompt. Stop browser interaction for that site and tell the user that the required session is active elsewhere.
+- Do not use browser sessions associated with another task, even when the same account or website is available there.
+- Keep each task's tabs, authentication state, and external communications confined to its own browser session to avoid disrupting the user or another agent.
+
 ## Evidence Before Agreement
 
 Do not mirror the user's latest framing or agree reflexively. Before affirming a
@@ -188,11 +203,9 @@ person or claim their availability merely because their work appears in a plan.
 - A repository migration does not authorize redesigning adjacent components or
   making unrelated fixes prerequisites. Crossing that scope boundary is a
   governance failure, not an implementation preference.
-- For dotconfig → Metagenda, extract existing locally owned shared Pi code and
-  transfer relevant issues; its agent owns destination integration. Personal
-  voice, browser control and host configuration stay in dotconfig, which consumes
-  the landed Metagenda package. Personal Telegram redesign is outside the
-  migration scope.
+- Pi source, shared extensions, personal voice, browser control and host
+  configuration belong in dotconfig. Keep their local source visible to version
+  control and fix it directly.
 - Consume upstream Pi extensions as pinned packages. Never copy or vendor their
   implementation into local source, silently fork them, or treat downloaded
   upstream code as locally owned migration work. Local source is for locally
@@ -302,8 +315,8 @@ implementation details rather than the domain.
 
 ## Roadmap Format
 
-**Never use numbered phases** (Phase 1, Phase 2, etc.) in roadmaps. Use the
-epic-based format from st0x.liquidity/ROADMAP.md:
+**Never use numbered phases** (Phase 1, Phase 2, etc.) in roadmaps. Use
+epic-based roadmaps:
 
 - Each `##` section is an **epic** — a goal-oriented group of related issues
 - Epics are ordered by priority (highest first) — **the first epic is always the
@@ -321,9 +334,11 @@ prose description of the goal before the task list.
 **Maximize parallelizability.** Structure epics and tasks so independent work
 streams are visually obvious. Use mermaid graphs to show what can run in
 parallel vs what has sequential dependencies. Keep delegated investigation
-read-only by default. Concurrent mutation requires a concrete isolation need
-and an approved worktree; do not create worktrees for ordinary task setup or
-split work into tiny pieces that create coordination overhead.
+read-only by default. A separate worktree is permitted only when the owner or
+another agent launched by the owner is concurrently working on the same
+repository as an agent. Isolation alone and agent-initiated fan-out never
+justify worktrees; do not split work into tiny pieces that create coordination
+overhead.
 
 ## Defensive Programming
 
@@ -530,7 +545,7 @@ or later. The task list is the single source of truth for what needs doing.
 Recording can mean creating a new task, splitting a request into multiple tasks,
 or updating/clarifying an existing task - whichever fits best.
 
-The todo list is your persistent memory across compactions. Without it, user
+The todo list preserves task state across compactions. Without it, user
 requests get lost when context is compressed.
 
 ### Granularity: more is better, not less
@@ -869,9 +884,10 @@ separate authorization rules.
 
 ## Git Worktrees
 
-Use `/worktree` only for a concrete isolation or concurrency requirement.
-The assigned checkout remains the default; a dirty tree alone is not a reason
-for another worktree. Use stable repository-local role slots such as
+Worktrees are permitted ONLY when the owner or another agent launched by the
+owner is working on the same repository concurrently with an agent. The assigned
+checkout remains the default. Isolation alone, dirty local state, ordinary setup,
+review, builds, and agent-initiated fan-out never justify a worktree. Use stable repository-local role slots such as
 `.worktrees/secondary` or, for exceptional disposable work,
 `.tmp/worktrees/secondary`. Verify the required base and existing ownership
 before creating or reusing a slot; do not derive its path from a branch or task.
@@ -966,39 +982,6 @@ Managed declaratively via nix-doom-emacs-unstraightened. No `doom sync` — edit
 - Shared (both platforms): `common.nix`
 - macOS only: `darwin.nix`
 - NixOS only: `nixos.nix`
-
-## Notes Vault Organization
-
-The unified notes vault at `~/code/st0x/notes/` is automatically synced from
-multiple source repositories via the `syncNotes` launchd service. This allows
-Obsidian to index all markdown files in one fast vault instead of scanning
-multiple directories.
-
-### Organizational Rules
-
-**Directory Structure by Source:**
-
-- `~/code/st0x/st0x.liquidity/` → `notes/liquidity/`
-- `~/code/st0x/st0x.issuance/` → `notes/issuance/`
-- `~/code/st0x/st0x.REPO/.worktrees/feat/name/` → `notes/name/` (repo name
-  appended to files)
-- `~/.config/` → `notes/dotconfig/`
-
-**Naming Conventions:**
-
-- Main repos preserve directory structure: `docs/file.md` → `docs/file.md`
-- Worktree files include repo in filename: `docs/file.md` →
-  `docs/file.liquidity.md`
-- Paths starting with `.` are converted: `.config` → `dotconfig`
-
-**Sync Behavior:** bidirectional (repos ↔ notes), only syncs files with parity
-in source repos, never modifies notes files without a corresponding source
-file, allows editing in Obsidian and syncing back, triggered on file changes
-(via fswatch).
-
-**Service Details:** runs continuously via `launchd.user.agents.syncNotes`,
-logs to `/tmp/sync-notes.out` (debug with `tail -f`), rebuilds applied with
-`darwin-rebuild switch --flake ~/.config`.
 
 ## Personal Skills
 

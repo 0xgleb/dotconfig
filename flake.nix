@@ -28,7 +28,6 @@
     but-nix.url = "github:data-cartel/but.nix";
     but-nix.inputs.nixpkgs.follows = "nixpkgs";
 
-    metagenda.url = "github:dataclique/metagenda";
   };
 
   outputs =
@@ -102,7 +101,7 @@
         {
           jf = import ./nushell/jf.nix {
             inherit pkgs;
-            metagendaFj = inputs.metagenda.packages.${pkgs.stdenv.hostPlatform.system}.fj;
+            metagendaFj = pkgs.callPackage ./nushell/fj/portable { };
           };
         }
         // import ./infra { inherit pkgs inputs; };
@@ -129,15 +128,9 @@
               touch "$out"
             '';
 
-          metagenda-skills-consumer =
-            assert import ./scripts/metagenda-skills-consumer.test.nix;
-            pkgs.runCommand "metagenda-skills-consumer-test" { } ''
-              touch "$out"
-            '';
-
-          metagenda-pi-extensions-consumer =
-            assert import ./scripts/metagenda-pi-extensions-consumer.test.nix;
-            pkgs.runCommand "metagenda-pi-extensions-consumer-test" { } ''
+          local-pi-consumer =
+            assert import ./scripts/local-pi-consumer.test.nix;
+            pkgs.runCommand "local-pi-consumer-test" { } ''
               touch "$out"
             '';
 
@@ -185,7 +178,7 @@
 
           fj-consumer = import ./nushell/jf-consumer.test.nix {
             inherit pkgs;
-            metagendaFj = inputs.metagenda.packages.${pkgs.stdenv.hostPlatform.system}.fj;
+            metagendaFj = pkgs.callPackage ./nushell/fj/portable { };
           };
 
           fj-module =

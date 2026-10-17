@@ -2,6 +2,10 @@
 
 - Read project instructions and relevant source before acting. Verify unfamiliar
   commands and flags instead of guessing.
+- Do not install or use persistent-memory extensions, memory-writing/search
+  tools, automated learning, or memory-injected prompts. Correct standing rules
+  directly in the applicable AGENTS.md; keep task state in todos or handoffs.
+  Reusable procedures belong in tracked skills, not a separate memory store.
 - Preserve explicit user intent, scope, prohibitions, completion criteria, and
   authorized exceptions through execution and delegation. Honor authorized
   exceptions to user-owned standards within higher-priority safety and authority
@@ -11,18 +15,21 @@
 - Report an actual execution restriction precisely, including the blocked action
   and remaining work, and escalate through an authorized channel. Never evade a
   restriction or describe blocked or unperformed work as completed.
+- Hard requirement from the owner (2026-10-08): no work slice may remain
+  local-only. At any point in time, destroying the machine must not lose more
+  than 15 minutes of work. Commit and push (or otherwise publish) every
+  completed unit of work within that bound, including work-in-progress states,
+  on a branch or draft PR when the result is not final. A harness failure that
+  blocks publication within the bound is an escalation-worthy outage, not a
+  reason to accumulate local-only work.
 - AGENTS.md files define standing rules of engagement and agent behavior. Never
   put transient task state, progress reports, one-off migration notes, temporary
   waiting conditions, session journals, or handoff notes in them; use task
   records or handoffs. Reusable migration procedures belong here; a particular
   migration's status and next steps do not.
-- Treat migration scope as an ownership boundary: move existing locally owned
-  shared Pi code unchanged, including Pi-specific shared extensions, and leave
-  destination integration to Metagenda. Do not substitute refactoring, redesign,
-  hardening, unrelated fixes, or repeated coordination for the requested move.
-  Personal voice, browser control and host configuration remain in dotconfig;
-  dotconfig consumes the published Metagenda package, not a parallel shared-code
-  implementation. Preserve upstream package ownership and provenance.
+- Pi source, shared extensions, personal voice, browser control and host
+  configuration belong in dotconfig. Keep their local source visible to version
+  control and fix it directly.
 - Consume upstream Pi extensions as pinned packages, never as copied or vendored
   local source. Local source is for locally owned code. Temporary source review
   does not establish ownership. A maintained upstream fork requires explicit
@@ -67,10 +74,8 @@
   that bug blocks it. For other cross-project support, delegate to the live role
   owner; if the role is unowned, claim it temporarily and handle it locally. A
   role never grants authority beyond constrained project tools, and an
-  operational role is not done merely because its inbox is empty. The session
-  rooted at `~/code/dataclique/yielduck` owns its managed `operator` role and
-  keeps monitoring even when every current implementation todo is blocked. A
-  registry read/sync failure means coordination is temporarily unavailable; it
+  operational role is not done merely because its inbox is empty. A registry
+  read/sync failure means coordination is temporarily unavailable; it
   does not revoke authorization already established by the user and project
   policy or block unrelated Git delivery. Continue safely when no exclusive
   lease or request transition is required. Never infer new authority from an
@@ -93,19 +98,21 @@
   `/Users/0xgleb/.config/pi-support` without requiring the user to notice,
   classify, repeat, or manually route it. Routing establishes responsibility,
   not new production, publication, secret, or cross-project mutation authority.
-- Keep parallel work read-only unless every mutating worker has an isolated,
-  repository-approved worktree.
-- Work in the session's assigned checkout by default. Do not inspect, enter,
-  modify, build in, or create other worktrees merely to avoid local state or as
-  routine agent setup; use one only when the task has a concrete isolation or
-  concurrency requirement. When a non-main worktree is necessary, use a stable
+- Keep agent-initiated parallel work read-only. A mutating worker may use a
+  separate worktree only for concurrent work by the owner or another agent
+  explicitly launched by the owner on the same repository.
+- Work in the session's assigned checkout by default. Worktrees are permitted
+  ONLY when the owner or another agent launched by the owner is working on the
+  same repository concurrently with an agent. Isolation alone, dirty local
+  state, ordinary setup, review, builds, and agent-initiated fan-out never
+  justify a worktree. When a non-main worktree is necessary, use a stable
   repository-local role slot such as `.worktrees/secondary`,
   `.worktrees/tertiary`, `.tmp/worktrees/secondary`, or
   `.tmp/worktrees/tertiary`; never mint PR-, ticket-, branch-, timestamp-, or
   task-named worktree directories. Disposable one-off worktrees are exceptional
   and must live under `.tmp/worktrees/<role-slot>`. The clanker or agent that
   creates any worktree owns it and must remove it, its generated outputs, and
-  its registration immediately after the isolated operation succeeds, fails, or
+  its registration immediately after the concurrent work succeeds, fails, or
   is cancelled. A pre-existing owner-managed role slot may remain; a slot made
   by the current agent may remain only with an explicit owner instruction. If
   immediate cleanup is unsafe, block completion on the exact path and reason and

@@ -20,34 +20,34 @@ Three layers, largest first:
 
 ## Structure
 
-| Path                    | Purpose                                                           |
-| ----------------------- | ----------------------------------------------------------------- |
-| `ai/`                   | Agent setup: Pi extensions, shared skills, harness hooks and policy |
-| `nushell/`              | Nushell config, `fj` command, and md sync                         |
-| `flake.nix`             | Flake definition, system configs, helper scripts                  |
-| `common.nix`            | Shared packages and settings (both platforms)                     |
-| `darwin.nix`            | macOS-specific: homebrew, GUI apps, hostname                      |
-| `nixos.nix`             | NixOS-specific: SSH, firewall, Tailscale                          |
-| `digitalocean.nix`      | Disk/boot config for DO droplets                                  |
-| `infra/`                | Terraform (droplet + Tailscale keys) and provision/deploy scripts |
-| `home.nix`              | Home Manager: git, zsh, neovim, zellij, fzf, direnv               |
-| `nvim/`                 | Neovim config (AstroNvim v5)                                      |
-| `doom/`                 | Doom Emacs config (nix-doom-emacs-unstraightened)                 |
-| `zellij/`               | Terminal multiplexer config                                       |
-| `karabiner/`            | Keyboard remapping (caps lock -> ctrl/esc)                        |
+| Path               | Purpose                                                             |
+| ------------------ | ------------------------------------------------------------------- |
+| `ai/`              | Agent setup: Pi extensions, shared skills, harness hooks and policy |
+| `nushell/`         | Nushell config, `fj` command, and md sync                           |
+| `flake.nix`        | Flake definition, system configs, helper scripts                    |
+| `common.nix`       | Shared packages and settings (both platforms)                       |
+| `darwin.nix`       | macOS-specific: homebrew, GUI apps, hostname                        |
+| `nixos.nix`        | NixOS-specific: SSH, firewall, Tailscale                            |
+| `digitalocean.nix` | Disk/boot config for DO droplets                                    |
+| `infra/`           | Terraform (droplet + Tailscale keys) and provision/deploy scripts   |
+| `home.nix`         | Home Manager: git, zsh, neovim, zellij, fzf, direnv                 |
+| `nvim/`            | Neovim config (AstroNvim v5)                                        |
+| `doom/`            | Doom Emacs config (nix-doom-emacs-unstraightened)                   |
+| `zellij/`          | Terminal multiplexer config                                         |
+| `karabiner/`       | Keyboard remapping (caps lock -> ctrl/esc)                          |
 
 ## Agents
 
 `ai/` holds everything the coding agents share, so a rule or skill is written
 once and every harness picks it up.
 
-| Path                  | Purpose                                                        |
-| --------------------- | -------------------------------------------------------------- |
-| `ai/AGENTS.md`        | Global agent instructions (symlinked as `~/.claude/CLAUDE.md`)  |
-| `ai/skills/`          | Shared skills, symlinked into both Claude and Cursor            |
-| `ai/hooks/`           | Harness hooks that enforce policy mechanically                  |
-| `ai/pi/extensions/`   | Pi extensions, including the agent registry and remote-control bridge |
-| `ai/*.settings.json`  | Per-harness settings (Claude, Cursor, Pi)                       |
+| Path                 | Purpose                                                               |
+| -------------------- | --------------------------------------------------------------------- |
+| `ai/AGENTS.md`       | Global agent instructions (symlinked as `~/.claude/CLAUDE.md`)        |
+| `ai/skills/`         | Shared skills, symlinked into both Claude and Cursor                  |
+| `ai/hooks/`          | Harness hooks that enforce policy mechanically                        |
+| `ai/pi/extensions/`  | Pi extensions, including the agent registry and remote-control bridge |
+| `ai/*.settings.json` | Per-harness settings (Claude, Cursor, Pi)                             |
 
 ### The agent bus
 
@@ -73,10 +73,10 @@ roster, hold the project role, arm the poll loop, drain one iteration, yield.
 Hooks enforce what instructions alone do not. They are wired in
 `ai/claude.settings.json` and run as ordinary nushell scripts:
 
-| Hook                       | Enforces                                                       |
-| -------------------------- | -------------------------------------------------------------- |
-| `delegation-nudge.nu`      | Nudges toward delegating a run of inline edits to subagents     |
-| `private-comms-guard.nu`   | Blocks publishing commands that would leak private agent-bus communication into public artifacts |
+| Hook                     | Enforces                                                                                         |
+| ------------------------ | ------------------------------------------------------------------------------------------------ |
+| `delegation-nudge.nu`    | Nudges toward delegating a run of inline edits to subagents                                      |
+| `private-comms-guard.nu` | Blocks publishing commands that would leak private agent-bus communication into public artifacts |
 
 ## Shell
 
@@ -109,7 +109,7 @@ Obsidian vault.
 Config lives at `~/.config/mdaemon.nuon`:
 
 ```nushell
-{ vault: "~/code/notes", orgs: ["~/code/st0x"] }
+{ vault: "~/code/notes", orgs: ["~/code/dataclique", "~/code/0xgleb"] }
 ```
 
 ## Build
@@ -161,9 +161,9 @@ encrypted disk; it is never committed.
 On the box, runtime secrets are plain root-only files under `/var/lib/secrets/`,
 seeded at install time and persisted across rebuilds:
 
-| File                                 | Purpose                                       |
-| ------------------------------------ | --------------------------------------------- |
-| `/var/lib/secrets/tailscale.authkey` | Tailscale node key (auto-join on first boot)  |
+| File                                 | Purpose                                      |
+| ------------------------------------ | -------------------------------------------- |
+| `/var/lib/secrets/tailscale.authkey` | Tailscale node key (auto-join on first boot) |
 
 The node key is seeded **only at install time** (`nixos-anywhere --extra-files`)
 and removed once tailscaled has joined and persisted its state, after which the

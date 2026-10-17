@@ -21,9 +21,23 @@
   waiting conditions, session journals, or handoff notes in them; use task records
   or handoffs. Reusable migration procedures belong here; a particular migration's
   status and next steps do not.
-- Shared Pi code belongs in Metagenda, including Pi-specific shared extensions.
-  Dotconfig consumes the published dependency; it does not maintain a parallel
-  implementation. Preserve upstream package ownership and personal host settings.
+- Pi source and shared Pi extensions belong in this repository and remain
+  visible to version control. Fix the local implementation directly.
+- Preserve callable extension exports while any loaded runtime still depends on
+  them. Test mixed-version import and call compatibility before changing live
+  modules, activate the change as a coherent unit, and verify real tool execution
+  after reload. Source tests alone do not prove a running session has migrated.
+
+# Worktrees and Standing Rules
+
+- Worktrees are permitted ONLY when the owner or another agent launched by the
+  owner is concurrently working on the same repository as an agent. Isolation
+  alone, dirty local state, ordinary setup, review, builds, and agent-initiated
+  fan-out never justify a worktree.
+- Do not install or use persistent-memory extensions, memory-writing/search
+  tools, automated learning, or memory-injected prompts. Correct standing rules
+  directly in AGENTS.md; keep task state in todos or handoffs and reusable
+  procedures in tracked skills, not a separate memory store.
 
 # Nix Style Guidelines
 
@@ -155,8 +169,7 @@ context rather than a competing backlog.
 
 # Current environment
 
-The former ST0x notes-sync layout is obsolete and must not be used as evidence
-of current filesystem structure, running services, or operational duties. Verify
-relevant configuration only when an authorized task needs it; do not invent a
-replacement layout. This documentation correction does not authorize service
-changes, filesystem cleanup, or deletion of historical records.
+Do not treat retired organization layouts or services as the current environment.
+Verify relevant configuration before making operational claims; do not invent a
+replacement layout. Documentation changes do not authorize service changes,
+filesystem cleanup, or deletion of historical records.
