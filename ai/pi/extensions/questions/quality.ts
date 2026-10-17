@@ -2,6 +2,10 @@ import { spawn } from "node:child_process"
 import { readFile } from "node:fs/promises"
 import { basename, join } from "node:path"
 import { Either } from "effect"
+import {
+  OWNER_PARENT_DEADLINE_ENV,
+  type OwnerAllowance,
+} from "../classified-workflows/owner-allowance.ts"
 import { parseContentCritiqueResponse } from "../shared/content-critique-response.ts"
 import { tierCandidates } from "../shared/model-tiers.ts"
 import { contentCritiquePrompt } from "../shared/content-critique.ts"
@@ -125,6 +129,7 @@ const boundedProjectInstructions = async (
 }
 
 export interface JudgeContext {
+  readonly execution?: Pick<OwnerAllowance, "admit" | "track">
   readonly cwd: string
   readonly getModel?: () => { provider: string; id: string } | undefined
 }
@@ -158,9 +163,13 @@ const piInvocation = (args: string[]): { command: string; args: string[] } => {
 export const makeQuestionJudge =
   (ctx: JudgeContext) =>
   async (prompt: string): Promise<JudgeResponse | undefined> => {
+    const execution = ctx.execution
+    const admission = execution?.admit()
+    if (!execution || !admission || Either.isLeft(admission)) return undefined
+    const sessionModel = sessionModelOf(ctx)
     const model = tierCandidates("light", {
       now: () => Date.now(),
-      sessionModel: sessionModelOf(ctx),
+      ...(sessionModel === undefined ? {} : { sessionModel }),
     })[0]
     if (!model) return undefined
     const invocation = piInvocation([
@@ -183,26 +192,69 @@ export const makeQuestionJudge =
       prompt,
     ])
     const completed = await new Promise<string | undefined>(resolve => {
-      const child = spawn(invocation.command, invocation.args, {
-        cwd: ctx.cwd,
-        stdio: ["ignore", "pipe", "ignore"],
+      const started = Either.try({
+        try: () =>
+          spawn(invocation.command, invocation.args, {
+            cwd: ctx.cwd,
+            stdio: ["ignore", "pipe", "ignore"],
+            env: {
+              ...process.env,
+              [OWNER_PARENT_DEADLINE_ENV]: String(admission.right.deadlineAt),
+            },
+          }),
+        catch: error => error,
       })
-      let output = ""
-      const timer = setTimeout(() => {
-        child.kill()
+      if (Either.isLeft(started)) {
         resolve(undefined)
-      }, QUESTION_JUDGE_TIMEOUT_MS)
+        return
+      }
+      const child = started.right
+      let output = ""
+      let closed = false
+      let settled = false
+      let timer: ReturnType<typeof setTimeout> | undefined
+      let killTimer: ReturnType<typeof setTimeout> | undefined
+      let unregister: (() => void) | undefined
+      const finish = (value: string | undefined) => {
+        if (settled) return
+        settled = true
+        clearTimeout(timer)
+        resolve(value)
+      }
+      const cleanup = () => {
+        closed = true
+        clearTimeout(timer)
+        clearTimeout(killTimer)
+        unregister?.()
+      }
+      const kill = (signal: "SIGTERM" | "SIGKILL") =>
+        Either.try({
+          try: () => child.kill(signal),
+          catch: error => error,
+        })
+      const terminate = () => {
+        if (closed) return
+        // Promise settlement must not cancel escalation or unregister a live child.
+        if (killTimer === undefined)
+          killTimer = setTimeout(() => {
+            if (!closed) kill("SIGKILL")
+          }, 1_000)
+        kill("SIGTERM")
+        finish(undefined)
+      }
       child.stdout.on("data", (chunk: Buffer) => {
         output += chunk.toString("utf8")
       })
       child.on("error", () => {
-        clearTimeout(timer)
-        resolve(undefined)
+        if (child.pid === undefined) cleanup()
+        finish(undefined)
       })
-      child.on("close", code => {
-        clearTimeout(timer)
-        resolve(code === 0 ? output : undefined)
+      child.on("close", (code: number | null) => {
+        cleanup()
+        finish(code === 0 ? output : undefined)
       })
+      unregister = execution.track(terminate)
+      if (!settled) timer = setTimeout(terminate, QUESTION_JUDGE_TIMEOUT_MS)
     })
     if (completed === undefined) return undefined
     return parseJudgeResponse(completed)

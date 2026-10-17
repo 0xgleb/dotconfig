@@ -4,7 +4,7 @@ import {
   type ExtensionContext,
 } from "@earendil-works/pi-coding-agent"
 import { Container, Input, matchesKey, Text } from "@earendil-works/pi-tui"
-import { Data, Effect } from "effect"
+import { Data, Effect, Either } from "effect"
 import { Type } from "typebox"
 import {
   applyQuestionAction,
@@ -175,13 +175,23 @@ const parseAction = (
     }
   })
 
-const judgeContextFor = (ctx: {
-  readonly cwd: string
-  readonly getModel?: () => { provider: string; id: string } | undefined
-}): JudgeContext => ctx
+const judgeContextFor = (
+  ctx: {
+    readonly cwd: string
+    readonly getModel?: () => { provider: string; id: string } | undefined
+  },
+  execution: JudgeContext["execution"],
+): JudgeContext => ({
+  cwd: ctx.cwd,
+  getModel: () => ctx.getModel?.(),
+  ...(execution === undefined ? {} : { execution }),
+})
 
-const questionsExtension: (pi: ExtensionAPI) => void = pi => {
-  registerRuntimeVersion(pi, "questions", "2026.09.25.1")
+const questionsExtension: (
+  pi: ExtensionAPI,
+  execution?: JudgeContext["execution"],
+) => void = (pi, execution) => {
+  registerRuntimeVersion(pi, "questions", "2026.10.17.1")
   let state = emptyQuestionState
   let dialogOpen = false
   let latestCtx: ExtensionContext | undefined
@@ -455,8 +465,13 @@ const questionsExtension: (pi: ExtensionAPI) => void = pi => {
           ? { options: request.options }
           : {}),
       },
-      askQualityDepsFor(judgeContextFor(latestCtx)),
+      askQualityDepsFor(judgeContextFor(latestCtx, execution)),
     )
+    const admission = execution?.admit()
+    if (admission && Either.isLeft(admission)) {
+      latestCtx?.ui.notify(admission.left.message, "warning")
+      return
+    }
     if (!verdict.admissible) {
       latestCtx.ui.notify(
         `Not queued: context-free question. ${verdict.reason}`,
@@ -652,7 +667,7 @@ const questionsExtension: (pi: ExtensionAPI) => void = pi => {
         }
         const verdict = await evaluateAskQuality(
           qualityInput,
-          askQualityDepsFor(judgeContextFor(ctx)),
+          askQualityDepsFor(judgeContextFor(ctx, execution)),
         )
         if (!verdict.admissible) {
           const text = `Not queued: context-free clarification question. ${verdict.reason}\nRewrite it with concrete referents the user can act on (artifact, path, current behavior, interval, or numbers) and ask again.`
@@ -668,6 +683,13 @@ const questionsExtension: (pi: ExtensionAPI) => void = pi => {
           }
         }
       }
+      const admission = execution?.admit()
+      if (admission && Either.isLeft(admission))
+        return {
+          content: [{ type: "text" as const, text: admission.left.message }],
+          details: { outcome: "blocked", reason: admission.left.message },
+          isError: true,
+        }
       return Effect.runPromise(
         executeQuestionAction(request, ctx).pipe(
           Effect.match({
