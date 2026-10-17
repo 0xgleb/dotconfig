@@ -74,6 +74,11 @@ test("real registered hooks enforce tools, provider starts, automation and watch
   assert.equal(entries.length, 0)
   emit("input", { source: "interactive", text: "implement the timer" })
   assert.equal(emit("tool_call"), undefined)
+  assert.deepEqual(
+    emit("cache_warming_decision"),
+    { action: "stop" },
+    "the SDK warmer cannot escape via its separate cancellation controller",
+  )
   assert.equal(entries.length, 1)
   const before = aborts
   const workersBefore = workersCancelled

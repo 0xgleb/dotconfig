@@ -105,6 +105,7 @@ import {
 import {
   reloadCommandRequest,
   reloadFailureDiagnostic,
+  reloadAfterIdle,
 } from "./manual-reload.ts"
 import { redactProtectedGitButlerResult } from "./protected-result.ts"
 import {
@@ -1112,7 +1113,7 @@ export default function classifiedWorkflows(
   onOwnerAllowance?: (guard: OwnerAllowance) => void,
 ): void {
   const withGitHookAuthority = registerGitHookAuthority(pi)
-  registerRuntimeVersion(pi, "classified-workflows", "2026.10.17.12")
+  registerRuntimeVersion(pi, "classified-workflows", "2026.10.17.13")
   const childTokenLimitResult = Effect.runSync(
     Effect.either(
       workflowChildTokenLimit(process.env[WORKFLOW_CHILD_TOKEN_LIMIT_ENV]),
@@ -2203,7 +2204,7 @@ export default function classifiedWorkflows(
         "info",
       )
       try {
-        await ctx.reload()
+        await Effect.runPromise(reloadAfterIdle(ctx))
         return
       } catch (error) {
         clearManualReloadPending()

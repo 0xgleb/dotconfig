@@ -86,7 +86,10 @@ export const registerOwnerAllowance = (
     return event.payload
   })
   pi.on("cache_warming_decision", (_event, ctx) => {
-    if (Either.isLeft(allowed(ctx))) return { action: "stop" }
+    // The SDK warmer owns a separate controller that ctx.abort() does not
+    // cancel. Fail closed: do not start work this guard cannot stop at expiry.
+    allowed(ctx)
+    return { action: "stop" }
   })
   pi.on("session_shutdown", () => {
     guard.dispose()

@@ -1,3 +1,36 @@
+import { Data, Effect } from "effect"
+
+export class ReloadBoundaryError extends Data.TaggedError(
+  "ReloadBoundaryError",
+)<{
+  readonly phase: "idle" | "reload"
+  readonly message: string
+}> {}
+
+export const reloadAfterIdle = (context: {
+  readonly waitForIdle: () => Promise<void>
+  readonly reload: () => Promise<void>
+}): Effect.Effect<void, ReloadBoundaryError> =>
+  Effect.tryPromise({
+    try: () => context.waitForIdle(),
+    catch: error =>
+      new ReloadBoundaryError({
+        phase: "idle",
+        message: errorIdentity(error).message,
+      }),
+  }).pipe(
+    Effect.andThen(
+      Effect.tryPromise({
+        try: () => context.reload(),
+        catch: error =>
+          new ReloadBoundaryError({
+            phase: "reload",
+            message: errorIdentity(error).message,
+          }),
+      }),
+    ),
+  )
+
 export type ReloadInitiator = "reload_pi" | "reload-runtime"
 
 export interface ReloadCommandRequest {
