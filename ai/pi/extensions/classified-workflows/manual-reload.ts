@@ -7,6 +7,7 @@ export class ReloadBoundaryError extends Data.TaggedError(
   readonly message: string
 }> {}
 
+/** The TUI silently skips reload during streaming; wait at the command boundary. */
 export const reloadAfterIdle = (context: {
   readonly waitForIdle: () => Promise<void>
   readonly reload: () => Promise<void>
