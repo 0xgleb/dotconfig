@@ -106,6 +106,10 @@ const renderMarkdownUnits = (
   return units
 }
 
+/** Render one document; the caller must bound its parsed text for Telegram. */
+export const telegramHtml: (markdown: string) => string = markdown =>
+  renderMarkdownUnits(markdown, Number.MAX_SAFE_INTEGER).join("\n")
+
 export const telegramHtmlChunks = (
   markdown: string,
   maximum = 4_000,

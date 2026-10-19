@@ -43,7 +43,7 @@ import {
   type RemoteImage,
 } from "./protocol.ts"
 import { makeRemoteBridgeStore } from "./sqlite-store.ts"
-import { telegramHtmlChunks } from "./telegram-format.ts"
+import { telegramHtml, telegramHtmlChunks } from "./telegram-format.ts"
 import {
   authorizeTelegramMessage,
   coalesceTelegramUpdates,
@@ -900,7 +900,9 @@ const questionRelayText = (
     .join("\n")
     .slice(0, TELEGRAM_MESSAGE_LIMIT - 120)
 
-  return `${body}\n\nReply directly to this message to answer only q${question.questionId}.`
+  return telegramHtml(
+    `${body}\n\nReply directly to this message to answer only q${question.questionId}.`,
+  )
 }
 
 const relayPendingQuestions = (
@@ -930,6 +932,8 @@ const relayPendingQuestions = (
                 runtime,
                 ownerChatId,
                 questionRelayText(question, agent, agents),
+                undefined,
+                "HTML",
               ).pipe(
                 Effect.flatMap(messageId =>
                   runtime.bridge.linkTelegramQuestion({
