@@ -22,10 +22,9 @@ import { contentCritiquePrompt } from "../shared/content-critique.ts"
  * Two layers:
  * 1. A deterministic structural check for the clear context-free shape
  *    (process-continuation phrasing with zero concrete markers).
- * 2. An optional lightweight tier-model judge for semantic vagueness. The
- *    judge is advisory quality control, never a safety gate: any judge
- *    failure, timeout, or absence admits the question (fail-open, no
- *    stalling, no invented facts).
+ * 2. An independent lightweight critic for semantic quality. A missing or
+ *    incomplete review cannot certify a question. Review unavailability is
+ *    distinct from a rejected draft and never grants execution authority.
  */
 
 const QUESTION_JUDGE_TIMEOUT_MS = 20_000
@@ -45,10 +44,13 @@ export interface AskQualityInput {
   }[]
 }
 
-export interface AskQualityVerdict {
-  readonly admissible: boolean
+export type AskQualityVerdict = {
   readonly reason: string
-}
+} & (
+  | { readonly outcome: "admitted"; readonly admissible: true }
+  | { readonly outcome: "rejected"; readonly admissible: false }
+  | { readonly outcome: "review-unavailable"; readonly admissible: false }
+)
 
 export interface JudgeResponse {
   readonly admissible: boolean
@@ -98,20 +100,26 @@ export const evaluateAskQuality = async (
   deps: AskQualityDeps,
 ): Promise<AskQualityVerdict> => {
   const structural = structuralContextFreeDefects(input.question)
-  if (structural) return { admissible: false, reason: structural }
+  if (structural)
+    return { outcome: "rejected", admissible: false, reason: structural }
   if (!deps.runJudge)
     return {
-      admissible: true,
-      reason: "No quality judge configured; admitted without semantic review",
+      outcome: "review-unavailable",
+      admissible: false,
+      reason: "No question critic is configured; no question queued.",
     }
   const instructions = await deps.projectInstructions?.()
   const verdict = await deps.runJudge(buildJudgePrompt(input, instructions))
   if (!verdict)
     return {
-      admissible: true,
-      reason: "Quality judge unavailable; admitted without semantic review",
+      outcome: "review-unavailable",
+      admissible: false,
+      reason:
+        "Critic review unavailable; no complete review was returned. No question queued.",
     }
-  return verdict
+  return verdict.admissible
+    ? { outcome: "admitted", admissible: true, reason: verdict.reason }
+    : { outcome: "rejected", admissible: false, reason: verdict.reason }
 }
 
 const boundedProjectInstructions = async (
@@ -129,6 +137,7 @@ const boundedProjectInstructions = async (
 }
 
 export interface JudgeContext {
+  readonly signal?: AbortSignal
   readonly execution?: Pick<OwnerAllowance, "admit" | "track">
   readonly cwd: string
   readonly getModel?: () => { provider: string; id: string } | undefined
@@ -158,14 +167,20 @@ const piInvocation = (args: string[]): { command: string; args: string[] } => {
 
 /**
  * Production judge: one bounded `pi --print` subprocess on the light tier.
- * Any failure path resolves undefined so the gate stays fail-open.
+ * Legacy availability projection: callers must never certify an absent review.
  */
 export const makeQuestionJudge =
   (ctx: JudgeContext) =>
   async (prompt: string): Promise<JudgeResponse | undefined> => {
     const execution = ctx.execution
     const admission = execution?.admit()
-    if (!execution || !admission || Either.isLeft(admission)) return undefined
+    if (
+      ctx.signal?.aborted ||
+      !execution ||
+      !admission ||
+      Either.isLeft(admission)
+    )
+      return undefined
     const sessionModel = sessionModelOf(ctx)
     const model = tierCandidates("light", {
       now: () => Date.now(),
@@ -225,6 +240,7 @@ export const makeQuestionJudge =
         closed = true
         clearTimeout(timer)
         clearTimeout(killTimer)
+        ctx.signal?.removeEventListener("abort", terminate)
         unregister?.()
       }
       const kill = (signal: "SIGTERM" | "SIGKILL") =>
@@ -254,6 +270,8 @@ export const makeQuestionJudge =
         finish(code === 0 ? output : undefined)
       })
       unregister = execution.track(terminate)
+      ctx.signal?.addEventListener("abort", terminate, { once: true })
+      if (ctx.signal?.aborted) terminate()
       if (!settled) timer = setTimeout(terminate, QUESTION_JUDGE_TIMEOUT_MS)
     })
     if (completed === undefined) return undefined

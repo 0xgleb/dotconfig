@@ -22,10 +22,10 @@ const command = [
 ].join("\n")
 const facts =
   "git@example.test:owner/repo.git\nabc1234 checked docs\ndocs/a.md\ndocs/b.md\n100644 blob abcdef docs/a.md\n100644 blob fedcba docs/b.md\nabcdef\nfedcba"
-const receipt = (observedCommand = command) =>
+const receipt = (observedCommand = command, boundary = subject) =>
   branchExecutionEvidence({
     scope: cwd,
-    subject,
+    subject: boundary,
     branch: [
       {
         type: "message",
@@ -71,6 +71,41 @@ test("recent native multiline publication facts retain success, input digest and
     assert.match(selected[0] ?? "", /commandScope=verified/)
     for (const fact of facts.split("\n"))
       assert.ok(selected[0]?.includes(fact), fact)
+  }
+})
+
+test("publication evidence stays visible for direnv-wrapped commits", () => {
+  for (const commit of [
+    "git commit -m 'critic/question fixes'",
+    "direnv exec . git commit -m 'critic/question fixes'",
+  ]) {
+    const boundary = { ...subject, input: { command: commit } }
+    const evidence = receipt(command, boundary)
+    assert.equal(evidence.length, 1)
+    const selected = selectRelevantExecutionEvidence(evidence, boundary)
+    assert.deepEqual(selected, evidence, commit)
+    for (const fact of facts.split("\n"))
+      assert.ok(selected[0]?.includes(fact), `${commit}: ${fact}`)
+  }
+})
+
+test("direnv attribution does not accept other directories, selectors, overrides or batches", () => {
+  for (const commit of [
+    "direnv exec /outside git commit -m x",
+    "direnv exec . git -C /outside commit -m x",
+    "direnv exec . git --git-dir=/outside commit -m x",
+    "direnv exec . env GIT_DIR=/outside git commit -m x",
+    "GIT_DIR=/outside direnv exec . git commit -m x",
+    "direnv exec . git commit -m x\ngit status --short",
+  ]) {
+    const boundary = { ...subject, input: { command: commit } }
+    const evidence = receipt(command, boundary)
+    assert.equal(evidence.length, 1)
+    assert.deepEqual(
+      selectRelevantExecutionEvidence(evidence, boundary),
+      [],
+      commit,
+    )
   }
 })
 

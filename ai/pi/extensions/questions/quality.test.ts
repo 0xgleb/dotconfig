@@ -56,17 +56,26 @@ test("a judge rejection is honored for semantically vague questions", async () =
   assert.equal(verdict.admissible, false)
 })
 
-test("judge failure admits the question without stalling", async () => {
+test("judge failure cannot certify an unreviewed question", async () => {
   const verdict = await evaluateAskQuality(
     { question: "Merge PR #63 now or after CodeRabbit clears?" },
     { runJudge: async () => undefined },
   )
-  assert.equal(verdict.admissible, true)
+  assert.equal(verdict.admissible, false)
+  assert.equal(verdict.outcome, "review-unavailable")
+  assert.match(verdict.reason, /review.*unavailable|no.*review/i)
+})
+
+test("an unconfigured critic cannot silently admit a question", async () => {
+  const verdict = await evaluateAskQuality(concreteDeliveryQuestion, {})
+  assert.equal(verdict.admissible, false)
+  assert.equal(verdict.outcome, "review-unavailable")
+  assert.match(verdict.reason, /no.*critic|no.*judge|not.*configured/i)
 })
 
 test("ask_user gates asks through the quality check before queueing", () => {
   assert.match(source, /evaluateAskQuality\(/)
-  assert.match(source, /outcome: "rejected"/)
+  assert.match(source, /outcome: verdict\.outcome/)
   assert.match(source, /Rewrite it with concrete referents/)
 })
 

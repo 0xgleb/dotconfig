@@ -612,8 +612,24 @@ export const runtimeCommandLocationForSubject = (
   // This records observations; it grants no command permission.
   const commands = command.split(/\r?\n/).filter(line => line.trim())
   for (const line of commands) {
-    const words = shellWords(line)
-    if (!words || unsafeGitTokens(words)) return undefined
+    const parsed = shellWords(line)
+    if (!parsed) return undefined
+    // `direnv exec .` loads the current directory's environment; it does not
+    // select a different command working directory. Keep the original command
+    // visible to policy and validate Git selectors after this literal prefix.
+    // This attributes observations only: it neither runs direnv nor authorizes
+    // its environment, hooks, Git operation, or a different repository.
+    const currentDirectoryDirenvGit =
+      commands.length === 1 &&
+      /^(?:\^)?direnv$/.test(parsed[0]?.text ?? "") &&
+      !parsed[0]?.quoted &&
+      parsed[1]?.text === "exec" &&
+      !parsed[1]?.quoted &&
+      parsed[2]?.text === "." &&
+      parsed[3]?.text === "git" &&
+      !parsed[3]?.quoted
+    const words = currentDirectoryDirenvGit ? parsed.slice(3) : parsed
+    if (unsafeGitTokens(words)) return undefined
     if (
       commands.length > 1 &&
       (words[0]?.quoted || !/^(?:\^)?git$/.test(words[0]?.text ?? ""))

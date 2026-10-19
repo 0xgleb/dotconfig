@@ -17,6 +17,58 @@ const context = (execution?: JudgeContext["execution"]): JudgeContext => ({
   getModel: () => ({ provider: "openai-codex", id: "gpt-6.1-sol" }),
 })
 
+test(
+  "cancelling a question stops its critic without extending or ending the owner lease",
+  { timeout: 5_000 },
+  async t => {
+    const { guard, grant } = clock()
+    assert.ok(Either.isRight(grant()))
+    const controller = new AbortController()
+    const original = childProcess.spawn
+    let child: ChildProcess | undefined
+    let ready = () => {}
+    const started = new Promise<void>(resolve => {
+      ready = resolve
+    })
+    const mocked = t.mock.method(childProcess, "spawn", () => {
+      child = original(
+        process.execPath,
+        [
+          "-e",
+          'process.on("SIGTERM", () => {}); process.stdout.write("ready"); setInterval(() => {}, 1000)',
+        ],
+        { stdio: ["ignore", "pipe", "ignore"] },
+      )
+      child.stdout?.once("data", ready)
+      return child
+    })
+    syncBuiltinESMExports()
+    t.after(() => {
+      mocked.mock.restore()
+      syncBuiltinESMExports()
+      child?.kill("SIGKILL")
+      guard.dispose()
+    })
+    const pending = makeQuestionJudge({
+      ...context(guard),
+      signal: controller.signal,
+    })("Cancellation-only regression")
+    await Promise.race([
+      started,
+      pending.then(() => assert.fail("critic settled before starting")),
+    ])
+    assert.ok(child)
+    const closed = once(child, "close")
+    controller.abort()
+    assert.equal(await pending, undefined)
+    assert.equal((await closed)[1], "SIGKILL")
+    assert.ok(
+      Either.isRight(guard.admit()),
+      "cancellation must not mint or consume another work allowance",
+    )
+  },
+)
+
 const clock = () => {
   let now = Date.now()
   let expire = () => {}

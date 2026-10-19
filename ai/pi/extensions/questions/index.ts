@@ -181,17 +181,19 @@ const judgeContextFor = (
     readonly getModel?: () => { provider: string; id: string } | undefined
   },
   execution: JudgeContext["execution"],
+  signal?: AbortSignal,
 ): JudgeContext => ({
   cwd: ctx.cwd,
   getModel: () => ctx.getModel?.(),
   ...(execution === undefined ? {} : { execution }),
+  ...(signal === undefined ? {} : { signal }),
 })
 
 const questionsExtension: (
   pi: ExtensionAPI,
   execution?: JudgeContext["execution"],
 ) => void = (pi, execution) => {
-  registerRuntimeVersion(pi, "questions", "2026.10.17.1")
+  registerRuntimeVersion(pi, "questions", "2026.10.17.2")
   let state = emptyQuestionState
   let dialogOpen = false
   let latestCtx: ExtensionContext | undefined
@@ -473,8 +475,10 @@ const questionsExtension: (
       return
     }
     if (!verdict.admissible) {
-      latestCtx.ui.notify(
-        `Not queued: context-free question. ${verdict.reason}`,
+      latestCtx?.ui.notify(
+        verdict.outcome === "review-unavailable"
+          ? verdict.reason
+          : `Not queued: question needs revision. ${verdict.reason}`,
         "warning",
       )
       return
@@ -648,7 +652,7 @@ const questionsExtension: (
     async execute(
       _toolCallId,
       request: QuestionRequest,
-      _signal,
+      signal,
       _onUpdate,
       ctx,
     ) {
@@ -667,15 +671,28 @@ const questionsExtension: (
         }
         const verdict = await evaluateAskQuality(
           qualityInput,
-          askQualityDepsFor(judgeContextFor(ctx, execution)),
+          askQualityDepsFor(judgeContextFor(ctx, execution, signal)),
         )
+        if (signal?.aborted)
+          return {
+            content: [
+              {
+                type: "text" as const,
+                text: "Question review stopped before completion; no question queued.",
+              },
+            ],
+            details: { outcome: "cancelled", action: request.action },
+          }
         if (!verdict.admissible) {
-          const text = `Not queued: context-free clarification question. ${verdict.reason}\nRewrite it with concrete referents the user can act on (artifact, path, current behavior, interval, or numbers) and ask again.`
+          const text =
+            verdict.outcome === "review-unavailable"
+              ? verdict.reason
+              : `Not queued: question needs revision. ${verdict.reason}\nRewrite it with concrete referents the user can act on (artifact, path, current behavior, interval, or numbers) and ask again.`
           ctx.ui.notify(text, "warning")
           return {
             content: [{ type: "text" as const, text }],
             details: {
-              outcome: "rejected",
+              outcome: verdict.outcome,
               action: request.action,
               reason: verdict.reason,
               state,
