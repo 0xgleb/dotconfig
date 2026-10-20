@@ -34,6 +34,7 @@ import {
 } from "./agent-selection.ts"
 import { pieceOfPiStatePath, remoteBridgeDatabasePath } from "./paths.ts"
 import { globalQuestionsText } from "./question-list.ts"
+import { questionCardHtml } from "./question-card.ts"
 import {
   BRIDGE_MESSAGE_TTL_MS,
   MAX_REMOTE_IMAGE_BYTES,
@@ -43,7 +44,7 @@ import {
   type RemoteImage,
 } from "./protocol.ts"
 import { makeRemoteBridgeStore } from "./sqlite-store.ts"
-import { telegramHtml, telegramHtmlChunks } from "./telegram-format.ts"
+import { telegramHtmlChunks } from "./telegram-format.ts"
 import {
   authorizeTelegramMessage,
   coalesceTelegramUpdates,
@@ -881,28 +882,7 @@ const questionRelayText = (
   agent: BridgeAgent,
   agents: readonly BridgeAgent[],
 ): string => {
-  const title = question.header
-    ? `❓ ${question.header}`
-    : "❓ Pi needs your answer"
-  const choices = question.options?.map(
-    (option, index) =>
-      `${index + 1}. ${option.label}${option.description ? ` — ${option.description}` : ""}`,
-  )
-  const body = [
-    title,
-    `Agent: ${identifiedAgentLabel(agent, agents)}`,
-    `Question q${question.questionId}`,
-    "",
-    question.question,
-    ...(choices ? ["", ...choices] : []),
-    ...(question.guess ? ["", `Suggested: ${question.guess}`] : []),
-  ]
-    .join("\n")
-    .slice(0, TELEGRAM_MESSAGE_LIMIT - 120)
-
-  return telegramHtml(
-    `${body}\n\nReply directly to this message to answer only q${question.questionId}.`,
-  )
+  return questionCardHtml(question, identifiedAgentLabel(agent, agents))
 }
 
 const relayPendingQuestions = (

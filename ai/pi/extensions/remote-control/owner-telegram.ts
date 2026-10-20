@@ -33,6 +33,7 @@ export type OwnerRelayDeliveryCode =
   | "send_failed"
   | "send_cancelled"
   | "send_uncertain"
+  | "invalid_binding"
 
 export class OwnerRelayDeliveryError extends Data.TaggedError(
   "OwnerRelayDeliveryError",
@@ -129,6 +130,141 @@ export const deliverStakeholderUpdate = (
       sendRelay(token, chatId, stakeholderUpdateText(text), options?.signal),
     ),
   )
+
+export interface QuestionEditReceipt {
+  readonly messageId: number
+  readonly textLinks: number
+}
+
+/** Bot API editMessageText returns the edited Message for a chat/message binding. */
+export const editOwnerQuestionRelay = (
+  input: {
+    readonly chatId: number
+    readonly messageId: number
+    readonly text: string
+  },
+  signal?: AbortSignal,
+): Effect.Effect<QuestionEditReceipt, OwnerRelayDeliveryError> =>
+  Effect.gen(function* () {
+    if (signal?.aborted)
+      return yield* Effect.fail(
+        deliveryFailure(
+          "send_cancelled",
+          "Question refresh cancelled before sending.",
+        ),
+      )
+    if (
+      !Number.isSafeInteger(input.chatId) ||
+      input.chatId < 1 ||
+      !Number.isSafeInteger(input.messageId) ||
+      input.messageId < 1 ||
+      typeof input.text !== "string" ||
+      input.text.length === 0
+    )
+      return yield* Effect.fail(
+        deliveryFailure(
+          "invalid_binding",
+          "Question refresh binding is invalid.",
+        ),
+      )
+    const configured = yield* Effect.all({
+      token: telegramToken,
+      chatId: ownerChatId,
+    })
+    if (configured.chatId !== input.chatId)
+      return yield* Effect.fail(
+        deliveryFailure(
+          "invalid_binding",
+          "Question is not bound to the configured owner chat.",
+        ),
+      )
+    if (signal?.aborted)
+      return yield* Effect.fail(
+        deliveryFailure(
+          "send_cancelled",
+          "Question refresh cancelled before sending.",
+        ),
+      )
+    const response = yield* Effect.tryPromise({
+      try: () =>
+        fetch(
+          `https://api.telegram.org/bot${configured.token}/editMessageText`,
+          {
+            method: "POST",
+            ...(signal ? { signal } : {}),
+            headers: { "content-type": "application/json" },
+            body: JSON.stringify({
+              chat_id: input.chatId,
+              message_id: input.messageId,
+              text: input.text,
+              parse_mode: "HTML",
+            }),
+          },
+        ),
+      catch: () =>
+        deliveryFailure(
+          "send_uncertain",
+          "Question refresh returned no receipt; inspect before retrying.",
+        ),
+    })
+    if (!response.ok)
+      return yield* Effect.fail(
+        deliveryFailure(
+          response.status >= 500 ? "send_uncertain" : "send_failed",
+          `Telegram question refresh failed with status ${response.status}.`,
+        ),
+      )
+    const payload = yield* Effect.tryPromise({
+      try: (): Promise<unknown> => response.json(),
+      catch: () =>
+        deliveryFailure(
+          "send_uncertain",
+          "Question refresh response was not JSON.",
+        ),
+    })
+    const messageId = yield* decodeTelegramSentMessageId(payload).pipe(
+      Effect.mapError(() =>
+        deliveryFailure(
+          "send_uncertain",
+          "Question refresh returned no valid edited-message receipt.",
+        ),
+      ),
+    )
+    if (messageId !== input.messageId)
+      return yield* Effect.fail(
+        deliveryFailure(
+          "invalid_binding",
+          "Telegram returned a different question message id.",
+        ),
+      )
+    const message = stateField(payload, "result")
+    const entities = stateField(message, "entities")
+    if (
+      entities !== undefined &&
+      (!Array.isArray(entities) ||
+        !entities.every(entity => {
+          const type = stateField(entity, "type")
+          const url = stateField(entity, "url")
+          return (
+            typeof type === "string" &&
+            (type !== "text_link" ||
+              (typeof url === "string" && /^https?:\/\//.test(url)))
+          )
+        }))
+    )
+      return yield* Effect.fail(
+        deliveryFailure(
+          "send_uncertain",
+          "Edited question entities are malformed.",
+        ),
+      )
+    const textLinks =
+      entities === undefined
+        ? 0
+        : entities.filter(entity => stateField(entity, "type") === "text_link")
+            .length
+    return { messageId, textLinks }
+  })
 
 export type ChatRelayDispatch =
   | { readonly outcome: "delivered"; readonly title: string }

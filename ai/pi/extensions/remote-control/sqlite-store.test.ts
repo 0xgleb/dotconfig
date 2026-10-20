@@ -56,6 +56,64 @@ const enqueue = (
     }),
   )
 
+test("presentation refresh reads only the exact agent's pending Telegram binding", async () =>
+  withStore(async store => {
+    await heartbeat(store)
+    await Effect.runPromise(
+      store.syncQuestions({
+        agentId: "session-1",
+        questions: [
+          {
+            id: 6,
+            status: "pending",
+            question: "Previously reviewed proposal.",
+          },
+        ],
+        now: 1_100,
+      }),
+    )
+    await Effect.runPromise(
+      store.linkTelegramQuestion({
+        agentId: "session-1",
+        questionId: 6,
+        chatId: 1_001,
+        messageId: 42,
+        now: 1_200,
+      }),
+    )
+    const bound = await Effect.runPromise(
+      store.getTelegramQuestionBinding({ agentId: "session-1", questionId: 6 }),
+    )
+    assert.equal(bound.messageId, 42)
+    assert.equal(bound.chatId, 1_001)
+    assert.equal(bound.question.questionId, 6)
+    const foreign = await Effect.runPromise(
+      Effect.either(
+        store.getTelegramQuestionBinding({
+          agentId: "another-session",
+          questionId: 6,
+        }),
+      ),
+    )
+    assert.equal(foreign._tag, "Left")
+    await Effect.runPromise(
+      store.dismissQuestion({
+        agentId: "session-1",
+        questionId: 6,
+        now: 1_300,
+      }),
+    )
+    const terminal = await Effect.runPromise(
+      Effect.either(
+        store.getTelegramQuestionBinding({
+          agentId: "session-1",
+          questionId: 6,
+        }),
+      ),
+    )
+    assert.equal(terminal._tag, "Left")
+  }))
+
 test("a live bridge agent accepts one deduplicated durable message", async () =>
   withStore(async store => {
     await heartbeat(store)

@@ -148,6 +148,16 @@ export interface RemoteBridgeStore {
   readonly isQuestionRelayed: (
     input: QuestionRelayStatusInput,
   ) => Effect.Effect<boolean, RemoteBridgeError>
+  readonly getTelegramQuestionBinding: (
+    input: QuestionRelayStatusInput,
+  ) => Effect.Effect<
+    {
+      readonly question: BridgeQuestion
+      readonly chatId: number
+      readonly messageId: number
+    },
+    RemoteBridgeError
+  >
   readonly isQuestionHistoricallyRelayed: (
     input: QuestionRelayStatusInput,
   ) => Effect.Effect<boolean, RemoteBridgeError>
@@ -1514,6 +1524,57 @@ export const makeRemoteBridgeStore = (
         return yield* Effect.forEach(rows, row =>
           rowFromEffect(row).pipe(Effect.flatMap(questionFromRowEffect)),
         )
+      }),
+    ),
+  getTelegramQuestionBinding: input =>
+    withDatabaseEffect(databasePath, database =>
+      Effect.gen(function* () {
+        const agentId = yield* boundedIdentifierEffect(
+          "agent id",
+          input.agentId,
+        )
+        const questionId = yield* positiveSafeIntegerEffect(
+          "question id",
+          input.questionId,
+        )
+        const row = yield* attempt(
+          "Could not read bound Telegram question",
+          () =>
+            database
+              .prepare(
+                "SELECT * FROM bridge_questions WHERE agent_id = ? AND question_id = ? AND status = 'pending'",
+              )
+              .get(agentId, questionId),
+        ).pipe(Effect.flatMap(optionalRowFromEffect))
+        if (
+          !row ||
+          row.telegram_chat_id === null ||
+          row.telegram_message_id === null
+        )
+          return yield* Effect.fail(
+            bridgeError(
+              "not_found",
+              "pending Telegram question binding not found for this agent",
+            ),
+          )
+        const chatId = yield* numberFieldEffect(row, "telegram_chat_id").pipe(
+          Effect.flatMap(value =>
+            positiveSafeIntegerEffect("Telegram chat id", value),
+          ),
+        )
+        const messageId = yield* numberFieldEffect(
+          row,
+          "telegram_message_id",
+        ).pipe(
+          Effect.flatMap(value =>
+            positiveSafeIntegerEffect("Telegram message id", value),
+          ),
+        )
+        return {
+          question: yield* questionFromRowEffect(row),
+          chatId,
+          messageId,
+        }
       }),
     ),
   isQuestionRelayed: input =>

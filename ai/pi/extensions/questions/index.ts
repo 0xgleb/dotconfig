@@ -49,6 +49,24 @@ export type QuestionDeliveryInspector = (
   ctx: ExtensionContext,
 ) => Promise<readonly QuestionDeliveryStatus[]>
 
+export type QuestionRefreshResult =
+  | {
+      readonly outcome: "updated"
+      readonly id: number
+      readonly messageId: number
+      readonly textLinks: number
+    }
+  | {
+      readonly outcome: "unavailable"
+      readonly id: number
+      readonly reason: string
+    }
+export type QuestionDeliveryRefresher = (
+  id: number,
+  ctx: ExtensionContext,
+  signal?: AbortSignal,
+) => Promise<QuestionRefreshResult>
+
 const QUESTION_MESSAGE = "pi.questions.list"
 const QUESTION_STATUS_KEY = "pi-questions"
 
@@ -61,6 +79,7 @@ interface QuestionRequest {
     | "replace"
     | "reopen"
     | "clear_resolved"
+    | "refresh_delivery"
   readonly question?: string
   readonly header?: string
   readonly guess?: string
@@ -89,6 +108,10 @@ const parseAction = (
         return { action: "list" }
       case "clear_resolved":
         return { action: "clear_resolved" }
+      case "refresh_delivery":
+        return yield* invalidQuestionAction(
+          "refresh_delivery must use the private delivery boundary",
+        )
       case "ask": {
         const question = request.question?.trim()
         if (!question)
@@ -202,8 +225,9 @@ const questionsExtension: (
   pi: ExtensionAPI,
   execution?: JudgeContext["execution"],
   inspectDelivery?: QuestionDeliveryInspector,
-) => void = (pi, execution, inspectDelivery) => {
-  registerRuntimeVersion(pi, "questions", "2026.10.17.4")
+  refreshDelivery?: QuestionDeliveryRefresher,
+) => void = (pi, execution, inspectDelivery, refreshDelivery) => {
+  registerRuntimeVersion(pi, "questions", "2026.10.17.5")
   let state = emptyQuestionState
   let dialogOpen = false
   let latestCtx: ExtensionContext | undefined
@@ -621,7 +645,7 @@ const questionsExtension: (
     name: "ask_user",
     label: "Question queue",
     description:
-      "Queue, list, resolve, withdraw, replace, or reopen persistent non-blocking questions for the user.",
+      "Queue, list, resolve, withdraw, replace, or reopen persistent non-blocking questions. refresh_delivery re-renders an existing pending Telegram card in place without changing or re-asking the decision.",
     promptSnippet:
       "Queue a persistent question for the user without blocking unrelated work",
     promptGuidelines: [
@@ -629,6 +653,7 @@ const questionsExtension: (
       "Before ask_user action=ask, inspect current user messages, ask_user list, and active todos; when prior work may already answer the decision, inspect memory_search and session_search first.",
       "Never use ask_user to repeat a pending, resolved, or otherwise already-answered decision unless newer human input explicitly reopens it.",
       "Use withdraw for an explicitly withdrawn card, replace to atomically withdraw and correct one, and reopen only when the original card remains accurate.",
+      "Use refresh_delivery with only id to repair the presentation of an existing pending Telegram card. It cannot change the question, choices, or reply binding and does not require reviewing an unchanged draft again.",
       "Include a short header, the current best guess, and 2-4 concise options when the decision has bounded choices.",
       "Continue independent work after asking; resolve the question with a concise answer summary when the user responds.",
       "Queued questions stay passive until the user explicitly opens /questions; never treat ordinary prompt input as an answer.",
@@ -642,6 +667,7 @@ const questionsExtension: (
         Type.Literal("replace"),
         Type.Literal("reopen"),
         Type.Literal("clear_resolved"),
+        Type.Literal("refresh_delivery"),
       ]),
       question: Type.Optional(Type.String()),
       header: Type.Optional(Type.String({ maxLength: 16 })),
@@ -667,6 +693,96 @@ const questionsExtension: (
       ctx,
     ) {
       restore(ctx)
+      if (request.action === "refresh_delivery") {
+        const target = state.questions.find(
+          question =>
+            question.id === request.id && question.status === "pending",
+        )
+        const refresh = refreshDelivery
+        const admission = execution?.admit()
+        if (
+          !target ||
+          !refresh ||
+          !admission ||
+          Either.isLeft(admission) ||
+          signal?.aborted ||
+          [
+            request.question,
+            request.header,
+            request.guess,
+            request.options,
+            request.answer,
+          ].some(value => value !== undefined)
+        )
+          return {
+            content: [
+              {
+                type: "text" as const,
+                text: "Question refresh unavailable: requires an existing pending id, active authority, and no content changes.",
+              },
+            ],
+            details: { outcome: "unavailable" },
+            isError: true,
+          }
+        const refreshed = await Effect.runPromise(
+          Effect.either(
+            Effect.tryPromise({
+              try: () => refresh(target.id, ctx, signal),
+              catch: () =>
+                "Question rendering update failed; inspect delivery before retrying.",
+            }),
+          ),
+        )
+        if (Either.isLeft(refreshed))
+          return {
+            content: [{ type: "text" as const, text: refreshed.left }],
+            details: { outcome: "unavailable", id: target.id },
+            isError: true,
+          }
+        const result = refreshed.right
+        if (!result || typeof result !== "object")
+          return {
+            content: [
+              {
+                type: "text" as const,
+                text: "Invalid question refresh receipt; inspect delivery before retrying.",
+              },
+            ],
+            details: { outcome: "unavailable", id: target.id },
+            isError: true,
+          }
+        if (
+          result.id !== target.id ||
+          result.outcome !== "updated" ||
+          !Number.isSafeInteger(result.messageId) ||
+          result.messageId < 1 ||
+          !Number.isSafeInteger(result.textLinks) ||
+          result.textLinks < 0
+        )
+          return {
+            content: [
+              {
+                type: "text" as const,
+                text:
+                  result.outcome === "unavailable" &&
+                  typeof result.reason === "string"
+                    ? result.reason
+                    : "Invalid question refresh receipt.",
+              },
+            ],
+            details: { outcome: "unavailable", id: target.id },
+            isError: true,
+          }
+        return {
+          content: [
+            {
+              type: "text" as const,
+              text: `Updated existing Telegram card q${target.id} in place; ${result.textLinks} text links confirmed. Question and reply binding are unchanged.`,
+            },
+          ],
+          details: result,
+        }
+      }
       if (
         (request.action === "ask" || request.action === "replace") &&
         request.question?.trim()

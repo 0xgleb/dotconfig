@@ -1,6 +1,12 @@
 import type { ExtensionAPI } from "@earendil-works/pi-coding-agent"
 import remoteControl from "../remote-control/index.ts"
-import questions, { type QuestionDeliveryStatus } from "../questions/index.ts"
+import questions, {
+  type QuestionDeliveryStatus,
+  type QuestionRefreshResult,
+} from "../questions/index.ts"
+import { editOwnerQuestionRelay } from "../remote-control/owner-telegram.ts"
+import { questionCardHtml } from "../remote-control/question-card.ts"
+import { identifiedAgentLabel } from "../remote-control/agent-identity.ts"
 import { homedir } from "node:os"
 import { Effect, Either } from "effect"
 import { makeRemoteBridgeStore } from "../remote-control/sqlite-store.ts"
@@ -51,6 +57,55 @@ export default (pi: ExtensionAPI): void => {
             ),
           ),
         )
+      },
+      async (id, ctx, signal): Promise<QuestionRefreshResult> => {
+        const agentId = ctx.sessionManager.getSessionId()
+        const loaded = await Effect.runPromise(
+          Effect.either(
+            Effect.all({
+              binding: questionStore.getTelegramQuestionBinding({
+                agentId,
+                questionId: id,
+              }),
+              agents: questionStore.listAgents(Date.now()),
+            }),
+          ),
+        )
+        if (Either.isLeft(loaded))
+          return { outcome: "unavailable", id, reason: loaded.left.message }
+        const agent = loaded.right.agents.find(agent => agent.id === agentId)
+        const admission = guard.admit()
+        if (
+          !agent ||
+          Either.isLeft(admission) ||
+          signal?.aborted ||
+          ctx.sessionManager.getSessionId() !== agentId
+        )
+          return {
+            outcome: "unavailable",
+            id,
+            reason:
+              "Question refresh authority or session is no longer current.",
+          }
+        const { binding, agents } = loaded.right
+        const edited = await Effect.runPromise(
+          Effect.either(
+            editOwnerQuestionRelay(
+              {
+                chatId: binding.chatId,
+                messageId: binding.messageId,
+                text: questionCardHtml(
+                  binding.question,
+                  identifiedAgentLabel(agent, agents),
+                ),
+              },
+              signal,
+            ),
+          ),
+        )
+        return Either.isLeft(edited)
+          ? { outcome: "unavailable", id, reason: edited.left.message }
+          : { outcome: "updated", id, ...edited.right }
       },
     )
   })

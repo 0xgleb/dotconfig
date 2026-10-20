@@ -5,6 +5,7 @@ import test from "node:test"
 import { runInNewContext } from "node:vm"
 import { Effect, Ref } from "effect"
 import * as formatting from "./telegram-format.ts"
+import { questionCardHtml } from "./question-card.ts"
 
 // Exercise the existing formatter/sender without importing and starting the daemon.
 const source = readFileSync(
@@ -32,6 +33,7 @@ const relay = (dependencies: Readonly<Record<string, unknown>> = {}) =>
       TELEGRAM_MESSAGE_LIMIT: 4_000,
       identifiedAgentLabel: () => "Fixture agent",
       telegramHtml: formatting.telegramHtml,
+      questionCardHtml,
       ...dependencies,
     },
   )
