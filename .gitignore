@@ -13,6 +13,10 @@ direnv/
 
 /.direnv/
 /.tmp/
+/.auto-resolution/
+/.conflict-base-0/
+/.conflict-side-0/
+/.conflict-side-1/
 /ai/pi/extensions/node_modules
 /billion-context/
 /ai/pi/brave-operator-profile/
