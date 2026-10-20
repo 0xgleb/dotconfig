@@ -213,7 +213,7 @@ const questionsExtension: (
   inspectDelivery?: QuestionDeliveryInspector,
   refreshDelivery?: QuestionDeliveryRefresher,
 ) => void = (pi, execution, inspectDelivery, refreshDelivery) => {
-  registerRuntimeVersion(pi, "questions", "2026.10.17.8")
+  registerRuntimeVersion(pi, "questions", "2026.10.17.9")
   let state = emptyQuestionState
   let dialogOpen = false
   let latestCtx: ExtensionContext | undefined
@@ -898,20 +898,32 @@ const questionsExtension: (
         ),
       )
       const reviews = request.action === "list" ? reviewJobs.snapshots() : []
+      const reviewStatus = reviews.map(job => ({
+        id: job.id,
+        status: job.status,
+        terminal: ![
+          "queued-review",
+          "reviewing",
+          "revising",
+          "publishing",
+        ].includes(job.status),
+        pass: job.pass,
+        ...(job.questionId === undefined ? {} : { questionId: job.questionId }),
+      }))
       const result =
         request.action === "list"
           ? {
               ...coreResult,
               content: [
-                ...coreResult.content,
                 ...(reviews.length
                   ? [
                       {
                         type: "text" as const,
-                        text: `Background question reviews: ${JSON.stringify(reviews)}`,
+                        text: `Current background review status (terminal=true means the draft is no longer pending review, not Telegram delivery): ${JSON.stringify(reviewStatus)}`,
                       },
                     ]
                   : []),
+                ...coreResult.content,
               ],
               details: { ...coreResult.details, reviewJobs: reviews },
             }

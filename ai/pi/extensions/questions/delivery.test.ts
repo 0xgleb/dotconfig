@@ -11,7 +11,7 @@ const start = source.indexOf('  pi.registerTool({\n    name: "ask_user"')
 const end = source.lastIndexOf("\n}\n\nexport default")
 assert.ok(start >= 0 && end > start)
 const registration = stripTypeScriptTypes(source.slice(start, end))
-const invoke = async (delivery: unknown) => {
+const invoke = async (delivery: unknown, reviews: readonly unknown[] = []) => {
   let tool: { execute: Function } | undefined
   let inspected: readonly number[] = []
   const state = {
@@ -27,7 +27,7 @@ const invoke = async (delivery: unknown) => {
       },
     },
     restore: () => {},
-    reviewJobs: { snapshots: () => [] },
+    reviewJobs: { snapshots: () => reviews },
     state,
     execution: undefined,
     inspectDelivery: async (ids: readonly number[]) => {
@@ -85,6 +85,26 @@ for (const delivery of [
     assert.equal(result.details.deliveries, undefined)
   })
 }
+
+test("exact terminal job status leads the result and does not replay editorial feedback", async () => {
+  const review = {
+    id: "7159c485-a79a-4596-8dc1-8bdfaa94cb77",
+    status: "needs-revision",
+    pass: 2,
+    reason: "PRIVATE_EDITORIAL_FEEDBACK",
+  }
+  const { result, text } = await invoke(
+    [{ id: 6, status: "not-confirmed" }],
+    [review],
+  )
+  assert.match(result.content[0].text, /7159c485-a79a-4596-8dc1-8bdfaa94cb77/)
+  assert.match(
+    result.content[0].text,
+    /"status":"needs-revision","terminal":true/,
+  )
+  assert.doesNotMatch(text, /PRIVATE_EDITORIAL_FEEDBACK/)
+  assert.equal(result.details.reviewJobs[0].reason, review.reason)
+})
 
 test("absence of a Telegram receipt remains not-confirmed", async () => {
   const { text } = await invoke([{ id: 6, status: "not-confirmed" }])
