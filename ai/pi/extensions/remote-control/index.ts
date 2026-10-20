@@ -147,7 +147,7 @@ export default function remoteControl(
   onAuthenticatedOwnerMessage?: (receivedAt: number) => void,
   options: RemoteControlOptions = {},
 ): void {
-  registerRuntimeVersion(pi, "remote-control", "2026.10.17.3")
+  registerRuntimeVersion(pi, "remote-control", "2026.10.17.4")
   const store = makeRemoteBridgeStore(
     remoteBridgeDatabasePath(process.env.XDG_STATE_HOME, homedir()),
   )
@@ -176,8 +176,8 @@ export default function remoteControl(
     )
     ctx.ui.setWidget(
       "telegram-reports",
-      snapshots.length
-        ? snapshots
+      pending.length
+        ? pending
             .slice(-4)
             .map(
               job =>
@@ -213,6 +213,14 @@ export default function remoteControl(
         catch: () => "Report status journal unavailable.",
       }),
     present: renderReports,
+    onTerminal: snapshot => {
+      latestCtx?.ui.notify(
+        `Telegram ${snapshot.kind} · ${snapshot.status}. History: report_delivery.`,
+        snapshot.status === "delivered" || snapshot.status === "cancelled"
+          ? "info"
+          : "warning",
+      )
+    },
     prepare: (kind, text, sender) =>
       kind === "owner-report" ? agentReportText(text, sender) : text,
     deliver: async (kind, text, sender, signal) => {

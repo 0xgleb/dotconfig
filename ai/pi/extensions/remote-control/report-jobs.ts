@@ -50,6 +50,7 @@ interface ReportRuntime {
   ) => Promise<ReportDelivery>
   readonly persist: (snapshot: ReportSnapshot) => Either.Either<void, string>
   readonly present: (snapshots: readonly ReportSnapshot[]) => void
+  readonly onTerminal?: (snapshot: ReportSnapshot) => void
 }
 interface Submission {
   readonly kind: ReportKind
@@ -217,6 +218,12 @@ export const createReportJobs = (runtime: ReportRuntime) => {
         reason: `${reason ? `${reason} ` : ""}Status journal unavailable; inspect this session before resubmitting.`,
       }
     present()
+    const notify = runtime.onTerminal
+    if (current(job) && notify)
+      Either.try({
+        try: () => notify({ ...job.snapshot }),
+        catch: error => error,
+      })
   }
   const stage = (
     job: Job,

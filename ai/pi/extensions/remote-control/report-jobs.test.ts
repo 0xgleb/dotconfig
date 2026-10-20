@@ -37,6 +37,7 @@ const fixture = (
   assert.ok(Either.isRight(guard.ownerInput(Date.now())))
   const sent: string[] = []
   const journal: ReportSnapshot[] = []
+  const terminals: ReportSnapshot[] = []
   const jobs = createReportJobs({
     execution: guard,
     process,
@@ -52,11 +53,15 @@ const fixture = (
         return Either.right(undefined)
       }),
     present: () => {},
+    onTerminal: snapshot => {
+      terminals.push(snapshot)
+    },
   })
   return {
     jobs,
     sent,
     journal,
+    terminals,
     guard,
     close: () => {
       jobs.close()
@@ -117,6 +122,8 @@ test("submission returns queued while whole-text critic is unresolved, then send
   complete(accepted)
   await settle(f.jobs)
   assert.deepEqual(f.sent, [text])
+  assert.equal(f.terminals.length, 1)
+  assert.equal(f.terminals[0]?.status, "delivered")
   assert.equal(f.jobs.snapshots()[0]?.status, "delivered")
   assert.match(f.jobs.snapshots()[0]?.reviewedHash ?? "", /^[a-f0-9]{64}$/)
 })
@@ -297,6 +304,11 @@ test("reload restores interrupted status without replaying a report", async t =>
   assert.equal(next.jobs.snapshots()[0]?.status, "interrupted")
   await turn()
   assert.equal(next.sent.length, 0)
+  assert.equal(
+    next.terminals.length,
+    0,
+    "restoring history must not replay completion notifications",
+  )
   assert.ok(
     Either.isLeft(
       next.jobs.restore([

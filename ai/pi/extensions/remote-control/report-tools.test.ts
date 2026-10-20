@@ -5,7 +5,11 @@ import { runInNewContext } from "node:vm"
 import test from "node:test"
 import { Effect, Either } from "effect"
 import { Type } from "typebox"
-import { createReportJobs, REPORT_JOB_ENTRY } from "./report-jobs.ts"
+import {
+  createReportJobs,
+  REPORT_JOB_ENTRY,
+  type ReportSnapshot,
+} from "./report-jobs.ts"
 import { createOwnerAllowance } from "../classified-workflows/owner-allowance.ts"
 
 const source = readFileSync(new URL("./index.ts", import.meta.url), "utf8")
@@ -68,7 +72,7 @@ export const reportToolsFixture = async (
       hasUI: true,
       ui: {
         setStatus: (_key: string, text: string) => {
-          ui.push(text)
+          ui.push(String(text))
         },
         setWidget: (_key: string, lines: string[]) => {
           ui.push(String(lines))
@@ -82,6 +86,46 @@ export const reportToolsFixture = async (
     },
   }
 }
+
+test("terminal report history does not remain above the prompt", async () => {
+  let present: (snapshots: readonly ReportSnapshot[]) => void = () => {}
+  const fixture = await reportToolsFixture({
+    createReportJobs: (runtime: Parameters<typeof createReportJobs>[0]) => {
+      present = runtime.present
+      return createReportJobs(runtime)
+    },
+  })
+  await fixture.tools
+    .get("report_delivery")
+    ?.execute("list", { action: "status" }, undefined, undefined, fixture.ctx)
+  const base = {
+    kind: "owner-report" as const,
+    createdAt: 1,
+    updatedAt: 2,
+    sender: "fixture",
+    characters: 10,
+  }
+  present([
+    {
+      ...base,
+      id: "b7f0b104-a328-4655-b1ec-6933f5d446f3",
+      status: "needs-revision",
+      pass: 2,
+    },
+    {
+      ...base,
+      id: "5ee03d58-08a3-4319-abba-0f382bc50a1d",
+      status: "delivered",
+      pass: 1,
+    },
+  ])
+  assert.ok(
+    !fixture.ui.some(
+      line => line.includes("b7f0b104") || line.includes("5ee03d58"),
+    ),
+    "terminal jobs belong in history, not persistent prompt rows",
+  )
+})
 
 test("actual report tool cannot send when its internal critic is unavailable", async () => {
   const fixture = await reportToolsFixture()
