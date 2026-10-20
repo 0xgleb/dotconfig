@@ -5,15 +5,54 @@ import { Either } from "effect"
 import {
   OWNER_PARENT_DEADLINE_ENV,
   type OwnerAllowance,
+  type OwnerAllowanceError,
 } from "../classified-workflows/owner-allowance.ts"
 import {
   MAX_CONTENT_CRITIQUE_OUTPUT_CHARACTERS,
   parseSettledContentResponse,
+  type ContentCritiqueResponseCode,
 } from "./content-critique-response.ts"
 import { tierCandidates } from "./model-tiers.ts"
 
+export type ContentProcessFailure =
+  | {
+      readonly code:
+        | "cancelled"
+        | "missing-lease"
+        | "model-unavailable"
+        | "spawn-failed"
+        | "process-error"
+        | "lease-ended"
+        | "output-too-large"
+    }
+  | {
+      readonly code: "lease-denied"
+      readonly reason: OwnerAllowanceError["code"]
+    }
+  | { readonly code: "timed-out"; readonly timeoutMs: number }
+  | { readonly code: "process-exited"; readonly exitCode: number | null }
+  | {
+      readonly code: "invalid-response"
+      readonly reason: ContentCritiqueResponseCode
+    }
+
+export const contentProcessFailureMessage = (
+  failure: ContentProcessFailure,
+): string => {
+  if (failure.code === "timed-out")
+    return `Review process timed out after ${failure.timeoutMs}ms.`
+  if (failure.code === "process-exited")
+    return `Review process exited with status ${failure.exitCode === null ? "unknown" : failure.exitCode}.`
+  if (failure.code === "lease-denied")
+    return `Owner allowance denied review (${failure.reason}).`
+  if (failure.code === "invalid-response")
+    return `Review response could not be accepted (${failure.reason}).`
+  return `Review process unavailable (${failure.code}).`
+}
+
 export interface ContentProcessContext {
   readonly signal?: AbortSignal
+  readonly onUnavailable?: (failure: ContentProcessFailure) => void
   readonly execution?: Pick<OwnerAllowance, "admit" | "track">
   readonly cwd: string
   readonly getModel?: () => { provider: string; id: string } | undefined
@@ -36,21 +75,25 @@ const systems = {
 
 /** No tools/context/extensions; parent admission, deadline and cancellation are mandatory. */
 export const runContentProcess: ContentProcess = async (ctx, task) => {
+  const unavailable = (failure: ContentProcessFailure): undefined => {
+    Either.try({
+      try: () => ctx.onUnavailable?.(failure),
+      catch: error => error,
+    })
+    return undefined
+  }
   const execution = ctx.execution
   const admission = execution?.admit()
-  if (
-    ctx.signal?.aborted ||
-    !execution ||
-    !admission ||
-    Either.isLeft(admission)
-  )
-    return undefined
+  if (ctx.signal?.aborted) return unavailable({ code: "cancelled" })
+  if (!execution || !admission) return unavailable({ code: "missing-lease" })
+  if (Either.isLeft(admission))
+    return unavailable({ code: "lease-denied", reason: admission.left.code })
   const session = ctx.getModel?.()
   const model = tierCandidates("light", {
     now: () => Date.now(),
     ...(session ? { sessionModel: `${session.provider}/${session.id}` } : {}),
   })[0]
-  if (!model) return undefined
+  if (!model) return unavailable({ code: "model-unavailable" })
   const args = [
     "--mode",
     "json",
@@ -73,6 +116,7 @@ export const runContentProcess: ContentProcess = async (ctx, task) => {
   const native = !/^(node|bun)(\.exe)?$/.test(
     basename(process.execPath).toLowerCase(),
   )
+  let failure: ContentProcessFailure = { code: "process-error" }
   const completed = await new Promise<string | undefined>(resolve => {
     const started = Either.try({
       try: () =>
@@ -87,6 +131,7 @@ export const runContentProcess: ContentProcess = async (ctx, task) => {
       catch: error => error,
     })
     if (Either.isLeft(started)) {
+      failure = { code: "spawn-failed" }
       resolve(undefined)
       return
     }
@@ -109,13 +154,14 @@ export const runContentProcess: ContentProcess = async (ctx, task) => {
       closed = true
       clearTimeout(timer)
       clearTimeout(killTimer)
-      ctx.signal?.removeEventListener("abort", terminate)
+      ctx.signal?.removeEventListener("abort", abort)
       unregister?.()
     }
     const kill = (signal: "SIGTERM" | "SIGKILL") =>
       Either.try({ try: () => child.kill(signal), catch: error => error })
-    const terminate = () => {
+    const terminate = (reason: ContentProcessFailure) => {
       if (closed) return
+      if (!settled) failure = reason
       if (killTimer === undefined)
         killTimer = setTimeout(() => {
           if (!closed) kill("SIGKILL")
@@ -123,29 +169,40 @@ export const runContentProcess: ContentProcess = async (ctx, task) => {
       kill("SIGTERM")
       finish(undefined)
     }
+    const abort = () => terminate({ code: "cancelled" })
     child.stdout.on("data", (chunk: Buffer) => {
       bytes += chunk.length
       if (bytes > MAX_CONTENT_CRITIQUE_OUTPUT_CHARACTERS) {
-        terminate()
+        terminate({ code: "output-too-large" })
         return
       }
       output += decoder.write(chunk)
     })
     child.on("error", () => {
-      terminate()
+      terminate({ code: "process-error" })
       if (child.pid === undefined) cleanup()
     })
     child.on("close", (code: number | null) => {
       output += decoder.end()
       cleanup()
+      if (!settled && (code !== 0 || ctx.signal?.aborted))
+        failure = ctx.signal?.aborted
+          ? { code: "cancelled" }
+          : { code: "process-exited", exitCode: code }
       finish(code === 0 && !ctx.signal?.aborted ? output : undefined)
     })
-    unregister = execution.track(terminate)
-    ctx.signal?.addEventListener("abort", terminate, { once: true })
-    if (ctx.signal?.aborted) terminate()
-    if (!settled) timer = setTimeout(terminate, TIMEOUT_MS)
+    unregister = execution.track(() => terminate({ code: "lease-ended" }))
+    ctx.signal?.addEventListener("abort", abort, { once: true })
+    if (ctx.signal?.aborted) abort()
+    if (!settled)
+      timer = setTimeout(
+        () => terminate({ code: "timed-out", timeoutMs: TIMEOUT_MS }),
+        TIMEOUT_MS,
+      )
   })
-  if (completed === undefined) return undefined
+  if (completed === undefined) return unavailable(failure)
   const text = parseSettledContentResponse(completed)
-  return Either.isRight(text) ? text.right : undefined
+  return Either.isRight(text)
+    ? text.right
+    : unavailable({ code: "invalid-response", reason: text.left.code })
 }

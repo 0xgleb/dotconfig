@@ -4,6 +4,7 @@ import { Either } from "effect"
 import { parseContentCritiqueResponse } from "../shared/content-critique-response.ts"
 import {
   runContentProcess,
+  contentProcessFailureMessage,
   type ContentProcessContext,
 } from "../shared/content-process.ts"
 import { contentCritiquePrompt } from "../shared/content-critique.ts"
@@ -35,6 +36,7 @@ export interface JudgeResponse {
 export interface AskQualityDeps {
   readonly runJudge?: (prompt: string) => Promise<JudgeResponse | undefined>
   readonly projectInstructions?: () => Promise<string | undefined>
+  readonly reviewUnavailableReason?: () => string | undefined
 }
 export const structuralContextFreeDefects = (
   question: string,
@@ -78,13 +80,16 @@ export const evaluateAskQuality = async (
     }
   const instructions = await deps.projectInstructions?.()
   const verdict = await deps.runJudge(buildJudgePrompt(input, instructions))
-  if (!verdict)
+  if (!verdict) {
+    const reason = deps.reviewUnavailableReason?.()
     return {
       outcome: "review-unavailable",
       admissible: false,
-      reason:
-        "Critic review unavailable; no complete review was returned. No question queued.",
+      reason: reason
+        ? `Critic review unavailable: ${reason} No question queued.`
+        : "Critic review unavailable; no complete review was returned. No question queued.",
     }
+  }
   return verdict.admissible
     ? { outcome: "admitted", admissible: true, reason: verdict.reason }
     : { outcome: "rejected", admissible: false, reason: verdict.reason }
@@ -119,11 +124,32 @@ export const makeQuestionJudge =
     const output = await runContentProcess(ctx, { role: "critic", prompt })
     if (output === undefined) return undefined
     const parsed = parseContentCritiqueResponse(output, "verdict-json")
-    return Either.isRight(parsed)
-      ? { admissible: parsed.right.admissible, reason: parsed.right.reason }
-      : undefined
+    if (Either.isRight(parsed))
+      return {
+        admissible: parsed.right.admissible,
+        reason: parsed.right.reason,
+      }
+    Either.try({
+      try: () =>
+        ctx.onUnavailable?.({
+          code: "invalid-response",
+          reason: parsed.left.code,
+        }),
+      catch: error => error,
+    })
+    return undefined
   }
-export const askQualityDepsFor = (ctx: JudgeContext): AskQualityDeps => ({
-  runJudge: makeQuestionJudge(ctx),
-  projectInstructions: () => boundedProjectInstructions(ctx.cwd),
-})
+export const askQualityDepsFor = (ctx: JudgeContext): AskQualityDeps => {
+  let reason: string | undefined
+  return {
+    runJudge: makeQuestionJudge({
+      ...ctx,
+      onUnavailable: failure => {
+        reason = contentProcessFailureMessage(failure)
+        ctx.onUnavailable?.(failure)
+      },
+    }),
+    projectInstructions: () => boundedProjectInstructions(ctx.cwd),
+    reviewUnavailableReason: () => reason,
+  }
+}
