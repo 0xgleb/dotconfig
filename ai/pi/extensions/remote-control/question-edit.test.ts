@@ -20,7 +20,7 @@ interface Receipt {
   readonly messageId: number
   readonly textLinks: number
 }
-const fixture = (payload: unknown) => {
+const fixture = (payload: unknown, status = 200) => {
   const calls: RequestInit[] = []
   const edit = runInNewContext(`${compiled}\n;editOwnerQuestionRelay`, {
     Effect,
@@ -34,7 +34,11 @@ const fixture = (payload: unknown) => {
         : undefined,
     fetch: async (_url: string, options: RequestInit) => {
       calls.push(options)
-      return { ok: true, json: async () => payload }
+      return {
+        ok: status >= 200 && status < 300,
+        status,
+        json: async () => payload,
+      }
     },
   }) as (
     input: { chatId: number; messageId: number; text: string },
@@ -70,6 +74,33 @@ test("edits the existing bound message in HTML mode and reports actual Telegram 
   assert.equal(body.message_id, 42)
   assert.equal(body.parse_mode, "HTML")
   assert.equal(body.text, input.text)
+})
+
+test("Telegram's unchanged-message response is classified without inventing an entity receipt", async () => {
+  const f = fixture(
+    {
+      ok: false,
+      error_code: 400,
+      description:
+        "Bad Request: message is not modified: specified new message content and reply markup are exactly the same as current content and reply markup",
+    },
+    400,
+  )
+  const result = await Effect.runPromise(Effect.either(f.edit(input)))
+  assert.ok(Either.isLeft(result))
+  assert.equal(result.left.code, "refresh_not_modified")
+  assert.equal(f.calls.length, 1)
+})
+
+test("other HTTP400 descriptions remain rejected and never expose raw provider text", async () => {
+  const f = fixture(
+    { ok: false, error_code: 400, description: "PRIVATE_SYNTHETIC_RESPONSE" },
+    400,
+  )
+  const result = await Effect.runPromise(Effect.either(f.edit(input)))
+  assert.ok(Either.isLeft(result))
+  assert.equal(result.left.code, "send_failed")
+  assert.doesNotMatch(JSON.stringify(result.left), /PRIVATE_SYNTHETIC/)
 })
 
 test("another chat cannot be edited, even with an otherwise valid message id", async () => {

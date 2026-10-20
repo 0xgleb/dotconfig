@@ -60,6 +60,7 @@ export type QuestionRefreshResult =
       readonly outcome: "unavailable"
       readonly id: number
       readonly reason: string
+      readonly reasonKind?: "already-current"
     }
 export type QuestionDeliveryRefresher = (
   id: number,
@@ -213,7 +214,7 @@ const questionsExtension: (
   inspectDelivery?: QuestionDeliveryInspector,
   refreshDelivery?: QuestionDeliveryRefresher,
 ) => void = (pi, execution, inspectDelivery, refreshDelivery) => {
-  registerRuntimeVersion(pi, "questions", "2026.10.17.9")
+  registerRuntimeVersion(pi, "questions", "2026.10.17.10")
   let state = emptyQuestionState
   let dialogOpen = false
   let latestCtx: ExtensionContext | undefined
@@ -839,6 +840,15 @@ const questionsExtension: (
             ],
             details: { outcome: "unavailable", id: target.id },
             isError: true,
+          }
+        if (
+          result.id === target.id &&
+          result.outcome === "unavailable" &&
+          result.reasonKind === "already-current"
+        )
+          return {
+            content: [{ type: "text" as const, text: result.reason }],
+            details: { outcome: "unchanged", id: target.id },
           }
         if (
           result.id !== target.id ||

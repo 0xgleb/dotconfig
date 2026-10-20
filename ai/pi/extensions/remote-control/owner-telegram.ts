@@ -34,6 +34,7 @@ export type OwnerRelayDeliveryCode =
   | "send_cancelled"
   | "send_uncertain"
   | "invalid_binding"
+  | "refresh_not_modified"
 
 export class OwnerRelayDeliveryError extends Data.TaggedError(
   "OwnerRelayDeliveryError",
@@ -207,13 +208,36 @@ export const editOwnerQuestionRelay = (
           "Question refresh returned no receipt; inspect before retrying.",
         ),
     })
-    if (!response.ok)
+    if (!response.ok) {
+      const rejected = yield* Effect.tryPromise({
+        try: (): Promise<unknown> => response.json(),
+        catch: () =>
+          deliveryFailure(
+            response.status >= 500 ? "send_uncertain" : "send_failed",
+            `Telegram question refresh failed with status ${response.status}; its error response was not JSON.`,
+          ),
+      })
+      const description = stateField(rejected, "description")
+      if (
+        response.status === 400 &&
+        stateField(rejected, "ok") === false &&
+        stateField(rejected, "error_code") === 400 &&
+        typeof description === "string" &&
+        /^Bad Request: message is not modified(?::|$)/iu.test(description)
+      )
+        return yield* Effect.fail(
+          deliveryFailure(
+            "refresh_not_modified",
+            "Telegram reports that this card already matches the requested rendering; no new message/entity receipt was returned.",
+          ),
+        )
       return yield* Effect.fail(
         deliveryFailure(
           response.status >= 500 ? "send_uncertain" : "send_failed",
           `Telegram question refresh failed with status ${response.status}.`,
         ),
       )
+    }
     const payload = yield* Effect.tryPromise({
       try: (): Promise<unknown> => response.json(),
       catch: () =>

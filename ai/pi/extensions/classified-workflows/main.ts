@@ -104,7 +104,14 @@ export default (pi: ExtensionAPI): void => {
           ),
         )
         return Either.isLeft(edited)
-          ? { outcome: "unavailable", id, reason: edited.left.message }
+          ? {
+              outcome: "unavailable",
+              id,
+              reason: edited.left.message,
+              ...(edited.left.code === "refresh_not_modified"
+                ? { reasonKind: "already-current" as const }
+                : {}),
+            }
           : { outcome: "updated", id, ...edited.right }
       },
     )
