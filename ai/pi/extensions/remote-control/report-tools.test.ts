@@ -141,6 +141,8 @@ test("actual reporting tool returns immediately and shows background processing 
   assert.equal(fixture.sent(), 0)
   await new Promise(resolve => setImmediate(resolve))
   assert.match(reviewed, /Agent report · agent-fixture/)
+  assert.match(reviewed, /Verified transport-owned envelope/)
+  assert.match(reviewed, /not a delivery receipt/)
   assert.ok(fixture.ui.some(line => line.includes("reviewing 1/2")))
   finish(
     JSON.stringify({
