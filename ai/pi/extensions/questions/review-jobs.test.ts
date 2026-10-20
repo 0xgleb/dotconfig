@@ -406,6 +406,41 @@ test("missing authority and invalid publication identifiers cannot certify a que
   assert.equal(jobs.snapshots()[0].questionId, undefined)
 })
 
+test("author receives transport limits; invalid field is diagnosed without exposing output", async t => {
+  const f = fixture(t, async (_ctx, task) => {
+    if (task.role === "critic") return verdict(false)
+    assert.match(task.prompt, /header at most 16/)
+    assert.match(task.prompt, /description at most 160/)
+    assert.match(task.prompt, /never a report/)
+    return JSON.stringify({
+      ...revised,
+      header: "PRIVATE_SYNTHETIC_TOO_LONG_HEADER",
+    })
+  })
+  f.jobs.submit(draft, f.context)
+  await settle()
+  assert.match(f.jobs.snapshots()[0].reason!, /invalid header field/)
+  assert.doesNotMatch(JSON.stringify(f.journal), /PRIVATE_SYNTHETIC/)
+  assert.equal(f.sent.length, 0)
+})
+
+test("URL preservation compares decoded text fields, not JSON newline escapes", async t => {
+  let count = 0
+  const changedFormatting = {
+    ...revised,
+    question: "Should https://example.com/file.ts\nuse the bounded queue?",
+  }
+  const f = fixture(t, async (_ctx, task) =>
+    task.role === "author"
+      ? JSON.stringify(changedFormatting)
+      : verdict(++count > 1),
+  )
+  f.jobs.submit(draft, f.context)
+  await settle()
+  assert.equal(f.jobs.snapshots()[0].status, "queued-question")
+  assert.equal(f.sent[0].question, changedFormatting.question)
+})
+
 test("malformed input and author fields fail validation rather than coercion", () => {
   for (const value of [
     null,

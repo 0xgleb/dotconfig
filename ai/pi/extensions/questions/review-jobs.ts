@@ -84,23 +84,39 @@ const fingerprint = (draft: AskQualityInput) =>
   createHash("sha256").update(serialize(draft)).digest("hex")
 const record = (value: unknown): value is Record<string, unknown> =>
   typeof value === "object" && value !== null && !Array.isArray(value)
-export const decodeQuestionDraft = (
+const questionDraftProblem = (
   value: unknown,
-): AskQualityInput | undefined => {
+):
+  | "object"
+  | "fields"
+  | "question"
+  | "header"
+  | "guess"
+  | "options"
+  | undefined => {
+  if (!record(value)) return "object"
   if (
-    !record(value) ||
     Object.keys(value).some(
       key => !["question", "header", "guess", "options"].includes(key),
-    ) ||
+    )
+  )
+    return "fields"
+  if (
     typeof value.question !== "string" ||
     !value.question.trim() ||
-    value.question.length > 4_000 ||
-    (value.header !== undefined &&
-      (typeof value.header !== "string" || value.header.length > 16)) ||
-    (value.guess !== undefined &&
-      (typeof value.guess !== "string" || value.guess.length > 2_000))
+    value.question.length > 4_000
   )
-    return undefined
+    return "question"
+  if (
+    value.header !== undefined &&
+    (typeof value.header !== "string" || value.header.length > 16)
+  )
+    return "header"
+  if (
+    value.guess !== undefined &&
+    (typeof value.guess !== "string" || value.guess.length > 2_000)
+  )
+    return "guess"
   if (
     value.options !== undefined &&
     (!Array.isArray(value.options) ||
@@ -120,6 +136,17 @@ export const decodeQuestionDraft = (
               option.description.length <= 160)),
       ))
   )
+    return "options"
+  return undefined
+}
+export const decodeQuestionDraft = (
+  value: unknown,
+): AskQualityInput | undefined => {
+  if (
+    questionDraftProblem(value) !== undefined ||
+    !record(value) ||
+    typeof value.question !== "string"
+  )
     return undefined
   const options = value.options as AskQualityInput["options"]
   return {
@@ -136,7 +163,19 @@ export const decodeQuestionDraft = (
   }
 }
 const links = (draft: AskQualityInput) =>
-  [...serialize(draft).matchAll(/https?:\/\/[^\s"<>\)]+/gu)]
+  [
+    ...[
+      draft.question,
+      draft.header ?? "",
+      draft.guess ?? "",
+      ...(draft.options ?? []).flatMap(option => [
+        option.label,
+        option.description ?? "",
+      ]),
+    ]
+      .join("\n")
+      .matchAll(/https?:\/\/[^\s"<>\)`]+/gu),
+  ]
     .map(match => match[0])
     .sort()
     .join("\n")
@@ -379,7 +418,7 @@ export const createQuestionReviewJobs = (runtime: Runtime) => {
           `Original DATA: ${serialize(job.request)}`,
           `Current DATA: ${serialize(draft)}`,
           `Criticism DATA: ${JSON.stringify(verdict.right.reason)}`,
-          'Return only a complete JSON card: {"question":"...","header":"...","guess":"...","options":[{"label":"...","description":"..."}]}. Optional fields may be omitted. Preserve all original URLs.',
+          'Return only a complete JSON card, never a report {"text":...} wrapper or Markdown fence: {"question":"...","header":"...","guess":"...","options":[{"label":"...","description":"..."}]}. Optional fields may be omitted. Existing transport limits: question 1–4000 characters; header at most 16 characters; guess at most 2000; options, if present, 2–4 entries; label 1–80 characters; description at most 160. Fit by editing wording, never inventing or silently clipping facts. Preserve all original URLs exactly.',
         ].join("\n\n"),
       )
       if (!admitted(job)) {
@@ -394,11 +433,16 @@ export const createQuestionReviewJobs = (runtime: Runtime) => {
         ? decodeQuestionDraft(decoded.right)
         : undefined
       if (!candidate || links(candidate) !== links(job.request)) {
+        const problem = Either.isLeft(decoded)
+          ? "invalid JSON"
+          : !candidate
+            ? `invalid ${questionDraftProblem(decoded.right) ?? "card"} field`
+            : "changed URL set"
         finish(
           job,
           "unavailable",
           revised.reason ??
-            "Author returned an invalid or link-changing card; no question published.",
+            `Author returned ${problem}; no question published.`,
         )
         return
       }
