@@ -1110,10 +1110,10 @@ const WorkflowParameters = Type.Object({
 
 export default function classifiedWorkflows(
   pi: ExtensionAPI,
-  onOwnerAllowance?: (guard: OwnerAllowance) => void,
+  onOwnerAllowance?: (guard: ReturnType<typeof registerOwnerAllowance>) => void,
 ): void {
   const withGitHookAuthority = registerGitHookAuthority(pi)
-  registerRuntimeVersion(pi, "classified-workflows", "2026.10.17.17")
+  registerRuntimeVersion(pi, "classified-workflows", "2026.10.17.18")
   const childTokenLimitResult = Effect.runSync(
     Effect.either(
       workflowChildTokenLimit(process.env[WORKFLOW_CHILD_TOKEN_LIMIT_ENV]),

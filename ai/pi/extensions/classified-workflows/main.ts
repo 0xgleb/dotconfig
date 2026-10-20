@@ -6,9 +6,17 @@ import classifiedWorkflows from "./index.ts"
 /** A private capability connects verified owner ingress to the execution guard. */
 export default (pi: ExtensionAPI): void => {
   classifiedWorkflows(pi, guard => {
-    remoteControl(pi, receivedAt => {
-      guard.ownerInput(receivedAt)
-    })
+    remoteControl(
+      pi,
+      guard.timing === "legacy-input"
+        ? receivedAt => {
+            guard.ownerInput(receivedAt)
+          }
+        : undefined,
+      guard.inputDelivery
+        ? { authorizeOwnerInput: guard.inputDelivery.authorizeInput }
+        : {},
+    )
     questions(pi, Object.freeze({ admit: guard.admit, track: guard.track }))
   })
 }

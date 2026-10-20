@@ -15,6 +15,228 @@ test("production entrypoint installs the hard deadline guard and cancels detache
   )
 })
 
+test("authenticated queued input renews only at the native model dispatch boundary", async t => {
+  t.mock.timers.enable({ apis: ["Date", "setTimeout"], now: 1_000 })
+  const callbacks = new Map<string, Function>()
+  const authorized = new Set<string>()
+  let dispatch: Function | undefined
+  const host = {
+    on: (name: string, callback: Function) => callbacks.set(name, callback),
+    appendEntry: () => {},
+    registerCommand: () => {},
+    registerModelInputDeliveryGuard: (callback: Function) => {
+      dispatch = callback
+      return {
+        ok: true,
+        value: {
+          authorizeInput: (id: string) => {
+            authorized.add(id)
+            return { ok: true, value: undefined }
+          },
+          isInputAuthorized: (id: string) => authorized.has(id),
+        },
+      }
+    },
+  }
+  const ctx = {
+    abort: () => {},
+    ui: { setStatus: () => {}, notify: () => {} },
+    sessionManager: { getEntries: () => [] },
+  }
+  const module = await import(
+    new URL("./owner-allowance-extension.ts", import.meta.url).href
+  )
+  const guard = Reflect.apply(
+    Reflect.get(module, "registerOwnerAllowance"),
+    undefined,
+    [host, () => {}],
+  )
+  t.after(() => guard.dispose())
+  callbacks.get("input")?.(
+    {
+      source: "interactive",
+      text: "queued owner input",
+      inputId: "owner-1",
+      streamingBehavior: "followUp",
+    },
+    ctx,
+  )
+  assert.equal(
+    guard.admit()._tag,
+    "Left",
+    "enqueueing must not grant any work allowance",
+  )
+  t.mock.timers.tick(300_000)
+  assert.ok(dispatch, "the native delivery gate must be registered")
+  const decision = Reflect.apply(dispatch, undefined, [
+    {
+      dispatchId: "dispatch-1",
+      dispatchedAt: Date.now(),
+      ownerInputIds: ["owner-1"],
+    },
+    ctx,
+  ])
+  assert.deepEqual(decision, { action: "allow" })
+  const window = guard.admit()
+  assert.equal(window._tag, "Right")
+  assert.equal(window.right.lastOwnerAt, 301_000)
+  assert.equal(window.right.deadlineAt, 301_000 + OWNER_ALLOWANCE_MS)
+})
+
+test("delivery-capable host refuses interactive input without a valid native receipt", async t => {
+  t.mock.timers.enable({ apis: ["Date", "setTimeout"], now: 1_000 })
+  const callbacks = new Map<string, Function>()
+  const host = {
+    on: (name: string, callback: Function) => callbacks.set(name, callback),
+    appendEntry: () => {},
+    registerCommand: () => {},
+    registerModelInputDeliveryGuard: () => ({
+      ok: true,
+      value: {
+        authorizeInput: () => ({
+          ok: false,
+          error: {
+            code: "unknown-input",
+            message: "Unknown native input receipt.",
+          },
+        }),
+        isInputAuthorized: () => false,
+      },
+    }),
+  }
+  const ctx = { abort: () => {}, ui: { setStatus: () => {}, notify: () => {} } }
+  const module = await import(
+    new URL("./owner-allowance-extension.ts", import.meta.url).href
+  )
+  const guard = Reflect.apply(
+    Reflect.get(module, "registerOwnerAllowance"),
+    undefined,
+    [host, () => {}],
+  )
+  t.after(() => guard.dispose())
+  for (const input of [
+    { source: "interactive", text: "missing receipt" },
+    { source: "interactive", text: "forged receipt", inputId: "forged" },
+  ]) {
+    const result = callbacks.get("input")?.(input, ctx)
+    assert.deepEqual(
+      result,
+      { action: "handled" },
+      "unproven input cannot enter the model queue",
+    )
+    assert.equal(
+      guard.admit()._tag,
+      "Left",
+      "missing provenance cannot grant a window",
+    )
+  }
+})
+
+test("model dispatch admission does not depend on presentation callbacks", async t => {
+  t.mock.timers.enable({ apis: ["Date", "setTimeout"], now: 1_000 })
+  let dispatch: Function | undefined
+  const host = {
+    on: () => {},
+    appendEntry: () => {},
+    registerCommand: () => {},
+    registerModelInputDeliveryGuard: (handler: Function) => {
+      dispatch = handler
+      return {
+        ok: true,
+        value: {
+          authorizeInput: () => ({ ok: true, value: undefined }),
+          isInputAuthorized: () => true,
+        },
+      }
+    },
+  }
+  const ctx = {
+    abort: () => {},
+    ui: {
+      setStatus: () => {
+        throw new Error("simulated renderer failure")
+      },
+      notify: () => {},
+    },
+  }
+  const module = await import(
+    new URL("./owner-allowance-extension.ts", import.meta.url).href
+  )
+  const guard = Reflect.apply(
+    Reflect.get(module, "registerOwnerAllowance"),
+    undefined,
+    [host, () => {}],
+  )
+  t.after(() => guard.dispose())
+  assert.ok(dispatch)
+  assert.deepEqual(
+    Reflect.apply(dispatch, undefined, [
+      {
+        dispatchId: "model-1",
+        dispatchedAt: Date.now(),
+        ownerInputIds: ["owner-1"],
+      },
+      ctx,
+    ]),
+    { action: "allow" },
+  )
+})
+
+test("native expiry integration failure cannot skip foreground cancellation", async t => {
+  t.mock.timers.enable({ apis: ["Date", "setTimeout"], now: 1_000 })
+  const callbacks = new Map<string, Function>()
+  let dispatch: Function | undefined
+  let aborts = 0
+  const host = {
+    on: (name: string, callback: Function) => callbacks.set(name, callback),
+    appendEntry: () => {},
+    registerCommand: () => {},
+    registerModelInputDeliveryGuard: (handler: Function) => {
+      dispatch = handler
+      return {
+        ok: true,
+        value: {
+          authorizeInput: () => ({ ok: true, value: undefined }),
+          isInputAuthorized: () => true,
+          expireActiveRun: () => {
+            throw new Error("simulated host callback failure")
+          },
+        },
+      }
+    },
+  }
+  const ctx = {
+    abort: () => {
+      aborts++
+    },
+    ui: { setStatus: () => {}, notify: () => {} },
+  }
+  const module = await import(
+    new URL("./owner-allowance-extension.ts", import.meta.url).href
+  )
+  const guard = Reflect.apply(
+    Reflect.get(module, "registerOwnerAllowance"),
+    undefined,
+    [host, () => {}],
+  )
+  t.after(() => guard.dispose())
+  assert.ok(dispatch)
+  Reflect.apply(dispatch, undefined, [
+    {
+      dispatchId: "model-1",
+      dispatchedAt: Date.now(),
+      ownerInputIds: ["owner-1"],
+    },
+    ctx,
+  ])
+  const before = aborts
+  t.mock.timers.tick(OWNER_ALLOWANCE_MS)
+  assert.ok(
+    aborts > before,
+    "foreground must abort even if the native integration throws",
+  )
+})
+
 test("real registered hooks enforce tools, provider starts, automation and watchdog cancellation", async t => {
   t.mock.timers.enable({ apis: ["Date", "setTimeout"], now: 1_000 })
   const callbacks = new Map<string, Function>()

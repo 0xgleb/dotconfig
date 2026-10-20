@@ -4,6 +4,7 @@ import type {
   ExtensionContext,
 } from "@earendil-works/pi-coding-agent"
 import { Effect, Either } from "effect"
+import type { DeliveryResult } from "../../host/model-input-delivery.ts"
 import { Type } from "typebox"
 import {
   backlogRequirementsFromText,
@@ -122,9 +123,14 @@ const safeError = (error: RemoteBridgeError): string =>
 const safeDeliveryError = (error: OwnerRelayDeliveryError): string =>
   `${error.code}: ${error.message}`.slice(0, 160)
 
+export interface RemoteControlOptions {
+  readonly authorizeOwnerInput?: (inputId: string) => DeliveryResult<void>
+}
+
 export default function remoteControl(
   pi: ExtensionAPI,
   onAuthenticatedOwnerMessage?: (receivedAt: number) => void,
+  options: RemoteControlOptions = {},
 ): void {
   registerRuntimeVersion(pi, "remote-control", "2026.09.04.1")
   const store = makeRemoteBridgeStore(
@@ -526,7 +532,25 @@ export default function remoteControl(
     const content = contentResult.right
     const prompt = content[0]
     const authenticatedOwner = remoteSourceCarriesOwnerAuthority(source)
-    if (authenticatedOwner) onAuthenticatedOwnerMessage?.(message.createdAt)
+    const nativeOwnerDelivery =
+      "registerModelInputDeliveryGuard" in pi &&
+      typeof pi.registerModelInputDeliveryGuard === "function"
+    if (
+      authenticatedOwner &&
+      nativeOwnerDelivery &&
+      !options.authorizeOwnerInput
+    ) {
+      ctx.ui.notify(
+        "Owner input was not queued: native delivery authority is unavailable.",
+        "warning",
+      )
+      await finishFailure(turn, "model_error")
+      return
+    }
+    // Retain the old callable receipt observer only for an unpatched host.
+    // Native delivery mode never grants from bridge creation/enqueue time.
+    if (authenticatedOwner && !nativeOwnerDelivery)
+      onAuthenticatedOwnerMessage?.(message.createdAt)
     if (authenticatedOwner && prompt?.type === "text")
       pi.events.emit(HUMAN_TURN_EVENT, prompt.text)
     pi.events.emit(MESSAGE_BACKLOG_EVENT, {
@@ -543,6 +567,9 @@ export default function remoteControl(
           try: () =>
             pi.sendUserMessage(content, {
               deliverAs: "steer",
+              ...(authenticatedOwner && options.authorizeOwnerInput
+                ? { authorizeInput: options.authorizeOwnerInput }
+                : {}),
             }),
           catch: () =>
             new RemoteBridgeError({
