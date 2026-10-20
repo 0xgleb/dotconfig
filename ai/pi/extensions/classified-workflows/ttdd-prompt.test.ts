@@ -17,7 +17,7 @@ const promptFor = (newText: string, projectInstructions: string) =>
         edits: [{ oldText: "// next item", newText }],
       },
     },
-  })
+  }).replace(/\s+/gu, " ")
 
 test("type-first prompt permits only the necessary pre-regression compile shape", () => {
   const prompt = promptFor(

@@ -9,9 +9,12 @@ import {
 } from "./hook-authority.ts"
 import type { Decision } from "./core.ts"
 import {
-  buildClassifierPrompt,
+  buildClassifierPrompt as renderClassifierPrompt,
   type ClassificationRequest,
 } from "./lifecycle.ts"
+
+const buildClassifierPrompt = (request: ClassificationRequest) =>
+  renderClassifierPrompt(request).replace(/\s+/gu, " ")
 
 const request: ClassificationRequest = {
   boundary: "action",
@@ -48,7 +51,7 @@ test("owner-enabled Git hook authority removes duplicate classifier hook prerequ
   )
   assert.match(prompt, /Git hooks enforce the configured checks/i)
   assert.match(prompt, /do not require.*(?:runner|source).*provenance/i)
-  assert.match(prompt, /Do not use --no-verify to bypass hook policy/)
+  assert.match(prompt, /Explicit hook bypass remains prohibited/)
   assert.match(prompt, /Preserve unrelated index and working-tree entries/)
 })
 
@@ -166,7 +169,7 @@ test("static wiring: the runtime uses the registered authority boundary", () => 
     true,
   )
   assert.equal(source.includes("return withGitHookAuthority("), true)
-  assert.equal(source.includes("classify(checkedRequest, ctx, signal,"), true)
+  assert.match(source, /classify\(\s*checkedRequest,\s*ctx,\s*signal,/u)
 })
 
 test("only exact registered modes are accepted, with typed failure for malformed input", () => {

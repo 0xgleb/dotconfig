@@ -36,7 +36,7 @@ const renderedCommitPolicy = (projectInstructions: string): string => {
       "Required documentation checks passed; the completed independent review covers the same exact blobs.",
       "The current hook source/configuration identifies a formatting-only runner; the exact staged blobs pass that formatter's check.",
     ],
-  })
+  }).replace(/\s+/gu, " ")
   const start = prompt.indexOf(
     "For the isMainWorktree=false linked-worktree commit path only:",
   )

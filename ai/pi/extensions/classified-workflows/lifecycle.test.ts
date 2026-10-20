@@ -5,7 +5,7 @@ import test from "node:test"
 import {
   boundedProjectInstructions,
   boundedToolResultActionContext,
-  buildClassifierPrompt,
+  buildClassifierPrompt as renderClassifierPrompt,
   createClassifiedAgentRunner,
   createToolResultAllowance,
   formatDecisionReason,
@@ -24,6 +24,11 @@ import {
   parseContinuationPause,
   wasRunAborted,
 } from "../shared/continuation-pause.ts"
+
+// Policy contract assertions ignore Markdown wrapping; runtime interpolation is
+// independently checked against complete normalized migration fingerprints.
+const buildClassifierPrompt = (request: ClassificationRequest) =>
+  renderClassifierPrompt(request).replace(/\s+/gu, " ")
 
 const extensionSource = readFileSync(
   new URL("./index.ts", import.meta.url),
