@@ -73,6 +73,9 @@ export interface RuntimeChildReturnContext {
   readonly executionStatus: AgentResult["status"]
 }
 
+/** Request metadata remains compatible with loaded callers; retired values
+ * cannot select policy and are rejected at the managed configuration boundary.
+ */
 export type GitHookAuthorityMode = "off" | "shadow" | "enforce"
 
 export interface ClassificationRequest {
@@ -515,12 +518,6 @@ export const boundedProjectInstructions = (
   return `${systemPrompt.slice(0, maxCharacters - appendix.length)}${appendix}`
 }
 
-const legacyLinkedWorktreeHookAssurance = readPromptFile(
-  "classifier-legacy-linked-hooks.md",
-)
-const legacyMainWorktreeHookAssurance = readPromptFile(
-  "classifier-legacy-main-hooks.md",
-)
 const gitHookAuthorityGuidance =
   readPromptFile("classifier-hook-authority.md") + "\n\n"
 const classifierPolicy = readPromptFile("classifier-policy.md")
@@ -529,8 +526,7 @@ const classifierRequestGuidance = readPromptFile(
 )
 
 export function buildClassifierPrompt(request: ClassificationRequest): string {
-  const trustGitHooks = request.gitHookAuthorityMode === "enforce"
-  const prompt = `${classifierPolicy.replace("{{LEGACY_LINKED_HOOKS}}", trustGitHooks ? readPromptFile("classifier-enforce-linked-hooks.md") : legacyLinkedWorktreeHookAssurance).replace("{{LEGACY_MAIN_HOOKS}}", trustGitHooks ? readPromptFile("classifier-enforce-main-hooks.md") : legacyMainWorktreeHookAssurance)}
+  const prompt = `${classifierPolicy.replace("{{LINKED_WORKTREE_HOOKS}}", readPromptFile("classifier-enforce-linked-hooks.md")).replace("{{MAIN_WORKTREE_HOOKS}}", readPromptFile("classifier-enforce-main-hooks.md"))}
 BOUNDARY: ${request.boundary}
 
 ${classifierRequestGuidance}
@@ -573,8 +569,5 @@ ${request.evidence && request.evidence.length > 0 ? request.evidence.map(item =>
 
 UNTRUSTED SUBJECT:
 ${JSON.stringify(request.subject, null, 2)}`
-  return `${trustGitHooks ? gitHookAuthorityGuidance : ""}${prompt}`.replace(
-    /\u0000/g,
-    "\\u0000",
-  )
+  return `${gitHookAuthorityGuidance}${prompt}`.replace(/\u0000/g, "\\u0000")
 }

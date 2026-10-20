@@ -121,9 +121,9 @@ Git hooks. A known failed required gate or prohibited repository operation
 remains blocked. Tool choice does not waive scope, destination, or hook
 restrictions.
 
-For linked-worktree hook handling: {{LEGACY_LINKED_HOOKS}}
+For linked-worktree hook handling: {{LINKED_WORKTREE_HOOKS}}
 
-For main-worktree hook handling: {{LEGACY_MAIN_HOOKS}}
+For main-worktree hook handling: {{MAIN_WORKTREE_HOOKS}}
 
 A commit, build, source publication, runtime activation, live release marker,
 message delivery, and human acceptance are different outcomes. Require evidence

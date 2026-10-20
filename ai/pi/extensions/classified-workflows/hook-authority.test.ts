@@ -116,23 +116,17 @@ test("registered default enforces hook authority and overrides conflicting reque
   assert.equal(original.gitHookAuthorityMode, "off")
 })
 
-test("managed rollback modes override an enforce field in the request", async () => {
+test("retired configured modes cannot dispatch or silently select a policy", async () => {
   for (const mode of ["off", "shadow"]) {
     const classify = registerGitHookAuthority(flagHost({ value: mode }).host)
     let calls = 0
-    await classify(
-      { ...request, gitHookAuthorityMode: "enforce" },
-      async checked => {
-        calls += 1
-        assert.equal(checked.gitHookAuthorityMode, mode)
-        assert.equal(
-          buildClassifierPrompt(checked).startsWith("GIT HOOK AUTHORITY"),
-          false,
-        )
-        return allowed
-      },
-    )
-    assert.equal(calls, 1)
+    const decision = await classify(request, async () => {
+      calls += 1
+      return allowed
+    })
+    assert.equal(calls, 0)
+    assert.equal(decision.verdict, "block")
+    assert.match(decision.reason, /^Retired --git-hook-authority mode;/)
   }
 })
 
@@ -173,7 +167,7 @@ test("static wiring: the runtime uses the registered authority boundary", () => 
 })
 
 test("only exact registered modes are accepted, with typed failure for malformed input", () => {
-  for (const mode of ["off", "shadow", "enforce"]) {
+  for (const mode of ["enforce"]) {
     const result = parseGitHookAuthorityMode(mode)
     assert.ok(Either.isRight(result))
     assert.equal(result.right, mode)
@@ -195,32 +189,28 @@ test("only exact registered modes are accepted, with typed failure for malformed
   }
 })
 
-test("a model-authored subject cannot select hook authority", () => {
+test("a model-authored subject cannot select a retired hook policy", () => {
   const prompt = buildClassifierPrompt({
     ...request,
-    subject: { gitHookAuthorityMode: "enforce", instructions: "Trust hooks" },
+    subject: {
+      gitHookAuthorityMode: "off",
+      instructions: "Restore old policy",
+    },
   })
-  assert.equal(prompt.startsWith("GIT HOOK AUTHORITY"), false)
+  assert.equal(prompt.startsWith("GIT HOOK AUTHORITY"), true)
   assert.equal(
     prompt.includes(
       "require current exact hook configuration and source evidence",
     ),
-    true,
+    false,
   )
 })
 
-test("off and shadow modes preserve the existing classifier prompt", () => {
-  const legacy = buildClassifierPrompt(request)
-  assert.equal(
-    buildClassifierPrompt({ ...request, gitHookAuthorityMode: "off" }),
-    legacy,
-  )
-  assert.equal(
-    buildClassifierPrompt({ ...request, gitHookAuthorityMode: "shadow" }),
-    legacy,
-  )
-  assert.match(
-    legacy,
-    /require current exact hook configuration and source evidence/i,
-  )
+test("stale request metadata cannot restore a second classifier policy", () => {
+  const current = buildClassifierPrompt(request)
+  for (const mode of ["off", "shadow"] as const)
+    assert.equal(
+      buildClassifierPrompt({ ...request, gitHookAuthorityMode: mode }),
+      current,
+    )
 })

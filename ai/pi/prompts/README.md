@@ -7,33 +7,36 @@ classifier policy.
 
 ## Classifier assembly
 
-`extensions/classified-workflows/lifecycle.ts` assembles these assets:
+`extensions/classified-workflows/lifecycle.ts` assembles one classifier input
+from these text fragments; the files do not run Git hooks or start separate
+model calls.
 
-| Asset                                | Use                                                       |
-| ------------------------------------ | --------------------------------------------------------- |
-| `classifier-policy.md`               | Generic authority, evidence, safety, and decision rules   |
-| `classifier-hook-authority.md`       | Enforcement prefix, used only in `enforce` mode           |
-| `classifier-enforce-linked-hooks.md` | Linked-worktree hook guidance in `enforce` mode           |
-| `classifier-enforce-main-hooks.md`   | Main-worktree hook guidance in `enforce` mode             |
-| `classifier-legacy-linked-hooks.md`  | Linked-worktree hook guidance in `off` and `shadow` modes |
-| `classifier-legacy-main-hooks.md`    | Main-worktree hook guidance in `off` and `shadow` modes   |
-| `classifier-request-guidance.md`     | How to interpret task blocker evidence                    |
+| Asset                                | Use                                                     |
+| ------------------------------------ | ------------------------------------------------------- |
+| `classifier-policy.md`               | Generic authority, evidence, safety, and decision rules |
+| `classifier-hook-authority.md`       | Guidance that configured Git hooks own their checks     |
+| `classifier-enforce-linked-hooks.md` | Linked-worktree hook guidance                           |
+| `classifier-enforce-main-hooks.md`   | Main-worktree hook guidance                             |
+| `classifier-request-guidance.md`     | How to interpret task blocker evidence                  |
 
-The enforce and legacy snippets are alternatives, not cumulative requirements.
-The `LEGACY_LINKED_HOOKS` and `LEGACY_MAIN_HOOKS` template keys retain their
-names for compatibility; the builder selects their replacements from the trusted
-hook-authority mode.
+The builder replaces `LINKED_WORKTREE_HOOKS` and `MAIN_WORKTREE_HOOKS` in
+trusted base text before appending runtime context and the untrusted subject.
+Strings supplied by a user, tool, or model remain literal input, even when they
+resemble a template marker.
 
-Substitute markers in trusted base text before appending runtime context and the
-untrusted subject. Strings supplied by a user, tool, or model remain literal
-input, even when they resemble a template marker. Keep callable exports stable
-while loaded consumers depend on them. Missing assets must fail the existing
-execution boundary, never fall back to an empty policy.
+The managed `git-hook-authority` flag accepts only `enforce`. Retired `off` and
+`shadow` configurations return an explicit error before classifier dispatch;
+they neither select an older policy nor silently change configuration. Existing
+request metadata and callable exports remain compatible with loaded consumers,
+but request fields cannot restore retired policy.
+
+Missing assets must fail the existing execution boundary, never fall back to an
+empty policy.
 
 ## Editing
 
 Use `deno fmt ai/pi/prompts` for Markdown. Review the complete saved assets with
 an independent critic before treating an editorial pass as finished. Bind review
 to the saved content and recheck it after changes. Rendering tests must cover
-hook-mode selection, actual runtime interpolation, and literal handling of
-untrusted data; a text snapshot alone does not prove classifier behavior.
+actual runtime interpolation and literal handling of untrusted data; a text
+snapshot alone does not prove classifier behavior.

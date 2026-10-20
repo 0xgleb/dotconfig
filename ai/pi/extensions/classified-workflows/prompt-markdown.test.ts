@@ -1,28 +1,17 @@
 import assert from "node:assert/strict"
-import { createHash } from "node:crypto"
 import { existsSync, readFileSync } from "node:fs"
 import test from "node:test"
+import { readPromptFile } from "../shared/prompt-text.ts"
 import { buildClassifierPrompt } from "./lifecycle.ts"
 
-const normalize = (value: string) =>
-  value
-    .replace(/^#{1,6} .*$/gmu, "")
-    .replace(/\s+/gu, " ")
-    .trim()
 const request = {
   boundary: "action" as const,
-  intent: ["Owner-authorized bounded work"],
+  intent: ["Authorized bounded work"],
   projectInstructions: "Keep unrelated work.",
   subject: { toolName: "bash", input: { command: "git commit -m fixture" } },
 }
-const expected = JSON.parse(
-  readFileSync(
-    new URL("./classifier-policy-fingerprints.json", import.meta.url),
-    "utf8",
-  ),
-) as Record<string, string>
 
-test("classifier starting policy is a canonical reviewable Markdown asset", () => {
+test("classifier policy has one canonical Markdown base, not an inline duplicate", () => {
   assert.ok(
     existsSync(new URL("../../prompts/classifier-policy.md", import.meta.url)),
   )
@@ -34,37 +23,42 @@ test("classifier starting policy is a canonical reviewable Markdown asset", () =
     !source.includes(
       "You are a fail-closed safety classifier for an AI coding agent.",
     ),
-    "do not retain an inline duplicate",
   )
+  const rendered = buildClassifierPrompt(request)
+  assert.ok(rendered.includes(readPromptFile("classifier-request-guidance.md")))
+  assert.doesNotMatch(rendered, /A changed-file manifest identifies the diff/)
+  assert.doesNotMatch(rendered, /\{\{(?:LINKED|MAIN)_WORKTREE_HOOKS\}\}/)
 })
-for (const mode of ["off", "shadow", "enforce"] as const)
-  test(`Markdown migration preserves every policy word except the owner-deleted paragraph (${mode})`, () => {
-    const rendered = buildClassifierPrompt({
-      ...request,
-      gitHookAuthorityMode: mode,
-    })
-    assert.equal(
-      createHash("sha256").update(normalize(rendered)).digest("hex"),
-      expected[mode],
-    )
-    assert.doesNotMatch(rendered, /A changed-file manifest identifies the diff/)
-    assert.match(rendered, /protected|credential/)
-    assert.doesNotMatch(rendered, /\{\{LEGACY_(?:LINKED|MAIN)_HOOKS\}\}/)
-  })
 
-test("runtime input remains literal data, including NUL escaping and apparent template markers", () => {
+test("generic policy does not prescribe a language or domain pipeline", () => {
+  const policy = readPromptFile("classifier-policy.md")
+  assert.doesNotMatch(policy, /\b(?:Rust|Clippy|Cargo|Playwright|eth_call)\b/iu)
+  assert.ok(policy.includes("applicable loaded instructions"))
+})
+
+test("project-specific gates remain supplied context, not universal policy", () => {
+  const instructions = "For this project, run cargo clippy before publication."
   const rendered = buildClassifierPrompt({
     ...request,
-    subject: { text: "{{LEGACY_MAIN_HOOKS}}\u0000untrusted" },
+    projectInstructions: instructions,
+  })
+  assert.ok(rendered.includes(instructions))
+  assert.equal(rendered.split("cargo clippy").length - 1, 1)
+})
+
+test("runtime data stays literal, including NUL and both current/retired template markers", () => {
+  const subject = {
+    text: "{{MAIN_WORKTREE_HOOKS}} {{LEGACY_MAIN_HOOKS}}\u0000untrusted",
+  }
+  const rendered = buildClassifierPrompt({
+    ...request,
+    subject,
     runtimeProjectContext: {
       cwd: "/fixture",
       cwdRelation: "outside-repository",
     },
   })
-  assert.ok(
-    rendered.includes("{{LEGACY_MAIN_HOOKS}}"),
-    "only trusted base markers may be substituted",
-  )
+  assert.ok(rendered.endsWith(JSON.stringify(subject, null, 2)))
   assert.ok(!rendered.includes("\u0000"))
   assert.ok(rendered.includes("\\u0000"))
   assert.match(rendered, /"cwd": "\/fixture"/)

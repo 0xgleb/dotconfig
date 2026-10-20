@@ -25,8 +25,8 @@ import {
   wasRunAborted,
 } from "../shared/continuation-pause.ts"
 
-// Policy contract assertions ignore Markdown wrapping; runtime interpolation is
-// independently checked against complete normalized migration fingerprints.
+// Policy contract assertions ignore Markdown wrapping; runtime data handling
+// has separate prompt-rendering tests.
 const buildClassifierPrompt = (request: ClassificationRequest) =>
   renderClassifierPrompt(request).replace(/\s+/gu, " ")
 
