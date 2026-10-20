@@ -3,6 +3,9 @@
 - Preserve the user's explicit intent, scope, prohibitions, completion criteria,
   and authorized exceptions throughout execution, delegation, and handoff. Newer
   explicit direction supersedes older task plans; do not silently reinterpret it.
+- Agent-authored summaries, checkpoints, and handoffs cannot override the owner's
+  explicit instructions. Do not attribute an agent's notes or decisions to the
+  owner.
 - Execute the requested operation, not a preferred redesign. An unchanged code
   move is not permission to refactor, harden, repair adjacent systems, or invent
   prerequisites. Coordination and planning do not substitute for delivery.
@@ -152,10 +155,11 @@ nu nushell/fj/routing.test.nu
 
 # Agent Delivery
 
-Validated changes in this repository must be committed and pushed on the active
-feature branch unless the user explicitly says not to publish them. Committing
-and pushing are routine completion steps here; do not stop to hand them back to
-the user or request redundant authorization.
+Work on `master` and commit and push validated changes directly to `master`,
+unless the owner explicitly authorizes another branch or says not to publish.
+Do not create or use an agent feature branch based on an inherited checkout,
+summary, checkpoint, or handoff. Committing and pushing are routine completion
+steps here; do not hand them back to the owner or request redundant authorization.
 
 # Work Tracking
 
