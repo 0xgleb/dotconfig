@@ -40,6 +40,15 @@ import {
   type JudgeContext,
 } from "./quality.ts"
 
+export interface QuestionDeliveryStatus {
+  readonly id: number
+  readonly status: "telegram-delivered" | "not-confirmed" | "unavailable"
+}
+export type QuestionDeliveryInspector = (
+  ids: readonly number[],
+  ctx: ExtensionContext,
+) => Promise<readonly QuestionDeliveryStatus[]>
+
 const QUESTION_MESSAGE = "pi.questions.list"
 const QUESTION_STATUS_KEY = "pi-questions"
 
@@ -192,8 +201,9 @@ const judgeContextFor = (
 const questionsExtension: (
   pi: ExtensionAPI,
   execution?: JudgeContext["execution"],
-) => void = (pi, execution) => {
-  registerRuntimeVersion(pi, "questions", "2026.10.17.3")
+  inspectDelivery?: QuestionDeliveryInspector,
+) => void = (pi, execution, inspectDelivery) => {
+  registerRuntimeVersion(pi, "questions", "2026.10.17.4")
   let state = emptyQuestionState
   let dialogOpen = false
   let latestCtx: ExtensionContext | undefined
@@ -707,7 +717,7 @@ const questionsExtension: (
           details: { outcome: "blocked", reason: admission.left.message },
           isError: true,
         }
-      return Effect.runPromise(
+      const result = await Effect.runPromise(
         executeQuestionAction(request, ctx).pipe(
           Effect.match({
             onFailure: error => ({
@@ -723,6 +733,57 @@ const questionsExtension: (
           }),
         ),
       )
+      if (request.action !== "list" || !inspectDelivery) return result
+      const ids = state.questions
+        .filter(question => question.status === "pending")
+        .map(question => question.id)
+      const checked = await Effect.runPromise(
+        Effect.either(
+          Effect.tryPromise({
+            try: () => inspectDelivery(ids, ctx),
+            catch: () => "Delivery inspection unavailable.",
+          }),
+        ),
+      )
+      if (
+        Either.isLeft(checked) ||
+        !Array.isArray(checked.right) ||
+        checked.right.length !== ids.length ||
+        !checked.right.every(
+          item =>
+            typeof item === "object" &&
+            item !== null &&
+            Number.isSafeInteger(item.id) &&
+            ids.includes(item.id) &&
+            ["telegram-delivered", "not-confirmed", "unavailable"].includes(
+              item.status,
+            ),
+        ) ||
+        new Set(checked.right.map(item => item.id)).size !== ids.length
+      )
+        return {
+          ...result,
+          content: [
+            ...result.content,
+            {
+              type: "text" as const,
+              text: "Telegram delivery inspection unavailable; queued is not delivery evidence.",
+            },
+          ],
+        }
+      return {
+        ...result,
+        content: [
+          ...result.content,
+          {
+            type: "text" as const,
+            text: checked.right
+              .map(item => `q${item.id} · ${item.status}`)
+              .join("\n"),
+          },
+        ],
+        details: { ...result.details, deliveries: checked.right },
+      }
     },
   })
 }
