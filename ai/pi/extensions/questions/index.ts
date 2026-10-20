@@ -26,19 +26,19 @@ import {
   QUESTION_STATE_EVENT,
   type RemoteUserQuestionResolution,
   type UserQuestionPendingCount,
-  type UserQuestionRequest,
   type UserQuestionResolution,
   type UserQuestionSnapshot,
   type UserQuestionStateSnapshot,
 } from "../shared/question-events.ts"
 import { registerRuntimeVersion } from "../shared/runtime-version.ts"
 import { pendingQuestionContext, questionListText } from "./presentation.ts"
+import { type JudgeContext } from "./quality.ts"
+import { runContentProcess } from "../shared/content-process.ts"
 import {
-  askQualityDepsFor,
-  evaluateAskQuality,
-  type AskQualityInput,
-  type JudgeContext,
-} from "./quality.ts"
+  createQuestionReviewJobs,
+  decodeQuestionDraft,
+  QUESTION_REVIEW_ENTRY,
+} from "./review-jobs.ts"
 
 export interface QuestionDeliveryStatus {
   readonly id: number
@@ -207,27 +207,13 @@ const parseAction = (
     }
   })
 
-const judgeContextFor = (
-  ctx: {
-    readonly cwd: string
-    readonly getModel?: () => { provider: string; id: string } | undefined
-  },
-  execution: JudgeContext["execution"],
-  signal?: AbortSignal,
-): JudgeContext => ({
-  cwd: ctx.cwd,
-  getModel: () => ctx.getModel?.(),
-  ...(execution === undefined ? {} : { execution }),
-  ...(signal === undefined ? {} : { signal }),
-})
-
 const questionsExtension: (
   pi: ExtensionAPI,
   execution?: JudgeContext["execution"],
   inspectDelivery?: QuestionDeliveryInspector,
   refreshDelivery?: QuestionDeliveryRefresher,
 ) => void = (pi, execution, inspectDelivery, refreshDelivery) => {
-  registerRuntimeVersion(pi, "questions", "2026.10.17.6")
+  registerRuntimeVersion(pi, "questions", "2026.10.17.7")
   let state = emptyQuestionState
   let dialogOpen = false
   let latestCtx: ExtensionContext | undefined
@@ -471,82 +457,44 @@ const questionsExtension: (
     await showQuestionDialog(ctx, pending[selectedIndex]?.id)
   }
 
+  pi.on("session_before_switch", () => {
+    reviewJobs.cancelAll()
+  })
+  pi.on("session_before_fork", () => {
+    reviewJobs.cancelAll()
+  })
+  pi.on("session_before_tree", () => {
+    reviewJobs.cancelAll()
+  })
   pi.on("session_start", (_event, ctx) => {
     latestCtx = ctx
     restore(ctx)
+    const restoredReviews = reviewJobs.restore(ctx.sessionManager.getBranch())
+    if (Either.isLeft(restoredReviews))
+      ctx.ui.notify(restoredReviews.left, "warning")
   })
   pi.on("session_compact", () => {
     pi.appendEntry(QUESTION_STATE_ENTRY, state)
   })
   pi.on("session_shutdown", (_event, ctx) => {
+    reviewJobs.close()
+    ctx.ui.setStatus("question-review", undefined)
     latestCtx = undefined
     ctx.ui.setStatus(QUESTION_STATUS_KEY, undefined)
     ctx.ui.setWidget(QUESTION_STATUS_KEY, undefined)
   })
   pi.events.on(QUESTION_ASK_EVENT, async (data: unknown) => {
-    const request = data as UserQuestionRequest
-    if (!latestCtx) return
-    const question = request.question.trim().slice(0, 4_000)
-    if (!question) return
-    const verdict = await evaluateAskQuality(
-      {
-        question,
-        ...(request.header?.trim()
-          ? { header: request.header.trim().slice(0, 16) }
-          : {}),
-        ...(request.guess?.trim()
-          ? { guess: request.guess.trim().slice(0, 2_000) }
-          : {}),
-        ...(request.options && request.options.length >= 2
-          ? { options: request.options }
-          : {}),
-      },
-      askQualityDepsFor(judgeContextFor(latestCtx, execution)),
-    )
-    const admission = execution?.admit()
-    if (admission && Either.isLeft(admission)) {
-      latestCtx?.ui.notify(admission.left.message, "warning")
+    const ctx = latestCtx
+    if (!ctx) return
+    // Events are untrusted too; validate before parseAction accesses strings.
+    const draft = decodeQuestionDraft(data)
+    if (!draft) {
+      ctx.ui.notify("Invalid question card; no review queued.", "warning")
       return
     }
-    if (!verdict.admissible) {
-      latestCtx?.ui.notify(
-        verdict.outcome === "review-unavailable"
-          ? verdict.reason
-          : `Not queued: question needs revision. ${verdict.reason}`,
-        "warning",
-      )
-      return
-    }
-    const repeated = repeatedQuestion(state, question)
-    if (repeated) {
-      latestCtx.ui.notify(
-        repeated.status === "resolved"
-          ? `Not queued: q${repeated.id} already resolved this decision.`
-          : `Not queued: q${repeated.id} already asks this decision.`,
-        "warning",
-      )
-      return
-    }
-    state = applyQuestionAction(state, {
-      action: "ask",
-      question,
-      ...(request.header?.trim()
-        ? { header: request.header.trim().slice(0, 16) }
-        : {}),
-      ...(request.guess?.trim()
-        ? { guess: request.guess.trim().slice(0, 2_000) }
-        : {}),
-      ...(request.options &&
-      request.options.length >= 2 &&
-      request.options.length <= 4
-        ? { options: request.options }
-        : {}),
-    })
-    persist(latestCtx)
-    latestCtx.ui.notify(
-      `Queued question q${state.nextId - 1}. Open /questions to answer.`,
-      "info",
-    )
+    const result = await queueQuestionReview({ action: "ask", ...draft }, ctx)
+    if (result.isError)
+      for (const part of result.content) ctx.ui.notify(part.text, "warning")
   })
 
   pi.events.on(QUESTION_REMOTE_RESOLUTION_EVENT, (data: unknown) => {
@@ -641,16 +589,157 @@ const questionsExtension: (
       })
     })
 
+  const reviewJobs = createQuestionReviewJobs({
+    execution,
+    process: runContentProcess,
+    onTerminal: snapshot => {
+      if (
+        ["unavailable", "needs-revision", "interrupted"].includes(
+          snapshot.status,
+        )
+      )
+        latestCtx?.ui.notify(
+          `Background question ${snapshot.id}: ${snapshot.status}. ${snapshot.reason ?? "Inspect ask_user list for status."}`,
+          "warning",
+        )
+    },
+    persist: snapshot => {
+      if (
+        !latestCtx ||
+        latestCtx.sessionManager.getSessionId() !== snapshot.sessionId
+      )
+        return Either.left("Question-review session changed.")
+      return Either.try({
+        try: () => pi.appendEntry(QUESTION_REVIEW_ENTRY, snapshot),
+        catch: () => "Question-review journal unavailable.",
+      })
+    },
+    present: snapshots => {
+      const ctx = latestCtx
+      if (!ctx) return
+      const active = snapshots.filter(job =>
+        ["queued-review", "reviewing", "revising", "publishing"].includes(
+          job.status,
+        ),
+      )
+      const latest = active.at(-1)
+      ctx.ui.setStatus(
+        "question-review",
+        latest
+          ? `Questions: ${active.length} · ${latest.status} ${latest.pass}/2`
+          : undefined,
+      )
+    },
+    publish: async (request, context) => {
+      const ctx = latestCtx
+      const admitted = execution?.admit()
+      if (
+        !ctx ||
+        ctx.sessionManager.getSessionId() !== context.sessionId ||
+        !admitted ||
+        Either.isLeft(admitted)
+      )
+        return {
+          outcome: "rejected",
+          reason:
+            "Question-review authority or session ended before publication.",
+        }
+      restore(ctx)
+      const published = await Effect.runPromise(
+        Effect.either(executeQuestionAction(request, ctx)),
+      )
+      if (Either.isLeft(published))
+        return { outcome: "rejected", reason: published.left.message }
+      if (published.right.details.outcome !== "success")
+        return {
+          outcome: "rejected",
+          reason:
+            "This decision is already pending or answered; no new question created.",
+        }
+      return {
+        outcome: "queued",
+        questionId: published.right.details.state.nextId - 1,
+      }
+    },
+  })
+  const queueQuestionReview = async (
+    request: QuestionRequest,
+    ctx: ExtensionContext,
+    signal?: AbortSignal,
+  ) => {
+    latestCtx = ctx
+    const parsed = await Effect.runPromise(
+      Effect.either(parseAction(request, state)),
+    )
+    if (Either.isLeft(parsed))
+      return {
+        content: [{ type: "text" as const, text: parsed.left.message }],
+        details: { outcome: "error" },
+        isError: true,
+      }
+    if (parsed.right.action === "ask") {
+      const repeated = repeatedQuestion(state, parsed.right.question)
+      if (repeated)
+        return {
+          content: [
+            {
+              type: "text" as const,
+              text: `Decision q${repeated.id} is already ${repeated.status}; no new draft queued.`,
+            },
+          ],
+          details: { outcome: "duplicate", duplicateQuestionId: repeated.id },
+        }
+    }
+    if (parsed.right.action !== "ask" && parsed.right.action !== "replace")
+      return {
+        content: [
+          {
+            type: "text" as const,
+            text: "Only ask/replace drafts enter background review.",
+          },
+        ],
+        details: { outcome: "error" },
+        isError: true,
+      }
+    const sessionId = ctx.sessionManager.getSessionId()
+    const queued = reviewJobs.submit(
+      parsed.right,
+      {
+        cwd: ctx.cwd,
+        getModel: () => ctx.model,
+        sessionId,
+        isCurrent: () => latestCtx?.sessionManager.getSessionId() === sessionId,
+      },
+      signal,
+    )
+    return Either.isLeft(queued)
+      ? {
+          content: [{ type: "text" as const, text: queued.left }],
+          details: { outcome: "review-unavailable" },
+          isError: true,
+        }
+      : {
+          content: [
+            {
+              type: "text" as const,
+              text: `Question draft ${queued.right.id} queued for internal background critique/revision (at most two critique passes). No foreground rewrite is needed. It is not yet a pending/delivered question.`,
+            },
+          ],
+          details: { outcome: "queued-review", jobId: queued.right.id },
+        }
+  }
+
   pi.registerTool({
     name: "ask_user",
     label: "Question queue",
     description:
-      "Queue, list, resolve, withdraw, replace, or reopen persistent non-blocking questions. refresh_delivery re-renders an existing pending Telegram card in place without changing or re-asking the decision.",
+      "Ask/replace drafts run an internal background critic/author fix loop (at most two critique passes) and return queued-review immediately. Only complete reviewed cards enter the question queue. List shows review-job and Telegram delivery status. No foreground review/rewrite workflow is needed. refresh_delivery only repairs an unchanged pending card.",
     promptSnippet:
       "Queue a persistent question for the user without blocking unrelated work",
     promptGuidelines: [
       "Use ask_user when a user decision is required but independent work remains executable.",
-      "Before ask_user action=ask, inspect current user messages, ask_user list, and active todos; when prior work may already answer the decision, inspect memory_search and session_search first.",
+      "Before ask_user action=ask, inspect current user messages, ask_user list, and active todos. Do not repeat an answered decision or create another draft while its background review is pending.",
+      "queued-review is a background draft job, not a question ID or delivery receipt. The tool handles criticism and author revision itself; continue independent work instead of running a foreground rewrite/review loop. List includes job outcomes.",
       "Never use ask_user to repeat a pending, resolved, or otherwise already-answered decision unless newer human input explicitly reopens it.",
       "Use withdraw for an explicitly withdrawn card, replace to atomically withdraw and correct one, and reopen only when the original card remains accurate.",
       "Use refresh_delivery with only id to repair the presentation of an existing pending Telegram card. It cannot change the question, choices, or reply binding and does not require reviewing an unchanged draft again.",
@@ -783,49 +872,8 @@ const questionsExtension: (
           details: result,
         }
       }
-      if (
-        (request.action === "ask" || request.action === "replace") &&
-        request.question?.trim()
-      ) {
-        const qualityInput: AskQualityInput = {
-          question: request.question.trim(),
-          ...(request.header?.trim() ? { header: request.header.trim() } : {}),
-          ...(request.guess?.trim() ? { guess: request.guess.trim() } : {}),
-          ...(request.options && request.options.length > 0
-            ? { options: request.options }
-            : {}),
-        }
-        const verdict = await evaluateAskQuality(
-          qualityInput,
-          askQualityDepsFor(judgeContextFor(ctx, execution, signal)),
-        )
-        if (signal?.aborted)
-          return {
-            content: [
-              {
-                type: "text" as const,
-                text: "Question review stopped before completion; no question queued.",
-              },
-            ],
-            details: { outcome: "cancelled", action: request.action },
-          }
-        if (!verdict.admissible) {
-          const text =
-            verdict.outcome === "review-unavailable"
-              ? verdict.reason
-              : `Not queued: question needs revision. ${verdict.reason}\nRewrite it with concrete referents the user can act on (artifact, path, current behavior, interval, or numbers) and ask again.`
-          ctx.ui.notify(text, "warning")
-          return {
-            content: [{ type: "text" as const, text }],
-            details: {
-              outcome: verdict.outcome,
-              action: request.action,
-              reason: verdict.reason,
-              state,
-            },
-          }
-        }
-      }
+      if (request.action === "ask" || request.action === "replace")
+        return queueQuestionReview(request, ctx, signal)
       const admission = execution?.admit()
       if (admission && Either.isLeft(admission))
         return {
@@ -833,7 +881,7 @@ const questionsExtension: (
           details: { outcome: "blocked", reason: admission.left.message },
           isError: true,
         }
-      const result = await Effect.runPromise(
+      const coreResult = await Effect.runPromise(
         executeQuestionAction(request, ctx).pipe(
           Effect.match({
             onFailure: error => ({
@@ -849,6 +897,25 @@ const questionsExtension: (
           }),
         ),
       )
+      const reviews = request.action === "list" ? reviewJobs.snapshots() : []
+      const result =
+        request.action === "list"
+          ? {
+              ...coreResult,
+              content: [
+                ...coreResult.content,
+                ...(reviews.length
+                  ? [
+                      {
+                        type: "text" as const,
+                        text: `Background question reviews: ${JSON.stringify(reviews)}`,
+                      },
+                    ]
+                  : []),
+              ],
+              details: { ...coreResult.details, reviewJobs: reviews },
+            }
+          : coreResult
       if (request.action !== "list" || !inspectDelivery) return result
       const ids = state.questions
         .filter(question => question.status === "pending")

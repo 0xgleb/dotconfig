@@ -1,5 +1,4 @@
 import assert from "node:assert/strict"
-import { readFileSync } from "node:fs"
 import test from "node:test"
 import {
   buildJudgePrompt,
@@ -7,8 +6,6 @@ import {
   parseJudgeResponse,
   structuralContextFreeDefects,
 } from "./quality.ts"
-
-const source = readFileSync(new URL("./index.ts", import.meta.url), "utf8")
 
 const operatorStatusChecksQuestion = {
   question: "Should I continue with the operator status checks?",
@@ -71,12 +68,6 @@ test("an unconfigured critic cannot silently admit a question", async () => {
   assert.equal(verdict.admissible, false)
   assert.equal(verdict.outcome, "review-unavailable")
   assert.match(verdict.reason, /no.*critic|no.*judge|not.*configured/i)
-})
-
-test("ask_user gates asks through the quality check before queueing", () => {
-  assert.match(source, /evaluateAskQuality\(/)
-  assert.match(source, /outcome: verdict\.outcome/)
-  assert.match(source, /Rewrite it with concrete referents/)
 })
 
 test("the critic sees complete concrete proposals, not just option labels", () => {

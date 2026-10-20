@@ -27,6 +27,7 @@ const invoke = async (delivery: unknown) => {
       },
     },
     restore: () => {},
+    reviewJobs: { snapshots: () => [] },
     state,
     execution: undefined,
     inspectDelivery: async (ids: readonly number[]) => {
