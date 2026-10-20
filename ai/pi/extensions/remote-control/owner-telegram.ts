@@ -31,6 +31,8 @@ export type OwnerRelayDeliveryCode =
   | "owner_chat_unknown"
   | "chat_registry_unreadable"
   | "send_failed"
+  | "send_cancelled"
+  | "send_uncertain"
 
 export class OwnerRelayDeliveryError extends Data.TaggedError(
   "OwnerRelayDeliveryError",
@@ -93,10 +95,18 @@ export const deliverCabaCardRelay = (): Effect.Effect<
 export const deliverOwnerRelay = (
   text: string,
   sender: string,
+  options?: { readonly signal?: AbortSignal },
+): Effect.Effect<void, OwnerRelayDeliveryError> =>
+  deliverPreparedOwnerRelay(agentReportText(text, sender), options)
+
+/** Native reporting jobs review this complete banner-bearing artifact first. */
+export const deliverPreparedOwnerRelay = (
+  preparedText: string,
+  options?: { readonly signal?: AbortSignal },
 ): Effect.Effect<void, OwnerRelayDeliveryError> =>
   Effect.all({ token: telegramToken, chatId: ownerChatId }).pipe(
     Effect.flatMap(({ token, chatId }) =>
-      sendRelay(token, chatId, agentReportText(text, sender)),
+      sendRelay(token, chatId, preparedText, options?.signal),
     ),
   )
 
@@ -112,10 +122,11 @@ export const stakeholderUpdateText = (text: string): string => text
 
 export const deliverStakeholderUpdate = (
   text: string,
+  options?: { readonly signal?: AbortSignal },
 ): Effect.Effect<void, OwnerRelayDeliveryError> =>
   Effect.all({ token: telegramToken, chatId: ownerChatId }).pipe(
     Effect.flatMap(({ token, chatId }) =>
-      sendRelay(token, chatId, stakeholderUpdateText(text)),
+      sendRelay(token, chatId, stakeholderUpdateText(text), options?.signal),
     ),
   )
 
@@ -156,12 +167,24 @@ const sendRelay = (
   token: string,
   chatId: number,
   text: string,
+  signal?: AbortSignal,
 ): Effect.Effect<void, OwnerRelayDeliveryError> =>
-  Effect.forEach(
-    ownerRelayChunks(text),
-    chunk => sendOwnerMessage(token, chatId, chunk),
-    { discard: true, concurrency: 1 },
-  ).pipe(Effect.asVoid)
+  Effect.gen(function* () {
+    let completed = 0
+    for (const chunk of ownerRelayChunks(text)) {
+      yield* sendOwnerMessage(token, chatId, chunk, undefined, signal).pipe(
+        Effect.mapError(error =>
+          completed > 0
+            ? deliveryFailure(
+                "send_uncertain",
+                "Only part of the report has confirmed delivery; do not automatically resend.",
+              )
+            : error,
+        ),
+      )
+      completed++
+    }
+  })
 
 const deliveryFailure = (
   code: OwnerRelayDeliveryCode,
@@ -297,12 +320,21 @@ const sendOwnerMessage = (
   chatId: number,
   text: string,
   replyMarkup?: ReturnType<typeof cabaSessionCard>["replyMarkup"],
+  signal?: AbortSignal,
 ): Effect.Effect<number, OwnerRelayDeliveryError> =>
   Effect.gen(function* () {
+    if (signal?.aborted)
+      return yield* Effect.fail(
+        deliveryFailure(
+          "send_cancelled",
+          "Report cancelled before this Telegram request.",
+        ),
+      )
     const response = yield* Effect.tryPromise({
       try: () =>
         fetch(`https://api.telegram.org/bot${token}/sendMessage`, {
           method: "POST",
+          ...(signal ? { signal } : {}),
           headers: { "content-type": "application/json" },
           body: JSON.stringify({
             chat_id: chatId,
@@ -316,14 +348,14 @@ const sendOwnerMessage = (
         }),
       catch: () =>
         deliveryFailure(
-          "send_failed",
-          "the Telegram sendMessage request failed",
+          "send_uncertain",
+          "the Telegram request did not return delivery evidence; do not automatically resend",
         ),
     })
     if (!response.ok)
       return yield* Effect.fail(
         deliveryFailure(
-          "send_failed",
+          response.status >= 500 ? "send_uncertain" : "send_failed",
           `the Telegram sendMessage request failed with status ${response.status}`,
         ),
       )
@@ -331,9 +363,16 @@ const sendOwnerMessage = (
       try: (): Promise<unknown> => response.json(),
       catch: () =>
         deliveryFailure(
-          "send_failed",
+          "send_uncertain",
           "the Telegram sendMessage response was not valid JSON",
         ),
     })
-    return yield* decodeTelegramSentMessageId(payload)
+    return yield* decodeTelegramSentMessageId(payload).pipe(
+      Effect.mapError(() =>
+        deliveryFailure(
+          "send_uncertain",
+          "Telegram returned no valid delivery receipt; do not automatically resend.",
+        ),
+      ),
+    )
   })

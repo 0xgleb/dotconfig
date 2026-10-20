@@ -38,6 +38,12 @@ export const parseContentCritiqueResponse = (
   output: unknown,
   format: ContentCritiqueResponseFormat = "pi-jsonl",
 ): Either.Either<ContentCritiqueVerdict, ContentCritiqueResponseError> => {
+  if (format === "pi-jsonl")
+    return Either.flatMap(parseSettledContentResponse(output), text =>
+      Either.flatMap(parseJson(text), parseVerdict),
+    )
+  if (format !== "verdict-json")
+    return failure("invalid-format", "Critic response format is unsupported.")
   if (typeof output !== "string")
     return failure("invalid-output", "Critic output must be text.")
   if (output.length > MAX_CONTENT_CRITIQUE_OUTPUT_CHARACTERS)
@@ -45,11 +51,20 @@ export const parseContentCritiqueResponse = (
       "output-too-large",
       "Critic output exceeded the bounded response size.",
     )
+  return Either.flatMap(parseJson(output.trim()), parseVerdict)
+}
 
-  if (format === "verdict-json")
-    return Either.flatMap(parseJson(output.trim()), parseVerdict)
-  if (format !== "pi-jsonl")
-    return failure("invalid-format", "Critic response format is unsupported.")
+/** Complete, normally settled assistant text; never accepts partial output. */
+export const parseSettledContentResponse = (
+  output: unknown,
+): Either.Either<string, ContentCritiqueResponseError> => {
+  if (typeof output !== "string")
+    return failure("invalid-output", "Critic output must be text.")
+  if (output.length > MAX_CONTENT_CRITIQUE_OUTPUT_CHARACTERS)
+    return failure(
+      "output-too-large",
+      "Critic output exceeded the bounded response size.",
+    )
 
   if (!output.endsWith("\n"))
     return failure(
@@ -141,7 +156,7 @@ export const parseContentCritiqueResponse = (
     .filter(part => part.type === "text")
     .map(part => part.text)
     .join("")
-  return Either.flatMap(parseJson(text), parseVerdict)
+  return Either.right(text)
 }
 
 type JsonEvent = Record<string, unknown> & { readonly type: string }

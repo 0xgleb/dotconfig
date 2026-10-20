@@ -5,6 +5,15 @@ import type {
 } from "@earendil-works/pi-coding-agent"
 import { Effect, Either } from "effect"
 import type { DeliveryResult } from "../../host/model-input-delivery.ts"
+import type {
+  ContentProcess,
+  ContentProcessContext,
+} from "../shared/content-process.ts"
+import {
+  createReportJobs,
+  REPORT_JOB_ENTRY,
+  type ReportSnapshot,
+} from "./report-jobs.ts"
 import { Type } from "typebox"
 import {
   backlogRequirementsFromText,
@@ -48,6 +57,8 @@ import {
   deliverCabaCardRelay,
   deliverChatRelay,
   deliverOwnerRelay,
+  deliverPreparedOwnerRelay,
+  agentReportText,
   deliverStakeholderUpdate,
   type OwnerRelayDeliveryError,
 } from "./owner-telegram.ts"
@@ -125,6 +136,10 @@ const safeDeliveryError = (error: OwnerRelayDeliveryError): string =>
 
 export interface RemoteControlOptions {
   readonly authorizeOwnerInput?: (inputId: string) => DeliveryResult<void>
+  readonly reporting?: {
+    readonly execution: NonNullable<ContentProcessContext["execution"]>
+    readonly process: ContentProcess
+  }
 }
 
 export default function remoteControl(
@@ -132,7 +147,7 @@ export default function remoteControl(
   onAuthenticatedOwnerMessage?: (receivedAt: number) => void,
   options: RemoteControlOptions = {},
 ): void {
-  registerRuntimeVersion(pi, "remote-control", "2026.09.04.1")
+  registerRuntimeVersion(pi, "remote-control", "2026.10.17.3")
   const store = makeRemoteBridgeStore(
     remoteBridgeDatabasePath(process.env.XDG_STATE_HOME, homedir()),
   )
@@ -148,6 +163,75 @@ export default function remoteControl(
   const run = <A, E>(
     operation: Effect.Effect<A, E>,
   ): Promise<Either.Either<A, E>> => Effect.runPromise(Effect.either(operation))
+
+  const renderReports = (snapshots: readonly ReportSnapshot[]) => {
+    const ctx = latestCtx
+    if (!ctx?.hasUI) return
+    const pending = snapshots.filter(job =>
+      ["queued", "reviewing", "revising", "sending"].includes(job.status),
+    )
+    ctx.ui.setStatus(
+      "telegram-reports",
+      pending.length ? `Telegram: ${pending.length} processing` : undefined,
+    )
+    ctx.ui.setWidget(
+      "telegram-reports",
+      snapshots.length
+        ? snapshots
+            .slice(-4)
+            .map(
+              job =>
+                `Telegram ${job.id.slice(0, 8)} · ${job.kind} · ${job.status}${job.pass ? ` ${job.pass}/2` : ""}`,
+            )
+        : undefined,
+    )
+  }
+  const reports = createReportJobs({
+    execution: options.reporting?.execution,
+    process: options.reporting?.process,
+    persist: snapshot =>
+      Either.try({
+        try: () => {
+          pi.appendEntry(REPORT_JOB_ENTRY, {
+            ...snapshot,
+            ...(snapshot.status === "needs-revision"
+              ? { reason: "Editorial revision needed; see this session." }
+              : {}),
+          })
+          if (
+            snapshot.kind === "stakeholder-update" &&
+            ["delivered", "undelivered", "uncertain"].includes(snapshot.status)
+          )
+            pi.appendEntry("stakeholder-update-audit", {
+              sender: snapshot.sender,
+              deliveredAt: snapshot.updatedAt,
+              characters: snapshot.characters,
+              outcome: snapshot.status,
+              ...(snapshot.reason ? { reason: snapshot.reason } : {}),
+            })
+        },
+        catch: () => "Report status journal unavailable.",
+      }),
+    present: renderReports,
+    prepare: (kind, text, sender) =>
+      kind === "owner-report" ? agentReportText(text, sender) : text,
+    deliver: async (kind, text, sender, signal) => {
+      const result = await run(
+        kind === "owner-report"
+          ? deliverPreparedOwnerRelay(text, { signal })
+          : deliverStakeholderUpdate(text, { signal }),
+      )
+      return Either.isRight(result)
+        ? { outcome: "delivered" }
+        : {
+            outcome:
+              result.left.code === "send_uncertain"
+                ? "uncertain"
+                : "undelivered",
+            reason: safeDeliveryError(result.left),
+          }
+    },
+  })
 
   pi.registerTool({
     name: "deliver_caba_tracker",
@@ -183,8 +267,9 @@ export default function remoteControl(
     name: "report_owner",
     label: "Report to owner",
     description:
-      "Deliver a bounded owner-facing report through the verified Piece of Pi Telegram transport and return typed delivery evidence.",
-    promptSnippet: "Deliver a verified report to the owner on Telegram",
+      "Queue a bounded owner report for internal background critic/author review (at most two critique passes), then Telegram delivery. Returns queued, not delivered. Processing and final status appear in the UI and report_delivery; do not run a separate foreground review.",
+    promptSnippet:
+      "Queue an internally reviewed Telegram report without blocking the foreground",
     promptGuidelines: [
       "Use report_owner for an explicitly requested owner report or a verified registry relay request.",
       "Keep reports concise, link identifiers, and never include credentials, prompts, raw logs, or full diffs.",
@@ -194,26 +279,32 @@ export default function remoteControl(
       { text: Type.String({ minLength: 1, maxLength: 16_000 }) },
       { additionalProperties: false },
     ),
-    async execute(_toolCallId, params, _signal, _onUpdate, ctx) {
-      const delivery = await run(
-        deliverOwnerRelay(params.text, bridgeAgentLabel(ctx)),
-      )
-      if (Either.isLeft(delivery)) {
-        const reason = safeDeliveryError(delivery.left)
-        return {
-          content: [
-            { type: "text", text: `Owner report was not delivered: ${reason}` },
-          ],
-          details: { outcome: "undelivered", reason },
-          isError: true,
-        }
-      }
-      return {
-        content: [
-          { type: "text", text: "Owner report delivered on Telegram." },
-        ],
-        details: { outcome: "delivered" },
-      }
+    async execute(_toolCallId, params, signal, _onUpdate, ctx) {
+      latestCtx = ctx
+      const sessionId = ctx.sessionManager.getSessionId()
+      const queued = reports.submit({
+        isCurrent: () => latestCtx?.sessionManager.getSessionId() === sessionId,
+        kind: "owner-report",
+        text: params.text,
+        sender: bridgeAgentLabel(ctx),
+        context: { cwd: ctx.cwd, getModel: () => ctx.model },
+        signal,
+      })
+      return Either.isLeft(queued)
+        ? {
+            content: [{ type: "text", text: queued.left.reason }],
+            details: queued.left,
+            isError: true,
+          }
+        : {
+            content: [
+              {
+                type: "text",
+                text: `Telegram report ${queued.right.id}: ${queued.right.status}. Internal review runs in background; queued is not delivery evidence.`,
+              },
+            ],
+            details: { outcome: queued.right.status, jobId: queued.right.id },
+          }
     },
   })
 
@@ -221,7 +312,7 @@ export default function remoteControl(
     name: "deliver_stakeholder_update",
     label: "Deliver stakeholder update",
     description:
-      "Deliver exact stakeholder-forwardable content to the owner's Telegram without a visible agent banner, while retaining sender audit metadata privately.",
+      "Queue exact stakeholder-forwardable content for internal background critique and Telegram delivery without an agent banner. Text is never automatically rewritten. Returns queued, not delivered; report_delivery and the UI show final status.",
     promptSnippet:
       "Deliver exact verified stakeholder-forwardable content to the owner on Telegram",
     promptGuidelines: [
@@ -233,44 +324,84 @@ export default function remoteControl(
       { text: Type.String({ minLength: 1, maxLength: 16_000 }) },
       { additionalProperties: false },
     ),
+    async execute(_toolCallId, params, signal, _onUpdate, ctx) {
+      latestCtx = ctx
+      const sessionId = ctx.sessionManager.getSessionId()
+      const queued = reports.submit({
+        isCurrent: () => latestCtx?.sessionManager.getSessionId() === sessionId,
+        kind: "stakeholder-update",
+        text: params.text,
+        sender: bridgeAgentLabel(ctx),
+        context: { cwd: ctx.cwd, getModel: () => ctx.model },
+        signal,
+      })
+      return Either.isLeft(queued)
+        ? {
+            content: [{ type: "text", text: queued.left.reason }],
+            details: queued.left,
+            isError: true,
+          }
+        : {
+            content: [
+              {
+                type: "text",
+                text: `Stakeholder update ${queued.right.id}: ${queued.right.status}. Exact text is reviewed in background, never rewritten.`,
+              },
+            ],
+            details: {
+              outcome: queued.right.status,
+              jobId: queued.right.id,
+              mode: "stakeholder_update",
+            },
+          }
+    },
+  })
+
+  pi.registerTool({
+    name: "report_delivery",
+    label: "Telegram delivery status",
+    description:
+      "Inspect or cancel background Telegram report jobs. Only delivered is delivery evidence. No automatic polling or model wakeups are needed: the UI shows progress.",
+    parameters: Type.Object(
+      {
+        action: Type.Union([Type.Literal("status"), Type.Literal("cancel")]),
+        jobId: Type.Optional(Type.String({ minLength: 1, maxLength: 80 })),
+      },
+      { additionalProperties: false },
+    ),
     async execute(_toolCallId, params, _signal, _onUpdate, ctx) {
-      const sender = bridgeAgentLabel(ctx)
-      const deliveredAt = Date.now()
-      const delivery = await run(deliverStakeholderUpdate(params.text))
-      if (Either.isLeft(delivery)) {
-        const reason = safeDeliveryError(delivery.left)
-        pi.appendEntry("stakeholder-update-audit", {
-          sender,
-          deliveredAt,
-          characters: params.text.length,
-          outcome: "undelivered",
-          reason,
-        })
+      latestCtx = ctx
+      if (
+        params.action === "cancel" &&
+        (!params.jobId || !reports.cancel(params.jobId))
+      )
         return {
           content: [
             {
               type: "text",
-              text: `Stakeholder update was not delivered: ${reason}`,
+              text: "Report job not found; cancel requires jobId.",
             },
           ],
-          details: { outcome: "undelivered", reason },
+          details: { outcome: "not-found" },
           isError: true,
         }
-      }
-      pi.appendEntry("stakeholder-update-audit", {
-        sender,
-        deliveredAt,
-        characters: params.text.length,
-        outcome: "delivered",
-      })
+      const jobs = reports
+        .snapshots()
+        .filter(job => !params.jobId || job.id === params.jobId)
       return {
         content: [
           {
             type: "text",
-            text: "Exact stakeholder update delivered on Telegram.",
+            text:
+              jobs
+                .map(
+                  job =>
+                    `${job.id} · ${job.status}${job.reason ? ` · ${job.reason}` : ""}`,
+                )
+                .join("\n") || "No report jobs.",
           },
         ],
-        details: { outcome: "delivered", mode: "stakeholder_update" },
+        details: { jobs },
       }
     },
   })
@@ -946,8 +1077,19 @@ export default function remoteControl(
     return { compaction: mechanicalDispatchCompaction(event.preparation) }
   })
 
+  pi.on("session_before_switch", () => {
+    reports.cancelAll()
+  })
+  pi.on("session_before_fork", () => {
+    reports.cancelAll()
+  })
+  pi.on("session_before_tree", () => {
+    reports.cancelAll()
+  })
   pi.on("session_start", (_event, ctx) => {
     latestCtx = ctx
+    const restored = reports.restore(ctx.sessionManager.getBranch())
+    if (Either.isLeft(restored)) ctx.ui.notify(restored.left, "warning")
     if (timer) clearInterval(timer)
     timer = setInterval(() => void sync(ctx), POLL_MS)
     timer.unref()
@@ -1041,6 +1183,9 @@ export default function remoteControl(
   })
 
   pi.on("session_shutdown", async (_event, ctx) => {
+    reports.close()
+    ctx.ui.setStatus("telegram-reports", undefined)
+    ctx.ui.setWidget("telegram-reports", undefined)
     if (timer) clearInterval(timer)
     timer = undefined
     latestCtx = ctx

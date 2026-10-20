@@ -193,7 +193,7 @@ const questionsExtension: (
   pi: ExtensionAPI,
   execution?: JudgeContext["execution"],
 ) => void = (pi, execution) => {
-  registerRuntimeVersion(pi, "questions", "2026.10.17.2")
+  registerRuntimeVersion(pi, "questions", "2026.10.17.3")
   let state = emptyQuestionState
   let dialogOpen = false
   let latestCtx: ExtensionContext | undefined
