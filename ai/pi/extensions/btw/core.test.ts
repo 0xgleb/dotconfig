@@ -47,6 +47,17 @@ test("btw transcript is bounded, recent-first, and excludes custom extension noi
   assert.match(transcript, /recent answer/)
 })
 
+test("many short session messages stay inside the full separator-inclusive budget", () => {
+  const entries = Array.from({ length: 30 }, (_, index) => ({
+    type: "message",
+    message: { role: "user", content: `message-${index}` },
+  }))
+
+  const transcript = buildBoundedTranscript(entries, 120)
+  assert.ok(transcript.length <= 120, `got ${transcript.length} characters`)
+  assert.ok(transcript.includes("message-29"))
+})
+
 test("tiny transcript budgets are still hard limits", () => {
   const transcript = buildBoundedTranscript(
     [

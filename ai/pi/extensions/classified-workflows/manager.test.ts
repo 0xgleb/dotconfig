@@ -14,8 +14,13 @@ import {
 import { MANAGER_CHAT_ENTRY, MANAGER_SUMMARY_ENTRY } from "./manager-core.ts"
 import { createOwnerAllowance, OWNER_ALLOWANCE_MS } from "./owner-allowance.ts"
 import { todoWorkSnapshot } from "./goal.ts"
+import type { ManagerChatView } from "./manager-chat.ts"
 
-const fixture = (mode = "tui", reply?: ManagerModel) => {
+const fixture = (
+  mode = "tui",
+  reply?: ManagerModel,
+  chatView?: ManagerChatView,
+) => {
   let now = 1000
   let timer: (() => void) | undefined
   let nextId = 2
@@ -96,7 +101,14 @@ const fixture = (mode = "tui", reply?: ManagerModel) => {
       ? reply(_ctx, request)
       : Either.right("Recorded outcome; next priority is task 1.")
   }
-  manager = registerWorkManager(pi, guard, model)
+  const view: ManagerChatView =
+    chatView ??
+    (async (_ctx, options) => {
+      if (options.initialQuestion) {
+        await options.submit(options.initialQuestion, options.signal)
+      }
+    })
+  manager = registerWorkManager(pi, guard, model, view)
   panelExtension(pi)
   const emit = async (name: string, event: unknown = {}) => {
     for (const callback of hooks.get(name) ?? []) await callback(event, ctx)
@@ -288,4 +300,43 @@ test("model tool calls, terminal controls, and oversized partial responses fail 
     )
     assert.ok(Either.isLeft(result))
   }
+})
+
+test("manager receives current worker messages and tool outcomes from session history", async () => {
+  const f = fixture()
+  f.entries.push(
+    {
+      id: "worker-message",
+      type: "message",
+      message: {
+        role: "assistant",
+        content: [{ type: "text", text: "Running the focused mapping tests." }],
+      },
+    },
+    {
+      id: "worker-result",
+      type: "message",
+      message: {
+        role: "toolResult",
+        toolName: "bash",
+        content: [{ type: "text", text: "Mapping suite: 12 tests passed." }],
+      },
+    },
+  )
+
+  await f.emit("session_start")
+  await f.command("What did the worker actually verify?")
+
+  const body = JSON.parse(f.requests[0]?.body ?? "{}") as {
+    workerSession?: { source: string; transcript: string }
+  }
+  assert.equal(body.workerSession?.source, "current_worker_branch")
+  assert.ok(
+    body.workerSession?.transcript.includes(
+      "Running the focused mapping tests.",
+    ),
+  )
+  assert.ok(
+    body.workerSession?.transcript.includes("Mapping suite: 12 tests passed."),
+  )
 })

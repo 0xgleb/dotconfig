@@ -1,11 +1,15 @@
-import {
-  BorderedLoader,
-  type ExtensionAPI,
-  type ExtensionContext,
+import type {
+  ExtensionAPI,
+  ExtensionContext,
 } from "@earendil-works/pi-coding-agent"
 import { Text } from "@earendil-works/pi-tui"
 import { Effect, Either } from "effect"
-import { ManagerAnswerPanel } from "../btw/index.ts"
+import {
+  openManagerChat,
+  type ManagerChatView,
+  type ManagerChatOptions,
+} from "./manager-chat.ts"
+import { buildBoundedTranscript } from "../btw/core.ts"
 import { readPromptFile } from "../shared/prompt-text.ts"
 import { registerRuntimeVersion } from "../shared/runtime-version.ts"
 import type { OwnerAllowance, OwnerWindow } from "./owner-allowance.ts"
@@ -14,6 +18,7 @@ import {
   MANAGER_PRIORITY_ENTRY,
   MANAGER_SUMMARY_ENTRY,
   ManagerError,
+  decodeManagerSummary,
   managerObservation,
   managerSummaryExists,
   parseManagerPriorities,
@@ -152,24 +157,7 @@ export const completeManagerModel: ManagerModel = async (ctx, request) => {
       : decodeReply(result.right)
   }
 
-  if (request.kind === "summary") return run(request.signal)
-
-  return ctx.ui.custom<Either.Either<string, ManagerError>>(
-    (tui, theme, _keys, done) => {
-      const loader = new BorderedLoader(tui, theme, "Manager…")
-      let settled = false
-      const finish = (result: Either.Either<string, ManagerError>) => {
-        if (!settled) {
-          settled = true
-          done(result)
-        }
-      }
-      loader.onAbort = () =>
-        finish(failure("cancelled", "Manager request cancelled."))
-      void run(AbortSignal.any([request.signal, loader.signal])).then(finish)
-      return loader
-    },
-  )
+  return run(request.signal)
 }
 
 interface ObservedRound {
@@ -184,11 +172,12 @@ export const registerWorkManager = (
   pi: ExtensionAPI,
   guard: OwnerAllowance,
   model: ManagerModel = completeManagerModel,
+  view: ManagerChatView = openManagerChat,
 ) => {
   let context: ExtensionContext | undefined
   let round: ObservedRound | undefined
   let generation = 0
-  let busy = false
+  let chatScope: AbortController | undefined
   const controllers = new Set<AbortController>()
 
   const token = (ctx: ExtensionContext) => ({
@@ -274,6 +263,11 @@ export const registerWorkManager = (
         return {
           tasks,
           priorities,
+          workerSession: {
+            source: "current_worker_branch" as const,
+            maxCharacters: 24_000,
+            transcript: buildBoundedTranscript(ctx.sessionManager.getBranch()),
+          },
           view: {
             tasks: observation.tasks,
             total: observation.total,
@@ -288,13 +282,17 @@ export const registerWorkManager = (
     ctx: ExtensionContext,
     kind: ManagerRequest["kind"],
     body: string,
+    ownerSignal?: AbortSignal,
   ): Promise<Either.Either<string, ManagerError>> => {
     const controller = new AbortController()
+    const signal = ownerSignal
+      ? AbortSignal.any([controller.signal, ownerSignal])
+      : controller.signal
     controllers.add(controller)
     const result = await Effect.runPromise(
       Effect.either(
         Effect.tryPromise({
-          try: () => model(ctx, { kind, body, signal: controller.signal }),
+          try: () => model(ctx, { kind, body, signal }),
           catch: () =>
             new ManagerError({
               code: "model_failed",
@@ -304,6 +302,8 @@ export const registerWorkManager = (
       ),
     )
     controllers.delete(controller)
+    if (signal.aborted)
+      return failure("cancelled", "Manager request cancelled.")
     if (Either.isLeft(result)) return Either.left(result.left)
     return Either.flatMap(result.right, answerText)
   }
@@ -433,6 +433,7 @@ export const registerWorkManager = (
               reason: "A starting task snapshot was not captured.",
             },
         worker: current.right.view,
+        workerSession: current.right.workerSession,
         observedToolResults: baseline
           ? { total: baseline.tools, failed: baseline.failures }
           : undefined,
@@ -446,6 +447,8 @@ export const registerWorkManager = (
 
   const resetContext = (ctx: ExtensionContext) => {
     generation += 1
+    chatScope?.abort()
+    chatScope = undefined
     for (const controller of controllers) controller.abort()
     pending = undefined
     round = undefined
@@ -454,7 +457,7 @@ export const registerWorkManager = (
     if (ctx.mode === "tui") ctx.ui.setWidget("manager", ["Manager · /manager"])
   }
 
-  registerRuntimeVersion(pi, "manager", "0.1.0")
+  registerRuntimeVersion(pi, "manager", "0.2.0")
 
   pi.on("session_start", (_event, ctx) => resetContext(ctx))
   pi.on("session_tree", (_event, ctx) => resetContext(ctx))
@@ -482,6 +485,8 @@ export const registerWorkManager = (
 
   pi.on("session_shutdown", () => {
     generation += 1
+    chatScope?.abort()
+    chatScope = undefined
     for (const controller of controllers) controller.abort()
     pending = undefined
   })
@@ -489,46 +494,40 @@ export const registerWorkManager = (
   pi.registerEntryRenderer<ManagerSummary>(
     MANAGER_SUMMARY_ENTRY,
     (entry, _options, theme) => {
-      const summary = entry.data
+      const decoded = decodeManagerSummary(entry.data)
+      if (Either.isLeft(decoded)) return new Text(decoded.left.message, 0, 0)
+      const summary = decoded.right
       if (summary.status === "started") return undefined
       return new Text(
-        `${theme.fg("accent", "Manager round report")} · ${summary.elapsedMs ?? "?"}ms\n${summary.text ?? summary.status}`,
+        `${theme.fg("accent", "Manager round report")} · ${summary.elapsedMs}ms\n${summary.text}`,
         0,
         0,
       )
     },
   )
 
-  const priorities = (ctx: ExtensionContext, text: string) => {
+  const priorities = (
+    ctx: ExtensionContext,
+    text: string,
+  ): Either.Either<string, ManagerError> => {
     const tasks =
       text.trim() === "clear"
         ? Either.right([])
         : readManagerTasks(ctx.sessionManager.getBranch())
-    if (Either.isLeft(tasks)) {
-      showError(ctx, tasks.left)
-      return
-    }
+    if (Either.isLeft(tasks)) return Either.left(tasks.left)
+
     const parsed = parseManagerPriorities(text, tasks.right)
-    if (Either.isLeft(parsed)) {
-      showError(ctx, parsed.left)
-      return
-    }
-    const saved = save(MANAGER_PRIORITY_ENTRY, parsed.right)
-    if (Either.isLeft(saved)) {
-      showError(ctx, saved.left)
-      return
-    }
-    ctx.ui.notify(
+    if (Either.isLeft(parsed)) return Either.left(parsed.left)
+
+    return Either.map(save(MANAGER_PRIORITY_ENTRY, parsed.right), () =>
       parsed.right.ids.length
         ? `Continuation order: ${parsed.right.ids.map(id => `#${id}`).join(", ")}`
         : "Manager priority order cleared.",
-      "info",
     )
   }
 
   pi.registerCommand("manager", {
-    description:
-      "Discuss worker priorities; priorities <ids>, history, summary, reset",
+    description: "Open manager chat; priorities <ids>, history, summary, reset",
     handler: async (args, ctx) => {
       if (ctx.mode !== "tui") {
         ctx.ui.notify("Manager chat requires the interactive TUI.", "warning")
@@ -538,28 +537,8 @@ export const registerWorkManager = (
       context = ctx
       const command = args.trim()
 
-      const display = (question: string, answer: string) =>
-        ctx.ui.custom<boolean>(
-          (tui, theme, _keys, done) =>
-            new ManagerAnswerPanel(
-              question,
-              answer,
-              ctx.model?.id ?? "manager",
-              theme,
-              done,
-              () => tui.requestRender(),
-            ),
-          {
-            overlay: true,
-            overlayOptions: {
-              width: "90%",
-              maxHeight: "85%",
-              anchor: "center",
-            },
-          },
-        )
-
       if (command === "reset") {
+        chatScope?.abort()
         const saved = save(MANAGER_CHAT_ENTRY, { version: 1, turns: [] })
         if (Either.isLeft(saved)) showError(ctx, saved.left)
         else ctx.ui.notify("Manager conversation cleared.", "info")
@@ -567,10 +546,30 @@ export const registerWorkManager = (
       }
 
       if (command.startsWith("priorities ")) {
-        priorities(ctx, command.slice("priorities ".length))
+        const result = priorities(ctx, command.slice("priorities ".length))
+        if (Either.isLeft(result)) showError(ctx, result.left)
+        else ctx.ui.notify(result.right, "info")
         return
       }
 
+      if (chatScope) {
+        showError(
+          ctx,
+          new ManagerError({
+            code: "busy",
+            message: "Manager chat is already open.",
+          }),
+        )
+        return
+      }
+
+      const history = readManagerTurns(ctx.sessionManager.getBranch())
+      if (Either.isLeft(history)) {
+        showError(ctx, history.left)
+        return
+      }
+
+      let notice: string | undefined
       if (command === "summary") {
         const entry = ctx.sessionManager
           .getBranch()
@@ -579,106 +578,64 @@ export const registerWorkManager = (
               item.type === "custom" &&
               item.customType === MANAGER_SUMMARY_ENTRY,
           )
-        const data = entry?.type === "custom" ? entry.data : undefined
-        if (record(data) && typeof data.text === "string") {
-          await display("Round report", data.text)
-          return
-        }
-        ctx.ui.notify(
-          record(data) && data.status === "started"
-            ? "Manager report is preparing."
-            : "No manager round report has been recorded.",
-          "info",
-        )
-        return
+        if (entry?.type === "custom") {
+          const summary = decodeManagerSummary(entry.data)
+          if (Either.isLeft(summary)) {
+            showError(ctx, summary.left)
+            return
+          }
+          notice =
+            summary.right.status === "started"
+              ? "Manager report is preparing."
+              : summary.right.text
+        } else notice = "No manager round report has been recorded."
       }
 
-      if (busy) {
-        showError(
-          ctx,
-          new ManagerError({
-            code: "busy",
-            message: "Manager is already answering.",
-          }),
-        )
-        return
-      }
-
-      if (command === "history") {
-        const history = readManagerTurns(ctx.sessionManager.getBranch())
-        if (Either.isLeft(history)) {
-          showError(ctx, history.left)
-          return
-        }
-        await display(
-          "Manager conversation",
-          history.right
-            .map(turn => `You: ${turn.question}\n\nManager: ${turn.answer}`)
-            .join("\n\n") || "Start a conversation with /manager.",
-        )
-        return
-      }
-
-      let question =
-        command || (await ctx.ui.input("Manager", "Discuss priorities"))
-
-      while (question !== undefined && question.trim()) {
+      const submit: ManagerChatOptions["submit"] = async (question, signal) => {
         if (question.startsWith("/manager priorities ")) {
-          priorities(ctx, question.slice("/manager priorities ".length))
-          question = await ctx.ui.input("Manager", "Discuss priorities")
-          continue
+          return priorities(ctx, question.slice("/manager priorities ".length))
         }
-        if (question.length > 4000 || unsafeControl.test(question)) {
-          showError(
-            ctx,
-            new ManagerError({
-              code: "invalid_input",
-              message:
-                "Manager questions must fit 4,000 characters and contain no terminal controls.",
-            }),
+        if (
+          !question.trim() ||
+          question.length > 4000 ||
+          unsafeControl.test(question)
+        ) {
+          return failure(
+            "invalid_input",
+            "Manager questions must fit 4,000 characters and contain no terminal controls.",
           )
-          return
         }
-        const history = readManagerTurns(ctx.sessionManager.getBranch())
-        if (Either.isLeft(history)) {
-          showError(ctx, history.left)
-          return
-        }
+
+        const previous = readManagerTurns(ctx.sessionManager.getBranch())
+        if (Either.isLeft(previous)) return Either.left(previous.left)
         const current = snapshot(ctx)
-        if (Either.isLeft(current)) {
-          showError(ctx, current.left)
-          return
-        }
+        if (Either.isLeft(current)) return Either.left(current.left)
+
         const origin = token(ctx)
-        busy = true
         const result = await request(
           ctx,
           "chat",
           JSON.stringify({
             worker: current.right.view,
+            workerSession: current.right.workerSession,
             priorities: current.right.priorities?.ids ?? [],
-            history: history.right,
+            history: previous.right,
+            managerNotice: notice,
             question,
           }),
+          signal,
         )
-        busy = false
+
         if (!sameBranch(ctx, origin)) {
-          showError(
-            ctx,
-            new ManagerError({
-              code: "session_changed",
-              message:
-                "Manager response discarded because the session branch changed.",
-            }),
+          return failure(
+            "session_changed",
+            "Manager response discarded because the session branch changed.",
           )
-          return
         }
-        if (Either.isLeft(result)) {
-          showError(ctx, result.left)
-          return
-        }
+        if (Either.isLeft(result)) return Either.left(result.left)
+
         const turns: ManagerTurn[] = [
-          ...history.right,
+          ...previous.right,
           { question, answer: result.right },
         ].slice(-12)
         while (
@@ -686,17 +643,43 @@ export const registerWorkManager = (
           turns.reduce(
             (total, turn) => total + turn.question.length + turn.answer.length,
             0,
-          ) > 24000
-        )
+          ) > 24_000
+        ) {
           turns.shift()
-        const saved = save(MANAGER_CHAT_ENTRY, { version: 1, turns })
-        if (Either.isLeft(saved)) {
-          showError(ctx, saved.left)
-          return
         }
-        if (!(await display(question, result.right))) return
-        question = await ctx.ui.input("Manager", "Discuss priorities")
+        const saved = save(MANAGER_CHAT_ENTRY, { version: 1, turns })
+        return Either.isLeft(saved) ? Either.left(saved.left) : result
       }
+
+      const scope = new AbortController()
+      chatScope = scope
+      const initialQuestion =
+        command && command !== "history" && command !== "summary"
+          ? command
+          : undefined
+      const opened = await Effect.runPromise(
+        Effect.either(
+          Effect.tryPromise({
+            try: () =>
+              view(ctx, {
+                turns: history.right,
+                signal: scope.signal,
+                submit,
+                ...(notice === undefined ? {} : { notice }),
+                ...(initialQuestion === undefined ? {} : { initialQuestion }),
+              }),
+            catch: () =>
+              new ManagerError({
+                code: "invalid_state",
+                message: "Manager chat view failed.",
+              }),
+          }),
+        ),
+      )
+
+      scope.abort()
+      if (chatScope === scope) chatScope = undefined
+      if (Either.isLeft(opened)) showError(ctx, opened.left)
     },
   })
 

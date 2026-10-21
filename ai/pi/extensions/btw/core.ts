@@ -1,5 +1,6 @@
 const DEFAULT_TRANSCRIPT_LIMIT = 24_000
 const DEFAULT_TOOL_RESULT_LIMIT = 1_000
+const TRANSCRIPT_SEPARATOR = "\n\n---\n\n"
 
 export interface TranscriptMessageLike {
   readonly role?: string
@@ -65,7 +66,7 @@ export const buildBoundedTranscript = (
     index -= 1
   ) {
     const section = sections[index] ?? ""
-    const separatorLength = kept.length > 0 ? 5 : 0
+    const separatorLength = kept.length > 0 ? TRANSCRIPT_SEPARATOR.length : 0
     if (separatorLength >= remaining) break
     remaining -= separatorLength
     if (section.length <= remaining) {
@@ -81,7 +82,7 @@ export const buildBoundedTranscript = (
     )
     remaining = 0
   }
-  return kept.join("\n\n---\n\n")
+  return kept.join(TRANSCRIPT_SEPARATOR)
 }
 
 export const sideQuestionPrompt = (
