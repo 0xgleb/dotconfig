@@ -6,6 +6,8 @@ export type PromptFile =
   | "classifier-enforce-main-hooks.md"
   | "classifier-hook-authority.md"
   | "classifier-request-guidance.md"
+  | "manager-system.md"
+  | "manager-round-summary.md"
 
 /** Trusted repository assets, never a filename or template supplied by a model.
  * Missing assets are external I/O failures; callers' existing execution boundary

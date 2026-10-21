@@ -6,7 +6,7 @@ import { OWNER_ALLOWANCE_ENTRY, OWNER_ALLOWANCE_MS } from "./owner-allowance.ts"
 test("production entrypoint installs the hard deadline guard and cancels detached workers", () => {
   const source = readFileSync(new URL("./index.ts", import.meta.url), "utf8")
   assert.ok(
-    /registerOwnerAllowance\(pi/.test(source),
+    /registerOwnerAllowance\(\s*pi\s*,/u.test(source),
     "production must install the guard",
   )
   assert.ok(

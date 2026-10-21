@@ -34,13 +34,17 @@ export interface ManagerObservation {
   readonly total: number
   readonly omitted: number
 }
-export interface ManagerSummary {
+export type ManagerSummary = {
   readonly version: 1
   readonly round: number
-  readonly status: "started" | "completed" | "failed"
-  readonly text?: string
-  readonly elapsedMs?: number
-}
+} & (
+  | { readonly status: "started" }
+  | {
+      readonly status: "completed" | "failed"
+      readonly text: string
+      readonly elapsedMs: number
+    }
+)
 const record = (value: unknown): value is Record<string, unknown> =>
   typeof value === "object" && value !== null && !Array.isArray(value)
 const positiveId = (value: unknown): value is number =>
@@ -164,11 +168,21 @@ export const managerObservation = (
   tasks: readonly Todo[],
   priorities?: ManagerPriorities,
 ): ManagerObservation => {
-  const ordered = orderManagerTasks(tasks, priorities)
+  const statusRank: Readonly<Record<Todo["status"], number>> = {
+    in_progress: 0,
+    in_review: 1,
+    pending: 2,
+    blocked: 3,
+    deferred: 4,
+    completed: 5,
+    cancelled: 6,
+  }
+  const recentWork = tasks
+    .toReversed()
+    .sort((left, right) => statusRank[left.status] - statusRank[right.status])
+  const ordered = orderManagerTasks(recentWork, priorities)
   const visible = ordered
-    .filter(task =>
-      ["pending", "in_progress", "in_review", "blocked"].includes(task.status),
-    )
+    .filter(task => task.status !== "completed" && task.status !== "cancelled")
     .slice(0, 24)
   return {
     tasks: visible.map(task => ({
@@ -208,12 +222,54 @@ export const readManagerTurns = (
       turn.question.length > 4000 ||
       typeof turn.answer !== "string" ||
       turn.answer.length === 0 ||
-      turn.answer.length > 12000
+      turn.answer.length > 12000 ||
+      /[\u0000-\u0008\u000b\u000c\u000e-\u001f\u007f]/u.test(
+        turn.question + turn.answer,
+      )
     )
       return invalid("Stored manager conversation contains an invalid turn.")
     turns.push({ question: turn.question, answer: turn.answer })
   }
   return Either.right(turns)
+}
+
+export const decodeManagerSummary = (
+  value: unknown,
+): Either.Either<ManagerSummary, ManagerError> => {
+  if (
+    !record(value) ||
+    value.version !== 1 ||
+    typeof value.round !== "number" ||
+    !Number.isSafeInteger(value.round) ||
+    value.round < 0
+  ) {
+    return invalid("Stored manager summary has an invalid round identity.")
+  }
+
+  if (value.status === "started") {
+    return Either.right({ version: 1, round: value.round, status: "started" })
+  }
+
+  if (
+    (value.status !== "completed" && value.status !== "failed") ||
+    typeof value.text !== "string" ||
+    !value.text.trim() ||
+    value.text.length > 12000 ||
+    /[\u0000-\u0008\u000b\u000c\u000e-\u001f\u007f]/u.test(value.text) ||
+    typeof value.elapsedMs !== "number" ||
+    !Number.isSafeInteger(value.elapsedMs) ||
+    value.elapsedMs < 0
+  ) {
+    return invalid("Stored manager summary has an invalid result.")
+  }
+
+  return Either.right({
+    version: 1,
+    round: value.round,
+    status: value.status,
+    text: value.text,
+    elapsedMs: value.elapsedMs,
+  })
 }
 
 export const managerSummaryExists = (
@@ -227,20 +283,9 @@ export const managerSummaryExists = (
       entry.customType !== MANAGER_SUMMARY_ENTRY
     )
       continue
-    const value = entry.data
-    if (
-      !record(value) ||
-      value.version !== 1 ||
-      typeof value.round !== "number" ||
-      !Number.isSafeInteger(value.round) ||
-      value.round < 0 ||
-      typeof value.status !== "string" ||
-      !["started", "completed", "failed"].includes(value.status)
-    )
-      return invalid(
-        "Stored manager summary reservation is malformed; automatic replay is blocked.",
-      )
-    if (value.round === round) return Either.right(true)
+    const decoded = decodeManagerSummary(entry.data)
+    if (Either.isLeft(decoded)) return Either.left(decoded.left)
+    if (decoded.right.round === round) return Either.right(true)
   }
   return Either.right(false)
 }

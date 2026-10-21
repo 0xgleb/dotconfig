@@ -10,6 +10,9 @@
 - Execute the requested operation, not a preferred redesign. An unchanged code
   move is not permission to refactor, harden, repair adjacent systems, or invent
   prerequisites. Coordination and planning do not substitute for delivery.
+- Document implemented behavior. Do not turn conversational suggestions into
+  documentation or catalogue absent and deferred features merely because they
+  were discussed.
 - Honor explicit authorized exceptions to user-owned project standards within
   higher-priority safety and authority boundaries. Do not invent approval gates
   or repeatedly request authorization already given for the same operation.

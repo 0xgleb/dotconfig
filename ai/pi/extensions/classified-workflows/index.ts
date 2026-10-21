@@ -18,6 +18,7 @@ import { Effect, Either } from "effect"
 import { Type } from "typebox"
 import { registerGitHookAuthority } from "./hook-authority.ts"
 import { registerOwnerAllowance } from "./owner-allowance-extension.ts"
+import { registerWorkManager } from "./manager.ts"
 import {
   OWNER_PARENT_DEADLINE_ENV,
   type OwnerAllowance,
@@ -1189,14 +1190,20 @@ export default function classifiedWorkflows(
   const backgroundWorkflows = new Map<string, BackgroundWorkflow>()
   const activeForegroundWorkflowControllers = new Set<AbortController>()
   let detachableForegroundWorkflow: DetachableForegroundWorkflow | undefined
-  const ownerAllowance = registerOwnerAllowance(pi, reason => {
-    clearLoopTimer()
-    clearTaskContinuationTimer()
-    for (const workflow of backgroundWorkflows.values())
-      if (workflow.status === "running") workflow.controller.abort(reason)
-    for (const controller of activeForegroundWorkflowControllers)
-      controller.abort(reason)
-  })
+  let manager: ReturnType<typeof registerWorkManager> | undefined
+  const ownerAllowance = registerOwnerAllowance(
+    pi,
+    reason => {
+      clearLoopTimer()
+      clearTaskContinuationTimer()
+      for (const workflow of backgroundWorkflows.values())
+        if (workflow.status === "running") workflow.controller.abort(reason)
+      for (const controller of activeForegroundWorkflowControllers)
+        controller.abort(reason)
+    },
+    window => manager?.expire(window),
+  )
+  manager = registerWorkManager(pi, ownerAllowance)
 
   const awaitQuestionRelay = (
     agentId: string,
