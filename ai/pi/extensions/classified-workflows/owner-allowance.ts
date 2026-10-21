@@ -32,6 +32,7 @@ export interface OwnerAllowanceRuntime<T> {
   readonly clear: (handle: T) => void
   readonly persist: (window: OwnerWindow) => void
   readonly cancel: (error: OwnerAllowanceError) => void
+  readonly onExpired?: (window: OwnerWindow) => void
 }
 
 export interface OwnerAllowance {
@@ -117,6 +118,7 @@ export const createOwnerAllowance = <T>(
     if (persistExpiry && window) {
       const expiredWindow = window
       invoke(() => runtime.persist(expiredWindow))
+      invoke(() => runtime.onExpired?.(expiredWindow))
     }
     return Either.left(reason)
   }

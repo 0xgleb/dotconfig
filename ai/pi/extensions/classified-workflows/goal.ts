@@ -1,4 +1,5 @@
 import { Data, Effect, Either } from "effect"
+import { readManagerPriorities } from "./manager-core.ts"
 
 export type GoalState =
   | {
@@ -201,6 +202,9 @@ const projectedTodoIdentity = (
 export const todoWorkSnapshot: (
   entries: unknown[],
 ) => TodoWorkSnapshot = entries => {
+  const priority = readManagerPriorities(entries)
+  if (Either.isLeft(priority))
+    return { pending: [], blocked: [priority.left.message], completed: [] }
   for (let index = entries.length - 1; index >= 0; index -= 1) {
     const entry = entries[index]
     if (!isRecord(entry)) continue
@@ -219,7 +223,7 @@ export const todoWorkSnapshot: (
           : undefined
     if (!state || !Array.isArray(state.todos)) continue
     const todos = state.todos
-    return todos.reduce<TodoWorkSnapshot>(
+    const snapshot = todos.reduce<TodoWorkSnapshot>(
       (snapshot, todo) => {
         if (
           !isRecord(todo) ||
@@ -266,6 +270,18 @@ export const todoWorkSnapshot: (
       },
       { pending: [], blocked: [], completed: [] },
     )
+    if (!priority.right) return snapshot
+    const selected = priority.right.ids.flatMap(id =>
+      snapshot.pending.filter(text => text.startsWith(`#${id} `)),
+    )
+    const chosen = new Set(selected)
+    return {
+      ...snapshot,
+      pending: [
+        ...selected,
+        ...snapshot.pending.filter(text => !chosen.has(text)),
+      ],
+    }
   }
   return { pending: [], blocked: [], completed: [] }
 }

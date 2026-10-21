@@ -14,6 +14,7 @@ import {
   OWNER_ALLOWANCE_ENTRY,
   OWNER_PARENT_DEADLINE_ENV,
   OwnerAllowanceError,
+  type OwnerWindow,
 } from "./owner-allowance.ts"
 
 interface NativeDeliveryBinding extends InputDeliveryBinding {
@@ -32,6 +33,7 @@ interface NativeDeliveryHost {
 export const registerOwnerAllowance = (
   pi: ExtensionAPI,
   cancelBackground: (reason: OwnerAllowanceError) => void,
+  onExpired?: (window: OwnerWindow) => void,
 ) => {
   let context: ExtensionContext | undefined
   let inputDelivery: NativeDeliveryBinding | undefined
@@ -42,6 +44,7 @@ export const registerOwnerAllowance = (
     schedule: (callback, delay) => setTimeout(callback, delay),
     clear: handle => clearTimeout(handle),
     persist: window => pi.appendEntry(OWNER_ALLOWANCE_ENTRY, window),
+    onExpired,
     cancel: reason => {
       const results = [
         () => cancelBackground(reason),
