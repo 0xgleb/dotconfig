@@ -5,11 +5,16 @@ import type {
 import { Text } from "@earendil-works/pi-tui"
 import { Effect, Either } from "effect"
 import {
-  openManagerChat,
   type ManagerChatView,
   type ManagerChatOptions,
 } from "./manager-chat.ts"
 import { buildBoundedTranscript } from "../btw/core.ts"
+import {
+  registerNativeManager,
+  type NativeManager,
+  type NativeManagerRuntime,
+} from "./manager-native.ts"
+import { ManagerSessionError } from "./manager-session-core.ts"
 import { readPromptFile } from "../shared/prompt-text.ts"
 import { registerRuntimeVersion } from "../shared/runtime-version.ts"
 import type { OwnerAllowance, OwnerWindow } from "./owner-allowance.ts"
@@ -172,8 +177,10 @@ export const registerWorkManager = (
   pi: ExtensionAPI,
   guard: OwnerAllowance,
   model: ManagerModel = completeManagerModel,
-  view: ManagerChatView = openManagerChat,
+  view?: ManagerChatView,
+  nativeRuntime?: NativeManagerRuntime,
 ) => {
+  let native: NativeManager | undefined
   let context: ExtensionContext | undefined
   let round: ObservedRound | undefined
   let generation = 0
@@ -227,7 +234,7 @@ export const registerWorkManager = (
     )
 
   const observe = (ctx: ExtensionContext) => {
-    if (ctx.mode !== "tui") return
+    if (ctx.mode !== "tui" || native?.isManager()) return
     context = ctx
     const allowed = guard.admit()
     if (
@@ -359,6 +366,7 @@ export const registerWorkManager = (
   }
 
   const expire = (window: OwnerWindow) => {
+    if (native?.isManager()) return
     const ctx = context
     if (!ctx || ctx.mode !== "tui" || window.status !== "expired") return
     const admitted = guard.admit()
@@ -454,10 +462,11 @@ export const registerWorkManager = (
     round = undefined
     context = undefined
     observe(ctx)
-    if (ctx.mode === "tui") ctx.ui.setWidget("manager", ["Manager · /manager"])
+    if (ctx.mode === "tui" && !native?.isManager())
+      ctx.ui.setWidget("manager", ["Manager · /manager"])
   }
 
-  registerRuntimeVersion(pi, "manager", "0.2.0")
+  registerRuntimeVersion(pi, "manager", "0.3.1")
 
   pi.on("session_start", (_event, ctx) => resetContext(ctx))
   pi.on("session_tree", (_event, ctx) => resetContext(ctx))
@@ -526,8 +535,70 @@ export const registerWorkManager = (
     )
   }
 
+  if (!view) {
+    native = registerNativeManager(
+      pi,
+      {
+        priorityId: ctx =>
+          ctx.sessionManager
+            .getBranch()
+            .findLast(
+              entry =>
+                entry.type === "custom" &&
+                entry.customType === MANAGER_PRIORITY_ENTRY,
+            )?.id ?? "initial",
+        priorities: (ctx, text) =>
+          Either.mapLeft(
+            priorities(ctx, text),
+            error =>
+              new ManagerSessionError({
+                code: "invalid_input",
+                message: error.message,
+              }),
+          ),
+        snapshot: ctx =>
+          Either.gen(function* () {
+            const current = yield* Either.mapLeft(
+              snapshot(ctx),
+              error =>
+                new ManagerSessionError({
+                  code: "unsafe_state",
+                  message: error.message,
+                }),
+            )
+            const latest = ctx.sessionManager
+              .getBranch()
+              .findLast(
+                entry =>
+                  entry.type === "custom" &&
+                  entry.customType === MANAGER_SUMMARY_ENTRY,
+              )
+            let report: ManagerSummary | null = null
+            if (latest?.type === "custom") {
+              report = yield* Either.mapLeft(
+                decodeManagerSummary(latest.data),
+                error =>
+                  new ManagerSessionError({
+                    code: "unsafe_state",
+                    message: error.message,
+                  }),
+              )
+            }
+            return {
+              view: current.view,
+              workerSession: current.workerSession,
+              priorities: current.priorities?.ids ?? [],
+              roundReport: report,
+            }
+          }),
+      },
+      nativeRuntime,
+    )
+  }
+
   pi.registerCommand("manager", {
-    description: "Open manager chat; priorities <ids>, history, summary, reset",
+    description:
+      "Open native manager chat; priorities <ids> commits continuation order",
     handler: async (args, ctx) => {
       if (ctx.mode !== "tui") {
         ctx.ui.notify("Manager chat requires the interactive TUI.", "warning")
@@ -536,6 +607,22 @@ export const registerWorkManager = (
 
       context = ctx
       const command = args.trim()
+
+      if (native?.isManager()) {
+        native.command(ctx, command)
+        return
+      }
+      if (!view && !command.startsWith("priorities ")) {
+        if (command && command !== "history" && command !== "summary") {
+          ctx.ui.notify(
+            "Run /manager, then send your message in the manager session.",
+            "info",
+          )
+          return
+        }
+        await native?.open(ctx)
+        return
+      }
 
       if (command === "reset") {
         chatScope?.abort()
@@ -551,6 +638,8 @@ export const registerWorkManager = (
         else ctx.ui.notify(result.right, "info")
         return
       }
+
+      if (!view) return
 
       if (chatScope) {
         showError(

@@ -14,7 +14,7 @@ import {
   type TUI,
 } from "@earendil-works/pi-tui"
 import { Either } from "effect"
-import { ManagerChatPanel } from "./manager-chat.ts"
+import { ManagerChatPanel, openManagerChat } from "./manager-chat.ts"
 import { MANAGER_CHAT_ENTRY } from "./manager-core.ts"
 import { registerWorkManager, type ManagerModel } from "./manager.ts"
 import { createOwnerAllowance } from "./owner-allowance.ts"
@@ -138,7 +138,7 @@ const fixture = (model: ManagerModel) => {
     cancel: () => {},
   })
   guard.ownerInput(1000)
-  registerWorkManager(pi, guard, model)
+  registerWorkManager(pi, guard, model, openManagerChat)
 
   const emit = async (name: string) => {
     for (const callback of hooks.get(name) ?? []) await callback({}, ctx)
@@ -179,7 +179,7 @@ const fixture = (model: ManagerModel) => {
   }
 }
 
-test("real manager command keeps one native overlay and carries the prior turn into the next request", async t => {
+test("legacy injected view remains callable and carries prior conversation turns", async t => {
   const requests: { history: unknown[]; question: string }[] = []
   const f = fixture(async (_ctx, request) => {
     requests.push(JSON.parse(request.body))

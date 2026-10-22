@@ -1,5 +1,5 @@
 import { createHash } from "node:crypto"
-import { isAbsolute, join } from "node:path"
+import { basename, isAbsolute, join } from "node:path"
 import { Data, Either } from "effect"
 
 export interface ManagerSessionLaunchInput {
@@ -37,6 +37,37 @@ export class ManagerSessionError extends Data.TaggedError(
     | "launch_failed"
   readonly message: string
 }> {}
+
+export const managerPairDirectory = (
+  input: Pick<
+    ManagerSessionLaunchInput,
+    "workerSessionId" | "workerCwd" | "agentDir"
+  >,
+): Either.Either<string, ManagerSessionError> => {
+  if (
+    typeof input.workerSessionId !== "string" ||
+    !/^[A-Za-z0-9][A-Za-z0-9_-]{0,79}$/u.test(input.workerSessionId) ||
+    ![input.workerCwd, input.agentDir].every(
+      path =>
+        typeof path === "string" &&
+        isAbsolute(path) &&
+        !/[\u0000-\u001f\u007f]/u.test(path),
+    )
+  ) {
+    return Either.left(
+      new ManagerSessionError({
+        code: "invalid_input",
+        message:
+          "Manager pairing requires a valid worker identity and absolute paths.",
+      }),
+    )
+  }
+  const pair = createHash("sha256")
+    .update(`${input.workerCwd}\u0000${input.workerSessionId}`)
+    .digest("hex")
+    .slice(0, 24)
+  return Either.right(join(input.agentDir, "manager", pair))
+}
 
 export const managerSessionLaunchPlan = (
   input: ManagerSessionLaunchInput,
@@ -79,16 +110,14 @@ export const managerSessionLaunchPlan = (
     )
   }
 
-  const pair = createHash("sha256")
-    .update(`${input.workerCwd}\u0000${input.workerSessionId}`)
-    .digest("hex")
-    .slice(0, 24)
-  const paneName = `manager-${pair}`
+  const directory = managerPairDirectory(input)
+  if (Either.isLeft(directory)) return Either.left(directory.left)
+  const paneName = `manager-${basename(directory.right)}`
   if (input.existingPaneNames.includes(paneName)) {
     return Either.right({ kind: "existing", paneName })
   }
 
-  const sessionDirectory = join(input.agentDir, "manager", pair, "sessions")
+  const sessionDirectory = join(directory.right, "sessions")
 
   return Either.right({
     kind: "launch",
