@@ -2,6 +2,8 @@ import { createHmac, timingSafeEqual } from "node:crypto"
 import { isAbsolute } from "node:path"
 import { Either } from "effect"
 import { ManagerSessionError } from "./manager-session-core.ts"
+import type { TodoRequest } from "../todo/state.ts"
+import { decodeTodoControl } from "../todo/control.ts"
 
 export interface ManagerPairScope {
   readonly workerSessionId: string
@@ -21,6 +23,121 @@ export interface ManagerContextSnapshot extends ManagerPairScope {
   readonly observedAt: number
   readonly priorityRevision: string
   readonly data: Readonly<Record<string, unknown>>
+}
+
+export interface ManagerTodoCommand extends ManagerPairScope {
+  readonly version: 2
+  readonly operation: "todo"
+  readonly id: string
+  readonly expectedRevision: string
+  readonly request: TodoRequest
+  readonly signature: string
+}
+
+export const signManagerTodo = (
+  scope: ManagerPairScope,
+  id: string,
+  revision: string,
+  request: TodoRequest,
+  capability: string,
+): Either.Either<ManagerTodoCommand, ManagerSessionError> => {
+  if (
+    !validScope(scope) ||
+    !identifier(id) ||
+    !identifier(revision) ||
+    !secret(capability)
+  ) {
+    return invalid("invalid_input", "Invalid manager task-control scope.")
+  }
+  const decoded = decodeTodoControl(request)
+  if (Either.isLeft(decoded)) return invalid("protocol", decoded.left.message)
+  const body = {
+    version: 2 as const,
+    operation: "todo" as const,
+    ...scope,
+    id,
+    expectedRevision: revision,
+    request: decoded.right,
+  }
+  return Either.map(
+    Either.try({
+      try: () =>
+        createHmac("sha256", capability)
+          .update(JSON.stringify(body))
+          .digest("hex"),
+      catch: () =>
+        new ManagerSessionError({
+          code: "io",
+          message: "Manager task signing failed.",
+        }),
+    }),
+    signature => ({ ...body, signature }),
+  )
+}
+
+export const verifyManagerTodo = (
+  value: unknown,
+  scope: ManagerPairScope,
+  revision: string,
+  capability: string,
+): Either.Either<ManagerTodoCommand, ManagerSessionError> => {
+  if (
+    !record(value) ||
+    value.version !== 2 ||
+    value.operation !== "todo" ||
+    !identifier(value.id) ||
+    !identifier(value.expectedRevision) ||
+    !secret(value.signature) ||
+    !onlyKeys(value, [
+      "version",
+      "operation",
+      "id",
+      "workerSessionId",
+      "cwd",
+      "expectedRevision",
+      "request",
+      "signature",
+    ])
+  ) {
+    return invalid("protocol", "Malformed manager task command.")
+  }
+  if (
+    value.workerSessionId !== scope.workerSessionId ||
+    value.cwd !== scope.cwd
+  )
+    return invalid("unauthorized", "Task command targets another worker.")
+  const request = decodeTodoControl(value.request)
+  if (Either.isLeft(request)) return invalid("protocol", request.left.message)
+  const expected = signManagerTodo(
+    scope,
+    value.id,
+    value.expectedRevision,
+    request.right,
+    capability,
+  )
+  if (Either.isLeft(expected)) return Either.left(expected.left)
+  const suppliedSignature = value.signature
+  const authenticated = Either.try({
+    try: () =>
+      timingSafeEqual(
+        Buffer.from(expected.right.signature, "hex"),
+        Buffer.from(suppliedSignature, "hex"),
+      ),
+    catch: () =>
+      new ManagerSessionError({
+        code: "io",
+        message: "Task signature verification failed.",
+      }),
+  })
+  if (Either.isLeft(authenticated)) return Either.left(authenticated.left)
+  if (!authenticated.right)
+    return invalid("unauthorized", "Manager task authentication failed.")
+  if (value.expectedRevision !== revision)
+    return invalid(
+      "stale_revision",
+      "Worker scope changed before the task request was applied.",
+    )
+  return expected
 }
 
 export interface ManagerPriorityReceipt {

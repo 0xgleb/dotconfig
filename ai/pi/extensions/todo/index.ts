@@ -29,6 +29,12 @@ import {
   type UserQuestionRequest,
 } from "../shared/question-events.ts"
 import { registerRuntimeVersion } from "../shared/runtime-version.ts"
+import { registerTodoControl } from "./control.ts"
+import {
+  invokeManagerTodo,
+  type ManagerTodoRuntime,
+} from "../classified-workflows/manager-client.ts"
+import { getManagerBinding } from "../shared/manager-binding.ts"
 import { KANBAN_OVERLAY_OPTIONS, KanbanComponent } from "./kanban.ts"
 import {
   CONTENT_GUTTER,
@@ -264,8 +270,11 @@ const restoredState = (
       )
 }
 
-export default function todoExtension(pi: ExtensionAPI): void {
-  registerRuntimeVersion(pi, "todo", "2026.09.13.1")
+export default function todoExtension(
+  pi: ExtensionAPI,
+  managerRuntime?: ManagerTodoRuntime,
+): void {
+  registerRuntimeVersion(pi, "todo", "2026.09.13.2")
   const stateRef = Effect.runSync(Ref.make<TodoState>(emptyTodoState))
   let restorationError: string | undefined
   let hudExpiry: ReturnType<typeof setTimeout> | undefined
@@ -563,59 +572,79 @@ export default function todoExtension(pi: ExtensionAPI): void {
       },
     )
 
+  const executeTodo = (
+    params: Parameters<typeof parseTodoAction>[0],
+    ctx: ExtensionContext,
+  ) => {
+    if (restorationError)
+      return {
+        isError: true,
+        content: [
+          {
+            type: "text" as const,
+            text: `Cannot use todos: ${restorationError}`,
+          },
+        ],
+      }
+    const program = Ref.get(stateRef).pipe(
+      Effect.flatMap(state =>
+        parseTodoAction(params, Date.now()).pipe(
+          Effect.flatMap(action =>
+            transitionTodoState(state, action, Date.now()),
+          ),
+          Effect.tap(({ state: nextState }) => Ref.set(stateRef, nextState)),
+          Effect.map(transition =>
+            successfulToolResult(
+              transition.action,
+              transition.state,
+              transition.message,
+            ),
+          ),
+          Effect.catchTags({
+            TodoInputError: error =>
+              Effect.succeed(
+                failedToolResult(error.action, state, error.message),
+              ),
+            TodoNotFoundError: error =>
+              Effect.succeed(
+                failedToolResult(error.action, state, error.message),
+              ),
+          }),
+        ),
+      ),
+    )
+    const result = Effect.runSync(program)
+    if (result.details.outcome === "success") {
+      pi.appendEntry(TODO_STATE_ENTRY, result.details.state)
+      publishBranchTodos(ctx, result.details.state)
+    }
+    renderTaskWidget(ctx, result.details.state)
+    scheduleReminder(ctx, result.details.state)
+    return result
+  }
+
+  const releaseControl = registerTodoControl(pi, (request, ctx) => {
+    const result = executeTodo(request, ctx)
+    return {
+      isError:
+        ("isError" in result && result.isError === true) ||
+        ("details" in result && result.details.outcome === "error"),
+      message: result.content.map(part => part.text).join("\n"),
+    }
+  })
+  pi.on("session_shutdown", releaseControl)
+
   pi.registerTool({
     name: "todo",
     label: "Todo",
     description:
       "Manage branch-aware tasks. add accepts parentId for one level of subtasks; grandchildren are forbidden. reply accepts at most 3 entries of 300 characters; restructure at the cap. Other actions: list, toggle, status, block, unblock, clear.",
     parameters: TodoParams,
-
-    async execute(_toolCallId, params, _signal, _onUpdate, ctx) {
-      if (restorationError)
-        return {
-          isError: true,
-          content: [
-            {
-              type: "text" as const,
-              text: `Cannot use todos: ${restorationError}`,
-            },
-          ],
-        }
-      const program = Ref.get(stateRef).pipe(
-        Effect.flatMap(state =>
-          parseTodoAction(params, Date.now()).pipe(
-            Effect.flatMap(action =>
-              transitionTodoState(state, action, Date.now()),
-            ),
-            Effect.tap(({ state: nextState }) => Ref.set(stateRef, nextState)),
-            Effect.map(transition =>
-              successfulToolResult(
-                transition.action,
-                transition.state,
-                transition.message,
-              ),
-            ),
-            Effect.catchTags({
-              TodoInputError: error =>
-                Effect.succeed(
-                  failedToolResult(error.action, state, error.message),
-                ),
-              TodoNotFoundError: error =>
-                Effect.succeed(
-                  failedToolResult(error.action, state, error.message),
-                ),
-            }),
-          ),
-        ),
-      )
-      const result = await Effect.runPromise(program)
-      if (result.details.outcome === "success") {
-        pi.appendEntry(TODO_STATE_ENTRY, result.details.state)
-        publishBranchTodos(ctx, result.details.state)
-      }
-      renderTaskWidget(ctx, result.details.state)
-      scheduleReminder(ctx, result.details.state)
-      return result
+    async execute(_toolCallId, params, signal, _onUpdate, ctx) {
+      const binding = getManagerBinding(pi, ctx)
+      if (Either.isLeft(binding) || binding.right.role === "manager")
+        return invokeManagerTodo(pi, ctx, params, signal, managerRuntime)
+      return executeTodo(params, ctx)
     },
 
     renderCall(args, theme) {

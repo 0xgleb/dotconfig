@@ -131,6 +131,28 @@ test("foreign pairing, symlinked context and malformed state cannot be read as w
   assert.ok(Either.isLeft(state.context()))
 })
 
+test("task requests use the worker task handler, never the priority parser, and preserve full list results", t => {
+  const { state } = fixture(t)
+  const queued = state.enqueueTodo(
+    { action: "add", text: "Worker backlog task" },
+    "revision-1",
+  )
+  assert.ok(Either.isRight(queued))
+  const message = "Recorded task details. ".repeat(500)
+  const processed = state.processPriorities(
+    () => "revision-1",
+    () => assert.fail("Task request reached the priority parser"),
+    request => {
+      assert.deepEqual(request, { action: "add", text: "Worker backlog task" })
+      return Either.right(message)
+    },
+  )
+  assert.ok(Either.isRight(processed))
+  const receipt = state.receipt(queued.right)
+  assert.ok(Either.isRight(receipt))
+  assert.equal(receipt.right?.message, message)
+})
+
 test("opening an absent worker pairing does not create or initialize it", t => {
   const root = mkdtempSync(join(tmpdir(), "pi-manager-native-test-"))
   t.after(() => rmSync(root, { recursive: true }))

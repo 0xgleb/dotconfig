@@ -8,6 +8,8 @@ import {
 } from "@earendil-works/pi-coding-agent"
 import { Effect, Either } from "effect"
 import { readPromptFile } from "../shared/prompt-text.ts"
+import { registerManagerBinding } from "../shared/manager-binding.ts"
+import type { TodoRequest } from "../todo/state.ts"
 import { decodeManagerSummary, type ManagerSummary } from "./manager-core.ts"
 import {
   openNativeManagerState,
@@ -21,6 +23,10 @@ import {
 } from "./manager-session-core.ts"
 
 export interface NativeManagerWorker {
+  readonly todo?: (
+    ctx: ExtensionContext,
+    request: TodoRequest,
+  ) => Either.Either<string, ManagerSessionError>
   readonly snapshot: (
     ctx: ExtensionContext,
   ) => Either.Either<Readonly<Record<string, unknown>>, ManagerSessionError>
@@ -57,6 +63,15 @@ export const registerNativeManager = (
     pi.getFlag("manager-worker") !== ""
   let cancelPolling: (() => void) | undefined
   let policyReady = false
+  let activeSessionId: string | undefined
+  const releaseBinding = registerManagerBinding(pi, sessionId => {
+    if (sessionId !== activeSessionId) return undefined
+    const workerSessionId = pi.getFlag("manager-worker")
+    if (!isManager()) return { role: "worker" }
+    return typeof workerSessionId === "string"
+      ? { role: "manager", workerSessionId }
+      : undefined
+  })
   const submitted = new Set<string>()
   const delivering = new Set<string>()
 
@@ -148,10 +163,16 @@ export const registerNativeManager = (
     epoch: string,
   ) => {
     let lastLeaf: string | undefined
+    const sessionId = ctx.sessionManager.getSessionId()
+    const cwd = ctx.cwd
+    const todo = worker.todo
     const tick = () => {
+      if (ctx.sessionManager.getSessionId() !== sessionId || ctx.cwd !== cwd)
+        return
       const applied = state.processPriorities(
         () => `${epoch}-${worker.priorityId(ctx)}`,
         text => worker.priorities(ctx, text),
+        todo ? request => todo(ctx, request) : undefined,
       )
       if (Either.isLeft(applied)) {
         notice(ctx, applied.left)
@@ -205,6 +226,7 @@ export const registerNativeManager = (
     )
   }
   const resume = (ctx: ExtensionContext, mode: "restore" | "replace") => {
+    activeSessionId = ctx.sessionManager.getSessionId()
     stop()
     if (isManager()) {
       pi.setActiveTools([...MANAGEMENT_TOOLS])
@@ -226,7 +248,11 @@ export const registerNativeManager = (
 
   pi.on("session_start", (_event, ctx) => resume(ctx, "restore"))
   pi.on("session_tree", (_event, ctx) => resume(ctx, "replace"))
-  pi.on("session_shutdown", stop)
+  pi.on("session_shutdown", () => {
+    stop()
+    activeSessionId = undefined
+    releaseBinding()
+  })
   pi.on("before_agent_start", (event, ctx) => {
     if (!isManager()) return
     pi.setActiveTools([...MANAGEMENT_TOOLS])
@@ -403,7 +429,7 @@ export const registerNativeManager = (
   }
 }
 
-const MANAGEMENT_TOOLS: readonly string[] = ["agent_registry"]
+const MANAGEMENT_TOOLS: readonly string[] = ["agent_registry", "todo"]
 const SCOPE_ENTRY = "manager.native-scope.v1"
 const NATIVE_MESSAGE = "manager-native-update"
 

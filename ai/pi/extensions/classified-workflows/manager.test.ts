@@ -47,6 +47,7 @@ const fixture = (
     { handler: (args: string, ctx: ExtensionContext) => Promise<void> }
   >()
   const notices: string[] = []
+  const widgets: { name: string; content: unknown }[] = []
   const requests: { kind: string; body: string }[] = []
   const pi = {
     events: { on: () => () => {}, emit: () => {} },
@@ -73,7 +74,8 @@ const fixture = (
     model: { id: "test-model", provider: "openai-codex" },
     ui: {
       notify: (message: string) => notices.push(message),
-      setWidget: () => {},
+      setWidget: (name: string, content: unknown) =>
+        widgets.push({ name, content }),
       custom: async () => false,
       input: async () => undefined,
     },
@@ -131,12 +133,22 @@ const fixture = (
     manager,
     requests,
     notices,
+    widgets,
     emit,
     command,
     expire,
     commands,
   }
 }
+
+test("idle manager state removes the command-hint widget", async () => {
+  const f = fixture()
+  await f.emit("session_start")
+  assert.equal(
+    f.widgets.filter(widget => widget.name === "manager").at(-1)?.content,
+    undefined,
+  )
+})
 
 test("ordinary manager conversation preserves worker queue and deadline; replaces btw", async () => {
   const f = fixture()

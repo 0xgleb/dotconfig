@@ -5,11 +5,68 @@ import {
   decodeManagerContext,
   signManagerPriority,
   verifyManagerPriority,
+  signManagerTodo,
+  verifyManagerTodo,
   type ManagerContextSnapshot,
 } from "./manager-pair-protocol.ts"
 
 const scope = { workerSessionId: "worker-123", cwd: "/projects/worker" }
 const capability = "ab".repeat(32)
+
+test("task-control signatures bind the operation and worker while preserving priority wire compatibility", () => {
+  const encoded = signManagerTodo(
+    scope,
+    "task-1",
+    "revision-1",
+    { action: "add", text: "Worker task" },
+    capability,
+  )
+  assert.ok(Either.isRight(encoded))
+  assert.deepEqual(
+    verifyManagerTodo(encoded.right, scope, "revision-1", capability),
+    encoded,
+  )
+  assert.ok(
+    Either.isLeft(
+      verifyManagerPriority(encoded.right, scope, "revision-1", capability),
+    ),
+  )
+  assert.ok(
+    Either.isLeft(
+      verifyManagerTodo(
+        { ...encoded.right, operation: "execute" },
+        scope,
+        "revision-1",
+        capability,
+      ),
+    ),
+  )
+  assert.ok(
+    Either.isLeft(
+      verifyManagerTodo(
+        { ...encoded.right, request: { action: "clear" } },
+        scope,
+        "revision-1",
+        capability,
+      ),
+    ),
+  )
+  assert.ok(
+    Either.isLeft(
+      verifyManagerTodo(
+        encoded.right,
+        { ...scope, workerSessionId: "foreign" },
+        "revision-1",
+        capability,
+      ),
+    ),
+  )
+  assert.ok(
+    Either.isLeft(
+      verifyManagerTodo(encoded.right, scope, "revision-2", capability),
+    ),
+  )
+})
 
 const signed = () => {
   const result = signManagerPriority(

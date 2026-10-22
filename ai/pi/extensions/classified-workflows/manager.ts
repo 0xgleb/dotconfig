@@ -15,6 +15,7 @@ import {
   type NativeManagerRuntime,
 } from "./manager-native.ts"
 import { ManagerSessionError } from "./manager-session-core.ts"
+import { requestTodoControl, todoControlAvailable } from "../todo/control.ts"
 import { readPromptFile } from "../shared/prompt-text.ts"
 import { registerRuntimeVersion } from "../shared/runtime-version.ts"
 import type { OwnerAllowance, OwnerWindow } from "./owner-allowance.ts"
@@ -462,11 +463,10 @@ export const registerWorkManager = (
     round = undefined
     context = undefined
     observe(ctx)
-    if (ctx.mode === "tui" && !native?.isManager())
-      ctx.ui.setWidget("manager", ["Manager · /manager"])
+    if (ctx.mode === "tui") ctx.ui.setWidget("manager", undefined)
   }
 
-  registerRuntimeVersion(pi, "manager", "0.3.1")
+  registerRuntimeVersion(pi, "manager", "0.3.3")
 
   pi.on("session_start", (_event, ctx) => resetContext(ctx))
   pi.on("session_tree", (_event, ctx) => resetContext(ctx))
@@ -539,6 +539,24 @@ export const registerWorkManager = (
     native = registerNativeManager(
       pi,
       {
+        todo: (ctx, request) => {
+          const result = requestTodoControl(pi, ctx, request)
+          if (Either.isLeft(result))
+            return Either.left(
+              new ManagerSessionError({
+                code: "unavailable",
+                message: result.left.message,
+              }),
+            )
+          return result.right.isError
+            ? Either.left(
+                new ManagerSessionError({
+                  code: "invalid_input",
+                  message: result.right.message,
+                }),
+              )
+            : Either.right(result.right.message)
+        },
         priorityId: ctx =>
           ctx.sessionManager
             .getBranch()
@@ -585,6 +603,7 @@ export const registerWorkManager = (
               )
             }
             return {
+              todoControl: todoControlAvailable(pi),
               view: current.view,
               workerSession: current.workerSession,
               priorities: current.priorities?.ids ?? [],

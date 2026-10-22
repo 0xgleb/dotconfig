@@ -14,6 +14,7 @@ import {
 } from "./manager-native.ts"
 import { managerPairDirectory } from "./manager-session-core.ts"
 import { prepareNativeManagerState } from "./manager-native-state.ts"
+import { getManagerBinding } from "../shared/manager-binding.ts"
 
 const scope = { workerSessionId: "worker-123", cwd: "/projects/worker" }
 const fixture = (t: test.TestContext, manager = false) => {
@@ -37,7 +38,17 @@ const fixture = (t: test.TestContext, manager = false) => {
   const messages: { message: unknown; options: unknown }[] = []
   const execs: { command: string; args: string[] }[] = []
   const notices: string[] = []
+  const eventHandlers = new Map<string, ((value: unknown) => void)[]>()
   const pi = {
+    events: {
+      on: (name: string, handler: (value: unknown) => void) => {
+        eventHandlers.set(name, [...(eventHandlers.get(name) ?? []), handler])
+        return () => {}
+      },
+      emit: (name: string, value: unknown) => {
+        for (const handler of eventHandlers.get(name) ?? []) handler(value)
+      },
+    },
     registerFlag: () => {},
     getFlag: () => (manager ? scope.workerSessionId : undefined),
     on: (
@@ -117,6 +128,7 @@ const fixture = (t: test.TestContext, manager = false) => {
     return prepared.right
   }
   return {
+    pi,
     registered,
     emit,
     active,
@@ -151,7 +163,12 @@ test("manager profile preserves the native editor and exposes registry managemen
     prompt: "What is the worker doing?",
   })
   assert.equal(f.registered.isManager(), true)
-  assert.deepEqual(f.active.at(-1), ["agent_registry"])
+  const todoApi = { ...f.pi, getFlag: () => undefined } as ExtensionAPI
+  assert.deepEqual(
+    getManagerBinding(todoApi, f.ctx),
+    Either.right({ role: "manager", workerSessionId: scope.workerSessionId }),
+  )
+  assert.deepEqual(f.active.at(-1), ["agent_registry", "todo"])
   const response = object(result)
   assert.equal(typeof response.systemPrompt, "string")
   assert.match(
@@ -167,6 +184,13 @@ test("manager profile preserves the native editor and exposes registry managemen
   )
   assert.equal(message.display, false)
   assert.deepEqual(f.execs, [])
+  assert.equal(
+    await f.emit("tool_call", { toolName: "agent_registry" }),
+    undefined,
+  )
+  assert.equal(await f.emit("tool_call", { toolName: "todo" }), undefined)
+  const denied = object(await f.emit("tool_call", { toolName: "bash" }))
+  assert.equal(denied.block, true)
 })
 
 test("normal worker sessions retain their own model tool set", async t => {

@@ -19,11 +19,14 @@ import {
   decodeManagerContext,
   signManagerPriority,
   verifyManagerPriority,
+  signManagerTodo,
+  verifyManagerTodo,
   type ManagerPairScope,
   type ManagerContextSnapshot,
   type ManagerPriorityReceipt,
 } from "./manager-pair-protocol.ts"
 import { ManagerSessionError } from "./manager-session-core.ts"
+import type { TodoRequest } from "../todo/state.ts"
 
 export interface NativeManagerState {
   readonly publish: (
@@ -37,9 +40,16 @@ export interface NativeManagerState {
     text: string,
     revision: string,
   ) => Either.Either<string, ManagerSessionError>
+  readonly enqueueTodo: (
+    request: TodoRequest,
+    revision: string,
+  ) => Either.Either<string, ManagerSessionError>
   readonly processPriorities: (
     revision: () => string,
     apply: (text: string) => Either.Either<string, ManagerSessionError>,
+    applyTodo?: (
+      request: TodoRequest,
+    ) => Either.Either<string, ManagerSessionError>,
   ) => Either.Either<readonly ManagerPriorityReceipt[], ManagerSessionError>
   readonly receipt: (
     id: string,
@@ -124,7 +134,7 @@ export const openNativeManagerState = (
           value.id !== id ||
           (value.status !== "completed" && value.status !== "failed") ||
           typeof value.message !== "string" ||
-          value.message.length > 4000
+          value.message.length > 250_000
         ) {
           return yield* failure(
             "protocol",
@@ -161,7 +171,24 @@ export const openNativeManagerState = (
           yield* atomicJson(join(directory, "requests"), `${id}.json`, command)
           return id
         }),
-      processPriorities: (revision, apply) =>
+      enqueueTodo: (request, revision) =>
+        Either.gen(function* () {
+          const capability = yield* readPrivate(
+            join(directory, "capability.key"),
+            256,
+          )
+          const id = randomUUID()
+          const command = yield* signManagerTodo(
+            scope,
+            id,
+            revision,
+            request,
+            capability,
+          )
+          yield* atomicJson(join(directory, "requests"), `${id}.json`, command)
+          return id
+        }),
+      processPriorities: (revision, apply, applyTodo) =>
         Either.gen(function* () {
           const names = yield* io(() =>
             readdirSync(join(directory, "requests")),
@@ -187,20 +214,23 @@ export const openNativeManagerState = (
             }
 
             const value = yield* readJson(requestPath)
-            const verified = verifyManagerPriority(
-              value,
-              scope,
-              revision(),
-              capability,
-            )
-            const result = Either.isLeft(verified)
-              ? Either.left(verified.left)
-              : verified.right.id !== id
-                ? failure(
-                    "protocol",
-                    "Manager request identity does not match its queue entry.",
-                  )
-                : apply(verified.right.text)
+            const taskRequest =
+              record(value) && value.version === 2 && value.operation === "todo"
+            if (taskRequest && !applyTodo) continue
+            const verified = taskRequest
+              ? verifyManagerTodo(value, scope, revision(), capability)
+              : verifyManagerPriority(value, scope, revision(), capability)
+            let result: Either.Either<string, ManagerSessionError>
+            if (Either.isLeft(verified)) result = Either.left(verified.left)
+            else if (verified.right.id !== id)
+              result = failure(
+                "protocol",
+                "Manager request identity does not match its queue entry.",
+              )
+            else if (verified.right.version === 2) {
+              if (!applyTodo) continue
+              result = applyTodo(verified.right.request)
+            } else result = apply(verified.right.text)
             const outcome: ManagerPriorityReceipt = {
               version: 1,
               id,
