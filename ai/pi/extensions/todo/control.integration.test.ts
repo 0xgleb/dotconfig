@@ -139,6 +139,7 @@ test("manager control updates the real worker todo store used by subsequent ordi
     data: { todoControl: true },
   })
   const managerEntries: Record<string, unknown>[] = []
+  let selected = true
   let managerTool: CapturedTool | undefined
   const managerPi = {
     ...pi,
@@ -151,6 +152,7 @@ test("manager control updates the real worker todo store used by subsequent ordi
   } as unknown as ExtensionAPI
   const managerCtx = {
     ...ctx,
+    cwd: "/global/manager",
     sessionManager: {
       getSessionId: () => "manager",
       getBranch: () => managerEntries,
@@ -158,7 +160,9 @@ test("manager control updates the real worker todo store used by subsequent ordi
   } as unknown as ExtensionContext
   registerManagerBinding(pi, id =>
     id === "manager"
-      ? { role: "manager", workerSessionId: "worker" }
+      ? selected
+        ? { role: "manager", workerSessionId: "worker", workerCwd: ctx.cwd }
+        : { role: "manager-unavailable", message: "Select an existing worker." }
       : undefined,
   )
   assert.equal(managerPi.getFlag("manager-worker"), undefined)
@@ -185,6 +189,16 @@ test("manager control updates the real worker todo store used by subsequent ordi
     undefined,
     managerCtx,
   )
+  selected = false
+  const unselected = await managerTool.execute(
+    "unselected",
+    { action: "add", text: "Must not become manager-local work" },
+    undefined,
+    undefined,
+    managerCtx,
+  )
+  assert.ok(record(unselected))
+  assert.equal(unselected.isError, true)
   const finalList = await tool.execute(
     "final-list",
     { action: "list" },

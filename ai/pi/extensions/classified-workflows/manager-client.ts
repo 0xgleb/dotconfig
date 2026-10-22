@@ -46,9 +46,12 @@ export const invokeManagerTodo = async (
 ): Promise<ManagerTodoToolResult> => {
   const binding = getManagerBinding(pi, ctx)
   if (Either.isLeft(binding)) return unavailable(binding.left.message)
+  if (binding.right.role === "manager-unavailable")
+    return unavailable(binding.right.message)
   if (binding.right.role !== "manager")
     return unavailable("This session has no paired manager binding.")
   const workerSessionId = binding.right.workerSessionId
+  const workerCwd = binding.right.workerCwd ?? ctx.cwd
   if (
     !Number.isFinite(runtime.timeoutMs) ||
     runtime.timeoutMs < 0 ||
@@ -58,13 +61,13 @@ export const invokeManagerTodo = async (
   }
   const directory = managerPairDirectory({
     workerSessionId,
-    workerCwd: ctx.cwd,
+    workerCwd,
     agentDir: runtime.agentDir,
   })
   if (Either.isLeft(directory)) return unavailable(directory.left.message)
   const state = openNativeManagerState(directory.right, {
     workerSessionId,
-    cwd: ctx.cwd,
+    cwd: workerCwd,
   })
   if (Either.isLeft(state)) return unavailable(state.left.message)
   const current = state.right.context()

@@ -3,10 +3,16 @@ import type {
   ExtensionContext,
 } from "@earendil-works/pi-coding-agent"
 import { Data, Either } from "effect"
+import { isAbsolute } from "node:path"
 
 export type ManagerBinding =
   | { readonly role: "worker" }
-  | { readonly role: "manager"; readonly workerSessionId: string }
+  | { readonly role: "manager-unavailable"; readonly message: string }
+  | {
+      readonly role: "manager"
+      readonly workerSessionId: string
+      readonly workerCwd?: string
+    }
 
 export class ManagerBindingError extends Data.TaggedError(
   "ManagerBindingError",
@@ -57,7 +63,7 @@ export const getManagerBinding = (
         entry.message.role === "custom" &&
         entry.message.customType === "manager-worker-observation",
     )
-  if (marked && answer?.role !== "manager")
+  if (marked && (!answer || answer.role === "worker"))
     return Either.left(
       new ManagerBindingError({
         message:
@@ -89,10 +95,19 @@ const validBinding = (value: unknown): value is ManagerBinding =>
   value !== null &&
   "role" in value &&
   (value.role === "worker" ||
+    (value.role === "manager-unavailable" &&
+      "message" in value &&
+      typeof value.message === "string" &&
+      value.message.length > 0 &&
+      value.message.length <= 4000) ||
     (value.role === "manager" &&
       "workerSessionId" in value &&
       typeof value.workerSessionId === "string" &&
-      /^[A-Za-z0-9][A-Za-z0-9_-]{0,79}$/u.test(value.workerSessionId)))
+      /^[A-Za-z0-9][A-Za-z0-9_-]{0,79}$/u.test(value.workerSessionId) &&
+      (!("workerCwd" in value) ||
+        (typeof value.workerCwd === "string" &&
+          isAbsolute(value.workerCwd) &&
+          !/[\u0000-\u001f\u007f]/u.test(value.workerCwd)))))
 
 const query = (value: unknown): value is BindingQuery =>
   typeof value === "object" &&

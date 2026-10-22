@@ -16,7 +16,11 @@ import { prepareNativeManagerState } from "./manager-native-state.ts"
 import { invokeManagerTodo } from "./manager-client.ts"
 import { registerManagerBinding } from "../shared/manager-binding.ts"
 
-const fixture = (t: test.TestContext, available = true) => {
+const fixture = (
+  t: test.TestContext,
+  available = true,
+  mode: "paired" | "global" = "paired",
+) => {
   const root = mkdtempSync(join(tmpdir(), "pi-manager-client-test-"))
   t.after(() => rmSync(root, { recursive: true }))
   const scope = { workerSessionId: "worker", cwd: "/projects/worker" }
@@ -49,7 +53,7 @@ const fixture = (t: test.TestContext, available = true) => {
     },
   } as unknown as ExtensionAPI
   const ctx = {
-    cwd: scope.cwd,
+    cwd: mode === "global" ? "/global/manager" : scope.cwd,
     sessionManager: {
       getSessionId: () => "manager-session",
       getBranch: () => [],
@@ -57,7 +61,11 @@ const fixture = (t: test.TestContext, available = true) => {
   } as unknown as ExtensionContext
   registerManagerBinding(pi, id =>
     id === "manager-session"
-      ? { role: "manager", workerSessionId: "worker" }
+      ? {
+          role: "manager",
+          workerSessionId: "worker",
+          ...(mode === "global" ? { workerCwd: scope.cwd } : {}),
+        }
       : undefined,
   )
   return { pi, ctx, state: state.right, root }
@@ -96,6 +104,29 @@ test("manager todo returns the verified worker result rather than a manager-loca
   assert.equal(result.content[0]?.text, "Added worker task #5")
   assert.equal(Object.hasOwn(result.details, "state"), false)
   assert.equal(calls, 1)
+})
+
+test("global manager todo uses the selected worker project rather than the manager workspace", async t => {
+  const f = fixture(t, true, "global")
+  const result = await invokeManagerTodo(
+    f.pi,
+    f.ctx,
+    { action: "list" },
+    undefined,
+    {
+      agentDir: f.root,
+      timeoutMs: 1000,
+      wait: async () => {
+        f.state.processPriorities(
+          () => "revision-1",
+          () => assert.fail("Wrong lane"),
+          () => Either.right("Actual selected worker backlog"),
+        )
+      },
+    },
+  )
+  assert.equal(result.details.outcome, "completed")
+  assert.equal(result.content[0]?.text, "Actual selected worker backlog")
 })
 
 test("an indeterminate worker result stays unconfirmed instead of becoming a failed or completed write", async t => {

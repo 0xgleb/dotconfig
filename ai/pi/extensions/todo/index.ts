@@ -642,7 +642,7 @@ export default function todoExtension(
     parameters: TodoParams,
     async execute(_toolCallId, params, signal, _onUpdate, ctx) {
       const binding = getManagerBinding(pi, ctx)
-      if (Either.isLeft(binding) || binding.right.role === "manager")
+      if (Either.isLeft(binding) || binding.right.role !== "worker")
         return invokeManagerTodo(pi, ctx, params, signal, managerRuntime)
       return executeTodo(params, ctx)
     },

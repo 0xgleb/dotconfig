@@ -63,6 +63,31 @@ test("manager binding crosses extension-private flag APIs without reading anothe
   )
 })
 
+test("an unselected global manager remains a manager, never a local worker", () => {
+  const f = fixture(true)
+  registerManagerBinding(f.owner, () => ({
+    role: "manager-unavailable",
+    message: "Select an existing worker.",
+  }))
+  assert.deepEqual(
+    getManagerBinding(f.todo, f.ctx),
+    Either.right({
+      role: "manager-unavailable",
+      message: "Select an existing worker.",
+    }),
+  )
+})
+
+test("a malformed selected worker project is rejected at the binding boundary", () => {
+  const f = fixture(true)
+  registerManagerBinding(f.owner, () => ({
+    role: "manager",
+    workerSessionId: "worker-123",
+    workerCwd: "relative",
+  }))
+  assert.ok(Either.isLeft(getManagerBinding(f.todo, f.ctx)))
+})
+
 test("normal standalone task use remains local when no manager controller is installed", () => {
   const f = fixture()
   assert.deepEqual(
