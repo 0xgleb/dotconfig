@@ -6,6 +6,7 @@ import {
   existsSync,
   writeFileSync,
   symlinkSync,
+  renameSync,
 } from "node:fs"
 import { tmpdir } from "node:os"
 import { join } from "node:path"
@@ -151,6 +152,43 @@ test("task requests use the worker task handler, never the priority parser, and 
   const receipt = state.receipt(queued.right)
   assert.ok(Either.isRight(receipt))
   assert.equal(receipt.right?.message, message)
+})
+
+test("receipt persistence failure cannot replay a non-idempotent task mutation", t => {
+  const { state, directory } = fixture(t)
+  const queued = state.enqueueTodo(
+    { action: "add", text: "Apply once" },
+    "revision-1",
+  )
+  assert.ok(Either.isRight(queued))
+  let calls = 0
+  const receipts = join(directory, "receipts")
+  const backup = join(directory, "receipt-backup")
+  const first = state.processPriorities(
+    () => "revision-1",
+    () => assert.fail("Wrong lane"),
+    () => {
+      calls += 1
+      renameSync(receipts, backup)
+      writeFileSync(receipts, "blocked fixture directory", { mode: 0o600 })
+      return Either.right("Applied")
+    },
+  )
+  assert.ok(Either.isLeft(first))
+  rmSync(receipts)
+  renameSync(backup, receipts)
+  state.processPriorities(
+    () => "revision-1",
+    () => assert.fail("Wrong lane"),
+    () => {
+      calls += 1
+      return Either.right("Replayed")
+    },
+  )
+  assert.equal(calls, 1)
+  const unconfirmed = state.receipt(queued.right)
+  assert.ok(Either.isRight(unconfirmed))
+  assert.equal(unconfirmed.right?.status, "started")
 })
 
 test("opening an absent worker pairing does not create or initialize it", t => {

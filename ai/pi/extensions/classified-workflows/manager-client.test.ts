@@ -8,7 +8,10 @@ import type {
   ExtensionContext,
 } from "@earendil-works/pi-coding-agent"
 import { Either } from "effect"
-import { managerPairDirectory } from "./manager-session-core.ts"
+import {
+  managerPairDirectory,
+  ManagerSessionError,
+} from "./manager-session-core.ts"
 import { prepareNativeManagerState } from "./manager-native-state.ts"
 import { invokeManagerTodo } from "./manager-client.ts"
 import { registerManagerBinding } from "../shared/manager-binding.ts"
@@ -93,6 +96,36 @@ test("manager todo returns the verified worker result rather than a manager-loca
   assert.equal(result.content[0]?.text, "Added worker task #5")
   assert.equal(Object.hasOwn(result.details, "state"), false)
   assert.equal(calls, 1)
+})
+
+test("an indeterminate worker result stays unconfirmed instead of becoming a failed or completed write", async t => {
+  const f = fixture(t)
+  const result = await invokeManagerTodo(
+    f.pi,
+    f.ctx,
+    { action: "add", text: "Uncertain" },
+    undefined,
+    {
+      agentDir: f.root,
+      timeoutMs: 1000,
+      wait: async () => {
+        f.state.processPriorities(
+          () => "revision-1",
+          () => assert.fail("Wrong lane"),
+          () =>
+            Either.left(
+              new ManagerSessionError({
+                code: "unconfirmed",
+                message:
+                  "Persistence result is unconfirmed; inspect before retry.",
+              }),
+            ),
+        )
+      },
+    },
+  )
+  assert.equal(result.details.outcome, "unconfirmed")
+  assert.equal(result.isError, true)
 })
 
 test("an older worker without the task-control capability does not receive a speculative mutation", async t => {

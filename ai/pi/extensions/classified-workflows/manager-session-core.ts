@@ -29,6 +29,7 @@ export class ManagerSessionError extends Data.TaggedError(
     | "invalid_input"
     | "unsupported_provider"
     | "unavailable"
+    | "unconfirmed"
     | "unauthorized"
     | "protocol"
     | "stale_revision"

@@ -150,7 +150,11 @@ export const registerNativeManager = (
     }
     for (const id of submitted) {
       const receipt = state.right.receipt(id)
-      if (Either.isRight(receipt) && receipt.right) {
+      if (
+        Either.isRight(receipt) &&
+        receipt.right &&
+        receipt.right.status !== "started"
+      ) {
         deliver(ctx, `priority-${id}`, receipt.right.message)
         submitted.delete(id)
       }

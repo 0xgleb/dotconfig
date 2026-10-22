@@ -143,7 +143,7 @@ export const verifyManagerTodo = (
 export interface ManagerPriorityReceipt {
   readonly version: 1
   readonly id: string
-  readonly status: "completed" | "failed"
+  readonly status: "started" | "completed" | "failed" | "unconfirmed"
   readonly message: string
 }
 

@@ -11,6 +11,7 @@ export interface TodoControlResult {
 }
 
 export class TodoControlError extends Data.TaggedError("TodoControlError")<{
+  readonly code?: "unconfirmed"
   readonly message: string
 }> {}
 
@@ -48,6 +49,7 @@ export const requestTodoControl = (
       } satisfies ControlEnvelope),
     catch: () =>
       new TodoControlError({
+        code: "unconfirmed",
         message:
           "Worker task result is unconfirmed; inspect its state before retrying.",
       }),

@@ -22,7 +22,7 @@ export interface ManagerTodoToolResult {
   readonly details:
     | { readonly outcome: "unavailable" }
     | {
-        readonly outcome: "completed" | "failed" | "queued"
+        readonly outcome: "completed" | "failed" | "queued" | "unconfirmed"
         readonly requestId: string
         readonly workerSessionId: string
       }
@@ -85,10 +85,12 @@ export const invokeManagerTodo = async (
   while (!signal?.aborted) {
     const receipt = state.right.receipt(requestId)
     if (Either.isLeft(receipt)) break
-    if (receipt.right) {
+    if (receipt.right && receipt.right.status !== "started") {
       return {
         content: [{ type: "text", text: receipt.right.message }],
-        isError: receipt.right.status === "failed",
+        isError:
+          receipt.right.status === "failed" ||
+          receipt.right.status === "unconfirmed",
         details: { outcome: receipt.right.status, requestId, workerSessionId },
       }
     }

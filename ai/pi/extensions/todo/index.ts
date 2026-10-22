@@ -274,7 +274,7 @@ export default function todoExtension(
   pi: ExtensionAPI,
   managerRuntime?: ManagerTodoRuntime,
 ): void {
-  registerRuntimeVersion(pi, "todo", "2026.09.13.2")
+  registerRuntimeVersion(pi, "todo", "2026.09.13.3")
   const stateRef = Effect.runSync(Ref.make<TodoState>(emptyTodoState))
   let restorationError: string | undefined
   let hudExpiry: ReturnType<typeof setTimeout> | undefined
@@ -592,7 +592,6 @@ export default function todoExtension(
           Effect.flatMap(action =>
             transitionTodoState(state, action, Date.now()),
           ),
-          Effect.tap(({ state: nextState }) => Ref.set(stateRef, nextState)),
           Effect.map(transition =>
             successfulToolResult(
               transition.action,
@@ -616,6 +615,7 @@ export default function todoExtension(
     const result = Effect.runSync(program)
     if (result.details.outcome === "success") {
       pi.appendEntry(TODO_STATE_ENTRY, result.details.state)
+      Effect.runSync(Ref.set(stateRef, result.details.state))
       publishBranchTodos(ctx, result.details.state)
     }
     renderTaskWidget(ctx, result.details.state)

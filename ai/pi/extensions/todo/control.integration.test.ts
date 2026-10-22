@@ -37,6 +37,7 @@ test("manager control updates the real worker todo store used by subsequent ordi
   >()
   const listeners = new Map<string, ((data: unknown) => void)[]>()
   let tool: CapturedTool | undefined
+  let failAppend = false
   const pi = {
     events: {
       on: (name: string, handler: (data: unknown) => void) => {
@@ -60,13 +61,18 @@ test("manager control updates the real worker todo store used by subsequent ordi
     },
     registerCommand: () => {},
     registerShortcut: () => {},
-    appendEntry: (customType: string, data: unknown) =>
+    appendEntry: (customType: string, data: unknown) => {
+      if (failAppend) {
+        failAppend = false
+        assert.fail("Injected SDK persistence failure")
+      }
       entries.push({
         type: "custom",
         id: `e${entries.length + 1}`,
         customType,
         data,
-      }),
+      })
+    },
   } as unknown as ExtensionAPI
   const ctx = {
     cwd: "/projects/worker",
@@ -195,6 +201,23 @@ test("manager control updates the real worker todo store used by subsequent ordi
     managerEntries.filter(entry => entry.customType === "todo.state").length,
     0,
   )
+  failAppend = true
+  const failed = requestTodoControl(pi, ctx, {
+    action: "add",
+    text: "Must not survive failed persistence",
+  })
+  assert.ok(Either.isLeft(failed))
+  const afterFailure = await tool.execute(
+    "after-failure",
+    { action: "list" },
+    undefined,
+    undefined,
+    ctx,
+  )
+  assert.ok(record(afterFailure))
+  const afterDetails = decodeTodoDetails(afterFailure.details)
+  assert.ok(Option.isSome(afterDetails))
+  assert.equal(afterDetails.value.state.todos.length, 2)
   for (const handler of hooks.get("session_shutdown") ?? [])
     await handler({}, ctx)
 })

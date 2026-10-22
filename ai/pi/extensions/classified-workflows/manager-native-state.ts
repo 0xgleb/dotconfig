@@ -132,7 +132,10 @@ export const openNativeManagerState = (
           !record(value) ||
           value.version !== 1 ||
           value.id !== id ||
-          (value.status !== "completed" && value.status !== "failed") ||
+          (value.status !== "completed" &&
+            value.status !== "failed" &&
+            value.status !== "started" &&
+            value.status !== "unconfirmed") ||
           typeof value.message !== "string" ||
           value.message.length > 250_000
         ) {
@@ -209,7 +212,8 @@ export const openNativeManagerState = (
             const previous = yield* receipt(id)
             const requestPath = join(directory, "requests", name)
             if (previous) {
-              yield* io(() => unlinkSync(requestPath))
+              if (previous.status !== "started")
+                yield* io(() => unlinkSync(requestPath))
               continue
             }
 
@@ -227,14 +231,25 @@ export const openNativeManagerState = (
                 "protocol",
                 "Manager request identity does not match its queue entry.",
               )
-            else if (verified.right.version === 2) {
-              if (!applyTodo) continue
-              result = applyTodo(verified.right.request)
-            } else result = apply(verified.right.text)
+            else {
+              const reserved = yield* reserveReceipt(
+                join(directory, "receipts"),
+                id,
+              )
+              if (reserved === "existing") continue
+              if (verified.right.version === 2) {
+                if (!applyTodo) continue
+                result = applyTodo(verified.right.request)
+              } else result = apply(verified.right.text)
+            }
             const outcome: ManagerPriorityReceipt = {
               version: 1,
               id,
-              status: Either.isRight(result) ? "completed" : "failed",
+              status: Either.isRight(result)
+                ? "completed"
+                : result.left.code === "unconfirmed"
+                  ? "unconfirmed"
+                  : "failed",
               message: Either.isRight(result)
                 ? result.right
                 : result.left.message,
@@ -247,6 +262,36 @@ export const openNativeManagerState = (
         }),
     }
   })
+
+const reserveReceipt = (
+  directory: string,
+  id: string,
+): Either.Either<"claimed" | "existing", ManagerSessionError> => {
+  const written = Either.try({
+    try: () =>
+      writeFileSync(
+        join(directory, `${id}.json`),
+        JSON.stringify({
+          version: 1,
+          id,
+          status: "started",
+          message: "Worker request started; result is not confirmed.",
+        } satisfies ManagerPriorityReceipt),
+        { flag: "wx", mode: 0o600 },
+      ),
+    catch: (error): unknown => error,
+  })
+  if (Either.isRight(written)) return Either.right("claimed")
+  const error = written.left
+  if (
+    typeof error === "object" &&
+    error !== null &&
+    "code" in error &&
+    error.code === "EEXIST"
+  )
+    return Either.right("existing")
+  return failure("io", "Could not reserve the worker request before execution.")
+}
 
 const record = (value: unknown): value is Record<string, unknown> =>
   typeof value === "object" && value !== null && !Array.isArray(value)
