@@ -1,6 +1,7 @@
 import { Data, Either } from "effect"
 
-export const OWNER_ALLOWANCE_MS = 30 * 60 * 1_000
+export const OWNER_ALLOWANCE_MS = 60 * 60 * 1_000
+const LEGACY_OWNER_ALLOWANCE_MS = 30 * 60 * 1_000
 export const OWNER_ALLOWANCE_ENTRY = "pi.owner-work-allowance.v1"
 // Non-secret absolute deadline inherited by managed Pi child processes.
 export const OWNER_PARENT_DEADLINE_ENV = "PI_OWNER_WORK_DEADLINE_MS"
@@ -59,7 +60,7 @@ const error = (code: OwnerAllowanceError["code"]) =>
     code,
     message:
       code === "expired"
-        ? "The 30-minute owner allowance expired. Work is stopped until a new authenticated owner message."
+        ? "The one-hour owner allowance expired. Work is stopped until a new authenticated owner message."
         : `Owner allowance is ${code}; no execution is admitted without valid owner deadline evidence.`,
   })
 
@@ -174,18 +175,37 @@ export const createOwnerAllowance = <T>(
         !time(snapshot.lastOwnerAt) ||
         !time(snapshot.deadlineAt) ||
         !time(snapshot.lastOwnerAt + OWNER_ALLOWANCE_MS) ||
-        snapshot.deadlineAt !== snapshot.lastOwnerAt + OWNER_ALLOWANCE_MS ||
+        (snapshot.deadlineAt !== snapshot.lastOwnerAt + OWNER_ALLOWANCE_MS &&
+          snapshot.deadlineAt !==
+            snapshot.lastOwnerAt + LEGACY_OWNER_ALLOWANCE_MS) ||
         (snapshot.status !== "active" && snapshot.status !== "expired")
       ) {
         stop(error("malformed"))
         return
       }
+      const now = runtime.now()
+      const upgradedDeadline = snapshot.lastOwnerAt + OWNER_ALLOWANCE_MS
+      const upgrade =
+        snapshot.deadlineAt ===
+          snapshot.lastOwnerAt + LEGACY_OWNER_ALLOWANCE_MS &&
+        snapshot.status === "active" &&
+        time(now) &&
+        now < snapshot.deadlineAt &&
+        (ceiling === undefined || upgradedDeadline <= ceiling)
       window = constrain({
         version: 1,
         lastOwnerAt: snapshot.lastOwnerAt,
-        deadlineAt: snapshot.deadlineAt,
+        deadlineAt: upgrade ? upgradedDeadline : snapshot.deadlineAt,
         status: snapshot.status,
       })
+      if (upgrade) {
+        const upgraded = window
+        const persisted = invoke(() => runtime.persist(upgraded))
+        if (Either.isLeft(persisted)) {
+          stop(persisted.left)
+          return
+        }
+      }
       arm()
     },
     ownerInput: receivedAt => {

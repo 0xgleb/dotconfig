@@ -52,12 +52,68 @@ const code = (result: ReturnType<OwnerAllowance["admit"]>) =>
     onRight: () => "allowed",
   })
 
+test("fresh authenticated owner input grants exactly one hour through the harness watchdog", () => {
+  const f = fixture()
+  assert.equal(api.OWNER_ALLOWANCE_MS, 60 * 60 * 1000)
+  f.guard.ownerInput(1000)
+  assert.equal(f.saved.at(-1)?.deadlineAt, 1000 + 60 * 60 * 1000)
+  f.time(1000 + 30 * 60 * 1000)
+  assert.equal(code(f.guard.admit()), "allowed")
+  f.time(1000 + 60 * 60 * 1000)
+  assert.equal(code(f.guard.admit()), "expired")
+})
+
+test("policy upgrade extends an unexpired legacy window from its authenticated timestamp, not reload time", () => {
+  const f = fixture()
+  f.time(5000)
+  f.guard.restore({
+    version: 1,
+    lastOwnerAt: 1000,
+    deadlineAt: 1000 + 30 * 60 * 1000,
+    status: "active",
+  })
+  assert.equal(code(f.guard.admit()), "allowed")
+  assert.equal(f.saved.at(-1)?.lastOwnerAt, 1000)
+  assert.equal(f.saved.at(-1)?.deadlineAt, 1000 + 60 * 60 * 1000)
+})
+
+test("policy upgrade cannot extend a legacy child's inherited parent deadline", () => {
+  const started = 10_000_000
+  const deadlineAt = started + 30 * 60 * 1000
+  const f = fixture(String(deadlineAt))
+  f.time(started + 1000)
+  f.guard.restore({
+    version: 1,
+    lastOwnerAt: started,
+    deadlineAt,
+    status: "active",
+  })
+  assert.equal(code(f.guard.admit()), "allowed")
+  assert.equal(f.saved.length, 0)
+  f.time(deadlineAt)
+  assert.equal(code(f.guard.admit()), "expired")
+})
+
+test("the one-hour policy does not revive expired legacy rounds", () => {
+  for (const status of ["active", "expired"] as const) {
+    const f = fixture()
+    f.time(1000 + 30 * 60 * 1000)
+    f.guard.restore({
+      version: 1,
+      lastOwnerAt: 1000,
+      deadlineAt: 1000 + 30 * 60 * 1000,
+      status,
+    })
+    assert.equal(code(f.guard.admit()), "expired")
+  }
+})
+
 test("missing owner evidence fails closed instead of starting a fresh allowance", () => {
   const f = fixture()
   assert.equal(code(f.guard.admit()), "missing")
   assert.equal(f.callbacks.size, 0)
 })
-test("exact 30-minute boundary blocks and latches expiry without changing tasks", () => {
+test("exact one-hour boundary blocks and latches expiry without changing tasks", () => {
   const f = fixture()
   f.guard.ownerInput(1_000)
   f.time(1_000 + api.OWNER_ALLOWANCE_MS - 1)
@@ -98,7 +154,7 @@ test("old or duplicate remote receipt timestamps cannot extend the allowance", (
   assert.equal(f.saved.length, 1)
   assert.equal(f.saved[0]?.deadlineAt, 1_000 + api.OWNER_ALLOWANCE_MS)
 })
-test("reload restores the original deadline and an expired latch, never now plus 30m", () => {
+test("reload restores the original deadline and an expired latch, never now plus one hour", () => {
   const f = fixture()
   f.time(5_000)
   f.guard.restore({
