@@ -114,11 +114,12 @@ test("all workers open one global native manager with no worker-pair startup fla
   assert.equal(plan.sessionDirectory, "/state/pi/agent/manager/global/sessions")
   assert.equal(plan.args[5], "/state/pi/agent/manager/global")
   assert.ok(!plan.args.includes("--manager-worker"))
+  assert.ok(plan.args.slice(0, plan.args.indexOf("--")).includes("--floating"))
   assert.ok(!plan.args.includes("--no-extensions"))
   const { parseArgs } = await import(
     pathToFileURL(join(getPackageDir(), "dist", "cli", "args.js")).href
   )
-  const parsed = parseArgs(plan.args.slice(8))
+  const parsed = parseArgs(plan.args.slice(plan.args.indexOf("--") + 2))
   assert.deepEqual(parsed.diagnostics, [])
   assert.deepEqual(parsed.messages, [])
   assert.equal(parsed.unknownFlags.get("manager"), true)

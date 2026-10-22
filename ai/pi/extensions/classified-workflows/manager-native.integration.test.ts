@@ -52,7 +52,8 @@ const fixture = (t: test.TestContext) => {
     const pi = {
       events: { on: () => () => {}, emit: () => {} },
       registerFlag: () => {},
-      getFlag: () => (manager ? "worker-pair" : undefined),
+      getFlag: (name: string) =>
+        manager && name === "manager-worker" ? "worker-pair" : undefined,
       setActiveTools: () => {},
       on: (
         name: string,
@@ -81,7 +82,12 @@ const fixture = (t: test.TestContext) => {
         })
       },
       sendUserMessage: () => assert.fail("manager started a worker round"),
-      registerTool: () => assert.fail("manager exposed a model tool"),
+      registerTool: (tool: { name: string }) =>
+        assert.equal(
+          tool.name,
+          "manager_control",
+          "only the manager control tool may be registered here",
+        ),
       exec: async (_command: string, args: string[]) => {
         executions.push(args)
         return { code: 0, stdout: "[]", stderr: "" }

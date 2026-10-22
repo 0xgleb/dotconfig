@@ -466,7 +466,7 @@ export const registerWorkManager = (
     if (ctx.mode === "tui") ctx.ui.setWidget("manager", undefined)
   }
 
-  registerRuntimeVersion(pi, "manager", "0.3.4")
+  registerRuntimeVersion(pi, "manager", "0.4.0")
 
   pi.on("session_start", (_event, ctx) => resetContext(ctx))
   pi.on("session_tree", (_event, ctx) => resetContext(ctx))

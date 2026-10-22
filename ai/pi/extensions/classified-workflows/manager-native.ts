@@ -1,5 +1,6 @@
 import { randomUUID } from "node:crypto"
-import { existsSync } from "node:fs"
+import { lstatSync, mkdirSync } from "node:fs"
+import { Type } from "typebox"
 import { join } from "node:path"
 import {
   getAgentDir,
@@ -18,9 +19,14 @@ import {
 } from "./manager-native-state.ts"
 import {
   managerPairDirectory,
-  managerSessionLaunchPlan,
+  globalManagerSessionLaunchPlan,
   ManagerSessionError,
 } from "./manager-session-core.ts"
+import {
+  readManagerTarget,
+  selectManagerTarget,
+  type ManagerTarget,
+} from "./manager-target.ts"
 
 export interface NativeManagerWorker {
   readonly todo?: (
@@ -54,23 +60,39 @@ export const registerNativeManager = (
   worker: NativeManagerWorker,
   runtime: NativeManagerRuntime = nativeRuntime(),
 ): NativeManager => {
+  pi.registerFlag("manager", {
+    description: "Run the native manager for all existing workers",
+    type: "boolean",
+  })
   pi.registerFlag("manager-worker", {
     description: "Pair a native manager chat with a worker session",
     type: "string",
   })
   const isManager = () =>
-    pi.getFlag("manager-worker") !== undefined &&
-    pi.getFlag("manager-worker") !== ""
+    (pi.getFlag("manager") !== undefined && pi.getFlag("manager") !== false) ||
+    (pi.getFlag("manager-worker") !== undefined &&
+      pi.getFlag("manager-worker") !== "")
   let cancelPolling: (() => void) | undefined
   let policyReady = false
   let activeSessionId: string | undefined
+  let activeCtx: ExtensionContext | undefined
+  let controlRegistered = false
   const releaseBinding = registerManagerBinding(pi, sessionId => {
     if (sessionId !== activeSessionId) return undefined
-    const workerSessionId = pi.getFlag("manager-worker")
     if (!isManager()) return { role: "worker" }
-    return typeof workerSessionId === "string"
-      ? { role: "manager", workerSessionId }
-      : undefined
+    if (!activeCtx)
+      return {
+        role: "manager-unavailable",
+        message: "Manager context is unavailable.",
+      }
+    const target = managerTarget(activeCtx)
+    return Either.isRight(target)
+      ? {
+          role: "manager",
+          workerSessionId: target.right.workerSessionId,
+          workerCwd: target.right.cwd,
+        }
+      : { role: "manager-unavailable", message: target.left.message }
   })
   const submitted = new Set<string>()
   const delivering = new Set<string>()
@@ -82,24 +104,38 @@ export const registerNativeManager = (
     cancelPolling = undefined
     delivering.clear()
   }
-  const binding = (ctx: ExtensionContext) => {
-    const selected = isManager()
-      ? pi.getFlag("manager-worker")
-      : ctx.sessionManager.getSessionId()
-    if (typeof selected !== "string")
-      return failed("invalid_input", "Manager worker identity is invalid.")
-    return Either.map(
-      managerPairDirectory({
-        agentDir: runtime.agentDir,
-        workerCwd: ctx.cwd,
-        workerSessionId: selected,
-      }),
-      directory => ({
-        directory,
-        scope: { workerSessionId: selected, cwd: ctx.cwd },
-      }),
+  const managerTarget = (
+    ctx: ExtensionContext,
+  ): Either.Either<ManagerTarget, ManagerSessionError> => {
+    const selected = readManagerTarget(ctx)
+    if (Either.isLeft(selected)) return selected
+    if (selected.right) return Either.right(selected.right)
+    const legacy = pi.getFlag("manager-worker")
+    if (typeof legacy === "string" && legacy)
+      return Either.right({ workerSessionId: legacy, cwd: ctx.cwd })
+    return failed(
+      "unavailable",
+      "Select an existing worker with manager_control before using its backlog or priorities. Discover workers with agent_registry.",
     )
   }
+  const binding = (ctx: ExtensionContext) =>
+    Either.flatMap(
+      isManager()
+        ? managerTarget(ctx)
+        : Either.right({
+            workerSessionId: ctx.sessionManager.getSessionId(),
+            cwd: ctx.cwd,
+          }),
+      scope =>
+        Either.map(
+          managerPairDirectory({
+            agentDir: runtime.agentDir,
+            workerCwd: scope.cwd,
+            workerSessionId: scope.workerSessionId,
+          }),
+          directory => ({ directory, scope }),
+        ),
+    )
   const client = (ctx: ExtensionContext) =>
     Either.flatMap(binding(ctx), target =>
       openNativeManagerState(target.directory, target.scope),
@@ -229,18 +265,126 @@ export const registerNativeManager = (
       () => epoch,
     )
   }
+  const registerControl = () => {
+    if (controlRegistered) return
+    pi.registerTool({
+      name: "manager_control",
+      label: "Manager worker control",
+      description:
+        "Select an existing worker using its session ID and cwd from agent_registry, inspect the selection, or queue confirmed priorities. Does not start worker rounds.",
+      parameters: Type.Object({
+        action: Type.Union([
+          Type.Literal("select"),
+          Type.Literal("current"),
+          Type.Literal("priorities"),
+        ]),
+        workerSessionId: Type.Optional(Type.String()),
+        cwd: Type.Optional(Type.String()),
+        order: Type.Optional(Type.String()),
+      }),
+      execute: async (_id, params, _signal, _update, ctx) => {
+        if (!isManager())
+          return controlError(
+            new ManagerSessionError({
+              code: "unauthorized",
+              message: "Worker selection is available only in the manager.",
+            }),
+          )
+        if (params.action === "select") {
+          if (
+            typeof params.workerSessionId !== "string" ||
+            typeof params.cwd !== "string"
+          )
+            return controlError(
+              new ManagerSessionError({
+                code: "invalid_input",
+                message:
+                  "Select requires an existing worker session ID and absolute cwd.",
+              }),
+            )
+          const selected = selectManagerTarget(
+            pi,
+            ctx,
+            { workerSessionId: params.workerSessionId, cwd: params.cwd },
+            runtime.agentDir,
+          )
+          return Either.isLeft(selected)
+            ? controlError(selected.left)
+            : {
+                content: [
+                  {
+                    type: "text" as const,
+                    text: `Selected worker ${selected.right.workerSessionId} at ${selected.right.cwd}.`,
+                  },
+                ],
+                isError: false,
+                details: { outcome: "selected", ...selected.right },
+              }
+        }
+        const selected = managerTarget(ctx)
+        if (Either.isLeft(selected)) return controlError(selected.left)
+        if (params.action === "current")
+          return {
+            content: [
+              {
+                type: "text" as const,
+                text: `Current worker: ${selected.right.workerSessionId} at ${selected.right.cwd}.`,
+              },
+            ],
+            isError: false,
+            details: { outcome: "selected", ...selected.right },
+          }
+        if (typeof params.order !== "string" || !params.order.trim())
+          return controlError(
+            new ManagerSessionError({
+              code: "invalid_input",
+              message:
+                "Priorities require an explicit order of task IDs or clear.",
+            }),
+          )
+        const state = client(ctx)
+        if (Either.isLeft(state)) return controlError(state.left)
+        const current = state.right.context()
+        if (Either.isLeft(current)) return controlError(current.left)
+        const queued = state.right.enqueuePriorities(
+          params.order,
+          current.right.priorityRevision,
+        )
+        if (Either.isLeft(queued)) return controlError(queued.left)
+        submitted.add(queued.right)
+        return {
+          content: [
+            {
+              type: "text" as const,
+              text: `Queued priority request ${queued.right}; worker completion is not confirmed.`,
+            },
+          ],
+          isError: false,
+          details: {
+            outcome: "queued",
+            requestId: queued.right,
+            ...selected.right,
+          },
+        }
+      },
+    })
+    controlRegistered = true
+  }
   const resume = (ctx: ExtensionContext, mode: "restore" | "replace") => {
     activeSessionId = ctx.sessionManager.getSessionId()
+    activeCtx = ctx
     stop()
     if (isManager()) {
+      registerControl()
       pi.setActiveTools([...MANAGEMENT_TOOLS])
       pollManager(ctx)
       cancelPolling = runtime.schedule(() => pollManager(ctx))
       return
     }
+    if (ctx.mode !== "tui") return
     const target = binding(ctx)
-    if (Either.isLeft(target) || !existsSync(target.right.directory)) return
-    const state = openNativeManagerState(
+    if (Either.isLeft(target)) return
+    const state = prepareNativeManagerState(
       target.right.directory,
       target.right.scope,
     )
@@ -255,6 +399,7 @@ export const registerNativeManager = (
   pi.on("session_shutdown", () => {
     stop()
     activeSessionId = undefined
+    activeCtx = undefined
     releaseBinding()
   })
   pi.on("before_agent_start", (event, ctx) => {
@@ -374,7 +519,7 @@ export const registerNativeManager = (
         ctx.ui.notify("Select a model before opening manager chat.", "warning")
         return
       }
-      const plan = managerSessionLaunchPlan({
+      const plan = globalManagerSessionLaunchPlan({
         workerSessionId: ctx.sessionManager.getSessionId(),
         workerCwd: ctx.cwd,
         agentDir: runtime.agentDir,
@@ -413,6 +558,12 @@ export const registerNativeManager = (
         )
         return
       }
+      const workspace = join(runtime.agentDir, "manager", "global")
+      const ready = prepareGlobalWorkspace(workspace)
+      if (Either.isLeft(ready)) {
+        notice(ctx, ready.left)
+        return
+      }
       const launch = plan.right
       const launched = await Effect.runPromise(
         Effect.either(
@@ -433,7 +584,35 @@ export const registerNativeManager = (
   }
 }
 
-const MANAGEMENT_TOOLS: readonly string[] = ["agent_registry", "todo"]
+const controlError = (error: ManagerSessionError) => ({
+  content: [{ type: "text" as const, text: error.message }],
+  isError: true,
+  details: { outcome: error.code },
+})
+const prepareGlobalWorkspace = (
+  directory: string,
+): Either.Either<void, ManagerSessionError> =>
+  Either.gen(function* () {
+    yield* attempt(() => mkdirSync(directory, { recursive: true, mode: 0o700 }))
+    const stat = yield* attempt(() => lstatSync(directory))
+    if (
+      !stat.isDirectory() ||
+      stat.isSymbolicLink() ||
+      (stat.mode & 0o077) !== 0 ||
+      typeof process.getuid !== "function" ||
+      stat.uid !== process.getuid()
+    )
+      return yield* failed(
+        "unsafe_state",
+        "Global manager workspace must be a private, owned directory.",
+      )
+  })
+
+const MANAGEMENT_TOOLS: readonly string[] = [
+  "agent_registry",
+  "todo",
+  "manager_control",
+]
 const SCOPE_ENTRY = "manager.native-scope.v1"
 const NATIVE_MESSAGE = "manager-native-update"
 

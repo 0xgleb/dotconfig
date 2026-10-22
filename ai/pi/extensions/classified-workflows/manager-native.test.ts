@@ -13,11 +13,14 @@ import {
   type NativeManagerRuntime,
 } from "./manager-native.ts"
 import { managerPairDirectory } from "./manager-session-core.ts"
-import { prepareNativeManagerState } from "./manager-native-state.ts"
+import {
+  prepareNativeManagerState,
+  openNativeManagerState,
+} from "./manager-native-state.ts"
 import { getManagerBinding } from "../shared/manager-binding.ts"
 
 const scope = { workerSessionId: "worker-123", cwd: "/projects/worker" }
-const fixture = (t: test.TestContext, manager = false) => {
+const fixture = (t: test.TestContext, manager: boolean | "global" = false) => {
   const root = mkdtempSync(join(tmpdir(), "pi-manager-profile-test-"))
   t.after(() => rmSync(root, { recursive: true }))
   const ticks: (() => void)[] = []
@@ -35,6 +38,18 @@ const fixture = (t: test.TestContext, manager = false) => {
   >()
   const entries: Record<string, unknown>[] = []
   const active: string[][] = []
+  const tools = new Map<
+    string,
+    {
+      execute: (
+        id: string,
+        params: Record<string, unknown>,
+        signal: undefined,
+        update: undefined,
+        ctx: ExtensionContext,
+      ) => unknown
+    }
+  >()
   const messages: { message: unknown; options: unknown }[] = []
   const execs: { command: string; args: string[] }[] = []
   const notices: string[] = []
@@ -50,7 +65,14 @@ const fixture = (t: test.TestContext, manager = false) => {
       },
     },
     registerFlag: () => {},
-    getFlag: () => (manager ? scope.workerSessionId : undefined),
+    getFlag: (name: string) =>
+      name === "manager"
+        ? manager === "global"
+          ? true
+          : undefined
+        : name === "manager-worker" && manager === true
+          ? scope.workerSessionId
+          : undefined,
     on: (
       event: string,
       callback: (event: unknown, ctx: ExtensionContext) => unknown,
@@ -72,7 +94,16 @@ const fixture = (t: test.TestContext, manager = false) => {
       })
     },
     sendUserMessage: () => assert.fail("manager cannot start a worker turn"),
-    registerTool: () => assert.fail("manager remains tool-free"),
+    registerTool: (tool: {
+      name: string
+      execute: (
+        id: string,
+        params: Record<string, unknown>,
+        signal: undefined,
+        update: undefined,
+        ctx: ExtensionContext,
+      ) => unknown
+    }) => tools.set(tool.name, tool),
     registerMessageRenderer: () => assert.fail("use the native Pi renderer"),
     exec: async (command: string, args: string[]) => {
       execs.push({ command, args })
@@ -80,7 +111,7 @@ const fixture = (t: test.TestContext, manager = false) => {
     },
   } as unknown as ExtensionAPI
   const ctx = {
-    cwd: scope.cwd,
+    cwd: manager === "global" ? join(root, "manager", "global") : scope.cwd,
     mode: "tui",
     model: { provider: "openai-codex", id: "gpt-6.1-sol" },
     sessionManager: {
@@ -129,6 +160,8 @@ const fixture = (t: test.TestContext, manager = false) => {
   }
   return {
     pi,
+    root,
+    tools,
     registered,
     emit,
     active,
@@ -166,9 +199,17 @@ test("manager profile preserves the native editor and exposes registry managemen
   const todoApi = { ...f.pi, getFlag: () => undefined } as ExtensionAPI
   assert.deepEqual(
     getManagerBinding(todoApi, f.ctx),
-    Either.right({ role: "manager", workerSessionId: scope.workerSessionId }),
+    Either.right({
+      role: "manager",
+      workerSessionId: scope.workerSessionId,
+      workerCwd: scope.cwd,
+    }),
   )
-  assert.deepEqual(f.active.at(-1), ["agent_registry", "todo"])
+  assert.deepEqual(f.active.at(-1), [
+    "agent_registry",
+    "todo",
+    "manager_control",
+  ])
   const response = object(result)
   assert.equal(typeof response.systemPrompt, "string")
   assert.match(
@@ -193,6 +234,65 @@ test("manager profile preserves the native editor and exposes registry managemen
   assert.equal(denied.block, true)
 })
 
+test("global manager selects an existing worker without changing native UI or starting a worker round", async t => {
+  const f = fixture(t, "global")
+  const state = f.seed()
+  state.publish({
+    ...scope,
+    version: 1,
+    observedAt: 1000,
+    priorityRevision: "revision-1",
+    data: { todoControl: true },
+  })
+  await f.emit("session_start")
+  assert.equal(f.registered.isManager(), true)
+  const initial = getManagerBinding(f.pi, f.ctx)
+  assert.ok(Either.isRight(initial))
+  assert.equal(initial.right.role, "manager-unavailable")
+  const control = f.tools.get("manager_control")
+  assert.ok(control)
+  const result = await control.execute(
+    "select",
+    {
+      action: "select",
+      workerSessionId: scope.workerSessionId,
+      cwd: scope.cwd,
+    },
+    undefined,
+    undefined,
+    f.ctx,
+  )
+  assert.equal(object(result).isError, false)
+  assert.deepEqual(
+    getManagerBinding(f.pi, f.ctx),
+    Either.right({
+      role: "manager",
+      workerSessionId: scope.workerSessionId,
+      workerCwd: scope.cwd,
+    }),
+  )
+  assert.deepEqual(f.active.at(-1), [
+    "agent_registry",
+    "todo",
+    "manager_control",
+  ])
+  assert.deepEqual(f.execs, [])
+})
+
+test("ordinary visible workers publish their control scope without needing a per-worker manager", async t => {
+  const f = fixture(t)
+  await f.emit("session_start")
+  const directory = managerPairDirectory({
+    workerSessionId: scope.workerSessionId,
+    workerCwd: scope.cwd,
+    agentDir: f.root,
+  })
+  assert.ok(Either.isRight(directory))
+  const state = openNativeManagerState(directory.right, scope)
+  assert.ok(Either.isRight(state))
+  assert.ok(Either.isRight(state.right.context()))
+})
+
 test("normal worker sessions retain their own model tool set", async t => {
   const f = fixture(t)
   await f.emit("session_start")
@@ -207,7 +307,8 @@ test("opening manager launches the real Pi CLI instead of any custom UI", async 
   assert.equal(f.execs.length, 2)
   assert.deepEqual(f.execs[0]?.args, ["action", "list-panes", "--json"])
   const args = f.execs[1]?.args ?? []
-  assert.ok(args.includes("--manager-worker"))
+  assert.ok(args.includes("--manager"))
+  assert.ok(!args.includes("--manager-worker"))
   assert.ok(args.includes("--continue"))
   assert.ok(!args.includes("--no-extensions"))
   assert.ok(!args.includes("--mode"))

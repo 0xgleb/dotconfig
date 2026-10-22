@@ -91,6 +91,7 @@ export const globalManagerSessionLaunchPlan = (
         paneName,
         "--cwd",
         workspace,
+        "--floating",
         "--",
         input.piExecutable,
         "--session-dir",
