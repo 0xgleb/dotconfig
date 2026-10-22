@@ -214,7 +214,7 @@ test("manager profile preserves the native editor and exposes registry managemen
   assert.equal(typeof response.systemPrompt, "string")
   assert.match(
     String(response.systemPrompt),
-    /planning conversation alongside a coding worker/u,
+    /native Pi manager for existing workers/u,
   )
   const message = object(response.message)
   assert.equal(typeof message.content, "string")
@@ -226,12 +226,107 @@ test("manager profile preserves the native editor and exposes registry managemen
   assert.equal(message.display, false)
   assert.deepEqual(f.execs, [])
   assert.equal(
-    await f.emit("tool_call", { toolName: "agent_registry" }),
+    await f.emit("tool_call", {
+      toolName: "agent_registry",
+      input: { action: "list" },
+    }),
     undefined,
   )
   assert.equal(await f.emit("tool_call", { toolName: "todo" }), undefined)
   const denied = object(await f.emit("tool_call", { toolName: "bash" }))
   assert.equal(denied.block, true)
+})
+
+const registryMutations = [
+  "clear",
+  "ingest_backlog",
+  "claim",
+  "release",
+  "delegate",
+  "claim_request",
+  "start_request",
+  "review_request",
+  "publish_request",
+  "complete_request",
+  "fail_request",
+  "cancel_request",
+] as const
+
+for (const profile of [true, "global"] as const) {
+  const name = profile === true ? "legacy" : "global"
+  test(`${name} manager cannot mutate registry roles or request lifecycle`, async t => {
+    const f = fixture(t, profile)
+    await f.emit("session_start")
+    for (const action of registryMutations) {
+      const denied = object(
+        await f.emit("tool_call", {
+          toolName: "agent_registry",
+          input: { action, manager: false },
+        }),
+      )
+      assert.equal(denied.block, true, action)
+      assert.equal(typeof denied.reason, "string")
+    }
+    assert.deepEqual(f.execs, [])
+    assert.deepEqual(f.messages, [])
+  })
+
+  test(`${name} manager rejects malformed and future registry actions without throwing`, async t => {
+    const f = fixture(t, profile)
+    for (const input of [
+      undefined,
+      null,
+      [],
+      {},
+      "list",
+      { action: null },
+      { action: 42 },
+      { action: ["list"] },
+      { action: "future_mutation" },
+    ]) {
+      const denied = object(
+        await f.emit("tool_call", { toolName: "agent_registry", input }),
+      )
+      assert.equal(denied.block, true, JSON.stringify(input))
+    }
+  })
+
+  test(`${name} manager can discover reports before selection and retain backlog controls`, async t => {
+    const f = fixture(t, profile)
+    await f.emit("session_start")
+    for (const action of ["list", "requests"]) {
+      assert.equal(
+        await f.emit("tool_call", {
+          toolName: "agent_registry",
+          input: { action },
+        }),
+        undefined,
+        action,
+      )
+    }
+    for (const toolName of ["todo", "manager_control"]) {
+      assert.equal(await f.emit("tool_call", { toolName }), undefined, toolName)
+    }
+    assert.equal(
+      object(await f.emit("tool_call", { toolName: "bash" })).block,
+      true,
+    )
+  })
+}
+
+test("ordinary workers retain their registry capabilities without a manager restriction", async t => {
+  const f = fixture(t)
+  await f.emit("session_start")
+  for (const action of [...registryMutations, "list", "requests"]) {
+    assert.equal(
+      await f.emit("tool_call", {
+        toolName: "agent_registry",
+        input: { action },
+      }),
+      undefined,
+      action,
+    )
+  }
 })
 
 test("global manager selects an existing worker without changing native UI or starting a worker round", async t => {

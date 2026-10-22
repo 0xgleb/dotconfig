@@ -431,15 +431,26 @@ export const registerNativeManager = (
     if (isManager() && (!policyReady || ctx.model?.provider === "anthropic"))
       ctx.abort()
   })
-  pi.on("tool_call", event =>
-    isManager() && !MANAGEMENT_TOOLS.includes(event.toolName)
-      ? {
-          block: true,
-          reason:
-            "Manager sessions permit management tools, not coding execution.",
-        }
-      : undefined,
-  )
+  pi.on("tool_call", event => {
+    if (!isManager()) return
+    if (!MANAGEMENT_TOOLS.includes(event.toolName))
+      return {
+        block: true,
+        reason:
+          "Manager sessions permit management tools, not coding execution.",
+      }
+    if (
+      event.toolName === "agent_registry" &&
+      (!record(event.input) ||
+        !Object.hasOwn(event.input, "action") ||
+        (event.input.action !== "list" && event.input.action !== "requests"))
+    )
+      return {
+        block: true,
+        reason:
+          "Manager sessions may read registry lists and reports, not mutate roles or request lifecycle.",
+      }
+  })
 
   return {
     isManager,
