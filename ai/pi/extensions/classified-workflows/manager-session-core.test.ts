@@ -6,6 +6,7 @@ import { getPackageDir } from "@earendil-works/pi-coding-agent"
 import { Either } from "effect"
 import {
   managerSessionLaunchPlan,
+  globalManagerSessionLaunchPlan,
   type ManagerSessionLaunchInput,
 } from "./manager-session-core.ts"
 
@@ -96,6 +97,44 @@ test("native manager sessions are stable per worker and isolated between workers
   assert.notEqual(other.right.paneName, first.paneName)
 })
 
+test("all workers open one global native manager with no worker-pair startup flag", async () => {
+  const first = globalManagerSessionLaunchPlan(input)
+  const other = globalManagerSessionLaunchPlan({
+    ...input,
+    workerSessionId: "second-worker",
+    workerCwd: "/projects/another",
+  })
+  assert.ok(Either.isRight(first))
+  assert.ok(Either.isRight(other))
+  assert.deepEqual(first, other)
+  assert.equal(first.right.kind, "launch")
+  if (first.right.kind !== "launch") assert.fail("Expected global launch")
+  const plan = first.right
+  assert.equal(plan.paneName, "manager")
+  assert.equal(plan.sessionDirectory, "/state/pi/agent/manager/global/sessions")
+  assert.equal(plan.args[5], "/state/pi/agent/manager/global")
+  assert.ok(!plan.args.includes("--manager-worker"))
+  assert.ok(!plan.args.includes("--no-extensions"))
+  const { parseArgs } = await import(
+    pathToFileURL(join(getPackageDir(), "dist", "cli", "args.js")).href
+  )
+  const parsed = parseArgs(plan.args.slice(8))
+  assert.deepEqual(parsed.diagnostics, [])
+  assert.deepEqual(parsed.messages, [])
+  assert.equal(parsed.unknownFlags.get("manager"), true)
+})
+
+test("an existing global manager is reused regardless of the requesting worker", () => {
+  const result = globalManagerSessionLaunchPlan({
+    ...input,
+    workerSessionId: "second-worker",
+    workerCwd: "/other",
+    existingPaneNames: ["manager"],
+  })
+  assert.ok(Either.isRight(result))
+  assert.deepEqual(result.right, { kind: "existing", paneName: "manager" })
+})
+
 test("invalid worker identity, workspace and model cannot reach a native launch", () => {
   for (const patch of [
     { workerSessionId: "../another-session" },
@@ -109,5 +148,8 @@ test("invalid worker identity, workspace and model cannot reach a native launch"
     { provider: "anthropic", modelId: "claude" },
   ]) {
     assert.ok(Either.isLeft(managerSessionLaunchPlan({ ...input, ...patch })))
+    assert.ok(
+      Either.isLeft(globalManagerSessionLaunchPlan({ ...input, ...patch })),
+    )
   }
 })

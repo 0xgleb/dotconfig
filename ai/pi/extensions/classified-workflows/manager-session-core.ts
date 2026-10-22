@@ -70,6 +70,42 @@ export const managerPairDirectory = (
   return Either.right(join(input.agentDir, "manager", pair))
 }
 
+export const globalManagerSessionLaunchPlan = (
+  input: ManagerSessionLaunchInput,
+): Either.Either<ManagerSessionLaunchPlan, ManagerSessionError> =>
+  Either.map(managerSessionLaunchPlan(input), (): ManagerSessionLaunchPlan => {
+    const paneName = "manager"
+    if (input.existingPaneNames.includes(paneName))
+      return { kind: "existing", paneName }
+    const workspace = join(input.agentDir, "manager", "global")
+    const sessionDirectory = join(workspace, "sessions")
+    return {
+      kind: "launch",
+      paneName,
+      sessionDirectory,
+      executable: "zellij",
+      args: [
+        "action",
+        "new-pane",
+        "--name",
+        paneName,
+        "--cwd",
+        workspace,
+        "--",
+        input.piExecutable,
+        "--session-dir",
+        sessionDirectory,
+        "--continue",
+        "--name",
+        paneName,
+        "--model",
+        `${input.provider}/${input.modelId}`,
+        "--no-builtin-tools",
+        "--manager",
+      ],
+    }
+  })
+
 export const managerSessionLaunchPlan = (
   input: ManagerSessionLaunchInput,
 ): Either.Either<ManagerSessionLaunchPlan, ManagerSessionError> => {
