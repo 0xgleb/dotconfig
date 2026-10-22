@@ -12,6 +12,7 @@ let
     metagendaFj = pkgs.callPackage ./nushell/fj/portable { };
   };
   skills = config.lib.file.mkOutOfStoreSymlink "${aiDir}/skills";
+  globalInstructions = config.lib.file.mkOutOfStoreSymlink "${config.home.homeDirectory}/.config/GLOBAL_AGENTS.md";
   isDarwin = pkgs.stdenv.hostPlatform.isDarwin;
   aiDir = "${config.home.homeDirectory}/.config/ai";
   cursorDir = "${config.home.homeDirectory}/.cursor";
@@ -235,9 +236,14 @@ in
       ".cursor/hooks".source = config.lib.file.mkOutOfStoreSymlink "${aiDir}/cursor/hooks";
       ".cursor/hooks.json".source = config.lib.file.mkOutOfStoreSymlink "${aiDir}/cursor/hooks.json";
       ".cursor/agent-env.sh".source = config.lib.file.mkOutOfStoreSymlink "${aiDir}/cursor/agent-env.sh";
-      ".cursor/AGENTS.md".source = config.lib.file.mkOutOfStoreSymlink "${aiDir}/AGENTS.md";
-      ".cursor/CLAUDE.md".source = config.lib.file.mkOutOfStoreSymlink "${aiDir}/AGENTS.md";
-      ".pi/agent/AGENTS.md".source = config.lib.file.mkOutOfStoreSymlink "${aiDir}/pi/AGENTS.md";
+      ".claude/CLAUDE.md".source = globalInstructions;
+      ".claude/CLAUDE.md".force = true;
+      ".cursor/AGENTS.md".source = globalInstructions;
+      ".cursor/AGENTS.md".force = true;
+      ".cursor/CLAUDE.md".source = globalInstructions;
+      ".cursor/CLAUDE.md".force = true;
+      ".pi/agent/AGENTS.md".source = globalInstructions;
+      ".pi/agent/AGENTS.md".force = true;
       ".pi/agent/bin/but".source = "${but}/bin/but";
       ".pi/agent/bin/but".force = true;
       ".pi/agent/bin/pi".source = "${unstable.pi-coding-agent}/bin/pi";

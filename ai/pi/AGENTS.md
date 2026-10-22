@@ -15,13 +15,16 @@
 - Report an actual execution restriction precisely, including the blocked action
   and remaining work, and escalate through an authorized channel. Never evade a
   restriction or describe blocked or unperformed work as completed.
-- Hard requirement from the owner (2026-10-08): no work slice may remain
-  local-only. At any point in time, destroying the machine must not lose more
-  than 15 minutes of work. Commit and push (or otherwise publish) every
-  completed unit of work within that bound, including work-in-progress states,
-  on a branch or draft PR when the result is not final. A harness failure that
-  blocks publication within the bound is an escalation-worthy outage, not a
-  reason to accumulate local-only work.
+- Commit and publish continuously: commit and push each completed work unit
+  before starting the next. Commit and push truthful checkpoints of unfinished source work
+  at least every 15 minutes using the repository's authorized workflow. Never let
+  agent-owned unstaged, untracked, staged-but-uncommitted, or unpushed changes
+  accumulate across work units. Preserve unrelated user-owned changes and permitted
+  temporary review/handoff artifacts; do not sweep them into commits or delete
+  them to make the tree clean. If publication is blocked, pause new work, preserve
+  the current state, and escalate; continue only bounded repairs needed to unblock
+  publication. Never bypass required gates. Use plain Git except in a verified
+  GitButler-managed main worktree, subject to repository-local workflow rules.
 - AGENTS.md files define standing rules of engagement and agent behavior. Never
   put transient task state, progress reports, one-off migration notes, temporary
   waiting conditions, session journals, or handoff notes in them; use task

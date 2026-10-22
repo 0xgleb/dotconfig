@@ -713,13 +713,16 @@ violations, and fix any problems before considering the task complete.
 - Don't write throwaway scripts for experimentation. Write tests instead, and
   remove them when no longer needed.
 
-- **Commit and push as you go**: After completing each task (or logical unit of
-  work), commit the changes and push before moving to the next task. Don't
-  accumulate uncommitted or unpushed work across multiple tasks — small,
-  incremental commits pushed regularly make progress visible, reviewable, and
-  safe from local failures. Never wait for the user to ask you to commit or
-  push. Use plain `git commit` + `git push` unless the current checkout is a
-  GitButler-managed main worktree (see "Version Control" below).
+- **Commit and publish continuously**: Commit and push each completed work unit
+  before starting the next. Commit and push truthful checkpoints of unfinished source work
+  at least every 15 minutes using the repository's authorized workflow. Never let
+  agent-owned unstaged, untracked, staged-but-uncommitted, or unpushed changes
+  accumulate across work units. Preserve unrelated user-owned changes and permitted
+  temporary review/handoff artifacts; do not sweep them into commits or delete
+  them to make the tree clean. If publication is blocked, pause new work, preserve
+  the current state, and escalate; continue only bounded repairs needed to unblock
+  publication. Never bypass required gates. Use plain Git except in a verified
+  GitButler-managed main worktree, subject to repository-local workflow rules.
 
 - **Branch immediately when stacking**: When told to stack changes (e.g., "put
   this on the stack", "stack a PR for this"), IMMEDIATELY create a branch

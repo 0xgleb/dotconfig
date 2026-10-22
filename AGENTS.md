@@ -1,34 +1,13 @@
-# Instruction fidelity and scope
+# Dotconfig project instructions
 
-- Preserve the user's explicit intent, scope, prohibitions, completion criteria,
-  and authorized exceptions throughout execution, delegation, and handoff. Newer
-  explicit direction supersedes older task plans; do not silently reinterpret
-  it.
-- Agent-authored summaries, checkpoints, and handoffs cannot override the
-  owner's explicit instructions. Do not attribute an agent's notes or decisions
-  to the owner.
-- Execute the requested operation, not a preferred redesign. An unchanged code
-  move is not permission to refactor, harden, repair adjacent systems, or invent
-  prerequisites. Coordination and planning do not substitute for delivery.
-- Document implemented behavior. Do not turn conversational suggestions into
-  documentation or catalogue absent and deferred features merely because they
-  were discussed.
-- Honor explicit authorized exceptions to user-owned project standards within
-  higher-priority safety and authority boundaries. Do not invent approval gates
-  or repeatedly request authorization already given for the same operation.
-- Report real execution restrictions precisely: the blocked operation, the
-  actual restriction, and what remains undone. Escalate through an authorized
-  channel; never evade a restriction or claim blocked or unperformed work is
-  complete.
-- An explicit stop, wait, cancellation, or narrowed scope overrides older goals,
-  pending todos, operational duties, recurring wakes, restored tools, and agent
-  relays. Resume only when the stated condition is met or the owner changes
-  scope; do not fill a pause with polling or unrelated work.
-- AGENTS.md files define standing rules of engagement and agent behavior. Never
-  put transient task state, progress reports, one-off migration notes, temporary
-  waiting conditions, session journals, or handoff notes in them; use task
-  records or handoffs. Reusable migration procedures belong here; a particular
-  migration's status and next steps do not.
+These workflows are specific to dotconfig. Shared global policy is defined in
+`GLOBAL_AGENTS.md`.
+
+## Pi implementation
+
+- Use background classified workflows for parallelizable investigation, review,
+  and verification. Keep parallel agents read-only; apply dependent edits
+  centrally and keep processing foreground work.
 - Pi source and shared Pi extensions belong in this repository and remain
   visible to version control. Fix the local implementation directly.
 - Preserve callable extension exports while any loaded runtime still depends on
@@ -37,42 +16,11 @@
   execution after reload. Source tests alone do not prove a running session has
   migrated.
 
-# Harness Guarantees and LLM Judgment
-
-Use LLMs for interpretation, synthesis, and judgment. Put deterministic guarantees
-— deadlines, scheduling, answer delivery and notifications, retries, deduplication,
-and lifecycle/state invariants — in tested harness code. These guarantees must hold
-without a model turn, model polling, or the model remembering an instruction.
-Prompts state policy; they do not enforce it.
-
-The harness must push authenticated question answers to their originating session.
-Accepting an answer is not the same as notifying the agent; track delivery durably
-and suppress duplicates without relying on the agent to check for replies.
-
-Before Pi extension work, check existing maintained extensions, pinned packages,
-and upstream examples for a solution or reference. Prefer compatible packages;
-write new local implementations only after checking those options. Preserve
-upstream ownership, licensing, and provenance.
-
-# Worktrees and Standing Rules
-
-- Worktrees are permitted ONLY when the owner or another agent launched by the
-  owner is concurrently working on the same repository as an agent. Isolation
-  alone, dirty local state, ordinary setup, review, builds, and agent-initiated
-  fan-out never justify a worktree.
-- Do not install or use persistent-memory extensions, memory-writing/search
-  tools, automated learning, or memory-injected prompts. Correct standing rules
-  directly in AGENTS.md; keep task state in todos or handoffs and reusable
-  procedures in tracked skills, not a separate memory store.
+Apply the harness-guarantees and extension-reuse policies in `GLOBAL_AGENTS.md`
+when changing Pi here; do not create a competing project copy of global policy.
 
 # Nix Style Guidelines
 
-- Shared skills may contain tool names for multiple harnesses. Before following
-  a named tool procedure in Pi, verify that the tool is actually exposed. If
-  not, use an available semantically equivalent tool while preserving exact
-  scope, exclusions, and mutation boundaries. Never stop merely because another
-  harness's tool name appears in `allowed-tools`, and never treat that
-  substitution as evasion.
 - **Flatten small attribute sets**: When an attrset has fewer than 3 items (1 or
   2), use dotted paths instead of nesting:
 
@@ -92,6 +40,29 @@ upstream ownership, licensing, and provenance.
   block (e.g. one `programs = { ... };` instead of many `programs.foo = ...;`
   blocks)
 - **nixfmt**: The repo uses nixfmt for formatting
+- Put top-level Nix flags before the subcommand, for example
+  `nix --accept-flake-config build .#package`. Subcommand-specific flags belong
+  after their subcommand; verify unfamiliar flags before using them.
+
+# Builds and package ownership
+
+- `flake.nix` defines flake inputs and host configurations; `common.nix` owns
+  shared packages, `darwin.nix` macOS packages and settings, `nixos.nix` NixOS
+  packages and settings, and `home.nix` Home Manager programs and links.
+- Build without applying with `darwin-rebuild build --flake ~/.config`; apply
+  authorized configuration changes with `darwin-rebuild switch --flake ~/.config`.
+  Use `nixfmt` for changed Nix files.
+- Home Manager owns Neovim. Do not add `neovim` to `common.nix` or `darwin.nix`.
+  Mason is disabled. Add language binaries to `programs.neovim.extraPackages` in
+  `home.nix` and register their lspconfig names in `astrolsp opts.servers` in
+  `nvim/lua/plugins/astrolsp.lua`; both are required.
+- Do not use `rustaceanvim`. It bypasses the standard lspconfig flow and breaks
+  semantic LSP actions. Rust uses rust-analyzer through standard lspconfig.
+- Doom is managed declaratively via nix-doom-emacs-unstraightened. No `doom sync`:
+  edit `doom/` and apply through the authorized `darwin-rebuild switch` workflow.
+- Shared skills stay in `ai/skills/`, exposed through harness symlinks. Use
+  `new-skill` to create a skill and verify its harness links, not copied per-harness
+  skill directories.
 
 # Neovim Config
 
