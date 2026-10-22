@@ -37,6 +37,23 @@
   execution after reload. Source tests alone do not prove a running session has
   migrated.
 
+# Harness Guarantees and LLM Judgment
+
+Use LLMs for interpretation, synthesis, and judgment. Put deterministic guarantees
+— deadlines, scheduling, answer delivery and notifications, retries, deduplication,
+and lifecycle/state invariants — in tested harness code. These guarantees must hold
+without a model turn, model polling, or the model remembering an instruction.
+Prompts state policy; they do not enforce it.
+
+The harness must push authenticated question answers to their originating session.
+Accepting an answer is not the same as notifying the agent; track delivery durably
+and suppress duplicates without relying on the agent to check for replies.
+
+Before Pi extension work, check existing maintained extensions, pinned packages,
+and upstream examples for a solution or reference. Prefer compatible packages;
+write new local implementations only after checking those options. Preserve
+upstream ownership, licensing, and provenance.
+
 # Worktrees and Standing Rules
 
 - Worktrees are permitted ONLY when the owner or another agent launched by the
