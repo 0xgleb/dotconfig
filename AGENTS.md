@@ -163,6 +163,9 @@ nu nushell/fj/routing.test.nu
 
 # Agent Delivery
 
+Use type-only Conventional Commit prefixes such as `fix:`, `feat:`, `refactor:`,
+`test:`, and `docs:` according to the change. Do not use `wip(pi):`.
+
 Work on `master` and commit and push validated changes directly to `master`,
 unless the owner explicitly authorizes another branch or says not to publish. Do
 not create or use an agent feature branch based on an inherited checkout,
