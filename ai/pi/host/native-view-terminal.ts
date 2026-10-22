@@ -18,30 +18,43 @@ export const createNativeViewTerminals = (
 ): NativeViewTerminals => {
   let active: NativeViewId = "worker"
   let activation = Symbol()
+  const listeners = new Map<NativeViewId, Parameters<Terminal["start"]>>()
+  const start = (
+    view: NativeViewId,
+    callbacks: Parameters<Terminal["start"]>,
+    token: symbol,
+  ): void => {
+    const [onInput, onResize] = callbacks
+    physical.start(
+      data => {
+        if (active === view && activation === token) onInput(data)
+      },
+      () => {
+        if (active === view && activation === token) onResize()
+      },
+    )
+  }
 
   const scoped = (view: NativeViewId): Terminal => {
     const owned = (effect: () => void): void => {
       if (active === view) effect()
     }
     return {
-      start: (onInput, onResize) =>
+      start: (onInput, onResize) => {
+        const callbacks: Parameters<Terminal["start"]> = [onInput, onResize]
+        listeners.set(view, callbacks)
         owned(() => {
           activation = Symbol()
-          const started = activation
-          physical.start(
-            data => {
-              if (active === view && activation === started) onInput(data)
-            },
-            () => {
-              if (active === view && activation === started) onResize()
-            },
-          )
-        }),
-      stop: () =>
+          start(view, callbacks, activation)
+        })
+      },
+      stop: () => {
+        listeners.delete(view)
         owned(() => {
           physical.stop()
           activation = Symbol()
-        }),
+        })
+      },
       drainInput: (maxMs, idleMs) =>
         active === view
           ? physical.drainInput(maxMs, idleMs)
@@ -77,13 +90,17 @@ export const createNativeViewTerminals = (
       if (view !== "worker" && view !== "manager")
         return { ok: false, code: "invalid_view" }
       if (view === active) return { ok: true }
+      const next = Symbol()
+      const callbacks = listeners.get(view)
       try {
         physical.stop()
+        if (callbacks) start(view, callbacks, next)
       } catch {
         return { ok: false, code: "terminal_failure" }
       }
-      activation = Symbol()
+      activation = next
       active = view
+      if (callbacks) callbacks[1]()
       return { ok: true }
     },
   }

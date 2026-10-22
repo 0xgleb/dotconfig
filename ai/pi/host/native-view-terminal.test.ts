@@ -108,10 +108,6 @@ test("switching retains independent editor input handlers and fences stale deliv
   assert.equal(f.stops(), 1)
   assert.equal(f.views.active(), "manager")
   assert.deepEqual(f.views.activate("worker"), { ok: true })
-  f.views.worker.start(
-    value => workerDraft.push(value),
-    () => {},
-  )
   f.inputs[0]("stale first activation")
   f.inputs[1]("stale manager activation")
   f.inputs[2]("returned worker")
