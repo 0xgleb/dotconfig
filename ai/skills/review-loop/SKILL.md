@@ -692,6 +692,7 @@ const [verifications, sweep] = await parallel([
           `have introduced. Report new_issues only for problems caused by or ` +
           `directly adjacent to the fix.`,
         {
+          cwd: repoRoot,
           label: `verify-fix:${finding.title}`,
           phase: "Verify fixes",
           model: lightModel,
@@ -713,6 +714,7 @@ const [verifications, sweep] = await parallel([
         `nits, and do not duplicate compiler or linter diagnostics. ` +
         `Return findings, or an empty list with clean_reason if clean.`,
       {
+        cwd: repoRoot,
         label: "delta-sweep",
         phase: "Sweep",
         model: lightModel,
