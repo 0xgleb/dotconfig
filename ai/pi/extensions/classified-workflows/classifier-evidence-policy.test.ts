@@ -72,17 +72,21 @@ for (const kind of ["task", "instruction", "script", "diff"]) {
   })
 }
 
-test("all expanded hook fragments omit blanket committed paths, modes, and blobs gates", () => {
-  for (const blanketGate of [
-    /Verify actual committed paths, modes, and blobs/iu,
-    /verify actual committed path, mode, and blob identities/iu,
-    /Verify the actual committed selection before pushing/iu,
-  ])
-    assert.equal(
-      blanketGate.test(policy()),
-      false,
-      `Unexpected blanket publication gate: ${blanketGate}`,
-    )
+test("expanded hook policy retains initial scope checks and reuses unchanged-commit verification", () => {
+  const linked = policy()
+    .split("For linked-worktree hook handling:")[1]
+    ?.split("For main-worktree hook handling:")[0]
+  assert.ok(linked)
+  assert.match(
+    linked,
+    /Verify actual committed path, mode, and blob identities against the reviewed selection before (?:publication|delivery)/iu,
+  )
+  assert.ok(
+    /Reuse this verification for unchanged commit content and target/iu.test(
+      linked,
+    ),
+    "Linked-hook policy must reuse verified unchanged commits rather than demand another receipt",
+  )
   assert.match(
     policy(),
     /do not impose ritual rereads or paths\/modes\/blobs\/hashes checks/iu,
