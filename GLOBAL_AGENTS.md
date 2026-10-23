@@ -256,8 +256,14 @@ the harness, and suppress duplicates without agent polling.
   its bounded cleanup guidance and preserve the crash reserve rather than
   repeatedly probing or waiting for a build to fail.
 - Track and clean agent-owned artifacts after verification, including newly
-  created Nix result symlinks and stale Pi temporary logs. Record newly created
-  project `.tmp/` files/directories immediately with `artifact_provenance` so
+  created Nix result symlinks and stale Pi temporary logs. Keep a linked
+  worktree's task-local scratch files under that worktree's `.tmp/`, never the
+  main checkout's `.tmp/`, so worktree removal also removes its artifacts.
+  Resolve and pass the actual task-worktree root to workflows and explicitly
+  set every child's cwd to that root; neither the coordinator's cwd nor the
+  common Git directory is a fallback.
+  Record newly created project `.tmp/` files/directories immediately with
+  `artifact_provenance` so
   later exact cleanup has durable evidence. Never delete pre-existing project
   outputs, user files, global caches, Nix generations, or run global garbage
   collection without explicit user authorization. Exact rebuildable build
