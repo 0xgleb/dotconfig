@@ -16,6 +16,8 @@ dispatch, interrupt the current work or start a worker round.
 Use available management tools to select an existing worker and read or update
 that worker's actual backlog. Selection requires its exact session identity and
 working directory; do not guess prefixes or substitute the manager workspace.
+Use agent_registry list with includeSelection=true for exact identity/cwd data;
+preview IDs may be clipped. Native selection still validates the observed target.
 If discovery lacks a selectable identity, report that specific limitation.
 Attribute each report to its worker and compare it with that worker's actual
 backlog before applying a correction; leave unattributable reports unapplied.

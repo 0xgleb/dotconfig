@@ -7,7 +7,7 @@ import type {
   ExtensionAPI,
   ExtensionContext,
 } from "@earendil-works/pi-coding-agent"
-import { Either } from "effect"
+import { Either, Effect } from "effect"
 import {
   registerNativeManager,
   type NativeManagerRuntime,
@@ -18,6 +18,7 @@ import {
   openNativeManagerState,
 } from "./manager-native-state.ts"
 import { getManagerBinding } from "../shared/manager-binding.ts"
+import { registryListingResult } from "../agent-registry/listing.ts"
 
 const scope = { workerSessionId: "worker-123", cwd: "/projects/worker" }
 const fixture = (t: test.TestContext, manager: boolean | "global" = false) => {
@@ -372,6 +373,119 @@ test("global manager selects an existing worker without changing native UI or st
     "manager_control",
   ])
   assert.deepEqual(f.execs, [])
+})
+
+test("model-visible registry identity selects the exact existing worker through manager_control", async t => {
+  const f = fixture(t, "global")
+  const target = {
+    workerSessionId: "00000000-0000-4000-8000-000000000123",
+    cwd: "/projects/another-worker",
+  }
+  const directory = managerPairDirectory({
+    workerSessionId: target.workerSessionId,
+    workerCwd: target.cwd,
+    agentDir: f.root,
+  })
+  assert.ok(Either.isRight(directory))
+  const state = prepareNativeManagerState(directory.right, target)
+  assert.ok(Either.isRight(state))
+  assert.ok(
+    Either.isRight(
+      state.right.publish({
+        ...target,
+        version: 1,
+        observedAt: 1000,
+        priorityRevision: "revision-1",
+        data: { todoControl: true },
+      }),
+    ),
+  )
+  const page = Effect.runSync(
+    registryListingResult(
+      {
+        version: 1,
+        leases: [],
+        requests: [],
+        agents: [
+          {
+            identity: { id: `${target.workerSessionId}:pid:123`, pid: 123 },
+            cwd: target.cwd,
+            label: "another worker",
+            heartbeatAt: 1,
+            expiresAt: 10000,
+            usage: {
+              input: 0,
+              output: 0,
+              cacheRead: 0,
+              cacheWrite: 0,
+              totalTokens: 0,
+            },
+          },
+        ],
+      },
+      { action: "list", includeSelection: true },
+      "manager-runtime:pid:456",
+      1000,
+    ),
+  )
+  const block = page.content.find(item =>
+    item.text.startsWith('{"workerSelections":'),
+  )
+  assert.ok(block)
+  const observation = object(JSON.parse(block.text))
+  assert.ok(Array.isArray(observation.workerSelections))
+  const selected = object(observation.workerSelections[0])
+  await f.emit("session_start")
+  const control = f.tools.get("manager_control")
+  assert.ok(control)
+  const result = await control.execute(
+    "select-from-registry",
+    {
+      action: "select",
+      workerSessionId: selected.workerSessionId,
+      cwd: selected.cwd,
+    },
+    undefined,
+    undefined,
+    f.ctx,
+  )
+  assert.equal(object(result).isError, false)
+  assert.deepEqual(
+    getManagerBinding(f.pi, f.ctx),
+    Either.right({
+      role: "manager",
+      workerSessionId: target.workerSessionId,
+      workerCwd: target.cwd,
+    }),
+  )
+  for (const rejectedTarget of [
+    { workerSessionId: "invalid.session", cwd: target.cwd },
+    { workerSessionId: target.workerSessionId, cwd: "relative/path" },
+    {
+      workerSessionId: "00000000-0000-4000-8000-000000000999",
+      cwd: target.cwd,
+    },
+    { workerSessionId: target.workerSessionId, cwd: "/projects/wrong-worker" },
+  ]) {
+    const rejected = await control.execute(
+      "reject-registry-observation",
+      { action: "select", ...rejectedTarget },
+      undefined,
+      undefined,
+      f.ctx,
+    )
+    assert.equal(object(rejected).isError, true)
+    assert.deepEqual(
+      getManagerBinding(f.pi, f.ctx),
+      Either.right({
+        role: "manager",
+        workerSessionId: target.workerSessionId,
+        workerCwd: target.cwd,
+      }),
+    )
+  }
+  assert.deepEqual(f.execs, [])
+  assert.deepEqual(f.messages, [])
 })
 
 test("ordinary visible workers publish their control scope without needing a per-worker manager", async t => {

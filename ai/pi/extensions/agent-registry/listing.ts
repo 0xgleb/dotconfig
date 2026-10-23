@@ -4,8 +4,19 @@ import {
   registrySnapshotForProject,
   type RegistryRequest,
   type RegistrySnapshot,
+  type RegisteredAgent,
 } from "./registry.ts"
 import { registryListText, registryRequestDetailText } from "./presentation.ts"
+import { parseRuntimeAgentId } from "./runtime-identity.ts"
+
+export type RegistryWorkerSelection =
+  | {
+      readonly kind: "runtime-session"
+      readonly agentId: string
+      readonly workerSessionId: string
+      readonly cwd: string
+    }
+  | { readonly kind: "unsupported-identity"; readonly agentId: string }
 
 export interface RegistryListQuery {
   readonly action: "list" | "requests"
@@ -15,6 +26,7 @@ export interface RegistryListQuery {
   readonly requestId?: string
   readonly limit?: number
   readonly offset?: number
+  readonly includeSelection?: boolean
 }
 
 export const registryListingResult = (
@@ -52,6 +64,19 @@ export const registryListingResult = (
         }),
       )
     }
+    if (
+      (query.includeSelection !== undefined &&
+        typeof query.includeSelection !== "boolean") ||
+      (query.includeSelection === true &&
+        (query.action !== "list" || query.requestId !== undefined))
+    )
+      return yield* Effect.fail(
+        new RegistryError({
+          code: "invalid_input",
+          message:
+            "includeSelection must be boolean and is supported only for list pages without requestId.",
+        }),
+      )
     for (const [name, value] of [
       ["project", query.project],
       ["role", query.role],
@@ -201,13 +226,40 @@ export const registryListingResult = (
       nextOffset === undefined
         ? "End of current matching registry rows."
         : `Next page: repeat the same filters with limit=${limit}, offset=${nextOffset}.`
+    const preview = {
+      type: "text" as const,
+      text: `${header}\n${text}\n${continuation}\nLive offset pagination: results can change between calls; restart at offset 0 after changes. Counts describe registry rows only, not total external backlog or source coverage. Rows are capped at 512 bytes; use requestId for the full request.`,
+    }
+    const workerSelections =
+      query.includeSelection === true
+        ? (page.agents ?? []).map(workerSelection)
+        : undefined
+    const selectionText =
+      workerSelections === undefined
+        ? undefined
+        : JSON.stringify({ workerSelections })
+    if (
+      selectionText !== undefined &&
+      Buffer.byteLength(preview.text, "utf8") +
+        Buffer.byteLength(selectionText, "utf8") >
+        32_000
+    )
+      return yield* Effect.fail(
+        new RegistryError({
+          code: "invalid_input",
+          message:
+            "Exact worker selection page exceeds 32000 bytes; retry with a lower limit. No selector was truncated.",
+        }),
+      )
+    const content =
+      selectionText === undefined
+        ? ([preview] satisfies [typeof preview])
+        : ([preview, { type: "text" as const, text: selectionText }] satisfies [
+            typeof preview,
+            typeof preview,
+          ])
     return {
-      content: [
-        {
-          type: "text" as const,
-          text: `${header}\n${text}\n${continuation}\nLive offset pagination: results can change between calls; restart at offset 0 after changes. Counts describe registry rows only, not total external backlog or source coverage. Rows are capped at 512 bytes; use requestId for the full request.`,
-        },
-      ] satisfies [{ type: "text"; text: string }],
+      content,
       details: {
         outcome: "success",
         action: query.action,
@@ -218,9 +270,22 @@ export const registryListingResult = (
         returned,
         partial,
         ...(nextOffset === undefined ? {} : { nextOffset }),
+        ...(workerSelections === undefined ? {} : { workerSelections }),
       },
     }
   })
+
+const workerSelection = (agent: RegisteredAgent): RegistryWorkerSelection => {
+  const runtime = parseRuntimeAgentId(agent.identity.id)
+  return runtime === undefined
+    ? { kind: "unsupported-identity", agentId: agent.identity.id }
+    : {
+        kind: "runtime-session",
+        agentId: agent.identity.id,
+        workerSessionId: runtime.sessionId,
+        cwd: agent.cwd,
+      }
+}
 
 const compareId = (left: string, right: string): number =>
   left < right ? -1 : left > right ? 1 : 0

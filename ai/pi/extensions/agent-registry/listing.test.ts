@@ -89,6 +89,15 @@ test("the actual tool branch forwards all listing filters and exact lookup", asy
   })
   assert.equal(detail.details.kind, "registry-request-detail")
   assert.ok(detail.content[0].text.endsWith(cancelled[0]!.text))
+  const selection = await invoke({
+    action: "list",
+    includeSelection: true,
+    limit: 1,
+  })
+  assert.equal(selection.content.length, 2)
+  assert.deepEqual(JSON.parse(selection.content.at(-1)!.text), {
+    workerSelections: [],
+  })
 })
 
 test("requests pages do not inspect the unrelated roster", () => {
@@ -272,7 +281,13 @@ test("role filtering bounds the roster too and does not mutate its source", () =
   }
   const before = JSON.stringify(value)
   const result = list(
-    { action: "list", project: "/project", role: "pi-support", limit: 10 },
+    {
+      action: "list",
+      project: "/project",
+      role: "pi-support",
+      limit: 10,
+      includeSelection: true,
+    },
     value,
   )
   assert.match(
@@ -280,6 +295,12 @@ test("role filtering bounds the roster too and does not mutate its source", () =
     /agents: 10 of 45; roles: 10 of 45; requests: 10 of 455/,
   )
   assert.doesNotMatch(result.content[0].text, /receiver/)
+  assert.deepEqual(JSON.parse(result.content.at(-1)!.text), {
+    workerSelections: rows.slice(0, 10).map(row => ({
+      kind: "unsupported-identity",
+      agentId: row.agent.identity.id,
+    })),
+  })
   const requestsOnly = list(
     { action: "requests", project: "/project", role: "pi-support" },
     value,

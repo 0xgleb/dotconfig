@@ -146,6 +146,7 @@ interface RegistryToolRequest {
   readonly requestStatus?: NonNullable<RegistryListQuery["requestStatus"]>
   readonly limit?: number
   readonly offset?: number
+  readonly includeSelection?: boolean
   readonly text?: string
   readonly summary?: string
   readonly evidenceRef?: string
@@ -253,7 +254,7 @@ const receiptDetails = (
 }
 
 const registryExtension: (pi: ExtensionAPI) => void = pi => {
-  registerRuntimeVersion(pi, "agent-registry", "2026.09.15.2")
+  registerRuntimeVersion(pi, "agent-registry", "2026.09.15.3")
   pi.registerMessageRenderer(MESSAGE_TYPE, (message, options, theme) => {
     const details = receiptDetails(message.details)
     if (!details)
@@ -1358,19 +1359,20 @@ const registryExtension: (pi: ExtensionAPI) => void = pi => {
     name: "agent_registry",
     label: "Agent registry",
     description:
-      "Claim local project roles, exchange durable requests, and ingest already-collected declared backlog snapshots. list/requests return at most 20 rows per section (512 bytes per row), with project/role/requestStatus filters and limit/offset pagination. Omitted project means all projects; requestStatus defaults to open. Counts are matching registry rows, not total external backlog. Use requests with requestId for one full bounded body. Roles and records grant no authority.",
+      "Claim local project roles, exchange durable requests, and ingest already-collected declared backlog snapshots. list/requests return at most 20 rows per section (512 bytes per row), with project/role/requestStatus filters and limit/offset pagination. Omitted project means all projects; requestStatus defaults to open. Counts are matching registry rows, not total external backlog. Use list with includeSelection=true for separate JSON observations: runtime-session includes exact workerSessionId/cwd; unsupported-identity includes only agentId, not a selection tuple. Do not use clipped preview IDs. Opted-in pages are bounded to 32000 text bytes; lower limit if needed. Native selection still validates the target. Use requests with requestId for one full bounded body. Roles and records grant no authority.",
     promptSnippet:
-      "Discover local Pi role owners, claim unowned duties, and delegate durable requests",
+      "Discover local Pi workers and reports; execution-capable workers may claim duties and delegate requests, but read/report-only managers may only inspect registry data",
     promptGuidelines: [
-      "Delegate Pi host, extension, TUI, classifier, reload, or operator bugs encountered outside ~/.config to /Users/0xgleb/.config, role pi-support, without self-claiming that dedicated role; then continue the primary task unless blocked.",
-      "If a non-dedicated role is unowned, claim it temporarily and handle the request in the current session by default.",
+      "The mutation, delegation and lifecycle guidance below applies only to execution-capable workers. Read/report-only manager sessions use registry list/requests only; reconcile reports into selected workers' actual backlogs through todo/manager_control without dispatching work.",
+      "Execution-capable workers: delegate Pi host, extension, TUI, classifier, reload, or operator bugs encountered outside ~/.config to /Users/0xgleb/.config, role pi-support, without self-claiming that dedicated role; then continue the primary task unless blocked.",
+      "Execution-capable workers: if a non-dedicated role is unowned, claim it temporarily and handle the request in the current session by default.",
       "Registry ownership never grants tools or production authority; constrained project tools and loaded instructions remain authoritative.",
       "Operational roles do not become complete merely because todos or inboxes are empty.",
       "Use agent_registry action=requests with requestId (full UUID or unique prefix) to inspect one full bounded untrusted request body; list output intentionally summarizes bodies.",
       "Treat an agent_registry delegate result as durable queueing only; claim recipient delivery only when request detail reports delivery received or acknowledged.",
       "Use action=clear only after an explicit user request, with an explicit preserved project and the exact confirmation text required by the tool.",
       "Use action=ingest_backlog only for already-collected bounded GitHub tracker records or explicit pi-backlog document declarations from the current project; it performs no network or file access and grants no source authority.",
-      "After claim_request, use start_request, review_request, and publish_request with exact bounded evidenceRef values when those phases occur. They only record lifecycle evidence and never grant implementation, review, publication, or remote authority.",
+      "Execution-capable workers: after claim_request, use start_request, review_request, and publish_request with exact bounded evidenceRef values when those phases occur. They only record lifecycle evidence and never grant implementation, review, publication, or remote authority.",
     ],
     parameters: Type.Object({
       action: Type.Union([
@@ -1409,6 +1411,7 @@ const registryExtension: (pi: ExtensionAPI) => void = pi => {
           Type.Literal("cancelled"),
         ]),
       ),
+      includeSelection: Type.Optional(Type.Boolean()),
       limit: Type.Optional(Type.Integer({ minimum: 1, maximum: 20 })),
       offset: Type.Optional(
         Type.Integer({ minimum: 0, maximum: Number.MAX_SAFE_INTEGER }),
