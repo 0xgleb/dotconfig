@@ -4,6 +4,8 @@ import type {
 } from "@earendil-works/pi-coding-agent"
 import { Box, Text } from "@earendil-works/pi-tui"
 import { Type } from "typebox"
+import { Effect, Either } from "effect"
+import { getAutomaticCompressionOwner } from "../shared/compression-ownership.ts"
 import { registerRuntimeVersion } from "../shared/runtime-version.ts"
 import {
   AUTO_RELOAD_ACTIVITY_REQUEST_EVENT,
@@ -60,7 +62,7 @@ const compactionMessageDetails = (
 }
 
 export default function safeCompaction(pi: ExtensionAPI): void {
-  registerRuntimeVersion(pi, "safe-compaction", "2026.08.23.1")
+  registerRuntimeVersion(pi, "safe-compaction", "2026.10.23.1")
   pi.registerMessageRenderer(MESSAGE_TYPE, (message, options, theme) => {
     const details = compactionMessageDetails(message.details)
     if (!details) return new Text(String(message.content), options.outputPad, 0)
@@ -86,6 +88,7 @@ export default function safeCompaction(pi: ExtensionAPI): void {
   let pendingAutomaticResume:
     Exclude<SafeCompactionState, { phase: "idle" | "preparing" }> | undefined
   let latestCtx: ExtensionContext | undefined
+  let ownershipLifetime = new AbortController()
 
   pi.events.on(
     AUTO_RELOAD_ACTIVITY_REQUEST_EVENT,
@@ -134,6 +137,8 @@ export default function safeCompaction(pi: ExtensionAPI): void {
   }
 
   pi.on("session_start", (_event, ctx) => {
+    ownershipLifetime.abort()
+    ownershipLifetime = new AbortController()
     latestCtx = ctx
     state = restoreSafeCompactionState(ctx.sessionManager.getBranch())
     compactRequested = false
@@ -155,7 +160,26 @@ export default function safeCompaction(pi: ExtensionAPI): void {
     persist(idleSafeCompactionState)
   })
 
-  pi.on("session_before_compact", (event, ctx) => {
+  pi.on("session_before_compact", async (event, ctx) => {
+    const lifetime = ownershipLifetime
+    const signal = AbortSignal.any([event.signal, lifetime.signal])
+    if (signal.aborted) return { cancel: true }
+    if (event.reason !== "manual") {
+      const ownership = await Effect.runPromise(
+        Effect.either(getAutomaticCompressionOwner(pi, ctx, signal)),
+      )
+      if (signal.aborted || lifetime !== ownershipLifetime)
+        return { cancel: true }
+      if (Either.isRight(ownership)) {
+        if (ownership.right.owner === "billion-context") return { cancel: true }
+      } else {
+        if (ownership.left.code === "cancelled") return { cancel: true }
+        ctx.ui.notify(
+          `Automatic compression ownership ${ownership.left.code}; native checkpoint safety remains enabled.`,
+          "warning",
+        )
+      }
+    }
     latestCtx = ctx
     const transition = beforeCompactionTransition(
       state,
@@ -248,6 +272,7 @@ export default function safeCompaction(pi: ExtensionAPI): void {
   })
 
   pi.on("session_shutdown", () => {
+    ownershipLifetime.abort()
     pendingAutomaticResume = undefined
     latestCtx = undefined
   })
