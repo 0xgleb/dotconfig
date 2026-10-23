@@ -22,7 +22,7 @@ test("one non-autodiscovered global source replaces the two divergent global fil
   )
 })
 
-test("every managed harness global entrypoint uses the same canonical source", () => {
+test("managed engineering harness entrypoints use the canonical source", () => {
   assert.ok(
     /globalInstructions =\s*config\.lib\.file\.mkOutOfStoreSymlink\s*"\$\{config.home.homeDirectory\}\/\.config\/GLOBAL_AGENTS\.md"/.test(
       home,
@@ -39,6 +39,12 @@ test("every managed harness global entrypoint uses the same canonical source", (
   }
 })
 
+test("Codex retains its independent research and administration instructions", () => {
+  assert.ok(!home.includes('".codex/AGENTS.md".source = globalInstructions;'))
+  const global = readFileSync(globalPath, "utf8")
+  assert.match(global, /Codex keeps its own `~\/.codex\/AGENTS\.md`/)
+})
+
 test("repository CLAUDE instructions resolve to repository policy, not global policy", () => {
   assert.equal(
     realpathSync(`${root}CLAUDE.md`),
@@ -46,8 +52,8 @@ test("repository CLAUDE instructions resolve to repository policy, not global po
   )
   const project = readFileSync(`${root}AGENTS.md`, "utf8")
   assert.ok(
-    /Work on `master`/.test(project),
-    "Project publication branch remains local",
+    /purpose-named branch/.test(project) && /open a draft PR/.test(project),
+    "Project publication workflow remains local",
   )
   assert.ok(
     /Do not use `rustaceanvim`/.test(project),
