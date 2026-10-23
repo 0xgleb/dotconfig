@@ -4,11 +4,20 @@ import { stripTypeScriptTypes } from "node:module"
 import { runInNewContext } from "node:vm"
 import test from "node:test"
 import { Effect, Either } from "effect"
+import type {
+  ExtensionAPI,
+  ExtensionContext,
+} from "@earendil-works/pi-coding-agent"
 import { createModelInputDelivery } from "../../host/model-input-delivery.ts"
 import {
   createOwnerAllowance,
   OWNER_ALLOWANCE_MS,
 } from "../classified-workflows/owner-allowance.ts"
+import {
+  getManagerBinding,
+  registerManagerBinding,
+} from "../shared/manager-binding.ts"
+import { enterRemoteToolGuard } from "./tool-guard.ts"
 import {
   RemoteBridgeError,
   remoteMessageSource,
@@ -22,12 +31,15 @@ const end = source.indexOf("  /**\n   * Registry leases", start)
 assert.ok(start >= 0 && end > start)
 const body = stripTypeScriptTypes(source.slice(start, end))
 
-for (const [requesterId, isOwner] of [
-  ["telegram-owner-1001", true],
-  ["agent-fixture", false],
+for (const [requesterId, isOwner, isManager] of [
+  ["telegram-owner-1001", true, false],
+  ["agent-fixture", false, false],
+  ["telegram-owner-1001", true, true],
+  ["agent-fixture", false, true],
+  ["telegram-forwarded-1001", false, true],
 ] as const) {
-  test(`actual remote boundary gives delivery provenance only to authenticated owner: ${requesterId}`, async () => {
-    let now = 1_000
+  test(`actual remote boundary: ${requesterId}, manager=${isManager}`, async () => {
+    let now = 1000
     let counter = 0
     const guard = createOwnerAllowance({
       now: () => now,
@@ -52,6 +64,45 @@ for (const [requesterId, isOwner] of [
     assert.ok(registered.ok)
     let queued: object | undefined
     let ingressObservations = 0
+    let activeTools = [
+      "agent_registry",
+      "todo",
+      "manager_control",
+      "bash",
+      "read",
+    ]
+    const listeners = new Map<string, ((value: unknown) => void)[]>()
+    const pi = {
+      registerModelInputDeliveryGuard: () => {},
+      getActiveTools: () => [...activeTools],
+      setActiveTools: (tools: string[]) => {
+        activeTools = [...tools]
+      },
+      events: {
+        on: (name: string, listener: (value: unknown) => void) => {
+          listeners.set(name, [...(listeners.get(name) ?? []), listener])
+          return () => {}
+        },
+        emit: (name: string, value: unknown) => {
+          for (const listener of listeners.get(name) ?? []) listener(value)
+        },
+      },
+      sendUserMessage: (
+        content: unknown,
+        options: { authorizeInput?: (id: string) => unknown },
+      ) => {
+        const accepted = ledger.acceptInput("extension")
+        assert.ok(accepted.ok)
+        options.authorizeInput?.(accepted.value.id)
+        queued = { role: "user", content }
+        assert.ok(ledger.associate(accepted.value, queued, true).ok)
+      },
+    } as unknown as ExtensionAPI
+    registerManagerBinding(pi, id =>
+      id === "self" && isManager
+        ? { role: "manager-unavailable", message: "No worker selected" }
+        : undefined,
+    )
     const begin = runInNewContext(`${body}\n;beginTurn`, {
       Effect,
       Either,
@@ -59,32 +110,25 @@ for (const [requesterId, isOwner] of [
       remoteMessageSource,
       remoteSourceCarriesOwnerAuthority,
       remoteTurnContent,
+      getManagerBinding,
       active: undefined,
       STATUS_KEY: "fixture",
       HUMAN_TURN_EVENT: "fixture:human",
       MESSAGE_BACKLOG_EVENT: "fixture:backlog",
       backlogRequirementsFromText: () => [],
-      enterRemoteToolGuard: () => ({}),
+      enterRemoteToolGuard,
       finishFailure: () => assert.fail("fixture input failed before queueing"),
       onAuthenticatedOwnerMessage: () => {
         ingressObservations++
       },
       options: { authorizeOwnerInput: registered.value.authorizeInput },
-      pi: {
-        registerModelInputDeliveryGuard: () => {},
-        events: { emit: () => {} },
-        sendUserMessage: (
-          content: unknown,
-          options: { authorizeInput?: (id: string) => unknown },
-        ) => {
-          const accepted = ledger.acceptInput("extension")
-          assert.ok(accepted.ok)
-          options.authorizeInput?.(accepted.value.id)
-          queued = { role: "user", content }
-          assert.ok(ledger.associate(accepted.value, queued, true).ok)
-        },
-      },
+      pi,
     })
+    const ctx = {
+      cwd: "/fixture",
+      sessionManager: { getSessionId: () => "self", getBranch: () => [] },
+      ui: { setStatus: () => {} },
+    } as unknown as ExtensionContext
     await begin(
       {
         status: "claimed",
@@ -95,22 +139,19 @@ for (const [requesterId, isOwner] of [
         createdAt: now,
         text: "Fixture instructions for file.ts",
       },
-      {
-        cwd: "/fixture",
-        ui: { setStatus: () => {} },
-      },
+      ctx,
     )
     assert.ok(queued)
-    assert.equal(
-      ingressObservations,
-      0,
-      "native mode never invokes the legacy receipt-time observer",
+    assert.deepEqual(
+      activeTools,
+      isOwner && isManager ? ["agent_registry", "todo", "manager_control"] : [],
     )
+    assert.equal(ingressObservations, 0, "native mode never renews at ingress")
     assert.ok(
       Either.isLeft(guard.admit()),
       "receipt/enqueue time must not renew",
     )
-    now = 601_000
+    now = 601000
     let dispatched = false
     const result = ledger.dispatch([queued], () => {
       dispatched = true

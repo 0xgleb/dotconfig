@@ -27,12 +27,22 @@ const sameTools = (
 
 export const enterRemoteToolGuard = (
   controller: ToolController,
+  _mode: "communication" | "management" = "communication",
 ): RemoteToolGuard => {
   const priorTools = [...controller.getActiveTools()]
+  const allowedTools =
+    _mode === "management"
+      ? priorTools.filter(
+          tool =>
+            tool === "agent_registry" ||
+            tool === "todo" ||
+            tool === "manager_control",
+        )
+      : []
   let restored = false
   let restoreResult: CapabilityRestoreResult | undefined
   const enforce = (): void => {
-    if (!restored) controller.setActiveTools([])
+    if (!restored) controller.setActiveTools([...allowedTools])
   }
   const restore = (): CapabilityRestoreResult => {
     if (restoreResult) return restoreResult
