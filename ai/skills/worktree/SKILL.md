@@ -49,6 +49,15 @@ checkout and do not enter other worktrees.
    cancelled. A pre-existing owner-managed slot may remain; an agent-created
    slot may remain only with explicit owner direction.
 
+## Temporary artifacts
+
+Keep task-local scratch files in the active worktree's `.tmp/`, including
+patches, prompts, reports, payloads, and logs. Never write a linked worktree's
+artifacts into the main checkout's `.tmp/`. Resolve the artifact root from the
+actual task worktree, not a coordinating session's cwd or the common Git
+directory. Pass that root explicitly to workflows and set every child's cwd to
+it. Record provenance where required and remove these artifacts with the worktree.
+
 ## Cleanup
 
 Use `git worktree remove` with each exact verified linked-worktree path.
