@@ -24,9 +24,12 @@ the strong-typing lane.
    signature has `amount: u64, price: u64, quantity: u64` with no wrappers, the
    compiler cannot prevent a caller from swapping them. A newtype turns a class
    of runtime bugs into compile errors.
-3. **Stringly-typed identifiers are bugs waiting.** `symbol: String`,
-   `order_id: String`, `address: String` where typed equivalents exist in the
-   codebase (`Symbol`, `OrderId`, `Address`) should be flagged.
+3. **Identifiers need domain types.** Stored or application-facing chat, order,
+   user and similar IDs need distinct types even when this is the only ID field
+   and no wrapper exists yet. Flag a bare string/number or an alias that remains
+   interchangeable with the primitive. Reuse an existing type or propose a
+   concrete newtype, opaque/branded type or value object appropriate to the
+   language.
 
 ## 1. Get the code to review
 
@@ -69,8 +72,10 @@ For non-Rust projects, look for branded types (TypeScript), value objects (other
 languages), or any wrapper that distinguishes a domain concept from its
 underlying primitive.
 
-If no domain types exist anywhere in the repo, this inspector has little to say
-beyond "consider introducing newtypes." Note that and keep the report short.
+No existing wrappers is not a clean result. Inspect identifier boundaries and
+internal state anyway; a single `chat_id: String` or `userId: string` can
+justify a concrete domain type without a pair of swappable parameters.
+Distinguish nominal/branded types from aliases that provide no separation.
 
 ## 3. Scan the diff
 
@@ -95,6 +100,9 @@ For each added or modified line in the diff, look for:
 - A signature or struct introduces **two or more primitives of the same
   underlying type** that represent different domain concepts, and no wrapper
   distinguishes them.
+- A single persistent/external identifier is stored or passed through internal
+  APIs without a distinct domain type. This does not require a second ID or an
+  existing wrapper; do not apply it to arbitrary display text or loop counters.
 - Example: `fn place_order(amount: u64, price: u64, quantity: u64)` — the
   compiler will not catch swapped arguments. Recommend introducing newtypes
   (`Amount`, `Price`, `Quantity`) if any are already used elsewhere, or suggest
@@ -104,8 +112,11 @@ For each added or modified line in the diff, look for:
 
 ### What NOT to flag
 
-- Conversions at SDK / external-API boundaries (serde, HTTP, FFI). Domain types
-  live inside the system; the wire format is allowed to be primitive.
+- Raw SDK / external-API wire representations (serde, HTTP, FFI), provided they
+  are converted at the boundary. This is not an exemption for internal
+  configuration, transport state or application signatures that keep passing raw
+  identifiers after decoding. Verify malformed-input handling and preserve valid
+  wire semantics.
 - Test fixtures or example values where the primitive is just data.
 - Existing code outside the diff (this is a diff-scoped review).
 - Style or naming nits unrelated to typing.
@@ -134,8 +145,8 @@ Domain types detected: <comma-separated list, or "none">
 
 1. <file>:<line>
    Code: `<signature or struct>`
-   Risk: <which two+ primitives could be swapped at the call site>
-   Suggestion: introduce `<NewType1>`, `<NewType2>` (or reuse existing if applicable)
+   Risk: <identifier/invariant lost in a raw primitive, or concrete swap risk>
+   Suggestion: introduce or reuse <one or more specific domain types and boundaries>
 
 ## Summary
 
@@ -157,9 +168,10 @@ No typing gaps found in this diff.
 
 1. **Stay in the strong-typing lane.** Do not flag correctness, ownership,
    idiom, or style. Other reviewers cover those.
-2. **Evidence-based.** Every flag must cite both the offending line and the
-   existing domain type (with path). Don't speculate about types that aren't in
-   the repo.
+2. **Evidence-based.** Cite the offending use and either the existing domain
+   type or the concrete identifier/invariant that justifies a new one. Propose
+   an explicit representation and boundary, not a vague request to add wrappers.
+   Lack of an existing type does not excuse an untyped persistent identifier.
 3. **Be specific.** Show the offending code and the exact replacement type, not
    a vague "consider strong typing."
 4. **Diff-scoped.** Only flag lines added or modified by this diff. Don't audit
