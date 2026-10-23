@@ -8,21 +8,29 @@ import type {
   OwnerWindow,
 } from "./owner-allowance.ts"
 
-const fixture = (inheritedDeadline?: unknown) => {
+const fixture = (
+  inheritedDeadline?: unknown,
+  onProgressCheckIn?: OwnerAllowanceRuntime<number>["onProgressCheckIn"],
+) => {
   let now = 1_000
   let next = 0
   const callbacks = new Map<number, () => void>()
+  const delays = new Map<number, number>()
   const cancelled: string[] = []
   const saved: OwnerWindow[] = []
+  const expired: OwnerWindow[] = []
   const runtime: OwnerAllowanceRuntime<number> = {
     ...(inheritedDeadline === undefined ? {} : { inheritedDeadline }),
+    ...(onProgressCheckIn === undefined ? {} : { onProgressCheckIn }),
     now: () => now,
-    schedule: (callback, _delay) => {
+    schedule: (callback, delay) => {
       callbacks.set(++next, callback)
+      delays.set(next, delay)
       return next
     },
     clear: handle => {
       callbacks.delete(handle)
+      delays.delete(handle)
     },
     persist: window => {
       saved.push(window)
@@ -30,6 +38,7 @@ const fixture = (inheritedDeadline?: unknown) => {
     cancel: error => {
       cancelled.push(error.code)
     },
+    onExpired: window => expired.push(window),
   }
   const construct: unknown = Reflect.get(api, "createOwnerAllowance")
   if (typeof construct !== "function")
@@ -39,8 +48,10 @@ const fixture = (inheritedDeadline?: unknown) => {
     runtime,
     guard,
     callbacks,
+    delays,
     cancelled,
     saved,
+    expired,
     time: (value: number) => {
       now = value
     },
@@ -250,6 +261,367 @@ test("persistence and cancellation failures cannot leave other execution running
   assert.equal(otherWorkerStopped, true)
   assert.ok(f.cancelled.length > 0)
   assert.notEqual(code(f.guard.admit()), "allowed")
+})
+
+test("supervision grants four hours and schedules check-ins without renewing the owner clock", () => {
+  const requests: api.OwnerProgressCheckIn[] = []
+  const f = fixture(undefined, request => {
+    requests.push(request)
+    return Either.right(undefined)
+  })
+  f.guard.ownerInput(1000)
+  assert.equal(f.saved.at(-1)?.deadlineAt, 1000 + 4 * 60 * 60 * 1000)
+  assert.equal(f.callbacks.size, 2)
+  assert.deepEqual(
+    [...f.delays.values()],
+    [api.SUPERVISED_OWNER_ALLOWANCE_MS, api.OWNER_PROGRESS_CHECK_IN_MS],
+  )
+  f.time(1000 + api.OWNER_PROGRESS_CHECK_IN_MS)
+  const check = [...f.callbacks.values()].at(-1)
+  if (!check) assert.fail("Missing progress check-in timer")
+  check()
+  assert.equal(requests.length, 1)
+  assert.equal([...f.delays.values()].at(-1), api.OWNER_PROGRESS_CHECK_IN_MS)
+  assert.equal(requests[0]?.sequence, 1)
+  assert.equal(requests[0]?.scheduledAt, 1000 + api.OWNER_PROGRESS_CHECK_IN_MS)
+  assert.equal(f.saved.length, 1)
+  assert.equal(f.saved[0]?.lastOwnerAt, 1000)
+  f.time(1000 + 4 * 60 * 60 * 1000)
+  assert.equal(code(f.guard.admit()), "expired")
+})
+
+test("a supervised legacy upgrade preserves its original owner timestamp and never revives expiry", () => {
+  for (const duration of [30 * 60 * 1000, 60 * 60 * 1000]) {
+    const f = fixture(undefined, () => Either.right(undefined))
+    f.time(5000)
+    f.guard.restore({
+      version: 1,
+      lastOwnerAt: 1000,
+      deadlineAt: 1000 + duration,
+      status: "active",
+    })
+    assert.equal(f.saved.at(-1)?.deadlineAt, 1000 + 4 * 60 * 60 * 1000)
+    assert.equal(f.saved.at(-1)?.lastOwnerAt, 1000)
+    const expired = fixture(undefined, () => Either.right(undefined))
+    expired.time(1000 + duration)
+    expired.guard.restore({
+      version: 1,
+      lastOwnerAt: 1000,
+      deadlineAt: 1000 + duration,
+      status: "active",
+    })
+    assert.equal(code(expired.guard.admit()), "expired")
+  }
+})
+
+test("an inherited ceiling preserves the actual owner timestamp and survives reload", () => {
+  const start = 100_000_000
+  const ceiling = start + 45 * 60 * 1000
+  const f = fixture(String(ceiling), () => Either.right(undefined))
+  f.time(start)
+  f.guard.ownerInput(start)
+  assert.equal(f.saved.at(-1)?.deadlineAt, ceiling)
+  assert.equal(f.saved.at(-1)?.lastOwnerAt, start)
+  const restored = fixture(String(ceiling), () => Either.right(undefined))
+  restored.time(start + 1000)
+  restored.guard.restore(f.saved.at(-1))
+  assert.equal(code(restored.guard.admit()), "allowed")
+  restored.time(ceiling)
+  assert.equal(code(restored.guard.admit()), "expired")
+})
+
+const progressTimer = (f: ReturnType<typeof fixture>) => {
+  const fire = [...f.callbacks.values()].at(-1)
+  if (!fire) throw new Error("Missing progress check-in timer")
+  return fire
+}
+
+test("an early check-in timer cannot request review before its scheduled boundary", () => {
+  const requests: api.OwnerProgressCheckIn[] = []
+  const f = fixture(undefined, request => {
+    requests.push(request)
+    return Either.right(undefined)
+  })
+  f.guard.ownerInput(1000)
+  progressTimer(f)()
+  assert.equal(requests.length, 0)
+  assert.equal([...f.delays.values()].at(-1), api.OWNER_PROGRESS_CHECK_IN_MS)
+  f.time(1000 + api.OWNER_PROGRESS_CHECK_IN_MS)
+  progressTimer(f)()
+  assert.equal(requests.length, 1)
+})
+
+test("obsolete check-in callbacks cannot act after renewal or disposal", () => {
+  const requests: api.OwnerProgressCheckIn[] = []
+  const f = fixture(undefined, request => {
+    requests.push(request)
+    return Either.right(undefined)
+  })
+  f.guard.ownerInput(1000)
+  const old = progressTimer(f)
+  f.time(2000)
+  f.guard.ownerInput(2000)
+  old()
+  assert.equal(requests.length, 0)
+  const current = progressTimer(f)
+  f.guard.dispose()
+  current()
+  assert.equal(requests.length, 0)
+  assert.equal(f.callbacks.size, 0)
+})
+
+test("delayed and restored check-ins use a stable coalesced interval identity", () => {
+  const requests: api.OwnerProgressCheckIn[] = []
+  const f = fixture(undefined, request => {
+    requests.push(request)
+    return Either.right(undefined)
+  })
+  f.guard.ownerInput(1000)
+  const delayed = progressTimer(f)
+  f.time(1000 + 3 * api.OWNER_PROGRESS_CHECK_IN_MS)
+  delayed()
+  delayed()
+  assert.deepEqual(
+    requests.map(request => request.sequence),
+    [3],
+  )
+  assert.equal([...f.delays.values()].at(-1), api.OWNER_PROGRESS_CHECK_IN_MS)
+  const restored = fixture(undefined, request => {
+    requests.push(request)
+    return Either.right(undefined)
+  })
+  restored.time(1000 + 3 * api.OWNER_PROGRESS_CHECK_IN_MS)
+  restored.guard.restore(f.saved[0])
+  assert.equal([...restored.delays.values()].at(-1), 0)
+  progressTimer(restored)()
+  assert.equal(
+    [...restored.delays.values()].at(-1),
+    api.OWNER_PROGRESS_CHECK_IN_MS,
+  )
+  assert.equal(requests[0]?.scheduledAt, requests[1]?.scheduledAt)
+  assert.equal(requests[0]?.window.lastOwnerAt, requests[1]?.window.lastOwnerAt)
+  assert.equal(f.saved.length, 1)
+})
+
+test("a late callback cannot submit review after the four-hour deadline", () => {
+  let requests = 0
+  const f = fixture(undefined, () => {
+    requests++
+    return Either.right(undefined)
+  })
+  f.guard.ownerInput(1000)
+  const pending = progressTimer(f)
+  f.time(1000 + api.SUPERVISED_OWNER_ALLOWANCE_MS)
+  pending()
+  assert.equal(requests, 0)
+  assert.equal(code(f.guard.admit()), "expired")
+  assert.equal(f.callbacks.size, 0)
+})
+
+test("callback failures and malformed acknowledgements remain typed failures", () => {
+  const callbacks: OwnerAllowanceRuntime<number>["onProgressCheckIn"][] = [
+    () => {
+      throw new Error("Fixture callback failure")
+    },
+    () =>
+      Either.left(
+        new api.OwnerAllowanceError({
+          code: "runtime-failure",
+          message: "Fixture queue unavailable",
+        }),
+      ),
+    (() => undefined) as unknown as NonNullable<
+      OwnerAllowanceRuntime<number>["onProgressCheckIn"]
+    >,
+    (() => Either.right("not an acknowledgement")) as unknown as NonNullable<
+      OwnerAllowanceRuntime<number>["onProgressCheckIn"]
+    >,
+    (() => Either.left("not a domain error")) as unknown as NonNullable<
+      OwnerAllowanceRuntime<number>["onProgressCheckIn"]
+    >,
+  ]
+  for (const callback of callbacks) {
+    const f = fixture(undefined, callback)
+    f.guard.ownerInput(1000)
+    f.time(1000 + api.OWNER_PROGRESS_CHECK_IN_MS)
+    assert.doesNotThrow(progressTimer(f))
+    assert.notEqual(code(f.guard.admit()), "allowed")
+    assert.equal(f.callbacks.size, 0)
+  }
+})
+
+test("a callback cannot mutate the live owner window or stop a renewed window", () => {
+  const f: ReturnType<typeof fixture> = fixture(undefined, request => {
+    Reflect.set(request.window, "deadlineAt", Number.MAX_SAFE_INTEGER)
+    f.time(1000 + api.OWNER_PROGRESS_CHECK_IN_MS + 1)
+    f.guard.ownerInput(1000 + api.OWNER_PROGRESS_CHECK_IN_MS + 1)
+    return Either.left(
+      new api.OwnerAllowanceError({
+        code: "runtime-failure",
+        message: "Obsolete request failed",
+      }),
+    )
+  })
+  f.guard.ownerInput(1000)
+  f.time(1000 + api.OWNER_PROGRESS_CHECK_IN_MS)
+  progressTimer(f)()
+  assert.equal(code(f.guard.admit()), "allowed")
+  assert.equal(
+    f.saved.at(-1)?.deadlineAt,
+    1000 +
+      api.OWNER_PROGRESS_CHECK_IN_MS +
+      1 +
+      api.SUPERVISED_OWNER_ALLOWANCE_MS,
+  )
+  assert.equal(f.callbacks.size, 2)
+})
+
+test("throwing acknowledgement accessors cannot escape or leave supervision silently disabled", () => {
+  for (const side of ["right", "left", "code"] as const) {
+    const f = fixture(undefined, () => {
+      const fail = () => {
+        throw new Error("Fixture accessor failure")
+      }
+      if (side === "right")
+        return Object.defineProperty(Either.right(undefined), "right", {
+          get: fail,
+        })
+      const cause = new api.OwnerAllowanceError({
+        code: "runtime-failure",
+        message: "Fixture error",
+      })
+      if (side === "code")
+        return Either.left(Object.defineProperty(cause, "code", { get: fail }))
+      return Object.defineProperty(Either.left(cause), "left", { get: fail })
+    })
+    f.guard.ownerInput(1000)
+    f.time(1000 + api.OWNER_PROGRESS_CHECK_IN_MS)
+    assert.doesNotThrow(progressTimer(f))
+    assert.equal(code(f.guard.admit()), "runtime-failure")
+    assert.equal(f.callbacks.size, 0)
+  }
+})
+
+test("reentrant acknowledgement accessors cannot replace a renewed window's timer", () => {
+  const f: ReturnType<typeof fixture> = fixture(undefined, () =>
+    Object.defineProperty(Either.right(undefined), "right", {
+      get: () => {
+        f.time(1000 + api.OWNER_PROGRESS_CHECK_IN_MS + 1)
+        f.guard.ownerInput(1000 + api.OWNER_PROGRESS_CHECK_IN_MS + 1)
+        return undefined
+      },
+    }),
+  )
+  f.guard.ownerInput(1000)
+  f.time(1000 + api.OWNER_PROGRESS_CHECK_IN_MS)
+  progressTimer(f)()
+  assert.equal(code(f.guard.admit()), "allowed")
+  assert.equal(f.callbacks.size, 2)
+  assert.equal([...f.delays.values()].at(-1), api.OWNER_PROGRESS_CHECK_IN_MS)
+})
+
+test("watchdog scheduling failure is typed and cancels already tracked work", t => {
+  const f = fixture(undefined, () => Either.right(undefined))
+  f.guard.ownerInput(1000)
+  let cancelled = 0
+  f.guard.track(() => {
+    cancelled++
+  })
+  t.mock.method(f.runtime, "schedule", () => {
+    throw new Error("Fixture scheduler unavailable")
+  })
+  f.time(2000)
+  assert.doesNotThrow(() => f.guard.ownerInput(2000))
+  assert.equal(code(f.guard.admit()), "runtime-failure")
+  assert.equal(cancelled, 1)
+  assert.equal(f.callbacks.size, 0)
+})
+
+test("throwing restoration getters cannot remove protection without cancelling work", () => {
+  for (const property of [
+    "version",
+    "lastOwnerAt",
+    "deadlineAt",
+    "status",
+  ] as const) {
+    const f = fixture(undefined, () => Either.right(undefined))
+    f.guard.ownerInput(1000)
+    let cancelled = 0
+    f.guard.track(() => {
+      cancelled++
+    })
+    const snapshot = { ...f.saved[0] }
+    Object.defineProperty(snapshot, property, {
+      get: () => {
+        throw new Error("Fixture snapshot accessor")
+      },
+    })
+    assert.doesNotThrow(() => f.guard.restore(snapshot))
+    assert.equal(cancelled, 1)
+    assert.equal(code(f.guard.admit()), "malformed")
+    assert.equal(f.callbacks.size, 0)
+  }
+})
+
+test("obsolete expiry cannot persist or report a renewed active window as expired", () => {
+  for (const throwsAfterRenewal of [false, true]) {
+    const f = fixture(undefined, () => Either.right(undefined))
+    f.guard.ownerInput(1000)
+    const expiry = [...f.callbacks.values()][0]
+    if (!expiry) throw new Error("Missing expiry watchdog")
+    f.guard.track(() => {
+      f.time(1000 + api.SUPERVISED_OWNER_ALLOWANCE_MS + 1)
+      f.guard.ownerInput(1000 + api.SUPERVISED_OWNER_ALLOWANCE_MS + 1)
+      if (throwsAfterRenewal) throw new Error("Obsolete cancellation failed")
+    })
+    f.time(1000 + api.SUPERVISED_OWNER_ALLOWANCE_MS)
+    expiry()
+    assert.equal(code(f.guard.admit()), "allowed")
+    assert.equal(f.saved.at(-1)?.status, "active")
+    assert.equal(
+      f.saved.at(-1)?.lastOwnerAt,
+      1000 + api.SUPERVISED_OWNER_ALLOWANCE_MS + 1,
+    )
+    assert.ok(
+      f.expired.every(
+        window => window.status === "expired" && window.lastOwnerAt === 1000,
+      ),
+    )
+    assert.equal(f.callbacks.size, 2)
+  }
+})
+
+test("restoration accessors cannot revive a scope disposed during decoding", () => {
+  const f = fixture(undefined, () => Either.right(undefined))
+  f.guard.ownerInput(1000)
+  const snapshot = { ...f.saved[0] }
+  Object.defineProperty(snapshot, "version", {
+    get: () => {
+      f.guard.dispose()
+      return 1
+    },
+  })
+  f.guard.restore(snapshot)
+  assert.equal(code(f.guard.admit()), "closed")
+  assert.equal(f.callbacks.size, 0)
+})
+
+test("the supervised watchdog cancels tracked work at its actual four-hour deadline", () => {
+  const f = fixture(undefined, () => Either.right(undefined))
+  f.guard.ownerInput(1000)
+  let cancelled = 0
+  f.guard.track(() => {
+    cancelled++
+  })
+  const expiry = [...f.callbacks.values()][0]
+  if (!expiry) throw new Error("Missing expiry watchdog")
+  f.time(1000 + api.SUPERVISED_OWNER_ALLOWANCE_MS)
+  expiry()
+  assert.equal(cancelled, 1)
+  assert.equal(f.expired.length, 1)
+  assert.equal(f.expired[0]?.status, "expired")
+  assert.equal(code(f.guard.admit()), "expired")
+  assert.equal(f.callbacks.size, 0)
 })
 
 test("dispose removes the watchdog without granting a replacement window", () => {
