@@ -81,7 +81,7 @@ gh pr view "<pr-ref>" --json files --jq '.files[] | "\(.additions)\t\(.deletions
 wc -l "$out_dir/diff.patch"
 ```
 
-Refuse to proceed on an empty diff. Warn on diffs larger than 5000 lines and ask
+Refuse to proceed on an empty diff. Warn on diffs larger than 10000 lines and ask
 whether to continue — reviewer quality degrades on huge diffs.
 
 Also save the PR metadata and the author's description:
