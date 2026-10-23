@@ -76,8 +76,9 @@ PR you have not checked out).
 
 ## 2. Identify Rust files in the diff
 
-From the diff, extract all `.rs` files. If **no Rust files** are in the diff,
-print "No Rust files in the diff — nothing to inspect." and stop.
+From the diff, extract all `.rs` files. If there are no Rust files, still
+inspect any changed `Cargo.toml` manifests for dependency inheritance. Stop only
+when neither Rust source nor Cargo manifests are in scope.
 
 ## 3. Read and analyze each Rust file
 
@@ -90,26 +91,29 @@ For each piece of changed code, evaluate against these criteria:
 
 ### Red flags (non-idiomatic Rust)
 
-| Signal                                | Example                                             | Verdict                                       |
-| ------------------------------------- | --------------------------------------------------- | --------------------------------------------- |
-| Unnecessary `.clone()`                | Cloning where a reference suffices                  | **FIX** — pass by reference                   |
-| `Arc<Mutex<_>>` without contention    | Single-threaded or single-owner context             | **FIX** — use `Rc<RefCell<_>>` or owned value |
-| Manual loop where iterator works      | `for i in 0..v.len() { v[i] }`                      | **FIX** — use `iter()`, `enumerate()`, etc.   |
-| Match-and-rewrap Option/Result        | `match opt { Some(x) => Some(f(x)), None => None }` | **FIX** — use `.map(f)`                       |
-| `unwrap()` in non-test code           | `file.read().unwrap()` in library                   | **FIX** — propagate with `?`                  |
-| Boolean parameters                    | `fn send(msg, compressed: bool, encrypted: bool)`   | **FIX** — use enums                           |
-| Stringly-typed API                    | `fn set_mode(mode: &str)`                           | **FIX** — use an enum                         |
-| Raw primitive where newtype fits      | `amount: u64, price: u64` in same scope             | **FIX** — newtype wrapper                     |
-| Wildcard `_` on owned enum            | `match event { A => ..., _ => {} }`                 | **FIX** — enumerate variants                  |
-| `Box<dyn Error>` in library           | Public API returning boxed errors                   | **FIX** — custom error type                   |
-| `to_string()` / `format!()` for error | Building error messages as strings                  | **FIX** — structured error variant            |
-| `.collect::<Vec<_>>()` then iterate   | Collecting just to iterate again                    | **FIX** — chain iterators                     |
-| Redundant `return`                    | `return value;` at end of function                  | **STYLE** — just `value`                      |
-| `if let` ignoring else case on Result | `if let Ok(x) = fallible()` silently drops errors   | **FIX** — handle Err                          |
-| `unsafe` without SAFETY comment       | `unsafe { ptr.read() }`                             | **FIX** — document invariant                  |
-| `impl ToString` instead of `Display`  | Custom `ToString` impl                              | **FIX** — implement `Display`                 |
-| `&String` or `&Vec<T>` in parameters  | `fn foo(s: &String)`                                | **FIX** — use `&str` / `&[T]`                 |
-| Nested `Option<Option<T>>`            | Confusing nested optionality                        | **FIX** — flatten or redesign                 |
+| Signal                                                           | Example                                                                                            | Verdict                                                                                                                                       |
+| ---------------------------------------------------------------- | -------------------------------------------------------------------------------------------------- | --------------------------------------------------------------------------------------------------------------------------------------------- |
+| Unnecessary `.clone()`                                           | Cloning where a reference suffices                                                                 | **FIX** — pass by reference                                                                                                                   |
+| `Arc<Mutex<_>>` without contention                               | Single-threaded or single-owner context                                                            | **FIX** — use `Rc<RefCell<_>>` or owned value                                                                                                 |
+| Manual loop where iterator works                                 | `for i in 0..v.len() { v[i] }`                                                                     | **FIX** — use `iter()`, `enumerate()`, etc.                                                                                                   |
+| Match-and-rewrap Option/Result                                   | `match opt { Some(x) => Some(f(x)), None => None }`                                                | **FIX** — use `.map(f)`                                                                                                                       |
+| `unwrap()` in non-test code                                      | `file.read().unwrap()` in library                                                                  | **FIX** — propagate with `?`                                                                                                                  |
+| Context-free source rewrapping or unjustifiably discarded causes | `.map_err(Error::Source)` or `.map_err(\|_\| Error::Decode)` without required context/sanitization | **FIX** — use typed `#[from]` and `?`; first check the contextual-conversion exceptions below                                                 |
+| Function-local imports of non-variants                           | `use crate::rate::TokenAmount;` inside a test/function                                             | **FIX** — move the import to module scope; only enum variants may use block-local `use`                                                       |
+| Duplicated common dependency versions                            | Member repeats a version already shared by workspace members                                       | **FIX** — declare the shared version under `[workspace.dependencies]` and inherit `workspace = true`; preserve local features and optionality |
+| Boolean parameters                                               | `fn send(msg, compressed: bool, encrypted: bool)`                                                  | **FIX** — use enums                                                                                                                           |
+| Stringly-typed API                                               | `fn set_mode(mode: &str)`                                                                          | **FIX** — use an enum                                                                                                                         |
+| Raw primitive where newtype fits                                 | `amount: u64, price: u64` in same scope                                                            | **FIX** — newtype wrapper                                                                                                                     |
+| Wildcard `_` on owned enum                                       | `match event { A => ..., _ => {} }`                                                                | **FIX** — enumerate variants                                                                                                                  |
+| `Box<dyn Error>` in library                                      | Public API returning boxed errors                                                                  | **FIX** — custom error type                                                                                                                   |
+| `to_string()` / `format!()` for error                            | Building error messages as strings                                                                 | **FIX** — structured error variant                                                                                                            |
+| `.collect::<Vec<_>>()` then iterate                              | Collecting just to iterate again                                                                   | **FIX** — chain iterators                                                                                                                     |
+| Redundant `return`                                               | `return value;` at end of function                                                                 | **STYLE** — just `value`                                                                                                                      |
+| `if let` ignoring else case on Result                            | `if let Ok(x) = fallible()` silently drops errors                                                  | **FIX** — handle Err                                                                                                                          |
+| `unsafe` without SAFETY comment                                  | `unsafe { ptr.read() }`                                                                            | **FIX** — document invariant                                                                                                                  |
+| `impl ToString` instead of `Display`                             | Custom `ToString` impl                                                                             | **FIX** — implement `Display`                                                                                                                 |
+| `&String` or `&Vec<T>` in parameters                             | `fn foo(s: &String)`                                                                               | **FIX** — use `&str` / `&[T]`                                                                                                                 |
+| Nested `Option<Option<T>>`                                       | Confusing nested optionality                                                                       | **FIX** — flatten or redesign                                                                                                                 |
 
 ### Green flags (idiomatic Rust)
 
@@ -125,6 +129,31 @@ For each piece of changed code, evaluate against these criteria:
 | `Cow<'_, str>` where ownership varies          | **GOOD** |
 | `#[must_use]` on fallible or important returns | **GOOD** |
 | Proper `Display` + `Error` implementations     | **GOOD** |
+
+### Error conversions and workspace dependencies
+
+Use typed source errors and `thiserror` `#[from]` variants with `?` for ordinary
+fallible conversions. Do not discard a decoder error into an operation-specific
+unit variant or replace a simple conversion with a manual `map_err` closure.
+Name source variants for the source error, not an arbitrary operation.
+
+Verify exceptions rather than rewriting mechanically: adding a file path,
+redacting a token-bearing URL, or adapting a generic serialization boundary may
+require a contextual conversion or custom `From`. Preserve those guarantees;
+never remove context, expose secrets, fabricate another crate's error, use
+`.ok()` to lose failure, or hide the same mapping in a gratuitous helper. Cover
+malformed input and preserved source chains with realistic regressions.
+
+For Cargo changes, inspect root and member manifests even if no `.rs` file
+changed. Common dependencies belong in `[workspace.dependencies]`; members
+inherit them with `workspace = true`. Keep member-specific features,
+`default-features` and `optional` behavior intact. Do not unify genuinely
+different version requirements or alter lockfile pins merely to remove a local
+version declaration.
+
+General spacing, qualification and cross-language identifier discipline are
+covered by `code-style-inspector` and `strong-typing-inspector`; their required
+conventions are not optional just because they are easy to fix.
 
 ## 4. Produce the verdict
 
@@ -195,7 +224,12 @@ Verdict: <blunt one-liner assessment>
 
 ## 5. Offer remediation
 
-After printing the verdict, stay in the session. Say:
+When driven by a review engine, return findings only. Do not edit or ask for
+another approval: review-loop/audit callers own authorized verification and
+fixing; read-only review callers remain read-only.
+
+For a direct inspection without implementation authority, stay in the session.
+Say:
 
 > Inspection complete. Want me to:
 >
