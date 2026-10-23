@@ -335,6 +335,11 @@ const onlyKeys = (
 const invalid = (code: ManagerSessionError["code"], message: string) =>
   Either.left(new ManagerSessionError({ code, message }))
 
+export {
+  identifier as isManagerProtocolIdentifier,
+  validScope as isManagerPairScope,
+}
+
 const signature = (
   scope: ManagerPairScope,
   id: string,
