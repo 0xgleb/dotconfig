@@ -52,6 +52,7 @@ import {
 import { registerRuntimeVersion } from "../shared/runtime-version.ts"
 import { HUMAN_TURN_EVENT } from "../shared/usage-governor-events.ts"
 import { agentDisplayLabel } from "./agent-identity.ts"
+import { getManagerBinding } from "../shared/manager-binding.ts"
 import { bridgeQueueRoutableAgents } from "./agent-selection.ts"
 import {
   deliverCabaCardRelay,
@@ -147,7 +148,7 @@ export default function remoteControl(
   onAuthenticatedOwnerMessage?: (receivedAt: number) => void,
   options: RemoteControlOptions = {},
 ): void {
-  registerRuntimeVersion(pi, "remote-control", "2026.10.17.4")
+  registerRuntimeVersion(pi, "remote-control", "2026.10.17.5")
   const store = makeRemoteBridgeStore(
     remoteBridgeDatabasePath(process.env.XDG_STATE_HOME, homedir()),
   )
@@ -854,6 +855,11 @@ export default function remoteControl(
     latestCtx = ctx
     try {
       const now = Date.now()
+      const binding = getManagerBinding(pi, ctx)
+      if (Either.isLeft(binding)) {
+        ctx.ui.setStatus(STATUS_KEY, `remote:error · ${binding.left.message}`)
+        return
+      }
       const heartbeat = await run(
         store.heartbeatAgent({
           id: ctx.sessionManager.getSessionId(),
@@ -861,6 +867,9 @@ export default function remoteControl(
           cwd: ctx.cwd,
           accepting: active === undefined,
           workDelivery: "native-pi",
+          ...(binding.right.role !== "worker"
+            ? { nativeManager: true as const }
+            : {}),
           now,
           ttlMs: BRIDGE_AGENT_TTL_MS,
         }),
