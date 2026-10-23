@@ -35,6 +35,103 @@ export class ManagerProgressError extends Data.TaggedError(
   readonly message: string
 }> {}
 
+export const signManagerProgressRequest = (
+  intent: ManagerProgressIntent,
+  capability: string,
+  now: number,
+): Either.Either<ManagerProgressRequest, ManagerProgressError> =>
+  Either.gen(function* () {
+    if (!hexDigest(capability)) return yield* malformed()
+
+    const fields = yield* dataFields(intent, intentKeys)
+    const decoded = yield* decodeIntentFields(fields)
+    yield* atTime(decoded, now)
+
+    const body = yield* requestBody(decoded)
+    const signed = yield* signature(body, capability)
+
+    return Object.freeze({ ...body, signature: signed })
+  })
+
+export const verifyManagerProgressRequest = (
+  value: unknown,
+  scope: ManagerPairScope,
+  managerSessionId: string,
+  capability: string,
+  now: number,
+): Either.Either<ManagerProgressRequest, ManagerProgressError> =>
+  Either.gen(function* () {
+    if (
+      !hexDigest(capability) ||
+      !isManagerProtocolIdentifier(managerSessionId)
+    )
+      return yield* malformed()
+
+    const fields = yield* dataFields(value, requestKeys)
+
+    if (
+      fields.version !== 1 ||
+      fields.kind !== kind ||
+      !hexDigest(fields.id) ||
+      !hexDigest(fields.signature)
+    )
+      return yield* malformed()
+
+    const decoded = yield* decodeIntentFields(fields)
+    const expectedScope = yield* Either.try({
+      try: () => ({ workerSessionId: scope.workerSessionId, cwd: scope.cwd }),
+      catch: () =>
+        new ManagerProgressError({
+          code: "malformed",
+          message: "Expected progress scope could not be inspected.",
+        }),
+    })
+
+    if (!isManagerPairScope(expectedScope)) return yield* malformed()
+    if (
+      decoded.workerSessionId !== expectedScope.workerSessionId ||
+      decoded.cwd !== expectedScope.cwd ||
+      decoded.managerSessionId !== managerSessionId
+    )
+      return yield* failure(
+        "scope",
+        "Progress check-in targets another worker or manager.",
+      )
+
+    yield* atTime(decoded, now)
+
+    const body = yield* requestBody(decoded)
+
+    if (body.id !== fields.id)
+      return yield* failure(
+        "authentication",
+        "Progress interval identity does not match its scope.",
+      )
+
+    const expectedSignature = yield* signature(body, capability)
+    const suppliedSignature = fields.signature
+    const authenticated = yield* Either.try({
+      try: () =>
+        timingSafeEqual(
+          Buffer.from(expectedSignature, "hex"),
+          Buffer.from(suppliedSignature, "hex"),
+        ),
+      catch: () =>
+        new ManagerProgressError({
+          code: "crypto",
+          message: "Progress authentication could not be checked.",
+        }),
+    })
+
+    if (!authenticated)
+      return yield* failure(
+        "authentication",
+        "Progress check-in authentication failed.",
+      )
+
+    return Object.freeze({ ...body, signature: suppliedSignature })
+  })
+
 const kind = "manager-progress-check-in" as const
 const intentKeys = [
   "workerSessionId",
@@ -79,21 +176,23 @@ const dataFields = (
         }),
     }),
     ({ isArray, descriptors }) => {
-      if (
-        isArray ||
-        Reflect.ownKeys(descriptors).length !== keys.length ||
-        keys.some(
-          key =>
-            !Object.hasOwn(descriptors, key) ||
-            !Object.hasOwn(descriptors[key], "value"),
-        )
-      )
+      if (isArray || Reflect.ownKeys(descriptors).length !== keys.length)
         return malformed()
 
-      return Either.right(
-        Object.freeze(
-          Object.fromEntries(keys.map(key => [key, descriptors[key].value])),
+      return Either.map(
+        Either.all(
+          keys.map(key => {
+            if (!Object.hasOwn(descriptors, key)) return malformed()
+
+            const descriptor = descriptors[key]
+
+            if (descriptor === undefined || !Object.hasOwn(descriptor, "value"))
+              return malformed()
+
+            return Either.right([key, descriptor.value] as const)
+          }),
         ),
+        fields => Object.freeze(Object.fromEntries(fields)),
       )
     },
   )
@@ -201,101 +300,4 @@ const signature = (
         code: "crypto",
         message: "Progress check-in signing failed.",
       }),
-  })
-
-export const signManagerProgressRequest = (
-  intent: ManagerProgressIntent,
-  capability: string,
-  now: number,
-): Either.Either<ManagerProgressRequest, ManagerProgressError> =>
-  Either.gen(function* () {
-    if (!hexDigest(capability)) return yield* malformed()
-
-    const fields = yield* dataFields(intent, intentKeys)
-    const decoded = yield* decodeIntentFields(fields)
-    yield* atTime(decoded, now)
-
-    const body = yield* requestBody(decoded)
-    const signed = yield* signature(body, capability)
-
-    return Object.freeze({ ...body, signature: signed })
-  })
-
-export const verifyManagerProgressRequest = (
-  value: unknown,
-  scope: ManagerPairScope,
-  managerSessionId: string,
-  capability: string,
-  now: number,
-): Either.Either<ManagerProgressRequest, ManagerProgressError> =>
-  Either.gen(function* () {
-    if (
-      !hexDigest(capability) ||
-      !isManagerProtocolIdentifier(managerSessionId)
-    )
-      return yield* malformed()
-
-    const fields = yield* dataFields(value, requestKeys)
-
-    if (
-      fields.version !== 1 ||
-      fields.kind !== kind ||
-      !hexDigest(fields.id) ||
-      !hexDigest(fields.signature)
-    )
-      return yield* malformed()
-
-    const decoded = yield* decodeIntentFields(fields)
-    const expectedScope = yield* Either.try({
-      try: () => ({ workerSessionId: scope.workerSessionId, cwd: scope.cwd }),
-      catch: () =>
-        new ManagerProgressError({
-          code: "malformed",
-          message: "Expected progress scope could not be inspected.",
-        }),
-    })
-
-    if (!isManagerPairScope(expectedScope)) return yield* malformed()
-    if (
-      decoded.workerSessionId !== expectedScope.workerSessionId ||
-      decoded.cwd !== expectedScope.cwd ||
-      decoded.managerSessionId !== managerSessionId
-    )
-      return yield* failure(
-        "scope",
-        "Progress check-in targets another worker or manager.",
-      )
-
-    yield* atTime(decoded, now)
-
-    const body = yield* requestBody(decoded)
-
-    if (body.id !== fields.id)
-      return yield* failure(
-        "authentication",
-        "Progress interval identity does not match its scope.",
-      )
-
-    const expectedSignature = yield* signature(body, capability)
-    const suppliedSignature = fields.signature
-    const authenticated = yield* Either.try({
-      try: () =>
-        timingSafeEqual(
-          Buffer.from(expectedSignature, "hex"),
-          Buffer.from(suppliedSignature, "hex"),
-        ),
-      catch: () =>
-        new ManagerProgressError({
-          code: "crypto",
-          message: "Progress authentication could not be checked.",
-        }),
-    })
-
-    if (!authenticated)
-      return yield* failure(
-        "authentication",
-        "Progress check-in authentication failed.",
-      )
-
-    return Object.freeze({ ...body, signature: suppliedSignature })
   })
