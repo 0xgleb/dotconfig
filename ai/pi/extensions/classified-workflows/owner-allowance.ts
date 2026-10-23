@@ -74,13 +74,38 @@ export const createOwnerAllowance = <T>(
   const allowanceMs =
     checkIn === undefined ? OWNER_ALLOWANCE_MS : SUPERVISED_OWNER_ALLOWANCE_MS
   const error = (code: OwnerAllowanceError["code"]) =>
-    new OwnerAllowanceError({
-      code,
-      message:
-        code === "expired"
-          ? `The ${checkIn === undefined ? "one-hour" : "four-hour"} owner allowance expired. Work is stopped until a new authenticated owner message.`
-          : `Owner allowance is ${code}; no execution is admitted without valid owner deadline evidence.`,
-    })
+    Object.freeze(
+      new OwnerAllowanceError({
+        code,
+        message:
+          code === "expired"
+            ? `The ${checkIn === undefined ? "one-hour" : "four-hour"} owner allowance expired. Work is stopped until a new authenticated owner message.`
+            : `Owner allowance is ${code}; no execution is admitted without valid owner deadline evidence.`,
+      }),
+    )
+  const snapshotWindow = (value: OwnerWindow): OwnerWindow =>
+    Object.freeze({ ...value })
+  const copyCallbackError = (
+    cause: OwnerAllowanceError,
+  ): OwnerAllowanceError => {
+    const code = cause.code
+    const message = cause.message
+    if (
+      ![
+        "missing",
+        "malformed",
+        "invalid-clock",
+        "expired",
+        "closed",
+        "runtime-failure",
+      ].some(known => known === code) ||
+      typeof message !== "string" ||
+      message.length === 0 ||
+      message.length > 4096
+    )
+      return error("malformed")
+    return Object.freeze(new OwnerAllowanceError({ code, message }))
+  }
   const inherited = runtime.inheritedDeadline
   const ceiling =
     typeof inherited === "string" &&
@@ -114,13 +139,17 @@ export const createOwnerAllowance = <T>(
   let checkInTimer: { readonly handle: T; readonly token: object } | undefined
   const invoke = (action: () => unknown, expectedGeneration = generation) => {
     const result = Either.try({
-      try: action,
+      try: () => {
+        const value = action()
+        return value instanceof OwnerAllowanceError
+          ? copyCallbackError(value)
+          : undefined
+      },
       catch: () => error("runtime-failure"),
     })
     if (generation === expectedGeneration) {
       if (Either.isLeft(result)) stopped = result.left
-      else if (result.right instanceof OwnerAllowanceError)
-        stopped = result.right
+      else if (result.right !== undefined) stopped = result.right
     }
     return result
   }
@@ -155,12 +184,18 @@ export const createOwnerAllowance = <T>(
     stopped = reason
     clear(expectedGeneration)
     if (generation === expectedGeneration && expiredWindow)
-      invoke(() => runtime.persist(expiredWindow), expectedGeneration)
+      invoke(
+        () => runtime.persist(snapshotWindow(expiredWindow)),
+        expectedGeneration,
+      )
     for (const cancel of pending) invoke(cancel, expectedGeneration)
     if (generation === expectedGeneration && shouldNotify)
       invoke(() => runtime.cancel(reason), expectedGeneration)
     if (generation === expectedGeneration && expiredWindow)
-      invoke(() => runtime.onExpired?.(expiredWindow), expectedGeneration)
+      invoke(
+        () => runtime.onExpired?.(snapshotWindow(expiredWindow)),
+        expectedGeneration,
+      )
     return Either.left(reason)
   }
   const admit: OwnerAllowance["admit"] = () => {
@@ -171,14 +206,19 @@ export const createOwnerAllowance = <T>(
     )
       return stop(error("malformed"))
     if (!window) return stop(error("missing"))
+    const current = window
+    const expectedGeneration = generation
     const clock = readClock()
+    if (generation !== expectedGeneration || window !== current || stopped)
+      return Either.left(stopped ?? error("closed"))
     if (Either.isLeft(clock)) return stop(clock.left)
     const now = clock.right
-    if (now < window.lastOwnerAt) return stop(error("invalid-clock"))
-    if (window.status === "expired" || now >= window.deadlineAt)
+    if (now < current.lastOwnerAt) return stop(error("invalid-clock"))
+    if (current.status === "expired" || now >= current.deadlineAt)
       return stop(error("expired"))
-    return Either.right(window)
+    return Either.right(current)
   }
+  const admitSnapshot = () => Either.map(admit(), snapshotWindow)
   const scheduleCheckIn = (minimumSequence: number) => {
     if (checkIn === undefined) return
     const admitted = admit()
@@ -186,6 +226,8 @@ export const createOwnerAllowance = <T>(
     const current = admitted.right
     const expectedGeneration = generation
     const clock = readClock()
+    if (generation !== expectedGeneration || window !== current || stopped)
+      return
     if (Either.isLeft(clock)) {
       stop(clock.left)
       return
@@ -216,6 +258,12 @@ export const createOwnerAllowance = <T>(
             const allowed = admit()
             if (Either.isLeft(allowed) || allowed.right !== current) return
             const firedClock = readClock()
+            if (
+              generation !== expectedGeneration ||
+              window !== current ||
+              stopped
+            )
+              return
             if (Either.isLeft(firedClock)) {
               stop(firedClock.left)
               return
@@ -254,23 +302,7 @@ export const createOwnerAllowance = <T>(
                   const cause = acknowledgement.left
                   if (!(cause instanceof OwnerAllowanceError))
                     return Either.left(error("malformed"))
-                  const code = cause.code
-                  const message = cause.message
-                  if (
-                    ![
-                      "missing",
-                      "malformed",
-                      "invalid-clock",
-                      "expired",
-                      "closed",
-                      "runtime-failure",
-                    ].some(known => known === code) ||
-                    typeof message !== "string" ||
-                    message.length === 0 ||
-                    message.length > 4096
-                  )
-                    return Either.left(error("malformed"))
-                  return Either.left(new OwnerAllowanceError({ code, message }))
+                  return Either.left(copyCallbackError(cause))
                 }
                 return acknowledgement.right === undefined
                   ? Either.right(undefined)
@@ -307,7 +339,12 @@ export const createOwnerAllowance = <T>(
     const admitted = admit()
     if (Either.isLeft(admitted)) return
     const clock = readClock()
-    if (generation !== expectedGeneration) return
+    if (
+      generation !== expectedGeneration ||
+      window !== admitted.right ||
+      stopped
+    )
+      return
     if (Either.isLeft(clock)) {
       stop(clock.left)
       return
@@ -339,14 +376,15 @@ export const createOwnerAllowance = <T>(
     scheduleCheckIn(1)
   }
   return {
-    admit,
+    admit: admitSnapshot,
     dispose: () => {
       generation = {}
       stop(error("closed"))
     },
     track: cancel => {
+      const expectedGeneration = generation
       if (Either.isLeft(admit())) {
-        invoke(cancel)
+        invoke(cancel, expectedGeneration)
         return () => {}
       }
       processes.add(cancel)
@@ -426,7 +464,7 @@ export const createOwnerAllowance = <T>(
       if (upgrade) {
         const upgraded = window
         const persisted = invoke(
-          () => runtime.persist(upgraded),
+          () => runtime.persist(snapshotWindow(upgraded)),
           expectedGeneration,
         )
         if (generation !== expectedGeneration) return
@@ -443,7 +481,10 @@ export const createOwnerAllowance = <T>(
         (checkIn !== undefined && typeof checkIn !== "function")
       )
         return stop(error("malformed"))
+      const previousGeneration = generation
       const clock = readClock()
+      if (generation !== previousGeneration)
+        return Either.left(stopped ?? error("closed"))
       if (Either.isLeft(clock)) return stop(clock.left)
       const now = clock.right
       if (
@@ -452,7 +493,7 @@ export const createOwnerAllowance = <T>(
         !time(receivedAt + allowanceMs)
       )
         return Either.left(error("invalid-clock"))
-      if (window && receivedAt <= window.lastOwnerAt) return admit()
+      if (window && receivedAt <= window.lastOwnerAt) return admitSnapshot()
       if (ceiling !== undefined && now >= ceiling) return stop(error("expired"))
       const expectedGeneration = {}
       generation = expectedGeneration
@@ -466,13 +507,13 @@ export const createOwnerAllowance = <T>(
       notified = false
       const granted = window
       const persisted = invoke(
-        () => runtime.persist(granted),
+        () => runtime.persist(snapshotWindow(granted)),
         expectedGeneration,
       )
-      if (generation !== expectedGeneration) return admit()
+      if (generation !== expectedGeneration) return admitSnapshot()
       if (Either.isLeft(persisted)) return stop(persisted.left)
       arm(expectedGeneration)
-      return admit()
+      return admitSnapshot()
     },
   }
 }
