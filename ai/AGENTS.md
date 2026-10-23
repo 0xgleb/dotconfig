@@ -1,6 +1,10 @@
 # Global Guidelines
 
-These rules apply across all repositories.
+These rules apply across all repositories. `../GLOBAL_AGENTS.md` is the
+canonical global policy. Global settings, shared skills, rules and harness
+source live at the Git toplevel/main worktree `~/.config`; scoped requests to
+change them follow its direct-edit, branch, incremental commit/push, draft-PR
+and ready-after-verification workflow.
 
 ## Standing Rules and Task State
 
@@ -191,12 +195,12 @@ policy that applies. Two cross-repo invariants stay regardless:
   protection, NEVER push to that protected branch without an explicit
   per-session instruction to do that exact thing. Admin override is the only way
   to do harm here; do not exercise it unprompted.
-- **No new PRs, no state flips, no comments without instruction.** Push policy
-  covers authorized Git or GitButler pushes on feature branches, not
-  `gh pr create`, `gh pr ready`, `gh pr merge`, draft-to-ready flips, or
-  PR/issue comments. Those still require an explicit per-session instruction
-  (and PR/issue comments fall under the "Authorship & Attribution"
-  speaking-via-accounts rule).
+- **No unrelated PRs, state flips or comments.** Global-resource change requests
+  carry the scoped draft-PR and ready-after-verification authority defined in
+  `../GLOBAL_AGENTS.md`; do not request it again. Outside that standing
+  workflow, PR creation/state changes need their own authority. Neither workflow
+  authorizes merging, review verdicts, comments or speaking socially for the
+  user.
 
 ## PR Assignment
 
@@ -239,16 +243,19 @@ person or claim their availability merely because their work appears in a plan.
   architecture.
 - Keep a granular task list for the current request and remove completed items
   so the remaining work is always obvious.
-- Before taking cross-project Pi support or operator work, check
-  `agent_registry`. Delegate to the live role owner; if the role is unowned,
-  claim it temporarily and handle it locally. A role never grants authority
-  beyond constrained project tools, and an operational role is not done merely
-  because its inbox is empty. A registry read/sync failure means coordination is
-  temporarily unavailable; it does not revoke authorization already established
-  by the user and project policy or block unrelated Git delivery. Continue
-  safely when no exclusive lease or request transition is required. Never infer
-  new authority from an unavailable registry; block only the operation that
-  actually requires registry ownership.
+- Routine requested global skill/rule/settings edits are handled directly in
+  `~/.config`, not delegated merely because the session started elsewhere.
+  Before taking genuine cross-project Pi support or operator work, check
+  `agent_registry`. Route genuine platform incidents to the declared live owner
+  or durable support queue. Never self-claim an absent dedicated support role. A
+  temporary non-dedicated task role may be claimed only within existing owner
+  authority. A role never grants capability, and an operational role is not
+  complete merely because its inbox is empty. A registry read/sync failure means
+  coordination is temporarily unavailable; it does not revoke authorization
+  already established by the user and project policy or block unrelated Git
+  delivery. Continue safely when no exclusive lease or request transition is
+  required. Never infer new authority from an unavailable registry; block only
+  the operation that actually requires registry ownership.
 - Never stop while assigned work remains executable. If a goal is active,
   continue until it is achieved. If any todo is pending, continue working
   through the task list. Stop only when all assigned work is complete or all
