@@ -22,6 +22,7 @@ import {
 } from "@earendil-works/pi-tui"
 import { Effect, Either, Option, Ref } from "effect"
 import { Type } from "typebox"
+import { isDeepStrictEqual } from "node:util"
 import { BRANCH_TODO_BACKLOG_EVENT } from "../shared/backlog-events.ts"
 import { branchTodoBacklogSnapshot } from "./backlog-adapter.ts"
 import {
@@ -281,7 +282,7 @@ export default function todoExtension(
   pi: ExtensionAPI,
   managerRuntime?: ManagerTodoRuntime,
 ): void {
-  registerRuntimeVersion(pi, "todo", "2026.09.13.4")
+  registerRuntimeVersion(pi, "todo", "2026.09.13.5")
   const stateRef = Effect.runSync(Ref.make<TodoState>(emptyTodoState))
   let restorationError: string | undefined
   let hudExpiry: ReturnType<typeof setTimeout> | undefined
@@ -424,10 +425,21 @@ export default function todoExtension(
       renderTaskWidget(ctx)
       return
     }
-    restorationError = undefined
-    await Effect.runPromise(Ref.set(stateRef, restored.right))
     const state = restored.right
-    pi.appendEntry(TODO_STATE_ENTRY, state)
+    const persisted = ctx.sessionManager
+      .getBranch()
+      .findLast(
+        entry =>
+          entry.type === "custom" && entry.customType === TODO_STATE_ENTRY,
+      )
+    if (
+      !persisted ||
+      persisted.type !== "custom" ||
+      !isDeepStrictEqual(persisted.data, state)
+    )
+      pi.appendEntry(TODO_STATE_ENTRY, state)
+    restorationError = undefined
+    await Effect.runPromise(Ref.set(stateRef, state))
     publishBranchTodos(ctx, state)
     registerHudToggle(ctx)
     renderTaskWidget(ctx, state)
@@ -620,7 +632,10 @@ export default function todoExtension(
       ),
     )
     const result = Effect.runSync(program)
-    if (result.details.outcome === "success") {
+    if (
+      result.details.outcome === "success" &&
+      result.details.action !== "list"
+    ) {
       pi.appendEntry(TODO_STATE_ENTRY, result.details.state)
       Effect.runSync(Ref.set(stateRef, result.details.state))
       publishBranchTodos(ctx, result.details.state)
@@ -652,10 +667,17 @@ export default function todoExtension(
       "Manage branch-aware tasks. add accepts parentId for one level of subtasks; grandchildren are forbidden. reply accepts at most 3 entries of 300 characters; restructure at the cap. priority sets an independent positive safe-integer rank (lower first), or null to unassign, without changing status. Other actions: list, toggle, status, block, unblock, clear.",
     parameters: TodoParams,
     async execute(_toolCallId, params, signal, _onUpdate, ctx) {
+      // The SDK preserves nullable priority even when another action is chosen.
+      // Only the priority action owns null's explicit-unassignment meaning.
+      const { priority, ...withoutPriority } = params
+      const request =
+        params.action !== "priority" && priority === null
+          ? withoutPriority
+          : params
       const binding = getManagerBinding(pi, ctx)
       if (Either.isLeft(binding) || binding.right.role !== "worker")
-        return invokeManagerTodo(pi, ctx, params, signal, managerRuntime)
-      return executeTodo(params, ctx)
+        return invokeManagerTodo(pi, ctx, request, signal, managerRuntime)
+      return executeTodo(request, ctx)
     },
 
     renderCall(args, theme) {
