@@ -50,19 +50,20 @@ when changing Pi here; do not create a competing project copy of global policy.
   shared packages, `darwin.nix` macOS packages and settings, `nixos.nix` NixOS
   packages and settings, and `home.nix` Home Manager programs and links.
 - Build without applying with `darwin-rebuild build --flake ~/.config`; apply
-  authorized configuration changes with `darwin-rebuild switch --flake ~/.config`.
-  Use `nixfmt` for changed Nix files.
+  authorized configuration changes with
+  `darwin-rebuild switch --flake ~/.config`. Use `nixfmt` for changed Nix files.
 - Home Manager owns Neovim. Do not add `neovim` to `common.nix` or `darwin.nix`.
   Mason is disabled. Add language binaries to `programs.neovim.extraPackages` in
   `home.nix` and register their lspconfig names in `astrolsp opts.servers` in
   `nvim/lua/plugins/astrolsp.lua`; both are required.
 - Do not use `rustaceanvim`. It bypasses the standard lspconfig flow and breaks
   semantic LSP actions. Rust uses rust-analyzer through standard lspconfig.
-- Doom is managed declaratively via nix-doom-emacs-unstraightened. No `doom sync`:
-  edit `doom/` and apply through the authorized `darwin-rebuild switch` workflow.
+- Doom is managed declaratively via nix-doom-emacs-unstraightened. No
+  `doom sync`: edit `doom/` and apply through the authorized
+  `darwin-rebuild switch` workflow.
 - Shared skills stay in `ai/skills/`, exposed through harness symlinks. Use
-  `new-skill` to create a skill and verify its harness links, not copied per-harness
-  skill directories.
+  `new-skill` to create a skill and verify its harness links, not copied
+  per-harness skill directories.
 
 # Neovim Config
 
@@ -154,12 +155,15 @@ nu nushell/fj/routing.test.nu
 Use type-only Conventional Commit prefixes such as `fix:`, `feat:`, `refactor:`,
 `test:`, and `docs:` according to the change. Do not use `wip(pi):`.
 
-Work on `master` and commit and push validated changes directly to `master`,
-unless the owner explicitly authorizes another branch or says not to publish. Do
-not create or use an agent feature branch based on an inherited checkout,
-summary, checkpoint, or handoff. Committing and pushing are routine completion
-steps here; do not hand them back to the owner or request redundant
-authorization.
+Requested global settings, skill, rule and harness-source changes follow
+`GLOBAL_AGENTS.md`: work directly in this repository's main worktree, create a
+separate purpose-named branch in the existing GitButler workspace, commit and
+push validated units continuously, open a draft PR and mark it ready only when
+the requested scope and verification are complete. Preserve unrelated changes.
+Do not hand routine Markdown edits to another agent or ask again for normal
+publication authority. Direct-to-master delivery requires explicit owner
+direction or a separately authorized role workflow; never merge or override
+branch protection as part of this default.
 
 # Work Tracking
 
