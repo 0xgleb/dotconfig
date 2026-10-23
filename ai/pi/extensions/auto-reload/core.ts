@@ -94,7 +94,8 @@ export const managedPiChangeLabel: (
     return `${parts[2]} extension`
   if (parts[0] === "skills" && parts[1]) return `${parts[1]} skill`
   if (parts[0] === "pi" && parts[1] === "themes") return "Pi theme"
-  if (parts.at(-1) === "AGENTS.md") return "agent instructions"
+  if (parts.at(-1) === "AGENTS.md" || parts.at(-1) === "GLOBAL_AGENTS.md")
+    return "agent instructions"
   if (parts.at(-1) === "pi.settings.json") return "Pi settings"
   return "Pi configuration"
 }
@@ -331,9 +332,9 @@ export const managedReloadDelivery = (
 export const managedPiWatchPaths: (aiRoot: string) => string[] = aiRoot =>
   isAbsolute(aiRoot)
     ? [
-        join(aiRoot, "AGENTS.md"),
+        join(aiRoot, "..", "GLOBAL_AGENTS.md"),
+        join(aiRoot, "..", "AGENTS.md"),
         join(aiRoot, "pi.settings.json"),
-        join(aiRoot, "pi", "AGENTS.md"),
         join(aiRoot, "pi", "extensions"),
         join(aiRoot, "pi", "themes"),
         join(aiRoot, "skills"),
