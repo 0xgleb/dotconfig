@@ -114,12 +114,24 @@ test("manager control updates the real worker todo store used by subsequent ordi
   assert.ok(Either.isRight(ranked))
   assert.equal(ranked.right.isError, false)
   const workerTreeHandlers = [...(hooks.get("session_tree") ?? [])]
+  const beforeRead = entries.length
   const listed = await tool.execute(
     "list",
     { action: "list" },
     undefined,
     undefined,
     ctx,
+  )
+  assert.equal(
+    entries.length,
+    beforeRead,
+    "list must not mutate the task journal",
+  )
+  for (const handler of hooks.get("session_start") ?? []) await handler({}, ctx)
+  assert.equal(
+    entries.length,
+    beforeRead,
+    "unchanged restoration must not mutate the task journal",
   )
   assert.ok(record(listed))
   const details = decodeTodoDetails(listed.details)
@@ -274,6 +286,33 @@ test("manager control updates the real worker todo store used by subsequent ordi
   assert.ok(Option.isSome(afterDetails))
   assert.equal(afterDetails.value.state.todos.length, 3)
   assert.equal(afterDetails.value.state.todos[2]?.priority, 1)
+  selected = true
+  const cleared = await managerTool.execute(
+    "clear-manager-priority",
+    { action: "priority", id: 3, priority: null },
+    undefined,
+    undefined,
+    managerCtx,
+  )
+  assert.ok(record(cleared))
+  assert.notEqual(cleared.isError, true)
+  for (const handler of workerTreeHandlers) await handler({}, ctx)
+  const afterClear = await tool.execute(
+    "read-back-clear",
+    { action: "list" },
+    undefined,
+    undefined,
+    ctx,
+  )
+  assert.ok(record(afterClear))
+  const clearedDetails = decodeTodoDetails(afterClear.details)
+  assert.ok(Option.isSome(clearedDetails))
+  const { priority: removed, ...unranked } = afterDetails.value.state.todos[2]!
+  assert.equal(removed, 1)
+  assert.deepEqual(clearedDetails.value.state.todos, [
+    ...afterDetails.value.state.todos.slice(0, 2),
+    unranked,
+  ])
   for (const handler of hooks.get("session_shutdown") ?? [])
     await handler({}, ctx)
 })
