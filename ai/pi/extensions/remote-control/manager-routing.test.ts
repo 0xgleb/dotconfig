@@ -49,7 +49,7 @@ const manager = {
 for (const [state, expected] of [
   [{}, "manager"],
   [{ selectedAgentId: "worker" }, "manager"],
-  [{ selectedAgentId: "worker", explicitAgentSelection: true }, "worker"],
+  [{ selectedAgentId: "worker", explicitAgentSelection: true }, "manager"],
 ] as const) {
   test(`actual bot selection defaults to manager, explicit override=${"explicitAgentSelection" in state}`, async () => {
     const start = daemon.indexOf("const chooseAgent = (")
@@ -228,7 +228,7 @@ for (const forwarded of [false, true]) {
       reply(
         {
           bridge: {
-            answerSolePendingTelegramQuestion: () => {
+            answerTelegramQuestion: () => {
               calls++
               return Effect.succeed(undefined)
             },
@@ -239,6 +239,7 @@ for (const forwarded of [false, true]) {
             userId: 42,
             chatId: 42,
             messageId: 1,
+            replyToMessageId: 100,
             text: "1",
             ...(forwarded
               ? { forwardOrigin: { speaker: "owner", userId: 42 } }

@@ -41,6 +41,7 @@ import {
   RemoteBridgeError,
   type BridgeAgent,
   type BridgeQuestion,
+  workDeliveryAcceptsInbox,
   type RemoteImage,
 } from "./protocol.ts"
 import { makeRemoteBridgeStore } from "./sqlite-store.ts"
@@ -797,12 +798,40 @@ const sendFormattedText = (
   chatId: number,
   text: string,
   replyToMessageId?: number,
+  originAgentId?: string,
 ): Effect.Effect<void, TelegramTransportError | TelegramContractError> =>
   Effect.forEach(
     telegramHtmlChunks(text, TELEGRAM_MESSAGE_LIMIT),
     chunk =>
-      sendTelegramMessage(runtime, chatId, chunk, replyToMessageId, "HTML"),
-    { discard: true },
+      sendTelegramMessage(
+        runtime,
+        chatId,
+        chunk,
+        replyToMessageId,
+        "HTML",
+      ).pipe(
+        Effect.flatMap(messageId =>
+          originAgentId === undefined
+            ? Effect.void
+            : runtime.bridge
+                .linkTelegramMessageOrigin({
+                  agentId: originAgentId,
+                  chatId,
+                  messageId,
+                })
+                .pipe(
+                  Effect.mapError(
+                    () =>
+                      new TelegramTransportError({
+                        method: "replyOrigin",
+                        message:
+                          "Message was sent, but its reply route was not recorded. Do not resend automatically.",
+                      }),
+                  ),
+                ),
+        ),
+      ),
+    { discard: true, concurrency: 1 },
   )
 
 interface TelegramUpdateRequest {
@@ -954,27 +983,39 @@ const relayPendingQuestions = (
 
 const chooseAgent = (
   runtime: PieceOfPiRuntime,
-  state: PieceOfPiState,
+  message: TelegramMessage,
 ): Effect.Effect<BridgeAgent, TelegramTransportError | RemoteBridgeError> =>
-  availableChatAgents(runtime).pipe(
-    Effect.flatMap(agents => {
-      const agent = managerDefaultAgent(
-        agents,
-        state.explicitAgentSelection === true
-          ? state.selectedAgentId
-          : undefined,
-      )
-      return agent
-        ? Effect.succeed(agent)
-        : Effect.fail(
-            new TelegramTransportError({
-              method: "chooseAgent",
-              message:
-                "No unique native manager is online. Use /agents to inspect available sessions; /use <label> explicitly overrides manager routing.",
-            }),
+  Effect.gen(function* () {
+    const origin =
+      message.replyToMessageId === undefined
+        ? undefined
+        : yield* runtime.bridge.getTelegramMessageOrigin({
+            chatId: message.chatId,
+            messageId: message.replyToMessageId,
+          })
+    const agents = yield* origin === undefined
+      ? availableChatAgents(runtime)
+      : availableAgents(runtime)
+    const agent =
+      origin === undefined
+        ? managerDefaultAgent(agents)
+        : agents.find(
+            candidate =>
+              candidate.id === origin &&
+              workDeliveryAcceptsInbox(candidate.workDelivery),
           )
-    }),
-  )
+    if (!agent)
+      return yield* Effect.fail(
+        new TelegramTransportError({
+          method: "chooseAgent",
+          message:
+            origin === undefined
+              ? "No unique native manager is online."
+              : "The agent that sent this message is not available for replies.",
+        }),
+      )
+    return agent
+  })
 
 interface BridgeFeedbackState {
   readonly nextTypingAt: number
@@ -985,8 +1026,9 @@ const deliverBridgeText = (
   chatId: number,
   ownerMessageId: number,
   text: string,
+  originAgentId?: string,
 ): Effect.Effect<void, TelegramTransportError | TelegramContractError> =>
-  sendFormattedText(runtime, chatId, text, ownerMessageId)
+  sendFormattedText(runtime, chatId, text, ownerMessageId, originAgentId)
 
 const advanceBridgeFeedback = (
   runtime: PieceOfPiRuntime,
@@ -1019,6 +1061,7 @@ const awaitBridgeResult = (
           chatId,
           ownerMessageId,
           message.response,
+          message.targetAgentId,
         ).pipe(Effect.tap(() => Effect.sync(() => emit("bridge_completed"))))
       }
       if (message.status === "failed") {
@@ -1118,7 +1161,9 @@ const enqueueOwnerMessage = (
   sendTelegramAction(runtime, update.message.chatId).pipe(
     Effect.flatMap(() => Ref.get(runtime.state)),
     Effect.flatMap(state =>
-      chooseAgent(runtime, state).pipe(Effect.map(agent => ({ agent, state }))),
+      chooseAgent(runtime, update.message).pipe(
+        Effect.map(agent => ({ agent, state })),
+      ),
     ),
     Effect.flatMap(({ agent, state }) =>
       (update.message.photo
@@ -1237,38 +1282,18 @@ const handleQuestionReply = (
   )
     return Effect.succeed(false)
   const replyToMessageId = update.message.replyToMessageId
-  const resolutionEffect =
-    replyToMessageId === undefined
-      ? runtime.bridge.answerSolePendingTelegramQuestion({
-          chatId: update.message.chatId,
-          answer,
-          now: Date.now(),
-        })
-      : runtime.bridge.answerTelegramQuestion({
-          chatId: update.message.chatId,
-          messageId: replyToMessageId,
-          answer,
-          now: Date.now(),
-        })
+  if (replyToMessageId === undefined) return Effect.succeed(false)
+  const resolutionEffect = runtime.bridge.answerTelegramQuestion({
+    chatId: update.message.chatId,
+    messageId: replyToMessageId,
+    answer,
+    now: Date.now(),
+  })
 
   return resolutionEffect.pipe(
     Effect.flatMap(resolution => {
       if (resolution === undefined) return Effect.succeed(false)
-      return availableAgents(runtime).pipe(
-        Effect.flatMap(agents => {
-          const agent = agents.find(({ id }) => id === resolution.agentId)
-          const label = agent
-            ? identifiedAgentLabel(agent, agents)
-            : "the originating Pi agent"
-          return sendText(
-            runtime,
-            update.message.chatId,
-            `Answered q${resolution.questionId} for ${label}.`,
-            update.message.messageId,
-          )
-        }),
-        Effect.as(true),
-      )
+      return Effect.succeed(true)
     }),
     Effect.tap(answered =>
       answered ? Effect.sync(() => emit("question_answered")) : Effect.void,
@@ -1388,7 +1413,7 @@ const handleOwnerCommand = (
       }) => state,
     ).pipe(
       Effect.tap(state => persistState(runtime.configuration.statePath, state)),
-      Effect.flatMap(state => chooseAgent(runtime, state)),
+      Effect.flatMap(() => chooseAgent(runtime, update.message)),
       Effect.flatMap(agent =>
         sendText(
           runtime,
