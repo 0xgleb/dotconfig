@@ -117,7 +117,7 @@ interface ActiveRemoteTurn {
   readonly messageId: string
   readonly claimToken: string
   readonly toolGuard: RemoteToolGuard
-  readonly lane: "conversational" | "routing"
+  readonly lane: "conversational" | "routing" | "management"
   readonly text: string
   readonly source?: ReturnType<typeof remoteMessageSource>
   readonly batch?: readonly ClaimedBridgeMessage[]
@@ -148,7 +148,7 @@ export default function remoteControl(
   onAuthenticatedOwnerMessage?: (receivedAt: number) => void,
   options: RemoteControlOptions = {},
 ): void {
-  registerRuntimeVersion(pi, "remote-control", "2026.10.17.5")
+  registerRuntimeVersion(pi, "remote-control", "2026.10.17.6")
   const store = makeRemoteBridgeStore(
     remoteBridgeDatabasePath(process.env.XDG_STATE_HOME, homedir()),
   )
@@ -488,7 +488,11 @@ export default function remoteControl(
       void sync(ctx)
       return
     }
-    if (!turn.source || !remoteSourceCarriesOwnerAuthority(turn.source)) {
+    if (
+      turn.lane === "management" ||
+      !turn.source ||
+      !remoteSourceCarriesOwnerAuthority(turn.source)
+    ) {
       taskContinuationPhase = "idle"
       taskContinuationId = undefined
       void sync(ctx)
@@ -645,22 +649,37 @@ export default function remoteControl(
     ctx: ExtensionContext,
   ): Promise<void> => {
     const source = remoteMessageSource(message.requesterId)
+    const binding = getManagerBinding(pi, ctx)
+    const management =
+      remoteSourceCarriesOwnerAuthority(source) &&
+      Either.isRight(binding) &&
+      binding.right.role !== "worker"
     const turn: ActiveRemoteTurn = {
       messageId: message.id,
       claimToken: message.claimToken,
-      toolGuard: enterRemoteToolGuard(pi),
-      lane: "conversational",
+      toolGuard: enterRemoteToolGuard(
+        pi,
+        management ? "management" : "communication",
+      ),
+      lane: management ? "management" : "conversational",
       text: message.text,
       source,
     }
     active = turn
-    ctx.ui.setStatus(STATUS_KEY, "remote:chat · tools:off")
+    ctx.ui.setStatus(
+      STATUS_KEY,
+      management ? "remote:manager" : "remote:chat · tools:off",
+    )
+    if (Either.isLeft(binding)) {
+      await finishFailure(turn, "model_error")
+      return
+    }
     const contentResult = await Effect.runPromise(
       Effect.either(
         remoteTurnContent(
           message.text,
           message.images,
-          "conversational",
+          management ? "management" : "conversational",
           source,
         ),
       ),
@@ -1159,6 +1178,7 @@ export default function remoteControl(
       await finishFailure(turn, "aborted")
       return
     }
+    if (turn.lane === "management") return
     const response = finalAssistantText([event.message])
     if (!response) return
     if (turn.lane === "routing") {
