@@ -624,6 +624,100 @@ test("the supervised watchdog cancels tracked work at its actual four-hour deadl
   assert.equal(f.callbacks.size, 0)
 })
 
+test("persistence and public window snapshots cannot alter the canonical parent ceiling", t => {
+  const start = 100_000_000
+  const ceiling = start + 45 * 60 * 1000
+  const f = fixture(String(ceiling), () => Either.right(undefined))
+  t.mock.method(f.runtime, "persist", snapshot => {
+    Reflect.set(snapshot, "deadlineAt", start + 8 * 60 * 60 * 1000)
+    f.saved.push(snapshot)
+  })
+  f.time(start)
+  const granted = f.guard.ownerInput(start)
+  if (Either.isLeft(granted)) throw new Error("Fixture grant failed")
+  Reflect.set(granted.right, "deadlineAt", start + 8 * 60 * 60 * 1000)
+  const admitted = f.guard.admit()
+  if (Either.isLeft(admitted)) throw new Error("Fixture admission failed")
+  Reflect.set(admitted.right, "deadlineAt", start + 8 * 60 * 60 * 1000)
+  assert.equal([...f.delays.values()][0], 45 * 60 * 1000)
+  f.time(ceiling)
+  assert.equal(code(f.guard.admit()), "expired")
+})
+
+test("disposal during a clock read denies and cancels newly tracked work", t => {
+  const f = fixture(undefined, () => Either.right(undefined))
+  f.guard.ownerInput(1000)
+  t.mock.method(f.runtime, "now", () => {
+    f.guard.dispose()
+    return 1000
+  })
+  let cancelled = 0
+  f.guard.track(() => {
+    cancelled++
+  })
+  assert.equal(cancelled, 1)
+  assert.equal(code(f.guard.admit()), "closed")
+  assert.equal(f.callbacks.size, 0)
+})
+
+test("clock callbacks cannot send a progress request after disposal or renewal", t => {
+  for (const change of ["dispose", "renew"] as const) {
+    const requests: api.OwnerProgressCheckIn[] = []
+    const f = fixture(undefined, request => {
+      requests.push(request)
+      return Either.right(undefined)
+    })
+    f.guard.ownerInput(1000)
+    f.time(1000 + api.OWNER_PROGRESS_CHECK_IN_MS)
+    const now = f.runtime.now
+    let calls = 0
+    const mocked = t.mock.method(f.runtime, "now", () => {
+      if (++calls === 2) {
+        if (change === "dispose") f.guard.dispose()
+        else {
+          f.time(1000 + api.OWNER_PROGRESS_CHECK_IN_MS + 1)
+          f.guard.ownerInput(now())
+        }
+      }
+      return now()
+    })
+    progressTimer(f)()
+    mocked.mock.restore()
+    assert.equal(requests.length, 0)
+    assert.equal(
+      code(f.guard.admit()),
+      change === "dispose" ? "closed" : "allowed",
+    )
+  }
+})
+
+test("proxy callback returns cannot escape or leave an admitted window without timers", t => {
+  const f = fixture(undefined, () => Either.right(undefined))
+  f.guard.ownerInput(1000)
+  let cancelled = 0
+  f.guard.track(() => {
+    cancelled++
+  })
+  t.mock.method(
+    f.runtime,
+    "persist",
+    () =>
+      new Proxy(
+        {},
+        {
+          getPrototypeOf: () => {
+            throw new Error("Fixture prototype trap")
+          },
+        },
+      ),
+  )
+  f.time(2000)
+  assert.doesNotThrow(() => f.guard.ownerInput(2000))
+  assert.equal(code(f.guard.admit()), "runtime-failure")
+  assert.equal(cancelled, 1)
+  assert.equal(f.callbacks.size, 0)
+})
+
 test("dispose removes the watchdog without granting a replacement window", () => {
   const f = fixture()
   f.guard.ownerInput(1_000)
