@@ -312,6 +312,9 @@ the harness, and suppress duplicates without agent polling.
   packages, and upstream examples for a solution or reference. Prefer compatible
   packages; write local code only after checking the options, preserving
   upstream ownership and licenses.
+- Keep shared skills in the canonical repository; verify harness discovery links
+  resolve to that source before claiming activation. After changing managed Pi
+  resources, use the registered reload tool. A queued reload is not activation proof.
 - Use only authenticated, permitted models and the current harness's supported
   delegation path. Do not infer capabilities from model names or stale harness
   instructions. Do not switch billing providers or harnesses as a workaround
@@ -331,7 +334,10 @@ the harness, and suppress duplicates without agent polling.
   Reproduce bugs through realistic production paths and data, not unreachable
   internal states fabricated only for a test. Malformed boundary inputs still
   require tests. Run relevant tests and inspect the final diff; retain only
-  justified changes.
+  justified changes. Preserve uncertain changes while reconciling current owner
+  intent, task records, repository history and ownership evidence. Lost context
+  does not authorize reverting work; remove only evidenced agent-owned unjustified
+  deltas.
 - Keep durable tasks granular and linked to the project's tracker. Record
   requests, corrections, blockers, and next actions without replacing a direct
   answer with task bookkeeping. Preserve deferred work and explicit constraints.
