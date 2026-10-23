@@ -242,7 +242,7 @@ git diff --name-status "$parent" > "$out_dir/files.txt"
 wc -l "$out_dir/diff.patch"
 ```
 
-Refuse to proceed if the diff is empty. If it exceeds 5000 lines, warn the user
+Refuse to proceed if the diff is empty. If it exceeds 10000 lines, warn the user
 and ask whether to proceed — reviewer quality degrades on huge diffs.
 
 **Ensure the artifact folder is gitignored.** Artifacts are written under
