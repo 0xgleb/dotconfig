@@ -29,7 +29,7 @@ import { decodeChatRegistry, type ChatRegistry } from "./chat-registry.ts"
 import {
   agentListHtml,
   agentMatchesSelector,
-  preferredAgent,
+  managerDefaultAgent,
   telegramRoutableAgents,
 } from "./agent-selection.ts"
 import { pieceOfPiStatePath, remoteBridgeDatabasePath } from "./paths.ts"
@@ -59,6 +59,8 @@ import {
   telegramAcknowledgementReaction,
   telegramImageFromBytes,
   telegramOwnerConversationText,
+  telegramHasDirectOwnerInput,
+  telegramDirectOwnerText,
   type TelegramAcknowledgementEmoji,
   type TelegramBotState,
   type TelegramCallbackQuery,
@@ -93,6 +95,7 @@ interface PieceOfPiState extends TelegramBotState {
   readonly nextUpdateId?: number
   readonly rejectionCounter: number
   readonly selectedAgentId?: string
+  readonly explicitAgentSelection?: true
   readonly ownerChatId?: number
   readonly chats?: ChatRegistry
   readonly pendingReactionFeedback?: readonly string[]
@@ -308,6 +311,17 @@ const decodeState = (
     )
   }
   if (
+    candidate.explicitAgentSelection !== undefined &&
+    (candidate.explicitAgentSelection !== true ||
+      typeof candidate.selectedAgentId !== "string" ||
+      candidate.selectedAgentId.length === 0)
+  )
+    return Effect.fail(
+      new PieceOfPiStateError({
+        message: "Piece of Pi explicit agent selection is invalid",
+      }),
+    )
+  if (
     candidate.ownerChatId !== undefined &&
     !Number.isSafeInteger(candidate.ownerChatId)
   ) {
@@ -363,6 +377,9 @@ const decodeState = (
       : {}),
     ...(typeof candidate.selectedAgentId === "string"
       ? { selectedAgentId: candidate.selectedAgentId }
+      : {}),
+    ...(candidate.explicitAgentSelection === true
+      ? { explicitAgentSelection: true as const }
       : {}),
     ...(typeof candidate.ownerChatId === "number"
       ? { ownerChatId: candidate.ownerChatId }
@@ -941,14 +958,19 @@ const chooseAgent = (
 ): Effect.Effect<BridgeAgent, TelegramTransportError | RemoteBridgeError> =>
   availableChatAgents(runtime).pipe(
     Effect.flatMap(agents => {
-      const agent = preferredAgent(agents, state.selectedAgentId)
+      const agent = managerDefaultAgent(
+        agents,
+        state.explicitAgentSelection === true
+          ? state.selectedAgentId
+          : undefined,
+      )
       return agent
         ? Effect.succeed(agent)
         : Effect.fail(
             new TelegramTransportError({
               method: "chooseAgent",
               message:
-                "Choose a bridge-ready agent with /agents and /use <label>",
+                "No unique native manager is online. Use /agents to inspect available sessions; /use <label> explicitly overrides manager routing.",
             }),
           )
     }),
@@ -1113,7 +1135,9 @@ const enqueueOwnerMessage = (
       return runtime.bridge
         .enqueue({
           targetAgentId: agent.id,
-          requesterId: `telegram-owner-${update.message.userId}`,
+          requesterId: telegramHasDirectOwnerInput(update.message)
+            ? `telegram-owner-${update.message.userId}`
+            : `telegram-forwarded-${update.message.userId}`,
           dedupeKey: `telegram-update-${update.updateId}`,
           text: `${reactionContext}${telegramOwnerConversationText(update.message, update.message.userId)}`,
           images,
@@ -1188,6 +1212,7 @@ const selectAgent = (
       Ref.updateAndGet(runtime.state, state => ({
         ...state,
         selectedAgentId: agent.id,
+        explicitAgentSelection: true as const,
       })).pipe(
         Effect.flatMap(state =>
           persistState(runtime.configuration.statePath, state),
@@ -1204,18 +1229,25 @@ const handleQuestionReply = (
   boolean,
   TelegramTransportError | TelegramContractError | RemoteBridgeError
 > => {
+  const answer = telegramDirectOwnerText(update.message)
+  if (
+    answer === undefined ||
+    answer === "/manager" ||
+    answer.startsWith("/use ")
+  )
+    return Effect.succeed(false)
   const replyToMessageId = update.message.replyToMessageId
   const resolutionEffect =
     replyToMessageId === undefined
       ? runtime.bridge.answerSolePendingTelegramQuestion({
           chatId: update.message.chatId,
-          answer: update.message.text,
+          answer,
           now: Date.now(),
         })
       : runtime.bridge.answerTelegramQuestion({
           chatId: update.message.chatId,
           messageId: replyToMessageId,
-          answer: update.message.text,
+          answer,
           now: Date.now(),
         })
 
@@ -1317,8 +1349,10 @@ const handleOwnerCommand = (
   | PieceOfPiStateError
   | RemoteBridgeError
 > => {
-  if (update.message.voice) return Effect.succeed(false)
-  const command = update.message.text.trim()
+  if (update.message.voice || update.message.edited)
+    return Effect.succeed(false)
+  const command = telegramDirectOwnerText(update.message)
+  if (command === undefined) return Effect.succeed(false)
   if (command === "/caba") {
     const session = initialCabaSession(Date.now())
     const card = cabaSessionCard(session)
@@ -1344,6 +1378,28 @@ const handleOwnerCommand = (
       Effect.as(true),
     )
   }
+  if (command === "/manager") {
+    return Ref.updateAndGet(
+      runtime.state,
+      ({
+        selectedAgentId: _selected,
+        explicitAgentSelection: _explicit,
+        ...state
+      }) => state,
+    ).pipe(
+      Effect.tap(state => persistState(runtime.configuration.statePath, state)),
+      Effect.flatMap(state => chooseAgent(runtime, state)),
+      Effect.flatMap(agent =>
+        sendText(
+          runtime,
+          update.message.chatId,
+          `Messages now go to ${agent.label}.`,
+          update.message.messageId,
+        ),
+      ),
+      Effect.as(true),
+    )
+  }
   if (command === "/questions") {
     return Effect.all({
       agents: availableAgents(runtime),
@@ -1364,7 +1420,7 @@ const handleOwnerCommand = (
     return sendText(
       runtime,
       update.message.chatId,
-      "Owner authenticated. Commands: /caba, /kanban, /agents, /use <label>, /bridge. Other text defaults to the .config Pi agent.",
+      "Owner authenticated. Other text goes to the native manager. Commands: /manager, /questions, /caba, /kanban, /agents, /use <label> (explicit override), /bridge.",
       update.message.messageId,
     ).pipe(Effect.as(true))
   }

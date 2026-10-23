@@ -48,6 +48,7 @@ export interface BridgeAgent {
   readonly accepting: boolean
   readonly workDelivery: BridgeWorkDelivery
   readonly queuedMessages: number
+  readonly nativeManager?: true
 }
 
 export type RemoteImageMediaType = "image/jpeg" | "image/png" | "image/webp"

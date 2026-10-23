@@ -203,6 +203,23 @@ const telegramConversationParts = (
     },
   ]
 
+export const telegramHasDirectOwnerInput = (
+  message: TelegramMessage,
+): boolean =>
+  telegramConversationParts(message).some(
+    part => part.forwardOrigin === undefined && part.text.trim().length > 0,
+  )
+
+export const telegramDirectOwnerText = (
+  message: TelegramMessage,
+): string | undefined => {
+  const parts = telegramConversationParts(message)
+  const part = parts[0]
+  return parts.length === 1 && part?.forwardOrigin === undefined
+    ? part?.text.trim()
+    : undefined
+}
+
 const quotedTelegramText = (text: string): string =>
   text
     .split("\n")
