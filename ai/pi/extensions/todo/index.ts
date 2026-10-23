@@ -67,6 +67,7 @@ import {
 const TodoParams = Type.Object({
   action: StringEnum([
     "list",
+    "priority",
     "add",
     "toggle",
     "status",
@@ -82,6 +83,12 @@ const TodoParams = Type.Object({
     }),
   ),
   id: Type.Optional(Type.Number({ description: "Todo ID" })),
+  priority: Type.Optional(
+    Type.Union([
+      Type.Integer({ minimum: 1, maximum: Number.MAX_SAFE_INTEGER }),
+      Type.Null(),
+    ]),
+  ),
   parentId: Type.Optional(
     Type.Integer({
       minimum: 1,
@@ -274,7 +281,7 @@ export default function todoExtension(
   pi: ExtensionAPI,
   managerRuntime?: ManagerTodoRuntime,
 ): void {
-  registerRuntimeVersion(pi, "todo", "2026.09.13.3")
+  registerRuntimeVersion(pi, "todo", "2026.09.13.4")
   const stateRef = Effect.runSync(Ref.make<TodoState>(emptyTodoState))
   let restorationError: string | undefined
   let hudExpiry: ReturnType<typeof setTimeout> | undefined
@@ -623,22 +630,26 @@ export default function todoExtension(
     return result
   }
 
-  const releaseControl = registerTodoControl(pi, (request, ctx) => {
-    const result = executeTodo(request, ctx)
-    return {
-      isError:
-        ("isError" in result && result.isError === true) ||
-        ("details" in result && result.details.outcome === "error"),
-      message: result.content.map(part => part.text).join("\n"),
-    }
-  })
+  const releaseControl = registerTodoControl(
+    pi,
+    (request, ctx) => {
+      const result = executeTodo(request, ctx)
+      return {
+        isError:
+          ("isError" in result && result.isError === true) ||
+          ("details" in result && result.details.outcome === "error"),
+        message: result.content.map(part => part.text).join("\n"),
+      }
+    },
+    { priority: true },
+  )
   pi.on("session_shutdown", releaseControl)
 
   pi.registerTool({
     name: "todo",
     label: "Todo",
     description:
-      "Manage branch-aware tasks. add accepts parentId for one level of subtasks; grandchildren are forbidden. reply accepts at most 3 entries of 300 characters; restructure at the cap. Other actions: list, toggle, status, block, unblock, clear.",
+      "Manage branch-aware tasks. add accepts parentId for one level of subtasks; grandchildren are forbidden. reply accepts at most 3 entries of 300 characters; restructure at the cap. priority sets an independent positive safe-integer rank (lower first), or null to unassign, without changing status. Other actions: list, toggle, status, block, unblock, clear.",
     parameters: TodoParams,
     async execute(_toolCallId, params, signal, _onUpdate, ctx) {
       const binding = getManagerBinding(pi, ctx)

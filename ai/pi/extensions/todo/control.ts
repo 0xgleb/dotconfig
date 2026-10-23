@@ -38,15 +38,25 @@ export const requestTodoControl = (
   let result: TodoControlResult | undefined
   let claimed = false
   const emitted = Either.try({
-    try: () =>
+    try: () => {
+      const preferPriorityAware = todoPriorityAvailable(pi)
       pi.events.emit(CONTROL_EVENT, {
         kind: "todo-control.v1",
-        run: (handler: TodoControlHandler) => {
-          if (claimed) return
+        run: (
+          handler: TodoControlHandler,
+          capabilities?: TodoControlCapabilities,
+        ) => {
+          if (
+            claimed ||
+            ((request.action === "priority" || preferPriorityAware) &&
+              capabilities?.priority !== true)
+          )
+            return
           claimed = true
           result = handler(request, ctx)
         },
-      } satisfies ControlEnvelope),
+      } satisfies ControlEnvelope)
+    },
     catch: () =>
       new TodoControlError({
         code: "unconfirmed",
@@ -64,12 +74,31 @@ export const requestTodoControl = (
     : Either.right(result)
 }
 
+export interface TodoControlCapabilities {
+  readonly priority?: true
+}
+
+export const todoPriorityAvailable = (pi: ExtensionAPI): boolean => {
+  let available = false
+  pi.events.emit(CONTROL_EVENT, {
+    kind: "todo-control.v1",
+    run: (
+      _handler: TodoControlHandler,
+      capabilities?: TodoControlCapabilities,
+    ) => {
+      if (capabilities?.priority === true) available = true
+    },
+  } satisfies ControlEnvelope)
+  return available
+}
+
 export const registerTodoControl = (
   pi: ExtensionAPI,
   handler: TodoControlHandler,
+  capabilities: TodoControlCapabilities = {},
 ): (() => void) =>
-  pi.events.on(CONTROL_EVENT, value => {
-    if (controlEnvelope(value)) value.run(handler)
+  pi.events.on(CONTROL_EVENT, (value: unknown) => {
+    if (controlEnvelope(value)) value.run(handler, capabilities)
   })
 
 export const todoControlAvailable = (pi: ExtensionAPI): boolean => {
@@ -85,7 +114,10 @@ export const todoControlAvailable = (pi: ExtensionAPI): boolean => {
 
 interface ControlEnvelope {
   readonly kind: "todo-control.v1"
-  readonly run: (handler: TodoControlHandler) => void
+  readonly run: (
+    handler: TodoControlHandler,
+    capabilities?: TodoControlCapabilities,
+  ) => void
 }
 
 const CONTROL_EVENT = "pi:manager-todo-control.v1"
@@ -100,8 +132,16 @@ const controlEnvelope = (value: unknown): value is ControlEnvelope =>
 
 const optionalId = Schema.optionalWith(Schema.Number, { exact: true })
 const optionalText = Schema.optionalWith(Schema.String, { exact: true })
-const RequestSchema: Schema.Schema<TodoRequest> = Schema.Union(
+const positiveSafeInteger = Schema.Number.pipe(
+  Schema.filter(value => Number.isSafeInteger(value) && value >= 1),
+)
+const RequestSchema = Schema.Union(
   Schema.Struct({ action: Schema.Literal("list") }),
+  Schema.Struct({
+    action: Schema.Literal("priority"),
+    id: positiveSafeInteger,
+    priority: Schema.NullOr(positiveSafeInteger),
+  }),
   Schema.Struct({
     action: Schema.Literal("add"),
     text: optionalText,

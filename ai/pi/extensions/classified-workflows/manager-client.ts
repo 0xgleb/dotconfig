@@ -76,6 +76,13 @@ export const invokeManagerTodo = async (
     return unavailable(
       "The worker has not loaded task control; no mutation was queued.",
     )
+  if (
+    request.action === "priority" &&
+    current.right.data.todoPriorityControl !== true
+  )
+    return unavailable(
+      "The worker has not loaded priority control; no mutation was queued.",
+    )
   const decoded = decodeTodoControl(request)
   if (Either.isLeft(decoded)) return unavailable(decoded.left.message)
   const submitted = state.right.enqueueTodo(

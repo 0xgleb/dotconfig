@@ -20,6 +20,7 @@ const fixture = (
   t: test.TestContext,
   available = true,
   mode: "paired" | "global" = "paired",
+  priorityAvailable = false,
 ) => {
   const root = mkdtempSync(join(tmpdir(), "pi-manager-client-test-"))
   t.after(() => rmSync(root, { recursive: true }))
@@ -37,7 +38,10 @@ const fixture = (
     version: 1,
     observedAt: Date.now(),
     priorityRevision: "revision-1",
-    data: { todoControl: available },
+    data: {
+      todoControl: available,
+      ...(priorityAvailable ? { todoPriorityControl: true } : {}),
+    },
   })
   const handlers = new Map<string, ((value: unknown) => void)[]>()
   const pi = {
@@ -177,6 +181,60 @@ test("an older worker without the task-control capability does not receive a spe
     ),
     Either.right([]),
   )
+})
+
+test("an older todo-capable worker cannot receive a speculative priority mutation", async t => {
+  const f = fixture(t, true, "global")
+  const result = await invokeManagerTodo(
+    f.pi,
+    f.ctx,
+    { action: "priority", id: 1, priority: 2 },
+    undefined,
+    { agentDir: f.root, timeoutMs: 0, wait: async () => {} },
+  )
+  assert.equal(result.details.outcome, "unavailable")
+  assert.deepEqual(
+    f.state.processPriorities(
+      () => "revision-1",
+      () => assert.fail("wrong lane"),
+      () => assert.fail("priority was queued to an older worker"),
+    ),
+    Either.right([]),
+  )
+})
+
+test("global priority correction crosses the signed todo lane and returns its worker receipt", async t => {
+  const f = fixture(t, true, "global", true)
+  let calls = 0
+  const result = await invokeManagerTodo(
+    f.pi,
+    f.ctx,
+    { action: "priority", id: 1, priority: 2 },
+    undefined,
+    {
+      agentDir: f.root,
+      timeoutMs: 1000,
+      wait: async () => {
+        f.state.processPriorities(
+          () => "revision-1",
+          () =>
+            assert.fail("numeric rank reached textual execution-order lane"),
+          request => {
+            calls += 1
+            assert.deepEqual(request, {
+              action: "priority",
+              id: 1,
+              priority: 2,
+            })
+            return Either.right("Todo #1 priority 2")
+          },
+        )
+      },
+    },
+  )
+  assert.equal(result.details.outcome, "completed")
+  assert.equal(result.content[0]?.text, "Todo #1 priority 2")
+  assert.equal(calls, 1)
 })
 
 test("a queued but unsettled task mutation is not reported as completed", async t => {

@@ -68,6 +68,50 @@ test("task-control signatures bind the operation and worker while preserving pri
   )
 })
 
+test("numeric task ranks and explicit clearing are authenticated v2 todo data, never textual order commands", () => {
+  for (const priority of [1, null]) {
+    const signed = signManagerTodo(
+      scope,
+      "rank-1",
+      "revision-1",
+      { action: "priority", id: 1, priority },
+      capability,
+    )
+    assert.ok(Either.isRight(signed))
+    assert.deepEqual(
+      verifyManagerTodo(signed.right, scope, "revision-1", capability),
+      signed,
+    )
+    assert.ok(
+      Either.isLeft(
+        verifyManagerPriority(signed.right, scope, "revision-1", capability),
+      ),
+    )
+    for (const request of [
+      { action: "priority", id: 2, priority },
+      { action: "priority", id: 1, priority: 3 },
+    ]) {
+      const changed = verifyManagerTodo(
+        { ...signed.right, request },
+        scope,
+        "revision-1",
+        capability,
+      )
+      assert.ok(Either.isLeft(changed))
+      if (Either.isLeft(changed))
+        assert.equal(changed.left.code, "unauthorized")
+    }
+    const stale = verifyManagerTodo(
+      signed.right,
+      scope,
+      "new-revision",
+      capability,
+    )
+    assert.ok(Either.isLeft(stale))
+    if (Either.isLeft(stale)) assert.equal(stale.left.code, "stale_revision")
+  }
+})
+
 const signed = () => {
   const result = signManagerPriority(
     scope,

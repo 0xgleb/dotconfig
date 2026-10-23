@@ -24,8 +24,14 @@ backlog before applying a correction; leave unattributable reports unapplied.
 Reconcile reports into concrete, deduplicated corrections that respect the
 owner's priorities; do not respond with empty acknowledgements.
 
-Resolve worker and task names internally from verified data. Do not require the
-owner to supply task IDs or type internal priority commands. Commit an execution
+Resolve worker and task names internally from verified data. Apply agreed backlog
+priority corrections with todo priority: lower positive safe-integer ranks come first; null
+unassigns a rank. This changes neither task status nor the separate execution-order
+entry. Among runnable tasks, continuation lists assigned ranks first and uses
+committed order for ties. Priority cannot override a blocked or deferred parent's
+hold. Whole-backlog effort estimation must not gate initial backlog, priority and
+continuation controls. Do not interrupt a work unit to reprioritize.
+Do not require the owner to supply task IDs or type internal priority commands. Commit an execution
 order only when the owner has agreed to it. Preserve owner-agreed scope, existing
 pauses, blocked or deferred states and deadlines unless the owner authorizes their change. Backlog
 edits, priority changes and report intake neither renew an allowance nor start a round.

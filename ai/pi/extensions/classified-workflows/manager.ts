@@ -3,6 +3,7 @@ import type {
   ExtensionContext,
 } from "@earendil-works/pi-coding-agent"
 import { Text } from "@earendil-works/pi-tui"
+import { createHash } from "node:crypto"
 import { Effect, Either } from "effect"
 import {
   type ManagerChatView,
@@ -15,7 +16,11 @@ import {
   type NativeManagerRuntime,
 } from "./manager-native.ts"
 import { ManagerSessionError } from "./manager-session-core.ts"
-import { requestTodoControl, todoControlAvailable } from "../todo/control.ts"
+import {
+  requestTodoControl,
+  todoControlAvailable,
+  todoPriorityAvailable,
+} from "../todo/control.ts"
 import { readPromptFile } from "../shared/prompt-text.ts"
 import { registerRuntimeVersion } from "../shared/runtime-version.ts"
 import type { OwnerAllowance, OwnerWindow } from "./owner-allowance.ts"
@@ -466,7 +471,7 @@ export const registerWorkManager = (
     if (ctx.mode === "tui") ctx.ui.setWidget("manager", undefined)
   }
 
-  registerRuntimeVersion(pi, "manager", "0.4.2")
+  registerRuntimeVersion(pi, "manager", "0.5.0")
 
   pi.on("session_start", (_event, ctx) => resetContext(ctx))
   pi.on("session_tree", (_event, ctx) => resetContext(ctx))
@@ -560,14 +565,24 @@ export const registerWorkManager = (
               )
             : Either.right(result.right.message)
         },
-        priorityId: ctx =>
-          ctx.sessionManager
-            .getBranch()
-            .findLast(
+        priorityId: ctx => {
+          const branch = ctx.sessionManager.getBranch()
+          const order =
+            branch.findLast(
               entry =>
                 entry.type === "custom" &&
                 entry.customType === MANAGER_PRIORITY_ENTRY,
-            )?.id ?? "initial",
+            )?.id ?? "initial"
+          const tasks =
+            branch.findLast(
+              entry =>
+                entry.type === "custom" && entry.customType === "todo.state",
+            )?.id ?? "initial"
+          return createHash("sha256")
+            .update(JSON.stringify([order, tasks]))
+            .digest("hex")
+            .slice(0, 32)
+        },
         priorities: (ctx, text) =>
           Either.mapLeft(
             priorities(ctx, text),
@@ -607,6 +622,7 @@ export const registerWorkManager = (
             }
             return {
               todoControl: todoControlAvailable(pi),
+              todoPriorityControl: todoPriorityAvailable(pi),
               view: current.view,
               workerSession: current.workerSession,
               priorities: current.priorities?.ids ?? [],

@@ -9,6 +9,7 @@ import {
   decodeTodoControl,
   registerTodoControl,
   requestTodoControl,
+  todoPriorityAvailable,
 } from "./control.ts"
 
 const fixture = () => {
@@ -47,6 +48,99 @@ test("manager todo requests decode the existing task operations without inventin
     Either.isLeft(
       decodeTodoControl({ action: "list", command: "extra control" }),
     ),
+  )
+})
+
+test("priority control strictly authenticates a rank or explicit unassignment", () => {
+  for (const priority of [1, Number.MAX_SAFE_INTEGER, null])
+    assert.deepEqual(
+      decodeTodoControl({ action: "priority", id: 2, priority }),
+      Either.right({ action: "priority", id: 2, priority }),
+    )
+  for (const request of [
+    { action: "priority", id: 2 },
+    { action: "priority", priority: 1 },
+    ...[0, -1, 0.5, NaN, Infinity, Number.MAX_SAFE_INTEGER + 1, "1"].map(
+      priority => ({ action: "priority", id: 2, priority }),
+    ),
+    { action: "priority", id: 2, priority: 1, status: "pending" },
+  ])
+    assert.ok(
+      Either.isLeft(decodeTodoControl(request)),
+      JSON.stringify(request),
+    )
+})
+
+test("older task handlers cannot receive speculative priority mutations", () => {
+  const f = fixture()
+  let calls = 0
+  registerTodoControl(f.pi, () => {
+    calls += 1
+    return { isError: false, message: "legacy" }
+  })
+  assert.equal(todoPriorityAvailable(f.pi), false)
+  assert.ok(
+    Either.isLeft(
+      requestTodoControl(f.pi, f.ctx, {
+        action: "priority",
+        id: 1,
+        priority: 2,
+      }),
+    ),
+  )
+  assert.equal(calls, 0)
+})
+
+test("priority capability skips overlapping legacy handlers and applies once with the original context", () => {
+  const f = fixture()
+  let calls = 0
+  registerTodoControl(f.pi, () =>
+    assert.fail("priority reached legacy reload handler"),
+  )
+  const release = registerTodoControl(
+    f.pi,
+    (request, ctx) => {
+      calls += 1
+      assert.equal(ctx, f.ctx)
+      assert.deepEqual(request, { action: "priority", id: 1, priority: 2 })
+      return { isError: false, message: "saved priority" }
+    },
+    { priority: true },
+  )
+  assert.equal(todoPriorityAvailable(f.pi), true)
+  assert.deepEqual(
+    requestTodoControl(f.pi, f.ctx, { action: "priority", id: 1, priority: 2 }),
+    Either.right({ isError: false, message: "saved priority" }),
+  )
+  assert.equal(calls, 1)
+  release()
+  assert.equal(todoPriorityAvailable(f.pi), false)
+})
+
+test("overlap routes status changes through the priority-aware writer so legacy state cannot erase metadata", () => {
+  const f = fixture()
+  registerTodoControl(f.pi, () =>
+    assert.fail("legacy writer would erase priority metadata"),
+  )
+  registerTodoControl(
+    f.pi,
+    request => {
+      assert.deepEqual(request, {
+        action: "status",
+        id: 1,
+        status: "completed",
+      })
+      return { isError: false, message: "preserved priority" }
+    },
+    { priority: true },
+  )
+  assert.deepEqual(
+    requestTodoControl(f.pi, f.ctx, {
+      action: "status",
+      id: 1,
+      status: "completed",
+    }),
+    Either.right({ isError: false, message: "preserved priority" }),
   )
 })
 

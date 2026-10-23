@@ -12,6 +12,12 @@ import { registerWorkManager, type ManagerModel } from "./manager.ts"
 import { createOwnerAllowance, OWNER_ALLOWANCE_MS } from "./owner-allowance.ts"
 import type { NativeManagerRuntime } from "./manager-native.ts"
 import { readManagerPriorities } from "./manager-core.ts"
+import { fileURLToPath } from "node:url"
+import { loadHostExtension } from "../../../test/pi-host-test-support.mjs"
+import { invokeManagerTodo } from "./manager-client.ts"
+import { managerPairDirectory } from "./manager-session-core.ts"
+import { openNativeManagerState } from "./manager-native-state.ts"
+import { todoWorkSnapshot } from "./goal.ts"
 
 const fixture = (t: test.TestContext) => {
   const root = mkdtempSync(join(tmpdir(), "pi-manager-pair-test-"))
@@ -49,8 +55,33 @@ const fixture = (t: test.TestContext) => {
     const modelCalls: string[] = []
     const executions: string[][] = []
     const notices: string[] = []
+    const listeners = new Map<string, ((value: unknown) => void)[]>()
+    const tools = new Map<
+      string,
+      {
+        execute: (
+          id: string,
+          request: Record<string, unknown>,
+          signal: undefined,
+          update: undefined,
+          ctx: ExtensionContext,
+        ) => unknown
+      }
+    >()
     const pi = {
-      events: { on: () => () => {}, emit: () => {} },
+      events: {
+        on: (name: string, callback: (value: unknown) => void) => {
+          listeners.set(name, [...(listeners.get(name) ?? []), callback])
+          return () =>
+            listeners.set(
+              name,
+              (listeners.get(name) ?? []).filter(value => value !== callback),
+            )
+        },
+        emit: (name: string, value: unknown) => {
+          for (const callback of listeners.get(name) ?? []) callback(value)
+        },
+      },
       registerFlag: () => {},
       getFlag: (name: string) =>
         manager && name === "manager-worker" ? "worker-pair" : undefined,
@@ -82,12 +113,23 @@ const fixture = (t: test.TestContext) => {
         })
       },
       sendUserMessage: () => assert.fail("manager started a worker round"),
-      registerTool: (tool: { name: string }) =>
-        assert.equal(
-          tool.name,
-          "manager_control",
-          "only the manager control tool may be registered here",
-        ),
+      registerTool: (tool: {
+        name: string
+        execute: (
+          id: string,
+          request: Record<string, unknown>,
+          signal: undefined,
+          update: undefined,
+          ctx: ExtensionContext,
+        ) => unknown
+      }) => {
+        assert.ok(
+          tool.name === "manager_control" || (!manager && tool.name === "todo"),
+          "only owner-loaded management/worker todo tools may register",
+        )
+        tools.set(tool.name, tool)
+      },
+      registerShortcut: () => {},
       exec: async (_command: string, args: string[]) => {
         executions.push(args)
         return { code: 0, stdout: "[]", stderr: "" }
@@ -105,6 +147,7 @@ const fixture = (t: test.TestContext) => {
       ui: {
         notify: (text: string) => notices.push(text),
         setWidget: () => {},
+        setStatus: () => {},
         custom: () => assert.fail("custom chat frontend used"),
       },
     } as unknown as ExtensionContext
@@ -143,6 +186,10 @@ const fixture = (t: test.TestContext) => {
       await registered.handler(text, ctx)
     }
     return {
+      pi,
+      ctx,
+      root,
+      tools,
       entries,
       guard,
       modelCalls,
@@ -179,6 +226,87 @@ test("default /manager launches native Pi; owner priorities reach actual continu
   assert.deepEqual(f.worker.guard.admit(), allowance)
   assert.deepEqual(f.worker.modelCalls, [])
   assert.equal(f.manager.messages.length, 1)
+})
+
+test("actual todo registration publishes priority capability and a manager correction preserves the allowance and round", async t => {
+  const f = fixture(t)
+  const extension: unknown = await loadHostExtension(
+    fileURLToPath(new URL("../todo/index.ts", import.meta.url)),
+  )
+  if (typeof extension !== "function")
+    return assert.fail("actual todo factory unavailable")
+  extension(f.worker.pi)
+  await f.worker.emit("session_start")
+  // Todo restoration appends a new journal entry after native session_start; publish the normal post-startup observation.
+  f.worker.tick()
+  await f.manager.emit("session_start")
+  const directory = managerPairDirectory({
+    workerSessionId: "worker-pair",
+    workerCwd: f.worker.ctx.cwd,
+    agentDir: f.worker.root,
+  })
+  assert.ok(Either.isRight(directory))
+  const state = openNativeManagerState(directory.right, {
+    workerSessionId: "worker-pair",
+    cwd: f.worker.ctx.cwd,
+  })
+  assert.ok(Either.isRight(state))
+  const observed = state.right.context()
+  assert.ok(Either.isRight(observed))
+  assert.equal(observed.right.data.todoPriorityControl, true)
+  assert.match(
+    observed.right.priorityRevision,
+    /^[A-Za-z0-9][A-Za-z0-9_-]{0,79}$/,
+  )
+  assert.ok(observed.right.priorityRevision.length <= 80)
+  const allowance = f.worker.guard.admit()
+  const result = await invokeManagerTodo(
+    f.manager.pi,
+    f.manager.ctx,
+    { action: "priority", id: 2, priority: 1 },
+    undefined,
+    {
+      agentDir: f.worker.root,
+      timeoutMs: 1000,
+      wait: async () => f.worker.tick(),
+    },
+  )
+  assert.equal(
+    result.details.outcome,
+    "completed",
+    result.content.map(part => part.text).join("\n"),
+  )
+  assert.deepEqual(
+    todoWorkSnapshot(f.worker.entries).pending.map(text => text.split(" ")[0]),
+    ["#2", "#1"],
+  )
+  assert.deepEqual(f.worker.guard.admit(), allowance)
+  assert.deepEqual(f.worker.modelCalls, [])
+  await f.worker.emit("session_shutdown", { reason: "reload" })
+})
+
+test("task-state changes fence already queued manager control instead of applying to a stale backlog", async t => {
+  const f = fixture(t)
+  await f.worker.emit("session_start")
+  await f.worker.command("")
+  await f.manager.emit("session_start")
+  await f.manager.command("priorities 2 1")
+  f.worker.entries.push({
+    type: "custom",
+    id: "replacement-todos",
+    customType: "todo.state",
+    data: {
+      todos: [
+        { id: 1, text: "Different work after clearing", status: "pending" },
+        { id: 2, text: "Another replacement", status: "pending" },
+      ],
+      nextId: 3,
+    },
+  })
+  f.worker.tick()
+  const priorities = readManagerPriorities(f.worker.entries)
+  assert.ok(Either.isRight(priorities))
+  assert.equal(priorities.right, undefined)
 })
 
 test("native priority relay preserves deferred status and reports the actual rejection", async t => {

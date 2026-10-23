@@ -29,6 +29,7 @@ export interface ManagerObservation {
     readonly id: number
     readonly title: string
     readonly status: string
+    readonly priority?: number
   }[]
   readonly completedIds: readonly number[]
   readonly total: number
@@ -116,7 +117,15 @@ export const parseManagerPriorities = (
       tasks.some(
         task =>
           task.id === id &&
-          ["pending", "in_progress", "in_review"].includes(task.status),
+          ["pending", "in_progress", "in_review"].includes(task.status) &&
+          (task.parentId === undefined ||
+            tasks.some(
+              parent =>
+                parent.id === task.parentId &&
+                parent.parentId === undefined &&
+                parent.status !== "blocked" &&
+                parent.status !== "deferred",
+            )),
       ),
     )
   )
@@ -151,17 +160,28 @@ export const readManagerPriorities = (
   return Either.right({ version: 1, ids: value.ids })
 }
 
-export const orderManagerTasks = <T extends { readonly id: number }>(
+export const orderManagerTasks = <
+  T extends { readonly id: number; readonly priority?: number },
+>(
   tasks: readonly T[],
   priorities: ManagerPriorities | undefined,
 ): readonly T[] => {
-  if (!priorities) return tasks
-  const ranks = new Map(priorities.ids.map((id, index) => [id, index]))
-  return [...tasks].sort(
-    (left, right) =>
-      (ranks.get(left.id) ?? Number.MAX_SAFE_INTEGER) -
-      (ranks.get(right.id) ?? Number.MAX_SAFE_INTEGER),
-  )
+  if (!priorities && tasks.every(task => task.priority === undefined))
+    return tasks
+  const ranks = new Map(priorities?.ids.map((id, index) => [id, index]) ?? [])
+  return [...tasks].sort((left, right) => {
+    if (left.priority !== right.priority) {
+      if (left.priority === undefined) return 1
+      if (right.priority === undefined) return -1
+      return left.priority < right.priority ? -1 : 1
+    }
+    const leftOrder = ranks.get(left.id)
+    const rightOrder = ranks.get(right.id)
+    if (leftOrder === rightOrder) return 0
+    if (leftOrder === undefined) return 1
+    if (rightOrder === undefined) return -1
+    return leftOrder - rightOrder
+  })
 }
 
 export const managerObservation = (
@@ -189,6 +209,7 @@ export const managerObservation = (
       id: task.id,
       title: Array.from(task.text).slice(0, 240).join(""),
       status: task.status,
+      ...(task.priority === undefined ? {} : { priority: task.priority }),
     })),
     completedIds: tasks
       .filter(task => task.status === "completed")

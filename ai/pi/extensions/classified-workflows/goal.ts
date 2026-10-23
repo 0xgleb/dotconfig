@@ -1,5 +1,5 @@
 import { Data, Effect, Either } from "effect"
-import { readManagerPriorities } from "./manager-core.ts"
+import { readManagerPriorities, orderManagerTasks } from "./manager-core.ts"
 
 export type GoalState =
   | {
@@ -223,6 +223,24 @@ export const todoWorkSnapshot: (
           : undefined
     if (!state || !Array.isArray(state.todos)) continue
     const todos = state.todos
+    if (
+      todos.some(
+        todo =>
+          isRecord(todo) &&
+          Object.hasOwn(todo, "priority") &&
+          (typeof todo.priority !== "number" ||
+            !Number.isSafeInteger(todo.priority) ||
+            todo.priority < 1),
+      )
+    )
+      return {
+        pending: [],
+        blocked: [
+          "Stored todo priority is malformed; expected a positive safe-integer rank or an omitted field.",
+        ],
+        completed: [],
+      }
+    const candidates: { id: number; text: string; priority?: number }[] = []
     const snapshot = todos.reduce<TodoWorkSnapshot>(
       (snapshot, todo) => {
         if (
@@ -253,10 +271,36 @@ export const todoWorkSnapshot: (
           return snapshot
         }
         const identity = projected.right
+        const parent =
+          todo.parentId === undefined
+            ? undefined
+            : todos.find(
+                candidate =>
+                  isRecord(candidate) && candidate.id === todo.parentId,
+              )
+        if (
+          (todo.status === "pending" ||
+            todo.status === "in_progress" ||
+            todo.status === "in_review") &&
+          isRecord(parent) &&
+          (parent.status === "blocked" || parent.status === "deferred")
+        ) {
+          snapshot.blocked.push(
+            `${identity} ${todo.text} — parent #${todo.parentId} is ${parent.status}${evidence}`,
+          )
+          return snapshot
+        }
+        const candidate = {
+          id: todo.id,
+          text: `${identity} ${todo.text}${evidence}`,
+          ...(typeof todo.priority === "number"
+            ? { priority: todo.priority }
+            : {}),
+        }
         if (todo.status === "in_progress" || todo.status === "in_review") {
-          snapshot.pending.unshift(`${identity} ${todo.text}${evidence}`)
+          candidates.unshift(candidate)
         } else if (todo.status === "pending") {
-          snapshot.pending.push(`${identity} ${todo.text}${evidence}`)
+          candidates.push(candidate)
         }
         if (todo.status === "blocked" && typeof todo.reason === "string") {
           snapshot.blocked.push(
@@ -270,17 +314,11 @@ export const todoWorkSnapshot: (
       },
       { pending: [], blocked: [], completed: [] },
     )
-    if (!priority.right) return snapshot
-    const selected = priority.right.ids.flatMap(id =>
-      snapshot.pending.filter(text => text.startsWith(`#${id} `)),
-    )
-    const chosen = new Set(selected)
     return {
       ...snapshot,
-      pending: [
-        ...selected,
-        ...snapshot.pending.filter(text => !chosen.has(text)),
-      ],
+      pending: orderManagerTasks(candidates, priority.right).map(
+        candidate => candidate.text,
+      ),
     }
   }
   return { pending: [], blocked: [], completed: [] }

@@ -17,6 +17,7 @@ interface TodoBase {
   readonly replies?: ReadonlyArray<string>
   readonly parentId?: number
   readonly statusChangedAt?: number
+  readonly priority?: number
 }
 
 export type Todo =
@@ -36,6 +37,11 @@ export type TodoRequest =
       readonly text?: string
       readonly parentId?: number
     }
+  | {
+      readonly action: "priority"
+      readonly id?: number
+      readonly priority?: number | null
+    }
   | { readonly action: "toggle"; readonly id?: number }
   | {
       readonly action: "status"
@@ -54,6 +60,11 @@ export type TodoAction =
       readonly action: "add"
       readonly text: string
       readonly parentId?: number
+    }
+  | {
+      readonly action: "priority"
+      readonly id: number
+      readonly priority: number | null
     }
   | { readonly action: "toggle"; readonly id: number }
   | {
@@ -89,23 +100,34 @@ export type TodoDetails =
 export class TodoInputError extends Data.TaggedError("TodoInputError")<{
   action: TodoRequest["action"]
   message: string
-  code?: "reply_limit" | "reply_length" | "invalid_parent" | "invalid_state"
+  code?:
+    | "reply_limit"
+    | "reply_length"
+    | "invalid_parent"
+    | "invalid_state"
+    | "invalid_priority"
 }> {}
 
 export const MAX_TODO_REPLIES = 3
 export const MAX_TODO_REPLY_LENGTH = 300
 
 export class TodoNotFoundError extends Data.TaggedError("TodoNotFoundError")<{
-  action: "toggle" | "status" | "block" | "reply" | "unblock"
+  action: "toggle" | "status" | "block" | "reply" | "unblock" | "priority"
   message: string
 }> {}
 
 export const emptyTodoState: TodoState = { todos: [], nextId: 1 }
 
+const validPriority = (value: unknown): value is number =>
+  typeof value === "number" && Number.isSafeInteger(value) && value >= 1
+
+const PrioritySchema = Schema.Number.pipe(Schema.filter(validPriority))
+
 const TodoSchema = Schema.Union(
   Schema.Struct({
     id: Schema.Number,
     text: Schema.String,
+    priority: Schema.optionalWith(PrioritySchema, { exact: true }),
     parentId: Schema.optionalWith(Schema.Number, { exact: true }),
     status: Schema.Literal(
       "pending",
@@ -122,6 +144,7 @@ const TodoSchema = Schema.Union(
     text: Schema.String,
     parentId: Schema.optionalWith(Schema.Number, { exact: true }),
     status: Schema.Literal("deferred"),
+    priority: Schema.optionalWith(PrioritySchema, { exact: true }),
     remindAt: Schema.optionalWith(Schema.Number, { exact: true }),
     replies: Schema.optionalWith(Schema.Array(Schema.String), { exact: true }),
     statusChangedAt: Schema.optionalWith(Schema.Number, { exact: true }),
@@ -131,6 +154,7 @@ const TodoSchema = Schema.Union(
     text: Schema.String,
     parentId: Schema.optionalWith(Schema.Number, { exact: true }),
     status: Schema.Literal("blocked"),
+    priority: Schema.optionalWith(PrioritySchema, { exact: true }),
     reason: Schema.String,
     replies: Schema.optionalWith(Schema.Array(Schema.String), { exact: true }),
     statusChangedAt: Schema.optionalWith(Schema.Number, { exact: true }),
@@ -143,6 +167,7 @@ const TodoStateSchema = Schema.Struct({
 })
 
 const TodoActionSchema = Schema.Literal(
+  "priority",
   "list",
   "add",
   "toggle",
@@ -181,6 +206,17 @@ const todoStateError = (
   state: TodoState,
   action: TodoAction["action"],
 ): TodoInputError | undefined => {
+  if (
+    state.todos.some(
+      todo => todo.priority !== undefined && !validPriority(todo.priority),
+    )
+  )
+    return new TodoInputError({
+      action,
+      code: "invalid_priority",
+      message:
+        "Persisted todo priority must be an assigned positive safe-integer rank or absent",
+    })
   const ids = state.todos.map(todo => todo.id)
   const maxId = ids.reduce((max, id) => Math.max(max, id), 0)
   if (
@@ -232,6 +268,7 @@ const todoWithStatus: (
   const base: TodoBase = {
     id: todo.id,
     text: todo.text,
+    ...(todo.priority === undefined ? {} : { priority: todo.priority }),
     ...(todo.parentId === undefined ? {} : { parentId: todo.parentId }),
     ...(todo.replies && todo.replies.length > 0
       ? { replies: todo.replies }
@@ -258,6 +295,40 @@ export const transitionTodoState: (
   const stateError = todoStateError(state, action.action)
   if (stateError) return Effect.fail(stateError)
   switch (action.action) {
+    case "priority": {
+      if (action.priority !== null && !validPriority(action.priority))
+        return Effect.fail(
+          new TodoInputError({
+            action: "priority",
+            code: "invalid_priority",
+            message:
+              "priority must be a positive safe-integer rank, or null to unassign",
+          }),
+        )
+      const target = state.todos.find(todo => todo.id === action.id)
+      if (!target)
+        return Effect.fail(
+          new TodoNotFoundError({
+            action: "priority",
+            message: `Todo #${action.id} not found`,
+          }),
+        )
+      const { priority: _priority, ...unassigned } = target
+      const replacement: Todo =
+        action.priority === null
+          ? unassigned
+          : { ...target, priority: action.priority }
+      return Effect.succeed({
+        action: "priority",
+        state: {
+          todos: state.todos.map(todo =>
+            todo.id === target.id ? replacement : todo,
+          ),
+          nextId: state.nextId,
+        },
+        message: `Todo #${target.id} priority ${action.priority === null ? "unassigned" : action.priority}`,
+      })
+    }
     case "list":
       return Effect.succeed({
         action: "list",
@@ -383,6 +454,7 @@ export const transitionTodoState: (
         text: target.text,
         status: "blocked",
         reason: action.reason,
+        ...(target.priority === undefined ? {} : { priority: target.priority }),
         ...(target.parentId === undefined ? {} : { parentId: target.parentId }),
         ...(target.replies && target.replies.length > 0
           ? { replies: target.replies }
@@ -526,6 +598,32 @@ export const parseTodoAction: (
   now = Date.now(),
 ) => {
   switch (request.action) {
+    case "priority":
+      if (
+        request.id === undefined ||
+        !Number.isSafeInteger(request.id) ||
+        request.id < 1
+      )
+        return Effect.fail(
+          new TodoInputError({
+            action: "priority",
+            message: "priority requires a positive safe-integer todo id",
+          }),
+        )
+      if (request.priority !== null && !validPriority(request.priority))
+        return Effect.fail(
+          new TodoInputError({
+            action: "priority",
+            code: "invalid_priority",
+            message:
+              "priority must be a positive safe-integer rank, or null to unassign",
+          }),
+        )
+      return Effect.succeed({
+        action: "priority",
+        id: request.id,
+        priority: request.priority,
+      })
     case "list":
       return Effect.succeed(request)
     case "add": {
@@ -711,6 +809,6 @@ const formatTodoList: (todos: ReadonlyArray<Todo>) => string = todos =>
                 : ""
           const replies =
             todo.replies?.map(reply => `\n    ↳ reply: ${reply}`).join("") ?? ""
-          return `${todoStatusMark(todo.status)} ${todoIdentityLabel(todo)}: ${todo.text}${detail}${replies}`
+          return `${todoStatusMark(todo.status)} ${todoIdentityLabel(todo)}: ${todo.text}${todo.priority === undefined ? "" : ` [priority ${todo.priority}]`}${detail}${replies}`
         })
         .join("\n")

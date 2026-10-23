@@ -15,6 +15,7 @@ import { join } from "node:path"
 import { managerPairDirectory } from "../classified-workflows/manager-session-core.ts"
 import { prepareNativeManagerState } from "../classified-workflows/manager-native-state.ts"
 import { registerManagerBinding } from "../shared/manager-binding.ts"
+import { todoWorkSnapshot } from "../classified-workflows/goal.ts"
 
 interface CapturedTool {
   execute: (
@@ -105,6 +106,14 @@ test("manager control updates the real worker todo store used by subsequent ordi
   })
   assert.ok(Either.isRight(updated))
   assert.equal(updated.right.isError, false)
+  const ranked = requestTodoControl(pi, ctx, {
+    action: "priority",
+    id: 1,
+    priority: 2,
+  })
+  assert.ok(Either.isRight(ranked))
+  assert.equal(ranked.right.isError, false)
+  const workerTreeHandlers = [...(hooks.get("session_tree") ?? [])]
   const listed = await tool.execute(
     "list",
     { action: "list" },
@@ -116,6 +125,14 @@ test("manager control updates the real worker todo store used by subsequent ordi
   const details = decodeTodoDetails(listed.details)
   assert.ok(Option.isSome(details))
   assert.equal(details.value.state.todos[0]?.status, "completed")
+  assert.equal(details.value.state.todos[0]?.priority, 2)
+  await tool.execute(
+    "lower-priority-work",
+    { action: "add", text: "Unassigned existing work" },
+    undefined,
+    undefined,
+    ctx,
+  )
 
   const root = mkdtempSync(join(tmpdir(), "pi-manager-todo-tool-test-"))
   t.after(() => rmSync(root, { recursive: true }))
@@ -136,7 +153,7 @@ test("manager control updates the real worker todo store used by subsequent ordi
     cwd: ctx.cwd,
     observedAt: Date.now(),
     priorityRevision: "rev",
-    data: { todoControl: true },
+    data: { todoControl: true, todoPriorityControl: true },
   })
   const managerEntries: Record<string, unknown>[] = []
   let selected = true
@@ -189,6 +206,16 @@ test("manager control updates the real worker todo store used by subsequent ordi
     undefined,
     managerCtx,
   )
+  const managerRanked = await managerTool.execute(
+    "manager-priority",
+    { action: "priority", id: 3, priority: 1 },
+    undefined,
+    undefined,
+    managerCtx,
+  )
+  assert.ok(record(managerRanked))
+  assert.notEqual(managerRanked.isError, true)
+  for (const handler of workerTreeHandlers) await handler({}, ctx)
   selected = false
   const unselected = await managerTool.execute(
     "unselected",
@@ -209,8 +236,22 @@ test("manager control updates the real worker todo store used by subsequent ordi
   assert.ok(record(finalList))
   const finalDetails = decodeTodoDetails(finalList.details)
   assert.ok(Option.isSome(finalDetails))
-  assert.equal(finalDetails.value.state.todos.length, 2)
-  assert.equal(finalDetails.value.state.todos[1]?.text, "Added from manager")
+  assert.equal(finalDetails.value.state.todos.length, 3)
+  assert.equal(finalDetails.value.state.todos[2]?.text, "Added from manager")
+  assert.equal(finalDetails.value.state.todos[2]?.priority, 1)
+  assert.equal(finalDetails.value.state.todos[2]?.status, "pending")
+  assert.deepEqual(
+    todoWorkSnapshot(entries).pending.map(text => text.split(" ")[0]),
+    ["#3", "#2"],
+  )
+  assert.equal(finalDetails.value.state.todos[0]?.priority, 2)
+  failAppend = true
+  const failedPriority = requestTodoControl(pi, ctx, {
+    action: "priority",
+    id: 3,
+    priority: 5,
+  })
+  assert.ok(Either.isLeft(failedPriority))
   assert.equal(
     managerEntries.filter(entry => entry.customType === "todo.state").length,
     0,
@@ -231,7 +272,8 @@ test("manager control updates the real worker todo store used by subsequent ordi
   assert.ok(record(afterFailure))
   const afterDetails = decodeTodoDetails(afterFailure.details)
   assert.ok(Option.isSome(afterDetails))
-  assert.equal(afterDetails.value.state.todos.length, 2)
+  assert.equal(afterDetails.value.state.todos.length, 3)
+  assert.equal(afterDetails.value.state.todos[2]?.priority, 1)
   for (const handler of hooks.get("session_shutdown") ?? [])
     await handler({}, ctx)
 })
