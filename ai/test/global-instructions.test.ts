@@ -22,6 +22,21 @@ test("one non-autodiscovered global source replaces the two divergent global fil
   )
 })
 
+test("consolidation preserves global safeguards and project-local guidance", () => {
+  const global = readFileSync(globalPath, "utf8")
+  const project = readFileSync(`${root}AGENTS.md`, "utf8")
+  assert.ok(global.includes("Preserve uncertain changes"))
+  assert.ok(global.includes("verify harness discovery links"))
+  assert.ok(global.includes("registered reload tool"))
+  assert.ok(project.includes("Put top-level Nix flags before the subcommand"))
+  assert.ok(
+    project.includes(
+      "Keep SPEC/ROADMAP → GitHub issues → local execution tasks",
+    ),
+  )
+  assert.ok(project.includes("explicit short-lived one-off exceptions"))
+})
+
 test("managed engineering harness entrypoints use the canonical source", () => {
   assert.ok(
     /globalInstructions =\s*config\.lib\.file\.mkOutOfStoreSymlink\s*"\$\{config.home.homeDirectory\}\/\.config\/GLOBAL_AGENTS\.md"/.test(
