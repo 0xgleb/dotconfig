@@ -64,6 +64,8 @@ const time = (value: unknown): value is number =>
   value >= 0 &&
   value <= 8_640_000_000_000_000
 
+export { time as isOwnerAllowanceTimestamp }
+
 const record = (value: unknown): value is Record<string, unknown> =>
   typeof value === "object" && value !== null && !Array.isArray(value)
 
