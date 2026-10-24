@@ -1,5 +1,7 @@
 use log.nu
 
+const CHECK_SOURCE = path self
+
 const skill_issues = [
   "skill issue detected, maybe try writing code that compiles next time"
   "not gonna lie that was lowkey embarrassing, go fix your code bestie"
@@ -100,30 +102,18 @@ def dispatch-check [] {
   }
 }
 
-# Re-raise a Ctrl-C interrupt so it propagates instead of being reported as a
-# check failure; a no-op for any other error.
-def rethrow-if-interrupt [e: record] {
-  if ($e.msg | str contains "interrupt") {
-    error make --unspanned { msg: "interrupted" }
-  }
-}
-
 export def run-captured []: nothing -> record<passed: bool, output: string> {
-  let start_pwd = $env.PWD
-  let result = (try {
-    dispatch-check
-    { passed: true, output: "" }
-  } catch {|e|
-    rethrow-if-interrupt $e
-    let error_msg = if ($e | get -o rendered? | is-not-empty) {
-      $e.rendered
-    } else {
-      $e.msg
-    }
-    { passed: false, output: $error_msg }
-  })
-  cd $start_pwd
-  $result
+  let command = $"source ($CHECK_SOURCE | to nuon)\ndispatch-check"
+  let result = (
+    ^$nu.current-exe --no-config-file --no-history --commands $command
+      | tee { print --raw }
+      | tee --stderr { print --raw --stderr }
+      | complete
+  )
+  if $result.exit_code == 130 {
+    error make --unspanned {msg: "interrupted"}
+  }
+  {passed: ($result.exit_code == 0), output: ($result.stdout + $result.stderr)}
 }
 
 export def skill-issue []: nothing -> string {
@@ -131,12 +121,9 @@ export def skill-issue []: nothing -> string {
 }
 
 export def execute [] {
-  let start_pwd = $env.PWD
-  try {
-    dispatch-check
-  } catch {|e|
-    rethrow-if-interrupt $e
+  let result = (run-captured)
+  if not $result.passed {
     print $"\n(ansi red_bold)(skill-issue)(ansi reset)\n"
+    error make --unspanned {msg: "repository checks failed"}
   }
-  cd $start_pwd
 }

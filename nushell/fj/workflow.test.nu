@@ -67,7 +67,7 @@ def main [] {
     }
     | str join "; ")
 
-  nu --commands (
+  ^$nu.current-exe --no-config-file --no-history --commands (
     $"source ($env.CURRENT_FILE); ($test_commands)"
   )
   print (

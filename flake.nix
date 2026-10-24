@@ -71,6 +71,29 @@
           };
         }
       );
+      fjWorkflowCheck =
+        system:
+        let
+          pkgs = nixpkgs.legacyPackages.${system};
+        in
+        pkgs.runCommand "fj-workflow-test"
+          {
+            nativeBuildInputs = with pkgs; [
+              nushell
+              git
+            ];
+          }
+          ''
+            cp ${./nushell/fj/check.nu} check.nu
+            cp ${./nushell/fj/check.test.nu} check.test.nu
+            cp ${./nushell/fj/log.nu} log.nu
+            cp ${./nushell/fj/routing.nu} routing.nu
+            cp ${./nushell/fj/workflow.nu} workflow.nu
+            cp ${./nushell/fj/workflow.test.nu} workflow.test.nu
+            ${pkgs.nushell}/bin/nu check.test.nu
+            ${pkgs.nushell}/bin/nu workflow.test.nu
+            touch $out
+          '';
     in
     {
 
@@ -203,20 +226,7 @@
                 touch $out
               '';
 
-          fj-workflow =
-            pkgs.runCommand "fj-workflow-test"
-              {
-                nativeBuildInputs = with pkgs; [ nushell ];
-              }
-              ''
-                cp ${./nushell/fj/check.nu} check.nu
-                cp ${./nushell/fj/log.nu} log.nu
-                cp ${./nushell/fj/routing.nu} routing.nu
-                cp ${./nushell/fj/workflow.nu} workflow.nu
-                cp ${./nushell/fj/workflow.test.nu} workflow.test.nu
-                ${pkgs.nushell}/bin/nu workflow.test.nu
-                touch $out
-              '';
+          fj-workflow = fjWorkflowCheck "aarch64-darwin";
 
           fj-consumer = import ./nushell/jf-consumer.test.nix {
             inherit pkgs;
@@ -327,6 +337,7 @@
         };
 
       checks.x86_64-linux.git-hooks = gitHooks.x86_64-linux;
+      checks.x86_64-linux.fj-workflow = fjWorkflowCheck "x86_64-linux";
 
       devShells = nixpkgs.lib.genAttrs hookSystems (
         system:
