@@ -75,6 +75,7 @@ safe_branch=$(echo "<headRefName>" | tr '/' '_')
 out_dir="$repo_root/.tmp/reviews/pr-${pr_number}-${invocation_id}-${safe_branch}"
 ```
 
+Record the working-tree/index state before the directory-ignore preflight.
 Before creating the invocation directory or writing any artifact, verify ignore
 coverage:
 
@@ -83,12 +84,21 @@ git check-ignore --verbose "$repo_root/.tmp/" "$out_dir/diff.patch"
 ```
 
 Require directory-wide coverage for both paths; a file-specific match is not
-sufficient. Immediately add the missing `.tmp/` directory pattern to this
-checkout's `.gitignore` under the existing ignore-repair policy, preserve other
-rules, and recheck both paths. This grants no worktree-creation authority.
+sufficient. Immediately add a missing `.tmp/` or `.worktrees/` directory pattern
+to the containing checkout's `.gitignore` when that directory is used, preserve
+other rules, and recheck both paths. No separate approval is needed; this grants
+no worktree-creation authority.
 
-Then call the registered `artifact_provenance` tool with the resolved absolute
-value of `out_dir`:
+Account for an owned ignore repair as a separate preflight unit through the
+repository's already-authorized checkpoint/publication workflow. Isolate only
+the new ignore hunk, preserving pre-existing changes; never attribute it to the
+PR being reviewed. Preserve ordinary publication gates. If the scoped checkpoint
+or required publication is blocked, leave the repair saved and report the exact
+blocker before starting another work unit.
+
+Only after coverage and any required repair checkpoint are established, call the
+registered `artifact_provenance` tool with the resolved absolute value of
+`out_dir`:
 
 ```json
 { "action": "create_directory", "path": "<resolved absolute out_dir>" }
@@ -100,6 +110,7 @@ fall back to raw `mkdir`. Add `crossWorkspace: true` only for an explicitly
 authorized target outside the tool session's workspace. The native UUID supplies
 the invocation namespace; the creation API does not promise exclusive
 allocation. Artifacts remain local-only and ephemeral.
+
 
 ## 3. Fetch the diff
 
