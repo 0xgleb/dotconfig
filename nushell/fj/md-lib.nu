@@ -411,6 +411,7 @@ export def run-apply [--plan: string, --yes (-y)] {
     print "Plan file cleaned up."
   } else {
     print "Plan file kept due to errors. Fix issues and re-run apply."
+    error make {msg: $"failed to apply ($error_count) Markdown actions"}
   }
 }
 

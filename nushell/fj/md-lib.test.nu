@@ -632,6 +632,33 @@ def "test combined sync applies the reviewed plan when default plan is replaced"
   }
 }
 
+def "test run-apply propagates copy failures and retains the plan" [] {
+  with-temp-dir {|dir|
+    let org = $"($dir)/org"
+    let repo = $"($org)/repo"
+    let vault = $"($dir)/vault"
+    mkdir $repo $vault
+    ^git -C $repo init -b test
+    "# repository" | save $"($repo)/README.md"
+    ^git -C $repo add -A
+    ^git -C $repo commit -m "init"
+    let plan_path = $"($dir)/plan.nuon"
+    run-plan --org $org --vault $vault --out $plan_path
+    "occupied note directory" | save $"($vault)/repo"
+
+    let failed = try {
+      run-apply --plan $plan_path --yes
+      false
+    } catch {|err|
+      $err.msg | str contains "failed to apply"
+    }
+    assert $failed "copy errors must propagate to the caller"
+    assert ($plan_path | path exists)
+    assert equal (open --raw $"($vault)/repo") "occupied note directory"
+    assert equal (open --raw $"($repo)/README.md") "# repository"
+  }
+}
+
 def "test run-apply rejects missing sources before writing any action" [] {
   for direction in [create forward reverse] {
     with-temp-dir {|dir|
