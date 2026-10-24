@@ -1,7 +1,8 @@
 import assert from "node:assert/strict"
 import test from "node:test"
 import { mkdtempSync, rmSync } from "node:fs"
-import { tmpdir } from "node:os"
+import os, { tmpdir } from "node:os"
+import { syncBuiltinESMExports } from "node:module"
 import { join } from "node:path"
 import type {
   ExtensionAPI,
@@ -22,6 +23,12 @@ import { todoWorkSnapshot } from "./goal.ts"
 const fixture = (t: test.TestContext) => {
   const root = mkdtempSync(join(tmpdir(), "pi-manager-pair-test-"))
   t.after(() => rmSync(root, { recursive: true }))
+  t.mock.method(os, "homedir", () => root)
+  syncBuiltinESMExports()
+  t.after(() => {
+    t.mock.restoreAll()
+    syncBuiltinESMExports()
+  })
   const actor = (manager: boolean) => {
     let now = 1000
     let deadline: (() => void) | undefined
