@@ -54,8 +54,9 @@ checkout and do not enter other worktrees.
 Resolve the task checkout root from the active worktree, not a coordinating
 session's cwd or the common Git directory. Pass this checkout root explicitly
 to workflows and set every child's cwd to it. Keep task-local patches, prompts,
-reports, payloads, and logs under that checkout root's `.tmp/`, never the main
-checkout's `.tmp/`. The artifact directory is not a child working directory.
+reports, payloads, and logs under that checkout root's `.tmp/`. For a linked
+worktree, never write its artifacts into the main checkout's `.tmp/`. The
+artifact directory is not a child working directory.
 Record provenance where required and remove these artifacts with the worktree.
 
 ## Cleanup
