@@ -11,6 +11,40 @@ const project = readFileSync(
   "utf8",
 ).replace(/\s+/g, " ")
 
+test("owner-identified mistakes generalize to a full defect-class audit", () => {
+  assert.match(
+    instructions,
+    /audit the full current scope for every other instance of that mistake class/is,
+  )
+  assert.match(
+    instructions,
+    /Repairing only the named instance is itself a failure/is,
+  )
+  assert.match(
+    instructions,
+    /record a follow-up task for that capability instead of citing its absence as an excuse/is,
+  )
+  assert.match(
+    instructions,
+    /standing owner rule applies globally, not only in the conversation that surfaced the example/is,
+  )
+})
+
+test("task priority lives only in the rank field", () => {
+  assert.match(
+    instructions,
+    /priority only through the backlog tool's priority\/rank field/is,
+  )
+  assert.match(
+    instructions,
+    /Never encode priority in task titles, text, or prose/is,
+  )
+  assert.match(
+    instructions,
+    /The rank field is the single ordering authority/is,
+  )
+})
+
 test("canonical instructions resist confirmation bias", () => {
   assert.match(
     instructions,
