@@ -210,6 +210,8 @@ test("manager profile preserves the native editor and exposes registry managemen
     "agent_registry",
     "todo",
     "manager_control",
+    "read",
+    "ask_user",
   ])
   const response = object(result)
   assert.equal(typeof response.systemPrompt, "string")
@@ -305,13 +307,16 @@ for (const profile of [true, "global"] as const) {
         action,
       )
     }
-    for (const toolName of ["todo", "manager_control"]) {
+    for (const toolName of ["todo", "manager_control", "read", "ask_user"]) {
       assert.equal(await f.emit("tool_call", { toolName }), undefined, toolName)
     }
-    assert.equal(
-      object(await f.emit("tool_call", { toolName: "bash" })).block,
-      true,
-    )
+    for (const toolName of ["bash", "write", "edit", "workflow"]) {
+      assert.equal(
+        object(await f.emit("tool_call", { toolName })).block,
+        true,
+        toolName,
+      )
+    }
   })
 }
 
@@ -371,6 +376,8 @@ test("global manager selects an existing worker without changing native UI or st
     "agent_registry",
     "todo",
     "manager_control",
+    "read",
+    "ask_user",
   ])
   assert.deepEqual(f.execs, [])
 })
