@@ -224,7 +224,9 @@ export const withheldExecutedToolResultPatch: (
           (classifierDiagnostic
             ? `Classifier diagnostic: ${classifierDiagnostic}. `
             : "") +
-          "Do not retry or assume rollback; first verify the exact intended state through an independently authorized read-only action.",
+          (classifierDiagnostic
+            ? "Read-only work may continue without a forced re-read; before any retry or mutation, verify the exact intended state."
+            : "Do not retry or assume rollback; first verify the exact intended state through an independently authorized read-only action."),
       },
     ],
     details: undefined,
@@ -532,7 +534,7 @@ BOUNDARY: ${request.boundary}
 ${classifierRequestGuidance}
 
 VISIBLE INTENT AND ACTIVE WORK (chronological within each source; newer human messages supersede older same-priority messages):
-${request.intent.length > 0 ? request.intent.map(item => `- ${item}`).join("\n") : "- No visible user intent; block."}
+${request.intent.length > 0 ? request.intent.map(item => `- ${item}`).join("\n") : "- No visible user intent; follow the applicable loaded instructions."}
 
 LOADED PROJECT INSTRUCTIONS:
 ${request.projectInstructions || "No project instructions were loaded."}

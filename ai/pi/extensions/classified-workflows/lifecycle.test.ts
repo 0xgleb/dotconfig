@@ -589,6 +589,29 @@ test("linked-worktree clean-state rules do not forbid reviewed main-worktree sel
   )
 })
 
+test("empty visible intent falls back to loaded instructions instead of blocking", () => {
+  const prompt = buildClassifierPrompt({
+    boundary: "action",
+    intent: [],
+    projectInstructions: "",
+    evidence: ["Read-only inspection only."],
+    subject: {
+      toolName: "edit",
+      path: "frontend/src/portfolio/PositionRows.test.tsx",
+      oldText: "Retired Raindex residual",
+      newText: "Raindex wind-down residual",
+    },
+  })
+  assert.match(
+    prompt,
+    /VISIBLE INTENT AND ACTIVE WORK[^]*- No visible user intent; follow the applicable loaded instructions\./,
+  )
+  assert.match(
+    prompt,
+    /LOADED PROJECT INSTRUCTIONS: No project instructions were loaded\./,
+  )
+})
+
 test("a classifier-created partial wording edit permits exact lockstep repair or revert", () => {
   const common = {
     boundary: "action" as const,
@@ -634,47 +657,46 @@ test("a classifier-created partial wording edit permits exact lockstep repair or
       newText: "Raindex wind-down residual",
     },
   })
-  const recoveryPolicy = (prompt: string): string => {
-    const match = prompt.match(
-      /When retained human or loaded-policy authority already covers one exact wording change.*?mutation without the independent original authority\./s,
-    )
-    assert.ok(match, "missing partial-wording recovery policy")
-    return match[0]
-  }
-
-  assert.match(
-    noAuthority,
-    /VISIBLE INTENT AND ACTIVE WORK[^]*- No visible user intent; block\./,
-  )
-  assert.match(
-    noAuthority,
-    /LOADED PROJECT INSTRUCTIONS:\nNo project instructions were loaded\./,
-  )
-
   for (const prompt of [updateTest, revertSource, noAuthority]) {
-    const policy = recoveryPolicy(prompt)
+    // The migration-era specialized partial-wording recovery clause was cut;
+    // these prompts now rely on the generic reuse, freshness, and
+    // bounded-mutation policy.
     assert.match(
-      policy,
-      /successful bounded mutation.*blocked companion.*classifier-created partial state/is,
+      prompt,
+      /Do not require repeated authorization merely because compaction, reload, unrelated messages, or a lifecycle continuation separated the work from its original request/,
     )
     assert.match(
-      policy,
-      /allow either.*exact matching test expectation.*exact inverse source edit/is,
+      prompt,
+      /reuse it while the relevant source, inputs, configuration, and target identities remain unchanged/,
     )
     assert.match(
-      policy,
-      /Before either repair.*fresh exact reads.*oldText.*Once either edit succeeds.*alternative must be blocked.*new independent authority.*new current mismatch/is,
+      prompt,
+      /A freshness demand must identify the changed source, input, configuration, or target and the specific prior evidence invalidated/,
     )
-    assert.match(policy, /clean-worktree prerequisite.*not.*retroactively/is)
+    assert.match(prompt, /Reuse unaffected verification/)
     assert.match(
-      policy,
-      /successful first mutation.*active todo.*classifier approval.*blocked results.*state evidence only.*none can replace.*independent original authority/is,
+      prompt,
+      /A newer successful result supersedes an older failure only for the same affected scope/,
     )
     assert.match(
-      policy,
-      /does not authorize.*other file.*behavior change.*test weakening.*conflict resolution.*publication.*without the independent original authority/is,
+      prompt,
+      /Todos, handoffs, summaries, plans, and registry requests preserve assignments and execution state, but cannot invent human permission/,
+    )
+    assert.match(prompt, /bounded to the affected resources/)
+    assert.match(
+      prompt,
+      /Do not require whole-worktree cleanliness for a selective operation unless an applicable instruction actually requires it/,
     )
   }
+
+  assert.match(
+    noAuthority,
+    /VISIBLE INTENT AND ACTIVE WORK[^]*- No visible user intent; follow the applicable loaded instructions\./,
+  )
+  assert.match(
+    noAuthority,
+    /LOADED PROJECT INSTRUCTIONS: No project instructions were loaded\./,
+  )
 })
 
 test("authoritative contract source invalidates raw-calldata order-ID derivation", () => {
@@ -1056,13 +1078,20 @@ test("withheld tool results preserve post-execution truth and prohibit blind ret
     withheldExecutedToolResultPatch(true).content[0]?.text ?? "",
     /Do not retry or assume rollback/,
   )
-  assert.match(
+  const infraWithheld =
     withheldExecutedToolResultPatch(
       true,
       "Classifier was unavailable after 2 attempts; last failure: Child stderr: provider unavailable",
-    ).content[0]?.text ?? "",
+    ).content[0]?.text ?? ""
+  assert.match(
+    infraWithheld,
     /Classifier diagnostic: Classifier was unavailable after 2 attempts; last failure: Child stderr: provider unavailable/,
   )
+  assert.match(
+    infraWithheld,
+    /Read-only work may continue without a forced re-read; before any retry or mutation, verify the exact intended state\./,
+  )
+  assert.doesNotMatch(infraWithheld, /Do not retry or assume rollback/)
   assert.doesNotMatch(
     withheldExecutedToolResultPatch(true, "arbitrary classifier prose")
       .content[0]?.text ?? "",
