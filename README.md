@@ -51,12 +51,12 @@ control and developer tools:
 Terraform-like plan/apply for syncing markdown files between source repos and an
 Obsidian vault.
 
-| Command        | Purpose                                  |
-| -------------- | ---------------------------------------- |
-| `fj md plan`   | Compute a sync plan                      |
-| `fj md diff`   | Show unified diffs for planned changes   |
-| `fj md sync`   | Apply a previously generated plan        |
-| `fj md`        | Run plan + diff + apply in one step      |
+| Command      | Purpose                                |
+| ------------ | -------------------------------------- |
+| `fj md plan` | Compute a sync plan                    |
+| `fj md diff` | Show unified diffs for planned changes |
+| `fj md sync` | Apply a previously generated plan      |
+| `fj md`      | Run plan + diff + apply in one step    |
 
 Config lives at `~/.config/mdaemon.nuon`:
 
@@ -66,13 +66,14 @@ Config lives at `~/.config/mdaemon.nuon`:
 
 ## Git hooks
 
-Enter `nix develop` or `nix-shell` from the checkout where you will commit.
-The locked `git-hooks.nix` input generates the ignored
-`.pre-commit-config.yaml` and installs the hooks. Linked worktrees share Git
-hook scripts, so activate the shell in each checkout before committing there.
+Enter `nix develop` from the checkout where you will commit. The locked
+`git-hooks.nix` input generates the ignored `.pre-commit-config.yaml` and
+installs the hooks. Linked worktrees share Git hook scripts, so activate the
+shell in each checkout before committing there.
 
-The Nixfmt hook and CI's `checks.<system>.git-hooks` use the same pinned
-configuration.
+Nixfmt, Deno Markdown formatting, and Prettier share the pinned configuration
+used by CI's `checks.<system>.git-hooks`. Prettier handles TypeScript, JSON, and
+other supported files, excluding Markdown, with `prettier.config.mjs`.
 
 ## Build
 

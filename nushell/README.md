@@ -5,11 +5,11 @@ directory via Home Manager (`programs.nushell` in `home.nix`).
 
 ## Files
 
-| File          | Purpose                                              |
-| ------------- | ---------------------------------------------------- |
-| `config.nu`   | Shell settings, keybindings, prompt, module imports   |
-| `env.nu`      | Environment variables (PATH, EDITOR)                 |
-| `scripts/fj/` | `fj` command module (git, graphite, gh, md sync)     |
+| File          | Purpose                                             |
+| ------------- | --------------------------------------------------- |
+| `config.nu`   | Shell settings, keybindings, prompt, module imports |
+| `env.nu`      | Environment variables (PATH, EDITOR)                |
+| `scripts/fj/` | `fj` command module (git, graphite, gh, md sync)    |
 
 ## The `fj` command
 

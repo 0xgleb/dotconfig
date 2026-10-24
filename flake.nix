@@ -41,7 +41,14 @@
           src = self;
           package = nixpkgs.legacyPackages.${system}.prek;
           default_stages = [ "pre-commit" ];
-          hooks.nixfmt.enable = true;
+          hooks = {
+            nixfmt.enable = true;
+            denofmt.enable = true;
+            denofmt.files = "\\.md$";
+            denofmt.require_serial = true;
+            prettier.enable = true;
+            prettier.excludes = [ "\\.md$" ];
+          };
         }
       );
     in
@@ -150,44 +157,6 @@
               '';
             };
 
-          ralphUp = pkgs.writeShellApplication {
-            name = "ralph-up";
-            runtimeInputs = [
-              pkgs.terraform
-              pkgs.openssh
-            ];
-            text = ''
-              flakeDir="$HOME/.config"
-              tfDir="$flakeDir/darwwwin/terraform"
-              sshKey="$HOME/.ssh/ralph_ed25519"
-              dropletSize="''${1:-s-2vcpu-4gb}"
-              cd "$tfDir"
-              terraform init -upgrade
-              terraform apply -var "droplet_size=$dropletSize" -auto-approve
-              ip=$(terraform output -raw ip)
-              echo "Waiting for SSH..."
-              until ssh -i "$sshKey" \
-                -o ConnectTimeout=5 \
-                -o StrictHostKeyChecking=accept-new \
-                root@"$ip" true 2>/dev/null; do sleep 2; done
-              echo "Installing NixOS..."
-              nix run github:nix-community/nixos-anywhere -- \
-                --flake "$flakeDir#nixxxos" \
-                --ssh-option "IdentityFile=$sshKey" \
-                --target-host root@"$ip"
-              echo "Done! ssh -i $sshKey 0xgleb@$ip"
-            '';
-          };
-
-          ralphDown = pkgs.writeShellApplication {
-            name = "ralph-down";
-            runtimeInputs = [ pkgs.terraform ];
-            text = ''
-              tfDir="$HOME/.config/darwwwin/terraform"
-              cd "$tfDir"
-              terraform destroy -auto-approve
-            '';
-          };
         };
 
       checks.aarch64-darwin =
