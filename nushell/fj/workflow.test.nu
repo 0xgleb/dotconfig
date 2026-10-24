@@ -113,6 +113,75 @@ def "test execute rejects files created during checks" [] {
   }
 }
 
+def "test execute supports editor arguments without evaluating shell text" [] {
+  for style in [bare double single escaped literal-path] {
+    with-check-fixture {|root, bin|
+      let editor = ($bin | path join "fixture editor")
+      let editor_arguments = ($bin | path join editor-arguments.nuon)
+      let claude_arguments = ($bin | path join claude-arguments.nuon)
+      [
+        $"#!($nu.current-exe) --no-config-file"
+        'def --wrapped main [...args: string] {'
+        $'  $args | to nuon | save ($editor_arguments | to nuon)'
+        '  "diagnose the failure" | save --force ($args | last)'
+        '}'
+      ] | str join (char newline) | save $editor
+      cp $editor ($bin | path join fixture-editor)
+      [
+        $"#!($nu.current-exe) --no-config-file"
+        'def --wrapped main [...args: string] {'
+        $'  $args | to nuon | save ($claude_arguments | to nuon)'
+        '}'
+      ] | str join (char newline) | save ($bin | path join claude)
+      ^chmod +x $editor ($bin | path join fixture-editor) ($bin | path join claude)
+      let literal = '$(must-not-run)'
+      let suffix = ['--wait' ('argument with spaces' | to nuon) ($literal | to nuon) ('' | to nuon)] | str join ' '
+      let raw = match $style {
+        bare => { $"fixture-editor ($suffix)" }
+        double => { $"($editor | to nuon) ($suffix)" }
+        single => { $"'($editor)' ($suffix)" }
+        escaped => { $"($editor | str replace --all ' ' '\ ') ($suffix)" }
+        literal-path => { $editor }
+      }
+      let succeeded = try {
+        with-env {EDITOR: $raw} { execute }
+        true
+      } catch {|err|
+        print -e $err.msg
+        false
+      }
+      assert $succeeded "configured editor command must accept executable and arguments"
+      let arguments = (open $editor_arguments)
+      let expected = if $style == literal-path { [] } else { ['--wait' 'argument with spaces' $literal ''] }
+      assert equal ($arguments | first (($arguments | length) - 1)) $expected
+      assert (not ($arguments | last | path exists)) "editor prompt must be cleaned"
+      let prompt = (open $claude_arguments | last)
+      assert ($prompt | str contains "diagnose the failure")
+      assert ($prompt | str contains "formatter stdout")
+      assert ($prompt | str contains "formatter stderr")
+    }
+  }
+}
+
+def "test execute rejects malformed editor commands" [] {
+  for case in [
+    {raw: '"unterminated', message: "invalid EDITOR quoting"}
+    {raw: 'fixture-editor \', message: "invalid EDITOR quoting"}
+    {raw: '', message: "EDITOR executable is empty"}
+    {raw: '""', message: "EDITOR executable is empty"}
+  ] {
+    with-check-fixture {|root, bin|
+      let rejected = try {
+        with-env {EDITOR: $case.raw} { execute }
+        false
+      } catch {|err|
+        $err.msg | str contains $case.message
+      }
+      assert $rejected
+    }
+  }
+}
+
 def "test strip-comments removes comment lines" [] {
   assert equal (
     strip-comments "# comment\nactual context"
