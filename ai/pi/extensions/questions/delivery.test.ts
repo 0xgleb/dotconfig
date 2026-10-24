@@ -106,6 +106,23 @@ test("exact terminal job status leads the result and does not replay editorial f
   assert.equal(result.details.reviewJobs[0].reason, review.reason)
 })
 
+test("legacy publication failures expose their operational reason without replaying the draft", async () => {
+  const review = {
+    id: "legacy-publication-failure",
+    status: "needs-revision",
+    pass: 2,
+    reviewedHash: "a".repeat(64),
+    reason: "Question-review authority or session ended before publication.",
+  }
+  const { result, text } = await invoke(
+    [{ id: 6, status: "not-confirmed" }],
+    [review],
+  )
+  assert.match(text, /authority or session ended before publication/)
+  assert.equal(result.details.state.questions.length, 1)
+  assert.doesNotMatch(text, /queued-question/)
+})
+
 test("absence of a Telegram receipt remains not-confirmed", async () => {
   const { text } = await invoke([{ id: 6, status: "not-confirmed" }])
   assert.match(text, /q6.*not-confirmed/)

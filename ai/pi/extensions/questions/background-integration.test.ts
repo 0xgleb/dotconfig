@@ -23,7 +23,7 @@ const factory = stripTypeScriptTypes(
   ),
 )
 
-test("actual complete extension wires background revision to final question state, not the foreground", async t => {
+test("registered ask_user publishes the final author revision after two editorial critiques", async t => {
   const handlers = new Map<string, Function>()
   const bus = new Map<string, Function>()
   const entries: unknown[] = []
@@ -47,6 +47,12 @@ test("actual complete extension wires background revision to final question stat
     guess: "Use the bounded queue.",
     options: [{ label: "Use queue" }, { label: "Keep current" }],
   }
+  const final = {
+    ...revised,
+    question: "Should file.ts admit at most four pending decision drafts?",
+  }
+  let authorCalls = 0
+  let unavailable = false
   const sandbox = {
     ...state,
     ...events,
@@ -62,14 +68,16 @@ test("actual complete extension wires background revision to final question stat
     registerRuntimeVersion: () => {},
     runContentProcess: async (_ctx: unknown, task: { role: string }) => {
       roles.push(task.role)
+      if (unavailable) return undefined
       return roles.length === 1
         ? waiting
         : task.role === "author"
-          ? JSON.stringify(revised)
+          ? JSON.stringify(++authorCalls === 1 ? revised : final)
           : JSON.stringify({
-              admissible: true,
+              admissible: false,
               coverage: "complete",
-              reason: "Self-contained and scoped.",
+              reason:
+                "Make explicit that the four queued drafts are pending decisions.",
             })
     },
   }
@@ -117,7 +125,8 @@ test("actual complete extension wires background revision to final question stat
     "ask",
     {
       action: "ask",
-      question: "Should file.ts use a bounded queue?",
+      question:
+        "Should file.ts use a four-item queue for pending decision drafts?",
       header: "Queue",
       guess: "Use the bounded queue.",
       options: revised.options,
@@ -143,12 +152,12 @@ test("actual complete extension wires background revision to final question stat
     JSON.stringify({
       admissible: false,
       coverage: "complete",
-      reason: "Explain the concrete capacity, not just bounded.",
+      reason: "State the four-draft capacity directly.",
     }),
   )
   for (let i = 0; i < 16; i++)
     await new Promise(resolve => setImmediate(resolve))
-  assert.deepEqual(roles, ["critic", "author", "critic"])
+  assert.deepEqual(roles, ["critic", "author", "critic", "author"])
   listed = await tool.execute(
     "list",
     { action: "list" },
@@ -157,7 +166,8 @@ test("actual complete extension wires background revision to final question stat
     ctx,
   )
   assert.equal(listed.details.state.questions.length, 1)
-  assert.equal(listed.details.state.questions[0].question, revised.question)
+  assert.equal(listed.details.state.questions[0].question, final.question)
+  assert.match(JSON.stringify(listed.content), /final author revision/i)
   assert.equal(listed.details.reviewJobs[0].status, "queued-question")
   assert.equal(
     listed.details.reviewJobs[0].questionId,
@@ -170,4 +180,36 @@ test("actual complete extension wires background revision to final question stat
     before,
     "malformed bus data is rejected before review",
   )
+
+  unavailable = true
+  const unavailableJob = await tool.execute(
+    "ask-unavailable",
+    {
+      action: "ask",
+      question: "Should the file.ts queue use FIFO or LIFO ordering?",
+      options: [{ label: "FIFO" }, { label: "LIFO" }],
+    },
+    undefined,
+    undefined,
+    ctx,
+  )
+  assert.equal(unavailableJob.details.outcome, "queued-review")
+  for (let i = 0; i < 16; i++)
+    await new Promise(resolve => setImmediate(resolve))
+  const failure = await tool.execute(
+    "list-failure",
+    { action: "list" },
+    undefined,
+    undefined,
+    ctx,
+  )
+  const failed = failure.details.reviewJobs.find(
+    (job: { id: string }) => job.id === unavailableJob.details.jobId,
+  )
+  assert.equal(failed.status, "unavailable")
+  assert.match(
+    JSON.stringify(failure.content),
+    /No complete independent critique after two bounded passes/,
+  )
+  assert.equal(failure.details.state.questions.length, 1)
 })
