@@ -559,6 +559,57 @@ def "test compute-actions skips colliding note paths" [] {
   }
 }
 
+def "test run-apply rejects missing sources before writing any action" [] {
+  for direction in [create forward reverse] {
+    with-temp-dir {|dir|
+      let org = $"($dir)/org"
+      let repo = $"($org)/repo"
+      let vault = $"($dir)/vault"
+      let notes = $"($vault)/repo"
+      mkdir $repo $notes
+      ^git -C $repo init
+
+      if $direction == "forward" {
+        "# vault A" | save $"($notes)/A.md"
+        "# vault B" | save $"($notes)/B.md"
+        sleep 100ms
+      }
+      "# repository A" | save $"($repo)/A.md"
+      "# repository B" | save $"($repo)/B.md"
+      if $direction == "reverse" {
+        sleep 100ms
+        "# vault A" | save $"($notes)/A.md"
+        "# vault B" | save $"($notes)/B.md"
+      }
+      ^git -C $repo add -A
+      ^git -C $repo commit -m "init"
+      let plan_path = $"($dir)/plan.nuon"
+      run-plan --org $org --vault $vault --out $plan_path
+      let actions = (open $plan_path | get actions)
+      assert equal ($actions | get action) [$direction $direction]
+      let first = ($actions | first)
+      let second = ($actions | get 1)
+      let output = if $direction == "reverse" { $first.source } else { $first.destination }
+      let original = if ($output | path exists) { open --raw $output } else { null }
+      rm $second.source
+
+      let rejected = try {
+        run-apply --plan $plan_path --yes
+        false
+      } catch {|err|
+        $err.msg | str contains "plan is stale"
+      }
+      assert $rejected
+      if $original == null {
+        assert (not ($output | path exists))
+      } else {
+        assert equal (open --raw $output) $original
+      }
+      assert ($plan_path | path exists)
+    }
+  }
+}
+
 # --- run-apply drift guard (the data-loss backstop, previously untested) ---
 
 def "test run-apply aborts on destination drift" [] {

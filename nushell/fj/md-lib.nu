@@ -322,7 +322,7 @@ export def run-apply [--plan: string, --yes (-y)] {
     let source_ok = if ($a.source | path exists) {
       (file-hash $a.source) == $a.source_hash
     } else {
-      $a.action != "reverse"
+      false
     }
 
     let dest_ok = if $a.destination_hash == null {
