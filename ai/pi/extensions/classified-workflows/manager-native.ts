@@ -623,6 +623,8 @@ const MANAGEMENT_TOOLS: readonly string[] = [
   "agent_registry",
   "todo",
   "manager_control",
+  "read",
+  "ask_user",
 ]
 const SCOPE_ENTRY = "manager.native-scope.v1"
 const NATIVE_MESSAGE = "manager-native-update"
