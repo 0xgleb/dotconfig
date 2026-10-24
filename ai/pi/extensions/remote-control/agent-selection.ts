@@ -42,6 +42,17 @@ export const resolvableSelector = (
   return sharesFolder ? agent.id : folder
 }
 
+export const managerDefaultAgent = (
+  agents: ReadonlyArray<BridgeAgent>,
+  explicitAgentId?: string,
+): BridgeAgent | undefined => {
+  const native = telegramRoutableAgents(agents)
+  if (explicitAgentId !== undefined)
+    return native.find(agent => agent.id === explicitAgentId)
+  const managers = native.filter(agent => agent.nativeManager === true)
+  return managers.length === 1 ? managers[0] : undefined
+}
+
 export const preferredAgent = (
   agents: ReadonlyArray<BridgeAgent>,
   selectedAgentId?: string,
