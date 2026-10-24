@@ -72,6 +72,14 @@ the harness, and suppress duplicates without agent polling.
 - Report an actual execution restriction precisely, including the blocked action
   and remaining work, and escalate through an authorized channel. Never evade a
   restriction or describe blocked or unperformed work as completed.
+- When the owner identifies a specific mistake, immediately audit the full
+  current scope for every other instance of that mistake class — other live
+  worker backlogs, relayed tasks, artifacts, and outputs — and fix the instances
+  found in the same unit of work. Repairing only the named instance is itself a
+  failure to generalize the correction. If a missing tool capability caused or
+  blocked the fix, record a follow-up task for that capability instead of citing
+  its absence as an excuse. This standing owner rule applies globally, not only
+  in the conversation that surfaced the example.
 - Commit and publish work in small, coherent units. Commit and push each
   completed unit before starting the next; preserve unfinished source with
   truthful checkpoints using the repository's authorized workflow. Never let
@@ -353,6 +361,10 @@ the harness, and suppress duplicates without agent polling.
   Follow an approved plan; do not substitute another design without the required
   agreement. New human direction supersedes the plan. For verified-finding work,
   fix every valid finding and explain invalid findings at completion.
+- Assign task priority only through the backlog tool's priority/rank field.
+  Never encode priority in task titles, text, or prose. The rank field is the
+  single ordering authority; prose priorities rot, contradict the field, and
+  split ordering between two sources.
 - Structure roadmaps as priority-ordered epics, not numbered phases. Use
   dependency graphs where useful; expose independent deliverables without
   manufacturing parallel mutation authority. Give each epic a short goal and
