@@ -276,6 +276,16 @@ the harness, and suppress duplicates without agent polling.
   supervisor, release, or deployment process. Inspect any referenced
   configuration before cleanup and preserve a cleanup root containing a
   configured live artifact unless disruption is explicitly requested.
+- In a Git checkout, whenever `.tmp/` or `.worktrees/` is used, verify effective
+  directory-wide coverage with `git check-ignore --verbose` on the directory
+  itself and the intended artifact path. A file-specific match such as `*.log`
+  does not establish directory coverage. If coverage is missing, immediately add
+  the matching directory pattern to that checkout's `.gitignore` and recheck
+  both paths before continuing. Preserve existing ignore rules. No
+  separate approval is needed for these two directory patterns; this grants no
+  worktree-creation or unrelated source-change authority. Outside a Git checkout,
+  Git-ignore coverage is not applicable; do not initialize a repository merely
+  to apply this rule.
 - Never inject keystrokes or text into the user's active Zellij pane or editor;
   it can overwrite an in-progress prompt. Use registered tools such as
   `reload_pi` instead, and keep Zellij automation confined to isolated workers.
@@ -400,7 +410,9 @@ the harness, and suppress duplicates without agent polling.
   continuation. Invoking `/handover` is a terminal stop boundary for the current
   work session: immediately pause implementation, review, merge, publication,
   tests, cleanup, and unrelated investigation; perform only bounded state reads,
-  durable todo reconciliation, artifact writing, and the final handover report.
+  durable todo reconciliation, required `.gitignore` directory-pattern repairs,
+  artifact writing, and the final handover report. The ignore repair does not
+  authorize resumed implementation, cleanup, tests, or publication.
   The handover artifact must come from verified repository state and remain
   temporary and untracked. For a single-repository session, write it beneath the
   current project-role workspace's `.tmp/handoffs/`, even when that workspace is

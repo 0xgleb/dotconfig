@@ -116,6 +116,11 @@ as `direnv exec "$repo_root" but …` for every `but` call. Never run `but setup
 All virtual branches are applied at once, so there is no checkout/advance — you
 iterate the applied series in place.
 
+Before any stack artifact is created or written, including step 3's initial
+patch and manifest, resolve the review artifact root and complete step 1's
+directory-ignore preflight, including accounting for an owned repair. Do not
+defer this preflight until after saving the initial patch.
+
 1. Confirm workspace mode: `but status` must succeed (you are on a `gitbutler/*`
    workspace branch). If it fails with "Setup required" or similar, **stop and
    tell the user to enter GitButler workspace mode first**.
@@ -166,6 +171,23 @@ Verify prerequisites before doing anything:
 
    Single-branch mode works on any Git repository. Only `stack` mode needs
    managed series; plain-Git worktrees run the single-branch loop.
+
+   Before the clean-tree gate or any artifact write, resolve the actual review
+   checkout root and record its working-tree/index state. Verify directory-wide
+   coverage with `git check-ignore --verbose` on `.tmp/` itself and the intended
+   artifact path, and on `.worktrees/` when used. A file-specific match is
+   insufficient. Immediately add any missing directory pattern to that checkout's
+   `.gitignore`, preserving existing rules, then recheck both paths; no separate
+   approval is needed and no worktree-creation authority is added.
+
+   Account for an owned ignore repair as a separate preflight unit through the
+   repository's already-authorized checkpoint/publication workflow. Isolate only
+   the new ignore hunk, never pre-existing changes; do not attribute this repair
+   to a reviewed branch's fix delta or absorb it into another branch. Preserve
+   normal publication gates. If a safe scoped checkpoint or required publication
+   is blocked, leave the repair saved and report the exact blocker before
+   starting the review. Repeat this preflight after checkout transitions before
+   using either directory.
 
 2. For GitButler stack mode, confirm the tool is available in the authorized
    project environment, but only after verifying a managed main worktree.
@@ -242,6 +264,10 @@ artifact root. Run the delta workflow from that checkout; a coordinator running
 elsewhere must add `cwd: repoRoot` to every child-agent options object in its
 example. An exported source directory is not the review checkout. Remove these
 temporary artifacts with the worktree.
+
+Complete step 1's directory-ignore preflight, including accounting for an owned
+repair, before recording a clean fix baseline or writing the initial review
+artifacts. Do not introduce an unaccounted ignore change after that baseline.
 
 Before creating the invocation directory or writing any artifact, verify ignore
 coverage:
@@ -1021,5 +1047,6 @@ invocations remain unchanged.
     confined to files implicated by fixed findings — otherwise escalate to a
     full panel pass.
 13. Before artifact writes, verify directory-wide ignore coverage and create and
-    record the invocation directory through the registered tool. Repair missing
-    `.tmp/` ignore coverage immediately under the existing policy.
+    record the invocation directory through the registered tool. Immediately
+    repair missing `.tmp/` or `.worktrees/` directory coverage when used,
+    preserving other rules; no separate approval is needed.
