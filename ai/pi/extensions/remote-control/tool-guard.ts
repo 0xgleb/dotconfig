@@ -36,7 +36,9 @@ export const enterRemoteToolGuard = (
           tool =>
             tool === "agent_registry" ||
             tool === "todo" ||
-            tool === "manager_control",
+            tool === "manager_control" ||
+            tool === "read" ||
+            tool === "ask_user",
         )
       : []
   let restored = false
