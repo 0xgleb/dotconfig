@@ -226,11 +226,16 @@
           fj-module =
             pkgs.runCommand "fj-module-test"
               {
-                nativeBuildInputs = with pkgs; [ nushell ];
+                nativeBuildInputs = with pkgs; [
+                  nushell
+                  git
+                ];
               }
               ''
-                cp -r ${./nushell/fj} fj
-                cd fj
+                mkdir nushell
+                cp -r ${./nushell/fj} nushell/fj
+                cp ${./nushell/jf.nix} nushell/jf.nix
+                cd nushell/fj
                 ${pkgs.nushell}/bin/nu routing.test.nu
                 ${pkgs.nushell}/bin/nu mod.test.nu
                 touch $out

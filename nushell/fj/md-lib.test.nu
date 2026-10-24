@@ -559,6 +559,79 @@ def "test compute-actions skips colliding note paths" [] {
   }
 }
 
+def "test combined sync applies the reviewed plan when default plan is replaced" [] {
+  with-temp-dir {|dir|
+    for label in [reviewed replacement] {
+      let org = $"($dir)/($label)/org"
+      let repo = $"($org)/repo"
+      let vault = $"($dir)/($label)/vault"
+      mkdir $repo $vault
+      ^git -C $repo init -b test
+      $"# ($label)" | save $"($repo)/README.md"
+      ^git -C $repo add -A
+      ^git -C $repo commit -m "init"
+      {vault: $vault, orgs: [$org]} | to nuon | save $"($dir)/($label).nuon"
+    }
+    let home = $"($dir)/home"
+    let bin = $"($dir)/bin"
+    mkdir $"($home)/.config" $bin
+    cp $"($dir)/reviewed.nuon" $"($home)/.config/mdaemon.nuon"
+    let replacement = $"($dir)/replacement-plan.nuon"
+    run-plan --config $"($dir)/replacement.nuon" --out $replacement
+    let shared_plan = $"($home)/.config/.mdup-plan.nuon"
+    cp $replacement $shared_plan
+    let observed = $"($dir)/reviewed.diff"
+    [
+      $"#!($nu.current-exe) --no-config-file"
+      'def --wrapped main [...args: string] {'
+      ('  cp ($args | last) ' + ($observed | to nuon))
+      $"  cp ($replacement | to nuon) ($shared_plan | to nuon)"
+      '}'
+    ] | str join (char newline) | save $"($bin)/bat"
+    ^chmod +x $"($bin)/bat"
+    let library = ($env.CURRENT_FILE | path dirname | path join md-lib.nu)
+    let command = [
+      $"use ($library | to nuon) [run-combined]"
+      'run-combined --yes'
+    ] | str join (char newline)
+    let result = (with-env {HOME: $home, PATH: ([$bin] | append $env.PATH)} {
+      ^$nu.current-exe --no-config-file --no-history --commands $command | complete
+    })
+    if $result.exit_code != 0 { error make {msg: $result.stderr} }
+    assert ((open --raw $observed) | str contains "# reviewed") "viewer must receive the reviewed content"
+    let reviewed_destination = $"($dir)/reviewed/vault/org/repo/README.md"
+    assert ($reviewed_destination | path exists) "apply replaced the reviewed plan with the default plan"
+    assert equal (open --raw $reviewed_destination) "# reviewed"
+    assert (not ($"($dir)/replacement/vault/org/repo/README.md" | path exists))
+    assert equal (open $shared_plan) (open $replacement)
+    let private_plan = ($result.stdout | lines
+      | where {|line| $line | str starts-with "Plan saved to: " }
+      | first | str replace "Plan saved to: " "")
+    assert ($private_plan != $shared_plan)
+    assert (not ($private_plan | path dirname | path exists))
+
+    let reviewed_source = $"($dir)/reviewed/org/repo/README.md"
+    "# changed during review" | save --force $reviewed_source
+    [
+      $"#!($nu.current-exe) --no-config-file"
+      'def --wrapped main [...args: string] {'
+      $"  rm ($reviewed_source | to nuon)"
+      '}'
+    ] | str join (char newline) | save --force $"($bin)/bat"
+    let stale = (with-env {HOME: $home, PATH: ([$bin] | append $env.PATH)} {
+      ^$nu.current-exe --no-config-file --no-history --commands $command | complete
+    })
+    assert ($stale.exit_code != 0)
+    assert ($stale.stderr | str contains "plan is stale")
+    let stale_plan = ($stale.stdout | lines
+      | where {|line| $line | str starts-with "Plan saved to: " }
+      | first | str replace "Plan saved to: " "")
+    assert (not ($stale_plan | path dirname | path exists))
+    assert equal (open $shared_plan) (open $replacement)
+    assert equal (open --raw $reviewed_destination) "# reviewed"
+  }
+}
+
 def "test run-apply rejects missing sources before writing any action" [] {
   for direction in [create forward reverse] {
     with-temp-dir {|dir|

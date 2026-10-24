@@ -413,3 +413,17 @@ export def run-apply [--plan: string, --yes (-y)] {
     print "Plan file kept due to errors. Fix issues and re-run apply."
   }
 }
+
+export def run-combined [--yes (-y)] {
+  let directory = (mktemp -d)
+  let plan_path = ($directory | path join plan.nuon)
+  try {
+    run-plan --out $plan_path
+    run-diff --plan $plan_path
+    run-apply --plan $plan_path --yes=$yes
+  } catch {|err|
+    rm -r $directory
+    error make $err
+  }
+  rm -r $directory
+}
