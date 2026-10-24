@@ -32,21 +32,23 @@ test("evolve fails at the first unsuccessful external step", () => {
   )
   assert.match(
     config,
-    /def verify-pi-host \[pi_bin: string\][\s\S]*?\^\$pi_bin --version/,
+    /def verify-pi-host \[pi_bin: string, config_root: string\][\s\S]*?\^\$pi_bin --version/,
   )
   assert.match(config, /readlink -f \$pi_bin/)
-  assert.match(config, /let expected_wrapped =/)
-  assert.match(config, /str contains \$expected_wrapped/)
   assert.match(
     config,
-    /managed Pi entrypoint executes a different host package/,
+    /nix --accept-flake-config eval --raw[\s\S]*?home-manager\.users\.\\"0xgleb\\"\.home\.file\.\\"\.pi\/agent\/bin\/pi\\"\.source/,
   )
-  assert.match(config, /str contains "renderSafely\(\)"/)
-  assert.match(config, /str contains "this\.renderSafely\(\);"/)
-  assert.match(config, /str contains "const pending = \[root\];"/)
+  assert.match(config, /!= \$expected_source/)
+  assert.match(
+    config,
+    /stale managed Pi entrypoint does not serve the activated host/,
+  )
+  assert.doesNotMatch(config, /pi-wrapped/)
+  assert.doesNotMatch(config, /renderSafely/)
   assert.match(
     evolve,
-    /run-evolve-step "Pi host verification" \{\|\| verify-pi-host \$pi_bin \}/,
+    /run-evolve-step "Pi host verification" \{\|\| verify-pi-host \$pi_bin \$config_root \}/,
   )
   assert.doesNotMatch(
     evolve,
