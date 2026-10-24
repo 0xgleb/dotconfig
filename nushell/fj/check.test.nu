@@ -1,6 +1,6 @@
 use std/assert
 
-source check.nu
+use check.nu [run-captured execute skill-issue]
 
 const CHECK_IMPLEMENTATION = path self check.nu
 

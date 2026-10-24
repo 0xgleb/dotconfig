@@ -31,20 +31,40 @@ export def strip-comments [
 
 export def execute [] {
   try {
+    let root = (^git rev-parse --show-toplevel)
+    cd $root
+    ^git add -A
+    let checked_tree = (^git write-tree)
     let result = (check run-captured)
 
     if $result.passed {
       print $"\n(ansi green_bold)checks passed(ansi reset)\n"
-
-      ^git add -A
-      let has_staged = (
-        do { ^git diff --cached --quiet } | complete | get exit_code
-      ) != 0
-      if not $has_staged {
+      let working = (do { ^git diff --quiet } | complete)
+      if $working.exit_code not-in [0 1] {
+        error make {msg: ("cannot compare working tree: " + $working.stderr)}
+      }
+      let current_tree = (^git write-tree)
+      let untracked = (^git ls-files --others --exclude-standard)
+      if $working.exit_code != 0 or $current_tree != $checked_tree or ($untracked | is-not-empty) {
+        error make {msg: "repository changed during checks; rerun fj do"}
+      }
+      let staged = (do { ^git diff --cached --quiet } | complete)
+      if $staged.exit_code == 0 {
         print "nothing to commit"
         return
       }
-      ^git commit
+      if $staged.exit_code != 1 {
+        error make {msg: ("cannot inspect staged changes: " + $staged.stderr)}
+      }
+      let directory = (mktemp -d)
+      try {
+        with-env {GIT_INDEX_FILE: ($directory | path join index)} {
+          ^git read-tree $checked_tree
+          ^git commit
+        }
+      } finally {
+        rm -r $directory
+      }
     } else {
       print $result.output
       let roast = (check skill-issue)
