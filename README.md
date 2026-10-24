@@ -64,6 +64,16 @@ Config lives at `~/.config/mdaemon.nuon`:
 { vault: "~/code/notes", orgs: ["~/code/st0x"] }
 ```
 
+## Git hooks
+
+Enter `nix develop` or `nix-shell` from the checkout where you will commit.
+The locked `git-hooks.nix` input generates the ignored
+`.pre-commit-config.yaml` and installs the hooks. Linked worktrees share Git
+hook scripts, so activate the shell in each checkout before committing there.
+
+The Nixfmt hook and CI's `checks.<system>.git-hooks` use the same pinned
+configuration.
+
 ## Build
 
 ```bash

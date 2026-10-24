@@ -16,6 +16,9 @@
 
     nix-doom-emacs-unstraightened.url = "github:marienz/nix-doom-emacs-unstraightened";
     nix-doom-emacs-unstraightened.inputs.nixpkgs.follows = "nixpkgs";
+
+    git-hooks.url = "github:cachix/git-hooks.nix";
+    git-hooks.inputs.nixpkgs.follows = "nixpkgs";
   };
 
   outputs =
@@ -27,6 +30,21 @@
       disko,
       ...
     }:
+    let
+      hookSystems = [
+        "aarch64-darwin"
+        "x86_64-linux"
+      ];
+      gitHooks = nixpkgs.lib.genAttrs hookSystems (
+        system:
+        inputs.git-hooks.lib.${system}.run {
+          src = self;
+          package = nixpkgs.legacyPackages.${system}.prek;
+          default_stages = [ "pre-commit" ];
+          hooks.nixfmt.enable = true;
+        }
+      );
+    in
     {
 
       # Local macOS
@@ -180,6 +198,8 @@
           };
         in
         {
+          git-hooks = gitHooks.aarch64-darwin;
+
           md-sync =
             pkgs.runCommand "md-sync-test"
               {
@@ -245,6 +265,21 @@
                 touch $out
               '';
         };
+
+      checks.x86_64-linux.git-hooks = gitHooks.x86_64-linux;
+
+      devShells = nixpkgs.lib.genAttrs hookSystems (
+        system:
+        let
+          hooks = gitHooks.${system};
+        in
+        {
+          default = nixpkgs.legacyPackages.${system}.mkShellNoCC {
+            packages = hooks.enabledPackages;
+            inherit (hooks) shellHook;
+          };
+        }
+      );
 
       # Expose package set for convenience
       darwinPackages = self.darwinConfigurations.darwwwin.pkgs;

@@ -264,7 +264,7 @@ def "test drift detection catches modified source" [] {
 
 # --- action-diff ---
 
-def "test action-diff create shows all lines as additions" [] {
+def "test action-diff create renders formatted Markdown additions" [] {
   with-temp-dir {|dir|
     "line one\nline two\n" | save $"($dir)/new.md"
     let action = {
@@ -279,8 +279,8 @@ def "test action-diff create shows all lines as additions" [] {
       dels: 0
     }
     let output = (action-diff $action)
-    assert ($output | str contains "+line one")
-    assert ($output | str contains "+line two")
+    assert ($output | str contains "+line one line two")
+    assert (not ($output | str contains "+line two"))
   }
 }
 

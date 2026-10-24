@@ -8,6 +8,7 @@ AppSupport
 .nushell/
 .zsh/
 /.tmp/
+/.pre-commit-config.yaml
 /cagent/
 /direnv/
 /emacs/

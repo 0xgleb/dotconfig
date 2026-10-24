@@ -29,21 +29,25 @@ in
       with pkgs;
       [
         cargo-watch
-        ghostty-bin
         unstable.graphite-cli
 
         unstable.codex
         unstable.claude-code
-      ];
+      ]
+      ++ pkgs.lib.optionals pkgs.stdenv.isDarwin [ ghostty-bin ];
 
     shell.enableNushellIntegration = true;
-    file."${nuConfigDir}/scripts".source = ./nushell/scripts;
-    file.".config/nushell/config.nu".source =
-      config.lib.file.mkOutOfStoreSymlink "${config.home.homeDirectory}/Library/Application Support/nushell/config.nu";
-    file.".config/nushell/env.nu".source =
-      config.lib.file.mkOutOfStoreSymlink "${config.home.homeDirectory}/Library/Application Support/nushell/env.nu";
-    file."Library/Application Support/com.mitchellh.ghostty/config.ghostty".source =
-      ./ghostty/config.ghostty;
+    file = {
+      "${nuConfigDir}/scripts".source = ./nushell/scripts;
+      "Library/Application Support/com.mitchellh.ghostty/config.ghostty".source =
+        ./ghostty/config.ghostty;
+    }
+    // pkgs.lib.optionalAttrs (pkgs.stdenv.isDarwin && !config.xdg.enable) {
+      ".config/nushell/config.nu".source =
+        config.lib.file.mkOutOfStoreSymlink "${config.home.homeDirectory}/Library/Application Support/nushell/config.nu";
+      ".config/nushell/env.nu".source =
+        config.lib.file.mkOutOfStoreSymlink "${config.home.homeDirectory}/Library/Application Support/nushell/env.nu";
+    };
   };
 
   # NOTE: this shit doesn't clean up after itself if you enable/disable it
