@@ -37,8 +37,13 @@ or merges; do not reuse stale scope.
 When the global worktree policy's owner-authorized concurrency requirement is
 satisfied, create the review checkout at `$REPO/.worktrees/review`. Otherwise,
 report the checkout blocker rather than creating a worktree for review alone.
-Plain Git only; never switch or mutate the main checkout; never invoke GitButler
-here. Refuse an occupied/unowned slot rather than taking it over.
+Plain Git only; never switch the main checkout. Its only permitted mutation in
+this review workflow is immediately adding missing `.tmp/` or `.worktrees/`
+directory patterns to its `.gitignore` when required by global policy. Never
+invoke GitButler here. Refuse an occupied/unowned slot rather than taking it over.
+Report any main-checkout ignore repair's exact path and owned hunk to the manager
+for a scoped checkpoint under the main worker's existing authority. Do not commit
+there or carry that repair into a reviewed PR's fix delta.
 
 Keep patches, prompts, reports, payloads, logs, and other review scratch files
 under this review worktree's `.tmp/`, never the main checkout's `.tmp/`. Resolve

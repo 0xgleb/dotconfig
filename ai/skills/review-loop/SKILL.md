@@ -116,6 +116,11 @@ as `direnv exec "$repo_root" but …` for every `but` call. Never run `but setup
 All virtual branches are applied at once, so there is no checkout/advance — you
 iterate the applied series in place.
 
+Before any stack artifact is created or written, including step 3's initial
+patch and manifest, resolve the review artifact root and complete step 1's
+directory-ignore preflight, including accounting for an owned repair. Do not
+defer this preflight until after saving the initial patch.
+
 1. Confirm workspace mode: `but status` must succeed (you are on a `gitbutler/*`
    workspace branch). If it fails with "Setup required" or similar, **stop and
    tell the user to enter GitButler workspace mode first**.
@@ -166,6 +171,23 @@ Verify prerequisites before doing anything:
 
    Single-branch mode works on any Git repository. Only `stack` mode needs
    managed series; plain-Git worktrees run the single-branch loop.
+
+   Before the clean-tree gate or any artifact write, resolve the actual review
+   checkout root and record its working-tree/index state. Verify directory-wide
+   coverage with `git check-ignore --verbose` on `.tmp/` itself and the intended
+   artifact path, and on `.worktrees/` when used. A file-specific match is
+   insufficient. Immediately add any missing directory pattern to that checkout's
+   `.gitignore`, preserving existing rules, then recheck both paths; no separate
+   approval is needed and no worktree-creation authority is added.
+
+   Account for an owned ignore repair as a separate preflight unit through the
+   repository's already-authorized checkpoint/publication workflow. Isolate only
+   the new ignore hunk, never pre-existing changes; do not attribute this repair
+   to a reviewed branch's fix delta or absorb it into another branch. Preserve
+   normal publication gates. If a safe scoped checkpoint or required publication
+   is blocked, leave the repair saved and report the exact blocker before
+   starting the review. Repeat this preflight after checkout transitions before
+   using either directory.
 
 2. For GitButler stack mode, confirm the tool is available in the authorized
    project environment, but only after verifying a managed main worktree.
@@ -231,7 +253,6 @@ repo_root=$(git rev-parse --show-toplevel)
 ts=$(date +%Y-%m-%d_%H-%M-%S)
 safe_branch=$(echo "$branch" | tr '/' '_')
 out_dir="$repo_root/.tmp/agent-local-ctx/reviews/${ts}-${safe_branch}"
-mkdir -p "$out_dir"
 ```
 
 Resolve `repo_root` from the checkout actually being reviewed. For a linked
@@ -244,6 +265,20 @@ elsewhere must add `cwd: repoRoot` to every child-agent options object in its
 example. An exported source directory is not the review checkout. Remove these
 temporary artifacts with the worktree.
 
+**Ensure the artifact folder is gitignored before creating or writing it.**
+Artifacts go under `$repo_root/.tmp/agent-local-ctx/`. Recheck directory-wide
+coverage with `git check-ignore --verbose` on `.tmp/` itself and the intended
+artifact path, not just a file-specific match. If this checkout
+needs a new `.tmp/` or `.worktrees/` repair, complete step 1's directory-ignore
+preflight, including accounting for the repair, before proceeding. Do not
+introduce an unaccounted ignore change after recording a clean fix baseline.
+
+Only after coverage is established, create the output directory:
+
+```bash
+mkdir -p "$out_dir"
+```
+
 Write the diff and file manifest. Diff against the working tree (no `..HEAD`) so
 re-review iterations automatically include uncommitted fixes:
 
@@ -255,11 +290,6 @@ wc -l "$out_dir/diff.patch"
 
 Refuse to proceed if the diff is empty. If it exceeds 5000 lines, warn the user
 and ask whether to proceed — reviewer quality degrades on huge diffs.
-
-**Ensure the artifact folder is gitignored.** Artifacts are written under
-`$repo_root/.tmp/agent-local-ctx/`. If `.tmp/` is not already gitignored (check
-with `grep -q '\.tmp/' "$repo_root/.gitignore"`), ask the user for permission to
-add it. Do not silently modify `.gitignore`.
 
 ## 3. Load project context
 
@@ -986,5 +1016,6 @@ invocations remain unchanged.
 12. Delta mode is only valid when the fix delta is small (~200 lines) and
     confined to files implicated by fixed findings — otherwise escalate to a
     full panel pass.
-13. Never silently modify `.gitignore` — ask permission to add `.tmp/` if
-    missing.
+13. Immediately add missing `.tmp/` or `.worktrees/` directory patterns to the
+    containing checkout's `.gitignore` when used. Preserve existing rules; do
+    not ask for separate approval.

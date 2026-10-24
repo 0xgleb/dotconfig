@@ -53,3 +53,4 @@ direnv/
 
 solana/id.json
 configstore/update-notifier-create-solana-dapp.json
+/ai/pi/workspaces/reviewer/.tmp/

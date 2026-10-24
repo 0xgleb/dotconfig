@@ -73,12 +73,30 @@ repo_root=$(git rev-parse --show-toplevel) || exit 1
 ts=$(date +%Y-%m-%d_%H-%M-%S)
 safe_branch=$(echo "<headRefName>" | tr '/' '_')
 out_dir="$repo_root/.tmp/reviews/pr-${pr_number}-${ts}-${safe_branch}"
-mkdir -p "$out_dir"
 ```
 
 Review artifacts always go under `.tmp/` (review output is local-only and
-ephemeral). Most repos already gitignore `.tmp/`; if this one does not, ask the
-user for permission before adding it. Do not silently modify `.gitignore`.
+ephemeral). Record the working-tree/index state before the ignore preflight.
+Before creating or writing artifacts, verify directory-wide coverage with
+`git check-ignore --verbose` on `.tmp/` itself and the intended artifact path;
+a file-specific match is insufficient. If coverage is missing, immediately add
+its directory pattern to this checkout's `.gitignore`, preserving existing
+rules, then recheck both paths; no separate approval is needed. Apply the same
+rule to `.worktrees/` whenever it is used.
+
+Account for an owned ignore repair as a separate preflight unit through the
+repository's already-authorized checkpoint/publication workflow. Isolate only
+the new ignore hunk, preserving pre-existing changes; never attribute it to the
+PR being reviewed. Preserve ordinary publication gates. If the scoped checkpoint
+or required publication is blocked, leave the repair saved and report the exact
+blocker before starting another work unit.
+
+Only after coverage and any required repair checkpoint are established, create
+the output directory:
+
+```bash
+mkdir -p "$out_dir"
+```
 
 ## 3. Fetch the diff
 
