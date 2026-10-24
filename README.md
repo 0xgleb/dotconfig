@@ -83,16 +83,17 @@ Hooks enforce what instructions alone do not. They are wired in
 **Nushell** is the primary shell. `fj` (also aliased as `jf`) unifies version
 control and developer tools:
 
-| Command                              | Routes to              |
-| ------------------------------------ | ---------------------- |
-| `fj`                                 | `git status` + `gt ls` |
-| `fj ui`                              | `gitui`                |
-| `fj pr list`, `fj pr view 123`       | `gh pr ...`            |
-| `fj issue list`, `fj issue create`   | `gh issue ...`         |
-| `fj mut`, `fj mut -a`                | `gt modify ...`        |
-| `fj ss`, `fj create`, `fj sync`, ... | `gt` (graphite)        |
-| `fj check`                           | repo-specific checks   |
-| anything else                        | `git`                  |
+| Command                              | Routes to                                                       |
+| ------------------------------------ | --------------------------------------------------------------- |
+| `fj`                                 | `but status` on a managed GitButler worktree, else `git status` |
+| `fj ui`                              | `gitui`                                                         |
+| `fj pr list`, `fj pr view 123`       | `gh pr ...`                                                     |
+| `fj issue list`, `fj issue create`   | `gh issue ...`                                                  |
+| `fj mut`, `fj mut -a`                | `but amend` / `git commit --amend`                              |
+| `fj ss`, `fj create`, `fj sync`, ... | `but` or `git`, translated per repo topology                    |
+| `fj check`                           | repo-specific checks                                            |
+| plain git subcommands (`fj add`, …)  | `git`                                                           |
+| anything else                        | error: unknown command                                          |
 
 ### Markdown vault sync (`fj md`)
 

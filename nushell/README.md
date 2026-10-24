@@ -40,7 +40,7 @@ plus the `f`/`j` aliases, for typo tolerance.
 The module is flat — every file lives directly in `fj/`. The `md-` prefix groups
 the markdown-sync files (which would otherwise be a `md/` subdir).
 
-```
+```text
 fj/
   mod.nu              -- main module, exports fj and subcommands
   routing.nu          -- pure routing logic (testable without side effects)

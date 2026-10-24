@@ -297,6 +297,8 @@
 
                 cp ${./nushell/fj/md-lib.test.nu} md-lib.test.nu
                 ${pkgs.nushell}/bin/nu md-lib.test.nu
+                cp ${./nushell/fj/md-sync-lib.test.nu} md-sync-lib.test.nu
+                ${pkgs.nushell}/bin/nu md-sync-lib.test.nu
                 touch $out
               '';
 
