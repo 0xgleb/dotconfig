@@ -234,6 +234,16 @@ out_dir="$repo_root/.tmp/agent-local-ctx/reviews/${ts}-${safe_branch}"
 mkdir -p "$out_dir"
 ```
 
+Resolve `repo_root` from the checkout actually being reviewed. For a linked
+review worktree, run setup there and keep every patch, prompt, report, payload,
+and log under that worktree's `.tmp/`, never the main checkout's `.tmp/`. A
+coordinator running elsewhere must pass the verified review-worktree root to
+workflows and children; neither its own cwd nor the shared Git directory is an
+artifact root. Run the delta workflow from that checkout; a coordinator running
+elsewhere must add `cwd: repoRoot` to every child-agent options object in its
+example. An exported source directory is not the review checkout. Remove these
+temporary artifacts with the worktree.
+
 Write the diff and file manifest. Diff against the working tree (no `..HEAD`) so
 re-review iterations automatically include uncommitted fixes:
 
@@ -678,6 +688,7 @@ const [verifications, sweep] = await parallel([
           `have introduced. Report new_issues only for problems caused by or ` +
           `directly adjacent to the fix.`,
         {
+          cwd: repoRoot,
           label: `verify-fix:${finding.title}`,
           phase: "Verify fixes",
           model: lightModel,
@@ -699,6 +710,7 @@ const [verifications, sweep] = await parallel([
         `nits, and do not duplicate compiler or linter diagnostics. ` +
         `Return findings, or an empty list with clean_reason if clean.`,
       {
+        cwd: repoRoot,
         label: "delta-sweep",
         phase: "Sweep",
         model: lightModel,
