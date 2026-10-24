@@ -7,10 +7,9 @@ const root = fileURLToPath(new URL("../../", import.meta.url))
 const globalPath = `${root}GLOBAL_AGENTS.md`
 const home = readFileSync(`${root}home.nix`, "utf8")
 
-test("one non-autodiscovered global source replaces the two divergent global files", () => {
+test("one non-autodiscovered global source replaces the retired ai global file", () => {
   assert.ok(lstatSync(globalPath).isFile())
   assert.equal(existsSync(`${root}ai/AGENTS.md`), false)
-  assert.equal(existsSync(`${root}ai/pi/AGENTS.md`), false)
   const global = readFileSync(globalPath, "utf8")
   assert.ok(
     /guarantees in tested harness code:[\s\S]*?timed publication/.test(global),
