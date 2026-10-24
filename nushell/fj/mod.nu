@@ -19,6 +19,7 @@ const portable_fj = "@metagendaFj@/bin/fj"
 
 export use md.nu
 export use infra.nu
+export use genie/
 export use cheatsheet.nu
 
 # unified dev command — run `fj help` for details.
