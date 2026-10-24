@@ -23,7 +23,6 @@ let
   runtimeDeps = with pkgs; [
     git
     gh
-    graphite-cli
     gitui
     sqlite
   ];
