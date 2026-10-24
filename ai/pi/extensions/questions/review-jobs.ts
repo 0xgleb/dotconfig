@@ -342,6 +342,48 @@ export const createQuestionReviewJobs = (runtime: Runtime) => {
       ...(reason === undefined ? {} : { reason }),
     }
   }
+  const publishReviewed = async (
+    job: Job,
+    draft: AskQualityInput,
+    pass: number,
+    completion: "critic-accepted" | "author-revised",
+  ) => {
+    job.snapshot = { ...job.snapshot, reviewedHash: fingerprint(draft) }
+    if (!stage(job, "publishing", pass)) return
+    const request: ReviewableQuestion =
+      job.request.action === "ask"
+        ? { action: "ask", ...draft }
+        : {
+            action: "replace",
+            id: job.request.id,
+            reason: job.request.reason,
+            ...draft,
+          }
+    const published = await runtime.publish(request, job.context)
+    if (published.outcome === "queued") {
+      if (
+        !Number.isSafeInteger(published.questionId) ||
+        published.questionId < 1
+      )
+        finish(
+          job,
+          "interrupted",
+          "Question publication returned an invalid identifier; inspect state before resubmitting.",
+        )
+      else
+        finish(
+          job,
+          "queued-question",
+          `${completion === "author-revised" ? "Final author revision incorporated the completed critique. " : ""}Question state created; Telegram delivery is not yet confirmed.`,
+          published.questionId,
+        )
+    } else
+      finish(
+        job,
+        "unavailable",
+        `Question publication rejected: ${published.reason}`,
+      )
+  }
   const process = async (job: Job) => {
     let draft = fields(job.request)
     for (let pass = 1; pass <= 2; pass++) {
@@ -373,40 +415,7 @@ export const createQuestionReviewJobs = (runtime: Runtime) => {
         return
       }
       if (verdict.right.admissible) {
-        job.snapshot = { ...job.snapshot, reviewedHash: fingerprint(draft) }
-        if (!stage(job, "publishing", pass)) return
-        const request: ReviewableQuestion =
-          job.request.action === "ask"
-            ? { action: "ask", ...draft }
-            : {
-                action: "replace",
-                id: job.request.id,
-                reason: job.request.reason,
-                ...draft,
-              }
-        const published = await runtime.publish(request, job.context)
-        if (published.outcome === "queued") {
-          if (
-            !Number.isSafeInteger(published.questionId) ||
-            published.questionId < 1
-          )
-            finish(
-              job,
-              "interrupted",
-              "Question publication returned an invalid identifier; inspect state before resubmitting.",
-            )
-          else
-            finish(
-              job,
-              "queued-question",
-              "Question state created; Telegram delivery is not yet confirmed.",
-              published.questionId,
-            )
-        } else finish(job, "needs-revision", published.reason)
-        return
-      }
-      if (pass === 2) {
-        finish(job, "needs-revision", verdict.right.reason)
+        await publishReviewed(job, draft, pass, "critic-accepted")
         return
       }
       if (!stage(job, "revising", pass)) return
@@ -447,6 +456,10 @@ export const createQuestionReviewJobs = (runtime: Runtime) => {
         return
       }
       draft = candidate
+      if (pass === 2) {
+        await publishReviewed(job, draft, pass, "author-revised")
+        return
+      }
     }
   }
   const drain = async () => {
