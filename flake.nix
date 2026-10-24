@@ -179,8 +179,6 @@
           };
         in
         {
-          git-hooks = gitHooks.aarch64-darwin;
-
           obsidian-packaging =
             let
               obsidian = self.legacyPackages.aarch64-darwin.obsidian;
