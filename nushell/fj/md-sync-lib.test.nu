@@ -1,0 +1,354 @@
+use std/assert
+
+source md-sync-lib.nu
+
+# --- undot ---
+
+def "test undot strips leading dots from segments" [] {
+  assert equal (undot ".local/prompts/foo.md") "local/prompts/foo.md"
+}
+
+def "test undot strips dots from multiple segments" [] {
+  assert equal (undot ".config/.hidden/file.md") "config/hidden/file.md"
+}
+
+def "test undot leaves non-dotted paths unchanged" [] {
+  assert equal (undot "docs/cqrs.md") "docs/cqrs.md"
+}
+
+def "test undot handles single file" [] {
+  assert equal (undot ".gitignore") "gitignore"
+}
+
+def "test undot preserves dots mid-segment" [] {
+  assert equal (undot "st0x.liquidity/README.md") "st0x.liquidity/README.md"
+}
+
+# --- note-file mapping (.local stripping + undot), exported from md-sync-lib ---
+
+def "test note-file strips .local and undots" [] {
+  assert equal (note-file ".local/prompts/01-setup.md") "prompts/01-setup.md"
+}
+
+def "test note-file passes through normal paths" [] {
+  assert equal (note-file "docs/cqrs.md") "docs/cqrs.md"
+}
+
+def "test note-file handles .local with nested dirs" [] {
+  assert equal (note-file ".local/prompts/deep/file.md") "prompts/deep/file.md"
+}
+
+# --- repo-for-path ---
+
+def test-targets [] {
+  [
+    { name: "liquidity", path: "/org/st0x.liquidity" }
+    { name: "issuance", path: "/org/st0x.issuance" }
+    {
+      name: "liquidity/worktrees/untouchable"
+      path: "/org/st0x.liquidity/.worktrees/feat/untouchable"
+    }
+  ]
+}
+
+def "test repo-for-path matches repo file" [] {
+  let result = (repo-for-path "/org/st0x.liquidity/docs/cqrs.md" (test-targets) "/org/notes")
+  assert equal $result "liquidity"
+}
+
+def "test repo-for-path matches worktree over main repo" [] {
+  let result = (repo-for-path
+    "/org/st0x.liquidity/.worktrees/feat/untouchable/docs/cqrs.md"
+    (test-targets)
+    "/org/notes")
+  assert equal $result "liquidity/worktrees/untouchable"
+}
+
+def "test repo-for-path matches notes path to repo" [] {
+  let result = (repo-for-path "/org/notes/liquidity/docs/cqrs.md" (test-targets) "/org/notes")
+  assert equal $result "liquidity"
+}
+
+def "test repo-for-path matches notes path to worktree" [] {
+  let result = (repo-for-path
+    "/org/notes/liquidity/worktrees/untouchable/docs/cqrs.md"
+    (test-targets)
+    "/org/notes")
+  assert equal $result "liquidity/worktrees/untouchable"
+}
+
+def "test repo-for-path returns null for unknown path" [] {
+  let result = (repo-for-path "/somewhere/else/file.md" (test-targets) "/org/notes")
+  assert equal $result null
+}
+
+# --- atomic-cp ---
+
+def "test atomic-cp copies file correctly" [] {
+  with-temp-dir {|dir|
+    let src = $"($dir)/src.md"
+    let dst = $"($dir)/dst.md"
+    "hello world" | save $src
+    atomic-cp $src $dst
+    assert equal (open --raw $dst | str trim) "hello world"
+  }
+}
+
+def "test atomic-cp does not leave tmp file on success" [] {
+  with-temp-dir {|dir|
+    let src = $"($dir)/src.md"
+    let dst = $"($dir)/dst.md"
+    "content" | save $src
+    atomic-cp $src $dst
+    assert (not ($"($dst).md-sync-tmp" | path exists))
+  }
+}
+
+# --- guard-empty-overwrite ---
+
+def "test guard-empty-overwrite allows non-empty to overwrite" [] {
+  with-temp-dir {|dir|
+    let newer = $"($dir)/newer.md"
+    let older = $"($dir)/older.md"
+    "new content" | save $newer
+    "old content" | save $older
+    guard-empty-overwrite $newer $older
+  }
+}
+
+def "test guard-empty-overwrite rejects empty overwrite" [] {
+  with-temp-dir {|dir|
+    let newer = $"($dir)/newer.md"
+    let older = $"($dir)/older.md"
+    "" | save $newer
+    "real content" | save $older
+    try {
+      guard-empty-overwrite $newer $older
+      assert false "should have errored"
+    } catch {|e|
+      assert ($e.msg | str contains "refusing to overwrite")
+    }
+  }
+}
+
+# --- sync-file (integration with temp dirs) ---
+
+def with-temp-dir [block: closure] {
+  let dir = (mktemp -d)
+  try {
+    do $block $dir
+  } catch {|e|
+    rm -rf $dir
+    error make { msg: $e.msg }
+  }
+  rm -rf $dir
+}
+
+def "test sync-file copies new file" [] {
+  with-temp-dir {|dir|
+    let src = $"($dir)/src.md"
+    let dst = $"($dir)/dst.md"
+    "hello" | save $src
+    sync-file $src $dst "test-repo" "src.md"
+    assert equal (open --raw $dst | str trim) "hello"
+  }
+}
+
+def "test sync-file repo-to-notes when src is newer" [] {
+  with-temp-dir {|dir|
+    let src = $"($dir)/src.md"
+    let dst = $"($dir)/dst.md"
+    "old content" | save $dst
+    sleep 100ms
+    "new content" | save $src
+    sync-file $src $dst "test-repo" "src.md"
+    assert equal (open --raw $dst | str trim) "new content"
+  }
+}
+
+def "test sync-file notes-to-repo when dst is newer" [] {
+  with-temp-dir {|dir|
+    let src = $"($dir)/src.md"
+    let dst = $"($dir)/dst.md"
+    "old content" | save $src
+    sleep 100ms
+    "new content" | save $dst
+    sync-file $src $dst "test-repo" "src.md"
+    assert equal (open --raw $src | str trim) "new content"
+  }
+}
+
+def "test sync-file rejects empty overwriting non-empty" [] {
+  with-temp-dir {|dir|
+    let src = $"($dir)/src.md"
+    let dst = $"($dir)/dst.md"
+    "real content here" | save $dst
+    sleep 100ms
+    "" | save $src
+    let original = (open --raw $dst)
+    try {
+      sync-file $src $dst "test-repo" "src.md"
+      assert false "should have errored"
+    } catch {|e|
+      assert ($e.msg | str contains "refusing to overwrite")
+    }
+    assert equal (open --raw $dst) $original
+  }
+}
+
+def "test sync-file no-op when files are identical" [] {
+  with-temp-dir {|dir|
+    let src = $"($dir)/src.md"
+    let dst = $"($dir)/dst.md"
+    "same" | save $src
+    "same" | save $dst
+    let src_mod_before = (ls -l $src | first | get modified)
+    sleep 100ms
+    sync-file $src $dst "test-repo" "src.md"
+    let src_mod_after = (ls -l $src | first | get modified)
+    assert equal $src_mod_before $src_mod_after
+  }
+}
+
+# --- md-files (integration with temp git repo) ---
+
+def "test md-files finds committed md files" [] {
+  with-temp-dir {|dir|
+    git -C $dir init
+    "# readme" | save $"($dir)/README.md"
+    "code" | save $"($dir)/main.rs"
+    git -C $dir add -A
+    git -C $dir commit -m "init"
+    let files = (md-files $dir)
+    assert ($files | any {|f| $f == "README.md" })
+    assert (not ($files | any {|f| $f == "main.rs" }))
+  }
+}
+
+def "test md-files finds .local files" [] {
+  with-temp-dir {|dir|
+    git -C $dir init
+    "# readme" | save $"($dir)/README.md"
+    git -C $dir add -A
+    git -C $dir commit -m "init"
+    mkdir $"($dir)/.local/prompts"
+    "prompt content" | save $"($dir)/.local/prompts/01-setup.md"
+    let files = (md-files $dir)
+    assert ($files | any {|f| $f == "README.md" })
+    assert ($files | any {|f| $f == ".local/prompts/01-setup.md" })
+  }
+}
+
+# --- full sync-repo integration ---
+
+def "test sync-repo syncs committed files to notes" [] {
+  with-temp-dir {|dir|
+    let repo = $"($dir)/repo"
+    let notes = $"($dir)/notes"
+    mkdir $repo
+    mkdir $notes
+    git -C $repo init
+    mkdir $"($repo)/docs"
+    "# arch" | save $"($repo)/docs/architecture.md"
+    "# readme" | save $"($repo)/README.md"
+    git -C $repo add -A
+    git -C $repo commit -m "init"
+    sync-repo $repo "test-repo" $notes
+    assert ($"($notes)/test-repo/README.md" | path exists)
+    assert ($"($notes)/test-repo/docs/architecture.md" | path exists)
+  }
+}
+
+def "test sync-repo maps .local files stripping prefix" [] {
+  with-temp-dir {|dir|
+    let repo = $"($dir)/repo"
+    let notes = $"($dir)/notes"
+    mkdir $repo
+    mkdir $notes
+    git -C $repo init
+    "# readme" | save $"($repo)/README.md"
+    git -C $repo add -A
+    git -C $repo commit -m "init"
+    mkdir $"($repo)/.local/prompts"
+    "prompt" | save $"($repo)/.local/prompts/01-setup.md"
+    sync-repo $repo "test-repo" $notes
+    assert ($"($notes)/test-repo/prompts/01-setup.md" | path exists)
+    assert (not ($"($notes)/test-repo/.local" | path exists))
+  }
+}
+
+# --- note-file anchoring + collisions (non-injective mapping regression) ---
+
+def "test note-file leaves mid-path .local untouched" [] {
+  # Only a LEADING .local/ is stripped; a committed path that merely contains
+  # .local/ mid-path keeps its structure (undot still drops the leading dot).
+  assert equal (note-file "docs/.local/x.md") "docs/local/x.md"
+}
+
+def "test note-collisions flags distinct sources mapping to one note" [] {
+  let collisions = (note-collisions [".local/prompts/x.md" "prompts/x.md" "docs/unique.md"])
+  assert equal ($collisions | length) 1
+  assert equal ($collisions | first | get note) "prompts/x.md"
+  assert equal ($collisions | first | get files | sort) [".local/prompts/x.md" "prompts/x.md"]
+}
+
+def "test note-collisions empty when all paths distinct" [] {
+  assert equal (note-collisions ["a.md" "docs/b.md" ".local/c.md"]) []
+}
+
+# --- sync-file backup-before-clobber (recoverability backstop) ---
+
+def "test sync-file backs up the overwritten side on clobber" [] {
+  with-temp-dir {|dir|
+    let notes = $"($dir)/notes"
+    mkdir $"($notes)/repo"
+    let src = $"($notes)/repo/src.md"
+    let dst = $"($notes)/repo/dst.md"
+    "vault old content" | save $dst
+    sleep 100ms
+    "repo new content" | save $src
+    sync-file $src $dst "repo" "src.md" $notes
+    assert equal (open --raw $dst | str trim) "repo new content"
+    let backups = (glob $"($notes)/.md-sync-conflicts/repo/*.bak")
+    assert equal ($backups | length) 1
+    assert equal (open --raw ($backups | first) | str trim) "vault old content"
+  }
+}
+
+# --- sync-repo collision handling ---
+
+def "test sync-repo skips colliding note paths" [] {
+  with-temp-dir {|dir|
+    let repo = $"($dir)/repo"
+    let notes = $"($dir)/notes"
+    mkdir $repo
+    mkdir $notes
+    git -C $repo init
+    mkdir $"($repo)/prompts"
+    "committed" | save $"($repo)/prompts/x.md"
+    git -C $repo add -A
+    git -C $repo commit -m "init"
+    mkdir $"($repo)/.local/prompts"
+    "local" | save $"($repo)/.local/prompts/x.md"
+
+    # both map to prompts/x.md -> collision -> neither is synced
+    sync-repo $repo "test-repo" $notes
+    assert (not ($"($notes)/test-repo/prompts/x.md" | path exists))
+  }
+}
+
+# --- test runner ---
+
+def main [] {
+  print "Running md-sync tests..."
+  let tests = (scope commands
+    | where ($it.type == "custom") and ($it.name | str starts-with "test ")
+    | get name)
+
+  let test_commands = ($tests
+    | each {|test_name| $"($test_name); print '  ok ($test_name)'" }
+    | str join "; ")
+
+  nu --commands $"source ($env.CURRENT_FILE); ($test_commands)"
+  print $"(ansi green)All ($tests | length) tests passed(ansi reset)"
+}

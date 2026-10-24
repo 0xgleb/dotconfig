@@ -72,7 +72,7 @@ return {
         -- ╭─────────────────────────────────────────╮
         -- │ SPC c — Code / LSP                       │
         -- ╰─────────────────────────────────────────╯
-        ["<Leader>c"] = { desc = "Code" },
+        ["<Leader>c"] = false,
         ["<Leader>cd"] = { function() vim.lsp.buf.definition() end, desc = "Go to definition" },
         ["<Leader>cD"] = { function() vim.lsp.buf.references() end, desc = "Find references" },
         ["<Leader>ca"] = { function() vim.lsp.buf.code_action() end, desc = "Code action" },
@@ -269,4 +269,15 @@ return {
       },
     },
   },
+  config = function(_, opts)
+    opts.diagnostics.jump = {
+      on_jump = function(_, bufnr)
+        vim.diagnostic.open_float { bufnr = bufnr, scope = "cursor", focus = false }
+      end,
+    }
+    require("astrocore").setup(opts)
+    vim.keymap.set("v", "<Leader>/", function() require("telescope.builtin").live_grep() end, {
+      desc = "Search project",
+    })
+  end,
 }

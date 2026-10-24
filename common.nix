@@ -1,7 +1,4 @@
-{
-  pkgs,
-  ...
-}:
+{ pkgs, ... }:
 let
   # User configuration (source of truth)
   user = {
@@ -64,7 +61,7 @@ in
       fswatch
 
       # # AI
-      # opencode
+      opencode
       ollama
 
       # Nix tools
@@ -80,9 +77,14 @@ in
   };
 
   nix.settings = {
-    experimental-features = "nix-command flakes";
+    experimental-features = [
+      "nix-command"
+      "flakes"
+    ];
     trusted-users = [ "0xgleb" ];
     substituters = [ "https://cache.nixos.org" ];
-    trusted-public-keys = [ "cache.nixos.org-1:6NCHdD59X431o0gWypbMrAURkbJ16ZPMQFGspcDShjY=" ];
+    trusted-public-keys = [
+      "cache.nixos.org-1:6NCHdD59X431o0gWypbMrAURkbJ16ZPMQFGspcDShjY="
+    ];
   };
 }

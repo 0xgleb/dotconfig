@@ -164,12 +164,12 @@ AstroNvim v5 config managed alongside the nix-darwin flake.
 
 ### Useful Built-in Commands
 
-| Command            | Action                         |
-| ------------------ | ------------------------------ |
-| `:LspInfo`         | Show attached LSP clients      |
-| `:checkhealth lsp` | Diagnose LSP issues            |
-| `:Lazy`            | Plugin manager                 |
-| `:Mason`           | LSP/linter/formatter installer |
+| Command            | Action                                          |
+| ------------------ | ----------------------------------------------- |
+| `:LspInfo`         | Show attached LSP clients                       |
+| `:checkhealth lsp` | Diagnose LSP issues                             |
+| `:Lazy`            | Plugin manager                                  |
+| `:Mason`           | Disabled — LSP servers come from Nix, not Mason |
 
 ## Structure
 

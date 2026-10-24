@@ -16,6 +16,7 @@ return {
     },
     servers = {
       "lua_ls",
+      "move_analyzer",
       "nil_ls",
       "ts_ls",
       "svelte",
@@ -66,7 +67,7 @@ return {
           function() require("astrolsp.toggles").buffer_semantic_tokens() end,
           desc = "Toggle LSP semantic highlight (buffer)",
           cond = function(client)
-            return client.supports_method "textDocument/semanticTokens/full" and vim.lsp.semantic_tokens ~= nil
+            return client:supports_method "textDocument/semanticTokens/full" and vim.lsp.semantic_tokens ~= nil
           end,
         },
       },

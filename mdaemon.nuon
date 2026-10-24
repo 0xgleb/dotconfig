@@ -1,1 +1,8 @@
-{vault: ~/notes, orgs: ["~/code/st0x", ~/code/data-cartel/]}
+{ vault:
+    "~/Library/Mobile Documents/iCloud~md~obsidian/Documents/repos",
+    orgs: [
+        "~/code/0xgleb/",
+        "~/code/data-cartel/",
+        "~/code/rainlanguage/"
+    ]
+}

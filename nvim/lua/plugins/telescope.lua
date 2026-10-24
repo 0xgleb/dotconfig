@@ -1,14 +1,13 @@
 ---@type LazySpec
 return {
   {
-    "nvim-telescope/telescope-fzf-native.nvim",
-    build = "make",
-    lazy = false,
-    config = function() require("telescope").load_extension "fzf" end,
-    dependencies = { "nvim-telescope/telescope.nvim" },
-  },
-  {
     "nvim-telescope/telescope.nvim",
+    dependencies = {
+      {
+        "nvim-telescope/telescope-fzf-native.nvim",
+        build = "make",
+      },
+    },
     opts = function(_, opts)
       local actions = require "telescope.actions"
       opts.defaults = vim.tbl_deep_extend("force", opts.defaults or {}, {
@@ -39,6 +38,10 @@ return {
           file_ignore_patterns = { "^%.git/", "^%.worktrees/" },
         },
       })
+    end,
+    config = function(_, opts)
+      require("telescope").setup(opts)
+      require("telescope").load_extension "fzf"
     end,
   },
 }

@@ -1,0 +1,3 @@
+ancestorEntries = ["ai/pi/extensions/browser-control/core.ts"]
+ourEntries = ["ai/pi/extensions/browser-control/core.ts", "ai/pi/extensions/browser-control/extension-protocol.test.ts", "ai/pi/extensions/browser-control/extension-protocol.ts", "ai/pi/extensions/browser-control/extension-transport.test.ts", "ai/pi/extensions/browser-control/extension-transport.ts"]
+theirEntries = ["ai/pi/extensions/browser-control/core.ts", "ai/pi/extensions/browser-control/extension-protocol.test.ts", "ai/pi/extensions/browser-control/extension-protocol.ts", "ai/pi/extensions/browser-control/extension-transport.test.ts", "ai/pi/extensions/browser-control/extension-transport.ts"]
