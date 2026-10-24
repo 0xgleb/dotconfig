@@ -183,6 +183,15 @@ export function resolveActionDecision(
     : { block: true, reason: formatDecisionReason(decision) }
 }
 
+/**
+ * Total classifier invocations for a candidate set: rotate the distinct
+ * candidates once, then retry the final candidate (the session model). Never
+ * spend fewer than three total attempts so one transient provider failure
+ * cannot exhaust the classification budget.
+ */
+export const classifierAttemptBudget = (candidateCount: number): number =>
+  Math.max(3, candidateCount + (candidateCount > 1 ? 1 : 0))
+
 export interface WithheldExecutedToolResultPatch {
   content: Array<{ type: "text"; text: string }>
   details: undefined
