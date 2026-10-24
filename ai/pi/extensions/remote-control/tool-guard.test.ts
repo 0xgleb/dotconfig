@@ -34,13 +34,14 @@ test("remote turns mechanically disable tools and restore the exact prior set on
   assert.deepEqual(writes, [[], [], ["read", "bash", "todo"]])
 })
 
-test("management turns retain only already-active coordination tools, never execution", () => {
+test("management turns retain active coordination, read and question tools, never execution", () => {
   let active = [
     "read",
     "bash",
     "todo",
     "agent_registry",
     "manager_control",
+    "ask_user",
     "workflow",
   ]
   const prior = [...active]
@@ -53,10 +54,17 @@ test("management turns retain only already-active coordination tools, never exec
     },
     "management",
   )
-  assert.deepEqual(active, ["todo", "agent_registry", "manager_control"])
+  const permitted = [
+    "read",
+    "todo",
+    "agent_registry",
+    "manager_control",
+    "ask_user",
+  ]
+  assert.deepEqual(active, permitted)
   active = ["bash", "todo"]
   guard.enforce()
-  assert.deepEqual(active, ["todo", "agent_registry", "manager_control"])
+  assert.deepEqual(active, permitted)
   guard.restore()
   assert.deepEqual(active, prior)
 })
