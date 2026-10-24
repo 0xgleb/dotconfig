@@ -114,8 +114,17 @@
           };
           atuinFlags =
             self.darwinConfigurations.darwwwin.config.home-manager.users."0xgleb".programs.atuin.flags;
+          # The extension tests import the `effect` package from the same
+          # production node_modules Home Manager links into the live tree.
+          piTestNodeModules = pkgs.importNpmLock.buildNodeModules {
+            npmRoot = ./ai/pi/extensions;
+            inherit (pkgs) nodejs;
+            derivationArgs.npmInstallFlags = "--legacy-peer-deps --omit=dev";
+          };
         in
         {
+          git-hooks = gitHooks.aarch64-darwin;
+
           obsidian-packaging =
             let
               obsidian = self.legacyPackages.aarch64-darwin.obsidian;
@@ -243,18 +252,15 @@
                 touch $out
               '';
 
-          pi-host-patch =
-            pkgs.runCommand "pi-host-patch-test"
+          pi-extension-contracts =
+            pkgs.runCommand "pi-extension-contracts-test"
               {
                 nativeBuildInputs = with pkgs; [ nodejs ];
               }
               ''
                 cp -r ${./ai} ai
                 chmod -R u+w ai
-                cp ${./flake.nix} flake.nix
-                cp ${./home.nix} home.nix
-                node --test ai/test/pi-host-patch.test.ts
-                node --test ai/test/pi-bounded-session-reader.test.ts
+                ln -s ${piTestNodeModules}/node_modules ai/pi/extensions/node_modules
                 node --test ai/pi/extensions/classified-workflows/loop.test.ts
                 touch $out
               '';
