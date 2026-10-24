@@ -5,22 +5,24 @@
 1. **Loopback HTTP JSON → typed job request.** Browser, CLI, and model-mediated
    callers are untrusted until the registered job-kind decoder accepts the whole
    payload.
-2. **Worker claim/heartbeat/result → current attempt.** A session or stale process
-   can present an old worker identity or lease token after expiry/reassignment.
+2. **Worker claim/heartbeat/result → current attempt.** A session or stale
+   process can present an old worker identity or lease token after
+   expiry/reassignment.
 3. **Persisted SQLite rows → domain state.** Corruption, partial migration, or a
    newer schema can violate the discriminated-union invariants.
 4. **Model output → job lifecycle.** A completion may describe work but cannot
    register a job kind, supply executable code, or authorize a transition.
-5. **Dashboard/Telegram command → control transition.** Authentication identifies
-   the caller; it does not itself grant cancellation, retry, repository, review,
-   deployment, wallet, or approval authority.
+5. **Dashboard/Telegram command → control transition.** Authentication
+   identifies the caller; it does not itself grant cancellation, retry,
+   repository, review, deployment, wallet, or approval authority.
 6. **Typed executor job → Claude/Cursor process.** Repository identity, lane,
-   model, task family, and limits are untrusted until an exact registered adapter
-   builds argv and prompt from source-owned templates. No job field becomes a
-   command, flag, endpoint, plugin, environment variable, or free-form prompt.
-7. **Harness handoff → supervisor result.** Executor output is an untrusted claim
-   until its version, task/repository/head identity, status, provenance, bounds,
-   and independent verifier evidence match the live attempt.
+   model, task family, and limits are untrusted until an exact registered
+   adapter builds argv and prompt from source-owned templates. No job field
+   becomes a command, flag, endpoint, plugin, environment variable, or free-form
+   prompt.
+7. **Harness handoff → supervisor result.** Executor output is an untrusted
+   claim until its version, task/repository/head identity, status, provenance,
+   bounds, and independent verifier evidence match the live attempt.
 
 ## Assets
 
@@ -29,8 +31,8 @@
 - Existing classifier and project-tool authority boundaries.
 - Bounded, non-sensitive audit history.
 - Scheduler availability under malformed or excessive input.
-- The user's local session and repository state, which a job payload must never be
-  able to mutate directly.
+- The user's local session and repository state, which a job payload must never
+  be able to mutate directly.
 - Subscription/API billing provenance and the capacity Pi reserves for its own
   classification, registry, Telegram, and final-gate work, kept separate from
   what job attempts may spend.
@@ -76,16 +78,17 @@ relative or protected repository paths, malformed head identity (wrong length,
 non-hex, or wrong case), API/custom endpoint/force/plugin/MCP flags, malformed
 or oversized handoffs, and handoffs whose head, job id, attempt, repository,
 lane, or verification status does not match the leased payload. They do not
-prove rejection of a well-formed but stale head — the head is checked for
-format and for self-consistency against the payload/handoff pair, not against
-the repository's live ref (see the Tampering row above). The Cursor payload variant fixes
-`task: "review-probe"` and `isolation: "read-only"`, so no mutating Cursor
+prove rejection of a well-formed but stale head — the head is checked for format
+and for self-consistency against the payload/handoff pair, not against the
+repository's live ref (see the Tampering row above). The Cursor payload variant
+fixes `task: "review-probe"` and `isolation: "read-only"`, so no mutating Cursor
 payload is representable — Cursor mutation is ineligible by construction, not
 merely rejected at runtime. Model output cannot select a lane or terminal
 transition: only the registered decoders and the handoff-matching check drive
 those transitions.
 
-The SQLite adapter and HTTP server must add red tests for concurrent atomic claim,
-duplicate idempotent enqueue, schema corruption/version drift, oversized bodies,
-unknown routes/methods, non-loopback binding, event redaction, lease heartbeat and
-expiry races, and service restart recovery before those boundaries are implemented.
+The SQLite adapter and HTTP server must add red tests for concurrent atomic
+claim, duplicate idempotent enqueue, schema corruption/version drift, oversized
+bodies, unknown routes/methods, non-loopback binding, event redaction, lease
+heartbeat and expiry races, and service restart recovery before those boundaries
+are implemented.

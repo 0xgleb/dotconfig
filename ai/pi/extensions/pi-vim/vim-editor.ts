@@ -77,8 +77,7 @@ export class VimEditor extends CustomEditor {
     cursorCol: number
   }> = []
   private wrapAutocomplete:
-    | ((provider: AutocompleteProvider) => AutocompleteProvider)
-    | undefined
+    ((provider: AutocompleteProvider) => AutocompleteProvider) | undefined
   private readonly isStreaming: () => boolean
   private readonly onFollowUp: ((text: string) => void) | undefined
   private readonly onAttachment:

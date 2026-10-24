@@ -50,19 +50,20 @@ when changing Pi here; do not create a competing project copy of global policy.
   shared packages, `darwin.nix` macOS packages and settings, `nixos.nix` NixOS
   packages and settings, and `home.nix` Home Manager programs and links.
 - Build without applying with `darwin-rebuild build --flake ~/.config`; apply
-  authorized configuration changes with `darwin-rebuild switch --flake ~/.config`.
-  Use `nixfmt` for changed Nix files.
+  authorized configuration changes with
+  `darwin-rebuild switch --flake ~/.config`. Use `nixfmt` for changed Nix files.
 - Home Manager owns Neovim. Do not add `neovim` to `common.nix` or `darwin.nix`.
   Mason is disabled. Add language binaries to `programs.neovim.extraPackages` in
   `home.nix` and register their lspconfig names in `astrolsp opts.servers` in
   `nvim/lua/plugins/astrolsp.lua`; both are required.
 - Do not use `rustaceanvim`. It bypasses the standard lspconfig flow and breaks
   semantic LSP actions. Rust uses rust-analyzer through standard lspconfig.
-- Doom is managed declaratively via nix-doom-emacs-unstraightened. No `doom sync`:
-  edit `doom/` and apply through the authorized `darwin-rebuild switch` workflow.
+- Doom is managed declaratively via nix-doom-emacs-unstraightened. No
+  `doom sync`: edit `doom/` and apply through the authorized
+  `darwin-rebuild switch` workflow.
 - Shared skills stay in `ai/skills/`, exposed through harness symlinks. Use
-  `new-skill` to create a skill and verify its harness links, not copied per-harness
-  skill directories.
+  `new-skill` to create a skill and verify its harness links, not copied
+  per-harness skill directories.
 
 # Neovim Config
 

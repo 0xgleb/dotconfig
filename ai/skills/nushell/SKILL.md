@@ -26,8 +26,8 @@ per-command docs).
 
 Reach for nushell when the task is **structured-data processing** — parsing
 JSON/CSV/TOML/YAML, filtering and reshaping tables, multi-step pipelines, or
-correlating fields across records. It replaces ad-hoc `python3`/`jq`/`awk`/`perl`
-scripts, which are forbidden.
+correlating fields across records. It replaces ad-hoc
+`python3`/`jq`/`awk`/`perl` scripts, which are forbidden.
 
 Do **not** use it for plain file search/read — the dedicated tools (Grep, Glob,
 Read) are better for that. Use nushell for the structured step, not as a generic
@@ -54,13 +54,13 @@ The single most common breakage is shell quoting. The reliable patterns:
 
 Two things that look like nushell problems but are not:
 
-- **`print` is a nushell builtin, not a bash one.** `print "x"` works *inside*
+- **`print` is a nushell builtin, not a bash one.** `print "x"` works _inside_
   `nu -c '...'`. Using `print` as a separator in a plain bash line fails with
   `print: command not found`. Keep nu code inside `nu -c`/a `.nu` file.
 - **Piping another command's stdout into `nu` can deliver empty input.** Many
-  CLIs (e.g. some `gh` paths) suppress or reformat stdout when not a
-  TTY, so `some-cmd | nu -c 'from json | ...'` hits `from json` with empty input
-  and errors `Pipeline empty`. **Fix:** redirect to a file first, then open it —
+  CLIs (e.g. some `gh` paths) suppress or reformat stdout when not a TTY, so
+  `some-cmd | nu -c 'from json | ...'` hits `from json` with empty input and
+  errors `Pipeline empty`. **Fix:** redirect to a file first, then open it —
   `some-cmd > .tmp/out.json` then `nu -c 'open .tmp/out.json | ...'`. This is
   more robust than piping and lets you re-inspect the raw bytes.
 
@@ -98,47 +98,48 @@ Debugging types: `... | describe` tells you whether a value is a `record`,
 ## Mental model — internalize these
 
 1. **Commands return typed VALUES, not text streams.** `ls` is a table,
-   `open x.json` is a record/table, `echo "x"` is the string value `x`. Pipelines
-   carry values. This is the biggest shift from bash.
+   `open x.json` is a record/table, `echo "x"` is the string value `x`.
+   Pipelines carry values. This is the biggest shift from bash.
 2. **Only the last value of a block/script is returned/displayed.** `40; 50; 60`
    yields `60`; earlier results are discarded. Use `print` for deliberate
    side-channel output that must NOT become the return value.
 3. **Two stages: parse-time then eval-time. There is no `eval`.** You cannot
-   build a command string at runtime and run it. Paths for `source`/`use` must be
-   `const` (parse-time), never `let` (runtime) — `let` there errors
+   build a command string at runtime and run it. Paths for `source`/`use` must
+   be `const` (parse-time), never `let` (runtime) — `let` there errors
    `not_a_constant`.
 4. **Immutable by default.** `let` is fixed, `mut` is mutable, `const` is
    parse-time. Closures (passed to `each`/`where`/`reduce`) **cannot mutate an
-   outer `mut`** (`Capture of mutable variable`). Accumulate with `reduce`, or use
-   a `for` loop (a block, runs in current scope) when you truly need mutation.
+   outer `mut`** (`Capture of mutable variable`). Accumulate with `reduce`, or
+   use a `for` loop (a block, runs in current scope) when you truly need
+   mutation.
 5. **`;` is sequencing, not `&&`/`||`.** `&&`/`||` are not command-chaining
-   operators; `and`/`or` are boolean operators on values. `;` also breaks `$in` —
-   only `|` passes data downstream.
+   operators; `and`/`or` are boolean operators on values. `;` also breaks `$in`
+   — only `|` passes data downstream.
 
 ## Idiom reference
 
-| Goal | Nushell |
-|---|---|
-| Field / index access | `$rec.key`, `$list.0`, `$table.col.2` (0-based) |
+| Goal                          | Nushell                                                                 |
+| ----------------------------- | ----------------------------------------------------------------------- |
+| Field / index access          | `$rec.key`, `$list.0`, `$table.col.2` (0-based)                         |
 | Safe access (missing -> null) | `$rec.key?` &nbsp;or&nbsp; `get key?` &nbsp;or&nbsp; `get -o some.path` |
-| Fallback for null/missing | `$rec.key? \| default "n/a"` |
-| Dynamic key from a variable | `$rec \| get $keyvar` (dot syntax can't take a var) |
-| Filter rows | `$t \| where status == "open"` &nbsp;/&nbsp; `where $it > 7` |
-| Map | `$xs \| each {\|x\| $"item ($x)" }` |
-| With index | `$xs \| enumerate \| each {\|e\| $"($e.index): ($e.item)" }` |
-| Fold/accumulate | `$xs \| reduce --fold 0 {\|elt, acc\| $acc + $elt }` |
-| Any / all | `$xs \| any {\|x\| $x > 0 }` / `all {\|x\| ... }` |
-| Pick columns (keep table) | `$t \| select a b` |
-| Extract values (lose table) | `$t \| get a` |
-| Drop columns | `$t \| reject a b` |
-| Sort / slice | `$t \| sort-by size \| first 5 \| skip 1` |
-| String interpolation | `$"hello ($name), ($xs \| length) items"` |
-| Concatenate | `$a ++ $b` (lists/strings) &nbsp;or&nbsp; `+` |
-| Parse text -> table | `... \| lines \| split column "\|" a b c \| str trim` |
-| Regex extract | `"v1.2" \| parse --regex '(?<maj>\d+)\.(?<min>\d+)'` |
-| if / match (expressions) | `if $x > 0 { "pos" } else { "neg" }` |
-| Env var, safe read | `$env.FOO? \| default "x"` ; set: `$env.FOO = "x"` |
-| Scoped env | `with-env { TOKEN: $t } { ^tool fetch }` |
+| Fallback for null/missing     | `$rec.key? \| default "n/a"`                                            |
+| Dynamic key from a variable   | `$rec \| get $keyvar` (dot syntax can't take a var)                     |
+| Filter rows                   | `$t \| where status == "open"` &nbsp;/&nbsp; `where $it > 7`            |
+| Map                           | `$xs \| each {\|x\| $"item ($x)" }`                                     |
+| With index                    | `$xs \| enumerate \| each {\|e\| $"($e.index): ($e.item)" }`            |
+| Fold/accumulate               | `$xs \| reduce --fold 0 {\|elt, acc\| $acc + $elt }`                    |
+| Any / all                     | `$xs \| any {\|x\| $x > 0 }` / `all {\|x\| ... }`                       |
+| Pick columns (keep table)     | `$t \| select a b`                                                      |
+| Extract values (lose table)   | `$t \| get a`                                                           |
+| Drop columns                  | `$t \| reject a b`                                                      |
+| Sort / slice                  | `$t \| sort-by size \| first 5 \| skip 1`                               |
+| String interpolation          | `$"hello ($name), ($xs \| length) items"`                               |
+| Concatenate                   | `$a ++ $b` (lists/strings) &nbsp;or&nbsp; `+`                           |
+| Parse text -> table           | `... \| lines \| split column "\|" a b c \| str trim`                   |
+| Regex extract                 | `"v1.2" \| parse --regex '(?<maj>\d+)\.(?<min>\d+)'`                    |
+| if / match (expressions)      | `if $x > 0 { "pos" } else { "neg" }`                                    |
+| Env var, safe read            | `$env.FOO? \| default "x"` ; set: `$env.FOO = "x"`                      |
+| Scoped env                    | `with-env { TOKEN: $t } { ^tool fetch }`                                |
 
 ### `get` vs `select`
 
@@ -151,9 +152,9 @@ result and vice versa.
 ### Closures
 
 Params are declared **inside** the braces: `{|elt| ... }`, `{|elt, acc| ... }`.
-A bare `{}` is an empty **record**, not a closure — write `{|| ... }` to force an
-empty closure. `$it` is the implicit current item, but only in row filters like
-`where`; in `each`/`reduce` you name your own param.
+A bare `{}` is an empty **record**, not a closure — write `{|| ... }` to force
+an empty closure. `$it` is the implicit current item, but only in row filters
+like `where`; in `each`/`reduce` you name your own param.
 
 ### Calling external commands
 
@@ -167,20 +168,22 @@ nu -c 'let r = (do { ^my-tool --json } | complete)
 
 - `^name` forces the system binary when a nu builtin shadows it (`^ls` vs `ls`).
 - Stderr prints to the screen and is **not** piped by default. Capture it with
-  `complete`, or redirect: `o>` (stdout), `e>` (stderr), `o+e>` (both to a file),
-  `o+e>|` (both into the next command). Discard with `| ignore`.
+  `complete`, or redirect: `o>` (stdout), `e>` (stderr), `o+e>` (both to a
+  file), `o+e>|` (both into the next command). Discard with `| ignore`.
 - Last exit code is `$env.LAST_EXIT_CODE` — there is no `$?`.
 
 ## Gotchas (the things that actually bite)
 
 - **Missing field/index ERRORS by default.** Always `?` for optional data:
   `$x.field?`, `$x.5?`, `get path?`. Forgetting this turns an absent JSON field
-  into a hard failure. (`get -i`/`--ignore-errors` is deprecated — use `?`/`-o`.)
+  into a hard failure. (`get -i`/`--ignore-errors` is deprecated — use
+  `?`/`-o`.)
 - **Plain quotes do not interpolate.** `"hello $name"` is literal. Interpolate
   with `$"hello ($name)"` — `$` prefix, expression in **parentheses**. Field
   access and command calls inside a string MUST be parenthesized.
-- **Single-quote interpolation `$'...'` processes no escapes** and cannot contain
-  `'` or unmatched `()`. Use `$"..."` when you need `\n` or literal parens (`\(`).
+- **Single-quote interpolation `$'...'` processes no escapes** and cannot
+  contain `'` or unmatched `()`. Use `$"..."` when you need `\n` or literal
+  parens (`\(`).
 - **`open` returns parsed data, not text.** Piping `open x.json | from json`
   double-parses and type-errors. Use `open --raw` when you need the string.
 - **`split column` default names are `column0`, `column1`, ...** (0-based). Pass
@@ -203,8 +206,8 @@ nu -c 'let r = (do { ^my-tool --json } | complete)
 ## Workflow
 
 1. Decide nushell is the right tool (structured data, not plain search/read).
-2. Get the data into a file when it comes from another CLI (`cmd > .tmp/x.json`),
-   then `open` it — more robust than piping into `nu`.
+2. Get the data into a file when it comes from another CLI
+   (`cmd > .tmp/x.json`), then `open` it — more robust than piping into `nu`.
 3. Build the pipeline incrementally; insert `| describe` to confirm shapes.
 4. Use `?` on every possibly-missing field and `default` for fallbacks.
 5. Run it (`nu -c '...'` or `nu .tmp/script.nu`); never paste nu syntax into a
@@ -212,11 +215,11 @@ nu -c 'let r = (do { ^my-tool --json } | complete)
 
 ## Hard rules
 
-1. Never paste nushell syntax into a plain bash command line — it must run inside
-   `nu -c '...'` or a `.nu` file. `print`, `each`, `$"..."`, cell paths are nu,
-   not bash.
-2. Always use `?` (or `get -o`) for fields that may be absent; never assume a key
-   exists. Financial/precise data must not rely on float equality.
+1. Never paste nushell syntax into a plain bash command line — it must run
+   inside `nu -c '...'` or a `.nu` file. `print`, `each`, `$"..."`, cell paths
+   are nu, not bash.
+2. Always use `?` (or `get -o`) for fields that may be absent; never assume a
+   key exists. Financial/precise data must not rely on float equality.
 3. Scratch files go under `.tmp/`, never `/tmp`.
 4. nushell replaces ad-hoc `python3`/`jq`/`awk`/`perl` for structured data — do
    not introduce those; do not use nushell to replace Grep/Glob/Read for plain

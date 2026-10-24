@@ -33,9 +33,9 @@ reconciliation, or cross-view invariants are not enforced.
 5. **Validate before mutation and fail closed.** An invariant violation returns
    a specific typed/domain error. It never panics, clamps, truncates, invents a
    default, or continues with partial state.
-6. **Test the system identity.** Every invariant needs a valid path, a
-   malformed or boundary path, and—when represented in several places—a
-   cross-view reconciliation test.
+6. **Test the system identity.** Every invariant needs a valid path, a malformed
+   or boundary path, and—when represented in several places—a cross-view
+   reconciliation test.
 
 ## 1. Get the code to review
 
@@ -71,11 +71,11 @@ demand duplicate checks when that proof is real and survives every entry path.
 - NAV, equity, exposure, balance, or performance views using different scope,
   units, marks, liabilities, valuation basis, or timestamps without an explicit
   bridge.
-- Accounting identities that omit fees, funding, realized or unrealized
-  returns, pending transfers, liabilities, or reserved/held state.
+- Accounting identities that omit fees, funding, realized or unrealized returns,
+  pending transfers, liabilities, or reserved/held state.
 - Validation after durable or externally visible mutation.
-- Recovery, replay, migration, or deserialization paths that reconstruct a
-  state forbidden by the live constructor.
+- Recovery, replay, migration, or deserialization paths that reconstruct a state
+  forbidden by the live constructor.
 - Panic, assertion, non-null assertion, partial indexing, silent fallback,
   coercion, clamping, unchecked arithmetic, or unbounded work on
   boundary-controlled state.

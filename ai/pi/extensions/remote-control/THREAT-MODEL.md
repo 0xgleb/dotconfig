@@ -8,9 +8,9 @@ direct outbound owner-report command for native and non-Pi agents, plus a
 separate exact-content stakeholder-update lane. Outbound reports never traverse
 an agent inbox. Ordinary reports carry visible sender/transport provenance;
 stakeholder updates preserve exact visible content while retaining sender,
-timestamp, size, and outcome in private audit metadata. The bridge does not carry
-approvals, tool calls, credentials,
-financial values, or operational authority.
+timestamp, size, and outcome in private audit metadata. The bridge does not
+carry approvals, tool calls, credentials, financial values, or operational
+authority.
 
 Assets protected by this boundary are:
 
@@ -33,32 +33,33 @@ Assets protected by this boundary are:
    store.
 2. **Agent/CLI → `pi-bridge`:** argv identifiers, delivery declarations, and
    stdin text are untrusted. CLI registrations may declare `cli-poll`,
-   `inline-only`, or `monitor-only`; they cannot mint the `native-pi` chat-target
-   capability. Omitted legacy declarations default fail-closed to monitor-only.
-   Inbox traffic is admitted only for typed `native-pi` and `cli-poll` consumers,
-   then bounded and validated before entering the typed SQLite lifecycle. Legacy
-   `relay-to-owner:` input is a decode-only transport frame:
-   prefix recognition happens before body validation, so empty or oversized
-   bodies become typed terminal delivery failures and can never fall through as
-   routable project work. Valid legacy bodies use the same bounded sequential
-   Telegram chunking as direct reports. `owner-report --sender` instead crosses
-   directly to the Telegram sender, adds immutable bounded agent provenance, and
-   never enqueues. `stakeholder-update --sender` is a separate exact-content
-   route whose sender is bounded and audited but not prepended to the visible
-   message.
+   `inline-only`, or `monitor-only`; they cannot mint the `native-pi`
+   chat-target capability. Omitted legacy declarations default fail-closed to
+   monitor-only. Inbox traffic is admitted only for typed `native-pi` and
+   `cli-poll` consumers, then bounded and validated before entering the typed
+   SQLite lifecycle. Legacy `relay-to-owner:` input is a decode-only transport
+   frame: prefix recognition happens before body validation, so empty or
+   oversized bodies become typed terminal delivery failures and can never fall
+   through as routable project work. Valid legacy bodies use the same bounded
+   sequential Telegram chunking as direct reports. `owner-report --sender`
+   instead crosses directly to the Telegram sender, adds immutable bounded agent
+   provenance, and never enqueues. `stakeholder-update --sender` is a separate
+   exact-content route whose sender is bounded and audited but not prepended to
+   the visible message.
 3. **SQLite → Pi extension:** rows may be stale or corrupt. Every field, status,
-   timestamp, protocol version, work-delivery mode, claim transition, and payload
-   is decoded and validated fail-closed. The additive v5 migration marks legacy
-   endpoints monitor-only until their real producer heartbeats again and exposes
-   queued counts so pre-existing undrainable rows cannot hide. Initialization
-   verifies the behavior-bearing column itself rather than trusting only
-   `user_version`, so an interrupted hot reload that stamped v5 before applying
-   the additive column repairs safely on the next open.
-4. **Remote text → model:** even owner-authenticated text remains untrusted model
-   input. The extension mechanically replaces the active tool set with the empty
-   set before injecting the turn and restores the exact prior set afterward.
-5. **Model → Telegram:** assistant output is untrusted data. Only bounded text is
-   persisted and returned; it never becomes a tool argument or authorization.
+   timestamp, protocol version, work-delivery mode, claim transition, and
+   payload is decoded and validated fail-closed. The additive v5 migration marks
+   legacy endpoints monitor-only until their real producer heartbeats again and
+   exposes queued counts so pre-existing undrainable rows cannot hide.
+   Initialization verifies the behavior-bearing column itself rather than
+   trusting only `user_version`, so an interrupted hot reload that stamped v5
+   before applying the additive column repairs safely on the next open.
+4. **Remote text → model:** even owner-authenticated text remains untrusted
+   model input. The extension mechanically replaces the active tool set with the
+   empty set before injecting the turn and restores the exact prior set
+   afterward.
+5. **Model → Telegram:** assistant output is untrusted data. Only bounded text
+   is persisted and returned; it never becomes a tool argument or authorization.
 
 ## STRIDE analysis
 
@@ -83,12 +84,12 @@ Assets protected by this boundary are:
 - Outbound owner reports call Telegram directly, include the sender and direct
   Piece of Pi transport in the rendered message, and never enter SQLite inbox
   routing. A legacy owner-relay prefix is terminally classified as transport
-  even when its body is empty or oversized; it is delivered in bounded chunks
-  or completed with an explicit typed failure, never routed as work. The
-  separate stakeholder-update route preserves exact visible content and cannot
-  be selected by an option on the ordinary report tool.
-- The exact prior active-tool set is restored once after success, failure, abort,
-  or shutdown.
+  even when its body is empty or oversized; it is delivered in bounded chunks or
+  completed with an explicit typed failure, never routed as work. The separate
+  stakeholder-update route preserves exact visible content and cannot be
+  selected by an option on the ordinary report tool.
+- The exact prior active-tool set is restored once after success, failure,
+  abort, or shutdown.
 - Delivery requires an unexpired exact session whose typed work-delivery mode
   accepts inbox traffic, plus an atomic claim token. Native Pi alone is a
   Telegram chat target; CLI-poll lanes accept explicit queue sends; inline-only
@@ -106,9 +107,9 @@ Assets protected by this boundary are:
 
 Contract tests cover bounded prompts/output, malformed inputs, exact tool-set
 restoration, recorded Telegram `MessageOrigin` shapes, forwarded-speaker order,
-forwarded-owner non-authority, attribution-label injection, owner-only filesystem
-modes, deduplicated enqueue, exact claim
-tokens, expiry, disabled claims, terminal pruning, stale sessions, and the
-machine-readable CLI boundary. Metagenda separately tests owner authentication,
-bootstrap identity-only behavior, exact argv/stdin invocation, protocol decoding,
-and duplicate Telegram updates before deployment.
+forwarded-owner non-authority, attribution-label injection, owner-only
+filesystem modes, deduplicated enqueue, exact claim tokens, expiry, disabled
+claims, terminal pruning, stale sessions, and the machine-readable CLI boundary.
+Metagenda separately tests owner authentication, bootstrap identity-only
+behavior, exact argv/stdin invocation, protocol decoding, and duplicate Telegram
+updates before deployment.

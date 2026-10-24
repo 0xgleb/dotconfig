@@ -28,6 +28,9 @@
     but-nix.url = "github:data-cartel/but.nix";
     but-nix.inputs.nixpkgs.follows = "nixpkgs";
 
+    git-hooks.url = "github:cachix/git-hooks.nix";
+    git-hooks.inputs.nixpkgs.follows = "nixpkgs";
+
   };
 
   outputs =
@@ -39,6 +42,59 @@
       disko,
       ...
     }:
+    let
+      hookSystems = [
+        "aarch64-darwin"
+        "x86_64-linux"
+      ];
+      gitHooks = nixpkgs.lib.genAttrs hookSystems (
+        system:
+        let
+          pkgs = nixpkgs.legacyPackages.${system};
+        in
+        inputs.git-hooks.lib.${system}.run {
+          src = self;
+          package = pkgs.prek;
+          configPath = ".git-hooks-config.yaml";
+          hooks = {
+            nixfmt.enable = true;
+            denofmt = {
+              enable = true;
+              files = "\\.md$";
+              require_serial = true;
+            };
+            prettier = {
+              enable = true;
+              excludes = [ "\\.md$" ];
+              settings.configPath = "${./prettier.config.mjs}";
+            };
+          };
+        }
+      );
+      fjWorkflowCheck =
+        system:
+        let
+          pkgs = nixpkgs.legacyPackages.${system};
+        in
+        pkgs.runCommand "fj-workflow-test"
+          {
+            nativeBuildInputs = with pkgs; [
+              nushell
+              git
+            ];
+          }
+          ''
+            cp ${./nushell/fj/check.nu} check.nu
+            cp ${./nushell/fj/check.test.nu} check.test.nu
+            cp ${./nushell/fj/log.nu} log.nu
+            cp ${./nushell/fj/routing.nu} routing.nu
+            cp ${./nushell/fj/workflow.nu} workflow.nu
+            cp ${./nushell/fj/workflow.test.nu} workflow.test.nu
+            ${pkgs.nushell}/bin/nu check.test.nu
+            ${pkgs.nushell}/bin/nu workflow.test.nu
+            touch $out
+          '';
+    in
     {
 
       # Local macOS
@@ -114,8 +170,17 @@
           };
           atuinFlags =
             self.darwinConfigurations.darwwwin.config.home-manager.users."0xgleb".programs.atuin.flags;
+          # The extension tests import the `effect` package from the same
+          # production node_modules Home Manager links into the live tree.
+          piTestNodeModules = pkgs.importNpmLock.buildNodeModules {
+            npmRoot = ./ai/pi/extensions;
+            inherit (pkgs) nodejs;
+            derivationArgs.npmInstallFlags = "--legacy-peer-deps --omit=dev";
+          };
         in
         {
+          git-hooks = gitHooks.aarch64-darwin;
+
           obsidian-packaging =
             let
               obsidian = self.legacyPackages.aarch64-darwin.obsidian;
@@ -161,20 +226,7 @@
                 touch $out
               '';
 
-          fj-workflow =
-            pkgs.runCommand "fj-workflow-test"
-              {
-                nativeBuildInputs = with pkgs; [ nushell ];
-              }
-              ''
-                cp ${./nushell/fj/check.nu} check.nu
-                cp ${./nushell/fj/log.nu} log.nu
-                cp ${./nushell/fj/routing.nu} routing.nu
-                cp ${./nushell/fj/workflow.nu} workflow.nu
-                cp ${./nushell/fj/workflow.test.nu} workflow.test.nu
-                ${pkgs.nushell}/bin/nu workflow.test.nu
-                touch $out
-              '';
+          fj-workflow = fjWorkflowCheck "aarch64-darwin";
 
           fj-consumer = import ./nushell/jf-consumer.test.nix {
             inherit pkgs;
@@ -184,11 +236,16 @@
           fj-module =
             pkgs.runCommand "fj-module-test"
               {
-                nativeBuildInputs = with pkgs; [ nushell ];
+                nativeBuildInputs = with pkgs; [
+                  nushell
+                  git
+                ];
               }
               ''
-                cp -r ${./nushell/fj} fj
-                cd fj
+                mkdir nushell
+                cp -r ${./nushell/fj} nushell/fj
+                cp ${./nushell/jf.nix} nushell/jf.nix
+                cd nushell/fj
                 ${pkgs.nushell}/bin/nu routing.test.nu
                 ${pkgs.nushell}/bin/nu mod.test.nu
                 touch $out
@@ -240,21 +297,20 @@
 
                 cp ${./nushell/fj/md-lib.test.nu} md-lib.test.nu
                 ${pkgs.nushell}/bin/nu md-lib.test.nu
+                cp ${./nushell/fj/md-sync-lib.test.nu} md-sync-lib.test.nu
+                ${pkgs.nushell}/bin/nu md-sync-lib.test.nu
                 touch $out
               '';
 
-          pi-host-patch =
-            pkgs.runCommand "pi-host-patch-test"
+          pi-extension-contracts =
+            pkgs.runCommand "pi-extension-contracts-test"
               {
                 nativeBuildInputs = with pkgs; [ nodejs ];
               }
               ''
                 cp -r ${./ai} ai
                 chmod -R u+w ai
-                cp ${./flake.nix} flake.nix
-                cp ${./home.nix} home.nix
-                node --test ai/test/pi-host-patch.test.ts
-                node --test ai/test/pi-bounded-session-reader.test.ts
+                ln -s ${piTestNodeModules}/node_modules ai/pi/extensions/node_modules
                 node --test ai/pi/extensions/classified-workflows/loop.test.ts
                 touch $out
               '';
@@ -281,6 +337,23 @@
                 touch $out
               '';
         };
+
+      checks.x86_64-linux.git-hooks = gitHooks.x86_64-linux;
+      checks.x86_64-linux.fj-workflow = fjWorkflowCheck "x86_64-linux";
+
+      devShells = nixpkgs.lib.genAttrs hookSystems (
+        system:
+        let
+          pkgs = nixpkgs.legacyPackages.${system};
+          hooks = gitHooks.${system};
+        in
+        {
+          default = pkgs.mkShellNoCC {
+            packages = [ pkgs.nodejs ] ++ hooks.enabledPackages;
+            inherit (hooks) shellHook;
+          };
+        }
+      );
 
       formatter.aarch64-darwin = (import nixpkgs { system = "aarch64-darwin"; }).nixfmt;
 

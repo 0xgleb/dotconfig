@@ -9,15 +9,13 @@
 
 Every lane shares one Telegram channel. All of their reports, questions,
 notices, and replies land in a single timeline, and there is no way to hold a
-conversation with one agent without the others' traffic interleaving through
-it.
+conversation with one agent without the others' traffic interleaving through it.
 
 The same flatness is a correctness problem, not only a reading problem. A
 message going the other way carries nothing that says which lane it is for, so
-the dispatcher infers the target from prose. That inference is where the
-routing defects come from: work filed against the wrong project, messages
-delivered to a lane that was not the addressee, and items landing in a queue
-nothing drains.
+the dispatcher infers the target from prose. That inference is where the routing
+defects come from: work filed against the wrong project, messages delivered to a
+lane that was not the addressee, and items landing in a queue nothing drains.
 
 Telegram supergroups support forum topics, and a message posted in a topic
 carries a `message_thread_id`. That identifier is a routing key chosen by the
@@ -30,15 +28,15 @@ from the text.
 
 - **Inbound routing stops being inferred.** A message arriving with a
   `message_thread_id` goes to the lane bound to that topic. No classification,
-  no roster guessing, no fallback to whichever project the dispatcher happens
-  to sit in. Model-based routing survives only where there is no topic: direct
+  no roster guessing, no fallback to whichever project the dispatcher happens to
+  sit in. Model-based routing survives only where there is no topic: direct
   messages and the group's general thread.
 - **Bindings are explicit and persisted**, mapping a topic id to a lane. A
   message in an unbound topic is answered saying it is unbound, rather than
   routed on a guess. Binding is an operator action; an agent never infers one.
-- **A lane answers in the topic it was addressed in.** A reply, a question
-  card, and a lane's own reports go to that lane's topic, so hopping between
-  topics is how the reader moves between agents.
+- **A lane answers in the topic it was addressed in.** A reply, a question card,
+  and a lane's own reports go to that lane's topic, so hopping between topics is
+  how the reader moves between agents.
 - **Bot identity is orthogonal and stays as it is.** The group already holds
   more than one bot, and each keeps posting exactly as it does today. Routing
   keys off the topic, not off which account posts, so this decision neither
@@ -74,6 +72,6 @@ on its own terms rather than smuggled in beside the routing key:
   which fails visibly instead of misdelivering quietly.
 - Direct messages keep working unchanged, so anything that should not sit in a
   group thread still has a home.
-- Nothing here forecloses the deferred items: per-bot identities, report
-  topics, and a role model each layer onto a topic-addressed chat without
-  revisiting this decision.
+- Nothing here forecloses the deferred items: per-bot identities, report topics,
+  and a role model each layer onto a topic-addressed chat without revisiting
+  this decision.

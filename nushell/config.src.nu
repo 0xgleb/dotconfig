@@ -193,15 +193,14 @@ def run-evolve-flake-update [config_root: string] {
   error make { msg: $"flake update failed with exit code ($result.exit_code)" }
 }
 
-def verify-pi-host [pi_bin: string] {
+def verify-pi-host [pi_bin: string, config_root: string] {
   ^$pi_bin --version
   let resolved_entry = (readlink -f $pi_bin)
-  let bin_dir = ($resolved_entry | path dirname)
-  let package_root = ($bin_dir | path join ".." | path expand)
-  let expected_wrapped = ($package_root | path join "bin" ".pi-wrapped")
-  let launcher = (open --raw $resolved_entry)
-  if not ($launcher | str contains $expected_wrapped) {
-    error make { msg: "managed Pi entrypoint executes a different host package" }
+  # Compare the stable entrypoint against the exact store path the current
+  # flake activates, so a stale wrapper or an older host package fails loudly.
+  let expected_source = (nix --accept-flake-config eval --raw $"($config_root)#darwinConfigurations.darwwwin.config.home-manager.users.\"0xgleb\".home.file.\".pi/agent/bin/pi\".source" | str trim)
+  if $resolved_entry != $expected_source {
+    error make { msg: "stale managed Pi entrypoint does not serve the activated host package" }
   }
 }
 
@@ -212,10 +211,10 @@ def evolve [] {
   run-evolve-step "sudo refresh" {|| ^sudo -v }
   run-evolve-flake-update $config_root
   run-evolve-step "Darwin switch" {|| ^sudo darwin-rebuild switch -v --flake $config_root }
-  # Verify behavior-bearing markers through the stable managed entrypoint.
-  # A copied Nix wrapper can retain an absolute exec path to an older host even
-  # when the copied package tree itself contains newer patched modules.
-  run-evolve-step "Pi host verification" {|| verify-pi-host $pi_bin }
+  # Verify the stable managed entrypoint resolves to the exact host package
+  # the switch just activated, so stale wrappers cannot keep serving an older
+  # pi after a successful rebuild.
+  run-evolve-step "Pi host verification" {|| verify-pi-host $pi_bin $config_root }
   # Collect only after activation has rooted the verified package in the new
   # Home Manager profile. Pre-activation GC can delete an unrooted emergency
   # host and leave the stable entrypoint dangling if a later update fails.

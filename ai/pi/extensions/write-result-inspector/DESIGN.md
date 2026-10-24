@@ -48,35 +48,35 @@ No new tool or agent instruction is required.
 
 ```ts
 type MutationDelta = {
-  toolCallId: string
-  path: string
-  language: InspectableLanguage
-  exactChangedText: string
-}
+  toolCallId: string;
+  path: string;
+  language: InspectableLanguage;
+  exactChangedText: string;
+};
 
 type InspectionFinding = {
-  source: "deterministic" | "luna"
-  inspector: InspectorKind
-  severity: "error" | "warning" | "info"
-  code: string
-  message: string
-  line?: number
-}
+  source: "deterministic" | "luna";
+  inspector: InspectorKind;
+  severity: "error" | "warning" | "info";
+  code: string;
+  message: string;
+  line?: number;
+};
 
 type ContextRequest = {
-  judgment: "architecture" | "invariant" | "external-contract"
-  reason: string
-  symbols: string[]
-}
+  judgment: "architecture" | "invariant" | "external-contract";
+  reason: string;
+  symbols: string[];
+};
 
 type InspectionOutcome =
   | {
-      status: "findings"
-      findings: InspectionFinding[]
-      contextRequests: ContextRequest[]
-    }
+    status: "findings";
+    findings: InspectionFinding[];
+    contextRequests: ContextRequest[];
+  }
   | { status: "clean" }
-  | { status: "skipped"; reason: SkipReason }
+  | { status: "skipped"; reason: SkipReason };
 ```
 
 Model output is decoded into this closed type. Unknown fields, paths,
@@ -135,8 +135,8 @@ The trusted changed path is attached locally; the model cannot select a target.
 
 A 2026-08-28 local sample used the same tool-less GPT-5.6 Luna/low subprocess
 shape on three synthetic TypeScript, Rust, and Nix local-style deltas. All three
-completed successfully in 5.20s, 6.32s, and 6.77s. They used 137/13, 128/13,
-and 124/13 input/output tokens respectively (137–150 total tokens). One earlier
+completed successfully in 5.20s, 6.32s, and 6.77s. They used 137/13, 128/13, and
+124/13 input/output tokens respectively (137–150 total tokens). One earlier
 sample completed in 5.33s. At Luna catalog rates, each measured call is roughly
 $0.00004, but the median added latency is about 5.83s before deterministic
 checker time.
@@ -158,8 +158,8 @@ makes per-write ordering more costly than the findings it prevents.
 
 ## Design B — asynchronous observer plus later advisory message (rejected)
 
-This design would return every write immediately, inspect in the background,
-and later call `pi.sendMessage(..., { deliverAs: "steer" })` with findings.
+This design would return every write immediately, inspect in the background, and
+later call `pi.sendMessage(..., { deliverAs: "steer" })` with findings.
 
 It improves immediate write latency, but loses the key contract: the next model
 turn may start before the advisory arrives. It also introduces a stale-context
@@ -174,6 +174,6 @@ adds a source-fixed post-tool barrier that accepts late typed results.
 
 ## Rollback
 
-Remove the extension from `package.json`; built-in `edit` and `write` behavior is
-unchanged because the extension observes successful results and never overrides
-execution.
+Remove the extension from `package.json`; built-in `edit` and `write` behavior
+is unchanged because the extension observes successful results and never
+overrides execution.

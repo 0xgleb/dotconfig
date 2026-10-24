@@ -71,8 +71,8 @@ Skills are the only agent surface in this repo — what used to be slash command
 ## Step 1 — Determine the name
 
 Parse `$ARGUMENTS` for the skill name (kebab-case, e.g. `deploy`, `run-tests`,
-`github-api`). This becomes the subdirectory name. If not provided, ask the
-user with `AskUserQuestion`.
+`github-api`). This becomes the subdirectory name. If not provided, ask the user
+with `AskUserQuestion`.
 
 Before going further, check the name is free:
 
@@ -86,28 +86,29 @@ If it exists, stop and confirm with the user before touching it (Hard rule 2).
 
 Batch these into one `AskUserQuestion` where possible:
 
-1. **Description** — one-line summary of *when* this skill should activate.
-   This is critical: Claude matches against it to decide whether to trigger.
-   Be specific about trigger phrases. Avoid `<` and `>` (use words, not `->`):
+1. **Description** — one-line summary of _when_ this skill should activate. This
+   is critical: Claude matches against it to decide whether to trigger. Be
+   specific about trigger phrases. Avoid `<` and `>` (use words, not `->`):
    Codex rejects angle brackets in the description, and the `codexSkills`
    derivation only rewrites `->`, not every bracket.
 2. **User-invocable** — should the user be able to invoke it explicitly
-   (`user-invocable: true`), or is it auto-trigger only? Most explicit
-   workflow skills here (`eod`, `eow`) set `user-invocable: true`;
-   skills intended only for automatic context selection may omit it.
+   (`user-invocable: true`), or is it auto-trigger only? Most explicit workflow
+   skills here (`eod`, `eow`) set `user-invocable: true`; skills intended only
+   for automatic context selection may omit it.
 3. **Allowed tools** — what the skill needs. Suggest based on its job:
    - Read-only research: `Read, Grep, Glob`
    - Code modification: `Read, Edit, Write, Grep, Glob`
    - Shared skills must not make their procedure depend exclusively on a
      harness-specific tool. Pi's built-ins are `read`, `bash`, `edit`, `write`,
-     `grep`, `find`, and `ls`; `allowed-tools` pre-approval does not create tools.
-     When naming `Glob`, `AskUserQuestion`, `SessionSearch`, `Agent`, or another
-     cross-harness capability, document the exact Pi tool or bounded equivalent
-     in the procedure and preserve its scope, exclusions, and mutation boundary.
+     `grep`, `find`, and `ls`; `allowed-tools` pre-approval does not create
+     tools. When naming `Glob`, `AskUserQuestion`, `SessionSearch`, `Agent`, or
+     another cross-harness capability, document the exact Pi tool or bounded
+     equivalent in the procedure and preserve its scope, exclusions, and
+     mutation boundary.
    - Shell commands: granular prefix globs, **never blanket `Bash(*)` or
      `Bash(git *)`** — list each command family, e.g. `Bash(git add *)`,
-     `Bash(git commit *)`, `Bash(cargo *)`. Match the space-glob style used
-     by the existing skills in this repo.
+     `Bash(git commit *)`, `Bash(cargo *)`. Match the space-glob style used by
+     the existing skills in this repo.
 
 ## Step 3 — Draft the content
 
@@ -117,8 +118,7 @@ two first for tone and structure):
 
 - Frontmatter as a YAML list for `allowed-tools` (see existing skills).
 - Open with a one-line summary of what the skill does.
-- Numbered, concrete workflow steps — specific instructions, not vague
-  guidance.
+- Numbered, concrete workflow steps — specific instructions, not vague guidance.
 - A "Hard rules" section at the end for non-negotiable constraints.
 - A "Failure modes" section when there are meaningful error cases.
 - A harness-capability failure mode whenever the workflow names a tool that is
@@ -204,7 +204,8 @@ If yes, `cd ~/.config && git push`. If no, stop.
    `allowed-tools`. Enumerate the specific command families the skill needs
    (`Bash(git add *)`, `Bash(git commit *)`, …).
 4. Show the full draft to the user before writing the file.
-5. Verify both `~/.claude/skills` and `~/.cursor/skills` resolve to the new file after writing.
+5. Verify both `~/.claude/skills` and `~/.cursor/skills` resolve to the new file
+   after writing.
 6. Never push without an explicit per-session yes from the user.
 
 ## Failure modes

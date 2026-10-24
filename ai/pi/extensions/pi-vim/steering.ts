@@ -1,8 +1,5 @@
 export type StreamingSubmissionMode =
-  | "pass"
-  | "immediate"
-  | "steer"
-  | "followUp"
+  "pass" | "immediate" | "steer" | "followUp"
 
 export const isSlashCommandInput = (text: string): boolean =>
   text.trimStart().startsWith("/")

@@ -38,23 +38,24 @@ passes message text over stdin; it never imports or mutates registry SQLite.
 
 A managed Pi extension shares the bridge store implementation. Each session
 heartbeats bridge readiness under its registry session ID, atomically claims at
-most one queued message while idle, temporarily replaces its active tool set with
-the empty set for the remote turn, and restores the exact prior set afterward.
-The extension records the final assistant text or a bounded typed failure against
-the correlation ID. Expired, duplicate, stale-session, concurrent, and oversized
-messages fail closed. A local disabled flag stops new delivery without affecting
-ordinary Pi operation.
+most one queued message while idle, temporarily replaces its active tool set
+with the empty set for the remote turn, and restores the exact prior set
+afterward. The extension records the final assistant text or a bounded typed
+failure against the correlation ID. Expired, duplicate, stale-session,
+concurrent, and oversized messages fail closed. A local disabled flag stops new
+delivery without affecting ordinary Pi operation.
 
 Metagenda authenticates the Telegram sender against one configured numeric owner
-ID before listing sessions or enqueueing messages. The Telegram bot token is read
-from a ragenix-decrypted runtime file, never from Nix evaluation, command-line
-arguments, logs, or committed plaintext. Until an owner ID is configured, the bot
-may report the sender's own numeric ID but exposes no Pi state.
+ID before listing sessions or enqueueing messages. The Telegram bot token is
+read from a ragenix-decrypted runtime file, never from Nix evaluation,
+command-line arguments, logs, or committed plaintext. Until an owner ID is
+configured, the bot may report the sender's own numeric ID but exposes no Pi
+state.
 
 The bridge protocol is message-only. It does not model approve/reject, invoke a
-Pi tool, continue a queued operational action, or derive authority from Telegram.
-Consequential remote control, if later justified, requires a separate typed
-command protocol and decision record.
+Pi tool, continue a queued operational action, or derive authority from
+Telegram. Consequential remote control, if later justified, requires a separate
+typed command protocol and decision record.
 
 ## Testable Success Criteria
 
@@ -62,7 +63,8 @@ The implementation starts from these failing tests:
 
 - an unauthenticated Telegram user receives no live-session metadata and cannot
   enqueue a bridge message;
-- with no owner configured, the bot can report only the caller's own Telegram ID;
+- with no owner configured, the bot can report only the caller's own Telegram
+  ID;
 - `/agents` returns only unexpired sessions that currently heartbeat bridge
   readiness, with no raw registry paths or runtime internals beyond the bounded
   display label;
@@ -78,15 +80,17 @@ The implementation starts from these failing tests:
 - disabling the bridge prevents new claims while ordinary local Pi prompts keep
   working;
 - the bot reads the token only from a configured runtime file and never includes
-  it in errors, logs, subprocess arguments, Nix store strings, or bridge records.
+  it in errors, logs, subprocess arguments, Nix store strings, or bridge
+  records.
 
 ## Alternatives Considered
 
 ### Let Metagenda read and write the registry database directly
 
 - Pros: Few moving pieces and immediate access to live agents.
-- Cons: Couples a network-facing process to an internal schema, broadens database
-  authority, and makes registry migrations a cross-repository release event.
+- Cons: Couples a network-facing process to an internal schema, broadens
+  database authority, and makes registry migrations a cross-repository release
+  event.
 - Rejected because: Session discovery does not justify allowing the Telegram bot
   to mutate the ownership and request-lifecycle database.
 
@@ -112,21 +116,21 @@ The implementation starts from these failing tests:
 
 - Pros: One long-running API could own discovery, streaming, scheduling, and
   future remote commands.
-- Cons: Adds supervision, IPC, upgrades, and a broad authority surface before the
-  message contract has operational evidence.
-- Rejected because: A narrow CLI plus durable mailbox proves the boundary without
-  prematurely building Metagenda's eventual full control plane.
+- Cons: Adds supervision, IPC, upgrades, and a broad authority surface before
+  the message contract has operational evidence.
+- Rejected because: A narrow CLI plus durable mailbox proves the boundary
+  without prematurely building Metagenda's eventual full control plane.
 
 ## Consequences
 
 Pi gains a second small local store and polling loop, and the CLI/extension
 protocol becomes a compatibility surface with explicit versioning and contract
-tests. Tool restoration and session shutdown paths require careful testing because
-active tools are process-global session state.
+tests. Tool restoration and session shutdown paths require careful testing
+because active tools are process-global session state.
 
-Metagenda stays independent of Pi's storage adapter and can later replace the CLI
-with an event-sorcery adapter without changing Telegram command semantics. The
-first release is intentionally less powerful than a remote-control bot: it can
-communicate and observe delivery, but it cannot authorize or execute a
+Metagenda stays independent of Pi's storage adapter and can later replace the
+CLI with an event-sorcery adapter without changing Telegram command semantics.
+The first release is intentionally less powerful than a remote-control bot: it
+can communicate and observe delivery, but it cannot authorize or execute a
 consequential action. Adding that power later will require a new decision rather
 than silently widening this protocol.

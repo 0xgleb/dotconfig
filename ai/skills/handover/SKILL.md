@@ -68,8 +68,8 @@ Attempt each required read once through the narrowest available command. A
 blocked, aborted, unavailable, or failed read does **not** authorize continuing
 implementation and does not prevent writing the rest of the handover. Record the
 missing field as `unverified`, including the exact command and failure reason,
-and preserve relevant durable todo/session evidence under that label. Never
-turn durable state into asserted Git truth. Do not inspect unrelated repositories
+and preserve relevant durable todo/session evidence under that label. Never turn
+durable state into asserted Git truth. Do not inspect unrelated repositories
 merely because their todos or registry requests are globally visible.
 
 ## Step 2 -- Decide the pause type
@@ -183,10 +183,11 @@ concrete action>. Do not re-do committed work: <one-line what is already done>.
 
 ## Step 6 -- Report
 
-First verify that the exact file exists and is readable. Then print the temporary
-document path and the continuation prompt so the user can copy it immediately.
-Do not stage, commit, push, or submit the handover artifact. End the turn after
-this report; a handover is never followed by resumed implementation.
+First verify that the exact file exists and is readable. Then print the
+temporary document path and the continuation prompt so the user can copy it
+immediately. Do not stage, commit, push, or submit the handover artifact. End
+the turn after this report; a handover is never followed by resumed
+implementation.
 
 ## Hard rules
 
@@ -194,8 +195,8 @@ this report; a handover is never followed by resumed implementation.
 2. Never write a secret value into the handover (Step 5). Name the config key.
 3. Cite specifics -- `file:line`, function, command, SHA. A handover without
    them is worse than none.
-4. State the pause type and exact pause point at the top; it is the highest-value
-   line.
+4. State the pause type and exact pause point at the top; it is the
+   highest-value line.
 5. Keep a single-repository handover under the current project-role workspace's
    `.tmp/handoffs/`; never stage, commit, push, or submit it.
 6. Treat invocation as a terminal stop boundary: after it, do only state

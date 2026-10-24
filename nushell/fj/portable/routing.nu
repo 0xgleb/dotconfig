@@ -205,4 +205,3 @@ export def protected-push-blocked [
   let verb = ($raw.args | first | default "")
   ($raw.tool == "stack") and ($verb == "ss") and ($backend in ["git" "but"]) and ($current_branch in ["master" "main"])
 }
-

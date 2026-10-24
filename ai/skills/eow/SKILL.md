@@ -45,8 +45,8 @@ allowed-tools:
 - **It's a stakeholder doc, not a transcript of the chat.** Never paste the
   user's feedback or your own corrections into the note (e.g. "none of it new",
   "not just what merged"). Don't borrow a tool's reserved words for loose
-  meaning: name the actual goal, issue, repository, or branch. Read every sentence for sense and grammar before
-  finishing.
+  meaning: name the actual goal, issue, repository, or branch. Read every
+  sentence for sense and grammar before finishing.
 
 ## The cardinal rule: cover the WHOLE week, every workstream
 
@@ -54,30 +54,31 @@ A week is mostly **in-flight work** (open PRs in review + draft), not merged.
 "What merged" is a small slice. Reducing the week to the one stack that happened
 to merge is the #1 failure mode of this skill.
 
-- Gather every PR you **touched** in the week across the selected repositories, bucket by
-  **workstream/goal**, and give each its own section. In-review and draft work
-  gets the same billing as merged work — just tag the status.
-- A goal can span repositories and a repository can hold several goals —
-  group by goal, not only by repository.
+- Gather every PR you **touched** in the week across the selected repositories,
+  bucket by **workstream/goal**, and give each its own section. In-review and
+  draft work gets the same billing as merged work — just tag the status.
+- A goal can span repositories and a repository can hold several goals — group
+  by goal, not only by repository.
 - Don't mislabel in-flight execution as "planning": if a refactor/migration has
   open PRs this week, it's done work in progress, not a future plan.
 
 ## Workflow
 
 1. **Find the file.** The weekly note lives under
-   `~/Library/Mobile Documents/iCloud~md~obsidian/Documents/repos/notes/`
-   as `YY.MM.DD@HH.MM-weekly.md`, matched by today's date prefix
+   `~/Library/Mobile Documents/iCloud~md~obsidian/Documents/repos/notes/` as
+   `YY.MM.DD@HH.MM-weekly.md`, matched by today's date prefix
    (`date +%y.%m.%d`). If none exists, ask the user — they create it in
    Obsidian. Preserve anything they've already written.
 2. **Read the last 1–2 weekly notes** for house style.
 3. **Determine the reporting week:** the most recent completed Mon–Sun (or
    week-to-date if run mid-week). Confirm if ambiguous. Use `START..END` (ISO).
-4. **Gather across the selected repositories by activity** (queries below) and bucket the
-   PRs by workstream/goal.
+4. **Gather across the selected repositories by activity** (queries below) and
+   bucket the PRs by workstream/goal.
 5. **Draft high-level** (see Structure). With a brain dump, the user's framing
    is canonical, but still reconcile against the data so no workstream is
    omitted — a TLDR is not the full inventory.
-6. **Plans:** use recorded priorities and distinguish proposals from commitments.
+6. **Plans:** use recorded priorities and distinguish proposals from
+   commitments.
 
 ## Structure
 
@@ -101,8 +102,7 @@ to merge is the #1 failure mode of this skill.
 - Each workstream is its own section with a status tag; **in-flight work is
   first-class**, not a footnote.
 - **Reviews are a stat** in the numbers line, not prose about others' work.
-- High-level repo/area labels for orientation;
-  never full `org/name` paths.
+- High-level repo/area labels for orientation; never full `org/name` paths.
 - No emoji. No "I"/"we" — drop the subject. ISO dates only.
 
 ## Data queries (week range)

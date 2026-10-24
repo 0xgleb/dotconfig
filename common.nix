@@ -77,7 +77,10 @@ in
   };
 
   nix.settings = {
-    experimental-features = "nix-command flakes";
+    experimental-features = [
+      "nix-command"
+      "flakes"
+    ];
     trusted-users = [ "0xgleb" ];
     substituters = [ "https://cache.nixos.org" ];
     trusted-public-keys = [

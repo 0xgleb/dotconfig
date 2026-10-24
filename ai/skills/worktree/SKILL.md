@@ -51,12 +51,12 @@ checkout and do not enter other worktrees.
 
 ## Cleanup
 
-Use `git worktree remove` with each exact verified linked-worktree path. Preserve
-uncommitted work unless the owner explicitly authorizes discarding it. When the
-owner orders removal regardless of contents, honor that exact authorization;
-Git's documented `--force` option may be needed for dirty worktrees. Never remove
-the main checkout or unrelated files. Remove stale registrations only within the
-requested repository scope.
+Use `git worktree remove` with each exact verified linked-worktree path.
+Preserve uncommitted work unless the owner explicitly authorizes discarding it.
+When the owner orders removal regardless of contents, honor that exact
+authorization; Git's documented `--force` option may be needed for dirty
+worktrees. Never remove the main checkout or unrelated files. Remove stale
+registrations only within the requested repository scope.
 
 If safe cleanup is blocked, record the exact path and reason, keep completion
 blocked, and make cleanup the first resumed action. Do not leave disk debt for

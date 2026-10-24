@@ -16,15 +16,16 @@
   and remaining work, and escalate through an authorized channel. Never evade a
   restriction or describe blocked or unperformed work as completed.
 - Commit and publish continuously: commit and push each completed work unit
-  before starting the next. Commit and push truthful checkpoints of unfinished source work
-  at least every 15 minutes using the repository's authorized workflow. Never let
-  agent-owned unstaged, untracked, staged-but-uncommitted, or unpushed changes
-  accumulate across work units. Preserve unrelated user-owned changes and permitted
-  temporary review/handoff artifacts; do not sweep them into commits or delete
-  them to make the tree clean. If publication is blocked, pause new work, preserve
-  the current state, and escalate; continue only bounded repairs needed to unblock
-  publication. Never bypass required gates. Use plain Git except in a verified
-  GitButler-managed main worktree, subject to repository-local workflow rules.
+  before starting the next. Commit and push truthful checkpoints of unfinished
+  source work at least every 15 minutes using the repository's authorized
+  workflow. Never let agent-owned unstaged, untracked, staged-but-uncommitted,
+  or unpushed changes accumulate across work units. Preserve unrelated
+  user-owned changes and permitted temporary review/handoff artifacts; do not
+  sweep them into commits or delete them to make the tree clean. If publication
+  is blocked, pause new work, preserve the current state, and escalate; continue
+  only bounded repairs needed to unblock publication. Never bypass required
+  gates. Use plain Git except in a verified GitButler-managed main worktree,
+  subject to repository-local workflow rules.
 - AGENTS.md files define standing rules of engagement and agent behavior. Never
   put transient task state, progress reports, one-off migration notes, temporary
   waiting conditions, session journals, or handoff notes in them; use task
@@ -78,12 +79,11 @@
   owner; if the role is unowned, claim it temporarily and handle it locally. A
   role never grants authority beyond constrained project tools, and an
   operational role is not done merely because its inbox is empty. A registry
-  read/sync failure means coordination is temporarily unavailable; it
-  does not revoke authorization already established by the user and project
-  policy or block unrelated Git delivery. Continue safely when no exclusive
-  lease or request transition is required. Never infer new authority from an
-  unavailable registry; block only the operation that actually requires registry
-  ownership.
+  read/sync failure means coordination is temporarily unavailable; it does not
+  revoke authorization already established by the user and project policy or
+  block unrelated Git delivery. Continue safely when no exclusive lease or
+  request transition is required. Never infer new authority from an unavailable
+  registry; block only the operation that actually requires registry ownership.
 - The authenticated owner has established this standing rule for documented
   operational duties: when a role's loaded workflow requires a routine version
   bump, branch publication, release build, or live-marker verification, perform
@@ -115,9 +115,9 @@
   task-named worktree directories. Disposable one-off worktrees are exceptional
   and must live under `.tmp/worktrees/<role-slot>`. The clanker or agent that
   creates any worktree owns it and must remove it, its generated outputs, and
-  its registration immediately after the concurrent work succeeds, fails, or
-  is cancelled. A pre-existing owner-managed role slot may remain; a slot made
-  by the current agent may remain only with an explicit owner instruction. If
+  its registration immediately after the concurrent work succeeds, fails, or is
+  cancelled. A pre-existing owner-managed role slot may remain; a slot made by
+  the current agent may remain only with an explicit owner instruction. If
   immediate cleanup is unsafe, block completion on the exact path and reason and
   make cleanup the first resumed action rather than leaving disk debt behind.
 - GitButler is valid only in a repository's main worktree. Detect the current

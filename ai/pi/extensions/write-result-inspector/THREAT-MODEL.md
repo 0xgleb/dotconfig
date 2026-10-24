@@ -44,9 +44,10 @@
 
 Before implementation, tests must fail for these cases:
 
-1. protected and outside-workspace mutations are rejected before prompt creation;
-2. high-confidence credential text and changed imports crossing workspace/protected
-   boundaries never reach a checker or model;
+1. protected and outside-workspace mutations are rejected before prompt
+   creation;
+2. high-confidence credential text and changed imports crossing
+   workspace/protected boundaries never reach a checker or model;
 3. model output cannot choose a path or return mutation/publication authority;
 4. architecture/invariant/external-contract items are accepted only as context
    requests, never findings;
@@ -55,9 +56,11 @@ Before implementation, tests must fail for these cases:
    instructions;
 7. deterministic failure or oversized/symlinked post-state makes model launch
    impossible;
-8. one logical sibling batch produces at most one model call and one result patch;
+8. one logical sibling batch produces at most one model call and one result
+   patch;
 9. shutdown cancellation resolves pending handlers without stale API access;
-10. validated nested usage is attached even when a later process result is unusable.
+10. validated nested usage is attached even when a later process result is
+    unusable.
 
 ## Explicit non-goals
 

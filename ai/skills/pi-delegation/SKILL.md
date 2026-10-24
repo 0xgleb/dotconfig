@@ -10,14 +10,15 @@ user choice always wins.
 
 ## Choose a mode
 
-Work directly when one agent can complete the task without meaningful independent
-investigation.
+Work directly when one agent can complete the task without meaningful
+independent investigation.
 
 Use Zellij workers when:
 
 - there are only a few independent tasks;
 - each worker can return a direct textual result;
-- no dependency graph, retry loop, shared budget, or automatic synthesis is needed;
+- no dependency graph, retry loop, shared budget, or automatic synthesis is
+  needed;
 - visible panes are useful to the user.
 
 Use a classified dynamic workflow when:
@@ -26,7 +27,8 @@ Use a classified dynamic workflow when:
 - the work needs fan-out followed by verification or synthesis;
 - competing approaches should be generated and judged;
 - bounded loops, retries, checkpoints, or cancellation are useful;
-- a task-specific program describes the desired behavior better than a fixed schema.
+- a task-specific program describes the desired behavior better than a fixed
+  schema.
 
 Never use tmux.
 
@@ -57,12 +59,14 @@ Anthropic API call.
 
 - Give every worker a self-contained task, scope, expected result, and stopping
   condition.
-- Never access, search, list, expose, or return credential or secret-bearing files.
+- Never access, search, list, expose, or return credential or secret-bearing
+  files.
 - Broad searches must explicitly exclude credential-shaped paths.
 - Start parallel investigation read-only.
 - Never allow parallel agents to modify the same working tree. Agent-initiated
   fan-out remains read-only; separate mutating worktrees require the owner or
-  another agent launched by the owner to be working on that repository concurrently.
+  another agent launched by the owner to be working on that repository
+  concurrently.
 - Keep agent-initiated workers read-only in the session's assigned checkout.
   Worktrees are permitted ONLY when the owner or another agent launched by the
   owner is concurrently working on the same repository as an agent. Isolation
@@ -92,20 +96,19 @@ Anthropic API call.
 
 Require an existing Zellij session. Do not silently create a detached session.
 When the user explicitly asks to spawn an agent, focusing its new tab or pane is
-allowed. For agent-initiated background delegation, snapshot the exact active tab
-and pane IDs before launch and restore both before returning control. Verify the
-restoration from structured Zellij state; if exact restoration is unavailable,
-use a classified background workflow instead.
+allowed. For agent-initiated background delegation, snapshot the exact active
+tab and pane IDs before launch and restore both before returning control. Verify
+the restoration from structured Zellij state; if exact restoration is
+unavailable, use a classified background workflow instead.
 
 Create or reuse a tab named `pi-workers` under that focus contract. Start each
-worker in a named pane with an
-ephemeral non-interactive Pi process:
+worker in a named pane with an ephemeral non-interactive Pi process:
 
 `pi --print --no-session --tools read,grep,find,ls`
 
-Capture the pane ID returned by Zellij. Use structured pane state to determine when
-the process exits and preserve its exit status. Collect the final plain-text output
-with `dump-screen --full`.
+Capture the pane ID returned by Zellij. Use structured pane state to determine
+when the process exits and preserve its exit status. Collect the final
+plain-text output with `dump-screen --full`.
 
 Polling, harvesting, and closing background workers must preserve the user's
 current focus and must never send keys to the user's active pane.
@@ -124,8 +127,8 @@ Synthesize centrally in the parent.
 ## Classified dynamic workflows
 
 Write task-specific JavaScript for the `workflow` tool. The program may compose
-agents, parallel work, verification, selection, checkpoints, and bounded loops. Do
-not force the request into a predefined workflow template.
+agents, parallel work, verification, selection, checkpoints, and bounded loops.
+Do not force the request into a predefined workflow template.
 
 Every workflow must specify the smallest sufficient:
 
@@ -137,17 +140,17 @@ Every workflow must specify the smallest sufficient:
 - retry limit;
 - total token budget.
 
-Call agents as `agent("focused task", { cwd?, tools?, model?, thinking? })`. Pass
-agent promises directly to `parallel`, for example
+Call agents as `agent("focused task", { cwd?, tools?, model?, thinking? })`.
+Pass agent promises directly to `parallel`, for example
 `await parallel([agent("first task"), agent("second task")])`. Every call must
 provide a focused task, working directory when it differs from the parent, tool
 capabilities, and model or thinking level when the default is not appropriate.
 Prefer cheaper models for bounded discovery and stronger models for synthesis or
-difficult verification. Never request `fable`, `sonnet`, `opus`, `claude-*`, or an
-`anthropic/*` model from a Pi workflow child: Anthropic API billing is disabled.
-When Claude adds enough value, run it only as a read-only external subscription
-lane with `claude -p --permission-mode plan`. If that subscription route is
-unavailable, omit Claude rather than falling back to an API provider.
+difficult verification. Never request `fable`, `sonnet`, `opus`, `claude-*`, or
+an `anthropic/*` model from a Pi workflow child: Anthropic API billing is
+disabled. When Claude adds enough value, run it only as a read-only external
+subscription lane with `claude -p --permission-mode plan`. If that subscription
+route is unavailable, omit Claude rather than falling back to an API provider.
 
 Assume every agent spawn, tool action, tool result, and returned result will be
 classified. Handle a blocked boundary as a typed failure. Do not expose blocked
@@ -161,8 +164,8 @@ For high-impact mutations, insert an explicit checkpoint. Non-interactive
 checkpoints deny rather than approve automatically.
 
 Keep workflow results compact and structured. Preserve evidence, uncertainty,
-failures, and provenance needed by the synthesizer without forwarding unnecessary
-conversation or tool-result content.
+failures, and provenance needed by the synthesizer without forwarding
+unnecessary conversation or tool-result content.
 
 ## Verification patterns
 

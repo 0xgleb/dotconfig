@@ -83,16 +83,17 @@ Hooks enforce what instructions alone do not. They are wired in
 **Nushell** is the primary shell. `fj` (also aliased as `jf`) unifies version
 control and developer tools:
 
-| Command                              | Routes to              |
-| ------------------------------------ | ---------------------- |
-| `fj`                                 | `git status` + `gt ls` |
-| `fj ui`                              | `gitui`                |
-| `fj pr list`, `fj pr view 123`       | `gh pr ...`            |
-| `fj issue list`, `fj issue create`   | `gh issue ...`         |
-| `fj mut`, `fj mut -a`                | `gt modify ...`        |
-| `fj ss`, `fj create`, `fj sync`, ... | `gt` (graphite)        |
-| `fj check`                           | repo-specific checks   |
-| anything else                        | `git`                  |
+| Command                              | Routes to                                                       |
+| ------------------------------------ | --------------------------------------------------------------- |
+| `fj`                                 | `but status` on a managed GitButler worktree, else `git status` |
+| `fj ui`                              | `gitui`                                                         |
+| `fj pr list`, `fj pr view 123`       | `gh pr ...`                                                     |
+| `fj issue list`, `fj issue create`   | `gh issue ...`                                                  |
+| `fj mut`, `fj mut -a`                | `but amend` / `git commit --amend`                              |
+| `fj ss`, `fj create`, `fj sync`, ... | `but` or `git`, translated per repo topology                    |
+| `fj check`                           | repo-specific checks                                            |
+| plain git subcommands (`fj add`, …)  | `git`                                                           |
+| anything else                        | error: unknown command                                          |
 
 ### Markdown vault sync (`fj md`)
 
@@ -130,10 +131,11 @@ nixfmt *.nix
 
 The `nixxxos` droplet is provisioned with Terraform and installed with
 nixos-anywhere. Terraform also mints the Tailscale auth keys; NixOS joins the
-tailnet declaratively. There is no resident agent service — run one manually over
-the tailnet (`ssh nixxxos`, then `fj clanker`, which launches Pi; use `fj clanker
---claude` to launch Claude Code with `--remote-control` for claude.ai / mobile; see
-"Running an agent on the box" below).
+tailnet declaratively. There is no resident agent service — run one manually
+over the tailnet (`ssh nixxxos`, then `fj clanker`, which launches Pi; use
+`fj clanker
+--claude` to launch Claude Code with `--remote-control` for
+claude.ai / mobile; see "Running an agent on the box" below).
 
 ### Secrets
 
@@ -211,9 +213,9 @@ ssh nixxxos
 claude /login        # claude.ai account; required for remote control
 ```
 
-Then launch it with `fj clanker --claude`. On the `nixxxos` host the Claude route
-automatically adds `--remote-control`, so the session is drivable from claude.ai
-and the Claude mobile app. Plain `fj clanker` launches Pi instead.
+Then launch it with `fj clanker --claude`. On the `nixxxos` host the Claude
+route automatically adds `--remote-control`, so the session is drivable from
+claude.ai and the Claude mobile app. Plain `fj clanker` launches Pi instead.
 
 ### Deploy (CI/CD)
 

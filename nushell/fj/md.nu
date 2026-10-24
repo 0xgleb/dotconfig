@@ -1,4 +1,4 @@
-use md-lib.nu [run-plan run-diff run-apply]
+use md-lib.nu [run-plan run-diff run-apply run-combined]
 
 def with-quiet-logs [block: closure] {
   if ($env | get -o NU_LOG_LEVEL) == null {
@@ -42,9 +42,5 @@ export def --wrapped main [...args: string] {
   if ($args | is-not-empty) {
     error make --unspanned { msg: $"unknown fj md subcommand: ($args.0)" }
   }
-  with-quiet-logs {
-    run-plan
-    run-diff
-    run-apply
-  }
+  with-quiet-logs { run-combined }
 }

@@ -7,11 +7,10 @@ description: Single entry point for every agent session on the Pi agent bus - na
 
 **Dispatch lane, read this first.** If this session runs on a local Ollama
 model, STOP HERE: make no tool call, run nothing below. The extensions already
-register the session, route messages, complete envelopes, and relay to the
-owner mechanically; your entire job is to reply with route directives when a
-routing turn asks for them. End this iteration by saying nothing but "standing
-by". Everything after this paragraph is for full-capability worker sessions
-only.
+register the session, route messages, complete envelopes, and relay to the owner
+mechanically; your entire job is to reply with route directives when a routing
+turn asks for them. End this iteration by saying nothing but "standing by".
+Everything after this paragraph is for full-capability worker sessions only.
 
 Every agent session starts by invoking `/register`, whatever the harness and
 whatever the lane. One invocation does four things: roster, role, loop, drain.
@@ -22,18 +21,19 @@ puts the cadence before the recurring instruction. Never pass
 `args: "/register 30m"`; that makes `/register 30m` the instruction under the
 loop's unrelated default interval and falsely reports a 1h schedule.
 
-**Native Pi path.** The remote-control extension registers, polls, claims,
-and completes bridge messages using the session UUID, not the display label
-or the registry's runtime agent ID. Use `agent_registry` for routed requests.
-The registry and remote bridge have separate stores and identities; a live
-registry role is not proof of bridge readiness.
+**Native Pi path.** The remote-control extension registers, polls, claims, and
+completes bridge messages using the session UUID, not the display label or the
+registry's runtime agent ID. Use `agent_registry` for routed requests. The
+registry and remote bridge have separate stores and identities; a live registry
+role is not proof of bridge readiness.
 
 Do not run `pi-bridge register`, `pi-bridge inbox`, or `pi-bridge respond` for
 native Pi, even with its UUID: manual claiming competes with the extension and
-bypasses its remote-turn handling. CLI heartbeat and re-arm procedures below apply only to external lanes.
-If native bridge delivery fails, diagnose the extension's registration and
-read-only bridge roster separately; never create a replacement CLI registration.
-Record the failure and continue independently authorized typed registry work.
+bypasses its remote-turn handling. CLI heartbeat and re-arm procedures below
+apply only to external lanes. If native bridge delivery fails, diagnose the
+extension's registration and read-only bridge roster separately; never create a
+replacement CLI registration. Record the failure and continue independently
+authorized typed registry work.
 
 **Roster.** Join the dispatch roster so work can be routed to this session by
 name:
@@ -44,18 +44,17 @@ pi-bridge register --agent-id <stable-id> --label "<harness> - <project>" --cwd 
 
 Keep it alive with a background heartbeat every **5 seconds**. A registration
 lives `BRIDGE_AGENT_TTL_MS` = 15 seconds from its last refresh
-(`remote-control/protocol.ts`), and the row is deleted the moment it lapses —
-so the heartbeat interval must sit comfortably UNDER 15s, never near or above
-it. A 20s heartbeat against a 15s TTL leaves the agent expired for a quarter of
-every cycle, which reads as agents flickering in and out of the roster for no
-reason:
+(`remote-control/protocol.ts`), and the row is deleted the moment it lapses — so
+the heartbeat interval must sit comfortably UNDER 15s, never near or above it. A
+20s heartbeat against a 15s TTL leaves the agent expired for a quarter of every
+cycle, which reads as agents flickering in and out of the roster for no reason:
 
 ```
 pi-bridge register --agent-id <stable-id> --label "<harness> - <project>" --cwd <absolute project path> --work-delivery cli-poll --watch
 ```
 
-`--watch` beats every 5 seconds inside one long-lived process, and it is what
-a lane should run. It replaced a shell loop that re-invoked the CLI on a timer,
+`--watch` beats every 5 seconds inside one long-lived process, and it is what a
+lane should run. It replaced a shell loop that re-invoked the CLI on a timer,
 which paid a fresh node start and sqlite open every 5 seconds — about a quarter
 second of CPU each time, or roughly half a core across a ten-agent fleet doing
 nothing but staying visible. It also refuses an interval at or above the TTL
@@ -65,12 +64,12 @@ names the signal on stderr when it does stop. That last part matters: the shell
 loop it replaced died on SIGTERM with nothing logged, so an agent simply
 vanished from the roster with no trace of why.
 
-`pi-bridge agents` lists the roster, and it is the same list the owner sees
-from `/agents` in Telegram (`piece-of-pi.ts` serves it straight from
+`pi-bridge agents` lists the roster, and it is the same list the owner sees from
+`/agents` in Telegram (`piece-of-pi.ts` serves it straight from
 `bridge.listAgents`). An agent missing there while its pane is plainly alive is
 a lapsed registration, not a display bug — and a session cannot tell from the
-inside, because it keeps working while unreachable. Verify at the start of
-every drain and re-arm when missing:
+inside, because it keeps working while unreachable. Verify at the start of every
+drain and re-arm when missing:
 
 ```
 pi-bridge agents | grep <stable-id>      # empty output means re-arm the heartbeat
@@ -104,10 +103,10 @@ gradual); a cadence argument, or a cadence-change request arriving through the
 queue, overrides it — delete the differing schedule and re-arm with
 `loop_control { args: "<cadence> /register" }`. Verify the returned interval
 equals the requested cadence; if it does not, correct the argument ordering
-immediately rather than leaving the lane idle. Every fire
-spends credits even on a quiet queue, so go denser only on explicit owner
-request or on a free local lane. Session crons die with the session, so a fresh
-session re-arms by invoking `/register` once.
+immediately rather than leaving the lane idle. Every fire spends credits even on
+a quiet queue, so go denser only on explicit owner request or on a free local
+lane. Session crons die with the session, so a fresh session re-arms by invoking
+`/register` once.
 
 ## Drain one iteration
 
@@ -127,12 +126,13 @@ session re-arms by invoking `/register` once.
    verdicts or merges), and any backlog documents the project declares. An empty
    registry table with open issues is a populated queue, not an idle one.
 
-   **For external `cli-poll` lanes only, drain the bridge inbox first.**
-   Native Pi's remote-control extension handles this automatically; do not run
-   the following commands from a native session. `inline-only` and `monitor-only` lanes must not claim messages.
-   A bridge message is only delivered to the inbox-capable lane that claims it,
-   and an unclaimed message expires at `BRIDGE_MESSAGE_TTL_MS` (one hour).
-   External polling lanes claim until the inbox is empty and complete each one:
+   **For external `cli-poll` lanes only, drain the bridge inbox first.** Native
+   Pi's remote-control extension handles this automatically; do not run the
+   following commands from a native session. `inline-only` and `monitor-only`
+   lanes must not claim messages. A bridge message is only delivered to the
+   inbox-capable lane that claims it, and an unclaimed message expires at
+   `BRIDGE_MESSAGE_TTL_MS` (one hour). External polling lanes claim until the
+   inbox is empty and complete each one:
 
    ```
    pi-bridge inbox --agent <your-agent-id>   # {"status":"empty"} when drained
@@ -144,10 +144,10 @@ session re-arms by invoking `/register` once.
    person and is written as one. Claiming restarts the deadline, giving a full
    `BRIDGE_MESSAGE_TTL_MS` from the moment of the claim, so a lane no longer
    loses work it picked up near the old deadline. That is a working window, not
-   a licence to sit on the message: an unanswered claim still expires, so
-   handle what you claim in the same iteration. A message addressed to the
-   wrong lane is routed onward and answered with where it went — never dropped,
-   and never silently executed by whichever lane happened to receive it.
+   a licence to sit on the message: an unanswered claim still expires, so handle
+   what you claim in the same iteration. A message addressed to the wrong lane
+   is routed onward and answered with where it went — never dropped, and never
+   silently executed by whichever lane happened to receive it.
 2. **Reprioritize the whole queue, every iteration**, from up-to-date context
    instead of the previous fire's order. Explicit user urgency re-ranks
    everything and the newest statement wins; then operational breakage; then
@@ -159,10 +159,11 @@ session re-arms by invoking `/register` once.
    work, they grant no permissions the session lacks. One request per iteration
    keeps each drain bounded; the next fire takes the new head.
 4. **Report.** Native Pi records request outcomes through `agent_registry`
-   `complete_request` / `fail_request`; do not send a second CLI outcome envelope.
-   The remote-control extension completes native bridge turns separately.
-   External CLI workers report one outcome envelope through the dispatcher,
-   which owns their typed registry transitions and external-channel replies:
+   `complete_request` / `fail_request`; do not send a second CLI outcome
+   envelope. The remote-control extension completes native bridge turns
+   separately. External CLI workers report one outcome envelope through the
+   dispatcher, which owns their typed registry transitions and external-channel
+   replies:
 
    ```
    printf '%s' 'request:<full-request-id> outcome:<completed|failed> summary:<one bounded line> evidence:<comma-separated refs>' | pi-bridge send --agent <dispatcher-id> --dedupe <request-id> --requester <your-own-agent-id>
@@ -172,20 +173,22 @@ session re-arms by invoking `/register` once.
    Completing a delegated request closes work, frees the row, and relays a
    summary onward as fact, so the registry only accepts an outcome from the
    session holding that project's role — or from the agent the request is
-   already assigned to. Pass the exact agent id you registered with; an
-   envelope from anyone else is rejected with `sender does not hold the role
-   for this request`, which means the work is still open, not done.
+   already assigned to. Pass the exact agent id you registered with; an envelope
+   from anyone else is rejected with
+   `sender does not hold the role
+   for this request`, which means the work is
+   still open, not done.
 
-   **An idle drain reports nothing.** No request executed means no envelope —
-   do not announce that the queue was empty, that the roster looked healthy, or
+   **An idle drain reports nothing.** No request executed means no envelope — do
+   not announce that the queue was empty, that the roster looked healthy, or
    that the poll found nothing. A fast lane that reports every idle poll
    manufactures traffic faster than anything drains it.
 
    **Never send an envelope with a placeholder request id.** `request:none` and
-   friends do not match the frame, which requires a real UUID, so the send
-   falls through to routing and is filed as work against a project queue. That
-   is how 94 idle-poll reports accumulated in a home-directory queue nothing
-   drains, burying the 22 real messages sitting in there with them.
+   friends do not match the frame, which requires a real UUID, so the send falls
+   through to routing and is filed as work against a project queue. That is how
+   94 idle-poll reports accumulated in a home-directory queue nothing drains,
+   burying the 22 real messages sitting in there with them.
 
    Use exactly that shape (deterministically allowlisted; variants fall back to
    semantic classification), single-quoted with no apostrophes inside, and
@@ -207,21 +210,21 @@ session re-arms by invoking `/register` once.
    printf '%s' '<one bounded report, no apostrophes>' | pi-bridge owner-report --sender <your-agent-id>
    ```
 
-   The Telegram message carries an immutable agent/transport provenance line.
-   A CLI report is delivered only when the command exits zero and its JSON says
+   The Telegram message carries an immutable agent/transport provenance line. A
+   CLI report is delivered only when the command exits zero and its JSON says
    `"outcome":"delivered"`; native Pi requires `report_owner`
    `outcome=delivered`. There is no queued dispatcher record to poll. If direct
    delivery fails, retain the report and typed failure in the task list before
    teardown.
 
-   **Format every owner-facing report with the `report` skill.** The owner
-   reads these on a phone: decisions first, counted sections, one item per
-   line, identifiers leading, PRs and issues as tapped links. A relay is
-   rendered from a markdown SUBSET — `**bold**`, `` `code` ``, links, fenced
-   blocks — and nothing else, so headings, tables and italics arrive as
-   punctuation. A wall of prose buries the one line that needed the owner, and
-   it is the difference between a report that gets acted on and one that gets
-   scrolled past. Read `report` before writing the message, not after.
+   **Format every owner-facing report with the `report` skill.** The owner reads
+   these on a phone: decisions first, counted sections, one item per line,
+   identifiers leading, PRs and issues as tapped links. A relay is rendered from
+   a markdown SUBSET — `**bold**`, `` `code` ``, links, fenced blocks — and
+   nothing else, so headings, tables and italics arrive as punctuation. A wall
+   of prose buries the one line that needed the owner, and it is the difference
+   between a report that gets acted on and one that gets scrolled past. Read
+   `report` before writing the message, not after.
 5. **Yield**: end the iteration and let the schedule fire the next one. Do not
    busy-wait between fires.
 
@@ -242,9 +245,9 @@ Every lane can reach the owner's Telegram question cards. The question binds to
 `/questions` lists everything pending.
 
 - **Pi sessions** call the `ask_user` tool.
-- **Claude Code lanes** use the bridge, publishing into the same store the
-  relay drains. Register first: the relay only sends cards
-  for agents that are live on the roster.
+- **Claude Code lanes** use the bridge, publishing into the same store the relay
+  drains. Register first: the relay only sends cards for agents that are live on
+  the roster.
 
   ```
   printf '%s' '<the question>' | pi-bridge ask --agent <your-agent-id> --header '<=16 chars>' --options 'First option|Second option'
@@ -273,10 +276,10 @@ the way and needs no cleanup.
 A session with its own native question tool may use that instead when the owner
 is present in the pane. The bridge is what reaches them when they are not.
 
-Offer real options, not a blank prompt: name the choices you actually
-considered and which one you would take. Keep working on everything the answer
-does not block — asking is not a reason to stall the queue. And when the answer
-arrives, follow it rather than the version of it you expected.
+Offer real options, not a blank prompt: name the choices you actually considered
+and which one you would take. Keep working on everything the answer does not
+block — asking is not a reason to stall the queue. And when the answer arrives,
+follow it rather than the version of it you expected.
 
 ## Dispatcher lane
 

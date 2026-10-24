@@ -119,6 +119,30 @@ assert_mapping("n", " tw", "Toggle word wrap")
 assert_mapping("n", " ts", "Toggle spell check")
 assert_mapping("n", " tf", "Toggle format on save")
 assert_mapping("n", " td", "Toggle diagnostics")
+assert_mapping("n", " tD", "Toggle diagnostic style (lines/text)")
+
+local diagnostic_style = vim.fn.maparg(" tD", "n", false, true)
+if type(diagnostic_style.callback) == "function" then
+  local original_diagnostics = vim.deepcopy(vim.diagnostic.config())
+  vim.diagnostic.config { virtual_lines = true, virtual_text = false }
+  for _, expected in ipairs {
+    { virtual_lines = false, virtual_text = true },
+    { virtual_lines = true, virtual_text = false },
+  } do
+    local ok, err = pcall(diagnostic_style.callback)
+    local current = vim.diagnostic.config()
+    if ok and current.virtual_lines == expected.virtual_lines and current.virtual_text == expected.virtual_text then
+      passed = passed + 1
+    else
+      print("FAIL: diagnostic style transition: " .. (ok and vim.inspect(current) or tostring(err)))
+      failed = failed + 1
+    end
+  end
+  vim.diagnostic.config(original_diagnostics)
+else
+  print("FAIL: diagnostic style mapping has no callable callback")
+  failed = failed + 1
+end
 
 -- Window
 assert_mapping("n", " wh", "Window left")

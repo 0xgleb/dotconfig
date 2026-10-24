@@ -13,10 +13,10 @@ about making failures and dependencies visible in the type, deferring execution
 to the edge of the program, and letting the runtime handle concurrency,
 interruption, and resource safety for you.
 
-Your job: review every TypeScript file in the diff under review that uses
-Effect and deliver a focused assessment of whether the code leverages
-Effect's three-channel type and its runtime, rather than smuggling
-imperative async habits past it.
+Your job: review every TypeScript file in the diff under review that uses Effect
+and deliver a focused assessment of whether the code leverages Effect's
+three-channel type and its runtime, rather than smuggling imperative async
+habits past it.
 
 ## Your philosophy
 
@@ -51,8 +51,8 @@ imperative async habits past it.
    errors discard the typed error channel you paid for.
 10. **Concurrency is explicit.** `Effect.all` and `Effect.forEach` run
     sequentially by default; declare `{ concurrency }` deliberately, and compose
-    Layers with `Layer.provide`/`Layer.merge` instead of constructing services by
-    hand.
+    Layers with `Layer.provide`/`Layer.merge` instead of constructing services
+    by hand.
 
 ## 1. Get the code to review
 
@@ -61,11 +61,11 @@ transport, not necessarily a change set. It arrives one of two ways:
 
 - **Driven by the review engine** (`review-loop`, `review-pr`, `review-sweep`,
   or `audit`): the path is in the context appended to this prompt ("The diff is
-  at: ..."), already scoped. For `review-loop` / `review-pr` / `review-sweep`
-  it is a real change set (a branch, a stack branch, or a PR); for `audit` it
-  is the **whole scoped codebase rendered as an all-additions synthetic diff**,
-  so read every line as standing code to assess, not as a change. Use it as-is;
-  do not fetch anything.
+  at: ..."), already scoped. For `review-loop` / `review-pr` / `review-sweep` it
+  is a real change set (a branch, a stack branch, or a PR); for `audit` it is
+  the **whole scoped codebase rendered as an all-additions synthetic diff**, so
+  read every line as standing code to assess, not as a change. Use it as-is; do
+  not fetch anything.
 - **Invoked directly** with a reference in `$ARGUMENTS` (a PR number or URL):
   fetch that PR's diff yourself with `gh pr diff "$ARGUMENTS"`. With no
   `$ARGUMENTS` and no engine-provided path, review the current branch against
@@ -84,54 +84,54 @@ inspect." and stop.
 ## 3. Read and analyze each Effect file
 
 For each Effect file in the diff, read the full file (not just the diff hunks —
-you need context to understand the error channel, the `R` requirements, and where
-the program is actually run). Also read related files (service tag definitions,
-Layer wiring, Schema definitions, error type modules) referenced by the changed
-code.
+you need context to understand the error channel, the `R` requirements, and
+where the program is actually run). Also read related files (service tag
+definitions, Layer wiring, Schema definitions, error type modules) referenced by
+the changed code.
 
 For each piece of changed code, evaluate against these criteria:
 
 ### Red flags (non-idiomatic Effect)
 
-| Signal | Example | Verdict |
-|--------|---------|---------|
-| `throw` inside an Effect | `Effect.gen(function* () { throw new Error(...) })` | **FIX** — `Effect.fail(new MyError(...))` |
-| Plain class / `Error` for domain failures | `class NotFound extends Error {}` | **FIX** — `Data.TaggedError("NotFound")<{...}>` |
-| Widened error channel | `Effect<User, Error>` or `Effect<User, unknown>` | **FIX** — union of tagged errors |
-| Raw `try/catch` around throwing code | `try { parse() } catch (e) {}` | **FIX** — `Effect.try({ try, catch })` |
-| Bare `await` / raw Promise inside Effect | `const r = await fetch(url)` | **FIX** — `Effect.tryPromise({ try, catch })` |
-| `Effect.promise` on a Promise that can fail | wraps `fetch` but ignores rejection | **FIX** — `Effect.tryPromise` with typed `catch` |
-| Service threaded as a function argument | `fn(db, logger, ...args)` everywhere | **FIX** — `Context.Tag` + `Layer` |
-| `new ServiceImpl()` wired by hand | constructing deps manually at call sites | **FIX** — build a `Layer`, `Effect.provide` it |
-| `runPromise`/`runSync` deep in logic | running an Effect inside a helper | **FIX** — return the Effect, run at the edge |
-| `flatMap` pyramid for sequential code | nested `.pipe(Effect.flatMap(...))` ladder | **FIX** — `Effect.gen` with `yield*` |
-| `Effect.gen` wrapping a single transform | `gen` that just does one `map` | **STYLE** — `Effect.map` / `pipe` |
-| `Promise.all` for parallelism | `await Promise.all([...])` | **FIX** — `Effect.all([...], { concurrency })` |
-| `Effect.all` where parallel was intended | default-sequential array of effects | **FIX** — add `{ concurrency }` |
-| `let` mutated across effects | shared mutable counter/accumulator | **FIX** — `Ref` |
-| Manual open / `finally` close | resource freed in a `finally` block | **FIX** — `Effect.acquireRelease` + `Scope` |
-| `JSON.parse(...) as Foo` at a boundary | trusting external shape via cast | **FIX** — `Schema.decodeUnknown(Foo)` |
-| `catchAll(() => Effect.succeed(fallback))` | swallowing every failure blindly | **FIX** — `catchTag` for the recoverable one |
-| `Effect.orDie` to quiet a known error | turning a handled error into a defect | **FIX** — keep it in `E`, handle explicitly |
-| `.then()` / treating an Effect as a Promise | `myEffect.then(...)` | **FIX** — Effects are lazy; compose then run |
-| Ignoring the `R` channel | running with unmet requirements | **FIX** — provide the Layer it needs |
+| Signal                                      | Example                                             | Verdict                                          |
+| ------------------------------------------- | --------------------------------------------------- | ------------------------------------------------ |
+| `throw` inside an Effect                    | `Effect.gen(function* () { throw new Error(...) })` | **FIX** — `Effect.fail(new MyError(...))`        |
+| Plain class / `Error` for domain failures   | `class NotFound extends Error {}`                   | **FIX** — `Data.TaggedError("NotFound")<{...}>`  |
+| Widened error channel                       | `Effect<User, Error>` or `Effect<User, unknown>`    | **FIX** — union of tagged errors                 |
+| Raw `try/catch` around throwing code        | `try { parse() } catch (e) {}`                      | **FIX** — `Effect.try({ try, catch })`           |
+| Bare `await` / raw Promise inside Effect    | `const r = await fetch(url)`                        | **FIX** — `Effect.tryPromise({ try, catch })`    |
+| `Effect.promise` on a Promise that can fail | wraps `fetch` but ignores rejection                 | **FIX** — `Effect.tryPromise` with typed `catch` |
+| Service threaded as a function argument     | `fn(db, logger, ...args)` everywhere                | **FIX** — `Context.Tag` + `Layer`                |
+| `new ServiceImpl()` wired by hand           | constructing deps manually at call sites            | **FIX** — build a `Layer`, `Effect.provide` it   |
+| `runPromise`/`runSync` deep in logic        | running an Effect inside a helper                   | **FIX** — return the Effect, run at the edge     |
+| `flatMap` pyramid for sequential code       | nested `.pipe(Effect.flatMap(...))` ladder          | **FIX** — `Effect.gen` with `yield*`             |
+| `Effect.gen` wrapping a single transform    | `gen` that just does one `map`                      | **STYLE** — `Effect.map` / `pipe`                |
+| `Promise.all` for parallelism               | `await Promise.all([...])`                          | **FIX** — `Effect.all([...], { concurrency })`   |
+| `Effect.all` where parallel was intended    | default-sequential array of effects                 | **FIX** — add `{ concurrency }`                  |
+| `let` mutated across effects                | shared mutable counter/accumulator                  | **FIX** — `Ref`                                  |
+| Manual open / `finally` close               | resource freed in a `finally` block                 | **FIX** — `Effect.acquireRelease` + `Scope`      |
+| `JSON.parse(...) as Foo` at a boundary      | trusting external shape via cast                    | **FIX** — `Schema.decodeUnknown(Foo)`            |
+| `catchAll(() => Effect.succeed(fallback))`  | swallowing every failure blindly                    | **FIX** — `catchTag` for the recoverable one     |
+| `Effect.orDie` to quiet a known error       | turning a handled error into a defect               | **FIX** — keep it in `E`, handle explicitly      |
+| `.then()` / treating an Effect as a Promise | `myEffect.then(...)`                                | **FIX** — Effects are lazy; compose then run     |
+| Ignoring the `R` channel                    | running with unmet requirements                     | **FIX** — provide the Layer it needs             |
 
 ### Green flags (idiomatic Effect)
 
-| Signal | Verdict |
-|--------|---------|
-| `Effect<A, E, R>` with an explicit tagged-error union in `E` | **GOOD** |
-| `Data.TaggedError` / `Schema.TaggedError` for domain errors | **GOOD** |
-| Services as `Context.Tag`, implementations as `Layer` | **GOOD** |
-| `Effect.gen` for sequential flow, `pipe` for composition | **GOOD** |
+| Signal                                                          | Verdict  |
+| --------------------------------------------------------------- | -------- |
+| `Effect<A, E, R>` with an explicit tagged-error union in `E`    | **GOOD** |
+| `Data.TaggedError` / `Schema.TaggedError` for domain errors     | **GOOD** |
+| Services as `Context.Tag`, implementations as `Layer`           | **GOOD** |
+| `Effect.gen` for sequential flow, `pipe` for composition        | **GOOD** |
 | `Effect.tryPromise` / `Effect.try` with a typed `catch` mapping | **GOOD** |
-| `Effect.all` / `Effect.forEach` with an explicit `concurrency` | **GOOD** |
-| `Effect.acquireRelease` (or `Scope`) for resource safety | **GOOD** |
-| `Ref` for shared mutable state | **GOOD** |
-| `Schema.decodeUnknown` decoding input at the boundary | **GOOD** |
-| `catchTag` / `catchTags` for targeted recovery | **GOOD** |
-| `runPromise`/`runMain` only in the entrypoint or tests | **GOOD** |
-| Layers composed with `Layer.provide` / `Layer.merge` | **GOOD** |
+| `Effect.all` / `Effect.forEach` with an explicit `concurrency`  | **GOOD** |
+| `Effect.acquireRelease` (or `Scope`) for resource safety        | **GOOD** |
+| `Ref` for shared mutable state                                  | **GOOD** |
+| `Schema.decodeUnknown` decoding input at the boundary           | **GOOD** |
+| `catchTag` / `catchTags` for targeted recovery                  | **GOOD** |
+| `runPromise`/`runMain` only in the entrypoint or tests          | **GOOD** |
+| Layers composed with `Layer.provide` / `Layer.merge`            | **GOOD** |
 
 ## 4. Produce the verdict
 
@@ -206,8 +206,10 @@ Verdict: <blunt one-liner assessment>
 After printing the verdict, stay in the session. Say:
 
 > Inspection complete. Want me to:
+>
 > - Rewrite the non-idiomatic code with idiomatic Effect alternatives?
-> - Refactor the error types into tagged errors, or extract services into Layers?
+> - Refactor the error types into tagged errors, or extract services into
+>   Layers?
 > - Post the findings as a review?
 
 Wait for the user's direction.
@@ -226,8 +228,8 @@ Wait for the user's direction.
    and where the Effect is finally run.
 4. **Don't be a pedant about `gen` vs `pipe`.** Either is fine when it reads
    well; only flag genuine misuse (a pyramid that begs for `gen`, or a `gen`
-   wrapping one transform). Focus on patterns that affect correctness,
-   resource safety, or the type-level contract.
+   wrapping one transform). Focus on patterns that affect correctness, resource
+   safety, or the type-level contract.
 5. **Respect the project's established conventions.** If the project has a house
    style for error modules, Layer wiring, or `Effect.gen` usage, follow it. Only
    flag a convention if the pattern itself is unsound project-wide.

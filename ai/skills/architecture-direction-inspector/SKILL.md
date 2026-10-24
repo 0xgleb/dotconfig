@@ -22,12 +22,12 @@ including dependency changes, only with strong evidence.
 
 1. Current ADRs, roadmap, specs, public interfaces, deployment/runtime
    constraints, and project instructions.
-2. Existing architectural patterns and dependency ecosystem used successfully
-   in adjacent modules.
+2. Existing architectural patterns and dependency ecosystem used successfully in
+   adjacent modules.
 3. Concrete behavior of the changed design: ownership, coupling, failure
    isolation, migration, operability, testability, and reversibility.
-4. External documentation or popularity is supporting evidence only; fashion
-   is not project direction.
+4. External documentation or popularity is supporting evidence only; fashion is
+   not project direction.
 
 ## 1. Get the code to review
 
@@ -40,14 +40,14 @@ changed behavior unless the engine says this is a whole-scope audit.
 ## 2. Map the architecture
 
 - Identify capabilities and invariants, not file layout.
-- Map data and control ownership, canonical state, public boundaries,
-  dependency direction, failure domains, and lifecycle.
+- Map data and control ownership, canonical state, public boundaries, dependency
+  direction, failure domains, and lifecycle.
 - Ask whether things that vary independently are coupled, or things that must
   change atomically are split.
-- Compare the chosen dependency or pattern with the project’s established
-  stack and explicit requirements.
-- Trace adoption and removal: migration, coexistence, rollback, persisted
-  state, public consumers, operations, testability, and observability.
+- Compare the chosen dependency or pattern with the project’s established stack
+  and explicit requirements.
+- Trace adoption and removal: migration, coexistence, rollback, persisted state,
+  public consumers, operations, testability, and observability.
 - Test the strongest counter-hypothesis: the local design may be intentionally
   simpler, reversible, and sufficient.
 
@@ -59,10 +59,9 @@ changed behavior unless the engine says this is a whole-scope audit.
   states.
 - A subsystem split or merge that makes atomic invariants impossible.
 - Infrastructure or library choices that conflict with documented runtime,
-  typing, failure, functional-programming, deployment, or operational
-  direction.
-- An incumbent dependency whose verified limitation forces bespoke glue that
-  a project-aligned alternative already solves.
+  typing, failure, functional-programming, deployment, or operational direction.
+- An incumbent dependency whose verified limitation forces bespoke glue that a
+  project-aligned alternative already solves.
 - An irreversible migration without coexistence, rollback, consumer inventory,
   or state-transition plan.
 - A missed architectural simplification with concrete reductions in coupling,
@@ -81,7 +80,8 @@ A dependency recommendation must:
 6. Identify the candidate’s new failure modes and operational costs.
 7. State the evidence that would falsify the recommendation.
 
-Never recommend a dependency because it is newer, popular, or personally preferred.
+Never recommend a dependency because it is newer, popular, or personally
+preferred.
 
 ## 4. What not to flag
 
@@ -108,8 +108,8 @@ For each finding provide:
 - migration, coexistence, rollback, and consumer boundary;
 - verification or falsification evidence.
 
-Classify findings as `architecture`. Return `NO_FINDINGS` when no
-recommendation clears this evidence bar.
+Classify findings as `architecture`. Return `NO_FINDINGS` when no recommendation
+clears this evidence bar.
 
 ## Severity
 

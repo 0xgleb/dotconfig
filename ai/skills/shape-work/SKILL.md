@@ -27,11 +27,11 @@ never plans the implementation and never writes production code.
 1. **GROUND.** Read before writing a single word. Pull the tracker item first:
    `gh issue view <N>` for the project's GitHub issue. Then read the relevant
    source modules, `ls adrs/` and the matching `adrs/NN-*.md`, and `ROADMAP.md`.
-   You cannot shape work you have not read. If the idea touches a crate you have not opened, open it (Grep /
-   Glob / Read) before reframing it.
+   You cannot shape work you have not read. If the idea touches a crate you have
+   not opened, open it (Grep / Glob / Read) before reframing it.
 
 2. **DIVERGE (optional, when the framing itself is in doubt).** Reframe as a
-   How-Might-We that names *who it serves in domain terms* ("How might we let
+   How-Might-We that names _who it serves in domain terms_ ("How might we let
    the settlement engine reject an underfunded order before it touches the
    ledger?" — not "How might we add validation?"). Generate 5-8 variations
    through lenses tuned to this engineer:
@@ -43,8 +43,8 @@ never plans the implementation and never writes production code.
    - **move-the-check-to-compile-time** — from runtime assert to trait bound /
      const / typestate.
    - **model-as-discriminated-union** — replace a bool or a stringly-typed flag
-     with an enum that makes invalid states unrepresentable.
-   Keep them considered, not shallow: 5-8 real options beat 20 throwaways.
+     with an enum that makes invalid states unrepresentable. Keep them
+     considered, not shallow: 5-8 real options beat 20 throwaways.
 
 3. **LOCK INTENT (interview).** State a one-line hypothesis of what they want
    plus a confidence level (and, below ~70%, one line on what is missing). Then
@@ -62,8 +62,8 @@ never plans the implementation and never writes production code.
    over-engineering tell against their YAGNI style and ask: "if you did not have
    to justify it to anyone, what would you actually want here?"
 
-4. **SURFACE ASSUMPTIONS.** Emit an `ASSUMPTIONS` block and STOP for
-   correction. It must cover at least:
+4. **SURFACE ASSUMPTIONS.** Emit an `ASSUMPTIONS` block and STOP for correction.
+   It must cover at least:
    - **crate / module boundaries** — where does this live, what does it depend
      on, what depends on it.
    - **on-chain vs off-chain split** — what runs in a contract vs a service.
@@ -96,7 +96,7 @@ never plans the implementation and never writes production code.
    - **coupling** — does it couple things that vary independently, or split
      things that always change together?
 
-6. **VALIDATE.** For every surviving assumption, state *how* it gets validated
+6. **VALIDATE.** For every surviving assumption, state _how_ it gets validated
    in this engineer's terms — never a vague "we should check":
    - a **failing test** (type-driven TDD: the test that compiles and fails),
    - a **spike** (a throwaway branch to learn one thing, then deleted),
@@ -108,8 +108,7 @@ never plans the implementation and never writes production code.
      order intake rejects an order whose total exceeds available balance with
      `RejectReason::Underfunded`" — concrete enough to drop straight into a
      `#[test]` or a `forge` test.
-   - An explicit **Non-goals / Out-of-scope** list.
-   Then route it:
+   - An explicit **Non-goals / Out-of-scope** list. Then route it:
    - **architectural decision** → draft `adrs/NN-name.md` (next free `NN` from
      `ls adrs/`) and **STOP for review** before proceeding.
    - **roadmap-level** → an epic-based entry (goal-first prose, then checkboxes;
@@ -122,15 +121,15 @@ never plans the implementation and never writes production code.
 
 ## Common rationalizations
 
-| Excuse | Reality |
-| --- | --- |
-| "The ask is clear enough to start coding." | If you cannot write the first failing test in one line right now, it is not clear — run the interview. |
-| "Asking questions is slower than just building it." | Post-merge rework on the wrong abstraction costs far more than 4-6 guess-carrying questions. A wrong type that reaches `crates/` propagates everywhere. |
-| "Let me make it generic so it is future-proof." | That is a want-vs-should-want tell. YAGNI: shape for the capability you have evidence for; a discriminated union you can extend beats a generic you cannot delete. |
-| "I will figure out the units / decimals while implementing." | Decimals and encoding are exactly where money bugs hide. Pin them in the ASSUMPTIONS block before a line of code, not in a hotfix. |
-| "I will write the spec after I get it working." | A spec written after the code just describes the code's accidents. Success criteria must exist as a failing test first, or they are not criteria. |
-| "It's a small reversible change, skip the ceremony." | Then skip the skill — shaping is for the irreversible or multi-file calls. Do not write a one-pager for a rename. |
-| "They said 'whatever you think.'" | That is not a yes. Offer two concrete directions as a choice; never let delegation substitute for locked intent. |
+| Excuse                                                       | Reality                                                                                                                                                            |
+| ------------------------------------------------------------ | ------------------------------------------------------------------------------------------------------------------------------------------------------------------ |
+| "The ask is clear enough to start coding."                   | If you cannot write the first failing test in one line right now, it is not clear — run the interview.                                                             |
+| "Asking questions is slower than just building it."          | Post-merge rework on the wrong abstraction costs far more than 4-6 guess-carrying questions. A wrong type that reaches `crates/` propagates everywhere.            |
+| "Let me make it generic so it is future-proof."              | That is a want-vs-should-want tell. YAGNI: shape for the capability you have evidence for; a discriminated union you can extend beats a generic you cannot delete. |
+| "I will figure out the units / decimals while implementing." | Decimals and encoding are exactly where money bugs hide. Pin them in the ASSUMPTIONS block before a line of code, not in a hotfix.                                 |
+| "I will write the spec after I get it working."              | A spec written after the code just describes the code's accidents. Success criteria must exist as a failing test first, or they are not criteria.                  |
+| "It's a small reversible change, skip the ceremony."         | Then skip the skill — shaping is for the irreversible or multi-file calls. Do not write a one-pager for a rename.                                                  |
+| "They said 'whatever you think.'"                            | That is not a yes. Offer two concrete directions as a choice; never let delegation substitute for locked intent.                                                   |
 
 ## Red flags
 
@@ -157,17 +156,17 @@ never plans the implementation and never writes production code.
 1. **Gated on an explicit yes.** Reject "whatever you think", "sounds good", and
    silence as terminal. Loop the restatement until you get an unambiguous yes.
 2. **Never fabricate CLI flags or values.** Run `--help` or read the config /
-   source first. If you are unsure of a `cargo`, `forge`, `nix`, `but`, or
-   `gh` flag, say "see `--help`" — never invent one.
-3. **Not done without non-goals.** Every output carries an explicit
-   Non-goals / Out-of-scope list.
+   source first. If you are unsure of a `cargo`, `forge`, `nix`, `but`, or `gh`
+   flag, say "see `--help`" — never invent one.
+3. **Not done without non-goals.** Every output carries an explicit Non-goals /
+   Out-of-scope list.
 4. **Not done without per-assumption validation.** Every surviving assumption
    names how it gets validated (failing test / spike / forge or testnet run /
    cited contract doc).
-5. **Emit a real artifact, not a generic one-pager.** An ADR at `adrs/NN-name.md`
-   (then STOP for review) OR an epic-based roadmap entry (never numbered phases;
-   mermaid for parallel streams) OR locked criteria folded into the tracker
-   issue. The shape matches the decision.
+5. **Emit a real artifact, not a generic one-pager.** An ADR at
+   `adrs/NN-name.md` (then STOP for review) OR an epic-based roadmap entry
+   (never numbered phases; mermaid for parallel streams) OR locked criteria
+   folded into the tracker issue. The shape matches the decision.
 6. **This skill never plans and never codes.** Hand confirmed intent to the plan
    stage and type-driven TDD. If you catch yourself writing implementation steps
    or production code, stop — that is the next stage's job.

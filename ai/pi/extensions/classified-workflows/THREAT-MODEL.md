@@ -5,8 +5,8 @@
 The classifier completion crosses from untrusted model output into the typed
 action decision. A model-authored tool call then crosses from the session into
 an external Telegram delivery. The protected assets are the owner's authority,
-the factual integrity and confidentiality of stakeholder updates, delivery
-audit truth, exactly-once delivery after verification, and session liveness.
+the factual integrity and confidentiality of stakeholder updates, delivery audit
+truth, exactly-once delivery after verification, and session liveness.
 
 ## STRIDE analysis
 

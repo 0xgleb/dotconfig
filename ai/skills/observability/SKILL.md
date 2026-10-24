@@ -44,7 +44,7 @@ or an indexer will ask, then answer each with exactly one well-chosen signal.
    of a closed set — model them as enums, not ad-hoc string literals scattered
    across call sites (the avoid-boolean-blindness / make-invalid-states-
    unrepresentable rule applies to telemetry too). Attach a correlation id
-   (order id, request id, tx hash) as a *field* so lines join across a request,
+   (order id, request id, tx hash) as a _field_ so lines join across a request,
    never as part of the message text.
 
 4. **Cardinality discipline.** Metric labels and `indexed` Solidity topics must
@@ -66,29 +66,30 @@ or an indexer will ask, then answer each with exactly one well-chosen signal.
 
 ## Common rationalizations
 
-| Excuse | Reality |
-| --- | --- |
-| "I'll add tracing after the service is working." | "After" is the first 3 a.m. incident — the most expensive possible moment to discover you are blind. Instrument with the feature. |
-| "More logs = more observability." | 300 prose lines you cannot query are worse than three structured events with stable names and fields. Noise hides the signal during an incident. |
-| "`println!` / `dbg!` / `console.log` is fine for now." | It cannot be filtered by level, correlated by request id, JSON-parsed, or alerted on. It is not telemetry; it is litter that ships to prod. |
-| "I'll just put the order id in the metric label so I can filter." | That is unbounded cardinality — it will take down the metrics backend. The order id goes in a `tracing` field or the event data, never a label or an `indexed` topic. |
-| "Averages are good enough for latency." | An average hides the p99 that pages you. Report percentiles (histograms), never means. |
-| "It's just an internal helper event, the ABI doesn't matter." | Emitted Solidity events are part of the contract's external interface — indexers and subgraphs depend on them. Changing one is an interface change (see interface-lifecycle). |
+| Excuse                                                            | Reality                                                                                                                                                                       |
+| ----------------------------------------------------------------- | ----------------------------------------------------------------------------------------------------------------------------------------------------------------------------- |
+| "I'll add tracing after the service is working."                  | "After" is the first 3 a.m. incident — the most expensive possible moment to discover you are blind. Instrument with the feature.                                             |
+| "More logs = more observability."                                 | 300 prose lines you cannot query are worse than three structured events with stable names and fields. Noise hides the signal during an incident.                              |
+| "`println!` / `dbg!` / `console.log` is fine for now."            | It cannot be filtered by level, correlated by request id, JSON-parsed, or alerted on. It is not telemetry; it is litter that ships to prod.                                   |
+| "I'll just put the order id in the metric label so I can filter." | That is unbounded cardinality — it will take down the metrics backend. The order id goes in a `tracing` field or the event data, never a label or an `indexed` topic.         |
+| "Averages are good enough for latency."                           | An average hides the p99 that pages you. Report percentiles (histograms), never means.                                                                                        |
+| "It's just an internal helper event, the ABI doesn't matter."     | Emitted Solidity events are part of the contract's external interface — indexers and subgraphs depend on them. Changing one is an interface change (see interface-lifecycle). |
 
 ## Red flags
 
 - A PR adds retries, a queue, a settlement loop, or an external RPC call and
   ships ZERO new telemetry.
 - Log lines built by string interpolation (`format!("order {id} failed")`)
-  instead of structured fields (`tracing::warn!(order_id = %id, "order failed")`).
+  instead of structured fields
+  (`tracing::warn!(order_id = %id, "order failed")`).
 - No correlation id (order id / request id / tx hash) threaded through the logs
   and spans of a single request.
 - A metric label or `indexed` Solidity topic holds an address, tx hash, order
   id, vault id, amount, or free-form error text.
 - Latency tracked as an average / sum-over-count instead of a histogram with
   queryable p95 / p99.
-- Event names or levels written as bare string literals at each call site
-  rather than a shared enum.
+- Event names or levels written as bare string literals at each call site rather
+  than a shared enum.
 - A new `event` added to a deployed contract with no `vm.expectEmit` test and no
   note that the ABI/interface changed.
 - `println!`, `dbg!`, or `console.log` left in a code path that runs in prod.

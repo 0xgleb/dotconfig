@@ -25,11 +25,11 @@
 
 ## STRIDE summary
 
-| Threat | Control |
-| --- | --- |
-| Spoofing | Extension and magic bytes must agree |
-| Tampering | Realpath, regular-file, size, and signature validation happen before attachment |
-| Repudiation | UI notification reports successful attachment or explicit rejection |
-| Information disclosure | Narrow temporary roots and path removal prevent arbitrary-file/path exposure |
-| Denial of service | 20 MiB hard limit bounds reads and model payloads |
-| Elevation of privilege | No shell, command execution, or arbitrary path action is exposed |
+| Threat                 | Control                                                                         |
+| ---------------------- | ------------------------------------------------------------------------------- |
+| Spoofing               | Extension and magic bytes must agree                                            |
+| Tampering              | Realpath, regular-file, size, and signature validation happen before attachment |
+| Repudiation            | UI notification reports successful attachment or explicit rejection             |
+| Information disclosure | Narrow temporary roots and path removal prevent arbitrary-file/path exposure    |
+| Denial of service      | 20 MiB hard limit bounds reads and model payloads                               |
+| Elevation of privilege | No shell, command execution, or arbitrary path action is exposed                |

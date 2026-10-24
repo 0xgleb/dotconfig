@@ -29,12 +29,11 @@ allocation, and accounting forecasts.
    parameter sweeps, and survivor filtering require honest validation.
 4. **Point estimates are not decision rules.** Uncertainty, sensitivity,
    calibration, and regime behavior must be explicit.
-5. **Statistical edge must survive implementation.** Costs, latency,
-   liquidity, capacity, missing data, resets, and operational constraints are
-   part of the model.
+5. **Statistical edge must survive implementation.** Costs, latency, liquidity,
+   capacity, missing data, resets, and operational constraints are part of the
+   model.
 6. **Allocation is joint.** Portfolio, provider, project, or strategy
-   allocations must be evaluated together rather than as isolated
-   opportunities.
+   allocations must be evaluated together rather than as isolated opportunities.
 
 ## 1. Get the code to review
 
@@ -70,16 +69,16 @@ Identify:
   relevance.
 - No confidence interval, forecast calibration, sensitivity analysis, or
   parameter stability evidence.
-- Performance dependent on one regime, structural break, start date,
-  benchmark, or narrow parameter point.
+- Performance dependent on one regime, structural break, start date, benchmark,
+  or narrow parameter point.
 - Ignored transaction, financing, borrow, slippage, latency, liquidity, or
   capacity costs.
 - For a resource model, ignored reset revisions, allowance bumps, provider/pool
   separation, expiry, queueing, or priority constraints.
-- Optimizer allocations dominated by estimation error, concentration,
-  unstable covariance, or missing constraints.
-- A strategy/model recommendation with no baseline and no test that could
-  reject it.
+- Optimizer allocations dominated by estimation error, concentration, unstable
+  covariance, or missing constraints.
+- A strategy/model recommendation with no baseline and no test that could reject
+  it.
 
 ## 4. Avoid overlap
 
