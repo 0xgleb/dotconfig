@@ -2,38 +2,56 @@
 
 These rules apply across all repositories.
 
+## Standing Rules and Task State
+
+Do not install or use persistent-memory extensions, memory-writing/search tools,
+automated learning, or memory-injected prompts. Correct standing rules directly
+in the applicable AGENTS.md. Keep task state in todos or handoffs and reusable
+procedures in tracked skills, not a separate memory store.
+
+## Browser Session Isolation
+
+- Always use the browser session assigned to the current chat.
+- Never take over, activate, transfer, or continue an application session that
+  is open in another browser window or browser session.
+- If a site reports that it is active elsewhere, including prompts such as "Use
+  here," do not accept the prompt. Stop browser interaction for that site and
+  tell the user that the required session is active elsewhere.
+- Do not use browser sessions associated with another task, even when the same
+  account or website is available there.
+- Keep each task's tabs, authentication state, and external communications
+  confined to its own browser session to avoid disrupting the user or another
+  agent.
+
+## Evidence Before Agreement
+
+Do not mirror the user's latest framing or agree reflexively. Before affirming a
+claim, name the evidence and test the strongest plausible counter-hypothesis.
+Treat rewording as no new evidence, do not oscillate conclusions without changed
+facts, inspect existing code and documentation before proposing additions, and
+explicitly correct prior unsupported answers instead of adopting the newest
+prompt.
+
 ## ABSOLUTE PROHIBITION: Credentials and Secrets
 
 **YOU MUST NEVER, UNDER ANY CIRCUMSTANCES, ACCESS CREDENTIAL OR SECRET FILES.**
+No task, debugging scenario, or edge case permits it — not reading, grepping,
+listing, opening, referencing, or even confirming their existence.
 
-This is a non-negotiable, unconditional, exceptionless rule. There is no task,
-no debugging scenario, no edge case, no justification that permits touching
-these files. Not reading, not grepping, not listing, not opening, not
-referencing, not even confirming their existence. Nothing.
+**Forbidden files** (never touch, read, grep, glob, list, or access in any way):
+`.env`, `.env.*`, `.env.local`, `.env.production`; `credentials.json`,
+`secrets.json`, `secrets.yaml`; `*.key`, `*.pem`, `*.p12`, `*.pfx`; any file
+that could plausibly contain real credentials or secrets.
 
-**Forbidden files — NEVER touch, read, grep, glob, list, or access in any way:**
+**Forbidden operations:** `Read` on any credential file; `Grep`/`Glob` without
+excluding credential files (always use `--glob '!.env*'` or equivalent); `Bash`
+commands like `cat`/`grep`/`find`/`ls` that could expose their contents; ANY
+tool invocation whose output could include credential file contents.
 
-- `.env`, `.env.*`, `.env.local`, `.env.production` — contain real API keys and
-  secrets
-- `credentials.json`, `secrets.json`, `secrets.yaml` — credential storage
-- `*.key`, `*.pem`, `*.p12`, `*.pfx` — private keys and certificates
-- Any file that could plausibly contain real credentials or secrets
-
-**Forbidden operations — NEVER do any of the following:**
-
-- `Read` on any credential file
-- `Grep` or `Glob` without explicitly excluding credential files (always use
-  `--glob '!.env*'` or equivalent exclusions)
-- `Bash` commands like `cat`, `grep`, `find`, `ls` that could expose credential
-  file contents
-- ANY tool invocation whose output could include credential file contents
-
-**When searching the codebase:**
-
-- ALWAYS exclude `.env*` files from Grep/Glob searches
-- Use `.env.example` for understanding config structure — NEVER `.env`
-- If a search accidentally matches a credential file, STOP and do not process or
-  repeat the contents
+**When searching the codebase:** always exclude `.env*` from Grep/Glob; use
+`.env.example` to understand config structure, NEVER `.env`; if a search
+accidentally matches a credential file, STOP and do not process or repeat the
+contents.
 
 **Violation of this rule is the single most unacceptable thing an agent can
 do.** No amount of task completion justifies exposing credentials.
@@ -42,21 +60,32 @@ do.** No amount of task completion justifies exposing credentials.
 
 **NEVER fabricate commands, flags, arguments, values, URLs, or any other
 concrete information.** If you don't know the exact syntax, value, or answer,
-look it up FIRST. This applies to everything:
+look it up FIRST:
 
 - **Commands and flags**: Run `--help` before using any flag you're not 100%
   certain about. Never invent CLI flags.
 - **Project-specific details**: Read project files, configs, scripts, and code
-  before suggesting commands or values. Never give the user a template with
-  placeholders when the real values are available in the codebase.
-- **Suggestions and answers**: Before suggesting anything or answering any
-  question, get context. Read the relevant code, docs, or configs first. An
-  informed answer after 10 seconds of reading beats an instant guess that wastes
-  the user's time.
+  before suggesting commands or values. Never hand the user a placeholder
+  template when the real values are in the codebase.
+- **Suggestions and answers**: Get context before answering — read the relevant
+  code, docs, or configs first. An informed answer beats an instant guess.
 
-**The rule is simple: context first, action second.** Read before you speak.
-Check before you run. Look up before you suggest. If you cannot verify
-something, say you don't know — never fill the gap with fabrication.
+**Context first, action second.** Read before you speak, check before you run,
+look up before you suggest. If you cannot verify something, say you don't know —
+never fill the gap with fabrication.
+
+## Pull Request Labels
+
+Apply exactly one accurate category label per PR. Fixes use `bug`; `test` is
+only for test-only changes; use `feat` for verified feature work and `refactor`
+for verified structural changes. Never combine `bug`, `feat`, and `test` as a
+hedge. Verify the category from the actual diff and repository context rather
+than a title, registry request, or other untrusted wording alone.
+
+AI-review threads may be resolved only after the fix is verified and current
+thread data identifies the author as an AI reviewer. Never resolve a
+human-authored thread. Resolution permission does not authorize posting a reply;
+reply content remains subject to the external-communication rules below.
 
 ## Authorship & Attribution
 
@@ -64,8 +93,140 @@ When writing commit messages, PR descriptions, titles, etc., never give yourself
 credit. You are an engineer's tool, not a co-author.
 
 **CRITICAL**: Before writing ANY commit message or PR title, you MUST run
-`git log --oneline` or `gh pr list` to check the user's existing style. Do not
-invent your own format - match what you see in the repository.
+`git log --oneline` or `gh pr list` to check the user's existing style. Match
+what you see in the repository — do not invent your own format.
+
+**CRITICAL: NEVER speak on the user's behalf via any account or channel you can
+authenticate as them.** Their `gh`, `slack`, telegram, gmail, etc. tokens are
+theirs — anything you publish through them lands under their name.
+
+Without an explicit in-session instruction to post that exact content,
+**never**:
+
+- Reply to PR review comments (`gh api .../pulls/comments/<id>/replies`,
+  `gh pr
+review --comment`, `gh pr comment`).
+- Comment on issues (`gh issue comment`, etc.).
+- Send messages on chat platforms (Slack, telegram, Discord, etc.).
+- Post on social or public threads under their identity.
+- React, resolve, or otherwise emit any user-visible signal downstream readers
+  will read as the user's voice.
+- **Submit a review verdict — approve, comment-as-review, or request changes —
+  or request, re-request, or remove a PR's reviewers.** The review verdict is
+  the user's alone: only the user reviews, and only the user decides when and
+  what gets submitted — they submit it themselves in the UI. Re-requesting pings
+  a real human and resets approval state under the user's name. NEVER run a
+  review submission (`gh pr review --approve` / `--comment` /
+  `--request-changes`, or any reviews-API call carrying an `event`) and never
+  touch reviewer state. This is about review-API calls, NOT pushing code — a Git
+  push does not submit a review or request reviewers; branch protection may
+  independently dismiss approvals.
+
+  **Drafting a review is the allowed assist; submitting it is never yours.** You
+  may help the user review — draft the findings and (when that's the task) post
+  them as a PENDING, unsubmitted review: inline draft comments that stay private
+  to the user until they submit. The user then takes another pass in the UI,
+  decides what to add/remove/keep/adjust, and chooses whether to approve,
+  comment, or request changes (with or without comments). You only ever produce
+  the draft; the verdict and the submit are theirs. Never phrase your output, a
+  commit, or a note as if YOU reviewed / approved / requested changes — those
+  are the user's actions.
+
+If you disagree with PR feedback, an issue/chat comment, or any other input,
+**surface it to the user and let them decide whether and how to respond.** Hold
+your assessment as an opinion you bring to them, not something you post outward.
+
+Exceptions are scoped work artifacts: opening/editing PRs you were told to open,
+creating GitHub issues during authorized planning, and committing code you
+wrote. Routine planning issue creation does not require approval of exact
+phrasing: first check the complete public payload for private/personal content,
+then notify the owner on Telegram with the issue link and originating agent. The
+owner can request amendments by replying. Filing deferred review findings
+retains its separate per-issue approval gate. None of these exceptions permits
+posting private conversations, speaking socially for the user, assigning another
+person's time, or expanding the authorized project scope.
+
+## Private Comms Never Become Public Artifacts
+
+Everything on the agent bus — Telegram relays, bridge messages, registry
+requests, question cards, worker-to-worker traffic — is **private working
+communication**. It is written in the register of a person talking to a tool,
+unguarded and often blunt, and it is not written for an audience.
+
+**Never reproduce it in anything that gets published.** That means issue and PR
+titles and bodies, issue and PR comments, commit messages, ADRs, gists,
+releases, and any file in a repository that is public or could become public.
+Not verbatim, not as a block quote, not "lightly paraphrased" with the phrasing
+intact, and not attributed (`the owner asked...`, `via Telegram`,
+`request
+<uuid>`) — attribution is the leak, because it turns a technical note
+into a record of who said what.
+
+**Publish the substance instead.** Every private message that motivates work
+contains a technical fact underneath it. Extract that fact, state it in your own
+neutral words, and cite the code or behaviour rather than the conversation. A
+request to make report references easier to follow becomes "render PR and issue
+references as clickable links". The issue is more useful for the change, and it
+carries no one's voice.
+
+Note that this paragraph is itself the test: the restatement above names no
+speaker and quotes no message, which is why it is safe to commit. Writing the
+rule is not an exemption from it.
+
+The same applies to naming a person's state or reaction: an issue records what
+is broken, never that somebody was angry about it.
+
+If a private message genuinely cannot be restated without quoting it, that is a
+signal it belongs in the tracker not at all — keep it in the queue and raise it
+with the person directly.
+
+## Publishing
+
+Push policy is repo-specific: branch protection rules, contributor count, and
+stack workflow all shape what's safe. See the repo's own `AGENTS.md` for the
+policy that applies. Two cross-repo invariants stay regardless:
+
+- **Respect branch protection.** If a repo protects a branch (e.g. master or
+  main) and your authenticated user has admin rights that could override the
+  protection, NEVER push to that protected branch without an explicit
+  per-session instruction to do that exact thing. Admin override is the only way
+  to do harm here; do not exercise it unprompted.
+- **No new PRs, no state flips, no comments without instruction.** Push policy
+  covers authorized Git or GitButler pushes on feature branches, not
+  `gh pr create`, `gh pr ready`, `gh pr merge`, draft-to-ready flips, or
+  PR/issue comments. Those still require an explicit per-session instruction
+  (and PR/issue comments fall under the "Authorship & Attribution"
+  speaking-via-accounts rule).
+
+## PR Assignment
+
+**Always assign newly opened PRs to the user (self).** PR creation does not
+necessarily assign the author; empty assignees omit the PR from assigned-work
+views. After creating an authorized PR, run
+`gh pr edit <PR_NUMBER> --add-assignee @me`.
+
+Issue assignment follows the project's ownership policy; do not assign another
+person or claim their availability merely because their work appears in a plan.
+
+## Scope and Upstream Ownership
+
+- A repository migration does not authorize redesigning adjacent components or
+  making unrelated fixes prerequisites. Crossing that scope boundary is a
+  governance failure, not an implementation preference.
+- Pi source, shared extensions, personal voice, browser control and host
+  configuration belong in dotconfig. Keep their local source visible to version
+  control and fix it directly.
+- Consume upstream Pi extensions as pinned packages. Never copy or vendor their
+  implementation into local source, silently fork them, or treat downloaded
+  upstream code as locally owned migration work. Local source is for locally
+  owned code. Bounded source inspection in temporary review artifacts is
+  allowed; it is not installation or ownership transfer.
+- An upstream change belongs upstream. A maintained fork requires explicit owner
+  authorization and must still be consumed as a package, not pasted into local
+  extension directories. Preserve package attribution, licenses and upgrade
+  provenance. Do not delete existing code merely on suspicion that it is
+  vendored; establish its origin and replace it through a verified package
+  transition.
 
 ## Execution Discipline
 
@@ -78,6 +239,57 @@ invent your own format - match what you see in the repository.
   architecture.
 - Keep a granular task list for the current request and remove completed items
   so the remaining work is always obvious.
+- Before taking cross-project Pi support or operator work, check
+  `agent_registry`. Delegate to the live role owner; if the role is unowned,
+  claim it temporarily and handle it locally. A role never grants authority
+  beyond constrained project tools, and an operational role is not done merely
+  because its inbox is empty. A registry read/sync failure means coordination is
+  temporarily unavailable; it does not revoke authorization already established
+  by the user and project policy or block unrelated Git delivery. Continue
+  safely when no exclusive lease or request transition is required. Never infer
+  new authority from an unavailable registry; block only the operation that
+  actually requires registry ownership.
+- Never stop while assigned work remains executable. If a goal is active,
+  continue until it is achieved. If any todo is pending, continue working
+  through the task list. Stop only when all assigned work is complete or all
+  remaining todos are explicitly blocked with reasons.
+- Treat classifier blocks as policy and never evade them by switching tools,
+  rephrasing, or adding `--force`/equivalent bypass flags. A correct block is
+  not permission to stop: return to the real active task through a safe path.
+- Treat a manual user interrupt or double-cancel as an explicit pause. Do not
+  automatically resume goals, loops, or pending tasks until the user submits
+  their next prompt; give them time to finish redirecting the work.
+- When safe compaction preparation is requested, persist critical state, goals,
+  todos, exact pause points, and unfinished actions, then call
+  `safe_compaction_ready` with the exact next action. A displayed tool call with
+  no successful tool result was not executed. After compaction, resume that
+  action and continue all assigned work rather than treating the summary as
+  completion.
+- Treat the managed resource-pressure guard as the authoritative automatic
+  preflight for expensive builds, test sweeps, and workflows. Do not poll `df`,
+  `vm_stat`, or process lists before routine work. If the guard blocks, follow
+  its bounded cleanup guidance and preserve the crash reserve rather than
+  repeatedly probing or waiting for a build to fail.
+- Track and clean agent-created artifacts after verification, including newly
+  created Nix result symlinks and stale Pi temporary logs. In Pi, record newly
+  created project `.tmp/` files/directories immediately with
+  `artifact_provenance` so later exact cleanup has durable evidence. Never
+  delete pre-existing project outputs, user files, global caches, Nix
+  generations, or run global garbage collection without explicit user
+  authorization. Exact rebuildable build outputs are disposable by default, but
+  project instructions and verified repository configuration may protect
+  artifacts consumed by a runtime, watcher, supervisor, release, or deployment
+  process. Inspect any referenced configuration before cleanup and preserve a
+  cleanup root containing a configured live artifact unless disruption is
+  explicitly requested.
+- Never inject keystrokes or text into the user's active Zellij pane or editor;
+  it can overwrite an in-progress prompt. Use registered tools such as
+  `reload_pi` instead, and keep Zellij automation confined to isolated workers.
+- When the user explicitly asks to spawn an agent, focusing its Zellij pane is
+  allowed. For agent-initiated background delegation, snapshot the user's active
+  tab and pane, launch the worker, and restore that exact focus before
+  returning. If exact restoration cannot be verified, use a classified
+  background workflow.
 - Keep changes minimal and reviewable. Prefer improving the relevant
   documentation in-repo when a lesson should help future work in the same
   repository.
@@ -92,39 +304,34 @@ invent your own format - match what you see in the repository.
 
 Good abstractions serve the system, not implementation details:
 
-- **Couple what belongs together**: Things that must happen together should be
-  impossible to separate. If operation A always requires operation B, the
-  abstraction should enforce this - don't rely on callers remembering.
-- **Decouple what varies independently**: Things that can change separately
-  should be loosely coupled. Easy to swap implementations, move components,
-  without cascading changes.
-- **Model domain capabilities**: Abstractions should describe what the system
-  can DO in domain terms. Ask "what purpose does this serve?" not "how is this
+- **Couple what belongs together**: If operation A always requires operation B,
+  the abstraction should make them impossible to separate — don't rely on
+  callers remembering.
+- **Decouple what varies independently**: Things that change separately should
+  be loosely coupled — easy to swap implementations without cascading changes.
+- **Model domain capabilities**: Abstractions describe what the system can DO in
+  domain terms. Ask "what purpose does this serve?" not "how is this
   implemented?"
 - **Abstractions are fractal**: Each level has its own domain and implementation
-  details. At the top level, "redeem tokens" is domain. One level down,
-  "persist/retrieve data" becomes domain for that layer (implementation of the
-  layer above). Each layer's implementation details become the domain concerns
-  of the layer below. A capability that's "implementation detail" at one level
-  might be a valid abstraction at a lower level.
+  details. "Redeem tokens" is domain at the top; one level down
+  "persist/retrieve data" becomes that layer's domain. A capability that's
+  implementation detail at one level may be a valid abstraction below it.
 - **Domain vs implementation is context-dependent**: What counts as "domain"
-  depends on what the system is for. In financial infrastructure, token backing
-  is domain. In a video game, the same operation might be implementation detail.
-  Understand the system's value proposition to identify its domain boundaries.
+  depends on what the system is for. In financial infrastructure token backing
+  is domain; in a video game the same operation might be implementation detail.
 - **Enable meaningful tests**: Good abstractions let you test business
-  invariants, not implementation details. If tests break when refactoring
-  internals, the abstraction leaked.
-- **Think holistically**: Don't design for the immediate case alone. Consider
-  the system as a whole - what features matter to consumers? Avoid ad-hoc
-  solutions that only fit one scenario.
+  invariants, not internals. If tests break when refactoring internals, the
+  abstraction leaked.
+- **Think holistically**: Consider the system as a whole — what features matter
+  to consumers? Avoid ad-hoc solutions that only fit one scenario.
 
 The mistake is focusing too narrowly on specific cases or centering on
 implementation details rather than the domain.
 
 ## Roadmap Format
 
-**Never use numbered phases** (Phase 1, Phase 2, etc.) in roadmaps. Use the
-epic-based format from st0x.liquidity/ROADMAP.md:
+**Never use numbered phases** (Phase 1, Phase 2, etc.) in roadmaps. Use
+epic-based roadmaps:
 
 - Each `##` section is an **epic** — a goal-oriented group of related issues
 - Epics are ordered by priority (highest first) — **the first epic is always the
@@ -141,16 +348,43 @@ prose description of the goal before the task list.
 
 **Maximize parallelizability.** Structure epics and tasks so independent work
 streams are visually obvious. Use mermaid graphs to show what can run in
-parallel vs what has sequential dependencies. Each independent work stream
-becomes a git worktree with its own graphite stack, enabling multiple agents to
-work simultaneously. Tasks should be large and meaningful enough to justify a
-dedicated worktree — don't split into tiny pieces that create coordination
+parallel vs what has sequential dependencies. Keep delegated investigation
+read-only by default. A separate worktree is permitted only when the owner or
+another agent launched by the owner is concurrently working on the same
+repository as an agent. Isolation alone and agent-initiated fan-out never
+justify worktrees; do not split work into tiny pieces that create coordination
 overhead.
+
+## Defensive Programming
+
+Treat persisted state, external responses, configuration, arithmetic, and
+cross-module inputs as capable of violating assumptions. Enforce invariants in
+types where possible and at the narrowest boundary otherwise. An invariant
+violation returns a specific typed error; it never panics, silently coerces the
+value, invents a fallback, or continues with partially trusted state. Cover the
+malformed or impossible shape with a regression test alongside the valid path.
+
+Small custom macros or generators are appropriate only for genuinely mechanical
+boilerplate when they make the invariant easier to read at every call site. Keep
+the domain operation, control flow, types, and error path visible; if
+understanding the abstraction requires reconstructing hidden behavior, write the
+explicit code instead.
 
 ## Code Style
 
 - Prefer functional programming patterns
+- In TypeScript and JavaScript, prefer `const`-bound arrow functions over
+  `function` declarations. Use an explicit callable type when it clarifies the
+  public contract; reserve declarations for overloads, generators, or APIs that
+  specifically require declaration semantics.
 - Use strict compiler and linter settings
+- In TypeScript, never use `throw` in production code, including inside
+  `Effect.try` callbacks or for invariant validation. Return domain and expected
+  failures directly with `Effect.fail` and recover through typed Effect
+  handlers. Use `Effect.try`/`Effect.tryPromise` only to translate a genuinely
+  throwing external API boundary; its callback must not throw agent-authored
+  domain errors. Explicit throws are permitted only in tests for
+  assertion/framework mechanics.
 - Comprehensive test coverage is expected
 - Model types properly - use the type system to make invalid states
   unrepresentable
@@ -183,9 +417,10 @@ overhead.
 
 ## Bash Usage
 
-**No bash for loops or complex bash commands.** Use dedicated tools (Glob, Grep,
-Read) for searching and reading files. Bash is for simple, single-purpose
-commands like `cargo check`, `git status`, etc.
+**Bash loops are fine.** (The old ban predated auto mode: compound commands used
+to hang on manual approval even when each iteration was pre-approved. The auto
+classifier handles them now.) Still use dedicated tools (Glob, Grep, Read) for
+searching and reading files rather than shell pipelines.
 
 **NEVER run ad-hoc scripts** (`python3`, `node`, `ruby`, shell scripts, etc.)
 for ANY purpose — not for searching, text processing, data extraction, or
@@ -224,6 +459,17 @@ succeeded. Never assume success — confirm it.
 worried about too much output, redirect to a file instead:
 `command > ./.tmp/descriptive-name` (relative path, `.tmp/` directory). Then
 read the file with the Read tool if needed.
+
+**EXCEPTION — builds, tests, CI, and long-running tools: show ALL output live.**
+For `cargo check`/`build`/`test`/`nextest`/`clippy`, `nix build`,
+`nix run .#ci`, `bun run check`/`test`, `forge test`, `npm test`, deploys,
+migrations, etc.: run the command bare — no `> file`, `| tail`, `| head`,
+`| grep`, or `2>&1 > ...`. Let stdout/stderr stream to the terminal and parse
+the tool result yourself afterward; never run a second command to slice the log.
+This holds regardless of output size — the user wants to see progress live.
+
+The redirect-to-`.tmp/` pattern is reserved for output you genuinely don't need
+live (e.g. a one-off grep over a large corpus, a JSON dump you'll later jq).
 
 **CRITICAL: Before running `git checkout -- <file>` or any command that discards
 working tree changes**, always run `git status` first to check for staged and
@@ -314,10 +560,82 @@ or later. The task list is the single source of truth for what needs doing.
 Recording can mean creating a new task, splitting a request into multiple tasks,
 or updating/clarifying an existing task - whichever fits best.
 
-The todo list is your persistent memory across compactions. Without it, user
-requests get lost when context is compressed.
+The todo list preserves task state across compactions. Without it, user requests
+get lost when context is compressed.
+
+### Granularity: more is better, not less
+
+The task list is **downstream of the issue / spec, not a substitute for it**.
+For each GitHub issue you are actively working on, break it down into the
+concrete implementation steps it will take -- the failing test, the type-level
+changes, the implementation, the cleanup pass, the description update, the
+assignment. Each of those is a task.
+
+"One issue at a time" is a **work-focus** rule, not a task-list-pruning rule. It
+means: don't context-switch across issues mid-flight, finish what you started
+before starting the next. It does **not** mean: keep the task list sparse,
+collapse multi-step work into one line, or delete entries to look focused. The
+opposite -- if the issue requires five concrete steps, the task list should show
+five concrete tasks under it.
+
+When the user redirects to a new issue, **do not delete the planning for the
+issues you are not working on yet** -- keep their tasks in `pending` or move
+them to a `[parked]`-style metadata flag, but the granular breakdown stays so it
+is ready to pick up when the active issue is done.
+
+## Session Handover Protocol
+
+Use the `/handover` skill as the standard cooperation boundary between long,
+compacted, usage-limited, or parallel human-agent sessions.
+
+### Outgoing sessions
+
+- Invoke `/handover` proactively when the user asks to transfer work, another
+  session is expected to continue it, or context/usage limits threaten reliable
+  continuation. Do not leave transfer state only in conversational memory.
+- Produce the skill's workspace-level handover document and continuation prompt
+  from verified repository state. Never stage or commit the temporary artifact.
+- A handover transfers responsibility; it does not mark unfinished todos done.
+  Preserve every pending request, blocker, decision, and exact pause point.
+
+### Receiving sessions
+
+- When the user says a handover exists, or a continuation prompt names one, read
+  that handover before resuming implementation. Treat its user requests as
+  still-active intent unless the current user message cancels or supersedes
+  them.
+- Record **every** transferred request, feedback item, blocker, and concrete
+  next step in the branch-aware todo list before doing further work. Deduplicate
+  equivalent existing tasks, but never silently drop or collapse requirements.
+- Reconcile the handover against current Git state and current project
+  instructions before editing; handovers can become stale and never override
+  higher-priority or newer user direction.
+- Briefly surface what was imported into the task list so the human can see that
+  the transfer succeeded, then continue autonomously from the named pause point.
+
+### Continuity rules
+
+- If another session is told to run `/handover`, the receiving session owns
+  discovering, ingesting, tracking, and completing that transferred work.
+- After compaction or resume, use the todo list plus any active handover as the
+  continuity source. Ask the user only when those artifacts and repository state
+  genuinely cannot resolve an ambiguity.
+- Never copy secrets into handovers or todos; name the relevant configuration
+  key or protected location instead.
 
 ## Subagent Delegation
+
+**Fable's role is delegation, orchestration, and final verification — not inline
+execution.** (Owner directive 2026-08-03.) Fable plans the work, splits it into
+well-scoped tasks, hands substantive execution down, and checks quality at the
+end:
+
+- **Opus 5 subagents** for investigation and complex multi-file changes.
+- **Sonnet 5 subagents** for well-specified implementation and mechanical work.
+
+Executing a multi-step task inline in the Fable session needs a reason (e.g. the
+work is inseparable from live session state, or delegation overhead exceeds the
+task); the default is to delegate.
 
 Use the task list to drive subagent delegation. When working through tasks:
 
@@ -359,25 +677,22 @@ RULES:
 ```
 
 **Scope:** Each subagent should have a narrow, well-defined task (e.g., "rename
-X to Y in these 3 files"). Do not give subagents broad exploratory mandates that
-could lead to unintended changes.
+X to Y in these 3 files"), never a broad exploratory mandate that could lead to
+unintended changes.
 
 **Include all relevant rules in the prompt**: The user cannot chat with
 subagents to steer them. Every repo-specific guideline, naming convention, code
-style rule, and constraint relevant to the subagent's task MUST be included in
-the prompt upfront. Copy the relevant sections verbatim from AGENTS.md or
-CLAUDE.md if needed - being thorough here prevents rework.
+style rule, and constraint relevant to the task MUST be in the prompt upfront —
+copy the relevant sections verbatim from AGENTS.md if needed.
 
-**Never read multiple subagent outputs back-to-back.** Reading responses from
-several agents in quick succession (e.g., checking on 3-5 completed agents in
-one turn) will blow out the context window and trigger compaction. Instead,
-check on ONE agent at a time: read its output, process/verify it, then move on
-to the next agent in a subsequent turn. Space out the reads across turns.
+**Never read multiple subagent outputs back-to-back.** Reading several agents'
+responses in one turn blows out the context window and triggers compaction.
+Check ONE agent at a time: read, process/verify, then move to the next in a
+subsequent turn.
 
-**You own subagent output.** Like a team lead is responsible for the team's
-output, you are responsible for everything subagents produce. Review all
-changes, assess quality, check for guideline violations, and fix any problems
-(yourself or via another subagent) before considering the task complete.
+**You own subagent output.** Like a team lead, you are responsible for
+everything subagents produce. Review all changes, check for guideline
+violations, and fix any problems before considering the task complete.
 
 ## Workflow
 
@@ -414,19 +729,24 @@ changes, assess quality, check for guideline violations, and fix any problems
 - Don't write throwaway scripts for experimentation. Write tests instead, and
   remove them when no longer needed.
 
-- **Commit and push as you go**: After completing each task (or logical unit of
-  work), commit the changes using Graphite and push (`gt ss`) before moving to
-  the next task. Don't accumulate uncommitted or unpushed work across multiple
-  tasks — small, incremental commits pushed regularly make progress visible,
-  reviewable, and safe from local failures. Never wait for the user to ask you
-  to commit or push.
+- **Commit and publish continuously**: Commit and push each completed work unit
+  before starting the next. Commit and push truthful checkpoints of unfinished
+  source work at least every 15 minutes using the repository's authorized
+  workflow. Never let agent-owned unstaged, untracked, staged-but-uncommitted,
+  or unpushed changes accumulate across work units. Preserve unrelated
+  user-owned changes and permitted temporary review/handoff artifacts; do not
+  sweep them into commits or delete them to make the tree clean. If publication
+  is blocked, pause new work, preserve the current state, and escalate; continue
+  only bounded repairs needed to unblock publication. Never bypass required
+  gates. Use plain Git except in a verified GitButler-managed main worktree,
+  subject to repository-local workflow rules.
 
 - **Branch immediately when stacking**: When told to stack changes (e.g., "put
-  this on the stack", "stack a PR for this"), IMMEDIATELY create a Graphite
-  branch with `gt create` before making any edits. Do not accumulate changes on
-  master or an unrelated branch. After the initial commit, regularly `gt modify`
-  as you make progress and `gt ss` to sync with remote. The user should never
-  have to ask "why aren't we on a branch yet?"
+  this on the stack", "stack a PR for this"), IMMEDIATELY create a branch before
+  making any edits. Do not accumulate changes on master or an unrelated branch.
+  Use `git checkout -b` outside existing GitButler-managed main worktrees; use
+  the existing GitButler branch workflow within one. The user should never have
+  to ask "why aren't we on a branch yet?"
 
 ## Diff Review (Before Handing Over)
 
@@ -470,84 +790,129 @@ When creating issues:
 - Reference code by file/function/struct names, not line numbers (line numbers
   go stale)
 
-## Version Control (Graphite)
+## PR Descriptions
 
-Graphite manages stacked PRs on top of git. Each branch = one PR. PRs stack on
-top of each other for incremental review.
+**Always follow the repo's PR template** (commonly
+`.github/PULL_REQUEST_TEMPLATE.md`). Read it once per repo and match its section
+headings exactly. The default shape, used whenever a repo does not ship its own
+template, is **Motivation / Solution** — never What/Why/How:
 
-**Docs:** https://graphite.com/docs/cli-quick-start **Command reference:**
-https://graphite.com/docs/command-reference
+```
+## Motivation
 
-### Core commands
+<!-- Why is this change needed? Link the issue/ADR it advances. State the problem
+     and the desired end state, not the diff. -->
 
-| Command                     | Purpose                                                          |
-| --------------------------- | ---------------------------------------------------------------- |
-| `gt init`                   | Initialize graphite tracking in a repo                           |
-| `gt create <name> -m "msg"` | Create a new stacked branch/PR from staged changes               |
-| `gt modify`                 | Amend current branch commit, auto-restacks descendants           |
-| `gt modify -a`              | Stage all + amend                                                |
-| `gt modify --into <branch>` | Amend into a downstack branch without checking it out            |
-| `gt ss`                     | Submit the entire stack to remote (force push)                   |
-| `gt ss --publish`           | Submit and publish (non-draft)                                   |
-| `gt co`                     | Interactive checkout                                             |
-| `gt sync`                   | Sync state with remote, clean merged branches                    |
-| `gt get <branch>`           | Fetch an existing graphite branch from remote                    |
-| `gt restack`                | Resolve conflicts after moving PRs around                        |
-| `gt reorder`                | Change the order of PRs in the stack                             |
-| `gt move`                   | Move current PR on top of another                                |
-| `gt absorb`                 | Distribute uncommitted changes to their respective PRs downstack |
-| `gt ls`                     | Show current stack (short)                                       |
-| `gt ll`                     | Show current stack (long, with commit graph)                     |
+## Solution
 
-### Workflow
+<!-- How does this PR solve it? Approach and key design decisions. One line per
+     bullet; detail belongs in the code or the linked issue. Note stack
+     relationships and any trade-offs or follow-ups. -->
+```
 
-1. Stage files with `git add` (graphite sits on top of git)
-2. `gt create <branch-name> -m "commit message"` to create a PR
-3. Stack more PRs with additional `gt create` calls
-4. `gt ss --publish` to push everything
-5. `gt sync` to pull latest and clean up merged branches
+**Transport Markdown as real bytes, never shell-style escape text.** Do not pass
+PR or issue prose containing literal `\n` sequences in a command argument. In
+Pi, command text is parsed by Nushell; shell forms such as `$'Title\n\nBody'` do
+not create line breaks. Write the actual multiline Markdown to an agent-owned
+file under the repository's sanctioned `.tmp/` area (record its provenance when
+Pi exposes that tool), then use `gh pr create/edit --body-file`,
+`gh issue create/edit --body-file`, or GitButler's `-F` file input. After every
+create or body edit, read the remote body back with
+`gh pr view <number-or-url> --json body --jq .body` (or the issue equivalent),
+inspect the rendered structure, and repair it from the file before claiming
+success if any literal `\n` remains.
 
-### Rules
+**Don't journal.** A PR description is not your work narrative.
 
-- **Do NOT run `gt` commands in subagents.** Only the orchestrating agent or the
-  user runs graphite commands.
-- Use `gt modify` to amend, NOT `git commit --amend`
-- Use `gt sync` to pull, NOT `git pull`
-- Read-only git commands (`git status`, `git diff`, `git log`) are fine
-- When the user needs to run a graphite command, **stop and tell them the
-  intent** (e.g., "we need to submit the stack"). If they don't know the
-  command, then provide it.
+- No "Finishing in-progress work" / "First half of the refactor" / "After
+  CodeRabbit feedback" framings — those are commit-history concerns, not
+  reviewer concerns.
+- No sections that document YOUR process. Reviewers care about intent, behavior
+  change, and risk.
+- Drop sections that have no content for this PR (e.g. no `## Screenshots`
+  section if there's nothing to screenshot).
+- One liner per bullet. Detail belongs in the code, the linked issue, or the
+  commit message — not as a paragraph in the PR body.
+
+## Nix CLI Flag Placement
+
+**Top-level nix flags go BEFORE the subcommand, not after.**
+
+```
+# Right
+nix --accept-flake-config develop .#shell -c <cmd>
+nix --accept-flake-config run .#package
+nix --accept-flake-config fmt -- file.nix
+nix --accept-flake-config build .#package
+
+# Wrong (the flag is silently ignored or interpreted as a subcommand arg)
+nix develop --accept-flake-config .#shell -c <cmd>
+nix run --accept-flake-config .#package
+```
+
+Top-level flags include `--accept-flake-config`, `--impure`, `--show-trace`,
+`--allow-import-from-derivation`, `--experimental-features`, etc.
+Subcommand-specific flags (e.g. `--profile` for `nix-env`, `-c` for
+`nix develop`) go after the subcommand. If unsure, check `nix --help` (top-level
+flags) vs `nix <subcommand> --help` (subcommand flags).
+
+## Keeping Issues and PRs Fresh
+
+**CRITICAL: Issue and PR descriptions must stay in sync with reality.** This
+applies to every issue and every PR, regardless of tracker, on every repository
+— not just the one currently in focus.
+
+- When the **scope of work changes** (a reviewer comment gets folded in, rebase
+  brings in new code that needs treatment, a related sub-task surfaces that the
+  PR now handles), update the issue and PR descriptions _before_ resubmitting /
+  closing — never leave a stale "What" or "How" section describing the diff from
+  three iterations ago.
+- When a **decision is made or reversed** during implementation that changes the
+  rationale, update the "Why" section so future readers see the rationale that
+  actually applies to the merged code, not the one the PR was opened with.
+- When **dependencies, milestones, or cross-links change** (new linked issue,
+  new milestone attached, sub-issue absorbed), update the metadata _and_ the
+  description so the prose matches the structure.
+- When something **moves out of scope and into another issue**, say so
+  explicitly in the original issue/PR so reviewers don't waste time hunting for
+  it.
+
+The default is: any time you push new work to a PR or change what an issue is
+about, the description gets re-read and updated if it no longer matches. Stale
+descriptions waste reviewer time and create false records of what shipped.
+
+## Version Control
+
+**Prefer GitButler in an existing managed main worktree; use plain Git
+elsewhere.** Verify topology before invoking `but`; every linked, isolated, or
+scratch worktree uses plain Git for both reads and writes.
+
+Explicit repository-local instructions may select another workflow instead of
+these shared defaults. Do not migrate repositories or rewrite branch history as
+part of tooling selection. Compatible `fj` aliases remain available through the
+verified GitButler/plain-Git routing.
+
+Use the appropriate existing workflow to stage only the intended changes,
+commit, and push the active feature branch after validation. Keep unrelated
+working-tree and index changes intact. Publishing code does not grant permission
+to create PRs, change review verdicts, or request reviewers; those retain their
+separate authorization rules.
 
 ## Git Worktrees
 
-Use a `.worktrees/` directory (gitignored) inside the repo for parallel work
-without stashing or switching branches.
+Worktrees are permitted ONLY when the owner or another agent launched by the
+owner is working on the same repository concurrently with an agent. The assigned
+checkout remains the default. Isolation alone, dirty local state, ordinary
+setup, review, builds, and agent-initiated fan-out never justify a worktree. Use
+stable repository-local role slots such as `.worktrees/secondary` or, for
+exceptional disposable work, `.tmp/worktrees/secondary`. Verify the required
+base and existing ownership before creating or reusing a slot; do not derive its
+path from a branch or task.
 
-```
-myrepo/              # regular clone, main working tree on your current branch
-  .worktrees/        # gitignored, spin up as needed
-    feat/auth/       # worktree for auth feature
-    feat/billing/    # worktree for billing feature
-```
-
-**Setup:** Add `.worktrees/` to `.gitignore`, then create worktrees with:
-
-```bash
-git worktree add .worktrees/feat/my-feature -b feat/my-feature
-```
-
-**Cleanup:** Remove when done:
-
-```bash
-git worktree remove .worktrees/feat/my-feature
-```
-
-**Key points:**
-
-- No bare clone ceremony — works with a normal clone
-- Each worktree gets its own working directory and branch
-- Shared `.git` object store — no extra disk for history
-- `.worktrees/` is gitignored so worktree state is local-only
+The creating agent owns immediate cleanup after success, failure, or
+cancellation. Preserve pre-existing owner-managed slots and unrelated work. If
+safe cleanup is blocked, record the exact path and reason rather than silently
+leaving it behind.
 
 **Submodules in worktrees:** Git worktrees don't share submodule checkouts. If a
 project has submodules (e.g., `lib/`), the worktree will have broken gitlinks.
@@ -555,10 +920,10 @@ Fix by creating a **real directory** with individual symlinks inside (Git 2.45+
 rejects symlinks in intermediate path components per CVE-2024-32002):
 
 ```bash
-# From the worktree root (e.g., .worktrees/category/name/)
+# From the worktree root (e.g., .worktrees/secondary/)
 mkdir lib
-ln -s ../../../../lib/forge-std lib/forge-std
-ln -s ../../../../lib/other-sub lib/other-sub
+ln -s ../../../lib/forge-std lib/forge-std
+ln -s ../../../lib/other-sub lib/other-sub
 # Adjust ../ depth to match worktree nesting: one ../ per directory level
 # to reach the main repo root, then append lib/<submodule>
 
@@ -568,9 +933,9 @@ git update-index --assume-unchanged lib/forge-std lib/other-sub ...
 
 The individual symlinks make builds work while keeping `lib/` a real directory
 (satisfying git's security checks); `--assume-unchanged` keeps `git status`
-clean. The `gt modify -a` flag won't work (it runs `git add --all` which fails
-on broken submodule refs) — always stage specific files with `git add <files>`
-then `gt modify`.
+clean. In a linked worktree, stage only the intended paths with plain Git and
+use the repository's authorized commit workflow. Do not blanket-stage unrelated
+files or invoke GitButler outside its main worktree.
 
 ## This Repository (dotconfig)
 
@@ -599,9 +964,9 @@ Nix flake managing two targets from a single repo:
 | `flake.nix`        | Flake definition, system configs, helper scripts             |
 | `common.nix`       | Shared packages and settings (both platforms)                |
 | `darwin.nix`       | macOS-specific: homebrew, GUI apps, hostname                 |
-| `nixos.nix`        | NixOS-specific: SSH, firewall, users, systemd services       |
+| `nixos.nix`        | NixOS-specific: SSH, firewall, users                         |
 | `digitalocean.nix` | Disk/boot config for DO droplets                             |
-| `home.nix`         | Home Manager: shared user env (both platforms)               |
+| `home.nix`         | Home Manager: zsh, git, doom-emacs, zellij, fzf, direnv      |
 | `doom/`            | Doom Emacs config (managed by nix-doom-emacs-unstraightened) |
 | `zellij/`          | Terminal multiplexer config                                  |
 | `karabiner/`       | Keyboard remapping (caps lock → ctrl/esc)                    |
@@ -635,76 +1000,16 @@ Managed declaratively via nix-doom-emacs-unstraightened. No `doom sync` — edit
 - macOS only: `darwin.nix`
 - NixOS only: `nixos.nix`
 
-### Platform boundary rules
-
-`home.nix` is **shared** between Darwin and NixOS. It must not contain
-platform-specific services, systemd units, launchd agents, or anything that only
-makes sense on one platform. Platform-specific config goes in the
-platform-specific file:
-
-- **systemd services** → `nixos.nix` (NixOS only; Darwin doesn't have systemd)
-- **launchd agents/daemons** → `darwin.nix` (macOS only)
-- **homebrew casks/brews** → `darwin.nix`
-- **NixOS-only packages** → `nixos.nix`
-
-## Notes Vault Organization
-
-The unified notes vault at `~/code/st0x/notes/` is automatically synced from
-multiple source repositories via the `syncNotes` launchd service. This allows
-Obsidian to index all markdown files in one fast vault instead of scanning
-multiple directories.
-
-### Organizational Rules
-
-**Directory Structure by Source:**
-
-- `~/code/st0x/st0x.liquidity/` → `notes/liquidity/`
-- `~/code/st0x/st0x.issuance/` → `notes/issuance/`
-- `~/code/st0x/st0x.REPO/.worktrees/feat/name/` → `notes/name/` (repo name
-  appended to files)
-- `~/.config/` → `notes/dotconfig/`
-
-**Naming Conventions:**
-
-- Main repos preserve directory structure: `docs/file.md` → `docs/file.md`
-- Worktree files include repo in filename: `docs/file.md` →
-  `docs/file.liquidity.md`
-- Paths starting with `.` are converted: `.config` → `dotconfig`
-
-**Example Structure:**
-
-```
-notes/
-  liquidity/
-    ROADMAP.md
-    docs/
-      cqrs.md
-      architecture.md
-  issuance/
-    ROADMAP.md
-  feat-branch/
-    docs/
-      design.liquidity.md
-  dotconfig/
-    CLAUDE.md
-    home.nix.md
-```
-
-**Sync Behavior:**
-
-- Bidirectional: repos ↔ notes
-- Only syncs files with parity in source repositories
-- Files in notes without corresponding source files are never modified
-- Allows editing in Obsidian and syncing changes back to source repos
-- Automatically triggered on file changes (via fswatch)
-
-**Service Details:**
-
-- Runs continuously via `launchd.user.agents.syncNotes`
-- Logs to `/tmp/sync-notes.out` (debug with `tail -f`)
-- Rebuilds applied with `darwin-rebuild switch --flake ~/.config`
-
 ## Personal Skills
 
-- For Linear work, use `/Users/0xgleb/.config/ai/skills/linear/SKILL.md`.
-- Default to read-only operations first, inspect `linear --help` before using unfamiliar commands, and treat `linear api` mutations as high-risk until the exact payload has been reviewed.
+Shared skills live in `~/.config/ai/skills/` and are symlinked into both
+harnesses:
+
+- Claude: `~/.claude/skills` → `~/.config/ai/skills`
+- Cursor: `~/.cursor/skills` → `~/.config/ai/skills`
+
+- Use GitHub issues/PRs for current project tracking. Preserve historical
+  records; changing tool defaults does not authorize external cleanup.
+- Keep SPEC/ROADMAP → GitHub issues → local execution tasks as the hierarchy,
+  with explicit one-off exceptions to issue linkage. Before unfamiliar GitHub
+  operations, inspect the CLI help and preserve the exact mutation boundary.

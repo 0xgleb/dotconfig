@@ -1,0 +1,996 @@
+import {
+  DynamicBorder,
+  type ExtensionAPI,
+  type ExtensionContext,
+} from "@earendil-works/pi-coding-agent"
+import { Container, Input, matchesKey, Text } from "@earendil-works/pi-tui"
+import { Data, Effect, Either } from "effect"
+import { Type } from "typebox"
+import {
+  applyQuestionAction,
+  decodeQuestionState,
+  emptyQuestionState,
+  pendingQuestions,
+  repairMisroutedPromptAnswers,
+  repeatedQuestion,
+  type QuestionAction,
+  type QuestionOption,
+  type QuestionState,
+} from "./state.ts"
+import {
+  QUESTION_ASK_EVENT,
+  QUESTION_PENDING_COUNT_EVENT,
+  QUESTION_REMOTE_RESOLUTION_EVENT,
+  QUESTION_RESOLVED_EVENT,
+  QUESTION_STATE_ENTRY,
+  QUESTION_STATE_EVENT,
+  type RemoteUserQuestionResolution,
+  type UserQuestionPendingCount,
+  type UserQuestionResolution,
+  type UserQuestionSnapshot,
+  type UserQuestionStateSnapshot,
+} from "../shared/question-events.ts"
+import { registerRuntimeVersion } from "../shared/runtime-version.ts"
+import { pendingQuestionContext, questionListText } from "./presentation.ts"
+import { type JudgeContext } from "./quality.ts"
+import { runContentProcess } from "../shared/content-process.ts"
+import {
+  createQuestionReviewJobs,
+  decodeQuestionDraft,
+  QUESTION_REVIEW_ENTRY,
+} from "./review-jobs.ts"
+
+export interface QuestionDeliveryStatus {
+  readonly id: number
+  readonly status: "telegram-delivered" | "not-confirmed" | "unavailable"
+}
+export type QuestionDeliveryInspector = (
+  ids: readonly number[],
+  ctx: ExtensionContext,
+) => Promise<readonly QuestionDeliveryStatus[]>
+
+export type QuestionRefreshResult =
+  | {
+      readonly outcome: "updated"
+      readonly id: number
+      readonly messageId: number
+      readonly textLinks: number
+    }
+  | {
+      readonly outcome: "unavailable"
+      readonly id: number
+      readonly reason: string
+      readonly reasonKind?: "already-current"
+    }
+export type QuestionDeliveryRefresher = (
+  id: number,
+  ctx: ExtensionContext,
+  signal?: AbortSignal,
+) => Promise<QuestionRefreshResult>
+
+const QUESTION_MESSAGE = "pi.questions.list"
+const QUESTION_STATUS_KEY = "pi-questions"
+
+interface QuestionRequest {
+  readonly action:
+    | "list"
+    | "ask"
+    | "resolve"
+    | "withdraw"
+    | "replace"
+    | "reopen"
+    | "clear_resolved"
+    | "refresh_delivery"
+  readonly question?: string
+  readonly header?: string
+  readonly guess?: string
+  readonly options?: readonly QuestionOption[]
+  readonly id?: number
+  readonly answer?: string
+  readonly reason?: string
+}
+
+class QuestionActionError extends Data.TaggedError("QuestionActionError")<{
+  readonly message: string
+}> {}
+
+const invalidQuestionAction = (
+  message: string,
+): Effect.Effect<never, QuestionActionError> =>
+  Effect.fail(new QuestionActionError({ message }))
+
+const parseAction = (
+  request: QuestionRequest,
+  state: QuestionState,
+): Effect.Effect<QuestionAction, QuestionActionError> =>
+  Effect.gen(function* () {
+    switch (request.action) {
+      case "list":
+        return { action: "list" }
+      case "clear_resolved":
+        return { action: "clear_resolved" }
+      case "refresh_delivery":
+        return yield* invalidQuestionAction(
+          "refresh_delivery must use the private delivery boundary",
+        )
+      case "ask": {
+        const question = request.question?.trim()
+        if (!question)
+          return yield* invalidQuestionAction("question required for ask")
+        return {
+          action: "ask",
+          question,
+          ...(request.header?.trim() ? { header: request.header.trim() } : {}),
+          ...(request.guess?.trim() ? { guess: request.guess.trim() } : {}),
+          ...(request.options && request.options.length > 0
+            ? { options: request.options }
+            : {}),
+        }
+      }
+      case "resolve": {
+        if (request.id === undefined)
+          return yield* invalidQuestionAction("id required for resolve")
+        const answer = request.answer?.trim()
+        if (!answer)
+          return yield* invalidQuestionAction("answer required for resolve")
+        const target = state.questions.find(({ id }) => id === request.id)
+        if (!target)
+          return yield* invalidQuestionAction(
+            `Question q${request.id} not found`,
+          )
+        if (target.status !== "pending")
+          return yield* invalidQuestionAction(
+            `Question q${request.id} is already resolved`,
+          )
+        return { action: "resolve", id: request.id, answer }
+      }
+      case "withdraw": {
+        if (request.id === undefined)
+          return yield* invalidQuestionAction("id required for withdraw")
+        const reason = request.reason?.trim()
+        if (!reason)
+          return yield* invalidQuestionAction("reason required for withdraw")
+        const target = state.questions.find(({ id }) => id === request.id)
+        if (!target)
+          return yield* invalidQuestionAction(
+            `Question q${request.id} not found`,
+          )
+        if (target.status === "resolved" && target.withdrawn)
+          return yield* invalidQuestionAction(
+            `Question q${request.id} is already withdrawn`,
+          )
+        return { action: "withdraw", id: request.id, reason }
+      }
+      case "replace": {
+        if (request.id === undefined)
+          return yield* invalidQuestionAction("id required for replace")
+        const reason = request.reason?.trim()
+        if (!reason)
+          return yield* invalidQuestionAction("reason required for replace")
+        const question = request.question?.trim()
+        if (!question)
+          return yield* invalidQuestionAction("question required for replace")
+        const target = state.questions.find(({ id }) => id === request.id)
+        if (!target)
+          return yield* invalidQuestionAction(
+            `Question q${request.id} not found`,
+          )
+        if (target.status === "resolved" && target.withdrawn)
+          return yield* invalidQuestionAction(
+            `Question q${request.id} is already withdrawn`,
+          )
+        return {
+          action: "replace",
+          id: request.id,
+          reason,
+          question,
+          ...(request.header?.trim() ? { header: request.header.trim() } : {}),
+          ...(request.guess?.trim() ? { guess: request.guess.trim() } : {}),
+          ...(request.options && request.options.length > 0
+            ? { options: request.options }
+            : {}),
+        }
+      }
+      case "reopen": {
+        if (request.id === undefined)
+          return yield* invalidQuestionAction("id required for reopen")
+        const target = state.questions.find(({ id }) => id === request.id)
+        if (!target)
+          return yield* invalidQuestionAction(
+            `Question q${request.id} not found`,
+          )
+        if (target.status !== "resolved")
+          return yield* invalidQuestionAction(
+            `Question q${request.id} is already pending`,
+          )
+        return { action: "reopen", id: request.id }
+      }
+    }
+  })
+
+const questionsExtension: (
+  pi: ExtensionAPI,
+  execution?: JudgeContext["execution"],
+  inspectDelivery?: QuestionDeliveryInspector,
+  refreshDelivery?: QuestionDeliveryRefresher,
+) => void = (pi, execution, inspectDelivery, refreshDelivery) => {
+  registerRuntimeVersion(pi, "questions", "2026.10.17.10")
+  let state = emptyQuestionState
+  let dialogOpen = false
+  let latestCtx: ExtensionContext | undefined
+
+  const publishState = (): void => {
+    const questions: readonly UserQuestionSnapshot[] = state.questions.map(
+      (question): UserQuestionSnapshot => {
+        const snapshot = {
+          id: question.id,
+          question: question.question,
+          ...(question.header ? { header: question.header } : {}),
+          ...(question.guess ? { guess: question.guess } : {}),
+          ...(question.options ? { options: question.options } : {}),
+        }
+        return question.status === "resolved"
+          ? { ...snapshot, status: "resolved", answer: question.answer }
+          : { ...snapshot, status: "pending" }
+      },
+    )
+    const snapshot: UserQuestionStateSnapshot = { questions }
+    pi.events.emit(QUESTION_STATE_EVENT, snapshot)
+  }
+
+  const render = (ctx: ExtensionContext) => {
+    const pending = pendingQuestions(state).length
+    const pendingCount: UserQuestionPendingCount = { pending }
+    pi.events.emit(QUESTION_PENDING_COUNT_EVENT, pendingCount)
+    ctx.ui.setStatus(
+      QUESTION_STATUS_KEY,
+      pending > 0 ? `awaiting:${pending} · /questions` : undefined,
+    )
+    if (ctx.hasUI) ctx.ui.setWidget(QUESTION_STATUS_KEY, undefined)
+  }
+
+  const restore = (ctx: ExtensionContext) => {
+    const entry = ctx.sessionManager
+      .getBranch()
+      .filter(
+        candidate =>
+          candidate.type === "custom" &&
+          candidate.customType === QUESTION_STATE_ENTRY,
+      )
+      .at(-1)
+    const restored =
+      entry?.type === "custom"
+        ? (decodeQuestionState(entry.data) ?? emptyQuestionState)
+        : emptyQuestionState
+    state = repairMisroutedPromptAnswers(restored)
+    if (
+      state.questions.some(
+        (question, index) => question !== restored.questions[index],
+      )
+    ) {
+      pi.appendEntry(QUESTION_STATE_ENTRY, state)
+    }
+    render(ctx)
+    publishState()
+  }
+
+  const persist = (ctx: ExtensionContext) => {
+    pi.appendEntry(QUESTION_STATE_ENTRY, state)
+    render(ctx)
+    publishState()
+  }
+
+  const showQuestions = () => {
+    pi.sendMessage({
+      customType: QUESTION_MESSAGE,
+      content: questionListText(state),
+      display: true,
+    })
+  }
+
+  const resolveQuestion = (
+    ctx: ExtensionContext,
+    id: number,
+    answer: string,
+  ): boolean => {
+    const target = state.questions.find(question => question.id === id)
+    const boundedAnswer = answer.trim().slice(0, 4_000)
+    if (!target || target.status !== "pending" || !boundedAnswer) return false
+
+    state = applyQuestionAction(state, {
+      action: "resolve",
+      id,
+      answer: boundedAnswer,
+    })
+    persist(ctx)
+    const resolution: UserQuestionResolution = { id, answer: boundedAnswer }
+    pi.events.emit(QUESTION_RESOLVED_EVENT, resolution)
+    pi.sendMessage(
+      {
+        customType: "pi.questions.answered",
+        content: `Resolved durable question q${id} with exact typed answer: ${boundedAnswer}\nContinue the waiting work using this answer.`,
+        display: false,
+      },
+      { triggerTurn: true, deliverAs: "followUp" },
+    )
+    return true
+  }
+
+  const showQuestionDialog = async (
+    ctx: ExtensionContext,
+    questionId?: number,
+  ) => {
+    if (!ctx.hasUI || dialogOpen) return
+    dialogOpen = true
+    try {
+      const pending = pendingQuestions(state)
+      const question =
+        questionId === undefined
+          ? pending[0]
+          : pending.find(({ id }) => id === questionId)
+      if (!question) return
+      const progress =
+        state.questions.findIndex(({ id }) => id === question.id) + 1
+      const total = state.questions.length
+      const answer = await ctx.ui.custom<string | null>(
+        (tui, theme, _keybindings, done) => {
+          const input = new Input()
+          const container = new Container()
+          const accent = (text: string) => theme.fg("accent", text)
+          const header = question.header
+            ? `ACTION REQUIRED · ${question.header}`
+            : "ACTION REQUIRED"
+          container.addChild(new DynamicBorder(accent))
+          container.addChild(
+            new Text(
+              `${theme.bold(accent(header))}${theme.fg("muted", `  Decision ${progress} of ${total}`)}`,
+              1,
+              0,
+            ),
+          )
+          container.addChild(
+            new Text(theme.fg("text", question.question), 1, 1),
+          )
+          if (question.options && question.options.length > 0) {
+            container.addChild(
+              new Text(
+                question.options
+                  .map(
+                    (option, index) =>
+                      `${accent(`${index + 1}.`)} ${theme.fg("text", option.label)}${
+                        option.description
+                          ? theme.fg("muted", ` — ${option.description}`)
+                          : ""
+                      }`,
+                  )
+                  .join("\n"),
+                1,
+                0,
+              ),
+            )
+          }
+          if (question.guess) {
+            container.addChild(
+              new Text(
+                `${theme.fg("muted", "Suggested answer")}\n${accent(question.guess)}`,
+                1,
+                1,
+              ),
+            )
+          }
+          container.addChild(
+            new Text(theme.bold(theme.fg("text", "Your answer")), 1, 1),
+          )
+          container.addChild(input)
+          container.addChild(
+            new Text(
+              theme.fg(
+                "dim",
+                `${question.options?.length ? `${theme.bold(`1-${question.options.length}`)} choose  ·  ` : ""}${theme.bold("enter")} submit  ·  ${theme.bold("tab")} use suggestion  ·  ${theme.bold("esc")} answer later`,
+              ),
+              1,
+              1,
+            ),
+          )
+          container.addChild(new DynamicBorder(accent))
+          input.onSubmit = value => {
+            const trimmed = value.trim()
+            if (trimmed) done(trimmed)
+          }
+          input.onEscape = () => done(null)
+          return {
+            get focused() {
+              return input.focused
+            },
+            set focused(value: boolean) {
+              input.focused = value
+            },
+            render: (width: number) => container.render(width),
+            invalidate: () => container.invalidate(),
+            handleInput: (data: string) => {
+              const optionIndex = /^[1-9]$/.test(data) ? Number(data) - 1 : -1
+              const option = question.options?.[optionIndex]
+              if (option) done(option.label)
+              else if (matchesKey(data, "tab") && question.guess)
+                input.setValue(question.guess)
+              else input.handleInput(data)
+              tui.requestRender()
+            },
+          }
+        },
+        {
+          overlay: true,
+          overlayOptions: {
+            width: "70%",
+            minWidth: 56,
+            maxHeight: "80%",
+            anchor: "center",
+            margin: 1,
+          },
+        },
+      )
+      if (answer !== null) resolveQuestion(ctx, question.id, answer)
+    } finally {
+      dialogOpen = false
+    }
+  }
+
+  const selectQuestion = async (ctx: ExtensionContext) => {
+    const pending = pendingQuestions(state)
+    if (pending.length === 0) {
+      showQuestions()
+      return
+    }
+    if (pending.length === 1) {
+      await showQuestionDialog(ctx, pending[0]?.id)
+      return
+    }
+    const choices = pending.map(
+      question =>
+        `q${question.id}  ${question.question.replace(/\s+/g, " ").slice(0, 100)}`,
+    )
+    const selected = await ctx.ui.select(
+      "Pending questions · ↑/↓ select · enter open · esc close",
+      choices,
+    )
+    if (selected === undefined) return
+    const selectedIndex = choices.indexOf(selected)
+    await showQuestionDialog(ctx, pending[selectedIndex]?.id)
+  }
+
+  pi.on("session_before_switch", () => {
+    reviewJobs.cancelAll()
+  })
+  pi.on("session_before_fork", () => {
+    reviewJobs.cancelAll()
+  })
+  pi.on("session_before_tree", () => {
+    reviewJobs.cancelAll()
+  })
+  pi.on("session_start", (_event, ctx) => {
+    latestCtx = ctx
+    restore(ctx)
+    const restoredReviews = reviewJobs.restore(ctx.sessionManager.getBranch())
+    if (Either.isLeft(restoredReviews))
+      ctx.ui.notify(restoredReviews.left, "warning")
+  })
+  pi.on("session_compact", () => {
+    pi.appendEntry(QUESTION_STATE_ENTRY, state)
+  })
+  pi.on("session_shutdown", (_event, ctx) => {
+    reviewJobs.close()
+    ctx.ui.setStatus("question-review", undefined)
+    latestCtx = undefined
+    ctx.ui.setStatus(QUESTION_STATUS_KEY, undefined)
+    ctx.ui.setWidget(QUESTION_STATUS_KEY, undefined)
+  })
+  pi.events.on(QUESTION_ASK_EVENT, async (data: unknown) => {
+    const ctx = latestCtx
+    if (!ctx) return
+    // Events are untrusted too; validate before parseAction accesses strings.
+    const draft = decodeQuestionDraft(data)
+    if (!draft) {
+      ctx.ui.notify("Invalid question card; no review queued.", "warning")
+      return
+    }
+    const result = await queueQuestionReview({ action: "ask", ...draft }, ctx)
+    if (result.isError)
+      for (const part of result.content) ctx.ui.notify(part.text, "warning")
+  })
+
+  pi.events.on(QUESTION_REMOTE_RESOLUTION_EVENT, (data: unknown) => {
+    const resolution = data as RemoteUserQuestionResolution
+    if (!latestCtx) return
+    resolveQuestion(latestCtx, resolution.id, resolution.answer)
+  })
+
+  pi.on("before_agent_start", event => {
+    const content = pendingQuestionContext(state)
+    return content
+      ? { systemPrompt: `${event.systemPrompt}\n\n${content}` }
+      : undefined
+  })
+
+  pi.registerCommand("questions", {
+    description: "Show questions awaiting user input",
+    async handler(_args, ctx) {
+      restore(ctx)
+      await selectQuestion(ctx)
+    },
+  })
+
+  const executeQuestionAction = (
+    request: QuestionRequest,
+    ctx: ExtensionContext,
+  ) =>
+    Effect.gen(function* () {
+      const action = yield* parseAction(request, state)
+      if (action.action === "ask" || action.action === "replace") {
+        const dedupeState =
+          action.action === "replace"
+            ? {
+                ...state,
+                questions: state.questions.filter(
+                  question => question.id !== action.id,
+                ),
+              }
+            : state
+        const repeated = repeatedQuestion(dedupeState, action.question)
+        if (repeated) {
+          const text =
+            repeated.status === "resolved"
+              ? `Not queued: q${repeated.id} already resolved this decision. Answer: ${repeated.answer}`
+              : `Not queued: q${repeated.id} already asks this decision.`
+          return {
+            content: [{ type: "text" as const, text }],
+            details: {
+              outcome: "duplicate",
+              action: action.action,
+              duplicateQuestionId: repeated.id,
+              state,
+            },
+          }
+        }
+      }
+      const priorState = state
+      return yield* Effect.try({
+        try: () => {
+          state = applyQuestionAction(priorState, action)
+          if (action.action !== "list") persist(ctx)
+          const text =
+            action.action === "ask"
+              ? `Queued question q${state.nextId - 1}. The user can answer it explicitly with /questions.`
+              : action.action === "resolve"
+                ? `Resolved question q${action.id}`
+                : action.action === "withdraw"
+                  ? `Withdrew question q${action.id}`
+                  : action.action === "replace"
+                    ? `Replaced question q${action.id} with q${state.nextId - 1}`
+                    : action.action === "reopen"
+                      ? `Reopened question q${action.id}`
+                      : questionListText(state)
+          if (action.action === "ask" || action.action === "replace")
+            ctx.ui.notify(text, "info")
+          return {
+            content: [{ type: "text" as const, text }],
+            details: {
+              outcome: "success",
+              action: action.action,
+              state,
+            },
+          }
+        },
+        catch: cause => {
+          state = priorState
+          return new QuestionActionError({
+            message:
+              cause instanceof Error ? cause.message : "Question action failed",
+          })
+        },
+      })
+    })
+
+  const reviewJobs = createQuestionReviewJobs({
+    execution,
+    process: runContentProcess,
+    onTerminal: snapshot => {
+      if (
+        ["unavailable", "needs-revision", "interrupted"].includes(
+          snapshot.status,
+        )
+      )
+        latestCtx?.ui.notify(
+          `Background question ${snapshot.id}: ${snapshot.status}. ${snapshot.reason ?? "Inspect ask_user list for status."}`,
+          "warning",
+        )
+    },
+    persist: snapshot => {
+      if (
+        !latestCtx ||
+        latestCtx.sessionManager.getSessionId() !== snapshot.sessionId
+      )
+        return Either.left("Question-review session changed.")
+      return Either.try({
+        try: () => pi.appendEntry(QUESTION_REVIEW_ENTRY, snapshot),
+        catch: () => "Question-review journal unavailable.",
+      })
+    },
+    present: snapshots => {
+      const ctx = latestCtx
+      if (!ctx) return
+      const active = snapshots.filter(job =>
+        ["queued-review", "reviewing", "revising", "publishing"].includes(
+          job.status,
+        ),
+      )
+      const latest = active.at(-1)
+      ctx.ui.setStatus(
+        "question-review",
+        latest
+          ? `Questions: ${active.length} · ${latest.status} ${latest.pass}/2`
+          : undefined,
+      )
+    },
+    publish: async (request, context) => {
+      const ctx = latestCtx
+      const admitted = execution?.admit()
+      if (
+        !ctx ||
+        ctx.sessionManager.getSessionId() !== context.sessionId ||
+        !admitted ||
+        Either.isLeft(admitted)
+      )
+        return {
+          outcome: "rejected",
+          reason:
+            "Question-review authority or session ended before publication.",
+        }
+      restore(ctx)
+      const published = await Effect.runPromise(
+        Effect.either(executeQuestionAction(request, ctx)),
+      )
+      if (Either.isLeft(published))
+        return { outcome: "rejected", reason: published.left.message }
+      if (published.right.details.outcome !== "success")
+        return {
+          outcome: "rejected",
+          reason:
+            "This decision is already pending or answered; no new question created.",
+        }
+      return {
+        outcome: "queued",
+        questionId: published.right.details.state.nextId - 1,
+      }
+    },
+  })
+  const queueQuestionReview = async (
+    request: QuestionRequest,
+    ctx: ExtensionContext,
+    signal?: AbortSignal,
+  ) => {
+    latestCtx = ctx
+    const parsed = await Effect.runPromise(
+      Effect.either(parseAction(request, state)),
+    )
+    if (Either.isLeft(parsed))
+      return {
+        content: [{ type: "text" as const, text: parsed.left.message }],
+        details: { outcome: "error" },
+        isError: true,
+      }
+    if (parsed.right.action === "ask") {
+      const repeated = repeatedQuestion(state, parsed.right.question)
+      if (repeated)
+        return {
+          content: [
+            {
+              type: "text" as const,
+              text: `Decision q${repeated.id} is already ${repeated.status}; no new draft queued.`,
+            },
+          ],
+          details: { outcome: "duplicate", duplicateQuestionId: repeated.id },
+        }
+    }
+    if (parsed.right.action !== "ask" && parsed.right.action !== "replace")
+      return {
+        content: [
+          {
+            type: "text" as const,
+            text: "Only ask/replace drafts enter background review.",
+          },
+        ],
+        details: { outcome: "error" },
+        isError: true,
+      }
+    const sessionId = ctx.sessionManager.getSessionId()
+    const queued = reviewJobs.submit(
+      parsed.right,
+      {
+        cwd: ctx.cwd,
+        getModel: () => ctx.model,
+        sessionId,
+        isCurrent: () => latestCtx?.sessionManager.getSessionId() === sessionId,
+      },
+      signal,
+    )
+    return Either.isLeft(queued)
+      ? {
+          content: [{ type: "text" as const, text: queued.left }],
+          details: { outcome: "review-unavailable" },
+          isError: true,
+        }
+      : {
+          content: [
+            {
+              type: "text" as const,
+              text: `Question draft ${queued.right.id} queued for internal background critique/revision (at most two critique passes). No foreground rewrite is needed. It is not yet a pending/delivered question.`,
+            },
+          ],
+          details: { outcome: "queued-review", jobId: queued.right.id },
+        }
+  }
+
+  pi.registerTool({
+    name: "ask_user",
+    label: "Question queue",
+    description:
+      "Ask/replace drafts run an internal background critic/author fix loop (at most two critique passes) and return queued-review immediately. Only complete reviewed cards enter the question queue. List shows review-job and Telegram delivery status. No foreground review/rewrite workflow is needed. refresh_delivery only repairs an unchanged pending card.",
+    promptSnippet:
+      "Queue a persistent question for the user without blocking unrelated work",
+    promptGuidelines: [
+      "Use ask_user when a user decision is required but independent work remains executable.",
+      "Before ask_user action=ask, inspect current user messages, ask_user list, and active todos. Do not repeat an answered decision or create another draft while its background review is pending.",
+      "queued-review is a background draft job, not a question ID or delivery receipt. The tool handles criticism and author revision itself; continue independent work instead of running a foreground rewrite/review loop. List includes job outcomes.",
+      "Never use ask_user to repeat a pending, resolved, or otherwise already-answered decision unless newer human input explicitly reopens it.",
+      "Use withdraw for an explicitly withdrawn card, replace to atomically withdraw and correct one, and reopen only when the original card remains accurate.",
+      "Use refresh_delivery with only id to repair the presentation of an existing pending Telegram card. It cannot change the question, choices, or reply binding and does not require reviewing an unchanged draft again.",
+      "Include a short header, the current best guess, and 2-4 concise options when the decision has bounded choices.",
+      "Continue independent work after asking; resolve the question with a concise answer summary when the user responds.",
+      "Queued questions stay passive until the user explicitly opens /questions; never treat ordinary prompt input as an answer.",
+    ],
+    parameters: Type.Object({
+      action: Type.Union([
+        Type.Literal("list"),
+        Type.Literal("ask"),
+        Type.Literal("resolve"),
+        Type.Literal("withdraw"),
+        Type.Literal("replace"),
+        Type.Literal("reopen"),
+        Type.Literal("clear_resolved"),
+        Type.Literal("refresh_delivery"),
+      ]),
+      question: Type.Optional(Type.String()),
+      header: Type.Optional(Type.String({ maxLength: 16 })),
+      guess: Type.Optional(Type.String()),
+      options: Type.Optional(
+        Type.Array(
+          Type.Object({
+            label: Type.String({ minLength: 1, maxLength: 80 }),
+            description: Type.Optional(Type.String({ maxLength: 160 })),
+          }),
+          { minItems: 2, maxItems: 4 },
+        ),
+      ),
+      id: Type.Optional(Type.Integer({ minimum: 1 })),
+      answer: Type.Optional(Type.String()),
+      reason: Type.Optional(Type.String()),
+    }),
+    async execute(
+      _toolCallId,
+      request: QuestionRequest,
+      signal,
+      _onUpdate,
+      ctx,
+    ) {
+      restore(ctx)
+      if (request.action === "refresh_delivery") {
+        const target = state.questions.find(
+          question =>
+            question.id === request.id && question.status === "pending",
+        )
+        const refresh = refreshDelivery
+        const admission = execution?.admit()
+        if (
+          !target ||
+          !refresh ||
+          !admission ||
+          Either.isLeft(admission) ||
+          signal?.aborted ||
+          [
+            request.question,
+            request.header,
+            request.guess,
+            request.options,
+            request.answer,
+          ].some(value => value !== undefined)
+        )
+          return {
+            content: [
+              {
+                type: "text" as const,
+                text: "Question refresh unavailable: requires an existing pending id, active authority, and no content changes.",
+              },
+            ],
+            details: { outcome: "unavailable" },
+            isError: true,
+          }
+        const refreshed = await Effect.runPromise(
+          Effect.either(
+            Effect.tryPromise({
+              try: () => refresh(target.id, ctx, signal),
+              catch: () =>
+                "Question rendering update failed; inspect delivery before retrying.",
+            }),
+          ),
+        )
+        if (Either.isLeft(refreshed))
+          return {
+            content: [{ type: "text" as const, text: refreshed.left }],
+            details: { outcome: "unavailable", id: target.id },
+            isError: true,
+          }
+        const result = refreshed.right
+        if (!result || typeof result !== "object")
+          return {
+            content: [
+              {
+                type: "text" as const,
+                text: "Invalid question refresh receipt; inspect delivery before retrying.",
+              },
+            ],
+            details: { outcome: "unavailable", id: target.id },
+            isError: true,
+          }
+        if (
+          result.id === target.id &&
+          result.outcome === "unavailable" &&
+          result.reasonKind === "already-current"
+        )
+          return {
+            content: [{ type: "text" as const, text: result.reason }],
+            details: { outcome: "unchanged", id: target.id },
+          }
+        if (
+          result.id !== target.id ||
+          result.outcome !== "updated" ||
+          !Number.isSafeInteger(result.messageId) ||
+          result.messageId < 1 ||
+          !Number.isSafeInteger(result.textLinks) ||
+          result.textLinks < 0
+        )
+          return {
+            content: [
+              {
+                type: "text" as const,
+                text:
+                  result.outcome === "unavailable" &&
+                  typeof result.reason === "string"
+                    ? result.reason
+                    : "Invalid question refresh receipt.",
+              },
+            ],
+            details: { outcome: "unavailable", id: target.id },
+            isError: true,
+          }
+        return {
+          content: [
+            {
+              type: "text" as const,
+              text: `Updated existing Telegram card q${target.id} in place; ${result.textLinks} text links confirmed. Question and reply binding are unchanged.`,
+            },
+          ],
+          details: result,
+        }
+      }
+      if (request.action === "ask" || request.action === "replace")
+        return queueQuestionReview(request, ctx, signal)
+      const admission = execution?.admit()
+      if (admission && Either.isLeft(admission))
+        return {
+          content: [{ type: "text" as const, text: admission.left.message }],
+          details: { outcome: "blocked", reason: admission.left.message },
+          isError: true,
+        }
+      const coreResult = await Effect.runPromise(
+        executeQuestionAction(request, ctx).pipe(
+          Effect.match({
+            onFailure: error => ({
+              content: [{ type: "text" as const, text: error.message }],
+              details: {
+                outcome: "error",
+                action: request.action,
+                state,
+                error: error.message,
+              },
+            }),
+            onSuccess: result => result,
+          }),
+        ),
+      )
+      const reviews = request.action === "list" ? reviewJobs.snapshots() : []
+      const reviewStatus = reviews.map(job => ({
+        id: job.id,
+        status: job.status,
+        terminal: ![
+          "queued-review",
+          "reviewing",
+          "revising",
+          "publishing",
+        ].includes(job.status),
+        pass: job.pass,
+        ...(job.questionId === undefined ? {} : { questionId: job.questionId }),
+      }))
+      const result =
+        request.action === "list"
+          ? {
+              ...coreResult,
+              content: [
+                ...(reviews.length
+                  ? [
+                      {
+                        type: "text" as const,
+                        text: `Current background review status (terminal=true means the draft is no longer pending review, not Telegram delivery): ${JSON.stringify(reviewStatus)}`,
+                      },
+                    ]
+                  : []),
+                ...coreResult.content,
+              ],
+              details: { ...coreResult.details, reviewJobs: reviews },
+            }
+          : coreResult
+      if (request.action !== "list" || !inspectDelivery) return result
+      const ids = state.questions
+        .filter(question => question.status === "pending")
+        .map(question => question.id)
+      const checked = await Effect.runPromise(
+        Effect.either(
+          Effect.tryPromise({
+            try: () => inspectDelivery(ids, ctx),
+            catch: () => "Delivery inspection unavailable.",
+          }),
+        ),
+      )
+      if (
+        Either.isLeft(checked) ||
+        !Array.isArray(checked.right) ||
+        checked.right.length !== ids.length ||
+        !checked.right.every(
+          item =>
+            typeof item === "object" &&
+            item !== null &&
+            Number.isSafeInteger(item.id) &&
+            ids.includes(item.id) &&
+            ["telegram-delivered", "not-confirmed", "unavailable"].includes(
+              item.status,
+            ),
+        ) ||
+        new Set(checked.right.map(item => item.id)).size !== ids.length
+      )
+        return {
+          ...result,
+          content: [
+            ...result.content,
+            {
+              type: "text" as const,
+              text: "Telegram delivery inspection unavailable; queued is not delivery evidence.",
+            },
+          ],
+        }
+      return {
+        ...result,
+        content: [
+          ...result.content,
+          {
+            type: "text" as const,
+            text: checked.right
+              .map(item => `q${item.id} · ${item.status}`)
+              .join("\n"),
+          },
+        ],
+        details: { ...result.details, deliveries: checked.right },
+      }
+    },
+  })
+}
+
+export default questionsExtension

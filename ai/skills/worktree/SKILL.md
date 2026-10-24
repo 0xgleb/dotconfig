@@ -1,199 +1,70 @@
 ---
 name: worktree
-description: Manage git worktrees with create, submodules, and verify subcommands
+description: Manage worktrees only for concurrent work by the owner or agents launched by the owner on the same repository, or for explicitly requested inventory and cleanup; never create one for isolation alone.
 user-invocable: true
 allowed-tools:
   - "Bash(git *)"
-  - "Bash(gt init *)"
   - "Bash(mkdir *)"
-  - "Bash(rm -rf *)"
-  - "Bash(ln -sfn *)"
+  - "Bash(fix-worktree-submodules *)"
   - "Bash(ls *)"
-  - "Bash(direnv *)"
   - "Bash(cd *)"
-  - "Bash(date *)"
-  - "Bash(find *)"
-  - AskUserQuestion
 ---
 
-# Worktree Skill
+# Worktrees
 
-Manage git worktrees with multiple subcommands.
+## When to Use
 
-## Usage
+Worktrees are permitted ONLY when the owner or another agent launched by the
+owner is concurrently working on the same repository as an agent. Isolation
+alone, dirty local state, ordinary setup, review, builds, and agent-initiated
+fan-out never justify a worktree. Explicit owner requests to inventory or remove
+existing worktrees authorize that cleanup, not new worktrees.
 
-```
-/worktree                # Auto-detect situation and resolve (smart mode)
-/worktree create         # Create a new worktree from main branch
-/worktree submodules <path>  # Fix submodules in an existing worktree
-/worktree verify         # Check if .worktrees/ paths match branch names
-```
+The assigned checkout remains the default workspace. Without owner-authorized
+concurrent work or an explicit inventory/cleanup request, inspect only that
+checkout and do not enter other worktrees.
 
-## Smart Mode (No Subcommand)
+## Procedure
 
-When no subcommand is provided, automatically detect the current situation and
-recommend or resolve as appropriate.
+1. Verify Git topology with `git rev-parse --show-toplevel`,
+   `git rev-parse --git-common-dir`, and, when inventory is authorized,
+   `git worktree list --porcelain`. GitButler is valid only in an existing
+   managed main worktree; use plain Git in every linked worktree.
+2. Before creation, identify the owner or owner-launched agent working on the
+   same repository concurrently. If none exists, do not create a worktree.
+3. Use a stable repository-local role slot: `.worktrees/secondary`,
+   `.worktrees/tertiary`, or an explicitly disposable `.tmp/worktrees/secondary`
+   or `.tmp/worktrees/tertiary`. Never use PR-, ticket-, branch-, timestamp-,
+   experiment-, or task-named directories. Verify existing ownership before
+   reusing a slot.
+4. Create only the selected slot from the task's verified base. Do not change
+   VCS backends, fetch unrelated branches, or initialize environments as routine
+   setup. Record artifact provenance for a newly created disposable slot when
+   the harness exposes that tool.
+5. Repair submodules only if concurrent work actually requires them. Use
+   `fix-worktree-submodules` only when that command exists; otherwise inspect
+   the repository's documented equivalent before acting.
+6. The creating agent owns removal of its worktree registration, directory, and
+   generated outputs immediately after concurrent work succeeds, fails, or is
+   cancelled. A pre-existing owner-managed slot may remain; an agent-created
+   slot may remain only with explicit owner direction.
 
-### Detection Logic
+## Cleanup
 
-1. **Detect if we're in a worktree or main repo:**
-   - Check if `git rev-parse --git-common-dir` differs from the current `.git`
-     location
-   - If in a worktree, get the worktree path and branch name
+Use `git worktree remove` with each exact verified linked-worktree path.
+Preserve uncommitted work unless the owner explicitly authorizes discarding it.
+When the owner orders removal regardless of contents, honor that exact
+authorization; Git's documented `--force` option may be needed for dirty
+worktrees. Never remove the main checkout or unrelated files. Remove stale
+registrations only within the requested repository scope.
 
-2. **If in main repo:**
-   - Run `verify` to check all worktrees for issues
-   - Suggest creating a new worktree if none exist
-   - List any existing worktrees and offer to create another
+If safe cleanup is blocked, record the exact path and reason, keep completion
+blocked, and make cleanup the first resumed action. Do not leave disk debt for
+the owner or another agent.
 
-3. **If in a worktree:**
-   - Check if submodules are broken:
-     - Look for broken symlinks in `lib/`
-     - Try to resolve a submodule path (e.g., `lib/some-sub/Cargo.toml`)
-     - If broken or unreachable, suggest `submodules`
-   - Check if `.worktrees/path/to/name` matches current branch name:
-     - Extract expected path from branch (e.g., `feat/auth` →
-       `.worktrees/feat/auth`)
-     - If mismatch, report and suggest moving worktree
-   - If no issues detected, report status: ✓ worktree is healthy
+## Verification
 
-4. **If ambiguous or multiple issues:**
-   - Ask user which action to take with explicit options
-
-### Steps
-
-1. **Determine location:**
-   ```bash
-   git_dir=$(git rev-parse --git-dir)
-   common_dir=$(git rev-parse --git-common-dir)
-   is_worktree=$([ "$git_dir" != "$common_dir/.git" ] && echo true || echo false)
-   ```
-
-2. **If main repo:** Run `verify` subcommand steps and suggest next action
-
-3. **If worktree:**
-   - Get current branch: `git rev-parse --abbrev-ref HEAD`
-   - Get worktree path: extract from `git worktree list`
-   - Check for broken submodules by attempting to list files in `lib/`
-   - If any issues found, recommend the appropriate fix
-   - If all healthy, report success and offer to open the worktree or run a
-     build check
-
-## Subcommands
-
-### create
-
-Create a new git worktree from the main branch of the current repository.
-
-#### Steps
-
-1. **Ask the user for the worktree name.** Suggest today's date (`YYYY-MM-DD`)
-   as the default. If the user accepts the default or provides no name, use the
-   date.
-
-2. **Resolve paths:**
-   - Main repo root: run `git rev-parse --git-common-dir` and strip the `/.git`
-     suffix. This gives the main repo root whether you're in the main repo or an
-     existing worktree.
-   - Main branch: run
-     `git symbolic-ref refs/remotes/origin/HEAD | sed 's|refs/remotes/origin/||'`
-     to detect it (e.g., `master` or `main`).
-   - Worktree path: `<main-repo-root>/.worktrees/<name>`.
-
-3. **Create the worktree container directory** if it doesn't exist:
-   ```bash
-   mkdir -p <main-repo-root>/.worktrees
-   ```
-
-4. **Fetch latest main branch** and **create the worktree** (run git commands
-   from the main repo root):
-   ```bash
-   git -C <main-repo-root> fetch origin <main-branch>
-   git -C <main-repo-root> worktree add <worktree-path> origin/<main-branch>
-   ```
-
-5. **Initialize Graphite** in the new worktree. First check the current trunk
-   from the CLI in the main repo:
-   ```bash
-   gt trunk
-   ```
-   Use that value as `<trunk>`, then initialize in the worktree:
-   ```bash
-   cd <worktree-path> && gt init --trunk <trunk>
-   ```
-
-6. **Fix submodule symlinks** (only if `lib/` exists in the main repo):
-   ```bash
-   fix-worktree-submodules <worktree-path>
-   ```
-   This nushell command handles everything: creates a real `lib/` directory with
-   individual relative symlinks to each submodule, computes the correct `../`
-   depth dynamically, and marks entries as assume-unchanged.
-
-7. **Allow direnv** and wait for the nix shell to initialize (only if a `.envrc`
-   file exists in the worktree):
-   ```bash
-   cd <worktree-path> && direnv allow
-   ```
-   Then run a command that forces direnv to load the environment:
-   ```bash
-   cd <worktree-path> && direnv exec <worktree-path> true
-   ```
-   Wait for it to complete. This ensures the nix shell is fully built before
-   proceeding.
-
-8. **Reset the SQLite database** (only if `sqlx` is available and the project
-   uses it -- check for a `migrations/` directory):
-   ```bash
-   cd <worktree-path> && direnv exec <worktree-path> sqlx db reset -y
-   ```
-
-9. **Report** the worktree path and confirm it's ready to use.
-
-### submodules
-
-Fix broken submodules in an already-created worktree. Run this if submodule
-symlinks are missing or broken, or if `cargo check` fails with "No such file or
-directory" on Cargo.toml paths.
-
-**Arguments:** `<worktree-path>` — the path to the worktree (e.g.,
-`.worktrees/feat/auth`)
-
-#### Steps
-
-1. Run the nushell command:
-   ```bash
-   fix-worktree-submodules <worktree-path>
-   ```
-2. **Report** what was fixed.
-
-### verify
-
-Check if the `.worktrees/` directory structure matches actual branch names. This
-helps identify when worktree paths and branch names have diverged.
-
-**Arguments:** none — scans all worktrees in the current repo
-
-#### Steps
-
-1. **Resolve the main repo root** using `git rev-parse --git-common-dir`.
-
-2. **Check if `.worktrees/` exists.** If it doesn't, report that no worktrees
-   exist.
-
-3. **Find all worktrees** in `.worktrees/` (recursively, since nesting is
-   allowed).
-
-4. **For each worktree path:**
-   - Extract the branch name:
-     `git -C <worktree-path> rev-parse --abbrev-ref HEAD`
-   - Compare it to the path structure (e.g., `.worktrees/feat/auth` →
-     `feat/auth`)
-   - If they match, mark as ✓
-   - If they don't match, report the mismatch with the actual branch name
-
-5. **Report a summary:**
-   - List all worktrees and their status
-   - For mismatches, show the expected path vs. the actual branch
-   - Suggest moving the worktree if the user wants the path to match the branch
-     (not automated — requires user decision)
+- `git worktree list --porcelain` shows only the intended registrations.
+- Every removed exact path is absent, including its generated outputs.
+- No worktree was created without verified owner-authorized concurrency.
+- Explicit requests for zero linked worktrees leave only the main checkout.

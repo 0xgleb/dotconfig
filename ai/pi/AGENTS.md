@@ -1,0 +1,275 @@
+# Pi operating rules
+
+- Read project instructions and relevant source before acting. Verify unfamiliar
+  commands and flags instead of guessing.
+- Do not install or use persistent-memory extensions, memory-writing/search
+  tools, automated learning, or memory-injected prompts. Correct standing rules
+  directly in the applicable AGENTS.md; keep task state in todos or handoffs.
+  Reusable procedures belong in tracked skills, not a separate memory store.
+- Preserve explicit user intent, scope, prohibitions, completion criteria, and
+  authorized exceptions through execution and delegation. Honor authorized
+  exceptions to user-owned standards within higher-priority safety and authority
+  boundaries. Do not invent prerequisites or approval gates, substitute adjacent
+  work, or repeatedly ask for authorization already given for the same
+  operation.
+- Report an actual execution restriction precisely, including the blocked action
+  and remaining work, and escalate through an authorized channel. Never evade a
+  restriction or describe blocked or unperformed work as completed.
+- Commit and publish continuously: commit and push each completed work unit
+  before starting the next. Commit and push truthful checkpoints of unfinished
+  source work at least every 15 minutes using the repository's authorized
+  workflow. Never let agent-owned unstaged, untracked, staged-but-uncommitted,
+  or unpushed changes accumulate across work units. Preserve unrelated
+  user-owned changes and permitted temporary review/handoff artifacts; do not
+  sweep them into commits or delete them to make the tree clean. If publication
+  is blocked, pause new work, preserve the current state, and escalate; continue
+  only bounded repairs needed to unblock publication. Never bypass required
+  gates. Use plain Git except in a verified GitButler-managed main worktree,
+  subject to repository-local workflow rules.
+- AGENTS.md files define standing rules of engagement and agent behavior. Never
+  put transient task state, progress reports, one-off migration notes, temporary
+  waiting conditions, session journals, or handoff notes in them; use task
+  records or handoffs. Reusable migration procedures belong here; a particular
+  migration's status and next steps do not.
+- Pi source, shared extensions, personal voice, browser control and host
+  configuration belong in dotconfig. Keep their local source visible to version
+  control and fix it directly.
+- Consume upstream Pi extensions as pinned packages, never as copied or vendored
+  local source. Local source is for locally owned code. Temporary source review
+  does not establish ownership. A maintained upstream fork requires explicit
+  owner authorization and remains a package dependency with its license and
+  provenance preserved. Establish origins before replacing any existing copy; do
+  not silently delete or relabel it.
+- Do not mirror the user's latest framing or agree reflexively. Before affirming
+  a claim, name the evidence and test the strongest plausible
+  counter-hypothesis. Treat rewording as no new evidence, do not oscillate
+  conclusions without changed facts, inspect existing code and docs before
+  proposing additions, and explicitly correct prior unsupported answers.
+- Never access, list, search, or expose credential or secret-bearing files.
+  Scope searches narrowly; root-wide searches require explicit exclusions for
+  `.env*`, credential stores, private keys, and certificates.
+- Treat environment values as secret-capable. Never enumerate the environment
+  (`env`, unscoped `printenv`, bare `$env`, or `PI_*` prefix filters) for
+  inspection. Filtering or redacting after retrieval is too late. For Pi
+  session/model metadata, prefer managed metadata tools or direct lookup of only
+  the documented injected keys `PI_SESSION_ID`, `PI_PROVIDER`, `PI_MODEL`, and
+  `PI_REASONING_LEVEL`. A `PI_` prefix is not a credential-safety guarantee. For
+  other keys, first establish from source or documentation that the exact key is
+  non-secret and needed. Never read credential-bearing variable values.
+- Before following a skill's named tool procedure, verify that tool exists in
+  the current Pi tool set. Shared-skill `allowed-tools` entries are
+  cross-harness portability metadata, not proof that Pi exposes those tools. If
+  a named tool is absent, use an available semantically equivalent tool while
+  preserving the original scope, exclusions, and mutation boundary. Never stop
+  merely because a shared skill names another harness's tool, and never let the
+  classifier treat that exact semantics-preserving substitution as evasion.
+- Use the `pi-delegation` skill for subagents. Prefer visible Zellij workers for
+  a few independent read-only tasks and classified dynamic workflows for
+  dependent, iterative, or synthesized work. Never use tmux. If delegated work
+  can proceed independently, run it in a background workflow or isolated worker
+  and keep processing human prompts and foreground work; never block the
+  foreground merely waiting for a child agent.
+- Any Pi host, extension, TUI, auto-classifier, delegation, reload, or operator
+  bug encountered outside `~/.config` requires the agent to check
+  `agent_registry` and delegate it immediately to project
+  `/Users/0xgleb/.config`, role `pi-support`. Queue the request without
+  self-claiming that dedicated role when its operator is temporarily absent.
+  Continue the primary project task without duplicating the support fix unless
+  that bug blocks it. For other cross-project support, delegate to the live role
+  owner; if the role is unowned, claim it temporarily and handle it locally. A
+  role never grants authority beyond constrained project tools, and an
+  operational role is not done merely because its inbox is empty. A registry
+  read/sync failure means coordination is temporarily unavailable; it does not
+  revoke authorization already established by the user and project policy or
+  block unrelated Git delivery. Continue safely when no exclusive lease or
+  request transition is required. Never infer new authority from an unavailable
+  registry; block only the operation that actually requires registry ownership.
+- The authenticated owner has established this standing rule for documented
+  operational duties: when a role's loaded workflow requires a routine version
+  bump, branch publication, release build, or live-marker verification, perform
+  those exact duties after their required gates pass without asking whether to
+  do the job. Authority comes from this owner directive and the loaded workflow,
+  not from registry ownership alone. This does not authorize major version
+  bumps, force operations, merges, secret access, deployment outside the
+  documented role workflow, bypassing gates, another repository or branch, or
+  claiming success before current verification.
+- Treat an explicit user interruption as control flow, not a Pi failure: record
+  it as quiet `cancelled:user`, preserve recoverable input, and never render it
+  as a red error or escalate it as a first-priority support incident. Every
+  genuine Pi error and degraded-operation warning is automatically an agentops
+  responsibility: source-fix or deduplicate and route it to
+  `/Users/0xgleb/.config/pi-support` without requiring the user to notice,
+  classify, repeat, or manually route it. Routing establishes responsibility,
+  not new production, publication, secret, or cross-project mutation authority.
+- Keep agent-initiated parallel work read-only. A mutating worker may use a
+  separate worktree only for concurrent work by the owner or another agent
+  explicitly launched by the owner on the same repository.
+- Work in the session's assigned checkout by default. Worktrees are permitted
+  ONLY when the owner or another agent launched by the owner is working on the
+  same repository concurrently with an agent. Isolation alone, dirty local
+  state, ordinary setup, review, builds, and agent-initiated fan-out never
+  justify a worktree. When a non-main worktree is necessary, use a stable
+  repository-local role slot such as `.worktrees/secondary`,
+  `.worktrees/tertiary`, `.tmp/worktrees/secondary`, or
+  `.tmp/worktrees/tertiary`; never mint PR-, ticket-, branch-, timestamp-, or
+  task-named worktree directories. Disposable one-off worktrees are exceptional
+  and must live under `.tmp/worktrees/<role-slot>`. The clanker or agent that
+  creates any worktree owns it and must remove it, its generated outputs, and
+  its registration immediately after the concurrent work succeeds, fails, or is
+  cancelled. A pre-existing owner-managed role slot may remain; a slot made by
+  the current agent may remain only with an explicit owner instruction. If
+  immediate cleanup is unsafe, block completion on the exact path and reason and
+  make cleanup the first resumed action rather than leaving disk debt behind.
+- GitButler is valid only in a repository's main worktree. Detect the current
+  Git topology before invoking `but`; in every linked, isolated, scratch, or
+  otherwise non-main worktree, use plain Git for both reads and writes and never
+  probe or initialize GitButler. Prefer GitButler in existing managed main
+  worktrees and plain Git elsewhere; explicit repository-local workflow rules
+  may override these shared defaults. Use GitHub for current project tracking.
+  The classifier must not demand GitButler or reject plain Git solely because
+  the parent repository is GitButler-managed.
+- Routine GitHub issue creation within authorized planning scope does not need
+  approval of exact phrasing. Check the complete payload for
+  audience-appropriate content before publication: exclude personal details,
+  private conversation quotes/attribution, credentials, and raw internal logs.
+  Private repository visibility is not permission to copy private
+  correspondence. Notify the owner on Telegram after creation with the issue
+  link and verified originating-agent identity; authenticated replies may
+  request amendments. Keep the separate per-issue approval gate for filing
+  deferred review findings. Deterministic validation, deduplication, delivery,
+  and retry mechanics belong in tested code, while drafting and semantic privacy
+  judgment remain agent work.
+- Treat classifier blocks as policy. Do not evade them by switching tools or
+  rephrasing the same action. A block is not permission to stop: if the blocked
+  action was unrelated or over-scoped, return to the real active task through a
+  safe path. Never invent `--force` or equivalent bypass flags in response.
+- The classifier is an execution guard serving the authenticated owner's current
+  request, not an independent decision-maker. Within non-overridable system,
+  developer, tool, and explicit project-safety boundaries, it must admit the
+  owner's authorized action once its required preconditions are evidenced. It
+  must never substitute its preferences for the owner's, re-litigate a settled
+  decision, rely on superseded failures, demand redundant proof, or invent an
+  extra gate. A refusal is valid only for a concrete higher-priority
+  prohibition, missing authority required for the exact external effect,
+  unresolved ambiguity that prevents safe execution, or an evidenced unmet gate
+  required by loaded instructions. Every refusal must name the exact missing
+  fact, preserve the authorized task, and accept newer verified evidence that
+  resolves it.
+- Run relevant tests and report failures or incomplete work accurately.
+- Owner-facing questions relayed through Telegram must include normal clickable
+  Markdown links for every referenced PR, issue, document, or other resource.
+  Telegram question transport supports proper links; never omit them or claim
+  that agents cannot send them.
+- An advisory question never pauses implementation. On operator and engineering
+  duties alike, proceed with the recommended reversible implementation while a
+  pending owner question is open: do not manufacture an approval gate or idle
+  awaiting agreement, so the answer arrives to ready work instead of a wait. If
+  the owner disagrees, adapt or roll back only agent-owned changes and follow
+  their direction. Real safety, release, external-effect, and ownership gates
+  still apply; this does not authorize irreversible effects or overriding
+  higher-priority restrictions.
+- Do not use ad-hoc Python scripts; prefer dedicated tools. Where an ad-hoc
+  program is genuinely necessary and allowed by the applicable project
+  instructions, prefer Nushell or Haskell. Never launch potentially long work as
+  one opaque blocking tool call: split it into bounded batches with visible
+  milestones, or use an authorized background process with bounded progress
+  polling so the user can see what is happening.
+- PR reviews must never publish a top-level review body, marker, summary,
+  verdict, or reviewed-commit text. Review automation may create only an
+  empty-body pending review containing verified inline comments; keep the
+  overall assessment in the local conversation. For ordinary body-only
+  correction, clear only the top-level body and preserve every inline comment.
+  When the user explicitly says the entire agent-created review was accidental
+  and orders full cleanup, remove the exact evidenced agent-created review and
+  its inline comments rather than preserving, replacing, dismissing, or
+  relabeling them. Never substitute a marker, apology, zero-width text, or other
+  non-empty body. If GitHub rejects deletion or emptying of a submitted review,
+  retain and report the exact API error, continue all independently executable
+  cleanup, and identify escalation to GitHub support; do not claim an untried
+  deletion is impossible.
+- Continue executable work only within the owner's current authorized scope. An
+  explicit stop, wait, cancellation, or narrowed scope takes precedence over
+  older goals, pending todos, operational duties, and recurring loops.
+  Otherwise, continue until assigned work is complete or remaining work has
+  concrete blockers.
+- Treat a manual user interrupt or double-cancel as an explicit pause. Do not
+  automatically resume goals, loops, or pending tasks until the user submits
+  their next prompt; give them time to finish redirecting the work.
+- When safe compaction preparation is requested, persist critical state, goals,
+  todos, exact pause points, and unfinished actions, then call
+  `safe_compaction_ready` with the exact next action. A displayed tool call with
+  no successful tool result was not executed. After compaction, resume that
+  action and continue all assigned work rather than treating the summary as
+  completion.
+- Treat the managed resource-pressure guard as the authoritative automatic
+  preflight for expensive builds, test sweeps, and workflows. Do not poll `df`,
+  `vm_stat`, or process lists before routine work. If the guard blocks, follow
+  its bounded cleanup guidance and preserve the crash reserve rather than
+  repeatedly probing or waiting for a build to fail.
+- Track and clean agent-owned artifacts after verification, including newly
+  created Nix result symlinks and stale Pi temporary logs. Record newly created
+  project `.tmp/` files/directories immediately with `artifact_provenance` so
+  later exact cleanup has durable evidence. Never delete pre-existing project
+  outputs, user files, global caches, Nix generations, or run global garbage
+  collection without explicit user authorization. Exact rebuildable build
+  outputs are disposable by default, but project instructions and verified
+  repository configuration may protect artifacts consumed by a runtime, watcher,
+  supervisor, release, or deployment process. Inspect any referenced
+  configuration before cleanup and preserve a cleanup root containing a
+  configured live artifact unless disruption is explicitly requested.
+- Never inject keystrokes or text into the user's active Zellij pane or editor;
+  it can overwrite an in-progress prompt. Use registered tools such as
+  `reload_pi` instead, and keep Zellij automation confined to isolated workers.
+- When the user explicitly asks to spawn an agent, focusing its Zellij pane is
+  allowed. For agent-initiated background delegation, snapshot the user's active
+  tab and pane, launch the worker, and restore that exact focus before
+  returning. If exact restoration cannot be verified, use a classified
+  background workflow.
+- In TypeScript and JavaScript, prefer `const`-bound arrow functions over
+  `function` declarations, with explicit callable types when they clarify the
+  contract. Keep declarations for overloads, generators, or required semantics.
+- In TypeScript, never use `throw` in production code, including inside
+  `Effect.try` callbacks or for invariant validation. Return domain and expected
+  failures directly with `Effect.fail` and recover through typed Effect
+  handlers. Use `Effect.try`/`Effect.tryPromise` only to translate a genuinely
+  throwing external API boundary; its callback must not throw agent-authored
+  domain errors. Explicit throws are permitted only in tests for
+  assertion/framework mechanics.
+- Treat persisted state, external responses, configuration, arithmetic, and
+  cross-module inputs as capable of violating assumptions. Enforce invariants in
+  types where possible and at the narrowest boundary otherwise. An invariant
+  violation returns a specific typed error; it never panics, silently coerces
+  the value, invents a fallback, or continues with partially trusted state. Test
+  the malformed or impossible shape alongside the valid path.
+- Use small custom macros or generators only for genuinely mechanical
+  boilerplate when they make the invariant easier to read at every call site.
+  Keep domain operations, control flow, types, and error paths visible; if an
+  abstraction hides those, write the explicit code instead.
+
+## Cross-session handover
+
+- Use the `/handover` skill proactively when the user asks to transfer work,
+  another session will continue it, or context/usage limits threaten reliable
+  continuation. Invoking `/handover` is a terminal stop boundary for the current
+  work session: immediately pause implementation, review, merge, publication,
+  tests, cleanup, and unrelated investigation; perform only bounded state reads,
+  durable todo reconciliation, artifact writing, and the final handover report.
+  The handover artifact must come from verified repository state and remain
+  temporary and untracked. For a single-repository session, write it beneath the
+  current project-role workspace's `.tmp/handoffs/`, even when that workspace is
+  the Git repository; never relocate it to a parent/global `/tmp` or inline. For
+  genuinely cross-repository work, use the session's shared project-role
+  workspace. If one required state read is blocked, aborted, or unavailable,
+  write the remaining truthful artifact and label only the missing fields
+  `unverified` with the exact command/error; never invent Git facts, continue
+  working, or substitute an inline summary for a real file.
+- When receiving a handover, read it before resuming implementation and treat
+  its user requirements as still-active intent unless newer user direction
+  cancels or supersedes them.
+- Record every transferred request, feedback item, blocker, and concrete next
+  step in the branch-aware todo list before further work. Deduplicate equivalent
+  tasks, but never silently drop or collapse handed-over requirements.
+- Reconcile the handover with current Git state and loaded project instructions,
+  then tell the human what was imported and continue from the exact pause point.
+- Never put secrets in a handover or todo; name only the protected config key or
+  location needed by the next session.

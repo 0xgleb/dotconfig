@@ -1,9 +1,8 @@
 variable "droplet_size" {
   type    = string
   default = "s-2vcpu-4gb"
-  # s-1vcpu-1gb: $6/mo — minimal
-  # s-2vcpu-4gb: $24/mo — dev work
-  # s-4vcpu-8gb: $48/mo — heavier work
+  # s-2vcpu-4gb:  $24/mo — default
+  # s-4vcpu-8gb:  $48/mo — more runtime headroom
 }
 
 variable "region" {
@@ -17,7 +16,15 @@ variable "do_token" {
   sensitive = true
 }
 
-variable "ssh_public_key_path" {
+variable "tailscale_api_key" {
+  type      = string
+  sensitive = true
+  # Create at https://login.tailscale.com/admin/settings/keys (API access token).
+  # Note: Tailscale API keys expire after 90 days and must be rotated.
+}
+
+variable "tailscale_tailnet" {
   type    = string
-  default = "~/.ssh/nixxxos_ed25519.pub"
+  default = "-"
+  # "-" means the default tailnet of the account that owns the API key.
 }
