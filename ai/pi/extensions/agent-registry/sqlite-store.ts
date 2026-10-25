@@ -2304,28 +2304,20 @@ const makeDatabaseAccess = (databasePath: string): DatabaseAccess => {
 
   const openEffect = (label: string): RegistryEffect<DatabaseSync> => {
     if (database) return Effect.succeed(database)
-    return dbCall(label, () => {
-      mkdirSync(dirname(databasePath), { recursive: true, mode: 0o700 })
-      return new DatabaseSync(databasePath)
-    }).pipe(
-      Effect.flatMap(opened =>
-        initializeEffect(opened, databasePath).pipe(
-          Effect.tap(() =>
-            Effect.sync(() => {
+    return Effect.acquireUseRelease(
+      dbCall(label, () => {
+        mkdirSync(dirname(databasePath), { recursive: true, mode: 0o700 })
+        return new DatabaseSync(databasePath)
+      }),
+      opened => initializeEffect(opened, databasePath).pipe(Effect.as(opened)),
+      (opened, exit) =>
+        Exit.isSuccess(exit)
+          ? Effect.sync(() => {
               database = opened
-            }),
-          ),
-          Effect.as(opened),
-          Effect.catchAll(error =>
-            dbCall("Could not close invalid registry", () =>
+            })
+          : dbCall("Could not close invalid registry", () =>
               opened.close(),
-            ).pipe(
-              Effect.catchAll(() => Effect.void),
-              Effect.andThen(Effect.fail(error)),
-            ),
-          ),
-        ),
-      ),
+            ).pipe(Effect.ignore),
     )
   }
 

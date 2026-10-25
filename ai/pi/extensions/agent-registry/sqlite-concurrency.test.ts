@@ -176,3 +176,55 @@ test(
     }
   },
 )
+test(
+  "interrupted WAL initialization closes its uncached connection",
+  { timeout: 15000 },
+  async t => {
+    const f = fixture(t)
+    await Effect.runPromise(f.first.snapshot(0))
+    f.first.close()
+    await new Promise<void>(resolve => setImmediate(resolve))
+    const writer = new DatabaseSync(join(f.root, "registry.sqlite"))
+    writer.prepare("PRAGMA journal_mode = DELETE").get()
+    writer.exec("BEGIN IMMEDIATE")
+    const attempted = await Effect.runPromise(Deferred.make<void>())
+    const prepare = DatabaseSync.prototype.prepare
+    const close = DatabaseSync.prototype.close
+    let opening: DatabaseSync | undefined
+    const closed: DatabaseSync[] = []
+    t.mock.method(
+      DatabaseSync.prototype,
+      "prepare",
+      function (this: DatabaseSync, sql: string) {
+        if (sql === "PRAGMA journal_mode = WAL") {
+          opening = this
+          Effect.runSync(Deferred.succeed(attempted, undefined))
+        }
+        return prepare.call(this, sql)
+      },
+    )
+    t.mock.method(
+      DatabaseSync.prototype,
+      "close",
+      function (this: DatabaseSync) {
+        closed.push(this)
+        return close.call(this)
+      },
+    )
+    try {
+      await Effect.runPromise(
+        Effect.gen(function* () {
+          const startup = yield* Effect.fork(f.second.snapshot(0))
+          yield* Deferred.await(attempted)
+          yield* Fiber.interrupt(startup)
+        }),
+      )
+      assert.ok(opening)
+      assert.deepEqual(closed, [opening])
+    } finally {
+      writer.exec("ROLLBACK")
+      writer.close()
+      if (opening && !closed.includes(opening)) close.call(opening)
+    }
+  },
+)
