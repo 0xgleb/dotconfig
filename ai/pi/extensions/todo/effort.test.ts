@@ -6,6 +6,7 @@ import {
   decodeTodoState,
   parseTodoAction,
   transitionTodoState,
+  wakeDueDeferredTodos,
   type TodoState,
 } from "./state.ts"
 
@@ -145,7 +146,46 @@ test("effort remains advisory across priority, replies, status, blocking, and de
   )
 })
 
-test("worker and manager task-list text displays relative effort points", () => {
+test("every status, completed toggle, and due reminder preserves effort independently", () => {
+  const estimated = apply(seed, { action: "effort", id: 1, effort: 3 }).state
+  for (const status of [
+    "pending",
+    "in_progress",
+    "in_review",
+    "completed",
+    "cancelled",
+  ] as const) {
+    const changed = apply(estimated, { action: "status", id: 1, status }).state
+    assert.equal(changed.todos[0]?.status, status)
+    assert.equal(changed.todos[0]?.effort, 3)
+    assert.deepEqual(changed.todos[1], estimated.todos[1])
+  }
+  const completed = apply(estimated, {
+    action: "status",
+    id: 1,
+    status: "completed",
+  }).state
+  const pending = apply(completed, { action: "toggle", id: 1 }).state
+  assert.equal(pending.todos[0]?.status, "pending")
+  assert.equal(pending.todos[0]?.effort, 3)
+  const remindAt = "2030-01-01T00:00:00Z"
+  const deferred = apply(estimated, {
+    action: "status",
+    id: 1,
+    status: "deferred",
+    remindAt,
+  }).state
+  const woken = wakeDueDeferredTodos(deferred, Date.parse(remindAt))
+  assert.deepEqual(
+    woken.woken.map(todo => todo.id),
+    [1],
+  )
+  assert.equal(woken.state.todos[0]?.status, "pending")
+  assert.equal(woken.state.todos[0]?.effort, 3)
+  assert.deepEqual(woken.state.todos[1], estimated.todos[1])
+})
+
+test("shared task-list formatting displays relative effort points", () => {
   const state = apply(seed, { action: "effort", id: 1, effort: 3 }).state
   const listed = apply(state, { action: "list" })
   assert.match(listed.message, /\[effort 3 points\]/u)

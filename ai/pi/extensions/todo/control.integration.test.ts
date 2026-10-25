@@ -3,6 +3,7 @@ import test from "node:test"
 import type {
   ExtensionAPI,
   ExtensionContext,
+  Theme,
 } from "@earendil-works/pi-coding-agent"
 import { Either, Option } from "effect"
 import { fileURLToPath } from "node:url"
@@ -18,6 +19,11 @@ import { registerManagerBinding } from "../shared/manager-binding.ts"
 import { todoWorkSnapshot } from "../classified-workflows/goal.ts"
 
 interface CapturedTool {
+  renderResult: (
+    result: unknown,
+    options: { expanded: boolean },
+    theme: Theme,
+  ) => { render: (width: number) => string[] }
   execute: (
     id: string,
     request: TodoRequest,
@@ -113,6 +119,15 @@ test("manager control updates the real worker todo store used by subsequent ordi
   })
   assert.ok(Either.isRight(ranked))
   assert.equal(ranked.right.isError, false)
+  const estimated = await tool.execute(
+    "estimate-worker",
+    { action: "effort", id: 1, effort: 3 },
+    undefined,
+    undefined,
+    ctx,
+  )
+  assert.ok(record(estimated))
+  assert.notEqual(estimated.isError, true)
   const workerTreeHandlers = [...(hooks.get("session_tree") ?? [])]
   const beforeRead = entries.length
   const listed = await tool.execute(
@@ -138,6 +153,14 @@ test("manager control updates the real worker todo store used by subsequent ordi
   assert.ok(Option.isSome(details))
   assert.equal(details.value.state.todos[0]?.status, "completed")
   assert.equal(details.value.state.todos[0]?.priority, 2)
+  assert.equal(details.value.state.todos[0]?.effort, 3)
+  const theme = {
+    fg: (_color: string, value: string) => value,
+  } as unknown as Theme
+  assert.match(
+    tool.renderResult(listed, { expanded: true }, theme).render(120).join("\n"),
+    /\[effort 3 points\]/u,
+  )
   await tool.execute(
     "lower-priority-work",
     { action: "add", text: "Unassigned existing work" },
@@ -165,7 +188,11 @@ test("manager control updates the real worker todo store used by subsequent ordi
     cwd: ctx.cwd,
     observedAt: Date.now(),
     priorityRevision: "rev",
-    data: { todoControl: true, todoPriorityControl: true },
+    data: {
+      todoControl: true,
+      todoPriorityControl: true,
+      todoEffortControl: true,
+    },
   })
   const managerEntries: Record<string, unknown>[] = []
   let selected = true
@@ -213,10 +240,25 @@ test("manager control updates the real worker todo store used by subsequent ordi
   assert.ok(managerTool)
   await managerTool.execute(
     "manager-add",
-    { action: "add", text: "Added from manager" },
+    { action: "add", text: "Added from manager", effort: 5 },
     undefined,
     undefined,
     managerCtx,
+  )
+  const managerList = await managerTool.execute(
+    "manager-list",
+    { action: "list" },
+    undefined,
+    undefined,
+    managerCtx,
+  )
+  assert.ok(record(managerList))
+  assert.match(
+    managerTool
+      .renderResult(managerList, { expanded: true }, theme)
+      .render(120)
+      .join("\n"),
+    /\[effort 5 points\]/u,
   )
   const managerRanked = await managerTool.execute(
     "manager-priority",
@@ -227,6 +269,15 @@ test("manager control updates the real worker todo store used by subsequent ordi
   )
   assert.ok(record(managerRanked))
   assert.notEqual(managerRanked.isError, true)
+  const managerEstimated = await managerTool.execute(
+    "manager-effort",
+    { action: "effort", id: 3, effort: 8 },
+    undefined,
+    undefined,
+    managerCtx,
+  )
+  assert.ok(record(managerEstimated))
+  assert.notEqual(managerEstimated.isError, true)
   for (const handler of workerTreeHandlers) await handler({}, ctx)
   selected = false
   const unselected = await managerTool.execute(
@@ -252,6 +303,8 @@ test("manager control updates the real worker todo store used by subsequent ordi
   assert.equal(finalDetails.value.state.todos[2]?.text, "Added from manager")
   assert.equal(finalDetails.value.state.todos[2]?.priority, 1)
   assert.equal(finalDetails.value.state.todos[2]?.status, "pending")
+  assert.equal(finalDetails.value.state.todos[2]?.effort, 8)
+  assert.equal(finalDetails.value.state.todos[0]?.effort, 3)
   assert.deepEqual(
     todoWorkSnapshot(entries).pending.map(text => text.split(" ")[0]),
     ["#3", "#2"],
@@ -268,6 +321,13 @@ test("manager control updates the real worker todo store used by subsequent ordi
     managerEntries.filter(entry => entry.customType === "todo.state").length,
     0,
   )
+  failAppend = true
+  const failedEffort = requestTodoControl(pi, ctx, {
+    action: "effort",
+    id: 3,
+    effort: 13,
+  })
+  assert.ok(Either.isLeft(failedEffort))
   failAppend = true
   const failed = requestTodoControl(pi, ctx, {
     action: "add",
@@ -286,6 +346,7 @@ test("manager control updates the real worker todo store used by subsequent ordi
   assert.ok(Option.isSome(afterDetails))
   assert.equal(afterDetails.value.state.todos.length, 3)
   assert.equal(afterDetails.value.state.todos[2]?.priority, 1)
+  assert.equal(afterDetails.value.state.todos[2]?.effort, 8)
   selected = true
   const cleared = await managerTool.execute(
     "clear-manager-priority",
@@ -312,6 +373,31 @@ test("manager control updates the real worker todo store used by subsequent ordi
   assert.deepEqual(clearedDetails.value.state.todos, [
     ...afterDetails.value.state.todos.slice(0, 2),
     unranked,
+  ])
+  const clearedEffort = await managerTool.execute(
+    "clear-manager-effort",
+    { action: "effort", id: 3, effort: null },
+    undefined,
+    undefined,
+    managerCtx,
+  )
+  assert.ok(record(clearedEffort))
+  assert.notEqual(clearedEffort.isError, true)
+  const finalEffortRead = await tool.execute(
+    "read-cleared-effort",
+    { action: "list" },
+    undefined,
+    undefined,
+    ctx,
+  )
+  assert.ok(record(finalEffortRead))
+  const effortDetails = decodeTodoDetails(finalEffortRead.details)
+  assert.ok(Option.isSome(effortDetails))
+  const { effort: removedEffort, ...unestimated } = unranked
+  assert.equal(removedEffort, 8)
+  assert.deepEqual(effortDetails.value.state.todos, [
+    ...clearedDetails.value.state.todos.slice(0, 2),
+    unestimated,
   ])
   for (const handler of hooks.get("session_shutdown") ?? [])
     await handler({}, ctx)

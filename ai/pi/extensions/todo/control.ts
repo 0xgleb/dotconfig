@@ -40,6 +40,10 @@ export const requestTodoControl = (
   const emitted = Either.try({
     try: () => {
       const preferPriorityAware = todoPriorityAvailable(pi)
+      const preferEffortAware = todoEffortAvailable(pi)
+      const requiresEffort =
+        request.action === "effort" ||
+        (request.action === "add" && request.effort !== undefined)
       pi.events.emit(CONTROL_EVENT, {
         kind: "todo-control.v1",
         run: (
@@ -49,7 +53,9 @@ export const requestTodoControl = (
           if (
             claimed ||
             ((request.action === "priority" || preferPriorityAware) &&
-              capabilities?.priority !== true)
+              capabilities?.priority !== true) ||
+            ((requiresEffort || preferEffortAware) &&
+              capabilities?.effort !== true)
           )
             return
           claimed = true
@@ -76,6 +82,21 @@ export const requestTodoControl = (
 
 export interface TodoControlCapabilities {
   readonly priority?: true
+  readonly effort?: true
+}
+
+export const todoEffortAvailable = (pi: ExtensionAPI): boolean => {
+  let available = false
+  pi.events.emit(CONTROL_EVENT, {
+    kind: "todo-control.v1",
+    run: (
+      _handler: TodoControlHandler,
+      capabilities?: TodoControlCapabilities,
+    ) => {
+      if (capabilities?.effort === true) available = true
+    },
+  } satisfies ControlEnvelope)
+  return available
 }
 
 export const todoPriorityAvailable = (pi: ExtensionAPI): boolean => {
