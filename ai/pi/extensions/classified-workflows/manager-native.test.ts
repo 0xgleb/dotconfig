@@ -560,7 +560,99 @@ test("round report enters native Markdown message rendering once without another
   assert.equal(typeof message.content, "string")
   assert.match(String(message.content), /```ts/u)
   assert.match(String(message.content), /100ms/u)
+  assert.match(
+    String(message.content),
+    /source worker worker-123 at \/projects\/worker/u,
+  )
   assert.equal(object(delivery.options).triggerTurn, false)
+})
+
+test("manager toolset exposes owner reporting without coding tools", async t => {
+  const f = fixture(t, true)
+  await f.emit("session_start")
+  assert.ok(f.active.at(-1)?.includes("report_owner"))
+  assert.equal(
+    await f.emit("tool_call", { toolName: "report_owner", input: {} }),
+    undefined,
+  )
+  const denied = object(await f.emit("tool_call", { toolName: "bash" }))
+  assert.equal(denied.block, true)
+})
+
+test("round report identity includes worker session and repository across selection and reload", async t => {
+  const f = fixture(t, "global")
+  const targets = [
+    scope,
+    { workerSessionId: "worker-other", cwd: scope.cwd },
+    { workerSessionId: scope.workerSessionId, cwd: "/projects/other" },
+  ]
+  const text =
+    "## Outcome\n\nOriginal report with `code` and [issue](https://example.com/issue)."
+  for (const target of targets) {
+    const directory = managerPairDirectory({
+      workerSessionId: target.workerSessionId,
+      workerCwd: target.cwd,
+      agentDir: f.root,
+    })
+    assert.ok(Either.isRight(directory))
+    const state = prepareNativeManagerState(directory.right, target)
+    assert.ok(Either.isRight(state))
+    assert.ok(
+      Either.isRight(
+        state.right.publish({
+          ...target,
+          version: 1,
+          observedAt: 1000,
+          priorityRevision: "revision-1",
+          data: {
+            roundReport: {
+              version: 1,
+              round: 12,
+              status: "completed",
+              elapsedMs: 100,
+              text,
+            },
+          },
+        }),
+      ),
+    )
+  }
+  await f.emit("session_start")
+  const control = f.tools.get("manager_control")
+  assert.ok(control)
+  for (const [index, target] of targets.entries()) {
+    const result = await control.execute(
+      "select",
+      { action: "select", ...target },
+      undefined,
+      undefined,
+      f.ctx,
+    )
+    assert.equal(object(result).isError, false)
+    for (const tick of f.ticks) {
+      tick()
+      tick()
+    }
+    assert.equal(f.messages.length, index + 1)
+    const delivery = f.messages[index]
+    assert.ok(delivery)
+    assert.equal(
+      object(delivery.message).content,
+      `source worker ${target.workerSessionId} at ${target.cwd}\n\n**Manager round report · 100ms**\n\n${text}`,
+    )
+    assert.equal(object(delivery.options).triggerTurn, false)
+  }
+  await f.emit("session_start")
+  await control.execute(
+    "select",
+    { action: "select", ...scope },
+    undefined,
+    undefined,
+    f.ctx,
+  )
+  for (const tick of f.ticks) tick()
+  assert.equal(f.messages.length, targets.length)
+  assert.deepEqual(f.execs, [])
 })
 
 const record = (value: unknown): value is Record<string, unknown> =>
