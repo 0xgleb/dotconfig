@@ -176,9 +176,9 @@ Verify prerequisites before doing anything:
    checkout root and record its working-tree/index state. Verify directory-wide
    coverage with `git check-ignore --verbose` on `.tmp/` itself and the intended
    artifact path, and on `.worktrees/` when used. A file-specific match is
-   insufficient. Immediately add any missing directory pattern to that checkout's
-   `.gitignore`, preserving existing rules, then recheck both paths; no separate
-   approval is needed and no worktree-creation authority is added.
+   insufficient. Immediately add any missing directory pattern to that
+   checkout's `.gitignore`, preserving existing rules, then recheck both paths;
+   no separate approval is needed and no worktree-creation authority is added.
 
    Account for an owned ignore repair as a separate preflight unit through the
    repository's already-authorized checkpoint/publication workflow. Isolate only
@@ -268,10 +268,10 @@ temporary artifacts with the worktree.
 **Ensure the artifact folder is gitignored before creating or writing it.**
 Artifacts go under `$repo_root/.tmp/agent-local-ctx/`. Recheck directory-wide
 coverage with `git check-ignore --verbose` on `.tmp/` itself and the intended
-artifact path, not just a file-specific match. If this checkout
-needs a new `.tmp/` or `.worktrees/` repair, complete step 1's directory-ignore
-preflight, including accounting for the repair, before proceeding. Do not
-introduce an unaccounted ignore change after recording a clean fix baseline.
+artifact path, not just a file-specific match. If this checkout needs a new
+`.tmp/` or `.worktrees/` repair, complete step 1's directory-ignore preflight,
+including accounting for the repair, before proceeding. Do not introduce an
+unaccounted ignore change after recording a clean fix baseline.
 
 Only after coverage is established, create the output directory:
 
