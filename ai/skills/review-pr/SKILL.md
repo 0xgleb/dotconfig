@@ -81,8 +81,12 @@ gh pr view "<pr-ref>" --json files --jq '.files[] | "\(.additions)\t\(.deletions
 wc -l "$out_dir/diff.patch"
 ```
 
-Refuse to proceed on an empty diff. Warn on diffs larger than 10000 lines and ask
-whether to continue — reviewer quality degrades on huge diffs.
+Refuse to proceed if the diff is empty. Diff size is not an approval gate and
+must not reduce review depth. For large diffs, follow review-core's bounded
+chunking and track complete retained-code and removal-boundary coverage. Inspect
+deleted code only as needed to verify surviving behavior, compatibility and
+removal effects; do not spend a review pass re-auditing intentional deletions.
+Preserve completed reviews and recover only missing chunks or context.
 
 Also save the PR metadata and the author's description:
 
