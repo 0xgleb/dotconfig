@@ -5,7 +5,7 @@ import test from "node:test"
 const global = readFileSync(
   new URL("../../GLOBAL_AGENTS.md", import.meta.url),
   "utf8",
-)
+).replace(/\s+/gu, " ")
 const project = readFileSync(
   new URL("../../AGENTS.md", import.meta.url),
   "utf8",
@@ -21,12 +21,13 @@ test("global instructions resist confirmation bias", () => {
   assert.match(global, /correct prior unsupported/i)
 })
 
-test("owner-identified mistakes generalize to a full defect-class audit", () => {
+test("owner-identified mistakes generalize within the current authorized work unit", () => {
   assert.match(
     global,
-    /audit the full\s+current scope for every other instance of that mistake class/is,
-    forGlobal("generalize one named mistake to every other instance"),
+    /check the entire current authorized work unit for every other instance of that mistake class/is,
+    forGlobal("generalize the correction within the assigned unit"),
   )
+  assert.doesNotMatch(global, /other live worker backlogs, relayed tasks/is)
   assert.match(
     global,
     /Repairing only the named instance is itself a\s+failure/is,
@@ -34,13 +35,14 @@ test("owner-identified mistakes generalize to a full defect-class audit", () => 
   )
   assert.match(
     global,
-    /record a follow-up task for that capability instead of citing\s+its absence as an excuse/is,
-    forGlobal("convert missing capabilities into follow-up tasks"),
+    /Report out-of-scope instances and proposed capability follow-ups to the manager/is,
+    forGlobal("route proposed follow-ups to the manager"),
   )
+  assert.match(global, /do not create or start additional work/is)
   assert.match(
     global,
     /standing owner rule applies globally, not only\s+in the conversation that surfaced the example/is,
-    forGlobal("bind the audit duty to owner authority everywhere"),
+    forGlobal("apply the scoped correction duty everywhere"),
   )
 })
 
@@ -60,6 +62,26 @@ test("task priority lives only in the rank field", () => {
     /The rank field is the\s+single ordering authority/is,
     forGlobal("keep one ordering authority"),
   )
+})
+
+test("driver workers publish checkpoints early without granting reviewer or manager authority", () => {
+  assert.match(global, /Driver workers.*commit and push regularly/is)
+  assert.match(global, /draft PR with the first checkpoint/is)
+  assert.match(global, /incomplete or broken.*failing checks/is)
+  assert.match(global, /checks pass for the\s+published head/is)
+  assert.match(global, /Review workers and managers are exempt/is)
+  assert.match(global, /does not grant them coding or publication authority/is)
+})
+
+test("only managers assign owner-confirmed priorities and workers follow backlog order", () => {
+  assert.match(global, /Only the manager may assign or change.*priorities/is)
+  assert.match(global, /only after the owner confirms/is)
+  assert.match(
+    global,
+    /Workers must execute the highest-ranked.*runnable work/is,
+  )
+  assert.match(global, /not insert self-chosen audits/is)
+  assert.match(global, /does not authorize new audit tasks.*reprioritization/is)
 })
 
 test("global TypeScript guidance keeps failures in typed Effect channels", () => {
