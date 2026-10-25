@@ -21,14 +21,13 @@ this policy and the repository instructions, inspect the relevant existing
 source, and preserve unrelated work. Genuine platform incidents still follow the
 support-routing policy.
 
-Use the existing GitButler workspace in this main worktree when managed; verify
-topology once when entering the repository, not as a repeated gate. Create a
-separate branch with a purpose-appropriate prefix, commit and push coherent
-validated units as work proceeds, and open a draft PR. Keep the PR draft while
-work or verification remains; mark it ready when the requested scope is complete
-and checked. A scoped global-resource change request carries authority for this
-normal branch/commit/push/draft/ready workflow without repeated permission asks.
-Explicit owner direction can select a different delivery workflow.
+Driver workers use the existing GitButler workspace in this main worktree when
+managed; verify topology once when entering the repository, not as a repeated
+gate. Create a separate branch with a purpose-appropriate prefix and follow the
+driver publication workflow below. A scoped global-resource change request
+carries authority for that branch/commit/push/draft/ready workflow without
+repeated permission asks. Explicit owner direction can select a different
+delivery workflow.
 
 This does not authorize merges, branch-protection overrides, secret access,
 applying host configuration, deployments or unrelated changes. Independent
@@ -72,25 +71,32 @@ the harness, and suppress duplicates without agent polling.
 - Report an actual execution restriction precisely, including the blocked action
   and remaining work, and escalate through an authorized channel. Never evade a
   restriction or describe blocked or unperformed work as completed.
-- When the owner identifies a specific mistake, immediately audit the full
-  current scope for every other instance of that mistake class — other live
-  worker backlogs, relayed tasks, artifacts, and outputs — and fix the instances
-  found in the same unit of work. Repairing only the named instance is itself a
-  failure to generalize the correction. If a missing tool capability caused or
-  blocked the fix, record a follow-up task for that capability instead of citing
-  its absence as an excuse. This standing owner rule applies globally, not only
-  in the conversation that surfaced the example.
-- Commit and publish work in small, coherent units. Commit and push each
-  completed unit before starting the next; preserve unfinished source with
-  truthful checkpoints using the repository's authorized workflow. Never let
-  agent-owned unstaged, untracked, staged-but-uncommitted, or unpushed changes
-  accumulate across work units. Preserve unrelated user-owned changes and
-  permitted temporary review/handoff artifacts; do not sweep them into commits
-  or delete them to make the tree clean. If publication is blocked, pause new
-  work, preserve the current state, and escalate; continue only bounded repairs
-  needed to unblock publication. Never bypass required gates. Use plain Git
-  except in a verified GitButler-managed main worktree, subject to
-  repository-local workflow rules.
+- When the owner identifies a specific mistake, check the entire current
+  authorized work unit for every other instance of that mistake class and fix
+  those instances within that unit. Repairing only the named instance is itself
+  a failure to generalize the correction. Report out-of-scope instances and
+  proposed capability follow-ups to the manager; do not create or start
+  additional work. A missing capability is a reported constraint, not an excuse
+  or a new worker assignment. This standing owner rule applies globally, not only
+  in the conversation that surfaced the example. This does not authorize new
+  audit tasks, expanded scope, or worker reprioritization.
+- Driver workers (agents owning implementation) must commit and push regularly
+  throughout assigned work. Open a draft PR with the first checkpoint on a
+  branch, and keep it updated as work proceeds. Incomplete or broken code and
+  failing checks are not reasons to withhold checkpoints: publish them in the
+  draft with their status stated accurately. Commit and push each completed
+  unit before starting the next. Mark a PR ready only when the requested work
+  is complete and checks pass for the published head, not unpublished local
+  changes. Review workers and managers are exempt from this driver publication
+  workflow; this exemption does not grant them coding or publication authority.
+  Never let agent-owned unstaged, untracked, staged-but-uncommitted, or unpushed
+  changes accumulate across work units. Preserve unrelated user-owned changes
+  and permitted temporary review/handoff artifacts; do not sweep them into
+  commits or delete them to make the tree clean. If publication is blocked,
+  preserve the current state and report the exact blocker; continue only bounded
+  repairs needed to unblock publication. Keep normal hooks and required safety
+  gates. Use plain Git except in a verified GitButler-managed main worktree,
+  subject to repository-local workflow rules.
 - AGENTS.md files define standing rules of engagement and agent behavior. Never
   put transient task state, progress reports, one-off migration notes, temporary
   waiting conditions, session journals, or handoff notes in them; use task
@@ -361,10 +367,15 @@ the harness, and suppress duplicates without agent polling.
   Follow an approved plan; do not substitute another design without the required
   agreement. New human direction supersedes the plan. For verified-finding work,
   fix every valid finding and explain invalid findings at completion.
-- Assign task priority only through the backlog tool's priority/rank field.
-  Never encode priority in task titles, text, or prose. The rank field is the
-  single ordering authority; prose priorities rot, contradict the field, and
-  split ordering between two sources.
+- Only the manager may assign or change backlog priorities, and only after the
+  owner confirms the proposed ordering. Assign task priority only through the
+  backlog tool's priority/rank field. Never encode priority in task titles, text,
+  or prose. The rank field is the single ordering authority. Workers must execute
+  the highest-ranked authorized runnable work in their respective backlogs, not
+  insert self-chosen audits, adjacent work, or priority changes. Report proposed
+  additions or ordering changes to the manager for owner confirmation; do not
+  act on them as a new work order. Direct owner instructions still take
+  precedence, but workers do not assign ranks themselves.
 - Structure roadmaps as priority-ordered epics, not numbered phases. Use
   dependency graphs where useful; expose independent deliverables without
   manufacturing parallel mutation authority. Give each epic a short goal and
