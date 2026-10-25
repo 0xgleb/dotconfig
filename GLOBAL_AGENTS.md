@@ -94,22 +94,23 @@ the harness, and suppress duplicates without agent polling.
   throughout assigned work. Open a draft PR with the first checkpoint on a
   branch, and keep it updated as work proceeds. Incomplete or broken code and
   failing checks are not reasons to withhold checkpoints: publish them in the
-  draft with their status stated accurately. Commit and push each completed
-  unit before starting the next. Mark a PR ready only when the requested work
-  is complete and checks pass for the published head, not unpublished local
-  changes. Where CI is configured, every CI check must succeed for the exact
-  published head; failing, pending, or unverified CI keeps the PR draft. Local
-  tests and agent reviews do not replace successful CI. Review workers and
-  managers are exempt from this driver publication workflow; this exemption
-  does not grant them coding or publication authority.
-  Never let agent-owned unstaged, untracked, staged-but-uncommitted, or unpushed
-  changes accumulate across work units. Preserve unrelated user-owned changes
-  and permitted temporary review/handoff artifacts; do not sweep them into
-  commits or delete them to make the tree clean. If publication is blocked,
-  preserve the current state and report the exact blocker; continue only bounded
-  repairs needed to unblock publication. Keep normal hooks and required safety
-  gates. Use plain Git except in a verified GitButler-managed main worktree,
-  subject to repository-local workflow rules.
+  draft with their status stated accurately. Commit and push each completed unit
+  before starting the next. Mark a PR ready only when the requested work is
+  complete and all project-required checks pass for the published head, not
+  unpublished local changes. Follow the repository's verification workflow.
+  Local verification is sufficient when that workflow uses local checks instead
+  of CI. Failing, pending, or unverified required checks keep the PR draft;
+  agent reviews do not replace those checks. Review workers and managers are
+  exempt from this driver publication workflow; this exemption does not grant
+  them coding or publication authority. Never let agent-owned unstaged,
+  untracked, staged-but-uncommitted, or unpushed changes accumulate across work
+  units. Preserve unrelated user-owned changes and permitted temporary
+  review/handoff artifacts; do not sweep them into commits or delete them to
+  make the tree clean. If publication is blocked, preserve the current state and
+  report the exact blocker; continue only bounded repairs needed to unblock
+  publication. Keep normal hooks and required safety gates. Use plain Git except
+  in a verified GitButler-managed main worktree, subject to repository-local
+  workflow rules.
 - AGENTS.md files define standing rules of engagement and agent behavior. Never
   put transient task state, progress reports, one-off migration notes, temporary
   waiting conditions, session journals, or handoff notes in them; use task
@@ -370,6 +371,8 @@ the harness, and suppress duplicates without agent polling.
 
 ## Shared development and communication requirements
 
+- Use `deno fmt` for Markdown, not Prettier. Follow the project's configured
+  formatters for other file types.
 - Before extension work, inspect existing maintained extensions, pinned
   packages, and upstream examples for a solution or reference. Prefer compatible
   packages; write local code only after checking the options, preserving
@@ -449,8 +452,8 @@ the harness, and suppress duplicates without agent polling.
   template. Preserve its headings and required content. Do not add sections
   absent from the template unless the owner explicitly requests them. When no
   template exists, use only Motivation / Solution. Keep descriptions current.
-  Transport Markdown as real bytes, not literal shell escape sequences;
-  verify the remote body after publication and repair transport errors without
+  Transport Markdown as real bytes, not literal shell escape sequences; verify
+  the remote body after publication and repair transport errors without
   expanding content authority. Keep descriptions free of process journals and
   empty sections; use concise bullets. Use `@path/to/file.md` references in
   prose intended for Claude-compatible tooling.
