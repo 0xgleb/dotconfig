@@ -73,6 +73,30 @@ test("driver workers publish checkpoints early without granting reviewer or mana
   assert.match(global, /does not grant them coding or publication authority/is)
 })
 
+test("PR readiness requires successful CI on the exact published head", () => {
+  assert.match(
+    global,
+    /every CI check must succeed for the exact published head/is,
+  )
+  assert.match(
+    global,
+    /failing, pending, or unverified CI keeps the PR draft/is,
+  )
+  assert.match(
+    global,
+    /Local tests and agent reviews do not replace successful CI/is,
+  )
+})
+
+test("PR descriptions follow the template without invented sections", () => {
+  assert.match(global, /Preserve its headings and required content/is)
+  assert.match(global, /Do not add sections absent from the template/is)
+  assert.match(
+    global,
+    /When no template exists, use only Motivation \/ Solution/is,
+  )
+})
+
 test("only managers assign owner-confirmed priorities and workers follow backlog order", () => {
   assert.match(global, /Only the manager may assign or change.*priorities/is)
   assert.match(global, /only after the owner confirms/is)

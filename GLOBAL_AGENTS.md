@@ -87,8 +87,11 @@ the harness, and suppress duplicates without agent polling.
   draft with their status stated accurately. Commit and push each completed
   unit before starting the next. Mark a PR ready only when the requested work
   is complete and checks pass for the published head, not unpublished local
-  changes. Review workers and managers are exempt from this driver publication
-  workflow; this exemption does not grant them coding or publication authority.
+  changes. Where CI is configured, every CI check must succeed for the exact
+  published head; failing, pending, or unverified CI keeps the PR draft. Local
+  tests and agent reviews do not replace successful CI. Review workers and
+  managers are exempt from this driver publication workflow; this exemption
+  does not grant them coding or publication authority.
   Never let agent-owned unstaged, untracked, staged-but-uncommitted, or unpushed
   changes accumulate across work units. Preserve unrelated user-owned changes
   and permitted temporary review/handoff artifacts; do not sweep them into
@@ -404,8 +407,10 @@ the harness, and suppress duplicates without agent polling.
   verification, preserving human threads and separate reply authority.
 - Write issues about problems, not proposed solutions; refer to code by type,
   function, or module names rather than line numbers. Use the repository's PR
-  template, or Motivation / Solution when no template exists. Keep descriptions
-  current. Transport Markdown as real bytes, not literal shell escape sequences;
+  template. Preserve its headings and required content. Do not add sections
+  absent from the template unless the owner explicitly requests them. When no
+  template exists, use only Motivation / Solution. Keep descriptions current.
+  Transport Markdown as real bytes, not literal shell escape sequences;
   verify the remote body after publication and repair transport errors without
   expanding content authority. Keep descriptions free of process journals and
   empty sections; use concise bullets. Use `@path/to/file.md` references in prose
