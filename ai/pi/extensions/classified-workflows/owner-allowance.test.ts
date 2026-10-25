@@ -63,14 +63,77 @@ const code = (result: ReturnType<OwnerAllowance["admit"]>) =>
     onRight: () => "allowed",
   })
 
-test("fresh authenticated owner input grants exactly one hour through the harness watchdog", () => {
-  const f = fixture()
-  assert.equal(api.OWNER_ALLOWANCE_MS, 60 * 60 * 1000)
-  f.guard.ownerInput(1000)
-  assert.equal(f.saved.at(-1)?.deadlineAt, 1000 + 60 * 60 * 1000)
-  f.time(1000 + 30 * 60 * 1000)
-  assert.equal(code(f.guard.admit()), "allowed")
-  f.time(1000 + 60 * 60 * 1000)
+for (const supervised of [false, true]) {
+  test(`authenticated owner input grants a flat two-hour window: supervised=${supervised}`, () => {
+    const f = fixture(
+      undefined,
+      supervised ? () => Either.right(undefined) : undefined,
+    )
+    const twoHours = 2 * 60 * 60 * 1000
+    assert.equal(api.OWNER_ALLOWANCE_MS, twoHours)
+    assert.equal(api.SUPERVISED_OWNER_ALLOWANCE_MS, twoHours)
+    assert.equal(code(f.guard.ownerInput(1000)), "allowed")
+    assert.equal(f.saved.at(-1)?.deadlineAt, 1000 + twoHours)
+    f.time(1000 + twoHours - 1)
+    assert.equal(code(f.guard.admit()), "allowed")
+    f.time(1000 + twoHours)
+    const expired = f.guard.admit()
+    assert.equal(code(expired), "expired")
+    assert.ok(Either.isLeft(expired))
+    assert.match(expired.left.message, /two-hour/)
+  })
+
+  for (const legacy of [
+    { duration: 30, elapsed: 10, status: "active", allowed: true },
+    { duration: 60, elapsed: 10, status: "active", allowed: true },
+    { duration: 240, elapsed: 90, status: "active", allowed: true },
+    { duration: 180, elapsed: 90, status: "active", allowed: true },
+    { duration: 120, elapsed: 90, status: "active", allowed: true },
+    { duration: 240, elapsed: 150, status: "active", allowed: false },
+    { duration: 60, elapsed: 70, status: "active", allowed: false },
+    { duration: 240, elapsed: 90, status: "expired", allowed: false },
+  ] as const) {
+    test(`historical ${legacy.duration}m/${legacy.status} snapshot at ${legacy.elapsed}m: supervised=${supervised}`, () => {
+      const f = fixture(
+        undefined,
+        supervised ? () => Either.right(undefined) : undefined,
+      )
+      f.time(1000 + legacy.elapsed * 60_000)
+      f.guard.restore({
+        version: 1,
+        lastOwnerAt: 1000,
+        deadlineAt: 1000 + legacy.duration * 60_000,
+        status: legacy.status,
+      })
+      const admitted = f.guard.admit()
+      assert.equal(code(admitted), legacy.allowed ? "allowed" : "expired")
+      if (legacy.allowed) {
+        assert.ok(Either.isRight(admitted))
+        assert.equal(admitted.right.lastOwnerAt, 1000)
+        assert.equal(admitted.right.deadlineAt, 1000 + 120 * 60_000)
+        if (legacy.duration === 120) assert.equal(f.saved.length, 0)
+      } else {
+        assert.ok(f.saved.every(window => window.status === "expired"))
+      }
+    })
+  }
+}
+
+test("historical window migration clips the two-hour policy to the inherited absolute ceiling", () => {
+  const ceiling = 1000 + 45 * 60_000
+  const f = fixture(String(ceiling))
+  f.time(1000 + 10 * 60_000)
+  f.guard.restore({
+    version: 1,
+    lastOwnerAt: 1000,
+    deadlineAt: 1000 + 30 * 60_000,
+    status: "active",
+  })
+  const admitted = f.guard.admit()
+  assert.ok(Either.isRight(admitted))
+  assert.equal(admitted.right.deadlineAt, ceiling)
+  assert.equal(f.saved.at(-1)?.lastOwnerAt, 1000)
+  f.time(ceiling)
   assert.equal(code(f.guard.admit()), "expired")
 })
 
@@ -85,7 +148,7 @@ test("policy upgrade extends an unexpired legacy window from its authenticated t
   })
   assert.equal(code(f.guard.admit()), "allowed")
   assert.equal(f.saved.at(-1)?.lastOwnerAt, 1000)
-  assert.equal(f.saved.at(-1)?.deadlineAt, 1000 + 60 * 60 * 1000)
+  assert.equal(f.saved.at(-1)?.deadlineAt, 1000 + 2 * 60 * 60 * 1000)
 })
 
 test("policy upgrade cannot extend a legacy child's inherited parent deadline", () => {
@@ -105,7 +168,7 @@ test("policy upgrade cannot extend a legacy child's inherited parent deadline", 
   assert.equal(code(f.guard.admit()), "expired")
 })
 
-test("the one-hour policy does not revive expired legacy rounds", () => {
+test("the two-hour policy does not revive expired legacy rounds", () => {
   for (const status of ["active", "expired"] as const) {
     const f = fixture()
     f.time(1000 + 30 * 60 * 1000)
@@ -124,7 +187,7 @@ test("missing owner evidence fails closed instead of starting a fresh allowance"
   assert.equal(code(f.guard.admit()), "missing")
   assert.equal(f.callbacks.size, 0)
 })
-test("exact one-hour boundary blocks and latches expiry without changing tasks", () => {
+test("exact two-hour boundary blocks and latches expiry without changing tasks", () => {
   const f = fixture()
   f.guard.ownerInput(1_000)
   f.time(1_000 + api.OWNER_ALLOWANCE_MS - 1)
@@ -165,7 +228,7 @@ test("old or duplicate remote receipt timestamps cannot extend the allowance", (
   assert.equal(f.saved.length, 1)
   assert.equal(f.saved[0]?.deadlineAt, 1_000 + api.OWNER_ALLOWANCE_MS)
 })
-test("reload restores the original deadline and an expired latch, never now plus one hour", () => {
+test("reload restores the original deadline and an expired latch, never now plus two hours", () => {
   const f = fixture()
   f.time(5_000)
   f.guard.restore({
@@ -191,7 +254,7 @@ test("malformed, future and overflow state cannot mint time", () => {
     {
       version: 1,
       lastOwnerAt: 1_000,
-      deadlineAt: 1_000 + api.OWNER_ALLOWANCE_MS + 1,
+      deadlineAt: 1_000 + 4 * 60 * 60 * 1000 + 1,
       status: "active",
     },
   ]) {
@@ -263,14 +326,14 @@ test("persistence and cancellation failures cannot leave other execution running
   assert.notEqual(code(f.guard.admit()), "allowed")
 })
 
-test("supervision grants four hours and schedules check-ins without renewing the owner clock", () => {
+test("supervision grants two hours and schedules check-ins without renewing the owner clock", () => {
   const requests: api.OwnerProgressCheckIn[] = []
   const f = fixture(undefined, request => {
     requests.push(request)
     return Either.right(undefined)
   })
   f.guard.ownerInput(1000)
-  assert.equal(f.saved.at(-1)?.deadlineAt, 1000 + 4 * 60 * 60 * 1000)
+  assert.equal(f.saved.at(-1)?.deadlineAt, 1000 + 2 * 60 * 60 * 1000)
   assert.equal(f.callbacks.size, 2)
   assert.deepEqual(
     [...f.delays.values()],
@@ -286,7 +349,7 @@ test("supervision grants four hours and schedules check-ins without renewing the
   assert.equal(requests[0]?.scheduledAt, 1000 + api.OWNER_PROGRESS_CHECK_IN_MS)
   assert.equal(f.saved.length, 1)
   assert.equal(f.saved[0]?.lastOwnerAt, 1000)
-  f.time(1000 + 4 * 60 * 60 * 1000)
+  f.time(1000 + 2 * 60 * 60 * 1000)
   assert.equal(code(f.guard.admit()), "expired")
 })
 
@@ -300,7 +363,7 @@ test("a supervised legacy upgrade preserves its original owner timestamp and nev
       deadlineAt: 1000 + duration,
       status: "active",
     })
-    assert.equal(f.saved.at(-1)?.deadlineAt, 1000 + 4 * 60 * 60 * 1000)
+    assert.equal(f.saved.at(-1)?.deadlineAt, 1000 + 2 * 60 * 60 * 1000)
     assert.equal(f.saved.at(-1)?.lastOwnerAt, 1000)
     const expired = fixture(undefined, () => Either.right(undefined))
     expired.time(1000 + duration)
@@ -370,6 +433,35 @@ test("obsolete check-in callbacks cannot act after renewal or disposal", () => {
   assert.equal(f.callbacks.size, 0)
 })
 
+test("two-hour supervision checks in at 30, 60 and 90 minutes without renewing or scheduling a 120-minute check-in", () => {
+  const requests: api.OwnerProgressCheckIn[] = []
+  const f = fixture(undefined, request => {
+    requests.push(request)
+    return Either.right(undefined)
+  })
+  f.guard.ownerInput(1000)
+  for (const sequence of [1, 2, 3]) {
+    f.time(1000 + sequence * api.OWNER_PROGRESS_CHECK_IN_MS)
+    progressTimer(f)()
+  }
+  assert.deepEqual(
+    requests.map(request => request.sequence),
+    [1, 2, 3],
+  )
+  assert.ok(
+    requests.every(
+      request =>
+        request.window.lastOwnerAt === 1000 &&
+        request.window.deadlineAt === 1000 + api.OWNER_ALLOWANCE_MS,
+    ),
+  )
+  assert.equal(f.callbacks.size, 1)
+  assert.equal(f.saved.length, 1)
+  f.time(1000 + api.OWNER_ALLOWANCE_MS)
+  assert.equal(code(f.guard.admit()), "expired")
+  assert.equal(requests.length, 3)
+})
+
 test("delayed and restored check-ins use a stable coalesced interval identity", () => {
   const requests: api.OwnerProgressCheckIn[] = []
   const f = fixture(undefined, request => {
@@ -385,7 +477,7 @@ test("delayed and restored check-ins use a stable coalesced interval identity", 
     requests.map(request => request.sequence),
     [3],
   )
-  assert.equal([...f.delays.values()].at(-1), api.OWNER_PROGRESS_CHECK_IN_MS)
+  assert.equal(f.callbacks.size, 1)
   const restored = fixture(undefined, request => {
     requests.push(request)
     return Either.right(undefined)
@@ -394,16 +486,17 @@ test("delayed and restored check-ins use a stable coalesced interval identity", 
   restored.guard.restore(f.saved[0])
   assert.equal([...restored.delays.values()].at(-1), 0)
   progressTimer(restored)()
+  assert.equal(restored.callbacks.size, 1)
   assert.equal(
     [...restored.delays.values()].at(-1),
-    api.OWNER_PROGRESS_CHECK_IN_MS,
+    api.OWNER_ALLOWANCE_MS - 3 * api.OWNER_PROGRESS_CHECK_IN_MS,
   )
   assert.equal(requests[0]?.scheduledAt, requests[1]?.scheduledAt)
   assert.equal(requests[0]?.window.lastOwnerAt, requests[1]?.window.lastOwnerAt)
   assert.equal(f.saved.length, 1)
 })
 
-test("a late callback cannot submit review after the four-hour deadline", () => {
+test("a late callback cannot submit review after the two-hour deadline", () => {
   let requests = 0
   const f = fixture(undefined, () => {
     requests++
@@ -606,7 +699,7 @@ test("restoration accessors cannot revive a scope disposed during decoding", () 
   assert.equal(f.callbacks.size, 0)
 })
 
-test("the supervised watchdog cancels tracked work at its actual four-hour deadline", () => {
+test("the supervised watchdog cancels tracked work at its actual two-hour deadline", () => {
   const f = fixture(undefined, () => Either.right(undefined))
   f.guard.ownerInput(1000)
   let cancelled = 0
@@ -628,7 +721,7 @@ test("persistence and public window snapshots cannot alter the canonical parent 
   const start = 100_000_000
   const ceiling = start + 45 * 60 * 1000
   const f = fixture(String(ceiling), () => Either.right(undefined))
-  t.mock.method(f.runtime, "persist", snapshot => {
+  t.mock.method(f.runtime, "persist", (snapshot: OwnerWindow) => {
     Reflect.set(snapshot, "deadlineAt", start + 8 * 60 * 60 * 1000)
     f.saved.push(snapshot)
   })

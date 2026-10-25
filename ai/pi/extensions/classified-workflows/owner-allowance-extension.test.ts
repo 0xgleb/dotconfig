@@ -13,7 +13,80 @@ test("production entrypoint installs the hard deadline guard and cancels detache
     /ownerAllowance\.admit\(\)/.test(source),
     "continuations must check the deadline",
   )
+  assert.ok(
+    /registerRuntimeVersion\(pi, "owner-allowance", "2026\.10\.25\.1"\)/.test(
+      source,
+    ),
+    "the two-hour allowance runtime marker must be registered",
+  )
 })
+
+for (const elapsedMinutes of [90, 150]) {
+  test(`registered session-start restores a historical four-hour window at ${elapsedMinutes} minutes`, async t => {
+    t.mock.timers.enable({
+      apis: ["Date", "setTimeout"],
+      now: 1000 + elapsedMinutes * 60_000,
+    })
+    const callbacks = new Map<string, (...args: unknown[]) => unknown>()
+    const saved: unknown[] = []
+    let aborts = 0
+    const host = {
+      on: (name: string, callback: (...args: unknown[]) => unknown) =>
+        callbacks.set(name, callback),
+      appendEntry: (type: string, data: unknown) => {
+        assert.equal(type, OWNER_ALLOWANCE_ENTRY)
+        saved.push(data)
+      },
+      registerCommand: () => {},
+    }
+    const ctx = {
+      abort: () => {
+        aborts++
+      },
+      ui: { setStatus: () => {}, notify: () => {} },
+      sessionManager: {
+        getEntries: () => [
+          {
+            type: "custom",
+            customType: OWNER_ALLOWANCE_ENTRY,
+            data: {
+              version: 1,
+              lastOwnerAt: 1000,
+              deadlineAt: 1000 + 4 * 60 * 60 * 1000,
+              status: "active",
+            },
+          },
+        ],
+      },
+    }
+    const module = await import(
+      new URL("./owner-allowance-extension.ts", import.meta.url).href
+    )
+    const guard = Reflect.apply(
+      Reflect.get(module, "registerOwnerAllowance"),
+      undefined,
+      [host, () => {}],
+    )
+    t.after(() => guard.dispose())
+    const start = callbacks.get("session_start")
+    assert.ok(start)
+    start({}, ctx)
+    assert.deepEqual(saved.at(-1), {
+      version: 1,
+      lastOwnerAt: 1000,
+      deadlineAt: 1000 + 2 * 60 * 60 * 1000,
+      status: elapsedMinutes < 120 ? "active" : "expired",
+    })
+    if (elapsedMinutes < 120) {
+      assert.equal(guard.admit()._tag, "Right")
+      t.mock.timers.tick((120 - elapsedMinutes) * 60_000)
+    }
+    const expired = guard.admit()
+    assert.equal(expired._tag, "Left")
+    assert.match(expired.left.message, /two-hour/)
+    assert.equal(aborts, 1)
+  })
+}
 
 test("authenticated queued input renews only at the native model dispatch boundary", async t => {
   t.mock.timers.enable({ apis: ["Date", "setTimeout"], now: 1_000 })
