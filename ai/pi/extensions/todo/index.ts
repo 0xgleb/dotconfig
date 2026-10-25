@@ -211,7 +211,10 @@ class TodoListComponent {
             : todo.text
         const text = this.theme.fg(isCompleted ? "dim" : "text", label)
         lines.push(
-          truncateToWidth(`${CONTENT_GUTTER}${check} ${id} ${text}`, width),
+          truncateToWidth(
+            `${CONTENT_GUTTER}${check} ${id} ${text}${todo.effort === undefined ? "" : ` [effort ${todo.effort} points]`}`,
+            width,
+          ),
         )
       }
     }
