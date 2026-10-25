@@ -64,8 +64,8 @@ linked review worktree, run setup there: every patch, prompt, report, payload,
 and log belongs under that worktree's `.tmp/`, never the main checkout's
 `.tmp/`. A coordinator running elsewhere must pass the verified review-worktree
 root to workflows and explicitly set every child's cwd to that root. Do not
-derive artifact paths from the coordinator's cwd or the shared Git directory,
-or fall back to the main checkout. Remove temporary artifacts with the worktree.
+derive artifact paths from the coordinator's cwd or the shared Git directory, or
+fall back to the main checkout. Remove temporary artifacts with the worktree.
 This does not authorize creating a worktree or checking out the PR.
 
 ```bash

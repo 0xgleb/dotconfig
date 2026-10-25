@@ -259,16 +259,15 @@ the harness, and suppress duplicates without agent polling.
   created Nix result symlinks and stale Pi temporary logs. Keep a linked
   worktree's task-local scratch files under that worktree's `.tmp/`, never the
   main checkout's `.tmp/`, so worktree removal also removes its artifacts.
-  Resolve and pass the actual task-worktree root to workflows and explicitly
-  set every child's cwd to that root; neither the coordinator's cwd nor the
-  common Git directory is a fallback.
-  Record newly created project `.tmp/` files/directories immediately with
-  `artifact_provenance` so
-  later exact cleanup has durable evidence. Never delete pre-existing project
-  outputs, user files, global caches, Nix generations, or run global garbage
-  collection without explicit user authorization. Exact rebuildable build
-  outputs are disposable by default, but project instructions and verified
-  repository configuration may protect artifacts consumed by a runtime, watcher,
+  Resolve and pass the actual task-worktree root to workflows and explicitly set
+  every child's cwd to that root; neither the coordinator's cwd nor the common
+  Git directory is a fallback. Record newly created project `.tmp/`
+  files/directories immediately with `artifact_provenance` so later exact
+  cleanup has durable evidence. Never delete pre-existing project outputs, user
+  files, global caches, Nix generations, or run global garbage collection
+  without explicit user authorization. Exact rebuildable build outputs are
+  disposable by default, but project instructions and verified repository
+  configuration may protect artifacts consumed by a runtime, watcher,
   supervisor, release, or deployment process. Inspect any referenced
   configuration before cleanup and preserve a cleanup root containing a
   configured live artifact unless disruption is explicitly requested.
