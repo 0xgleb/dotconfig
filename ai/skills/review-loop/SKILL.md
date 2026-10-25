@@ -242,8 +242,12 @@ git diff --name-status "$parent" > "$out_dir/files.txt"
 wc -l "$out_dir/diff.patch"
 ```
 
-Refuse to proceed if the diff is empty. If it exceeds 5000 lines, warn the user
-and ask whether to proceed — reviewer quality degrades on huge diffs.
+Refuse to proceed if the diff is empty. Diff size is not an approval gate and
+must not reduce review depth. For large diffs, follow review-core's bounded
+chunking and track complete retained-code and removal-boundary coverage. Inspect
+deleted code only as needed to verify surviving behavior, compatibility and
+removal effects; do not spend a review pass re-auditing intentional deletions.
+Preserve completed reviews and recover only missing chunks or context.
 
 **Ensure the artifact folder is gitignored.** Artifacts are written under
 `$repo_root/.tmp/agent-local-ctx/`. If `.tmp/` is not already gitignored (check
