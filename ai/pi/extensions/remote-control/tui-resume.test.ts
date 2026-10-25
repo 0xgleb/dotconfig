@@ -81,7 +81,7 @@ const fixture = async (t: test.TestContext) => {
     registerCommand: (name: string) => {
       assert.notEqual(
         name,
-        "resume-work",
+        "round",
         "ordinary registered commands bypass trusted input provenance",
       )
     },
@@ -180,9 +180,9 @@ const fixture = async (t: test.TestContext) => {
   }
 }
 
-test("native editor /resume-work queues owner input for every live worker, including busy ones", async t => {
+test("native editor /round queues owner input for every live worker, including busy ones", async t => {
   const f = await fixture(t)
-  await f.submitTui("/resume-work")
+  await f.submitTui("/round")
   const agents = await f.queued()
   assert.equal(agents.find(agent => agent.id === "a")?.queuedMessages, 1)
   assert.equal(agents.find(agent => agent.id === "b")?.queuedMessages, 1)
@@ -250,12 +250,12 @@ for (const route of ["extension", "rpc", "arguments"] as const) {
     const f = await fixture(t)
     f.guard.ownerInput(Date.now())
     if (route === "extension")
-      await f.session.sendUserMessage("/resume-work", {
+      await f.session.sendUserMessage("/round", {
         expandPromptTemplates: true,
       })
     else if (route === "rpc")
-      await f.session.prompt("/resume-work", { source: "rpc" })
-    else await f.session.prompt("/resume-work a")
+      await f.session.prompt("/round", { source: "rpc" })
+    else await f.session.prompt("/round a")
     assert.equal(
       (await f.queued()).some(agent => agent.queuedMessages > 0),
       false,
@@ -268,8 +268,8 @@ for (const route of ["extension", "rpc", "arguments"] as const) {
 test("concurrent extension invocation cannot borrow the interactive owner's authority", async t => {
   const f = await fixture(t)
   await Promise.all([
-    f.submitTui("/resume-work"),
-    f.session.sendUserMessage("/resume-work"),
+    f.submitTui("/round"),
+    f.session.sendUserMessage("/round"),
   ])
   assert.equal(
     (await f.queued()).find(agent => agent.id === "a")?.queuedMessages,
