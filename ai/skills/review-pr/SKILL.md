@@ -1,7 +1,7 @@
 ---
 name: review-pr
 user-invocable: true
-allowed-tools: Bash(gh:*), Bash(git:*), Bash(agy:*), Bash(command:*), Bash(mkdir:*), Bash(cat:*), Bash(mktemp:*), Bash(rm:*), Bash(wc:*), Bash(date:*), Bash(basename:*), Bash(test:*), Bash(grep:*), Bash(find:*), Read, Write, Agent, Workflow, Skill
+allowed-tools: Bash(gh:*), Bash(git:*), Bash(agy:*), Bash(command:*), artifact_provenance, Bash(cat:*), Bash(mktemp:*), Bash(rm:*), Bash(wc:*), Bash(uuidgen:*), Bash(basename:*), Bash(test:*), Bash(grep:*), Bash(find:*), Read, Write, Agent, Workflow, Skill
 description: Cross-review a pull request by number or URL without checking it out. Runs a multi-model Workflow panel with per-finding verification, then posts verified findings as a draft PR review. Never blocked by unavailable optional lanes.
 argument-hint: <pr-number | pr-url>
 ---
@@ -70,15 +70,36 @@ This does not authorize creating a worktree or checking out the PR.
 
 ```bash
 repo_root=$(git rev-parse --show-toplevel) || exit 1
-ts=$(date +%Y-%m-%d_%H-%M-%S)
+invocation_id=$(uuidgen) || exit 1
 safe_branch=$(echo "<headRefName>" | tr '/' '_')
-out_dir="$repo_root/.tmp/reviews/pr-${pr_number}-${ts}-${safe_branch}"
-mkdir -p "$out_dir"
+out_dir="$repo_root/.tmp/reviews/pr-${pr_number}-${invocation_id}-${safe_branch}"
 ```
 
-Review artifacts always go under `.tmp/` (review output is local-only and
-ephemeral). Most repos already gitignore `.tmp/`; if this one does not, ask the
-user for permission before adding it. Do not silently modify `.gitignore`.
+Before creating the invocation directory or writing any artifact, verify ignore
+coverage:
+
+```bash
+git check-ignore --verbose "$repo_root/.tmp/" "$out_dir/diff.patch"
+```
+
+Require directory-wide coverage for both paths; a file-specific match is not
+sufficient. Immediately add the missing `.tmp/` directory pattern to this
+checkout's `.gitignore` under the existing ignore-repair policy, preserve other
+rules, and recheck both paths. This grants no worktree-creation authority.
+
+Then call the registered `artifact_provenance` tool with the resolved absolute
+value of `out_dir`:
+
+```json
+{ "action": "create_directory", "path": "<resolved absolute out_dir>" }
+```
+
+Require successful creation and provenance recording before writing descendants.
+Use an available registered harness equivalent if the tool name differs; do not
+fall back to raw `mkdir`. Add `crossWorkspace: true` only for an explicitly
+authorized target outside the tool session's workspace. The native UUID supplies
+the invocation namespace; the creation API does not promise exclusive
+allocation. Artifacts remain local-only and ephemeral.
 
 ## 3. Fetch the diff
 
@@ -90,8 +111,12 @@ gh pr view "<pr-ref>" --json files --jq '.files[] | "\(.additions)\t\(.deletions
 wc -l "$out_dir/diff.patch"
 ```
 
-Refuse to proceed on an empty diff. Warn on diffs larger than 5000 lines and ask
-whether to continue — reviewer quality degrades on huge diffs.
+Refuse to proceed if the diff is empty. Diff size is not an approval gate and
+must not reduce review depth. For large diffs, follow review-core's bounded
+chunking and track complete retained-code and removal-boundary coverage. Inspect
+deleted code only as needed to verify surviving behavior, compatibility and
+removal effects; do not spend a review pass re-auditing intentional deletions.
+Preserve completed reviews and recover only missing chunks or context.
 
 Also save the PR metadata and the author's description:
 
