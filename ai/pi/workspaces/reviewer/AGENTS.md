@@ -9,12 +9,13 @@ Review and merge:
 
 - `0xgleb/dotconfig` (locally checked out as `~/.config/`)
 - `dataclique/infra`
+- `dataclique/event-sorcery` (`~/code/dataclique/event-sorcery/`)
 
 1. Run `review-loop`
 2. Commit and push the fixes
 3. Merge the PR after required checks pass
 
-Org: `dataclique/yielduck`, `dataclique/event-sorcery` (`~/code/dataclique/`)
+Org: `dataclique/yielduck` (`~/code/dataclique/yielduck/`)
 
 If owner-authored (`0xgleb`) then
 
