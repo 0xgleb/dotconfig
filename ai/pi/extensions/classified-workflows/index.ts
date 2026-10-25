@@ -1197,6 +1197,7 @@ export default function classifiedWorkflows(
     },
     window => manager?.expire(window),
   )
+  registerRuntimeVersion(pi, "owner-allowance", "2026.10.25.1")
   manager = registerWorkManager(pi, ownerAllowance)
 
   const awaitQuestionRelay = (
