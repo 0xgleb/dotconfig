@@ -15,6 +15,7 @@ import * as Either from "effect/Either"
 import * as Ref from "effect/Ref"
 
 import { TELEGRAM_RESUME_REQUEST } from "../shared/telegram-resume.ts"
+import { resumeWorkers, resumeOutcomeText } from "./resume.ts"
 import { identifiedAgentLabel } from "./agent-identity.ts"
 import {
   advanceCabaSession,
@@ -722,7 +723,7 @@ const registerTelegramCommands = (
       { command: "caba", description: "Open the Boulder CABA session tracker" },
       { command: "kanban", description: "Show the selected agent task board" },
       { command: "agents", description: "List available Pi agents" },
-      { command: "resume", description: "Resume all live workers" },
+      { command: "round", description: "Resume all live workers" },
       {
         command: "questions",
         description: "List pending questions for all agents",
@@ -735,7 +736,7 @@ const registerTelegramCommands = (
     Effect.flatMap(decodeTelegramOk),
     Effect.tap(() =>
       Effect.sync(() =>
-        emit("telegram_commands_registered", { resume: "all-live-workers" }),
+        emit("telegram_commands_registered", { round: "all-live-workers" }),
       ),
     ),
   )
@@ -1297,7 +1298,7 @@ const handleQuestionReply = (
   if (
     answer === undefined ||
     answer === "/manager" ||
-    answer === "/resume" ||
+    answer === "/round" ||
     answer.startsWith("/use ")
   )
     return Effect.succeed(false)
@@ -1391,66 +1392,45 @@ const resumeAllWorkers = (
   void,
   TelegramTransportError | TelegramContractError | RemoteBridgeError
 > =>
-  runtime.bridge.listAgents(Date.now(), { includeExpired: true }).pipe(
-    Effect.flatMap(agents => {
-      const now = Date.now()
-      const workers = agents.filter(agent => !agent.nativeManager)
-      const live = workers.filter(
-        agent => agent.workDelivery === "native-pi" && agent.expiresAt > now,
-      )
-      const skipped = workers.filter(agent => !live.includes(agent))
-      const message = update.message
-      const resumeUpdate = {
-        ...update,
-        message: {
-          chatId: message.chatId,
-          messageId: message.messageId,
-          userId: message.userId,
-          text: TELEGRAM_RESUME_REQUEST,
-          ...(message.username ? { username: message.username } : {}),
-        },
-      }
-      return Effect.forEach(
-        live,
-        agent =>
-          enqueueOwnerMessage(runtime, resumeUpdate, agent).pipe(
-            Effect.map(message => {
-              const identity = `${agent.label} · ${agent.cwd} · session ${agent.id}`
-              if (message.status === "failed")
-                return `Skipped (${message.failure}): ${identity}`
-              if (message.status === "completed")
-                return `Input already accepted: ${identity}`
-              if (message.status === "claimed") return `Delivering: ${identity}`
-              return `Queued: ${identity}`
-            }),
-            Effect.catchAll(() =>
-              Effect.succeed(
-                `Skipped (delivery failed): ${agent.label} · ${agent.cwd} · session ${agent.id}`,
+  resumeWorkers(runtime.bridge, {
+    requesterId: `telegram-owner-${update.message.userId}`,
+    invocationId: String(update.updateId),
+  }).pipe(
+    Effect.tap(results =>
+      Effect.forEach(
+        results,
+        result => {
+          if (result.status !== "accepted") return Effect.void
+          return Effect.forkDaemon(
+            awaitBridgeResult(
+              runtime,
+              update.message.chatId,
+              update.message.messageId,
+              result.message.id,
+              { nextTypingAt: Date.now() + BRIDGE_TYPING_REFRESH_MS },
+            ).pipe(
+              Effect.catchAll(() =>
+                sendText(
+                  runtime,
+                  update.message.chatId,
+                  `Round response could not be delivered: ${result.agent.label} · ${result.agent.cwd} · session ${result.agent.id}.`,
+                  update.message.messageId,
+                ).pipe(Effect.catchAll(() => Effect.void)),
               ),
             ),
-          ),
-        { concurrency: 4 },
-      ).pipe(
-        Effect.flatMap(results =>
-          sendText(
-            runtime,
-            message.chatId,
-            [
-              ...results,
-              ...skipped.map(
-                agent =>
-                  `Skipped (offline or unavailable): ${agent.label} · ${agent.cwd} · session ${agent.id}`,
-              ),
-              ...(workers.length === 0
-                ? ["No worker sessions are registered."]
-                : []),
-              "Expired or missing sessions are not restarted. Each accepted worker sends its own delivery confirmation.",
-            ].join("\n"),
-            message.messageId,
-          ),
-        ),
-      )
-    }),
+          ).pipe(Effect.asVoid)
+        },
+        { discard: true },
+      ),
+    ),
+    Effect.flatMap(results =>
+      sendText(
+        runtime,
+        update.message.chatId,
+        resumeOutcomeText(results),
+        update.message.messageId,
+      ),
+    ),
   )
 
 const handleOwnerCommand = (
@@ -1492,7 +1472,7 @@ const handleOwnerCommand = (
       Effect.as(true),
     )
   }
-  if (command === "/resume") {
+  if (command === "/round") {
     return resumeAllWorkers(runtime, update).pipe(Effect.as(true))
   }
   if (command === "/manager") {
@@ -1537,7 +1517,7 @@ const handleOwnerCommand = (
     return sendText(
       runtime,
       update.message.chatId,
-      "Owner authenticated. Other text goes to the native manager. Commands: /resume (all live workers), /manager, /questions, /caba, /kanban, /agents, /use <label> (explicit override), /bridge.",
+      "Owner authenticated. Other text goes to the native manager. Commands: /round (all live workers), /manager, /questions, /caba, /kanban, /agents, /use <label> (explicit override), /bridge.",
       update.message.messageId,
     ).pipe(Effect.as(true))
   }

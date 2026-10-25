@@ -651,7 +651,7 @@ export default function remoteControl(
     }
   }
 
-  registerRuntimeVersion(pi, "owner-resume-input", "2026.10.24.1")
+  registerRuntimeVersion(pi, "owner-resume-input", "2026.10.24.2")
   const resumeOwnerWork = async (
     message: ClaimedBridgeMessage,
     ctx: ExtensionContext,
@@ -1291,8 +1291,8 @@ export default function remoteControl(
     return undefined
   })
 
-  // Pi reserves /resume for saved sessions. Registered commands also run before
-  // input provenance is available; /resume-work must stay on the native input hook.
+  // Registered commands run before input provenance is available.
+  // Keep /round on the native input hook so only interactive owner input can invoke it.
   const handleTuiResumeInput = async (
     event: {
       readonly text: string
@@ -1302,10 +1302,10 @@ export default function remoteControl(
     ctx: ExtensionContext,
   ): Promise<boolean> => {
     const text = event.text.trim()
-    if (!/^\/resume-work(?:\s|$)/.test(text)) return false
-    if (text !== "/resume-work" || event.source !== "interactive") {
+    if (!/^\/round(?:\s|$)/.test(text)) return false
+    if (text !== "/round" || event.source !== "interactive") {
       ctx.ui.notify(
-        "Use bare /resume-work from the owner TUI; worker and RPC invocations are not authorized.",
+        "Use bare /round from the owner TUI; worker and RPC invocations are not authorized.",
         "warning",
       )
       return true

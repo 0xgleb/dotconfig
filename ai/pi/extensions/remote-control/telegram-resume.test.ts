@@ -4,6 +4,7 @@ import { tmpdir } from "node:os"
 import { join } from "node:path"
 import { DatabaseSync } from "node:sqlite"
 import { makeRemoteBridgeStore } from "./sqlite-store.ts"
+import { resumeWorkers, resumeOutcomeText } from "./resume.ts"
 import {
   createModelInputDelivery,
   type ModelInputDispatch,
@@ -19,7 +20,7 @@ import { stripTypeScriptTypes } from "node:module"
 import { runInNewContext } from "node:vm"
 import test from "node:test"
 import { HUMAN_TURN_EVENT } from "../shared/usage-governor-events.ts"
-import { Effect, Either, Ref } from "effect"
+import { Deferred, Effect, Either, Ref } from "effect"
 import {
   remoteMessageSource,
   remoteSourceCarriesOwnerAuthority,
@@ -51,7 +52,7 @@ const extract = (source: string, start: string, end: string): string => {
 }
 
 for (const ok of [false, true]) {
-  test(`menu registration confirms /resume only after Telegram accepts it: ok=${ok}`, async () => {
+  test(`menu registration confirms /round only after Telegram accepts it: ok=${ok}`, async () => {
     const events: unknown[] = []
     const register = runInNewContext(
       `${extract(relay, "const registerTelegramCommands = (", "const sendTelegramMessage = (")}\n;registerTelegramCommands`,
@@ -64,7 +65,7 @@ for (const ok of [false, true]) {
           body: { commands: { command: string }[] },
         ) => {
           assert.equal(method, "setMyCommands")
-          assert.ok(body.commands.some(command => command.command === "resume"))
+          assert.ok(body.commands.some(command => command.command === "round"))
           return Effect.succeed({ ok, result: true })
         },
         emit: (event: string, fields: unknown) => {
@@ -80,13 +81,13 @@ for (const ok of [false, true]) {
     if (ok)
       assert.deepEqual(JSON.parse(JSON.stringify(events[0])), {
         event: "telegram_commands_registered",
-        fields: { resume: "all-live-workers" },
+        fields: { round: "all-live-workers" },
       })
   })
 }
 
 for (const forwarded of [false, true]) {
-  test(`/resume command uses authenticated native work delivery, forwarded=${forwarded}`, async () => {
+  test(`/round command uses authenticated native work delivery, forwarded=${forwarded}`, async () => {
     const queued: unknown[] = []
     const handle = runInNewContext(
       `${extract(relay, "const handleOwnerCommand = (", "const handleUpdateBody = (")}\n;handleOwnerCommand`,
@@ -110,7 +111,7 @@ for (const forwarded of [false, true]) {
             chatId: 42,
             messageId: 7,
             userId: 42,
-            text: "/resume",
+            text: "/round",
             replyToMessageId: 6,
             ...(forwarded
               ? { forwardOrigin: { speaker: "owner", userId: 42 } }
@@ -128,7 +129,7 @@ for (const forwarded of [false, true]) {
           chatId: 42,
           messageId: 7,
           userId: 42,
-          text: "/resume",
+          text: "/round",
           replyToMessageId: 6,
         },
       })
@@ -723,6 +724,18 @@ test("actual resume enqueue preserves the marker and feedback, with independent 
     0,
     "resume must not consume unrelated reaction feedback",
   )
+  await Effect.runPromise(
+    resumeWorkers(store, {
+      requesterId: "telegram-owner-42",
+      invocationId: String(update.updateId),
+    }),
+  )
+  for (const agent of await Effect.runPromise(store.listAgents(Date.now())))
+    assert.equal(
+      agent.queuedMessages,
+      1,
+      "shared action must preserve legacy per-update Telegram dedupe keys",
+    )
   for (const worker of workers) {
     const claimed = await Effect.runPromise(
       store.claimNext({ agentId: worker.id, now: Date.now() }),
@@ -754,140 +767,222 @@ test("actual resume enqueue preserves the marker and feedback, with independent 
   }
 })
 
-test("bare /resume targets every live worker, skips dead sessions and managers, and reports identities", async () => {
-  const queued: { id: string; update: unknown }[] = []
-  let reply = ""
-  const resume = runInNewContext(
-    `${extract(relay, "const resumeAllWorkers = (", "const handleOwnerCommand = (")}\n;resumeAllWorkers`,
-    {
-      Effect,
-      TELEGRAM_RESUME_REQUEST,
-      TELEGRAM_RESUME_TAG,
-      enqueueOwnerMessage: (
-        _runtime: unknown,
-        update: unknown,
-        target: { id: string },
-      ) => {
-        queued.push({ id: target.id, update })
-        return target.id === "worker-b"
-          ? Effect.fail(
-              new RemoteBridgeError({
-                code: "io",
-                message: "fixture delivery failure",
-              }),
-            )
-          : Effect.succeed(
-              target.id === "failed"
-                ? { status: "failed", failure: "expired" }
-                : {
-                    status: target.id === "worker-a" ? "completed" : "claimed",
-                  },
-            )
-      },
-      sendText: (_runtime: unknown, _chat: number, text: string) => {
-        reply = text
-        return Effect.void
-      },
-    },
-  )
-  await Effect.runPromise(
-    resume(
+for (const failWatcher of [false, true]) {
+  test(`bare /round routes worker results and watcher notifications: failure=${failWatcher}`, async () => {
+    const queued: { id: string; text: string; requesterId: string }[] = []
+    const watched: { chatId: number; replyId: number; messageId: string }[] = []
+    const replies: string[] = []
+    const watchersStarted = await Effect.runPromise(Deferred.make<void>())
+    const failureNotified = await Effect.runPromise(Deferred.make<void>())
+    const startedAt = Date.now()
+    const enqueue = (input: {
+      targetAgentId: string
+      text: string
+      requesterId: string
+    }) => {
+      queued.push({
+        id: input.targetAgentId,
+        text: input.text,
+        requesterId: input.requesterId,
+      })
+      if (input.targetAgentId === "worker-b")
+        return Effect.fail(
+          new RemoteBridgeError({
+            code: "io",
+            message: "fixture delivery failure",
+          }),
+        )
+      return Effect.succeed(
+        input.targetAgentId === "failed"
+          ? {
+              id: `message-${input.targetAgentId}`,
+              status: "failed",
+              failure: "expired",
+            }
+          : {
+              id: `message-${input.targetAgentId}`,
+              status:
+                input.targetAgentId === "worker-a"
+                  ? "completed"
+                  : input.targetAgentId === "queued"
+                    ? "queued"
+                    : "claimed",
+            },
+      )
+    }
+    const resume = runInNewContext(
+      `${extract(relay, "const resumeAllWorkers = (", "const handleOwnerCommand = (")}\n;resumeAllWorkers`,
       {
-        bridge: {
-          listAgents: (_now: number, options: unknown) => {
-            assert.equal(
-              JSON.stringify(options),
-              JSON.stringify({ includeExpired: true }),
-            )
-            return Effect.succeed([
-              {
-                id: "worker-a",
-                label: "A",
-                cwd: "/work/a",
-                accepting: true,
-                workDelivery: "native-pi",
-                expiresAt: Number.MAX_SAFE_INTEGER,
-              },
-              {
-                id: "worker-b",
-                label: "B",
-                cwd: "/work/b",
-                accepting: true,
-                workDelivery: "native-pi",
-                expiresAt: Number.MAX_SAFE_INTEGER,
-              },
-              {
-                id: "busy",
-                label: "Busy",
-                cwd: "/work/busy",
-                accepting: false,
-                workDelivery: "native-pi",
-                expiresAt: Number.MAX_SAFE_INTEGER,
-              },
-              {
-                id: "failed",
-                label: "Failed",
-                cwd: "/work/failed",
-                accepting: true,
-                workDelivery: "native-pi",
-                expiresAt: Number.MAX_SAFE_INTEGER,
-              },
-              {
-                id: "dead",
-                label: "Dead",
-                cwd: "/work/dead",
-                accepting: true,
-                workDelivery: "native-pi",
-                expiresAt: 0,
-              },
-              {
-                id: "manager",
-                label: "Manager",
-                nativeManager: true,
-                accepting: true,
-                workDelivery: "native-pi",
-                expiresAt: Number.MAX_SAFE_INTEGER,
-              },
-            ])
-          },
+        Effect,
+        TELEGRAM_RESUME_REQUEST,
+        TELEGRAM_RESUME_TAG,
+        resumeWorkers,
+        resumeOutcomeText,
+        awaitBridgeResult: (
+          _runtime: unknown,
+          chatId: number,
+          replyId: number,
+          messageId: string,
+          state: { nextTypingAt: number },
+        ) =>
+          Effect.gen(function* () {
+            watched.push({ chatId, replyId, messageId })
+            assert.ok(state.nextTypingAt >= startedAt + 5000)
+            if (watched.length === 3)
+              yield* Deferred.succeed(watchersStarted, undefined)
+            if (failWatcher && messageId === "message-busy")
+              return yield* Effect.fail(
+                new RemoteBridgeError({
+                  code: "io",
+                  message: "fixture watcher failure",
+                }),
+              )
+          }),
+        BRIDGE_TYPING_REFRESH_MS: 5000,
+        sendText: (
+          _runtime: unknown,
+          chatId: number,
+          text: string,
+          replyId: number,
+        ) => {
+          assert.equal(chatId, 42)
+          assert.equal(replyId, 9)
+          replies.push(text)
+          return text.startsWith("Round response could not be delivered:")
+            ? Deferred.succeed(failureNotified, undefined)
+            : Effect.void
         },
       },
-      {
-        updateId: 99,
-        message: { chatId: 42, messageId: 9, userId: 42, text: "/resume" },
-      },
-    ),
-  )
-  assert.deepEqual(
-    queued.map(item => item.id),
-    ["worker-a", "worker-b", "busy", "failed"],
-  )
-  for (const item of queued)
-    assert.equal(
-      (item.update as { message: { text: string } }).message.text,
-      TELEGRAM_RESUME_REQUEST,
-      TELEGRAM_RESUME_TAG,
     )
-  assert.match(
-    reply,
-    /Input already accepted: A · \/work\/a · session worker-a/,
-  )
-  assert.match(reply, /Delivering: Busy · \/work\/busy · session busy/)
-  assert.match(
-    reply,
-    /Skipped \(expired\): Failed · \/work\/failed · session failed/,
-  )
-  assert.match(reply, /worker-b/)
-  assert.match(reply, /dead/)
-  assert.match(
-    reply,
-    /Skipped \(delivery failed\): B · \/work\/b · session worker-b/,
-  )
-  assert.match(
-    reply,
-    /Skipped \(offline or unavailable\): Dead · \/work\/dead · session dead/,
-  )
-})
+    await Effect.runPromise(
+      resume(
+        {
+          bridge: {
+            enqueue,
+            listAgents: (_now: number, options: unknown) => {
+              assert.equal(
+                JSON.stringify(options),
+                JSON.stringify({ includeExpired: true }),
+              )
+              return Effect.succeed([
+                {
+                  id: "worker-a",
+                  label: "A",
+                  cwd: "/work/a",
+                  accepting: true,
+                  workDelivery: "native-pi",
+                  expiresAt: Number.MAX_SAFE_INTEGER,
+                },
+                {
+                  id: "worker-b",
+                  label: "B",
+                  cwd: "/work/b",
+                  accepting: true,
+                  workDelivery: "native-pi",
+                  expiresAt: Number.MAX_SAFE_INTEGER,
+                },
+                {
+                  id: "busy",
+                  label: "Busy",
+                  cwd: "/work/busy",
+                  accepting: false,
+                  workDelivery: "native-pi",
+                  expiresAt: Number.MAX_SAFE_INTEGER,
+                },
+                {
+                  id: "queued",
+                  label: "Queue",
+                  cwd: "/work/queued",
+                  accepting: true,
+                  workDelivery: "native-pi",
+                  expiresAt: Number.MAX_SAFE_INTEGER,
+                },
+                {
+                  id: "failed",
+                  label: "Failed",
+                  cwd: "/work/failed",
+                  accepting: true,
+                  workDelivery: "native-pi",
+                  expiresAt: Number.MAX_SAFE_INTEGER,
+                },
+                {
+                  id: "dead",
+                  label: "Dead",
+                  cwd: "/work/dead",
+                  accepting: true,
+                  workDelivery: "native-pi",
+                  expiresAt: 0,
+                },
+                {
+                  id: "manager",
+                  label: "Manager",
+                  nativeManager: true,
+                  accepting: true,
+                  workDelivery: "native-pi",
+                  expiresAt: Number.MAX_SAFE_INTEGER,
+                },
+              ])
+            },
+          },
+        },
+        {
+          updateId: 99,
+          message: { chatId: 42, messageId: 9, userId: 42, text: "/round" },
+        },
+      ),
+    )
+    await Effect.runPromise(
+      Deferred.await(watchersStarted).pipe(Effect.timeout("1 second")),
+    )
+    if (failWatcher)
+      await Effect.runPromise(
+        Deferred.await(failureNotified).pipe(Effect.timeout("1 second")),
+      )
+    assert.deepEqual(watched, [
+      { chatId: 42, replyId: 9, messageId: "message-worker-a" },
+      { chatId: 42, replyId: 9, messageId: "message-busy" },
+      { chatId: 42, replyId: 9, messageId: "message-queued" },
+    ])
+    const failureReplies = replies.filter(text =>
+      text.startsWith("Round response could not be delivered:"),
+    )
+    assert.deepEqual(
+      failureReplies,
+      failWatcher
+        ? [
+            "Round response could not be delivered: Busy · /work/busy · session busy.",
+          ]
+        : [],
+    )
+    const reply = replies.find(text => text.includes("Input already accepted:"))
+    assert.ok(reply)
+    assert.deepEqual(
+      queued.map(item => item.id),
+      ["worker-a", "worker-b", "busy", "queued", "failed"],
+    )
+    for (const item of queued) {
+      assert.equal(item.text, TELEGRAM_RESUME_REQUEST)
+      assert.equal(item.requesterId, "telegram-owner-42")
+    }
+    assert.match(
+      reply,
+      /Input already accepted: A · \/work\/a · session worker-a/,
+    )
+    assert.match(reply, /Delivering: Busy · \/work\/busy · session busy/)
+    assert.match(reply, /Queued: Queue · \/work\/queued · session queued/)
+    assert.match(
+      reply,
+      /Skipped \(expired\): Failed · \/work\/failed · session failed/,
+    )
+    assert.match(reply, /worker-b/)
+    assert.match(reply, /dead/)
+    assert.match(reply, /Skipped \(io\): B · \/work\/b · session worker-b/)
+    assert.match(
+      reply,
+      /Skipped \(offline or unavailable\): Dead · \/work\/dead · session dead/,
+    )
+  })
+}
 
 test("native resume releases only the matching session's continuation pause", () => {
   const source = readFileSync(
@@ -936,7 +1031,7 @@ test("native resume releases only the matching session's continuation pause", ()
 test("resume is registered in Telegram's command menu and bypasses question-answer consumption", () => {
   assert.match(
     extension,
-    /registerRuntimeVersion\(pi, "owner-resume-input", "2026\.10\.24\.1"\)/,
+    /registerRuntimeVersion\(pi, "owner-resume-input", "2026\.10\.24\.2"\)/,
   )
   assert.match(
     readFileSync(
@@ -945,13 +1040,13 @@ test("resume is registered in Telegram's command menu and bypasses question-answ
     ),
     /registerRuntimeVersion\(pi, "owner-resume-continuation", "2026\.10\.24\.1"\)/,
   )
-  assert.match(relay, /command: "resume"/)
+  assert.match(relay, /command: "round"/)
   const question = extract(
     relay,
     "const handleQuestionReply = (",
     "const ensureCabaSession = (",
   )
-  assert.match(question, /answer === "\/resume"/)
+  assert.match(question, /answer === "\/round"/)
   assert.match(extension, /resumeOwnerWork\(message, ctx\)/)
   assert.match(extension, /resumeOwnerWork\(claimed\.right, ctx\)/)
 })

@@ -45,7 +45,10 @@ export const resumeWorkers = (
             .enqueue({
               targetAgentId: agent.id,
               requesterId: input.requesterId,
-              dedupeKey: `resume-${input.invocationId}-${agent.id}`,
+              dedupeKey:
+                input.requesterId === "owner-pane"
+                  ? `resume-${input.invocationId}-${agent.id}`
+                  : `telegram-resume-${input.invocationId}-${agent.id}`,
               text: TELEGRAM_RESUME_REQUEST,
               now: Date.now(),
               ttlMs: BRIDGE_MESSAGE_TTL_MS,
