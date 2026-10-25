@@ -64,7 +64,7 @@ the steps below reference `{NAME}`:
 
 | Input                   | What it is                                                                                                                                |
 | ----------------------- | ----------------------------------------------------------------------------------------------------------------------------------------- |
-| `out_dir`               | Absolute artifact dir under the active review checkout's gitignored `.tmp/`; linked reviews never use the main checkout's `.tmp/`.                                                                 |
+| `out_dir`               | Absolute artifact dir under the active review checkout's gitignored `.tmp/`; linked reviews never use the main checkout's `.tmp/`.        |
 | `{DIFF_PATH}`           | Path to the unified diff to review (`$out_dir/diff.patch`).                                                                               |
 | `{FILES_PATH}`          | Path to the name-status manifest (`$out_dir/files.txt`). Caller-only — the workflow never reads it; it feeds chunking and the file count. |
 | `{REPO_ROOT}`           | Repo root.                                                                                                                                |

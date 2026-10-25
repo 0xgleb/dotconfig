@@ -52,7 +52,8 @@ the harness, and suppress duplicates without agent polling.
 
 - Read project instructions and relevant source before acting. Verify unfamiliar
   commands and flags instead of guessing. Never invent concrete values, URLs or
-  repository facts; report unresolved gaps rather than filling them with guesses.
+  repository facts; report unresolved gaps rather than filling them with
+  guesses.
 - Do not install or use persistent-memory extensions, memory-writing/search
   tools, automated learning, or memory-injected prompts. Correct standing rules
   directly in the applicable AGENTS.md; keep task state in todos or handoffs.
@@ -264,16 +265,15 @@ the harness, and suppress duplicates without agent polling.
   created Nix result symlinks and stale Pi temporary logs. Keep a linked
   worktree's task-local scratch files under that worktree's `.tmp/`, never the
   main checkout's `.tmp/`, so worktree removal also removes its artifacts.
-  Resolve and pass the actual task-worktree root to workflows and explicitly
-  set every child's cwd to that root; neither the coordinator's cwd nor the
-  common Git directory is a fallback.
-  Record newly created project `.tmp/` files/directories immediately with
-  `artifact_provenance` so
-  later exact cleanup has durable evidence. Never delete pre-existing project
-  outputs, user files, global caches, Nix generations, or run global garbage
-  collection without explicit user authorization. Exact rebuildable build
-  outputs are disposable by default, but project instructions and verified
-  repository configuration may protect artifacts consumed by a runtime, watcher,
+  Resolve and pass the actual task-worktree root to workflows and explicitly set
+  every child's cwd to that root; neither the coordinator's cwd nor the common
+  Git directory is a fallback. Record newly created project `.tmp/`
+  files/directories immediately with `artifact_provenance` so later exact
+  cleanup has durable evidence. Never delete pre-existing project outputs, user
+  files, global caches, Nix generations, or run global garbage collection
+  without explicit user authorization. Exact rebuildable build outputs are
+  disposable by default, but project instructions and verified repository
+  configuration may protect artifacts consumed by a runtime, watcher,
   supervisor, release, or deployment process. Inspect any referenced
   configuration before cleanup and preserve a cleanup root containing a
   configured live artifact unless disruption is explicitly requested.
@@ -282,11 +282,11 @@ the harness, and suppress duplicates without agent polling.
   itself and the intended artifact path. A file-specific match such as `*.log`
   does not establish directory coverage. If coverage is missing, immediately add
   the matching directory pattern to that checkout's `.gitignore` and recheck
-  both paths before continuing. Preserve existing ignore rules. No
-  separate approval is needed for these two directory patterns; this grants no
-  worktree-creation or unrelated source-change authority. Outside a Git checkout,
-  Git-ignore coverage is not applicable; do not initialize a repository merely
-  to apply this rule.
+  both paths before continuing. Preserve existing ignore rules. No separate
+  approval is needed for these two directory patterns; this grants no
+  worktree-creation or unrelated source-change authority. Outside a Git
+  checkout, Git-ignore coverage is not applicable; do not initialize a
+  repository merely to apply this rule.
 - Never inject keystrokes or text into the user's active Zellij pane or editor;
   it can overwrite an in-progress prompt. Use registered tools such as
   `reload_pi` instead, and keep Zellij automation confined to isolated workers.
@@ -324,7 +324,8 @@ the harness, and suppress duplicates without agent polling.
   upstream ownership and licenses.
 - Keep shared skills in the canonical repository; verify harness discovery links
   resolve to that source before claiming activation. After changing managed Pi
-  resources, use the registered reload tool. A queued reload is not activation proof.
+  resources, use the registered reload tool. A queued reload is not activation
+  proof.
 - Use only authenticated, permitted models and the current harness's supported
   delegation path. Do not infer capabilities from model names or stale harness
   instructions. Do not switch billing providers or harnesses as a workaround
@@ -334,7 +335,8 @@ the harness, and suppress duplicates without agent polling.
   linting, public API before implementation details, and explicit domain states
   over boolean flags. Do not introduce speculative abstractions or wrappers
   hiding domain logic. Package by feature rather than technical layer. Keep API
-  documentation and necessary explanations; omit comments that merely narrate code.
+  documentation and necessary explanations; omit comments that merely narrate
+  code.
 - Record confirmed significant, hard-to-reverse architectural decisions through
   the `adr` skill. Settle unresolved architectural choices with the owner before
   proceeding; do not turn routine implementation into a new approval gate.
@@ -346,8 +348,8 @@ the harness, and suppress duplicates without agent polling.
   require tests. Run relevant tests and inspect the final diff; retain only
   justified changes. Preserve uncertain changes while reconciling current owner
   intent, task records, repository history and ownership evidence. Lost context
-  does not authorize reverting work; remove only evidenced agent-owned unjustified
-  deltas.
+  does not authorize reverting work; remove only evidenced agent-owned
+  unjustified deltas.
 - Keep durable tasks granular and linked to the project's tracker. Record
   requests, corrections, blockers, and next actions without replacing a direct
   answer with task bookkeeping. Preserve deferred work and explicit constraints.
@@ -386,8 +388,8 @@ the harness, and suppress duplicates without agent polling.
   current. Transport Markdown as real bytes, not literal shell escape sequences;
   verify the remote body after publication and repair transport errors without
   expanding content authority. Keep descriptions free of process journals and
-  empty sections; use concise bullets. Use `@path/to/file.md` references in prose
-  intended for Claude-compatible tooling.
+  empty sections; use concise bullets. Use `@path/to/file.md` references in
+  prose intended for Claude-compatible tooling.
 - Use the shared reporting, question, and editorial procedures where available.
   Owner-facing questions need enough context to decide and clickable resource
   links. Agent-authored Telegram content requires independent review; use a
@@ -413,11 +415,11 @@ the harness, and suppress duplicates without agent polling.
   tests, cleanup, and unrelated investigation; perform only bounded state reads,
   durable todo reconciliation, required `.gitignore` directory-pattern repairs,
   artifact writing, and the final handover report. The ignore repair does not
-  authorize resumed implementation, cleanup, tests, or publication.
-  The handover artifact must come from verified repository state and remain
-  temporary and untracked. For a single-repository session, write it beneath the
-  current project-role workspace's `.tmp/handoffs/`, even when that workspace is
-  the Git repository; never relocate it to a parent/global `/tmp` or inline. For
+  authorize resumed implementation, cleanup, tests, or publication. The handover
+  artifact must come from verified repository state and remain temporary and
+  untracked. For a single-repository session, write it beneath the current
+  project-role workspace's `.tmp/handoffs/`, even when that workspace is the Git
+  repository; never relocate it to a parent/global `/tmp` or inline. For
   genuinely cross-repository work, use the session's shared project-role
   workspace. If one required state read is blocked, aborted, or unavailable,
   write the remaining truthful artifact and label only the missing fields
