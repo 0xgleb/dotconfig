@@ -3,7 +3,7 @@ import type {
   ExtensionContext,
 } from "@earendil-works/pi-coding-agent"
 import { Data, Either, Schema } from "effect"
-import type { TodoRequest } from "./state.ts"
+import { isFibonacciEffort, type TodoRequest } from "./state.ts"
 
 export interface TodoControlResult {
   readonly isError: boolean
@@ -135,8 +135,14 @@ const optionalText = Schema.optionalWith(Schema.String, { exact: true })
 const positiveSafeInteger = Schema.Number.pipe(
   Schema.filter(value => Number.isSafeInteger(value) && value >= 1),
 )
+const effortPoints = Schema.Number.pipe(Schema.filter(isFibonacciEffort))
 const RequestSchema = Schema.Union(
   Schema.Struct({ action: Schema.Literal("list") }),
+  Schema.Struct({
+    action: Schema.Literal("effort"),
+    id: positiveSafeInteger,
+    effort: Schema.NullOr(effortPoints),
+  }),
   Schema.Struct({
     action: Schema.Literal("priority"),
     id: positiveSafeInteger,
@@ -146,6 +152,7 @@ const RequestSchema = Schema.Union(
     action: Schema.Literal("add"),
     text: optionalText,
     parentId: optionalId,
+    effort: Schema.optionalWith(effortPoints, { exact: true }),
   }),
   Schema.Struct({ action: Schema.Literal("toggle"), id: optionalId }),
   Schema.Struct({
