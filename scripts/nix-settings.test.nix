@@ -7,4 +7,5 @@ assert
     "nix-command"
     "flakes"
   ];
+
 true
