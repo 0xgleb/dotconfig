@@ -101,11 +101,15 @@ test("direnv attribution does not accept other directories, selectors, overrides
     const boundary = { ...subject, input: { command: commit } }
     const evidence = receipt(command, boundary)
     assert.equal(evidence.length, 1)
-    assert.deepEqual(
-      selectRelevantExecutionEvidence(evidence, boundary),
-      [],
-      commit,
+    const selected = selectRelevantExecutionEvidence(evidence, boundary)
+    assert.equal(selected.length, 1, commit)
+    const header = (selected[0] ?? "").split(" input=")[0] ?? ""
+    assert.match(header, / context=unscoped$/)
+    assert.doesNotMatch(
+      header,
+      / (?:scope|snapshot|commandScope|commandVcsToken|verification)=/,
     )
+    assert.ok(selected[0]?.includes("checked docs"))
   }
 })
 
@@ -116,8 +120,20 @@ test("multi-command receipts with location changes or overrides remain unattribu
     "git status --short\ngit --git-dir=/outside status --short",
     "git status --short\nGIT_DIR=/outside git status --short",
     "git status --short\n(git status --short)",
-  ])
-    assert.deepEqual(receipt(observedCommand), [], observedCommand)
+  ]) {
+    const evidence = receipt(observedCommand)
+    assert.equal(evidence.length, 1, observedCommand)
+    assert.deepEqual(
+      selectRelevantExecutionEvidence(evidence, subject),
+      evidence,
+    )
+    const header = (evidence[0] ?? "").split(" input=")[0] ?? ""
+    assert.match(header, / context=unscoped$/)
+    assert.doesNotMatch(
+      header,
+      / (?:scope|snapshot|commandScope|commandVcsToken|verification)=/,
+    )
+  }
 })
 
 test("publication facts survive unrelated read churn without becoming authority", () => {
