@@ -73,19 +73,26 @@ test("driver workers publish checkpoints early without granting reviewer or mana
   assert.match(global, /does not grant them coding or publication authority/is)
 })
 
-test("PR readiness requires successful CI on the exact published head", () => {
-  assert.match(
-    global,
-    /every CI check must succeed for the exact published head/is,
+test("PR readiness follows the required local or CI verification workflow", () => {
+  assert.ok(
+    /all project-required checks pass for the published head/is.test(global),
   )
-  assert.match(
-    global,
-    /failing, pending, or unverified CI keeps the PR draft/is,
+  assert.ok(/Follow the repository's verification workflow/is.test(global))
+  assert.ok(
+    /Local verification is sufficient when that workflow uses local checks instead of CI/is.test(
+      global,
+    ),
   )
-  assert.match(
-    global,
-    /Local tests and agent reviews do not replace successful CI/is,
+  assert.ok(
+    /failing, pending, or unverified required checks keep the PR draft/is.test(
+      global,
+    ),
   )
+  assert.doesNotMatch(global, /every CI check must succeed/is)
+})
+
+test("Markdown formatting uses Deno instead of Prettier", () => {
+  assert.ok(/Use `deno fmt` for Markdown, not Prettier/is.test(global))
 })
 
 test("PR descriptions follow the template without invented sections", () => {
