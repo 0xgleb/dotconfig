@@ -176,9 +176,9 @@ Verify prerequisites before doing anything:
    checkout root and record its working-tree/index state. Verify directory-wide
    coverage with `git check-ignore --verbose` on `.tmp/` itself and the intended
    artifact path, and on `.worktrees/` when used. A file-specific match is
-   insufficient. Immediately add any missing directory pattern to that checkout's
-   `.gitignore`, preserving existing rules, then recheck both paths; no separate
-   approval is needed and no worktree-creation authority is added.
+   insufficient. Immediately add any missing directory pattern to that
+   checkout's `.gitignore`, preserving existing rules, then recheck both paths;
+   no separate approval is needed and no worktree-creation authority is added.
 
    Account for an owned ignore repair as a separate preflight unit through the
    repository's already-authorized checkpoint/publication workflow. Isolate only
