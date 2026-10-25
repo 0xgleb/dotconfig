@@ -59,8 +59,17 @@ continue. Proceed only on explicit confirmation.
 
 ## 2. Prepare the workspace
 
+Resolve `repo_root` from the checkout assigned to this review. When using a
+linked review worktree, run setup there: every patch, prompt, report, payload,
+and log belongs under that worktree's `.tmp/`, never the main checkout's
+`.tmp/`. A coordinator running elsewhere must pass the verified review-worktree
+root to workflows and explicitly set every child's cwd to that root. Do not
+derive artifact paths from the coordinator's cwd or the shared Git directory, or
+fall back to the main checkout. Remove temporary artifacts with the worktree.
+This does not authorize creating a worktree or checking out the PR.
+
 ```bash
-repo_root=$(git rev-parse --show-toplevel 2>/dev/null || pwd)
+repo_root=$(git rev-parse --show-toplevel) || exit 1
 ts=$(date +%Y-%m-%d_%H-%M-%S)
 safe_branch=$(echo "<headRefName>" | tr '/' '_')
 out_dir="$repo_root/.tmp/reviews/pr-${pr_number}-${ts}-${safe_branch}"
@@ -250,7 +259,7 @@ conversation in Step 2 instead.
 # Build the review payload as a JSON file.
 # "body" is intentionally empty — the overall assessment is displayed in
 # the conversation (Step 2), not posted to the draft.
-review_json=$(mktemp -t pr-review.XXXXXX.json)
+review_json="$out_dir/pending-review.json"
 cat > "$review_json" <<'ENDJSON'
 {
   "commit_id": "<head_sha>",
