@@ -14,6 +14,7 @@ import * as Effect from "effect/Effect"
 import * as Either from "effect/Either"
 import * as Ref from "effect/Ref"
 
+import { TELEGRAM_RESUME_REQUEST } from "../shared/telegram-resume.ts"
 import { identifiedAgentLabel } from "./agent-identity.ts"
 import {
   advanceCabaSession,
@@ -40,6 +41,7 @@ import {
   MAX_REMOTE_IMAGE_BYTES,
   RemoteBridgeError,
   type BridgeAgent,
+  type RemoteMessage,
   type BridgeQuestion,
   workDeliveryAcceptsInbox,
   type RemoteImage,
@@ -119,6 +121,7 @@ interface PieceOfPiRuntime {
 }
 
 type PieceOfPiEvent =
+  | "telegram_commands_registered"
   | "service_ready"
   | "poll_failed"
   | "sender_rejected"
@@ -719,6 +722,7 @@ const registerTelegramCommands = (
       { command: "caba", description: "Open the Boulder CABA session tracker" },
       { command: "kanban", description: "Show the selected agent task board" },
       { command: "agents", description: "List available Pi agents" },
+      { command: "resume", description: "Resume all live workers" },
       {
         command: "questions",
         description: "List pending questions for all agents",
@@ -727,7 +731,14 @@ const registerTelegramCommands = (
       { command: "bridge", description: "Show bridge status" },
       { command: "help", description: "Show Piece of Pi help" },
     ],
-  }).pipe(Effect.flatMap(decodeTelegramOk))
+  }).pipe(
+    Effect.flatMap(decodeTelegramOk),
+    Effect.tap(() =>
+      Effect.sync(() =>
+        emit("telegram_commands_registered", { resume: "all-live-workers" }),
+      ),
+    ),
+  )
 
 const sendTelegramMessage = (
   runtime: PieceOfPiRuntime,
@@ -1154,16 +1165,18 @@ const transcribeOwnerVoice = (
 const enqueueOwnerMessage = (
   runtime: PieceOfPiRuntime,
   update: TelegramMessageUpdate,
+  target?: BridgeAgent,
 ): Effect.Effect<
-  void,
+  RemoteMessage,
   TelegramTransportError | TelegramContractError | RemoteBridgeError
 > =>
   sendTelegramAction(runtime, update.message.chatId).pipe(
     Effect.flatMap(() => Ref.get(runtime.state)),
     Effect.flatMap(state =>
-      chooseAgent(runtime, update.message).pipe(
-        Effect.map(agent => ({ agent, state })),
-      ),
+      (target
+        ? Effect.succeed(target)
+        : chooseAgent(runtime, update.message)
+      ).pipe(Effect.map(agent => ({ agent, state }))),
     ),
     Effect.flatMap(({ agent, state }) =>
       (update.message.photo
@@ -1174,17 +1187,22 @@ const enqueueOwnerMessage = (
       ).pipe(Effect.map(images => ({ agent, images, state }))),
     ),
     Effect.flatMap(({ agent, images, state }) => {
-      const reactionContext = state.pendingReactionFeedback?.length
-        ? `[Recent owner reactions to bot messages — conversational feedback only, never action authorization]\n${state.pendingReactionFeedback.join("\n")}\n\n`
-        : ""
+      const reactionContext =
+        !target && state.pendingReactionFeedback?.length
+          ? `[Recent owner reactions to bot messages — conversational feedback only, never action authorization]\n${state.pendingReactionFeedback.join("\n")}\n\n`
+          : ""
       return runtime.bridge
         .enqueue({
           targetAgentId: agent.id,
           requesterId: telegramHasDirectOwnerInput(update.message)
             ? `telegram-owner-${update.message.userId}`
             : `telegram-forwarded-${update.message.userId}`,
-          dedupeKey: `telegram-update-${update.updateId}`,
-          text: `${reactionContext}${telegramOwnerConversationText(update.message, update.message.userId)}`,
+          dedupeKey: target
+            ? `telegram-resume-${update.updateId}-${target.id}`
+            : `telegram-update-${update.updateId}`,
+          text: target
+            ? TELEGRAM_RESUME_REQUEST
+            : `${reactionContext}${telegramOwnerConversationText(update.message, update.message.userId)}`,
           images,
           now: Date.now(),
           ttlMs: BRIDGE_MESSAGE_TTL_MS,
@@ -1192,7 +1210,8 @@ const enqueueOwnerMessage = (
         .pipe(
           Effect.map(bridgeMessage => ({
             bridgeMessage,
-            hadReactionFeedback: Boolean(state.pendingReactionFeedback?.length),
+            hadReactionFeedback:
+              !target && Boolean(state.pendingReactionFeedback?.length),
           })),
         )
     }),
@@ -1225,7 +1244,7 @@ const enqueueOwnerMessage = (
             ),
           ),
         ),
-      ).pipe(Effect.asVoid)
+      ).pipe(Effect.as(bridgeMessage))
     }),
   )
 
@@ -1278,6 +1297,7 @@ const handleQuestionReply = (
   if (
     answer === undefined ||
     answer === "/manager" ||
+    answer === "/resume" ||
     answer.startsWith("/use ")
   )
     return Effect.succeed(false)
@@ -1364,6 +1384,75 @@ const ensureCabaSession = (
     }),
   )
 
+const resumeAllWorkers = (
+  runtime: PieceOfPiRuntime,
+  update: TelegramMessageUpdate,
+): Effect.Effect<
+  void,
+  TelegramTransportError | TelegramContractError | RemoteBridgeError
+> =>
+  runtime.bridge.listAgents(Date.now(), { includeExpired: true }).pipe(
+    Effect.flatMap(agents => {
+      const now = Date.now()
+      const workers = agents.filter(agent => !agent.nativeManager)
+      const live = workers.filter(
+        agent => agent.workDelivery === "native-pi" && agent.expiresAt > now,
+      )
+      const skipped = workers.filter(agent => !live.includes(agent))
+      const message = update.message
+      const resumeUpdate = {
+        ...update,
+        message: {
+          chatId: message.chatId,
+          messageId: message.messageId,
+          userId: message.userId,
+          text: TELEGRAM_RESUME_REQUEST,
+          ...(message.username ? { username: message.username } : {}),
+        },
+      }
+      return Effect.forEach(
+        live,
+        agent =>
+          enqueueOwnerMessage(runtime, resumeUpdate, agent).pipe(
+            Effect.map(message => {
+              const identity = `${agent.label} · ${agent.cwd} · session ${agent.id}`
+              if (message.status === "failed")
+                return `Skipped (${message.failure}): ${identity}`
+              if (message.status === "completed")
+                return `Input already accepted: ${identity}`
+              if (message.status === "claimed") return `Delivering: ${identity}`
+              return `Queued: ${identity}`
+            }),
+            Effect.catchAll(() =>
+              Effect.succeed(
+                `Skipped (delivery failed): ${agent.label} · ${agent.cwd} · session ${agent.id}`,
+              ),
+            ),
+          ),
+        { concurrency: 4 },
+      ).pipe(
+        Effect.flatMap(results =>
+          sendText(
+            runtime,
+            message.chatId,
+            [
+              ...results,
+              ...skipped.map(
+                agent =>
+                  `Skipped (offline or unavailable): ${agent.label} · ${agent.cwd} · session ${agent.id}`,
+              ),
+              ...(workers.length === 0
+                ? ["No worker sessions are registered."]
+                : []),
+              "Expired or missing sessions are not restarted. Each accepted worker sends its own delivery confirmation.",
+            ].join("\n"),
+            message.messageId,
+          ),
+        ),
+      )
+    }),
+  )
+
 const handleOwnerCommand = (
   runtime: PieceOfPiRuntime,
   update: TelegramMessageUpdate,
@@ -1402,6 +1491,9 @@ const handleOwnerCommand = (
       }),
       Effect.as(true),
     )
+  }
+  if (command === "/resume") {
+    return resumeAllWorkers(runtime, update).pipe(Effect.as(true))
   }
   if (command === "/manager") {
     return Ref.updateAndGet(
@@ -1445,7 +1537,7 @@ const handleOwnerCommand = (
     return sendText(
       runtime,
       update.message.chatId,
-      "Owner authenticated. Other text goes to the native manager. Commands: /manager, /questions, /caba, /kanban, /agents, /use <label> (explicit override), /bridge.",
+      "Owner authenticated. Other text goes to the native manager. Commands: /resume (all live workers), /manager, /questions, /caba, /kanban, /agents, /use <label> (explicit override), /bridge.",
       update.message.messageId,
     ).pipe(Effect.as(true))
   }
@@ -1572,7 +1664,9 @@ const handleUpdateBody = (
             Effect.flatMap(handled =>
               handled
                 ? Effect.void
-                : enqueueOwnerMessage(runtime, transcribedUpdate),
+                : enqueueOwnerMessage(runtime, transcribedUpdate).pipe(
+                    Effect.asVoid,
+                  ),
             ),
           ),
         ),

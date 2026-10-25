@@ -275,6 +275,7 @@ import {
   latestContinuationPause,
   wasRunAborted,
 } from "../shared/continuation-pause.ts"
+import { TELEGRAM_RESUME_EVENT } from "../shared/telegram-resume.ts"
 import { FOREGROUND_WORKFLOW_WAIT_PROBE_EVENT } from "../shared/foreground-wait.ts"
 import {
   ACTIVITY_PHASE_EVENT,
@@ -2784,6 +2785,20 @@ export default function classifiedWorkflows(
     }
     questionState = applyQuestionResolutionSnapshot(questionState, resolution)
     if (continuationPaused && latestCtx) setContinuationPaused(false, latestCtx)
+  })
+
+  registerRuntimeVersion(pi, "owner-resume-continuation", "2026.10.24.1")
+  pi.events.on(TELEGRAM_RESUME_EVENT, request => {
+    if (!isRecord(request) || typeof request.sessionId !== "string") {
+      rejectWorkflowEvent(TELEGRAM_RESUME_EVENT)
+      return
+    }
+    if (
+      latestCtx &&
+      request.sessionId === latestCtx.sessionManager.getSessionId() &&
+      continuationPaused
+    )
+      setContinuationPaused(false, latestCtx)
   })
 
   pi.events.on(MANAGED_OPERATIONAL_ROLE_RESUMED_EVENT, () => {
