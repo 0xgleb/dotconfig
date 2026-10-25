@@ -60,7 +60,8 @@ the harness, and suppress duplicates without agent polling.
 
 - Read project instructions and relevant source before acting. Verify unfamiliar
   commands and flags instead of guessing. Never invent concrete values, URLs or
-  repository facts; report unresolved gaps rather than filling them with guesses.
+  repository facts; report unresolved gaps rather than filling them with
+  guesses.
 - Do not install or use persistent-memory extensions, memory-writing/search
   tools, automated learning, or memory-injected prompts. Correct standing rules
   directly in the applicable AGENTS.md; keep task state in todos or handoffs.
@@ -86,29 +87,30 @@ the harness, and suppress duplicates without agent polling.
   a failure to generalize the correction. Report out-of-scope instances and
   proposed capability follow-ups to the manager; do not create or start
   additional work. A missing capability is a reported constraint, not an excuse
-  or a new worker assignment. This standing owner rule applies globally, not only
-  in the conversation that surfaced the example. This does not authorize new
-  audit tasks, expanded scope, or worker reprioritization.
+  or a new worker assignment. This standing owner rule applies globally, not
+  only in the conversation that surfaced the example. This does not authorize
+  new audit tasks, expanded scope, or worker reprioritization.
 - Driver workers (agents owning implementation) must commit and push regularly
   throughout assigned work. Open a draft PR with the first checkpoint on a
   branch, and keep it updated as work proceeds. Incomplete or broken code and
   failing checks are not reasons to withhold checkpoints: publish them in the
-  draft with their status stated accurately. Commit and push each completed
-  unit before starting the next. Mark a PR ready only when the requested work
-  is complete and checks pass for the published head, not unpublished local
-  changes. Where CI is configured, every CI check must succeed for the exact
-  published head; failing, pending, or unverified CI keeps the PR draft. Local
-  tests and agent reviews do not replace successful CI. Review workers and
-  managers are exempt from this driver publication workflow; this exemption
-  does not grant them coding or publication authority.
-  Never let agent-owned unstaged, untracked, staged-but-uncommitted, or unpushed
-  changes accumulate across work units. Preserve unrelated user-owned changes
-  and permitted temporary review/handoff artifacts; do not sweep them into
-  commits or delete them to make the tree clean. If publication is blocked,
-  preserve the current state and report the exact blocker; continue only bounded
-  repairs needed to unblock publication. Keep normal hooks and required safety
-  gates. Use plain Git except in a verified GitButler-managed main worktree,
-  subject to repository-local workflow rules.
+  draft with their status stated accurately. Commit and push each completed unit
+  before starting the next. Mark a PR ready only when the requested work is
+  complete and all project-required checks pass for the published head, not
+  unpublished local changes. Follow the repository's verification workflow.
+  Local verification is sufficient when that workflow uses local checks instead
+  of CI. Failing, pending, or unverified required checks keep the PR draft;
+  agent reviews do not replace those checks. Review workers and managers are
+  exempt from this driver publication workflow; this exemption does not grant
+  them coding or publication authority. Never let agent-owned unstaged,
+  untracked, staged-but-uncommitted, or unpushed changes accumulate across work
+  units. Preserve unrelated user-owned changes and permitted temporary
+  review/handoff artifacts; do not sweep them into commits or delete them to
+  make the tree clean. If publication is blocked, preserve the current state and
+  report the exact blocker; continue only bounded repairs needed to unblock
+  publication. Keep normal hooks and required safety gates. Use plain Git except
+  in a verified GitButler-managed main worktree, subject to repository-local
+  workflow rules.
 - AGENTS.md files define standing rules of engagement and agent behavior. Never
   put transient task state, progress reports, one-off migration notes, temporary
   waiting conditions, session journals, or handoff notes in them; use task
@@ -307,11 +309,11 @@ the harness, and suppress duplicates without agent polling.
   itself and the intended artifact path. A file-specific match such as `*.log`
   does not establish directory coverage. If coverage is missing, immediately add
   the matching directory pattern to that checkout's `.gitignore` and recheck
-  both paths before continuing. Preserve existing ignore rules. No
-  separate approval is needed for these two directory patterns; this grants no
-  worktree-creation or unrelated source-change authority. Outside a Git checkout,
-  Git-ignore coverage is not applicable; do not initialize a repository merely
-  to apply this rule.
+  both paths before continuing. Preserve existing ignore rules. No separate
+  approval is needed for these two directory patterns; this grants no
+  worktree-creation or unrelated source-change authority. Outside a Git
+  checkout, Git-ignore coverage is not applicable; do not initialize a
+  repository merely to apply this rule.
 - Never inject keystrokes or text into the user's active Zellij pane or editor;
   it can overwrite an in-progress prompt. Use registered tools such as
   `reload_pi` instead, and keep Zellij automation confined to isolated workers.
@@ -343,13 +345,16 @@ the harness, and suppress duplicates without agent polling.
 
 ## Shared development and communication requirements
 
+- Use `deno fmt` for Markdown, not Prettier. Follow the project's configured
+  formatters for other file types.
 - Before extension work, inspect existing maintained extensions, pinned
   packages, and upstream examples for a solution or reference. Prefer compatible
   packages; write local code only after checking the options, preserving
   upstream ownership and licenses.
 - Keep shared skills in the canonical repository; verify harness discovery links
   resolve to that source before claiming activation. After changing managed Pi
-  resources, use the registered reload tool. A queued reload is not activation proof.
+  resources, use the registered reload tool. A queued reload is not activation
+  proof.
 - Use only authenticated, permitted models and the current harness's supported
   delegation path. Do not infer capabilities from model names or stale harness
   instructions. Do not switch billing providers or harnesses as a workaround
@@ -359,7 +364,8 @@ the harness, and suppress duplicates without agent polling.
   linting, public API before implementation details, and explicit domain states
   over boolean flags. Do not introduce speculative abstractions or wrappers
   hiding domain logic. Package by feature rather than technical layer. Keep API
-  documentation and necessary explanations; omit comments that merely narrate code.
+  documentation and necessary explanations; omit comments that merely narrate
+  code.
 - Record confirmed significant, hard-to-reverse architectural decisions through
   the `adr` skill. Settle unresolved architectural choices with the owner before
   proceeding; do not turn routine implementation into a new approval gate.
@@ -371,8 +377,8 @@ the harness, and suppress duplicates without agent polling.
   require tests. Run relevant tests and inspect the final diff; retain only
   justified changes. Preserve uncertain changes while reconciling current owner
   intent, task records, repository history and ownership evidence. Lost context
-  does not authorize reverting work; remove only evidenced agent-owned unjustified
-  deltas.
+  does not authorize reverting work; remove only evidenced agent-owned
+  unjustified deltas.
 - Keep durable tasks granular and linked to the project's tracker. Record
   requests, corrections, blockers, and next actions without replacing a direct
   answer with task bookkeeping. Preserve deferred work and explicit constraints.
@@ -381,13 +387,14 @@ the harness, and suppress duplicates without agent polling.
   fix every valid finding and explain invalid findings at completion.
 - Only the manager may assign or change backlog priorities, and only after the
   owner confirms the proposed ordering. Assign task priority only through the
-  backlog tool's priority/rank field. Never encode priority in task titles, text,
-  or prose. The rank field is the single ordering authority. Workers must execute
-  the highest-ranked authorized runnable work in their respective backlogs, not
-  insert self-chosen audits, adjacent work, or priority changes. Report proposed
-  additions or ordering changes to the manager for owner confirmation; do not
-  act on them as a new work order. Direct owner instructions still take
-  precedence, but workers do not assign ranks themselves.
+  backlog tool's priority/rank field. Never encode priority in task titles,
+  text, or prose. The rank field is the single ordering authority. Workers must
+  execute the highest-ranked authorized runnable work in their respective
+  backlogs, not insert self-chosen audits, adjacent work, or priority changes.
+  Report proposed additions or ordering changes to the manager for owner
+  confirmation; do not act on them as a new work order. Direct owner
+  instructions still take precedence, but workers do not assign ranks
+  themselves.
 - Structure roadmaps as priority-ordered epics, not numbered phases. Use
   dependency graphs where useful; expose independent deliverables without
   manufacturing parallel mutation authority. Give each epic a short goal and
@@ -419,11 +426,11 @@ the harness, and suppress duplicates without agent polling.
   template. Preserve its headings and required content. Do not add sections
   absent from the template unless the owner explicitly requests them. When no
   template exists, use only Motivation / Solution. Keep descriptions current.
-  Transport Markdown as real bytes, not literal shell escape sequences;
-  verify the remote body after publication and repair transport errors without
+  Transport Markdown as real bytes, not literal shell escape sequences; verify
+  the remote body after publication and repair transport errors without
   expanding content authority. Keep descriptions free of process journals and
-  empty sections; use concise bullets. Use `@path/to/file.md` references in prose
-  intended for Claude-compatible tooling.
+  empty sections; use concise bullets. Use `@path/to/file.md` references in
+  prose intended for Claude-compatible tooling.
 - Use the shared reporting, question, and editorial procedures where available.
   Owner-facing questions need enough context to decide and clickable resource
   links. Agent-authored Telegram content requires independent review; use a
@@ -449,11 +456,11 @@ the harness, and suppress duplicates without agent polling.
   tests, cleanup, and unrelated investigation; perform only bounded state reads,
   durable todo reconciliation, required `.gitignore` directory-pattern repairs,
   artifact writing, and the final handover report. The ignore repair does not
-  authorize resumed implementation, cleanup, tests, or publication.
-  The handover artifact must come from verified repository state and remain
-  temporary and untracked. For a single-repository session, write it beneath the
-  current project-role workspace's `.tmp/handoffs/`, even when that workspace is
-  the Git repository; never relocate it to a parent/global `/tmp` or inline. For
+  authorize resumed implementation, cleanup, tests, or publication. The handover
+  artifact must come from verified repository state and remain temporary and
+  untracked. For a single-repository session, write it beneath the current
+  project-role workspace's `.tmp/handoffs/`, even when that workspace is the Git
+  repository; never relocate it to a parent/global `/tmp` or inline. For
   genuinely cross-repository work, use the session's shared project-role
   workspace. If one required state read is blocked, aborted, or unavailable,
   write the remaining truthful artifact and label only the missing fields
