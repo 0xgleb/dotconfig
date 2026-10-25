@@ -37,7 +37,7 @@ test("only actual worker expiry emits a private once-per-round summary opportuni
   guard.dispose()
   assert.equal(windows.length, 1)
   assert.equal(windows[0]?.deadlineAt, now)
-  assert.deepEqual(order.slice(0, 3), ["cancel", "persist", "summary"])
+  assert.deepEqual(order.slice(0, 3), ["persist", "cancel", "summary"])
 })
 
 test("shutdown, malformed state and already-expired restoration cannot start another summary", () => {

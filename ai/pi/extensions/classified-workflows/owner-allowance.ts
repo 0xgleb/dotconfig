@@ -1,9 +1,11 @@
 import { Data, Either } from "effect"
 
-export const OWNER_ALLOWANCE_MS = 60 * 60 * 1_000
-export const SUPERVISED_OWNER_ALLOWANCE_MS = 4 * OWNER_ALLOWANCE_MS
+export const OWNER_ALLOWANCE_MS = 2 * 60 * 60 * 1_000
+export const SUPERVISED_OWNER_ALLOWANCE_MS = OWNER_ALLOWANCE_MS
 export const OWNER_PROGRESS_CHECK_IN_MS = 30 * 60 * 1_000
 const LEGACY_OWNER_ALLOWANCE_MS = 30 * 60 * 1_000
+const LEGACY_ONE_HOUR_OWNER_ALLOWANCE_MS = 60 * 60 * 1_000
+const HISTORICAL_MAX_OWNER_ALLOWANCE_MS = 4 * 60 * 60 * 1_000
 export const OWNER_ALLOWANCE_ENTRY = "pi.owner-work-allowance.v1"
 // Non-secret absolute deadline inherited by managed Pi child processes.
 export const OWNER_PARENT_DEADLINE_ENV = "PI_OWNER_WORK_DEADLINE_MS"
@@ -73,15 +75,14 @@ export const createOwnerAllowance = <T>(
   runtime: OwnerAllowanceRuntime<T>,
 ): OwnerAllowance => {
   const checkIn = runtime.onProgressCheckIn
-  const allowanceMs =
-    checkIn === undefined ? OWNER_ALLOWANCE_MS : SUPERVISED_OWNER_ALLOWANCE_MS
+  const allowanceMs = OWNER_ALLOWANCE_MS
   const error = (code: OwnerAllowanceError["code"]) =>
     Object.freeze(
       new OwnerAllowanceError({
         code,
         message:
           code === "expired"
-            ? `The ${checkIn === undefined ? "one-hour" : "four-hour"} owner allowance expired. Work is stopped until a new authenticated owner message.`
+            ? "The two-hour owner allowance expired. Work is stopped until a new authenticated owner message."
             : `Owner allowance is ${code}; no execution is admitted without valid owner deadline evidence.`,
       }),
     )
@@ -407,7 +408,9 @@ export const createOwnerAllowance = <T>(
             !time(deadlineAt) ||
             !time(lastOwnerAt + allowanceMs) ||
             deadlineAt <= lastOwnerAt ||
-            deadlineAt > lastOwnerAt + allowanceMs ||
+            deadlineAt > lastOwnerAt + HISTORICAL_MAX_OWNER_ALLOWANCE_MS ||
+            (deadlineAt - lastOwnerAt > allowanceMs &&
+              !time(lastOwnerAt + HISTORICAL_MAX_OWNER_ALLOWANCE_MS)) ||
             (status !== "active" && status !== "expired")
           )
             return Either.left(error("malformed"))
@@ -451,19 +454,25 @@ export const createOwnerAllowance = <T>(
       generation = expectedGeneration
       stopped = undefined
       notified = false
-      const upgradedDeadline = value.lastOwnerAt + allowanceMs
       const legacyDuration = value.deadlineAt - value.lastOwnerAt
-      const upgrade =
+      const migrate =
         (legacyDuration === LEGACY_OWNER_ALLOWANCE_MS ||
-          (checkIn !== undefined && legacyDuration === OWNER_ALLOWANCE_MS)) &&
+          legacyDuration === LEGACY_ONE_HOUR_OWNER_ALLOWANCE_MS ||
+          legacyDuration > allowanceMs) &&
         value.status === "active" &&
-        clock.right < value.deadlineAt &&
-        (ceiling === undefined || upgradedDeadline <= ceiling)
+        clock.right >= value.lastOwnerAt &&
+        clock.right < value.deadlineAt
       window = constrain({
         ...value,
-        deadlineAt: upgrade ? upgradedDeadline : value.deadlineAt,
+        deadlineAt: migrate
+          ? value.lastOwnerAt + allowanceMs
+          : value.deadlineAt,
       })
-      if (upgrade) {
+      if (
+        window.deadlineAt !== value.deadlineAt &&
+        window.status === "active" &&
+        clock.right < window.deadlineAt
+      ) {
         const upgraded = window
         const persisted = invoke(
           () => runtime.persist(snapshotWindow(upgraded)),
