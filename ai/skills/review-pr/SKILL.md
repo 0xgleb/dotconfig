@@ -91,8 +91,8 @@ value of `out_dir`:
 ```
 
 Require successful creation and provenance recording before writing descendants.
-Use an available registered harness equivalent if the tool name differs; do not
-fall back to raw `mkdir`. Add `crossWorkspace: true` only for an explicitly
+Use an available registered harness equivalent if its tool name differs; do not
+fall back to raw `mkdir`. Add `crossWorkspace: true` only for an independently
 authorized target outside the tool session's workspace. The native UUID supplies
 the invocation namespace; the creation API does not promise exclusive
 allocation. Artifacts remain local-only and ephemeral.

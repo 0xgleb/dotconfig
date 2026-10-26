@@ -193,11 +193,14 @@ providers.
 
 ## 2. Resolve scope & prepare workspace
 
-Determine what to review. **Stack mode overrides the generic commands below.**
-Use the current virtual branch's verified name, parent SHA and head SHA from the
-sequential adapter, not the combined workspace branch or HEAD. Generate the
-initial diff and file manifest from that immutable parent/head range. Keep those
-review artifacts.
+Determine what to review. On a stacked branch, **always diff against its own
+parent, not trunk**; a trunk comparison would include ancestor PRs and drown
+this branch's changes in unrelated scope.
+
+**Stack mode overrides the generic commands below.** Use the current virtual
+branch's verified name, parent SHA and head SHA from the sequential adapter, not
+the combined workspace branch or HEAD. Generate the initial diff and file
+manifest from that immutable parent/head range. Keep those review artifacts.
 
 Before fixing that branch, record a clean tracked/index workspace baseline and
 serialize writers. Record each fix's exact paths and content changes, including
@@ -222,11 +225,8 @@ include its uncommitted fixes. If the current checkout is a combined managed
 workspace, do not treat it as one feature branch; resolve an explicit branch
 scope or use the stack adapter before proceeding.
 
-Diff against the branch's **own parent**, not trunk — reviewing against trunk
-would include ancestor PRs and drown the reviewers in unrelated changes. In
-GitButler stack mode, use the base from `but branch show <branch>`. For plain
-Git, use the merge-base with the verified default branch. In stack mode,
-override `parent` below with the branch's base from the adapter.
+For plain Git, use the merge-base with the verified default branch. In stack
+mode, override `parent` below with the exact parent from the adapter.
 
 ```bash
 default_branch=$(git symbolic-ref refs/remotes/origin/HEAD --short) || {
@@ -250,8 +250,10 @@ coordinator running elsewhere must pass the verified review-worktree root to
 workflows and children; neither its own cwd nor the shared Git directory is an
 artifact root. Run the delta workflow from that checkout; a coordinator running
 elsewhere must add `cwd: repoRoot` to every child-agent options object in its
-example. An exported source directory is not the review checkout. Remove these
-temporary artifacts with the worktree.
+example. Set `repoRoot` to that verified checkout for every child cwd; never
+substitute `out_dir` or an exported `sourceRoot`. An exported source directory
+is a read boundary, not the review checkout. Remove these temporary artifacts
+with the worktree.
 
 Before creating the invocation directory or writing any artifact, complete step
 1's global preflight for this invocation path, including repair accounting
@@ -269,8 +271,8 @@ value of `out_dir`:
 ```
 
 Require successful creation and provenance recording before writing descendants.
-Use an available registered harness equivalent if the tool name differs; do not
-fall back to raw `mkdir`. Add `crossWorkspace: true` only for an explicitly
+Use an available registered harness equivalent if its tool name differs; do not
+fall back to raw `mkdir`. Add `crossWorkspace: true` only for an independently
 authorized target outside the tool session's workspace. The native UUID supplies
 the invocation namespace; the creation API does not promise exclusive
 allocation.
@@ -794,6 +796,7 @@ const [verifications, sweep, markdown] = await parallel([
           `Do not edit or spawn another critic. Report reviewedFiles for scoped files ` +
           `only and unreadFiles for any incomplete required coverage.`,
         {
+          cwd: repoRoot,
           label: "markdown-consistency",
           phase: "Sweep",
           model: lightModel,
