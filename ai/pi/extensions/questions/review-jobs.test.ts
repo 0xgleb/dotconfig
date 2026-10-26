@@ -132,11 +132,16 @@ test("two editorial critiques end with the author's final revision and a queued 
   })
   f.jobs.submit(draft, f.context)
   await settle()
+
+  const snapshot = f.jobs.snapshots()[0]
+
+  assert.ok(snapshot)
   assert.deepEqual(roles, ["critic", "author", "critic", "author"])
-  assert.equal(f.jobs.snapshots()[0].status, "queued-question")
-  assert.equal(f.jobs.snapshots()[0].pass, 2)
-  assert.equal(f.jobs.snapshots()[0].questionId, 7)
-  assert.match(f.jobs.snapshots()[0].reason!, /final author revision/i)
+  assert.equal(snapshot.status, "queued-question")
+  assert.equal(snapshot.pass, 2)
+  assert.equal(snapshot.questionId, 7)
+  assert.ok(snapshot.reason)
+  assert.match(snapshot.reason, /final author revision/i)
   assert.deepEqual(f.sent, [{ action: "ask", ...final }])
   assert.equal(f.terminal.length, 1)
 })
@@ -154,9 +159,14 @@ test("last author revision still rejects changed links instead of publishing", a
   )
   f.jobs.submit(draft, f.context)
   await settle()
+
+  const snapshot = f.jobs.snapshots()[0]
+
+  assert.ok(snapshot)
   assert.equal(authors, 2)
-  assert.equal(f.jobs.snapshots()[0].status, "unavailable")
-  assert.match(f.jobs.snapshots()[0].reason!, /changed URL set/)
+  assert.equal(snapshot.status, "unavailable")
+  assert.ok(snapshot.reason)
+  assert.match(snapshot.reason, /changed URL set/)
   assert.equal(f.sent.length, 0)
 })
 
@@ -172,12 +182,20 @@ test("cancellation during the last author revision prevents publication", async 
   )
   f.jobs.submit(draft, f.context)
   await settle()
+
+  const revisingSnapshot = f.jobs.snapshots()[0]
+
+  assert.ok(revisingSnapshot)
   assert.equal(authors, 2)
-  assert.equal(f.jobs.snapshots()[0].status, "revising")
+  assert.equal(revisingSnapshot.status, "revising")
   f.jobs.cancelAll()
   last.resolve(JSON.stringify(revised))
   await settle()
-  assert.equal(f.jobs.snapshots()[0].status, "cancelled")
+
+  const cancelledSnapshot = f.jobs.snapshots()[0]
+
+  assert.ok(cancelledSnapshot)
+  assert.equal(cancelledSnapshot.status, "cancelled")
   assert.equal(f.sent.length, 0)
 })
 
@@ -196,9 +214,14 @@ test("publication rejection remains an explicit operational failure, not editori
   t.after(() => jobs.close())
   jobs.submit(draft, f.context)
   await settle()
-  assert.equal(jobs.snapshots()[0].status, "unavailable")
-  assert.match(jobs.snapshots()[0].reason!, /Decision q4 is already pending/)
-  assert.equal(jobs.snapshots()[0].questionId, undefined)
+
+  const snapshot = jobs.snapshots()[0]
+
+  assert.ok(snapshot)
+  assert.equal(snapshot.status, "unavailable")
+  assert.ok(snapshot.reason)
+  assert.match(snapshot.reason, /Decision q4 is already pending/)
+  assert.equal(snapshot.questionId, undefined)
 })
 
 for (const output of [
