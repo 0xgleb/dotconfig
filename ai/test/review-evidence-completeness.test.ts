@@ -77,11 +77,15 @@ const args = {
   sourceAccess: "Fixture source is supplied at the agent boundary.",
   includeAttribution: false,
 }
-type ExternalLane = (typeof args.lanes)[number] & { externalCmd: string }
+type LegacyLane = (typeof args.lanes)[number] & { externalCmd: string }
 const runReview = async (
   overrides: Partial<Record<Stage, AgentResponse>> = {},
   calls: Stage[] = [],
-  extraLanes: ExternalLane[] = [],
+  extraLanes: LegacyLane[] = [],
+  options: {
+    tierModels?: { light: string; mid: string }
+    inspectRequest?: (request: AgentRequest) => void
+  } = {},
 ) => {
   const results: Record<Stage, AgentResponse> = {
     review: completed({ findings: [finding] }),
@@ -90,7 +94,11 @@ const runReview = async (
     synthesis: completed({ report_markdown: "One verified finding." }),
     ...overrides,
   }
-  const input = { ...args, lanes: [...args.lanes, ...extraLanes] }
+  const input = {
+    ...args,
+    lanes: [...args.lanes, ...extraLanes],
+    tierModels: options.tierModels,
+  }
   const report = await runWorkflowScript(
     `const args = ${JSON.stringify(input)};\n${script}`,
     limits,
@@ -99,6 +107,7 @@ const runReview = async (
       // The real sandbox handles schema-backed results and blocked envelopes.
       availableMemoryBytes: () => Number.MAX_SAFE_INTEGER,
       runAgent: async request => {
+        options.inspectRequest?.(request)
         const stage = stageOf(request)
         calls.push(stage)
         const response = results[stage]
@@ -177,26 +186,54 @@ test("blocked synthesis is incomplete rather than a missing clean report", async
   assert.equal(report.report, null)
 })
 
-test("blocked optional Claude evidence does not invalidate a complete native review", async () => {
-  const { report } = await runReview(
-    { optional: blocked },
+test("legacy external-command metadata stays native and its blocked lane remains required", async () => {
+  const { report, calls } = await runReview(
+    {
+      review: request =>
+        request.task.includes("/fixture/legacy.txt")
+          ? blocked
+          : completed({ findings: [finding] }),
+    },
     [],
     [
       {
-        key: "optional-claude",
-        promptPath: "/fixture/optional.txt",
+        key: "legacy-reviewer",
+        promptPath: "/fixture/legacy.txt",
         diffPath: "/fixture/diff.patch",
         externalCmd: "fixture-only-command-never-executed",
       },
     ],
+    {
+      inspectRequest: request => {
+        assert.equal(request.model, "openai-codex/gpt-6.1-sol")
+        assert.doesNotMatch(request.task, /Use Bash to run external/)
+        assert.doesNotMatch(request.task, /fixture-only-command/)
+      },
+    },
   )
+  assert.deepEqual(calls, ["review", "review"])
   assert.ok("status" in report)
-  assert.equal(report.status, "completed")
+  assert.equal(report.status, "incomplete")
   assert.ok("laneErrors" in report)
-  assert.match(JSON.stringify(report.laneErrors), /optional-claude/)
+  assert.match(JSON.stringify(report.laneErrors), /legacy-reviewer/)
   assert.match(JSON.stringify(report.laneErrors), /unavailable source evidence/)
   assert.ok("report" in report)
-  assert.equal(report.report, "One verified finding.")
+  assert.equal(report.report, null)
+})
+
+test("review, verification and synthesis keep GPT-6.1-sol despite caller tier overrides", async () => {
+  const models: (string | undefined)[] = []
+  const { report, calls } = await runReview({}, [], [], {
+    tierModels: { light: "foreign/light", mid: "foreign/mid" },
+    inspectRequest: request => {
+      assert.equal(request.model, "openai-codex/gpt-6.1-sol")
+      models.push(request.model)
+    },
+  })
+  assert.deepEqual(calls, ["review", "verify", "synthesis"])
+  assert.equal(models.length, 3)
+  assert.ok("status" in report)
+  assert.equal(report.status, "completed")
 })
 
 test("partial verification preserves both verified and blocked candidates", async () => {

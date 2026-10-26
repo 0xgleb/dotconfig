@@ -7,9 +7,7 @@ import {
   tierModel,
 } from "../pi/extensions/shared/model-tiers.ts"
 
-// Extension-source content assertions (classifier tiers, Claude routing in
-// agent-process) live with their owning repo (dataclique/metagenda) after the
-// pi-source migration. This file pins only the dotconfig-owned review skills.
+// These contracts cover dotconfig-owned review skills, not provider runtimes.
 const reviewCore = readFileSync(
   new URL("../skills/review-core/SKILL.md", import.meta.url),
   "utf8",
@@ -22,21 +20,54 @@ const reviewPr = readFileSync(
   new URL("../skills/review-pr/SKILL.md", import.meta.url),
   "utf8",
 )
+const reviewSweep = readFileSync(
+  new URL("../skills/review-sweep/SKILL.md", import.meta.url),
+  "utf8",
+)
 
-test("Pi workflows never route Claude through API providers", () => {
-  assert.match(reviewCore, /Anthropic API billing is disabled/i)
-  assert.match(reviewCore, /claude -p --permission-mode plan/i)
+const skills = [
+  ["review core", reviewCore],
+  ["review loop", reviewLoop],
+  ["review PR", reviewPr],
+  ["review sweep", reviewSweep],
+] as const
+
+test("all review skills select authenticated native GPT-6.1-sol lanes", () => {
+  for (const [name, contents] of skills) {
+    assert.match(contents, /openai-codex\/gpt-6\.1-sol/, name)
+    assert.doesNotMatch(contents, /\b(?:sonnet|opus|fable)\b/i, name)
+    assert.doesNotMatch(contents, /claude -p|Bash\((?:claude|agy):/, name)
+  }
   assert.match(
-    reviewPr,
-    /Never\s+send `fable`,\s+`sonnet`,\s+`opus`,\s+`claude-\*`,\s+or/i,
+    reviewCore,
+    /const lightModel = ["']openai-codex\/gpt-6\.1-sol["']/,
   )
+  assert.match(reviewCore, /const midModel = lightModel/)
+  assert.match(
+    reviewLoop,
+    /const lightModel = ["']openai-codex\/gpt-6\.1-sol["']/,
+  )
+  assert.doesNotMatch(reviewCore, /tierModels\?\.(?:light|mid)/)
+  assert.doesNotMatch(reviewCore, /lane\.externalCmd|fallbackCmds/)
 })
 
-test("review workflow children receive an explicit repository cwd and least-privilege tools", () => {
+test("every inspector table row names the same current model", () => {
+  const rows = reviewCore
+    .split("\n")
+    .filter(line => /^\| [a-z-]+\s+\|/.test(line))
+    .map(line => line.split("|").map(cell => cell.trim()))
+    .filter(cells => cells[2]?.startsWith("`"))
+  assert.equal(rows.length, 21)
+  for (const row of rows) {
+    assert.equal(row[4], "gpt-6.1-sol", row[1])
+  }
+})
+
+test("review children retain explicit repository cwd and least-privilege source tools", () => {
   assert.match(reviewCore, /cwd: repoRoot/)
   assert.match(
     reviewCore,
-    /tools: lane\.externalCmd[\s\S]*?\[["']read["'], ["']grep["'], ["']find["'], ["']ls["'], ["']bash["']\][\s\S]*?: sourceTools/,
+    /label: `review:\$\{lane\.key\}`[\s\S]*?tools: sourceTools/,
   )
   assert.match(
     reviewCore,
@@ -44,91 +75,26 @@ test("review workflow children receive an explicit repository cwd and least-priv
   )
 })
 
-test("review-pr lanes get bounded no-checkout access to the exact PR-head git object", () => {
+test("PR lanes retain bounded no-checkout access to the exact head object", () => {
   assert.match(reviewPr, /"sourceRevision": "<head_sha>"/)
-  assert.match(reviewCore, /sourceRevision/)
   assert.match(reviewCore, /\^\[0-9a-f\]\{40,64\}\$/)
   assert.match(
     reviewCore,
     /const sourceTools = gitObjectSource[\s\S]*?["']bash["']/,
   )
-  assert.match(reviewCore, /tools: lane\.externalCmd[\s\S]*?: sourceTools/)
-  assert.match(
-    reviewCore,
-    /label: `verify:\$\{finding\.file\}`[\s\S]*?tools: sourceTools/,
-  )
   assert.match(
     reviewCore,
     /label: ["']synthesize["'][\s\S]*?tools: sourceTools/,
   )
-  assert.match(reviewCore, /Never read (?:\\)?`\.env\*/)
+  assert.match(reviewCore, /Never read\s+(?:\\)?`\.env\*/)
   assert.match(reviewCore, /credential stores, private keys, or certificates/)
 })
 
-test("Claude review-duty adapters stay inside the subscription harness", () => {
-  for (const [name, contents] of [
-    ["review loop", reviewLoop],
-    ["review PR", reviewPr],
-  ] as const) {
-    assert.match(contents, /Claude Code review-duty harness adapter/)
-    assert.match(contents, /CLAUDE_REVIEW_HANDOFF v1/)
-    assert.match(contents, /independent native Fable verifier/)
-    assert.match(contents, /pi-bridge send/)
-    assert.match(
-      contents,
-      /Never\s+invoke\s+Claude through Pi, an Anthropic API provider/i,
-    )
-    assert.match(contents, /Missing subscription auth or Fable is `blocked`/)
-  }
-})
-
-test("review lanes resolve through provider tiers instead of one hardcoded provider", () => {
-  for (const [name, contents] of [
-    ["review core", reviewCore],
-    ["review loop", reviewLoop],
-    ["review PR", reviewPr],
-  ] as const) {
-    assert.doesNotMatch(
-      contents,
-      /gpt-5\.4-mini/,
-      `${name} must not regress below GPT-5.6`,
-    )
-    assert.doesNotMatch(
-      contents,
-      /\bmodel\s*:\s*["'][a-zA-Z0-9._-]+\/[^"'\r\n]+["']/,
-      `${name} must not hardcode one provider's model in a lane cell`,
-    )
-  }
-  assert.match(reviewCore, /provider tier/)
-  assert.match(reviewCore, /PI_PROVIDER/)
-  assert.match(reviewCore, /zai\/glm-5\.3-flash/)
-  assert.match(reviewCore, /model: lightModel/)
-  assert.match(reviewCore, /model: midModel/)
-  assert.match(reviewLoop, /tierModels\?\.light/)
-  assert.match(reviewLoop, /tierModels/)
-})
-
-test("documented review tiers mirror the shared model-tier source", () => {
-  const tiers: readonly ModelTier[] = ["light", "mid", "top"]
-  const documentedTiers = [
-    ...reviewCore.matchAll(
-      /- `([^`]+)`: light\s+`([^`]+)`, mid\s+`([^`]+)`, top\s+`([^`]+)`/g,
-    ),
-  ]
-
-  assert.equal(documentedTiers.length, MODEL_TIER_PROVIDERS.length)
-
-  for (const provider of MODEL_TIER_PROVIDERS) {
-    const entries = documentedTiers.filter(entry => entry[1] === provider)
-
-    assert.equal(entries.length, 1, `Expected one tier row for ${provider}`)
-    const entry = entries[0]
-    assert.ok(entry)
-
-    for (const [index, tier] of tiers.entries()) {
-      const model = tierModel(tier, provider)
-      assert.ok(model, `Missing ${provider} ${tier} model`)
-      assert.equal(entry[index + 2], model, `${provider} ${tier} model drifted`)
-    }
+test("dedicated review-duty adapters use registered gates and native verification", () => {
+  for (const contents of [reviewLoop, reviewPr]) {
+    assert.match(contents, /review_duty/)
+    assert.match(contents, /own\/assigned\/automatic/)
+    assert.match(contents, /openai-codex\/gpt-6\.1-sol/)
+    assert.doesNotMatch(contents, /CLAUDE_REVIEW_HANDOFF|pi-bridge send/)
   }
 })

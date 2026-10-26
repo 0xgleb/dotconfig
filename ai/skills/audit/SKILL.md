@@ -1,13 +1,13 @@
 ---
 name: audit
 user-invocable: true
-allowed-tools: Bash(git:*), Bash(gh:*), Bash(but:*), Bash(direnv:*), Bash(agy:*), Bash(command:*), Bash(cargo:*), Bash(nix:*), Bash(mkdir:*), Bash(cat:*), Bash(mktemp:*), Bash(rm:*), Bash(test:*), Bash(grep:*), Bash(wc:*), Bash(date:*), Bash(basename:*), Bash(find:*), Read, Write, Edit, Agent, Workflow, AskUserQuestion, Skill
-description: Use to audit a whole codebase (the entire repository by default, or a specified package or path) with the multi-model review panel, then fix the actionable findings and put them up as pull requests using the project's version control or stacking tool (GitButler or plain git). Triggers on requests to audit the repo or a crate or package and open fixes for what it finds. Like review-loop, but scoped to standing code and shipping the fixes as PRs.
+allowed-tools: Bash(git:*), Bash(gh:*), Bash(but:*), Bash(direnv:*), Bash(command:*), Bash(cargo:*), Bash(nix:*), Bash(mkdir:*), Bash(cat:*), Bash(mktemp:*), Bash(rm:*), Bash(test:*), Bash(grep:*), Bash(wc:*), Bash(date:*), Bash(basename:*), Bash(find:*), Read, Write, Edit, Agent, Workflow, AskUserQuestion, Skill
+description: Use to audit a whole codebase (the entire repository by default, or a specified package or path) with the native review panel, then fix the actionable findings and put them up as pull requests using the project's version control or stacking tool (GitButler or plain git). Triggers on requests to audit the repo or a crate or package and open fixes for what it finds. Like review-loop, but scoped to standing code and shipping the fixes as PRs.
 argument-hint: [package-or-path]
 ---
 
-Audit a whole codebase with the same multi-model panel the rest of the review
-stack uses, then **fix what it finds and put the fixes up as PRs**. Where
+Audit a whole codebase with the same native panel the rest of the review stack
+uses, then **fix what it finds and put the fixes up as PRs**. Where
 `/review-pr`, `/review-loop`, and `/review-sweep` review a **diff**, this
 reviews **standing code** — the whole repo, or a package/path you name — and,
 like `/review-loop`, fixes the findings; but instead of leaving fixes
@@ -231,32 +231,43 @@ exact scoped global-resource branch/PR workflow is already authorized by
 `GLOBAL_AGENTS.md`. In that case record the bounded plan and execute it without
 another approval round; do not add unrelated clusters or external effects.
 
-## 8. Open one PR per cluster
+## 8. Deliver one PR per cluster
 
-For each confirmed cluster (return to `trunk`/start between clusters):
+For each confirmed cluster (return to `trunk`/start between independent
+clusters):
 
-1. **Branch off trunk.** GitButler: create a new virtual branch. Plain Git:
-   `git checkout "$trunk"` then `git checkout -b <name>`.
-2. **Apply the cluster's fixes** with `/review-loop`'s fix discipline: read the
-   source, re-verify each finding against current code, apply a surgical fix,
-   add or update tests where the project docs require coverage. Keep it to this
-   cluster's files.
-3. **Compile gate + delta re-review + check.** Run the fastest scoped typecheck,
-   then `/review-loop`'s delta re-review over the fix, then `check_cmd` (skip if
-   none) until green. Never open a PR whose fixes do not compile or fail the
-   project check.
-4. **Commit and open a DRAFT PR, assigned to you.** Commit the cluster. Then:
-   - GitButler: `but push` the branch, then `gh pr create --draft`.
-   - Plain git: `git push -u origin <name>`, then `gh pr create --draft`. Then
-     `gh pr edit <number> --add-assignee @me` (PRs default to no assignee).
-5. **PR description = Motivation / Solution** (the repo default), citing the
-   audit findings it closes: file:line, severity, why it matters, and the fix.
-   Keep it factual; no AI-process narration.
+1. **Use the cluster's branch.** Continue an existing unmerged branch/PR for
+   follow-up corrections, checking later stacked changes before revising an
+   earlier version. For a new independent cluster, create a virtual branch in a
+   verified GitButler workspace, or a plain-Git branch off trunk. A new prompt
+   or session is not a reason to duplicate ongoing work.
+2. **Apply only this cluster's fixes** with `/review-loop`'s fix discipline:
+   read the source, re-verify each finding, make surgical fixes and add required
+   behavior tests. Use scoped file/hunk assignment to keep unrelated changes off
+   the branch. Draft status never excuses mixed commits, branches or PRs.
+3. **Publish checkpoints continuously.** Commit and push the first scoped
+   checkpoint and open a self-assigned draft PR through the repository's
+   authorized workflow; update an existing PR instead of creating a duplicate.
+   Keep normal hooks. Incomplete code or failing checks can be checkpointed in
+   that correctly scoped draft with their status stated accurately. Commit and
+   push each completed unit before starting another.
+4. **Verify the published head.** Run the scoped compile gate, delta re-review
+   and the project's required checks, including required CI when applicable.
+   Local checks suffice when the repository uses local verification instead of
+   CI. Agent reviews do not replace required checks; failed, pending or
+   unverified checks keep the PR draft.
+5. **Keep the description current.** Use the repository's PR template, or
+   Motivation / Solution when none exists. Explain the problem and solution
+   without private attribution or an AI-process journal.
+6. **Mark completed PRs ready.** Once the cluster is complete and its required
+   checks pass for the published head, run `gh pr ready <number>` or the
+   repository's equivalent and verify the resulting state. This applies to all
+   authorized audit-fix PRs, not only global resources; do not invent a second
+   approval gate. Honor an explicit owner instruction to retain a draft.
+   Otherwise continue unfinished scoped work or report its concrete blocker; do
+   not call a still-draft delivery complete.
 
-Open PRs as **drafts**. Only a scoped global-resource change authorized by
-`GLOBAL_AGENTS.md` may be marked ready after completion and verification; other
-audits retain their ordinary ready-state gate. Never merge or override branch
-protection.
+Never merge or override branch protection.
 
 ## 9. Return and summarize
 
@@ -265,10 +276,10 @@ restore). Print the summary:
 
 ```
 ━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━
-Audit complete — <tool>  ·  <N> draft PRs opened
+Audit delivery — <tool>  ·  <N> PRs ready · <M> drafts blocked
 ━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━
-  #123  fix/settlement-rounding   <url>   (closes 2 findings)
-  #124  fix/auth-check-admin      <url>   (closes 1 finding)
+  #123  fix/settlement-rounding   <url>   ready; closes 2 findings
+  #124  fix/auth-check-admin      <url>   draft; required check failing
 
 Deferred (not fixed): 6 findings — say the word to file them as issues.
 Full report: <path to review.md>
@@ -281,27 +292,29 @@ each exact draft and obtain confirmation before creating it.
 
 ## Hard rules
 
-1. **Opening PRs is this skill's purpose**, as drafts assigned to self. Follow
-   the explicit scoped global-resource ready-after-verification exception when
-   applicable; never merge or override branch protection.
+1. **Deliver verified PRs, not permanent drafts.** Publish scoped draft
+   checkpoints, then mark each PR ready once its work and required checks pass
+   for the published head, unless the owner explicitly requires draft-only
+   delivery. Self-assign; never merge or override branch protection.
 2. **Confirm new publication scope before creating branches/PRs.** Do not ask
    again for the exact scoped global-resource workflow already authorized by
    `GLOBAL_AGENTS.md`; unrelated extra PRs still need authority.
 3. **One coherent, small PR per cluster.** Never a single giant PR; group by
    crate/module/theme; default to independent sibling branches off trunk, stack
    only on real dependencies.
-4. **Every PR compiles and passes `check_cmd` before it is opened.** Fixes are
-   surgical and scoped to the cluster; re-verify each finding against current
-   source first.
+4. **Required checks gate readiness, not checkpoint publication.** Preserve
+   normal hooks, keep incomplete or failing work draft, and verify the published
+   head before marking ready. Fixes and branch diffs stay scoped to one cluster
+   at every checkpoint; re-verify findings against current source.
 5. **Clean tree after the directory-ignore preflight; never leak unrelated
    changes** into fix branches. Account for owned ignore repairs separately,
    including zero-finding audits and checkout transitions. Return to the start
    branch at the end.
 6. The audit target is a synthetic diff against the empty tree — everything
    shown is in scope; "pre-existing/out of scope" never applies.
-7. The review runs as a single `Workflow` invocation per pass (review-core) —
-   never hand-roll the fan-out. External CLIs run read-only (review-core step
-   4): agy `--sandbox` and never `--dangerously-skip-permissions`.
+7. The review runs as a single `Workflow` invocation per pass (review-core),
+   using read-only authenticated `openai-codex/gpt-6.1-sol` lanes through the
+   active harness's classified workflow. Do not launch external model CLIs.
 8. **Filing deferred findings is gated**: show drafts, confirm, then create. Use
    GitHub issues with problem-only descriptions.
 9. Immediately add missing `.tmp/` or `.worktrees/` directory patterns to the
@@ -317,9 +330,10 @@ each exact draft and obtain confirmation before creating it.
   hard and proceed; a one-line heads-up is fine, but do NOT stop for
   confirmation on an unscoped audit. Scoping to a package is an optional cheaper
   follow-up the user may choose, not a gate.
-- **A cluster's fix fails to converge or breaks the check command** — do not
-  open that PR; report it, keep its findings in the deferred list, and continue
-  with the other clusters.
+- **A cluster's fix fails to converge or breaks a required check** — preserve
+  and publish its scoped checkpoint as a draft with the exact blocker. Do not
+  mark it ready or silently reclassify unfinished work as deferred. Follow the
+  repository's blocked-publication rules before starting another unit.
 - **A required native lane errors** — preserve an incomplete result and its
   reason. Selected inspectors are required; empty findings do not prove clean.
 - **The workflow fails mid-run** — relaunch with
