@@ -379,6 +379,12 @@ For each remaining finding, compute a **default action** based on severity,
 verdict, and confidence. **Bias heavily toward fixing now** — only defer when
 the fix is massive enough to warrant its own stacked PR.
 
+**Error-contract boundary:** This boundary overrides severity defaults and every
+automatic-fix instruction in this skill. Automatically correct error models only
+when the public error contract is preserved or that specific contract change is
+already authorized. Otherwise classify the finding as **Discuss** before
+editing. Do not request renewed approval for an already-authorized correction.
+
 | Severity | Verdict  | Confidence | Default action   |
 | -------- | -------- | ---------- | ---------------- |
 | critical | any      | any        | **Auto-fix**     |
@@ -403,8 +409,10 @@ re-test and re-review semantic changes. This does not expand publication scope.
 
 **Auto-dismiss**: drop the finding silently. No user input needed.
 
-**Discuss**: the evidence is weak or reviewers disagree. Show the user the full
-finding and ask what to do. Default to fixing unless it's massive.
+**Discuss**: the evidence is weak, reviewers disagree, or the specific public
+error-contract change lacks authorization. Show the user the full finding and
+ask what to do. Do not edit an unauthorized public error-contract change before
+authorization.
 
 **Defer to GitHub** is NOT a default action. Only use it when:
 
@@ -439,7 +447,7 @@ Full details: <path to review.md>
 For **discuss** findings only, use `AskUserQuestion`:
 
 ```
-Q: [#N] <title> — sev <severity>. Reviewers disagree — what should I do?
+Q: [#N] <title> — sev <severity>. Decision needed — what should I do?
    options:
      - "Fix now" (Recommended) — implement the fix in this session
      - "Dismiss" — drop it, not a real issue
