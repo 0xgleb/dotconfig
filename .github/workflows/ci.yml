@@ -1,5 +1,8 @@
 name: CI
 
+permissions:
+  contents: read
+
 on:
   push:
     branches: [master]
@@ -18,6 +21,15 @@ jobs:
           extra_nix_config: |
             experimental-features = nix-command flakes
       - run: nix flake check
+      - name: Typecheck Pi extensions
+        timeout-minutes: 10
+        working-directory: ai/pi/extensions
+        run: |
+          nix shell github:NixOS/nixpkgs/02c087f3fe673c9e317f206a627cb6b910336dbe#nodejs --command bash -euo pipefail -c '
+            node --test ci-typecheck.test.ts
+            npm ci --legacy-peer-deps --include=dev
+            npm run typecheck
+          '
 
   build-nixos:
     runs-on: ubuntu-latest
