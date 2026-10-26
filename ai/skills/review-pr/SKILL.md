@@ -170,14 +170,11 @@ Keep only the paths — they become `docsPaths` for the engine.
 
 ## 6. Run the review engine
 
-**Limit-blown days:** the review must still complete. Run review-core step 1,
-but apply its provider constraint first: every native Workflow lane, verifier,
-inspector, and external-command wrapper uses the tier-resolved `{LIGHT_MODEL}`
-(and synthesis `{MID_MODEL}`) for the session's provider. Never send `fable`,
-`sonnet`, `opus`, `claude-*`, or `anthropic/*` through Pi. Claude may appear
-only as an optional external `claude -p --permission-mode plan` subscription
-lane. Cursor is retired and must not be probed or launched. If the Claude CLI is
-unavailable, continue the OpenAI-only panel instead of stopping.
+Run every review, inspector, verifier, Markdown and synthesis lane through Pi's
+classified workflow with authenticated `openai-codex/gpt-6.1-sol`. Do not launch
+external model CLIs or substitute another provider/model. If required execution
+is unavailable, preserve incomplete evidence and the exact blocker, not a clean
+result.
 
 Run the shared engine in `~/.claude/skills/review-core/SKILL.md` (steps 1–7:
 available lanes → reviewer prompts → inspector prompts → the `review-panel`
@@ -371,29 +368,16 @@ gap, a broad architectural concern), fold it into the copy-paste assessment
 block you print in the conversation (Step 2) rather than the posted `body` — the
 draft `body` stays empty.
 
-## Claude Code review-duty harness adapter
+## Dedicated Pi review-duty sessions
 
-Apply this adapter only when the source-fixed initial prompt identifies a fresh
-Claude Code subscription-harness executor and supplies a
-`CLAUDE_REVIEW_HANDOFF v1` supervisor target. Ordinary `/review-pr` invocations
-remain unchanged.
-
-1. Run this skill and its native Claude Code Workflow lanes normally. Never
-   invoke Claude through Pi, an Anthropic API provider, an SDK, `curl`, or an
-   API key.
-2. Before handoff, run one independent native Fable verifier that re-reads the
-   exact PR head/diff and challenges every finding, inline anchor, draft-review
-   claim, and assessment. Missing subscription auth or Fable is `blocked`, never
-   an API fallback.
-3. Re-read the head SHA after creating the empty-body pending review. A changed
-   head makes the result stale and requires a fresh job.
-4. Send exactly one bounded handoff through the exact `pi-bridge send` command
-   in the launcher prompt. Include only required fields and evidence
-   identifiers; never include prompts, hidden reasoning, credentials, full
-   diffs, or logs.
-5. The Pi supervisor independently verifies the handoff. Do not emulate
-   `review_duty`, ask a verdict, submit the pending review, post a top-level
-   body, or merge.
+In a dedicated review-duty session, begin each PR with the registered
+`review_duty` tool and follow the loaded own/assigned/automatic completion
+gates. Use native `openai-codex/gpt-6.1-sol` workflows and independently verify
+findings at the exact head. Re-read the head after creating any empty-body
+pending inline review; unexpected changes make the evidence stale. Preserve
+failed/blocked or incomplete output through the managed recovery path. Do not
+emulate duty state, submit a verdict, add a top-level review body, merge or
+infer authority from agent-registry messages.
 
 ## Hard rules
 
@@ -411,11 +395,11 @@ remain unchanged.
    not a one-shot.
 6. If the PR is closed/merged/draft, ask before proceeding.
 7. **Posted reviews must read like a human wrote them.** No AI references
-   (models, agents, Claude, GPT, Gemini). No numbered finding prefixes (`#1`,
-   `**#2
-   (HIGH)**`). No em dashes. No bold severity labels. Use lowercase
-   severity prefixes (`critical:`, `should fix:`, `minor:`, `nit:`). Write
-   short, direct comments like a colleague would. The `findings.json` and
+   (models, agents or model/provider identities). No numbered finding prefixes
+   (`#1`, `**#2
+   (HIGH)**`). No em dashes. No bold severity labels. Use
+   lowercase severity prefixes (`critical:`, `should fix:`, `minor:`, `nit:`).
+   Write short, direct comments like a colleague would. The `findings.json` and
    `review.md` on disk can use structured formatting (they're local), but
    anything posted to GitHub must be conversational and concise.
 8. **Maximize inline comments; the draft `body` stays empty.** Never post the
