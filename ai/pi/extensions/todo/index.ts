@@ -69,6 +69,7 @@ const TodoParams = Type.Object({
   action: StringEnum([
     "list",
     "priority",
+    "effort",
     "add",
     "toggle",
     "status",
@@ -89,6 +90,18 @@ const TodoParams = Type.Object({
       Type.Integer({ minimum: 1, maximum: Number.MAX_SAFE_INTEGER }),
       Type.Null(),
     ]),
+  ),
+  effort: Type.Optional(
+    Type.Union(
+      [
+        Type.Integer({ minimum: 1, maximum: Number.MAX_SAFE_INTEGER }),
+        Type.Null(),
+      ],
+      {
+        description:
+          "Optional Fibonacci relative effort points (1, 2, 3, 5, 8, ...); effort action accepts null to clear. One point anchors a complete small delivery unit: one file or a matching implementation/test pair, verification, commit, push, and completed ready PR. Advisory only, never time or a file-count algorithm.",
+      },
+    ),
   ),
   parentId: Type.Optional(
     Type.Integer({
@@ -198,7 +211,10 @@ class TodoListComponent {
             : todo.text
         const text = this.theme.fg(isCompleted ? "dim" : "text", label)
         lines.push(
-          truncateToWidth(`${CONTENT_GUTTER}${check} ${id} ${text}`, width),
+          truncateToWidth(
+            `${CONTENT_GUTTER}${check} ${id} ${text}${todo.effort === undefined ? "" : ` [effort ${todo.effort} points]`}`,
+            width,
+          ),
         )
       }
     }
@@ -282,7 +298,7 @@ export default function todoExtension(
   pi: ExtensionAPI,
   managerRuntime?: ManagerTodoRuntime,
 ): void {
-  registerRuntimeVersion(pi, "todo", "2026.09.13.5")
+  registerRuntimeVersion(pi, "todo", "2026.10.25.1")
   const stateRef = Effect.runSync(Ref.make<TodoState>(emptyTodoState))
   let restorationError: string | undefined
   let hudExpiry: ReturnType<typeof setTimeout> | undefined
@@ -656,7 +672,7 @@ export default function todoExtension(
         message: result.content.map(part => part.text).join("\n"),
       }
     },
-    { priority: true },
+    { priority: true, effort: true },
   )
   pi.on("session_shutdown", releaseControl)
 
@@ -664,16 +680,21 @@ export default function todoExtension(
     name: "todo",
     label: "Todo",
     description:
-      "Manage branch-aware tasks. add accepts parentId for one level of subtasks; grandchildren are forbidden. reply accepts at most 3 entries of 300 characters; restructure at the cap. priority sets an independent positive safe-integer rank (lower first), or null to unassign, without changing status. Other actions: list, toggle, status, block, unblock, clear.",
+      "Manage branch-aware tasks. add accepts parentId for one level of subtasks; grandchildren are forbidden. reply accepts at most 3 entries of 300 characters; restructure at the cap. priority sets an independent positive safe-integer rank (lower first), or null to unassign, without changing status. effort sets or clears optional Fibonacci relative points; add also accepts effort. Estimates never gate status, priority, or execution. Other actions: list, toggle, status, block, unblock, clear.",
     parameters: TodoParams,
     async execute(_toolCallId, params, signal, _onUpdate, ctx) {
-      // The SDK preserves nullable priority even when another action is chosen.
-      // Only the priority action owns null's explicit-unassignment meaning.
+      // Nullable metadata survives SDK validation on unrelated actions.
+      // Only its owning action interprets null as explicit unassignment.
       const { priority, ...withoutPriority } = params
-      const request =
+      const normalizedPriority =
         params.action !== "priority" && priority === null
           ? withoutPriority
           : params
+      const { effort, ...withoutEffort } = normalizedPriority
+      const request =
+        params.action !== "effort" && effort === null
+          ? withoutEffort
+          : normalizedPriority
       const binding = getManagerBinding(pi, ctx)
       if (Either.isLeft(binding) || binding.right.role !== "worker")
         return invokeManagerTodo(pi, ctx, request, signal, managerRuntime)
@@ -693,6 +714,8 @@ export default function todoExtension(
         text += ` ${theme.fg("warning", `blocked: ${args.reason}`)}`
       if (args.remindAt)
         text += ` ${theme.fg("accent", `until ${args.remindAt}`)}`
+      if (args.effort !== undefined)
+        text += ` ${theme.fg("accent", args.effort === null ? "clear effort" : `effort ${args.effort} points`)}`
       return new Text(text, 0, 0)
     },
 
@@ -735,7 +758,7 @@ export default function todoExtension(
             todo.replies
               ?.map(reply => `\n    ${theme.fg("accent", "↳ reply:")} ${reply}`)
               .join("") ?? ""
-          text += `\n${check} ${theme.fg("accent", todoIdentityLabel(todo))} ${theme.fg(completed ? "dim" : "muted", label)}${replies}`
+          text += `\n${check} ${theme.fg("accent", todoIdentityLabel(todo))} ${theme.fg(completed ? "dim" : "muted", label)}${todo.effort === undefined ? "" : ` [effort ${todo.effort} points]`}${replies}`
         }
         if (!expanded && details.state.todos.length > visible.length) {
           text += `\n${theme.fg("dim", `... ${details.state.todos.length - visible.length} more`)}`
