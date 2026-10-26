@@ -29,6 +29,14 @@ For other authors (likely `levsgit`),
 
 > Reviewed and published by @0xgleb's clanker
 
+## Non-merge PR handoff
+
+Once polishing or pre-review is complete for a PR you are not authorized to
+merge, report the outcome directly to the owner on Telegram with `report_owner`.
+Include the PR link, reviewed head, verification status, and any unresolved
+findings or blockers. Do not report to the Manager or describe a queued report
+as delivered.
+
 ## Existing feedback
 
 When available, collect CodeRabbit feedback and other unaddressed PR review
