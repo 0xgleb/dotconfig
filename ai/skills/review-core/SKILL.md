@@ -21,8 +21,8 @@ Resolve once, before step 1:
    environment key (or the session model's `provider/id` prefix).
 2. Map it through the current tier table (mirror of
    `pi/extensions/shared/model-tiers.ts` — keep in sync with that source):
-   - `openai-codex`: light `openai-codex/gpt-5.6-luna`, mid
-     `openai-codex/gpt-5.6-terra`, top `openai-codex/gpt-5.6-sol`
+   - `openai-codex`: light `openai-codex/gpt-6.1-sol`, mid
+     `openai-codex/gpt-6.1-sol`, top `openai-codex/gpt-6.1-sol`
    - `zai`: light `zai/glm-5.3-flash`, mid `zai/glm-5.3`, top `zai/glm-5.3`
 3. Substitute the resolved ids for `{LIGHT_MODEL}` / `{MID_MODEL}` everywhere
    below.
