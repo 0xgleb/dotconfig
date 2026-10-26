@@ -97,6 +97,20 @@ test(
         "Preserve latest snapshot",
       ],
     )
+
+    const persisted = await Effect.runPromise(
+      f.first.backlogSnapshot("/repo/a"),
+    )
+    assert.deepEqual(persisted.items, state.items)
+    assert.deepEqual(persisted.sources.map(source => source.id).toSorted(), [
+      "session-1:todo-1:snapshot-1000",
+      "session-1:todo-1:snapshot-2000",
+    ])
+    assert.deepEqual(persisted.requirements.map(item => item.text).toSorted(), [
+      "Keep initial requirement",
+      "Keep initial requirement",
+      "Preserve latest snapshot",
+    ])
   },
 )
 
@@ -176,6 +190,7 @@ test(
     }
   },
 )
+
 test(
   "interrupted WAL initialization closes its uncached connection",
   { timeout: 15000 },
