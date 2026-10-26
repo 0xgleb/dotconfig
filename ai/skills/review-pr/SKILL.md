@@ -96,21 +96,19 @@ PR being reviewed. Preserve ordinary publication gates. If the scoped checkpoint
 or required publication is blocked, leave the repair saved and report the exact
 blocker before starting another work unit.
 
-Only after coverage and any required repair checkpoint are established, call the
-registered `artifact_provenance` tool with the resolved absolute value of
-`out_dir`:
+After coverage and any required repair checkpoint are established, call the
+registered `artifact_provenance` tool with the resolved absolute `out_dir`:
 
 ```json
 { "action": "create_directory", "path": "<resolved absolute out_dir>" }
 ```
 
 Require successful creation and provenance recording before writing descendants.
-Use an available registered harness equivalent if the tool name differs; do not
-fall back to raw `mkdir`. Add `crossWorkspace: true` only for an explicitly
+Use an available registered harness equivalent if its tool name differs; do not
+fall back to raw `mkdir`. Add `crossWorkspace: true` only for an independently
 authorized target outside the tool session's workspace. The native UUID supplies
 the invocation namespace; the creation API does not promise exclusive
 allocation. Artifacts remain local-only and ephemeral.
-
 
 ## 3. Fetch the diff
 
