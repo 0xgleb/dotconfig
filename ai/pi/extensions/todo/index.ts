@@ -265,21 +265,31 @@ const MAX_TIMER_DELAY_MS = 2_147_483_647
 const restoredState = (
   ctx: ExtensionContext,
 ): Effect.Effect<TodoState, TodoInputError> => {
-  const snapshots = ctx.sessionManager.getBranch().flatMap(entry => {
-    if (entry.type === "custom" && entry.customType === TODO_STATE_ENTRY)
-      return [{ data: entry.data }]
-    if (
-      entry.type !== "message" ||
-      entry.message.role !== "toolResult" ||
-      entry.message.toolName !== "todo"
-    )
-      return []
-    const details = entry.message.details
-    return typeof details === "object" && details !== null && "state" in details
-      ? [{ data: details.state }]
-      : []
-  })
-  const latest = snapshots.at(-1)
+  const branch = ctx.sessionManager.getBranch()
+  const persisted = branch.findLast(
+    entry => entry.type === "custom" && entry.customType === TODO_STATE_ENTRY,
+  )
+  // Tool results can arrive after newer manager mutations. Only legacy
+  // branches without authoritative entries restore from result details.
+  const latest =
+    persisted?.type === "custom"
+      ? { data: persisted.data }
+      : branch
+          .flatMap(entry => {
+            if (
+              entry.type !== "message" ||
+              entry.message.role !== "toolResult" ||
+              entry.message.toolName !== "todo"
+            )
+              return []
+            const details = entry.message.details
+            return typeof details === "object" &&
+              details !== null &&
+              "state" in details
+              ? [{ data: details.state }]
+              : []
+          })
+          .at(-1)
   if (!latest) return Effect.succeed(emptyTodoState)
   const decoded = decodeTodoState(latest.data)
   return Option.isSome(decoded)
@@ -419,8 +429,8 @@ export default function todoExtension(
       scheduleReminder(ctx, current)
       return
     }
-    Effect.runSync(Ref.set(stateRef, wake.state))
     pi.appendEntry(TODO_STATE_ENTRY, wake.state)
+    Effect.runSync(Ref.set(stateRef, wake.state))
     publishBranchTodos(ctx, wake.state)
     renderTaskWidget(ctx, wake.state)
     scheduleReminder(ctx, wake.state)
@@ -432,7 +442,7 @@ export default function todoExtension(
   }
 
   const reconstructAndRender = async (ctx: ExtensionContext) => {
-    const restored = await Effect.runPromise(Effect.either(restoredState(ctx)))
+    const restored = Effect.runSync(Effect.either(restoredState(ctx)))
     if (Either.isLeft(restored)) {
       restorationError = restored.left.message
       if (reminderTimer) clearTimeout(reminderTimer)
@@ -455,7 +465,7 @@ export default function todoExtension(
     )
       pi.appendEntry(TODO_STATE_ENTRY, state)
     restorationError = undefined
-    await Effect.runPromise(Ref.set(stateRef, state))
+    Effect.runSync(Ref.set(stateRef, state))
     publishBranchTodos(ctx, state)
     registerHudToggle(ctx)
     renderTaskWidget(ctx, state)
@@ -494,7 +504,7 @@ export default function todoExtension(
       return undefined
     }
     const current = Effect.runSync(Ref.get(stateRef))
-    const result = await Effect.runPromise(
+    const result = Effect.runSync(
       Effect.either(transitionTodoState(current, action, Date.now())),
     )
     if (Either.isLeft(result)) {
@@ -502,8 +512,8 @@ export default function todoExtension(
       return undefined
     }
     const transition = result.right
-    await Effect.runPromise(Ref.set(stateRef, transition.state))
     pi.appendEntry(TODO_STATE_ENTRY, transition.state)
+    Effect.runSync(Ref.set(stateRef, transition.state))
     publishBranchTodos(ctx, transition.state)
     renderTaskWidget(ctx, transition.state)
     scheduleReminder(ctx, transition.state)
