@@ -88,9 +88,8 @@ export const globalManagerSessionLaunchPlan = (
     )
     const sessionDirectory = join(
       input.agentDir,
-      "manager",
-      "global",
       "sessions",
+      `--${workspace.replace(/^[/\\]/u, "").replace(/[/\\:]/gu, "-")}--`,
     )
     return {
       kind: "launch",
@@ -107,8 +106,6 @@ export const globalManagerSessionLaunchPlan = (
         "--floating",
         "--",
         input.piExecutable,
-        "--session-dir",
-        sessionDirectory,
         "--continue",
         "--name",
         paneName,
