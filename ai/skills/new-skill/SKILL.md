@@ -65,6 +65,6 @@ for changing the canonical source.
 
 Missing context, broken live links or unavailable validation must be reported
 precisely, not hidden behind a clean claim. Preserve completed evidence and
-continue independent authorized work. A genuine platform incident follows the
-repository's support-routing policy; it does not transfer routine skill editing
-or grant new authority.
+continue independent authorized work. A genuine platform blocker follows the
+repository's owner-consulted investigation and repair procedure; it does not
+transfer routine skill editing or grant new authority.

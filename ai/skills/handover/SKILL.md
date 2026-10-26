@@ -49,9 +49,10 @@ after a handover attempt fails.
 
 Do not silently degrade to an inline summary. The required outcome is a real
 handover file. If a tool or classifier blocks creation, preserve the exact
-failure in the durable todo state, route the Pi defect to `pi-support`, report
-that no file exists, and stop. Never claim a handover succeeded without a
-successful file-write result.
+failure in the durable todo state, explain the failed action, suspected cause,
+and proposed fix to the owner, report that no file exists, and stop. Obtain
+approval before any repair; the handover stop boundary still applies. Never
+claim a handover succeeded without a successful file-write result.
 
 ## Step 1 -- Gather the git ground truth
 
@@ -70,7 +71,8 @@ For each repository, note the branch, the last few commits that belong to this
 session's work, and whether the working tree is clean or mid-edit. Record each
 dirty file's ownership and completion state; dirt alone does not establish a
 half-done implementation. Distinguish an intentionally saved ignore repair and
-unrelated changes from the session's unfinished work when deciding the pause type.
+unrelated changes from the session's unfinished work when deciding the pause
+type.
 
 Attempt each required read once through the narrowest available command. A
 blocked, aborted, unavailable, or failed read does **not** authorize continuing
@@ -108,17 +110,16 @@ workspace:
   nearest shared parent rather than arbitrarily assigning the handover to one
   participating repository.
 
-Resolve `<project-role-workspace>/.tmp/handoffs/YYYY-MM-DD-<slug>.md` once;
-do not bounce among multiple directories or an inline-only handover. Inside a
-Git checkout, use `git check-ignore --verbose` on the containing `.tmp/`
-directory itself and the intended handover path before creating or writing
-artifacts. Require directory-wide coverage, not a file-specific match. Immediately
-add a missing directory pattern to that checkout's `.gitignore` and recheck both
-paths. Refresh affected Git state reads after an ignore repair
-so the handover records the resulting state. If the required shared workspace
-is outside every Git checkout, Git-ignore coverage is not applicable; do not
-initialize a repository or create an ineffective parent `.gitignore` just for
-the handover.
+Resolve `<project-role-workspace>/.tmp/handoffs/YYYY-MM-DD-<slug>.md` once; do
+not bounce among multiple directories or an inline-only handover. Inside a Git
+checkout, use `git check-ignore --verbose` on the containing `.tmp/` directory
+itself and the intended handover path before creating or writing artifacts.
+Require directory-wide coverage, not a file-specific match. Immediately add a
+missing directory pattern to that checkout's `.gitignore` and recheck both
+paths. Refresh affected Git state reads after an ignore repair so the handover
+records the resulting state. If the required shared workspace is outside every
+Git checkout, Git-ignore coverage is not applicable; do not initialize a
+repository or create an ineffective parent `.gitignore` just for the handover.
 
 Once applicable ignore coverage is established, create the directory if absent
 and write the handover. Treat the file as ephemeral local state: do not add
@@ -150,8 +151,8 @@ error arm" -- not "working on bar".>
 ## In progress / uncommitted
 
 <Each dirty file, its ownership and completion state, and its next action.
-Distinguish saved ignore repairs and unrelated work from half-done edits;
-"none, tree clean" if applicable.>
+Distinguish saved ignore repairs and unrelated work from half-done edits; "none,
+tree clean" if applicable.>
 
 ## Next steps (in order)
 
