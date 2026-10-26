@@ -170,11 +170,11 @@
           };
           atuinFlags =
             self.darwinConfigurations.darwwwin.config.home-manager.users."0xgleb".programs.atuin.flags;
-          # Registration tests need the pinned SDK alongside production dependencies.
+          # Registration tests stub the host SDK and use production dependencies.
           piTestNodeModules = pkgs.importNpmLock.buildNodeModules {
             npmRoot = ./ai/pi/extensions;
             inherit (pkgs) nodejs;
-            derivationArgs.npmInstallFlags = "--legacy-peer-deps --include=dev";
+            derivationArgs.npmInstallFlags = "--legacy-peer-deps --omit=dev";
           };
         in
         {

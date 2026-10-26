@@ -1,8 +1,8 @@
 import assert from "node:assert/strict"
+import { registerHooks } from "node:module"
 import test from "node:test"
 import type { ExtensionAPI } from "@earendil-works/pi-coding-agent"
 
-import registryExtension from "./index.ts"
 import {
   BRANCH_TODO_BACKLOG_EVENT,
   CANONICAL_BACKLOG_EVENT,
@@ -18,6 +18,32 @@ import {
 import { RUNTIME_VERSION_REQUEST_EVENT } from "../shared/runtime-version.ts"
 
 type RegisteredTool = Parameters<ExtensionAPI["registerTool"]>[0]
+
+const hostModules = new Map([
+  ["@earendil-works/pi-coding-agent", 'export const CONFIG_DIR_NAME = "pi"'],
+  ["@earendil-works/pi-tui", "export class Text {}"],
+  [
+    "typebox",
+    `export const Type = Object.fromEntries(
+      ["Object", "Union", "Literal", "Optional", "Array", "String", "Integer", "Number", "Boolean", "Null"]
+        .map(kind => [kind, (...parameters) => ({ kind, parameters })])
+    )`,
+  ],
+])
+const importHooks = registerHooks({
+  resolve: (specifier, context, nextResolve) => {
+    const source = hostModules.get(specifier)
+    return source === undefined
+      ? nextResolve(specifier, context)
+      : {
+          url: `data:text/javascript,${encodeURIComponent(source)}`,
+          shortCircuit: true,
+        }
+  },
+})
+const { default: registryExtension } = await import("./index.ts").finally(() =>
+  importHooks.deregister(),
+)
 
 const registration = () => {
   const subscriptions = new Set<string>()
