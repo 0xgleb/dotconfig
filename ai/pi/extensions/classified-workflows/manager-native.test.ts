@@ -11,6 +11,7 @@ import { Either, Effect } from "effect"
 import {
   registerNativeManager,
   type NativeManagerRuntime,
+  type NativeManagerWorker,
 } from "./manager-native.ts"
 import { managerPairDirectory } from "./manager-session-core.ts"
 import {
@@ -21,13 +22,24 @@ import { getManagerBinding } from "../shared/manager-binding.ts"
 import { registryListingResult } from "../agent-registry/listing.ts"
 
 const scope = { workerSessionId: "worker-123", cwd: "/projects/worker" }
-const fixture = (t: test.TestContext, manager: boolean | "global" = false) => {
-  const root = mkdtempSync(join(tmpdir(), "pi-manager-profile-test-"))
-  t.after(() => rmSync(root, { recursive: true }))
+const fixture = (
+  t: test.TestContext,
+  manager: boolean | "global" = false,
+  options: {
+    readonly agentDir?: string
+    readonly now?: () => number
+    readonly idle?: () => boolean
+    readonly deadline?: NativeManagerRuntime["deadline"]
+    readonly reviewCheckIn?: NativeManagerWorker["reviewCheckIn"]
+  } = {},
+) => {
+  const root = options.agentDir ?? mkdtempSync("/tmp/pmn-")
   const ticks: (() => void)[] = []
   const runtime: NativeManagerRuntime = {
     agentDir: root,
     piExecutable: join(root, "bin", "pi"),
+    ...(options.now ? { now: options.now } : {}),
+    ...(options.deadline ? { deadline: options.deadline } : {}),
     schedule: tick => {
       ticks.push(tick)
       return () => {}
@@ -114,12 +126,14 @@ const fixture = (t: test.TestContext, manager: boolean | "global" = false) => {
   const ctx = {
     cwd: manager === "global" ? join(root, "manager", "global") : scope.cwd,
     mode: "tui",
+    isIdle: options.idle ?? (() => true),
     model: { provider: "openai-codex", id: "gpt-6.1-sol" },
     sessionManager: {
       getSessionId: () => (manager ? "manager-456" : scope.workerSessionId),
       getBranch: () => entries,
     },
     ui: {
+      getEditorText: () => "",
       notify: (text: string) => notices.push(text),
       custom: () =>
         assert.fail("native manager cannot create another chat frontend"),
@@ -132,6 +146,9 @@ const fixture = (t: test.TestContext, manager: boolean | "global" = false) => {
   const registered = registerNativeManager(
     pi,
     {
+      ...(options.reviewCheckIn
+        ? { reviewCheckIn: options.reviewCheckIn }
+        : {}),
       snapshot: () =>
         Either.right({
           workerSession: { transcript: "worker log" },
@@ -175,6 +192,35 @@ const fixture = (t: test.TestContext, manager: boolean | "global" = false) => {
     seed,
   }
 }
+
+test("native worker direct priority execution survives a tree switch and stops on shutdown", async t => {
+  const worker = fixture(t)
+  await worker.emit("session_start")
+  const manager = fixture(t, true, { agentDir: worker.root })
+  await manager.emit("session_start")
+  const tool = manager.tools.get("manager_control")
+  assert.ok(tool)
+  const call = async () =>
+    object(
+      await tool.execute(
+        "direct-order",
+        { action: "priorities", order: "55 16" },
+        undefined,
+        undefined,
+        manager.ctx,
+      ),
+    )
+  const first = await call()
+  assert.equal(first.isError, false)
+  assert.equal(object(first.details).outcome, "completed")
+  assert.match(JSON.stringify(first.content), /Saved/u)
+  await worker.emit("session_tree")
+  assert.equal((await call()).isError, false)
+  await worker.emit("session_shutdown")
+  const stopped = await call()
+  assert.equal(stopped.isError, true)
+  assert.notEqual(object(stopped.details).outcome, "queued")
+})
 
 test("manager profile preserves the native editor and exposes registry management", async t => {
   const f = fixture(t, true)
