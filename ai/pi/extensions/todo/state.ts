@@ -336,6 +336,9 @@ export const validateTodoState = (
   return error ? Effect.fail(error) : Effect.succeed(state)
 }
 
+const isTerminalTodo = (todo: Todo): boolean =>
+  todo.status === "completed" || todo.status === "cancelled"
+
 const todoWithStatus: (
   todo: Todo,
   status: SettableTodoStatus,
@@ -345,7 +348,12 @@ const todoWithStatus: (
   const base: TodoBase = {
     id: todo.id,
     text: todo.text,
-    ...(todo.priority === undefined ? {} : { priority: todo.priority }),
+    ...(todo.priority === undefined ||
+    isTerminalTodo(todo) ||
+    status === "completed" ||
+    status === "cancelled"
+      ? {}
+      : { priority: todo.priority }),
     ...(todo.effort === undefined ? {} : { effort: todo.effort }),
     ...(todo.parentId === undefined ? {} : { parentId: todo.parentId }),
     ...(todo.replies && todo.replies.length > 0
@@ -388,15 +396,31 @@ const applyPriorityOrder = (
       new TodoNotFoundError({ action, message: `Todo #${missing} not found` }),
     )
   const ranks = new Map(ids.map((id, index) => [id, index + 1]))
+  const terminal = state.todos.find(
+    todo => ranks.has(todo.id) && isTerminalTodo(todo),
+  )
+  if (terminal)
+    return Effect.fail(
+      new TodoInputError({
+        action,
+        code: "invalid_priority",
+        message: `Terminal todo #${terminal.id} cannot be assigned an active rank`,
+      }),
+    )
   if (
-    state.todos.some(todo => todo.priority !== undefined && !ranks.has(todo.id))
+    state.todos.some(
+      todo =>
+        !isTerminalTodo(todo) &&
+        todo.priority !== undefined &&
+        !ranks.has(todo.id),
+    )
   )
     return Effect.fail(
       new TodoInputError({
         action,
         code: "invalid_priority",
         message:
-          "Priority order must include every currently assigned todo; use priority=null to unassign explicitly",
+          "Priority order must include every currently assigned nonterminal todo; use priority=null to unassign explicitly",
       }),
     )
   return Effect.succeed({
@@ -450,6 +474,15 @@ export const transitionTodoState: (
             message: `Todo #${!target ? action.id : action.referenceId} not found`,
           }),
         )
+      if (isTerminalTodo(target) || isTerminalTodo(reference))
+        return Effect.fail(
+          new TodoInputError({
+            action: action.action,
+            code: "invalid_priority",
+            message:
+              "Relative priority requires nonterminal mover and reference tasks",
+          }),
+        )
       if (reference.priority === undefined)
         return Effect.fail(
           new TodoInputError({
@@ -460,7 +493,9 @@ export const transitionTodoState: (
         )
       const ordered = state.todos
         .flatMap(todo =>
-          todo.priority === undefined || todo.id === target.id
+          isTerminalTodo(todo) ||
+          todo.priority === undefined ||
+          todo.id === target.id
             ? []
             : [{ id: todo.id, rank: todo.priority }],
         )
@@ -530,10 +565,21 @@ export const transitionTodoState: (
             message: `Todo #${action.id} not found`,
           }),
         )
+      if (action.priority !== null && isTerminalTodo(target))
+        return Effect.fail(
+          new TodoInputError({
+            action: "priority",
+            code: "invalid_priority",
+            message: `Terminal todo #${target.id} cannot be assigned an active rank`,
+          }),
+        )
       if (
         action.priority !== null &&
         state.todos.filter(
-          todo => todo.id !== target.id && todo.priority === action.priority,
+          todo =>
+            !isTerminalTodo(todo) &&
+            todo.id !== target.id &&
+            todo.priority === action.priority,
         ).length >= MAX_TODOS_PER_PRIORITY
       )
         return Effect.fail(
@@ -693,7 +739,9 @@ export const transitionTodoState: (
         text: target.text,
         status: "blocked",
         reason: action.reason,
-        ...(target.priority === undefined ? {} : { priority: target.priority }),
+        ...(target.priority === undefined || isTerminalTodo(target)
+          ? {}
+          : { priority: target.priority }),
         ...(target.effort === undefined ? {} : { effort: target.effort }),
         ...(target.parentId === undefined ? {} : { parentId: target.parentId }),
         ...(target.replies && target.replies.length > 0
