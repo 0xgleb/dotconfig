@@ -99,11 +99,25 @@ outside the tool session's workspace. Do not substitute raw `mkdir`.
 ```bash
 empty=$(git -C "$repo_root" hash-object -t tree /dev/null)   # canonical empty-tree object
 git -C "$repo_root" diff "$empty" HEAD -- "$scope" \
-  ':(exclude)*.lock' ':(exclude)Cargo.lock' ':(exclude)flake.lock' > "$out_dir/diff.patch"
+  ':(exclude)*.lock' ':(exclude)Cargo.lock' ':(exclude)flake.lock' \
+  ':(exclude)**/.env*' ':(exclude)**/credentials*' ':(exclude)**/secrets*' \
+  ':(exclude)**/.ssh/**' ':(exclude)**/.aws/**' ':(exclude)**/.gnupg/**' \
+  ':(exclude)**/*.key' ':(exclude)**/*.pem' ':(exclude)**/*.p12' \
+  ':(exclude)**/*.pfx' ':(exclude)**/*.crt' ':(exclude)**/*.cer' > "$out_dir/diff.patch"
 git -C "$repo_root" diff --name-status "$empty" HEAD -- "$scope" \
-  ':(exclude)*.lock' ':(exclude)Cargo.lock' ':(exclude)flake.lock' > "$out_dir/files.txt"
+  ':(exclude)*.lock' ':(exclude)Cargo.lock' ':(exclude)flake.lock' \
+  ':(exclude)**/.env*' ':(exclude)**/credentials*' ':(exclude)**/secrets*' \
+  ':(exclude)**/.ssh/**' ':(exclude)**/.aws/**' ':(exclude)**/.gnupg/**' \
+  ':(exclude)**/*.key' ':(exclude)**/*.pem' ':(exclude)**/*.p12' \
+  ':(exclude)**/*.pfx' ':(exclude)**/*.crt' ':(exclude)**/*.cer' > "$out_dir/files.txt"
 wc -l "$out_dir/diff.patch"
 ```
+
+Apply these credential/private-key/certificate exclusions before retrieving
+contents or even generating the file manifest. Use the identical exclusions for
+every chunk-generation command and context search; Git tracking/ignore status is
+not evidence that a file is safe. Never collect first and redact afterward.
+Report protected paths as excluded, not reviewed.
 
 Refuse on an empty target. A whole repo is large, so this leans hard on chunking
 (step 5) — large is expected, not a blocker. **Do not stop for size confirmation

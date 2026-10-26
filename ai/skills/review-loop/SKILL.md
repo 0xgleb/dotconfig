@@ -187,8 +187,9 @@ Verify prerequisites before doing anything:
    ```
    If dirty, tell the user and stop.
 
-The review engine resolves its native and Claude subscription lanes in
-review-core step 1. Cursor lanes are retired and must not be probed or launched.
+The review engine uses native Pi `openai-codex/gpt-6.1-sol` lanes throughout. Do
+not probe or launch external model CLIs, subscription wrappers or other
+providers.
 
 ## 2. Resolve scope & prepare workspace
 
@@ -365,18 +366,18 @@ Run the shared engine in `~/.claude/skills/review-core/SKILL.md` (steps 1–7:
 available lanes → reviewer prompts → inspector prompts → the `review-panel`
 Workflow → after-workflow handling → print findings). Pass the contract inputs:
 
-| Contract input                                          | Value for review-loop                                                                                                                                                                                                                                                                 |
-| ------------------------------------------------------- | ------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------- |
-| `out_dir`, `{DIFF_PATH}`, `{FILES_PATH}`, `{REPO_ROOT}` | from step 2 (`$out_dir/diff.patch`, `$out_dir/files.txt`)                                                                                                                                                                                                                             |
-| `{PROJECT_DOCS_PATHS}`                                  | the docs paths from step 3                                                                                                                                                                                                                                                            |
-| `{PR_DESCRIPTION}`                                      | `pr_body` from step 3 (or "No description available")                                                                                                                                                                                                                                 |
-| `{SOURCE_ACCESS}`                                       | `Read source files directly from the working tree, which already reflects the change under review.`                                                                                                                                                                                   |
-| `{SCOPE_NOTE}`                                          | `The diff is scoped to exactly the changes under review (the current branch against its parent).`                                                                                                                                                                                     |
-| `{INSPECTOR_ARG}`                                       | empty string (the inspectors review the current branch)                                                                                                                                                                                                                               |
-| `{REPORT_HEADER}`                                       | `# Review — <branch>\n**Commit:** <head_sha>\n**Parent:** <parent_sha> (<parent branch>)\n**Files changed:** <N>\n**Diff size:** <LOC> lines\n**Panel:** native Luna focus lanes, applicable inspectors, optional Claude subscription lane; per-finding verification; Luna synthesis` |
-| `{TERMINAL_HEADER}`                                     | `Review — <branch>\n<N> files, <LOC> lines changed`                                                                                                                                                                                                                                   |
-| `{SYNTHESIS_EXTRA}`                                     | empty string                                                                                                                                                                                                                                                                          |
-| `{INCLUDE_ATTRIBUTION}`                                 | `true`                                                                                                                                                                                                                                                                                |
+| Contract input                                          | Value for review-loop                                                                                                                                                                                                                                      |
+| ------------------------------------------------------- | ---------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------- |
+| `out_dir`, `{DIFF_PATH}`, `{FILES_PATH}`, `{REPO_ROOT}` | from step 2 (`$out_dir/diff.patch`, `$out_dir/files.txt`)                                                                                                                                                                                                  |
+| `{PROJECT_DOCS_PATHS}`                                  | the docs paths from step 3                                                                                                                                                                                                                                 |
+| `{PR_DESCRIPTION}`                                      | `pr_body` from step 3 (or "No description available")                                                                                                                                                                                                      |
+| `{SOURCE_ACCESS}`                                       | `Read source files directly from the working tree, which already reflects the change under review.`                                                                                                                                                        |
+| `{SCOPE_NOTE}`                                          | `The diff is scoped to exactly the changes under review (the current branch against its parent).`                                                                                                                                                          |
+| `{INSPECTOR_ARG}`                                       | empty string (the inspectors review the current branch)                                                                                                                                                                                                    |
+| `{REPORT_HEADER}`                                       | `# Review — <branch>\n**Commit:** <head_sha>\n**Parent:** <parent_sha> (<parent branch>)\n**Files changed:** <N>\n**Diff size:** <LOC> lines\n**Panel:** native gpt-6.1-sol focus lanes and applicable inspectors; independent verification and synthesis` |
+| `{TERMINAL_HEADER}`                                     | `Review — <branch>\n<N> files, <LOC> lines changed`                                                                                                                                                                                                        |
+| `{SYNTHESIS_EXTRA}`                                     | empty string                                                                                                                                                                                                                                               |
+| `{INCLUDE_ATTRIBUTION}`                                 | `true`                                                                                                                                                                                                                                                     |
 
 **Stack-mode contract override, for every initial, delta and escalated pass:**
 `{SOURCE_ACCESS}` names committed source at the selected branch head plus the
@@ -591,22 +592,26 @@ the workflow `scriptPath` from step 4) when any of:
   the cost here even for a small delta.
 
 **Otherwise run delta mode** — the default and fast path. One small workflow: a
-fix-verifier per fixed finding plus one Opus broad sweep of the fix delta. Pass
-`args`:
+fix-verifier per fixed finding plus one independent native broad sweep of the
+fix delta. Pass `args`:
 `{fixedFindings: <findings fixed this loop so far>, deltaDiffPath,
-fullDiffPath, repoRoot, docsPaths, reviewSource, tierModels}`.
-`tierModels` carries the provider-tier resolution from the engine's provider
-constraint (`{ light, mid }` resolved ids, or null on an unknown provider).
-`reviewSource` must contain `mode` (`single` or `stack`), `branch`, `parentSha`,
-`headSha`, `sourceRoot`, and `ownedDeltaPath`, all resolved from step 2. In
-stack mode `sourceRoot` is the exported committed branch source, never the
-combined workspace; in single mode it is the current source root. Both modes
-name the exact owned delta artifact. Missing scope is blocked, not a clean
-review. Reuse the returned `scriptPath` only with refreshed scope and artifact
-inputs on later passes.
+fullDiffPath, repoRoot, docsPaths, reviewSource, tierModels, markdownFiles,
+markdownPromptPath}`.
+Always supply `markdownFiles` from the scoped manifest, including an explicit
+empty array when none exist. For a nonempty list, supply an existing Markdown
+prompt using power-unslop's whole-set contract. Never infer that a missing
+Markdown result means there were no Markdown files. `tierModels` carries the
+provider-tier resolution from the engine's provider constraint (`{ light, mid }`
+resolved ids, or null on an unknown provider). `reviewSource` must contain
+`mode` (`single` or `stack`), `branch`, `parentSha`, `headSha`, `sourceRoot`,
+and `ownedDeltaPath`, all resolved from step 2. In stack mode `sourceRoot` is
+the exported committed branch source, never the combined workspace; in single
+mode it is the current source root. Both modes name the exact owned delta
+artifact. Missing scope is blocked, not a clean review. Reuse the returned
+`scriptPath` only with refreshed scope and artifact inputs on later passes.
 
 ```javascript
-export const meta = {
+const meta = {
   name: "review-delta",
   description: "Verify applied fixes and sweep the fix delta for new issues",
   phases: [
@@ -682,10 +687,11 @@ const {
   docsPaths,
   reviewSource,
   tierModels,
+  markdownFiles,
+  markdownPromptPath,
 } = parsedArgs;
-// Tier-resolved light model from the provider constraint section; undefined
-// on an unknown provider, so lanes inherit the session model.
-const lightModel = tierModels?.light;
+// All native lanes use the current authenticated model.
+const lightModel = "openai-codex/gpt-6.1-sol";
 const scopeFields = [
   "branch",
   "parentSha",
@@ -709,7 +715,28 @@ const sourceContext =
   `Read only the named sourceRoot plus ownedDeltaPath. In stack mode this is ` +
   `committed branch source plus its owned overlay, never the combined workspace. `;
 
-const [verifications, sweep] = await parallel([
+if (
+  !Array.isArray(markdownFiles) ||
+  (markdownFiles.length > 0 &&
+    (typeof markdownPromptPath !== "string" || !markdownPromptPath.trim()))
+) {
+  return {
+    status: "incomplete",
+    phaseErrors: ["Missing Markdown review scope/prompt"],
+  };
+}
+const markdownRequired = markdownFiles.length > 0;
+const MARKDOWN_SCHEMA = {
+  type: "object",
+  required: ["findings", "reviewedFiles", "unreadFiles"],
+  properties: {
+    findings: { type: "array", items: FINDING },
+    reviewedFiles: { type: "array", items: { type: "string" } },
+    unreadFiles: { type: "array", items: { type: "string" } },
+  },
+};
+
+const [verifications, sweep, markdown] = await parallel([
   () =>
     parallel(fixedFindings.map((finding) => () =>
       agent(
@@ -754,11 +781,64 @@ const [verifications, sweep] = await parallel([
         schema: SWEEP_SCHEMA,
       },
     ),
+  () =>
+    markdownRequired
+      ? agent(
+        sourceContext +
+          `Read ${markdownPromptPath} and the complete scoped Markdown set: ` +
+          `${
+            JSON.stringify(markdownFiles)
+          }. Be the independent power-unslop critic; ` +
+          `check cross-document logical consistency and relevant controlling/linked docs. ` +
+          `Do not edit or spawn another critic. Report reviewedFiles for scoped files ` +
+          `only and unreadFiles for any incomplete required coverage.`,
+        {
+          label: "markdown-consistency",
+          phase: "Sweep",
+          model: lightModel,
+          tools: ["read"],
+          schema: MARKDOWN_SCHEMA,
+        },
+      )
+      : Promise.resolve({ findings: [], reviewedFiles: [], unreadFiles: [] }),
 ]);
 
+const phaseErrors = [];
+if (
+  !Array.isArray(verifications) || verifications.length !== fixedFindings.length
+) {
+  phaseErrors.push("Missing fix-verification results");
+}
+for (let index = 0; index < fixedFindings.length; index++) {
+  const result = verifications?.[index];
+  if (
+    !result || result.status === "blocked" || typeof result.fixed !== "boolean"
+  ) {
+    phaseErrors.push(`Fix verifier ${index} did not complete`);
+  }
+}
+if (!sweep || sweep.status === "blocked" || !Array.isArray(sweep.findings)) {
+  phaseErrors.push("Sweep did not complete");
+}
+const reviewedMarkdown = new Set(markdown?.reviewedFiles ?? []);
+if (
+  !markdown || markdown.status === "blocked" ||
+  !Array.isArray(markdown.findings) || !Array.isArray(markdown.unreadFiles) ||
+  markdown.unreadFiles.length > 0 ||
+  markdownFiles.some((path) => !reviewedMarkdown.has(path)) ||
+  reviewedMarkdown.size !== new Set(markdownFiles).size
+) {
+  phaseErrors.push("Markdown review did not complete");
+}
 return {
-  verifications: (verifications || []).filter(Boolean),
-  sweepFindings: sweep ? sweep.findings : [],
+  status: phaseErrors.length > 0 ? "incomplete" : "completed",
+  phaseErrors,
+  expectedVerifications: fixedFindings.length,
+  verifications: verifications ?? [],
+  sweepFindings: Array.isArray(sweep?.findings) ? sweep.findings : null,
+  markdownFindings: Array.isArray(markdown?.findings)
+    ? markdown.findings
+    : null,
 };
 ```
 
@@ -776,25 +856,27 @@ worth it. (Skip entirely if the project declared no check command.)
 ### Interpret the result
 
 1. Save the result to `$out_dir/delta-iter${N}.json` (audit trail).
-2. **Clean pass** = every verification has `fixed: true` with no `new_issues`,
-   and `sweepFindings` is empty. The loop has converged. Run the project's check
-   command (`check_cmd`) and let it run until it passes or it needs the user. If
-   the project declared **no** check command (`check_cmd` empty), there is
-   nothing to run, so skip straight to step 10/11. If the check command itself
-   commits or amends on success, that behavior is **overridden by this loop**:
-   never amend in single-branch mode (hard rule 4); in stack mode the stack flow
-   amends once per branch after convergence, so the check command must not amend
-   separately.
+2. **Clean pass** requires `status: completed`, no phase errors, exactly the
+   expected verifier count, every verification `fixed: true` with no
+   `new_issues`, and completed empty `sweepFindings` and `markdownFindings`.
+   Missing, blocked or malformed results are incomplete, never empty success.
+   The loop has converged. Run the project's check command (`check_cmd`) and let
+   it run until it passes or it needs the user. If the project declared **no**
+   check command (`check_cmd` empty), there is nothing to run, so skip straight
+   to step 10/11. If the check command itself commits or amends on success, that
+   behavior is **overridden by this loop**: never amend in single-branch mode
+   (hard rule 4); in stack mode the stack flow amends once per branch after
+   convergence, so the check command must not amend separately.
    - If the check command made **no code changes**: proceed to step 10/11.
    - If it **made code changes** (lint, formatting, auto-fixes): run one more
      delta pass over the new delta. This converges quickly since those changes
      are mechanical.
-3. **Not clean**: collect unresolved findings (`fixed: false` — re-fix),
-   `new_issues`, and `sweepFindings`. Filter out anything substantively
-   identical to a finding already fixed or dismissed (compare file + line
-   range + description). If nothing remains, treat as clean. Otherwise increment
-   the iteration counter and loop back to step 6 (triage) with only the
-   remaining findings.
+3. **Not clean**: preserve phase errors and all unresolved findings
+   (`fixed: false`), new issues, sweep findings and Markdown findings. A failed
+   fix verification is not dismissed because the same finding appeared in an
+   earlier iteration. Deduplicate only equivalent current findings without
+   dropping their unresolved status; recover missing phases before claiming
+   convergence. Then continue triage and re-review under the existing scope.
 
 **Cap at 4 review passes total** (full or delta — initial + up to 3 re-reviews).
 If new findings keep appearing after 4 passes, stop and tell the user — the
@@ -935,34 +1017,16 @@ continue the upstack walk — do not stop here. Follow the global checkpoint
 cadence while advancing and publish any remaining work at the end; stack mode
 does not impose an end-only publication gate.
 
-### Claude Code review-duty harness adapter
+### Dedicated Pi review-duty sessions
 
-Apply this adapter only when the source-fixed initial prompt identifies a fresh
-Claude Code subscription-harness executor and supplies a
-`CLAUDE_REVIEW_HANDOFF v1` supervisor target. Ordinary `/review-loop`
-invocations remain unchanged.
-
-1. Run this skill and its native Claude Code Workflow lanes normally. Never
-   invoke Claude through Pi, an Anthropic API provider, an SDK, `curl`, or an
-   API key.
-2. Before handoff, run one independent native Fable verifier that re-reads the
-   current diff/head and challenges every finding, fix, test, and convergence
-   claim. Missing subscription auth or Fable is `blocked`, never an API
-   fallback.
-3. For this exact source-fixed own/auto PR job only, the harness adapter
-   overrides ordinary single-branch hard rule 4 after clean convergence: follow
-   the loaded repository's commit/stack/push delivery rules so verified fixes
-   reach the existing PR. Never open a new PR, publish a draft, merge, or touch
-   another branch. If repository delivery policy is missing or ambiguous, report
-   blocked.
-4. Re-read the PR head after fixes and distinguish the input head from the
-   output head. An unexpected remote change is stale and requires a fresh job.
-5. Send exactly one bounded handoff through the exact `pi-bridge send` command
-   in the launcher prompt. Include only the required fields and evidence
-   identifiers; never include prompts, hidden reasoning, credentials, full
-   diffs, or logs.
-6. The Pi supervisor independently verifies the handoff. Do not emulate
-   `review_duty`, ask a verdict, publish a top-level review body, or merge.
+Begin each PR with the registered `review_duty` tool and follow its loaded
+own/assigned/automatic gates. Use native `openai-codex/gpt-6.1-sol` workflows,
+independently verify the final head/diff/fixes and distinguish input from output
+heads. Publish verified fixes only under the exact repository/owner authority;
+never infer that authority from a worker or role. Preserve failed/incomplete
+results through managed recovery, and finish through the duty tool rather than
+emulating lifecycle state. No review verdict, top-level review body or merge is
+authorized by this adapter.
 
 ---
 
