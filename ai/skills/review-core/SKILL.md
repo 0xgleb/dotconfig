@@ -305,7 +305,11 @@ file list and the related controlling/linked docs needed for cross-document
 consistency. Use power-unslop's whole-set contract, not paragraph-only editing.
 The lane itself is the independent critic: return findings without nested
 critics, file edits or a separate approval ceremony. Incomplete Markdown
-coverage is an incomplete required lane, not clean prose.
+coverage is an incomplete required lane, not clean prose. Require the critic to
+set `reviewer_error` with the unread paths and reasons whenever required
+coverage is incomplete, so the existing lane-error gate retains that failure.
+Keep any partial findings alongside the error; `clean_reason` alone does not
+carry an incomplete result through the engine.
 
 Select `code-style-inspector` for every source-code scope, including small
 changes and full-codebase audits. Its shared conventions are an explicit review
@@ -342,6 +346,9 @@ Shared context block (append to every inspector prompt):
 The diff is at: {DIFF_PATH}
 Repo root: {REPO_ROOT}
 {SOURCE_ACCESS}
+If required coverage or evidence is incomplete, set reviewer_error to a
+non-empty explanation naming unread paths and reasons, and return any partial
+findings alongside it. Do not report incomplete coverage only in clean_reason.
 ```
 
 ## 4. Assemble the lanes

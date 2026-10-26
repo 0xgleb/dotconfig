@@ -932,8 +932,10 @@ invocations remain unchanged.
 
 - **A required native lane errors:** retain incomplete status and its reason;
   selected inspectors are required. Follow review-core's missing-work recovery.
-- **Review returns no findings:** only `status: completed` is a clean success;
-  incomplete review with an empty list must not exit as clean.
+- **Review returns no findings:** review-core full-panel results require
+  `status: completed` for a clean success. Step 9 delta results use that step's
+  verification and sweep convergence criteria instead. Missing required evidence
+  remains incomplete; an empty findings list alone is not success.
 - **A fix turns out to be larger than expected:** stop, report progress, ask
   whether to continue, defer to a stacked PR, or dismiss.
 - **Review pass cap hit (4 passes):** stop and tell the user. Summarize what was

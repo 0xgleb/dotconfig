@@ -107,8 +107,9 @@ For each added or modified line in the diff, look for:
   compiler will not catch swapped arguments. Recommend introducing newtypes
   (`Amount`, `Price`, `Quantity`) if any are already used elsewhere, or suggest
   introducing them if not.
-- Only flag when the swap risk is real. Two unrelated `usize` lengths in
-  different contexts is not the same as `(price, quantity)` in one call.
+- For co-occurring-primitive findings, only flag when the swap risk is real. Two
+  unrelated `usize` lengths in different contexts is not the same as
+  `(price, quantity)` in one call.
 
 ### What NOT to flag
 
