@@ -42,6 +42,8 @@ test("management turns retain active coordination, read and question tools, neve
     "agent_registry",
     "manager_control",
     "ask_user",
+    "web_search",
+    "web_fetch",
     "workflow",
   ]
   const prior = [...active]
@@ -60,6 +62,8 @@ test("management turns retain active coordination, read and question tools, neve
     "agent_registry",
     "manager_control",
     "ask_user",
+    "web_search",
+    "web_fetch",
   ]
   assert.deepEqual(active, permitted)
   active = ["bash", "todo"]
