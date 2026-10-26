@@ -170,12 +170,11 @@
           };
           atuinFlags =
             self.darwinConfigurations.darwwwin.config.home-manager.users."0xgleb".programs.atuin.flags;
-          # The extension tests import the `effect` package from the same
-          # production node_modules Home Manager links into the live tree.
+          # Registration tests need the pinned SDK alongside production dependencies.
           piTestNodeModules = pkgs.importNpmLock.buildNodeModules {
             npmRoot = ./ai/pi/extensions;
             inherit (pkgs) nodejs;
-            derivationArgs.npmInstallFlags = "--legacy-peer-deps --omit=dev";
+            derivationArgs.npmInstallFlags = "--legacy-peer-deps --include=dev";
           };
         in
         {
@@ -311,7 +310,9 @@
                 cp -r ${./ai} ai
                 chmod -R u+w ai
                 ln -s ${piTestNodeModules}/node_modules ai/pi/extensions/node_modules
-                node --test ai/pi/extensions/classified-workflows/loop.test.ts
+                node --test \
+                  ai/pi/extensions/classified-workflows/loop.test.ts \
+                  ai/pi/extensions/agent-registry/retired-routing.test.ts
                 touch $out
               '';
 
