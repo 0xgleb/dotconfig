@@ -313,6 +313,7 @@
                 node --test \
                   ai/pi/extensions/classified-workflows/loop.test.ts \
                   ai/pi/extensions/agent-registry/registration.test.ts \
+                  ai/pi/extensions/agent-registry/outcome-events.test.ts \
                   ai/pi/extensions/agent-registry/paths.test.ts \
                   ai/pi/extensions/agent-registry/delivery.test.ts \
                   ai/pi/extensions/agent-registry/registry.test.ts \
