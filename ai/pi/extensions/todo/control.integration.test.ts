@@ -118,7 +118,8 @@ test("manager control updates the real worker todo store used by subsequent ordi
     priority: 2,
   })
   assert.ok(Either.isRight(ranked))
-  assert.equal(ranked.right.isError, false)
+  assert.equal(ranked.right.isError, true)
+  assert.match(ranked.right.message, /Terminal todo #1/u)
   const estimated = await tool.execute(
     "estimate-worker",
     { action: "effort", id: 1, effort: 3 },
@@ -152,7 +153,7 @@ test("manager control updates the real worker todo store used by subsequent ordi
   const details = decodeTodoDetails(listed.details)
   assert.ok(Option.isSome(details))
   assert.equal(details.value.state.todos[0]?.status, "completed")
-  assert.equal(details.value.state.todos[0]?.priority, 2)
+  assert.equal(details.value.state.todos[0]?.priority, undefined)
   assert.equal(details.value.state.todos[0]?.effort, 3)
   const theme = {
     fg: (_color: string, value: string) => value,
@@ -309,7 +310,7 @@ test("manager control updates the real worker todo store used by subsequent ordi
     todoWorkSnapshot(entries).pending.map(text => text.split(" ")[0]),
     ["#3", "#2"],
   )
-  assert.equal(finalDetails.value.state.todos[0]?.priority, 2)
+  assert.equal(finalDetails.value.state.todos[0]?.priority, undefined)
   failAppend = true
   const failedPriority = requestTodoControl(pi, ctx, {
     action: "priority",
