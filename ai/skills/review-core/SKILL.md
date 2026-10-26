@@ -1,7 +1,7 @@
 ---
 name: review-core
-description: Internal shared review-engine reference for the review-loop, review-pr, and review-sweep skills. Not a user task and never invoked directly; those skills read this file to run the multi-model panel, probes, prompts, and finding output.
-allowed-tools: Bash(claude:*), Bash(command:*), Bash(cat:*), Bash(find:*), Bash(mkdir:*), Bash(wc:*), Read, Write, Agent, Workflow
+description: Internal shared review-engine reference for the review-loop, review-pr, and review-sweep skills. Not a user task and never invoked directly; those skills read this file to run the native review panel, prompts, and finding output.
+allowed-tools: Read, Write, Agent, Workflow
 ---
 
 # Review engine (shared)
@@ -152,17 +152,11 @@ If you find nothing worth raising, return an empty findings list and set
 clean_reason to a one-sentence justification of why the diff is clean.
 ```
 
-(For the optional Claude Code subscription lane, replace the "Output" paragraph
-with the original markdown output format: `### <title>` sections with
-Severity/File/Category/Finding/Why it matters/Recommended fix/Confidence
-bullets, and `### No findings` when clean. Its prompt must be self-contained
-because the external CLI reads no other prompt files.)
-
 ### Per-reviewer focus paragraphs
 
 Append one of these to the base prompt for each reviewer:
 
-**Opus A — Concurrency & async ordering:**
+**Concurrency & async ordering:**
 
 ```
 YOUR FOCUS: Pay special attention to the ordering of async operations
@@ -173,7 +167,7 @@ setup sequences, concurrent writers to shared state, and assumptions about
 which operation completes first.
 ```
 
-**Fable — Goal evaluation & domain logic:**
+**Goal evaluation & domain logic:**
 
 ```
 YOUR FOCUS: Read the description carefully, then evaluate whether the
@@ -184,7 +178,7 @@ the stated goals — your job is to find the gap between intent and
 implementation.
 ```
 
-**Sonnet — Error handling & failure modes:**
+**Error handling & failure modes:**
 
 ```
 YOUR FOCUS: Trace every error path and failure mode. What happens when a
@@ -194,7 +188,7 @@ for silent failures, missing error propagation, and recovery paths that
 leave the system in an inconsistent state.
 ```
 
-**External A — Edge cases & boundary conditions:**
+**Edge cases & boundary conditions:**
 
 ```
 YOUR FOCUS: Look for edge cases at boundaries. What happens at block 0?
@@ -203,7 +197,7 @@ is None for the first time? When a counter overflows? Find the inputs
 that the author probably didn't test.
 ```
 
-**External B — Broad general sweep:**
+**Broad general sweep:**
 
 ```
 YOUR FOCUS: Do a broad, unbiased review. Don't focus on any particular
@@ -234,29 +228,29 @@ containment), but do not add a lane whose trigger is absent. For an audit,
 include every matching higher-level lane because the synthetic diff places the
 whole scoped system in review.
 
-| Inspector              | Skill (under `~/.claude/skills/`)            | Include when the scope has                                                                                                                                           | Lane model     | Category / severity mapping                                                                                                                                                   |
-| ---------------------- | -------------------------------------------- | -------------------------------------------------------------------------------------------------------------------------------------------------------------------- | -------------- | ----------------------------------------------------------------------------------------------------------------------------------------------------------------------------- |
-| markdown               | `power-unslop`                               | any scoped `.md` file, including prose-only changes                                                                                                                  | current native | `doc-coherence` or `convention`; report concrete logical/contract conflicts, not cosmetic quotas                                                                              |
-| code-style             | `code-style-inspector`                       | source code in any language                                                                                                                                          | sonnet         | `convention`; verified required spacing/import/provenance violations=low, not dismissible personal-preference nits                                                            |
-| test                   | `test-inspector`                             | test files                                                                                                                                                           | sonnet         | category `tests`; useless=medium, weak=low, missing-coverage-for-risky=high, mock-abuse=medium                                                                                |
-| rust                   | `idiomatic-rust-inspector`                   | `.rs` or `Cargo.toml`                                                                                                                                                | opus           | `maintainability` for idiom, `correctness` for ownership/unsafe; non-idiomatic-with-correctness-impact=high, style-only=medium, suboptimal=low                                |
-| typescript             | `idiomatic-typescript-inspector`             | `.ts` / `.tsx`                                                                                                                                                       | sonnet         | `maintainability` (or `correctness` when an `any`/unsafe cast hides a bug); same scale as rust                                                                                |
-| effect                 | `idiomatic-effect-inspector`                 | a TS file importing `effect`                                                                                                                                         | opus           | `maintainability`/`correctness`; throwing or an untyped error channel = high                                                                                                  |
-| nushell                | `idiomatic-nushell-inspector`                | `.nu`                                                                                                                                                                | sonnet         | `maintainability`; `complete` on an internal command or data-loss from string-parsing = high                                                                                  |
-| nix                    | `idiomatic-nix-inspector`                    | `.nix`                                                                                                                                                               | opus           | `maintainability`; import-from-derivation / impurity / non-reproducibility = high                                                                                             |
-| solidjs                | `idiomatic-solidjs-inspector`                | `solid-js` used                                                                                                                                                      | sonnet         | `maintainability`; reactivity-breaking (prop destructure, effect-for-derived) = high                                                                                          |
-| svelte                 | `idiomatic-svelte-inspector`                 | `.svelte`                                                                                                                                                            | sonnet         | `maintainability`; reactivity bugs (effect-for-derived, legacy runes) = high                                                                                                  |
-| github-actions         | `idiomatic-github-actions-inspector`         | files under `.github/workflows/`                                                                                                                                     | opus           | `security` for unpinned actions / script injection / over-broad permissions (high..critical); else `maintainability`                                                          |
-| terraform              | `idiomatic-terraform-inspector`              | `.tf`                                                                                                                                                                | opus           | `security` for plaintext secrets = critical; `maintainability` for count-vs-for_each / structure                                                                              |
-| functional-programming | `idiomatic-functional-programming-inspector` | any FP-leaning source (`.rs`/`.ts`/`.tsx`/`.nu`/`.nix`)                                                                                                              | sonnet         | `maintainability`; side-effects-in-transforms / partial functions / invalid-states-representable = high                                                                       |
-| strong-typing          | `strong-typing-inspector`                    | typed source in any language, or source storing/passing domain identifiers                                                                                           | sonnet         | `maintainability`; primitive-where-domain-type-exists = medium (high for money/identifiers), missed-newtype = low                                                             |
-| external-contract      | `external-contract-inspector`                | external touchpoints (HTTP/RPC/SDK responses, on-chain ABIs, units/decimals) — usually worth including                                                               | opus           | `correctness`; risk-weighted critical (wrong width/unit/encoding at a money or on-chain boundary) down to low                                                                 |
-| defensive-programming  | `defensive-programming-inspector`            | stateful flows, persistence/recovery, accounting or conservation equations, aggregate/projection derivation, or the same domain state shown through multiple views   | opus           | `correctness` or `financial`; unreconciled money/whole-book state=critical, deterministic cross-view/state divergence=high, bounded malformed-state acceptance=medium         |
-| architecture-direction | `architecture-direction-inspector`           | dependency manifests, subsystem/module/public boundaries, source-of-truth ownership, persistence/transport/deployment changes, migrations, or a new major capability | opus           | `architecture`; irreversible wrong ownership/dependency direction=high..critical, evidenced recurring coupling/glue=medium, bounded refinement=low                            |
-| financial-programming  | `financial-programming-inspector`            | monetary values, balances, prices, fees, ledger entries, token math, equity/NAV, cash flows, or monetary projections                                                 | opus           | `financial`; silent value corruption or accounting-identity failure=critical, wrong rounding/conservation/cross-ledger mismatch=high, precision drift=medium                  |
-| quantitative-research  | `quantitative-research-inspector`            | strategy/signal research, forecasting, backtests, optimization, portfolio/project/provider allocation, pacing/burn-rate models, or statistical decision rules        | opus           | `strategy` or `financial`; leakage/invalid evidence sizing live decisions=critical, selection bias/regime/cost failure=high, uncertainty/calibration gap=medium               |
-| quantitative-trading   | `quantitative-trading-inspector`             | trading implementation (orders, fills, positions, market data, executable signals, backtests)                                                                        | opus           | `strategy` or `correctness`; position/PnL desync or sign errors=critical, unavailable information/stale-price/venue violations=high, research-only execution-model gap=medium |
-| risk-management        | `risk-management-inspector`                  | automated money paths, aggregate exposure, position sizing, payment dispatch, leverage/concentration, liquidity/capacity, drawdown, or stress controls               | opus           | `risk` or `security`; unbounded/fail-open/double-send paths=critical, aggregate/concentration/stress/model-uncertainty gaps=high, silent breach handling=medium               |
+| Inspector              | Skill (under `~/.claude/skills/`)            | Include when the scope has                                                                                                                                                                | Lane model  | Category / severity mapping                                                                                                                                                   |
+| ---------------------- | -------------------------------------------- | ----------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------- | ----------- | ----------------------------------------------------------------------------------------------------------------------------------------------------------------------------- |
+| markdown               | `power-unslop`                               | any scoped `.md` file, including prose-only changes                                                                                                                                       | gpt-6.1-sol | `doc-coherence` or `convention`; report concrete logical/contract conflicts, not cosmetic quotas                                                                              |
+| code-style             | `code-style-inspector`                       | source code in any language                                                                                                                                                               | gpt-6.1-sol | `convention`; verified required spacing/import/provenance violations=low, not dismissible personal-preference nits                                                            |
+| test                   | `test-inspector`                             | test files or new/changed retained behavior, even when no test file changed                                                                                                               | gpt-6.1-sol | category `tests`; useless=medium, weak=low, missing-coverage-for-risky=high, mock-abuse=medium                                                                                |
+| rust                   | `idiomatic-rust-inspector`                   | `.rs` or `Cargo.toml`                                                                                                                                                                     | gpt-6.1-sol | `maintainability` for idiom, `correctness` for ownership/unsafe; non-idiomatic-with-correctness-impact=high, style-only=medium, suboptimal=low                                |
+| typescript             | `idiomatic-typescript-inspector`             | `.ts` / `.tsx`                                                                                                                                                                            | gpt-6.1-sol | `maintainability` (or `correctness` when an `any`/unsafe cast hides a bug); same scale as rust                                                                                |
+| effect                 | `idiomatic-effect-inspector`                 | a TS file importing `effect`                                                                                                                                                              | gpt-6.1-sol | `maintainability`/`correctness`; throwing or an untyped error channel = high                                                                                                  |
+| nushell                | `idiomatic-nushell-inspector`                | `.nu`                                                                                                                                                                                     | gpt-6.1-sol | `maintainability`; `complete` on an internal command or data-loss from string-parsing = high                                                                                  |
+| nix                    | `idiomatic-nix-inspector`                    | `.nix`                                                                                                                                                                                    | gpt-6.1-sol | `maintainability`; import-from-derivation / impurity / non-reproducibility = high                                                                                             |
+| solidjs                | `idiomatic-solidjs-inspector`                | `solid-js` used                                                                                                                                                                           | gpt-6.1-sol | `maintainability`; reactivity-breaking (prop destructure, effect-for-derived) = high                                                                                          |
+| svelte                 | `idiomatic-svelte-inspector`                 | `.svelte`                                                                                                                                                                                 | gpt-6.1-sol | `maintainability`; reactivity bugs (effect-for-derived, legacy runes) = high                                                                                                  |
+| github-actions         | `idiomatic-github-actions-inspector`         | files under `.github/workflows/`                                                                                                                                                          | gpt-6.1-sol | `security` for unpinned actions / script injection / over-broad permissions (high..critical); else `maintainability`                                                          |
+| terraform              | `idiomatic-terraform-inspector`              | `.tf`                                                                                                                                                                                     | gpt-6.1-sol | `security` for plaintext secrets = critical; `maintainability` for count-vs-for_each / structure                                                                              |
+| functional-programming | `idiomatic-functional-programming-inspector` | any FP-leaning source (`.rs`/`.ts`/`.tsx`/`.nu`/`.nix`)                                                                                                                                   | gpt-6.1-sol | `maintainability`; side-effects-in-transforms / partial functions / invalid-states-representable = high                                                                       |
+| strong-typing          | `strong-typing-inspector`                    | typed source in any language, or source storing/passing domain identifiers                                                                                                                | gpt-6.1-sol | `maintainability`; primitive-where-domain-type-exists = medium (high for money/identifiers), missed-newtype = low                                                             |
+| external-contract      | `external-contract-inspector`                | external touchpoints (HTTP/RPC/SDK responses, on-chain ABIs, units/decimals) — usually worth including                                                                                    | gpt-6.1-sol | `correctness`; risk-weighted critical (wrong width/unit/encoding at a money or on-chain boundary) down to low                                                                 |
+| defensive-programming  | `defensive-programming-inspector`            | stateful flows, persistence/recovery, accounting or conservation equations, aggregate/projection derivation, or the same domain state shown through multiple views                        | gpt-6.1-sol | `correctness` or `financial`; unreconciled money/whole-book state=critical, deterministic cross-view/state divergence=high, bounded malformed-state acceptance=medium         |
+| architecture-direction | `architecture-direction-inspector`           | new capabilities, architecture/spec proposals (including docs-only), dependency manifests, ownership/public boundaries, lifecycle, persistence/transport/deployment changes or migrations | gpt-6.1-sol | `architecture`; irreversible wrong ownership/dependency direction=high..critical, evidenced recurring coupling/glue=medium, bounded refinement=low                            |
+| financial-programming  | `financial-programming-inspector`            | monetary values, balances, prices, fees, ledger entries, token math, equity/NAV, cash flows, or monetary projections                                                                      | gpt-6.1-sol | `financial`; silent value corruption or accounting-identity failure=critical, wrong rounding/conservation/cross-ledger mismatch=high, precision drift=medium                  |
+| quantitative-research  | `quantitative-research-inspector`            | strategy/signal research, forecasting, backtests, optimization, portfolio/project/provider allocation, pacing/burn-rate models, or statistical decision rules                             | gpt-6.1-sol | `strategy` or `financial`; leakage/invalid evidence sizing live decisions=critical, selection bias/regime/cost failure=high, uncertainty/calibration gap=medium               |
+| quantitative-trading   | `quantitative-trading-inspector`             | trading implementation (orders, fills, positions, market data, executable signals, backtests)                                                                                             | gpt-6.1-sol | `strategy` or `correctness`; position/PnL desync or sign errors=critical, unavailable information/stale-price/venue violations=high, research-only execution-model gap=medium |
+| risk-management        | `risk-management-inspector`                  | automated money paths, aggregate exposure, position sizing, payment dispatch, leverage/concentration, liquidity/capacity, drawdown, or stress controls                                    | gpt-6.1-sol | `risk` or `security`; unbounded/fail-open/double-send paths=critical, aggregate/concentration/stress/model-uncertainty gaps=high, silent breach handling=medium               |
 
 Select the Markdown lane whenever any `.md` file is in scope, even when there
 are no source-code changes. Give its fresh critic the complete scoped Markdown
@@ -289,8 +283,8 @@ Higher-level trigger checks are explicit:
 - Forecast, signal, strategy, backtest, optimizer, allocation, or pacing-model
   changes select `quantitative-research-inspector`.
 
-Every inspector lane uses the tier-resolved `{LIGHT_MODEL}` under the provider
-constraint. Inspector lanes never invoke a retired external harness.
+Every inspector lane uses authenticated `openai-codex/gpt-6.1-sol`, including
+Markdown critics. Inspector lanes never invoke an external model harness.
 
 For each **selected** inspector, write `$out_dir/prompt-<inspector>.txt` = the
 full body of its skill file (everything below the frontmatter, with `$ARGUMENTS`
@@ -314,7 +308,7 @@ findings alongside it. Do not report incomplete coverage only in clean_reason.
 
 Build native reviewer lanes for the required focus prompts plus every selected
 inspector. Each native lane object is `{key, model, promptPath, diffPath}` and
-sets `model` to the tier-resolved `{LIGHT_MODEL}`. Normally all lanes share
+sets `model` to `openai-codex/gpt-6.1-sol`. Normally all lanes share
 `{DIFF_PATH}`; chunked runs differ as described below.
 
 Assemble only native Pi lanes using the current authenticated model. Do not add
@@ -325,12 +319,11 @@ external-command model lanes.
 Size the native panel to the diff so each pass stays affordable. Inspectors
 selected in step 3 are always included.
 
-- **< 50 changed lines:** goal-evaluation and error-handling focus lanes,
-  selected inspectors, and the optional Claude subscription lane.
-- **50-500 changed lines:** all native focus lanes, selected inspectors, and the
-  optional Claude subscription lane.
-- **> 500 lines or security-sensitive paths:** all native focus lanes, every
-  applicable inspector, and the optional Claude subscription lane.
+- **< 50 changed lines:** goal-evaluation and error-handling focus lanes plus
+  selected inspectors.
+- **50-500 changed lines:** all native focus lanes and selected inspectors.
+- **> 500 lines or security-sensitive paths:** all native focus lanes and every
+  applicable inspector.
 
 Security-sensitive paths force the full panel regardless of size. Drop lanes by
 omitting their objects from the `lanes` array.
@@ -348,8 +341,8 @@ lane objects":
 1. Read `{FILES_PATH}` to see which files changed.
 2. Group files by domain/crate/directory into logical chunks; verify all files
    are covered; report chunk sizes to the user.
-3. Duplicate the reviewer lanes per chunk (keys like `opus-a-chunk-b`), each
-   with its chunk's `diffPath`. Inspector lanes run once on the full diff.
+3. Duplicate the reviewer lanes per chunk (keys like `concurrency-chunk-b`),
+   each with its chunk's `diffPath`. Inspector lanes run once on the full diff.
 4. Pass all lanes to a single workflow invocation — dedup and verification
    handle the rest.
 
@@ -372,7 +365,7 @@ synthesis:
 {
   "repoRoot": "{REPO_ROOT}",
   "docsPaths": ["{PROJECT_DOCS_PATHS as array}"],
-  "lanes": [ ...lane objects — every lane.model must match the resolved light tier... ],
+  "lanes": [ ...lane objects — every lane.model is openai-codex/gpt-6.1-sol... ],
   "tierModels": { "light": "{LIGHT_MODEL}", "mid": "{MID_MODEL}" },
   "reportHeader": "{REPORT_HEADER}",
   "synthesisExtra": "{SYNTHESIS_EXTRA}",
@@ -382,9 +375,10 @@ synthesis:
 }
 ```
 
-`tierModels` carries the provider-tier resolution from the provider constraint
-section. On an unknown provider, pass `"light"` and `"mid"` as `null` so the
-workflow omits lane models and children inherit the session model.
+`tierModels` is retained only for caller compatibility: both fields name
+`openai-codex/gpt-6.1-sol`. The workflow pins that model for review,
+verification and synthesis; neither caller-supplied tier fields nor the
+session's model can select a different model.
 
 The tool result includes a `scriptPath` — the caller keeps it and reuses
 `{scriptPath, args}` for any later full-panel pass instead of resending the
@@ -400,7 +394,7 @@ unrelated shell commands remain prohibited and semantically classified.
 const meta = {
   name: "review-panel",
   description:
-    "Multi-model review panel: parallel review, dedup, adversarial verify, synthesize",
+    "Native review panel: parallel review, dedup, adversarial verify, synthesize",
   phases: [
     { title: "Review", detail: "reviewers + inspectors in parallel" },
     { title: "Verify", detail: "adversarial refuter per deduped finding" },
@@ -486,10 +480,9 @@ const {
   includeAttribution,
   tierModels,
 } = parsedArgs;
-// Tier-resolved models from the provider constraint section. Undefined on an
-// unknown provider: lanes then inherit the session model.
-const lightModel = tierModels?.light;
-const midModel = tierModels?.mid;
+// Compatibility tier fields do not select a model.
+const lightModel = "openai-codex/gpt-6.1-sol";
+const midModel = lightModel;
 
 const gitObjectSource = typeof sourceRevision === "string" &&
   /^[0-9a-f]{40,64}$/.test(sourceRevision);
@@ -518,34 +511,16 @@ const reviewLane = (lane) => {
     `Project docs: ${docsPaths.join(", ")}\n` +
     `Repo root: ${repoRoot}`;
 
-  const prompt = lane.externalCmd
-    ? `Use Bash to run external review commands from the directory ${repoRoot} ` +
-      `(one call per command, 10 minute timeout each).\n\n` +
-      `Primary command:\n${lane.externalCmd}\n\n` +
-      (lane.fallbackCmds?.length
-        ? `If the primary fails with usage limit, rate limit, quota, auth, or ` +
-          `timeout errors, try these fallbacks IN ORDER (one Bash call each):\n` +
-          lane.fallbackCmds.map((cmd, i) => `${i + 1}. ${cmd}`).join("\n") +
-          `\n\nIf every external command fails, read the review instructions at ` +
-          `${lane.promptPath} and follow them as a native sonnet reviewer ` +
-          `(standard structured output — not markdown sections).\n`
-        : `If the command fails, reports a usage/rate limit, or is unusable, ` +
-          `read the review instructions at ${lane.promptPath} and follow them ` +
-          `as a native sonnet reviewer instead.\n`) +
-      `Otherwise convert the review stdout into structured findings (parse each ` +
-      `### section into one finding). If all attempts fail, return an empty ` +
-      `findings list and set reviewer_error to a summary of each attempt.`
-    : `Read the review instructions at ${lane.promptPath} and follow them ` +
-      `exactly.\n${context}\n${sourceReadBoundary}\nRead the diff, the project ` +
-      `docs, and any source files referenced by the diff that you need for context.`;
+  const prompt =
+    `Read the review instructions at ${lane.promptPath} and follow ` +
+    `them exactly.\n${context}\n${sourceReadBoundary}\nRead the diff, the project ` +
+    `docs, and any source files referenced by the diff that you need for context.`;
 
   return agent(prompt, {
     label: `review:${lane.key}`,
     phase: "Review",
     cwd: repoRoot,
-    tools: lane.externalCmd
-      ? ["read", "grep", "find", "ls", "bash"]
-      : sourceTools,
+    tools: sourceTools,
     model: lightModel,
     schema: REVIEW_SCHEMA,
   }).then((result) =>
@@ -613,8 +588,7 @@ log(
 );
 
 const reviewIncomplete = lanes.some(
-  (lane, index) =>
-    !lane.externalCmd && (!laneResults[index] || laneResults[index].error),
+  (_lane, index) => !laneResults[index] || laneResults[index].error,
 );
 if (reviewIncomplete) {
   return {
@@ -787,8 +761,7 @@ schema agents reject the workflow instead of returning a verdict.
    attribution in JSON even when `{INCLUDE_ATTRIBUTION}` is false.
 2. Report every incomplete phase and its retained reason. An incomplete result
    is never clean, even with empty `findings`. Preserve successful evidence and
-   continue only the missing work under the caller's authority and gates. An
-   optional Claude lane error alone does not make the native panel incomplete.
+   continue only the missing work under the caller's authority and gates.
 3. Only `status: "completed"` with empty `findings` is a clean pass.
 
 ## 7. Print findings to the terminal
@@ -803,7 +776,7 @@ Print a compact, scannable summary from the returned `findings`. Show the
 
 ▲ CRITICAL (count)
   1. <title>
-     <file>:<line>  [opus-a, external-b]  confidence: 95
+     <file>:<line>  [concurrency, general]  confidence: 95
      <one-line fix>
 
 ▲ HIGH (count)
@@ -829,7 +802,7 @@ what happens when there are no findings and what to do next.
 - **Required evidence is blocked:** return an incomplete result with the
   affected lane or candidate and reason; never synthesize a clean verdict from
   unavailable evidence. Every selected native reviewer and inspector is
-  required. An optional Claude lane failure alone is non-fatal.
+  required.
 - **The workflow itself fails mid-run:** relaunch with
   `{scriptPath, args,
   resumeFromRunId}` — completed lanes return cached
@@ -843,8 +816,9 @@ what happens when there are no findings and what to do next.
    reviewers sequentially or hand-roll the fan-out with individual Agent calls.
 2. Verification and synthesis happen **inside the workflow**, never in the main
    session (context pollution).
-3. **The optional Claude subscription CLI runs read-only** with
-   `--permission-mode plan`; never use an Anthropic API provider.
+3. **All lanes use authenticated `openai-codex/gpt-6.1-sol`.** Do not launch
+   external model CLIs or fall back to another model/provider. Preserve the
+   exact incomplete result if authentication or quota is unavailable.
 4. Never fabricate or silently discard findings when a lane is blocked. Retain
    `laneErrors`, `verificationErrors`, `unverifiedFindings`, and
    `synthesisError`; incomplete evidence never supports a clean pass.
