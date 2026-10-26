@@ -11,8 +11,8 @@ import {
 import { MANAGED_OPERATIONAL_ROLE_RESUMED_EVENT } from "../shared/registry-intent-events.ts"
 import { REMOTE_CAPABILITY_HANDSHAKE_EVENT } from "../shared/remote-capability.ts"
 import { AGENTOPS_INCIDENT_EVENT } from "../shared/agentops-events.ts"
-import { TELEGRAM_RESUME_EVENT } from "../shared/telegram-resume.ts"
 
+const TELEGRAM_RESUME_EVENT = "fixture.telegram.resume"
 const source = readFileSync(new URL("./index.ts", import.meta.url), "utf8")
 const harness = (sendFailure?: Error) => {
   const start = source.indexOf("  const validWorkflowQuestionId =")
