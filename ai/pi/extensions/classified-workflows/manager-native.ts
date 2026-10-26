@@ -64,6 +64,9 @@ export const registerNativeManager = (
   pi.registerFlag("manager", {
     description: "Run the native manager for all existing workers",
     type: "boolean",
+    default:
+      process.cwd() ===
+      join(homedir(), ".config", "ai", "pi", "workspaces", "manager"),
   })
   pi.registerFlag("manager-worker", {
     description: "Pair a native manager chat with a worker session",
