@@ -57,17 +57,17 @@ trunk=$(git -C "$repo_root" symbolic-ref refs/remotes/origin/HEAD --short 2>/dev
 start_branch=$(git -C "$repo_root" rev-parse --abbrev-ref HEAD)   # return here at the end
 ```
 
-GitButler is main-worktree-only; every linked, isolated, or scratch worktree uses
-plain Git without probing `but`. In a verified GitButler main worktree, confirm
-workspace mode (`but status` ok) as `/review-sweep` does.
+GitButler is main-worktree-only; every linked, isolated, or scratch worktree
+uses plain Git without probing `but`. In a verified GitButler main worktree,
+confirm workspace mode (`but status` ok) as `/review-sweep` does.
 
-Record the working-tree/index state, then verify directory-wide `.tmp/`
-coverage with `git check-ignore --verbose` on the directory itself and the
-intended artifact path. A file-specific match does not establish directory
-coverage. If coverage is missing, immediately add the directory pattern to this
-checkout's `.gitignore`, preserving existing rules and without asking for
-separate approval, then recheck both paths. Apply the same rule to `.worktrees/`
-whenever it is used; this does not authorize creating a worktree.
+Record the working-tree/index state, then verify directory-wide `.tmp/` coverage
+with `git check-ignore --verbose` on the directory itself and the intended
+artifact path. A file-specific match does not establish directory coverage. If
+coverage is missing, immediately add the directory pattern to this checkout's
+`.gitignore`, preserving existing rules and without asking for separate
+approval, then recheck both paths. Apply the same rule to `.worktrees/` whenever
+it is used; this does not authorize creating a worktree.
 
 Account for an owned ignore repair as a separate preflight unit through the
 repository's already-authorized checkpoint/publication workflow before starting
@@ -81,9 +81,10 @@ exact blocker rather than starting another work unit.
 After accounting for the repair, require a clean working tree/index; stop and
 report any remaining unrelated changes without discarding them. Fix clusters
 start from clean branches off trunk. Recheck ignore coverage after each checkout
-transition, including returning to `start_branch`, before using either directory.
-Immediately repair missing coverage and account for that repair as its own
-preflight unit; never carry an unstaged ignore repair between fix clusters.
+transition, including returning to `start_branch`, before using either
+directory. Immediately repair missing coverage and account for that repair as
+its own preflight unit; never carry an unstaged ignore repair between fix
+clusters.
 
 ## 3. Prepare the workspace and build the audit target
 
@@ -98,11 +99,25 @@ out_dir="$repo_root/.tmp/agent-local-ctx/reviews/audit-${ts}-${safe_scope}"
 mkdir -p "$out_dir"
 empty=$(git -C "$repo_root" hash-object -t tree /dev/null)   # canonical empty-tree object
 git -C "$repo_root" diff "$empty" HEAD -- "$scope" \
-  ':(exclude)*.lock' ':(exclude)Cargo.lock' ':(exclude)flake.lock' > "$out_dir/diff.patch"
+  ':(exclude)*.lock' ':(exclude)Cargo.lock' ':(exclude)flake.lock' \
+  ':(exclude)**/.env*' ':(exclude)**/credentials*' ':(exclude)**/secrets*' \
+  ':(exclude)**/.ssh/**' ':(exclude)**/.aws/**' ':(exclude)**/.gnupg/**' \
+  ':(exclude)**/*.key' ':(exclude)**/*.pem' ':(exclude)**/*.p12' \
+  ':(exclude)**/*.pfx' ':(exclude)**/*.crt' ':(exclude)**/*.cer' > "$out_dir/diff.patch"
 git -C "$repo_root" diff --name-status "$empty" HEAD -- "$scope" \
-  ':(exclude)*.lock' ':(exclude)Cargo.lock' ':(exclude)flake.lock' > "$out_dir/files.txt"
+  ':(exclude)*.lock' ':(exclude)Cargo.lock' ':(exclude)flake.lock' \
+  ':(exclude)**/.env*' ':(exclude)**/credentials*' ':(exclude)**/secrets*' \
+  ':(exclude)**/.ssh/**' ':(exclude)**/.aws/**' ':(exclude)**/.gnupg/**' \
+  ':(exclude)**/*.key' ':(exclude)**/*.pem' ':(exclude)**/*.p12' \
+  ':(exclude)**/*.pfx' ':(exclude)**/*.crt' ':(exclude)**/*.cer' > "$out_dir/files.txt"
 wc -l "$out_dir/diff.patch"
 ```
+
+Apply these credential/private-key/certificate exclusions before retrieving
+contents or even generating the file manifest. Use the identical exclusions for
+every chunk-generation command and context search; Git tracking/ignore status is
+not evidence that a file is safe. Never collect first and redact afterward.
+Report protected paths as excluded, not reviewed.
 
 Refuse on an empty target. A whole repo is large, so this leans hard on chunking
 (step 5) — large is expected, not a blocker. **Do not stop for size confirmation
