@@ -259,14 +259,25 @@ const autoReload: (pi: ExtensionAPI) => void = pi => {
       .replace(/\s+/g, " ")
       .trim()
       .slice(0, 240)
-    pi.sendMessage(
-      {
-        customType: "auto-reload.failure",
-        content: `${severity}: ${operation}: ${detail}`,
-        display: true,
-      },
-      { triggerTurn: false },
-    )
+    try {
+      pi.sendMessage(
+        {
+          customType: "auto-reload.failure",
+          content: `${severity}: ${operation}: ${detail}`,
+          display: true,
+        },
+        { triggerTurn: false },
+      )
+    } catch {
+      console.error(
+        JSON.stringify({
+          level: "error",
+          component: "auto-reload",
+          event: "notice-delivery-failed",
+          operation,
+        }),
+      )
+    }
   }
   let watchers: FSWatcher[] = []
   let timer: ReturnType<typeof setTimeout> | undefined

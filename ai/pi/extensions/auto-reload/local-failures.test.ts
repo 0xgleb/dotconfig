@@ -15,7 +15,7 @@ type LocalMessage = {
   readonly display: boolean
 }
 
-const failureReporter = () => {
+const failureReporter = (sendFailure?: Error) => {
   const source = readFileSync(new URL("./index.ts", import.meta.url), "utf8")
   const start = source.indexOf("  const reportIncident =")
   const end = source.indexOf("  let watchers:", start)
@@ -25,19 +25,23 @@ const failureReporter = () => {
     readonly options: unknown
   }[] = []
   const routed: unknown[] = []
+  const logs: string[] = []
   const api = {
     events: {
       emit: (_name: string, value: unknown) => routed.push(value),
     },
-    sendMessage: (message: LocalMessage, options: unknown) =>
-      messages.push({ message, options }),
+    sendMessage: (message: LocalMessage, options: unknown) => {
+      if (sendFailure) throw sendFailure
+      messages.push({ message, options })
+    },
   }
   const report: Reporter = new Function(
     "pi",
+    "console",
     `${stripTypeScriptTypes(source.slice(start, end), { mode: "strip" })}
      return reportIncident;`,
-  )(api)
-  return { report, messages, routed }
+  )(api, { error: (record: string) => logs.push(record) })
+  return { report, messages, routed, logs }
 }
 
 test("reload failure stays visible locally without routing or starting a turn", () => {
@@ -54,6 +58,31 @@ test("reload failure stays visible locally without routing or starting a turn", 
     },
   ])
   assert.deepEqual(runtime.routed, [])
+})
+
+test("a stale notice sender cannot interrupt recovery or expose its error", () => {
+  const runtime = failureReporter(new Error("sensitive sender sentinel"))
+  assert.doesNotThrow(() =>
+    runtime.report(
+      "error",
+      "automatic extension reload",
+      "sensitive summary sentinel",
+    ),
+  )
+  assert.deepEqual(runtime.messages, [])
+  assert.deepEqual(runtime.routed, [])
+  assert.deepEqual(
+    runtime.logs.map(record => JSON.parse(record)),
+    [
+      {
+        level: "error",
+        component: "auto-reload",
+        event: "notice-delivery-failed",
+        operation: "automatic extension reload",
+      },
+    ],
+  )
+  assert.doesNotMatch(runtime.logs.join("\n"), /sensitive/u)
 })
 
 test("local reload failure retains bounded single-line diagnostics", () => {
