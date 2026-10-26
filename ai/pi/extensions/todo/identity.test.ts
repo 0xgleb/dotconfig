@@ -195,6 +195,9 @@ test("a malformed authoritative entry fails closed rather than falling back to l
   const result = await f.run({ action: "list" })
   assert.ok(record(result))
   assert.equal(result.isError, true)
+  assert.ok(record(result.details))
+  assert.equal(result.details.outcome, "unavailable")
+  assert.equal(Object.hasOwn(result.details, "state"), false)
 })
 
 test("a delayed actual tool result cannot roll back manager-created identity or effort", async t => {
