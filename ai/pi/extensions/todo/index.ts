@@ -624,6 +624,7 @@ export default function todoExtension(
     if (restorationError)
       return {
         isError: true,
+        details: { outcome: "unavailable" as const },
         content: [
           {
             type: "text" as const,

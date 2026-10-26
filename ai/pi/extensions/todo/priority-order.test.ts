@@ -120,6 +120,17 @@ test("absolute assignments reject occupied ranks, while explicit null still unas
   assert.deepEqual(unassigned.todos.slice(1), seed.todos.slice(1))
 })
 
+test("reapplying an existing rank is idempotent even for legacy active collisions", () => {
+  const legacy: TodoState = {
+    ...seed,
+    todos: seed.todos.map(todo =>
+      todo.id === 2 ? { ...todo, priority: 2 } : todo,
+    ),
+  }
+  const result = apply(legacy, { action: "priority", id: 1, priority: 2 })
+  assert.deepEqual(result.state, legacy)
+})
+
 test("historical terminal ranks do not occupy slots or need manual unranking", () => {
   for (const status of ["completed", "cancelled"] as const) {
     const legacy: TodoState = {

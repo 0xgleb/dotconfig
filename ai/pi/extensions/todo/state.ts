@@ -575,6 +575,7 @@ export const transitionTodoState: (
         )
       if (
         action.priority !== null &&
+        action.priority !== target.priority &&
         state.todos.filter(
           todo =>
             !isTerminalTodo(todo) &&
