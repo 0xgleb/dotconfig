@@ -23,11 +23,14 @@ support-routing policy.
 
 Driver workers use the existing GitButler workspace in this main worktree when
 managed; verify topology once when entering the repository, not as a repeated
-gate. Create a separate branch with a purpose-appropriate prefix and follow the
-driver publication workflow below. A scoped global-resource change request
-carries authority for that branch/commit/push/draft/ready workflow without
-repeated permission asks. Explicit owner direction can select a different
-delivery workflow.
+gate. Continue the existing branch and PR for follow-up corrections to unmerged
+work, checking later branches for changes that already supersede the earlier
+version. A new prompt, session or reload does not require a new branch. Create a
+separate purpose-named branch only for independent work without a suitable
+ongoing branch, and follow the driver publication workflow below. A scoped
+global-resource change request carries authority for that
+branch/commit/push/draft/ready workflow without repeated permission asks.
+Explicit owner direction can select a different delivery workflow.
 
 This does not authorize merges, branch-protection overrides, secret access,
 applying host configuration, deployments or unrelated changes. Independent
