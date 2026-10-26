@@ -22,7 +22,6 @@ export const managedOperationalRole: (
   home: string,
 ) => ManagedOperationalRole | undefined = (cwd, home) => {
   const roles: ManagedOperationalRole[] = [
-    { project: join(home, ".config"), role: "pi-support" },
     { project: join(home, "code", "dataclique", "yielduck"), role: "operator" },
     {
       project: join(home, "code", "dataclique", "moneymentum"),
@@ -42,7 +41,6 @@ export const shouldSelfClaimUnownedRole: (
   home: string,
 ) => boolean = (project, role, cwd, home) => {
   const dedicated = [
-    { project: join(home, ".config"), role: "pi-support" },
     { project: join(home, "code", "dataclique", "yielduck"), role: "operator" },
     {
       project: join(home, "code", "dataclique", "moneymentum"),

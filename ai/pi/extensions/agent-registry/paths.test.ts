@@ -8,13 +8,6 @@ import {
 
 test("managed operational roles are scoped to their owning project sessions", () => {
   assert.deepEqual(
-    managedOperationalRole("/Users/example/.config", "/Users/example"),
-    {
-      project: "/Users/example/.config",
-      role: "pi-support",
-    },
-  )
-  assert.deepEqual(
     managedOperationalRole(
       "/Users/example/code/dataclique/yielduck",
       "/Users/example",
@@ -49,24 +42,6 @@ test("managed operational roles are scoped to their owning project sessions", ()
 test("sessions outside dedicated projects never self-claim their standing roles", () => {
   assert.equal(
     shouldSelfClaimUnownedRole(
-      "/Users/example/.config",
-      "pi-support",
-      "/Users/example/code/project",
-      "/Users/example",
-    ),
-    false,
-  )
-  assert.equal(
-    shouldSelfClaimUnownedRole(
-      "/Users/example/.config",
-      "pi-support",
-      "/Users/example/.config",
-      "/Users/example",
-    ),
-    true,
-  )
-  assert.equal(
-    shouldSelfClaimUnownedRole(
       "/Users/example/code/dataclique/yielduck",
       "operator",
       "/Users/example/code/other",
@@ -151,6 +126,25 @@ test("sessions outside dedicated projects never self-claim their standing roles"
       "/Users/example/code/project",
       "reviewer",
       "/Users/example/code/other",
+      "/Users/example",
+    ),
+    true,
+  )
+})
+
+test("dotconfig has no implicit operational role or reserved support worker", () => {
+  assert.equal(
+    managedOperationalRole("/Users/example/.config", "/Users/example"),
+    undefined,
+  )
+})
+
+test("historical support-role names follow ordinary explicit-claim rules", () => {
+  assert.equal(
+    shouldSelfClaimUnownedRole(
+      "/Users/example/.config",
+      "pi-support",
+      "/Users/example/code/project",
       "/Users/example",
     ),
     true,
