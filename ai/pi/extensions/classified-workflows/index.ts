@@ -294,7 +294,6 @@ import {
 } from "../shared/registry-intent-events.ts"
 import { registerRuntimeVersion } from "../shared/runtime-version.ts"
 import { markPreferredProvider, tierCandidates } from "../shared/model-tiers.ts"
-import { AGENTOPS_INCIDENT_EVENT } from "../shared/agentops-events.ts"
 import { remoteBridgeDatabasePath } from "../remote-control/paths.ts"
 import { RemoteBridgeError } from "../remote-control/protocol.ts"
 import { makeRemoteBridgeStore } from "../remote-control/sqlite-store.ts"
@@ -2760,12 +2759,25 @@ export default function classifiedWorkflows(
     const error = new WorkflowScriptError({
       message: `Invalid workflow event payload: ${eventName}`,
     })
-    pi.events.emit(AGENTOPS_INCIDENT_EVENT, {
-      severity: "error",
-      component: "classified-workflows",
-      operation: "decode internal event",
-      summary: error.message,
-    })
+    try {
+      pi.sendMessage(
+        {
+          customType: "workflow.invalid-event",
+          content: error.message,
+          display: true,
+        },
+        { triggerTurn: false },
+      )
+    } catch {
+      console.error(
+        JSON.stringify({
+          level: "error",
+          component: "classified-workflows",
+          event: "notice-delivery-failed",
+          operation: "decode internal event",
+        }),
+      )
+    }
   }
 
   pi.events.on(QUESTION_STATE_EVENT, snapshot => {

@@ -4,7 +4,6 @@ import { stripTypeScriptTypes } from "node:module"
 import test from "node:test"
 import { Effect, Either } from "effect"
 
-import { AGENTOPS_INCIDENT_EVENT } from "../shared/agentops-events.ts"
 import { MemoryCapacityError } from "../shared/memory-capacity.ts"
 import { RESOURCE_PREFLIGHT_REQUEST_EVENT } from "../shared/resource-preflight.ts"
 import * as resource from "./core.ts"
@@ -22,7 +21,6 @@ const resourceRuntime = (
     ...resource,
     Effect,
     Either,
-    AGENTOPS_INCIDENT_EVENT,
     RESOURCE_PREFLIGHT_REQUEST_EVENT,
     STATUS_KEY: "disk-pressure",
     INCIDENT_PATH: "/fixture/incident.json",

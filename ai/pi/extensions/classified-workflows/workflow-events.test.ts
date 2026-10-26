@@ -10,7 +10,6 @@ import {
 } from "../shared/question-events.ts"
 import { MANAGED_OPERATIONAL_ROLE_RESUMED_EVENT } from "../shared/registry-intent-events.ts"
 import { REMOTE_CAPABILITY_HANDSHAKE_EVENT } from "../shared/remote-capability.ts"
-import { AGENTOPS_INCIDENT_EVENT } from "../shared/agentops-events.ts"
 
 const TELEGRAM_RESUME_EVENT = "fixture.telegram.resume"
 const source = readFileSync(new URL("./index.ts", import.meta.url), "utf8")
@@ -49,7 +48,6 @@ const harness = (sendFailure?: Error) => {
       "QUESTION_RESOLVED_EVENT",
       "MANAGED_OPERATIONAL_ROLE_RESUMED_EVENT",
       "REMOTE_CAPABILITY_HANDSHAKE_EVENT",
-      "AGENTOPS_INCIDENT_EVENT",
       "registerRuntimeVersion",
       "TELEGRAM_RESUME_EVENT",
       "console",
@@ -72,7 +70,6 @@ const harness = (sendFailure?: Error) => {
       QUESTION_RESOLVED_EVENT,
       MANAGED_OPERATIONAL_ROLE_RESUMED_EVENT,
       REMOTE_CAPABILITY_HANDSHAKE_EVENT,
-      AGENTOPS_INCIDENT_EVENT,
       () => undefined,
       TELEGRAM_RESUME_EVENT,
       { error: (record: string) => logs.push(record) },

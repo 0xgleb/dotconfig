@@ -24,15 +24,12 @@ test("macOS capacity uses the shared pressure-aware provider instead of raw free
   assert.match(source, /only.*available.*reserve/is)
 })
 
-test("resource warnings automatically route typed agentops incidents", () => {
-  assert.match(source, /AGENTOPS_INCIDENT_EVENT/)
-  assert.match(
-    source,
-    /component: "resource-pressure"[\s\S]*?operation[\s\S]*?summary/,
-  )
-  assert.match(source, /Disk pressure is below the crash reserve/)
-  assert.match(source, /Memory pressure is below the crash reserve/)
-  assert.match(source, /reportIncident\("error", "post-build cleanup"/)
+test("resource failures retain local diagnostics without incident dispatch", () => {
+  assert.doesNotMatch(source, /pi\.events\.emit/)
+  assert.match(source, /ctx\.ui\.notify\(summary, "warning"\)/)
+  assert.match(source, /Disk pressure critical/)
+  assert.match(source, /Memory pressure requires action/)
+  assert.match(source, /Post-build cleanup failed safely/)
 })
 
 test("critical memory incidents steer the active session instead of waiting passively", () => {

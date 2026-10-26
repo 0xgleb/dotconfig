@@ -8,7 +8,6 @@ import type {
 } from "@earendil-works/pi-coding-agent"
 import { isToolCallEventType } from "@earendil-works/pi-coding-agent"
 import { Effect, Either } from "effect"
-import { AGENTOPS_INCIDENT_EVENT } from "../shared/agentops-events.ts"
 import { availableMemoryBytes } from "../shared/memory-capacity.ts"
 import {
   RESOURCE_PREFLIGHT_REQUEST_EVENT,
@@ -98,19 +97,6 @@ const processAggregateText = (): string => {
 export default (pi: ExtensionAPI) => {
   registerRuntimeVersion(pi, "resource-pressure", "2026.09.04.1")
   const pendingBuilds = new Map<string, PendingBuild>()
-  const reportIncident = (
-    severity: "error" | "warning",
-    operation: string,
-    summary: string,
-  ): void => {
-    pi.events.emit(AGENTOPS_INCIDENT_EVENT, {
-      severity,
-      component: "resource-pressure",
-      operation,
-      summary,
-    })
-  }
-
   const resourcePressureSnapshot = async (
     cwd: string,
     command: string,
@@ -168,9 +154,6 @@ export default (pi: ExtensionAPI) => {
       ),
     )
     if (Either.isLeft(claimed)) {
-      const summary =
-        "Memory pressure is below the crash reserve and Pi could not claim the remediation incident"
-      reportIncident("error", "claim memory remediation", summary)
       ctx.ui.notify(
         "Memory pressure requires action, but Pi could not claim the remediation incident. Close or restart a high-memory application before expensive work.",
         "warning",
@@ -179,11 +162,6 @@ export default (pi: ExtensionAPI) => {
     }
     if (!claimed.right) return
     const available = formatFreeBytes(memoryAvailable)
-    reportIncident(
-      "warning",
-      "memory capacity preflight",
-      "Memory pressure is below the crash reserve; bounded remediation is required",
-    )
     ctx.ui.notify(
       `Memory pressure action assigned to this session: ${available} available. Remediation will start now.`,
       "warning",
@@ -216,7 +194,6 @@ export default (pi: ExtensionAPI) => {
       )
       if (Either.isLeft(memory)) {
         const summary = `Resource-pressure check failed safely: ${memory.left.message}`
-        reportIncident("error", "resource capacity preflight", summary)
         ctx.ui.notify(summary, "warning")
         return
       }
@@ -228,11 +205,6 @@ export default (pi: ExtensionAPI) => {
           `Cleaned ${removed.length} stale Pi temporary log${removed.length === 1 ? "" : "s"}.`,
         )
       if (available < CRITICAL_FREE_BYTES) {
-        reportIncident(
-          "warning",
-          "disk capacity preflight",
-          "Disk pressure is below the crash reserve; expensive builds are blocked until capacity is recovered",
-        )
         ctx.ui.notify(
           `Disk pressure critical: ${formatFreeBytes(available)} free. Expensive builds are blocked until space is recovered.`,
           "warning",
@@ -240,7 +212,6 @@ export default (pi: ExtensionAPI) => {
       }
     } catch (error) {
       const summary = `Resource-pressure check failed safely: ${error instanceof Error ? error.message : "unknown error"}`
-      reportIncident("error", "resource capacity preflight", summary)
       ctx.ui.notify(summary, "warning")
     }
   })
@@ -258,7 +229,6 @@ export default (pi: ExtensionAPI) => {
       )
       if (Either.isLeft(memory)) {
         const summary = `Disk pressure guard could not verify safe build capacity: ${memory.left.message}`
-        reportIncident("error", "expensive-command capacity preflight", summary)
         return { block: true, reason: `${summary}.` }
       }
       const memoryAvailable = memory.right
@@ -286,7 +256,6 @@ export default (pi: ExtensionAPI) => {
       })
     } catch (error) {
       const summary = `Disk pressure guard could not verify safe build capacity: ${error instanceof Error ? error.message : "unknown error"}`
-      reportIncident("error", "expensive-command capacity preflight", summary)
       return {
         block: true,
         reason: `${summary}.`,
@@ -309,7 +278,6 @@ export default (pi: ExtensionAPI) => {
       )
       if (Either.isLeft(memory)) {
         const summary = `Post-build cleanup failed safely: ${memory.left.message}`
-        reportIncident("error", "post-build cleanup", summary)
         ctx.ui.notify(summary, "warning")
         return
       }
@@ -323,7 +291,6 @@ export default (pi: ExtensionAPI) => {
       }
     } catch (error) {
       const summary = `Post-build cleanup failed safely: ${error instanceof Error ? error.message : "unknown error"}`
-      reportIncident("error", "post-build cleanup", summary)
       ctx.ui.notify(summary, "warning")
     }
   })
