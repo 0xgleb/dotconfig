@@ -24,7 +24,7 @@ import { CAPABILITY_CIRCUIT_ENTRY } from "../classified-workflows/capability-cir
 
 const source = readFileSync(new URL("./index.ts", import.meta.url), "utf8")
 const start = source.indexOf("  const sync = async")
-const end = source.indexOf("  const autoClaimOperationalRole", start)
+const end = source.indexOf("  const collectDeclaredBacklog", start)
 assert.ok(start >= 0 && end > start)
 const syncSource = stripTypeScriptTypes(source.slice(start, end))
 const agent = { id: "agent-1", pid: 1 }
