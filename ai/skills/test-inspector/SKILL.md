@@ -63,6 +63,12 @@ PR you have not checked out).
 
 ## 2. Identify test files in the diff
 
+Intentional capability removal does not itself require replacement tests. Apply
+`GLOBAL_AGENTS.md`'s obsolete-capability rule: retire feature-only tests and
+fixtures, assess current retained contracts, and do not request absence-only
+tests or inventories of retired names. Negative coverage for current behavior,
+compatibility, and security boundaries remains valuable.
+
 From the diff, extract all files that are test files. Detect test files by:
 
 - Files in `tests/`, `test/`, `__tests__/`, `spec/` directories
@@ -191,9 +197,10 @@ Wait for the user's direction.
    their place by catching bugs that would otherwise reach production.
 5. **Call out mock abuse.** If more than 50% of a test's setup is mocking, it's
    almost certainly testing implementation details. Flag it loudly.
-6. **Flag missing tests for risky code.** If the diff under review touches error
-   handling, state transitions, financial calculations, auth logic, or
-   concurrency — and there's no test for it — that's a critical finding.
+6. **Flag missing tests for risky retained behavior.** If the diff adds or
+   changes retained error handling, state transitions, financial calculations,
+   auth logic, or concurrency without meaningful coverage, that's a critical
+   finding. Intentional deletion is not a new behavior requiring a test.
 7. **Stay brutally honest.** You're the last line of defense before bad tests
    get merged and become someone else's maintenance burden. Don't be nice — be
    right.

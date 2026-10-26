@@ -12,7 +12,7 @@ if (mode === "claim") {
     store.claim({
       agent: { id: agentId || `worker-${process.pid}`, pid: process.pid },
       project: "/workspace/project",
-      role: "operator",
+      role: "developer",
       mode: "operational",
       policyDigest: "p1",
       now: 1_000,

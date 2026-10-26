@@ -85,7 +85,7 @@ test("dashboard uses Solid lifecycle primitives and validates API job state", ()
     /\.filter\(\(\{ resetAt \}\) => resetAt === activeRunway\.latest\.resetAt\)/,
   )
   assert.match(app, /PROJECT ALLOCATION/)
-  assert.doesNotMatch(app, /FEEDER LANES|agentops-(?:config|yielduck|review)/)
+  assert.doesNotMatch(app, /FEEDER LANES/)
   assert.match(app, /job\.spec\.payload\.task/)
   assert.match(app, /jobSchedulePresentation\(job\)/)
   assert.match(app, /classList=\{\{ stale: schedule\.stale \}\}/)

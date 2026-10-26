@@ -312,8 +312,16 @@
                 ln -s ${piTestNodeModules}/node_modules ai/pi/extensions/node_modules
                 node --test \
                   ai/pi/extensions/classified-workflows/loop.test.ts \
-                  ai/pi/extensions/agent-registry/retired-routing.test.ts \
+                  ai/pi/extensions/agent-registry/registration.test.ts \
                   ai/pi/extensions/agent-registry/paths.test.ts \
+                  ai/pi/extensions/agent-registry/delivery.test.ts \
+                  ai/pi/extensions/agent-registry/registry.test.ts \
+                  ai/pi/extensions/agent-registry/presentation.test.ts \
+                  ai/pi/extensions/agent-registry/listing.test.ts \
+                  ai/pi/extensions/agent-registry/backlog-wake-controller.test.ts \
+                  ai/pi/extensions/agent-registry/backlog-wake.test.ts \
+                  ai/pi/extensions/agent-registry/backlog.test.ts \
+                  ai/pi/extensions/remote-control/agent-identity.test.ts \
                   ai/pi/extensions/auto-reload/index.test.ts \
                   ai/pi/extensions/auto-reload/local-failures.test.ts \
                   ai/pi/extensions/classified-workflows/workflow-events.test.ts \

@@ -14,7 +14,6 @@ import {
 } from "./sqlite-store.ts"
 import {
   prioritizedActiveReceiptLeases,
-  reconcileSessionLease,
   RegistryError,
   registryReceiptAvailable,
   registrySyncNotification,
@@ -238,7 +237,7 @@ test("concurrent claims produce exactly one exclusive role owner", async () => {
         first.claim({
           agent: agent("agent-a"),
           project: "/workspace/project",
-          role: "staging-operator",
+          role: "staging-developer",
           mode: "operational",
           policyDigest: "policy-a",
           now: 1_000,
@@ -249,7 +248,7 @@ test("concurrent claims produce exactly one exclusive role owner", async () => {
         second.claim({
           agent: agent("agent-b"),
           project: "/workspace/project",
-          role: "staging-operator",
+          role: "staging-developer",
           mode: "operational",
           policyDigest: "policy-a",
           now: 1_000,
@@ -300,7 +299,7 @@ test("one registry connection serializes concurrent lifecycle mutations", async 
     const first = Effect.runPromise(
       store.enqueue({
         project: "/workspace/project",
-        role: "operator",
+        role: "developer",
         requesterId: "requester",
         text: "first parallel lifecycle mutation",
         now: 1_000,
@@ -310,7 +309,7 @@ test("one registry connection serializes concurrent lifecycle mutations", async 
     const second = Effect.runPromise(
       store.enqueue({
         project: "/workspace/project",
-        role: "operator",
+        role: "developer",
         requesterId: "requester",
         text: "second parallel lifecycle mutation",
         now: 1_001,
@@ -368,7 +367,7 @@ test("rollback failure retains both typed causes and retires the connection", as
     const exit = await Effect.runPromiseExit(
       store.enqueue({
         project: "/repo",
-        role: "operator",
+        role: "developer",
         requesterId: "sender",
         text: "first",
         now: 1,
@@ -385,7 +384,7 @@ test("rollback failure retains both typed causes and retires the connection", as
     const next = await Effect.runPromise(
       store.enqueue({
         project: "/repo",
-        role: "operator",
+        role: "developer",
         requesterId: "sender",
         text: "second",
         now: 2,
@@ -423,7 +422,7 @@ test("interrupting a registry transaction rolls back before releasing access", a
     const interrupted = Effect.runFork(
       store.enqueue({
         project: "/workspace/project",
-        role: "operator",
+        role: "developer",
         requesterId: "requester",
         text: "interrupted mutation",
         now: 1_000,
@@ -435,7 +434,7 @@ test("interrupting a registry transaction rolls back before releasing access", a
     const request = await Effect.runPromise(
       store.enqueue({
         project: "/workspace/project",
-        role: "operator",
+        role: "developer",
         requesterId: "requester",
         text: "after interruption",
         now: 2_000,
@@ -514,7 +513,7 @@ test("one agent holds multiple roles while a live lease cannot be stolen", async
       store.claim({
         agent: owner,
         project: "/workspace/project",
-        role: "staging-operator",
+        role: "staging-developer",
         mode: "operational",
         policyDigest: "p1",
         now: 1_000,
@@ -544,7 +543,7 @@ test("expired leases are reclaimable but stale owners cannot mutate requests", a
       store.claim({
         agent: agent("agent-a"),
         project: "/workspace/project",
-        role: "operator",
+        role: "developer",
         mode: "operational",
         policyDigest: "p1",
         now: 1_000,
@@ -560,7 +559,7 @@ test("expired leases are reclaimable but stale owners cannot mutate requests", a
     const request = await Effect.runPromise(
       store.enqueue({
         project: "/workspace/project",
-        role: "operator",
+        role: "developer",
         requesterId: "requester",
         text: "inspect health",
         now: 1_010,
@@ -578,7 +577,7 @@ test("expired leases are reclaimable but stale owners cannot mutate requests", a
       store.claim({
         agent: agent("agent-b"),
         project: "/workspace/project",
-        role: "operator",
+        role: "developer",
         mode: "operational",
         policyDigest: "p1",
         now: 1_101,
@@ -621,7 +620,7 @@ test("policy revision changes suspend rather than silently upgrade a lease", asy
       store.claim({
         agent: agent("agent-a"),
         project: "/workspace/project",
-        role: "production-operator",
+        role: "production-developer",
         mode: "operational",
         policyDigest: "p1",
         now: 1_000,
@@ -646,57 +645,13 @@ test("policy revision changes suspend rather than silently upgrade a lease", asy
   })
 })
 
-test("session start rebinds an owned suspended lease to the newly loaded policy", async () => {
-  await withStores(async store => {
-    const initial = await Effect.runPromise(
-      store.claim({
-        agent: agent("agent-a"),
-        project: "/workspace/project",
-        role: "operator",
-        mode: "operational",
-        policyDigest: "p1",
-        now: 1_000,
-        ttlMs: 10_000,
-      }),
-    )
-    assert.equal(initial.outcome, "claimed")
-    const suspended = await Effect.runPromise(
-      store.heartbeat({
-        leaseId: initial.lease.id,
-        agentId: "agent-a",
-        policyDigest: "p2",
-        now: 1_010,
-        ttlMs: 10_000,
-      }),
-    )
-    assert.equal(suspended.status, "suspended")
-
-    const rebound = await Effect.runPromise(
-      reconcileSessionLease({
-        store,
-        agent: agent("agent-a"),
-        project: "/workspace/project",
-        role: "operator",
-        mode: "operational",
-        policyDigest: "p2",
-        now: 1_020,
-        ttlMs: 10_000,
-      }),
-    )
-    assert.equal(rebound.outcome, "claimed")
-    assert.notEqual(rebound.lease.id, initial.lease.id)
-    assert.equal(rebound.lease.policyDigest, "p2")
-    assert.equal(rebound.lease.status, "active")
-  })
-})
-
 test("manual pause stops authorization and can resume only before expiry under the same policy", async () => {
   await withStores(async store => {
     const claimed = await Effect.runPromise(
       store.claim({
         agent: agent("agent-a"),
         project: "/workspace/project",
-        role: "operator",
+        role: "developer",
         mode: "operational",
         policyDigest: "p1",
         now: 1_000,
@@ -714,7 +669,7 @@ test("manual pause stops authorization and can resume only before expiry under t
     const queued = await Effect.runPromise(
       store.enqueue({
         project: "/workspace/project",
-        role: "operator",
+        role: "developer",
         requesterId: "requester",
         text: "wait",
         now: 1_011,
@@ -750,7 +705,7 @@ test("operational leases remain live with an empty inbox until explicit release"
       store.claim({
         agent: agent("agent-a"),
         project: "/workspace/project",
-        role: "operator",
+        role: "developer",
         mode: "operational",
         policyDigest: "p1",
         now: 1_000,
@@ -802,7 +757,7 @@ test("administrative clear is atomic and preserves only the selected project tre
       store.claim({
         agent: agent("agent-a"),
         project: `${yielduck}/worker`,
-        role: "operator",
+        role: "developer",
         mode: "operational",
         policyDigest: "p1",
         now: 1_000,
@@ -813,7 +768,7 @@ test("administrative clear is atomic and preserves only the selected project tre
       store.claim({
         agent: agent("agent-b"),
         project: "/workspace/config",
-        role: "pi-support",
+        role: "maintainer",
         mode: "operational",
         policyDigest: "p1",
         now: 1_000,
@@ -823,7 +778,7 @@ test("administrative clear is atomic and preserves only the selected project tre
     await Effect.runPromise(
       store.enqueue({
         project: yielduck,
-        role: "operator",
+        role: "developer",
         requesterId: "requester",
         text: "preserve",
         now: 1_010,
@@ -832,7 +787,7 @@ test("administrative clear is atomic and preserves only the selected project tre
     await Effect.runPromise(
       store.enqueue({
         project: "/workspace/config",
-        role: "pi-support",
+        role: "maintainer",
         requesterId: "requester",
         text: "clear",
         now: 1_011,
@@ -864,7 +819,7 @@ test("administrative clear does not preserve lookalike path prefixes", async () 
     await Effect.runPromise(
       store.enqueue({
         project: "/workspace/yielduck-evil",
-        role: "operator",
+        role: "developer",
         requesterId: "requester",
         text: "remove",
         now: 1_000,
@@ -930,7 +885,7 @@ test("valid todo activity summaries cannot prevent presence and lease renewal", 
         store.claim({
           agent: identity,
           project: "/workspace/project",
-          role: "operator",
+          role: "developer",
           mode: "operational",
           policyDigest: "p1",
           now: 1_000,
@@ -1120,7 +1075,7 @@ test("lease heartbeats publish bounded component versions for fleet diagnostics"
           runtimeVersions: { "classified-workflows": "2026.07.23.1" },
         },
         project: "/workspace/project",
-        role: "operator",
+        role: "developer",
         mode: "operational",
         policyDigest: "p1",
         now: 1_000,
@@ -1158,7 +1113,7 @@ test("request receipt is durable, lease-bound, and distinct from explicit acknow
       store.claim({
         agent: agent("agent-a"),
         project: "/workspace/project",
-        role: "operator",
+        role: "developer",
         mode: "operational",
         policyDigest: "p1",
         now: 1_000,
@@ -1172,7 +1127,7 @@ test("request receipt is durable, lease-bound, and distinct from explicit acknow
     const queued = await Effect.runPromise(
       store.enqueue({
         project: "/workspace/project",
-        role: "operator",
+        role: "developer",
         requesterId: "requester",
         text: "inspect health",
         now: 1_010,
@@ -1218,7 +1173,7 @@ test("request receipt is durable, lease-bound, and distinct from explicit acknow
       store.claim({
         agent: agent("agent-b"),
         project: "/workspace/project",
-        role: "operator",
+        role: "developer",
         mode: "operational",
         policyDigest: "p1",
         now: 1_101,
@@ -1260,7 +1215,7 @@ test("a live lease cannot receive a request for another role", async () => {
       store.claim({
         agent: agent("agent-a"),
         project: "/workspace/project",
-        role: "operator",
+        role: "developer",
         mode: "operational",
         policyDigest: "p1",
         now: 1_000,
@@ -1300,7 +1255,7 @@ test("acknowledged request history stays durable without entering operational sn
       store.claim({
         agent: agent("agent-a"),
         project: "/workspace/project",
-        role: "pi-support",
+        role: "maintainer",
         mode: "operational",
         policyDigest: "p1",
         now: 1_000,
@@ -1314,7 +1269,7 @@ test("acknowledged request history stays durable without entering operational sn
     const queued = await Effect.runPromise(
       store.enqueue({
         project: "/workspace/project",
-        role: "pi-support",
+        role: "maintainer",
         requesterId: "requester",
         requesterLabel: "st0x PR reviewer",
         requesterCwd: "/workspace/st0x.rest.api",
@@ -1380,7 +1335,7 @@ test("dot-quoted SQL JSONPath keys remain relayable while credential file paths 
       store.claim({
         agent: agent("agent-a"),
         project: "/workspace/project",
-        role: "pi-support",
+        role: "maintainer",
         mode: "operational",
         policyDigest: "p1",
         now: 1_000,
@@ -1397,7 +1352,7 @@ test("dot-quoted SQL JSONPath keys remain relayable while credential file paths 
     const queued = await Effect.runPromise(
       store.enqueue({
         project: "/workspace/project",
-        role: "pi-support",
+        role: "maintainer",
         requesterId: "requester",
         text: diagnostic,
         now: 1_010,
@@ -1431,7 +1386,7 @@ test("terminal request transitions are first-writer-wins", async () => {
       store.claim({
         agent: agent("agent-a"),
         project: "/workspace/project",
-        role: "operator",
+        role: "developer",
         mode: "operational",
         policyDigest: "p1",
         now: 1_000,
@@ -1445,7 +1400,7 @@ test("terminal request transitions are first-writer-wins", async () => {
     const queued = await Effect.runPromise(
       store.enqueue({
         project: "/workspace/project",
-        role: "operator",
+        role: "developer",
         requesterId: "requester",
         text: "race",
         now: 1_010,
@@ -1501,7 +1456,7 @@ test("expired leases are purged before capacity checks and expiration arithmetic
       store.claim({
         agent: agent("agent-a"),
         project: "/workspace/new",
-        role: "operator",
+        role: "developer",
         mode: "task",
         policyDigest: "p1",
         now: 2,
@@ -1514,7 +1469,7 @@ test("expired leases are purged before capacity checks and expiration arithmetic
         store.claim({
           agent: agent("agent-b"),
           project: "/workspace/unsafe",
-          role: "operator",
+          role: "developer",
           mode: "task",
           policyDigest: "p1",
           now: Number.MAX_SAFE_INTEGER,
@@ -1639,7 +1594,7 @@ test("request priority defaults to normal and urgent survives persistence", asyn
     const normal = await Effect.runPromise(
       store.enqueue({
         project: "/workspace/project",
-        role: "operator",
+        role: "developer",
         requesterId: "requester",
         text: "normal",
         now: 1_000,
@@ -1648,7 +1603,7 @@ test("request priority defaults to normal and urgent survives persistence", asyn
     const urgent = await Effect.runPromise(
       store.enqueue({
         project: "/workspace/project",
-        role: "operator",
+        role: "developer",
         requesterId: "requester",
         text: "urgent",
         priority: "urgent",
@@ -1674,7 +1629,7 @@ test("partial request receipt metadata fails closed", async () => {
     const queued = await Effect.runPromise(
       store.enqueue({
         project: "/workspace/project",
-        role: "operator",
+        role: "developer",
         requesterId: "requester",
         text: "inspect",
         now: 1_000,
@@ -1715,7 +1670,7 @@ test("malformed input and unknown schema versions fail closed", async () => {
         store.claim({
           agent: null as unknown as AgentIdentity,
           project: "/workspace/project",
-          role: "operator",
+          role: "developer",
           mode: "task",
           policyDigest: "p1",
           now: 1_000,
@@ -1748,7 +1703,7 @@ test("malformed input and unknown schema versions fail closed", async () => {
       Effect.runPromise(
         store.enqueue({
           project: "/workspace/project",
-          role: "operator",
+          role: "developer",
           requesterId: "requester",
           text: "read .env.production",
           now: 1_000,
@@ -1760,7 +1715,7 @@ test("malformed input and unknown schema versions fail closed", async () => {
       Effect.runPromise(
         store.enqueue({
           project: "/workspace/project",
-          role: "operator",
+          role: "developer",
           requesterId: "requester",
           text: "wake",
           priority: "critical" as "urgent",
@@ -1792,7 +1747,7 @@ test("SQLite adapter commits complete versioned state", async () => {
       store.claim({
         agent: agent("agent-a"),
         project: "/workspace/project",
-        role: "operator",
+        role: "developer",
         mode: "operational",
         policyDigest: "p1",
         now: 1_000,
@@ -1827,7 +1782,7 @@ test("request lifecycle retains start evidence through review into publication",
       store.claim({
         agent: agent("agent-a"),
         project: "/workspace/project",
-        role: "operator",
+        role: "developer",
         mode: "operational",
         policyDigest: "p1",
         now: 1_000,
@@ -1842,7 +1797,7 @@ test("request lifecycle retains start evidence through review into publication",
     const request = await Effect.runPromise(
       store.enqueue({
         project: "/workspace/project",
-        role: "operator",
+        role: "developer",
         requesterId: "requester",
         text: "deliver the reviewed change",
         now: 1_010,

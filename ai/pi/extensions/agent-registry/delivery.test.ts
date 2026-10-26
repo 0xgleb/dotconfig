@@ -64,7 +64,7 @@ test("request mutations resolve an exact id or unique prefix to the canonical id
 
 test("operational receipts wake one safe turn while task-role receipts remain passive", () => {
   const syncStart = source.indexOf("  const sync = async")
-  const syncEnd = source.indexOf("  const autoClaimOperationalRole", syncStart)
+  const syncEnd = source.indexOf("  const collectDeclaredBacklog", syncStart)
   assert.ok(syncStart >= 0 && syncEnd > syncStart)
   const syncSource = source.slice(syncStart, syncEnd)
   assert.match(syncSource, /store\.heartbeatAgent\(/)
@@ -89,9 +89,7 @@ test("operational receipts wake one safe turn while task-role receipts remain pa
   )
   assert.match(syncSource, /notifiedRequests\.add\(request\.id\)/)
   assert.match(syncSource, /persistNotifiedRequests\(\)/)
-  assert.doesNotMatch(syncSource, /candidate\.recipientLeaseId/)
   assert.doesNotMatch(syncSource, /store\.claimRequest\(/)
-  assert.doesNotMatch(syncSource, /dispatchOperationalTriage/)
 })
 
 test("delegate results show bounded request content instead of only queue metadata", () => {

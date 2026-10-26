@@ -171,10 +171,6 @@ test("global instructions keep registry coordination separate from authority", (
   assert.match(global, /A role\s+grants no capability/i)
   assert.match(
     global,
-    /operational duties do not end when an inbox is\s+empty/is,
-  )
-  assert.match(
-    global,
     /Registry failure blocks only operations requiring its ownership or\s+transitions/is,
   )
 })

@@ -161,7 +161,7 @@ test("a source identity cannot alias an item from another project", async () => 
 test("exact-content dedupe scope separates identical role requirements", async () => {
   const first = await ingest(emptyBacklogState, {
     ...request("request-1", "Run the same operation"),
-    dedupe: { kind: "exact-content", scope: "operator" },
+    dedupe: { kind: "exact-content", scope: "developer" },
   })
   const second = await ingest(first, {
     ...request("request-2", "Run the same operation"),

@@ -61,20 +61,23 @@ test("registry registration subscribes only to current coordination events", () 
       REGISTRY_PROJECTS_REQUEST_EVENT,
     ]),
   )
-  assert.equal(runtime.hooks.has("tool_result"), false)
-  assert.equal(runtime.hooks.has("agent_end"), false)
-  assert.equal(runtime.hooks.has("agent_settled"), true)
+  assert.deepEqual(
+    runtime.hooks,
+    new Set([
+      "session_start",
+      "session_compact",
+      "agent_settled",
+      "input",
+      "session_shutdown",
+    ]),
+  )
 })
 
-test("registry tool keeps coordination authority without injected support routing", () => {
+test("registry tool describes its coordination authority boundary", () => {
   const tool = registration().tools.get("agent_registry")
   assert.ok(tool)
   const guidelines = tool.promptGuidelines?.join("\n")
   assert.ok(guidelines)
-  assert.doesNotMatch(
-    guidelines,
-    /pi-support|delegate.*(?:classifier|TUI|reload).*bugs/is,
-  )
   assert.match(
     guidelines,
     /Registry ownership never grants tools or production authority/,

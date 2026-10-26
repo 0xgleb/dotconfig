@@ -7,7 +7,7 @@ import type { RegistryRequest, RegistrySnapshot } from "./registry.ts"
 
 const request = (
   index: number,
-  role = "pi-support",
+  role = "maintainer",
   project = "/project",
 ): RegistryRequest => ({
   id: `00000000-0000-4000-8000-${String(index).padStart(12, "0")}`,
@@ -27,7 +27,7 @@ const snapshot: RegistrySnapshot = {
     ...Array.from({ length: 455 }, (_, index) => request(index)),
     request(456, "receiver"),
     request(457, "storyteller"),
-    request(458, "pi-support", "/other"),
+    request(458, "maintainer", "/other"),
   ],
 }
 const list = (query: RegistryListQuery, value = snapshot) =>
@@ -72,7 +72,7 @@ test("the actual tool branch forwards all listing filters and exact lookup", asy
     const result = await invoke({
       action,
       project: "/project",
-      role: "pi-support",
+      role: "maintainer",
       requestStatus: "cancelled",
       limit: 2,
       offset: 2,
@@ -113,7 +113,7 @@ test("requests pages do not inspect the unrelated roster", () => {
   }
   assert.match(
     text(
-      { action: "requests", project: "/project", role: "pi-support", limit: 1 },
+      { action: "requests", project: "/project", role: "maintainer", limit: 1 },
       value,
     ),
     /requests: 1 of 455/,
@@ -124,7 +124,7 @@ test("filters project and role before paging and omits bodies from details", () 
   const result = list({
     action: "requests",
     project: "/project",
-    role: "pi-support",
+    role: "maintainer",
   })
   assert.match(result.content[0].text, /requests: 20 of 455/)
   assert.match(result.content[0].text, /offset=20/)
@@ -146,7 +146,7 @@ test("stable pages cover every matching ID exactly once on an unchanged snapshot
     const result = list({
       action: "requests",
       project: "/project",
-      role: "pi-support",
+      role: "maintainer",
       offset,
     })
     for (const match of result.content[0].text.matchAll(/\? (\S+)/g))
@@ -157,7 +157,7 @@ test("stable pages cover every matching ID exactly once on an unchanged snapshot
   const last = list({
     action: "requests",
     project: "/project",
-    role: "pi-support",
+    role: "maintainer",
     offset: 440,
   })
   assert.equal("nextOffset" in last.details, false)
@@ -263,7 +263,7 @@ test("role filtering bounds the roster too and does not mutate its source", () =
       lease: {
         id: `lease-${index}`,
         project: "/project",
-        role: index < 45 ? "pi-support" : "receiver",
+        role: index < 45 ? "maintainer" : "receiver",
         owner: identity,
         mode: "operational" as const,
         status: "active" as const,
@@ -284,7 +284,7 @@ test("role filtering bounds the roster too and does not mutate its source", () =
     {
       action: "list",
       project: "/project",
-      role: "pi-support",
+      role: "maintainer",
       limit: 10,
       includeSelection: true,
     },
@@ -302,7 +302,7 @@ test("role filtering bounds the roster too and does not mutate its source", () =
     })),
   })
   const requestsOnly = list(
-    { action: "requests", project: "/project", role: "pi-support" },
+    { action: "requests", project: "/project", role: "maintainer" },
     value,
   )
   assert.doesNotMatch(requestsOnly.content[0].text, /Live agents:|label-/)

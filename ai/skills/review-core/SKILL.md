@@ -108,9 +108,11 @@ Review priorities, in order:
    project docs above. Do NOT invent conventions the docs don't mandate.
 5. MAINTAINABILITY — only flag things that will actively hurt the next
    engineer to touch this code. Not "could be slightly cleaner."
-6. TEST COVERAGE — missing coverage for new logic, tests that assert the
-   wrong thing, tests that document gaps instead of fixing them. Only flag if
-   the project's docs call test coverage out as required.
+6. TEST COVERAGE — missing coverage for new or changed retained logic, tests
+   that assert the wrong thing, tests that document gaps instead of fixing them.
+   Only flag if the project's docs call test coverage out as required. Apply
+   GLOBAL_AGENTS.md's obsolete-capability rule; do not request absence-only
+   tests or inventories of retired names.
 7. DOCUMENTATION SELF-CONTAINMENT — for any prose doc in the diff (ADRs,
    READMEs, design docs, SPEC), check it reads as a standalone record a future
    reader understands without the PR, the review threads, the chat, or the code

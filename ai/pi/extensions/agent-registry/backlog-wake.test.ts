@@ -34,7 +34,7 @@ const snapshot: RegistrySnapshot = {
     {
       id: "lease-1",
       project: "/workspace",
-      role: "operator",
+      role: "developer",
       mode: "operational",
       status: "active",
       owner: agent,
@@ -379,7 +379,7 @@ test("malformed persisted pause and capability state fail closed with diagnostic
   }
 })
 
-test("task, foreign, paused, wrong-project and expired leases cannot wake the operator", async () => {
+test("task, foreign, paused, wrong-project and expired leases cannot wake the developer", async () => {
   const lease = snapshot.leases[0]
   assert.ok(lease)
   for (const changed of [
@@ -500,7 +500,7 @@ test("a receipt and backlog reconciliation cannot both wake in one sync", async 
         {
           id: "request-1",
           project: "/workspace",
-          role: "operator",
+          role: "developer",
           requesterId: "source",
           text: "inspect",
           priority: "urgent",
