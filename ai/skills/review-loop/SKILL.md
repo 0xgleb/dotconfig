@@ -25,14 +25,15 @@ actionable findings.
 **Speed design:** the **first pass** runs the multi-model panel, **adaptively
 sized to the diff** (small diffs run fewer lanes). Each finding is adversarially
 verified **before** triage so false positives never cost a fix-and-re-review
-cycle. Fix-now findings are applied **in parallel by default** (one agent per
-file cluster). A **compile gate** runs after each fix pass so a broken fix never
-burns a review pass, and a **formatter-only delta** is treated as verified by
-construction and skips the pass entirely. **Re-review passes** run in fast delta
-mode (per-fix verifiers plus one broad sweep of the fix delta) and **escalate to
-a full independent panel pass** when the fix delta is large, scope grew, or it
-touched security-sensitive paths. On an escalated full pass, the project's check
-command overlaps the panel concurrently.
+cycle. Independent verification and repair proposals may run in read-only
+parallel lanes; the parent applies source edits centrally. A **compile gate**
+runs after each fix pass so a broken fix never burns a review pass, and a
+**formatter-only delta** is treated as verified by construction and skips the
+pass entirely. **Re-review passes** run in fast delta mode (per-fix verifiers
+plus one broad sweep of the fix delta) and **escalate to a full independent
+panel pass** when the fix delta is large, scope grew, or it touched
+security-sensitive paths. On an escalated full pass, the project's check command
+overlaps the panel concurrently.
 
 **Argument:** with no argument, the loop runs on the **current branch only**;
 publication requires independent repository or owner authority. With `stack`, it
@@ -317,6 +318,14 @@ nix develop .#<real-non-default-attr> -c true >/dev/null 2>&1 &
 
 ## 4. Run the review engine
 
+Automatically include power-unslop for every scoped `.md` file through the
+shared engine's Markdown lane, including a prose-only branch. Supply the full
+scoped Markdown set plus relevant controlling/linked docs; check logical
+consistency across them, not only within individual files. Keep the critic
+read-only, apply valid repairs centrally under the existing fix authority, and
+re-review the updated set until complete. No extra opt-in or prose draft is
+required. Unread Markdown prevents a clean completion claim.
+
 Run the shared engine in `~/.claude/skills/review-core/SKILL.md` (steps 1–7:
 available lanes → reviewer prompts → inspector prompts → the `review-panel`
 Workflow → after-workflow handling → print findings). Pass the contract inputs:
@@ -346,8 +355,11 @@ later full-panel passes. The engine writes `$out_dir/review.md` and
 `$out_dir/findings.json` and prints the terminal summary; this skill triages the
 returned `findings` array next.
 
-If the review reports **no findings**, print that prominently and exit — nothing
-to loop over.
+Only a review result with `status: completed` and **no findings** is clean. If
+any required native reviewer, selected inspector, verifier or synthesis phase is
+incomplete, retain its evidence and exact reason, and continue the missing work
+under existing authority. Empty findings from incomplete review are not success
+and do not end the loop.
 
 ## 5. Triage input
 
@@ -367,6 +379,12 @@ For each remaining finding, compute a **default action** based on severity,
 verdict, and confidence. **Bias heavily toward fixing now** — only defer when
 the fix is massive enough to warrant its own stacked PR.
 
+**Error-contract boundary:** This boundary overrides severity defaults and every
+automatic-fix instruction in this skill. Automatically correct error models only
+when the public error contract is preserved or that specific contract change is
+already authorized. Otherwise classify the finding as **Discuss** before
+editing. Do not request renewed approval for an already-authorized correction.
+
 | Severity | Verdict  | Confidence | Default action   |
 | -------- | -------- | ---------- | ---------------- |
 | critical | any      | any        | **Auto-fix**     |
@@ -380,12 +398,21 @@ the fix is massive enough to warrant its own stacked PR.
 | low      | any      | < 75       | **Auto-dismiss** |
 | nit      | any      | any        | **Auto-dismiss** |
 
+Verified violations of required code conventions are not personal-preference
+nits. Auto-fix bounded, behavior-preserving spacing/import repairs and required
+identifier/error-model corrections after verifying the concrete finding, even
+when their severity is low. Do not auto-dismiss them merely as cosmetic. Keep
+real ambiguity, meaningful error context, invariants and language requirements;
+re-test and re-review semantic changes. This does not expand publication scope.
+
 **Auto-fix**: apply the fix immediately without asking. No user input needed.
 
 **Auto-dismiss**: drop the finding silently. No user input needed.
 
-**Discuss**: the evidence is weak or reviewers disagree. Show the user the full
-finding and ask what to do. Default to fixing unless it's massive.
+**Discuss**: the evidence is weak, reviewers disagree, or the specific public
+error-contract change lacks authorization. Show the user the full finding and
+ask what to do. Do not edit an unauthorized public error-contract change before
+authorization.
 
 **Defer to GitHub** is NOT a default action. Only use it when:
 
@@ -420,7 +447,7 @@ Full details: <path to review.md>
 For **discuss** findings only, use `AskUserQuestion`:
 
 ```
-Q: [#N] <title> — sev <severity>. Reviewers disagree — what should I do?
+Q: [#N] <title> — sev <severity>. Decision needed — what should I do?
    options:
      - "Fix now" (Recommended) — implement the fix in this session
      - "Dismiss" — drop it, not a real issue
@@ -439,84 +466,21 @@ Plan:
   Dismiss (1):     #5
 ```
 
-## 8. Fix-now pass (parallel by default)
+## 8. Apply verified fixes centrally
 
-Apply the "fix now" findings. **Parallelize by default**: findings that touch
-different files are independent and should be fixed concurrently.
+Group findings by file or tightly coupled feature. Independent read-only agents
+may verify current code and propose precise repairs in parallel; they must not
+edit the shared checkout or run mutating commands. Apply dependent source edits
+centrally in the parent, preserving unrelated working-tree/index changes.
 
-1. **Cluster the fix-now findings by file.** All findings whose `file` is the
-   same (or in the same tightly-coupled module) go in one cluster. Each file
-   belongs to exactly one cluster, so no two clusters ever edit the same file —
-   that makes concurrent edits to the main working tree safe with **no worktree
-   isolation** needed.
-2. **Decide serial vs fan-out:**
-   - **Stay in the foreground, serial**, when: there are ≤2 clusters; the fixes
-     **interact** (one fix's correctness depends on another's); a fix needs
-     non-trivial judgment, test authoring, or might turn out larger than the
-     report suggests (e.g. a critical security fix). For these, do them
-     yourself, one at a time, so you can stop and re-triage if a fix balloons.
-   - **Fan out** the rest: dispatch the independent clusters as a single
-     `Workflow`, one agent per cluster.
-3. **Foreground serial fix**, per finding: announce it, read the source,
-   RE-VERIFY it is still valid against the current code (it may have changed
-   since the review — don't trust the report blindly), apply the
-   `recommended_fix` with `Edit` (or `Write` for new files), keep it surgical
-   (no unrelated cleanups, match the project's style), add/update tests if the
-   fix touches them or the project docs mandate coverage for this logic, then
-   print a one-line summary. If a fix turns out larger than expected or more
-   nuanced than the report, **stop and tell the user** — offer to re-triage
-   (defer, dismiss, or adjust).
-4. **Fan-out Workflow** for the independent clusters — pass `args`:
-   `{clusters, repoRoot, fullDiffPath: "$out_dir/diff.patch", docsPaths}` where
-   each cluster is `{key, findings: [...]}`:
+For each finding, re-read the current source and verify it still applies. Make
+the smallest correct change, add required regression coverage, and record the
+owned delta. If the fix grows beyond its authorized scope, re-triage instead of
+silently expanding it. Keep review-only callers read-only.
 
-```javascript
-export const meta = {
-  name: "review-fix-fanout",
-  description:
-    "Apply agreed review fixes in parallel, one agent per file cluster",
-  phases: [{ title: "Fix", detail: "one agent per file cluster" }],
-};
-
-const FIX_RESULT = {
-  type: "object",
-  required: ["key", "summary"],
-  properties: {
-    key: { type: "string" },
-    summary: { type: "string" },
-    skipped: { type: "array", items: { type: "string" } },
-    notes: { type: "string" },
-  },
-};
-
-const parsedArgs = typeof args === "string" ? JSON.parse(args) : args;
-const { clusters, repoRoot, fullDiffPath, docsPaths } = parsedArgs;
-
-const results = await parallel(clusters.map((cluster) => () =>
-  agent(
-    `You are applying agreed code-review fixes to one cluster of findings that ` +
-      `all touch the same file(s). Repo root: ${repoRoot}. The full PR diff ` +
-      `(context) is at: ${fullDiffPath}. Project docs: ${
-        docsPaths.join(", ")
-      }.\n\n` +
-      `Findings to fix (JSON): ${JSON.stringify(cluster.findings)}\n\n` +
-      `For each finding: read the current source at its location, RE-VERIFY the ` +
-      `finding is still valid against the current code (if it is already resolved ` +
-      `or no longer applies, add it to "skipped" and move on), then apply the ` +
-      `recommended_fix with Edit (or Write for new files). Keep every change ` +
-      `surgical — no unrelated cleanups, match the project's style. If a fix ` +
-      `touches tests or the project docs mandate test coverage for this kind of ` +
-      `logic, add/update the tests. Report what you changed. Only edit files in ` +
-      `this cluster — never touch another cluster's files.`,
-    { label: `fix:${cluster.key}`, phase: "Fix", schema: FIX_RESULT },
-  )
-));
-
-return { results: results.filter(Boolean) };
-```
-
-After the workflow returns, read each cluster's `summary`/`skipped` and report
-what was changed. You own the result — spot-check the edits.
+Separate mutating workers/worktrees require the independently owner-authorized
+concurrency allowed by global policy; assigning disjoint files is not itself
+permission. Ordinary review-loop fan-out remains read-only.
 
 ### Compile gate
 
@@ -564,13 +528,22 @@ git diff HEAD --stat | tail -1
 git diff "$parent" > "$out_dir/diff-iter${N}.patch"   # updated full diff
 ```
 
-**Formatter-only skip.** If the only thing that changed since the last reviewed
-state is the output of a deterministic formatter/hook (`cargo fmt`, `deno fmt`,
-`prettier`, `yamlfmt`, `nixfmt`) and that formatter now passes, **do not spawn a
-review pass over it** — formatter output cannot introduce a review-worthy
-finding. Confirm the delta matches what re-running the formatter produces; if
-any hand-written line changed, fall through to the normal modes. Treat a
-pure-formatter delta as verified by construction and skip to convergence.
+**Markdown re-review.** Any changed `.md` file requires a fresh power-unslop
+pass over the current scoped Markdown set and relevant cross-document context,
+even when the code delta is small. Re-bind the review to current saved bytes.
+This prose lane need not rerun unrelated code reviewers, but cannot be omitted
+from a clean result.
+
+**Formatter-only skip (non-Markdown).** If the only thing that changed since the
+last reviewed state is the output of a deterministic formatter/hook
+(`cargo fmt`, `deno fmt`, `prettier`, `yamlfmt`, `nixfmt`) and that formatter
+now passes, **do not spawn a review pass over it** — formatter output cannot
+introduce a review-worthy finding. Confirm the delta matches what re-running the
+formatter produces; if any hand-written line changed, fall through to the normal
+modes. Treat a pure-formatter delta as verified by construction and skip to
+convergence. If Markdown changed, run the Markdown re-review above instead; do
+not carry an old prose hash or cross-document verdict forward as if it covered
+the new text.
 
 **Escalate to a full panel pass** (re-run the review engine — review-core steps
 1–7 — with the updated full diff, applying review-core's adaptive sizing; reuse
@@ -734,7 +707,8 @@ const [verifications, sweep] = await parallel([
         `Review the fix delta holistically: bugs, broken invariants, ` +
         `interactions with the rest of the PR, convention violations from the ` +
         `project docs. Apply the same bar as a full review — correctness ` +
-        `first, no style nits, nothing the compiler or linter would catch. ` +
+        `first; enforce required code conventions without inventing personal style ` +
+        `nits, and do not duplicate compiler or linter diagnostics. ` +
         `Return findings, or an empty list with clean_reason if clean.`,
       {
         label: "delta-sweep",
@@ -956,10 +930,12 @@ invocations remain unchanged.
 
 ## Failure modes
 
-- **All reviewer lanes error:** stop only if native Workflow lanes all failed
-  (rare). See review-core engine failure modes.
-- **Review returns no findings:** print "No findings" and exit the command
-  successfully — nothing to loop over.
+- **A required native lane errors:** retain incomplete status and its reason;
+  selected inspectors are required. Follow review-core's missing-work recovery.
+- **Review returns no findings:** review-core full-panel results require
+  `status: completed` for a clean success. Step 9 delta results use that step's
+  verification and sweep convergence criteria instead. Missing required evidence
+  remains incomplete; an empty findings list alone is not success.
 - **A fix turns out to be larger than expected:** stop, report progress, ask
   whether to continue, defer to a stacked PR, or dismiss.
 - **Review pass cap hit (4 passes):** stop and tell the user. Summarize what was
@@ -997,9 +973,9 @@ invocations remain unchanged.
 6. Always re-verify findings against the current source before applying fixes —
    the code may have changed since the review.
 7. Keep fixes surgical. No "while I'm here" cleanups.
-8. Fix-now findings are applied in **parallel by default** (one agent per file
-   cluster); stay serial only for ≤2 clusters, interacting fixes, or fixes that
-   need judgment. No two fix agents ever edit the same file.
+8. Parallelize independent read-only verification/proposals; apply source edits
+   centrally. Disjoint files do not authorize parallel writers. Any separately
+   authorized concurrent worker follows global ownership/worktree policy.
 9. Run the compile gate after every fix pass; run the project's check command
    (`check_cmd`, or skip if none) only after the review loop converges clean. If
    it makes code changes, run another delta pass.

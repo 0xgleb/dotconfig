@@ -1,6 +1,6 @@
 ---
 name: power-unslop
-description: Refine agent-generated content through independent adversarial critique and author-applied revisions, adapting the objective to its purpose, audience and channel. Use for specifications, PR descriptions, decision questions, owner reports, stakeholder updates, substantive interactive replies and all agent-authored Telegram communications; not code, logs, quoted sources or the user's words.
+description: Refine agent-generated content through independent adversarial critique and author-applied revisions, adapting the objective to its purpose, audience and channel. Use for scoped repository Markdown reviews, specifications, PR descriptions, decision questions, owner reports, stakeholder updates, substantive interactive replies and all agent-authored Telegram communications; not code, logs or private quoted words.
 user-invocable: true
 ---
 
@@ -57,6 +57,28 @@ The caller may provide another purpose or a more specific objective. Prefer
 relevant information and clear order to a blanket word limit. More context is
 justified only when it changes understanding or the decision.
 
+## Check the document set, not isolated paragraphs
+
+For repository Markdown, identify every scoped `.md` file and the related
+controlling or linked documents needed to interpret its claims. Read affected
+files completely. Compare the set for contradictory contracts, terminology,
+ownership, versions, lifecycle/status, authority, examples and cross-references.
+A locally clear sentence can still be wrong because another document defines a
+different contract or because a proposal is presented elsewhere as implemented.
+Trace the conflict and cite both sides instead of polishing one paragraph.
+
+Honor the scope: related unchanged documents supply context, not permission for
+unrelated rewrites. Preserve fixed owner decisions and genuine open questions;
+do not invent policy to make documents agree. Large sets may be reviewed in
+coherent groups, but require a cross-set consistency pass before declaring the
+whole set complete. Report unread files and unresolved evidence explicitly.
+
+In review-loop, every scoped `.md` file receives this independent review,
+including prose-only changes. A fresh Markdown reviewer lane may serve as the
+independent critic; it returns findings only and does not recursively spawn
+critics or edit files. The authorized parent applies repairs and obtains fresh
+whole-set criticism after changes, binding review to the current saved content.
+
 ## Get independent criticism
 
 Use [pi-delegation](../pi-delegation/SKILL.md) for a fresh read-only critic each
@@ -82,8 +104,10 @@ The critic checks:
   has seen.
 - Whether the reader can take the intended action; concrete alternatives,
   meaningful tradeoffs and any necessary boundaries on approval.
-- Contradictions, invented facts, stronger certainty, lost exceptions, changed
-  authority and unsupported implementation or delivery claims.
+- Logical contradictions within and across the affected document set, invented
+  facts, incompatible terminology or examples, stronger certainty, lost
+  exceptions, changed authority, broken references and unsupported
+  implementation or delivery claims.
 - Redundancy, filler, synonym cycling, forced symmetry, unnecessary headings and
   process narration. Cut content that does not help this reader, not facts
   needed to understand the decision.
