@@ -409,6 +409,12 @@ For each remaining finding, compute a **default action** based on severity,
 verdict, and confidence. **Bias heavily toward fixing now** — only defer when
 the fix is massive enough to warrant its own stacked PR.
 
+**Error-contract boundary:** This boundary overrides severity defaults and every
+automatic-fix instruction in this skill. Automatically correct error models only
+when the public error contract is preserved or that specific contract change is
+already authorized. Otherwise classify the finding as **Discuss** before
+editing. Do not request renewed approval for an already-authorized correction.
+
 | Severity | Verdict  | Confidence | Default action   |
 | -------- | -------- | ---------- | ---------------- |
 | critical | any      | any        | **Auto-fix**     |
@@ -433,8 +439,10 @@ re-test and re-review semantic changes. This does not expand publication scope.
 
 **Auto-dismiss**: drop the finding silently. No user input needed.
 
-**Discuss**: the evidence is weak or reviewers disagree. Show the user the full
-finding and ask what to do. Default to fixing unless it's massive.
+**Discuss**: the evidence is weak, reviewers disagree, or the specific public
+error-contract change lacks authorization. Show the user the full finding and
+ask what to do. Do not edit an unauthorized public error-contract change before
+authorization.
 
 **Defer to GitHub** is NOT a default action. Only use it when:
 
@@ -469,7 +477,7 @@ Full details: <path to review.md>
 For **discuss** findings only, use `AskUserQuestion`:
 
 ```
-Q: [#N] <title> — sev <severity>. Reviewers disagree — what should I do?
+Q: [#N] <title> — sev <severity>. Decision needed — what should I do?
    options:
      - "Fix now" (Recommended) — implement the fix in this session
      - "Dismiss" — drop it, not a real issue
@@ -956,8 +964,10 @@ invocations remain unchanged.
 
 - **A required native lane errors:** retain incomplete status and its reason;
   selected inspectors are required. Follow review-core's missing-work recovery.
-- **Review returns no findings:** only `status: completed` is a clean success;
-  incomplete review with an empty list must not exit as clean.
+- **Review returns no findings:** review-core full-panel results require
+  `status: completed` for a clean success. Step 9 delta results use that step's
+  verification and sweep convergence criteria instead. Missing required evidence
+  remains incomplete; an empty findings list alone is not success.
 - **A fix turns out to be larger than expected:** stop, report progress, ask
   whether to continue, defer to a stacked PR, or dismiss.
 - **Review pass cap hit (4 passes):** stop and tell the user. Summarize what was
