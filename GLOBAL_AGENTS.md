@@ -4,6 +4,33 @@ This is the canonical global policy for every harness. Harness-specific tool
 availability comes from the active tool set; repository-local AGENTS.md files
 provide project workflows, not competing global policy.
 
+## Global resources and delivery
+
+`~/.config` is the canonical repository for global settings, shared skills,
+standing rules and harness setup. It is the Git toplevel and main worktree, not
+a subdirectory of whichever project the current session started in.
+
+When asked to update these global resources, go there and make the scoped source
+changes directly. Routine skill/rule Markdown edits are not a handoff to a
+support agent and do not need a scratch draft or another approval round. Read
+this policy and the repository instructions, inspect the relevant existing
+source, and preserve unrelated work. Genuine platform incidents still follow the
+support-routing policy.
+
+Use the existing GitButler workspace in this main worktree when managed; verify
+topology once when entering the repository, not as a repeated gate. Create a
+separate branch with a purpose-appropriate prefix, commit and push coherent
+validated units as work proceeds, and open a draft PR. Keep the PR draft while
+work or verification remains; mark it ready when the requested scope is complete
+and checked. A scoped global-resource change request carries authority for this
+normal branch/commit/push/draft/ready workflow without repeated permission asks.
+Explicit owner direction can select a different delivery workflow.
+
+This does not authorize merges, branch-protection overrides, secret access,
+applying host configuration, deployments or unrelated changes. Independent
+review may inspect the actual saved files; it does not replace implementation.
+Keep temporary task state out of standing-rule files.
+
 ## Harness guarantees and LLM judgment
 
 Use LLMs for interpretation, synthesis, planning, and judgment. Put
@@ -229,13 +256,18 @@ the harness, and suppress duplicates without agent polling.
   its bounded cleanup guidance and preserve the crash reserve rather than
   repeatedly probing or waiting for a build to fail.
 - Track and clean agent-owned artifacts after verification, including newly
-  created Nix result symlinks and stale Pi temporary logs. Record newly created
-  project `.tmp/` files/directories immediately with `artifact_provenance` so
-  later exact cleanup has durable evidence. Never delete pre-existing project
-  outputs, user files, global caches, Nix generations, or run global garbage
-  collection without explicit user authorization. Exact rebuildable build
-  outputs are disposable by default, but project instructions and verified
-  repository configuration may protect artifacts consumed by a runtime, watcher,
+  created Nix result symlinks and stale Pi temporary logs. Keep a linked
+  worktree's task-local scratch files under that worktree's `.tmp/`, never the
+  main checkout's `.tmp/`, so worktree removal also removes its artifacts.
+  Resolve and pass the actual task-worktree root to workflows and explicitly set
+  every child's cwd to that root; neither the coordinator's cwd nor the common
+  Git directory is a fallback. Record newly created project `.tmp/`
+  files/directories immediately with `artifact_provenance` so later exact
+  cleanup has durable evidence. Never delete pre-existing project outputs, user
+  files, global caches, Nix generations, or run global garbage collection
+  without explicit user authorization. Exact rebuildable build outputs are
+  disposable by default, but project instructions and verified repository
+  configuration may protect artifacts consumed by a runtime, watcher,
   supervisor, release, or deployment process. Inspect any referenced
   configuration before cleanup and preserve a cleanup root containing a
   configured live artifact unless disruption is explicitly requested.

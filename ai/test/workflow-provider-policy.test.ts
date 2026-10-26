@@ -1,6 +1,11 @@
 import assert from "node:assert/strict"
 import { readFileSync } from "node:fs"
 import test from "node:test"
+import {
+  MODEL_TIER_PROVIDERS,
+  type ModelTier,
+  tierModel,
+} from "../pi/extensions/shared/model-tiers.ts"
 
 // Extension-source content assertions (classifier tiers, Claude routing in
 // agent-process) live with their owning repo (dataclique/metagenda) after the
@@ -23,7 +28,7 @@ test("Pi workflows never route Claude through API providers", () => {
   assert.match(reviewCore, /claude -p --permission-mode plan/i)
   assert.match(
     reviewPr,
-    /Never send `fable`, `sonnet`, `opus`, `claude-\*`, or/i,
+    /Never\s+send `fable`,\s+`sonnet`,\s+`opus`,\s+`claude-\*`,\s+or/i,
   )
 })
 
@@ -31,7 +36,7 @@ test("review workflow children receive an explicit repository cwd and least-priv
   assert.match(reviewCore, /cwd: repoRoot/)
   assert.match(
     reviewCore,
-    /tools: lane\.externalCmd[\s\S]*?\['read', 'grep', 'find', 'ls', 'bash'\][\s\S]*?: sourceTools/,
+    /tools: lane\.externalCmd[\s\S]*?\[["']read["'], ["']grep["'], ["']find["'], ["']ls["'], ["']bash["']\][\s\S]*?: sourceTools/,
   )
   assert.match(
     reviewCore,
@@ -43,14 +48,20 @@ test("review-pr lanes get bounded no-checkout access to the exact PR-head git ob
   assert.match(reviewPr, /"sourceRevision": "<head_sha>"/)
   assert.match(reviewCore, /sourceRevision/)
   assert.match(reviewCore, /\^\[0-9a-f\]\{40,64\}\$/)
-  assert.match(reviewCore, /const sourceTools = gitObjectSource[\s\S]*?'bash'/)
+  assert.match(
+    reviewCore,
+    /const sourceTools = gitObjectSource[\s\S]*?["']bash["']/,
+  )
   assert.match(reviewCore, /tools: lane\.externalCmd[\s\S]*?: sourceTools/)
   assert.match(
     reviewCore,
     /label: `verify:\$\{finding\.file\}`[\s\S]*?tools: sourceTools/,
   )
-  assert.match(reviewCore, /label: 'synthesize'[\s\S]*?tools: sourceTools/)
-  assert.match(reviewCore, /Never read `\.env\*`/)
+  assert.match(
+    reviewCore,
+    /label: ["']synthesize["'][\s\S]*?tools: sourceTools/,
+  )
+  assert.match(reviewCore, /Never read (?:\\)?`\.env\*/)
   assert.match(reviewCore, /credential stores, private keys, or certificates/)
 })
 
@@ -65,7 +76,7 @@ test("Claude review-duty adapters stay inside the subscription harness", () => {
     assert.match(contents, /pi-bridge send/)
     assert.match(
       contents,
-      /Never invoke\s+Claude through Pi, an Anthropic API provider/i,
+      /Never\s+invoke\s+Claude through Pi, an Anthropic API provider/i,
     )
     assert.match(contents, /Missing subscription auth or Fable is `blocked`/)
   }
@@ -84,21 +95,40 @@ test("review lanes resolve through provider tiers instead of one hardcoded provi
     )
     assert.doesNotMatch(
       contents,
-      /model: 'openai-codex\/gpt-5\.6-luna'/,
-      `${name} must not hardcode one provider's model in a lane cell`,
-    )
-    assert.doesNotMatch(
-      contents,
-      /model: "openai-codex\/gpt-5\.6-luna"/,
+      /\bmodel\s*:\s*["'][a-zA-Z0-9._-]+\/[^"'\r\n]+["']/,
       `${name} must not hardcode one provider's model in a lane cell`,
     )
   }
   assert.match(reviewCore, /provider tier/)
   assert.match(reviewCore, /PI_PROVIDER/)
   assert.match(reviewCore, /zai\/glm-5\.3-flash/)
-  assert.match(reviewCore, /gpt-5\.6-luna/)
   assert.match(reviewCore, /model: lightModel/)
   assert.match(reviewCore, /model: midModel/)
   assert.match(reviewLoop, /tierModels\?\.light/)
   assert.match(reviewLoop, /tierModels/)
+})
+
+test("documented review tiers mirror the shared model-tier source", () => {
+  const tiers: readonly ModelTier[] = ["light", "mid", "top"]
+  const documentedTiers = [
+    ...reviewCore.matchAll(
+      /- `([^`]+)`: light\s+`([^`]+)`, mid\s+`([^`]+)`, top\s+`([^`]+)`/g,
+    ),
+  ]
+
+  assert.equal(documentedTiers.length, MODEL_TIER_PROVIDERS.length)
+
+  for (const provider of MODEL_TIER_PROVIDERS) {
+    const entries = documentedTiers.filter(entry => entry[1] === provider)
+
+    assert.equal(entries.length, 1, `Expected one tier row for ${provider}`)
+    const entry = entries[0]
+    assert.ok(entry)
+
+    for (const [index, tier] of tiers.entries()) {
+      const model = tierModel(tier, provider)
+      assert.ok(model, `Missing ${provider} ${tier} model`)
+      assert.equal(entry[index + 2], model, `${provider} ${tier} model drifted`)
+    }
+  }
 })
