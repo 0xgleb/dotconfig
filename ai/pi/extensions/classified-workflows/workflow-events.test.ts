@@ -11,18 +11,25 @@ import {
 import { MANAGED_OPERATIONAL_ROLE_RESUMED_EVENT } from "../shared/registry-intent-events.ts"
 import { REMOTE_CAPABILITY_HANDSHAKE_EVENT } from "../shared/remote-capability.ts"
 import { AGENTOPS_INCIDENT_EVENT } from "../shared/agentops-events.ts"
+import { TELEGRAM_RESUME_EVENT } from "../shared/telegram-resume.ts"
 
 const source = readFileSync(new URL("./index.ts", import.meta.url), "utf8")
-const harness = () => {
+const harness = (sendFailure?: Error) => {
   const start = source.indexOf("  const validWorkflowQuestionId =")
   const end = source.indexOf('  pi.on("agent_start",', start)
   assert.ok(start >= 0 && end > start)
   const listeners = new Map<string, (value: unknown) => void>()
   const failures: unknown[] = []
+  const notices: unknown[] = []
+  const logs: string[] = []
   const initial = {
     questions: [{ id: 1, question: "Continue?", status: "pending" }],
   }
   const pi = {
+    sendMessage: (message: unknown, options: unknown) => {
+      if (sendFailure) throw sendFailure
+      notices.push({ message, options })
+    },
     events: {
       on: (name: string, listener: (value: unknown) => void) => {
         listeners.set(name, listener)
@@ -43,6 +50,9 @@ const harness = () => {
       "MANAGED_OPERATIONAL_ROLE_RESUMED_EVENT",
       "REMOTE_CAPABILITY_HANDSHAKE_EVENT",
       "AGENTOPS_INCIDENT_EVENT",
+      "registerRuntimeVersion",
+      "TELEGRAM_RESUME_EVENT",
+      "console",
       "isRecord",
       `let questionState = initial;
      let continuationPaused = true;
@@ -63,10 +73,13 @@ const harness = () => {
       MANAGED_OPERATIONAL_ROLE_RESUMED_EVENT,
       REMOTE_CAPABILITY_HANDSHAKE_EVENT,
       AGENTOPS_INCIDENT_EVENT,
+      () => undefined,
+      TELEGRAM_RESUME_EVENT,
+      { error: (record: string) => logs.push(record) },
       (value: unknown) =>
         typeof value === "object" && value !== null && !Array.isArray(value),
     )
-  return { listeners, failures, inspect, initial }
+  return { listeners, failures, notices, logs, inspect, initial }
 }
 
 test("malformed question snapshots do not replace classifier state", () => {
@@ -102,7 +115,8 @@ test("malformed question snapshots do not replace classifier state", () => {
       state.listeners.get(QUESTION_STATE_EVENT)?.(value),
     )
     assert.deepEqual(state.inspect().state, state.initial)
-    assert.equal(state.failures.length, 1)
+    assert.equal(state.notices.length, 1)
+    assert.deepEqual(state.failures, [])
   }
 })
 
@@ -119,7 +133,8 @@ test("malformed resolutions do not resume paused work", () => {
     )
     assert.equal(state.inspect().paused, true)
     assert.deepEqual(state.inspect().state, state.initial)
-    assert.equal(state.failures.length, 1)
+    assert.equal(state.notices.length, 1)
+    assert.deepEqual(state.failures, [])
   }
 })
 
@@ -140,8 +155,45 @@ test("malformed capability handshakes do not reopen the circuit", () => {
       state.listeners.get(REMOTE_CAPABILITY_HANDSHAKE_EVENT)?.(value),
     )
     assert.deepEqual(state.inspect().circuit, { open: true })
-    assert.equal(state.failures.length, 1)
+    assert.equal(state.notices.length, 1)
+    assert.deepEqual(state.failures, [])
   }
+})
+
+test("invalid workflow events only report local non-turning notices", () => {
+  const state = harness()
+  state.listeners.get(QUESTION_STATE_EVENT)?.(null)
+  assert.deepEqual(state.notices, [
+    {
+      message: {
+        customType: "workflow.invalid-event",
+        content: `Invalid workflow event payload: ${QUESTION_STATE_EVENT}`,
+        display: true,
+      },
+      options: { triggerTurn: false },
+    },
+  ])
+  assert.deepEqual(state.failures, [])
+})
+
+test("invalid events remain rejected when the local sender is stale", () => {
+  const state = harness(new Error("sensitive sender sentinel"))
+  assert.doesNotThrow(() => state.listeners.get(QUESTION_STATE_EVENT)?.(null))
+  assert.deepEqual(state.inspect().state, state.initial)
+  assert.deepEqual(state.failures, [])
+  assert.deepEqual(state.notices, [])
+  assert.deepEqual(
+    state.logs.map(record => JSON.parse(record)),
+    [
+      {
+        level: "error",
+        component: "classified-workflows",
+        event: "notice-delivery-failed",
+        operation: "decode internal event",
+      },
+    ],
+  )
+  assert.doesNotMatch(state.logs.join("\n"), /sensitive/u)
 })
 
 test("valid question and capability events preserve their existing transitions", () => {
@@ -162,4 +214,5 @@ test("valid question and capability events preserve their existing transitions",
   })
   assert.equal((state.inspect().circuit as { open: boolean }).open, false)
   assert.equal(state.failures.length, 0)
+  assert.deepEqual(state.notices, [])
 })

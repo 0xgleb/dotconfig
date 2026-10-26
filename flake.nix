@@ -314,7 +314,11 @@
                   ai/pi/extensions/classified-workflows/loop.test.ts \
                   ai/pi/extensions/agent-registry/retired-routing.test.ts \
                   ai/pi/extensions/auto-reload/index.test.ts \
-                  ai/pi/extensions/auto-reload/local-failures.test.ts
+                  ai/pi/extensions/auto-reload/local-failures.test.ts \
+                  ai/pi/extensions/classified-workflows/workflow-events.test.ts \
+                  ai/pi/extensions/disk-pressure/index.test.ts \
+                  ai/pi/extensions/disk-pressure/local-failures.test.ts \
+                  ai/pi/extensions/disk-pressure/core.test.ts
                 touch $out
               '';
 
