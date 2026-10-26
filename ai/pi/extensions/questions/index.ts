@@ -214,7 +214,7 @@ const questionsExtension: (
   inspectDelivery?: QuestionDeliveryInspector,
   refreshDelivery?: QuestionDeliveryRefresher,
 ) => void = (pi, execution, inspectDelivery, refreshDelivery) => {
-  registerRuntimeVersion(pi, "questions", "2026.10.17.11")
+  registerRuntimeVersion(pi, "questions", "2026.10.17.12")
   let state = emptyQuestionState
   let dialogOpen = false
   let latestCtx: ExtensionContext | undefined
@@ -311,7 +311,7 @@ const questionsExtension: (
         content: `Resolved durable question q${id} with exact typed answer: ${boundedAnswer}\nContinue the waiting work using this answer.`,
         display: false,
       },
-      { triggerTurn: true, deliverAs: "followUp" },
+      { triggerTurn: true, deliverAs: "steer" },
     )
     return true
   }
