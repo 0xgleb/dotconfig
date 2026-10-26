@@ -1,6 +1,6 @@
 ---
 name: code-style-inspector
-description: Auto-run during code reviews and audits in any language to check logical spacing, import scope, unnecessary qualification, domain identifiers and copied-definition provenance. Skip prose-only changes.
+description: Auto-run during code reviews and audits in any language to check logical spacing, import scope, readable qualification, domain identifiers and copied-definition provenance. Skip prose-only changes.
 allowed-tools:
   - Read
   - Grep
@@ -17,7 +17,8 @@ owns fixes and publication.
 
 1. Use the engine's supplied diff and source identity. An audit's all-additions
    diff makes all scoped standing code eligible. Read affected files, imports
-   and relevant domain types; do not infer collisions from a hunk alone.
+   and relevant domain types. Assess meaning at the use site, not just namespace
+   collisions; a diff hunk alone may omit necessary context.
 2. Check the rules below using the language's actual namespace and typing
    semantics. Honor explicit project or owner exceptions.
 3. Report the location, violated rule, concrete repair and any real exception.
@@ -40,12 +41,22 @@ statement or rewrite formatter-controlled layout by taste.
 
 ### Import names at the right scope
 
-Import unambiguous dependencies at module/file scope instead of repeating long
-package-qualified paths in signatures and bodies. In Rust, function/block-local
-`use` is allowed only for enum variants, not types, traits or functions.
-Qualification is justified by actual name collisions, associated/enum members,
-or a required language/library namespace. Preserve those cases; do not replace
-qualification with gratuitous aliases or break a required module API.
+Import distinctive dependencies at module/file scope when their short names
+remain clear at the use site. Shorten paths to improve readability, not to
+maximize the number of imports.
+
+Preserve qualification when it explains an operation, type or error's origin
+without making the reader jump back to the imports. A local name collision is
+not required: `std::fs::read` identifies a filesystem operation, and
+`eyre::Result` identifies its error contract. Generic names such as `Error`
+remain crate-qualified even when no other `Error` is imported. Keep context such
+as `fmt::Result` and `io::Result` rather than treating every unambiguous name as
+a candidate for shortening.
+
+Also preserve qualification for actual name collisions, associated/enum members
+and required language/library namespaces. Do not introduce gratuitous aliases or
+break a required module API. In Rust, function/block-local `use` is allowed only
+for enum variants; other imports belong at module or test-module scope.
 
 ### Give identifiers domain types
 

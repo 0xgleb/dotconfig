@@ -1,12 +1,12 @@
 ---
 name: review-sweep
 user-invocable: true
-allowed-tools: Bash(but:*), Bash(direnv:*), Bash(git:*), Bash(gh:*), Bash(agy:*), Bash(command:*), Bash(cargo:*), Bash(mkdir:*), Bash(cat:*), Bash(mktemp:*), Bash(rm:*), Bash(test:*), Bash(grep:*), Bash(wc:*), Bash(date:*), Bash(basename:*), Bash(find:*), Bash(ls:*), Read, Write, Edit, Agent, Workflow, AskUserQuestion, Skill
+allowed-tools: Bash(but:*), Bash(direnv:*), Bash(git:*), Bash(gh:*), Bash(command:*), Bash(cargo:*), Bash(mkdir:*), Bash(cat:*), Bash(mktemp:*), Bash(rm:*), Bash(test:*), Bash(grep:*), Bash(wc:*), Bash(date:*), Bash(basename:*), Bash(find:*), Bash(ls:*), Read, Write, Edit, Agent, Workflow, AskUserQuestion, Skill
 description: "Review an existing GitButler stack: fix owned branches and draft inline findings on others. Plain Git uses single-branch review."
 argument-hint: "[--start BRANCH] [--end BRANCH]"
 ---
 
-Sweep an entire stack with the multi-model review panel, **parallelized**, and
+Sweep an entire stack with the native review panel, **parallelized**, and
 dispatching per **authorship**.
 
 **Default scope is the WHOLE stack.** Invoked with no arguments, the sweep

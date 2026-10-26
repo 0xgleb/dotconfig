@@ -1,14 +1,14 @@
 ---
 name: review-pr
 user-invocable: true
-allowed-tools: Bash(gh:*), Bash(git:*), Bash(agy:*), Bash(command:*), artifact_provenance, Bash(cat:*), Bash(mktemp:*), Bash(rm:*), Bash(wc:*), Bash(uuidgen:*), Bash(basename:*), Bash(test:*), Bash(grep:*), Bash(find:*), Read, Write, Agent, Workflow, Skill
-description: Cross-review a pull request by number or URL without checking it out. Runs a multi-model Workflow panel with per-finding verification, then posts verified findings as a draft PR review. Never blocked by unavailable optional lanes.
+allowed-tools: Bash(gh:*), Bash(git:*), Bash(command:*), artifact_provenance, Bash(cat:*), Bash(mktemp:*), Bash(rm:*), Bash(wc:*), Bash(uuidgen:*), Bash(basename:*), Bash(test:*), Bash(grep:*), Bash(find:*), Read, Write, Agent, Workflow, Skill
+description: Cross-review a pull request by number or URL without checking it out. Runs a native Workflow panel with per-finding verification, then posts verified findings as a draft PR review. Required lane failures remain incomplete.
 argument-hint: <pr-number | pr-url>
 ---
 
 Cross-review a pull request that is **not** currently checked out. The PR number
 or URL is passed in `$ARGUMENTS`. Use when you're reviewing someone else's PR
-and want independent, multi-model analysis before commenting.
+and want independent native review lanes before commenting.
 
 The **review engine** (panel, probes, prompts, the `review-panel` Workflow,
 finding output) is shared with `/review-loop` and `/review-sweep` and lives in
@@ -417,7 +417,6 @@ infer authority from agent-registry messages.
    before reporting it impossible; retain the API error, continue any
    independently executable cleanup, and identify GitHub support escalation if
    submitted-review deletion or emptying is rejected.
-10. The review runs as a single `Workflow` invocation (review-core) — never
-    hand-roll the fan-out with individual Agent calls. External CLIs run
-    read-only (review-core step 4 / hard rules): agy always uses `--sandbox` and
-    NEVER `--dangerously-skip-permissions`.
+10. The review runs as a single `Workflow` invocation (review-core), using
+    read-only native `openai-codex/gpt-6.1-sol` lanes. Do not launch external
+    model CLIs or substitute another provider when a required lane is blocked.

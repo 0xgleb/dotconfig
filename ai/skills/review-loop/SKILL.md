@@ -1,7 +1,7 @@
 ---
 name: review-loop
 user-invocable: true
-allowed-tools: Bash(but:*), Bash(direnv:*), Bash(git:*), Bash(gh:*), Bash(agy:*), Bash(command:*), Bash(cargo:*), Bash(nix:*), artifact_provenance, Bash(cat:*), Bash(mktemp:*), Bash(rm:*), Bash(test:*), Bash(grep:*), Bash(wc:*), Bash(uuidgen:*), Bash(basename:*), Bash(find:*), Read, Write, Edit, Agent, Workflow, AskUserQuestion
+allowed-tools: Bash(but:*), Bash(direnv:*), Bash(git:*), Bash(gh:*), Bash(command:*), Bash(cargo:*), Bash(nix:*), artifact_provenance, Bash(cat:*), Bash(mktemp:*), Bash(rm:*), Bash(test:*), Bash(grep:*), Bash(wc:*), Bash(uuidgen:*), Bash(basename:*), Bash(find:*), Read, Write, Edit, Agent, Workflow, AskUserQuestion
 description: Review and fix the current branch until clean; use stack for an existing GitButler stack. Use review-pr for read-only PR assessment.
 argument-hint: [stack]
 ---
@@ -22,7 +22,7 @@ fixed without asking. The loop re-reviews after each fix pass to catch issues
 introduced by the fixes themselves. It stops when a review pass returns no new
 actionable findings.
 
-**Speed design:** the **first pass** runs the multi-model panel, **adaptively
+**Speed design:** the **first pass** runs the native review panel, **adaptively
 sized to the diff** (small diffs run fewer lanes). Each finding is adversarially
 verified **before** triage so false positives never cost a fix-and-re-review
 cycle. Independent verification and repair proposals may run in read-only
@@ -621,15 +621,16 @@ markdownPromptPath}`.
 Always supply `markdownFiles` from the scoped manifest, including an explicit
 empty array when none exist. For a nonempty list, supply an existing Markdown
 prompt using power-unslop's whole-set contract. Never infer that a missing
-Markdown result means there were no Markdown files. `tierModels` carries the
-provider-tier resolution from the engine's provider constraint (`{ light, mid }`
-resolved ids, or null on an unknown provider). `reviewSource` must contain
-`mode` (`single` or `stack`), `branch`, `parentSha`, `headSha`, `sourceRoot`,
-and `ownedDeltaPath`, all resolved from step 2. In stack mode `sourceRoot` is
-the exported committed branch source, never the combined workspace; in single
-mode it is the current source root. Both modes name the exact owned delta
-artifact. Missing scope is blocked, not a clean review. Reuse the returned
-`scriptPath` only with refreshed scope and artifact inputs on later passes.
+Markdown result means there were no Markdown files. `tierModels` is retained for
+compatibility; both fields name `openai-codex/gpt-6.1-sol`, and the workflow
+pins that model rather than selecting by provider or tier. `reviewSource` must
+contain `mode` (`single` or `stack`), `branch`, `parentSha`, `headSha`,
+`sourceRoot`, and `ownedDeltaPath`, all resolved from step 2. In stack mode
+`sourceRoot` is the exported committed branch source, never the combined
+workspace; in single mode it is the current source root. Both modes name the
+exact owned delta artifact. Missing scope is blocked, not a clean review. Reuse
+the returned `scriptPath` only with refreshed scope and artifact inputs on later
+passes.
 
 ```javascript
 const meta = {
@@ -1102,10 +1103,10 @@ authorized by this adapter.
    it makes code changes, run another delta pass.
 10. Cap at 4 review passes (full or delta). Convergence requires a clean pass —
     never end on a fix. Stop and ask the user if you don't converge.
-11. The review pass runs as a single `Workflow` invocation (review-core) — never
-    run reviewers sequentially or hand-roll the fan-out. External CLIs run
-    read-only (review-core step 4 / hard rules). Verification and synthesis
-    happen inside the workflow, never in the main session.
+11. The review pass runs as a single `Workflow` invocation (review-core), using
+    read-only native `openai-codex/gpt-6.1-sol` lanes. Do not launch external
+    model CLIs. Verification and synthesis happen inside the workflow, never in
+    the main session.
 12. Delta mode is only valid when the fix delta is small (~200 lines) and
     confined to files implicated by fixed findings — otherwise escalate to a
     full panel pass.
