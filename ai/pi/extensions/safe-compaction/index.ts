@@ -168,6 +168,7 @@ export default function safeCompaction(pi: ExtensionAPI): void {
       const ownership = await Effect.runPromise(
         Effect.either(getAutomaticCompressionOwner(pi, ctx, signal)),
       )
+
       if (signal.aborted || lifetime !== ownershipLifetime)
         return { cancel: true }
       if (Either.isRight(ownership)) {

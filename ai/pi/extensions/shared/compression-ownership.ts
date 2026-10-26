@@ -2,7 +2,7 @@ import type {
   ExtensionAPI,
   ExtensionContext,
 } from "@earendil-works/pi-coding-agent"
-import { Data, Effect, Either } from "effect"
+import { Brand, Data, Effect, Either } from "effect"
 
 export type AutomaticCompressionOwner =
   | { readonly owner: "native" }
@@ -112,6 +112,16 @@ export const registerAutomaticCompressionOwner = (
 
 const OWNERSHIP_EVENT = "pi:automatic-compression-ownership.v1"
 
+type CompressionSessionId = string & Brand.Brand<"CompressionSessionId">
+const CompressionSessionId = Brand.nominal<CompressionSessionId>()
+
+type DecodedCompressionOwner =
+  | { readonly owner: "native" }
+  | {
+      readonly owner: "billion-context"
+      readonly sessionId: CompressionSessionId
+    }
+
 interface OwnershipQuery {
   readonly version: 1
   readonly sessionId: string
@@ -179,7 +189,7 @@ const malformed = (): CompressionOwnershipError =>
 
 const currentSessionId = (
   context: ExtensionContext,
-): Effect.Effect<string, CompressionOwnershipError> =>
+): Effect.Effect<CompressionSessionId, CompressionOwnershipError> =>
   Effect.try({
     try: () => context.sessionManager.getSessionId(),
     catch: () =>
@@ -192,14 +202,14 @@ const currentSessionId = (
       typeof sessionId === "string" &&
       sessionId.length > 0 &&
       !/[\u0000-\u001f\u007f]/u.test(sessionId)
-        ? Effect.succeed(sessionId)
+        ? Effect.succeed(CompressionSessionId(sessionId))
         : Effect.fail(malformed()),
     ),
   )
 
 const unchangedSession = (
   context: ExtensionContext,
-  sessionId: string,
+  sessionId: CompressionSessionId,
 ): Effect.Effect<void, CompressionOwnershipError> =>
   currentSessionId(context).pipe(
     Effect.flatMap(current =>
@@ -217,8 +227,8 @@ const unchangedSession = (
 
 const decodeOwner = (
   value: unknown,
-  sessionId: string,
-): Effect.Effect<AutomaticCompressionOwner, CompressionOwnershipError> =>
+  sessionId: CompressionSessionId,
+): Effect.Effect<DecodedCompressionOwner, CompressionOwnershipError> =>
   Effect.gen(function* () {
     if (typeof value !== "object" || value === null)
       return yield* Effect.fail(malformed())

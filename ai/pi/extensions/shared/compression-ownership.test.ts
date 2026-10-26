@@ -376,9 +376,32 @@ test("foreign ownership queries cannot execute accessors or change callbacks bet
   assert.equal(offers, 0)
 })
 
-test("foreign query descriptor traps are contained without invoking has traps", () => {
+test("the real SDK bus reports uncaught descriptor errors without rethrowing", t => {
   const f = fixture()
+  const reportedErrors = t.mock.method(console, "error", () => undefined)
+  const query = new Proxy(
+    {},
+    {
+      ownKeys: () => {
+        throw new Error("fixture uncaught descriptor trap")
+      },
+    },
+  )
+  f.pi.events.on("pi:automatic-compression-ownership.v1", value => {
+    Object.getOwnPropertyDescriptors(value)
+  })
+
+  assert.doesNotThrow(() =>
+    f.pi.events.emit("pi:automatic-compression-ownership.v1", query),
+  )
+  assert.equal(reportedErrors.mock.callCount(), 1)
+})
+
+test("foreign query descriptor traps are contained without invoking has traps", t => {
+  const f = fixture()
+  const reportedErrors = t.mock.method(console, "error", () => undefined)
   let hasCalls = 0
+  let ownKeysCalls = 0
   registerAutomaticCompressionOwner(f.pi, async () => ({ owner: "native" }))
   const query = new Proxy(
     {},
@@ -388,14 +411,18 @@ test("foreign query descriptor traps are contained without invoking has traps", 
         throw new Error("fixture has trap")
       },
       ownKeys: () => {
+        ownKeysCalls++
         throw new Error("fixture query descriptor trap")
       },
     },
   )
+
   assert.doesNotThrow(() =>
     f.pi.events.emit("pi:automatic-compression-ownership.v1", query),
   )
+  assert.equal(ownKeysCalls, 1)
   assert.equal(hasCalls, 0)
+  assert.equal(reportedErrors.mock.callCount(), 0)
 })
 
 test("an already cancelled request never invokes an ownership controller", async () => {
