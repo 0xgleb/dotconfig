@@ -312,7 +312,9 @@
                 ln -s ${piTestNodeModules}/node_modules ai/pi/extensions/node_modules
                 node --test \
                   ai/pi/extensions/classified-workflows/loop.test.ts \
-                  ai/pi/extensions/agent-registry/retired-routing.test.ts
+                  ai/pi/extensions/agent-registry/retired-routing.test.ts \
+                  ai/pi/extensions/auto-reload/index.test.ts \
+                  ai/pi/extensions/auto-reload/local-failures.test.ts
                 touch $out
               '';
 

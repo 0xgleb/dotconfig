@@ -36,7 +36,6 @@ import {
   reloadComposerIsSafe,
   unseenHandoffNames,
 } from "./core.ts"
-import { AGENTOPS_INCIDENT_EVENT } from "../shared/agentops-events.ts"
 import { isContinuationPaused } from "../shared/continuation-pause.ts"
 import {
   AUTO_RELOAD_ACTIVITY_REQUEST_EVENT,
@@ -255,12 +254,19 @@ const autoReload: (pi: ExtensionAPI) => void = pi => {
     operation: string,
     summary: string,
   ): void => {
-    pi.events.emit(AGENTOPS_INCIDENT_EVENT, {
-      severity,
-      component: "auto-reload",
-      operation,
-      summary,
-    })
+    const detail = summary
+      .replace(/[\u0000-\u001f\u007f]+/g, " ")
+      .replace(/\s+/g, " ")
+      .trim()
+      .slice(0, 240)
+    pi.sendMessage(
+      {
+        customType: "auto-reload.failure",
+        content: `${severity}: ${operation}: ${detail}`,
+        display: true,
+      },
+      { triggerTurn: false },
+    )
   }
   let watchers: FSWatcher[] = []
   let timer: ReturnType<typeof setTimeout> | undefined
