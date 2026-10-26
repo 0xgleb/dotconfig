@@ -1,11 +1,6 @@
 import assert from "node:assert/strict"
 import { readFileSync } from "node:fs"
 import test from "node:test"
-import {
-  MODEL_TIER_PROVIDERS,
-  type ModelTier,
-  tierModel,
-} from "../pi/extensions/shared/model-tiers.ts"
 
 // These contracts cover dotconfig-owned review skills, not provider runtimes.
 const reviewCore = readFileSync(
@@ -31,6 +26,14 @@ const skills = [
   ["review PR", reviewPr],
   ["review sweep", reviewSweep],
 ] as const
+
+const setupSection = (source: string): string => {
+  const start = source.indexOf("\n## 2.")
+  const end = source.indexOf("\n## 3.", start)
+
+  assert.ok(start >= 0 && end > start, "review setup section must exist")
+  return source.slice(start, end)
+}
 
 test("all review skills select authenticated native GPT-6.1-sol lanes", () => {
   for (const [name, contents] of skills) {
@@ -97,4 +100,52 @@ test("dedicated review-duty adapters use registered gates and native verificatio
     assert.match(contents, /openai-codex\/gpt-6\.1-sol/)
     assert.doesNotMatch(contents, /CLAUDE_REVIEW_HANDOFF|pi-bridge send/)
   }
+})
+
+test("review setup uses fail-closed native UUID invocation namespaces", () => {
+  for (const contents of [reviewLoop, reviewPr]) {
+    const setup = setupSection(contents)
+
+    assert.match(setup, /invocation_id=\$\(uuidgen\)\s*\|\|\s*exit 1/)
+    assert.match(setup, /out_dir=.*invocation_id/)
+    assert.doesNotMatch(setup, /ts=\$\(date/)
+  }
+})
+
+test("review setup records successful registered creation between ignore checks and writes", () => {
+  for (const contents of [reviewLoop, reviewPr]) {
+    const setup = setupSection(contents)
+    const fromSetup = contents
+      .slice(contents.indexOf("\n## 2."))
+      .replace(/\s+/gu, " ")
+    const ignore = fromSetup.indexOf("git check-ignore --verbose")
+    const create = fromSetup.indexOf('"action": "create_directory"')
+    const success = fromSetup.indexOf(
+      "Require successful creation and provenance recording before writing descendants.",
+    )
+    const write = fromSetup.indexOf('> "$out_dir/diff.patch"')
+
+    assert.ok(
+      ignore >= 0 && create > ignore && success > create && write > success,
+    )
+    assert.doesNotMatch(setup, /^\s*mkdir\s+-p\b/m)
+    assert.match(contents, /allowed-tools:.*artifact_provenance/)
+  }
+})
+
+test("the Markdown consistency child uses the actual review checkout cwd", () => {
+  assert.match(
+    reviewLoop,
+    /\{\s*cwd: repoRoot,\s*label: ["']markdown-consistency["']/,
+  )
+})
+
+test("incomplete Markdown coverage enters the existing lane error channel", () => {
+  const start = reviewCore.indexOf("Shared context block")
+  const end = reviewCore.indexOf("\n## 4.", start)
+
+  assert.ok(start >= 0 && end > start)
+  const context = reviewCore.slice(start, end).replace(/\s+/gu, " ")
+
+  assert.match(context, /incomplete.*reviewer_error.*partial.*clean_reason/)
 })
