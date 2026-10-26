@@ -1,6 +1,5 @@
 import { createHash } from "node:crypto"
 import { homedir } from "node:os"
-import { join } from "node:path"
 import {
   CONFIG_DIR_NAME,
   type ExtensionAPI,
@@ -23,23 +22,9 @@ import {
 } from "../shared/backlog-events.ts"
 import { isContinuationPaused } from "../shared/continuation-pause.ts"
 import {
-  AGENTOPS_INCIDENT_EVENT,
-  agentopsRequestText,
-  agentTurnIncidentAfterRun,
-  decodeAgentopsIncident,
-  hasOpenAgentopsIncident,
-  isExplicitUserCancellation,
-  shouldRouteToolFailureToAgentops,
-  type AgentopsIncident,
-} from "../shared/agentops-events.ts"
-import {
   AUTO_RELOAD_PENDING_REQUEST_EVENT,
   type AutoReloadPendingReporter,
 } from "../shared/reload-events.ts"
-import {
-  decodeSafeCompactionInterrupt,
-  SAFE_COMPACTION_INTERRUPT_EVENT,
-} from "../shared/safe-compaction-events.ts"
 import {
   REGISTRY_DELEGATE_REQUEST_EVENT,
   REGISTRY_IDENTITY_REQUEST_EVENT,
@@ -187,26 +172,6 @@ const safeErrorMessage: (error: unknown) => string = error => {
     : "Agent registry operation failed"
 }
 
-const boundedIncidentSummary = (content: unknown): string | undefined => {
-  if (!Array.isArray(content)) return undefined
-  const text = content
-    .flatMap(item =>
-      typeof item === "object" &&
-      item !== null &&
-      "type" in item &&
-      item.type === "text" &&
-      "text" in item &&
-      typeof item.text === "string"
-        ? [item.text]
-        : [],
-    )
-    .join(" ")
-    .replace(/[\u0000-\u001f\u007f]+/g, " ")
-    .replace(/\s+/g, " ")
-    .trim()
-  return text.length > 0 ? text.slice(0, 240) : undefined
-}
-
 const currentOwnerIntervention = (pi: ExtensionAPI): number | undefined => {
   let ownerInteractionAt: number | undefined
   const query: OwnerInterventionQuery = {
@@ -336,8 +301,6 @@ const registryExtension: (pi: ExtensionAPI) => void = pi => {
   let latestSnapshot: RegistrySnapshot | undefined
   let registryFailureActive = false
   let backlogCollectorAbort: AbortController | undefined
-  let compactionInterruptionPending = false
-  let pendingAgentTurnIncident: AgentopsIncident | undefined
   const backlogWake = makeBacklogWakeController(pi)
   const notifiedRequests = new Set<string>()
 
@@ -478,96 +441,6 @@ const registryExtension: (pi: ExtensionAPI) => void = pi => {
 
   const currentPolicyDigest = (ctx: ExtensionContext): string =>
     sessionPolicyDigest ?? policyDigest(ctx)
-
-  const routeAgentopsIncident = async (payload: unknown): Promise<void> => {
-    const incident = decodeAgentopsIncident(payload)
-    const ctx = latestCtx
-    const epoch = activeLifecycleEpoch
-    if (
-      !incident ||
-      !ctx ||
-      epoch === undefined ||
-      isExplicitUserCancellation(incident.summary)
-    )
-      return
-
-    const now = Date.now()
-    const snapshot = await run(store.snapshot(now))
-    if (epoch !== activeLifecycleEpoch || ctx !== latestCtx) return
-    if (hasOpenAgentopsIncident(snapshot.requests, incident)) return
-
-    await run(
-      store.enqueue({
-        project: join(homedir(), ".config"),
-        role: "pi-support",
-        requesterId: ctx.sessionManager.getSessionId(),
-        requesterLabel: pi.getSessionName() ?? "Pi agent",
-        requesterCwd: ctx.cwd,
-        text: agentopsRequestText(
-          incident,
-          pi.getSessionName() ?? "Pi agent",
-          ctx.cwd,
-        ),
-        priority: incident.severity === "error" ? "urgent" : "normal",
-        now,
-      }),
-    )
-  }
-
-  pi.events.on(AGENTOPS_INCIDENT_EVENT, payload => {
-    void routeAgentopsIncident(payload).catch(() => {
-      console.error("Pi agentops incident routing failed")
-    })
-  })
-
-  pi.events.on(SAFE_COMPACTION_INTERRUPT_EVENT, payload => {
-    if (decodeSafeCompactionInterrupt(payload))
-      compactionInterruptionPending = true
-  })
-
-  pi.on("tool_result", event => {
-    if (activeLifecycleEpoch === undefined || !event.isError) return
-    const summary = boundedIncidentSummary(event.content)
-    if (
-      !summary ||
-      isExplicitUserCancellation(summary) ||
-      !shouldRouteToolFailureToAgentops(event.toolName, summary)
-    )
-      return
-    pi.events.emit(AGENTOPS_INCIDENT_EVENT, {
-      severity: "error",
-      component: event.toolName,
-      operation: "tool execution",
-      summary,
-    })
-  })
-
-  pi.on("agent_end", event => {
-    if (activeLifecycleEpoch === undefined) return
-    const assistant = event.messages
-      .filter(message => message.role === "assistant")
-      .at(-1)
-    const expectedCompactionInterruption =
-      compactionInterruptionPending &&
-      assistant?.stopReason === "error" &&
-      (assistant.errorMessage === "This operation was aborted" ||
-        assistant.errorMessage === "terminated")
-    compactionInterruptionPending = false
-    if (!assistant) {
-      pendingAgentTurnIncident = undefined
-      return
-    }
-    pendingAgentTurnIncident = agentTurnIncidentAfterRun(
-      assistant,
-      expectedCompactionInterruption,
-    )
-  })
-
-  pi.on("agent_settled", () => {
-    const incident = pendingAgentTurnIncident
-    pendingAgentTurnIncident = undefined
-    if (incident) pi.events.emit(AGENTOPS_INCIDENT_EVENT, incident)
-  })
 
   const resolveRuntimeAgentId = (requestedAgentId: string): string => {
     const ctx = latestCtx
@@ -1274,12 +1147,12 @@ const registryExtension: (pi: ExtensionAPI) => void = pi => {
           authority: "authenticated-owner",
           requirements,
         }).catch(error => {
-          pi.events.emit(AGENTOPS_INCIDENT_EVENT, {
-            severity: "error",
-            component: "agent-registry",
-            operation: "local owner message backlog ingestion",
-            summary: safeErrorMessage(error),
-          })
+          ctx.ui.setStatus("agent-registry-error", "registry:backlog")
+          if (ctx.hasUI)
+            ctx.ui.notify(
+              `Local owner message backlog ingestion failed: ${safeErrorMessage(error)}`,
+              "error",
+            )
         })
       }
     }
@@ -1305,7 +1178,6 @@ const registryExtension: (pi: ExtensionAPI) => void = pi => {
   })
 
   pi.on("session_shutdown", async (event, ctx) => {
-    pendingAgentTurnIncident = undefined
     latestCtx = undefined
     lifecycleEpoch += 1
     activeLifecycleEpoch = undefined
@@ -1364,7 +1236,6 @@ const registryExtension: (pi: ExtensionAPI) => void = pi => {
       "Discover local Pi workers and reports; execution-capable workers may claim duties and delegate requests, but read/report-only managers may only inspect registry data",
     promptGuidelines: [
       "The mutation, delegation and lifecycle guidance below applies only to execution-capable workers. Read/report-only manager sessions use registry list/requests only; reconcile reports into selected workers' actual backlogs through todo/manager_control without dispatching work.",
-      "Execution-capable workers: delegate Pi host, extension, TUI, classifier, reload, or operator bugs encountered outside ~/.config to /Users/0xgleb/.config, role pi-support, without self-claiming that dedicated role; then continue the primary task unless blocked.",
       "Execution-capable workers: if a non-dedicated role is unowned, claim it temporarily and handle the request in the current session by default.",
       "Registry ownership never grants tools or production authority; constrained project tools and loaded instructions remain authoritative.",
       "Operational roles do not become complete merely because todos or inboxes are empty.",

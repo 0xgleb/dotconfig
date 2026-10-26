@@ -23,48 +23,6 @@ test("runtime registration identity is process-scoped while request ownership re
   )
 })
 
-test("real Pi failures automatically become deduplicated pi-support incidents", () => {
-  assert.match(source, /pi\.on\("tool_result"[\s\S]*?event\.isError/)
-  const agentEndStart = source.indexOf('pi.on("agent_end"')
-  const agentSettledStart = source.indexOf('pi.on("agent_settled"')
-  assert.ok(agentEndStart >= 0 && agentSettledStart > agentEndStart)
-  const agentEndSource = source.slice(agentEndStart, agentSettledStart)
-  assert.match(agentEndSource, /agentTurnIncidentAfterRun/)
-  assert.doesNotMatch(agentEndSource, /AGENTOPS_INCIDENT_EVENT/)
-  assert.match(
-    source.slice(agentSettledStart),
-    /pendingAgentTurnIncident[\s\S]*?AGENTOPS_INCIDENT_EVENT/,
-  )
-  assert.match(source, /isExplicitUserCancellation/)
-  assert.match(source, /shouldRouteToolFailureToAgentops/)
-  assert.match(
-    source,
-    /hasOpenAgentopsIncident\(snapshot\.requests, incident\)/,
-  )
-  assert.match(
-    source,
-    /project: join\(homedir\(\), "\.config"\)[\s\S]*?role: "pi-support"/,
-  )
-  assert.match(
-    source,
-    /priority: incident\.severity === "error" \? "urgent" : "normal"/,
-  )
-})
-
-test("forced compaction aborts are consumed as typed control flow, not incidents", () => {
-  assert.match(source, /SAFE_COMPACTION_INTERRUPT_EVENT/)
-  assert.match(
-    source,
-    /pi\.events\.on\([\s\S]*?SAFE_COMPACTION_INTERRUPT_EVENT[\s\S]*?compactionInterruptionPending = true/,
-  )
-  assert.match(
-    source,
-    /const expectedCompactionInterruption =[\s\S]*?compactionInterruptionPending[\s\S]*?assistant\.errorMessage === "This operation was aborted"[\s\S]*?assistant\.errorMessage === "terminated"/,
-  )
-  assert.match(source, /compactionInterruptionPending = false/)
-  assert.match(source, /expectedCompactionInterruption[\s\S]*?return/)
-})
-
 test("cross-project terminal outcomes stay out of unrelated model context", () => {
   const syncStart = source.indexOf("  const sync = async")
   const outcomeEnd = source.indexOf("      snapshot = await run", syncStart)
