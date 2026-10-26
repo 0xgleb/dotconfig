@@ -97,9 +97,7 @@ fixes needed to do the review. Such fixes do not authorize edits in the main
 checkout or another agent's checkout. The only standing exception to the
 prohibition on main-checkout edits is immediately adding missing `.tmp/` or
 `.worktrees/` directory patterns to the main `.gitignore` when required by
-global policy. Report that exact owned hunk to the manager for a scoped
-checkpoint; do not commit there or carry the repair into the reviewed PR. Other
-exceptions require explicit owner direction.
+global policy.
 
 Keep patches, prompts, reports, payloads, logs, and other review scratch files
 under this review worktree's `.tmp/`, never the main checkout's `.tmp/`. Resolve
@@ -110,10 +108,3 @@ cwd to it.
 Once you're done with all the reviews for the repo for a round, delete the
 worktree and its temporary artifacts together. Preserve unrelated files and
 never use the main checkout as a fallback scratch location.
-
-## Reporting
-
-- Report each review to the manager: repository, PR links, outcome (feedback /
-  fixes-pushed / merged / blocked / empty), and cleanup status.
-- Affected main workers sync via the manager at safe boundaries; never pull or
-  push on their checkouts directly. Paused workers stay paused.
