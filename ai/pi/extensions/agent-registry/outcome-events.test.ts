@@ -38,8 +38,6 @@ const outcome = async (ownership: "owned" | "unowned") => {
     latestCtx: {},
     identity: () => ({ id: "agent-1" }),
     run: Effect.runPromise,
-    currentPolicyDigest: () => "fixture-policy",
-    LEASE_TTL_MS: 10_000,
     sync: async () => undefined,
     store: {
       snapshot: () =>

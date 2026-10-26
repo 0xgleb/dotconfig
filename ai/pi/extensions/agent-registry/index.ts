@@ -626,7 +626,7 @@ const registryExtension: (pi: ExtensionAPI) => void = pi => {
           report({ outcome: "recorded" })
           return
         }
-        let lease = snapshot.leases.find(
+        const lease = snapshot.leases.find(
           candidate =>
             candidate.owner.id === agent.id &&
             candidate.project === target.project &&
@@ -634,18 +634,11 @@ const registryExtension: (pi: ExtensionAPI) => void = pi => {
             candidate.status === "active",
         )
         if (!lease) {
-          const claim = await run(
-            store.claim({
-              agent,
-              project: target.project,
-              role: target.role,
-              mode: "task",
-              policyDigest: currentPolicyDigest(ctx),
-              now,
-              ttlMs: LEASE_TTL_MS,
-            }),
-          )
-          lease = claim.lease
+          report({
+            outcome: "failed",
+            reason: "request role must be claimed explicitly",
+          })
+          return
         }
         if (target.status === "queued") {
           await run(
