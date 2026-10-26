@@ -128,9 +128,10 @@ out any applied series. Resolve names and order from current metadata.
 
 Common: confirm the review tooling is available exactly as `/review-loop` step 1
 requires, then resolve review-core step 1 once for the whole sweep. Use the
-native Luna lanes for every branch and add at most one read-only Claude Code
-subscription lane when available. Cursor remains retired; never probe or launch
-it mid-sweep.
+native `openai-codex/gpt-6.1-sol` lanes for every branch, including inspection,
+verification, Markdown review and synthesis. Do not probe or launch external
+model CLIs or substitute providers mid-sweep; preserve a concrete unavailable
+execution blocker instead.
 
 **[GitButler]** `but` is provided by the repo's flake/devenv. If `but` is not on
 `PATH`, invoke it as `direnv exec "$repo_root" but …` for every `but` call

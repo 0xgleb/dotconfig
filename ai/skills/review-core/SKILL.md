@@ -6,56 +6,20 @@ allowed-tools: Bash(claude:*), Bash(command:*), Bash(cat:*), Bash(find:*), Bash(
 
 # Review engine (shared)
 
-## Provider constraint (overrides every model cell below)
+## Native Pi execution
 
-Anthropic API billing is disabled. Never pass `fable`, `sonnet`, `opus`,
-`claude-*`, or `anthropic/*` as a Workflow `model` — those legacy lane names
-below are focus labels only.
+Run all review, inspection, verification, Markdown criticism and synthesis lanes
+through the classified Pi `workflow` tool with authenticated
+`openai-codex/gpt-6.1-sol`. `{LIGHT_MODEL}` and `{MID_MODEL}` are compatibility
+placeholders for that same current model, not permission to choose another tier.
+Do not probe or launch external model CLIs, subscription wrappers or alternative
+providers. If the model/authentication is unavailable, preserve incomplete
+status and the exact blocker rather than silently substituting a model.
 
-Every native Workflow lane resolves its model through the **provider tier
-system** at invocation time. No lane hardcodes one provider's model: a hardcoded
-pin kills the whole panel whenever that provider's auth or quota is down.
-Resolve once, before step 1:
-
-1. Read the session provider from the documented non-secret `PI_PROVIDER`
-   environment key (or the session model's `provider/id` prefix).
-2. Map it through the current tier table (mirror of
-   `pi/extensions/shared/model-tiers.ts` — keep in sync with that source):
-   - `openai-codex`: light `openai-codex/gpt-6.1-sol`, mid
-     `openai-codex/gpt-6.1-sol`, top `openai-codex/gpt-6.1-sol`
-   - `zai`: light `zai/glm-5.3-flash`, mid `zai/glm-5.3`, top `zai/glm-5.3`
-3. Substitute the resolved ids for `{LIGHT_MODEL}` / `{MID_MODEL}` everywhere
-   below.
-4. Unknown provider: omit the `model` field on those lanes (children inherit the
-   session model) and note the fallback in the report header.
-
-Lane→tier mapping: reviewer focus lanes, inspectors, adversarial verifiers,
-delta sweeps, fix agents, and external-command wrappers run `{LIGHT_MODEL}` (the
-lightest authenticated tier — review lanes stay cheap); the synthesis lane runs
-`{MID_MODEL}`.
-
-Claude is optional and may run only through a subscription CLI external lane:
-
-```bash
-claude -p --permission-mode plan --model sonnet --no-session-persistence \
-  --allowedTools "Read,Grep,Glob,Bash(git show *)" \
-  "$(cat \"<promptPath>\") The diff to review is at: <diffPath>"
-```
-
-The Pi wrapper for that external command also uses `{LIGHT_MODEL}`. Cursor is
-retired and must never be probed or launched. If `claude -p` is unavailable or
-fails, omit Claude and continue the native panel. Legacy lane names below are
-focus labels only; every native Workflow lane uses the tier-resolved model from
-the provider constraint above.
-
-This is **not a user-facing skill**. It is the single source of truth for the
-review engine that `review-loop`, `review-pr`, and `review-sweep` share: turn a
-**diff** into **deduplicated, adversarially verified findings** and a canonical
-report. The caller decides where the diff comes from and what to do with the
-findings; everything between is here.
-
-Do not invoke this skill on its own. A caller follows these steps after it has
-produced a diff, then takes its own action on the returned findings.
+This is the shared engine for review-loop, review-pr, review-sweep and audit. It
+turns an explicitly scoped diff into independently checked, deduplicated and
+adversarially verified findings. The caller owns source scope and authorized
+fixing/publication. This reference does not itself grant mutation authority.
 
 ## The contract (caller-provided inputs)
 
@@ -79,17 +43,12 @@ the steps below reference `{NAME}`:
 | `{SYNTHESIS_EXTRA}`     | Extra synthesis instructions, or `""`. PR review passes the no-AI-references / frame-to-reviewer block.                                   |
 | `{INCLUDE_ATTRIBUTION}` | `true` to keep `Found by` lane attribution in the report and terminal output; `false` to strip it (PR review).                            |
 
-## 1. Resolve the available review lanes
+## 1. Select native focus lanes
 
-The native Workflow panel is always available and every native lane uses the
-tier-resolved `{LIGHT_MODEL}` from the provider constraint above (synthesis uses
-`{MID_MODEL}`). Cursor is retired: never probe it, cache its availability, or
-launch a Cursor lane.
-
-Optionally add one read-only Claude Code subscription lane when `claude -p` is
-available. Its failure is non-fatal: omit it and continue the OpenAI-only panel.
-Lane names such as `fable`, `opus`, and `sonnet` remain focus labels, not model
-identifiers. Never pass those names as Workflow models.
+All selected lanes use `openai-codex/gpt-6.1-sol` with read-only tools. Choose
+focuses by scope and size below, not by provider availability. Every selected
+reviewer/inspector and required verification/synthesis phase must complete; a
+missing result is incomplete, not an optional empty success.
 
 ## 2. Build the reviewer prompts
 
@@ -358,10 +317,8 @@ inspector. Each native lane object is `{key, model, promptPath, diffPath}` and
 sets `model` to the tier-resolved `{LIGHT_MODEL}`. Normally all lanes share
 `{DIFF_PATH}`; chunked runs differ as described below.
 
-When available, add at most one read-only Claude Code subscription lane using
-the exact command in the provider constraint. Its lane object uses
-`{key, externalCmd, promptPath, diffPath}` and omits `model`. Never replace it
-with an Anthropic API provider or a retired Cursor executable.
+Assemble only native Pi lanes using the current authenticated model. Do not add
+external-command model lanes.
 
 ### Adaptive panel sizing (by diff size)
 
@@ -877,8 +834,8 @@ what happens when there are no findings and what to do next.
   `{scriptPath, args,
   resumeFromRunId}` — completed lanes return cached
   results instantly; only the failed part re-runs.
-- **The Claude subscription lane hits a usage limit:** omit it and continue the
-  native Workflow panel; never fall back to an API provider or Cursor.
+- **Required model authentication or quota is unavailable:** retain the exact
+  incomplete phase and its evidence; do not silently switch models or providers.
 
 ## Hard rules
 

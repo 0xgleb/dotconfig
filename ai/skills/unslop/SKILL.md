@@ -20,6 +20,8 @@ available GPT model from generation 6 or later before publication or delivery.
      forced symmetry, and chatbot phrasing;
    - use plain words, active voice, concrete statements, and varied sentence
      length;
+   - apply the writing checks below and fix each clear defect without changing
+     meaning;
    - return only the revised text.
 3. Choose an available GPT model from generation 6 or later, preferring a fast
    variant suitable for editing. In Pi, use the classified `workflow` tool with
@@ -32,6 +34,53 @@ available GPT model from generation 6 or later before publication or delivery.
 5. If the revision is not clearly better, keep the original. A no-op is better
    than a polished distortion.
 6. Deliver only the verified revision.
+
+## Writing checks and fixes
+
+Apply these alongside the removal checks below. Fix clear defects rather than
+merely listing them. They are checks, not blanket bans: passive voice,
+repetition and longer sentences can clarify a technical contract.
+
+- **Tautology and empty definitions:** replace circular definitions and empty
+  name echoes with the responsibility, behavior, input or output they should
+  explain. Keep informative statements even when the noun and verb share a root.
+- **Redundant wording:** remove padding such as “in order to,” “each individual”
+  and “currently existing” when the shorter form preserves meaning.
+- **Repeated rules:** give each rule one authoritative home. Elsewhere,
+  reference it or explain its consequence; retain repetition that prevents
+  ambiguity.
+- **Unclear actors:** name who acts when ownership matters.
+- **Weak verbs:** replace unnecessary nominalizations with direct verbs, such as
+  “reconciles balances” instead of “performs the reconciliation of balances.”
+- **Overloaded sentences:** separate a rule, its exception and its rationale
+  when combining them makes the reader backtrack. Preserve the exception’s
+  scope.
+- **Vague references:** clarify “this,” “it,” “the above” and similar references
+  when the intended referent is established but unclear in the wording.
+- **Terminology drift:** use one term per concept and preserve defined
+  distinctions. Do not merge concepts or rename established identifiers to
+  create superficial consistency.
+- **Imprecise qualifiers:** scrutinize “normally,” “sufficient,” “promptly” and
+  “where necessary.” Use an established condition or policy when available; do
+  not invent thresholds or resolve an open decision through copy editing.
+- **Meta commentary:** remove drafting history, agreement markers,
+  self-evaluation and announcements of what the document explains. Preserve
+  labels that distinguish requirements, proposals and deferred work.
+- **Buried requirements:** distinguish requirements, options, examples and
+  deferred capabilities. If an example contains an established requirement
+  absent from the main text, state it there without expanding its authority.
+- **Unhelpful examples:** keep examples that resolve ambiguity or expose a
+  consequence. Shorten or remove those that merely paraphrase a rule, respecting
+  any explicit requirement to retain illustrations.
+- **Nonparallel lists:** align comparable items in conceptual level and
+  grammatical structure without forcing unlike concepts into a false symmetry.
+- **Unnecessary abstraction:** name concrete operations and relationships
+  instead of vague phrases such as “facilitates the orchestration of
+  interactions.”
+
+When a repair would require missing facts or a technical decision, preserve the
+meaning and identify the ambiguity separately; do not silently redesign the
+content.
 
 ## What to remove
 
