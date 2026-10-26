@@ -60,7 +60,11 @@ const expectRanks = (
   assert.equal(after.nextId, before.nextId)
   assert.deepEqual(
     after.todos,
-    before.todos.map(todo => ({ ...todo, priority: ranks[todo.id] })),
+    before.todos.map(todo =>
+      ranks[todo.id] === undefined
+        ? todo
+        : { ...todo, priority: ranks[todo.id] },
+    ),
   )
   const decoded = decodeTodoState(JSON.parse(JSON.stringify(after)))
   assert.ok(Option.isSome(decoded))
@@ -76,24 +80,24 @@ test("relative above/below atomically orders ranks while preserving holds, histo
     referenceId: 2,
     position: "above",
   }).state
-  expectRanks(estimated, above, { 1: 1, 3: 2, 2: 3, 4: 4 })
+  expectRanks(estimated, above, { 1: 1, 3: 2, 2: 3 })
   const below = apply(above, {
     action: "priority_relative",
     id: 1,
     referenceId: 2,
     position: "below",
   }).state
-  expectRanks(above, below, { 3: 1, 2: 2, 1: 3, 4: 4 })
+  expectRanks(above, below, { 3: 1, 2: 2, 1: 3 })
   assert.equal(JSON.stringify(estimated), before)
 })
 
-test("one bulk order includes all assigned tasks and can assign previously unranked work", () => {
+test("one bulk order includes active assigned tasks and can assign unranked work without rewriting history", () => {
   const before = JSON.stringify(seed)
   const ordered = apply(seed, {
     action: "priority_order",
-    ids: [4, 2, 3, 1],
+    ids: [2, 3, 1],
   }).state
-  expectRanks(seed, ordered, { 4: 1, 2: 2, 3: 3, 1: 4 })
+  expectRanks(seed, ordered, { 2: 1, 3: 2, 1: 3 })
   assert.equal(JSON.stringify(seed), before)
 })
 
@@ -114,6 +118,105 @@ test("absolute assignments reject occupied ranks, while explicit null still unas
   }).state
   assert.equal("priority" in unassigned.todos[0]!, false)
   assert.deepEqual(unassigned.todos.slice(1), seed.todos.slice(1))
+})
+
+test("historical terminal ranks do not occupy slots or need manual unranking", () => {
+  for (const status of ["completed", "cancelled"] as const) {
+    const legacy: TodoState = {
+      ...seed,
+      todos: seed.todos.map(todo =>
+        todo.id === 4 ? { ...todo, status, priority: 1 } : todo,
+      ),
+    }
+    const assigned = apply(legacy, {
+      action: "priority",
+      id: 3,
+      priority: 1,
+    }).state
+    assert.equal(assigned.todos[2]?.priority, 1)
+    assert.deepEqual(assigned.todos[3], legacy.todos[3])
+    const ordered = apply(assigned, {
+      action: "priority_order",
+      ids: [2, 3, 1],
+    }).state
+    expectRanks(assigned, ordered, { 2: 1, 3: 2, 1: 3 })
+  }
+})
+
+test("completion and cancellation release only their own slot; reopening never reclaims it", () => {
+  for (const status of ["completed", "cancelled"] as const) {
+    const finished = apply(seed, { action: "status", id: 1, status }).state
+    assert.equal(finished.todos[0]?.priority, undefined)
+    assert.deepEqual(finished.todos.slice(1), seed.todos.slice(1))
+    const reassigned = apply(finished, {
+      action: "priority",
+      id: 3,
+      priority: 2,
+    }).state
+    const reopened = apply(reassigned, {
+      action: "status",
+      id: 1,
+      status: "pending",
+    }).state
+    assert.equal(reopened.todos[0]?.priority, undefined)
+    assert.equal(reopened.todos[2]?.priority, 2)
+    assert.equal(reopened.todos[1]?.priority, 8)
+    assert.deepEqual(reopened.todos[0]?.replies, seed.todos[0]?.replies)
+  }
+  const finished = apply(seed, { action: "toggle", id: 1 }).state
+  assert.equal(finished.todos[0]?.priority, undefined)
+  const reopened = apply(finished, { action: "toggle", id: 1 }).state
+  assert.equal(reopened.todos[0]?.status, "pending")
+  assert.equal(reopened.todos[0]?.priority, undefined)
+  assert.equal(reopened.todos[1]?.priority, 8)
+})
+
+test("legacy terminal reopening paths cannot restore a now-occupied historical rank", () => {
+  for (const status of ["completed", "cancelled"] as const) {
+    const legacy: TodoState = {
+      ...seed,
+      todos: seed.todos.map(todo =>
+        todo.id === 4 ? { ...todo, status, priority: 2 } : todo,
+      ),
+    }
+    for (const request of [
+      { action: "status", id: 4, status: "pending" },
+      { action: "status", id: 4, status: "deferred" },
+      { action: "unblock", id: 4 },
+      { action: "block", id: 4, reason: "Explicit hold" },
+    ]) {
+      const reopened = apply(legacy, request).state
+      assert.equal(reopened.todos[3]?.priority, undefined)
+      assert.deepEqual(reopened.todos.slice(0, 3), legacy.todos.slice(0, 3))
+    }
+  }
+})
+
+test("terminal tasks cannot be assigned active absolute, relative or bulk ranks", () => {
+  for (const request of [
+    { action: "priority", id: 4, priority: 1 },
+    { action: "priority_relative", id: 4, referenceId: 1, position: "above" },
+    { action: "priority_relative", id: 3, referenceId: 4, position: "below" },
+    { action: "priority_order", ids: [1, 2, 4] },
+  ]) {
+    const decoded = decodeTodoControl(request)
+    assert.ok(Either.isRight(decoded))
+    const result = Effect.runSync(
+      Effect.either(
+        Effect.flatMap(parseTodoAction(decoded.right), action =>
+          transitionTodoState(seed, action),
+        ),
+      ),
+    )
+    assert.ok(Either.isLeft(result), JSON.stringify(request))
+    assert.equal(result.left._tag, "TodoInputError")
+  }
+  const cleared = apply(seed, {
+    action: "priority",
+    id: 4,
+    priority: null,
+  }).state
+  assert.equal(cleared.todos[3]?.priority, undefined)
 })
 
 test("direct parser rejects sparse JavaScript ID arrays with a typed failure", () => {
@@ -140,9 +243,10 @@ test("invalid relative or bulk requests fail without changing authoritative task
     { action: "priority_relative", id: 1, referenceId: 1, position: "above" },
     { action: "priority_relative", id: 1, referenceId: 3, position: "above" },
     { action: "priority_relative", id: 99, referenceId: 1, position: "below" },
-    { action: "priority_order", ids: [1, 2] },
-    { action: "priority_order", ids: [1, 2, 4, 99] },
-    { action: "priority_order", ids: [1, 1, 2, 4] },
+    { action: "priority_order", ids: [1] },
+    { action: "priority_order", ids: [1, 2, 99] },
+    { action: "priority_order", ids: [1, 1, 2] },
+    { action: "priority_order", ids: [1, 2, 4] },
     { action: "priority_order", ids: [] },
   ]) {
     const decoded = decodeTodoControl(request)
