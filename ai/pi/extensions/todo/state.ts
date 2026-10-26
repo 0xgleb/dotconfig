@@ -54,6 +54,13 @@ export type TodoRequest =
       readonly id?: number
       readonly priority?: number | null
     }
+  | {
+      readonly action: "priority_relative"
+      readonly id?: number
+      readonly referenceId?: number
+      readonly position?: "above" | "below"
+    }
+  | { readonly action: "priority_order"; readonly ids?: ReadonlyArray<number> }
   | { readonly action: "toggle"; readonly id?: number }
   | {
       readonly action: "status"
@@ -84,6 +91,13 @@ export type TodoAction =
       readonly id: number
       readonly priority: number | null
     }
+  | {
+      readonly action: "priority_relative"
+      readonly id: number
+      readonly referenceId: number
+      readonly position: "above" | "below"
+    }
+  | { readonly action: "priority_order"; readonly ids: ReadonlyArray<number> }
   | { readonly action: "toggle"; readonly id: number }
   | {
       readonly action: "status"
@@ -125,8 +139,10 @@ export class TodoInputError extends Data.TaggedError("TodoInputError")<{
     | "invalid_state"
     | "invalid_priority"
     | "invalid_effort"
+    | "priority_conflict"
 }> {}
 
+export const MAX_TODOS_PER_PRIORITY = 1
 export const MAX_TODO_REPLIES = 3
 export const MAX_TODO_REPLY_LENGTH = 300
 
@@ -147,7 +163,15 @@ export const isFibonacciEffort = (value: unknown): value is FibonacciEffort => {
 
 export class TodoNotFoundError extends Data.TaggedError("TodoNotFoundError")<{
   action:
-    "toggle" | "status" | "block" | "reply" | "unblock" | "priority" | "effort"
+    | "toggle"
+    | "status"
+    | "block"
+    | "reply"
+    | "unblock"
+    | "priority"
+    | "effort"
+    | "priority_relative"
+    | "priority_order"
   message: string
 }> {}
 
@@ -206,6 +230,8 @@ const TodoStateSchema = Schema.Struct({
 })
 
 const TodoActionSchema = Schema.Literal(
+  "priority_relative",
+  "priority_order",
   "effort",
   "priority",
   "list",
@@ -335,6 +361,57 @@ const todoWithStatus: (
 const pendingTodo: (todo: Todo) => Todo = todo =>
   todoWithStatus(todo, "pending")
 
+const validPriorityOrder = (value: unknown): value is ReadonlyArray<number> =>
+  Array.isArray(value) &&
+  value.length > 0 &&
+  Array.from(value).every(validPriority) &&
+  new Set(value).size === value.length
+
+const applyPriorityOrder = (
+  state: TodoState,
+  ids: ReadonlyArray<number>,
+  action: "priority_order" | "priority_relative",
+): Effect.Effect<TodoTransition, TodoInputError | TodoNotFoundError> => {
+  if (!validPriorityOrder(ids))
+    return Effect.fail(
+      new TodoInputError({
+        action,
+        code: "invalid_priority",
+        message:
+          "Priority order requires a nonempty list of unique positive safe-integer todo IDs",
+      }),
+    )
+  const existing = new Set(state.todos.map(todo => todo.id))
+  const missing = ids.find(id => !existing.has(id))
+  if (missing !== undefined)
+    return Effect.fail(
+      new TodoNotFoundError({ action, message: `Todo #${missing} not found` }),
+    )
+  const ranks = new Map(ids.map((id, index) => [id, index + 1]))
+  if (
+    state.todos.some(todo => todo.priority !== undefined && !ranks.has(todo.id))
+  )
+    return Effect.fail(
+      new TodoInputError({
+        action,
+        code: "invalid_priority",
+        message:
+          "Priority order must include every currently assigned todo; use priority=null to unassign explicitly",
+      }),
+    )
+  return Effect.succeed({
+    action,
+    state: {
+      nextId: state.nextId,
+      todos: state.todos.map(todo => {
+        const priority = ranks.get(todo.id)
+        return priority === undefined ? todo : { ...todo, priority }
+      }),
+    },
+    message: `Ordered ${ids.length} todos with one assigned task per rank: ${ids.map((id, index) => `#${id}=${index + 1}`).join(", ")}`,
+  })
+}
+
 export const transitionTodoState: (
   state: TodoState,
   action: TodoAction,
@@ -347,6 +424,60 @@ export const transitionTodoState: (
   const stateError = todoStateError(state, action.action)
   if (stateError) return Effect.fail(stateError)
   switch (action.action) {
+    case "priority_order":
+      return applyPriorityOrder(state, action.ids, action.action)
+    case "priority_relative": {
+      if (
+        !validPriority(action.id) ||
+        !validPriority(action.referenceId) ||
+        (action.position !== "above" && action.position !== "below") ||
+        action.id === action.referenceId
+      )
+        return Effect.fail(
+          new TodoInputError({
+            action: action.action,
+            code: "invalid_priority",
+            message:
+              "Relative priority requires distinct positive safe-integer todo IDs and position above or below",
+          }),
+        )
+      const target = state.todos.find(todo => todo.id === action.id)
+      const reference = state.todos.find(todo => todo.id === action.referenceId)
+      if (!target || !reference)
+        return Effect.fail(
+          new TodoNotFoundError({
+            action: action.action,
+            message: `Todo #${!target ? action.id : action.referenceId} not found`,
+          }),
+        )
+      if (reference.priority === undefined)
+        return Effect.fail(
+          new TodoInputError({
+            action: action.action,
+            code: "invalid_priority",
+            message: "Relative priority requires an assigned reference task",
+          }),
+        )
+      const ordered = state.todos
+        .flatMap(todo =>
+          todo.priority === undefined || todo.id === target.id
+            ? []
+            : [{ id: todo.id, rank: todo.priority }],
+        )
+        .toSorted((left, right) => left.rank - right.rank)
+        .map(todo => todo.id)
+      const insertion =
+        ordered.indexOf(reference.id) + (action.position === "below" ? 1 : 0)
+      return applyPriorityOrder(
+        state,
+        [
+          ...ordered.slice(0, insertion),
+          target.id,
+          ...ordered.slice(insertion),
+        ],
+        action.action,
+      )
+    }
     case "effort": {
       if (action.effort !== null && !isFibonacciEffort(action.effort))
         return Effect.fail(
@@ -397,6 +528,19 @@ export const transitionTodoState: (
           new TodoNotFoundError({
             action: "priority",
             message: `Todo #${action.id} not found`,
+          }),
+        )
+      if (
+        action.priority !== null &&
+        state.todos.filter(
+          todo => todo.id !== target.id && todo.priority === action.priority,
+        ).length >= MAX_TODOS_PER_PRIORITY
+      )
+        return Effect.fail(
+          new TodoInputError({
+            action: "priority",
+            code: "priority_conflict",
+            message: `Rank ${action.priority} is occupied (limit ${MAX_TODOS_PER_PRIORITY}); use priority_order or priority_relative to reorder atomically`,
           }),
         )
       const { priority: _priority, ...unassigned } = target
@@ -694,6 +838,38 @@ export const parseTodoAction: (
   now = Date.now(),
 ) => {
   switch (request.action) {
+    case "priority_order":
+      return validPriorityOrder(request.ids)
+        ? Effect.succeed({ action: "priority_order", ids: request.ids })
+        : Effect.fail(
+            new TodoInputError({
+              action: "priority_order",
+              code: "invalid_priority",
+              message:
+                "Priority order requires a nonempty list of unique positive safe-integer todo IDs",
+            }),
+          )
+    case "priority_relative":
+      if (
+        !validPriority(request.id) ||
+        !validPriority(request.referenceId) ||
+        request.id === request.referenceId ||
+        (request.position !== "above" && request.position !== "below")
+      )
+        return Effect.fail(
+          new TodoInputError({
+            action: "priority_relative",
+            code: "invalid_priority",
+            message:
+              "Relative priority requires distinct positive safe-integer todo IDs and position above or below",
+          }),
+        )
+      return Effect.succeed({
+        action: "priority_relative",
+        id: request.id,
+        referenceId: request.referenceId,
+        position: request.position,
+      })
     case "effort":
       if (
         request.id === undefined ||
