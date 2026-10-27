@@ -117,7 +117,9 @@ the harness, and suppress duplicates without agent polling.
   is blocked, preserve the current state and report the exact blocker; continue
   only bounded repairs needed to unblock publication. Keep normal hooks and
   required safety gates. Use plain Git except in a verified GitButler-managed
-  main worktree, subject to repository-local workflow rules.
+  main worktree, where GitButler is mandatory. GitButler checkpoint publication
+  follows the whole-workspace synchronization rule below, never an isolated
+  branch push.
 - AGENTS.md files define standing rules of engagement and agent behavior. Never
   put transient task state, progress reports, one-off migration notes, temporary
   waiting conditions, session journals, or handoff notes in them; use task
@@ -213,21 +215,39 @@ the harness, and suppress duplicates without agent polling.
   probe or initialize GitButler. Use GitButler in verified managed main
   worktrees and plain Git elsewhere. Repository-local rules govern branch
   organization, verification and delivery details, but cannot replace the
-  managed-main publication workflow below without explicit owner approval. Use
-  GitHub for current project tracking. The classifier must not demand GitButler
-  or reject plain Git solely because the parent repository is GitButler-managed.
-  When an explicitly authorized stacking workflow requires a branch, create it
-  before editing. Preserve branch protections and checks.
+  mandatory managed-main workflow without the explicit owner-approved exception
+  below. Use GitHub for current project tracking. The classifier must not demand
+  GitButler or reject plain Git solely because the parent repository is
+  GitButler-managed. When an explicitly authorized stacking workflow requires a
+  branch, create it before editing. Preserve repository branch protections and
+  required checks within the applicable workflow.
 - In a verified GitButler-managed main worktree, every publication uses the
   whole-workspace workflow: `but pull` everything, resolve all resulting
   conflicts, then bare `but push` to publish everything across the workspace's
-  branches and stacks. Never push a selected branch or stack. Serialize this
-  workflow with the responsible workspace agent, keeping commits scoped by
-  purpose. Incomplete work remains a truthful draft checkpoint. If publication
-  is blocked, preserve state and report the exact blocker. This grants no merge,
-  force-push or protection-bypass authority; other deviations require explicit
-  owner approval. Plain-Git workflows outside managed main worktrees are
-  unchanged.
+  branches and stacks. Do not push a named branch, a selected stack, or another
+  isolated subset. Serialize this workflow with other writers. Keep commits
+  scoped to owned files and hunks; publishing the workspace does not authorize
+  sweeping unrelated uncommitted changes into commits, merging, force pushes, or
+  bypassing hooks or branch protections. Incomplete work remains a truthful
+  draft checkpoint, not a reason to substitute an isolated push. If the full
+  workflow is blocked, preserve the state and report the exact blocker. Apart
+  from the bounded corrective-publication exception below, other deviations
+  require explicit owner approval through `ask_user` and must be completely
+  necessary. Plain-Git workflows outside managed main worktrees are unchanged.
+- Corrective-publication exception: within an existing driver assignment, if
+  GitButler demonstrably rewinds a published branch or publishes its internal
+  conflict-storage history, the driver may use a narrowly scoped plain-Git push
+  to restore that branch's last verified valid published tip. First preserve
+  pending edits and genuine newer work, reconcile the local workspace, and
+  verify the exact incorrect remote tip and intended restoration commit. Bind
+  each push to that ref and observed tip with explicit
+  `--force-with-lease=<ref>:<incorrect-tip>`; never use unrestricted `--force`.
+  If the remote changed, stop and reconcile rather than overwrite it. This does
+  not authorize new feature publication through plain Git, unaffected ref
+  rewrites, dropped peer work, merges, or hook/protection bypasses. Return
+  immediately to the normal whole-workspace `but pull`, conflict resolution,
+  and bare `but push` protocol. Other GitButler failures do not grant this
+  exception merely because an ordinary command failed.
 - Routine GitHub issue creation within authorized planning scope does not need
   approval of exact phrasing. Check the complete payload for
   audience-appropriate content before publication: exclude personal details,

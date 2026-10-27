@@ -61,9 +61,10 @@ the current branch.
 
 ### Detect the stacking tool
 
-Prefer GitButler in existing managed main worktrees and plain Git elsewhere,
-subject to explicit repository-local workflow instructions. Detect topology
-before selecting stack mode (same detection as `/review-sweep`):
+Use GitButler in verified managed main worktrees and plain Git elsewhere. Follow
+the mandatory whole-workspace publication rule in `GLOBAL_AGENTS.md`;
+repository-local defaults do not override it. Detect topology before selecting
+stack mode (same detection as `/review-sweep`):
 
 ```bash
 repo_root=$(git rev-parse --show-toplevel)
