@@ -87,6 +87,7 @@ for (const request of [
 
     registerTodoControl(f.pi, () => {
       calls += 1
+
       return { isError: false, message: "legacy" }
     })
 
@@ -158,6 +159,7 @@ test("overlap routes status changes through the priority-aware writer so legacy 
         id: 1,
         status: "completed",
       })
+
       return { isError: false, message: "preserved priority" }
     },
     { priority: true },
@@ -181,6 +183,7 @@ test("priority-only handlers cannot receive effort changes or estimated addition
     f.pi,
     () => {
       calls += 1
+
       return { isError: false, message: "legacy priority writer" }
     },
     { priority: true },
@@ -212,6 +215,7 @@ test("overlap routes every operation through the effort-aware writer without los
     (request, ctx) => {
       calls += 1
       assert.equal(ctx, f.ctx)
+
       return { isError: false, message: request.action }
     },
     capabilities,

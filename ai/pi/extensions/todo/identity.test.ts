@@ -164,6 +164,7 @@ const fixture = async (
         if (duringUi) {
           const action = duringUi
           duringUi = undefined
+
           queueMicrotask(() => queueMicrotask(action))
         }
 
@@ -396,6 +397,7 @@ for (const request of [
 test("legacy tool-result-only branches restore once and continue allocating stable IDs", async t => {
   const original = await fixture(t)
   await original.hook("session_start")
+
   const legacy = await original.run({
     action: "add",
     text: "Legacy task",
@@ -416,6 +418,7 @@ test("legacy tool-result-only branches restore once and continue allocating stab
 test("a malformed authoritative entry fails closed rather than falling back to later valid result details", async t => {
   const f = await fixture(t)
   await f.hook("session_start")
+
   const delayed = await f.run({ action: "add", text: "Existing task" })
 
   f.persistRaw({
@@ -437,6 +440,7 @@ test("a malformed authoritative entry fails closed rather than falling back to l
 test("a delayed actual tool result cannot roll back manager-created identity or effort", async t => {
   const f = await fixture(t)
   await f.hook("session_start")
+
   const delayed = await f.run({ action: "add", text: "First worker task" })
 
   const created = f.control({ action: "add", text: "Manager task" })
@@ -467,6 +471,7 @@ test("a delayed actual tool result cannot roll back manager-created identity or 
 test("branch restoration cannot overwrite a manager mutation admitted during hydration", async t => {
   const f = await fixture(t)
   await f.hook("session_start")
+
   await f.run({ action: "add", text: "Existing worker task" })
 
   const restoration = f.hook("session_tree")
@@ -490,12 +495,14 @@ test("branch restoration cannot overwrite a manager mutation admitted during hyd
 test("a native UI state change and concurrent manager add preserve both mutations", async t => {
   const f = await fixture(t)
   await f.hook("session_start")
+
   await f.run({ action: "add", text: "Held task", effort: 3 })
   await f.run({ action: "block", id: 1, reason: "Decision" })
 
   f.duringUi(() => {
     f.control({ action: "add", text: "Concurrent manager task", effort: 8 })
   })
+
   await f.unblockUi()
 
   const after = await f.state()
@@ -510,6 +517,7 @@ test("a native UI state change and concurrent manager add preserve both mutation
 test("failed native UI persistence cannot change the state observed by the next manager request", async t => {
   const f = await fixture(t)
   await f.hook("session_start")
+
   await f.run({ action: "add", text: "Held task" })
   await f.run({ action: "block", id: 1, reason: "Decision" })
 
@@ -525,8 +533,10 @@ test("failed native UI persistence cannot change the state observed by the next 
 test("failed reminder persistence preserves the deferred state and its rank", async t => {
   const f = await fixture(t)
   await f.hook("session_start")
+
   await f.run({ action: "add", text: "Deferred task", effort: 3 })
   f.control({ action: "priority", id: 1, priority: 2 })
+
   const due = Date.now() + 60_000
   await f.run({
     action: "status",
@@ -556,6 +566,7 @@ for (const mode of ["headless", "interactive", "unavailable-status"] as const)
     const f = await fixture(t, mode === "headless" ? "headless" : "interactive")
 
     await f.hook("session_start")
+
     await f.run({ action: "add", text: "Deferred task", effort: 3 })
     f.control({ action: "priority", id: 1, priority: 2 })
     await f.run({
@@ -595,6 +606,7 @@ for (const mode of ["headless", "interactive", "unavailable-status"] as const)
 test("cleared effort stays cleared when an older actual result arrives after the write", async t => {
   const f = await fixture(t)
   await f.hook("session_start")
+
   const delayed = await f.run({
     action: "add",
     text: "Estimated task",
