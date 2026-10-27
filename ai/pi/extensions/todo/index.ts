@@ -271,21 +271,21 @@ class TodoListComponent {
   }
 }
 
-function successfulToolResult(
+const successfulToolResult = (
   action: TodoAction["action"],
   state: TodoState,
   message: string,
-) {
+) => {
   const details: TodoDetails = { outcome: "success", action, state }
 
   return { content: [{ type: "text" as const, text: message }], details }
 }
 
-function failedToolResult(
+const failedToolResult = (
   action: TodoAction["action"],
   state: TodoState,
   error: string,
-) {
+) => {
   const details: TodoDetails = { outcome: "error", action, state, error }
 
   return {
@@ -345,10 +345,10 @@ const restoredState = (
       )
 }
 
-export default function todoExtension(
+const todoExtension = (
   pi: ExtensionAPI,
   managerRuntime?: ManagerTodoRuntime,
-): void {
+): void => {
   registerRuntimeVersion(pi, "todo", "2026.10.25.1")
 
   const stateRef = Effect.runSync(Ref.make<TodoState>(emptyTodoState))
@@ -1102,3 +1102,5 @@ export default function todoExtension(
     await wakeDueReminders(ctx)
   })
 }
+
+export default todoExtension
