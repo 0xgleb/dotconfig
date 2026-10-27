@@ -1,7 +1,7 @@
 ---
 name: review-loop
 user-invocable: true
-allowed-tools: Bash(but:*), Bash(direnv:*), Bash(git:*), Bash(gh:*), Bash(agy:*), Bash(command:*), Bash(cargo:*), Bash(nix:*), Bash(mkdir:*), Bash(cat:*), Bash(mktemp:*), Bash(rm:*), Bash(test:*), Bash(grep:*), Bash(wc:*), Bash(date:*), Bash(basename:*), Bash(find:*), Read, Write, Edit, Agent, Workflow, AskUserQuestion
+allowed-tools: Bash(but:*), Bash(direnv:*), Bash(git:*), Bash(gh:*), Bash(agy:*), Bash(command:*), Bash(cargo:*), Bash(nix:*), artifact_provenance, Bash(cat:*), Bash(mktemp:*), Bash(rm:*), Bash(test:*), Bash(grep:*), Bash(wc:*), Bash(uuidgen:*), Bash(basename:*), Bash(find:*), Read, Write, Edit, Agent, Workflow, AskUserQuestion
 description: Review and fix the current branch until clean; use stack for an existing GitButler stack. Use review-pr for read-only PR assessment.
 argument-hint: [stack]
 ---
@@ -212,11 +212,11 @@ include its uncommitted fixes. If the current checkout is a combined managed
 workspace, do not treat it as one feature branch; resolve an explicit branch
 scope or use the stack adapter before proceeding.
 
-own parent**, not trunk — reviewing against trunk would include ancestor PRs and
-drown the reviewers in unrelated changes. In GitButler stack mode, use the base
-from `but branch show <branch>`. For plain Git, use the merge-base with the
-verified default branch. In stack mode, override `parent` below with the
-branch's base from the adapter.
+Diff against the branch's **own parent**, not trunk — reviewing against trunk
+would include ancestor PRs and drown the reviewers in unrelated changes. In
+GitButler stack mode, use the base from `but branch show <branch>`. For plain
+Git, use the merge-base with the verified default branch. In stack mode,
+override `parent` below with the branch's base from the adapter.
 
 ```bash
 default_branch=$(git symbolic-ref refs/remotes/origin/HEAD --short) || {
@@ -227,11 +227,10 @@ parent=$(git merge-base "$default_branch" HEAD)
 branch=$(git rev-parse --abbrev-ref HEAD)
 head_sha=$(git rev-parse HEAD)
 parent_sha=$(git rev-parse "$parent")
-repo_root=$(git rev-parse --show-toplevel)
-ts=$(date +%Y-%m-%d_%H-%M-%S)
+repo_root=$(git rev-parse --show-toplevel) || exit 1
+invocation_id=$(uuidgen) || exit 1
 safe_branch=$(echo "$branch" | tr '/' '_')
-out_dir="$repo_root/.tmp/agent-local-ctx/reviews/${ts}-${safe_branch}"
-mkdir -p "$out_dir"
+out_dir="$repo_root/.tmp/agent-local-ctx/reviews/${invocation_id}-${safe_branch}"
 ```
 
 Resolve `repo_root` from the checkout actually being reviewed. For a linked
@@ -243,6 +242,32 @@ artifact root. Run the delta workflow from that checkout; a coordinator running
 elsewhere must add `cwd: repoRoot` to every child-agent options object in its
 example. An exported source directory is not the review checkout. Remove these
 temporary artifacts with the worktree.
+
+Before creating the invocation directory or writing any artifact, verify ignore
+coverage:
+
+```bash
+git check-ignore --verbose "$repo_root/.tmp/" "$out_dir/diff.patch"
+```
+
+Require directory-wide coverage for both paths; a file-specific match is not
+sufficient. Immediately add the missing `.tmp/` directory pattern to this
+checkout's `.gitignore` under the existing ignore-repair policy, preserve other
+rules, and recheck both paths. This grants no worktree-creation authority.
+
+Then call the registered `artifact_provenance` tool with the resolved absolute
+value of `out_dir`:
+
+```json
+{ "action": "create_directory", "path": "<resolved absolute out_dir>" }
+```
+
+Require successful creation and provenance recording before writing descendants.
+Use an available registered harness equivalent if the tool name differs; do not
+fall back to raw `mkdir`. Add `crossWorkspace: true` only for an explicitly
+authorized target outside the tool session's workspace. The native UUID supplies
+the invocation namespace; the creation API does not promise exclusive
+allocation.
 
 Write the diff and file manifest. Diff against the working tree (no `..HEAD`) so
 re-review iterations automatically include uncommitted fixes:
@@ -259,11 +284,6 @@ chunking and track complete retained-code and removal-boundary coverage. Inspect
 deleted code only as needed to verify surviving behavior, compatibility and
 removal effects; do not spend a review pass re-auditing intentional deletions.
 Preserve completed reviews and recover only missing chunks or context.
-
-**Ensure the artifact folder is gitignored.** Artifacts are written under
-`$repo_root/.tmp/agent-local-ctx/`. If `.tmp/` is not already gitignored (check
-with `grep -q '\.tmp/' "$repo_root/.gitignore"`), ask the user for permission to
-add it. Do not silently modify `.gitignore`.
 
 ## 3. Load project context
 
@@ -389,6 +409,12 @@ For each remaining finding, compute a **default action** based on severity,
 verdict, and confidence. **Bias heavily toward fixing now** — only defer when
 the fix is massive enough to warrant its own stacked PR.
 
+**Error-contract boundary:** This boundary overrides severity defaults and every
+automatic-fix instruction in this skill. Automatically correct error models only
+when the public error contract is preserved or that specific contract change is
+already authorized. Otherwise classify the finding as **Discuss** before
+editing. Do not request renewed approval for an already-authorized correction.
+
 | Severity | Verdict  | Confidence | Default action   |
 | -------- | -------- | ---------- | ---------------- |
 | critical | any      | any        | **Auto-fix**     |
@@ -413,8 +439,10 @@ re-test and re-review semantic changes. This does not expand publication scope.
 
 **Auto-dismiss**: drop the finding silently. No user input needed.
 
-**Discuss**: the evidence is weak or reviewers disagree. Show the user the full
-finding and ask what to do. Default to fixing unless it's massive.
+**Discuss**: the evidence is weak, reviewers disagree, or the specific public
+error-contract change lacks authorization. Show the user the full finding and
+ask what to do. Do not edit an unauthorized public error-contract change before
+authorization.
 
 **Defer to GitHub** is NOT a default action. Only use it when:
 
@@ -449,7 +477,7 @@ Full details: <path to review.md>
 For **discuss** findings only, use `AskUserQuestion`:
 
 ```
-Q: [#N] <title> — sev <severity>. Reviewers disagree — what should I do?
+Q: [#N] <title> — sev <severity>. Decision needed — what should I do?
    options:
      - "Fix now" (Recommended) — implement the fix in this session
      - "Dismiss" — drop it, not a real issue
@@ -936,8 +964,10 @@ invocations remain unchanged.
 
 - **A required native lane errors:** retain incomplete status and its reason;
   selected inspectors are required. Follow review-core's missing-work recovery.
-- **Review returns no findings:** only `status: completed` is a clean success;
-  incomplete review with an empty list must not exit as clean.
+- **Review returns no findings:** review-core full-panel results require
+  `status: completed` for a clean success. Step 9 delta results use that step's
+  verification and sweep convergence criteria instead. Missing required evidence
+  remains incomplete; an empty findings list alone is not success.
 - **A fix turns out to be larger than expected:** stop, report progress, ask
   whether to continue, defer to a stacked PR, or dismiss.
 - **Review pass cap hit (4 passes):** stop and tell the user. Summarize what was
@@ -990,5 +1020,6 @@ invocations remain unchanged.
 12. Delta mode is only valid when the fix delta is small (~200 lines) and
     confined to files implicated by fixed findings — otherwise escalate to a
     full panel pass.
-13. Never silently modify `.gitignore` — ask permission to add `.tmp/` if
-    missing.
+13. Before artifact writes, verify directory-wide ignore coverage and create and
+    record the invocation directory through the registered tool. Repair missing
+    `.tmp/` ignore coverage immediately under the existing policy.

@@ -83,6 +83,14 @@ export const invokeManagerTodo = async (
     return unavailable(
       "The worker has not loaded priority control; no mutation was queued.",
     )
+  if (
+    (request.action === "effort" ||
+      (request.action === "add" && request.effort !== undefined)) &&
+    current.right.data.todoEffortControl !== true
+  )
+    return unavailable(
+      "The worker has not loaded effort control; no mutation was queued.",
+    )
   const decoded = decodeTodoControl(request)
   if (Either.isLeft(decoded)) return unavailable(decoded.left.message)
   const submitted = state.right.enqueueTodo(
