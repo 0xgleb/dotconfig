@@ -37,6 +37,12 @@ Include the PR link, reviewed head, verification status, and any unresolved
 findings or blockers. Do not report to the Manager or describe a queued report
 as delivered.
 
+An explicit owner instruction to merge a specific PR overrides that repository's
+usual non-merge handoff for that PR only. Once its required review, fixes and
+checks pass, merge it normally without asking for merge approval again. This
+does not authorize other PRs, bypass required gates or override branch
+protection.
+
 ## Existing feedback
 
 When available, collect CodeRabbit feedback and other unaddressed PR review
@@ -57,6 +63,19 @@ Review stacks bottom-up. Across the round, prioritize ready PRs targeting
 `master` over dependent PRs in any stack so mergeable foundations land first.
 Re-read each dependent PR's base, head, and diff after its predecessor changes
 or merges; do not reuse stale scope.
+
+## Merge conflicts
+
+When the review authorizes fixes, resolve merge conflicts rather than leaving
+the PR blocked merely because it conflicts. For review-only PRs, report the
+missing fix authority without modifying the branch. In the authorized review
+checkout, merge the verified current target branch into the PR's actual head
+branch and reconcile conflicts while preserving the intended changes from both
+sides. Re-review the resulting diff, rerun required checks, and commit and push
+to the same PR branch. Report a concrete checkout, authority or
+unresolved-intent blocker when resolution cannot safely proceed. This does not
+expand PR merge authority or permit force-pushes, protection overrides or
+primary-checkout edits.
 
 ## Checkout
 
