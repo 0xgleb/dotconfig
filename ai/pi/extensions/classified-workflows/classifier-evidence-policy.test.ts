@@ -79,22 +79,22 @@ for (const kind of ["task", "instruction", "script", "diff"]) {
   })
 }
 
-test("expanded hook policy retains initial scope checks and reuses unchanged-commit verification", () => {
+test("linked hook policy runs hooks normally without a mandatory identity comparison", () => {
   const linked = policy()
     .split("For linked-worktree hook handling:")[1]
     ?.split("For main-worktree hook handling:")[0]
 
   assert.ok(linked)
+  assert.match(linked, /run configured hooks normally/iu)
   assert.match(
     linked,
-    /Verify actual committed path, mode, and blob identities against the reviewed selection before (?:publication|delivery)/iu,
+    /Unexpected mismatches stop delivery and preserve evidence/iu,
   )
-  assert.ok(
-    /Reuse this verification for unchanged commit content and target/iu.test(
-      linked,
-    ),
-    "Linked-hook policy must reuse verified unchanged commits rather than demand another receipt",
+  assert.doesNotMatch(
+    linked,
+    /Verify actual committed path, mode, and blob identities/iu,
   )
+  assert.doesNotMatch(linked, /Reuse this verification for unchanged commit/iu)
   assert.match(
     policy(),
     /do not impose ritual rereads or paths\/modes\/blobs\/hashes checks/iu,
