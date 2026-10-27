@@ -1388,12 +1388,14 @@ const unscopedResultEvidence = (candidate: string): string | undefined => {
     /^(?:functions\.)?\S+ result status=(?:success|error|unknown)(?: inputDigest=[0-9a-f]{64})?\b/i.exec(
       candidate,
     )?.[0]
+
   if (!identity) return undefined
 
   const boundaries = [
     candidate.indexOf(" input="),
     candidate.indexOf(": "),
   ].filter(index => index >= identity.length)
+
   if (boundaries.length === 0) return undefined
 
   return `${identity} context=unscoped${candidate.slice(Math.min(...boundaries))}`
