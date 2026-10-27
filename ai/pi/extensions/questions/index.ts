@@ -214,7 +214,7 @@ const questionsExtension: (
   inspectDelivery?: QuestionDeliveryInspector,
   refreshDelivery?: QuestionDeliveryRefresher,
 ) => void = (pi, execution, inspectDelivery, refreshDelivery) => {
-  registerRuntimeVersion(pi, "questions", "2026.10.17.10")
+  registerRuntimeVersion(pi, "questions", "2026.10.17.12")
   let state = emptyQuestionState
   let dialogOpen = false
   let latestCtx: ExtensionContext | undefined
@@ -311,7 +311,7 @@ const questionsExtension: (
         content: `Resolved durable question q${id} with exact typed answer: ${boundedAnswer}\nContinue the waiting work using this answer.`,
         display: false,
       },
-      { triggerTurn: true, deliverAs: "followUp" },
+      { triggerTurn: true, deliverAs: "steer" },
     )
     return true
   }
@@ -734,7 +734,7 @@ const questionsExtension: (
     name: "ask_user",
     label: "Question queue",
     description:
-      "Ask/replace drafts run an internal background critic/author fix loop (at most two critique passes) and return queued-review immediately. Only complete reviewed cards enter the question queue. List shows review-job and Telegram delivery status. No foreground review/rewrite workflow is needed. refresh_delivery only repairs an unchanged pending card.",
+      "Ask/replace drafts run an internal background critic/author fix loop (at most two critique passes) and return queued-review immediately. Editorial feedback gets an author revision even after the final critique; complete reviewed/revised cards enter the queue. List shows operational failure reasons and Telegram delivery status. No foreground review/rewrite workflow is needed. refresh_delivery only repairs an unchanged pending card.",
     promptSnippet:
       "Queue a persistent question for the user without blocking unrelated work",
     promptGuidelines: [
@@ -918,6 +918,11 @@ const questionsExtension: (
           "publishing",
         ].includes(job.status),
         pass: job.pass,
+        // Legacy reviewedHash distinguishes publication failure from editorial feedback.
+        ...(job.reason === undefined ||
+        (job.status === "needs-revision" && job.reviewedHash === undefined)
+          ? {}
+          : { reason: job.reason }),
         ...(job.questionId === undefined ? {} : { questionId: job.questionId }),
       }))
       const result =
