@@ -20,6 +20,7 @@ import {
   requestTodoControl,
   todoControlAvailable,
   todoPriorityAvailable,
+  todoEffortAvailable,
 } from "../todo/control.ts"
 import { readPromptFile } from "../shared/prompt-text.ts"
 import { registerRuntimeVersion } from "../shared/runtime-version.ts"
@@ -623,6 +624,7 @@ export const registerWorkManager = (
             return {
               todoControl: todoControlAvailable(pi),
               todoPriorityControl: todoPriorityAvailable(pi),
+              todoEffortControl: todoEffortAvailable(pi),
               view: current.view,
               workerSession: current.workerSession,
               priorities: current.priorities?.ids ?? [],
