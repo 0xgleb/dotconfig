@@ -355,6 +355,7 @@
                   ai/pi/extensions/classified-workflows/intent-context.test.ts \
                   ai/pi/extensions/classified-workflows/manual-reload-boundary.test.ts \
                   ai/pi/extensions/control-plane/job-runtime.test.ts \
+                  ai/pi/extensions/control-plane/review-duty-profile.test.ts \
                   ai/pi/extensions/control-plane/server.test.ts \
                   ai/pi/extensions/control-plane/sqlite-job-store.test.ts \
                   ai/pi/extensions/control-plane/usage-policy.test.ts \

@@ -455,17 +455,11 @@ const decodeRegisteredSpec = (
         kind,
         payload: decoded,
       }))
-    : kind === "harness.review"
-      ? Effect.map(decoders[kind](payload), decoded => ({
-          ...schedule,
-          kind,
-          payload: decoded,
-        }))
-      : Effect.map(decoders[kind](payload), decoded => ({
-          ...schedule,
-          kind,
-          payload: decoded,
-        }))
+    : Effect.map(decoders[kind](payload), decoded => ({
+        ...schedule,
+        kind,
+        payload: decoded,
+      }))
 
 /**
  * Decodes a job spec offered to the enqueue boundary, binding any harness
