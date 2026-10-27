@@ -36,7 +36,7 @@ test("a submitted question answer unpauses and resumes the waiting agent", () =>
   assert.match(questions, /exact typed answer/)
   assert.match(questions, /display: false/)
   assert.doesNotMatch(questions, /The user answered q/)
-  assert.match(questions, /triggerTurn: true, deliverAs: "followUp"/)
+  assert.match(questions, /triggerTurn: true, deliverAs: "steer"/)
   assert.match(workflows, /pi\.events\.on\(\s*QUESTION_RESOLVED_EVENT/)
   assert.match(workflows, /setContinuationPaused\(false, latestCtx\)/)
 })
