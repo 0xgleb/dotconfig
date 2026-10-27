@@ -562,13 +562,14 @@ const makeStore = (database: DatabaseSync): SqlitePlanStore => {
             return Option.none()
           }
           const plan = yield* planFrom(raw)
-          if (page.after !== undefined) {
+          const after = page.after
+          if (after !== undefined) {
             const cursor = yield* io("Could not validate plan cursor", () =>
               database
                 .prepare(
                   "SELECT id FROM issue_plan_tasks WHERE plan_id = ? AND id = ?",
                 )
-                .get(plan.id, page.after),
+                .get(plan.id, after),
             )
             if (cursor === undefined)
               return yield* fail(
