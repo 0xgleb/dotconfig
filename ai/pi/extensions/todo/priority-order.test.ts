@@ -287,35 +287,82 @@ test("direct transition rejects sparse JavaScript ID arrays without throwing", (
   assert.equal(result.left._tag, "TodoInputError")
 })
 
-test("invalid relative or bulk requests fail without changing authoritative tasks", () => {
-  const before = JSON.stringify(seed)
-
-  for (const request of [
-    { action: "priority_relative", id: 1, referenceId: 1, position: "above" },
-    { action: "priority_relative", id: 1, referenceId: 3, position: "above" },
-    { action: "priority_relative", id: 99, referenceId: 1, position: "below" },
-    { action: "priority_order", ids: [1] },
-    { action: "priority_order", ids: [1, 2, 99] },
-    { action: "priority_order", ids: [1, 1, 2] },
-    { action: "priority_order", ids: [1, 2, 4] },
-    { action: "priority_order", ids: [] },
-  ]) {
+test("valid-shaped invalid priority operations return typed domain failures without changing tasks", () => {
+  for (const { request, tag } of [
+    {
+      request: {
+        action: "priority_relative",
+        id: 1,
+        referenceId: 1,
+        position: "above",
+      },
+      tag: "TodoInputError",
+    },
+    {
+      request: {
+        action: "priority_relative",
+        id: 1,
+        referenceId: 3,
+        position: "above",
+      },
+      tag: "TodoInputError",
+    },
+    {
+      request: {
+        action: "priority_relative",
+        id: 99,
+        referenceId: 1,
+        position: "below",
+      },
+      tag: "TodoNotFoundError",
+    },
+    {
+      request: {
+        action: "priority_relative",
+        id: 1,
+        referenceId: 99,
+        position: "below",
+      },
+      tag: "TodoNotFoundError",
+    },
+    { request: { action: "priority_order", ids: [1] }, tag: "TodoInputError" },
+    {
+      request: { action: "priority_order", ids: [1, 2, 99] },
+      tag: "TodoNotFoundError",
+    },
+    {
+      request: { action: "priority_order", ids: [1, 2, 4] },
+      tag: "TodoInputError",
+    },
+  ] as const) {
+    const state = structuredClone(seed)
+    const before = structuredClone(state)
     const decoded = decodeTodoControl(request)
 
-    if (Either.isRight(decoded)) {
-      const result = Effect.runSync(
-        Effect.either(
-          Effect.flatMap(parseTodoAction(decoded.right), action =>
-            transitionTodoState(seed, action),
-          ),
+    assert.ok(Either.isRight(decoded), JSON.stringify(request))
+
+    const result = Effect.runSync(
+      Effect.either(
+        Effect.flatMap(parseTodoAction(decoded.right), action =>
+          transitionTodoState(state, action),
         ),
-      )
+      ),
+    )
 
-      assert.ok(Either.isLeft(result), JSON.stringify(request))
-    }
+    assert.ok(Either.isLeft(result), JSON.stringify(request))
+    assert.equal(result.left._tag, tag, JSON.stringify(request))
+    assert.equal(result.left.action, request.action)
+    if (result.left._tag === "TodoInputError")
+      assert.equal(result.left.code, "invalid_priority")
+
+    assert.deepEqual(state, before, JSON.stringify(request))
   }
+})
 
+test("malformed priority requests fail shared decoding before domain execution", () => {
   for (const request of [
+    { action: "priority_order", ids: [1, 1, 2] },
+    { action: "priority_order", ids: [] },
     { action: "priority_order", ids: [1, 2.5] },
     { action: "priority_order", ids: ["1"] },
     { action: "priority_relative", id: 1, referenceId: 0, position: "above" },
@@ -325,8 +372,10 @@ test("invalid relative or bulk requests fail without changing authoritative task
       referenceId: 2,
       position: "sideways",
     },
-  ])
-    assert.ok(Either.isLeft(decodeTodoControl(request)))
+  ]) {
+    const decoded = decodeTodoControl(request)
 
-  assert.equal(JSON.stringify(seed), before)
+    assert.ok(Either.isLeft(decoded), JSON.stringify(request))
+    assert.equal(decoded.left._tag, "TodoControlError")
+  }
 })
