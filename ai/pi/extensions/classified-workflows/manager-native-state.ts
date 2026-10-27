@@ -61,6 +61,7 @@ export const prepareNativeManagerState = (
         "unsafe_state",
         "Manager state directory must be absolute.",
       )
+
     yield* io(() => mkdirSync(directory, { recursive: true, mode: 0o700 }))
     yield* privateDirectory(directory)
 
@@ -80,6 +81,7 @@ export const prepareNativeManagerState = (
       )
       yield* privateDirectory(join(directory, child))
     }
+
     return yield* openNativeManagerState(directory, scope)
   })
 
@@ -89,7 +91,9 @@ export const openNativeManagerState = (
 ): Either.Either<NativeManagerState, ManagerSessionError> =>
   Either.gen(function* () {
     yield* privateDirectory(directory)
+
     const stored = yield* readJson(join(directory, "scope.json"))
+
     if (
       !record(stored) ||
       stored.version !== 1 ||
@@ -101,6 +105,7 @@ export const openNativeManagerState = (
         "Manager state belongs to another worker.",
       )
     }
+
     for (const child of ["requests", "receipts"])
       yield* privateDirectory(join(directory, child))
 
@@ -113,9 +118,12 @@ export const openNativeManagerState = (
             "invalid_input",
             "Invalid manager request identity.",
           )
+
         const path = join(directory, "receipts", `${id}.json`)
         if (!existsSync(path)) return undefined
+
         const value = yield* readJson(path)
+
         if (
           !record(value) ||
           value.version !== 1 ||
@@ -132,6 +140,7 @@ export const openNativeManagerState = (
             "Malformed manager priority receipt.",
           )
         }
+
         return { version: 1, id, status: value.status, message: value.message }
       })
 
@@ -183,6 +192,7 @@ const privateDirectory = (
 ): Either.Either<void, ManagerSessionError> =>
   Either.gen(function* () {
     const stat = yield* io(() => lstatSync(path))
+
     if (
       !isAbsolute(path) ||
       !stat.isDirectory() ||
@@ -207,6 +217,7 @@ const readPrivate = (
       const fd = openSync(path, constants.O_RDONLY | constants.O_NOFOLLOW)
       try {
         const stat = fstatSync(fd)
+
         if (
           !stat.isFile() ||
           stat.size > maximumBytes ||
@@ -219,6 +230,7 @@ const readPrivate = (
             "Manager state file has unsafe ownership, permissions or size.",
           )
         }
+
         return Either.right(readFileSync(fd, "utf8"))
       } finally {
         closeSync(fd)
@@ -245,12 +257,14 @@ const atomicJson = (
   value: unknown,
 ): Either.Either<void, ManagerSessionError> => {
   const temporary = join(directory, `pending-${randomUUID()}`)
+
   return io(() => {
     try {
       writeFileSync(temporary, JSON.stringify(value), {
         flag: "wx",
         mode: 0o600,
       })
+
       renameSync(temporary, join(directory, name))
     } finally {
       if (existsSync(temporary)) unlinkSync(temporary)

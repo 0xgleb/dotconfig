@@ -45,10 +45,12 @@ test("manager control updates the real worker todo store used by subsequent ordi
   const listeners = new Map<string, ((data: unknown) => void)[]>()
   let tool: CapturedTool | undefined
   let failAppend = false
+
   const pi = {
     events: {
       on: (name: string, handler: (data: unknown) => void) => {
         listeners.set(name, [...(listeners.get(name) ?? []), handler])
+
         return () =>
           listeners.set(
             name,
@@ -73,6 +75,7 @@ test("manager control updates the real worker todo store used by subsequent ordi
         failAppend = false
         assert.fail("Injected SDK persistence failure")
       }
+
       entries.push({
         type: "custom",
         id: `e${entries.length + 1}`,
@@ -81,6 +84,7 @@ test("manager control updates the real worker todo store used by subsequent ordi
       })
     },
   } as unknown as ExtensionAPI
+
   const ctx = {
     cwd: "/projects/worker",
     hasUI: false,
@@ -89,15 +93,20 @@ test("manager control updates the real worker todo store used by subsequent ordi
     sessionManager: { getSessionId: () => "worker", getBranch: () => entries },
     ui: { notify: () => {}, setStatus: () => {}, setWidget: () => {} },
   } as unknown as ExtensionContext
+
   const todoExtension: unknown = await loadHostExtension(
     fileURLToPath(new URL("./index.ts", import.meta.url)),
   )
+
   assert.equal(typeof todoExtension, "function")
   if (typeof todoExtension !== "function")
     assert.fail("Expected the actual todo extension factory")
+
   todoExtension(pi)
   for (const handler of hooks.get("session_start") ?? []) await handler({}, ctx)
+
   assert.ok(tool)
+
   await tool.execute(
     "add",
     { action: "add", text: "Worker task" },
@@ -105,21 +114,26 @@ test("manager control updates the real worker todo store used by subsequent ordi
     undefined,
     ctx,
   )
+
   const updated = requestTodoControl(pi, ctx, {
     action: "status",
     id: 1,
     status: "completed",
   })
+
   assert.ok(Either.isRight(updated))
   assert.equal(updated.right.isError, false)
+
   const ranked = requestTodoControl(pi, ctx, {
     action: "priority",
     id: 1,
     priority: 2,
   })
+
   assert.ok(Either.isRight(ranked))
   assert.equal(ranked.right.isError, true)
   assert.match(ranked.right.message, /Terminal todo #1/u)
+
   const estimated = await tool.execute(
     "estimate-worker",
     { action: "effort", id: 1, effort: 3 },
@@ -127,10 +141,13 @@ test("manager control updates the real worker todo store used by subsequent ordi
     undefined,
     ctx,
   )
+
   assert.ok(record(estimated))
   assert.notEqual(estimated.isError, true)
+
   const workerTreeHandlers = [...(hooks.get("session_tree") ?? [])]
   const beforeRead = entries.length
+
   const listed = await tool.execute(
     "list",
     { action: "list" },
@@ -138,30 +155,39 @@ test("manager control updates the real worker todo store used by subsequent ordi
     undefined,
     ctx,
   )
+
   assert.equal(
     entries.length,
     beforeRead,
     "list must not mutate the task journal",
   )
+
   for (const handler of hooks.get("session_start") ?? []) await handler({}, ctx)
+
   assert.equal(
     entries.length,
     beforeRead,
     "unchanged restoration must not mutate the task journal",
   )
+
   assert.ok(record(listed))
+
   const details = decodeTodoDetails(listed.details)
+
   assert.ok(Option.isSome(details))
   assert.equal(details.value.state.todos[0]?.status, "completed")
   assert.equal(details.value.state.todos[0]?.priority, undefined)
   assert.equal(details.value.state.todos[0]?.effort, 3)
+
   const theme = {
     fg: (_color: string, value: string) => value,
   } as unknown as Theme
+
   assert.match(
     tool.renderResult(listed, { expanded: true }, theme).render(120).join("\n"),
     /\[effort 3 points\]/u,
   )
+
   await tool.execute(
     "lower-priority-work",
     { action: "add", text: "Unassigned existing work" },
@@ -172,17 +198,22 @@ test("manager control updates the real worker todo store used by subsequent ordi
 
   const root = mkdtempSync(join(tmpdir(), "pi-manager-todo-tool-test-"))
   t.after(() => rmSync(root, { recursive: true }))
+
   const directory = managerPairDirectory({
     agentDir: root,
     workerCwd: ctx.cwd,
     workerSessionId: "worker",
   })
+
   assert.ok(Either.isRight(directory))
+
   const state = prepareNativeManagerState(directory.right, {
     workerSessionId: "worker",
     cwd: ctx.cwd,
   })
+
   assert.ok(Either.isRight(state))
+
   state.right.publish({
     version: 1,
     workerSessionId: "worker",
@@ -195,9 +226,11 @@ test("manager control updates the real worker todo store used by subsequent ordi
       todoEffortControl: true,
     },
   })
+
   const managerEntries: Record<string, unknown>[] = []
   let selected = true
   let managerTool: CapturedTool | undefined
+
   const managerPi = {
     ...pi,
     getFlag: () => undefined,
@@ -207,6 +240,7 @@ test("manager control updates the real worker todo store used by subsequent ordi
     appendEntry: (customType: string, data: unknown) =>
       managerEntries.push({ type: "custom", customType, data }),
   } as unknown as ExtensionAPI
+
   const managerCtx = {
     ...ctx,
     cwd: "/global/manager",
@@ -215,6 +249,7 @@ test("manager control updates the real worker todo store used by subsequent ordi
       getBranch: () => managerEntries,
     },
   } as unknown as ExtensionContext
+
   registerManagerBinding(pi, id =>
     id === "manager"
       ? selected
@@ -222,7 +257,9 @@ test("manager control updates the real worker todo store used by subsequent ordi
         : { role: "manager-unavailable", message: "Select an existing worker." }
       : undefined,
   )
+
   assert.equal(managerPi.getFlag("manager-worker"), undefined)
+
   todoExtension(managerPi, {
     agentDir: root,
     timeoutMs: 1000,
@@ -232,13 +269,17 @@ test("manager control updates the real worker todo store used by subsequent ordi
         () => assert.fail("Wrong queue lane"),
         request => {
           const result = requestTodoControl(pi, ctx, request)
+
           assert.ok(Either.isRight(result))
+
           return Either.right(result.right.message)
         },
       )
     },
   })
+
   assert.ok(managerTool)
+
   await managerTool.execute(
     "manager-add",
     { action: "add", text: "Added from manager", effort: 5 },
@@ -246,6 +287,7 @@ test("manager control updates the real worker todo store used by subsequent ordi
     undefined,
     managerCtx,
   )
+
   const managerList = await managerTool.execute(
     "manager-list",
     { action: "list" },
@@ -253,6 +295,7 @@ test("manager control updates the real worker todo store used by subsequent ordi
     undefined,
     managerCtx,
   )
+
   assert.ok(record(managerList))
   assert.match(
     managerTool
@@ -261,6 +304,7 @@ test("manager control updates the real worker todo store used by subsequent ordi
       .join("\n"),
     /\[effort 5 points\]/u,
   )
+
   const managerRanked = await managerTool.execute(
     "manager-priority",
     { action: "priority", id: 3, priority: 1 },
@@ -268,8 +312,10 @@ test("manager control updates the real worker todo store used by subsequent ordi
     undefined,
     managerCtx,
   )
+
   assert.ok(record(managerRanked))
   assert.notEqual(managerRanked.isError, true)
+
   const managerEstimated = await managerTool.execute(
     "manager-effort",
     { action: "effort", id: 3, effort: 8 },
@@ -277,9 +323,12 @@ test("manager control updates the real worker todo store used by subsequent ordi
     undefined,
     managerCtx,
   )
+
   assert.ok(record(managerEstimated))
   assert.notEqual(managerEstimated.isError, true)
+
   for (const handler of workerTreeHandlers) await handler({}, ctx)
+
   selected = false
   const unselected = await managerTool.execute(
     "unselected",
@@ -288,8 +337,10 @@ test("manager control updates the real worker todo store used by subsequent ordi
     undefined,
     managerCtx,
   )
+
   assert.ok(record(unselected))
   assert.equal(unselected.isError, true)
+
   const finalList = await tool.execute(
     "final-list",
     { action: "list" },
@@ -297,8 +348,11 @@ test("manager control updates the real worker todo store used by subsequent ordi
     undefined,
     ctx,
   )
+
   assert.ok(record(finalList))
+
   const finalDetails = decodeTodoDetails(finalList.details)
+
   assert.ok(Option.isSome(finalDetails))
   assert.equal(finalDetails.value.state.todos.length, 3)
   assert.equal(finalDetails.value.state.todos[2]?.text, "Added from manager")
@@ -311,30 +365,37 @@ test("manager control updates the real worker todo store used by subsequent ordi
     ["#3", "#2"],
   )
   assert.equal(finalDetails.value.state.todos[0]?.priority, undefined)
+
   failAppend = true
   const failedPriority = requestTodoControl(pi, ctx, {
     action: "priority",
     id: 3,
     priority: 5,
   })
+
   assert.ok(Either.isLeft(failedPriority))
   assert.equal(
     managerEntries.filter(entry => entry.customType === "todo.state").length,
     0,
   )
+
   failAppend = true
   const failedEffort = requestTodoControl(pi, ctx, {
     action: "effort",
     id: 3,
     effort: 13,
   })
+
   assert.ok(Either.isLeft(failedEffort))
+
   failAppend = true
   const failed = requestTodoControl(pi, ctx, {
     action: "add",
     text: "Must not survive failed persistence",
   })
+
   assert.ok(Either.isLeft(failed))
+
   const afterFailure = await tool.execute(
     "after-failure",
     { action: "list" },
@@ -342,12 +403,16 @@ test("manager control updates the real worker todo store used by subsequent ordi
     undefined,
     ctx,
   )
+
   assert.ok(record(afterFailure))
+
   const afterDetails = decodeTodoDetails(afterFailure.details)
+
   assert.ok(Option.isSome(afterDetails))
   assert.equal(afterDetails.value.state.todos.length, 3)
   assert.equal(afterDetails.value.state.todos[2]?.priority, 1)
   assert.equal(afterDetails.value.state.todos[2]?.effort, 8)
+
   selected = true
   const cleared = await managerTool.execute(
     "clear-manager-priority",
@@ -356,9 +421,12 @@ test("manager control updates the real worker todo store used by subsequent ordi
     undefined,
     managerCtx,
   )
+
   assert.ok(record(cleared))
   assert.notEqual(cleared.isError, true)
+
   for (const handler of workerTreeHandlers) await handler({}, ctx)
+
   const afterClear = await tool.execute(
     "read-back-clear",
     { action: "list" },
@@ -366,15 +434,21 @@ test("manager control updates the real worker todo store used by subsequent ordi
     undefined,
     ctx,
   )
+
   assert.ok(record(afterClear))
+
   const clearedDetails = decodeTodoDetails(afterClear.details)
+
   assert.ok(Option.isSome(clearedDetails))
+
   const { priority: removed, ...unranked } = afterDetails.value.state.todos[2]!
+
   assert.equal(removed, 1)
   assert.deepEqual(clearedDetails.value.state.todos, [
     ...afterDetails.value.state.todos.slice(0, 2),
     unranked,
   ])
+
   const clearedEffort = await managerTool.execute(
     "clear-manager-effort",
     { action: "effort", id: 3, effort: null },
@@ -382,8 +456,10 @@ test("manager control updates the real worker todo store used by subsequent ordi
     undefined,
     managerCtx,
   )
+
   assert.ok(record(clearedEffort))
   assert.notEqual(clearedEffort.isError, true)
+
   const finalEffortRead = await tool.execute(
     "read-cleared-effort",
     { action: "list" },
@@ -391,15 +467,21 @@ test("manager control updates the real worker todo store used by subsequent ordi
     undefined,
     ctx,
   )
+
   assert.ok(record(finalEffortRead))
+
   const effortDetails = decodeTodoDetails(finalEffortRead.details)
+
   assert.ok(Option.isSome(effortDetails))
+
   const { effort: removedEffort, ...unestimated } = unranked
+
   assert.equal(removedEffort, 8)
   assert.deepEqual(effortDetails.value.state.todos, [
     ...clearedDetails.value.state.todos.slice(0, 2),
     unestimated,
   ])
+
   for (const handler of hooks.get("session_shutdown") ?? [])
     await handler({}, ctx)
 })

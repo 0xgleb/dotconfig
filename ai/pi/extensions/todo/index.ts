@@ -186,6 +186,7 @@ class TodoListComponent {
       },
       width,
     )
+
     lines.push("", this.theme.bold(this.theme.fg("borderAccent", header)), "")
 
     if (this.todos.length === 0) {
@@ -210,6 +211,7 @@ class TodoListComponent {
             ? `${todo.text} — until ${new Date(todo.remindAt).toISOString()}`
             : todo.text
         const text = this.theme.fg(isCompleted ? "dim" : "text", label)
+
         lines.push(
           truncateToWidth(
             `${CONTENT_GUTTER}${check} ${id} ${text}${todo.effort === undefined ? "" : ` [effort ${todo.effort} points]`}`,
@@ -227,8 +229,10 @@ class TodoListComponent {
       ),
       "",
     )
+
     this.cachedWidth = width
     this.cachedLines = lines
+
     return lines
   }
 
@@ -244,6 +248,7 @@ function successfulToolResult(
   message: string,
 ) {
   const details: TodoDetails = { outcome: "success", action, state }
+
   return { content: [{ type: "text" as const, text: message }], details }
 }
 
@@ -253,6 +258,7 @@ function failedToolResult(
   error: string,
 ) {
   const details: TodoDetails = { outcome: "error", action, state, error }
+
   return {
     content: [{ type: "text" as const, text: `Error: ${error}` }],
     details,
@@ -269,6 +275,7 @@ const restoredState = (
   const persisted = branch.findLast(
     entry => entry.type === "custom" && entry.customType === TODO_STATE_ENTRY,
   )
+
   // Tool results can arrive after newer manager mutations. Only legacy
   // branches without authoritative entries restore from result details.
   const latest =
@@ -282,7 +289,9 @@ const restoredState = (
               entry.message.toolName !== "todo"
             )
               return []
+
             const details = entry.message.details
+
             return typeof details === "object" &&
               details !== null &&
               "state" in details
@@ -290,8 +299,11 @@ const restoredState = (
               : []
           })
           .at(-1)
+
   if (!latest) return Effect.succeed(emptyTodoState)
+
   const decoded = decodeTodoState(latest.data)
+
   return Option.isSome(decoded)
     ? validateTodoState(decoded.value)
     : Effect.fail(
@@ -309,6 +321,7 @@ export default function todoExtension(
   managerRuntime?: ManagerTodoRuntime,
 ): void {
   registerRuntimeVersion(pi, "todo", "2026.10.25.1")
+
   const stateRef = Effect.runSync(Ref.make<TodoState>(emptyTodoState))
   let restorationError: string | undefined
   let hudExpiry: ReturnType<typeof setTimeout> | undefined
@@ -333,13 +346,16 @@ export default function todoExtension(
 
   const mountTaskWidget = (ctx: ExtensionContext, state: TodoState): void => {
     if (!ctx.hasUI) return
+
     const summary = todoSummary(state)
+
     ctx.ui.setStatus(
       "todo",
       summary.total > 0
         ? `tasks:${summary.pending}/${summary.total}`
         : undefined,
     )
+
     // Unmounted whenever there is nothing tracked, or the operator hid it
     // with ctrl+t; shouldShowTaskHud is the one place these two conditions
     // combine so emptiness always wins over a stale toggle.
@@ -359,10 +375,13 @@ export default function todoExtension(
 
   const registerHudToggle = (ctx: ExtensionContext): void => {
     if (!ctx.hasUI) return
+
     releaseHudToggle?.()
     releaseHudToggle = ctx.ui.onTerminalInput(data => {
       if (!matchesKey(data, "ctrl+t")) return undefined
+
       const state = Effect.runSync(Ref.get(stateRef))
+
       // Toggling while the board is empty has nothing to affect — there is no
       // widget for the preference to show or hide — so it is left untouched
       // rather than silently armed for whenever a task next appears.
@@ -370,6 +389,7 @@ export default function todoExtension(
         hudVisibility = toggleTaskHudVisibility(hudVisibility)
         renderTaskWidget(ctx, state)
       }
+
       return { consume: true }
     })
   }
@@ -384,9 +404,11 @@ export default function todoExtension(
       ctx.ui.setWidget("todo-top-tasks", undefined)
       return
     }
+
     mountTaskWidget(ctx, state)
 
     if (hudExpiry) clearTimeout(hudExpiry)
+
     const now = Date.now()
     const nextExpiry = state.todos
       .filter(
@@ -399,6 +421,7 @@ export default function todoExtension(
         statusChangedAt === undefined ? [] : [statusChangedAt + 10_000 - now],
       )
       .sort((left, right) => left - right)[0]
+
     if (nextExpiry !== undefined) {
       hudExpiry = setTimeout(() => renderTaskWidget(ctx), nextExpiry + 25)
     }
@@ -412,9 +435,13 @@ export default function todoExtension(
   ) => {
     if (reminderTimer) clearTimeout(reminderTimer)
     reminderTimer = undefined
+
     const nextAt = nextDeferredReminderAt(state)
+
     if (nextAt === undefined) return
+
     const delay = Math.min(Math.max(0, nextAt - Date.now()), MAX_TIMER_DELAY_MS)
+
     reminderTimer = setTimeout(() => {
       reminderTimer = undefined
       void wakeDueReminders(ctx)
@@ -423,17 +450,22 @@ export default function todoExtension(
 
   wakeDueReminders = async (ctx: ExtensionContext) => {
     if (restorationError) return
+
     const current = Effect.runSync(Ref.get(stateRef))
     const wake = wakeDueDeferredTodos(current, Date.now())
+
     if (wake.woken.length === 0) {
       scheduleReminder(ctx, current)
       return
     }
+
     pi.appendEntry(TODO_STATE_ENTRY, wake.state)
     Effect.runSync(Ref.set(stateRef, wake.state))
     publishBranchTodos(ctx, wake.state)
+
     renderTaskWidget(ctx, wake.state)
     scheduleReminder(ctx, wake.state)
+
     if (ctx.hasUI)
       ctx.ui.notify(
         `${wake.woken.length} deferred todo reminder(s) moved to pending.`,
@@ -443,14 +475,17 @@ export default function todoExtension(
 
   const reconstructAndRender = async (ctx: ExtensionContext) => {
     const restored = Effect.runSync(Effect.either(restoredState(ctx)))
+
     if (Either.isLeft(restored)) {
       restorationError = restored.left.message
       if (reminderTimer) clearTimeout(reminderTimer)
       if (hudExpiry) clearTimeout(hudExpiry)
+
       ctx.ui.notify(`Cannot restore todos: ${restorationError}`, "error")
       renderTaskWidget(ctx)
       return
     }
+
     const state = restored.right
     const persisted = ctx.sessionManager
       .getBranch()
@@ -458,27 +493,34 @@ export default function todoExtension(
         entry =>
           entry.type === "custom" && entry.customType === TODO_STATE_ENTRY,
       )
+
     if (
       !persisted ||
       persisted.type !== "custom" ||
       !isDeepStrictEqual(persisted.data, state)
     )
       pi.appendEntry(TODO_STATE_ENTRY, state)
+
     restorationError = undefined
     Effect.runSync(Ref.set(stateRef, state))
     publishBranchTodos(ctx, state)
+
     registerHudToggle(ctx)
     renderTaskWidget(ctx, state)
     scheduleReminder(ctx, state)
     await wakeDueReminders(ctx)
   }
+
   pi.on("session_start", async (_event, ctx) => reconstructAndRender(ctx))
   pi.on("session_tree", async (_event, ctx) => reconstructAndRender(ctx))
   pi.on("session_compact", async (_event, ctx) => {
     if (restorationError) return
+
     const state = Effect.runSync(Ref.get(stateRef))
+
     pi.appendEntry(TODO_STATE_ENTRY, state)
     publishBranchTodos(ctx, state)
+
     registerHudToggle(ctx)
     renderTaskWidget(ctx, state)
     scheduleReminder(ctx, state)
@@ -489,8 +531,10 @@ export default function todoExtension(
     if (reminderTimer) clearTimeout(reminderTimer)
     hudExpiry = undefined
     reminderTimer = undefined
+
     releaseHudToggle?.()
     releaseHudToggle = undefined
+
     ctx.ui.setStatus("todo", undefined)
     ctx.ui.setWidget("todo-top-tasks", undefined)
   })
@@ -503,20 +547,26 @@ export default function todoExtension(
       ctx.ui.notify(`Cannot change todos: ${restorationError}`, "error")
       return undefined
     }
+
     const current = Effect.runSync(Ref.get(stateRef))
     const result = Effect.runSync(
       Effect.either(transitionTodoState(current, action, Date.now())),
     )
+
     if (Either.isLeft(result)) {
       ctx.ui.notify(result.left.message, "error")
       return undefined
     }
+
     const transition = result.right
+
     pi.appendEntry(TODO_STATE_ENTRY, transition.state)
     Effect.runSync(Ref.set(stateRef, transition.state))
     publishBranchTodos(ctx, transition.state)
+
     renderTaskWidget(ctx, transition.state)
     scheduleReminder(ctx, transition.state)
+
     return transition.state
   }
 
@@ -561,11 +611,14 @@ export default function todoExtension(
           scrollInfo: text => theme.fg("dim", text),
           noMatch: text => theme.fg("warning", text),
         })
+
         list.onSelect = item =>
           done(item.value === "cancel" ? null : item.value)
         list.onCancel = () => done(null)
+
         const container = new Container()
         const accent = (text: string) => theme.fg("accent", text)
+
         container.addChild(new DynamicBorder(accent))
         container.addChild(
           new Text(theme.bold(accent(`BLOCKED #${todo.id}`)), 1, 0),
@@ -578,6 +631,7 @@ export default function todoExtension(
             0,
           ),
         )
+
         if (todo.replies && todo.replies.length > 0) {
           container.addChild(
             new Text(
@@ -587,6 +641,7 @@ export default function todoExtension(
             ),
           )
         }
+
         container.addChild(list)
         container.addChild(
           new Text(
@@ -596,6 +651,7 @@ export default function todoExtension(
           ),
         )
         container.addChild(new DynamicBorder(accent))
+
         return {
           render: (width: number) => container.render(width),
           invalidate: () => container.invalidate(),
@@ -632,6 +688,7 @@ export default function todoExtension(
           },
         ],
       }
+
     const program = Ref.get(stateRef).pipe(
       Effect.flatMap(state =>
         parseTodoAction(params, Date.now()).pipe(
@@ -658,7 +715,9 @@ export default function todoExtension(
         ),
       ),
     )
+
     const result = Effect.runSync(program)
+
     if (
       result.details.outcome === "success" &&
       result.details.action !== "list"
@@ -667,8 +726,10 @@ export default function todoExtension(
       Effect.runSync(Ref.set(stateRef, result.details.state))
       publishBranchTodos(ctx, result.details.state)
     }
+
     renderTaskWidget(ctx, result.details.state)
     scheduleReminder(ctx, result.details.state)
+
     return result
   }
 
@@ -676,6 +737,7 @@ export default function todoExtension(
     pi,
     (request, ctx) => {
       const result = executeTodo(request, ctx)
+
       return {
         isError:
           ("isError" in result && result.isError === true) ||
@@ -685,6 +747,7 @@ export default function todoExtension(
     },
     { priority: true, effort: true },
   )
+
   pi.on("session_shutdown", releaseControl)
 
   pi.registerTool({
@@ -706,9 +769,12 @@ export default function todoExtension(
         params.action !== "effort" && effort === null
           ? withoutEffort
           : normalizedPriority
+
       const binding = getManagerBinding(pi, ctx)
+
       if (Either.isLeft(binding) || binding.right.role !== "worker")
         return invokeManagerTodo(pi, ctx, request, signal, managerRuntime)
+
       return executeTodo(request, ctx)
     },
 
@@ -727,25 +793,31 @@ export default function todoExtension(
         text += ` ${theme.fg("accent", `until ${args.remindAt}`)}`
       if (args.effort !== undefined)
         text += ` ${theme.fg("accent", args.effort === null ? "clear effort" : `effort ${args.effort} points`)}`
+
       return new Text(text, 0, 0)
     },
 
     renderResult(result, { expanded }, theme) {
       const details = Option.getOrUndefined(decodeTodoDetails(result.details))
+
       if (!details) {
         const content = result.content[0]
+
         return new Text(content?.type === "text" ? content.text : "", 0, 0)
       }
+
       if (details.outcome === "error")
         return new Text(theme.fg("error", `Error: ${details.error}`), 0, 0)
 
       if (details.action === "list") {
         if (details.state.todos.length === 0)
           return new Text(theme.fg("dim", "No todos"), 0, 0)
+
         const visible = expanded
           ? details.state.todos
           : details.state.todos.slice(0, 5)
         let text = theme.fg("muted", `${details.state.todos.length} todo(s):`)
+
         for (const todo of visible) {
           const completed = todo.status === "completed"
           const blocked = todo.status === "blocked"
@@ -769,16 +841,20 @@ export default function todoExtension(
             todo.replies
               ?.map(reply => `\n    ${theme.fg("accent", "↳ reply:")} ${reply}`)
               .join("") ?? ""
+
           text += `\n${check} ${theme.fg("accent", todoIdentityLabel(todo))} ${theme.fg(completed ? "dim" : "muted", label)}${todo.effort === undefined ? "" : ` [effort ${todo.effort} points]`}${replies}`
         }
+
         if (!expanded && details.state.todos.length > visible.length) {
           text += `\n${theme.fg("dim", `... ${details.state.todos.length - visible.length} more`)}`
         }
+
         return new Text(text, 0, 0)
       }
 
       const content = result.content[0]
       const message = content?.type === "text" ? content.text : "Done"
+
       return new Text(
         theme.fg("success", "✓ ") + theme.fg("muted", message),
         0,
@@ -798,7 +874,9 @@ export default function todoExtension(
         ctx.ui.notify("/todos requires interactive mode", "error")
         return
       }
+
       const state = Effect.runSync(Ref.get(stateRef))
+
       await ctx.ui.custom<void>(
         (_tui, theme, _kb, done) =>
           new TodoListComponent(state.todos, theme, () => done()),
@@ -818,15 +896,18 @@ export default function todoExtension(
         ctx.ui.notify("/blocked requires interactive mode", "error")
         return
       }
+
       const state = Effect.runSync(Ref.get(stateRef))
       const blocked = state.todos.filter(
         (todo): todo is Extract<Todo, { status: "blocked" }> =>
           todo.status === "blocked",
       )
+
       if (blocked.length === 0) {
         ctx.ui.notify("No blocked todos.", "info")
         return
       }
+
       const choices = blocked.map(
         todo => `#${todo.id}  ${todo.text.replace(/\s+/g, " ").slice(0, 100)}`,
       )
@@ -834,37 +915,50 @@ export default function todoExtension(
         "Blocked todos · select one to triage",
         choices,
       )
+
       if (selected === undefined) return
+
       const todo = blocked[choices.indexOf(selected)]
+
       if (!todo) return
+
       const action = await chooseBlockedAction(ctx, todo)
+
       if (!action) return
 
       if (action === "unblock") {
         if (!(await applyUiAction({ action: "unblock", id: todo.id }, ctx)))
           return
+
         ctx.ui.notify(`Todo #${todo.id} unblocked.`, "info")
         return
       }
+
       if (action === "resolve") {
         if (!(await applyUiAction({ action: "unblock", id: todo.id }, ctx)))
           return
         if (!(await applyUiAction({ action: "toggle", id: todo.id }, ctx)))
           return
+
         ctx.ui.notify(`Todo #${todo.id} resolved.`, "info")
         return
       }
+
       if (action === "reply") {
         const reply = await ctx.ui.input(
           `Reply to blocker #${todo.id}`,
           "Add context or answer the blocker",
         )
+
         if (!reply?.trim()) return
+
         const disposition = await ctx.ui.select("After attaching this reply", [
           "Keep blocked",
           "Reply and unblock",
         ])
+
         if (disposition === undefined) return
+
         if (
           !(await applyUiAction(
             { action: "reply", id: todo.id, text: reply.trim() },
@@ -877,6 +971,7 @@ export default function todoExtension(
           !(await applyUiAction({ action: "unblock", id: todo.id }, ctx))
         )
           return
+
         ctx.ui.notify(
           disposition === "Reply and unblock"
             ? `Reply attached and todo #${todo.id} unblocked.`
@@ -885,12 +980,15 @@ export default function todoExtension(
         )
         return
       }
+
       if (action === "edit") {
         const reason = await ctx.ui.input(
           `New blocker reason for #${todo.id}`,
           todo.reason,
         )
+
         if (!reason?.trim()) return
+
         if (
           !(await applyUiAction(
             { action: "block", id: todo.id, reason: reason.trim() },
@@ -898,19 +996,25 @@ export default function todoExtension(
           ))
         )
           return
+
         ctx.ui.notify(`Todo #${todo.id} blocker updated.`, "info")
         return
       }
+
       const decision = await ctx.ui.input(
         `Question needed to unblock #${todo.id}`,
         "What decision or information is needed?",
       )
+
       if (!decision?.trim()) return
+
       const request: UserQuestionRequest = {
         header: "Blocked todo",
         question: `Blocked todo #${todo.id}: ${todo.text}\nCurrent blocker: ${todo.reason}\nDecision needed: ${decision.trim()}`,
       }
+
       pi.events.emit(QUESTION_ASK_EVENT, request)
+
       ctx.ui.notify(`Queued a pending question for todo #${todo.id}.`, "info")
     },
   })
@@ -927,7 +1031,9 @@ export default function todoExtension(
         ctx.ui.notify("/kanban requires interactive mode", "error")
         return
       }
+
       const state = Effect.runSync(Ref.get(stateRef))
+
       await ctx.ui.custom<void>(
         (tui, theme, _kb, done) =>
           new KanbanComponent(
@@ -940,7 +1046,9 @@ export default function todoExtension(
                 { action: "unblock", id: todo.id },
                 ctx,
               )
+
               if (next) ctx.ui.notify(`Todo #${todo.id} unblocked.`, "info")
+
               return next
             },
           ),

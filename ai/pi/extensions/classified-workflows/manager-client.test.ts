@@ -23,15 +23,20 @@ interface WorkerOptions {
 const fixture = (t: test.TestContext, options: WorkerOptions = {}) => {
   const root = mkdtempSync(join(tmpdir(), "pi-manager-client-test-"))
   t.after(() => rmSync(root, { recursive: true }))
+
   const scope = { workerSessionId: "worker", cwd: "/projects/worker" }
   const directory = managerPairDirectory({
     workerSessionId: scope.workerSessionId,
     workerCwd: scope.cwd,
     agentDir: root,
   })
+
   assert.ok(Either.isRight(directory))
+
   const state = prepareNativeManagerState(directory.right, scope)
+
   assert.ok(Either.isRight(state))
+
   assert.ok(
     Either.isRight(
       state.right.publish({
@@ -47,12 +52,14 @@ const fixture = (t: test.TestContext, options: WorkerOptions = {}) => {
       }),
     ),
   )
+
   const handlers = new Map<string, ((value: unknown) => void)[]>()
   const pi = {
     getFlag: () => undefined,
     events: {
       on: (name: string, handler: (value: unknown) => void) => {
         handlers.set(name, [...(handlers.get(name) ?? []), handler])
+
         return () => {}
       },
       emit: (name: string, value: unknown) => {
@@ -67,6 +74,7 @@ const fixture = (t: test.TestContext, options: WorkerOptions = {}) => {
       getBranch: () => [],
     },
   } as unknown as ExtensionContext
+
   registerManagerBinding(pi, id =>
     id === "manager-session"
       ? {
@@ -76,17 +84,20 @@ const fixture = (t: test.TestContext, options: WorkerOptions = {}) => {
         }
       : undefined,
   )
+
   const runtime = {
     agentDir: root,
     timeoutMs: 0,
     wait: async () => assert.fail("An unavailable mutation must not poll"),
   }
+
   return { pi, ctx, state: state.right, runtime }
 }
 
 for (const managerCwd of ["/projects/worker", "/global/manager"])
   test(`manager task calls fail closed for the selected worker from ${managerCwd}`, async t => {
     const worker = fixture(t, { managerCwd })
+
     for (const request of [
       { action: "list" },
       { action: "add", text: "Do not dispatch" },
@@ -103,11 +114,13 @@ for (const managerCwd of ["/projects/worker", "/global/manager"])
 
       assert.equal(result.isError, true)
       assert.deepEqual(result.details, { outcome: "unavailable" })
+
       const first = result.content[0]
       assert.ok(first)
       assert.match(first.text, /\/projects\/worker/u)
       assert.match(first.text, /session worker/u)
     }
+
     assert.deepEqual(
       worker.state.processPriorities(
         () => assert.fail("No revision may be read"),
@@ -129,6 +142,7 @@ for (const [option, request, message] of [
 ] as const)
   test(`a worker without ${option} cannot receive speculative mutations`, async t => {
     const worker = fixture(t, { [option]: false })
+
     const result = await invokeManagerTodo(
       worker.pi,
       worker.ctx,
@@ -139,9 +153,11 @@ for (const [option, request, message] of [
 
     assert.equal(result.isError, true)
     assert.deepEqual(result.details, { outcome: "unavailable" })
+
     const first = result.content[0]
     assert.ok(first)
     assert.match(first.text, message)
+
     assert.deepEqual(
       worker.state.processPriorities(
         () => assert.fail("No revision may be read"),

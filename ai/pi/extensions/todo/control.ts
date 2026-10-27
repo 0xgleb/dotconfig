@@ -37,6 +37,7 @@ export const requestTodoControl = (
 ): Either.Either<TodoControlResult, TodoControlError> => {
   let result: TodoControlResult | undefined
   let claimed = false
+
   const emitted = Either.try({
     try: () => {
       const preferPriorityAware = todoPriorityAvailable(pi)
@@ -44,6 +45,7 @@ export const requestTodoControl = (
       const requiresEffort =
         request.action === "effort" ||
         (request.action === "add" && request.effort !== undefined)
+
       pi.events.emit(CONTROL_EVENT, {
         kind: "todo-control.v1",
         run: (
@@ -58,6 +60,7 @@ export const requestTodoControl = (
               capabilities?.effort !== true)
           )
             return
+
           claimed = true
           result = handler(request, ctx)
         },
@@ -70,7 +73,9 @@ export const requestTodoControl = (
           "Worker task result is unconfirmed; inspect its state before retrying.",
       }),
   })
+
   if (Either.isLeft(emitted)) return Either.left(emitted.left)
+
   return result === undefined
     ? Either.left(
         new TodoControlError({
@@ -87,6 +92,7 @@ export interface TodoControlCapabilities {
 
 export const todoEffortAvailable = (pi: ExtensionAPI): boolean => {
   let available = false
+
   pi.events.emit(CONTROL_EVENT, {
     kind: "todo-control.v1",
     run: (
@@ -96,11 +102,13 @@ export const todoEffortAvailable = (pi: ExtensionAPI): boolean => {
       if (capabilities?.effort === true) available = true
     },
   } satisfies ControlEnvelope)
+
   return available
 }
 
 export const todoPriorityAvailable = (pi: ExtensionAPI): boolean => {
   let available = false
+
   pi.events.emit(CONTROL_EVENT, {
     kind: "todo-control.v1",
     run: (
@@ -110,6 +118,7 @@ export const todoPriorityAvailable = (pi: ExtensionAPI): boolean => {
       if (capabilities?.priority === true) available = true
     },
   } satisfies ControlEnvelope)
+
   return available
 }
 
@@ -124,12 +133,14 @@ export const registerTodoControl = (
 
 export const todoControlAvailable = (pi: ExtensionAPI): boolean => {
   let available = false
+
   pi.events.emit(CONTROL_EVENT, {
     kind: "todo-control.v1",
     run: () => {
       available = true
     },
   } satisfies ControlEnvelope)
+
   return available
 }
 
@@ -157,6 +168,7 @@ const positiveSafeInteger = Schema.Number.pipe(
   Schema.filter(value => Number.isSafeInteger(value) && value >= 1),
 )
 const effortPoints = Schema.Number.pipe(Schema.filter(isFibonacciEffort))
+
 const RequestSchema = Schema.Union(
   Schema.Struct({ action: Schema.Literal("list") }),
   Schema.Struct({
