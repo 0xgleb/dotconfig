@@ -316,7 +316,7 @@ test("schema version four migrates singleton admission to durable role rows", as
     )
     assert.deepEqual(
       await Effect.runPromise(
-        store.claimAutonomousAdmission("moneymentum-operator", 1_000, 0, 0),
+        store.claimAutonomousAdmission("general", 1_000, 0, 0),
       ),
       { allowed: true, admittedAt: 1_000 },
     )
@@ -758,42 +758,22 @@ test("autonomous admission preserves the fleet cap and a durable weighted role c
     const second = await Effect.runPromise(makeSqliteJobStore(path))
     const [left, right] = await Promise.all([
       Effect.runPromise(
-        first.claimAutonomousAdmission(
-          "moneymentum-operator",
-          1_000,
-          60_000,
-          300_000,
-        ),
+        first.claimAutonomousAdmission("general", 1_000, 60_000, 300_000),
       ),
       Effect.runPromise(
-        second.claimAutonomousAdmission(
-          "moneymentum-operator",
-          1_000,
-          60_000,
-          300_000,
-        ),
+        second.claimAutonomousAdmission("general", 1_000, 60_000, 300_000),
       ),
     ])
     assert.equal([left, right].filter(({ allowed }) => allowed).length, 1)
     assert.deepEqual(
       await Effect.runPromise(
-        first.claimAutonomousAdmission(
-          "yielduck-operator",
-          60_999,
-          60_000,
-          60_000,
-        ),
+        first.claimAutonomousAdmission("reviewer", 60_999, 60_000, 60_000),
       ),
       { allowed: false, retryAt: 61_000 },
     )
     assert.deepEqual(
       await Effect.runPromise(
-        first.claimAutonomousAdmission(
-          "moneymentum-operator",
-          61_000,
-          60_000,
-          300_000,
-        ),
+        first.claimAutonomousAdmission("general", 61_000, 60_000, 300_000),
       ),
       { allowed: false, retryAt: 301_000 },
     )
@@ -803,12 +783,7 @@ test("autonomous admission preserves the fleet cap and a durable weighted role c
     const reopened = await Effect.runPromise(makeSqliteJobStore(path))
     assert.deepEqual(
       await Effect.runPromise(
-        reopened.claimAutonomousAdmission(
-          "moneymentum-operator",
-          301_000,
-          60_000,
-          300_000,
-        ),
+        reopened.claimAutonomousAdmission("general", 301_000, 60_000, 300_000),
       ),
       { allowed: true, admittedAt: 301_000 },
     )
@@ -982,7 +957,7 @@ test("provider calls serialize across the fleet at the calibrated interval", asy
       store.reserveProviderCall({
         reservationId: "call-c",
         agentId: "agent-c",
-        role: "yielduck-operator",
+        role: "reviewer",
         provider: "openai",
         requestedTokens: 100,
         capacityTokens: 1_000,
@@ -1002,7 +977,7 @@ test("provider calls serialize across the fleet at the calibrated interval", asy
       store.reserveProviderCall({
         reservationId: "call-c",
         agentId: "agent-c",
-        role: "yielduck-operator",
+        role: "reviewer",
         provider: "openai",
         requestedTokens: 100,
         capacityTokens: 1_000,

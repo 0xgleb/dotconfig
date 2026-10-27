@@ -15,13 +15,6 @@ import {
   type ReviewKind,
 } from "./harness-protocol.ts"
 import {
-  decodeHarnessResearchHandoff,
-  decodeHarnessResearchPayload,
-  validateNewHarnessResearchPayload,
-  type HarnessResearchHandoff,
-  type HarnessResearchPayload,
-} from "./harness-research-protocol.ts"
-import {
   canonicalPath,
   repositorySlug,
   REVIEW_DUTY_PROFILES,
@@ -47,7 +40,6 @@ interface JobSchedule {
 export interface RegisteredJobPayloads {
   readonly "review-duty.scan": { readonly profile: ReviewDutyProfile }
   readonly "harness.review": HarnessReviewPayload
-  readonly "harness.research": HarnessResearchPayload
 }
 
 export type RegisteredJobKind = keyof RegisteredJobPayloads
@@ -92,11 +84,6 @@ export interface HarnessReviewResult {
   readonly handoff: HarnessReviewHandoff
 }
 
-export interface HarnessResearchResult {
-  readonly kind: "harness.research"
-  readonly handoff: HarnessResearchHandoff
-}
-
 export interface VerifiedHarnessReviewResult extends HarnessReviewResult {
   readonly handoff: VerifiedHarnessHandoff
 }
@@ -105,7 +92,7 @@ export interface UnsuccessfulHarnessReviewResult extends HarnessReviewResult {
   readonly handoff: UnsuccessfulHarnessHandoff
 }
 
-export type RegisteredJobResult = HarnessReviewResult | HarnessResearchResult
+export type RegisteredJobResult = HarnessReviewResult
 
 interface JobIdentity {
   readonly id: JobId
@@ -312,8 +299,6 @@ const enqueuePayloadDecoders = (home: CanonicalPath): JobPayloadDecoders => ({
   "review-duty.scan": decodeReviewDutyScanPayload,
   "harness.review": value =>
     asRuntimeError(decodeHarnessReviewPayload(value, home)),
-  "harness.research": value =>
-    asRuntimeError(validateNewHarnessResearchPayload(value)),
 })
 
 /**
@@ -328,8 +313,6 @@ const enqueuePayloadDecoders = (home: CanonicalPath): JobPayloadDecoders => ({
 const STORED_PAYLOAD_DECODERS: JobPayloadDecoders = {
   "review-duty.scan": decodeReviewDutyScanPayload,
   "harness.review": value => decodeStoredHarnessPayload(value),
-  "harness.research": value =>
-    asRuntimeError(decodeHarnessResearchPayload(value)),
 }
 
 export const REGISTERED_JOB_KINDS = Object.freeze(

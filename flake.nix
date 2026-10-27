@@ -170,11 +170,26 @@
           };
           atuinFlags =
             self.darwinConfigurations.darwwwin.config.home-manager.users."0xgleb".programs.atuin.flags;
-          # Registration tests stub the host SDK and use production dependencies.
+          piExtensionPackage = nixpkgs.lib.importJSON ./ai/pi/extensions/package.json;
+          piExtensionLock = nixpkgs.lib.importJSON ./ai/pi/extensions/package-lock.json;
+          piTestPackage = piExtensionPackage // {
+            devDependencies = {
+              inherit (piExtensionPackage.devDependencies) "@earendil-works/pi-tui";
+            };
+          };
+          # Stub SDK registration only; HUD tests use the pinned real TUI package.
           piTestNodeModules = pkgs.importNpmLock.buildNodeModules {
             npmRoot = ./ai/pi/extensions;
+            package = piTestPackage;
+            packageLock = piExtensionLock // {
+              packages = piExtensionLock.packages // {
+                "" = piExtensionLock.packages."" // {
+                  inherit (piTestPackage) devDependencies;
+                };
+              };
+            };
             inherit (pkgs) nodejs;
-            derivationArgs.npmInstallFlags = "--legacy-peer-deps --omit=dev";
+            derivationArgs.npmInstallFlags = "--legacy-peer-deps";
           };
         in
         {
@@ -308,9 +323,24 @@
               }
               ''
                 cp -r ${./ai} ai
+                cp ${./home.nix} home.nix
                 chmod -R u+w ai
                 ln -s ${piTestNodeModules}/node_modules ai/pi/extensions/node_modules
                 node --test \
+                  ai/test/manual-reload.test.ts \
+                  ai/test/runtime-version.test.ts \
+                  ai/pi/extensions/classified-workflows/core.test.ts \
+                  ai/pi/extensions/classified-workflows/intent-context.test.ts \
+                  ai/pi/extensions/classified-workflows/manual-reload-boundary.test.ts \
+                  ai/pi/extensions/control-plane/job-runtime.test.ts \
+                  ai/pi/extensions/control-plane/server.test.ts \
+                  ai/pi/extensions/control-plane/sqlite-job-store.test.ts \
+                  ai/pi/extensions/control-plane/usage-policy.test.ts \
+                  ai/pi/extensions/control-plane/throttle-activity.test.ts \
+                  ai/pi/extensions/control-plane/dashboard/dashboard.test.ts \
+                  ai/pi/extensions/usage-governor/core.test.ts \
+                  ai/pi/extensions/usage-governor/throttle-hud.test.ts \
+                  ai/pi/extensions/remote-control/telegram-resume.test.ts \
                   ai/pi/extensions/classified-workflows/loop.test.ts \
                   ai/pi/extensions/agent-registry/registration.test.ts \
                   ai/pi/extensions/agent-registry/outcome-events.test.ts \

@@ -4,12 +4,7 @@ import { truncateToWidth, visibleWidth } from "@earendil-works/pi-tui"
 import { framedChromeInset } from "../shared/chrome.ts"
 import type { UsagePace } from "./core.ts"
 
-const ROLE_NAMES = [
-  "general",
-  "reviewer",
-  "yielduck-operator",
-  "moneymentum-operator",
-] as const
+const ROLE_NAMES = ["general", "reviewer"] as const
 
 type ThrottleRole = (typeof ROLE_NAMES)[number]
 
@@ -289,9 +284,6 @@ const compactTokens = (value: number): string =>
       ? `${(value / 1_000).toFixed(1)}k`
       : String(value)
 
-const decisionRoleLabel = (role: string): string =>
-  role.replace(/-operator$/u, "")
-
 const decisionAge = (at: number, now: number): string => {
   const seconds = Math.max(0, Math.floor((now - at) / 1_000))
   return seconds < 60 ? `${seconds}s ago` : `${Math.floor(seconds / 60)}m ago`
@@ -315,7 +307,7 @@ const latestDecision = (control: ThrottleControl): string => {
     latest.requestedTokens !== undefined || latest.grantedTokens !== undefined
       ? ` ${compactTokens(latest.requestedTokens ?? 0)}→${compactTokens(latest.grantedTokens ?? 0)}`
       : ""
-  return `latest · ${latest.kind} ${decisionRoleLabel(latest.role)} ${latest.outcome}${tokenChange} · ${decisionAge(latest.at, control.computedAt)}`
+  return `latest · ${latest.kind} ${latest.role} ${latest.outcome}${tokenChange} · ${decisionAge(latest.at, control.computedAt)}`
 }
 
 const currentSpeed = (control: ThrottleControl): number =>
@@ -343,13 +335,6 @@ const padBetween = (left: string, right: string, width: number): string => {
   )
   return `${boundedLeft}${"─".repeat(gap)}${boundedRight}`
 }
-
-const roleLabel = (role: ThrottleRole): string =>
-  role === "yielduck-operator"
-    ? "yielduck"
-    : role === "moneymentum-operator"
-      ? "moneymentum"
-      : role
 
 export const throttleHudLines = (
   control: ThrottleControl,
@@ -404,10 +389,7 @@ export const throttleHudLines = (
     : "token capacity calibrating"
   const profile = `${control.profile.kind === "flat-until-reset" ? "flat 24/7" : control.profile.kind} · ${control.profile.participants} ${control.profile.participants === 1 ? "owner" : "owners"}`
   const roles = control.roles
-    .map(
-      ({ role, tokenScale }) =>
-        `${roleLabel(role)} ${percent(tokenScale * 100)}`,
-    )
+    .map(({ role, tokenScale }) => `${role} ${percent(tokenScale * 100)}`)
     .join(" · ")
   const { counts } = control.activity
   const activityRollup = `${Math.round(control.activity.windowMs / 60_000)}m · ${counts.admitted} admitted · ${counts.deferred} deferred · ${counts.scaled} scaled · ${counts.settled} settled`

@@ -187,7 +187,6 @@ const REVIEW_DUTY_ACTIONS = new Set([
   "continue",
   "complete-auto",
 ])
-const RELEASE_CADENCE_ACTIONS = new Set(["status", "enable", "disable", "mark"])
 const isSkillView = (
   toolName: string,
   input: Readonly<Record<string, unknown>>,
@@ -234,7 +233,6 @@ const LOCALLY_GENERATED_RESULT_TOOLS = new Set([
   "ask_user",
   "artifact_provenance",
   "review_duty",
-  "release_cadence",
   "reload_pi",
   "loop_control",
   "workflow_audit",
@@ -819,17 +817,6 @@ export function deterministicDecision(request: ToolRequest): Decision | null {
     return {
       verdict: "allow",
       reason: "Typed local review-duty reporting gate",
-      source: "deterministic",
-    }
-  }
-
-  if (
-    request.toolName === "release_cadence" &&
-    RELEASE_CADENCE_ACTIONS.has(String(request.input.action))
-  ) {
-    return {
-      verdict: "allow",
-      reason: "Session-local verified release cadence bookkeeping",
       source: "deterministic",
     }
   }

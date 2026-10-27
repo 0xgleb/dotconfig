@@ -104,7 +104,6 @@ let
       cp ($source_root | path join "job-presentation.ts") ($build_root | path join "job-presentation.ts")
       cp ($source_root | path join "usage-policy.ts") ($build_root | path join "usage-policy.ts")
       cp ($source_root | path join "harness-protocol.ts") ($build_root | path join "harness-protocol.ts")
-      cp ($source_root | path join "harness-research-protocol.ts") ($build_root | path join "harness-research-protocol.ts")
       cp ($source_root | path join "review-duty-profile.ts") ($build_root | path join "review-duty-profile.ts")
       ^${pkgs.coreutils}/bin/rm --recursive --force ($build_root | path join "node_modules")
       ^${pkgs.coreutils}/bin/ln --symbolic --no-target-directory ${piExtensionNodeModules}/node_modules ($build_root | path join "node_modules")

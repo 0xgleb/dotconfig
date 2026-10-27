@@ -1,7 +1,6 @@
 import assert from "node:assert/strict"
 import test from "node:test"
 import {
-  autonomousRoleForCwd,
   controlPlaneUsageAdmissionUrl,
   controlPlaneUsageControlUrl,
   controlPlaneUsageUrl,
@@ -184,8 +183,8 @@ test("control-plane usage URLs remain loopback-only", () => {
     "http://127.0.0.1:43121/v1/usage/control",
   )
   assert.equal(
-    controlPlaneUsageAdmissionUrl(undefined, "moneymentum-operator"),
-    "http://127.0.0.1:43121/v1/usage/admit?role=moneymentum-operator",
+    controlPlaneUsageAdmissionUrl(undefined, "general"),
+    "http://127.0.0.1:43121/v1/usage/admit?role=general",
   )
   assert.equal(
     controlPlaneUsageAdmissionUrl(undefined, "reviewer", {
@@ -212,21 +211,6 @@ test("control-plane usage URLs remain loopback-only", () => {
     undefined,
   )
   assert.equal(controlPlaneUsageUrl("43121/path"), undefined)
-})
-
-test("project paths map to bounded autonomous roles", () => {
-  assert.equal(
-    autonomousRoleForCwd(
-      "/Users/example/code/dataclique/yielduck",
-      "/Users/example",
-    ),
-    "yielduck-operator",
-  )
-  assert.equal(
-    autonomousRoleForCwd("/Users/example/code/st0x", "/Users/example"),
-    "reviewer",
-  )
-  assert.equal(autonomousRoleForCwd("/tmp/project", undefined), "general")
 })
 
 test("autonomous admission responses reject malformed policy state", () => {
