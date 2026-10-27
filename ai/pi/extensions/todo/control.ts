@@ -3,7 +3,7 @@ import type {
   ExtensionContext,
 } from "@earendil-works/pi-coding-agent"
 import { Data, Either, Schema } from "effect"
-import type { TodoRequest } from "./state.ts"
+import { isFibonacciEffort, type TodoRequest } from "./state.ts"
 
 export interface TodoControlResult {
   readonly isError: boolean
@@ -40,6 +40,10 @@ export const requestTodoControl = (
   const emitted = Either.try({
     try: () => {
       const preferPriorityAware = todoPriorityAvailable(pi)
+      const preferEffortAware = todoEffortAvailable(pi)
+      const requiresEffort =
+        request.action === "effort" ||
+        (request.action === "add" && request.effort !== undefined)
       pi.events.emit(CONTROL_EVENT, {
         kind: "todo-control.v1",
         run: (
@@ -49,7 +53,9 @@ export const requestTodoControl = (
           if (
             claimed ||
             ((request.action === "priority" || preferPriorityAware) &&
-              capabilities?.priority !== true)
+              capabilities?.priority !== true) ||
+            ((requiresEffort || preferEffortAware) &&
+              capabilities?.effort !== true)
           )
             return
           claimed = true
@@ -76,6 +82,21 @@ export const requestTodoControl = (
 
 export interface TodoControlCapabilities {
   readonly priority?: true
+  readonly effort?: true
+}
+
+export const todoEffortAvailable = (pi: ExtensionAPI): boolean => {
+  let available = false
+  pi.events.emit(CONTROL_EVENT, {
+    kind: "todo-control.v1",
+    run: (
+      _handler: TodoControlHandler,
+      capabilities?: TodoControlCapabilities,
+    ) => {
+      if (capabilities?.effort === true) available = true
+    },
+  } satisfies ControlEnvelope)
+  return available
 }
 
 export const todoPriorityAvailable = (pi: ExtensionAPI): boolean => {
@@ -135,8 +156,14 @@ const optionalText = Schema.optionalWith(Schema.String, { exact: true })
 const positiveSafeInteger = Schema.Number.pipe(
   Schema.filter(value => Number.isSafeInteger(value) && value >= 1),
 )
+const effortPoints = Schema.Number.pipe(Schema.filter(isFibonacciEffort))
 const RequestSchema = Schema.Union(
   Schema.Struct({ action: Schema.Literal("list") }),
+  Schema.Struct({
+    action: Schema.Literal("effort"),
+    id: positiveSafeInteger,
+    effort: Schema.NullOr(effortPoints),
+  }),
   Schema.Struct({
     action: Schema.Literal("priority"),
     id: positiveSafeInteger,
@@ -146,6 +173,7 @@ const RequestSchema = Schema.Union(
     action: Schema.Literal("add"),
     text: optionalText,
     parentId: optionalId,
+    effort: Schema.optionalWith(effortPoints, { exact: true }),
   }),
   Schema.Struct({ action: Schema.Literal("toggle"), id: optionalId }),
   Schema.Struct({

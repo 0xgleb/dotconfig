@@ -11,6 +11,11 @@ export type TodoStatus =
 export type SettableTodoStatus = Exclude<TodoStatus, "blocked">
 type ImmediateTodoStatus = Exclude<SettableTodoStatus, "deferred">
 
+declare const fibonacciEffortBrand: unique symbol
+export type FibonacciEffort = number & {
+  readonly [fibonacciEffortBrand]: true
+}
+
 interface TodoBase {
   readonly id: number
   readonly text: string
@@ -18,6 +23,7 @@ interface TodoBase {
   readonly parentId?: number
   readonly statusChangedAt?: number
   readonly priority?: number
+  readonly effort?: FibonacciEffort
 }
 
 export type Todo =
@@ -36,6 +42,12 @@ export type TodoRequest =
       readonly action: "add"
       readonly text?: string
       readonly parentId?: number
+      readonly effort?: number
+    }
+  | {
+      readonly action: "effort"
+      readonly id?: number
+      readonly effort?: number | null
     }
   | {
       readonly action: "priority"
@@ -60,6 +72,12 @@ export type TodoAction =
       readonly action: "add"
       readonly text: string
       readonly parentId?: number
+      readonly effort?: FibonacciEffort
+    }
+  | {
+      readonly action: "effort"
+      readonly id: number
+      readonly effort: FibonacciEffort | null
     }
   | {
       readonly action: "priority"
@@ -106,13 +124,30 @@ export class TodoInputError extends Data.TaggedError("TodoInputError")<{
     | "invalid_parent"
     | "invalid_state"
     | "invalid_priority"
+    | "invalid_effort"
 }> {}
 
 export const MAX_TODO_REPLIES = 3
 export const MAX_TODO_REPLY_LENGTH = 300
 
+export const isFibonacciEffort = (value: unknown): value is FibonacciEffort => {
+  if (typeof value !== "number" || !Number.isSafeInteger(value) || value < 1)
+    return false
+  if (value === 1) return true
+  let previous = 1
+  let current = 2
+  while (current < value) {
+    if (current > Number.MAX_SAFE_INTEGER - previous) return false
+    const next = previous + current
+    previous = current
+    current = next
+  }
+  return current === value
+}
+
 export class TodoNotFoundError extends Data.TaggedError("TodoNotFoundError")<{
-  action: "toggle" | "status" | "block" | "reply" | "unblock" | "priority"
+  action:
+    "toggle" | "status" | "block" | "reply" | "unblock" | "priority" | "effort"
   message: string
 }> {}
 
@@ -122,11 +157,13 @@ const validPriority = (value: unknown): value is number =>
   typeof value === "number" && Number.isSafeInteger(value) && value >= 1
 
 const PrioritySchema = Schema.Number.pipe(Schema.filter(validPriority))
+const EffortSchema = Schema.declare(isFibonacciEffort)
 
 const TodoSchema = Schema.Union(
   Schema.Struct({
     id: Schema.Number,
     text: Schema.String,
+    effort: Schema.optionalWith(EffortSchema, { exact: true }),
     priority: Schema.optionalWith(PrioritySchema, { exact: true }),
     parentId: Schema.optionalWith(Schema.Number, { exact: true }),
     status: Schema.Literal(
@@ -144,6 +181,7 @@ const TodoSchema = Schema.Union(
     text: Schema.String,
     parentId: Schema.optionalWith(Schema.Number, { exact: true }),
     status: Schema.Literal("deferred"),
+    effort: Schema.optionalWith(EffortSchema, { exact: true }),
     priority: Schema.optionalWith(PrioritySchema, { exact: true }),
     remindAt: Schema.optionalWith(Schema.Number, { exact: true }),
     replies: Schema.optionalWith(Schema.Array(Schema.String), { exact: true }),
@@ -154,6 +192,7 @@ const TodoSchema = Schema.Union(
     text: Schema.String,
     parentId: Schema.optionalWith(Schema.Number, { exact: true }),
     status: Schema.Literal("blocked"),
+    effort: Schema.optionalWith(EffortSchema, { exact: true }),
     priority: Schema.optionalWith(PrioritySchema, { exact: true }),
     reason: Schema.String,
     replies: Schema.optionalWith(Schema.Array(Schema.String), { exact: true }),
@@ -167,6 +206,7 @@ const TodoStateSchema = Schema.Struct({
 })
 
 const TodoActionSchema = Schema.Literal(
+  "effort",
   "priority",
   "list",
   "add",
@@ -206,6 +246,17 @@ const todoStateError = (
   state: TodoState,
   action: TodoAction["action"],
 ): TodoInputError | undefined => {
+  if (
+    state.todos.some(
+      todo => todo.effort !== undefined && !isFibonacciEffort(todo.effort),
+    )
+  )
+    return new TodoInputError({
+      action,
+      code: "invalid_effort",
+      message:
+        "Persisted effort must be positive safe Fibonacci points or absent",
+    })
   if (
     state.todos.some(
       todo => todo.priority !== undefined && !validPriority(todo.priority),
@@ -269,6 +320,7 @@ const todoWithStatus: (
     id: todo.id,
     text: todo.text,
     ...(todo.priority === undefined ? {} : { priority: todo.priority }),
+    ...(todo.effort === undefined ? {} : { effort: todo.effort }),
     ...(todo.parentId === undefined ? {} : { parentId: todo.parentId }),
     ...(todo.replies && todo.replies.length > 0
       ? { replies: todo.replies }
@@ -295,6 +347,40 @@ export const transitionTodoState: (
   const stateError = todoStateError(state, action.action)
   if (stateError) return Effect.fail(stateError)
   switch (action.action) {
+    case "effort": {
+      if (action.effort !== null && !isFibonacciEffort(action.effort))
+        return Effect.fail(
+          new TodoInputError({
+            action: "effort",
+            code: "invalid_effort",
+            message:
+              "effort must be positive safe Fibonacci points, or null to clear",
+          }),
+        )
+      const target = state.todos.find(todo => todo.id === action.id)
+      if (!target)
+        return Effect.fail(
+          new TodoNotFoundError({
+            action: "effort",
+            message: `Todo #${action.id} not found`,
+          }),
+        )
+      const { effort: _effort, ...unestimated } = target
+      const replacement: Todo =
+        action.effort === null
+          ? unestimated
+          : { ...target, effort: action.effort }
+      return Effect.succeed({
+        action: "effort",
+        state: {
+          todos: state.todos.map(todo =>
+            todo.id === target.id ? replacement : todo,
+          ),
+          nextId: state.nextId,
+        },
+        message: `Todo #${target.id} effort ${action.effort === null ? "unassigned" : `${action.effort} points`}`,
+      })
+    }
     case "priority": {
       if (action.priority !== null && !validPriority(action.priority))
         return Effect.fail(
@@ -346,6 +432,14 @@ export const transitionTodoState: (
           }),
         )
       }
+      if (action.effort !== undefined && !isFibonacciEffort(action.effort))
+        return Effect.fail(
+          new TodoInputError({
+            action: "add",
+            code: "invalid_effort",
+            message: "effort must be positive safe Fibonacci points",
+          }),
+        )
       if (action.parentId !== undefined) {
         const parent = state.todos.find(todo => todo.id === action.parentId)
         if (
@@ -368,6 +462,7 @@ export const transitionTodoState: (
         id: state.nextId,
         text: action.text,
         status: "pending",
+        ...(action.effort === undefined ? {} : { effort: action.effort }),
         ...(action.parentId === undefined ? {} : { parentId: action.parentId }),
       }
       return Effect.succeed({
@@ -455,6 +550,7 @@ export const transitionTodoState: (
         status: "blocked",
         reason: action.reason,
         ...(target.priority === undefined ? {} : { priority: target.priority }),
+        ...(target.effort === undefined ? {} : { effort: target.effort }),
         ...(target.parentId === undefined ? {} : { parentId: target.parentId }),
         ...(target.replies && target.replies.length > 0
           ? { replies: target.replies }
@@ -598,6 +694,32 @@ export const parseTodoAction: (
   now = Date.now(),
 ) => {
   switch (request.action) {
+    case "effort":
+      if (
+        request.id === undefined ||
+        !Number.isSafeInteger(request.id) ||
+        request.id < 1
+      )
+        return Effect.fail(
+          new TodoInputError({
+            action: "effort",
+            message: "effort requires a positive safe-integer todo id",
+          }),
+        )
+      if (request.effort !== null && !isFibonacciEffort(request.effort))
+        return Effect.fail(
+          new TodoInputError({
+            action: "effort",
+            code: "invalid_effort",
+            message:
+              "effort must be positive safe Fibonacci points, or null to clear",
+          }),
+        )
+      return Effect.succeed({
+        action: "effort",
+        id: request.id,
+        effort: request.effort,
+      })
     case "priority":
       if (
         request.id === undefined ||
@@ -627,6 +749,14 @@ export const parseTodoAction: (
     case "list":
       return Effect.succeed(request)
     case "add": {
+      if (request.effort !== undefined && !isFibonacciEffort(request.effort))
+        return Effect.fail(
+          new TodoInputError({
+            action: "add",
+            code: "invalid_effort",
+            message: "effort must be positive safe Fibonacci points",
+          }),
+        )
       const text = request.text?.trim()
       if (
         request.parentId !== undefined &&
@@ -644,6 +774,7 @@ export const parseTodoAction: (
         ? Effect.succeed({
             action: "add",
             text,
+            ...(request.effort === undefined ? {} : { effort: request.effort }),
             ...(request.parentId === undefined
               ? {}
               : { parentId: request.parentId }),
@@ -809,6 +940,6 @@ const formatTodoList: (todos: ReadonlyArray<Todo>) => string = todos =>
                 : ""
           const replies =
             todo.replies?.map(reply => `\n    ↳ reply: ${reply}`).join("") ?? ""
-          return `${todoStatusMark(todo.status)} ${todoIdentityLabel(todo)}: ${todo.text}${todo.priority === undefined ? "" : ` [priority ${todo.priority}]`}${detail}${replies}`
+          return `${todoStatusMark(todo.status)} ${todoIdentityLabel(todo)}: ${todo.text}${todo.priority === undefined ? "" : ` [priority ${todo.priority}]`}${todo.effort === undefined ? "" : ` [effort ${todo.effort} points]`}${detail}${replies}`
         })
         .join("\n")

@@ -144,6 +144,68 @@ test("overlap routes status changes through the priority-aware writer so legacy 
   )
 })
 
+test("priority-only handlers cannot receive effort changes or estimated additions", () => {
+  const f = fixture()
+  let calls = 0
+  registerTodoControl(
+    f.pi,
+    () => {
+      calls += 1
+      return { isError: false, message: "legacy priority writer" }
+    },
+    { priority: true },
+  )
+  for (const request of [
+    { action: "effort", id: 1, effort: 3 } as const,
+    { action: "add", text: "Estimated task", effort: 3 } as const,
+  ])
+    assert.ok(Either.isLeft(requestTodoControl(f.pi, f.ctx, request)))
+  assert.equal(calls, 0)
+})
+
+test("overlap routes every operation through the effort-aware writer without losing priority or applying twice", () => {
+  const f = fixture()
+  registerTodoControl(
+    f.pi,
+    () => assert.fail("legacy writer could erase effort"),
+    { priority: true },
+  )
+  let calls = 0
+  const capabilities = { priority: true, effort: true } as const
+  const release = registerTodoControl(
+    f.pi,
+    (request, ctx) => {
+      calls += 1
+      assert.equal(ctx, f.ctx)
+      return { isError: false, message: request.action }
+    },
+    capabilities,
+  )
+  const requests = [
+    { action: "list" },
+    { action: "status", id: 1, status: "completed" },
+    { action: "priority", id: 1, priority: 2 },
+    { action: "effort", id: 1, effort: 5 },
+    { action: "add", text: "Optional estimate", effort: 3 },
+  ] as const
+  for (const request of requests)
+    assert.deepEqual(
+      requestTodoControl(f.pi, f.ctx, request),
+      Either.right({ isError: false, message: request.action }),
+    )
+  assert.equal(calls, requests.length)
+  release()
+  assert.ok(
+    Either.isLeft(
+      requestTodoControl(f.pi, f.ctx, {
+        action: "effort",
+        id: 1,
+        effort: null,
+      }),
+    ),
+  )
+})
+
 test("todo control reports an unavailable worker handler rather than claiming a write", () => {
   const f = fixture()
   assert.ok(Either.isLeft(requestTodoControl(f.pi, f.ctx, { action: "list" })))
