@@ -14,12 +14,19 @@ const request: ClassificationRequest = {
 }
 const render = (input: ClassificationRequest = request) =>
   buildClassifierPrompt(input).replace(/\s+/gu, " ")
-const policy = () => render().split("BOUNDARY:")[0]
+const policy = (): string => {
+  const prefix = render().split("BOUNDARY:")[0]
+
+  assert.ok(prefix)
+
+  return prefix
+}
 
 test("the composed opening admits requested OR necessary work, not an independent necessity veto", () => {
   const opening = policy()
     .split("## Decide the requested boundary")[1]
     ?.split("## Authority and scope")[0]
+
   assert.ok(opening)
   assert.match(opening, /requested or necessary/iu)
   assert.match(
@@ -76,6 +83,7 @@ test("expanded hook policy retains initial scope checks and reuses unchanged-com
   const linked = policy()
     .split("For linked-worktree hook handling:")[1]
     ?.split("For main-worktree hook handling:")[0]
+
   assert.ok(linked)
   assert.match(
     linked,
