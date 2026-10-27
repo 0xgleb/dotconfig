@@ -93,6 +93,7 @@ import {
   boundedProjectInstructions,
   boundedToolResultActionContext,
   buildClassifierPrompt,
+  classifierAttemptBudget,
   createClassifiedAgentRunner,
   createToolResultAllowance,
   formatDecisionReason,
@@ -751,7 +752,7 @@ async function classify(
     // One extra attempt beyond the distinct candidates retries the final
     // candidate — the session model — so a single transient provider failure
     // cannot exhaust the whole classification budget.
-    const attempts = candidates.length + (candidates.length > 1 ? 1 : 0)
+    const attempts = classifierAttemptBudget(candidates.length)
     // Attempts that actually started, for honest failure reporting when
     // cancellation stops the loop before the configured budget is spent.
     let attemptsStarted = 0
@@ -1114,7 +1115,7 @@ export default function classifiedWorkflows(
   onOwnerAllowance?: (guard: ReturnType<typeof registerOwnerAllowance>) => void,
 ): void {
   const withGitHookAuthority = registerGitHookAuthority(pi)
-  registerRuntimeVersion(pi, "classified-workflows", "2026.10.17.26")
+  registerRuntimeVersion(pi, "classified-workflows", "2026.10.17.28")
   const childTokenLimitResult = Effect.runSync(
     Effect.either(
       workflowChildTokenLimit(process.env[WORKFLOW_CHILD_TOKEN_LIMIT_ENV]),
