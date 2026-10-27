@@ -263,37 +263,40 @@ test("manager control updates the real worker todo store used by subsequent ordi
   todoExtension(managerPi, {
     agentDir: root,
     timeoutMs: 1000,
-    wait: async () => {
-      state.right.processPriorities(
-        () => "rev",
-        () => assert.fail("Wrong queue lane"),
-        request => {
-          const result = requestTodoControl(pi, ctx, request)
-
-          assert.ok(Either.isRight(result))
-
-          return Either.right(result.right.message)
-        },
-      )
-    },
+    wait: async () =>
+      assert.fail("Unavailable manager requests must not poll for receipts"),
   })
 
   assert.ok(managerTool)
 
-  await managerTool.execute(
+  const unavailable = await managerTool.execute(
     "manager-add",
-    { action: "add", text: "Added from manager", effort: 5 },
+    { action: "add", text: "Must not dispatch", effort: 5 },
     undefined,
     undefined,
     managerCtx,
   )
 
-  const managerList = await managerTool.execute(
-    "manager-list",
+  assert.ok(record(unavailable))
+  assert.equal(unavailable.isError, true)
+  assert.deepEqual(unavailable.details, { outcome: "unavailable" })
+  assert.equal(managerEntries.length, 0)
+
+  const managerAdded = requestTodoControl(pi, ctx, {
+    action: "add",
+    text: "Added from manager",
+    effort: 5,
+  })
+
+  assert.ok(Either.isRight(managerAdded))
+  assert.equal(managerAdded.right.isError, false)
+
+  const managerList = await tool.execute(
+    "read-worker-after-control",
     { action: "list" },
     undefined,
     undefined,
-    managerCtx,
+    ctx,
   )
 
   assert.ok(record(managerList))
@@ -305,27 +308,23 @@ test("manager control updates the real worker todo store used by subsequent ordi
     /\[effort 5 points\]/u,
   )
 
-  const managerRanked = await managerTool.execute(
-    "manager-priority",
-    { action: "priority", id: 3, priority: 1 },
-    undefined,
-    undefined,
-    managerCtx,
-  )
+  const managerRanked = requestTodoControl(pi, ctx, {
+    action: "priority",
+    id: 3,
+    priority: 1,
+  })
 
-  assert.ok(record(managerRanked))
-  assert.notEqual(managerRanked.isError, true)
+  assert.ok(Either.isRight(managerRanked))
+  assert.equal(managerRanked.right.isError, false)
 
-  const managerEstimated = await managerTool.execute(
-    "manager-effort",
-    { action: "effort", id: 3, effort: 8 },
-    undefined,
-    undefined,
-    managerCtx,
-  )
+  const managerEstimated = requestTodoControl(pi, ctx, {
+    action: "effort",
+    id: 3,
+    effort: 8,
+  })
 
-  assert.ok(record(managerEstimated))
-  assert.notEqual(managerEstimated.isError, true)
+  assert.ok(Either.isRight(managerEstimated))
+  assert.equal(managerEstimated.right.isError, false)
 
   for (const handler of workerTreeHandlers) await handler({}, ctx)
 
@@ -414,16 +413,14 @@ test("manager control updates the real worker todo store used by subsequent ordi
   assert.equal(afterDetails.value.state.todos[2]?.effort, 8)
 
   selected = true
-  const cleared = await managerTool.execute(
-    "clear-manager-priority",
-    { action: "priority", id: 3, priority: null },
-    undefined,
-    undefined,
-    managerCtx,
-  )
+  const cleared = requestTodoControl(pi, ctx, {
+    action: "priority",
+    id: 3,
+    priority: null,
+  })
 
-  assert.ok(record(cleared))
-  assert.notEqual(cleared.isError, true)
+  assert.ok(Either.isRight(cleared))
+  assert.equal(cleared.right.isError, false)
 
   for (const handler of workerTreeHandlers) await handler({}, ctx)
 
@@ -449,16 +446,14 @@ test("manager control updates the real worker todo store used by subsequent ordi
     unranked,
   ])
 
-  const clearedEffort = await managerTool.execute(
-    "clear-manager-effort",
-    { action: "effort", id: 3, effort: null },
-    undefined,
-    undefined,
-    managerCtx,
-  )
+  const clearedEffort = requestTodoControl(pi, ctx, {
+    action: "effort",
+    id: 3,
+    effort: null,
+  })
 
-  assert.ok(record(clearedEffort))
-  assert.notEqual(clearedEffort.isError, true)
+  assert.ok(Either.isRight(clearedEffort))
+  assert.equal(clearedEffort.right.isError, false)
 
   const finalEffortRead = await tool.execute(
     "read-cleared-effort",
