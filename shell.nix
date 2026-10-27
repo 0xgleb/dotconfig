@@ -1,18 +1,7 @@
+let
+  flake = builtins.getFlake ("git+file://" + toString ./.);
+in
 {
-  pkgs ?
-    let
-      flake = builtins.getFlake ("git+file://" + toString ./.);
-    in
-    import flake.inputs.nixpkgs { system = builtins.currentSystem; },
+  pkgs ? flake.inputs.nixpkgs.legacyPackages.${builtins.currentSystem},
 }:
-pkgs.mkShellNoCC {
-  packages = [
-    pkgs.nodejs
-    pkgs.prek
-    pkgs.prettier
-  ];
-
-  shellHook = ''
-    prek install
-  '';
-}
+flake.devShells.${pkgs.stdenv.hostPlatform.system}.default
