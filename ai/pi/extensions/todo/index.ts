@@ -69,6 +69,8 @@ const TodoParams = Type.Object({
   action: StringEnum([
     "list",
     "priority",
+    "priority_relative",
+    "priority_order",
     "effort",
     "add",
     "toggle",
@@ -85,16 +87,42 @@ const TodoParams = Type.Object({
     }),
   ),
   id: Type.Optional(Type.Number({ description: "Todo ID" })),
+  referenceId: Type.Optional(
+    Type.Number({
+      minimum: 1,
+      maximum: Number.MAX_SAFE_INTEGER,
+      multipleOf: 1,
+    }),
+  ),
+  position: Type.Optional(StringEnum(["above", "below"] as const)),
+  ids: Type.Optional(
+    Type.Array(
+      Type.Number({
+        minimum: 1,
+        maximum: Number.MAX_SAFE_INTEGER,
+        multipleOf: 1,
+      }),
+      { minItems: 1, uniqueItems: true },
+    ),
+  ),
   priority: Type.Optional(
     Type.Union([
-      Type.Integer({ minimum: 1, maximum: Number.MAX_SAFE_INTEGER }),
+      Type.Number({
+        minimum: 1,
+        maximum: Number.MAX_SAFE_INTEGER,
+        multipleOf: 1,
+      }),
       Type.Null(),
     ]),
   ),
   effort: Type.Optional(
     Type.Union(
       [
-        Type.Integer({ minimum: 1, maximum: Number.MAX_SAFE_INTEGER }),
+        Type.Number({
+          minimum: 1,
+          maximum: Number.MAX_SAFE_INTEGER,
+          multipleOf: 1,
+        }),
         Type.Null(),
       ],
       {
@@ -104,8 +132,9 @@ const TodoParams = Type.Object({
     ),
   ),
   parentId: Type.Optional(
-    Type.Integer({
+    Type.Number({
       minimum: 1,
+      multipleOf: 1,
       description: "Existing root todo ID for add; one level of subtasks only",
     }),
   ),
@@ -754,7 +783,7 @@ export default function todoExtension(
     name: "todo",
     label: "Todo",
     description:
-      "Manage branch-aware tasks. add accepts parentId for one level of subtasks; grandchildren are forbidden. reply accepts at most 3 entries of 300 characters; restructure at the cap. priority sets an independent positive safe-integer rank (lower first), or null to unassign, without changing status. effort sets or clears optional Fibonacci relative points; add also accepts effort. Estimates never gate status, priority, or execution. Other actions: list, toggle, status, block, unblock, clear.",
+      "Manage branch-aware tasks. add accepts parentId for one level of subtasks; grandchildren are forbidden. reply accepts at most 3 entries of 300 characters; restructure at the cap. priority sets an independent positive safe-integer rank (lower first), or null to unassign, without changing status. priority_relative moves id above/below referenceId atomically; priority_order assigns dense ranks to ids and must include all currently ranked nonterminal tasks. effort sets or clears optional Fibonacci relative points; add also accepts effort. Estimates never gate status, priority, or execution. Other actions: list, toggle, status, block, unblock, clear.",
     parameters: TodoParams,
     async execute(_toolCallId, params, signal, _onUpdate, ctx) {
       // Nullable metadata survives SDK validation on unrelated actions.

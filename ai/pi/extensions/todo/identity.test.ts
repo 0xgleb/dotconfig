@@ -1,13 +1,21 @@
 import assert from "node:assert/strict"
 import test from "node:test"
-import { fileURLToPath } from "node:url"
+import { join } from "node:path"
+import { fileURLToPath, pathToFileURL } from "node:url"
 import type {
   ExtensionAPI,
   ExtensionContext,
 } from "@earendil-works/pi-coding-agent"
 import { Either, Option } from "effect"
-import { requestTodoControl } from "./control.ts"
-import { decodeTodoState, type TodoRequest } from "./state.ts"
+import { decodeTodoControl, requestTodoControl } from "./control.ts"
+import { registerManagerBinding } from "../shared/manager-binding.ts"
+import { decodeTodoState, type TodoRequest, type TodoState } from "./state.ts"
+
+interface OrderingExample {
+  readonly name: string
+  readonly request: TodoRequest
+  readonly ranks: Readonly<Record<number, number>>
+}
 
 const record = (value: unknown): value is Record<string, unknown> =>
   typeof value === "object" && value !== null
@@ -25,6 +33,22 @@ const fixture = async (t: test.TestContext) => {
 
   assert.ok(typeof factory === "function")
 
+  const { getPackageDir } = await import("@earendil-works/pi-coding-agent")
+  const validator: unknown = await import(
+    pathToFileURL(
+      join(
+        getPackageDir(),
+        "node_modules/@earendil-works/pi-ai/dist/utils/validation.js",
+      ),
+    ).href
+  )
+
+  assert.ok(
+    record(validator) && typeof validator.validateToolArguments === "function",
+  )
+
+  const validateToolArguments = validator.validateToolArguments
+
   const entries: Record<string, unknown>[] = []
   const hooks = new Map<
     string,
@@ -40,6 +64,8 @@ const fixture = async (t: test.TestContext) => {
   let failAppend = false
   let tool:
     | {
+        readonly name: string
+        readonly parameters: unknown
         execute: (
           id: string,
           request: TodoRequest,
@@ -124,6 +150,9 @@ const fixture = async (t: test.TestContext) => {
     },
   } as unknown as ExtensionContext
 
+  registerManagerBinding(pi, id =>
+    id === "identity-worker" ? { role: "worker" } : undefined,
+  )
   factory(pi)
 
   const hook = async (name: string) => {
@@ -136,6 +165,27 @@ const fixture = async (t: test.TestContext) => {
     assert.ok(tool)
 
     return tool.execute("identity-call", request, undefined, undefined, ctx)
+  }
+
+  const validate = (request: unknown): unknown => {
+    assert.ok(tool)
+
+    return validateToolArguments(tool, {
+      type: "toolCall",
+      id: "identity-validated-call",
+      name: tool.name,
+      arguments: request,
+    })
+  }
+
+  const runValidated = (request: unknown) => {
+    const validated = validate(request)
+    const decoded = decodeTodoControl(validated)
+
+    assert.ok(Either.isRight(decoded))
+    assert.deepEqual(decoded.right, validated)
+
+    return run(decoded.right)
   }
 
   const control = (request: TodoRequest) => {
@@ -182,6 +232,8 @@ const fixture = async (t: test.TestContext) => {
 
   return {
     run,
+    validate,
+    runValidated,
     control,
     state,
     hook,
@@ -198,6 +250,116 @@ const fixture = async (t: test.TestContext) => {
     },
   }
 }
+
+const rankedBranch = (remindAt: number): TodoState => ({
+  nextId: 5,
+  todos: [
+    {
+      id: 1,
+      text: "Held parent",
+      status: "blocked",
+      reason: "Retain hold",
+      replies: ["Scope retained"],
+      priority: 2,
+    },
+    {
+      id: 2,
+      text: "Deferred child",
+      parentId: 1,
+      status: "deferred",
+      remindAt,
+      statusChangedAt: 123,
+      priority: 8,
+    },
+    { id: 3, text: "Unranked work", status: "pending" },
+    {
+      id: 4,
+      text: "Historical completion",
+      status: "completed",
+      priority: Number.MAX_SAFE_INTEGER,
+    },
+  ],
+})
+
+const orderingExamples: ReadonlyArray<OrderingExample> = [
+  {
+    name: "above",
+    request: {
+      action: "priority_relative",
+      id: 3,
+      referenceId: 2,
+      position: "above",
+    },
+    ranks: { 1: 1, 2: 3, 3: 2 },
+  },
+  {
+    name: "below",
+    request: {
+      action: "priority_relative",
+      id: 3,
+      referenceId: 2,
+      position: "below",
+    },
+    ranks: { 1: 1, 2: 2, 3: 3 },
+  },
+  {
+    name: "bulk",
+    request: { action: "priority_order", ids: [2, 3, 1] },
+    ranks: { 1: 3, 2: 1, 3: 2 },
+  },
+]
+
+for (const example of orderingExamples)
+  test(`SDK-validated ${example.name} ordering reaches the real local todo tool`, async t => {
+    const worker = await fixture(t)
+
+    worker.persistRaw(rankedBranch(Date.now() + 60_000))
+    await worker.hook("session_start")
+
+    worker.control({ action: "effort", id: 3, effort: 3 })
+
+    const before = await worker.state()
+
+    const result = await worker.runValidated(example.request)
+
+    assert.ok(record(result) && record(result.details))
+    assert.equal(result.details.outcome, "success")
+
+    const after = await worker.state()
+
+    assert.equal(after.nextId, before.nextId)
+    assert.deepEqual(
+      after.todos,
+      before.todos.map(todo =>
+        Object.hasOwn(example.ranks, todo.id)
+          ? { ...todo, priority: example.ranks[todo.id] }
+          : todo,
+      ),
+    )
+  })
+
+for (const request of [
+  { action: "priority_relative", id: 3, referenceId: 0, position: "above" },
+  { action: "priority_relative", id: 3, referenceId: 2.5, position: "above" },
+  { action: "priority_relative", id: 3, referenceId: 2, position: "sideways" },
+  { action: "priority", id: 3, priority: 2.5 },
+  { action: "effort", id: 3, effort: 3.5 },
+  { action: "add", text: "Reject a fractional parent", parentId: 1.5 },
+  { action: "priority_order", ids: [] },
+  { action: "priority_order", ids: [1, 1] },
+  { action: "priority_order", ids: [1, 2.5] },
+  { action: "priority_order", ids: [1, Number.MAX_SAFE_INTEGER + 1] },
+])
+  test(`the advertised SDK schema rejects malformed ordering ${JSON.stringify(request)}`, async t => {
+    const worker = await fixture(t)
+
+    const validation = Either.try(() => worker.validate(request))
+
+    assert.ok(
+      Either.isLeft(validation),
+      `SDK accepted ${JSON.stringify(validation)}`,
+    )
+  })
 
 test("legacy tool-result-only branches restore once and continue allocating stable IDs", async t => {
   const original = await fixture(t)
