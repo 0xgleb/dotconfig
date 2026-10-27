@@ -3,6 +3,7 @@ import { dirname, isAbsolute, join, normalize, relative, sep } from "node:path"
 import { randomUUID } from "node:crypto"
 import { DatabaseSync } from "node:sqlite"
 import { Cause, Effect, Either, Exit } from "effect"
+import { decodeAgentRole, type AgentRole } from "../shared/agent-role.ts"
 import {
   BacklogError,
   ingestBacklogSource,
@@ -390,12 +391,11 @@ const persistedTextEffect = (
     ),
   )
 
-const roleNameEffect = (role: string): RegistryEffect<string> => {
-  const normalized = role.trim()
-  return /^[a-z][a-z0-9-]{0,63}$/.test(normalized)
-    ? Effect.succeed(normalized)
-    : failRegistry("invalid_input", "role must match [a-z][a-z0-9-]{0,63}")
-}
+const roleNameEffect = (role: unknown): RegistryEffect<AgentRole> =>
+  Either.match(decodeAgentRole(role), {
+    onLeft: error => failRegistry("invalid_input", error.message),
+    onRight: role => Effect.succeed(role),
+  })
 
 const leaseModeEffect = (value: unknown): RegistryEffect<Lease["mode"]> =>
   value === "task" || value === "operational"
