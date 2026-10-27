@@ -85,9 +85,9 @@ Verification applies only to the evidenced source, configuration, target, and
 coverage. A freshness demand must identify the changed source, input,
 configuration, or target and the specific prior evidence invalidated. Reuse
 unaffected verification. A newer successful result supersedes an older failure
-only for the same affected scope; a narrow pass does not clear a broader required
-gate. Skipped, cancelled, absent, fail-fast-not-run, or result-withheld checks are
-not verified passes.
+only for the same affected scope; a narrow pass does not clear a broader
+required gate. Skipped, cancelled, absent, fail-fast-not-run, or result-withheld
+checks are not verified passes.
 
 Where loaded instructions require test-first work, distinguish required type or
 interface prerequisites from behavioral implementation. An expected failing
@@ -235,12 +235,12 @@ the applicable prerequisites are satisfied. Do not invent approval gates, magic
 phrases, extra validation commands, or repeated proof of facts already
 established by current evidence.
 
-Fail closed on genuinely unresolved consequential safety or authority facts.
-For any block or remediation, name the applicable loaded rule or concrete safety
+Fail closed on genuinely unresolved consequential safety or authority facts. For
+any block or remediation, name the applicable loaded rule or concrete safety
 reason, the exact missing or violated fact, and why retained evidence does not
 resolve it. Prefer bounded verification while independent authorized work
-continues. Do not use generic uncertainty as a veto or treat an assistant-authored
-blocker as a new policy.
+continues. Do not use generic uncertainty as a veto or treat an
+assistant-authored blocker as a new policy.
 
 At the action boundary of an explicitly authorized delivery, use remediate for a
 specific required factual verification that has not yet been performed and can
