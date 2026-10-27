@@ -2,6 +2,7 @@ import assert from "node:assert/strict"
 import test from "node:test"
 import { join } from "node:path"
 import { fileURLToPath, pathToFileURL } from "node:url"
+import { setImmediate } from "node:timers/promises"
 import type {
   ExtensionAPI,
   ExtensionContext,
@@ -9,6 +10,7 @@ import type {
 import { Either, Option } from "effect"
 import { decodeTodoControl, requestTodoControl } from "./control.ts"
 import { registerManagerBinding } from "../shared/manager-binding.ts"
+import { BRANCH_TODO_BACKLOG_EVENT } from "../shared/backlog-events.ts"
 import { decodeTodoState, type TodoRequest, type TodoState } from "./state.ts"
 
 interface OrderingExample {
@@ -20,7 +22,10 @@ interface OrderingExample {
 const record = (value: unknown): value is Record<string, unknown> =>
   typeof value === "object" && value !== null
 
-const fixture = async (t: test.TestContext) => {
+const fixture = async (
+  t: test.TestContext,
+  mode: "headless" | "interactive" = "headless",
+) => {
   const support: unknown = await import(
     new URL("../../../test/pi-host-test-support.mjs", import.meta.url).href
   )
@@ -50,6 +55,9 @@ const fixture = async (t: test.TestContext) => {
   const validateToolArguments = validator.validateToolArguments
 
   const entries: Record<string, unknown>[] = []
+  const publications: unknown[] = []
+  const notifications: string[] = []
+  const statuses: (string | undefined)[] = []
   const hooks = new Map<
     string,
     ((event: unknown, ctx: ExtensionContext) => unknown)[]
@@ -62,6 +70,8 @@ const fixture = async (t: test.TestContext) => {
 
   let duringUi: (() => void) | undefined
   let failAppend = false
+  let failStatus = false
+  let appendAttempts = 0
   let tool:
     | {
         readonly name: string
@@ -86,6 +96,8 @@ const fixture = async (t: test.TestContext) => {
         return () => callbacks.delete(callback)
       },
       emit: (name: string, value: unknown) => {
+        if (name === BRANCH_TODO_BACKLOG_EVENT) publications.push(value)
+
         for (const callback of listeners.get(name) ?? []) callback(value)
       },
     },
@@ -110,6 +122,8 @@ const fixture = async (t: test.TestContext) => {
     registerShortcut: () => {},
 
     appendEntry: (customType: string, data: unknown) => {
+      appendAttempts += 1
+
       if (failAppend) {
         failAppend = false
         assert.fail("Injected SDK persistence failure")
@@ -126,7 +140,7 @@ const fixture = async (t: test.TestContext) => {
 
   const ctx = {
     cwd: "/projects/todo-identity-fixture",
-    hasUI: false,
+    hasUI: mode === "interactive",
     mode: "tui",
     isIdle: () => true,
     sessionManager: {
@@ -134,9 +148,17 @@ const fixture = async (t: test.TestContext) => {
       getBranch: () => entries,
     },
     ui: {
-      notify: () => {},
-      setStatus: () => {},
+      notify: (message: string) => notifications.push(message),
+      setStatus: (_key: string, value: string | undefined) => {
+        if (failStatus) {
+          failStatus = false
+          assert.fail("Injected SDK status failure")
+        }
+
+        statuses.push(value)
+      },
       setWidget: () => {},
+      onTerminalInput: () => () => {},
       select: async (_title: string, choices: string[]) => choices[0],
       custom: async () => {
         if (duringUi) {
@@ -239,8 +261,18 @@ const fixture = async (t: test.TestContext) => {
     hook,
     deliverResult,
     unblockUi,
+    observations: () => ({
+      entries: structuredClone(entries),
+      publications: structuredClone(publications),
+      notifications: [...notifications],
+      appendAttempts,
+    }),
+    status: () => statuses.at(-1),
     failNextAppend: () => {
       failAppend = true
+    },
+    failNextStatus: () => {
+      failStatus = true
     },
     duringUi: (action: () => void) => {
       duringUi = action
@@ -514,6 +546,51 @@ test("failed reminder persistence preserves the deferred state and its rank", as
 
   assert.deepEqual(await f.state(), before)
 })
+
+for (const mode of ["headless", "interactive", "unavailable-status"] as const)
+  test(`a scheduled reminder append failure conserves tasks and cannot escape or retry (${mode})`, async t => {
+    const now = Date.UTC(2030, 0, 1)
+
+    t.mock.timers.enable({ apis: ["Date", "setTimeout"], now })
+
+    const f = await fixture(t, mode === "headless" ? "headless" : "interactive")
+
+    await f.hook("session_start")
+    await f.run({ action: "add", text: "Deferred task", effort: 3 })
+    f.control({ action: "priority", id: 1, priority: 2 })
+    await f.run({
+      action: "status",
+      id: 1,
+      status: "deferred",
+      remindAt: new Date(now + 1000).toISOString(),
+    })
+
+    const before = await f.state()
+    const observed = f.observations()
+
+    f.failNextAppend()
+    if (mode === "unavailable-status") f.failNextStatus()
+
+    t.mock.timers.tick(1000)
+    await setImmediate()
+
+    if (mode === "interactive")
+      assert.equal(f.status(), "tasks:reminder-blocked")
+
+    assert.deepEqual(f.observations(), {
+      ...observed,
+      appendAttempts: observed.appendAttempts + 1,
+    })
+
+    t.mock.timers.tick(3_600_000)
+    await setImmediate()
+
+    assert.deepEqual(await f.state(), before)
+    assert.deepEqual(f.observations(), {
+      ...observed,
+      appendAttempts: observed.appendAttempts + 1,
+    })
+  })
 
 test("cleared effort stays cleared when an older actual result arrives after the write", async t => {
   const f = await fixture(t)

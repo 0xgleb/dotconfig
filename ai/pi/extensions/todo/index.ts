@@ -473,7 +473,11 @@ export default function todoExtension(
 
     reminderTimer = setTimeout(() => {
       reminderTimer = undefined
-      void wakeDueReminders(ctx)
+      void wakeDueReminders(ctx).catch(() => {
+        Either.try(() => {
+          if (ctx.hasUI) ctx.ui.setStatus("todo", "tasks:reminder-blocked")
+        })
+      })
     }, delay)
   }
 
