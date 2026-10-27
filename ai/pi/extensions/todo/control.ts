@@ -42,6 +42,10 @@ export const requestTodoControl = (
     try: () => {
       const preferPriorityAware = todoPriorityAvailable(pi)
       const preferEffortAware = todoEffortAvailable(pi)
+      const requiresPriority =
+        request.action === "priority" ||
+        request.action === "priority_relative" ||
+        request.action === "priority_order"
       const requiresEffort =
         request.action === "effort" ||
         (request.action === "add" && request.effort !== undefined)
@@ -54,7 +58,7 @@ export const requestTodoControl = (
         ) => {
           if (
             claimed ||
-            ((request.action === "priority" || preferPriorityAware) &&
+            ((requiresPriority || preferPriorityAware) &&
               capabilities?.priority !== true) ||
             ((requiresEffort || preferEffortAware) &&
               capabilities?.effort !== true)
