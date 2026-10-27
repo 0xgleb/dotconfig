@@ -6,7 +6,7 @@ const read = (path: string): string =>
   readFileSync(new URL(path, import.meta.url), "utf8")
 
 test("independent delegation never blocks the human foreground", () => {
-  const instructions = read("../pi/AGENTS.md")
+  const instructions = read("../../GLOBAL_AGENTS.md")
   const extension = read("../pi/extensions/classified-workflows/index.ts")
   const skill = read("../skills/pi-delegation/SKILL.md")
 

@@ -3,7 +3,7 @@ import { readFileSync } from "node:fs"
 import test from "node:test"
 
 const guidance = readFileSync(
-  new URL("../pi/AGENTS.md", import.meta.url),
+  new URL("../../GLOBAL_AGENTS.md", import.meta.url),
   "utf8",
 ).replace(/\s+/g, " ")
 
