@@ -95,10 +95,10 @@ fi
 echo "stacking tool: $tool"
 ```
 
-Prefer GitButler only in an existing managed main worktree. A linked, isolated,
-or scratch worktree uses plain Git and must not run even a GitButler readiness
-probe. Explicit repository-local instructions may select a different workflow
-rather than these shared defaults.
+Use GitButler in a verified managed main worktree, following the mandatory
+whole-workspace publication rule in `GLOBAL_AGENTS.md`; repository-local
+defaults do not override it. A linked, isolated, scratch or unmanaged worktree
+uses plain Git and must not run even a GitButler readiness probe.
 
 If `tool=none`, stop: this repo has no stacking tool, so there is no stack to
 sweep. Tell the user to use `/review-loop` on the single branch instead.
@@ -302,13 +302,14 @@ For each branch:
      commit, `but
      amend <file> <commit>`.
 
-4. **Publish this unit before advancing.** Verify its owned paths, modes, blobs
-   and effective remote scope, then push through the existing authorized
-   workflow. Any included ancestors must already be validated and published. Do
-   not use bare `but push` or broaden scope on a selector mismatch. Preserve
-   normal hooks; if publication is blocked, retain the checkpoint and report the
-   exact blocker before starting another unit. Required checks on the published
-   head still gate any independently authorized ready transition.
+4. **Publish before advancing.** Verify this unit's owned committed changes,
+   then follow `GLOBAL_AGENTS.md`'s whole-workspace workflow: `but pull`,
+   resolve all conflicts, then bare `but push` for every workspace branch and
+   stack. Keep unfinished work in truthful draft checkpoints; never substitute
+   an isolated branch or stack push. Preserve normal hooks. If publication is
+   blocked, retain the state and report the exact blocker before starting
+   another unit. Required checks on the published head still gate any
+   independently authorized ready transition.
 
 5. **Stop the sweep on a stuck branch.** If a branch hits the 4-pass cap, stop —
    do **not** descend into its children (their scope is built on unsettled
@@ -386,11 +387,12 @@ modify/submit rule below is **author-mode only**.
 4. **Modify-and-advance is allowed (author mode).** Modifying each branch's
    fixes into its verified managed main-worktree series is expected — the same
    relaxation `/review-loop stack` makes.
-5. **Publish each completed unit before advancing (author mode).** In the
-   verified GitButler-managed main worktree, push only the reviewed modified
-   scope through the existing workflow. This skill adds no PR-state or comment
-   authority; independently authorized driver ready steps keep their own gates.
-   Never override branch protection or update unrelated branches.
+5. **Publish before advancing (author mode).** In the verified GitButler-managed
+   main worktree, keep fixes scoped to the reviewed branch but publish through
+   the global whole-workspace synchronization workflow. Do not push an isolated
+   branch or stack. This skill adds no PR-state or comment authority;
+   independently authorized driver ready steps keep their own gates. Never
+   override branch protection or sweep unrelated source into fix commits.
 6. **Never change the VCS's mode or topology.** No setup/teardown, branch
    creation, deletion, reparenting, reordering, or merging a branch into its
    parent. A descendant restack caused by absorbing a verified fix is expected,
