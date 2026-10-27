@@ -103,8 +103,9 @@ the harness, and suppress duplicates without agent polling.
   make the tree clean. If publication is blocked, preserve the current state and
   report the exact blocker; continue only bounded repairs needed to unblock
   publication. Keep normal hooks and required safety gates. Use plain Git except
-  in a verified GitButler-managed main worktree, subject to repository-local
-  workflow rules.
+  in a verified GitButler-managed main worktree, where GitButler is mandatory.
+  GitButler checkpoint publication follows the whole-workspace synchronization
+  rule below, never an isolated branch push.
 - AGENTS.md files define standing rules of engagement and agent behavior. Never
   put transient task state, progress reports, one-off migration notes, temporary
   waiting conditions, session journals, or handoff notes in them; use task
@@ -197,13 +198,28 @@ the harness, and suppress duplicates without agent polling.
 - GitButler is valid only in a repository's main worktree. Detect the current
   Git topology before invoking `but`; in every linked, isolated, scratch, or
   otherwise non-main worktree, use plain Git for both reads and writes and never
-  probe or initialize GitButler. Prefer GitButler in existing managed main
-  worktrees and plain Git elsewhere; explicit repository-local workflow rules
-  may override these shared defaults. Use GitHub for current project tracking.
-  The classifier must not demand GitButler or reject plain Git solely because
-  the parent repository is GitButler-managed. When an explicitly authorized
-  stacking workflow requires a branch, create it before editing; do not override
-  repository-local branch or publication rules.
+  probe or initialize GitButler. Use GitButler in verified managed main
+  worktrees and plain Git elsewhere. Repository-local rules govern branch
+  organization, verification and delivery details, but cannot replace the
+  mandatory managed-main workflow without the explicit owner-approved exception
+  below. Use GitHub for current project tracking. The classifier must not demand
+  GitButler or reject plain Git solely because the parent repository is
+  GitButler-managed. When an explicitly authorized stacking workflow requires a
+  branch, create it before editing. Preserve repository branch protections and
+  required checks within the applicable workflow.
+- In a verified GitButler-managed main worktree, every publication uses the
+  whole-workspace workflow: `but pull` everything, resolve all resulting
+  conflicts, then bare `but push` to publish everything across the workspace's
+  branches and stacks. Do not push a named branch, a selected stack, or another
+  isolated subset. Serialize this workflow with other writers. Keep commits
+  scoped to owned files and hunks; publishing the workspace does not authorize
+  sweeping unrelated uncommitted changes into commits, merging, force pushes, or
+  bypassing hooks or branch protections. Incomplete work remains a truthful
+  draft checkpoint, not a reason to substitute an isolated push. If the full
+  workflow is blocked, preserve the state and report the exact blocker. Only
+  when an exception is completely necessary, ask through `ask_user` and obtain
+  explicit owner approval before deviating. Plain-Git workflows outside managed
+  main worktrees are unchanged.
 - Routine GitHub issue creation within authorized planning scope does not need
   approval of exact phrasing. Check the complete payload for
   audience-appropriate content before publication: exclude personal details,

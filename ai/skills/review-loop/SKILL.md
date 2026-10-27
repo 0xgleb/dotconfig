@@ -51,9 +51,10 @@ in an upstack walk: review-loop a branch, fold the fixes into its commit,
 advance to the next branch, and repeat to the top of the stack. Passing `stack`
 is an explicit opt-in to the amend-and-advance flow, so in stack mode **hard
 rule #4 is relaxed**: you MAY absorb fixes into the current branch before
-advancing (`but absorb`). Publish each validated branch unit before advancing,
-using its verified selector and effective remote scope. Do not withhold
-completed lower-branch work because a later branch is unfinished. Review-loop
+advancing (`but absorb`). Keep fixes scoped to that branch; publication follows
+the whole-workspace synchronization rule in `GLOBAL_AGENTS.md`, not an isolated
+branch push. Do not withhold completed lower-branch work because a later branch
+is unfinished; retain truthful draft status for unfinished work. Review-loop
 itself adds no PR-state or comment authority; independently authorized
 global-resource publication/ready steps remain governed by `GLOBAL_AGENTS.md`.
 
@@ -62,9 +63,10 @@ the current branch.
 
 ### Detect the stacking tool
 
-Prefer GitButler in existing managed main worktrees and plain Git elsewhere,
-subject to explicit repository-local workflow instructions. Detect topology
-before selecting stack mode (same detection as `/review-sweep`):
+Use GitButler in verified managed main worktrees and plain Git elsewhere. Follow
+the mandatory whole-workspace publication rule in `GLOBAL_AGENTS.md`;
+repository-local defaults do not override it. Detect topology before selecting
+stack mode (same detection as `/review-sweep`):
 
 ```bash
 repo_root=$(git rev-parse --show-toplevel)
@@ -140,14 +142,17 @@ defer this preflight until after saving the initial patch.
    `but absorb
    <branch> --dry-run` first and confirm it targets the intended
    branch. If nothing was modified, skip the absorb.
-5. Before advancing, inspect this completed unit's unpublished paths, modes and
-   blobs and push its verified selector. GitButler may include ancestors; they
-   must already be validated/published, never unrelated work. Do not use bare
-   `but push` or broaden scope on a CLI mismatch. Preserve/checkpoint and route
-   a concrete publication block rather than accumulating further source units.
-6. If a branch hits the 4-pass cap, stop that branch and report its exact state;
-   do not advance or publish its unfinished fixes. Previously completed lower
-   branches remain delivered. No checkout restoration is needed.
+5. Before advancing, verify this unit's owned committed changes. Publish using
+   `GLOBAL_AGENTS.md`'s whole-workspace workflow: `but pull`, resolve all
+   conflicts, then bare `but push` for every workspace branch and stack. Keep
+   unfinished work in truthful draft checkpoints. Do not substitute a
+   branch-scoped push; preserve the state and report a concrete publication
+   blocker rather than accumulating further source units.
+6. If a branch hits the 4-pass cap, report its exact state and stop advancing
+   the review. Preserve and publish owned unfinished fixes as truthful draft
+   checkpoints through the global whole-workspace workflow; nonconvergence
+   prevents readiness, not checkpoint publication. No checkout restoration is
+   needed.
 
 Per-branch summary:
 
@@ -1037,8 +1042,9 @@ alone does not authorize an amend, commit, or push.
 flow: the GitButler wrapper, only in a verified managed main worktree, absorbs
 fixes with `but absorb` and advances through the series. Plain-Git and linked
 worktrees remain in single-branch mode. Print the per-branch summary line, then
-publish this completed branch unit before continuing the upstack walk. Do not
-hold earlier validated work until the whole series finishes.
+publish through the global whole-workspace synchronization workflow before
+continuing the upstack walk. Do not hold earlier validated work until the whole
+series finishes.
 
 ### Dedicated Pi review-duty sessions
 
@@ -1086,12 +1092,13 @@ authorized by this adapter.
 4. **Single-branch mode:** never amend, commit, or push — leave the fixes
    uncommitted for the user to review unless repository policy independently
    authorizes publication. **Stack mode, only in a verified GitButler-managed
-   main worktree:** absorb and publish each validated branch unit before
-   advancing, after selector and unpublished-content verification. Never use
-   bare `but push`. Linked/plain-Git worktrees remain in single-branch mode.
-   Independent scoped global-resource authority still permits its documented
-   draft-PR/ready workflow; otherwise this skill grants no new PR/state effect.
-   Never merge, post/resolve comments or override branch protection.
+   main worktree:** absorb only the current branch's owned fixes, then publish
+   through `GLOBAL_AGENTS.md`'s whole-workspace synchronization workflow before
+   advancing. Never use an isolated branch or stack push. Linked/plain-Git
+   worktrees remain in single-branch mode. Independent scoped global-resource
+   authority still permits its documented draft-PR/ready workflow; otherwise
+   this skill grants no new PR/state effect. Never merge, post/resolve comments
+   or override branch protection.
 5. Use `gh issue create --body-file` with the approved body file, not inline
    escaped Markdown.
 6. Always re-verify findings against the current source before applying fixes —
