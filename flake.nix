@@ -174,10 +174,14 @@
           piExtensionLock = nixpkgs.lib.importJSON ./ai/pi/extensions/package-lock.json;
           piTestPackage = piExtensionPackage // {
             devDependencies = {
-              inherit (piExtensionPackage.devDependencies) "@earendil-works/pi-tui";
+              inherit (piExtensionPackage.devDependencies)
+                "@earendil-works/pi-tui"
+                "@types/node"
+                typescript
+                ;
             };
           };
-          # Stub SDK registration only; HUD tests use the pinned real TUI package.
+          # Stub SDK registration only; retain the pinned TUI and compiler.
           piTestNodeModules = pkgs.importNpmLock.buildNodeModules {
             npmRoot = ./ai/pi/extensions;
             package = piTestPackage;
@@ -326,6 +330,24 @@
                 cp ${./home.nix} home.nix
                 chmod -R u+w ai
                 ln -s ${piTestNodeModules}/node_modules ai/pi/extensions/node_modules
+                cp ${
+                  pkgs.writeText "pi-control-plane-contracts-tsconfig.json" (
+                    builtins.toJSON {
+                      extends = "./tsconfig.json";
+                      files = [
+                        "./control-plane/job-runtime.ts"
+                        "./control-plane/sqlite-job-store.ts"
+                        "./control-plane/server.ts"
+                        "./control-plane/usage-policy.ts"
+                      ];
+                      include = [ ];
+                    }
+                  )
+                } ai/pi/extensions/tsconfig.contracts.json
+                (
+                  cd ai/pi/extensions
+                  node_modules/.bin/tsc --project tsconfig.contracts.json
+                )
                 node --test \
                   ai/test/manual-reload.test.ts \
                   ai/test/runtime-version.test.ts \
