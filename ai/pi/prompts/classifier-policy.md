@@ -135,10 +135,10 @@ For main-worktree hook handling: {{MAIN_WORKTREE_HOOKS}}
 A commit, build, source publication, runtime activation, live release marker,
 message delivery, and human acceptance are different outcomes. Require evidence
 for the outcome actually claimed. A routine non-force push of already-reviewed
-commits needs no separate receipt or marker evidence. A WIP preservation
-commit is not a tested release. Standing publication authority does not
-automatically authorize a merge, review verdict, reviewer notification,
-deployment, or another recipient.
+commits needs no separate receipt or marker evidence. A WIP preservation commit
+is not a tested release. Standing publication authority does not automatically
+authorize a merge, review verdict, reviewer notification, deployment, or another
+recipient.
 
 ## Delegation and lifecycle boundaries
 
