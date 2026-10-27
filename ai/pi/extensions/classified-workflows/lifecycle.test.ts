@@ -2,6 +2,7 @@ import assert from "node:assert/strict"
 import { readFileSync } from "node:fs"
 import { stripTypeScriptTypes } from "node:module"
 import test from "node:test"
+import { Either } from "effect"
 import {
   boundedProjectInstructions,
   boundedToolResultActionContext,
@@ -134,6 +135,8 @@ test("task continuation retries a transient queued-message guard without losing 
   const schedule = new Function(
     "setTimeout",
     "pi",
+    "Either",
+    "ownerAllowance",
     `
     let taskContinuationTimer;
     const clearTaskContinuationTimer = () => {};
@@ -159,6 +162,8 @@ test("task continuation retries a transient queued-message guard without losing 
         sent++
       },
     },
+    Either,
+    { admit: () => Either.right(undefined) },
   )
   schedule(ctx)
   const first = readTimer()
