@@ -404,7 +404,9 @@ test("no required reviewers cannot become a completed review", async () => {
 })
 
 test("an unexplained empty reviewer result cannot certify source coverage", async () => {
-  const { report, calls } = await runReview({ review: completed({ findings: [] }) })
+  const { report, calls } = await runReview({
+    review: completed({ findings: [] }),
+  })
 
   assert.deepEqual(calls, ["review"])
   assert.ok("status" in report)
