@@ -155,17 +155,31 @@ nu nushell/fj/routing.test.nu
 Use type-only Conventional Commit prefixes such as `fix:`, `feat:`, `refactor:`,
 `test:`, and `docs:` according to the change. Do not use `wip(pi):`.
 
-Requested global settings, skill, rule and harness-source changes follow
-`GLOBAL_AGENTS.md`: work directly in this repository's main worktree and
-continue the existing branch/PR for corrections to unmerged work. Check later
-stacked changes before revising an earlier version; create a purpose-named
-branch in the existing GitButler workspace only for independent new work. Commit
-and push validated units continuously, open a draft PR with the first checkpoint
-when no PR exists, and mark it ready once the requested scope and verification
-are complete. Preserve unrelated changes. Do not hand routine Markdown edits to
-another agent or ask again for normal publication authority. Direct-to-master
-delivery requires explicit owner direction or a separately authorized role
-workflow; never merge or override branch protection as part of this default.
+The dotconfig worker publishes requested global settings, skill, rule and
+harness-source changes under `GLOBAL_AGENTS.md`; other-project agents' shared
+skill and global-rule edits follow the publication-ownership rule below. Work
+directly in this repository's main worktree and continue the existing branch/PR
+for corrections to unmerged work. Check later stacked changes before revising an
+earlier version; create a purpose-named branch in the existing GitButler
+workspace only for independent new work. Commit and push validated units
+continuously, open a draft PR with the first checkpoint when no PR exists, and
+mark it ready once the requested scope and verification are complete. Preserve
+unrelated changes. Do not hand routine Markdown edits to another agent or ask
+again for normal publication authority. Direct-to-master delivery requires
+explicit owner direction or a separately authorized role workflow; never merge
+or override branch protection as part of this default.
+
+## Shared-edit publication ownership
+
+Other-project agents make authorized shared skill and global-rule updates
+directly in this repository, leaving those edits uncommitted for the dotconfig
+worker. The dotconfig worker must pick up these changes even when it did not
+author them: inspect and group them by scope, reconcile conflicts, commit, push,
+and open or update the corresponding PRs. Do not leave them uncommitted because
+they came from another agent. Preserve their intended changes and report
+validation accurately; keep incomplete work draft and make completed work ready
+after the required checks pass. Serialize all dotconfig VCS mutations through
+this worker.
 
 # Work Tracking
 
