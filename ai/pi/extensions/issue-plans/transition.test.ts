@@ -16,6 +16,7 @@ import { decodeTaskMutationBatch, type TaskMutationBatch } from "./mutations.ts"
 import {
   prepareTaskChanges,
   MAX_TRANSITION_NODES,
+  MAX_TRANSITION_EDGES,
   type CurrentTask,
   type PlanCandidate,
   type TaskSnapshot,
@@ -245,6 +246,36 @@ test("cycle checks include the external dependency closure without mutating it",
   assert.deepEqual(state, original)
 })
 
+test("a cyclic persisted graph is rejected before a batch can repair it", () => {
+  const state: TaskSnapshot = {
+    ...snapshot(),
+    tasks: [current(a, t1, [t2]), current(b, t2, [t1])],
+  }
+  const before = structuredClone(state)
+
+  fails(
+    batch([{ op: "edit", target: existing(a, t1), dependsOn: [] }]),
+    "cycle",
+    state,
+  )
+  assert.deepEqual(state, before)
+})
+
+test("duplicate persisted dependencies reject the batch without normalizing its input", () => {
+  const state: TaskSnapshot = {
+    ...snapshot(),
+    tasks: [current(a, t1, [t2, t2]), current(b, t2)],
+  }
+  const before = structuredClone(state)
+
+  fails(
+    batch([{ op: "status", target: existing(a, t1), status: "doing" }]),
+    "corrupt_state",
+    state,
+  )
+  assert.deepEqual(state, before)
+})
+
 test("dependency rewrites validate the final atomic graph, not intermediate order", () => {
   const state: TaskSnapshot = {
     ...snapshot(),
@@ -348,6 +379,75 @@ test("status changes preserve factual blockers and history records only changed 
   assert.ok(Object.isFrozen(result.tasks[0]))
   assert.ok(Object.isFrozen(result.tasks[0]?.dependsOn))
   assert.ok(Object.isFrozen(result.changed[0]?.fields))
+})
+
+test("the dependency edge budget accepts its boundary and rejects one additional reachable edge", () => {
+  const leafIds = Array.from({ length: 999 }, (_, index) =>
+    taskId(1_000 + index),
+  )
+  const branches = Array.from({ length: 100 }, (_, index) => ({
+    id: taskId(3_000 + index),
+    dependsOn: leafIds,
+  }))
+  const root = current(
+    a,
+    t1,
+    branches.map(node => node.id),
+  )
+  const state: TaskSnapshot = {
+    ...snapshot(),
+    tasks: [root, current(b, t2)],
+    external: [...branches, ...leafIds.map(id => ({ id, dependsOn: [] }))],
+  }
+  const input = batch([
+    { op: "status", target: existing(a, t1), status: "doing" },
+  ])
+  const edgeCount = [...state.tasks, ...state.external].reduce(
+    (count, node) => count + node.dependsOn.length,
+    0,
+  )
+  assert.equal(edgeCount, MAX_TRANSITION_EDGES)
+  assert.equal(success(input, state).events.length, 1)
+
+  const [firstLeaf] = leafIds
+  assert.ok(firstLeaf)
+
+  fails(input, "capacity", {
+    ...state,
+    tasks: [root, current(b, t2, [firstLeaf])],
+  })
+})
+
+test("a new task cannot grow an initially valid component beyond the node budget", () => {
+  const external = Array.from(
+    { length: MAX_TRANSITION_NODES - 2 },
+    (_, index) => ({
+      id: taskId(10_000 + index),
+      dependsOn:
+        index === MAX_TRANSITION_NODES - 3 ? [] : [taskId(10_001 + index)],
+    }),
+  )
+  const state: TaskSnapshot = {
+    ...snapshot(),
+    tasks: [current(a, t1, [taskId(10_000)]), current(b, t2)],
+    external,
+  }
+  assert.equal(state.tasks.length + external.length, MAX_TRANSITION_NODES)
+  assert.deepEqual(
+    success(
+      batch([{ op: "status", target: existing(a, t1), status: "todo" }]),
+      state,
+    ),
+    { plans: [], tasks: [], events: [], changed: [] },
+  )
+
+  fails(
+    batch([
+      { op: "add", issue: a, key: "overflow", text: "One task too many" },
+    ]),
+    "capacity",
+    state,
+  )
 })
 
 test("deep dependency components are validated iteratively within explicit bounds", () => {
