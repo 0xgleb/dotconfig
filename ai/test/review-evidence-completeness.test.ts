@@ -86,6 +86,7 @@ const runReview = async (
   options: {
     tierModels?: { light: string; mid: string }
     sourceRevision?: string
+    docsPaths?: string[]
     reviewLanes?: ReviewLane[]
     workflowLimits?: WorkflowLimits
     inspectRequest?: (request: AgentRequest) => void
@@ -103,6 +104,7 @@ const runReview = async (
     lanes: options.reviewLanes ?? [...args.lanes, ...extraLanes],
     tierModels: options.tierModels,
     sourceRevision: options.sourceRevision,
+    docsPaths: options.docsPaths ?? args.docsPaths,
   }
 
   const report = await runWorkflowScript(
@@ -573,6 +575,49 @@ test("all verdict partitions retain exact candidate membership", async () => {
   assert.deepEqual(report.findings, expected.slice(0, 3))
   assert.ok("dismissed" in report)
   assert.deepEqual(report.dismissed, expected.slice(3))
+})
+
+test("oversized reviewer context fails before dispatch without certifying coverage", async () => {
+  const docsPaths = Array.from(
+    { length: 1000 },
+    (_, index) => `/fixture/packages/package-${index}/AGENTS.md`,
+  )
+  const { report, calls } = await runReview({}, [], [], { docsPaths })
+
+  assert.deepEqual(calls, [])
+  assert.ok("status" in report)
+  assert.equal(report.status, "incomplete")
+  assert.ok("laneErrors" in report)
+  assert.match(JSON.stringify(report.laneErrors), /Review task exceeds 32,000/)
+  assert.ok("report" in report)
+  assert.equal(report.report, null)
+})
+
+test("oversized verification retains the original unverified candidate", async () => {
+  const candidate = {
+    ...finding,
+    finding: "Detailed source evidence. ".repeat(1400),
+  }
+  const { report, calls } = await runReview({
+    review: completed({ findings: [candidate] }),
+  })
+
+  assert.deepEqual(calls, ["review"])
+  assert.ok("status" in report)
+  assert.equal(report.status, "incomplete")
+  assert.ok("verificationErrors" in report)
+  assert.match(
+    JSON.stringify(report.verificationErrors),
+    /Verification task exceeds 32,000/,
+  )
+  assert.ok("unverifiedFindings" in report)
+  assert.deepEqual(report.unverifiedFindings, [
+    {
+      ...candidate,
+      found_by: ["native-reviewer"],
+      diff_path: "/fixture/diff.patch",
+    },
+  ])
 })
 
 test("oversized synthesis preserves verified evidence without an oversized agent task", async () => {
