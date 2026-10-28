@@ -823,6 +823,106 @@ const readReceipt = (
         "corrupt_state",
         "Task receipt omitted generated task identities",
       )
+    const planIds = new Map(plans.map(plan => [issueKey(plan.issue), plan.id]))
+    for (const plan of plans) {
+      const current = yield* findPlan(database, plan.issue)
+      if (
+        Option.isNone(current) ||
+        current.value.id !== plan.id ||
+        current.value.revision < plan.revision
+      )
+        return yield* fail(
+          "corrupt_state",
+          "Task receipt disagrees with its persisted plan",
+        )
+    }
+
+    const historyRows = yield* io(
+      "Could not reconcile task receipt history",
+      () =>
+        database
+          .prepare(
+            "SELECT h.plan_id, h.task_id, h.operation_index, h.kind, t.id AS persisted_task_id FROM issue_plan_history h LEFT JOIN issue_plan_tasks t ON t.id = h.task_id WHERE h.batch_id = ? ORDER BY h.operation_index LIMIT ?",
+          )
+          .all(saved.batchId, MAX_TASK_MUTATIONS + 1),
+    )
+    if (historyRows.length !== saved.eventCount)
+      return yield* fail(
+        "corrupt_state",
+        "Task receipt event count disagrees with persisted history",
+      )
+
+    const changesById = new Map(changed.map(task => [task.id, task]))
+    const recordedTasks = new Set<TaskId>()
+    const recordedOperations = new Set<number>()
+    for (const rawHistory of historyRows) {
+      const history = yield* decode(
+        Schema.Struct({
+          plan_id: PlanIdSchema,
+          task_id: TaskIdSchema,
+          operation_index: RevisionSchema,
+          kind: Schema.Literal("add", "edit", "status", "block"),
+          persisted_task_id: Schema.NullOr(TaskIdSchema),
+        }),
+        rawHistory,
+        "corrupt_state",
+        "Invalid persisted task receipt history",
+      )
+      const operation = batch.operations[history.operation_index]
+      const task = changesById.get(history.task_id)
+      if (
+        operation === undefined ||
+        operation.op !== history.kind ||
+        task === undefined ||
+        history.persisted_task_id !== task.id ||
+        planIds.get(issueKey(task.issue)) !== history.plan_id ||
+        recordedOperations.has(history.operation_index)
+      )
+        return yield* fail(
+          "corrupt_state",
+          "Task receipt identities disagree with persisted history",
+        )
+
+      const target: TaskReference =
+        operation.op === "add"
+          ? {
+              issue: operation.issue,
+              task: { kind: "added", key: operation.key },
+            }
+          : operation.target
+      const identity = target.task
+      const operationId =
+        identity.kind === "existing"
+          ? identity.id
+          : created.find(
+              item =>
+                issueKey(item.issue) === issueKey(target.issue) &&
+                item.key === identity.key,
+            )?.id
+      if (
+        issueKey(target.issue) !== issueKey(task.issue) ||
+        operationId !== task.id
+      )
+        return yield* fail(
+          "corrupt_state",
+          "Task receipt history disagrees with the requested target",
+        )
+
+      recordedTasks.add(task.id)
+      recordedOperations.add(history.operation_index)
+    }
+    if (
+      recordedTasks.size !== changed.length ||
+      plans.some(
+        plan =>
+          !changed.some(task => issueKey(task.issue) === issueKey(plan.issue)),
+      )
+    )
+      return yield* fail(
+        "corrupt_state",
+        "Task receipt contains changes without persisted history",
+      )
+
     return Option.some(
       Object.freeze({
         kind: "saved",
@@ -1061,7 +1161,7 @@ const persistTaskChanges = (
     if (resultJson.length > 1_048_576)
       return yield* fail("capacity", "Task result exceeds its receipt budget")
     const scopeJson = yield* encodedJson(batch.issues)
-    yield* io("Could not save task request receipt", () =>
+    const receiptWrite = yield* io("Could not save task request receipt", () =>
       database
         .prepare(
           "INSERT INTO issue_plan_batches (id, actor_id, request_id, fingerprint, scope_json, recorded_at, result_json) VALUES (?, ?, ?, ?, ?, ?, ?)",
@@ -1076,6 +1176,12 @@ const persistTaskChanges = (
           resultJson,
         ),
     )
+    if (receiptWrite.changes !== 1)
+      return yield* fail(
+        "corrupt_state",
+        "Task request receipt was not saved exactly once",
+      )
+
     const planIds = new Map<string, IssuePlan["id"]>()
     for (const candidate of prepared.plans) {
       const plan = candidate.plan
@@ -1127,15 +1233,25 @@ const persistTaskChanges = (
         )
     }
     for (const task of prepared.tasks) {
-      yield* io("Could not replace task dependency edges", () => {
+      yield* io("Could not replace task dependency edges", () =>
         database
           .prepare("DELETE FROM issue_plan_dependencies WHERE task_id = ?")
-          .run(task.id)
-        const insert = database.prepare(
-          "INSERT INTO issue_plan_dependencies (task_id, depends_on_id) VALUES (?, ?)",
+          .run(task.id),
+      )
+      for (const target of task.dependsOn) {
+        const inserted = yield* io("Could not save task dependency edge", () =>
+          database
+            .prepare(
+              "INSERT INTO issue_plan_dependencies (task_id, depends_on_id) VALUES (?, ?)",
+            )
+            .run(task.id, target),
         )
-        for (const target of task.dependsOn) insert.run(task.id, target)
-      })
+        if (inserted.changes !== 1)
+          return yield* fail(
+            "corrupt_state",
+            "Task dependency edge was not saved exactly once",
+          )
+      }
     }
     for (const event of prepared.events) {
       const identity = event.op === "add" ? event.task : event
@@ -1146,7 +1262,7 @@ const persistTaskChanges = (
           "Task history event has no changed plan",
         )
       const payload = yield* encodedJson(event)
-      yield* io("Could not append task history", () =>
+      const inserted = yield* io("Could not append task history", () =>
         database
           .prepare(
             "INSERT INTO issue_plan_history (batch_id, plan_id, task_id, operation_index, kind, recorded_at, payload_json) VALUES (?, ?, ?, ?, ?, ?, ?)",
@@ -1161,7 +1277,97 @@ const persistTaskChanges = (
             payload,
           ),
       )
+      if (inserted.changes !== 1)
+        return yield* fail(
+          "corrupt_state",
+          "Task history event was not saved exactly once",
+        )
     }
+
+    const stored = yield* readReceipt(
+      database,
+      batch,
+      context,
+      fingerprint,
+    ).pipe(
+      Effect.catchTag("TaskRequestConflictError", () =>
+        fail(
+          "corrupt_state",
+          "Saved task request intent changed during persistence",
+        ),
+      ),
+    )
+    if (Option.isNone(stored))
+      return yield* fail(
+        "corrupt_state",
+        "Saved task request receipt disappeared",
+      )
+
+    for (const plan of plans) {
+      const persisted = yield* findPlan(database, plan.issue)
+      if (
+        Option.isNone(persisted) ||
+        persisted.value.id !== plan.id ||
+        persisted.value.revision !== plan.revision
+      )
+        return yield* fail(
+          "corrupt_state",
+          "Saved issue plan disagrees with the prepared change",
+        )
+    }
+
+    for (const task of prepared.tasks) {
+      const row = yield* io("Could not verify saved task", () =>
+        database
+          .prepare(
+            "SELECT id, plan_id, text, status, blocker FROM issue_plan_tasks WHERE id = ?",
+          )
+          .get(task.id),
+      )
+      const persisted = yield* decode(
+        Schema.extend(TaskRowSchema, Schema.Struct({ plan_id: PlanIdSchema })),
+        row,
+        "corrupt_state",
+        "Invalid saved task projection",
+      )
+      if (
+        persisted.plan_id !== planIds.get(issueKey(task.issue)) ||
+        persisted.text !== task.text ||
+        persisted.status !== task.status ||
+        persisted.blocker !== task.blocker
+      )
+        return yield* fail(
+          "corrupt_state",
+          "Saved task projection disagrees with the prepared change",
+        )
+
+      const rawEdges = yield* io(
+        "Could not verify saved task dependencies",
+        () =>
+          database
+            .prepare(
+              "SELECT depends_on_id FROM issue_plan_dependencies WHERE task_id = ? ORDER BY depends_on_id LIMIT ?",
+            )
+            .all(task.id, MAX_TASK_DEPENDENCIES + 1),
+      )
+      const edges = yield* decode(
+        Schema.Array(Schema.Struct({ depends_on_id: TaskIdSchema })),
+        rawEdges,
+        "corrupt_state",
+        "Invalid saved task dependency projection",
+      )
+      if (
+        edges.length !== task.dependsOn.length ||
+        edges.some(
+          (edge, index) => edge.depends_on_id !== task.dependsOn[index],
+        )
+      )
+        return yield* fail(
+          "corrupt_state",
+          "Saved task dependencies disagree with the prepared change",
+        )
+    }
+
     return result
   })
 

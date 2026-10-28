@@ -278,6 +278,199 @@ test("host request identities replay saved receipts but reject changed batches",
     })
   }))
 
+for (const corruption of ["task identities", "event count"] as const) {
+  test(`request replay rejects a saved receipt with corrupted ${corruption}`, async () =>
+    fixture(async path => {
+      const input = batch([
+        { op: "add", issue: a, key: "once", text: "One task" },
+      ])
+      await withStore(path, async store => {
+        await run(store.apply(input, context("corrupt-receipt")))
+      })
+      sql(path, database => {
+        const json = database
+          .prepare("SELECT result_json FROM issue_plan_batches")
+          .get()?.result_json
+        assert.ok(typeof json === "string")
+        const saved: unknown = JSON.parse(json)
+        assert.ok(typeof saved === "object" && saved !== null)
+
+        if (corruption === "event count") {
+          assert.ok("eventCount" in saved)
+          saved.eventCount = 0
+        } else {
+          assert.ok("changed" in saved && "created" in saved)
+          for (const rows of [saved.changed, saved.created]) {
+            assert.ok(Array.isArray(rows))
+            const first: unknown = rows[0]
+            assert.ok(
+              typeof first === "object" && first !== null && "id" in first,
+            )
+            first.id = "20000000-0000-4000-8000-000000000999"
+          }
+        }
+        database
+          .prepare("UPDATE issue_plan_batches SET result_json = ?")
+          .run(JSON.stringify(saved))
+      })
+      await withStore(path, async store => {
+        await errorCode(
+          store.apply(input, context("corrupt-receipt")),
+          "corrupt_state",
+        )
+      })
+    }))
+}
+
+for (const table of [
+  "issue_plan_batches",
+  "issue_plans",
+  "issue_plan_tasks",
+  "issue_plan_history",
+  "issue_plan_dependencies",
+] as const) {
+  test(`a suppressed ${table} insert rolls the entire task batch back`, async () =>
+    fixture(async path => {
+      await withStore(path, async store => {
+        sql(path, database => {
+          database.exec(
+            `CREATE TRIGGER fixture_suppress_insert BEFORE INSERT ON ${table} BEGIN SELECT RAISE(IGNORE); END;`,
+          )
+        })
+        await errorCode(
+          store.apply(
+            batch([
+              { op: "add", issue: a, key: "first", text: "First" },
+              {
+                op: "add",
+                issue: b,
+                key: "second",
+                text: "Second",
+                dependsOn: [added("first")],
+              },
+            ]),
+            context("suppressed-insert"),
+          ),
+          "corrupt_state",
+        )
+        assert.ok(
+          Option.isNone(await run(store.readPlan(issue(), { limit: 10 }))),
+        )
+        assert.ok(
+          Option.isNone(await run(store.readPlan(issue(b), { limit: 10 }))),
+        )
+      })
+      sql(path, database => {
+        for (const name of [
+          "issue_plans",
+          "issue_plan_tasks",
+          "issue_plan_batches",
+          "issue_plan_dependencies",
+          "issue_plan_history",
+        ]) {
+          assert.equal(
+            database.prepare(`SELECT COUNT(*) AS count FROM ${name}`).get()
+              ?.count,
+            0,
+          )
+        }
+      })
+    }))
+}
+
+for (const [table, mutation] of [
+  [
+    "issue_plans",
+    "UPDATE issue_plans SET revision = revision + 1 WHERE id = NEW.id",
+  ],
+  [
+    "issue_plan_tasks",
+    "UPDATE issue_plan_tasks SET text = 'Silently changed' WHERE id = NEW.id",
+  ],
+  [
+    "issue_plan_history",
+    "DELETE FROM issue_plan_history WHERE batch_id = NEW.batch_id AND operation_index = NEW.operation_index",
+  ],
+  [
+    "issue_plan_dependencies",
+    "DELETE FROM issue_plan_dependencies WHERE task_id = NEW.task_id AND depends_on_id = NEW.depends_on_id",
+  ],
+] as const) {
+  test(`post-write reconciliation rejects a changed ${table} projection`, async () =>
+    fixture(async path => {
+      await withStore(path, async store => {
+        sql(path, database => {
+          database.exec(
+            `CREATE TRIGGER fixture_change_projection AFTER INSERT ON ${table} BEGIN ${mutation}; END;`,
+          )
+        })
+        await errorCode(
+          store.apply(
+            batch([
+              { op: "add", issue: a, key: "first", text: "First" },
+              {
+                op: "add",
+                issue: b,
+                key: "second",
+                text: "Second",
+                dependsOn: [added("first")],
+              },
+            ]),
+            context("changed-projection"),
+          ),
+          "corrupt_state",
+        )
+        assert.ok(
+          Option.isNone(await run(store.readPlan(issue(), { limit: 10 }))),
+        )
+        assert.ok(
+          Option.isNone(await run(store.readPlan(issue(b), { limit: 10 }))),
+        )
+      })
+      sql(path, database => {
+        for (const name of [
+          "issue_plans",
+          "issue_plan_tasks",
+          "issue_plan_batches",
+          "issue_plan_dependencies",
+          "issue_plan_history",
+        ]) {
+          assert.equal(
+            database.prepare(`SELECT COUNT(*) AS count FROM ${name}`).get()
+              ?.count,
+            0,
+          )
+        }
+      })
+    }))
+}
+
+test("replaying an older receipt survives later legitimate task changes", async () =>
+  fixture(async path => {
+    const input = batch([{ op: "add", issue: a, key: "first", text: "First" }])
+    await withStore(path, async store => {
+      const saved = await run(store.apply(input, context("original")))
+      const created = saved.created[0]
+      assert.ok(created)
+      const changed = await run(
+        store.apply(
+          batch([
+            { op: "status", target: existing(created.id), status: "doing" },
+          ]),
+          context("later"),
+        ),
+      )
+      assert.equal(changed.plans[0]?.revision, 2)
+
+      const replayed = await run(store.apply(input, context("original")))
+      assert.deepEqual(replayed, { ...saved, receipt: "replayed" })
+      const page = await run(store.readPlan(issue(), { limit: 10 }))
+      assert.ok(Option.isSome(page))
+      assert.equal(page.value.tasks[0]?.status, "doing")
+      assert.equal(page.value.plan.revision, 2)
+    })
+  }))
+
 test("concurrent writers load current state under the same SQLite write lock", async () =>
   fixture(async path => {
     const first = await run(
