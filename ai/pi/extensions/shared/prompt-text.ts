@@ -8,6 +8,7 @@ export type PromptFile =
   | "classifier-request-guidance.md"
   | "manager-system.md"
   | "manager-round-summary.md"
+  | "remote-manager-turn.md"
 
 /** Trusted repository assets, never a filename or template supplied by a model.
  * Missing assets are external I/O failures; callers' existing execution boundary

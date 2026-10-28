@@ -1,6 +1,6 @@
 import assert from "node:assert/strict"
 import test from "node:test"
-import { mkdtempSync, rmSync } from "node:fs"
+import { existsSync, mkdtempSync, rmSync, writeFileSync } from "node:fs"
 import { join } from "node:path"
 import { tmpdir } from "node:os"
 import type {
@@ -74,6 +74,41 @@ const fixture = (
   )
   return { pi, ctx, state: state.right, root }
 }
+
+test("retired manager enqueue APIs fail closed and never consume historical task files", t => {
+  const f = fixture(t)
+  assert.ok(
+    Either.isLeft(f.state.enqueueTodo({ action: "list" }, "revision-1")),
+  )
+  assert.ok(Either.isLeft(f.state.enqueuePriorities("1", "revision-1")))
+  const directory = managerPairDirectory({
+    agentDir: f.root,
+    workerSessionId: "worker",
+    workerCwd: "/projects/worker",
+  })
+  assert.ok(Either.isRight(directory))
+  const legacy = join(
+    directory.right,
+    "requests",
+    "00000000-0000-4000-8000-000000000055.json",
+  )
+  writeFileSync(legacy, JSON.stringify({ version: 2, operation: "todo" }), {
+    mode: 0o600,
+  })
+  assert.deepEqual(
+    f.state.processPriorities(
+      () => "revision-1",
+      () => assert.fail("Retired priority command executed"),
+      () => assert.fail("Retired task command executed"),
+    ),
+    Either.right([]),
+  )
+  assert.equal(
+    existsSync(legacy),
+    true,
+    "historical files remain inert, not consumed or migrated",
+  )
+})
 
 test("manager todo returns the verified worker result rather than a manager-local task snapshot", async t => {
   const f = fixture(t)
@@ -161,6 +196,8 @@ test("an indeterminate worker result stays unconfirmed instead of becoming a fai
   )
   assert.equal(result.details.outcome, "unconfirmed")
   assert.equal(result.isError, true)
+  assert.match(result.content[0]!.text, /worker/u)
+  assert.match(result.content[0]!.text, /\/projects\/worker/u)
 })
 
 test("an older worker without the task-control capability does not receive a speculative mutation", async t => {
@@ -203,6 +240,28 @@ test("an older todo-capable worker cannot receive a speculative priority mutatio
   )
 })
 
+test("unsupported effort reports the exact selected worker before queueing", async t => {
+  const f = fixture(t, true, "global", true)
+  const result = await invokeManagerTodo(
+    f.pi,
+    f.ctx,
+    { action: "effort", id: 55, effort: 5 },
+    undefined,
+    { agentDir: f.root, timeoutMs: 0, wait: async () => {} },
+  )
+  assert.equal(result.isError, true)
+  assert.match(result.content[0]!.text, /\/projects\/worker/u)
+  assert.match(result.content[0]!.text, /session worker/u)
+  assert.deepEqual(
+    f.state.processPriorities(
+      () => "revision-1",
+      () => assert.fail("Unexpected priority request"),
+      () => assert.fail("Unsupported effort must not queue"),
+    ),
+    Either.right([]),
+  )
+})
+
 test("global priority correction crosses the signed todo lane and returns its worker receipt", async t => {
   const f = fixture(t, true, "global", true)
   let calls = 0
@@ -237,7 +296,7 @@ test("global priority correction crosses the signed todo lane and returns its wo
   assert.equal(calls, 1)
 })
 
-test("a queued but unsettled task mutation is not reported as completed", async t => {
+test("an absent direct worker returns an error and leaves no deferred task command", async t => {
   const f = fixture(t)
   const result = await invokeManagerTodo(
     f.pi,
@@ -246,6 +305,14 @@ test("a queued but unsettled task mutation is not reported as completed", async 
     undefined,
     { agentDir: f.root, timeoutMs: 0, wait: async () => {} },
   )
-  assert.equal(result.details.outcome, "queued")
-  assert.match(result.content[0]?.text ?? "", /not confirmed/u)
+  assert.equal(result.isError, true)
+  assert.notEqual(result.details.outcome, "queued")
+  assert.deepEqual(
+    f.state.processPriorities(
+      () => "revision-1",
+      () => assert.fail("Unexpected priorities"),
+      () => assert.fail("No task command may execute after the failed call"),
+    ),
+    Either.right([]),
+  )
 })
