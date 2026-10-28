@@ -6,15 +6,14 @@ import type {
   Theme,
 } from "@earendil-works/pi-coding-agent"
 import { Either, Option } from "effect"
+import { registerNativeManager } from "../classified-workflows/manager-native.ts"
+import { ManagerSessionError } from "../classified-workflows/manager-session-core.ts"
 import { fileURLToPath } from "node:url"
 import { loadHostExtension } from "../../../test/pi-host-test-support.mjs"
 import { requestTodoControl } from "./control.ts"
 import { decodeTodoDetails, type TodoRequest } from "./state.ts"
 import { mkdtempSync, rmSync } from "node:fs"
-import { tmpdir } from "node:os"
-import { join } from "node:path"
 import { managerPairDirectory } from "../classified-workflows/manager-session-core.ts"
-import { prepareNativeManagerState } from "../classified-workflows/manager-native-state.ts"
 import { registerManagerBinding } from "../shared/manager-binding.ts"
 import { todoWorkSnapshot } from "../classified-workflows/goal.ts"
 
@@ -46,6 +45,8 @@ test("manager control updates the real worker todo store used by subsequent ordi
   let tool: CapturedTool | undefined
   let failAppend = false
   const pi = {
+    registerFlag: () => {},
+    getFlag: () => undefined,
     events: {
       on: (name: string, handler: (data: unknown) => void) => {
         listeners.set(name, [...(listeners.get(name) ?? []), handler])
@@ -170,31 +171,47 @@ test("manager control updates the real worker todo store used by subsequent ordi
     ctx,
   )
 
-  const root = mkdtempSync(join(tmpdir(), "pi-manager-todo-tool-test-"))
-  t.after(() => rmSync(root, { recursive: true }))
+  const root = mkdtempSync("/tmp/pmt-")
+  t.after(async () => {
+    for (const handler of hooks.get("session_shutdown") ?? [])
+      await handler({}, ctx)
+    rmSync(root, { recursive: true })
+  })
   const directory = managerPairDirectory({
     agentDir: root,
     workerCwd: ctx.cwd,
     workerSessionId: "worker",
   })
   assert.ok(Either.isRight(directory))
-  const state = prepareNativeManagerState(directory.right, {
-    workerSessionId: "worker",
-    cwd: ctx.cwd,
-  })
-  assert.ok(Either.isRight(state))
-  state.right.publish({
-    version: 1,
-    workerSessionId: "worker",
-    cwd: ctx.cwd,
-    observedAt: Date.now(),
-    priorityRevision: "rev",
-    data: {
-      todoControl: true,
-      todoPriorityControl: true,
-      todoEffortControl: true,
+  registerNativeManager(
+    pi,
+    {
+      snapshot: () =>
+        Either.right({
+          todoControl: true,
+          todoPriorityControl: true,
+          todoEffortControl: true,
+        }),
+      priorityId: () => "task-control",
+      priorities: () =>
+        assert.fail(
+          "Numeric todo ranks must not reach textual continuation order",
+        ),
+      todo: (workerCtx, request) =>
+        Either.flatMap(requestTodoControl(pi, workerCtx, request), result =>
+          result.isError
+            ? Either.left(
+                new ManagerSessionError({
+                  code: "invalid_input",
+                  message: result.message,
+                }),
+              )
+            : Either.right(result.message),
+        ),
     },
-  })
+    { agentDir: root, piExecutable: "/unused/pi", schedule: () => () => {} },
+  )
+  for (const handler of hooks.get("session_start") ?? []) await handler({}, ctx)
   const managerEntries: Record<string, unknown>[] = []
   let selected = true
   let managerTool: CapturedTool | undefined
@@ -226,17 +243,8 @@ test("manager control updates the real worker todo store used by subsequent ordi
   todoExtension(managerPi, {
     agentDir: root,
     timeoutMs: 1000,
-    wait: async () => {
-      state.right.processPriorities(
-        () => "rev",
-        () => assert.fail("Wrong queue lane"),
-        request => {
-          const result = requestTodoControl(pi, ctx, request)
-          assert.ok(Either.isRight(result))
-          return Either.right(result.right.message)
-        },
-      )
-    },
+    wait: async () =>
+      assert.fail("Direct manager task control must never poll a queue"),
   })
   assert.ok(managerTool)
   await managerTool.execute(

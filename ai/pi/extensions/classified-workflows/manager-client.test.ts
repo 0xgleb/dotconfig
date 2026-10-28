@@ -2,12 +2,16 @@ import assert from "node:assert/strict"
 import test from "node:test"
 import { existsSync, mkdtempSync, rmSync, writeFileSync } from "node:fs"
 import { join } from "node:path"
-import { tmpdir } from "node:os"
 import type {
   ExtensionAPI,
   ExtensionContext,
 } from "@earendil-works/pi-coding-agent"
-import { Either } from "effect"
+import { Effect, Either } from "effect"
+import type { TodoRequest } from "../todo/state.ts"
+import {
+  startManagerTaskServer,
+  type ManagerTaskServer,
+} from "./manager-task-rpc.ts"
 import {
   managerPairDirectory,
   ManagerSessionError,
@@ -22,8 +26,12 @@ const fixture = (
   mode: "paired" | "global" = "paired",
   priorityAvailable = false,
 ) => {
-  const root = mkdtempSync(join(tmpdir(), "pi-manager-client-test-"))
-  t.after(() => rmSync(root, { recursive: true }))
+  const root = mkdtempSync("/tmp/pmc-")
+  let server: ManagerTaskServer | undefined
+  t.after(async () => {
+    if (server) await Effect.runPromise(server.close)
+    rmSync(root, { recursive: true })
+  })
   const scope = { workerSessionId: "worker", cwd: "/projects/worker" }
   const directory = managerPairDirectory({
     workerSessionId: scope.workerSessionId,
@@ -72,7 +80,24 @@ const fixture = (
         }
       : undefined,
   )
-  return { pi, ctx, state: state.right, root }
+  const start = async (
+    apply: (request: TodoRequest) => Either.Either<string, ManagerSessionError>,
+  ) => {
+    const authority = state.right.taskAuthority
+    assert.ok(authority)
+    server = await Effect.runPromise(
+      startManagerTaskServer({
+        directory: directory.right,
+        authority,
+        revision: () => Either.right("revision-1"),
+        invoke: operation =>
+          operation.kind === "todo"
+            ? apply(operation.request)
+            : assert.fail("Wrong control lane"),
+      }),
+    )
+  }
+  return { pi, ctx, state: state.right, root, start }
 }
 
 test("retired manager enqueue APIs fail closed and never consume historical task files", t => {
@@ -113,6 +138,11 @@ test("retired manager enqueue APIs fail closed and never consume historical task
 test("manager todo returns the verified worker result rather than a manager-local task snapshot", async t => {
   const f = fixture(t)
   let calls = 0
+  await f.start(request => {
+    assert.deepEqual(request, { action: "add", text: "Real worker task" })
+    calls += 1
+    return Either.right("Added worker task #5")
+  })
   const result = await invokeManagerTodo(
     f.pi,
     f.ctx,
@@ -121,32 +151,20 @@ test("manager todo returns the verified worker result rather than a manager-loca
     {
       agentDir: f.root,
       timeoutMs: 1000,
-      wait: async () => {
-        const processed = f.state.processPriorities(
-          () => "revision-1",
-          () => assert.fail("Wrong control lane"),
-          request => {
-            assert.deepEqual(request, {
-              action: "add",
-              text: "Real worker task",
-            })
-            calls += 1
-            return Either.right("Added worker task #5")
-          },
-        )
-        assert.ok(Either.isRight(processed))
-      },
+      wait: async () =>
+        assert.fail("Direct calls must never poll a deferred task command"),
     },
   )
   assert.equal(result.isError, false)
   assert.equal(result.details.outcome, "completed")
-  assert.equal(result.content[0]?.text, "Added worker task #5")
+  assert.match(result.content[0]?.text ?? "", /Added worker task #5/u)
   assert.equal(Object.hasOwn(result.details, "state"), false)
   assert.equal(calls, 1)
 })
 
 test("global manager todo uses the selected worker project rather than the manager workspace", async t => {
   const f = fixture(t, true, "global")
+  await f.start(() => Either.right("Actual selected worker backlog"))
   const result = await invokeManagerTodo(
     f.pi,
     f.ctx,
@@ -155,21 +173,23 @@ test("global manager todo uses the selected worker project rather than the manag
     {
       agentDir: f.root,
       timeoutMs: 1000,
-      wait: async () => {
-        f.state.processPriorities(
-          () => "revision-1",
-          () => assert.fail("Wrong lane"),
-          () => Either.right("Actual selected worker backlog"),
-        )
-      },
+      wait: async () => assert.fail("No polling"),
     },
   )
   assert.equal(result.details.outcome, "completed")
-  assert.equal(result.content[0]?.text, "Actual selected worker backlog")
+  assert.match(result.content[0]?.text ?? "", /Actual selected worker backlog/u)
 })
 
 test("an indeterminate worker result stays unconfirmed instead of becoming a failed or completed write", async t => {
   const f = fixture(t)
+  await f.start(() =>
+    Either.left(
+      new ManagerSessionError({
+        code: "unconfirmed",
+        message: "Persistence result is unconfirmed; inspect before retry.",
+      }),
+    ),
+  )
   const result = await invokeManagerTodo(
     f.pi,
     f.ctx,
@@ -178,20 +198,7 @@ test("an indeterminate worker result stays unconfirmed instead of becoming a fai
     {
       agentDir: f.root,
       timeoutMs: 1000,
-      wait: async () => {
-        f.state.processPriorities(
-          () => "revision-1",
-          () => assert.fail("Wrong lane"),
-          () =>
-            Either.left(
-              new ManagerSessionError({
-                code: "unconfirmed",
-                message:
-                  "Persistence result is unconfirmed; inspect before retry.",
-              }),
-            ),
-        )
-      },
+      wait: async () => assert.fail("No polling"),
     },
   )
   assert.equal(result.details.outcome, "unconfirmed")
@@ -207,7 +214,11 @@ test("an older worker without the task-control capability does not receive a spe
     f.ctx,
     { action: "clear" },
     undefined,
-    { agentDir: f.root, timeoutMs: 0, wait: async () => {} },
+    {
+      agentDir: f.root,
+      timeoutMs: 1000,
+      wait: async () => assert.fail("No polling"),
+    },
   )
   assert.equal(result.details.outcome, "unavailable")
   assert.deepEqual(
@@ -227,7 +238,11 @@ test("an older todo-capable worker cannot receive a speculative priority mutatio
     f.ctx,
     { action: "priority", id: 1, priority: 2 },
     undefined,
-    { agentDir: f.root, timeoutMs: 0, wait: async () => {} },
+    {
+      agentDir: f.root,
+      timeoutMs: 1000,
+      wait: async () => assert.fail("No polling"),
+    },
   )
   assert.equal(result.details.outcome, "unavailable")
   assert.deepEqual(
@@ -240,18 +255,23 @@ test("an older todo-capable worker cannot receive a speculative priority mutatio
   )
 })
 
-test("unsupported effort reports the exact selected worker before queueing", async t => {
+test("unsupported effort reports the exact selected worker before dispatch", async t => {
   const f = fixture(t, true, "global", true)
   const result = await invokeManagerTodo(
     f.pi,
     f.ctx,
     { action: "effort", id: 55, effort: 5 },
     undefined,
-    { agentDir: f.root, timeoutMs: 0, wait: async () => {} },
+    {
+      agentDir: f.root,
+      timeoutMs: 1000,
+      wait: async () => assert.fail("No polling"),
+    },
   )
   assert.equal(result.isError, true)
   assert.match(result.content[0]!.text, /\/projects\/worker/u)
   assert.match(result.content[0]!.text, /session worker/u)
+  assert.match(result.content[0]!.text, /effort control/u)
   assert.deepEqual(
     f.state.processPriorities(
       () => "revision-1",
@@ -262,9 +282,14 @@ test("unsupported effort reports the exact selected worker before queueing", asy
   )
 })
 
-test("global priority correction crosses the signed todo lane and returns its worker receipt", async t => {
+test("global priority correction crosses the direct todo lane and returns the worker result", async t => {
   const f = fixture(t, true, "global", true)
   let calls = 0
+  await f.start(request => {
+    calls += 1
+    assert.deepEqual(request, { action: "priority", id: 1, priority: 2 })
+    return Either.right("Todo #1 priority 2")
+  })
   const result = await invokeManagerTodo(
     f.pi,
     f.ctx,
@@ -273,26 +298,11 @@ test("global priority correction crosses the signed todo lane and returns its wo
     {
       agentDir: f.root,
       timeoutMs: 1000,
-      wait: async () => {
-        f.state.processPriorities(
-          () => "revision-1",
-          () =>
-            assert.fail("numeric rank reached textual execution-order lane"),
-          request => {
-            calls += 1
-            assert.deepEqual(request, {
-              action: "priority",
-              id: 1,
-              priority: 2,
-            })
-            return Either.right("Todo #1 priority 2")
-          },
-        )
-      },
+      wait: async () => assert.fail("No polling"),
     },
   )
   assert.equal(result.details.outcome, "completed")
-  assert.equal(result.content[0]?.text, "Todo #1 priority 2")
+  assert.match(result.content[0]?.text ?? "", /Todo #1 priority 2/u)
   assert.equal(calls, 1)
 })
 
@@ -303,7 +313,11 @@ test("an absent direct worker returns an error and leaves no deferred task comma
     f.ctx,
     { action: "add", text: "Pending" },
     undefined,
-    { agentDir: f.root, timeoutMs: 0, wait: async () => {} },
+    {
+      agentDir: f.root,
+      timeoutMs: 1000,
+      wait: async () => assert.fail("No polling"),
+    },
   )
   assert.equal(result.isError, true)
   assert.notEqual(result.details.outcome, "queued")
