@@ -13,7 +13,7 @@ import {
   type TaskStatus,
 } from "./model.ts"
 
-const DraftKeySchema = Schema.String.pipe(
+export const DraftKeySchema = Schema.String.pipe(
   Schema.pattern(/^[A-Za-z][A-Za-z0-9_-]{0,63}$/u),
   Schema.brand("DraftTaskKey"),
 )
