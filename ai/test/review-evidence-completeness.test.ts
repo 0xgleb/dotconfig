@@ -77,11 +77,11 @@ const args = {
   sourceAccess: "Fixture source is supplied at the agent boundary.",
   includeAttribution: false,
 }
-type LegacyLane = (typeof args.lanes)[number] & { externalCmd: string }
+type ReviewLane = (typeof args.lanes)[number] & { externalCmd?: string }
 const runReview = async (
   overrides: Partial<Record<Stage, AgentResponse>> = {},
   calls: Stage[] = [],
-  extraLanes: LegacyLane[] = [],
+  extraLanes: ReviewLane[] = [],
   options: {
     tierModels?: { light: string; mid: string }
     inspectRequest?: (request: AgentRequest) => void
@@ -257,6 +257,118 @@ test("partial verification preserves both verified and blocked candidates", asyn
   assert.match(JSON.stringify(report.unverifiedFindings), /src\/second\.ts/)
   assert.ok("report" in report)
   assert.equal(report.report, null)
+})
+
+for (const [name, alternative] of [
+  [
+    "different failure mechanism",
+    {
+      ...finding,
+      title: "Reconciliation loses a committed event",
+      finding: "A durable event is omitted from the projection.",
+      why_it_matters: "Committed state and the displayed balance diverge.",
+      recommended_fix:
+        "Replay the missing event before publishing the projection.",
+    },
+  ],
+  [
+    "different repair",
+    {
+      ...finding,
+      recommended_fix: "Return incomplete before entering synthesis.",
+    },
+  ],
+  ["different anchor", { ...finding, line_start: 14, line_end: 16 }],
+] as const) {
+  test(`nearby candidates retain independent verification for a ${name}`, async () => {
+    const { report, calls } = await runReview({
+      review: completed({ findings: [finding, alternative] }),
+    })
+
+    assert.deepEqual(calls, ["review", "verify", "verify", "synthesis"])
+    assert.ok("status" in report)
+    assert.equal(report.status, "completed")
+    assert.ok("findings" in report && Array.isArray(report.findings))
+    assert.equal(report.findings.length, 2)
+    assert.ok(
+      report.findings.some(
+        (candidate: unknown) =>
+          typeof candidate === "object" &&
+          candidate !== null &&
+          "finding" in candidate &&
+          candidate.finding === alternative.finding &&
+          "recommended_fix" in candidate &&
+          candidate.recommended_fix === alternative.recommended_fix &&
+          "line_start" in candidate &&
+          candidate.line_start === alternative.line_start,
+      ),
+    )
+  })
+}
+
+test("identical findings merge without losing reviewer attribution", async () => {
+  const { report, calls } = await runReview(
+    {},
+    [],
+    [
+      {
+        key: "second-reviewer",
+        promptPath: "/fixture/second.txt",
+        diffPath: "/fixture/diff.patch",
+      },
+    ],
+  )
+
+  assert.deepEqual(calls, ["review", "review", "verify", "synthesis"])
+  assert.ok("findings" in report && Array.isArray(report.findings))
+  assert.equal(report.findings.length, 1)
+
+  const sole: unknown = report.findings[0]
+  assert.ok(typeof sole === "object" && sole !== null && "found_by" in sole)
+  assert.deepEqual(sole.found_by, ["native-reviewer", "second-reviewer"])
+})
+
+test("synthesis receives every unique scoped diff, not only the first chunk", async () => {
+  const { report } = await runReview(
+    {},
+    [],
+    [
+      {
+        key: "second-chunk",
+        promptPath: "/fixture/second-chunk.txt",
+        diffPath: "/fixture/second-chunk.patch",
+      },
+    ],
+    {
+      inspectRequest: request => {
+        if (stageOf(request) !== "synthesis") return
+
+        assert.ok(request.task.includes("/fixture/diff.patch"))
+        assert.ok(request.task.includes("/fixture/second-chunk.patch"))
+        assert.match(request.task, /Read every scoped diff/)
+      },
+    },
+  )
+
+  assert.ok("status" in report)
+  assert.equal(report.status, "completed")
+})
+
+test("synthesis is instructed to report verified findings, not discover new ones", async () => {
+  const { report } = await runReview({}, [], [], {
+    inspectRequest: request => {
+      if (stageOf(request) !== "synthesis") return
+
+      assert.match(request.task, /Only report the supplied verified findings/)
+      assert.doesNotMatch(
+        request.task,
+        /call out anything the reviewers collectively missed/,
+      )
+    },
+  })
+
+  assert.ok("status" in report)
+  assert.equal(report.status, "completed")
 })
 
 test("a successful zero-candidate review may still complete cleanly", async () => {

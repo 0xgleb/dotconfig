@@ -78,9 +78,18 @@ you may read but should not review.
 The author describes the change as:
 {PR_DESCRIPTION}
 
-Evaluate whether the implementation actually delivers on this description.
-If the change claims to prevent event loss, verify that it does. If it claims
-idempotency, check the dedup path. Do not take the description at face value.
+First challenge the overall approach: is the addition necessary, does it
+solve a confirmed problem, and does it fit the project's architecture? Compare
+no addition, reuse of an existing path, and a smaller aligned alternative.
+Then evaluate whether the implementation delivers the claimed behavior. If it
+claims to prevent event loss, verify that it does; if it claims idempotency,
+check the dedup path. Do not take the description at face value.
+
+Distinguish accepted requirements from unaccepted architecture/spec proposals.
+A proposal is review material, not proof that its approach should exist. Check
+both the proposal's direction and, where implementation exists, its fidelity
+to accepted contracts. Review findings do not adopt a proposal or authorize an
+unrequested redesign.
 
 Review priorities, in order:
 
@@ -91,10 +100,15 @@ Review priorities, in order:
    identities, temporal consistency, and reconciliation across persistence,
    aggregates, APIs, and user-visible projections. Locally valid pieces do not
    prove whole-system consistency.
-1B. ARCHITECTURE DIRECTION — when the change affects ownership, subsystem or
-   public boundaries, persistence/transport/deployment, or dependencies, judge
-   fit against ADRs, project direction, adjacent patterns, lifecycle,
-   reversibility, and operational constraints. Reject taste-based redesigns.
+1B. ARCHITECTURE DIRECTION — for new capabilities, architecture/spec proposals
+   (including docs-only changes), ownership/boundary changes, persistence,
+   transport, deployment or dependencies, assess necessity and system fit.
+   Trace function/crate ownership, abstraction leaks and dependency direction
+   against accepted ADRs/specifications, adjacent patterns and operational
+   constraints. Verify required event-sourcing and trait/interface boundaries
+   in actual callers, not just declarations. Reject unjustified additions
+   where evidenced; do not replace approach-level review with local fixes or
+   demand abstractions for hypothetical future use.
 1C. FINANCIAL & STRATEGY VALIDITY — for monetary, trading, forecasting,
    optimization, allocation, or risk changes, check accounting identities,
    research falsifiability, implementation realism, aggregate containment, and
@@ -135,7 +149,8 @@ What NOT to flag:
 - Pre-existing issues on lines the diff did not modify.
 - Missing documentation unless the docs mandate it.
 - Renamings, reorganizations, or "this could be factored differently"
-  suggestions.
+  suggestions based only on preference. Evidenced wrong-crate ownership,
+  abstraction leakage and unjustified parallel capabilities remain in scope.
 - Pedantic edge cases a senior engineer would not call out in a real PR.
 
 Output: return your findings via the structured output tool you have been
@@ -170,12 +185,13 @@ which operation completes first.
 **Goal evaluation & domain logic:**
 
 ```
-YOUR FOCUS: Read the description carefully, then evaluate whether the
-implementation actually achieves what it claims. If it says "events are
-never lost," find a scenario where they could be. If it says "checkpoint
-only advances safely," find a case where it doesn't. Be adversarial about
-the stated goals — your job is to find the gap between intent and
-implementation.
+YOUR FOCUS: Challenge the goal and approach before checking delivery. Does
+this capability need to exist, is its problem established, and can an existing
+project-aligned path serve it? Judge architecture/spec proposals rather than
+assuming their premises are accepted. Trace ownership and abstraction boundaries
+against project direction. Then test the claimed behavior: if events are "never
+lost" or checkpoints advance "safely," find a scenario that disproves it. Report
+approach-level findings even when local implementation is internally correct.
 ```
 
 **Error handling & failure modes:**
@@ -277,9 +293,16 @@ Higher-level trigger checks are explicit:
 - Stateful persistence, recovery, aggregate, accounting, or multi-view changes
   with a conservation/reconciliation identity select
   `defensive-programming-inspector`.
-- Dependency, source-of-truth, subsystem/public-boundary, migration,
-  persistence/transport, or deployment direction changes select
-  `architecture-direction-inspector`.
+- New capabilities or substantive architecture/spec proposals select
+  `architecture-direction-inspector`, including docs-only proposals. Dependency,
+  source-of-truth, subsystem/public-boundary, lifecycle, migration,
+  persistence/transport and deployment direction changes also select it. Size
+  and lack of source-code changes do not exempt a proposal from approach-level
+  criticism.
+- New or changed retained behavior selects `test-inspector` even without test
+  changes. It must inspect relevant existing coverage, not infer a gap from the
+  changed-file list alone. Prose-only proposals need acceptance-criteria review,
+  not runnable tests.
 - Forecast, signal, strategy, backtest, optimizer, allocation, or pacing-model
   changes select `quantitative-research-inspector`.
 
@@ -289,9 +312,10 @@ Markdown critics. Inspector lanes never invoke an external model harness.
 For each **selected** inspector, write `$out_dir/prompt-<inspector>.txt` = the
 full body of its skill file (everything below the frontmatter, with `$ARGUMENTS`
 replaced by `{INSPECTOR_ARG}`) + the shared context block below + its mapping
-rule from the table (tell it to return findings via the structured output tool,
-and to return an empty findings list with `clean_reason` if its language is not
-actually present once it reads the diff).
+rule from the table. Only language-specific inspectors may return an empty
+findings list with `clean_reason` because their language is absent. Domain,
+architecture, test-acceptance and Markdown inspectors assess their content
+triggers; docs-only changes are not a language-absence exemption.
 
 Shared context block (append to every inspector prompt):
 
@@ -299,6 +323,12 @@ Shared context block (append to every inspector prompt):
 The diff is at: {DIFF_PATH}
 Repo root: {REPO_ROOT}
 {SOURCE_ACCESS}
+ENGINE MODE: You are already the independent, read-only critic. Apply the
+skill's inspection criteria, not its author-side revision or delegation steps.
+Do not spawn reviewers, edit, publish, offer remediation or continue a dialogue.
+Return only the supplied findings schema. This engine contract supersedes
+standalone report templates, NO_FINDINGS tokens and conversational instructions.
+An empty result requires findings: [] and clean_reason, not a standalone token.
 If required coverage or evidence is incomplete, set reviewer_error to a
 non-empty explanation naming unread paths and reasons, and return any partial
 findings alongside it. Do not report incomplete coverage only in clean_reason.
@@ -563,15 +593,18 @@ const laneErrors = lanes
 
 const raw = laneResults.filter(Boolean).flatMap((result) => result.findings);
 
-// Dedup across ALL lanes before the expensive verify phase — this barrier is
-// intentional (it removes duplicate work), not an accident to "parallelize away".
+// Collapse only exact diagnosis, consequence, repair and anchor matches.
+// Proximity or paraphrasing alone cannot establish that two defects are one.
 const merged = [];
 for (const finding of raw) {
   const dup = merged.find((existing) =>
     existing.file === finding.file &&
     existing.category === finding.category &&
-    finding.line_start <= existing.line_end + 3 &&
-    existing.line_start <= finding.line_end + 3
+    existing.line_start === finding.line_start &&
+    existing.line_end === finding.line_end &&
+    existing.finding === finding.finding &&
+    existing.why_it_matters === finding.why_it_matters &&
+    existing.recommended_fix === finding.recommended_fix
   );
   if (dup) {
     dup.found_by = [...new Set([...dup.found_by, ...finding.found_by])];
@@ -699,12 +732,13 @@ const synthesis = await agent(
     `Reviewer lanes that errored: ${JSON.stringify(laneErrors)}\n\n` +
     `Verified findings (JSON, pre-sorted): ${JSON.stringify(survivors)}\n\n` +
     `Dismissed findings (JSON): ${JSON.stringify(dismissed)}\n\n` +
-    `The diff is at: ${lanes[0].diffPath}. Project docs: ` +
-    `${
-      docsPaths.join(", ")
-    }. ${sourceAccess} ${sourceReadBoundary} Read the diff so your overall ` +
-    `assessment reflects the actual change, and call out anything the ` +
-    `reviewers collectively missed. Preserve verified architectural and ` +
+    `Scoped diffs: ${
+      JSON.stringify([...new Set(lanes.map((lane) => lane.diffPath))])
+    }. Project docs: ${docsPaths.join(", ")}. ` +
+    `${sourceAccess} ${sourceReadBoundary} Read every scoped diff so your ` +
+    `overall assessment reflects the complete change. Only report the supplied ` +
+    `verified findings; do not introduce unverified candidates during synthesis. ` +
+    `Preserve verified architectural and ` +
     `strategic findings as first-class recommendations: retain their cited ` +
     `project direction, invariant or hypothesis, migration/falsification ` +
     `boundary, and concrete consequence rather than flattening them into ` +
