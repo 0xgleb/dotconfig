@@ -997,7 +997,7 @@ test("native resume releases only the matching session's continuation pause", ()
     extract(
       source,
       "  pi.events.on(TELEGRAM_RESUME_EVENT,",
-      "  pi.events.on(MANAGED_OPERATIONAL_ROLE_RESUMED_EVENT,",
+      "  pi.events.on(REMOTE_CAPABILITY_HANDSHAKE_EVENT,",
     ),
     {
       pi: {

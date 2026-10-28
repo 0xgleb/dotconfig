@@ -289,7 +289,6 @@ import {
   type UserQuestionStateSnapshot,
 } from "../shared/question-events.ts"
 import {
-  MANAGED_OPERATIONAL_ROLE_RESUMED_EVENT,
   REGISTRY_INTENT_REQUEST_EVENT,
   type RegistryIntentReporter,
   type RegistryIntentRequest,
@@ -2799,10 +2798,6 @@ export default function classifiedWorkflows(
       continuationPaused
     )
       setContinuationPaused(false, latestCtx)
-  })
-
-  pi.events.on(MANAGED_OPERATIONAL_ROLE_RESUMED_EVENT, () => {
-    if (continuationPaused && latestCtx) setContinuationPaused(false, latestCtx)
   })
 
   pi.events.on(REMOTE_CAPABILITY_HANDSHAKE_EVENT, handshake => {
