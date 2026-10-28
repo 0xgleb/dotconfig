@@ -91,6 +91,11 @@ both the proposal's direction and, where implementation exists, its fidelity
 to accepted contracts. Review findings do not adopt a proposal or authorize an
 unrequested redesign.
 
+If required source, specifications or other evidence cannot be read completely,
+return reviewer_error naming the unread paths and reasons, alongside partial
+findings. An empty findings list does not establish a clean review when
+required evidence is missing.
+
 Review priorities, in order:
 
 1. CORRECTNESS — bugs, logic errors, off-by-ones, race conditions, unhandled
@@ -385,11 +390,35 @@ The whole pass — fan-out, dedup, adversarial verification, synthesis — runs 
 **one `Workflow` invocation**. Findings come back schema-validated, so there is
 no markdown parsing and no separate aggregator in the main session.
 
-Invoke `Workflow` with the script below via `script`, and `args`. Set
-`maxAgents: 16`; this is a per-named-phase cap, while `tokenBudget` remains a
-whole-workflow cap. The script batches larger lane or finding sets into settled
-named phases, retaining each completed batch in the same invocation before
-synthesis:
+Use the registered `workflow` tool. Its `code` contains a JSON-serialized
+`const args = ...;` with the contract below, followed by the implementation. Do
+not pass unsupported `script`, `args`, `scriptPath` or cache-resume fields to
+the tool.
+
+Set explicit outer limits using [pi-delegation](../pi-delegation/SKILL.md):
+
+- This recipe uses `maxAgents: 16` per named phase. If a smaller panel needs a
+  smaller cap, set both the outer limit and `PHASE_AGENT_CAP` consistently.
+- Bound `concurrency` to the useful parallel work, at most eight. Set finite
+  `agentTimeoutMs` and `workflowTimeoutMs`; 480,000 and 1,800,000 milliseconds
+  respectively are a bounded starting envelope, not a completion promise.
+- Set `retries: 0` unless a justified bounded retry is part of this pass.
+- Set an explicit whole-workflow `tokenBudget` for the planned panel, not just
+  its first phase. Admission needs at least 80,000 tokens per configured agent
+  slot (1,280,000 for sixteen); that floor does not guarantee enough budget for
+  later phases. Respect the tool's maximum and preserve incomplete evidence if
+  the available envelope cannot finish the required scope.
+- Set a concise purpose `label`. Use `background: true` while the parent has
+  independent work; do not duplicate the delegated panel.
+
+The runtime permits sixteen named phases and 32,000 characters per agent task.
+The script reserves a synthesis phase, checks the complete verification phase
+requirement, and refuses oversized tasks without discarding collected evidence.
+Sixteen slots across sixteen phases bound admission to at most 256 child calls;
+token and deadline limits can stop it earlier. Guards return `incomplete` with
+reasons, not a reduced-scope clean verdict. A runtime timeout or budget failure
+may instead reject the invocation; recover its completed child evidence through
+`workflow_audit` and continue only missing work.
 
 ```json
 {
@@ -410,15 +439,19 @@ synthesis:
 verification and synthesis; neither caller-supplied tier fields nor the
 session's model can select a different model.
 
-The tool result includes a `scriptPath` — the caller keeps it and reuses
-`{scriptPath, args}` for any later full-panel pass instead of resending the
-script.
+Working-tree and revision-based lanes share the same credential exclusions and
+path-scoped source boundary. When `{SOURCE_REVISION}` is present, Bash is
+additionally limited to exact read-only
+`git show '<revision>:<repo-relative-path>'` calls. The revision is validated
+before Bash is exposed; checkout, worktree creation, mutation and unrelated
+commands remain prohibited.
 
-When `{SOURCE_REVISION}` is present, native lanes receive Bash solely for exact
-read-only `git show '<revision>:<repo-relative-path>'` calls. Never read
-`.env*`, credential stores, private keys, or certificates. The revision is
-validated before Bash is exposed; checkout, worktree creation, mutation, and
-unrelated shell commands remain prohibited and semantically classified.
+Reviewers preserve partial findings with `reviewer_error` when required evidence
+is unread. Verifiers use `verdict: incomplete`, a concrete `rationale` and
+`evidence_error` rather than inventing scores. Substantive verdicts must supply
+valid severity and confidence; the script validates them after parsing.
+Synthesis may return `evidence_error` without a report. Every such failure holds
+the completion gate and preserves the appropriate candidates.
 
 ```javascript
 const meta = {
@@ -485,12 +518,20 @@ const REVIEW_SCHEMA = {
 
 const VERDICT_SCHEMA = {
   type: "object",
-  required: ["verdict", "rationale", "severity", "confidence"],
+  required: ["verdict", "rationale"],
   properties: {
     verdict: {
-      enum: ["valid", "likely", "disputed", "invalid", "out-of-scope"],
+      enum: [
+        "valid",
+        "likely",
+        "disputed",
+        "invalid",
+        "out-of-scope",
+        "incomplete",
+      ],
     },
     rationale: { type: "string" },
+    evidence_error: { type: "string" },
     severity: { enum: ["critical", "high", "medium", "low", "nit"] },
     confidence: { type: "integer" },
   },
@@ -524,17 +565,23 @@ if (sourceRevision !== undefined && !gitObjectSource) {
 const sourceTools = gitObjectSource
   ? ["read", "grep", "find", "ls", "bash"]
   : ["read", "grep", "find", "ls"];
-const sourceReadBoundary = gitObjectSource
-  ? `For PR-head source context, use Bash only for exact read-only ` +
-    `git show '${sourceRevision}:<repo-relative-path>' calls. Do not use the ` +
-    `mismatched working-tree copy of a source file. Never read \`.env*\`, ` +
-    `credential stores, private keys, or certificates. Do not use Bash for ` +
-    `checkout, worktree creation, mutation, or unrelated commands.`
-  : "";
+const sourceReadBoundary =
+  `Never read, search or list \`.env*\`, credential stores, private keys, ` +
+  `certificates or encrypted credential payloads. Keep searches path-scoped ` +
+  `with explicit credential exclusions. Never return authentication-bearing ` +
+  `URLs or credential values. ` +
+  (gitObjectSource
+    ? `For PR-head source context, use Bash only for exact read-only ` +
+      `git show '${sourceRevision}:<repo-relative-path>' calls. Do not use the ` +
+      `mismatched working-tree copy, or use Bash for checkout, worktree creation, ` +
+      `mutation or unrelated commands.`
+    : `Read scoped working-tree source; related files supply context, not an ` +
+      `expanded audit or mutation scope.`);
 
-// maxAgents is a per-phase cap. Batch variable lane/finding counts so one
-// workflow retains completed outputs through verification and synthesis.
+// These bounds match the workflow runtime; changing them requires verification.
 const PHASE_AGENT_CAP = 16;
+const MAX_PHASES = 16;
+const MAX_AGENT_TASK_CHARS = 32_000;
 
 const reviewLane = (lane) => {
   const context = `The diff is at: ${lane.diffPath}\n` +
@@ -544,7 +591,18 @@ const reviewLane = (lane) => {
   const prompt =
     `Read the review instructions at ${lane.promptPath} and follow ` +
     `them exactly.\n${context}\n${sourceReadBoundary}\nRead the diff, the project ` +
-    `docs, and any source files referenced by the diff that you need for context.`;
+    `docs, and any source files referenced by the diff that you need for context. ` +
+    `If required evidence is unread or incomplete, return reviewer_error naming ` +
+    `the paths and reasons, preserving any partial findings.`;
+
+  if (prompt.length > MAX_AGENT_TASK_CHARS) {
+    return Promise.resolve({
+      key: lane.key,
+      error:
+        "Review task exceeds 32,000 characters; source coverage is incomplete.",
+      findings: [],
+    });
+  }
 
   return agent(prompt, {
     label: `review:${lane.key}`,
@@ -558,7 +616,11 @@ const reviewLane = (lane) => {
       key: lane.key,
       error: result.status === "blocked"
         ? result.reason
-        : result.reviewer_error || null,
+        : result.reviewer_error || (
+          result.findings.length === 0 && !result.clean_reason?.trim()
+            ? "Reviewer returned no findings without clean_reason."
+            : null
+        ),
       findings: (result.findings || []).map((finding) => ({
         ...finding,
         found_by: [lane.key],
@@ -569,13 +631,39 @@ const reviewLane = (lane) => {
 };
 
 const laneResults = [];
-const reviewBatchCount = Math.max(1, Math.ceil(lanes.length / PHASE_AGENT_CAP));
+if (lanes.length === 0) {
+  return {
+    status: "incomplete",
+    findings: [],
+    dismissed: [],
+    laneErrors: ["No required review lanes were supplied."],
+    verificationErrors: [],
+    unverifiedFindings: [],
+    synthesisError: null,
+    report: null,
+  };
+}
+const reviewBatchCount = Math.ceil(lanes.length / PHASE_AGENT_CAP);
+if (reviewBatchCount + 1 > MAX_PHASES) {
+  return {
+    status: "incomplete",
+    findings: [],
+    dismissed: [],
+    laneErrors: [],
+    verificationErrors: [],
+    unverifiedFindings: [],
+    synthesisError: null,
+    resourceError:
+      "Review batches exceed the 16-phase limit with synthesis reserved.",
+    report: null,
+  };
+}
 for (let offset = 0; offset < lanes.length; offset += PHASE_AGENT_CAP) {
   const batchNumber = Math.floor(offset / PHASE_AGENT_CAP) + 1;
   phase(`Review ${batchNumber}/${reviewBatchCount}`);
   laneResults.push(
     ...await parallel(
-      lanes.slice(offset, offset + PHASE_AGENT_CAP).map((lane) => () =>
+      lanes.slice(offset, offset + PHASE_AGENT_CAP).map((lane) =>
         reviewLane(lane)
       ),
     ),
@@ -636,49 +724,95 @@ if (reviewIncomplete) {
   };
 }
 
-const verifyFinding = (finding) =>
-  agent(
+const verifyFinding = (finding) => {
+  const prompt =
     `You are adversarially verifying a single code-review finding. Read the ` +
-      `actual code before judging — never judge from the finding text alone.\n\n` +
-      `Finding: ${JSON.stringify(finding)}\n\n` +
-      `The diff is at: ${finding.diff_path}\nRepo root: ${repoRoot}\n` +
-      `${sourceAccess}\n${sourceReadBoundary}\n\n` +
-      `Classify the finding: valid (real, you verified it against the code), ` +
-      `likely (probably real but needs more context), disputed (evidence is ` +
-      `weak), invalid (false positive — the code contradicts the claim), ` +
-      `out-of-scope (real but on lines the diff did not modify). Refute only ` +
-      `with concrete evidence from the code; do not dismiss ` +
-      `uncertain-but-plausible findings. For architecture, financial, strategy, ` +
-      `and risk findings, inspect the cited ADR/spec/invariant/research evidence ` +
-      `and the end-to-end path; do not dismiss them merely because the changed ` +
-      `line is locally valid. Re-score severity and confidence from your own ` +
-      `reading (confidence 100 = you verified it yourself).`,
-    {
-      label: `verify:${finding.file}`,
-      phase: "Verify",
-      cwd: repoRoot,
-      tools: sourceTools,
-      model: lightModel,
-      schema: VERDICT_SCHEMA,
-    },
-  ).then((verdict) =>
-    verdict?.status === "blocked"
-      ? { ...finding, verificationError: verdict.reason }
-      : { ...finding, ...verdict }
-  );
+    `actual code before judging — never judge from the finding text alone.\n\n` +
+    `Finding: ${JSON.stringify(finding)}\n\n` +
+    `The diff is at: ${finding.diff_path}\nRepo root: ${repoRoot}\n` +
+    `${sourceAccess}\n${sourceReadBoundary}\n\n` +
+    `Classify the finding: valid (real, verified), likely (probably real), ` +
+    `disputed (weak evidence), invalid (contradicted by source), or ` +
+    `out-of-scope (outside the changed lines). If required evidence cannot ` +
+    `be read, return verdict incomplete and explain the unread paths in ` +
+    `rationale and evidence_error; do not substitute a substantive verdict. ` +
+    `Preserve project-direction, invariant and end-to-end evidence for ` +
+    `architecture, financial, strategy and risk findings; local validity does ` +
+    `not refute them. Otherwise return severity and integer confidence 0–100 ` +
+    `from your own reading, with concrete rationale.`;
+
+  if (prompt.length > MAX_AGENT_TASK_CHARS) {
+    return Promise.resolve({
+      ...finding,
+      verificationError: "Verification task exceeds 32,000 characters.",
+    });
+  }
+
+  return agent(prompt, {
+    label: `verify:${finding.file}`,
+    phase: "Verify",
+    cwd: repoRoot,
+    tools: sourceTools,
+    model: lightModel,
+    schema: VERDICT_SCHEMA,
+  }).then((verdict) => {
+    if (!verdict) {
+      return { ...finding, verificationError: "Verifier returned no result." };
+    }
+    if (verdict.status === "blocked") {
+      return { ...finding, verificationError: verdict.reason };
+    }
+    if (verdict.evidence_error?.trim()) {
+      return { ...finding, verificationError: verdict.evidence_error };
+    }
+    if (verdict.verdict === "incomplete") {
+      return {
+        ...finding,
+        verificationError: verdict.rationale.trim()
+          ? verdict.rationale
+          : "Verifier reported incomplete evidence without a reason.",
+      };
+    }
+    if (!verdict.rationale.trim()) {
+      return { ...finding, verificationError: "Verifier returned no substantive rationale." };
+    }
+    if (
+      verdict.severity === undefined ||
+      !Number.isInteger(verdict.confidence) ||
+      verdict.confidence < 0 || verdict.confidence > 100
+    ) {
+      return {
+        ...finding,
+        verificationError: "Verifier returned invalid or missing scores.",
+      };
+    }
+    return { ...finding, ...verdict };
+  });
+};
 
 const verified = [];
-const verifyBatchCount = Math.max(
-  1,
-  Math.ceil(merged.length / PHASE_AGENT_CAP),
-);
+const verifyBatchCount = Math.ceil(merged.length / PHASE_AGENT_CAP);
+if (reviewBatchCount + verifyBatchCount + 1 > MAX_PHASES) {
+  return {
+    status: "incomplete",
+    findings: [],
+    dismissed: [],
+    laneErrors,
+    verificationErrors: [],
+    unverifiedFindings: merged,
+    synthesisError: null,
+    resourceError:
+      "Required verification and synthesis exceed the 16-phase limit.",
+    report: null,
+  };
+}
 for (let offset = 0; offset < merged.length; offset += PHASE_AGENT_CAP) {
   const batchNumber = Math.floor(offset / PHASE_AGENT_CAP) + 1;
   phase(`Verify ${batchNumber}/${verifyBatchCount}`);
   verified.push(
     ...await parallel(
       merged.slice(offset, offset + PHASE_AGENT_CAP)
-        .map((finding) => () => verifyFinding(finding)),
+        .map((finding) => verifyFinding(finding)),
     ),
   );
 }
@@ -724,59 +858,85 @@ if (verificationErrors.length > 0) {
 phase("Synthesize");
 
 const foundByField = includeAttribution ? "Found by, " : "";
-const synthesis = await agent(
+const synthesisPrompt =
   `You are a senior staff engineer writing the canonical report for a ` +
-    `multi-reviewer code review. The findings below were already deduplicated ` +
-    `and adversarially verified — do not re-litigate verdicts.\n\n` +
-    `Report header (use verbatim at the top):\n${reportHeader}\n\n` +
-    `Reviewer lanes that errored: ${JSON.stringify(laneErrors)}\n\n` +
-    `Verified findings (JSON, pre-sorted): ${JSON.stringify(survivors)}\n\n` +
-    `Dismissed findings (JSON): ${JSON.stringify(dismissed)}\n\n` +
-    `Scoped diffs: ${
-      JSON.stringify([...new Set(lanes.map((lane) => lane.diffPath))])
-    }. Project docs: ${docsPaths.join(", ")}. ` +
-    `${sourceAccess} ${sourceReadBoundary} Read every scoped diff so your ` +
-    `overall assessment reflects the complete change. Only report the supplied ` +
-    `verified findings; do not introduce unverified candidates during synthesis. ` +
-    `Preserve verified architectural and ` +
-    `strategic findings as first-class recommendations: retain their cited ` +
-    `project direction, invariant or hypothesis, migration/falsification ` +
-    `boundary, and concrete consequence rather than flattening them into ` +
-    `maintainability prose.\n\n` +
-    `Produce a markdown report: the header block, "## Summary" (2-3 sentence ` +
-    `verdict with valid-finding counts per severity), "## Findings" (one ` +
-    `"### [SEVERITY] <title>" section per finding with File, Category, ` +
-    `Validity, Confidence, ${foundByField}Issue, Why it matters, Recommended ` +
-    `fix, and the verifier's rationale as "Verification"), "## Findings ` +
-    `dismissed as invalid" (bulleted, one-line rationale each), "## Findings ` +
-    `dismissed as out-of-scope", "## Overall assessment" (2-3 paragraphs of ` +
-    `your own senior-engineer judgment on merge readiness). No emojis, no ` +
-    `apologies, be decisive.` +
-    (synthesisExtra ? `\n\n${synthesisExtra}` : ""),
-  {
-    label: "synthesize",
-    phase: "Synthesize",
-    cwd: repoRoot,
-    tools: sourceTools,
-    model: midModel,
-    schema: {
-      type: "object",
-      required: ["report_markdown"],
-      properties: { report_markdown: { type: "string" } },
+  `multi-reviewer code review. The findings below were already deduplicated ` +
+  `and adversarially verified — do not re-litigate verdicts.\n\n` +
+  `Report header (use verbatim at the top):\n${reportHeader}\n\n` +
+  `Reviewer lanes that errored: ${JSON.stringify(laneErrors)}\n\n` +
+  `Verified findings (JSON, pre-sorted): ${JSON.stringify(survivors)}\n\n` +
+  `Dismissed findings (JSON): ${JSON.stringify(dismissed)}\n\n` +
+  `Scoped diffs: ${
+    JSON.stringify([...new Set(lanes.map((lane) => lane.diffPath))])
+  }. Project docs: ${docsPaths.join(", ")}. ` +
+  `${sourceAccess} ${sourceReadBoundary} Read every scoped diff so your ` +
+  `overall assessment reflects the complete change. Only report the supplied ` +
+  `verified findings; do not introduce unverified candidates during synthesis. ` +
+  `Preserve verified architectural and ` +
+  `strategic findings as first-class recommendations: retain their cited ` +
+  `project direction, invariant or hypothesis, migration/falsification ` +
+  `boundary, and concrete consequence rather than flattening them into ` +
+  `maintainability prose.\n\n` +
+  `Produce a markdown report: the header block, "## Summary" (2-3 sentence ` +
+  `verdict with valid-finding counts per severity), "## Findings" (one ` +
+  `"### [SEVERITY] <title>" section per finding with File, Category, ` +
+  `Validity, Confidence, ${foundByField}Issue, Why it matters, Recommended ` +
+  `fix, and the verifier's rationale as "Verification"), "## Findings ` +
+  `dismissed as invalid" (bulleted, one-line rationale each), "## Findings ` +
+  `dismissed as out-of-scope", "## Overall assessment" (2-3 paragraphs of ` +
+  `your own senior-engineer judgment on merge readiness). No emojis, no ` +
+  `apologies, be decisive. If required evidence cannot be read completely, ` +
+  `return evidence_error naming the paths and reasons instead of a complete ` +
+  `report_markdown. Otherwise provide a non-empty report_markdown.` +
+  (synthesisExtra ? `\n\n${synthesisExtra}` : "");
+
+if (synthesisPrompt.length > MAX_AGENT_TASK_CHARS) {
+  return {
+    status: "incomplete",
+    findings: survivors,
+    dismissed,
+    laneErrors,
+    verificationErrors,
+    unverifiedFindings: [],
+    synthesisError: null,
+    resourceError:
+      "Synthesis task exceeds 32,000 characters; verified evidence is retained.",
+    report: null,
+  };
+}
+
+const synthesis = await agent(synthesisPrompt, {
+  label: "synthesize",
+  phase: "Synthesize",
+  cwd: repoRoot,
+  tools: sourceTools,
+  model: midModel,
+  schema: {
+    type: "object",
+    properties: {
+      report_markdown: { type: "string" },
+      evidence_error: { type: "string" },
     },
   },
-);
+});
 
-const synthesisBlocked = synthesis?.status === "blocked";
+let synthesisError = null;
+if (synthesis?.status === "blocked") {
+  synthesisError = synthesis.reason;
+} else if (synthesis?.evidence_error?.trim()) {
+  synthesisError = synthesis.evidence_error;
+} else if (!synthesis?.report_markdown?.trim()) {
+  synthesisError = "Synthesis returned no complete report.";
+}
 return {
-  status: synthesisBlocked ? "incomplete" : "completed",
+  status: synthesisError === null ? "completed" : "incomplete",
   findings: survivors,
   dismissed,
   laneErrors,
   verificationErrors,
   unverifiedFindings: [],
-  synthesisError: synthesisBlocked ? synthesis.reason : null,
-  report: synthesisBlocked ? null : synthesis.report_markdown,
+  synthesisError,
+  report: synthesisError === null ? synthesis.report_markdown : null,
 };
 ```
 
@@ -784,10 +944,12 @@ return {
 
 The workflow returns
 `{status, findings, dismissed, laneErrors,
-verificationErrors, unverifiedFindings, synthesisError, report}`.
-Required native reviewer or inspector failures and blocked verifiers prevent
-synthesis; blocked synthesis prevents completion. Actual failed or timed-out
-schema agents reject the workflow instead of returning a verdict.
+verificationErrors, unverifiedFindings, synthesisError, report}`,
+plus `resourceError` when a task-size or phase-budget guard prevents completion.
+Runtime blocks and agent-reported missing evidence both hold their phase gates.
+Required reviewer or verifier failures prevent synthesis; incomplete synthesis
+prevents completion. Failed or timed-out schema agents may reject the workflow
+instead of returning a result; retain the managed audit evidence in that case.
 
 1. Save the full result to `$out_dir/result.json`, preserving errors and
    unverified candidates, and the verified findings to `$out_dir/findings.json`.
@@ -809,8 +971,7 @@ Print a compact, scannable summary from the returned `findings`. Show the
 ━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━
 
 ▲ CRITICAL (count)
-  1. <title>
-     <file>:<line>  [concurrency, general]  confidence: 95
+  1. <title> — <file>:<line> [concurrency, general] confidence: 95
      <one-line fix>
 
 ▲ HIGH (count)
@@ -827,9 +988,10 @@ Print a compact, scannable summary from the returned `findings`. Show the
 Full report: <absolute path to review.md>
 ```
 
-Keep each finding to **two lines**: title line (title + lanes + confidence) and
-fix line (recommended fix). Full details live in `review.md`. The caller decides
-what happens when there are no findings and what to do next.
+Keep each finding to **two lines**: title line with source location, optional
+lanes and confidence; then the recommended fix. Full details live in
+`review.md`. The caller decides what happens when there are no findings and what
+to do next.
 
 ## Engine failure modes
 
@@ -837,10 +999,11 @@ what happens when there are no findings and what to do next.
   affected lane or candidate and reason; never synthesize a clean verdict from
   unavailable evidence. Every selected native reviewer and inspector is
   required.
-- **The workflow itself fails mid-run:** relaunch with
-  `{scriptPath, args,
-  resumeFromRunId}` — completed lanes return cached
-  results instantly; only the failed part re-runs.
+- **The workflow itself fails mid-run:** inspect its managed `workflow_audit`,
+  retain completed outputs and exact gaps, and launch a bounded missing-only
+  recovery through the supported `code` interface. Do not promise automatic
+  cache replay or repeat successful lanes. Context or result truncation remains
+  incomplete evidence, not a clean result.
 - **Required model authentication or quota is unavailable:** retain the exact
   incomplete phase and its evidence; do not silently switch models or providers.
 
