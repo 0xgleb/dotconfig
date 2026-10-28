@@ -8,7 +8,6 @@ import {
   QUESTION_STATE_EVENT,
   QUESTION_RESOLVED_EVENT,
 } from "../shared/question-events.ts"
-import { MANAGED_OPERATIONAL_ROLE_RESUMED_EVENT } from "../shared/registry-intent-events.ts"
 import { REMOTE_CAPABILITY_HANDSHAKE_EVENT } from "../shared/remote-capability.ts"
 import { AGENTOPS_INCIDENT_EVENT } from "../shared/agentops-events.ts"
 
@@ -40,7 +39,6 @@ const harness = () => {
       "WorkflowScriptError",
       "QUESTION_STATE_EVENT",
       "QUESTION_RESOLVED_EVENT",
-      "MANAGED_OPERATIONAL_ROLE_RESUMED_EVENT",
       "REMOTE_CAPABILITY_HANDSHAKE_EVENT",
       "AGENTOPS_INCIDENT_EVENT",
       "isRecord",
@@ -60,7 +58,6 @@ const harness = () => {
       WorkflowScriptError,
       QUESTION_STATE_EVENT,
       QUESTION_RESOLVED_EVENT,
-      MANAGED_OPERATIONAL_ROLE_RESUMED_EVENT,
       REMOTE_CAPABILITY_HANDSHAKE_EVENT,
       AGENTOPS_INCIDENT_EVENT,
       (value: unknown) =>
