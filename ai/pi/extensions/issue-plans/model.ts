@@ -9,6 +9,10 @@ export const TaskIdSchema = Schema.UUID.pipe(
   Schema.brand("IssueTaskId"),
   Schema.filter(value => value === value.toLowerCase()),
 )
+export const MutationBatchIdSchema = Schema.UUID.pipe(
+  Schema.brand("TaskMutationBatchId"),
+  Schema.filter(value => value === value.toLowerCase()),
+)
 export const RevisionSchema = Schema.Number.pipe(
   Schema.int(),
   Schema.nonNegative(),
@@ -26,6 +30,7 @@ export const StatusSchema = Schema.Literal("todo", "doing", "done", "cancelled")
 export type PlanId = typeof PlanIdSchema.Type
 export type TaskId = typeof TaskIdSchema.Type
 export type TaskStatus = typeof StatusSchema.Type
+export type MutationBatchId = typeof MutationBatchIdSchema.Type
 
 export interface IssuePlan {
   readonly id: PlanId
