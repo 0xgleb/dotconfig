@@ -2,7 +2,7 @@
 name: test-inspector
 user-invocable: true
 allowed-tools: Bash(gh:*), Bash(git:*), Bash(wc:*), Bash(test:*), Bash(date:*), Bash(mktemp:*), Bash(rm:*), Read, Grep, Glob, Agent
-description: Auto-run when a review or audit changes test, spec, fixture, snapshot, or mock files; find false-confidence tests, over-mocking, implementation coupling, tautologies, and missing behavior assertions, but do not perform general production-code correctness review.
+description: Auto-run for new or changed retained behavior, even without test changes, and for test, fixture, snapshot or mock changes; verify real happy-path and error-path coverage, expose false-confidence assertions and over-mocking, but do not perform general production-code correctness review.
 argument-hint: "[pr-number | pr-url]"
 ---
 
