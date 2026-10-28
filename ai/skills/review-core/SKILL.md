@@ -414,10 +414,11 @@ Set explicit outer limits using [pi-delegation](../pi-delegation/SKILL.md):
 The runtime permits sixteen named phases and 32,000 characters per agent task.
 The script reserves a synthesis phase, checks the complete verification phase
 requirement, and refuses oversized tasks without discarding collected evidence.
-Sixteen slots across sixteen phases bound admission to at most 256 child calls;
-token and deadline limits can stop it earlier. Guards return `incomplete` with
-reasons, not a reduced-scope clean verdict. A runtime timeout or budget failure
-may instead reject the invocation; recover its completed child evidence through
+Sixteen slots across sixteen phases bound logical `agent()` admissions to 256.
+Bounded repairs or retries can add model executions; token and deadline limits
+can stop the pass earlier. Guards return `incomplete` with reasons, not a
+reduced-scope clean verdict. A runtime timeout or budget failure may instead
+reject the invocation; recover its completed child evidence through
 `workflow_audit` and continue only missing work.
 
 ```json
