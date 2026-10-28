@@ -232,7 +232,7 @@ test("future feature schema is rejected without changing registry version", asyn
       await run(store.ensurePlan(issue()))
       sql(path, database =>
         database.exec(
-          "UPDATE issue_plan_schema SET version = 2; PRAGMA user_version = 5;",
+          "UPDATE issue_plan_schema SET version = 3; PRAGMA user_version = 5;",
         ),
       )
       await expectError(
@@ -256,7 +256,7 @@ test("future feature schema is rejected without changing registry version", asyn
       assert.equal(
         database.prepare("SELECT version FROM issue_plan_schema").get()
           ?.version,
-        2,
+        3,
       )
     })
   }))
@@ -437,7 +437,7 @@ for (const incompatible of ["future", "incomplete"]) {
         )
         database.exec(
           incompatible === "future"
-            ? "UPDATE issue_plan_schema SET version = 2"
+            ? "UPDATE issue_plan_schema SET version = 3"
             : "DROP TABLE issue_plan_schema",
         )
       })
