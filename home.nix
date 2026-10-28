@@ -366,10 +366,19 @@ in
     neovim = {
       enable = true;
       withRuby = false;
-      withPython3 = false;
+      withPython3 = true;
+      extraPython3Packages =
+        ps: with ps; [
+          jupyter-client
+          cairosvg
+          nbformat
+          pillow
+        ];
       extraPackages = with pkgs; [
         fd
         gcc
+        haskell-language-server
+        imagemagick
         lazygit
         lua-language-server
         luarocks
@@ -381,8 +390,11 @@ in
         typescript-language-server
       ];
       plugins = with pkgs.vimPlugins; [
+        molten-nvim
+        image-nvim
         (nvim-treesitter.withPlugins (grammars: [
           grammars.bash
+          grammars.haskell
           grammars.html
           grammars.css
           grammars.javascript
@@ -398,7 +410,13 @@ in
           grammars.yaml
         ]))
       ];
-      initLua = builtins.readFile ./nvim/bootstrap.lua;
+      initLua = ''
+        vim.g.research_plugin_paths = {
+          image = "${pkgs.vimPlugins.image-nvim}",
+          molten = "${pkgs.vimPlugins.molten-nvim}",
+        }
+      ''
+      + builtins.readFile ./nvim/bootstrap.lua;
     };
 
     # Atuin — fuzzy history search (ctrl+r) for nushell

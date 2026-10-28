@@ -18,6 +18,43 @@ AstroNvim v5 config managed alongside the nix-darwin flake.
 
    Without the Nerd Font, icons render as `?` boxes.
 
+## Haskell research
+
+Home Manager installs Molten, image.nvim, ImageMagick and a Python provider with
+Jupyter client support. Apply the configuration with
+`darwin-rebuild switch --flake ~/.config`, then restart Neovim.
+
+In Ghostty, enter Yielduck's research shell with `nix develop .#research` and
+open `research/scratch.hs`. This shell exposes the `yielduck-haskell` kernel; it
+does not register a global kernel. Run Neovim directly in Ghostty for inline
+images. Image rendering through Zellij has not been verified.
+
+Select code paragraphs without their explanatory comments, then evaluate them.
+Definitions persist until the kernel is stopped. In the scratch file, evaluate
+the imports and definition paragraphs, then put the cursor on `sampleMean` or
+`sampleChart` and press `,meiw` to display the value or chart. Haskell LSP uses `hls` through
+the standard AstroLSP flow.
+
+| Key            | Action                      |
+| -------------- | --------------------------- |
+| `,mi`          | Start Haskell kernel        |
+| `,ml`          | Evaluate notebook line      |
+| `,me` + motion | Evaluate notebook motion    |
+| `,r` (visual)  | Evaluate notebook selection |
+| `,mr`          | Reevaluate notebook cell    |
+| `,mo`          | Enter notebook output       |
+| `,mh`          | Hide notebook output        |
+| `,mx`          | Interrupt notebook kernel   |
+| `,mq`          | Stop notebook kernel        |
+
+Use `:MoltenInfo` for kernel discovery and `:checkhealth provider` to inspect
+the Python host. The Nix Neovim wrapper registers remote plugins; no pip or
+LuaRocks install is needed.
+
+Sources:
+[Molten's Home Manager setup](https://github.com/benlubas/molten-nvim/blob/main/docs/NixOS.md),
+[image.nvim](https://github.com/3rd/image.nvim).
+
 ## Keybindings Cheatsheet
 
 `SPC` = Space (leader key). Tap `SPC` and wait for which-key popup to explore.

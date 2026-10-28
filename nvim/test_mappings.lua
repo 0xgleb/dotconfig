@@ -33,6 +33,17 @@ local function assert_no_mapping(mode, lhs)
   passed = passed + 1
 end
 
+-- Research notebook (localleader is comma)
+assert_mapping("n", ",mi", "Start Haskell kernel")
+assert_mapping("n", ",ml", "Evaluate notebook line")
+assert_mapping("n", ",me", "Evaluate notebook motion")
+assert_mapping("n", ",mr", "Reevaluate notebook cell")
+assert_mapping("n", ",mo", "Enter notebook output")
+assert_mapping("n", ",mh", "Hide notebook output")
+assert_mapping("n", ",mx", "Interrupt notebook kernel")
+assert_mapping("n", ",mq", "Stop notebook kernel")
+assert_mapping("v", ",r", "Evaluate notebook selection")
+
 -- Quick access
 assert_mapping("n", " <Space>", "Find file in project")
 assert_mapping("n", " /", "Search project")
