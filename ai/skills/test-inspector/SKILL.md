@@ -24,15 +24,17 @@ uncovered. Keep unchanged tests in scope only as evidence for changed behavior.
    (network, filesystem, clock). Mocking your own domain objects, services, or
    helpers is a design smell — the test is coupled to implementation, not
    behavior.
-3. **Don't test the language.** A test that verifies a struct has the fields you
-   just defined, that a getter returns what was set, or that a constructor
-   constructs — is worthless. The compiler already checks this.
-4. **Don't test the framework.** Testing that your ORM saves and loads, that
-   your HTTP framework routes correctly, or that your DI container injects — is
-   the framework's job, not yours.
-5. **Coverage is a liar.** 100% coverage with shallow assertions catches zero
-   bugs. One integration test with real data through a real code path is worth
-   ten unit tests that mock everything.
+3. **Test owned invariants, not language mechanics.** Trivial field assignment
+   or generated accessors need no test of the language. Smart constructors,
+   validation and compatibility rules are project behavior and need assertions.
+4. **Distinguish framework mechanics from application contracts.** Do not retest
+   unchanged ORM or router internals. Test project-owned serialization,
+   mappings, configuration, registration and routing when assertions detect a
+   real wiring or boundary defect. Save/load and HTTP tests are not useless by
+   mechanism.
+5. **Coverage needs meaningful assertions.** Neither high coverage percentages
+   nor real infrastructure prove protection. Use the smallest test that
+   exercises the real owned behavior and would fail on the claimed defect.
 6. **Tests should survive refactors.** If renaming an internal method or
    restructuring a module breaks the test (without changing behavior), the test
    is testing implementation details and is a maintenance burden.
