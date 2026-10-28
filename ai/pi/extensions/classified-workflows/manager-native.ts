@@ -118,6 +118,8 @@ export const registerNativeManager = (
       "Select an existing worker with manager_control before using its backlog or priorities. Discover workers with agent_registry.",
     )
   }
+  const workerAttribution = (target: ManagerTarget): string =>
+    `source worker ${target.workerSessionId} at ${target.cwd}`
   const binding = (ctx: ExtensionContext) =>
     Either.flatMap(
       isManager()
@@ -181,7 +183,11 @@ export const registerNativeManager = (
     ) {
       const report = decodeManagerSummary(current.right.data.roundReport)
       if (Either.isRight(report) && report.right.status !== "started") {
-        deliver(ctx, `round-${report.right.round}`, reportText(report.right))
+        deliver(
+          ctx,
+          `round-${JSON.stringify([current.right.cwd, current.right.workerSessionId, report.right.round])}`,
+          reportText(report.right, workerAttribution(current.right)),
+        )
       }
     }
     for (const id of submitted) {
@@ -477,7 +483,7 @@ export const registerNativeManager = (
           deliver(
             ctx,
             `requested-report-${randomUUID()}`,
-            reportText(report.right),
+            reportText(report.right, workerAttribution(current.right)),
           )
         return
       }
@@ -625,14 +631,16 @@ const MANAGEMENT_TOOLS: readonly string[] = [
   "manager_control",
   "read",
   "ask_user",
+  "report_owner",
 ]
 const SCOPE_ENTRY = "manager.native-scope.v1"
 const NATIVE_MESSAGE = "manager-native-update"
 
 const reportText = (
   report: Exclude<ManagerSummary, { status: "started" }>,
+  attribution: string,
 ): string =>
-  `**Manager round report · ${report.elapsedMs}ms**\n\n${report.text}`
+  `${attribution}\n\n**Manager round report · ${report.elapsedMs}ms**\n\n${report.text}`
 
 const record = (value: unknown): value is Record<string, unknown> =>
   typeof value === "object" && value !== null && !Array.isArray(value)

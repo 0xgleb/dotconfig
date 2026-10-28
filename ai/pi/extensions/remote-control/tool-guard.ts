@@ -38,7 +38,8 @@ export const enterRemoteToolGuard = (
             tool === "todo" ||
             tool === "manager_control" ||
             tool === "read" ||
-            tool === "ask_user",
+            tool === "ask_user" ||
+            tool === "report_owner",
         )
       : []
   let restored = false
