@@ -65,7 +65,7 @@ transport, not necessarily a change set. It arrives one of two ways:
 Read source for context from the working tree (or `git show <sha>:<path>` for a
 PR you have not checked out).
 
-## 2. Identify test files in the diff
+## 2. Map changed behavior to relevant tests
 
 From the diff, extract all files that are test files. Detect test files by:
 
