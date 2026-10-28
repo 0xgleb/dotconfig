@@ -9,7 +9,7 @@ const global = readFileSync(
 const project = readFileSync(
   new URL("../../AGENTS.md", import.meta.url),
   "utf8",
-)
+).replace(/\s+/gu, " ")
 
 const forGlobal = (reason: string) => `GLOBAL_AGENTS.md must ${reason}`
 
@@ -238,6 +238,6 @@ test("dotconfig delivery includes committing and pushing without handoff", () =>
   assert.match(project, /Do not hand routine Markdown edits to another agent/is)
   assert.match(
     project,
-    /mark it ready only when\s+the requested scope and verification are complete/is,
+    /mark it ready (?:only when|once) the requested scope and verification are complete/is,
   )
 })

@@ -243,9 +243,9 @@ the harness, and suppress duplicates without agent polling.
   If the remote changed, stop and reconcile rather than overwrite it. This does
   not authorize new feature publication through plain Git, unaffected ref
   rewrites, dropped peer work, merges, or hook/protection bypasses. Return
-  immediately to the normal whole-workspace `but pull`, conflict resolution,
-  and bare `but push` protocol. Other GitButler failures do not grant this
-  exception merely because an ordinary command failed.
+  immediately to the normal whole-workspace `but pull`, conflict resolution, and
+  bare `but push` protocol. Other GitButler failures do not grant this exception
+  merely because an ordinary command failed.
 - Routine GitHub issue creation within authorized planning scope does not need
   approval of exact phrasing. Check the complete payload for
   audience-appropriate content before publication: exclude personal details,
