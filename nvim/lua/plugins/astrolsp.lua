@@ -15,6 +15,7 @@ return {
       timeout_ms = 1000,
     },
     servers = {
+      "hls",
       "lua_ls",
       "move_analyzer",
       "nil_ls",
