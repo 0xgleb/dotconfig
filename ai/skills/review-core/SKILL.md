@@ -774,7 +774,10 @@ const verifyFinding = (finding) => {
       };
     }
     if (!verdict.rationale.trim()) {
-      return { ...finding, verificationError: "Verifier returned no substantive rationale." };
+      return {
+        ...finding,
+        verificationError: "Verifier returned no substantive rationale.",
+      };
     }
     if (
       verdict.severity === undefined ||
@@ -786,6 +789,7 @@ const verifyFinding = (finding) => {
         verificationError: "Verifier returned invalid or missing scores.",
       };
     }
+
     return { ...finding, ...verdict };
   });
 };
