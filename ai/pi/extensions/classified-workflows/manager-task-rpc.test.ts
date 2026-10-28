@@ -13,6 +13,7 @@ import { Effect, Either } from "effect"
 import {
   createManagerTaskAuthority,
   type ManagerTaskOperation,
+  type ManagerTaskAuthority,
 } from "./manager-task-protocol.ts"
 import {
   startManagerTaskServer,
@@ -33,13 +34,17 @@ const fixture = (t: test.TestContext) => {
   )
   let writes = 0
   const file = join(directory, "persisted.json")
-  const start = async (revision = () => Either.right("revision-1")) => {
+  const start = async (
+    revision = () => Either.right("revision-1"),
+    options: { authority?: ManagerTaskAuthority; now?: () => number } = {},
+  ) => {
     const opened = await Effect.runPromise(
       Effect.either(
         startManagerTaskServer({
           directory,
           authority,
           revision,
+          ...options,
           invoke: operation => {
             writeFileSync(file, JSON.stringify(operation), { mode: 0o600 })
             writes += 1
@@ -57,7 +62,11 @@ const fixture = (t: test.TestContext) => {
   }
   const call = (
     operation: ManagerTaskOperation,
-    overrides: { signal?: AbortSignal; timeoutMs?: number } = {},
+    overrides: {
+      signal?: AbortSignal
+      timeoutMs?: number
+      authority?: ManagerTaskAuthority
+    } = {},
   ) =>
     Effect.runPromise(
       Effect.either(
@@ -73,6 +82,47 @@ const fixture = (t: test.TestContext) => {
     )
   return { directory, authority, start, call, file, writes: () => writes }
 }
+
+test("a deadline consumed during signing fails before sending a worker command", async t => {
+  const f = fixture(t)
+  await f.start()
+  const authority: ManagerTaskAuthority = {
+    ...f.authority,
+    command: (...args) => {
+      Atomics.wait(new Int32Array(new SharedArrayBuffer(4)), 0, 0, 120)
+      return f.authority.command(...args)
+    },
+  }
+  const result = await f.call(
+    { kind: "todo", request: { action: "clear" } },
+    { authority, timeoutMs: 50 },
+  )
+  assert.ok(Either.isLeft(result))
+  assert.equal(
+    result.left.code,
+    "unavailable",
+    "expired signing never becomes a possibly dispatched call",
+  )
+  assert.equal(f.writes(), 0)
+})
+
+test("a deadline crossed during worker authentication prevents invocation", async t => {
+  const f = fixture(t)
+  let at = 1000
+  const authority: ManagerTaskAuthority = {
+    ...f.authority,
+    readCommand: (...args) => {
+      const result = f.authority.readCommand(...args)
+      at = 3000
+      return result
+    },
+  }
+  await f.start(undefined, { authority, now: () => at })
+  const result = await f.call({ kind: "todo", request: { action: "clear" } })
+  assert.ok(Either.isRight(result))
+  assert.equal(result.right.outcome, "failed")
+  assert.equal(f.writes(), 0)
+})
 
 test("a direct task call returns only the actual worker result after persistence", async t => {
   const f = fixture(t)
