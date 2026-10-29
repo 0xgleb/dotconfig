@@ -1,10 +1,10 @@
 import assert from "node:assert/strict"
-import { mkdirSync, mkdtempSync, rmSync } from "node:fs"
+import { existsSync, mkdirSync, mkdtempSync, renameSync, rmSync } from "node:fs"
 import { join } from "node:path"
 import { DatabaseSync } from "node:sqlite"
 import test from "node:test"
 import { fileURLToPath } from "node:url"
-import { Effect, Either, Option } from "effect"
+import { Cause, Deferred, Effect, Either, Exit, Fiber, Option } from "effect"
 import { decodeIssueReference } from "./identity.ts"
 import {
   openSqlitePlanStore,
@@ -469,6 +469,379 @@ test("replaying an older receipt survives later legitimate task changes", async 
       assert.equal(page.value.tasks[0]?.status, "doing")
       assert.equal(page.value.plan.revision, 2)
     })
+  }))
+
+for (const verification of ["available", "unavailable"] as const) {
+  test(`lost COMMIT acknowledgement uses ${verification} fresh read-only evidence`, async t =>
+    fixture(async path => {
+      const input = batch([
+        { op: "add", issue: a, key: "once", text: "Only once" },
+      ])
+      const exec = DatabaseSync.prototype.exec
+      const prepare = DatabaseSync.prototype.prepare
+      let armed = true
+      let acknowledgementLost = false
+      let original: DatabaseSync | undefined
+      let recoveryReads = 0
+      let createdId = ""
+
+      await withStore(path, async store => {
+        t.mock.method(
+          DatabaseSync.prototype,
+          "exec",
+          function (this: DatabaseSync, command: string) {
+            if (armed && command === "COMMIT") {
+              armed = false
+              original = this
+              exec.call(this, command)
+              acknowledgementLost = true
+              throw new Error("fixture lost commit acknowledgement")
+            }
+            return exec.call(this, command)
+          },
+        )
+        t.mock.method(
+          DatabaseSync.prototype,
+          "prepare",
+          function (this: DatabaseSync, command: string) {
+            if (
+              acknowledgementLost &&
+              command.includes(
+                "fingerprint, result_json FROM issue_plan_batches",
+              )
+            ) {
+              recoveryReads += 1
+              assert.notEqual(this, original)
+              assert.throws(
+                () =>
+                  exec.call(
+                    this,
+                    "CREATE TABLE fixture_forbidden_write (id INTEGER)",
+                  ),
+                /readonly/i,
+              )
+              if (verification === "unavailable")
+                throw new Error("fixture recovery read unavailable")
+            }
+            return prepare.call(this, command)
+          },
+        )
+
+        const result = await run(
+          Effect.either(store.apply(input, context("lost-ack"))),
+        )
+        if (verification === "available") {
+          assert.ok(Either.isRight(result))
+          assert.equal(result.right.receipt, "recovered")
+          const created = result.right.created[0]
+          assert.ok(created)
+          createdId = created.id
+        } else {
+          assert.ok(Either.isLeft(result))
+          assert.equal(result.left.code, "unknown_completion")
+          assert.ok(result.left.code === "unknown_completion")
+          assert.equal(result.left.requestId, "lost-ack")
+          assert.match(result.left.batchId, /^[0-9a-f-]{36}$/)
+          assert.ok(Cause.isCause(result.left.cause))
+        }
+        assert.equal(recoveryReads, 1)
+        await errorCode(store.readPlan(issue(), { limit: 10 }), "io")
+      })
+      acknowledgementLost = false
+
+      await withStore(path, async store => {
+        const replay = await run(store.apply(input, context("lost-ack")))
+        assert.equal(replay.receipt, "replayed")
+        if (verification === "available")
+          assert.equal(replay.created[0]?.id, createdId)
+        const page = await run(store.readPlan(issue(), { limit: 10 }))
+        assert.ok(Option.isSome(page))
+        assert.equal(page.value.tasks.length, 1)
+      })
+      sql(path, database => {
+        assert.equal(
+          database
+            .prepare("SELECT COUNT(*) AS count FROM issue_plan_tasks")
+            .get()?.count,
+          1,
+        )
+        assert.equal(
+          database
+            .prepare("SELECT COUNT(*) AS count FROM issue_plan_history")
+            .get()?.count,
+          1,
+        )
+      })
+    }))
+}
+
+for (const evidence of ["missing database", "different batch"] as const) {
+  test(`recovery rejects ${evidence} without replacing the original commit identity`, async t =>
+    fixture(async (path, root) => {
+      await withStore(path, async store => {
+        const exec = DatabaseSync.prototype.exec
+        let armed = true
+        let originalBatchId = ""
+        t.mock.method(
+          DatabaseSync.prototype,
+          "exec",
+          function (this: DatabaseSync, command: string) {
+            if (armed && command === "COMMIT") {
+              armed = false
+              exec.call(this, command)
+              const row = this.prepare(
+                "SELECT id, result_json FROM issue_plan_batches",
+              ).get()
+              assert.ok(
+                typeof row?.id === "string" &&
+                  typeof row.result_json === "string",
+              )
+              originalBatchId = row.id
+              if (evidence === "missing database") {
+                renameSync(path, join(root, "preserved.sqlite"))
+              } else {
+                const replacement = "30000000-0000-4000-8000-000000000999"
+                const result: unknown = JSON.parse(row.result_json)
+                assert.ok(
+                  typeof result === "object" &&
+                    result !== null &&
+                    "batchId" in result,
+                )
+                result.batchId = replacement
+                exec.call(this, "PRAGMA foreign_keys = OFF")
+                this.prepare(
+                  "UPDATE issue_plan_batches SET id = ?, result_json = ? WHERE id = ?",
+                ).run(replacement, JSON.stringify(result), originalBatchId)
+                this.prepare(
+                  "UPDATE issue_plan_history SET batch_id = ? WHERE batch_id = ?",
+                ).run(replacement, originalBatchId)
+              }
+              throw new Error(
+                "fixture lost acknowledgement with unavailable evidence",
+              )
+            }
+            return exec.call(this, command)
+          },
+        )
+        const result = await run(
+          Effect.either(
+            store.apply(
+              batch([{ op: "add", issue: a, key: "first", text: "One task" }]),
+              context("bound-recovery"),
+            ),
+          ),
+        )
+        assert.ok(Either.isLeft(result))
+        assert.ok(result.left.code === "unknown_completion")
+        assert.equal(result.left.batchId, originalBatchId)
+        assert.equal(result.left.requestId, "bound-recovery")
+        if (evidence === "missing database")
+          assert.equal(existsSync(path), false)
+      })
+    }))
+}
+
+test("recovery uses the captured database configuration rather than later caller mutations", async t =>
+  fixture(async (path, root) => {
+    const options = { databasePath: path, busyTimeoutMs: 0 }
+    const store = await run(openSqlitePlanStore(options))
+    options.databasePath = join(root, "unrelated.sqlite")
+    options.busyTimeoutMs = 1_000_000
+    const exec = DatabaseSync.prototype.exec
+    let armed = true
+    t.mock.method(
+      DatabaseSync.prototype,
+      "exec",
+      function (this: DatabaseSync, command: string) {
+        exec.call(this, command)
+        if (armed && command === "COMMIT") {
+          armed = false
+          throw new Error(
+            "fixture lost acknowledgement after configuration changed",
+          )
+        }
+      },
+    )
+    try {
+      const result = await run(
+        store.apply(
+          batch([
+            { op: "add", issue: a, key: "first", text: "Original database" },
+          ]),
+          context("captured-options"),
+        ),
+      )
+      assert.equal(result.receipt, "recovered")
+      assert.equal(existsSync(options.databasePath), false)
+    } finally {
+      await run(store.close())
+    }
+  }))
+
+test("a failed COMMIT with confirmed rollback remains a known failure and leaves the connection usable", async t =>
+  fixture(async path => {
+    const input = batch([{ op: "add", issue: a, key: "first", text: "First" }])
+    await withStore(path, async store => {
+      const exec = DatabaseSync.prototype.exec
+      let armed = true
+      t.mock.method(
+        DatabaseSync.prototype,
+        "exec",
+        function (this: DatabaseSync, command: string) {
+          if (armed && command === "COMMIT") {
+            armed = false
+            throw new Error("fixture commit rejected before execution")
+          }
+          return exec.call(this, command)
+        },
+      )
+
+      await errorCode(store.apply(input, context("known-failure")), "io")
+      assert.ok(
+        Option.isNone(await run(store.readPlan(issue(), { limit: 10 }))),
+      )
+      const saved = await run(store.apply(input, context("known-failure")))
+      assert.equal(saved.receipt, "committed")
+      assert.equal(saved.created.length, 1)
+    })
+  }))
+
+test("failed COMMIT and rollback without durable receipt stays unknown and never reapplies", async t =>
+  fixture(async path => {
+    await withStore(path, async store => {
+      const exec = DatabaseSync.prototype.exec
+      let phase: "commit" | "rollback" | "complete" = "commit"
+      let commits = 0
+      t.mock.method(
+        DatabaseSync.prototype,
+        "exec",
+        function (this: DatabaseSync, command: string) {
+          if (phase === "commit" && command === "COMMIT") {
+            commits += 1
+            phase = "rollback"
+            throw new Error("fixture unacknowledged commit failure")
+          }
+          if (phase === "rollback" && command === "ROLLBACK") {
+            phase = "complete"
+            throw new Error("fixture failed rollback")
+          }
+          return exec.call(this, command)
+        },
+      )
+      await errorCode(
+        store.apply(
+          batch([{ op: "add", issue: a, key: "first", text: "Not committed" }]),
+          context("unknown-absent"),
+        ),
+        "unknown_completion",
+      )
+      assert.equal(commits, 1)
+      await errorCode(store.readPlan(issue(), { limit: 10 }), "io")
+    })
+    sql(path, database => {
+      assert.equal(
+        database.prepare("SELECT COUNT(*) AS count FROM issue_plan_tasks").get()
+          ?.count,
+        0,
+      )
+      assert.equal(
+        database
+          .prepare("SELECT COUNT(*) AS count FROM issue_plan_batches")
+          .get()?.count,
+        0,
+      )
+    })
+  }))
+
+test("cancellation at successful COMMIT does not roll back durable tasks", async t =>
+  fixture(async path => {
+    const input = batch([
+      { op: "add", issue: a, key: "first", text: "Committed once" },
+    ])
+    await withStore(path, async store => {
+      const exec = DatabaseSync.prototype.exec
+      const controller = new AbortController()
+      let committed = false
+      let rollbacks = 0
+      t.mock.method(
+        DatabaseSync.prototype,
+        "exec",
+        function (this: DatabaseSync, command: string) {
+          if (command === "ROLLBACK" && committed) rollbacks += 1
+          exec.call(this, command)
+          if (command === "COMMIT" && !committed) {
+            committed = true
+            controller.abort()
+          }
+        },
+      )
+
+      await Effect.runPromiseExit(
+        store.apply(input, context("cancel-at-commit")),
+        { signal: controller.signal },
+      )
+      assert.equal(committed, true)
+      assert.equal(rollbacks, 0)
+      const replay = await run(store.apply(input, context("cancel-at-commit")))
+      assert.equal(replay.receipt, "replayed")
+      const page = await run(store.readPlan(issue(), { limit: 10 }))
+      assert.ok(Option.isSome(page))
+      assert.equal(page.value.tasks.length, 1)
+    })
+  }))
+
+test("cancelling interruptible task work rolls back without starting COMMIT", async t =>
+  fixture(async path => {
+    const entered = await run(Deferred.make<void>())
+    const store = await run(
+      openSqlitePlanStore({
+        databasePath: path,
+        busyTimeoutMs: 0,
+        taskTransactionBeginSignal: Deferred.succeed(entered, undefined).pipe(
+          Effect.andThen(Effect.never),
+        ),
+      }),
+    )
+    const exec = DatabaseSync.prototype.exec
+    let commits = 0
+    let rollbacks = 0
+    t.mock.method(
+      DatabaseSync.prototype,
+      "exec",
+      function (this: DatabaseSync, command: string) {
+        if (command === "COMMIT") commits += 1
+        if (command === "ROLLBACK") rollbacks += 1
+        return exec.call(this, command)
+      },
+    )
+    try {
+      const fiber = await run(
+        Effect.forkDaemon(
+          store.apply(
+            batch([
+              {
+                op: "add",
+                issue: a,
+                key: "first",
+                text: "Cancelled before write",
+              },
+            ]),
+            context("cancel-work"),
+          ),
+        ),
+      )
+      await run(Deferred.await(entered))
+      const result = await run(Fiber.interrupt(fiber))
+      assert.ok(Exit.isFailure(result))
+      assert.ok(Cause.isInterrupted(result.cause))
+      assert.equal(commits, 0)
+      assert.equal(rollbacks, 1)
+      assert.ok(
+        Option.isNone(await run(store.readPlan(issue(), { limit: 10 }))),
+      )
+    } finally {
+      await run(store.close())
+    }
   }))
 
 test("concurrent writers load current state under the same SQLite write lock", async () =>
