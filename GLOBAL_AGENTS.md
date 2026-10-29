@@ -25,8 +25,12 @@ For shared skill and global-rule changes, agents assigned to other projects make
 the source edits directly in `~/.config` but leave them uncommitted for the
 agent responsible for that workspace. Report the changed paths, purpose, and
 verification to that agent; do not commit, push, create PRs, or otherwise mutate
-dotconfig VCS state. This harness-resource routing rule does not change
-publication duties in the agent's assigned project.
+VCS state from that shared main worktree. This restriction is scoped to the main
+worktree, not every checkout of the repository. In a separately authorized
+linked review checkout, use the normal plain-Git review, fix and publication
+workflow under the existing task authority, including for dotconfig PRs. This
+does not grant new checkout or merge authority or change publication duties in
+the agent's assigned project.
 
 ## Workspace publication ownership
 
