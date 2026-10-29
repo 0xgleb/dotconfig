@@ -826,6 +826,10 @@ const todoExtension = (
         text += ` ${theme.fg("accent", `until ${args.remindAt}`)}`
       if (args.effort !== undefined)
         text += ` ${theme.fg("accent", args.effort === null ? "clear effort" : `effort ${args.effort} points`)}`
+      if (args.action === "priority_relative")
+        text += ` ${theme.fg("accent", `#${args.id} ${args.position} #${args.referenceId}`)}`
+      if (args.action === "priority_order" && args.ids)
+        text += ` ${theme.fg("accent", `order ${args.ids.map(id => `#${id}`).join(" ")}`)}`
 
       return new Text(text, 0, 0)
     },
