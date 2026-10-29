@@ -32,21 +32,36 @@ workflow under the existing task authority, including for dotconfig PRs. This
 does not grant new checkout or merge authority or change publication duties in
 the agent's assigned project.
 
-Driver workers use the existing GitButler workspace in this main worktree when
-managed; verify topology once when entering the repository, not as a repeated
-gate. Continue the existing branch and PR for follow-up corrections to unmerged
-work, checking later branches for changes that already supersede the earlier
-version. A new prompt, session or reload does not require a new branch. Create a
-separate purpose-named branch only for independent work without a suitable
-ongoing branch, and follow the driver publication workflow below. A scoped
-global-resource change request carries authority for the dotconfig worker's
-branch/commit/push/draft/ready workflow without repeated permission asks.
-Explicit owner direction can select a different delivery workflow.
+## Workspace publication ownership
 
-This does not authorize merges, branch-protection overrides, secret access,
-applying host configuration, deployments or unrelated changes. Independent
-review may inspect the actual saved files; it does not replace implementation.
-Keep temporary task state out of standing-rule files.
+The agent responsible for a GitButler workspace owns publication of all pending
+tracked and untracked project changes, including changes made by the owner or
+other agents. Inspect and group changes by purpose, reconcile conflicts, then
+commit, push, and open or update the corresponding PRs through the required
+workspace workflow. Do not leave changes uncommitted because someone else
+authored them or they are unrelated to the agent's current task. Preserve the
+author's intent and explicit exclusions; keep temporary review/handoff artifacts
+out of commits. Serialize workspace VCS mutations through the responsible agent.
+
+Reuse an existing branch and PR when the changes are related, including
+follow-up corrections to unmerged work. Discovering more changes does not
+require a new branch or PR; neither does a new prompt, session or reload. Check
+later stacked changes before revising an earlier version. Create a purpose-named
+branch only for independent work without a suitable ongoing branch. Keep
+incomplete or failing work in draft and make completed work ready after its
+required checks pass, following the driver publication workflow below.
+
+Driver workers use the existing GitButler workspace in a managed main worktree;
+verify topology once when entering the repository, not as a repeated gate. A
+scoped global-resource change request carries authority for the responsible
+dotconfig agent's branch/commit/push/draft/ready workflow without repeated
+permission asks. Explicit owner direction can select a different delivery
+workflow.
+
+Publication ownership does not authorize unrelated implementation, merges,
+branch-protection overrides, secret access, applying host configuration or
+deployments. Independent review may inspect the actual saved files; it does not
+replace implementation. Keep temporary task state out of standing-rule files.
 
 ## Harness guarantees and LLM judgment
 
@@ -96,24 +111,26 @@ the harness, and suppress duplicates without agent polling.
   only in the conversation that surfaced the example. This does not authorize
   new audit tasks, expanded scope, or worker reprioritization.
 - Driver workers (agents owning implementation) must commit and push regularly
-  throughout assigned work, except for cross-project shared edits left for the
-  responsible workspace agent under the routing rule above. Open a draft PR with
-  the first checkpoint on a branch, and keep it updated as work proceeds.
-  Incomplete or broken code and failing checks are not reasons to withhold
-  checkpoints: publish them in the draft with their status stated accurately.
-  Commit and push each completed unit before starting the next. Mark a PR ready
-  only when the requested work is complete and all project-required checks pass
-  for the published head, not unpublished local changes. Follow the repository's
-  verification workflow. Local verification is sufficient when that workflow
-  uses local checks instead of CI. Failing, pending, or unverified required
-  checks keep the PR draft; agent reviews do not replace those checks. Review
-  workers and managers are exempt from this driver publication workflow; this
-  exemption does not grant them coding or publication authority. Never let
+  throughout assigned work, except for cross-project harness-resource edits left
+  for the responsible workspace agent under the routing rule above. Open a draft
+  PR with the first checkpoint on a branch, and keep it updated as work
+  proceeds. Incomplete or broken code and failing checks are not reasons to
+  withhold checkpoints: publish them in the draft with their status stated
+  accurately. Commit and push each completed unit before starting the next. Mark
+  a PR ready only when the requested work is complete and all project-required
+  checks pass for the published head, not unpublished local changes. Follow the
+  repository's verification workflow. Local verification is sufficient when that
+  workflow uses local checks instead of CI. Failing, pending, or unverified
+  required checks keep the PR draft; agent reviews do not replace those checks.
+  Review workers and managers are exempt from this driver publication workflow;
+  this exemption does not grant them coding or publication authority. Never let
   agent-owned unstaged, untracked, staged-but-uncommitted, or unpushed changes
-  accumulate across work units, except for shared edits awaiting the responsible
-  workspace agent's publication under the routing rule above. Preserve unrelated
-  user-owned changes and permitted temporary review/handoff artifacts; do not
-  sweep them into commits or delete them to make the tree clean. If publication
+  accumulate across work units, except for shared edits awaiting the dotconfig
+  agent's publication under the routing rule above. Preserve permitted temporary
+  review/handoff artifacts. Outside a workspace whose publication you own,
+  preserve unrelated user-owned changes without committing or deleting them to
+  make the tree clean. Inside an owned GitButler workspace, publish them under
+  the ownership rule above rather than leaving them uncommitted. If publication
   is blocked, preserve the current state and report the exact blocker; continue
   only bounded repairs needed to unblock publication. Keep normal hooks and
   required safety gates. Use plain Git except in a verified GitButler-managed
@@ -226,14 +243,15 @@ the harness, and suppress duplicates without agent polling.
   conflicts, then bare `but push` to publish everything across the workspace's
   branches and stacks. Do not push a named branch, a selected stack, or another
   isolated subset. Serialize this workflow with other writers. Keep commits
-  scoped to owned files and hunks; publishing the workspace does not authorize
-  sweeping unrelated uncommitted changes into commits, merging, force pushes, or
-  bypassing hooks or branch protections. Incomplete work remains a truthful
-  draft checkpoint, not a reason to substitute an isolated push. If the full
-  workflow is blocked, preserve the state and report the exact blocker. Apart
-  from the bounded corrective-publication exception below, other deviations
-  require explicit owner approval through `ask_user` and must be completely
-  necessary. Plain-Git workflows outside managed main worktrees are unchanged.
+  scoped by purpose, including owner and peer edits under workspace publication
+  ownership; do not sweep unrelated changes into the same commit. Publishing the
+  workspace does not authorize merging, force pushes, or bypassing hooks or
+  branch protections. Incomplete work remains a truthful draft checkpoint, not a
+  reason to substitute an isolated push. If the full workflow is blocked,
+  preserve the state and report the exact blocker. Apart from the bounded
+  corrective-publication exception below, other deviations require explicit
+  owner approval through `ask_user` and must be completely necessary. Plain-Git
+  workflows outside managed main worktrees are unchanged.
 - Corrective-publication exception: within an existing driver assignment, if
   GitButler demonstrably rewinds a published branch or publishes its internal
   conflict-storage history, the driver may use a narrowly scoped plain-Git push
