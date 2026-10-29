@@ -1,5 +1,6 @@
 import assert from "node:assert/strict"
 import { execFileSync } from "node:child_process"
+import { randomUUID } from "node:crypto"
 import {
   mkdirSync,
   mkdtempSync,
@@ -10,17 +11,12 @@ import {
 } from "node:fs"
 import { join } from "node:path"
 import { DatabaseSync } from "node:sqlite"
-import test from "node:test"
+import test, { mock } from "node:test"
 import { fileURLToPath } from "node:url"
 import { Effect, Either, Option } from "effect"
 import { makeSqliteRegistryStore } from "../agent-registry/sqlite-store.ts"
-import { decodeIssueReference } from "./identity.ts"
-import {
-  openSqlitePlanStore,
-  type PlanId,
-  type PlanStoreError,
-  type SqlitePlanStore,
-} from "./sqlite-store.ts"
+import { decodeIssueReference, type IssueReference } from "./identity.ts"
+import { openSqliteTaskStore, type SqliteTaskStore } from "./sqlite-store.ts"
 
 const run = Effect.runPromise
 const fixtureParent = fileURLToPath(
@@ -42,11 +38,11 @@ const fixture = async (work: (root: string) => Promise<void>) => {
 }
 const withStore = async (
   path: string,
-  work: (store: SqlitePlanStore) => Promise<void>,
+  work: (store: SqliteTaskStore) => Promise<void>,
   busyTimeoutMs = 2_000,
 ) => {
   const store = await run(
-    openSqlitePlanStore({ databasePath: path, busyTimeoutMs }),
+    openSqliteTaskStore({ databasePath: path, busyTimeoutMs }),
   )
   try {
     await work(store)
@@ -54,18 +50,18 @@ const withStore = async (
     await run(store.close())
   }
 }
-const expectError = async <T>(
-  operation: Effect.Effect<T, PlanStoreError>,
-  code: PlanStoreError["code"],
+const expectError = async <T, E extends { readonly code: string }>(
+  operation: Effect.Effect<T, E>,
+  code: E["code"],
 ) => {
   const result = await run(Effect.either(operation))
   assert.ok(Either.isLeft(result))
   assert.equal(result.left.code, code)
 }
-const sql = (path: string, work: (database: DatabaseSync) => void) => {
+const sql = <A>(path: string, work: (database: DatabaseSync) => A): A => {
   const database = new DatabaseSync(path)
   try {
-    work(database)
+    return work(database)
   } finally {
     database.close()
   }
@@ -75,17 +71,47 @@ const ids: readonly [string, string, string] = [
   "00000000-0000-4000-8000-000000000002",
   "00000000-0000-4000-8000-000000000003",
 ]
-const seed = (path: string, planId: PlanId, id: string, text: string) =>
+const seedIssueRecord = (path: string, target = issue()): string =>
+  sql(path, database => {
+    const id = randomUUID()
+    database
+      .prepare(
+        "INSERT INTO issue_plans (id, repository, issue_number, revision) VALUES (?, ?, ?, 0)",
+      )
+      .run(id, target.repository, target.number)
+    return id
+  })
+const seedTask = (path: string, issueRowId: string, id: string, text: string) =>
   sql(path, database => {
     database
       .prepare(
         "INSERT INTO issue_plan_tasks (id, plan_id, text, status, blocker) VALUES (?, ?, ?, 'todo', NULL)",
       )
-      .run(id, planId, text)
+      .run(id, issueRowId, text)
   })
+const appendTask = (store: SqliteTaskStore, target: IssueReference = issue()) =>
+  store.apply(
+    {
+      issues: [target],
+      operations: [
+        {
+          op: "add",
+          issue: target,
+          key: "fixture",
+          text: "Persisted requirement",
+        },
+      ],
+    },
+    {
+      actorId: "fixture-worker",
+      requestId: randomUUID(),
+      now: 1_000,
+      cancellation: "forbidden",
+    },
+  )
 
-for (const order of ["registry-first", "plans-first"]) {
-  test(`plans coexist with the real registry: ${order}`, async () =>
+for (const order of ["registry-first", "tasks-first"]) {
+  test(`issue tasks coexist with the real registry: ${order}`, async () =>
     fixture(async root => {
       const path = join(root, "registry.sqlite")
       const registry = makeSqliteRegistryStore(root)
@@ -102,49 +128,57 @@ for (const order of ["registry-first", "plans-first"]) {
       try {
         const request =
           order === "registry-first" ? await populateRegistry() : undefined
-        let persistedId: PlanId | undefined
+        let persistedTaskId: string | undefined
         await withStore(path, async store => {
-          const first = await run(store.ensurePlan(issue()))
-          persistedId = first.id
-          const second = await run(store.ensurePlan(issue()))
-          assert.equal(second.id, first.id)
-          assert.equal(second.revision, 0)
-          if (order === "plans-first") await populateRegistry()
+          const write = appendTask(store)
+          const first = await run(write)
+          const second = await run(write)
+          persistedTaskId = first.created[0]?.id
+          assert.ok(persistedTaskId)
+          assert.equal(second.receipt, "replayed")
+          assert.deepEqual(second.created, first.created)
+          assert.deepEqual(second.issues, [{ issue: issue(), revision: 1 }])
+          if (order === "tasks-first") await populateRegistry()
         })
         const snapshot = await run(registry.snapshot(1_000))
         assert.equal(snapshot.requests.length, 1)
         if (request) assert.equal(snapshot.requests[0]?.id, request.id)
         await withStore(path, async store => {
-          const page = await run(store.readPlan(issue(), { limit: 10 }))
+          const page = await run(store.readTasks(issue(), { limit: 10 }))
           assert.ok(Option.isSome(page))
-          assert.equal(page.value.plan.id, persistedId)
-          assert.deepEqual(page.value.tasks, [])
+          assert.deepEqual(page.value.issue, issue())
+          assert.equal(page.value.revision, 1)
+          assert.equal(page.value.tasks[0]?.id, persistedTaskId)
         })
-        sql(path, database =>
+        sql(path, database => {
           assert.equal(
             database.prepare("PRAGMA user_version").get()?.user_version,
             5,
-          ),
-        )
+          )
+          assert.equal(
+            database.prepare("SELECT COUNT(*) AS count FROM issue_plans").get()
+              ?.count,
+            1,
+          )
+        })
       } finally {
         registry.close()
       }
     }))
 }
 
-test("qualified plans and bounded task pages survive reopening without worker presence", async () =>
+test("qualified issue task pages survive reopening without worker presence", async () =>
   fixture(async root => {
     const path = join(root, "registry.sqlite")
-    await withStore(path, async store => {
-      const first = await run(store.ensurePlan(issue()))
-      const other = await run(store.ensurePlan(issue("dataclique/yielduck")))
-      assert.notEqual(first.id, other.id)
-      seed(path, first.id, ids[0], "First requirement")
-      seed(path, first.id, ids[1], "Second requirement")
-      seed(path, other.id, ids[2], "Different repository")
+    await withStore(path, async () => {
+      const first = seedIssueRecord(path)
+      const other = seedIssueRecord(path, issue("dataclique/yielduck"))
+      seedTask(path, first, ids[0], "First requirement")
+      seedTask(path, first, ids[1], "Second requirement")
+      seedTask(path, other, ids[2], "Different repository")
     })
     await withStore(path, async store => {
-      const first = await run(store.readPlan(issue(), { limit: 1 }))
+      const first = await run(store.readTasks(issue(), { limit: 1 }))
       assert.ok(Option.isSome(first))
       assert.deepEqual(
         first.value.tasks.map(task => task.text),
@@ -152,7 +186,7 @@ test("qualified plans and bounded task pages survive reopening without worker pr
       )
       assert.ok(first.value.next)
       const next = await run(
-        store.readPlan(issue(), { limit: 1, after: first.value.next }),
+        store.readTasks(issue(), { limit: 1, after: first.value.next }),
       )
       assert.ok(Option.isSome(next))
       assert.deepEqual(
@@ -161,28 +195,29 @@ test("qualified plans and bounded task pages survive reopening without worker pr
       )
       assert.equal(next.value.next, null)
       const other = await run(
-        store.readPlan(issue("dataclique/yielduck"), { limit: 1 }),
+        store.readTasks(issue("dataclique/yielduck"), { limit: 1 }),
       )
       assert.ok(Option.isSome(other))
       const foreign = other.value.tasks[0]
       assert.ok(foreign)
       await expectError(
-        store.readPlan(issue(), { limit: 1, after: foreign.id }),
+        store.readTasks(issue(), { limit: 1, after: foreign.id }),
         "invalid_input",
       )
-      const absent = await run(
-        store.readPlan(issue("owner/missing"), { limit: 10 }),
+      assert.ok(
+        Option.isNone(
+          await run(store.readTasks(issue("owner/missing"), { limit: 10 })),
+        ),
       )
-      assert.ok(Option.isNone(absent))
     })
   }))
 
-test("a separate process reads the same persisted plan", async () =>
+test("a separate process reads the same persisted issue tasks", async () =>
   fixture(async root => {
     const path = join(root, "registry.sqlite")
-    await withStore(path, async store => {
-      const plan = await run(store.ensurePlan(issue()))
-      seed(path, plan.id, ids[0], "Visible across processes")
+    await withStore(path, async () => {
+      const row = seedIssueRecord(path)
+      seedTask(path, row, ids[0], "Visible across processes")
       const worker = fileURLToPath(
         new URL("./sqlite-store.worker.ts", import.meta.url),
       )
@@ -191,32 +226,33 @@ test("a separate process reads the same persisted plan", async () =>
         timeout: 10_000,
       })
       assert.deepEqual(JSON.parse(output), {
-        planId: plan.id,
+        issue: issue(),
+        revision: 0,
         taskIds: [ids[0]],
         text: "Visible across processes",
       })
     })
   }))
 
-test("malformed persisted task identity fails instead of returning a partial plan", async () =>
+test("malformed persisted task identity fails instead of returning partial tasks", async () =>
   fixture(async root => {
     const path = join(root, "registry.sqlite")
     await withStore(path, async store => {
-      const plan = await run(store.ensurePlan(issue()))
-      seed(path, plan.id, ids[0], "Valid first row")
-      seed(
+      const row = seedIssueRecord(path)
+      seedTask(path, row, ids[0], "Valid first row")
+      seedTask(
         path,
-        plan.id,
+        row,
         "malformed-uuid",
         "A foreign writer inserted this row",
       )
-      await expectError(store.readPlan(issue(), { limit: 1 }), "corrupt_state")
+      await expectError(store.readTasks(issue(), { limit: 1 }), "corrupt_state")
       sql(path, database =>
         database
           .prepare("DELETE FROM issue_plan_tasks WHERE id = ?")
           .run("malformed-uuid"),
       )
-      const recovered = await run(store.readPlan(issue(), { limit: 1 }))
+      const recovered = await run(store.readTasks(issue(), { limit: 1 }))
       assert.ok(Option.isSome(recovered))
       assert.deepEqual(
         recovered.value.tasks.map(task => task.id),
@@ -229,23 +265,23 @@ test("future feature schema is rejected without changing registry version", asyn
   fixture(async root => {
     const path = join(root, "registry.sqlite")
     await withStore(path, async store => {
-      await run(store.ensurePlan(issue()))
+      await run(appendTask(store))
       sql(path, database =>
         database.exec(
-          "UPDATE issue_plan_schema SET version = 3; PRAGMA user_version = 5;",
+          "UPDATE issue_plan_schema SET version = 5; PRAGMA user_version = 5;",
         ),
       )
       await expectError(
-        store.readPlan(issue(), { limit: 10 }),
+        store.readTasks(issue(), { limit: 10 }),
         "unsupported_schema",
       )
       await expectError(
-        store.ensurePlan(issue("owner/other")),
+        appendTask(store, issue("owner/other")),
         "unsupported_schema",
       )
     })
     await expectError(
-      openSqlitePlanStore({ databasePath: path }),
+      openSqliteTaskStore({ databasePath: path }),
       "unsupported_schema",
     )
     sql(path, database => {
@@ -256,7 +292,7 @@ test("future feature schema is rejected without changing registry version", asyn
       assert.equal(
         database.prepare("SELECT version FROM issue_plan_schema").get()
           ?.version,
-        3,
+        5,
       )
     })
   }))
@@ -264,15 +300,16 @@ test("future feature schema is rejected without changing registry version", asyn
 test("page bounds and closed connections fail explicitly", async () =>
   fixture(async root => {
     const store = await run(
-      openSqlitePlanStore({ databasePath: join(root, "registry.sqlite") }),
+      openSqliteTaskStore({ databasePath: join(root, "registry.sqlite") }),
     )
     try {
       for (const limit of [0, -1, 101, 1.5, Number.NaN])
-        await expectError(store.readPlan(issue(), { limit }), "invalid_input")
+        await expectError(store.readTasks(issue(), { limit }), "invalid_input")
     } finally {
       await run(store.close())
     }
-    await expectError(store.readPlan(issue(), { limit: 10 }), "closed")
+    await expectError(store.readTasks(issue(), { limit: 10 }), "closed")
+    await expectError(appendTask(store), "closed")
     await run(store.close())
   }))
 
@@ -283,13 +320,13 @@ test("symlink database paths are rejected before touching their target", async (
     const path = join(root, "registry.sqlite")
     symlinkSync(target, path)
     await expectError(
-      openSqlitePlanStore({ databasePath: path }),
+      openSqliteTaskStore({ databasePath: path }),
       "invalid_path",
     )
     assert.equal(readFileSync(target, "utf8"), "untouched fixture")
   }))
 
-test("writer lock exhaustion is typed and never creates a partial plan", async () =>
+test("writer lock exhaustion is typed and never creates partial issue tasks", async () =>
   fixture(async root => {
     const path = join(root, "registry.sqlite")
     await withStore(path, async () => {})
@@ -299,10 +336,11 @@ test("writer lock exhaustion is typed and never creates a partial plan", async (
       await withStore(
         path,
         async store => {
-          await expectError(store.ensurePlan(issue()), "busy")
+          await expectError(appendTask(store), "busy")
           lock.exec("ROLLBACK")
-          const result = await run(store.readPlan(issue(), { limit: 10 }))
-          assert.ok(Option.isNone(result))
+          assert.ok(
+            Option.isNone(await run(store.readTasks(issue(), { limit: 10 }))),
+          )
         },
         0,
       )
@@ -314,12 +352,12 @@ test("writer lock exhaustion is typed and never creates a partial plan", async (
 test("partial feature initialization is rejected rather than guessed or replaced", async () =>
   fixture(async root => {
     const path = join(root, "registry.sqlite")
-    await withStore(path, async store => {
-      await run(store.ensurePlan(issue()))
+    await withStore(path, async () => {
+      seedIssueRecord(path)
     })
     sql(path, database => database.exec("DROP TABLE issue_plan_schema"))
     await expectError(
-      openSqlitePlanStore({ databasePath: path }),
+      openSqliteTaskStore({ databasePath: path }),
       "unsupported_schema",
     )
     sql(path, database =>
@@ -335,38 +373,159 @@ test("caller revision tokens and blank persisted blockers are not accepted", asy
   fixture(async root => {
     const path = join(root, "registry.sqlite")
     await withStore(path, async store => {
-      const plan = await run(store.ensurePlan(issue("0xGleb/DotConfig")))
-      assert.equal((await run(store.ensurePlan(issue()))).id, plan.id)
+      const first = await run(
+        store.apply(
+          {
+            issues: [{ repository: "0xGleb/DotConfig", number: 1 }],
+            operations: [
+              {
+                op: "add",
+                issue: { repository: "0xGleb/DotConfig", number: 1 },
+                key: "first",
+                text: "Canonical issue",
+              },
+            ],
+          },
+          {
+            actorId: "fixture",
+            requestId: "canonical",
+            now: 1_000,
+            cancellation: "forbidden",
+          },
+        ),
+      )
+      assert.deepEqual(first.issues, [{ issue: issue(), revision: 1 }])
+      await run(appendTask(store))
+      sql(path, database =>
+        assert.equal(
+          database.prepare("SELECT COUNT(*) AS count FROM issue_plans").get()
+            ?.count,
+          1,
+        ),
+      )
       const extraIssue = { ...issue(), expectedRevisions: {} }
       const extraPage = { limit: 10, expectedRevisions: {} }
-      await expectError(store.ensurePlan(extraIssue), "invalid_input")
-      await expectError(store.readPlan(issue(), extraPage), "invalid_input")
-      seed(path, plan.id, ids[0], "Retain the full requirement")
+      await expectError(
+        store.readTasks(extraIssue, { limit: 10 }),
+        "invalid_input",
+      )
+      await expectError(store.readTasks(issue(), extraPage), "invalid_input")
+      const id = first.created[0]?.id
+      assert.ok(id)
       sql(path, database =>
         database
           .prepare("UPDATE issue_plan_tasks SET blocker = ? WHERE id = ?")
-          .run("   ", ids[0]),
+          .run("   ", id),
       )
-      await expectError(store.readPlan(issue(), { limit: 10 }), "corrupt_state")
+      await expectError(
+        store.readTasks(issue(), { limit: 10 }),
+        "corrupt_state",
+      )
+    })
+  }))
+
+for (const corruption of ["noncanonical-only", "canonical-duplicate"]) {
+  test(`reads and writes reject corrupted qualified issue identity: ${corruption}`, async () =>
+    fixture(async root => {
+      const path = join(root, "registry.sqlite")
+      await withStore(path, async store => {
+        seedIssueRecord(path)
+        sql(path, database => {
+          if (corruption === "noncanonical-only")
+            database
+              .prepare("UPDATE issue_plans SET repository = ?")
+              .run("0xGleb/DotConfig")
+          else
+            database
+              .prepare(
+                "INSERT INTO issue_plans (id, repository, issue_number, revision) VALUES (?, ?, 1, 0)",
+              )
+              .run(randomUUID(), "0xGleb/DotConfig")
+        })
+        await expectError(
+          store.readTasks(issue(), { limit: 10 }),
+          "corrupt_state",
+        )
+        await expectError(appendTask(store), "corrupt_state")
+      })
+    }))
+}
+
+test("production qualified-issue lookups use a bounded index for existing and absent issues", async () =>
+  fixture(async root => {
+    const path = join(root, "registry.sqlite")
+    const repository = "fixture/large"
+    await withStore(path, async store => {
+      sql(path, database => {
+        database.exec("BEGIN IMMEDIATE")
+        const insert = database.prepare(
+          "INSERT INTO issue_plans (id, repository, issue_number, revision) VALUES (?, ?, ?, 0)",
+        )
+        for (let number = 1; number <= 10_000; number++)
+          insert.run(randomUUID(), repository, number)
+        database.exec("COMMIT")
+      })
+      const lookups: string[] = []
+      const prepare = DatabaseSync.prototype.prepare
+      const tracked = mock.method(
+        DatabaseSync.prototype,
+        "prepare",
+        function (this: DatabaseSync, query: string) {
+          if (query.includes("FROM issue_plans WHERE repository ="))
+            lookups.push(query)
+          return prepare.call(this, query)
+        },
+      )
+      try {
+        assert.ok(
+          Option.isSome(
+            await run(store.readTasks(issue(repository, 5_000), { limit: 1 })),
+          ),
+        )
+        assert.ok(
+          Option.isNone(
+            await run(store.readTasks(issue(repository, 10_001), { limit: 1 })),
+          ),
+        )
+        await run(appendTask(store, issue(repository, 5_000)))
+        await run(appendTask(store, issue(repository, 10_001)))
+      } finally {
+        tracked.mock.restore()
+      }
+      assert.ok(lookups.length >= 4)
+      sql(path, database => {
+        for (const query of new Set(lookups)) {
+          for (const number of [5_000, 10_001]) {
+            const plan = database
+              .prepare(`EXPLAIN QUERY PLAN ${query}`)
+              .all(repository, number)
+            assert.ok(
+              plan.some(
+                row =>
+                  typeof row.detail === "string" &&
+                  row.detail.includes(
+                    "SEARCH issue_plans USING INDEX issue_plan_issues_nocase",
+                  ),
+              ),
+            )
+          }
+        }
+      })
     })
   }))
 
 test("a matching-column schema without issue uniqueness is rejected", async () =>
   fixture(async root => {
     const path = join(root, "registry.sqlite")
-    await withStore(path, async store => {
-      await run(store.ensurePlan(issue()))
-    })
+    await withStore(path, async () => {})
     sql(path, database => {
-      database.exec(`
-      DROP TABLE issue_plans;
-      CREATE TABLE issue_plans (
-        id TEXT PRIMARY KEY,
-        repository TEXT NOT NULL,
-        issue_number INTEGER NOT NULL CHECK (issue_number BETWEEN 1 AND 9007199254740991),
-        revision INTEGER NOT NULL CHECK (revision BETWEEN 0 AND 9007199254740991)
-      ) STRICT;
-    `)
+      database.exec(`DROP TABLE issue_plans;
+        CREATE TABLE issue_plans (
+          id TEXT PRIMARY KEY,
+          repository TEXT NOT NULL,
+          issue_number INTEGER NOT NULL CHECK (issue_number BETWEEN 1 AND 9007199254740991),
+          revision INTEGER NOT NULL CHECK (revision BETWEEN 0 AND 9007199254740991)
+        ) STRICT;`)
       const insert = database.prepare(
         "INSERT INTO issue_plans (id, repository, issue_number, revision) VALUES (?, '0xgleb/dotconfig', 1, 0)",
       )
@@ -374,7 +533,7 @@ test("a matching-column schema without issue uniqueness is rejected", async () =
       insert.run(ids[1])
     })
     const opened = await run(
-      Effect.either(openSqlitePlanStore({ databasePath: path })),
+      Effect.either(openSqliteTaskStore({ databasePath: path })),
     )
     if (Either.isRight(opened)) await run(opened.right.close())
     assert.ok(Either.isLeft(opened))
@@ -409,7 +568,7 @@ for (const object of [
         )
       })
       const opened = await run(
-        Effect.either(openSqlitePlanStore({ databasePath: path })),
+        Effect.either(openSqliteTaskStore({ databasePath: path })),
       )
       if (Either.isRight(opened)) await run(opened.right.close())
       sql(path, database =>
@@ -427,9 +586,7 @@ for (const incompatible of ["future", "incomplete"]) {
   test(`rejected ${incompatible} schema does not change persistent journal mode`, async () =>
     fixture(async root => {
       const path = join(root, "registry.sqlite")
-      await withStore(path, async store => {
-        await run(store.ensurePlan(issue()))
-      })
+      await withStore(path, async () => {})
       sql(path, database => {
         assert.equal(
           database.prepare("PRAGMA journal_mode = DELETE").get()?.journal_mode,
@@ -437,12 +594,12 @@ for (const incompatible of ["future", "incomplete"]) {
         )
         database.exec(
           incompatible === "future"
-            ? "UPDATE issue_plan_schema SET version = 3"
+            ? "UPDATE issue_plan_schema SET version = 5"
             : "DROP TABLE issue_plan_schema",
         )
       })
       await expectError(
-        openSqlitePlanStore({ databasePath: path }),
+        openSqliteTaskStore({ databasePath: path }),
         "unsupported_schema",
       )
       sql(path, database =>

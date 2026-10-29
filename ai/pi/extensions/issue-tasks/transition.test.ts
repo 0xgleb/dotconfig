@@ -6,19 +6,14 @@ import {
   issueKey,
   type IssueReference,
 } from "./identity.ts"
-import {
-  PlanIdSchema,
-  TaskIdSchema,
-  type IssuePlan,
-  type TaskId,
-} from "./model.ts"
+import { TaskIdSchema, type IssueTaskRevision, type TaskId } from "./model.ts"
 import { decodeTaskMutationBatch, type TaskMutationBatch } from "./mutations.ts"
 import {
   prepareTaskChanges,
   MAX_TRANSITION_NODES,
   MAX_TRANSITION_EDGES,
   type CurrentTask,
-  type PlanCandidate,
+  type IssueCandidate,
   type TaskSnapshot,
   type TaskMutationContext,
   type PreparedTaskChanges,
@@ -38,17 +33,10 @@ const taskId = (index: number): TaskId => {
   assert.ok(Either.isRight(value))
   return value.right
 }
-const plan = (
+const issueState = (
   issue: IssueReference,
-  index: number,
   revision: number,
-): IssuePlan => {
-  const value = Schema.decodeUnknownEither(PlanIdSchema)(
-    `10000000-0000-4000-8000-${index.toString().padStart(12, "0")}`,
-  )
-  assert.ok(Either.isRight(value))
-  return { id: value.right, issue, revision }
-}
+): IssueTaskRevision => ({ issue, revision })
 const t1 = taskId(1)
 const t2 = taskId(2)
 const current = (
@@ -64,9 +52,9 @@ const current = (
   dependsOn,
 })
 const snapshot = (): TaskSnapshot => ({
-  plans: [
-    { kind: "stored", plan: plan(a, 1, 2) },
-    { kind: "stored", plan: plan(b, 2, 7) },
+  issues: [
+    { kind: "stored", state: issueState(a, 2) },
+    { kind: "stored", state: issueState(b, 7) },
   ],
   tasks: [current(a, t1), current(b, t2)],
   external: [],
@@ -124,7 +112,48 @@ const fails = (
   assert.equal(result.left.code, code)
 }
 
-test("a complete multi-issue batch prepares changes and advances each touched plan once", () => {
+test("creation-qualified aliases survive transfers and preserve intermediate issue revisions", () => {
+  const input = batch([
+    { op: "add", issue: a, key: "moved", text: "Fresh requirement" },
+    { op: "transfer", target: added(a, "moved"), toIssue: b },
+    { op: "status", target: added(a, "moved"), status: "doing" },
+    { op: "edit", target: added(a, "moved"), dependsOn: [existing(a, t1)] },
+    { op: "transfer", target: added(a, "moved"), toIssue: a },
+    {
+      op: "block",
+      target: added(a, "moved"),
+      reason: "External input missing",
+    },
+  ])
+  const result = success(input)
+  const moved = result.tasks.find(task => task.id === taskId(100))
+  assert.ok(moved)
+  assert.deepEqual(moved.issue, a)
+  assert.equal(moved.status, "doing")
+  assert.equal(moved.blocker, "External input missing")
+  assert.deepEqual(moved.dependsOn, [t1])
+  assert.deepEqual(
+    result.issues.map(candidate => [
+      issueKey(candidate.state.issue),
+      candidate.state.revision,
+    ]),
+    [
+      [issueKey(a), 3],
+      [issueKey(b), 8],
+    ],
+  )
+  const transfers = result.events.filter(event => event.op === "transfer")
+  assert.deepEqual(
+    transfers.map(event => [event.splitFrom, event.issue]),
+    [
+      [a, b],
+      [b, a],
+    ],
+  )
+  assert.equal(result.events.length, 6)
+})
+
+test("a complete multi-issue batch prepares changes and advances each touched issue once", () => {
   const input = batch([
     {
       op: "add",
@@ -149,9 +178,9 @@ test("a complete multi-issue batch prepares changes and advances each touched pl
   assert.equal(result.tasks.length, 3)
   assert.equal(result.events.length, 5)
   assert.deepEqual(
-    result.plans.map(candidate => [
-      issueKey(candidate.plan.issue),
-      candidate.plan.revision,
+    result.issues.map(candidate => [
+      issueKey(candidate.state.issue),
+      candidate.state.revision,
     ]),
     [
       [issueKey(a), 3],
@@ -166,23 +195,20 @@ test("a complete multi-issue batch prepares changes and advances each touched pl
   assert.equal(result.changed.length, 3)
 })
 
-test("new plan candidates are persisted only when they receive real task changes", () => {
+test("new issue task state is persisted only when it receives real task changes", () => {
   const input = batch([{ op: "add", issue: a, key: "new", text: "First step" }])
-  const newCandidate = (
-    issue: IssueReference,
-    index: number,
-  ): PlanCandidate => ({
+  const newCandidate = (issue: IssueReference): IssueCandidate => ({
     kind: "new",
-    plan: { ...plan(issue, index, 0), revision: 0 },
+    state: { issue, revision: 0 },
   })
   const result = success(input, {
-    plans: [newCandidate(a, 1), newCandidate(b, 2)],
+    issues: [newCandidate(a), newCandidate(b)],
     tasks: [],
     external: [],
   })
-  assert.equal(result.plans.length, 1)
-  assert.equal(result.plans[0]?.kind, "new")
-  assert.equal(result.plans[0]?.plan.revision, 1)
+  assert.equal(result.issues.length, 1)
+  assert.equal(result.issues[0]?.kind, "new")
+  assert.equal(result.issues[0]?.state.revision, 1)
 })
 
 test("qualified targets cannot redirect a valid task ID to another issue", () => {
@@ -234,7 +260,7 @@ test("cancellation and reopening cancelled work require trusted owner authorizat
 test("cycle checks include the external dependency closure without mutating it", () => {
   const c = taskId(3)
   const state: TaskSnapshot = {
-    plans: snapshot().plans,
+    issues: snapshot().issues,
     tasks: [current(a, t1), current(b, t2, [c])],
     external: [{ id: c, dependsOn: [t1] }],
   }
@@ -299,9 +325,9 @@ test("dependency rewrites validate the final atomic graph, not intermediate orde
 test("no-op batches preserve exhausted revisions but real changes cannot overflow", () => {
   const state: TaskSnapshot = {
     ...snapshot(),
-    plans: [
-      { kind: "stored", plan: plan(a, 1, Number.MAX_SAFE_INTEGER) },
-      { kind: "stored", plan: plan(b, 2, 7) },
+    issues: [
+      { kind: "stored", state: issueState(a, Number.MAX_SAFE_INTEGER) },
+      { kind: "stored", state: issueState(b, 7) },
     ],
   }
   const result = success(
@@ -317,7 +343,7 @@ test("no-op batches preserve exhausted revisions but real changes cannot overflo
     ]),
     state,
   )
-  assert.deepEqual(result, { plans: [], tasks: [], events: [], changed: [] })
+  assert.deepEqual(result, { issues: [], tasks: [], events: [], changed: [] })
   fails(
     batch([{ op: "status", target: existing(a, t1), status: "doing" }]),
     "revision_exhausted",
@@ -438,7 +464,7 @@ test("a new task cannot grow an initially valid component beyond the node budget
       batch([{ op: "status", target: existing(a, t1), status: "todo" }]),
       state,
     ),
-    { plans: [], tasks: [], events: [], changed: [] },
+    { issues: [], tasks: [], events: [], changed: [] },
   )
 
   fails(
