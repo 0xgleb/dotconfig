@@ -648,7 +648,7 @@ test("failed reminder persistence preserves the deferred state and its rank", as
 })
 
 for (const mode of ["headless", "interactive", "unavailable-status"] as const)
-  test(`a scheduled reminder append failure conserves tasks and cannot escape or retry (${mode})`, async t => {
+  test(`a scheduled reminder append failure conserves tasks without escaping or autonomously retrying (${mode})`, async t => {
     const now = Date.UTC(2030, 0, 1)
 
     t.mock.timers.enable({ apis: ["Date", "setTimeout"], now })
@@ -686,11 +686,12 @@ for (const mode of ["headless", "interactive", "unavailable-status"] as const)
     t.mock.timers.tick(3_600_000)
     await setImmediate()
 
-    assert.deepEqual(await f.state(), before)
     assert.deepEqual(f.observations(), {
       ...observed,
       appendAttempts: observed.appendAttempts + 1,
     })
+
+    assert.deepEqual(await f.state(), before)
   })
 
 test("cleared effort stays cleared when an older actual result arrives after the write", async t => {
