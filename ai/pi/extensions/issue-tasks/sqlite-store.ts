@@ -2,6 +2,7 @@ import { createHash, randomUUID } from "node:crypto"
 import { closeSync, lstatSync, openSync, realpathSync } from "node:fs"
 import { dirname, isAbsolute, resolve } from "node:path"
 import { DatabaseSync } from "node:sqlite"
+import { isDeepStrictEqual } from "node:util"
 import { Cause, Data, Effect, Either, Exit, Option, Schema } from "effect"
 import {
   decodeIssueReference,
@@ -1780,6 +1781,11 @@ const persistTaskChanges = (
       return yield* fail(
         "corrupt_state",
         "Saved task request receipt disappeared",
+      )
+    if (!isDeepStrictEqual(stored.value, result))
+      return yield* fail(
+        "corrupt_state",
+        "Saved task receipt disagrees with the prepared result",
       )
 
     for (const plan of plans) {
