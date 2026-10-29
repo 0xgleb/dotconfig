@@ -27,6 +27,10 @@ return {
     dir = paths.molten,
     lazy = false,
     dependencies = { "image.nvim" },
+    config = function()
+      if paths.parsers then vim.opt.runtimepath:prepend(paths.parsers) end
+      require("research.notebook").setup()
+    end,
     init = function()
       vim.g.molten_image_provider = "image.nvim"
       vim.g.molten_auto_open_output = false
