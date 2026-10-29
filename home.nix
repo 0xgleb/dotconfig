@@ -367,6 +367,15 @@ in
       enable = true;
       withRuby = false;
       withPython3 = true;
+      # Home Manager clears the wrapper's packpath. Make Molten visible during
+      # Nix's remote-plugin manifest generation as well as normal startup.
+      extraWrapperArgs = [
+        "--add-flags"
+        "--cmd 'set runtimepath+=${pkgs.vimPlugins.molten-nvim}'"
+        "--add-flags"
+        ''--cmd "lua ${config.programs.neovim.finalPackage.providerLuaRc}"''
+      ];
+
       extraPython3Packages =
         ps: with ps; [
           jupyter-client

@@ -51,6 +51,14 @@ Use `:MoltenInfo` for kernel discovery and `:checkhealth provider` to inspect
 the Python host. The Nix Neovim wrapper registers remote plugins; no pip or
 LuaRocks install is needed.
 
+Verify plugin loading, the Python host and remote registration with:
+
+```sh
+nvim --headless -c "luafile nvim/test_research.lua" -c "qa!"
+```
+
+Run this from `~/.config` using the new Home Manager generation.
+
 Sources:
 [Molten's Home Manager setup](https://github.com/benlubas/molten-nvim/blob/main/docs/NixOS.md),
 [image.nvim](https://github.com/3rd/image.nvim).
