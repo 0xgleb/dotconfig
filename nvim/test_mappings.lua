@@ -92,6 +92,7 @@ assert_mapping("n", " hm", "Man pages")
 assert_mapping("n", " ht", "Change theme")
 
 -- Open
+assert_mapping("n", " e", "Toggle Explorer")
 assert_mapping("n", " on", "File tree")
 assert_mapping("n", " oN", "File tree (reveal current)")
 assert_mapping("n", " op", "Project sidebar")
