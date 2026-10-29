@@ -160,7 +160,12 @@ const TodoParams = Type.Object({
 })
 
 type StatusColor =
-  "success" | "warning" | "accent" | "toolTitle" | "dim" | "muted"
+  | "success"
+  | "warning"
+  | "accent"
+  | "toolTitle"
+  | "dim"
+  | "muted"
 
 const statusColor = (status: TodoStatus | undefined): StatusColor => {
   switch (status) {
@@ -816,7 +821,8 @@ const todoExtension = (
         theme.fg("toolTitle", theme.bold("todo ")) +
         theme.fg("muted", args.action)
       if (args.text) text += ` ${theme.fg("dim", `"${args.text}"`)}`
-      if (args.id !== undefined) text += ` ${theme.fg("accent", `#${args.id}`)}`
+      if (args.id !== undefined && args.action !== "priority_relative")
+        text += ` ${theme.fg("accent", `#${args.id}`)}`
       if (args.parentId !== undefined)
         text += ` ${theme.fg("accent", `subtask of #${args.parentId}`)}`
       if (args.status) text += ` ${theme.fg("accent", args.status)}`

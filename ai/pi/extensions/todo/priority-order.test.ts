@@ -359,6 +359,51 @@ test("valid-shaped invalid priority operations return typed domain failures with
   }
 })
 
+test("bulk ordering preserves state, shape, lookup and eligibility error precedence", () => {
+  for (const { state, ids, tag, message } of [
+    {
+      state: { ...seed, nextId: 1 },
+      ids: [],
+      tag: "TodoInputError",
+      message:
+        "Todo state requires unique positive safe-integer IDs and a nextId greater than every existing ID",
+    },
+    {
+      state: seed,
+      ids: [99, 99],
+      tag: "TodoInputError",
+      message:
+        "Priority order requires a nonempty list of unique positive safe-integer todo IDs",
+    },
+    {
+      state: seed,
+      ids: [4, 99],
+      tag: "TodoNotFoundError",
+      message: "Todo #99 not found",
+    },
+    {
+      state: seed,
+      ids: [4],
+      tag: "TodoInputError",
+      message: "Terminal todo #4 cannot be assigned an active rank",
+    },
+  ]) {
+    const before = structuredClone(state)
+
+    const result = Effect.runSync(
+      Effect.either(
+        transitionTodoState(state, { action: "priority_order", ids }),
+      ),
+    )
+
+    assert.ok(Either.isLeft(result))
+    assert.equal(result.left._tag, tag)
+    assert.equal(result.left.action, "priority_order")
+    assert.equal(result.left.message, message)
+    assert.deepEqual(state, before)
+  }
+})
+
 test("malformed priority requests fail shared decoding before domain execution", () => {
   for (const request of [
     { action: "priority_order", ids: [1, 1, 2] },

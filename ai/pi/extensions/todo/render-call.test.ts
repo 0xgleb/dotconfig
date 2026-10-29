@@ -1,6 +1,14 @@
 import assert from "node:assert/strict"
 import { fileURLToPath } from "node:url"
 import test from "node:test"
+import type {
+  ExtensionAPI,
+  Theme,
+  ToolDefinition,
+} from "@earendil-works/pi-coding-agent"
+import type { TodoRequest } from "./state.ts"
+
+type CallRenderer = NonNullable<ToolDefinition["renderCall"]>
 
 const record = (value: unknown): value is Record<string, unknown> =>
   typeof value === "object" && value !== null
@@ -8,11 +16,9 @@ const record = (value: unknown): value is Record<string, unknown> =>
 const theme = {
   fg: (_kind: string, text: string) => text,
   bold: (text: string) => text,
-}
+} satisfies Pick<Theme, "fg" | "bold">
 
-const loadTool = async (): Promise<{
-  renderCall: (args: never, theme: typeof theme) => { readonly text: string }
-}> => {
+const loadRenderer = async (): Promise<CallRenderer> => {
   const support: unknown = await import(
     new URL("../../../test/pi-host-test-support.mjs", import.meta.url).href
   )
@@ -25,44 +31,69 @@ const loadTool = async (): Promise<{
 
   assert.ok(typeof factory === "function")
 
-  let tool: unknown
-  factory({
-    events: { on: () => {} },
-    registerTool: (definition: unknown) => {
-      tool = definition
+  let renderCall: CallRenderer | undefined
+  const pi = {
+    events: { on: () => () => {}, emit: () => {} },
+    registerTool: definition => {
+      // The test host erases schema/state generics; calls below use TodoRequest.
+      renderCall = definition.renderCall as CallRenderer | undefined
     },
     registerCommand: () => {},
     registerShortcut: () => {},
     on: () => () => {},
-    setWidget: () => {},
-  })
+  } satisfies Pick<
+    ExtensionAPI,
+    "events" | "registerTool" | "registerCommand" | "registerShortcut" | "on"
+  >
+  const partialHost: Partial<ExtensionAPI> = pi
 
-  assert.ok(
-    record(tool) && typeof tool.renderCall === "function",
-    "actual Jiti-loaded todo extension exposes renderCall",
-  )
+  // Registration uses only the SDK-checked host methods above.
+  factory(partialHost as ExtensionAPI)
 
-  return tool as {
-    renderCall: (args: never, theme: typeof theme) => { readonly text: string }
-  }
+  assert.ok(renderCall, "actual Jiti-loaded todo extension exposes renderCall")
+
+  return renderCall
 }
 
-test("priority_relative renders the moved task, direction and reference", async () => {
-  const tool = await loadTool()
-  const rendered = tool.renderCall(
-    { action: "priority_relative", id: 7, referenceId: 3, position: "above" } as never,
-    theme,
-  )
+const render = async (args: TodoRequest): Promise<string> => {
+  const renderCall = await loadRenderer()
+  const hostOptions = { durationMs: undefined, outputPad: 0 }
+  const context = {
+    args,
+    toolCallId: "todo-render-call",
+    invalidate: () => {},
+    lastComponent: undefined,
+    state: undefined,
+    cwd: "/projects/todo-render-fixture",
+    executionStarted: false,
+    argsComplete: true,
+    isPartial: false,
+    expanded: false,
+    showImages: false,
+    isError: false,
+    ...hostOptions,
+  } satisfies Parameters<CallRenderer>[2]
 
-  assert.match(rendered.text, /#7 above #3/)
+  // The renderer uses only fg/bold; component rendering needs no full theme state.
+  return renderCall(args, theme as Theme, context)
+    .render(120)
+    .map(line => line.trimEnd())
+    .join("\n")
+}
+
+test("priority_relative renders the moved task once, direction and reference", async () => {
+  const rendered = await render({
+    action: "priority_relative",
+    id: 7,
+    referenceId: 3,
+    position: "above",
+  })
+
+  assert.equal(rendered, "todo priority_relative #7 above #3")
 })
 
 test("priority_order renders the ordered id sequence", async () => {
-  const tool = await loadTool()
-  const rendered = tool.renderCall(
-    { action: "priority_order", ids: [4, 9, 2] } as never,
-    theme,
-  )
+  const rendered = await render({ action: "priority_order", ids: [4, 9, 2] })
 
-  assert.match(rendered.text, /#4 #9 #2/)
+  assert.equal(rendered, "todo priority_order order #4 #9 #2")
 })

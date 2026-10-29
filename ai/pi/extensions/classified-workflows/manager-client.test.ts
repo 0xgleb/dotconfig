@@ -1,6 +1,12 @@
 import assert from "node:assert/strict"
 import test from "node:test"
-import { mkdtempSync, rmSync } from "node:fs"
+import {
+  mkdtempSync,
+  readFileSync,
+  readdirSync,
+  rmSync,
+  writeFileSync,
+} from "node:fs"
 import { tmpdir } from "node:os"
 import { join } from "node:path"
 import type {
@@ -53,6 +59,21 @@ const fixture = (t: test.TestContext, options: WorkerOptions = {}) => {
     ),
   )
 
+  const requestsDirectory = join(directory.right, "requests")
+  writeFileSync(
+    join(requestsDirectory, "00000000-0000-4000-8000-000000000058.json"),
+    JSON.stringify({ version: 2, operation: "todo", historical: true }),
+    { mode: 0o600 },
+  )
+
+  const requestFiles = () =>
+    readdirSync(requestsDirectory)
+      .toSorted()
+      .map(name => ({
+        name,
+        content: readFileSync(join(requestsDirectory, name), "utf8"),
+      }))
+
   const handlers = new Map<string, ((value: unknown) => void)[]>()
   const pi = {
     getFlag: () => undefined,
@@ -60,22 +81,38 @@ const fixture = (t: test.TestContext, options: WorkerOptions = {}) => {
       on: (name: string, handler: (value: unknown) => void) => {
         handlers.set(name, [...(handlers.get(name) ?? []), handler])
 
-        return () => {}
+        return () => {
+          handlers.set(
+            name,
+            (handlers.get(name) ?? []).filter(listener => listener !== handler),
+          )
+        }
       },
       emit: (name: string, value: unknown) => {
         for (const handler of handlers.get(name) ?? []) handler(value)
       },
     },
-  } as unknown as ExtensionAPI
-  const ctx = {
-    cwd: options.managerCwd ?? scope.cwd,
-    sessionManager: {
-      getSessionId: () => "manager-session",
-      getBranch: () => [],
-    },
-  } as unknown as ExtensionContext
+  } satisfies Pick<ExtensionAPI, "getFlag" | "events">
+  const sessionManager = {
+    getSessionId: () => "manager-session",
+    getBranch: () => [],
+  } satisfies Pick<
+    ExtensionContext["sessionManager"],
+    "getSessionId" | "getBranch"
+  >
 
-  registerManagerBinding(pi, id =>
+  // These clients use only the checked binding and session surfaces.
+  const partialHost: Partial<ExtensionAPI> = pi
+  const host = partialHost as ExtensionAPI
+  const partialSession: Partial<ExtensionContext["sessionManager"]> =
+    sessionManager
+  const context = {
+    cwd: options.managerCwd ?? scope.cwd,
+    sessionManager: partialSession as ExtensionContext["sessionManager"],
+  } satisfies Partial<ExtensionContext>
+  const ctx = context as ExtensionContext
+
+  registerManagerBinding(host, id =>
     id === "manager-session"
       ? {
           role: "manager",
@@ -91,12 +128,13 @@ const fixture = (t: test.TestContext, options: WorkerOptions = {}) => {
     wait: async () => assert.fail("An unavailable mutation must not poll"),
   }
 
-  return { pi, ctx, state: state.right, runtime }
+  return { pi: host, ctx, state: state.right, runtime, requestFiles }
 }
 
 for (const managerCwd of ["/projects/worker", "/global/manager"])
   test(`manager task calls fail closed for the selected worker from ${managerCwd}`, async t => {
     const worker = fixture(t, { managerCwd })
+    const before = worker.requestFiles()
 
     for (const request of [
       { action: "list" },
@@ -114,6 +152,7 @@ for (const managerCwd of ["/projects/worker", "/global/manager"])
 
       assert.equal(result.isError, true)
       assert.deepEqual(result.details, { outcome: "unavailable" })
+      assert.deepEqual(worker.requestFiles(), before)
 
       const first = result.content[0]
       assert.ok(first)
@@ -142,6 +181,7 @@ for (const [option, request, message] of [
 ] as const)
   test(`a worker without ${option} cannot receive speculative mutations`, async t => {
     const worker = fixture(t, { [option]: false })
+    const before = worker.requestFiles()
 
     const result = await invokeManagerTodo(
       worker.pi,
@@ -153,6 +193,7 @@ for (const [option, request, message] of [
 
     assert.equal(result.isError, true)
     assert.deepEqual(result.details, { outcome: "unavailable" })
+    assert.deepEqual(worker.requestFiles(), before)
 
     const first = result.content[0]
     assert.ok(first)

@@ -6,6 +6,7 @@ import { setImmediate } from "node:timers/promises"
 import type {
   ExtensionAPI,
   ExtensionContext,
+  ExtensionUIContext,
 } from "@earendil-works/pi-coding-agent"
 import { Either, Option } from "effect"
 import { decodeTodoControl, requestTodoControl } from "./control.ts"
@@ -68,23 +69,43 @@ const fixture = async (
     (args: string, ctx: ExtensionContext) => Promise<void>
   >()
 
-  let duringUi: (() => void) | undefined
+  let uiDecision: Promise<string> | undefined
+  let signalUiOpened: (() => void) | undefined
   let failAppend = false
   let failStatus = false
   let appendAttempts = 0
   let tool:
-    | {
-        readonly name: string
-        readonly parameters: unknown
-        execute: (
-          id: string,
-          request: TodoRequest,
-          signal: undefined,
-          update: undefined,
-          ctx: ExtensionContext,
-        ) => Promise<unknown>
-      }
+    | Pick<
+        Parameters<ExtensionAPI["registerTool"]>[0],
+        "name" | "parameters" | "execute"
+      >
     | undefined
+
+  const on: ExtensionAPI["on"] = (name, callback) => {
+    // The fixture drives only the captured lifecycle hooks, not every SDK event.
+    const captured = callback as unknown as (
+      event: unknown,
+      ctx: ExtensionContext,
+    ) => unknown
+
+    hooks.set(name, [...(hooks.get(name) ?? []), captured])
+
+    return () => {
+      hooks.set(
+        name,
+        (hooks.get(name) ?? []).filter(hook => hook !== captured),
+      )
+    }
+  }
+
+  const custom: ExtensionUIContext["custom"] = async <T>() => {
+    const opened = signalUiOpened
+    signalUiOpened = undefined
+    opened?.()
+
+    // This fixture chooses the unblock action; it does not implement a TUI.
+    return (uiDecision === undefined ? "unblock" : await uiDecision) as T
+  }
 
   const pi = {
     events: {
@@ -93,7 +114,9 @@ const fixture = async (
         callbacks.add(callback)
         listeners.set(name, callbacks)
 
-        return () => callbacks.delete(callback)
+        return () => {
+          callbacks.delete(callback)
+        }
       },
       emit: (name: string, value: unknown) => {
         if (name === BRANCH_TODO_BACKLOG_EVENT) publications.push(value)
@@ -102,26 +125,25 @@ const fixture = async (
       },
     },
 
-    on: (
-      name: string,
-      callback: (event: unknown, ctx: ExtensionContext) => unknown,
-    ) => hooks.set(name, [...(hooks.get(name) ?? []), callback]),
+    on,
 
-    registerTool: (definition: typeof tool) => {
+    registerTool: definition => {
       tool = definition
     },
 
-    registerCommand: (
-      name: string,
-      definition: {
-        handler: (args: string, ctx: ExtensionContext) => Promise<void>
-      },
-    ) => {
-      commands.set(name, definition.handler)
+    registerCommand: (name, definition) => {
+      // The captured blocked command uses only the base extension context.
+      commands.set(
+        name,
+        definition.handler as (
+          args: string,
+          ctx: ExtensionContext,
+        ) => Promise<void>,
+      )
     },
     registerShortcut: () => {},
 
-    appendEntry: (customType: string, data: unknown) => {
+    appendEntry: (customType, data) => {
       appendAttempts += 1
 
       if (failAppend) {
@@ -136,47 +158,72 @@ const fixture = async (
         id: `entry-${entries.length}`,
       })
     },
-  } as unknown as ExtensionAPI
+  } satisfies Pick<
+    ExtensionAPI,
+    | "events"
+    | "on"
+    | "registerTool"
+    | "registerCommand"
+    | "registerShortcut"
+    | "appendEntry"
+  >
 
-  const ctx = {
+  const ui = {
+    notify: message => {
+      notifications.push(message)
+    },
+    setStatus: (_key, value) => {
+      if (failStatus) {
+        failStatus = false
+        assert.fail("Injected SDK status failure")
+      }
+
+      statuses.push(value)
+    },
+    setWidget: () => {},
+    onTerminalInput: () => () => {},
+    select: async (_title, choices) => choices[0],
+    custom,
+  } satisfies Pick<
+    ExtensionUIContext,
+    | "notify"
+    | "setStatus"
+    | "setWidget"
+    | "onTerminalInput"
+    | "select"
+    | "custom"
+  >
+
+  const sessionManager = {
+    getSessionId: () => "identity-worker",
+    // Hydration consumes these entry projections, not full SDK session records.
+    getBranch: () =>
+      entries as unknown as ReturnType<
+        ExtensionContext["sessionManager"]["getBranch"]
+      >,
+  } satisfies Pick<
+    ExtensionContext["sessionManager"],
+    "getSessionId" | "getBranch"
+  >
+
+  // Ordinary methods are checked above; only unexercised host surfaces are absent.
+  const partialHost: Partial<ExtensionAPI> = pi
+  const host = partialHost as ExtensionAPI
+  const partialUi: Partial<ExtensionUIContext> = ui
+  const context = {
     cwd: "/projects/todo-identity-fixture",
     hasUI: mode === "interactive",
     mode: "tui",
     isIdle: () => true,
-    sessionManager: {
-      getSessionId: () => "identity-worker",
-      getBranch: () => entries,
-    },
-    ui: {
-      notify: (message: string) => notifications.push(message),
-      setStatus: (_key: string, value: string | undefined) => {
-        if (failStatus) {
-          failStatus = false
-          assert.fail("Injected SDK status failure")
-        }
+    sessionManager: sessionManager as ExtensionContext["sessionManager"],
+    ui: partialUi as ExtensionUIContext,
+  } satisfies Partial<ExtensionContext>
+  const ctx = context as ExtensionContext
 
-        statuses.push(value)
-      },
-      setWidget: () => {},
-      onTerminalInput: () => () => {},
-      select: async (_title: string, choices: string[]) => choices[0],
-      custom: async () => {
-        if (duringUi) {
-          const action = duringUi
-          duringUi = undefined
-
-          queueMicrotask(() => queueMicrotask(action))
-        }
-
-        return "unblock"
-      },
-    },
-  } as unknown as ExtensionContext
-
-  registerManagerBinding(pi, id =>
+  registerManagerBinding(host, id =>
     id === "identity-worker" ? { role: "worker" } : undefined,
   )
-  factory(pi)
+  factory(host)
 
   const hook = async (name: string) => {
     for (const callback of hooks.get(name) ?? []) await callback({}, ctx)
@@ -187,7 +234,22 @@ const fixture = async (
   const run = (request: TodoRequest) => {
     assert.ok(tool)
 
-    return tool.execute("identity-call", request, undefined, undefined, ctx)
+    const toolFacilities = {
+      tools: [],
+      executeTool: async () => assert.fail("Unexpected nested tool invocation"),
+    }
+    const toolContext = {
+      ...ctx,
+      ...toolFacilities,
+    } satisfies Parameters<typeof tool.execute>[4]
+
+    return tool.execute(
+      "identity-call",
+      request,
+      undefined,
+      undefined,
+      toolContext,
+    )
   }
 
   const validate = (request: unknown): unknown => {
@@ -212,7 +274,7 @@ const fixture = async (
   }
 
   const control = (request: TodoRequest) => {
-    const result = requestTodoControl(pi, ctx, request)
+    const result = requestTodoControl(host, ctx, request)
 
     assert.ok(Either.isRight(result))
     assert.equal(result.right.isError, false, result.right.message)
@@ -275,8 +337,21 @@ const fixture = async (
     failNextStatus: () => {
       failStatus = true
     },
-    duringUi: (action: () => void) => {
-      duringUi = action
+    pauseUi: () => {
+      let decide: ((value: string) => void) | undefined
+      uiDecision = new Promise(resolve => {
+        decide = resolve
+      })
+
+      return {
+        opened: new Promise<void>(resolve => {
+          signalUiOpened = resolve
+        }),
+        chooseUnblock: () => {
+          assert.ok(decide, "the UI decision is pending")
+          decide("unblock")
+        },
+      }
     },
     persistRaw: (data: unknown) => {
       entries.push({ type: "custom", customType: "todo.state", data })
@@ -499,13 +574,28 @@ test("a native UI state change and concurrent manager add preserve both mutation
   await f.run({ action: "add", text: "Held task", effort: 3 })
   await f.run({ action: "block", id: 1, reason: "Decision" })
 
-  f.duringUi(() => {
-    f.control({ action: "add", text: "Concurrent manager task", effort: 8 })
-  })
+  const decision = f.pauseUi()
+  const pendingUi = f.unblockUi()
+  await decision.opened
 
-  await f.unblockUi()
+  f.control({ action: "add", text: "Concurrent manager task", effort: 8 })
+
+  const committedBeforeUi = await f.state()
+  const beforeUiEntries = f.observations().entries
+
+  assert.equal(committedBeforeUi.todos[0]?.status, "blocked")
+  assert.equal(committedBeforeUi.todos[1]?.text, "Concurrent manager task")
+  assert.equal(committedBeforeUi.todos[1]?.effort, 8)
+  assert.deepEqual(beforeUiEntries.at(-1)?.data, committedBeforeUi)
+
+  decision.chooseUnblock()
+  await pendingUi
 
   const after = await f.state()
+  const afterUiEntries = f.observations().entries
+
+  assert.equal(afterUiEntries.length, beforeUiEntries.length + 1)
+  assert.deepEqual(afterUiEntries.at(-1)?.data, after)
 
   assert.equal(after.todos[0]?.status, "pending")
   assert.equal(after.todos[0]?.effort, 3)
