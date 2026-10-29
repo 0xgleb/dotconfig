@@ -84,6 +84,7 @@
       "chatgpt"
       "coderabbit"
       "font-jetbrains-mono-nerd-font"
+      "ghostty"
       "karabiner-elements"
       "tailscale-app"
     ];

@@ -21,13 +21,15 @@ AstroNvim v5 config managed alongside the nix-darwin flake.
 ## Haskell research
 
 Home Manager installs Molten, image.nvim, ImageMagick and a Python provider with
-Jupyter client support. Apply the configuration with
-`darwin-rebuild switch --flake ~/.config`, then restart Neovim.
+Jupyter client support. The Ghostty Homebrew cask is declared in `darwin.nix`.
+Apply the configuration with `darwin-rebuild switch --flake ~/.config`, then
+restart Neovim.
 
 In Ghostty, enter Yielduck's research shell with `nix develop .#research` and
 open `research/scratch.hs`. This shell exposes the `yielduck-haskell` kernel; it
-does not register a global kernel. Run Neovim directly in Ghostty for inline
-images. Image rendering through Zellij has not been verified.
+does not register a global kernel. Use a Kitty-graphics terminal such as
+Ghostty. Zellij 0.45+ also supports this protocol; visual chart placement in
+this setup still needs verification.
 
 Select code paragraphs without their explanatory comments, then evaluate them.
 Definitions persist until the kernel is stopped. In the scratch file, evaluate
@@ -61,7 +63,8 @@ Run this from `~/.config` using the new Home Manager generation.
 
 Sources:
 [Molten's Home Manager setup](https://github.com/benlubas/molten-nvim/blob/main/docs/NixOS.md),
-[image.nvim](https://github.com/3rd/image.nvim).
+[image.nvim](https://github.com/3rd/image.nvim),
+[Zellij graphics support](https://github.com/zellij-org/zellij/blob/main/CHANGELOG.md).
 
 ## Keybindings Cheatsheet
 
