@@ -259,9 +259,9 @@
           nushell-config =
             pkgs.runCommand "nushell-config-test"
               {
-                nativeBuildInputs = with pkgs; [
-                  atuin
-                  nushell
+                nativeBuildInputs = [
+                  self.legacyPackages.aarch64-darwin.atuin
+                  pkgs.nushell
                 ];
               }
               ''
