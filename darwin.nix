@@ -72,14 +72,14 @@
   homebrew = {
     enable = true;
 
-    brews = [ "tkhq/tap/turnkey" ];
+    # brews = [ "tkhq/tap/turnkey" ];
     casks = [
       "amethyst"
       "chatgpt"
-      "coderabbit"
+      # "coderabbit"
       "font-jetbrains-mono-nerd-font"
       "karabiner-elements"
-      "tailscale-app"
+      # "tailscale-app"
     ];
 
     onActivation = {
