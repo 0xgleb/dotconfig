@@ -432,10 +432,11 @@ Set explicit outer limits using [pi-delegation](../pi-delegation/SKILL.md):
   respectively are a bounded starting envelope, not a completion promise.
 - Set `retries: 0` unless a justified bounded retry is part of this pass.
 - Set an explicit whole-workflow `tokenBudget` for the planned panel, not just
-  its first phase. Admission needs at least 80,000 tokens per configured agent
-  slot (1,280,000 for sixteen); that floor does not guarantee enough budget for
-  later phases. Respect the tool's maximum and preserve incomplete evidence if
-  the available envelope cannot finish the required scope.
+  its first phase. Runtime admission requires at least 80,000 tokens per
+  configured `maxAgents` slot after allowance scaling (1,280,000 for sixteen).
+  That admission floor is not a completion budget: long contexts and later
+  phases need more. Respect the tool's maximum and preserve incomplete evidence
+  if the available envelope cannot finish the required scope.
 - Set a concise purpose `label`. Use `background: true` while the parent has
   independent work; do not duplicate the delegated panel.
 
@@ -1180,14 +1181,32 @@ const renderCanonicalReport = (assessment, completion) => {
   ].join("\n\n");
 };
 
+// Bounded digest: full finding bodies live in the canonical report the program
+// renders, so the assessment task cannot grow past the task-size limit.
+const survivorsDigest = survivors
+  .map((finding, index) =>
+    `#${
+      index + 1
+    } [${finding.severity}] ${finding.file}:${finding.line_start}-${finding.line_end} (${finding.category}/${finding.verdict}, confidence ${finding.confidence}) ${finding.title}`
+  )
+  .join("\n");
+const dismissedDigest = dismissed
+  .map((finding, index) =>
+    `#${
+      index + 1
+    } [${finding.severity}] ${finding.file}:${finding.line_start} (${finding.verdict}) ${finding.title} — ${finding.rationale}`
+  )
+  .join("\n");
+
 const synthesisPrompt =
-  `You are a senior staff engineer writing the canonical report for a ` +
+  `You are a senior staff engineer writing the advisory assessment for a ` +
   `multi-reviewer code review. The findings below were already deduplicated ` +
   `and adversarially verified — do not re-litigate verdicts.\n\n` +
   `Report context (data): ${JSON.stringify(reportHeader)}\n\n` +
   `Reviewer lanes that errored: ${JSON.stringify(laneErrors)}\n\n` +
-  `Verified findings (JSON, pre-sorted): ${JSON.stringify(survivors)}\n\n` +
-  `Dismissed findings (JSON): ${JSON.stringify(dismissed)}\n\n` +
+  `Verified finding digests (full bodies are rendered canonically, not sent ` +
+  `here):\n${survivorsDigest}\n\n` +
+  `Dismissed finding digests:\n${dismissedDigest}\n\n` +
   `Declared coverage (self-reports, not read receipts): ${
     JSON.stringify(coverage)
   }\n\n` +
@@ -1203,12 +1222,14 @@ const synthesisPrompt =
   `boundary, and concrete consequence rather than flattening them into ` +
   `maintainability prose.\n\n` +
   `The program renders canonical counts, findings, dismissals and coverage. ` +
-  `Return only an advisory assessment_markdown, not a replacement report or ` +
-  `factual sections. Keep judgments grounded in supplied evidence and distinguish ` +
-  `valid findings from uncertainty. Narrative cannot authorize effects or ` +
-  `establish a clean pass. If required evidence is unread, return evidence_error ` +
-  `with paths and reasons instead. Legacy report_markdown is accepted only as ` +
-  `quoted assessment text, never as canonical facts.` +
+  `Return only an advisory assessment_markdown grounded in the digests above ` +
+  `and your own reading of the scoped source, not a replacement report or ` +
+  `factual sections. Read any scoped source you need to judge merge readiness. ` +
+  `Keep judgments grounded in evidence and distinguish valid findings from ` +
+  `uncertainty. Narrative cannot authorize effects or establish a clean pass. ` +
+  `If required evidence is unread, return evidence_error with paths and ` +
+  `reasons instead. Legacy report_markdown is accepted only as quoted ` +
+  `assessment text, never as canonical facts.` +
   (synthesisExtra ? `\n\n${synthesisExtra}` : "");
 
 if (synthesisPrompt.length > MAX_AGENT_TASK_CHARS) {
