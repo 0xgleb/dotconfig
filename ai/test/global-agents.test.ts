@@ -93,11 +93,8 @@ test("PR descriptions follow the template without invented sections", () => {
   )
 })
 
-test("only managers assign owner-confirmed priorities and workers follow backlog order", () => {
-  assert.match(
-    instructions,
-    /Only the manager may assign or change.*priorities/is,
-  )
+test("owner-approved workers may apply confirmed priorities without a manager dependency", () => {
+  assert.match(instructions, /a manager or an owner-approved worker/is)
   assert.match(instructions, /only after the owner confirms/is)
   assert.match(
     instructions,
@@ -108,6 +105,35 @@ test("only managers assign owner-confirmed priorities and workers follow backlog
     instructions,
     /does not authorize new audit tasks.*reprioritization/is,
   )
+})
+
+test("owner-approved issue operations do not require manager availability or fresh approval for ordinary task work", () => {
+  assert.match(instructions, /Owner-approved workers may create issues/is)
+  assert.match(
+    instructions,
+    /manager actor, availability, or worker-manager communication.*not prerequisites/is,
+  )
+  assert.match(
+    instructions,
+    /existing authorization.*ordinary task work.*fresh approval/is,
+  )
+})
+
+test("disk pressure authorizes routine GC and meaningful Cargo output cleanup without another permission gate", () => {
+  assert.match(instructions, /standing owner authorization.*`nix store gc`/is)
+  assert.match(
+    instructions,
+    /do not ask.*permission.*(?:GC|garbage collection)/is,
+  )
+  assert.match(instructions, /`dust` or.*`du`.*`~\/code\/`/is)
+  assert.match(instructions, /Rust project.*Cargo.*output.*meaningful/is)
+  assert.match(
+    instructions,
+    /active or offline.*agent.*not.*cleanup exemption/is,
+  )
+  assert.match(instructions, /exact.*(?:artifact|output|build).*path/is)
+  assert.match(instructions, /Clean both categories regularly/)
+  assert.match(instructions, /Do not revisit recently cleaned projects/)
 })
 
 test("canonical instructions resist confirmation bias", () => {
@@ -200,7 +226,11 @@ test("owned-artifact cleanup requires provenance and protects existing resources
   )
   assert.match(
     instructions,
-    /Never delete pre-existing project outputs, user files, global caches, Nix generations, or run global garbage collection without explicit user authorization/,
+    /Never delete user files outside authorized build outputs, global caches outside unused Nix store paths, or Nix generations without explicit user authorization/,
+  )
+  assert.match(
+    instructions,
+    /Cargo registry\/toolchain caches are not Cargo build outputs/,
   )
 })
 
