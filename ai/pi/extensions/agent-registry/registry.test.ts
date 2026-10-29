@@ -565,7 +565,7 @@ test("a killed SQLite writer rolls back before another process proceeds", async 
     await closed
     const snapshot = await Effect.runPromise(store.snapshot(1_000))
     assert.equal(
-      snapshot.leases.some(({ role }) => role === "crashed"),
+      snapshot.leases.some(({ id }) => id === "crashed-lease"),
       false,
     )
   })
@@ -1523,7 +1523,7 @@ test("expired leases are purged before capacity checks and expiration arithmetic
     ) VALUES (?, ?, ?, 'task', 'old', 1, 'p1', 0, 0, 1, 'active')`)
     database.exec("BEGIN IMMEDIATE")
     for (let index = 0; index < 1_024; index += 1) {
-      insert.run(`/workspace/${index}`, `role-${index}`, `lease-${index}`)
+      insert.run(`/workspace/${index}`, "driver-worker", `lease-${index}`)
     }
     database.exec("COMMIT")
     database.close()

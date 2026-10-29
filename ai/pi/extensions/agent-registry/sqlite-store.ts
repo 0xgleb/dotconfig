@@ -3,7 +3,11 @@ import { dirname, isAbsolute, join, normalize, relative, sep } from "node:path"
 import { randomUUID } from "node:crypto"
 import { DatabaseSync } from "node:sqlite"
 import { Cause, Effect, Either, Exit } from "effect"
-import { decodeAgentRole, type AgentRole } from "../shared/agent-role.ts"
+import {
+  AGENT_ROLES,
+  decodeAgentRole,
+  type AgentRole,
+} from "../shared/agent-role.ts"
 import {
   BacklogError,
   ingestBacklogSource,
@@ -397,6 +401,62 @@ const roleNameEffect = (role: unknown): RegistryEffect<AgentRole> =>
     onRight: role => Effect.succeed(role),
   })
 
+const persistedRoleEffect = (
+  value: unknown,
+  kind: "lease" | "request",
+  id: string,
+): RegistryEffect<AgentRole> =>
+  Either.match(decodeAgentRole(value), {
+    onLeft: () =>
+      failRegistry(
+        "corrupt_state",
+        `registry ${kind} ${JSON.stringify(id.slice(0, 80))} has an unsupported agent role`,
+      ),
+    onRight: role => Effect.succeed(role),
+  })
+
+const validateStoredRolesEffect = (
+  database: DatabaseSync,
+): RegistryEffect<void> =>
+  Effect.gen(function* () {
+    const placeholders = AGENT_ROLES.map(() => "?").join(", ")
+    const raw = yield* dbCall(
+      "Could not inspect persisted registry roles",
+      () =>
+        database
+          .prepare(
+            `
+        SELECT 'lease' AS record_kind, lease_id AS record_id, role
+        FROM leases
+        WHERE typeof(role) != 'text'
+          OR role COLLATE BINARY NOT IN (${placeholders})
+        UNION ALL
+        SELECT 'request' AS record_kind, request_id AS record_id, role
+        FROM requests
+        WHERE typeof(role) != 'text'
+          OR role COLLATE BINARY NOT IN (${placeholders})
+        LIMIT 1
+      `,
+          )
+          .get(...AGENT_ROLES, ...AGENT_ROLES),
+    )
+    const row = yield* optionalRowEffect(raw)
+
+    if (!row) return
+
+    const kind = yield* requiredStringField(row, "record_kind")
+
+    if (kind !== "lease" && kind !== "request")
+      return yield* failRegistry(
+        "corrupt_state",
+        "registry role inventory kind is malformed",
+      )
+
+    const id = yield* requiredStringField(row, "record_id")
+
+    yield* persistedRoleEffect(row.role, kind, id)
+  })
+
 const leaseModeEffect = (value: unknown): RegistryEffect<Lease["mode"]> =>
   value === "task" || value === "operational"
     ? Effect.succeed(value)
@@ -758,6 +818,8 @@ const activitiesRowEffect = (
 
 const leaseRowEffect = (row: Row): RegistryEffect<Lease> =>
   Effect.gen(function* () {
+    const id = yield* requiredStringField(row, "lease_id")
+    const role = yield* persistedRoleEffect(row.role, "lease", id)
     const status = yield* requiredStringField(row, "status")
     const mode = yield* requiredStringField(row, "mode")
     if (status !== "active" && status !== "paused" && status !== "suspended")
@@ -779,9 +841,9 @@ const leaseRowEffect = (row: Row): RegistryEffect<Lease> =>
       ...(runtimeVersions ? { runtimeVersions } : {}),
     }
     const base: Omit<Lease, "status"> = {
-      id: yield* requiredStringField(row, "lease_id"),
+      id,
       project: yield* requiredStringField(row, "project"),
-      role: yield* requiredStringField(row, "role"),
+      role,
       mode,
       owner,
       policyDigest: yield* requiredStringField(row, "policy_digest"),
@@ -827,6 +889,8 @@ const registeredAgentRowEffect = (row: Row): RegistryEffect<RegisteredAgent> =>
 
 const requestRowEffect = (row: Row): RegistryEffect<RegistryRequest> =>
   Effect.gen(function* () {
+    const id = yield* requiredStringField(row, "request_id")
+    const role = yield* persistedRoleEffect(row.role, "request", id)
     const status = yield* requiredStringField(row, "status")
     const requesterAcknowledgedAt = yield* optionalNumberFieldEffect(
       row,
@@ -860,9 +924,9 @@ const requestRowEffect = (row: Row): RegistryEffect<RegistryRequest> =>
     const requesterLabel = yield* optionalStringField(row, "requester_label")
     const requesterCwd = yield* optionalStringField(row, "requester_cwd")
     const base = {
-      id: yield* requiredStringField(row, "request_id"),
+      id,
       project: yield* requiredStringField(row, "project"),
-      role: yield* requiredStringField(row, "role"),
+      role,
       requesterId: yield* requiredStringField(row, "requester_id"),
       ...(requesterLabel ? { requesterLabel } : {}),
       ...(requesterCwd ? { requesterCwd } : {}),
@@ -2067,6 +2131,7 @@ const initializeEffect = (
       observedVersion === SCHEMA_VERSION &&
       (yield* currentAdditiveSchemaEffect(database))
     ) {
+      yield* validateStoredRolesEffect(database)
       yield* dbCall("Could not secure registry database", () =>
         chmodSync(databasePath, 0o600),
       )
@@ -2249,6 +2314,7 @@ const initializeEffect = (
             "priority TEXT NOT NULL DEFAULT 'normal'",
           )
         }
+        yield* validateStoredRolesEffect(database)
         yield* dbCall("Could not install backlog schema", () =>
           installBacklogSchema(database),
         )
@@ -2724,7 +2790,7 @@ export const makeSqliteRegistryStore: (
   ): RegistryEffect<T> =>
     databaseTransactionEffect(
       database,
-      work,
+      validateStoredRolesEffect(database).pipe(Effect.andThen(work)),
       transactionBeginSignal,
       databaseAccess.retire,
     )
@@ -2735,6 +2801,7 @@ export const makeSqliteRegistryStore: (
       useDatabaseEffect(databaseAccess, "Could not read registry", database =>
         Effect.gen(function* () {
           const timestamp = yield* validateTimeEffect("now", now)
+          yield* validateStoredRolesEffect(database)
           const raw = yield* dbCall("Could not read registry", () => ({
             agents: database
               .prepare(

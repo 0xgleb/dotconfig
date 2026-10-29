@@ -34,7 +34,7 @@ const snapshot: RegistrySnapshot = {
     {
       id: "lease-1",
       project: "/workspace",
-      role: "developer",
+      role: "driver-worker",
       mode: "operational",
       status: "active",
       owner: agent,
@@ -500,7 +500,7 @@ test("a receipt and backlog reconciliation cannot both wake in one sync", async 
         {
           id: "request-1",
           project: "/workspace",
-          role: "developer",
+          role: "driver-worker",
           requesterId: "source",
           text: "inspect",
           priority: "urgent",

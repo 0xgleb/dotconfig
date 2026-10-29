@@ -34,7 +34,7 @@ if (mode === "claim") {
     )
     .run(
       "/workspace/project",
-      "crashed",
+      "driver-worker",
       "crashed-lease",
       "task",
       "crashed",
