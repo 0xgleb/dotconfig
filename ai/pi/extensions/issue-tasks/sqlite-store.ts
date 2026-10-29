@@ -768,9 +768,10 @@ const SavedResultSchema = Schema.Struct({
 type ChangedField = TaskChangeSummary["fields"][number]
 const MAX_TRANSFER_EVENT_TEXT = 4_096
 const MAX_EDIT_EVENT_TEXT = 2_097_152
+const MAX_RECEIPT_TEXT = 1_048_576
 
-type StoredTextColumn = "id" | "text" | "status" | "blocker"
-type StoredTextLimit = 9 | 36 | typeof MAX_TASK_TEXT
+type StoredTextColumn = "id" | "text" | "status" | "blocker" | "result_json"
+type StoredTextLimit = 9 | 36 | typeof MAX_TASK_TEXT | typeof MAX_RECEIPT_TEXT
 // Admit UTF-8 and UTF-16 byte representations; schemas retain exact code-unit limits.
 const boundedStoredText = (
   column: StoredTextColumn,
@@ -912,22 +913,22 @@ const readReceipt = (
     const raw = yield* io("Could not read task request receipt", () =>
       database
         .prepare(
-          "SELECT id, fingerprint, result_json FROM issue_plan_batches WHERE actor_id = ? AND request_id = ?",
+          `SELECT ${boundedStoredText("id", 36)} AS id, CASE WHEN typeof(fingerprint) != 'text' THEN -1 WHEN octet_length(fingerprint) > ${3 * fingerprint.length} THEN 0 ELSE fingerprint = ? COLLATE BINARY END AS fingerprint_matches, ${boundedStoredText("result_json", MAX_RECEIPT_TEXT)} AS result_json FROM issue_plan_batches WHERE actor_id = ? AND request_id = ?`,
         )
-        .get(context.actorId, context.requestId),
+        .get(fingerprint, context.actorId, context.requestId),
     )
     if (raw === undefined) return Option.none()
     const row = yield* decode(
       Schema.Struct({
         id: MutationBatchIdSchema,
-        fingerprint: Schema.String,
-        result_json: Schema.String.pipe(Schema.maxLength(1_048_576)),
+        fingerprint_matches: Schema.Literal(0, 1),
+        result_json: Schema.String.pipe(Schema.maxLength(MAX_RECEIPT_TEXT)),
       }),
       raw,
       "corrupt_state",
       "Invalid task receipt",
     )
-    if (row.fingerprint !== fingerprint)
+    if (row.fingerprint_matches !== 1)
       return yield* Effect.fail(
         new TaskRequestConflictError({
           code: "request_conflict",
@@ -1596,7 +1597,7 @@ const persistTaskChanges = (
       created: result.created,
       eventCount: result.eventCount,
     })
-    if (resultJson.length > 1_048_576)
+    if (resultJson.length > MAX_RECEIPT_TEXT)
       return yield* fail("capacity", "Task result exceeds its receipt budget")
     const scopeJson = yield* encodedJson(batch.issues)
     const receiptWrite = yield* io("Could not save task request receipt", () =>

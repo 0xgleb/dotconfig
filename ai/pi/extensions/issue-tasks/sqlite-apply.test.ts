@@ -119,7 +119,7 @@ const observeReads = async <A>(
 }
 const materializedStrings = (
   reads: readonly ObservedRead[],
-  field: string,
+  field?: string,
 ): readonly string[] => {
   const entries: readonly (readonly [string, unknown])[] = reads.flatMap(
     read => {
@@ -128,7 +128,9 @@ const materializedStrings = (
         : [read.result]
       return rows.flatMap(row => {
         if (typeof row !== "object" || row === null) return []
-        return Object.entries(row).filter(([name]) => name === field)
+        return Object.entries(row).filter(
+          ([name]) => field === undefined || name === field,
+        )
       })
     },
   )
@@ -1803,6 +1805,114 @@ for (const [table, mutation] of [
     }))
 }
 
+test("receipt JSON is bounded before driver materialization", async () =>
+  fixture(async path => {
+    await withStore(path, async store => {
+      const input = batch([{ op: "add", issue: a, key: "one", text: "One" }])
+      const request = context("bounded-receipt-json")
+      const saved = await run(store.apply(input, request))
+      const envelope = 3 * 1_048_576
+      writeReceiptJson(path, saved.batchId, " ".repeat(envelope + 1))
+      const observed = await observeReads(
+        query =>
+          query.includes(
+            "FROM issue_plan_batches WHERE actor_id = ? AND request_id = ?",
+          ),
+        () => run(Effect.either(store.apply(input, request))),
+      )
+      assert.ok(Either.isLeft(observed.value))
+      assert.equal(observed.value.left.code, "corrupt_state")
+      assert.ok(observed.reads.length > 0)
+      assert.ok(
+        materializedStrings(observed.reads, "result_json").every(
+          value => Buffer.byteLength(value, "utf8") <= envelope,
+        ),
+        "Oversized receipt JSON crossed the SQLite driver boundary",
+      )
+    })
+  }))
+
+for (const encoding of ["UTF-8", "UTF-16le", "UTF-16be"] as const) {
+  test(`receipt replay preserves accepted duplicate keys, escaped NUL and boundary padding: ${encoding}`, async () =>
+    fixture(async path => {
+      sql(path, database =>
+        database.exec(`
+        PRAGMA encoding = '${encoding}';
+        CREATE TABLE fixture_encoding (value INTEGER) STRICT;
+      `),
+      )
+      chmodSync(path, 0o600)
+      await withStore(path, async store => {
+        const input = batch([{ op: "add", issue: a, key: "one", text: "One" }])
+        const request = context("padded-receipt")
+        const saved = await run(store.apply(input, request))
+        const original = receiptJson(path, saved.batchId)
+        const alternate = original.replace(
+          '"kind":"saved"',
+          `"kind":${JSON.stringify("界\u0000🦆")},"kind":"saved"`,
+        )
+        assert.notEqual(alternate, original)
+        assert.ok(alternate.length < 1_048_576)
+        const padded = alternate + " ".repeat(1_048_576 - alternate.length)
+        writeReceiptJson(path, saved.batchId, padded)
+        const created = saved.created[0]
+        assert.ok(created)
+        await run(
+          store.apply(
+            batch([
+              { op: "status", target: existing(created.id), status: "doing" },
+            ]),
+            context("after-padded-receipt"),
+          ),
+        )
+        assert.deepEqual(await run(store.apply(input, request)), {
+          ...saved,
+          receipt: "replayed",
+        })
+        assert.equal(receiptJson(path, saved.batchId), padded)
+      })
+    }))
+}
+
+for (const encoding of ["ascii", "nul", "unicode"] as const) {
+  test(`fingerprint mismatch stays a conflict without unbounded driver text: ${encoding}`, async () =>
+    fixture(async path => {
+      await withStore(path, async store => {
+        const input = batch([{ op: "add", issue: a, key: "one", text: "One" }])
+        const request = context("bounded-fingerprint")
+        const saved = await run(store.apply(input, request))
+        const envelope = 3 * 1_048_576
+        const fingerprint =
+          encoding === "unicode"
+            ? "界".repeat(1_048_577)
+            : (encoding === "nul" ? "x\u0000" : "") + "x".repeat(envelope + 1)
+        sql(path, database =>
+          database
+            .prepare(
+              "UPDATE issue_plan_batches SET fingerprint = ? WHERE id = ?",
+            )
+            .run(fingerprint, saved.batchId),
+        )
+        const observed = await observeReads(
+          query =>
+            query.includes(
+              "FROM issue_plan_batches WHERE actor_id = ? AND request_id = ?",
+            ),
+          () => run(Effect.either(store.apply(input, request))),
+        )
+        assert.ok(Either.isLeft(observed.value))
+        assert.equal(observed.value.left.code, "request_conflict")
+        assert.ok(observed.reads.length > 0)
+        assert.ok(
+          materializedStrings(observed.reads).every(
+            value => Buffer.byteLength(value, "utf8") <= envelope,
+          ),
+          "Unbounded fingerprint text crossed the SQLite driver boundary",
+        )
+      })
+    }))
+}
+
 for (const [field, units] of [
   ["id", 36],
   ["text", 131_072],
@@ -2140,7 +2250,7 @@ for (const verification of ["available", "unavailable"] as const) {
             if (
               acknowledgementLost &&
               command.includes(
-                "fingerprint, result_json FROM issue_plan_batches",
+                "FROM issue_plan_batches WHERE actor_id = ? AND request_id = ?",
               )
             ) {
               recoveryReads += 1
