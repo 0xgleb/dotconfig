@@ -233,11 +233,61 @@ test("global instructions enforce handover ingestion", () => {
   assert.match(global, /todo list/i)
 })
 
-test("dotconfig delivery includes committing and pushing without handoff", () => {
-  assert.match(project, /push validated units continuously, open a draft PR/is)
-  assert.match(project, /Do not hand routine Markdown edits to another agent/is)
+test("workspace publication includes owner and peer changes regardless of the active task", () => {
+  assert.match(
+    global,
+    /agent responsible for a GitButler workspace.*publication of all pending tracked and untracked project changes/is,
+  )
+  assert.match(global, /including changes made by the owner or other agents/is)
+  assert.match(global, /unrelated to the agent's current task/is)
+  assert.match(
+    global,
+    /inspect and group.*reconcile conflicts.*commit.*push.*open or update.*PRs/is,
+  )
+  assert.match(global, /does not authorize unrelated implementation/is)
+})
+
+test("related discovered changes reuse an existing branch and PR", () => {
+  assert.match(
+    global,
+    /Reuse an existing branch and PR when the changes are related/is,
+  )
+  assert.match(
+    global,
+    /Discovering more changes does not require a new branch or PR/is,
+  )
+  assert.match(
+    global,
+    /only for independent work without a suitable ongoing branch/is,
+  )
+})
+
+test("cross-project harness edits remain direct source changes without foreign VCS writes", () => {
+  assert.match(
+    global,
+    /agents assigned to other projects.*source edits directly in `~\/.config`/is,
+  )
+  assert.match(
+    global,
+    /leave them uncommitted.*agent responsible for that workspace/is,
+  )
+  assert.match(
+    global,
+    /do not commit, push, create PRs, or otherwise mutate dotconfig VCS state/is,
+  )
+})
+
+test("dotconfig refers to global delivery policy rather than duplicating publication ownership", () => {
   assert.match(
     project,
-    /mark it ready (?:only when|once) the requested scope and verification are complete/is,
+    /Follow the workspace publication and delivery rules in `GLOBAL_AGENTS.md`/is,
+  )
+  assert.doesNotMatch(
+    project,
+    /Shared-edit publication ownership|must pick up these changes/is,
+  )
+  assert.match(
+    project,
+    /Direct-to-master delivery requires explicit owner direction/is,
   )
 })

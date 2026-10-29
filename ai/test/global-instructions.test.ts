@@ -68,8 +68,10 @@ test("repository CLAUDE instructions resolve to repository policy, not global po
   )
   const project = readFileSync(`${root}AGENTS.md`, "utf8")
   assert.ok(
-    /purpose-named branch/.test(project) && /open a draft PR/.test(project),
-    "Project publication workflow remains local",
+    /Follow the workspace publication and delivery rules in\s+`GLOBAL_AGENTS.md`/.test(
+      project,
+    ),
+    "Project policy must reference the canonical global publication workflow",
   )
   assert.ok(
     /Do not use `rustaceanvim`/.test(project),
