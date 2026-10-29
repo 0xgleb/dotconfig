@@ -31,13 +31,15 @@ return {
         },
       },
       rust_analyzer = {
+        -- Keep macOS directory-watcher teardown out of Neovim's UI/exit path.
+        capabilities = { workspace = { didChangeWatchedFiles = { dynamicRegistration = false } } },
         settings = {
           ["rust-analyzer"] = {
             check = {
-              command = "clippy",
-              extraArgs = { "--no-deps" },
+              command = "check",
             },
             files = {
+              watcher = "server",
               excludeDirs = { ".direnv", ".git", ".worktrees", "target" },
             },
           },
