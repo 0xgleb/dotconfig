@@ -763,7 +763,49 @@ const SavedResultSchema = Schema.Struct({
   ),
   eventCount: RevisionSchema,
 })
+type ChangedField = TaskChangeSummary["fields"][number]
 const MAX_TRANSFER_EVENT_TEXT = 4_096
+const MAX_EDIT_EVENT_TEXT = 2_097_152
+const EditEventSchema = Schema.Struct({
+  op: Schema.Literal("edit"),
+  operationIndex: RevisionSchema,
+  issue: Schema.Unknown,
+  id: TaskIdSchema,
+  changes: Schema.Array(
+    Schema.Union(
+      Schema.Struct({
+        field: Schema.Literal("text"),
+        before: TextSchema,
+        after: TextSchema,
+      }),
+      Schema.Struct({
+        field: Schema.Literal("dependsOn"),
+        before: Schema.Array(TaskIdSchema).pipe(
+          Schema.maxItems(MAX_TASK_DEPENDENCIES),
+        ),
+        after: Schema.Array(TaskIdSchema).pipe(
+          Schema.maxItems(MAX_TASK_DEPENDENCIES),
+        ),
+      }),
+    ),
+  ).pipe(Schema.minItems(1), Schema.maxItems(2)),
+})
+const StatusEventSchema = Schema.Struct({
+  op: Schema.Literal("status"),
+  operationIndex: RevisionSchema,
+  issue: Schema.Unknown,
+  id: TaskIdSchema,
+  before: StatusSchema,
+  after: StatusSchema,
+})
+const BlockEventSchema = Schema.Struct({
+  op: Schema.Literal("block"),
+  operationIndex: RevisionSchema,
+  issue: Schema.Unknown,
+  id: TaskIdSchema,
+  before: Schema.NullOr(TextSchema),
+  after: Schema.NullOr(TextSchema),
+})
 const TransferEventSchema = Schema.Struct({
   op: Schema.Literal("transfer"),
   operationIndex: RevisionSchema,
@@ -771,6 +813,29 @@ const TransferEventSchema = Schema.Struct({
   id: TaskIdSchema,
   splitFrom: Schema.Unknown,
 })
+const decodeEventPayload = <A, I>(
+  schema: Schema.Schema<A, I>,
+  json: string | null,
+): StoreEffect<A> =>
+  Effect.gen(function* () {
+    if (json === null)
+      return yield* fail(
+        "corrupt_state",
+        "Task history has no bounded change payload",
+      )
+    const raw: unknown = yield* io("Could not decode task history", () =>
+      JSON.parse(json),
+    ).pipe(
+      Effect.catchAll(() => fail("corrupt_state", "Invalid task history JSON")),
+    )
+    return yield* decode(
+      schema,
+      raw,
+      "corrupt_state",
+      "Invalid task history event",
+    )
+  })
+
 const encodedJson = (value: unknown): StoreEffect<string> =>
   Effect.gen(function* () {
     const encoded = yield* io("Could not encode task data", () =>
@@ -959,7 +1024,7 @@ const readReceipt = (
       )
         return yield* fail(
           "corrupt_state",
-          "Task receipt disagrees with its persisted plan",
+          "Task receipt disagrees with its stored issue revision",
         )
     }
 
@@ -968,7 +1033,7 @@ const readReceipt = (
       () =>
         database
           .prepare(
-            `SELECT h.plan_id, h.task_id, h.operation_index, h.kind, t.id AS persisted_task_id, CASE WHEN h.kind = 'transfer' AND length(h.payload_json) <= ${MAX_TRANSFER_EVENT_TEXT} THEN h.payload_json ELSE NULL END AS transfer_payload FROM issue_plan_history h LEFT JOIN issue_plan_tasks t ON t.id = h.task_id WHERE h.batch_id = ? ORDER BY h.operation_index LIMIT ?`,
+            `SELECT h.plan_id, h.task_id, h.operation_index, h.kind, t.id AS persisted_task_id, CASE WHEN h.kind = 'transfer' AND length(h.payload_json) <= ${MAX_TRANSFER_EVENT_TEXT} THEN h.payload_json ELSE NULL END AS transfer_payload, CASE WHEN h.kind = 'edit' THEN substr(h.payload_json, 1, ${MAX_EDIT_EVENT_TEXT + 1}) ELSE NULL END AS edit_payload, CASE WHEN h.kind IN ('status', 'block') THEN substr(h.payload_json, 1, ${MAX_EDIT_EVENT_TEXT + 1}) ELSE NULL END AS state_payload FROM issue_plan_history h LEFT JOIN issue_plan_tasks t ON t.id = h.task_id WHERE h.batch_id = ? ORDER BY h.operation_index LIMIT ?`,
           )
           .all(saved.batchId, MAX_TASK_MUTATIONS + 1),
     )
@@ -981,7 +1046,7 @@ const readReceipt = (
     const changesById = new Map(changed.map(task => [task.id, task]))
     const recordedTasks = new Set<TaskId>()
     const recordedOperations = new Set<number>()
-    const recordedTransfers = new Set<TaskId>()
+    const recordedFields = new Map<TaskId, Set<ChangedField>>()
     const recordedIssues = new Set<string>()
     const locations = new Map<TaskId, IssueReference>()
     for (const rawHistory of historyRows) {
@@ -994,6 +1059,12 @@ const readReceipt = (
           persisted_task_id: Schema.NullOr(TaskIdSchema),
           transfer_payload: Schema.NullOr(
             Schema.String.pipe(Schema.maxLength(MAX_TRANSFER_EVENT_TEXT)),
+          ),
+          edit_payload: Schema.NullOr(
+            Schema.String.pipe(Schema.maxLength(MAX_EDIT_EVENT_TEXT)),
+          ),
+          state_payload: Schema.NullOr(
+            Schema.String.pipe(Schema.maxLength(MAX_EDIT_EVENT_TEXT)),
           ),
         }),
         rawHistory,
@@ -1093,8 +1164,135 @@ const readReceipt = (
             "corrupt_state",
             "Transfer provenance disagrees with the requested ownership change",
           )
-        recordedTransfers.add(task.id)
       }
+      let eventFields: readonly ChangedField[]
+      switch (operation.op) {
+        case "add":
+          eventFields = ["text", "status", "blocker", "dependsOn"]
+          break
+        case "status": {
+          const payload = yield* decodeEventPayload(
+            StatusEventSchema,
+            history.state_payload,
+          )
+          const owner = yield* storedIssue(payload.issue)
+          if (
+            payload.id !== task.id ||
+            payload.operationIndex !== history.operation_index ||
+            issueKey(owner) !== issueKey(before) ||
+            payload.before === payload.after ||
+            payload.after !== operation.status
+          )
+            return yield* fail(
+              "corrupt_state",
+              "Status history is inconsistent with the requested change",
+            )
+          eventFields = ["status"]
+          break
+        }
+        case "block": {
+          const payload = yield* decodeEventPayload(
+            BlockEventSchema,
+            history.state_payload,
+          )
+          const owner = yield* storedIssue(payload.issue)
+          if (
+            payload.id !== task.id ||
+            payload.operationIndex !== history.operation_index ||
+            issueKey(owner) !== issueKey(before) ||
+            payload.before === payload.after ||
+            payload.after !== operation.reason
+          )
+            return yield* fail(
+              "corrupt_state",
+              "Blocker history is inconsistent with the requested change",
+            )
+          eventFields = ["blocker"]
+          break
+        }
+        case "transfer":
+          eventFields = ["issue"]
+          break
+        case "edit": {
+          const payloadJson = history.edit_payload
+          if (payloadJson === null)
+            return yield* fail(
+              "corrupt_state",
+              "Edit history has no bounded change payload",
+            )
+          const rawPayload: unknown = yield* io(
+            "Could not decode edit history",
+            () => JSON.parse(payloadJson),
+          ).pipe(
+            Effect.catchAll(() =>
+              fail("corrupt_state", "Invalid edit history JSON"),
+            ),
+          )
+          const payload = yield* decode(
+            EditEventSchema,
+            rawPayload,
+            "corrupt_state",
+            "Invalid edit history",
+          )
+          const owner = yield* storedIssue(payload.issue)
+          const fields = payload.changes.map(change => change.field)
+          const requestedDependencies = new Set<TaskId>()
+          if (operation.dependsOn !== undefined) {
+            for (const reference of operation.dependsOn) {
+              const dependency = reference.task
+              const id =
+                dependency.kind === "existing"
+                  ? dependency.id
+                  : created.find(
+                      allocation =>
+                        issueKey(allocation.issue) ===
+                          issueKey(reference.issue) &&
+                        allocation.key === dependency.key,
+                    )?.id
+              if (id === undefined || requestedDependencies.has(id))
+                return yield* fail(
+                  "corrupt_state",
+                  "Edit history has an invalid requested dependency identity",
+                )
+              requestedDependencies.add(id)
+            }
+          }
+          if (
+            payload.id !== task.id ||
+            payload.operationIndex !== history.operation_index ||
+            issueKey(owner) !== issueKey(before) ||
+            new Set(fields).size !== fields.length ||
+            payload.changes.some(change => {
+              if (change.field === "text")
+                return (
+                  operation.text === undefined ||
+                  change.before === change.after ||
+                  change.after !== operation.text
+                )
+              if (operation.dependsOn === undefined) return true
+              const prior = new Set(change.before)
+              const next = new Set(change.after)
+              return (
+                prior.size !== change.before.length ||
+                next.size !== change.after.length ||
+                next.size !== requestedDependencies.size ||
+                change.after.some(id => !requestedDependencies.has(id)) ||
+                (prior.size === next.size &&
+                  change.before.every(id => next.has(id)))
+              )
+            })
+          )
+            return yield* fail(
+              "corrupt_state",
+              "Edit history fields disagree with the requested change",
+            )
+          eventFields = fields
+          break
+        }
+      }
+      const fields = recordedFields.get(task.id) ?? new Set<ChangedField>()
+      for (const field of eventFields) fields.add(field)
+      recordedFields.set(task.id, fields)
       locations.set(task.id, after)
       recordedIssues.add(issueKey(before))
       recordedIssues.add(issueKey(after))
@@ -1106,17 +1304,20 @@ const readReceipt = (
       recordedIssues.size !== plans.length ||
       changed.some(task => {
         const location = locations.get(task.id)
+        const fields = recordedFields.get(task.id)
         return (
           location === undefined ||
           issueKey(location) !== issueKey(task.issue) ||
-          task.fields.includes("issue") !== recordedTransfers.has(task.id)
+          fields === undefined ||
+          fields.size !== task.fields.length ||
+          task.fields.some(field => !fields.has(field))
         )
       }) ||
       plans.some(plan => !recordedIssues.has(issueKey(plan.issue)))
     )
       return yield* fail(
         "corrupt_state",
-        "Task receipt contains changes without persisted history",
+        "Task receipt changes disagree with persisted history",
       )
 
     return Option.some(
