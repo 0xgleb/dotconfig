@@ -49,8 +49,11 @@ export const signManagerTodo = (
   ) {
     return invalid("invalid_input", "Invalid manager task-control scope.")
   }
+
   const decoded = decodeTodoControl(request)
+
   if (Either.isLeft(decoded)) return invalid("protocol", decoded.left.message)
+
   const body = {
     version: 2 as const,
     operation: "todo" as const,
@@ -59,6 +62,7 @@ export const signManagerTodo = (
     expectedRevision: revision,
     request: decoded.right,
   }
+
   return Either.map(
     Either.try({
       try: () =>
@@ -101,13 +105,17 @@ export const verifyManagerTodo = (
   ) {
     return invalid("protocol", "Malformed manager task command.")
   }
+
   if (
     value.workerSessionId !== scope.workerSessionId ||
     value.cwd !== scope.cwd
   )
     return invalid("unauthorized", "Task command targets another worker.")
+
   const request = decodeTodoControl(value.request)
+
   if (Either.isLeft(request)) return invalid("protocol", request.left.message)
+
   const expected = signManagerTodo(
     scope,
     value.id,
@@ -115,7 +123,9 @@ export const verifyManagerTodo = (
     request.right,
     capability,
   )
+
   if (Either.isLeft(expected)) return Either.left(expected.left)
+
   const suppliedSignature = value.signature
   const authenticated = Either.try({
     try: () =>
@@ -129,14 +139,17 @@ export const verifyManagerTodo = (
         message: "Task signature verification failed.",
       }),
   })
+
   if (Either.isLeft(authenticated)) return Either.left(authenticated.left)
   if (!authenticated.right)
     return invalid("unauthorized", "Manager task authentication failed.")
+
   if (value.expectedRevision !== revision)
     return invalid(
       "stale_revision",
       "Worker scope changed before the task request was applied.",
     )
+
   return expected
 }
 
@@ -230,13 +243,15 @@ export const verifyManagerPriority = (
     value.text,
     capability,
   )
+
   if (Either.isLeft(expected)) return Either.left(expected.left)
 
+  const suppliedSignature = value.signature
   const authenticated = Either.try({
     try: () =>
       timingSafeEqual(
         Buffer.from(expected.right, "hex"),
-        Buffer.from(value.signature, "hex"),
+        Buffer.from(suppliedSignature, "hex"),
       ),
     catch: () =>
       new ManagerSessionError({
@@ -244,6 +259,7 @@ export const verifyManagerPriority = (
         message: "Manager signature verification failed.",
       }),
   })
+
   if (Either.isLeft(authenticated)) return Either.left(authenticated.left)
   if (!authenticated.right)
     return invalid("unauthorized", "Manager priority authentication failed.")

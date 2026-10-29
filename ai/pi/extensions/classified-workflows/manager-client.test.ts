@@ -1,251 +1,210 @@
 import assert from "node:assert/strict"
 import test from "node:test"
-import { mkdtempSync, rmSync } from "node:fs"
-import { join } from "node:path"
+import {
+  mkdtempSync,
+  readFileSync,
+  readdirSync,
+  rmSync,
+  writeFileSync,
+} from "node:fs"
 import { tmpdir } from "node:os"
+import { join } from "node:path"
 import type {
   ExtensionAPI,
   ExtensionContext,
 } from "@earendil-works/pi-coding-agent"
 import { Either } from "effect"
-import {
-  managerPairDirectory,
-  ManagerSessionError,
-} from "./manager-session-core.ts"
+import { managerPairDirectory } from "./manager-session-core.ts"
 import { prepareNativeManagerState } from "./manager-native-state.ts"
 import { invokeManagerTodo } from "./manager-client.ts"
 import { registerManagerBinding } from "../shared/manager-binding.ts"
 
-const fixture = (
-  t: test.TestContext,
-  available = true,
-  mode: "paired" | "global" = "paired",
-  priorityAvailable = false,
-) => {
+interface WorkerOptions {
+  readonly taskControl?: boolean
+  readonly priorityControl?: boolean
+  readonly effortControl?: boolean
+  readonly managerCwd?: string
+}
+
+const fixture = (t: test.TestContext, options: WorkerOptions = {}) => {
   const root = mkdtempSync(join(tmpdir(), "pi-manager-client-test-"))
   t.after(() => rmSync(root, { recursive: true }))
+
   const scope = { workerSessionId: "worker", cwd: "/projects/worker" }
   const directory = managerPairDirectory({
     workerSessionId: scope.workerSessionId,
     workerCwd: scope.cwd,
     agentDir: root,
   })
+
   assert.ok(Either.isRight(directory))
+
   const state = prepareNativeManagerState(directory.right, scope)
+
   assert.ok(Either.isRight(state))
-  state.right.publish({
-    ...scope,
-    version: 1,
-    observedAt: Date.now(),
-    priorityRevision: "revision-1",
-    data: {
-      todoControl: available,
-      ...(priorityAvailable ? { todoPriorityControl: true } : {}),
-    },
-  })
+
+  assert.ok(
+    Either.isRight(
+      state.right.publish({
+        ...scope,
+        version: 1,
+        observedAt: Date.now(),
+        priorityRevision: "revision-1",
+        data: {
+          todoControl: options.taskControl ?? true,
+          todoPriorityControl: options.priorityControl ?? true,
+          todoEffortControl: options.effortControl ?? true,
+        },
+      }),
+    ),
+  )
+
+  const requestsDirectory = join(directory.right, "requests")
+  writeFileSync(
+    join(requestsDirectory, "00000000-0000-4000-8000-000000000058.json"),
+    JSON.stringify({ version: 2, operation: "todo", historical: true }),
+    { mode: 0o600 },
+  )
+
+  const requestFiles = () =>
+    readdirSync(requestsDirectory)
+      .toSorted()
+      .map(name => ({
+        name,
+        content: readFileSync(join(requestsDirectory, name), "utf8"),
+      }))
+
   const handlers = new Map<string, ((value: unknown) => void)[]>()
   const pi = {
     getFlag: () => undefined,
     events: {
       on: (name: string, handler: (value: unknown) => void) => {
         handlers.set(name, [...(handlers.get(name) ?? []), handler])
-        return () => {}
+
+        return () => {
+          handlers.set(
+            name,
+            (handlers.get(name) ?? []).filter(listener => listener !== handler),
+          )
+        }
       },
       emit: (name: string, value: unknown) => {
         for (const handler of handlers.get(name) ?? []) handler(value)
       },
     },
-  } as unknown as ExtensionAPI
-  const ctx = {
-    cwd: mode === "global" ? "/global/manager" : scope.cwd,
-    sessionManager: {
-      getSessionId: () => "manager-session",
-      getBranch: () => [],
-    },
-  } as unknown as ExtensionContext
-  registerManagerBinding(pi, id =>
+  } satisfies Pick<ExtensionAPI, "getFlag" | "events">
+  const sessionManager = {
+    getSessionId: () => "manager-session",
+    getBranch: () => [],
+  } satisfies Pick<
+    ExtensionContext["sessionManager"],
+    "getSessionId" | "getBranch"
+  >
+
+  // These clients use only the checked binding and session surfaces.
+  const partialHost: Partial<ExtensionAPI> = pi
+  const host = partialHost as ExtensionAPI
+  const partialSession: Partial<ExtensionContext["sessionManager"]> =
+    sessionManager
+  const context = {
+    cwd: options.managerCwd ?? scope.cwd,
+    sessionManager: partialSession as ExtensionContext["sessionManager"],
+  } satisfies Partial<ExtensionContext>
+  const ctx = context as ExtensionContext
+
+  registerManagerBinding(host, id =>
     id === "manager-session"
       ? {
           role: "manager",
-          workerSessionId: "worker",
-          ...(mode === "global" ? { workerCwd: scope.cwd } : {}),
+          workerSessionId: scope.workerSessionId,
+          workerCwd: scope.cwd,
         }
       : undefined,
   )
-  return { pi, ctx, state: state.right, root }
+
+  const runtime = {
+    agentDir: root,
+    timeoutMs: 0,
+    wait: async () => assert.fail("An unavailable mutation must not poll"),
+  }
+
+  return { pi: host, ctx, state: state.right, runtime, requestFiles }
 }
 
-test("manager todo returns the verified worker result rather than a manager-local task snapshot", async t => {
-  const f = fixture(t)
-  let calls = 0
-  const result = await invokeManagerTodo(
-    f.pi,
-    f.ctx,
-    { action: "add", text: "Real worker task" },
-    undefined,
-    {
-      agentDir: f.root,
-      timeoutMs: 1000,
-      wait: async () => {
-        const processed = f.state.processPriorities(
-          () => "revision-1",
-          () => assert.fail("Wrong control lane"),
-          request => {
-            assert.deepEqual(request, {
-              action: "add",
-              text: "Real worker task",
-            })
-            calls += 1
-            return Either.right("Added worker task #5")
-          },
-        )
-        assert.ok(Either.isRight(processed))
-      },
-    },
-  )
-  assert.equal(result.isError, false)
-  assert.equal(result.details.outcome, "completed")
-  assert.equal(result.content[0]?.text, "Added worker task #5")
-  assert.equal(Object.hasOwn(result.details, "state"), false)
-  assert.equal(calls, 1)
-})
+for (const managerCwd of ["/projects/worker", "/global/manager"])
+  test(`manager task calls fail closed for the selected worker from ${managerCwd}`, async t => {
+    const worker = fixture(t, { managerCwd })
+    const before = worker.requestFiles()
 
-test("global manager todo uses the selected worker project rather than the manager workspace", async t => {
-  const f = fixture(t, true, "global")
-  const result = await invokeManagerTodo(
-    f.pi,
-    f.ctx,
-    { action: "list" },
-    undefined,
-    {
-      agentDir: f.root,
-      timeoutMs: 1000,
-      wait: async () => {
-        f.state.processPriorities(
-          () => "revision-1",
-          () => assert.fail("Wrong lane"),
-          () => Either.right("Actual selected worker backlog"),
-        )
-      },
-    },
-  )
-  assert.equal(result.details.outcome, "completed")
-  assert.equal(result.content[0]?.text, "Actual selected worker backlog")
-})
+    for (const request of [
+      { action: "list" },
+      { action: "add", text: "Do not dispatch" },
+      { action: "priority", id: 1, priority: 2 },
+      { action: "effort", id: 1, effort: 5 },
+    ] as const) {
+      const result = await invokeManagerTodo(
+        worker.pi,
+        worker.ctx,
+        request,
+        undefined,
+        worker.runtime,
+      )
 
-test("an indeterminate worker result stays unconfirmed instead of becoming a failed or completed write", async t => {
-  const f = fixture(t)
-  const result = await invokeManagerTodo(
-    f.pi,
-    f.ctx,
-    { action: "add", text: "Uncertain" },
-    undefined,
-    {
-      agentDir: f.root,
-      timeoutMs: 1000,
-      wait: async () => {
-        f.state.processPriorities(
-          () => "revision-1",
-          () => assert.fail("Wrong lane"),
-          () =>
-            Either.left(
-              new ManagerSessionError({
-                code: "unconfirmed",
-                message:
-                  "Persistence result is unconfirmed; inspect before retry.",
-              }),
-            ),
-        )
-      },
-    },
-  )
-  assert.equal(result.details.outcome, "unconfirmed")
-  assert.equal(result.isError, true)
-})
+      assert.equal(result.isError, true)
+      assert.deepEqual(result.details, { outcome: "unavailable" })
+      assert.deepEqual(worker.requestFiles(), before)
 
-test("an older worker without the task-control capability does not receive a speculative mutation", async t => {
-  const f = fixture(t, false)
-  const result = await invokeManagerTodo(
-    f.pi,
-    f.ctx,
-    { action: "clear" },
-    undefined,
-    { agentDir: f.root, timeoutMs: 0, wait: async () => {} },
-  )
-  assert.equal(result.details.outcome, "unavailable")
-  assert.deepEqual(
-    f.state.processPriorities(
-      () => "revision-1",
-      () => assert.fail("Unexpected priority request"),
-      () => assert.fail("Unsupported task request was queued"),
-    ),
-    Either.right([]),
-  )
-})
+      const first = result.content[0]
+      assert.ok(first)
+      assert.match(first.text, /\/projects\/worker/u)
+      assert.match(first.text, /session worker/u)
+    }
 
-test("an older todo-capable worker cannot receive a speculative priority mutation", async t => {
-  const f = fixture(t, true, "global")
-  const result = await invokeManagerTodo(
-    f.pi,
-    f.ctx,
+    assert.deepEqual(
+      worker.state.processPriorities(
+        () => assert.fail("No revision may be read"),
+        () => assert.fail("No priority mutation may execute"),
+        () => assert.fail("No task mutation may execute"),
+      ),
+      Either.right([]),
+    )
+  })
+
+for (const [option, request, message] of [
+  ["taskControl", { action: "clear" }, /task control/u],
+  [
+    "priorityControl",
     { action: "priority", id: 1, priority: 2 },
-    undefined,
-    { agentDir: f.root, timeoutMs: 0, wait: async () => {} },
-  )
-  assert.equal(result.details.outcome, "unavailable")
-  assert.deepEqual(
-    f.state.processPriorities(
-      () => "revision-1",
-      () => assert.fail("wrong lane"),
-      () => assert.fail("priority was queued to an older worker"),
-    ),
-    Either.right([]),
-  )
-})
+    /priority control/u,
+  ],
+  ["effortControl", { action: "effort", id: 1, effort: 5 }, /effort control/u],
+] as const)
+  test(`a worker without ${option} cannot receive speculative mutations`, async t => {
+    const worker = fixture(t, { [option]: false })
+    const before = worker.requestFiles()
 
-test("global priority correction crosses the signed todo lane and returns its worker receipt", async t => {
-  const f = fixture(t, true, "global", true)
-  let calls = 0
-  const result = await invokeManagerTodo(
-    f.pi,
-    f.ctx,
-    { action: "priority", id: 1, priority: 2 },
-    undefined,
-    {
-      agentDir: f.root,
-      timeoutMs: 1000,
-      wait: async () => {
-        f.state.processPriorities(
-          () => "revision-1",
-          () =>
-            assert.fail("numeric rank reached textual execution-order lane"),
-          request => {
-            calls += 1
-            assert.deepEqual(request, {
-              action: "priority",
-              id: 1,
-              priority: 2,
-            })
-            return Either.right("Todo #1 priority 2")
-          },
-        )
-      },
-    },
-  )
-  assert.equal(result.details.outcome, "completed")
-  assert.equal(result.content[0]?.text, "Todo #1 priority 2")
-  assert.equal(calls, 1)
-})
+    const result = await invokeManagerTodo(
+      worker.pi,
+      worker.ctx,
+      request,
+      undefined,
+      worker.runtime,
+    )
 
-test("a queued but unsettled task mutation is not reported as completed", async t => {
-  const f = fixture(t)
-  const result = await invokeManagerTodo(
-    f.pi,
-    f.ctx,
-    { action: "add", text: "Pending" },
-    undefined,
-    { agentDir: f.root, timeoutMs: 0, wait: async () => {} },
-  )
-  assert.equal(result.details.outcome, "queued")
-  assert.match(result.content[0]?.text ?? "", /not confirmed/u)
-})
+    assert.equal(result.isError, true)
+    assert.deepEqual(result.details, { outcome: "unavailable" })
+    assert.deepEqual(worker.requestFiles(), before)
+
+    const first = result.content[0]
+    assert.ok(first)
+    assert.match(first.text, message)
+
+    assert.deepEqual(
+      worker.state.processPriorities(
+        () => assert.fail("No revision may be read"),
+        () => assert.fail("No priority mutation may execute"),
+        () => assert.fail("No task mutation may execute"),
+      ),
+      Either.right([]),
+    )
+  })

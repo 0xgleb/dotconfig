@@ -11,6 +11,10 @@ export type TodoStatus =
 export type SettableTodoStatus = Exclude<TodoStatus, "blocked">
 type ImmediateTodoStatus = Exclude<SettableTodoStatus, "deferred">
 
+declare const todoIdBrand: unique symbol
+type TodoId = number & { readonly [todoIdBrand]: true }
+type TodoOrder = readonly [TodoId, ...TodoId[]]
+
 declare const fibonacciEffortBrand: unique symbol
 export type FibonacciEffort = number & {
   readonly [fibonacciEffortBrand]: true
@@ -54,6 +58,13 @@ export type TodoRequest =
       readonly id?: number
       readonly priority?: number | null
     }
+  | {
+      readonly action: "priority_relative"
+      readonly id?: number
+      readonly referenceId?: number
+      readonly position?: "above" | "below"
+    }
+  | { readonly action: "priority_order"; readonly ids?: ReadonlyArray<number> }
   | { readonly action: "toggle"; readonly id?: number }
   | {
       readonly action: "status"
@@ -84,6 +95,13 @@ export type TodoAction =
       readonly id: number
       readonly priority: number | null
     }
+  | {
+      readonly action: "priority_relative"
+      readonly id: number
+      readonly referenceId: number
+      readonly position: "above" | "below"
+    }
+  | { readonly action: "priority_order"; readonly ids: ReadonlyArray<number> }
   | { readonly action: "toggle"; readonly id: number }
   | {
       readonly action: "status"
@@ -125,8 +143,10 @@ export class TodoInputError extends Data.TaggedError("TodoInputError")<{
     | "invalid_state"
     | "invalid_priority"
     | "invalid_effort"
+    | "priority_conflict"
 }> {}
 
+export const MAX_TODOS_PER_PRIORITY = 1
 export const MAX_TODO_REPLIES = 3
 export const MAX_TODO_REPLY_LENGTH = 300
 
@@ -134,20 +154,32 @@ export const isFibonacciEffort = (value: unknown): value is FibonacciEffort => {
   if (typeof value !== "number" || !Number.isSafeInteger(value) || value < 1)
     return false
   if (value === 1) return true
+
   let previous = 1
   let current = 2
+
   while (current < value) {
     if (current > Number.MAX_SAFE_INTEGER - previous) return false
+
     const next = previous + current
     previous = current
     current = next
   }
+
   return current === value
 }
 
 export class TodoNotFoundError extends Data.TaggedError("TodoNotFoundError")<{
   action:
-    "toggle" | "status" | "block" | "reply" | "unblock" | "priority" | "effort"
+    | "toggle"
+    | "status"
+    | "block"
+    | "reply"
+    | "unblock"
+    | "priority"
+    | "effort"
+    | "priority_relative"
+    | "priority_order"
   message: string
 }> {}
 
@@ -206,6 +238,8 @@ const TodoStateSchema = Schema.Struct({
 })
 
 const TodoActionSchema = Schema.Literal(
+  "priority_relative",
+  "priority_order",
   "effort",
   "priority",
   "list",
@@ -257,6 +291,7 @@ const todoStateError = (
       message:
         "Persisted effort must be positive safe Fibonacci points or absent",
     })
+
   if (
     state.todos.some(
       todo => todo.priority !== undefined && !validPriority(todo.priority),
@@ -268,8 +303,10 @@ const todoStateError = (
       message:
         "Persisted todo priority must be an assigned positive safe-integer rank or absent",
     })
+
   const ids = state.todos.map(todo => todo.id)
   const maxId = ids.reduce((max, id) => Math.max(max, id), 0)
+
   if (
     ids.some(id => !Number.isSafeInteger(id) || id < 1) ||
     new Set(ids).size !== ids.length ||
@@ -283,9 +320,12 @@ const todoStateError = (
         "Todo state requires unique positive safe-integer IDs and a nextId greater than every existing ID",
     })
   }
+
   const invalid = state.todos.find(todo => {
     if (todo.parentId === undefined) return false
+
     const parent = state.todos.find(candidate => candidate.id === todo.parentId)
+
     return (
       !Number.isSafeInteger(todo.parentId) ||
       todo.parentId < 1 ||
@@ -294,6 +334,7 @@ const todoStateError = (
       parent.parentId !== undefined
     )
   })
+
   return invalid === undefined
     ? undefined
     : new TodoInputError({
@@ -307,8 +348,12 @@ export const validateTodoState = (
   state: TodoState,
 ): Effect.Effect<TodoState, TodoInputError> => {
   const error = todoStateError(state, "list")
+
   return error ? Effect.fail(error) : Effect.succeed(state)
 }
+
+const isTerminalTodo = (todo: Todo): boolean =>
+  todo.status === "completed" || todo.status === "cancelled"
 
 const todoWithStatus: (
   todo: Todo,
@@ -319,7 +364,12 @@ const todoWithStatus: (
   const base: TodoBase = {
     id: todo.id,
     text: todo.text,
-    ...(todo.priority === undefined ? {} : { priority: todo.priority }),
+    ...(todo.priority === undefined ||
+    isTerminalTodo(todo) ||
+    status === "completed" ||
+    status === "cancelled"
+      ? {}
+      : { priority: todo.priority }),
     ...(todo.effort === undefined ? {} : { effort: todo.effort }),
     ...(todo.parentId === undefined ? {} : { parentId: todo.parentId }),
     ...(todo.replies && todo.replies.length > 0
@@ -327,6 +377,7 @@ const todoWithStatus: (
       : {}),
     ...(now === undefined ? {} : { statusChangedAt: now }),
   }
+
   return status === "deferred"
     ? { ...base, status, ...(remindAt === undefined ? {} : { remindAt }) }
     : { ...base, status }
@@ -345,8 +396,88 @@ export const transitionTodoState: (
   now,
 ) => {
   const stateError = todoStateError(state, action.action)
+
   if (stateError) return Effect.fail(stateError)
+
   switch (action.action) {
+    case "priority_order":
+      return applyPriorityOrder(state, action.ids, action.action)
+
+    case "priority_relative": {
+      if (
+        !isTodoId(action.id) ||
+        !isTodoId(action.referenceId) ||
+        (action.position !== "above" && action.position !== "below") ||
+        action.id === action.referenceId
+      )
+        return Effect.fail(
+          new TodoInputError({
+            action: action.action,
+            code: "invalid_priority",
+            message:
+              "Relative priority requires distinct positive safe-integer todo IDs and position above or below",
+          }),
+        )
+
+      const moverId = action.id
+      const referenceId = action.referenceId
+      const target = state.todos.find(todo => todo.id === moverId)
+      const reference = state.todos.find(todo => todo.id === referenceId)
+
+      if (!target || !reference)
+        return Effect.fail(
+          new TodoNotFoundError({
+            action: action.action,
+            message: `Todo #${!target ? action.id : action.referenceId} not found`,
+          }),
+        )
+      if (isTerminalTodo(target) || isTerminalTodo(reference))
+        return Effect.fail(
+          new TodoInputError({
+            action: action.action,
+            code: "invalid_priority",
+            message:
+              "Relative priority requires nonterminal mover and reference tasks",
+          }),
+        )
+      if (reference.priority === undefined)
+        return Effect.fail(
+          new TodoInputError({
+            action: action.action,
+            code: "invalid_priority",
+            message: "Relative priority requires an assigned reference task",
+          }),
+        )
+
+      return Effect.flatMap(
+        normalizeOrderingTodos(state, action.action),
+        todos => {
+          const ordered = todos
+            .flatMap(([id, todo]) =>
+              isTerminalTodo(todo) ||
+              todo.priority === undefined ||
+              id === moverId
+                ? []
+                : [{ id, rank: todo.priority }],
+            )
+            .toSorted((left, right) => left.rank - right.rank)
+            .map(todo => todo.id)
+          const insertion =
+            ordered.indexOf(referenceId) + (action.position === "below" ? 1 : 0)
+
+          return applyPriorityOrder(
+            state,
+            [
+              ...ordered.slice(0, insertion),
+              moverId,
+              ...ordered.slice(insertion),
+            ],
+            action.action,
+          )
+        },
+      )
+    }
+
     case "effort": {
       if (action.effort !== null && !isFibonacciEffort(action.effort))
         return Effect.fail(
@@ -357,7 +488,9 @@ export const transitionTodoState: (
               "effort must be positive safe Fibonacci points, or null to clear",
           }),
         )
+
       const target = state.todos.find(todo => todo.id === action.id)
+
       if (!target)
         return Effect.fail(
           new TodoNotFoundError({
@@ -365,11 +498,13 @@ export const transitionTodoState: (
             message: `Todo #${action.id} not found`,
           }),
         )
+
       const { effort: _effort, ...unestimated } = target
       const replacement: Todo =
         action.effort === null
           ? unestimated
           : { ...target, effort: action.effort }
+
       return Effect.succeed({
         action: "effort",
         state: {
@@ -381,6 +516,7 @@ export const transitionTodoState: (
         message: `Todo #${target.id} effort ${action.effort === null ? "unassigned" : `${action.effort} points`}`,
       })
     }
+
     case "priority": {
       if (action.priority !== null && !validPriority(action.priority))
         return Effect.fail(
@@ -391,7 +527,9 @@ export const transitionTodoState: (
               "priority must be a positive safe-integer rank, or null to unassign",
           }),
         )
+
       const target = state.todos.find(todo => todo.id === action.id)
+
       if (!target)
         return Effect.fail(
           new TodoNotFoundError({
@@ -399,11 +537,38 @@ export const transitionTodoState: (
             message: `Todo #${action.id} not found`,
           }),
         )
+      if (action.priority !== null && isTerminalTodo(target))
+        return Effect.fail(
+          new TodoInputError({
+            action: "priority",
+            code: "invalid_priority",
+            message: `Terminal todo #${target.id} cannot be assigned an active rank`,
+          }),
+        )
+      if (
+        action.priority !== null &&
+        action.priority !== target.priority &&
+        state.todos.filter(
+          todo =>
+            !isTerminalTodo(todo) &&
+            todo.id !== target.id &&
+            todo.priority === action.priority,
+        ).length >= MAX_TODOS_PER_PRIORITY
+      )
+        return Effect.fail(
+          new TodoInputError({
+            action: "priority",
+            code: "priority_conflict",
+            message: `Rank ${action.priority} is occupied (limit ${MAX_TODOS_PER_PRIORITY}); use priority_order or priority_relative to reorder atomically`,
+          }),
+        )
+
       const { priority: _priority, ...unassigned } = target
       const replacement: Todo =
         action.priority === null
           ? unassigned
           : { ...target, priority: action.priority }
+
       return Effect.succeed({
         action: "priority",
         state: {
@@ -415,6 +580,7 @@ export const transitionTodoState: (
         message: `Todo #${target.id} priority ${action.priority === null ? "unassigned" : action.priority}`,
       })
     }
+
     case "list":
       return Effect.succeed({
         action: "list",
@@ -442,6 +608,7 @@ export const transitionTodoState: (
         )
       if (action.parentId !== undefined) {
         const parent = state.todos.find(todo => todo.id === action.parentId)
+
         if (
           !Number.isSafeInteger(action.parentId) ||
           !parent ||
@@ -458,6 +625,7 @@ export const transitionTodoState: (
           )
         }
       }
+
       const todo: Todo = {
         id: state.nextId,
         text: action.text,
@@ -465,6 +633,7 @@ export const transitionTodoState: (
         ...(action.effort === undefined ? {} : { effort: action.effort }),
         ...(action.parentId === undefined ? {} : { parentId: action.parentId }),
       }
+
       return Effect.succeed({
         action: "add",
         state: { todos: [...state.todos, todo], nextId: state.nextId + 1 },
@@ -474,6 +643,7 @@ export const transitionTodoState: (
 
     case "toggle": {
       const target = state.todos.find(({ id }) => id === action.id)
+
       if (!target) {
         return Effect.fail(
           new TodoNotFoundError({
@@ -482,10 +652,12 @@ export const transitionTodoState: (
           }),
         )
       }
+
       const replacement: Todo =
         target.status === "completed"
           ? pendingTodo(target)
           : todoWithStatus(target, "completed", now)
+
       return Effect.succeed({
         action: "toggle",
         state: {
@@ -500,6 +672,7 @@ export const transitionTodoState: (
 
     case "status": {
       const target = state.todos.find(({ id }) => id === action.id)
+
       if (!target) {
         return Effect.fail(
           new TodoNotFoundError({
@@ -508,6 +681,7 @@ export const transitionTodoState: (
           }),
         )
       }
+
       const changedAt =
         action.status === "completed" || action.status === "cancelled"
           ? now
@@ -522,6 +696,7 @@ export const transitionTodoState: (
         replacement.status === "deferred" && replacement.remindAt !== undefined
           ? ` until ${new Date(replacement.remindAt).toISOString()}`
           : ""
+
       return Effect.succeed({
         action: "status",
         state: {
@@ -536,6 +711,7 @@ export const transitionTodoState: (
 
     case "block": {
       const target = state.todos.find(({ id }) => id === action.id)
+
       if (!target) {
         return Effect.fail(
           new TodoNotFoundError({
@@ -544,18 +720,22 @@ export const transitionTodoState: (
           }),
         )
       }
+
       const replacement: Todo = {
         id: target.id,
         text: target.text,
         status: "blocked",
         reason: action.reason,
-        ...(target.priority === undefined ? {} : { priority: target.priority }),
+        ...(target.priority === undefined || isTerminalTodo(target)
+          ? {}
+          : { priority: target.priority }),
         ...(target.effort === undefined ? {} : { effort: target.effort }),
         ...(target.parentId === undefined ? {} : { parentId: target.parentId }),
         ...(target.replies && target.replies.length > 0
           ? { replies: target.replies }
           : {}),
       }
+
       return Effect.succeed({
         action: "block",
         state: {
@@ -570,6 +750,7 @@ export const transitionTodoState: (
 
     case "reply": {
       const target = state.todos.find(({ id }) => id === action.id)
+
       if (!target) {
         return Effect.fail(
           new TodoNotFoundError({
@@ -596,10 +777,12 @@ export const transitionTodoState: (
           }),
         )
       }
+
       const replacement: Todo = {
         ...target,
         replies: [...(target.replies ?? []), action.text],
       }
+
       return Effect.succeed({
         action: "reply",
         state: {
@@ -614,6 +797,7 @@ export const transitionTodoState: (
 
     case "unblock": {
       const target = state.todos.find(({ id }) => id === action.id)
+
       if (!target) {
         return Effect.fail(
           new TodoNotFoundError({
@@ -622,6 +806,7 @@ export const transitionTodoState: (
           }),
         )
       }
+
       return Effect.succeed({
         action: "unblock",
         state: {
@@ -636,6 +821,7 @@ export const transitionTodoState: (
 
     case "clear": {
       const count = state.todos.length
+
       return Effect.succeed({
         action: "clear",
         state: emptyTodoState,
@@ -671,8 +857,11 @@ export const wakeDueDeferredTodos: (
       todo.remindAt !== undefined &&
       todo.remindAt <= now,
   )
+
   if (woken.length === 0) return { state, woken }
+
   const dueIds = new Set(woken.map(({ id }) => id))
+
   return {
     state: {
       todos: state.todos.map(todo =>
@@ -694,6 +883,41 @@ export const parseTodoAction: (
   now = Date.now(),
 ) => {
   switch (request.action) {
+    case "priority_order":
+      return validPriorityOrder(request.ids)
+        ? Effect.succeed({ action: "priority_order", ids: request.ids })
+        : Effect.fail(
+            new TodoInputError({
+              action: "priority_order",
+              code: "invalid_priority",
+              message:
+                "Priority order requires a nonempty list of unique positive safe-integer todo IDs",
+            }),
+          )
+
+    case "priority_relative":
+      if (
+        !isTodoId(request.id) ||
+        !isTodoId(request.referenceId) ||
+        request.id === request.referenceId ||
+        (request.position !== "above" && request.position !== "below")
+      )
+        return Effect.fail(
+          new TodoInputError({
+            action: "priority_relative",
+            code: "invalid_priority",
+            message:
+              "Relative priority requires distinct positive safe-integer todo IDs and position above or below",
+          }),
+        )
+
+      return Effect.succeed({
+        action: "priority_relative",
+        id: request.id,
+        referenceId: request.referenceId,
+        position: request.position,
+      })
+
     case "effort":
       if (
         request.id === undefined ||
@@ -715,11 +939,13 @@ export const parseTodoAction: (
               "effort must be positive safe Fibonacci points, or null to clear",
           }),
         )
+
       return Effect.succeed({
         action: "effort",
         id: request.id,
         effort: request.effort,
       })
+
     case "priority":
       if (
         request.id === undefined ||
@@ -741,13 +967,16 @@ export const parseTodoAction: (
               "priority must be a positive safe-integer rank, or null to unassign",
           }),
         )
+
       return Effect.succeed({
         action: "priority",
         id: request.id,
         priority: request.priority,
       })
+
     case "list":
       return Effect.succeed(request)
+
     case "add": {
       if (request.effort !== undefined && !isFibonacciEffort(request.effort))
         return Effect.fail(
@@ -757,7 +986,9 @@ export const parseTodoAction: (
             message: "effort must be positive safe Fibonacci points",
           }),
         )
+
       const text = request.text?.trim()
+
       if (
         request.parentId !== undefined &&
         (!Number.isSafeInteger(request.parentId) || request.parentId < 1)
@@ -770,6 +1001,7 @@ export const parseTodoAction: (
           }),
         )
       }
+
       return text
         ? Effect.succeed({
             action: "add",
@@ -786,6 +1018,7 @@ export const parseTodoAction: (
             }),
           )
     }
+
     case "toggle":
       return request.id === undefined
         ? Effect.fail(
@@ -795,6 +1028,7 @@ export const parseTodoAction: (
             }),
           )
         : Effect.succeed({ action: "toggle", id: request.id })
+
     case "status":
       if (request.id === undefined) {
         return Effect.fail(
@@ -812,6 +1046,7 @@ export const parseTodoAction: (
           }),
         )
       }
+
       if (request.remindAt === undefined) {
         return Effect.succeed({
           action: "status",
@@ -819,6 +1054,7 @@ export const parseTodoAction: (
           status: request.status,
         })
       }
+
       if (request.status !== "deferred") {
         return Effect.fail(
           new TodoInputError({
@@ -835,7 +1071,9 @@ export const parseTodoAction: (
           }),
         )
       }
+
       const remindAt = Date.parse(request.remindAt)
+
       if (!Number.isFinite(remindAt) || remindAt <= now) {
         return Effect.fail(
           new TodoInputError({
@@ -844,12 +1082,14 @@ export const parseTodoAction: (
           }),
         )
       }
+
       return Effect.succeed({
         action: "status",
         id: request.id,
         status: request.status,
         remindAt,
       })
+
     case "block": {
       if (request.id === undefined) {
         return Effect.fail(
@@ -859,7 +1099,9 @@ export const parseTodoAction: (
           }),
         )
       }
+
       const reason = request.reason?.trim()
+
       return reason
         ? Effect.succeed({ action: "block", id: request.id, reason })
         : Effect.fail(
@@ -869,6 +1111,7 @@ export const parseTodoAction: (
             }),
           )
     }
+
     case "reply": {
       if (request.id === undefined) {
         return Effect.fail(
@@ -878,7 +1121,9 @@ export const parseTodoAction: (
           }),
         )
       }
+
       const text = request.text?.trim()
+
       if (text && text.length > MAX_TODO_REPLY_LENGTH) {
         return Effect.fail(
           new TodoInputError({
@@ -888,6 +1133,7 @@ export const parseTodoAction: (
           }),
         )
       }
+
       return text
         ? Effect.succeed({ action: "reply", id: request.id, text })
         : Effect.fail(
@@ -897,6 +1143,7 @@ export const parseTodoAction: (
             }),
           )
     }
+
     case "unblock":
       return request.id === undefined
         ? Effect.fail(
@@ -906,6 +1153,7 @@ export const parseTodoAction: (
             }),
           )
         : Effect.succeed({ action: "unblock", id: request.id })
+
     case "clear":
       return Effect.succeed(request)
   }
@@ -940,6 +1188,113 @@ const formatTodoList: (todos: ReadonlyArray<Todo>) => string = todos =>
                 : ""
           const replies =
             todo.replies?.map(reply => `\n    ↳ reply: ${reply}`).join("") ?? ""
+
           return `${todoStatusMark(todo.status)} ${todoIdentityLabel(todo)}: ${todo.text}${todo.priority === undefined ? "" : ` [priority ${todo.priority}]`}${todo.effort === undefined ? "" : ` [effort ${todo.effort} points]`}${detail}${replies}`
         })
         .join("\n")
+
+const isTodoId = (value: unknown): value is TodoId =>
+  typeof value === "number" && Number.isSafeInteger(value) && value >= 1
+
+const validPriorityOrder = (value: unknown): value is TodoOrder =>
+  Array.isArray(value) &&
+  value.length > 0 &&
+  Array.from(value).every(isTodoId) &&
+  new Set(value).size === value.length
+
+const normalizeOrderingTodos = (
+  state: TodoState,
+  action: "priority_order" | "priority_relative",
+): Effect.Effect<ReadonlyArray<readonly [TodoId, Todo]>, TodoInputError> =>
+  Effect.forEach(state.todos, todo =>
+    isTodoId(todo.id)
+      ? Effect.succeed([todo.id, todo] as const)
+      : Effect.fail(
+          new TodoInputError({
+            action,
+            code: "invalid_state",
+            message:
+              "Todo state requires unique positive safe-integer IDs and a nextId greater than every existing ID",
+          }),
+        ),
+  )
+
+const applyPriorityOrder = (
+  state: TodoState,
+  ids: ReadonlyArray<number>,
+  action: "priority_order" | "priority_relative",
+): Effect.Effect<TodoTransition, TodoInputError | TodoNotFoundError> => {
+  if (!validPriorityOrder(ids))
+    return Effect.fail(
+      new TodoInputError({
+        action,
+        code: "invalid_priority",
+        message:
+          "Priority order requires a nonempty list of unique positive safe-integer todo IDs",
+      }),
+    )
+
+  return Effect.flatMap(
+    normalizeOrderingTodos(state, action),
+    (
+      todos,
+    ): Effect.Effect<TodoTransition, TodoInputError | TodoNotFoundError> => {
+      const existing = new Set(todos.map(([id]) => id))
+      const missing = ids.find(id => !existing.has(id))
+
+      if (missing !== undefined)
+        return Effect.fail(
+          new TodoNotFoundError({
+            action,
+            message: `Todo #${missing} not found`,
+          }),
+        )
+
+      const ranks = new Map<TodoId, number>(
+        ids.map((id, index) => [id, index + 1]),
+      )
+      const terminal = todos.find(
+        ([id, todo]) => ranks.has(id) && isTerminalTodo(todo),
+      )
+
+      if (terminal)
+        return Effect.fail(
+          new TodoInputError({
+            action,
+            code: "invalid_priority",
+            message: `Terminal todo #${terminal[0]} cannot be assigned an active rank`,
+          }),
+        )
+
+      if (
+        todos.some(
+          ([id, todo]) =>
+            !isTerminalTodo(todo) &&
+            todo.priority !== undefined &&
+            !ranks.has(id),
+        )
+      )
+        return Effect.fail(
+          new TodoInputError({
+            action,
+            code: "invalid_priority",
+            message:
+              "Priority order must include every currently assigned nonterminal todo; use priority=null to unassign explicitly",
+          }),
+        )
+
+      return Effect.succeed({
+        action,
+        state: {
+          nextId: state.nextId,
+          todos: todos.map(([id, todo]) => {
+            const priority = ranks.get(id)
+
+            return priority === undefined ? todo : { ...todo, priority }
+          }),
+        },
+        message: `Ordered ${ids.length} todos with one assigned task per rank: ${ids.map((id, index) => `#${id}=${index + 1}`).join(", ")}`,
+      })
+    },
+  )
+}
