@@ -60,7 +60,8 @@ type AgentResponse = AgentResult | ((request: AgentRequest) => AgentResult)
 const stageOf = (request: AgentRequest): Stage => {
   if (request.task.startsWith("Use Bash to run external")) return "optional"
   if (request.task.includes("adversarially verifying")) return "verify"
-  if (request.task.includes("writing the canonical report")) return "synthesis"
+  if (request.task.includes("writing the advisory assessment"))
+    return "synthesis"
   assert.ok(request.task.startsWith("Read the review instructions"))
   return "review"
 }
@@ -90,6 +91,7 @@ const runReview = async (
     tierModels?: { light: string; mid: string }
     sourceRevision?: string
     docsPaths?: string[]
+    reportHeader?: string
     reviewLanes?: ReviewLane[]
     workflowLimits?: WorkflowLimits
     inspectRequest?: (request: AgentRequest) => void
@@ -108,6 +110,7 @@ const runReview = async (
     tierModels: options.tierModels,
     sourceRevision: options.sourceRevision,
     docsPaths: options.docsPaths ?? args.docsPaths,
+    reportHeader: options.reportHeader ?? args.reportHeader,
   }
 
   const report = await runWorkflowScript(
@@ -1104,19 +1107,53 @@ test("oversized verification retains the original unverified candidate", async (
   ])
 })
 
+test("large finding bodies do not bloat the assessment task", async () => {
+  const candidates = Array.from({ length: 40 }, (_, index) => ({
+    ...finding,
+    file: `src/large-body-${index}.ts`,
+    finding: "Detailed source evidence. ".repeat(60),
+  }))
+  const { report, calls } = await runReview(
+    {
+      review: completed({ findings: candidates }),
+      synthesis: completed({
+        assessment_markdown: "Address the recorded findings.",
+      }),
+    },
+    [],
+    [],
+    { workflowLimits: { ...limits, maxAgents: 16, tokenBudget: 1_280_000 } },
+  )
+
+  assert.ok("status" in report)
+  assert.equal(report.status, "completed")
+  assert.equal(calls.filter(stage => stage === "verify").length, 40)
+  assert.equal(calls.filter(stage => stage === "synthesis").length, 1)
+  assert.ok("report" in report && typeof report.report === "string")
+  assert.match(report.report, /high=40/)
+  for (const candidate of candidates) {
+    assert.ok(report.report.includes(candidate.file))
+    assert.ok(report.report.includes(candidate.finding))
+  }
+})
+
 test("oversized synthesis preserves verified evidence without an oversized agent task", async () => {
   const candidates = Array.from({ length: 40 }, (_, index) => ({
     ...finding,
     file: `src/large-${index}.ts`,
     finding: "Detailed source evidence. ".repeat(60),
   }))
+  const giantHeader = "X".repeat(40_000)
   const { report, calls } = await runReview(
     {
       review: completed({ findings: candidates }),
     },
     [],
     [],
-    { workflowLimits: { ...limits, maxAgents: 16, tokenBudget: 1_280_000 } },
+    {
+      reportHeader: giantHeader,
+      workflowLimits: { ...limits, maxAgents: 16, tokenBudget: 1_280_000 },
+    },
   )
 
   assert.ok("status" in report)
