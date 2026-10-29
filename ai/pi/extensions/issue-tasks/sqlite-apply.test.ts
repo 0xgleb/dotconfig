@@ -1740,6 +1740,89 @@ for (const [table, mutation] of [
     }))
 }
 
+for (const issueState of ["new", "existing"] as const) {
+  test(`fresh receipt reconciliation rejects lowered revisions for a ${issueState} issue`, async () =>
+    fixture(async path => {
+      await withStore(path, async store => {
+        const input = await (async () => {
+          if (issueState === "new")
+            return batch([{ op: "add", issue: a, key: "first", text: "First" }])
+
+          const seeded = await run(
+            store.apply(
+              batch([{ op: "add", issue: a, key: "seed", text: "Seed" }]),
+              context("seed-before-receipt-trigger"),
+            ),
+          )
+          const created = seeded.created[0]
+          assert.ok(created)
+          return batch([
+            { op: "status", target: existing(created.id), status: "doing" },
+          ])
+        })()
+        const before = await run(store.readTasks(issue(), { limit: 10 }))
+        const snapshot = () =>
+          sql(path, database => ({
+            counts: [
+              "issue_plans",
+              "issue_plan_tasks",
+              "issue_plan_batches",
+              "issue_plan_dependencies",
+              "issue_plan_history",
+            ].map(table =>
+              database.prepare(`SELECT COUNT(*) AS count FROM ${table}`).get(),
+            ),
+            receipts: database
+              .prepare("SELECT result_json FROM issue_plan_batches ORDER BY id")
+              .all(),
+          }))
+        const beforeRows = snapshot()
+        sql(path, database =>
+          database.exec(`
+          CREATE TRIGGER fixture_lower_receipt AFTER INSERT ON issue_plan_batches
+          BEGIN
+            UPDATE issue_plan_batches SET result_json = json_set(
+              NEW.result_json,
+              '$.plans[0].revision', json_extract(NEW.result_json, '$.plans[0].revision') - 1,
+              '$.changed[0].revision', json_extract(NEW.result_json, '$.changed[0].revision') - 1
+            ) WHERE id = NEW.id;
+          END;
+        `),
+        )
+
+        await errorCode(
+          store.apply(input, context("lowered-receipt")),
+          "corrupt_state",
+        )
+        assert.deepEqual(
+          await run(store.readTasks(issue(), { limit: 10 })),
+          before,
+        )
+        assert.deepEqual(snapshot(), beforeRows)
+        sql(path, database =>
+          database.exec("DROP TRIGGER fixture_lower_receipt"),
+        )
+
+        const saved = await run(store.apply(input, context("lowered-receipt")))
+        assert.equal(saved.issues[0]?.revision, issueState === "new" ? 1 : 2)
+        const changed = saved.changed[0]
+        assert.ok(changed)
+        await run(
+          store.apply(
+            batch([
+              { op: "status", target: existing(changed.id), status: "done" },
+            ]),
+            context("later-than-lowered-receipt"),
+          ),
+        )
+        assert.deepEqual(
+          await run(store.apply(input, context("lowered-receipt"))),
+          { ...saved, receipt: "replayed" },
+        )
+      })
+    }))
+}
+
 test("replaying an older receipt survives later legitimate task changes", async () =>
   fixture(async path => {
     const input = batch([{ op: "add", issue: a, key: "first", text: "First" }])
