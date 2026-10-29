@@ -31,12 +31,18 @@ const agent = (id: string, label: string): BridgeAgent => ({
 
 test("agent display labels combine a friendly project and declared role", () => {
   assert.equal(
-    agentDisplayLabel("yielduck", [{ role: "developer", mode: "operational" }]),
-    "Yielduck · Developer",
+    agentDisplayLabel("yielduck", [
+      { role: "driver-worker", mode: "operational" },
+    ]),
+    "Yielduck · Driver Worker",
   )
   assert.equal(
-    agentDisplayLabel(".config", [{ role: "maintainer", mode: "operational" }]),
-    "Dotconfig · Maintainer",
+    agentDisplayLabel(".config", [{ role: "manager", mode: "operational" }]),
+    "Dotconfig · Manager",
+  )
+  assert.equal(
+    agentDisplayLabel("reviews", [{ role: "review-worker", mode: "task" }]),
+    "Reviews · Review Worker",
   )
   assert.equal(agentDisplayLabel("st0x-review-duty", []), "ST0x Review Duty")
 })

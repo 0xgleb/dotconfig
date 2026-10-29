@@ -12,6 +12,10 @@ import type {
   ExtensionUIContext,
 } from "@earendil-works/pi-coding-agent"
 import { registryStateRoot } from "./paths.ts"
+import {
+  REGISTRY_DELEGATE_REQUEST_EVENT,
+  type RegistryDelegateOutcome,
+} from "../shared/registry-intent-events.ts"
 
 type RegisteredTool = Pick<
   Parameters<ExtensionAPI["registerTool"]>[0],
@@ -181,6 +185,7 @@ const fixture = (t: test.TestContext) => {
       registryStateRoot(root, "/unused-home"),
       "registry.sqlite",
     ),
+    emit: (event: string, data: unknown) => pi.events.emit(event, data),
     validate: (args: unknown) =>
       validateToolArguments(captured, {
         type: "toolCall",
@@ -316,6 +321,102 @@ test("SDK optional-null normalization permits listing but never selects a claim 
     assert.equal(
       database.prepare("SELECT COUNT(*) AS count FROM leases").get()?.count,
       0,
+    )
+  } finally {
+    database.close()
+  }
+})
+
+const delegation = (
+  role: unknown,
+  report: (outcome: RegistryDelegateOutcome) => void,
+) => ({
+  project: "/fixture/delegate-project",
+  role,
+  text: "Route coordination fixture",
+  requesterId: "fixture-requester",
+  requesterLabel: "Fixture requester",
+  requesterCwd: "/fixture/source",
+  report,
+})
+
+for (const role of [
+  "receiver",
+  "developer",
+  " manager ",
+  "",
+  null,
+  42,
+  {},
+  undefined,
+])
+  test(`delegate event rejects unsupported role before storage ${JSON.stringify(role)}`, t => {
+    const f = fixture(t)
+    const outcomes: RegistryDelegateOutcome[] = []
+
+    f.emit(
+      REGISTRY_DELEGATE_REQUEST_EVENT,
+      delegation(role, outcome => {
+        outcomes.push(outcome)
+      }),
+    )
+
+    assert.equal(
+      outcomes.length,
+      1,
+      "the boundary reports a deterministic failure",
+    )
+    const outcome = outcomes[0]
+    assert.ok(outcome?.outcome === "failed")
+    assert.match(
+      outcome.reason,
+      role === undefined
+        ? /missing_selection/u
+        : /Agent role must be manager, driver-worker, or review-worker\./u,
+    )
+    assert.equal(existsSync(f.databasePath), false)
+  })
+
+test("a delegate event without a role never infers a recipient", t => {
+  const f = fixture(t)
+  const outcomes: RegistryDelegateOutcome[] = []
+  const { role: _role, ...request } = delegation(undefined, outcome => {
+    outcomes.push(outcome)
+  })
+
+  f.emit(REGISTRY_DELEGATE_REQUEST_EVENT, request)
+
+  assert.equal(outcomes.length, 1)
+  const outcome = outcomes[0]
+  assert.ok(outcome?.outcome === "failed")
+  assert.match(outcome.reason, /missing_selection/u)
+  assert.equal(existsSync(f.databasePath), false)
+})
+
+test("canonical delegate events enqueue explicit roles through real SQLite", async t => {
+  const f = fixture(t)
+
+  const outcomes = await Promise.all(
+    ["manager", "driver-worker", "review-worker"].map(
+      role =>
+        new Promise<RegistryDelegateOutcome>(resolve => {
+          f.emit(REGISTRY_DELEGATE_REQUEST_EVENT, delegation(role, resolve))
+        }),
+    ),
+  )
+
+  assert.equal(outcomes.length, 3)
+  for (const outcome of outcomes) assert.equal(outcome.outcome, "queued")
+
+  const database = new DatabaseSync(f.databasePath, { readOnly: true })
+
+  try {
+    assert.deepEqual(
+      database
+        .prepare("SELECT role FROM requests ORDER BY role")
+        .all()
+        .map(row => row.role),
+      ["driver-worker", "manager", "review-worker"],
     )
   } finally {
     database.close()

@@ -1,3 +1,5 @@
+import type { AgentRole } from "./agent-role.ts"
+
 export const REGISTRY_INTENT_REQUEST_EVENT = "pi:registry-intent-request"
 export const REGISTRY_IDENTITY_REQUEST_EVENT = "pi:registry-identity-request"
 export const MANAGED_OPERATIONAL_ROLE_RESUMED_EVENT =
@@ -10,7 +12,7 @@ export interface RegistryIntentRequest {
 }
 
 export interface RegistryRoleIdentity {
-  readonly role: string
+  readonly role: AgentRole
   readonly mode: "task" | "operational"
 }
 
@@ -21,7 +23,7 @@ export interface RegistryIdentityRequest {
 
 export interface ManagedOperationalRoleResumed {
   readonly project: string
-  readonly role: string
+  readonly role: AgentRole
 }
 
 export const REGISTRY_DELEGATE_REQUEST_EVENT = "pi:registry-delegate-request"
@@ -32,13 +34,13 @@ export type RegistryDelegateOutcome =
 
 /**
  * Mechanical delegate lane used by the dispatch flow: the emitter provides
- * the raw message and target project, the agent-registry extension performs
- * the typed enqueue with no model or classifier involvement, and reports the
- * queued request id (or a bounded failure) through the callback.
+ * the raw message, explicit canonical role and target project. The registry
+ * performs typed enqueue without model or classifier involvement and reports
+ * the queued request ID or bounded failure through the callback.
  */
 export interface RegistryDelegateRequest {
   readonly project: string
-  readonly role: string
+  readonly role: AgentRole
   readonly text: string
   readonly priority?: "normal" | "urgent"
   readonly requesterId: string

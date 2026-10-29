@@ -520,10 +520,6 @@ const registryExtension: (pi: ExtensionAPI) => void = pi => {
       typeof payload.project !== "string" ||
       !payload.project.startsWith("/") ||
       payload.project.length > 512 ||
-      !("role" in payload) ||
-      typeof payload.role !== "string" ||
-      payload.role.length === 0 ||
-      payload.role.length > 64 ||
       !("text" in payload) ||
       typeof payload.text !== "string" ||
       payload.text.length === 0 ||
@@ -544,10 +540,24 @@ const registryExtension: (pi: ExtensionAPI) => void = pi => {
     const callback = payload.report
     const report: RegistryDelegateRequest["report"] = outcome =>
       callback(outcome)
+    const role = "role" in payload ? payload.role : undefined
+    const decodedRole = decodeAgentRole(role)
+
+    if (Either.isLeft(decodedRole)) {
+      report({
+        outcome: "failed",
+        reason:
+          role === undefined
+            ? "missing_selection: an explicit canonical recipient role is required"
+            : decodedRole.left.message,
+      })
+      return
+    }
+
     void run(
       store.enqueue({
         project: payload.project,
-        role: payload.role,
+        role: decodedRole.right,
         requesterId: payload.requesterId,
         requesterLabel: payload.requesterLabel,
         requesterCwd: payload.requesterCwd,
