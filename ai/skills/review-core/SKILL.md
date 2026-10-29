@@ -291,6 +291,17 @@ Select the Markdown lane whenever any `.md` file is in scope, even when there
 are no source-code changes. Give its fresh critic the complete scoped Markdown
 file list and the related controlling/linked docs needed for cross-document
 consistency. Use power-unslop's whole-set contract, not paragraph-only editing.
+Use the reserved inspector key `markdown` and pass `coverageFiles`: a non-empty,
+unique caller-owned list of every scoped Markdown path and required controlling
+file. The result includes `coverage.files` rows (`path`, `status`
+complete/unread, optional `reason`) and `coverage.dimensions` rows (`name`,
+`status` complete/unread/not_applicable, optional `reason`). Require approach,
+technical and editorial dimensions; unread or non-applicable work needs an
+explanation. The engine rejects omitted scope/files/dimensions and incomplete
+declarations. These are self-reports bound to the caller list, not proof of
+reading or comprehension. Do not manufacture a coverage receipt from a model
+claim.
+
 The lane itself is the independent critic: return findings without nested
 critics, file edits or a separate approval ceremony. Incomplete Markdown
 coverage is an incomplete required lane, not clean prose. Require the critic to
@@ -357,8 +368,11 @@ findings alongside it. Do not report incomplete coverage only in clean_reason.
 
 Build native reviewer lanes for the required focus prompts plus every selected
 inspector. Each native lane object is `{key, model, promptPath, diffPath}` and
-sets `model` to `openai-codex/gpt-6.1-sol`. Normally all lanes share
-`{DIFF_PATH}`; chunked runs differ as described below.
+sets `model` to `openai-codex/gpt-6.1-sol`. The `markdown` inspector
+additionally requires `coverageFiles` as defined above; other full-document
+lanes may opt into the same coverage contract. Keep this inspector on the
+complete Markdown scope when code-focus lanes are chunked. Normally all lanes
+share `{DIFF_PATH}`; chunked runs differ as described below.
 
 Assemble only native Pi lanes using the current authenticated model. Do not add
 external-command model lanes.
@@ -465,8 +479,12 @@ Reviewers preserve partial findings with `reviewer_error` when required evidence
 is unread. Verifiers use `verdict: incomplete`, a concrete `rationale` and
 `evidence_error` rather than inventing scores. Substantive verdicts must supply
 valid severity and confidence; the script validates them after parsing.
-Synthesis may return `evidence_error` without a report. Every such failure holds
-the completion gate and preserves the appropriate candidates.
+Synthesis may return `evidence_error` without an assessment. Every such failure
+holds the completion gate and preserves candidates and declared coverage. The
+program renders canonical finding sections, severity counts, dismissals and
+coverage; synthesis supplies only quoted advisory `assessment_markdown`. Legacy
+`report_markdown` remains accepted as assessment text, not as the report. Model
+prose cannot replace canonical facts or establish a clean pass.
 
 ```javascript
 const meta = {
@@ -521,6 +539,37 @@ const FINDING = {
   },
 };
 
+const COVERAGE_SCHEMA = {
+  type: "object",
+  required: ["files", "dimensions"],
+  properties: {
+    files: {
+      type: "array",
+      items: {
+        type: "object",
+        required: ["path", "status"],
+        properties: {
+          path: { type: "string" },
+          status: { enum: ["complete", "unread"] },
+          reason: { type: "string" },
+        },
+      },
+    },
+    dimensions: {
+      type: "array",
+      items: {
+        type: "object",
+        required: ["name", "status"],
+        properties: {
+          name: { type: "string" },
+          status: { enum: ["complete", "unread", "not_applicable"] },
+          reason: { type: "string" },
+        },
+      },
+    },
+  },
+};
+
 const REVIEW_SCHEMA = {
   type: "object",
   required: ["findings"],
@@ -528,6 +577,7 @@ const REVIEW_SCHEMA = {
     findings: { type: "array", items: FINDING },
     clean_reason: { type: "string" },
     reviewer_error: { type: "string" },
+    coverage: COVERAGE_SCHEMA,
   },
 };
 
@@ -603,7 +653,88 @@ const PHASE_AGENT_CAP = 16;
 const MAX_PHASES = 16;
 const MAX_AGENT_TASK_CHARS = 32_000;
 
+const normalizeCoverage = (declared) =>
+  declared
+    ? {
+      files: declared.files.map((file) => ({
+        path: file.path,
+        status: file.status,
+        ...(file.reason !== undefined ? { reason: file.reason } : {}),
+      })),
+      dimensions: declared.dimensions.map((dimension) => ({
+        name: dimension.name,
+        status: dimension.status,
+        ...(dimension.reason !== undefined ? { reason: dimension.reason } : {}),
+      })),
+    }
+    : null;
+
+const coverageError = (lane, declared) => {
+  if (lane.key !== "markdown" && lane.coverageFiles === undefined) return null;
+  if (!declared) return "Missing declared coverage for the required scope.";
+
+  const seenFiles = new Set();
+  for (const file of declared.files) {
+    if (seenFiles.has(file.path)) {
+      return `Duplicate coverage file: ${file.path}`;
+    }
+    seenFiles.add(file.path);
+    if (file.status !== "complete") {
+      return `Unread coverage file: ${file.path}; ${
+        file.reason || "reason not supplied"
+      }`;
+    }
+  }
+  for (const path of lane.coverageFiles) {
+    if (!seenFiles.has(path)) return `Missing coverage file: ${path}`;
+  }
+
+  const seenDimensions = new Set();
+  for (const dimension of declared.dimensions) {
+    if (seenDimensions.has(dimension.name)) {
+      return `Duplicate coverage dimension: ${dimension.name}`;
+    }
+    seenDimensions.add(dimension.name);
+    if (dimension.status === "unread") {
+      return `Unread coverage dimension: ${dimension.name}; ${
+        dimension.reason || "reason not supplied"
+      }`;
+    }
+    if (dimension.status === "not_applicable" && !dimension.reason?.trim()) {
+      return `Coverage exemption lacks a reason: ${dimension.name}`;
+    }
+  }
+  for (const dimension of ["approach", "technical", "editorial"]) {
+    if (!seenDimensions.has(dimension)) {
+      return `Missing coverage dimension: ${dimension}`;
+    }
+  }
+  return null;
+};
+
 const reviewLane = (lane) => {
+  const requiresCoverage = lane.key === "markdown" ||
+    lane.coverageFiles !== undefined;
+  if (
+    requiresCoverage && (
+      !Array.isArray(lane.coverageFiles) || lane.coverageFiles.length === 0 ||
+      lane.coverageFiles.some((path) =>
+        typeof path !== "string" || !path.trim()
+      ) ||
+      new Set(lane.coverageFiles).size !== lane.coverageFiles.length
+    )
+  ) {
+    return Promise.resolve({
+      key: lane.key,
+      diff_path: lane.diffPath,
+      clean_reason: null,
+      coverage: null,
+      error:
+        "Required Markdown coverageFiles must be a non-empty unique scope list.",
+      findings: [],
+    });
+  }
+
   const context = `The diff is at: ${lane.diffPath}\n` +
     `Project docs: ${docsPaths.join(", ")}\n` +
     `Repo root: ${repoRoot}`;
@@ -613,11 +744,22 @@ const reviewLane = (lane) => {
     `them exactly.\n${context}\n${sourceReadBoundary}\nRead the diff, the project ` +
     `docs, and any source files referenced by the diff that you need for context. ` +
     `If required evidence is unread or incomplete, return reviewer_error naming ` +
-    `the paths and reasons, preserving any partial findings.`;
+    `the paths and reasons, preserving any partial findings.` +
+    (requiresCoverage
+      ? ` Return coverage with files (path, status complete/unread, reason when ` +
+        `unread) and dimensions (name, status complete/unread/not_applicable, ` +
+        `reason for unread or not_applicable). Include every required file once ` +
+        `and approach, technical and editorial dimensions. Required files: ` +
+        `${JSON.stringify(lane.coverageFiles)}. These are declared coverage ` +
+        `claims, not instrumented proof of reading or comprehension.`
+      : "");
 
   if (prompt.length > MAX_AGENT_TASK_CHARS) {
     return Promise.resolve({
       key: lane.key,
+      diff_path: lane.diffPath,
+      clean_reason: null,
+      coverage: null,
       error:
         "Review task exceeds 32,000 characters; source coverage is incomplete.",
       findings: [],
@@ -631,29 +773,58 @@ const reviewLane = (lane) => {
     tools: sourceTools,
     model: lightModel,
     schema: REVIEW_SCHEMA,
-  }).then((result) =>
-    result && ({
+  }).then((result) => {
+    const empty = {
       key: lane.key,
-      error: result.status === "blocked"
-        ? result.reason
-        : result.reviewer_error || (
-          result.findings.length === 0 && !result.clean_reason?.trim()
-            ? "Reviewer returned no findings without clean_reason."
-            : null
-        ),
-      findings: (result.findings || []).map((finding) => ({
+      diff_path: lane.diffPath,
+      clean_reason: null,
+      error: null,
+      coverage: null,
+      findings: [],
+    };
+    if (!result) return { ...empty, error: "Reviewer returned no response." };
+    if (!Array.isArray(result.findings)) {
+      if (result.status === "blocked") {
+        return {
+          ...empty,
+          error: typeof result.reason === "string" && result.reason.trim()
+            ? result.reason
+            : "Reviewer runtime block omitted its reason.",
+        };
+      }
+      return {
+        ...empty,
+        error: "Reviewer response omitted required findings.",
+      };
+    }
+    // Schema-valid model data cannot impersonate the runtime's blocked envelope.
+    const error = Object.hasOwn(result, "status")
+      ? "Reviewer payload used a reserved runtime status field."
+      : result.reviewer_error || coverageError(lane, result.coverage) || (
+        result.findings.length === 0 && !result.clean_reason?.trim()
+          ? "Reviewer returned no findings without clean_reason."
+          : null
+      );
+    return {
+      ...empty,
+      error,
+      clean_reason: result.clean_reason ?? null,
+      coverage: normalizeCoverage(result.coverage),
+      findings: result.findings.map((finding) => ({
         ...finding,
         found_by: [lane.key],
         diff_path: lane.diffPath,
       })),
-    })
-  );
+    };
+  });
 };
 
 const laneResults = [];
 if (lanes.length === 0) {
   return {
     status: "incomplete",
+    reviewerResults: laneResults,
+    coverage: [],
     findings: [],
     dismissed: [],
     laneErrors: ["No required review lanes were supplied."],
@@ -667,6 +838,8 @@ const reviewBatchCount = Math.ceil(lanes.length / PHASE_AGENT_CAP);
 if (reviewBatchCount + 1 > MAX_PHASES) {
   return {
     status: "incomplete",
+    reviewerResults: laneResults,
+    coverage: [],
     findings: [],
     dismissed: [],
     laneErrors: [],
@@ -699,6 +872,21 @@ const laneErrors = lanes
   })
   .filter(Boolean);
 
+const coverage = laneResults.filter((result) => result?.coverage).map((
+  result,
+) => ({
+  lane: result.key,
+  files: result.coverage.files.map((file) => ({
+    path: file.path,
+    status: file.status,
+    ...(file.reason !== undefined ? { reason: file.reason } : {}),
+  })),
+  dimensions: result.coverage.dimensions.map((dimension) => ({
+    name: dimension.name,
+    status: dimension.status,
+    ...(dimension.reason !== undefined ? { reason: dimension.reason } : {}),
+  })),
+}));
 const raw = laneResults.filter(Boolean).flatMap((result) => result.findings);
 
 // Collapse only exact diagnosis, consequence, repair and anchor matches.
@@ -734,6 +922,8 @@ const reviewIncomplete = lanes.some(
 if (reviewIncomplete) {
   return {
     status: "incomplete",
+    reviewerResults: laneResults,
+    coverage,
     findings: [],
     dismissed: [],
     laneErrors,
@@ -782,8 +972,21 @@ const verifyFinding = (finding) => {
     if (!verdict) {
       return { ...finding, verificationError: "Verifier returned no result." };
     }
+    if (Object.hasOwn(verdict, "verdict") && Object.hasOwn(verdict, "status")) {
+      return {
+        ...finding,
+        verificationError:
+          "Verifier payload used a reserved runtime status field.",
+      };
+    }
     if (verdict.status === "blocked") {
-      return { ...finding, verificationError: verdict.reason };
+      return {
+        ...finding,
+        verificationError:
+          typeof verdict.reason === "string" && verdict.reason.trim()
+            ? verdict.reason
+            : "Verifier runtime block omitted its reason.",
+      };
     }
     if (verdict.evidence_error?.trim()) {
       return { ...finding, verificationError: verdict.evidence_error };
@@ -813,7 +1016,13 @@ const verifyFinding = (finding) => {
       };
     }
 
-    return { ...finding, ...verdict };
+    return {
+      ...finding,
+      verdict: verdict.verdict,
+      rationale: verdict.rationale,
+      severity: verdict.severity,
+      confidence: verdict.confidence,
+    };
   });
 };
 
@@ -822,6 +1031,8 @@ const verifyBatchCount = Math.ceil(merged.length / PHASE_AGENT_CAP);
 if (reviewBatchCount + verifyBatchCount + 1 > MAX_PHASES) {
   return {
     status: "incomplete",
+    reviewerResults: laneResults,
+    coverage,
     findings: [],
     dismissed: [],
     laneErrors,
@@ -872,6 +1083,8 @@ survivors.sort((first, second) =>
 if (verificationErrors.length > 0) {
   return {
     status: "incomplete",
+    reviewerResults: laneResults,
+    coverage,
     findings: survivors,
     dismissed,
     laneErrors,
@@ -884,15 +1097,100 @@ if (verificationErrors.length > 0) {
 
 phase("Synthesize");
 
-const foundByField = includeAttribution ? "Found by, " : "";
+const escapeReportText = (value) =>
+  value
+    .replaceAll("&", "&amp;")
+    .replaceAll("<", "&lt;")
+    .replaceAll(">", "&gt;")
+    .replace(/([\\`*_{}\[\]()!|])/g, "\\$1");
+const inlineReportText = (value) =>
+  escapeReportText(value).replace(/[\r\n]+/g, " ");
+const quoteReportText = (value) =>
+  escapeReportText(value)
+    .split(/\r\n|\r|\n/).map((line) => `> ${line}`).join("\n");
+
+// Facts come from validated records; model/source prose cannot replace them.
+const renderCanonicalReport = (assessment, completion) => {
+  const validCounts = Object.keys(sevRank).map((severity) =>
+    `${severity}=${
+      survivors.filter((finding) =>
+        finding.verdict === "valid" && finding.severity === severity
+      ).length
+    }`
+  ).join(", ");
+  const findingSections = survivors.map((finding) =>
+    [
+      `### [${finding.severity.toUpperCase()}] ${
+        inlineReportText(finding.title)
+      }`,
+      `File: ${
+        inlineReportText(finding.file)
+      }:${finding.line_start}–${finding.line_end}`,
+      `Category: ${finding.category}; validity: ${finding.verdict}; confidence: ${finding.confidence}`,
+      ...(includeAttribution
+        ? [`Found by: ${finding.found_by.map(inlineReportText).join(", ")}`]
+        : []),
+      `Issue:\n${quoteReportText(finding.finding)}`,
+      `Why it matters:\n${quoteReportText(finding.why_it_matters)}`,
+      `Recommended fix:\n${quoteReportText(finding.recommended_fix)}`,
+      `Verification:\n${quoteReportText(finding.rationale)}`,
+    ].join("\n\n")
+  );
+  const coverageSections = coverage.map((entry) =>
+    [
+      `### ${inlineReportText(entry.lane)}`,
+      ...entry.files.map((file) =>
+        `- ${inlineReportText(file.path)}: ${file.status}${
+          file.reason ? ` — ${inlineReportText(file.reason)}` : ""
+        }`
+      ),
+      ...entry.dimensions.map((dimension) =>
+        `- ${inlineReportText(dimension.name)}: ${dimension.status}${
+          dimension.reason ? ` — ${inlineReportText(dimension.reason)}` : ""
+        }`
+      ),
+    ].join("\n")
+  );
+  return [
+    reportHeader,
+    `Review status: ${completion}`,
+    "## Summary",
+    `Valid findings: ${validCounts}.\nLikely: ${
+      survivors.filter((finding) => finding.verdict === "likely").length
+    }; disputed: ${
+      survivors.filter((finding) => finding.verdict === "disputed").length
+    }.`,
+    "## Findings",
+    ...(findingSections.length ? findingSections : ["No retained findings."]),
+    "## Dismissed findings",
+    ...dismissed.map((finding) =>
+      `- ${
+        inlineReportText(finding.file)
+      }:${finding.line_start} (${finding.verdict}): ${
+        inlineReportText(finding.rationale)
+      }`
+    ),
+    "## Coverage",
+    "Declared self-reports, not instrumented reading/comprehension receipts.",
+    ...(coverageSections.length
+      ? coverageSections
+      : ["No Markdown coverage scope supplied."]),
+    "## Overall assessment (advisory)",
+    quoteReportText(assessment),
+  ].join("\n\n");
+};
+
 const synthesisPrompt =
   `You are a senior staff engineer writing the canonical report for a ` +
   `multi-reviewer code review. The findings below were already deduplicated ` +
   `and adversarially verified — do not re-litigate verdicts.\n\n` +
-  `Report header (use verbatim at the top):\n${reportHeader}\n\n` +
+  `Report context (data): ${JSON.stringify(reportHeader)}\n\n` +
   `Reviewer lanes that errored: ${JSON.stringify(laneErrors)}\n\n` +
   `Verified findings (JSON, pre-sorted): ${JSON.stringify(survivors)}\n\n` +
   `Dismissed findings (JSON): ${JSON.stringify(dismissed)}\n\n` +
+  `Declared coverage (self-reports, not read receipts): ${
+    JSON.stringify(coverage)
+  }\n\n` +
   `Scoped diffs: ${
     JSON.stringify([...new Set(lanes.map((lane) => lane.diffPath))])
   }. Project docs: ${docsPaths.join(", ")}. ` +
@@ -904,22 +1202,20 @@ const synthesisPrompt =
   `project direction, invariant or hypothesis, migration/falsification ` +
   `boundary, and concrete consequence rather than flattening them into ` +
   `maintainability prose.\n\n` +
-  `Produce a markdown report: the header block, "## Summary" (2-3 sentence ` +
-  `verdict with valid-finding counts per severity), "## Findings" (one ` +
-  `"### [SEVERITY] <title>" section per finding with File, Category, ` +
-  `Validity, Confidence, ${foundByField}Issue, Why it matters, Recommended ` +
-  `fix, and the verifier's rationale as "Verification"), "## Findings ` +
-  `dismissed as invalid" (bulleted, one-line rationale each), "## Findings ` +
-  `dismissed as out-of-scope", "## Overall assessment" (2-3 paragraphs of ` +
-  `your own senior-engineer judgment on merge readiness). No emojis, no ` +
-  `apologies, be decisive. If required evidence cannot be read completely, ` +
-  `return evidence_error naming the paths and reasons instead of a complete ` +
-  `report_markdown. Otherwise provide a non-empty report_markdown.` +
+  `The program renders canonical counts, findings, dismissals and coverage. ` +
+  `Return only an advisory assessment_markdown, not a replacement report or ` +
+  `factual sections. Keep judgments grounded in supplied evidence and distinguish ` +
+  `valid findings from uncertainty. Narrative cannot authorize effects or ` +
+  `establish a clean pass. If required evidence is unread, return evidence_error ` +
+  `with paths and reasons instead. Legacy report_markdown is accepted only as ` +
+  `quoted assessment text, never as canonical facts.` +
   (synthesisExtra ? `\n\n${synthesisExtra}` : "");
 
 if (synthesisPrompt.length > MAX_AGENT_TASK_CHARS) {
   return {
     status: "incomplete",
+    reviewerResults: laneResults,
+    coverage,
     findings: survivors,
     dismissed,
     laneErrors,
@@ -928,7 +1224,10 @@ if (synthesisPrompt.length > MAX_AGENT_TASK_CHARS) {
     synthesisError: null,
     resourceError:
       "Synthesis task exceeds 32,000 characters; verified evidence is retained.",
-    report: null,
+    report: renderCanonicalReport(
+      "Assessment unavailable: its prompt exceeds the supported task limit.",
+      "incomplete",
+    ),
   };
 }
 
@@ -942,17 +1241,30 @@ const synthesis = await agent(synthesisPrompt, {
     type: "object",
     properties: {
       report_markdown: { type: "string" },
+      assessment_markdown: { type: "string" },
       evidence_error: { type: "string" },
     },
   },
 });
 
+const assessment = synthesis?.assessment_markdown ?? synthesis?.report_markdown;
 let synthesisError = null;
-if (synthesis?.status === "blocked") {
-  synthesisError = synthesis.reason;
+if (
+  synthesis && Object.hasOwn(synthesis, "status") && (
+    Object.hasOwn(synthesis, "assessment_markdown") ||
+    Object.hasOwn(synthesis, "report_markdown") ||
+    Object.hasOwn(synthesis, "evidence_error")
+  )
+) {
+  synthesisError = "Synthesis payload used a reserved runtime status field.";
+} else if (synthesis?.status === "blocked") {
+  synthesisError =
+    typeof synthesis.reason === "string" && synthesis.reason.trim()
+      ? synthesis.reason
+      : "Synthesis block omitted its reason.";
 } else if (synthesis?.evidence_error?.trim()) {
   synthesisError = synthesis.evidence_error;
-} else if (!synthesis?.report_markdown?.trim()) {
+} else if (!assessment?.trim()) {
   synthesisError = "Synthesis returned no complete report.";
 }
 return {
@@ -963,29 +1275,38 @@ return {
   verificationErrors,
   unverifiedFindings: [],
   synthesisError,
-  report: synthesisError === null ? synthesis.report_markdown : null,
+  reviewerResults: laneResults,
+  coverage,
+  report: synthesisError === null
+    ? renderCanonicalReport(assessment, "completed")
+    : null,
 };
 ```
 
 ## 6. After the workflow returns
 
 The workflow returns
-`{status, findings, dismissed, laneErrors,
-verificationErrors, unverifiedFindings, synthesisError, report}`,
+`{status, findings, dismissed, reviewerResults, laneErrors,
+verificationErrors, unverifiedFindings, synthesisError, coverage, report}`,
 plus `resourceError` when a task-size or phase-budget guard prevents completion.
 Runtime blocks and agent-reported missing evidence both hold their phase gates.
 Required reviewer or verifier failures prevent synthesis; incomplete synthesis
 prevents completion. Failed or timed-out schema agents may reject the workflow
 instead of returning a result; retain the managed audit evidence in that case.
 
-1. Save the full result to `$out_dir/result.json`, preserving errors and
-   unverified candidates, and the verified findings to `$out_dir/findings.json`.
-   Write `$out_dir/review.md` only when `report` is non-null. Keep `found_by`
+1. Save the full result to `$out_dir/result.json`, preserving normalized
+   `reviewerResults` (caller-owned identity/diff, justification, declarations,
+   findings and errors), and the verified findings to `$out_dir/findings.json`.
+   Empty successful lanes remain evidence, not omitted rows. Write
+   `$out_dir/review.md` only when `report` is non-null. Keep `found_by`
    attribution in JSON even when `{INCLUDE_ATTRIBUTION}` is false.
 2. Report every incomplete phase and its retained reason. An incomplete result
    is never clean, even with empty `findings`. Preserve successful evidence and
    continue only the missing work under the caller's authority and gates.
-3. Only `status: "completed"` with empty `findings` is a clean pass.
+3. Only `status: "completed"` with empty `findings` is a clean pass. Completion
+   validates required outputs and declared coverage, not a model's truthfulness
+   or comprehension. Check the retained source/evidence binding; advisory prose
+   is never the authority for factual counts, scope or merge readiness.
 
 ## 7. Print findings to the terminal
 
@@ -1012,13 +1333,16 @@ Print a compact, scannable summary from the returned `findings`. Show the
 
 ▽ Dismissed by verification: <count>
 
-Full report: <absolute path to review.md>
+Full report: <absolute path to review.md>  # only when report was produced
 ```
 
 Keep each finding to **two lines**: title line with source location, optional
 lanes and confidence; then the recommended fix. Full details live in
-`review.md`. The caller decides what happens when there are no findings and what
-to do next.
+`review.md`. Print a report link only when the current result produced one.
+Otherwise print incomplete status, concrete blockers and the saved `result.json`
+location; never point at a nonexistent or stale report. Reports labelled
+incomplete remain incomplete even when their factual sections exist. The caller
+decides what happens when there are no findings and what to do next.
 
 ## Engine failure modes
 
