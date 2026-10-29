@@ -28,6 +28,24 @@ let
     '';
   };
   moveTreeSitter = pkgs.vimPlugins.nvim-treesitter.grammarToPlugin pkgs.tree-sitter-grammars.tree-sitter-move;
+  researchParsers = pkgs.symlinkJoin {
+    name = "nvim-research-parsers";
+    paths =
+      (pkgs.vimPlugins.nvim-treesitter.withPlugins (grammars: [
+        grammars.haskell
+        grammars.markdown
+        grammars.markdown_inline
+      ])).dependencies;
+  };
+  researchMolten = pkgs.vimPlugins.molten-nvim.overrideAttrs (previous: {
+    postPatch = (previous.postPatch or "") + ''
+      # Imported errors already include output_type. The exporter supplies that
+      # argument positionally; retaining it in extras breaks every later save.
+      substituteInPlace rplugin/python3/molten/ipynb.py \
+        --replace-fail 'chunk.extras = output_data' \
+        'chunk.extras = {key: value for key, value in output_data.items() if key != "output_type"}'
+    '';
+  });
   but-unwrapped = inputs.but-nix.packages.${pkgs.stdenv.hostPlatform.system}.gitbutler-cli;
   but = pkgs.writeShellScriptBin "but" ''
     exec ${pkgs.bash}/bin/bash ${./scripts/but-linked-worktree-guard.sh} \
@@ -366,10 +384,28 @@ in
     neovim = {
       enable = true;
       withRuby = false;
-      withPython3 = false;
+      withPython3 = true;
+      # Home Manager clears the wrapper's packpath. Make Molten visible during
+      # Nix's remote-plugin manifest generation as well as normal startup.
+      extraWrapperArgs = [
+        "--add-flags"
+        "--cmd 'set runtimepath+=${researchMolten}'"
+        "--add-flags"
+        ''--cmd "lua ${config.programs.neovim.finalPackage.providerLuaRc}"''
+      ];
+
+      extraPython3Packages =
+        ps: with ps; [
+          jupyter-client
+          cairosvg
+          nbformat
+          pillow
+        ];
       extraPackages = with pkgs; [
         fd
         gcc
+        haskell-language-server
+        imagemagick
         lazygit
         lua-language-server
         luarocks
@@ -381,8 +417,11 @@ in
         typescript-language-server
       ];
       plugins = with pkgs.vimPlugins; [
+        researchMolten
+        image-nvim
         (nvim-treesitter.withPlugins (grammars: [
           grammars.bash
+          grammars.haskell
           grammars.html
           grammars.css
           grammars.javascript
@@ -398,7 +437,14 @@ in
           grammars.yaml
         ]))
       ];
-      initLua = builtins.readFile ./nvim/bootstrap.lua;
+      initLua = ''
+        vim.g.research_plugin_paths = {
+          image = "${pkgs.vimPlugins.image-nvim}",
+          molten = "${researchMolten}",
+          parsers = "${researchParsers}",
+        }
+      ''
+      + builtins.readFile ./nvim/bootstrap.lua;
     };
 
     # Atuin — fuzzy history search (ctrl+r) for nushell
