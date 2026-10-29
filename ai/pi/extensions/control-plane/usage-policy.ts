@@ -60,10 +60,15 @@ export interface AllowanceRunway {
   readonly planningHorizonAt: number
 }
 
-export type AutonomousRole = "general" | "reviewer"
+/** Accounting classes, independent of canonical registry AgentRole identities. */
+export type QuotaClass = "general" | "reviewer"
+
+/** Compatibility name for quota accounting; not a registry role declaration. */
+export type AutonomousRole = QuotaClass
 
 export interface RolePollingPolicy {
-  readonly role: AutonomousRole
+  /** Legacy transport key for the quota class. */
+  readonly role: QuotaClass
   readonly baseIntervalMs: number
   readonly weight: number
   readonly effectiveIntervalMs: number

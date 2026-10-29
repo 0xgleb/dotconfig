@@ -3,10 +3,12 @@ import { truncateToWidth, visibleWidth } from "@earendil-works/pi-tui"
 
 import { framedChromeInset } from "../shared/chrome.ts"
 import type { UsagePace } from "./core.ts"
+import type { QuotaClass } from "../control-plane/usage-policy.ts"
 
+// Legacy role/roles transport keys contain quota classes, not AgentRole values.
 const ROLE_NAMES = ["general", "reviewer"] as const
 
-type ThrottleRole = (typeof ROLE_NAMES)[number]
+type ThrottleRole = QuotaClass
 
 interface ThrottlePolicy {
   readonly pace: UsagePace
@@ -21,7 +23,8 @@ interface ThrottlePolicy {
 }
 
 interface ThrottleRolePolicy {
-  readonly role: ThrottleRole
+  /** Legacy transport key for the quota class. */
+  readonly role: QuotaClass
   readonly baseIntervalMs: number
   readonly weight: number
   readonly effectiveIntervalMs: number
