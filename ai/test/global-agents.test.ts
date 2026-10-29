@@ -455,7 +455,7 @@ test("related discovered changes reuse an existing branch and PR", () => {
   )
 })
 
-test("cross-project harness edits remain direct source changes without foreign VCS writes", () => {
+test("cross-project harness edits reserve main-worktree VCS without blocking authorized review checkouts", () => {
   assert.match(
     instructions,
     /agents assigned to other projects.*source edits directly in `~\/.config`/is,
@@ -466,8 +466,17 @@ test("cross-project harness edits remain direct source changes without foreign V
   )
   assert.match(
     instructions,
-    /do not commit, push, create PRs, or otherwise mutate dotconfig VCS state/is,
+    /do not commit, push, create PRs, or otherwise mutate VCS state from that shared main worktree/is,
   )
+  assert.match(
+    global,
+    /restriction is scoped to the main worktree, not every checkout of the repository/is,
+  )
+  assert.match(
+    global,
+    /separately authorized linked review checkout.*normal plain-Git review, fix and publication workflow.*including for dotconfig PRs/is,
+  )
+  assert.match(global, /does not grant new checkout or merge authority/is)
 })
 
 test("dotconfig refers to global delivery policy rather than duplicating publication ownership", () => {
