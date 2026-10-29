@@ -32,8 +32,8 @@ images. Image rendering through Zellij has not been verified.
 Select code paragraphs without their explanatory comments, then evaluate them.
 Definitions persist until the kernel is stopped. In the scratch file, evaluate
 the imports and definition paragraphs, then put the cursor on `sampleMean` or
-`sampleChart` and press `,meiw` to display the value or chart. Haskell LSP uses `hls` through
-the standard AstroLSP flow.
+`sampleChart` and press `,meiw` to display the value or chart. Haskell LSP uses
+`hls` through the standard AstroLSP flow.
 
 | Key            | Action                      |
 | -------------- | --------------------------- |
