@@ -160,12 +160,7 @@ const TodoParams = Type.Object({
 })
 
 type StatusColor =
-  | "success"
-  | "warning"
-  | "accent"
-  | "toolTitle"
-  | "dim"
-  | "muted"
+  "success" | "warning" | "accent" | "toolTitle" | "dim" | "muted"
 
 const statusColor = (status: TodoStatus | undefined): StatusColor => {
   switch (status) {
