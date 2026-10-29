@@ -2,8 +2,7 @@
 
 - Status: Proposed
 - Date: 2026-10-26
-- Issue:
-  [Issue-centric task management](https://github.com/0xgleb/dotconfig/issues/362)
+- Issue: Tracking issue pending creation
 
 ## Context
 
