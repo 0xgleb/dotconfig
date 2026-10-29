@@ -14,8 +14,9 @@ export const RevisionSchema = Schema.Number.pipe(
   Schema.nonNegative(),
   Schema.lessThanOrEqualTo(Number.MAX_SAFE_INTEGER),
 )
+export const MAX_TASK_TEXT = 131_072
 export const TextSchema = Schema.String.pipe(
-  Schema.maxLength(131_072),
+  Schema.maxLength(MAX_TASK_TEXT),
   Schema.filter(value => value.trim().length > 0),
   Schema.filter(
     value => !/[\u0000-\u0008\u000b\u000c\u000e-\u001f\u007f]/u.test(value),
