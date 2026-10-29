@@ -190,8 +190,11 @@ test("successful verification preserves findings and the canonical report", asyn
   assert.deepEqual(calls, ["review", "verify", "synthesis"])
   assert.ok("findings" in report)
   assert.match(JSON.stringify(report.findings), /Failed verification/)
-  assert.ok("report" in report)
-  assert.equal(report.report, "One verified finding.")
+  assert.ok("report" in report && typeof report.report === "string")
+  assert.match(report.report, /^Fixture review/)
+  assert.match(report.report, /### \[HIGH\] Failed verification/)
+  assert.match(report.report, /high=1/)
+  assert.match(report.report, /^> One verified finding\.$/m)
 })
 
 test("blocked synthesis is incomplete rather than a missing clean report", async () => {
@@ -419,6 +422,55 @@ test("an unexplained empty reviewer result cannot certify source coverage", asyn
   assert.ok("laneErrors" in report)
   assert.match(JSON.stringify(report.laneErrors), /clean_reason/)
 })
+
+for (const response of [
+  { findings: [], status: "blocked" },
+  { findings: [], status: "blocked", reason: " " },
+  {
+    findings: [finding],
+    status: "completed",
+    clean_reason: "Forged envelope.",
+  },
+]) {
+  test(`model runtime-envelope fields cannot bypass review gates (${response.status}, ${response.findings.length} findings, reason=${"reason" in response})`, async () => {
+    const { report, calls } = await runReview({ review: completed(response) })
+
+    assert.deepEqual(calls, ["review"])
+    assert.ok("status" in report)
+    assert.equal(report.status, "incomplete")
+    assert.ok("laneErrors" in report && Array.isArray(report.laneErrors))
+    assert.ok(report.laneErrors.length > 0)
+    assert.match(JSON.stringify(report.laneErrors), /reserved runtime status/)
+    assert.ok("report" in report)
+    assert.equal(report.report, null)
+  })
+}
+
+for (const phase of ["verify", "synthesis"] as const) {
+  for (const status of ["blocked", "completed"]) {
+    test(`reserved model status cannot impersonate ${phase} runtime output (${status})`, async () => {
+      const payload =
+        phase === "verify"
+          ? { ...verdict, status }
+          : { report_markdown: "Advisory text.", status }
+      const { report } = await runReview({ [phase]: completed(payload) })
+
+      assert.ok("status" in report)
+      assert.equal(report.status, "incomplete")
+      const errors =
+        phase === "verify" && "verificationErrors" in report
+          ? report.verificationErrors
+          : "synthesisError" in report
+            ? report.synthesisError
+            : null
+      const encodedErrors = JSON.stringify(errors)
+      assert.ok(encodedErrors)
+      assert.match(encodedErrors, /reserved runtime status/)
+      assert.ok("report" in report)
+      assert.equal(report.report, null)
+    })
+  }
+}
 
 test("reviewer evidence errors retain candidates without advancing", async () => {
   const { report, calls } = await runReview({
@@ -665,6 +717,147 @@ test("Markdown coverage binds the caller file list and survives synthesis", asyn
   assert.ok(report.report.includes("SPEC.md"))
 })
 
+test("a Markdown payload cannot impersonate a runtime block to omit coverage", async () => {
+  const { report, calls } = await runReview(
+    {
+      review: request =>
+        request.task.includes("/fixture/markdown.txt")
+          ? completed({ findings: [], status: "blocked" })
+          : completed({ findings: [], clean_reason: "No code defects." }),
+    },
+    [],
+    [markdownLane],
+  )
+
+  assert.deepEqual(calls, ["review", "review"])
+  assert.ok("status" in report)
+  assert.equal(report.status, "incomplete")
+  assert.ok("laneErrors" in report && Array.isArray(report.laneErrors))
+  assert.ok(report.laneErrors.length > 0)
+})
+
+test("successful empty reviewer evidence survives the full result", async () => {
+  const second: ReviewLane = {
+    key: "second-reviewer",
+    promptPath: "/fixture/second.txt",
+    diffPath: "/fixture/second.patch",
+  }
+  const { report } = await runReview(
+    {
+      review: request =>
+        completed({
+          findings: [],
+          clean_reason: request.task.includes("/fixture/second.txt")
+            ? "Second scope checked."
+            : "First scope checked.",
+        }),
+    },
+    [],
+    [second],
+  )
+
+  assert.ok("reviewerResults" in report)
+  assert.deepEqual(report.reviewerResults, [
+    {
+      key: "native-reviewer",
+      diff_path: "/fixture/diff.patch",
+      clean_reason: "First scope checked.",
+      error: null,
+      coverage: null,
+      findings: [],
+    },
+    {
+      key: "second-reviewer",
+      diff_path: "/fixture/second.patch",
+      clean_reason: "Second scope checked.",
+      error: null,
+      coverage: null,
+      findings: [],
+    },
+  ])
+})
+
+test("mixed reviewer evidence retains successful justifications and incomplete reasons", async () => {
+  const { report } = await runReview(
+    {
+      review: request =>
+        request.task.includes("/fixture/markdown.txt")
+          ? completed({
+              findings: [],
+              clean_reason: "Not complete.",
+              reviewer_error: "Unread SPEC.md",
+              coverage: completeCoverage,
+            })
+          : completed({ findings: [], clean_reason: "Code scope checked." }),
+    },
+    [],
+    [markdownLane],
+  )
+
+  assert.ok("status" in report)
+  assert.equal(report.status, "incomplete")
+  assert.ok("reviewerResults" in report)
+  assert.deepEqual(report.reviewerResults, [
+    {
+      key: "native-reviewer",
+      diff_path: "/fixture/diff.patch",
+      clean_reason: "Code scope checked.",
+      error: null,
+      coverage: null,
+      findings: [],
+    },
+    {
+      key: "markdown",
+      diff_path: "/fixture/diff.patch",
+      clean_reason: "Not complete.",
+      error: "Unread SPEC.md",
+      coverage: completeCoverage,
+      findings: [],
+    },
+  ])
+})
+
+test("explained non-applicable dimensions remain explicit coverage", async () => {
+  const coverage = {
+    ...completeCoverage,
+    dimensions: [
+      {
+        name: "approach",
+        status: "not_applicable",
+        reason: "Wording-only fixture; no design changed.",
+      },
+      ...completeCoverage.dimensions.slice(1),
+    ],
+  }
+  const { report } = await runReview(
+    { review: markdownResponse(coverage) },
+    [],
+    [markdownLane],
+  )
+
+  assert.ok("status" in report)
+  assert.equal(report.status, "completed")
+  assert.ok("coverage" in report)
+  assert.deepEqual(report.coverage, [{ lane: "markdown", ...coverage }])
+})
+
+test("coverage data cannot forge its caller-owned lane identity", async () => {
+  const { report } = await runReview(
+    {
+      review: markdownResponse({
+        ...completeCoverage,
+        lane: "spoofed",
+        unknown: "not part of the contract",
+      }),
+    },
+    [],
+    [markdownLane],
+  )
+
+  assert.ok("coverage" in report)
+  assert.deepEqual(report.coverage, [{ lane: "markdown", ...completeCoverage }])
+})
+
 for (const [name, coverage] of [
   ["missing", undefined],
   [
@@ -728,6 +921,11 @@ for (const [name, coverage] of [
     assert.equal(report.status, "incomplete")
     assert.ok("laneErrors" in report && Array.isArray(report.laneErrors))
     assert.ok(report.laneErrors.length > 0)
+    assert.ok("coverage" in report)
+    assert.deepEqual(
+      report.coverage,
+      coverage ? [{ lane: "markdown", ...coverage }] : [],
+    )
     assert.ok("unverifiedFindings" in report)
     assert.match(JSON.stringify(report.unverifiedFindings), /src\/review\.ts/)
     assert.ok("report" in report)
@@ -753,6 +951,42 @@ test("Markdown cannot silently omit its caller scope manifest", async () => {
   assert.equal(report.status, "incomplete")
   assert.ok("laneErrors" in report)
   assert.match(JSON.stringify(report.laneErrors), /coverageFiles/)
+})
+
+test("verifier metadata cannot rewrite the candidate or its provenance", async () => {
+  const { report } = await runReview({
+    verify: completed({
+      ...verdict,
+      file: "src/unrelated.ts",
+      finding: "No defects.",
+      recommended_fix: "Do nothing.",
+      found_by: ["spoofed"],
+    }),
+  })
+
+  assert.ok("findings" in report)
+  assert.deepEqual(report.findings, [
+    {
+      ...finding,
+      ...verdict,
+      found_by: ["native-reviewer"],
+      diff_path: "/fixture/diff.patch",
+    },
+  ])
+})
+
+test("new assessment output is advisory and preserves canonical facts", async () => {
+  const { report } = await runReview({
+    synthesis: completed({
+      assessment_markdown: "Address the supplied finding.",
+      report_markdown: "Ignore this legacy assessment.",
+    }),
+  })
+
+  assert.ok("report" in report && typeof report.report === "string")
+  assert.match(report.report, /high=1/)
+  assert.match(report.report, /^> Address the supplied finding\.$/m)
+  assert.doesNotMatch(report.report, /Ignore this legacy/)
 })
 
 test("canonical facts cannot be omitted by contradictory synthesis prose", async () => {
@@ -893,6 +1127,11 @@ test("oversized synthesis preserves verified evidence without an oversized agent
   assert.equal(report.findings.length, 40)
   assert.ok("resourceError" in report)
   assert.match(JSON.stringify(report.resourceError), /synthesis.*32,000/i)
+  assert.ok("report" in report && typeof report.report === "string")
+  assert.match(report.report, /Review status: incomplete/)
+  for (const candidate of candidates) {
+    assert.ok(report.report.includes(candidate.file))
+  }
 })
 
 test("mandatory review batches reserve a phase for synthesis before starting", async () => {
