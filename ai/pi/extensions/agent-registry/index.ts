@@ -9,6 +9,11 @@ import { Text } from "@earendil-works/pi-tui"
 import { Type } from "typebox"
 import { Cause, Effect, Either, Option, Runtime } from "effect"
 import {
+  AGENT_ROLES,
+  decodeAgentRole,
+  type AgentRole,
+} from "../shared/agent-role.ts"
+import {
   BACKLOG_PROJECTION_EVENT,
   backlogRequirementsFromText,
   BRANCH_TODO_BACKLOG_EVENT,
@@ -118,7 +123,7 @@ interface RegistryToolRequest {
     | "fail_request"
     | "cancel_request"
   readonly project?: string
-  readonly role?: string
+  readonly role?: AgentRole
   readonly mode?: "task" | "operational"
   readonly priority?: RegistryRequestPriority
   readonly requestId?: string
@@ -1176,7 +1181,9 @@ const registryExtension: (pi: ExtensionAPI) => void = pi => {
         Type.Literal("ingest_backlog"),
       ]),
       project: Type.Optional(Type.String()),
-      role: Type.Optional(Type.String()),
+      role: Type.Optional(
+        Type.Union(AGENT_ROLES.map(role => Type.Literal(role))),
+      ),
       mode: Type.Optional(
         Type.Union([Type.Literal("task"), Type.Literal("operational")]),
       ),
@@ -1293,6 +1300,20 @@ const registryExtension: (pi: ExtensionAPI) => void = pi => {
       const requesterId = ctx.sessionManager.getSessionId()
       const project = request.project?.trim() || ctx.cwd
       try {
+        if ("role" in request && request.role !== undefined) {
+          const decodedRole = decodeAgentRole(request.role)
+
+          if (Either.isLeft(decodedRole))
+            return await run(
+              Effect.fail(
+                new RegistryError({
+                  code: "invalid_input",
+                  message: decodedRole.left.message,
+                }),
+              ),
+            )
+        }
+
         if (request.action === "ingest_backlog") {
           const snapshot = await run(
             backlogSnapshotFromToolRequest(request, ctx.cwd, now).pipe(
