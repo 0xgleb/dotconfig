@@ -736,13 +736,13 @@ const classifierBackoff: (
   })
 }
 
-async function classify(
+const classify = async (
   request: ClassificationRequest,
   ctx: Pick<ExtensionContext, "cwd" | "getModel">,
   signal?: AbortSignal,
   onActivity?: (active: boolean) => void,
   owner?: OwnerAllowance,
-): Promise<Decision> {
+): Promise<Decision> => {
   onActivity?.(true)
   try {
     let lastClassifierFailure = "no classifier process result"
@@ -1108,10 +1108,10 @@ const WorkflowParameters = Type.Object({
   ),
 })
 
-export default function classifiedWorkflows(
+const classifiedWorkflows = (
   pi: ExtensionAPI,
   onOwnerAllowance?: (guard: ReturnType<typeof registerOwnerAllowance>) => void,
-): void {
+): void => {
   const withGitHookAuthority = registerGitHookAuthority(pi)
   registerRuntimeVersion(pi, "classified-workflows", "2026.10.17.26")
   const childTokenLimitResult = Effect.runSync(
@@ -4612,3 +4612,5 @@ export default function classifiedWorkflows(
   })
   onOwnerAllowance?.(ownerAllowance)
 }
+
+export default classifiedWorkflows

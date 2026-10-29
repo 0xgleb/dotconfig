@@ -614,7 +614,9 @@ const isExactAgentopolyCapabilityMarketPrMetadata = (
   )
 }
 
-export function deterministicDecision(request: ToolRequest): Decision | null {
+export const deterministicDecision = (
+  request: ToolRequest,
+): Decision | null => {
   if (
     ["memory", "memory_search", "session_search"].includes(
       request.toolName.replace(/^functions\./, ""),
