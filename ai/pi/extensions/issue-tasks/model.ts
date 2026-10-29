@@ -1,10 +1,6 @@
 import { Schema } from "effect"
 import type { IssueReference } from "./identity.ts"
 
-export const PlanIdSchema = Schema.UUID.pipe(
-  Schema.brand("IssuePlanId"),
-  Schema.filter(value => value === value.toLowerCase()),
-)
 export const TaskIdSchema = Schema.UUID.pipe(
   Schema.brand("IssueTaskId"),
   Schema.filter(value => value === value.toLowerCase()),
@@ -27,28 +23,25 @@ export const TextSchema = Schema.String.pipe(
 )
 export const StatusSchema = Schema.Literal("todo", "doing", "done", "cancelled")
 
-export type PlanId = typeof PlanIdSchema.Type
 export type TaskId = typeof TaskIdSchema.Type
 export type TaskStatus = typeof StatusSchema.Type
 export type MutationBatchId = typeof MutationBatchIdSchema.Type
 
-export interface IssuePlan {
-  readonly id: PlanId
+export interface IssueTaskRevision {
   readonly issue: IssueReference
   readonly revision: number
 }
-export interface PlanTask {
+export interface IssueTask {
   readonly id: TaskId
   readonly text: string
   readonly status: TaskStatus
   readonly blocker: string | null
 }
-export interface PlanPage {
-  readonly plan: IssuePlan
-  readonly tasks: readonly PlanTask[]
+export interface IssueTaskPage extends IssueTaskRevision {
+  readonly tasks: readonly IssueTask[]
   readonly next: TaskId | null
 }
-export interface PlanPageInput {
+export interface TaskPageInput {
   readonly limit: number
   readonly after?: TaskId
 }

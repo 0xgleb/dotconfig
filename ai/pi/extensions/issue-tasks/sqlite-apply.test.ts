@@ -5,12 +5,15 @@ import { DatabaseSync } from "node:sqlite"
 import test from "node:test"
 import { fileURLToPath } from "node:url"
 import { Cause, Deferred, Effect, Either, Exit, Fiber, Option } from "effect"
+import { makeSqliteRegistryStore } from "../agent-registry/sqlite-store.ts"
 import { decodeIssueReference } from "./identity.ts"
 import {
-  openSqlitePlanStore,
-  type SqlitePlanStore,
+  openSqliteTaskStore,
+  type SqliteTaskStore,
   type TaskApplyContext,
 } from "./sqlite-store.ts"
+
+import { MAX_TRANSITION_TEXT } from "./transition.ts"
 
 const run = Effect.runPromise
 const parent = fileURLToPath(
@@ -55,10 +58,10 @@ const fixture = async (work: (path: string, root: string) => Promise<void>) => {
 }
 const withStore = async (
   path: string,
-  work: (store: SqlitePlanStore) => Promise<void>,
+  work: (store: SqliteTaskStore) => Promise<void>,
 ) => {
   const store = await run(
-    openSqlitePlanStore({ databasePath: path, busyTimeoutMs: 0 }),
+    openSqliteTaskStore({ databasePath: path, busyTimeoutMs: 0 }),
   )
   try {
     await work(store)
@@ -74,6 +77,32 @@ const sql = (path: string, work: (database: DatabaseSync) => void) => {
     database.close()
   }
 }
+// Keep the published c2cb44c1 v2 declaration independent of current history DDL.
+const restoreVersionTwoHistory = (path: string) =>
+  sql(path, database =>
+    database.exec(`
+    BEGIN IMMEDIATE;
+    DROP INDEX IF EXISTS issue_plan_issues_nocase;
+    ALTER TABLE issue_plan_history RENAME TO fixture_previous_history;
+    CREATE TABLE issue_plan_history (
+      sequence INTEGER PRIMARY KEY CHECK (sequence BETWEEN 1 AND 9007199254740991),
+      batch_id TEXT NOT NULL REFERENCES issue_plan_batches(id),
+      plan_id TEXT NOT NULL REFERENCES issue_plans(id),
+      task_id TEXT NOT NULL REFERENCES issue_plan_tasks(id),
+      operation_index INTEGER NOT NULL CHECK (operation_index BETWEEN 0 AND 999),
+      kind TEXT NOT NULL CHECK (kind IN ('add', 'edit', 'status', 'block')),
+      recorded_at INTEGER NOT NULL CHECK (recorded_at BETWEEN 0 AND 9007199254740991),
+      payload_json TEXT NOT NULL,
+      UNIQUE (batch_id, operation_index)
+    ) STRICT;
+    INSERT INTO issue_plan_history SELECT * FROM fixture_previous_history;
+    DROP TABLE fixture_previous_history;
+    CREATE INDEX issue_plan_history_by_task ON issue_plan_history (task_id, sequence);
+    UPDATE issue_plan_schema SET version = 2;
+    COMMIT;
+  `),
+  )
+
 const errorCode = async <T, E extends { readonly code: string }>(
   effect: Effect.Effect<T, E>,
   expected: string,
@@ -81,6 +110,139 @@ const errorCode = async <T, E extends { readonly code: string }>(
   const value = await run(Effect.either(effect))
   assert.ok(Either.isLeft(value))
   assert.equal(value.left.code, expected)
+}
+
+test("issue-addressed task writes and reads expose issue revisions without an independent container", async () =>
+  fixture(async path => {
+    await withStore(path, async store => {
+      const saved = await run(
+        store.apply(
+          batch(
+            [{ op: "add", issue: a, key: "only", text: "Issue requirement" }],
+            [a],
+          ),
+          context("issue-only-contract"),
+        ),
+      )
+      const created = saved.created[0]
+      assert.ok(created)
+      assert.deepEqual(saved, {
+        kind: "saved",
+        receipt: "committed",
+        batchId: saved.batchId,
+        issues: [{ issue: a, revision: 1 }],
+        changed: [
+          {
+            issue: a,
+            id: created.id,
+            revision: 1,
+            fields: ["text", "status", "blocker", "dependsOn"],
+          },
+        ],
+        created: [{ issue: a, key: "only", id: created.id }],
+        eventCount: 1,
+      })
+      const page = await run(store.readTasks(issue(), { limit: 10 }))
+      assert.ok(Option.isSome(page))
+      assert.deepEqual(page.value, {
+        issue: a,
+        revision: 1,
+        tasks: [
+          {
+            id: created.id,
+            text: "Issue requirement",
+            status: "todo",
+            blocker: null,
+          },
+        ],
+        next: null,
+      })
+      assert.equal("ensurePlan" in store, false)
+    })
+  }))
+
+for (const change of ["add", "edit", "block"]) {
+  test(`final task text budget admits the boundary and rejects overflowing ${change}`, async () =>
+    fixture(async path => {
+      await withStore(path, async store => {
+        const largeText = "x".repeat(131_072)
+        assert.equal(largeText.length * 64, MAX_TRANSITION_TEXT)
+        const ids: string[] = []
+        for (let index = 0; index < 64; index++) {
+          const seeded = await run(
+            store.apply(
+              batch(
+                [
+                  {
+                    op: "add",
+                    issue: a,
+                    key: "seed",
+                    text: index === 63 ? largeText.slice(2) : largeText,
+                  },
+                ],
+                [a],
+              ),
+              context(`text-seed-${index}`),
+            ),
+          )
+          const created = seeded.created[0]
+          assert.ok(created)
+          ids.push(created.id)
+        }
+        const small = await run(
+          store.apply(
+            batch([{ op: "add", issue: a, key: "small", text: "x" }], [a]),
+            context("text-small"),
+          ),
+        )
+        const target = small.created[0]
+        assert.ok(target)
+        ids.push(target.id)
+        const noOps = (targets: readonly string[]) =>
+          targets.map(id => ({
+            op: "status",
+            target: existing(id),
+            status: "todo",
+          }))
+        const boundaryOperation =
+          change === "add"
+            ? { op: "add", issue: a, key: "boundary", text: "x" }
+            : change === "edit"
+              ? { op: "edit", target: existing(target.id), text: "xx" }
+              : { op: "block", target: existing(target.id), reason: "x" }
+        const boundary = await run(
+          store.apply(
+            batch([...noOps(ids), boundaryOperation], [a]),
+            context("text-boundary"),
+          ),
+        )
+        const loadedIds = [
+          ...ids,
+          ...boundary.created.map(created => created.id),
+        ]
+        const overflowOperation =
+          change === "add"
+            ? { op: "add", issue: a, key: "overflow", text: "x" }
+            : change === "edit"
+              ? { op: "edit", target: existing(target.id), text: "xxx" }
+              : { op: "block", target: existing(target.id), reason: "xx" }
+        await errorCode(
+          store.apply(
+            batch([...noOps(loadedIds), overflowOperation], [a]),
+            context("text-overflow"),
+          ),
+          "capacity",
+        )
+        const after = await run(store.readTasks(issue(), { limit: 100 }))
+        assert.ok(Option.isSome(after))
+        assert.equal(after.value.revision, boundary.issues[0]?.revision)
+        assert.equal(after.value.tasks.length, loadedIds.length)
+        const unchanged = after.value.tasks.find(row => row.id === target.id)
+        assert.ok(unchanged)
+        assert.equal(unchanged.text, change === "edit" ? "xx" : "x")
+        assert.equal(unchanged.blocker, change === "block" ? "x" : null)
+      })
+    }))
 }
 
 test("an atomic multi-issue write persists stable tasks, edges, revisions and private history", async () =>
@@ -112,7 +274,7 @@ test("an atomic multi-issue write persists stable tasks, edges, revisions and pr
       assert.equal(saved.kind, "saved")
       assert.equal(saved.receipt, "committed")
       assert.equal(saved.eventCount, 4)
-      assert.equal(saved.plans.length, 2)
+      assert.equal(saved.issues.length, 2)
       const first = saved.created.find(item => item.key === "first")
       const second = saved.created.find(item => item.key === "second")
       assert.ok(first && second)
@@ -125,8 +287,8 @@ test("an atomic multi-issue write persists stable tasks, edges, revisions and pr
       )
     })
     await withStore(path, async store => {
-      const first = await run(store.readPlan(issue(), { limit: 10 }))
-      const second = await run(store.readPlan(issue(b), { limit: 10 }))
+      const first = await run(store.readTasks(issue(), { limit: 10 }))
+      const second = await run(store.readTasks(issue(b), { limit: 10 }))
       assert.ok(Option.isSome(first) && Option.isSome(second))
       assert.equal(first.value.tasks[0]?.id, firstId)
       assert.equal(first.value.tasks[0]?.status, "doing")
@@ -150,7 +312,272 @@ test("an atomic multi-issue write persists stable tasks, edges, revisions and pr
     })
   }))
 
-test("a failed late target leaves no plan, task, receipt or history from the batch", async () =>
+test("cross-issue transfer preserves task identity, state, dependency edges and history across reopen", async () =>
+  fixture(async path => {
+    let dependencyId = ""
+    let movedId = ""
+    let residentId = ""
+    const seed = batch([
+      { op: "add", issue: a, key: "dependency", text: "Source dependency" },
+      {
+        op: "add",
+        issue: a,
+        key: "moved",
+        text: "Completed requirement",
+        dependsOn: [added("dependency")],
+      },
+      {
+        op: "add",
+        issue: b,
+        key: "resident",
+        text: "Destination requirement",
+        dependsOn: [added("moved")],
+      },
+      { op: "status", target: added("moved"), status: "done" },
+      {
+        op: "block",
+        target: added("moved"),
+        reason: "External input remains documented",
+      },
+    ])
+    await withStore(path, async store => {
+      const original = await run(store.apply(seed, context("transfer-seed")))
+      const dependency = original.created.find(row => row.key === "dependency")
+      const moved = original.created.find(row => row.key === "moved")
+      const resident = original.created.find(row => row.key === "resident")
+      assert.ok(dependency && moved && resident)
+      dependencyId = dependency.id
+      movedId = moved.id
+      residentId = resident.id
+      let priorHistory: readonly unknown[] = []
+      sql(path, database => {
+        priorHistory = database
+          .prepare("SELECT * FROM issue_plan_history ORDER BY sequence")
+          .all()
+      })
+      assert.equal(priorHistory.length, 5)
+
+      const saved = await run(
+        store.apply(
+          batch([{ op: "transfer", target: existing(movedId), toIssue: b }]),
+          context("transfer-existing"),
+        ),
+      )
+      assert.equal(saved.receipt, "committed")
+      assert.equal(saved.eventCount, 1)
+      assert.deepEqual(saved.created, [])
+      assert.deepEqual(saved.changed, [
+        { issue: issue(b), id: movedId, revision: 2, fields: ["issue"] },
+      ])
+      assert.equal(saved.issues.length, 2)
+      for (const qualified of [a, b]) {
+        assert.equal(
+          saved.issues.find(
+            plan =>
+              plan.issue.repository === qualified.repository &&
+              plan.issue.number === qualified.number,
+          )?.revision,
+          2,
+        )
+      }
+      const source = await run(store.readTasks(issue(), { limit: 10 }))
+      const destination = await run(store.readTasks(issue(b), { limit: 10 }))
+      assert.ok(Option.isSome(source) && Option.isSome(destination))
+      assert.deepEqual(
+        source.value.tasks.map(task => task.id),
+        [dependencyId],
+      )
+      assert.equal(destination.value.tasks.length, 2)
+      assert.deepEqual(
+        destination.value.tasks.find(task => task.id === movedId),
+        {
+          id: movedId,
+          text: "Completed requirement",
+          status: "done",
+          blocker: "External input remains documented",
+        },
+      )
+      sql(path, database => {
+        const history = database
+          .prepare("SELECT * FROM issue_plan_history ORDER BY sequence")
+          .all()
+        assert.deepEqual(history.slice(0, priorHistory.length), priorHistory)
+        assert.equal(history.length, priorHistory.length + 1)
+        const transfer = history.at(-1)
+        assert.ok(transfer && typeof transfer.payload_json === "string")
+        assert.equal(transfer.task_id, movedId)
+        assert.equal(transfer.kind, "transfer")
+        const payload: unknown = JSON.parse(transfer.payload_json)
+        assert.deepEqual(payload, {
+          op: "transfer",
+          operationIndex: 0,
+          issue: b,
+          id: movedId,
+          splitFrom: a,
+        })
+        const edges = database
+          .prepare("SELECT task_id, depends_on_id FROM issue_plan_dependencies")
+          .all()
+        assert.equal(edges.length, 2)
+        assert.ok(
+          edges.some(
+            edge =>
+              edge.task_id === movedId && edge.depends_on_id === dependencyId,
+          ),
+        )
+        assert.ok(
+          edges.some(
+            edge =>
+              edge.task_id === residentId && edge.depends_on_id === movedId,
+          ),
+        )
+      })
+      await errorCode(
+        store.apply(
+          batch([
+            {
+              op: "edit",
+              target: existing(movedId),
+              text: "Reject the stale owner",
+            },
+          ]),
+          context("transfer-stale-owner"),
+        ),
+        "scope_mismatch",
+      )
+      const currentOwner = await run(
+        store.apply(
+          batch([
+            { op: "status", target: existing(movedId, b), status: "done" },
+          ]),
+          context("transfer-current-owner"),
+        ),
+      )
+      assert.deepEqual(currentOwner.issues, [])
+      assert.equal(currentOwner.eventCount, 0)
+      const replay = await run(store.apply(seed, context("transfer-seed")))
+      assert.equal(replay.receipt, "replayed")
+      assert.equal(replay.batchId, original.batchId)
+      assert.deepEqual(replay.created, original.created)
+    })
+    await withStore(path, async store => {
+      const source = await run(store.readTasks(issue(), { limit: 10 }))
+      const destination = await run(store.readTasks(issue(b), { limit: 10 }))
+      assert.ok(Option.isSome(source) && Option.isSome(destination))
+      assert.equal(source.value.revision, 2)
+      assert.equal(destination.value.revision, 2)
+      assert.deepEqual(
+        source.value.tasks.map(task => task.id),
+        [dependencyId],
+      )
+      assert.equal(destination.value.tasks.length, 2)
+      assert.equal(
+        destination.value.tasks.find(task => task.id === movedId)?.status,
+        "done",
+      )
+    })
+  }))
+
+for (const omittedIndex of [0, 1]) {
+  test(`transfer replay rejects an omitted affected issue revision: ${omittedIndex}`, async () =>
+    fixture(async path => {
+      await withStore(path, async store => {
+        const seed = await run(
+          store.apply(
+            batch(
+              [
+                {
+                  op: "add",
+                  issue: a,
+                  key: "source",
+                  text: "Transfer requirement",
+                },
+              ],
+              [a],
+            ),
+            context("receipt-transfer-seed"),
+          ),
+        )
+        const task = seed.created[0]
+        assert.ok(task)
+        const transfer = batch([
+          { op: "transfer", target: existing(task.id), toIssue: b },
+        ])
+        const transferContext = context("receipt-transfer")
+        const saved = await run(store.apply(transfer, transferContext))
+        assert.deepEqual(saved.issues, [
+          { issue: a, revision: 2 },
+          { issue: b, revision: 1 },
+        ])
+        sql(path, database => {
+          const row = database
+            .prepare("SELECT result_json FROM issue_plan_batches WHERE id = ?")
+            .get(saved.batchId)
+          assert.ok(row && typeof row.result_json === "string")
+          const receipt: unknown = JSON.parse(row.result_json)
+          assert.ok(
+            typeof receipt === "object" &&
+              receipt !== null &&
+              "plans" in receipt,
+          )
+          assert.ok(Array.isArray(receipt.plans))
+          assert.equal(receipt.plans.length, 2)
+          receipt.plans.splice(omittedIndex, 1)
+          database
+            .prepare(
+              "UPDATE issue_plan_batches SET result_json = ? WHERE id = ?",
+            )
+            .run(JSON.stringify(receipt), saved.batchId)
+        })
+        await errorCode(store.apply(transfer, transferContext), "corrupt_state")
+      })
+    }))
+}
+
+test("task transfer initializes destination issue state without a separate create operation", async () =>
+  fixture(async path => {
+    await withStore(path, async store => {
+      const initial = await run(
+        store.apply(
+          batch(
+            [
+              {
+                op: "add",
+                issue: a,
+                key: "source",
+                text: "Move this requirement",
+              },
+            ],
+            [a],
+          ),
+          context("fresh-destination-source"),
+        ),
+      )
+      const task = initial.created[0]
+      assert.ok(task)
+      const moved = await run(
+        store.apply(
+          batch([{ op: "transfer", target: existing(task.id), toIssue: b }]),
+          context("fresh-destination-transfer"),
+        ),
+      )
+      assert.deepEqual(moved.issues, [
+        { issue: a, revision: 2 },
+        { issue: b, revision: 1 },
+      ])
+      assert.deepEqual(moved.created, [])
+      const source = await run(store.readTasks(issue(), { limit: 10 }))
+      const destination = await run(store.readTasks(issue(b), { limit: 10 }))
+      assert.ok(Option.isSome(source) && Option.isSome(destination))
+      assert.deepEqual(source.value.tasks, [])
+      assert.deepEqual(
+        destination.value.tasks.map(row => row.id),
+        [task.id],
+      )
+    })
+  }))
+
+test("a failed late target leaves no issue state, task, receipt or history from the batch", async () =>
   fixture(async path => {
     await withStore(path, async store => {
       await errorCode(
@@ -173,7 +600,7 @@ test("a failed late target leaves no plan, task, receipt or history from the bat
         "missing_task",
       )
       assert.ok(
-        Option.isNone(await run(store.readPlan(issue(), { limit: 10 }))),
+        Option.isNone(await run(store.readTasks(issue(), { limit: 10 }))),
       )
     })
     sql(path, database => {
@@ -203,7 +630,7 @@ test("cancellation policy is trusted context, not batch data, and failed cancell
         "unauthorized",
       )
       assert.ok(
-        Option.isNone(await run(store.readPlan(issue(), { limit: 10 }))),
+        Option.isNone(await run(store.readTasks(issue(), { limit: 10 }))),
       )
       const saved = await run(
         store.apply(input, context("owner-cancel", "owner-authorized")),
@@ -354,10 +781,10 @@ for (const table of [
           "corrupt_state",
         )
         assert.ok(
-          Option.isNone(await run(store.readPlan(issue(), { limit: 10 }))),
+          Option.isNone(await run(store.readTasks(issue(), { limit: 10 }))),
         )
         assert.ok(
-          Option.isNone(await run(store.readPlan(issue(b), { limit: 10 }))),
+          Option.isNone(await run(store.readTasks(issue(b), { limit: 10 }))),
         )
       })
       sql(path, database => {
@@ -421,10 +848,10 @@ for (const [table, mutation] of [
           "corrupt_state",
         )
         assert.ok(
-          Option.isNone(await run(store.readPlan(issue(), { limit: 10 }))),
+          Option.isNone(await run(store.readTasks(issue(), { limit: 10 }))),
         )
         assert.ok(
-          Option.isNone(await run(store.readPlan(issue(b), { limit: 10 }))),
+          Option.isNone(await run(store.readTasks(issue(b), { limit: 10 }))),
         )
       })
       sql(path, database => {
@@ -460,14 +887,14 @@ test("replaying an older receipt survives later legitimate task changes", async 
           context("later"),
         ),
       )
-      assert.equal(changed.plans[0]?.revision, 2)
+      assert.equal(changed.issues[0]?.revision, 2)
 
       const replayed = await run(store.apply(input, context("original")))
       assert.deepEqual(replayed, { ...saved, receipt: "replayed" })
-      const page = await run(store.readPlan(issue(), { limit: 10 }))
+      const page = await run(store.readTasks(issue(), { limit: 10 }))
       assert.ok(Option.isSome(page))
       assert.equal(page.value.tasks[0]?.status, "doing")
-      assert.equal(page.value.plan.revision, 2)
+      assert.equal(page.value.revision, 2)
     })
   }))
 
@@ -545,7 +972,7 @@ for (const verification of ["available", "unavailable"] as const) {
           assert.ok(Cause.isCause(result.left.cause))
         }
         assert.equal(recoveryReads, 1)
-        await errorCode(store.readPlan(issue(), { limit: 10 }), "io")
+        await errorCode(store.readTasks(issue(), { limit: 10 }), "io")
       })
       acknowledgementLost = false
 
@@ -554,7 +981,7 @@ for (const verification of ["available", "unavailable"] as const) {
         assert.equal(replay.receipt, "replayed")
         if (verification === "available")
           assert.equal(replay.created[0]?.id, createdId)
-        const page = await run(store.readPlan(issue(), { limit: 10 }))
+        const page = await run(store.readTasks(issue(), { limit: 10 }))
         assert.ok(Option.isSome(page))
         assert.equal(page.value.tasks.length, 1)
       })
@@ -644,7 +1071,7 @@ for (const evidence of ["missing database", "different batch"] as const) {
 test("recovery uses the captured database configuration rather than later caller mutations", async t =>
   fixture(async (path, root) => {
     const options = { databasePath: path, busyTimeoutMs: 0 }
-    const store = await run(openSqlitePlanStore(options))
+    const store = await run(openSqliteTaskStore(options))
     options.databasePath = join(root, "unrelated.sqlite")
     options.busyTimeoutMs = 1_000_000
     const exec = DatabaseSync.prototype.exec
@@ -698,7 +1125,7 @@ test("a failed COMMIT with confirmed rollback remains a known failure and leaves
 
       await errorCode(store.apply(input, context("known-failure")), "io")
       assert.ok(
-        Option.isNone(await run(store.readPlan(issue(), { limit: 10 }))),
+        Option.isNone(await run(store.readTasks(issue(), { limit: 10 }))),
       )
       const saved = await run(store.apply(input, context("known-failure")))
       assert.equal(saved.receipt, "committed")
@@ -736,7 +1163,7 @@ test("failed COMMIT and rollback without durable receipt stays unknown and never
         "unknown_completion",
       )
       assert.equal(commits, 1)
-      await errorCode(store.readPlan(issue(), { limit: 10 }), "io")
+      await errorCode(store.readTasks(issue(), { limit: 10 }), "io")
     })
     sql(path, database => {
       assert.equal(
@@ -784,7 +1211,7 @@ test("cancellation at successful COMMIT does not roll back durable tasks", async
       assert.equal(rollbacks, 0)
       const replay = await run(store.apply(input, context("cancel-at-commit")))
       assert.equal(replay.receipt, "replayed")
-      const page = await run(store.readPlan(issue(), { limit: 10 }))
+      const page = await run(store.readTasks(issue(), { limit: 10 }))
       assert.ok(Option.isSome(page))
       assert.equal(page.value.tasks.length, 1)
     })
@@ -794,7 +1221,7 @@ test("cancelling interruptible task work rolls back without starting COMMIT", as
   fixture(async path => {
     const entered = await run(Deferred.make<void>())
     const store = await run(
-      openSqlitePlanStore({
+      openSqliteTaskStore({
         databasePath: path,
         busyTimeoutMs: 0,
         taskTransactionBeginSignal: Deferred.succeed(entered, undefined).pipe(
@@ -837,7 +1264,7 @@ test("cancelling interruptible task work rolls back without starting COMMIT", as
       assert.equal(commits, 0)
       assert.equal(rollbacks, 1)
       assert.ok(
-        Option.isNone(await run(store.readPlan(issue(), { limit: 10 }))),
+        Option.isNone(await run(store.readTasks(issue(), { limit: 10 }))),
       )
     } finally {
       await run(store.close())
@@ -847,10 +1274,10 @@ test("cancelling interruptible task work rolls back without starting COMMIT", as
 test("concurrent writers load current state under the same SQLite write lock", async () =>
   fixture(async path => {
     const first = await run(
-      openSqlitePlanStore({ databasePath: path, busyTimeoutMs: 0 }),
+      openSqliteTaskStore({ databasePath: path, busyTimeoutMs: 0 }),
     )
     const second = await run(
-      openSqlitePlanStore({ databasePath: path, busyTimeoutMs: 0 }),
+      openSqliteTaskStore({ databasePath: path, busyTimeoutMs: 0 }),
     )
     try {
       await Promise.all([
@@ -871,10 +1298,10 @@ test("concurrent writers load current state under the same SQLite write lock", a
           ),
         ),
       ])
-      const page = await run(first.readPlan(issue(), { limit: 10 }))
+      const page = await run(first.readTasks(issue(), { limit: 10 }))
       assert.ok(Option.isSome(page))
       assert.equal(page.value.tasks.length, 2)
-      assert.equal(page.value.plan.revision, 2)
+      assert.equal(page.value.revision, 2)
     } finally {
       await run(first.close())
       await run(second.close())
@@ -915,9 +1342,9 @@ test("a cyclic final batch is rejected without changing tasks or history", async
         ),
         "cycle",
       )
-      const page = await run(store.readPlan(issue(), { limit: 10 }))
+      const page = await run(store.readTasks(issue(), { limit: 10 }))
       assert.ok(Option.isSome(page))
-      assert.equal(page.value.plan.revision, 1)
+      assert.equal(page.value.revision, 1)
     })
     sql(path, database =>
       assert.equal(
@@ -929,14 +1356,255 @@ test("a cyclic final batch is rejected without changing tasks or history", async
     )
   }))
 
+test("version-two history upgrades without losing registry data, history or old receipts", async () =>
+  fixture(async (path, root) => {
+    const registry = makeSqliteRegistryStore(root)
+    const seed = batch(
+      [
+        {
+          op: "add",
+          issue: a,
+          key: "retained",
+          text: "Retain original history",
+        },
+      ],
+      [a],
+    )
+    const seedContext = context("version-two-seed")
+    let retainedId = ""
+    let priorHistory: readonly unknown[] = []
+    try {
+      const request = await run(
+        registry.enqueue({
+          project: "/fixture/project",
+          role: "worker",
+          requesterId: "fixture-worker",
+          text: "Keep unrelated registry data",
+          now: 1_000,
+        }),
+      )
+      await withStore(path, async store => {
+        const saved = await run(store.apply(seed, seedContext))
+        const retained = saved.created[0]
+        assert.ok(retained)
+        retainedId = retained.id
+      })
+      restoreVersionTwoHistory(path)
+      sql(path, database => {
+        priorHistory = database
+          .prepare("SELECT * FROM issue_plan_history ORDER BY sequence")
+          .all()
+      })
+      await withStore(path, async store => {
+        const moved = await run(
+          store.apply(
+            batch([
+              { op: "transfer", target: existing(retainedId), toIssue: b },
+            ]),
+            context("after-version-two-upgrade"),
+          ),
+        )
+        assert.equal(moved.eventCount, 1)
+        const replay = await run(store.apply(seed, seedContext))
+        assert.equal(replay.receipt, "replayed")
+        assert.equal(replay.created[0]?.id, retainedId)
+        const destination = await run(store.readTasks(issue(b), { limit: 10 }))
+        assert.ok(Option.isSome(destination))
+        assert.equal(destination.value.tasks[0]?.id, retainedId)
+      })
+      sql(path, database => {
+        const history = database
+          .prepare("SELECT * FROM issue_plan_history ORDER BY sequence")
+          .all()
+        assert.deepEqual(history.slice(0, priorHistory.length), priorHistory)
+        assert.equal(history.length, priorHistory.length + 1)
+        assert.equal(history.at(-1)?.kind, "transfer")
+        assert.equal(
+          database.prepare("SELECT version FROM issue_plan_schema").get()
+            ?.version,
+          4,
+        )
+        assert.equal(
+          database.prepare("PRAGMA user_version").get()?.user_version,
+          5,
+        )
+      })
+      const snapshot = await run(registry.snapshot(1_000))
+      assert.equal(snapshot.requests.length, 1)
+      assert.equal(snapshot.requests[0]?.id, request.id)
+    } finally {
+      registry.close()
+    }
+  }))
+
+for (const foreign of [
+  "CREATE INDEX fixture_history_index ON issue_plan_history (recorded_at)",
+  "CREATE VIEW fixture_history_view AS SELECT task_id FROM issue_plan_history",
+  "CREATE TRIGGER fixture_history_trigger AFTER INSERT ON fixture_subject BEGIN SELECT sequence FROM issue_plan_history; END",
+  "CREATE TABLE fixture_history_reference (sequence INTEGER REFERENCES issue_plan_history(sequence)) STRICT; INSERT INTO fixture_history_reference SELECT sequence FROM issue_plan_history LIMIT 1",
+]) {
+  test(`version-two upgrade preserves foreign history objects by refusing unsafe rebuild: ${foreign.split(" ").slice(1, 3).join(" ")}`, async () =>
+    fixture(async path => {
+      await withStore(path, async store => {
+        await run(
+          store.apply(
+            batch(
+              [
+                {
+                  op: "add",
+                  issue: a,
+                  key: "original",
+                  text: "Keep existing work",
+                },
+              ],
+              [a],
+            ),
+            context("foreign-history-seed"),
+          ),
+        )
+      })
+      restoreVersionTwoHistory(path)
+      let beforeSchema: readonly unknown[] = []
+      let beforeHistory: readonly unknown[] = []
+      sql(path, database => {
+        database.exec(
+          "CREATE TABLE fixture_subject (id INTEGER PRIMARY KEY) STRICT; INSERT INTO fixture_subject VALUES (1)",
+        )
+        database.exec(foreign)
+        assert.equal(
+          database.prepare("PRAGMA journal_mode = DELETE").get()?.journal_mode,
+          "delete",
+        )
+        beforeSchema = database
+          .prepare("SELECT * FROM sqlite_schema ORDER BY name")
+          .all()
+        beforeHistory = database
+          .prepare("SELECT * FROM issue_plan_history ORDER BY sequence")
+          .all()
+      })
+      const opened = await run(
+        Effect.either(openSqliteTaskStore({ databasePath: path })),
+      )
+      if (Either.isRight(opened)) await run(opened.right.close())
+      sql(path, database => {
+        assert.deepEqual(
+          database.prepare("SELECT * FROM sqlite_schema ORDER BY name").all(),
+          beforeSchema,
+        )
+        assert.deepEqual(
+          database
+            .prepare("SELECT * FROM issue_plan_history ORDER BY sequence")
+            .all(),
+          beforeHistory,
+        )
+        assert.equal(
+          database.prepare("SELECT id FROM fixture_subject").get()?.id,
+          1,
+        )
+        assert.equal(
+          database.prepare("SELECT version FROM issue_plan_schema").get()
+            ?.version,
+          2,
+        )
+        assert.equal(
+          database.prepare("PRAGMA journal_mode").get()?.journal_mode,
+          "delete",
+        )
+      })
+      assert.ok(Either.isLeft(opened))
+      assert.equal(opened.left.code, "unsupported_schema")
+    }))
+}
+
+test("version-three upgrade adds qualified lookup indexing without rewriting task history", async () =>
+  fixture(async path => {
+    let id = ""
+    let originalHistory: readonly unknown[] = []
+    await withStore(path, async store => {
+      const saved = await run(
+        store.apply(
+          batch(
+            [
+              {
+                op: "add",
+                issue: a,
+                key: "retained",
+                text: "Retain version-three tasks",
+              },
+            ],
+            [a],
+          ),
+          context("version-three-seed"),
+        ),
+      )
+      const task = saved.created[0]
+      assert.ok(task)
+      id = task.id
+    })
+    sql(path, database => {
+      originalHistory = database
+        .prepare("SELECT * FROM issue_plan_history ORDER BY sequence")
+        .all()
+      database.exec(
+        "DROP INDEX issue_plan_issues_nocase; UPDATE issue_plan_schema SET version = 3; PRAGMA user_version = 5;",
+      )
+    })
+    await withStore(path, async store => {
+      const page = await run(store.readTasks(issue(), { limit: 10 }))
+      assert.ok(Option.isSome(page))
+      assert.equal(page.value.tasks[0]?.id, id)
+      assert.equal(page.value.revision, 1)
+    })
+    sql(path, database => {
+      assert.deepEqual(
+        database
+          .prepare("SELECT * FROM issue_plan_history ORDER BY sequence")
+          .all(),
+        originalHistory,
+      )
+      assert.ok(
+        database
+          .prepare(
+            "SELECT name FROM sqlite_schema WHERE name = 'issue_plan_issues_nocase'",
+          )
+          .get(),
+      )
+      assert.equal(
+        database.prepare("SELECT version FROM issue_plan_schema").get()
+          ?.version,
+        4,
+      )
+      assert.equal(
+        database.prepare("PRAGMA user_version").get()?.user_version,
+        5,
+      )
+    })
+  }))
+
 test("a new schema upgrades the real version-one namespace without changing registry ownership", async () =>
   fixture(async path => {
+    let retainedId = ""
     await withStore(path, async store => {
-      await run(store.ensurePlan(issue()))
+      const before = await run(
+        store.apply(
+          batch([
+            {
+              op: "add",
+              issue: a,
+              key: "before",
+              text: "Retain through upgrade",
+            },
+          ]),
+          context("before-upgrade"),
+        ),
+      )
+      const retained = before.created[0]
+      assert.ok(retained)
+      retainedId = retained.id
     })
     sql(path, database =>
       database.exec(
-        "DROP TABLE IF EXISTS issue_plan_history; DROP TABLE IF EXISTS issue_plan_dependencies; DROP TABLE IF EXISTS issue_plan_batches; UPDATE issue_plan_schema SET version = 1; PRAGMA user_version = 5;",
+        "DROP TABLE IF EXISTS issue_plan_history; DROP TABLE IF EXISTS issue_plan_dependencies; DROP TABLE IF EXISTS issue_plan_batches; DROP INDEX issue_plan_issues_nocase; UPDATE issue_plan_schema SET version = 1; PRAGMA user_version = 5;",
       ),
     )
     await withStore(path, async store => {
@@ -947,12 +1615,16 @@ test("a new schema upgrades the real version-one namespace without changing regi
         ),
       )
       assert.equal(saved.created.length, 1)
+      const page = await run(store.readTasks(issue(), { limit: 10 }))
+      assert.ok(Option.isSome(page))
+      assert.equal(page.value.tasks.length, 2)
+      assert.ok(page.value.tasks.some(task => task.id === retainedId))
     })
     sql(path, database => {
       assert.equal(
         database.prepare("SELECT version FROM issue_plan_schema").get()
           ?.version,
-        2,
+        4,
       )
       assert.equal(
         database.prepare("PRAGMA user_version").get()?.user_version,

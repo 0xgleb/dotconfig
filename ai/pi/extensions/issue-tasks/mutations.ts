@@ -22,6 +22,7 @@ export type TaskTarget =
   | { readonly kind: "existing"; readonly id: TaskId }
   | { readonly kind: "added"; readonly key: DraftTaskKey }
 export interface TaskReference {
+  /** Current owner for an existing ID; creation namespace for an added key. */
   readonly issue: IssueReference
   readonly task: TaskTarget
 }
@@ -48,6 +49,11 @@ export type TaskMutation =
       readonly op: "block"
       readonly target: TaskReference
       readonly reason: string | null
+    }
+  | {
+      readonly op: "transfer"
+      readonly target: TaskReference
+      readonly toIssue: IssueReference
     }
 export interface TaskMutationBatch {
   readonly issues: readonly IssueReference[]
@@ -271,6 +277,15 @@ const mutation = (
         const reason = yield* leaf(Schema.NullOr(TextSchema), raw.reason)
         return freezeMutation({ op: "block", target, reason })
       }
+      case "transfer": {
+        if (
+          !shape(raw, ["op", "target", "toIssue"], ["op", "target", "toIssue"])
+        )
+          return yield* invalid("invalid_operation", "Invalid transfer fields")
+        const target = yield* reference(raw.target, scope, additions)
+        const toIssue = yield* scopedIssue(raw.toIssue, scope)
+        return freezeMutation({ op: "transfer", target, toIssue })
+      }
       default:
         return yield* invalid("invalid_operation", "Unknown task operation")
     }
@@ -320,6 +335,9 @@ export const decodeTaskMutationBatch = (
           break
         case "status":
           references += 1
+          break
+        case "transfer":
+          references += 2
           break
         case "block":
           references += 1

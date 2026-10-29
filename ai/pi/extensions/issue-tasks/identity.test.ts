@@ -17,7 +17,7 @@ test("repository-qualified identities distinguish identical issue numbers", () =
   assert.equal(issueKey(first.right), "0xgleb/dotconfig#1")
 })
 
-test("GitHub repository case does not create independently writable plans", () => {
+test("GitHub repository case does not create duplicate issue ownership", () => {
   const decoded = decodeIssueReference(issue("0xGleb/DotConfig", 361))
   assert.ok(Either.isRight(decoded))
   assert.equal(issueKey(decoded.right), "0xgleb/dotconfig#361")
