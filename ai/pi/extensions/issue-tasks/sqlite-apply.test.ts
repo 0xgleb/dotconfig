@@ -1,5 +1,12 @@
 import assert from "node:assert/strict"
-import { existsSync, mkdirSync, mkdtempSync, renameSync, rmSync } from "node:fs"
+import {
+  chmodSync,
+  existsSync,
+  mkdirSync,
+  mkdtempSync,
+  renameSync,
+  rmSync,
+} from "node:fs"
 import { join } from "node:path"
 import { DatabaseSync } from "node:sqlite"
 import test from "node:test"
@@ -77,6 +84,62 @@ const sql = <A>(path: string, work: (database: DatabaseSync) => A): A => {
   } finally {
     database.close()
   }
+}
+interface ObservedRead {
+  readonly query: string
+  readonly method: "get" | "all"
+  readonly result: unknown
+}
+const observeReads = async <A>(
+  accepts: (query: string) => boolean,
+  work: () => Promise<A>,
+): Promise<{ readonly value: A; readonly reads: readonly ObservedRead[] }> => {
+  const reads: ObservedRead[] = []
+  const prepare = DatabaseSync.prototype.prepare
+  DatabaseSync.prototype.prepare = function (query) {
+    const statement = prepare.call(this, query)
+    if (accepts(query))
+      for (const method of ["get", "all"] as const) {
+        const read = statement[method]
+        Object.defineProperty(statement, method, {
+          value: (...parameters: readonly unknown[]) => {
+            const result: unknown = Reflect.apply(read, statement, parameters)
+            reads.push({ query, method, result })
+            return result
+          },
+        })
+      }
+    return statement
+  }
+  try {
+    return { value: await work(), reads }
+  } finally {
+    DatabaseSync.prototype.prepare = prepare
+  }
+}
+const materializedStrings = (
+  reads: readonly ObservedRead[],
+  field: string,
+): readonly string[] => {
+  const entries: readonly (readonly [string, unknown])[] = reads.flatMap(
+    read => {
+      const rows: readonly unknown[] = Array.isArray(read.result)
+        ? read.result
+        : [read.result]
+      return rows.flatMap(row => {
+        if (typeof row !== "object" || row === null) return []
+        return Object.entries(row).filter(([name]) => name === field)
+      })
+    },
+  )
+  assert.ok(
+    entries.length > 0,
+    `No production projection for ${field} was observed`,
+  )
+
+  return entries.flatMap(([, value]) =>
+    typeof value === "string" ? [value] : [],
+  )
 }
 const receiptJson = (path: string, id: MutationBatchId): string =>
   sql(path, database => {
@@ -1736,6 +1799,198 @@ for (const [table, mutation] of [
             0,
           )
         }
+      })
+    }))
+}
+
+for (const [field, units] of [
+  ["id", 36],
+  ["text", 131_072],
+  ["status", 9],
+  ["blocker", 131_072],
+] as const) {
+  for (const pageKind of ["first", "next", "lookahead"] as const) {
+    test(`task page bounds oversized ${field} before driver materialization: ${pageKind}`, async () =>
+      fixture(async path => {
+        await withStore(path, async store => {
+          await run(
+            store.apply(
+              batch([
+                { op: "add", issue: a, key: "one", text: "One" },
+                { op: "add", issue: a, key: "two", text: "Two" },
+              ]),
+              context("page-materialization"),
+            ),
+          )
+          const initial = await run(store.readTasks(issue(), { limit: 10 }))
+          assert.ok(Option.isSome(initial))
+          const first = initial.value.tasks[0]
+          const second = initial.value.tasks[1]
+          assert.ok(first && second)
+          const target = pageKind === "first" ? first : second
+          const envelope = 3 * units
+          const oversized = "x".repeat(envelope + 1)
+          sql(path, database => {
+            if (field === "id") database.exec("PRAGMA foreign_keys = OFF")
+            database.exec("PRAGMA ignore_check_constraints = ON")
+            database
+              .prepare(`UPDATE issue_plan_tasks SET ${field} = ? WHERE id = ?`)
+              .run(oversized, target.id)
+          })
+
+          const observed = await observeReads(
+            query => query.includes("FROM issue_plan_tasks WHERE plan_id = ?"),
+            () =>
+              run(
+                Effect.either(
+                  store.readTasks(issue(), {
+                    limit: 1,
+                    ...(pageKind === "next" ? { after: first.id } : {}),
+                  }),
+                ),
+              ),
+          )
+          assert.ok(Either.isLeft(observed.value))
+          assert.equal(observed.value.left.code, "corrupt_state")
+          assert.ok(
+            observed.reads.length > 0,
+            "Production task-page query was not observed",
+          )
+          assert.ok(
+            materializedStrings(observed.reads, field).every(
+              value => Buffer.byteLength(value, "utf8") <= envelope,
+            ),
+            `An oversized stored ${field} crossed the SQLite driver boundary`,
+          )
+        })
+      }))
+  }
+}
+
+for (const pageKind of ["first", "next"] as const) {
+  test(`task page ordering remains on the source index: ${pageKind}`, async () =>
+    fixture(async path => {
+      await withStore(path, async store => {
+        await run(
+          store.apply(
+            batch([
+              { op: "add", issue: a, key: "one", text: "One" },
+              { op: "add", issue: a, key: "two", text: "Two" },
+              { op: "add", issue: a, key: "three", text: "Three" },
+            ]),
+            context("indexed-pages"),
+          ),
+        )
+        const initial = await run(store.readTasks(issue(), { limit: 1 }))
+        assert.ok(Option.isSome(initial) && initial.value.next)
+        const cursor = initial.value.next
+        const observed = await observeReads(
+          query => query.includes("FROM issue_plan_tasks WHERE plan_id = ?"),
+          () =>
+            run(
+              store.readTasks(issue(), {
+                limit: 1,
+                ...(pageKind === "next" ? { after: cursor } : {}),
+              }),
+            ),
+        )
+        const read = observed.reads.find(read =>
+          read.query.includes("ORDER BY"),
+        )
+        assert.ok(read)
+        const details = sql(path, database => {
+          const plan = database
+            .prepare(
+              "SELECT id FROM issue_plans WHERE repository = ? AND issue_number = ?",
+            )
+            .get(a.repository, a.number)
+          assert.ok(plan && typeof plan.id === "string")
+          const parameters =
+            pageKind === "next" ? [plan.id, cursor, 2] : [plan.id, 2]
+          return database
+            .prepare(`EXPLAIN QUERY PLAN ${read.query}`)
+            .all(...parameters)
+            .map(row => {
+              assert.ok(typeof row.detail === "string")
+              return row.detail
+            })
+        })
+        assert.ok(
+          details.some(detail => detail.includes("SEARCH issue_plan_tasks")),
+          details.join("\n"),
+        )
+        assert.ok(
+          details.every(detail => !detail.includes("TEMP B-TREE")),
+          details.join("\n"),
+        )
+      })
+    }))
+}
+
+for (const encoding of ["UTF-8", "UTF-16le", "UTF-16be"] as const) {
+  test(`task page preserves accepted boundary Unicode and NULL with ${encoding}`, async () =>
+    fixture(async path => {
+      sql(path, database =>
+        database.exec(`
+        PRAGMA encoding = '${encoding}';
+        CREATE TABLE fixture_encoding (value INTEGER) STRICT;
+      `),
+      )
+      chmodSync(path, 0o600)
+      await withStore(path, async store => {
+        const bmp = "界".repeat(131_072)
+        const supplementary = "🦆".repeat(65_536)
+        const saved = await run(
+          store.apply(
+            batch([
+              { op: "add", issue: a, key: "bmp", text: bmp },
+              {
+                op: "add",
+                issue: a,
+                key: "supplementary",
+                text: supplementary,
+              },
+            ]),
+            context("unicode-page"),
+          ),
+        )
+        const created = saved.created[0]
+        assert.ok(created)
+        await run(
+          store.apply(
+            batch([
+              {
+                op: "block",
+                target: existing(created.id),
+                reason: supplementary,
+              },
+            ]),
+            context("unicode-blocker"),
+          ),
+        )
+
+        const first = await run(store.readTasks(issue(), { limit: 1 }))
+        assert.ok(Option.isSome(first))
+        assert.ok(first.value.next)
+        const second = await run(
+          store.readTasks(issue(), {
+            limit: 1,
+            after: first.value.next,
+          }),
+        )
+        assert.ok(Option.isSome(second))
+        assert.equal(second.value.next, null)
+        const tasks = [...first.value.tasks, ...second.value.tasks]
+        assert.equal(tasks.length, 2)
+        assert.equal(tasks.find(task => task.id === created.id)?.text, bmp)
+        assert.equal(
+          tasks.find(task => task.id === created.id)?.blocker,
+          supplementary,
+        )
+        const other = tasks.find(task => task.id !== created.id)
+        assert.ok(other)
+        assert.equal(other.text, supplementary)
+        assert.equal(other.blocker, null)
       })
     }))
 }

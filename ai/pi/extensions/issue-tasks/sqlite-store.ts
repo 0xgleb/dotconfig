@@ -13,6 +13,7 @@ import {
   TaskIdSchema,
   RevisionSchema,
   TextSchema,
+  MAX_TASK_TEXT,
   StatusSchema,
   type IssueTaskRevision,
   type IssueTaskPage,
@@ -767,6 +768,17 @@ const SavedResultSchema = Schema.Struct({
 type ChangedField = TaskChangeSummary["fields"][number]
 const MAX_TRANSFER_EVENT_TEXT = 4_096
 const MAX_EDIT_EVENT_TEXT = 2_097_152
+
+type StoredTextColumn = "id" | "text" | "status" | "blocker"
+type StoredTextLimit = 9 | 36 | typeof MAX_TASK_TEXT
+// Admit UTF-8 and UTF-16 byte representations; schemas retain exact code-unit limits.
+const boundedStoredText = (
+  column: StoredTextColumn,
+  maxUnits: StoredTextLimit,
+): string =>
+  `CASE WHEN ${column} IS NULL THEN NULL WHEN typeof(${column}) = 'text' AND octet_length(${column}) <= ${3 * maxUnits} THEN ${column} ELSE -1 END`
+const taskPageColumns = `${boundedStoredText("id", 36)} AS id, ${boundedStoredText("text", MAX_TASK_TEXT)} AS text, ${boundedStoredText("status", 9)} AS status, ${boundedStoredText("blocker", MAX_TASK_TEXT)} AS blocker`
+
 const EditEventSchema = Schema.Struct({
   op: Schema.Literal("edit"),
   operationIndex: RevisionSchema,
@@ -2098,12 +2110,12 @@ const makeStore = (
             page.after === undefined
               ? database
                   .prepare(
-                    "SELECT id, text, status, blocker FROM issue_plan_tasks WHERE plan_id = ? ORDER BY id LIMIT ?",
+                    `SELECT ${taskPageColumns} FROM issue_plan_tasks WHERE plan_id = ? ORDER BY issue_plan_tasks.id LIMIT ?`,
                   )
                   .all(plan.id, page.limit + 1)
               : database
                   .prepare(
-                    "SELECT id, text, status, blocker FROM issue_plan_tasks WHERE plan_id = ? AND id > ? ORDER BY id LIMIT ?",
+                    `SELECT ${taskPageColumns} FROM issue_plan_tasks WHERE plan_id = ? AND issue_plan_tasks.id > ? ORDER BY issue_plan_tasks.id LIMIT ?`,
                   )
                   .all(plan.id, page.after, page.limit + 1),
           )
