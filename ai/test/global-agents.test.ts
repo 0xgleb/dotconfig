@@ -104,8 +104,11 @@ test("PR descriptions follow the template without invented sections", () => {
   )
 })
 
-test("only managers assign owner-confirmed priorities and workers follow backlog order", () => {
-  assert.match(global, /Only the manager may assign or change.*priorities/is)
+test("owner-approved workers may apply confirmed priorities without a manager dependency", () => {
+  assert.ok(
+    global.includes("a manager or an owner-approved worker"),
+    "Owner approval, not a manager role, authorizes priority changes",
+  )
   assert.match(global, /only after the owner confirms/is)
   assert.match(
     global,
@@ -113,6 +116,21 @@ test("only managers assign owner-confirmed priorities and workers follow backlog
   )
   assert.match(global, /not insert self-chosen audits/is)
   assert.match(global, /does not authorize new audit tasks.*reprioritization/is)
+})
+
+test("owner-approved issue operations do not require manager availability or fresh approval for ordinary task work", () => {
+  assert.ok(
+    global.includes("Owner-approved workers may create issues"),
+    "Issue creation cannot require a manager actor",
+  )
+  assert.match(
+    global,
+    /manager actor, availability, or worker-manager communication.*not prerequisites/is,
+  )
+  assert.match(
+    global,
+    /existing authorization.*ordinary task work.*fresh approval/is,
+  )
 })
 
 test("global TypeScript guidance keeps failures in typed Effect channels", () => {
@@ -143,7 +161,24 @@ test("global instructions enforce disk-pressure hygiene", () => {
   assert.match(global, /artifact_provenance/is)
   assert.match(
     global,
-    /never.*global.*(?:cache|garbage collection).*without explicit/is,
+    /never delete.*user files.*global caches.*Nix generations.*without explicit/is,
+  )
+})
+
+test("disk pressure authorizes routine GC and meaningful Cargo output cleanup without another permission gate", () => {
+  assert.match(global, /standing owner authorization.*`nix store gc`/is)
+  assert.match(global, /do not ask.*permission.*(?:GC|garbage collection)/is)
+  assert.match(global, /`dust` or.*`du`.*`~\/code\/`/is)
+  assert.match(global, /Rust project.*Cargo.*output.*meaningful/is)
+  assert.match(global, /active or offline.*agent.*not.*cleanup exemption/is)
+  assert.match(global, /exact.*(?:artifact|output|build).*path/is)
+  assert.ok(
+    global.includes("Clean both categories regularly"),
+    "GC and Cargo output cleanup are both routine duties",
+  )
+  assert.ok(
+    global.includes("Do not revisit recently cleaned projects"),
+    "Resolved pressure must not trigger another cross-project sweep",
   )
 })
 

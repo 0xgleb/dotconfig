@@ -339,7 +339,24 @@ the harness, and suppress duplicates without agent polling.
   preflight for expensive builds, test sweeps, and workflows. Do not poll `df`,
   `vm_stat`, or process lists before routine work. If the guard blocks, follow
   its bounded cleanup guidance and preserve the crash reserve rather than
-  repeatedly probing or waiting for a build to fail.
+  repeatedly probing or waiting for a build to fail. Disk pressure is a cleanup
+  work order, not merely a notification to relay or leave unattended.
+- Standing owner authorization covers running `nix store gc` for unused store
+  paths, without deleting generations. Do not ask for routine permission to run
+  GC. Use `dust` or `du` to inspect the largest disk contributors under
+  `~/code/`. Verify a Rust project manifest, the exact Cargo output directory,
+  and its meaningful contribution to disk usage, then remove that exact
+  build-artifact path. This authority covers pre-existing Cargo outputs in other
+  projects; an active or offline worker agent is not a cleanup exemption. Do not
+  require that worker's permission or current-runtime artifact provenance for
+  these verified Cargo outputs. Remove build artifacts, never source or their
+  workspace parent. Clean both categories regularly as routine maintenance and
+  in response to disk pressure; neither cache is something to preserve by
+  default. Do not substitute a warning for cleanup or treat reclaiming one
+  category as permission to neglect the other. Routine cleanup must not displace
+  active work once pressure is resolved. Do not revisit recently cleaned
+  projects because of a stale warning; return to the primary task unless new
+  pressure or an explicit cleanup request makes further inspection necessary.
 - Track and clean agent-owned artifacts after verification, including newly
   created Nix result symlinks and stale Pi temporary logs. Keep a linked
   worktree's task-local scratch files under that worktree's `.tmp/`, never the
@@ -348,14 +365,14 @@ the harness, and suppress duplicates without agent polling.
   every child's cwd to that root; neither the coordinator's cwd nor the common
   Git directory is a fallback. Record newly created project `.tmp/`
   files/directories immediately with `artifact_provenance` so later exact
-  cleanup has durable evidence. Never delete pre-existing project outputs, user
-  files, global caches, Nix generations, or run global garbage collection
-  without explicit user authorization. Exact rebuildable build outputs are
-  disposable by default, but project instructions and verified repository
-  configuration may protect artifacts consumed by a runtime, watcher,
-  supervisor, release, or deployment process. Inspect any referenced
-  configuration before cleanup and preserve a cleanup root containing a
-  configured live artifact unless disruption is explicitly requested.
+  cleanup has durable evidence. Never delete user files outside authorized build
+  outputs, global caches outside unused Nix store paths, or Nix generations
+  without explicit user authorization. Cargo registry/toolchain caches are not
+  Cargo build outputs. For other exact rebuildable build outputs, preserve
+  artifacts protected by project instructions or verified runtime, watcher,
+  supervisor, release, or deployment configuration. Inspect referenced
+  configuration and preserve a cleanup root containing a configured live
+  artifact unless disruption is explicitly requested.
 - In a Git checkout, whenever `.tmp/` or `.worktrees/` is used, verify effective
   directory-wide coverage with `git check-ignore --verbose` on the directory
   itself and the intended artifact path. A file-specific match such as `*.log`
@@ -437,16 +454,23 @@ the harness, and suppress duplicates without agent polling.
   Follow an approved plan; do not substitute another design without the required
   agreement. New human direction supersedes the plan. For verified-finding work,
   fix every valid finding and explain invalid findings at completion.
-- Only the manager may assign or change backlog priorities, and only after the
-  owner confirms the proposed ordering. Assign task priority only through the
-  backlog tool's priority/rank field. Never encode priority in task titles,
-  text, or prose. The rank field is the single ordering authority. Workers must
-  execute the highest-ranked authorized runnable work in their respective
-  backlogs, not insert self-chosen audits, adjacent work, or priority changes.
-  Report proposed additions or ordering changes to the manager for owner
-  confirmation; do not act on them as a new work order. Direct owner
-  instructions still take precedence, but workers do not assign ranks
-  themselves.
+- Owner-approved workers may create issues and perform otherwise manager-only
+  issue operations within the approved scope. A manager actor, availability, or
+  worker-manager communication are not prerequisites. Existing authorization is
+  sufficient for ordinary task work; do not require fresh approval. This grants
+  neither read-only managers coding/execution capabilities nor blanket authority
+  for unrelated remote effects.
+- Backlog priorities may be assigned or changed by a manager or an
+  owner-approved worker, only after the owner confirms the proposed ordering.
+  Assign task priority only through the backlog tool's priority/rank field.
+  Never encode priority in task titles, text, or prose. The rank field is the
+  single ordering authority. Workers must execute the highest-ranked authorized
+  runnable work in their respective backlogs, not insert self-chosen audits,
+  adjacent work, or priority changes. Report proposed additions or ordering
+  changes to the owner, directly or through a manager, for confirmation; do not
+  act on them as a new work order. Direct owner instructions still take
+  precedence. Workers must not invent ranks or promote their own work without
+  owner approval.
 - Structure roadmaps as priority-ordered epics, not numbered phases. Use
   dependency graphs where useful; expose independent deliverables without
   manufacturing parallel mutation authority. Give each epic a short goal and
