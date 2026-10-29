@@ -143,6 +143,12 @@ export interface SqlitePlanStoreOptions {
 }
 
 type StoreEffect<A> = Effect.Effect<A, PlanStoreError>
+interface ValidatedPlanStoreOptions {
+  readonly databasePath: string
+  readonly busyTimeoutMs: number
+  readonly taskTransactionBeginSignal:
+    Effect.Effect<void, PlanStoreError> | undefined
+}
 type ConnectionState = "open" | "unusable" | "closed"
 
 const schemaDeclarations = [
@@ -321,12 +327,16 @@ const retryBusy = <A>(
     ),
   )
 
-const transaction = <A, E>(
+const transaction = <A, E, F = never>(
   database: DatabaseSync,
   mode: "read" | "write",
   work: Effect.Effect<A, E>,
   poison: () => void = () => {},
-): Effect.Effect<A, E | PlanStoreError> =>
+  recoverCommit?: (
+    value: A,
+    cause: Cause.Cause<PlanStoreError>,
+  ) => Effect.Effect<A, F>,
+): Effect.Effect<A, E | F | PlanStoreError> =>
   Effect.uninterruptibleMask(restore =>
     Effect.gen(function* () {
       yield* retryBusy(
@@ -334,18 +344,27 @@ const transaction = <A, E>(
           database.exec(mode === "write" ? "BEGIN IMMEDIATE" : "BEGIN"),
         ),
       )
-      const result = yield* Effect.exit(
-        restore(
-          work.pipe(
-            Effect.flatMap(value =>
-              io("Could not commit plan transaction", () =>
-                database.exec("COMMIT"),
-              ).pipe(Effect.as(value)),
-            ),
+      const worked = yield* Effect.exit(restore(work))
+      if (Exit.isFailure(worked)) {
+        const rollback = yield* Effect.exit(
+          io("Could not roll back plan transaction", () =>
+            database.exec("ROLLBACK"),
           ),
-        ),
+        )
+        if (Exit.isFailure(rollback)) {
+          poison()
+          return yield* Effect.failCause(
+            Cause.sequential(worked.cause, rollback.cause),
+          )
+        }
+        return yield* Effect.failCause(worked.cause)
+      }
+
+      const committed = yield* Effect.exit(
+        io("Could not commit plan transaction", () => database.exec("COMMIT")),
       )
-      if (Exit.isSuccess(result)) return result.value
+      if (Exit.isSuccess(committed)) return worked.value
+
       const rollback = yield* Effect.exit(
         io("Could not roll back plan transaction", () =>
           database.exec("ROLLBACK"),
@@ -353,17 +372,21 @@ const transaction = <A, E>(
       )
       if (Exit.isFailure(rollback)) {
         poison()
-        return yield* Effect.failCause(
-          Cause.sequential(result.cause, rollback.cause),
-        )
+        const cause = Cause.sequential(committed.cause, rollback.cause)
+        return yield* recoverCommit === undefined
+          ? Effect.failCause(cause)
+          : recoverCommit(worked.value, cause)
       }
-      return yield* Effect.failCause(result.cause)
+      return yield* Effect.failCause(committed.cause)
     }),
   )
 
 class FileExists extends Data.TaggedError("FileExists") {}
 
-const secureFile = (path: string): StoreEffect<void> =>
+const secureFile = (
+  path: string,
+  mode: "create" | "existing" = "create",
+): StoreEffect<void> =>
   Effect.gen(function* () {
     if (typeof path !== "string" || !isAbsolute(path) || path !== resolve(path))
       return yield* fail(
@@ -392,23 +415,25 @@ const secureFile = (path: string): StoreEffect<void> =>
         "invalid_path",
         "Database directory must be canonical and writable only by its owner",
       )
-    const descriptor = yield* Effect.try({
-      try: () => openSync(path, "wx", 0o600),
-      catch: error =>
-        typeof error === "object" &&
-        error !== null &&
-        "code" in error &&
-        error.code === "EEXIST"
-          ? new FileExists()
-          : new PlanStoreError({
-              code: "io",
-              message: "Could not create private database file",
-            }),
-    }).pipe(Effect.catchTag("FileExists", () => Effect.succeed(undefined)))
-    if (descriptor !== undefined)
-      yield* io("Could not close new database file", () =>
-        closeSync(descriptor),
-      )
+    if (mode === "create") {
+      const descriptor = yield* Effect.try({
+        try: () => openSync(path, "wx", 0o600),
+        catch: error =>
+          typeof error === "object" &&
+          error !== null &&
+          "code" in error &&
+          error.code === "EEXIST"
+            ? new FileExists()
+            : new PlanStoreError({
+                code: "io",
+                message: "Could not create private database file",
+              }),
+      }).pipe(Effect.catchTag("FileExists", () => Effect.succeed(undefined)))
+      if (descriptor !== undefined)
+        yield* io("Could not close new database file", () =>
+          closeSync(descriptor),
+        )
+    }
     const file = yield* io("Could not inspect database file", () =>
       lstatSync(path),
     )
@@ -1371,16 +1396,126 @@ const persistTaskChanges = (
     return result
   })
 
+interface AppliedTaskRequest {
+  readonly batch: TaskMutationBatch
+  readonly context: TaskApplyContext
+  readonly fingerprint: string
+  readonly result: TaskApplyResult
+}
+
+const readCommittedRequest = (
+  options: ValidatedPlanStoreOptions,
+  request: AppliedTaskRequest,
+): StoreEffect<TaskApplyResult> =>
+  Effect.uninterruptible(
+    Effect.gen(function* () {
+      yield* secureFile(options.databasePath, "existing")
+      const database = yield* io(
+        "Could not open task recovery reader",
+        () => new DatabaseSync(options.databasePath, { readOnly: true }),
+      )
+      const observed = yield* Effect.exit(
+        Effect.gen(function* () {
+          yield* io("Could not configure task recovery reader", () =>
+            database.exec(`PRAGMA busy_timeout = ${options.busyTimeoutMs};`),
+          )
+          return yield* transaction(
+            database,
+            "read",
+            Effect.gen(function* () {
+              yield* checkVersion(database)
+              const receipt = yield* readReceipt(
+                database,
+                request.batch,
+                request.context,
+                request.fingerprint,
+              ).pipe(
+                Effect.catchTag("TaskRequestConflictError", () =>
+                  fail(
+                    "corrupt_state",
+                    "Recovery receipt has different task intent",
+                  ),
+                ),
+              )
+              if (Option.isNone(receipt))
+                return yield* fail(
+                  "corrupt_state",
+                  "No durable task receipt confirms this commit",
+                )
+
+              const expected = yield* encodedJson({
+                ...request.result,
+                receipt: "committed",
+              })
+              const actual = yield* encodedJson(receipt.value)
+              if (actual !== expected)
+                return yield* fail(
+                  "corrupt_state",
+                  "Recovery receipt differs from the original task result",
+                )
+
+              return receipt.value
+            }),
+          )
+        }),
+      )
+      const closed = yield* Effect.exit(
+        io("Could not close task recovery reader", () => database.close()),
+      )
+      if (Exit.isFailure(observed))
+        return yield* Effect.failCause(
+          Exit.isFailure(closed)
+            ? Cause.sequential(observed.cause, closed.cause)
+            : observed.cause,
+        )
+      if (Exit.isFailure(closed)) return yield* Effect.failCause(closed.cause)
+
+      return observed.value
+    }),
+  )
+
+const recoverTaskCommit = (
+  options: ValidatedPlanStoreOptions,
+  request: AppliedTaskRequest,
+  cause: Cause.Cause<PlanStoreError>,
+): Effect.Effect<AppliedTaskRequest, TaskCommitUnknownError> =>
+  Effect.gen(function* () {
+    const observed = yield* Effect.exit(readCommittedRequest(options, request))
+    if (Exit.isFailure(observed))
+      return yield* Effect.fail(
+        new TaskCommitUnknownError({
+          code: "unknown_completion",
+          batchId: request.result.batchId,
+          requestId: request.context.requestId,
+          message:
+            "Task commit completion could not be confirmed; do not reapply with a new request identity",
+          cause: Cause.sequential(cause, observed.cause),
+        }),
+      )
+
+    return Object.freeze({
+      ...request,
+      result: Object.freeze({
+        ...observed.value,
+        receipt: "recovered" as const,
+      }),
+    })
+  })
+
 const makeStore = (
   database: DatabaseSync,
-  options: SqlitePlanStoreOptions,
+  options: ValidatedPlanStoreOptions,
 ): SqlitePlanStore => {
   const gate = Effect.unsafeMakeSemaphore(1)
   let state: ConnectionState = "open"
-  const use = <A, E>(
+  const use = <A, E, F = never>(
     mode: "read" | "write",
     operation: Effect.Effect<A, E>,
-  ): Effect.Effect<A, E | PlanStoreError> =>
+    recoverCommit?: (
+      value: A,
+      cause: Cause.Cause<PlanStoreError>,
+    ) => Effect.Effect<A, F>,
+  ): Effect.Effect<A, E | F | PlanStoreError> =>
     gate.withPermits(1)(
       Effect.suspend(() => {
         if (state === "closed") return fail("closed", "Plan store is closed")
@@ -1396,6 +1531,7 @@ const makeStore = (
           () => {
             state = "unusable"
           },
+          recoverCommit,
         )
       }),
     )
@@ -1432,14 +1568,22 @@ const makeStore = (
             fingerprint,
           )
           if (Option.isSome(previous))
-            return Object.freeze({ ...previous.value, receipt: "replayed" })
+            return Object.freeze({
+              batch,
+              context,
+              fingerprint,
+              result: Object.freeze({
+                ...previous.value,
+                receipt: "replayed" as const,
+              }),
+            })
           const loaded = yield* loadTaskSnapshot(database, batch)
           const prepared = prepareTaskChanges(batch, loaded.snapshot, {
             cancellation: context.cancellation,
             additions: loaded.additions,
           })
           if (Either.isLeft(prepared)) return yield* Effect.fail(prepared.left)
-          return yield* persistTaskChanges(
+          const result = yield* persistTaskChanges(
             database,
             batch,
             context,
@@ -1447,8 +1591,10 @@ const makeStore = (
             prepared.right,
             loaded.additions,
           )
+          return Object.freeze({ batch, context, fingerprint, result })
         }),
-      ),
+        (request, cause) => recoverTaskCommit(options, request, cause),
+      ).pipe(Effect.map(request => request.result)),
     ensurePlan: target =>
       use(
         "write",
@@ -1592,10 +1738,15 @@ export const openSqlitePlanStore = (
           "invalid_input",
           "Busy timeout must be an integer from 0 to 2000 milliseconds",
         )
-      yield* secureFile(options.databasePath)
+      const captured = Object.freeze({
+        databasePath: options.databasePath,
+        busyTimeoutMs: timeout,
+        taskTransactionBeginSignal: options.taskTransactionBeginSignal,
+      })
+      yield* secureFile(captured.databasePath)
       const database = yield* io(
         "Could not open plan database",
-        () => new DatabaseSync(options.databasePath),
+        () => new DatabaseSync(captured.databasePath),
       )
       const initialized = yield* Effect.exit(
         restore(initialize(database, timeout)),
@@ -1610,6 +1761,6 @@ export const openSqlitePlanStore = (
             : initialized.cause,
         )
       }
-      return makeStore(database, options)
+      return makeStore(database, captured)
     }),
   )
