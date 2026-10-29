@@ -9,14 +9,13 @@ import {
   type IssueReference,
 } from "./identity.ts"
 import {
-  PlanIdSchema,
   TaskIdSchema,
   RevisionSchema,
   TextSchema,
   StatusSchema,
-  type IssuePlan,
-  type PlanPage,
-  type PlanPageInput,
+  type IssueTaskRevision,
+  type IssueTaskPage,
+  type TaskPageInput,
   MutationBatchIdSchema,
   type MutationBatchId,
   type TaskId,
@@ -37,7 +36,7 @@ import {
   MAX_TRANSITION_TEXT,
   type CurrentTask,
   type DependencyNode,
-  type PlanCandidate,
+  type IssueCandidate,
   type TaskSnapshot,
   type PreparedTaskChanges,
   type TaskTransitionError,
@@ -46,12 +45,21 @@ import {
   type TaskMutationContext,
 } from "./transition.ts"
 
+const StorageIssueIdSchema = Schema.UUID.pipe(
+  Schema.brand("StorageIssueRowId"),
+  Schema.filter(value => value === value.toLowerCase()),
+)
+type StorageIssueId = typeof StorageIssueIdSchema.Type
+interface StoredIssueRow extends IssueTaskRevision {
+  readonly id: StorageIssueId
+}
+
 const PageSchema = Schema.Struct({
   limit: Schema.Number.pipe(Schema.int(), Schema.between(1, 100)),
   after: Schema.optional(TaskIdSchema),
 })
 const PlanRowSchema = Schema.Struct({
-  id: PlanIdSchema,
+  id: StorageIssueIdSchema,
   repository: Schema.String,
   issue_number: Schema.Number,
   revision: RevisionSchema,
@@ -64,16 +72,15 @@ const TaskRowSchema = Schema.Struct({
 })
 
 export type {
-  PlanId,
   TaskId,
   TaskStatus,
-  IssuePlan,
-  PlanTask,
-  PlanPage,
-  PlanPageInput,
+  IssueTaskRevision,
+  IssueTask,
+  IssueTaskPage,
+  TaskPageInput,
 } from "./model.ts"
 
-export class PlanStoreError extends Data.TaggedError("PlanStoreError")<{
+export class TaskStoreError extends Data.TaggedError("TaskStoreError")<{
   readonly code:
     | "invalid_input"
     | "invalid_path"
@@ -96,7 +103,7 @@ export interface TaskApplyResult {
   readonly kind: "saved"
   readonly receipt: "committed" | "replayed" | "recovered"
   readonly batchId: MutationBatchId
-  readonly plans: readonly IssuePlan[]
+  readonly issues: readonly IssueTaskRevision[]
   readonly changed: readonly TaskChangeSummary[]
   readonly created: readonly TaskIdAllocation[]
   readonly eventCount: number
@@ -117,37 +124,36 @@ export class TaskCommitUnknownError extends Data.TaggedError(
   readonly cause: unknown
 }> {}
 export type TaskApplyError =
-  | PlanStoreError
+  | TaskStoreError
   | TaskMutationError
   | TaskTransitionError
   | TaskRequestConflictError
   | TaskCommitUnknownError
 
-export interface SqlitePlanStore {
+export interface SqliteTaskStore {
   readonly apply: (
     input: unknown,
     context: TaskApplyContext,
   ) => Effect.Effect<TaskApplyResult, TaskApplyError>
-  readonly ensurePlan: (issue: IssueReference) => StoreEffect<IssuePlan>
-  readonly readPlan: (
+  readonly readTasks: (
     issue: IssueReference,
-    page: PlanPageInput,
-  ) => StoreEffect<Option.Option<PlanPage>>
+    page: TaskPageInput,
+  ) => StoreEffect<Option.Option<IssueTaskPage>>
   readonly close: () => StoreEffect<void>
 }
-export interface SqlitePlanStoreOptions {
+export interface SqliteTaskStoreOptions {
   readonly databasePath: string
   readonly busyTimeoutMs?: number
   // Deterministic transaction barrier for fixture interruption tests only.
-  readonly taskTransactionBeginSignal?: Effect.Effect<void, PlanStoreError>
+  readonly taskTransactionBeginSignal?: Effect.Effect<void, TaskStoreError>
 }
 
-type StoreEffect<A> = Effect.Effect<A, PlanStoreError>
+type StoreEffect<A> = Effect.Effect<A, TaskStoreError>
 interface ValidatedPlanStoreOptions {
   readonly databasePath: string
   readonly busyTimeoutMs: number
   readonly taskTransactionBeginSignal:
-    Effect.Effect<void, PlanStoreError> | undefined
+    Effect.Effect<void, TaskStoreError> | undefined
 }
 type ConnectionState = "open" | "unusable" | "closed"
 
@@ -235,11 +241,43 @@ const mutationSchemaDeclarations = [
     sql: "CREATE INDEX issue_plan_history_by_task ON issue_plan_history (task_id, sequence)",
   },
 ] as const
-const currentSchemaDeclarations = [
+const transferHistoryDeclaration = {
+  name: "issue_plan_history",
+  type: "table",
+  sql: `CREATE TABLE issue_plan_history (
+    sequence INTEGER PRIMARY KEY CHECK (sequence BETWEEN 1 AND 9007199254740991),
+    batch_id TEXT NOT NULL REFERENCES issue_plan_batches(id),
+    plan_id TEXT NOT NULL REFERENCES issue_plans(id),
+    task_id TEXT NOT NULL REFERENCES issue_plan_tasks(id),
+    operation_index INTEGER NOT NULL CHECK (operation_index BETWEEN 0 AND 999),
+    kind TEXT NOT NULL CHECK (kind IN ('add', 'edit', 'status', 'block', 'transfer')),
+    recorded_at INTEGER NOT NULL CHECK (recorded_at BETWEEN 0 AND 9007199254740991),
+    payload_json TEXT NOT NULL,
+    UNIQUE (batch_id, operation_index)
+  ) STRICT`,
+} as const
+const currentMutationSchemaDeclarations = mutationSchemaDeclarations.map(
+  entry =>
+    entry.name === "issue_plan_history" ? transferHistoryDeclaration : entry,
+)
+const versionTwoSchemaDeclarations = [
   ...schemaDeclarations,
   ...mutationSchemaDeclarations,
 ]
-const SCHEMA_VERSION = 2
+const versionThreeSchemaDeclarations = [
+  ...schemaDeclarations,
+  ...currentMutationSchemaDeclarations,
+]
+const qualifiedIssueIndexDeclaration = {
+  name: "issue_plan_issues_nocase",
+  type: "index",
+  sql: "CREATE INDEX issue_plan_issues_nocase ON issue_plans (repository COLLATE NOCASE, issue_number)",
+} as const
+const currentSchemaDeclarations = [
+  ...versionThreeSchemaDeclarations,
+  qualifiedIssueIndexDeclaration,
+]
+const SCHEMA_VERSION = 4
 const SchemaObjectSchema = Schema.Struct({
   name: Schema.String,
   type: Schema.String,
@@ -251,15 +289,15 @@ const normalizedDeclaration = (sql: string): string =>
   sql.replace(/\s+/gu, " ").trim().replace(/;$/u, "")
 
 const fail = (
-  code: PlanStoreError["code"],
+  code: TaskStoreError["code"],
   message: string,
-): StoreEffect<never> => Effect.fail(new PlanStoreError({ code, message }))
+): StoreEffect<never> => Effect.fail(new TaskStoreError({ code, message }))
 
 const io = <A>(message: string, operation: () => A): StoreEffect<A> =>
   Effect.try({
     try: operation,
     catch: error =>
-      new PlanStoreError({
+      new TaskStoreError({
         code:
           error instanceof Error &&
           /database (?:is (?:busy|locked)|table is locked)/iu.test(
@@ -274,11 +312,11 @@ const io = <A>(message: string, operation: () => A): StoreEffect<A> =>
 const decode = <A, I>(
   schema: Schema.Schema<A, I>,
   value: unknown,
-  code: PlanStoreError["code"],
+  code: TaskStoreError["code"],
   message: string,
 ): StoreEffect<A> =>
   Schema.decodeUnknown(schema, { onExcessProperty: "error" })(value).pipe(
-    Effect.mapError(() => new PlanStoreError({ code, message })),
+    Effect.mapError(() => new TaskStoreError({ code, message })),
   )
 
 const checkedIssue = (
@@ -291,13 +329,13 @@ const checkedIssue = (
     : Effect.succeed(result.right)
 }
 
-const planFrom = (value: unknown): StoreEffect<IssuePlan> =>
+const planFrom = (value: unknown): StoreEffect<StoredIssueRow> =>
   Effect.gen(function* () {
     const row = yield* decode(
       PlanRowSchema,
       value,
       "corrupt_state",
-      "Invalid persisted issue plan",
+      "Invalid persisted issue task state",
     )
     const issue = yield* checkedIssue(
       { repository: row.repository, number: row.issue_number },
@@ -334,20 +372,20 @@ const transaction = <A, E, F = never>(
   poison: () => void = () => {},
   recoverCommit?: (
     value: A,
-    cause: Cause.Cause<PlanStoreError>,
+    cause: Cause.Cause<TaskStoreError>,
   ) => Effect.Effect<A, F>,
-): Effect.Effect<A, E | F | PlanStoreError> =>
+): Effect.Effect<A, E | F | TaskStoreError> =>
   Effect.uninterruptibleMask(restore =>
     Effect.gen(function* () {
       yield* retryBusy(
-        io("Could not begin plan transaction", () =>
+        io("Could not begin task transaction", () =>
           database.exec(mode === "write" ? "BEGIN IMMEDIATE" : "BEGIN"),
         ),
       )
       const worked = yield* Effect.exit(restore(work))
       if (Exit.isFailure(worked)) {
         const rollback = yield* Effect.exit(
-          io("Could not roll back plan transaction", () =>
+          io("Could not roll back task transaction", () =>
             database.exec("ROLLBACK"),
           ),
         )
@@ -361,12 +399,12 @@ const transaction = <A, E, F = never>(
       }
 
       const committed = yield* Effect.exit(
-        io("Could not commit plan transaction", () => database.exec("COMMIT")),
+        io("Could not commit task transaction", () => database.exec("COMMIT")),
       )
       if (Exit.isSuccess(committed)) return worked.value
 
       const rollback = yield* Effect.exit(
-        io("Could not roll back plan transaction", () =>
+        io("Could not roll back task transaction", () =>
           database.exec("ROLLBACK"),
         ),
       )
@@ -424,7 +462,7 @@ const secureFile = (
           "code" in error &&
           error.code === "EEXIST"
             ? new FileExists()
-            : new PlanStoreError({
+            : new TaskStoreError({
                 code: "io",
                 message: "Could not create private database file",
               }),
@@ -454,7 +492,7 @@ const namespaceObjects = (
 ): StoreEffect<readonly SchemaObject[]> =>
   Effect.gen(function* () {
     const names = currentSchemaDeclarations.map(entry => entry.name)
-    const raw = yield* io("Could not inspect plan schema", () =>
+    const raw = yield* io("Could not inspect task schema", () =>
       database
         .prepare(
           `SELECT name, type, sql FROM sqlite_schema WHERE name COLLATE NOCASE IN (${names.map(() => "?").join(",")})`,
@@ -465,13 +503,13 @@ const namespaceObjects = (
       Schema.Array(SchemaObjectSchema),
       raw,
       "unsupported_schema",
-      "Invalid plan schema metadata",
+      "Invalid task schema metadata",
     )
   })
 
 const readSchemaVersion = (database: DatabaseSync): StoreEffect<number> =>
   Effect.gen(function* () {
-    const raw = yield* io("Could not read plan schema version", () =>
+    const raw = yield* io("Could not read task schema version", () =>
       database
         .prepare("SELECT id, version FROM issue_plan_schema LIMIT 2")
         .all(),
@@ -482,13 +520,13 @@ const readSchemaVersion = (database: DatabaseSync): StoreEffect<number> =>
       ),
       raw,
       "unsupported_schema",
-      "Invalid plan schema version",
+      "Invalid task schema version",
     )
     const first = rows[0]
     if (rows.length !== 1 || first === undefined)
       return yield* fail(
         "unsupported_schema",
-        "Invalid issue-plan schema version row",
+        "Invalid issue-task schema version row",
       )
     return first.version
   })
@@ -496,7 +534,7 @@ const readSchemaVersion = (database: DatabaseSync): StoreEffect<number> =>
 const checkNamespace = (
   database: DatabaseSync,
   objects: readonly SchemaObject[],
-): StoreEffect<1 | typeof SCHEMA_VERSION | undefined> =>
+): StoreEffect<1 | 2 | 3 | typeof SCHEMA_VERSION | undefined> =>
   Effect.gen(function* () {
     if (objects.length === 0) return undefined
     const metadata = objects.find(object => object.name === "issue_plan_schema")
@@ -509,20 +547,31 @@ const checkNamespace = (
     )
       return yield* fail(
         "unsupported_schema",
-        "Unversioned or conflicting issue-plan namespace",
+        "Unversioned or conflicting issue-task namespace",
       )
     const version = yield* readSchemaVersion(database)
-    if (version !== 1 && version !== SCHEMA_VERSION)
+    if (
+      version !== 1 &&
+      version !== 2 &&
+      version !== 3 &&
+      version !== SCHEMA_VERSION
+    )
       return yield* fail(
         "unsupported_schema",
-        "Unsupported issue-plan schema version",
+        "Unsupported issue-task schema version",
       )
     const expected =
-      version === 1 ? schemaDeclarations : currentSchemaDeclarations
+      version === 1
+        ? schemaDeclarations
+        : version === 2
+          ? versionTwoSchemaDeclarations
+          : version === 3
+            ? versionThreeSchemaDeclarations
+            : currentSchemaDeclarations
     if (objects.length !== expected.length)
       return yield* fail(
         "unsupported_schema",
-        "Incomplete or conflicting issue-plan schema",
+        "Incomplete or conflicting issue-task schema",
       )
     for (const actual of objects) {
       const declaration = expected.find(entry => entry.name === actual.name)
@@ -535,7 +584,7 @@ const checkNamespace = (
       )
         return yield* fail(
           "unsupported_schema",
-          "Incompatible issue-plan schema constraints",
+          "Incompatible issue-task schema constraints",
         )
     }
     return version
@@ -550,7 +599,7 @@ const checkVersion = (database: DatabaseSync): StoreEffect<void> =>
     if (version !== SCHEMA_VERSION)
       return yield* fail(
         "unsupported_schema",
-        "Issue-plan schema changed while this connection was open",
+        "Issue-task schema changed while this connection was open",
       )
   })
 
@@ -571,18 +620,62 @@ const migrate = (database: DatabaseSync): StoreEffect<void> =>
         )
         if (current === SCHEMA_VERSION) return
         if (current === undefined) {
-          yield* io("Could not create issue-plan schema", () =>
+          yield* io("Could not create issue-task schema", () =>
             database.exec(
               `${currentSchemaDeclarations.map(entry => entry.sql).join(";\n")};\nINSERT INTO issue_plan_schema (id, version) VALUES (1, ${SCHEMA_VERSION});`,
             ),
           )
-        } else {
-          yield* io("Could not upgrade issue-plan schema", () =>
+        } else if (current === 1) {
+          yield* io("Could not upgrade issue-task schema", () =>
             database.exec(
-              `${mutationSchemaDeclarations.map(entry => entry.sql).join(";\n")};\nUPDATE issue_plan_schema SET version = ${SCHEMA_VERSION} WHERE id = 1;`,
+              `${currentMutationSchemaDeclarations.map(entry => entry.sql).join(";\n")};\n${qualifiedIssueIndexDeclaration.sql};\nUPDATE issue_plan_schema SET version = ${SCHEMA_VERSION} WHERE id = 1;`,
+            ),
+          )
+        } else if (current === 2) {
+          const dependent = yield* io(
+            "Could not inspect history schema dependencies",
+            () =>
+              database
+                .prepare(
+                  "SELECT name FROM sqlite_schema WHERE (tbl_name = 'issue_plan_history' COLLATE NOCASE AND sql IS NOT NULL AND name NOT IN ('issue_plan_history', 'issue_plan_history_by_task')) OR (type IN ('view', 'trigger') AND instr(lower(sql), 'issue_plan_history') > 0) LIMIT 1",
+                )
+                .get(),
+          )
+          const foreignKey = yield* io(
+            "Could not inspect history foreign keys",
+            () =>
+              database
+                .prepare(
+                  "SELECT s.name FROM sqlite_schema AS s JOIN pragma_foreign_key_list(s.name) AS f WHERE s.type = 'table' AND f.\"table\" = 'issue_plan_history' COLLATE NOCASE LIMIT 1",
+                )
+                .get(),
+          )
+          if (dependent !== undefined || foreignKey !== undefined)
+            return yield* fail(
+              "unsupported_schema",
+              "History upgrade cannot preserve foreign schema dependencies",
+            )
+          const index = currentMutationSchemaDeclarations.find(
+            entry => entry.name === "issue_plan_history_by_task",
+          )
+          if (index === undefined)
+            return yield* fail(
+              "unsupported_schema",
+              "History upgrade has no index declaration",
+            )
+          yield* io("Could not upgrade task history schema", () =>
+            database.exec(
+              `ALTER TABLE issue_plan_history RENAME TO issue_plan_history_upgrade_source;\nDROP INDEX issue_plan_history_by_task;\n${transferHistoryDeclaration.sql};\nINSERT INTO issue_plan_history (sequence, batch_id, plan_id, task_id, operation_index, kind, recorded_at, payload_json) SELECT sequence, batch_id, plan_id, task_id, operation_index, kind, recorded_at, payload_json FROM issue_plan_history_upgrade_source;\nDROP TABLE issue_plan_history_upgrade_source;\n${index.sql};\n${qualifiedIssueIndexDeclaration.sql};\nUPDATE issue_plan_schema SET version = ${SCHEMA_VERSION} WHERE id = 1;`,
+            ),
+          )
+        } else {
+          yield* io("Could not upgrade qualified issue lookup", () =>
+            database.exec(
+              `${qualifiedIssueIndexDeclaration.sql};\nUPDATE issue_plan_schema SET version = ${SCHEMA_VERSION} WHERE id = 1;`,
             ),
           )
         }
+        yield* checkVersion(database)
       }),
     )
   })
@@ -592,13 +685,14 @@ const initialize = (
   timeout: number,
 ): StoreEffect<void> =>
   Effect.gen(function* () {
-    yield* io("Could not configure plan connection", () =>
+    yield* io("Could not configure task-store connection", () =>
       database.exec(
         `PRAGMA busy_timeout = ${timeout}; PRAGMA synchronous = NORMAL; PRAGMA foreign_keys = ON;`,
       ),
     )
     const existing = yield* namespaceObjects(database)
     if (existing.length !== 0) yield* checkNamespace(database, existing)
+    yield* migrate(database)
     const journal = yield* io("Could not read database journal mode", () =>
       database.prepare("PRAGMA journal_mode").get(),
     )
@@ -623,7 +717,6 @@ const initialize = (
       if (result.journal_mode !== "wal")
         return yield* fail("io", "WAL could not be enabled")
     }
-    yield* migrate(database)
   })
 
 const ContextSchema = Schema.Struct({
@@ -646,7 +739,7 @@ const SavedResultSchema = Schema.Struct({
   batchId: MutationBatchIdSchema,
   plans: Schema.Array(
     Schema.Struct({
-      id: PlanIdSchema,
+      id: StorageIssueIdSchema,
       issue: Schema.Unknown,
       revision: RevisionSchema,
     }),
@@ -657,7 +750,7 @@ const SavedResultSchema = Schema.Struct({
       id: TaskIdSchema,
       revision: RevisionSchema,
       fields: Schema.Array(
-        Schema.Literal("text", "status", "blocker", "dependsOn"),
+        Schema.Literal("text", "status", "blocker", "dependsOn", "issue"),
       ),
     }),
   ),
@@ -669,6 +762,14 @@ const SavedResultSchema = Schema.Struct({
     }),
   ),
   eventCount: RevisionSchema,
+})
+const MAX_TRANSFER_EVENT_TEXT = 4_096
+const TransferEventSchema = Schema.Struct({
+  op: Schema.Literal("transfer"),
+  operationIndex: RevisionSchema,
+  issue: Schema.Unknown,
+  id: TaskIdSchema,
+  splitFrom: Schema.Unknown,
 })
 const encodedJson = (value: unknown): StoreEffect<string> =>
   Effect.gen(function* () {
@@ -700,9 +801,9 @@ const storedIssue = (value: unknown): StoreEffect<IssueReference> =>
 const findPlan = (
   database: DatabaseSync,
   issue: IssueReference,
-): StoreEffect<Option.Option<IssuePlan>> =>
+): StoreEffect<Option.Option<StoredIssueRow>> =>
   Effect.gen(function* () {
-    const rows = yield* io("Could not read qualified issue plan", () =>
+    const rows = yield* io("Could not read qualified issue task state", () =>
       database
         .prepare(
           "SELECT id, repository, issue_number, revision FROM issue_plans WHERE repository = ? COLLATE NOCASE AND issue_number = ? LIMIT 2",
@@ -712,7 +813,7 @@ const findPlan = (
     if (rows.length > 1)
       return yield* fail(
         "corrupt_state",
-        "Multiple plans match the canonical issue identity",
+        "Multiple issue records match the canonical issue identity",
       )
     const first = rows[0]
     return first === undefined
@@ -727,7 +828,7 @@ const readReceipt = (
   fingerprint: string,
 ): Effect.Effect<
   Option.Option<TaskApplyResult>,
-  PlanStoreError | TaskRequestConflictError
+  TaskStoreError | TaskRequestConflictError
 > =>
   Effect.gen(function* () {
     const raw = yield* io("Could not read task request receipt", () =>
@@ -777,7 +878,7 @@ const readReceipt = (
         "Task receipt counts or identity disagree",
       )
     const scope = new Set(batch.issues.map(issueKey))
-    const plans: IssuePlan[] = []
+    const plans: StoredIssueRow[] = []
     const revisions = new Map<string, number>()
     for (const plan of saved.plans) {
       const issue = yield* storedIssue(plan.issue)
@@ -785,7 +886,7 @@ const readReceipt = (
       if (!scope.has(key) || revisions.has(key))
         return yield* fail(
           "corrupt_state",
-          "Task receipt plan scope is invalid",
+          "Task receipt issue scope is invalid",
         )
       revisions.set(key, plan.revision)
       plans.push(Object.freeze({ id: plan.id, issue, revision: plan.revision }))
@@ -800,7 +901,7 @@ const readReceipt = (
         revisions.get(key) !== task.revision ||
         taskIds.has(task.id) ||
         task.fields.length === 0 ||
-        task.fields.length > 4 ||
+        task.fields.length > 5 ||
         new Set(task.fields).size !== task.fields.length
       )
         return yield* fail(
@@ -867,7 +968,7 @@ const readReceipt = (
       () =>
         database
           .prepare(
-            "SELECT h.plan_id, h.task_id, h.operation_index, h.kind, t.id AS persisted_task_id FROM issue_plan_history h LEFT JOIN issue_plan_tasks t ON t.id = h.task_id WHERE h.batch_id = ? ORDER BY h.operation_index LIMIT ?",
+            `SELECT h.plan_id, h.task_id, h.operation_index, h.kind, t.id AS persisted_task_id, CASE WHEN h.kind = 'transfer' AND length(h.payload_json) <= ${MAX_TRANSFER_EVENT_TEXT} THEN h.payload_json ELSE NULL END AS transfer_payload FROM issue_plan_history h LEFT JOIN issue_plan_tasks t ON t.id = h.task_id WHERE h.batch_id = ? ORDER BY h.operation_index LIMIT ?`,
           )
           .all(saved.batchId, MAX_TASK_MUTATIONS + 1),
     )
@@ -880,14 +981,20 @@ const readReceipt = (
     const changesById = new Map(changed.map(task => [task.id, task]))
     const recordedTasks = new Set<TaskId>()
     const recordedOperations = new Set<number>()
+    const recordedTransfers = new Set<TaskId>()
+    const recordedIssues = new Set<string>()
+    const locations = new Map<TaskId, IssueReference>()
     for (const rawHistory of historyRows) {
       const history = yield* decode(
         Schema.Struct({
-          plan_id: PlanIdSchema,
+          plan_id: StorageIssueIdSchema,
           task_id: TaskIdSchema,
           operation_index: RevisionSchema,
-          kind: Schema.Literal("add", "edit", "status", "block"),
+          kind: Schema.Literal("add", "edit", "status", "block", "transfer"),
           persisted_task_id: Schema.NullOr(TaskIdSchema),
+          transfer_payload: Schema.NullOr(
+            Schema.String.pipe(Schema.maxLength(MAX_TRANSFER_EVENT_TEXT)),
+          ),
         }),
         rawHistory,
         "corrupt_state",
@@ -900,7 +1007,6 @@ const readReceipt = (
         operation.op !== history.kind ||
         task === undefined ||
         history.persisted_task_id !== task.id ||
-        planIds.get(issueKey(task.issue)) !== history.plan_id ||
         recordedOperations.has(history.operation_index)
       )
         return yield* fail(
@@ -924,24 +1030,89 @@ const readReceipt = (
                 issueKey(item.issue) === issueKey(target.issue) &&
                 item.key === identity.key,
             )?.id
-      if (
-        issueKey(target.issue) !== issueKey(task.issue) ||
-        operationId !== task.id
-      )
+      if (operationId !== task.id)
         return yield* fail(
           "corrupt_state",
           "Task receipt history disagrees with the requested target",
         )
-
+      const prior = locations.get(task.id)
+      const before =
+        operation.op === "add"
+          ? target.issue
+          : identity.kind === "existing"
+            ? (prior ?? target.issue)
+            : prior
+      if (
+        before === undefined ||
+        (operation.op === "add" && prior !== undefined) ||
+        (identity.kind === "existing" &&
+          (createdIds.has(task.id) ||
+            issueKey(target.issue) !== issueKey(before)))
+      )
+        return yield* fail(
+          "corrupt_state",
+          "Task receipt has inconsistent operation-local ownership",
+        )
+      const after = operation.op === "transfer" ? operation.toIssue : before
+      if (planIds.get(issueKey(after)) !== history.plan_id)
+        return yield* fail(
+          "corrupt_state",
+          "Task history belongs to another operation-local issue",
+        )
+      if (operation.op === "transfer") {
+        const payloadJson = history.transfer_payload
+        if (payloadJson === null)
+          return yield* fail(
+            "corrupt_state",
+            "Transfer history has no bounded provenance payload",
+          )
+        const rawPayload: unknown = yield* io(
+          "Could not decode transfer provenance",
+          () => JSON.parse(payloadJson),
+        ).pipe(
+          Effect.catchAll(() =>
+            fail("corrupt_state", "Invalid transfer history JSON"),
+          ),
+        )
+        const payload = yield* decode(
+          TransferEventSchema,
+          rawPayload,
+          "corrupt_state",
+          "Invalid transfer history",
+        )
+        const splitFrom = yield* storedIssue(payload.splitFrom)
+        const destination = yield* storedIssue(payload.issue)
+        if (
+          payload.id !== task.id ||
+          payload.operationIndex !== history.operation_index ||
+          issueKey(splitFrom) !== issueKey(before) ||
+          issueKey(destination) !== issueKey(after) ||
+          issueKey(before) === issueKey(after)
+        )
+          return yield* fail(
+            "corrupt_state",
+            "Transfer provenance disagrees with the requested ownership change",
+          )
+        recordedTransfers.add(task.id)
+      }
+      locations.set(task.id, after)
+      recordedIssues.add(issueKey(before))
+      recordedIssues.add(issueKey(after))
       recordedTasks.add(task.id)
       recordedOperations.add(history.operation_index)
     }
     if (
       recordedTasks.size !== changed.length ||
-      plans.some(
-        plan =>
-          !changed.some(task => issueKey(task.issue) === issueKey(plan.issue)),
-      )
+      recordedIssues.size !== plans.length ||
+      changed.some(task => {
+        const location = locations.get(task.id)
+        return (
+          location === undefined ||
+          issueKey(location) !== issueKey(task.issue) ||
+          task.fields.includes("issue") !== recordedTransfers.has(task.id)
+        )
+      }) ||
+      plans.some(plan => !recordedIssues.has(issueKey(plan.issue)))
     )
       return yield* fail(
         "corrupt_state",
@@ -953,7 +1124,11 @@ const readReceipt = (
         kind: "saved",
         receipt: "committed",
         batchId: saved.batchId,
-        plans: Object.freeze(plans),
+        issues: Object.freeze(
+          plans.map(row =>
+            Object.freeze({ issue: row.issue, revision: row.revision }),
+          ),
+        ),
         changed: Object.freeze(changed),
         created: Object.freeze(created),
         eventCount: saved.eventCount,
@@ -969,30 +1144,23 @@ const loadTaskSnapshot = (
   readonly additions: readonly TaskIdAllocation[]
 }> =>
   Effect.gen(function* () {
-    const addIssues = new Set(
-      batch.operations.flatMap(operation =>
-        operation.op === "add" ? [issueKey(operation.issue)] : [],
-      ),
-    )
-    const plans: PlanCandidate[] = []
+    const issues: IssueCandidate[] = []
     for (const issue of batch.issues) {
       const current = yield* findPlan(database, issue)
       if (Option.isSome(current))
-        plans.push(Object.freeze({ kind: "stored", plan: current.value }))
-      else if (addIssues.has(issueKey(issue))) {
-        const id = yield* decode(
-          PlanIdSchema,
-          yield* io("Could not generate plan identity", randomUUID),
-          "io",
-          "Invalid generated plan identity",
-        )
-        plans.push(
+        issues.push(
           Object.freeze({
-            kind: "new",
-            plan: Object.freeze({ id, issue, revision: 0 }),
+            kind: "stored",
+            state: Object.freeze({ issue, revision: current.value.revision }),
           }),
         )
-      }
+      else
+        issues.push(
+          Object.freeze({
+            kind: "new",
+            state: Object.freeze({ issue, revision: 0 }),
+          }),
+        )
     }
     const references: TaskReference[] = []
     for (const operation of batch.operations) {
@@ -1152,7 +1320,7 @@ const loadTaskSnapshot = (
         )
       }
     return {
-      snapshot: { plans, tasks: currentTasks, external },
+      snapshot: { issues, tasks: currentTasks, external },
       additions: Object.freeze(additions),
     }
   })
@@ -1172,17 +1340,48 @@ const persistTaskChanges = (
       "io",
       "Invalid generated task batch identity",
     )
-    const plans = Object.freeze(prepared.plans.map(candidate => candidate.plan))
+    const plans: StoredIssueRow[] = []
+    for (const candidate of prepared.issues) {
+      const { issue, revision } = candidate.state
+      const current = yield* findPlan(database, issue)
+      if (
+        (candidate.kind === "new" && Option.isSome(current)) ||
+        (candidate.kind === "stored" &&
+          (Option.isNone(current) || current.value.revision + 1 !== revision))
+      )
+        return yield* fail(
+          "corrupt_state",
+          "Issue task revision changed after preparation",
+        )
+      const id = Option.isSome(current)
+        ? current.value.id
+        : yield* decode(
+            StorageIssueIdSchema,
+            yield* io("Could not allocate issue storage row", randomUUID),
+            "io",
+            "Invalid issue storage row identity",
+          )
+      plans.push(Object.freeze({ id, issue, revision }))
+    }
     const result: TaskApplyResult = Object.freeze({
       kind: "saved",
       receipt: "committed",
       batchId,
-      plans,
+      issues: Object.freeze(prepared.issues.map(candidate => candidate.state)),
       changed: prepared.changed,
       created: additions,
       eventCount: prepared.events.length,
     })
-    const resultJson = yield* encodedJson(result)
+    // Historical receipt keys remain private; public ownership is issue-qualified.
+    const resultJson = yield* encodedJson({
+      kind: result.kind,
+      receipt: result.receipt,
+      batchId,
+      plans,
+      changed: result.changed,
+      created: result.created,
+      eventCount: result.eventCount,
+    })
     if (resultJson.length > 1_048_576)
       return yield* fail("capacity", "Task result exceeds its receipt budget")
     const scopeJson = yield* encodedJson(batch.issues)
@@ -1207,37 +1406,52 @@ const persistTaskChanges = (
         "Task request receipt was not saved exactly once",
       )
 
-    const planIds = new Map<string, IssuePlan["id"]>()
-    for (const candidate of prepared.plans) {
-      const plan = candidate.plan
+    const planIds = new Map<string, StorageIssueId>()
+    for (const candidate of prepared.issues) {
+      const plan = plans.find(
+        row => issueKey(row.issue) === issueKey(candidate.state.issue),
+      )
+      if (plan === undefined)
+        return yield* fail("corrupt_state", "Changed issue has no storage row")
       planIds.set(issueKey(plan.issue), plan.id)
-      const updated = yield* io("Could not save changed issue plan", () =>
-        candidate.kind === "new"
-          ? database
-              .prepare(
-                "INSERT INTO issue_plans (id, repository, issue_number, revision) VALUES (?, ?, ?, ?)",
-              )
-              .run(
-                plan.id,
-                plan.issue.repository,
-                plan.issue.number,
-                plan.revision,
-              )
-          : database
-              .prepare("UPDATE issue_plans SET revision = ? WHERE id = ?")
-              .run(plan.revision, plan.id),
+      const updated = yield* io(
+        "Could not save changed issue task state",
+        () =>
+          candidate.kind === "new"
+            ? database
+                .prepare(
+                  "INSERT INTO issue_plans (id, repository, issue_number, revision) VALUES (?, ?, ?, ?)",
+                )
+                .run(
+                  plan.id,
+                  plan.issue.repository,
+                  plan.issue.number,
+                  plan.revision,
+                )
+            : database
+                .prepare("UPDATE issue_plans SET revision = ? WHERE id = ?")
+                .run(plan.revision, plan.id),
       )
       if (updated.changes !== 1)
         return yield* fail(
           "corrupt_state",
-          "Changed issue plan was not saved exactly once",
+          "Changed issue task state was not saved exactly once",
         )
     }
     const newIds = new Set(additions.map(task => task.id))
+    const originalOwners = new Map<TaskId, IssueReference>()
+    for (const event of prepared.events)
+      if (event.op === "transfer" && !originalOwners.has(event.id))
+        originalOwners.set(event.id, event.splitFrom)
     for (const task of prepared.tasks) {
       const planId = planIds.get(issueKey(task.issue))
-      if (planId === undefined)
-        return yield* fail("corrupt_state", "Changed task has no changed plan")
+      const originalIssue = originalOwners.get(task.id) ?? task.issue
+      const originalPlanId = planIds.get(issueKey(originalIssue))
+      if (planId === undefined || originalPlanId === undefined)
+        return yield* fail(
+          "corrupt_state",
+          "Changed task has no changed issue state",
+        )
       const updated = yield* io("Could not save changed task", () =>
         newIds.has(task.id)
           ? database
@@ -1247,9 +1461,16 @@ const persistTaskChanges = (
               .run(task.id, planId, task.text, task.status, task.blocker)
           : database
               .prepare(
-                "UPDATE issue_plan_tasks SET text = ?, status = ?, blocker = ? WHERE id = ? AND plan_id = ?",
+                "UPDATE issue_plan_tasks SET plan_id = ?, text = ?, status = ?, blocker = ? WHERE id = ? AND plan_id = ?",
               )
-              .run(task.text, task.status, task.blocker, task.id, planId),
+              .run(
+                planId,
+                task.text,
+                task.status,
+                task.blocker,
+                task.id,
+                originalPlanId,
+              ),
       )
       if (updated.changes !== 1)
         return yield* fail(
@@ -1284,7 +1505,7 @@ const persistTaskChanges = (
       if (planId === undefined)
         return yield* fail(
           "corrupt_state",
-          "Task history event has no changed plan",
+          "Task history event has no changed issue state",
         )
       const payload = yield* encodedJson(event)
       const inserted = yield* io("Could not append task history", () =>
@@ -1307,6 +1528,38 @@ const persistTaskChanges = (
           "corrupt_state",
           "Task history event was not saved exactly once",
         )
+    }
+
+    for (const event of prepared.events) {
+      const identity = event.op === "add" ? event.task : event
+      const planId = planIds.get(issueKey(identity.issue))
+      if (planId === undefined)
+        return yield* fail(
+          "corrupt_state",
+          "Saved task history lost its changed issue state",
+        )
+      const payload = yield* encodedJson(event)
+      const exact = yield* io("Could not verify saved task history", () =>
+        database
+          .prepare(
+            "SELECT COUNT(*) AS count FROM issue_plan_history WHERE batch_id = ? AND operation_index = ? AND plan_id = ? AND task_id = ? AND kind = ? AND recorded_at = ? AND payload_json = ?",
+          )
+          .get(
+            batchId,
+            event.operationIndex,
+            planId,
+            identity.id,
+            event.op,
+            context.now,
+            payload,
+          ),
+      )
+      yield* decode(
+        Schema.Struct({ count: Schema.Literal(1) }),
+        exact,
+        "corrupt_state",
+        "Saved task history disagrees with the prepared event",
+      )
     }
 
     const stored = yield* readReceipt(
@@ -1337,7 +1590,7 @@ const persistTaskChanges = (
       )
         return yield* fail(
           "corrupt_state",
-          "Saved issue plan disagrees with the prepared change",
+          "Saved issue task state disagrees with the prepared change",
         )
     }
 
@@ -1350,7 +1603,10 @@ const persistTaskChanges = (
           .get(task.id),
       )
       const persisted = yield* decode(
-        Schema.extend(TaskRowSchema, Schema.Struct({ plan_id: PlanIdSchema })),
+        Schema.extend(
+          TaskRowSchema,
+          Schema.Struct({ plan_id: StorageIssueIdSchema }),
+        ),
         row,
         "corrupt_state",
         "Invalid saved task projection",
@@ -1477,7 +1733,7 @@ const readCommittedRequest = (
 const recoverTaskCommit = (
   options: ValidatedPlanStoreOptions,
   request: AppliedTaskRequest,
-  cause: Cause.Cause<PlanStoreError>,
+  cause: Cause.Cause<TaskStoreError>,
 ): Effect.Effect<AppliedTaskRequest, TaskCommitUnknownError> =>
   Effect.gen(function* () {
     const observed = yield* Effect.exit(readCommittedRequest(options, request))
@@ -1505,7 +1761,7 @@ const recoverTaskCommit = (
 const makeStore = (
   database: DatabaseSync,
   options: ValidatedPlanStoreOptions,
-): SqlitePlanStore => {
+): SqliteTaskStore => {
   const gate = Effect.unsafeMakeSemaphore(1)
   let state: ConnectionState = "open"
   const use = <A, E, F = never>(
@@ -1513,16 +1769,16 @@ const makeStore = (
     operation: Effect.Effect<A, E>,
     recoverCommit?: (
       value: A,
-      cause: Cause.Cause<PlanStoreError>,
+      cause: Cause.Cause<TaskStoreError>,
     ) => Effect.Effect<A, F>,
-  ): Effect.Effect<A, E | F | PlanStoreError> =>
+  ): Effect.Effect<A, E | F | TaskStoreError> =>
     gate.withPermits(1)(
       Effect.suspend(() => {
-        if (state === "closed") return fail("closed", "Plan store is closed")
+        if (state === "closed") return fail("closed", "Task store is closed")
         if (state === "unusable")
           return fail(
             "io",
-            "Plan connection is unusable after a database failure",
+            "Task-store connection is unusable after a database failure",
           )
         return transaction(
           database,
@@ -1595,40 +1851,7 @@ const makeStore = (
         }),
         (request, cause) => recoverTaskCommit(options, request, cause),
       ).pipe(Effect.map(request => request.result)),
-    ensurePlan: target =>
-      use(
-        "write",
-        Effect.gen(function* () {
-          const issue = yield* checkedIssue(target, "invalid_input")
-          const existing = yield* io("Could not read issue plan", () =>
-            database
-              .prepare(
-                "SELECT id, repository, issue_number, revision FROM issue_plans WHERE repository = ? AND issue_number = ?",
-              )
-              .get(issue.repository, issue.number),
-          )
-          if (existing !== undefined) return yield* planFrom(existing)
-          const generated = yield* io(
-            "Could not generate plan identity",
-            randomUUID,
-          )
-          const id = yield* decode(
-            PlanIdSchema,
-            generated,
-            "io",
-            "Invalid generated plan identity",
-          )
-          yield* io("Could not save issue plan", () =>
-            database
-              .prepare(
-                "INSERT INTO issue_plans (id, repository, issue_number, revision) VALUES (?, ?, ?, 0)",
-              )
-              .run(id, issue.repository, issue.number),
-          )
-          return Object.freeze({ id, issue, revision: 0 })
-        }),
-      ),
-    readPlan: (target, input) =>
+    readTasks: (target, input) =>
       use(
         "read",
         Effect.gen(function* () {
@@ -1637,27 +1860,21 @@ const makeStore = (
             PageSchema,
             input,
             "invalid_input",
-            "Plan pages require a limit from 1 to 100 and an optional task cursor",
+            "Task pages require a limit from 1 to 100 and an optional task cursor",
           )
-          const raw = yield* io("Could not read issue plan", () =>
-            database
-              .prepare(
-                "SELECT id, repository, issue_number, revision FROM issue_plans WHERE repository = ? AND issue_number = ?",
-              )
-              .get(issue.repository, issue.number),
-          )
-          if (raw === undefined) {
+          const stored = yield* findPlan(database, issue)
+          if (Option.isNone(stored)) {
             if (page.after !== undefined)
               return yield* fail(
                 "invalid_input",
-                "Cursor does not belong to the requested plan",
+                "Cursor does not belong to the requested issue",
               )
             return Option.none()
           }
-          const plan = yield* planFrom(raw)
+          const plan = stored.value
           const after = page.after
           if (after !== undefined) {
-            const cursor = yield* io("Could not validate plan cursor", () =>
+            const cursor = yield* io("Could not validate task cursor", () =>
               database
                 .prepare(
                   "SELECT id FROM issue_plan_tasks WHERE plan_id = ? AND id = ?",
@@ -1667,10 +1884,10 @@ const makeStore = (
             if (cursor === undefined)
               return yield* fail(
                 "invalid_input",
-                "Cursor does not belong to the requested plan",
+                "Cursor does not belong to the requested issue",
               )
           }
-          const rows = yield* io("Could not read plan tasks", () =>
+          const rows = yield* io("Could not read issue tasks", () =>
             page.after === undefined
               ? database
                   .prepare(
@@ -1687,17 +1904,18 @@ const makeStore = (
             Schema.Array(TaskRowSchema),
             rows,
             "corrupt_state",
-            "Invalid persisted plan task",
+            "Invalid persisted task",
           )
           const visible = Object.freeze(
             tasks.slice(0, page.limit).map(task => Object.freeze(task)),
           )
           const last = visible.at(-1)
           if (tasks.length > page.limit && last === undefined)
-            return yield* fail("corrupt_state", "Invalid plan page boundary")
+            return yield* fail("corrupt_state", "Invalid task page boundary")
           return Option.some(
             Object.freeze({
-              plan,
+              issue: plan.issue,
+              revision: plan.revision,
               tasks: visible,
               next:
                 tasks.length > page.limit && last !== undefined
@@ -1712,7 +1930,7 @@ const makeStore = (
         Effect.suspend(() => {
           if (state === "closed") return Effect.void
           state = "unusable"
-          return io("Could not close plan database", () =>
+          return io("Could not close task database", () =>
             database.close(),
           ).pipe(
             Effect.tap(() =>
@@ -1726,9 +1944,9 @@ const makeStore = (
   }
 }
 
-export const openSqlitePlanStore = (
-  options: SqlitePlanStoreOptions,
-): StoreEffect<SqlitePlanStore> =>
+export const openSqliteTaskStore = (
+  options: SqliteTaskStoreOptions,
+): StoreEffect<SqliteTaskStore> =>
   Effect.uninterruptibleMask(restore =>
     Effect.gen(function* () {
       const timeout =
@@ -1745,7 +1963,7 @@ export const openSqlitePlanStore = (
       })
       yield* secureFile(captured.databasePath)
       const database = yield* io(
-        "Could not open plan database",
+        "Could not open task database",
         () => new DatabaseSync(captured.databasePath),
       )
       const initialized = yield* Effect.exit(
@@ -1753,7 +1971,7 @@ export const openSqlitePlanStore = (
       )
       if (Exit.isFailure(initialized)) {
         const closed = yield* Effect.exit(
-          io("Could not close invalid plan database", () => database.close()),
+          io("Could not close invalid task database", () => database.close()),
         )
         return yield* Effect.failCause(
           Exit.isFailure(closed)

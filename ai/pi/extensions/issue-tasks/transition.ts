@@ -1,9 +1,8 @@
 import { Data, Either } from "effect"
 import { issueKey, type IssueReference } from "./identity.ts"
 import type {
-  IssuePlan,
-  PlanId,
-  PlanTask,
+  IssueTaskRevision,
+  IssueTask,
   TaskId,
   TaskStatus,
 } from "./model.ts"
@@ -13,7 +12,7 @@ import type {
   TaskReference,
 } from "./mutations.ts"
 
-export interface CurrentTask extends PlanTask {
+export interface CurrentTask extends IssueTask {
   readonly issue: IssueReference
   readonly dependsOn: readonly TaskId[]
 }
@@ -23,15 +22,15 @@ export interface DependencyNode {
   readonly dependsOn: readonly TaskId[]
 }
 
-export type PlanCandidate =
-  | { readonly kind: "stored"; readonly plan: IssuePlan }
+export type IssueCandidate =
+  | { readonly kind: "stored"; readonly state: IssueTaskRevision }
   | {
       readonly kind: "new"
-      readonly plan: IssuePlan & { readonly revision: 0 }
+      readonly state: IssueTaskRevision & { readonly revision: 0 }
     }
 
 export interface TaskSnapshot {
-  readonly plans: readonly PlanCandidate[]
+  readonly issues: readonly IssueCandidate[]
   readonly tasks: readonly CurrentTask[]
   readonly external: readonly DependencyNode[]
 }
@@ -85,21 +84,30 @@ export type TaskEvent =
       readonly before: string | null
       readonly after: string | null
     }
+  | {
+      readonly op: "transfer"
+      readonly operationIndex: number
+      readonly issue: IssueReference
+      readonly id: TaskId
+      readonly splitFrom: IssueReference
+    }
 
 export interface TaskChangeSummary {
   readonly issue: IssueReference
   readonly id: TaskId
   readonly revision: number
-  readonly fields: readonly ("text" | "dependsOn" | "status" | "blocker")[]
+  readonly fields: readonly (
+    "text" | "dependsOn" | "status" | "blocker" | "issue"
+  )[]
 }
 
-export interface PreparedPlanChange {
+export interface PreparedIssueChange {
   readonly kind: "stored" | "new"
-  readonly plan: IssuePlan
+  readonly state: IssueTaskRevision
 }
 
 export interface PreparedTaskChanges {
-  readonly plans: readonly PreparedPlanChange[]
+  readonly issues: readonly PreparedIssueChange[]
   readonly tasks: readonly CurrentTask[]
   readonly events: readonly TaskEvent[]
   readonly changed: readonly TaskChangeSummary[]
@@ -220,33 +228,30 @@ export const prepareTaskChanges = (
       return yield* fail("capacity", "Task dependency component is too large")
 
     const scope = new Set(batch.issues.map(issueKey))
-    const plans = new Map<string, PlanCandidate>()
-    const planIds = new Set<PlanId>()
-    for (const candidate of snapshot.plans) {
-      const key = issueKey(candidate.plan.issue)
-      const revision = candidate.plan.revision
+    const issueStates = new Map<string, IssueCandidate>()
+    for (const candidate of snapshot.issues) {
+      const key = issueKey(candidate.state.issue)
+      const revision = candidate.state.revision
       if (
         !scope.has(key) ||
-        plans.has(key) ||
-        planIds.has(candidate.plan.id) ||
+        issueStates.has(key) ||
         !Number.isSafeInteger(revision) ||
         revision < 0 ||
         (candidate.kind === "new" && revision !== 0)
       )
         return yield* fail(
           "corrupt_state",
-          "Invalid or duplicated plan projection",
+          "Invalid or duplicated issue task state",
         )
 
-      plans.set(key, candidate)
-      planIds.add(candidate.plan.id)
+      issueStates.set(key, candidate)
     }
 
     const tasks = new Map<TaskId, CurrentTask>()
     const graph = new Map<TaskId, readonly TaskId[]>()
     let textSize = 0
     for (const task of snapshot.tasks) {
-      const candidate = plans.get(issueKey(task.issue))
+      const candidate = issueStates.get(issueKey(task.issue))
       if (
         candidate === undefined ||
         candidate.kind !== "stored" ||
@@ -332,7 +337,10 @@ export const prepareTaskChanges = (
       const task = tasks.get(id)
       if (task === undefined)
         return fail("missing_task", "Referenced task has not been created")
-      if (issueKey(task.issue) !== issueKey(reference.issue))
+      if (
+        reference.task.kind === "existing" &&
+        issueKey(task.issue) !== issueKey(reference.issue)
+      )
         return fail("scope_mismatch", "Task identity belongs to another issue")
 
       return Either.right(task)
@@ -356,6 +364,7 @@ export const prepareTaskChanges = (
       })
 
     const events: TaskEvent[] = []
+    const changedIssues = new Set<string>()
     const touched = new Map<TaskId, Set<ChangedField>>()
     const mark = (id: TaskId, fields: readonly ChangedField[]): void => {
       const prior = touched.get(id)
@@ -365,15 +374,18 @@ export const prepareTaskChanges = (
     }
 
     const record = (event: TaskEvent): void => {
+      const issue = event.op === "add" ? event.task.issue : event.issue
+      changedIssues.add(issueKey(issue))
+      if (event.op === "transfer") changedIssues.add(issueKey(event.splitFrom))
       events.push(Object.freeze(event))
     }
 
     for (const [operationIndex, operation] of batch.operations.entries()) {
       if (operation.op === "add") {
-        if (!plans.has(issueKey(operation.issue)))
+        if (!issueStates.has(issueKey(operation.issue)))
           return yield* fail(
             "corrupt_state",
-            "A scoped addition has no plan candidate",
+            "A scoped addition has no issue task state",
           )
 
         const id = allocations.get(aliasKey(operation.issue, operation.key))
@@ -441,6 +453,26 @@ export const prepareTaskChanges = (
           )
           break
         }
+        case "transfer": {
+          if (!issueStates.has(issueKey(operation.toIssue)))
+            return yield* fail(
+              "corrupt_state",
+              "Transfer destination has no issue task state",
+            )
+          if (issueKey(task.issue) === issueKey(operation.toIssue)) break
+
+          const current = frozenTask({ ...task, issue: operation.toIssue })
+          tasks.set(current.id, current)
+          record({
+            op: "transfer",
+            operationIndex,
+            issue: current.issue,
+            id: current.id,
+            splitFrom: task.issue,
+          })
+          mark(current.id, ["issue"])
+          break
+        }
         case "status": {
           if (
             context.cancellation !== "owner-authorized" &&
@@ -448,7 +480,7 @@ export const prepareTaskChanges = (
           )
             return yield* fail(
               "unauthorized",
-              "Only the owner or an authorized manager may cancel or reopen cancelled tasks",
+              "Cancelling or reopening tasks requires owner approval",
             )
           if (task.status === operation.status) break
 
@@ -484,10 +516,20 @@ export const prepareTaskChanges = (
       }
     }
 
+    let finalTextSize = 0
+    for (const task of tasks.values()) {
+      finalTextSize +=
+        task.text.length + (task.blocker === null ? 0 : task.blocker.length)
+      if (finalTextSize > MAX_TRANSITION_TEXT)
+        return yield* fail(
+          "capacity",
+          "Final task text exceeds the transaction budget",
+        )
+    }
+
     yield* validateGraph(graph)
 
     const changedTasks: CurrentTask[] = []
-    const changedIssues = new Set<string>()
     for (const id of touched.keys()) {
       const task = tasks.get(id)
       if (task === undefined)
@@ -500,29 +542,33 @@ export const prepareTaskChanges = (
       changedIssues.add(issueKey(task.issue))
     }
 
-    const changedPlans: PreparedPlanChange[] = []
+    const preparedIssues: PreparedIssueChange[] = []
     const revisions = new Map<string, number>()
     for (const issue of batch.issues) {
       const key = issueKey(issue)
       if (!changedIssues.has(key)) continue
 
-      const candidate = plans.get(key)
+      const candidate = issueStates.get(key)
       if (candidate === undefined)
-        return yield* fail("corrupt_state", "A changed task has no plan")
+        return yield* fail(
+          "corrupt_state",
+          "A changed task has no issue task state",
+        )
 
-      const revision = candidate.plan.revision + 1
+      const revision = candidate.state.revision + 1
       if (!Number.isSafeInteger(revision))
         return yield* fail(
           "revision_exhausted",
-          "Plan revision cannot advance beyond the safe integer range",
+          "Issue task revision cannot advance beyond the safe integer range",
         )
 
-      const plan = Object.freeze({
-        id: candidate.plan.id,
+      const issueState = Object.freeze({
         issue: frozenIssue(issue),
         revision,
       })
-      changedPlans.push(Object.freeze({ kind: candidate.kind, plan }))
+      preparedIssues.push(
+        Object.freeze({ kind: candidate.kind, state: issueState }),
+      )
       revisions.set(key, revision)
     }
 
@@ -532,6 +578,7 @@ export const prepareTaskChanges = (
       "status",
       "blocker",
       "dependsOn",
+      "issue",
     ]
     for (const task of changedTasks) {
       const fields = touched.get(task.id)
@@ -553,7 +600,7 @@ export const prepareTaskChanges = (
     }
 
     return Object.freeze({
-      plans: Object.freeze(changedPlans),
+      issues: Object.freeze(preparedIssues),
       tasks: Object.freeze(changedTasks),
       events: Object.freeze(events),
       changed: Object.freeze(changed),
