@@ -784,8 +784,19 @@ type StoredTextColumn =
   | "t.status"
   | "t.blocker"
   | "p.repository"
+  | "h.plan_id"
+  | "h.task_id"
+  | "h.kind"
+  | "h.payload_json"
 type StoredTextLimit =
-  9 | 36 | 140 | typeof MAX_TASK_TEXT | typeof MAX_RECEIPT_TEXT
+  | 8
+  | 9
+  | 36
+  | 140
+  | typeof MAX_TASK_TEXT
+  | typeof MAX_RECEIPT_TEXT
+  | typeof MAX_TRANSFER_EVENT_TEXT
+  | typeof MAX_EDIT_EVENT_TEXT
 // Admit UTF-8 and UTF-16 byte representations; schemas retain exact code-unit limits.
 const boundedStoredText = (
   column: StoredTextColumn,
@@ -794,6 +805,9 @@ const boundedStoredText = (
   `CASE WHEN ${column} IS NULL THEN NULL WHEN typeof(${column}) = 'text' AND octet_length(${column}) <= ${3 * maxUnits} THEN ${column} ELSE -1 END`
 const taskColumns = `${boundedStoredText("id", 36)} AS id, ${boundedStoredText("text", MAX_TASK_TEXT)} AS text, ${boundedStoredText("status", 9)} AS status, ${boundedStoredText("blocker", MAX_TASK_TEXT)} AS blocker`
 const taskDependenciesQuery = `SELECT ${boundedStoredText("depends_on_id", 36)} AS depends_on_id FROM issue_plan_dependencies WHERE task_id = ? ORDER BY issue_plan_dependencies.depends_on_id LIMIT ?`
+const receiptHistorySource =
+  "FROM issue_plan_history h LEFT JOIN issue_plan_tasks t ON t.id = h.task_id WHERE h.batch_id = ?"
+const receiptHistoryColumns = `${boundedStoredText("h.plan_id", 36)} AS plan_id, ${boundedStoredText("h.task_id", 36)} AS task_id, h.operation_index, ${boundedStoredText("h.kind", 8)} AS kind, ${boundedStoredText("t.id", 36)} AS persisted_task_id, CASE WHEN h.kind = 'transfer' THEN ${boundedStoredText("h.payload_json", MAX_TRANSFER_EVENT_TEXT)} ELSE NULL END AS transfer_payload, CASE WHEN h.kind = 'edit' THEN ${boundedStoredText("h.payload_json", MAX_EDIT_EVENT_TEXT)} ELSE NULL END AS edit_payload, CASE WHEN h.kind IN ('status', 'block') THEN ${boundedStoredText("h.payload_json", MAX_EDIT_EVENT_TEXT)} ELSE NULL END AS state_payload`
 
 const EditEventSchema = Schema.Struct({
   op: Schema.Literal("edit"),
@@ -1057,28 +1071,50 @@ const readReceipt = (
         )
     }
 
-    const historyRows = yield* io(
-      "Could not reconcile task receipt history",
+    const rawHistoryCount = yield* io(
+      "Could not count task receipt history",
       () =>
         database
           .prepare(
-            `SELECT h.plan_id, h.task_id, h.operation_index, h.kind, t.id AS persisted_task_id, CASE WHEN h.kind = 'transfer' AND length(h.payload_json) <= ${MAX_TRANSFER_EVENT_TEXT} THEN h.payload_json ELSE NULL END AS transfer_payload, CASE WHEN h.kind = 'edit' THEN substr(h.payload_json, 1, ${MAX_EDIT_EVENT_TEXT + 1}) ELSE NULL END AS edit_payload, CASE WHEN h.kind IN ('status', 'block') THEN substr(h.payload_json, 1, ${MAX_EDIT_EVENT_TEXT + 1}) ELSE NULL END AS state_payload FROM issue_plan_history h LEFT JOIN issue_plan_tasks t ON t.id = h.task_id WHERE h.batch_id = ? ORDER BY h.operation_index LIMIT ?`,
+            `SELECT COUNT(*) AS count FROM (SELECT 1 ${receiptHistorySource} LIMIT ?)`,
           )
-          .all(saved.batchId, MAX_TASK_MUTATIONS + 1),
+          .get(saved.batchId, MAX_TASK_MUTATIONS + 1),
     )
-    if (historyRows.length !== saved.eventCount)
+    const historyCount = yield* decode(
+      Schema.Struct({ count: RevisionSchema }),
+      rawHistoryCount,
+      "corrupt_state",
+      "Invalid task receipt history count",
+    )
+    if (historyCount.count !== saved.eventCount)
       return yield* fail(
         "corrupt_state",
         "Task receipt event count disagrees with persisted history",
       )
 
+    const nextHistory = yield* io(
+      "Could not prepare incremental task receipt history",
+      () =>
+        database.prepare(
+          `SELECT ${receiptHistoryColumns} ${receiptHistorySource} AND h.operation_index > ? ORDER BY h.operation_index LIMIT 1`,
+        ),
+    )
+    let rawHistory = yield* io(
+      "Could not read first task receipt history",
+      () =>
+        database
+          .prepare(
+            `SELECT ${receiptHistoryColumns} ${receiptHistorySource} ORDER BY h.operation_index LIMIT 1`,
+          )
+          .get(saved.batchId),
+    )
     const changesById = new Map(changed.map(task => [task.id, task]))
     const recordedTasks = new Set<TaskId>()
     const recordedOperations = new Set<number>()
     const recordedFields = new Map<TaskId, Set<ChangedField>>()
     const recordedIssues = new Set<string>()
     const locations = new Map<TaskId, IssueReference>()
-    for (const rawHistory of historyRows) {
+    while (rawHistory !== undefined) {
       const history = yield* decode(
         Schema.Struct({
           plan_id: StorageIssueIdSchema,
@@ -1327,7 +1363,15 @@ const readReceipt = (
       recordedIssues.add(issueKey(after))
       recordedTasks.add(task.id)
       recordedOperations.add(history.operation_index)
+      rawHistory = yield* io("Could not read next task receipt history", () =>
+        nextHistory.get(saved.batchId, history.operation_index),
+      )
     }
+    if (recordedOperations.size !== historyCount.count)
+      return yield* fail(
+        "corrupt_state",
+        "Task receipt event count disagrees with persisted history",
+      )
     if (
       recordedTasks.size !== changed.length ||
       recordedIssues.size !== plans.length ||
