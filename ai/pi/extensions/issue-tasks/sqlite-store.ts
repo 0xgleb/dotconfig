@@ -770,15 +770,30 @@ const MAX_TRANSFER_EVENT_TEXT = 4_096
 const MAX_EDIT_EVENT_TEXT = 2_097_152
 const MAX_RECEIPT_TEXT = 1_048_576
 
-type StoredTextColumn = "id" | "text" | "status" | "blocker" | "result_json"
-type StoredTextLimit = 9 | 36 | typeof MAX_TASK_TEXT | typeof MAX_RECEIPT_TEXT
+type StoredTextColumn =
+  | "id"
+  | "text"
+  | "status"
+  | "blocker"
+  | "result_json"
+  | "repository"
+  | "plan_id"
+  | "depends_on_id"
+  | "t.id"
+  | "t.text"
+  | "t.status"
+  | "t.blocker"
+  | "p.repository"
+type StoredTextLimit =
+  9 | 36 | 140 | typeof MAX_TASK_TEXT | typeof MAX_RECEIPT_TEXT
 // Admit UTF-8 and UTF-16 byte representations; schemas retain exact code-unit limits.
 const boundedStoredText = (
   column: StoredTextColumn,
   maxUnits: StoredTextLimit,
 ): string =>
   `CASE WHEN ${column} IS NULL THEN NULL WHEN typeof(${column}) = 'text' AND octet_length(${column}) <= ${3 * maxUnits} THEN ${column} ELSE -1 END`
-const taskPageColumns = `${boundedStoredText("id", 36)} AS id, ${boundedStoredText("text", MAX_TASK_TEXT)} AS text, ${boundedStoredText("status", 9)} AS status, ${boundedStoredText("blocker", MAX_TASK_TEXT)} AS blocker`
+const taskColumns = `${boundedStoredText("id", 36)} AS id, ${boundedStoredText("text", MAX_TASK_TEXT)} AS text, ${boundedStoredText("status", 9)} AS status, ${boundedStoredText("blocker", MAX_TASK_TEXT)} AS blocker`
+const taskDependenciesQuery = `SELECT ${boundedStoredText("depends_on_id", 36)} AS depends_on_id FROM issue_plan_dependencies WHERE task_id = ? ORDER BY issue_plan_dependencies.depends_on_id LIMIT ?`
 
 const EditEventSchema = Schema.Struct({
   op: Schema.Literal("edit"),
@@ -885,7 +900,7 @@ const findPlan = (
     const rows = yield* io("Could not read qualified issue task state", () =>
       database
         .prepare(
-          "SELECT id, repository, issue_number, revision FROM issue_plans WHERE repository = ? COLLATE NOCASE AND issue_number = ? LIMIT 2",
+          `SELECT ${boundedStoredText("id", 36)} AS id, ${boundedStoredText("repository", 140)} AS repository, issue_number, revision FROM issue_plans WHERE repository = ? COLLATE NOCASE AND issue_number = ? LIMIT 2`,
         )
         .all(issue.repository, issue.number),
     )
@@ -1404,7 +1419,7 @@ const loadTaskSnapshot = (
     ])
     const taskStatement = yield* io("Could not prepare task snapshot", () =>
       database.prepare(
-        `SELECT t.id, t.text, t.status, t.blocker, p.repository, p.issue_number FROM issue_plan_tasks t JOIN issue_plans p ON p.id = t.plan_id WHERE t.id = ? AND (${scopeSql})`,
+        `SELECT ${boundedStoredText("t.id", 36)} AS id, ${boundedStoredText("t.text", MAX_TASK_TEXT)} AS text, ${boundedStoredText("t.status", 9)} AS status, ${boundedStoredText("t.blocker", MAX_TASK_TEXT)} AS blocker, ${boundedStoredText("p.repository", 140)} AS repository, p.issue_number FROM issue_plan_tasks t JOIN issue_plans p ON p.id = t.plan_id WHERE t.id = ? AND (${scopeSql})`,
       ),
     )
     const rowSchema = Schema.Struct({
@@ -1455,14 +1470,11 @@ const loadTaskSnapshot = (
     const edges = new Map<TaskId, readonly TaskId[]>()
     const dependencies = yield* io(
       "Could not prepare dependency snapshot",
-      () =>
-        database.prepare(
-          "SELECT depends_on_id FROM issue_plan_dependencies WHERE task_id = ? ORDER BY depends_on_id LIMIT ?",
-        ),
+      () => database.prepare(taskDependenciesQuery),
     )
     const exists = yield* io(
       "Could not prepare dependency identity check",
-      () => database.prepare("SELECT id FROM issue_plan_tasks WHERE id = ?"),
+      () => database.prepare("SELECT 1 FROM issue_plan_tasks WHERE id = ?"),
     )
     let edgeCount = 0
     for (let position = 0; position < queue.length; position += 1) {
@@ -1818,7 +1830,7 @@ const persistTaskChanges = (
       const row = yield* io("Could not verify saved task", () =>
         database
           .prepare(
-            "SELECT id, plan_id, text, status, blocker FROM issue_plan_tasks WHERE id = ?",
+            `SELECT ${taskColumns}, ${boundedStoredText("plan_id", 36)} AS plan_id FROM issue_plan_tasks WHERE id = ?`,
           )
           .get(task.id),
       )
@@ -1846,9 +1858,7 @@ const persistTaskChanges = (
         "Could not verify saved task dependencies",
         () =>
           database
-            .prepare(
-              "SELECT depends_on_id FROM issue_plan_dependencies WHERE task_id = ? ORDER BY depends_on_id LIMIT ?",
-            )
+            .prepare(taskDependenciesQuery)
             .all(task.id, MAX_TASK_DEPENDENCIES + 1),
       )
       const edges = yield* decode(
@@ -2097,7 +2107,7 @@ const makeStore = (
             const cursor = yield* io("Could not validate task cursor", () =>
               database
                 .prepare(
-                  "SELECT id FROM issue_plan_tasks WHERE plan_id = ? AND id = ?",
+                  "SELECT 1 FROM issue_plan_tasks WHERE plan_id = ? AND id = ?",
                 )
                 .get(plan.id, after),
             )
@@ -2111,12 +2121,12 @@ const makeStore = (
             page.after === undefined
               ? database
                   .prepare(
-                    `SELECT ${taskPageColumns} FROM issue_plan_tasks WHERE plan_id = ? ORDER BY issue_plan_tasks.id LIMIT ?`,
+                    `SELECT ${taskColumns} FROM issue_plan_tasks WHERE plan_id = ? ORDER BY issue_plan_tasks.id LIMIT ?`,
                   )
                   .all(plan.id, page.limit + 1)
               : database
                   .prepare(
-                    `SELECT ${taskPageColumns} FROM issue_plan_tasks WHERE plan_id = ? AND issue_plan_tasks.id > ? ORDER BY issue_plan_tasks.id LIMIT ?`,
+                    `SELECT ${taskColumns} FROM issue_plan_tasks WHERE plan_id = ? AND issue_plan_tasks.id > ? ORDER BY issue_plan_tasks.id LIMIT ?`,
                   )
                   .all(plan.id, page.after, page.limit + 1),
           )

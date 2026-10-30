@@ -1805,6 +1805,181 @@ for (const [table, mutation] of [
     }))
 }
 
+test("qualified issue lookup bounds its stored ID before driver materialization", async () =>
+  fixture(async path => {
+    await withStore(path, async store => {
+      await run(
+        store.apply(
+          batch([{ op: "add", issue: a, key: "one", text: "One" }]),
+          context("bounded-plan-id"),
+        ),
+      )
+      sql(path, database => {
+        database.exec("PRAGMA foreign_keys = OFF")
+        database.prepare("UPDATE issue_plans SET id = ?").run("x".repeat(109))
+      })
+      const observed = await observeReads(
+        query =>
+          query.includes(
+            "FROM issue_plans WHERE repository = ? COLLATE NOCASE",
+          ),
+        () => run(Effect.either(store.readTasks(issue(), { limit: 1 }))),
+      )
+      assert.ok(Either.isLeft(observed.value))
+      assert.equal(observed.value.left.code, "corrupt_state")
+      assert.ok(
+        materializedStrings(observed.reads, "id").every(
+          value => value.length <= 108,
+        ),
+      )
+    })
+  }))
+
+test("current task snapshot bounds blockers before driver materialization", async () =>
+  fixture(async path => {
+    await withStore(path, async store => {
+      const saved = await run(
+        store.apply(
+          batch([{ op: "add", issue: a, key: "one", text: "One" }]),
+          context("bounded-snapshot"),
+        ),
+      )
+      const created = saved.created[0]
+      assert.ok(created)
+      const envelope = 3 * 131_072
+      sql(path, database =>
+        database
+          .prepare("UPDATE issue_plan_tasks SET blocker = ? WHERE id = ?")
+          .run("x".repeat(envelope + 1), created.id),
+      )
+      const observed = await observeReads(
+        query => query.includes("FROM issue_plan_tasks t JOIN issue_plans p"),
+        () =>
+          run(
+            Effect.either(
+              store.apply(
+                batch([
+                  {
+                    op: "status",
+                    target: existing(created.id),
+                    status: "doing",
+                  },
+                ]),
+                context("read-bounded-snapshot"),
+              ),
+            ),
+          ),
+      )
+      assert.ok(Either.isLeft(observed.value))
+      assert.equal(observed.value.left.code, "corrupt_state")
+      assert.ok(
+        materializedStrings(observed.reads, "blocker").every(
+          value => value.length <= envelope,
+        ),
+      )
+    })
+  }))
+
+test("dependency snapshot bounds stored IDs before driver materialization", async () =>
+  fixture(async path => {
+    await withStore(path, async store => {
+      const saved = await run(
+        store.apply(
+          batch([{ op: "add", issue: a, key: "one", text: "One" }]),
+          context("bounded-edge"),
+        ),
+      )
+      const created = saved.created[0]
+      assert.ok(created)
+      sql(path, database => {
+        database.exec("PRAGMA foreign_keys = OFF")
+        database
+          .prepare(
+            "INSERT INTO issue_plan_dependencies (task_id, depends_on_id) VALUES (?, ?)",
+          )
+          .run(created.id, "x".repeat(109))
+      })
+      const observed = await observeReads(
+        query =>
+          query.includes("FROM issue_plan_dependencies WHERE task_id = ?"),
+        () =>
+          run(
+            Effect.either(
+              store.apply(
+                batch([
+                  {
+                    op: "status",
+                    target: existing(created.id),
+                    status: "doing",
+                  },
+                ]),
+                context("read-bounded-edge"),
+              ),
+            ),
+          ),
+      )
+      assert.ok(Either.isLeft(observed.value))
+      assert.equal(observed.value.left.code, "corrupt_state")
+      assert.ok(
+        materializedStrings(observed.reads, "depends_on_id").every(
+          value => value.length <= 108,
+        ),
+      )
+    })
+  }))
+
+test("post-write task verification bounds trigger-produced blockers and rolls back", async () =>
+  fixture(async path => {
+    await withStore(path, async store => {
+      const envelope = 3 * 131_072
+      sql(path, database =>
+        database.exec(`
+        CREATE TRIGGER fixture_oversized_blocker AFTER INSERT ON issue_plan_tasks
+        BEGIN
+          UPDATE issue_plan_tasks SET blocker = hex(zeroblob(${envelope / 2})) || 'x' WHERE id = NEW.id;
+        END;
+      `),
+      )
+      const observed = await observeReads(
+        query => query.includes("FROM issue_plan_tasks WHERE id = ?"),
+        () =>
+          run(
+            Effect.either(
+              store.apply(
+                batch([{ op: "add", issue: a, key: "one", text: "One" }]),
+                context("bounded-post-write"),
+              ),
+            ),
+          ),
+      )
+      assert.ok(Either.isLeft(observed.value))
+      assert.equal(observed.value.left.code, "corrupt_state")
+      assert.ok(
+        materializedStrings(observed.reads, "blocker").every(
+          value => value.length <= envelope,
+        ),
+      )
+      assert.ok(
+        Option.isNone(await run(store.readTasks(issue(), { limit: 1 }))),
+      )
+      sql(path, database => {
+        for (const table of [
+          "issue_plans",
+          "issue_plan_tasks",
+          "issue_plan_batches",
+          "issue_plan_dependencies",
+          "issue_plan_history",
+        ]) {
+          assert.equal(
+            database.prepare(`SELECT COUNT(*) AS count FROM ${table}`).get()
+              ?.count,
+            0,
+          )
+        }
+      })
+    })
+  }))
+
 test("receipt JSON is bounded before driver materialization", async () =>
   fixture(async path => {
     await withStore(path, async store => {
