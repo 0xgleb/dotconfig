@@ -42,6 +42,14 @@ export interface IssueTaskPage extends IssueTaskRevision {
   readonly tasks: readonly IssueTask[]
   readonly next: TaskId | null
 }
+export interface TaskAddress {
+  readonly issue: IssueReference
+  readonly id: TaskId
+}
+export interface IssueTaskDetail extends IssueTaskRevision {
+  readonly task: IssueTask
+  readonly dependsOn: readonly TaskAddress[]
+}
 export interface TaskPageInput {
   readonly limit: number
   readonly after?: TaskId
