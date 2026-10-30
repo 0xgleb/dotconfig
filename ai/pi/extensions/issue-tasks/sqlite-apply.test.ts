@@ -157,6 +157,29 @@ const writeReceiptJson = (path: string, id: MutationBatchId, json: string) =>
       .prepare("UPDATE issue_plan_batches SET result_json = ? WHERE id = ?")
       .run(json, id),
   )
+const historyJson = (path: string, id: MutationBatchId, index = 0): string =>
+  sql(path, database => {
+    const row = database
+      .prepare(
+        "SELECT payload_json FROM issue_plan_history WHERE batch_id = ? AND operation_index = ?",
+      )
+      .get(id, index)
+    assert.ok(row && typeof row.payload_json === "string")
+    return row.payload_json
+  })
+const writeHistoryJson = (
+  path: string,
+  id: MutationBatchId,
+  json: string,
+  index = 0,
+) =>
+  sql(path, database =>
+    database
+      .prepare(
+        "UPDATE issue_plan_history SET payload_json = ? WHERE batch_id = ? AND operation_index = ?",
+      )
+      .run(json, id, index),
+  )
 const forgeReceiptFields = (
   path: string,
   id: MutationBatchId,
@@ -1801,6 +1824,323 @@ for (const [table, mutation] of [
             0,
           )
         }
+      })
+    }))
+}
+
+test("incremental history preserves sparse operation indices and indexed reads across reopen", async () =>
+  fixture(async path => {
+    const historical = await withStore(path, async store => {
+      const seeded = await run(
+        store.apply(
+          batch([{ op: "add", issue: a, key: "one", text: "One" }]),
+          context("sparse-history-seed"),
+        ),
+      )
+      const created = seeded.created[0]
+      assert.ok(created)
+      const target = existing(created.id)
+      const input = batch([
+        { op: "status", target, status: "todo" },
+        { op: "status", target, status: "doing" },
+        { op: "status", target, status: "doing" },
+        { op: "status", target, status: "todo" },
+      ])
+      const request = context("sparse-history")
+      const saved = await run(store.apply(input, request))
+      assert.equal(saved.eventCount, 2)
+      await run(
+        store.apply(
+          batch([{ op: "status", target, status: "doing" }]),
+          context("later-sparse-history"),
+        ),
+      )
+      return { input, request, saved }
+    })
+    await withStore(path, async store => {
+      const observed = await observeReads(
+        query => query.includes("FROM issue_plan_history h LEFT JOIN"),
+        () => run(store.apply(historical.input, historical.request)),
+      )
+      assert.deepEqual(observed.value, {
+        ...historical.saved,
+        receipt: "replayed",
+      })
+      assert.ok(observed.reads.length > 0)
+      sql(path, database => {
+        for (const query of new Set(observed.reads.map(read => read.query))) {
+          const parameters = query.startsWith("SELECT COUNT(*)")
+            ? [historical.saved.batchId, 1_001]
+            : query.includes("h.operation_index > ?")
+              ? [historical.saved.batchId, 1]
+              : [historical.saved.batchId]
+          const details = database
+            .prepare(`EXPLAIN QUERY PLAN ${query}`)
+            .all(...parameters)
+            .map(row => {
+              assert.ok(typeof row.detail === "string")
+              return row.detail
+            })
+          assert.ok(
+            details.some(detail => detail.includes("SEARCH h")),
+            details.join("\n"),
+          )
+          assert.ok(
+            details.every(detail => !detail.includes("TEMP B-TREE")),
+            details.join("\n"),
+          )
+          if (query.includes("h.operation_index > ?"))
+            assert.ok(
+              details.some(detail => detail.includes("operation_index>?")),
+              details.join("\n"),
+            )
+        }
+      })
+    })
+  }))
+
+for (const corruption of [
+  "missing",
+  "extra",
+  "negative",
+  "out-of-range",
+] as const) {
+  test(`incremental history rejects ${corruption} event indices`, async () =>
+    fixture(async path => {
+      await withStore(path, async store => {
+        const seeded = await run(
+          store.apply(
+            batch([{ op: "add", issue: a, key: "one", text: "One" }]),
+            context("corrupt-count-seed"),
+          ),
+        )
+        const created = seeded.created[0]
+        assert.ok(created)
+        const target = existing(created.id)
+        const input = batch([
+          { op: "status", target, status: "todo" },
+          { op: "status", target, status: "doing" },
+          { op: "status", target, status: "doing" },
+          { op: "status", target, status: "todo" },
+        ])
+        const request = context("corrupt-history-count")
+        const saved = await run(store.apply(input, request))
+        sql(path, database => {
+          if (corruption === "missing")
+            database
+              .prepare(
+                "DELETE FROM issue_plan_history WHERE batch_id = ? AND operation_index = 1",
+              )
+              .run(saved.batchId)
+          else if (corruption === "extra")
+            database
+              .prepare(
+                `
+            INSERT INTO issue_plan_history (sequence, batch_id, plan_id, task_id, operation_index, kind, recorded_at, payload_json)
+            SELECT (SELECT MAX(sequence) + 1 FROM issue_plan_history), batch_id, plan_id, task_id, 2, kind, recorded_at, payload_json
+            FROM issue_plan_history WHERE batch_id = ? AND operation_index = 1
+          `,
+              )
+              .run(saved.batchId)
+          else {
+            database.exec("PRAGMA ignore_check_constraints = ON")
+            database
+              .prepare(
+                "UPDATE issue_plan_history SET operation_index = ? WHERE batch_id = ? AND operation_index = 1",
+              )
+              .run(corruption === "negative" ? -1 : 999, saved.batchId)
+          }
+        })
+        const observed = await observeReads(
+          query => query.includes("AS state_payload"),
+          () => run(Effect.either(store.apply(input, request))),
+        )
+        assert.ok(Either.isLeft(observed.value))
+        assert.equal(observed.value.left.code, "corrupt_state")
+        if (corruption === "missing" || corruption === "extra")
+          assert.equal(
+            observed.reads.length,
+            0,
+            "Count mismatch fetched history payloads",
+          )
+      })
+    }))
+}
+
+for (const kind of ["edit", "status", "block"] as const) {
+  test(`history replay rejects a raw NUL suffix without silently truncating ${kind}`, async () =>
+    fixture(async path => {
+      await withStore(path, async store => {
+        const seeded = await run(
+          store.apply(
+            batch([{ op: "add", issue: a, key: "one", text: "One" }]),
+            context("history-seed"),
+          ),
+        )
+        const created = seeded.created[0]
+        assert.ok(created)
+        const target = existing(created.id)
+        const input = batch([
+          kind === "edit"
+            ? { op: "edit", target, text: "Changed" }
+            : kind === "status"
+              ? { op: "status", target, status: "doing" }
+              : { op: "block", target, reason: "Blocked" },
+        ])
+        const request = context("nul-suffixed-history")
+        const saved = await run(store.apply(input, request))
+        const invalid = historyJson(path, saved.batchId) + "\u0000trailing junk"
+        writeHistoryJson(path, saved.batchId, invalid)
+        await errorCode(store.apply(input, request), "corrupt_state")
+        assert.equal(historyJson(path, saved.batchId), invalid)
+      })
+    }))
+}
+
+for (const [field, units] of [
+  ["plan_id", 36],
+  ["task_id", 36],
+  ["kind", 8],
+] as const) {
+  test(`history headers bound ${field} before driver materialization`, async () =>
+    fixture(async path => {
+      await withStore(path, async store => {
+        const input = batch([{ op: "add", issue: a, key: "one", text: "One" }])
+        const request = context("bounded-history-header")
+        const saved = await run(store.apply(input, request))
+        const envelope = 3 * units
+        const oversized = "x".repeat(envelope + 1)
+        sql(path, database => {
+          database.exec("PRAGMA foreign_keys = OFF")
+          database.exec("PRAGMA ignore_check_constraints = ON")
+          if (field === "task_id") {
+            const created = saved.created[0]
+            assert.ok(created)
+            database
+              .prepare("UPDATE issue_plan_tasks SET id = ? WHERE id = ?")
+              .run(oversized, created.id)
+          }
+          database
+            .prepare(
+              `UPDATE issue_plan_history SET ${field} = ? WHERE batch_id = ?`,
+            )
+            .run(oversized, saved.batchId)
+        })
+        const observed = await observeReads(
+          query => query.includes("AS persisted_task_id"),
+          () => run(Effect.either(store.apply(input, request))),
+        )
+        assert.ok(Either.isLeft(observed.value))
+        assert.equal(observed.value.left.code, "corrupt_state")
+        assert.ok(
+          materializedStrings(observed.reads, field).every(
+            value => value.length <= envelope,
+          ),
+        )
+        if (field === "task_id")
+          assert.ok(
+            materializedStrings(observed.reads, "persisted_task_id").every(
+              value => value.length <= envelope,
+            ),
+          )
+      })
+    }))
+}
+
+test("transfer history bounds the complete NUL-suffixed payload before materialization", async () =>
+  fixture(async path => {
+    await withStore(path, async store => {
+      const seeded = await run(
+        store.apply(
+          batch([{ op: "add", issue: a, key: "one", text: "One" }]),
+          context("transfer-history-seed"),
+        ),
+      )
+      const created = seeded.created[0]
+      assert.ok(created)
+      const input = batch([
+        { op: "transfer", target: existing(created.id), toIssue: b },
+      ])
+      const request = context("bounded-transfer-history")
+      const saved = await run(store.apply(input, request))
+      const envelope = 3 * 4_096
+      writeHistoryJson(
+        path,
+        saved.batchId,
+        historyJson(path, saved.batchId) + "\u0000" + "x".repeat(envelope + 1),
+      )
+      const observed = await observeReads(
+        query => query.includes("AS transfer_payload"),
+        () => run(Effect.either(store.apply(input, request))),
+      )
+      assert.ok(Either.isLeft(observed.value))
+      assert.equal(observed.value.left.code, "corrupt_state")
+      assert.ok(
+        materializedStrings(observed.reads, "transfer_payload").every(
+          value => value.length <= envelope,
+        ),
+      )
+    })
+  }))
+
+for (const encoding of ["UTF-8", "UTF-16le", "UTF-16be"] as const) {
+  test(`history reads materialize one padded payload at a time without changing acceptance: ${encoding}`, async () =>
+    fixture(async path => {
+      sql(path, database =>
+        database.exec(
+          `PRAGMA encoding = '${encoding}'; CREATE TABLE fixture_encoding (value INTEGER) STRICT;`,
+        ),
+      )
+      chmodSync(path, 0o600)
+      await withStore(path, async store => {
+        const seeded = await run(
+          store.apply(
+            batch([{ op: "add", issue: a, key: "one", text: "One" }]),
+            context("stream-history-seed"),
+          ),
+        )
+        const created = seeded.created[0]
+        assert.ok(created)
+        const target = existing(created.id)
+        const input = batch([
+          { op: "status", target, status: "doing" },
+          { op: "status", target, status: "todo" },
+          { op: "status", target, status: "doing" },
+        ])
+        const request = context("padded-history")
+        const saved = await run(store.apply(input, request))
+        for (let index = 0; index < 3; index += 1) {
+          const original = historyJson(path, saved.batchId, index)
+          const alternate = original.replace(
+            '"op":"status"',
+            `"op":${JSON.stringify("界\u0000🦆")},"op":"status"`,
+          )
+          assert.notEqual(alternate, original)
+          assert.ok(alternate.length < 2_097_152)
+          writeHistoryJson(
+            path,
+            saved.batchId,
+            alternate + " ".repeat(2_097_152 - alternate.length),
+            index,
+          )
+        }
+        const observed = await observeReads(
+          query => query.includes("AS state_payload"),
+          () => run(store.apply(input, request)),
+        )
+        assert.deepEqual(observed.value, { ...saved, receipt: "replayed" })
+        assert.ok(observed.reads.length > 0)
+        assert.ok(
+          observed.reads.every(
+            read => !Array.isArray(read.result) || read.result.length <= 1,
+          ),
+          "Multiple large history payloads crossed the driver in one fetch",
+        )
+        for (let index = 0; index < 3; index += 1)
+          assert.equal(
+            historyJson(path, saved.batchId, index).length,
+            2_097_152,
+          )
       })
     }))
 }
