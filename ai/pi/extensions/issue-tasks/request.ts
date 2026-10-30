@@ -4,7 +4,7 @@ import {
   type IssueReference,
   type PlanInputError,
 } from "./identity.ts"
-import { TaskIdSchema, type TaskPageInput } from "./model.ts"
+import { TaskIdSchema, type TaskAddress, type TaskPageInput } from "./model.ts"
 import {
   decodeTaskMutationBatch,
   type TaskMutationBatch,
@@ -18,12 +18,16 @@ export type TaskRequest =
       readonly page: TaskPageInput
     }
   | {
+      readonly action: "get"
+      readonly target: TaskAddress
+    }
+  | {
       readonly action: "apply"
       readonly batch: TaskMutationBatch
     }
 
 export class TaskRequestError extends Data.TaggedError("TaskRequestError")<{
-  readonly code: "invalid_request" | "invalid_page"
+  readonly code: "invalid_request" | "invalid_page" | "invalid_task"
   readonly message: string
 }> {}
 
@@ -50,10 +54,13 @@ const invalid = (code: TaskRequestError["code"]) =>
   Either.left(
     new TaskRequestError({
       code,
-      message:
-        code === "invalid_page"
-          ? "Task page requires limit 1–100 and an optional canonical task cursor"
-          : "Task request requires only its explicit read or apply fields",
+      message: {
+        invalid_page:
+          "Task page requires limit 1–100 and an optional canonical task cursor",
+        invalid_task: "Task lookup requires a canonical task UUID",
+        invalid_request:
+          "Task request requires only its explicit read, get or apply fields",
+      }[code],
     }),
   )
 
@@ -86,6 +93,20 @@ export const decodeTaskRequest = (
             : { after: decodedPage.right.after }),
         })
         return Object.freeze({ action: "read", issue, page })
+      }
+      case "get": {
+        if (!shape(input, ["action", "issue", "id"], ["action", "issue", "id"]))
+          return yield* invalid("invalid_request")
+
+        const issue = yield* decodeIssueReference(input.issue)
+        const id = Schema.decodeUnknownEither(TaskIdSchema)(input.id)
+
+        if (Either.isLeft(id)) return yield* invalid("invalid_task")
+
+        return Object.freeze({
+          action: "get",
+          target: Object.freeze({ issue, id: id.right }),
+        })
       }
       case "apply": {
         if (
