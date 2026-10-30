@@ -29,14 +29,20 @@ const agent = (id: string, label: string): BridgeAgent => ({
   expiresAt: 2,
 })
 
-test("agent display labels combine a friendly project and operational role", () => {
+test("agent display labels combine a friendly project and declared role", () => {
   assert.equal(
-    agentDisplayLabel("yielduck", [{ role: "operator", mode: "operational" }]),
-    "Yielduck · Operator",
+    agentDisplayLabel("yielduck", [
+      { role: "driver-worker", mode: "operational" },
+    ]),
+    "Yielduck · Driver Worker",
   )
   assert.equal(
-    agentDisplayLabel(".config", [{ role: "pi-support", mode: "operational" }]),
-    "Dotconfig · Pi Support",
+    agentDisplayLabel(".config", [{ role: "manager", mode: "operational" }]),
+    "Dotconfig · Manager",
+  )
+  assert.equal(
+    agentDisplayLabel("reviews", [{ role: "review-worker", mode: "task" }]),
+    "Reviews · Review Worker",
   )
   assert.equal(agentDisplayLabel("st0x-review-duty", []), "ST0x Review Duty")
 })
@@ -79,20 +85,20 @@ test("a direct numbered owner message tries the sole pending delivered question 
 
 test("duplicate friendly identities receive deterministic instance numbers", () => {
   const agents = [
-    agent("019f-a", "Yielduck · Operator"),
-    agent("019f-b", "Yielduck · Operator"),
-    agent("019f-c", "Dotconfig · Pi Support"),
+    agent("019f-a", "Yielduck · Developer"),
+    agent("019f-b", "Yielduck · Developer"),
+    agent("019f-c", "Dotconfig · Maintainer"),
   ]
   assert.equal(
     identifiedAgentLabel(agents[0]!, agents),
-    "Yielduck · Operator · Instance 1",
+    "Yielduck · Developer · Instance 1",
   )
   assert.equal(
     identifiedAgentLabel(agents[1]!, agents),
-    "Yielduck · Operator · Instance 2",
+    "Yielduck · Developer · Instance 2",
   )
   assert.equal(
     identifiedAgentLabel(agents[2]!, agents),
-    "Dotconfig · Pi Support",
+    "Dotconfig · Maintainer",
   )
 })

@@ -14,8 +14,8 @@ allowed-tools:
 
 `~/.config` is the Git toplevel and main worktree for global skills and harness
 configuration. Follow its `GLOBAL_AGENTS.md` and `AGENTS.md`; do not hand a
-routine requested skill edit to another operator or substitute a scratch draft
-for changing the canonical source.
+routine requested skill edit to another agent or substitute a scratch draft for
+changing the canonical source.
 
 ## Procedure
 
@@ -24,13 +24,16 @@ for changing the canonical source.
    duplicate. Update an existing skill when that is the requested change; never
    overwrite unrelated work. Ask only for genuinely missing decisions, not
    metadata the request already determines.
-2. Verify main-worktree topology and the existing VCS workspace. For follow-up
-   corrections to an unmerged change, continue its existing branch and PR;
-   inspect later branches in its stack before changing guidance they may already
-   supersede. A new prompt, session or reload is not a new work unit. Create a
-   purpose-named branch only for independent work with no suitable ongoing
-   branch. Preserve unrelated tracked, staged and untracked changes; use scoped
-   file/hunk assignment. Do not create a worktree for isolation alone.
+2. Apply `GLOBAL_AGENTS.md`'s publication ownership before VCS actions.
+   Cross-project editors leave shared-main edits uncommitted and report their
+   paths, purpose and verification to its responsible workspace agent. The
+   responsible publisher verifies topology and the existing VCS workspace. For
+   follow-up corrections to unmerged work, continue its existing branch and PR;
+   inspect later stacked changes before revising guidance they may supersede. A
+   new prompt, session or reload is not a new work unit. Create a purpose-named
+   branch only for independent work without a suitable ongoing branch. Preserve
+   unrelated work under the applicable ownership rule; do not create a worktree
+   for isolation alone.
 3. Edit the canonical skill directly. Use a precise activation description,
    concrete workflow and stopping conditions. Names use lowercase letters,
    digits and hyphens, at most 64 characters; descriptions are at most 1024
@@ -50,13 +53,14 @@ for changing the canonical source.
    enabled harness links relevant to the request. Do not recreate a skill in a
    per-harness directory. Home Manager's generated resources may need a separate
    authorized activation; a source edit does not authorize a host rebuild.
-8. Commit and push coherent validated units as work proceeds. Update the
-   existing PR when continuing its work; otherwise open a draft PR with the
-   first checkpoint through the repository's workflow. Keep its description
-   current. Mark it ready once the requested scope and verification are
-   complete. This routine delivery is authorized by the scoped global-resource
-   request; do not ask again whether to push. Never merge or override branch
-   protection.
+8. The responsible publisher commits and pushes coherent units through the
+   repository's workflow, keeping unfinished work in draft. Update a related
+   existing PR; otherwise open a draft with the first checkpoint. Keep its
+   description current and mark it ready only after scope and verification are
+   complete. A separately authorized linked-review editor uses plain Git under
+   the existing task authority; this does not grant new checkout or merge
+   authority. Do not ask again for publication already authorized under that
+   ownership rule. Never merge or override branch protection.
 9. Use the registered reload tool after changing live Pi resources. Verify
    discovery/activation; do not inject slash commands or keystrokes into the
    owner's editor. Release any temporary task role when the work is complete.
@@ -65,6 +69,6 @@ for changing the canonical source.
 
 Missing context, broken live links or unavailable validation must be reported
 precisely, not hidden behind a clean claim. Preserve completed evidence and
-continue independent authorized work. A genuine platform incident follows the
-repository's support-routing policy; it does not transfer routine skill editing
-or grant new authority.
+continue independent authorized work. A genuine platform blocker follows the
+repository's owner-consulted investigation and repair procedure; it does not
+transfer routine skill editing or grant new authority.

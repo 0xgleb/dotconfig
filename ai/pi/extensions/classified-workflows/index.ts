@@ -295,7 +295,6 @@ import {
 } from "../shared/registry-intent-events.ts"
 import { registerRuntimeVersion } from "../shared/runtime-version.ts"
 import { markPreferredProvider, tierCandidates } from "../shared/model-tiers.ts"
-import { AGENTOPS_INCIDENT_EVENT } from "../shared/agentops-events.ts"
 import { remoteBridgeDatabasePath } from "../remote-control/paths.ts"
 import { RemoteBridgeError } from "../remote-control/protocol.ts"
 import { makeRemoteBridgeStore } from "../remote-control/sqlite-store.ts"
@@ -738,13 +737,13 @@ const classifierBackoff: (
   })
 }
 
-async function classify(
+const classify = async (
   request: ClassificationRequest,
   ctx: Pick<ExtensionContext, "cwd" | "getModel">,
   signal?: AbortSignal,
   onActivity?: (active: boolean) => void,
   owner?: OwnerAllowance,
-): Promise<Decision> {
+): Promise<Decision> => {
   onActivity?.(true)
   try {
     let lastClassifierFailure = "no classifier process result"
@@ -1110,10 +1109,10 @@ const WorkflowParameters = Type.Object({
   ),
 })
 
-export default function classifiedWorkflows(
+const classifiedWorkflows = (
   pi: ExtensionAPI,
   onOwnerAllowance?: (guard: ReturnType<typeof registerOwnerAllowance>) => void,
-): void {
+): void => {
   const withGitHookAuthority = registerGitHookAuthority(pi)
   registerRuntimeVersion(pi, "classified-workflows", "2026.10.17.28")
   const childTokenLimitResult = Effect.runSync(
@@ -2761,12 +2760,25 @@ export default function classifiedWorkflows(
     const error = new WorkflowScriptError({
       message: `Invalid workflow event payload: ${eventName}`,
     })
-    pi.events.emit(AGENTOPS_INCIDENT_EVENT, {
-      severity: "error",
-      component: "classified-workflows",
-      operation: "decode internal event",
-      summary: error.message,
-    })
+    try {
+      pi.sendMessage(
+        {
+          customType: "workflow.invalid-event",
+          content: error.message,
+          display: true,
+        },
+        { triggerTurn: false },
+      )
+    } catch {
+      console.error(
+        JSON.stringify({
+          level: "error",
+          component: "classified-workflows",
+          event: "notice-delivery-failed",
+          operation: "decode internal event",
+        }),
+      )
+    }
   }
 
   pi.events.on(QUESTION_STATE_EVENT, snapshot => {
@@ -4601,3 +4613,5 @@ export default function classifiedWorkflows(
   })
   onOwnerAllowance?.(ownerAllowance)
 }
+
+export default classifiedWorkflows

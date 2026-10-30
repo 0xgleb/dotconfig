@@ -537,9 +537,11 @@ edit the shared checkout or run mutating commands. Apply dependent source edits
 centrally in the parent, preserving unrelated working-tree/index changes.
 
 For each finding, re-read the current source and verify it still applies. Make
-the smallest correct change, add required regression coverage, and record the
-owned delta. If the fix grows beyond its authorized scope, re-triage instead of
-silently expanding it. Keep review-only callers read-only.
+the smallest correct change, add required regression coverage for changed
+retained behavior, and record the owned delta. Apply GLOBAL_AGENTS.md's
+obsolete-capability rule; intentional removal does not require replacement tests
+or inventories of retired names. If the fix grows beyond its authorized scope,
+re-triage instead of silently expanding it. Keep review-only callers read-only.
 
 Separate mutating workers/worktrees require the independently owner-authorized
 concurrency allowed by global policy; assigning disjoint files is not itself

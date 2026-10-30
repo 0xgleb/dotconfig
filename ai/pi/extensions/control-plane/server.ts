@@ -14,10 +14,6 @@ import {
 } from "./allowance-pool.ts"
 import { decodeHarnessReviewHandoff } from "./harness-protocol.ts"
 import {
-  decodeHarnessResearchHandoff,
-  harnessResearchHandoffMatchesAttempt,
-} from "./harness-research-protocol.ts"
-import {
   decodeJobSpec,
   isRegisteredJobKind,
   JobRuntimeError,
@@ -56,12 +52,9 @@ const LOOPBACK_HOSTS = ["127.0.0.1", "::1"] as const
 const USAGE_SAMPLE_INTERVAL_MS = 60_000
 const CODEX_ALLOWANCE_SAMPLE_INTERVAL_MS = 15 * 60_000
 const USAGE_HISTORY_WINDOW_MS = 7 * 24 * 60 * 60 * 1_000
-const MAX_RESEARCH_SCHEDULE_SKEW_MS = 7 * 24 * 60 * 60 * 1_000
 const OPENAI_AUTONOMOUS_ROLES: readonly AutonomousRole[] = [
   "general",
   "reviewer",
-  "yielduck-operator",
-  "moneymentum-operator",
 ]
 
 const openAiControlCheckpoints = (
@@ -372,21 +365,6 @@ const handleJobs = (
     const body = yield* readBody(request)
     const input = yield* parseJson(body)
     const spec = yield* decodeJobSpec(input, home)
-    // Research jobs are scheduled near the present: a runAt far from now is
-    // a stale replay of an already-served plan, not fresh work.
-    if (spec.kind === "harness.research") {
-      const now = yield* Clock.currentTimeMillis
-      if (
-        Math.abs(now - spec.runAt) > MAX_RESEARCH_SCHEDULE_SKEW_MS &&
-        !("recurrence" in spec && spec.recurrence !== undefined)
-      )
-        return yield* Effect.fail(
-          serverError(
-            "invalid_payload",
-            "research job schedule is too far from the present",
-          ),
-        )
-    }
     const result = yield* store.enqueue(spec)
     sendJson(response, result.created ? 201 : 200, { job: result.job })
   })
@@ -544,43 +522,6 @@ const handleComplete = (
             )
           : store.complete(id, leaseToken, now, summary, result)
       const job = yield* publish
-      sendJson(response, 200, { job })
-      return
-    }
-    if (current.spec.kind === "harness.research") {
-      if (
-        !isRecord(input) ||
-        !exactKeys(input, ["leaseToken", "handoff"]) ||
-        typeof input.leaseToken !== "string"
-      )
-        return yield* Effect.fail(
-          serverError("request_failed", "typed research handoff is required"),
-        )
-      const handoff = yield* Effect.mapError(
-        decodeHarnessResearchHandoff(input.handoff),
-        () => serverError("request_failed", "research handoff is invalid"),
-      )
-      if (
-        !harnessResearchHandoffMatchesAttempt(
-          handoff,
-          current.spec.payload,
-          current.id,
-          current.attempt,
-        )
-      )
-        return yield* Effect.fail(
-          serverError(
-            "request_failed",
-            "research handoff does not match the live attempt",
-          ),
-        )
-      const job = yield* store.complete(
-        id,
-        input.leaseToken,
-        Date.now(),
-        handoff.summary,
-        { kind: "harness.research", handoff },
-      )
       sendJson(response, 200, { job })
       return
     }

@@ -25,7 +25,7 @@ test("workflow fan-out admission is bypassed while throttling is disabled", () =
     source,
     /if \(throttlingMode\(\) === "disabled" \|\| event\.toolName !== "workflow"\) return/,
   )
-  assert.match(source, /kind: "workflow", requestedTokens/)
+  assert.match(source, /kind: "workflow",\s*requestedTokens/)
   assert.match(source, /event\.input\.tokenBudget = admission\.grantedTokens/)
   assert.match(source, /awaitWorkflowAdmission/)
   assert.doesNotMatch(source, /Workflow blocked: OpenAI allowance pacing/)

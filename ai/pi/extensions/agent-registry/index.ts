@@ -1,6 +1,5 @@
 import { createHash } from "node:crypto"
 import { homedir } from "node:os"
-import { join } from "node:path"
 import {
   CONFIG_DIR_NAME,
   type ExtensionAPI,
@@ -9,6 +8,11 @@ import {
 import { Text } from "@earendil-works/pi-tui"
 import { Type } from "typebox"
 import { Cause, Effect, Either, Option, Runtime } from "effect"
+import {
+  AGENT_ROLES,
+  decodeAgentRole,
+  type AgentRole,
+} from "../shared/agent-role.ts"
 import {
   BACKLOG_PROJECTION_EVENT,
   backlogRequirementsFromText,
@@ -23,23 +27,9 @@ import {
 } from "../shared/backlog-events.ts"
 import { isContinuationPaused } from "../shared/continuation-pause.ts"
 import {
-  AGENTOPS_INCIDENT_EVENT,
-  agentopsRequestText,
-  agentTurnIncidentAfterRun,
-  decodeAgentopsIncident,
-  hasOpenAgentopsIncident,
-  isExplicitUserCancellation,
-  shouldRouteToolFailureToAgentops,
-  type AgentopsIncident,
-} from "../shared/agentops-events.ts"
-import {
   AUTO_RELOAD_PENDING_REQUEST_EVENT,
   type AutoReloadPendingReporter,
 } from "../shared/reload-events.ts"
-import {
-  decodeSafeCompactionInterrupt,
-  SAFE_COMPACTION_INTERRUPT_EVENT,
-} from "../shared/safe-compaction-events.ts"
 import {
   REGISTRY_DELEGATE_REQUEST_EVENT,
   REGISTRY_IDENTITY_REQUEST_EVENT,
@@ -82,14 +72,9 @@ import { makeSqliteRegistryStore } from "./sqlite-store.ts"
 import { runtimeAgentId } from "./runtime-identity.ts"
 import { decodeTodoState } from "../todo/state.ts"
 import { sessionTokenUsage } from "./usage.ts"
-import {
-  managedOperationalRole,
-  registryStateRoot,
-  shouldSelfClaimUnownedRole,
-} from "./paths.ts"
+import { registryStateRoot } from "./paths.ts"
 import {
   boundedRegistryRequestPreview,
-  operatorBacklogText,
   registryListText,
   registryRequestDetailText,
   requestDeliveryStatus,
@@ -100,7 +85,6 @@ import {
 } from "./presentation.ts"
 import {
   prioritizedActiveReceiptLeases,
-  reconcileSessionLease,
   RegistryError,
   registryReceiptAvailable,
   registrySyncNotification,
@@ -139,7 +123,7 @@ interface RegistryToolRequest {
     | "fail_request"
     | "cancel_request"
   readonly project?: string
-  readonly role?: string
+  readonly role?: AgentRole
   readonly mode?: "task" | "operational"
   readonly priority?: RegistryRequestPriority
   readonly requestId?: string
@@ -185,26 +169,6 @@ const safeErrorMessage: (error: unknown) => string = error => {
         .replace(/[\u0000-\u001f\u007f]/g, " ")
         .slice(0, 240)
     : "Agent registry operation failed"
-}
-
-const boundedIncidentSummary = (content: unknown): string | undefined => {
-  if (!Array.isArray(content)) return undefined
-  const text = content
-    .flatMap(item =>
-      typeof item === "object" &&
-      item !== null &&
-      "type" in item &&
-      item.type === "text" &&
-      "text" in item &&
-      typeof item.text === "string"
-        ? [item.text]
-        : [],
-    )
-    .join(" ")
-    .replace(/[\u0000-\u001f\u007f]+/g, " ")
-    .replace(/\s+/g, " ")
-    .trim()
-  return text.length > 0 ? text.slice(0, 240) : undefined
 }
 
 const currentOwnerIntervention = (pi: ExtensionAPI): number | undefined => {
@@ -336,8 +300,6 @@ const registryExtension: (pi: ExtensionAPI) => void = pi => {
   let latestSnapshot: RegistrySnapshot | undefined
   let registryFailureActive = false
   let backlogCollectorAbort: AbortController | undefined
-  let compactionInterruptionPending = false
-  let pendingAgentTurnIncident: AgentopsIncident | undefined
   const backlogWake = makeBacklogWakeController(pi)
   const notifiedRequests = new Set<string>()
 
@@ -479,96 +441,6 @@ const registryExtension: (pi: ExtensionAPI) => void = pi => {
   const currentPolicyDigest = (ctx: ExtensionContext): string =>
     sessionPolicyDigest ?? policyDigest(ctx)
 
-  const routeAgentopsIncident = async (payload: unknown): Promise<void> => {
-    const incident = decodeAgentopsIncident(payload)
-    const ctx = latestCtx
-    const epoch = activeLifecycleEpoch
-    if (
-      !incident ||
-      !ctx ||
-      epoch === undefined ||
-      isExplicitUserCancellation(incident.summary)
-    )
-      return
-
-    const now = Date.now()
-    const snapshot = await run(store.snapshot(now))
-    if (epoch !== activeLifecycleEpoch || ctx !== latestCtx) return
-    if (hasOpenAgentopsIncident(snapshot.requests, incident)) return
-
-    await run(
-      store.enqueue({
-        project: join(homedir(), ".config"),
-        role: "pi-support",
-        requesterId: ctx.sessionManager.getSessionId(),
-        requesterLabel: pi.getSessionName() ?? "Pi agent",
-        requesterCwd: ctx.cwd,
-        text: agentopsRequestText(
-          incident,
-          pi.getSessionName() ?? "Pi agent",
-          ctx.cwd,
-        ),
-        priority: incident.severity === "error" ? "urgent" : "normal",
-        now,
-      }),
-    )
-  }
-
-  pi.events.on(AGENTOPS_INCIDENT_EVENT, payload => {
-    void routeAgentopsIncident(payload).catch(() => {
-      console.error("Pi agentops incident routing failed")
-    })
-  })
-
-  pi.events.on(SAFE_COMPACTION_INTERRUPT_EVENT, payload => {
-    if (decodeSafeCompactionInterrupt(payload))
-      compactionInterruptionPending = true
-  })
-
-  pi.on("tool_result", event => {
-    if (activeLifecycleEpoch === undefined || !event.isError) return
-    const summary = boundedIncidentSummary(event.content)
-    if (
-      !summary ||
-      isExplicitUserCancellation(summary) ||
-      !shouldRouteToolFailureToAgentops(event.toolName, summary)
-    )
-      return
-    pi.events.emit(AGENTOPS_INCIDENT_EVENT, {
-      severity: "error",
-      component: event.toolName,
-      operation: "tool execution",
-      summary,
-    })
-  })
-
-  pi.on("agent_end", event => {
-    if (activeLifecycleEpoch === undefined) return
-    const assistant = event.messages
-      .filter(message => message.role === "assistant")
-      .at(-1)
-    const expectedCompactionInterruption =
-      compactionInterruptionPending &&
-      assistant?.stopReason === "error" &&
-      (assistant.errorMessage === "This operation was aborted" ||
-        assistant.errorMessage === "terminated")
-    compactionInterruptionPending = false
-    if (!assistant) {
-      pendingAgentTurnIncident = undefined
-      return
-    }
-    pendingAgentTurnIncident = agentTurnIncidentAfterRun(
-      assistant,
-      expectedCompactionInterruption,
-    )
-  })
-
-  pi.on("agent_settled", () => {
-    const incident = pendingAgentTurnIncident
-    pendingAgentTurnIncident = undefined
-    if (incident) pi.events.emit(AGENTOPS_INCIDENT_EVENT, incident)
-  })
-
   const resolveRuntimeAgentId = (requestedAgentId: string): string => {
     const ctx = latestCtx
     return ctx && requestedAgentId === ctx.sessionManager.getSessionId()
@@ -648,10 +520,6 @@ const registryExtension: (pi: ExtensionAPI) => void = pi => {
       typeof payload.project !== "string" ||
       !payload.project.startsWith("/") ||
       payload.project.length > 512 ||
-      !("role" in payload) ||
-      typeof payload.role !== "string" ||
-      payload.role.length === 0 ||
-      payload.role.length > 64 ||
       !("text" in payload) ||
       typeof payload.text !== "string" ||
       payload.text.length === 0 ||
@@ -672,10 +540,24 @@ const registryExtension: (pi: ExtensionAPI) => void = pi => {
     const callback = payload.report
     const report: RegistryDelegateRequest["report"] = outcome =>
       callback(outcome)
+    const role = "role" in payload ? payload.role : undefined
+    const decodedRole = decodeAgentRole(role)
+
+    if (Either.isLeft(decodedRole)) {
+      report({
+        outcome: "failed",
+        reason:
+          role === undefined
+            ? "missing_selection: an explicit canonical recipient role is required"
+            : decodedRole.left.message,
+      })
+      return
+    }
+
     void run(
       store.enqueue({
         project: payload.project,
-        role: payload.role,
+        role: decodedRole.right,
         requesterId: payload.requesterId,
         requesterLabel: payload.requesterLabel,
         requesterCwd: payload.requesterCwd,
@@ -759,7 +641,7 @@ const registryExtension: (pi: ExtensionAPI) => void = pi => {
           report({ outcome: "recorded" })
           return
         }
-        let lease = snapshot.leases.find(
+        const lease = snapshot.leases.find(
           candidate =>
             candidate.owner.id === agent.id &&
             candidate.project === target.project &&
@@ -767,18 +649,11 @@ const registryExtension: (pi: ExtensionAPI) => void = pi => {
             candidate.status === "active",
         )
         if (!lease) {
-          const claim = await run(
-            store.claim({
-              agent,
-              project: target.project,
-              role: target.role,
-              mode: "task",
-              policyDigest: currentPolicyDigest(ctx),
-              now,
-              ttlMs: LEASE_TTL_MS,
-            }),
-          )
-          lease = claim.lease
+          report({
+            outcome: "failed",
+            reason: "request role must be claimed explicitly",
+          })
+          return
         }
         if (target.status === "queued") {
           await run(
@@ -1103,24 +978,6 @@ const registryExtension: (pi: ExtensionAPI) => void = pi => {
     }
   }
 
-  const autoClaimOperationalRole = async (ctx: ExtensionContext) => {
-    const managed = managedOperationalRole(ctx.cwd, homedir())
-    if (!managed) return undefined
-    await run(
-      reconcileSessionLease({
-        store,
-        agent: identity(ctx),
-        project: managed.project,
-        role: managed.role,
-        mode: "operational",
-        policyDigest: currentPolicyDigest(ctx),
-        now: Date.now(),
-        ttlMs: LEASE_TTL_MS,
-      }),
-    )
-    return managed
-  }
-
   const collectDeclaredBacklog = async (
     ctx: ExtensionContext,
     epoch: number,
@@ -1177,7 +1034,7 @@ const registryExtension: (pi: ExtensionAPI) => void = pi => {
     )
   }
 
-  pi.on("session_start", async (event, ctx) => {
+  pi.on("session_start", async (_event, ctx) => {
     const epoch = ++lifecycleEpoch
     activeLifecycleEpoch = epoch
     backlogCollectorAbort?.abort()
@@ -1189,14 +1046,6 @@ const registryExtension: (pi: ExtensionAPI) => void = pi => {
     backlogCoverage.reset()
     restoreNotifiedRequests(ctx)
     sessionPolicyDigest = policyDigest(ctx)
-    const resumedRole = await autoClaimOperationalRole(ctx).catch(error => {
-      if (epoch !== activeLifecycleEpoch) return undefined
-      ctx.ui.notify(
-        `Could not claim managed operational role: ${safeErrorMessage(error)}`,
-        "warning",
-      )
-      return undefined
-    })
     if (epoch !== activeLifecycleEpoch) return
     await sync(ctx, false, epoch)
     if (epoch !== activeLifecycleEpoch) return
@@ -1204,12 +1053,6 @@ const registryExtension: (pi: ExtensionAPI) => void = pi => {
       if (epoch === activeLifecycleEpoch && !collectorAbort.signal.aborted)
         ctx.ui.setStatus("backlog-collector", "backlog:error")
     })
-    if (resumedRole && event.reason !== "reload") {
-      ctx.ui.notify(
-        `Managed operational role held for the next polling tick: ${resumedRole.project}/${resumedRole.role}`,
-        "info",
-      )
-    }
     timer = setInterval(() => void sync(ctx, true, epoch), SYNC_MS)
     timer.unref?.()
   })
@@ -1232,24 +1075,10 @@ const registryExtension: (pi: ExtensionAPI) => void = pi => {
     })
   }
 
-  const showOperatorBacklog = async (ctx: ExtensionContext) => {
-    const now = Date.now()
-    const snapshot = await run(store.snapshot(now))
-    pi.sendMessage({
-      customType: MESSAGE_TYPE,
-      content: operatorBacklogText(snapshot, identity(ctx).id, now),
-      display: true,
-    })
-  }
-
   pi.on("input", async (event, ctx) => {
     const trimmed = event.text.trim()
     if (trimmed === "/agents") {
       await showRegistry(ctx)
-      return { action: "handled" }
-    }
-    if (trimmed === "/operator") {
-      await showOperatorBacklog(ctx)
       return { action: "handled" }
     }
     if (event.source === "interactive" && trimmed && !trimmed.startsWith("/")) {
@@ -1274,38 +1103,19 @@ const registryExtension: (pi: ExtensionAPI) => void = pi => {
           authority: "authenticated-owner",
           requirements,
         }).catch(error => {
-          pi.events.emit(AGENTOPS_INCIDENT_EVENT, {
-            severity: "error",
-            component: "agent-registry",
-            operation: "local owner message backlog ingestion",
-            summary: safeErrorMessage(error),
-          })
+          ctx.ui.setStatus("agent-registry-error", "registry:backlog")
+          if (ctx.hasUI)
+            ctx.ui.notify(
+              `Local owner message backlog ingestion failed: ${safeErrorMessage(error)}`,
+              "error",
+            )
         })
       }
     }
     queueMicrotask(() => void sync(ctx))
   })
 
-  pi.on("before_agent_start", async (event, ctx) => {
-    const snapshot = await run(store.snapshot(Date.now())).catch(
-      () => undefined,
-    )
-    if (!snapshot) return
-    const leases = ownedLeases(snapshot, identity(ctx).id)
-    if (leases.length === 0) return
-    const content = `Registry roles owned by this session:\n${leases
-      .map(
-        lease =>
-          `- ${lease.project}/${lease.role}: ${lease.mode}, ${lease.status}`,
-      )
-      .join(
-        "\n",
-      )}\nOperational roles remain active even when their inbox is empty.`
-    return { systemPrompt: `${event.systemPrompt}\n\n${content}` }
-  })
-
   pi.on("session_shutdown", async (event, ctx) => {
-    pendingAgentTurnIncident = undefined
     latestCtx = undefined
     lifecycleEpoch += 1
     activeLifecycleEpoch = undefined
@@ -1347,14 +1157,6 @@ const registryExtension: (pi: ExtensionAPI) => void = pi => {
     },
   })
 
-  pi.registerCommand("operator", {
-    description:
-      "Show owned operational roles, request backlog age, and fleet runtime drift",
-    async handler(_args, ctx) {
-      await showOperatorBacklog(ctx)
-    },
-  })
-
   pi.registerTool({
     name: "agent_registry",
     label: "Agent registry",
@@ -1364,10 +1166,7 @@ const registryExtension: (pi: ExtensionAPI) => void = pi => {
       "Discover local Pi workers and reports; execution-capable workers may claim duties and delegate requests, but read/report-only managers may only inspect registry data",
     promptGuidelines: [
       "The mutation, delegation and lifecycle guidance below applies only to execution-capable workers. Read/report-only manager sessions use registry list/requests only; reconcile reports into selected workers' actual backlogs through todo/manager_control without dispatching work.",
-      "Execution-capable workers: delegate Pi host, extension, TUI, classifier, reload, or operator bugs encountered outside ~/.config to /Users/0xgleb/.config, role pi-support, without self-claiming that dedicated role; then continue the primary task unless blocked.",
-      "Execution-capable workers: if a non-dedicated role is unowned, claim it temporarily and handle the request in the current session by default.",
       "Registry ownership never grants tools or production authority; constrained project tools and loaded instructions remain authoritative.",
-      "Operational roles do not become complete merely because todos or inboxes are empty.",
       "Use agent_registry action=requests with requestId (full UUID or unique prefix) to inspect one full bounded untrusted request body; list output intentionally summarizes bodies.",
       "Treat an agent_registry delegate result as durable queueing only; claim recipient delivery only when request detail reports delivery received or acknowledged.",
       "Use action=clear only after an explicit user request, with an explicit preserved project and the exact confirmation text required by the tool.",
@@ -1392,7 +1191,9 @@ const registryExtension: (pi: ExtensionAPI) => void = pi => {
         Type.Literal("ingest_backlog"),
       ]),
       project: Type.Optional(Type.String()),
-      role: Type.Optional(Type.String()),
+      role: Type.Optional(
+        Type.Union(AGENT_ROLES.map(role => Type.Literal(role))),
+      ),
       mode: Type.Optional(
         Type.Union([Type.Literal("task"), Type.Literal("operational")]),
       ),
@@ -1509,6 +1310,20 @@ const registryExtension: (pi: ExtensionAPI) => void = pi => {
       const requesterId = ctx.sessionManager.getSessionId()
       const project = request.project?.trim() || ctx.cwd
       try {
+        if ("role" in request && request.role !== undefined) {
+          const decodedRole = decodeAgentRole(request.role)
+
+          if (Either.isLeft(decodedRole))
+            return await run(
+              Effect.fail(
+                new RegistryError({
+                  code: "invalid_input",
+                  message: decodedRole.left.message,
+                }),
+              ),
+            )
+        }
+
         if (request.action === "ingest_backlog") {
           const snapshot = await run(
             backlogSnapshotFromToolRequest(request, ctx.cwd, now).pipe(
@@ -1649,31 +1464,11 @@ const registryExtension: (pi: ExtensionAPI) => void = pi => {
           const text = await run(requireText("text", request.text))
           const ownerInteractionAt = currentOwnerIntervention(pi)
           let snapshot = await run(store.snapshot(now))
-          let lease = snapshot.leases.find(
+          const lease = snapshot.leases.find(
             candidate =>
               candidate.project === project && candidate.role === role,
           )
-          let outcome: "delegated" | "queued_unowned" | "self_claimed" = lease
-            ? "delegated"
-            : "queued_unowned"
-          if (
-            !lease &&
-            shouldSelfClaimUnownedRole(project, role, ctx.cwd, homedir())
-          ) {
-            const claim = await run(
-              store.claim({
-                agent,
-                project,
-                role,
-                mode: request.mode ?? "task",
-                policyDigest: currentPolicyDigest(ctx),
-                now,
-                ttlMs: LEASE_TTL_MS,
-              }),
-            )
-            lease = claim.lease
-            outcome = lease.owner.id === agent.id ? "self_claimed" : "delegated"
-          }
+          const outcome = lease ? "delegated" : "queued_unowned"
           const queued = await run(
             store.enqueue({
               project,
@@ -1715,11 +1510,9 @@ const registryExtension: (pi: ExtensionAPI) => void = pi => {
               {
                 type: "text",
                 text:
-                  outcome === "self_claimed"
-                    ? `No live owner existed; self-claimed ${project}/${role}. Request ${queued.id} is acknowledged by this session and is yours to add to todos and execute.`
-                    : outcome === "queued_unowned"
-                      ? `Durably queued request ${queued.id} for the standing ${project}/${role} operator; no live recipient has received it. Do not duplicate it locally.`
-                      : `Durably queued request ${queued.id} for ${project}/${role}, owned by ${lease?.owner.id}; delivery pending recipient receipt.`,
+                  outcome === "queued_unowned"
+                    ? `Durably queued request ${queued.id} for ${project}/${role}; no live recipient has received it.`
+                    : `Durably queued request ${queued.id} for ${project}/${role}, owned by ${lease?.owner.id}; delivery pending recipient receipt.`,
               },
             ],
             details: {

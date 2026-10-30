@@ -170,12 +170,30 @@
           };
           atuinFlags =
             self.darwinConfigurations.darwwwin.config.home-manager.users."0xgleb".programs.atuin.flags;
-          # The extension tests import the `effect` package from the same
-          # production node_modules Home Manager links into the live tree.
+          piExtensionPackage = nixpkgs.lib.importJSON ./ai/pi/extensions/package.json;
+          piExtensionLock = nixpkgs.lib.importJSON ./ai/pi/extensions/package-lock.json;
+          piTestPackage = piExtensionPackage // {
+            devDependencies = {
+              inherit (piExtensionPackage.devDependencies)
+                "@earendil-works/pi-tui"
+                "@types/node"
+                typescript
+                ;
+            };
+          };
+          # Stub SDK registration only; retain the pinned TUI and compiler.
           piTestNodeModules = pkgs.importNpmLock.buildNodeModules {
             npmRoot = ./ai/pi/extensions;
+            package = piTestPackage;
+            packageLock = piExtensionLock // {
+              packages = piExtensionLock.packages // {
+                "" = piExtensionLock.packages."" // {
+                  inherit (piTestPackage) devDependencies;
+                };
+              };
+            };
             inherit (pkgs) nodejs;
-            derivationArgs.npmInstallFlags = "--legacy-peer-deps --omit=dev";
+            derivationArgs.npmInstallFlags = "--legacy-peer-deps";
           };
         in
         {
@@ -309,9 +327,61 @@
               }
               ''
                 cp -r ${./ai} ai
+                cp ${./home.nix} home.nix
                 chmod -R u+w ai
                 ln -s ${piTestNodeModules}/node_modules ai/pi/extensions/node_modules
-                node --test ai/pi/extensions/classified-workflows/loop.test.ts
+                cp ${
+                  pkgs.writeText "pi-control-plane-contracts-tsconfig.json" (
+                    builtins.toJSON {
+                      extends = "./tsconfig.json";
+                      files = [
+                        "./control-plane/job-runtime.ts"
+                        "./control-plane/sqlite-job-store.ts"
+                        "./control-plane/server.ts"
+                        "./control-plane/usage-policy.ts"
+                      ];
+                      include = [ ];
+                    }
+                  )
+                } ai/pi/extensions/tsconfig.contracts.json
+                (
+                  cd ai/pi/extensions
+                  node_modules/.bin/tsc --project tsconfig.contracts.json
+                )
+                node --test \
+                  ai/test/manual-reload.test.ts \
+                  ai/test/runtime-version.test.ts \
+                  ai/pi/extensions/classified-workflows/core.test.ts \
+                  ai/pi/extensions/classified-workflows/intent-context.test.ts \
+                  ai/pi/extensions/classified-workflows/manual-reload-boundary.test.ts \
+                  ai/pi/extensions/control-plane/job-runtime.test.ts \
+                  ai/pi/extensions/control-plane/review-duty-profile.test.ts \
+                  ai/pi/extensions/control-plane/server.test.ts \
+                  ai/pi/extensions/control-plane/sqlite-job-store.test.ts \
+                  ai/pi/extensions/control-plane/usage-policy.test.ts \
+                  ai/pi/extensions/control-plane/throttle-activity.test.ts \
+                  ai/pi/extensions/control-plane/dashboard/dashboard.test.ts \
+                  ai/pi/extensions/usage-governor/core.test.ts \
+                  ai/pi/extensions/usage-governor/throttle-hud.test.ts \
+                  ai/pi/extensions/remote-control/registry-role-selection.test.ts \
+                  ai/pi/extensions/classified-workflows/loop.test.ts \
+                  ai/pi/extensions/agent-registry/registration.test.ts \
+                  ai/pi/extensions/agent-registry/outcome-events.test.ts \
+                  ai/pi/extensions/agent-registry/paths.test.ts \
+                  ai/pi/extensions/agent-registry/delivery.test.ts \
+                  ai/pi/extensions/agent-registry/registry.test.ts \
+                  ai/pi/extensions/agent-registry/presentation.test.ts \
+                  ai/pi/extensions/agent-registry/listing.test.ts \
+                  ai/pi/extensions/agent-registry/backlog-wake-controller.test.ts \
+                  ai/pi/extensions/agent-registry/backlog-wake.test.ts \
+                  ai/pi/extensions/agent-registry/backlog.test.ts \
+                  ai/pi/extensions/remote-control/agent-identity.test.ts \
+                  ai/pi/extensions/auto-reload/index.test.ts \
+                  ai/pi/extensions/auto-reload/local-failures.test.ts \
+                  ai/pi/extensions/classified-workflows/workflow-events.test.ts \
+                  ai/pi/extensions/disk-pressure/index.test.ts \
+                  ai/pi/extensions/disk-pressure/local-failures.test.ts \
+                  ai/pi/extensions/disk-pressure/core.test.ts
                 touch $out
               '';
 

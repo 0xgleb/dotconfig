@@ -10,12 +10,15 @@ const browserRuntimeSources = [
   "../job-runtime.ts",
   "../job-presentation.ts",
   "../harness-protocol.ts",
-  "../harness-research-protocol.ts",
   "../review-duty-profile.ts",
 ].map(path => readFileSync(new URL(path, import.meta.url), "utf8"))
-const dashboardNix = readFileSync(
-  new URL("../../../dashboard.nix", import.meta.url),
+const home = readFileSync(
+  new URL("../../../../../home.nix", import.meta.url),
   "utf8",
+)
+const dashboardLauncher = home.slice(
+  home.indexOf("  piControlPlane ="),
+  home.indexOf("  piControlPlaneWatch ="),
 )
 
 test("dashboard uses Solid lifecycle primitives and validates API job state", () => {
@@ -85,7 +88,7 @@ test("dashboard uses Solid lifecycle primitives and validates API job state", ()
     /\.filter\(\(\{ resetAt \}\) => resetAt === activeRunway\.latest\.resetAt\)/,
   )
   assert.match(app, /PROJECT ALLOCATION/)
-  assert.doesNotMatch(app, /FEEDER LANES|agentops-(?:config|yielduck|review)/)
+  assert.doesNotMatch(app, /FEEDER LANES/)
   assert.match(app, /job\.spec\.payload\.task/)
   assert.match(app, /jobSchedulePresentation\(job\)/)
   assert.match(app, /classList=\{\{ stale: schedule\.stale \}\}/)
@@ -125,28 +128,22 @@ const localImportGraph = (
   )
 }
 
-const literal = (value: string): string =>
-  value.replace(/[.*+?^${}()|[\]\\]/gu, "\\$&")
-
-test("the dashboard derivation fileset stages the full local import graph", () => {
+test("the dashboard launcher stages the full local browser import graph", () => {
   const graph = localImportGraph(appUrl, new Map())
   const imported = [...graph.keys()].filter(href => href !== appUrl.href)
   assert.ok(imported.length > 0, "app.tsx must reach at least one local module")
-  // The fileset roots are written relative to the repo root (./extensions/…).
-  const toFilesetEntry = (href: string): string => {
-    const afterExtensions = href.slice(href.indexOf("control-plane/"))
-    return `./extensions/${afterExtensions}`
-  }
-  assert.match(
-    dashboardNix,
-    /\.\/extensions\/control-plane\/dashboard\/app\.tsx/u,
-  )
-  for (const href of imported) {
-    const entry = literal(toFilesetEntry(href))
-    assert.match(
-      dashboardNix,
-      new RegExp(entry, "u"),
-      `${href} must be in the dashboard derivation fileset`,
+  for (const href of graph.keys()) {
+    const relative = href.slice(
+      href.indexOf("control-plane/") + "control-plane/".length,
+    )
+    const argumentsText = relative
+      .split("/")
+      .map(segment => JSON.stringify(segment))
+      .join(" ")
+    const stage = `cp ($source_root | path join ${argumentsText}) ($build_root | path join ${argumentsText})`
+    assert.ok(
+      dashboardLauncher.includes(stage),
+      `${relative} must be staged by the dashboard launcher`,
     )
   }
   for (const [href, source] of graph)
@@ -155,12 +152,10 @@ test("the dashboard derivation fileset stages the full local import graph", () =
       /from "node:/u,
       `${href} imports a Node builtin`,
     )
-  assert.match(dashboardNix, /bun2nix\.mkDerivation/)
-  assert.match(dashboardNix, /bunDeps = bun2nix\.fetchBunDeps/)
-  assert.match(
-    dashboardNix,
-    /nu --no-config-file --no-history pi\/build-dashboard\.nu/,
-  )
+  assert.match(dashboardLauncher, /piExtensionNodeModules\}\/node_modules/)
+  assert.match(dashboardLauncher, /babel-preset-solid/)
+  assert.match(dashboardLauncher, /pkgs\.esbuild/)
+  assert.match(dashboardLauncher, /--platform=browser/)
 })
 
 test("dashboard assets are local, responsive, and share the terminal archeofuturism palette", () => {

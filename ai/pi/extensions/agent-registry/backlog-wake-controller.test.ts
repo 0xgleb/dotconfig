@@ -32,7 +32,7 @@ const input: Omit<BacklogWakeInput, "lastFingerprint"> = {
       {
         id: "lease-1",
         project: "/workspace",
-        role: "operator",
+        role: "driver-worker",
         mode: "operational",
         status: "active",
         owner: { id: "agent-1", pid: 1 },

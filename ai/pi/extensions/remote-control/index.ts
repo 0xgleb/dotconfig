@@ -22,11 +22,9 @@ import {
 import { wasRunAborted } from "../shared/continuation-pause.ts"
 import { isLocalDispatchProvider } from "../shared/local-lane.ts"
 import {
-  REGISTRY_DELEGATE_REQUEST_EVENT,
   REGISTRY_OUTCOME_EVENT,
   REGISTRY_PROJECTS_REQUEST_EVENT,
   type RegistryDelegateOutcome,
-  type RegistryDelegateRequest,
   type RegistryOutcomeRequest,
   type RegistryOutcomeResult,
   type RegistryProjectsRequest,
@@ -505,30 +503,16 @@ export default function remoteControl(
     )
   }
 
+  // Project-only directives provide no explicit canonical recipient role.
   const delegateToProject = (
-    project: string,
-    text: string,
-    ctx: ExtensionContext,
+    _project: string,
+    _text: string,
+    _ctx: ExtensionContext,
   ): Promise<RegistryDelegateOutcome> =>
-    new Promise(resolve => {
-      const timeout = setTimeout(
-        () =>
-          resolve({ outcome: "failed", reason: "registry delegate timed out" }),
-        5_000,
-      )
-      const request: RegistryDelegateRequest = {
-        project,
-        role: "receiver",
-        text,
-        requesterId: "telegram-dispatch",
-        requesterLabel: "Piece of Pi Telegram dispatch",
-        requesterCwd: ctx.cwd,
-        report: result => {
-          clearTimeout(timeout)
-          resolve(result)
-        },
-      }
-      pi.events.emit(REGISTRY_DELEGATE_REQUEST_EVENT, request)
+    Promise.resolve({
+      outcome: "failed",
+      reason:
+        "missing_selection: an explicit canonical recipient role is required",
     })
 
   const finishEnvelope = async (

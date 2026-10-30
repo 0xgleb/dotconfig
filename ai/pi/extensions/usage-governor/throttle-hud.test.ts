@@ -55,7 +55,7 @@ const fixture = {
     },
     pausedRoles: [
       {
-        role: "moneymentum-operator",
+        role: "general",
         retryAt: Date.parse("2026-08-18T00:10:00-03:00"),
       },
     ],
@@ -82,20 +82,6 @@ const fixture = {
       weight: 2,
       effectiveIntervalMs: 11_250_000,
       tokenScale: 0.64,
-    },
-    {
-      role: "yielduck-operator",
-      baseIntervalMs: 3_600_000,
-      weight: 2.5,
-      effectiveIntervalMs: 4_500_000,
-      tokenScale: 0.8,
-    },
-    {
-      role: "moneymentum-operator",
-      baseIntervalMs: 18_000_000,
-      weight: 1,
-      effectiveIntervalMs: 56_250_000,
-      tokenScale: 0.32,
     },
   ],
 } as const
@@ -184,8 +170,5 @@ test("CLI throttle HUD is expressive, responsive, and aligned with other HUDs", 
     /burn 1\.33%\/h observed · 0\.43%\/h permitted · 3\.1× over pace/,
   )
   assert.match(wide, /flat 24\/7 · 1 owner/)
-  assert.match(
-    wide,
-    /general 32% · reviewer 64% · yielduck 80% · moneymentum 32%/,
-  )
+  assert.match(wide, /general 32% · reviewer 64%/)
 })

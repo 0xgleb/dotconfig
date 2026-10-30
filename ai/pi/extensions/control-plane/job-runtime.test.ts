@@ -106,11 +106,7 @@ const leasedJob = (): Job =>
   run(claimJob(readyJob(), "worker-a", "lease-a", 1_000, 90_000))
 
 test("the untrusted enqueue boundary accepts only registered bounded job payloads", () => {
-  assert.deepEqual(REGISTERED_JOB_KINDS, [
-    "review-duty.scan",
-    "harness.review",
-    "harness.research",
-  ])
+  assert.deepEqual(REGISTERED_JOB_KINDS, ["review-duty.scan", "harness.review"])
   assert.deepEqual(run(decodeJobSpec(reviewSpec, home)), reviewSpec)
   assert.deepEqual(run(decodeJobSpec(harnessSpec, home)), harnessSpec)
   assert.equal(

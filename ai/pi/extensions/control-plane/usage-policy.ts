@@ -60,11 +60,15 @@ export interface AllowanceRunway {
   readonly planningHorizonAt: number
 }
 
-export type AutonomousRole =
-  "general" | "reviewer" | "yielduck-operator" | "moneymentum-operator"
+/** Accounting classes, independent of canonical registry AgentRole identities. */
+export type QuotaClass = "general" | "reviewer"
+
+/** Compatibility name for quota accounting; not a registry role declaration. */
+export type AutonomousRole = QuotaClass
 
 export interface RolePollingPolicy {
-  readonly role: AutonomousRole
+  /** Legacy transport key for the quota class. */
+  readonly role: QuotaClass
   readonly baseIntervalMs: number
   readonly weight: number
   readonly effectiveIntervalMs: number
@@ -185,10 +189,8 @@ const ROLE_POLLING_CONFIG: Readonly<
     { readonly baseIntervalMs: number; readonly weight: number }
   >
 > = {
-  "general": { baseIntervalMs: 4 * HOUR_MS, weight: 1 },
-  "reviewer": { baseIntervalMs: 4 * HOUR_MS, weight: 1 },
-  "yielduck-operator": { baseIntervalMs: 4 * HOUR_MS, weight: 1 },
-  "moneymentum-operator": { baseIntervalMs: 4 * HOUR_MS, weight: 1 },
+  general: { baseIntervalMs: 4 * HOUR_MS, weight: 1 },
+  reviewer: { baseIntervalMs: 4 * HOUR_MS, weight: 1 },
 }
 
 const PACE_PRESSURE: Readonly<Record<UsagePace, number>> = {
@@ -200,10 +202,7 @@ const PACE_PRESSURE: Readonly<Record<UsagePace, number>> = {
 }
 
 export const isAutonomousRole = (role: unknown): role is AutonomousRole =>
-  role === "general" ||
-  role === "reviewer" ||
-  role === "yielduck-operator" ||
-  role === "moneymentum-operator"
+  role === "general" || role === "reviewer"
 
 const autonomousRole = (role: string): AutonomousRole =>
   isAutonomousRole(role) ? role : "general"
