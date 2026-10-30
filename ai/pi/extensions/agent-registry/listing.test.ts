@@ -105,11 +105,11 @@ test("requests pages do not inspect the unrelated roster", () => {
   const value: RegistrySnapshot = {
     version: 1,
     requests: snapshot.requests,
-    get agents() {
-      assert.fail("requests lane inspected agents")
+    get agents(): never {
+      return assert.fail("requests lane inspected agents")
     },
-    get leases() {
-      assert.fail("requests lane inspected leases")
+    get leases(): never {
+      return assert.fail("requests lane inspected leases")
     },
   }
   assert.match(
