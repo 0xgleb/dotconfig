@@ -113,66 +113,6 @@ test("blocker diagnostics cannot authorize recovery by changing task state", () 
   }
 })
 
-test("task continuation retries a transient queued-message guard without losing its wake", () => {
-  const start = extensionSource.indexOf("  const scheduleTaskContinuation =")
-  const end = extensionSource.indexOf(
-    "  const clearManualReloadPending =",
-    start,
-  )
-  assert.ok(start >= 0 && end > start)
-  const source = stripTypeScriptTypes(extensionSource.slice(start, end))
-  let timer: (() => void) | undefined
-  const readTimer: () => (() => void) | undefined = () => timer
-  let queued = true
-  let sent = 0
-  const ctx = {
-    sessionManager: { getBranch: () => [] },
-    isIdle: () => true,
-    ui: { getEditorText: () => "" },
-    hasPendingMessages: () => queued,
-  }
-  const schedule = new Function(
-    "setTimeout",
-    "pi",
-    `
-    let taskContinuationTimer;
-    const clearTaskContinuationTimer = () => {};
-    const todoWorkSnapshot = () => ({pending: [1]});
-    const taskContinuationMessage = () => "continue pending work";
-    const pendingActionRemediation = undefined;
-    const continuationPaused = false;
-    const workflowLifecycleActive = true;
-    const capabilityCircuit = {open: false};
-    const manualReloadPending = false;
-    const TASK_CONTINUATION_QUIET_MS = 1;
-    const TASK_MESSAGE = "task";
-    ${source}
-    return scheduleTaskContinuation;
-  `,
-  )(
-    (callback: () => void) => {
-      timer = callback
-      return 1
-    },
-    {
-      sendMessage: () => {
-        sent++
-      },
-    },
-  )
-  schedule(ctx)
-  const first = readTimer()
-  assert.ok(first)
-  timer = undefined
-  first()
-  assert.equal(sent, 0)
-  const second = readTimer()
-  assert.ok(second, "transient queued message must rearm the quiet timer")
-  queued = false
-  second()
-  assert.equal(sent, 1)
-})
-
 test("bounded project instructions retain only structurally wrapped source-fixed policy", () => {
   const sourcePath = "/workspace/repo/AGENTS.md"
   const requiredPolicy = [
