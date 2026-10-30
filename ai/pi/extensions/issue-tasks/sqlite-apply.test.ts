@@ -1828,6 +1828,108 @@ for (const [table, mutation] of [
     }))
 }
 
+for (const field of ["text", "repository", "plan_id"] as const) {
+  test(`single-task lookup bounds ${field} before driver materialization`, async () =>
+    fixture(async path => {
+      await withStore(path, async store => {
+        const saved = await run(
+          store.apply(
+            batch([
+              { op: "add", issue: b, key: "dependency", text: "Dependency" },
+              {
+                op: "add",
+                issue: a,
+                key: "main",
+                text: "Main",
+                dependsOn: [
+                  { issue: b, task: { kind: "added", key: "dependency" } },
+                ],
+              },
+            ]),
+            context("bounded-task-detail"),
+          ),
+        )
+
+        const main = saved.created.find(task => task.key === "main")
+        const dependency = saved.created.find(task => task.key === "dependency")
+        assert.ok(main && dependency)
+
+        const envelope =
+          3 * (field === "text" ? 131_072 : field === "repository" ? 140 : 36)
+        const oversized = "x".repeat(envelope + 1)
+
+        sql(path, database => {
+          database.exec("PRAGMA foreign_keys = OFF")
+          database.exec("PRAGMA ignore_check_constraints = ON")
+
+          if (field === "text")
+            database
+              .prepare("UPDATE issue_plan_tasks SET text = ? WHERE id = ?")
+              .run(oversized, main.id)
+          else if (field === "repository")
+            database
+              .prepare(
+                "UPDATE issue_plans SET repository = ? WHERE repository = ? AND issue_number = ?",
+              )
+              .run(oversized, b.repository, b.number)
+          else {
+            database
+              .prepare(
+                "UPDATE issue_plans SET id = ? WHERE repository = ? AND issue_number = ?",
+              )
+              .run(oversized, b.repository, b.number)
+            database
+              .prepare("UPDATE issue_plan_tasks SET plan_id = ? WHERE id = ?")
+              .run(oversized, dependency.id)
+          }
+        })
+
+        const observed = await observeReads(
+          query =>
+            query.includes(
+              field === "text"
+                ? "FROM issue_plan_tasks WHERE plan_id = ? AND id = ?"
+                : "FROM issue_plan_dependencies d",
+            ),
+          () => run(Effect.either(store.readTask(issue(), main.id))),
+        )
+
+        assert.ok(Either.isLeft(observed.value))
+        assert.equal(observed.value.left.code, "corrupt_state")
+        assert.ok(
+          materializedStrings(observed.reads, field).every(
+            value => value.length <= envelope,
+          ),
+        )
+
+        if (field !== "text")
+          sql(path, database => {
+            for (const query of new Set(
+              observed.reads.map(read => read.query),
+            )) {
+              const details = database
+                .prepare(`EXPLAIN QUERY PLAN ${query}`)
+                .all(main.id, 1_001)
+                .map(row => {
+                  assert.ok(typeof row.detail === "string")
+
+                  return row.detail
+                })
+
+              assert.ok(
+                details.some(detail => detail.includes("SEARCH d")),
+                details.join("\n"),
+              )
+              assert.ok(
+                details.every(detail => !detail.includes("TEMP B-TREE")),
+                details.join("\n"),
+              )
+            }
+          })
+      })
+    }))
+}
+
 test("incremental history preserves sparse operation indices and indexed reads across reopen", async () =>
   fixture(async path => {
     const historical = await withStore(path, async store => {
