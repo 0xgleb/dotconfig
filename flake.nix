@@ -363,7 +363,7 @@
                   ai/pi/extensions/control-plane/dashboard/dashboard.test.ts \
                   ai/pi/extensions/usage-governor/core.test.ts \
                   ai/pi/extensions/usage-governor/throttle-hud.test.ts \
-                  ai/pi/extensions/remote-control/telegram-resume.test.ts \
+                  ai/pi/extensions/remote-control/registry-role-selection.test.ts \
                   ai/pi/extensions/classified-workflows/loop.test.ts \
                   ai/pi/extensions/agent-registry/registration.test.ts \
                   ai/pi/extensions/agent-registry/outcome-events.test.ts \
