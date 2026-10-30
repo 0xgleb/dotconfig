@@ -17,6 +17,7 @@ import {
   StatusSchema,
   type IssueTaskRevision,
   type IssueTaskPage,
+  type IssueTaskDetail,
   type TaskPageInput,
   MutationBatchIdSchema,
   type MutationBatchId,
@@ -79,6 +80,8 @@ export type {
   IssueTaskRevision,
   IssueTask,
   IssueTaskPage,
+  IssueTaskDetail,
+  TaskAddress,
   TaskPageInput,
 } from "./model.ts"
 
@@ -137,6 +140,10 @@ export interface SqliteTaskStore {
     input: unknown,
     context: TaskApplyContext,
   ) => Effect.Effect<TaskApplyResult, TaskApplyError>
+  readonly readTask: (
+    issue: IssueReference,
+    id: TaskId,
+  ) => StoreEffect<Option.Option<IssueTaskDetail>>
   readonly readTasks: (
     issue: IssueReference,
     page: TaskPageInput,
@@ -784,6 +791,8 @@ type StoredTextColumn =
   | "t.status"
   | "t.blocker"
   | "p.repository"
+  | "p.id"
+  | "d.depends_on_id"
   | "h.plan_id"
   | "h.task_id"
   | "h.kind"
@@ -2125,6 +2134,104 @@ const makeStore = (
         }),
         (request, cause) => recoverTaskCommit(options, request, cause),
       ).pipe(Effect.map(request => request.result)),
+    readTask: (target, input) =>
+      use(
+        "read",
+        Effect.gen(function* () {
+          const issue = yield* checkedIssue(target, "invalid_input")
+          const id = yield* decode(
+            TaskIdSchema,
+            input,
+            "invalid_input",
+            "Invalid task identity",
+          )
+
+          const stored = yield* findPlan(database, issue)
+
+          if (Option.isNone(stored)) return Option.none()
+
+          const plan = stored.value
+          const raw = yield* io("Could not read qualified task", () =>
+            database
+              .prepare(
+                `SELECT ${taskColumns} FROM issue_plan_tasks WHERE plan_id = ? AND id = ?`,
+              )
+              .get(plan.id, id),
+          )
+
+          if (raw === undefined) return Option.none()
+
+          const task = yield* decode(
+            TaskRowSchema,
+            raw,
+            "corrupt_state",
+            "Invalid persisted task",
+          )
+
+          const rawDependencies = yield* io(
+            "Could not read task dependency addresses",
+            () =>
+              database
+                .prepare(
+                  `SELECT ${boundedStoredText("d.depends_on_id", 36)} AS id, ${boundedStoredText("p.id", 36)} AS plan_id, ${boundedStoredText("p.repository", 140)} AS repository, p.issue_number FROM issue_plan_dependencies d LEFT JOIN issue_plan_tasks t ON t.id = d.depends_on_id LEFT JOIN issue_plans p ON p.id = t.plan_id WHERE d.task_id = ? ORDER BY d.depends_on_id LIMIT ?`,
+                )
+                .all(id, MAX_TASK_DEPENDENCIES + 1),
+          )
+
+          if (rawDependencies.length > MAX_TASK_DEPENDENCIES)
+            return yield* fail(
+              "capacity",
+              "Task has too many dependency addresses",
+            )
+
+          const rows = yield* decode(
+            Schema.Array(
+              Schema.Struct({
+                id: TaskIdSchema,
+                plan_id: StorageIssueIdSchema,
+                repository: Schema.String,
+                issue_number: Schema.Number,
+              }),
+            ),
+            rawDependencies,
+            "corrupt_state",
+            "Invalid persisted dependency address",
+          )
+
+          if (new Set(rows.map(row => row.id)).size !== rows.length)
+            return yield* fail(
+              "corrupt_state",
+              "Duplicate persisted dependency addresses",
+            )
+
+          const dependsOn = yield* Effect.forEach(rows, row =>
+            Effect.gen(function* () {
+              const dependencyIssue = yield* checkedIssue(
+                { repository: row.repository, number: row.issue_number },
+                "corrupt_state",
+              )
+              const owner = yield* findPlan(database, dependencyIssue)
+
+              if (Option.isNone(owner) || owner.value.id !== row.plan_id)
+                return yield* fail(
+                  "corrupt_state",
+                  "Dependency owner disagrees with qualified issue state",
+                )
+
+              return Object.freeze({ issue: owner.value.issue, id: row.id })
+            }),
+          )
+
+          return Option.some(
+            Object.freeze({
+              issue: plan.issue,
+              revision: plan.revision,
+              task: Object.freeze(task),
+              dependsOn: Object.freeze(dependsOn),
+            }),
+          )
+        }),
+      ),
     readTasks: (target, input) =>
       use(
         "read",

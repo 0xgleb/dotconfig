@@ -16,7 +16,11 @@ import { fileURLToPath } from "node:url"
 import { Effect, Either, Option } from "effect"
 import { makeSqliteRegistryStore } from "../agent-registry/sqlite-store.ts"
 import { decodeIssueReference, type IssueReference } from "./identity.ts"
-import { openSqliteTaskStore, type SqliteTaskStore } from "./sqlite-store.ts"
+import {
+  openSqliteTaskStore,
+  type SqliteTaskStore,
+  type TaskId,
+} from "./sqlite-store.ts"
 
 const run = Effect.runPromise
 const fixtureParent = fileURLToPath(
@@ -109,6 +113,294 @@ const appendTask = (store: SqliteTaskStore, target: IssueReference = issue()) =>
       cancellation: "forbidden",
     },
   )
+
+test("single-task lookup returns issue revision, full task data and dependency addresses", async () =>
+  fixture(async root => {
+    const path = join(root, "tasks.sqlite")
+    await withStore(path, async store => {
+      const saved = await run(appendTask(store))
+      const created = saved.created[0]
+      assert.ok(created)
+
+      const found = await run(store.readTask(issue(), created.id))
+
+      assert.ok(Option.isSome(found))
+      assert.deepEqual(found.value, {
+        issue: issue(),
+        revision: 1,
+        task: {
+          id: created.id,
+          text: "Persisted requirement",
+          status: "todo",
+          blocker: null,
+        },
+        dependsOn: [],
+      })
+    })
+  }))
+
+test("single-task lookup keeps qualified owners distinct and returns missing without inference", async () =>
+  fixture(async root => {
+    const path = join(root, "tasks.sqlite")
+    await withStore(path, async store => {
+      const saved = await run(appendTask(store))
+      const created = saved.created[0]
+      assert.ok(created)
+
+      assert.ok(
+        Option.isNone(
+          await run(store.readTask(issue("other/repo"), created.id)),
+        ),
+      )
+
+      await run(appendTask(store, issue("other/repo")))
+
+      assert.ok(
+        Option.isNone(
+          await run(store.readTask(issue("other/repo"), created.id)),
+        ),
+      )
+      assert.ok(
+        Option.isSome(
+          await run(store.readTask(issue("0XGLEB/DOTCONFIG"), created.id)),
+        ),
+      )
+
+      await run(store.close())
+
+      await expectError(store.readTask(issue(), created.id), "closed")
+    })
+  }))
+
+test("single-task lookup rejects malformed caller IDs even when the issue is absent", async () =>
+  fixture(async root => {
+    const path = join(root, "tasks.sqlite")
+    await withStore(path, async store => {
+      for (const id of [
+        undefined,
+        null,
+        1,
+        "not-a-uuid",
+        "AAAAAAAA-AAAA-4AAA-8AAA-AAAAAAAAAAAA",
+      ])
+        await expectError(
+          store.readTask(issue(), id as TaskId),
+          "invalid_input",
+        )
+    })
+  }))
+
+test("single-task lookup resolves current dependency owners after transfer and reopen", async () =>
+  fixture(async root => {
+    const path = join(root, "tasks.sqlite")
+    const other = issue("other/repo")
+    const destination = issue("third/repo")
+    let mainId: TaskId | undefined
+    let dependencyId: TaskId | undefined
+
+    await withStore(path, async store => {
+      const saved = await run(
+        store.apply(
+          {
+            issues: [issue(), other],
+            operations: [
+              {
+                op: "add",
+                issue: other,
+                key: "dependency",
+                text: "Dependency",
+              },
+              {
+                op: "add",
+                issue: issue(),
+                key: "main",
+                text: "Main",
+                dependsOn: [
+                  { issue: other, task: { kind: "added", key: "dependency" } },
+                ],
+              },
+            ],
+          },
+          {
+            actorId: "reader",
+            requestId: "seed-links",
+            now: 1_000,
+            cancellation: "forbidden",
+          },
+        ),
+      )
+      mainId = saved.created.find(task => task.key === "main")?.id
+      dependencyId = saved.created.find(task => task.key === "dependency")?.id
+      assert.ok(mainId && dependencyId)
+
+      const found = await run(store.readTask(issue(), mainId))
+
+      assert.ok(Option.isSome(found))
+      assert.deepEqual(found.value.dependsOn, [
+        { issue: other, id: dependencyId },
+      ])
+
+      await run(
+        store.apply(
+          {
+            issues: [other, destination],
+            operations: [
+              {
+                op: "transfer",
+                target: {
+                  issue: other,
+                  task: { kind: "existing", id: dependencyId },
+                },
+                toIssue: destination,
+              },
+            ],
+          },
+          {
+            actorId: "reader",
+            requestId: "move-dependency",
+            now: 2_000,
+            cancellation: "forbidden",
+          },
+        ),
+      )
+    })
+
+    await withStore(path, async store => {
+      assert.ok(mainId && dependencyId)
+
+      const found = await run(store.readTask(issue(), mainId))
+
+      assert.ok(Option.isSome(found))
+      assert.equal(found.value.revision, 1)
+      assert.deepEqual(found.value.dependsOn, [
+        { issue: destination, id: dependencyId },
+      ])
+    })
+  }))
+
+test("single-task lookup rejects dangling dependency edges instead of dropping them", async () =>
+  fixture(async root => {
+    const path = join(root, "tasks.sqlite")
+    await withStore(path, async store => {
+      const saved = await run(appendTask(store))
+      const created = saved.created[0]
+      assert.ok(created)
+      sql(path, database => {
+        database.exec("PRAGMA foreign_keys = OFF")
+        database
+          .prepare(
+            "INSERT INTO issue_plan_dependencies (task_id, depends_on_id) VALUES (?, ?)",
+          )
+          .run(created.id, ids[0])
+      })
+
+      await expectError(store.readTask(issue(), created.id), "corrupt_state")
+    })
+  }))
+
+test("single-task lookup bounds dependency cardinality before decoding addresses", async () =>
+  fixture(async root => {
+    const path = join(root, "tasks.sqlite")
+    await withStore(path, async store => {
+      const saved = await run(appendTask(store))
+      const created = saved.created[0]
+      assert.ok(created)
+      sql(path, database => {
+        const owner = database
+          .prepare("SELECT plan_id FROM issue_plan_tasks WHERE id = ?")
+          .get(created.id)
+        assert.ok(owner && typeof owner.plan_id === "string")
+        const add = database.prepare(
+          "INSERT INTO issue_plan_tasks (id, plan_id, text, status) VALUES (?, ?, 'Dependency', 'todo')",
+        )
+        const edge = database.prepare(
+          "INSERT INTO issue_plan_dependencies (task_id, depends_on_id) VALUES (?, ?)",
+        )
+        database.exec("BEGIN")
+        for (let index = 0; index < 1_000; index += 1) {
+          const id = randomUUID()
+          add.run(id, owner.plan_id)
+          edge.run(created.id, id)
+        }
+        database.exec("COMMIT")
+      })
+
+      const boundary = await run(store.readTask(issue(), created.id))
+
+      assert.ok(Option.isSome(boundary))
+      assert.equal(boundary.value.dependsOn.length, 1_000)
+
+      sql(path, database => {
+        const owner = database
+          .prepare("SELECT plan_id FROM issue_plan_tasks WHERE id = ?")
+          .get(created.id)
+        assert.ok(owner && typeof owner.plan_id === "string")
+        const id = randomUUID()
+        database
+          .prepare(
+            "INSERT INTO issue_plan_tasks (id, plan_id, text, status) VALUES (?, ?, 'Extra', 'todo')",
+          )
+          .run(id, owner.plan_id)
+        database
+          .prepare(
+            "INSERT INTO issue_plan_dependencies (task_id, depends_on_id) VALUES (?, ?)",
+          )
+          .run(created.id, id)
+      })
+
+      await expectError(store.readTask(issue(), created.id), "capacity")
+    })
+  }))
+
+test("single-task lookup rejects noncanonical dependency owner metadata", async () =>
+  fixture(async root => {
+    const path = join(root, "tasks.sqlite")
+    const other = issue("other/repo")
+    await withStore(path, async store => {
+      const saved = await run(
+        store.apply(
+          {
+            issues: [issue(), other],
+            operations: [
+              {
+                op: "add",
+                issue: other,
+                key: "dependency",
+                text: "Dependency",
+              },
+              {
+                op: "add",
+                issue: issue(),
+                key: "main",
+                text: "Main",
+                dependsOn: [
+                  { issue: other, task: { kind: "added", key: "dependency" } },
+                ],
+              },
+            ],
+          },
+          {
+            actorId: "reader",
+            requestId: "bad-dependency-owner",
+            now: 1_000,
+            cancellation: "forbidden",
+          },
+        ),
+      )
+      const main = saved.created.find(task => task.key === "main")
+      assert.ok(main)
+
+      sql(path, database =>
+        database
+          .prepare(
+            "UPDATE issue_plans SET repository = 'OTHER/REPO' WHERE repository = ?",
+          )
+          .run(other.repository),
+      )
+
+      await expectError(store.readTask(issue(), main.id), "corrupt_state")
+    })
+  }))
 
 for (const order of ["registry-first", "tasks-first"]) {
   test(`issue tasks coexist with the real registry: ${order}`, async () =>
