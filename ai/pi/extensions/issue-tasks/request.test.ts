@@ -14,6 +14,7 @@ const b = issue("Owner/Other")
 const id = "aaaaaaaa-aaaa-4aaa-8aaa-aaaaaaaaaaaa"
 const addition = { op: "add", issue: a, key: "one", text: "One" }
 const read = { action: "read", issue: a, page: { limit: 1 } }
+const get = { action: "get", issue: a, id }
 const apply = { action: "apply", issues: [a], operations: [addition] }
 const failure = (input: unknown, code: TaskRequestDecodeError["code"]) => {
   const decoded = decodeTaskRequest(input)
@@ -41,6 +42,61 @@ test("task read accepts both page boundaries and a syntactically valid cursor", 
     assert.ok(Either.isRight(decoded))
     assert.deepEqual(decoded.right, { ...read, page: { limit, after: id } })
   }
+})
+
+test("task get decodes a canonical qualified task address without granting authority", () => {
+  const decoded = decodeTaskRequest({
+    ...get,
+    issue: { repository: "OWNER/REPO", number: 12 },
+  })
+
+  assert.ok(Either.isRight(decoded))
+  assert.deepEqual(decoded.right, { action: "get", target: { issue: a, id } })
+  assert.equal(decoded.right.action, "get")
+  if (decoded.right.action !== "get") assert.fail("Expected get request")
+
+  assert.ok(Object.isFrozen(decoded.right))
+  assert.ok(Object.isFrozen(decoded.right.target))
+  assert.ok(Object.isFrozen(decoded.right.target.issue))
+})
+
+test("task get rejects malformed IDs, missing qualification and extra fields", () => {
+  for (const id of [
+    undefined,
+    null,
+    1,
+    "not-a-uuid",
+    "AAAAAAAA-AAAA-4AAA-8AAA-AAAAAAAAAAAA",
+  ])
+    failure({ ...get, id }, "invalid_task")
+
+  for (const input of [
+    { action: "get", id },
+    { action: "get", issue: a },
+    { ...get, page: { limit: 1 } },
+    { ...get, issues: [a] },
+    { ...get, [Symbol("hidden")]: true },
+  ])
+    failure(input, "invalid_request")
+
+  failure({ ...get, issue: { number: 12 } }, "invalid_issue")
+})
+
+test("task get detaches its qualified task address from caller mutations", () => {
+  const source = {
+    action: "get",
+    issue: { repository: "Owner/Repo", number: 12 },
+    id,
+  }
+
+  const decoded = decodeTaskRequest(source)
+
+  assert.ok(Either.isRight(decoded))
+
+  source.issue.repository = "Owner/Other"
+  source.id = "bbbbbbbb-bbbb-4bbb-8bbb-bbbbbbbbbbbb"
+
+  assert.deepEqual(decoded.right, { action: "get", target: { issue: a, id } })
 })
 
 test("task apply delegates complete issue-qualified mutations without an independent container", () => {
@@ -71,7 +127,7 @@ for (const field of [
   "reply",
 ]) {
   test(`task request rejects caller metadata or legacy field: ${field}`, () => {
-    for (const input of [read, apply])
+    for (const input of [read, get, apply])
       failure({ ...input, [field]: "forged" }, "invalid_request")
   })
 }
