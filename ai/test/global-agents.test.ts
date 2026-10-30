@@ -104,8 +104,11 @@ test("PR descriptions follow the template without invented sections", () => {
   )
 })
 
-test("only managers assign owner-confirmed priorities and workers follow backlog order", () => {
-  assert.match(global, /Only the manager may assign or change.*priorities/is)
+test("owner-approved workers may apply confirmed priorities without a manager dependency", () => {
+  assert.ok(
+    global.includes("a manager or an owner-approved worker"),
+    "Owner approval, not a manager role, authorizes priority changes",
+  )
   assert.match(global, /only after the owner confirms/is)
   assert.match(
     global,
@@ -113,6 +116,21 @@ test("only managers assign owner-confirmed priorities and workers follow backlog
   )
   assert.match(global, /not insert self-chosen audits/is)
   assert.match(global, /does not authorize new audit tasks.*reprioritization/is)
+})
+
+test("owner-approved issue operations do not require manager availability or fresh approval for ordinary task work", () => {
+  assert.ok(
+    global.includes("Owner-approved workers may create issues"),
+    "Issue creation cannot require a manager actor",
+  )
+  assert.match(
+    global,
+    /manager actor, availability, or worker-manager communication.*not prerequisites/is,
+  )
+  assert.match(
+    global,
+    /existing authorization.*ordinary task work.*fresh approval/is,
+  )
 })
 
 test("global TypeScript guidance keeps failures in typed Effect channels", () => {
@@ -162,7 +180,24 @@ test("global instructions enforce disk-pressure hygiene", () => {
   assert.match(global, /artifact_provenance/is)
   assert.match(
     global,
-    /never.*global.*(?:cache|garbage collection).*without explicit/is,
+    /never delete.*user files.*global caches.*Nix generations.*without explicit/is,
+  )
+})
+
+test("disk pressure authorizes routine GC and meaningful Cargo output cleanup without another permission gate", () => {
+  assert.match(global, /standing owner authorization.*`nix store gc`/is)
+  assert.match(global, /do not ask.*permission.*(?:GC|garbage collection)/is)
+  assert.match(global, /`dust` or.*`du`.*`~\/code\/`/is)
+  assert.match(global, /Rust project.*Cargo.*output.*meaningful/is)
+  assert.match(global, /active or offline.*agent.*not.*cleanup exemption/is)
+  assert.match(global, /exact.*(?:artifact|output|build).*path/is)
+  assert.ok(
+    global.includes("Clean both categories regularly"),
+    "GC and Cargo output cleanup are both routine duties",
+  )
+  assert.ok(
+    global.includes("Do not revisit recently cleaned projects"),
+    "Resolved pressure must not trigger another cross-project sweep",
   )
 })
 
@@ -245,11 +280,70 @@ test("global instructions enforce handover ingestion", () => {
   assert.match(global, /todo list/i)
 })
 
-test("dotconfig delivery includes committing and pushing without handoff", () => {
-  assert.match(project, /push validated units continuously, open a draft PR/is)
-  assert.match(project, /Do not hand routine Markdown edits to another agent/is)
+test("workspace publication includes owner and peer changes regardless of the active task", () => {
+  assert.match(
+    global,
+    /agent responsible for a GitButler workspace.*publication of all pending tracked and untracked project changes/is,
+  )
+  assert.match(global, /including changes made by the owner or other agents/is)
+  assert.match(global, /unrelated to the agent's current task/is)
+  assert.match(
+    global,
+    /inspect and group.*reconcile conflicts.*commit.*push.*open or update.*PRs/is,
+  )
+  assert.match(global, /does not authorize unrelated implementation/is)
+})
+
+test("related discovered changes reuse an existing branch and PR", () => {
+  assert.match(
+    global,
+    /Reuse an existing branch and PR when the changes are related/is,
+  )
+  assert.match(
+    global,
+    /Discovering more changes does not require a new branch or PR/is,
+  )
+  assert.match(
+    global,
+    /only for independent work without a suitable ongoing branch/is,
+  )
+})
+
+test("cross-project harness edits reserve main-worktree VCS without blocking authorized review checkouts", () => {
+  assert.match(
+    global,
+    /agents assigned to other projects.*source edits directly in `~\/.config`/is,
+  )
+  assert.match(
+    global,
+    /leave them uncommitted.*agent responsible for that workspace/is,
+  )
+  assert.match(
+    global,
+    /do not commit, push, create PRs, or otherwise mutate VCS state from that shared main worktree/is,
+  )
+  assert.match(
+    global,
+    /restriction is scoped to the main worktree, not every checkout of the repository/is,
+  )
+  assert.match(
+    global,
+    /separately authorized linked review checkout.*normal plain-Git review, fix and publication workflow.*including for dotconfig PRs/is,
+  )
+  assert.match(global, /does not grant new checkout or merge authority/is)
+})
+
+test("dotconfig refers to global delivery policy rather than duplicating publication ownership", () => {
   assert.match(
     project,
-    /mark it ready once the requested scope and verification are complete/is,
+    /Follow the workspace publication and delivery rules in `GLOBAL_AGENTS.md`/is,
+  )
+  assert.doesNotMatch(
+    project,
+    /Shared-edit publication ownership|must pick up these changes/is,
+  )
+  assert.match(
+    project,
+    /Direct-to-master delivery requires explicit owner direction/is,
   )
 })

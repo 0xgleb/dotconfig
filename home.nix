@@ -261,6 +261,8 @@ in
         };
       };
       ".pi/agent/skills".source = skills;
+      ".pi/agent/keybindings.json".source =
+        config.lib.file.mkOutOfStoreSymlink "${aiDir}/pi/keybindings.json";
       ".local/share/nvim/site/parser/move.so".source = "${moveTreeSitter}/parser/move.so";
       ".local/share/nvim/site/queries/move".source = "${moveTreeSitter}/queries/move";
       ".config/ai/pi/extensions/node_modules" = {
