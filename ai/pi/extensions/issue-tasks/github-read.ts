@@ -1,4 +1,4 @@
-import { Data, Either, Schema } from "effect"
+import { Data, Effect, Either, Schema } from "effect"
 import {
   decodeIssueReference,
   decodeIssueRepository,
@@ -10,6 +10,96 @@ import {
 
 export const MAX_GITHUB_READ_BYTES = 1_048_576
 export const MAX_GITHUB_ISSUE_PAGE_SIZE = 100
+
+export const GITHUB_ISSUE_LIST_DOCUMENT = `query IssueBacklogList(
+  $owner: String!
+  $name: String!
+  $first: Int!
+  $after: String
+  $states: [IssueState!]
+) {
+  repository(owner: $owner, name: $name) {
+    nameWithOwner
+    issues(first: $first, after: $after, states: $states) {
+      nodes {
+        number
+        title
+        url
+        state
+        updatedAt
+        repository { nameWithOwner }
+      }
+      pageInfo { hasNextPage endCursor }
+    }
+  }
+}`
+
+export interface GitHubIssueListExecution {
+  readonly document: typeof GITHUB_ISSUE_LIST_DOCUMENT
+  readonly variables: {
+    readonly owner: string
+    readonly name: string
+    readonly first: number
+    readonly after: string | null
+    readonly states: readonly ("OPEN" | "CLOSED")[]
+  }
+}
+export interface GitHubIssueReadOptions {
+  readonly executeQuery: (
+    request: GitHubIssueListExecution,
+  ) => Effect.Effect<string, GitHubReadError>
+}
+export interface GitHubIssueReader {
+  readonly list: (
+    input: unknown,
+  ) => Effect.Effect<GitHubIssueListPage, GitHubReadError | PlanInputError>
+}
+
+export const createGitHubIssueReader = (
+  options: GitHubIssueReadOptions,
+): GitHubIssueReader => ({
+  list: input =>
+    Effect.gen(function* () {
+      yield* Effect.yieldNow()
+
+      const decoded = decodeGitHubIssueListQuery(input)
+
+      if (Either.isLeft(decoded)) return yield* Effect.fail(decoded.left)
+
+      const query = decoded.right
+      const separator = query.repository.indexOf("/")
+
+      if (separator < 1) return yield* Effect.fail(readError("invalid_request"))
+
+      const states: readonly ("OPEN" | "CLOSED")[] = Object.freeze(
+        query.state === "all"
+          ? ["OPEN", "CLOSED"]
+          : [query.state === "open" ? "OPEN" : "CLOSED"],
+      )
+      const request: GitHubIssueListExecution = Object.freeze({
+        document: GITHUB_ISSUE_LIST_DOCUMENT,
+        variables: Object.freeze({
+          owner: query.repository.slice(0, separator),
+          name: query.repository.slice(separator + 1),
+          first: query.page.limit,
+          after: query.page.after === undefined ? null : query.page.after,
+          states,
+        }),
+      })
+
+      const payload = yield* Effect.suspend(() =>
+        options.executeQuery(request),
+      ).pipe(
+        Effect.mapError(() => readError("transport_error")),
+        Effect.catchAllDefect(() => Effect.fail(readError("transport_error"))),
+      )
+      const page = decodeGitHubIssueListPage(payload, query)
+
+      if (Either.isLeft(page)) return yield* Effect.fail(page.left)
+
+      return page.right
+    }),
+})
 
 export interface GitHubIssueListQuery {
   readonly repository: IssueRepository
@@ -38,6 +128,7 @@ export class GitHubReadError extends Data.TaggedError("GitHubReadError")<{
     | "invalid_request"
     | "invalid_response"
     | "remote_error"
+    | "transport_error"
     | "unavailable"
     | "partial_response"
     | "capacity"
@@ -54,6 +145,7 @@ const readError = (code: GitHubReadError["code"]): GitHubReadError =>
         "GitHub issue response violates the requested page contract",
       remote_error:
         "GitHub reported a query error; response data is not complete readback",
+      transport_error: "GitHub query transport did not produce a response",
       unavailable: "The requested GitHub repository is unavailable",
       partial_response:
         "GitHub returned an unavailable issue node or node list",
