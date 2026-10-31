@@ -1,11 +1,54 @@
 import assert from "node:assert/strict"
 import test from "node:test"
 import { Either } from "effect"
-import { decodeIssueReference, decodeIssueScope, issueKey } from "./identity.ts"
+import {
+  decodeIssueReference,
+  decodeIssueRepository,
+  decodeIssueScope,
+  issueKey,
+} from "./identity.ts"
 
 const issue = (repository = "0xgleb/dotconfig", number = 1) => ({
   repository,
   number,
+})
+
+test("repository discovery targets normalize without fabricating an issue identity", () => {
+  for (const source of [
+    "Owner/Repo",
+    "a/b",
+    `${"A".repeat(39)}/${"R".repeat(100)}`,
+  ]) {
+    const decoded = decodeIssueRepository(source)
+    assert.ok(Either.isRight(decoded))
+    assert.equal(decoded.right, source.toLowerCase())
+  }
+})
+
+test("repository discovery rejects malformed or Unicode-aliased targets without coercion", () => {
+  for (const source of [
+    undefined,
+    null,
+    1,
+    [],
+    {},
+    "",
+    "owner",
+    "owner/repo/extra",
+    "owner/.",
+    "owner/..",
+    "owner/repo\n",
+    "K/repo",
+    "owner-/repo",
+    "-owner/repo",
+    "owner--name/repo",
+    `${"a".repeat(40)}/repo`,
+    `owner/${"a".repeat(101)}`,
+  ]) {
+    const decoded = decodeIssueRepository(source)
+    assert.ok(Either.isLeft(decoded))
+    assert.equal(decoded.left.code, "invalid_repository")
+  }
 })
 
 test("repository-qualified identities distinguish identical issue numbers", () => {
