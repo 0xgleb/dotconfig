@@ -111,7 +111,6 @@ authorized target outside the tool session's workspace. The native UUID supplies
 the invocation namespace; the creation API does not promise exclusive
 allocation. Artifacts remain local-only and ephemeral.
 
-
 ## 3. Fetch the diff
 
 Fetch the PR diff from GitHub — do not check out the PR:

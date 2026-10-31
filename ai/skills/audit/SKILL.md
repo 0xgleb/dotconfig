@@ -57,17 +57,17 @@ trunk=$(git -C "$repo_root" symbolic-ref refs/remotes/origin/HEAD --short 2>/dev
 start_branch=$(git -C "$repo_root" rev-parse --abbrev-ref HEAD)   # return here at the end
 ```
 
-GitButler is main-worktree-only; every linked, isolated, or scratch worktree uses
-plain Git without probing `but`. In a verified GitButler main worktree, confirm
-workspace mode (`but status` ok) as `/review-sweep` does.
+GitButler is main-worktree-only; every linked, isolated, or scratch worktree
+uses plain Git without probing `but`. In a verified GitButler main worktree,
+confirm workspace mode (`but status` ok) as `/review-sweep` does.
 
-Record the working-tree/index state, then verify directory-wide `.tmp/`
-coverage with `git check-ignore --verbose` on the directory itself and the
-intended artifact path. A file-specific match does not establish directory
-coverage. If coverage is missing, immediately add the directory pattern to this
-checkout's `.gitignore`, preserving existing rules and without asking for
-separate approval, then recheck both paths. Apply the same rule to `.worktrees/`
-whenever it is used; this does not authorize creating a worktree.
+Record the working-tree/index state, then verify directory-wide `.tmp/` coverage
+with `git check-ignore --verbose` on the directory itself and the intended
+artifact path. A file-specific match does not establish directory coverage. If
+coverage is missing, immediately add the directory pattern to this checkout's
+`.gitignore`, preserving existing rules and without asking for separate
+approval, then recheck both paths. Apply the same rule to `.worktrees/` whenever
+it is used; this does not authorize creating a worktree.
 
 Account for an owned ignore repair as a separate preflight unit through the
 repository's already-authorized checkpoint/publication workflow before starting
@@ -81,9 +81,10 @@ exact blocker rather than starting another work unit.
 After accounting for the repair, require a clean working tree/index; stop and
 report any remaining unrelated changes without discarding them. Fix clusters
 start from clean branches off trunk. Recheck ignore coverage after each checkout
-transition, including returning to `start_branch`, before using either directory.
-Immediately repair missing coverage and account for that repair as its own
-preflight unit; never carry an unstaged ignore repair between fix clusters.
+transition, including returning to `start_branch`, before using either
+directory. Immediately repair missing coverage and account for that repair as
+its own preflight unit; never carry an unstaged ignore repair between fix
+clusters.
 
 ## 3. Prepare the workspace and build the audit target
 
