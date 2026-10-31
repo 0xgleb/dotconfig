@@ -34,6 +34,48 @@ export const GITHUB_ISSUE_LIST_DOCUMENT = `query IssueBacklogList(
   }
 }`
 
+export const GITHUB_ISSUE_GET_DOCUMENT = `query IssueBacklogGet(
+  $owner: String!
+  $name: String!
+  $number: Int!
+  $relatedFirst: Int!
+  $blockedByAfter: String
+  $deliveryAfter: String
+) {
+  repository(owner: $owner, name: $name) {
+    nameWithOwner
+    issue(number: $number) {
+      number
+      title
+      url
+      state
+      updatedAt
+      body
+      repository { nameWithOwner }
+      parent { number url repository { nameWithOwner } }
+      blockedBy(first: $relatedFirst, after: $blockedByAfter) {
+        nodes { number url repository { nameWithOwner } }
+        pageInfo { hasNextPage endCursor }
+      }
+      closedByPullRequestsReferences(first: $relatedFirst, after: $deliveryAfter, includeClosedPrs: true) {
+        nodes { number url state repository { nameWithOwner } }
+        pageInfo { hasNextPage endCursor }
+      }
+    }
+  }
+}`
+
+export interface GitHubIssueGetExecution {
+  readonly document: typeof GITHUB_ISSUE_GET_DOCUMENT
+  readonly variables: {
+    readonly owner: string
+    readonly name: string
+    readonly number: number
+    readonly relatedFirst: number
+    readonly blockedByAfter: string | null
+    readonly deliveryAfter: string | null
+  }
+}
 export interface GitHubIssueListExecution {
   readonly document: typeof GITHUB_ISSUE_LIST_DOCUMENT
   readonly variables: {
@@ -44,12 +86,17 @@ export interface GitHubIssueListExecution {
     readonly states: readonly ("OPEN" | "CLOSED")[]
   }
 }
+export type GitHubIssueQueryExecution =
+  GitHubIssueListExecution | GitHubIssueGetExecution
 export interface GitHubIssueReadOptions {
   readonly executeQuery: (
-    request: GitHubIssueListExecution,
+    request: GitHubIssueQueryExecution,
   ) => Effect.Effect<string, GitHubReadError>
 }
 export interface GitHubIssueReader {
+  readonly get: (
+    input: unknown,
+  ) => Effect.Effect<GitHubIssueGetResult, GitHubReadError>
   readonly list: (
     input: unknown,
   ) => Effect.Effect<GitHubIssueListPage, GitHubReadError | PlanInputError>
@@ -57,49 +104,90 @@ export interface GitHubIssueReader {
 
 export const createGitHubIssueReader = (
   options: GitHubIssueReadOptions,
-): GitHubIssueReader => ({
-  list: input =>
-    Effect.gen(function* () {
-      yield* Effect.yieldNow()
+): GitHubIssueReader => {
+  const execute = (request: GitHubIssueQueryExecution) =>
+    Effect.suspend(() => options.executeQuery(request)).pipe(
+      Effect.mapError(() => readError("transport_error")),
+      Effect.catchAllDefect(() => Effect.fail(readError("transport_error"))),
+    )
 
-      const decoded = decodeGitHubIssueListQuery(input)
+  return {
+    get: input =>
+      Effect.gen(function* () {
+        yield* Effect.yieldNow()
+        const decoded = decodeGitHubIssueGetQuery(input)
 
-      if (Either.isLeft(decoded)) return yield* Effect.fail(decoded.left)
+        if (Either.isLeft(decoded)) return yield* Effect.fail(decoded.left)
 
-      const query = decoded.right
-      const separator = query.repository.indexOf("/")
+        const query = decoded.right
+        const separator = query.issue.repository.indexOf("/")
 
-      if (separator < 1) return yield* Effect.fail(readError("invalid_request"))
+        if (separator < 1)
+          return yield* Effect.fail(readError("invalid_request"))
 
-      const states: readonly ("OPEN" | "CLOSED")[] = Object.freeze(
-        query.state === "all"
-          ? ["OPEN", "CLOSED"]
-          : [query.state === "open" ? "OPEN" : "CLOSED"],
-      )
-      const request: GitHubIssueListExecution = Object.freeze({
-        document: GITHUB_ISSUE_LIST_DOCUMENT,
-        variables: Object.freeze({
-          owner: query.repository.slice(0, separator),
-          name: query.repository.slice(separator + 1),
-          first: query.page.limit,
-          after: query.page.after === undefined ? null : query.page.after,
-          states,
-        }),
-      })
+        const request: GitHubIssueGetExecution = Object.freeze({
+          document: GITHUB_ISSUE_GET_DOCUMENT,
+          variables: Object.freeze({
+            owner: query.issue.repository.slice(0, separator),
+            name: query.issue.repository.slice(separator + 1),
+            number: query.issue.number,
+            relatedFirst: query.related.limit,
+            blockedByAfter:
+              query.related.blockedByAfter === undefined
+                ? null
+                : query.related.blockedByAfter,
+            deliveryAfter:
+              query.related.deliveryAfter === undefined
+                ? null
+                : query.related.deliveryAfter,
+          }),
+        })
+        const payload = yield* execute(request)
+        const result = decodeGitHubIssueGetResult(payload, query)
 
-      const payload = yield* Effect.suspend(() =>
-        options.executeQuery(request),
-      ).pipe(
-        Effect.mapError(() => readError("transport_error")),
-        Effect.catchAllDefect(() => Effect.fail(readError("transport_error"))),
-      )
-      const page = decodeGitHubIssueListPage(payload, query)
+        if (Either.isLeft(result)) return yield* Effect.fail(result.left)
 
-      if (Either.isLeft(page)) return yield* Effect.fail(page.left)
+        return result.right
+      }),
+    list: input =>
+      Effect.gen(function* () {
+        yield* Effect.yieldNow()
 
-      return page.right
-    }),
-})
+        const decoded = decodeGitHubIssueListQuery(input)
+
+        if (Either.isLeft(decoded)) return yield* Effect.fail(decoded.left)
+
+        const query = decoded.right
+        const separator = query.repository.indexOf("/")
+
+        if (separator < 1)
+          return yield* Effect.fail(readError("invalid_request"))
+
+        const states: readonly ("OPEN" | "CLOSED")[] = Object.freeze(
+          query.state === "all"
+            ? ["OPEN", "CLOSED"]
+            : [query.state === "open" ? "OPEN" : "CLOSED"],
+        )
+        const request: GitHubIssueListExecution = Object.freeze({
+          document: GITHUB_ISSUE_LIST_DOCUMENT,
+          variables: Object.freeze({
+            owner: query.repository.slice(0, separator),
+            name: query.repository.slice(separator + 1),
+            first: query.page.limit,
+            after: query.page.after === undefined ? null : query.page.after,
+            states,
+          }),
+        })
+
+        const payload = yield* execute(request)
+        const page = decodeGitHubIssueListPage(payload, query)
+
+        if (Either.isLeft(page)) return yield* Effect.fail(page.left)
+
+        return page.right
+      }),
+  }
+}
 
 export interface GitHubIssueListQuery {
   readonly repository: IssueRepository

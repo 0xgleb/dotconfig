@@ -6,6 +6,7 @@ import {
   createGitHubIssueReader,
   GITHUB_ISSUE_LIST_DOCUMENT,
   type GitHubIssueListExecution,
+  type GitHubIssueQueryExecution,
   decodeGitHubIssueListQuery,
   decodeGitHubIssueListPage,
   MAX_GITHUB_READ_BYTES,
@@ -42,6 +43,12 @@ const recorded = {
     },
   },
 }
+const listExecution = (
+  request: GitHubIssueQueryExecution,
+): GitHubIssueListExecution => {
+  assert.ok(request.document === GITHUB_ISSUE_LIST_DOCUMENT)
+  return request
+}
 const failure = (
   payload: unknown,
   code: GitHubReadError["code"],
@@ -57,7 +64,7 @@ test("GitHub reader executes one fixed list query with validated frozen variable
   const reader = createGitHubIssueReader({
     executeQuery: request =>
       Effect.sync(() => {
-        calls.push(request)
+        calls.push(listExecution(request))
         return JSON.stringify(recorded)
       }),
   })
@@ -119,7 +126,7 @@ test("GitHub reader forwards the real continuation to the independently recorded
   const reader = createGitHubIssueReader({
     executeQuery: request =>
       Effect.sync(() => {
-        requests.push(request)
+        requests.push(listExecution(request))
         return JSON.stringify(following)
       }),
   })
@@ -152,7 +159,7 @@ test("GitHub reader encodes a closed-only query without widening its state filte
   const reader = createGitHubIssueReader({
     executeQuery: request =>
       Effect.sync(() => {
-        requests.push(request)
+        requests.push(listExecution(request))
         return JSON.stringify(response)
       }),
   })
