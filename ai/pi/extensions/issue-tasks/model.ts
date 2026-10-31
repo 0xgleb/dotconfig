@@ -50,6 +50,27 @@ export interface IssueTaskDetail extends IssueTaskRevision {
   readonly task: IssueTask
   readonly dependsOn: readonly TaskAddress[]
 }
+export interface TaskFilter {
+  readonly status?: TaskStatus
+  readonly blocked?: boolean
+}
+export const TaskFilterSchema = Schema.Unknown.pipe(
+  Schema.filter(
+    value =>
+      typeof value === "object" &&
+      value !== null &&
+      !Array.isArray(value) &&
+      Reflect.ownKeys(value).every(
+        key => key === "status" || key === "blocked",
+      ),
+  ),
+  Schema.compose(
+    Schema.Struct({
+      status: Schema.optional(StatusSchema),
+      blocked: Schema.optional(Schema.Boolean),
+    }),
+  ),
+)
 export interface TaskPageInput {
   readonly limit: number
   readonly after?: TaskId

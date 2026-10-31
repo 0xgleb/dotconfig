@@ -4,7 +4,13 @@ import {
   type IssueReference,
   type PlanInputError,
 } from "./identity.ts"
-import { TaskIdSchema, type TaskAddress, type TaskPageInput } from "./model.ts"
+import {
+  TaskIdSchema,
+  TaskFilterSchema,
+  type TaskAddress,
+  type TaskPageInput,
+  type TaskFilter,
+} from "./model.ts"
 import {
   decodeTaskMutationBatch,
   type TaskMutationBatch,
@@ -16,6 +22,7 @@ export type TaskRequest =
       readonly action: "read"
       readonly issue: IssueReference
       readonly page: TaskPageInput
+      readonly filter?: TaskFilter
     }
   | {
       readonly action: "get"
@@ -27,7 +34,8 @@ export type TaskRequest =
     }
 
 export class TaskRequestError extends Data.TaggedError("TaskRequestError")<{
-  readonly code: "invalid_request" | "invalid_page" | "invalid_task"
+  readonly code:
+    "invalid_request" | "invalid_page" | "invalid_task" | "invalid_filter"
   readonly message: string
 }> {}
 
@@ -58,6 +66,8 @@ const invalid = (code: TaskRequestError["code"]) =>
         invalid_page:
           "Task page requires limit 1–100 and an optional canonical task cursor",
         invalid_task: "Task lookup requires a canonical task UUID",
+        invalid_filter:
+          "Task filter accepts only a lifecycle status and boolean blocked predicate",
         invalid_request:
           "Task request requires only its explicit read, get or apply fields",
       }[code],
@@ -74,7 +84,7 @@ export const decodeTaskRequest = (
         if (
           !shape(
             input,
-            ["action", "issue", "page"],
+            ["action", "issue", "page", "filter"],
             ["action", "issue", "page"],
           )
         )
@@ -92,7 +102,26 @@ export const decodeTaskRequest = (
             ? {}
             : { after: decodedPage.right.after }),
         })
-        return Object.freeze({ action: "read", issue, page })
+        const decodedFilter = Schema.decodeUnknownEither(TaskFilterSchema)(
+          input.filter === undefined ? {} : input.filter,
+        )
+        if (Either.isLeft(decodedFilter))
+          return yield* invalid("invalid_filter")
+        const filter = Object.freeze({
+          ...(decodedFilter.right.status === undefined
+            ? {}
+            : { status: decodedFilter.right.status }),
+          ...(decodedFilter.right.blocked === undefined
+            ? {}
+            : { blocked: decodedFilter.right.blocked }),
+        })
+
+        return Object.freeze({
+          action: "read",
+          issue,
+          page,
+          ...(input.filter === undefined ? {} : { filter }),
+        })
       }
       case "get": {
         if (!shape(input, ["action", "issue", "id"], ["action", "issue", "id"]))

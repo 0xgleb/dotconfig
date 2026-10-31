@@ -20,6 +20,7 @@ import {
   openSqliteTaskStore,
   type SqliteTaskStore,
   type TaskId,
+  type TaskFilter,
 } from "./sqlite-store.ts"
 
 const run = Effect.runPromise
@@ -113,6 +114,194 @@ const appendTask = (store: SqliteTaskStore, target: IssueReference = issue()) =>
       cancellation: "forbidden",
     },
   )
+
+test("filtered task pages combine status and factual blocker without changing issue state", async () =>
+  fixture(async root => {
+    const path = join(root, "tasks.sqlite")
+    await withStore(path, async store => {
+      const owner = seedIssueRecord(path)
+      for (const [index, id] of ids.entries())
+        seedTask(path, owner, id, `Task ${index}`)
+      sql(path, database => {
+        database
+          .prepare(
+            "UPDATE issue_plan_tasks SET status = 'doing' WHERE id IN (?, ?)",
+          )
+          .run(ids[1], ids[2])
+        database
+          .prepare(
+            "UPDATE issue_plan_tasks SET blocker = 'Waiting' WHERE id = ?",
+          )
+          .run(ids[2])
+      })
+
+      const filtered = await run(
+        store.readTasks(
+          issue(),
+          { limit: 100 },
+          { status: "doing", blocked: true },
+        ),
+      )
+
+      assert.ok(Option.isSome(filtered))
+      assert.deepEqual(
+        filtered.value.tasks.map(task => task.id),
+        [ids[2]],
+      )
+      assert.equal(filtered.value.next, null)
+      assert.equal(filtered.value.revision, 0)
+      const unblocked = await run(
+        store.readTasks(issue(), { limit: 100 }, { blocked: false }),
+      )
+      assert.ok(Option.isSome(unblocked))
+      assert.deepEqual(
+        unblocked.value.tasks.map(task => task.id),
+        ids.slice(0, 2),
+      )
+      const all = await run(store.readTasks(issue(), { limit: 100 }))
+      assert.ok(Option.isSome(all))
+      assert.equal(all.value.tasks.length, 3)
+      assert.equal(all.value.revision, 0)
+      assert.deepEqual(
+        await run(store.readTasks(issue(), { limit: 100 }, {})),
+        all,
+      )
+      const statusOnly = await run(
+        store.readTasks(issue(), { limit: 100 }, { status: "doing" }),
+      )
+      assert.ok(Option.isSome(statusOnly))
+      assert.deepEqual(
+        statusOnly.value.tasks.map(task => task.id),
+        ids.slice(1),
+      )
+      const noMatch = await run(
+        store.readTasks(issue(), { limit: 100 }, { status: "done" }),
+      )
+      assert.ok(Option.isSome(noMatch))
+      assert.deepEqual(noMatch.value.tasks, [])
+      assert.equal(noMatch.value.revision, 0)
+      assert.ok(
+        Option.isNone(
+          await run(
+            store.readTasks(
+              issue("absent/repo"),
+              { limit: 1 },
+              { blocked: true },
+            ),
+          ),
+        ),
+      )
+    })
+  }))
+
+test("filtered task pages keep qualified keysets and filtered lookahead across reopen", async () =>
+  fixture(async root => {
+    const path = join(root, "tasks.sqlite")
+    await withStore(path, async store => {
+      const owner = seedIssueRecord(path)
+      for (const id of ids) seedTask(path, owner, id, "Task")
+      sql(path, database =>
+        database
+          .prepare("UPDATE issue_plan_tasks SET status = 'done' WHERE id = ?")
+          .run(ids[1]),
+      )
+      const unfiltered = await run(store.readTasks(issue(), { limit: 100 }))
+      assert.ok(Option.isSome(unfiltered))
+      const middle = unfiltered.value.tasks[1]
+      assert.ok(middle)
+
+      const first = await run(
+        store.readTasks(issue(), { limit: 1 }, { status: "todo" }),
+      )
+      assert.ok(Option.isSome(first) && first.value.next)
+      assert.deepEqual(
+        first.value.tasks.map(task => task.id),
+        [ids[0]],
+      )
+      const second = await run(
+        store.readTasks(
+          issue(),
+          { limit: 1, after: first.value.next },
+          { status: "todo" },
+        ),
+      )
+      assert.ok(Option.isSome(second))
+      assert.deepEqual(
+        second.value.tasks.map(task => task.id),
+        [ids[2]],
+      )
+      assert.equal(second.value.next, null)
+      assert.deepEqual(
+        await run(
+          store.readTasks(
+            issue(),
+            { limit: 1, after: middle.id },
+            { status: "todo" },
+          ),
+        ),
+        second,
+      )
+      await expectError(
+        store.readTasks(
+          issue("other/repo"),
+          { limit: 1, after: middle.id },
+          { status: "todo" },
+        ),
+        "invalid_input",
+      )
+      const foreignOwner = seedIssueRecord(path, issue("other/repo"))
+      seedTask(
+        path,
+        foreignOwner,
+        "00000000-0000-4000-8000-000000000004",
+        "Other",
+      )
+      await expectError(
+        store.readTasks(
+          issue("other/repo"),
+          { limit: 1, after: middle.id },
+          { status: "todo" },
+        ),
+        "invalid_input",
+      )
+    })
+    await withStore(path, async store => {
+      const reopened = await run(
+        store.readTasks(issue(), { limit: 100 }, { status: "todo" }),
+      )
+      assert.ok(Option.isSome(reopened))
+      assert.deepEqual(
+        reopened.value.tasks.map(task => task.id),
+        [ids[0], ids[2]],
+      )
+      assert.equal(reopened.value.revision, 0)
+    })
+  }))
+
+test("filtered task pages reject invalid filters even when the issue is absent", async () =>
+  fixture(async root => {
+    await withStore(join(root, "tasks.sqlite"), async store => {
+      for (const filter of [
+        null,
+        false,
+        [],
+        { status: null },
+        { status: "in_review" },
+        { blocked: "false" },
+        { blocked: 0 },
+        { authority: "owner" },
+        { [Symbol("hidden")]: true },
+        Object.defineProperty({}, "authority", { value: "owner" }),
+      ])
+        await expectError(
+          store.readTasks(issue(), { limit: 1 }, filter as TaskFilter),
+          "invalid_input",
+        )
+      assert.ok(
+        Option.isNone(await run(store.readTasks(issue(), { limit: 1 }))),
+      )
+    })
+  }))
 
 test("single-task lookup returns issue revision, full task data and dependency addresses", async () =>
   fixture(async root => {
