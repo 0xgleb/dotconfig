@@ -1,13 +1,16 @@
 import assert from "node:assert/strict"
 import test from "node:test"
-import { Either } from "effect"
+import { Cause, Deferred, Effect, Either, Exit } from "effect"
 import { decodeIssueReference } from "./identity.ts"
 import {
+  createGitHubIssueReader,
+  GITHUB_ISSUE_GET_DOCUMENT,
+  type GitHubIssueGetExecution,
   decodeGitHubIssueGetQuery,
   decodeGitHubIssueGetResult,
   MAX_GITHUB_READ_BYTES,
   type GitHubIssueGetQuery,
-  type GitHubReadError,
+  GitHubReadError,
 } from "./github-read.ts"
 
 const target = decodeIssueReference({
@@ -67,6 +70,227 @@ const failure = (
   assert.ok(Either.isLeft(result))
   assert.equal(result.left.code, code)
 }
+
+test("GitHub get reader executes one fixed query with qualified frozen variables", async () => {
+  const calls: GitHubIssueGetExecution[] = []
+  const reader = createGitHubIssueReader({
+    executeQuery: request =>
+      Effect.sync(() => {
+        assert.ok(request.document === GITHUB_ISSUE_GET_DOCUMENT)
+        calls.push(request)
+        return JSON.stringify(recorded)
+      }),
+  })
+
+  const result = await Effect.runPromise(
+    reader.get({
+      issue: { repository: "0xGleb/DotConfig", number: 86 },
+      related: {
+        limit: 1,
+        blockedByAfter: "dep-before",
+        deliveryAfter: "pr-before",
+      },
+    }),
+  )
+
+  assert.equal(result.detail?.issue.number, 86)
+  assert.deepEqual(calls, [
+    {
+      document: GITHUB_ISSUE_GET_DOCUMENT,
+      variables: {
+        owner: "0xgleb",
+        name: "dotconfig",
+        number: 86,
+        relatedFirst: 1,
+        blockedByAfter: "dep-before",
+        deliveryAfter: "pr-before",
+      },
+    },
+  ])
+  assert.ok(
+    calls.every(
+      call => Object.isFrozen(call) && Object.isFrozen(call.variables),
+    ),
+  )
+})
+
+test("GitHub get reader sends null initial cursors and never follows either relation automatically", async () => {
+  const page = response({
+    blockedBy: {
+      nodes: [],
+      pageInfo: { hasNextPage: true, endCursor: "dep-next" },
+    },
+    closedByPullRequestsReferences: {
+      nodes: [],
+      pageInfo: { hasNextPage: true, endCursor: "pr-next" },
+    },
+  })
+  const calls: GitHubIssueGetExecution[] = []
+  const reader = createGitHubIssueReader({
+    executeQuery: request =>
+      Effect.sync(() => {
+        assert.ok(request.document === GITHUB_ISSUE_GET_DOCUMENT)
+        calls.push(request)
+        return JSON.stringify(page)
+      }),
+  })
+  const result = await Effect.runPromise(reader.get(query))
+  assert.equal(calls.length, 1)
+  assert.equal(calls[0]?.variables.blockedByAfter, null)
+  assert.equal(calls[0]?.variables.deliveryAfter, null)
+  assert.equal(result.detail?.blockedBy.pageInfo.endCursor, "dep-next")
+  assert.equal(result.detail?.delivery.pageInfo.endCursor, "pr-next")
+})
+
+test("GitHub get reader validates Int32 and caller metadata before host I/O", async () => {
+  let calls = 0
+  const reader = createGitHubIssueReader({
+    executeQuery: () =>
+      Effect.sync(() => {
+        calls += 1
+        return JSON.stringify(recorded)
+      }),
+  })
+  for (const input of [
+    { ...query, issue: { ...query.issue, number: 2_147_483_648 } },
+    { ...query, authority: "owner" },
+    { ...query, related: { limit: 0 } },
+  ]) {
+    const result = await Effect.runPromise(Effect.either(reader.get(input)))
+    assert.ok(Either.isLeft(result))
+    assert.equal(result.left.code, "invalid_request")
+  }
+  assert.equal(calls, 0)
+})
+
+for (const stop of ["failure", "defect"] as const) {
+  test(`GitHub get reader sanitizes host ${stop} without retrying`, async () => {
+    let calls = 0
+    const reader = createGitHubIssueReader({
+      executeQuery: () => {
+        calls += 1
+        return stop === "failure"
+          ? Effect.fail(
+              new GitHubReadError({
+                code: "unavailable",
+                message: "Private transport diagnostic",
+              }),
+            )
+          : Effect.die("Private transport diagnostic")
+      },
+    })
+    const result = await Effect.runPromise(Effect.either(reader.get(query)))
+    assert.ok(Either.isLeft(result))
+    assert.equal(result.left.code, "transport_error")
+    assert.ok(
+      !JSON.stringify(result.left).includes("Private transport diagnostic"),
+    )
+    assert.equal(calls, 1)
+  })
+}
+
+test("pre-aborted GitHub get reads interrupt valid and invalid requests without I/O", async () => {
+  let calls = 0
+  const reader = createGitHubIssueReader({
+    executeQuery: () =>
+      Effect.sync(() => {
+        calls += 1
+        return JSON.stringify(recorded)
+      }),
+  })
+  const controller = new AbortController()
+  controller.abort()
+  for (const input of [query, { ...query, related: { limit: 0 } }]) {
+    const result = await Effect.runPromiseExit(reader.get(input), {
+      signal: controller.signal,
+    })
+    assert.ok(Exit.isFailure(result) && Cause.isInterruptedOnly(result.cause))
+  }
+  assert.equal(calls, 0)
+})
+
+test(
+  "in-flight GitHub get cancellation reaches the injected query and releases its finalizer",
+  { timeout: 5_000 },
+  async t => {
+    const entered = await Effect.runPromise(Deferred.make<void>())
+    const controller = new AbortController()
+    t.signal.addEventListener("abort", () => controller.abort(), { once: true })
+    let released = false
+    const reader = createGitHubIssueReader({
+      executeQuery: () =>
+        Deferred.succeed(entered, undefined).pipe(
+          Effect.zipRight(Effect.never),
+          Effect.ensuring(
+            Effect.sync(() => {
+              released = true
+            }),
+          ),
+        ),
+    })
+    const pending = Effect.runPromiseExit(reader.get(query), {
+      signal: controller.signal,
+    })
+    try {
+      const started = await Promise.race([
+        Effect.runPromise(Deferred.await(entered)).then(() => true),
+        pending.then(() => false),
+      ])
+      assert.equal(started, true)
+      controller.abort()
+      const result = await pending
+      assert.ok(Exit.isFailure(result) && Cause.isInterruptedOnly(result.cause))
+      assert.equal(released, true)
+    } finally {
+      controller.abort()
+      await pending
+    }
+  },
+)
+
+test("GitHub get reader preserves the qualified unavailable result", async () => {
+  let calls = 0
+  const reader = createGitHubIssueReader({
+    executeQuery: () =>
+      Effect.sync(() => {
+        calls += 1
+        return JSON.stringify({ data: { repository: null } })
+      }),
+  })
+  const result = await Effect.runPromise(reader.get(query))
+  assert.deepEqual(result, { issue: query.issue, detail: null })
+  assert.equal(calls, 1)
+})
+
+test("GitHub get reader retains partial, remote and capacity readback errors after transport", async () => {
+  for (const [payload, expected] of [
+    [
+      JSON.stringify(response({ closedByPullRequestsReferences: null })),
+      "partial_response",
+    ],
+    [
+      JSON.stringify({
+        ...recorded,
+        errors: [{ message: "Private remote error" }],
+      }),
+      "remote_error",
+    ],
+    ["x".repeat(MAX_GITHUB_READ_BYTES + 1), "capacity"],
+  ] as const) {
+    let calls = 0
+    const reader = createGitHubIssueReader({
+      executeQuery: () =>
+        Effect.sync(() => {
+          calls += 1
+          return payload
+        }),
+    })
+    const result = await Effect.runPromise(Effect.either(reader.get(query)))
+    assert.ok(Either.isLeft(result))
+    assert.equal(result.left.code, expected)
+    assert.equal(calls, 1)
+  }
+})
 
 test("GitHub get queries detach qualified identity and strictly bound independent cursors", () => {
   const input = {
