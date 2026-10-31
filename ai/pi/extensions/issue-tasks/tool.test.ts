@@ -791,6 +791,85 @@ for (const failure of ["defect", "interrupt"] as const) {
   )
 }
 
+test("actual SDK forwards filtered issue reads without resolving mutation grants", async () =>
+  fixture(async store => {
+    await invoke(register(ordinaryOptions(store)), addRequest, "seed-filter")
+    let hostCalls = 0
+    const tool = register({
+      ...ordinaryOptions(store),
+      contextForCall: () => {
+        hostCalls += 1
+        return Effect.fail(
+          new tools.TaskHostError({
+            code: "host_unavailable",
+            message: "No grant",
+          }),
+        )
+      },
+    })
+
+    const result = await invoke(tool, {
+      action: "read",
+      issue: rawIssue,
+      page: { limit: 1 },
+      filter: { status: "done", blocked: false },
+    })
+
+    assert.equal(result.details.outcome.kind, "page")
+    if (result.details.outcome.kind !== "page")
+      assert.fail("Expected filtered page")
+    assert.deepEqual(result.details.outcome.page.tasks, [])
+    assert.equal(result.details.outcome.page.revision, 1)
+    assert.equal(hostCalls, 0)
+  }))
+
+test("actual SDK and domain decoder reject unsupported filter fields and actions before effects", async () =>
+  fixture(async store => {
+    let hostCalls = 0
+    const options = ordinaryOptions(store)
+    const tool = register({
+      ...options,
+      contextForCall: call => {
+        hostCalls += 1
+        return options.contextForCall(call)
+      },
+    })
+    for (const filter of [
+      { status: "in_review" },
+      { blocked: {} },
+      { authority: "owner" },
+    ])
+      assert.throws(() =>
+        invoke(tool, {
+          action: "read",
+          issue: rawIssue,
+          page: { limit: 1 },
+          filter,
+        }),
+      )
+    for (const request of [
+      {
+        action: "get",
+        issue: rawIssue,
+        id: "aaaaaaaa-aaaa-4aaa-8aaa-aaaaaaaaaaaa",
+        filter: {},
+      },
+      { ...addRequest, filter: {} },
+    ]) {
+      const result = await invoke(tool, request)
+      assert.equal(result.details.outcome.kind, "failed")
+      if (result.details.outcome.kind !== "failed")
+        assert.fail("Expected invalid request")
+      assert.equal(result.details.outcome.code, "invalid_request")
+    }
+    assert.equal(hostCalls, 0)
+    assert.ok(
+      Option.isNone(
+        await Effect.runPromise(store.readTasks(issue(), { limit: 1 })),
+      ),
+    )
+  }))
+
 test("actual SDK validates and executes an unwired registered issue task read offline", async () =>
   fixture(async store => {
     const saved = await Effect.runPromise(

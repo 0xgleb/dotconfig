@@ -21,7 +21,7 @@ import {
 } from "./sqlite-store.ts"
 
 import { MAX_TRANSITION_TEXT } from "./transition.ts"
-import type { MutationBatchId } from "./model.ts"
+import type { MutationBatchId, TaskFilter } from "./model.ts"
 
 const run = Effect.runPromise
 const parent = fileURLToPath(
@@ -2594,8 +2594,8 @@ for (const [field, units] of [
   }
 }
 
-for (const pageKind of ["first", "next"] as const) {
-  test(`task page ordering remains on the source index: ${pageKind}`, async () =>
+for (const field of ["text", "blocker"] as const) {
+  test(`filtered task lookahead bounds ${field} before driver materialization`, async () =>
     fixture(async path => {
       await withStore(path, async store => {
         await run(
@@ -2603,55 +2603,137 @@ for (const pageKind of ["first", "next"] as const) {
             batch([
               { op: "add", issue: a, key: "one", text: "One" },
               { op: "add", issue: a, key: "two", text: "Two" },
-              { op: "add", issue: a, key: "three", text: "Three" },
             ]),
-            context("indexed-pages"),
+            context("filtered-materialization"),
           ),
         )
-        const initial = await run(store.readTasks(issue(), { limit: 1 }))
-        assert.ok(Option.isSome(initial) && initial.value.next)
-        const cursor = initial.value.next
+        const initial = await run(store.readTasks(issue(), { limit: 10 }))
+        assert.ok(Option.isSome(initial))
+        const second = initial.value.tasks[1]
+        assert.ok(second)
+        const envelope = 3 * 131_072
+        sql(path, database => {
+          database
+            .prepare("UPDATE issue_plan_tasks SET blocker = 'Waiting'")
+            .run()
+          database.exec("PRAGMA ignore_check_constraints = ON")
+          database
+            .prepare(`UPDATE issue_plan_tasks SET ${field} = ? WHERE id = ?`)
+            .run("x".repeat(envelope + 1), second.id)
+        })
+
         const observed = await observeReads(
-          query => query.includes("FROM issue_plan_tasks WHERE plan_id = ?"),
+          query =>
+            query.includes("issue_plan_tasks.status = ?") &&
+            query.includes("ORDER BY"),
           () =>
             run(
-              store.readTasks(issue(), {
-                limit: 1,
-                ...(pageKind === "next" ? { after: cursor } : {}),
-              }),
+              Effect.either(
+                store.readTasks(
+                  issue(),
+                  { limit: 1 },
+                  { status: "todo", blocked: true },
+                ),
+              ),
             ),
         )
-        const read = observed.reads.find(read =>
-          read.query.includes("ORDER BY"),
-        )
-        assert.ok(read)
-        const details = sql(path, database => {
-          const plan = database
-            .prepare(
-              "SELECT id FROM issue_plans WHERE repository = ? AND issue_number = ?",
-            )
-            .get(a.repository, a.number)
-          assert.ok(plan && typeof plan.id === "string")
-          const parameters =
-            pageKind === "next" ? [plan.id, cursor, 2] : [plan.id, 2]
-          return database
-            .prepare(`EXPLAIN QUERY PLAN ${read.query}`)
-            .all(...parameters)
-            .map(row => {
-              assert.ok(typeof row.detail === "string")
-              return row.detail
-            })
-        })
+
+        assert.ok(Either.isLeft(observed.value))
+        assert.equal(observed.value.left.code, "corrupt_state")
         assert.ok(
-          details.some(detail => detail.includes("SEARCH issue_plan_tasks")),
-          details.join("\n"),
+          observed.reads.some(
+            read =>
+              read.method === "all" &&
+              Array.isArray(read.result) &&
+              read.result.length === 2,
+          ),
         )
         assert.ok(
-          details.every(detail => !detail.includes("TEMP B-TREE")),
-          details.join("\n"),
+          materializedStrings(observed.reads, field).every(
+            value => Buffer.byteLength(value, "utf8") <= envelope,
+          ),
         )
       })
     }))
+}
+
+const pageFilters: readonly (TaskFilter | undefined)[] = [
+  undefined,
+  {},
+  { status: "todo" },
+  { blocked: true },
+  { blocked: false },
+  { status: "todo", blocked: true },
+  { status: "todo", blocked: false },
+]
+for (const filter of pageFilters) {
+  for (const pageKind of ["first", "next"] as const) {
+    test(`task page ordering remains on the source index: ${pageKind}/${JSON.stringify(filter)}`, async () =>
+      fixture(async path => {
+        await withStore(path, async store => {
+          await run(
+            store.apply(
+              batch([
+                { op: "add", issue: a, key: "one", text: "One" },
+                { op: "add", issue: a, key: "two", text: "Two" },
+                { op: "add", issue: a, key: "three", text: "Three" },
+              ]),
+              context("indexed-pages"),
+            ),
+          )
+          const initial = await run(store.readTasks(issue(), { limit: 1 }))
+          assert.ok(Option.isSome(initial) && initial.value.next)
+          const cursor = initial.value.next
+          const observed = await observeReads(
+            query => query.includes("FROM issue_plan_tasks WHERE plan_id = ?"),
+            () =>
+              run(
+                store.readTasks(
+                  issue(),
+                  {
+                    limit: 1,
+                    ...(pageKind === "next" ? { after: cursor } : {}),
+                  },
+                  filter,
+                ),
+              ),
+          )
+          const read = observed.reads.find(read =>
+            read.query.includes("ORDER BY"),
+          )
+          assert.ok(read)
+          const details = sql(path, database => {
+            const plan = database
+              .prepare(
+                "SELECT id FROM issue_plans WHERE repository = ? AND issue_number = ?",
+              )
+              .get(a.repository, a.number)
+            assert.ok(plan && typeof plan.id === "string")
+            const parameters = [
+              plan.id,
+              ...(pageKind === "next" ? [cursor] : []),
+              ...(filter?.status === undefined ? [] : [filter.status]),
+              2,
+            ]
+            return database
+              .prepare(`EXPLAIN QUERY PLAN ${read.query}`)
+              .all(...parameters)
+              .map(row => {
+                assert.ok(typeof row.detail === "string")
+                return row.detail
+              })
+          })
+          assert.ok(
+            details.some(detail => detail.includes("SEARCH issue_plan_tasks")),
+            details.join("\n"),
+          )
+          assert.ok(
+            details.every(detail => !detail.includes("TEMP B-TREE")),
+            details.join("\n"),
+          )
+        })
+      }))
+  }
 }
 
 for (const encoding of ["UTF-8", "UTF-16le", "UTF-16be"] as const) {

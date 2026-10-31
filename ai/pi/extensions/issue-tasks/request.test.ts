@@ -22,6 +22,61 @@ const failure = (input: unknown, code: TaskRequestDecodeError["code"]) => {
   assert.equal(decoded.left.code, code)
 }
 
+test("task read decodes a detached explicit status and blocker filter", () => {
+  const filter = { status: "doing", blocked: false }
+  const decoded = decodeTaskRequest({ ...read, filter })
+
+  assert.ok(Either.isRight(decoded))
+  assert.deepEqual(decoded.right, {
+    ...read,
+    filter: { status: "doing", blocked: false },
+  })
+  filter.status = "done"
+  filter.blocked = true
+  assert.deepEqual(decoded.right, {
+    ...read,
+    filter: { status: "doing", blocked: false },
+  })
+  assert.ok(decoded.right.action === "read")
+  assert.ok(Object.isFrozen(decoded.right.filter))
+})
+
+test("task filters reject malformed or authority-bearing predicates without coercion", () => {
+  for (const filter of [
+    null,
+    false,
+    [],
+    { status: null },
+    { status: "in_review" },
+    { blocked: "false" },
+    { blocked: 0 },
+    { authority: "owner" },
+    { [Symbol("hidden")]: true },
+    Object.defineProperty({}, "authority", { value: "owner" }),
+  ])
+    failure({ ...read, filter }, "invalid_filter")
+  failure({ ...get, filter: {} }, "invalid_request")
+  failure({ ...apply, filter: {} }, "invalid_request")
+})
+
+test("task filters accept all lifecycle statuses and preserve false or omitted predicates", () => {
+  for (const status of ["todo", "doing", "done", "cancelled"])
+    for (const blocked of [undefined, true, false]) {
+      const filter = { status, ...(blocked === undefined ? {} : { blocked }) }
+      const decoded = decodeTaskRequest({ ...read, filter })
+      assert.ok(Either.isRight(decoded))
+      assert.deepEqual(decoded.right, { ...read, filter })
+    }
+  for (const filter of [{}, { status: undefined, blocked: undefined }]) {
+    const decoded = decodeTaskRequest({ ...read, filter })
+    assert.ok(Either.isRight(decoded))
+    assert.deepEqual(decoded.right, { ...read, filter: {} })
+  }
+  const omitted = decodeTaskRequest({ ...read, filter: undefined })
+  assert.ok(Either.isRight(omitted))
+  assert.deepEqual(omitted.right, read)
+})
+
 test("task read request canonicalizes its explicit issue and preserves its page", () => {
   const decoded = decodeTaskRequest({
     action: "read",

@@ -61,6 +61,12 @@ const TaskReferenceParameters = Type.Object(
 const DependencyParameters = Type.Array(TaskReferenceParameters, {
   maxItems: MAX_TASK_DEPENDENCIES,
 })
+const TaskStatusParameter = Type.Union([
+  Type.Literal("todo"),
+  Type.Literal("doing"),
+  Type.Literal("done"),
+  Type.Literal("cancelled"),
+])
 const OperationParameters = Type.Union([
   Type.Object(
     {
@@ -85,12 +91,7 @@ const OperationParameters = Type.Union([
     {
       op: Type.Literal("status"),
       target: TaskReferenceParameters,
-      status: Type.Union([
-        Type.Literal("todo"),
-        Type.Literal("doing"),
-        Type.Literal("done"),
-        Type.Literal("cancelled"),
-      ]),
+      status: TaskStatusParameter,
     },
     { additionalProperties: false },
   ),
@@ -125,6 +126,15 @@ const TaskParameters = Type.Object(
         {
           limit: Type.Integer({ minimum: 1, maximum: 100 }),
           after: Type.Optional(TaskIdParameter),
+        },
+        { additionalProperties: false },
+      ),
+    ),
+    filter: Type.Optional(
+      Type.Object(
+        {
+          status: Type.Optional(TaskStatusParameter),
+          blocked: Type.Optional(Type.Boolean()),
         },
         { additionalProperties: false },
       ),
@@ -226,7 +236,11 @@ const executeRequest = (
   Effect.gen(function* () {
     switch (request.action) {
       case "read": {
-        const page = yield* options.store.readTasks(request.issue, request.page)
+        const page = yield* options.store.readTasks(
+          request.issue,
+          request.page,
+          request.filter,
+        )
 
         if (Option.isNone(page))
           return {
@@ -294,7 +308,7 @@ export const createTaskTool = (options: TaskToolOptions): IssueTaskTool => ({
   name: "task",
   label: "Task",
   description:
-    "Read/get issue-qualified tasks or apply an atomic explicit-issue mutation batch. Read requires issue/page; get requires issue/id; apply requires complete issues/operations (add, edit, status, block, transfer). No worker selection or replies. Authority and request identity come only from the host.",
+    "Read/get issue-qualified tasks or apply an atomic explicit-issue mutation batch. Read requires issue/page with optional status/blocked filter; get requires issue/id; apply requires complete issues/operations (add, edit, status, block, transfer). No worker selection or replies. Authority and request identity come only from the host.",
   parameters: TaskParameters,
   execute: async (toolCallId, params, signal, _onUpdate, ctx) => {
     let outcome: TaskExecutionOutcome
