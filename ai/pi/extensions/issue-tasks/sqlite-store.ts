@@ -15,10 +15,12 @@ import {
   TextSchema,
   MAX_TASK_TEXT,
   StatusSchema,
+  TaskFilterSchema,
   type IssueTaskRevision,
   type IssueTaskPage,
   type IssueTaskDetail,
   type TaskPageInput,
+  type TaskFilter,
   MutationBatchIdSchema,
   type MutationBatchId,
   type TaskId,
@@ -83,6 +85,7 @@ export type {
   IssueTaskDetail,
   TaskAddress,
   TaskPageInput,
+  TaskFilter,
 } from "./model.ts"
 
 export class TaskStoreError extends Data.TaggedError("TaskStoreError")<{
@@ -147,6 +150,7 @@ export interface SqliteTaskStore {
   readonly readTasks: (
     issue: IssueReference,
     page: TaskPageInput,
+    filter?: TaskFilter,
   ) => StoreEffect<Option.Option<IssueTaskPage>>
   readonly close: () => StoreEffect<void>
 }
@@ -2232,7 +2236,7 @@ const makeStore = (
           )
         }),
       ),
-    readTasks: (target, input) =>
+    readTasks: (target, input, selection) =>
       use(
         "read",
         Effect.gen(function* () {
@@ -2242,6 +2246,12 @@ const makeStore = (
             input,
             "invalid_input",
             "Task pages require a limit from 1 to 100 and an optional task cursor",
+          )
+          const filter = yield* decode(
+            TaskFilterSchema,
+            selection === undefined ? {} : selection,
+            "invalid_input",
+            "Task filter requires a lifecycle status and boolean blocked predicate",
           )
           const stored = yield* findPlan(database, issue)
           if (Option.isNone(stored)) {
@@ -2268,18 +2278,29 @@ const makeStore = (
                 "Cursor does not belong to the requested issue",
               )
           }
+          const cursorPredicate =
+            after === undefined ? "" : " AND issue_plan_tasks.id > ?"
+          const statusPredicate =
+            filter.status === undefined
+              ? ""
+              : " AND issue_plan_tasks.status = ?"
+          const blockerPredicate =
+            filter.blocked === undefined
+              ? ""
+              : filter.blocked
+                ? " AND issue_plan_tasks.blocker IS NOT NULL"
+                : " AND issue_plan_tasks.blocker IS NULL"
           const rows = yield* io("Could not read issue tasks", () =>
-            page.after === undefined
-              ? database
-                  .prepare(
-                    `SELECT ${taskColumns} FROM issue_plan_tasks WHERE plan_id = ? ORDER BY issue_plan_tasks.id LIMIT ?`,
-                  )
-                  .all(plan.id, page.limit + 1)
-              : database
-                  .prepare(
-                    `SELECT ${taskColumns} FROM issue_plan_tasks WHERE plan_id = ? AND issue_plan_tasks.id > ? ORDER BY issue_plan_tasks.id LIMIT ?`,
-                  )
-                  .all(plan.id, page.after, page.limit + 1),
+            database
+              .prepare(
+                `SELECT ${taskColumns} FROM issue_plan_tasks WHERE plan_id = ?${cursorPredicate}${statusPredicate}${blockerPredicate} ORDER BY issue_plan_tasks.id LIMIT ?`,
+              )
+              .all(
+                plan.id,
+                ...(after === undefined ? [] : [after]),
+                ...(filter.status === undefined ? [] : [filter.status]),
+                page.limit + 1,
+              ),
           )
           const tasks = yield* decode(
             Schema.Array(TaskRowSchema),
