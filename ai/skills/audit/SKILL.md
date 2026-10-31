@@ -42,8 +42,9 @@ stop and ask rather than auditing everything by accident.
 
 ## 2. Detect the VCS/stacking tool and preflight
 
-The action opens branches and PRs, so detect the tool (same as `/review-sweep`)
-and require a clean tree.
+The action opens branches and PRs, so detect the tool (same as `/review-sweep`).
+Complete the directory-ignore preflight before requiring a clean tree or writing
+artifacts.
 
 ```bash
 git_common_dir=$(git -C "$repo_root" rev-parse --path-format=absolute --git-common-dir)
@@ -52,15 +53,37 @@ if [ "$repo_root" != "$main_root" ]; then tool=git
 elif [ -d "$git_common_dir/gitbutler" ]; then tool=gitbutler
 else tool=git
 fi
-git -C "$repo_root" status --porcelain   # must be clean — fixes go on new branches off trunk
 trunk=$(git -C "$repo_root" symbolic-ref refs/remotes/origin/HEAD --short 2>/dev/null | sed 's#^origin/##' || echo master)
 start_branch=$(git -C "$repo_root" rev-parse --abbrev-ref HEAD)   # return here at the end
 ```
 
-If the tree is dirty, stop and tell the user (uncommitted work would leak into
-the fix branches). GitButler is main-worktree-only; every linked, isolated, or
-scratch worktree uses plain Git without probing `but`. In a verified GitButler
-main worktree, confirm workspace mode (`but status` ok) as `/review-sweep` does.
+GitButler is main-worktree-only; every linked, isolated, or scratch worktree uses
+plain Git without probing `but`. In a verified GitButler main worktree, confirm
+workspace mode (`but status` ok) as `/review-sweep` does.
+
+Record the working-tree/index state, then verify directory-wide `.tmp/`
+coverage with `git check-ignore --verbose` on the directory itself and the
+intended artifact path. A file-specific match does not establish directory
+coverage. If coverage is missing, immediately add the directory pattern to this
+checkout's `.gitignore`, preserving existing rules and without asking for
+separate approval, then recheck both paths. Apply the same rule to `.worktrees/`
+whenever it is used; this does not authorize creating a worktree.
+
+Account for an owned ignore repair as a separate preflight unit through the
+repository's already-authorized checkpoint/publication workflow before starting
+the audit. Isolate only the new ignore hunk; never commit pre-existing changes
+with it. This unit is required even when the audit later finds nothing. Preserve
+normal publication gates: an ignore repair does not authorize an otherwise
+unapproved PR, merge, or branch-protection bypass. If a safe scoped checkpoint
+or its required publication is blocked, leave the repair saved and report the
+exact blocker rather than starting another work unit.
+
+After accounting for the repair, require a clean working tree/index; stop and
+report any remaining unrelated changes without discarding them. Fix clusters
+start from clean branches off trunk. Recheck ignore coverage after each checkout
+transition, including returning to `start_branch`, before using either directory.
+Immediately repair missing coverage and account for that repair as its own
+preflight unit; never carry an unstaged ignore repair between fix clusters.
 
 ## 3. Prepare the workspace and build the audit target
 
@@ -255,8 +278,10 @@ each exact draft and obtain confirmation before creating it.
 4. **Every PR compiles and passes `check_cmd` before it is opened.** Fixes are
    surgical and scoped to the cluster; re-verify each finding against current
    source first.
-5. **Clean tree to start; never leak unrelated changes** into fix branches.
-   Return to the start branch at the end.
+5. **Clean tree after the directory-ignore preflight; never leak unrelated
+   changes** into fix branches. Account for owned ignore repairs separately,
+   including zero-finding audits and checkout transitions. Return to the start
+   branch at the end.
 6. The audit target is a synthetic diff against the empty tree — everything
    shown is in scope; "pre-existing/out of scope" never applies.
 7. The review runs as a single `Workflow` invocation per pass (review-core) —
@@ -264,7 +289,9 @@ each exact draft and obtain confirmation before creating it.
    4): agy `--sandbox` and never `--dangerously-skip-permissions`.
 8. **Filing deferred findings is gated**: show drafts, confirm, then create. Use
    GitHub issues with problem-only descriptions.
-9. Never silently modify `.gitignore` — ask before adding `.tmp/` if missing.
+9. Immediately add missing `.tmp/` or `.worktrees/` directory patterns to the
+   containing checkout's `.gitignore` when used. Preserve existing rules; no
+   separate approval is needed.
 
 ## Failure modes
 

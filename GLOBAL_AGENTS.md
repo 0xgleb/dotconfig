@@ -1,8 +1,12 @@
 # Global agent operating rules
 
-This is the canonical global policy for every harness. Harness-specific tool
-availability comes from the active tool set; repository-local AGENTS.md files
-provide project workflows, not competing global policy.
+This is the canonical global policy for engineering harnesses configured to use
+it. Harness-specific tool availability comes from the active tool set;
+repository-local AGENTS.md files provide local workflows, not copies of global
+policy.
+
+Codex keeps its own `~/.codex/AGENTS.md` for research and administrative work.
+Do not replace that file with this policy or merge its distinct rules here.
 
 ## Global resources and delivery
 
@@ -47,7 +51,8 @@ the harness, and suppress duplicates without agent polling.
 ## Scope, execution, and safety
 
 - Read project instructions and relevant source before acting. Verify unfamiliar
-  commands and flags instead of guessing.
+  commands and flags instead of guessing. Never invent concrete values, URLs or
+  repository facts; report unresolved gaps rather than filling them with guesses.
 - Do not install or use persistent-memory extensions, memory-writing/search
   tools, automated learning, or memory-injected prompts. Correct standing rules
   directly in the applicable AGENTS.md; keep task state in todos or handoffs.
@@ -271,6 +276,16 @@ the harness, and suppress duplicates without agent polling.
   supervisor, release, or deployment process. Inspect any referenced
   configuration before cleanup and preserve a cleanup root containing a
   configured live artifact unless disruption is explicitly requested.
+- In a Git checkout, whenever `.tmp/` or `.worktrees/` is used, verify effective
+  directory-wide coverage with `git check-ignore --verbose` on the directory
+  itself and the intended artifact path. A file-specific match such as `*.log`
+  does not establish directory coverage. If coverage is missing, immediately add
+  the matching directory pattern to that checkout's `.gitignore` and recheck
+  both paths before continuing. Preserve existing ignore rules. No
+  separate approval is needed for these two directory patterns; this grants no
+  worktree-creation or unrelated source-change authority. Outside a Git checkout,
+  Git-ignore coverage is not applicable; do not initialize a repository merely
+  to apply this rule.
 - Never inject keystrokes or text into the user's active Zellij pane or editor;
   it can overwrite an in-progress prompt. Use registered tools such as
   `reload_pi` instead, and keep Zellij automation confined to isolated workers.
@@ -306,6 +321,9 @@ the harness, and suppress duplicates without agent polling.
   packages, and upstream examples for a solution or reference. Prefer compatible
   packages; write local code only after checking the options, preserving
   upstream ownership and licenses.
+- Keep shared skills in the canonical repository; verify harness discovery links
+  resolve to that source before claiming activation. After changing managed Pi
+  resources, use the registered reload tool. A queued reload is not activation proof.
 - Use only authenticated, permitted models and the current harness's supported
   delegation path. Do not infer capabilities from model names or stale harness
   instructions. Do not switch billing providers or harnesses as a workaround
@@ -314,14 +332,21 @@ the harness, and suppress duplicates without agent polling.
   control flow, failures, and ownership visible. Prefer strict typing and
   linting, public API before implementation details, and explicit domain states
   over boolean flags. Do not introduce speculative abstractions or wrappers
-  hiding domain logic.
+  hiding domain logic. Package by feature rather than technical layer. Keep API
+  documentation and necessary explanations; omit comments that merely narrate code.
+- Record confirmed significant, hard-to-reverse architectural decisions through
+  the `adr` skill. Settle unresolved architectural choices with the owner before
+  proceeding; do not turn routine implementation into a new approval gate.
 - Follow type-driven test-first work: define the contract, write a compiling
   test that fails on the required behavior, then implement and refine. Type
   prerequisites may precede the failing test; behavioral logic may not.
   Reproduce bugs through realistic production paths and data, not unreachable
   internal states fabricated only for a test. Malformed boundary inputs still
   require tests. Run relevant tests and inspect the final diff; retain only
-  justified changes.
+  justified changes. Preserve uncertain changes while reconciling current owner
+  intent, task records, repository history and ownership evidence. Lost context
+  does not authorize reverting work; remove only evidenced agent-owned unjustified
+  deltas.
 - Keep durable tasks granular and linked to the project's tracker. Record
   requests, corrections, blockers, and next actions without replacing a direct
   answer with task bookkeeping. Preserve deferred work and explicit constraints.
@@ -330,7 +355,8 @@ the harness, and suppress duplicates without agent polling.
   fix every valid finding and explain invalid findings at completion.
 - Structure roadmaps as priority-ordered epics, not numbered phases. Use
   dependency graphs where useful; expose independent deliverables without
-  manufacturing parallel mutation authority.
+  manufacturing parallel mutation authority. Give each epic a short goal and
+  linked checklist; keep completed epics at the bottom.
 - Use only the browser session assigned to the task. Never take over an
   application active in another browser session or accept a "Use here" takeover.
   Stop that interaction and report the conflict; keep tabs, authentication, and
@@ -339,8 +365,8 @@ the harness, and suppress duplicates without agent polling.
   explicit authorization. No unsolicited issue/PR comments, review verdicts,
   reviewer changes, reactions, social posts, merges, or deployment. Authorized
   scoped artifacts and standing workflows retain their exact exceptions. Do not
-  give yourself authorship credit; inspect repository commit style before
-  writing a message, and follow its PR template.
+  give yourself authorship credit; inspect repository commit and PR-title style
+  before writing them, and follow the repository's PR template.
 - Private conversations and agent-bus messages never become public artifacts,
   whether quoted, lightly paraphrased, or attributed to their sender. Publish
   neutral technical substance, not personal circumstances, reactions, private
@@ -358,7 +384,9 @@ the harness, and suppress duplicates without agent polling.
   template, or Motivation / Solution when no template exists. Keep descriptions
   current. Transport Markdown as real bytes, not literal shell escape sequences;
   verify the remote body after publication and repair transport errors without
-  expanding content authority.
+  expanding content authority. Keep descriptions free of process journals and
+  empty sections; use concise bullets. Use `@path/to/file.md` references in prose
+  intended for Claude-compatible tooling.
 - Use the shared reporting, question, and editorial procedures where available.
   Owner-facing questions need enough context to decide and clickable resource
   links. Agent-authored Telegram content requires independent review; use a
@@ -372,7 +400,8 @@ the harness, and suppress duplicates without agent polling.
   environment-prefix overrides. Show build/test output live, avoid opaque
   long-running calls, and verify state transitions. Do not hide warnings or
   dismiss failures as merely pre-existing; triage or route them within the
-  current authorized scope.
+  current authorized scope. Keep commands focused and individually reviewable;
+  inspect working-tree and index state before destructive operations.
 
 ## Cross-session handover
 
@@ -381,7 +410,9 @@ the harness, and suppress duplicates without agent polling.
   continuation. Invoking `/handover` is a terminal stop boundary for the current
   work session: immediately pause implementation, review, merge, publication,
   tests, cleanup, and unrelated investigation; perform only bounded state reads,
-  durable todo reconciliation, artifact writing, and the final handover report.
+  durable todo reconciliation, required `.gitignore` directory-pattern repairs,
+  artifact writing, and the final handover report. The ignore repair does not
+  authorize resumed implementation, cleanup, tests, or publication.
   The handover artifact must come from verified repository state and remain
   temporary and untracked. For a single-repository session, write it beneath the
   current project-role workspace's `.tmp/handoffs/`, even when that workspace is
