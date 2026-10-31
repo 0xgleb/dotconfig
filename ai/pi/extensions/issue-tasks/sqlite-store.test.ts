@@ -21,6 +21,7 @@ import {
   type SqliteTaskStore,
   type TaskId,
   type TaskFilter,
+  type TaskReadQuery,
 } from "./sqlite-store.ts"
 
 const run = Effect.runPromise
@@ -114,6 +115,222 @@ const appendTask = (store: SqliteTaskStore, target: IssueReference = issue()) =>
       cancellation: "forbidden",
     },
   )
+
+test(
+  "multi-issue task reads echo ordered qualified pages, repeated filters and missing state",
+  { timeout: 5_000 },
+  async () =>
+    fixture(async root => {
+      await withStore(join(root, "tasks.sqlite"), async store => {
+        const other = issue("other/repo")
+        const missing = issue("missing/repo")
+        await run(appendTask(store))
+        await run(appendTask(store, other))
+        const first = await run(store.readTasks(issue(), { limit: 1 }))
+        const second = await run(store.readTasks(other, { limit: 1 }))
+        assert.ok(Option.isSome(first) && Option.isSome(second))
+
+        const pages = await run(
+          store.readManyTasks([
+            { issue: other, page: { limit: 1 } },
+            { issue: missing, page: { limit: 1 } },
+            { issue: issue(), page: { limit: 1 } },
+            { issue: issue(), page: { limit: 1 }, filter: { status: "done" } },
+          ]),
+        )
+
+        assert.deepEqual(pages, [
+          { issue: other, page: second.value },
+          { issue: missing, page: null },
+          { issue: issue(), page: first.value },
+          {
+            issue: issue(),
+            page: { issue: issue(), revision: 1, tasks: [], next: null },
+          },
+        ])
+        assert.ok(
+          Object.isFrozen(pages) &&
+            pages.every(
+              page =>
+                Object.isFrozen(page) &&
+                Object.isFrozen(page.issue) &&
+                (page.page === null || Object.isFrozen(page.page)),
+            ),
+        )
+      })
+    }),
+)
+
+test(
+  "multi-issue task reads retain text and revisions across a concurrent SQLite commit",
+  { timeout: 5_000 },
+  async () =>
+    fixture(async root => {
+      const path = join(root, "tasks.sqlite")
+      await withStore(path, async store => {
+        const other = issue("other/repo")
+        const owner = seedIssueRecord(path)
+        const otherOwner = seedIssueRecord(path, other)
+        seedTask(path, owner, ids[0], "Old A")
+        seedTask(path, otherOwner, ids[1], "Old B")
+        const prepare = DatabaseSync.prototype.prepare
+        let advanced = false
+        const interception = mock.method(
+          DatabaseSync.prototype,
+          "prepare",
+          function (this: DatabaseSync, query: string) {
+            const statement = prepare.call(this, query)
+            if (
+              query.includes("FROM issue_plan_tasks WHERE plan_id = ?") &&
+              query.includes("ORDER BY")
+            ) {
+              const all = statement.all
+              Object.defineProperty(statement, "all", {
+                value: (...parameters: readonly unknown[]) => {
+                  const result: unknown = Reflect.apply(
+                    all,
+                    statement,
+                    parameters,
+                  )
+                  if (!advanced) {
+                    advanced = true
+                    sql(path, writer => {
+                      writer.exec("BEGIN IMMEDIATE")
+                      writer
+                        .prepare(
+                          "UPDATE issue_plan_tasks SET text = 'New B' WHERE id = ?",
+                        )
+                        .run(ids[1])
+                      writer
+                        .prepare(
+                          "UPDATE issue_plans SET revision = 1 WHERE id = ?",
+                        )
+                        .run(otherOwner)
+                      writer.exec("COMMIT")
+                    })
+                  }
+                  return result
+                },
+              })
+            }
+            return statement
+          },
+        )
+        try {
+          const pages = await run(
+            store.readManyTasks([
+              { issue: issue(), page: { limit: 1 } },
+              { issue: other, page: { limit: 1 } },
+            ]),
+          )
+
+          assert.equal(advanced, true)
+          assert.deepEqual(
+            pages.map(result => ({
+              issue: result.issue,
+              revision: result.page?.revision,
+              text: result.page?.tasks[0]?.text,
+            })),
+            [
+              { issue: issue(), revision: 0, text: "Old A" },
+              { issue: other, revision: 0, text: "Old B" },
+            ],
+          )
+        } finally {
+          interception.mock.restore()
+        }
+        const latest = await run(store.readTasks(other, { limit: 1 }))
+        assert.ok(Option.isSome(latest))
+        assert.equal(latest.value.revision, 1)
+        assert.equal(latest.value.tasks[0]?.text, "New B")
+      })
+    }),
+)
+
+test(
+  "multi-issue task reads reject every malformed query and excess budget before fetching tasks",
+  { timeout: 5_000 },
+  async () =>
+    fixture(async root => {
+      await withStore(join(root, "tasks.sqlite"), async store => {
+        await run(appendTask(store))
+        const query = { issue: issue(), page: { limit: 1 } }
+        const fetched: string[] = []
+        const prepare = DatabaseSync.prototype.prepare
+        const interception = mock.method(
+          DatabaseSync.prototype,
+          "prepare",
+          function (this: DatabaseSync, text: string) {
+            if (text.includes("FROM issue_plan_tasks")) fetched.push(text)
+            return prepare.call(this, text)
+          },
+        )
+        try {
+          for (const queries of [
+            null,
+            [],
+            Array.from({ length: 101 }, () => query),
+            [
+              { ...query, page: { limit: 51 } },
+              { ...query, page: { limit: 50 } },
+            ],
+            [query, { ...query, page: { limit: 101 } }],
+            [query, { ...query, filter: { blocked: "false" } }],
+            [query, { ...query, authority: "owner" }],
+            [query, { ...query, [Symbol("hidden")]: true }],
+          ])
+            await expectError(
+              store.readManyTasks(queries as readonly TaskReadQuery[]),
+              "invalid_input",
+            )
+        } finally {
+          interception.mock.restore()
+        }
+        assert.deepEqual(fetched, [])
+        const unchanged = await run(store.readTasks(issue(), { limit: 1 }))
+        assert.ok(Option.isSome(unchanged))
+        assert.equal(unchanged.value.revision, 1)
+      })
+    }),
+)
+
+test(
+  "multi-issue task reads accept the maximum budget and roll back later cursor failures",
+  { timeout: 5_000 },
+  async () =>
+    fixture(async root => {
+      await withStore(join(root, "tasks.sqlite"), async store => {
+        await run(appendTask(store))
+        const query = { issue: issue(), page: { limit: 1 } }
+        const pages = await run(
+          store.readManyTasks(Array.from({ length: 100 }, () => query)),
+        )
+        assert.equal(pages.length, 100)
+        assert.ok(
+          pages.every(
+            result =>
+              result.page?.tasks.length === 1 && result.page.revision === 1,
+          ),
+        )
+        const first = pages[0]?.page?.tasks[0]
+        assert.ok(first)
+        await expectError(
+          store.readManyTasks([
+            query,
+            {
+              issue: issue("missing/repo"),
+              page: { limit: 1, after: first.id },
+            },
+          ]),
+          "invalid_input",
+        )
+        const afterFailure = await run(store.readManyTasks([query]))
+        assert.deepEqual(afterFailure, [pages[0]])
+        await run(store.close())
+        await expectError(store.readManyTasks([query]), "closed")
+      })
+    }),
+)
 
 test("filtered task pages combine status and factual blocker without changing issue state", async () =>
   fixture(async root => {

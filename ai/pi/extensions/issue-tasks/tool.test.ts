@@ -791,6 +791,111 @@ for (const failure of ["defect", "interrupt"] as const) {
   )
 }
 
+test("actual SDK executes readMany without mutation grants or live workers", async () =>
+  fixture(async store => {
+    let hostCalls = 0
+    const tool = register({
+      ...ordinaryOptions(store),
+      contextForCall: () => {
+        hostCalls += 1
+        return Effect.fail(
+          new tools.TaskHostError({
+            code: "host_unavailable",
+            message: "No grants",
+          }),
+        )
+      },
+    })
+
+    const result = await invoke(tool, {
+      action: "readMany",
+      queries: [{ issue: rawIssue, page: { limit: 1 } }],
+    })
+
+    assert.deepEqual(result.details.outcome, {
+      kind: "pages",
+      pages: [{ issue: issue(), page: null }],
+    })
+    assert.equal(hostCalls, 0)
+    assert.notEqual(result.isError, true)
+  }))
+
+test("actual SDK readMany retains each query filter and bounds failures before store access", async () =>
+  fixture(async store => {
+    await invoke(register(ordinaryOptions(store)), addRequest, "seed-many")
+    let storeCalls = 0
+    let hostCalls = 0
+    const tool = register({
+      ...ordinaryOptions(store),
+      store: {
+        ...store,
+        readManyTasks: queries => {
+          storeCalls += 1
+          return store.readManyTasks(queries)
+        },
+      },
+      contextForCall: () => {
+        hostCalls += 1
+        return Effect.fail(
+          new tools.TaskHostError({
+            code: "host_unavailable",
+            message: "No grant",
+          }),
+        )
+      },
+    })
+    const query = { issue: rawIssue, page: { limit: 1 } }
+    const result = await invoke(tool, {
+      action: "readMany",
+      queries: [
+        { ...query, filter: { status: "done" } },
+        { ...query, filter: { status: "todo", blocked: false } },
+      ],
+    })
+    assert.equal(result.details.outcome.kind, "pages")
+    if (result.details.outcome.kind !== "pages")
+      assert.fail("Expected qualified pages")
+    assert.deepEqual(
+      result.details.outcome.pages.map(page => page.page?.tasks.length),
+      [0, 1],
+    )
+    assert.equal(storeCalls, 1)
+    const rejected = await invoke(tool, {
+      action: "readMany",
+      queries: [
+        { ...query, page: { limit: 51 } },
+        { ...query, page: { limit: 50 } },
+      ],
+    })
+    assert.equal(rejected.details.outcome.kind, "failed")
+    if (rejected.details.outcome.kind !== "failed")
+      assert.fail("Expected invalid query budget")
+    assert.equal(rejected.details.outcome.code, "invalid_queries")
+    assert.equal(storeCalls, 1)
+    assert.equal(hostCalls, 0)
+  }))
+
+test("readMany output failure retains complete qualified results without failed-read metadata", async () =>
+  fixture(async store => {
+    const tool = register({
+      ...ordinaryOptions(store),
+      renderOutput: () =>
+        Effect.fail(
+          new tools.TaskOutputError({ message: "Private output failure" }),
+        ),
+    })
+    const result = await invoke(tool, {
+      action: "readMany",
+      queries: [{ issue: rawIssue, page: { limit: 1 } }],
+    })
+    assert.deepEqual(result.details, {
+      outcome: { kind: "pages", pages: [{ issue: issue(), page: null }] },
+      output: "unavailable",
+    })
+    assert.notEqual(result.isError, true)
+    assert.ok(!JSON.stringify(result).includes("Private output failure"))
+  }))
+
 test("actual SDK forwards filtered issue reads without resolving mutation grants", async () =>
   fixture(async store => {
     await invoke(register(ordinaryOptions(store)), addRequest, "seed-filter")
