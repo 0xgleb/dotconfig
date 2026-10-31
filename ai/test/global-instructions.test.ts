@@ -23,8 +23,9 @@ test("one non-autodiscovered global source replaces the two divergent global fil
 })
 
 test("consolidation preserves global safeguards and project-local guidance", () => {
-  const global = readFileSync(globalPath, "utf8")
-  const project = readFileSync(`${root}AGENTS.md`, "utf8")
+  const global = readFileSync(globalPath, "utf8").replace(/\s+/gu, " ")
+  const project = readFileSync(`${root}AGENTS.md`, "utf8").replace(/\s+/gu, " ")
+
   assert.ok(global.includes("Preserve uncertain changes"))
   assert.ok(global.includes("verify harness discovery links"))
   assert.ok(global.includes("registered reload tool"))
@@ -67,8 +68,10 @@ test("repository CLAUDE instructions resolve to repository policy, not global po
   )
   const project = readFileSync(`${root}AGENTS.md`, "utf8")
   assert.ok(
-    /purpose-named branch/.test(project) && /open a draft PR/.test(project),
-    "Project publication workflow remains local",
+    /Follow the workspace publication and delivery rules in\s+`GLOBAL_AGENTS.md`/.test(
+      project,
+    ),
+    "Project policy must reference the canonical global publication workflow",
   )
   assert.ok(
     /Do not use `rustaceanvim`/.test(project),

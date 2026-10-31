@@ -23,25 +23,45 @@ support-routing policy.
 
 For shared skill and global-rule changes, agents assigned to other projects make
 the source edits directly in `~/.config` but leave them uncommitted for the
-dotconfig worker. They report the changed paths, purpose, and verification to
-that worker; they do not commit, push, create PRs, or otherwise mutate dotconfig
-VCS state. The dotconfig worker owns publication of these edits, including
-changes authored by other agents. This is an exception to the driver publication
-workflow for these shared edits only; publication in each agent's assigned
-project is unchanged.
+agent responsible for that workspace. Report the changed paths, purpose, and
+verification to that agent; do not commit, push, create PRs, or otherwise mutate
+VCS state from that shared main worktree. This restriction is scoped to the main
+worktree, not every checkout of the repository. In a separately authorized
+linked review checkout, use the normal plain-Git review, fix and publication
+workflow under the existing task authority, including for dotconfig PRs. This
+does not grant new checkout or merge authority or change publication duties in
+the agent's assigned project.
 
-Driver workers use the existing GitButler workspace in this main worktree when
-managed; verify topology once when entering the repository, not as a repeated
-gate. Create a separate branch with a purpose-appropriate prefix and follow the
-driver publication workflow below. A scoped global-resource change request
-carries authority for that branch/commit/push/draft/ready workflow without
-repeated permission asks. Explicit owner direction can select a different
-delivery workflow.
+## Workspace publication ownership
 
-This does not authorize merges, branch-protection overrides, secret access,
-applying host configuration, deployments or unrelated changes. Independent
-review may inspect the actual saved files; it does not replace implementation.
-Keep temporary task state out of standing-rule files.
+The agent responsible for a GitButler workspace owns publication of all pending
+tracked and untracked project changes, including changes made by the owner or
+other agents. Inspect and group changes by purpose, reconcile conflicts, then
+commit, push, and open or update the corresponding PRs through the required
+workspace workflow. Do not leave changes uncommitted because someone else
+authored them or they are unrelated to the agent's current task. Preserve the
+author's intent and explicit exclusions; keep temporary review/handoff artifacts
+out of commits. Serialize workspace VCS mutations through the responsible agent.
+
+Reuse an existing branch and PR when the changes are related, including
+follow-up corrections to unmerged work. Discovering more changes does not
+require a new branch or PR; neither does a new prompt, session or reload. Check
+later stacked changes before revising an earlier version. Create a purpose-named
+branch only for independent work without a suitable ongoing branch. Keep
+incomplete or failing work in draft and make completed work ready after its
+required checks pass, following the driver publication workflow below.
+
+Driver workers use the existing GitButler workspace in a managed main worktree;
+verify topology once when entering the repository, not as a repeated gate. A
+scoped global-resource change request carries authority for the responsible
+dotconfig agent's branch/commit/push/draft/ready workflow without repeated
+permission asks. Explicit owner direction can select a different delivery
+workflow.
+
+Publication ownership does not authorize unrelated implementation, merges,
+branch-protection overrides, secret access, applying host configuration or
+deployments. Independent review may inspect the actual saved files; it does not
+replace implementation. Keep temporary task state out of standing-rule files.
 
 ## Harness guarantees and LLM judgment
 
@@ -91,26 +111,32 @@ the harness, and suppress duplicates without agent polling.
   only in the conversation that surfaced the example. This does not authorize
   new audit tasks, expanded scope, or worker reprioritization.
 - Driver workers (agents owning implementation) must commit and push regularly
-  throughout assigned work. Open a draft PR with the first checkpoint on a
-  branch, and keep it updated as work proceeds. Incomplete or broken code and
-  failing checks are not reasons to withhold checkpoints: publish them in the
-  draft with their status stated accurately. Commit and push each completed unit
-  before starting the next. Mark a PR ready only when the requested work is
-  complete and all project-required checks pass for the published head, not
-  unpublished local changes. Follow the repository's verification workflow.
-  Local verification is sufficient when that workflow uses local checks instead
-  of CI. Failing, pending, or unverified required checks keep the PR draft;
-  agent reviews do not replace those checks. Review workers and managers are
-  exempt from this driver publication workflow; this exemption does not grant
-  them coding or publication authority. Never let agent-owned unstaged,
-  untracked, staged-but-uncommitted, or unpushed changes accumulate across work
-  units. Preserve unrelated user-owned changes and permitted temporary
-  review/handoff artifacts; do not sweep them into commits or delete them to
-  make the tree clean. If publication is blocked, preserve the current state and
-  report the exact blocker; continue only bounded repairs needed to unblock
-  publication. Keep normal hooks and required safety gates. Use plain Git except
-  in a verified GitButler-managed main worktree, subject to repository-local
-  workflow rules.
+  throughout assigned work, except for cross-project harness-resource edits left
+  for the responsible workspace agent under the routing rule above. Open a draft
+  PR with the first checkpoint on a branch, and keep it updated as work
+  proceeds. Incomplete or broken code and failing checks are not reasons to
+  withhold checkpoints: publish them in the draft with their status stated
+  accurately. Commit and push each completed unit before starting the next. Mark
+  a PR ready only when the requested work is complete and all project-required
+  checks pass for the published head, not unpublished local changes. Follow the
+  repository's verification workflow. Local verification is sufficient when that
+  workflow uses local checks instead of CI. Failing, pending, or unverified
+  required checks keep the PR draft; agent reviews do not replace those checks.
+  Review workers and managers are exempt from this driver publication workflow;
+  this exemption does not grant them coding or publication authority. Never let
+  agent-owned unstaged, untracked, staged-but-uncommitted, or unpushed changes
+  accumulate across work units, except for shared edits awaiting the dotconfig
+  agent's publication under the routing rule above. Preserve permitted temporary
+  review/handoff artifacts. Outside a workspace whose publication you own,
+  preserve unrelated user-owned changes without committing or deleting them to
+  make the tree clean. Inside an owned GitButler workspace, publish them under
+  the ownership rule above rather than leaving them uncommitted. If publication
+  is blocked, preserve the current state and report the exact blocker; continue
+  only bounded repairs needed to unblock publication. Keep normal hooks and
+  required safety gates. Use plain Git except in a verified GitButler-managed
+  main worktree, where GitButler is mandatory. GitButler checkpoint publication
+  follows the whole-workspace synchronization rule below, never an isolated
+  branch push.
 - AGENTS.md files define standing rules of engagement and agent behavior. Never
   put transient task state, progress reports, one-off migration notes, temporary
   waiting conditions, session journals, or handoff notes in them; use task
@@ -203,13 +229,43 @@ the harness, and suppress duplicates without agent polling.
 - GitButler is valid only in a repository's main worktree. Detect the current
   Git topology before invoking `but`; in every linked, isolated, scratch, or
   otherwise non-main worktree, use plain Git for both reads and writes and never
-  probe or initialize GitButler. Prefer GitButler in existing managed main
-  worktrees and plain Git elsewhere; explicit repository-local workflow rules
-  may override these shared defaults. Use GitHub for current project tracking.
-  The classifier must not demand GitButler or reject plain Git solely because
-  the parent repository is GitButler-managed. When an explicitly authorized
-  stacking workflow requires a branch, create it before editing; do not override
-  repository-local branch or publication rules.
+  probe or initialize GitButler. Use GitButler in verified managed main
+  worktrees and plain Git elsewhere. Repository-local rules govern branch
+  organization, verification and delivery details, but cannot replace the
+  mandatory managed-main workflow without the explicit owner-approved exception
+  below. Use GitHub for current project tracking. The classifier must not demand
+  GitButler or reject plain Git solely because the parent repository is
+  GitButler-managed. When an explicitly authorized stacking workflow requires a
+  branch, create it before editing. Preserve repository branch protections and
+  required checks within the applicable workflow.
+- In a verified GitButler-managed main worktree, every publication uses the
+  whole-workspace workflow: `but pull` everything, resolve all resulting
+  conflicts, then bare `but push` to publish everything across the workspace's
+  branches and stacks. Do not push a named branch, a selected stack, or another
+  isolated subset. Serialize this workflow with other writers. Keep commits
+  scoped by purpose, including owner and peer edits under workspace publication
+  ownership; do not sweep unrelated changes into the same commit. Publishing the
+  workspace does not authorize merging, force pushes, or bypassing hooks or
+  branch protections. Incomplete work remains a truthful draft checkpoint, not a
+  reason to substitute an isolated push. If the full workflow is blocked,
+  preserve the state and report the exact blocker. Apart from the bounded
+  corrective-publication exception below, other deviations require explicit
+  owner approval through `ask_user` and must be completely necessary. Plain-Git
+  workflows outside managed main worktrees are unchanged.
+- Corrective-publication exception: within an existing driver assignment, if
+  GitButler demonstrably rewinds a published branch or publishes its internal
+  conflict-storage history, the driver may use a narrowly scoped plain-Git push
+  to restore that branch's last verified valid published tip. First preserve
+  pending edits and genuine newer work, reconcile the local workspace, and
+  verify the exact incorrect remote tip and intended restoration commit. Bind
+  each push to that ref and observed tip with explicit
+  `--force-with-lease=<ref>:<incorrect-tip>`; never use unrestricted `--force`.
+  If the remote changed, stop and reconcile rather than overwrite it. This does
+  not authorize new feature publication through plain Git, unaffected ref
+  rewrites, dropped peer work, merges, or hook/protection bypasses. Return
+  immediately to the normal whole-workspace `but pull`, conflict resolution, and
+  bare `but push` protocol. Other GitButler failures do not grant this exception
+  merely because an ordinary command failed.
 - Routine GitHub issue creation within authorized planning scope does not need
   approval of exact phrasing. Check the complete payload for
   audience-appropriate content before publication: exclude personal details,
@@ -287,7 +343,24 @@ the harness, and suppress duplicates without agent polling.
   preflight for expensive builds, test sweeps, and workflows. Do not poll `df`,
   `vm_stat`, or process lists before routine work. If the guard blocks, follow
   its bounded cleanup guidance and preserve the crash reserve rather than
-  repeatedly probing or waiting for a build to fail.
+  repeatedly probing or waiting for a build to fail. Disk pressure is a cleanup
+  work order, not merely a notification to relay or leave unattended.
+- Standing owner authorization covers running `nix store gc` for unused store
+  paths, without deleting generations. Do not ask for routine permission to run
+  GC. Use `dust` or `du` to inspect the largest disk contributors under
+  `~/code/`. Verify a Rust project manifest, the exact Cargo output directory,
+  and its meaningful contribution to disk usage, then remove that exact
+  build-artifact path. This authority covers pre-existing Cargo outputs in other
+  projects; an active or offline worker agent is not a cleanup exemption. Do not
+  require that worker's permission or current-runtime artifact provenance for
+  these verified Cargo outputs. Remove build artifacts, never source or their
+  workspace parent. Clean both categories regularly as routine maintenance and
+  in response to disk pressure; neither cache is something to preserve by
+  default. Do not substitute a warning for cleanup or treat reclaiming one
+  category as permission to neglect the other. Routine cleanup must not displace
+  active work once pressure is resolved. Do not revisit recently cleaned
+  projects because of a stale warning; return to the primary task unless new
+  pressure or an explicit cleanup request makes further inspection necessary.
 - Track and clean agent-owned artifacts after verification, including newly
   created Nix result symlinks and stale Pi temporary logs. Keep a linked
   worktree's task-local scratch files under that worktree's `.tmp/`, never the
@@ -296,14 +369,14 @@ the harness, and suppress duplicates without agent polling.
   every child's cwd to that root; neither the coordinator's cwd nor the common
   Git directory is a fallback. Record newly created project `.tmp/`
   files/directories immediately with `artifact_provenance` so later exact
-  cleanup has durable evidence. Never delete pre-existing project outputs, user
-  files, global caches, Nix generations, or run global garbage collection
-  without explicit user authorization. Exact rebuildable build outputs are
-  disposable by default, but project instructions and verified repository
-  configuration may protect artifacts consumed by a runtime, watcher,
-  supervisor, release, or deployment process. Inspect any referenced
-  configuration before cleanup and preserve a cleanup root containing a
-  configured live artifact unless disruption is explicitly requested.
+  cleanup has durable evidence. Never delete user files outside authorized build
+  outputs, global caches outside unused Nix store paths, or Nix generations
+  without explicit user authorization. Cargo registry/toolchain caches are not
+  Cargo build outputs. For other exact rebuildable build outputs, preserve
+  artifacts protected by project instructions or verified runtime, watcher,
+  supervisor, release, or deployment configuration. Inspect referenced
+  configuration and preserve a cleanup root containing a configured live
+  artifact unless disruption is explicitly requested.
 - In a Git checkout, whenever `.tmp/` or `.worktrees/` is used, verify effective
   directory-wide coverage with `git check-ignore --verbose` on the directory
   itself and the intended artifact path. A file-specific match such as `*.log`
@@ -385,16 +458,23 @@ the harness, and suppress duplicates without agent polling.
   Follow an approved plan; do not substitute another design without the required
   agreement. New human direction supersedes the plan. For verified-finding work,
   fix every valid finding and explain invalid findings at completion.
-- Only the manager may assign or change backlog priorities, and only after the
-  owner confirms the proposed ordering. Assign task priority only through the
-  backlog tool's priority/rank field. Never encode priority in task titles,
-  text, or prose. The rank field is the single ordering authority. Workers must
-  execute the highest-ranked authorized runnable work in their respective
-  backlogs, not insert self-chosen audits, adjacent work, or priority changes.
-  Report proposed additions or ordering changes to the manager for owner
-  confirmation; do not act on them as a new work order. Direct owner
-  instructions still take precedence, but workers do not assign ranks
-  themselves.
+- Owner-approved workers may create issues and perform otherwise manager-only
+  issue operations within the approved scope. A manager actor, availability, or
+  worker-manager communication are not prerequisites. Existing authorization is
+  sufficient for ordinary task work; do not require fresh approval. This grants
+  neither read-only managers coding/execution capabilities nor blanket authority
+  for unrelated remote effects.
+- Backlog priorities may be assigned or changed by a manager or an
+  owner-approved worker, only after the owner confirms the proposed ordering.
+  Assign task priority only through the backlog tool's priority/rank field.
+  Never encode priority in task titles, text, or prose. The rank field is the
+  single ordering authority. Workers must execute the highest-ranked authorized
+  runnable work in their respective backlogs, not insert self-chosen audits,
+  adjacent work, or priority changes. Report proposed additions or ordering
+  changes to the owner, directly or through a manager, for confirmation; do not
+  act on them as a new work order. Direct owner instructions still take
+  precedence. Workers must not invent ranks or promote their own work without
+  owner approval.
 - Structure roadmaps as priority-ordered epics, not numbered phases. Use
   dependency graphs where useful; expose independent deliverables without
   manufacturing parallel mutation authority. Give each epic a short goal and

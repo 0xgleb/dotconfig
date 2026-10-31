@@ -111,8 +111,9 @@ aliases and route by verified topology:
 
 Never invoke GitButler outside the main worktree; detect topology before routing
 instead of waiting for `but` to fail. These are shared defaults, not
-organization-specific rules; explicit repository-local workflows may override
-them. Do not migrate repositories, change branches, or rewrite history merely to
+organization-specific rules. Repository-local workflows remain subject to the
+global managed-main publication rule and its explicit owner-approval exceptions.
+Do not migrate repositories, change branches, or rewrite history merely to
 select a backend.
 
 Plain git commands (`add`, `commit`, `push`, `status`, `diff`, `log`, …) always
@@ -155,15 +156,10 @@ nu nushell/fj/routing.test.nu
 Use type-only Conventional Commit prefixes such as `fix:`, `feat:`, `refactor:`,
 `test:`, and `docs:` according to the change. Do not use `wip(pi):`.
 
-Requested global settings, skill, rule and harness-source changes follow
-`GLOBAL_AGENTS.md`: work directly in this repository's main worktree, create a
-separate purpose-named branch in the existing GitButler workspace, commit and
-push validated units continuously, open a draft PR and mark it ready only when
-the requested scope and verification are complete. Preserve unrelated changes.
-Do not hand routine Markdown edits to another agent or ask again for normal
-publication authority. Direct-to-master delivery requires explicit owner
-direction or a separately authorized role workflow; never merge or override
-branch protection as part of this default.
+Follow the workspace publication and delivery rules in `GLOBAL_AGENTS.md`.
+Direct-to-master delivery requires explicit owner direction or a separately
+authorized role workflow; never merge or override branch protection as part of
+this default.
 
 # Work Tracking
 

@@ -1,14 +1,14 @@
 ---
 name: review-pr
 user-invocable: true
-allowed-tools: Bash(gh:*), Bash(git:*), Bash(agy:*), Bash(command:*), artifact_provenance, Bash(cat:*), Bash(mktemp:*), Bash(rm:*), Bash(wc:*), Bash(uuidgen:*), Bash(basename:*), Bash(test:*), Bash(grep:*), Bash(find:*), Read, Write, Agent, Workflow, Skill
-description: Cross-review a pull request by number or URL without checking it out. Runs a multi-model Workflow panel with per-finding verification, then posts verified findings as a draft PR review. Never blocked by unavailable optional lanes.
+allowed-tools: Bash(gh:*), Bash(git:*), Bash(command:*), artifact_provenance, Bash(cat:*), Bash(mktemp:*), Bash(rm:*), Bash(wc:*), Bash(uuidgen:*), Bash(basename:*), Bash(test:*), Bash(grep:*), Bash(find:*), Read, Write, Agent, Workflow, Skill
+description: Cross-review a pull request by number or URL without checking it out. Runs a native Workflow panel with per-finding verification, then posts verified findings as a draft PR review. Required lane failures remain incomplete.
 argument-hint: <pr-number | pr-url>
 ---
 
 Cross-review a pull request that is **not** currently checked out. The PR number
 or URL is passed in `$ARGUMENTS`. Use when you're reviewing someone else's PR
-and want independent, multi-model analysis before commenting.
+and want independent native review lanes before commenting.
 
 The **review engine** (panel, probes, prompts, the `review-panel` Workflow,
 finding output) is shared with `/review-loop` and `/review-sweep` and lives in
@@ -96,21 +96,19 @@ PR being reviewed. Preserve ordinary publication gates. If the scoped checkpoint
 or required publication is blocked, leave the repair saved and report the exact
 blocker before starting another work unit.
 
-Only after coverage and any required repair checkpoint are established, call the
-registered `artifact_provenance` tool with the resolved absolute value of
-`out_dir`:
+After coverage and any required repair checkpoint are established, call the
+registered `artifact_provenance` tool with the resolved absolute `out_dir`:
 
 ```json
 { "action": "create_directory", "path": "<resolved absolute out_dir>" }
 ```
 
 Require successful creation and provenance recording before writing descendants.
-Use an available registered harness equivalent if the tool name differs; do not
-fall back to raw `mkdir`. Add `crossWorkspace: true` only for an explicitly
+Use an available registered harness equivalent if its tool name differs; do not
+fall back to raw `mkdir`. Add `crossWorkspace: true` only for an independently
 authorized target outside the tool session's workspace. The native UUID supplies
 the invocation namespace; the creation API does not promise exclusive
 allocation. Artifacts remain local-only and ephemeral.
-
 
 ## 3. Fetch the diff
 
@@ -170,14 +168,11 @@ Keep only the paths — they become `docsPaths` for the engine.
 
 ## 6. Run the review engine
 
-**Limit-blown days:** the review must still complete. Run review-core step 1,
-but apply its provider constraint first: every native Workflow lane, verifier,
-inspector, and external-command wrapper uses the tier-resolved `{LIGHT_MODEL}`
-(and synthesis `{MID_MODEL}`) for the session's provider. Never send `fable`,
-`sonnet`, `opus`, `claude-*`, or `anthropic/*` through Pi. Claude may appear
-only as an optional external `claude -p --permission-mode plan` subscription
-lane. Cursor is retired and must not be probed or launched. If the Claude CLI is
-unavailable, continue the OpenAI-only panel instead of stopping.
+Run every review, inspector, verifier, Markdown and synthesis lane through Pi's
+classified workflow with authenticated `openai-codex/gpt-6.1-sol`. Do not launch
+external model CLIs or substitute another provider/model. If required execution
+is unavailable, preserve incomplete evidence and the exact blocker, not a clean
+result.
 
 Run the shared engine in `~/.claude/skills/review-core/SKILL.md` (steps 1–7:
 available lanes → reviewer prompts → inspector prompts → the `review-panel`
@@ -371,29 +366,16 @@ gap, a broad architectural concern), fold it into the copy-paste assessment
 block you print in the conversation (Step 2) rather than the posted `body` — the
 draft `body` stays empty.
 
-## Claude Code review-duty harness adapter
+## Dedicated Pi review-duty sessions
 
-Apply this adapter only when the source-fixed initial prompt identifies a fresh
-Claude Code subscription-harness executor and supplies a
-`CLAUDE_REVIEW_HANDOFF v1` supervisor target. Ordinary `/review-pr` invocations
-remain unchanged.
-
-1. Run this skill and its native Claude Code Workflow lanes normally. Never
-   invoke Claude through Pi, an Anthropic API provider, an SDK, `curl`, or an
-   API key.
-2. Before handoff, run one independent native Fable verifier that re-reads the
-   exact PR head/diff and challenges every finding, inline anchor, draft-review
-   claim, and assessment. Missing subscription auth or Fable is `blocked`, never
-   an API fallback.
-3. Re-read the head SHA after creating the empty-body pending review. A changed
-   head makes the result stale and requires a fresh job.
-4. Send exactly one bounded handoff through the exact `pi-bridge send` command
-   in the launcher prompt. Include only required fields and evidence
-   identifiers; never include prompts, hidden reasoning, credentials, full
-   diffs, or logs.
-5. The Pi supervisor independently verifies the handoff. Do not emulate
-   `review_duty`, ask a verdict, submit the pending review, post a top-level
-   body, or merge.
+In a dedicated review-duty session, begin each PR with the registered
+`review_duty` tool and follow the loaded own/assigned/automatic completion
+gates. Use native `openai-codex/gpt-6.1-sol` workflows and independently verify
+findings at the exact head. Re-read the head after creating any empty-body
+pending inline review; unexpected changes make the evidence stale. Preserve
+failed/blocked or incomplete output through the managed recovery path. Do not
+emulate duty state, submit a verdict, add a top-level review body, merge or
+infer authority from agent-registry messages.
 
 ## Hard rules
 
@@ -411,11 +393,11 @@ remain unchanged.
    not a one-shot.
 6. If the PR is closed/merged/draft, ask before proceeding.
 7. **Posted reviews must read like a human wrote them.** No AI references
-   (models, agents, Claude, GPT, Gemini). No numbered finding prefixes (`#1`,
-   `**#2
-   (HIGH)**`). No em dashes. No bold severity labels. Use lowercase
-   severity prefixes (`critical:`, `should fix:`, `minor:`, `nit:`). Write
-   short, direct comments like a colleague would. The `findings.json` and
+   (models, agents or model/provider identities). No numbered finding prefixes
+   (`#1`, `**#2
+   (HIGH)**`). No em dashes. No bold severity labels. Use
+   lowercase severity prefixes (`critical:`, `should fix:`, `minor:`, `nit:`).
+   Write short, direct comments like a colleague would. The `findings.json` and
    `review.md` on disk can use structured formatting (they're local), but
    anything posted to GitHub must be conversational and concise.
 8. **Maximize inline comments; the draft `body` stays empty.** Never post the
@@ -433,7 +415,6 @@ remain unchanged.
    before reporting it impossible; retain the API error, continue any
    independently executable cleanup, and identify GitHub support escalation if
    submitted-review deletion or emptying is rejected.
-10. The review runs as a single `Workflow` invocation (review-core) — never
-    hand-roll the fan-out with individual Agent calls. External CLIs run
-    read-only (review-core step 4 / hard rules): agy always uses `--sandbox` and
-    NEVER `--dangerously-skip-permissions`.
+10. The review runs as a single `Workflow` invocation (review-core), using
+    read-only native `openai-codex/gpt-6.1-sol` lanes. Do not launch external
+    model CLIs or substitute another provider when a required lane is blocked.

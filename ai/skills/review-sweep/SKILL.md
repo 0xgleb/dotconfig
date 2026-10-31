@@ -1,12 +1,12 @@
 ---
 name: review-sweep
 user-invocable: true
-allowed-tools: Bash(but:*), Bash(direnv:*), Bash(git:*), Bash(gh:*), Bash(agy:*), Bash(command:*), Bash(cargo:*), Bash(mkdir:*), Bash(cat:*), Bash(mktemp:*), Bash(rm:*), Bash(test:*), Bash(grep:*), Bash(wc:*), Bash(date:*), Bash(basename:*), Bash(find:*), Bash(ls:*), Read, Write, Edit, Agent, Workflow, AskUserQuestion, Skill
+allowed-tools: Bash(but:*), Bash(direnv:*), Bash(git:*), Bash(gh:*), Bash(command:*), Bash(cargo:*), Bash(mkdir:*), Bash(cat:*), Bash(mktemp:*), Bash(rm:*), Bash(test:*), Bash(grep:*), Bash(wc:*), Bash(date:*), Bash(basename:*), Bash(find:*), Bash(ls:*), Read, Write, Edit, Agent, Workflow, AskUserQuestion, Skill
 description: "Review an existing GitButler stack: fix owned branches and draft inline findings on others. Plain Git uses single-branch review."
 argument-hint: "[--start BRANCH] [--end BRANCH]"
 ---
 
-Sweep an entire stack with the multi-model review panel, **parallelized**, and
+Sweep an entire stack with the native review panel, **parallelized**, and
 dispatching per **authorship**.
 
 **Default scope is the WHOLE stack.** Invoked with no arguments, the sweep
@@ -19,8 +19,8 @@ it", not "ask me".
 **Authorship decides the per-branch action** (detected once, up front):
 
 - **Author mode — your own stack** (you authored the PRs): `/review-loop` per
-  branch — fix the findings, modify them into the branch, advance, submit the
-  stack at the end.
+  branch — fix the findings, modify them into the branch, publish the verified
+  unit, then advance.
 - **Reviewer mode — someone else's stack** (you are the reviewer): `/review-pr`
   per branch's PR — cross-review and post a draft batch of comments for the
   author. NEVER modify their code, NEVER submit a verdict, NEVER push.
@@ -95,10 +95,10 @@ fi
 echo "stacking tool: $tool"
 ```
 
-Prefer GitButler only in an existing managed main worktree. A linked, isolated,
-or scratch worktree uses plain Git and must not run even a GitButler readiness
-probe. Explicit repository-local instructions may select a different workflow
-rather than these shared defaults.
+Use GitButler in a verified managed main worktree, following the mandatory
+whole-workspace publication rule in `GLOBAL_AGENTS.md`; repository-local
+defaults do not override it. A linked, isolated, scratch or unmanaged worktree
+uses plain Git and must not run even a GitButler readiness probe.
 
 If `tool=none`, stop: this repo has no stacking tool, so there is no stack to
 sweep. Tell the user to use `/review-loop` on the single branch instead.
@@ -128,9 +128,10 @@ out any applied series. Resolve names and order from current metadata.
 
 Common: confirm the review tooling is available exactly as `/review-loop` step 1
 requires, then resolve review-core step 1 once for the whole sweep. Use the
-native Luna lanes for every branch and add at most one read-only Claude Code
-subscription lane when available. Cursor remains retired; never probe or launch
-it mid-sweep.
+native `openai-codex/gpt-6.1-sol` lanes for every branch, including inspection,
+verification, Markdown review and synthesis. Do not probe or launch external
+model CLIs or substitute providers mid-sweep; preserve a concrete unavailable
+execution blocker instead.
 
 **[GitButler]** `but` is provided by the repo's flake/devenv. If `but` is not on
 `PATH`, invoke it as `direnv exec "$repo_root" but …` for every `but` call
@@ -243,10 +244,10 @@ anything. Nothing here checks out a branch or edits a file.
    branch at the same time (each as its own Workflow run, launched together / in
    the background — reuse the lanes resolved in step 3, with each branch's own
    `diff.patch`, `{SOURCE_ACCESS}`, docs, and PR description). The executor caps
-   real concurrency, but firing them together overlaps the slow external-CLI
-   lanes and the verify phases across branches instead of serializing them.
-   Collect each branch's verified `findings` + `review.md` as it completes; key
-   them by branch. A branch whose panel fails mid-run is relaunched with
+   real concurrency, but firing them together overlaps native review and
+   verification phases across branches instead of serializing them. Collect each
+   branch's verified `findings` + `review.md` as it completes; key them by
+   branch. A branch whose panel fails mid-run is relaunched with
    `{scriptPath, args, resumeFromRunId}` (it does not block the others).
 
    Pass per-branch `review-core` contract inputs as `/review-loop` step 4 does,
@@ -301,7 +302,16 @@ For each branch:
      commit, `but
      amend <file> <commit>`.
 
-4. **Stop the sweep on a stuck branch.** If a branch hits the 4-pass cap, stop —
+4. **Publish before advancing.** Verify this unit's owned committed changes,
+   then follow `GLOBAL_AGENTS.md`'s whole-workspace workflow: `but pull`,
+   resolve all conflicts, then bare `but push` for every workspace branch and
+   stack. Keep unfinished work in truthful draft checkpoints; never substitute
+   an isolated branch or stack push. Preserve normal hooks. If publication is
+   blocked, retain the state and report the exact blocker before starting
+   another unit. Required checks on the published head still gate any
+   independently authorized ready transition.
+
+5. **Stop the sweep on a stuck branch.** If a branch hits the 4-pass cap, stop —
    do **not** descend into its children (their scope is built on unsettled
    code). Report it and follow `/review-loop`'s non-convergence flow.
 
@@ -339,20 +349,14 @@ Every pending review must have an empty top-level body: never post a marker,
 summary, verdict, reviewed-commit text, or any other PR-level review content.
 Only verified inline findings belong in the draft.
 
-**[Author mode]** Then **submit the fixes** — a stack of review fixes left local
-is worthless. Submit once, at the end, from the start branch:
+**[Author mode]** Report each unit's actual commit/push and check status; phase
+2 already publishes each completed unit before advancing. Do not collect a
+second end-of-sweep publication batch or call an unpublished unit delivered.
 
-- For each modified branch, resolve its current branch name from the recorded
-  series and use `but push <branch-name>`. Never use bare `but push`: in
-  non-interactive mode it pushes all branches. Before each push, verify the
-  selector and effective remote scope match the reviewed modified branch; if the
-  installed version's selector semantics differ, inspect its help and stop
-  rather than broaden the push.
-
-Submitting is NOT publishing. Never `--publish`, never flip draft→ready, never
-open a NEW PR, never post/resolve/react to PR comments or otherwise change
-review state, and never override branch protection. If nothing was modified,
-there is nothing to submit — say so and stop.
+This review skill grants no new PR, readiness, comment or merge authority.
+Follow any independently authorized driver workflow for those effects; never
+infer them from the sweep itself or override branch protection. If nothing
+changed, report that no publication was needed.
 
 ---
 
@@ -383,12 +387,12 @@ modify/submit rule below is **author-mode only**.
 4. **Modify-and-advance is allowed (author mode).** Modifying each branch's
    fixes into its verified managed main-worktree series is expected — the same
    relaxation `/review-loop stack` makes.
-5. **Push the fixes without changing PR state (author mode).** In the verified
-   GitButler-managed main worktree, push only modified series using the scoped
-   existing workflow. Never flip draft→ready, open a new PR, post/resolve/react
-   to PR comments, or override branch protection. Inspect the intended branch
-   and remote scope before pushing; an existing approval is not permission to
-   update unrelated branches.
+5. **Publish before advancing (author mode).** In the verified GitButler-managed
+   main worktree, keep fixes scoped to the reviewed branch but publish through
+   the global whole-workspace synchronization workflow. Do not push an isolated
+   branch or stack. This skill adds no PR-state or comment authority;
+   independently authorized driver ready steps keep their own gates. Never
+   override branch protection or sweep unrelated source into fix commits.
 6. **Never change the VCS's mode or topology.** No setup/teardown, branch
    creation, deletion, reparenting, reordering, or merging a branch into its
    parent. A descendant restack caused by absorbing a verified fix is expected,
@@ -397,10 +401,10 @@ modify/submit rule below is **author-mode only**.
    branch that failed to converge — their scope is built on unsettled code.
 8. **Per branch, the shared engine owns the review.** Each panel is
    `review-core` (single `review-panel` Workflow, verify + synthesize inside it,
-   read-only external CLIs — `--sandbox` and never
-   `--dangerously-skip-permissions` for agy). The per-branch action is
-   `/review-loop`'s fix loop (author) or `/review-pr`'s draft flow (reviewer).
-   Do not hand-roll the fan-out or relax those rules.
+   read-only authenticated `openai-codex/gpt-6.1-sol` lanes, no external model
+   CLIs). The per-branch action is `/review-loop`'s fix loop (author) or
+   `/review-pr`'s draft flow (reviewer). Do not hand-roll the fan-out or relax
+   those rules.
 9. **GitButler workspace mode is a precondition, not something you create.** If
    `but status` fails, stop and tell the user; never switch onto/off the
    `gitbutler/*` branch yourself.
