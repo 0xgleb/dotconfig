@@ -27,9 +27,29 @@ export interface IssueReference {
 }
 
 export class PlanInputError extends Data.TaggedError("PlanInputError")<{
-  readonly code: "invalid_issue" | "invalid_scope"
+  readonly code: "invalid_issue" | "invalid_scope" | "invalid_repository"
   readonly message: string
 }> {}
+
+export const decodeIssueRepository = (
+  value: unknown,
+): Either.Either<IssueRepository, PlanInputError> =>
+  Either.gen(function* () {
+    const invalid = () =>
+      new PlanInputError({
+        code: "invalid_repository",
+        message:
+          "A repository requires an explicit GitHub owner/name identity.",
+      })
+
+    const original = yield* Schema.decodeUnknownEither(RepositoryInputSchema)(
+      value,
+    ).pipe(Either.mapLeft(invalid))
+
+    return yield* Schema.decodeUnknownEither(RepositorySchema)(
+      original.toLowerCase(),
+    ).pipe(Either.mapLeft(invalid))
+  })
 
 export const decodeIssueReference = (
   value: unknown,
@@ -52,12 +72,9 @@ export const decodeIssueReference = (
     )
       return yield* Either.left(invalid())
 
-    const original = yield* Schema.decodeUnknownEither(RepositoryInputSchema)(
-      value.repository,
-    ).pipe(Either.mapLeft(invalid))
-    const repository = yield* Schema.decodeUnknownEither(RepositorySchema)(
-      original.toLowerCase(),
-    ).pipe(Either.mapLeft(invalid))
+    const repository = yield* decodeIssueRepository(value.repository).pipe(
+      Either.mapLeft(invalid),
+    )
     const number = yield* Schema.decodeUnknownEither(IssueNumberSchema)(
       value.number,
     ).pipe(Either.mapLeft(invalid))
