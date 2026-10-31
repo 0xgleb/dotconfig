@@ -73,6 +73,37 @@ test("driver workers publish checkpoints early without granting reviewer or mana
   assert.match(global, /does not grant them coding or publication authority/is)
 })
 
+test("PR readiness follows the required local or CI verification workflow", () => {
+  assert.ok(
+    /all project-required checks pass for the published head/is.test(global),
+  )
+  assert.ok(/Follow the repository's verification workflow/is.test(global))
+  assert.ok(
+    /Local verification is sufficient when that workflow uses local checks instead of CI/is.test(
+      global,
+    ),
+  )
+  assert.ok(
+    /failing, pending, or unverified required checks keep the PR draft/is.test(
+      global,
+    ),
+  )
+  assert.doesNotMatch(global, /every CI check must succeed/is)
+})
+
+test("Markdown formatting uses Deno instead of Prettier", () => {
+  assert.ok(/Use `deno fmt` for Markdown, not Prettier/is.test(global))
+})
+
+test("PR descriptions follow the template without invented sections", () => {
+  assert.match(global, /Preserve its headings and required content/is)
+  assert.match(global, /Do not add sections absent from the template/is)
+  assert.match(
+    global,
+    /When no template exists, use only Motivation \/ Solution/is,
+  )
+})
+
 test("only managers assign owner-confirmed priorities and workers follow backlog order", () => {
   assert.match(global, /Only the manager may assign or change.*priorities/is)
   assert.match(global, /only after the owner confirms/is)
