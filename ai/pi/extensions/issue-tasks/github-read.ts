@@ -123,6 +123,44 @@ export interface GitHubIssueListPage {
     | { readonly hasNextPage: false; readonly endCursor: string | null }
     | { readonly hasNextPage: true; readonly endCursor: string }
 }
+export type GitHubConnectionPageInfo = GitHubIssueListPage["pageInfo"]
+const GitHubPullRequestNumberSchema = Schema.Number.pipe(
+  Schema.int(),
+  Schema.between(1, 2_147_483_647),
+  Schema.brand("GitHubPullRequestNumber"),
+)
+export type GitHubPullRequestNumber = typeof GitHubPullRequestNumberSchema.Type
+export interface GitHubPullRequestReference {
+  readonly repository: IssueRepository
+  readonly number: GitHubPullRequestNumber
+  readonly url: string
+  readonly state: "open" | "closed" | "merged"
+}
+export interface GitHubIssueGetQuery {
+  readonly issue: IssueReference
+  readonly related: {
+    readonly limit: number
+    readonly blockedByAfter?: string
+    readonly deliveryAfter?: string
+  }
+}
+export interface GitHubIssueDetail extends GitHubIssueSummary {
+  readonly body: string
+  readonly parent: IssueReference | null
+  readonly blockedBy: {
+    readonly issues: readonly IssueReference[]
+    readonly pageInfo: GitHubConnectionPageInfo
+  }
+  readonly delivery: {
+    readonly pullRequests: readonly GitHubPullRequestReference[]
+    readonly pageInfo: GitHubConnectionPageInfo
+  }
+}
+export interface GitHubIssueGetResult {
+  readonly issue: IssueReference
+  readonly detail: GitHubIssueDetail | null
+}
+
 export class GitHubReadError extends Data.TaggedError("GitHubReadError")<{
   readonly code:
     | "invalid_request"
@@ -140,15 +178,14 @@ const readError = (code: GitHubReadError["code"]): GitHubReadError =>
     code,
     message: {
       invalid_request:
-        "Issue discovery requires explicit repository, state and bounded pagination",
+        "GitHub issue reads require explicit targets and bounded pagination",
       invalid_response:
         "GitHub issue response violates the requested page contract",
       remote_error:
         "GitHub reported a query error; response data is not complete readback",
       transport_error: "GitHub query transport did not produce a response",
       unavailable: "The requested GitHub repository is unavailable",
-      partial_response:
-        "GitHub returned an unavailable issue node or node list",
+      partial_response: "GitHub returned unavailable requested data",
       capacity: "GitHub response exceeds the local read byte budget",
     }[code],
   })
@@ -217,6 +254,275 @@ const IssueRowSchema = Schema.Struct({
   repository: Schema.Struct({ nameWithOwner: Schema.String }),
 })
 
+const RelatedInputSchema = Schema.Struct({
+  limit: PageInputSchema.fields.limit,
+  blockedByAfter: PageInputSchema.fields.after,
+  deliveryAfter: PageInputSchema.fields.after,
+})
+const IssueReferenceRowSchema = Schema.Struct({
+  number: IssueRowSchema.fields.number,
+  url: Schema.String,
+  repository: IssueRowSchema.fields.repository,
+})
+const PullRequestRowSchema = Schema.Struct({
+  number: GitHubPullRequestNumberSchema,
+  url: Schema.String,
+  state: Schema.Literal("OPEN", "CLOSED", "MERGED"),
+  repository: IssueRowSchema.fields.repository,
+})
+const RelationConnectionSchema = Schema.Struct({
+  nodes: Schema.NullOr(Schema.Array(Schema.Unknown)),
+  pageInfo: PageInfoSchema,
+})
+const GetEnvelopeSchema = Schema.Struct({
+  data: Schema.Struct({
+    repository: Schema.NullOr(
+      Schema.Struct({
+        nameWithOwner: Schema.String,
+        issue: Schema.NullOr(Schema.Unknown),
+      }),
+    ),
+  }),
+})
+const DetailRowSchema = Schema.Struct({
+  ...IssueRowSchema.fields,
+  body: Schema.String,
+  parent: Schema.NullOr(IssueReferenceRowSchema),
+  blockedBy: RelationConnectionSchema,
+  closedByPullRequestsReferences: Schema.NullOr(RelationConnectionSchema),
+})
+const decodeReadPayload = (
+  payload: unknown,
+): Either.Either<unknown, GitHubReadError> =>
+  Either.gen(function* () {
+    if (typeof payload !== "string") return yield* invalid("invalid_response")
+    if (Buffer.byteLength(payload, "utf8") > MAX_GITHUB_READ_BYTES)
+      return yield* invalid("capacity")
+
+    const parsed = yield* Either.try({
+      try: (): unknown => JSON.parse(payload),
+      catch: () => readError("invalid_response"),
+    })
+
+    if (
+      typeof parsed === "object" &&
+      parsed !== null &&
+      Object.hasOwn(parsed, "errors")
+    ) {
+      yield* decode(
+        Schema.Struct({ errors: QueryErrorsSchema }),
+        parsed,
+        "invalid_response",
+      )
+      return yield* invalid("remote_error")
+    }
+
+    return parsed
+  })
+const decodeIssueReferenceRow = (
+  input: unknown,
+): Either.Either<IssueReference, GitHubReadError> =>
+  Either.gen(function* () {
+    const row = yield* decode(
+      IssueReferenceRowSchema,
+      input,
+      "invalid_response",
+    )
+    const issue = yield* decodeIssueReference({
+      repository: row.repository.nameWithOwner,
+      number: row.number,
+    }).pipe(Either.mapLeft(() => readError("invalid_response")))
+
+    if (
+      row.url.toLowerCase() !==
+      `https://github.com/${issue.repository}/issues/${issue.number}`
+    )
+      return yield* invalid("invalid_response")
+
+    return issue
+  })
+const decodeIssueSummary = (
+  input: unknown,
+): Either.Either<GitHubIssueSummary, GitHubReadError> =>
+  Either.gen(function* () {
+    const row = yield* decode(IssueRowSchema, input, "invalid_response")
+    const issue = yield* decodeIssueReferenceRow(row)
+
+    return Object.freeze({
+      issue,
+      title: row.title,
+      url: row.url,
+      state: row.state === "OPEN" ? "open" : "closed",
+      updatedAt: row.updatedAt,
+    })
+  })
+const decodePullRequestRow = (
+  input: unknown,
+): Either.Either<GitHubPullRequestReference, GitHubReadError> =>
+  Either.gen(function* () {
+    const row = yield* decode(PullRequestRowSchema, input, "invalid_response")
+    const repository = yield* decodeIssueRepository(
+      row.repository.nameWithOwner,
+    ).pipe(Either.mapLeft(() => readError("invalid_response")))
+
+    if (
+      row.url.toLowerCase() !==
+      `https://github.com/${repository}/pull/${row.number}`
+    )
+      return yield* invalid("invalid_response")
+
+    return Object.freeze({
+      repository,
+      number: row.number,
+      url: row.url,
+      state:
+        row.state === "OPEN"
+          ? "open"
+          : row.state === "CLOSED"
+            ? "closed"
+            : "merged",
+    })
+  })
+
+export const decodeGitHubIssueGetQuery = (
+  input: unknown,
+): Either.Either<GitHubIssueGetQuery, GitHubReadError> =>
+  Either.gen(function* () {
+    if (
+      !shape(input, ["issue", "related"], ["issue", "related"]) ||
+      !shape(input.issue, ["repository", "number"], ["repository", "number"]) ||
+      !shape(
+        input.related,
+        ["limit", "blockedByAfter", "deliveryAfter"],
+        ["limit"],
+      )
+    )
+      return yield* invalid("invalid_request")
+
+    const issue = yield* decodeIssueReference(input.issue).pipe(
+      Either.mapLeft(() => readError("invalid_request")),
+    )
+    yield* decode(IssueRowSchema.fields.number, issue.number, "invalid_request")
+    const related = yield* decode(
+      RelatedInputSchema,
+      input.related,
+      "invalid_request",
+    )
+
+    if (
+      [related.blockedByAfter, related.deliveryAfter].some(
+        cursor =>
+          cursor !== undefined &&
+          Buffer.byteLength(cursor, "utf8") > MAX_GITHUB_READ_BYTES,
+      )
+    )
+      return yield* invalid("invalid_request")
+
+    return Object.freeze({
+      issue,
+      related: Object.freeze({
+        limit: related.limit,
+        ...(related.blockedByAfter === undefined
+          ? {}
+          : { blockedByAfter: related.blockedByAfter }),
+        ...(related.deliveryAfter === undefined
+          ? {}
+          : { deliveryAfter: related.deliveryAfter }),
+      }),
+    })
+  })
+
+export const decodeGitHubIssueGetResult = (
+  payload: unknown,
+  suppliedQuery: GitHubIssueGetQuery,
+): Either.Either<GitHubIssueGetResult, GitHubReadError> =>
+  Either.gen(function* () {
+    const query = yield* decodeGitHubIssueGetQuery(suppliedQuery)
+    const parsed = yield* decodeReadPayload(payload)
+    const envelope = yield* decode(
+      GetEnvelopeSchema,
+      parsed,
+      "invalid_response",
+    )
+    const repository = envelope.data.repository
+
+    if (repository === null)
+      return Object.freeze({ issue: query.issue, detail: null })
+
+    const owner = yield* decodeIssueRepository(repository.nameWithOwner).pipe(
+      Either.mapLeft(() => readError("invalid_response")),
+    )
+
+    if (owner !== query.issue.repository)
+      return yield* invalid("invalid_response")
+    if (repository.issue === null)
+      return Object.freeze({ issue: query.issue, detail: null })
+
+    const row = yield* decode(
+      DetailRowSchema,
+      repository.issue,
+      "invalid_response",
+    )
+    const summary = yield* decodeIssueSummary(row)
+
+    if (issueKey(summary.issue) !== issueKey(query.issue))
+      return yield* invalid("invalid_response")
+
+    const blockedBy = row.blockedBy
+    const delivery = row.closedByPullRequestsReferences
+
+    if (
+      blockedBy.nodes === null ||
+      delivery === null ||
+      delivery.nodes === null ||
+      blockedBy.nodes.some(node => node === null) ||
+      delivery.nodes.some(node => node === null)
+    )
+      return yield* invalid("partial_response")
+    if (
+      blockedBy.nodes.length > query.related.limit ||
+      delivery.nodes.length > query.related.limit ||
+      (blockedBy.pageInfo.hasNextPage &&
+        blockedBy.pageInfo.endCursor === query.related.blockedByAfter) ||
+      (delivery.pageInfo.hasNextPage &&
+        delivery.pageInfo.endCursor === query.related.deliveryAfter)
+    )
+      return yield* invalid("invalid_response")
+
+    const parent =
+      row.parent === null ? null : yield* decodeIssueReferenceRow(row.parent)
+    const issues = yield* Either.all(
+      blockedBy.nodes.map(decodeIssueReferenceRow),
+    )
+    const pullRequests = yield* Either.all(
+      delivery.nodes.map(decodePullRequestRow),
+    )
+
+    if (
+      new Set(issues.map(issueKey)).size !== issues.length ||
+      new Set(pullRequests.map(pr => `${pr.repository}#${pr.number}`)).size !==
+        pullRequests.length
+    )
+      return yield* invalid("invalid_response")
+
+    return Object.freeze({
+      issue: query.issue,
+      detail: Object.freeze({
+        ...summary,
+        body: row.body,
+        parent,
+        blockedBy: Object.freeze({
+          issues: Object.freeze(issues),
+          pageInfo: Object.freeze({ ...blockedBy.pageInfo }),
+        }),
+        delivery: Object.freeze({
+          pullRequests: Object.freeze(pullRequests),
+          pageInfo: Object.freeze({ ...delivery.pageInfo }),
+        }),
+      }),
+    })
+  })
+
 export const decodeGitHubIssueListQuery = (
   input: unknown,
 ): Either.Either<GitHubIssueListQuery, GitHubReadError | PlanInputError> =>
@@ -257,30 +563,7 @@ export const decodeGitHubIssueListPage = (
 ): Either.Either<GitHubIssueListPage, GitHubReadError | PlanInputError> =>
   Either.gen(function* () {
     const query = yield* decodeGitHubIssueListQuery(suppliedQuery)
-
-    if (typeof payload !== "string") return yield* invalid("invalid_response")
-    if (Buffer.byteLength(payload, "utf8") > MAX_GITHUB_READ_BYTES)
-      return yield* invalid("capacity")
-
-    const parsed = yield* Either.try({
-      try: (): unknown => JSON.parse(payload),
-      catch: () => readError("invalid_response"),
-    })
-
-    if (
-      typeof parsed === "object" &&
-      parsed !== null &&
-      Object.hasOwn(parsed, "errors")
-    ) {
-      yield* decode(
-        Schema.Struct({ errors: QueryErrorsSchema }),
-        parsed,
-        "invalid_response",
-      )
-
-      return yield* invalid("remote_error")
-    }
-
+    const parsed = yield* decodeReadPayload(payload)
     const envelope = yield* decode(EnvelopeSchema, parsed, "invalid_response")
     const repository = envelope.data.repository
 
@@ -303,35 +586,16 @@ export const decodeGitHubIssueListPage = (
     )
       return yield* invalid("invalid_response")
 
-    const issues = yield* Either.all(
-      nodes.map(node =>
-        Either.gen(function* () {
-          const row = yield* decode(IssueRowSchema, node, "invalid_response")
-          const issue = yield* decodeIssueReference({
-            repository: row.repository.nameWithOwner,
-            number: row.number,
-          }).pipe(Either.mapLeft(() => readError("invalid_response")))
-          const state = row.state === "OPEN" ? "open" : "closed"
+    const issues = yield* Either.all(nodes.map(decodeIssueSummary))
 
-          if (
-            issue.repository !== query.repository ||
-            row.url.toLowerCase() !==
-              `https://github.com/${issue.repository}/issues/${issue.number}` ||
-            (query.state !== "all" && state !== query.state)
-          )
-            return yield* invalid("invalid_response")
-
-          return Object.freeze({
-            issue,
-            title: row.title,
-            url: row.url,
-            state,
-            updatedAt: row.updatedAt,
-          })
-        }),
-      ),
+    if (
+      issues.some(
+        row =>
+          row.issue.repository !== query.repository ||
+          (query.state !== "all" && row.state !== query.state),
+      )
     )
-
+      return yield* invalid("invalid_response")
     if (new Set(issues.map(row => issueKey(row.issue))).size !== issues.length)
       return yield* invalid("invalid_response")
 
