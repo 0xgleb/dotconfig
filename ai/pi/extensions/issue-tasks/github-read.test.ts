@@ -1,13 +1,16 @@
 import assert from "node:assert/strict"
 import test from "node:test"
-import { Either } from "effect"
+import { Cause, Deferred, Effect, Either, Exit } from "effect"
 import { decodeIssueReference, decodeIssueRepository } from "./identity.ts"
 import {
+  createGitHubIssueReader,
+  GITHUB_ISSUE_LIST_DOCUMENT,
+  type GitHubIssueListExecution,
   decodeGitHubIssueListQuery,
   decodeGitHubIssueListPage,
   MAX_GITHUB_READ_BYTES,
   type GitHubIssueListQuery,
-  type GitHubReadError,
+  GitHubReadError,
 } from "./github-read.ts"
 
 const repository = decodeIssueRepository("0xgleb/dotconfig")
@@ -48,6 +51,251 @@ const failure = (
   assert.ok(Either.isLeft(decoded))
   assert.equal(decoded.left.code, code)
 }
+
+test("GitHub reader executes one fixed list query with validated frozen variables", async () => {
+  const calls: GitHubIssueListExecution[] = []
+  const reader = createGitHubIssueReader({
+    executeQuery: request =>
+      Effect.sync(() => {
+        calls.push(request)
+        return JSON.stringify(recorded)
+      }),
+  })
+
+  const result = await Effect.runPromise(
+    reader.list({
+      repository: "0xGleb/DotConfig",
+      state: "all",
+      page: { limit: 1 },
+    }),
+  )
+
+  assert.equal(result.issues[0]?.issue.number, 19)
+  assert.deepEqual(calls, [
+    {
+      document: GITHUB_ISSUE_LIST_DOCUMENT,
+      variables: {
+        owner: "0xgleb",
+        name: "dotconfig",
+        first: 1,
+        after: null,
+        states: ["OPEN", "CLOSED"],
+      },
+    },
+  ])
+  assert.ok(
+    calls.every(
+      call =>
+        Object.isFrozen(call) &&
+        Object.isFrozen(call.variables) &&
+        Object.isFrozen(call.variables.states),
+    ),
+  )
+})
+
+test("GitHub reader forwards the real continuation to the independently recorded next page", async () => {
+  const nextCursor = "Y3Vyc29yOnYyOpK0MjAyNi0wNS0wMVQxOTowMzoyNlrPAAAAAQQ-dio="
+  const following = {
+    data: {
+      repository: {
+        nameWithOwner: "0xgleb/dotconfig",
+        issues: {
+          nodes: [
+            {
+              number: 41,
+              title: "add tailscale as homebrew cask",
+              url: "https://github.com/0xgleb/dotconfig/issues/41",
+              state: "OPEN",
+              updatedAt: "2026-05-01T19:03:26Z",
+              repository: { nameWithOwner: "0xgleb/dotconfig" },
+            },
+          ],
+          pageInfo: { hasNextPage: true, endCursor: nextCursor },
+        },
+      },
+    },
+  }
+  const requests: GitHubIssueListExecution[] = []
+  const reader = createGitHubIssueReader({
+    executeQuery: request =>
+      Effect.sync(() => {
+        requests.push(request)
+        return JSON.stringify(following)
+      }),
+  })
+
+  const result = await Effect.runPromise(
+    reader.list({ ...query, page: { limit: 1, after: cursor } }),
+  )
+
+  assert.equal(requests.length, 1)
+  assert.deepEqual(requests[0]?.variables, {
+    owner: "0xgleb",
+    name: "dotconfig",
+    first: 1,
+    after: cursor,
+    states: ["OPEN"],
+  })
+  assert.equal(result.issues[0]?.issue.number, 41)
+  assert.deepEqual(result.pageInfo, {
+    hasNextPage: true,
+    endCursor: nextCursor,
+  })
+})
+
+test("GitHub reader encodes a closed-only query without widening its state filter", async () => {
+  const response = structuredClone(recorded)
+  const first = response.data.repository.issues.nodes[0]
+  assert.ok(first)
+  first.state = "CLOSED"
+  const requests: GitHubIssueListExecution[] = []
+  const reader = createGitHubIssueReader({
+    executeQuery: request =>
+      Effect.sync(() => {
+        requests.push(request)
+        return JSON.stringify(response)
+      }),
+  })
+
+  const result = await Effect.runPromise(
+    reader.list({ ...query, state: "closed" }),
+  )
+
+  assert.deepEqual(requests[0]?.variables.states, ["CLOSED"])
+  assert.equal(result.issues[0]?.state, "closed")
+})
+
+test("GitHub reader rejects invalid input before invoking the host query port", async () => {
+  let calls = 0
+  const reader = createGitHubIssueReader({
+    executeQuery: () =>
+      Effect.sync(() => {
+        calls += 1
+        return JSON.stringify(recorded)
+      }),
+  })
+
+  const result = await Effect.runPromise(
+    Effect.either(reader.list({ ...query, page: { limit: 0 } })),
+  )
+
+  assert.ok(Either.isLeft(result))
+  assert.equal(result.left.code, "invalid_request")
+  assert.equal(calls, 0)
+})
+
+for (const stop of ["failure", "defect"] as const) {
+  test(`GitHub reader projects host ${stop} without private diagnostics or retries`, async () => {
+    let calls = 0
+    const reader = createGitHubIssueReader({
+      executeQuery: () => {
+        calls += 1
+        return stop === "failure"
+          ? Effect.fail(
+              new GitHubReadError({
+                code: "unavailable",
+                message: "Private transport diagnostic",
+              }),
+            )
+          : Effect.die("Private transport diagnostic")
+      },
+    })
+
+    const result = await Effect.runPromise(Effect.either(reader.list(query)))
+
+    assert.ok(Either.isLeft(result))
+    assert.equal(result.left.code, "transport_error")
+    assert.ok(
+      !JSON.stringify(result.left).includes("Private transport diagnostic"),
+    )
+    assert.equal(calls, 1)
+  })
+}
+
+test(
+  "GitHub reader cancellation interrupts the host query effect instead of becoming a transport error",
+  { timeout: 5_000 },
+  async t => {
+    const entered = await Effect.runPromise(Deferred.make<void>())
+    const controller = new AbortController()
+    t.signal.addEventListener("abort", () => controller.abort(), { once: true })
+    let released = false
+    const reader = createGitHubIssueReader({
+      executeQuery: () =>
+        Deferred.succeed(entered, undefined).pipe(
+          Effect.zipRight(Effect.never),
+          Effect.ensuring(
+            Effect.sync(() => {
+              released = true
+            }),
+          ),
+        ),
+    })
+    const pending = Effect.runPromiseExit(reader.list(query), {
+      signal: controller.signal,
+    })
+    try {
+      const started = await Promise.race([
+        Effect.runPromise(Deferred.await(entered)).then(() => true),
+        pending.then(() => false),
+      ])
+      assert.equal(started, true)
+      controller.abort()
+      const result = await pending
+      assert.ok(Exit.isFailure(result) && Cause.isInterruptedOnly(result.cause))
+      assert.equal(released, true)
+    } finally {
+      controller.abort()
+      await pending
+    }
+  },
+)
+
+test("pre-aborted GitHub reads perform no host query", async () => {
+  let calls = 0
+  const reader = createGitHubIssueReader({
+    executeQuery: () =>
+      Effect.sync(() => {
+        calls += 1
+        return JSON.stringify(recorded)
+      }),
+  })
+  const controller = new AbortController()
+  controller.abort()
+  for (const input of [query, { ...query, page: { limit: 0 } }]) {
+    const result = await Effect.runPromiseExit(reader.list(input), {
+      signal: controller.signal,
+    })
+    assert.ok(Exit.isFailure(result) && Cause.isInterruptedOnly(result.cause))
+  }
+  assert.equal(calls, 0)
+})
+
+test("GitHub reader preserves typed readback failures after one successful host call", async () => {
+  for (const [payload, expected] of [
+    [
+      JSON.stringify({
+        ...recorded,
+        errors: [{ message: "Private query error" }],
+      }),
+      "remote_error",
+    ],
+    ["x".repeat(MAX_GITHUB_READ_BYTES + 1), "capacity"],
+  ] as const) {
+    let calls = 0
+    const reader = createGitHubIssueReader({
+      executeQuery: () =>
+        Effect.sync(() => {
+          calls += 1
+          return payload
+        }),
+    })
+    const result = await Effect.runPromise(Effect.either(reader.list(query)))
+    assert.ok(Either.isLeft(result))
+    assert.equal(result.left.code, expected)
+    assert.equal(calls, 1)
+  }
+})
 
 test("GitHub issue list queries require explicit canonical scope and detached pagination", () => {
   const source = {
