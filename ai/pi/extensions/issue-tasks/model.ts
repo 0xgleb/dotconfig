@@ -15,6 +15,7 @@ export const RevisionSchema = Schema.Number.pipe(
   Schema.lessThanOrEqualTo(Number.MAX_SAFE_INTEGER),
 )
 export const MAX_TASK_TEXT = 131_072
+export const MAX_TASK_PAGE_SIZE = 100
 export const TextSchema = Schema.String.pipe(
   Schema.maxLength(MAX_TASK_TEXT),
   Schema.filter(value => value.trim().length > 0),
@@ -74,4 +75,13 @@ export const TaskFilterSchema = Schema.Unknown.pipe(
 export interface TaskPageInput {
   readonly limit: number
   readonly after?: TaskId
+}
+export interface TaskReadQuery {
+  readonly issue: IssueReference
+  readonly page: TaskPageInput
+  readonly filter?: TaskFilter
+}
+export interface IssueTaskPageResult {
+  readonly issue: IssueReference
+  readonly page: IssueTaskPage | null
 }

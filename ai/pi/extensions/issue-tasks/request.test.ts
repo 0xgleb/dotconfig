@@ -2,7 +2,11 @@ import assert from "node:assert/strict"
 import test from "node:test"
 import { Either } from "effect"
 import { decodeIssueReference } from "./identity.ts"
-import { decodeTaskRequest, type TaskRequestDecodeError } from "./request.ts"
+import {
+  decodeTaskRequest,
+  decodeTaskReadQueries,
+  type TaskRequestDecodeError,
+} from "./request.ts"
 
 const issue = (repository = "Owner/Repo", number = 12) => {
   const decoded = decodeIssueReference({ repository, number })
@@ -14,6 +18,10 @@ const b = issue("Owner/Other")
 const id = "aaaaaaaa-aaaa-4aaa-8aaa-aaaaaaaaaaaa"
 const addition = { op: "add", issue: a, key: "one", text: "One" }
 const read = { action: "read", issue: a, page: { limit: 1 } }
+const readMany = {
+  action: "readMany",
+  queries: [{ issue: a, page: { limit: 1 } }],
+}
 const get = { action: "get", issue: a, id }
 const apply = { action: "apply", issues: [a], operations: [addition] }
 const failure = (input: unknown, code: TaskRequestDecodeError["code"]) => {
@@ -21,6 +29,111 @@ const failure = (input: unknown, code: TaskRequestDecodeError["code"]) => {
   assert.ok(Either.isLeft(decoded))
   assert.equal(decoded.left.code, code)
 }
+
+test("multi-issue task queries normalize and detach every qualified page", () => {
+  const source = [
+    {
+      issue: { repository: "Owner/Repo", number: 12 },
+      page: { limit: 1 },
+      filter: { blocked: false },
+    },
+  ]
+  const decoded = decodeTaskReadQueries(source)
+
+  assert.ok(Either.isRight(decoded))
+  assert.deepEqual(decoded.right, [
+    { issue: a, page: { limit: 1 }, filter: { blocked: false } },
+  ])
+  const first = source[0]
+  assert.ok(first)
+  first.issue.repository = "Other/Repo"
+  first.page.limit = 2
+  first.filter.blocked = true
+  assert.deepEqual(decoded.right, [
+    { issue: a, page: { limit: 1 }, filter: { blocked: false } },
+  ])
+  assert.ok(Object.isFrozen(decoded.right))
+  assert.ok(
+    decoded.right.every(
+      query =>
+        Object.isFrozen(query) &&
+        Object.isFrozen(query.issue) &&
+        Object.isFrozen(query.page) &&
+        Object.isFrozen(query.filter),
+    ),
+  )
+})
+
+test("task readMany decodes explicit pages without worker or mutation authority", () => {
+  const queries = [
+    { issue: a, page: { limit: 1 } },
+    { issue: b, page: { limit: 2 }, filter: { status: "doing" } },
+  ]
+  const decoded = decodeTaskRequest({ action: "readMany", queries })
+
+  assert.ok(Either.isRight(decoded))
+  assert.deepEqual(decoded.right, { action: "readMany", queries })
+})
+
+test("task readMany accepts the exact shared row budget with repeated issue queries", () => {
+  for (const queries of [
+    [{ issue: a, page: { limit: 100 } }],
+    [
+      { issue: a, page: { limit: 50 } },
+      { issue: a, page: { limit: 50 } },
+    ],
+    Array.from({ length: 100 }, () => ({ issue: a, page: { limit: 1 } })),
+  ]) {
+    const decoded = decodeTaskReadQueries(queries)
+    assert.ok(Either.isRight(decoded))
+    assert.deepEqual(decoded.right, queries)
+  }
+})
+
+test("task readMany rejects malformed vectors, later queries and aggregate overflow", () => {
+  const query = { issue: a, page: { limit: 1 } }
+  for (const queries of [
+    null,
+    [],
+    Array.from({ length: 101 }, () => query),
+    [
+      { ...query, page: { limit: 51 } },
+      { ...query, page: { limit: 50 } },
+    ],
+    [query, {}],
+    [query, { ...query, worker: "forged" }],
+    [query, { ...query, [Symbol("hidden")]: true }],
+  ])
+    failure({ action: "readMany", queries }, "invalid_queries")
+  failure(
+    {
+      action: "readMany",
+      queries: [query, { ...query, issue: { number: 12 } }],
+    },
+    "invalid_issue",
+  )
+  failure(
+    {
+      action: "readMany",
+      queries: [query, { ...query, page: { limit: 101 } }],
+    },
+    "invalid_page",
+  )
+  failure(
+    {
+      action: "readMany",
+      queries: [query, { ...query, filter: { blocked: "false" } }],
+    },
+    "invalid_filter",
+  )
+  for (const input of [
+    { action: "readMany" },
+    { ...readMany, issue: a },
+    { ...readMany, page: { limit: 1 } },
+    { ...readMany, [Symbol("hidden")]: true },
+  ])
+    failure(input, "invalid_request")
+})
 
 test("task read decodes a detached explicit status and blocker filter", () => {
   const filter = { status: "doing", blocked: false }
@@ -182,7 +295,7 @@ for (const field of [
   "reply",
 ]) {
   test(`task request rejects caller metadata or legacy field: ${field}`, () => {
-    for (const input of [read, get, apply])
+    for (const input of [read, readMany, get, apply])
       failure({ ...input, [field]: "forged" }, "invalid_request")
   })
 }

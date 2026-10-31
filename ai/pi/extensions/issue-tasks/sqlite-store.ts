@@ -14,6 +14,7 @@ import {
   RevisionSchema,
   TextSchema,
   MAX_TASK_TEXT,
+  MAX_TASK_PAGE_SIZE,
   StatusSchema,
   TaskFilterSchema,
   type IssueTaskRevision,
@@ -21,6 +22,8 @@ import {
   type IssueTaskDetail,
   type TaskPageInput,
   type TaskFilter,
+  type TaskReadQuery,
+  type IssueTaskPageResult,
   MutationBatchIdSchema,
   type MutationBatchId,
   type TaskId,
@@ -34,6 +37,7 @@ import {
   type TaskMutationBatch,
   type TaskReference,
 } from "./mutations.ts"
+import { decodeTaskReadQueries } from "./request.ts"
 import {
   prepareTaskChanges,
   MAX_TRANSITION_NODES,
@@ -60,7 +64,10 @@ interface StoredIssueRow extends IssueTaskRevision {
 }
 
 const PageSchema = Schema.Struct({
-  limit: Schema.Number.pipe(Schema.int(), Schema.between(1, 100)),
+  limit: Schema.Number.pipe(
+    Schema.int(),
+    Schema.between(1, MAX_TASK_PAGE_SIZE),
+  ),
   after: Schema.optional(TaskIdSchema),
 })
 const PlanRowSchema = Schema.Struct({
@@ -86,6 +93,8 @@ export type {
   TaskAddress,
   TaskPageInput,
   TaskFilter,
+  TaskReadQuery,
+  IssueTaskPageResult,
 } from "./model.ts"
 
 export class TaskStoreError extends Data.TaggedError("TaskStoreError")<{
@@ -152,6 +161,9 @@ export interface SqliteTaskStore {
     page: TaskPageInput,
     filter?: TaskFilter,
   ) => StoreEffect<Option.Option<IssueTaskPage>>
+  readonly readManyTasks: (
+    queries: readonly TaskReadQuery[],
+  ) => StoreEffect<readonly IssueTaskPageResult[]>
   readonly close: () => StoreEffect<void>
 }
 export interface SqliteTaskStoreOptions {
@@ -2045,6 +2057,95 @@ const recoverTaskCommit = (
     })
   })
 
+const readIssueTasks = (
+  database: DatabaseSync,
+  target: IssueReference,
+  input: TaskPageInput,
+  selection?: TaskFilter,
+): StoreEffect<Option.Option<IssueTaskPage>> =>
+  Effect.gen(function* () {
+    const issue = yield* checkedIssue(target, "invalid_input")
+    const page = yield* decode(
+      PageSchema,
+      input,
+      "invalid_input",
+      "Task pages require a limit from 1 to 100 and an optional task cursor",
+    )
+    const filter = yield* decode(
+      TaskFilterSchema,
+      selection === undefined ? {} : selection,
+      "invalid_input",
+      "Task filter requires a lifecycle status and boolean blocked predicate",
+    )
+    const stored = yield* findPlan(database, issue)
+    if (Option.isNone(stored)) {
+      if (page.after !== undefined)
+        return yield* fail(
+          "invalid_input",
+          "Cursor does not belong to the requested issue",
+        )
+      return Option.none()
+    }
+    const plan = stored.value
+    const after = page.after
+    if (after !== undefined) {
+      const cursor = yield* io("Could not validate task cursor", () =>
+        database
+          .prepare(
+            "SELECT 1 FROM issue_plan_tasks WHERE plan_id = ? AND id = ?",
+          )
+          .get(plan.id, after),
+      )
+      if (cursor === undefined)
+        return yield* fail(
+          "invalid_input",
+          "Cursor does not belong to the requested issue",
+        )
+    }
+    const cursorPredicate =
+      after === undefined ? "" : " AND issue_plan_tasks.id > ?"
+    const statusPredicate =
+      filter.status === undefined ? "" : " AND issue_plan_tasks.status = ?"
+    const blockerPredicate =
+      filter.blocked === undefined
+        ? ""
+        : filter.blocked
+          ? " AND issue_plan_tasks.blocker IS NOT NULL"
+          : " AND issue_plan_tasks.blocker IS NULL"
+    const rows = yield* io("Could not read issue tasks", () =>
+      database
+        .prepare(
+          `SELECT ${taskColumns} FROM issue_plan_tasks WHERE plan_id = ?${cursorPredicate}${statusPredicate}${blockerPredicate} ORDER BY issue_plan_tasks.id LIMIT ?`,
+        )
+        .all(
+          plan.id,
+          ...(after === undefined ? [] : [after]),
+          ...(filter.status === undefined ? [] : [filter.status]),
+          page.limit + 1,
+        ),
+    )
+    const tasks = yield* decode(
+      Schema.Array(TaskRowSchema),
+      rows,
+      "corrupt_state",
+      "Invalid persisted task",
+    )
+    const visible = Object.freeze(
+      tasks.slice(0, page.limit).map(task => Object.freeze(task)),
+    )
+    const last = visible.at(-1)
+    if (tasks.length > page.limit && last === undefined)
+      return yield* fail("corrupt_state", "Invalid task page boundary")
+    return Option.some(
+      Object.freeze({
+        issue: plan.issue,
+        revision: plan.revision,
+        tasks: visible,
+        next: tasks.length > page.limit && last !== undefined ? last.id : null,
+      }),
+    )
+  })
+
 const makeStore = (
   database: DatabaseSync,
   options: ValidatedPlanStoreOptions,
@@ -2079,6 +2180,38 @@ const makeStore = (
       }),
     )
   return {
+    readManyTasks: input =>
+      use(
+        "read",
+        Effect.gen(function* () {
+          const decoded = decodeTaskReadQueries(input)
+
+          if (Either.isLeft(decoded))
+            return yield* fail("invalid_input", decoded.left.message)
+
+          const pages = yield* Effect.forEach(
+            decoded.right,
+            query =>
+              readIssueTasks(
+                database,
+                query.issue,
+                query.page,
+                query.filter,
+              ).pipe(
+                Effect.map(page =>
+                  Object.freeze({
+                    issue: query.issue,
+                    page: Option.isSome(page) ? page.value : null,
+                  }),
+                ),
+              ),
+            { concurrency: 1 },
+          )
+
+          return Object.freeze(pages)
+        }),
+      ),
+
     apply: (input, suppliedContext) =>
       use(
         "write",
@@ -2237,96 +2370,7 @@ const makeStore = (
         }),
       ),
     readTasks: (target, input, selection) =>
-      use(
-        "read",
-        Effect.gen(function* () {
-          const issue = yield* checkedIssue(target, "invalid_input")
-          const page = yield* decode(
-            PageSchema,
-            input,
-            "invalid_input",
-            "Task pages require a limit from 1 to 100 and an optional task cursor",
-          )
-          const filter = yield* decode(
-            TaskFilterSchema,
-            selection === undefined ? {} : selection,
-            "invalid_input",
-            "Task filter requires a lifecycle status and boolean blocked predicate",
-          )
-          const stored = yield* findPlan(database, issue)
-          if (Option.isNone(stored)) {
-            if (page.after !== undefined)
-              return yield* fail(
-                "invalid_input",
-                "Cursor does not belong to the requested issue",
-              )
-            return Option.none()
-          }
-          const plan = stored.value
-          const after = page.after
-          if (after !== undefined) {
-            const cursor = yield* io("Could not validate task cursor", () =>
-              database
-                .prepare(
-                  "SELECT 1 FROM issue_plan_tasks WHERE plan_id = ? AND id = ?",
-                )
-                .get(plan.id, after),
-            )
-            if (cursor === undefined)
-              return yield* fail(
-                "invalid_input",
-                "Cursor does not belong to the requested issue",
-              )
-          }
-          const cursorPredicate =
-            after === undefined ? "" : " AND issue_plan_tasks.id > ?"
-          const statusPredicate =
-            filter.status === undefined
-              ? ""
-              : " AND issue_plan_tasks.status = ?"
-          const blockerPredicate =
-            filter.blocked === undefined
-              ? ""
-              : filter.blocked
-                ? " AND issue_plan_tasks.blocker IS NOT NULL"
-                : " AND issue_plan_tasks.blocker IS NULL"
-          const rows = yield* io("Could not read issue tasks", () =>
-            database
-              .prepare(
-                `SELECT ${taskColumns} FROM issue_plan_tasks WHERE plan_id = ?${cursorPredicate}${statusPredicate}${blockerPredicate} ORDER BY issue_plan_tasks.id LIMIT ?`,
-              )
-              .all(
-                plan.id,
-                ...(after === undefined ? [] : [after]),
-                ...(filter.status === undefined ? [] : [filter.status]),
-                page.limit + 1,
-              ),
-          )
-          const tasks = yield* decode(
-            Schema.Array(TaskRowSchema),
-            rows,
-            "corrupt_state",
-            "Invalid persisted task",
-          )
-          const visible = Object.freeze(
-            tasks.slice(0, page.limit).map(task => Object.freeze(task)),
-          )
-          const last = visible.at(-1)
-          if (tasks.length > page.limit && last === undefined)
-            return yield* fail("corrupt_state", "Invalid task page boundary")
-          return Option.some(
-            Object.freeze({
-              issue: plan.issue,
-              revision: plan.revision,
-              tasks: visible,
-              next:
-                tasks.length > page.limit && last !== undefined
-                  ? last.id
-                  : null,
-            }),
-          )
-        }),
-      ),
+      use("read", readIssueTasks(database, target, input, selection)),
     close: () =>
       gate.withPermits(1)(
         Effect.suspend(() => {

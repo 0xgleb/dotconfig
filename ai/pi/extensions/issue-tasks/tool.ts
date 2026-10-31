@@ -7,6 +7,8 @@ import { Type } from "typebox"
 import { MAX_PLAN_ISSUES_PER_CALL, type IssueReference } from "./identity.ts"
 import {
   MAX_TASK_TEXT,
+  MAX_TASK_PAGE_SIZE,
+  type IssueTaskPageResult,
   type IssueTaskDetail,
   type IssueTaskPage,
   type MutationBatchId,
@@ -112,33 +114,47 @@ const OperationParameters = Type.Union([
     { additionalProperties: false },
   ),
 ])
+const TaskPageParameters = Type.Object(
+  {
+    limit: Type.Integer({ minimum: 1, maximum: MAX_TASK_PAGE_SIZE }),
+    after: Type.Optional(TaskIdParameter),
+  },
+  { additionalProperties: false },
+)
+const TaskFilterParameters = Type.Object(
+  {
+    status: Type.Optional(TaskStatusParameter),
+    blocked: Type.Optional(Type.Boolean()),
+  },
+  { additionalProperties: false },
+)
+const TaskReadQueryParameters = Type.Object(
+  {
+    issue: IssueParameters,
+    page: TaskPageParameters,
+    filter: Type.Optional(TaskFilterParameters),
+  },
+  { additionalProperties: false },
+)
 const TaskParameters = Type.Object(
   {
     action: Type.Union([
       Type.Literal("read"),
+      Type.Literal("readMany"),
       Type.Literal("get"),
       Type.Literal("apply"),
     ]),
     issue: Type.Optional(IssueParameters),
     id: Type.Optional(TaskIdParameter),
-    page: Type.Optional(
-      Type.Object(
-        {
-          limit: Type.Integer({ minimum: 1, maximum: 100 }),
-          after: Type.Optional(TaskIdParameter),
-        },
-        { additionalProperties: false },
-      ),
+    page: Type.Optional(TaskPageParameters),
+    filter: Type.Optional(TaskFilterParameters),
+    queries: Type.Optional(
+      Type.Array(TaskReadQueryParameters, {
+        minItems: 1,
+        maxItems: MAX_TASK_PAGE_SIZE,
+      }),
     ),
-    filter: Type.Optional(
-      Type.Object(
-        {
-          status: Type.Optional(TaskStatusParameter),
-          blocked: Type.Optional(Type.Boolean()),
-        },
-        { additionalProperties: false },
-      ),
-    ),
+
     issues: Type.Optional(
       Type.Array(IssueParameters, {
         minItems: 1,
@@ -165,6 +181,7 @@ export class TaskOutputError extends Data.TaggedError("TaskOutputError")<{
 
 export type TaskExecutionOutcome =
   | { readonly kind: "page"; readonly page: IssueTaskPage }
+  | { readonly kind: "pages"; readonly pages: readonly IssueTaskPageResult[] }
   | { readonly kind: "task"; readonly detail: IssueTaskDetail }
   | { readonly kind: "missing_issue"; readonly issue: IssueReference }
   | { readonly kind: "missing_task"; readonly target: TaskAddress }
@@ -203,7 +220,10 @@ export interface TaskNativeCall {
   readonly sessionId: string
 }
 export interface TaskToolOptions {
-  readonly store: Pick<SqliteTaskStore, "apply" | "readTasks" | "readTask">
+  readonly store: Pick<
+    SqliteTaskStore,
+    "apply" | "readTasks" | "readTask" | "readManyTasks"
+  >
   readonly contextForCall: (
     call: TaskNativeCall,
   ) => Effect.Effect<TaskApplyContext, TaskHostError>
@@ -235,6 +255,11 @@ const executeRequest = (
 ): Effect.Effect<TaskExecutionOutcome> =>
   Effect.gen(function* () {
     switch (request.action) {
+      case "readMany": {
+        const pages = yield* options.store.readManyTasks(request.queries)
+
+        return { kind: "pages", pages } satisfies TaskExecutionOutcome
+      }
       case "read": {
         const page = yield* options.store.readTasks(
           request.issue,
@@ -281,6 +306,8 @@ const unavailableOutput = (outcome: TaskExecutionOutcome): string => {
   switch (outcome.kind) {
     case "saved":
       return `Saved task batch ${outcome.result.batchId} (${outcome.result.receipt}); ${outcome.result.changed.length} changed, ${outcome.result.created.length} created. Detailed output unavailable. Do not repeat this write with a new request identity.`
+    case "pages":
+      return `Checked ${outcome.pages.length} qualified issue-page queries. Detailed output unavailable.`
     case "page":
       return `Read ${outcome.page.tasks.length} tasks from ${outcome.page.issue.repository}#${outcome.page.issue.number}, revision ${outcome.page.revision}. Detailed output unavailable.`
     case "task":
@@ -308,7 +335,7 @@ export const createTaskTool = (options: TaskToolOptions): IssueTaskTool => ({
   name: "task",
   label: "Task",
   description:
-    "Read/get issue-qualified tasks or apply an atomic explicit-issue mutation batch. Read requires issue/page with optional status/blocked filter; get requires issue/id; apply requires complete issues/operations (add, edit, status, block, transfer). No worker selection or replies. Authority and request identity come only from the host.",
+    "Read/get issue-qualified tasks or apply an atomic explicit-issue mutation batch. Read requires issue/page with optional status/blocked filter; readMany takes explicit queries (issue/page/filter) totalling at most 100 requested tasks; get requires issue/id; apply requires complete issues/operations (add, edit, status, block, transfer). No worker selection or replies. Authority and request identity come only from the host.",
   parameters: TaskParameters,
   execute: async (toolCallId, params, signal, _onUpdate, ctx) => {
     let outcome: TaskExecutionOutcome
