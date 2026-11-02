@@ -11,7 +11,9 @@ test("one non-autodiscovered global source replaces the two divergent global fil
   assert.ok(lstatSync(globalPath).isFile())
   assert.equal(existsSync(`${root}ai/AGENTS.md`), false)
   assert.equal(existsSync(`${root}ai/pi/AGENTS.md`), false)
+
   const global = readFileSync(globalPath, "utf8")
+
   assert.ok(
     /guarantees in tested harness code:[\s\S]*?timed publication/.test(global),
     "Timing guarantees must belong to harness code",
@@ -25,6 +27,7 @@ test("one non-autodiscovered global source replaces the two divergent global fil
 test("consolidation preserves global safeguards and project-local guidance", () => {
   const global = readFileSync(globalPath, "utf8")
   const project = readFileSync(`${root}AGENTS.md`, "utf8")
+
   assert.ok(global.includes("Preserve uncertain changes"))
   assert.ok(global.includes("verify harness discovery links"))
   assert.ok(global.includes("registered reload tool"))
@@ -56,7 +59,9 @@ test("managed engineering harness entrypoints use the canonical source", () => {
 
 test("Codex retains its independent research and administration instructions", () => {
   assert.ok(!home.includes('".codex/AGENTS.md".source = globalInstructions;'))
+
   const global = readFileSync(globalPath, "utf8")
+
   assert.match(global, /Codex keeps its own `~\/.codex\/AGENTS\.md`/)
 })
 
@@ -65,7 +70,9 @@ test("repository CLAUDE instructions resolve to repository policy, not global po
     realpathSync(`${root}CLAUDE.md`),
     realpathSync(`${root}AGENTS.md`),
   )
+
   const project = readFileSync(`${root}AGENTS.md`, "utf8")
+
   assert.ok(
     /purpose-named branch/.test(project) && /open a draft PR/.test(project),
     "Project publication workflow remains local",
