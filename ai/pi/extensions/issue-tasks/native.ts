@@ -43,6 +43,7 @@ export const acquireNativeTaskTool = (
       openSqliteTaskStore(storeOptions),
       acquired => acquired.close().pipe(Effect.catchAll(onCloseFailure)),
     )
+
     const issueReader = createIssueTaskReader({
       github: createGitHubCliReader({ cwd }),
       tasks: store,

@@ -139,6 +139,7 @@ test("native composition executes SDK-validated local actions and closes with it
       assert.equal(grants, 1)
 
       await close(scope)
+
       const stopped = (await invoke(tool, read)).details.outcome
 
       assert.equal(stopped.kind, "failed")
@@ -162,6 +163,7 @@ test("independent native scopes share persisted tasks but not connection lifetim
       assert.equal((await invoke(writer, add)).details.outcome.kind, "saved")
 
       await close(first)
+
       const result = (await invoke(reader, read)).details.outcome
 
       assert.equal(result.kind, "page")
@@ -209,6 +211,7 @@ test("native opening captures the host file and callbacks before deferred execut
     const scope = Effect.runSync(Scope.make())
     const original = options(root)
     let originalGrants = 0
+    let originalRenders = 0
 
     const input = {
       ...original,
@@ -219,18 +222,32 @@ test("native opening captures the host file and callbacks before deferred execut
 
         return original.contextForCall(call)
       },
+      renderOutput: (
+        outcome: Parameters<NativeTaskToolOptions["renderOutput"]>[0],
+      ) => {
+        originalRenders += 1
+
+        return Effect.succeed(`Original ${outcome.kind}`)
+      },
     }
 
     const pending = native.acquireNativeTaskTool(input)
 
     input.databasePath = join(root, "redirected.sqlite")
     input.contextForCall = () => Effect.die("Redirected authority was used")
+    input.renderOutput = () => Effect.succeed("Redirected output")
 
     try {
       const tool = await Effect.runPromise(Scope.extend(pending, scope))
 
-      assert.equal((await invoke(tool, add)).details.outcome.kind, "saved")
+      const saved = await invoke(tool, add)
+
+      assert.equal(saved.details.outcome.kind, "saved")
+      assert.deepEqual(saved.content, [
+        { type: "text", text: "Original saved" },
+      ])
       assert.equal(originalGrants, 1)
+      assert.equal(originalRenders, 1)
       assert.equal(existsSync(join(root, "tasks.sqlite")), true)
       assert.equal(existsSync(join(root, "redirected.sqlite")), false)
     } finally {
@@ -290,6 +307,7 @@ test("interruption between native acquisition and consumer handoff closes the ac
       )
 
       controller.abort()
+
       const result = await running
 
       assert.ok(Exit.isFailure(result))
@@ -309,15 +327,21 @@ test("typed close failures reach the host reporter without changing the earlier 
   fixture(async root => {
     const scope = Effect.runSync(Scope.make())
     const failures: TaskStoreError[] = []
+    const input = {
+      ...options(root),
+      onCloseFailure: (error: TaskStoreError) =>
+        Effect.sync(() => {
+          failures.push(error)
+        }),
+    }
+    const pending = native.acquireNativeTaskTool(input)
+
+    input.onCloseFailure = () =>
+      Effect.sync(() => assert.fail("Redirected close reporter was used"))
 
     try {
-      const tool = await acquire(scope, {
-        ...options(root),
-        onCloseFailure: error =>
-          Effect.sync(() => {
-            failures.push(error)
-          }),
-      })
+      const tool = await Effect.runPromise(Scope.extend(pending, scope))
+
       const saved = await invoke(tool, add)
 
       assert.equal(saved.details.outcome.kind, "saved")
