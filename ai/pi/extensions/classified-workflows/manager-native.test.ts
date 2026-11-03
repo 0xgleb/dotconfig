@@ -300,6 +300,8 @@ test("manager profile preserves the native editor and exposes registry managemen
     "manager_control",
     "read",
     "bash",
+    "write",
+    "edit",
     "ask_user",
     "report_owner",
     "web_search",
@@ -328,7 +330,7 @@ test("manager profile preserves the native editor and exposes registry managemen
     undefined,
   )
   assert.equal(await f.emit("tool_call", { toolName: "todo" }), undefined)
-  const denied = object(await f.emit("tool_call", { toolName: "write" }))
+  const denied = object(await f.emit("tool_call", { toolName: "workflow" }))
   assert.equal(denied.block, true)
 })
 
@@ -386,6 +388,47 @@ for (const profile of [true, "global"] as const) {
     }
   })
 
+  test(`${name} manager exposes file tools for authorized manager work`, async t => {
+    const f = fixture(t, profile)
+
+    await f.emit("session_start")
+
+    const policy = object(
+      await f.emit("before_agent_start", {
+        systemPrompt: "Native Pi base",
+        prompt: "Save the approved manager draft.",
+      }),
+    )
+
+    for (const toolName of ["write", "edit"]) {
+      assert.ok(f.active.at(-1)?.includes(toolName), toolName)
+      const input =
+        toolName === "write"
+          ? { path: "manager-draft.md", content: "Approved draft" }
+          : {
+              path: "manager-draft.md",
+              edits: [{ oldText: "Draft", newText: "Approved draft" }],
+            }
+
+      assert.equal(await f.emit("tool_call", { toolName, input }), undefined)
+    }
+
+    assert.match(
+      String(policy.systemPrompt).replace(/\s+/gu, " "),
+      /Use write and edit for owner-authorized manager work/u,
+    )
+    assert.match(
+      String(policy.systemPrompt).replace(/\s+/gu, " "),
+      /necessary formatting and verification of those files/u,
+    )
+    assert.equal(
+      object(await f.emit("tool_call", { toolName: "workflow" })).block,
+      true,
+    )
+    assert.deepEqual(f.execs, [])
+    assert.deepEqual(f.messages, [])
+  })
+
   test(`${name} manager exposes existing bash for GitHub issue maintenance`, async t => {
     const f = fixture(t, profile)
 
@@ -418,13 +461,10 @@ for (const profile of [true, "global"] as const) {
       /General shell execution, coding and worker launches remain excluded/u,
     )
 
-    for (const toolName of ["write", "edit", "workflow"]) {
-      assert.equal(
-        object(await f.emit("tool_call", { toolName })).block,
-        true,
-        toolName,
-      )
-    }
+    assert.equal(
+      object(await f.emit("tool_call", { toolName: "workflow" })).block,
+      true,
+    )
 
     assert.deepEqual(f.execs, [])
     assert.deepEqual(f.messages, [])
@@ -448,6 +488,8 @@ for (const profile of [true, "global"] as const) {
       "manager_control",
       "read",
       "bash",
+      "write",
+      "edit",
       "ask_user",
       "report_owner",
       "web_search",
@@ -455,13 +497,10 @@ for (const profile of [true, "global"] as const) {
     ]) {
       assert.equal(await f.emit("tool_call", { toolName }), undefined, toolName)
     }
-    for (const toolName of ["write", "edit", "workflow"]) {
-      assert.equal(
-        object(await f.emit("tool_call", { toolName })).block,
-        true,
-        toolName,
-      )
-    }
+    assert.equal(
+      object(await f.emit("tool_call", { toolName: "workflow" })).block,
+      true,
+    )
   })
 }
 
@@ -523,6 +562,8 @@ test("global manager selects an existing worker without changing native UI or st
     "manager_control",
     "read",
     "bash",
+    "write",
+    "edit",
     "ask_user",
     "report_owner",
     "web_search",
@@ -746,7 +787,7 @@ test("round report enters native Markdown message rendering once without another
   assert.equal(object(delivery.options).triggerTurn, false)
 })
 
-test("manager toolset exposes owner reporting without coding tools", async t => {
+test("manager toolset exposes owner reporting with role-scoped file tools", async t => {
   const f = fixture(t, true)
   await f.emit("session_start")
   assert.ok(f.active.at(-1)?.includes("report_owner"))
@@ -754,7 +795,7 @@ test("manager toolset exposes owner reporting without coding tools", async t => 
     await f.emit("tool_call", { toolName: "report_owner", input: {} }),
     undefined,
   )
-  const denied = object(await f.emit("tool_call", { toolName: "write" }))
+  const denied = object(await f.emit("tool_call", { toolName: "workflow" }))
   assert.equal(denied.block, true)
 })
 

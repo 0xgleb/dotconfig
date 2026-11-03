@@ -27,6 +27,25 @@ test("management retains existing owner reporting through enforcement and exact 
   assert.deepEqual(f.tools(), prior)
 })
 
+test("management preserves available file tools without exposing them to ordinary communication", () => {
+  const prior = ["write", "edit", "read", "workflow"]
+  const f = fixture(prior)
+  const guard = enterRemoteToolGuard(f.controller, "management")
+
+  assert.deepEqual(f.tools(), ["write", "edit", "read"])
+  f.controller.setActiveTools(["workflow"])
+  guard.enforce()
+  assert.deepEqual(f.tools(), ["write", "edit", "read"])
+  guard.restore()
+  assert.deepEqual(f.tools(), prior)
+
+  const communication = enterRemoteToolGuard(f.controller, "communication")
+
+  assert.deepEqual(f.tools(), [])
+  communication.restore()
+  assert.deepEqual(f.tools(), prior)
+})
+
 test("ordinary agent communication cannot report or execute and restores the exact tools", () => {
   const prior = ["report_owner", "bash", "read", "todo"]
   const f = fixture(prior)
@@ -48,8 +67,8 @@ test("management cannot promote unavailable owner reporting", () => {
   assert.deepEqual(f.tools(), ["bash", "read", "todo"])
 })
 
-test("management cannot promote unavailable GitHub CLI or coding tools", () => {
-  const prior = ["read", "report_owner", "write", "edit", "workflow"]
+test("management cannot promote unavailable GitHub CLI or file tools", () => {
+  const prior = ["read", "report_owner", "workflow"]
   const f = fixture(prior)
   const guard = enterRemoteToolGuard(f.controller, "management")
 

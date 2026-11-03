@@ -654,6 +654,8 @@ const MANAGEMENT_TOOLS: readonly string[] = [
   "manager_control",
   "read",
   "bash",
+  "write",
+  "edit",
   "ask_user",
   "report_owner",
 ]
