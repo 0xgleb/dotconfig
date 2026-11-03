@@ -19,7 +19,12 @@ import {
   createGitHubIssueReader,
   type GitHubIssueQueryExecution,
 } from "./github-read.ts"
-import { createIssueTaskReader } from "./issue-view.ts"
+import {
+  createIssueTaskReader,
+  type IssueTaskListView,
+  type IssueTaskDetailView,
+} from "./issue-view.ts"
+import { createGitHubCliReader } from "./github-cli.ts"
 import type { IssueTaskTool, TaskToolOptions } from "./tool.ts"
 
 const piExecutable = realpathSync(
@@ -180,6 +185,98 @@ const getIssueResponse = JSON.stringify({
     },
   },
 })
+
+// Same source-owned non-secret live-read opt-in as github-cli.live.test.ts.
+const liveReadEnabled = process.env.PI_ISSUE_TASK_GITHUB_LIVE_READ_TESTS === "1"
+test(
+  "actual SDK task issue reads compose the default GitHub CLI and isolated SQLite",
+  { skip: !liveReadEnabled, timeout: 45_000 },
+  async t =>
+    fixture(async store => {
+      let grants = 0
+      const options = ordinaryOptions(store)
+      const tool = register({
+        ...options,
+        issueReader: createIssueTaskReader({
+          github: createGitHubCliReader({
+            cwd: fileURLToPath(new URL("../../../../", import.meta.url)),
+          }),
+          tasks: store,
+        }),
+        contextForCall: call => {
+          grants += 1
+          return options.contextForCall(call)
+        },
+        renderOutput: outcome =>
+          Effect.succeed(
+            `Outcome ${outcome.kind}; full data retained in details.`,
+          ),
+      })
+      const target = { repository: rawIssue.repository, number: 86 }
+      const seeded = await invoke(
+        tool,
+        {
+          action: "apply",
+          issues: [target],
+          operations: [
+            {
+              op: "add",
+              issue: target,
+              key: "fixture",
+              text: "Native read integration fixture",
+            },
+          ],
+        },
+        "native-live-seed",
+        t.signal,
+      )
+      assert.equal(seeded.details.outcome.kind, "saved")
+      if (seeded.details.outcome.kind !== "saved")
+        assert.fail("Expected isolated fixture write")
+      const created = seeded.details.outcome.result.created[0]
+      assert.ok(created)
+      assert.equal(grants, 1)
+      grants = 0
+
+      const listed = await invoke(
+        tool,
+        { action: "listIssues", query: { ...listIssuesQuery, state: "all" } },
+        "native-live-list",
+        t.signal,
+      )
+      assert.equal(listed.details.outcome.kind, "issue_list")
+      if (listed.details.outcome.kind !== "issue_list")
+        assert.fail("Expected bounded native issue list")
+      const listView: IssueTaskListView = listed.details.outcome.view
+      assert.equal(listView.repository, rawIssue.repository)
+      assert.equal(listView.issues.length <= 1, true)
+      assert.equal(
+        listView.issues.every(
+          row => row.metadata.issue.repository === rawIssue.repository,
+        ),
+        true,
+      )
+
+      const found = await invoke(
+        tool,
+        { action: "getIssue", query: { ...getIssueQuery, issue: target } },
+        "native-live-get",
+        t.signal,
+      )
+      assert.equal(found.details.outcome.kind, "issue_detail")
+      if (found.details.outcome.kind !== "issue_detail")
+        assert.fail("Expected qualified native issue detail")
+      const view: IssueTaskDetailView = found.details.outcome.view
+      assert.equal(view.issue.repository, target.repository)
+      assert.equal(view.issue.number, 86)
+      assert.equal(typeof view.detail?.body, "string")
+      assert.equal(view.tasks?.issue.number, 86)
+      assert.equal(view.tasks?.tasks[0]?.id, created.id)
+      assert.equal(grants, 0)
+      assert.equal(found.details.output, "complete")
+      assert.equal(found.isError, false)
+    }),
+)
 
 test("registered task listIssues joins real issue decoding and SQLite without mutation grants", async () =>
   fixture(async store => {
