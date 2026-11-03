@@ -8,6 +8,18 @@ import {
   type GitHubIssueReader,
 } from "./github-read.ts"
 
+import {
+  createGitHubProjectReader,
+  type GitHubProjectReader,
+} from "./github-project-read.ts"
+
+export const createGitHubCliProjectReader = (
+  _options: GitHubCliReaderOptions,
+): GitHubProjectReader =>
+  createGitHubProjectReader({
+    executeQuery: () => Effect.fail(transportError()),
+  })
+
 export interface GitHubCliExecutionOptions {
   readonly cwd: string
   readonly encoding: "buffer"
