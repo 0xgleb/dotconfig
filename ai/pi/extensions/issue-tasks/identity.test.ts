@@ -13,6 +13,22 @@ const issue = (repository = "0xgleb/dotconfig", number = 1) => ({
   number,
 })
 
+for (const [name, input] of [
+  ["inherited required fields", Object.create(issue())],
+  ["symbol excess field", { ...issue(), [Symbol("extra")]: true }],
+  [
+    "non-enumerable excess field",
+    Object.defineProperty(issue(), "extra", { value: true }),
+  ],
+] as const) {
+  test(`issue decoding rejects ${name} at the native-object boundary`, () => {
+    const decoded = decodeIssueReference(input)
+
+    assert.ok(Either.isLeft(decoded))
+    assert.equal(decoded.left.code, "invalid_issue")
+  })
+}
+
 test("repository discovery targets normalize without fabricating an issue identity", () => {
   for (const source of [
     "Owner/Repo",

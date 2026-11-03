@@ -66,10 +66,14 @@ export const decodeIssueReference = (
       typeof value !== "object" ||
       value === null ||
       Array.isArray(value) ||
+      !Object.hasOwn(value, "repository") ||
       !("repository" in value) ||
       typeof value.repository !== "string" ||
+      !Object.hasOwn(value, "number") ||
       !("number" in value) ||
-      Object.keys(value).some(key => !["repository", "number"].includes(key))
+      Reflect.ownKeys(value).some(
+        key => key !== "repository" && key !== "number",
+      )
     )
       return yield* Either.left(invalid())
 
