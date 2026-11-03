@@ -1,11 +1,12 @@
 import assert from "node:assert/strict"
-import { mkdirSync, mkdtempSync, rmSync } from "node:fs"
-import { join } from "node:path"
+import { mkdirSync, mkdtempSync, readFileSync, rmSync } from "node:fs"
+import { join, resolve } from "node:path"
 import test from "node:test"
 import { fileURLToPath, pathToFileURL } from "node:url"
 import {
   getPackageDir,
   SessionManager,
+  SettingsManager,
   type ModelRegistry,
 } from "@earendil-works/pi-coding-agent"
 import type { TaskToolDetails } from "./tool.ts"
@@ -15,7 +16,13 @@ const parent = fileURLToPath(
 )
 const extensionDirectory = fileURLToPath(new URL("./", import.meta.url))
 
-test("actual SDK discovers task, registers it at session start and executes persisted work without a model", async () => {
+const extensionPackage = fileURLToPath(new URL("../", import.meta.url))
+
+const configuredSettings = JSON.parse(
+  readFileSync(new URL("../../../pi.settings.json", import.meta.url), "utf8"),
+)
+
+test("actual SDK resolves task and todo from the configured package, then executes persisted task work without a model", async () => {
   const packageRoot = getPackageDir()
   const loader = await import(
     pathToFileURL(join(packageRoot, "dist/core/extensions/loader.js")).href
@@ -34,6 +41,9 @@ test("actual SDK discovers task, registers it at session start and executes pers
       ),
     ).href
   )
+  const packageManager = await import(
+    pathToFileURL(join(packageRoot, "dist/core/package-manager.js")).href
+  )
   const runtime = loader.createExtensionRuntime()
 
   mkdirSync(parent, { recursive: true, mode: 0o700 })
@@ -43,8 +53,34 @@ test("actual SDK discovers task, registers it at session start and executes pers
   let runner: InstanceType<typeof runnerModule.ExtensionRunner> | undefined
 
   try {
+    assert.ok(configuredSettings.packages.includes(resolve(extensionPackage)))
+
+    const packages = new packageManager.DefaultPackageManager({
+      cwd: root,
+      agentDir: root,
+      settingsManager: SettingsManager.inMemory(),
+    })
+
+    const resources = await packages.resolveExtensionSources(
+      [extensionPackage],
+      {
+        temporary: true,
+      },
+    )
+
+    const taskResource = resources.extensions.find(
+      resource => resource.path === join(extensionDirectory, "index.ts"),
+    )
+
+    const todoResource = resources.extensions.find(
+      resource => resource.path === join(extensionPackage, "todo/index.ts"),
+    )
+
+    assert.equal(taskResource?.enabled, true, "configured package exposes task")
+    assert.equal(todoResource?.enabled, true, "configured package retains todo")
+    assert.ok(taskResource)
     const loaded = await loader.loadExtensions(
-      [extensionDirectory],
+      [taskResource.path],
       root,
       busModule.createEventBus(),
       runtime,
