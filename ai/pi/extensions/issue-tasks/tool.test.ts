@@ -15,6 +15,11 @@ import {
 } from "./sqlite-store.ts"
 import { MutationBatchIdSchema } from "./model.ts"
 import { decodeIssueReference } from "./identity.ts"
+import {
+  createGitHubIssueReader,
+  type GitHubIssueQueryExecution,
+} from "./github-read.ts"
+import { createIssueTaskReader } from "./issue-view.ts"
 import type { IssueTaskTool, TaskToolOptions } from "./tool.ts"
 
 const piExecutable = realpathSync(
@@ -124,6 +129,407 @@ const addRequest = {
   issues: [rawIssue],
   operations: [{ op: "add", issue: rawIssue, key: "one", text: "Requirement" }],
 }
+
+const listIssuesQuery = {
+  repository: rawIssue.repository,
+  state: "open",
+  page: { limit: 1 },
+  tasks: { limit: 1 },
+}
+const getIssueQuery = {
+  issue: rawIssue,
+  related: { limit: 1 },
+  tasks: { page: { limit: 1 } },
+}
+const remoteIssue = {
+  ...rawIssue,
+  title: "Fixture issue",
+  url: "https://github.com/0xgleb/dotconfig/issues/1",
+  state: "OPEN",
+  updatedAt: "2026-10-20T20:14:47Z",
+  repository: { nameWithOwner: rawIssue.repository },
+}
+const listIssuesResponse = JSON.stringify({
+  data: {
+    repository: {
+      nameWithOwner: rawIssue.repository,
+      issues: {
+        nodes: [remoteIssue],
+        pageInfo: { hasNextPage: false, endCursor: "opaque-terminal" },
+      },
+    },
+  },
+})
+const getIssueResponse = JSON.stringify({
+  data: {
+    repository: {
+      nameWithOwner: rawIssue.repository,
+      issue: {
+        ...remoteIssue,
+        body: "Fixture acceptance data",
+        parent: null,
+        blockedBy: {
+          nodes: [],
+          pageInfo: { hasNextPage: false, endCursor: null },
+        },
+        closedByPullRequestsReferences: {
+          nodes: [],
+          pageInfo: { hasNextPage: false, endCursor: null },
+        },
+      },
+    },
+  },
+})
+
+test("registered task listIssues joins real issue decoding and SQLite without mutation grants", async () =>
+  fixture(async store => {
+    await invoke(register(ordinaryOptions(store)), addRequest, "seed")
+    let grants = 0
+    const requests: GitHubIssueQueryExecution[] = []
+    const issueReader = createIssueTaskReader({
+      github: createGitHubIssueReader({
+        executeQuery: request =>
+          Effect.sync(() => {
+            requests.push(request)
+            return listIssuesResponse
+          }),
+      }),
+      tasks: store,
+    })
+    const options = ordinaryOptions(store)
+    const tool = register({
+      ...options,
+      issueReader,
+      contextForCall: call => {
+        grants += 1
+        return options.contextForCall(call)
+      },
+    })
+    const result = await invoke(tool, {
+      action: "listIssues",
+      query: { ...listIssuesQuery, page: { limit: 1, after: "opaque-before" } },
+    })
+    assert.equal(result.details.outcome.kind, "issue_list")
+    if (result.details.outcome.kind !== "issue_list")
+      assert.fail("Expected qualified issue list")
+    assert.equal(
+      result.details.outcome.view.issues[0]?.metadata.issue.number,
+      1,
+    )
+    assert.equal(result.details.outcome.view.issues[0]?.tasks?.tasks.length, 1)
+    assert.equal(requests.length, 1)
+    assert.ok(requests[0] && "after" in requests[0].variables)
+    assert.equal(requests[0].variables.after, "opaque-before")
+    assert.equal(grants, 0)
+    assert.equal(result.isError, false)
+  }))
+
+test("registered task getIssue retains body, qualified task page and independent relation arguments", async () =>
+  fixture(async store => {
+    await invoke(register(ordinaryOptions(store)), addRequest, "seed")
+    const requests: GitHubIssueQueryExecution[] = []
+    const tool = register({
+      ...ordinaryOptions(store),
+      issueReader: createIssueTaskReader({
+        github: createGitHubIssueReader({
+          executeQuery: request =>
+            Effect.sync(() => {
+              requests.push(request)
+              return getIssueResponse
+            }),
+        }),
+        tasks: store,
+      }),
+    })
+    const result = await invoke(tool, {
+      action: "getIssue",
+      query: {
+        ...getIssueQuery,
+        related: {
+          limit: 1,
+          blockedByAfter: "dep-before",
+          deliveryAfter: "pr-before",
+        },
+      },
+    })
+    assert.equal(result.details.outcome.kind, "issue_detail")
+    if (result.details.outcome.kind !== "issue_detail")
+      assert.fail("Expected issue detail")
+    assert.deepEqual(result.details.outcome.view.issue, issue())
+    assert.equal(
+      result.details.outcome.view.detail?.body,
+      "Fixture acceptance data",
+    )
+    assert.equal(result.details.outcome.view.tasks?.tasks.length, 1)
+    assert.equal(requests.length, 1)
+    assert.ok(requests[0] && "blockedByAfter" in requests[0].variables)
+    assert.equal(requests[0].variables.blockedByAfter, "dep-before")
+    assert.equal(requests[0].variables.deliveryAfter, "pr-before")
+  }))
+
+test("registered task explicitly reports missing issue-reader capability while local reads still work", async () =>
+  fixture(async store => {
+    const tool = register(ordinaryOptions(store))
+    for (const request of [
+      { action: "listIssues", query: listIssuesQuery },
+      { action: "getIssue", query: getIssueQuery },
+    ]) {
+      const result = await invoke(tool, request)
+      assert.equal(result.details.outcome.kind, "failed")
+      if (result.details.outcome.kind !== "failed")
+        assert.fail("Expected missing host capability")
+      assert.equal(result.details.outcome.code, "host_unavailable")
+    }
+    const local = await invoke(tool, {
+      action: "read",
+      issue: rawIssue,
+      page: { limit: 1 },
+    })
+    assert.equal(local.details.outcome.kind, "missing_issue")
+  }))
+
+test("actual SDK describes strict issue query shapes without widening local task cursor validation", async () =>
+  fixture(async store => {
+    const tool = register(ordinaryOptions(store))
+    for (const request of [
+      {
+        action: "listIssues",
+        query: { ...listIssuesQuery, authority: "owner" },
+      },
+      {
+        action: "getIssue",
+        query: {
+          ...getIssueQuery,
+          issue: { ...rawIssue, number: 2_147_483_648 },
+        },
+      },
+      {
+        action: "getIssue",
+        query: { ...getIssueQuery, related: { limit: 1, worker: "other" } },
+      },
+      {
+        action: "read",
+        issue: rawIssue,
+        page: { limit: 1, after: "opaque-before" },
+      },
+    ])
+      assert.throws(() => invoke(tool, request))
+  }))
+
+test("registered issue actions reject excess root fields and aggregate budgets before any read", async () =>
+  fixture(async store => {
+    let calls = 0
+    const options = ordinaryOptions(store)
+    const tool = register({
+      ...options,
+      issueReader: createIssueTaskReader({
+        github: createGitHubIssueReader({
+          executeQuery: () =>
+            Effect.sync(() => {
+              calls += 1
+              return listIssuesResponse
+            }),
+        }),
+        tasks: store,
+      }),
+      contextForCall: call => {
+        calls += 1
+        return options.contextForCall(call)
+      },
+    })
+    for (const request of [
+      { action: "listIssues", query: listIssuesQuery, issue: rawIssue },
+      {
+        action: "getIssue",
+        query: getIssueQuery,
+        operations: addRequest.operations,
+      },
+      {
+        action: "listIssues",
+        query: {
+          ...listIssuesQuery,
+          page: { limit: 100 },
+          tasks: { limit: 2 },
+        },
+      },
+      {
+        action: "read",
+        issue: rawIssue,
+        page: { limit: 1 },
+        query: listIssuesQuery,
+      },
+    ]) {
+      const result = await invoke(tool, request)
+      assert.equal(result.details.outcome.kind, "failed")
+      if (result.details.outcome.kind !== "failed")
+        assert.fail("Expected semantic request rejection")
+      assert.equal(result.details.outcome.code, "invalid_request")
+    }
+    assert.equal(calls, 0)
+  }))
+
+test("registered issue renderer failure retains qualified unavailable metadata and existing local tasks", async () =>
+  fixture(async store => {
+    await invoke(register(ordinaryOptions(store)), addRequest, "seed")
+    const tool = register({
+      ...ordinaryOptions(store),
+      issueReader: createIssueTaskReader({
+        github: createGitHubIssueReader({
+          executeQuery: () =>
+            Effect.succeed(JSON.stringify({ data: { repository: null } })),
+        }),
+        tasks: store,
+      }),
+      renderOutput: () =>
+        Effect.fail(
+          new tools.TaskOutputError({
+            message: "Fixture renderer unavailable",
+          }),
+        ),
+    })
+    const result = await invoke(tool, {
+      action: "getIssue",
+      query: getIssueQuery,
+    })
+    assert.equal(result.details.outcome.kind, "issue_detail")
+    if (result.details.outcome.kind !== "issue_detail")
+      assert.fail("Expected preserved detail outcome")
+    assert.deepEqual(result.details.outcome.view.issue, issue())
+    assert.equal(result.details.outcome.view.detail, null)
+    assert.equal(result.details.outcome.view.tasks?.tasks.length, 1)
+    assert.equal(result.details.output, "unavailable")
+    const content = result.content[0]
+    assert.ok(content?.type === "text")
+    assert.match(content.text, /0xgleb\/dotconfig#1/)
+    assert.match(content.text, /metadata unavailable/i)
+    assert.equal(result.isError, false)
+  }))
+
+test("registered issue list overflow keeps the full view and a bounded qualified fallback", async () =>
+  fixture(async store => {
+    const tool = register({
+      ...ordinaryOptions(store),
+      issueReader: createIssueTaskReader({
+        github: createGitHubIssueReader({
+          executeQuery: () => Effect.succeed(listIssuesResponse),
+        }),
+        tasks: store,
+      }),
+      renderOutput: () => Effect.succeed("x".repeat(50 * 1024 + 1)),
+    })
+    const result = await invoke(tool, {
+      action: "listIssues",
+      query: listIssuesQuery,
+    })
+    assert.equal(result.details.outcome.kind, "issue_list")
+    if (result.details.outcome.kind !== "issue_list")
+      assert.fail("Expected preserved list outcome")
+    assert.equal(result.details.outcome.view.issues.length, 1)
+    assert.equal(result.details.output, "unavailable")
+    const content = result.content[0]
+    assert.ok(content?.type === "text")
+    assert.match(content.text, /0xgleb\/dotconfig/)
+    assert.ok(Buffer.byteLength(content.text, "utf8") <= 50 * 1024)
+  }))
+
+test("pre-aborted registered issue reads make no remote call or mutation-context request", async () =>
+  fixture(async store => {
+    let calls = 0
+    const options = ordinaryOptions(store)
+    const tool = register({
+      ...options,
+      issueReader: createIssueTaskReader({
+        github: createGitHubIssueReader({
+          executeQuery: () =>
+            Effect.sync(() => {
+              calls += 1
+              return getIssueResponse
+            }),
+        }),
+        tasks: store,
+      }),
+      contextForCall: call => {
+        calls += 1
+        return options.contextForCall(call)
+      },
+    })
+    const controller = new AbortController()
+    controller.abort()
+    for (const request of [
+      { action: "listIssues", query: listIssuesQuery },
+      { action: "getIssue", query: getIssueQuery },
+    ]) {
+      const result = await invoke(
+        tool,
+        request,
+        "aborted-read",
+        controller.signal,
+      )
+      assert.equal(result.details.outcome.kind, "interrupted")
+    }
+    assert.equal(calls, 0)
+  }))
+
+test(
+  "in-flight registered issue cancellation remains interrupted rather than an unconfirmed write",
+  { timeout: 5_000 },
+  async t =>
+    fixture(async store => {
+      const entered = await Effect.runPromise(Deferred.make<void>())
+      const controller = new AbortController()
+      t.signal.addEventListener("abort", () => controller.abort(), {
+        once: true,
+      })
+      let released = false
+      let grants = 0
+      const options = ordinaryOptions(store)
+      const tool = register({
+        ...options,
+        issueReader: createIssueTaskReader({
+          github: createGitHubIssueReader({
+            executeQuery: () =>
+              Deferred.succeed(entered, undefined).pipe(
+                Effect.zipRight(Effect.never),
+                Effect.ensuring(
+                  Effect.sync(() => {
+                    released = true
+                  }),
+                ),
+              ),
+          }),
+          tasks: store,
+        }),
+        contextForCall: call => {
+          grants += 1
+          return options.contextForCall(call)
+        },
+      })
+      const pending = invoke(
+        tool,
+        { action: "getIssue", query: getIssueQuery },
+        "interrupted-issue",
+        controller.signal,
+      )
+      try {
+        assert.equal(
+          await Promise.race([
+            Effect.runPromise(Deferred.await(entered)).then(() => true),
+            pending.then(() => false),
+          ]),
+          true,
+        )
+        controller.abort()
+        const result = await pending
+        assert.equal(result.details.outcome.kind, "interrupted")
+        assert.equal(result.isError, false)
+        assert.equal(released, true)
+        assert.equal(grants, 0)
+      } finally {
+        controller.abort()
+        await pending
+      }
+    }),
+)
 
 test("registered task apply uses host identity, replays one native request and supports qualified get", async () =>
   fixture(async store => {
