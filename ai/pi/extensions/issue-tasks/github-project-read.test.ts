@@ -373,6 +373,75 @@ test("Project read preserves known nonissues without inventing issue references"
   assert.ok(page.items.every(item => Object.isFrozen(item)))
 })
 
+test("Project response admits 100 complete distinct items at the upper row bound", () => {
+  const original = issueItem()
+  const nodes = Array.from({ length: 100 }, (_, index) =>
+    issueItem("personal", {
+      id: `item-${index}`,
+      content: { ...original.content, number: index + 1 },
+    }),
+  )
+  const page = right(
+    decodeGitHubProjectPage(
+      JSON.stringify(envelope("personal", nodes)),
+      query("personal", 100),
+    ),
+  )
+
+  assert.deepEqual(
+    page.items.map(item => {
+      assert.ok(item.kind === "issue")
+      return { itemId: item.itemId, issue: item.issue }
+    }),
+    Array.from({ length: 100 }, (_, index) => ({
+      itemId: `item-${index}`,
+      issue: { repository: "owner/repository", number: index + 1 },
+    })),
+  )
+})
+
+test("Project issues preserve closed state without applying eligibility policy", () => {
+  const open = issueItem()
+  const closed = issueItem("personal", {
+    content: { ...open.content, state: "CLOSED" },
+  })
+  const item = right(read(envelope("personal", [closed]))).items[0]
+
+  assert.ok(item?.kind === "issue")
+  assert.equal(item.state, "closed")
+  assert.deepEqual(item.priority, { kind: "number", value: 2 })
+  assert.deepEqual(item.effort, { kind: "number", value: 5 })
+  assert.equal(
+    code(
+      read(
+        envelope("personal", [
+          issueItem("personal", {
+            content: { ...open.content, state: "UNKNOWN" },
+          }),
+        ]),
+      ),
+    ),
+    "invalid_response",
+  )
+})
+
+test("Project duplicate-item detection is independent of qualified issue uniqueness", () => {
+  const first = issueItem()
+  const second = issueItem("personal", {
+    id: "second-item",
+    content: { ...first.content, number: 8 },
+  })
+
+  assert.equal(
+    right(read(envelope("personal", [first, second]))).items.length,
+    2,
+  )
+  assert.equal(
+    code(read(envelope("personal", [first, { ...second, id: first.id }]))),
+    "invalid_response",
+  )
+})
+
 test("Project rows enforce qualified identities, active-only scope, uniqueness and requested row budget", () => {
   for (const item of [
     issueItem("personal", { isArchived: true }),
@@ -488,7 +557,8 @@ test("every continuing Project cursor is usable within the request byte budget",
       page: { limit: 1, after: page.pageInfo.endCursor },
     })
 
-    assert.ok(Either.isRight(next))
+    assert.deepEqual(page.pageInfo, { hasNextPage: true, endCursor })
+    assert.equal(right(next).page.after, endCursor)
   }
   for (const endCursor of ["x".repeat(4097), "😀".repeat(1024) + "x"]) {
     assert.equal(
