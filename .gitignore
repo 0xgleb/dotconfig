@@ -12,7 +12,8 @@ direnv/
 .zsh/
 
 /.direnv/
-/.git-hooks-config.yaml
+/.pre-commit-config.yaml
+/.devenv/
 /.tmp/
 /.auto-resolution/
 /.conflict-base-0/

@@ -110,23 +110,28 @@ workspace:
   participating repository.
 
 Resolve `<project-role-workspace>/.tmp/handoffs/YYYY-MM-DD-<slug>.md` once; do
-not bounce among multiple directories or an inline-only handover. Inside a Git
-checkout, use `git check-ignore --verbose` on the containing `.tmp/` directory
-itself and the intended handover path before creating or writing artifacts.
-Require directory-wide coverage, not a file-specific match. Immediately add a
-missing directory pattern to that checkout's `.gitignore` and recheck both
-paths. Refresh affected Git state reads after an ignore repair so the handover
-records the resulting state. If the required shared workspace is outside every
-Git checkout, Git-ignore coverage is not applicable; do not initialize a
-repository or create an ineffective parent `.gitignore` just for the handover.
+not bounce among multiple directories or an inline-only handover. Before
+creating or writing artifacts, apply `GLOBAL_AGENTS.md`'s directory-ignore
+preflight at that workspace. The handover stop boundary permits a saved ignore
+repair, not its publication; refresh affected Git state reads and include the
+repair in the handover. Git-ignore checks do not apply outside a Git checkout.
 
-Once applicable ignore coverage is established, create the directory if absent
-and write the handover. Treat the file as ephemeral local state: do not add
-per-handover filename patterns, stage or commit the handover file, or include it
-in a PR. `<slug>` names the active task in kebab-case. Use this template,
-filling every section with specifics -- file paths, `file:line` refs, command
-names, commit SHAs. For unavailable facts, use the explicit `unverified` form
-from Step 1 instead of inventing specifics. No vague summaries:
+If the handoff directory is absent, create and record its resolved absolute path
+through `artifact_provenance`'s `create_directory` action or an available
+registered harness equivalent. Do not claim pre-existing directory contents.
+Write the handover, then immediately record the exact new file unless a
+current-runtime recorded directory already covers it. Add `crossWorkspace:
+true`
+only for an explicitly authorized target outside the tool session's workspace.
+Preserve any existing handover; choose a unique suffix if the resolved filename
+is occupied.
+
+Treat the file as ephemeral local state: do not add per-handover filename
+patterns, stage or commit the handover file, or include it in a PR. `<slug>`
+names the active task in kebab-case. Use this template, filling every section
+with specifics -- file paths, `file:line` refs, command names, commit SHAs. For
+unavailable facts, use the explicit `unverified` form from Step 1 instead of
+inventing specifics. No vague summaries:
 
 ```markdown
 # Handover: <active task>

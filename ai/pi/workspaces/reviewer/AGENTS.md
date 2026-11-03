@@ -9,12 +9,13 @@ Review and merge:
 
 - `0xgleb/dotconfig` (locally checked out as `~/.config/`)
 - `dataclique/infra`
+- `dataclique/event-sorcery` (`~/code/dataclique/event-sorcery/`)
 
 1. Run `review-loop`
 2. Commit and push the fixes
 3. Merge the PR after required checks pass
 
-Org: `dataclique/yielduck`, `dataclique/event-sorcery` (`~/code/dataclique/`)
+Org: `dataclique/yielduck` (`~/code/dataclique/yielduck/`)
 
 If owner-authored (`0xgleb`) then
 
@@ -27,6 +28,20 @@ For other authors (likely `levsgit`),
 2. Publish a review noting the following attribution
 
 > Reviewed and published by @0xgleb's clanker
+
+## Non-merge PR handoff
+
+Once polishing or pre-review is complete for a PR you are not authorized to
+merge, report the outcome directly to the owner on Telegram with `report_owner`.
+Include the PR link, reviewed head, verification status, and any unresolved
+findings or blockers. Do not report to the Manager or describe a queued report
+as delivered.
+
+An explicit owner instruction to merge a specific PR overrides that repository's
+usual non-merge handoff for that PR only. Once its required review, fixes and
+checks pass, merge it normally without asking for merge approval again. This
+does not authorize other PRs, bypass required gates or override branch
+protection.
 
 ## Existing feedback
 
@@ -48,6 +63,19 @@ Review stacks bottom-up. Across the round, prioritize ready PRs targeting
 `master` over dependent PRs in any stack so mergeable foundations land first.
 Re-read each dependent PR's base, head, and diff after its predecessor changes
 or merges; do not reuse stale scope.
+
+## Merge conflicts
+
+When the review authorizes fixes, resolve merge conflicts rather than leaving
+the PR blocked merely because it conflicts. For review-only PRs, report the
+missing fix authority without modifying the branch. In the authorized review
+checkout, merge the verified current target branch into the PR's actual head
+branch and reconcile conflicts while preserving the intended changes from both
+sides. Re-review the resulting diff, rerun required checks, and commit and push
+to the same PR branch. Report a concrete checkout, authority or
+unresolved-intent blocker when resolution cannot safely proceed. This does not
+expand PR merge authority or permit force-pushes, protection overrides or
+primary-checkout edits.
 
 ## Checkout
 

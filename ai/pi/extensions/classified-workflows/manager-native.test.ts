@@ -1,7 +1,8 @@
 import assert from "node:assert/strict"
 import test from "node:test"
-import { mkdtempSync, rmSync } from "node:fs"
-import { tmpdir } from "node:os"
+import { lstatSync, mkdirSync, mkdtempSync, rmSync, symlinkSync } from "node:fs"
+import os, { tmpdir } from "node:os"
+import { syncBuiltinESMExports } from "node:module"
 import { join } from "node:path"
 import type {
   ExtensionAPI,
@@ -159,6 +160,14 @@ const fixture = (t: test.TestContext, manager: boolean | "global" = false) => {
     assert.ok(Either.isRight(prepared))
     return prepared.right
   }
+  t.mock.method(os, "homedir", () => root)
+  syncBuiltinESMExports()
+  t.after(async () => {
+    await emit("session_shutdown")
+    if (!options.agentDir) rmSync(root, { recursive: true })
+    t.mock.restoreAll()
+    syncBuiltinESMExports()
+  })
   return {
     pi,
     root,
@@ -516,11 +525,44 @@ test("opening manager launches the real Pi CLI instead of any custom UI", async 
   assert.equal(f.execs.length, 2)
   assert.deepEqual(f.execs[0]?.args, ["action", "list-panes", "--json"])
   const args = f.execs[1]?.args ?? []
+  const workspace = join(f.root, ".config", "ai", "pi", "workspaces", "manager")
+  assert.equal(args[args.indexOf("--cwd") + 1], workspace)
+  assert.ok(lstatSync(workspace).isDirectory())
+  assert.equal(lstatSync(workspace).mode & 0o077, 0)
+  assert.equal(
+    args[args.indexOf("--session-dir") + 1],
+    join(f.root, "manager", "global", "sessions"),
+  )
   assert.ok(args.includes("--manager"))
   assert.ok(!args.includes("--manager-worker"))
   assert.ok(args.includes("--continue"))
   assert.ok(!args.includes("--no-extensions"))
   assert.ok(!args.includes("--mode"))
+})
+
+test("manager opens after settings activation creates an owned workspace with default permissions", async t => {
+  const f = fixture(t)
+  const workspace = join(f.root, ".config", "ai", "pi", "workspaces", "manager")
+  mkdirSync(join(workspace, ".pi"), { recursive: true, mode: 0o755 })
+  assert.notEqual(lstatSync(workspace).mode & 0o077, 0)
+  await f.registered.open(f.ctx)
+  assert.equal(f.execs.length, 2)
+  assert.equal(lstatSync(workspace).mode & 0o077, 0)
+  assert.equal(f.execs[1]?.args[5], workspace)
+})
+
+test("manager rejects a symlink workspace without changing its target permissions", async t => {
+  const f = fixture(t)
+  const parent = join(f.root, ".config", "ai", "pi", "workspaces")
+  const target = join(f.root, "other-directory")
+  mkdirSync(parent, { recursive: true })
+  mkdirSync(target, { mode: 0o755 })
+  const mode = lstatSync(target).mode
+  symlinkSync(target, join(parent, "manager"))
+  await f.registered.open(f.ctx)
+  assert.equal(f.execs.length, 1)
+  assert.equal(lstatSync(target).mode, mode)
+  assert.ok(f.notices.some(text => text.includes("private, owned directory")))
 })
 
 test("round report enters native Markdown message rendering once without another model turn", async t => {

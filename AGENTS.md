@@ -155,15 +155,10 @@ nu nushell/fj/routing.test.nu
 Use type-only Conventional Commit prefixes such as `fix:`, `feat:`, `refactor:`,
 `test:`, and `docs:` according to the change. Do not use `wip(pi):`.
 
-Requested global settings, skill, rule and harness-source changes follow
-`GLOBAL_AGENTS.md`: work directly in this repository's main worktree, create a
-separate purpose-named branch in the existing GitButler workspace, commit and
-push validated units continuously, open a draft PR and mark it ready only when
-the requested scope and verification are complete. Preserve unrelated changes.
-Do not hand routine Markdown edits to another agent or ask again for normal
-publication authority. Direct-to-master delivery requires explicit owner
-direction or a separately authorized role workflow; never merge or override
-branch protection as part of this default.
+Follow the workspace publication and delivery rules in `GLOBAL_AGENTS.md`.
+Direct-to-master delivery requires explicit owner direction or a separately
+authorized role workflow; never merge or override branch protection as part of
+this default.
 
 # Work Tracking
 
@@ -176,9 +171,7 @@ independent deliverables into separate tasks and use artifact-level subtasks to
 show processing stages and progress.
 
 Keep SPEC/ROADMAP → GitHub issues → local execution tasks as the planning
-hierarchy. Aim for approximately 95% of substantive local tasks to link to an
-issue, with explicit short-lived one-off exceptions. Notes and memories provide
-context rather than a competing backlog.
+hierarchy. Notes and memories provide context rather than a competing backlog.
 
 # Current environment
 

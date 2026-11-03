@@ -176,13 +176,24 @@ the harness, and suppress duplicates without agent polling.
 - GitButler is valid only in a repository's main worktree. Detect the current
   Git topology before invoking `but`; in every linked, isolated, scratch, or
   otherwise non-main worktree, use plain Git for both reads and writes and never
-  probe or initialize GitButler. Prefer GitButler in existing managed main
-  worktrees and plain Git elsewhere; explicit repository-local workflow rules
-  may override these shared defaults. Use GitHub for current project tracking.
-  The classifier must not demand GitButler or reject plain Git solely because
-  the parent repository is GitButler-managed. When an explicitly authorized
-  stacking workflow requires a branch, create it before editing; do not override
-  repository-local branch or publication rules.
+  probe or initialize GitButler. Use GitButler in verified managed main
+  worktrees and plain Git elsewhere. Repository-local rules govern branch
+  organization, verification and delivery details, but cannot replace the
+  managed-main publication workflow below without explicit owner approval. Use
+  GitHub for current project tracking. The classifier must not demand GitButler
+  or reject plain Git solely because the parent repository is GitButler-managed.
+  When an explicitly authorized stacking workflow requires a branch, create it
+  before editing. Preserve branch protections and checks.
+- In a verified GitButler-managed main worktree, every publication uses the
+  whole-workspace workflow: `but pull` everything, resolve all resulting
+  conflicts, then bare `but push` to publish everything across the workspace's
+  branches and stacks. Never push a selected branch or stack. Serialize this
+  workflow with the responsible workspace agent, keeping commits scoped by
+  purpose. Incomplete work remains a truthful draft checkpoint. If publication
+  is blocked, preserve state and report the exact blocker. This grants no merge,
+  force-push or protection-bypass authority; other deviations require explicit
+  owner approval. Plain-Git workflows outside managed main worktrees are
+  unchanged.
 - Routine GitHub issue creation within authorized planning scope does not need
   approval of exact phrasing. Check the complete payload for
   audience-appropriate content before publication: exclude personal details,
@@ -269,24 +280,32 @@ the harness, and suppress duplicates without agent polling.
   every child's cwd to that root; neither the coordinator's cwd nor the common
   Git directory is a fallback. Record newly created project `.tmp/`
   files/directories immediately with `artifact_provenance` so later exact
-  cleanup has durable evidence. Never delete pre-existing project outputs, user
-  files, global caches, Nix generations, or run global garbage collection
-  without explicit user authorization. Exact rebuildable build outputs are
-  disposable by default, but project instructions and verified repository
-  configuration may protect artifacts consumed by a runtime, watcher,
+  cleanup has durable evidence. A recorded directory covers descendants created
+  inside it; do not redundantly record those files. Never delete pre-existing
+  project outputs, user files, global caches, Nix generations, or run global
+  garbage collection without explicit user authorization. Exact rebuildable
+  build outputs are disposable by default, but project instructions and verified
+  repository configuration may protect artifacts consumed by a runtime, watcher,
   supervisor, release, or deployment process. Inspect any referenced
   configuration before cleanup and preserve a cleanup root containing a
   configured live artifact unless disruption is explicitly requested.
-- In a Git checkout, whenever `.tmp/` or `.worktrees/` is used, verify effective
+- In a Git checkout, whenever `.tmp/` or `.worktrees/` is used, record the
+  working-tree/index state before the directory-ignore preflight. Verify
   directory-wide coverage with `git check-ignore --verbose` on the directory
-  itself and the intended artifact path. A file-specific match such as `*.log`
-  does not establish directory coverage. If coverage is missing, immediately add
-  the matching directory pattern to that checkout's `.gitignore` and recheck
-  both paths before continuing. Preserve existing ignore rules. No separate
-  approval is needed for these two directory patterns; this grants no
-  worktree-creation or unrelated source-change authority. Outside a Git
-  checkout, Git-ignore coverage is not applicable; do not initialize a
-  repository merely to apply this rule.
+  itself and the intended artifact path; a file-specific match such as `*.log`
+  is insufficient. Immediately add any missing directory pattern to that
+  checkout's `.gitignore`, preserve existing rules, and recheck both paths.
+  Account for an owned repair as a separate preflight unit through the
+  repository's already-authorized checkpoint/publication workflow. Isolate the
+  new ignore hunk from pre-existing changes and reviewed finding fixes; do not
+  absorb it into another branch. Preserve publication gates. If a scoped
+  checkpoint or required publication is blocked, leave the repair saved and
+  report the exact blocker before starting another work unit. Handover remains a
+  stop boundary: save its repair, refresh affected state reads and include it in
+  the handover without publication. No separate approval is needed for these two
+  directory patterns; this grants no worktree-creation, new-PR or unrelated
+  source-change authority. Outside a Git checkout, Git-ignore coverage is not
+  applicable; do not initialize a repository merely to apply this rule.
 - Never inject keystrokes or text into the user's active Zellij pane or editor;
   it can overwrite an in-progress prompt. Use registered tools such as
   `reload_pi` instead, and keep Zellij automation confined to isolated workers.
@@ -295,6 +314,13 @@ the harness, and suppress duplicates without agent polling.
   tab and pane, launch the worker, and restore that exact focus before
   returning. If exact restoration cannot be verified, use a classified
   background workflow.
+- Keep code readable across languages: choose clear names, separate independent
+  declarations with blank lines, and keep lines readable, including embedded SQL
+  and JSON. Separate meaningful phases inside larger bodies, but keep tiny
+  two–three-line bodies compact rather than inserting mechanical inner blank
+  lines. Code-style inspection owns these readability rules; typing inspection
+  owns newtypes, domain types and opaque-versus-primitive representation
+  choices.
 - In TypeScript and JavaScript, prefer `const`-bound arrow functions over
   `function` declarations, with explicit callable types when they clarify the
   contract. Keep declarations for overloads, generators, or required semantics.
@@ -350,10 +376,11 @@ the harness, and suppress duplicates without agent polling.
   intent, task records, repository history and ownership evidence. Lost context
   does not authorize reverting work; remove only evidenced agent-owned
   unjustified deltas.
-- Keep durable tasks granular and linked to the project's tracker. Record
-  requests, corrections, blockers, and next actions without replacing a direct
-  answer with task bookkeeping. Preserve deferred work and explicit constraints.
-  Follow an approved plan; do not substitute another design without the required
+- Every task belongs to a repository-qualified GitHub issue, without exceptions
+  for short-lived or one-off work. Keep tasks granular. Record requests,
+  corrections, blockers, and next actions without replacing a direct answer with
+  task bookkeeping. Preserve deferred work and explicit constraints. Follow an
+  approved plan; do not substitute another design without the required
   agreement. New human direction supersedes the plan. For verified-finding work,
   fix every valid finding and explain invalid findings at completion.
 - Structure roadmaps as priority-ordered epics, not numbered phases. Use
