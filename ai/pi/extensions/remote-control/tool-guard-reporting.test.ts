@@ -19,11 +19,36 @@ test("management retains existing owner reporting through enforcement and exact 
   const prior = ["bash", "report_owner", "read", "todo", "workflow"]
   const f = fixture(prior)
   const guard = enterRemoteToolGuard(f.controller, "management")
-  assert.deepEqual(f.tools(), ["bash", "report_owner", "read", "todo"])
+  assert.deepEqual(f.tools(), [
+    "bash",
+    "report_owner",
+    "read",
+    "todo",
+    "workflow",
+  ])
   f.controller.setActiveTools(["bash", "workflow"])
   guard.enforce()
-  assert.deepEqual(f.tools(), ["bash", "report_owner", "read", "todo"])
+  assert.deepEqual(f.tools(), [
+    "bash",
+    "report_owner",
+    "read",
+    "todo",
+    "workflow",
+  ])
   assert.equal(guard.restore().status, "restored")
+  assert.deepEqual(f.tools(), prior)
+})
+
+test("management preserves available workflow without operational-worker tools", () => {
+  const prior = ["workflow", "read", "agent_workspace"]
+  const f = fixture(prior)
+  const guard = enterRemoteToolGuard(f.controller, "management")
+
+  assert.deepEqual(f.tools(), ["workflow", "read"])
+  f.controller.setActiveTools(["agent_workspace"])
+  guard.enforce()
+  assert.deepEqual(f.tools(), ["workflow", "read"])
+  guard.restore()
   assert.deepEqual(f.tools(), prior)
 })
 
@@ -32,10 +57,10 @@ test("management preserves available file tools without exposing them to ordinar
   const f = fixture(prior)
   const guard = enterRemoteToolGuard(f.controller, "management")
 
-  assert.deepEqual(f.tools(), ["write", "edit", "read"])
+  assert.deepEqual(f.tools(), ["write", "edit", "read", "workflow"])
   f.controller.setActiveTools(["workflow"])
   guard.enforce()
-  assert.deepEqual(f.tools(), ["write", "edit", "read"])
+  assert.deepEqual(f.tools(), ["write", "edit", "read", "workflow"])
   guard.restore()
   assert.deepEqual(f.tools(), prior)
 
@@ -67,8 +92,8 @@ test("management cannot promote unavailable owner reporting", () => {
   assert.deepEqual(f.tools(), ["bash", "read", "todo"])
 })
 
-test("management cannot promote unavailable GitHub CLI or file tools", () => {
-  const prior = ["read", "report_owner", "workflow"]
+test("management cannot promote unavailable GitHub CLI, file or workflow tools", () => {
+  const prior = ["read", "report_owner", "agent_workspace"]
   const f = fixture(prior)
   const guard = enterRemoteToolGuard(f.controller, "management")
 

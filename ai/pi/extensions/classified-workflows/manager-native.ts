@@ -658,6 +658,7 @@ const MANAGEMENT_TOOLS: readonly string[] = [
   "edit",
   "ask_user",
   "report_owner",
+  "workflow",
 ]
 const SCOPE_ENTRY = "manager.native-scope.v1"
 const NATIVE_MESSAGE = "manager-native-update"

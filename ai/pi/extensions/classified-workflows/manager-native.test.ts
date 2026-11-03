@@ -306,6 +306,7 @@ test("manager profile preserves the native editor and exposes registry managemen
     "report_owner",
     "web_search",
     "web_fetch",
+    "workflow",
   ])
   const response = object(result)
   assert.equal(typeof response.systemPrompt, "string")
@@ -330,7 +331,9 @@ test("manager profile preserves the native editor and exposes registry managemen
     undefined,
   )
   assert.equal(await f.emit("tool_call", { toolName: "todo" }), undefined)
-  const denied = object(await f.emit("tool_call", { toolName: "workflow" }))
+  const denied = object(
+    await f.emit("tool_call", { toolName: "agent_workspace" }),
+  )
   assert.equal(denied.block, true)
 })
 
@@ -388,6 +391,48 @@ for (const profile of [true, "global"] as const) {
     }
   })
 
+  test(`${name} manager exposes workflow for authorized management assistance`, async t => {
+    const f = fixture(t, profile)
+
+    await f.emit("session_start")
+
+    const policy = object(
+      await f.emit("before_agent_start", {
+        systemPrompt: "Native Pi base",
+        prompt: "Independently review the issue draft.",
+      }),
+    )
+
+    assert.ok(f.active.at(-1)?.includes("workflow"))
+    assert.equal(
+      await f.emit("tool_call", {
+        toolName: "workflow",
+        input: {
+          code: 'return await agent("Review supplied draft", { tools: ["read"] })',
+          maxAgents: 1,
+          concurrency: 1,
+          agentTimeoutMs: 180000,
+          workflowTimeoutMs: 180000,
+          retries: 0,
+          tokenBudget: 80000,
+          background: true,
+          label: "Review manager draft",
+        },
+      }),
+      undefined,
+    )
+    assert.match(
+      String(policy.systemPrompt).replace(/\s+/gu, " "),
+      /Use workflow for bounded, read-only assistance with authorized manager work/u,
+    )
+    assert.equal(
+      object(await f.emit("tool_call", { toolName: "agent_workspace" })).block,
+      true,
+    )
+    assert.deepEqual(f.execs, [])
+    assert.deepEqual(f.messages, [])
+  })
+
   test(`${name} manager exposes file tools for authorized manager work`, async t => {
     const f = fixture(t, profile)
 
@@ -422,7 +467,7 @@ for (const profile of [true, "global"] as const) {
       /necessary formatting and verification of those files/u,
     )
     assert.equal(
-      object(await f.emit("tool_call", { toolName: "workflow" })).block,
+      object(await f.emit("tool_call", { toolName: "agent_workspace" })).block,
       true,
     )
     assert.deepEqual(f.execs, [])
@@ -458,11 +503,11 @@ for (const profile of [true, "global"] as const) {
     assert.match(prompt, /owner-authorized GitHub issue operations/u)
     assert.match(
       prompt,
-      /General shell execution, coding and worker launches remain excluded/u,
+      /General shell execution, coding and operational worker launches remain excluded/u,
     )
 
     assert.equal(
-      object(await f.emit("tool_call", { toolName: "workflow" })).block,
+      object(await f.emit("tool_call", { toolName: "agent_workspace" })).block,
       true,
     )
 
@@ -494,11 +539,12 @@ for (const profile of [true, "global"] as const) {
       "report_owner",
       "web_search",
       "web_fetch",
+      "workflow",
     ]) {
       assert.equal(await f.emit("tool_call", { toolName }), undefined, toolName)
     }
     assert.equal(
-      object(await f.emit("tool_call", { toolName: "workflow" })).block,
+      object(await f.emit("tool_call", { toolName: "agent_workspace" })).block,
       true,
     )
   })
@@ -568,6 +614,7 @@ test("global manager selects an existing worker without changing native UI or st
     "report_owner",
     "web_search",
     "web_fetch",
+    "workflow",
   ])
   assert.deepEqual(f.execs, [])
 })
@@ -795,7 +842,9 @@ test("manager toolset exposes owner reporting with role-scoped file tools", asyn
     await f.emit("tool_call", { toolName: "report_owner", input: {} }),
     undefined,
   )
-  const denied = object(await f.emit("tool_call", { toolName: "workflow" }))
+  const denied = object(
+    await f.emit("tool_call", { toolName: "agent_workspace" }),
+  )
   assert.equal(denied.block, true)
 })
 

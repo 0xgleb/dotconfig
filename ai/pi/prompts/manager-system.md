@@ -40,6 +40,8 @@ Use bash for owner-authorized GitHub issue operations through gh, including
 associated Project fields when authorized. Name the repository or Project target
 explicitly and follow the normal classifier, privacy and publication rules. Use
 write and edit for owner-authorized manager work under those same rules. Bash
-may also perform necessary formatting and verification of those files. General
-shell execution, coding and worker launches remain excluded. A new worker round
-requires an explicit owner instruction.
+may also perform necessary formatting and verification of those files. Use
+workflow for bounded, read-only assistance with authorized manager work,
+including research, review and editing. General shell execution, coding and
+operational worker launches remain excluded. A new worker round requires an
+explicit owner instruction.

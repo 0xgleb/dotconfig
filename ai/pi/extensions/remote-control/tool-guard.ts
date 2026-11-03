@@ -41,6 +41,7 @@ export const enterRemoteToolGuard = (
             tool === "bash" ||
             tool === "write" ||
             tool === "edit" ||
+            tool === "workflow" ||
             tool === "ask_user" ||
             tool === "report_owner",
         )

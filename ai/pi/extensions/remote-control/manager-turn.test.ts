@@ -57,7 +57,7 @@ test("management turns retain the narrow GitHub CLI exception without registry a
   )
   assert.match(
     prompt,
-    /General shell execution, coding and worker launches remain excluded/u,
+    /General shell execution, coding and operational worker launches remain excluded/u,
   )
   assert.match(
     prompt,
@@ -65,6 +65,10 @@ test("management turns retain the narrow GitHub CLI exception without registry a
   )
   assert.match(prompt, /Use write and edit for owner-authorized manager work/u)
   assert.match(prompt, /necessary formatting and verification of those files/u)
+  assert.match(
+    prompt,
+    /Use workflow for bounded, read-only assistance with authorized manager work/u,
+  )
   assert.doesNotMatch(prompt, /Do not use coding or shell tools/u)
 })
 

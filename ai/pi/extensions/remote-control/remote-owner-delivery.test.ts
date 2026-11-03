@@ -72,6 +72,7 @@ for (const [requesterId, isOwner, isManager] of [
       "read",
       "write",
       "edit",
+      "workflow",
     ]
     const listeners = new Map<string, ((value: unknown) => void)[]>()
     const pi = {
@@ -155,6 +156,7 @@ for (const [requesterId, isOwner, isManager] of [
             "read",
             "write",
             "edit",
+            "workflow",
           ]
         : [],
     )

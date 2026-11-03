@@ -67,6 +67,7 @@ test("management turns retain active GitHub CLI and coordination tools without c
     "ask_user",
     "web_search",
     "web_fetch",
+    "workflow",
     "write",
     "edit",
   ]
