@@ -9,9 +9,9 @@ const piDocs = readFileSync(
   "utf8",
 )
 const piInstructions = readFileSync(
-  new URL("../pi/AGENTS.md", import.meta.url),
+  new URL("../../GLOBAL_AGENTS.md", import.meta.url),
   "utf8",
-)
+).replace(/\s+/g, " ")
 const newSkill = readFileSync(
   new URL("../skills/new-skill/SKILL.md", import.meta.url),
   "utf8",
@@ -69,13 +69,20 @@ test("Pi instructions require capability checks and semantics-preserving equival
   )
 })
 
-test("new shared skills must document tested Pi equivalents for harness-specific tools", () => {
-  assert.match(newSkill, /allowed-tools.*does not create tools/is)
-  assert.match(newSkill, /document the exact Pi tool or bounded equivalent/i)
-  assert.match(newSkill, /tested semantics-preserving equivalent/i)
+test("shared skill metadata preserves native tool scope without granting capabilities", () => {
+  const policy = newSkill.replace(/\s+/g, " ")
+
   assert.match(
-    newSkill,
-    /rather than instructing the agent to\s+stop or ask for a nonexistent tool/is,
+    policy,
+    /Keep tool metadata narrow\. It does not create capabilities:/,
+  )
+  assert.match(
+    policy,
+    /use available native equivalents while preserving scope, exclusions and mutation limits\./,
+  )
+  assert.match(
+    policy,
+    /No blanket shell\/tool grants, secret access or unclassified workers\./,
   )
 })
 
@@ -111,5 +118,5 @@ test("handover is a terminal artifact-producing procedure with truthful partial-
     handoverSkill,
     /verify that the exact file exists and is readable/i,
   )
-  assert.match(handoverSkill, /end the turn after\s+this report/is)
+  assert.match(handoverSkill, /\bend\s+the\s+turn\s+after\s+this\s+report\b/i)
 })

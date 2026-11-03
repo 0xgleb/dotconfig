@@ -24,6 +24,22 @@ The assigned checkout remains the default workspace. Without owner-authorized
 concurrent work or an explicit inventory/cleanup request, inspect only that
 checkout and do not enter other worktrees.
 
+Record the working-tree/index state before the directory-ignore preflight.
+Before using `.tmp/` or `.worktrees/`, verify directory-wide coverage with
+`git check-ignore --verbose` on the directory itself and the intended artifact
+path; a file-specific match is insufficient. If coverage is missing, immediately
+add its directory pattern to the containing checkout's `.gitignore`, preserving
+existing rules, then recheck both paths. No separate approval is needed; this
+does not authorize creating a worktree.
+
+Account for an owned ignore repair separately through the repository's
+already-authorized checkpoint/publication workflow, isolating only the new
+ignore hunk and preserving pre-existing changes. If that checkpoint or required
+publication is blocked, leave the repair saved and report the blocker before
+starting concurrent work. Recheck in a newly created checkout before using its
+temporary directories. Do not defer the repair's disposition until cleanup or
+infer authority to discard it or force-remove a dirty worktree.
+
 ## Procedure
 
 1. Verify Git topology with `git rev-parse --show-toplevel`,

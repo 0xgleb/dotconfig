@@ -65,9 +65,15 @@ export const repositoryAllowedForProfile = (
 ): boolean =>
   PROFILE_OWNERS[profile].includes(repository.split("/", 1)[0] ?? "")
 
+/** Returns the repository permitted for automatic review under this profile. */
 export const automaticRepositoryForProfile = (
   profile: ReviewDutyProfile,
-): RepositorySlug | undefined => AUTOMATIC_REPOSITORIES[profile]
+): RepositorySlug | undefined =>
+  profile === "dataclique-review"
+    ? repositorySlug("dataclique/yielduck")
+    : profile === "personal-review"
+      ? repositorySlug("0xgleb/dotconfig")
+      : undefined
 
 /**
  * Home-relative checkout locations registered for a repository under a
@@ -122,19 +128,6 @@ const PROFILE_OWNERS: Readonly<Record<ReviewDutyProfile, readonly string[]>> = {
   "st0x-review": ["st0x-technology", "rainlanguage"],
   "dataclique-review": ["dataclique", "0xgleb"],
   "personal-review": ["0xgleb"],
-}
-
-/**
- * Repository each profile reviews without being asked. The literals pass
- * `repositorySlug` here rather than at the comparison, so a table entry that
- * is not an `owner/name` identifier is refused where it is written instead of
- * silently never matching.
- */
-const AUTOMATIC_REPOSITORIES: Readonly<
-  Partial<Record<ReviewDutyProfile, RepositorySlug>>
-> = {
-  "dataclique-review": repositorySlug("dataclique/yielduck"),
-  "personal-review": repositorySlug("0xgleb/dotconfig"),
 }
 
 /**
