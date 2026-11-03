@@ -63,6 +63,16 @@ tracking, required formatting, verification, and bounded responsibility
 routing—remains in scope. It does not independently authorize unrelated repairs,
 external effects, cleanup, or deployment.
 
+An authorized review or fix includes the repository's existing documented
+environment and complete hook setup in its already-authorized checkout. Do not
+invent a separate environment-approval gate merely because the checkout is new.
+Use checkout and tracked-bootstrap provenance without demanding protected file
+contents as proof. Environment approval and actual loading are different facts;
+bounded loading of the approved environment remains necessary verification
+support. Preserve hook and shared-worktree ownership rules. This authority does
+not extend to unrelated environments, secret loading, host activation, or check
+bypasses.
+
 ## Evidence, freshness, and verification
 
 Use source-fixed runtime context only for the facts it attests. Do not infer
