@@ -42,8 +42,9 @@ stop and ask rather than auditing everything by accident.
 
 ## 2. Detect the VCS/stacking tool and preflight
 
-The action opens branches and PRs, so detect the tool (same as `/review-sweep`)
-and require a clean tree.
+The action opens branches and PRs, so detect the tool (same as `/review-sweep`).
+Complete the directory-ignore preflight before requiring a clean tree or writing
+artifacts.
 
 ```bash
 git_common_dir=$(git -C "$repo_root" rev-parse --path-format=absolute --git-common-dir)
@@ -52,15 +53,24 @@ if [ "$repo_root" != "$main_root" ]; then tool=git
 elif [ -d "$git_common_dir/gitbutler" ]; then tool=gitbutler
 else tool=git
 fi
-git -C "$repo_root" status --porcelain   # must be clean — fixes go on new branches off trunk
 trunk=$(git -C "$repo_root" symbolic-ref refs/remotes/origin/HEAD --short 2>/dev/null | sed 's#^origin/##' || echo master)
 start_branch=$(git -C "$repo_root" rev-parse --abbrev-ref HEAD)   # return here at the end
 ```
 
-If the tree is dirty, stop and tell the user (uncommitted work would leak into
-the fix branches). GitButler is main-worktree-only; every linked, isolated, or
-scratch worktree uses plain Git without probing `but`. In a verified GitButler
-main worktree, confirm workspace mode (`but status` ok) as `/review-sweep` does.
+GitButler is main-worktree-only; every linked, isolated, or scratch worktree
+uses plain Git without probing `but`. In a verified GitButler main worktree,
+confirm workspace mode (`but status` ok) as `/review-sweep` does.
+
+Apply `GLOBAL_AGENTS.md`'s directory-ignore preflight, including state capture
+and separate repair accounting, before the clean-tree gate or any artifact
+write. This preflight also applies to a zero-finding audit.
+
+After accounting for the repair, require a clean working tree/index; stop and
+report any remaining unrelated changes without discarding them. Fix clusters
+start from clean branches off trunk. Recheck ignore coverage after each checkout
+transition, including returning to `start_branch`, before using either
+directory. Follow the same global preflight at each transition rather than
+carrying an unaccounted repair between fix clusters.
 
 ## 3. Prepare the workspace and build the audit target
 
@@ -69,10 +79,24 @@ the diff-centric engine can audit standing code. Gitignored paths drop out for
 free; exclude the tracked lockfiles.
 
 ```bash
-ts=$(date +%Y-%m-%d_%H-%M-%S)
+invocation_id=$(uuidgen) || exit 1
 safe_scope=$(echo "$scope" | tr '/. ' '___')
-out_dir="$repo_root/.tmp/agent-local-ctx/reviews/audit-${ts}-${safe_scope}"
-mkdir -p "$out_dir"
+out_dir="$repo_root/.tmp/agent-local-ctx/reviews/audit-${invocation_id}-${safe_scope}"
+```
+
+After step 2's preflight covers this invocation path, create and record its
+resolved absolute directory through the registered harness tool:
+
+```json
+{ "action": "create_directory", "path": "<resolved absolute out_dir>" }
+```
+
+Use `artifact_provenance` or an available registered harness equivalent. Require
+successful creation/recording before writing descendants; the recorded directory
+covers them. Add `crossWorkspace: true` only for an explicitly authorized target
+outside the tool session's workspace. Do not substitute raw `mkdir`.
+
+```bash
 empty=$(git -C "$repo_root" hash-object -t tree /dev/null)   # canonical empty-tree object
 git -C "$repo_root" diff "$empty" HEAD -- "$scope" \
   ':(exclude)*.lock' ':(exclude)Cargo.lock' ':(exclude)flake.lock' > "$out_dir/diff.patch"
@@ -205,12 +229,13 @@ For each confirmed cluster (return to `trunk`/start between clusters):
    cluster's files.
 3. **Compile gate + delta re-review + check.** Run the fastest scoped typecheck,
    then `/review-loop`'s delta re-review over the fix, then `check_cmd` (skip if
-   none) until green. Never open a PR whose fixes do not compile or fail the
-   project check.
-4. **Commit and open a DRAFT PR, assigned to you.** Commit the cluster. Then:
-   - GitButler: `but push` the branch, then `gh pr create --draft`.
-   - Plain git: `git push -u origin <name>`, then `gh pr create --draft`. Then
-     `gh pr edit <number> --add-assignee @me` (PRs default to no assignee).
+   none) until green. Report incomplete or failing verification accurately.
+4. **Checkpoint the cluster in a DRAFT PR, assigned to you.** Follow
+   `GLOBAL_AGENTS.md` and repository publication rules for commits, pushes,
+   checkpoint timing and required ready-state gates. Use the managed-main
+   whole-workspace flow for GitButler and plain Git in other checkouts. Keep
+   failing or incomplete work draft; do not withhold an otherwise required
+   checkpoint because verification is not yet green.
 5. **PR description = Motivation / Solution** (the repo default), citing the
    audit findings it closes: file:line, severity, why it matters, and the fix.
    Keep it factual; no AI-process narration.
@@ -252,11 +277,14 @@ each exact draft and obtain confirmation before creating it.
 3. **One coherent, small PR per cluster.** Never a single giant PR; group by
    crate/module/theme; default to independent sibling branches off trunk, stack
    only on real dependencies.
-4. **Every PR compiles and passes `check_cmd` before it is opened.** Fixes are
-   surgical and scoped to the cluster; re-verify each finding against current
-   source first.
-5. **Clean tree to start; never leak unrelated changes** into fix branches.
-   Return to the start branch at the end.
+4. **Preserve verification and draft-state gates.** Re-verify each finding
+   against current source, keep fixes surgical and scoped to the cluster, and
+   follow the global publication policy rather than treating checks as a gate on
+   draft checkpoints.
+5. **Clean tree after the directory-ignore preflight; never leak unrelated
+   changes** into fix branches. Account for owned ignore repairs separately,
+   including zero-finding audits and checkout transitions. Return to the start
+   branch at the end.
 6. The audit target is a synthetic diff against the empty tree — everything
    shown is in scope; "pre-existing/out of scope" never applies.
 7. The review runs as a single `Workflow` invocation per pass (review-core) —
@@ -264,7 +292,6 @@ each exact draft and obtain confirmation before creating it.
    4): agy `--sandbox` and never `--dangerously-skip-permissions`.
 8. **Filing deferred findings is gated**: show drafts, confirm, then create. Use
    GitHub issues with problem-only descriptions.
-9. Never silently modify `.gitignore` — ask before adding `.tmp/` if missing.
 
 ## Failure modes
 
@@ -275,9 +302,9 @@ each exact draft and obtain confirmation before creating it.
   hard and proceed; a one-line heads-up is fine, but do NOT stop for
   confirmation on an unscoped audit. Scoping to a package is an optional cheaper
   follow-up the user may choose, not a gate.
-- **A cluster's fix fails to converge or breaks the check command** — do not
-  open that PR; report it, keep its findings in the deferred list, and continue
-  with the other clusters.
+- **A cluster's fix fails to converge or breaks the check command** — keep its
+  checkpoint draft under the publication policy, report the failure, retain
+  unresolved findings, and continue with the other clusters.
 - **A required native lane errors** — preserve an incomplete result and its
   reason. Selected inspectors are required; empty findings do not prove clean.
 - **The workflow fails mid-run** — relaunch with

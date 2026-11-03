@@ -24,6 +24,12 @@ The assigned checkout remains the default workspace. Without owner-authorized
 concurrent work or an explicit inventory/cleanup request, inspect only that
 checkout and do not enter other worktrees.
 
+Apply `GLOBAL_AGENTS.md`'s directory-ignore preflight before using temporary
+directories or creating a slot. Recheck in a newly created checkout before using
+its temporary directories. Account for any owned repair during preflight, not at
+cleanup; a saved repair does not authorize discarding it or force-removing a
+dirty worktree.
+
 ## Procedure
 
 1. Verify Git topology with `git rev-parse --show-toplevel`,
