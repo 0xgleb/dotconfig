@@ -137,9 +137,13 @@ export const createGitHubProjectReader = (
       Effect.gen(function* () {
         yield* Effect.yieldNow()
         const query = yield* decodeGitHubProjectQuery(input)
-        const binding = bindings[query.project]
+        const binding = yield* decode(
+          ProjectBindingSchema,
+          rawBindings[query.project],
+        )
 
         if (Either.isLeft(captured)) return yield* Effect.fail(captured.left)
+
         const execute = captured.right
         const request: GitHubProjectQueryExecution = Object.freeze({
           document: GITHUB_PROJECT_SCHEDULING_DOCUMENT,
@@ -181,7 +185,11 @@ export const decodeGitHubProjectPage = (
 
     if (project === null) return yield* invalid("unavailable")
 
-    const binding = bindings[query.project]
+    const binding = yield* decode(
+      ProjectBindingSchema,
+      rawBindings[query.project],
+    )
+
     if (
       project.id !== binding.id ||
       project.number !== binding.number ||
@@ -197,6 +205,7 @@ export const decodeGitHubProjectPage = (
     yield* validateField(project.effortField, "Effort", binding.effort)
 
     const { nodes, pageInfo } = project.items
+
     if (nodes === null || nodes.some(node => node === null))
       return yield* invalid("partial_response")
     if (
@@ -225,7 +234,7 @@ export const decodeGitHubProjectPage = (
     })
   })
 
-const bindings = {
+const rawBindings = {
   personal: {
     id: "PVT_kwHOAl_tIc4BpO1U",
     number: 4,
@@ -242,11 +251,34 @@ const bindings = {
   },
 } as const
 
-type FieldBinding = {
-  readonly id: string
-  readonly backing: string | null
-}
-type ProjectBinding = (typeof bindings)[GitHubSchedulingProject]
+const ProjectIdSchema = Schema.String.pipe(
+  Schema.minLength(1),
+  Schema.brand("GitHubSchedulingProjectId"),
+)
+const ProjectFieldIdSchema = Schema.String.pipe(
+  Schema.minLength(1),
+  Schema.brand("GitHubSchedulingProjectFieldId"),
+)
+const IssueFieldIdSchema = Schema.String.pipe(
+  Schema.minLength(1),
+  Schema.brand("GitHubSchedulingIssueFieldId"),
+)
+const FieldBindingSchema = Schema.Struct({
+  id: ProjectFieldIdSchema,
+  backing: Schema.NullOr(IssueFieldIdSchema),
+})
+const ProjectBindingSchema = Schema.Struct({
+  id: ProjectIdSchema,
+  number: Schema.Number.pipe(Schema.int(), Schema.between(1, 2_147_483_647)),
+  owner: Schema.Struct({
+    __typename: Schema.Literal("User", "Organization"),
+    login: Schema.String.pipe(Schema.minLength(1)),
+  }),
+  priority: FieldBindingSchema,
+  effort: FieldBindingSchema,
+})
+type FieldBinding = typeof FieldBindingSchema.Type
+type ProjectBinding = typeof ProjectBindingSchema.Type
 
 const projectError = (code: GitHubReadError["code"]): GitHubReadError =>
   new GitHubReadError({
@@ -282,14 +314,17 @@ const shape = (
   ) &&
   required.every(key => Object.hasOwn(input, key))
 
+const CursorSchema = Schema.String.pipe(
+  Schema.minLength(1),
+  Schema.maxLength(4096),
+  Schema.filter(cursor => Buffer.byteLength(cursor, "utf8") <= 4096),
+)
 const PageInputSchema = Schema.Struct({
   limit: Schema.Number.pipe(
     Schema.int(),
     Schema.between(1, MAX_GITHUB_PROJECT_PAGE_SIZE),
   ),
-  after: Schema.optional(
-    Schema.String.pipe(Schema.minLength(1), Schema.maxLength(4096)),
-  ),
+  after: Schema.optional(CursorSchema),
 })
 const ProjectSchema = Schema.Literal("personal", "dataclique")
 const normalizeQuery = (
@@ -301,6 +336,7 @@ const normalizeQuery = (
 
     const suppliedProject = input.project
     const suppliedPage = input.page
+
     if (!shape(suppliedPage, ["limit", "after"], ["limit"]))
       return yield* invalid("invalid_request")
 
@@ -310,12 +346,6 @@ const normalizeQuery = (
     const page = yield* Schema.decodeUnknownEither(PageInputSchema)(
       suppliedPage,
     ).pipe(Either.mapLeft(() => projectError("invalid_request")))
-
-    if (
-      page.after !== undefined &&
-      Buffer.byteLength(page.after, "utf8") > 4096
-    )
-      return yield* invalid("invalid_request")
 
     return Object.freeze({
       project,
@@ -333,19 +363,19 @@ const PageInfoSchema = Schema.Union(
   }),
   Schema.Struct({
     hasNextPage: Schema.Literal(true),
-    endCursor: Schema.String.pipe(Schema.minLength(1)),
+    endCursor: CursorSchema,
   }),
 )
 const FieldSchema = Schema.Struct({
   __typename: Schema.Literal("ProjectV2Field"),
-  id: Schema.String,
+  id: ProjectFieldIdSchema,
   name: Schema.String,
   dataType: Schema.Literal("NUMBER"),
   isIssueField: Schema.Boolean,
   issueField: Schema.NullOr(
     Schema.Struct({
       __typename: Schema.Literal("IssueFieldNumber"),
-      id: Schema.String,
+      id: IssueFieldIdSchema,
     }),
   ),
 })
@@ -354,7 +384,7 @@ const EnvelopeSchema = Schema.Struct({
     node: Schema.NullOr(
       Schema.Struct({
         __typename: Schema.Literal("ProjectV2"),
-        id: Schema.String,
+        id: ProjectIdSchema,
         number: Schema.Number.pipe(Schema.int()),
         owner: Schema.Struct({
           __typename: Schema.Literal("User", "Organization"),
@@ -390,12 +420,12 @@ const NumberSchema = Schema.Number.pipe(Schema.finite())
 const NumericValueSchema = Schema.Union(
   Schema.Struct({
     __typename: Schema.Literal("ProjectV2ItemFieldNumberValue"),
-    field: Schema.Struct({ id: Schema.String }),
+    field: Schema.Struct({ id: ProjectFieldIdSchema }),
     number: Schema.NullOr(NumberSchema),
   }),
   Schema.Struct({
     __typename: Schema.Literal("ProjectV2ItemIssueFieldValue"),
-    field: Schema.Struct({ id: Schema.String }),
+    field: Schema.Struct({ id: ProjectFieldIdSchema }),
     issueFieldValue: Schema.NullOr(
       Schema.Struct({
         __typename: Schema.Literal("IssueFieldNumberValue"),
@@ -417,6 +447,7 @@ const decodePayload = (
       try: (): unknown => JSON.parse(payload),
       catch: () => projectError("invalid_response"),
     })
+
     if (
       typeof parsed === "object" &&
       parsed !== null &&
@@ -432,6 +463,7 @@ const decodePayload = (
       )
       return yield* invalid("remote_error")
     }
+
     return parsed
   })
 
@@ -457,6 +489,7 @@ const decodeNumber = (
     if (input === null) return Object.freeze({ kind: "unset" as const })
 
     const number = yield* decode(NumericValueSchema, input)
+
     if (number.field.id !== binding.id)
       return yield* invalid("invalid_response")
 
@@ -479,6 +512,7 @@ const decodeItem = (
   Either.gen(function* () {
     const item = yield* decode(ItemSchema, input)
     const content = item.content
+
     if (content === null) return yield* invalid("partial_response")
     if (content.__typename !== "Issue")
       return Object.freeze({
