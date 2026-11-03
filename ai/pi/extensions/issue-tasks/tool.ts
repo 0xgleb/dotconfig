@@ -312,10 +312,14 @@ export interface TaskToolOptions {
     outcome: TaskExecutionOutcome,
   ) => Effect.Effect<string, TaskOutputError>
 }
-export type IssueTaskTool = ToolDefinition<
-  typeof TaskParameters,
-  TaskToolDetails
->
+type NativeTaskTool = ToolDefinition<typeof TaskParameters, TaskToolDetails>
+export type IssueTaskTool = Omit<NativeTaskTool, "execute"> & {
+  readonly execute: (...args: Parameters<NativeTaskTool["execute"]>) => Promise<
+    Awaited<ReturnType<NativeTaskTool["execute"]>> & {
+      readonly isError: boolean
+    }
+  >
+}
 
 type TaskFailure =
   TaskRequestDecodeError | TaskApplyError | TaskHostError | IssueTaskReadFailure
@@ -333,6 +337,7 @@ const decodeToolRequest = (
     return decodeTaskRequest(input)
 
   const action: unknown = Reflect.get(input, "action")
+
   if (action !== "listIssues" && action !== "getIssue")
     return decodeTaskRequest(input)
   if (
@@ -343,6 +348,7 @@ const decodeToolRequest = (
     return decodeTaskRequest(input)
 
   const query: unknown = Reflect.get(input, "query")
+
   return action === "listIssues"
     ? decodeIssueTaskListQuery(query).pipe(
         Either.map(value =>
@@ -387,9 +393,12 @@ const executeRequest = (
 
         if (request.action === "listIssues") {
           const view = yield* reader.list(request.query)
+
           return { kind: "issue_list", view } satisfies TaskExecutionOutcome
         }
+
         const view = yield* reader.get(request.query)
+
         return { kind: "issue_detail", view } satisfies TaskExecutionOutcome
       }
       case "readMany": {
@@ -431,7 +440,9 @@ const executeRequest = (
       }
       case "apply": {
         const context = yield* options.contextForCall(call)
+
         yield* Effect.sync(writeStarted)
+
         const result = yield* options.store.apply(request.batch, context)
 
         return { kind: "saved", result } satisfies TaskExecutionOutcome
@@ -452,6 +463,7 @@ const unavailableOutput = (outcome: TaskExecutionOutcome): string => {
         outcome.view.tasks === null
           ? "No local task state"
           : `Local task page: ${outcome.view.tasks.tasks.length} tasks, revision ${outcome.view.tasks.revision}`
+
       return `${metadata} for ${outcome.view.issue.repository}#${outcome.view.issue.number}. ${tasks}. Detailed output unavailable.`
     }
     case "saved":
@@ -488,7 +500,9 @@ export const createTaskTool = (options: TaskToolOptions): IssueTaskTool => ({
     "Read/get issue-qualified tasks, listIssues/getIssue metadata with local tasks, or apply an atomic explicit-issue mutation batch. read uses issue/page/filter; readMany explicit queries totals at most 100 requested tasks; get uses issue/id. listIssues uses query {repository,state,page,tasks:{limit,filter?}} with at most 100 aggregate requested tasks; getIssue uses query {issue,related:{limit,blockedByAfter?,deliveryAfter?},tasks:{page,filter?}}. apply uses complete issues/operations (add, edit, status, block, transfer). No worker selection or replies. Mutation authority and request identity come only from the host.",
   parameters: TaskParameters,
   execute: async (toolCallId, params, signal, _onUpdate, ctx) => {
+    const executionOptions = signal === undefined ? {} : { signal }
     let outcome: TaskExecutionOutcome
+
     if (signal?.aborted === true) outcome = { kind: "interrupted" }
     else {
       const attempt: { invocation: TaskNativeCall | undefined } = {
@@ -509,11 +523,12 @@ export const createTaskTool = (options: TaskToolOptions): IssueTaskTool => ({
           attempt.invocation = invocation
         })
       })
-      const executed = await Effect.runPromiseExit(operation, { signal })
+      const executed = await Effect.runPromiseExit(operation, executionOptions)
 
       if (Exit.isSuccess(executed)) outcome = executed.value
       else {
         const interrupted = Cause.isInterruptedOnly(executed.cause)
+
         outcome =
           attempt.invocation !== undefined
             ? {
@@ -538,7 +553,7 @@ export const createTaskTool = (options: TaskToolOptions): IssueTaskTool => ({
         ? undefined
         : await Effect.runPromiseExit(
             Effect.suspend(() => options.renderOutput(outcome)),
-            { signal },
+            executionOptions,
           )
     const complete =
       rendered !== undefined &&
@@ -562,6 +577,8 @@ export const registerTaskTool = (
   options: TaskToolOptions,
 ): IssueTaskTool => {
   const tool = createTaskTool(options)
+
   pi.registerTool(tool)
+
   return tool
 }
