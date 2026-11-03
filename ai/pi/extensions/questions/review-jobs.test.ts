@@ -116,17 +116,112 @@ test("returns immediately; internal critic-author-fresh critic publishes only th
   )
 })
 
-test("two rejecting critiques is the cap, with one internal author and no publish", async t => {
+test("two editorial critiques end with the author's final revision and a queued question", async t => {
   const roles: string[] = []
+  const final = {
+    ...revised,
+    question:
+      "Should [file.ts](https://example.com/file.ts) admit at most four pending decision drafts?",
+  }
+  let authors = 0
   const f = fixture(t, async (_ctx, task) => {
     roles.push(task.role)
-    return task.role === "author" ? JSON.stringify(revised) : verdict(false)
+    return task.role === "author"
+      ? JSON.stringify(++authors === 1 ? revised : final)
+      : verdict(false, "Make the decision concrete without changing its scope.")
   })
   f.jobs.submit(draft, f.context)
   await settle()
-  assert.deepEqual(roles, ["critic", "author", "critic"])
-  assert.equal(f.jobs.snapshots()[0].status, "needs-revision")
+
+  const snapshot = f.jobs.snapshots()[0]
+
+  assert.ok(snapshot)
+  assert.deepEqual(roles, ["critic", "author", "critic", "author"])
+  assert.equal(snapshot.status, "queued-question")
+  assert.equal(snapshot.pass, 2)
+  assert.equal(snapshot.questionId, 7)
+  assert.ok(snapshot.reason)
+  assert.match(snapshot.reason, /final author revision/i)
+  assert.deepEqual(f.sent, [{ action: "ask", ...final }])
+  assert.equal(f.terminal.length, 1)
+})
+
+test("last author revision still rejects changed links instead of publishing", async t => {
+  let authors = 0
+  const f = fixture(t, async (_ctx, task) =>
+    task.role === "critic"
+      ? verdict(false)
+      : JSON.stringify(
+          ++authors === 1
+            ? revised
+            : { ...revised, question: "Use https://attacker.invalid instead?" },
+        ),
+  )
+  f.jobs.submit(draft, f.context)
+  await settle()
+
+  const snapshot = f.jobs.snapshots()[0]
+
+  assert.ok(snapshot)
+  assert.equal(authors, 2)
+  assert.equal(snapshot.status, "unavailable")
+  assert.ok(snapshot.reason)
+  assert.match(snapshot.reason, /changed URL set/)
   assert.equal(f.sent.length, 0)
+})
+
+test("cancellation during the last author revision prevents publication", async t => {
+  const last = deferred<string | undefined>()
+  let authors = 0
+  const f = fixture(t, async (_ctx, task) =>
+    task.role === "critic"
+      ? verdict(false)
+      : ++authors === 1
+        ? JSON.stringify(revised)
+        : last.promise,
+  )
+  f.jobs.submit(draft, f.context)
+  await settle()
+
+  const revisingSnapshot = f.jobs.snapshots()[0]
+
+  assert.ok(revisingSnapshot)
+  assert.equal(authors, 2)
+  assert.equal(revisingSnapshot.status, "revising")
+  f.jobs.cancelAll()
+  last.resolve(JSON.stringify(revised))
+  await settle()
+
+  const cancelledSnapshot = f.jobs.snapshots()[0]
+
+  assert.ok(cancelledSnapshot)
+  assert.equal(cancelledSnapshot.status, "cancelled")
+  assert.equal(f.sent.length, 0)
+})
+
+test("publication rejection remains an explicit operational failure, not editorial needs-revision", async t => {
+  const f = fixture(t, async () => verdict(true))
+  const jobs = createQuestionReviewJobs({
+    execution: f.guard,
+    process: async () => verdict(true),
+    present: () => {},
+    persist: () => Either.right(undefined),
+    publish: async () => ({
+      outcome: "rejected",
+      reason: "Decision q4 is already pending; no duplicate created.",
+    }),
+  })
+  t.after(() => jobs.close())
+  jobs.submit(draft, f.context)
+  await settle()
+
+  const snapshot = jobs.snapshots()[0]
+
+  assert.ok(snapshot)
+  assert.equal(snapshot.status, "unavailable")
+  assert.ok(snapshot.reason)
+  assert.match(snapshot.reason, /Decision q4 is already pending/)
+  assert.equal(snapshot.questionId, undefined)
 })
 
 for (const output of [

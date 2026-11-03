@@ -1,0 +1,14 @@
+{
+  "packages": ["npm:pi-unsloth-webtools@0.11.0"],
+  "unslothWebTools": {
+    "allowLocalFiles": false,
+    "allowPrivateAddresses": false,
+    "lightpandaEnabled": false,
+    "lightpandaFallback": false,
+    "transport": "off",
+    "engines": ["duckduckgo"],
+    "maxResults": 5,
+    "maxChars": 20000,
+    "timeoutMs": 15000
+  }
+}
