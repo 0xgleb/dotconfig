@@ -42,13 +42,14 @@ existing task ID must name its currently associated issue. Batch-local creation
 aliases retain their creation-time issue qualification after a transfer.
 
 `task` replaces `todo`. Its mutations are add, edit, status, block and transfer;
-its lifecycle values are `todo | doing | done | cancelled`. Trusted host context
-supplies cancellation and reopening authority, never model-authored fields.
-Blocking is independent of lifecycle: a non-null `blocker` marks a task as
-blocked without changing its lifecycle value. For example, a task can remain
-`doing` while blocked; clearing its blocker leaves it `doing`. The
-`blocked: true` read filter selects tasks with a non-null blocker. Holds and
-deferral are issue-scheduling concerns. There is no `in_review` task state.
+its lifecycle values are `todo | doing | done | cancelled`. Entering or leaving
+`cancelled` requires owner-authorized host context, never model-authored fields.
+Reopening `done` does not require that cancellation grant. Blocking is
+independent of lifecycle: a non-null `blocker` marks a task as blocked without
+changing its lifecycle value. For example, a task can remain `doing` while
+blocked; clearing its blocker leaves it `doing`. The `blocked: true` read filter
+selects tasks with a non-null blocker. Holds and deferral are issue-scheduling
+concerns. There is no `in_review` task state.
 
 Use the existing personal Project and existing organization Project. Bind their
 verified numeric **Priority** fields with their actual scopes: the personal

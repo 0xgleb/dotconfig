@@ -322,10 +322,11 @@ the harness, and suppress duplicates without agent polling.
   internal states fabricated only for a test. Malformed boundary inputs still
   require tests. Run relevant tests and inspect the final diff; retain only
   justified changes.
-- Keep durable tasks granular and linked to the project's tracker. Record
-  requests, corrections, blockers, and next actions without replacing a direct
-  answer with task bookkeeping. Preserve deferred work and explicit constraints.
-  Follow an approved plan; do not substitute another design without the required
+- Every task belongs to a repository-qualified GitHub issue, without exceptions
+  for short-lived or one-off work. Keep tasks granular. Record requests,
+  corrections, blockers, and next actions without replacing a direct answer with
+  task bookkeeping. Preserve deferred work and explicit constraints. Follow an
+  approved plan; do not substitute another design without the required
   agreement. New human direction supersedes the plan. For verified-finding work,
   fix every valid finding and explain invalid findings at completion.
 - Structure roadmaps as priority-ordered epics, not numbered phases. Use
