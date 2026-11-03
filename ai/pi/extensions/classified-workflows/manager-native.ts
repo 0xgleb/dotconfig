@@ -653,6 +653,7 @@ const MANAGEMENT_TOOLS: readonly string[] = [
   "todo",
   "manager_control",
   "read",
+  "bash",
   "ask_user",
   "report_owner",
 ]

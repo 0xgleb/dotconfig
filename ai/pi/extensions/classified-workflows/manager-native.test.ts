@@ -299,7 +299,9 @@ test("manager profile preserves the native editor and exposes registry managemen
     "todo",
     "manager_control",
     "read",
+    "bash",
     "ask_user",
+    "report_owner",
     "web_search",
     "web_fetch",
   ])
@@ -326,7 +328,7 @@ test("manager profile preserves the native editor and exposes registry managemen
     undefined,
   )
   assert.equal(await f.emit("tool_call", { toolName: "todo" }), undefined)
-  const denied = object(await f.emit("tool_call", { toolName: "bash" }))
+  const denied = object(await f.emit("tool_call", { toolName: "write" }))
   assert.equal(denied.block, true)
 })
 
@@ -384,6 +386,50 @@ for (const profile of [true, "global"] as const) {
     }
   })
 
+  test(`${name} manager exposes existing bash for GitHub issue maintenance`, async t => {
+    const f = fixture(t, profile)
+
+    await f.emit("session_start")
+
+    const policy = object(
+      await f.emit("before_agent_start", {
+        systemPrompt: "Native Pi base",
+        prompt: "List the authorized repository's issues.",
+      }),
+    )
+
+    assert.ok(f.active.at(-1)?.includes("bash"))
+    assert.equal(
+      await f.emit("tool_call", {
+        toolName: "bash",
+        input: {
+          command:
+            "gh issue list --repo 0xgleb/dotconfig --json number --limit 1",
+        },
+      }),
+      undefined,
+    )
+
+    const prompt = String(policy.systemPrompt).replace(/\s+/gu, " ")
+
+    assert.match(prompt, /owner-authorized GitHub issue operations/u)
+    assert.match(
+      prompt,
+      /General shell execution, coding and worker launches remain excluded/u,
+    )
+
+    for (const toolName of ["write", "edit", "workflow"]) {
+      assert.equal(
+        object(await f.emit("tool_call", { toolName })).block,
+        true,
+        toolName,
+      )
+    }
+
+    assert.deepEqual(f.execs, [])
+    assert.deepEqual(f.messages, [])
+  })
+
   test(`${name} manager can discover reports before selection and retain backlog controls`, async t => {
     const f = fixture(t, profile)
     await f.emit("session_start")
@@ -401,13 +447,15 @@ for (const profile of [true, "global"] as const) {
       "todo",
       "manager_control",
       "read",
+      "bash",
       "ask_user",
+      "report_owner",
       "web_search",
       "web_fetch",
     ]) {
       assert.equal(await f.emit("tool_call", { toolName }), undefined, toolName)
     }
-    for (const toolName of ["bash", "write", "edit", "workflow"]) {
+    for (const toolName of ["write", "edit", "workflow"]) {
       assert.equal(
         object(await f.emit("tool_call", { toolName })).block,
         true,
@@ -474,7 +522,9 @@ test("global manager selects an existing worker without changing native UI or st
     "todo",
     "manager_control",
     "read",
+    "bash",
     "ask_user",
+    "report_owner",
     "web_search",
     "web_fetch",
   ])
@@ -704,7 +754,7 @@ test("manager toolset exposes owner reporting without coding tools", async t => 
     await f.emit("tool_call", { toolName: "report_owner", input: {} }),
     undefined,
   )
-  const denied = object(await f.emit("tool_call", { toolName: "bash" }))
+  const denied = object(await f.emit("tool_call", { toolName: "write" }))
   assert.equal(denied.block, true)
 })
 

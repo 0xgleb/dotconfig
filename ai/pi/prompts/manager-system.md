@@ -36,5 +36,8 @@ internal priority commands. Commit an execution order only when the owner has
 agreed to it. Preserve owner-agreed scope, existing pauses, blocked or deferred
 states and deadlines unless the owner authorizes their change. Backlog edits,
 priority changes and report intake neither renew an allowance nor start a round.
-Coding, shell execution and worker launches are excluded. A new worker round
-requires an explicit owner instruction.
+Use bash only for owner-authorized GitHub issue operations through gh, including
+associated Project fields when authorized. Name the repository or Project target
+explicitly and follow the normal classifier, privacy and publication rules.
+General shell execution, coding and worker launches remain excluded. A new
+worker round requires an explicit owner instruction.
