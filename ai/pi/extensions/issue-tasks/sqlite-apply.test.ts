@@ -3346,44 +3346,120 @@ test("cancelling interruptible task work rolls back without starting COMMIT", as
     }
   }))
 
-test("concurrent writers load current state under the same SQLite write lock", async () =>
-  fixture(async path => {
-    const first = await run(
-      openSqliteTaskStore({ databasePath: path, busyTimeoutMs: 0 }),
-    )
-    const second = await run(
-      openSqliteTaskStore({ databasePath: path, busyTimeoutMs: 0 }),
-    )
-    try {
-      await Promise.all([
-        run(
+test(
+  "concurrent writers load current state under the same SQLite write lock",
+  { timeout: 5_000 },
+  async t =>
+    fixture(async path => {
+      const entered = await run(Deferred.make<void>())
+      const release = await run(Deferred.make<void>())
+      const contended = await run(Deferred.make<void>())
+      const first = await run(
+        openSqliteTaskStore({
+          databasePath: path,
+          busyTimeoutMs: 0,
+          taskTransactionBeginSignal: Deferred.succeed(entered, undefined).pipe(
+            Effect.andThen(Deferred.await(release)),
+          ),
+        }),
+      )
+      const second = await run(
+        openSqliteTaskStore({ databasePath: path, busyTimeoutMs: 0 }),
+      )
+      const exec = DatabaseSync.prototype.exec
+      let busyAttempts = 0
+      t.mock.method(
+        DatabaseSync.prototype,
+        "exec",
+        function (this: DatabaseSync, ...args: Parameters<typeof exec>) {
+          try {
+            return exec.apply(this, args)
+          } catch (error) {
+            if (
+              args[0] === "BEGIN IMMEDIATE" &&
+              typeof error === "object" &&
+              error !== null &&
+              "errcode" in error &&
+              error.errcode === 5
+            ) {
+              busyAttempts += 1
+              Effect.runSync(Deferred.succeed(contended, undefined))
+            }
+            throw error
+          }
+        },
+      )
+      const writes: Promise<unknown>[] = []
+      try {
+        const firstWrite = run(
           first.apply(
             batch([
               { op: "add", issue: a, key: "first", text: "First writer" },
             ]),
             context("writer-one"),
           ),
-        ),
-        run(
+          { signal: t.signal },
+        )
+        writes.push(firstWrite)
+        await run(Deferred.await(entered), { signal: t.signal })
+
+        const secondWrite = run(
           second.apply(
             batch([
               { op: "add", issue: a, key: "second", text: "Second writer" },
             ]),
             context("writer-two"),
           ),
-        ),
-      ])
+          { signal: t.signal },
+        )
+        writes.push(secondWrite)
+        await run(Deferred.await(contended), { signal: t.signal })
+        assert.ok(
+          busyAttempts > 0,
+          "writer two must encounter the held native SQLite lock",
+        )
 
-      const page = await run(first.readTasks(issue(), { limit: 10 }))
+        await run(Deferred.succeed(release, undefined))
+        const [firstSaved, secondSaved] = await Promise.all([
+          firstWrite,
+          secondWrite,
+        ])
+        assert.equal(firstSaved.issues[0]?.revision, 1)
+        assert.equal(secondSaved.issues[0]?.revision, 2)
+        assert.equal(firstSaved.eventCount, 1)
+        assert.equal(secondSaved.eventCount, 1)
+      } finally {
+        await run(Deferred.succeed(release, undefined))
+        await Promise.allSettled(writes)
+        await run(first.close())
+        await run(second.close())
+      }
 
-      assert.ok(Option.isSome(page))
-      assert.equal(page.value.tasks.length, 2)
-      assert.equal(page.value.revision, 2)
-    } finally {
-      await run(first.close())
-      await run(second.close())
-    }
-  }))
+      await withStore(path, async reopened => {
+        const page = await run(reopened.readTasks(issue(), { limit: 10 }))
+        assert.ok(Option.isSome(page))
+        assert.equal(page.value.revision, 2)
+        assert.deepEqual(page.value.tasks.map(task => task.text).sort(), [
+          "First writer",
+          "Second writer",
+        ])
+      })
+      sql(path, database => {
+        assert.equal(
+          database
+            .prepare("SELECT COUNT(*) AS count FROM issue_plan_batches")
+            .get()?.count,
+          2,
+        )
+        assert.equal(
+          database
+            .prepare("SELECT COUNT(*) AS count FROM issue_plan_history")
+            .get()?.count,
+          2,
+        )
+      })
+    }),
+)
 
 test("a cyclic final batch is rejected without changing tasks or history", async () =>
   fixture(async path => {
