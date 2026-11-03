@@ -23,13 +23,38 @@ const replace =
 
     return json.replace(before, after)
   }
-interface CorruptionCase {
+type CorruptionCase = {
   readonly name: string
   readonly operations: readonly unknown[]
   readonly operationIndex: number
-  readonly target: "history" | "receipt"
-  readonly corrupt: (json: string) => string
-}
+} & (
+  | {
+      readonly target: "history" | "receipt"
+      readonly corrupt: (json: string) => string
+    }
+  | { readonly target: "missing-event" }
+)
+const removeChange =
+  (field: "text" | "dependsOn") =>
+  (json: string): string => {
+    const payload: unknown = JSON.parse(json)
+    assert.ok(
+      typeof payload === "object" && payload !== null && "changes" in payload,
+    )
+    assert.ok(Array.isArray(payload.changes))
+    assert.equal(payload.changes.length, 2)
+
+    const changes = payload.changes.filter((change: unknown) => {
+      assert.ok(
+        typeof change === "object" && change !== null && "field" in change,
+      )
+      return change.field !== field
+    })
+    assert.equal(changes.length, 1)
+    payload.changes = changes
+
+    return JSON.stringify(payload)
+  }
 const cases: readonly CorruptionCase[] = [
   {
     name: "malformed add JSON",
@@ -106,6 +131,38 @@ const cases: readonly CorruptionCase[] = [
       '"before":["4a501756-0fac-4df7-bce7-7ee0f08eb21e"]',
     ),
   },
+  ...(["text", "dependsOn"] as const).map((field): CorruptionCase => ({
+    name: `omitted requested edit field: ${field}`,
+    operations: [
+      { ...add, key: "dependency" },
+      add,
+      {
+        op: "edit",
+        target: reference(),
+        text: "changed text",
+        dependsOn: [reference("dependency")],
+      },
+    ],
+    operationIndex: 2,
+    target: "history",
+    corrupt: removeChange(field),
+  })),
+  {
+    name: "omitted final state-changing operation",
+    operations: [add, { op: "status", target: reference(), status: "doing" }],
+    operationIndex: 1,
+    target: "missing-event",
+  },
+  {
+    name: "omitted intermediate state-changing operation",
+    operations: [
+      add,
+      { op: "status", target: reference(), status: "doing" },
+      { op: "block", target: reference(), reason: "blocked" },
+    ],
+    operationIndex: 1,
+    target: "missing-event",
+  },
   {
     name: "malformed receipt JSON classification",
     operations: [add],
@@ -152,34 +209,65 @@ for (const scenario of cases) {
       const database = new DatabaseSync(databasePath)
       try {
         const query =
-          scenario.target === "history"
+          scenario.target === "receipt"
             ? database.prepare(
-                "SELECT payload_json AS json FROM issue_plan_history WHERE batch_id = ? AND operation_index = ?",
-              )
-            : database.prepare(
                 "SELECT result_json AS json FROM issue_plan_batches WHERE id = ?",
               )
+            : database.prepare(
+                "SELECT payload_json AS json FROM issue_plan_history WHERE batch_id = ? AND operation_index = ?",
+              )
         const row =
-          scenario.target === "history"
-            ? query.get(saved.batchId, scenario.operationIndex)
-            : query.get(saved.batchId)
+          scenario.target === "receipt"
+            ? query.get(saved.batchId)
+            : query.get(saved.batchId, scenario.operationIndex)
         assert.ok(row !== undefined && typeof row.json === "string")
 
-        const corrupted = scenario.corrupt(row.json)
-        assert.notEqual(corrupted, row.json)
-
-        if (scenario.target === "history") {
+        if (scenario.target === "missing-event") {
           database
             .prepare(
-              "UPDATE issue_plan_history SET payload_json = ? WHERE batch_id = ? AND operation_index = ?",
+              "DELETE FROM issue_plan_history WHERE batch_id = ? AND operation_index = ?",
             )
-            .run(corrupted, saved.batchId, scenario.operationIndex)
-        } else {
+            .run(saved.batchId, scenario.operationIndex)
+          const receiptRow = database
+            .prepare("SELECT result_json FROM issue_plan_batches WHERE id = ?")
+            .get(saved.batchId)
+          assert.ok(
+            receiptRow !== undefined &&
+              typeof receiptRow.result_json === "string",
+          )
+
+          const receipt: unknown = JSON.parse(receiptRow.result_json)
+          assert.ok(
+            typeof receipt === "object" &&
+              receipt !== null &&
+              "eventCount" in receipt,
+          )
+          assert.ok(
+            typeof receipt.eventCount === "number" && receipt.eventCount > 0,
+          )
+          receipt.eventCount -= 1
           database
             .prepare(
               "UPDATE issue_plan_batches SET result_json = ? WHERE id = ?",
             )
-            .run(corrupted, saved.batchId)
+            .run(JSON.stringify(receipt), saved.batchId)
+        } else {
+          const corrupted = scenario.corrupt(row.json)
+          assert.notEqual(corrupted, row.json)
+
+          if (scenario.target === "history") {
+            database
+              .prepare(
+                "UPDATE issue_plan_history SET payload_json = ? WHERE batch_id = ? AND operation_index = ?",
+              )
+              .run(corrupted, saved.batchId, scenario.operationIndex)
+          } else {
+            database
+              .prepare(
+                "UPDATE issue_plan_batches SET result_json = ? WHERE id = ?",
+              )
+              .run(corrupted, saved.batchId)
+          }
         }
         const beforeReplay = snapshot(database)
         const reopened = await Effect.runPromise(

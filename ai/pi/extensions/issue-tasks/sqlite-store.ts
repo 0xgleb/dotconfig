@@ -1240,6 +1240,120 @@ const readReceipt = (
       TaskId,
       Partial<Pick<CurrentTask, "text" | "status" | "blocker" | "dependsOn">>
     >()
+    const verifyAbsentOperation = (
+      operation: TaskMutationBatch["operations"][number],
+    ): StoreEffect<void> =>
+      Effect.gen(function* () {
+        if (operation.op === "add")
+          return yield* fail(
+            "corrupt_state",
+            "Task creation has no history event",
+          )
+
+        const target = operation.target
+        const identity = target.task
+        const id =
+          identity.kind === "existing"
+            ? identity.id
+            : created.find(
+                item =>
+                  issueKey(item.issue) === issueKey(target.issue) &&
+                  item.key === identity.key,
+              )?.id
+        if (id === undefined)
+          return yield* fail(
+            "corrupt_state",
+            "An omitted operation has no task identity",
+          )
+
+        const owner =
+          locations.get(id) ??
+          (identity.kind === "existing" ? target.issue : undefined)
+        if (
+          owner === undefined ||
+          (identity.kind === "existing" &&
+            (createdIds.has(id) || issueKey(owner) !== issueKey(target.issue)))
+        )
+          return yield* fail(
+            "corrupt_state",
+            "An omitted operation has inconsistent ownership",
+          )
+
+        let state = fieldStates.get(id) ?? {}
+        switch (operation.op) {
+          case "transfer":
+            if (issueKey(owner) !== issueKey(operation.toIssue))
+              return yield* fail(
+                "corrupt_state",
+                "Ownership change has no history event",
+              )
+            break
+          case "status":
+            if (state.status !== undefined && state.status !== operation.status)
+              return yield* fail(
+                "corrupt_state",
+                "Status change has no history event",
+              )
+            state = { ...state, status: operation.status }
+            break
+          case "block":
+            if (
+              state.blocker !== undefined &&
+              state.blocker !== operation.reason
+            )
+              return yield* fail(
+                "corrupt_state",
+                "Blocker change has no history event",
+              )
+            state = { ...state, blocker: operation.reason }
+            break
+          case "edit": {
+            if (operation.text !== undefined) {
+              if (state.text !== undefined && state.text !== operation.text)
+                return yield* fail(
+                  "corrupt_state",
+                  "Text change has no history event",
+                )
+              state = { ...state, text: operation.text }
+            }
+            if (operation.dependsOn !== undefined) {
+              const dependencies: TaskId[] = []
+              for (const reference of operation.dependsOn) {
+                const dependency = reference.task
+                const dependencyId =
+                  dependency.kind === "existing"
+                    ? dependency.id
+                    : created.find(
+                        item =>
+                          issueKey(item.issue) === issueKey(reference.issue) &&
+                          item.key === dependency.key,
+                      )?.id
+                if (dependencyId === undefined)
+                  return yield* fail(
+                    "corrupt_state",
+                    "An omitted edit has an unresolved dependency",
+                  )
+                dependencies.push(dependencyId)
+              }
+              dependencies.sort()
+              if (
+                new Set(dependencies).size !== dependencies.length ||
+                (state.dependsOn !== undefined &&
+                  !isDeepStrictEqual([...state.dependsOn].sort(), dependencies))
+              )
+                return yield* fail(
+                  "corrupt_state",
+                  "Dependency change has no history event",
+                )
+              state = { ...state, dependsOn: dependencies }
+            }
+            break
+          }
+        }
+        fieldStates.set(id, state)
+        locations.set(id, owner)
+      })
+    let nextRequestedIndex = 0
     while (rawHistory !== undefined) {
       const history = yield* decode(
         Schema.Struct({
@@ -1266,6 +1380,17 @@ const readReceipt = (
         "Invalid persisted task receipt history",
       )
 
+      while (nextRequestedIndex < history.operation_index) {
+        const absent = batch.operations[nextRequestedIndex]
+        if (absent === undefined)
+          return yield* fail(
+            "corrupt_state",
+            "History exceeds the requested operation range",
+          )
+
+        yield* verifyAbsentOperation(absent)
+        nextRequestedIndex += 1
+      }
       const operation = batch.operations[history.operation_index]
       const task = changesById.get(history.task_id)
 
@@ -1535,6 +1660,17 @@ const readReceipt = (
             payload.operationIndex !== history.operation_index ||
             issueKey(owner) !== issueKey(before) ||
             new Set(fields).size !== fields.length ||
+            (operation.text !== undefined &&
+              fieldState.text !== undefined &&
+              operation.text !== fieldState.text &&
+              !fields.includes("text")) ||
+            (operation.dependsOn !== undefined &&
+              fieldState.dependsOn !== undefined &&
+              !isDeepStrictEqual(
+                [...fieldState.dependsOn].sort(),
+                [...requestedDependencies].sort(),
+              ) &&
+              !fields.includes("dependsOn")) ||
             payload.changes.some(change => {
               if (change.field === "text")
                 return (
@@ -1576,11 +1712,19 @@ const readReceipt = (
                 ? { ...fieldState, text: change.after }
                 : { ...fieldState, dependsOn: change.after }
           }
+          if (operation.text !== undefined)
+            fieldState = { ...fieldState, text: operation.text }
+          if (operation.dependsOn !== undefined)
+            fieldState = {
+              ...fieldState,
+              dependsOn: [...requestedDependencies].sort(),
+            }
           eventFields = fields
           break
         }
       }
 
+      nextRequestedIndex = history.operation_index + 1
       fieldStates.set(task.id, fieldState)
       const fields = recordedFields.get(task.id) ?? new Set<ChangedField>()
       for (const field of eventFields) fields.add(field)
@@ -1594,6 +1738,9 @@ const readReceipt = (
         nextHistory.get(saved.batchId, history.operation_index),
       )
     }
+
+    for (const absent of batch.operations.slice(nextRequestedIndex))
+      yield* verifyAbsentOperation(absent)
 
     if (recordedOperations.size !== historyCount.count)
       return yield* fail(
