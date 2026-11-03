@@ -38,6 +38,7 @@ export const enterRemoteToolGuard = (
             tool === "todo" ||
             tool === "manager_control" ||
             tool === "read" ||
+            tool === "bash" ||
             tool === "ask_user" ||
             tool === "report_owner",
         )

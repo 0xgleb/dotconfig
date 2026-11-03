@@ -34,7 +34,7 @@ test("remote turns mechanically disable tools and restore the exact prior set on
   assert.deepEqual(writes, [[], [], ["read", "bash", "todo"]])
 })
 
-test("management turns retain active coordination, read and question tools, never execution", () => {
+test("management turns retain active GitHub CLI and coordination tools without coding delegation", () => {
   let active = [
     "read",
     "bash",
@@ -45,6 +45,8 @@ test("management turns retain active coordination, read and question tools, neve
     "web_search",
     "web_fetch",
     "workflow",
+    "write",
+    "edit",
   ]
   const prior = [...active]
   const guard = enterRemoteToolGuard(
@@ -58,6 +60,7 @@ test("management turns retain active coordination, read and question tools, neve
   )
   const permitted = [
     "read",
+    "bash",
     "todo",
     "agent_registry",
     "manager_control",

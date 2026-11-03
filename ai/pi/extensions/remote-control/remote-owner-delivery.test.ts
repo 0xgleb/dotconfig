@@ -144,7 +144,9 @@ for (const [requesterId, isOwner, isManager] of [
     assert.ok(queued)
     assert.deepEqual(
       activeTools,
-      isOwner && isManager ? ["agent_registry", "todo", "manager_control"] : [],
+      isOwner && isManager
+        ? ["agent_registry", "todo", "manager_control", "bash", "read"]
+        : [],
     )
     assert.equal(ingressObservations, 0, "native mode never renews at ingress")
     assert.ok(
