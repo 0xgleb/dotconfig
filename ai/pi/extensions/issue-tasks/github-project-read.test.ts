@@ -135,7 +135,12 @@ test("Project queries detach and freeze only selected scope and bounded opaque p
   assert.ok(Object.isFrozen(normalized))
   assert.ok(Object.isFrozen(normalized.page))
   assert.notEqual(normalized.page, input.page)
-  assert.equal(query("dataclique", 100).page.limit, 100)
+  assert.equal(
+    right(
+      decodeGitHubProjectQuery({ project: "dataclique", page: { limit: 100 } }),
+    ).page.limit,
+    100,
+  )
 })
 
 test("Project queries reject caller authority, arbitrary targets and malformed budgets", () => {
@@ -466,6 +471,31 @@ test("Project cursors distinguish final cursors from missing or nonadvancing con
     ).pageInfo,
     { hasNextPage: true, endCursor: " next " },
   )
+})
+
+test("every continuing Project cursor is usable within the request byte budget", () => {
+  const payload = (endCursor: string) =>
+    JSON.stringify(
+      envelope("personal", [], {
+        items: { nodes: [], pageInfo: { hasNextPage: true, endCursor } },
+      }),
+    )
+
+  for (const endCursor of ["x".repeat(4096), "😀".repeat(1024)]) {
+    const page = right(decodeGitHubProjectPage(payload(endCursor), query()))
+    const next = decodeGitHubProjectQuery({
+      project: "personal",
+      page: { limit: 1, after: page.pageInfo.endCursor },
+    })
+
+    assert.ok(Either.isRight(next))
+  }
+  for (const endCursor of ["x".repeat(4097), "😀".repeat(1024) + "x"]) {
+    assert.equal(
+      code(decodeGitHubProjectPage(payload(endCursor), query())),
+      "invalid_response",
+    )
+  }
 })
 
 test("Project response enforces byte budget before JSON and never accepts partial GraphQL errors", () => {
