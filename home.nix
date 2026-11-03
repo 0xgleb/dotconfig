@@ -354,6 +354,8 @@ in
         user.name = "0xgleb";
         init.defaultBranch = "master";
         push.autoSetupRemote = true;
+        # Native fsmonitor queries stall for ~1s per nested repository on macOS.
+        core.fsmonitor = false;
       };
     };
 
