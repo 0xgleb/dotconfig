@@ -176,9 +176,7 @@ independent deliverables into separate tasks and use artifact-level subtasks to
 show processing stages and progress.
 
 Keep SPEC/ROADMAP → GitHub issues → local execution tasks as the planning
-hierarchy. Aim for approximately 95% of substantive local tasks to link to an
-issue, with explicit short-lived one-off exceptions. Notes and memories provide
-context rather than a competing backlog.
+hierarchy. Notes and memories provide context rather than a competing backlog.
 
 # Current environment
 

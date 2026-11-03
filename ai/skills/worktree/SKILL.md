@@ -38,9 +38,15 @@ checkout and do not enter other worktrees.
    experiment-, or task-named directories. Verify existing ownership before
    reusing a slot.
 4. Create only the selected slot from the task's verified base. Do not change
-   VCS backends, fetch unrelated branches, or initialize environments as routine
-   setup. Record artifact provenance for a newly created disposable slot when
-   the harness exposes that tool.
+   VCS backends, fetch unrelated branches, or initialize unapproved
+   environments. When the main worktree uses direnv and its repository
+   environment is already owner-approved, run `direnv allow <worktree-root>` in
+   the linked or review checkout before tests or commits. Main-checkout approval
+   does not activate a new checkout. Use the repository's declared complete
+   setup, not partial hook configs or skipped hooks. This grants no new secret,
+   host-configuration or deployment authority. Diagnose activation errors rather
+   than silently working outside the environment. Record artifact provenance for
+   a newly created disposable slot when the harness exposes that tool.
 5. Repair submodules only if concurrent work actually requires them. Use
    `fix-worktree-submodules` only when that command exists; otherwise inspect
    the repository's documented equivalent before acting.
