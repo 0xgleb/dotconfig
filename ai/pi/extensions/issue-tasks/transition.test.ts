@@ -21,7 +21,9 @@ import {
 
 const issue = (repository: string): IssueReference => {
   const value = decodeIssueReference({ repository, number: 1 })
+
   assert.ok(Either.isRight(value))
+
   return value.right
 }
 const a = issue("0xgleb/dotconfig")
@@ -30,7 +32,9 @@ const taskId = (index: number): TaskId => {
   const value = Schema.decodeUnknownEither(TaskIdSchema)(
     `20000000-0000-4000-8000-${index.toString().padStart(12, "0")}`,
   )
+
   assert.ok(Either.isRight(value))
+
   return value.right
 }
 const issueState = (
@@ -69,7 +73,9 @@ const added = (issue: IssueReference, key: string) => ({
 })
 const batch = (operations: readonly unknown[]): TaskMutationBatch => {
   const value = decodeTaskMutationBatch({ issues: [a, b], operations })
+
   assert.ok(Either.isRight(value))
+
   return value.right
 }
 const context = (
@@ -95,10 +101,12 @@ const success = (
   policy = context(input),
 ): PreparedTaskChanges => {
   const result = prepareTaskChanges(input, state, policy)
+
   assert.ok(
     Either.isRight(result),
     Either.isLeft(result) ? result.left.message : undefined,
   )
+
   return result.right
 }
 const fails = (
@@ -108,6 +116,7 @@ const fails = (
   policy = context(input),
 ) => {
   const result = prepareTaskChanges(input, state, policy)
+
   assert.ok(Either.isLeft(result))
   assert.equal(result.left.code, code)
 }
@@ -127,6 +136,7 @@ test("creation-qualified aliases survive transfers and preserve intermediate iss
   ])
   const result = success(input)
   const moved = result.tasks.find(task => task.id === taskId(100))
+
   assert.ok(moved)
   assert.deepEqual(moved.issue, a)
   assert.equal(moved.status, "doing")
@@ -142,7 +152,9 @@ test("creation-qualified aliases survive transfers and preserve intermediate iss
       [issueKey(b), 8],
     ],
   )
+
   const transfers = result.events.filter(event => event.op === "transfer")
+
   assert.deepEqual(
     transfers.map(event => [event.splitFrom, event.issue]),
     [
@@ -174,6 +186,7 @@ test("a complete multi-issue batch prepares changes and advances each touched is
   const before = snapshot()
   const copy = structuredClone(before)
   const result = success(input, before)
+
   assert.deepEqual(before, copy)
   assert.equal(result.tasks.length, 3)
   assert.equal(result.events.length, 5)
@@ -187,7 +200,9 @@ test("a complete multi-issue batch prepares changes and advances each touched is
       [issueKey(b), 8],
     ],
   )
+
   const created = result.tasks.find(task => task.id === taskId(100))
+
   assert.ok(created)
   assert.equal(created.status, "doing")
   assert.equal(created.blocker, "External input is missing")
@@ -206,6 +221,7 @@ test("new issue task state is persisted only when it receives real task changes"
     tasks: [],
     external: [],
   })
+
   assert.equal(result.issues.length, 1)
   assert.equal(result.issues[0]?.kind, "new")
   assert.equal(result.issues[0]?.state.revision, 1)
@@ -226,6 +242,7 @@ test("a missing later target rejects the batch without changing its source snaps
   const state = snapshot()
   const original = structuredClone(state)
   fails(input, "missing_task", state)
+
   assert.deepEqual(state, original)
 })
 
@@ -239,6 +256,7 @@ test("cancellation and reopening cancelled work require trusted owner authorizat
       ?.status,
     "cancelled",
   )
+
   const base = snapshot()
   const cancelled: TaskSnapshot = {
     ...base,
@@ -269,6 +287,7 @@ test("cycle checks include the external dependency closure without mutating it",
   ])
   const original = structuredClone(state)
   fails(input, "cycle", state)
+
   assert.deepEqual(state, original)
 })
 
@@ -284,6 +303,7 @@ test("a cyclic persisted graph is rejected before a batch can repair it", () => 
     "cycle",
     state,
   )
+
   assert.deepEqual(state, before)
 })
 
@@ -299,6 +319,7 @@ test("duplicate persisted dependencies reject the batch without normalizing its 
     "corrupt_state",
     state,
   )
+
   assert.deepEqual(state, before)
 })
 
@@ -314,6 +335,7 @@ test("dependency rewrites validate the final atomic graph, not intermediate orde
     ]),
     state,
   )
+
   assert.deepEqual(
     result.events.map(event => event.operationIndex),
     [0, 1],
@@ -343,6 +365,7 @@ test("no-op batches preserve exhausted revisions but real changes cannot overflo
     ]),
     state,
   )
+
   assert.deepEqual(result, { issues: [], tasks: [], events: [], changed: [] })
   fails(
     batch([{ op: "status", target: existing(a, t1), status: "doing" }]),
@@ -364,6 +387,7 @@ test("malformed projections and ID allocations fail rather than overwrite data",
     ...base,
     tasks: [current(a, t1, [taskId(999)]), current(b, t2)],
   })
+
   const add = batch([
     { op: "add", issue: a, key: "new", text: "Requires generated identity" },
   ])
@@ -371,8 +395,11 @@ test("malformed projections and ID allocations fail rather than overwrite data",
     cancellation: "forbidden",
     additions: [],
   })
+
   const allocation = context(add).additions[0]
+
   assert.ok(allocation)
+
   fails(add, "invalid_allocation", base, {
     cancellation: "forbidden",
     additions: [{ ...allocation, id: t2 }],
@@ -394,9 +421,12 @@ test("status changes preserve factual blockers and history records only changed 
     batch([{ op: "status", target: existing(a, t1), status: "done" }]),
     state,
   )
+
   assert.equal(result.tasks[0]?.blocker, "Awaiting external input")
   assert.deepEqual(result.changed[0]?.fields, ["status"])
+
   const event = result.events[0]
+
   assert.ok(event?.op === "status")
   assert.equal(event.before, "doing")
   assert.equal(event.after, "done")
@@ -432,6 +462,7 @@ test("the dependency edge budget accepts its boundary and rejects one additional
     (count, node) => count + node.dependsOn.length,
     0,
   )
+
   assert.equal(edgeCount, MAX_TRANSITION_EDGES)
   assert.equal(success(input, state).events.length, 1)
 
@@ -458,6 +489,7 @@ test("a new task cannot grow an initially valid component beyond the node budget
     tasks: [current(a, t1, [taskId(10_000)]), current(b, t2)],
     external,
   }
+
   assert.equal(state.tasks.length + external.length, MAX_TRANSITION_NODES)
   assert.deepEqual(
     success(
@@ -486,6 +518,7 @@ test("deep dependency components are validated iteratively within explicit bound
     tasks: [current(a, t1, [taskId(1_000)]), current(b, t2)],
     external,
   }
+
   assert.equal(
     success(
       batch([{ op: "edit", target: existing(a, t1), text: "Still bounded" }]),

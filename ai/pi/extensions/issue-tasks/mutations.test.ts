@@ -31,14 +31,17 @@ const batch = (
 ) => ({ issues, operations })
 const accepted = (input: unknown) => {
   const result = decodeTaskMutationBatch(input)
+
   assert.ok(
     Either.isRight(result),
     Either.isLeft(result) ? result.left.message : undefined,
   )
+
   return result.right
 }
 const rejected = (input: unknown, code?: string) => {
   const result = decodeTaskMutationBatch(input)
+
   assert.ok(Either.isLeft(result))
   if (code !== undefined) assert.equal(result.left.code, code)
 }
@@ -66,9 +69,12 @@ test("qualified mutations canonicalize issues and correlate only earlier additio
       [uppercase, second],
     ),
   )
+
   assert.equal(result.issues[0]?.repository, "0xgleb/dotconfig")
   assert.equal(result.operations.length, 5)
+
   const created = result.operations[0]
+
   assert.ok(created?.op === "add")
   assert.deepEqual(created.dependsOn, [])
 })
@@ -111,9 +117,11 @@ test("all four lifecycle literals decode without granting execution authority", 
       batch([{ op: "status", target: existing(), status }]),
     )
     const operation = result.operations[0]
+
     assert.ok(operation?.op === "status")
     assert.equal(operation.status, status)
   }
+
   for (const status of ["blocked", "in_review", 0])
     rejected(
       batch([{ op: "status", target: existing(), status }]),
@@ -129,6 +137,7 @@ test("unknown fields cannot introduce revisions, caller authority or scheduling"
   ]) {
     rejected({ ...batch([add()]), ...extra }, "invalid_batch")
   }
+
   for (const extra of [{ priority: 1 }, { effort: 1 }, { status: "cancelled" }])
     rejected(batch([{ ...add(), ...extra }]), "invalid_operation")
   rejected(
@@ -176,6 +185,7 @@ test("dependency lists are explicit and do not silently deduplicate", () => {
     batch([{ ...add(), dependsOn: [existing(), existing()] }]),
     "invalid_operation",
   )
+
   const result = accepted(
     batch([
       { op: "edit", target: existing(), dependsOn: [] },
@@ -183,6 +193,7 @@ test("dependency lists are explicit and do not silently deduplicate", () => {
     ]),
   )
   const edited = result.operations[0]
+
   assert.ok(edited?.op === "edit")
   assert.deepEqual(edited.dependsOn, [])
 })
@@ -217,6 +228,7 @@ test("aggregate text and reference budgets bound the whole atomic call", () => {
     ]),
     "capacity",
   )
+
   const refs = Array.from({ length: 1_000 }, (_, index) =>
     existing(
       first,
@@ -224,6 +236,7 @@ test("aggregate text and reference budgets bound the whole atomic call", () => {
     ),
   )
   const target = existing(first, "ffffffff-ffff-4fff-8fff-ffffffffffff")
+
   rejected(
     batch(
       Array.from(
@@ -244,19 +257,26 @@ test("decoded mutations detach from caller data and keep instruction-like text a
     { op: "status", target: added("first"), status: "doing" },
   ])
   const result = accepted(payload)
+
   assert.ok(Object.isFrozen(result))
   assert.ok(Object.isFrozen(result.operations))
+
   const operation = result.operations[0]
+
   assert.ok(operation?.op === "add")
   assert.ok(Object.isFrozen(operation))
   assert.ok(Object.isFrozen(operation.dependsOn))
+
   const reference = operation.dependsOn[0]
+
   assert.ok(reference)
   assert.ok(Object.isFrozen(reference))
   assert.ok(Object.isFrozen(reference.issue))
   assert.ok(Object.isFrozen(reference.task))
   assert.equal(operation.text, text)
+
   sourceIssue.repository = "owner/changed"
+
   assert.equal(operation.issue.repository, "0xgleb/dotconfig")
   assert.equal(reference.issue.repository, "0xgleb/dotconfig")
 })
@@ -274,6 +294,7 @@ test("reference budget accepts its exact boundary and rejects one extra target",
     target,
     dependsOn: refs,
   }))
+
   accepted(batch(operations))
   rejected(
     batch([...operations, { op: "status", target, status: "done" }]),

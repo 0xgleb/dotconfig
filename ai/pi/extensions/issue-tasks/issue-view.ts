@@ -97,6 +97,7 @@ const reconcilePages = (
     pages.length !== queries.length ||
     queries.some((query, index) => {
       const page = pages[index]
+
       return (
         page === undefined ||
         issueKey(page.issue) !== issueKey(query.issue) ||
@@ -129,6 +130,7 @@ export const decodeIssueTaskListQuery = (
       state: input.state,
       page: input.page,
     }).pipe(Either.mapLeft(() => readError("invalid_request")))
+
     const limit = yield* Schema.decodeUnknownEither(LimitSchema)(
       input.tasks.limit,
     ).pipe(Either.mapLeft(() => readError("invalid_request")))
@@ -175,6 +177,7 @@ export const decodeIssueTaskGetQuery = (
       issue: input.issue,
       related: input.related,
     }).pipe(Either.mapLeft(() => readError("invalid_request")))
+
     const reads = yield* decodeTaskReadQueries([
       {
         issue: query.issue,
@@ -184,6 +187,7 @@ export const decodeIssueTaskGetQuery = (
           : { filter: input.tasks.filter }),
       },
     ]).pipe(Either.mapLeft(() => readError("invalid_request")))
+
     const read = reads[0]
 
     if (read === undefined) return yield* invalid()
@@ -202,7 +206,9 @@ export const createIssueTaskReader = (
   list: input =>
     Effect.gen(function* () {
       yield* Effect.yieldNow()
+
       const query = yield* decodeIssueTaskListQuery(input)
+
       const metadata = yield* options.github.list({
         repository: query.repository,
         state: query.state,
@@ -228,10 +234,14 @@ export const createIssueTaskReader = (
             : { filter: query.tasks.filter }),
         })),
       ).pipe(Either.mapLeft(() => readError("inconsistent_readback")))
+
       const pages = yield* options.tasks.readManyTasks(queries)
+
       yield* reconcilePages(queries, pages)
+
       const issues = yield* Effect.forEach(pages, (page, index) => {
         const row = metadata.issues[index]
+
         return row === undefined
           ? Effect.fail(readError("inconsistent_readback"))
           : Effect.succeed(Object.freeze({ metadata: row, tasks: page.page }))
@@ -246,7 +256,9 @@ export const createIssueTaskReader = (
   get: input =>
     Effect.gen(function* () {
       yield* Effect.yieldNow()
+
       const query = yield* decodeIssueTaskGetQuery(input)
+
       const metadata = yield* options.github.get({
         issue: query.issue,
         related: query.related,
@@ -261,7 +273,9 @@ export const createIssueTaskReader = (
 
       const queries = [{ issue: query.issue, ...query.tasks }]
       const pages = yield* options.tasks.readManyTasks(queries)
+
       yield* reconcilePages(queries, pages)
+
       const page = pages[0]
 
       if (page === undefined)

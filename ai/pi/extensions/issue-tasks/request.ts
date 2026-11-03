@@ -163,6 +163,7 @@ export const decodeTaskRequest = (
 ): Either.Either<TaskRequest, TaskRequestDecodeError> =>
   Either.gen(function* () {
     if (!record(input)) return yield* invalid("invalid_request")
+
     switch (input.action) {
       case "read": {
         if (
@@ -213,10 +214,12 @@ export const decodeTaskRequest = (
           )
         )
           return yield* invalid("invalid_request")
+
         const batch = yield* decodeTaskMutationBatch({
           issues: input.issues,
           operations: input.operations,
         })
+
         return Object.freeze({ action: "apply", batch })
       }
       default:

@@ -1,5 +1,6 @@
 const mode = process.argv[2]
 let input = ""
+
 process.stdin.setEncoding("utf8")
 process.stdin.on("data", chunk => {
   input += chunk
@@ -22,6 +23,7 @@ process.stdin.on("end", () => {
     process.stdout.write("{", () => process.exit(0))
     return
   }
+
   const request = JSON.parse(input)
   const variables = request.variables
   const repository = `${variables.owner}/${variables.name}`
@@ -56,6 +58,7 @@ process.stdin.on("end", () => {
           },
         }
   const json = JSON.stringify({ data })
+
   if (mode === "stderr-exact" || mode === "stderr-over") {
     process.stdout.write(json, () => {
       const size = mode === "stderr-exact" ? 1_048_576 : 1_048_577
@@ -63,6 +66,7 @@ process.stdin.on("end", () => {
     })
     return
   }
+
   const payload =
     mode === "exact"
       ? json + " ".repeat(1_048_576 - Buffer.byteLength(json))
@@ -71,5 +75,6 @@ process.stdin.on("end", () => {
         : mode === "unicode-over"
           ? "😀".repeat(262_145)
           : json
+
   process.stdout.write(payload, () => process.exit(0))
 })

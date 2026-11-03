@@ -96,6 +96,7 @@ const register = (options: TaskToolOptions): IssueTaskTool => {
   )
   assert.deepEqual(captured, [tool])
   assert.equal(tool.name, "task")
+
   return tool
 }
 const invoke = (
@@ -110,12 +111,15 @@ const invoke = (
     name: "task",
     arguments: args,
   })
+
   return tool.execute(id, validated, signal, undefined, nativeContext)
 }
 
 const issue = () => {
   const decoded = decodeIssueReference(rawIssue)
+
   assert.ok(Either.isRight(decoded))
+
   return decoded.right
 }
 const ordinaryOptions = (store: SqliteTaskStore): TaskToolOptions => ({
@@ -230,9 +234,11 @@ test(
         "native-live-seed",
         t.signal,
       )
+
       assert.equal(seeded.details.outcome.kind, "saved")
       if (seeded.details.outcome.kind !== "saved")
         assert.fail("Expected isolated fixture write")
+
       const created = seeded.details.outcome.result.created[0]
       assert.ok(created)
       assert.equal(grants, 1)
@@ -247,6 +253,7 @@ test(
       assert.equal(listed.details.outcome.kind, "issue_list")
       if (listed.details.outcome.kind !== "issue_list")
         assert.fail("Expected bounded native issue list")
+
       const listView: IssueTaskListView = listed.details.outcome.view
       assert.equal(listView.repository, rawIssue.repository)
       assert.equal(listView.issues.length <= 1, true)
@@ -266,6 +273,7 @@ test(
       assert.equal(found.details.outcome.kind, "issue_detail")
       if (found.details.outcome.kind !== "issue_detail")
         assert.fail("Expected qualified native issue detail")
+
       const view: IssueTaskDetailView = found.details.outcome.view
       assert.equal(view.issue.repository, target.repository)
       assert.equal(view.issue.number, 86)
@@ -309,6 +317,7 @@ test("registered task listIssues joins real issue decoding and SQLite without mu
     assert.equal(result.details.outcome.kind, "issue_list")
     if (result.details.outcome.kind !== "issue_list")
       assert.fail("Expected qualified issue list")
+
     assert.equal(
       result.details.outcome.view.issues[0]?.metadata.issue.number,
       1,
@@ -352,6 +361,7 @@ test("registered task getIssue retains body, qualified task page and independent
     assert.equal(result.details.outcome.kind, "issue_detail")
     if (result.details.outcome.kind !== "issue_detail")
       assert.fail("Expected issue detail")
+
     assert.deepEqual(result.details.outcome.view.issue, issue())
     assert.equal(
       result.details.outcome.view.detail?.body,
@@ -375,6 +385,7 @@ test("registered task explicitly reports missing issue-reader capability while l
       assert.equal(result.details.outcome.kind, "failed")
       if (result.details.outcome.kind !== "failed")
         assert.fail("Expected missing host capability")
+
       assert.equal(result.details.outcome.code, "host_unavailable")
     }
     const local = await invoke(tool, {
@@ -460,6 +471,7 @@ test("registered issue actions reject excess root fields and aggregate budgets b
       assert.equal(result.details.outcome.kind, "failed")
       if (result.details.outcome.kind !== "failed")
         assert.fail("Expected semantic request rejection")
+
       assert.equal(result.details.outcome.code, "invalid_request")
     }
     assert.equal(calls, 0)
@@ -491,6 +503,7 @@ test("registered issue renderer failure retains qualified unavailable metadata a
     assert.equal(result.details.outcome.kind, "issue_detail")
     if (result.details.outcome.kind !== "issue_detail")
       assert.fail("Expected preserved detail outcome")
+
     assert.deepEqual(result.details.outcome.view.issue, issue())
     assert.equal(result.details.outcome.view.detail, null)
     assert.equal(result.details.outcome.view.tasks?.tasks.length, 1)
@@ -521,6 +534,7 @@ test("registered issue list overflow keeps the full view and a bounded qualified
     assert.equal(result.details.outcome.kind, "issue_list")
     if (result.details.outcome.kind !== "issue_list")
       assert.fail("Expected preserved list outcome")
+
     assert.equal(result.details.outcome.view.issues.length, 1)
     assert.equal(result.details.output, "unavailable")
     const content = result.content[0]
@@ -617,6 +631,7 @@ test(
         )
         controller.abort()
         const result = await pending
+
         assert.equal(result.details.outcome.kind, "interrupted")
         assert.equal(result.isError, false)
         assert.equal(released, true)
@@ -650,6 +665,7 @@ test("registered task apply uses host identity, replays one native request and s
       replay.details.outcome.kind !== "saved"
     )
       assert.fail("Expected saved receipts")
+
     assert.equal(first.details.outcome.result.receipt, "committed")
     assert.equal(replay.details.outcome.result.receipt, "replayed")
     assert.deepEqual(
@@ -672,6 +688,7 @@ test("registered task apply uses host identity, replays one native request and s
     assert.equal(found.details.outcome.kind, "task")
     if (found.details.outcome.kind !== "task")
       assert.fail("Expected task detail")
+
     assert.equal(found.details.outcome.detail.task.id, created.id)
     assert.deepEqual(found.details.outcome.detail.dependsOn, [])
     assert.equal(
@@ -770,6 +787,7 @@ test("registered task distinguishes ordinary worker operations from explicit pri
     assert.equal(created.details.outcome.kind, "saved")
     if (created.details.outcome.kind !== "saved")
       assert.fail("Expected saved addition")
+
     const task = created.details.outcome.result.created[0]
     assert.ok(task)
     const statusRequest = (status: string) => ({
@@ -793,6 +811,7 @@ test("registered task distinguishes ordinary worker operations from explicit pri
     assert.equal(denied.details.outcome.kind, "failed")
     if (denied.details.outcome.kind !== "failed")
       assert.fail("Expected denied transition")
+
     assert.equal(denied.details.outcome.code, "unauthorized")
     const granted = register({
       ...options,
@@ -853,6 +872,7 @@ test("post-commit renderer failure preserves saved outcome and same-request repl
       replay.details.outcome.kind !== "saved"
     )
       assert.fail("Expected durable receipts")
+
     assert.equal(first.details.output, "unavailable")
     assert.equal(replay.details.outcome.result.receipt, "replayed")
     const text = first.content
@@ -950,6 +970,7 @@ test(
         assert.equal(result.details.outcome.kind, "unconfirmed")
         if (result.details.outcome.kind !== "unconfirmed")
           assert.fail("Expected explicit unconfirmed write")
+
         assert.equal(result.details.outcome.stop, "interrupted")
         assert.deepEqual(result.details.outcome.invocation, {
           toolCallId: "interrupt-write",
@@ -981,7 +1002,9 @@ test("signal abort at successful COMMIT preserves unconfirmed invocation and dur
       "exec",
       function (this: DatabaseSync, query: string) {
         const result = Reflect.apply(exec, this, [query])
+
         if (query === "COMMIT") controller.abort()
+
         return result
       },
     )
@@ -995,6 +1018,7 @@ test("signal abort at successful COMMIT preserves unconfirmed invocation and dur
       assert.equal(result.details.outcome.kind, "unconfirmed")
       if (result.details.outcome.kind !== "unconfirmed")
         assert.fail("Expected explicit unconfirmed write")
+
       assert.equal(result.details.outcome.stop, "interrupted")
       assert.deepEqual(result.details.outcome.invocation, {
         toolCallId: "commit-abort",
@@ -1010,6 +1034,7 @@ test("signal abort at successful COMMIT preserves unconfirmed invocation and dur
     assert.equal(replay.details.outcome.kind, "saved")
     if (replay.details.outcome.kind !== "saved")
       assert.fail("Expected durable original receipt")
+
     assert.equal(replay.details.outcome.result.receipt, "replayed")
     const page = await Effect.runPromise(store.readTasks(issue(), { limit: 1 }))
     assert.ok(Option.isSome(page))
@@ -1071,6 +1096,7 @@ test("host unavailability is a typed failure without task writes", async () =>
     assert.equal(result.details.outcome.kind, "failed")
     if (result.details.outcome.kind !== "failed")
       assert.fail("Expected host failure")
+
     assert.equal(result.details.outcome.code, "host_unavailable")
     assert.ok(
       Option.isNone(
@@ -1143,11 +1169,13 @@ for (const stage of ["host", "store"] as const) {
         assert.equal(result.details.outcome.kind, "failed")
         if (result.details.outcome.kind !== "failed")
           assert.fail("Expected pre-write failure")
+
         assert.equal(result.details.outcome.code, "execution_defect")
       } else {
         assert.equal(result.details.outcome.kind, "unconfirmed")
         if (result.details.outcome.kind !== "unconfirmed")
           assert.fail("Expected unconfirmed write")
+
         assert.equal(result.details.outcome.stop, "execution_defect")
         assert.deepEqual(result.details.outcome.invocation, {
           toolCallId: "defect-call",
@@ -1232,6 +1260,7 @@ test("actual SDK executes all documented mutation shapes including creation refe
     assert.equal(result.details.outcome.kind, "saved")
     if (result.details.outcome.kind !== "saved")
       assert.fail("Expected saved batch")
+
     const created = result.details.outcome.result.created[0]
     assert.ok(created)
     const found = await invoke(tool, {
@@ -1243,6 +1272,7 @@ test("actual SDK executes all documented mutation shapes including creation refe
     assert.equal(found.details.outcome.kind, "task")
     if (found.details.outcome.kind !== "task")
       assert.fail("Expected transferred task")
+
     assert.equal(found.details.outcome.detail.task.text, "Edited")
     assert.equal(found.details.outcome.detail.task.blocker, "Blocked")
     assert.equal(found.details.outcome.detail.task.status, "doing")
@@ -1289,6 +1319,7 @@ for (const failure of ["defect", "interrupt"] as const) {
         assert.equal(replay.details.outcome.kind, "saved")
         if (replay.details.outcome.kind !== "saved")
           assert.fail("Expected saved replay")
+
         assert.equal(replay.details.outcome.result.receipt, "replayed")
       }),
   )
@@ -1358,6 +1389,7 @@ test("actual SDK readMany retains each query filter and bounds failures before s
     assert.equal(result.details.outcome.kind, "pages")
     if (result.details.outcome.kind !== "pages")
       assert.fail("Expected qualified pages")
+
     assert.deepEqual(
       result.details.outcome.pages.map(page => page.page?.tasks.length),
       [0, 1],
@@ -1373,6 +1405,7 @@ test("actual SDK readMany retains each query filter and bounds failures before s
     assert.equal(rejected.details.outcome.kind, "failed")
     if (rejected.details.outcome.kind !== "failed")
       assert.fail("Expected invalid query budget")
+
     assert.equal(rejected.details.outcome.code, "invalid_queries")
     assert.equal(storeCalls, 1)
     assert.equal(hostCalls, 0)
@@ -1426,6 +1459,7 @@ test("actual SDK forwards filtered issue reads without resolving mutation grants
     assert.equal(result.details.outcome.kind, "page")
     if (result.details.outcome.kind !== "page")
       assert.fail("Expected filtered page")
+
     assert.deepEqual(result.details.outcome.page.tasks, [])
     assert.equal(result.details.outcome.page.revision, 1)
     assert.equal(hostCalls, 0)
@@ -1468,6 +1502,7 @@ test("actual SDK and domain decoder reject unsupported filter fields and actions
       assert.equal(result.details.outcome.kind, "failed")
       if (result.details.outcome.kind !== "failed")
         assert.fail("Expected invalid request")
+
       assert.equal(result.details.outcome.code, "invalid_request")
     }
     assert.equal(hostCalls, 0)
@@ -1521,6 +1556,7 @@ test("actual SDK validates and executes an unwired registered issue task read of
     assert.equal(result.details.outcome.kind, "page")
     if (result.details.outcome.kind !== "page")
       assert.fail("Expected task page")
+
     assert.equal(result.details.outcome.page.tasks[0]?.id, saved.created[0]?.id)
     assert.equal(
       hostCalls,

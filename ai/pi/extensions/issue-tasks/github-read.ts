@@ -115,6 +115,7 @@ export const createGitHubIssueReader = (
     get: input =>
       Effect.gen(function* () {
         yield* Effect.yieldNow()
+
         const decoded = decodeGitHubIssueGetQuery(input)
 
         if (Either.isLeft(decoded)) return yield* Effect.fail(decoded.left)
@@ -142,7 +143,9 @@ export const createGitHubIssueReader = (
                 : query.related.deliveryAfter,
           }),
         })
+
         const payload = yield* execute(request)
+
         const result = decodeGitHubIssueGetResult(payload, query)
 
         if (Either.isLeft(result)) return yield* Effect.fail(result.left)
@@ -180,6 +183,7 @@ export const createGitHubIssueReader = (
         })
 
         const payload = yield* execute(request)
+
         const page = decodeGitHubIssueListPage(payload, query)
 
         if (Either.isLeft(page)) return yield* Effect.fail(page.left)
@@ -402,6 +406,7 @@ const decodeReadPayload = (
         parsed,
         "invalid_response",
       )
+
       return yield* invalid("remote_error")
     }
 
@@ -416,6 +421,7 @@ const decodeIssueReferenceRow = (
       input,
       "invalid_response",
     )
+
     const issue = yield* decodeIssueReference({
       repository: row.repository.nameWithOwner,
       number: row.number,
@@ -434,6 +440,7 @@ const decodeIssueSummary = (
 ): Either.Either<GitHubIssueSummary, GitHubReadError> =>
   Either.gen(function* () {
     const row = yield* decode(IssueRowSchema, input, "invalid_response")
+
     const issue = yield* decodeIssueReferenceRow(row)
 
     return Object.freeze({
@@ -449,6 +456,7 @@ const decodePullRequestRow = (
 ): Either.Either<GitHubPullRequestReference, GitHubReadError> =>
   Either.gen(function* () {
     const row = yield* decode(PullRequestRowSchema, input, "invalid_response")
+
     const repository = yield* decodeIssueRepository(
       row.repository.nameWithOwner,
     ).pipe(Either.mapLeft(() => readError("invalid_response")))
@@ -490,7 +498,9 @@ export const decodeGitHubIssueGetQuery = (
     const issue = yield* decodeIssueReference(input.issue).pipe(
       Either.mapLeft(() => readError("invalid_request")),
     )
+
     yield* decode(IssueRowSchema.fields.number, issue.number, "invalid_request")
+
     const related = yield* decode(
       RelatedInputSchema,
       input.related,
@@ -527,11 +537,13 @@ export const decodeGitHubIssueGetResult = (
   Either.gen(function* () {
     const query = yield* decodeGitHubIssueGetQuery(suppliedQuery)
     const parsed = yield* decodeReadPayload(payload)
+
     const envelope = yield* decode(
       GetEnvelopeSchema,
       parsed,
       "invalid_response",
     )
+
     const repository = envelope.data.repository
 
     if (repository === null)
@@ -551,6 +563,7 @@ export const decodeGitHubIssueGetResult = (
       repository.issue,
       "invalid_response",
     )
+
     const summary = yield* decodeIssueSummary(row)
 
     if (issueKey(summary.issue) !== issueKey(query.issue))
@@ -652,7 +665,9 @@ export const decodeGitHubIssueListPage = (
   Either.gen(function* () {
     const query = yield* decodeGitHubIssueListQuery(suppliedQuery)
     const parsed = yield* decodeReadPayload(payload)
+
     const envelope = yield* decode(EnvelopeSchema, parsed, "invalid_response")
+
     const repository = envelope.data.repository
 
     if (repository === null) return yield* invalid("unavailable")

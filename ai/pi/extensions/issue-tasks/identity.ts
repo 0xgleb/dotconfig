@@ -61,6 +61,7 @@ export const decodeIssueReference = (
         message:
           "An issue requires only a repository (owner/name) and a positive safe integer number.",
       })
+
     if (
       typeof value !== "object" ||
       value === null ||
@@ -96,6 +97,7 @@ export const decodeIssueScope = (
         code: "invalid_scope",
         message: `Issue scope requires 1–${MAX_PLAN_ISSUES_PER_CALL} distinct repository-qualified issues.`,
       })
+
     if (
       !Array.isArray(value) ||
       value.length === 0 ||

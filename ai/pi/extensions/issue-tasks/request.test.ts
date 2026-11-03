@@ -10,7 +10,9 @@ import {
 
 const issue = (repository = "Owner/Repo", number = 12) => {
   const decoded = decodeIssueReference({ repository, number })
+
   assert.ok(Either.isRight(decoded))
+
   return decoded.right
 }
 const a = issue()
@@ -26,6 +28,7 @@ const get = { action: "get", issue: a, id }
 const apply = { action: "apply", issues: [a], operations: [addition] }
 const failure = (input: unknown, code: TaskRequestDecodeError["code"]) => {
   const decoded = decodeTaskRequest(input)
+
   assert.ok(Either.isLeft(decoded))
   assert.equal(decoded.left.code, code)
 }
@@ -44,11 +47,15 @@ test("multi-issue task queries normalize and detach every qualified page", () =>
   assert.deepEqual(decoded.right, [
     { issue: a, page: { limit: 1 }, filter: { blocked: false } },
   ])
+
   const first = source[0]
+
   assert.ok(first)
+
   first.issue.repository = "Other/Repo"
   first.page.limit = 2
   first.filter.blocked = true
+
   assert.deepEqual(decoded.right, [
     { issue: a, page: { limit: 1 }, filter: { blocked: false } },
   ])
@@ -85,6 +92,7 @@ test("task readMany accepts the exact shared row budget with repeated issue quer
     Array.from({ length: 100 }, () => ({ issue: a, page: { limit: 1 } })),
   ]) {
     const decoded = decodeTaskReadQueries(queries)
+
     assert.ok(Either.isRight(decoded))
     assert.deepEqual(decoded.right, queries)
   }
@@ -92,6 +100,7 @@ test("task readMany accepts the exact shared row budget with repeated issue quer
 
 test("task readMany rejects malformed vectors, later queries and aggregate overflow", () => {
   const query = { issue: a, page: { limit: 1 } }
+
   for (const queries of [
     null,
     [],
@@ -144,8 +153,10 @@ test("task read decodes a detached explicit status and blocker filter", () => {
     ...read,
     filter: { status: "doing", blocked: false },
   })
+
   filter.status = "done"
   filter.blocked = true
+
   assert.deepEqual(decoded.right, {
     ...read,
     filter: { status: "doing", blocked: false },
@@ -177,15 +188,20 @@ test("task filters accept all lifecycle statuses and preserve false or omitted p
     for (const blocked of [undefined, true, false]) {
       const filter = { status, ...(blocked === undefined ? {} : { blocked }) }
       const decoded = decodeTaskRequest({ ...read, filter })
+
       assert.ok(Either.isRight(decoded))
       assert.deepEqual(decoded.right, { ...read, filter })
     }
+
   for (const filter of [{}, { status: undefined, blocked: undefined }]) {
     const decoded = decodeTaskRequest({ ...read, filter })
+
     assert.ok(Either.isRight(decoded))
     assert.deepEqual(decoded.right, { ...read, filter: {} })
   }
+
   const omitted = decodeTaskRequest({ ...read, filter: undefined })
+
   assert.ok(Either.isRight(omitted))
   assert.deepEqual(omitted.right, read)
 })
@@ -196,6 +212,7 @@ test("task read request canonicalizes its explicit issue and preserves its page"
     issue: { repository: "Owner/Repo", number: 12 },
     page: { limit: 1 },
   })
+
   assert.ok(Either.isRight(decoded))
   assert.deepEqual(decoded.right, {
     action: "read",
@@ -207,6 +224,7 @@ test("task read request canonicalizes its explicit issue and preserves its page"
 test("task read accepts both page boundaries and a syntactically valid cursor", () => {
   for (const limit of [1, 100]) {
     const decoded = decodeTaskRequest({ ...read, page: { limit, after: id } })
+
     assert.ok(Either.isRight(decoded))
     assert.deepEqual(decoded.right, { ...read, page: { limit, after: id } })
   }
@@ -273,9 +291,11 @@ test("task apply delegates complete issue-qualified mutations without an indepen
     issues: [{ repository: "Owner/Repo", number: 12 }, b],
     operations: [addition, { ...addition, issue: b, text: "Other" }],
   })
+
   assert.ok(Either.isRight(decoded))
   assert.equal(decoded.right.action, "apply")
   if (decoded.right.action !== "apply") assert.fail("Expected apply request")
+
   assert.deepEqual(decoded.right.batch.issues, [a, b])
   assert.deepEqual(decoded.right.batch.operations, [
     { ...addition, dependsOn: [] },
@@ -420,7 +440,9 @@ test("task decoding treats lifecycle intent as data, not a cancellation grant", 
       },
     ],
   })
+
   assert.ok(Either.isRight(decoded))
+
   failure(
     {
       ...apply,
@@ -443,17 +465,22 @@ test("decoded requests detach from mutable caller data and are immutable", () =>
     page: { limit: 1, after: id },
   }
   const decoded = decodeTaskRequest(source)
+
   assert.ok(Either.isRight(decoded))
   assert.equal(decoded.right.action, "read")
   if (decoded.right.action !== "read") assert.fail("Expected read request")
+
   source.issue.repository = "Owner/Other"
   source.page.limit = 100
   source.page.after = "bbbbbbbb-bbbb-4bbb-8bbb-bbbbbbbbbbbb"
+
   assert.deepEqual(decoded.right, { ...read, page: { limit: 1, after: id } })
   assert.ok(Object.isFrozen(decoded.right))
   assert.ok(Object.isFrozen(decoded.right.issue))
   assert.ok(Object.isFrozen(decoded.right.page))
+
   const write = decodeTaskRequest(apply)
+
   assert.ok(Either.isRight(write))
   assert.ok(Object.isFrozen(write.right))
 })

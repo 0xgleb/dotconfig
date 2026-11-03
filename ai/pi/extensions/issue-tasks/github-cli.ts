@@ -87,6 +87,7 @@ export const createGitHubCliReader = (
                 },
                 (error, stdout) => {
                   if (outcome !== undefined) return
+
                   outcome =
                     error !== null || !Buffer.isBuffer(stdout)
                       ? Either.left(transportError())
@@ -106,29 +107,36 @@ export const createGitHubCliReader = (
             resume(Effect.fail(started.left))
             return
           }
+
           const child = started.right
           const stop = () => {
             if (closed || exited || child.pid === undefined) return
+
             const stopped = Either.try({
               try: () => child.kill("SIGKILL"),
               catch: transportError,
             })
+
             if (Either.isLeft(stopped)) outcome = Either.left(stopped.left)
           }
           const inputFailed = () => {
             outcome = Either.left(transportError())
             stop()
           }
+
           child.once("exit", () => {
             exited = true
           })
           child.once("close", () => {
             closed = true
+
             if (outcome === undefined) resume(Effect.fail(transportError()))
             else if (Either.isLeft(outcome)) resume(Effect.fail(outcome.left))
             else resume(Effect.succeed(outcome.right))
           })
+
           const input = child.stdin
+
           if (input === null || input === undefined) inputFailed()
           else {
             input.on("error", inputFailed)
@@ -136,6 +144,7 @@ export const createGitHubCliReader = (
               try: () => input.end(payload.right),
               catch: transportError,
             })
+
             if (Either.isLeft(sent)) inputFailed()
           }
 
@@ -144,6 +153,7 @@ export const createGitHubCliReader = (
               finish(Effect.void)
               return
             }
+
             child.once("close", () => finish(Effect.void))
             stop()
           })

@@ -17,7 +17,9 @@ const target = decodeIssueReference({
   repository: "0xgleb/dotconfig",
   number: 86,
 })
+
 assert.ok(Either.isRight(target))
+
 const query: GitHubIssueGetQuery = {
   issue: target.right,
   related: { limit: 1 },
@@ -67,6 +69,7 @@ const failure = (
   supplied = query,
 ) => {
   const result = decodeGitHubIssueGetResult(payload, supplied)
+
   assert.ok(Either.isLeft(result))
   assert.equal(result.left.code, code)
 }
@@ -78,6 +81,7 @@ test("GitHub get reader executes one fixed query with qualified frozen variables
       Effect.sync(() => {
         assert.ok(request.document === GITHUB_ISSUE_GET_DOCUMENT)
         calls.push(request)
+
         return JSON.stringify(recorded)
       }),
   })
@@ -131,10 +135,12 @@ test("GitHub get reader sends null initial cursors and never follows either rela
       Effect.sync(() => {
         assert.ok(request.document === GITHUB_ISSUE_GET_DOCUMENT)
         calls.push(request)
+
         return JSON.stringify(page)
       }),
   })
   const result = await Effect.runPromise(reader.get(query))
+
   assert.equal(calls.length, 1)
   assert.equal(calls[0]?.variables.blockedByAfter, null)
   assert.equal(calls[0]?.variables.deliveryAfter, null)
@@ -157,6 +163,7 @@ test("GitHub get reader validates Int32 and caller metadata before host I/O", as
     { ...query, related: { limit: 0 } },
   ]) {
     const result = await Effect.runPromise(Effect.either(reader.get(input)))
+
     assert.ok(Either.isLeft(result))
     assert.equal(result.left.code, "invalid_request")
   }
@@ -169,6 +176,7 @@ for (const stop of ["failure", "defect"] as const) {
     const reader = createGitHubIssueReader({
       executeQuery: () => {
         calls += 1
+
         return stop === "failure"
           ? Effect.fail(
               new GitHubReadError({
@@ -180,6 +188,7 @@ for (const stop of ["failure", "defect"] as const) {
       },
     })
     const result = await Effect.runPromise(Effect.either(reader.get(query)))
+
     assert.ok(Either.isLeft(result))
     assert.equal(result.left.code, "transport_error")
     assert.ok(
@@ -204,6 +213,7 @@ test("pre-aborted GitHub get reads interrupt valid and invalid requests without 
     const result = await Effect.runPromiseExit(reader.get(input), {
       signal: controller.signal,
     })
+
     assert.ok(Exit.isFailure(result) && Cause.isInterruptedOnly(result.cause))
   }
   assert.equal(calls, 0)
@@ -236,9 +246,11 @@ test(
         Effect.runPromise(Deferred.await(entered)).then(() => true),
         pending.then(() => false),
       ])
+
       assert.equal(started, true)
       controller.abort()
       const result = await pending
+
       assert.ok(Exit.isFailure(result) && Cause.isInterruptedOnly(result.cause))
       assert.equal(released, true)
     } finally {
@@ -258,6 +270,7 @@ test("GitHub get reader preserves the qualified unavailable result", async () =>
       }),
   })
   const result = await Effect.runPromise(reader.get(query))
+
   assert.deepEqual(result, { issue: query.issue, detail: null })
   assert.equal(calls, 1)
 })
@@ -286,6 +299,7 @@ test("GitHub get reader retains partial, remote and capacity readback errors aft
         }),
     })
     const result = await Effect.runPromise(Effect.either(reader.get(query)))
+
     assert.ok(Either.isLeft(result))
     assert.equal(result.left.code, expected)
     assert.equal(calls, 1)
@@ -302,7 +316,9 @@ test("GitHub get queries detach qualified identity and strictly bound independen
     },
   }
   const result = decodeGitHubIssueGetQuery(input)
+
   assert.ok(Either.isRight(result))
+
   input.issue.number = 87
   input.related.blockedByAfter = "changed"
   assert.deepEqual(result.right, {
@@ -338,6 +354,7 @@ test("GitHub get queries detach qualified identity and strictly bound independen
     { ...query, issue: { ...query.issue, number: 2_147_483_648 } },
   ]) {
     const invalid = decodeGitHubIssueGetQuery(input)
+
     assert.ok(Either.isLeft(invalid))
     assert.equal(invalid.left.code, "invalid_request")
   }
@@ -358,10 +375,13 @@ test("GitHub get queries detach qualified identity and strictly bound independen
 
 test("GitHub get decodes recorded issue detail without interpreting body or inventing links", () => {
   const result = decodeGitHubIssueGetResult(JSON.stringify(recorded), query)
+
   assert.ok(Either.isRight(result))
   assert.deepEqual(result.right.issue, target.right)
   const detail = result.right.detail
+
   assert.ok(detail)
+
   assert.equal(detail.body, "Technical issue-body fixture")
   assert.equal(detail.parent, null)
   assert.deepEqual(detail.blockedBy, {
@@ -397,6 +417,7 @@ test("GitHub get unavailable root retains the requested target rather than claim
     },
   ]) {
     const result = decodeGitHubIssueGetResult(JSON.stringify(payload), query)
+
     assert.ok(Either.isRight(result))
     assert.deepEqual(result.right, { issue: target.right, detail: null })
     assert.ok(Object.isFrozen(result.right))
@@ -433,9 +454,13 @@ test("GitHub get preserves cross-repository relations and independently advancin
       },
     })
     const result = decodeGitHubIssueGetResult(JSON.stringify(payload), supplied)
+
     assert.ok(Either.isRight(result))
+
     const detail = result.right.detail
+
     assert.ok(detail)
+
     assert.equal(detail.body, payload.data.repository.issue.body)
     assert.equal(detail.parent?.repository, "example/parents")
     assert.equal(detail.blockedBy.issues[0]?.repository, "example/dependencies")
@@ -512,6 +537,7 @@ test("GitHub get connections enforce per-relation count, uniqueness and non-prog
       ),
       supplied,
     )
+
     assert.ok(Either.isRight(terminal))
   }
 })
@@ -536,6 +562,7 @@ test("GitHub get admits 100 distinct entries per relation without inventing a sh
     ...query,
     related: { limit: 100 },
   })
+
   assert.ok(Either.isRight(result))
   assert.equal(result.right.detail?.blockedBy.issues.length, 100)
   assert.equal(result.right.detail?.delivery.pullRequests.length, 100)
@@ -543,7 +570,9 @@ test("GitHub get admits 100 distinct entries per relation without inventing a sh
 
 test("GitHub get validates its supplied request before parsing or capacity checks", () => {
   const wide = decodeIssueReference({ ...query.issue, number: 2_147_483_648 })
+
   assert.ok(Either.isRight(wide))
+
   failure("x".repeat(MAX_GITHUB_READ_BYTES + 1), "invalid_request", {
     ...query,
     issue: wide.right,
@@ -627,6 +656,7 @@ test("GitHub get preserves exact body bytes within the common pre-parse response
   const payload = JSON.stringify(response({ body }))
   assert.equal(Buffer.byteLength(payload, "utf8"), MAX_GITHUB_READ_BYTES)
   const result = decodeGitHubIssueGetResult(payload, query)
+
   assert.ok(Either.isRight(result))
   assert.equal(result.right.detail?.body, body)
   failure(payload + "x", "capacity")

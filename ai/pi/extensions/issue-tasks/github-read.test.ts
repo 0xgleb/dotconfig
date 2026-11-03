@@ -15,7 +15,9 @@ import {
 } from "./github-read.ts"
 
 const repository = decodeIssueRepository("0xgleb/dotconfig")
+
 assert.ok(Either.isRight(repository))
+
 const query: GitHubIssueListQuery = {
   repository: repository.right,
   state: "open",
@@ -47,6 +49,7 @@ const listExecution = (
   request: GitHubIssueQueryExecution,
 ): GitHubIssueListExecution => {
   assert.ok(request.document === GITHUB_ISSUE_LIST_DOCUMENT)
+
   return request
 }
 const failure = (
@@ -55,6 +58,7 @@ const failure = (
   input = query,
 ) => {
   const decoded = decodeGitHubIssueListPage(payload, input)
+
   assert.ok(Either.isLeft(decoded))
   assert.equal(decoded.left.code, code)
 }
@@ -65,6 +69,7 @@ test("GitHub reader executes one fixed list query with validated frozen variable
     executeQuery: request =>
       Effect.sync(() => {
         calls.push(listExecution(request))
+
         return JSON.stringify(recorded)
       }),
   })
@@ -127,6 +132,7 @@ test("GitHub reader forwards the real continuation to the independently recorded
     executeQuery: request =>
       Effect.sync(() => {
         requests.push(listExecution(request))
+
         return JSON.stringify(following)
       }),
   })
@@ -153,13 +159,17 @@ test("GitHub reader forwards the real continuation to the independently recorded
 test("GitHub reader encodes a closed-only query without widening its state filter", async () => {
   const response = structuredClone(recorded)
   const first = response.data.repository.issues.nodes[0]
+
   assert.ok(first)
+
   first.state = "CLOSED"
+
   const requests: GitHubIssueListExecution[] = []
   const reader = createGitHubIssueReader({
     executeQuery: request =>
       Effect.sync(() => {
         requests.push(listExecution(request))
+
         return JSON.stringify(response)
       }),
   })
@@ -197,6 +207,7 @@ for (const stop of ["failure", "defect"] as const) {
     const reader = createGitHubIssueReader({
       executeQuery: () => {
         calls += 1
+
         return stop === "failure"
           ? Effect.fail(
               new GitHubReadError({
@@ -246,9 +257,11 @@ test(
         Effect.runPromise(Deferred.await(entered)).then(() => true),
         pending.then(() => false),
       ])
+
       assert.equal(started, true)
       controller.abort()
       const result = await pending
+
       assert.ok(Exit.isFailure(result) && Cause.isInterruptedOnly(result.cause))
       assert.equal(released, true)
     } finally {
@@ -273,6 +286,7 @@ test("pre-aborted GitHub reads perform no host query", async () => {
     const result = await Effect.runPromiseExit(reader.list(input), {
       signal: controller.signal,
     })
+
     assert.ok(Exit.isFailure(result) && Cause.isInterruptedOnly(result.cause))
   }
   assert.equal(calls, 0)
@@ -298,6 +312,7 @@ test("GitHub reader preserves typed readback failures after one successful host 
         }),
     })
     const result = await Effect.runPromise(Effect.either(reader.list(query)))
+
     assert.ok(Either.isLeft(result))
     assert.equal(result.left.code, expected)
     assert.equal(calls, 1)
@@ -336,6 +351,7 @@ test("GitHub issue pages decode the recorded qualified response and its real con
     repository: query.repository,
     number: 19,
   })
+
   assert.ok(Either.isRight(issue))
   assert.deepEqual(decoded.right, {
     repository: query.repository,
@@ -407,6 +423,7 @@ test("GitHub query limits, states and opaque cursors are bounded without caller 
         state,
         page: { limit, after: "opaque-cursor" },
       })
+
       assert.ok(Either.isRight(decoded))
       assert.equal(decoded.right.page.limit, limit)
     }
@@ -431,6 +448,7 @@ test("GitHub query limits, states and opaque cursors are bounded without caller 
     { ...query, state: "doing" },
   ]) {
     const decoded = decodeGitHubIssueListQuery(input)
+
     assert.ok(Either.isLeft(decoded))
     assert.equal(decoded.left.code, "invalid_request")
   }
@@ -438,6 +456,7 @@ test("GitHub query limits, states and opaque cursors are bounded without caller 
     ...query,
     repository: "missing-owner",
   })
+
   assert.ok(Either.isLeft(invalidRepository))
   assert.equal(invalidRepository.left.code, "invalid_repository")
 })
@@ -457,7 +476,9 @@ test("GitHub pages reject malformed JSON, envelopes, rows and response errors", 
   ])
     failure(payload, "invalid_response")
   const row = recorded.data.repository.issues.nodes[0]
+
   assert.ok(row)
+
   for (const patch of [
     { number: 0 },
     { number: 2_147_483_648 },
@@ -499,7 +520,9 @@ test("GitHub pages reject malformed JSON, envelopes, rows and response errors", 
 
 test("GitHub pages enforce requested count, unique identities and state filters", () => {
   const row = recorded.data.repository.issues.nodes[0]
+
   assert.ok(row)
+
   const response = {
     data: {
       repository: {
@@ -529,6 +552,7 @@ test("GitHub pages enforce requested count, unique identities and state filters"
     ...query,
     state: "all",
   })
+
   assert.ok(Either.isRight(accepted))
   assert.equal(accepted.right.issues[0]?.state, "closed")
 })
@@ -558,6 +582,7 @@ test("GitHub continuations require progress only when another page exists", () =
     ...query,
     page: { limit: 1, after: cursor },
   })
+
   assert.ok(Either.isRight(accepted))
   const empty = {
     data: {
@@ -571,6 +596,7 @@ test("GitHub continuations require progress only when another page exists", () =
     },
   }
   const decoded = decodeGitHubIssueListPage(JSON.stringify(empty), query)
+
   assert.ok(Either.isRight(decoded))
   assert.deepEqual(decoded.right.issues, [])
 })
@@ -578,12 +604,16 @@ test("GitHub continuations require progress only when another page exists", () =
 test("GitHub decoder admits the exact byte envelope and preserves Unicode", () => {
   const response = structuredClone(recorded)
   const row = response.data.repository.issues.nodes[0]
+
   assert.ok(row)
+
   row.title = "🦆 technical title"
+
   const json = JSON.stringify(response)
   const payload =
     json + " ".repeat(MAX_GITHUB_READ_BYTES - Buffer.byteLength(json, "utf8"))
   const decoded = decodeGitHubIssueListPage(payload, query)
+
   assert.ok(Either.isRight(decoded))
   assert.equal(decoded.right.issues[0]?.title, row.title)
   failure(payload, "invalid_request", { ...query, page: { limit: 0 } })

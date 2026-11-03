@@ -111,6 +111,7 @@ const scopedIssue = (
 ): Result<IssueReference> =>
   Either.gen(function* () {
     const decoded = decodeIssueReference(raw)
+
     if (Either.isLeft(decoded))
       return yield* invalid(
         "invalid_operation",
@@ -121,6 +122,7 @@ const scopedIssue = (
         "scope_mismatch",
         "Every affected issue must be listed in the explicit scope",
       )
+
     return decoded.right
   })
 
@@ -135,7 +137,9 @@ const reference = (
         "invalid_operation",
         "Task reference requires only issue and task",
       )
+
     const issue = yield* scopedIssue(raw.issue, scope)
+
     if (!record(raw.task))
       return yield* invalid("invalid_operation", "Invalid task target")
     if (raw.task.kind === "existing") {
@@ -144,7 +148,9 @@ const reference = (
           "invalid_operation",
           "Existing task requires only kind and id",
         )
+
       const id = yield* leaf(TaskIdSchema, raw.task.id)
+
       return Object.freeze({
         issue,
         task: Object.freeze({ kind: "existing", id }),
@@ -156,17 +162,21 @@ const reference = (
           "invalid_operation",
           "Added task requires only kind and key",
         )
+
       const key = yield* leaf(DraftKeySchema, raw.task.key)
+
       if (!additions.has(draftIdentity(issue, key)))
         return yield* invalid(
           "invalid_operation",
           "Draft task key must refer to an earlier add in the same batch",
         )
+
       return Object.freeze({
         issue,
         task: Object.freeze({ kind: "added", key }),
       })
     }
+
     return yield* invalid("invalid_operation", "Unknown task target kind")
   })
 
@@ -186,19 +196,24 @@ const dependencies = (
         "capacity",
         "Too many dependencies in one operation",
       )
+
     const decoded: TaskReference[] = []
     const identities = new Set<string>()
+
     for (const value of raw) {
       const target = yield* reference(value, scope, additions)
       const identity = referenceIdentity(target)
+
       if (identities.has(identity))
         return yield* invalid(
           "invalid_operation",
           "Dependencies must be distinct",
         )
+
       identities.add(identity)
       decoded.push(target)
     }
+
     return Object.freeze(decoded)
   })
 
@@ -213,6 +228,7 @@ const mutation = (
         "invalid_operation",
         "An operation must be an object",
       )
+
     switch (raw.op) {
       case "add": {
         if (
@@ -223,17 +239,21 @@ const mutation = (
           )
         )
           return yield* invalid("invalid_operation", "Invalid add fields")
+
         const issue = yield* scopedIssue(raw.issue, scope)
         const key = yield* leaf(DraftKeySchema, raw.key)
+
         if (additions.has(draftIdentity(issue, key)))
           return yield* invalid(
             "invalid_operation",
             "Draft task keys must be distinct within an issue",
           )
+
         const text = yield* leaf(TextSchema, raw.text)
         const dependsOn = Object.hasOwn(raw, "dependsOn")
           ? yield* dependencies(raw.dependsOn, scope, additions)
           : Object.freeze([])
+
         return freezeMutation({ op: "add", issue, key, text, dependsOn })
       }
       case "edit": {
@@ -249,6 +269,7 @@ const mutation = (
             "invalid_operation",
             "An edit requires text or dependencies",
           )
+
         const target = yield* reference(raw.target, scope, additions)
         const text = Object.hasOwn(raw, "text")
           ? yield* leaf(TextSchema, raw.text)
@@ -256,6 +277,7 @@ const mutation = (
         const dependsOn = Object.hasOwn(raw, "dependsOn")
           ? yield* dependencies(raw.dependsOn, scope, additions)
           : undefined
+
         return freezeMutation({
           op: "edit",
           target,
@@ -266,15 +288,19 @@ const mutation = (
       case "status": {
         if (!shape(raw, ["op", "target", "status"], ["op", "target", "status"]))
           return yield* invalid("invalid_operation", "Invalid status fields")
+
         const target = yield* reference(raw.target, scope, additions)
         const status = yield* leaf(StatusSchema, raw.status)
+
         return freezeMutation({ op: "status", target, status })
       }
       case "block": {
         if (!shape(raw, ["op", "target", "reason"], ["op", "target", "reason"]))
           return yield* invalid("invalid_operation", "Invalid blocker fields")
+
         const target = yield* reference(raw.target, scope, additions)
         const reason = yield* leaf(Schema.NullOr(TextSchema), raw.reason)
+
         return freezeMutation({ op: "block", target, reason })
       }
       case "transfer": {
@@ -282,8 +308,10 @@ const mutation = (
           !shape(raw, ["op", "target", "toIssue"], ["op", "target", "toIssue"])
         )
           return yield* invalid("invalid_operation", "Invalid transfer fields")
+
         const target = yield* reference(raw.target, scope, additions)
         const toIssue = yield* scopedIssue(raw.toIssue, scope)
+
         return freezeMutation({ op: "transfer", target, toIssue })
       }
       default:
@@ -300,7 +328,9 @@ export const decodeTaskMutationBatch = (
         "invalid_batch",
         "A task batch requires only explicit issues and operations",
       )
+
     const decodedScope = decodeIssueScope(input.issues)
+
     if (Either.isLeft(decodedScope))
       return yield* invalid(
         "invalid_batch",
@@ -316,13 +346,16 @@ export const decodeTaskMutationBatch = (
         "capacity",
         "Too many operations in one atomic batch",
       )
+
     const scope = new Set(decodedScope.right.map(issueKey))
     const additions = new Set<string>()
     const operations: TaskMutation[] = []
     let references = 0
     let textSize = 0
+
     for (const value of input.operations) {
       const operation = yield* mutation(value, scope, additions)
+
       switch (operation.op) {
         case "add":
           references += operation.dependsOn.length
@@ -344,13 +377,16 @@ export const decodeTaskMutationBatch = (
           textSize += operation.reason === null ? 0 : operation.reason.length
           break
       }
+
       if (references > MAX_BATCH_REFERENCES || textSize > MAX_BATCH_TEXT)
         return yield* invalid(
           "capacity",
           "Atomic task batch exceeds its aggregate reference or text budget",
         )
+
       operations.push(operation)
     }
+
     return Object.freeze({
       issues: decodedScope.right,
       operations: Object.freeze(operations),

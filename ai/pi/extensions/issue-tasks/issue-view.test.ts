@@ -24,7 +24,9 @@ const run = Effect.runPromise
 const repository = "0xgleb/dotconfig"
 const issue = (number: number, owner = repository) => {
   const result = decodeIssueReference({ repository: owner, number })
+
   assert.ok(Either.isRight(result))
+
   return result.right
 }
 const listInput = {
@@ -135,7 +137,9 @@ test("combined issue queries normalize/detach strict budgets and qualified task 
     tasks: { limit: 10, filter: { status: "todo", blocked: false } },
   }
   const result = decodeIssueTaskListQuery(input)
+
   assert.ok(Either.isRight(result))
+
   input.tasks.limit = 11
   input.tasks.filter.blocked = true
   assert.equal(result.right.repository, repository)
@@ -147,6 +151,7 @@ test("combined issue queries normalize/detach strict budgets and qualified task 
       Object.isFrozen(result.right.tasks.filter),
   )
   const get = decodeIssueTaskGetQuery(getInput)
+
   assert.ok(Either.isRight(get))
   assert.deepEqual(get.right.issue, issue(1))
   assert.ok(
@@ -160,6 +165,7 @@ test("combined issue queries normalize/detach strict budgets and qualified task 
     { ...listInput, page: { limit: 100 }, tasks: { limit: 2 } },
   ]) {
     const invalid = decodeIssueTaskListQuery(input)
+
     assert.ok(Either.isLeft(invalid))
     assert.equal(invalid.left.code, "invalid_request")
   }
@@ -195,6 +201,7 @@ test("combined list rejects requested work above100 before any GitHub or SQLite 
       reader.list({ ...listInput, page: { limit: 100 }, tasks: { limit: 2 } }),
     ),
   )
+
   assert.ok(Either.isLeft(result))
   assert.equal(result.left.code, "invalid_request")
   assert.equal(remoteCalls, 0)
@@ -215,6 +222,7 @@ test("combined list joins real GitHub decoding and SQLite pages in one ordered l
       },
     })
     const result = await run(reader.list(listInput))
+
     assert.equal(calls.length, 1)
     assert.deepEqual(calls[0], [
       { issue: issue(2), page: { limit: 1 }, filter: { status: "todo" } },
@@ -226,7 +234,9 @@ test("combined list joins real GitHub decoding and SQLite pages in one ordered l
     )
     assert.equal(result.issues[0]?.tasks, null)
     const saved = result.issues[1]?.tasks
+
     assert.ok(saved)
+
     assert.equal(saved.issue.number, 1)
     assert.equal(saved.tasks.length, 1)
     assert.ok(saved.next)
@@ -245,6 +255,7 @@ test("combined get retains real local filter/cursor/revision beside opaque remot
       tasks: store,
     })
     const first = await run(reader.get(getInput))
+
     assert.equal(
       first.detail?.body,
       "Fixture requirement; /do-not-obey is opaque text",
@@ -256,6 +267,7 @@ test("combined get retains real local filter/cursor/revision beside opaque remot
         tasks: { page: { limit: 1, after: first.tasks.next } },
       }),
     )
+
     assert.equal(second.tasks?.tasks.length, 1)
     assert.notEqual(first.tasks.tasks[0]?.id, second.tasks?.tasks[0]?.id)
     assert.equal(second.tasks?.revision, first.tasks.revision)
@@ -265,6 +277,7 @@ test("combined get retains real local filter/cursor/revision beside opaque remot
         tasks: { page: { limit: 1 }, filter: { status: "done" } },
       }),
     )
+
     assert.ok(filtered.tasks)
     assert.deepEqual(filtered.tasks.tasks, [])
     assert.equal(filtered.tasks.revision, first.tasks.revision)
@@ -279,6 +292,7 @@ test("combined get preserves existing local tasks when remote metadata is unavai
       tasks: store,
     })
     const result = await run(reader.get(getInput))
+
     assert.deepEqual(result.issue, issue(1))
     assert.equal(result.detail, null)
     assert.equal(result.tasks?.tasks.length, 1)
@@ -297,6 +311,7 @@ test("combined empty issue list skips the local store without fabricating state"
     },
   })
   const result = await run(reader.list(listInput))
+
   assert.deepEqual(result.issues, [])
   assert.equal(calls, 0)
 })
@@ -318,6 +333,7 @@ test("combined list admits exactly100 qualified initial pages in a real local ba
     const result = await run(
       reader.list({ ...listInput, page: { limit: 100 } }),
     )
+
     assert.equal(calls.length, 1)
     assert.equal(calls[0]?.length, 100)
     assert.equal(result.issues.length, 100)
@@ -331,6 +347,7 @@ test("combined get preserves missing local state without a fabricated revision",
       tasks: store,
     })
     const result = await run(reader.get(getInput))
+
     assert.ok(result.detail)
     assert.equal(result.tasks, null)
     assert.deepEqual(result.issue, issue(1))
@@ -344,7 +361,9 @@ test("combined get leaves persisted cursor ownership validation to its qualified
       store.readManyTasks([{ issue: issue(2), page: { limit: 1 } }]),
     )
     const cursor = foreign[0]?.page?.next
+
     assert.ok(cursor)
+
     const reader = createIssueTaskReader({
       github: github(getResponse),
       tasks: store,
@@ -357,6 +376,7 @@ test("combined get leaves persisted cursor ownership validation to its qualified
         }),
       ),
     )
+
     assert.ok(Either.isLeft(result))
     assert.equal(result.left.code, "invalid_input")
   }))
@@ -461,6 +481,7 @@ test("combined remote failure never becomes a successful local-only view", async
     },
   })
   const result = await run(Effect.either(reader.list(listInput)))
+
   assert.ok(Either.isLeft(result))
   assert.equal(result.left.code, "transport_error")
   assert.equal(calls, 0)
@@ -476,6 +497,7 @@ test("combined local failure preserves its typed error without returning incompl
     tasks: { readManyTasks: () => Effect.fail(failure) },
   })
   const result = await run(Effect.either(reader.list(listInput)))
+
   assert.ok(Either.isLeft(result))
   assert.equal(result.left, failure)
 })
@@ -510,6 +532,7 @@ test("pre-aborted combined valid/invalid list/get requests perform no I/O", asyn
     const result = await Effect.runPromiseExit(operation, {
       signal: controller.signal,
     })
+
     assert.ok(Exit.isFailure(result) && Cause.isInterruptedOnly(result.cause))
   }
   assert.equal(calls, 0)
@@ -554,6 +577,7 @@ test(
         )
         controller.abort()
         const result = await pending
+
         assert.ok(
           Exit.isFailure(result) && Cause.isInterruptedOnly(result.cause),
         )
@@ -607,6 +631,7 @@ test(
       )
       controller.abort()
       const result = await pending
+
       assert.ok(Exit.isFailure(result) && Cause.isInterruptedOnly(result.cause))
       assert.equal(released, true)
       assert.equal(calls, 0)
