@@ -78,6 +78,12 @@ the harness, and suppress duplicates without agent polling.
 
 ## Scope, execution, and safety
 
+- Never give time-based estimates for any work. Use relative Fibonacci effort
+  points (1, 2, 3, 5, 8, ...) when estimating effort, never a conversion to
+  time. Effort 1 anchors a complete small delivery unit: one file or a matching
+  implementation/test pair, verification, commit, push, and a completed ready
+  PR. This is a relative delivery anchor, not a file-count algorithm. Estimate
+  remaining delivery at issue level, not individual execution tasks.
 - Read project instructions and relevant source before acting. Verify unfamiliar
   commands and flags instead of guessing. Never invent concrete values, URLs or
   repository facts; report unresolved gaps rather than filling them with
