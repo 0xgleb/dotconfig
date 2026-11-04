@@ -361,12 +361,10 @@ export const latestCompactionSummary: (
   return undefined
 }
 
+/** Compatibility export: legacy todo data no longer schedules work. */
 export const taskContinuationMessage: (
   snapshot: TodoWorkSnapshot,
-) => string | undefined = snapshot =>
-  snapshot.pending.length > 0
-    ? `The task list is not complete. Continue working without stopping. Pending: ${snapshot.pending.slice(0, 5).join("; ")}${snapshot.pending.length > 5 ? `; plus ${snapshot.pending.length - 5} more` : ""}.`
-    : undefined
+) => string | undefined = _snapshot => undefined
 
 export function assistantUsageTokens(messages: unknown[]): number {
   return messages.reduce<number>((total, message) => {
