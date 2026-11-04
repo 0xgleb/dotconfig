@@ -19,6 +19,8 @@ const bindings = {
     owner: { __typename: "User", login: "0xgleb" },
     priority: "PVTF_lAHOAl_tIc4BpO1UzhnrZvE",
     effort: "PVTF_lAHOAl_tIc4BpO1UzhnrY5k",
+    status: "PVTSSF_lAHOAl_tIc4BpO1UzhnrYfs",
+    inProgress: "In progress",
     priorityBacking: null,
     effortBacking: null,
   },
@@ -28,6 +30,8 @@ const bindings = {
     owner: { __typename: "Organization", login: "dataclique" },
     priority: "PVTF_lADOCA_DB84BkDqIzhnrbUw",
     effort: "PVTF_lADOCA_DB84BkDqIzhny3PM",
+    status: "PVTSSF_lADOCA_DB84BkDqIzhi1sHA",
+    inProgress: "In Progress",
     priorityBacking: "IFN_kgDOAu5Mmg",
     effortBacking: "IFN_kgDOAu7REw",
   },
@@ -61,6 +65,19 @@ const numeric = (
             ? null
             : { __typename: "IssueFieldNumberValue", value },
       }
+const viewer = { id: "fixture-viewer-id", login: "0xgleb" }
+const unassigned = {
+  nodes: [],
+  totalCount: 0,
+  pageInfo: { hasNextPage: false, endCursor: null },
+}
+const statusField = (project: GitHubSchedulingProject) => ({
+  __typename: "ProjectV2SingleSelectField",
+  id: bindings[project].status,
+  name: "Status",
+  dataType: "SINGLE_SELECT",
+  options: [{ id: "47fc9ee4", name: bindings[project].inProgress }],
+})
 const issueItem = (
   project: GitHubSchedulingProject = "personal",
   patch: Readonly<Record<string, unknown>> = {},
@@ -69,9 +86,11 @@ const issueItem = (
   isArchived: false,
   content: {
     __typename: "Issue",
+    id: "fixture-issue-node-id",
     number: 7,
     state: "OPEN",
     repository: { nameWithOwner: "Owner/Repository" },
+    assignees: unassigned,
   },
   priority: numeric(project, bindings[project].priority, 2),
   effort: numeric(project, bindings[project].effort, 5),
@@ -86,6 +105,7 @@ const envelope = (
 
   return {
     data: {
+      viewer,
       node: {
         __typename: "ProjectV2",
         id: binding.id,
@@ -97,6 +117,7 @@ const envelope = (
           binding.priorityBacking,
         ),
         effortField: field(binding.effort, "Effort", binding.effortBacking),
+        statusField: statusField(project),
         items: { nodes, pageInfo: { hasNextPage: false, endCursor: null } },
         ...patch,
       },
@@ -119,6 +140,113 @@ const read = (
   payload: unknown,
   project: GitHubSchedulingProject = "personal",
 ) => decodeGitHubProjectPage(JSON.stringify(payload), query(project))
+
+for (const project of ["personal", "dataclique"] as const) {
+  test(`${project} carries authenticated actor, complete assignees and validated In Progress target`, () => {
+    const assignees = [viewer, { id: "another-user", login: "levsgit" }]
+    const row = issueItem(project)
+    const page = right(
+      read(
+        envelope(project, [
+          {
+            ...row,
+            content: {
+              ...row.content,
+              assignees: { ...unassigned, nodes: assignees, totalCount: 2 },
+            },
+          },
+        ]),
+        project,
+      ),
+    )
+    const item = page.items[0]
+
+    assert.deepEqual(Reflect.get(page, "viewer"), viewer)
+    assert.deepEqual(Reflect.get(page, "inProgress"), {
+      projectId: bindings[project].id,
+      fieldId: bindings[project].status,
+      optionId: "47fc9ee4",
+    })
+    assert.ok(item?.kind === "issue")
+    assert.equal(Reflect.get(item, "issueNodeId"), "fixture-issue-node-id")
+    assert.deepEqual(Reflect.get(item, "assignees"), assignees)
+    assert.ok(Object.isFrozen(Reflect.get(page, "viewer")))
+    assert.ok(Object.isFrozen(Reflect.get(item, "assignees")))
+  })
+
+  test(`${project} refuses missing/rebound/ambiguous In Progress metadata`, () => {
+    const valid = statusField(project)
+    for (const supplied of [
+      null,
+      { ...valid, id: "another-field" },
+      { ...valid, name: "Another status" },
+      { ...valid, __typename: "ProjectV2Field" },
+      { ...valid, options: [] },
+      {
+        ...valid,
+        options: [{ id: "other-option", name: bindings[project].inProgress }],
+      },
+      { ...valid, options: [{ id: "47fc9ee4", name: "Done" }] },
+      { ...valid, options: [...valid.options, ...valid.options] },
+    ]) {
+      assert.ok(
+        Either.isLeft(
+          read(envelope(project, [], { statusField: supplied }), project),
+        ),
+      )
+    }
+  })
+}
+
+test("Project read cannot interpret unavailable or contradictory assignees as unassigned", () => {
+  for (const assignees of [
+    null,
+    { ...unassigned, nodes: null },
+    { ...unassigned, nodes: [null], totalCount: 1 },
+    { ...unassigned, totalCount: 1 },
+    { ...unassigned, nodes: [viewer], totalCount: 0 },
+    { ...unassigned, nodes: [viewer, viewer], totalCount: 2 },
+    {
+      ...unassigned,
+      nodes: [viewer],
+      totalCount: 1,
+      pageInfo: { hasNextPage: true, endCursor: "more" },
+    },
+    { ...unassigned, totalCount: -1 },
+    { ...unassigned, nodes: [{ id: "", login: "0xgleb" }], totalCount: 1 },
+    { ...unassigned, nodes: [{ id: "user", login: "" }], totalCount: 1 },
+  ]) {
+    const row = issueItem()
+    assert.ok(
+      Either.isLeft(
+        read(
+          envelope("personal", [
+            {
+              ...row,
+              content: { ...row.content, assignees },
+            },
+          ]),
+        ),
+      ),
+    )
+  }
+})
+
+test("Project read requires actual viewer evidence rather than assuming the configured project owner", () => {
+  for (const actor of [
+    undefined,
+    null,
+    { id: "", login: "0xgleb" },
+    { id: "viewer", login: "" },
+  ]) {
+    const payload = envelope()
+    assert.ok(
+      Either.isLeft(
+        read({ ...payload, data: { ...payload.data, viewer: actor } }),
+      ),
+    )
+  }
+})
 
 test("Project queries detach and freeze only selected scope and bounded opaque pagination", () => {
   const input = {
@@ -303,7 +431,7 @@ test("Project values reject wrong field identities, nonnumbers and incompatible 
 })
 
 test("Project read distinguishes unavailable, partial and malformed content instead of empty success", () => {
-  assert.equal(code(read({ data: { node: null } })), "unavailable")
+  assert.equal(code(read({ data: { viewer, node: null } })), "unavailable")
   assert.equal(
     code(read(envelope("personal", [], { priorityField: null }))),
     "unavailable",

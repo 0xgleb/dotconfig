@@ -44,6 +44,7 @@ process.stdin.on("end", () => {
   process.stdout.write(
     JSON.stringify({
       data: {
+        viewer: { id: "fixture-viewer-id", login: "0xgleb" },
         node: {
           __typename: "ProjectV2",
           id: request.variables.project,
@@ -61,6 +62,20 @@ process.stdin.on("end", () => {
             "Effort",
             personal ? null : "IFN_kgDOAu7REw",
           ),
+          statusField: {
+            __typename: "ProjectV2SingleSelectField",
+            id: personal
+              ? "PVTSSF_lAHOAl_tIc4BpO1UzhnrYfs"
+              : "PVTSSF_lADOCA_DB84BkDqIzhi1sHA",
+            name: "Status",
+            dataType: "SINGLE_SELECT",
+            options: [
+              {
+                id: "47fc9ee4",
+                name: personal ? "In progress" : "In Progress",
+              },
+            ],
+          },
           items: {
             nodes: [
               {
@@ -68,6 +83,12 @@ process.stdin.on("end", () => {
                 isArchived: false,
                 content: {
                   __typename: "Issue",
+                  id: "fixture-issue-node-id",
+                  assignees: {
+                    nodes: [],
+                    totalCount: 0,
+                    pageInfo: { hasNextPage: false, endCursor: null },
+                  },
                   number: 7,
                   state: "OPEN",
                   repository: { nameWithOwner: "owner/repository" },
