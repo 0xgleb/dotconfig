@@ -19,6 +19,7 @@ return {
       "lua_ls",
       "move_analyzer",
       "nil_ls",
+      "solidity_ls_nomicfoundation",
       "ts_ls",
       "svelte",
       "rust_analyzer",

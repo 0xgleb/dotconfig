@@ -28,6 +28,17 @@ let
     '';
   };
   moveTreeSitter = pkgs.vimPlugins.nvim-treesitter.grammarToPlugin pkgs.tree-sitter-grammars.tree-sitter-move;
+  # The Nomic Foundation Solidity language server is only packaged inside
+  # the VS Code extension; expose its bundled server under the command name
+  # lspconfig's solidity_ls_nomicfoundation config expects. It resolves
+  # imports through the project's foundry.toml/remappings.txt.
+  solidityLanguageServer = pkgs.writeShellApplication {
+    name = "nomicfoundation-solidity-language-server";
+    runtimeInputs = [ pkgs.nodejs ];
+    text = ''
+      exec node ${pkgs.vscode-extensions.nomicfoundation.hardhat-solidity}/share/vscode/extensions/nomicfoundation.hardhat-solidity/server/out/index.js "$@"
+    '';
+  };
   researchParsers = pkgs.symlinkJoin {
     name = "nvim-research-parsers";
     paths =
@@ -415,6 +426,7 @@ in
         nil
         ripgrep
         rust-analyzer
+        solidityLanguageServer
         svelte-language-server
         typescript-language-server
       ];
