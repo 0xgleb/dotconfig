@@ -5,6 +5,11 @@ does not require selecting or connecting to a worker. Keep the selected-worker
 todo route for remaining legacy backlogs during the manual transition. Tool
 exposure does not change trusted host grants.
 
+Issue scheduling uses numeric Priority × remaining Fibonacci Effort, factual
+blockers and issue dependencies. Missing Effort requires refinement before
+assignment. Keep legacy todo records and advisory effort distinct from issue
+scheduling, and preserve explicit stop, pause and deadline controls.
+
 Do not treat proposals as approved changes. Reports, quotes and backlog edits do
 not authorize a new worker round; starting one requires the current owner's
 explicit instruction.
