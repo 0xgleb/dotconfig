@@ -93,9 +93,12 @@ test("PR descriptions follow the template without invented sections", () => {
   )
 })
 
-test("owner-approved workers may apply confirmed priorities without a manager dependency", () => {
-  assert.match(instructions, /a manager or an owner-approved worker/is)
-  assert.match(instructions, /only after the owner confirms/is)
+test("managers and workers apply only owner-confirmed backlog priorities", () => {
+  assert.match(
+    instructions,
+    /Backlog priorities may be assigned or changed by a manager or worker, only after the owner confirms the proposed ordering/is,
+  )
+  assert.doesNotMatch(instructions, /a manager or an owner-approved worker/is)
   assert.match(
     instructions,
     /Workers must execute the highest-ranked.*runnable work/is,
@@ -107,16 +110,32 @@ test("owner-approved workers may apply confirmed priorities without a manager de
   )
 })
 
-test("owner-approved issue operations do not require manager availability or fresh approval for ordinary task work", () => {
-  assert.match(instructions, /Owner-approved workers may create issues/is)
+test("specific owner-requested issue operations need neither a worker class nor a live manager", () => {
   assert.match(
     instructions,
-    /manager actor, availability, or worker-manager communication.*not prerequisites/is,
+    /Any worker may perform the specific GitHub issue or Project operation requested by the owner/,
   )
   assert.match(
     instructions,
-    /existing authorization.*ordinary task work.*fresh approval/is,
+    /global Markdown instruction, not a dedicated harness-enforced permission system or an approved-worker class/,
   )
+  assert.match(
+    instructions,
+    /A manager actor, availability or worker-manager communication are not prerequisites/,
+  )
+  assert.match(
+    instructions,
+    /the same requested operation does not need fresh approval/,
+  )
+  assert.match(
+    instructions,
+    /Existing tool classification, privacy and publication rules still apply/,
+  )
+  assert.match(
+    instructions,
+    /grants neither read-only managers coding\/execution capabilities nor authority for unrelated remote effects/,
+  )
+  assert.doesNotMatch(instructions, /Owner-approved workers may create issues/)
 })
 
 test("disk pressure authorizes routine GC and meaningful Cargo output cleanup without another permission gate", () => {
@@ -469,14 +488,14 @@ test("cross-project harness edits reserve main-worktree VCS without blocking aut
     /do not commit, push, create PRs, or otherwise mutate VCS state from that shared main worktree/is,
   )
   assert.match(
-    global,
+    instructions,
     /restriction is scoped to the main worktree, not every checkout of the repository/is,
   )
   assert.match(
-    global,
+    instructions,
     /separately authorized linked review checkout.*normal plain-Git review, fix and publication workflow.*including for dotconfig PRs/is,
   )
-  assert.match(global, /does not grant new checkout or merge authority/is)
+  assert.match(instructions, /does not grant new checkout or merge authority/is)
 })
 
 test("dotconfig refers to global delivery policy rather than duplicating publication ownership", () => {
@@ -491,6 +510,10 @@ test("dotconfig refers to global delivery policy rather than duplicating publica
   assert.match(
     project,
     /Direct-to-master delivery requires explicit owner direction/is,
+  )
+  assert.match(
+    project,
+    /never merge or override branch protection as part of this default/is,
   )
 })
 

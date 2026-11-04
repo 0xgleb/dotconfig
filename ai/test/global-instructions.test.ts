@@ -35,7 +35,11 @@ test("consolidation preserves global safeguards and project-local guidance", () 
       "Keep SPEC/ROADMAP → GitHub issues → local execution tasks",
     ),
   )
-  assert.ok(project.includes("explicit short-lived one-off exceptions"))
+  assert.match(
+    global,
+    /Every task belongs to a repository-qualified GitHub issue, without exceptions for short-lived or one-off work/,
+  )
+  assert.doesNotMatch(project, /explicit short-lived one-off exceptions/)
 })
 
 test("managed engineering harness entrypoints use the canonical source", () => {
