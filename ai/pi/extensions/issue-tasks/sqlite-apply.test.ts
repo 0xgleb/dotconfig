@@ -98,6 +98,33 @@ const sql = <A>(path: string, work: (database: DatabaseSync) => A): A => {
   }
 }
 
+const auditDependencyWrites = (path: string) =>
+  sql(path, database =>
+    database.exec(`
+    CREATE TABLE fixture_edge_writes (
+      operation TEXT, task_id TEXT, depends_on_id TEXT
+    ) STRICT;
+    CREATE TRIGGER fixture_edge_insert AFTER INSERT ON issue_plan_dependencies
+    BEGIN
+      INSERT INTO fixture_edge_writes VALUES ('insert', NEW.task_id, NEW.depends_on_id);
+    END;
+    CREATE TRIGGER fixture_edge_delete AFTER DELETE ON issue_plan_dependencies
+    BEGIN
+      INSERT INTO fixture_edge_writes VALUES ('delete', OLD.task_id, OLD.depends_on_id);
+    END;
+  `),
+  )
+
+const dependencyWrites = (path: string) =>
+  sql(path, database =>
+    database
+      .prepare(
+        "SELECT operation, task_id, depends_on_id FROM fixture_edge_writes ORDER BY rowid",
+      )
+      .all()
+      .map(row => [row.operation, row.task_id, row.depends_on_id]),
+  )
+
 interface ObservedRead {
   readonly query: string
   readonly method: "get" | "all"
@@ -269,6 +296,272 @@ const errorCode = async <T, E extends { readonly code: string }>(
   assert.ok(Either.isLeft(value))
   assert.equal(value.left.code, expected)
 }
+
+for (const change of ["text", "status", "block", "transfer"] as const) {
+  test(`selective dependency writes omit unchanged edges for ${change}`, async () =>
+    fixture(async path => {
+      const identity = await withStore(path, async store => {
+        const seed = await run(
+          store.apply(
+            batch([
+              { op: "add", issue: a, key: "dependency", text: "Dependency" },
+              {
+                op: "add",
+                issue: a,
+                key: "work",
+                text: "Work",
+                dependsOn: [added("dependency")],
+              },
+            ]),
+            context("selective-seed"),
+          ),
+        )
+        const dependency = seed.created[0]
+        const work = seed.created[1]
+        assert.ok(dependency && work)
+        auditDependencyWrites(path)
+
+        const target = existing(work.id)
+        const operation =
+          change === "text"
+            ? { op: "edit", target, text: "Changed" }
+            : change === "status"
+              ? { op: "status", target, status: "doing" }
+              : change === "block"
+                ? { op: "block", target, reason: "Waiting" }
+                : { op: "transfer", target, toIssue: b }
+        await run(
+          store.apply(batch([operation]), context(`selective-${change}`)),
+        )
+
+        assert.deepEqual(dependencyWrites(path), [])
+        return { id: work.id, dependency: dependency.id }
+      })
+      await withStore(path, async reopened => {
+        const saved = await run(
+          reopened.readTask(issue(change === "transfer" ? b : a), identity.id),
+        )
+        assert.ok(Option.isSome(saved))
+        assert.deepEqual(saved.value.dependsOn, [
+          { issue: issue(), id: identity.dependency },
+        ])
+      })
+    }))
+}
+
+test("selective dependency writes insert creation edges after all task rows", async () =>
+  fixture(async path => {
+    const identity = await withStore(path, async store => {
+      auditDependencyWrites(path)
+      const saved = await run(
+        store.apply(
+          batch([
+            { op: "add", issue: a, key: "work", text: "Work" },
+            { op: "add", issue: a, key: "dependency", text: "Dependency" },
+            {
+              op: "edit",
+              target: added("work"),
+              dependsOn: [added("dependency")],
+            },
+          ]),
+          context("selective-add"),
+        ),
+      )
+      const work = saved.created[0]
+      const dependency = saved.created[1]
+      assert.ok(dependency && work)
+      assert.deepEqual(dependencyWrites(path), [
+        ["insert", work.id, dependency.id],
+      ])
+      return { id: work.id, dependency: dependency.id }
+    })
+    await withStore(path, async reopened => {
+      const saved = await run(reopened.readTask(issue(), identity.id))
+      assert.ok(Option.isSome(saved))
+      assert.deepEqual(saved.value.dependsOn, [
+        { issue: issue(), id: identity.dependency },
+      ])
+    })
+  }))
+
+for (const mode of ["replace", "clear", "net-revert"] as const) {
+  test(`selective dependency writes preserve ${mode} events and reopened edges`, async () =>
+    fixture(async path => {
+      const identity = await withStore(path, async store => {
+        const seeded = await run(
+          store.apply(
+            batch([
+              { op: "add", issue: a, key: "first", text: "First dependency" },
+              { op: "add", issue: a, key: "second", text: "Second dependency" },
+              {
+                op: "add",
+                issue: a,
+                key: "work",
+                text: "Work",
+                dependsOn: [added("first")],
+              },
+            ]),
+            context("selective-change-seed"),
+          ),
+        )
+        const first = seeded.created[0]
+        const second = seeded.created[1]
+        const work = seeded.created[2]
+        assert.ok(first && second && work)
+        auditDependencyWrites(path)
+
+        const firstEdit = {
+          op: "edit",
+          target: existing(work.id),
+          dependsOn: mode === "clear" ? [] : [existing(second.id)],
+        }
+        const operations =
+          mode === "net-revert"
+            ? [
+                firstEdit,
+                {
+                  op: "edit",
+                  target: existing(work.id),
+                  dependsOn: [existing(first.id)],
+                },
+              ]
+            : [firstEdit]
+        const saved = await run(
+          store.apply(batch(operations), context(`selective-${mode}`)),
+        )
+        const dependency = mode === "replace" ? second.id : first.id
+
+        assert.deepEqual(dependencyWrites(path), [
+          ["delete", work.id, first.id],
+          ...(mode === "clear" ? [] : [["insert", work.id, dependency]]),
+        ])
+        assert.equal(saved.eventCount, mode === "net-revert" ? 2 : 1)
+        return { id: work.id, dependency }
+      })
+      await withStore(path, async reopened => {
+        const saved = await run(reopened.readTask(issue(), identity.id))
+        assert.ok(Option.isSome(saved))
+        assert.deepEqual(
+          saved.value.dependsOn,
+          mode === "clear" ? [] : [{ issue: issue(), id: identity.dependency }],
+        )
+      })
+    }))
+}
+
+test("selective dependency verification rolls back corruption of an unchanged edge", async () =>
+  fixture(async path => {
+    await withStore(path, async store => {
+      const seed = await run(
+        store.apply(
+          batch([
+            { op: "add", issue: a, key: "dependency", text: "Dependency" },
+            {
+              op: "add",
+              issue: a,
+              key: "work",
+              text: "Work",
+              dependsOn: [added("dependency")],
+            },
+          ]),
+          context("selective-corruption-seed"),
+        ),
+      )
+      const work = seed.created[1]
+      assert.ok(work)
+      sql(path, database =>
+        database.exec(`
+        CREATE TRIGGER fixture_corrupt_skipped_dependency
+        AFTER UPDATE OF text ON issue_plan_tasks
+        WHEN NEW.id = '${work.id}'
+        BEGIN
+          DELETE FROM issue_plan_dependencies WHERE task_id = NEW.id;
+        END;
+      `),
+      )
+      const tables = [
+        "issue_plans",
+        "issue_plan_tasks",
+        "issue_plan_dependencies",
+        "issue_plan_batches",
+        "issue_plan_history",
+      ]
+      const before = sql(path, database =>
+        JSON.stringify(
+          tables.map(table =>
+            database.prepare(`SELECT * FROM ${table} ORDER BY rowid`).all(),
+          ),
+        ),
+      )
+
+      await errorCode(
+        store.apply(
+          batch([{ op: "edit", target: existing(work.id), text: "Changed" }]),
+          context("selective-corruption"),
+        ),
+        "corrupt_state",
+      )
+
+      assert.equal(
+        sql(path, database =>
+          JSON.stringify(
+            tables.map(table =>
+              database.prepare(`SELECT * FROM ${table} ORDER BY rowid`).all(),
+            ),
+          ),
+        ),
+        before,
+      )
+    })
+  }))
+
+test("selective task writes prepare repeated write statements once per batch", async t =>
+  fixture(async path => {
+    await withStore(path, async store => {
+      const seed = await run(
+        store.apply(
+          batch([
+            { op: "add", issue: a, key: "first", text: "First" },
+            { op: "add", issue: b, key: "second", text: "Second" },
+            { op: "add", issue: b, key: "third", text: "Third" },
+          ]),
+          context("selective-prepare-seed"),
+        ),
+      )
+      const counts = new Map<string, number>()
+      const prefixes = [
+        "UPDATE issue_plans SET revision",
+        "UPDATE issue_plan_tasks SET plan_id",
+        "INSERT INTO issue_plan_history",
+      ]
+      const prepare = DatabaseSync.prototype.prepare
+      t.mock.method(
+        DatabaseSync.prototype,
+        "prepare",
+        function (this: DatabaseSync, query: string) {
+          if (prefixes.some(prefix => query.startsWith(prefix)))
+            counts.set(query, (counts.get(query) ?? 0) + 1)
+          return prepare.call(this, query)
+        },
+      )
+
+      await run(
+        store.apply(
+          batch(
+            seed.created.map((task, index) => ({
+              op: "edit",
+              target: existing(task.id, task.issue),
+              text: `Changed ${index}`,
+            })),
+          ),
+          context("selective-prepare"),
+        ),
+      )
+
+      assert.equal(counts.size, 3)
+      for (const [query, count] of counts) assert.equal(count, 1, query)
+    })
+  }))
 
 test("issue-addressed task writes and reads expose issue revisions without an independent container", async () =>
   fixture(async path => {

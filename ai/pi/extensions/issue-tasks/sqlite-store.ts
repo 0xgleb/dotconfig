@@ -2145,6 +2145,42 @@ const persistTaskChanges = (
         "Task request receipt was not saved exactly once",
       )
 
+    const statements = yield* io(
+      "Could not prepare task persistence statements",
+      () => ({
+        insertPlan: database.prepare(
+          "INSERT INTO issue_plans (id, repository, issue_number, revision) " +
+            "VALUES (?, ?, ?, ?)",
+        ),
+        updatePlan: database.prepare(
+          "UPDATE issue_plans SET revision = ? WHERE id = ?",
+        ),
+        insertTask: database.prepare(
+          "INSERT INTO issue_plan_tasks (id, plan_id, text, status, blocker) " +
+            "VALUES (?, ?, ?, ?, ?)",
+        ),
+        updateTask: database.prepare(
+          "UPDATE issue_plan_tasks SET plan_id = ?, text = ?, status = ?, blocker = ? " +
+            "WHERE id = ? AND plan_id = ?",
+        ),
+        appendHistory: database.prepare(
+          "INSERT INTO issue_plan_history " +
+            "(batch_id, plan_id, task_id, operation_index, kind, recorded_at, payload_json) " +
+            "VALUES (?, ?, ?, ?, ?, ?, ?)",
+        ),
+        verifyHistory: database.prepare(
+          "SELECT COUNT(*) AS count FROM issue_plan_history " +
+            "WHERE batch_id = ? AND operation_index = ? AND plan_id = ? " +
+            "AND task_id = ? AND kind = ? AND recorded_at = ? AND payload_json = ?",
+        ),
+        verifyTask: database.prepare(
+          `SELECT ${taskColumns}, ${boundedStoredText("plan_id", 36)} AS plan_id ` +
+            "FROM issue_plan_tasks WHERE id = ?",
+        ),
+        verifyDependencies: database.prepare(taskDependenciesQuery),
+      }),
+    )
+
     const planIds = new Map<string, StorageIssueId>()
     for (const candidate of prepared.issues) {
       const plan = plans.find(
@@ -2159,19 +2195,13 @@ const persistTaskChanges = (
         "Could not save changed issue task state",
         () =>
           candidate.kind === "new"
-            ? database
-                .prepare(
-                  "INSERT INTO issue_plans (id, repository, issue_number, revision) VALUES (?, ?, ?, ?)",
-                )
-                .run(
-                  plan.id,
-                  plan.issue.repository,
-                  plan.issue.number,
-                  plan.revision,
-                )
-            : database
-                .prepare("UPDATE issue_plans SET revision = ? WHERE id = ?")
-                .run(plan.revision, plan.id),
+            ? statements.insertPlan.run(
+                plan.id,
+                plan.issue.repository,
+                plan.issue.number,
+                plan.revision,
+              )
+            : statements.updatePlan.run(plan.revision, plan.id),
       )
 
       if (updated.changes !== 1)
@@ -2200,23 +2230,21 @@ const persistTaskChanges = (
 
       const updated = yield* io("Could not save changed task", () =>
         newIds.has(task.id)
-          ? database
-              .prepare(
-                "INSERT INTO issue_plan_tasks (id, plan_id, text, status, blocker) VALUES (?, ?, ?, ?, ?)",
-              )
-              .run(task.id, planId, task.text, task.status, task.blocker)
-          : database
-              .prepare(
-                "UPDATE issue_plan_tasks SET plan_id = ?, text = ?, status = ?, blocker = ? WHERE id = ? AND plan_id = ?",
-              )
-              .run(
-                planId,
-                task.text,
-                task.status,
-                task.blocker,
-                task.id,
-                originalPlanId,
-              ),
+          ? statements.insertTask.run(
+              task.id,
+              planId,
+              task.text,
+              task.status,
+              task.blocker,
+            )
+          : statements.updateTask.run(
+              planId,
+              task.text,
+              task.status,
+              task.blocker,
+              task.id,
+              originalPlanId,
+            ),
       )
 
       if (updated.changes !== 1)
@@ -2226,26 +2254,46 @@ const persistTaskChanges = (
         )
     }
 
-    for (const task of prepared.tasks) {
-      yield* io("Could not replace task dependency edges", () =>
-        database
-          .prepare("DELETE FROM issue_plan_dependencies WHERE task_id = ?")
-          .run(task.id),
-      )
-      for (const target of task.dependsOn) {
-        const inserted = yield* io("Could not save task dependency edge", () =>
-          database
-            .prepare(
-              "INSERT INTO issue_plan_dependencies (task_id, depends_on_id) VALUES (?, ?)",
-            )
-            .run(task.id, target),
-        )
+    const dependencyChanges = new Set(
+      prepared.changed
+        .filter(change => change.fields.includes("dependsOn"))
+        .map(change => change.id),
+    )
+    const dependencyTasks = prepared.tasks.filter(task =>
+      dependencyChanges.has(task.id),
+    )
 
-        if (inserted.changes !== 1)
-          return yield* fail(
-            "corrupt_state",
-            "Task dependency edge was not saved exactly once",
+    if (dependencyTasks.length > 0) {
+      const removeEdges = yield* io(
+        "Could not prepare task dependency replacement",
+        () =>
+          database.prepare(
+            "DELETE FROM issue_plan_dependencies WHERE task_id = ?",
+          ),
+      )
+      const insertEdge = yield* io(
+        "Could not prepare task dependency insertion",
+        () =>
+          database.prepare(
+            "INSERT INTO issue_plan_dependencies (task_id, depends_on_id) VALUES (?, ?)",
+          ),
+      )
+
+      for (const task of dependencyTasks) {
+        yield* io("Could not replace task dependency edges", () =>
+          removeEdges.run(task.id),
+        )
+        for (const target of task.dependsOn) {
+          const inserted = yield* io(
+            "Could not save task dependency edge",
+            () => insertEdge.run(task.id, target),
           )
+          if (inserted.changes !== 1)
+            return yield* fail(
+              "corrupt_state",
+              "Task dependency edge was not saved exactly once",
+            )
+        }
       }
     }
 
@@ -2261,19 +2309,15 @@ const persistTaskChanges = (
 
       const payload = yield* encodedJson(event)
       const inserted = yield* io("Could not append task history", () =>
-        database
-          .prepare(
-            "INSERT INTO issue_plan_history (batch_id, plan_id, task_id, operation_index, kind, recorded_at, payload_json) VALUES (?, ?, ?, ?, ?, ?, ?)",
-          )
-          .run(
-            batchId,
-            planId,
-            identity.id,
-            event.operationIndex,
-            event.op,
-            context.now,
-            payload,
-          ),
+        statements.appendHistory.run(
+          batchId,
+          planId,
+          identity.id,
+          event.operationIndex,
+          event.op,
+          context.now,
+          payload,
+        ),
       )
 
       if (inserted.changes !== 1)
@@ -2295,19 +2339,15 @@ const persistTaskChanges = (
 
       const payload = yield* encodedJson(event)
       const exact = yield* io("Could not verify saved task history", () =>
-        database
-          .prepare(
-            "SELECT COUNT(*) AS count FROM issue_plan_history WHERE batch_id = ? AND operation_index = ? AND plan_id = ? AND task_id = ? AND kind = ? AND recorded_at = ? AND payload_json = ?",
-          )
-          .get(
-            batchId,
-            event.operationIndex,
-            planId,
-            identity.id,
-            event.op,
-            context.now,
-            payload,
-          ),
+        statements.verifyHistory.get(
+          batchId,
+          event.operationIndex,
+          planId,
+          identity.id,
+          event.op,
+          context.now,
+          payload,
+        ),
       )
 
       yield* decode(
@@ -2359,11 +2399,7 @@ const persistTaskChanges = (
 
     for (const task of prepared.tasks) {
       const row = yield* io("Could not verify saved task", () =>
-        database
-          .prepare(
-            `SELECT ${taskColumns}, ${boundedStoredText("plan_id", 36)} AS plan_id FROM issue_plan_tasks WHERE id = ?`,
-          )
-          .get(task.id),
+        statements.verifyTask.get(task.id),
       )
       const persisted = yield* decode(
         Schema.extend(
@@ -2389,9 +2425,7 @@ const persistTaskChanges = (
       const rawEdges = yield* io(
         "Could not verify saved task dependencies",
         () =>
-          database
-            .prepare(taskDependenciesQuery)
-            .all(task.id, MAX_TASK_DEPENDENCIES + 1),
+          statements.verifyDependencies.all(task.id, MAX_TASK_DEPENDENCIES + 1),
       )
 
       const edges = yield* decode(
