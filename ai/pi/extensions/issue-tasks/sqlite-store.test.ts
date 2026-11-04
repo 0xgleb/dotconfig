@@ -25,16 +25,17 @@ import {
 } from "./sqlite-store.ts"
 
 const run = Effect.runPromise
+
 const fixtureParent = fileURLToPath(
   new URL("../../../../.tmp/issue-plans-tests/", import.meta.url),
 )
+
 const issue = (repository = "0xgleb/dotconfig", number = 1) => {
   const result = decodeIssueReference({ repository, number })
-
   assert.ok(Either.isRight(result))
-
   return result.right
 }
+
 const fixture = async (work: (root: string) => Promise<void>) => {
   mkdirSync(fixtureParent, { recursive: true, mode: 0o700 })
   const root = mkdtempSync(join(fixtureParent, "case-"))
@@ -45,6 +46,7 @@ const fixture = async (work: (root: string) => Promise<void>) => {
     rmSync(root, { recursive: true, force: true })
   }
 }
+
 const withStore = async (
   path: string,
   work: (store: SqliteTaskStore) => Promise<void>,
@@ -60,15 +62,16 @@ const withStore = async (
     await run(store.close())
   }
 }
+
 const expectError = async <T, E extends { readonly code: string }>(
   operation: Effect.Effect<T, E>,
   code: E["code"],
 ) => {
   const result = await run(Effect.either(operation))
-
   assert.ok(Either.isLeft(result))
   assert.equal(result.left.code, code)
 }
+
 const sql = <A>(path: string, work: (database: DatabaseSync) => A): A => {
   const database = new DatabaseSync(path)
 
@@ -78,11 +81,13 @@ const sql = <A>(path: string, work: (database: DatabaseSync) => A): A => {
     database.close()
   }
 }
+
 const ids: readonly [string, string, string] = [
   "00000000-0000-4000-8000-000000000001",
   "00000000-0000-4000-8000-000000000002",
   "00000000-0000-4000-8000-000000000003",
 ]
+
 const seedIssueRecord = (path: string, target = issue()): string =>
   sql(path, database => {
     const id = randomUUID()
@@ -94,6 +99,7 @@ const seedIssueRecord = (path: string, target = issue()): string =>
 
     return id
   })
+
 const seedTask = (path: string, issueRowId: string, id: string, text: string) =>
   sql(path, database => {
     database
@@ -102,6 +108,7 @@ const seedTask = (path: string, issueRowId: string, id: string, text: string) =>
       )
       .run(id, issueRowId, text)
   })
+
 const appendTask = (store: SqliteTaskStore, target: IssueReference = issue()) =>
   store.apply(
     {
@@ -122,6 +129,151 @@ const appendTask = (store: SqliteTaskStore, target: IssueReference = issue()) =>
       cancellation: "forbidden",
     },
   )
+
+for (const supplied of [undefined, 0, 250, 2_000] as const) {
+  test(`native busy timeout ${supplied ?? "default"} is retained by commit recovery`, async t =>
+    fixture(async root => {
+      const path = join(root, "tasks.sqlite")
+      const expected = supplied ?? 0
+      const configured: unknown[] = []
+      const exec = DatabaseSync.prototype.exec
+      let loseAcknowledgement = false
+
+      t.mock.method(
+        DatabaseSync.prototype,
+        "exec",
+        function (this: DatabaseSync, ...args: Parameters<typeof exec>) {
+          exec.apply(this, args)
+          if (args[0].startsWith("PRAGMA busy_timeout"))
+            configured.push(this.prepare("PRAGMA busy_timeout").get()?.timeout)
+          if (loseAcknowledgement && args[0] === "COMMIT") {
+            loseAcknowledgement = false
+            throw new Error("fixture lost acknowledgement after native commit")
+          }
+        },
+      )
+
+      const options =
+        supplied === undefined
+          ? { databasePath: path }
+          : { databasePath: path, busyTimeoutMs: supplied }
+      const store = await run(openSqliteTaskStore(options))
+
+      try {
+        loseAcknowledgement = true
+        const saved = await run(appendTask(store))
+
+        assert.equal(saved.receipt, "recovered")
+        assert.deepEqual(configured, [expected, expected])
+      } finally {
+        await run(store.close())
+      }
+    }))
+}
+
+test(
+  "default task-store contention yields between bounded retries without partial writes",
+  { timeout: 10_000 },
+  async t =>
+    fixture(async root => {
+      const path = join(root, "tasks.sqlite")
+      const store = await run(openSqliteTaskStore({ databasePath: path }))
+      const holder = new DatabaseSync(path)
+
+      const exec = DatabaseSync.prototype.exec
+      const nativeTimeouts: unknown[] = []
+      let busyAttempts = 0
+      let locked = false
+      let progressed = false
+      let progress: ReturnType<typeof setImmediate> | undefined
+
+      t.mock.method(
+        DatabaseSync.prototype,
+        "exec",
+        function (this: DatabaseSync, ...args: Parameters<typeof exec>) {
+          const observed = this !== holder && args[0] === "BEGIN IMMEDIATE"
+          if (observed)
+            nativeTimeouts.push(
+              this.prepare("PRAGMA busy_timeout").get()?.timeout,
+            )
+          try {
+            return exec.apply(this, args)
+          } catch (error) {
+            if (
+              observed &&
+              typeof error === "object" &&
+              error !== null &&
+              "errcode" in error &&
+              error.errcode === 5
+            ) {
+              busyAttempts += 1
+              if (busyAttempts === 1)
+                progress = setImmediate(() => {
+                  progressed = true
+                })
+            }
+            throw error
+          }
+        },
+      )
+
+      const mutation = appendTask(store)
+
+      try {
+        holder.exec("BEGIN IMMEDIATE")
+        locked = true
+        const blocked = await run(Effect.either(mutation), { signal: t.signal })
+
+        assert.ok(Either.isLeft(blocked))
+        assert.equal(blocked.left.code, "busy")
+        assert.equal(busyAttempts, 3)
+        assert.deepEqual(nativeTimeouts, [0, 0, 0])
+        assert.equal(progressed, true)
+        sql(path, database => {
+          for (const table of [
+            "issue_plans",
+            "issue_plan_tasks",
+            "issue_plan_dependencies",
+            "issue_plan_batches",
+            "issue_plan_history",
+          ]) {
+            assert.equal(
+              database.prepare(`SELECT COUNT(*) AS count FROM ${table}`).get()
+                ?.count,
+              0,
+            )
+          }
+        })
+
+        holder.exec("ROLLBACK")
+        locked = false
+        const saved = await run(mutation, { signal: t.signal })
+
+        assert.equal(saved.receipt, "committed")
+        assert.equal(saved.issues[0]?.revision, 1)
+        assert.equal(saved.created.length, 1)
+        sql(path, database => {
+          for (const table of [
+            "issue_plans",
+            "issue_plan_tasks",
+            "issue_plan_batches",
+            "issue_plan_history",
+          ]) {
+            assert.equal(
+              database.prepare(`SELECT COUNT(*) AS count FROM ${table}`).get()
+                ?.count,
+              1,
+            )
+          }
+        })
+      } finally {
+        if (progress !== undefined) clearImmediate(progress)
+        if (locked) holder.exec("ROLLBACK")
+        holder.close()
+        await run(store.close())
+      }
+    }),
+)
 
 test(
   "multi-issue task reads echo ordered qualified pages, repeated filters and missing state",
@@ -182,6 +334,7 @@ test(
         const otherOwner = seedIssueRecord(path, other)
         seedTask(path, owner, ids[0], "Old A")
         seedTask(path, otherOwner, ids[1], "Old B")
+
         const prepare = DatabaseSync.prototype.prepare
         let advanced = false
         const interception = mock.method(
@@ -228,6 +381,7 @@ test(
             return statement
           },
         )
+
         try {
           const pages = await run(
             store.readManyTasks([
@@ -268,7 +422,9 @@ test(
     fixture(async root => {
       await withStore(join(root, "tasks.sqlite"), async store => {
         await run(appendTask(store))
+
         const query = { issue: issue(), page: { limit: 1 } }
+
         const fetched: string[] = []
         const prepare = DatabaseSync.prototype.prepare
         const interception = mock.method(
@@ -276,10 +432,10 @@ test(
           "prepare",
           function (this: DatabaseSync, text: string) {
             if (text.includes("FROM issue_plan_tasks")) fetched.push(text)
-
             return prepare.call(this, text)
           },
         )
+
         try {
           for (const queries of [
             null,
@@ -319,6 +475,7 @@ test(
     fixture(async root => {
       await withStore(join(root, "tasks.sqlite"), async store => {
         await run(appendTask(store))
+
         const query = { issue: issue(), page: { limit: 1 } }
         const pages = await run(
           store.readManyTasks(Array.from({ length: 100 }, () => query)),
@@ -860,6 +1017,7 @@ for (const order of ["registry-first", "tasks-first"]) {
     fixture(async root => {
       const path = join(root, "registry.sqlite")
       const registry = makeSqliteRegistryStore(root)
+
       const populateRegistry = () =>
         run(
           registry.enqueue({
@@ -870,6 +1028,7 @@ for (const order of ["registry-first", "tasks-first"]) {
             now: 1_000,
           }),
         )
+
       try {
         const request =
           order === "registry-first" ? await populateRegistry() : undefined
@@ -974,6 +1133,7 @@ test("a separate process reads the same persisted issue tasks", async () =>
     await withStore(path, async () => {
       const row = seedIssueRecord(path)
       seedTask(path, row, ids[0], "Visible across processes")
+
       const worker = fileURLToPath(
         new URL("./sqlite-store.worker.ts", import.meta.url),
       )
@@ -1078,6 +1238,7 @@ test("symlink database paths are rejected before touching their target", async (
   fixture(async root => {
     const target = join(root, "target.txt")
     writeFileSync(target, "untouched fixture", { mode: 0o600 })
+
     const path = join(root, "registry.sqlite")
     symlinkSync(target, path)
     await expectError(
@@ -1231,6 +1392,7 @@ test("production qualified-issue lookups use a bounded index for existing and ab
           insert.run(randomUUID(), repository, number)
         database.exec("COMMIT")
       })
+
       const lookups: string[] = []
       const prepare = DatabaseSync.prototype.prepare
       const tracked = mock.method(
@@ -1239,10 +1401,10 @@ test("production qualified-issue lookups use a bounded index for existing and ab
         function (this: DatabaseSync, query: string) {
           if (query.includes("FROM issue_plans WHERE repository ="))
             lookups.push(query)
-
           return prepare.call(this, query)
         },
       )
+
       try {
         assert.ok(
           Option.isSome(

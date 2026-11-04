@@ -58,7 +58,9 @@ const StorageIssueIdSchema = Schema.UUID.pipe(
   Schema.brand("StorageIssueRowId"),
   Schema.filter(value => value === value.toLowerCase()),
 )
+
 type StorageIssueId = typeof StorageIssueIdSchema.Type
+
 interface StoredIssueRow extends IssueTaskRevision {
   readonly id: StorageIssueId
 }
@@ -70,12 +72,14 @@ const PageSchema = Schema.Struct({
   ),
   after: Schema.optional(TaskIdSchema),
 })
+
 const PlanRowSchema = Schema.Struct({
   id: StorageIssueIdSchema,
   repository: Schema.String,
   issue_number: Schema.Number,
   revision: RevisionSchema,
 })
+
 const TaskRowSchema = Schema.Struct({
   id: TaskIdSchema,
   text: TextSchema,
@@ -116,6 +120,7 @@ export interface TaskApplyContext {
   readonly now: number
   readonly cancellation: TaskMutationContext["cancellation"]
 }
+
 export interface TaskApplyResult {
   readonly kind: "saved"
   readonly receipt: "committed" | "replayed" | "recovered"
@@ -125,12 +130,14 @@ export interface TaskApplyResult {
   readonly created: readonly TaskIdAllocation[]
   readonly eventCount: number
 }
+
 export class TaskRequestConflictError extends Data.TaggedError(
   "TaskRequestConflictError",
 )<{
   readonly code: "request_conflict"
   readonly message: string
 }> {}
+
 export class TaskCommitUnknownError extends Data.TaggedError(
   "TaskCommitUnknownError",
 )<{
@@ -140,6 +147,7 @@ export class TaskCommitUnknownError extends Data.TaggedError(
   readonly message: string
   readonly cause: unknown
 }> {}
+
 export type TaskApplyError =
   | TaskStoreError
   | TaskMutationError
@@ -166,6 +174,7 @@ export interface SqliteTaskStore {
   ) => StoreEffect<readonly IssueTaskPageResult[]>
   readonly close: () => StoreEffect<void>
 }
+
 export interface SqliteTaskStoreOptions {
   readonly databasePath: string
   readonly busyTimeoutMs?: number
@@ -174,12 +183,14 @@ export interface SqliteTaskStoreOptions {
 }
 
 type StoreEffect<A> = Effect.Effect<A, TaskStoreError>
+
 interface ValidatedPlanStoreOptions {
   readonly databasePath: string
   readonly busyTimeoutMs: number
   readonly taskTransactionBeginSignal:
     Effect.Effect<void, TaskStoreError> | undefined
 }
+
 type ConnectionState = "open" | "unusable" | "closed"
 
 const schemaDeclarations = [
@@ -266,6 +277,7 @@ const mutationSchemaDeclarations = [
     sql: "CREATE INDEX issue_plan_history_by_task ON issue_plan_history (task_id, sequence)",
   },
 ] as const
+
 const transferHistoryDeclaration = {
   name: "issue_plan_history",
   type: "table",
@@ -281,33 +293,41 @@ const transferHistoryDeclaration = {
     UNIQUE (batch_id, operation_index)
   ) STRICT`,
 } as const
+
 const currentMutationSchemaDeclarations = mutationSchemaDeclarations.map(
   entry =>
     entry.name === "issue_plan_history" ? transferHistoryDeclaration : entry,
 )
+
 const versionTwoSchemaDeclarations = [
   ...schemaDeclarations,
   ...mutationSchemaDeclarations,
 ]
+
 const versionThreeSchemaDeclarations = [
   ...schemaDeclarations,
   ...currentMutationSchemaDeclarations,
 ]
+
 const qualifiedIssueIndexDeclaration = {
   name: "issue_plan_issues_nocase",
   type: "index",
   sql: "CREATE INDEX issue_plan_issues_nocase ON issue_plans (repository COLLATE NOCASE, issue_number)",
 } as const
+
 const currentSchemaDeclarations = [
   ...versionThreeSchemaDeclarations,
   qualifiedIssueIndexDeclaration,
 ]
+
 const SCHEMA_VERSION = 4
+
 const SchemaObjectSchema = Schema.Struct({
   name: Schema.String,
   type: Schema.String,
   sql: Schema.NullOr(Schema.String),
 })
+
 type SchemaObject = typeof SchemaObjectSchema.Type
 
 const normalizedDeclaration = (sql: string): string =>
@@ -446,6 +466,7 @@ const transaction = <A, E, F = never>(
 
       if (Exit.isFailure(rollback)) {
         poison()
+
         const cause = Cause.sequential(committed.cause, rollback.cause)
 
         return yield* recoverCommit === undefined
@@ -705,6 +726,7 @@ const migrate = (database: DatabaseSync): StoreEffect<void> =>
                 )
                 .get(),
           )
+
           const foreignKey = yield* io(
             "Could not inspect history foreign keys",
             () =>
@@ -810,6 +832,7 @@ const ContextSchema = Schema.Struct({
   now: RevisionSchema,
   cancellation: Schema.Literal("forbidden", "owner-authorized"),
 })
+
 const SavedResultSchema = Schema.Struct({
   kind: Schema.Literal("saved"),
   receipt: Schema.Literal("committed"),
@@ -840,7 +863,9 @@ const SavedResultSchema = Schema.Struct({
   ),
   eventCount: RevisionSchema,
 })
+
 type ChangedField = TaskChangeSummary["fields"][number]
+
 const MAX_TRANSFER_EVENT_TEXT = 4_096
 const MAX_EDIT_EVENT_TEXT = 2_097_152
 const MAX_RECEIPT_TEXT = 1_048_576
@@ -865,6 +890,7 @@ type StoredTextColumn =
   | "h.task_id"
   | "h.kind"
   | "h.payload_json"
+
 type StoredTextLimit =
   | 8
   | 9
@@ -874,16 +900,21 @@ type StoredTextLimit =
   | typeof MAX_RECEIPT_TEXT
   | typeof MAX_TRANSFER_EVENT_TEXT
   | typeof MAX_EDIT_EVENT_TEXT
+
 // Admit UTF-8 and UTF-16 byte representations; schemas retain exact code-unit limits.
 const boundedStoredText = (
   column: StoredTextColumn,
   maxUnits: StoredTextLimit,
 ): string =>
   `CASE WHEN ${column} IS NULL THEN NULL WHEN typeof(${column}) = 'text' AND octet_length(${column}) <= ${3 * maxUnits} THEN ${column} ELSE -1 END`
+
 const taskColumns = `${boundedStoredText("id", 36)} AS id, ${boundedStoredText("text", MAX_TASK_TEXT)} AS text, ${boundedStoredText("status", 9)} AS status, ${boundedStoredText("blocker", MAX_TASK_TEXT)} AS blocker`
+
 const taskDependenciesQuery = `SELECT ${boundedStoredText("depends_on_id", 36)} AS depends_on_id FROM issue_plan_dependencies WHERE task_id = ? ORDER BY issue_plan_dependencies.depends_on_id LIMIT ?`
+
 const receiptHistorySource =
   "FROM issue_plan_history h LEFT JOIN issue_plan_tasks t ON t.id = h.task_id WHERE h.batch_id = ?"
+
 const receiptHistoryColumns = `${boundedStoredText("h.plan_id", 36)} AS plan_id, ${boundedStoredText("h.task_id", 36)} AS task_id, h.operation_index, ${boundedStoredText("h.kind", 8)} AS kind, ${boundedStoredText("t.id", 36)} AS persisted_task_id, CASE WHEN h.kind = 'transfer' THEN ${boundedStoredText("h.payload_json", MAX_TRANSFER_EVENT_TEXT)} ELSE NULL END AS transfer_payload, CASE WHEN h.kind = 'edit' THEN ${boundedStoredText("h.payload_json", MAX_EDIT_EVENT_TEXT)} ELSE NULL END AS edit_payload, CASE WHEN h.kind IN ('status', 'block') THEN ${boundedStoredText("h.payload_json", MAX_EDIT_EVENT_TEXT)} ELSE NULL END AS state_payload, CASE WHEN h.kind = 'add' THEN ${boundedStoredText("h.payload_json", MAX_EDIT_EVENT_TEXT)} ELSE NULL END AS add_payload`
 
 const AddEventSchema = Schema.Struct({
@@ -900,6 +931,7 @@ const AddEventSchema = Schema.Struct({
     ),
   }),
 })
+
 const EditEventSchema = Schema.Struct({
   op: Schema.Literal("edit"),
   operationIndex: RevisionSchema,
@@ -924,6 +956,7 @@ const EditEventSchema = Schema.Struct({
     ),
   ).pipe(Schema.minItems(1), Schema.maxItems(2)),
 })
+
 const StatusEventSchema = Schema.Struct({
   op: Schema.Literal("status"),
   operationIndex: RevisionSchema,
@@ -932,6 +965,7 @@ const StatusEventSchema = Schema.Struct({
   before: StatusSchema,
   after: StatusSchema,
 })
+
 const BlockEventSchema = Schema.Struct({
   op: Schema.Literal("block"),
   operationIndex: RevisionSchema,
@@ -940,6 +974,7 @@ const BlockEventSchema = Schema.Struct({
   before: Schema.NullOr(TextSchema),
   after: Schema.NullOr(TextSchema),
 })
+
 const TransferEventSchema = Schema.Struct({
   op: Schema.Literal("transfer"),
   operationIndex: RevisionSchema,
@@ -947,6 +982,7 @@ const TransferEventSchema = Schema.Struct({
   id: TaskIdSchema,
   splitFrom: Schema.Unknown,
 })
+
 const decodeEventPayload = <A, I>(
   schema: Schema.Schema<A, I>,
   json: string | null,
@@ -986,6 +1022,7 @@ const encodedJson = (value: unknown): StoreEffect<string> =>
 
     return encoded
   })
+
 const storedIssue = (value: unknown): StoreEffect<IssueReference> =>
   Effect.gen(function* () {
     const issue = yield* checkedIssue(value, "corrupt_state")
@@ -1003,6 +1040,7 @@ const storedIssue = (value: unknown): StoreEffect<IssueReference> =>
 
     return issue
   })
+
 const findPlan = (
   database: DatabaseSync,
   issue: IssueReference,
@@ -1221,6 +1259,7 @@ const readReceipt = (
           `SELECT ${receiptHistoryColumns} ${receiptHistorySource} AND h.operation_index > ? ORDER BY h.operation_index LIMIT 1`,
         ),
     )
+
     let rawHistory = yield* io(
       "Could not read first task receipt history",
       () =>
@@ -1230,6 +1269,7 @@ const readReceipt = (
           )
           .get(saved.batchId),
     )
+
     const changesById = new Map(changed.map(task => [task.id, task]))
     const recordedTasks = new Set<TaskId>()
     const recordedOperations = new Set<number>()
@@ -1240,6 +1280,7 @@ const readReceipt = (
       TaskId,
       Partial<Pick<CurrentTask, "text" | "status" | "blocker" | "dependsOn">>
     >()
+
     const verifyAbsentOperation = (
       operation: TaskMutationBatch["operations"][number],
     ): StoreEffect<void> =>
@@ -1280,6 +1321,7 @@ const readReceipt = (
           )
 
         let state = fieldStates.get(id) ?? {}
+
         switch (operation.op) {
           case "transfer":
             if (issueKey(owner) !== issueKey(operation.toIssue))
@@ -1316,6 +1358,7 @@ const readReceipt = (
                 )
               state = { ...state, text: operation.text }
             }
+
             if (operation.dependsOn !== undefined) {
               const dependencies: TaskId[] = []
               for (const reference of operation.dependsOn) {
@@ -1335,6 +1378,7 @@ const readReceipt = (
                   )
                 dependencies.push(dependencyId)
               }
+
               dependencies.sort()
               if (
                 new Set(dependencies).size !== dependencies.length ||
@@ -1350,9 +1394,11 @@ const readReceipt = (
             break
           }
         }
+
         fieldStates.set(id, state)
         locations.set(id, owner)
       })
+
     let nextRequestedIndex = 0
     while (rawHistory !== undefined) {
       const history = yield* decode(
@@ -1391,6 +1437,7 @@ const readReceipt = (
         yield* verifyAbsentOperation(absent)
         nextRequestedIndex += 1
       }
+
       const operation = batch.operations[history.operation_index]
       const task = changesById.get(history.task_id)
 
@@ -1499,6 +1546,7 @@ const readReceipt = (
 
       let eventFields: readonly ChangedField[]
       let fieldState = fieldStates.get(task.id) ?? {}
+
       switch (operation.op) {
         case "add": {
           const payload = yield* decodeEventPayload(
@@ -1527,6 +1575,7 @@ const readReceipt = (
 
             dependencies.push(id)
           }
+
           if (
             payload.operationIndex !== history.operation_index ||
             payload.task.id !== task.id ||
@@ -1628,6 +1677,7 @@ const readReceipt = (
             "corrupt_state",
             "Invalid edit history",
           )
+
           const owner = yield* storedIssue(payload.issue)
           const fields = payload.changes.map(change => change.field)
           const requestedDependencies = new Set<TaskId>()
@@ -1726,6 +1776,7 @@ const readReceipt = (
 
       nextRequestedIndex = history.operation_index + 1
       fieldStates.set(task.id, fieldState)
+
       const fields = recordedFields.get(task.id) ?? new Set<ChangedField>()
       for (const field of eventFields) fields.add(field)
       recordedFields.set(task.id, fields)
@@ -1848,6 +1899,7 @@ const loadTaskSnapshot = (
         `SELECT ${boundedStoredText("t.id", 36)} AS id, ${boundedStoredText("t.text", MAX_TASK_TEXT)} AS text, ${boundedStoredText("t.status", 9)} AS status, ${boundedStoredText("t.blocker", MAX_TASK_TEXT)} AS blocker, ${boundedStoredText("p.repository", 140)} AS repository, p.issue_number FROM issue_plan_tasks t JOIN issue_plans p ON p.id = t.plan_id WHERE t.id = ? AND (${scopeSql})`,
       ),
     )
+
     const rowSchema = Schema.Struct({
       id: TaskIdSchema,
       text: TextSchema,
@@ -1856,6 +1908,7 @@ const loadTaskSnapshot = (
       repository: Schema.String,
       issue_number: Schema.Number,
     })
+
     const tasks = new Map<TaskId, Omit<CurrentTask, "dependsOn">>()
     let textSize = 0
     for (const id of ids) {
@@ -1895,17 +1948,21 @@ const loadTaskSnapshot = (
         }),
       )
     }
+
     const queue = [...tasks.keys()]
     const seen = new Set(queue)
     const edges = new Map<TaskId, readonly TaskId[]>()
+
     const dependencies = yield* io(
       "Could not prepare dependency snapshot",
       () => database.prepare(taskDependenciesQuery),
     )
+
     const exists = yield* io(
       "Could not prepare dependency identity check",
       () => database.prepare("SELECT 1 FROM issue_plan_tasks WHERE id = ?"),
     )
+
     let edgeCount = 0
     for (let position = 0; position < queue.length; position += 1) {
       const id = queue[position]
@@ -2129,6 +2186,7 @@ const persistTaskChanges = (
     for (const event of prepared.events)
       if (event.op === "transfer" && !originalOwners.has(event.id))
         originalOwners.set(event.id, event.splitFrom)
+
     for (const task of prepared.tasks) {
       const planId = planIds.get(issueKey(task.issue))
       const originalIssue = originalOwners.get(task.id) ?? task.issue
@@ -2372,6 +2430,7 @@ const readCommittedRequest = (
   Effect.uninterruptible(
     Effect.gen(function* () {
       yield* secureFile(options.databasePath, "existing")
+
       const database = yield* io(
         "Could not open task recovery reader",
         () => new DatabaseSync(options.databasePath, { readOnly: true }),
@@ -2388,6 +2447,7 @@ const readCommittedRequest = (
             "read",
             Effect.gen(function* () {
               yield* checkVersion(database)
+
               const receipt = yield* readReceipt(
                 database,
                 request.batch,
@@ -2425,6 +2485,7 @@ const readCommittedRequest = (
           )
         }),
       )
+
       const closed = yield* Effect.exit(
         io("Could not close task recovery reader", () => database.close()),
       )
@@ -2575,6 +2636,7 @@ const makeStore = (
 ): SqliteTaskStore => {
   const gate = Effect.unsafeMakeSemaphore(1)
   let state: ConnectionState = "open"
+
   const use = <A, E, F = never>(
     mode: "read" | "write",
     operation: Effect.Effect<A, E>,
@@ -2831,7 +2893,7 @@ export const openSqliteTaskStore = (
   Effect.uninterruptibleMask(restore =>
     Effect.gen(function* () {
       const timeout =
-        options.busyTimeoutMs === undefined ? 2_000 : options.busyTimeoutMs
+        options.busyTimeoutMs === undefined ? 0 : options.busyTimeoutMs
 
       if (!Number.isSafeInteger(timeout) || timeout < 0 || timeout > 2_000)
         return yield* fail(
@@ -2844,7 +2906,9 @@ export const openSqliteTaskStore = (
         busyTimeoutMs: timeout,
         taskTransactionBeginSignal: options.taskTransactionBeginSignal,
       })
+
       yield* secureFile(captured.databasePath)
+
       const database = yield* io(
         "Could not open task database",
         () => new DatabaseSync(captured.databasePath),
