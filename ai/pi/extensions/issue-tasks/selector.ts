@@ -22,10 +22,7 @@ const IssuePrioritySchema = Schema.Number.pipe(
 export type IssuePriority = typeof IssuePrioritySchema.Type
 
 export interface IssueSelectionEligibility {
-  readonly scheduling: "active" | "held" | "deferred" | "refinement"
   readonly blockers: "clear" | "blocked" | "unknown"
-  /** Clear requires a complete ancestor chain with no held/deferred ancestor. */
-  readonly parent: "clear" | "held" | "unknown"
   readonly dependencies: "clear" | "blocked" | "unknown"
   /** Assignment relative to the worker for whom the host is selecting. */
   readonly ownership: "available" | "current" | "other" | "unknown"
@@ -49,12 +46,8 @@ export interface IssueAssignmentSnapshot {
 
 export type IssueIneligibilityReason =
   | "closed"
-  | "held"
-  | "deferred"
   | "blocked"
   | "unknown_blockers"
-  | "held_parent"
-  | "unknown_parent"
   | "blocked_dependencies"
   | "unknown_dependencies"
   | "owned_elsewhere"
@@ -73,7 +66,7 @@ export type IssueSelectionAssessment =
   | {
       readonly kind: "refinement"
       readonly issue: IssueReference
-      readonly reason: "missing_effort" | "scheduled_refinement"
+      readonly reason: "missing_effort"
     }
   | {
       readonly kind: "ineligible"
@@ -139,9 +132,7 @@ const NumberInputSchema = Schema.Union(
 )
 
 const EligibilitySchema = Schema.Struct({
-  scheduling: Schema.Literal("active", "held", "deferred", "refinement"),
   blockers: Schema.Literal("clear", "blocked", "unknown"),
-  parent: Schema.Literal("clear", "held", "unknown"),
   dependencies: Schema.Literal("clear", "blocked", "unknown"),
   ownership: Schema.Literal("available", "current", "other", "unknown"),
   authorization: Schema.Literal("allowed", "denied", "unknown"),
@@ -289,12 +280,8 @@ const assessCandidate = (
   const reasons: IssueIneligibilityReason[] = []
 
   if (candidate.state === "closed") reasons.push("closed")
-  if (eligibility.scheduling === "held") reasons.push("held")
-  if (eligibility.scheduling === "deferred") reasons.push("deferred")
   if (eligibility.blockers === "blocked") reasons.push("blocked")
   if (eligibility.blockers === "unknown") reasons.push("unknown_blockers")
-  if (eligibility.parent === "held") reasons.push("held_parent")
-  if (eligibility.parent === "unknown") reasons.push("unknown_parent")
   if (eligibility.dependencies === "blocked")
     reasons.push("blocked_dependencies")
   if (eligibility.dependencies === "unknown")
@@ -313,12 +300,6 @@ const assessCandidate = (
       reasons: Object.freeze(reasons),
     })
   }
-  if (eligibility.scheduling === "refinement")
-    return Object.freeze({
-      kind: "refinement",
-      issue,
-      reason: "scheduled_refinement",
-    })
   if (effort.kind === "unset")
     return Object.freeze({
       kind: "refinement",
