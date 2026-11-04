@@ -79,7 +79,12 @@ test("native Project reader uses existing bounded transport and actual fixed-que
     const item = page.items[0]
 
     assert.equal(page.project, project)
+    assert.deepEqual(page.viewer, { id: "fixture-viewer-id", login: "0xgleb" })
+    assert.equal(page.inProgress.projectId, id)
+    assert.equal(page.inProgress.optionId, "47fc9ee4")
     assert.ok(item?.kind === "issue")
+    assert.equal(item.issueNodeId, "fixture-issue-node-id")
+    assert.deepEqual(item.assignees, [])
     assert.deepEqual(item.issue, { repository: "owner/repository", number: 7 })
     assert.deepEqual(item.priority, { kind: "number", value: 2 })
     assert.deepEqual(item.effort, { kind: "number", value: 5 })

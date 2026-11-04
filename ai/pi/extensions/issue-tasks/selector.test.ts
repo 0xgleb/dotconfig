@@ -431,6 +431,7 @@ test("decoded Project observations enter the consumer contract without eligibili
   const effortId = "PVTF_lAHOAl_tIc4BpO1UzhnrY5k"
   const payload = {
     data: {
+      viewer: { id: "fixture-viewer-id", login: "0xgleb" },
       node: {
         __typename: "ProjectV2",
         id: "PVT_kwHOAl_tIc4BpO1U",
@@ -438,12 +439,25 @@ test("decoded Project observations enter the consumer contract without eligibili
         owner: { __typename: "User", login: "0xgleb" },
         priorityField: field(priorityId, "Priority"),
         effortField: field(effortId, "Effort"),
+        statusField: {
+          __typename: "ProjectV2SingleSelectField",
+          id: "PVTSSF_lAHOAl_tIc4BpO1UzhnrYfs",
+          name: "Status",
+          dataType: "SINGLE_SELECT",
+          options: [{ id: "47fc9ee4", name: "In progress" }],
+        },
         items: {
           nodes: [1, 2].map(number => ({
             id: `item-${number}`,
             isArchived: false,
             content: {
               __typename: "Issue",
+              id: `issue-node-${number}`,
+              assignees: {
+                nodes: [],
+                totalCount: 0,
+                pageInfo: { hasNextPage: false, endCursor: null },
+              },
               number,
               state: "OPEN",
               repository: { nameWithOwner: "Owner/Repository" },
