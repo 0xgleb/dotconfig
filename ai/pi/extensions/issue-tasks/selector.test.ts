@@ -11,9 +11,7 @@ import {
 } from "./selector.ts"
 
 const eligibility: IssueSelectionEligibility = {
-  scheduling: "active",
   blockers: "clear",
-  parent: "clear",
   dependencies: "clear",
   ownership: "available",
   authorization: "allowed",
@@ -107,12 +105,8 @@ test("ties prefer lower Priority, then canonical repository and numeric issue id
 })
 
 for (const [field, value, reason] of [
-  ["scheduling", "held", "held"],
-  ["scheduling", "deferred", "deferred"],
   ["blockers", "blocked", "blocked"],
   ["blockers", "unknown", "unknown_blockers"],
-  ["parent", "held", "held_parent"],
-  ["parent", "unknown", "unknown_parent"],
   ["dependencies", "blocked", "blocked_dependencies"],
   ["dependencies", "unknown", "unknown_dependencies"],
   ["ownership", "other", "owned_elsewhere"],
@@ -120,68 +114,58 @@ for (const [field, value, reason] of [
   ["authorization", "denied", "unauthorized"],
   ["authorization", "unknown", "unknown_authorization"],
 ] as const) {
-  const schedulingStates =
-    field === "scheduling" ? ["active"] : ["active", "refinement"]
-
-  for (const scheduling of schedulingStates) {
-    test(`${scheduling}: ${field} ${value} excludes the issue despite a smaller product`, () => {
-      const rows = [
-        candidate(1, {
-          eligibility: { ...eligibility, scheduling, [field]: value },
-        }),
-        candidate(2, { priority: numeric(2) }),
-      ]
-      const result = run(snapshot(rows))
-      const assessment = result.assessments[0]
-
-      assert.ok(result.kind === "selected")
-      assert.equal(result.issue.number, 2)
-      assert.ok(assessment?.kind === "ineligible")
-      assert.deepEqual(assessment.reasons, [reason])
-    })
-  }
-}
-
-for (const [name, patch, reason] of [
-  ["closed", { state: "closed" }, "closed"],
-  ["unranked", { priority: { kind: "unset" } }, "unranked"],
-] as const) {
-  test(`explicit refinement cannot override ${name} with missing effort`, () => {
-    const result = run(
-      snapshot([
-        candidate(1, {
-          ...patch,
-          effort: { kind: "unset" },
-          eligibility: { ...eligibility, scheduling: "refinement" },
-        }),
-      ]),
-    )
+  test(`${field} ${value} excludes the issue despite a smaller product`, () => {
+    const rows = [
+      candidate(1, { eligibility: { ...eligibility, [field]: value } }),
+      candidate(2, { priority: numeric(2) }),
+    ]
+    const result = run(snapshot(rows))
     const assessment = result.assessments[0]
 
-    assert.equal(result.kind, "none")
+    assert.ok(result.kind === "selected")
+    assert.equal(result.issue.number, 2)
     assert.ok(assessment?.kind === "ineligible")
     assert.deepEqual(assessment.reasons, [reason])
   })
 }
 
-test("explicit refinement precedes missing-effort refinement", () => {
-  const result = run(
-    snapshot([
-      candidate(1, {
-        effort: { kind: "unset" },
-        eligibility: { ...eligibility, scheduling: "refinement" },
-      }),
-    ]),
-  )
+test("lower priority changes ordering rather than creating an exclusion state", () => {
+  const rows = [candidate(1), candidate(2, { priority: numeric(99) })]
+  const result = run(snapshot(rows))
 
-  assert.equal(result.kind, "none")
-  assert.deepEqual(result.assessments, [
-    {
-      kind: "refinement",
-      issue: { repository: "owner/repository", number: 1 },
-      reason: "scheduled_refinement",
-    },
-  ])
+  assert.ok(result.kind === "selected")
+  assert.equal(result.issue.number, 1)
+  assert.deepEqual(
+    result.assessments.map(row => row.kind),
+    ["eligible", "eligible"],
+  )
+  assert.equal(winner(rows.slice(1)).number, 2)
+})
+
+test("rejects independent scheduling states and implicit parent exclusions", () => {
+  for (const scheduling of ["active", "held", "deferred", "refinement"]) {
+    assert.equal(
+      errorCode(
+        snapshot([
+          candidate(1, {
+            eligibility: { ...eligibility, scheduling, parent: "clear" },
+          }),
+        ]),
+      ),
+      "invalid_input",
+    )
+  }
+
+  assert.equal(
+    errorCode(
+      snapshot([
+        candidate(1, {
+          eligibility: { ...eligibility, scheduling: "active", parent: "held" },
+        }),
+      ]),
+    ),
+    "invalid_input",
+  )
 })
 
 test("current-worker ownership stays eligible without creating execution authority", () => {
@@ -193,29 +177,21 @@ test("current-worker ownership stays eligible without creating execution authori
   )
 })
 
-test("missing effort and explicit refinement are visible but never weighted as one", () => {
+test("missing effort is explicit refinement rather than an invented weight", () => {
   const result = run(
     snapshot([
       candidate(1, { effort: { kind: "unset" } }),
-      candidate(2, {
-        eligibility: { ...eligibility, scheduling: "refinement" },
-      }),
-      candidate(3, { priority: numeric(5), effort: numeric(3) }),
+      candidate(2, { priority: numeric(5), effort: numeric(3) }),
     ]),
   )
 
   assert.ok(result.kind === "selected")
-  assert.equal(result.issue.number, 3)
-  assert.deepEqual(
-    result.assessments.slice(0, 2).map(row => row.kind),
-    ["refinement", "refinement"],
-  )
-  assert.deepEqual(
-    result.assessments
-      .slice(0, 2)
-      .map(row => (row.kind === "refinement" ? row.reason : undefined)),
-    ["missing_effort", "scheduled_refinement"],
-  )
+  assert.equal(result.issue.number, 2)
+  assert.deepEqual(result.assessments[0], {
+    kind: "refinement",
+    issue: { repository: "owner/repository", number: 1 },
+    reason: "missing_effort",
+  })
 })
 
 test("exclusions precede refinement, with fixed complete reason ordering", () => {
@@ -226,9 +202,7 @@ test("exclusions precede refinement, with fixed complete reason ordering", () =>
         priority: { kind: "unset" },
         effort: { kind: "unset" },
         eligibility: {
-          scheduling: "held",
           blockers: "blocked",
-          parent: "held",
           dependencies: "blocked",
           ownership: "other",
           authorization: "denied",
@@ -242,9 +216,7 @@ test("exclusions precede refinement, with fixed complete reason ordering", () =>
   assert.ok(assessment?.kind === "ineligible")
   assert.deepEqual(assessment.reasons, [
     "closed",
-    "held",
     "blocked",
-    "held_parent",
     "blocked_dependencies",
     "owned_elsewhere",
     "unauthorized",
@@ -496,7 +468,7 @@ test("decoded Project observations enter the consumer contract without eligibili
             effort: item.effort,
             eligibility: {
               ...eligibility,
-              scheduling: item.issue.number === 1 ? "held" : "active",
+              dependencies: item.issue.number === 1 ? "blocked" : "clear",
             },
           },
         ]

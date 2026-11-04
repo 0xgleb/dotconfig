@@ -47,8 +47,9 @@ supplies cancellation and reopening authority, never model-authored fields.
 Blocking is independent of lifecycle: a non-null `blocker` marks a task as
 blocked without changing its lifecycle value. For example, a task can remain
 `doing` while blocked; clearing its blocker leaves it `doing`. The
-`blocked: true` read filter selects tasks with a non-null blocker. Holds and
-deferral are issue-scheduling concerns. There is no `in_review` task state.
+`blocked: true` read filter selects tasks with a non-null blocker. Numeric issue
+Priority expresses ordering; factual blockers and issue dependencies express
+work that cannot proceed. There is no `in_review` task state.
 
 Use the existing personal Project and existing organization Project. Bind their
 verified numeric **Priority** fields with their actual scopes: the personal
@@ -56,8 +57,8 @@ field is project-local, while the organization field is an issue field surfaced
 in the Project. Do not create a replacement Project or a Rank field.
 Remaining-delivery Fibonacci effort belongs to issue scheduling, not individual
 tasks; its binding must identify the actual field and scope rather than treating
-an Estimate field as an Effort field. Issues without an estimate remain in
-refinement and are ineligible for assignment.
+an Estimate field as an Effort field. Issues missing Effort remain in refinement
+and are ineligible for assignment.
 
 Initially, issue and Project operations follow a global Markdown rule, not a new
 harness-enforced permission system. Any worker may perform the specific issue
@@ -73,8 +74,10 @@ needed to reconcile partial success. A split issue remains unscheduled until its
 issue, tasks and dependencies are consistent.
 
 Use one assignment selector across issue-next, HUD, continuation, manager views
-and safe-boundary notifications. Scheduling never changes holds, renews an
-allowance or starts an idle or paused worker.
+and safe-boundary notifications. Order eligible issues by numeric Priority ×
+remaining Fibonacci Effort. Respect factual blockers, issue dependencies and
+execution scope. Selection does not mutate scheduling data, renew an allowance
+or start an idle or paused worker.
 
 ## Alternatives Considered
 
