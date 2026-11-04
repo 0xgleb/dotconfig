@@ -1,8 +1,12 @@
 # Global agent operating rules
 
-This is the canonical global policy for every harness. Harness-specific tool
-availability comes from the active tool set; repository-local AGENTS.md files
-provide project workflows, not competing global policy.
+This is the canonical global policy for engineering harnesses configured to use
+it. Harness-specific tool availability comes from the active tool set;
+repository-local AGENTS.md files provide local workflows, not copies of global
+policy.
+
+Codex keeps its own `~/.codex/AGENTS.md` for research and administrative work.
+Do not replace that file with this policy or merge its distinct rules here.
 
 ## Global resources and delivery
 
@@ -47,7 +51,9 @@ the harness, and suppress duplicates without agent polling.
 ## Scope, execution, and safety
 
 - Read project instructions and relevant source before acting. Verify unfamiliar
-  commands and flags instead of guessing.
+  commands and flags instead of guessing. Never invent concrete values, URLs or
+  repository facts; report unresolved gaps rather than filling them with
+  guesses.
 - Do not install or use persistent-memory extensions, memory-writing/search
   tools, automated learning, or memory-injected prompts. Correct standing rules
   directly in the applicable AGENTS.md; keep task state in todos or handoffs.
@@ -170,13 +176,24 @@ the harness, and suppress duplicates without agent polling.
 - GitButler is valid only in a repository's main worktree. Detect the current
   Git topology before invoking `but`; in every linked, isolated, scratch, or
   otherwise non-main worktree, use plain Git for both reads and writes and never
-  probe or initialize GitButler. Prefer GitButler in existing managed main
-  worktrees and plain Git elsewhere; explicit repository-local workflow rules
-  may override these shared defaults. Use GitHub for current project tracking.
-  The classifier must not demand GitButler or reject plain Git solely because
-  the parent repository is GitButler-managed. When an explicitly authorized
-  stacking workflow requires a branch, create it before editing; do not override
-  repository-local branch or publication rules.
+  probe or initialize GitButler. Use GitButler in verified managed main
+  worktrees and plain Git elsewhere. Repository-local rules govern branch
+  organization, verification and delivery details, but cannot replace the
+  managed-main publication workflow below without explicit owner approval. Use
+  GitHub for current project tracking. The classifier must not demand GitButler
+  or reject plain Git solely because the parent repository is GitButler-managed.
+  When an explicitly authorized stacking workflow requires a branch, create it
+  before editing. Preserve branch protections and checks.
+- In a verified GitButler-managed main worktree, every publication uses the
+  whole-workspace workflow: `but pull` everything, resolve all resulting
+  conflicts, then bare `but push` to publish everything across the workspace's
+  branches and stacks. Never push a selected branch or stack. Serialize this
+  workflow with the responsible workspace agent, keeping commits scoped by
+  purpose. Incomplete work remains a truthful draft checkpoint. If publication
+  is blocked, preserve state and report the exact blocker. This grants no merge,
+  force-push or protection-bypass authority; other deviations require explicit
+  owner approval. Plain-Git workflows outside managed main worktrees are
+  unchanged.
 - Routine GitHub issue creation within authorized planning scope does not need
   approval of exact phrasing. Check the complete payload for
   audience-appropriate content before publication: exclude personal details,
@@ -263,14 +280,32 @@ the harness, and suppress duplicates without agent polling.
   every child's cwd to that root; neither the coordinator's cwd nor the common
   Git directory is a fallback. Record newly created project `.tmp/`
   files/directories immediately with `artifact_provenance` so later exact
-  cleanup has durable evidence. Never delete pre-existing project outputs, user
-  files, global caches, Nix generations, or run global garbage collection
-  without explicit user authorization. Exact rebuildable build outputs are
-  disposable by default, but project instructions and verified repository
-  configuration may protect artifacts consumed by a runtime, watcher,
+  cleanup has durable evidence. A recorded directory covers descendants created
+  inside it; do not redundantly record those files. Never delete pre-existing
+  project outputs, user files, global caches, Nix generations, or run global
+  garbage collection without explicit user authorization. Exact rebuildable
+  build outputs are disposable by default, but project instructions and verified
+  repository configuration may protect artifacts consumed by a runtime, watcher,
   supervisor, release, or deployment process. Inspect any referenced
   configuration before cleanup and preserve a cleanup root containing a
   configured live artifact unless disruption is explicitly requested.
+- In a Git checkout, whenever `.tmp/` or `.worktrees/` is used, record the
+  working-tree/index state before the directory-ignore preflight. Verify
+  directory-wide coverage with `git check-ignore --verbose` on the directory
+  itself and the intended artifact path; a file-specific match such as `*.log`
+  is insufficient. Immediately add any missing directory pattern to that
+  checkout's `.gitignore`, preserve existing rules, and recheck both paths.
+  Account for an owned repair as a separate preflight unit through the
+  repository's already-authorized checkpoint/publication workflow. Isolate the
+  new ignore hunk from pre-existing changes and reviewed finding fixes; do not
+  absorb it into another branch. Preserve publication gates. If a scoped
+  checkpoint or required publication is blocked, leave the repair saved and
+  report the exact blocker before starting another work unit. Handover remains a
+  stop boundary: save its repair, refresh affected state reads and include it in
+  the handover without publication. No separate approval is needed for these two
+  directory patterns; this grants no worktree-creation, new-PR or unrelated
+  source-change authority. Outside a Git checkout, Git-ignore coverage is not
+  applicable; do not initialize a repository merely to apply this rule.
 - Never inject keystrokes or text into the user's active Zellij pane or editor;
   it can overwrite an in-progress prompt. Use registered tools such as
   `reload_pi` instead, and keep Zellij automation confined to isolated workers.
@@ -279,6 +314,13 @@ the harness, and suppress duplicates without agent polling.
   tab and pane, launch the worker, and restore that exact focus before
   returning. If exact restoration cannot be verified, use a classified
   background workflow.
+- Keep code readable across languages: choose clear names, separate independent
+  declarations with blank lines, and keep lines readable, including embedded SQL
+  and JSON. Separate meaningful phases inside larger bodies, but keep tiny
+  two–three-line bodies compact rather than inserting mechanical inner blank
+  lines. Code-style inspection owns these readability rules; typing inspection
+  owns newtypes, domain types and opaque-versus-primitive representation
+  choices.
 - In TypeScript and JavaScript, prefer `const`-bound arrow functions over
   `function` declarations, with explicit callable types when they clarify the
   contract. Keep declarations for overloads, generators, or required semantics.
@@ -306,6 +348,10 @@ the harness, and suppress duplicates without agent polling.
   packages, and upstream examples for a solution or reference. Prefer compatible
   packages; write local code only after checking the options, preserving
   upstream ownership and licenses.
+- Keep shared skills in the canonical repository; verify harness discovery links
+  resolve to that source before claiming activation. After changing managed Pi
+  resources, use the registered reload tool. A queued reload is not activation
+  proof.
 - Use only authenticated, permitted models and the current harness's supported
   delegation path. Do not infer capabilities from model names or stale harness
   instructions. Do not switch billing providers or harnesses as a workaround
@@ -314,14 +360,22 @@ the harness, and suppress duplicates without agent polling.
   control flow, failures, and ownership visible. Prefer strict typing and
   linting, public API before implementation details, and explicit domain states
   over boolean flags. Do not introduce speculative abstractions or wrappers
-  hiding domain logic.
+  hiding domain logic. Package by feature rather than technical layer. Keep API
+  documentation and necessary explanations; omit comments that merely narrate
+  code.
+- Record confirmed significant, hard-to-reverse architectural decisions through
+  the `adr` skill. Settle unresolved architectural choices with the owner before
+  proceeding; do not turn routine implementation into a new approval gate.
 - Follow type-driven test-first work: define the contract, write a compiling
   test that fails on the required behavior, then implement and refine. Type
   prerequisites may precede the failing test; behavioral logic may not.
   Reproduce bugs through realistic production paths and data, not unreachable
   internal states fabricated only for a test. Malformed boundary inputs still
   require tests. Run relevant tests and inspect the final diff; retain only
-  justified changes.
+  justified changes. Preserve uncertain changes while reconciling current owner
+  intent, task records, repository history and ownership evidence. Lost context
+  does not authorize reverting work; remove only evidenced agent-owned
+  unjustified deltas.
 - Every task belongs to a repository-qualified GitHub issue, without exceptions
   for short-lived or one-off work. Keep tasks granular. Record requests,
   corrections, blockers, and next actions without replacing a direct answer with
@@ -331,7 +385,8 @@ the harness, and suppress duplicates without agent polling.
   fix every valid finding and explain invalid findings at completion.
 - Structure roadmaps as priority-ordered epics, not numbered phases. Use
   dependency graphs where useful; expose independent deliverables without
-  manufacturing parallel mutation authority.
+  manufacturing parallel mutation authority. Give each epic a short goal and
+  linked checklist; keep completed epics at the bottom.
 - Use only the browser session assigned to the task. Never take over an
   application active in another browser session or accept a "Use here" takeover.
   Stop that interaction and report the conflict; keep tabs, authentication, and
@@ -340,8 +395,8 @@ the harness, and suppress duplicates without agent polling.
   explicit authorization. No unsolicited issue/PR comments, review verdicts,
   reviewer changes, reactions, social posts, merges, or deployment. Authorized
   scoped artifacts and standing workflows retain their exact exceptions. Do not
-  give yourself authorship credit; inspect repository commit style before
-  writing a message, and follow its PR template.
+  give yourself authorship credit; inspect repository commit and PR-title style
+  before writing them, and follow the repository's PR template.
 - Private conversations and agent-bus messages never become public artifacts,
   whether quoted, lightly paraphrased, or attributed to their sender. Publish
   neutral technical substance, not personal circumstances, reactions, private
@@ -359,7 +414,9 @@ the harness, and suppress duplicates without agent polling.
   template, or Motivation / Solution when no template exists. Keep descriptions
   current. Transport Markdown as real bytes, not literal shell escape sequences;
   verify the remote body after publication and repair transport errors without
-  expanding content authority.
+  expanding content authority. Keep descriptions free of process journals and
+  empty sections; use concise bullets. Use `@path/to/file.md` references in
+  prose intended for Claude-compatible tooling.
 - Use the shared reporting, question, and editorial procedures where available.
   Owner-facing questions need enough context to decide and clickable resource
   links. Agent-authored Telegram content requires independent review; use a
@@ -373,7 +430,8 @@ the harness, and suppress duplicates without agent polling.
   environment-prefix overrides. Show build/test output live, avoid opaque
   long-running calls, and verify state transitions. Do not hide warnings or
   dismiss failures as merely pre-existing; triage or route them within the
-  current authorized scope.
+  current authorized scope. Keep commands focused and individually reviewable;
+  inspect working-tree and index state before destructive operations.
 
 ## Cross-session handover
 
@@ -382,11 +440,13 @@ the harness, and suppress duplicates without agent polling.
   continuation. Invoking `/handover` is a terminal stop boundary for the current
   work session: immediately pause implementation, review, merge, publication,
   tests, cleanup, and unrelated investigation; perform only bounded state reads,
-  durable todo reconciliation, artifact writing, and the final handover report.
-  The handover artifact must come from verified repository state and remain
-  temporary and untracked. For a single-repository session, write it beneath the
-  current project-role workspace's `.tmp/handoffs/`, even when that workspace is
-  the Git repository; never relocate it to a parent/global `/tmp` or inline. For
+  durable todo reconciliation, required `.gitignore` directory-pattern repairs,
+  artifact writing, and the final handover report. The ignore repair does not
+  authorize resumed implementation, cleanup, tests, or publication. The handover
+  artifact must come from verified repository state and remain temporary and
+  untracked. For a single-repository session, write it beneath the current
+  project-role workspace's `.tmp/handoffs/`, even when that workspace is the Git
+  repository; never relocate it to a parent/global `/tmp` or inline. For
   genuinely cross-repository work, use the session's shared project-role
   workspace. If one required state read is blocked, aborted, or unavailable,
   write the remaining truthful artifact and label only the missing fields

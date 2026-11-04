@@ -51,10 +51,10 @@ in an upstack walk: review-loop a branch, fold the fixes into its commit,
 advance to the next branch, and repeat to the top of the stack. Passing `stack`
 is an explicit opt-in to the amend-and-advance flow, so in stack mode **hard
 rule #4 is relaxed**: you MAY absorb fixes into the current branch before
-advancing (`but absorb`). When the walk finishes converged, **push only the
-modified branches** with `but push <branch-name>` so the fixes reach the PRs —
-see the Stack flow's final step. Submitting is not publishing: never
-`--publish`, flip draft→ready, open new PRs, or post PR comments.
+advancing (`but absorb`). Checkpoint timing and publication scope follow
+`GLOBAL_AGENTS.md`'s workspace workflow throughout the walk; final convergence
+does not defer an otherwise-required checkpoint. This skill alone does not
+authorize draft→ready changes, new PRs or PR comments.
 
 With no `stack` argument, skip this section entirely and run steps 1–11 once on
 the current branch.
@@ -116,6 +116,11 @@ as `direnv exec "$repo_root" but …` for every `but` call. Never run `but setup
 All virtual branches are applied at once, so there is no checkout/advance — you
 iterate the applied series in place.
 
+Before any stack artifact is created or written, including step 3's initial
+patch and manifest, resolve the review artifact root and complete step 1's
+directory-ignore preflight, including accounting for an owned repair. Do not
+defer this preflight until after saving the initial patch.
+
 1. Confirm workspace mode: `but status` must succeed (you are on a `gitbutler/*`
    workspace branch). If it fails with "Setup required" or similar, **stop and
    tell the user to enter GitButler workspace mode first**.
@@ -136,13 +141,13 @@ iterate the applied series in place.
    branch. If nothing was modified, skip.
 5. Same non-convergence rule: if a branch hits the 4-pass cap, stop on it — do
    **NOT** advance to the next series. Report which branch is stuck.
-6. When the entire walk converges, use `but push <branch-name>` for each
-   recorded modified branch. Verify its current selector and effective remote
-   scope before pushing. Never use bare `but push`: non-interactive mode pushes
-   all branches. If installed selector semantics differ, inspect help and stop
-   rather than broaden the push. No mode changes, draft flips, new PRs or PR
-   comments. If a branch is stuck, do not push. No checkout restoration is
-   needed.
+6. Publish checkpoints and remaining converged work according to
+   `GLOBAL_AGENTS.md`'s timing and managed-main workspace workflow, serialized
+   with the responsible workspace agent. Do not postpone a required checkpoint
+   until the entire walk finishes. Scoped fix commits do not authorize isolated
+   branch pushes. No mode changes, draft flips, new PRs or PR comments are
+   authorized by this skill. If a branch is stuck, report it; no checkout
+   restoration is needed.
 
 Per-branch summary:
 
@@ -167,6 +172,11 @@ Verify prerequisites before doing anything:
    Single-branch mode works on any Git repository. Only `stack` mode needs
    managed series; plain-Git worktrees run the single-branch loop.
 
+   Before the clean-tree gate or any artifact write, resolve the actual review
+   checkout root and apply `GLOBAL_AGENTS.md`'s directory-ignore preflight,
+   including state capture and separate repair accounting. Repeat it after
+   checkout transitions before using either temporary directory.
+
 2. For GitButler stack mode, confirm the tool is available in the authorized
    project environment, but only after verifying a managed main worktree.
 
@@ -182,12 +192,11 @@ review-core step 1. Cursor lanes are retired and must not be probed or launched.
 
 ## 2. Resolve scope & prepare workspace
 
-Determine what to review. On a stacked branch, **always diff against the
-branch's **Stack mode overrides the generic commands below.** Use the current
-virtual branch's verified name, parent SHA and head SHA from the sequential
-adapter, not the combined workspace branch or HEAD. Generate the initial diff
-and file manifest from that immutable parent/head range. Keep those review
-artifacts.
+Determine what to review. **Stack mode overrides the generic commands below.**
+Use the current virtual branch's verified name, parent SHA and head SHA from the
+sequential adapter, not the combined workspace branch or HEAD. Generate the
+initial diff and file manifest from that immutable parent/head range. Keep those
+review artifacts.
 
 Before fixing that branch, record a clean tracked/index workspace baseline and
 serialize writers. Record each fix's exact paths and content changes, including
@@ -243,17 +252,13 @@ elsewhere must add `cwd: repoRoot` to every child-agent options object in its
 example. An exported source directory is not the review checkout. Remove these
 temporary artifacts with the worktree.
 
-Before creating the invocation directory or writing any artifact, verify ignore
-coverage:
+Before creating the invocation directory or writing any artifact, complete step
+1's global preflight for this invocation path, including repair accounting
+before recording a clean fix baseline:
 
 ```bash
 git check-ignore --verbose "$repo_root/.tmp/" "$out_dir/diff.patch"
 ```
-
-Require directory-wide coverage for both paths; a file-specific match is not
-sufficient. Immediately add the missing `.tmp/` directory pattern to this
-checkout's `.gitignore` under the existing ignore-repair policy, preserve other
-rules, and recheck both paths. This grants no worktree-creation authority.
 
 Then call the registered `artifact_provenance` tool with the resolved absolute
 value of `out_dir`:
@@ -926,8 +931,9 @@ alone does not authorize an amend, commit, or push.
 flow: the GitButler wrapper, only in a verified managed main worktree, absorbs
 fixes with `but absorb` and advances through the series. Plain-Git and linked
 worktrees remain in single-branch mode. Print the per-branch summary line, then
-continue the upstack walk — do not stop here. The stack is submitted once at the
-end of the walk (Stack flow, final step), not per branch.
+continue the upstack walk — do not stop here. Follow the global checkpoint
+cadence while advancing and publish any remaining work at the end; stack mode
+does not impose an end-only publication gate.
 
 ### Claude Code review-duty harness adapter
 
@@ -993,13 +999,12 @@ invocations remain unchanged.
 4. **Single-branch mode:** never amend, commit, or push — leave the fixes
    uncommitted for the user to review unless repository policy independently
    authorizes publication. **Stack mode, only in a verified GitButler-managed
-   main worktree:** `but absorb` into each branch is expected; once the walk
-   converges, `but push <branch-name>` sends only recorded modified branches
-   after selector/remote-scope verification. Never use bare `but push`. Linked
-   and other plain-Git worktrees remain in single-branch mode. The fixes must
-   reach the PRs. Submitting existing-PR code is the job; never `--publish`,
-   flip draft→ready, open a NEW PR, post/resolve PR comments, or override branch
-   protection.
+   main worktree:** `but absorb` into each branch is expected; checkpoint timing
+   and publication scope follow `GLOBAL_AGENTS.md`'s managed-main workspace
+   workflow, not an end-only or selected-branch push. Linked and other plain-Git
+   worktrees remain in single-branch mode. The fixes must reach the PRs. This
+   skill alone does not authorize draft→ready changes, new PRs, PR comments or
+   branch-protection overrides.
 5. Use `gh issue create --body-file` with the approved body file, not inline
    escaped Markdown.
 6. Always re-verify findings against the current source before applying fixes —
@@ -1020,6 +1025,5 @@ invocations remain unchanged.
 12. Delta mode is only valid when the fix delta is small (~200 lines) and
     confined to files implicated by fixed findings — otherwise escalate to a
     full panel pass.
-13. Before artifact writes, verify directory-wide ignore coverage and create and
-    record the invocation directory through the registered tool. Repair missing
-    `.tmp/` ignore coverage immediately under the existing policy.
+13. Complete steps 1–2's global preflight and registered invocation-directory
+    creation before artifact writes; recheck after checkout transitions.

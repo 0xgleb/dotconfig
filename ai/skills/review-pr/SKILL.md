@@ -75,17 +75,13 @@ safe_branch=$(echo "<headRefName>" | tr '/' '_')
 out_dir="$repo_root/.tmp/reviews/pr-${pr_number}-${invocation_id}-${safe_branch}"
 ```
 
-Before creating the invocation directory or writing any artifact, verify ignore
-coverage:
+Before creating the invocation directory or writing any artifact, apply
+`GLOBAL_AGENTS.md`'s directory-ignore preflight, including state capture and
+separate repair accounting, to this invocation path:
 
 ```bash
 git check-ignore --verbose "$repo_root/.tmp/" "$out_dir/diff.patch"
 ```
-
-Require directory-wide coverage for both paths; a file-specific match is not
-sufficient. Immediately add the missing `.tmp/` directory pattern to this
-checkout's `.gitignore` under the existing ignore-repair policy, preserve other
-rules, and recheck both paths. This grants no worktree-creation authority.
 
 Then call the registered `artifact_provenance` tool with the resolved absolute
 value of `out_dir`:
