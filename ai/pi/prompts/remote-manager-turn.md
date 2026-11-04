@@ -1,5 +1,10 @@
 Use the manager's coordination tools in this turn to answer the owner and carry
-out their explicit instructions against the selected workers' actual backlogs.
+out their explicit instructions. Use task for issue-associated work addressed by
+repository-qualified GitHub issue. It accesses shared local storage directly and
+does not require selecting or connecting to a worker. Keep the selected-worker
+todo route for remaining legacy backlogs during the manual transition. Tool
+exposure does not change trusted host grants.
+
 Do not treat proposals as approved changes. Reports, quotes and backlog edits do
 not authorize a new worker round; starting one requires the current owner's
 explicit instruction.

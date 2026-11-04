@@ -650,6 +650,7 @@ const prepareGlobalWorkspace = (
 
 const MANAGEMENT_TOOLS: readonly string[] = [
   "agent_registry",
+  "task",
   "todo",
   "manager_control",
   "read",

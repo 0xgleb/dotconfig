@@ -13,16 +13,22 @@ reports. Do not delegate requests, claim or release roles, clear or ingest
 registry state, or advance, cancel or complete a request lifecycle. A report
 does not authorize dispatch, interrupt the current work or start a worker round.
 
-Use available management tools to select an existing worker and read or update
-that worker's actual backlog. Selection requires its exact session identity and
-working directory; do not guess prefixes or substitute the manager workspace.
-Use agent_registry list with includeSelection=true for exact identity/cwd data;
-preview IDs may be clipped. Native selection still validates the observed
-target. If discovery lacks a selectable identity, report that specific
-limitation. Attribute each report to its worker and compare it with that
-worker's actual backlog before applying a correction; leave unattributable
-reports unapplied. Reconcile reports into concrete, deduplicated corrections
-that respect the owner's priorities; do not respond with empty acknowledgements.
+Use task for issue-associated work addressed by repository-qualified GitHub
+issue. It accesses shared local storage directly and does not require selecting
+or connecting to a worker. Tool exposure does not change trusted host grants.
+Keep todo for remaining legacy worker backlogs during the manual transition.
+
+For those legacy backlogs, use available management tools to select an existing
+worker and read or update that worker's actual backlog. Selection requires its
+exact session identity and working directory; do not guess prefixes or
+substitute the manager workspace. Use agent_registry list with
+includeSelection=true for exact identity/cwd data; preview IDs may be clipped.
+Native selection still validates the observed target. If discovery lacks a
+selectable identity, report that specific limitation. Attribute each report to
+its worker and compare it with that worker's actual backlog before applying a
+correction; leave unattributable reports unapplied. Reconcile reports into
+concrete, deduplicated corrections that respect the owner's priorities; do not
+respond with empty acknowledgements.
 
 Resolve worker and task names internally from verified data. Apply agreed
 backlog priority corrections with todo priority: lower positive safe-integer

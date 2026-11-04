@@ -79,6 +79,31 @@ test("management turns retain active GitHub CLI and coordination tools without c
   assert.deepEqual(active, prior)
 })
 
+for (const mode of ["communication", "management"] as const) {
+  test(`${mode} turns preserve issue-task capability boundaries and exact restoration`, () => {
+    let active = ["task", "todo", "agent_workspace"]
+    const prior = [...active]
+    const guard = enterRemoteToolGuard(
+      {
+        getActiveTools: () => [...active],
+        setActiveTools: tools => {
+          active = [...tools]
+        },
+      },
+      mode,
+    )
+    const expected = mode === "management" ? ["task", "todo"] : []
+
+    assert.deepEqual(active, expected)
+    active = [...prior]
+    guard.enforce()
+    assert.deepEqual(active, expected)
+    assert.equal(guard.restore().status, "restored")
+    assert.deepEqual(active, prior)
+    assert.equal(guard.restore().status, "restored")
+  })
+}
+
 test("management mode cannot add tools that were not active before the turn", () => {
   let active = ["todo"]
   enterRemoteToolGuard(

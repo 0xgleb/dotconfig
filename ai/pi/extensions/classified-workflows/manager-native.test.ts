@@ -296,6 +296,7 @@ test("manager profile preserves the native editor and exposes registry managemen
   )
   assert.deepEqual(f.active.at(-1), [
     "agent_registry",
+    "task",
     "todo",
     "manager_control",
     "read",
@@ -389,6 +390,76 @@ for (const profile of [true, "global"] as const) {
       )
       assert.equal(denied.block, true, JSON.stringify(input))
     }
+  })
+
+  test(`${name} manager admits qualified issue tasks without a live worker`, async t => {
+    const f = fixture(t, profile)
+
+    const issue = { repository: "0xgleb/dotconfig", number: 170 }
+
+    await f.emit("session_start")
+    assert.ok(f.active.at(-1)?.includes("task"))
+    assert.ok(f.active.at(-1)?.includes("todo"))
+
+    if (profile === "global") {
+      const binding = getManagerBinding(f.pi, f.ctx)
+
+      assert.ok(Either.isRight(binding))
+      assert.equal(binding.right.role, "manager-unavailable")
+    }
+
+    const policy = object(
+      await f.emit("before_agent_start", {
+        systemPrompt: "Native Pi base",
+        prompt: "Read and update this issue's local tasks.",
+      }),
+    )
+
+    for (const input of [
+      { action: "read", issue, page: { limit: 1 } },
+      {
+        action: "apply",
+        issues: [issue],
+        operations: [
+          { op: "add", issue, key: "one", text: "Approved requirement" },
+        ],
+      },
+    ]) {
+      const original = structuredClone(input)
+
+      assert.equal(
+        await f.emit("tool_call", { toolName: "task", input }),
+        undefined,
+      )
+      assert.deepEqual(input, original)
+    }
+
+    const prompt = String(policy.systemPrompt).replace(/\s+/gu, " ")
+
+    assert.match(
+      prompt,
+      /Use task for issue-associated work addressed by repository-qualified GitHub issue/u,
+    )
+    assert.match(
+      prompt,
+      /does not require selecting or connecting to a worker/u,
+    )
+    assert.equal(await f.emit("tool_call", { toolName: "todo" }), undefined)
+    assert.equal(
+      object(await f.emit("tool_call", { toolName: "agent_workspace" })).block,
+      true,
+    )
+    assert.equal(
+      object(
+        await f.emit("tool_call", {
+          toolName: "agent_registry",
+          input: { action: "delegate" },
+        }),
+      ).block,
+      true,
+    )
+    assert.deepEqual(f.execs, [])
+    assert.deepEqual(f.messages, [])
   })
 
   test(`${name} manager exposes workflow for authorized management assistance`, async t => {
@@ -529,6 +600,7 @@ for (const profile of [true, "global"] as const) {
       )
     }
     for (const toolName of [
+      "task",
       "todo",
       "manager_control",
       "read",
@@ -604,6 +676,7 @@ test("global manager selects an existing worker without changing native UI or st
   )
   assert.deepEqual(f.active.at(-1), [
     "agent_registry",
+    "task",
     "todo",
     "manager_control",
     "read",
