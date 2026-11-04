@@ -23,12 +23,14 @@ support-routing policy.
 
 For shared skill and global-rule changes, agents assigned to other projects make
 the source edits directly in `~/.config` but leave them uncommitted for the
-dotconfig worker. They report the changed paths, purpose, and verification to
-that worker; they do not commit, push, create PRs, or otherwise mutate dotconfig
-VCS state. The dotconfig worker owns publication of these edits, including
-changes authored by other agents. This is an exception to the driver publication
-workflow for these shared edits only; publication in each agent's assigned
-project is unchanged.
+agent responsible for that workspace. Report the changed paths, purpose, and
+verification to that agent; do not commit, push, create PRs, or otherwise mutate
+VCS state from that shared main worktree. This restriction is scoped to the main
+worktree, not every checkout of the repository. In a separately authorized
+linked review checkout, use the normal plain-Git review, fix and publication
+workflow under the existing task authority, including for dotconfig PRs. This
+does not grant new checkout or merge authority or change publication duties in
+the agent's assigned project.
 
 Driver workers use the existing GitButler workspace in this main worktree when
 managed; verify topology once when entering the repository, not as a repeated
@@ -91,22 +93,25 @@ the harness, and suppress duplicates without agent polling.
   only in the conversation that surfaced the example. This does not authorize
   new audit tasks, expanded scope, or worker reprioritization.
 - Driver workers (agents owning implementation) must commit and push regularly
-  throughout assigned work. Open a draft PR with the first checkpoint on a
-  branch, and keep it updated as work proceeds. Incomplete or broken code and
-  failing checks are not reasons to withhold checkpoints: publish them in the
-  draft with their status stated accurately. Commit and push each completed unit
-  before starting the next. Mark a PR ready only when the requested work is
-  complete and checks pass for the published head, not unpublished local
-  changes. Review workers and managers are exempt from this driver publication
-  workflow; this exemption does not grant them coding or publication authority.
-  Never let agent-owned unstaged, untracked, staged-but-uncommitted, or unpushed
-  changes accumulate across work units. Preserve unrelated user-owned changes
-  and permitted temporary review/handoff artifacts; do not sweep them into
-  commits or delete them to make the tree clean. If publication is blocked,
-  preserve the current state and report the exact blocker; continue only bounded
-  repairs needed to unblock publication. Keep normal hooks and required safety
-  gates. Use plain Git except in a verified GitButler-managed main worktree,
-  subject to repository-local workflow rules.
+  throughout assigned work, except for cross-project shared edits left for the
+  responsible workspace agent under the routing rule above. Open a draft PR with
+  the first checkpoint on a branch, and keep it updated as work proceeds.
+  Incomplete or broken code and failing checks are not reasons to withhold
+  checkpoints: publish them in the draft with their status stated accurately.
+  Commit and push each completed unit before starting the next. Mark a PR ready
+  only when the requested work is complete and checks pass for the published
+  head, not unpublished local changes. Review workers and managers are exempt
+  from this driver publication workflow; this exemption does not grant them
+  coding or publication authority. Never let agent-owned unstaged, untracked,
+  staged-but-uncommitted, or unpushed changes accumulate across work units,
+  except for shared edits awaiting the responsible workspace agent's publication
+  under the routing rule above. Preserve unrelated user-owned changes and
+  permitted temporary review/handoff artifacts; do not sweep them into commits
+  or delete them to make the tree clean. If publication is blocked, preserve the
+  current state and report the exact blocker; continue only bounded repairs
+  needed to unblock publication. Keep normal hooks and required safety gates.
+  Use plain Git except in a verified GitButler-managed main worktree, subject to
+  repository-local workflow rules.
 - AGENTS.md files define standing rules of engagement and agent behavior. Never
   put transient task state, progress reports, one-off migration notes, temporary
   waiting conditions, session journals, or handoff notes in them; use task
