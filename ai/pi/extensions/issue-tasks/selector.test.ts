@@ -13,8 +13,6 @@ import {
 const eligibility: IssueSelectionEligibility = {
   blockers: "clear",
   dependencies: "clear",
-  ownership: "available",
-  authorization: "allowed",
 }
 
 const numeric = (value: number) => ({ kind: "number", value })
@@ -55,6 +53,37 @@ const winner = (rows: readonly { readonly issue: unknown }[]) => {
   assert.ok(result.kind === "selected")
   return result.issue
 }
+
+test("read-only selection needs factual gates, not worker permission attestations", () => {
+  const result = run(
+    snapshot([
+      candidate(1, {
+        eligibility: { blockers: "clear", dependencies: "clear" },
+      }),
+    ]),
+  )
+
+  assert.ok(result.kind === "selected")
+  assert.equal(result.issue.number, 1)
+})
+
+test("rejects unsupported ownership or permission flags instead of invented clearance", () => {
+  for (const [field, value] of [
+    ["ownership", "available"],
+    ["ownership", "current"],
+    ["authorization", "allowed"],
+    ["authorization", "denied"],
+  ] as const) {
+    assert.equal(
+      errorCode(
+        snapshot([
+          candidate(1, { eligibility: { ...eligibility, [field]: value } }),
+        ]),
+      ),
+      "invalid_input",
+    )
+  }
+})
 
 test("selects the smallest exact Priority times remaining Effort, not rank or input position", () => {
   const rows = [
@@ -109,10 +138,6 @@ for (const [field, value, reason] of [
   ["blockers", "unknown", "unknown_blockers"],
   ["dependencies", "blocked", "blocked_dependencies"],
   ["dependencies", "unknown", "unknown_dependencies"],
-  ["ownership", "other", "owned_elsewhere"],
-  ["ownership", "unknown", "unknown_ownership"],
-  ["authorization", "denied", "unauthorized"],
-  ["authorization", "unknown", "unknown_authorization"],
 ] as const) {
   test(`${field} ${value} excludes the issue despite a smaller product`, () => {
     const rows = [
@@ -168,15 +193,6 @@ test("rejects independent scheduling states and implicit parent exclusions", () 
   )
 })
 
-test("current-worker ownership stays eligible without creating execution authority", () => {
-  assert.equal(
-    winner([
-      candidate(1, { eligibility: { ...eligibility, ownership: "current" } }),
-    ]).number,
-    1,
-  )
-})
-
 test("missing effort is explicit refinement rather than an invented weight", () => {
   const result = run(
     snapshot([
@@ -204,8 +220,6 @@ test("exclusions precede refinement, with fixed complete reason ordering", () =>
         eligibility: {
           blockers: "blocked",
           dependencies: "blocked",
-          ownership: "other",
-          authorization: "denied",
         },
       }),
     ]),
@@ -218,8 +232,6 @@ test("exclusions precede refinement, with fixed complete reason ordering", () =>
     "closed",
     "blocked",
     "blocked_dependencies",
-    "owned_elsewhere",
-    "unauthorized",
     "unranked",
   ])
 })
@@ -277,7 +289,7 @@ test("rejects malformed tags, missing gates, caller extras and invalid identitie
     candidate(1, { priority: { kind: "default" } }),
     candidate(1, { effort: null }),
     candidate(1, { eligibility: {} }),
-    candidate(1, { eligibility: { ...eligibility, authorization: "maybe" } }),
+    candidate(1, { eligibility: { ...eligibility, dependencies: "maybe" } }),
     candidate(1, { issue: { repository: "not-a-repository", number: 1 } }),
     candidate(1, { issue: { repository: "owner/repository", number: 0 } }),
     candidate(1, { authority: "owner" }),
