@@ -24,10 +24,6 @@ export type IssuePriority = typeof IssuePrioritySchema.Type
 export interface IssueSelectionEligibility {
   readonly blockers: "clear" | "blocked" | "unknown"
   readonly dependencies: "clear" | "blocked" | "unknown"
-  /** Assignment relative to the worker for whom the host is selecting. */
-  readonly ownership: "available" | "current" | "other" | "unknown"
-  /** Observed owner scope for that worker, never an execution grant. */
-  readonly authorization: "allowed" | "denied" | "unknown"
 }
 
 export interface IssueSelectionCandidate {
@@ -50,10 +46,6 @@ export type IssueIneligibilityReason =
   | "unknown_blockers"
   | "blocked_dependencies"
   | "unknown_dependencies"
-  | "owned_elsewhere"
-  | "unknown_ownership"
-  | "unauthorized"
-  | "unknown_authorization"
   | "unranked"
 
 export type IssueSelectionAssessment =
@@ -102,7 +94,8 @@ export class IssueSelectionError extends Data.TaggedError(
 /**
  * Coverage is caller-attested for the explicit scope, not proof of complete
  * Project pagination. Supply every scoped issue, including ineligible rows.
- * Selection neither persists assignments nor replaces current execution checks.
+ * Selection is a recommendation, not an execution grant. It neither persists
+ * assignments nor replaces current scope, worker, stop or deadline checks.
  */
 export const selectIssueAssignment = (
   input: unknown,
@@ -134,8 +127,6 @@ const NumberInputSchema = Schema.Union(
 const EligibilitySchema = Schema.Struct({
   blockers: Schema.Literal("clear", "blocked", "unknown"),
   dependencies: Schema.Literal("clear", "blocked", "unknown"),
-  ownership: Schema.Literal("available", "current", "other", "unknown"),
-  authorization: Schema.Literal("allowed", "denied", "unknown"),
 })
 
 const CandidateSchema = Schema.Struct({
@@ -286,11 +277,6 @@ const assessCandidate = (
     reasons.push("blocked_dependencies")
   if (eligibility.dependencies === "unknown")
     reasons.push("unknown_dependencies")
-  if (eligibility.ownership === "other") reasons.push("owned_elsewhere")
-  if (eligibility.ownership === "unknown") reasons.push("unknown_ownership")
-  if (eligibility.authorization === "denied") reasons.push("unauthorized")
-  if (eligibility.authorization === "unknown")
-    reasons.push("unknown_authorization")
 
   if (priority.kind === "unset" || reasons.length > 0) {
     if (priority.kind === "unset") reasons.push("unranked")
