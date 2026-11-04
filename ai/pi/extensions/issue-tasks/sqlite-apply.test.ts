@@ -23,18 +23,20 @@ import { MAX_TRANSITION_TEXT } from "./transition.ts"
 import type { MutationBatchId, TaskFilter } from "./model.ts"
 
 const run = Effect.runPromise
+
 const parent = fileURLToPath(
   new URL("../../../../.tmp/issue-plans-tests/", import.meta.url),
 )
+
 const a = { repository: "0xgleb/dotconfig", number: 1 }
 const b = { repository: "dataclique/yielduck", number: 1 }
+
 const issue = (raw = a) => {
   const value = decodeIssueReference(raw)
-
   assert.ok(Either.isRight(value))
-
   return value.right
 }
+
 const context = (
   requestId: string,
   cancellation: TaskApplyContext["cancellation"] = "forbidden",
@@ -44,18 +46,22 @@ const context = (
   now: 1_000,
   cancellation,
 })
+
 const added = (key: string, target = a) => ({
   issue: target,
   task: { kind: "added", key },
 })
+
 const existing = (id: string, target = a) => ({
   issue: target,
   task: { kind: "existing", id },
 })
+
 const batch = (operations: readonly unknown[], issues = [a, b]) => ({
   issues,
   operations,
 })
+
 const fixture = async (work: (path: string, root: string) => Promise<void>) => {
   mkdirSync(parent, { recursive: true, mode: 0o700 })
   const root = mkdtempSync(join(parent, "apply-"))
@@ -66,6 +72,7 @@ const fixture = async (work: (path: string, root: string) => Promise<void>) => {
     rmSync(root, { recursive: true, force: true })
   }
 }
+
 const withStore = async <A>(
   path: string,
   work: (store: SqliteTaskStore) => Promise<A>,
@@ -80,6 +87,7 @@ const withStore = async <A>(
     await run(store.close())
   }
 }
+
 const sql = <A>(path: string, work: (database: DatabaseSync) => A): A => {
   const database = new DatabaseSync(path)
 
@@ -89,16 +97,19 @@ const sql = <A>(path: string, work: (database: DatabaseSync) => A): A => {
     database.close()
   }
 }
+
 interface ObservedRead {
   readonly query: string
   readonly method: "get" | "all"
   readonly result: unknown
 }
+
 const observeReads = async <A>(
   accepts: (query: string) => boolean,
   work: () => Promise<A>,
 ): Promise<{ readonly value: A; readonly reads: readonly ObservedRead[] }> => {
   const reads: ObservedRead[] = []
+
   const prepare = DatabaseSync.prototype.prepare
   DatabaseSync.prototype.prepare = function (query) {
     const statement = prepare.call(this, query)
@@ -106,11 +117,11 @@ const observeReads = async <A>(
     if (accepts(query))
       for (const method of ["get", "all"] as const) {
         const read = statement[method]
+
         Object.defineProperty(statement, method, {
           value: (...parameters: readonly unknown[]) => {
             const result: unknown = Reflect.apply(read, statement, parameters)
             reads.push({ query, method, result })
-
             return result
           },
         })
@@ -125,6 +136,7 @@ const observeReads = async <A>(
     DatabaseSync.prototype.prepare = prepare
   }
 }
+
 const materializedStrings = (
   reads: readonly ObservedRead[],
   field?: string,
@@ -153,22 +165,23 @@ const materializedStrings = (
     typeof value === "string" ? [value] : [],
   )
 }
+
 const receiptJson = (path: string, id: MutationBatchId): string =>
   sql(path, database => {
     const row = database
       .prepare("SELECT result_json FROM issue_plan_batches WHERE id = ?")
       .get(id)
-
     assert.ok(row && typeof row.result_json === "string")
-
     return row.result_json
   })
+
 const writeReceiptJson = (path: string, id: MutationBatchId, json: string) =>
   sql(path, database =>
     database
       .prepare("UPDATE issue_plan_batches SET result_json = ? WHERE id = ?")
       .run(json, id),
   )
+
 const historyJson = (path: string, id: MutationBatchId, index = 0): string =>
   sql(path, database => {
     const row = database
@@ -176,11 +189,10 @@ const historyJson = (path: string, id: MutationBatchId, index = 0): string =>
         "SELECT payload_json FROM issue_plan_history WHERE batch_id = ? AND operation_index = ?",
       )
       .get(id, index)
-
     assert.ok(row && typeof row.payload_json === "string")
-
     return row.payload_json
   })
+
 const writeHistoryJson = (
   path: string,
   id: MutationBatchId,
@@ -194,6 +206,7 @@ const writeHistoryJson = (
       )
       .run(json, id, index),
   )
+
 const forgeReceiptFields = (
   path: string,
   id: MutationBatchId,
@@ -215,6 +228,7 @@ const forgeReceiptFields = (
   )
 
   changed.fields = fields
+
   const tampered = JSON.stringify(receipt)
   writeReceiptJson(path, id, tampered)
 
@@ -252,7 +266,6 @@ const errorCode = async <T, E extends { readonly code: string }>(
   expected: string,
 ) => {
   const value = await run(Effect.either(effect))
-
   assert.ok(Either.isLeft(value))
   assert.equal(value.left.code, expected)
 }
@@ -315,6 +328,7 @@ for (const change of ["add", "edit", "block"]) {
       await withStore(path, async store => {
         const largeText = "x".repeat(131_072)
         assert.equal(largeText.length * 64, MAX_TRANSITION_TEXT)
+
         const ids: string[] = []
         for (let index = 0; index < 64; index++) {
           const seeded = await run(
@@ -337,6 +351,7 @@ for (const change of ["add", "edit", "block"]) {
           assert.ok(created)
           ids.push(created.id)
         }
+
         const small = await run(
           store.apply(
             batch([{ op: "add", issue: a, key: "small", text: "x" }], [a]),
@@ -346,12 +361,14 @@ for (const change of ["add", "edit", "block"]) {
         const target = small.created[0]
         assert.ok(target)
         ids.push(target.id)
+
         const noOps = (targets: readonly string[]) =>
           targets.map(id => ({
             op: "status",
             target: existing(id),
             status: "todo",
           }))
+
         const boundaryOperation =
           change === "add"
             ? { op: "add", issue: a, key: "boundary", text: "x" }
@@ -369,6 +386,7 @@ for (const change of ["add", "edit", "block"]) {
           ...ids,
           ...boundary.created.map(created => created.id),
         ]
+
         const overflowOperation =
           change === "add"
             ? { op: "add", issue: a, key: "overflow", text: "x" }
@@ -388,6 +406,7 @@ for (const change of ["add", "edit", "block"]) {
         assert.ok(Option.isSome(after))
         assert.equal(after.value.revision, boundary.issues[0]?.revision)
         assert.equal(after.value.tasks.length, loadedIds.length)
+
         const unchanged = after.value.tasks.find(row => row.id === target.id)
         assert.ok(unchanged)
         assert.equal(unchanged.text, change === "edit" ? "xx" : "x")
@@ -427,6 +446,7 @@ test("an atomic multi-issue write persists stable tasks, edges, revisions and pr
       assert.equal(saved.receipt, "committed")
       assert.equal(saved.eventCount, 4)
       assert.equal(saved.issues.length, 2)
+
       const first = saved.created.find(item => item.key === "first")
       const second = saved.created.find(item => item.key === "second")
       assert.ok(first && second)
@@ -470,6 +490,7 @@ test("cross-issue transfer preserves task identity, state, dependency edges and 
     let dependencyId = ""
     let movedId = ""
     let residentId = ""
+
     const seed = batch([
       { op: "add", issue: a, key: "dependency", text: "Source dependency" },
       {
@@ -503,6 +524,7 @@ test("cross-issue transfer preserves task identity, state, dependency edges and 
       dependencyId = dependency.id
       movedId = moved.id
       residentId = resident.id
+
       let priorHistory: readonly unknown[] = []
       sql(path, database => {
         priorHistory = database
@@ -525,6 +547,7 @@ test("cross-issue transfer preserves task identity, state, dependency edges and 
         { issue: issue(b), id: movedId, revision: 2, fields: ["issue"] },
       ])
       assert.equal(saved.issues.length, 2)
+
       for (const qualified of [a, b]) {
         assert.equal(
           saved.issues.find(
@@ -535,6 +558,7 @@ test("cross-issue transfer preserves task identity, state, dependency edges and 
           2,
         )
       }
+
       const source = await run(store.readTasks(issue(), { limit: 10 }))
       const destination = await run(store.readTasks(issue(b), { limit: 10 }))
       assert.ok(Option.isSome(source) && Option.isSome(destination))
@@ -558,10 +582,12 @@ test("cross-issue transfer preserves task identity, state, dependency edges and 
           .all()
         assert.deepEqual(history.slice(0, priorHistory.length), priorHistory)
         assert.equal(history.length, priorHistory.length + 1)
+
         const transfer = history.at(-1)
         assert.ok(transfer && typeof transfer.payload_json === "string")
         assert.equal(transfer.task_id, movedId)
         assert.equal(transfer.kind, "transfer")
+
         const payload: unknown = JSON.parse(transfer.payload_json)
         assert.deepEqual(payload, {
           op: "transfer",
@@ -570,6 +596,7 @@ test("cross-issue transfer preserves task identity, state, dependency edges and 
           id: movedId,
           splitFrom: a,
         })
+
         const edges = database
           .prepare("SELECT task_id, depends_on_id FROM issue_plan_dependencies")
           .all()
@@ -658,6 +685,7 @@ for (const omittedIndex of [0, 1]) {
         )
         const task = seed.created[0]
         assert.ok(task)
+
         const transfer = batch([
           { op: "transfer", target: existing(task.id), toIssue: b },
         ])
@@ -672,6 +700,7 @@ for (const omittedIndex of [0, 1]) {
             .prepare("SELECT result_json FROM issue_plan_batches WHERE id = ?")
             .get(saved.batchId)
           assert.ok(row && typeof row.result_json === "string")
+
           const receipt: unknown = JSON.parse(row.result_json)
           assert.ok(
             typeof receipt === "object" &&
@@ -713,6 +742,7 @@ test("task transfer initializes destination issue state without a separate creat
       )
       const task = initial.created[0]
       assert.ok(task)
+
       const moved = await run(
         store.apply(
           batch([{ op: "transfer", target: existing(task.id), toIssue: b }]),
@@ -725,6 +755,7 @@ test("task transfer initializes destination issue state without a separate creat
         { issue: b, revision: 1 },
       ])
       assert.deepEqual(moved.created, [])
+
       const source = await run(store.readTasks(issue(), { limit: 10 }))
       const destination = await run(store.readTasks(issue(b), { limit: 10 }))
       assert.ok(Option.isSome(source) && Option.isSome(destination))
@@ -828,6 +859,7 @@ test("host request identities replay saved receipts but reject changed batches",
     await withStore(path, async store => {
       const saved = await run(store.apply(input, context("once")))
       batchId = saved.batchId
+
       const created = saved.created[0]
       assert.ok(created)
       taskId = created.id
@@ -879,6 +911,7 @@ test("request replay rejects a changed-field summary inconsistent with add histo
         "blocker",
         "dependsOn",
       ])
+
       const before = await run(store.readTasks(issue(), { limit: 10 }))
       sql(path, database => {
         const row = database
@@ -991,6 +1024,7 @@ for (const kind of ["status", "block", "transfer"]) {
           )
           const task = initial.created[0]
           assert.ok(task)
+
           const operation =
             kind === "status"
               ? { op: "status", target: existing(task.id), status: "doing" }
@@ -1007,6 +1041,7 @@ for (const kind of ["status", "block", "transfer"]) {
           const changed = saved.changed[0]
           assert.ok(changed)
           assert.equal(changed.fields.length, 1)
+
           const owner = kind === "transfer" ? issue(b) : issue()
           const before = await run(store.readTasks(owner, { limit: 10 }))
           const fields =
@@ -1056,6 +1091,7 @@ for (const mode of ["text", "dependsOn", "both"]) {
         const dependency = seeded.created.find(row => row.key === "dependency")
         const task = seeded.created.find(row => row.key === "work")
         assert.ok(dependency && task)
+
         const input = batch(
           [
             {
@@ -1072,6 +1108,7 @@ for (const mode of ["text", "dependsOn", "both"]) {
         )
         const request = context("edit-fields")
         const saved = await run(store.apply(input, request))
+
         const fields = mode === "both" ? ["text", "dependsOn"] : [mode]
         assert.deepEqual(saved.changed[0]?.fields, fields)
         if (mode !== "dependsOn")
@@ -1153,6 +1190,7 @@ test("receipt field unions retain net-zero events but exclude no-op edit request
       const second = seeded.created.find(row => row.key === "second")
       const task = seeded.created.find(row => row.key === "work")
       assert.ok(first && second && task)
+
       const noOp = {
         op: "edit",
         target: existing(task.id),
@@ -1182,6 +1220,7 @@ test("receipt field unions retain net-zero events but exclude no-op edit request
       const request = context("union-net-zero")
       const saved = await run(store.apply(input, request))
       assert.equal(saved.eventCount, 8)
+
       const changed = saved.changed[0]
       assert.ok(changed)
       assert.deepEqual(changed.fields, ["text", "status", "blocker", "issue"])
@@ -1229,6 +1268,7 @@ test("receipt field reconciliation is per task rather than a batch-wide union", 
       const first = seeded.created[0]
       const second = seeded.created[1]
       assert.ok(first && second)
+
       const input = batch(
         [
           { op: "edit", target: existing(first.id), text: "Updated first" },
@@ -1245,6 +1285,7 @@ test("receipt field reconciliation is per task rather than a batch-wide union", 
       assert.deepEqual(saved.changed[0]?.fields, ["text"])
       assert.deepEqual(saved.changed[1]?.fields, ["blocker"])
       forgeReceiptFields(path, saved.batchId, ["blocker"], 0)
+
       const forged = forgeReceiptFields(path, saved.batchId, ["text"], 1)
       const before = await run(store.readTasks(issue(), { limit: 10 }))
       await errorCode(store.apply(input, request), "corrupt_state")
@@ -1331,6 +1372,7 @@ for (const noOp of ["text", "empty dependencies", "reordered dependencies"]) {
         const second = seed.created[1]
         const task = seed.created[2]
         assert.ok(first && second && task)
+
         const input = batch(
           [
             {
@@ -1416,6 +1458,7 @@ for (const kind of ["status", "block"]) {
         )
         const task = seed.created[0]
         assert.ok(task)
+
         const noOp =
           kind === "status"
             ? { op: "status", target: existing(task.id), status: "todo" }
@@ -1496,6 +1539,7 @@ for (const kind of ["text", "dependsOn", "status", "block"]) {
         const second = seed.created[1]
         const task = seed.created[2]
         assert.ok(first && second && task)
+
         const operation =
           kind === "text"
             ? { op: "edit", target: existing(task.id), text: "Updated" }
@@ -1524,6 +1568,7 @@ for (const kind of ["text", "dependsOn", "status", "block"]) {
           assert.ok(typeof payload === "object" && payload !== null)
           if (kind === "text" || kind === "dependsOn") {
             assert.ok("changes" in payload && Array.isArray(payload.changes))
+
             const change: unknown = payload.changes[0]
             assert.ok(
               typeof change === "object" &&
@@ -1565,6 +1610,7 @@ test("edit receipt resolves creation-qualified dependency aliases after dependen
       )
       const task = seed.created[0]
       assert.ok(task)
+
       const input = batch([
         { op: "add", issue: a, key: "dependency", text: "New dependency" },
         { op: "transfer", target: added("dependency"), toIssue: b },
@@ -1625,6 +1671,7 @@ for (const corruption of [
         const dependency = seed.created[0]
         const task = seed.created[1]
         assert.ok(dependency && task)
+
         const input = batch(
           [{ op: "edit", target: existing(task.id), text: "Updated" }],
           [a],
@@ -1633,6 +1680,7 @@ for (const corruption of [
         const saved = await run(store.apply(input, request))
         const before = await run(store.readTasks(issue(), { limit: 10 }))
         const receiptBefore = receiptJson(path, saved.batchId)
+
         sql(path, database => {
           const row = database
             .prepare(
@@ -1724,6 +1772,7 @@ for (const corruption of ["task identities", "event count"] as const) {
           assert.ok("changed" in saved && "created" in saved)
           for (const rows of [saved.changed, saved.created]) {
             assert.ok(Array.isArray(rows))
+
             const first: unknown = rows[0]
             assert.ok(
               typeof first === "object" && first !== null && "id" in first,
@@ -1952,7 +2001,6 @@ for (const field of ["text", "repository", "plan_id"] as const) {
                 .all(main.id, 1_001)
                 .map(row => {
                   assert.ok(typeof row.detail === "string")
-
                   return row.detail
                 })
 
@@ -2022,7 +2070,6 @@ test("incremental history preserves sparse operation indices and indexed reads a
             .all(...parameters)
             .map(row => {
               assert.ok(typeof row.detail === "string")
-
               return row.detail
             })
           assert.ok(
@@ -2152,6 +2199,7 @@ for (const [field, units] of [
         const input = batch([{ op: "add", issue: a, key: "one", text: "One" }])
         const request = context("bounded-history-header")
         const saved = await run(store.apply(input, request))
+
         const envelope = 3 * units
         const oversized = "x".repeat(envelope + 1)
         sql(path, database => {
@@ -2207,6 +2255,7 @@ test("transfer history bounds the complete NUL-suffixed payload before materiali
       ])
       const request = context("bounded-transfer-history")
       const saved = await run(store.apply(input, request))
+
       const envelope = 3 * 4_096
       writeHistoryJson(
         path,
@@ -2330,6 +2379,7 @@ test("current task snapshot bounds blockers before driver materialization", asyn
       )
       const created = saved.created[0]
       assert.ok(created)
+
       const envelope = 3 * 131_072
       sql(path, database =>
         database
@@ -2470,6 +2520,7 @@ test("receipt JSON is bounded before driver materialization", async () =>
       const input = batch([{ op: "add", issue: a, key: "one", text: "One" }])
       const request = context("bounded-receipt-json")
       const saved = await run(store.apply(input, request))
+
       const envelope = 3 * 1_048_576
       writeReceiptJson(path, saved.batchId, " ".repeat(envelope + 1))
       const observed = await observeReads(
@@ -2540,6 +2591,7 @@ for (const encoding of ["ascii", "nul", "unicode"] as const) {
         const input = batch([{ op: "add", issue: a, key: "one", text: "One" }])
         const request = context("bounded-fingerprint")
         const saved = await run(store.apply(input, request))
+
         const envelope = 3 * 1_048_576
         const fingerprint =
           encoding === "unicode"
@@ -2596,7 +2648,9 @@ for (const [field, units] of [
           const first = initial.value.tasks[0]
           const second = initial.value.tasks[1]
           assert.ok(first && second)
+
           const target = pageKind === "first" ? first : second
+
           const envelope = 3 * units
           const oversized = "x".repeat(envelope + 1)
           sql(path, database => {
@@ -2653,6 +2707,7 @@ for (const field of ["text", "blocker"] as const) {
         assert.ok(Option.isSome(initial))
         const second = initial.value.tasks[1]
         assert.ok(second)
+
         const envelope = 3 * 131_072
         sql(path, database => {
           database
@@ -2708,6 +2763,7 @@ const pageFilters: readonly (TaskFilter | undefined)[] = [
   { status: "todo", blocked: true },
   { status: "todo", blocked: false },
 ]
+
 for (const filter of pageFilters) {
   for (const pageKind of ["first", "next"] as const) {
     test(`task page ordering remains on the source index: ${pageKind}/${JSON.stringify(filter)}`, async () =>
@@ -2765,7 +2821,6 @@ for (const filter of pageFilters) {
               .all(...parameters)
               .map(row => {
                 assert.ok(typeof row.detail === "string")
-
                 return row.detail
               })
           })
@@ -2835,6 +2890,7 @@ for (const encoding of ["UTF-8", "UTF-16le", "UTF-16be"] as const) {
         )
         assert.ok(Option.isSome(second))
         assert.equal(second.value.next, null)
+
         const tasks = [...first.value.tasks, ...second.value.tasks]
         assert.equal(tasks.length, 2)
         assert.equal(tasks.find(task => task.id === created.id)?.text, bmp)
@@ -2842,6 +2898,7 @@ for (const encoding of ["UTF-8", "UTF-16le", "UTF-16be"] as const) {
           tasks.find(task => task.id === created.id)?.blocker,
           supplementary,
         )
+
         const other = tasks.find(task => task.id !== created.id)
         assert.ok(other)
         assert.equal(other.text, supplementary)
@@ -2872,6 +2929,7 @@ for (const issueState of ["new", "existing"] as const) {
           ])
         })()
         const before = await run(store.readTasks(issue(), { limit: 10 }))
+
         const snapshot = () =>
           sql(path, database => ({
             counts: [
@@ -2887,6 +2945,7 @@ for (const issueState of ["new", "existing"] as const) {
               .prepare("SELECT result_json FROM issue_plan_batches ORDER BY id")
               .all(),
           }))
+
         const beforeRows = snapshot()
         sql(path, database =>
           database.exec(`
@@ -2916,6 +2975,7 @@ for (const issueState of ["new", "existing"] as const) {
 
         const saved = await run(store.apply(input, context("lowered-receipt")))
         assert.equal(saved.issues[0]?.revision, issueState === "new" ? 1 : 2)
+
         const changed = saved.changed[0]
         assert.ok(changed)
         await run(
@@ -2968,6 +3028,7 @@ for (const verification of ["available", "unavailable"] as const) {
       const input = batch([
         { op: "add", issue: a, key: "once", text: "Only once" },
       ])
+
       const exec = DatabaseSync.prototype.exec
       const prepare = DatabaseSync.prototype.prepare
       let armed = true
@@ -2988,6 +3049,7 @@ for (const verification of ["available", "unavailable"] as const) {
               acknowledgementLost = true
               throw new Error("fixture lost commit acknowledgement")
             }
+
             return exec.call(this, command)
           },
         )
@@ -3014,6 +3076,7 @@ for (const verification of ["available", "unavailable"] as const) {
               if (verification === "unavailable")
                 throw new Error("fixture recovery read unavailable")
             }
+
             return prepare.call(this, command)
           },
         )
@@ -3025,6 +3088,7 @@ for (const verification of ["available", "unavailable"] as const) {
         if (verification === "available") {
           assert.ok(Either.isRight(result))
           assert.equal(result.right.receipt, "recovered")
+
           const created = result.right.created[0]
           assert.ok(created)
           createdId = created.id
@@ -3083,6 +3147,7 @@ for (const evidence of ["missing database", "different batch"] as const) {
             if (armed && command === "COMMIT") {
               armed = false
               exec.call(this, command)
+
               const row = this.prepare(
                 "SELECT id, result_json FROM issue_plan_batches",
               ).get()
@@ -3095,6 +3160,7 @@ for (const evidence of ["missing database", "different batch"] as const) {
                 renameSync(path, join(root, "preserved.sqlite"))
               } else {
                 const replacement = "30000000-0000-4000-8000-000000000999"
+
                 const result: unknown = JSON.parse(row.result_json)
                 assert.ok(
                   typeof result === "object" &&
@@ -3114,6 +3180,7 @@ for (const evidence of ["missing database", "different batch"] as const) {
                 "fixture lost acknowledgement with unavailable evidence",
               )
             }
+
             return exec.call(this, command)
           },
         )
@@ -3282,8 +3349,10 @@ test("cancellation at successful COMMIT does not roll back durable tasks", async
 
       assert.equal(committed, true)
       assert.equal(rollbacks, 0)
+
       const replay = await run(store.apply(input, context("cancel-at-commit")))
       assert.equal(replay.receipt, "replayed")
+
       const page = await run(store.readTasks(issue(), { limit: 10 }))
       assert.ok(Option.isSome(page))
       assert.equal(page.value.tasks.length, 1)
@@ -3366,6 +3435,7 @@ test(
       const second = await run(
         openSqliteTaskStore({ databasePath: path, busyTimeoutMs: 0 }),
       )
+
       const exec = DatabaseSync.prototype.exec
       let busyAttempts = 0
       t.mock.method(
@@ -3512,6 +3582,7 @@ test("a cyclic final batch is rejected without changing tasks or history", async
 test("version-two history upgrades without losing registry data, history or old receipts", async () =>
   fixture(async (path, root) => {
     const registry = makeSqliteRegistryStore(root)
+
     const seed = batch(
       [
         {
@@ -3524,6 +3595,7 @@ test("version-two history upgrades without losing registry data, history or old 
       [a],
     )
     const seedContext = context("version-two-seed")
+
     let retainedId = ""
     let priorHistory: readonly unknown[] = []
     try {
@@ -3558,9 +3630,11 @@ test("version-two history upgrades without losing registry data, history or old 
           ),
         )
         assert.equal(moved.eventCount, 1)
+
         const replay = await run(store.apply(seed, seedContext))
         assert.equal(replay.receipt, "replayed")
         assert.equal(replay.created[0]?.id, retainedId)
+
         const destination = await run(store.readTasks(issue(b), { limit: 10 }))
         assert.ok(Option.isSome(destination))
         assert.equal(destination.value.tasks[0]?.id, retainedId)
@@ -3772,6 +3846,7 @@ test("a new schema upgrades the real version-one namespace without changing regi
         ),
       )
       assert.equal(saved.created.length, 1)
+
       const page = await run(store.readTasks(issue(), { limit: 10 }))
       assert.ok(Option.isSome(page))
       assert.equal(page.value.tasks.length, 2)

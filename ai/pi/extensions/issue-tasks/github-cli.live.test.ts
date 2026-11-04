@@ -14,6 +14,7 @@ test(
     const reader = createGitHubCliReader({
       cwd: fileURLToPath(new URL("../../../../", import.meta.url)),
     })
+
     const page = await Effect.runPromise(
       reader.list({
         repository: "0xgleb/dotconfig",

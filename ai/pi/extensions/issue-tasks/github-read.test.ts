@@ -23,7 +23,9 @@ const query: GitHubIssueListQuery = {
   state: "open",
   page: { limit: 1 },
 }
+
 const cursor = "Y3Vyc29yOnYyOpK0MjAyNi0wMy0xOFQxOToxNTowMFrO9Daxdg=="
+
 // Selected fields from the verified read-only GitHub response; no body or comments.
 const recorded = {
   data: {
@@ -45,31 +47,31 @@ const recorded = {
     },
   },
 }
+
 const listExecution = (
   request: GitHubIssueQueryExecution,
 ): GitHubIssueListExecution => {
   assert.ok(request.document === GITHUB_ISSUE_LIST_DOCUMENT)
-
   return request
 }
+
 const failure = (
   payload: unknown,
   code: GitHubReadError["code"],
   input = query,
 ) => {
   const decoded = decodeGitHubIssueListPage(payload, input)
-
   assert.ok(Either.isLeft(decoded))
   assert.equal(decoded.left.code, code)
 }
 
 test("GitHub reader executes one fixed list query with validated frozen variables", async () => {
   const calls: GitHubIssueListExecution[] = []
+
   const reader = createGitHubIssueReader({
     executeQuery: request =>
       Effect.sync(() => {
         calls.push(listExecution(request))
-
         return JSON.stringify(recorded)
       }),
   })
@@ -107,6 +109,7 @@ test("GitHub reader executes one fixed list query with validated frozen variable
 
 test("GitHub reader forwards the real continuation to the independently recorded next page", async () => {
   const nextCursor = "Y3Vyc29yOnYyOpK0MjAyNi0wNS0wMVQxOTowMzoyNlrPAAAAAQQ-dio="
+
   const following = {
     data: {
       repository: {
@@ -127,12 +130,13 @@ test("GitHub reader forwards the real continuation to the independently recorded
       },
     },
   }
+
   const requests: GitHubIssueListExecution[] = []
+
   const reader = createGitHubIssueReader({
     executeQuery: request =>
       Effect.sync(() => {
         requests.push(listExecution(request))
-
         return JSON.stringify(following)
       }),
   })
@@ -165,11 +169,11 @@ test("GitHub reader encodes a closed-only query without widening its state filte
   first.state = "CLOSED"
 
   const requests: GitHubIssueListExecution[] = []
+
   const reader = createGitHubIssueReader({
     executeQuery: request =>
       Effect.sync(() => {
         requests.push(listExecution(request))
-
         return JSON.stringify(response)
       }),
   })
@@ -184,6 +188,7 @@ test("GitHub reader encodes a closed-only query without widening its state filte
 
 test("GitHub reader rejects invalid input before invoking the host query port", async () => {
   let calls = 0
+
   const reader = createGitHubIssueReader({
     executeQuery: () =>
       Effect.sync(() => {
@@ -204,6 +209,7 @@ test("GitHub reader rejects invalid input before invoking the host query port", 
 for (const stop of ["failure", "defect"] as const) {
   test(`GitHub reader projects host ${stop} without private diagnostics or retries`, async () => {
     let calls = 0
+
     const reader = createGitHubIssueReader({
       executeQuery: () => {
         calls += 1
@@ -235,9 +241,12 @@ test(
   { timeout: 5_000 },
   async t => {
     const entered = await Effect.runPromise(Deferred.make<void>())
+
     const controller = new AbortController()
     t.signal.addEventListener("abort", () => controller.abort(), { once: true })
+
     let released = false
+
     const reader = createGitHubIssueReader({
       executeQuery: () =>
         Deferred.succeed(entered, undefined).pipe(
@@ -249,9 +258,11 @@ test(
           ),
         ),
     })
+
     const pending = Effect.runPromiseExit(reader.list(query), {
       signal: controller.signal,
     })
+
     try {
       const started = await Promise.race([
         Effect.runPromise(Deferred.await(entered)).then(() => true),
@@ -273,6 +284,7 @@ test(
 
 test("pre-aborted GitHub reads perform no host query", async () => {
   let calls = 0
+
   const reader = createGitHubIssueReader({
     executeQuery: () =>
       Effect.sync(() => {
@@ -280,8 +292,10 @@ test("pre-aborted GitHub reads perform no host query", async () => {
         return JSON.stringify(recorded)
       }),
   })
+
   const controller = new AbortController()
   controller.abort()
+
   for (const input of [query, { ...query, page: { limit: 0 } }]) {
     const result = await Effect.runPromiseExit(reader.list(input), {
       signal: controller.signal,
@@ -289,6 +303,7 @@ test("pre-aborted GitHub reads perform no host query", async () => {
 
     assert.ok(Exit.isFailure(result) && Cause.isInterruptedOnly(result.cause))
   }
+
   assert.equal(calls, 0)
 })
 
@@ -304,6 +319,7 @@ test("GitHub reader preserves typed readback failures after one successful host 
     ["x".repeat(MAX_GITHUB_READ_BYTES + 1), "capacity"],
   ] as const) {
     let calls = 0
+
     const reader = createGitHubIssueReader({
       executeQuery: () =>
         Effect.sync(() => {
@@ -311,6 +327,7 @@ test("GitHub reader preserves typed readback failures after one successful host 
           return payload
         }),
     })
+
     const result = await Effect.runPromise(Effect.either(reader.list(query)))
 
     assert.ok(Either.isLeft(result))
@@ -325,6 +342,7 @@ test("GitHub issue list queries require explicit canonical scope and detached pa
     state: "open",
     page: { limit: 1, after: cursor },
   }
+
   const decoded = decodeGitHubIssueListQuery(source)
 
   assert.ok(Either.isRight(decoded))
@@ -347,6 +365,7 @@ test("GitHub issue pages decode the recorded qualified response and its real con
   const decoded = decodeGitHubIssueListPage(JSON.stringify(recorded), query)
 
   assert.ok(Either.isRight(decoded))
+
   const issue = decodeIssueReference({
     repository: query.repository,
     number: 19,
@@ -381,6 +400,7 @@ test("GitHub issue pages decode the recorded qualified response and its real con
 test("GitHub terminal pages may retain their last non-null cursor", () => {
   const response = structuredClone(recorded)
   response.data.repository.issues.pageInfo.hasNextPage = false
+
   const decoded = decodeGitHubIssueListPage(JSON.stringify(response), query)
 
   assert.ok(Either.isRight(decoded))
@@ -400,8 +420,10 @@ test("GitHub nullable nodes and unavailable repositories never become empty comp
         },
       },
     }
+
     failure(JSON.stringify(response), "partial_response")
   }
+
   failure(JSON.stringify({ data: { repository: null } }), "unavailable")
 })
 
@@ -427,6 +449,7 @@ test("GitHub query limits, states and opaque cursors are bounded without caller 
       assert.ok(Either.isRight(decoded))
       assert.equal(decoded.right.page.limit, limit)
     }
+
   for (const input of [
     null,
     [],
@@ -452,6 +475,7 @@ test("GitHub query limits, states and opaque cursors are bounded without caller 
     assert.ok(Either.isLeft(decoded))
     assert.equal(decoded.left.code, "invalid_request")
   }
+
   const invalidRepository = decodeGitHubIssueListQuery({
     ...query,
     repository: "missing-owner",
@@ -475,6 +499,7 @@ test("GitHub pages reject malformed JSON, envelopes, rows and response errors", 
     JSON.stringify({ errors: [null] }),
   ])
     failure(payload, "invalid_response")
+
   const row = recorded.data.repository.issues.nodes[0]
 
   assert.ok(row)
@@ -503,8 +528,10 @@ test("GitHub pages reject malformed JSON, envelopes, rows and response errors", 
         },
       },
     }
+
     failure(JSON.stringify(response), "invalid_response")
   }
+
   failure(
     JSON.stringify({
       data: {
@@ -531,11 +558,13 @@ test("GitHub pages enforce requested count, unique identities and state filters"
       },
     },
   }
+
   failure(JSON.stringify(response), "invalid_response")
   failure(JSON.stringify(response), "invalid_response", {
     ...query,
     page: { limit: 2 },
   })
+
   const closed = {
     data: {
       repository: {
@@ -547,7 +576,9 @@ test("GitHub pages enforce requested count, unique identities and state filters"
       },
     },
   }
+
   failure(JSON.stringify(closed), "invalid_response")
+
   const accepted = decodeGitHubIssueListPage(JSON.stringify(closed), {
     ...query,
     state: "all",
@@ -570,20 +601,25 @@ test("GitHub continuations require progress only when another page exists", () =
         },
       },
     }
+
     failure(JSON.stringify(response), "invalid_response")
   }
+
   failure(JSON.stringify(recorded), "invalid_response", {
     ...query,
     page: { limit: 1, after: cursor },
   })
+
   const terminal = structuredClone(recorded)
   terminal.data.repository.issues.pageInfo.hasNextPage = false
+
   const accepted = decodeGitHubIssueListPage(JSON.stringify(terminal), {
     ...query,
     page: { limit: 1, after: cursor },
   })
 
   assert.ok(Either.isRight(accepted))
+
   const empty = {
     data: {
       repository: {
@@ -595,6 +631,7 @@ test("GitHub continuations require progress only when another page exists", () =
       },
     },
   }
+
   const decoded = decodeGitHubIssueListPage(JSON.stringify(empty), query)
 
   assert.ok(Either.isRight(decoded))
@@ -612,6 +649,7 @@ test("GitHub decoder admits the exact byte envelope and preserves Unicode", () =
   const json = JSON.stringify(response)
   const payload =
     json + " ".repeat(MAX_GITHUB_READ_BYTES - Buffer.byteLength(json, "utf8"))
+
   const decoded = decodeGitHubIssueListPage(payload, query)
 
   assert.ok(Either.isRight(decoded))

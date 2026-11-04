@@ -133,16 +133,20 @@ export class TaskTransitionError extends Data.TaggedError(
 }> {}
 
 type Result<A> = Either.Either<A, TaskTransitionError>
+
 type ChangedField = TaskChangeSummary["fields"][number]
 
 const fail = (
   code: TaskTransitionError["code"],
   message: string,
 ): Result<never> => Either.left(new TaskTransitionError({ code, message }))
+
 const aliasKey = (issue: IssueReference, key: DraftTaskKey): string =>
   `${issueKey(issue)}:${key}`
+
 const frozenIssue = (issue: IssueReference): IssueReference =>
   Object.freeze({ repository: issue.repository, number: issue.number })
+
 const frozenTask = (task: CurrentTask): CurrentTask =>
   Object.freeze({
     issue: frozenIssue(task.issue),
@@ -152,6 +156,7 @@ const frozenTask = (task: CurrentTask): CurrentTask =>
     blocker: task.blocker,
     dependsOn: Object.freeze([...task.dependsOn].sort()),
   })
+
 const equalIds = (
   first: readonly TaskId[],
   second: readonly TaskId[],
@@ -168,6 +173,7 @@ const validateGraph = (
   const incoming = new Map<TaskId, number>(
     Array.from(graph.keys(), id => [id, 0]),
   )
+
   let edgeCount = 0
 
   for (const dependencies of graph.values()) {
@@ -193,6 +199,7 @@ const validateGraph = (
   for (const [id, count] of incoming) if (count === 0) ready.push(id)
 
   let visited = 0
+
   while (visited < ready.length) {
     const id = ready[visited]
 
@@ -237,6 +244,7 @@ export const prepareTaskChanges = (
       return yield* fail("capacity", "Task dependency component is too large")
 
     const scope = new Set(batch.issues.map(issueKey))
+
     const issueStates = new Map<string, IssueCandidate>()
 
     for (const candidate of snapshot.issues) {
@@ -259,7 +267,9 @@ export const prepareTaskChanges = (
     }
 
     const tasks = new Map<TaskId, CurrentTask>()
+
     const graph = new Map<TaskId, readonly TaskId[]>()
+
     let textSize = 0
 
     for (const task of snapshot.tasks) {
@@ -299,6 +309,7 @@ export const prepareTaskChanges = (
     yield* validateGraph(graph)
 
     const initialIds = new Set(tasks.keys())
+
     const expected = new Set<string>()
 
     for (const operation of batch.operations)
@@ -315,6 +326,7 @@ export const prepareTaskChanges = (
       }
 
     const allocations = new Map<string, TaskId>()
+
     const allocatedIds = new Set<TaskId>()
 
     for (const addition of context.additions) {
@@ -388,8 +400,11 @@ export const prepareTaskChanges = (
       })
 
     const events: TaskEvent[] = []
+
     const changedIssues = new Set<string>()
+
     const touched = new Map<TaskId, Set<ChangedField>>()
+
     const mark = (id: TaskId, fields: readonly ChangedField[]): void => {
       const prior = touched.get(id)
       const current = prior === undefined ? new Set<ChangedField>() : prior
@@ -445,10 +460,12 @@ export const prepareTaskChanges = (
       switch (operation.op) {
         case "edit": {
           const text = operation.text === undefined ? task.text : operation.text
+
           const dependsOn =
             operation.dependsOn === undefined
               ? task.dependsOn
               : yield* dependencies(operation.dependsOn)
+
           const changes: EditChange[] = []
 
           if (text !== task.text)
@@ -577,6 +594,7 @@ export const prepareTaskChanges = (
     }
 
     const preparedIssues: PreparedIssueChange[] = []
+
     const revisions = new Map<string, number>()
 
     for (const issue of batch.issues) {
@@ -611,6 +629,7 @@ export const prepareTaskChanges = (
     }
 
     const changed: TaskChangeSummary[] = []
+
     const fieldOrder: readonly ChangedField[] = [
       "text",
       "status",

@@ -23,7 +23,6 @@ for (const [name, input] of [
 ] as const) {
   test(`issue decoding rejects ${name} at the native-object boundary`, () => {
     const decoded = decodeIssueReference(input)
-
     assert.ok(Either.isLeft(decoded))
     assert.equal(decoded.left.code, "invalid_issue")
   })
@@ -36,7 +35,6 @@ test("repository discovery targets normalize without fabricating an issue identi
     `${"A".repeat(39)}/${"R".repeat(100)}`,
   ]) {
     const decoded = decodeIssueRepository(source)
-
     assert.ok(Either.isRight(decoded))
     assert.equal(decoded.right, source.toLowerCase())
   }
@@ -63,7 +61,6 @@ test("repository discovery rejects malformed or Unicode-aliased targets without 
     `owner/${"a".repeat(101)}`,
   ]) {
     const decoded = decodeIssueRepository(source)
-
     assert.ok(Either.isLeft(decoded))
     assert.equal(decoded.left.code, "invalid_repository")
   }
@@ -81,7 +78,6 @@ test("repository-qualified identities distinguish identical issue numbers", () =
 
 test("GitHub repository case does not create duplicate issue ownership", () => {
   const decoded = decodeIssueReference(issue("0xGleb/DotConfig", 361))
-
   assert.ok(Either.isRight(decoded))
   assert.equal(issueKey(decoded.right), "0xgleb/dotconfig#361")
 })
@@ -112,7 +108,6 @@ test("malformed and ambiguous issue targets fail at the boundary", () => {
 
   for (const value of invalid) {
     const result = decodeIssueReference(value)
-
     assert.ok(Either.isLeft(result), JSON.stringify(value))
     assert.equal(result.left.code, "invalid_issue")
   }
@@ -144,7 +139,6 @@ test("multi-issue scope is explicit, bounded and rejects case-equivalent duplica
     Array.from({ length: 101 }, (_, index) => issue("owner/repo", index + 1)),
   ]) {
     const result = decodeIssueScope(value)
-
     assert.ok(Either.isLeft(result))
     assert.equal(result.left.code, "invalid_scope")
   }

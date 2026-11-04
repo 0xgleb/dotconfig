@@ -49,16 +49,20 @@ const IssueParameters = Type.Object(
   },
   { additionalProperties: false },
 )
+
 const TaskIdParameter = Type.String({
   pattern: "^[0-9a-f]{8}-[0-9a-f]{4}-[0-9a-f]{4}-[0-9a-f]{4}-[0-9a-f]{12}$",
 })
+
 const DraftKeyParameter = Type.String({
   pattern: "^[A-Za-z][A-Za-z0-9_-]{0,63}$",
 })
+
 const TaskTextParameter = Type.String({
   minLength: 1,
   maxLength: MAX_TASK_TEXT,
 })
+
 const TaskReferenceParameters = Type.Object(
   {
     issue: IssueParameters,
@@ -75,15 +79,18 @@ const TaskReferenceParameters = Type.Object(
   },
   { additionalProperties: false },
 )
+
 const DependencyParameters = Type.Array(TaskReferenceParameters, {
   maxItems: MAX_TASK_DEPENDENCIES,
 })
+
 const TaskStatusParameter = Type.Union([
   Type.Literal("todo"),
   Type.Literal("doing"),
   Type.Literal("done"),
   Type.Literal("cancelled"),
 ])
+
 const OperationParameters = Type.Union([
   Type.Object(
     {
@@ -129,6 +136,7 @@ const OperationParameters = Type.Union([
     { additionalProperties: false },
   ),
 ])
+
 const TaskPageParameters = Type.Object(
   {
     limit: Type.Integer({ minimum: 1, maximum: MAX_TASK_PAGE_SIZE }),
@@ -136,6 +144,7 @@ const TaskPageParameters = Type.Object(
   },
   { additionalProperties: false },
 )
+
 const TaskFilterParameters = Type.Object(
   {
     status: Type.Optional(TaskStatusParameter),
@@ -143,6 +152,7 @@ const TaskFilterParameters = Type.Object(
   },
   { additionalProperties: false },
 )
+
 const TaskReadQueryParameters = Type.Object(
   {
     issue: IssueParameters,
@@ -151,10 +161,12 @@ const TaskReadQueryParameters = Type.Object(
   },
   { additionalProperties: false },
 )
+
 const GitHubCursorParameter = Type.String({
   minLength: 1,
   maxLength: MAX_GITHUB_READ_BYTES,
 })
+
 const RelatedIssueParameters = Type.Object(
   {
     limit: Type.Integer({ minimum: 1, maximum: MAX_GITHUB_ISSUE_PAGE_SIZE }),
@@ -163,6 +175,7 @@ const RelatedIssueParameters = Type.Object(
   },
   { additionalProperties: false },
 )
+
 const IssueListQueryParameters = Type.Object(
   {
     repository: Type.String({ minLength: 1, maxLength: 140 }),
@@ -191,6 +204,7 @@ const IssueListQueryParameters = Type.Object(
   },
   { additionalProperties: false },
 )
+
 const IssueGetQueryParameters = Type.Object(
   {
     issue: Type.Object(
@@ -208,6 +222,7 @@ const IssueGetQueryParameters = Type.Object(
   },
   { additionalProperties: false },
 )
+
 const TaskParameters = Type.Object(
   {
     action: Type.Union([
@@ -252,6 +267,7 @@ export class TaskHostError extends Data.TaggedError("TaskHostError")<{
   readonly code: "host_unavailable"
   readonly message: string
 }> {}
+
 export class TaskOutputError extends Data.TaggedError("TaskOutputError")<{
   readonly message: string
 }> {}
@@ -295,10 +311,12 @@ export interface TaskToolDetails {
   readonly outcome: TaskExecutionOutcome
   readonly output: "complete" | "unavailable"
 }
+
 export interface TaskNativeCall {
   readonly toolCallId: string
   readonly sessionId: string
 }
+
 export interface TaskToolOptions {
   readonly issueReader?: IssueTaskReader
   readonly store: Pick<
@@ -312,7 +330,9 @@ export interface TaskToolOptions {
     outcome: TaskExecutionOutcome,
   ) => Effect.Effect<string, TaskOutputError>
 }
+
 type NativeTaskTool = ToolDefinition<typeof TaskParameters, TaskToolDetails>
+
 export type IssueTaskTool = Omit<NativeTaskTool, "execute"> & {
   readonly execute: (...args: Parameters<NativeTaskTool["execute"]>) => Promise<
     Awaited<ReturnType<NativeTaskTool["execute"]>> & {
@@ -323,10 +343,12 @@ export type IssueTaskTool = Omit<NativeTaskTool, "execute"> & {
 
 type TaskFailure =
   TaskRequestDecodeError | TaskApplyError | TaskHostError | IssueTaskReadFailure
+
 type TaskToolRequest =
   | TaskRequest
   | { readonly action: "listIssues"; readonly query: IssueTaskListQuery }
   | { readonly action: "getIssue"; readonly query: IssueTaskGetQuery }
+
 const decodeToolRequest = (
   input: unknown,
 ): Either.Either<
@@ -361,6 +383,7 @@ const decodeToolRequest = (
         ),
       )
 }
+
 const failureOutcome = (error: TaskFailure): TaskExecutionOutcome =>
   error._tag === "TaskCommitUnknownError"
     ? {
@@ -393,7 +416,6 @@ const executeRequest = (
 
         if (request.action === "listIssues") {
           const view = yield* reader.list(request.query)
-
           return { kind: "issue_list", view } satisfies TaskExecutionOutcome
         }
 
@@ -403,7 +425,6 @@ const executeRequest = (
       }
       case "readMany": {
         const pages = yield* options.store.readManyTasks(request.queries)
-
         return { kind: "pages", pages } satisfies TaskExecutionOutcome
       }
       case "read": {
@@ -459,6 +480,7 @@ const unavailableOutput = (outcome: TaskExecutionOutcome): string => {
         outcome.view.detail === null
           ? "GitHub metadata unavailable"
           : "Read issue metadata"
+
       const tasks =
         outcome.view.tasks === null
           ? "No local task state"
@@ -488,6 +510,7 @@ const unavailableOutput = (outcome: TaskExecutionOutcome): string => {
       return "Task execution did not produce a verified outcome. Reconcile state before retrying; do not substitute a new request identity."
   }
 }
+
 const withinOutputBudget = (text: unknown): text is string =>
   typeof text === "string" &&
   Buffer.byteLength(text, "utf8") <= 50 * 1_024 &&
@@ -501,6 +524,7 @@ export const createTaskTool = (options: TaskToolOptions): IssueTaskTool => ({
   parameters: TaskParameters,
   execute: async (toolCallId, params, signal, _onUpdate, ctx) => {
     const executionOptions = signal === undefined ? {} : { signal }
+
     let outcome: TaskExecutionOutcome
 
     if (signal?.aborted === true) outcome = { kind: "interrupted" }
@@ -508,6 +532,7 @@ export const createTaskTool = (options: TaskToolOptions): IssueTaskTool => ({
       const attempt: { invocation: TaskNativeCall | undefined } = {
         invocation: undefined,
       }
+
       const operation = Effect.suspend(() => {
         const decoded = decodeToolRequest(params)
 
@@ -523,6 +548,7 @@ export const createTaskTool = (options: TaskToolOptions): IssueTaskTool => ({
           attempt.invocation = invocation
         })
       })
+
       const executed = await Effect.runPromiseExit(operation, executionOptions)
 
       if (Exit.isSuccess(executed)) outcome = executed.value
@@ -577,8 +603,6 @@ export const registerTaskTool = (
   options: TaskToolOptions,
 ): IssueTaskTool => {
   const tool = createTaskTool(options)
-
   pi.registerTool(tool)
-
   return tool
 }

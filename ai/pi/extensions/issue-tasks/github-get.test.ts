@@ -24,6 +24,7 @@ const query: GitHubIssueGetQuery = {
   issue: target.right,
   related: { limit: 1 },
 }
+
 // Verified get86 shape; gh replaced body BEFORE output with this technical fixture.
 const recorded = {
   data: {
@@ -50,6 +51,7 @@ const recorded = {
     },
   },
 }
+
 const response = (changes: Readonly<Record<string, unknown>>) => ({
   data: {
     repository: {
@@ -58,30 +60,31 @@ const response = (changes: Readonly<Record<string, unknown>>) => ({
     },
   },
 })
+
 const reference = (repository: string, number: number) => ({
   number,
   repository: { nameWithOwner: repository },
   url: `https://github.com/${repository}/issues/${number}`,
 })
+
 const failure = (
   payload: unknown,
   code: GitHubReadError["code"],
   supplied = query,
 ) => {
   const result = decodeGitHubIssueGetResult(payload, supplied)
-
   assert.ok(Either.isLeft(result))
   assert.equal(result.left.code, code)
 }
 
 test("GitHub get reader executes one fixed query with qualified frozen variables", async () => {
   const calls: GitHubIssueGetExecution[] = []
+
   const reader = createGitHubIssueReader({
     executeQuery: request =>
       Effect.sync(() => {
         assert.ok(request.document === GITHUB_ISSUE_GET_DOCUMENT)
         calls.push(request)
-
         return JSON.stringify(recorded)
       }),
   })
@@ -129,16 +132,18 @@ test("GitHub get reader sends null initial cursors and never follows either rela
       pageInfo: { hasNextPage: true, endCursor: "pr-next" },
     },
   })
+
   const calls: GitHubIssueGetExecution[] = []
+
   const reader = createGitHubIssueReader({
     executeQuery: request =>
       Effect.sync(() => {
         assert.ok(request.document === GITHUB_ISSUE_GET_DOCUMENT)
         calls.push(request)
-
         return JSON.stringify(page)
       }),
   })
+
   const result = await Effect.runPromise(reader.get(query))
 
   assert.equal(calls.length, 1)
@@ -150,6 +155,7 @@ test("GitHub get reader sends null initial cursors and never follows either rela
 
 test("GitHub get reader validates Int32 and caller metadata before host I/O", async () => {
   let calls = 0
+
   const reader = createGitHubIssueReader({
     executeQuery: () =>
       Effect.sync(() => {
@@ -157,6 +163,7 @@ test("GitHub get reader validates Int32 and caller metadata before host I/O", as
         return JSON.stringify(recorded)
       }),
   })
+
   for (const input of [
     { ...query, issue: { ...query.issue, number: 2_147_483_648 } },
     { ...query, authority: "owner" },
@@ -167,12 +174,14 @@ test("GitHub get reader validates Int32 and caller metadata before host I/O", as
     assert.ok(Either.isLeft(result))
     assert.equal(result.left.code, "invalid_request")
   }
+
   assert.equal(calls, 0)
 })
 
 for (const stop of ["failure", "defect"] as const) {
   test(`GitHub get reader sanitizes host ${stop} without retrying`, async () => {
     let calls = 0
+
     const reader = createGitHubIssueReader({
       executeQuery: () => {
         calls += 1
@@ -187,6 +196,7 @@ for (const stop of ["failure", "defect"] as const) {
           : Effect.die("Private transport diagnostic")
       },
     })
+
     const result = await Effect.runPromise(Effect.either(reader.get(query)))
 
     assert.ok(Either.isLeft(result))
@@ -200,6 +210,7 @@ for (const stop of ["failure", "defect"] as const) {
 
 test("pre-aborted GitHub get reads interrupt valid and invalid requests without I/O", async () => {
   let calls = 0
+
   const reader = createGitHubIssueReader({
     executeQuery: () =>
       Effect.sync(() => {
@@ -207,8 +218,10 @@ test("pre-aborted GitHub get reads interrupt valid and invalid requests without 
         return JSON.stringify(recorded)
       }),
   })
+
   const controller = new AbortController()
   controller.abort()
+
   for (const input of [query, { ...query, related: { limit: 0 } }]) {
     const result = await Effect.runPromiseExit(reader.get(input), {
       signal: controller.signal,
@@ -216,6 +229,7 @@ test("pre-aborted GitHub get reads interrupt valid and invalid requests without 
 
     assert.ok(Exit.isFailure(result) && Cause.isInterruptedOnly(result.cause))
   }
+
   assert.equal(calls, 0)
 })
 
@@ -224,9 +238,12 @@ test(
   { timeout: 5_000 },
   async t => {
     const entered = await Effect.runPromise(Deferred.make<void>())
+
     const controller = new AbortController()
     t.signal.addEventListener("abort", () => controller.abort(), { once: true })
+
     let released = false
+
     const reader = createGitHubIssueReader({
       executeQuery: () =>
         Deferred.succeed(entered, undefined).pipe(
@@ -238,9 +255,11 @@ test(
           ),
         ),
     })
+
     const pending = Effect.runPromiseExit(reader.get(query), {
       signal: controller.signal,
     })
+
     try {
       const started = await Promise.race([
         Effect.runPromise(Deferred.await(entered)).then(() => true),
@@ -262,6 +281,7 @@ test(
 
 test("GitHub get reader preserves the qualified unavailable result", async () => {
   let calls = 0
+
   const reader = createGitHubIssueReader({
     executeQuery: () =>
       Effect.sync(() => {
@@ -269,6 +289,7 @@ test("GitHub get reader preserves the qualified unavailable result", async () =>
         return JSON.stringify({ data: { repository: null } })
       }),
   })
+
   const result = await Effect.runPromise(reader.get(query))
 
   assert.deepEqual(result, { issue: query.issue, detail: null })
@@ -291,6 +312,7 @@ test("GitHub get reader retains partial, remote and capacity readback errors aft
     ["x".repeat(MAX_GITHUB_READ_BYTES + 1), "capacity"],
   ] as const) {
     let calls = 0
+
     const reader = createGitHubIssueReader({
       executeQuery: () =>
         Effect.sync(() => {
@@ -298,6 +320,7 @@ test("GitHub get reader retains partial, remote and capacity readback errors aft
           return payload
         }),
     })
+
     const result = await Effect.runPromise(Effect.either(reader.get(query)))
 
     assert.ok(Either.isLeft(result))
@@ -315,6 +338,7 @@ test("GitHub get queries detach qualified identity and strictly bound independen
       deliveryAfter: "pr-before",
     },
   }
+
   const result = decodeGitHubIssueGetQuery(input)
 
   assert.ok(Either.isRight(result))
@@ -378,10 +402,10 @@ test("GitHub get decodes recorded issue detail without interpreting body or inve
 
   assert.ok(Either.isRight(result))
   assert.deepEqual(result.right.issue, target.right)
+
   const detail = result.right.detail
 
   assert.ok(detail)
-
   assert.equal(detail.body, "Technical issue-body fixture")
   assert.equal(detail.parent, null)
   assert.deepEqual(detail.blockedBy, {
@@ -433,6 +457,7 @@ test("GitHub get preserves cross-repository relations and independently advancin
       deliveryAfter: "pr-before",
     },
   }
+
   for (const state of ["OPEN", "CLOSED", "MERGED"] as const) {
     // Synthetic relation counterfixtures, not claims about actual links or PR states.
     const payload = response({
@@ -453,6 +478,7 @@ test("GitHub get preserves cross-repository relations and independently advancin
         pageInfo: { hasNextPage: true, endCursor: "pr-next" },
       },
     })
+
     const result = decodeGitHubIssueGetResult(JSON.stringify(payload), supplied)
 
     assert.ok(Either.isRight(result))
@@ -460,7 +486,6 @@ test("GitHub get preserves cross-repository relations and independently advancin
     const detail = result.right.detail
 
     assert.ok(detail)
-
     assert.equal(detail.body, payload.data.repository.issue.body)
     assert.equal(detail.parent?.repository, "example/parents")
     assert.equal(detail.blockedBy.issues[0]?.repository, "example/dependencies")
@@ -481,6 +506,7 @@ test("GitHub get preserves cross-repository relations and independently advancin
 
 test("GitHub get nullable requested relation data is partial, never a fabricated empty connection", () => {
   const pageInfo = { hasNextPage: false, endCursor: null }
+
   for (const changes of [
     { blockedBy: { nodes: null, pageInfo } },
     { blockedBy: { nodes: [null], pageInfo } },
@@ -493,12 +519,14 @@ test("GitHub get nullable requested relation data is partial, never a fabricated
 
 test("GitHub get connections enforce per-relation count, uniqueness and non-progress", () => {
   const pageInfo = { hasNextPage: false, endCursor: null }
+
   const issue = reference("example/dependencies", 3)
   const pr = {
     ...reference("example/delivery", 4),
     url: "https://github.com/example/delivery/pull/4",
     state: "MERGED",
   }
+
   for (const changes of [
     { blockedBy: { nodes: [issue, issue], pageInfo } },
     { closedByPullRequestsReferences: { nodes: [pr, pr], pageInfo } },
@@ -509,11 +537,13 @@ test("GitHub get connections enforce per-relation count, uniqueness and non-prog
       related: { limit: 2 },
     })
   }
+
   for (const key of ["blockedBy", "closedByPullRequestsReferences"]) {
     const supplied = {
       ...query,
       related: { limit: 1, blockedByAfter: "same", deliveryAfter: "same" },
     }
+
     failure(
       JSON.stringify(
         response({
@@ -526,6 +556,7 @@ test("GitHub get connections enforce per-relation count, uniqueness and non-prog
       "invalid_response",
       supplied,
     )
+
     const terminal = decodeGitHubIssueGetResult(
       JSON.stringify(
         response({
@@ -544,20 +575,24 @@ test("GitHub get connections enforce per-relation count, uniqueness and non-prog
 
 test("GitHub get admits 100 distinct entries per relation without inventing a shared row cap", () => {
   const pageInfo = { hasNextPage: false, endCursor: null }
+
   const issues = Array.from({ length: 100 }, (_, index) =>
     reference("example/dependencies", index + 1),
   )
+
   const pullRequests = Array.from({ length: 100 }, (_, index) => ({
     ...reference("example/delivery", index + 1),
     url: `https://github.com/example/delivery/pull/${index + 1}`,
     state: "MERGED",
   }))
+
   const payload = JSON.stringify(
     response({
       blockedBy: { nodes: issues, pageInfo },
       closedByPullRequestsReferences: { nodes: pullRequests, pageInfo },
     }),
   )
+
   const result = decodeGitHubIssueGetResult(payload, {
     ...query,
     related: { limit: 100 },
@@ -615,6 +650,7 @@ test("GitHub get rejects malformed metadata, URL kinds, missing fields and forei
     },
   ])
     failure(JSON.stringify(response(changes)), "invalid_response")
+
   failure(
     JSON.stringify({
       data: {
@@ -636,6 +672,7 @@ test("GitHub get errors alongside data and malformed envelopes remain explicit f
     }),
     "remote_error",
   )
+
   for (const payload of [
     null,
     "{",
@@ -653,8 +690,10 @@ test("GitHub get preserves exact body bytes within the common pre-parse response
   const added =
     MAX_GITHUB_READ_BYTES - Buffer.byteLength(JSON.stringify(recorded), "utf8")
   const body = recorded.data.repository.issue.body + "x".repeat(added)
+
   const payload = JSON.stringify(response({ body }))
   assert.equal(Buffer.byteLength(payload, "utf8"), MAX_GITHUB_READ_BYTES)
+
   const result = decodeGitHubIssueGetResult(payload, query)
 
   assert.ok(Either.isRight(result))

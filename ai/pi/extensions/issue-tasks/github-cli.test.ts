@@ -13,17 +13,21 @@ import {
 } from "./github-read.ts"
 
 const cwd = fileURLToPath(new URL("../../../../", import.meta.url))
+
 const program = fileURLToPath(
   new URL("./test-fixtures/github-cli.mjs", import.meta.url),
 )
+
 const fixtureParent = fileURLToPath(
   new URL("../../../../.tmp/issue-github-cli-tests/", import.meta.url),
 )
+
 const query = {
   repository: "0xGleb/DotConfig",
   state: "open",
   page: { limit: 1 },
 }
+
 const getQuery = {
   issue: { repository: "0xGleb/DotConfig", number: 86 },
   related: {
@@ -32,13 +36,16 @@ const getQuery = {
     deliveryAfter: "pr-before",
   },
 }
+
 const probe = (mode: string, timeout?: number) => {
   const events: string[] = []
   const stderrSizes: number[] = []
   const children: ChildProcess[] = []
   const closed = new Set<ChildProcess>()
   const closures: Promise<void>[] = []
+
   const entered = Effect.runSync(Deferred.make<void>())
+
   const launch: GitHubCliLaunch = (args, options, callback) => {
     assert.deepEqual(args, [
       "api",
@@ -65,6 +72,7 @@ const probe = (mode: string, timeout?: number) => {
         callback(error, stdout, stderr)
       },
     )
+
     children.push(child)
     child.stdout?.once("data", () =>
       Effect.runSync(Deferred.succeed(entered, undefined)),
@@ -82,6 +90,7 @@ const probe = (mode: string, timeout?: number) => {
 
     return child
   }
+
   const cleanup = async () => {
     for (const child of children)
       if (
@@ -96,6 +105,7 @@ const probe = (mode: string, timeout?: number) => {
 
   return { launch, events, stderrSizes, children, closed, entered, cleanup }
 }
+
 const expectFailure = async <E extends { readonly code: string }>(
   operation: Effect.Effect<unknown, E>,
   code: E["code"],
@@ -112,7 +122,9 @@ const expectFailure = async <E extends { readonly code: string }>(
 test("native GitHub CLI reader uses fixed arguments and actual JSON stdin for list/get", async t => {
   const child = probe("success")
   t.after(child.cleanup)
+
   const reader = createGitHubCliReader({ cwd, launch: child.launch })
+
   const list = await Effect.runPromise(reader.list(query))
 
   assert.deepEqual(JSON.parse(list.issues[0]?.title ?? "null"), {
@@ -125,6 +137,7 @@ test("native GitHub CLI reader uses fixed arguments and actual JSON stdin for li
       states: ["OPEN"],
     },
   })
+
   const get = await Effect.runPromise(reader.get(getQuery))
 
   assert.deepEqual(JSON.parse(get.detail?.body ?? "null"), {
@@ -145,13 +158,16 @@ test("native GitHub CLI reader uses fixed arguments and actual JSON stdin for li
 test("native GitHub CLI captures host execution configuration before later caller mutation", async t => {
   const child = probe("success")
   t.after(child.cleanup)
+
   const options = { cwd, launch: child.launch }
   const reader = createGitHubCliReader(options)
+
   options.cwd = "."
   options.launch = () =>
     assert.fail(
       "Later launch mutation must not replace the captured host capability",
     )
+
   const result = await Effect.runPromise(reader.list(query))
 
   assert.equal(result.issues.length, 1)
@@ -161,7 +177,9 @@ test("native GitHub CLI captures host execution configuration before later calle
 test("native GitHub CLI does not launch for malformed requests or pre-aborted reads", async t => {
   const child = probe("success")
   t.after(child.cleanup)
+
   const reader = createGitHubCliReader({ cwd, launch: child.launch })
+
   await expectFailure(
     reader.list({ ...query, page: { limit: 0 } }),
     "invalid_request",
@@ -173,8 +191,10 @@ test("native GitHub CLI does not launch for malformed requests or pre-aborted re
     }),
     "invalid_request",
   )
+
   const controller = new AbortController()
   controller.abort()
+
   const result = await Effect.runPromiseExit(reader.list(query), {
     signal: controller.signal,
   })
@@ -212,6 +232,7 @@ for (const mode of ["oversize", "unicode-over", "stderr-over"] as const) {
   test(`native GitHub CLI rejects ${mode} without decoding clipped output`, async t => {
     const child = probe(mode)
     t.after(child.cleanup)
+
     await expectFailure(
       createGitHubCliReader({ cwd, launch: child.launch }).list(query),
       "transport_error",
@@ -231,6 +252,7 @@ test("native GitHub CLI rejects malformed UTF8 without replacement and preserves
   ] as const) {
     const child = probe(mode)
     t.after(child.cleanup)
+
     await expectFailure(
       createGitHubCliReader({ cwd, launch: child.launch }).list(query),
       expected,
@@ -243,10 +265,12 @@ test("native GitHub CLI rejects malformed UTF8 without replacement and preserves
 test("native GitHub CLI sanitizes nonzero diagnostics and waits for close before failure", async t => {
   const child = probe("nonzero")
   t.after(child.cleanup)
+
   await expectFailure(
     createGitHubCliReader({ cwd, launch: child.launch }).list(query),
     "transport_error",
   )
+
   child.events.push("settled")
   assert.equal(child.closed.size, 1)
   assert.ok(child.events.indexOf("close") < child.events.indexOf("settled"))
@@ -255,8 +279,10 @@ test("native GitHub CLI sanitizes nonzero diagnostics and waits for close before
 test("native GitHub CLI spawn failure is typed and close-observed", async () => {
   mkdirSync(fixtureParent, { recursive: true, mode: 0o700 })
   const root = mkdtempSync(join(fixtureParent, "spawn-"))
+
   try {
     let closed = false
+
     const launch: GitHubCliLaunch = (_args, options, callback) => {
       const child = execFile(
         join(root, "missing-executable"),
@@ -264,12 +290,14 @@ test("native GitHub CLI spawn failure is typed and close-observed", async () => 
         options,
         callback,
       )
+
       child.once("close", () => {
         closed = true
       })
 
       return child
     }
+
     await expectFailure(
       createGitHubCliReader({ cwd, launch }).list(query),
       "transport_error",
@@ -284,6 +312,7 @@ test("native GitHub CLI spawn failure is typed and close-observed", async () => 
 test("native GitHub CLI rejects relative host cwd instead of guessing an execution location", async t => {
   const child = probe("success")
   t.after(child.cleanup)
+
   await expectFailure(
     createGitHubCliReader({ cwd: ".", launch: child.launch }).list(query),
     "transport_error",
@@ -298,16 +327,18 @@ test(
   async t => {
     const child = probe("hang")
     t.after(child.cleanup)
+
     const launch: GitHubCliLaunch = (args, options, callback) => {
       const process = child.launch(args, options, callback)
       process.stdin?.destroy(new Error("Private fixture stdin failure"))
-
       return process
     }
+
     await expectFailure(
       createGitHubCliReader({ cwd, launch }).list(query),
       "transport_error",
     )
+
     assert.equal(child.closed.size, 1)
   },
 )
@@ -318,12 +349,15 @@ test(
   async t => {
     const child = probe("hang")
     t.after(child.cleanup)
+
     const controller = new AbortController()
     t.signal.addEventListener("abort", () => controller.abort(), { once: true })
+
     const pending = Effect.runPromiseExit(
       createGitHubCliReader({ cwd, launch: child.launch }).list(query),
       { signal: controller.signal },
     )
+
     try {
       assert.equal(
         await Promise.race([

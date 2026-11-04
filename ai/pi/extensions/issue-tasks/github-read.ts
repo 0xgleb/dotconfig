@@ -9,6 +9,7 @@ import {
 } from "./identity.ts"
 
 export const MAX_GITHUB_READ_BYTES = 1_048_576
+
 export const MAX_GITHUB_ISSUE_PAGE_SIZE = 100
 
 export const GITHUB_ISSUE_LIST_DOCUMENT = `query IssueBacklogList(
@@ -76,6 +77,7 @@ export interface GitHubIssueGetExecution {
     readonly deliveryAfter: string | null
   }
 }
+
 export interface GitHubIssueListExecution {
   readonly document: typeof GITHUB_ISSUE_LIST_DOCUMENT
   readonly variables: {
@@ -86,13 +88,16 @@ export interface GitHubIssueListExecution {
     readonly states: readonly ("OPEN" | "CLOSED")[]
   }
 }
+
 export type GitHubIssueQueryExecution =
   GitHubIssueListExecution | GitHubIssueGetExecution
+
 export interface GitHubIssueReadOptions {
   readonly executeQuery: (
     request: GitHubIssueQueryExecution,
   ) => Effect.Effect<string, GitHubReadError>
 }
+
 export interface GitHubIssueReader {
   readonly get: (
     input: unknown,
@@ -171,6 +176,7 @@ export const createGitHubIssueReader = (
             ? ["OPEN", "CLOSED"]
             : [query.state === "open" ? "OPEN" : "CLOSED"],
         )
+
         const request: GitHubIssueListExecution = Object.freeze({
           document: GITHUB_ISSUE_LIST_DOCUMENT,
           variables: Object.freeze({
@@ -201,6 +207,7 @@ export interface GitHubIssueListQuery {
     readonly after?: string
   }
 }
+
 export interface GitHubIssueSummary {
   readonly issue: IssueReference
   readonly title: string
@@ -208,6 +215,7 @@ export interface GitHubIssueSummary {
   readonly state: "open" | "closed"
   readonly updatedAt: string
 }
+
 export interface GitHubIssueListPage {
   readonly repository: IssueRepository
   readonly issues: readonly GitHubIssueSummary[]
@@ -215,19 +223,24 @@ export interface GitHubIssueListPage {
     | { readonly hasNextPage: false; readonly endCursor: string | null }
     | { readonly hasNextPage: true; readonly endCursor: string }
 }
+
 export type GitHubConnectionPageInfo = GitHubIssueListPage["pageInfo"]
+
 const GitHubPullRequestNumberSchema = Schema.Number.pipe(
   Schema.int(),
   Schema.between(1, 2_147_483_647),
   Schema.brand("GitHubPullRequestNumber"),
 )
+
 export type GitHubPullRequestNumber = typeof GitHubPullRequestNumberSchema.Type
+
 export interface GitHubPullRequestReference {
   readonly repository: IssueRepository
   readonly number: GitHubPullRequestNumber
   readonly url: string
   readonly state: "open" | "closed" | "merged"
 }
+
 export interface GitHubIssueGetQuery {
   readonly issue: IssueReference
   readonly related: {
@@ -236,6 +249,7 @@ export interface GitHubIssueGetQuery {
     readonly deliveryAfter?: string
   }
 }
+
 export interface GitHubIssueDetail extends GitHubIssueSummary {
   readonly body: string
   readonly parent: IssueReference | null
@@ -248,6 +262,7 @@ export interface GitHubIssueDetail extends GitHubIssueSummary {
     readonly pageInfo: GitHubConnectionPageInfo
   }
 }
+
 export interface GitHubIssueGetResult {
   readonly issue: IssueReference
   readonly detail: GitHubIssueDetail | null
@@ -281,7 +296,9 @@ const readError = (code: GitHubReadError["code"]): GitHubReadError =>
       capacity: "GitHub response exceeds the local read byte budget",
     }[code],
   })
+
 const invalid = (code: GitHubReadError["code"]) => Either.left(readError(code))
+
 const shape = (
   input: unknown,
   allowed: readonly string[],
@@ -294,6 +311,7 @@ const shape = (
     key => typeof key === "string" && allowed.includes(key),
   ) &&
   required.every(key => Object.hasOwn(input, key))
+
 const decode = <A, I>(
   schema: Schema.Schema<A, I>,
   input: unknown,
@@ -304,6 +322,7 @@ const decode = <A, I>(
   )
 
 const StateSchema = Schema.Literal("open", "closed", "all")
+
 const PageInputSchema = Schema.Struct({
   limit: Schema.Number.pipe(
     Schema.int(),
@@ -311,6 +330,7 @@ const PageInputSchema = Schema.Struct({
   ),
   after: Schema.optional(Schema.String.pipe(Schema.minLength(1))),
 })
+
 const PageInfoSchema = Schema.Union(
   Schema.Struct({
     hasNextPage: Schema.Literal(false),
@@ -321,6 +341,7 @@ const PageInfoSchema = Schema.Union(
     endCursor: Schema.String.pipe(Schema.minLength(1)),
   }),
 )
+
 const EnvelopeSchema = Schema.Struct({
   data: Schema.Struct({
     repository: Schema.NullOr(
@@ -334,9 +355,11 @@ const EnvelopeSchema = Schema.Struct({
     ),
   }),
 })
+
 const QueryErrorsSchema = Schema.Array(
   Schema.Struct({ message: Schema.String }),
 ).pipe(Schema.minItems(1))
+
 const IssueRowSchema = Schema.Struct({
   number: Schema.Number.pipe(Schema.int(), Schema.between(1, 2_147_483_647)),
   title: Schema.String,
@@ -351,21 +374,25 @@ const RelatedInputSchema = Schema.Struct({
   blockedByAfter: PageInputSchema.fields.after,
   deliveryAfter: PageInputSchema.fields.after,
 })
+
 const IssueReferenceRowSchema = Schema.Struct({
   number: IssueRowSchema.fields.number,
   url: Schema.String,
   repository: IssueRowSchema.fields.repository,
 })
+
 const PullRequestRowSchema = Schema.Struct({
   number: GitHubPullRequestNumberSchema,
   url: Schema.String,
   state: Schema.Literal("OPEN", "CLOSED", "MERGED"),
   repository: IssueRowSchema.fields.repository,
 })
+
 const RelationConnectionSchema = Schema.Struct({
   nodes: Schema.NullOr(Schema.Array(Schema.Unknown)),
   pageInfo: PageInfoSchema,
 })
+
 const GetEnvelopeSchema = Schema.Struct({
   data: Schema.Struct({
     repository: Schema.NullOr(
@@ -376,6 +403,7 @@ const GetEnvelopeSchema = Schema.Struct({
     ),
   }),
 })
+
 const DetailRowSchema = Schema.Struct({
   ...IssueRowSchema.fields,
   body: Schema.String,
@@ -383,6 +411,7 @@ const DetailRowSchema = Schema.Struct({
   blockedBy: RelationConnectionSchema,
   closedByPullRequestsReferences: Schema.NullOr(RelationConnectionSchema),
 })
+
 const decodeReadPayload = (
   payload: unknown,
 ): Either.Either<unknown, GitHubReadError> =>
@@ -412,6 +441,7 @@ const decodeReadPayload = (
 
     return parsed
   })
+
 const decodeIssueReferenceRow = (
   input: unknown,
 ): Either.Either<IssueReference, GitHubReadError> =>
@@ -435,6 +465,7 @@ const decodeIssueReferenceRow = (
 
     return issue
   })
+
 const decodeIssueSummary = (
   input: unknown,
 ): Either.Either<GitHubIssueSummary, GitHubReadError> =>
@@ -451,6 +482,7 @@ const decodeIssueSummary = (
       updatedAt: row.updatedAt,
     })
   })
+
 const decodePullRequestRow = (
   input: unknown,
 ): Either.Either<GitHubPullRequestReference, GitHubReadError> =>
@@ -536,6 +568,7 @@ export const decodeGitHubIssueGetResult = (
 ): Either.Either<GitHubIssueGetResult, GitHubReadError> =>
   Either.gen(function* () {
     const query = yield* decodeGitHubIssueGetQuery(suppliedQuery)
+
     const parsed = yield* decodeReadPayload(payload)
 
     const envelope = yield* decode(
@@ -592,9 +625,11 @@ export const decodeGitHubIssueGetResult = (
 
     const parent =
       row.parent === null ? null : yield* decodeIssueReferenceRow(row.parent)
+
     const issues = yield* Either.all(
       blockedBy.nodes.map(decodeIssueReferenceRow),
     )
+
     const pullRequests = yield* Either.all(
       delivery.nodes.map(decodePullRequestRow),
     )
@@ -664,6 +699,7 @@ export const decodeGitHubIssueListPage = (
 ): Either.Either<GitHubIssueListPage, GitHubReadError | PlanInputError> =>
   Either.gen(function* () {
     const query = yield* decodeGitHubIssueListQuery(suppliedQuery)
+
     const parsed = yield* decodeReadPayload(payload)
 
     const envelope = yield* decode(EnvelopeSchema, parsed, "invalid_response")

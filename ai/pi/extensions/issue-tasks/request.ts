@@ -59,8 +59,10 @@ const PageSchema = Schema.Struct({
   ),
   after: Schema.optional(TaskIdSchema),
 })
+
 const record = (input: unknown): input is Readonly<Record<string, unknown>> =>
   typeof input === "object" && input !== null && !Array.isArray(input)
+
 const shape = (
   input: unknown,
   allowed: readonly string[],
@@ -71,6 +73,7 @@ const shape = (
     key => typeof key === "string" && allowed.includes(key),
   ) &&
   required.every(key => Object.hasOwn(input, key))
+
 const invalid = (code: TaskRequestError["code"]) =>
   Either.left(
     new TaskRequestError({

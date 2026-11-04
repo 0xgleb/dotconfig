@@ -17,20 +17,24 @@ export interface GitHubCliExecutionOptions {
   readonly killSignal: "SIGKILL"
   readonly signal: AbortSignal
 }
+
 export type GitHubCliLaunch = (
   args: readonly string[],
   options: GitHubCliExecutionOptions,
   callback: (error: Error | null, stdout: Buffer, stderr: Buffer) => void,
 ) => ChildProcess
+
 export interface GitHubCliReaderOptions {
   readonly cwd: string
   readonly launch?: GitHubCliLaunch
 }
+
 const transportError = (): GitHubReadError =>
   new GitHubReadError({
     code: "transport_error",
     message: "GitHub CLI did not produce a complete response",
   })
+
 const githubArguments = Object.freeze([
   "api",
   "graphql",
@@ -72,6 +76,7 @@ export const createGitHubCliReader = (
           let outcome: Either.Either<string, GitHubReadError> | undefined
           let closed = false
           let exited = false
+
           const started = Either.try({
             try: () =>
               launch(
@@ -109,6 +114,7 @@ export const createGitHubCliReader = (
           }
 
           const child = started.right
+
           const stop = () => {
             if (closed || exited || child.pid === undefined) return
 
@@ -119,6 +125,7 @@ export const createGitHubCliReader = (
 
             if (Either.isLeft(stopped)) outcome = Either.left(stopped.left)
           }
+
           const inputFailed = () => {
             outcome = Either.left(transportError())
             stop()
@@ -140,6 +147,7 @@ export const createGitHubCliReader = (
           if (input === null || input === undefined) inputFailed()
           else {
             input.on("error", inputFailed)
+
             const sent = Either.try({
               try: () => input.end(payload.right),
               catch: transportError,

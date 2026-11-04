@@ -17,15 +17,19 @@ export const DraftKeySchema = Schema.String.pipe(
   Schema.pattern(/^[A-Za-z][A-Za-z0-9_-]{0,63}$/u),
   Schema.brand("DraftTaskKey"),
 )
+
 export type DraftTaskKey = typeof DraftKeySchema.Type
+
 export type TaskTarget =
   | { readonly kind: "existing"; readonly id: TaskId }
   | { readonly kind: "added"; readonly key: DraftTaskKey }
+
 export interface TaskReference {
   /** Current owner for an existing ID; creation namespace for an added key. */
   readonly issue: IssueReference
   readonly task: TaskTarget
 }
+
 export type TaskMutation =
   | {
       readonly op: "add"
@@ -55,6 +59,7 @@ export type TaskMutation =
       readonly target: TaskReference
       readonly toIssue: IssueReference
     }
+
 export interface TaskMutationBatch {
   readonly issues: readonly IssueReference[]
   readonly operations: readonly TaskMutation[]
@@ -72,12 +77,15 @@ export class TaskMutationError extends Data.TaggedError("TaskMutationError")<{
 }> {}
 
 type Result<A> = Either.Either<A, TaskMutationError>
+
 const invalid = (
   code: TaskMutationError["code"],
   message: string,
 ): Result<never> => Either.left(new TaskMutationError({ code, message }))
+
 const record = (value: unknown): value is Readonly<Record<string, unknown>> =>
   typeof value === "object" && value !== null && !Array.isArray(value)
+
 const shape = (
   value: unknown,
   allowed: readonly string[],
@@ -88,6 +96,7 @@ const shape = (
     key => typeof key === "string" && allowed.includes(key),
   ) &&
   required.every(key => Object.hasOwn(value, key))
+
 const leaf = <A, I>(schema: Schema.Schema<A, I>, value: unknown): Result<A> =>
   Schema.decodeUnknownEither(schema, { onExcessProperty: "error" })(value).pipe(
     Either.mapLeft(
@@ -98,10 +107,13 @@ const leaf = <A, I>(schema: Schema.Schema<A, I>, value: unknown): Result<A> =>
         }),
     ),
   )
+
 const draftIdentity = (issue: IssueReference, key: DraftTaskKey): string =>
   `${issueKey(issue)}:${key}`
+
 const referenceIdentity = (reference: TaskReference): string =>
   `${issueKey(reference.issue)}:${reference.task.kind}:${reference.task.kind === "existing" ? reference.task.id : reference.task.key}`
+
 const freezeMutation = (operation: TaskMutation): TaskMutation =>
   Object.freeze(operation)
 
@@ -198,6 +210,7 @@ const dependencies = (
       )
 
     const decoded: TaskReference[] = []
+
     const identities = new Set<string>()
 
     for (const value of raw) {
@@ -271,9 +284,11 @@ const mutation = (
           )
 
         const target = yield* reference(raw.target, scope, additions)
+
         const text = Object.hasOwn(raw, "text")
           ? yield* leaf(TextSchema, raw.text)
           : undefined
+
         const dependsOn = Object.hasOwn(raw, "dependsOn")
           ? yield* dependencies(raw.dependsOn, scope, additions)
           : undefined
@@ -348,8 +363,11 @@ export const decodeTaskMutationBatch = (
       )
 
     const scope = new Set(decodedScope.right.map(issueKey))
+
     const additions = new Set<string>()
+
     const operations: TaskMutation[] = []
+
     let references = 0
     let textSize = 0
 

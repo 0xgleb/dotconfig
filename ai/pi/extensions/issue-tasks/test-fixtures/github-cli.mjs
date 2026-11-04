@@ -1,4 +1,5 @@
 const mode = process.argv[2]
+
 let input = ""
 
 process.stdin.setEncoding("utf8")
@@ -28,6 +29,7 @@ process.stdin.on("end", () => {
   const variables = request.variables
   const repository = `${variables.owner}/${variables.name}`
   const number = variables.number ?? 1
+
   const row = {
     number,
     title: JSON.stringify(request),
@@ -36,7 +38,9 @@ process.stdin.on("end", () => {
     updatedAt: "2026-10-20T20:14:47Z",
     repository: { nameWithOwner: repository },
   }
+
   const empty = { nodes: [], pageInfo: { hasNextPage: false, endCursor: null } }
+
   const data =
     variables.number === undefined
       ? {
@@ -57,6 +61,7 @@ process.stdin.on("end", () => {
             },
           },
         }
+
   const json = JSON.stringify({ data })
 
   if (mode === "stderr-exact" || mode === "stderr-over") {

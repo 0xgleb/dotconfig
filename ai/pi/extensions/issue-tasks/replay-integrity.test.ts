@@ -8,21 +8,25 @@ import { Effect, Either } from "effect"
 import { openSqliteTaskStore } from "./sqlite-store.ts"
 
 const issue = { repository: "0xgleb/dotconfig", number: 140 }
+
 const reference = (key = "task") => ({
   issue,
   task: { kind: "added", key },
 })
+
 const add = { op: "add", issue, key: "task", text: "created task" }
+
 const fixtureParent = fileURLToPath(
   new URL("../../../../.tmp/issue-plans-tests/", import.meta.url),
 )
+
 const replace =
   (before: string, after: string) =>
   (json: string): string => {
     assert.equal(json.includes(before), true)
-
     return json.replace(before, after)
   }
+
 type CorruptionCase = {
   readonly name: string
   readonly operations: readonly unknown[]
@@ -34,6 +38,7 @@ type CorruptionCase = {
     }
   | { readonly target: "missing-event" }
 )
+
 const removeChange =
   (field: "text" | "dependsOn") =>
   (json: string): string => {
@@ -50,11 +55,13 @@ const removeChange =
       )
       return change.field !== field
     })
+
     assert.equal(changes.length, 1)
     payload.changes = changes
 
     return JSON.stringify(payload)
   }
+
 const cases: readonly CorruptionCase[] = [
   {
     name: "malformed add JSON",
@@ -171,6 +178,7 @@ const cases: readonly CorruptionCase[] = [
     corrupt: () => "{",
   },
 ]
+
 const snapshot = (database: DatabaseSync): string =>
   JSON.stringify([
     database.prepare("SELECT * FROM issue_plans ORDER BY id").all(),
@@ -269,10 +277,12 @@ for (const scenario of cases) {
               .run(corrupted, saved.batchId)
           }
         }
+
         const beforeReplay = snapshot(database)
         const reopened = await Effect.runPromise(
           openSqliteTaskStore({ databasePath }),
         )
+
         try {
           const replayed = await Effect.runPromise(
             Effect.either(reopened.apply(batch, context)),

@@ -8,9 +8,11 @@ const RepositoryInputSchema = Schema.String.pipe(
   Schema.filter(value => !value.split("/")[0]?.includes("--")),
   Schema.filter(value => ![".", ".."].includes(value.split("/")[1] ?? "")),
 )
+
 const RepositorySchema = RepositoryInputSchema.pipe(
   Schema.brand("IssueRepository"),
 )
+
 const IssueNumberSchema = Schema.Number.pipe(
   Schema.int(),
   Schema.positive(),
@@ -19,6 +21,7 @@ const IssueNumberSchema = Schema.Number.pipe(
 )
 
 export type IssueRepository = typeof RepositorySchema.Type
+
 export type IssueNumber = typeof IssueNumberSchema.Type
 
 export interface IssueReference {
