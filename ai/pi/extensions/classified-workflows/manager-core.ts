@@ -96,49 +96,6 @@ export const readManagerTasks = (
     : Either.right(checked.right.todos)
 }
 
-export const parseManagerPriorities = (
-  text: string,
-  tasks: readonly Todo[],
-): Either.Either<ManagerPriorities, ManagerError> => {
-  if (text.trim() === "clear") return Either.right({ version: 1, ids: [] })
-  const parts = text.trim().split(/\s+/u)
-  if (parts.length > 64 || !parts.every(part => /^[1-9][0-9]*$/u.test(part)))
-    return Either.left(
-      new ManagerError({
-        code: "invalid_input",
-        message: "Use up to 64 distinct task IDs, or priorities clear.",
-      }),
-    )
-  const ids = parts.map(Number)
-  if (
-    !ids.every(positiveId) ||
-    new Set(ids).size !== ids.length ||
-    !ids.every(id =>
-      tasks.some(
-        task =>
-          task.id === id &&
-          ["pending", "in_progress", "in_review"].includes(task.status) &&
-          (task.parentId === undefined ||
-            tasks.some(
-              parent =>
-                parent.id === task.parentId &&
-                parent.parentId === undefined &&
-                parent.status !== "blocked" &&
-                parent.status !== "deferred",
-            )),
-      ),
-    )
-  )
-    return Either.left(
-      new ManagerError({
-        code: "invalid_input",
-        message:
-          "Priorities must name distinct existing runnable tasks; paused tasks are not resumed.",
-      }),
-    )
-  return Either.right({ version: 1, ids })
-}
-
 export const readManagerPriorities = (
   entries: readonly unknown[],
 ): Either.Either<ManagerPriorities | undefined, ManagerError> => {
@@ -154,9 +111,7 @@ export const readManagerPriorities = (
     !value.ids.every(positiveId) ||
     new Set(value.ids).size !== value.ids.length
   )
-    return invalid(
-      "Stored manager priorities are malformed; use /manager priorities clear to repair them.",
-    )
+    return invalid("Stored manager priorities are malformed.")
   return Either.right({ version: 1, ids: value.ids })
 }
 

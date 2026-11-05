@@ -8,13 +8,12 @@ import {
   managerObservation,
   managerSummaryExists,
   orderManagerTasks,
-  parseManagerPriorities,
   readManagerPriorities,
   readManagerTasks,
   readManagerTurns,
 } from "./manager-core.ts"
 import type { Todo } from "../todo/state.ts"
-import { todoWorkSnapshot, taskContinuationMessage } from "./goal.ts"
+import { todoWorkSnapshot } from "./goal.ts"
 
 const tasks: Todo[] = [
   { id: 1, text: "First existing task", status: "pending" },
@@ -51,23 +50,6 @@ test("manager observes current task state, not raw tool output", () => {
   )
 })
 
-test("explicit priority selection is bounded, unique and references runnable tasks", () => {
-  const chosen = parseManagerPriorities("2 1", tasks)
-  assert.ok(Either.isRight(chosen))
-  assert.deepEqual(chosen.right, { version: 1, ids: [2, 1] })
-  for (const bad of [
-    "2 2",
-    "999",
-    "3",
-    "4",
-    "1; run something",
-    "0",
-    "-1",
-    "1.2",
-  ])
-    assert.ok(Either.isLeft(parseManagerPriorities(bad, tasks)), bad)
-})
-
 test("missing priorities preserve existing order; malformed stored priorities are explicit errors", () => {
   assert.deepEqual(readManagerPriorities(entries), Either.right(undefined))
   assert.ok(
@@ -95,7 +77,7 @@ test("missing priorities preserve existing order; malformed stored priorities ar
   )
 })
 
-test("manager priority order reaches the existing continuation without unpausing anything", () => {
+test("historical manager priority order preserves held task status", () => {
   const prioritized = [
     ...entries,
     {
@@ -111,8 +93,6 @@ test("manager priority order reaches the existing continuation without unpausing
   const pending = todoWorkSnapshot(prioritized).pending
   assert.ok(pending[0]?.startsWith("#1 "))
   assert.ok(pending[1]?.startsWith("#2 "))
-  const continuation = taskContinuationMessage(todoWorkSnapshot(prioritized))
-  assert.ok(continuation?.includes("#1 First existing task"))
   assert.ok(
     !pending.some(item => item.startsWith("#3 ") || item.startsWith("#4 ")),
   )

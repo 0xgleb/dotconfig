@@ -208,12 +208,6 @@ export const prepareNativeManagerState = (
       )
     }
 
-    for (const child of ["requests", "receipts"]) {
-      yield* io(() =>
-        mkdirSync(join(directory, child), { recursive: true, mode: 0o700 }),
-      )
-      yield* privateDirectory(join(directory, child))
-    }
     return yield* openNativeManagerState(directory, scope)
   })
 
@@ -237,9 +231,6 @@ export const openNativeManagerState = (
         "Manager state belongs to another worker.",
       )
     }
-    for (const child of ["requests", "receipts"])
-      yield* privateDirectory(join(directory, child))
-
     const receipt = (
       id: string,
     ): Either.Either<ManagerPriorityReceipt | undefined, ManagerSessionError> =>
@@ -249,7 +240,10 @@ export const openNativeManagerState = (
             "invalid_input",
             "Invalid manager request identity.",
           )
-        const path = join(directory, "receipts", `${id}.json`)
+        const receipts = join(directory, "receipts")
+        if (!existsSync(receipts)) return undefined
+        yield* privateDirectory(receipts)
+        const path = join(receipts, `${id}.json`)
         if (!existsSync(path)) return undefined
         const value = yield* readJson(path)
         if (
@@ -289,17 +283,11 @@ export const openNativeManagerState = (
         ),
       receipt,
       enqueuePriorities: () =>
-        failure(
-          "unavailable",
-          `Queued manager calls are retired for ${scope.cwd} (session ${scope.workerSessionId}); use direct task control.`,
-        ),
+        failure("unavailable", "Legacy task control is unavailable."),
       enqueueTodo: () =>
-        failure(
-          "unavailable",
-          `Queued manager calls are retired for ${scope.cwd} (session ${scope.workerSessionId}); use direct task control.`,
-        ),
-      // Callable compatibility only: historical commands remain inert.
-      processPriorities: () => Either.right([]),
+        failure("unavailable", "Legacy task control is unavailable."),
+      processPriorities: () =>
+        failure("unavailable", "Legacy task control is unavailable."),
     }
   })
 
