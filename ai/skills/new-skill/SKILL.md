@@ -24,9 +24,13 @@ for changing the canonical source.
    duplicate. Update an existing skill when that is the requested change; never
    overwrite unrelated work. Ask only for genuinely missing decisions, not
    metadata the request already determines.
-2. Verify main-worktree topology and the existing VCS workspace, then create a
-   separate purpose-named branch before editing. Preserve unrelated tracked,
-   staged and untracked changes. Do not create a worktree for isolation alone.
+2. Verify main-worktree topology and the existing VCS workspace. For follow-up
+   corrections to an unmerged change, continue its existing branch and PR;
+   inspect later branches in its stack before changing guidance they may already
+   supersede. A new prompt, session or reload is not a new work unit. Create a
+   purpose-named branch only for independent work with no suitable ongoing
+   branch. Preserve unrelated tracked, staged and untracked changes; use scoped
+   file/hunk assignment. Do not create a worktree for isolation alone.
 3. Edit the canonical skill directly. Use a precise activation description,
    concrete workflow and stopping conditions. Names use lowercase letters,
    digits and hyphens, at most 64 characters; descriptions are at most 1024
@@ -46,11 +50,13 @@ for changing the canonical source.
    enabled harness links relevant to the request. Do not recreate a skill in a
    per-harness directory. Home Manager's generated resources may need a separate
    authorized activation; a source edit does not authorize a host rebuild.
-8. Commit and push coherent validated units as work proceeds. Open a draft PR
-   through the repository's existing workflow and keep its description current.
-   Mark it ready only after the requested scope and verification are complete.
-   This routine delivery is authorized by the scoped global-resource request; do
-   not ask again whether to push. Never merge or override branch protection.
+8. Commit and push coherent validated units as work proceeds. Update the
+   existing PR when continuing its work; otherwise open a draft PR with the
+   first checkpoint through the repository's workflow. Keep its description
+   current. Mark it ready once the requested scope and verification are
+   complete. This routine delivery is authorized by the scoped global-resource
+   request; do not ask again whether to push. Never merge or override branch
+   protection.
 9. Use the registered reload tool after changing live Pi resources. Verify
    discovery/activation; do not inject slash commands or keystrokes into the
    owner's editor. Release any temporary task role when the work is complete.

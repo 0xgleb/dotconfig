@@ -1,6 +1,6 @@
 ---
 name: register
-description: Single entry point for every agent session on the Pi agent bus - native Pi or Claude Code, dispatcher lane or worker lane. Each invocation registers the session on the bridge roster with a heartbeat, holds or claims the project's registry role, arms the recurring poll loop, then drains one iteration of the project's queue and yields. Accepts an optional cadence argument (e.g. /register 30m) that arms or re-arms the loop at that interval.
+description: Single entry point for every agent session on the Pi agent bus - native Pi, dispatcher lane or worker lane. Each invocation registers the session on the bridge roster with a heartbeat, holds or claims the project's registry role, arms the recurring poll loop, then drains one iteration of the project's queue and yields. Accepts an optional cadence argument (e.g. /register 30m) that arms or re-arms the loop at that interval.
 ---
 
 # Register
@@ -230,51 +230,30 @@ lane. Session crons die with the session, so a fresh session re-arms by invoking
 
 ## Ask the owner instead of guessing
 
-A guess that survives review costs nothing; a guess that ships costs a rewrite
-and the owner's attention twice. The tiering exists precisely because guess
-quality degrades down it — Fable and GPT-5.6 Sol guess tolerably, and that is
-exactly why work landing below them must ask rather than assume.
+Use the current authenticated `openai-codex/gpt-6.1-sol` for substantive work.
+Model identity does not establish facts or authority: resolve real missing
+requirements from repository/current owner evidence, and ask only when a genuine
+unsettled decision prevents safe execution.
 
 Ask whenever a decision would change what gets built and the answer is not
 already in the repo, the issue, or the current instruction: which of several
-designs, which model or identifier, whether to touch something outside the
-stated scope, or which of two readings of an ambiguous request is meant.
+designs or domain identifiers, whether to touch something outside the stated
+scope, or which of two readings of an ambiguous request is meant.
 
 Every lane can reach the owner's Telegram question cards. The question binds to
 `(agent_id, question_id)`, the owner answers by replying to the card, and
 `/questions` lists everything pending.
 
-- **Pi sessions** call the `ask_user` tool.
-- **Claude Code lanes** use the bridge, publishing into the same store the relay
-  drains. Register first: the relay only sends cards for agents that are live on
-  the roster.
+Pi sessions use the registered `ask_user` tool and its managed delivery/reply
+routing. Do not poll an external bridge or replace native cards. Advisory
+questions do not pause independent authorized work, and settled decisions must
+not be asked again.
 
-  ```
-  printf '%s' '<the question>' | pi-bridge ask --agent <your-agent-id> --header '<=16 chars>' --options 'First option|Second option'
-  pi-bridge answer --agent <your-agent-id>    # status pending until the owner replies
-  ```
-
-  `answer` is a poll, not a push — harness sessions have no inbox, so check it
-  on each drain until it returns a resolution. A question does not stall the
-  queue: keep doing everything the answer does not block.
-
-**Withdraw a card the moment it stops mattering.** Because a lane keeps working
-rather than waiting, the answer often arrives from somewhere else first — the
-code gets read, an ADR lands, the decision is overtaken. A card left standing
-after that is asking for attention the answer no longer needs:
-
-```
-pi-bridge dismiss --agent <your-agent-id> --question <question-id>
-```
-
-It is scoped to the asking agent, so a lane can only retract its own card, and
-it refuses once the owner has answered — that reply is collected with `answer`,
-never discarded. Only cards belonging to an agent currently live on the roster
-are listed, so a card raised by a session that has since died is already out of
-the way and needs no cleanup.
-
-A session with its own native question tool may use that instead when the owner
-is present in the pane. The bridge is what reaches them when they are not.
+Manage card status through native `ask_user` actions and their loaded policies,
+not a separate bridge polling queue. Inspect pending, resolved and draft-review
+status before asking; queued review is not a delivered card. Preserve answered
+decisions and reply bindings. Native delivery is available even when the owner
+is not present in the pane.
 
 Offer real options, not a blank prompt: name the choices you actually considered
 and which one you would take. Keep working on everything the answer does not
@@ -292,6 +271,6 @@ agents, or touches credential files. Full-capability sessions are worker lanes
 and run the drain above.
 
 Generation beyond deterministic bookkeeping stays queued for a full-capability
-native Pi or Claude Code subscription session. The dispatcher never starts an
-external Cursor worker, guesses through an ambiguous routing target, or stalls
-the queue waiting for an unavailable delegate.
+native Pi session using the current authenticated gpt-6.1-sol model. The
+dispatcher never starts an external model worker, guesses through an ambiguous
+routing target, or stalls the queue waiting for an unavailable delegate.
