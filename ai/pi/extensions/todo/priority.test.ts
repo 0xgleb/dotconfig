@@ -79,7 +79,13 @@ test("priority input rejects absent, nonpositive, fractional and unsafe ranks wi
     NaN,
   ]) {
     const result = run(
-      Effect.either(parseTodoAction({ action: "priority", id: 2, priority })),
+      Effect.either(
+        parseTodoAction({
+          action: "priority",
+          id: 2,
+          ...(priority === undefined ? {} : { priority }),
+        }),
+      ),
     )
     assert.ok(Either.isLeft(result))
     if (Either.isLeft(result))
@@ -112,8 +118,8 @@ test("malformed persisted priority is rejected, never silently decoded as unassi
   if (Either.isLeft(result)) assert.equal(result.left.code, "invalid_priority")
 })
 
-test("every status/block/wake reconstruction conserves assigned priority", () => {
-  let state: TodoState = {
+test("nonterminal status/block/wake transitions preserve rank while terminal transitions release it", () => {
+  const state: TodoState = {
     todos: [{ id: 1, text: "Ranked", status: "pending", priority: 3 }],
     nextId: 2,
   }
@@ -128,10 +134,25 @@ test("every status/block/wake reconstruction conserves assigned priority", () =>
     { action: "reply", id: 1, text: "evidence" },
     { action: "status", id: 1, status: "deferred", remindAt: 9000 },
   ] satisfies TodoAction[]) {
-    state = run(transitionTodoState(state, action, 1000)).state
-    assert.equal(state.todos[0]?.priority, 3, action.action)
+    const after = run(transitionTodoState(state, action, 1000)).state
+    const finishes =
+      action.action === "toggle" ||
+      (action.action === "status" && action.status === "cancelled")
+    assert.equal(
+      after.todos[0]?.priority,
+      finishes ? undefined : 3,
+      action.action,
+    )
   }
-  assert.equal(wakeDueDeferredTodos(state, 9000).state.todos[0]?.priority, 3)
+  const deferred = run(
+    transitionTodoState(state, {
+      action: "status",
+      id: 1,
+      status: "deferred",
+      remindAt: 9000,
+    }),
+  ).state
+  assert.equal(wakeDueDeferredTodos(deferred, 9000).state.todos[0]?.priority, 3)
 })
 
 test("missing priority target and bypassed invalid domain action fail without mutating state", () => {
@@ -149,6 +170,9 @@ test("missing priority target and bypassed invalid domain action fail without mu
     ),
   )
   assert.ok(Either.isLeft(invalid))
-  if (Either.isLeft(invalid))
-    assert.equal(invalid.left.code, "invalid_priority")
+  if (Either.isLeft(invalid)) {
+    assert.equal(invalid.left._tag, "TodoInputError")
+    if (invalid.left._tag === "TodoInputError")
+      assert.equal(invalid.left.code, "invalid_priority")
+  }
 })

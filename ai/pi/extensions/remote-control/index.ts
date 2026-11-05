@@ -34,6 +34,7 @@ import {
 import {
   QUESTION_REMOTE_RESOLUTION_EVENT,
   QUESTION_STATE_EVENT,
+  decodeUserQuestionStateSnapshot,
   type RemoteUserQuestionResolution,
   type UserQuestionStateSnapshot,
 } from "../shared/question-events.ts"
@@ -52,6 +53,7 @@ import {
 import { registerRuntimeVersion } from "../shared/runtime-version.ts"
 import { HUMAN_TURN_EVENT } from "../shared/usage-governor-events.ts"
 import { agentDisplayLabel } from "./agent-identity.ts"
+import { getManagerBinding } from "../shared/manager-binding.ts"
 import { bridgeQueueRoutableAgents } from "./agent-selection.ts"
 import {
   deliverCabaCardRelay,
@@ -116,7 +118,7 @@ interface ActiveRemoteTurn {
   readonly messageId: string
   readonly claimToken: string
   readonly toolGuard: RemoteToolGuard
-  readonly lane: "conversational" | "routing"
+  readonly lane: "conversational" | "routing" | "management"
   readonly text: string
   readonly source?: ReturnType<typeof remoteMessageSource>
   readonly batch?: readonly ClaimedBridgeMessage[]
@@ -147,7 +149,7 @@ export default function remoteControl(
   onAuthenticatedOwnerMessage?: (receivedAt: number) => void,
   options: RemoteControlOptions = {},
 ): void {
-  registerRuntimeVersion(pi, "remote-control", "2026.10.17.4")
+  registerRuntimeVersion(pi, "remote-control", "2026.10.17.6")
   const store = makeRemoteBridgeStore(
     remoteBridgeDatabasePath(process.env.XDG_STATE_HOME, homedir()),
   )
@@ -414,8 +416,13 @@ export default function remoteControl(
     },
   })
 
-  pi.events.on(QUESTION_STATE_EVENT, (snapshot: UserQuestionStateSnapshot) => {
-    questionState = snapshot
+  pi.events.on(QUESTION_STATE_EVENT, (snapshot: unknown) => {
+    const decoded = decodeUserQuestionStateSnapshot(snapshot)
+    if (Either.isLeft(decoded)) {
+      latestCtx?.ui.notify(decoded.left.message, "warning")
+      return
+    }
+    questionState = decoded.right
     questionsDirty = true
   })
 
@@ -487,7 +494,11 @@ export default function remoteControl(
       void sync(ctx)
       return
     }
-    if (!turn.source || !remoteSourceCarriesOwnerAuthority(turn.source)) {
+    if (
+      turn.lane === "management" ||
+      !turn.source ||
+      !remoteSourceCarriesOwnerAuthority(turn.source)
+    ) {
       taskContinuationPhase = "idle"
       taskContinuationId = undefined
       void sync(ctx)
@@ -644,22 +655,37 @@ export default function remoteControl(
     ctx: ExtensionContext,
   ): Promise<void> => {
     const source = remoteMessageSource(message.requesterId)
+    const binding = getManagerBinding(pi, ctx)
+    const management =
+      remoteSourceCarriesOwnerAuthority(source) &&
+      Either.isRight(binding) &&
+      binding.right.role !== "worker"
     const turn: ActiveRemoteTurn = {
       messageId: message.id,
       claimToken: message.claimToken,
-      toolGuard: enterRemoteToolGuard(pi),
-      lane: "conversational",
+      toolGuard: enterRemoteToolGuard(
+        pi,
+        management ? "management" : "communication",
+      ),
+      lane: management ? "management" : "conversational",
       text: message.text,
       source,
     }
     active = turn
-    ctx.ui.setStatus(STATUS_KEY, "remote:chat · tools:off")
+    ctx.ui.setStatus(
+      STATUS_KEY,
+      management ? "remote:manager" : "remote:chat · tools:off",
+    )
+    if (Either.isLeft(binding)) {
+      await finishFailure(turn, "model_error")
+      return
+    }
     const contentResult = await Effect.runPromise(
       Effect.either(
         remoteTurnContent(
           message.text,
           message.images,
-          "conversational",
+          management ? "management" : "conversational",
           source,
         ),
       ),
@@ -704,7 +730,7 @@ export default function remoteControl(
       Effect.either(
         Effect.try({
           try: () =>
-            pi.sendUserMessage(content, {
+            pi.sendUserMessage([...content], {
               deliverAs: "steer",
               ...(authenticatedOwner && options.authorizeOwnerInput
                 ? { authorizeInput: options.authorizeOwnerInput }
@@ -854,6 +880,11 @@ export default function remoteControl(
     latestCtx = ctx
     try {
       const now = Date.now()
+      const binding = getManagerBinding(pi, ctx)
+      if (Either.isLeft(binding)) {
+        ctx.ui.setStatus(STATUS_KEY, `remote:error · ${binding.left.message}`)
+        return
+      }
       const heartbeat = await run(
         store.heartbeatAgent({
           id: ctx.sessionManager.getSessionId(),
@@ -861,6 +892,9 @@ export default function remoteControl(
           cwd: ctx.cwd,
           accepting: active === undefined,
           workDelivery: "native-pi",
+          ...(binding.right.role !== "worker"
+            ? { nativeManager: true as const }
+            : {}),
           now,
           ttlMs: BRIDGE_AGENT_TTL_MS,
         }),
@@ -1064,6 +1098,7 @@ export default function remoteControl(
           message.role === "custom" &&
           message.customType === REMOTE_TASK_CONTINUATION_MESSAGE &&
           message.details !== undefined &&
+          message.details !== null &&
           typeof message.details === "object" &&
           "taskContinuationId" in message.details &&
           message.details.taskContinuationId === taskContinuationId,
@@ -1150,6 +1185,7 @@ export default function remoteControl(
       await finishFailure(turn, "aborted")
       return
     }
+    if (turn.lane === "management") return
     const response = finalAssistantText([event.message])
     if (!response) return
     if (turn.lane === "routing") {
