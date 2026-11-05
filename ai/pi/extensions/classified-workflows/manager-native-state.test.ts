@@ -240,6 +240,126 @@ test("check-ins reject foreign snapshots and retain the channel's private file m
   assert.ok(Either.isLeft(channel.take(checkInNow)))
 })
 
+test("check-in windows above the owner allowance fail before publication", t => {
+  const { state, directory } = fixture(t)
+  const channel = state.checkIns
+  assert.ok(channel)
+  const result = channel.enqueue(
+    {
+      ...checkIn,
+      window: {
+        ...checkIn.window,
+        deadlineAt:
+          checkIn.window.lastOwnerAt + SUPERVISED_OWNER_ALLOWANCE_MS + 1,
+      },
+    },
+    checkInContext,
+    checkInNow,
+  )
+  assert.ok(Either.isLeft(result))
+  assert.equal(result.left.code, "protocol")
+  assert.equal(existsSync(join(directory, "check-ins")), false)
+})
+
+test("reopened channels reject malformed persisted check-in envelopes", async t => {
+  const examples = [
+    { name: "unsupported version", patch: { version: 2 } },
+    { name: "invalid request identity", patch: { id: "invalid" } },
+    {
+      name: "foreign snapshot scope",
+      patch: {
+        context: { ...checkInContext, workerSessionId: "other-worker" },
+      },
+    },
+  ]
+  for (const example of examples) {
+    await t.test(example.name, child => {
+      const { state, directory } = fixture(child)
+      const channel = state.checkIns
+      assert.ok(channel)
+      const queued = channel.enqueue(checkIn, checkInContext, checkInNow)
+      assert.ok(Either.isRight(queued))
+      const path = join(directory, "check-ins", `${queued.right}.json`)
+      const original: unknown = JSON.parse(readFileSync(path, "utf8"))
+      assert.ok(typeof original === "object" && original !== null)
+      const malformed = JSON.stringify({ ...original, ...example.patch })
+      writeFileSync(path, malformed)
+      const reopened = openNativeManagerState(directory, scope)
+      assert.ok(Either.isRight(reopened))
+      const result = reopened.right.checkIns?.receipt(queued.right, checkInNow)
+      assert.ok(result && Either.isLeft(result))
+      assert.equal(result.left.code, "protocol")
+      assert.equal(readFileSync(path, "utf8"), malformed)
+      assert.deepEqual(readdirSync(join(directory, "check-in-receipts")), [])
+    })
+  }
+})
+
+test("a valid persisted request cannot be read under another filename identity", t => {
+  const { state, directory } = fixture(t)
+  const channel = state.checkIns
+  assert.ok(channel)
+  const first = channel.enqueue(checkIn, checkInContext, checkInNow)
+  assert.ok(Either.isRight(first))
+  const other = channel.enqueue(
+    {
+      ...checkIn,
+      window: {
+        ...checkIn.window,
+        lastOwnerAt: checkIn.window.lastOwnerAt + 1,
+        deadlineAt: checkIn.window.deadlineAt + 1,
+      },
+      scheduledAt: checkIn.scheduledAt + 1,
+    },
+    { ...checkInContext, observedAt: checkInNow + 1 },
+    checkInNow + 1,
+  )
+  assert.ok(Either.isRight(other))
+  const path = join(directory, "check-ins", `${first.right}.json`)
+  const misplaced = readFileSync(
+    join(directory, "check-ins", `${other.right}.json`),
+    "utf8",
+  )
+  writeFileSync(path, misplaced)
+  const reopened = openNativeManagerState(directory, scope)
+  assert.ok(Either.isRight(reopened))
+  const result = reopened.right.checkIns?.receipt(first.right, checkInNow + 1)
+  assert.ok(result && Either.isLeft(result))
+  assert.equal(result.left.code, "protocol")
+  assert.match(result.left.message, /identity.*file/u)
+  assert.equal(readFileSync(path, "utf8"), misplaced)
+  assert.deepEqual(readdirSync(join(directory, "check-in-receipts")), [])
+})
+
+test("reopened channels reject malformed persisted check-in receipt fields", async t => {
+  const examples = [
+    { name: "foreign identity", patch: { id: "other-request" } },
+    { name: "unsupported status", patch: { status: "queued" } },
+    { name: "malformed message", patch: { message: 7 } },
+  ]
+  for (const example of examples) {
+    await t.test(example.name, child => {
+      const { state, directory } = fixture(child)
+      const channel = state.checkIns
+      assert.ok(channel)
+      const queued = channel.enqueue(checkIn, checkInContext, checkInNow)
+      assert.ok(Either.isRight(queued))
+      assert.ok(Either.isRight(channel.take(checkInNow)))
+      const pending = channel.receipt(queued.right, checkInNow)
+      assert.ok(Either.isRight(pending) && pending.right)
+      const path = join(directory, "check-in-receipts", `${queued.right}.json`)
+      const malformed = JSON.stringify({ ...pending.right, ...example.patch })
+      writeFileSync(path, malformed)
+      const reopened = openNativeManagerState(directory, scope)
+      assert.ok(Either.isRight(reopened))
+      const result = reopened.right.checkIns?.receipt(queued.right, checkInNow)
+      assert.ok(result && Either.isLeft(result))
+      assert.equal(result.left.code, "protocol")
+      assert.equal(readFileSync(path, "utf8"), malformed)
+    })
+  }
+})
+
 test("an oversized UTF-8 check-in is rejected without publishing a request", t => {
   const { state, directory } = fixture(t)
   const channel = state.checkIns
