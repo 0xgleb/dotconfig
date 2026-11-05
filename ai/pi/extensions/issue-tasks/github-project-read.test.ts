@@ -94,6 +94,7 @@ const issueItem = (
   },
   priority: numeric(project, bindings[project].priority, 2),
   effort: numeric(project, bindings[project].effort, 5),
+  status: null,
   ...patch,
 })
 const envelope = (
@@ -246,6 +247,55 @@ test("Project read requires actual viewer evidence rather than assuming the conf
       ),
     )
   }
+})
+
+test("Project observations retain a validated current Status and available option metadata", () => {
+  const page = right(
+    read(
+      envelope("personal", [
+        issueItem("personal", {
+          status: {
+            __typename: "ProjectV2ItemFieldSingleSelectValue",
+            field: { id: bindings.personal.status },
+            optionId: "47fc9ee4",
+          },
+        }),
+      ]),
+    ),
+  )
+  const row = page.items[0]
+  assert.ok(row?.kind === "issue")
+  assert.equal(Reflect.get(row, "status"), "47fc9ee4")
+  assert.deepEqual(
+    Reflect.get(page, "statusOptions"),
+    statusField("personal").options,
+  )
+})
+
+test("current Project Status cannot silently use another field, unknown option or missing evidence", () => {
+  for (const status of [
+    undefined,
+    {
+      __typename: "ProjectV2ItemFieldSingleSelectValue",
+      field: { id: "wrong-field" },
+      optionId: "47fc9ee4",
+    },
+    {
+      __typename: "ProjectV2ItemFieldSingleSelectValue",
+      field: { id: bindings.personal.status },
+      optionId: "unknown-option",
+    },
+    {
+      __typename: "ProjectV2ItemFieldSingleSelectValue",
+      field: { id: bindings.personal.status },
+      optionId: null,
+    },
+  ])
+    assert.ok(
+      Either.isLeft(
+        read(envelope("personal", [issueItem("personal", { status })])),
+      ),
+    )
 })
 
 test("Project queries detach and freeze only selected scope and bounded opaque pagination", () => {

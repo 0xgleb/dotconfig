@@ -231,6 +231,9 @@ const NextQueryParameters = Type.Object(
   {
     repository: Type.String({ minLength: 1, maxLength: 140 }),
     project: Type.Union([Type.Literal("personal"), Type.Literal("dataclique")]),
+    mode: Type.Optional(
+      Type.Union([Type.Literal("implementation"), Type.Literal("review")]),
+    ),
   },
   { additionalProperties: false },
 )
@@ -521,6 +524,8 @@ const unavailableOutput = (outcome: TaskExecutionOutcome): string => {
       const next = outcome.result
       if (next.kind === "none")
         return "No eligible issue was selected. Detailed observations retained."
+      if (next.kind === "review")
+        return "Review selection retained; issue assignees and status were not changed."
       const target = next.receipt.trace.target
       return next.receipt.kind === "verified"
         ? `Verified ${target.issue.repository}#${target.issue.number} assigned to ${target.viewer.login} and In Progress at readback; no exclusive ownership guarantee. Detailed observations retained.`
@@ -657,7 +662,7 @@ export const createTaskTool = (options: TaskToolOptions): IssueTaskTool => ({
   name: "task",
   label: "Task",
   description:
-    "Select and pick up an eligible issue with next query {repository,project:personal|dataclique}, read/get issue-qualified tasks, listIssues/getIssue metadata with local tasks, or apply an atomic explicit-issue mutation batch. read uses issue/page/filter; readMany explicit queries totals at most 100 requested tasks; get uses issue/id. listIssues uses query {repository,state,page,tasks:{limit,filter?}} with at most 100 aggregate requested tasks; getIssue uses query {issue,related:{limit,blockedByAfter?,deliveryAfter?},tasks:{page,filter?}}. apply uses complete issues/operations (add, edit, status, block, transfer). No worker selection or replies. Mutation authority and request identity come only from the host.",
+    "Select and pick up an eligible issue with next query {repository,project:personal|dataclique,mode?:implementation|review}; review mode selects In review without changing assignees or status. Read/get issue-qualified tasks, listIssues/getIssue metadata with local tasks, or apply an atomic explicit-issue mutation batch. read uses issue/page/filter; readMany explicit queries totals at most 100 requested tasks; get uses issue/id. listIssues uses query {repository,state,page,tasks:{limit,filter?}} with at most 100 aggregate requested tasks; getIssue uses query {issue,related:{limit,blockedByAfter?,deliveryAfter?},tasks:{page,filter?}}. apply uses complete issues/operations (add, edit, status, block, transfer). No worker selection or replies. Mutation authority and request identity come only from the host.",
   parameters: TaskParameters,
   execute: async (toolCallId, params, signal, onUpdate, ctx) => {
     let outcome: TaskExecutionOutcome

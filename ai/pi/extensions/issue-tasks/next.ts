@@ -11,6 +11,7 @@ import {
   type GitHubProjectItem,
   type GitHubSchedulingProject,
   type GitHubInProgressTarget,
+  type GitHubProjectStatusTarget,
 } from "./github-project-read.ts"
 import type { GitHubUser } from "./github-user.ts"
 import {
@@ -36,6 +37,7 @@ import type { SqliteTaskStore, TaskStoreError } from "./sqlite-store.ts"
 export interface IssueNextQuery {
   readonly repository: IssueRepository
   readonly project: GitHubSchedulingProject
+  readonly mode?: "implementation" | "review"
 }
 
 export interface IssueNextProgress {
@@ -70,6 +72,8 @@ export interface IssueNextObservation {
   readonly selection: IssueAssignmentSelection
   readonly viewer: GitHubUser
   readonly inProgress: GitHubInProgressTarget
+  readonly review?: { readonly status: GitHubProjectStatusTarget }
+  readonly refineOptions?: readonly GitHubProjectStatusTarget["optionId"][]
   readonly selected: ProjectIssue | null
   readonly excludedAssignments: readonly {
     readonly issue: IssueReference
@@ -93,7 +97,7 @@ const readError = (code: IssueNextReadError["code"]): IssueNextReadError =>
     code,
     message: {
       invalid_request:
-        "Next issue requires only a qualified repository and an existing Project alias",
+        "Next issue requires a qualified repository, an existing Project alias, and optional implementation/review mode",
       inconsistent_readback:
         "Issue selection sources changed or returned inconsistent qualified coverage",
       capacity: "Complete issue selection exceeds the source read budget",
@@ -105,6 +109,7 @@ const readError = (code: IssueNextReadError["code"]): IssueNextReadError =>
 const QuerySchema = Schema.Struct({
   repository: Schema.Unknown,
   project: Schema.Literal("personal", "dataclique"),
+  mode: Schema.optional(Schema.Literal("implementation", "review")),
 })
 
 export const decodeIssueNextQuery = (input: unknown) =>
@@ -117,7 +122,11 @@ export const decodeIssueNextQuery = (input: unknown) =>
         const repository = yield* decodeIssueRepository(raw.repository).pipe(
           Either.mapLeft(() => readError("invalid_request")),
         )
-        return Object.freeze({ repository, project: raw.project })
+        return Object.freeze({
+          repository,
+          project: raw.project,
+          ...(raw.mode === undefined ? {} : { mode: raw.mode }),
+        })
       }),
     catch: () => readError("invalid_request"),
   }).pipe(Either.flatMap(result => result))
@@ -366,6 +375,9 @@ export const createIssueNextReader = (
       }[] = []
       let viewer: GitHubUser | undefined
       let inProgress: GitHubInProgressTarget | undefined
+      let review: { readonly status: GitHubProjectStatusTarget } | undefined
+      let statusOptions:
+        ReadonlyMap<GitHubProjectStatusTarget["optionId"], string> | undefined
       const itemIds = new Set<string>()
       const issueIds = new Set<string>()
       const cursors = new Set<string>()
@@ -393,6 +405,36 @@ export const createIssueNextReader = (
           return yield* Effect.fail(readError("inconsistent_readback"))
         viewer = Object.freeze({ ...page.viewer })
         inProgress = Object.freeze({ ...page.inProgress })
+        const currentOptions = new Map(
+          page.statusOptions.map(option => [option.id, option.name]),
+        )
+        if (
+          statusOptions !== undefined &&
+          (statusOptions.size !== currentOptions.size ||
+            [...statusOptions].some(
+              ([id, name]) => currentOptions.get(id) !== name,
+            ))
+        )
+          return yield* Effect.fail(readError("inconsistent_readback"))
+        statusOptions = currentOptions
+        const refineOptions = new Set(
+          page.statusOptions
+            .filter(option => option.name.toLowerCase() === "refine")
+            .map(option => option.id),
+        )
+        if (query.mode === "review") {
+          const options = page.statusOptions.filter(
+            option => option.name.toLowerCase() === "in review",
+          )
+          const option = options[0]
+          if (options.length !== 1 || option === undefined)
+            return yield* Effect.fail(readError("unavailable"))
+          if (review !== undefined && review.status.optionId !== option.id)
+            return yield* Effect.fail(readError("inconsistent_readback"))
+          review = Object.freeze({
+            status: Object.freeze({ ...inProgress, optionId: option.id }),
+          })
+        }
         for (const item of page.items) {
           if (itemIds.has(item.itemId))
             return yield* Effect.fail(readError("inconsistent_readback"))
@@ -405,7 +447,16 @@ export const createIssueNextReader = (
             return yield* Effect.fail(readError("inconsistent_readback"))
           issueIds.add(key)
           if (item.issue.repository !== query.repository) continue
-          if (item.assignees.some(user => user.id !== page.viewer.id)) {
+          if (item.status !== null && refineOptions.has(item.status)) continue
+          if (query.mode === "review") {
+            if (review === undefined)
+              return yield* Effect.fail(readError("inconsistent_readback"))
+            if (item.status !== review.status.optionId) continue
+          }
+          if (
+            query.mode !== "review" &&
+            item.assignees.some(user => user.id !== page.viewer.id)
+          ) {
             excludedAssignments.push(
               Object.freeze({
                 issue: Object.freeze({ ...item.issue }),
@@ -435,7 +486,11 @@ export const createIssueNextReader = (
         after = page.pageInfo.endCursor
       }
 
-      if (viewer === undefined || inProgress === undefined)
+      if (
+        viewer === undefined ||
+        inProgress === undefined ||
+        statusOptions === undefined
+      )
         return yield* Effect.fail(readError("inconsistent_readback"))
 
       const candidates: IssueSelectionCandidate[] = []
@@ -470,6 +525,12 @@ export const createIssueNextReader = (
         selected,
         viewer,
         inProgress,
+        ...(review === undefined ? {} : { review }),
+        refineOptions: Object.freeze(
+          [...statusOptions]
+            .filter(([, name]) => name.toLowerCase() === "refine")
+            .map(([id]) => id),
+        ),
         excludedAssignments: Object.freeze(excludedAssignments),
       })
     }).pipe(Effect.catchAllDefect(() => Effect.fail(readError("unavailable"))))

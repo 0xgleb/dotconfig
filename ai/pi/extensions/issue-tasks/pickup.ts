@@ -96,6 +96,11 @@ export type IssuePickupReceipt = {
 export type IssueNextPickResult =
   | { readonly kind: "none"; readonly observation: IssueNextObservation }
   | {
+      readonly kind: "review"
+      readonly observation: IssueNextObservation
+      readonly observed: IssuePickupObservation
+    }
+  | {
       readonly kind: "pickup"
       readonly observation: IssueNextObservation
       readonly receipt: IssuePickupReceipt
@@ -130,7 +135,7 @@ const pickError = (code: IssueNextPickError["code"]) =>
     }[code],
   })
 
-const eligibleObservation = (
+const matchingOpenObservation = (
   target: IssuePickupTarget,
   observed: IssuePickupObservation,
 ): boolean =>
@@ -142,9 +147,15 @@ const eligibleObservation = (
   observed.projectId === target.inProgress.projectId &&
   observed.state === "open" &&
   !observed.archived &&
-  observed.assignees.every(user => user.id === target.viewer.id) &&
   (observed.status === null ||
     observed.status.fieldId === target.inProgress.fieldId)
+
+const eligibleObservation = (
+  target: IssuePickupTarget,
+  observed: IssuePickupObservation,
+): boolean =>
+  matchingOpenObservation(target, observed) &&
+  observed.assignees.every(user => user.id === target.viewer.id)
 
 const desiredObservation = (
   target: IssuePickupTarget,
@@ -205,6 +216,19 @@ export const createIssueNextPicker = (options: {
         viewer: observation.viewer,
         inProgress: observation.inProgress,
       })
+      if (observation.review !== undefined) {
+        const observed = freezeObservation(yield* ports.inspect(target))
+        const status = observation.review.status
+        if (
+          !matchingOpenObservation(target, observed) ||
+          status.projectId !== target.inProgress.projectId ||
+          status.fieldId !== target.inProgress.fieldId ||
+          observed.status?.fieldId !== status.fieldId ||
+          observed.status.optionId !== status.optionId
+        )
+          return yield* Effect.fail(pickError("stale_selection"))
+        return Object.freeze({ kind: "review" as const, observation, observed })
+      }
       let trace: IssuePickupTrace = Object.freeze({
         target,
         stage: "preflight",
@@ -217,7 +241,11 @@ export const createIssueNextPicker = (options: {
       }
       record(trace)
       const initial = freezeObservation(yield* ports.inspect(target))
-      if (!eligibleObservation(target, initial))
+      if (
+        !eligibleObservation(target, initial) ||
+        (initial.status !== null &&
+          observation.refineOptions?.includes(initial.status.optionId) === true)
+      )
         return yield* Effect.fail(pickError("stale_selection"))
       record({
         ...trace,

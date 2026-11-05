@@ -472,6 +472,7 @@ test("decoded Project observations enter the consumer contract without eligibili
               field: { id: effortId },
               number: 1,
             },
+            status: null,
           })),
           pageInfo: { hasNextPage: false, endCursor: null },
         },
