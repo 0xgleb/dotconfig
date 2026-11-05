@@ -58,6 +58,13 @@ export const GITHUB_PROJECT_SCHEDULING_DOCUMENT = `query ProjectSchedulingMetada
           }
           priority: fieldValueByName(name: "Priority") { ...SchedulingNumber }
           effort: fieldValueByName(name: "Effort") { ...SchedulingNumber }
+          status: fieldValueByName(name: "Status") {
+            __typename
+            ... on ProjectV2ItemFieldSingleSelectValue {
+              optionId
+              field { ... on ProjectV2SingleSelectField { id } }
+            }
+          }
         }
         pageInfo { hasNextPage endCursor }
       }
@@ -121,6 +128,7 @@ export type GitHubProjectItem =
       readonly issue: IssueReference
       readonly issueNodeId: GitHubIssueNodeId
       readonly assignees: readonly GitHubUser[]
+      readonly status: GitHubProjectStatusTarget["optionId"] | null
       readonly state: "open" | "closed"
       readonly priority: GitHubProjectNumberValue
       readonly effort: GitHubProjectNumberValue
@@ -134,6 +142,10 @@ export interface GitHubProjectPage {
   readonly project: GitHubSchedulingProject
   readonly viewer: GitHubUser
   readonly inProgress: GitHubInProgressTarget
+  readonly statusOptions: readonly {
+    readonly id: GitHubProjectStatusTarget["optionId"]
+    readonly name: string
+  }[]
   readonly items: readonly GitHubProjectItem[]
   readonly pageInfo: GitHubConnectionPageInfo
 }
@@ -247,7 +259,7 @@ export const decodeGitHubProjectPage = (
       return yield* invalid("invalid_response")
 
     const items = yield* Either.all(
-      nodes.map(node => decodeItem(node, binding)),
+      nodes.map(node => decodeItem(node, binding, project.statusField.options)),
     )
     const issues = items.flatMap(item =>
       item.kind === "issue" ? [issueKey(item.issue)] : [],
@@ -263,6 +275,9 @@ export const decodeGitHubProjectPage = (
       project: query.project,
       viewer: Object.freeze({ ...envelope.data.viewer }),
       inProgress: Object.freeze(inProgress),
+      statusOptions: Object.freeze(
+        project.statusField.options.map(option => Object.freeze({ ...option })),
+      ),
       items: Object.freeze(items),
       pageInfo: Object.freeze({ ...pageInfo }),
     })
@@ -381,7 +396,8 @@ export const GitHubInProgressTargetSchema = Schema.Struct({
   fieldId: ProjectFieldIdSchema,
   optionId: StatusOptionIdSchema,
 })
-export type GitHubInProgressTarget = typeof GitHubInProgressTargetSchema.Type
+export type GitHubProjectStatusTarget = typeof GitHubInProgressTargetSchema.Type
+export type GitHubInProgressTarget = GitHubProjectStatusTarget
 
 const StatusBindingSchema = Schema.Struct({
   id: ProjectFieldIdSchema,
@@ -558,6 +574,12 @@ const ItemSchema = Schema.Struct({
   content: Schema.NullOr(Schema.Union(IssueContentSchema, OtherContentSchema)),
   priority: Schema.Unknown,
   effort: Schema.Unknown,
+  status: Schema.Unknown,
+})
+const CurrentStatusSchema = Schema.Struct({
+  __typename: Schema.Literal("ProjectV2ItemFieldSingleSelectValue"),
+  optionId: StatusOptionIdSchema,
+  field: Schema.Struct({ id: ProjectFieldIdSchema }),
 })
 const NumberSchema = Schema.Number.pipe(Schema.finite())
 const NumericValueSchema = Schema.Union(
@@ -651,6 +673,7 @@ const decodeNumber = (
 const decodeItem = (
   input: unknown,
   binding: ProjectBinding,
+  statusOptions: typeof StatusFieldSchema.Type.options,
 ): Either.Either<GitHubProjectItem, GitHubReadError> =>
   Either.gen(function* () {
     const item = yield* decode(ItemSchema, input)
@@ -671,12 +694,23 @@ const decodeItem = (
     const priority = yield* decodeNumber(item.priority, binding.priority)
     const effort = yield* decodeNumber(item.effort, binding.effort)
     const assignees = yield* decodeGitHubAssignees(content.assignees)
+    let status: GitHubProjectStatusTarget["optionId"] | null = null
+    if (item.status !== null) {
+      const value = yield* decode(CurrentStatusSchema, item.status)
+      if (
+        value.field.id !== binding.status.id ||
+        !statusOptions.some(option => option.id === value.optionId)
+      )
+        return yield* invalid("invalid_response")
+      status = value.optionId
+    }
 
     return Object.freeze({
       kind: "issue" as const,
       itemId: item.id,
       issue,
       issueNodeId: content.id,
+      status,
       assignees: Object.freeze(
         assignees.map(value => Object.freeze({ ...value })),
       ),

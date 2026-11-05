@@ -24,6 +24,7 @@ interface Row {
   readonly priority: number
   readonly effort: number | null
   readonly repository?: string
+  readonly status?: string | null
   readonly assignees?: readonly {
     readonly id: string
     readonly login: string
@@ -67,7 +68,11 @@ const projectPayload = (
           id: "PVTSSF_lAHOAl_tIc4BpO1UzhnrYfs",
           name: "Status",
           dataType: "SINGLE_SELECT",
-          options: [{ id: "47fc9ee4", name: "In progress" }],
+          options: [
+            { id: "47fc9ee4", name: "In progress" },
+            { id: "aba860b9", name: "In review" },
+            { id: "refine-option", name: "Refine" },
+          ],
         },
         items: {
           nodes: rows.map(row => ({
@@ -87,6 +92,14 @@ const projectPayload = (
             },
             priority: value(priorityId, row.priority),
             effort: value(effortId, row.effort),
+            status:
+              row.status === undefined || row.status === null
+                ? null
+                : {
+                    __typename: "ProjectV2ItemFieldSingleSelectValue",
+                    optionId: row.status,
+                    field: { id: "PVTSSF_lAHOAl_tIc4BpO1UzhnrYfs" },
+                  },
           })),
           pageInfo:
             after === null ? pageInfo : { hasNextPage: true, endCursor: after },
@@ -174,6 +187,75 @@ const withStore = async (work: (store: SqliteTaskStore) => Promise<void>) => {
     rmSync(root, { recursive: true })
   }
 }
+
+test("implementation next excludes actual Refine status before ranking even with complete numeric metadata", async () => {
+  await withStore(async tasks => {
+    const source = ports([
+      projectPayload([
+        { number: 1, priority: 1, effort: 1, status: "refine-option" },
+        { number: 2, priority: 2, effort: 1, status: "47fc9ee4" },
+      ]),
+    ])
+    const result = await run(
+      createIssueNextReader({ ...source, tasks }).next(query),
+    )
+    assert.ok(result.kind === "selected")
+    assert.equal(result.issue.number, 2)
+    assert.ok(
+      !source.calls.includes("issue:1"),
+      "Refine exclusion must precede dependency/task reads",
+    )
+  })
+})
+
+test("reviewer next selects only In review issues and preserves an implementation author's assignment", async () => {
+  await withStore(async tasks => {
+    const source = ports([
+      projectPayload([
+        { number: 1, priority: 1, effort: 1, status: "47fc9ee4" },
+        {
+          number: 2,
+          priority: 2,
+          effort: 1,
+          status: "aba860b9",
+          assignees: [{ id: "other-user", login: "levsgit" }],
+        },
+      ]),
+    ])
+    const observed = await run(
+      createIssueNextReader({ ...source, tasks }).read({
+        ...query,
+        mode: "review",
+      }),
+    )
+    assert.ok(observed.selection.kind === "selected")
+    assert.equal(observed.selection.issue.number, 2)
+    assert.equal(observed.selected?.assignees[0]?.login, "levsgit")
+    assert.equal(observed.review?.status.optionId, "aba860b9")
+    assert.ok(
+      !source.calls.includes("issue:1"),
+      "non-review issues must be excluded before downstream reads",
+    )
+  })
+})
+
+test("reviewer next returns none if no issue has the actual In review status", async () => {
+  await withStore(async tasks => {
+    const source = ports([
+      projectPayload([
+        { number: 1, priority: 1, effort: 1, status: "47fc9ee4" },
+      ]),
+    ])
+    const observed = await run(
+      createIssueNextReader({ ...source, tasks }).read({
+        ...query,
+        mode: "review",
+      }),
+    )
+    assert.equal(observed.selection.kind, "none")
+    assert.deepEqual(source.calls, ["project:0"])
+  })
+})
 
 for (const assignees of [
   [{ id: "other-user", login: "levsgit" }],
