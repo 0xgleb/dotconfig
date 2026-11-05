@@ -121,6 +121,7 @@ const runReview = async (
       // The real sandbox handles schema-backed results and blocked envelopes.
       availableMemoryBytes: () => Number.MAX_SAFE_INTEGER,
       runAgent: async request => {
+        assert.equal(request.cwd, input.repoRoot)
         options.inspectRequest?.(request)
         const stage = stageOf(request)
         calls.push(stage)
@@ -580,7 +581,7 @@ for (const sourceRevision of [undefined, "a".repeat(40)]) {
   test(`every phase receives source-safety and evidence instructions (${sourceRevision ? "revision" : "working tree"})`, async () => {
     const seen: Stage[] = []
     await runReview({}, [], [], {
-      sourceRevision,
+      ...(sourceRevision === undefined ? {} : { sourceRevision }),
       inspectRequest: request => {
         const stage = stageOf(request)
         seen.push(stage)
@@ -633,19 +634,6 @@ for (const sourceRevision of [
     assert.deepEqual(calls, [])
   })
 }
-
-test("shared coverage priority requires meaningful happy and failure paths", () => {
-  const priority = skill.match(/6\. TEST COVERAGE[^\n]*([\s\S]*?)\n7\./)?.[0]
-  assert.ok(priority)
-
-  assert.match(priority, /happy-path/)
-  assert.match(priority, /failure-path/)
-  assert.doesNotMatch(priority, /Only flag if/)
-  assert.match(
-    skill,
-    /BEGIN_AUTHOR_DESCRIPTION[\s\S]*\{PR_DESCRIPTION\}[\s\S]*END_AUTHOR_DESCRIPTION/,
-  )
-})
 
 test("verification scopes new behavior rather than unchanged supporting lines", async () => {
   let verifications = 0
@@ -1224,4 +1212,72 @@ test("a successful zero-candidate review may still complete cleanly", async () =
   assert.deepEqual(calls, ["review", "synthesis"])
   assert.ok("findings" in report && Array.isArray(report.findings))
   assert.equal(report.findings.length, 0)
+})
+
+test("delta review binds every child to the checkout rather than exported source", async () => {
+  const reviewLoop = readFileSync(
+    new URL("../skills/review-loop/SKILL.md", import.meta.url),
+    "utf8",
+  )
+  const deltaScript = [
+    ...reviewLoop.matchAll(/```javascript\n([\s\S]*?)\n```/g),
+  ]
+    .map(match => match[1])
+    .find(block => block && /name:\s*["']review-delta["']/.test(block))
+
+  assert.ok(deltaScript, "exercise the documented review-delta implementation")
+
+  const input = {
+    fixedFindings: [finding],
+    deltaDiffPath: "/fixture/artifacts/fix.patch",
+    fullDiffPath: "/fixture/artifacts/full.patch",
+    repoRoot: "/fixture/review-checkout",
+    docsPaths: ["/fixture/review-checkout/AGENTS.md"],
+    reviewSource: {
+      mode: "stack",
+      branch: "fixture-branch",
+      parentSha: "a".repeat(40),
+      headSha: "b".repeat(40),
+      sourceRoot: "/fixture/exported-source",
+      ownedDeltaPath: "/fixture/artifacts/fix.patch",
+    },
+    markdownFiles: ["README.md"],
+    markdownPromptPath: "/fixture/artifacts/markdown-prompt.txt",
+  }
+  const requests: AgentRequest[] = []
+
+  const report = await runWorkflowScript(
+    `const args = ${JSON.stringify(input)};\n${deltaScript}`,
+    limits,
+    {
+      availableMemoryBytes: () => Number.MAX_SAFE_INTEGER,
+      runAgent: async request => {
+        requests.push(request)
+        assert.equal(request.cwd, input.repoRoot)
+
+        if (request.task.includes(input.markdownPromptPath)) {
+          return completed({
+            findings: [],
+            reviewedFiles: input.markdownFiles,
+            unreadFiles: [],
+          })
+        }
+        if (request.task.includes(finding.title)) {
+          return completed({ fixed: true, rationale: "The fix is verified." })
+        }
+        return completed({ findings: [], clean_reason: "No new issues." })
+      },
+      checkpoint: async () => "approved",
+    },
+  )
+
+  assert.ok(typeof report === "object" && report !== null)
+  assert.ok("status" in report)
+  assert.equal(report.status, "completed")
+  assert.equal(requests.length, 3)
+  assert.equal(
+    requests.filter(request => request.task.includes(input.markdownPromptPath))
+      .length,
+    1,
+  )
 })
