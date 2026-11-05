@@ -12,7 +12,7 @@ import { TaskStoreError } from "./sqlite-store.ts"
 const parent = fileURLToPath(
   new URL("../../../../.tmp/issue-task-host-tests/", import.meta.url),
 )
-const issue = { repository: "0xgleb/dotconfig", number: 1 }
+const issue = { repository: "owner/repository", number: 1 }
 const add = {
   action: "apply",
   issues: [issue],
