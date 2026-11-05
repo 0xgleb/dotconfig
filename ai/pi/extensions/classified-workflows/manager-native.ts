@@ -11,7 +11,6 @@ import {
 import { Effect, Either } from "effect"
 import { readPromptFile } from "../shared/prompt-text.ts"
 import { registerManagerBinding } from "../shared/manager-binding.ts"
-import type { TodoRequest } from "../todo/state.ts"
 import { decodeManagerSummary, type ManagerSummary } from "./manager-core.ts"
 import {
   openNativeManagerState,
@@ -33,7 +32,7 @@ import {
 export interface NativeManagerWorker {
   readonly todo?: (
     ctx: ExtensionContext,
-    request: TodoRequest,
+    request: unknown,
   ) => Either.Either<string, ManagerSessionError>
   readonly snapshot: (
     ctx: ExtensionContext,

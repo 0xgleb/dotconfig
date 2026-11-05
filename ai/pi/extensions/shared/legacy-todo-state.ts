@@ -1,10 +1,5 @@
 import { Data, Effect, Option, Schema } from "effect"
-import {
-  isFibonacciEffort,
-  type FibonacciEffort,
-} from "../shared/fibonacci-effort.ts"
-
-export { isFibonacciEffort, type FibonacciEffort }
+import { isFibonacciEffort, type FibonacciEffort } from "./fibonacci-effort.ts"
 
 export type TodoStatus =
   | "pending"
@@ -37,45 +32,8 @@ export interface TodoState {
   readonly nextId: number
 }
 
-export type TodoRequest =
-  | { readonly action: "list" }
-  | {
-      readonly action: "add"
-      readonly text?: string
-      readonly parentId?: number
-      readonly effort?: number
-    }
-  | {
-      readonly action: "effort"
-      readonly id?: number
-      readonly effort?: number | null
-    }
-  | {
-      readonly action: "priority"
-      readonly id?: number
-      readonly priority?: number | null
-    }
-  | {
-      readonly action: "priority_relative"
-      readonly id?: number
-      readonly referenceId?: number
-      readonly position?: "above" | "below"
-    }
-  | { readonly action: "priority_order"; readonly ids?: ReadonlyArray<number> }
-  | { readonly action: "toggle"; readonly id?: number }
-  | {
-      readonly action: "status"
-      readonly id?: number
-      readonly status?: SettableTodoStatus
-      readonly remindAt?: string
-    }
-  | { readonly action: "block"; readonly id?: number; readonly reason?: string }
-  | { readonly action: "reply"; readonly id?: number; readonly text?: string }
-  | { readonly action: "unblock"; readonly id?: number }
-  | { readonly action: "clear" }
-
 export class TodoInputError extends Data.TaggedError("TodoInputError")<{
-  action: TodoRequest["action"]
+  action: "list"
   message: string
   code?:
     | "reply_limit"
@@ -146,7 +104,7 @@ export const decodeTodoState: (
 
 const todoStateError = (
   state: TodoState,
-  action: TodoRequest["action"],
+  action: "list",
 ): TodoInputError | undefined => {
   if (
     state.todos.some(

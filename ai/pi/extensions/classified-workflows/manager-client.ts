@@ -2,7 +2,6 @@ import type {
   ExtensionAPI,
   ExtensionContext,
 } from "@earendil-works/pi-coding-agent"
-import type { TodoRequest } from "../todo/state.ts"
 
 export interface ManagerTodoRuntime {
   readonly agentDir: string
@@ -35,7 +34,7 @@ export const isNativeManagerProfile = (pi: ExtensionAPI): boolean =>
 export const invokeManagerTodo = async (
   _pi: ExtensionAPI,
   _ctx: ExtensionContext,
-  _request: TodoRequest,
+  _request: unknown,
   _signal?: AbortSignal,
   _runtime?: ManagerTodoRuntime,
 ): Promise<ManagerTodoToolResult> => ({

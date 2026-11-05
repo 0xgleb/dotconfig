@@ -23,7 +23,6 @@ import {
   type ManagerPriorityReceipt,
 } from "./manager-pair-protocol.ts"
 import { ManagerSessionError } from "./manager-session-core.ts"
-import type { TodoRequest } from "../todo/state.ts"
 
 export interface NativeManagerState {
   readonly publish: (
@@ -38,14 +37,14 @@ export interface NativeManagerState {
     revision: string,
   ) => Either.Either<string, ManagerSessionError>
   readonly enqueueTodo: (
-    request: TodoRequest,
+    request: unknown,
     revision: string,
   ) => Either.Either<string, ManagerSessionError>
   readonly processPriorities: (
     revision: () => string,
     apply: (text: string) => Either.Either<string, ManagerSessionError>,
     applyTodo?: (
-      request: TodoRequest,
+      request: unknown,
     ) => Either.Either<string, ManagerSessionError>,
   ) => Either.Either<readonly ManagerPriorityReceipt[], ManagerSessionError>
   readonly receipt: (

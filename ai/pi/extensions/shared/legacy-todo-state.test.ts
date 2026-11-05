@@ -1,7 +1,11 @@
 import assert from "node:assert/strict"
 import test from "node:test"
 import { Effect, Either, Option } from "effect"
-import { decodeTodoState, validateTodoState, type TodoState } from "./state.ts"
+import {
+  decodeTodoState,
+  validateTodoState,
+  type TodoState,
+} from "./legacy-todo-state.ts"
 
 test("persisted state is decoded instead of cast", () => {
   const valid = decodeTodoState({

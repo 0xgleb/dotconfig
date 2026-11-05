@@ -2,7 +2,7 @@ import assert from "node:assert/strict"
 import test from "node:test"
 import { todoWorkSnapshot } from "./goal.ts"
 import { managerObservation, MANAGER_PRIORITY_ENTRY } from "./manager-core.ts"
-import type { Todo, TodoState } from "../todo/state.ts"
+import type { Todo, TodoState } from "../shared/legacy-todo-state.ts"
 
 const entries = (todos: readonly Todo[], order?: readonly number[]) => [
   {

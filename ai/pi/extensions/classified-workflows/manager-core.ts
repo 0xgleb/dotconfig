@@ -1,5 +1,9 @@
 import { Data, Either, Effect, Option } from "effect"
-import { decodeTodoState, validateTodoState, type Todo } from "../todo/state.ts"
+import {
+  decodeTodoState,
+  validateTodoState,
+  type Todo,
+} from "../shared/legacy-todo-state.ts"
 
 export const MANAGER_PRIORITY_ENTRY = "pi.manager-priorities.v1"
 export const MANAGER_CHAT_ENTRY = "pi.manager-chat.v1"

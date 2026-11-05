@@ -12,7 +12,7 @@ import {
   readManagerTasks,
   readManagerTurns,
 } from "./manager-core.ts"
-import type { Todo } from "../todo/state.ts"
+import type { Todo } from "../shared/legacy-todo-state.ts"
 import { todoWorkSnapshot } from "./goal.ts"
 
 const tasks: Todo[] = [
