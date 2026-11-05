@@ -66,7 +66,7 @@ for (const [requesterId, isOwner, isManager] of [
     let ingressObservations = 0
     let activeTools = [
       "agent_registry",
-      "todo",
+      "task",
       "manager_control",
       "bash",
       "read",
@@ -150,7 +150,7 @@ for (const [requesterId, isOwner, isManager] of [
       isOwner && isManager
         ? [
             "agent_registry",
-            "todo",
+            "task",
             "manager_control",
             "bash",
             "read",

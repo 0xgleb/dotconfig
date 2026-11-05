@@ -101,9 +101,13 @@ test("management tool-call commentary cannot complete the turn or restore tools 
           { type: "text", text: "I will check." },
           {
             type: "toolCall",
-            name: "todo",
+            name: "task",
             id: "t",
-            arguments: { action: "list" },
+            arguments: {
+              action: "read",
+              issue: { repository: "owner/project", number: 1 },
+              page: { limit: 20 },
+            },
           },
         ],
       },
@@ -124,8 +128,12 @@ test("tool-call commentary is not a final reply even at agent_end", () => {
           {
             type: "toolCall",
             id: "t",
-            name: "todo",
-            arguments: { action: "list" },
+            name: "task",
+            arguments: {
+              action: "read",
+              issue: { repository: "owner/project", number: 1 },
+              page: { limit: 20 },
+            },
           },
         ],
       },
