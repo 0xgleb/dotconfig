@@ -1,7 +1,7 @@
 import assert from "node:assert/strict"
 import test from "node:test"
-import { lstatSync, mkdirSync, mkdtempSync, rmSync, symlinkSync } from "node:fs"
-import os, { tmpdir } from "node:os"
+import { lstatSync, mkdirSync, mkdtempSync, symlinkSync } from "node:fs"
+import os from "node:os"
 import { syncBuiltinESMExports } from "node:module"
 import { join } from "node:path"
 import type {
@@ -16,7 +16,6 @@ import {
 import {
   registerNativeManager,
   type NativeManagerRuntime,
-  type NativeManagerWorker,
 } from "./manager-native.ts"
 import { managerPairDirectory } from "./manager-session-core.ts"
 import {
@@ -35,7 +34,6 @@ const fixture = (
     readonly now?: () => number
     readonly idle?: () => boolean
     readonly deadline?: NativeManagerRuntime["deadline"]
-    readonly reviewCheckIn?: NativeManagerWorker["reviewCheckIn"]
   } = {},
 ) => {
   const root =
@@ -154,9 +152,6 @@ const fixture = (
   const registered = registerNativeManager(
     pi,
     {
-      ...(options.reviewCheckIn
-        ? { reviewCheckIn: options.reviewCheckIn }
-        : {}),
       snapshot: () =>
         Either.right({
           workerSession: { transcript: "worker log" },
