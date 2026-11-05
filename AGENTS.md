@@ -111,8 +111,9 @@ aliases and route by verified topology:
 
 Never invoke GitButler outside the main worktree; detect topology before routing
 instead of waiting for `but` to fail. These are shared defaults, not
-organization-specific rules; explicit repository-local workflows may override
-them. Do not migrate repositories, change branches, or rewrite history merely to
+organization-specific rules. Repository-local workflows remain subject to the
+global managed-main publication rule and its explicit owner-approval exceptions.
+Do not migrate repositories, change branches, or rewrite history merely to
 select a backend.
 
 Plain git commands (`add`, `commit`, `push`, `status`, `diff`, `log`, …) always
@@ -166,9 +167,10 @@ Use GitHub issues/PRs for current project tracking. Preserve historical tracker
 records; changing the current toolchain does not authorize external cleanup.
 
 Name each task for one concrete action or outcome. Keep attribution, recency,
-priority, and constraints in its details, not generic title prefixes. Split
-independent deliverables into separate tasks and use artifact-level subtasks to
-show processing stages and progress.
+and constraints in its details, not generic title prefixes. Task ordering
+follows the rank-field policy in `GLOBAL_AGENTS.md`. Split independent
+deliverables into separate tasks and use artifact-level subtasks to show
+processing stages and progress.
 
 Keep SPEC/ROADMAP → GitHub issues → local execution tasks as the planning
 hierarchy. Notes and memories provide context rather than a competing backlog.

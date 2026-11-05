@@ -39,8 +39,8 @@ Native Pi sessions use the typed tool:
 report_owner { text: "<report>" }
 ```
 
-Claude Code, Cursor, and other CLI lanes call the same verified Telegram sender
-directly and identify themselves:
+Other CLI integrations call the same verified Telegram sender directly and
+identify themselves:
 
 ```
 printf '%s' '<report>' | pi-bridge owner-report --sender <stable-agent-id>
