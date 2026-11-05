@@ -13,6 +13,10 @@ import {
   IssueNextReadError,
 } from "./next.ts"
 import type {
+  TaskProjectPlacement,
+  ProjectPlacementObservation,
+} from "./placement.ts"
+import type {
   IssueNextPicker,
   IssueNextPickResult,
   IssuePickupTrace,
@@ -293,7 +297,13 @@ export type TaskExecutionOutcome =
   | { readonly kind: "task"; readonly detail: IssueTaskDetail }
   | { readonly kind: "missing_issue"; readonly issue: IssueReference }
   | { readonly kind: "missing_task"; readonly target: TaskAddress }
-  | { readonly kind: "saved"; readonly result: TaskApplyResult }
+  | {
+      readonly kind: "saved"
+      readonly result: TaskApplyResult
+      readonly projectPlacement?: readonly ProjectPlacementObservation[]
+      readonly projectPlacementFailure?:
+        "interrupted" | "unavailable" | "inconsistent_readback"
+    }
   | {
       readonly kind: "failed"
       readonly code: Exclude<
@@ -333,6 +343,7 @@ export interface TaskNativeCall {
   readonly sessionId: string
 }
 export interface TaskToolOptions {
+  readonly placeAffected?: TaskProjectPlacement["placeAffected"]
   readonly nextPicker?: IssueNextPicker
   readonly issueReader?: IssueTaskReader
   readonly store: Pick<
@@ -530,8 +541,12 @@ const unavailableOutput = (outcome: TaskExecutionOutcome): string => {
           : `Local task page: ${outcome.view.tasks.tasks.length} tasks, revision ${outcome.view.tasks.revision}`
       return `${metadata} for ${outcome.view.issue.repository}#${outcome.view.issue.number}. ${tasks}. Detailed output unavailable.`
     }
-    case "saved":
-      return `Saved task batch ${outcome.result.batchId} (${outcome.result.receipt}); ${outcome.result.changed.length} changed, ${outcome.result.created.length} created. Detailed output unavailable. Do not repeat this write with a new request identity.`
+    case "saved": {
+      const incomplete =
+        outcome.projectPlacementFailure !== undefined ||
+        outcome.projectPlacement?.some(row => row.kind !== "linked") === true
+      return `Saved task batch ${outcome.result.batchId} (${outcome.result.receipt}); ${outcome.result.changed.length} changed, ${outcome.result.created.length} created. ${incomplete ? "Project placement incomplete; local tasks remain saved. Reconcile Project membership without resubmitting the task write. " : ""}Detailed output unavailable. Do not repeat this write with a new request identity.`
+    }
     case "pages":
       return `Checked ${outcome.pages.length} qualified issue-page queries. Detailed output unavailable.`
     case "page":
@@ -552,6 +567,87 @@ const unavailableOutput = (outcome: TaskExecutionOutcome): string => {
       return "Task execution did not produce a verified outcome. Reconcile state before retrying; do not substitute a new request identity."
   }
 }
+const placeSavedOutcome = async (
+  saved: Extract<TaskExecutionOutcome, { readonly kind: "saved" }>,
+  invocation: TaskNativeCall | undefined,
+  options: TaskToolOptions,
+  signal: AbortSignal | undefined,
+): Promise<Extract<TaskExecutionOutcome, { readonly kind: "saved" }>> => {
+  const captured = Either.try({
+    try: () => options.placeAffected,
+    catch: () => "unavailable" as const,
+  })
+  if (Either.isRight(captured) && captured.right === undefined) return saved
+  const scope = new Map(
+    saved.result.issues.map(row => [
+      `${row.issue.repository}#${row.issue.number}`,
+      row.issue,
+    ]),
+  )
+  let known = new Map<string, ProjectPlacementObservation>()
+  let inconsistent = false
+  const observe = (
+    observations: readonly ProjectPlacementObservation[],
+  ): void => {
+    const next = new Map<string, ProjectPlacementObservation>()
+    for (const row of observations) {
+      const key = `${row.issue.repository}#${row.issue.number}`
+      if (!scope.has(key) || next.has(key)) {
+        inconsistent = true
+        return
+      }
+      next.set(key, row)
+    }
+    if ([...known.keys()].some(key => !next.has(key))) {
+      inconsistent = true
+      return
+    }
+    known = next
+  }
+  let failure:
+    "interrupted" | "unavailable" | "inconsistent_readback" | undefined
+  if (Either.isLeft(captured) || invocation === undefined)
+    failure = "unavailable"
+  else {
+    const place = captured.right
+    if (place !== undefined) {
+      const attempted = await Effect.runPromiseExit(
+        Effect.suspend(() => place(saved.result, invocation, observe)),
+        { signal },
+      )
+      if (Exit.isSuccess(attempted)) observe(attempted.value)
+      else
+        failure = Cause.isInterruptedOnly(attempted.cause)
+          ? "interrupted"
+          : "unavailable"
+    }
+  }
+  if (inconsistent) failure = "inconsistent_readback"
+  if (known.size !== scope.size && failure === undefined)
+    failure = "inconsistent_readback"
+  const projectPlacement: readonly ProjectPlacementObservation[] =
+    Object.freeze(
+      [...scope].map(([key, issue]) => {
+        const observed = known.get(key)
+        return observed === undefined
+          ? Object.freeze({
+              kind: "not_attempted" as const,
+              issue,
+              reason:
+                failure === "interrupted"
+                  ? ("cancelled" as const)
+                  : ("unavailable" as const),
+            })
+          : observed
+      }),
+    )
+  return Object.freeze({
+    ...saved,
+    projectPlacement,
+    ...(failure === undefined ? {} : { projectPlacementFailure: failure }),
+  })
+}
+
 const withinOutputBudget = (text: unknown): text is string =>
   typeof text === "string" &&
   Buffer.byteLength(text, "utf8") <= 50 * 1_024 &&
@@ -565,6 +661,7 @@ export const createTaskTool = (options: TaskToolOptions): IssueTaskTool => ({
   parameters: TaskParameters,
   execute: async (toolCallId, params, signal, onUpdate, ctx) => {
     let outcome: TaskExecutionOutcome
+    let completedInvocation: TaskNativeCall | undefined
     if (signal?.aborted === true) outcome = { kind: "interrupted" }
     else {
       const attempt: {
@@ -584,6 +681,7 @@ export const createTaskTool = (options: TaskToolOptions): IssueTaskTool => ({
           toolCallId,
           sessionId: ctx.sessionManager.getSessionId(),
         }
+        completedInvocation = invocation
 
         const observeNext: IssueNextObserver = progress =>
           Effect.try({
@@ -653,6 +751,14 @@ export const createTaskTool = (options: TaskToolOptions): IssueTaskTool => ({
       }
     }
 
+    if (outcome.kind === "saved")
+      outcome = await placeSavedOutcome(
+        outcome,
+        completedInvocation,
+        options,
+        signal,
+      )
+
     const rendered =
       signal?.aborted === true
         ? undefined
@@ -672,6 +778,10 @@ export const createTaskTool = (options: TaskToolOptions): IssueTaskTool => ({
       isError:
         outcome.kind === "failed" ||
         outcome.kind === "unknown" ||
+        (outcome.kind === "saved" &&
+          (outcome.projectPlacementFailure !== undefined ||
+            outcome.projectPlacement?.some(row => row.kind !== "linked") ===
+              true)) ||
         (outcome.kind === "issue_next" &&
           outcome.result.kind === "pickup" &&
           outcome.result.receipt.kind !== "verified") ||

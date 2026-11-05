@@ -3,6 +3,7 @@ import {
   createGitHubCliReader,
   createGitHubCliProjectReader,
   createGitHubCliPickupClient,
+  createGitHubCliProjectPlacement,
 } from "./github-cli.ts"
 import { createIssueNextReader } from "./next.ts"
 import { createIssueNextPicker } from "./pickup.ts"
@@ -72,10 +73,12 @@ export const acquireNativeTaskTool = (
       }),
       pickup: createGitHubCliPickupClient({ cwd }),
     })
+    const placement = createGitHubCliProjectPlacement({ cwd })
     const tool = createTaskTool({
       store,
       issueReader,
       nextPicker,
+      placeAffected: placement.placeAffected,
       contextForCall,
       renderOutput,
     })
