@@ -5,7 +5,7 @@
   "scripts": {
     "format": "prettier --write --no-error-on-unmatched-pattern --config ../../../prettier.config.mjs ../../../ai/**/*.{ts,tsx,mts,cts}",
     "format:check": "prettier --check --no-error-on-unmatched-pattern --config ../../../prettier.config.mjs ../../../ai/**/*.{ts,tsx,mts,cts}",
-    "typecheck": "tsc --noEmit -p tsconfig.json"
+    "typecheck": "nix build --no-link ../../..#pi-extension-typecheck"
   },
   "keywords": [
     "pi-package"
@@ -69,13 +69,8 @@
     ]
   },
   "devDependencies": {
-    "@earendil-works/pi-agent-core": "0.84.1",
-    "@earendil-works/pi-ai": "0.84.1",
-    "@earendil-works/pi-coding-agent": "0.84.1",
-    "@earendil-works/pi-tui": "0.84.1",
     "@types/node": "24.12.4",
     "prettier": "3.8.3",
-    "typebox": "1.3.7",
     "typescript": "5.9.3"
   }
 }
