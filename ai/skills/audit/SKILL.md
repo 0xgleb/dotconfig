@@ -141,8 +141,11 @@ limit-blown days), batch workflow passes (~40 lanes each) for whole-repo audits.
 Tell the user once; do not re-probe. `/review-pr`-scale diffs run one
 native-only pass — five reviewers + inspectors is sufficient.
 
-The engine writes `review.md` / `findings.json` and prints the summary. If
-`findings` is empty, say the audit found nothing actionable and stop.
+The engine writes `review.md` / `findings.json` and prints the summary. Only
+`status: completed` with empty `findings` establishes a clean audit. A missing
+or failed required native inspector/reviewer/verifier/synthesis phase is
+incomplete, not a clean result; retain evidence and finish the missing
+authorized work.
 
 ## 6. Triage
 
@@ -153,6 +156,15 @@ Triage the returned `findings` with `/review-loop`'s bias-to-fix table (severity
   **defer-by-default is fine for low-value findings** — a whole-repo audit
   surfaces more than is worth a PR; fix the ones that clearly should be fixed,
   and offer the rest as a list.
+
+Verified violations of required code conventions are not optional style nits.
+Include the general style lane and relevant language/typing lanes from the
+shared engine. Fix bounded spacing/import repairs and justified
+identifier/error-model corrections in the authorized fix clusters rather than
+deferring them as cosmetic; preserve behavior, genuine namespace ambiguity and
+error context. Normal check/re-review gates still apply. PR-plan confirmation
+applies only when publication scope is not already authorized by the
+global-resource workflow.
 
 ## 7. Plan the PRs and confirm
 
@@ -176,7 +188,10 @@ Audit fix plan — <tool>  ·  <N> PRs off <trunk>
 ```
 
 Use `AskUserQuestion` to confirm: create all, a subset, file the deferred ones
-as issues instead, or stop. Do not create PRs until the user picks.
+as issues instead, or stop. Do not create PRs until the user picks, unless the
+exact scoped global-resource branch/PR workflow is already authorized by
+`GLOBAL_AGENTS.md`. In that case record the bounded plan and execute it without
+another approval round; do not add unrelated clusters or external effects.
 
 ## 8. Open one PR per cluster
 
@@ -200,8 +215,9 @@ For each confirmed cluster (return to `trunk`/start between clusters):
    audit findings it closes: file:line, severity, why it matters, and the fix.
    Keep it factual; no AI-process narration.
 
-Open PRs as **drafts** so you review before they reach reviewers — never flip
-draft to ready, never `--publish`, never merge, never override branch
+Open PRs as **drafts**. Only a scoped global-resource change authorized by
+`GLOBAL_AGENTS.md` may be marked ready after completion and verification; other
+audits retain their ordinary ready-state gate. Never merge or override branch
 protection.
 
 ## 9. Return and summarize
@@ -227,12 +243,12 @@ each exact draft and obtain confirmation before creating it.
 
 ## Hard rules
 
-1. **Opening PRs is this skill's purpose** (the user invoked `/audit`), but
-   always as **drafts assigned to self**: never `--publish`, never flip draft to
-   ready, never merge, never override branch protection. The user reviews and
-   ships.
-2. **Confirm the PR plan before creating any branch or PR.** Opening several PRs
-   is a large outward action — stop for input on the plan (count, grouping).
+1. **Opening PRs is this skill's purpose**, as drafts assigned to self. Follow
+   the explicit scoped global-resource ready-after-verification exception when
+   applicable; never merge or override branch protection.
+2. **Confirm new publication scope before creating branches/PRs.** Do not ask
+   again for the exact scoped global-resource workflow already authorized by
+   `GLOBAL_AGENTS.md`; unrelated extra PRs still need authority.
 3. **One coherent, small PR per cluster.** Never a single giant PR; group by
    crate/module/theme; default to independent sibling branches off trunk, stack
    only on real dependencies.
@@ -262,8 +278,8 @@ each exact draft and obtain confirmation before creating it.
 - **A cluster's fix fails to converge or breaks the check command** — do not
   open that PR; report it, keep its findings in the deferred list, and continue
   with the other clusters.
-- **All reviewer lanes error** — stop (review-core engine failure modes);
-  inspector lanes erroring is non-fatal.
+- **A required native lane errors** — preserve an incomplete result and its
+  reason. Selected inspectors are required; empty findings do not prove clean.
 - **The workflow fails mid-run** — relaunch with
   `{scriptPath, args,
   resumeFromRunId}`; completed lanes return cached

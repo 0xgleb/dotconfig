@@ -1,7 +1,7 @@
 ---
 name: review-pr
 user-invocable: true
-allowed-tools: Bash(gh:*), Bash(git:*), Bash(agy:*), Bash(command:*), Bash(mkdir:*), Bash(cat:*), Bash(mktemp:*), Bash(rm:*), Bash(wc:*), Bash(date:*), Bash(basename:*), Bash(test:*), Bash(grep:*), Bash(find:*), Read, Write, Agent, Workflow, Skill
+allowed-tools: Bash(gh:*), Bash(git:*), Bash(agy:*), Bash(command:*), artifact_provenance, Bash(cat:*), Bash(mktemp:*), Bash(rm:*), Bash(wc:*), Bash(uuidgen:*), Bash(basename:*), Bash(test:*), Bash(grep:*), Bash(find:*), Read, Write, Agent, Workflow, Skill
 description: Cross-review a pull request by number or URL without checking it out. Runs a multi-model Workflow panel with per-finding verification, then posts verified findings as a draft PR review. Never blocked by unavailable optional lanes.
 argument-hint: <pr-number | pr-url>
 ---
@@ -59,17 +59,47 @@ continue. Proceed only on explicit confirmation.
 
 ## 2. Prepare the workspace
 
+Resolve `repo_root` from the checkout assigned to this review. When using a
+linked review worktree, run setup there: every patch, prompt, report, payload,
+and log belongs under that worktree's `.tmp/`, never the main checkout's
+`.tmp/`. A coordinator running elsewhere must pass the verified review-worktree
+root to workflows and explicitly set every child's cwd to that root. Do not
+derive artifact paths from the coordinator's cwd or the shared Git directory, or
+fall back to the main checkout. Remove temporary artifacts with the worktree.
+This does not authorize creating a worktree or checking out the PR.
+
 ```bash
-repo_root=$(git rev-parse --show-toplevel 2>/dev/null || pwd)
-ts=$(date +%Y-%m-%d_%H-%M-%S)
+repo_root=$(git rev-parse --show-toplevel) || exit 1
+invocation_id=$(uuidgen) || exit 1
 safe_branch=$(echo "<headRefName>" | tr '/' '_')
-out_dir="$repo_root/.tmp/reviews/pr-${pr_number}-${ts}-${safe_branch}"
-mkdir -p "$out_dir"
+out_dir="$repo_root/.tmp/reviews/pr-${pr_number}-${invocation_id}-${safe_branch}"
 ```
 
-Review artifacts always go under `.tmp/` (review output is local-only and
-ephemeral). Most repos already gitignore `.tmp/`; if this one does not, ask the
-user for permission before adding it. Do not silently modify `.gitignore`.
+Before creating the invocation directory or writing any artifact, verify ignore
+coverage:
+
+```bash
+git check-ignore --verbose "$repo_root/.tmp/" "$out_dir/diff.patch"
+```
+
+Require directory-wide coverage for both paths; a file-specific match is not
+sufficient. Immediately add the missing `.tmp/` directory pattern to this
+checkout's `.gitignore` under the existing ignore-repair policy, preserve other
+rules, and recheck both paths. This grants no worktree-creation authority.
+
+Then call the registered `artifact_provenance` tool with the resolved absolute
+value of `out_dir`:
+
+```json
+{ "action": "create_directory", "path": "<resolved absolute out_dir>" }
+```
+
+Require successful creation and provenance recording before writing descendants.
+Use an available registered harness equivalent if the tool name differs; do not
+fall back to raw `mkdir`. Add `crossWorkspace: true` only for an explicitly
+authorized target outside the tool session's workspace. The native UUID supplies
+the invocation namespace; the creation API does not promise exclusive
+allocation. Artifacts remain local-only and ephemeral.
 
 ## 3. Fetch the diff
 
@@ -254,7 +284,7 @@ conversation in Step 2 instead.
 # Build the review payload as a JSON file.
 # "body" is intentionally empty — the overall assessment is displayed in
 # the conversation (Step 2), not posted to the draft.
-review_json=$(mktemp -t pr-review.XXXXXX.json)
+review_json="$out_dir/pending-review.json"
 cat > "$review_json" <<'ENDJSON'
 {
   "commit_id": "<head_sha>",

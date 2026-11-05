@@ -155,12 +155,15 @@ nu nushell/fj/routing.test.nu
 Use type-only Conventional Commit prefixes such as `fix:`, `feat:`, `refactor:`,
 `test:`, and `docs:` according to the change. Do not use `wip(pi):`.
 
-Work on `master` and commit and push validated changes directly to `master`,
-unless the owner explicitly authorizes another branch or says not to publish. Do
-not create or use an agent feature branch based on an inherited checkout,
-summary, checkpoint, or handoff. Committing and pushing are routine completion
-steps here; do not hand them back to the owner or request redundant
-authorization.
+Requested global settings, skill, rule and harness-source changes follow
+`GLOBAL_AGENTS.md`: work directly in this repository's main worktree, create a
+separate purpose-named branch in the existing GitButler workspace, commit and
+push validated units continuously, open a draft PR and mark it ready only when
+the requested scope and verification are complete. Preserve unrelated changes.
+Do not hand routine Markdown edits to another agent or ask again for normal
+publication authority. Direct-to-master delivery requires explicit owner
+direction or a separately authorized role workflow; never merge or override
+branch protection as part of this default.
 
 # Work Tracking
 
