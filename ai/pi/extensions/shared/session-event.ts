@@ -1,4 +1,4 @@
-import { Data, Schema } from "effect"
+import { Data, Effect, Schema } from "effect"
 import { AttemptId, JobId } from "./job-attempt.ts"
 
 // Session-side half of the v0.1 shared job and session event contract
@@ -165,7 +165,7 @@ export type SessionEventDecision =
       readonly event: SessionEvent
     }
 
-// Planned acceptance entry point: pure decision over the current snapshot,
+// Pure decision over the current snapshot,
 // session ownership, prior event receipt, and the incoming event. It grants
 // no claim, dispatch, or persistence authority; the store applies it in one
 // transaction.
@@ -174,4 +174,128 @@ export type DecideSessionEvent = (
   ownership: SessionIdentity,
   receipt: SessionEventReceipt,
   event: SessionEvent,
-) => import("effect").Effect.Effect<SessionEventDecision, SessionEventError>
+) => Effect.Effect<SessionEventDecision, SessionEventError>
+
+const failure = (code: SessionEventError["code"]) =>
+  Effect.fail(new SessionEventError({ code }))
+
+const decodeBoundary = <A, I>(schema: Schema.Schema<A, I>, input: unknown) =>
+  Schema.decodeUnknown(schema, { onExcessProperty: "error" })(input).pipe(
+    Effect.mapError(() => new SessionEventError({ code: "malformed" })),
+  )
+
+const sameEvent = Schema.equivalence(SessionEvent)
+const sameSnapshot = Schema.equivalence(SessionSnapshot)
+
+const snapshotAfter = (event: SessionEvent): SessionSnapshot => {
+  const fields = { sessionId: event.sessionId, sequence: event.sequence }
+  switch (event.kind) {
+    case "registered":
+      return { ...fields, status: "registered" }
+    case "assigned":
+    case "attempt-released":
+      return { ...fields, status: "assigned", jobId: event.jobId }
+    case "attempt-started":
+      return {
+        ...fields,
+        status: "executing",
+        jobId: event.jobId,
+        attemptId: event.attemptId,
+      }
+    case "closed":
+    case "owner-lost":
+      return { ...fields, status: event.kind, terminalEventId: event.eventId }
+  }
+}
+
+const permitsTransition = (
+  current: SessionSnapshot,
+  incoming: SessionEvent,
+): boolean => {
+  if (current.status === "closed" || current.status === "owner-lost")
+    return false
+  if (current.status === "pending") return incoming.kind === "registered"
+  switch (incoming.kind) {
+    case "registered":
+      return false
+    case "assigned":
+      return current.status === "registered" || current.status === "assigned"
+    case "attempt-started":
+      return current.status === "assigned"
+    case "attempt-released":
+      return current.status === "executing"
+    case "closed":
+    case "owner-lost":
+      return true
+  }
+}
+
+export const decideSessionEvent: DecideSessionEvent = (
+  snapshot,
+  ownership,
+  receipt,
+  event,
+) =>
+  Effect.gen(function* () {
+    const current = yield* decodeBoundary(SessionSnapshot, snapshot)
+    const active = yield* decodeBoundary(SessionIdentity, ownership)
+    const prior = yield* decodeBoundary(SessionEventReceipt, receipt)
+    const incoming = yield* decodeBoundary(SessionEvent, event)
+    if (
+      current.sessionId !== active.sessionId ||
+      incoming.sessionId !== active.sessionId
+    )
+      return yield* failure("stale-session")
+
+    if (prior.kind === "recorded") {
+      if (
+        !sameEvent(prior.event, incoming) ||
+        incoming.sequence > current.sequence ||
+        (incoming.sequence === current.sequence &&
+          !sameSnapshot(current, snapshotAfter(incoming))) ||
+        ((incoming.kind === "closed" || incoming.kind === "owner-lost") &&
+          incoming.sequence !== current.sequence) ||
+        ((current.status === "closed" || current.status === "owner-lost") &&
+          current.terminalEventId === incoming.eventId &&
+          !sameSnapshot(current, snapshotAfter(incoming)))
+      )
+        return yield* failure("receipt-conflict")
+      return { kind: "duplicate" }
+    }
+
+    if (
+      (current.status === "closed" || current.status === "owner-lost") &&
+      current.terminalEventId === incoming.eventId
+    ) {
+      if (
+        current.status !== incoming.kind ||
+        current.sequence !== incoming.sequence
+      )
+        return yield* failure("receipt-conflict")
+      return { kind: "duplicate" }
+    }
+
+    if (
+      current.sequence === Number.MAX_SAFE_INTEGER ||
+      incoming.sequence !== current.sequence + 1
+    )
+      return yield* failure("out-of-order")
+    if (
+      (incoming.kind === "attempt-started" ||
+        incoming.kind === "attempt-released") &&
+      "jobId" in current &&
+      (current.jobId !== incoming.jobId ||
+        (incoming.kind === "attempt-released" &&
+          "attemptId" in current &&
+          current.attemptId !== incoming.attemptId))
+    )
+      return yield* failure("foreign-attempt")
+    if (!permitsTransition(current, incoming))
+      return yield* failure("invalid-transition")
+
+    return {
+      kind: "appended",
+      snapshot: snapshotAfter(incoming),
+      event: incoming,
+    }
+  })
