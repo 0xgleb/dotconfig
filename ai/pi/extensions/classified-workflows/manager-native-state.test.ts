@@ -2,6 +2,7 @@ import assert from "node:assert/strict"
 import test from "node:test"
 import fs, {
   mkdtempSync,
+  mkdirSync,
   rmSync,
   existsSync,
   readFileSync,
@@ -18,8 +19,6 @@ import { Either } from "effect"
 import {
   prepareNativeManagerState,
   openNativeManagerState,
-  takeNativeManagerCheckIn,
-  type NativeManagerCheckIns,
 } from "./manager-native-state.ts"
 import {
   ManagerSessionError,
@@ -61,6 +60,7 @@ test("manager submissions fail closed and cannot dispatch deferred commands", t 
   const id = "00000000-0000-4000-8000-000000000055"
   const historical = JSON.stringify({ version: 2, operation: "todo" })
   const path = join(directory, "requests", `${id}.json`)
+  mkdirSync(join(directory, "requests"), { mode: 0o700 })
   writeFileSync(path, historical, { mode: 0o600 })
 
   for (const submitted of [
@@ -87,6 +87,7 @@ for (const status of ["started", "completed", "failed", "unconfirmed"] as const)
     const { directory } = fixture(t)
     const id = "00000000-0000-4000-8000-000000000056"
     const receipt = { version: 1, id, status, message: "Recorded result" }
+    mkdirSync(join(directory, "receipts"), { mode: 0o700 })
     writeFileSync(
       join(directory, "receipts", `${id}.json`),
       JSON.stringify(receipt),
@@ -100,6 +101,7 @@ for (const status of ["started", "completed", "failed", "unconfirmed"] as const)
 test("malformed persisted receipts are typed failures, not successful results", t => {
   const { directory, state } = fixture(t)
   const id = "00000000-0000-4000-8000-000000000057"
+  mkdirSync(join(directory, "receipts"), { mode: 0o700 })
   writeFileSync(
     join(directory, "receipts", `${id}.json`),
     JSON.stringify({ version: 1, id, status: "unknown", message: "Recorded" }),

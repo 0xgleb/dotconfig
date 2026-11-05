@@ -16,9 +16,6 @@ import { decodeManagerSummary, type ManagerSummary } from "./manager-core.ts"
 import {
   openNativeManagerState,
   prepareNativeManagerState,
-  takeNativeManagerCheckIn,
-  type NativeManagerCheckIn,
-  type NativeManagerCheckInReview,
   type NativeManagerState,
 } from "./manager-native-state.ts"
 import {
@@ -34,11 +31,6 @@ import {
 } from "./manager-target.ts"
 
 export interface NativeManagerWorker {
-  readonly reviewCheckIn?: (
-    ctx: ExtensionContext,
-    request: NativeManagerCheckIn,
-    signal: AbortSignal,
-  ) => Promise<Either.Either<string, ManagerSessionError>>
   readonly todo?: (
     ctx: ExtensionContext,
     request: TodoRequest,

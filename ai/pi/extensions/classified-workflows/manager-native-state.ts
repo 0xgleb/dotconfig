@@ -22,66 +22,10 @@ import {
   type ManagerContextSnapshot,
   type ManagerPriorityReceipt,
 } from "./manager-pair-protocol.ts"
-import {
-  ManagerSessionError,
-  managerPairDirectory,
-} from "./manager-session-core.ts"
+import { ManagerSessionError } from "./manager-session-core.ts"
 import type { TodoRequest } from "../todo/state.ts"
-import {
-  OWNER_PROGRESS_CHECK_IN_MS,
-  SUPERVISED_OWNER_ALLOWANCE_MS,
-  type OwnerProgressCheckIn,
-} from "./owner-allowance.ts"
-
-declare const nativeManagerCheckInIdBrand: unique symbol
-
-export type NativeManagerCheckInId = string & {
-  readonly [nativeManagerCheckInIdBrand]: true
-}
-
-export interface NativeManagerCheckIn {
-  readonly version: 1
-  readonly id: NativeManagerCheckInId
-  readonly queuedAt: number
-  readonly checkIn: OwnerProgressCheckIn
-  readonly context: ManagerContextSnapshot
-}
-
-export interface NativeManagerCheckInReceipt {
-  readonly id: NativeManagerCheckInId
-  readonly status: "queued" | "review-requested" | "reviewed" | "failed"
-  readonly message: string
-  readonly updatedAt: number
-}
-
-export interface NativeManagerCheckIns {
-  readonly enqueue: (
-    checkIn: OwnerProgressCheckIn,
-    context: ManagerContextSnapshot,
-    now: number,
-  ) => Either.Either<NativeManagerCheckInId, ManagerSessionError>
-  readonly take: (
-    now: number,
-  ) => Either.Either<NativeManagerCheckIn | undefined, ManagerSessionError>
-  readonly finish: (
-    id: string,
-    outcome: {
-      readonly status: "reviewed" | "failed"
-      readonly message: string
-    },
-    now: number,
-  ) => Either.Either<void, ManagerSessionError>
-  readonly receipt: (
-    id: string,
-    now: number,
-  ) => Either.Either<
-    NativeManagerCheckInReceipt | undefined,
-    ManagerSessionError
-  >
-}
 
 export interface NativeManagerState {
-  readonly checkIns?: NativeManagerCheckIns
   readonly publish: (
     context: ManagerContextSnapshot,
   ) => Either.Either<void, ManagerSessionError>
@@ -109,81 +53,11 @@ export interface NativeManagerState {
   ) => Either.Either<ManagerPriorityReceipt | undefined, ManagerSessionError>
 }
 
-export interface NativeManagerCheckInReview {
-  readonly request: NativeManagerCheckIn
-  readonly finish: (
-    outcome: {
-      readonly status: "reviewed" | "failed"
-      readonly message: string
-    },
-    now: number,
-  ) => Either.Either<void, ManagerSessionError>
-}
-
 export const takeNativeManagerCheckIn = (
-  agentDir: string,
-  now: number,
-): Either.Either<NativeManagerCheckInReview | undefined, ManagerSessionError> =>
-  Either.gen(function* () {
-    if (!isAbsolute(agentDir))
-      return yield* failure(
-        "invalid_input",
-        "Manager check-in lookup requires an absolute agent directory.",
-      )
-    const root = join(agentDir, "manager")
-    if (!existsSync(root)) return undefined
-    yield* privateDirectory(root)
-    const names = yield* io(() => readdirSync(root))
-    for (const name of names
-      .filter(name => /^[0-9a-f]{24}$/u.test(name))
-      .sort()) {
-      if (!existsSync(join(root, name, "check-ins"))) continue
-      const directory = join(root, name)
-      yield* privateDirectory(directory)
-      const stored = yield* readJson(join(directory, "scope.json"))
-      if (
-        !record(stored) ||
-        stored.version !== 1 ||
-        typeof stored.workerSessionId !== "string" ||
-        typeof stored.cwd !== "string"
-      )
-        return yield* failure(
-          "protocol",
-          "Malformed worker scope in check-in channel.",
-        )
-      const scope = { workerSessionId: stored.workerSessionId, cwd: stored.cwd }
-      const expected = yield* managerPairDirectory({
-        agentDir,
-        workerSessionId: scope.workerSessionId,
-        workerCwd: scope.cwd,
-      })
-      if (expected !== directory)
-        return yield* failure(
-          "unauthorized",
-          "Check-in channel belongs to another worker scope.",
-        )
-      const state = yield* openNativeManagerState(directory, scope)
-      const channel = state.checkIns
-      if (!channel)
-        return yield* failure(
-          "unavailable",
-          "Worker check-in channel is unavailable.",
-        )
-      const request = yield* channel.take(now)
-      if (request)
-        return {
-          request,
-          finish: (
-            outcome: {
-              readonly status: "reviewed" | "failed"
-              readonly message: string
-            },
-            at: number,
-          ) => channel.finish(request.id, outcome, at),
-        }
-    }
-    return undefined
-  })
+  _agentDir: string,
+  _now: number,
+): Either.Either<never, ManagerSessionError> =>
+  failure("unavailable", "Native manager check-ins are unavailable.")
 
 export const prepareNativeManagerState = (
   directory: string,
@@ -266,13 +140,6 @@ export const openNativeManagerState = (
       })
 
     return {
-      checkIns: nativeCheckIns(
-        directory,
-        Object.freeze({
-          workerSessionId: stored.workerSessionId,
-          cwd: stored.cwd,
-        }),
-      ),
       publish: context =>
         Either.flatMap(decodeManagerContext(context, scope), value =>
           atomicJson(directory, "context.json", value),
@@ -286,8 +153,7 @@ export const openNativeManagerState = (
         failure("unavailable", "Legacy task control is unavailable."),
       enqueueTodo: () =>
         failure("unavailable", "Legacy task control is unavailable."),
-      processPriorities: () =>
-        failure("unavailable", "Legacy task control is unavailable."),
+      processPriorities: () => Either.right([]),
     }
   })
 
