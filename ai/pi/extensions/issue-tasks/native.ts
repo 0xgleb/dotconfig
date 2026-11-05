@@ -1,5 +1,11 @@
 import { Effect, type Scope } from "effect"
-import { createGitHubCliReader } from "./github-cli.ts"
+import {
+  createGitHubCliReader,
+  createGitHubCliProjectReader,
+  createGitHubCliPickupClient,
+} from "./github-cli.ts"
+import { createIssueNextReader } from "./next.ts"
+import { createIssueNextPicker } from "./pickup.ts"
 import { createIssueTaskReader } from "./issue-view.ts"
 import {
   openSqliteTaskStore,
@@ -10,6 +16,7 @@ import {
   createTaskTool,
   type IssueTaskTool,
   type TaskToolOptions,
+  type TaskExecutionOutcome,
 } from "./tool.ts"
 
 export interface NativeTaskToolOptions
@@ -44,11 +51,71 @@ export const acquireNativeTaskTool = (
       acquired => acquired.close().pipe(Effect.catchAll(onCloseFailure)),
     )
 
-    const issueReader = createIssueTaskReader({
-      github: createGitHubCliReader({ cwd }),
-      tasks: store,
+    const running = new Set<ReturnType<IssueTaskTool["execute"]>>()
+    const lifetime = yield* Effect.acquireRelease(
+      Effect.sync(() => new AbortController()),
+      controller =>
+        Effect.gen(function* () {
+          controller.abort()
+          yield* Effect.promise(() => Promise.allSettled([...running])).pipe(
+            Effect.asVoid,
+          )
+        }),
+    )
+    const github = createGitHubCliReader({ cwd })
+    const issueReader = createIssueTaskReader({ github, tasks: store })
+    const nextPicker = createIssueNextPicker({
+      reader: createIssueNextReader({
+        projects: createGitHubCliProjectReader({ cwd }),
+        github,
+        tasks: store,
+      }),
+      pickup: createGitHubCliPickupClient({ cwd }),
     })
-
-    return createTaskTool({ store, issueReader, contextForCall, renderOutput })
+    const tool = createTaskTool({
+      store,
+      issueReader,
+      nextPicker,
+      contextForCall,
+      renderOutput,
+    })
+    const execute: IssueTaskTool["execute"] = async (
+      id,
+      parameters,
+      signal,
+      onUpdate,
+      context,
+    ) => {
+      if (lifetime.signal.aborted) {
+        const outcome: TaskExecutionOutcome = {
+          kind: "failed",
+          code: "closed",
+          message: "Native task scope is closed",
+        }
+        return {
+          content: [{ type: "text", text: "Native task scope is closed." }],
+          details: { outcome, output: "complete" },
+          isError: true,
+        }
+      }
+      const activeSignal =
+        signal === undefined
+          ? lifetime.signal
+          : AbortSignal.any([signal, lifetime.signal])
+      const execution = tool.execute(
+        id,
+        parameters,
+        activeSignal,
+        onUpdate,
+        context,
+      )
+      running.add(execution)
+      try {
+        return await execution
+      } finally {
+        running.delete(execution)
+      }
+    }
+    return { ...tool, execute }
   })
 }

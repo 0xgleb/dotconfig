@@ -5,6 +5,7 @@ import test from "node:test"
 import { Cause, Deferred, Effect, Either, Exit } from "effect"
 import {
   createGitHubCliProjectReader,
+  createGitHubCliPickupClient,
   type GitHubCliLaunch,
 } from "./github-cli.ts"
 import { MAX_GITHUB_READ_BYTES } from "./github-read.ts"
@@ -14,7 +15,7 @@ const cwd = fileURLToPath(new URL("../../../../", import.meta.url))
 const program = fileURLToPath(
   new URL("./test-fixtures/github-project-cli.mjs", import.meta.url),
 )
-const probe = (mode = "success") => {
+const probe = (mode = "success", fixtureProgram = program) => {
   const children: ChildProcess[] = []
   const closed = new Set<ChildProcess>()
   const closures: Promise<void>[] = []
@@ -35,7 +36,12 @@ const probe = (mode = "success") => {
     assert.equal(options.timeout, 30_000)
     assert.equal(options.killSignal, "SIGKILL")
 
-    const child = execFile(process.execPath, [program, mode], options, callback)
+    const child = execFile(
+      process.execPath,
+      [fixtureProgram, mode],
+      options,
+      callback,
+    )
     children.push(child)
     child.stdout?.once("data", () =>
       Effect.runSync(Deferred.succeed(entered, undefined)),
@@ -63,6 +69,52 @@ const probe = (mode = "success") => {
   }
   return { launch, children, closed, entered, cleanup }
 }
+
+test("native pickup uses the same bounded subprocess transport for read and narrow mutations", async t => {
+  const source = probe()
+  const pickup = probe(
+    "success",
+    fileURLToPath(
+      new URL("./test-fixtures/github-pickup-cli.mjs", import.meta.url),
+    ),
+  )
+  t.after(source.cleanup)
+  t.after(pickup.cleanup)
+  const page = await Effect.runPromise(
+    createGitHubCliProjectReader({ cwd, launch: source.launch }).read({
+      project: "personal",
+      page: { limit: 1 },
+    }),
+  )
+  const item = page.items[0]
+  assert.ok(item?.kind === "issue")
+  const target = {
+    issue: item.issue,
+    issueNodeId: item.issueNodeId,
+    itemId: item.itemId,
+    viewer: page.viewer,
+    inProgress: page.inProgress,
+  }
+  const client = createGitHubCliPickupClient({ cwd, launch: pickup.launch })
+  const observed = await Effect.runPromise(client.inspect(target))
+  assert.equal(observed.itemId, target.itemId)
+  assert.deepEqual(observed.assignees, [page.viewer])
+  let dispatches = 0
+  const invocation = { sessionId: "native-session", toolCallId: "native-call" }
+  await Effect.runPromise(
+    client.assignOwner(target, invocation, () => {
+      dispatches++
+    }),
+  )
+  await Effect.runPromise(
+    client.setInProgress(target, invocation, () => {
+      dispatches++
+    }),
+  )
+  assert.equal(dispatches, 2)
+  assert.equal(pickup.children.length, 3)
+  assert.equal(pickup.closed.size, 3)
+})
 
 test("native Project reader uses existing bounded transport and actual fixed-query JSON stdin", async t => {
   const child = probe()

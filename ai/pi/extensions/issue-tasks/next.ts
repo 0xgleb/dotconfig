@@ -107,7 +107,7 @@ const QuerySchema = Schema.Struct({
   project: Schema.Literal("personal", "dataclique"),
 })
 
-const decodeQuery = (input: unknown) =>
+export const decodeIssueNextQuery = (input: unknown) =>
   Either.try({
     try: () =>
       Either.gen(function* () {
@@ -144,7 +144,7 @@ export const createIssueNextReader = (
   const read: IssueNextReader["read"] = (input, observe) =>
     Effect.gen(function* () {
       yield* Effect.yieldNow()
-      const query = yield* decodeQuery(input)
+      const query = yield* decodeIssueNextQuery(input)
       const ports = yield* captured
       let reads = 0
       let taskCount = 0

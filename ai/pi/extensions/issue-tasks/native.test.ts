@@ -255,6 +255,29 @@ test("native opening captures the host file and callbacks before deferred execut
     }
   }))
 
+test("native next reaches the captured Project transport rather than an unwired host capability", () =>
+  fixture(async root => {
+    const scope = Effect.runSync(Scope.make())
+    try {
+      const tool = await acquire(scope, {
+        ...options(root),
+        cwd: join(root, "missing"),
+      })
+      const result = await invoke(tool, {
+        action: "next",
+        query: { repository: issue.repository, project: "personal" },
+      })
+      assert.ok(result.details.outcome.kind === "failed")
+      assert.equal(result.details.outcome.code, "transport_error")
+      assert.equal(
+        (await invoke(tool, read)).details.outcome.kind,
+        "missing_issue",
+      )
+    } finally {
+      await close(scope)
+    }
+  }))
+
 test("failed native GitHub transport does not disable local task operations", () =>
   fixture(async root => {
     const scope = Effect.runSync(Scope.make())
