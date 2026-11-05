@@ -74,6 +74,7 @@ export interface IssueNextObservation {
   readonly inProgress: GitHubInProgressTarget
   readonly review?: { readonly status: GitHubProjectStatusTarget }
   readonly refineOptions?: readonly GitHubProjectStatusTarget["optionId"][]
+  readonly inReviewOptions?: readonly GitHubProjectStatusTarget["optionId"][]
   readonly selected: ProjectIssue | null
   readonly excludedAssignments: readonly {
     readonly issue: IssueReference
@@ -422,12 +423,12 @@ export const createIssueNextReader = (
             .filter(option => option.name.toLowerCase() === "refine")
             .map(option => option.id),
         )
+        const reviewOptions = page.statusOptions.filter(
+          option => option.name.toLowerCase() === "in review",
+        )
         if (query.mode === "review") {
-          const options = page.statusOptions.filter(
-            option => option.name.toLowerCase() === "in review",
-          )
-          const option = options[0]
-          if (options.length !== 1 || option === undefined)
+          const option = reviewOptions[0]
+          if (reviewOptions.length !== 1 || option === undefined)
             return yield* Effect.fail(readError("unavailable"))
           if (review !== undefined && review.status.optionId !== option.id)
             return yield* Effect.fail(readError("inconsistent_readback"))
@@ -448,6 +449,11 @@ export const createIssueNextReader = (
           issueIds.add(key)
           if (item.issue.repository !== query.repository) continue
           if (item.status !== null && refineOptions.has(item.status)) continue
+          if (
+            query.mode !== "review" &&
+            reviewOptions.some(option => option.id === item.status)
+          )
+            continue
           if (query.mode === "review") {
             if (review === undefined)
               return yield* Effect.fail(readError("inconsistent_readback"))
@@ -529,6 +535,11 @@ export const createIssueNextReader = (
         refineOptions: Object.freeze(
           [...statusOptions]
             .filter(([, name]) => name.toLowerCase() === "refine")
+            .map(([id]) => id),
+        ),
+        inReviewOptions: Object.freeze(
+          [...statusOptions]
+            .filter(([, name]) => name.toLowerCase() === "in review")
             .map(([id]) => id),
         ),
         excludedAssignments: Object.freeze(excludedAssignments),
