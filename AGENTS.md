@@ -111,8 +111,9 @@ aliases and route by verified topology:
 
 Never invoke GitButler outside the main worktree; detect topology before routing
 instead of waiting for `but` to fail. These are shared defaults, not
-organization-specific rules; explicit repository-local workflows may override
-them. Do not migrate repositories, change branches, or rewrite history merely to
+organization-specific rules. Repository-local workflows remain subject to the
+global managed-main publication rule and its explicit owner-approval exceptions.
+Do not migrate repositories, change branches, or rewrite history merely to
 select a backend.
 
 Plain git commands (`add`, `commit`, `push`, `status`, `diff`, `log`, …) always

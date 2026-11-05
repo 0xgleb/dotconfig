@@ -6,10 +6,12 @@ const instructions = readFileSync(
   new URL("../../GLOBAL_AGENTS.md", import.meta.url),
   "utf8",
 )
+
 const worktree = readFileSync(
   new URL("../skills/worktree/SKILL.md", import.meta.url),
   "utf8",
 )
+
 const worktreePolicy = instructions.replace(/\s+/g, " ")
 
 test("worktrees require owner concurrency and stable repository-local role slots", () => {
@@ -38,11 +40,25 @@ test("isolation and task-derived names do not justify worktrees", () => {
   )
 })
 
-test("worktree detection compares absolute Git directories without adding another suffix", () => {
-  assert.ok(worktree.includes("git rev-parse --path-format=absolute --git-dir"))
-  assert.ok(
-    worktree.includes("git rev-parse --path-format=absolute --git-common-dir"),
+test("worktree setup verifies checkout topology and scopes inventory to authorized work", () => {
+  const procedure = worktree.replace(/\s+/g, " ")
+
+  assert.match(
+    procedure,
+    /Verify Git topology with `git rev-parse --show-toplevel`/,
   )
-  assert.ok(worktree.includes('"$git_dir" != "$common_dir"'))
-  assert.ok(!worktree.includes('"$common_dir/.git"'))
+  assert.match(procedure, /`git rev-parse --git-common-dir`/)
+  assert.match(
+    procedure,
+    /when inventory is authorized, `git worktree list --porcelain`/,
+  )
+  assert.match(
+    procedure,
+    /GitButler is valid only in an existing managed main worktree/,
+  )
+  assert.match(procedure, /use plain Git in every linked worktree/)
+  assert.match(
+    procedure,
+    /Without owner-authorized concurrent work or an explicit inventory\/cleanup request, inspect only that checkout and do not enter other worktrees/,
+  )
 })
