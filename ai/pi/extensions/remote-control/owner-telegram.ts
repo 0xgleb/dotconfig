@@ -305,24 +305,22 @@ export const deliverChatRelay = (
   text: string,
 ): Effect.Effect<ChatRelayDispatch, OwnerRelayDeliveryError> =>
   chatRegistry.pipe(
-    Effect.flatMap(
-      (chats): Effect.Effect<ChatRelayDispatch, OwnerRelayDeliveryError> => {
-        const chat = resolveChat(chats, name)
-        if (!chat) {
-          return Effect.succeed({
-            outcome: "unknown_chat",
-            known: knownChatNames(chats),
-          } satisfies ChatRelayDispatch)
-        }
-        return telegramToken.pipe(
-          Effect.flatMap(token => sendRelay(token, chat.id, text)),
-          Effect.as({
-            outcome: "delivered",
-            title: chat.title,
-          } satisfies ChatRelayDispatch),
-        )
-      },
-    ),
+    Effect.flatMap(chats => {
+      const chat = resolveChat(chats, name)
+      if (!chat) {
+        return Effect.succeed({
+          outcome: "unknown_chat",
+          known: knownChatNames(chats),
+        } satisfies ChatRelayDispatch)
+      }
+      return telegramToken.pipe(
+        Effect.flatMap(token => sendRelay(token, chat.id, text)),
+        Effect.as({
+          outcome: "delivered",
+          title: chat.title,
+        } satisfies ChatRelayDispatch),
+      )
+    }),
   )
 
 const sendRelay = (

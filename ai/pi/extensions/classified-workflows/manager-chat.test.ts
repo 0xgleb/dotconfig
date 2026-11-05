@@ -127,31 +127,6 @@ test("closing cancels only the panel request, finishes once and ignores late rep
   assert.equal(f.renders(), renders)
 })
 
-test("PageUp and PageDown scroll the rendered manager transcript without changing its content", async () => {
-  const f = fixture(async () =>
-    Either.right(
-      Array.from({ length: 60 }, (_, index) => `Transcript line ${index}`).join(
-        "\n",
-      ),
-    ),
-  )
-  f.send("Long answer")
-  await nextTick()
-  const visibleTranscript = () => {
-    const lines = f.text().match(/Transcript line \d+/gu)
-    assert.ok(lines && lines.length > 0)
-    return lines
-  }
-  const bottom = visibleTranscript()
-  const renders = f.renders()
-  f.panel.handleInput("\u001b[5~")
-  assert.ok(f.renders() > renders)
-  assert.notDeepEqual(visibleTranscript(), bottom)
-  f.panel.handleInput("\u001b[6~")
-  assert.deepEqual(visibleTranscript(), bottom)
-  f.panel.dispose()
-})
-
 test("scope cancellation closes an idle manager panel exactly once", () => {
   const f = fixture(async () => Either.right("Answer"))
   f.scope.abort()

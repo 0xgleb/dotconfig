@@ -249,12 +249,7 @@ export default function remoteControl(
     description:
       "Deliver the real interactive Boulder CABA tracker card directly to the owner's Telegram.",
     parameters: Type.Object({}, { additionalProperties: false }),
-    async execute(): Promise<{
-      content: { type: "text"; text: string }[]
-      details:
-        { outcome: "delivered" } | { outcome: "undelivered"; reason: string }
-      isError?: true
-    }> {
+    async execute() {
       const delivery = await run(deliverCabaCardRelay())
       if (Either.isLeft(delivery)) {
         const reason = safeDeliveryError(delivery.left)

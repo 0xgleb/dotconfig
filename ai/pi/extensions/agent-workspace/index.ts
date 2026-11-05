@@ -237,7 +237,7 @@ export default function agentWorkspace(pi: ExtensionAPI): void {
 
         const existing = paneNames(queried.stdout).includes(profile.paneName)
         if (params.action === "status") {
-          return { profile, status: existing ? "running" : "stopped" } as const
+          return { status: existing ? "running" : "stopped" } as const
         }
         if (params.action === "replace") {
           if (pi.getSessionName() !== profile.sessionName) {
@@ -278,7 +278,7 @@ export default function agentWorkspace(pi: ExtensionAPI): void {
               }),
             )
           }
-          return { profile, status: "replaced", mode: "inventory" } as const
+          return { status: "replaced", mode: "inventory" } as const
         }
         if (params.action === "dispatch") {
           if (!existing || pi.getSessionName() !== profile.sessionName) {
@@ -398,9 +398,9 @@ export default function agentWorkspace(pi: ExtensionAPI): void {
               }),
             )
           }
-          return { profile, status: "dispatched", mode: dispatch.mode } as const
+          return { status: "dispatched", mode: dispatch.mode } as const
         }
-        if (existing) return { profile, status: "running" } as const
+        if (existing) return { status: "running" } as const
 
         const launched = yield* Effect.tryPromise({
           try: () =>
@@ -429,11 +429,10 @@ export default function agentWorkspace(pi: ExtensionAPI): void {
             }),
           )
         }
-        return { profile, status: "started" } as const
+        return { status: "started" } as const
       })
 
       const outcome = await Effect.runPromise(operation)
-      const { profile } = outcome
       return {
         content: [
           {

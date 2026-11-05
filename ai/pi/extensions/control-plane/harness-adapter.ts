@@ -113,7 +113,7 @@ export const buildHarnessLaunchPlan = (
     ),
     decoded =>
       rootIsRegistered(decoded.repositoryRoot, allowedRoots)
-        ? Effect.flatMap(launchDirectory(decoded, id, attempt, home), cwd =>
+        ? Effect.flatMap(launchDirectory(decoded, id, attempt), cwd =>
             rootIsRegistered(cwd, allowedRoots)
               ? Effect.succeed(
                   launchPlan(decoded, cwd, id, attempt, environment),
@@ -151,12 +151,10 @@ const launchDirectory = (
   payload: HarnessReviewPayload,
   jobId: JobId,
   attempt: number,
-  home: CanonicalPath,
 ): Effect.Effect<CanonicalPath, HarnessAdapterError> => {
   const root = payload.repositoryRoot
   if (payload.isolation === "read-only") return Effect.succeed(root)
-  const registeredSegments = pathSegments(root).slice(pathSegments(home).length)
-  if (includesAny(registeredSegments, WORKTREE_DIRECTORY))
+  if (includesAny(pathSegments(root), WORKTREE_DIRECTORY))
     return invalid("approved-worktree isolation requires a primary checkout")
   const worktree = canonicalPath(
     join(root, WORKTREE_DIRECTORY, `${jobId}-${String(attempt)}`),

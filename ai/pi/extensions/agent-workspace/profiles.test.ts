@@ -6,14 +6,13 @@ import {
   claudeInPlaceLaunchArguments,
   claudeWorkspaceLaunchArguments,
   workspaceProfile,
-  type AgentWorkspaceProfile,
 } from "./profiles.ts"
 
 const expectedLoop = (instruction: string): string =>
   `/loop 2h+-1h ${instruction}`
 
 const assertSupervisorProfile = (
-  profile: AgentWorkspaceProfile,
+  profile: ReturnType<typeof workspaceProfile>,
   sessionName: string,
   loop: string,
 ): void => {
@@ -36,7 +35,6 @@ const assertSupervisorProfile = (
 
 test("st0x review workspace is a Luna supervisor with isolated authority", () => {
   const profile = workspaceProfile("st0x-review", "/Users/example")
-  assert.ok(profile, "supported workspace profile must exist")
 
   assert.equal(profile.tabName, "st0x")
   assert.equal(profile.cwd, "/Users/example/code/st0x")
@@ -74,7 +72,6 @@ test("st0x review workspace is a Luna supervisor with isolated authority", () =>
 
 test("DataClique workspace is one combined Claude reviewer for DataClique and personal scope", () => {
   const profile = workspaceProfile("dataclique-review", "/Users/example")
-  assert.ok(profile, "supported workspace profile must exist")
 
   assert.equal(profile.tabName, "dataclique-personal-review")
   assert.equal(profile.paneName, "claude-dataclique-personal-review")
@@ -123,7 +120,6 @@ test("DataClique workspace is one combined Claude reviewer for DataClique and pe
 
 test("personal supervisor isolates dotconfig automatic completion and root", () => {
   const profile = workspaceProfile("personal-review", "/Users/example")
-  assert.ok(profile, "supported workspace profile must exist")
 
   assert.deepEqual(profile.allowedOwners, ["0xgleb"])
   assert.deepEqual(profile.additionalRepositoryRoots, [
@@ -145,7 +141,6 @@ test("personal supervisor isolates dotconfig automatic completion and root", () 
 
 test("in-place replacement preserves the existing pane and uses fresh clanker", () => {
   const profile = workspaceProfile("personal-review", "/Users/example")
-  assert.ok(profile, "supported workspace profile must exist")
   const args = claudeInPlaceLaunchArguments(
     profile,
     "supervisor-session",
@@ -175,7 +170,6 @@ test("in-place replacement preserves the existing pane and uses fresh clanker", 
 
 test("Claude inventory dispatch uses the verified fresh clanker subscription route", () => {
   const profile = workspaceProfile("st0x-review", "/Users/example")
-  assert.ok(profile, "supported workspace profile must exist")
   const args = claudeExecutorLaunchArguments(
     profile,
     { mode: "inventory" },
@@ -218,7 +212,6 @@ test("Claude inventory dispatch uses the verified fresh clanker subscription rou
 
 test("Claude PR dispatch invokes shared skills and mandatory native Fable verification", () => {
   const profile = workspaceProfile("dataclique-review", "/Users/example")
-  assert.ok(profile, "supported workspace profile must exist")
   const args = claudeExecutorLaunchArguments(
     profile,
     {

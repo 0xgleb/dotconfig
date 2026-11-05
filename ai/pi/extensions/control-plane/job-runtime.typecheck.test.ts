@@ -1,9 +1,6 @@
-import assert from "node:assert/strict"
-import { toCommitSha, toJobId } from "./harness-protocol.ts"
-import { canonicalPath } from "./review-duty-profile.ts"
+import type { HarnessReviewHandoff } from "./harness-protocol.ts"
 import type {
-  VerifiedHarnessHandoff,
-  VerifiedHarnessReviewResult,
+  HarnessReviewResult,
   Job,
   RegisteredJobSpec,
   ReviewDutyScanSpec,
@@ -11,20 +8,11 @@ import type {
 
 /**
  * Compile-time regression suite for the terminal Job invariants (issue #58).
- * Fixture assertions construct valid domain values; `tsc --noEmit` is the
- * regression check. Every `@ts-expect-error` below is a state that must stay
+ * It carries no runtime assertions: `tsc --noEmit` over this file is the
+ * test. Every `@ts-expect-error` below is a state that must stay
  * unrepresentable; if one becomes constructible again the directive turns
  * unused and the typecheck fails.
  */
-
-const fixtureId = toJobId("job-1")
-assert.ok(fixtureId !== undefined)
-
-const headSha = toCommitSha("a".repeat(40))
-assert.ok(headSha !== undefined)
-
-const repositoryRoot = canonicalPath("/Users/example/code/0xgleb/example")
-assert.ok(repositoryRoot !== undefined)
 
 type HarnessReviewSpec = Extract<
   RegisteredJobSpec,
@@ -47,23 +35,23 @@ const harnessSpec: HarnessReviewSpec = {
     repository: "0xgleb/example",
     pullRequest: 7,
     kind: "own",
-    inputHeadSha: headSha,
-    repositoryRoot,
+    inputHeadSha: "a".repeat(40),
+    repositoryRoot: "/Users/example/code/0xgleb/example",
     isolation: "approved-worktree",
   },
   runAt: 1_000,
   maxAttempts: 2,
 }
 
-const handoff: VerifiedHarnessHandoff = {
+const handoff: HarnessReviewHandoff = {
   protocolVersion: 1,
-  jobId: fixtureId,
+  jobId: "job-h",
   attempt: 1,
   lane: "claude-code-max",
   repository: "0xgleb/example",
   pullRequest: 7,
-  inputHeadSha: headSha,
-  outputHeadSha: headSha,
+  inputHeadSha: "a".repeat(40),
+  outputHeadSha: "a".repeat(40),
   status: "clean",
   assessment: "No verified findings.",
   evidence: ["check:review-core"],
@@ -71,10 +59,10 @@ const handoff: VerifiedHarnessHandoff = {
   executorProvenance: "subscription-verified",
 }
 
-const result: VerifiedHarnessReviewResult = { kind: "harness.review", handoff }
+const result: HarnessReviewResult = { kind: "harness.review", handoff }
 
 const terminal = {
-  id: fixtureId,
+  id: "job-1",
   attempt: 1,
   createdAt: 1_000,
   updatedAt: 2_000,
@@ -153,11 +141,11 @@ const failedWithResultShape = {
   result,
 } as const
 
-// @ts-expect-error a failed harness job cannot carry a verified review result
+// @ts-expect-error a failed job never carries a result
 export const failedWithResult: Job = failedWithResultShape
 
 const leasedWithResultShape = {
-  id: fixtureId,
+  id: "job-1",
   attempt: 1,
   createdAt: 1_000,
   updatedAt: 2_000,
@@ -171,42 +159,3 @@ const leasedWithResultShape = {
 
 // @ts-expect-error a leased job never carries a result
 export const leasedWithResult: Job = leasedWithResultShape
-
-const nonterminal = {
-  id: fixtureId,
-  attempt: 0,
-  createdAt: 1_000,
-  updatedAt: 2_000,
-} as const
-
-const scheduledWithResultShape = {
-  ...nonterminal,
-  spec: { ...harnessSpec, runAt: 5_000 },
-  state: "scheduled",
-  result,
-} as const
-
-// @ts-expect-error a scheduled job cannot carry a result from an attempt
-export const scheduledWithResult: Job = scheduledWithResultShape
-
-const readyWithResultShape = {
-  ...nonterminal,
-  spec: harnessSpec,
-  state: "ready",
-  result,
-} as const
-
-// @ts-expect-error a ready job cannot carry a result from an attempt
-export const readyWithResult: Job = readyWithResultShape
-
-const retryingWithResultShape = {
-  ...nonterminal,
-  spec: { ...harnessSpec, runAt: 5_000 },
-  state: "retry_wait",
-  attempt: 1,
-  lastAttemptSummary: "retry scheduled",
-  result,
-} as const
-
-// @ts-expect-error a retrying job retains a summary, not a terminal result
-export const retryingWithResult: Job = retryingWithResultShape

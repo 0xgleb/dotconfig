@@ -1,4 +1,4 @@
-import { Data, Effect, Schema } from "effect"
+import { Data, Schema } from "effect"
 import { JobId } from "./job-attempt.ts"
 
 // The immutable half of the job contract from SPEC "Jobs and worker pools" and
@@ -95,7 +95,7 @@ export const JobBudget = Schema.Struct({
 })
 export type JobBudget = typeof JobBudget.Type
 
-const JobRequestFields = Schema.Struct({
+export const JobRequest = Schema.Struct({
   version: Schema.Literal(1),
   jobId: JobId,
   prompt: Schema.String.pipe(
@@ -106,45 +106,17 @@ const JobRequestFields = Schema.Struct({
   execution: JobExecutionMetadata,
   budget: JobBudget,
 })
-
-const isJobRequestFields = Schema.is(JobRequestFields)
-
-const FrozenJobRequest = Schema.declare<typeof JobRequestFields.Type>(
-  (input): input is typeof JobRequestFields.Type =>
-    isJobRequestFields(input) &&
-    Object.isFrozen(input) &&
-    Object.isFrozen(input.allowedTools) &&
-    Object.isFrozen(input.execution) &&
-    Object.isFrozen(input.budget),
-)
-
-export const JobRequest = Schema.transform(JobRequestFields, FrozenJobRequest, {
-  strict: true,
-  decode: request =>
-    Object.freeze({
-      ...request,
-      allowedTools: Object.freeze([...request.allowedTools]),
-      execution: Object.freeze({ ...request.execution }),
-      budget: Object.freeze({ ...request.budget }),
-    }),
-  encode: request => request,
-})
 export type JobRequest = typeof JobRequest.Type
 
 export class JobRequestError extends Data.TaggedError("JobRequestError")<{
   readonly code: "malformed"
 }> {}
 
-// Decoding is the boundary:
+// The only planned entry point signature. Decoding is the boundary:
 // everything that passes is a deeply frozen value, and everything that fails
 // is a typed error. Callers resolve model, reasoning, cwd, and tools BEFORE
 // decoding; the decoder never invents defaults, inherits session settings, or
 // trims input.
 export type DecodeJobRequest = (
   input: unknown,
-) => Effect.Effect<JobRequest, JobRequestError>
-
-export const decodeJobRequest: DecodeJobRequest = input =>
-  Schema.decodeUnknown(JobRequest, { onExcessProperty: "error" })(input).pipe(
-    Effect.mapError(() => new JobRequestError({ code: "malformed" })),
-  )
+) => import("effect").Effect.Effect<JobRequest, JobRequestError>

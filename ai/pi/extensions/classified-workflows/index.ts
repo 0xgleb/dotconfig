@@ -682,6 +682,7 @@ function goalTranscript(ctx: ExtensionContext): string[] {
       const text = messageText(entry.message)
       if (
         !text ||
+        !isRecord(entry.message) ||
         (entry.message.role !== "user" && entry.message.role !== "assistant")
       ) {
         return []

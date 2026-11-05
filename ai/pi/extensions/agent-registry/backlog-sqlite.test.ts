@@ -1171,10 +1171,7 @@ test("persisted backlog projects, revisions, and timestamps are canonical", asyn
       database.exec(corruption.update)
       database.close()
       const reopened = makeSqliteRegistryStore(root)
-      await assert.rejects(
-        run(Effect.asVoid(corruption.read(reopened))),
-        corruption.pattern,
-      )
+      await assert.rejects(run(corruption.read(reopened)), corruption.pattern)
       reopened.close()
     } finally {
       rmSync(root, { recursive: true, force: true })

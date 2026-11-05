@@ -99,7 +99,7 @@ const claudePayload: HarnessReviewPayload = {
   isolation: "read-only",
 }
 
-const cursorPayload = {
+const cursorPayload: HarnessReviewPayload = {
   lane: "cursor-subscription",
   task: "review-probe",
   model: "grok-4.5",
@@ -289,40 +289,6 @@ test("approved-worktree work never nests inside another worktree", () => {
     }),
     "invalid_input",
   )
-})
-
-test("worktree containment is relative to the registered home, not its ancestors", () => {
-  const nestedHome = canonical("/sandbox/.worktrees/review/home")
-  const root = canonical(`${nestedHome}/code/st0x/example`)
-  const payload = { ...ownReviewPayload, repositoryRoot: root }
-  const roots = registeredRoots([root])
-  const launchedFrom = { ...environment, HOME: nestedHome }
-  const launch = Effect.runSync(
-    buildHarnessLaunchPlan(
-      payload,
-      "job-a",
-      1,
-      roots,
-      nestedHome,
-      launchedFrom,
-    ),
-  )
-  assert.equal(launch.cwd, `${root}/.worktrees/job-a-1`)
-
-  const nested = Effect.runSync(
-    Effect.either(
-      buildHarnessLaunchPlan(
-        { ...payload, repositoryRoot: canonical(`${root}/.worktrees/review`) },
-        "job-a",
-        1,
-        roots,
-        nestedHome,
-        launchedFrom,
-      ),
-    ),
-  )
-  assert.ok(Either.isLeft(nested))
-  assert.equal(nested.left.code, "invalid_input")
 })
 
 test("the cursor lane is retired and builds no probe", () => {

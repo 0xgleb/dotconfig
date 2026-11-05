@@ -156,7 +156,6 @@ test("pinned observations obey scope and newer full-status supersession", () => 
   assert.ok(!selected.includes(current))
   assert.doesNotMatch(
     toolResultExecutionEvidence({
-      subject,
       toolName: "bash",
       input: { command },
       text: "[]",

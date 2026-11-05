@@ -5,46 +5,21 @@ import { join } from "node:path"
 import test from "node:test"
 import { Effect } from "effect"
 import type { HarnessLaunchPlan } from "./harness-adapter.ts"
-import {
-  toCommitSha,
-  toJobId,
-  type HarnessReviewHandoff,
-} from "./harness-protocol.ts"
-import { canonicalPath, type CanonicalPath } from "./review-duty-profile.ts"
-import { decodeStoredJob, jobResult, type Job } from "./job-runtime.ts"
+import type { HarnessReviewHandoff } from "./harness-protocol.ts"
 import {
   HarnessWorkerError,
   runNextHarnessAttempt,
   spawnHarnessExecutor,
   type HarnessSpawner,
-  type HarnessWorkerOptions,
 } from "./harness-worker.ts"
 import { startControlPlaneServer } from "./server.ts"
 import { makeSqliteJobStore, type SqliteJobStore } from "./sqlite-job-store.ts"
-
-const canonical = (value: string): CanonicalPath => {
-  const path = canonicalPath(value)
-  assert.ok(path !== undefined, `invalid fixture path: ${value}`)
-  return path
-}
-
-const commit = (value: string) => {
-  const sha = toCommitSha(value)
-  assert.ok(sha !== undefined, `invalid fixture commit: ${value}`)
-  return sha
-}
-
-const fixtureJobId = (value: string) => {
-  const id = toJobId(value)
-  assert.ok(id !== undefined, `invalid fixture job id: ${value}`)
-  return id
-}
 
 const withServer = async (
   run: (origin: string, store: SqliteJobStore, home: string) => Promise<void>,
 ): Promise<void> => {
   const root = await mkdtemp(join(tmpdir(), "pi-harness-worker-test-"))
-  const home = canonical(join(root, "home"))
+  const home = join(root, "home")
   const store = await Effect.runPromise(
     makeSqliteJobStore(join(root, "jobs.sqlite"), home),
   )
@@ -60,7 +35,7 @@ const withServer = async (
   }
 }
 
-const headSha = commit("a".repeat(40))
+const headSha = "a".repeat(40)
 
 const harnessEnqueueBody = (home: string) => ({
   kind: "harness.review",
@@ -80,12 +55,6 @@ const harnessEnqueueBody = (home: string) => ({
   idempotencyKey: "harness:personal:example:7:head",
 })
 
-const responseJob = async (response: Response): Promise<Job> => {
-  const body: unknown = await response.json()
-  assert.ok(typeof body === "object" && body !== null && "job" in body)
-  return Effect.runPromise(decodeStoredJob(body.job))
-}
-
 const enqueueHarnessJob = async (
   origin: string,
   home: string,
@@ -96,7 +65,7 @@ const enqueueHarnessJob = async (
     body: JSON.stringify(harnessEnqueueBody(home)),
   })
   assert.equal(response.status, 201)
-  return (await responseJob(response)).id
+  return ((await response.json()) as { job: { id: string } }).job.id
 }
 
 const handoffFor = (
@@ -104,7 +73,7 @@ const handoffFor = (
   overrides: Partial<HarnessReviewHandoff> = {},
 ): HarnessReviewHandoff => ({
   protocolVersion: 1,
-  jobId: fixtureJobId(jobId),
+  jobId,
   attempt: 1,
   lane: "claude-code-max",
   repository: "0xgleb/example",
@@ -149,26 +118,29 @@ const workerOptions = (
   origin: string,
   home: string,
   spawner: HarnessSpawner,
-): HarnessWorkerOptions => ({
+) => ({
   origin,
   workerId: "harness-supervisor",
   leaseTtlMs: 90_000,
   retryDelayMs: 0,
   allowedRoots: [`${home}/code/0xgleb/example`],
-  home: canonical(home),
+  home,
   spawner,
 })
 
-const jobState = async (origin: string, jobId: string): Promise<Job> => {
+const jobState = async (
+  origin: string,
+  jobId: string,
+): Promise<{ state: string; result?: { handoff: { jobId: string } } }> => {
   const response = await fetch(`${origin}/v1/jobs`)
-  const body: unknown = await response.json()
-  assert.ok(typeof body === "object" && body !== null && "jobs" in body)
-  assert.ok(Array.isArray(body.jobs))
-  const documents: readonly unknown[] = body.jobs
-  const jobs = await Effect.runPromise(
-    Effect.forEach(documents, decodeStoredJob),
-  )
-  const job = jobs.find(candidate => candidate.id === jobId)
+  const jobs = (await response.json()) as {
+    jobs: Array<{
+      id: string
+      state: string
+      result?: { handoff: { jobId: string } }
+    }>
+  }
+  const job = jobs.jobs.find(candidate => candidate.id === jobId)
   assert.ok(job)
   return job
 }
@@ -217,7 +189,7 @@ test("a matching executor handoff completes the claimed harness job", async () =
     assert.equal(calls[0]?.lane, "claude-code-max")
     const persisted = await jobState(origin, jobId)
     assert.equal(persisted.state, "succeeded")
-    assert.equal(jobResult(persisted)?.handoff.jobId, jobId)
+    assert.equal(persisted.result?.handoff.jobId, jobId)
   }))
 
 test("blocked handoffs fail the attempt instead of completing the job", async () =>
@@ -251,9 +223,7 @@ test("blocked handoffs fail the attempt instead of completing the job", async ()
 test("mismatched, malformed, and oversized executor output fails the attempt", async () => {
   const cases: ReadonlyArray<(jobId: string) => string> = [
     jobId =>
-      JSON.stringify(
-        handoffFor(jobId, { inputHeadSha: commit("b".repeat(40)) }),
-      ),
+      JSON.stringify(handoffFor(jobId, { inputHeadSha: "b".repeat(40) })),
     () => "not json at all",
     jobId => JSON.stringify({ ...handoffFor(jobId), prompt: "leaked" }),
     jobId => `${JSON.stringify(handoffFor(jobId))}${" ".repeat(70_000)}x`,
@@ -328,7 +298,7 @@ test("non-harness jobs are never claimed or executed by the harness worker", asy
       }),
     })
     assert.equal(response.status, 201)
-    const jobId = (await responseJob(response)).id
+    const jobId = ((await response.json()) as { job: { id: string } }).job.id
     const calls: HarnessLaunchPlan[] = []
     const outcome = await Effect.runPromise(
       runNextHarnessAttempt(
@@ -399,7 +369,6 @@ test("malformed control-plane claim responses surface as typed request failures"
         runNextHarnessAttempt(
           workerOptions(
             `http://127.0.0.1:${String(address.port)}`,
-            "/Users/example",
             stubSpawner(() => ({ kind: "spawned", exitCode: 0, stdout: "" })),
           ),
         ),
@@ -419,9 +388,9 @@ test("malformed control-plane claim responses surface as typed request failures"
 
 const executionPlan = (argv: readonly string[]): HarnessLaunchPlan => ({
   lane: "claude-code-max",
-  cwd: canonical(tmpdir()),
+  cwd: "/",
   argv,
-  environmentAllowlist: [],
+  scrubbedEnvironment: [],
 })
 
 test("the process spawner captures bounded stdout and exit codes", async () => {
