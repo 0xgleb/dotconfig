@@ -459,6 +459,7 @@ const nativeCheckIns = (
           { version: 1, id, queuedAt: now, checkIn, context },
           scope,
         )
+        const payload = yield* encodePrivateJson(request)
         yield* privateDirectory(directory)
         for (const path of [requests, receipts]) {
           yield* io(() => mkdirSync(path, { recursive: true, mode: 0o700 }))
@@ -467,7 +468,7 @@ const nativeCheckIns = (
         const created = yield* publishExclusiveJson(
           requests,
           `${id}.json`,
-          request,
+          payload,
         )
         if (created === "existing") {
           const existing = yield* read(id)
@@ -548,10 +549,8 @@ const reserveReceipt = (
   id: string,
   initial?: NativeManagerCheckInReceipt,
 ): Either.Either<"claimed" | "existing", ManagerSessionError> =>
-  Either.map(
-    publishExclusiveJson(
-      directory,
-      `${id}.json`,
+  Either.gen(function* () {
+    const payload = yield* encodePrivateJson(
       initial ??
         ({
           version: 1,
@@ -559,9 +558,14 @@ const reserveReceipt = (
           status: "started",
           message: "Worker request started; result is not confirmed.",
         } satisfies ManagerPriorityReceipt),
-    ),
-    outcome => (outcome === "created" ? "claimed" : "existing"),
-  )
+    )
+    const outcome = yield* publishExclusiveJson(
+      directory,
+      `${id}.json`,
+      payload,
+    )
+    return outcome === "created" ? "claimed" : "existing"
+  })
 
 const record = (value: unknown): value is Record<string, unknown> =>
   typeof value === "object" && value !== null && !Array.isArray(value)
@@ -601,9 +605,11 @@ const privateDirectory = (
     }
   })
 
+const PRIVATE_STATE_MAX_BYTES = 256_000
+
 const readPrivate = (
   path: string,
-  maximumBytes = 256_000,
+  maximumBytes = PRIVATE_STATE_MAX_BYTES,
 ): Either.Either<string, ManagerSessionError> =>
   Either.flatMap(
     io(() => {
@@ -642,16 +648,27 @@ const readJson = (path: string): Either.Either<unknown, ManagerSessionError> =>
     }),
   )
 
-const publishExclusiveJson = (
-  directory: string,
-  name: string,
+const encodePrivateJson = (
   value: unknown,
-): Either.Either<"created" | "existing", ManagerSessionError> =>
+): Either.Either<string, ManagerSessionError> =>
   Either.gen(function* () {
     const payload = yield* io(() => JSON.stringify(value))
     if (typeof payload !== "string")
       return yield* failure("io", "Manager state could not be serialized.")
+    if (Buffer.byteLength(payload) > PRIVATE_STATE_MAX_BYTES)
+      return yield* failure(
+        "unsafe_state",
+        "Manager state payload exceeds the private-file byte limit.",
+      )
+    return payload
+  })
 
+const publishExclusiveJson = (
+  directory: string,
+  name: string,
+  payload: string,
+): Either.Either<"created" | "existing", ManagerSessionError> =>
+  Either.gen(function* () {
     const temporary = yield* io(() =>
       join(directory, `pending-${randomUUID()}`),
     )

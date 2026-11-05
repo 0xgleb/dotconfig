@@ -240,6 +240,70 @@ test("check-ins reject foreign snapshots and retain the channel's private file m
   assert.ok(Either.isLeft(channel.take(checkInNow)))
 })
 
+test("an oversized UTF-8 check-in is rejected without publishing a request", t => {
+  const { state, directory } = fixture(t)
+  const channel = state.checkIns
+  assert.ok(channel)
+  const context = {
+    ...checkInContext,
+    data: { transcript: "é".repeat(128_000) },
+  }
+  const result = channel.enqueue(checkIn, context, checkInNow)
+  assert.ok(Either.isLeft(result))
+  assert.equal(result.left.code, "unsafe_state")
+  assert.equal(existsSync(join(directory, "check-ins")), false)
+})
+
+test("a check-in at the complete serialized byte limit survives reopening", t => {
+  const { state, directory } = fixture(t)
+  const channel = state.checkIns
+  assert.ok(channel)
+  const emptyContext = { ...checkInContext, data: { padding: "" } }
+  const envelope = {
+    version: 1,
+    id: `${checkIn.window.lastOwnerAt}-${checkIn.sequence}`,
+    queuedAt: checkInNow,
+    checkIn,
+    context: emptyContext,
+  }
+  const paddingBytes = 256_000 - Buffer.byteLength(JSON.stringify(envelope))
+  const context = {
+    ...emptyContext,
+    data: { padding: "x".repeat(paddingBytes) },
+  }
+  const queued = channel.enqueue(checkIn, context, checkInNow)
+  assert.ok(Either.isRight(queued))
+  assert.equal(
+    lstatSync(join(directory, "check-ins", `${queued.right}.json`)).size,
+    256_000,
+  )
+  const reopened = openNativeManagerState(directory, scope)
+  assert.ok(Either.isRight(reopened))
+  const taken = reopened.right.checkIns?.take(checkInNow)
+  assert.ok(taken && Either.isRight(taken))
+  assert.deepEqual(taken.right?.context, context)
+})
+
+test("a readable worker snapshot that overflows its check-in envelope is rejected", t => {
+  const { state, directory } = fixture(t)
+  const channel = state.checkIns
+  assert.ok(channel)
+  const emptyContext = { ...checkInContext, data: { padding: "" } }
+  const paddingBytes = 256_000 - Buffer.byteLength(JSON.stringify(emptyContext))
+  const context = {
+    ...emptyContext,
+    data: { padding: "x".repeat(paddingBytes) },
+  }
+  assert.ok(Either.isRight(state.publish(context)))
+  const snapshot = state.context()
+  assert.ok(Either.isRight(snapshot))
+  assert.deepEqual(snapshot.right, context)
+  const result = channel.enqueue(checkIn, context, checkInNow)
+  assert.ok(Either.isLeft(result))
+  assert.equal(result.left.code, "unsafe_state")
+  assert.equal(existsSync(join(directory, "check-ins")), false)
+})
+
 const failNextStateWrite = (t: test.TestContext) => {
   const write = fs.writeFileSync
   let injected = false
