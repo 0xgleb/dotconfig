@@ -165,7 +165,7 @@ test("jobs survive closing and reopening the SQLite adapter", async () =>
 
 test("owner intervention survives closing and reopening the SQLite adapter", async () =>
   withStore(async path => {
-    const first = await Effect.runPromise(makeSqliteJobStore(path))
+    const first = await Effect.runPromise(makeSqliteJobStore(path, home))
     await Effect.runPromise(
       first.recordAgentIntervention({
         agentId: "agent-a",
@@ -175,7 +175,7 @@ test("owner intervention survives closing and reopening the SQLite adapter", asy
     )
     first.close()
 
-    const reopened = await Effect.runPromise(makeSqliteJobStore(path))
+    const reopened = await Effect.runPromise(makeSqliteJobStore(path, home))
     assert.equal(
       await Effect.runPromise(reopened.agentIntervention("agent-a")),
       1_000,
@@ -189,7 +189,7 @@ test("schema version one migrates transactionally to the workspace-lock schema",
     legacy.exec("PRAGMA user_version = 1")
     legacy.close()
 
-    const store = await Effect.runPromise(makeSqliteJobStore(path))
+    const store = await Effect.runPromise(makeSqliteJobStore(path, home))
     const version = store.unsafeDatabaseForTests
       .prepare("PRAGMA user_version")
       .get()
@@ -236,7 +236,7 @@ test("schema version six gains durable agent allocation state", async () =>
     `)
     previous.close()
 
-    const store = await Effect.runPromise(makeSqliteJobStore(path))
+    const store = await Effect.runPromise(makeSqliteJobStore(path, home))
     const queueColumns = store.unsafeDatabaseForTests
       .prepare("PRAGMA table_info(provider_call_queue)")
       .all() as ReadonlyArray<{ readonly name?: unknown }>
@@ -276,7 +276,7 @@ test("schema version two migrates generic allowance rows without assigning a rea
     `)
     legacy.close()
 
-    const store = await Effect.runPromise(makeSqliteJobStore(path))
+    const store = await Effect.runPromise(makeSqliteJobStore(path, home))
     assert.deepEqual(
       await Effect.runPromise(store.listAllowanceCheckpoints(0)),
       [
@@ -306,7 +306,7 @@ test("schema version four migrates singleton admission to durable role rows", as
     `)
     legacy.close()
 
-    const store = await Effect.runPromise(makeSqliteJobStore(path))
+    const store = await Effect.runPromise(makeSqliteJobStore(path, home))
     const columns = store.unsafeDatabaseForTests
       .prepare("PRAGMA table_info(usage_admission)")
       .all() as ReadonlyArray<{ readonly name?: unknown }>
@@ -343,7 +343,7 @@ test("schema version five migrates allowance samples to event rows", async () =>
     `)
     previous.close()
 
-    const store = await Effect.runPromise(makeSqliteJobStore(path))
+    const store = await Effect.runPromise(makeSqliteJobStore(path, home))
     assert.deepEqual(
       await Effect.runPromise(store.listAllowanceCheckpoints(0)),
       [
@@ -380,7 +380,7 @@ test("schema version three separates app-server samples from the ChatGPT shared 
     `)
     previous.close()
 
-    const store = await Effect.runPromise(makeSqliteJobStore(path))
+    const store = await Effect.runPromise(makeSqliteJobStore(path, home))
     assert.deepEqual(
       await Effect.runPromise(store.listAllowanceCheckpoints(0)),
       [
@@ -520,11 +520,13 @@ test("a blocked harness handoff is stored with the attempt it ended", async () =
     const claimed = await Effect.runPromise(
       store.claimDue("worker-a", "lease-a", 1_000, 90_000),
     )
-    assert.equal(claimed?.attempt, 1)
+    assert.ok(claimed)
+    assert.equal(claimed.id, "job-b")
+    assert.equal(claimed.attempt, 1)
 
     const handoff = {
       protocolVersion: 1,
-      jobId: "job-b",
+      jobId: claimed.id,
       attempt: 1,
       lane: "claude-code-max",
       repository: "0xgleb/example",
@@ -633,7 +635,7 @@ test("usage samples survive agent expiry and update within a bounded time bucket
 
 test("allowance checkpoints survive restarts and reject impossible resets", async () =>
   withStore(async path => {
-    const first = await Effect.runPromise(makeSqliteJobStore(path))
+    const first = await Effect.runPromise(makeSqliteJobStore(path, home))
     await Effect.runPromise(
       first.recordAllowanceCheckpoint({
         provider: "openai",
@@ -646,7 +648,7 @@ test("allowance checkpoints survive restarts and reject impossible resets", asyn
     )
     first.close()
 
-    const reopened = await Effect.runPromise(makeSqliteJobStore(path))
+    const reopened = await Effect.runPromise(makeSqliteJobStore(path, home))
     assert.deepEqual(
       await Effect.runPromise(reopened.listAllowanceCheckpoints(0)),
       [
@@ -705,7 +707,7 @@ test("allowance checkpoints survive restarts and reject impossible resets", asyn
 
 test("allowance checkpoint storage stays bounded and rejects evicted history", async () =>
   withStore(async path => {
-    const store = await Effect.runPromise(makeSqliteJobStore(path))
+    const store = await Effect.runPromise(makeSqliteJobStore(path, home))
     const insert = store.unsafeDatabaseForTests.prepare(
       `INSERT INTO allowance_checkpoints (
          provider, pool, source, captured_at, remaining_percent, event, reset_at
@@ -754,8 +756,8 @@ test("allowance checkpoint storage stays bounded and rejects evicted history", a
 
 test("autonomous admission preserves the fleet cap and a durable weighted role cap", async () =>
   withStore(async path => {
-    const first = await Effect.runPromise(makeSqliteJobStore(path))
-    const second = await Effect.runPromise(makeSqliteJobStore(path))
+    const first = await Effect.runPromise(makeSqliteJobStore(path, home))
+    const second = await Effect.runPromise(makeSqliteJobStore(path, home))
     const [left, right] = await Promise.all([
       Effect.runPromise(
         first.claimAutonomousAdmission(
@@ -800,7 +802,7 @@ test("autonomous admission preserves the fleet cap and a durable weighted role c
     first.close()
     second.close()
 
-    const reopened = await Effect.runPromise(makeSqliteJobStore(path))
+    const reopened = await Effect.runPromise(makeSqliteJobStore(path, home))
     assert.deepEqual(
       await Effect.runPromise(
         reopened.claimAutonomousAdmission(
@@ -817,7 +819,7 @@ test("autonomous admission preserves the fleet cap and a durable weighted role c
 
 test("provider-call reservations have durable atomic storage", async () =>
   withStore(async path => {
-    const store = await Effect.runPromise(makeSqliteJobStore(path))
+    const store = await Effect.runPromise(makeSqliteJobStore(path, home))
     const table = store.unsafeDatabaseForTests
       .prepare(
         "SELECT name FROM sqlite_master WHERE type = 'table' AND name = 'provider_call_reservations'",
@@ -835,7 +837,7 @@ test("provider-call reservations have durable atomic storage", async () =>
 
 test("expired unresolved provider calls cannot release budget before settlement", async () =>
   withStore(async path => {
-    const store = await Effect.runPromise(makeSqliteJobStore(path))
+    const store = await Effect.runPromise(makeSqliteJobStore(path, home))
     const start = 1_000
     const windowMs = 4 * 60 * 60 * 1_000
     assert.deepEqual(
@@ -898,7 +900,7 @@ test("expired unresolved provider calls cannot release budget before settlement"
 
 test("unresolved provider calls can reserve concurrently within the token cap", async () =>
   withStore(async path => {
-    const store = await Effect.runPromise(makeSqliteJobStore(path))
+    const store = await Effect.runPromise(makeSqliteJobStore(path, home))
     const first = await Effect.runPromise(
       store.reserveProviderCall({
         reservationId: "concurrent-a",
@@ -935,7 +937,7 @@ test("unresolved provider calls can reserve concurrently within the token cap", 
 
 test("provider calls serialize across the fleet at the calibrated interval", async () =>
   withStore(async path => {
-    const store = await Effect.runPromise(makeSqliteJobStore(path))
+    const store = await Effect.runPromise(makeSqliteJobStore(path, home))
     const first = await Effect.runPromise(
       store.reserveProviderCall({
         reservationId: "call-a",
@@ -1034,7 +1036,7 @@ test("provider calls serialize across the fleet at the calibrated interval", asy
 
 test("provider queue ages work by its per-agent allocation weight", async () =>
   withStore(async path => {
-    const store = await Effect.runPromise(makeSqliteJobStore(path))
+    const store = await Effect.runPromise(makeSqliteJobStore(path, home))
     const reserve = (
       reservationId: string,
       agentId: string,
@@ -1079,7 +1081,7 @@ test("provider queue ages work by its per-agent allocation weight", async () =>
 
 test("malformed persisted allowance checkpoints fail closed", async () =>
   withStore(async path => {
-    const store = await Effect.runPromise(makeSqliteJobStore(path))
+    const store = await Effect.runPromise(makeSqliteJobStore(path, home))
     await Effect.runPromise(
       store.recordAllowanceCheckpoint({
         provider: "openai",
