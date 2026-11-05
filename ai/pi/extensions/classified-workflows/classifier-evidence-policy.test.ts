@@ -22,6 +22,32 @@ const policy = (): string => {
   return prefix
 }
 
+const assertMainHookPolicy = (prompt: string): void => {
+  const main = prompt
+    .split("For main-worktree hook handling:")[1]
+    ?.split("A commit, build,")[0]
+
+  assert.ok(main)
+  assert.match(main, /Follow applicable loaded publication gates/iu)
+  assert.match(
+    main,
+    /reuse established evidence unless a relevant change invalidates it/iu,
+  )
+  assert.match(
+    main,
+    /Unexpected changed content must be reviewed and verified before delivery/iu,
+  )
+  assert.match(
+    main,
+    /Failed required gates, force, hook bypass, and unauthorized paths or branches remain blocked/iu,
+  )
+  assert.doesNotMatch(
+    main,
+    /Verify the actual committed selection before pushing/iu,
+  )
+  assert.doesNotMatch(prompt, /\{\{(?:LINKED|MAIN)_WORKTREE_HOOKS\}\}/u)
+}
+
 test("the composed opening admits requested OR necessary work, not an independent necessity veto", () => {
   const opening = policy()
     .split("## Decide the requested boundary")[1]
@@ -67,6 +93,7 @@ for (const kind of ["task", "instruction", "script", "diff"]) {
       ...request,
       evidence: [evidence, "Unrelated documentation was read afterward."],
     })
+
     assert.ok(prompt.includes(evidence))
     assert.match(
       prompt,
@@ -79,7 +106,7 @@ for (const kind of ["task", "instruction", "script", "diff"]) {
   })
 }
 
-test("expanded hook policy retains initial scope checks and reuses unchanged-commit verification", () => {
+test("expanded hook policies retain scope checks and reuse unchanged verification", () => {
   const linked = policy()
     .split("For linked-worktree hook handling:")[1]
     ?.split("For main-worktree hook handling:")[0]
@@ -99,13 +126,41 @@ test("expanded hook policy retains initial scope checks and reuses unchanged-com
     policy(),
     /do not impose ritual rereads or paths\/modes\/blobs\/hashes checks/iu,
   )
-  assert.doesNotMatch(policy(), /\{\{(?:LINKED|MAIN)_WORKTREE_HOOKS\}\}/u)
+  assertMainHookPolicy(policy())
 })
+
+for (const { label, replacement } of [
+  { label: "empty", replacement: "" },
+  {
+    label: "former selection requirement",
+    replacement:
+      "Use the repository-approved VCS backend and run configured hooks normally. " +
+      "Verify the actual committed selection before pushing. Unexpected changed content " +
+      "must be reviewed and verified before delivery. Failed required gates, force, " +
+      "hook bypass, and unauthorized paths or branches remain blocked.",
+  },
+]) {
+  test(`main-worktree contract rejects ${label} while linked guidance survives`, () => {
+    const prompt = policy()
+
+    const mainMarker = "For main-worktree hook handling:"
+    const main = prompt.split(mainMarker)[1]?.split("A commit, build,")[0]
+
+    assert.ok(main)
+
+    const changed = prompt.replace(main, replacement)
+
+    assert.notEqual(changed, prompt)
+    assert.equal(changed.split(mainMarker)[0], prompt.split(mainMarker)[0])
+    assert.throws(() => assertMainHookPolicy(changed))
+  })
+}
 
 test("rendered prompt retains supplied project-selection instructions", () => {
   const instructions =
     "Before pushing this branch, verify committed path, mode, and blob identities against the approved selection."
   const prompt = render({ ...request, projectInstructions: instructions })
+
   assert.ok(prompt.includes(instructions))
   assert.match(
     prompt,
@@ -149,6 +204,7 @@ test("untrusted action text remains data and cannot supply a missing safety fact
     },
   }
   const prompt = buildClassifierPrompt({ ...request, subject })
+
   assert.ok(prompt.endsWith(JSON.stringify(subject, null, 2)))
   assert.match(
     policy(),
