@@ -51,12 +51,10 @@ in an upstack walk: review-loop a branch, fold the fixes into its commit,
 advance to the next branch, and repeat to the top of the stack. Passing `stack`
 is an explicit opt-in to the amend-and-advance flow, so in stack mode **hard
 rule #4 is relaxed**: you MAY absorb fixes into the current branch before
-advancing (`but absorb`). Keep fixes scoped to that branch; publication follows
-the whole-workspace synchronization rule in `GLOBAL_AGENTS.md`, not an isolated
-branch push. Do not withhold completed lower-branch work because a later branch
-is unfinished; retain truthful draft status for unfinished work. Review-loop
-itself adds no PR-state or comment authority; independently authorized
-global-resource publication/ready steps remain governed by `GLOBAL_AGENTS.md`.
+advancing (`but absorb`). Checkpoint timing and publication scope follow
+`GLOBAL_AGENTS.md`'s workspace workflow throughout the walk; final convergence
+does not defer an otherwise-required checkpoint. This skill alone does not
+authorize draft→ready changes, new PRs or PR comments.
 
 With no `stack` argument, skip this section entirely and run steps 1–11 once on
 the current branch.
@@ -141,18 +139,16 @@ defer this preflight until after saving the initial patch.
    fold the fixes into that branch with `but absorb <branch>` — run
    `but absorb
    <branch> --dry-run` first and confirm it targets the intended
-   branch. If nothing was modified, skip the absorb.
-5. Before advancing, verify this unit's owned committed changes. Publish using
-   `GLOBAL_AGENTS.md`'s whole-workspace workflow: `but pull`, resolve all
-   conflicts, then bare `but push` for every workspace branch and stack. Keep
-   unfinished work in truthful draft checkpoints. Do not substitute a
-   branch-scoped push; preserve the state and report a concrete publication
-   blocker rather than accumulating further source units.
-6. If a branch hits the 4-pass cap, report its exact state and stop advancing
-   the review. Preserve and publish owned unfinished fixes as truthful draft
-   checkpoints through the global whole-workspace workflow; nonconvergence
-   prevents readiness, not checkpoint publication. No checkout restoration is
-   needed.
+   branch. If nothing was modified, skip.
+5. Same non-convergence rule: if a branch hits the 4-pass cap, stop on it — do
+   **NOT** advance to the next series. Report which branch is stuck.
+6. Publish checkpoints and remaining converged work according to
+   `GLOBAL_AGENTS.md`'s timing and managed-main workspace workflow, serialized
+   with the responsible workspace agent. Do not postpone a required checkpoint
+   until the entire walk finishes. Scoped fix commits do not authorize isolated
+   branch pushes. No mode changes, draft flips, new PRs or PR comments are
+   authorized by this skill. If a branch is stuck, report it; no checkout
+   restoration is needed.
 
 Per-branch summary:
 
@@ -178,21 +174,9 @@ Verify prerequisites before doing anything:
    managed series; plain-Git worktrees run the single-branch loop.
 
    Before the clean-tree gate or any artifact write, resolve the actual review
-   checkout root and record its working-tree/index state. Verify directory-wide
-   coverage with `git check-ignore --verbose` on `.tmp/` itself and the intended
-   artifact path, and on `.worktrees/` when used. A file-specific match is
-   insufficient. Immediately add any missing directory pattern to that
-   checkout's `.gitignore`, preserving existing rules, then recheck both paths;
-   no separate approval is needed and no worktree-creation authority is added.
-
-   Account for an owned ignore repair as a separate preflight unit through the
-   repository's already-authorized checkpoint/publication workflow. Isolate only
-   the new ignore hunk, never pre-existing changes; do not attribute this repair
-   to a reviewed branch's fix delta or absorb it into another branch. Preserve
-   normal publication gates. If a safe scoped checkpoint or required publication
-   is blocked, leave the repair saved and report the exact blocker before
-   starting the review. Repeat this preflight after checkout transitions before
-   using either directory.
+   checkout root and apply `GLOBAL_AGENTS.md`'s directory-ignore preflight,
+   including state capture and separate repair accounting. Repeat it after
+   checkout transitions before using either temporary directory.
 
 2. For GitButler stack mode, confirm the tool is available in the authorized
    project environment, but only after verifying a managed main worktree.
@@ -272,24 +256,16 @@ substitute `out_dir` or an exported `sourceRoot`. An exported source directory
 is a read boundary, not the review checkout. Remove these temporary artifacts
 with the worktree.
 
-Complete step 1's directory-ignore preflight, including accounting for an owned
-repair, before recording a clean fix baseline or writing the initial review
-artifacts. Do not introduce an unaccounted ignore change after that baseline.
-
-Before creating the invocation directory or writing any artifact, verify ignore
-coverage:
+Before creating the invocation directory or writing any artifact, complete step
+1's global preflight for this invocation path, including repair accounting
+before recording a clean fix baseline:
 
 ```bash
 git check-ignore --verbose "$repo_root/.tmp/" "$out_dir/diff.patch"
 ```
 
-Require directory-wide coverage for both paths; a file-specific match is not
-sufficient. Immediately add the missing `.tmp/` directory pattern to this
-checkout's `.gitignore` under the existing ignore-repair policy, preserve other
-rules, and recheck both paths. This grants no worktree-creation authority.
-
-After coverage and any required repair checkpoint are established, call the
-registered `artifact_provenance` tool with the resolved absolute `out_dir`:
+Then call the registered `artifact_provenance` tool with the resolved absolute
+value of `out_dir`:
 
 ```json
 { "action": "create_directory", "path": "<resolved absolute out_dir>" }
@@ -1042,9 +1018,9 @@ alone does not authorize an amend, commit, or push.
 flow: the GitButler wrapper, only in a verified managed main worktree, absorbs
 fixes with `but absorb` and advances through the series. Plain-Git and linked
 worktrees remain in single-branch mode. Print the per-branch summary line, then
-publish through the global whole-workspace synchronization workflow before
-continuing the upstack walk. Do not hold earlier validated work until the whole
-series finishes.
+continue the upstack walk — do not stop here. Follow the global checkpoint
+cadence while advancing and publish any remaining work at the end; stack mode
+does not impose an end-only publication gate.
 
 ### Dedicated Pi review-duty sessions
 
@@ -1092,13 +1068,12 @@ authorized by this adapter.
 4. **Single-branch mode:** never amend, commit, or push — leave the fixes
    uncommitted for the user to review unless repository policy independently
    authorizes publication. **Stack mode, only in a verified GitButler-managed
-   main worktree:** absorb only the current branch's owned fixes, then publish
-   through `GLOBAL_AGENTS.md`'s whole-workspace synchronization workflow before
-   advancing. Never use an isolated branch or stack push. Linked/plain-Git
-   worktrees remain in single-branch mode. Independent scoped global-resource
-   authority still permits its documented draft-PR/ready workflow; otherwise
-   this skill grants no new PR/state effect. Never merge, post/resolve comments
-   or override branch protection.
+   main worktree:** `but absorb` into each branch is expected; checkpoint timing
+   and publication scope follow `GLOBAL_AGENTS.md`'s managed-main workspace
+   workflow, not an end-only or selected-branch push. Linked and other plain-Git
+   worktrees remain in single-branch mode. The fixes must reach the PRs. This
+   skill alone does not authorize draft→ready changes, new PRs, PR comments or
+   branch-protection overrides.
 5. Use `gh issue create --body-file` with the approved body file, not inline
    escaped Markdown.
 6. Always re-verify findings against the current source before applying fixes —
@@ -1119,9 +1094,5 @@ authorized by this adapter.
 12. Delta mode is only valid when the fix delta is small (~200 lines) and
     confined to files implicated by fixed findings — otherwise escalate to a
     full panel pass.
-13. Before artifact writes, verify directory-wide ignore coverage. Immediately
-    repair missing `.tmp/` or `.worktrees/` directory patterns when used,
-    preserving other rules; no separate approval is needed. After the ignore
-    preflight and required repair accounting, require successful registered
-    invocation-directory creation and provenance recording before artifact
-    writes.
+13. Complete steps 1–2's global preflight and registered invocation-directory
+    creation before artifact writes; recheck after checkout transitions.

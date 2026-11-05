@@ -14,6 +14,7 @@ direnv/
 /.direnv/
 /.git-hooks-config.yaml
 /.pre-commit-config.yaml
+/.devenv/
 /.tmp/
 /.auto-resolution/
 /.conflict-base-0/
@@ -56,5 +57,7 @@ direnv/
 solana/id.json
 configstore/update-notifier-create-solana-dapp.json
 /ai/pi/workspaces/reviewer/.tmp/
+/ai/pi/workspaces/manager/.tmp/
 /ai/pi/workspaces/manager/.pi/
+/ai/pi/workspaces/manager/.tmp/
 .pre-commit-config.yaml

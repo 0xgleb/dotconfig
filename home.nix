@@ -244,7 +244,7 @@ in
       ".cursor/CLAUDE.md".force = true;
       ".pi/agent/AGENTS.md".source = globalInstructions;
       ".pi/agent/AGENTS.md".force = true;
-      ".pi/agent/manager/global/.pi/settings.json".source =
+      ".config/ai/pi/workspaces/manager/.pi/settings.json".source =
         config.lib.file.mkOutOfStoreSymlink "${aiDir}/pi/manager.settings.json";
       ".pi/agent/bin/but".source = "${but}/bin/but";
       ".pi/agent/bin/but".force = true;
@@ -354,6 +354,8 @@ in
         user.name = "0xgleb";
         init.defaultBranch = "master";
         push.autoSetupRemote = true;
+        # Native fsmonitor queries stall for ~1s per nested repository on macOS.
+        core.fsmonitor = false;
       };
     };
 

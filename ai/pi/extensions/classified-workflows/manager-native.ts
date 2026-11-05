@@ -1,7 +1,8 @@
-import { randomUUID } from "node:crypto"
-import { lstatSync, mkdirSync } from "node:fs"
+import { createHash, randomUUID } from "node:crypto"
+import { chmodSync, lstatSync, mkdirSync } from "node:fs"
 import { Type } from "typebox"
 import { join } from "node:path"
+import { homedir } from "node:os"
 import {
   getAgentDir,
   type ExtensionAPI,
@@ -63,6 +64,9 @@ export const registerNativeManager = (
   pi.registerFlag("manager", {
     description: "Run the native manager for all existing workers",
     type: "boolean",
+    default:
+      process.cwd() ===
+      join(homedir(), ".config", "ai", "pi", "workspaces", "manager"),
   })
   pi.registerFlag("manager-worker", {
     description: "Pair a native manager chat with a worker session",
@@ -561,7 +565,10 @@ export const registerNativeManager = (
         notice(ctx, epoch.left)
         return
       }
-      startWorker(ctx, state.right, epoch.right)
+      await stop()
+      activeSessionId = ctx.sessionManager.getSessionId()
+      activeCtx = ctx
+      await startWorker(ctx, state.right, epoch.right, target.right.directory)
       if (plan.right.kind === "existing") {
         ctx.ui.notify(
           `Manager is running in pane ${plan.right.paneName}.`,
@@ -569,7 +576,14 @@ export const registerNativeManager = (
         )
         return
       }
-      const workspace = join(runtime.agentDir, "manager", "global")
+      const workspace = join(
+        homedir(),
+        ".config",
+        "ai",
+        "pi",
+        "workspaces",
+        "manager",
+      )
       const ready = prepareGlobalWorkspace(workspace)
       if (Either.isLeft(ready)) {
         notice(ctx, ready.left)
@@ -609,7 +623,6 @@ const prepareGlobalWorkspace = (
     if (
       !stat.isDirectory() ||
       stat.isSymbolicLink() ||
-      (stat.mode & 0o077) !== 0 ||
       typeof process.getuid !== "function" ||
       stat.uid !== process.getuid()
     )
@@ -617,6 +630,8 @@ const prepareGlobalWorkspace = (
         "unsafe_state",
         "Global manager workspace must be a private, owned directory.",
       )
+    if ((stat.mode & 0o077) !== 0)
+      yield* attempt(() => chmodSync(directory, 0o700))
   })
 
 const MANAGEMENT_TOOLS: readonly string[] = [

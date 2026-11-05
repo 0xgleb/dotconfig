@@ -1,6 +1,6 @@
 ---
 name: code-style-inspector
-description: Auto-run during code reviews and audits in any language to check logical spacing, import scope, readable qualification, domain identifiers and copied-definition provenance. Skip prose-only changes.
+description: Auto-run during code reviews and audits in any language to check readable names, declaration and statement spacing, import qualification, line length including embedded SQL/JSON, and copied-definition provenance. Skip prose-only changes.
 allowed-tools:
   - Read
   - Grep
@@ -17,10 +17,10 @@ owns fixes and publication.
 
 1. Use the engine's supplied diff and source identity. An audit's all-additions
    diff makes all scoped standing code eligible. Read affected files, imports
-   and relevant domain types. Assess meaning at the use site, not just namespace
+   and surrounding code. Assess readability at the use site, not just namespace
    collisions; a diff hunk alone may omit necessary context.
-2. Check the rules below using the language's actual namespace and typing
-   semantics. Honor explicit project or owner exceptions.
+2. Check the language-independent rules below using the language's actual
+   namespace semantics. Honor explicit project or owner exceptions.
 3. Report the location, violated rule, concrete repair and any real exception.
    Return no findings only after complete coverage; identify inaccessible or
    unread source rather than claiming it passed.
@@ -30,14 +30,17 @@ metadata do not require installing tools or changing the review boundary.
 
 ## Checks
 
-### Separate logical steps
+### Separate declarations and meaningful phases
 
-Require a blank line between distinct phases: after a completed operation chain
-before handling its result, after a match/switch before constructing a derived
-value, and after a guard before the final return expression. This applies across
-languages, including before `if let` and a final iterator expression in Rust.
-Keep tightly related bindings together; do not insert a blank line before every
-statement or rewrite formatter-controlled layout by taste.
+Separate independent declarations with blank lines, including consecutive
+`const`-bound helper functions. Spacing inside their bodies does not substitute
+for spacing between declarations.
+
+Within larger bodies, separate meaningful phases: a completed operation chain
+from substantial result handling, or validation from subsequent work. Keep tiny
+two–three-line bodies compact; an assertion followed by a return does not
+mechanically require an intervening blank line. Do not space every statement or
+rewrite formatter-controlled layout by taste.
 
 ### Import names at the right scope
 
@@ -55,21 +58,24 @@ a candidate for shortening.
 
 Also preserve qualification for actual name collisions, associated/enum members
 and required language/library namespaces. Do not introduce gratuitous aliases or
-break a required module API. In Rust, function/block-local `use` is allowed only
-for enum variants; other imports belong at module or test-module scope.
+break a required module API. Language-specific import restrictions belong to the
+corresponding language inspector.
 
-### Give identifiers domain types
+### Use readable names and line lengths
 
-An identifier stored or passed inside the application needs a distinct domain
-type, not a bare string/number or an alias that remains interchangeable with it.
-A lone chat/order/user ID can need a newtype even when no wrapper exists yet.
-Use the language's newtypes, opaque/branded types or value objects; parse and
-validate required invariants at the boundary. Raw wire/FFI fields are allowed
-only at that boundary, not as an excuse to keep internal configuration or state
-untyped. Do not wrap ordinary display text or loop counters.
+Names should communicate a value's role at the use site. Flag unclear names and
+unexplained abbreviations, not the absence of a newtype or a preference for a
+different domain model. Domain types, newtypes and opaque-versus-primitive
+representation choices belong to `strong-typing-inspector`, whether or not that
+lane runs alongside this one. Language-specific representation mechanics belong
+to the corresponding language inspector.
 
-When the engine also selects `strong-typing-inspector`, it owns detailed typing
-findings; do not emit the same identifier finding twice.
+Check long embedded SQL queries, JSON snippets and other code that the
+configured formatter does not lay out. Use the project's line-length rule where
+one exists; otherwise require a readable structure rather than inventing a
+numeric limit. Preserve query behavior, exact wire bytes and fixtures whose
+layout is part of their contract; propose a layout that does not change those
+semantics.
 
 ### Cite copied definitions precisely
 
