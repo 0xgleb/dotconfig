@@ -192,15 +192,29 @@ test("registers a pending session and keeps its assignment linkage", async () =>
   const registeredResult = await Effect.runPromise(
     contract.decideSessionEvent(pending, ownership, absent, registration()),
   )
-  assert.equal(registeredResult.kind, "appended")
+  assert.ok(registeredResult.kind === "appended")
+  assert.deepEqual(registeredResult.snapshot, {
+    sessionId: pending.sessionId,
+    status: "registered",
+    sequence: 1,
+  })
 
   const assignment = eventAt(2, { kind: "assigned", jobId: uuid(10) })
   const assignedResult = await Effect.runPromise(
-    contract.decideSessionEvent(snapshot(), ownership, absent, assignment),
+    contract.decideSessionEvent(
+      registeredResult.snapshot,
+      ownership,
+      absent,
+      assignment,
+    ),
   )
-  assert.equal(assignedResult.kind, "appended")
-  if (assignedResult.kind === "appended")
-    assert.equal(assignedResult.snapshot.status, "assigned")
+  assert.ok(assignedResult.kind === "appended")
+  assert.deepEqual(assignedResult.snapshot, {
+    sessionId: pending.sessionId,
+    status: "assigned",
+    sequence: 2,
+    jobId: uuid(10),
+  })
 })
 
 test("executes an assigned attempt and releases back to assigned", async () => {
@@ -217,7 +231,14 @@ test("executes an assigned attempt and releases back to assigned", async () => {
       started,
     ),
   )
-  assert.equal(startedResult.kind, "appended")
+  assert.ok(startedResult.kind === "appended")
+  assert.deepEqual(startedResult.snapshot, {
+    sessionId: ownership.sessionId,
+    status: "executing",
+    sequence: 3,
+    jobId: uuid(10),
+    attemptId: uuid(11),
+  })
 
   const released = eventAt(4, {
     kind: "attempt-released",
@@ -226,18 +247,19 @@ test("executes an assigned attempt and releases back to assigned", async () => {
   })
   const releasedResult = await Effect.runPromise(
     contract.decideSessionEvent(
-      snapshot({
-        status: "executing",
-        sequence: 3,
-        jobId: uuid(10),
-        attemptId: uuid(11),
-      }),
+      startedResult.snapshot,
       ownership,
       absent,
       released,
     ),
   )
-  assert.equal(releasedResult.kind, "appended")
+  assert.ok(releasedResult.kind === "appended")
+  assert.deepEqual(releasedResult.snapshot, {
+    sessionId: ownership.sessionId,
+    status: "assigned",
+    sequence: 4,
+    jobId: uuid(10),
+  })
 })
 
 test("a terminal receipt is idempotent and a changed payload conflicts", async () => {
@@ -249,9 +271,27 @@ test("a terminal receipt is idempotent and a changed payload conflicts", async (
   })
   assert.deepEqual(
     await Effect.runPromise(
-      contract.decideSessionEvent(finished, ownership, absent, closed),
+      contract.decideSessionEvent(
+        finished,
+        ownership,
+        { kind: "recorded", event: closed },
+        closed,
+      ),
     ),
     { kind: "duplicate" },
+  )
+  await expectSessionError(
+    [finished, ownership, absent, closed],
+    "out-of-order",
+  )
+  await expectSessionError(
+    [
+      finished,
+      ownership,
+      absent,
+      { ...closed, occurredAt: closed.occurredAt + 1 },
+    ],
+    "out-of-order",
   )
 })
 
@@ -411,7 +451,12 @@ test("terminal receipt payload changes cannot rewrite the terminal identity", as
     "receipt-conflict",
   )
   await expectSessionError(
-    [current, ownership, absent, { ...event, kind: "owner-lost" }],
+    [
+      current,
+      ownership,
+      { kind: "recorded", event },
+      { ...event, kind: "owner-lost" },
+    ],
     "receipt-conflict",
   )
 })
@@ -484,6 +529,32 @@ test("released assignments can be replaced without admitting a foreign active at
   )
 })
 
+test("snapshot boundaries reject state and sequence combinations unreachable through acceptance", async () => {
+  for (const fields of [
+    { status: "pending", sequence: 1 },
+    { status: "registered", sequence: 5 },
+    { status: "assigned", sequence: 1, jobId: uuid(10) },
+    { status: "executing", sequence: 2, jobId: uuid(10), attemptId: uuid(11) },
+    { status: "closed", sequence: 1, terminalEventId: uuid(201) },
+    { status: "owner-lost", sequence: 1, terminalEventId: uuid(201) },
+  ]) {
+    const current = { sessionId: ownership.sessionId, ...fields }
+    assert.equal(
+      Schema.decodeUnknownEither(SessionSnapshot)(current)._tag,
+      "Left",
+    )
+    await expectSessionError(
+      [
+        current,
+        ownership,
+        absent,
+        eventAt(fields.sequence + 1, { kind: "assigned", jobId: uuid(10) }),
+      ],
+      "malformed",
+    )
+  }
+})
+
 test("all acceptance boundaries reject malformed inputs and stale ownership", async () => {
   const event = eventAt(2, { kind: "assigned", jobId: uuid(10) })
   for (const args of [
@@ -498,7 +569,16 @@ test("all acceptance boundaries reject malformed inputs and stale ownership", as
     "stale-session",
   )
   await expectSessionError(
-    [snapshot({ sequence: Number.MAX_SAFE_INTEGER }), ownership, absent, event],
+    [
+      snapshot({
+        status: "assigned",
+        sequence: Number.MAX_SAFE_INTEGER,
+        jobId: uuid(10),
+      }),
+      ownership,
+      absent,
+      event,
+    ],
     "out-of-order",
   )
 })

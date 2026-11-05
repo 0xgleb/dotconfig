@@ -117,25 +117,25 @@ export const SessionSnapshot = Schema.Union(
   Schema.Struct({
     sessionId: SessionId,
     status: Schema.Literal("registered"),
-    sequence: Sequence,
+    sequence: Schema.Literal(1),
   }),
   Schema.Struct({
     sessionId: SessionId,
     status: Schema.Literal("assigned"),
-    sequence: Sequence,
+    sequence: Sequence.pipe(Schema.greaterThanOrEqualTo(2)),
     jobId: JobId,
   }),
   Schema.Struct({
     sessionId: SessionId,
     status: Schema.Literal("executing"),
-    sequence: Sequence,
+    sequence: Sequence.pipe(Schema.greaterThanOrEqualTo(3)),
     jobId: JobId,
     attemptId: AttemptId,
   }),
   Schema.Struct({
     sessionId: SessionId,
     status: Schema.Literal("closed", "owner-lost"),
-    sequence: Sequence,
+    sequence: Sequence.pipe(Schema.greaterThanOrEqualTo(2)),
     terminalEventId: SessionEventId,
   }),
 )
@@ -187,24 +187,37 @@ const decodeBoundary = <A, I>(schema: Schema.Schema<A, I>, input: unknown) =>
 const sameEvent = Schema.equivalence(SessionEvent)
 const sameSnapshot = Schema.equivalence(SessionSnapshot)
 
-const snapshotAfter = (event: SessionEvent): SessionSnapshot => {
+const snapshotAfter = (
+  event: SessionEvent,
+): Effect.Effect<SessionSnapshot, SessionEventError> => {
   const fields = { sessionId: event.sessionId, sequence: event.sequence }
   switch (event.kind) {
     case "registered":
-      return { ...fields, status: "registered" }
+      return decodeBoundary(SessionSnapshot, {
+        ...fields,
+        status: "registered",
+      })
     case "assigned":
     case "attempt-released":
-      return { ...fields, status: "assigned", jobId: event.jobId }
+      return decodeBoundary(SessionSnapshot, {
+        ...fields,
+        status: "assigned",
+        jobId: event.jobId,
+      })
     case "attempt-started":
-      return {
+      return decodeBoundary(SessionSnapshot, {
         ...fields,
         status: "executing",
         jobId: event.jobId,
         attemptId: event.attemptId,
-      }
+      })
     case "closed":
     case "owner-lost":
-      return { ...fields, status: event.kind, terminalEventId: event.eventId }
+      return decodeBoundary(SessionSnapshot, {
+        ...fields,
+        status: event.kind,
+        terminalEventId: event.eventId,
+      })
   }
 }
 
@@ -248,28 +261,21 @@ export const decideSessionEvent: DecideSessionEvent = (
       return yield* failure("stale-session")
 
     if (prior.kind === "recorded") {
+      const projected = yield* snapshotAfter(incoming).pipe(
+        Effect.mapError(
+          () => new SessionEventError({ code: "receipt-conflict" }),
+        ),
+      )
       if (
         !sameEvent(prior.event, incoming) ||
         incoming.sequence > current.sequence ||
         (incoming.sequence === current.sequence &&
-          !sameSnapshot(current, snapshotAfter(incoming))) ||
+          !sameSnapshot(current, projected)) ||
         ((incoming.kind === "closed" || incoming.kind === "owner-lost") &&
           incoming.sequence !== current.sequence) ||
         ((current.status === "closed" || current.status === "owner-lost") &&
           current.terminalEventId === incoming.eventId &&
-          !sameSnapshot(current, snapshotAfter(incoming)))
-      )
-        return yield* failure("receipt-conflict")
-      return { kind: "duplicate" }
-    }
-
-    if (
-      (current.status === "closed" || current.status === "owner-lost") &&
-      current.terminalEventId === incoming.eventId
-    ) {
-      if (
-        current.status !== incoming.kind ||
-        current.sequence !== incoming.sequence
+          !sameSnapshot(current, projected))
       )
         return yield* failure("receipt-conflict")
       return { kind: "duplicate" }
@@ -295,7 +301,7 @@ export const decideSessionEvent: DecideSessionEvent = (
 
     return {
       kind: "appended",
-      snapshot: snapshotAfter(incoming),
+      snapshot: yield* snapshotAfter(incoming),
       event: incoming,
     }
   })
