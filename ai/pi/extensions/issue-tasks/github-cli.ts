@@ -6,7 +6,20 @@ import {
   GitHubReadError,
   MAX_GITHUB_READ_BYTES,
   type GitHubIssueReader,
+  type GitHubIssueQueryExecution,
 } from "./github-read.ts"
+import {
+  createGitHubProjectReader,
+  type GitHubProjectReader,
+  type GitHubProjectQueryExecution,
+} from "./github-project-read.ts"
+
+export const createGitHubCliProjectReader = (
+  options: GitHubCliReaderOptions,
+): GitHubProjectReader =>
+  createGitHubProjectReader({
+    executeQuery: createGitHubCliExecutor(options),
+  })
 
 export interface GitHubCliExecutionOptions {
   readonly cwd: string
@@ -42,112 +55,117 @@ const githubArguments = Object.freeze([
 
 export const createGitHubCliReader = (
   options: GitHubCliReaderOptions,
-): GitHubIssueReader => {
+): GitHubIssueReader =>
+  createGitHubIssueReader({ executeQuery: createGitHubCliExecutor(options) })
+
+const createGitHubCliExecutor = (
+  options: GitHubCliReaderOptions,
+): ((
+  request: GitHubIssueQueryExecution | GitHubProjectQueryExecution,
+) => Effect.Effect<string, GitHubReadError>) => {
   const cwd = options.cwd
   const launch: GitHubCliLaunch =
     options.launch ??
     ((args, execution, callback) =>
       execFile("gh", [...args], execution, callback))
 
-  return createGitHubIssueReader({
-    executeQuery: request =>
-      Effect.suspend(() => {
-        if (typeof cwd !== "string" || !isAbsolute(cwd))
-          return Effect.fail(transportError())
+  return request =>
+    Effect.suspend(() => {
+      if (typeof cwd !== "string" || !isAbsolute(cwd))
+        return Effect.fail(transportError())
 
-        const payload = Either.try({
+      const payload = Either.try({
+        try: () =>
+          JSON.stringify({
+            query: request.document,
+            variables: request.variables,
+          }),
+        catch: transportError,
+      })
+
+      if (Either.isLeft(payload)) return Effect.fail(payload.left)
+      if (typeof payload.right !== "string")
+        return Effect.fail(transportError())
+
+      return Effect.async<string, GitHubReadError>((resume, signal) => {
+        let outcome: Either.Either<string, GitHubReadError> | undefined
+        let closed = false
+        let exited = false
+        const started = Either.try({
           try: () =>
-            JSON.stringify({
-              query: request.document,
-              variables: request.variables,
-            }),
+            launch(
+              githubArguments,
+              {
+                cwd,
+                encoding: "buffer",
+                shell: false,
+                maxBuffer: MAX_GITHUB_READ_BYTES,
+                timeout: 30_000,
+                killSignal: "SIGKILL",
+                signal,
+              },
+              (error, stdout) => {
+                if (outcome !== undefined) return
+                outcome =
+                  error !== null || !Buffer.isBuffer(stdout)
+                    ? Either.left(transportError())
+                    : Either.try({
+                        try: () =>
+                          new TextDecoder("utf-8", { fatal: true }).decode(
+                            stdout,
+                          ),
+                        catch: transportError,
+                      })
+              },
+            ),
           catch: transportError,
         })
 
-        if (Either.isLeft(payload)) return Effect.fail(payload.left)
-        if (typeof payload.right !== "string")
-          return Effect.fail(transportError())
-
-        return Effect.async<string, GitHubReadError>((resume, signal) => {
-          let outcome: Either.Either<string, GitHubReadError> | undefined
-          let closed = false
-          let exited = false
-          const started = Either.try({
-            try: () =>
-              launch(
-                githubArguments,
-                {
-                  cwd,
-                  encoding: "buffer",
-                  shell: false,
-                  maxBuffer: MAX_GITHUB_READ_BYTES,
-                  timeout: 30_000,
-                  killSignal: "SIGKILL",
-                  signal,
-                },
-                (error, stdout) => {
-                  if (outcome !== undefined) return
-                  outcome =
-                    error !== null || !Buffer.isBuffer(stdout)
-                      ? Either.left(transportError())
-                      : Either.try({
-                          try: () =>
-                            new TextDecoder("utf-8", { fatal: true }).decode(
-                              stdout,
-                            ),
-                          catch: transportError,
-                        })
-                },
-              ),
+        if (Either.isLeft(started)) {
+          resume(Effect.fail(started.left))
+          return
+        }
+        const child = started.right
+        const stop = () => {
+          if (closed || exited || child.pid === undefined) return
+          const stopped = Either.try({
+            try: () => child.kill("SIGKILL"),
             catch: transportError,
           })
+          if (Either.isLeft(stopped)) outcome = Either.left(stopped.left)
+        }
+        const inputFailed = () => {
+          outcome = Either.left(transportError())
+          stop()
+        }
+        child.once("exit", () => {
+          exited = true
+        })
+        child.once("close", () => {
+          closed = true
+          if (outcome === undefined) resume(Effect.fail(transportError()))
+          else if (Either.isLeft(outcome)) resume(Effect.fail(outcome.left))
+          else resume(Effect.succeed(outcome.right))
+        })
+        const input = child.stdin
+        if (input === null || input === undefined) inputFailed()
+        else {
+          input.on("error", inputFailed)
+          const sent = Either.try({
+            try: () => input.end(payload.right),
+            catch: transportError,
+          })
+          if (Either.isLeft(sent)) inputFailed()
+        }
 
-          if (Either.isLeft(started)) {
-            resume(Effect.fail(started.left))
+        return Effect.async<void>(finish => {
+          if (closed) {
+            finish(Effect.void)
             return
           }
-          const child = started.right
-          const stop = () => {
-            if (closed || exited || child.pid === undefined) return
-            const stopped = Either.try({
-              try: () => child.kill("SIGKILL"),
-              catch: transportError,
-            })
-            if (Either.isLeft(stopped)) outcome = Either.left(stopped.left)
-          }
-          const inputFailed = () => {
-            outcome = Either.left(transportError())
-            stop()
-          }
-          child.once("exit", () => {
-            exited = true
-          })
-          child.once("close", () => {
-            closed = true
-            if (outcome === undefined) resume(Effect.fail(transportError()))
-            else if (Either.isLeft(outcome)) resume(Effect.fail(outcome.left))
-            else resume(Effect.succeed(outcome.right))
-          })
-          const input = child.stdin
-          if (input === null || input === undefined) inputFailed()
-          else {
-            input.on("error", inputFailed)
-            const sent = Either.try({
-              try: () => input.end(payload.right),
-              catch: transportError,
-            })
-            if (Either.isLeft(sent)) inputFailed()
-          }
-
-          return Effect.async<void>(finish => {
-            if (closed) {
-              finish(Effect.void)
-              return
-            }
-            child.once("close", () => finish(Effect.void))
-            stop()
-          })
+          child.once("close", () => finish(Effect.void))
+          stop()
         })
-      }),
-  })
+      })
+    })
 }
