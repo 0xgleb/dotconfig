@@ -384,6 +384,151 @@ test("expired check-ins fail without starting review or extending the original d
   assert.match(receipt.right?.message ?? "", /expired/)
 })
 
+test("a review cannot finish with a clock earlier than its claim", t => {
+  const { state, directory } = fixture(t)
+  const channel = state.checkIns
+  assert.ok(channel)
+  const queued = channel.enqueue(checkIn, checkInContext, checkInNow)
+  assert.ok(Either.isRight(queued))
+  assert.ok(Either.isRight(channel.take(checkInNow + 1)))
+  const path = join(directory, "check-in-receipts", `${queued.right}.json`)
+  const before = readFileSync(path, "utf8")
+  const result = channel.finish(
+    queued.right,
+    { status: "reviewed", message: "Reviewed." },
+    checkInNow,
+  )
+  assert.ok(Either.isLeft(result))
+  assert.equal(result.left.code, "invalid_input")
+  assert.equal(readFileSync(path, "utf8"), before)
+  const pending = channel.receipt(queued.right, checkInNow + 1)
+  assert.ok(Either.isRight(pending))
+  assert.equal(pending.right?.status, "review-requested")
+})
+
+test("a receipt clock cannot precede the queued request", t => {
+  const { state, directory } = fixture(t)
+  const channel = state.checkIns
+  assert.ok(channel)
+  const queued = channel.enqueue(checkIn, checkInContext, checkInNow)
+  assert.ok(Either.isRight(queued))
+  const result = channel.receipt(queued.right, checkInNow - 1)
+  assert.ok(Either.isLeft(result))
+  assert.equal(result.left.code, "invalid_input")
+  assert.deepEqual(readdirSync(join(directory, "check-in-receipts")), [])
+})
+
+test("reopened check-in receipts reject impossible lifecycle timestamps", async t => {
+  const examples = [
+    { name: "reviewed before enqueue", status: "reviewed", at: checkInNow - 1 },
+    { name: "failed before enqueue", status: "failed", at: checkInNow - 1 },
+    {
+      name: "reviewed at deadline",
+      status: "reviewed",
+      at: checkIn.window.deadlineAt,
+    },
+    {
+      name: "claimed at deadline",
+      status: "review-requested",
+      at: checkIn.window.deadlineAt,
+    },
+  ]
+  for (const example of examples) {
+    await t.test(example.name, child => {
+      const { state, directory } = fixture(child)
+      const channel = state.checkIns
+      assert.ok(channel)
+      const queued = channel.enqueue(checkIn, checkInContext, checkInNow)
+      assert.ok(Either.isRight(queued))
+      assert.ok(Either.isRight(channel.take(checkInNow)))
+      const pending = channel.receipt(queued.right, checkInNow)
+      assert.ok(Either.isRight(pending) && pending.right)
+      const path = join(directory, "check-in-receipts", `${queued.right}.json`)
+      const malformed = JSON.stringify({
+        ...pending.right,
+        status: example.status,
+        updatedAt: example.at,
+      })
+      writeFileSync(path, malformed)
+      const reopened = openNativeManagerState(directory, scope)
+      assert.ok(Either.isRight(reopened))
+      const result = reopened.right.checkIns?.receipt(
+        queued.right,
+        checkIn.window.deadlineAt,
+      )
+      assert.ok(result && Either.isLeft(result))
+      assert.equal(result.left.code, "protocol")
+      assert.equal(readFileSync(path, "utf8"), malformed)
+    })
+  }
+})
+
+test("completion requires a claimed unexpired review and preserves terminal results", async t => {
+  await t.test("unclaimed completion", child => {
+    const { state, directory } = fixture(child)
+    const channel = state.checkIns
+    assert.ok(channel)
+    const queued = channel.enqueue(checkIn, checkInContext, checkInNow)
+    assert.ok(Either.isRight(queued))
+    const result = channel.finish(
+      queued.right,
+      { status: "reviewed", message: "Not claimed." },
+      checkInNow,
+    )
+    assert.ok(Either.isLeft(result))
+    assert.equal(result.left.code, "unconfirmed")
+    assert.deepEqual(readdirSync(join(directory, "check-in-receipts")), [])
+  })
+  await t.test("completion at the deadline", child => {
+    const { state } = fixture(child)
+    const channel = state.checkIns
+    assert.ok(channel)
+    const queued = channel.enqueue(checkIn, checkInContext, checkInNow)
+    assert.ok(Either.isRight(queued))
+    assert.ok(Either.isRight(channel.take(checkInNow)))
+    const result = channel.finish(
+      queued.right,
+      { status: "reviewed", message: "Too late." },
+      checkIn.window.deadlineAt,
+    )
+    assert.ok(Either.isLeft(result))
+    assert.equal(result.left.code, "unconfirmed")
+    const expired = channel.receipt(queued.right, checkIn.window.deadlineAt)
+    assert.ok(Either.isRight(expired))
+    assert.equal(expired.right?.status, "failed")
+  })
+  await t.test("repeated completion", child => {
+    const { state } = fixture(child)
+    const channel = state.checkIns
+    assert.ok(channel)
+    const queued = channel.enqueue(checkIn, checkInContext, checkInNow)
+    assert.ok(Either.isRight(queued))
+    assert.ok(Either.isRight(channel.take(checkInNow)))
+    assert.ok(
+      Either.isRight(
+        channel.finish(
+          queued.right,
+          { status: "reviewed", message: "First result." },
+          checkInNow + 1,
+        ),
+      ),
+    )
+    const first = channel.receipt(queued.right, checkInNow + 1)
+    const second = channel.finish(
+      queued.right,
+      { status: "failed", message: "Replacement result." },
+      checkInNow + 2,
+    )
+    assert.ok(Either.isLeft(second))
+    assert.equal(second.left.code, "unconfirmed")
+    assert.deepEqual(channel.receipt(queued.right, checkInNow + 2), first)
+    assert.deepEqual(
+      channel.receipt(queued.right, checkIn.window.deadlineAt),
+      first,
+    )
+  })
+})
+
 test("completed check-in history does not hide the next queued review", t => {
   const { state } = fixture(t)
   const channel = state.checkIns

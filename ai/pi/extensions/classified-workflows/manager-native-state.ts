@@ -403,6 +403,11 @@ const nativeCheckIns = (
         return yield* failure("invalid_input", "Invalid check-in clock.")
       const request = yield* read(id)
       if (!request) return undefined
+      if (now < request.queuedAt)
+        return yield* failure(
+          "invalid_input",
+          "Check-in clock precedes the queued request.",
+        )
       yield* privateDirectory(receipts)
       const path = join(receipts, `${id}.json`)
       let result: NativeManagerCheckInReceipt = {
@@ -421,7 +426,11 @@ const nativeCheckIns = (
             stored.status !== "failed") ||
           typeof stored.message !== "string" ||
           stored.message.length > 12000 ||
-          !checkInTime(stored.updatedAt)
+          !checkInTime(stored.updatedAt) ||
+          stored.updatedAt < request.queuedAt ||
+          ((stored.status === "review-requested" ||
+            stored.status === "reviewed") &&
+            stored.updatedAt >= request.checkIn.window.deadlineAt)
         )
           return yield* failure("protocol", "Malformed check-in receipt.")
         result = {
@@ -431,6 +440,11 @@ const nativeCheckIns = (
           updatedAt: stored.updatedAt,
         }
       }
+      if (now < result.updatedAt)
+        return yield* failure(
+          "invalid_input",
+          "Check-in clock precedes its persisted receipt.",
+        )
       if (
         now >= request.checkIn.window.deadlineAt &&
         result.status !== "reviewed" &&
