@@ -116,7 +116,6 @@ export const registerNativeManager = (
         }
       : { role: "manager-unavailable", message: target.left.message }
   })
-  let workerGeneration = 0
   const delivering = new Set<string>()
 
   const notice = (ctx: ExtensionContext, error: ManagerSessionError) =>
@@ -382,7 +381,7 @@ export const registerNativeManager = (
     const epoch = epochFor(ctx, mode)
     if (Either.isLeft(state)) notice(ctx, state.left)
     else if (Either.isLeft(epoch)) notice(ctx, epoch.left)
-    else await startWorker(ctx, state.right, epoch.right)
+    else startWorker(ctx, state.right, epoch.right)
   }
 
   pi.on("session_start", (_event, ctx) => resume(ctx, "restore"))
@@ -548,7 +547,7 @@ export const registerNativeManager = (
       await stop()
       activeSessionId = ctx.sessionManager.getSessionId()
       activeCtx = ctx
-      await startWorker(ctx, state.right, epoch.right)
+      startWorker(ctx, state.right, epoch.right)
       if (plan.right.kind === "existing") {
         ctx.ui.notify(
           `Manager is running in pane ${plan.right.paneName}.`,
