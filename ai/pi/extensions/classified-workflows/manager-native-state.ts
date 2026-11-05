@@ -1,4 +1,4 @@
-import { randomBytes, randomUUID } from "node:crypto"
+import { randomUUID } from "node:crypto"
 import {
   constants,
   openSync,
@@ -11,14 +11,9 @@ import {
   unlinkSync,
   mkdirSync,
   existsSync,
-  readdirSync,
 } from "node:fs"
 import { isAbsolute, join } from "node:path"
 import { Either } from "effect"
-import {
-  createManagerTaskAuthority,
-  type ManagerTaskAuthority,
-} from "./manager-task-protocol.ts"
 import {
   decodeManagerContext,
   type ManagerPairScope,
@@ -36,7 +31,6 @@ export interface NativeManagerState {
     ManagerContextSnapshot,
     ManagerSessionError
   >
-  readonly taskAuthority?: ManagerTaskAuthority
   readonly enqueuePriorities: (
     text: string,
     revision: string,
@@ -75,13 +69,6 @@ export const prepareNativeManagerState = (
         writeFileSync(
           join(directory, "scope.json"),
           JSON.stringify({ version: 1, ...scope }),
-          { flag: "wx", mode: 0o600 },
-        ),
-      )
-      yield* io(() =>
-        writeFileSync(
-          join(directory, "capability.key"),
-          randomBytes(32).toString("hex"),
           { flag: "wx", mode: 0o600 },
         ),
       )
@@ -158,13 +145,6 @@ export const openNativeManagerState = (
           decodeManagerContext(value, scope),
         ),
       receipt,
-      taskAuthority: createManagerTaskAuthority(
-        Object.freeze({
-          workerSessionId: stored.workerSessionId,
-          cwd: stored.cwd,
-        }),
-        () => readPrivate(join(directory, "capability.key"), 256),
-      ),
       enqueuePriorities: () =>
         failure(
           "unavailable",
@@ -179,36 +159,6 @@ export const openNativeManagerState = (
       processPriorities: () => Either.right([]),
     }
   })
-
-const reserveReceipt = (
-  directory: string,
-  id: string,
-): Either.Either<"claimed" | "existing", ManagerSessionError> => {
-  const written = Either.try({
-    try: () =>
-      writeFileSync(
-        join(directory, `${id}.json`),
-        JSON.stringify({
-          version: 1,
-          id,
-          status: "started",
-          message: "Worker request started; result is not confirmed.",
-        } satisfies ManagerPriorityReceipt),
-        { flag: "wx", mode: 0o600 },
-      ),
-    catch: (error): unknown => error,
-  })
-  if (Either.isRight(written)) return Either.right("claimed")
-  const error = written.left
-  if (
-    typeof error === "object" &&
-    error !== null &&
-    "code" in error &&
-    error.code === "EEXIST"
-  )
-    return Either.right("existing")
-  return failure("io", "Could not reserve the worker request before execution.")
-}
 
 const record = (value: unknown): value is Record<string, unknown> =>
   typeof value === "object" && value !== null && !Array.isArray(value)
