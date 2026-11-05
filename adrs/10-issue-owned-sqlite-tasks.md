@@ -49,7 +49,7 @@ blocked without changing its lifecycle value. For example, a task can remain
 `doing` while blocked; clearing its blocker leaves it `doing`. The
 `blocked: true` read filter selects tasks with a non-null blocker. Numeric issue
 Priority expresses ordering; factual blockers and issue dependencies express
-work that cannot proceed. There is no `in_review` task state.
+work that cannot proceed.
 
 Use the existing personal Project and existing organization Project. Bind their
 verified numeric **Priority** fields with their actual scopes: the personal
