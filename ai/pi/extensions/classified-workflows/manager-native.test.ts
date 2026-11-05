@@ -164,7 +164,6 @@ const fixture = (t: test.TestContext, manager: boolean | "global" = false) => {
   syncBuiltinESMExports()
   t.after(async () => {
     await emit("session_shutdown")
-    if (!options.agentDir) rmSync(root, { recursive: true })
     t.mock.restoreAll()
     syncBuiltinESMExports()
   })
@@ -529,10 +528,7 @@ test("opening manager launches the real Pi CLI instead of any custom UI", async 
   assert.equal(args[args.indexOf("--cwd") + 1], workspace)
   assert.ok(lstatSync(workspace).isDirectory())
   assert.equal(lstatSync(workspace).mode & 0o077, 0)
-  assert.equal(
-    args[args.indexOf("--session-dir") + 1],
-    join(f.root, "manager", "global", "sessions"),
-  )
+  assert.equal(args.includes("--session-dir"), false)
   assert.ok(args.includes("--manager"))
   assert.ok(!args.includes("--manager-worker"))
   assert.ok(args.includes("--continue"))

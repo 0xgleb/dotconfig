@@ -112,7 +112,7 @@ export const registerNativeManager = (
     ctx: ExtensionContext,
   ): Either.Either<ManagerTarget, ManagerSessionError> => {
     const selected = readManagerTarget(ctx)
-    if (Either.isLeft(selected)) return selected
+    if (Either.isLeft(selected)) return Either.left(selected.left)
     if (selected.right) return Either.right(selected.right)
     const legacy = pi.getFlag("manager-worker")
     if (typeof legacy === "string" && legacy)
@@ -568,7 +568,7 @@ export const registerNativeManager = (
       await stop()
       activeSessionId = ctx.sessionManager.getSessionId()
       activeCtx = ctx
-      await startWorker(ctx, state.right, epoch.right, target.right.directory)
+      await startWorker(ctx, state.right, epoch.right)
       if (plan.right.kind === "existing") {
         ctx.ui.notify(
           `Manager is running in pane ${plan.right.paneName}.`,
