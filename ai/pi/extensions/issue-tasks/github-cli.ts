@@ -9,6 +9,12 @@ import {
   type GitHubIssueQueryExecution,
 } from "./github-read.ts"
 import {
+  createGitHubProjectPlacement,
+  type TaskProjectPlacement,
+  type GitHubProjectMembershipExecution,
+  type GitHubProjectPlacementExecution,
+} from "./placement.ts"
+import {
   createGitHubPickupClient,
   type GitHubPickupReadExecution,
   type GitHubPickupWriteExecution,
@@ -46,6 +52,32 @@ export const createGitHubCliPickupClient = (
                 dispatch: dispatched ? "possible" : "not_started",
                 message:
                   "GitHub pickup transport did not produce a verified response",
+              }),
+          ),
+        )
+      }),
+  })
+}
+
+export const createGitHubCliProjectPlacement = (
+  options: GitHubCliReaderOptions,
+): TaskProjectPlacement => {
+  const execute = createGitHubCliExecutor(options)
+  return createGitHubProjectPlacement({
+    read: request => execute(request),
+    write: (request, onDispatch) =>
+      Effect.suspend(() => {
+        let dispatched = false
+        return execute(request, () => {
+          dispatched = true
+          onDispatch()
+        }).pipe(
+          Effect.mapError(
+            () =>
+              new IssuePickupWriteError({
+                dispatch: dispatched ? "possible" : "not_started",
+                message:
+                  "GitHub Project placement transport did not produce a verified response",
               }),
           ),
         )
@@ -99,7 +131,9 @@ const createGitHubCliExecutor = (
     | GitHubIssueQueryExecution
     | GitHubProjectQueryExecution
     | GitHubPickupReadExecution
-    | GitHubPickupWriteExecution,
+    | GitHubPickupWriteExecution
+    | GitHubProjectMembershipExecution
+    | GitHubProjectPlacementExecution,
   onDispatch?: () => void,
 ) => Effect.Effect<string, GitHubReadError>) => {
   const cwd = options.cwd

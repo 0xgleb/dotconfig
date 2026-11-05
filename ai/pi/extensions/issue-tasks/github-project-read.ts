@@ -1,4 +1,4 @@
-import { Effect, Either, Schema } from "effect"
+import { Effect, Either, Option, Schema } from "effect"
 import {
   GitHubUserSchema,
   decodeGitHubAssignees,
@@ -6,6 +6,7 @@ import {
 } from "./github-user.ts"
 import {
   decodeIssueReference,
+  decodeIssueRepository,
   issueKey,
   type IssueReference,
 } from "./identity.ts"
@@ -301,6 +302,31 @@ export const decodeGitHubInProgressTarget = (
       fieldId: status.id,
       optionId: option.id,
     })
+  })
+
+export const configuredTaskProject = (
+  input: unknown,
+): Either.Either<
+  Option.Option<{
+    readonly project: GitHubSchedulingProject
+    readonly projectId: GitHubInProgressTarget["projectId"]
+  }>,
+  GitHubReadError
+> =>
+  Either.gen(function* () {
+    const repository = yield* decodeIssueRepository(input).pipe(
+      Either.mapLeft(() => projectError("invalid_request")),
+    )
+    const owner = repository.slice(0, repository.indexOf("/"))
+    const project =
+      owner === rawBindings.personal.owner.login
+        ? "personal"
+        : owner === rawBindings.dataclique.owner.login
+          ? "dataclique"
+          : null
+    if (project === null) return Option.none()
+    const binding = yield* decode(ProjectBindingSchema, rawBindings[project])
+    return Option.some(Object.freeze({ project, projectId: binding.id }))
   })
 
 const rawBindings = {
