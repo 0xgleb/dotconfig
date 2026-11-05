@@ -15,7 +15,7 @@ import { fileURLToPath, pathToFileURL } from "node:url"
 import { Cause, Deferred, Effect, Either, Exit, Scope } from "effect"
 import type { NativeTaskToolOptions } from "./native.ts"
 import type { IssueTaskTool } from "./tool.ts"
-import type { TaskStoreError } from "./sqlite-store.ts"
+import { openSqliteTaskStore, type TaskStoreError } from "./sqlite-store.ts"
 
 const executable = realpathSync(
   execFileSync("which", ["pi"], { encoding: "utf8" }).trim(),
@@ -62,7 +62,7 @@ const fixture = async (work: (root: string) => Promise<void>) => {
   }
 }
 
-const issue = { repository: "0xgleb/dotconfig", number: 1 }
+const issue = { repository: "owner/repository", number: 1 }
 const add = {
   action: "apply",
   issues: [issue],
@@ -255,6 +255,59 @@ test("native opening captures the host file and callbacks before deferred execut
     }
   }))
 
+test("native next reaches the captured Project transport rather than an unwired host capability", () =>
+  fixture(async root => {
+    const scope = Effect.runSync(Scope.make())
+    try {
+      const tool = await acquire(scope, {
+        ...options(root),
+        cwd: join(root, "missing"),
+      })
+      const result = await invoke(tool, {
+        action: "next",
+        query: { repository: issue.repository, project: "personal" },
+      })
+      assert.ok(result.details.outcome.kind === "failed")
+      assert.equal(result.details.outcome.code, "transport_error")
+      assert.equal(
+        (await invoke(tool, read)).details.outcome.kind,
+        "missing_issue",
+      )
+    } finally {
+      await close(scope)
+    }
+  }))
+
+test("native task save retains local truth while automatically reporting configured Project transport failure", () =>
+  fixture(async root => {
+    const scope = Effect.runSync(Scope.make())
+    const target = { repository: "0xgleb/dotconfig", number: 179 }
+    try {
+      const tool = await acquire(scope, {
+        ...options(root),
+        cwd: join(root, "missing"),
+      })
+      const result = await invoke(tool, {
+        action: "apply",
+        issues: [target],
+        operations: [
+          { op: "add", issue: target, key: "work", text: "Fixture placement" },
+        ],
+      })
+      assert.ok(result.details.outcome.kind === "saved")
+      assert.equal(result.details.outcome.result.receipt, "committed")
+      assert.equal(result.details.outcome.projectPlacement?.[0]?.kind, "failed")
+      const retained = await invoke(tool, {
+        action: "read",
+        issue: target,
+        page: { limit: 1 },
+      })
+      assert.equal(retained.details.outcome.kind, "page")
+    } finally {
+      await close(scope)
+    }
+  }))
+
 test("failed native GitHub transport does not disable local task operations", () =>
   fixture(async root => {
     const scope = Effect.runSync(Scope.make())
@@ -386,24 +439,34 @@ test(
       const liveIssue = { repository: "0xgleb/dotconfig", number: 86 }
 
       try {
+        const local = await Effect.runPromise(
+          openSqliteTaskStore({ databasePath: options(root).databasePath }),
+        )
+        try {
+          const seeded = await Effect.runPromise(
+            local.apply(
+              {
+                issues: [liveIssue],
+                operations: [
+                  { op: "add", issue: liveIssue, key: "one", text: "Fixture" },
+                ],
+              },
+              {
+                actorId: "read-fixture",
+                requestId: "seed-local",
+                now: 1000,
+                cancellation: "forbidden",
+              },
+            ),
+          )
+          assert.equal(seeded.kind, "saved")
+        } finally {
+          await Effect.runPromise(local.close())
+        }
         const tool = await acquire(scope, {
           ...options(root),
           renderOutput: () => Effect.succeed("Native fixture read"),
         })
-        const seeded = await invoke(
-          tool,
-          {
-            action: "apply",
-            issues: [liveIssue],
-            operations: [
-              { op: "add", issue: liveIssue, key: "one", text: "Fixture" },
-            ],
-          },
-          "seed-local",
-          t.signal,
-        )
-
-        assert.equal(seeded.details.outcome.kind, "saved")
 
         const result = await invoke(
           tool,

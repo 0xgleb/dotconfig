@@ -4,6 +4,25 @@ import type {
 } from "@earendil-works/pi-coding-agent"
 import { Cause, Data, Effect, Either, Exit, Option } from "effect"
 import { Type } from "typebox"
+import {
+  decodeIssueNextQuery,
+  type IssueNextQuery,
+  type IssueNextProgress,
+  type IssueNextReadFailure,
+  type IssueNextObserver,
+  IssueNextReadError,
+} from "./next.ts"
+import type {
+  TaskProjectPlacement,
+  ProjectPlacementObservation,
+} from "./placement.ts"
+import type {
+  IssueNextPicker,
+  IssueNextPickResult,
+  IssuePickupTrace,
+  IssuePickupReadError,
+  IssueNextPickError,
+} from "./pickup.ts"
 import { MAX_PLAN_ISSUES_PER_CALL, type IssueReference } from "./identity.ts"
 import {
   MAX_TASK_TEXT,
@@ -208,6 +227,16 @@ const IssueGetQueryParameters = Type.Object(
   },
   { additionalProperties: false },
 )
+const NextQueryParameters = Type.Object(
+  {
+    repository: Type.String({ minLength: 1, maxLength: 140 }),
+    project: Type.Union([Type.Literal("personal"), Type.Literal("dataclique")]),
+    mode: Type.Optional(
+      Type.Union([Type.Literal("implementation"), Type.Literal("review")]),
+    ),
+  },
+  { additionalProperties: false },
+)
 const TaskParameters = Type.Object(
   {
     action: Type.Union([
@@ -217,9 +246,14 @@ const TaskParameters = Type.Object(
       Type.Literal("apply"),
       Type.Literal("listIssues"),
       Type.Literal("getIssue"),
+      Type.Literal("next"),
     ]),
     query: Type.Optional(
-      Type.Union([IssueListQueryParameters, IssueGetQueryParameters]),
+      Type.Union([
+        IssueListQueryParameters,
+        IssueGetQueryParameters,
+        NextQueryParameters,
+      ]),
     ),
     issue: Type.Optional(IssueParameters),
     id: Type.Optional(TaskIdParameter),
@@ -257,6 +291,8 @@ export class TaskOutputError extends Data.TaggedError("TaskOutputError")<{
 }> {}
 
 export type TaskExecutionOutcome =
+  | { readonly kind: "issue_next"; readonly result: IssueNextPickResult }
+  | { readonly kind: "next_progress"; readonly progress: IssueNextProgress }
   | { readonly kind: "issue_list"; readonly view: IssueTaskListView }
   | { readonly kind: "issue_detail"; readonly view: IssueTaskDetailView }
   | { readonly kind: "page"; readonly page: IssueTaskPage }
@@ -264,7 +300,13 @@ export type TaskExecutionOutcome =
   | { readonly kind: "task"; readonly detail: IssueTaskDetail }
   | { readonly kind: "missing_issue"; readonly issue: IssueReference }
   | { readonly kind: "missing_task"; readonly target: TaskAddress }
-  | { readonly kind: "saved"; readonly result: TaskApplyResult }
+  | {
+      readonly kind: "saved"
+      readonly result: TaskApplyResult
+      readonly projectPlacement?: readonly ProjectPlacementObservation[]
+      readonly projectPlacementFailure?:
+        "interrupted" | "unavailable" | "inconsistent_readback"
+    }
   | {
       readonly kind: "failed"
       readonly code: Exclude<
@@ -272,6 +314,9 @@ export type TaskExecutionOutcome =
         | TaskApplyError["code"]
         | TaskHostError["code"]
         | IssueTaskReadFailure["code"]
+        | IssueNextReadFailure["code"]
+        | IssuePickupReadError["code"]
+        | IssueNextPickError["code"]
         | "execution_defect",
         "unknown_completion"
       >
@@ -287,6 +332,7 @@ export type TaskExecutionOutcome =
   | {
       readonly kind: "unconfirmed"
       readonly invocation: TaskNativeCall
+      readonly pickup?: IssuePickupTrace
       readonly stop: "interrupted" | "execution_defect"
       readonly message: string
     }
@@ -300,6 +346,8 @@ export interface TaskNativeCall {
   readonly sessionId: string
 }
 export interface TaskToolOptions {
+  readonly placeAffected?: TaskProjectPlacement["placeAffected"]
+  readonly nextPicker?: IssueNextPicker
   readonly issueReader?: IssueTaskReader
   readonly store: Pick<
     SqliteTaskStore,
@@ -318,22 +366,29 @@ export type IssueTaskTool = ToolDefinition<
 >
 
 type TaskFailure =
-  TaskRequestDecodeError | TaskApplyError | TaskHostError | IssueTaskReadFailure
+  | TaskRequestDecodeError
+  | TaskApplyError
+  | TaskHostError
+  | IssueTaskReadFailure
+  | IssueNextReadFailure
+  | IssuePickupReadError
+  | IssueNextPickError
 type TaskToolRequest =
   | TaskRequest
   | { readonly action: "listIssues"; readonly query: IssueTaskListQuery }
   | { readonly action: "getIssue"; readonly query: IssueTaskGetQuery }
+  | { readonly action: "next"; readonly query: IssueNextQuery }
 const decodeToolRequest = (
   input: unknown,
 ): Either.Either<
   TaskToolRequest,
-  TaskRequestDecodeError | IssueTaskReadError
+  TaskRequestDecodeError | IssueTaskReadError | IssueNextReadError
 > => {
   if (typeof input !== "object" || input === null || Array.isArray(input))
     return decodeTaskRequest(input)
 
   const action: unknown = Reflect.get(input, "action")
-  if (action !== "listIssues" && action !== "getIssue")
+  if (action !== "listIssues" && action !== "getIssue" && action !== "next")
     return decodeTaskRequest(input)
   if (
     !Object.hasOwn(input, "action") ||
@@ -343,6 +398,10 @@ const decodeToolRequest = (
     return decodeTaskRequest(input)
 
   const query: unknown = Reflect.get(input, "query")
+  if (action === "next")
+    return decodeIssueNextQuery(query).pipe(
+      Either.map(value => Object.freeze({ action: "next", query: value })),
+    )
   return action === "listIssues"
     ? decodeIssueTaskListQuery(query).pipe(
         Either.map(value =>
@@ -370,9 +429,29 @@ const executeRequest = (
   call: TaskNativeCall,
   options: TaskToolOptions,
   writeStarted: () => void,
+  onPickupTrace: (trace: IssuePickupTrace) => void,
+  observeNext: IssueNextObserver,
 ): Effect.Effect<TaskExecutionOutcome> =>
   Effect.gen(function* () {
     switch (request.action) {
+      case "next": {
+        const picker = options.nextPicker
+        if (picker === undefined)
+          return yield* Effect.fail(
+            new TaskHostError({
+              code: "host_unavailable",
+              message: "Native next dispatch is unavailable",
+            }),
+          )
+        yield* options.contextForCall(call)
+        const result = yield* picker.next(
+          request.query,
+          call,
+          onPickupTrace,
+          observeNext,
+        )
+        return { kind: "issue_next", result } satisfies TaskExecutionOutcome
+      }
       case "listIssues":
       case "getIssue": {
         const reader = options.issueReader
@@ -441,6 +520,19 @@ const executeRequest = (
 
 const unavailableOutput = (outcome: TaskExecutionOutcome): string => {
   switch (outcome.kind) {
+    case "issue_next": {
+      const next = outcome.result
+      if (next.kind === "none")
+        return "No eligible issue was selected. Detailed observations retained."
+      if (next.kind === "review")
+        return "Review selection retained; issue assignees and status were not changed."
+      const target = next.receipt.trace.target
+      return next.receipt.kind === "verified"
+        ? `Verified ${target.issue.repository}#${target.issue.number} assigned to ${target.viewer.login} and In Progress at readback; no exclusive ownership guarantee. Detailed observations retained.`
+        : `Pickup ${next.receipt.kind} for ${target.issue.repository}#${target.issue.number}. Reconcile retained effect observations; do not automatically retry or select another issue.`
+    }
+    case "next_progress":
+      return `Reading next issue: ${outcome.progress.stage}, ${outcome.progress.reads} source reads.`
     case "issue_list":
       return `Read ${outcome.view.issues.length} issues from ${outcome.view.repository}. Detailed output unavailable.`
     case "issue_detail": {
@@ -454,8 +546,12 @@ const unavailableOutput = (outcome: TaskExecutionOutcome): string => {
           : `Local task page: ${outcome.view.tasks.tasks.length} tasks, revision ${outcome.view.tasks.revision}`
       return `${metadata} for ${outcome.view.issue.repository}#${outcome.view.issue.number}. ${tasks}. Detailed output unavailable.`
     }
-    case "saved":
-      return `Saved task batch ${outcome.result.batchId} (${outcome.result.receipt}); ${outcome.result.changed.length} changed, ${outcome.result.created.length} created. Detailed output unavailable. Do not repeat this write with a new request identity.`
+    case "saved": {
+      const incomplete =
+        outcome.projectPlacementFailure !== undefined ||
+        outcome.projectPlacement?.some(row => row.kind !== "linked") === true
+      return `Saved task batch ${outcome.result.batchId} (${outcome.result.receipt}); ${outcome.result.changed.length} changed, ${outcome.result.created.length} created. ${incomplete ? "Project placement incomplete; local tasks remain saved. Reconcile Project membership without resubmitting the task write. " : ""}Detailed output unavailable. Do not repeat this write with a new request identity.`
+    }
     case "pages":
       return `Checked ${outcome.pages.length} qualified issue-page queries. Detailed output unavailable.`
     case "page":
@@ -476,6 +572,87 @@ const unavailableOutput = (outcome: TaskExecutionOutcome): string => {
       return "Task execution did not produce a verified outcome. Reconcile state before retrying; do not substitute a new request identity."
   }
 }
+const placeSavedOutcome = async (
+  saved: Extract<TaskExecutionOutcome, { readonly kind: "saved" }>,
+  invocation: TaskNativeCall | undefined,
+  options: TaskToolOptions,
+  signal: AbortSignal | undefined,
+): Promise<Extract<TaskExecutionOutcome, { readonly kind: "saved" }>> => {
+  const captured = Either.try({
+    try: () => options.placeAffected,
+    catch: () => "unavailable" as const,
+  })
+  if (Either.isRight(captured) && captured.right === undefined) return saved
+  const scope = new Map(
+    saved.result.issues.map(row => [
+      `${row.issue.repository}#${row.issue.number}`,
+      row.issue,
+    ]),
+  )
+  let known = new Map<string, ProjectPlacementObservation>()
+  let inconsistent = false
+  const observe = (
+    observations: readonly ProjectPlacementObservation[],
+  ): void => {
+    const next = new Map<string, ProjectPlacementObservation>()
+    for (const row of observations) {
+      const key = `${row.issue.repository}#${row.issue.number}`
+      if (!scope.has(key) || next.has(key)) {
+        inconsistent = true
+        return
+      }
+      next.set(key, row)
+    }
+    if ([...known.keys()].some(key => !next.has(key))) {
+      inconsistent = true
+      return
+    }
+    known = next
+  }
+  let failure:
+    "interrupted" | "unavailable" | "inconsistent_readback" | undefined
+  if (Either.isLeft(captured) || invocation === undefined)
+    failure = "unavailable"
+  else {
+    const place = captured.right
+    if (place !== undefined) {
+      const attempted = await Effect.runPromiseExit(
+        Effect.suspend(() => place(saved.result, invocation, observe)),
+        { signal },
+      )
+      if (Exit.isSuccess(attempted)) observe(attempted.value)
+      else
+        failure = Cause.isInterruptedOnly(attempted.cause)
+          ? "interrupted"
+          : "unavailable"
+    }
+  }
+  if (inconsistent) failure = "inconsistent_readback"
+  if (known.size !== scope.size && failure === undefined)
+    failure = "inconsistent_readback"
+  const projectPlacement: readonly ProjectPlacementObservation[] =
+    Object.freeze(
+      [...scope].map(([key, issue]) => {
+        const observed = known.get(key)
+        return observed === undefined
+          ? Object.freeze({
+              kind: "not_attempted" as const,
+              issue,
+              reason:
+                failure === "interrupted"
+                  ? ("cancelled" as const)
+                  : ("unavailable" as const),
+            })
+          : observed
+      }),
+    )
+  return Object.freeze({
+    ...saved,
+    projectPlacement,
+    ...(failure === undefined ? {} : { projectPlacementFailure: failure }),
+  })
+}
+
 const withinOutputBudget = (text: unknown): text is string =>
   typeof text === "string" &&
   Buffer.byteLength(text, "utf8") <= 50 * 1_024 &&
@@ -485,14 +662,19 @@ export const createTaskTool = (options: TaskToolOptions): IssueTaskTool => ({
   name: "task",
   label: "Task",
   description:
-    "Read/get issue-qualified tasks, listIssues/getIssue metadata with local tasks, or apply an atomic explicit-issue mutation batch. read uses issue/page/filter; readMany explicit queries totals at most 100 requested tasks; get uses issue/id. listIssues uses query {repository,state,page,tasks:{limit,filter?}} with at most 100 aggregate requested tasks; getIssue uses query {issue,related:{limit,blockedByAfter?,deliveryAfter?},tasks:{page,filter?}}. apply uses complete issues/operations (add, edit, status, block, transfer). No worker selection or replies. Mutation authority and request identity come only from the host.",
+    "Select and pick up an eligible issue with next query {repository,project:personal|dataclique,mode?:implementation|review}; review mode selects In review without changing assignees or status. Read/get issue-qualified tasks, listIssues/getIssue metadata with local tasks, or apply an atomic explicit-issue mutation batch. read uses issue/page/filter; readMany explicit queries totals at most 100 requested tasks; get uses issue/id. listIssues uses query {repository,state,page,tasks:{limit,filter?}} with at most 100 aggregate requested tasks; getIssue uses query {issue,related:{limit,blockedByAfter?,deliveryAfter?},tasks:{page,filter?}}. apply uses complete issues/operations (add, edit, status, block, transfer). No worker selection or replies. Mutation authority and request identity come only from the host.",
   parameters: TaskParameters,
-  execute: async (toolCallId, params, signal, _onUpdate, ctx) => {
+  execute: async (toolCallId, params, signal, onUpdate, ctx) => {
     let outcome: TaskExecutionOutcome
+    let completedInvocation: TaskNativeCall | undefined
     if (signal?.aborted === true) outcome = { kind: "interrupted" }
     else {
-      const attempt: { invocation: TaskNativeCall | undefined } = {
+      const attempt: {
+        invocation: TaskNativeCall | undefined
+        pickup: IssuePickupTrace | undefined
+      } = {
         invocation: undefined,
+        pickup: undefined,
       }
       const operation = Effect.suspend(() => {
         const decoded = decodeToolRequest(params)
@@ -504,10 +686,48 @@ export const createTaskTool = (options: TaskToolOptions): IssueTaskTool => ({
           toolCallId,
           sessionId: ctx.sessionManager.getSessionId(),
         }
+        completedInvocation = invocation
 
-        return executeRequest(decoded.right, invocation, options, () => {
-          attempt.invocation = invocation
-        })
+        const observeNext: IssueNextObserver = progress =>
+          Effect.try({
+            try: () =>
+              onUpdate?.({
+                content: [
+                  {
+                    type: "text",
+                    text: `Reading next issue: ${progress.stage}, ${progress.reads} source reads.`,
+                  },
+                ],
+                details: {
+                  outcome: { kind: "next_progress", progress },
+                  output: "complete",
+                },
+              }),
+            catch: () =>
+              new IssueNextReadError({
+                code: "observer_unavailable",
+                message: "Next issue progress could not be delivered",
+              }),
+          })
+        return executeRequest(
+          decoded.right,
+          invocation,
+          options,
+          () => {
+            attempt.invocation = invocation
+          },
+          trace => {
+            attempt.pickup = trace
+            if (
+              trace.assignment === "possible" ||
+              trace.assignment === "acknowledged" ||
+              trace.status === "possible" ||
+              trace.status === "acknowledged"
+            )
+              attempt.invocation = invocation
+          },
+          observeNext,
+        )
       })
       const executed = await Effect.runPromiseExit(operation, { signal })
 
@@ -519,6 +739,9 @@ export const createTaskTool = (options: TaskToolOptions): IssueTaskTool => ({
             ? {
                 kind: "unconfirmed",
                 invocation: attempt.invocation,
+                ...(attempt.pickup === undefined
+                  ? {}
+                  : { pickup: attempt.pickup }),
                 stop: interrupted ? "interrupted" : "execution_defect",
                 message:
                   "Write completion is unconfirmed; reconcile the original invocation before retrying",
@@ -532,6 +755,14 @@ export const createTaskTool = (options: TaskToolOptions): IssueTaskTool => ({
                 }
       }
     }
+
+    if (outcome.kind === "saved")
+      outcome = await placeSavedOutcome(
+        outcome,
+        completedInvocation,
+        options,
+        signal,
+      )
 
     const rendered =
       signal?.aborted === true
@@ -552,6 +783,13 @@ export const createTaskTool = (options: TaskToolOptions): IssueTaskTool => ({
       isError:
         outcome.kind === "failed" ||
         outcome.kind === "unknown" ||
+        (outcome.kind === "saved" &&
+          (outcome.projectPlacementFailure !== undefined ||
+            outcome.projectPlacement?.some(row => row.kind !== "linked") ===
+              true)) ||
+        (outcome.kind === "issue_next" &&
+          outcome.result.kind === "pickup" &&
+          outcome.result.receipt.kind !== "verified") ||
         (outcome.kind === "unconfirmed" && outcome.stop === "execution_defect"),
     }
   },

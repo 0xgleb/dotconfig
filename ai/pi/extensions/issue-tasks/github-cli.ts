@@ -9,6 +9,18 @@ import {
   type GitHubIssueQueryExecution,
 } from "./github-read.ts"
 import {
+  createGitHubProjectPlacement,
+  type TaskProjectPlacement,
+  type GitHubProjectMembershipExecution,
+  type GitHubProjectPlacementExecution,
+} from "./placement.ts"
+import {
+  createGitHubPickupClient,
+  type GitHubPickupReadExecution,
+  type GitHubPickupWriteExecution,
+} from "./github-pickup.ts"
+import { IssuePickupWriteError, type IssuePickupClient } from "./pickup.ts"
+import {
   createGitHubProjectReader,
   type GitHubProjectReader,
   type GitHubProjectQueryExecution,
@@ -20,6 +32,58 @@ export const createGitHubCliProjectReader = (
   createGitHubProjectReader({
     executeQuery: createGitHubCliExecutor(options),
   })
+
+export const createGitHubCliPickupClient = (
+  options: GitHubCliReaderOptions,
+): IssuePickupClient => {
+  const execute = createGitHubCliExecutor(options)
+  return createGitHubPickupClient({
+    read: request => execute(request),
+    write: (request, onDispatch) =>
+      Effect.suspend(() => {
+        let dispatched = false
+        return execute(request, () => {
+          dispatched = true
+          onDispatch()
+        }).pipe(
+          Effect.mapError(
+            () =>
+              new IssuePickupWriteError({
+                dispatch: dispatched ? "possible" : "not_started",
+                message:
+                  "GitHub pickup transport did not produce a verified response",
+              }),
+          ),
+        )
+      }),
+  })
+}
+
+export const createGitHubCliProjectPlacement = (
+  options: GitHubCliReaderOptions,
+): TaskProjectPlacement => {
+  const execute = createGitHubCliExecutor(options)
+  return createGitHubProjectPlacement({
+    read: request => execute(request),
+    write: (request, onDispatch) =>
+      Effect.suspend(() => {
+        let dispatched = false
+        return execute(request, () => {
+          dispatched = true
+          onDispatch()
+        }).pipe(
+          Effect.mapError(
+            () =>
+              new IssuePickupWriteError({
+                dispatch: dispatched ? "possible" : "not_started",
+                message:
+                  "GitHub Project placement transport did not produce a verified response",
+              }),
+          ),
+        )
+      }),
+  })
+}
 
 export interface GitHubCliExecutionOptions {
   readonly cwd: string
@@ -44,6 +108,8 @@ const transportError = (): GitHubReadError =>
     code: "transport_error",
     message: "GitHub CLI did not produce a complete response",
   })
+// --input - reads the complete GraphQL JSON body from stdin.
+// https://cli.github.com/manual/gh_api
 const githubArguments = Object.freeze([
   "api",
   "graphql",
@@ -61,7 +127,14 @@ export const createGitHubCliReader = (
 const createGitHubCliExecutor = (
   options: GitHubCliReaderOptions,
 ): ((
-  request: GitHubIssueQueryExecution | GitHubProjectQueryExecution,
+  request:
+    | GitHubIssueQueryExecution
+    | GitHubProjectQueryExecution
+    | GitHubPickupReadExecution
+    | GitHubPickupWriteExecution
+    | GitHubProjectMembershipExecution
+    | GitHubProjectPlacementExecution,
+  onDispatch?: () => void,
 ) => Effect.Effect<string, GitHubReadError>) => {
   const cwd = options.cwd
   const launch: GitHubCliLaunch =
@@ -69,7 +142,7 @@ const createGitHubCliExecutor = (
     ((args, execution, callback) =>
       execFile("gh", [...args], execution, callback))
 
-  return request =>
+  return (request, onDispatch) =>
     Effect.suspend(() => {
       if (typeof cwd !== "string" || !isAbsolute(cwd))
         return Effect.fail(transportError())
@@ -152,7 +225,10 @@ const createGitHubCliExecutor = (
         else {
           input.on("error", inputFailed)
           const sent = Either.try({
-            try: () => input.end(payload.right),
+            try: () => {
+              onDispatch?.()
+              input.end(payload.right)
+            },
             catch: transportError,
           })
           if (Either.isLeft(sent)) inputFailed()

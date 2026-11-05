@@ -1,6 +1,12 @@
-import { Effect, Either, Schema } from "effect"
+import { Effect, Either, Option, Schema } from "effect"
+import {
+  GitHubUserSchema,
+  decodeGitHubAssignees,
+  type GitHubUser,
+} from "./github-user.ts"
 import {
   decodeIssueReference,
+  decodeIssueRepository,
   issueKey,
   type IssueReference,
 } from "./identity.ts"
@@ -16,6 +22,7 @@ export const GITHUB_PROJECT_SCHEDULING_DOCUMENT = `query ProjectSchedulingMetada
   $first: Int!
   $after: String
 ) {
+  viewer { id login }
   node(id: $project) {
     __typename
     ... on ProjectV2 {
@@ -28,16 +35,36 @@ export const GITHUB_PROJECT_SCHEDULING_DOCUMENT = `query ProjectSchedulingMetada
       }
       priorityField: field(name: "Priority") { ...SchedulingField }
       effortField: field(name: "Effort") { ...SchedulingField }
+      statusField: field(name: "Status") {
+        __typename
+        ... on ProjectV2SingleSelectField {
+          id name dataType options { id name }
+        }
+      }
       items(first: $first, after: $after, archivedStates: [NOT_ARCHIVED], orderBy: {field: POSITION, direction: ASC}) {
         nodes {
           id
           isArchived
           content {
             __typename
-            ... on Issue { number state repository { nameWithOwner } }
+            ... on Issue {
+              id number state repository { nameWithOwner }
+              assignees(first: 100) {
+                nodes { id login }
+                totalCount
+                pageInfo { hasNextPage endCursor }
+              }
+            }
           }
           priority: fieldValueByName(name: "Priority") { ...SchedulingNumber }
           effort: fieldValueByName(name: "Effort") { ...SchedulingNumber }
+          status: fieldValueByName(name: "Status") {
+            __typename
+            ... on ProjectV2ItemFieldSingleSelectValue {
+              optionId
+              field { ... on ProjectV2SingleSelectField { id } }
+            }
+          }
         }
         pageInfo { hasNextPage endCursor }
       }
@@ -70,7 +97,7 @@ fragment SchedulingNumber on ProjectV2ItemFieldValue {
 }`
 
 export type GitHubSchedulingProject = "personal" | "dataclique"
-const ProjectItemIdSchema = Schema.String.pipe(
+export const ProjectItemIdSchema = Schema.String.pipe(
   Schema.minLength(1),
   Schema.brand("GitHubProjectItemId"),
 )
@@ -99,6 +126,9 @@ export type GitHubProjectItem =
       readonly kind: "issue"
       readonly itemId: GitHubProjectItemId
       readonly issue: IssueReference
+      readonly issueNodeId: GitHubIssueNodeId
+      readonly assignees: readonly GitHubUser[]
+      readonly status: GitHubProjectStatusTarget["optionId"] | null
       readonly state: "open" | "closed"
       readonly priority: GitHubProjectNumberValue
       readonly effort: GitHubProjectNumberValue
@@ -110,6 +140,12 @@ export type GitHubProjectItem =
     }
 export interface GitHubProjectPage {
   readonly project: GitHubSchedulingProject
+  readonly viewer: GitHubUser
+  readonly inProgress: GitHubInProgressTarget
+  readonly statusOptions: readonly {
+    readonly id: GitHubProjectStatusTarget["optionId"]
+    readonly name: string
+  }[]
   readonly items: readonly GitHubProjectItem[]
   readonly pageInfo: GitHubConnectionPageInfo
 }
@@ -198,11 +234,19 @@ export const decodeGitHubProjectPage = (
     )
       return yield* invalid("invalid_response")
 
-    if (project.priorityField === null || project.effortField === null)
+    if (
+      project.priorityField === null ||
+      project.effortField === null ||
+      project.statusField === null
+    )
       return yield* invalid("unavailable")
 
     yield* validateField(project.priorityField, "Priority", binding.priority)
     yield* validateField(project.effortField, "Effort", binding.effort)
+    const inProgress = yield* decodeGitHubInProgressTarget(
+      project.id,
+      project.statusField,
+    )
 
     const { nodes, pageInfo } = project.items
 
@@ -215,7 +259,7 @@ export const decodeGitHubProjectPage = (
       return yield* invalid("invalid_response")
 
     const items = yield* Either.all(
-      nodes.map(node => decodeItem(node, binding)),
+      nodes.map(node => decodeItem(node, binding, project.statusField.options)),
     )
     const issues = items.flatMap(item =>
       item.kind === "issue" ? [issueKey(item.issue)] : [],
@@ -229,9 +273,75 @@ export const decodeGitHubProjectPage = (
 
     return Object.freeze({
       project: query.project,
+      viewer: Object.freeze({ ...envelope.data.viewer }),
+      inProgress: Object.freeze(inProgress),
+      statusOptions: Object.freeze(
+        project.statusField.options.map(option => Object.freeze({ ...option })),
+      ),
       items: Object.freeze(items),
       pageInfo: Object.freeze({ ...pageInfo }),
     })
+  })
+
+export const decodeGitHubInProgressTarget = (
+  projectId: unknown,
+  field: unknown,
+): Either.Either<GitHubInProgressTarget, GitHubReadError> =>
+  Either.gen(function* () {
+    const project = yield* decode(ProjectIdSchema, projectId)
+    const alias =
+      project === rawBindings.personal.id
+        ? "personal"
+        : project === rawBindings.dataclique.id
+          ? "dataclique"
+          : null
+    if (alias === null) return yield* invalid("invalid_response")
+    const binding = yield* decode(ProjectBindingSchema, rawBindings[alias])
+    if (field === null) return yield* invalid("unavailable")
+    const status = yield* decode(StatusFieldSchema, field)
+    const option = status.options.find(
+      value => value.id === binding.status.optionId,
+    )
+    if (
+      status.id !== binding.status.id ||
+      status.name !== "Status" ||
+      option?.name !== binding.status.optionName ||
+      new Set(status.options.map(value => value.id)).size !==
+        status.options.length ||
+      new Set(status.options.map(value => value.name)).size !==
+        status.options.length
+    )
+      return yield* invalid("invalid_response")
+    return yield* decode(GitHubInProgressTargetSchema, {
+      projectId: project,
+      fieldId: status.id,
+      optionId: option.id,
+    })
+  })
+
+export const configuredTaskProject = (
+  input: unknown,
+): Either.Either<
+  Option.Option<{
+    readonly project: GitHubSchedulingProject
+    readonly projectId: GitHubInProgressTarget["projectId"]
+  }>,
+  GitHubReadError
+> =>
+  Either.gen(function* () {
+    const repository = yield* decodeIssueRepository(input).pipe(
+      Either.mapLeft(() => projectError("invalid_request")),
+    )
+    const owner = repository.slice(0, repository.indexOf("/"))
+    const project =
+      owner === rawBindings.personal.owner.login
+        ? "personal"
+        : owner === rawBindings.dataclique.owner.login
+          ? "dataclique"
+          : null
+    if (project === null) return Option.none()
+    const binding = yield* decode(ProjectBindingSchema, rawBindings[project])
+    return Option.some(Object.freeze({ project, projectId: binding.id }))
   })
 
 const rawBindings = {
@@ -241,6 +351,11 @@ const rawBindings = {
     owner: { __typename: "User", login: "0xgleb" },
     priority: { id: "PVTF_lAHOAl_tIc4BpO1UzhnrZvE", backing: null },
     effort: { id: "PVTF_lAHOAl_tIc4BpO1UzhnrY5k", backing: null },
+    status: {
+      id: "PVTSSF_lAHOAl_tIc4BpO1UzhnrYfs",
+      optionId: "47fc9ee4",
+      optionName: "In progress",
+    },
   },
   dataclique: {
     id: "PVT_kwDOCA_DB84BkDqI",
@@ -248,6 +363,11 @@ const rawBindings = {
     owner: { __typename: "Organization", login: "dataclique" },
     priority: { id: "PVTF_lADOCA_DB84BkDqIzhnrbUw", backing: "IFN_kgDOAu5Mmg" },
     effort: { id: "PVTF_lADOCA_DB84BkDqIzhny3PM", backing: "IFN_kgDOAu7REw" },
+    status: {
+      id: "PVTSSF_lADOCA_DB84BkDqIzhi1sHA",
+      optionId: "47fc9ee4",
+      optionName: "In Progress",
+    },
   },
 } as const
 
@@ -259,6 +379,31 @@ const ProjectFieldIdSchema = Schema.String.pipe(
   Schema.minLength(1),
   Schema.brand("GitHubSchedulingProjectFieldId"),
 )
+export const GitHubIssueNodeIdSchema = Schema.String.pipe(
+  Schema.minLength(1),
+  Schema.maxLength(1024),
+  Schema.filter(value => !/[\s\u0000-\u001f\u007f-\u009f]/u.test(value)),
+  Schema.brand("GitHubIssueNodeId"),
+)
+export type GitHubIssueNodeId = typeof GitHubIssueNodeIdSchema.Type
+
+const StatusOptionIdSchema = Schema.String.pipe(
+  Schema.minLength(1),
+  Schema.brand("GitHubProjectStatusOptionId"),
+)
+export const GitHubInProgressTargetSchema = Schema.Struct({
+  projectId: ProjectIdSchema,
+  fieldId: ProjectFieldIdSchema,
+  optionId: StatusOptionIdSchema,
+})
+export type GitHubProjectStatusTarget = typeof GitHubInProgressTargetSchema.Type
+export type GitHubInProgressTarget = GitHubProjectStatusTarget
+
+const StatusBindingSchema = Schema.Struct({
+  id: ProjectFieldIdSchema,
+  optionId: StatusOptionIdSchema,
+  optionName: Schema.String,
+})
 const IssueFieldIdSchema = Schema.String.pipe(
   Schema.minLength(1),
   Schema.brand("GitHubSchedulingIssueFieldId"),
@@ -276,6 +421,7 @@ const ProjectBindingSchema = Schema.Struct({
   }),
   priority: FieldBindingSchema,
   effort: FieldBindingSchema,
+  status: StatusBindingSchema,
 })
 type FieldBinding = typeof FieldBindingSchema.Type
 type ProjectBinding = typeof ProjectBindingSchema.Type
@@ -379,8 +525,18 @@ const FieldSchema = Schema.Struct({
     }),
   ),
 })
+const StatusFieldSchema = Schema.Struct({
+  __typename: Schema.Literal("ProjectV2SingleSelectField"),
+  id: ProjectFieldIdSchema,
+  name: Schema.String,
+  dataType: Schema.Literal("SINGLE_SELECT"),
+  options: Schema.Array(
+    Schema.Struct({ id: StatusOptionIdSchema, name: Schema.String }),
+  ).pipe(Schema.maxItems(100)),
+})
 const EnvelopeSchema = Schema.Struct({
   data: Schema.Struct({
+    viewer: GitHubUserSchema,
     node: Schema.NullOr(
       Schema.Struct({
         __typename: Schema.Literal("ProjectV2"),
@@ -392,6 +548,7 @@ const EnvelopeSchema = Schema.Struct({
         }),
         priorityField: Schema.NullOr(FieldSchema),
         effortField: Schema.NullOr(FieldSchema),
+        statusField: Schema.NullOr(StatusFieldSchema),
         items: Schema.Struct({
           nodes: Schema.NullOr(Schema.Array(Schema.Unknown)),
           pageInfo: PageInfoSchema,
@@ -402,6 +559,8 @@ const EnvelopeSchema = Schema.Struct({
 })
 const IssueContentSchema = Schema.Struct({
   __typename: Schema.Literal("Issue"),
+  id: GitHubIssueNodeIdSchema,
+  assignees: Schema.Unknown,
   number: Schema.Number.pipe(Schema.int(), Schema.between(1, 2_147_483_647)),
   state: Schema.Literal("OPEN", "CLOSED"),
   repository: Schema.Struct({ nameWithOwner: Schema.String }),
@@ -415,6 +574,12 @@ const ItemSchema = Schema.Struct({
   content: Schema.NullOr(Schema.Union(IssueContentSchema, OtherContentSchema)),
   priority: Schema.Unknown,
   effort: Schema.Unknown,
+  status: Schema.Unknown,
+})
+const CurrentStatusSchema = Schema.Struct({
+  __typename: Schema.Literal("ProjectV2ItemFieldSingleSelectValue"),
+  optionId: StatusOptionIdSchema,
+  field: Schema.Struct({ id: ProjectFieldIdSchema }),
 })
 const NumberSchema = Schema.Number.pipe(Schema.finite())
 const NumericValueSchema = Schema.Union(
@@ -508,6 +673,7 @@ const decodeNumber = (
 const decodeItem = (
   input: unknown,
   binding: ProjectBinding,
+  statusOptions: typeof StatusFieldSchema.Type.options,
 ): Either.Either<GitHubProjectItem, GitHubReadError> =>
   Either.gen(function* () {
     const item = yield* decode(ItemSchema, input)
@@ -527,11 +693,27 @@ const decodeItem = (
     }).pipe(Either.mapLeft(() => projectError("invalid_response")))
     const priority = yield* decodeNumber(item.priority, binding.priority)
     const effort = yield* decodeNumber(item.effort, binding.effort)
+    const assignees = yield* decodeGitHubAssignees(content.assignees)
+    let status: GitHubProjectStatusTarget["optionId"] | null = null
+    if (item.status !== null) {
+      const value = yield* decode(CurrentStatusSchema, item.status)
+      if (
+        value.field.id !== binding.status.id ||
+        !statusOptions.some(option => option.id === value.optionId)
+      )
+        return yield* invalid("invalid_response")
+      status = value.optionId
+    }
 
     return Object.freeze({
       kind: "issue" as const,
       itemId: item.id,
       issue,
+      issueNodeId: content.id,
+      status,
+      assignees: Object.freeze(
+        assignees.map(value => Object.freeze({ ...value })),
+      ),
       state: content.state === "OPEN" ? ("open" as const) : ("closed" as const),
       priority,
       effort,
