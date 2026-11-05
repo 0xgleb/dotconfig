@@ -17,6 +17,7 @@ import {
   prepareNativeManagerState,
   openNativeManagerState,
   takeNativeManagerCheckIn,
+  type NativeManagerCheckIns,
 } from "./manager-native-state.ts"
 import {
   ManagerSessionError,
@@ -258,11 +259,8 @@ test("completed check-in history does not hide the next queued review", t => {
       scheduledAt: checkInNow + index,
     }
     const now = checkInNow + index
-    const queued = channel.enqueue(
-      current,
-      { ...checkInContext, observedAt: now },
-      now,
-    )
+    const queued: ReturnType<NativeManagerCheckIns["enqueue"]> =
+      channel.enqueue(current, { ...checkInContext, observedAt: now }, now)
     assert.ok(Either.isRight(queued))
     const taken = channel.take(now)
     assert.ok(Either.isRight(taken))
