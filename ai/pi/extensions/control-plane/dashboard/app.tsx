@@ -12,8 +12,9 @@ import { decodeStoredJob, type Job } from "../job-runtime.ts"
 import { jobSchedulePresentation, relativeTime } from "../job-presentation.ts"
 import {
   allowancePoolLabel,
-  isAllowancePool,
+  ALLOWANCE_POOLS,
   isAllowanceSource,
+  type AllowanceSource,
   selectedAllowanceCheckpoints,
   type ProviderAllowanceCheckpoint,
 } from "../allowance-pool.ts"
@@ -101,7 +102,7 @@ interface UsageHistory {
   readonly control: {
     readonly provider: "openai"
     readonly pool: "chatgpt-shared-weekly" | "codex-app-server-weekly"
-    readonly source: "manual" | "codex-app-server" | "unavailable"
+    readonly source: AllowanceSource | "unavailable"
     readonly activity?: DashboardThrottleActivity
   }
   readonly sampling: {
@@ -160,18 +161,21 @@ const decodeHealth = (value: unknown): Health | undefined => {
   }
 }
 
+const isNonnegativeSafeInteger = (value: unknown): value is number =>
+  typeof value === "number" && Number.isSafeInteger(value) && value >= 0
+
 const decodeTokenUsage = (value: unknown): TokenUsage | undefined => {
+  if (!isRecord(value)) return undefined
+  const { input, output, cacheRead, cacheWrite, totalTokens } = value
   if (
-    !isRecord(value) ||
-    !["input", "output", "cacheRead", "cacheWrite", "totalTokens"].every(
-      key =>
-        typeof value[key] === "number" &&
-        Number.isSafeInteger(value[key]) &&
-        Number(value[key]) >= 0,
-    )
+    !isNonnegativeSafeInteger(input) ||
+    !isNonnegativeSafeInteger(output) ||
+    !isNonnegativeSafeInteger(cacheRead) ||
+    !isNonnegativeSafeInteger(cacheWrite) ||
+    !isNonnegativeSafeInteger(totalTokens)
   )
     return undefined
-  return value as unknown as TokenUsage
+  return { input, output, cacheRead, cacheWrite, totalTokens }
 }
 
 const decodeThrottleActivity = (
@@ -211,22 +215,22 @@ const decodeUsage = (value: unknown): UsageHistory | undefined => {
     value.control.provider !== "openai" ||
     (value.control.pool !== "chatgpt-shared-weekly" &&
       value.control.pool !== "codex-app-server-weekly") ||
-    (value.control.source !== "manual" &&
-      value.control.source !== "codex-app-server" &&
-      value.control.source !== "unavailable") ||
+    (value.control.source !== "unavailable" &&
+      !isAllowanceSource(value.control.source)) ||
     !isRecord(value.sampling) ||
-    !["unavailable", "sampling", "ok", "error"].includes(
-      String(value.sampling.status),
-    ) ||
-    (value.sampling.lastAttemptAt !== undefined &&
-      (!Number.isSafeInteger(value.sampling.lastAttemptAt) ||
-        Number(value.sampling.lastAttemptAt) < 0)) ||
-    (value.sampling.lastCapturedAt !== undefined &&
-      (!Number.isSafeInteger(value.sampling.lastCapturedAt) ||
-        Number(value.sampling.lastCapturedAt) < 0)) ||
+    (value.sampling.status !== "unavailable" &&
+      value.sampling.status !== "sampling" &&
+      value.sampling.status !== "ok" &&
+      value.sampling.status !== "error") ||
     (value.sampling.error !== undefined &&
       value.sampling.error !== "registry" &&
       value.sampling.error !== "store")
+  )
+    return undefined
+  const { lastAttemptAt, lastCapturedAt } = value.sampling
+  if (
+    (lastAttemptAt !== undefined && !isNonnegativeSafeInteger(lastAttemptAt)) ||
+    (lastCapturedAt !== undefined && !isNonnegativeSafeInteger(lastCapturedAt))
   )
     return undefined
   const activity = decodeThrottleActivity(value.control.activity)
@@ -239,8 +243,7 @@ const decodeUsage = (value: unknown): UsageHistory | undefined => {
       typeof candidate.label !== "string" ||
       typeof candidate.cwd !== "string" ||
       (candidate.model !== undefined && typeof candidate.model !== "string") ||
-      !Number.isSafeInteger(candidate.capturedAt) ||
-      Number(candidate.capturedAt) < 0
+      !isNonnegativeSafeInteger(candidate.capturedAt)
     )
       return undefined
     const usage = decodeTokenUsage(candidate.usage)
@@ -250,7 +253,7 @@ const decodeUsage = (value: unknown): UsageHistory | undefined => {
       label: candidate.label,
       cwd: candidate.cwd,
       ...(candidate.model ? { model: candidate.model } : {}),
-      capturedAt: Number(candidate.capturedAt),
+      capturedAt: candidate.capturedAt,
       usage,
     })
   }
@@ -258,25 +261,35 @@ const decodeUsage = (value: unknown): UsageHistory | undefined => {
   for (const candidate of value.checkpoints) {
     if (
       !isRecord(candidate) ||
-      !isAllowancePool(candidate.provider, candidate.pool) ||
       !isAllowanceSource(candidate.source) ||
-      typeof candidate.capturedAt !== "number" ||
-      !Number.isSafeInteger(candidate.capturedAt) ||
-      candidate.capturedAt < 0 ||
-      !isAllowanceRemainingPercent(candidate.remainingPercent) ||
-      typeof candidate.resetAt !== "number" ||
-      !Number.isSafeInteger(candidate.resetAt) ||
-      candidate.resetAt <= candidate.capturedAt
+      !isNonnegativeSafeInteger(candidate.capturedAt) ||
+      !isAllowanceRemainingPercent(candidate.remainingPercent)
     )
       return undefined
-    checkpoints.push({
-      provider: candidate.provider,
-      pool: candidate.pool,
+    const selection = ALLOWANCE_POOLS.find(
+      pool =>
+        pool.provider === candidate.provider && pool.pool === candidate.pool,
+    )
+    if (!selection) return undefined
+    const base = {
+      provider: selection.provider,
+      pool: selection.pool,
       source: candidate.source,
       capturedAt: candidate.capturedAt,
       remainingPercent: candidate.remainingPercent,
-      resetAt: candidate.resetAt,
-    })
+    }
+    if (candidate.event === "refill") {
+      if (candidate.resetAt !== undefined) return undefined
+      checkpoints.push({ ...base, event: "refill" })
+    } else {
+      if (
+        candidate.event !== undefined ||
+        !isNonnegativeSafeInteger(candidate.resetAt) ||
+        candidate.resetAt <= candidate.capturedAt
+      )
+        return undefined
+      checkpoints.push({ ...base, resetAt: candidate.resetAt })
+    }
   }
   return {
     samples,
@@ -287,7 +300,14 @@ const decodeUsage = (value: unknown): UsageHistory | undefined => {
       source: value.control.source,
       ...(activity ? { activity } : {}),
     },
-    sampling: value.sampling as unknown as UsageHistory["sampling"],
+    sampling: {
+      status: value.sampling.status,
+      ...(lastAttemptAt === undefined ? {} : { lastAttemptAt }),
+      ...(lastCapturedAt === undefined ? {} : { lastCapturedAt }),
+      ...(value.sampling.error === undefined
+        ? {}
+        : { error: value.sampling.error }),
+    },
   }
 }
 
@@ -304,40 +324,58 @@ const decodeAgents = (value: unknown): readonly AgentPresence[] | undefined => {
       typeof candidate.label !== "string" ||
       typeof candidate.cwd !== "string" ||
       (candidate.model !== undefined && typeof candidate.model !== "string") ||
-      !isRecord(candidate.usage) ||
-      !["input", "output", "cacheRead", "cacheWrite", "totalTokens"].every(
-        key =>
-          typeof candidate.usage[key] === "number" &&
-          Number.isSafeInteger(candidate.usage[key]) &&
-          Number(candidate.usage[key]) >= 0,
-      ) ||
       !Array.isArray(candidate.activities) ||
-      !candidate.activities.every(
-        activity =>
-          isRecord(activity) &&
-          typeof activity.todoId === "number" &&
-          Number.isSafeInteger(activity.todoId) &&
-          activity.todoId >= 1 &&
-          (activity.status === "in_progress" ||
-            activity.status === "in_review" ||
-            activity.status === "pending") &&
-          typeof activity.text === "string",
-      ) ||
       !Array.isArray(candidate.roles) ||
-      !candidate.roles.every(
-        role =>
-          isRecord(role) &&
-          typeof role.project === "string" &&
-          typeof role.role === "string" &&
-          (role.mode === "task" || role.mode === "operational"),
-      ) ||
       typeof candidate.heartbeatAt !== "number" ||
       !Number.isSafeInteger(candidate.heartbeatAt) ||
       typeof candidate.expiresAt !== "number" ||
       !Number.isSafeInteger(candidate.expiresAt)
     )
       return undefined
-    agents.push(candidate as unknown as AgentPresence)
+    const usage = decodeTokenUsage(candidate.usage)
+    if (!usage) return undefined
+    const activities: AgentPresence["activities"][number][] = []
+    for (const activity of candidate.activities) {
+      if (
+        !isRecord(activity) ||
+        typeof activity.todoId !== "number" ||
+        !Number.isSafeInteger(activity.todoId) ||
+        activity.todoId < 1 ||
+        (activity.status !== "in_progress" &&
+          activity.status !== "in_review" &&
+          activity.status !== "pending") ||
+        typeof activity.text !== "string"
+      )
+        return undefined
+      activities.push({
+        todoId: activity.todoId,
+        status: activity.status,
+        text: activity.text,
+      })
+    }
+    const roles: AgentPresence["roles"][number][] = []
+    for (const role of candidate.roles) {
+      if (
+        !isRecord(role) ||
+        typeof role.project !== "string" ||
+        typeof role.role !== "string" ||
+        (role.mode !== "task" && role.mode !== "operational")
+      )
+        return undefined
+      roles.push({ project: role.project, role: role.role, mode: role.mode })
+    }
+    agents.push({
+      id: candidate.id,
+      presence: candidate.presence,
+      label: candidate.label,
+      cwd: candidate.cwd,
+      ...(candidate.model === undefined ? {} : { model: candidate.model }),
+      usage,
+      activities,
+      roles,
+      heartbeatAt: candidate.heartbeatAt,
+      expiresAt: candidate.expiresAt,
+    })
   }
   return agents
 }
@@ -476,9 +514,12 @@ const App = () => {
   )
   const activeCheckpoints = createMemo(() => {
     const history = usageHistory()
-    return history
-      ? selectedAllowanceCheckpoints(history.checkpoints, history.control)
-      : []
+    if (!history || history.control.source === "unavailable") return []
+    return selectedAllowanceCheckpoints(history.checkpoints, {
+      provider: history.control.provider,
+      pool: history.control.pool,
+      source: history.control.source,
+    })
   })
   const latestCheckpoint = createMemo(
     () =>
@@ -524,19 +565,16 @@ const App = () => {
           checkpoint.provider === "openai" &&
           checkpoint.pool === "codex-app-server-weekly",
       )
-      .map(checkpoint => ({
-        capturedAt: checkpoint.capturedAt,
-        remainingPercent: checkpoint.remainingPercent,
-        resetAt: checkpoint.resetAt,
-        evidence: "observed" as const,
-      })),
+      .map(checkpoint => ({ ...checkpoint, evidence: "observed" as const })),
   )
   const combinedChartCheckpoints = createMemo(() => [
     ...chartCheckpoints(),
     ...codexChartCheckpoints(),
   ])
   const chartEvents = createMemo(() =>
-    chartCheckpoints().filter(checkpoint => checkpoint.event !== undefined),
+    chartCheckpoints().filter(
+      checkpoint => checkpoint.historyEvent !== undefined,
+    ),
   )
   const chartDomain = createMemo(() =>
     allowanceChartDomain(combinedChartCheckpoints()),
@@ -684,6 +722,8 @@ const App = () => {
     const now = snapshot()?.refreshedAt
     if (checkpoint && now !== undefined && allowanceIsStale())
       return `Last verified ${relativeTime(checkpoint.capturedAt, now)}`
+    if (checkpoint?.event === "refill")
+      return "refill recorded · provider reset unavailable"
     return checkpoint
       ? `resets ${new Date(checkpoint.resetAt).toLocaleString([], {
           weekday: "short",
@@ -924,14 +964,16 @@ const App = () => {
                 <For each={chartCheckpoints()}>
                   {checkpoint => (
                     <ellipse
-                      class={`allowance-point chatgpt ${checkpoint.evidence}${checkpoint.event ? " event" : ""}`}
+                      class={`allowance-point chatgpt ${checkpoint.evidence}${checkpoint.historyEvent ? " event" : ""}`}
                       cx={chartX(checkpoint.capturedAt)}
                       cy={allowanceY(checkpoint.remainingPercent)}
-                      rx={checkpoint.event ? "0.22" : "0.12"}
-                      ry={checkpoint.event ? "1.1" : "0.7"}
+                      rx={checkpoint.historyEvent ? "0.22" : "0.12"}
+                      ry={checkpoint.historyEvent ? "1.1" : "0.7"}
                     >
-                      <Show when={checkpoint.event}>
-                        <title>{allowanceEventDetail(checkpoint.event)}</title>
+                      <Show when={checkpoint.historyEvent}>
+                        <title>
+                          {allowanceEventDetail(checkpoint.historyEvent)}
+                        </title>
                       </Show>
                     </ellipse>
                   )}
@@ -979,7 +1021,7 @@ const App = () => {
                 <For each={chartEvents()}>
                   {checkpoint => (
                     <span class={checkpoint.evidence}>
-                      {allowanceEventLabel(checkpoint.event)}
+                      {allowanceEventLabel(checkpoint.historyEvent)}
                     </span>
                   )}
                 </For>
@@ -1056,8 +1098,11 @@ const App = () => {
                             </span>
                           </div>
                           <p>
-                            {job.spec.kind} · {job.spec.payload.task} ·{" "}
-                            {job.id.slice(0, 8)}
+                            {job.spec.kind} ·{" "}
+                            {job.spec.kind === "review-duty.scan"
+                              ? job.spec.payload.profile
+                              : job.spec.payload.task}{" "}
+                            · {job.id.slice(0, 8)}
                           </p>
                         </div>
                         <div class="job-attempt">
