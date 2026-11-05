@@ -442,6 +442,8 @@ const telegramUserForwardOrigin = (
       }),
     )
   }
+  const userId = input.id
+  const firstName = input.first_name
   return Effect.all({
     lastName: optionalTelegramString(
       input.last_name,
@@ -454,14 +456,14 @@ const telegramUserForwardOrigin = (
   }).pipe(
     Effect.map(({ lastName, username }) => {
       const name = boundedTelegramSpeaker(
-        [input.first_name, lastName].filter(Boolean).join(" "),
+        [firstName, lastName].filter(Boolean).join(" "),
       )
       const normalized = normalizedUsername(username)
       return {
         speaker: boundedTelegramSpeaker(
           normalized ? `${name} (@${normalized})` : name,
         ),
-        userId: input.id,
+        userId,
         ...(normalized ? { username: normalized } : {}),
       }
     }),
@@ -483,12 +485,12 @@ const telegramChatForwardOrigin = (
       }),
     )
   }
+  const title = boundedTelegramSpeaker(input.title)
   return optionalTelegramString(
     input.username,
     "Telegram forwarded chat username is invalid",
   ).pipe(
     Effect.map(username => {
-      const title = boundedTelegramSpeaker(input.title)
       const normalized = normalizedUsername(username)
       return {
         speaker: boundedTelegramSpeaker(
@@ -889,19 +891,22 @@ const decodeMessage = (
         : `${caption}\n${mediaFallback}`
       : mediaFallback)
 
+  const chatId = chat.id
+  const messageId = message.message_id
+  const userId = sender.id
   return Effect.all({
     photo: decodePhoto(message.photo),
     voice: decodeVoice(message.voice),
     forwardOrigin: decodeTelegramForwardOrigin(message.forward_origin),
   }).pipe(
     Effect.map(({ photo, voice, forwardOrigin }): TelegramMessage => ({
-      chatId: chat.id,
-      messageId: message.message_id,
-      userId: sender.id,
+      chatId,
+      messageId,
+      userId,
       ...(username ? { username } : {}),
       text,
       ...(photo ? { photo } : {}),
-      ...(voice ? { voice: { ...voice, messageId: message.message_id } } : {}),
+      ...(voice ? { voice: { ...voice, messageId } } : {}),
       ...(forwardOrigin ? { forwardOrigin } : {}),
       ...(isSafeInteger(replyToMessageId) ? { replyToMessageId } : {}),
       ...(edited ? { edited: true as const } : {}),
@@ -1194,34 +1199,32 @@ export const decodeTelegramUpdates = (
     )
   }
 
-  return Effect.forEach(input.result, update => {
-    if (!isRecord(update) || !isSafeInteger(update.update_id)) {
-      return Effect.fail(
-        new TelegramContractError({ message: "Telegram update id is invalid" }),
-      )
-    }
-    return decodeMessage(update).pipe(
-      Effect.flatMap(message =>
-        message
-          ? Effect.succeed({ message })
-          : decodeCallbackQuery(update).pipe(
-              Effect.flatMap(callbackQuery =>
-                callbackQuery
-                  ? Effect.succeed({ callbackQuery })
-                  : decodeReaction(update).pipe(
-                      Effect.map(reaction => (reaction ? { reaction } : {})),
-                    ),
-              ),
-            ),
-      ),
-      Effect.map((payload): TelegramUpdate => {
+  return Effect.forEach(
+    input.result,
+    (update): Effect.Effect<TelegramUpdate, TelegramContractError> =>
+      Effect.gen(function* () {
+        if (!isRecord(update) || !isSafeInteger(update.update_id)) {
+          return yield* Effect.fail(
+            new TelegramContractError({
+              message: "Telegram update id is invalid",
+            }),
+          )
+        }
+        const updateId = update.update_id
+        const message = yield* decodeMessage(update)
+        const callbackQuery = message
+          ? undefined
+          : yield* decodeCallbackQuery(update)
+        const reaction =
+          message || callbackQuery ? undefined : yield* decodeReaction(update)
         const groupChat = decodeGroupChat(update)
         return {
-          updateId: update.update_id as number,
-          ...payload,
+          updateId,
+          ...(message ? { message } : {}),
+          ...(callbackQuery ? { callbackQuery } : {}),
+          ...(reaction ? { reaction } : {}),
           ...(groupChat ? { groupChat } : {}),
         }
       }),
-    )
-  })
+  )
 }

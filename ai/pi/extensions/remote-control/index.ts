@@ -34,6 +34,7 @@ import {
 import {
   QUESTION_REMOTE_RESOLUTION_EVENT,
   QUESTION_STATE_EVENT,
+  decodeUserQuestionStateSnapshot,
   type RemoteUserQuestionResolution,
   type UserQuestionStateSnapshot,
 } from "../shared/question-events.ts"
@@ -248,7 +249,12 @@ export default function remoteControl(
     description:
       "Deliver the real interactive Boulder CABA tracker card directly to the owner's Telegram.",
     parameters: Type.Object({}, { additionalProperties: false }),
-    async execute() {
+    async execute(): Promise<{
+      content: { type: "text"; text: string }[]
+      details:
+        { outcome: "delivered" } | { outcome: "undelivered"; reason: string }
+      isError?: true
+    }> {
       const delivery = await run(deliverCabaCardRelay())
       if (Either.isLeft(delivery)) {
         const reason = safeDeliveryError(delivery.left)
@@ -415,8 +421,13 @@ export default function remoteControl(
     },
   })
 
-  pi.events.on(QUESTION_STATE_EVENT, (snapshot: UserQuestionStateSnapshot) => {
-    questionState = snapshot
+  pi.events.on(QUESTION_STATE_EVENT, (snapshot: unknown) => {
+    const decoded = decodeUserQuestionStateSnapshot(snapshot)
+    if (Either.isLeft(decoded)) {
+      latestCtx?.ui.notify(decoded.left.message, "warning")
+      return
+    }
+    questionState = decoded.right
     questionsDirty = true
   })
 
@@ -724,7 +735,7 @@ export default function remoteControl(
       Effect.either(
         Effect.try({
           try: () =>
-            pi.sendUserMessage(content, {
+            pi.sendUserMessage([...content], {
               deliverAs: "steer",
               ...(authenticatedOwner && options.authorizeOwnerInput
                 ? { authorizeInput: options.authorizeOwnerInput }
@@ -1092,6 +1103,7 @@ export default function remoteControl(
           message.role === "custom" &&
           message.customType === REMOTE_TASK_CONTINUATION_MESSAGE &&
           message.details !== undefined &&
+          message.details !== null &&
           typeof message.details === "object" &&
           "taskContinuationId" in message.details &&
           message.details.taskContinuationId === taskContinuationId,

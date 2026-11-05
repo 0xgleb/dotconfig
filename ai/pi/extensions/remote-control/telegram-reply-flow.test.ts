@@ -46,6 +46,16 @@ const extract = (start: string, end: string) => {
   return stripTypeScriptTypes(source.slice(first, last))
 }
 
+const routedAgentId = (value: unknown): string => {
+  assert.ok(
+    typeof value === "object" &&
+      value !== null &&
+      "id" in value &&
+      typeof value.id === "string",
+  )
+  return value.id
+}
+
 for (const origin of [undefined, "worker", "offline-worker"]) {
   test(`exact reply origin overrides manager only for that message: ${origin}`, async t => {
     const store = fixture(t)
@@ -87,7 +97,7 @@ for (const origin of [undefined, "worker", "offline-worker"]) {
       return
     }
     assert.ok(Either.isRight(result))
-    assert.equal(result.right.id, origin ?? "manager")
+    assert.equal(routedAgentId(result.right), origin ?? "manager")
     const ordinary = await Effect.runPromise(
       choose(
         { bridge: store },
@@ -95,7 +105,7 @@ for (const origin of [undefined, "worker", "offline-worker"]) {
       ),
     )
     assert.equal(
-      ordinary.id,
+      routedAgentId(ordinary),
       "manager",
       "reply routing must never become global selection",
     )

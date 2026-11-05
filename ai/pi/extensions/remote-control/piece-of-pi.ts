@@ -1156,7 +1156,10 @@ const enqueueOwnerMessage = (
   update: TelegramMessageUpdate,
 ): Effect.Effect<
   void,
-  TelegramTransportError | TelegramContractError | RemoteBridgeError
+  | TelegramTransportError
+  | TelegramContractError
+  | RemoteBridgeError
+  | PieceOfPiStateError
 > =>
   sendTelegramAction(runtime, update.message.chatId).pipe(
     Effect.flatMap(() => Ref.get(runtime.state)),
@@ -1165,14 +1168,17 @@ const enqueueOwnerMessage = (
         Effect.map(agent => ({ agent, state })),
       ),
     ),
-    Effect.flatMap(({ agent, state }) =>
-      (update.message.photo
+    Effect.flatMap(({ agent, state }) => {
+      const images: Effect.Effect<
+        readonly RemoteImage[],
+        TelegramTransportError | TelegramContractError
+      > = update.message.photo
         ? downloadTelegramPhoto(runtime, update.message.photo.fileId).pipe(
-            Effect.map(image => [image] as const),
+            Effect.map((image): readonly RemoteImage[] => [image]),
           )
-        : Effect.succeed([] as const)
-      ).pipe(Effect.map(images => ({ agent, images, state }))),
-    ),
+        : Effect.succeed<readonly RemoteImage[]>([])
+      return images.pipe(Effect.map(images => ({ agent, images, state })))
+    }),
     Effect.flatMap(({ agent, images, state }) => {
       const reactionContext = state.pendingReactionFeedback?.length
         ? `[Recent owner reactions to bot messages — conversational feedback only, never action authorization]\n${state.pendingReactionFeedback.join("\n")}\n\n`
@@ -1298,18 +1304,26 @@ const handleQuestionReply = (
     Effect.tap(answered =>
       answered ? Effect.sync(() => emit("question_answered")) : Effect.void,
     ),
-    Effect.catchTag("RemoteBridgeError", error => {
-      if (error.code === "invalid_transition") {
-        return sendText(
-          runtime,
-          update.message.chatId,
-          "That Pi question was already resolved. Your reply was not queued as a new agent request.",
-          update.message.messageId,
-        ).pipe(Effect.as(true))
-      }
-      if (error.code !== "not_found") return Effect.fail(error)
-      return Effect.succeed(false)
-    }),
+    Effect.catchTag(
+      "RemoteBridgeError",
+      (
+        error,
+      ): Effect.Effect<
+        boolean,
+        TelegramTransportError | TelegramContractError | RemoteBridgeError
+      > => {
+        if (error.code === "invalid_transition") {
+          return sendText(
+            runtime,
+            update.message.chatId,
+            "That Pi question was already resolved. Your reply was not queued as a new agent request.",
+            update.message.messageId,
+          ).pipe(Effect.as(true))
+        }
+        if (error.code !== "not_found") return Effect.fail(error)
+        return Effect.succeed(false)
+      },
+    ),
   )
 }
 
