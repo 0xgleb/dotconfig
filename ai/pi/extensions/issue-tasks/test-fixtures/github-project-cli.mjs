@@ -95,6 +95,7 @@ process.stdin.on("end", () => {
                 },
                 priority: number(priority, 2),
                 effort: number(effort, 5),
+                status: null,
               },
             ],
             pageInfo: { hasNextPage: false, endCursor: null },

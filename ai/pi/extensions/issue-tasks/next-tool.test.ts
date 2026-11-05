@@ -108,6 +108,29 @@ test("actual SDK argument dispatch exposes native next and derives invocation fr
   assert.equal(result.isError, false)
 })
 
+test("actual SDK next accepts explicit review mode without caller-owned identity or clearance", async () => {
+  const calls: unknown[] = []
+  const tool = createTaskTool(
+    options({
+      next: input =>
+        Effect.sync(() => {
+          calls.push(input)
+          return { kind: "none" as const, observation }
+        }),
+    }),
+  )
+  const input = { action: "next", query: { ...query, mode: "review" } }
+  const result = await tool.execute(
+    "actual-host-call",
+    args(tool, input),
+    undefined,
+    undefined,
+    context,
+  )
+  assert.equal(result.details.outcome.kind, "issue_next")
+  assert.deepEqual(calls, [input.query])
+})
+
 test("native next rejects fabricated authority before the picker or host write context", async () => {
   let calls = 0
   const tool = createTaskTool(

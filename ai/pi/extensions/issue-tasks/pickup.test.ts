@@ -80,6 +80,7 @@ const recommendation: IssueNextObservation = {
     issueNodeId: target.issueNodeId,
     issue: target.issue,
     assignees: [],
+    status: null,
     state: "open",
     priority: { kind: "number", value: 1 },
     effort: { kind: "number", value: 1 },
@@ -143,6 +144,77 @@ const fixture = (observation: IssuePickupObservation = initial) => {
   }
 }
 const run = Effect.runPromise
+
+test("reviewer pickup rechecks In review without changing the implementation assignee or status", async () => {
+  const reviewStatus = Schema.decodeUnknownSync(GitHubInProgressTargetSchema)({
+    projectId: target.inProgress.projectId,
+    fieldId: target.inProgress.fieldId,
+    optionId: "aba860b9",
+  })
+  const observed = {
+    ...initial,
+    assignees: [other],
+    status: { fieldId: reviewStatus.fieldId, optionId: reviewStatus.optionId },
+  }
+  const source = fixture(observed)
+  const picker = createIssueNextPicker({
+    reader: {
+      read: () =>
+        Effect.succeed({ ...recommendation, review: { status: reviewStatus } }),
+    },
+    pickup: source.client,
+  })
+  const result = await run(picker.next({ mode: "review" }, invocation))
+  assert.ok(result.kind === "review")
+  assert.deepEqual(result.observed.assignees, [other])
+  assert.deepEqual(result.observed.status, observed.status)
+  assert.deepEqual(source.calls, ["inspect"])
+})
+
+test("review pickup fails before work if the selected issue has left In review", async () => {
+  const source = fixture({ ...initial, assignees: [viewer], status: desired })
+  const reviewStatus = Schema.decodeUnknownSync(GitHubInProgressTargetSchema)({
+    projectId: target.inProgress.projectId,
+    fieldId: target.inProgress.fieldId,
+    optionId: "aba860b9",
+  })
+  const picker = createIssueNextPicker({
+    reader: {
+      read: () =>
+        Effect.succeed({ ...recommendation, review: { status: reviewStatus } }),
+    },
+    pickup: source.client,
+  })
+  const result = await run(
+    Effect.either(picker.next({ mode: "review" }, invocation)),
+  )
+  assert.ok(Either.isLeft(result))
+  assert.equal(result.left.code, "stale_selection")
+  assert.deepEqual(source.calls, ["inspect"])
+})
+
+test("implementation pickup refuses a selection that moves to Refine before live reinspection", async () => {
+  const refine = Schema.decodeUnknownSync(GitHubInProgressTargetSchema)({
+    projectId: target.inProgress.projectId,
+    fieldId: target.inProgress.fieldId,
+    optionId: "refine-option",
+  })
+  const source = fixture({
+    ...initial,
+    status: { fieldId: refine.fieldId, optionId: refine.optionId },
+  })
+  const picker = createIssueNextPicker({
+    reader: {
+      read: () =>
+        Effect.succeed({ ...recommendation, refineOptions: [refine.optionId] }),
+    },
+    pickup: source.client,
+  })
+  const result = await run(Effect.either(picker.next({}, invocation)))
+  assert.ok(Either.isLeft(result))
+  assert.equal(result.left.code, "stale_selection")
+  assert.deepEqual(source.calls, ["inspect"])
+})
 
 test("native pickup adds owner, changes only selected item status, and verifies actual readback", async () => {
   const source = fixture()
