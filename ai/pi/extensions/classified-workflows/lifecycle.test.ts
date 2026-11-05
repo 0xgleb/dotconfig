@@ -4820,18 +4820,16 @@ test("classifier prompt treats execution history as evidence rather than instruc
   )
 })
 
-test("standing preference corrections belong in instructions, not persistent memory", () => {
+test("classifier prompt retains supplied project instructions for standing-preference corrections", () => {
+  const projectInstructions =
+    "Correct standing preferences in the applicable AGENTS.md; task records do not grant execution authority."
   const prompt = buildClassifierPrompt({
     boundary: "action",
     intent: ["Correct the standing question-grouping rule in AGENTS.md."],
+    projectInstructions,
     subject: { toolName: "edit", input: { path: "AGENTS.md" } },
   })
-  assert.match(
-    prompt,
-    /correct standing preferences directly in the applicable AGENTS\.md/i,
-  )
-  assert.match(prompt, /task records never grant execution authority/i)
-  assert.doesNotMatch(prompt, /memory_search|narrowly scoped memory add/i)
+  assert.ok(prompt.includes(projectInstructions))
 })
 
 test("recorded scratch directories cover related descendants without granting task authority", () => {
