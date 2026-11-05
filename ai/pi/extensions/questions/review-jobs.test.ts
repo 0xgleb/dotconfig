@@ -29,10 +29,14 @@ const revised = {
   options: [{ label: "Use queue" }, { label: "Keep current" }],
 }
 const deferred = <T>() => {
-  let resolve!: (value: T) => void
+  let complete: ((value: T) => void) | undefined
   const promise = new Promise<T>(done => {
-    resolve = done
+    complete = done
   })
+  const resolve = (value: T): void => {
+    assert.ok(complete)
+    complete(value)
+  }
   return { promise, resolve }
 }
 const settle = async () => {
@@ -81,6 +85,19 @@ const fixture = (t: test.TestContext, process: ContentProcess) => {
 }
 const processCwd = process.cwd()
 
+const firstReviewSnapshot = (
+  jobs: Pick<ReturnType<typeof createQuestionReviewJobs>, "snapshots">,
+): QuestionReviewSnapshot => {
+  const snapshot = jobs.snapshots()[0]
+  assert.ok(snapshot)
+  return snapshot
+}
+
+const requiredText = (value: string | undefined): string => {
+  assert.ok(typeof value === "string")
+  return value
+}
+
 test("returns immediately; internal critic-author-fresh critic publishes only the final reviewed card", async t => {
   const first = deferred<string | undefined>()
   const roles: string[] = []
@@ -103,12 +120,18 @@ test("returns immediately; internal critic-author-fresh critic publishes only th
   first.resolve(verdict(false, "UNIQUE_PRIVATE_CRITIC_FEEDBACK"))
   await settle()
   assert.deepEqual(roles, ["critic", "author", "critic"])
-  assert.match(prompts[1], /UNIQUE_PRIVATE_CRITIC_FEEDBACK/)
-  assert.doesNotMatch(prompts[2], /UNIQUE_PRIVATE_CRITIC_FEEDBACK/)
+  assert.match(requiredText(prompts[1]), /UNIQUE_PRIVATE_CRITIC_FEEDBACK/)
+  assert.doesNotMatch(
+    requiredText(prompts[2]),
+    /UNIQUE_PRIVATE_CRITIC_FEEDBACK/,
+  )
   assert.deepEqual(f.sent, [{ action: "ask", ...revised }])
-  assert.equal(f.jobs.snapshots()[0].status, "queued-question")
-  assert.equal(f.jobs.snapshots()[0].questionId, 7)
-  assert.match(f.jobs.snapshots()[0].reviewedHash!, /^[a-f0-9]{64}$/)
+  assert.equal(firstReviewSnapshot(f.jobs).status, "queued-question")
+  assert.equal(firstReviewSnapshot(f.jobs).questionId, 7)
+  assert.match(
+    requiredText(firstReviewSnapshot(f.jobs).reviewedHash),
+    /^[a-f0-9]{64}$/,
+  )
   assert.equal(f.terminal.length, 1)
   assert.ok(
     !JSON.stringify(f.journal).includes(draft.question),
@@ -243,7 +266,7 @@ for (const output of [
     f.jobs.submit(draft, f.context)
     await settle()
     assert.equal(calls, 2)
-    assert.equal(f.jobs.snapshots()[0].status, "unavailable")
+    assert.equal(firstReviewSnapshot(f.jobs).status, "unavailable")
     assert.equal(f.sent.length, 0)
   })
 }
@@ -262,7 +285,7 @@ test("author cannot change URLs or replacement identity before independent appro
     f.context,
   )
   await settle()
-  assert.equal(f.jobs.snapshots()[0].status, "unavailable")
+  assert.equal(firstReviewSnapshot(f.jobs).status, "unavailable")
   assert.equal(f.sent.length, 0)
 })
 
@@ -287,7 +310,8 @@ test("owner renewal cannot extend original child deadline or admit an expired dr
   const first = deferred<string | undefined>()
   let inherited: number | undefined
   const f = fixture(t, async ctx => {
-    const lease = ctx.execution!.admit()
+    assert.ok(ctx.execution)
+    const lease = ctx.execution.admit()
     if (Either.isRight(lease)) inherited = lease.right.deadlineAt
     return first.promise
   })
@@ -301,7 +325,7 @@ test("owner renewal cannot extend original child deadline or admit an expired dr
   now = initial.right.deadlineAt + 1
   first.resolve(verdict(true))
   await settle()
-  assert.equal(f.jobs.snapshots()[0].status, "cancelled")
+  assert.equal(firstReviewSnapshot(f.jobs).status, "cancelled")
   assert.equal(f.sent.length, 0)
 })
 
@@ -319,7 +343,7 @@ test("cancel and session changes cannot publish even after a late clean verdict"
   first.resolve(verdict(true))
   await settle()
   assert.equal(signal?.aborted, true)
-  assert.equal(f.jobs.snapshots()[0].status, "cancelled")
+  assert.equal(firstReviewSnapshot(f.jobs).status, "cancelled")
   assert.equal(f.sent.length, 0)
   assert.equal(f.terminal.length, 1)
 })
@@ -390,7 +414,7 @@ test("restore interrupts unfinished metadata without model, publish or terminal 
   await settle()
   assert.equal(calls, 0)
   assert.equal(f.sent.length, 0)
-  assert.equal(f.jobs.snapshots()[0].status, "interrupted")
+  assert.equal(firstReviewSnapshot(f.jobs).status, "interrupted")
   assert.equal(
     f.terminal.length,
     before + 1,
@@ -433,7 +457,7 @@ test("journal and cancellation-registration exceptions never leave an executable
   t.after(() => bad.close())
   assert.ok(Either.isLeft(bad.submit(draft, f.context)))
   await settle()
-  assert.equal(bad.snapshots()[0].status, "cancelled")
+  assert.equal(firstReviewSnapshot(bad).status, "cancelled")
   const journal = createQuestionReviewJobs({
     execution: f.guard,
     process: async () => verdict(true),
@@ -463,15 +487,21 @@ test("late actual publication proof resolves interruption without claiming Teleg
   const controller = new AbortController()
   jobs.submit(draft, f.context, controller.signal)
   await settle()
-  assert.equal(jobs.snapshots()[0].status, "publishing")
+  assert.equal(firstReviewSnapshot(jobs).status, "publishing")
   controller.abort()
-  assert.equal(jobs.snapshots()[0].status, "interrupted")
+  assert.equal(firstReviewSnapshot(jobs).status, "interrupted")
   proof.resolve({ outcome: "queued", questionId: 8 })
   await settle()
-  assert.equal(jobs.snapshots()[0].status, "queued-question")
-  assert.equal(jobs.snapshots()[0].questionId, 8)
-  assert.match(jobs.snapshots()[0].reason!, /delivery is not yet confirmed/)
-  assert.doesNotMatch(jobs.snapshots()[0].reason!, /cancelled/)
+  assert.equal(firstReviewSnapshot(jobs).status, "queued-question")
+  assert.equal(firstReviewSnapshot(jobs).questionId, 8)
+  assert.match(
+    requiredText(firstReviewSnapshot(jobs).reason),
+    /delivery is not yet confirmed/,
+  )
+  assert.doesNotMatch(
+    requiredText(firstReviewSnapshot(jobs).reason),
+    /cancelled/,
+  )
 })
 
 test("missing authority and invalid publication identifiers cannot certify a question", async t => {
@@ -497,8 +527,8 @@ test("missing authority and invalid publication identifiers cannot certify a que
   t.after(() => jobs.close())
   jobs.submit(draft, f.context)
   await settle()
-  assert.equal(jobs.snapshots()[0].status, "interrupted")
-  assert.equal(jobs.snapshots()[0].questionId, undefined)
+  assert.equal(firstReviewSnapshot(jobs).status, "interrupted")
+  assert.equal(firstReviewSnapshot(jobs).questionId, undefined)
 })
 
 test("author receives transport limits; invalid field is diagnosed without exposing output", async t => {
@@ -514,7 +544,10 @@ test("author receives transport limits; invalid field is diagnosed without expos
   })
   f.jobs.submit(draft, f.context)
   await settle()
-  assert.match(f.jobs.snapshots()[0].reason!, /invalid header field/)
+  assert.match(
+    requiredText(firstReviewSnapshot(f.jobs).reason),
+    /invalid header field/,
+  )
   assert.doesNotMatch(JSON.stringify(f.journal), /PRIVATE_SYNTHETIC/)
   assert.equal(f.sent.length, 0)
 })
@@ -532,8 +565,10 @@ test("URL preservation compares decoded text fields, not JSON newline escapes", 
   )
   f.jobs.submit(draft, f.context)
   await settle()
-  assert.equal(f.jobs.snapshots()[0].status, "queued-question")
-  assert.equal(f.sent[0].question, changedFormatting.question)
+  assert.equal(firstReviewSnapshot(f.jobs).status, "queued-question")
+  const published = f.sent[0]
+  assert.ok(published)
+  assert.equal(published.question, changedFormatting.question)
 })
 
 test("malformed input and author fields fail validation rather than coercion", () => {
