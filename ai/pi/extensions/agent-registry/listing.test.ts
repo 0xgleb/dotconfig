@@ -105,10 +105,10 @@ test("requests pages do not inspect the unrelated roster", () => {
     version: 1,
     requests: snapshot.requests,
     get agents() {
-      assert.fail("requests lane inspected agents")
+      return assert.fail("requests lane inspected agents")
     },
     get leases() {
-      assert.fail("requests lane inspected leases")
+      return assert.fail("requests lane inspected leases")
     },
   }
   assert.match(

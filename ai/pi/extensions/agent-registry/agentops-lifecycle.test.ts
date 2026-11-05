@@ -165,7 +165,10 @@ test("shutdown releases the context used by incident routing", async () => {
 })
 
 test("incident routing stops when shutdown occurs during its snapshot read", async () => {
-  const snapshot = Promise.withResolvers<{ requests: never[] }>()
+  let resolveSnapshot: ((value: { requests: never[] }) => void) | undefined
+  const snapshot = new Promise<{ requests: never[] }>(resolve => {
+    resolveSnapshot = resolve
+  })
   const enqueued: unknown[] = []
   const install = new Function(
     "snapshot",
@@ -191,7 +194,7 @@ test("incident routing stops when shutdown occurs during its snapshot read", asy
     route: (payload: unknown) => Promise<void>
     retire: () => void
   } = install(
-    snapshot.promise,
+    snapshot,
     enqueued,
     decodeAgentopsIncident,
     isExplicitUserCancellation,
@@ -205,7 +208,8 @@ test("incident routing stops when shutdown occurs during its snapshot read", asy
     summary: "Classifier unavailable",
   })
   runtime.retire()
-  snapshot.resolve({ requests: [] })
+  assert.ok(resolveSnapshot)
+  resolveSnapshot({ requests: [] })
   await pending
   assert.deepEqual(enqueued, [])
 })
