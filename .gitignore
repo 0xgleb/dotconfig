@@ -59,4 +59,5 @@ configstore/update-notifier-create-solana-dapp.json
 /ai/pi/workspaces/reviewer/.tmp/
 /ai/pi/workspaces/manager/.tmp/
 /ai/pi/workspaces/manager/.pi/
+/ai/pi/workspaces/manager/.tmp/
 .pre-commit-config.yaml
