@@ -190,6 +190,41 @@ const withStore = async (work: (store: SqliteTaskStore) => Promise<void>) => {
   }
 }
 
+for (const mode of [undefined, "implementation"] as const) {
+  test(`implementation next excludes In review before ranking: ${mode ?? "default"}`, async () => {
+    await withStore(async tasks => {
+      const source = ports([
+        projectPayload([
+          {
+            number: 1,
+            priority: 1,
+            effort: 1,
+            status: "aba860b9",
+            assignees: [viewer],
+          },
+          {
+            number: 2,
+            priority: 2,
+            effort: 1,
+            status: "47fc9ee4",
+            assignees: [viewer],
+          },
+        ]),
+      ])
+      const observed = await run(
+        createIssueNextReader({ ...source, tasks }).read({
+          ...query,
+          ...(mode === undefined ? {} : { mode }),
+        }),
+      )
+      assert.ok(observed.selection.kind === "selected")
+      assert.equal(observed.selection.issue.number, 2)
+      assert.deepEqual(observed.inReviewOptions, ["aba860b9"])
+      assert.ok(!source.calls.includes("issue:1"))
+    })
+  })
+}
+
 test("implementation next excludes actual Refine status before ranking even with complete numeric metadata", async () => {
   await withStore(async tasks => {
     const source = ports([
