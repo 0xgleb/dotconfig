@@ -1,6 +1,6 @@
 import assert from "node:assert/strict"
 import test from "node:test"
-import { mkdtempSync, rmSync } from "node:fs"
+import { mkdtempSync, readdirSync, rmSync } from "node:fs"
 import { tmpdir } from "node:os"
 import { join } from "node:path"
 import { pathToFileURL, fileURLToPath } from "node:url"
@@ -18,6 +18,7 @@ import { prepareNativeManagerState } from "../classified-workflows/manager-nativ
 const factory = await loadHostExtension(
   fileURLToPath(new URL("./index.ts", import.meta.url)),
 )
+
 const { validateToolArguments } = await import(
   pathToFileURL(
     join(
@@ -36,7 +37,11 @@ interface CapturedTool {
     signal: undefined,
     update: undefined,
     ctx: ExtensionContext,
-  ) => Promise<{ isError?: boolean; content: { text: string }[] }>
+  ) => Promise<{
+    readonly isError?: boolean
+    readonly content: { readonly text: string }[]
+    readonly details?: unknown
+  }>
 }
 
 for (const effortSupported of [true, false])
@@ -51,19 +56,24 @@ for (const effortSupported of [true, false])
     { action: "list", priority: 4 },
     { action: "list", unexpected: "unsupported field" },
   ]) {
-    test(`actual SDK -> registered manager tool -> signed worker request (effort capability ${effortSupported}): ${operation.action} ${"priority" in operation ? operation.priority : ""}`, async t => {
+    test(`actual SDK -> registered manager tool fails closed (effort capability ${effortSupported}): ${operation.action} ${"priority" in operation ? operation.priority : ""}`, async t => {
       const root = mkdtempSync(join(tmpdir(), "pi-manager-tool-validation-"))
       t.after(() => rmSync(root, { recursive: true }))
+
       const scope = { workerSessionId: "worker", cwd: "/projects/worker" }
       const directory = managerPairDirectory({
         agentDir: root,
         workerSessionId: scope.workerSessionId,
         workerCwd: scope.cwd,
       })
+
       assert.ok(Either.isRight(directory))
+
       const state = prepareNativeManagerState(directory.right, scope)
+
       assert.ok(Either.isRight(state))
-      state.right.publish({
+
+      const published = state.right.publish({
         ...scope,
         version: 1,
         observedAt: Date.now(),
@@ -74,12 +84,17 @@ for (const effortSupported of [true, false])
           ...(effortSupported ? { todoEffortControl: true } : {}),
         },
       })
+
+      assert.ok(Either.isRight(published))
+
       const listeners = new Map<string, ((value: unknown) => void)[]>()
       let tool: CapturedTool | undefined
+
       const pi = {
         events: {
           on: (name: string, listener: (value: unknown) => void) => {
             listeners.set(name, [...(listeners.get(name) ?? []), listener])
+
             return () => {}
           },
           emit: (name: string, value: unknown) => {
@@ -94,6 +109,7 @@ for (const effortSupported of [true, false])
         },
         appendEntry: () => assert.fail("manager-local task mutation"),
       } as unknown as ExtensionAPI
+
       registerManagerBinding(pi, id =>
         id === "manager"
           ? {
@@ -103,27 +119,25 @@ for (const effortSupported of [true, false])
             }
           : undefined,
       )
+
       const ctx = {
         cwd: "/global/manager",
         sessionManager: { getSessionId: () => "manager", getBranch: () => [] },
       } as unknown as ExtensionContext
-      let calls = 0
+
+      let polls = 0
+
       factory(pi, {
         agentDir: root,
         timeoutMs: 1000,
         wait: async () => {
-          state.right.processPriorities(
-            () => "rev",
-            () => assert.fail("wrong lane"),
-            request => {
-              calls += 1
-              assert.deepEqual(request, operation)
-              return Either.right(JSON.stringify(request))
-            },
-          )
+          polls += 1
+          assert.fail("Unavailable manager requests must not poll for receipts")
         },
       })
+
       assert.ok(tool)
+
       const input = {
         text: null,
         id: null,
@@ -135,12 +149,14 @@ for (const effortSupported of [true, false])
         remindAt: null,
         ...operation,
       }
+
       const validated = validateToolArguments(tool, {
         type: "toolCall",
         id: "call",
         name: "todo",
         arguments: input,
       })
+
       const result = await tool.execute(
         "call",
         validated,
@@ -148,21 +164,29 @@ for (const effortSupported of [true, false])
         undefined,
         ctx,
       )
+
+      assert.equal(result.isError, true)
+      assert.deepEqual(result.details, { outcome: "unavailable" })
+      assert.equal(polls, 0)
+      assert.deepEqual(readdirSync(join(directory.right, "requests")), [])
+
+      const message = result.content.map(part => part.text).join("\n")
+
+      if ("effort" in operation && !effortSupported) {
+        assert.match(message, /not loaded effort control/u)
+        return
+      }
+
       if (
-        ("effort" in operation && !effortSupported) ||
         "unexpected" in operation ||
         (operation.action !== "priority" && "priority" in operation)
       ) {
-        assert.equal(result.isError, true)
-        assert.equal(calls, 0, "unsupported input must never reach the worker")
+        assert.match(message, /Malformed worker task request/u)
         return
       }
-      assert.notEqual(
-        result.isError,
-        true,
-        result.content.map(part => part.text).join("\n"),
-      )
-      assert.equal(calls, 1)
-      assert.deepEqual(JSON.parse(result.content[0]!.text), operation)
+
+      assert.match(message, /Queued manager calls are retired/u)
+      assert.match(message, /\/projects\/worker/u)
+      assert.match(message, /session worker/u)
     })
   }

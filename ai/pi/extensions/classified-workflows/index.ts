@@ -307,19 +307,20 @@ const classifierModelOverride = (): string | undefined =>
   process.env.PI_CLASSIFIER_MODEL?.trim() || undefined
 
 const sessionClassifierModel = (
-  ctx: Pick<ExtensionContext, "getModel">,
+  ctx: Pick<ExtensionContext, "model">,
 ): string | undefined => {
-  const model = ctx.getModel?.()
+  const model = ctx.model
   return model ? `${model.provider}/${model.id}` : undefined
 }
 
 const classifierCandidates = (
-  ctx: Pick<ExtensionContext, "cwd" | "getModel">,
+  ctx: Pick<ExtensionContext, "cwd" | "model">,
 ): string[] => {
   const override = classifierModelOverride()
+  const sessionModel = sessionClassifierModel(ctx)
   const candidates = tierCandidates("mid", {
     now: () => Date.now(),
-    sessionModel: sessionClassifierModel(ctx),
+    ...(sessionModel ? { sessionModel } : {}),
   })
   return override && !candidates.includes(override)
     ? [override, ...candidates]
@@ -740,7 +741,7 @@ const classifierBackoff: (
 
 async function classify(
   request: ClassificationRequest,
-  ctx: Pick<ExtensionContext, "cwd" | "getModel">,
+  ctx: Pick<ExtensionContext, "cwd" | "model">,
   signal?: AbortSignal,
   onActivity?: (active: boolean) => void,
   owner?: OwnerAllowance,
@@ -773,6 +774,7 @@ async function classify(
 
       try {
         attemptsStarted += 1
+        const candidate = candidates[Math.min(attempt, candidates.length - 1)]
         const result = await runPi(
           [
             "--mode",
@@ -785,12 +787,7 @@ async function classify(
             "--no-prompt-templates",
             "--no-themes",
             "--no-context-files",
-            ...(candidates[Math.min(attempt, candidates.length - 1)]
-              ? [
-                  "--model",
-                  candidates[Math.min(attempt, candidates.length - 1)],
-                ]
-              : []),
+            ...(candidate ? ["--model", candidate] : []),
             "--thinking",
             "low",
             "--system-prompt",
@@ -811,11 +808,7 @@ async function classify(
         ) {
           const decision = parseClassifierDecision(result.output)
           if (decision.reason !== "Classifier returned an invalid decision") {
-            if (candidates[Math.min(attempt, candidates.length - 1)])
-              markPreferredProvider(
-                candidates[Math.min(attempt, candidates.length - 1)],
-                () => Date.now(),
-              )
+            if (candidate) markPreferredProvider(candidate, () => Date.now())
             return decision
           }
           lastClassifierFailure = "classifier returned an invalid decision"
@@ -862,7 +855,7 @@ async function classify(
 async function evaluateGoal(
   condition: string,
   transcript: string[],
-  ctx: Pick<ExtensionContext, "cwd" | "getModel">,
+  ctx: Pick<ExtensionContext, "cwd" | "model">,
   owner: OwnerAllowance,
 ): Promise<GoalEvaluation> {
   const controller = new AbortController()
@@ -1256,7 +1249,7 @@ export default function classifiedWorkflows(
     request: ClassificationRequest,
     ctx: Pick<
       ExtensionContext,
-      "cwd" | "getContextUsage" | "getSystemPrompt" | "getModel"
+      "cwd" | "getContextUsage" | "getSystemPrompt" | "model"
     >,
     signal?: AbortSignal,
     projectContexts: RuntimeClassificationProjectContexts = runtimeClassificationProjectContexts(

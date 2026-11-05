@@ -1,4 +1,4 @@
-import { randomBytes, randomUUID } from "node:crypto"
+import { randomUUID } from "node:crypto"
 import {
   constants,
   openSync,
@@ -11,16 +11,11 @@ import {
   unlinkSync,
   mkdirSync,
   existsSync,
-  readdirSync,
 } from "node:fs"
 import { isAbsolute, join } from "node:path"
 import { Either } from "effect"
 import {
   decodeManagerContext,
-  signManagerPriority,
-  verifyManagerPriority,
-  signManagerTodo,
-  verifyManagerTodo,
   type ManagerPairScope,
   type ManagerContextSnapshot,
   type ManagerPriorityReceipt,
@@ -74,13 +69,6 @@ export const prepareNativeManagerState = (
         writeFileSync(
           join(directory, "scope.json"),
           JSON.stringify({ version: 1, ...scope }),
-          { flag: "wx", mode: 0o600 },
-        ),
-      )
-      yield* io(() =>
-        writeFileSync(
-          join(directory, "capability.key"),
-          randomBytes(32).toString("hex"),
           { flag: "wx", mode: 0o600 },
         ),
       )
@@ -157,141 +145,20 @@ export const openNativeManagerState = (
           decodeManagerContext(value, scope),
         ),
       receipt,
-      enqueuePriorities: (text, revision) =>
-        Either.gen(function* () {
-          const capability = yield* readPrivate(
-            join(directory, "capability.key"),
-            256,
-          )
-          const id = randomUUID()
-          const command = yield* signManagerPriority(
-            scope,
-            id,
-            revision,
-            text,
-            capability,
-          )
-          yield* atomicJson(join(directory, "requests"), `${id}.json`, command)
-          return id
-        }),
-      enqueueTodo: (request, revision) =>
-        Either.gen(function* () {
-          const capability = yield* readPrivate(
-            join(directory, "capability.key"),
-            256,
-          )
-          const id = randomUUID()
-          const command = yield* signManagerTodo(
-            scope,
-            id,
-            revision,
-            request,
-            capability,
-          )
-          yield* atomicJson(join(directory, "requests"), `${id}.json`, command)
-          return id
-        }),
-      processPriorities: (revision, apply, applyTodo) =>
-        Either.gen(function* () {
-          const names = yield* io(() =>
-            readdirSync(join(directory, "requests")),
-          )
-          const requests = names
-            .filter(name => /^[0-9a-f-]{36}\.json$/u.test(name))
-            .sort()
-            .slice(0, 32)
-          if (requests.length === 0) return []
-          const capability = yield* readPrivate(
-            join(directory, "capability.key"),
-            256,
-          )
-          const results: ManagerPriorityReceipt[] = []
-
-          for (const name of requests) {
-            const id = name.slice(0, -5)
-            const previous = yield* receipt(id)
-            const requestPath = join(directory, "requests", name)
-            if (previous) {
-              if (previous.status !== "started")
-                yield* io(() => unlinkSync(requestPath))
-              continue
-            }
-
-            const value = yield* readJson(requestPath)
-            const taskRequest =
-              record(value) && value.version === 2 && value.operation === "todo"
-            if (taskRequest && !applyTodo) continue
-            const verified = taskRequest
-              ? verifyManagerTodo(value, scope, revision(), capability)
-              : verifyManagerPriority(value, scope, revision(), capability)
-            let result: Either.Either<string, ManagerSessionError>
-            if (Either.isLeft(verified)) result = Either.left(verified.left)
-            else if (verified.right.id !== id)
-              result = failure(
-                "protocol",
-                "Manager request identity does not match its queue entry.",
-              )
-            else {
-              const reserved = yield* reserveReceipt(
-                join(directory, "receipts"),
-                id,
-              )
-              if (reserved === "existing") continue
-              if (verified.right.version === 2) {
-                if (!applyTodo) continue
-                result = applyTodo(verified.right.request)
-              } else result = apply(verified.right.text)
-            }
-            const outcome: ManagerPriorityReceipt = {
-              version: 1,
-              id,
-              status: Either.isRight(result)
-                ? "completed"
-                : result.left.code === "unconfirmed"
-                  ? "unconfirmed"
-                  : "failed",
-              message: Either.isRight(result)
-                ? result.right
-                : result.left.message,
-            }
-            yield* atomicJson(join(directory, "receipts"), name, outcome)
-            yield* io(() => unlinkSync(requestPath))
-            results.push(outcome)
-          }
-          return results
-        }),
+      enqueuePriorities: () =>
+        failure(
+          "unavailable",
+          `Queued manager calls are retired for ${scope.cwd} (session ${scope.workerSessionId}); use direct task control.`,
+        ),
+      enqueueTodo: () =>
+        failure(
+          "unavailable",
+          `Queued manager calls are retired for ${scope.cwd} (session ${scope.workerSessionId}); use direct task control.`,
+        ),
+      // Callable compatibility only: historical commands remain inert.
+      processPriorities: () => Either.right([]),
     }
   })
-
-const reserveReceipt = (
-  directory: string,
-  id: string,
-): Either.Either<"claimed" | "existing", ManagerSessionError> => {
-  const written = Either.try({
-    try: () =>
-      writeFileSync(
-        join(directory, `${id}.json`),
-        JSON.stringify({
-          version: 1,
-          id,
-          status: "started",
-          message: "Worker request started; result is not confirmed.",
-        } satisfies ManagerPriorityReceipt),
-        { flag: "wx", mode: 0o600 },
-      ),
-    catch: (error): unknown => error,
-  })
-  if (Either.isRight(written)) return Either.right("claimed")
-  const error = written.left
-  if (
-    typeof error === "object" &&
-    error !== null &&
-    "code" in error &&
-    error.code === "EEXIST"
-  )
-    return Either.right("existing")
-  return failure("io", "Could not reserve the worker request before execution.")
-}
 
 const record = (value: unknown): value is Record<string, unknown> =>
   typeof value === "object" && value !== null && !Array.isArray(value)

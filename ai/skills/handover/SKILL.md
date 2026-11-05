@@ -8,6 +8,7 @@ allowed-tools:
   - "Bash(git diff *)"
   - "Bash(git branch *)"
   - "Bash(git rev-parse *)"
+  - "Bash(git check-ignore *)"
   - "Bash(ls *)"
   - "Bash(mkdir *)"
   - "Read"
@@ -31,14 +32,20 @@ session, or explicitly asks to hand off. The artifact is two things: a
 **handover document** (what happened and exactly where we are) and a
 **continuation prompt** (the message to paste into the next session).
 
+Reading or editing this document for policy maintenance does not invoke the
+handover workflow.
+
 ## Terminal stop boundary
 
 Invoking this skill ends implementation in the current session. Immediately stop
 coding, reviewing, merging, publishing, testing, cleanup, and unrelated
 investigation. From this point until the final report, perform only the bounded
-state reads needed for the handover, reconcile durable todos, write the handover
-artifact, and print its path and continuation prompt. Never resume the paused
-work after the artifact is written or after a handover attempt fails.
+state reads needed for the handover, reconcile durable todos, make required
+`.gitignore` directory-pattern repairs, write the handover artifact, and print
+its path and continuation prompt. The ignore repair is the only configuration
+write exception; it does not authorize resumed implementation, cleanup, tests,
+or publication. Never resume the paused work after the artifact is written or
+after a handover attempt fails.
 
 Do not silently degrade to an inline summary. The required outcome is a real
 handover file. If a tool or classifier blocks creation, preserve the exact
@@ -60,9 +67,11 @@ git diff --stat --cached                        # staged shape
 ```
 
 For each repository, note the branch, the last few commits that belong to this
-session's work, and whether the working tree is clean or mid-edit. A dirty tree
-means a **mid-implementation pause** -- say so explicitly and name the half-done
-edit.
+session's work, and whether the working tree is clean or mid-edit. Record each
+dirty file's ownership and completion state; dirt alone does not establish a
+half-done implementation. Distinguish an intentionally saved ignore repair and
+unrelated changes from the session's unfinished work when deciding the pause
+type.
 
 Attempt each required read once through the narrowest available command. A
 blocked, aborted, unavailable, or failed read does **not** authorize continuing
@@ -100,14 +109,29 @@ workspace:
   nearest shared parent rather than arbitrarily assigning the handover to one
   participating repository.
 
-Write to `<project-role-workspace>/.tmp/handoffs/YYYY-MM-DD-<slug>.md`, creating
-the directory if absent. Resolve this path once and use it; do not bounce among
-multiple directories or an inline-only handover. Treat the file as ephemeral
-local state: do not add it to any `.gitignore`, stage it, commit it, or include
-it in a PR. `<slug>` names the active task in kebab-case. Use this template,
-filling every section with specifics -- file paths, `file:line` refs, command
-names, commit SHAs. For unavailable facts, use the explicit `unverified` form
-from Step 1 instead of inventing specifics. No vague summaries:
+Resolve `<project-role-workspace>/.tmp/handoffs/YYYY-MM-DD-<slug>.md` once; do
+not bounce among multiple directories or an inline-only handover. Before
+creating or writing artifacts, apply `GLOBAL_AGENTS.md`'s directory-ignore
+preflight at that workspace. The handover stop boundary permits a saved ignore
+repair, not its publication; refresh affected Git state reads and include the
+repair in the handover. Git-ignore checks do not apply outside a Git checkout.
+
+If the handoff directory is absent, create and record its resolved absolute path
+through `artifact_provenance`'s `create_directory` action or an available
+registered harness equivalent. Do not claim pre-existing directory contents.
+Write the handover, then immediately record the exact new file unless a
+current-runtime recorded directory already covers it. Add `crossWorkspace:
+true`
+only for an explicitly authorized target outside the tool session's workspace.
+Preserve any existing handover; choose a unique suffix if the resolved filename
+is occupied.
+
+Treat the file as ephemeral local state: do not add per-handover filename
+patterns, stage or commit the handover file, or include it in a PR. `<slug>`
+names the active task in kebab-case. Use this template, filling every section
+with specifics -- file paths, `file:line` refs, command names, commit SHAs. For
+unavailable facts, use the explicit `unverified` form from Step 1 instead of
+inventing specifics. No vague summaries:
 
 ```markdown
 # Handover: <active task>
@@ -130,8 +154,9 @@ error arm" -- not "working on bar".>
 
 ## In progress / uncommitted
 
-<Each dirty file and what the half-done edit is; "none, tree clean" if a
-boundary. Name the next concrete edit for each.>
+<Each dirty file, its ownership and completion state, and its next action.
+Distinguish saved ignore repairs and unrelated work from half-done edits; "none,
+tree clean" if applicable.>
 
 ## Next steps (in order)
 
@@ -200,7 +225,8 @@ implementation.
 5. Keep a single-repository handover under the current project-role workspace's
    `.tmp/handoffs/`; never stage, commit, push, or submit it.
 6. Treat invocation as a terminal stop boundary: after it, do only state
-   collection, todo reconciliation, artifact writing, and the final report.
+   collection, todo reconciliation, required directory-ignore repairs, artifact
+   writing, and the final report. No resumed implementation or publication.
 7. One failed state read cannot deadlock the artifact. Label the exact fact
    `unverified`; never invent it, omit the failure, or continue implementation.
 8. A handover succeeds only after a real file write and read-back verification.
