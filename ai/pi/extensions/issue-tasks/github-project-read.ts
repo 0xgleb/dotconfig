@@ -1,5 +1,9 @@
 import { Effect, Either, Schema } from "effect"
-import { GitHubUserSchema, type GitHubUser } from "./github-user.ts"
+import {
+  GitHubUserSchema,
+  decodeGitHubAssignees,
+  type GitHubUser,
+} from "./github-user.ts"
 import {
   decodeIssueReference,
   issueKey,
@@ -85,7 +89,7 @@ fragment SchedulingNumber on ProjectV2ItemFieldValue {
 }`
 
 export type GitHubSchedulingProject = "personal" | "dataclique"
-const ProjectItemIdSchema = Schema.String.pipe(
+export const ProjectItemIdSchema = Schema.String.pipe(
   Schema.minLength(1),
   Schema.brand("GitHubProjectItemId"),
 )
@@ -226,25 +230,10 @@ export const decodeGitHubProjectPage = (
 
     yield* validateField(project.priorityField, "Priority", binding.priority)
     yield* validateField(project.effortField, "Effort", binding.effort)
-    const status = project.statusField
-    const option = status.options.find(
-      value => value.id === binding.status.optionId,
+    const inProgress = yield* decodeGitHubInProgressTarget(
+      project.id,
+      project.statusField,
     )
-    if (
-      status.id !== binding.status.id ||
-      status.name !== "Status" ||
-      option?.name !== binding.status.optionName ||
-      new Set(status.options.map(value => value.id)).size !==
-        status.options.length ||
-      new Set(status.options.map(value => value.name)).size !==
-        status.options.length
-    )
-      return yield* invalid("invalid_response")
-    const inProgress = yield* decode(GitHubInProgressTargetSchema, {
-      projectId: project.id,
-      fieldId: status.id,
-      optionId: option.id,
-    })
 
     const { nodes, pageInfo } = project.items
 
@@ -275,6 +264,42 @@ export const decodeGitHubProjectPage = (
       inProgress: Object.freeze(inProgress),
       items: Object.freeze(items),
       pageInfo: Object.freeze({ ...pageInfo }),
+    })
+  })
+
+export const decodeGitHubInProgressTarget = (
+  projectId: unknown,
+  field: unknown,
+): Either.Either<GitHubInProgressTarget, GitHubReadError> =>
+  Either.gen(function* () {
+    const project = yield* decode(ProjectIdSchema, projectId)
+    const alias =
+      project === rawBindings.personal.id
+        ? "personal"
+        : project === rawBindings.dataclique.id
+          ? "dataclique"
+          : null
+    if (alias === null) return yield* invalid("invalid_response")
+    const binding = yield* decode(ProjectBindingSchema, rawBindings[alias])
+    if (field === null) return yield* invalid("unavailable")
+    const status = yield* decode(StatusFieldSchema, field)
+    const option = status.options.find(
+      value => value.id === binding.status.optionId,
+    )
+    if (
+      status.id !== binding.status.id ||
+      status.name !== "Status" ||
+      option?.name !== binding.status.optionName ||
+      new Set(status.options.map(value => value.id)).size !==
+        status.options.length ||
+      new Set(status.options.map(value => value.name)).size !==
+        status.options.length
+    )
+      return yield* invalid("invalid_response")
+    return yield* decode(GitHubInProgressTargetSchema, {
+      projectId: project,
+      fieldId: status.id,
+      optionId: option.id,
     })
   })
 
@@ -467,13 +492,6 @@ const StatusFieldSchema = Schema.Struct({
     Schema.Struct({ id: StatusOptionIdSchema, name: Schema.String }),
   ).pipe(Schema.maxItems(100)),
 })
-const AssigneesSchema = Schema.Struct({
-  nodes: Schema.NullOr(
-    Schema.Array(Schema.NullOr(GitHubUserSchema)).pipe(Schema.maxItems(100)),
-  ),
-  totalCount: Schema.Number.pipe(Schema.int(), Schema.nonNegative()),
-  pageInfo: PageInfoSchema,
-})
 const EnvelopeSchema = Schema.Struct({
   data: Schema.Struct({
     viewer: GitHubUserSchema,
@@ -500,7 +518,7 @@ const EnvelopeSchema = Schema.Struct({
 const IssueContentSchema = Schema.Struct({
   __typename: Schema.Literal("Issue"),
   id: GitHubIssueNodeIdSchema,
-  assignees: Schema.NullOr(AssigneesSchema),
+  assignees: Schema.Unknown,
   number: Schema.Number.pipe(Schema.int(), Schema.between(1, 2_147_483_647)),
   state: Schema.Literal("OPEN", "CLOSED"),
   repository: Schema.Struct({ nameWithOwner: Schema.String }),
@@ -626,23 +644,7 @@ const decodeItem = (
     }).pipe(Either.mapLeft(() => projectError("invalid_response")))
     const priority = yield* decodeNumber(item.priority, binding.priority)
     const effort = yield* decodeNumber(item.effort, binding.effort)
-    const connection = content.assignees
-    if (
-      connection === null ||
-      connection.nodes === null ||
-      connection.nodes.some(value => value === null)
-    )
-      return yield* invalid("partial_response")
-    if (connection.pageInfo.hasNextPage)
-      return yield* invalid("partial_response")
-    const assignees = connection.nodes.filter(value => value !== null)
-    if (
-      connection.totalCount !== assignees.length ||
-      new Set(assignees.map(value => value.id)).size !== assignees.length ||
-      new Set(assignees.map(value => value.login.toLowerCase())).size !==
-        assignees.length
-    )
-      return yield* invalid("invalid_response")
+    const assignees = yield* decodeGitHubAssignees(content.assignees)
 
     return Object.freeze({
       kind: "issue" as const,
