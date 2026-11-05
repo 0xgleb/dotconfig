@@ -142,6 +142,7 @@ for (const { label, replacement } of [
 ]) {
   test(`main-worktree contract rejects ${label} while linked guidance survives`, () => {
     const prompt = policy()
+
     const mainMarker = "For main-worktree hook handling:"
     const main = prompt.split(mainMarker)[1]?.split("A commit, build,")[0]
 
