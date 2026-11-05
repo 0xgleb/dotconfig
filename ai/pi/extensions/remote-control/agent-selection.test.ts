@@ -5,6 +5,7 @@ import {
   agentMatchesSelector,
   bridgeQueueRoutableAgents,
   preferredAgent,
+  managerDefaultAgent,
   resolvableSelector,
   telegramRoutableAgents,
 } from "./agent-selection.ts"
@@ -83,6 +84,45 @@ test("dotconfig is the default unless an explicit selection remains live", () =>
   assert.equal(
     preferredAgent(agents, agents[1]!.id)?.label,
     "Yielduck · Operator",
+  )
+})
+
+test("Telegram defaults to one verified native manager, never a worker or misleading label", () => {
+  const manager: BridgeAgent = {
+    ...agents[0]!,
+    id: "manager",
+    label: "Manager",
+    cwd: "/manager/global",
+    nativeManager: true,
+  }
+  assert.equal(managerDefaultAgent([...agents, manager]), manager)
+  assert.equal(managerDefaultAgent(agents), undefined)
+  assert.equal(
+    managerDefaultAgent([
+      ...agents,
+      { ...agents[0]!, id: "fake-manager", label: "Manager" },
+    ]),
+    undefined,
+  )
+  assert.equal(
+    managerDefaultAgent([...agents, { ...manager, workDelivery: "cli-poll" }]),
+    undefined,
+  )
+  assert.equal(
+    managerDefaultAgent([
+      ...agents,
+      manager,
+      { ...manager, id: "other-manager" },
+    ]),
+    undefined,
+  )
+  assert.equal(
+    managerDefaultAgent([...agents, manager], agents[1]!.id),
+    agents[1],
+  )
+  assert.equal(
+    managerDefaultAgent([...agents, manager], "missing-worker"),
+    undefined,
   )
 })
 

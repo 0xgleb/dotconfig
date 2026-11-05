@@ -31,6 +31,16 @@ return {
     },
     mappings = {
       n = {
+        -- Notebook commands use localleader (comma), separate from code/LSP.
+        ["<LocalLeader>mi"] = { "<Cmd>MoltenInit yielduck-haskell<CR>", desc = "Start Haskell kernel" },
+        ["<LocalLeader>ml"] = { "<Cmd>MoltenEvaluateLine<CR>", desc = "Evaluate notebook line" },
+        ["<LocalLeader>me"] = { "<Cmd>MoltenEvaluateOperator<CR>", desc = "Evaluate notebook motion" },
+        ["<LocalLeader>mr"] = { "<Cmd>MoltenReevaluateCell<CR>", desc = "Reevaluate notebook cell" },
+        ["<LocalLeader>mo"] = { "<Cmd>noautocmd MoltenEnterOutput<CR>", desc = "Enter notebook output" },
+        ["<LocalLeader>mh"] = { "<Cmd>MoltenHideOutput<CR>", desc = "Hide notebook output" },
+        ["<LocalLeader>mx"] = { "<Cmd>MoltenInterrupt<CR>", desc = "Interrupt notebook kernel" },
+        ["<LocalLeader>mq"] = { "<Cmd>MoltenDeinit<CR>", desc = "Stop notebook kernel" },
+
         -- ╭─────────────────────────────────────────╮
         -- │ Top-level Doom bindings                  │
         -- ╰─────────────────────────────────────────╯
@@ -149,9 +159,10 @@ return {
         -- │ SPC o — Open                             │
         -- ╰─────────────────────────────────────────╯
         ["<Leader>o"] = { desc = "Open" },
-        ["<Leader>on"] = { "<Cmd>Neotree toggle<CR>", desc = "File tree" },
-        ["<Leader>oN"] = { "<Cmd>Neotree reveal<CR>", desc = "File tree (reveal current)" },
-        ["<Leader>op"] = { "<Cmd>Neotree toggle<CR>", desc = "Project sidebar" },
+        ["<Leader>e"] = { function() require("worktree_tree").open "toggle" end, desc = "Toggle Explorer" },
+        ["<Leader>on"] = { function() require("worktree_tree").open "toggle" end, desc = "File tree" },
+        ["<Leader>oN"] = { function() require("worktree_tree").open "reveal" end, desc = "File tree (reveal current)" },
+        ["<Leader>op"] = { function() require("worktree_tree").open "toggle" end, desc = "Project sidebar" },
         ["<Leader>ot"] = { "<Cmd>ToggleTerm<CR>", desc = "Terminal" },
 
         -- ╭─────────────────────────────────────────╮
@@ -260,6 +271,7 @@ return {
       },
 
       v = {
+        ["<LocalLeader>r"] = { ":<C-u>MoltenEvaluateVisual<CR>gv", desc = "Evaluate notebook selection" },
         ["<Leader>ca"] = { function() vim.lsp.buf.code_action() end, desc = "Code action" },
         ["<Leader>/"] = { function() require("telescope.builtin").live_grep() end, desc = "Search project" },
       },

@@ -160,6 +160,18 @@ const effortPoints = Schema.Number.pipe(Schema.filter(isFibonacciEffort))
 const RequestSchema = Schema.Union(
   Schema.Struct({ action: Schema.Literal("list") }),
   Schema.Struct({
+    action: Schema.Literal("priority_relative"),
+    id: positiveSafeInteger,
+    referenceId: positiveSafeInteger,
+    position: Schema.Literal("above", "below"),
+  }),
+  Schema.Struct({
+    action: Schema.Literal("priority_order"),
+    ids: Schema.Array(positiveSafeInteger).pipe(
+      Schema.filter(ids => ids.length > 0 && new Set(ids).size === ids.length),
+    ),
+  }),
+  Schema.Struct({
     action: Schema.Literal("effort"),
     id: positiveSafeInteger,
     effort: Schema.NullOr(effortPoints),

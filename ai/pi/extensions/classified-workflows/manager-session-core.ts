@@ -1,5 +1,6 @@
 import { createHash } from "node:crypto"
 import { basename, isAbsolute, join } from "node:path"
+import { homedir } from "node:os"
 import { Data, Either } from "effect"
 
 export interface ManagerSessionLaunchInput {
@@ -77,8 +78,19 @@ export const globalManagerSessionLaunchPlan = (
     const paneName = "manager"
     if (input.existingPaneNames.includes(paneName))
       return { kind: "existing", paneName }
-    const workspace = join(input.agentDir, "manager", "global")
-    const sessionDirectory = join(workspace, "sessions")
+    const workspace = join(
+      homedir(),
+      ".config",
+      "ai",
+      "pi",
+      "workspaces",
+      "manager",
+    )
+    const sessionDirectory = join(
+      input.agentDir,
+      "sessions",
+      `--${workspace.replace(/^[/\\]/u, "").replace(/[/\\:]/gu, "-")}--`,
+    )
     return {
       kind: "launch",
       paneName,
@@ -94,8 +106,6 @@ export const globalManagerSessionLaunchPlan = (
         "--floating",
         "--",
         input.piExecutable,
-        "--session-dir",
-        sessionDirectory,
         "--continue",
         "--name",
         paneName,

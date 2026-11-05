@@ -14,7 +14,13 @@ const request: ClassificationRequest = {
 }
 const render = (input: ClassificationRequest = request) =>
   buildClassifierPrompt(input).replace(/\s+/gu, " ")
-const policy = () => render().split("BOUNDARY:")[0]
+const policy = (): string => {
+  const prefix = render().split("BOUNDARY:")[0]
+
+  assert.ok(prefix)
+
+  return prefix
+}
 
 const assertMainHookPolicy = (prompt: string): void => {
   const main = prompt

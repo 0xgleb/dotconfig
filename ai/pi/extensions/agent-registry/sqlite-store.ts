@@ -148,6 +148,22 @@ const dbCall = <T>(label: string, operation: () => T): RegistryEffect<T> =>
     catch: error => asRegistryError(error, label),
   })
 
+const retryRegistryBusy = <T>(
+  operation: RegistryEffect<T>,
+  remaining = 2,
+): RegistryEffect<T> =>
+  operation.pipe(
+    Effect.catchIf(
+      error => error.code === "busy" && remaining > 0,
+      () =>
+        Effect.sleep("25 millis").pipe(
+          Effect.andThen(
+            Effect.suspend(() => retryRegistryBusy(operation, remaining - 1)),
+          ),
+        ),
+    ),
+  )
+
 const rollbackEffect = (
   database: DatabaseSync,
   retire: (database: DatabaseSync) => RegistryEffect<void>,
@@ -168,8 +184,10 @@ const databaseTransactionEffect = <T>(
 ): RegistryEffect<T> =>
   Effect.uninterruptibleMask(restore =>
     Effect.gen(function* () {
-      yield* dbCall("Could not begin registry transaction", () =>
-        database.exec("BEGIN IMMEDIATE"),
+      yield* retryRegistryBusy(
+        dbCall("Could not begin registry transaction", () =>
+          database.exec("BEGIN IMMEDIATE"),
+        ),
       )
       const exit = yield* Effect.exit(
         restore(
@@ -2049,15 +2067,20 @@ const initializeEffect = (
     })
     const journalRow = yield* rowEffect(journalRaw)
     const journalMode = yield* requiredStringField(journalRow, "journal_mode")
-    if (journalMode.toLowerCase() !== "wal")
-      yield* dbCall("Could not enable registry WAL", () =>
-        database.prepare("PRAGMA journal_mode = WAL").get(),
-      ).pipe(
-        Effect.catchIf(
-          error => error.code === "busy",
-          () => Effect.void,
+    if (journalMode.toLowerCase() !== "wal") {
+      const configured = yield* retryRegistryBusy(
+        dbCall("Could not enable registry WAL", () =>
+          database.prepare("PRAGMA journal_mode = WAL").get(),
         ),
       )
+      const row = yield* rowEffect(configured)
+      const mode = yield* requiredStringField(row, "journal_mode")
+      if (mode.toLowerCase() !== "wal")
+        return yield* failRegistry(
+          "io",
+          "Registry WAL mode could not be enabled",
+        )
+    }
     yield* dbCall("Could not configure registry", () => {
       database.exec("PRAGMA synchronous = NORMAL;")
       database.exec("PRAGMA foreign_keys = ON;")
@@ -2281,28 +2304,20 @@ const makeDatabaseAccess = (databasePath: string): DatabaseAccess => {
 
   const openEffect = (label: string): RegistryEffect<DatabaseSync> => {
     if (database) return Effect.succeed(database)
-    return dbCall(label, () => {
-      mkdirSync(dirname(databasePath), { recursive: true, mode: 0o700 })
-      return new DatabaseSync(databasePath)
-    }).pipe(
-      Effect.flatMap(opened =>
-        initializeEffect(opened, databasePath).pipe(
-          Effect.tap(() =>
-            Effect.sync(() => {
+    return Effect.acquireUseRelease(
+      dbCall(label, () => {
+        mkdirSync(dirname(databasePath), { recursive: true, mode: 0o700 })
+        return new DatabaseSync(databasePath)
+      }),
+      opened => initializeEffect(opened, databasePath).pipe(Effect.as(opened)),
+      (opened, exit) =>
+        Exit.isSuccess(exit)
+          ? Effect.sync(() => {
               database = opened
-            }),
-          ),
-          Effect.as(opened),
-          Effect.catchAll(error =>
-            dbCall("Could not close invalid registry", () =>
+            })
+          : dbCall("Could not close invalid registry", () =>
               opened.close(),
-            ).pipe(
-              Effect.catchAll(() => Effect.void),
-              Effect.andThen(Effect.fail(error)),
-            ),
-          ),
-        ),
-      ),
+            ).pipe(Effect.ignore),
     )
   }
 

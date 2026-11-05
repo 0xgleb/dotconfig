@@ -12,7 +12,7 @@ const retiredWorkerPath = new URL(
   import.meta.url,
 )
 const cursorRuntimeSources = [
-  "../AGENTS.md",
+  "../../GLOBAL_AGENTS.md",
   "../skills/register/SKILL.md",
   "../skills/pi-delegation/SKILL.md",
   "../skills/review-core/SKILL.md",

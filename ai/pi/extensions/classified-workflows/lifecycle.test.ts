@@ -2,10 +2,12 @@ import assert from "node:assert/strict"
 import { readFileSync } from "node:fs"
 import { stripTypeScriptTypes } from "node:module"
 import test from "node:test"
+import { Either } from "effect"
 import {
   boundedProjectInstructions,
   boundedToolResultActionContext,
   buildClassifierPrompt as renderClassifierPrompt,
+  classifierAttemptBudget,
   createClassifiedAgentRunner,
   createToolResultAllowance,
   formatDecisionReason,
@@ -133,6 +135,8 @@ test("task continuation retries a transient queued-message guard without losing 
   const schedule = new Function(
     "setTimeout",
     "pi",
+    "Either",
+    "ownerAllowance",
     `
     let taskContinuationTimer;
     const clearTaskContinuationTimer = () => {};
@@ -158,6 +162,8 @@ test("task continuation retries a transient queued-message guard without losing 
         sent++
       },
     },
+    Either,
+    { admit: () => Either.right(undefined) },
   )
   schedule(ctx)
   const first = readTimer()
@@ -5965,6 +5971,14 @@ test("classifier availability failures retain one bounded actionable diagnostic"
     extensionSource,
     /sanitizeProcessDiagnostic[\s\S]*?slice\(0, 500\)/,
   )
+})
+
+test("a single classifier candidate still gets at least three total attempts", () => {
+  // A lone transient provider abort must not exhaust the classification
+  // budget: one configured candidate previously meant one attempt total.
+  assert.equal(classifierAttemptBudget(1), 3)
+  assert.equal(classifierAttemptBudget(2), 3)
+  assert.equal(classifierAttemptBudget(4), 5)
 })
 
 test("decision reasons identify the policy source", () => {

@@ -1,4 +1,4 @@
-import { completeSimple, type UserMessage } from "@earendil-works/pi-ai/compat"
+import { completeSimple, type UserMessage } from "@earendil-works/pi-ai"
 import type { ImageContent } from "@earendil-works/pi-ai"
 import type {
   ExtensionAPI,

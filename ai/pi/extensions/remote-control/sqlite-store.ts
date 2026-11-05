@@ -32,6 +32,8 @@ import {
 const BUSY_TIMEOUT_MS = 2_000
 const MAX_AGENTS = 1_024
 const MAX_MESSAGES = 10_000
+const MANAGER_HEARTBEAT_TRIGGER = "bridge_agents_invalidate_manager"
+const MANAGER_HEARTBEAT_TRIGGER_SQL = `CREATE TRIGGER ${MANAGER_HEARTBEAT_TRIGGER} AFTER UPDATE OF heartbeat_at ON bridge_agents BEGIN UPDATE bridge_agents SET manager_heartbeat_at = NULL WHERE agent_id = NEW.agent_id; END`
 
 type Row = Readonly<Record<string, unknown>>
 
@@ -41,6 +43,7 @@ export interface HeartbeatBridgeAgentInput {
   readonly cwd: string
   readonly accepting: boolean
   readonly workDelivery: BridgeWorkDelivery
+  readonly nativeManager?: true
   readonly now: number
   readonly ttlMs: number
 }
@@ -164,6 +167,15 @@ export interface RemoteBridgeStore {
   readonly markQuestionDeliveredInConversation: (
     input: DismissQuestionInput,
   ) => Effect.Effect<void, RemoteBridgeError>
+  readonly linkTelegramMessageOrigin: (input: {
+    readonly agentId: string
+    readonly chatId: number
+    readonly messageId: number
+  }) => Effect.Effect<void, RemoteBridgeError>
+  readonly getTelegramMessageOrigin: (input: {
+    readonly chatId: number
+    readonly messageId: number
+  }) => Effect.Effect<string | undefined, RemoteBridgeError>
   readonly linkTelegramQuestion: (
     input: LinkTelegramQuestionInput,
   ) => Effect.Effect<BridgeQuestion, RemoteBridgeError>
@@ -287,14 +299,30 @@ const agentFromRowEffect = (
   row: Row,
 ): Effect.Effect<BridgeAgent, RemoteBridgeError> =>
   Effect.gen(function* () {
+    const heartbeatAt = yield* numberFieldEffect(row, "heartbeat_at")
+    const managerAt =
+      row.manager_heartbeat_at === null ||
+      row.manager_heartbeat_at === undefined
+        ? undefined
+        : yield* numberFieldEffect(row, "manager_heartbeat_at")
+    const workDelivery = yield* workDeliveryFieldEffect(row)
+    if (
+      managerAt !== undefined &&
+      (managerAt > heartbeatAt ||
+        (managerAt === heartbeatAt && workDelivery !== "native-pi"))
+    )
+      return yield* Effect.fail(
+        bridgeError("corrupt_state", "bridge manager presence is malformed"),
+      )
     return {
+      ...(managerAt === heartbeatAt ? { nativeManager: true as const } : {}),
       id: yield* requiredStringFieldEffect(row, "agent_id"),
       label: yield* requiredStringFieldEffect(row, "label"),
       cwd: yield* requiredStringFieldEffect(row, "cwd"),
-      heartbeatAt: yield* numberFieldEffect(row, "heartbeat_at"),
+      heartbeatAt,
       expiresAt: yield* numberFieldEffect(row, "expires_at"),
       accepting: yield* booleanFieldEffect(row, "accepting"),
-      workDelivery: yield* workDeliveryFieldEffect(row),
+      workDelivery,
       queuedMessages:
         row.queued_messages === undefined
           ? 0
@@ -546,6 +574,77 @@ const purgeOrphanedConversationDeliveries = (database: DatabaseSync): void => {
     .run()
 }
 
+const managerHeartbeatTriggerPresent = (
+  database: DatabaseSync,
+): Effect.Effect<boolean, RemoteBridgeError> =>
+  attempt("Could not inspect manager heartbeat trigger", () =>
+    database
+      .prepare(
+        "SELECT sql FROM sqlite_master WHERE type = 'trigger' AND name = ?",
+      )
+      .get(MANAGER_HEARTBEAT_TRIGGER),
+  ).pipe(
+    Effect.flatMap(optionalRowFromEffect),
+    Effect.flatMap(row =>
+      row === undefined
+        ? Effect.succeed(false)
+        : requiredStringFieldEffect(row, "sql").pipe(
+            Effect.flatMap(sql =>
+              sql.replace(/\s+/gu, " ").trim() === MANAGER_HEARTBEAT_TRIGGER_SQL
+                ? Effect.succeed(true)
+                : Effect.fail(
+                    bridgeError(
+                      "corrupt_state",
+                      "manager heartbeat trigger is malformed",
+                    ),
+                  ),
+            ),
+          ),
+    ),
+  )
+
+const messageOriginEffect = (
+  database: DatabaseSync,
+  chatId: number,
+  messageId: number,
+): Effect.Effect<string | undefined, RemoteBridgeError> =>
+  Effect.gen(function* () {
+    const rows = yield* attempt("Could not read Telegram message origin", () =>
+      database
+        .prepare(
+          "SELECT chat_id, message_id, agent_id FROM bridge_telegram_message_origins WHERE chat_id = ? AND message_id = ? LIMIT 2",
+        )
+        .all(chatId, messageId),
+    )
+    if (rows.length === 0) return undefined
+    if (rows.length !== 1)
+      return yield* Effect.fail(
+        bridgeError(
+          "corrupt_state",
+          "Telegram message has conflicting origins.",
+        ),
+      )
+    const row = yield* rowFromEffect(rows[0])
+    const storedChat = yield* numberFieldEffect(row, "chat_id")
+    const storedMessage = yield* numberFieldEffect(row, "message_id")
+    if (storedChat !== chatId || storedMessage !== messageId)
+      return yield* Effect.fail(
+        bridgeError(
+          "corrupt_state",
+          "Telegram message origin address is malformed.",
+        ),
+      )
+    const agentId = yield* requiredStringFieldEffect(row, "agent_id")
+    return yield* boundedIdentifierEffect("origin agent id", agentId).pipe(
+      Effect.mapError(() =>
+        bridgeError(
+          "corrupt_state",
+          "Telegram message origin identity is malformed.",
+        ),
+      ),
+    )
+  })
+
 const initializeEffect = (
   database: DatabaseSync,
 ): Effect.Effect<void, RemoteBridgeError> =>
@@ -574,6 +673,24 @@ const initializeEffect = (
             "SELECT 1 AS present FROM pragma_table_info('bridge_agents') WHERE name = ?",
           )
           .get("work_delivery"),
+      )) === undefined
+    const needsManagerHeartbeatColumn =
+      (yield* attempt("Could not inspect bridge manager presence schema", () =>
+        database
+          .prepare(
+            "SELECT 1 FROM pragma_table_info('bridge_agents') WHERE name = ?",
+          )
+          .get("manager_heartbeat_at"),
+      )) === undefined
+    const needsManagerHeartbeatTrigger =
+      !(yield* managerHeartbeatTriggerPresent(database))
+    const needsMessageOriginsTable =
+      (yield* attempt("Could not inspect Telegram message origins", () =>
+        database
+          .prepare(
+            "SELECT 1 FROM sqlite_master WHERE type = 'table' AND name = ?",
+          )
+          .get("bridge_telegram_message_origins"),
       )) === undefined
     const needsQuestionDeliveryChannelsTable =
       (yield* attempt("Could not inspect question delivery schema", () =>
@@ -654,6 +771,9 @@ const initializeEffect = (
     if (
       version === BRIDGE_PROTOCOL_VERSION &&
       !needsWorkDeliveryColumn &&
+      !needsManagerHeartbeatColumn &&
+      !needsManagerHeartbeatTrigger &&
+      !needsMessageOriginsTable &&
       !needsQuestionDeliveryChannelsTable
     ) {
       yield* attempt("Could not purge orphaned question deliveries", () =>
@@ -746,6 +866,31 @@ const initializeEffect = (
           database.exec(
             "ALTER TABLE bridge_agents ADD COLUMN work_delivery TEXT NOT NULL DEFAULT 'monitor-only' CHECK (work_delivery IN ('native-pi', 'cli-poll', 'inline-only', 'monitor-only'))",
           )
+        // Recheck after acquiring the transaction: another process may have added it.
+        if (
+          needsManagerHeartbeatColumn &&
+          !database
+            .prepare(
+              "SELECT 1 FROM pragma_table_info('bridge_agents') WHERE name = ?",
+            )
+            .get("manager_heartbeat_at")
+        )
+          database.exec(
+            "ALTER TABLE bridge_agents ADD COLUMN manager_heartbeat_at INTEGER CHECK (manager_heartbeat_at >= 0)",
+          )
+        if (
+          needsManagerHeartbeatTrigger &&
+          !database
+            .prepare(
+              "SELECT 1 FROM sqlite_master WHERE type = 'trigger' AND name = ?",
+            )
+            .get(MANAGER_HEARTBEAT_TRIGGER)
+        )
+          database.exec(MANAGER_HEARTBEAT_TRIGGER_SQL)
+        if (needsMessageOriginsTable)
+          database.exec(
+            "CREATE TABLE IF NOT EXISTS bridge_telegram_message_origins (chat_id INTEGER NOT NULL, message_id INTEGER NOT NULL, agent_id TEXT NOT NULL, PRIMARY KEY (chat_id, message_id)) STRICT",
+          )
         if (needsQuestionDeliveryChannelsTable)
           database.exec(`
             CREATE TABLE bridge_question_delivery_channels (
@@ -760,6 +905,13 @@ const initializeEffect = (
         database.exec(`PRAGMA user_version = ${BRIDGE_PROTOCOL_VERSION}`)
       }),
     )
+    if (!(yield* managerHeartbeatTriggerPresent(database)))
+      return yield* Effect.fail(
+        bridgeError(
+          "corrupt_state",
+          "manager heartbeat trigger is missing after migration",
+        ),
+      )
   })
 
 const withDatabaseEffect = <T>(
@@ -912,6 +1064,16 @@ export const makeRemoteBridgeStore = (
               "agent work delivery is not supported",
             ),
           )
+        if (
+          input.nativeManager !== undefined &&
+          (input.nativeManager !== true || input.workDelivery !== "native-pi")
+        )
+          return yield* Effect.fail(
+            bridgeError(
+              "invalid_input",
+              "manager presence requires a native Pi endpoint",
+            ),
+          )
         const ttlMs = yield* boundedTtlEffect(input.ttlMs)
         const expiresAt = now + ttlMs
         if (!Number.isSafeInteger(expiresAt))
@@ -943,15 +1105,16 @@ export const makeRemoteBridgeStore = (
               database
                 .prepare(
                   `INSERT INTO bridge_agents (
-                     agent_id, label, cwd, heartbeat_at, expires_at, accepting, work_delivery
-                   ) VALUES (?, ?, ?, ?, ?, ?, ?)
+                     agent_id, label, cwd, heartbeat_at, expires_at, accepting, work_delivery, manager_heartbeat_at
+                   ) VALUES (?, ?, ?, ?, ?, ?, ?, ?)
                    ON CONFLICT(agent_id) DO UPDATE SET
                      label = excluded.label,
                      cwd = excluded.cwd,
                      heartbeat_at = excluded.heartbeat_at,
                      expires_at = excluded.expires_at,
                      accepting = excluded.accepting,
-                     work_delivery = excluded.work_delivery`,
+                     work_delivery = excluded.work_delivery,
+                     manager_heartbeat_at = excluded.manager_heartbeat_at`,
                 )
                 .run(
                   id,
@@ -961,8 +1124,19 @@ export const makeRemoteBridgeStore = (
                   expiresAt,
                   input.accepting ? 1 : 0,
                   input.workDelivery,
+                  input.nativeManager === true ? now : null,
                 ),
             )
+            // Every heartbeat update clears old presence, even at an equal timestamp.
+            // Only the current native manager producer reasserts it in this transaction.
+            if (input.nativeManager === true)
+              yield* attempt("Could not refresh native manager presence", () =>
+                database
+                  .prepare(
+                    "UPDATE bridge_agents SET manager_heartbeat_at = ? WHERE agent_id = ?",
+                  )
+                  .run(now, id),
+              )
             const row = yield* attempt("Could not read bridge agent", () =>
               database
                 .prepare(
@@ -1681,6 +1855,83 @@ export const makeRemoteBridgeStore = (
             )
           }),
         )
+      }),
+    ),
+  linkTelegramMessageOrigin: input =>
+    withDatabaseEffect(databasePath, database =>
+      Effect.gen(function* () {
+        const agentId = yield* boundedIdentifierEffect(
+          "origin agent id",
+          input.agentId,
+        )
+        const chatId = yield* positiveSafeIntegerEffect(
+          "Telegram chat id",
+          input.chatId,
+        )
+        const messageId = yield* positiveSafeIntegerEffect(
+          "Telegram message id",
+          input.messageId,
+        )
+        yield* transactionEffect(
+          database,
+          Effect.gen(function* () {
+            const previous = yield* messageOriginEffect(
+              database,
+              chatId,
+              messageId,
+            )
+            if (previous !== undefined) {
+              if (previous !== agentId)
+                return yield* Effect.fail(
+                  bridgeError(
+                    "invalid_transition",
+                    "Telegram message origin cannot be reassigned.",
+                  ),
+                )
+              return
+            }
+            const count = yield* attempt(
+              "Could not count Telegram message origins",
+              () =>
+                database
+                  .prepare(
+                    "SELECT COUNT(*) AS count FROM bridge_telegram_message_origins",
+                  )
+                  .get(),
+            ).pipe(
+              Effect.flatMap(rowFromEffect),
+              Effect.flatMap(row => numberFieldEffect(row, "count")),
+            )
+            if (count >= MAX_MESSAGES)
+              return yield* Effect.fail(
+                bridgeError(
+                  "capacity",
+                  "Telegram message origin capacity reached.",
+                ),
+              )
+            yield* attempt("Could not bind Telegram message origin", () =>
+              database
+                .prepare(
+                  "INSERT INTO bridge_telegram_message_origins (chat_id, message_id, agent_id) VALUES (?, ?, ?)",
+                )
+                .run(chatId, messageId, agentId),
+            )
+          }),
+        )
+      }),
+    ),
+  getTelegramMessageOrigin: input =>
+    withDatabaseEffect(databasePath, database =>
+      Effect.gen(function* () {
+        const chatId = yield* positiveSafeIntegerEffect(
+          "Telegram chat id",
+          input.chatId,
+        )
+        const messageId = yield* positiveSafeIntegerEffect(
+          "Telegram message id",
+          input.messageId,
+        )
+        return yield* messageOriginEffect(database, chatId, messageId)
       }),
     ),
   linkTelegramQuestion: input =>

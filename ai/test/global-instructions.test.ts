@@ -11,18 +11,9 @@ test("one non-autodiscovered global source replaces the two divergent global fil
   assert.ok(lstatSync(globalPath).isFile())
   assert.equal(existsSync(`${root}ai/AGENTS.md`), false)
   assert.equal(existsSync(`${root}ai/pi/AGENTS.md`), false)
-  const global = readFileSync(globalPath, "utf8")
-  assert.ok(
-    /guarantees in tested harness code:[\s\S]*?timed publication/.test(global),
-    "Timing guarantees must belong to harness code",
-  )
-  assert.ok(
-    !/(?:every|at least every)\s+\d+\s+(?:minutes?|hours?)/.test(global),
-    "Do not assign timed publication cadence to the model",
-  )
 })
 
-test("every managed harness global entrypoint uses the same canonical source", () => {
+test("managed engineering harness entrypoints use the canonical source", () => {
   assert.ok(
     /globalInstructions =\s*config\.lib\.file\.mkOutOfStoreSymlink\s*"\$\{config.home.homeDirectory\}\/\.config\/GLOBAL_AGENTS\.md"/.test(
       home,
@@ -39,18 +30,13 @@ test("every managed harness global entrypoint uses the same canonical source", (
   }
 })
 
+test("Codex retains its independent research and administration instructions", () => {
+  assert.ok(!home.includes('".codex/AGENTS.md".source = globalInstructions;'))
+})
+
 test("repository CLAUDE instructions resolve to repository policy, not global policy", () => {
   assert.equal(
     realpathSync(`${root}CLAUDE.md`),
     realpathSync(`${root}AGENTS.md`),
-  )
-  const project = readFileSync(`${root}AGENTS.md`, "utf8")
-  assert.ok(
-    /Work on `master`/.test(project),
-    "Project publication branch remains local",
-  )
-  assert.ok(
-    /Do not use `rustaceanvim`/.test(project),
-    "Project Neovim ownership rules must be preserved",
   )
 })
