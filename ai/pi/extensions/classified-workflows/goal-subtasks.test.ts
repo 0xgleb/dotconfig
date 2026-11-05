@@ -1,6 +1,6 @@
 import assert from "node:assert/strict"
 import test from "node:test"
-import { todoWorkSnapshot, taskContinuationMessage } from "./goal.ts"
+import { todoWorkSnapshot } from "./goal.ts"
 
 const snapshot = (todos: readonly unknown[]) =>
   todoWorkSnapshot([
@@ -23,7 +23,6 @@ test("completed roots do not hide pending children or their root links", () => {
   assert.deepEqual(work.blocked, [
     "#3 (subtask of #1) Verify runtime — Reload pending",
   ])
-  assert.equal(taskContinuationMessage(work), undefined)
 })
 
 test("malformed parent links are explicit blockers, never trusted relationships", () => {
@@ -43,10 +42,9 @@ test("malformed parent links are explicit blockers, never trusted relationships"
   assert.match(work.blocked[0] ?? "", /#3 Grandchild.*invalid parent/i)
 })
 
-test("review work remains visible for manual migration without automatic continuation", () => {
+test("historical review work remains visible in the read-only projection", () => {
   const work = snapshot([
     { id: 4, text: "Review before delivery", status: "in_review" },
   ])
   assert.deepEqual(work.pending, ["#4 Review before delivery"])
-  assert.equal(taskContinuationMessage(work), undefined)
 })

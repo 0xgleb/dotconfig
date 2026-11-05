@@ -3,6 +3,7 @@ import { Cause, Effect, Either, Exit, Option, Scope } from "effect"
 import { acquireNativeTaskTool, type NativeTaskToolOptions } from "./native.ts"
 import type { TaskStoreError } from "./sqlite-store.ts"
 import { TaskHostError } from "./tool.ts"
+import { registerTaskContinuation } from "./continuation.ts"
 
 export interface NativeTaskHostOptions extends Omit<
   NativeTaskToolOptions,
@@ -17,15 +18,18 @@ export interface NativeTaskHostOptions extends Omit<
 type NativeTaskLifetime = {
   readonly scope: Scope.CloseableScope
   readonly acquisition: AbortController
+  unregisterContinuation?: () => void
 }
 
 const release = (lifetime: NativeTaskLifetime): Promise<void> => {
+  lifetime.unregisterContinuation?.()
   lifetime.acquisition.abort()
   return Effect.runPromise(Scope.close(lifetime.scope, Exit.void))
 }
 
 export const registerNativeTaskHost = (
-  pi: Pick<ExtensionAPI, "on" | "registerTool">,
+  pi: Pick<ExtensionAPI, "on" | "registerTool"> &
+    Partial<Pick<ExtensionAPI, "events">>,
   options: NativeTaskHostOptions,
 ): void => {
   const { onOpenFailure, prepareDatabase, ...nativeOptions } = options
@@ -77,7 +81,15 @@ export const registerNativeTaskHost = (
     }
 
     const registered = Either.try({
-      try: () => pi.registerTool(opened.value),
+      try: () => {
+        pi.registerTool(opened.value)
+        if (pi.events !== undefined)
+          lifetime.unregisterContinuation = registerTaskContinuation(
+            { events: pi.events },
+            ctx,
+            opened.value.continuation,
+          )
+      },
       catch: () =>
         new TaskHostError({
           code: "host_unavailable",
