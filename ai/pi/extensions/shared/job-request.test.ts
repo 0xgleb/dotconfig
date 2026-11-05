@@ -185,7 +185,7 @@ const expectSchemaRejection = (input: unknown) => {
   assert.throws(() => decodeSync(input))
 }
 
-test("a valid request decoded through the committed surface is not yet preserved frozen", () => {
+test("schema decoding preserves the deeply frozen request contract", () => {
   const request = decodeSync(validRequest())
   assert.ok(Object.isFrozen(request), "decoded request must be deeply frozen")
   assert.ok(
