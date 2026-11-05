@@ -1,6 +1,6 @@
 import assert from "node:assert/strict"
 import test from "node:test"
-import {
+import fs, {
   mkdtempSync,
   rmSync,
   existsSync,
@@ -9,7 +9,9 @@ import {
   symlinkSync,
   renameSync,
   lstatSync,
+  readdirSync,
 } from "node:fs"
+import { syncBuiltinESMExports } from "node:module"
 import { tmpdir } from "node:os"
 import { join } from "node:path"
 import { Either } from "effect"
@@ -194,9 +196,15 @@ test("check-in retries retain the same queued snapshot and cannot request a seco
     ),
     first,
   )
+  assert.deepEqual(readdirSync(join(directory, "check-ins")), [
+    `${first.right}.json`,
+  ])
   const taken = channel.take(checkInNow + 1)
   assert.ok(Either.isRight(taken))
   assert.deepEqual(taken.right?.context, checkInContext)
+  assert.deepEqual(readdirSync(join(directory, "check-in-receipts")), [
+    `${first.right}.json`,
+  ])
   const reopened = openNativeManagerState(directory, scope)
   assert.ok(Either.isRight(reopened))
   assert.deepEqual(
@@ -230,6 +238,70 @@ test("check-ins reject foreign snapshots and retain the channel's private file m
   renameSync(path, target)
   symlinkSync(target, path)
   assert.ok(Either.isLeft(channel.take(checkInNow)))
+})
+
+const failNextStateWrite = (t: test.TestContext) => {
+  const write = fs.writeFileSync
+  let injected = false
+  const mocked = t.mock.method(
+    fs,
+    "writeFileSync",
+    (...args: Parameters<typeof fs.writeFileSync>) => {
+      if (!injected) {
+        injected = true
+        write(args[0], "{", args[2])
+        throw Object.assign(new Error("Simulated partial disk-full write"), {
+          code: "ENOSPC",
+        })
+      }
+      return write(...args)
+    },
+  )
+  const restore = () => {
+    mocked.mock.restore()
+    syncBuiltinESMExports()
+  }
+  t.after(restore)
+  syncBuiltinESMExports()
+  return restore
+}
+
+test("a partial request write leaves no published request and can be retried", t => {
+  const { state, directory } = fixture(t)
+  const channel = state.checkIns
+  assert.ok(channel)
+  const restore = failNextStateWrite(t)
+  const failed = channel.enqueue(checkIn, checkInContext, checkInNow)
+  restore()
+  assert.ok(Either.isLeft(failed))
+  assert.equal(failed.left.code, "io")
+  assert.deepEqual(readdirSync(join(directory, "check-ins")), [])
+  const retried = channel.enqueue(checkIn, checkInContext, checkInNow)
+  assert.ok(Either.isRight(retried))
+  const reopened = openNativeManagerState(directory, scope)
+  assert.ok(Either.isRight(reopened))
+  const taken = reopened.right.checkIns?.take(checkInNow)
+  assert.ok(taken && Either.isRight(taken))
+  assert.equal(taken.right?.id, retried.right)
+})
+
+test("a partial reservation leaves no claim and another channel can take the request", t => {
+  const { state, directory } = fixture(t)
+  const channel = state.checkIns
+  assert.ok(channel)
+  const queued = channel.enqueue(checkIn, checkInContext, checkInNow)
+  assert.ok(Either.isRight(queued))
+  const restore = failNextStateWrite(t)
+  const failed = channel.take(checkInNow)
+  restore()
+  assert.ok(Either.isLeft(failed))
+  assert.equal(failed.left.code, "io")
+  assert.deepEqual(readdirSync(join(directory, "check-in-receipts")), [])
+  const reopened = openNativeManagerState(directory, scope)
+  assert.ok(Either.isRight(reopened))
+  const taken = reopened.right.checkIns?.take(checkInNow)
+  assert.ok(taken && Either.isRight(taken))
+  assert.equal(taken.right?.id, queued.right)
 })
 
 test("expired check-ins fail without starting review or extending the original deadline", t => {

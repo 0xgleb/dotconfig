@@ -8,6 +8,7 @@ import {
   readFileSync,
   writeFileSync,
   renameSync,
+  linkSync,
   unlinkSync,
   mkdirSync,
   existsSync,
@@ -463,18 +464,12 @@ const nativeCheckIns = (
           yield* io(() => mkdirSync(path, { recursive: true, mode: 0o700 }))
           yield* privateDirectory(path)
         }
-        const created = Either.try({
-          try: () =>
-            writeFileSync(
-              join(requests, `${id}.json`),
-              JSON.stringify(request),
-              { flag: "wx", mode: 0o600 },
-            ),
-          catch: (error): unknown => error,
-        })
-        if (Either.isLeft(created)) {
-          if (!record(created.left) || created.left.code !== "EEXIST")
-            return yield* failure("io", "Could not queue the manager check-in.")
+        const created = yield* publishExclusiveJson(
+          requests,
+          `${id}.json`,
+          request,
+        )
+        if (created === "existing") {
           const existing = yield* read(id)
           if (
             !existing ||
@@ -552,35 +547,21 @@ const reserveReceipt = (
   directory: string,
   id: string,
   initial?: NativeManagerCheckInReceipt,
-): Either.Either<"claimed" | "existing", ManagerSessionError> => {
-  const written = Either.try({
-    try: () =>
-      writeFileSync(
-        join(directory, `${id}.json`),
-        JSON.stringify(
-          initial ??
-            ({
-              version: 1,
-              id,
-              status: "started",
-              message: "Worker request started; result is not confirmed.",
-            } satisfies ManagerPriorityReceipt),
-        ),
-        { flag: "wx", mode: 0o600 },
-      ),
-    catch: (error): unknown => error,
-  })
-  if (Either.isRight(written)) return Either.right("claimed")
-  const error = written.left
-  if (
-    typeof error === "object" &&
-    error !== null &&
-    "code" in error &&
-    error.code === "EEXIST"
+): Either.Either<"claimed" | "existing", ManagerSessionError> =>
+  Either.map(
+    publishExclusiveJson(
+      directory,
+      `${id}.json`,
+      initial ??
+        ({
+          version: 1,
+          id,
+          status: "started",
+          message: "Worker request started; result is not confirmed.",
+        } satisfies ManagerPriorityReceipt),
+    ),
+    outcome => (outcome === "created" ? "claimed" : "existing"),
   )
-    return Either.right("existing")
-  return failure("io", "Could not reserve the worker request before execution.")
-}
 
 const record = (value: unknown): value is Record<string, unknown> =>
   typeof value === "object" && value !== null && !Array.isArray(value)
@@ -660,6 +641,49 @@ const readJson = (path: string): Either.Either<unknown, ManagerSessionError> =>
         }),
     }),
   )
+
+const publishExclusiveJson = (
+  directory: string,
+  name: string,
+  value: unknown,
+): Either.Either<"created" | "existing", ManagerSessionError> =>
+  Either.gen(function* () {
+    const payload = yield* io(() => JSON.stringify(value))
+    if (typeof payload !== "string")
+      return yield* failure("io", "Manager state could not be serialized.")
+
+    const temporary = yield* io(() =>
+      join(directory, `pending-${randomUUID()}`),
+    )
+    const fd = yield* io(() =>
+      openSync(
+        temporary,
+        constants.O_WRONLY | constants.O_CREAT | constants.O_EXCL,
+        0o600,
+      ),
+    )
+    const written = io(() => writeFileSync(fd, payload))
+    const closed = io(() => closeSync(fd))
+
+    const published = Either.flatMap(
+      Either.flatMap(written, () => closed),
+      () => {
+        const linked = Either.try({
+          try: () => linkSync(temporary, join(directory, name)),
+          catch: (error): unknown => error,
+        })
+        if (Either.isRight(linked)) return Either.right("created" as const)
+        if (record(linked.left) && linked.left.code === "EEXIST")
+          return Either.right("existing" as const)
+        return failure("io", "Manager state could not be published.")
+      },
+    )
+
+    const removed = io(() => unlinkSync(temporary))
+    if (Either.isLeft(published)) return yield* published
+    yield* removed
+    return published.right
+  })
 
 const atomicJson = (
   directory: string,
