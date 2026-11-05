@@ -129,12 +129,9 @@ export const takeNativeManagerCheckIn = (
     yield* privateDirectory(root)
     const names = yield* io(() => readdirSync(root))
     for (const name of names
-      .filter(
-        name =>
-          /^[0-9a-f]{24}$/u.test(name) &&
-          existsSync(join(root, name, "check-ins")),
-      )
+      .filter(name => /^[0-9a-f]{24}$/u.test(name))
       .sort()) {
+      if (!existsSync(join(root, name, "check-ins"))) continue
       const directory = join(root, name)
       yield* privateDirectory(directory)
       const stored = yield* readJson(join(directory, "scope.json"))
@@ -506,15 +503,15 @@ const nativeCheckIns = (
         yield* privateDirectory(requests)
         yield* privateDirectory(receipts)
         const names = yield* io(() => readdirSync(requests))
+        let eligible = 0
         for (const name of names
           .filter(
-            name =>
-              name.endsWith(".json") &&
-              checkInId(name.slice(0, -5)) &&
-              !existsSync(join(receipts, name)),
+            name => name.endsWith(".json") && checkInId(name.slice(0, -5)),
           )
-          .sort()
-          .slice(0, 32)) {
+          .sort()) {
+          if (existsSync(join(receipts, name))) continue
+          if (eligible === 32) break
+          eligible += 1
           const id = name.slice(0, -5)
           const current = yield* receipt(id, now)
           if (!current || current.status !== "queued") continue
