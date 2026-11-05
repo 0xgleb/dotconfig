@@ -46,6 +46,7 @@ const field = (id: string, name: string, backing: string | null) => ({
   issueField:
     backing === null ? null : { __typename: "IssueFieldNumber", id: backing },
 })
+
 const numeric = (
   project: GitHubSchedulingProject,
   id: string,
@@ -65,12 +66,14 @@ const numeric = (
             ? null
             : { __typename: "IssueFieldNumberValue", value },
       }
+
 const viewer = { id: "fixture-viewer-id", login: "0xgleb" }
 const unassigned = {
   nodes: [],
   totalCount: 0,
   pageInfo: { hasNextPage: false, endCursor: null },
 }
+
 const statusField = (project: GitHubSchedulingProject) => ({
   __typename: "ProjectV2SingleSelectField",
   id: bindings[project].status,
@@ -78,6 +81,7 @@ const statusField = (project: GitHubSchedulingProject) => ({
   dataType: "SINGLE_SELECT",
   options: [{ id: "47fc9ee4", name: bindings[project].inProgress }],
 })
+
 const issueItem = (
   project: GitHubSchedulingProject = "personal",
   patch: Readonly<Record<string, unknown>> = {},
@@ -97,6 +101,7 @@ const issueItem = (
   status: null,
   ...patch,
 })
+
 const envelope = (
   project: GitHubSchedulingProject = "personal",
   nodes: readonly unknown[] = [],
@@ -125,18 +130,22 @@ const envelope = (
     },
   }
 }
+
 const right = <A>(result: Either.Either<A, GitHubReadError>): A => {
   assert.ok(Either.isRight(result))
   return result.right
 }
+
 const code = <A>(result: Either.Either<A, GitHubReadError>) => {
   assert.ok(Either.isLeft(result))
   return result.left.code
 }
+
 const query = (
   project: GitHubSchedulingProject = "personal",
   limit = 10,
 ): GitHubProjectQuery => ({ project, page: { limit } })
+
 const read = (
   payload: unknown,
   project: GitHubSchedulingProject = "personal",
@@ -684,6 +693,7 @@ test("Project cursors distinguish final cursors from missing or nonadvancing con
       page: { limit: 1, after: "before" },
     }),
   )
+
   const payload = (pageInfo: unknown) =>
     JSON.stringify(envelope("personal", [], { items: { nodes: [], pageInfo } }))
 
@@ -698,6 +708,7 @@ test("Project cursors distinguish final cursors from missing or nonadvancing con
       { hasNextPage: false, endCursor },
     )
   }
+
   for (const endCursor of [null, "", "before"]) {
     assert.equal(
       code(
@@ -709,6 +720,7 @@ test("Project cursors distinguish final cursors from missing or nonadvancing con
       "invalid_response",
     )
   }
+
   assert.deepEqual(
     right(
       decodeGitHubProjectPage(
@@ -738,6 +750,7 @@ test("every continuing Project cursor is usable within the request byte budget",
     assert.deepEqual(page.pageInfo, { hasNextPage: true, endCursor })
     assert.equal(right(next).page.after, endCursor)
   }
+
   for (const endCursor of ["x".repeat(4097), "😀".repeat(1024) + "x"]) {
     assert.equal(
       code(decodeGitHubProjectPage(payload(endCursor), query())),
@@ -759,6 +772,7 @@ test("Project response enforces byte budget before JSON and never accepts partia
     ),
     "capacity",
   )
+
   const error = read({
     ...envelope(),
     errors: [{ message: "fake-private-provider-detail" }],
