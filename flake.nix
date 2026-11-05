@@ -186,6 +186,16 @@
         {
           git-hooks = gitHooks.aarch64-darwin;
 
+          atuin-darwin =
+            assert import ./scripts/atuin-darwin-checks.test.nix {
+              pkgs = self.legacyPackages.aarch64-darwin;
+              upstreamAtuin = pkgs.atuin;
+              nushellCheck = self.checks.aarch64-darwin.nushell-config;
+            };
+            pkgs.runCommand "atuin-darwin-checks" { } ''
+              touch "$out"
+            '';
+
           obsidian-packaging =
             let
               obsidian = self.legacyPackages.aarch64-darwin.obsidian;
