@@ -1,4 +1,10 @@
 import { Data, Effect, Option, Schema } from "effect"
+import {
+  isFibonacciEffort,
+  type FibonacciEffort,
+} from "../shared/fibonacci-effort.ts"
+
+export { isFibonacciEffort, type FibonacciEffort }
 
 export type TodoStatus =
   | "pending"
@@ -10,11 +16,6 @@ export type TodoStatus =
   | "deferred"
 export type SettableTodoStatus = Exclude<TodoStatus, "blocked">
 type ImmediateTodoStatus = Exclude<SettableTodoStatus, "deferred">
-
-declare const fibonacciEffortBrand: unique symbol
-export type FibonacciEffort = number & {
-  readonly [fibonacciEffortBrand]: true
-}
 
 interface TodoBase {
   readonly id: number
@@ -145,21 +146,6 @@ export class TodoInputError extends Data.TaggedError("TodoInputError")<{
 export const MAX_TODOS_PER_PRIORITY = 1
 export const MAX_TODO_REPLIES = 3
 export const MAX_TODO_REPLY_LENGTH = 300
-
-export const isFibonacciEffort = (value: unknown): value is FibonacciEffort => {
-  if (typeof value !== "number" || !Number.isSafeInteger(value) || value < 1)
-    return false
-  if (value === 1) return true
-  let previous = 1
-  let current = 2
-  while (current < value) {
-    if (current > Number.MAX_SAFE_INTEGER - previous) return false
-    const next = previous + current
-    previous = current
-    current = next
-  }
-  return current === value
-}
 
 export class TodoNotFoundError extends Data.TaggedError("TodoNotFoundError")<{
   action:
