@@ -28,10 +28,12 @@
   nixpkgs.overlays = [
     (import ./obsidian-overlay.nix)
     (_final: prev: {
-      # Upstream Darwin-only test workaround; retain all other checks.
-      # https://github.com/NixOS/nixpkgs/issues/573527#issuecomment-6144195587
       atuin = prev.atuin.overrideAttrs (old: {
-        checkFlags = old.checkFlags ++ [ "--skip=filtered_commands_leave_no_captured_output" ];
+        checkFlags = old.checkFlags ++ [
+          # Upstream Darwin capture-test workaround.
+          # https://github.com/NixOS/nixpkgs/issues/573527#issuecomment-6144195587
+          "--skip=filtered_commands_leave_no_captured_output"
+        ];
       });
       # The pinned 6.0.2 pnpm dependency fetch has an incorrect Darwin hash.
       typescript-language-server = prev.typescript-language-server.overrideAttrs (old: {
@@ -78,6 +80,7 @@
       "chatgpt"
       # "coderabbit"
       "font-jetbrains-mono-nerd-font"
+      "ghostty"
       "karabiner-elements"
       # "tailscale-app"
     ];

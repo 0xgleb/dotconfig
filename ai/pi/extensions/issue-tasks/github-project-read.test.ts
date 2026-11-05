@@ -693,7 +693,7 @@ test("Project cursors distinguish final cursors from missing or nonadvancing con
       page: { limit: 1, after: "before" },
     }),
   )
-  
+
   const payload = (pageInfo: unknown) =>
     JSON.stringify(envelope("personal", [], { items: { nodes: [], pageInfo } }))
 
@@ -708,7 +708,7 @@ test("Project cursors distinguish final cursors from missing or nonadvancing con
       { hasNextPage: false, endCursor },
     )
   }
-  
+
   for (const endCursor of [null, "", "before"]) {
     assert.equal(
       code(
@@ -720,7 +720,7 @@ test("Project cursors distinguish final cursors from missing or nonadvancing con
       "invalid_response",
     )
   }
-  
+
   assert.deepEqual(
     right(
       decodeGitHubProjectPage(
@@ -750,7 +750,7 @@ test("every continuing Project cursor is usable within the request byte budget",
     assert.deepEqual(page.pageInfo, { hasNextPage: true, endCursor })
     assert.equal(right(next).page.after, endCursor)
   }
-  
+
   for (const endCursor of ["x".repeat(4097), "😀".repeat(1024) + "x"]) {
     assert.equal(
       code(decodeGitHubProjectPage(payload(endCursor), query())),
@@ -772,7 +772,7 @@ test("Project response enforces byte budget before JSON and never accepts partia
     ),
     "capacity",
   )
-  
+
   const error = read({
     ...envelope(),
     errors: [{ message: "fake-private-provider-detail" }],

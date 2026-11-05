@@ -12,11 +12,6 @@ import { Effect, Either } from "effect"
 import { readPromptFile } from "../shared/prompt-text.ts"
 import { registerManagerBinding } from "../shared/manager-binding.ts"
 import type { TodoRequest } from "../todo/state.ts"
-import {
-  startManagerTaskServer,
-  callManagerTask,
-  type ManagerTaskServer,
-} from "./manager-task-rpc.ts"
 import { decodeManagerSummary, type ManagerSummary } from "./manager-core.ts"
 import {
   openNativeManagerState,
@@ -121,7 +116,6 @@ export const registerNativeManager = (
         }
       : { role: "manager-unavailable", message: target.left.message }
   })
-  let taskServer: ManagerTaskServer | undefined
   let workerGeneration = 0
   const delivering = new Set<string>()
 
@@ -132,12 +126,6 @@ export const registerNativeManager = (
     cancelPolling?.()
     cancelPolling = undefined
     delivering.clear()
-    const previous = taskServer
-    taskServer = undefined
-    if (previous) {
-      const closed = await Effect.runPromise(Effect.either(previous.close))
-      if (Either.isLeft(closed) && activeCtx) notice(activeCtx, closed.left)
-    }
   }
   const managerTarget = (
     ctx: ExtensionContext,
@@ -225,7 +213,6 @@ export const registerNativeManager = (
     ctx: ExtensionContext,
     state: NativeManagerState,
     epoch: string,
-    directory: string,
   ) => {
     let lastLeaf: string | undefined
     const sessionId = ctx.sessionManager.getSessionId()
@@ -257,96 +244,14 @@ export const registerNativeManager = (
     }
     tick()
     cancelPolling = runtime.schedule(tick)
-    if (!state.taskAuthority) {
-      notice(
-        ctx,
-        new ManagerSessionError({
-          code: "unavailable",
-          message:
-            "Direct task authority is unavailable; reload the worker coherently.",
-        }),
-      )
-      return
-    }
-    const started = await Effect.runPromise(
-      Effect.either(
-        startManagerTaskServer({
-          directory,
-          authority: state.taskAuthority,
-          revision: () =>
-            currentScope()
-              ? attempt(() =>
-                  createHash("sha256")
-                    .update(
-                      JSON.stringify([
-                        epoch,
-                        sessionId,
-                        cwd,
-                        worker.priorityId(ctx),
-                        ctx.sessionManager.getBranch().at(-1)?.id ?? null,
-                      ]),
-                    )
-                    .digest("hex"),
-                )
-              : failed(
-                  "stale_revision",
-                  "The primary worker scope changed before task execution.",
-                ),
-          invoke: operation => {
-            if (!currentScope())
-              return failed(
-                "stale_revision",
-                "The primary worker scope is no longer active.",
-              )
-            if (operation.kind === "priorities")
-              return worker.priorities(ctx, operation.text)
-            const todo = worker.todo
-            return todo
-              ? todo(ctx, operation.request)
-              : failed(
-                  "unavailable",
-                  "This worker has not loaded task control.",
-                )
-          },
-        }),
-      ),
-    )
-    if (Either.isLeft(started)) notice(ctx, started.left)
-    else if (!currentScope()) {
-      const closed = await Effect.runPromise(Effect.either(started.right.close))
-      if (Either.isLeft(closed)) notice(ctx, closed.left)
-    } else taskServer = started.right
   }
 
-  const directPriorities = async (
-    ctx: ExtensionContext,
-    text: string,
-    signal?: AbortSignal,
-  ) => {
-    const target = binding(ctx)
-    if (Either.isLeft(target)) return Either.left(target.left)
-    const state = openNativeManagerState(
-      target.right.directory,
-      target.right.scope,
-    )
+  const submitPriorities = (ctx: ExtensionContext, text: string) => {
+    const state = client(ctx)
     if (Either.isLeft(state)) return Either.left(state.left)
-    if (!state.right.taskAuthority)
-      return failed(
-        "unavailable",
-        "Direct task authority is unavailable; reload worker and manager coherently.",
-      )
-    return Effect.runPromise(
-      Effect.either(
-        callManagerTask({
-          directory: target.right.directory,
-          scope: target.right.scope,
-          authority: state.right.taskAuthority,
-          operation: { kind: "priorities", text },
-          timeoutMs: 5000,
-          ...(signal ? { signal } : {}),
-        }),
-      ),
-    )
+    const current = state.right.context()
+    if (Either.isLeft(current)) return Either.left(current.left)
+    return state.right.enqueuePriorities(text, current.right.priorityRevision)
   }
 
   const epochFor = (ctx: ExtensionContext, mode: "restore" | "replace") => {
@@ -381,7 +286,7 @@ export const registerNativeManager = (
       name: "manager_control",
       label: "Manager worker control",
       description:
-        "Select an existing worker using its session ID and cwd from agent_registry, inspect the selection, or directly persist confirmed priorities and return the worker result. Does not start worker rounds.",
+        "Select an existing worker using its session ID and cwd from agent_registry or inspect the selection. Legacy priority submission retains its typed unavailable result; use direct task control. Does not start worker rounds.",
       parameters: Type.Object({
         action: Type.Union([
           Type.Literal("select"),
@@ -452,7 +357,7 @@ export const registerNativeManager = (
                 "Priorities require an explicit order of task IDs or clear.",
             }),
           )
-        const result = await directPriorities(ctx, params.order, _signal)
+        const result = submitPriorities(ctx, params.order)
         if (Either.isLeft(result))
           return controlError(
             new ManagerSessionError({
@@ -460,16 +365,12 @@ export const registerNativeManager = (
               message: `Worker ${selected.right.cwd} (session ${selected.right.workerSessionId}): ${result.left.message}`,
             }),
           )
-        return {
-          content: [
-            {
-              type: "text" as const,
-              text: `Worker ${selected.right.cwd} (session ${selected.right.workerSessionId}): ${result.right.message}`,
-            },
-          ],
-          isError: result.right.outcome !== "completed",
-          details: { outcome: result.right.outcome, ...selected.right },
-        }
+        return controlError(
+          new ManagerSessionError({
+            code: "unconfirmed",
+            message: `Worker ${selected.right.cwd} returned priority request ${result.right}; execution is not confirmed.`,
+          }),
+        )
       },
     })
     controlRegistered = true
@@ -495,8 +396,7 @@ export const registerNativeManager = (
     const epoch = epochFor(ctx, mode)
     if (Either.isLeft(state)) notice(ctx, state.left)
     else if (Either.isLeft(epoch)) notice(ctx, epoch.left)
-    else
-      await startWorker(ctx, state.right, epoch.right, target.right.directory)
+    else await startWorker(ctx, state.right, epoch.right)
   }
 
   pi.on("session_start", (_event, ctx) => resume(ctx, "restore"))
@@ -598,15 +498,15 @@ export const registerNativeManager = (
         )
         return
       }
-      const result = await directPriorities(
-        ctx,
-        text.slice("priorities ".length),
-      )
+      const result = submitPriorities(ctx, text.slice("priorities ".length))
       if (Either.isLeft(result)) notice(ctx, result.left)
       else
-        ctx.ui.notify(
-          result.right.message,
-          result.right.outcome === "completed" ? "info" : "warning",
+        notice(
+          ctx,
+          new ManagerSessionError({
+            code: "unconfirmed",
+            message: `Priority request ${result.right} has no confirmed execution.`,
+          }),
         )
     },
     open: async ctx => {
@@ -675,7 +575,7 @@ export const registerNativeManager = (
       await stop()
       activeSessionId = ctx.sessionManager.getSessionId()
       activeCtx = ctx
-      await startWorker(ctx, state.right, epoch.right, target.right.directory)
+      await startWorker(ctx, state.right, epoch.right)
       if (plan.right.kind === "existing") {
         ctx.ui.notify(
           `Manager is running in pane ${plan.right.paneName}.`,

@@ -10,6 +10,10 @@ import type {
 } from "@earendil-works/pi-coding-agent"
 import { Either, Effect } from "effect"
 import {
+  OWNER_ALLOWANCE_MS,
+  OWNER_PROGRESS_CHECK_IN_MS,
+} from "./owner-allowance.ts"
+import {
   registerNativeManager,
   type NativeManagerRuntime,
   type NativeManagerWorker,
@@ -34,7 +38,10 @@ const fixture = (
     readonly reviewCheckIn?: NativeManagerWorker["reviewCheckIn"]
   } = {},
 ) => {
-  const root = options.agentDir ?? mkdtempSync("/tmp/pmn-")
+  const root =
+    options.agentDir ?? mkdtempSync(join(tmpdir(), "pi-manager-profile-test-"))
+  if (!options.agentDir) t.after(() => rmSync(root, { recursive: true }))
+  const priorities = t.mock.fn(() => Either.right("Saved"))
   const ticks: (() => void)[] = []
   const runtime: NativeManagerRuntime = {
     agentDir: root,
@@ -156,7 +163,7 @@ const fixture = (
           roundReport: null,
         }),
       priorityId: () => "initial",
-      priorities: () => Either.right("Saved"),
+      priorities,
     },
     runtime,
   )
@@ -181,7 +188,6 @@ const fixture = (
   syncBuiltinESMExports()
   t.after(async () => {
     await emit("session_shutdown")
-    if (!options.agentDir) rmSync(root, { recursive: true })
     t.mock.restoreAll()
     syncBuiltinESMExports()
   })
@@ -199,10 +205,11 @@ const fixture = (
     ctx,
     ticks,
     seed,
+    priorities,
   }
 }
 
-test("native worker direct priority execution survives a tree switch and stops on shutdown", async t => {
+test("native priority requests retain typed failure without worker mutations across lifecycle changes", async t => {
   const worker = fixture(t)
   await worker.emit("session_start")
   const manager = fixture(t, true, { agentDir: worker.root })
@@ -220,15 +227,41 @@ test("native worker direct priority execution survives a tree switch and stops o
       ),
     )
   const first = await call()
-  assert.equal(first.isError, false)
-  assert.equal(object(first.details).outcome, "completed")
-  assert.match(JSON.stringify(first.content), /Saved/u)
+  assert.equal(first.isError, true)
+  assert.match(JSON.stringify(first.content), /retired/u)
+  assert.equal(worker.priorities.mock.callCount(), 0)
   await worker.emit("session_tree")
-  assert.equal((await call()).isError, false)
+  const changed = await call()
+  assert.equal(changed.isError, true)
+  assert.match(JSON.stringify(changed.content), /retired/u)
   await worker.emit("session_shutdown")
   const stopped = await call()
   assert.equal(stopped.isError, true)
   assert.notEqual(object(stopped.details).outcome, "queued")
+  assert.equal(worker.priorities.mock.callCount(), 0)
+})
+
+test("unfinished native check-in delivery returns unavailable without starting a turn", async t => {
+  const f = fixture(t)
+  await f.emit("session_start")
+  const checkIn = f.registered.checkIn
+  assert.ok(checkIn)
+  const before = f.messages.length
+  const result = checkIn(f.ctx, {
+    window: {
+      version: 1,
+      lastOwnerAt: 1_000,
+      deadlineAt: 1_000 + OWNER_ALLOWANCE_MS,
+      status: "active",
+    },
+    sequence: 1,
+    scheduledAt: 1_000 + OWNER_PROGRESS_CHECK_IN_MS,
+  })
+  assert.ok(Either.isLeft(result))
+  assert.equal(result.left.code, "unavailable")
+  assert.match(result.left.message, /not implemented/u)
+  assert.equal(f.messages.length, before)
+  assert.equal(f.execs.length, 0)
 })
 
 test("manager profile preserves the native editor and exposes registry management", async t => {
@@ -575,10 +608,7 @@ test("opening manager launches the real Pi CLI instead of any custom UI", async 
   assert.equal(args[args.indexOf("--cwd") + 1], workspace)
   assert.ok(lstatSync(workspace).isDirectory())
   assert.equal(lstatSync(workspace).mode & 0o077, 0)
-  assert.equal(
-    args[args.indexOf("--session-dir") + 1],
-    join(f.root, "manager", "global", "sessions"),
-  )
+  assert.equal(args.includes("--session-dir"), false)
   assert.ok(args.includes("--manager"))
   assert.ok(!args.includes("--manager-worker"))
   assert.ok(args.includes("--continue"))
