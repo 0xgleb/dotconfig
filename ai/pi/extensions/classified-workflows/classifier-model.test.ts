@@ -20,7 +20,7 @@ test("an explicit environment override still wins before tier candidates", () =>
 })
 
 test("classifier and goal evaluator accept the session model context", () => {
-  assert.match(source, /Pick<ExtensionContext, "cwd" \| "getModel">/)
+  assert.match(source, /Pick<ExtensionContext, "cwd" \| "model">/)
 })
 
 test("each classifier attempt runs on its own tier candidate", () => {
@@ -30,6 +30,7 @@ test("each classifier attempt runs on its own tier candidate", () => {
   assert.match(body, /attempt < attempts/)
   assert.match(
     body,
-    /"--model",\s*candidates\[Math\.min\(attempt, candidates\.length - 1\)\]/,
+    /const candidate = candidates\[Math\.min\(attempt, candidates\.length - 1\)\]/,
   )
+  assert.match(body, /candidate \? \["--model", candidate\] : \[\]/)
 })
