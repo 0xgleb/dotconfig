@@ -297,7 +297,6 @@ test("manager profile preserves the native editor and exposes registry managemen
   assert.deepEqual(f.active.at(-1), [
     "agent_registry",
     "task",
-    "todo",
     "manager_control",
     "read",
     "bash",
@@ -331,7 +330,6 @@ test("manager profile preserves the native editor and exposes registry managemen
     }),
     undefined,
   )
-  assert.equal(await f.emit("tool_call", { toolName: "todo" }), undefined)
   const denied = object(
     await f.emit("tool_call", { toolName: "agent_workspace" }),
   )
@@ -399,7 +397,6 @@ for (const profile of [true, "global"] as const) {
 
     await f.emit("session_start")
     assert.ok(f.active.at(-1)?.includes("task"))
-    assert.ok(f.active.at(-1)?.includes("todo"))
 
     if (profile === "global") {
       const binding = getManagerBinding(f.pi, f.ctx)
@@ -444,7 +441,6 @@ for (const profile of [true, "global"] as const) {
       prompt,
       /does not require selecting or connecting to a worker/u,
     )
-    assert.equal(await f.emit("tool_call", { toolName: "todo" }), undefined)
     assert.equal(
       object(await f.emit("tool_call", { toolName: "agent_workspace" })).block,
       true,
@@ -601,7 +597,6 @@ for (const profile of [true, "global"] as const) {
     }
     for (const toolName of [
       "task",
-      "todo",
       "manager_control",
       "read",
       "bash",
@@ -677,7 +672,6 @@ test("global manager selects an existing worker without changing native UI or st
   assert.deepEqual(f.active.at(-1), [
     "agent_registry",
     "task",
-    "todo",
     "manager_control",
     "read",
     "bash",
