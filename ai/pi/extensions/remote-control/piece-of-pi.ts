@@ -72,7 +72,11 @@ import {
   type TelegramReaction,
   type TelegramUpdate,
 } from "./telegram.ts"
-import { cleanupVoiceDirectory, runWhisperCli } from "./voice-process.ts"
+import {
+  cleanupVoiceDirectory,
+  runWhisperCli,
+  withVoiceDirectory,
+} from "./voice-process.ts"
 import {
   decodeWhisperTranscript,
   replaceVoiceMarker,
@@ -625,7 +629,7 @@ const transcribeTelegramVoice = (
   }
   return downloadTelegramVoice(runtime, fileId).pipe(
     Effect.flatMap(bytes =>
-      Effect.acquireUseRelease(
+      withVoiceDirectory(
         Effect.tryPromise({
           try: () => mkdtemp(join(tmpdir(), "piece-of-pi-voice-")),
           catch: () =>
@@ -674,7 +678,7 @@ const transcribeTelegramVoice = (
             Effect.flatMap(decodeWhisperTranscript),
           )
         },
-        cleanupVoiceDirectory,
+        directory => cleanupVoiceDirectory(directory),
       ),
     ),
   )
