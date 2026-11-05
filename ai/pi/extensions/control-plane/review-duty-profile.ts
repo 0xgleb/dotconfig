@@ -124,14 +124,9 @@ const PROFILE_OWNERS: Readonly<Record<ReviewDutyProfile, readonly string[]>> = {
   "personal-review": ["0xgleb"],
 }
 
-/**
- * Repository each profile reviews without being asked. The literals pass
- * `repositorySlug` here rather than at the comparison, so a table entry that
- * is not an `owner/name` identifier is refused where it is written instead of
- * silently never matching.
- */
+/** Automatic review targets use the same identifier boundary as requested repositories. */
 const AUTOMATIC_REPOSITORIES: Readonly<
-  Partial<Record<ReviewDutyProfile, RepositorySlug>>
+  Partial<Record<ReviewDutyProfile, RepositorySlug | undefined>>
 > = {
   "dataclique-review": repositorySlug("dataclique/yielduck"),
   "personal-review": repositorySlug("0xgleb/dotconfig"),
