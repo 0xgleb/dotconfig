@@ -65,7 +65,6 @@
       "./release-cadence/index.ts",
       "./request-observability/index.ts",
       "./safe-compaction/index.ts",
-      "./todo/index.ts",
       "./usage-governor/index.ts"
     ]
   },
