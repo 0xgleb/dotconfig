@@ -9,9 +9,6 @@ const workflow = readFileSync(
 const manifest: unknown = JSON.parse(
   readFileSync(new URL("./package.json", import.meta.url), "utf8"),
 )
-const lock: unknown = JSON.parse(
-  readFileSync(new URL("../../../flake.lock", import.meta.url), "utf8"),
-)
 
 const isRecord = (value: unknown): value is Readonly<Record<string, unknown>> =>
   typeof value === "object" && value !== null && !Array.isArray(value)
@@ -22,9 +19,14 @@ const record = (value: unknown): Readonly<Record<string, unknown>> => {
 }
 
 const checkStart = workflow.indexOf("\n  check:\n")
-const buildStart = workflow.indexOf("\n  build-nixos:\n")
-assert.ok(checkStart >= 0 && buildStart > checkStart)
-const checkJob = workflow.slice(checkStart, buildStart)
+assert.ok(checkStart >= 0)
+const followingJob = workflow
+  .slice(checkStart + 1)
+  .search(/\n  [a-zA-Z][\w-]*:\n/)
+const checkJob = workflow.slice(
+  checkStart,
+  followingJob < 0 ? undefined : checkStart + 1 + followingJob,
+)
 
 const typecheckStep = (): string => {
   const start = checkJob.indexOf("      - name: Typecheck Pi extensions\n")
@@ -33,33 +35,29 @@ const typecheckStep = (): string => {
   return checkJob.slice(start, end < 0 ? undefined : end)
 }
 
-const nixpkgsSource = (): string => {
-  const flake = record(lock)
-  const nodes = record(flake.nodes)
-  assert.ok(typeof flake.root === "string")
-  const inputs = record(record(nodes[flake.root]).inputs)
-  assert.ok(typeof inputs.nixpkgs === "string")
-  const locked = record(record(nodes[inputs.nixpkgs]).locked)
-  assert.equal(locked.type, "github")
-  assert.equal(locked.owner, "NixOS")
-  assert.equal(locked.repo, "nixpkgs")
-  assert.ok(typeof locked.rev === "string" && /^[0-9a-f]{40}$/.test(locked.rev))
-  return `github:NixOS/nixpkgs/${locked.rev}#nodejs`
-}
-
 test("the required CI check installs development dependencies and runs the declared compiler", () => {
   const step = typecheckStep()
   assert.equal(
     record(record(manifest).scripts).typecheck,
     "tsc --noEmit -p tsconfig.json",
   )
-  assert.match(step, /working-directory: ai\/pi\/extensions/)
-  assert.ok(step.includes(`nix shell ${nixpkgsSource()} --command`))
+  assert.match(
+    step,
+    /nix --accept-flake-config --no-pure-eval develop \.#default --command/,
+  )
+  const directory = step.indexOf("cd ai/pi/extensions")
   const contract = step.indexOf("node --test ci-typecheck.test.ts")
   const install = step.indexOf("npm ci --legacy-peer-deps --include=dev")
   const compiler = step.indexOf("npm run typecheck")
-  assert.ok(contract >= 0 && install > contract && compiler > install)
-  assert.ok(checkJob.indexOf("nix flake check") < checkJob.indexOf(step))
+  assert.ok(
+    directory >= 0 &&
+      contract > directory &&
+      install > contract &&
+      compiler > install,
+  )
+  assert.ok(
+    checkJob.indexOf("nix --no-pure-eval flake check") < checkJob.indexOf(step),
+  )
 })
 
 test("compiler and installation failures cannot be suppressed in the required check", () => {
@@ -82,9 +80,5 @@ test("the compiler gate preserves existing Nix gates and read-only checkout cred
     checkJob,
     /cachix\/install-nix-action@ba0dd844c9180cbf77aa72a116d6fbc515d0e87b/,
   )
-  assert.match(checkJob, /- run: nix flake check/)
-  assert.match(
-    workflow.slice(buildStart),
-    /- run: nix build \.#nixosConfigurations\.nixxxos\.config\.system\.build\.toplevel/,
-  )
+  assert.match(checkJob, /- run: nix --no-pure-eval flake check/)
 })

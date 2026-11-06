@@ -25,9 +25,9 @@ jobs:
 
       - name: Typecheck Pi extensions
         timeout-minutes: 10
-        working-directory: ai/pi/extensions
         run: |
-          nix shell github:NixOS/nixpkgs/02c087f3fe673c9e317f206a627cb6b910336dbe#nodejs --command bash -euo pipefail -c '
+          nix --accept-flake-config --no-pure-eval develop .#default --command bash -euo pipefail -c '
+            cd ai/pi/extensions
             node --test ci-typecheck.test.ts
             npm ci --legacy-peer-deps --include=dev
             npm run typecheck
