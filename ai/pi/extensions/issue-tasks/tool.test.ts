@@ -1,7 +1,6 @@
 import assert from "node:assert/strict"
 import { execFileSync } from "node:child_process"
 import { mkdirSync, mkdtempSync, realpathSync, rmSync } from "node:fs"
-import { createRequire } from "node:module"
 import { dirname, join } from "node:path"
 import test, { mock } from "node:test"
 import { DatabaseSync } from "node:sqlite"
@@ -34,26 +33,43 @@ const hostRoot = join(
   dirname(dirname(piExecutable)),
   "lib/node_modules/pi-monorepo",
 )
-const host = createRequire(join(hostRoot, "package.json"))
-const { createJiti } = await import(
-  pathToFileURL(join(hostRoot, "dist/core/extensions/jiti-loader.js")).href
+const sdk = await import(
+  pathToFileURL(join(hostRoot, "dist/bundle/index.js")).href
 )
-const loader = createJiti(import.meta.url, {
-  alias: { typebox: host.resolve("typebox") },
-  moduleCache: false,
-  fsCache: false,
-})
-const tools: typeof import("./tool.ts") = await loader.import(
-  fileURLToPath(new URL("./tool.ts", import.meta.url)),
+const bridgeParent = fileURLToPath(
+  new URL("../../../../.tmp/task-renderer-tests/", import.meta.url),
 )
-const { validateToolArguments } = await import(
-  pathToFileURL(
-    join(
-      hostRoot,
-      "node_modules/@earendil-works/pi-ai/dist/utils/validation.js",
-    ),
-  ).href
+mkdirSync(bridgeParent, { recursive: true, mode: 0o700 })
+const bridgeRoot = mkdtempSync(join(bridgeParent, "sdk-host-"))
+const eventBus = sdk.createEventBus()
+const captured: unknown[] = []
+const unsubscribe = eventBus.on("issue-task-test-host", (value: unknown) =>
+  captured.push(value),
 )
+
+try {
+  const loaded = await sdk.discoverAndLoadExtensions(
+    [fileURLToPath(new URL("./test-fixtures/sdk-host.ts", import.meta.url))],
+    bridgeRoot,
+    bridgeRoot,
+    eventBus,
+  )
+  assert.deepEqual(loaded.errors, [])
+  assert.equal(loaded.extensions.length, 1)
+  assert.equal(captured.length, 1)
+} finally {
+  unsubscribe()
+  rmSync(bridgeRoot, { recursive: true })
+}
+
+const bridge = captured[0] as {
+  readonly version: string
+  readonly visibleWidth: (text: string) => number
+  readonly tools: typeof import("./tool.ts")
+  readonly validateToolArguments: (typeof import("@earendil-works/pi-ai"))["validateToolArguments"]
+}
+assert.equal(bridge.version, sdk.VERSION)
+const { tools, validateToolArguments } = bridge
 
 const rawIssue = { repository: "0xgleb/dotconfig", number: 1 }
 const fixtureParent = fileURLToPath(
@@ -1394,6 +1410,7 @@ test("readMany output failure retains complete qualified results without failed-
     assert.deepEqual(result.details, {
       outcome: { kind: "pages", pages: [{ issue: issue(), page: null }] },
       output: "unavailable",
+      invocation: { toolCallId: "fixture-call", sessionId: "fixture-reader" },
     })
     assert.notEqual(result.isError, true)
     assert.ok(!JSON.stringify(result).includes("Private output failure"))
@@ -1475,6 +1492,48 @@ test("actual SDK and domain decoder reject unsupported filter fields and actions
       Option.isNone(
         await Effect.runPromise(store.readTasks(issue(), { limit: 1 })),
       ),
+    )
+  }))
+
+test("installed SDK shell renders task names and expands the retained native receipt", async () =>
+  fixture(async store => {
+    const tool = register(ordinaryOptions(store))
+    const added = await invoke(tool, addRequest, "sdk-render-add")
+    assert.equal(added.details.outcome.kind, "saved")
+    if (added.details.outcome.kind !== "saved")
+      assert.fail("Expected saved task")
+    const created = added.details.outcome.result.created[0]
+    assert.ok(created)
+    const args = { action: "read", issue: rawIssue, page: { limit: 10 } }
+    const result = await invoke(tool, args, "sdk-render-read")
+    sdk.initTheme("dark")
+    const component = new sdk.ToolExecutionComponent(
+      "task",
+      "sdk-render-read",
+      args,
+      { outputPad: 1 },
+      tool,
+      { requestRender: () => {} },
+      process.cwd(),
+    )
+    component.setArgsComplete()
+    component.markExecutionStarted()
+    component.updateResult({ ...result, isError: result.isError === true })
+    const compact = component.render(80).join("\n")
+    assert.match(compact, /Task · read/)
+    assert.match(compact, /Requirement/)
+    assert.match(compact, /todo/)
+    assert.doesNotMatch(compact, new RegExp(created.id))
+    component.setExpanded(true)
+    const expanded = component.render(80).join("\n")
+    assert.match(expanded, /Requirement/)
+    assert.match(expanded, new RegExp(created.id))
+    assert.match(expanded, /fixture-reader/)
+    assert.match(expanded, /sdk-render-read/)
+    assert.ok(
+      component
+        .render(24)
+        .every((line: string) => bridge.visibleWidth(line) <= 24),
     )
   }))
 
