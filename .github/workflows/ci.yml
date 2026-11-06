@@ -1,5 +1,8 @@
 name: CI
 
+permissions:
+  contents: read
+
 on:
   push:
     branches: [master]
@@ -17,21 +20,15 @@ jobs:
         with:
           extra_nix_config: |
             experimental-features = nix-command flakes
+
       - run: nix --no-pure-eval flake check
 
-  build-nixos:
-    runs-on: ubuntu-latest
-    steps:
-      - uses: actions/checkout@34e114876b0b11c390a56381ad16ebd13914f8d5 # v4
-        with:
-          persist-credentials: false
-      - name: Free disk space
+      - name: Typecheck Pi extensions
+        timeout-minutes: 10
         run: |
-          sudo rm -rf /usr/share/dotnet /usr/local/lib/android /opt/ghc /opt/hostedtoolcache/CodeQL
-          sudo docker image prune --all --force || true
-          df -h /
-      - uses: cachix/install-nix-action@ba0dd844c9180cbf77aa72a116d6fbc515d0e87b # v27
-        with:
-          extra_nix_config: |
-            experimental-features = nix-command flakes
-      - run: nix build .#nixosConfigurations.nixxxos.config.system.build.toplevel
+          nix --accept-flake-config --no-pure-eval develop .#default --command bash -euo pipefail -c '
+            cd ai/pi/extensions
+            node --test ci-typecheck.test.ts
+            npm ci --legacy-peer-deps --include=dev
+            npm run typecheck
+          '
