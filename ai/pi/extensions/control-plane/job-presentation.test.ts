@@ -2,9 +2,13 @@ import assert from "node:assert/strict"
 import test from "node:test"
 import type { Job } from "./job-runtime.ts"
 import { jobSchedulePresentation } from "./job-presentation.ts"
+import { toJobId } from "./harness-protocol.ts"
+
+const fixtureId = toJobId("job-a")
+assert.ok(fixtureId !== undefined)
 
 const baseJob = {
-  id: "job-a",
+  id: fixtureId,
   spec: {
     kind: "review-duty.scan" as const,
     payload: { profile: "st0x-review" as const },
