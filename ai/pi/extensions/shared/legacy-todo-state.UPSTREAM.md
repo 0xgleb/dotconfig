@@ -1,6 +1,6 @@
 # Upstream attribution
 
-The todo extension is adapted from
+The historical todo-state decoder is adapted from
 [`diegopetrucci/pi-extensions`](https://github.com/diegopetrucci/pi-extensions/tree/966ac95f8d717be6f763c62c88f4beb92b6554d3/extensions/todo)
 at commit `966ac95f8d717be6f763c62c88f4beb92b6554d3`.
 

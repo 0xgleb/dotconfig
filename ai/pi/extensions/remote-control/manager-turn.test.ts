@@ -42,6 +42,36 @@ test("management prompt permits coordination without a preliminary text acknowle
   )
 })
 
+test("management turns retain the narrow GitHub CLI exception without registry authority", () => {
+  const prompt = Effect.runSync(
+    remoteTurnPrompt(
+      "List issues in the authorized repository.",
+      "management",
+      remoteMessageSource("telegram-owner-42"),
+    ),
+  ).replace(/\s+/gu, " ")
+
+  assert.match(
+    prompt,
+    /Use bash for owner-authorized GitHub issue operations through gh/u,
+  )
+  assert.match(
+    prompt,
+    /General shell execution, coding and operational worker launches remain excluded/u,
+  )
+  assert.match(
+    prompt,
+    /Do not delegate registry work or change registry roles or request lifecycle/u,
+  )
+  assert.match(prompt, /Use write and edit for owner-authorized manager work/u)
+  assert.match(prompt, /necessary formatting and verification of those files/u)
+  assert.match(
+    prompt,
+    /Use workflow for bounded, read-only assistance with authorized manager work/u,
+  )
+  assert.doesNotMatch(prompt, /Do not use coding or shell tools/u)
+})
+
 test("management tool-call commentary cannot complete the turn or restore tools early", async () => {
   const start = source.indexOf('  pi.on("turn_end"')
   const end = source.indexOf('  pi.on("agent_end"', start)
@@ -71,9 +101,13 @@ test("management tool-call commentary cannot complete the turn or restore tools 
           { type: "text", text: "I will check." },
           {
             type: "toolCall",
-            name: "todo",
+            name: "task",
             id: "t",
-            arguments: { action: "list" },
+            arguments: {
+              action: "read",
+              issue: { repository: "owner/project", number: 1 },
+              page: { limit: 20 },
+            },
           },
         ],
       },
@@ -94,8 +128,12 @@ test("tool-call commentary is not a final reply even at agent_end", () => {
           {
             type: "toolCall",
             id: "t",
-            name: "todo",
-            arguments: { action: "list" },
+            name: "task",
+            arguments: {
+              action: "read",
+              issue: { repository: "owner/project", number: 1 },
+              page: { limit: 20 },
+            },
           },
         ],
       },

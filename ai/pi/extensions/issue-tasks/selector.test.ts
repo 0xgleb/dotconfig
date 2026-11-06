@@ -2,7 +2,6 @@ import assert from "node:assert/strict"
 import test from "node:test"
 import { Effect, Either } from "effect"
 import { isFibonacciEffort } from "../shared/fibonacci-effort.ts"
-import { isFibonacciEffort as legacyFibonacciEffort } from "../todo/state.ts"
 import { decodeGitHubProjectPage } from "./github-project-read.ts"
 import {
   MAX_ISSUE_SELECTION_CANDIDATES,
@@ -400,9 +399,7 @@ test("throwing external getters become sanitized typed failures", () => {
   assert.doesNotMatch(result.left.message, /private caller detail/)
 })
 
-test("shared Fibonacci validation preserves the legacy import and all safe boundaries", () => {
-  assert.equal(legacyFibonacciEffort, isFibonacciEffort)
-
+test("shared Fibonacci validation enforces safe numeric boundaries", () => {
   for (const value of [1, 2, 3, 5, 8, 13, 8944394323791464])
     assert.equal(isFibonacciEffort(value), true)
   for (const value of [
