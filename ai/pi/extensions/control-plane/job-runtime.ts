@@ -132,10 +132,14 @@ interface TerminalFields extends JobIdentity {
 export type RetryingJob = JobBase & {
   readonly state: "retry_wait"
   readonly lastAttemptSummary: string
+  readonly result?: never
 }
 
 export type Job =
-  | (JobBase & { readonly state: "scheduled" | "ready" })
+  | (JobBase & {
+      readonly state: "scheduled" | "ready"
+      readonly result?: never
+    })
   | RetryingJob
   | (JobBase & {
       readonly state: "leased"
@@ -159,10 +163,12 @@ export type TerminalJob =
   | (TerminalFields & {
       readonly spec: ResultlessJobSpec
       readonly state: "succeeded"
+      readonly result?: never
     })
   | (TerminalFields & {
       readonly spec: RegisteredJobSpec
       readonly state: "failed" | "cancelled"
+      readonly result?: never
     })
   | (TerminalFields & {
       readonly spec: HarnessReviewSpec
