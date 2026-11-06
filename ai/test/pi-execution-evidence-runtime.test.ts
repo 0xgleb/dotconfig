@@ -40,11 +40,13 @@ test("classifier collects and selects tool evidence after command policy removal
   assert.equal(evidence.length, 1)
   assert.match(evidence[0] ?? "", /snapshot=git-status/)
   assert.deepEqual(selectRelevantExecutionEvidence(evidence, subject), evidence)
-  assert.deepEqual(
-    selectRelevantExecutionEvidence(evidence, {
-      ...subject,
-      input: { command: "git -C /missing status --short" },
-    }),
-    [],
-  )
+  const unknownScopeContext = selectRelevantExecutionEvidence(evidence, {
+    ...subject,
+    input: { command: "git -C /missing status --short" },
+  })
+  assert.equal(unknownScopeContext.length, 1)
+  const header = (unknownScopeContext[0] ?? "").split(" input=")[0] ?? ""
+  assert.match(header, / context=unscoped$/)
+  assert.doesNotMatch(header, / (?:scope|snapshot|commandScope|verification)=/)
+  assert.match(unknownScopeContext[0] ?? "", / M tracked\.ts/)
 })
