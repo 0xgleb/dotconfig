@@ -35,9 +35,14 @@ export const enterRemoteToolGuard = (
       ? priorTools.filter(
           tool =>
             tool === "agent_registry" ||
+            tool === "task" ||
             tool === "todo" ||
             tool === "manager_control" ||
             tool === "read" ||
+            tool === "bash" ||
+            tool === "write" ||
+            tool === "edit" ||
+            tool === "workflow" ||
             tool === "ask_user" ||
             tool === "report_owner",
         )

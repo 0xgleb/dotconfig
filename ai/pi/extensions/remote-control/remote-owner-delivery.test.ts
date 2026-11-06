@@ -70,6 +70,9 @@ for (const [requesterId, isOwner, isManager] of [
       "manager_control",
       "bash",
       "read",
+      "write",
+      "edit",
+      "workflow",
     ]
     const listeners = new Map<string, ((value: unknown) => void)[]>()
     const pi = {
@@ -144,7 +147,18 @@ for (const [requesterId, isOwner, isManager] of [
     assert.ok(queued)
     assert.deepEqual(
       activeTools,
-      isOwner && isManager ? ["agent_registry", "todo", "manager_control"] : [],
+      isOwner && isManager
+        ? [
+            "agent_registry",
+            "todo",
+            "manager_control",
+            "bash",
+            "read",
+            "write",
+            "edit",
+            "workflow",
+          ]
+        : [],
     )
     assert.equal(ingressObservations, 0, "native mode never renews at ingress")
     assert.ok(

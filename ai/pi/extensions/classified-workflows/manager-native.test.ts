@@ -296,10 +296,18 @@ test("manager profile preserves the native editor and exposes registry managemen
   )
   assert.deepEqual(f.active.at(-1), [
     "agent_registry",
+    "task",
     "todo",
     "manager_control",
     "read",
+    "bash",
+    "write",
+    "edit",
     "ask_user",
+    "report_owner",
+    "web_search",
+    "web_fetch",
+    "workflow",
   ])
   const response = object(result)
   assert.equal(typeof response.systemPrompt, "string")
@@ -324,7 +332,9 @@ test("manager profile preserves the native editor and exposes registry managemen
     undefined,
   )
   assert.equal(await f.emit("tool_call", { toolName: "todo" }), undefined)
-  const denied = object(await f.emit("tool_call", { toolName: "bash" }))
+  const denied = object(
+    await f.emit("tool_call", { toolName: "agent_workspace" }),
+  )
   assert.equal(denied.block, true)
 })
 
@@ -382,6 +392,200 @@ for (const profile of [true, "global"] as const) {
     }
   })
 
+  test(`${name} manager admits qualified issue tasks without a live worker`, async t => {
+    const f = fixture(t, profile)
+
+    const issue = { repository: "0xgleb/dotconfig", number: 170 }
+
+    await f.emit("session_start")
+    assert.ok(f.active.at(-1)?.includes("task"))
+    assert.ok(f.active.at(-1)?.includes("todo"))
+
+    if (profile === "global") {
+      const binding = getManagerBinding(f.pi, f.ctx)
+
+      assert.ok(Either.isRight(binding))
+      assert.equal(binding.right.role, "manager-unavailable")
+    }
+
+    const policy = object(
+      await f.emit("before_agent_start", {
+        systemPrompt: "Native Pi base",
+        prompt: "Read and update this issue's local tasks.",
+      }),
+    )
+
+    for (const input of [
+      { action: "read", issue, page: { limit: 1 } },
+      {
+        action: "apply",
+        issues: [issue],
+        operations: [
+          { op: "add", issue, key: "one", text: "Approved requirement" },
+        ],
+      },
+    ]) {
+      const original = structuredClone(input)
+
+      assert.equal(
+        await f.emit("tool_call", { toolName: "task", input }),
+        undefined,
+      )
+      assert.deepEqual(input, original)
+    }
+
+    const prompt = String(policy.systemPrompt).replace(/\s+/gu, " ")
+
+    assert.match(
+      prompt,
+      /Use task for issue-associated work addressed by repository-qualified GitHub issue/u,
+    )
+    assert.match(
+      prompt,
+      /does not require selecting or connecting to a worker/u,
+    )
+    assert.equal(await f.emit("tool_call", { toolName: "todo" }), undefined)
+    assert.equal(
+      object(await f.emit("tool_call", { toolName: "agent_workspace" })).block,
+      true,
+    )
+    assert.equal(
+      object(
+        await f.emit("tool_call", {
+          toolName: "agent_registry",
+          input: { action: "delegate" },
+        }),
+      ).block,
+      true,
+    )
+    assert.deepEqual(f.execs, [])
+    assert.deepEqual(f.messages, [])
+  })
+
+  test(`${name} manager exposes workflow for authorized management assistance`, async t => {
+    const f = fixture(t, profile)
+
+    await f.emit("session_start")
+
+    const policy = object(
+      await f.emit("before_agent_start", {
+        systemPrompt: "Native Pi base",
+        prompt: "Independently review the issue draft.",
+      }),
+    )
+
+    assert.ok(f.active.at(-1)?.includes("workflow"))
+    assert.equal(
+      await f.emit("tool_call", {
+        toolName: "workflow",
+        input: {
+          code: 'return await agent("Review supplied draft", { tools: ["read"] })',
+          maxAgents: 1,
+          concurrency: 1,
+          agentTimeoutMs: 180000,
+          workflowTimeoutMs: 180000,
+          retries: 0,
+          tokenBudget: 80000,
+          background: true,
+          label: "Review manager draft",
+        },
+      }),
+      undefined,
+    )
+    assert.match(
+      String(policy.systemPrompt).replace(/\s+/gu, " "),
+      /Use workflow for bounded, read-only assistance with authorized manager work/u,
+    )
+    assert.equal(
+      object(await f.emit("tool_call", { toolName: "agent_workspace" })).block,
+      true,
+    )
+    assert.deepEqual(f.execs, [])
+    assert.deepEqual(f.messages, [])
+  })
+
+  test(`${name} manager exposes file tools for authorized manager work`, async t => {
+    const f = fixture(t, profile)
+
+    await f.emit("session_start")
+
+    const policy = object(
+      await f.emit("before_agent_start", {
+        systemPrompt: "Native Pi base",
+        prompt: "Save the approved manager draft.",
+      }),
+    )
+
+    for (const toolName of ["write", "edit"]) {
+      assert.ok(f.active.at(-1)?.includes(toolName), toolName)
+      const input =
+        toolName === "write"
+          ? { path: "manager-draft.md", content: "Approved draft" }
+          : {
+              path: "manager-draft.md",
+              edits: [{ oldText: "Draft", newText: "Approved draft" }],
+            }
+
+      assert.equal(await f.emit("tool_call", { toolName, input }), undefined)
+    }
+
+    assert.match(
+      String(policy.systemPrompt).replace(/\s+/gu, " "),
+      /Use write and edit for owner-authorized manager work/u,
+    )
+    assert.match(
+      String(policy.systemPrompt).replace(/\s+/gu, " "),
+      /necessary formatting and verification of those files/u,
+    )
+    assert.equal(
+      object(await f.emit("tool_call", { toolName: "agent_workspace" })).block,
+      true,
+    )
+    assert.deepEqual(f.execs, [])
+    assert.deepEqual(f.messages, [])
+  })
+
+  test(`${name} manager exposes existing bash for GitHub issue maintenance`, async t => {
+    const f = fixture(t, profile)
+
+    await f.emit("session_start")
+
+    const policy = object(
+      await f.emit("before_agent_start", {
+        systemPrompt: "Native Pi base",
+        prompt: "List the authorized repository's issues.",
+      }),
+    )
+
+    assert.ok(f.active.at(-1)?.includes("bash"))
+    assert.equal(
+      await f.emit("tool_call", {
+        toolName: "bash",
+        input: {
+          command:
+            "gh issue list --repo 0xgleb/dotconfig --json number --limit 1",
+        },
+      }),
+      undefined,
+    )
+
+    const prompt = String(policy.systemPrompt).replace(/\s+/gu, " ")
+
+    assert.match(prompt, /owner-authorized GitHub issue operations/u)
+    assert.match(
+      prompt,
+      /General shell execution, coding and operational worker launches remain excluded/u,
+    )
+
+    assert.equal(
+      object(await f.emit("tool_call", { toolName: "agent_workspace" })).block,
+      true,
+    )
+
+    assert.deepEqual(f.execs, [])
+    assert.deepEqual(f.messages, [])
+  })
+
   test(`${name} manager can discover reports before selection and retain backlog controls`, async t => {
     const f = fixture(t, profile)
     await f.emit("session_start")
@@ -395,16 +599,26 @@ for (const profile of [true, "global"] as const) {
         action,
       )
     }
-    for (const toolName of ["todo", "manager_control", "read", "ask_user"]) {
+    for (const toolName of [
+      "task",
+      "todo",
+      "manager_control",
+      "read",
+      "bash",
+      "write",
+      "edit",
+      "ask_user",
+      "report_owner",
+      "web_search",
+      "web_fetch",
+      "workflow",
+    ]) {
       assert.equal(await f.emit("tool_call", { toolName }), undefined, toolName)
     }
-    for (const toolName of ["bash", "write", "edit", "workflow"]) {
-      assert.equal(
-        object(await f.emit("tool_call", { toolName })).block,
-        true,
-        toolName,
-      )
-    }
+    assert.equal(
+      object(await f.emit("tool_call", { toolName: "agent_workspace" })).block,
+      true,
+    )
   })
 }
 
@@ -462,10 +676,18 @@ test("global manager selects an existing worker without changing native UI or st
   )
   assert.deepEqual(f.active.at(-1), [
     "agent_registry",
+    "task",
     "todo",
     "manager_control",
     "read",
+    "bash",
+    "write",
+    "edit",
     "ask_user",
+    "report_owner",
+    "web_search",
+    "web_fetch",
+    "workflow",
   ])
   assert.deepEqual(f.execs, [])
 })
@@ -685,7 +907,7 @@ test("round report enters native Markdown message rendering once without another
   assert.equal(object(delivery.options).triggerTurn, false)
 })
 
-test("manager toolset exposes owner reporting without coding tools", async t => {
+test("manager toolset exposes owner reporting with role-scoped file tools", async t => {
   const f = fixture(t, true)
   await f.emit("session_start")
   assert.ok(f.active.at(-1)?.includes("report_owner"))
@@ -693,7 +915,9 @@ test("manager toolset exposes owner reporting without coding tools", async t => 
     await f.emit("tool_call", { toolName: "report_owner", input: {} }),
     undefined,
   )
-  const denied = object(await f.emit("tool_call", { toolName: "bash" }))
+  const denied = object(
+    await f.emit("tool_call", { toolName: "agent_workspace" }),
+  )
   assert.equal(denied.block, true)
 })
 

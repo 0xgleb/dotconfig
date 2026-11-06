@@ -9,10 +9,11 @@ import type { TodoRequest } from "../todo/state.ts"
 import { decodeTodoControl } from "../todo/control.ts"
 import { managerPairDirectory } from "./manager-session-core.ts"
 import { openNativeManagerState } from "./manager-native-state.ts"
+import { callManagerTask } from "./manager-task-rpc.ts"
 
 export interface ManagerTodoRuntime {
   readonly agentDir: string
-  readonly wait: () => Promise<void>
+  readonly wait?: () => Promise<void>
   readonly timeoutMs: number
 }
 
@@ -20,11 +21,16 @@ export interface ManagerTodoToolResult {
   readonly content: { type: "text"; text: string }[]
   readonly isError: boolean
   readonly details:
-    | { readonly outcome: "unavailable" }
     | {
-        readonly outcome: "completed" | "failed" | "queued" | "unconfirmed"
-        readonly requestId: string
+        readonly outcome: "unavailable"
+        readonly workerSessionId?: string
+        readonly workerCwd?: string
+      }
+    | {
+        readonly outcome: "completed" | "failed" | "unconfirmed"
+        readonly requestId?: string
         readonly workerSessionId: string
+        readonly workerCwd: string
       }
 }
 
@@ -41,7 +47,6 @@ export const invokeManagerTodo = async (
   runtime: ManagerTodoRuntime = {
     agentDir: getAgentDir(),
     timeoutMs: 5000,
-    wait: () => new Promise(resolve => setTimeout(resolve, 50)),
   },
 ): Promise<ManagerTodoToolResult> => {
   const binding = getManagerBinding(pi, ctx)
@@ -52,86 +57,75 @@ export const invokeManagerTodo = async (
     return unavailable("This session has no paired manager binding.")
   const workerSessionId = binding.right.workerSessionId
   const workerCwd = binding.right.workerCwd ?? ctx.cwd
+  const selected = (message: string) =>
+    `Worker ${workerCwd} (session ${workerSessionId}): ${message}`
+  const fail = (message: string): ManagerTodoToolResult => ({
+    ...unavailable(selected(message)),
+    details: { outcome: "unavailable", workerSessionId, workerCwd },
+  })
   if (
-    !Number.isFinite(runtime.timeoutMs) ||
-    runtime.timeoutMs < 0 ||
+    !Number.isSafeInteger(runtime.timeoutMs) ||
+    runtime.timeoutMs <= 0 ||
     runtime.timeoutMs > 30_000
   ) {
-    return unavailable("Invalid manager worker binding or request timeout.")
+    return fail("Invalid manager worker binding or request timeout.")
   }
   const directory = managerPairDirectory({
     workerSessionId,
     workerCwd,
     agentDir: runtime.agentDir,
   })
-  if (Either.isLeft(directory)) return unavailable(directory.left.message)
+  if (Either.isLeft(directory)) return fail(directory.left.message)
   const state = openNativeManagerState(directory.right, {
     workerSessionId,
     cwd: workerCwd,
   })
-  if (Either.isLeft(state)) return unavailable(state.left.message)
+  if (Either.isLeft(state)) return fail(state.left.message)
   const current = state.right.context()
-  if (Either.isLeft(current)) return unavailable(current.left.message)
+  if (Either.isLeft(current)) return fail(current.left.message)
   if (current.right.data.todoControl !== true)
-    return unavailable(
-      "The worker has not loaded task control; no mutation was queued.",
-    )
+    return fail("The selected worker has not loaded direct task control.")
   if (
     request.action === "priority" &&
     current.right.data.todoPriorityControl !== true
   )
-    return unavailable(
-      "The worker has not loaded priority control; no mutation was queued.",
-    )
+    return fail("The selected worker has not loaded priority control.")
   if (
     (request.action === "effort" ||
       (request.action === "add" && request.effort !== undefined)) &&
     current.right.data.todoEffortControl !== true
   )
-    return unavailable(
-      "The worker has not loaded effort control; no mutation was queued.",
-    )
+    return fail("The selected worker has not loaded effort control.")
   const decoded = decodeTodoControl(request)
-  if (Either.isLeft(decoded)) return unavailable(decoded.left.message)
-  const submitted = state.right.enqueueTodo(
-    decoded.right,
-    current.right.priorityRevision,
-  )
-  if (Either.isLeft(submitted)) return unavailable(submitted.left.message)
-  const requestId = submitted.right
-  const deadline = performance.now() + runtime.timeoutMs
-  while (!signal?.aborted) {
-    const receipt = state.right.receipt(requestId)
-    if (Either.isLeft(receipt)) break
-    if (receipt.right && receipt.right.status !== "started") {
-      return {
-        content: [{ type: "text", text: receipt.right.message }],
-        isError:
-          receipt.right.status === "failed" ||
-          receipt.right.status === "unconfirmed",
-        details: { outcome: receipt.right.status, requestId, workerSessionId },
-      }
-    }
-    if (performance.now() >= deadline) break
-    const waited = await Effect.runPromise(
-      Effect.either(
-        Effect.tryPromise({
-          try: runtime.wait,
-          catch: () => "reply_wait_failed" as const,
-        }),
-      ),
+  if (Either.isLeft(decoded)) return fail(decoded.left.message)
+  if (!state.right.taskAuthority)
+    return fail(
+      "Direct worker task authority is unavailable; reload the selected worker and manager coherently.",
     )
-    if (Either.isLeft(waited)) break
+  const result = await Effect.runPromise(
+    Effect.either(
+      callManagerTask({
+        directory: directory.right,
+        scope: { workerSessionId, cwd: workerCwd },
+        authority: state.right.taskAuthority,
+        operation: { kind: "todo", request: decoded.right },
+        timeoutMs: runtime.timeoutMs,
+        ...(signal ? { signal } : {}),
+      }),
+    ),
+  )
+  if (Either.isLeft(result)) {
+    if (result.left.code !== "unconfirmed") return fail(result.left.message)
+    return {
+      content: [{ type: "text", text: selected(result.left.message) }],
+      isError: true,
+      details: { outcome: "unconfirmed", workerSessionId, workerCwd },
+    }
   }
   return {
-    content: [
-      {
-        type: "text",
-        text: `Queued worker request ${requestId}; its result is not confirmed.`,
-      },
-    ],
-    isError: false,
-    details: { outcome: "queued", requestId, workerSessionId },
+    content: [{ type: "text", text: selected(result.right.message) }],
+    isError: result.right.outcome !== "completed",
+    details: { outcome: result.right.outcome, workerSessionId, workerCwd },
   }
 }
 

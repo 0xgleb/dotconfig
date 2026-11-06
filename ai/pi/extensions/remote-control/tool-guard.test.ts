@@ -34,7 +34,7 @@ test("remote turns mechanically disable tools and restore the exact prior set on
   assert.deepEqual(writes, [[], [], ["read", "bash", "todo"]])
 })
 
-test("management turns retain active coordination, read and question tools, never execution", () => {
+test("management turns retain active GitHub CLI and coordination tools without coding delegation", () => {
   let active = [
     "read",
     "bash",
@@ -42,7 +42,11 @@ test("management turns retain active coordination, read and question tools, neve
     "agent_registry",
     "manager_control",
     "ask_user",
+    "web_search",
+    "web_fetch",
     "workflow",
+    "write",
+    "edit",
   ]
   const prior = [...active]
   const guard = enterRemoteToolGuard(
@@ -56,10 +60,16 @@ test("management turns retain active coordination, read and question tools, neve
   )
   const permitted = [
     "read",
+    "bash",
     "todo",
     "agent_registry",
     "manager_control",
     "ask_user",
+    "web_search",
+    "web_fetch",
+    "workflow",
+    "write",
+    "edit",
   ]
   assert.deepEqual(active, permitted)
   active = ["bash", "todo"]
@@ -68,6 +78,31 @@ test("management turns retain active coordination, read and question tools, neve
   guard.restore()
   assert.deepEqual(active, prior)
 })
+
+for (const mode of ["communication", "management"] as const) {
+  test(`${mode} turns preserve issue-task capability boundaries and exact restoration`, () => {
+    let active = ["task", "todo", "agent_workspace"]
+    const prior = [...active]
+    const guard = enterRemoteToolGuard(
+      {
+        getActiveTools: () => [...active],
+        setActiveTools: tools => {
+          active = [...tools]
+        },
+      },
+      mode,
+    )
+    const expected = mode === "management" ? ["task", "todo"] : []
+
+    assert.deepEqual(active, expected)
+    active = [...prior]
+    guard.enforce()
+    assert.deepEqual(active, expected)
+    assert.equal(guard.restore().status, "restored")
+    assert.deepEqual(active, prior)
+    assert.equal(guard.restore().status, "restored")
+  })
+}
 
 test("management mode cannot add tools that were not active before the turn", () => {
   let active = ["todo"]

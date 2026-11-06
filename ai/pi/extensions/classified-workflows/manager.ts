@@ -649,7 +649,7 @@ export const registerWorkManager = (
       const command = args.trim()
 
       if (native?.isManager()) {
-        native.command(ctx, command)
+        await native.command(ctx, command)
         return
       }
       if (!view && !command.startsWith("priorities ")) {

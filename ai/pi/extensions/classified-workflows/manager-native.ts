@@ -650,11 +650,16 @@ const prepareGlobalWorkspace = (
 
 const MANAGEMENT_TOOLS: readonly string[] = [
   "agent_registry",
+  "task",
   "todo",
   "manager_control",
   "read",
+  "bash",
+  "write",
+  "edit",
   "ask_user",
   "report_owner",
+  "workflow",
 ]
 const SCOPE_ENTRY = "manager.native-scope.v1"
 const NATIVE_MESSAGE = "manager-native-update"
