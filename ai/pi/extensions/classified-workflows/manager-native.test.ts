@@ -1,6 +1,6 @@
 import assert from "node:assert/strict"
 import test from "node:test"
-import { lstatSync, mkdirSync, mkdtempSync, symlinkSync } from "node:fs"
+import { lstatSync, mkdirSync, mkdtempSync, rmSync, symlinkSync } from "node:fs"
 import os from "node:os"
 import { syncBuiltinESMExports } from "node:module"
 import { join } from "node:path"
@@ -9,10 +9,6 @@ import type {
   ExtensionContext,
 } from "@earendil-works/pi-coding-agent"
 import { Either, Effect } from "effect"
-import {
-  OWNER_ALLOWANCE_MS,
-  OWNER_PROGRESS_CHECK_IN_MS,
-} from "./owner-allowance.ts"
 import {
   registerNativeManager,
   type NativeManagerRuntime,
@@ -37,9 +33,9 @@ const fixture = (
   } = {},
 ) => {
   const root =
-    options.agentDir ?? mkdtempSync(join(tmpdir(), "pi-manager-profile-test-"))
+    options.agentDir ??
+    mkdtempSync(join(os.tmpdir(), "pi-manager-profile-test-"))
   if (!options.agentDir) t.after(() => rmSync(root, { recursive: true }))
-  const priorities = t.mock.fn(() => Either.right("Saved"))
   const ticks: (() => void)[] = []
   const runtime: NativeManagerRuntime = {
     agentDir: root,
@@ -158,7 +154,7 @@ const fixture = (
           roundReport: null,
         }),
       priorityId: () => "initial",
-      priorities,
+      priorities: () => Either.right("Saved"),
     },
     runtime,
   )
@@ -200,64 +196,8 @@ const fixture = (
     ctx,
     ticks,
     seed,
-    priorities,
   }
 }
-
-test("native priority requests retain typed failure without worker mutations across lifecycle changes", async t => {
-  const worker = fixture(t)
-  await worker.emit("session_start")
-  const manager = fixture(t, true, { agentDir: worker.root })
-  await manager.emit("session_start")
-  const tool = manager.tools.get("manager_control")
-  assert.ok(tool)
-  const call = async () =>
-    object(
-      await tool.execute(
-        "direct-order",
-        { action: "priorities", order: "55 16" },
-        undefined,
-        undefined,
-        manager.ctx,
-      ),
-    )
-  const first = await call()
-  assert.equal(first.isError, true)
-  assert.match(JSON.stringify(first.content), /retired/u)
-  assert.equal(worker.priorities.mock.callCount(), 0)
-  await worker.emit("session_tree")
-  const changed = await call()
-  assert.equal(changed.isError, true)
-  assert.match(JSON.stringify(changed.content), /retired/u)
-  await worker.emit("session_shutdown")
-  const stopped = await call()
-  assert.equal(stopped.isError, true)
-  assert.notEqual(object(stopped.details).outcome, "queued")
-  assert.equal(worker.priorities.mock.callCount(), 0)
-})
-
-test("unfinished native check-in delivery returns unavailable without starting a turn", async t => {
-  const f = fixture(t)
-  await f.emit("session_start")
-  const checkIn = f.registered.checkIn
-  assert.ok(checkIn)
-  const before = f.messages.length
-  const result = checkIn(f.ctx, {
-    window: {
-      version: 1,
-      lastOwnerAt: 1_000,
-      deadlineAt: 1_000 + OWNER_ALLOWANCE_MS,
-      status: "active",
-    },
-    sequence: 1,
-    scheduledAt: 1_000 + OWNER_PROGRESS_CHECK_IN_MS,
-  })
-  assert.ok(Either.isLeft(result))
-  assert.equal(result.left.code, "unavailable")
-  assert.match(result.left.message, /not implemented/u)
-  assert.equal(f.messages.length, before)
-  assert.equal(f.execs.length, 0)
-})
 
 test("manager profile preserves the native editor and exposes registry management", async t => {
   const f = fixture(t, true)

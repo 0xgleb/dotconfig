@@ -107,6 +107,7 @@ export const registerNativeManager = (
         }
       : { role: "manager-unavailable", message: target.left.message }
   })
+  let workerGeneration = 0
   const delivering = new Set<string>()
 
   const notice = (ctx: ExtensionContext, error: ManagerSessionError) =>
@@ -243,14 +244,6 @@ export const registerNativeManager = (
     cancelPolling = runtime.schedule(tick)
   }
 
-  const submitPriorities = (ctx: ExtensionContext, text: string) => {
-    const state = client(ctx)
-    if (Either.isLeft(state)) return Either.left(state.left)
-    const current = state.right.context()
-    if (Either.isLeft(current)) return Either.left(current.left)
-    return state.right.enqueuePriorities(text, current.right.priorityRevision)
-  }
-
   const epochFor = (ctx: ExtensionContext, mode: "restore" | "replace") => {
     const previous = ctx.sessionManager
       .getBranch()
@@ -372,7 +365,7 @@ export const registerNativeManager = (
     const epoch = epochFor(ctx, mode)
     if (Either.isLeft(state)) notice(ctx, state.left)
     else if (Either.isLeft(epoch)) notice(ctx, epoch.left)
-    else startWorker(ctx, state.right, epoch.right)
+    else await startWorker(ctx, state.right, epoch.right)
   }
 
   pi.on("session_start", (_event, ctx) => resume(ctx, "restore"))
@@ -538,7 +531,7 @@ export const registerNativeManager = (
       await stop()
       activeSessionId = ctx.sessionManager.getSessionId()
       activeCtx = ctx
-      startWorker(ctx, state.right, epoch.right)
+      await startWorker(ctx, state.right, epoch.right)
       if (plan.right.kind === "existing") {
         ctx.ui.notify(
           `Manager is running in pane ${plan.right.paneName}.`,
