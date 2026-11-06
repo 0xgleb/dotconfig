@@ -241,6 +241,41 @@ test("ambiguous duplicate pending IDs cannot confirm a selection", async () => {
   assert.equal(restored.left.code, "invalid_state")
 })
 
+for (const action of ["read", "apply"] as const) {
+  for (const nextFirst of [true, false]) {
+    test(`mixed ${action}/next pending IDs are ambiguous with nextFirst=${nextFirst}`, async () => {
+      const native = await nativeNextResult()
+      const incidental =
+        action === "read"
+          ? { action, issue: native.issue, page: { limit: 10 } }
+          : {
+              action,
+              issues: [native.issue],
+              operations: [
+                {
+                  op: "add",
+                  issue: native.issue,
+                  key: "one",
+                  text: "Incidental requirement",
+                },
+              ],
+            }
+      const nextCall = call("mixed-id", native.args)
+      const incidentalCall = call("mixed-id", incidental)
+      const restored = currentIssueFromEntries([
+        assistant(
+          ...(nextFirst
+            ? [nextCall, incidentalCall]
+            : [incidentalCall, nextCall]),
+        ),
+        result("mixed-id", native.details),
+      ])
+      assert.ok(Either.isLeft(restored))
+      assert.equal(restored.left.code, "invalid_state")
+    })
+  }
+}
+
 test("completed nonlatest calls do not remain pending when their ID is reused", async () => {
   const first = await nativeNextResult()
   const latest = await nativeNextResult(8)
@@ -255,6 +290,26 @@ test("completed nonlatest calls do not remain pending when their ID is reused", 
   assert.deepEqual(restored.right, {
     kind: "issue",
     issue: first.issue,
+    mode: "implementation",
+  })
+})
+
+test("incidental ID collisions after completed selection do not invalidate its focus", async () => {
+  const native = await nativeNextResult()
+  const args = { action: "read", issue: native.issue, page: { limit: 10 } }
+  const restored = currentIssueFromEntries([
+    assistant(call("completed", native.args)),
+    result("completed", native.details),
+    assistant(call("completed", args), call("completed", args)),
+    result("completed", {
+      outcome: { kind: "missing_issue", issue: native.issue },
+      output: "complete",
+    }),
+  ])
+  assert.ok(Either.isRight(restored))
+  assert.deepEqual(restored.right, {
+    kind: "issue",
+    issue: native.issue,
     mode: "implementation",
   })
 })

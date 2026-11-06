@@ -81,7 +81,7 @@ export const taskNextHudFocus = (
     )
   })
 
-type PendingNext =
+type PendingTaskCall =
   | { readonly kind: "call"; readonly args: unknown }
   | { readonly kind: "ambiguous" }
 
@@ -89,7 +89,7 @@ export const currentIssueFromEntries = (
   entries: readonly unknown[],
 ): Either.Either<TaskHudFocus, TaskHudFocusError> => {
   if (!Array.isArray(entries)) return Either.left(error("invalid_state"))
-  const pending = new Map<string, PendingNext>()
+  const pending = new Map<string, PendingTaskCall>()
   let latest: string | undefined
   let current: Either.Either<TaskHudFocus, TaskHudFocusError> = Either.right({
     kind: "none",
@@ -106,18 +106,18 @@ export const currentIssueFromEntries = (
           call.type !== "toolCall" ||
           call.name !== "task" ||
           typeof call.id !== "string" ||
-          call.id.length === 0 ||
-          !record(call.arguments) ||
-          call.arguments.action !== "next"
+          call.id.length === 0
         )
           continue
-        latest = call.id
+        const changesFocus =
+          record(call.arguments) && call.arguments.action === "next"
+        if (changesFocus) latest = call.id
         if (pending.has(call.id)) {
           pending.set(call.id, { kind: "ambiguous" })
-          current = Either.left(error("invalid_state"))
+          if (call.id === latest) current = Either.left(error("invalid_state"))
         } else {
           pending.set(call.id, { kind: "call", args: call.arguments })
-          current = Either.right({ kind: "unconfirmed" })
+          if (changesFocus) current = Either.right({ kind: "unconfirmed" })
         }
       }
     }
@@ -131,12 +131,13 @@ export const currentIssueFromEntries = (
     if (request === undefined) continue
     pending.delete(message.toolCallId)
     if (message.toolCallId !== latest) continue
+    latest = undefined
     const projected =
       request.kind === "ambiguous"
         ? Either.left(error("invalid_state"))
         : taskNextHudFocus(request.args, message.details)
     current = Either.isLeft(projected)
-      ? projected
+      ? Either.left(projected.left)
       : Option.match(projected.right, {
           onNone: () => current,
           onSome: focus => Either.right(focus),
