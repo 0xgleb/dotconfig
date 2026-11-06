@@ -127,6 +127,7 @@ test("foreign pairing, symlinked context and malformed state cannot be read as w
 })
 
 const checkInNow = 1_801_000
+
 const checkIn: OwnerProgressCheckIn = {
   window: {
     version: 1,
@@ -137,6 +138,7 @@ const checkIn: OwnerProgressCheckIn = {
   sequence: 1,
   scheduledAt: checkInNow,
 }
+
 const checkInContext = { ...snapshot, observedAt: checkInNow }
 
 test("plain check-ins carry the actual worker snapshot and distinguish queued from reviewed", t => {
@@ -468,6 +470,7 @@ const failNextStateWrite = (t: test.TestContext) => {
       return write(...args)
     },
   )
+
   const restore = () => {
     mocked.mock.restore()
     syncBuiltinESMExports()

@@ -308,6 +308,7 @@ const checkInTime = (value: unknown): value is number =>
   Number.isSafeInteger(value) &&
   value >= 0 &&
   value <= 8_640_000_000_000_000
+
 const checkInId = (value: unknown): value is NativeManagerCheckInId =>
   typeof value === "string" && /^[0-9]{1,16}-[1-9][0-9]{0,5}$/u.test(value)
 
@@ -400,6 +401,7 @@ const nativeCheckIns = (
         )
       return request
     })
+
   const receipt: NativeManagerCheckIns["receipt"] = (id, now) =>
     Either.gen(function* () {
       if (!checkInTime(now))

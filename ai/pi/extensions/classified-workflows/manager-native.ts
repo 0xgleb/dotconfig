@@ -224,6 +224,7 @@ export const registerNativeManager = (
       ctx.sessionManager.getSessionId() === sessionId &&
       ctx.cwd === cwd &&
       !isManager()
+
     const tick = () => {
       if (!currentScope()) return
       const leaf = ctx.sessionManager.getBranch().at(-1)?.id
