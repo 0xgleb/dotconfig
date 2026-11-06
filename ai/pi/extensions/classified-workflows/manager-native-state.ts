@@ -33,16 +33,22 @@ import {
   type OwnerProgressCheckIn,
 } from "./owner-allowance.ts"
 
+declare const nativeManagerCheckInIdBrand: unique symbol
+
+export type NativeManagerCheckInId = string & {
+  readonly [nativeManagerCheckInIdBrand]: true
+}
+
 export interface NativeManagerCheckIn {
   readonly version: 1
-  readonly id: string
+  readonly id: NativeManagerCheckInId
   readonly queuedAt: number
   readonly checkIn: OwnerProgressCheckIn
   readonly context: ManagerContextSnapshot
 }
 
 export interface NativeManagerCheckInReceipt {
-  readonly id: string
+  readonly id: NativeManagerCheckInId
   readonly status: "queued" | "review-requested" | "reviewed" | "failed"
   readonly message: string
   readonly updatedAt: number
@@ -53,7 +59,7 @@ export interface NativeManagerCheckIns {
     checkIn: OwnerProgressCheckIn,
     context: ManagerContextSnapshot,
     now: number,
-  ) => Either.Either<string, ManagerSessionError>
+  ) => Either.Either<NativeManagerCheckInId, ManagerSessionError>
   readonly take: (
     now: number,
   ) => Either.Either<NativeManagerCheckIn | undefined, ManagerSessionError>
@@ -302,8 +308,8 @@ const checkInTime = (value: unknown): value is number =>
   Number.isSafeInteger(value) &&
   value >= 0 &&
   value <= 8_640_000_000_000_000
-const checkInId = (value: string) =>
-  /^[0-9]{1,16}-[1-9][0-9]{0,5}$/u.test(value)
+const checkInId = (value: unknown): value is NativeManagerCheckInId =>
+  typeof value === "string" && /^[0-9]{1,16}-[1-9][0-9]{0,5}$/u.test(value)
 
 const decodeCheckIn = (
   value: unknown,
@@ -408,7 +414,7 @@ const nativeCheckIns = (
       yield* privateDirectory(receipts)
       const path = join(receipts, `${id}.json`)
       let result: NativeManagerCheckInReceipt = {
-        id,
+        id: request.id,
         status: "queued",
         message: "Manager review queued.",
         updatedAt: request.queuedAt,
@@ -431,7 +437,7 @@ const nativeCheckIns = (
         )
           return yield* failure("protocol", "Malformed check-in receipt.")
         result = {
-          id,
+          id: request.id,
           status: stored.status,
           message: stored.message,
           updatedAt: stored.updatedAt,
@@ -448,7 +454,7 @@ const nativeCheckIns = (
         result.status !== "failed"
       ) {
         result = {
-          id,
+          id: request.id,
           status: "failed",
           message: "Worker allowance expired before manager review completed.",
           updatedAt: now,
@@ -492,7 +498,7 @@ const nativeCheckIns = (
               "Check-in already exists under another deadline.",
             )
         }
-        return id
+        return request.id
       }),
     take: now =>
       Either.gen(function* () {
@@ -515,8 +521,8 @@ const nativeCheckIns = (
           const id = name.slice(0, -5)
           const current = yield* receipt(id, now)
           if (!current || current.status !== "queued") continue
-          const reserved = yield* reserveReceipt(receipts, id, {
-            id,
+          const reserved = yield* reserveReceipt(receipts, current.id, {
+            id: current.id,
             status: "review-requested",
             message: "Manager review requested; completion is not confirmed.",
             updatedAt: now,
@@ -544,8 +550,8 @@ const nativeCheckIns = (
             "unconfirmed",
             "No pending manager review can accept this result.",
           )
-        yield* atomicJson(receipts, `${id}.json`, {
-          id,
+        yield* atomicJson(receipts, `${current.id}.json`, {
+          id: current.id,
           status: outcome.status,
           message: outcome.message,
           updatedAt: now,

@@ -179,6 +179,33 @@ test("plain check-ins carry the actual worker snapshot and distinguish queued fr
   assert.match(reviewed.right?.message ?? "", /oversized active task/)
 })
 
+test("wire-decoded check-in IDs remain accepted by reopened receipt and finish APIs", t => {
+  const { state, directory } = fixture(t)
+  const channel = state.checkIns
+  assert.ok(channel)
+  const queued = channel.enqueue(checkIn, checkInContext, checkInNow)
+  assert.ok(Either.isRight(queued))
+  const wireId: unknown = JSON.parse(JSON.stringify(queued.right))
+  assert.ok(typeof wireId === "string")
+  const reopened = openNativeManagerState(directory, scope)
+  assert.ok(Either.isRight(reopened) && reopened.right.checkIns)
+  const receiver = reopened.right.checkIns
+  assert.ok(Either.isRight(receiver.take(checkInNow)))
+  assert.ok(
+    Either.isRight(
+      receiver.finish(
+        wireId,
+        { status: "reviewed", message: "Reviewed through the wire ID." },
+        checkInNow + 1,
+      ),
+    ),
+  )
+  const receipt = receiver.receipt(wireId, checkInNow + 1)
+  assert.ok(Either.isRight(receipt))
+  assert.equal(receipt.right?.id, queued.right)
+  assert.equal(receipt.right?.status, "reviewed")
+})
+
 test("check-in retries retain the same queued snapshot and cannot request a second review", t => {
   const { state, directory } = fixture(t)
   const channel = state.checkIns
