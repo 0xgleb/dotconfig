@@ -121,7 +121,6 @@ import {
   parseStoredGoal,
   recoverLatestIndependentGoal,
   restoreGoal,
-  taskContinuationMessage,
   todoClassifierIntent,
   todoWorkSnapshot,
   type GoalCommand,
@@ -1832,10 +1831,9 @@ export default function classifiedWorkflows(
   const scheduleTaskContinuation = (ctx: ExtensionContext): void => {
     clearTaskContinuationTimer()
     if (Either.isLeft(ownerAllowance.admit())) return
-    const work = todoWorkSnapshot(ctx.sessionManager.getBranch())
     const pendingMessage = pendingActionRemediation
       ? remediationContinuationMessage(pendingActionRemediation)
-      : taskContinuationMessage(work)
+      : undefined
     if (!pendingMessage) return
     taskContinuationTimer = setTimeout(() => {
       taskContinuationTimer = undefined
@@ -1856,10 +1854,9 @@ export default function classifiedWorkflows(
         scheduleTaskContinuation(ctx)
         return
       }
-      const currentWork = todoWorkSnapshot(ctx.sessionManager.getBranch())
       const content = pendingActionRemediation
         ? remediationContinuationMessage(pendingActionRemediation)
-        : taskContinuationMessage(currentWork)
+        : undefined
       if (!content) return
       pi.sendMessage(
         { customType: TASK_MESSAGE, content, display: true },
@@ -2841,7 +2838,6 @@ export default function classifiedWorkflows(
       scheduleTaskContinuation(ctx)
       return
     }
-    const work = todoWorkSnapshot(ctx.sessionManager.getBranch())
     if (goalEvaluating) return
     const evaluating = goalState
     const usageTokens = goalRunTokens
@@ -2868,13 +2864,12 @@ export default function classifiedWorkflows(
       evaluation,
       usageTokens,
       Date.now(),
-      work.pending,
     )
     pi.appendEntry(GOAL_ENTRY, goalState)
     updateGoalStatus(ctx)
     if (goalState.status === "active") {
       showGoalMessage(
-        `Goal remains active · ${work.pending.length} pending task${work.pending.length === 1 ? "" : "s"} · continue working.`,
+        "Goal remains active · continue working toward the explicit goal.",
         true,
       )
     } else if (goalState.status === "achieved") {
