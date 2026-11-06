@@ -3,8 +3,10 @@ import { mkdtemp, rm } from "node:fs/promises"
 import { tmpdir } from "node:os"
 import { join } from "node:path"
 import test from "node:test"
-import { Effect } from "effect"
-import type { Job } from "./job-runtime.ts"
+import { Effect, Either } from "effect"
+import { toJobId } from "./harness-protocol.ts"
+import { decodeStoredJob, type Job } from "./job-runtime.ts"
+import { canonicalPath } from "./review-duty-profile.ts"
 import {
   legacyAgentopsResearchJobs,
   reconcileLegacyAgentopsResearchJobs,
@@ -16,8 +18,11 @@ const legacyResearch = (
   profile: string,
   state: "ready" | "leased" | "succeeded",
 ): Job => {
+  const jobId = toJobId(id)
+  assert.ok(jobId !== undefined)
+
   const base = {
-    id,
+    id: jobId,
     spec: {
       kind: "harness.research" as const,
       payload: {
@@ -50,22 +55,44 @@ const legacyResearch = (
     state,
     finishedAt: 1_000,
     summary: "historical result",
-    result: {
-      kind: "harness.research",
-      handoff: {
-        protocolVersion: 1,
-        jobId: id,
-        attempt: 1,
-        lane: "subscription-plan",
-        profile,
-        task: "bounded-task",
-        status: "completed",
-        summary: "historical result",
-        evidence: ["bounded evidence"],
-      },
-    },
   }
 }
+
+test("stored research history rejects result data not supported by its job kind", async () => {
+  const history = legacyResearch(
+    "legacy-history",
+    "agentops-yielduck",
+    "succeeded",
+  )
+
+  assert.deepEqual(await Effect.runPromise(decodeStoredJob(history)), history)
+
+  const result = await Effect.runPromise(
+    Effect.either(
+      decodeStoredJob({
+        ...history,
+        result: {
+          kind: "harness.research",
+          handoff: {
+            protocolVersion: 1,
+            jobId: history.id,
+            attempt: 1,
+            lane: "subscription-plan",
+            profile: "agentops-yielduck",
+            task: "bounded-task",
+            status: "completed",
+            summary: "historical result",
+            evidence: ["bounded evidence"],
+          },
+        },
+      }),
+    ),
+  )
+
+  assert.ok(Either.isLeft(result))
+  assert.equal(result.left.code, "invalid_input")
+  assert.match(result.left.message, /result is not valid for this job kind/u)
+})
 
 test("legacy agentops research reconciliation cancels only active mislabeled jobs", async () => {
   const jobs = [
@@ -80,11 +107,24 @@ test("legacy agentops research reconciliation cancels only active mislabeled job
   )
 
   const root = await mkdtemp(join(tmpdir(), "pi-research-ownership-test-"))
+
+  const home = canonicalPath(root)
+  assert.ok(home !== undefined)
+
+  const ready = jobs[0]
+  assert.ok(ready)
+
+  const leased = jobs[1]
+  assert.ok(leased)
+
+  const project = jobs[3]
+  assert.ok(project)
+
   const store = await Effect.runPromise(
-    makeSqliteJobStore(join(root, "jobs.sqlite")),
+    makeSqliteJobStore(join(root, "jobs.sqlite"), home),
   )
   try {
-    await Effect.runPromise(store.enqueue(jobs[1].spec, "legacy-leased", 1_000))
+    await Effect.runPromise(store.enqueue(leased.spec, "legacy-leased", 1_000))
     await Effect.runPromise(
       store.claimDueResearch(
         "agentops-yielduck",
@@ -94,8 +134,8 @@ test("legacy agentops research reconciliation cancels only active mislabeled job
         9_000,
       ),
     )
-    await Effect.runPromise(store.enqueue(jobs[0].spec, "legacy-ready", 1_001))
-    await Effect.runPromise(store.enqueue(jobs[3].spec, "project-ready", 1_001))
+    await Effect.runPromise(store.enqueue(ready.spec, "legacy-ready", 1_001))
+    await Effect.runPromise(store.enqueue(project.spec, "project-ready", 1_001))
 
     const result = await Effect.runPromise(
       reconcileLegacyAgentopsResearchJobs(store, 2_000),
