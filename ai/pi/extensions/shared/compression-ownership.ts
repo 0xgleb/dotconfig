@@ -31,9 +31,13 @@ export const getAutomaticCompressionOwner = (
 ): Effect.Effect<AutomaticCompressionOwner, CompressionOwnershipError> =>
   Effect.gen(function* () {
     if (signal.aborted) return yield* Effect.fail(cancelled())
+
     const sessionId = yield* currentSessionId(context)
+
     const offers: unknown[] = []
+
     let accepting = true
+
     yield* Effect.try({
       try: () =>
         pi.events.emit(OWNERSHIP_EVENT, {
@@ -50,6 +54,7 @@ export const getAutomaticCompressionOwner = (
         }),
     })
     accepting = false
+
     if (signal.aborted) return yield* Effect.fail(cancelled())
     if (offers.length > 1)
       return yield* Effect.fail(
@@ -62,8 +67,10 @@ export const getAutomaticCompressionOwner = (
       yield* unchangedSession(context, sessionId)
       return { owner: "native" }
     }
+
     const resolver = offers[0]
     if (typeof resolver !== "function") return yield* Effect.fail(malformed())
+
     const result = yield* Effect.tryPromise({
       try: runtimeSignal =>
         Promise.resolve<unknown>(
@@ -94,9 +101,12 @@ export const getAutomaticCompressionOwner = (
       }),
       Effect.raceFirst(waitForCancellation(signal)),
     )
+
     if (signal.aborted) return yield* Effect.fail(cancelled())
     yield* unchangedSession(context, sessionId)
+
     const owner = yield* decodeOwner(result, sessionId)
+
     if (signal.aborted) return yield* Effect.fail(cancelled())
     yield* unchangedSession(context, sessionId)
     return owner
@@ -113,6 +123,7 @@ export const registerAutomaticCompressionOwner = (
 const OWNERSHIP_EVENT = "pi:automatic-compression-ownership.v1"
 
 type CompressionSessionId = string & Brand.Brand<"CompressionSessionId">
+
 const CompressionSessionId = Brand.nominal<CompressionSessionId>()
 
 type DecodedCompressionOwner =
@@ -140,14 +151,18 @@ const offerController = (
 ): Either.Either<void, CompressionOwnershipError> => {
   if (typeof value !== "object" || value === null)
     return Either.left(malformed())
+
   return Either.try({
     try: () => Object.getOwnPropertyDescriptors(value),
     catch: () => malformed(),
   }).pipe(
     Either.flatMap(descriptors => {
       const version = ownDataValue(descriptors, "version")
+
       const sessionId = ownDataValue(descriptors, "sessionId")
+
       const accept = ownDataValue(descriptors, "accept")
+
       if (
         version !== 1 ||
         typeof sessionId !== "string" ||
@@ -155,6 +170,7 @@ const offerController = (
         typeof accept !== "function"
       )
         return Either.left(malformed())
+
       return Either.try({
         try: () => {
           Reflect.apply(accept, undefined, [resolve])
@@ -232,24 +248,27 @@ const decodeOwner = (
   Effect.gen(function* () {
     if (typeof value !== "object" || value === null)
       return yield* Effect.fail(malformed())
+
     const descriptors = yield* Effect.try({
       try: () => Object.getOwnPropertyDescriptors(value),
       catch: () => malformed(),
     })
+
     const keys = Reflect.ownKeys(descriptors)
-    const owner: unknown = Object.hasOwn(descriptors, "owner")
-      ? descriptors.owner?.value
-      : undefined
-    const resolvedSession: unknown = Object.hasOwn(descriptors, "sessionId")
-      ? descriptors.sessionId?.value
-      : undefined
+
+    const owner = ownDataValue(descriptors, "owner")
+
+    const resolvedSession = ownDataValue(descriptors, "sessionId")
+
     if (owner === "native" && keys.length === 1) return { owner: "native" }
+
     if (
       owner !== "billion-context" ||
       keys.length !== 2 ||
       typeof resolvedSession !== "string"
     )
       return yield* Effect.fail(malformed())
+
     if (resolvedSession !== sessionId)
       return yield* Effect.fail(
         new CompressionOwnershipError({
@@ -258,5 +277,6 @@ const decodeOwner = (
             "Automatic compression owner answered for a different session.",
         }),
       )
+
     return { owner: "billion-context", sessionId }
   })

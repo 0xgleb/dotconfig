@@ -88,6 +88,7 @@ export default function safeCompaction(pi: ExtensionAPI): void {
   let pendingAutomaticResume:
     Exclude<SafeCompactionState, { phase: "idle" | "preparing" }> | undefined
   let latestCtx: ExtensionContext | undefined
+
   let ownershipLifetime = new AbortController()
 
   pi.events.on(
@@ -139,6 +140,7 @@ export default function safeCompaction(pi: ExtensionAPI): void {
   pi.on("session_start", (_event, ctx) => {
     ownershipLifetime.abort()
     ownershipLifetime = new AbortController()
+
     latestCtx = ctx
     state = restoreSafeCompactionState(ctx.sessionManager.getBranch())
     compactRequested = false
@@ -163,7 +165,9 @@ export default function safeCompaction(pi: ExtensionAPI): void {
   pi.on("session_before_compact", async (event, ctx) => {
     const lifetime = ownershipLifetime
     const signal = AbortSignal.any([event.signal, lifetime.signal])
+
     if (signal.aborted) return { cancel: true }
+
     if (event.reason !== "manual") {
       const ownership = await Effect.runPromise(
         Effect.either(getAutomaticCompressionOwner(pi, ctx, signal)),
@@ -171,17 +175,21 @@ export default function safeCompaction(pi: ExtensionAPI): void {
 
       if (signal.aborted || lifetime !== ownershipLifetime)
         return { cancel: true }
+
       if (Either.isRight(ownership)) {
         if (ownership.right.owner === "billion-context") return { cancel: true }
       } else {
         if (ownership.left.code === "cancelled") return { cancel: true }
+
         ctx.ui.notify(
           `Automatic compression ownership ${ownership.left.code}; native checkpoint safety remains enabled.`,
           "warning",
         )
       }
     }
+
     latestCtx = ctx
+
     const transition = beforeCompactionTransition(
       state,
       event.reason,
@@ -274,6 +282,7 @@ export default function safeCompaction(pi: ExtensionAPI): void {
 
   pi.on("session_shutdown", () => {
     ownershipLifetime.abort()
+
     pendingAutomaticResume = undefined
     latestCtx = undefined
   })
