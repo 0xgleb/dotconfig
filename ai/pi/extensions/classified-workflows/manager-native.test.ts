@@ -273,7 +273,6 @@ test("manager profile preserves the native editor and exposes registry managemen
 
 const registryMutations = [
   "clear",
-  "ingest_backlog",
   "claim",
   "release",
   "delegate",

@@ -184,11 +184,6 @@ export interface ClaimRequestInput {
   readonly now: number
 }
 
-export interface AdvanceRequestBacklogInput extends ClaimRequestInput {
-  readonly phase: "implementation" | "review" | "publication"
-  readonly evidenceRef: string
-}
-
 export interface CompleteRequestInput extends ClaimRequestInput {
   readonly summary: string
 }
@@ -292,9 +287,6 @@ export interface RegistryStore {
   ) => Effect.Effect<ClearedRegistryCounts, RegistryError>
   readonly claimRequest: (
     input: ClaimRequestInput,
-  ) => Effect.Effect<RegistryRequest, RegistryError>
-  readonly advanceRequestBacklog: (
-    input: AdvanceRequestBacklogInput,
   ) => Effect.Effect<RegistryRequest, RegistryError>
   readonly completeRequest: (
     input: CompleteRequestInput,
