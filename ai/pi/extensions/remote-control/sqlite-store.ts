@@ -118,6 +118,7 @@ export interface RemoteBridgeStore {
   ) => Effect.Effect<BridgeAgent, RemoteBridgeError>
   readonly listAgents: (
     now: number,
+    options?: { readonly includeExpired?: boolean },
   ) => Effect.Effect<readonly BridgeAgent[], RemoteBridgeError>
   readonly enqueue: (
     input: EnqueueRemoteMessageInput,
@@ -1083,11 +1084,6 @@ export const makeRemoteBridgeStore = (
         return yield* transactionEffect(
           database,
           Effect.gen(function* () {
-            yield* attempt("Could not expire bridge agents", () =>
-              database
-                .prepare("DELETE FROM bridge_agents WHERE expires_at <= ?")
-                .run(now),
-            )
             if ((yield* countEffect(database, "bridge_agents")) >= MAX_AGENTS) {
               const existing = yield* attempt(
                 "Could not inspect bridge agent capacity",
@@ -1096,10 +1092,26 @@ export const makeRemoteBridgeStore = (
                     .prepare("SELECT 1 FROM bridge_agents WHERE agent_id = ?")
                     .get(id),
               )
-              if (!existing)
-                return yield* Effect.fail(
-                  bridgeError("capacity", "bridge agent capacity reached"),
+              if (!existing) {
+                yield* attempt(
+                  "Could not prune oldest expired bridge agent",
+                  () =>
+                    database
+                      .prepare(
+                        `DELETE FROM bridge_agents WHERE agent_id = (
+                    SELECT agent_id FROM bridge_agents WHERE expires_at <= ?
+                    ORDER BY expires_at, agent_id LIMIT 1
+                  )`,
+                      )
+                      .run(now),
                 )
+                if (
+                  (yield* countEffect(database, "bridge_agents")) >= MAX_AGENTS
+                )
+                  return yield* Effect.fail(
+                    bridgeError("capacity", "bridge agent capacity reached"),
+                  )
+              }
             }
             yield* attempt("Could not persist bridge agent heartbeat", () =>
               database
@@ -1153,15 +1165,11 @@ export const makeRemoteBridgeStore = (
         )
       }),
     ),
-  listAgents: now =>
+  listAgents: (now, options) =>
     withDatabaseEffect(databasePath, database =>
       Effect.gen(function* () {
         const at = yield* boundedTimestampEffect("now", now)
-        yield* attempt("Could not expire bridge agents", () =>
-          database
-            .prepare("DELETE FROM bridge_agents WHERE expires_at <= ?")
-            .run(at),
-        )
+        const includeExpired = options?.includeExpired === true
         const rows = yield* attempt("Could not list bridge agents", () =>
           database
             .prepare(
@@ -1170,9 +1178,9 @@ export const makeRemoteBridgeStore = (
                   WHERE m.target_agent_id = a.agent_id AND m.status = 'queued')
                    AS queued_messages
                FROM bridge_agents AS a
-               WHERE a.expires_at > ? ORDER BY a.label, a.agent_id`,
+               WHERE ? OR a.expires_at > ? ORDER BY a.label, a.agent_id`,
             )
-            .all(at),
+            .all(includeExpired ? 1 : 0, at),
         )
         return yield* Effect.forEach(rows, row =>
           rowFromEffect(row).pipe(Effect.flatMap(agentFromRowEffect)),

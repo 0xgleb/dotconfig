@@ -18,7 +18,6 @@ const components = [
   ["nushell-default", "nushell-default"],
   ["questions", "questions"],
   ["pi-vim", "pi-vim"],
-  ["release-cadence", "release-cadence"],
   ["remote-control", "remote-control"],
   ["disk-pressure", "resource-pressure"],
   ["image-summary", "image-summary"],
