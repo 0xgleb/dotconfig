@@ -28,12 +28,31 @@
   nixpkgs.overlays = [
     (import ./obsidian-overlay.nix)
     (_final: prev: {
-      atuin = prev.atuin.overrideAttrs (old: {
-        checkFlags = old.checkFlags ++ [
-          # Upstream Darwin capture-test workaround.
-          # https://github.com/NixOS/nixpkgs/issues/573527#issuecomment-6144195587
-          "--skip=filtered_commands_leave_no_captured_output"
-        ];
+      atuin = prev.stdenvNoCC.mkDerivation (finalAttrs: {
+        pname = "atuin";
+        version = "18.24.4";
+
+        src = prev.fetchurl {
+          url = "https://github.com/atuinsh/atuin/releases/download/v${finalAttrs.version}/atuin-aarch64-apple-darwin.tar.gz";
+          hash = "sha256-7dBilDd1mb9NhcozN6vIAiVqmRJiJgvdmA0bZJWDVT0=";
+        };
+
+        dontFixup = true;
+
+        installPhase = ''
+          runHook preInstall
+          install -Dm755 atuin "$out/bin/atuin"
+          install -Dm644 LICENSE "$out/share/licenses/atuin/LICENSE"
+          runHook postInstall
+        '';
+
+        nativeInstallCheckInputs = [ prev.versionCheckHook ];
+        doInstallCheck = true;
+
+        meta = prev.atuin.meta // {
+          platforms = [ "aarch64-darwin" ];
+          sourceProvenance = [ prev.lib.sourceTypes.binaryNativeCode ];
+        };
       });
       # The pinned 6.0.2 pnpm dependency fetch has an incorrect Darwin hash.
       typescript-language-server = prev.typescript-language-server.overrideAttrs (old: {
