@@ -2,7 +2,7 @@ import assert from "node:assert/strict"
 import { execFileSync } from "node:child_process"
 import { mkdirSync, mkdtempSync, realpathSync, rmSync } from "node:fs"
 import { dirname, join } from "node:path"
-import test, { mock } from "node:test"
+import test, { after, mock } from "node:test"
 import { DatabaseSync } from "node:sqlite"
 import { fileURLToPath, pathToFileURL } from "node:url"
 import { Deferred, Effect, Either, Option, Schema } from "effect"
@@ -25,6 +25,7 @@ import {
 } from "./issue-view.ts"
 import { createGitHubCliReader } from "./github-cli.ts"
 import type { IssueTaskTool, TaskToolOptions } from "./tool.ts"
+import { registryStateRoot } from "../agent-registry/paths.ts"
 
 const piExecutable = realpathSync(
   execFileSync("which", ["pi"], { encoding: "utf8" }).trim(),
@@ -33,6 +34,15 @@ const hostRoot = join(
   dirname(dirname(piExecutable)),
   "lib/node_modules/pi-monorepo",
 )
+// Jiti documents this non-secret switch; keep every SDK load inside this test
+// process from leaving transform files outside its owned fixture directories.
+const previousFsCache = process.env.JITI_FS_CACHE
+process.env.JITI_FS_CACHE = "false"
+after(() => {
+  if (previousFsCache === undefined) delete process.env.JITI_FS_CACHE
+  else process.env.JITI_FS_CACHE = previousFsCache
+})
+
 const sdk = await import(
   pathToFileURL(join(hostRoot, "dist/bundle/index.js")).href
 )
@@ -1494,6 +1504,143 @@ test("actual SDK and domain decoder reject unsupported filter fields and actions
       ),
     )
   }))
+
+test("installed SDK reload registers and renders persisted task state through the real extension entry", async () => {
+  const root = mkdtempSync(join(bridgeParent, "registered-render-"))
+  // Source-owned, non-secret registry state path; never use the live database.
+  const previous = process.env.XDG_STATE_HOME
+  process.env.XDG_STATE_HOME = root
+  const sessionManager = sdk.SessionManager.inMemory(root)
+  const errors: unknown[] = []
+  let runner: InstanceType<typeof sdk.ExtensionRunner> | undefined
+  try {
+    for (const reason of ["startup", "reload"] as const) {
+      const loaded = await sdk.discoverAndLoadExtensions(
+        [fileURLToPath(new URL("./index.ts", import.meta.url))],
+        root,
+        root,
+        sdk.createEventBus(),
+      )
+      assert.deepEqual(loaded.errors, [])
+      assert.equal(loaded.extensions.length, 1)
+      const active = new sdk.ExtensionRunner(
+        loaded.extensions,
+        loaded.runtime,
+        root,
+        sessionManager,
+        {},
+      )
+      runner = active
+      active.onError((error: unknown) => errors.push(error))
+      assert.equal(active.getToolDefinition("task"), undefined)
+      await active.emit({ type: "session_start", reason })
+      const registered = active.getToolDefinition("task")
+      assert.ok(registered)
+      assert.equal(typeof registered.renderCall, "function")
+      assert.equal(typeof registered.renderResult, "function")
+      if (reason === "startup") {
+        const seed = await Effect.runPromise(
+          openSqliteTaskStore({
+            databasePath: join(
+              registryStateRoot(root, root),
+              "registry.sqlite",
+            ),
+          }),
+        )
+        try {
+          await Effect.runPromise(
+            seed.apply(
+              {
+                issues: [rawIssue],
+                operations: [
+                  {
+                    op: "add",
+                    issue: rawIssue,
+                    key: "native",
+                    text: "Persist native renderer state",
+                  },
+                ],
+              },
+              {
+                actorId: "fixture",
+                requestId: "native-seed",
+                now: 1000,
+                cancellation: "forbidden",
+              },
+            ),
+          )
+        } finally {
+          await Effect.runPromise(seed.close())
+        }
+      }
+      const args = { action: "read", issue: rawIssue, page: { limit: 10 } }
+      const callId = `native-render-${reason}`
+      const params = validateToolArguments(registered, {
+        type: "toolCall",
+        id: callId,
+        name: "task",
+        arguments: args,
+      })
+      const result = await registered.execute(
+        callId,
+        params,
+        undefined,
+        undefined,
+        active.createToolContext(callId, undefined),
+      )
+      assert.equal(result.details.outcome.kind, "page")
+      assert.equal(
+        result.details.invocation.sessionId,
+        sessionManager.getSessionId(),
+      )
+      sdk.initTheme("dark")
+      const component = new sdk.ToolExecutionComponent(
+        "task",
+        callId,
+        args,
+        {},
+        registered,
+        { requestRender: () => {} },
+        root,
+      )
+      component.setArgsComplete()
+      component.markExecutionStarted()
+      component.updateResult({ ...result, isError: result.isError === true })
+      assert.match(
+        component.render(80).join("\n"),
+        /Persist native renderer state/,
+      )
+      component.setExpanded(true)
+      const expanded = component.render(80).join("\n")
+      assert.match(expanded, /Retained output/)
+      assert.match(expanded, new RegExp(callId))
+      await active.emit({
+        type: "session_shutdown",
+        reason: reason === "startup" ? "reload" : "quit",
+      })
+      runner = undefined
+      const closed = await registered.execute(
+        `${callId}-closed`,
+        params,
+        undefined,
+        undefined,
+        active.createToolContext(`${callId}-closed`, undefined),
+      )
+      assert.equal(closed.details.outcome.kind, "failed")
+      assert.equal(closed.details.outcome.code, "closed")
+    }
+    assert.deepEqual(errors, [])
+  } finally {
+    try {
+      if (runner !== undefined)
+        await runner.emit({ type: "session_shutdown", reason: "quit" })
+    } finally {
+      if (previous === undefined) delete process.env.XDG_STATE_HOME
+      else process.env.XDG_STATE_HOME = previous
+      rmSync(root, { recursive: true })
+    }
+  }
+})
 
 test("installed SDK shell renders task names and expands the retained native receipt", async () =>
   fixture(async store => {
