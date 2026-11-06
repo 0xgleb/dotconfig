@@ -16,12 +16,6 @@ import {
   type NativeManagerRuntime,
 } from "./manager-native.ts"
 import { ManagerSessionError } from "./manager-session-core.ts"
-import {
-  requestTodoControl,
-  todoControlAvailable,
-  todoPriorityAvailable,
-  todoEffortAvailable,
-} from "../todo/control.ts"
 import { readPromptFile } from "../shared/prompt-text.ts"
 import { registerRuntimeVersion } from "../shared/runtime-version.ts"
 import type { OwnerAllowance, OwnerWindow } from "./owner-allowance.ts"
@@ -33,7 +27,6 @@ import {
   decodeManagerSummary,
   managerObservation,
   managerSummaryExists,
-  parseManagerPriorities,
   readManagerPriorities,
   readManagerTasks,
   readManagerTurns,
@@ -472,7 +465,7 @@ export const registerWorkManager = (
     if (ctx.mode === "tui") ctx.ui.setWidget("manager", undefined)
   }
 
-  registerRuntimeVersion(pi, "manager", "0.5.0")
+  registerRuntimeVersion(pi, "manager", "0.5.1")
 
   pi.on("session_start", (_event, ctx) => resetContext(ctx))
   pi.on("session_tree", (_event, ctx) => resetContext(ctx))
@@ -521,51 +514,17 @@ export const registerWorkManager = (
     },
   )
 
-  const priorities = (
-    ctx: ExtensionContext,
-    text: string,
-  ): Either.Either<string, ManagerError> => {
-    const tasks =
-      text.trim() === "clear"
-        ? Either.right([])
-        : readManagerTasks(ctx.sessionManager.getBranch())
-    if (Either.isLeft(tasks)) return Either.left(tasks.left)
-
-    const parsed = parseManagerPriorities(text, tasks.right)
-    if (Either.isLeft(parsed)) return Either.left(parsed.left)
-
-    return Either.map(save(MANAGER_PRIORITY_ENTRY, parsed.right), () =>
-      parsed.right.ids.length
-        ? `Continuation order: ${parsed.right.ids.map(id => `#${id}`).join(", ")}`
-        : "Manager priority order cleared.",
-    )
-  }
-
   if (!view) {
     native = registerNativeManager(
       pi,
       {
-        todo: (ctx, request) => {
-          const result = requestTodoControl(pi, ctx, request)
-          if (Either.isLeft(result))
-            return Either.left(
-              new ManagerSessionError({
-                code:
-                  result.left.code === "unconfirmed"
-                    ? "unconfirmed"
-                    : "unavailable",
-                message: result.left.message,
-              }),
-            )
-          return result.right.isError
-            ? Either.left(
-                new ManagerSessionError({
-                  code: "invalid_input",
-                  message: result.right.message,
-                }),
-              )
-            : Either.right(result.right.message)
-        },
+        todo: () =>
+          Either.left(
+            new ManagerSessionError({
+              code: "unavailable",
+              message: "Use the issue-qualified task tool to manage tasks.",
+            }),
+          ),
         priorityId: ctx => {
           const branch = ctx.sessionManager.getBranch()
           const order =
@@ -584,14 +543,12 @@ export const registerWorkManager = (
             .digest("hex")
             .slice(0, 32)
         },
-        priorities: (ctx, text) =>
-          Either.mapLeft(
-            priorities(ctx, text),
-            error =>
-              new ManagerSessionError({
-                code: "invalid_input",
-                message: error.message,
-              }),
+        priorities: () =>
+          Either.left(
+            new ManagerSessionError({
+              code: "unavailable",
+              message: "Issue scheduling uses the configured GitHub Project.",
+            }),
           ),
         snapshot: ctx =>
           Either.gen(function* () {
@@ -622,9 +579,9 @@ export const registerWorkManager = (
               )
             }
             return {
-              todoControl: todoControlAvailable(pi),
-              todoPriorityControl: todoPriorityAvailable(pi),
-              todoEffortControl: todoEffortAvailable(pi),
+              todoControl: false,
+              todoPriorityControl: false,
+              todoEffortControl: false,
               view: current.view,
               workerSession: current.workerSession,
               priorities: current.priorities?.ids ?? [],
@@ -637,8 +594,7 @@ export const registerWorkManager = (
   }
 
   pi.registerCommand("manager", {
-    description:
-      "Open native manager chat; priorities <ids> commits continuation order",
+    description: "Open native manager chat",
     handler: async (args, ctx) => {
       if (ctx.mode !== "tui") {
         ctx.ui.notify("Manager chat requires the interactive TUI.", "warning")
@@ -652,7 +608,7 @@ export const registerWorkManager = (
         await native.command(ctx, command)
         return
       }
-      if (!view && !command.startsWith("priorities ")) {
+      if (!view) {
         if (command && command !== "history" && command !== "summary") {
           ctx.ui.notify(
             "Run /manager, then send your message in the manager session.",
@@ -669,13 +625,6 @@ export const registerWorkManager = (
         const saved = save(MANAGER_CHAT_ENTRY, { version: 1, turns: [] })
         if (Either.isLeft(saved)) showError(ctx, saved.left)
         else ctx.ui.notify("Manager conversation cleared.", "info")
-        return
-      }
-
-      if (command.startsWith("priorities ")) {
-        const result = priorities(ctx, command.slice("priorities ".length))
-        if (Either.isLeft(result)) showError(ctx, result.left)
-        else ctx.ui.notify(result.right, "info")
         return
       }
 
@@ -721,9 +670,6 @@ export const registerWorkManager = (
       }
 
       const submit: ManagerChatOptions["submit"] = async (question, signal) => {
-        if (question.startsWith("/manager priorities ")) {
-          return priorities(ctx, question.slice("/manager priorities ".length))
-        }
         if (
           !question.trim() ||
           question.length > 4000 ||

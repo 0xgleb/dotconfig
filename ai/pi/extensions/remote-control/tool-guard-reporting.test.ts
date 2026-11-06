@@ -16,14 +16,14 @@ const fixture = (prior: readonly string[]) => {
 }
 
 test("management retains existing owner reporting through enforcement and exact restoration", () => {
-  const prior = ["bash", "report_owner", "read", "todo", "workflow"]
+  const prior = ["bash", "report_owner", "read", "task", "workflow"]
   const f = fixture(prior)
   const guard = enterRemoteToolGuard(f.controller, "management")
   assert.deepEqual(f.tools(), [
     "bash",
     "report_owner",
     "read",
-    "todo",
+    "task",
     "workflow",
   ])
   f.controller.setActiveTools(["bash", "workflow"])
@@ -32,7 +32,7 @@ test("management retains existing owner reporting through enforcement and exact 
     "bash",
     "report_owner",
     "read",
-    "todo",
+    "task",
     "workflow",
   ])
   assert.equal(guard.restore().status, "restored")
@@ -72,7 +72,7 @@ test("management preserves available file tools without exposing them to ordinar
 })
 
 test("ordinary agent communication cannot report or execute and restores the exact tools", () => {
-  const prior = ["report_owner", "bash", "read", "todo"]
+  const prior = ["report_owner", "bash", "read", "task"]
   const f = fixture(prior)
   const guard = enterRemoteToolGuard(f.controller, "communication")
   assert.deepEqual(f.tools(), [])
@@ -83,13 +83,13 @@ test("ordinary agent communication cannot report or execute and restores the exa
 })
 
 test("management cannot promote unavailable owner reporting", () => {
-  const f = fixture(["bash", "read", "todo"])
+  const f = fixture(["bash", "read", "task"])
   const guard = enterRemoteToolGuard(f.controller, "management")
-  assert.deepEqual(f.tools(), ["bash", "read", "todo"])
+  assert.deepEqual(f.tools(), ["bash", "read", "task"])
   guard.enforce()
-  assert.deepEqual(f.tools(), ["bash", "read", "todo"])
+  assert.deepEqual(f.tools(), ["bash", "read", "task"])
   guard.restore()
-  assert.deepEqual(f.tools(), ["bash", "read", "todo"])
+  assert.deepEqual(f.tools(), ["bash", "read", "task"])
 })
 
 test("management cannot promote unavailable GitHub CLI, file or workflow tools", () => {

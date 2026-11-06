@@ -21,26 +21,18 @@ const assertOnlyClearsPersistentWidget = (
   )
 }
 
-test("persistent detail stays out of the editor while the bounded task HUD remains visible", () => {
+test("workflow and registry detail stays out of the editor", () => {
   const workflows = read("../pi/extensions/classified-workflows/index.ts")
-  const todos = read("../pi/extensions/todo/index.ts")
-  const todoPresentation = read("../pi/extensions/todo/presentation.ts")
   const registry = read("../pi/extensions/agent-registry/index.ts")
 
-  assert.match(todos, /taskHud\(this\.state\)/)
-  assert.match(todos, /placement: "aboveEditor"/)
-  assert.match(todoPresentation, /TASKS  ·/)
-  assert.doesNotMatch(todoPresentation, /TASK\/\/GRID/)
   assertOnlyClearsPersistentWidget(workflows, '"pi-loop",')
   assertOnlyClearsPersistentWidget(workflows, '"pi-goal",')
   assertOnlyClearsPersistentWidget(registry, "STATUS_KEY,")
 
-  assert.match(todos, /setStatus\("todo"/)
   assert.match(workflows, /setStatus\("pi-loop"/)
   assert.match(workflows, /setStatus\("pi-goal"/)
   assert.match(registry, /setStatus\(STATUS_KEY/)
 
-  assert.match(todos, /registerCommand\("kanban"/)
   assert.match(workflows, /registerCommand\("loop"/)
   assert.match(workflows, /registerCommand\("goal"/)
   assert.match(registry, /registerCommand\("agents"/)

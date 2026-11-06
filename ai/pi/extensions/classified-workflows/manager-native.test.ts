@@ -1,7 +1,7 @@
 import assert from "node:assert/strict"
 import test from "node:test"
 import { lstatSync, mkdirSync, mkdtempSync, rmSync, symlinkSync } from "node:fs"
-import os, { tmpdir } from "node:os"
+import os from "node:os"
 import { syncBuiltinESMExports } from "node:module"
 import { join } from "node:path"
 import type {
@@ -10,13 +10,8 @@ import type {
 } from "@earendil-works/pi-coding-agent"
 import { Either, Effect } from "effect"
 import {
-  OWNER_ALLOWANCE_MS,
-  OWNER_PROGRESS_CHECK_IN_MS,
-} from "./owner-allowance.ts"
-import {
   registerNativeManager,
   type NativeManagerRuntime,
-  type NativeManagerWorker,
 } from "./manager-native.ts"
 import { managerPairDirectory } from "./manager-session-core.ts"
 import {
@@ -35,13 +30,12 @@ const fixture = (
     readonly now?: () => number
     readonly idle?: () => boolean
     readonly deadline?: NativeManagerRuntime["deadline"]
-    readonly reviewCheckIn?: NativeManagerWorker["reviewCheckIn"]
   } = {},
 ) => {
   const root =
-    options.agentDir ?? mkdtempSync(join(tmpdir(), "pi-manager-profile-test-"))
+    options.agentDir ??
+    mkdtempSync(join(os.tmpdir(), "pi-manager-profile-test-"))
   if (!options.agentDir) t.after(() => rmSync(root, { recursive: true }))
-  const priorities = t.mock.fn(() => Either.right("Saved"))
   const ticks: (() => void)[] = []
   const runtime: NativeManagerRuntime = {
     agentDir: root,
@@ -154,16 +148,13 @@ const fixture = (
   const registered = registerNativeManager(
     pi,
     {
-      ...(options.reviewCheckIn
-        ? { reviewCheckIn: options.reviewCheckIn }
-        : {}),
       snapshot: () =>
         Either.right({
           workerSession: { transcript: "worker log" },
           roundReport: null,
         }),
       priorityId: () => "initial",
-      priorities,
+      priorities: () => Either.right("Saved"),
     },
     runtime,
   )
@@ -205,64 +196,8 @@ const fixture = (
     ctx,
     ticks,
     seed,
-    priorities,
   }
 }
-
-test("native priority requests retain typed failure without worker mutations across lifecycle changes", async t => {
-  const worker = fixture(t)
-  await worker.emit("session_start")
-  const manager = fixture(t, true, { agentDir: worker.root })
-  await manager.emit("session_start")
-  const tool = manager.tools.get("manager_control")
-  assert.ok(tool)
-  const call = async () =>
-    object(
-      await tool.execute(
-        "direct-order",
-        { action: "priorities", order: "55 16" },
-        undefined,
-        undefined,
-        manager.ctx,
-      ),
-    )
-  const first = await call()
-  assert.equal(first.isError, true)
-  assert.match(JSON.stringify(first.content), /retired/u)
-  assert.equal(worker.priorities.mock.callCount(), 0)
-  await worker.emit("session_tree")
-  const changed = await call()
-  assert.equal(changed.isError, true)
-  assert.match(JSON.stringify(changed.content), /retired/u)
-  await worker.emit("session_shutdown")
-  const stopped = await call()
-  assert.equal(stopped.isError, true)
-  assert.notEqual(object(stopped.details).outcome, "queued")
-  assert.equal(worker.priorities.mock.callCount(), 0)
-})
-
-test("unfinished native check-in delivery returns unavailable without starting a turn", async t => {
-  const f = fixture(t)
-  await f.emit("session_start")
-  const checkIn = f.registered.checkIn
-  assert.ok(checkIn)
-  const before = f.messages.length
-  const result = checkIn(f.ctx, {
-    window: {
-      version: 1,
-      lastOwnerAt: 1_000,
-      deadlineAt: 1_000 + OWNER_ALLOWANCE_MS,
-      status: "active",
-    },
-    sequence: 1,
-    scheduledAt: 1_000 + OWNER_PROGRESS_CHECK_IN_MS,
-  })
-  assert.ok(Either.isLeft(result))
-  assert.equal(result.left.code, "unavailable")
-  assert.match(result.left.message, /not implemented/u)
-  assert.equal(f.messages.length, before)
-  assert.equal(f.execs.length, 0)
-})
 
 test("manager profile preserves the native editor and exposes registry management", async t => {
   const f = fixture(t, true)
@@ -297,7 +232,6 @@ test("manager profile preserves the native editor and exposes registry managemen
   assert.deepEqual(f.active.at(-1), [
     "agent_registry",
     "task",
-    "todo",
     "manager_control",
     "read",
     "bash",
@@ -331,7 +265,6 @@ test("manager profile preserves the native editor and exposes registry managemen
     }),
     undefined,
   )
-  assert.equal(await f.emit("tool_call", { toolName: "todo" }), undefined)
   const denied = object(
     await f.emit("tool_call", { toolName: "agent_workspace" }),
   )
@@ -399,7 +332,6 @@ for (const profile of [true, "global"] as const) {
 
     await f.emit("session_start")
     assert.ok(f.active.at(-1)?.includes("task"))
-    assert.ok(f.active.at(-1)?.includes("todo"))
 
     if (profile === "global") {
       const binding = getManagerBinding(f.pi, f.ctx)
@@ -444,7 +376,6 @@ for (const profile of [true, "global"] as const) {
       prompt,
       /does not require selecting or connecting to a worker/u,
     )
-    assert.equal(await f.emit("tool_call", { toolName: "todo" }), undefined)
     assert.equal(
       object(await f.emit("tool_call", { toolName: "agent_workspace" })).block,
       true,
@@ -601,7 +532,6 @@ for (const profile of [true, "global"] as const) {
     }
     for (const toolName of [
       "task",
-      "todo",
       "manager_control",
       "read",
       "bash",
@@ -677,7 +607,6 @@ test("global manager selects an existing worker without changing native UI or st
   assert.deepEqual(f.active.at(-1), [
     "agent_registry",
     "task",
-    "todo",
     "manager_control",
     "read",
     "bash",

@@ -2,7 +2,6 @@ import assert from "node:assert/strict"
 import { createHmac } from "node:crypto"
 import test from "node:test"
 import { Either } from "effect"
-import { signManagerPriority } from "./manager-pair-protocol.ts"
 import {
   OWNER_PROGRESS_CHECK_IN_MS,
   SUPERVISED_OWNER_ALLOWANCE_MS,
@@ -156,22 +155,6 @@ test("every authenticated scheduling or revision field is bound by the signature
         now,
       ),
     ),
-    "authentication",
-  )
-})
-
-test("a priority-command signature cannot be replayed as a progress capability", () => {
-  const request = signed()
-  const priority = signManagerPriority(
-    scope,
-    request.id,
-    request.revision,
-    "1 2",
-    TEST_CAPABILITY,
-  )
-  if (Either.isLeft(priority)) throw new Error(priority.left.message)
-  assert.equal(
-    code(verify({ ...request, signature: priority.right.signature })),
     "authentication",
   )
 })
