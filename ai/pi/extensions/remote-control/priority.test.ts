@@ -25,17 +25,6 @@ test("only authenticated Telegram ingress records a direct owner intervention", 
   )
 })
 
-test("claimed owner and agent messages enter the durable backlog before model delivery", () => {
-  assert.match(
-    source,
-    /import \{[\s\S]*?backlogRequirementsFromText,[\s\S]*?MESSAGE_BACKLOG_EVENT,[\s\S]*?\} from "\.\.\/shared\/backlog-events\.ts"/,
-  )
-  assert.match(
-    source,
-    /const authenticatedOwner = remoteSourceCarriesOwnerAuthority\(source\)[\s\S]*?pi\.events\.emit\(MESSAGE_BACKLOG_EVENT, \{[\s\S]*?project: ctx\.cwd,[\s\S]*?messageId: message\.id,[\s\S]*?source: authenticatedOwner \? "owner-message" : "bridge-message"[\s\S]*?requirements: backlogRequirementsFromText\(message\.text\)[\s\S]*?\}\)[\s\S]*?pi\.sendUserMessage\(content,/,
-  )
-})
-
 test("routing turns never present no-inbox bridge endpoints as live workers", () => {
   assert.match(
     source,

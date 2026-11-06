@@ -17,10 +17,6 @@ import {
   type ReportSnapshot,
 } from "./report-jobs.ts"
 import { Type } from "typebox"
-import {
-  backlogRequirementsFromText,
-  MESSAGE_BACKLOG_EVENT,
-} from "../shared/backlog-events.ts"
 import { wasRunAborted } from "../shared/continuation-pause.ts"
 import {
   TELEGRAM_RESUME_EVENT,
@@ -868,14 +864,6 @@ export default function remoteControl(
       onAuthenticatedOwnerMessage?.(message.createdAt)
     if (authenticatedOwner && prompt?.type === "text")
       pi.events.emit(HUMAN_TURN_EVENT, prompt.text)
-    pi.events.emit(MESSAGE_BACKLOG_EVENT, {
-      project: ctx.cwd,
-      messageId: message.id,
-      observedAt: message.createdAt,
-      source: authenticatedOwner ? "owner-message" : "bridge-message",
-      authority: authenticatedOwner ? "authenticated-owner" : "routing-only",
-      requirements: backlogRequirementsFromText(message.text),
-    })
     const sent = await Effect.runPromise(
       Effect.either(
         Effect.try({

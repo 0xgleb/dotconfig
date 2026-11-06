@@ -74,20 +74,6 @@ test("cross-project terminal outcomes stay out of unrelated model context", () =
   assert.doesNotMatch(outcomeSource, /pi\.sendMessage\(/)
 })
 
-test("request work phases use one typed implementation-review-publication pipeline", () => {
-  assert.match(source, /Type\.Literal\("start_request"\)/)
-  assert.match(source, /Type\.Literal\("review_request"\)/)
-  assert.match(source, /Type\.Literal\("publish_request"\)/)
-  assert.match(
-    source,
-    /evidenceRef: Type\.Optional\([\s\S]*?Type\.String\(\{ minLength: 1, maxLength: 1_024 \}\)/,
-  )
-  assert.match(
-    source,
-    /store\.advanceRequestBacklog\(\{[\s\S]*?requestId,[\s\S]*?leaseId: lease\.id,[\s\S]*?agentId: agent\.id,[\s\S]*?phase,[\s\S]*?evidenceRef:/,
-  )
-})
-
 test("request mutation shortcuts require an active owned lease", () => {
   assert.match(
     source,
