@@ -263,12 +263,13 @@ const safeText = (text: string): string =>
 const label = (text: string): string =>
   safeText(text).replace(/\s+/gu, " ").trim()
 
+const isRecord = (value: unknown): value is Readonly<Record<string, unknown>> =>
+  typeof value === "object" && value !== null && !Array.isArray(value)
+
 const record = (
   value: unknown,
 ): Readonly<Record<string, unknown>> | undefined =>
-  typeof value === "object" && value !== null && !Array.isArray(value)
-    ? value
-    : undefined
+  isRecord(value) ? value : undefined
 
 const issueLabel = (value: unknown): string => {
   const issue = record(value)
