@@ -13,5 +13,7 @@ Preserve independently required scope, credential, review, and test protections;
 this policy does not waive an explicit project workflow.
 
 Preserve unrelated index and working-tree entries. Explicit hook bypass remains
-prohibited. Verify actual committed paths, modes, and blobs before publication
-and stop on an unexpected change.
+prohibited. Additional publication verification must follow applicable loaded
+instructions or a concrete scope, ownership, or destination risk; identify the
+exact fact still missing. Reuse established selection evidence when the relevant
+content and target are unchanged.

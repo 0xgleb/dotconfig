@@ -688,9 +688,18 @@ test("only bounded final assistant text becomes the bridge response", () => {
       },
       {
         role: "assistant",
+        stopReason: "toolUse",
+        content: [
+          { type: "text", text: "Intermediate commentary" },
+          { type: "toolCall", name: "bash" },
+        ],
+      },
+      {
+        role: "assistant",
+        stopReason: "stop",
         content: [
           { type: "text", text: "first" },
-          { type: "toolCall", name: "bash" },
+          { type: "thinking", thinking: "private" },
           { type: "text", text: "second" },
         ],
       },

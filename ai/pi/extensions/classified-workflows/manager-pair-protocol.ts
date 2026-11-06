@@ -232,11 +232,12 @@ export const verifyManagerPriority = (
   )
   if (Either.isLeft(expected)) return Either.left(expected.left)
 
+  const suppliedSignature = value.signature
   const authenticated = Either.try({
     try: () =>
       timingSafeEqual(
         Buffer.from(expected.right, "hex"),
-        Buffer.from(value.signature, "hex"),
+        Buffer.from(suppliedSignature, "hex"),
       ),
     catch: () =>
       new ManagerSessionError({
@@ -334,6 +335,11 @@ const onlyKeys = (
 
 const invalid = (code: ManagerSessionError["code"], message: string) =>
   Either.left(new ManagerSessionError({ code, message }))
+
+export {
+  identifier as isManagerProtocolIdentifier,
+  validScope as isManagerPairScope,
+}
 
 const signature = (
   scope: ManagerPairScope,

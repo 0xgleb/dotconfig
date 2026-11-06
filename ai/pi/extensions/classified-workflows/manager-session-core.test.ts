@@ -1,6 +1,8 @@
 import assert from "node:assert/strict"
 import test from "node:test"
 import { join } from "node:path"
+import os, { homedir } from "node:os"
+import { syncBuiltinESMExports } from "node:module"
 import { pathToFileURL } from "node:url"
 import { getPackageDir } from "@earendil-works/pi-coding-agent"
 import { Either } from "effect"
@@ -97,7 +99,14 @@ test("native manager sessions are stable per worker and isolated between workers
   assert.notEqual(other.right.paneName, first.paneName)
 })
 
-test("all workers open one global native manager with no worker-pair startup flag", async () => {
+test("all workers open one global native manager with no worker-pair startup flag", async t => {
+  t.mock.method(os, "homedir", () => "/home/operator")
+  syncBuiltinESMExports()
+  t.after(() => {
+    t.mock.restoreAll()
+    syncBuiltinESMExports()
+  })
+
   const first = globalManagerSessionLaunchPlan(input)
   const other = globalManagerSessionLaunchPlan({
     ...input,
@@ -111,8 +120,16 @@ test("all workers open one global native manager with no worker-pair startup fla
   if (first.right.kind !== "launch") assert.fail("Expected global launch")
   const plan = first.right
   assert.equal(plan.paneName, "manager")
-  assert.equal(plan.sessionDirectory, "/state/pi/agent/manager/global/sessions")
-  assert.equal(plan.args[5], "/state/pi/agent/manager/global")
+  assert.equal(
+    plan.sessionDirectory,
+    "/state/pi/agent/sessions/--home-operator-.config-ai-pi-workspaces-manager--",
+  )
+  assert.equal(
+    plan.args[5],
+    join(homedir(), ".config", "ai", "pi", "workspaces", "manager"),
+  )
+  assert.equal(plan.args.includes("--session-dir"), false)
+  assert.ok(plan.args.includes("--continue"))
   assert.ok(!plan.args.includes("--manager-worker"))
   assert.ok(plan.args.slice(0, plan.args.indexOf("--")).includes("--floating"))
   assert.ok(!plan.args.includes("--no-extensions"))
@@ -123,6 +140,27 @@ test("all workers open one global native manager with no worker-pair startup fla
   assert.deepEqual(parsed.diagnostics, [])
   assert.deepEqual(parsed.messages, [])
   assert.equal(parsed.unknownFlags.get("manager"), true)
+})
+
+test("global manager uses the OS home independently of custom conversation storage", t => {
+  t.mock.method(os, "homedir", () => "/home/operator")
+  syncBuiltinESMExports()
+  t.after(() => {
+    t.mock.restoreAll()
+    syncBuiltinESMExports()
+  })
+  const result = globalManagerSessionLaunchPlan(input)
+  assert.ok(Either.isRight(result))
+  assert.equal(result.right.kind, "launch")
+  if (result.right.kind !== "launch") assert.fail("Expected global launch")
+  assert.equal(
+    result.right.args[5],
+    "/home/operator/.config/ai/pi/workspaces/manager",
+  )
+  assert.equal(
+    result.right.sessionDirectory,
+    "/state/pi/agent/sessions/--home-operator-.config-ai-pi-workspaces-manager--",
+  )
 })
 
 test("an existing global manager is reused regardless of the requesting worker", () => {

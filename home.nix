@@ -28,6 +28,35 @@ let
     '';
   };
   moveTreeSitter = pkgs.vimPlugins.nvim-treesitter.grammarToPlugin pkgs.tree-sitter-grammars.tree-sitter-move;
+  # The Nomic Foundation Solidity language server is only packaged inside
+  # the VS Code extension; expose its bundled server under the command name
+  # lspconfig's solidity_ls_nomicfoundation config expects. It resolves
+  # imports through the project's foundry.toml/remappings.txt.
+  solidityLanguageServer = pkgs.writeShellApplication {
+    name = "nomicfoundation-solidity-language-server";
+    runtimeInputs = [ pkgs.nodejs ];
+    text = ''
+      exec node ${pkgs.vscode-extensions.nomicfoundation.hardhat-solidity}/share/vscode/extensions/nomicfoundation.hardhat-solidity/server/out/index.js "$@"
+    '';
+  };
+  researchParsers = pkgs.symlinkJoin {
+    name = "nvim-research-parsers";
+    paths =
+      (pkgs.vimPlugins.nvim-treesitter.withPlugins (grammars: [
+        grammars.haskell
+        grammars.markdown
+        grammars.markdown_inline
+      ])).dependencies;
+  };
+  researchMolten = pkgs.vimPlugins.molten-nvim.overrideAttrs (previous: {
+    postPatch = (previous.postPatch or "") + ''
+      # Imported errors already include output_type. The exporter supplies that
+      # argument positionally; retaining it in extras breaks every later save.
+      substituteInPlace rplugin/python3/molten/ipynb.py \
+        --replace-fail 'chunk.extras = output_data' \
+        'chunk.extras = {key: value for key, value in output_data.items() if key != "output_type"}'
+    '';
+  });
   but-unwrapped = inputs.but-nix.packages.${pkgs.stdenv.hostPlatform.system}.gitbutler-cli;
   but = pkgs.writeShellScriptBin "but" ''
     exec ${pkgs.bash}/bin/bash ${./scripts/but-linked-worktree-guard.sh} \
@@ -244,7 +273,7 @@ in
       ".cursor/CLAUDE.md".force = true;
       ".pi/agent/AGENTS.md".source = globalInstructions;
       ".pi/agent/AGENTS.md".force = true;
-      ".pi/agent/manager/global/.pi/settings.json".source =
+      ".config/ai/pi/workspaces/manager/.pi/settings.json".source =
         config.lib.file.mkOutOfStoreSymlink "${aiDir}/pi/manager.settings.json";
       ".pi/agent/bin/but".source = "${but}/bin/but";
       ".pi/agent/bin/but".force = true;
@@ -262,6 +291,8 @@ in
         };
       };
       ".pi/agent/skills".source = skills;
+      ".pi/agent/keybindings.json".source =
+        config.lib.file.mkOutOfStoreSymlink "${aiDir}/pi/keybindings.json";
       ".local/share/nvim/site/parser/move.so".source = "${moveTreeSitter}/parser/move.so";
       ".local/share/nvim/site/queries/move".source = "${moveTreeSitter}/queries/move";
       ".config/ai/pi/extensions/node_modules" = {
@@ -352,6 +383,8 @@ in
         user.name = "0xgleb";
         init.defaultBranch = "master";
         push.autoSetupRemote = true;
+        # Native fsmonitor queries stall for ~1s per nested repository on macOS.
+        core.fsmonitor = false;
       };
     };
 
@@ -364,10 +397,28 @@ in
     neovim = {
       enable = true;
       withRuby = false;
-      withPython3 = false;
+      withPython3 = true;
+      # Home Manager clears the wrapper's packpath. Make Molten visible during
+      # Nix's remote-plugin manifest generation as well as normal startup.
+      extraWrapperArgs = [
+        "--add-flags"
+        "--cmd 'set runtimepath+=${researchMolten}'"
+        "--add-flags"
+        ''--cmd "lua ${config.programs.neovim.finalPackage.providerLuaRc}"''
+      ];
+
+      extraPython3Packages =
+        ps: with ps; [
+          jupyter-client
+          cairosvg
+          nbformat
+          pillow
+        ];
       extraPackages = with pkgs; [
         fd
         gcc
+        haskell-language-server
+        imagemagick
         lazygit
         lua-language-server
         luarocks
@@ -375,12 +426,16 @@ in
         nil
         ripgrep
         rust-analyzer
+        solidityLanguageServer
         svelte-language-server
         typescript-language-server
       ];
       plugins = with pkgs.vimPlugins; [
+        researchMolten
+        image-nvim
         (nvim-treesitter.withPlugins (grammars: [
           grammars.bash
+          grammars.haskell
           grammars.html
           grammars.css
           grammars.javascript
@@ -396,7 +451,14 @@ in
           grammars.yaml
         ]))
       ];
-      initLua = builtins.readFile ./nvim/bootstrap.lua;
+      initLua = ''
+        vim.g.research_plugin_paths = {
+          image = "${pkgs.vimPlugins.image-nvim}",
+          molten = "${researchMolten}",
+          parsers = "${researchParsers}",
+        }
+      ''
+      + builtins.readFile ./nvim/bootstrap.lua;
     };
 
     # Atuin — fuzzy history search (ctrl+r) for nushell

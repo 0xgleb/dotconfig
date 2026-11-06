@@ -37,6 +37,12 @@ Include the PR link, reviewed head, verification status, and any unresolved
 findings or blockers. Do not report to the Manager or describe a queued report
 as delivered.
 
+An explicit owner instruction to merge a specific PR overrides that repository's
+usual non-merge handoff for that PR only. Once its required review, fixes and
+checks pass, merge it normally without asking for merge approval again. This
+does not authorize other PRs, bypass required gates or override branch
+protection.
+
 ## Existing feedback
 
 When available, collect CodeRabbit feedback and other unaddressed PR review
@@ -58,6 +64,19 @@ Review stacks bottom-up. Across the round, prioritize ready PRs targeting
 Re-read each dependent PR's base, head, and diff after its predecessor changes
 or merges; do not reuse stale scope.
 
+## Merge conflicts
+
+When the review authorizes fixes, resolve merge conflicts rather than leaving
+the PR blocked merely because it conflicts. For review-only PRs, report the
+missing fix authority without modifying the branch. In the authorized review
+checkout, merge the verified current target branch into the PR's actual head
+branch and reconcile conflicts while preserving the intended changes from both
+sides. Re-review the resulting diff, rerun required checks, and commit and push
+to the same PR branch. Report a concrete checkout, authority or
+unresolved-intent blocker when resolution cannot safely proceed. This does not
+expand PR merge authority or permit force-pushes, protection overrides or
+primary-checkout edits.
+
 ## Checkout
 
 When the global worktree policy's owner-authorized concurrency requirement is
@@ -78,9 +97,7 @@ fixes needed to do the review. Such fixes do not authorize edits in the main
 checkout or another agent's checkout. The only standing exception to the
 prohibition on main-checkout edits is immediately adding missing `.tmp/` or
 `.worktrees/` directory patterns to the main `.gitignore` when required by
-global policy. Report that exact owned hunk to the manager for a scoped
-checkpoint; do not commit there or carry the repair into the reviewed PR. Other
-exceptions require explicit owner direction.
+global policy.
 
 Keep patches, prompts, reports, payloads, logs, and other review scratch files
 under this review worktree's `.tmp/`, never the main checkout's `.tmp/`. Resolve
@@ -91,10 +108,3 @@ cwd to it.
 Once you're done with all the reviews for the repo for a round, delete the
 worktree and its temporary artifacts together. Preserve unrelated files and
 never use the main checkout as a fallback scratch location.
-
-## Reporting
-
-- Report each review to the manager: repository, PR links, outcome (feedback /
-  fixes-pushed / merged / blocked / empty), and cleanup status.
-- Affected main workers sync via the manager at safe boundaries; never pull or
-  push on their checkouts directly. Paused workers stay paused.

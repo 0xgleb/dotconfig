@@ -1,7 +1,8 @@
 import assert from "node:assert/strict"
 import test from "node:test"
-import { mkdtempSync, rmSync } from "node:fs"
-import { tmpdir } from "node:os"
+import { lstatSync, mkdirSync, mkdtempSync, rmSync, symlinkSync } from "node:fs"
+import os, { tmpdir } from "node:os"
+import { syncBuiltinESMExports } from "node:module"
 import { join } from "node:path"
 import type {
   ExtensionAPI,
@@ -9,8 +10,13 @@ import type {
 } from "@earendil-works/pi-coding-agent"
 import { Either, Effect } from "effect"
 import {
+  OWNER_ALLOWANCE_MS,
+  OWNER_PROGRESS_CHECK_IN_MS,
+} from "./owner-allowance.ts"
+import {
   registerNativeManager,
   type NativeManagerRuntime,
+  type NativeManagerWorker,
 } from "./manager-native.ts"
 import { managerPairDirectory } from "./manager-session-core.ts"
 import {
@@ -21,13 +27,27 @@ import { getManagerBinding } from "../shared/manager-binding.ts"
 import { registryListingResult } from "../agent-registry/listing.ts"
 
 const scope = { workerSessionId: "worker-123", cwd: "/projects/worker" }
-const fixture = (t: test.TestContext, manager: boolean | "global" = false) => {
-  const root = mkdtempSync(join(tmpdir(), "pi-manager-profile-test-"))
-  t.after(() => rmSync(root, { recursive: true }))
+const fixture = (
+  t: test.TestContext,
+  manager: boolean | "global" = false,
+  options: {
+    readonly agentDir?: string
+    readonly now?: () => number
+    readonly idle?: () => boolean
+    readonly deadline?: NativeManagerRuntime["deadline"]
+    readonly reviewCheckIn?: NativeManagerWorker["reviewCheckIn"]
+  } = {},
+) => {
+  const root =
+    options.agentDir ?? mkdtempSync(join(tmpdir(), "pi-manager-profile-test-"))
+  if (!options.agentDir) t.after(() => rmSync(root, { recursive: true }))
+  const priorities = t.mock.fn(() => Either.right("Saved"))
   const ticks: (() => void)[] = []
   const runtime: NativeManagerRuntime = {
     agentDir: root,
     piExecutable: join(root, "bin", "pi"),
+    ...(options.now ? { now: options.now } : {}),
+    ...(options.deadline ? { deadline: options.deadline } : {}),
     schedule: tick => {
       ticks.push(tick)
       return () => {}
@@ -114,12 +134,14 @@ const fixture = (t: test.TestContext, manager: boolean | "global" = false) => {
   const ctx = {
     cwd: manager === "global" ? join(root, "manager", "global") : scope.cwd,
     mode: "tui",
+    isIdle: options.idle ?? (() => true),
     model: { provider: "openai-codex", id: "gpt-6.1-sol" },
     sessionManager: {
       getSessionId: () => (manager ? "manager-456" : scope.workerSessionId),
       getBranch: () => entries,
     },
     ui: {
+      getEditorText: () => "",
       notify: (text: string) => notices.push(text),
       custom: () =>
         assert.fail("native manager cannot create another chat frontend"),
@@ -132,13 +154,16 @@ const fixture = (t: test.TestContext, manager: boolean | "global" = false) => {
   const registered = registerNativeManager(
     pi,
     {
+      ...(options.reviewCheckIn
+        ? { reviewCheckIn: options.reviewCheckIn }
+        : {}),
       snapshot: () =>
         Either.right({
           workerSession: { transcript: "worker log" },
           roundReport: null,
         }),
       priorityId: () => "initial",
-      priorities: () => Either.right("Saved"),
+      priorities,
     },
     runtime,
   )
@@ -159,6 +184,13 @@ const fixture = (t: test.TestContext, manager: boolean | "global" = false) => {
     assert.ok(Either.isRight(prepared))
     return prepared.right
   }
+  t.mock.method(os, "homedir", () => root)
+  syncBuiltinESMExports()
+  t.after(async () => {
+    await emit("session_shutdown")
+    t.mock.restoreAll()
+    syncBuiltinESMExports()
+  })
   return {
     pi,
     root,
@@ -173,8 +205,64 @@ const fixture = (t: test.TestContext, manager: boolean | "global" = false) => {
     ctx,
     ticks,
     seed,
+    priorities,
   }
 }
+
+test("native priority requests retain typed failure without worker mutations across lifecycle changes", async t => {
+  const worker = fixture(t)
+  await worker.emit("session_start")
+  const manager = fixture(t, true, { agentDir: worker.root })
+  await manager.emit("session_start")
+  const tool = manager.tools.get("manager_control")
+  assert.ok(tool)
+  const call = async () =>
+    object(
+      await tool.execute(
+        "direct-order",
+        { action: "priorities", order: "55 16" },
+        undefined,
+        undefined,
+        manager.ctx,
+      ),
+    )
+  const first = await call()
+  assert.equal(first.isError, true)
+  assert.match(JSON.stringify(first.content), /retired/u)
+  assert.equal(worker.priorities.mock.callCount(), 0)
+  await worker.emit("session_tree")
+  const changed = await call()
+  assert.equal(changed.isError, true)
+  assert.match(JSON.stringify(changed.content), /retired/u)
+  await worker.emit("session_shutdown")
+  const stopped = await call()
+  assert.equal(stopped.isError, true)
+  assert.notEqual(object(stopped.details).outcome, "queued")
+  assert.equal(worker.priorities.mock.callCount(), 0)
+})
+
+test("unfinished native check-in delivery returns unavailable without starting a turn", async t => {
+  const f = fixture(t)
+  await f.emit("session_start")
+  const checkIn = f.registered.checkIn
+  assert.ok(checkIn)
+  const before = f.messages.length
+  const result = checkIn(f.ctx, {
+    window: {
+      version: 1,
+      lastOwnerAt: 1_000,
+      deadlineAt: 1_000 + OWNER_ALLOWANCE_MS,
+      status: "active",
+    },
+    sequence: 1,
+    scheduledAt: 1_000 + OWNER_PROGRESS_CHECK_IN_MS,
+  })
+  assert.ok(Either.isLeft(result))
+  assert.equal(result.left.code, "unavailable")
+  assert.match(result.left.message, /not implemented/u)
+  assert.equal(f.messages.length, before)
+  assert.equal(f.execs.length, 0)
+})
 
 test("manager profile preserves the native editor and exposes registry management", async t => {
   const f = fixture(t, true)
@@ -210,6 +298,8 @@ test("manager profile preserves the native editor and exposes registry managemen
     "agent_registry",
     "todo",
     "manager_control",
+    "read",
+    "ask_user",
   ])
   const response = object(result)
   assert.equal(typeof response.systemPrompt, "string")
@@ -305,13 +395,16 @@ for (const profile of [true, "global"] as const) {
         action,
       )
     }
-    for (const toolName of ["todo", "manager_control"]) {
+    for (const toolName of ["todo", "manager_control", "read", "ask_user"]) {
       assert.equal(await f.emit("tool_call", { toolName }), undefined, toolName)
     }
-    assert.equal(
-      object(await f.emit("tool_call", { toolName: "bash" })).block,
-      true,
-    )
+    for (const toolName of ["bash", "write", "edit", "workflow"]) {
+      assert.equal(
+        object(await f.emit("tool_call", { toolName })).block,
+        true,
+        toolName,
+      )
+    }
   })
 }
 
@@ -371,6 +464,8 @@ test("global manager selects an existing worker without changing native UI or st
     "agent_registry",
     "todo",
     "manager_control",
+    "read",
+    "ask_user",
   ])
   assert.deepEqual(f.execs, [])
 })
@@ -516,11 +611,41 @@ test("opening manager launches the real Pi CLI instead of any custom UI", async 
   assert.equal(f.execs.length, 2)
   assert.deepEqual(f.execs[0]?.args, ["action", "list-panes", "--json"])
   const args = f.execs[1]?.args ?? []
+  const workspace = join(f.root, ".config", "ai", "pi", "workspaces", "manager")
+  assert.equal(args[args.indexOf("--cwd") + 1], workspace)
+  assert.ok(lstatSync(workspace).isDirectory())
+  assert.equal(lstatSync(workspace).mode & 0o077, 0)
+  assert.equal(args.includes("--session-dir"), false)
   assert.ok(args.includes("--manager"))
   assert.ok(!args.includes("--manager-worker"))
   assert.ok(args.includes("--continue"))
   assert.ok(!args.includes("--no-extensions"))
   assert.ok(!args.includes("--mode"))
+})
+
+test("manager opens after settings activation creates an owned workspace with default permissions", async t => {
+  const f = fixture(t)
+  const workspace = join(f.root, ".config", "ai", "pi", "workspaces", "manager")
+  mkdirSync(join(workspace, ".pi"), { recursive: true, mode: 0o755 })
+  assert.notEqual(lstatSync(workspace).mode & 0o077, 0)
+  await f.registered.open(f.ctx)
+  assert.equal(f.execs.length, 2)
+  assert.equal(lstatSync(workspace).mode & 0o077, 0)
+  assert.equal(f.execs[1]?.args[5], workspace)
+})
+
+test("manager rejects a symlink workspace without changing its target permissions", async t => {
+  const f = fixture(t)
+  const parent = join(f.root, ".config", "ai", "pi", "workspaces")
+  const target = join(f.root, "other-directory")
+  mkdirSync(parent, { recursive: true })
+  mkdirSync(target, { mode: 0o755 })
+  const mode = lstatSync(target).mode
+  symlinkSync(target, join(parent, "manager"))
+  await f.registered.open(f.ctx)
+  assert.equal(f.execs.length, 1)
+  assert.equal(lstatSync(target).mode, mode)
+  assert.ok(f.notices.some(text => text.includes("private, owned directory")))
 })
 
 test("round report enters native Markdown message rendering once without another model turn", async t => {

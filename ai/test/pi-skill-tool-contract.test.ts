@@ -9,9 +9,9 @@ const piDocs = readFileSync(
   "utf8",
 )
 const piInstructions = readFileSync(
-  new URL("../pi/AGENTS.md", import.meta.url),
+  new URL("../../GLOBAL_AGENTS.md", import.meta.url),
   "utf8",
-)
+).replace(/\s+/g, " ")
 const newSkill = readFileSync(
   new URL("../skills/new-skill/SKILL.md", import.meta.url),
   "utf8",

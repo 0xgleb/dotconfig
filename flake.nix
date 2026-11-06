@@ -31,6 +31,11 @@
     git-hooks.url = "github:cachix/git-hooks.nix";
     git-hooks.inputs.nixpkgs.follows = "nixpkgs";
 
+    devenv.url = "github:cachix/devenv";
+    devenv.inputs = {
+      nixpkgs.follows = "nixpkgs";
+      git-hooks.follows = "git-hooks";
+    };
   };
 
   outputs =
@@ -47,6 +52,19 @@
         "aarch64-darwin"
         "x86_64-linux"
       ];
+      hooks = {
+        nixfmt.enable = true;
+        denofmt = {
+          enable = true;
+          files = "\\.md$";
+          require_serial = true;
+        };
+        prettier = {
+          enable = true;
+          excludes = [ "\\.md$" ];
+          settings.configPath = "${./prettier.config.mjs}";
+        };
+      };
       gitHooks = nixpkgs.lib.genAttrs hookSystems (
         system:
         let
@@ -55,20 +73,7 @@
         inputs.git-hooks.lib.${system}.run {
           src = self;
           package = pkgs.prek;
-          configPath = ".git-hooks-config.yaml";
-          hooks = {
-            nixfmt.enable = true;
-            denofmt = {
-              enable = true;
-              files = "\\.md$";
-              require_serial = true;
-            };
-            prettier = {
-              enable = true;
-              excludes = [ "\\.md$" ];
-              settings.configPath = "${./prettier.config.mjs}";
-            };
-          };
+          inherit hooks;
         }
       );
       fjWorkflowCheck =
@@ -181,6 +186,16 @@
         {
           git-hooks = gitHooks.aarch64-darwin;
 
+          atuin-darwin =
+            assert import ./scripts/atuin-darwin-checks.test.nix {
+              pkgs = self.legacyPackages.aarch64-darwin;
+              upstreamAtuin = pkgs.atuin;
+              nushellCheck = self.checks.aarch64-darwin.nushell-config;
+            };
+            pkgs.runCommand "atuin-darwin-checks" { } ''
+              touch "$out"
+            '';
+
           obsidian-packaging =
             let
               obsidian = self.legacyPackages.aarch64-darwin.obsidian;
@@ -254,9 +269,9 @@
           nushell-config =
             pkgs.runCommand "nushell-config-test"
               {
-                nativeBuildInputs = with pkgs; [
-                  atuin
-                  nushell
+                nativeBuildInputs = [
+                  self.legacyPackages.aarch64-darwin.atuin
+                  pkgs.nushell
                 ];
               }
               ''
@@ -345,12 +360,24 @@
         system:
         let
           pkgs = nixpkgs.legacyPackages.${system};
-          hooks = gitHooks.${system};
         in
         {
-          default = pkgs.mkShellNoCC {
-            packages = [ pkgs.nodejs ] ++ hooks.enabledPackages;
-            inherit (hooks) shellHook;
+          default = inputs.devenv.lib.mkShell {
+            inherit inputs pkgs;
+            modules = [
+              {
+                packages = [
+                  pkgs.nodejs
+                  pkgs.git
+                ];
+                git-hooks = { inherit hooks; };
+                tasks."dotconfig:prek-shim" = {
+                  exec = "prek install -f --hook-type pre-commit";
+                  after = [ "devenv:git-hooks:install" ];
+                  before = [ "devenv:enterShell" ];
+                };
+              }
+            ];
           };
         }
       );

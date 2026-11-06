@@ -287,6 +287,10 @@ test("managed reload summaries identify changed capabilities without exposing fu
     managedPiChangeLabel(`${root}/skills/pi-delegation/SKILL.md`, root),
     "pi-delegation skill",
   )
+  assert.equal(
+    managedPiChangeLabel(`${root}/../GLOBAL_AGENTS.md`, root),
+    "agent instructions",
+  )
   assert.deepEqual(
     parseManagedReloadSummary({
       labels: ["questions extension", "questions extension"],
@@ -419,9 +423,9 @@ test("auto reload triggers turns for active work and blockers that the new gener
 
 test("auto reload watches only managed Pi source roots", () => {
   assert.deepEqual(managedPiWatchPaths("/Users/example/.config/ai"), [
-    "/Users/example/.config/ai/AGENTS.md",
+    "/Users/example/.config/GLOBAL_AGENTS.md",
+    "/Users/example/.config/AGENTS.md",
     "/Users/example/.config/ai/pi.settings.json",
-    "/Users/example/.config/ai/pi/AGENTS.md",
     "/Users/example/.config/ai/pi/extensions",
     "/Users/example/.config/ai/pi/themes",
     "/Users/example/.config/ai/skills",

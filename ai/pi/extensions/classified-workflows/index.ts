@@ -93,6 +93,7 @@ import {
   boundedProjectInstructions,
   boundedToolResultActionContext,
   buildClassifierPrompt,
+  classifierAttemptBudget,
   createClassifiedAgentRunner,
   createToolResultAllowance,
   formatDecisionReason,
@@ -274,6 +275,7 @@ import {
   latestContinuationPause,
   wasRunAborted,
 } from "../shared/continuation-pause.ts"
+import { TELEGRAM_RESUME_EVENT } from "../shared/telegram-resume.ts"
 import { FOREGROUND_WORKFLOW_WAIT_PROBE_EVENT } from "../shared/foreground-wait.ts"
 import {
   ACTIVITY_PHASE_EVENT,
@@ -287,7 +289,6 @@ import {
   type UserQuestionStateSnapshot,
 } from "../shared/question-events.ts"
 import {
-  MANAGED_OPERATIONAL_ROLE_RESUMED_EVENT,
   REGISTRY_INTENT_REQUEST_EVENT,
   type RegistryIntentReporter,
   type RegistryIntentRequest,
@@ -306,19 +307,20 @@ const classifierModelOverride = (): string | undefined =>
   process.env.PI_CLASSIFIER_MODEL?.trim() || undefined
 
 const sessionClassifierModel = (
-  ctx: Pick<ExtensionContext, "getModel">,
+  ctx: Pick<ExtensionContext, "model">,
 ): string | undefined => {
-  const model = ctx.getModel?.()
+  const model = ctx.model
   return model ? `${model.provider}/${model.id}` : undefined
 }
 
 const classifierCandidates = (
-  ctx: Pick<ExtensionContext, "cwd" | "getModel">,
+  ctx: Pick<ExtensionContext, "cwd" | "model">,
 ): string[] => {
   const override = classifierModelOverride()
+  const sessionModel = sessionClassifierModel(ctx)
   const candidates = tierCandidates("mid", {
     now: () => Date.now(),
-    sessionModel: sessionClassifierModel(ctx),
+    ...(sessionModel ? { sessionModel } : {}),
   })
   return override && !candidates.includes(override)
     ? [override, ...candidates]
@@ -739,7 +741,7 @@ const classifierBackoff: (
 
 async function classify(
   request: ClassificationRequest,
-  ctx: Pick<ExtensionContext, "cwd" | "getModel">,
+  ctx: Pick<ExtensionContext, "cwd" | "model">,
   signal?: AbortSignal,
   onActivity?: (active: boolean) => void,
   owner?: OwnerAllowance,
@@ -751,7 +753,7 @@ async function classify(
     // One extra attempt beyond the distinct candidates retries the final
     // candidate — the session model — so a single transient provider failure
     // cannot exhaust the whole classification budget.
-    const attempts = candidates.length + (candidates.length > 1 ? 1 : 0)
+    const attempts = classifierAttemptBudget(candidates.length)
     // Attempts that actually started, for honest failure reporting when
     // cancellation stops the loop before the configured budget is spent.
     let attemptsStarted = 0
@@ -772,6 +774,7 @@ async function classify(
 
       try {
         attemptsStarted += 1
+        const candidate = candidates[Math.min(attempt, candidates.length - 1)]
         const result = await runPi(
           [
             "--mode",
@@ -784,12 +787,7 @@ async function classify(
             "--no-prompt-templates",
             "--no-themes",
             "--no-context-files",
-            ...(candidates[Math.min(attempt, candidates.length - 1)]
-              ? [
-                  "--model",
-                  candidates[Math.min(attempt, candidates.length - 1)],
-                ]
-              : []),
+            ...(candidate ? ["--model", candidate] : []),
             "--thinking",
             "low",
             "--system-prompt",
@@ -810,11 +808,7 @@ async function classify(
         ) {
           const decision = parseClassifierDecision(result.output)
           if (decision.reason !== "Classifier returned an invalid decision") {
-            if (candidates[Math.min(attempt, candidates.length - 1)])
-              markPreferredProvider(
-                candidates[Math.min(attempt, candidates.length - 1)],
-                () => Date.now(),
-              )
+            if (candidate) markPreferredProvider(candidate, () => Date.now())
             return decision
           }
           lastClassifierFailure = "classifier returned an invalid decision"
@@ -861,7 +855,7 @@ async function classify(
 async function evaluateGoal(
   condition: string,
   transcript: string[],
-  ctx: Pick<ExtensionContext, "cwd" | "getModel">,
+  ctx: Pick<ExtensionContext, "cwd" | "model">,
   owner: OwnerAllowance,
 ): Promise<GoalEvaluation> {
   const controller = new AbortController()
@@ -1114,7 +1108,7 @@ export default function classifiedWorkflows(
   onOwnerAllowance?: (guard: ReturnType<typeof registerOwnerAllowance>) => void,
 ): void {
   const withGitHookAuthority = registerGitHookAuthority(pi)
-  registerRuntimeVersion(pi, "classified-workflows", "2026.10.17.26")
+  registerRuntimeVersion(pi, "classified-workflows", "2026.10.17.28")
   const childTokenLimitResult = Effect.runSync(
     Effect.either(
       workflowChildTokenLimit(process.env[WORKFLOW_CHILD_TOKEN_LIMIT_ENV]),
@@ -1203,6 +1197,7 @@ export default function classifiedWorkflows(
     },
     window => manager?.expire(window),
   )
+  registerRuntimeVersion(pi, "owner-allowance", "2026.10.25.1")
   manager = registerWorkManager(pi, ownerAllowance)
 
   const awaitQuestionRelay = (
@@ -1255,7 +1250,7 @@ export default function classifiedWorkflows(
     request: ClassificationRequest,
     ctx: Pick<
       ExtensionContext,
-      "cwd" | "getContextUsage" | "getSystemPrompt" | "getModel"
+      "cwd" | "getContextUsage" | "getSystemPrompt" | "model"
     >,
     signal?: AbortSignal,
     projectContexts: RuntimeClassificationProjectContexts = runtimeClassificationProjectContexts(
@@ -2785,8 +2780,18 @@ export default function classifiedWorkflows(
     if (continuationPaused && latestCtx) setContinuationPaused(false, latestCtx)
   })
 
-  pi.events.on(MANAGED_OPERATIONAL_ROLE_RESUMED_EVENT, () => {
-    if (continuationPaused && latestCtx) setContinuationPaused(false, latestCtx)
+  registerRuntimeVersion(pi, "owner-resume-continuation", "2026.10.24.1")
+  pi.events.on(TELEGRAM_RESUME_EVENT, request => {
+    if (!isRecord(request) || typeof request.sessionId !== "string") {
+      rejectWorkflowEvent(TELEGRAM_RESUME_EVENT)
+      return
+    }
+    if (
+      latestCtx &&
+      request.sessionId === latestCtx.sessionManager.getSessionId() &&
+      continuationPaused
+    )
+      setContinuationPaused(false, latestCtx)
   })
 
   pi.events.on(REMOTE_CAPABILITY_HANDSHAKE_EVENT, handshake => {

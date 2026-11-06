@@ -34,6 +34,55 @@ test("remote turns mechanically disable tools and restore the exact prior set on
   assert.deepEqual(writes, [[], [], ["read", "bash", "todo"]])
 })
 
+test("management turns retain active coordination, read and question tools, never execution", () => {
+  let active = [
+    "read",
+    "bash",
+    "todo",
+    "agent_registry",
+    "manager_control",
+    "ask_user",
+    "workflow",
+  ]
+  const prior = [...active]
+  const guard = enterRemoteToolGuard(
+    {
+      getActiveTools: () => [...active],
+      setActiveTools: tools => {
+        active = [...tools]
+      },
+    },
+    "management",
+  )
+  const permitted = [
+    "read",
+    "todo",
+    "agent_registry",
+    "manager_control",
+    "ask_user",
+  ]
+  assert.deepEqual(active, permitted)
+  active = ["bash", "todo"]
+  guard.enforce()
+  assert.deepEqual(active, permitted)
+  guard.restore()
+  assert.deepEqual(active, prior)
+})
+
+test("management mode cannot add tools that were not active before the turn", () => {
+  let active = ["todo"]
+  enterRemoteToolGuard(
+    {
+      getActiveTools: () => [...active],
+      setActiveTools: tools => {
+        active = [...tools]
+      },
+    },
+    "management",
+  )
+  assert.deepEqual(active, ["todo"])
+})
+
 test("remote tool restoration makes one managed recovery attempt", () => {
   let active = ["read", "bash"]
   let ignoredRestoration = false
