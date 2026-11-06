@@ -22,7 +22,6 @@ const components = [
   ["disk-pressure", "resource-pressure"],
   ["image-summary", "image-summary"],
   ["safe-compaction", "safe-compaction"],
-  ["todo", "todo"],
   ["usage-governor", "usage-governor"],
 ] as const
 

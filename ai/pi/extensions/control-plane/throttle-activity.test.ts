@@ -26,7 +26,7 @@ test("throttle activity exposes actual admissions, scaling, deferrals, and in-fl
     at: 1_200,
     kind: "turn",
     outcome: "deferred",
-    role: "moneymentum-operator",
+    role: "general",
     retryAt: 61_200,
   })
 
@@ -41,12 +41,12 @@ test("throttle activity exposes actual admissions, scaling, deferrals, and in-fl
       settled: 0,
       blocked: 0,
     },
-    pausedRoles: [{ role: "moneymentum-operator", retryAt: 61_200 }],
+    pausedRoles: [{ role: "general", retryAt: 61_200 }],
     latest: {
       at: 1_200,
       kind: "turn",
       outcome: "deferred",
-      role: "moneymentum-operator",
+      role: "general",
       retryAt: 61_200,
     },
   })

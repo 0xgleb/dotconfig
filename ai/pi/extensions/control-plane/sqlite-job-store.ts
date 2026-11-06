@@ -164,13 +164,6 @@ export interface SqliteJobStore {
     ttlMs: number,
     kinds?: readonly RegisteredJobKind[],
   ) => Effect.Effect<Job | undefined, JobStoreError | JobRuntimeError>
-  readonly claimDueResearch: (
-    profile: string,
-    workerId: string,
-    leaseToken: string,
-    now: number,
-    ttlMs: number,
-  ) => Effect.Effect<Job | undefined, JobStoreError | JobRuntimeError>
   readonly complete: (
     id: string,
     leaseToken: string,
@@ -759,41 +752,6 @@ const makeStore = (
     return inTransaction(claimNextDue())
   }
 
-  const claimDueResearch: SqliteJobStore["claimDueResearch"] = (
-    profile,
-    workerId,
-    leaseToken,
-    now,
-    ttlMs,
-  ) =>
-    Effect.flatMap(validateId(profile), registeredProfile =>
-      inTransaction(
-        Effect.gen(function* () {
-          const value = yield* sql(
-            () =>
-              database
-                .prepare(
-                  `SELECT document FROM jobs
-                   WHERE kind = 'harness.research'
-                     AND state IN ('scheduled', 'ready', 'retry_wait')
-                     AND run_at <= ?
-                     AND json_extract(document, '$.spec.payload.profile') = ?
-                   ORDER BY run_at, updated_at, job_id
-                   LIMIT 1`,
-                )
-                .get(now, registeredProfile),
-            "failed to select due research job",
-          )
-          if (value === undefined) return undefined
-          const job = yield* Effect.flatMap(rowFrom(value), documentFromRow)
-          return yield* Effect.flatMap(
-            claimJob(job, workerId, leaseToken, now, ttlMs),
-            persist,
-          )
-        }),
-      ),
-    )
-
   const complete: SqliteJobStore["complete"] = (
     id,
     leaseToken,
@@ -1148,9 +1106,7 @@ const makeStore = (
         )
         const intervals = [fleetMinimumIntervalMs, roleMinimumIntervalMs]
         if (
-          !/^(?:general|reviewer|yielduck-operator|moneymentum-operator)$/u.test(
-            role,
-          ) ||
+          !/^(?:general|reviewer)$/u.test(role) ||
           intervals.some(
             interval =>
               !Number.isSafeInteger(interval) ||
@@ -1284,9 +1240,7 @@ const makeStore = (
           )
           if (
             input.provider !== "openai" ||
-            !/^(?:general|reviewer|yielduck-operator|moneymentum-operator)$/u.test(
-              input.role,
-            ) ||
+            !/^(?:general|reviewer)$/u.test(input.role) ||
             !Number.isSafeInteger(input.requestedTokens) ||
             input.requestedTokens < 1 ||
             input.requestedTokens > 2_000_000 ||
@@ -1684,7 +1638,6 @@ const makeStore = (
     get,
     list,
     claimDue,
-    claimDueResearch,
     complete,
     fail,
     cancel,

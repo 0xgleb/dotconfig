@@ -134,22 +134,22 @@ test("future checkpoints cannot govern an earlier decision", () => {
 })
 
 test("open pacing removes autonomous cadence while pressure preserves role weights", () => {
-  assert.deepEqual(rolePollingPolicy("moneymentum-operator", "open"), {
-    role: "moneymentum-operator",
+  assert.deepEqual(rolePollingPolicy("general", "open"), {
+    role: "general",
     baseIntervalMs: 4 * 60 * 60 * 1_000,
     weight: 1,
     effectiveIntervalMs: 60_000,
     tokenScale: 1,
   })
-  assert.deepEqual(rolePollingPolicy("moneymentum-operator", "critical"), {
-    role: "moneymentum-operator",
+  assert.deepEqual(rolePollingPolicy("general", "critical"), {
+    role: "general",
     baseIntervalMs: 4 * 60 * 60 * 1_000,
     weight: 1,
     effectiveIntervalMs: 16 * 60 * 60 * 1_000,
     tokenScale: 0.25,
   })
   assert.equal(
-    rolePollingPolicy("yielduck-operator", "critical").effectiveIntervalMs,
+    rolePollingPolicy("reviewer", "critical").effectiveIntervalMs,
     16 * 60 * 60 * 1_000,
   )
 })
@@ -287,11 +287,7 @@ test("five percent hard reserve denies workflow token spend", () => {
     ],
     now,
   )
-  const role = rolePollingPolicy(
-    "yielduck-operator",
-    result.pace,
-    result.throttleRatio,
-  )
+  const role = rolePollingPolicy("reviewer", result.pace, result.throttleRatio)
   assert.equal(result.pace, "reserve")
   assert.equal(role.tokenScale, 0)
   assert.equal(workflowTokenBudget(800_000, role).allowed, false)

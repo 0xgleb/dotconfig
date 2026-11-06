@@ -15,7 +15,6 @@ import {
   type OwnerInterventionRelay,
 } from "../shared/usage-governor-events.ts"
 import {
-  autonomousRoleForCwd,
   controlPlaneUsageAdmissionUrl,
   controlPlaneUsageControlUrl,
   controlPlaneUsageUrl,
@@ -390,7 +389,7 @@ const restoredModel = (
   return undefined
 }
 
-export default function usageGovernor(pi: ExtensionAPI): void {
+const usageGovernor = (pi: ExtensionAPI): void => {
   registerRuntimeVersion(pi, "usage-governor", "2026.09.04.1")
   let turnLaneState = emptyTurnLaneState()
   let preferredModel: PersistedModelRef | undefined
@@ -555,7 +554,7 @@ export default function usageGovernor(pi: ExtensionAPI): void {
             reservationId,
             ctx.sessionManager.getSessionId(),
             ctx.cwd,
-            autonomousRoleForCwd(ctx.cwd, process.env.HOME),
+            "general",
             requestedProviderTokens(ctx),
             activeTurnLane,
             activeOwnerInteractionAt,
@@ -595,10 +594,10 @@ export default function usageGovernor(pi: ExtensionAPI): void {
     while (true) {
       const result = await Effect.runPromise(
         Effect.either(
-          requestAutonomousAdmission(
-            autonomousRoleForCwd(ctx.cwd, process.env.HOME),
-            { kind: "workflow", requestedTokens },
-          ),
+          requestAutonomousAdmission("general", {
+            kind: "workflow",
+            requestedTokens,
+          }),
         ),
       )
       if (Either.isLeft(result)) {
@@ -911,3 +910,5 @@ export default function usageGovernor(pi: ExtensionAPI): void {
     ctx.ui.setStatus("usage-governor", "usage:unthrottled")
   })
 }
+
+export default usageGovernor

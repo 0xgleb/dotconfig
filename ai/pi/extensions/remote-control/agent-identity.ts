@@ -1,9 +1,7 @@
 import type { BridgeAgent } from "./protocol.ts"
+import type { RegistryRoleIdentity } from "../shared/registry-intent-events.ts"
 
-export interface AgentRoleIdentity {
-  readonly role: string
-  readonly mode: "task" | "operational"
-}
+export type AgentRoleIdentity = RegistryRoleIdentity
 
 const titleWord = (word: string): string => {
   const normalized = word.toLowerCase()

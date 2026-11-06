@@ -24,7 +24,7 @@ import { CAPABILITY_CIRCUIT_ENTRY } from "../classified-workflows/capability-cir
 
 const source = readFileSync(new URL("./index.ts", import.meta.url), "utf8")
 const start = source.indexOf("  const sync = async")
-const end = source.indexOf("  const autoClaimOperationalRole", start)
+const end = source.indexOf("  const collectDeclaredBacklog", start)
 assert.ok(start >= 0 && end > start)
 const syncSource = stripTypeScriptTypes(source.slice(start, end))
 const agent = { id: "agent-1", pid: 1 }
@@ -34,7 +34,7 @@ const snapshot: RegistrySnapshot = {
     {
       id: "lease-1",
       project: "/workspace",
-      role: "operator",
+      role: "driver-worker",
       mode: "operational",
       status: "active",
       owner: agent,
@@ -379,7 +379,7 @@ test("malformed persisted pause and capability state fail closed with diagnostic
   }
 })
 
-test("task, foreign, paused, wrong-project and expired leases cannot wake the operator", async () => {
+test("task, foreign, paused, wrong-project and expired leases cannot wake the developer", async () => {
   const lease = snapshot.leases[0]
   assert.ok(lease)
   for (const changed of [
@@ -500,7 +500,7 @@ test("a receipt and backlog reconciliation cannot both wake in one sync", async 
         {
           id: "request-1",
           project: "/workspace",
-          role: "operator",
+          role: "driver-worker",
           requesterId: "source",
           text: "inspect",
           priority: "urgent",

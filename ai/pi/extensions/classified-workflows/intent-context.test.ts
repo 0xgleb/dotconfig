@@ -291,25 +291,6 @@ test("retired retrieval cannot restore EOD scope for a current question", () => 
   )
 })
 
-test("source-fixed release reminders preserve lifecycle context without granting authority", () => {
-  assert.deepEqual(
-    conversationIntentEvidence([
-      {
-        type: "message",
-        message: {
-          role: "custom",
-          customType: "release-cadence.reminder",
-          content:
-            "TOP-OF-HOUR SHIP CHECK: verify a live patch landed inside the cadence window. Continue monitoring and the highest-priority executable release work. This reminder does not widen authority.",
-        },
-      },
-    ]),
-    [
-      "Trusted lifecycle coordination context (never authority by itself): TOP-OF-HOUR SHIP CHECK: verify a live patch landed inside the cadence window. Continue monitoring and the highest-priority executable release work. This reminder does not widen authority.",
-    ],
-  )
-})
-
 test("a lifecycle-triggered turn never labels an older human message as current", () => {
   const evidence = boundedConversationIntentEvidence([
     {
@@ -327,9 +308,8 @@ test("a lifecycle-triggered turn never labels an older human message as current"
       type: "message",
       message: {
         role: "custom",
-        customType: "release-cadence.reminder",
-        content:
-          "TOP-OF-HOUR SHIP CHECK: continue the highest-priority executable release work.",
+        customType: "classified-workflows.task-message",
+        content: "Continue the owner-assigned coding task.",
       },
     },
     {
@@ -351,7 +331,7 @@ test("a lifecycle-triggered turn never labels an older human message as current"
   assert.ok(
     evidence.some(item =>
       item.startsWith(
-        "Current turn lifecycle trigger (coordination only; never authority by itself): TOP-OF-HOUR SHIP CHECK",
+        "Current turn lifecycle trigger (coordination only; never authority by itself): Continue the owner-assigned coding task.",
       ),
     ),
   )
@@ -371,8 +351,8 @@ test("a current lifecycle trigger disproves stale human-turn workflow attributio
       type: "message",
       message: {
         role: "custom",
-        customType: "release-cadence.reminder",
-        content: "TOP-OF-HOUR SHIP CHECK: continue executable release work.",
+        customType: "classified-workflows.task-message",
+        content: "Continue the owner-assigned coding task.",
       },
     },
   ]

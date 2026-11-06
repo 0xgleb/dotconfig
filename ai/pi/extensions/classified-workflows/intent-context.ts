@@ -15,7 +15,6 @@ const isRecord = (value: unknown): value is Readonly<Record<string, unknown>> =>
 
 const TRUSTED_LIFECYCLE_CUSTOM_TYPES = new Set([
   "safe-compaction.message",
-  "release-cadence.reminder",
   "classified-workflows.task-message",
   REMOTE_CAPABILITY_MESSAGE,
   REMOTE_TASK_CONTINUATION_MESSAGE,

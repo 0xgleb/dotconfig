@@ -49,9 +49,11 @@ after a handover attempt fails.
 
 Do not silently degrade to an inline summary. The required outcome is a real
 handover file. If a tool or classifier blocks creation, preserve the exact
-failure in the durable todo state, route the Pi defect to `pi-support`, report
-that no file exists, and stop. Never claim a handover succeeded without a
-successful file-write result.
+failure in the durable task state, explain the failed action, suspected cause,
+and proposed fix to the owner, report that no file exists, and stop. Obtain
+approval for that blocker fix; the handover stop boundary and its standing
+`.gitignore` repair exception still apply. Never claim a handover succeeded
+without a successful file-write result.
 
 ## Step 1 -- Gather the git ground truth
 
