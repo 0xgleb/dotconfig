@@ -185,36 +185,6 @@ test("manual abort pause state persists defensively and keys off the final assis
   )
 })
 
-test("pending todos continue after a quiet settled turn without seizing user input", () => {
-  assert.match(
-    extensionSource,
-    /scheduleTaskContinuation[\s\S]*?taskContinuationMessage\(work\)[\s\S]*?setTimeout/,
-  )
-  assert.match(
-    extensionSource,
-    /ctx\.isIdle\(\)[\s\S]*?ctx\.ui\.getEditorText\(\)\.trim\(\)\.length > 0[\s\S]*?ctx\.hasPendingMessages\(\)/,
-  )
-  assert.match(
-    extensionSource,
-    /customType: TASK_MESSAGE[\s\S]*?triggerTurn: true[\s\S]*?deliverAs: "followUp"/,
-  )
-  const settledStart = extensionSource.indexOf('pi.on("agent_settled"')
-  const settled = extensionSource.slice(settledStart, settledStart + 1_000)
-  assert.match(settled, /scheduleTaskContinuation\(ctx\)/)
-  assert.match(
-    extensionSource,
-    /pi\.on\("input"[\s\S]*?clearTaskContinuationTimer\(\)/,
-  )
-  assert.match(
-    extensionSource,
-    /pi\.on\("agent_start"[\s\S]*?clearTaskContinuationTimer\(\)/,
-  )
-  assert.match(
-    extensionSource,
-    /pi\.on\("session_shutdown"[\s\S]*?clearTaskContinuationTimer\(\)/,
-  )
-})
-
 test("managed reload preemption persists workflow state without becoming a manual pause", () => {
   assert.match(
     extensionSource,

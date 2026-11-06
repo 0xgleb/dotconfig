@@ -78,6 +78,12 @@ the harness, and suppress duplicates without agent polling.
 
 ## Scope, execution, and safety
 
+- Never give time-based estimates for any work. Use relative Fibonacci effort
+  points (1, 2, 3, 5, 8, ...) when estimating effort, never a conversion to
+  time. Effort 1 anchors a complete small delivery unit: one file or a matching
+  implementation/test pair, verification, commit, push, and a completed ready
+  PR. This is a relative delivery anchor, not a file-count algorithm. Estimate
+  remaining delivery at issue level, not individual execution tasks.
 - Read project instructions and relevant source before acting. Verify unfamiliar
   commands and flags instead of guessing. Never invent concrete values, URLs or
   repository facts; report unresolved gaps rather than filling them with
@@ -366,24 +372,33 @@ the harness, and suppress duplicates without agent polling.
   every child's cwd to that root; neither the coordinator's cwd nor the common
   Git directory is a fallback. Record newly created project `.tmp/`
   files/directories immediately with `artifact_provenance` so later exact
-  cleanup has durable evidence. Never delete user files outside authorized build
-  outputs, global caches outside unused Nix store paths, or Nix generations
-  without explicit user authorization. Cargo registry/toolchain caches are not
-  Cargo build outputs. For other exact rebuildable build outputs, preserve
-  artifacts protected by project instructions or verified runtime, watcher,
-  supervisor, release, or deployment configuration. Inspect referenced
-  configuration and preserve a cleanup root containing a configured live
-  artifact unless disruption is explicitly requested.
-- In a Git checkout, whenever `.tmp/` or `.worktrees/` is used, verify effective
+  cleanup has durable evidence. A recorded directory covers descendants created
+  inside it; do not redundantly record those files. Never delete user files
+  outside authorized build outputs, global caches outside unused Nix store
+  paths, or Nix generations without explicit user authorization. Cargo
+  registry/toolchain caches are not Cargo build outputs. Exact rebuildable build
+  outputs are disposable by default, but project instructions and verified
+  repository configuration may protect artifacts consumed by a runtime, watcher,
+  supervisor, release, or deployment process. Inspect any referenced
+  configuration before cleanup and preserve a cleanup root containing a
+  configured live artifact unless disruption is explicitly requested.
+- In a Git checkout, whenever `.tmp/` or `.worktrees/` is used, record the
+  working-tree/index state before the directory-ignore preflight. Verify
   directory-wide coverage with `git check-ignore --verbose` on the directory
-  itself and the intended artifact path. A file-specific match such as `*.log`
-  does not establish directory coverage. If coverage is missing, immediately add
-  the matching directory pattern to that checkout's `.gitignore` and recheck
-  both paths before continuing. Preserve existing ignore rules. No separate
-  approval is needed for these two directory patterns; this grants no
-  worktree-creation or unrelated source-change authority. Outside a Git
-  checkout, Git-ignore coverage is not applicable; do not initialize a
-  repository merely to apply this rule.
+  itself and the intended artifact path; a file-specific match such as `*.log`
+  is insufficient. Immediately add any missing directory pattern to that
+  checkout's `.gitignore`, preserve existing rules, and recheck both paths.
+  Account for an owned repair as a separate preflight unit through the
+  repository's already-authorized checkpoint/publication workflow. Isolate the
+  new ignore hunk from pre-existing changes and reviewed finding fixes; do not
+  absorb it into another branch. Preserve publication gates. If a scoped
+  checkpoint or required publication is blocked, leave the repair saved and
+  report the exact blocker before starting another work unit. Handover remains a
+  stop boundary: save its repair, refresh affected state reads and include it in
+  the handover without publication. No separate approval is needed for these two
+  directory patterns; this grants no worktree-creation, new-PR or unrelated
+  source-change authority. Outside a Git checkout, Git-ignore coverage is not
+  applicable; do not initialize a repository merely to apply this rule.
 - Never inject keystrokes or text into the user's active Zellij pane or editor;
   it can overwrite an in-progress prompt. Use registered tools such as
   `reload_pi` instead, and keep Zellij automation confined to isolated workers.
@@ -392,6 +407,13 @@ the harness, and suppress duplicates without agent polling.
   tab and pane, launch the worker, and restore that exact focus before
   returning. If exact restoration cannot be verified, use a classified
   background workflow.
+- Keep code readable across languages: choose clear names, separate independent
+  declarations with blank lines, and keep lines readable, including embedded SQL
+  and JSON. Separate meaningful phases inside larger bodies, but keep tiny
+  two–three-line bodies compact rather than inserting mechanical inner blank
+  lines. Code-style inspection owns these readability rules; typing inspection
+  owns newtypes, domain types and opaque-versus-primitive representation
+  choices.
 - In TypeScript and JavaScript, prefer `const`-bound arrow functions over
   `function` declarations, with explicit callable types when they clarify the
   contract. Keep declarations for overloads, generators, or required semantics.
@@ -439,16 +461,6 @@ the harness, and suppress duplicates without agent polling.
 - Record confirmed significant, hard-to-reverse architectural decisions through
   the `adr` skill. Settle unresolved architectural choices with the owner before
   proceeding; do not turn routine implementation into a new approval gate.
-- Apply type-driven test-first work to added or changed retained behavior:
-  define the contract, write a compiling test that fails on the required
-  behavior, then implement and refine. Type prerequisites may precede the
-  failing test; behavioral logic may not. Reproduce bugs through realistic
-  production paths and data, not unreachable internal states fabricated only for
-  a test. Malformed boundary inputs still require tests. Run relevant tests and
-  inspect the final diff; retain only justified changes. Preserve uncertain
-  changes while reconciling current owner intent, task records, repository
-  history and ownership evidence. Lost context does not authorize reverting
-  work; remove only evidenced agent-owned unjustified deltas.
 - When deleting an obsolete capability, delete its feature-only tests and
   fixtures alongside its implementation and documentation. Intentional removal
   does not itself require replacement tests. Verify current retained contracts;
@@ -456,29 +468,41 @@ the harness, and suppress duplicates without agent polling.
   legacy-name inventories. Negative coverage must defend a current behavioral,
   compatibility, or security requirement. Malformed-input and security tests
   remain required for retained boundaries.
-- Keep durable tasks granular and linked to the project's tracker. Record
-  requests, corrections, blockers, and next actions without replacing a direct
-  answer with task bookkeeping. Preserve deferred work and explicit constraints.
-  Follow an approved plan; do not substitute another design without the required
+- Follow type-driven test-first work: define the contract, write a compiling
+  test that fails on the required behavior, then implement and refine. Type
+  prerequisites may precede the failing test; behavioral logic may not.
+  Reproduce bugs through realistic production paths and data, not unreachable
+  internal states fabricated only for a test. Malformed boundary inputs still
+  require tests. Run relevant tests and inspect the final diff; retain only
+  justified changes. Preserve uncertain changes while reconciling current owner
+  intent, task records, repository history and ownership evidence. Lost context
+  does not authorize reverting work; remove only evidenced agent-owned
+  unjustified deltas.
+- Every task belongs to a repository-qualified GitHub issue, without exceptions
+  for short-lived or one-off work. Keep tasks granular. Record requests,
+  corrections, blockers, and next actions without replacing a direct answer with
+  task bookkeeping. Preserve deferred work and explicit constraints. Follow an
+  approved plan; do not substitute another design without the required
   agreement. New human direction supersedes the plan. For verified-finding work,
   fix every valid finding and explain invalid findings at completion.
-- Owner-approved workers may create issues and perform otherwise manager-only
-  issue operations within the approved scope. A manager actor, availability, or
-  worker-manager communication are not prerequisites. Existing authorization is
-  sufficient for ordinary task work; do not require fresh approval. This grants
-  neither read-only managers coding/execution capabilities nor blanket authority
-  for unrelated remote effects.
-- Backlog priorities may be assigned or changed by a manager or an
-  owner-approved worker, only after the owner confirms the proposed ordering.
-  Assign task priority only through the backlog tool's priority/rank field.
-  Never encode priority in task titles, text, or prose. The rank field is the
-  single ordering authority. Workers must execute the highest-ranked authorized
-  runnable work in their respective backlogs, not insert self-chosen audits,
-  adjacent work, or priority changes. Report proposed additions or ordering
-  changes to the owner, directly or through a manager, for confirmation; do not
-  act on them as a new work order. Direct owner instructions still take
-  precedence. Workers must not invent ranks or promote their own work without
-  owner approval.
+- Any worker may perform the specific GitHub issue or Project operation
+  requested by the owner. This is a global Markdown instruction, not a dedicated
+  harness-enforced permission system or an approved-worker class. Existing tool
+  classification, privacy and publication rules still apply. A manager actor,
+  availability or worker-manager communication are not prerequisites, and the
+  same requested operation does not need fresh approval. This grants neither
+  read-only managers coding/execution capabilities nor authority for unrelated
+  remote effects.
+- Backlog priorities may be assigned or changed by a manager or worker, only
+  after the owner confirms the proposed ordering. Assign task priority only
+  through the backlog tool's priority/rank field. Never encode priority in task
+  titles, text, or prose. The rank field is the single ordering authority.
+  Workers must execute the highest-ranked authorized runnable work in their
+  respective backlogs, not insert self-chosen audits, adjacent work, or priority
+  changes. Report proposed additions or ordering changes to the owner, directly
+  or through a manager, for confirmation; do not act on them as a new work
+  order. Direct owner instructions still take precedence. Workers must not
+  invent ranks or promote their own work without owner approval.
 - Structure roadmaps as priority-ordered epics, not numbered phases. Use
   dependency graphs where useful; expose independent deliverables without
   manufacturing parallel mutation authority. Give each epic a short goal and

@@ -56,6 +56,7 @@
       "./compact-read/index.ts",
       "./disk-pressure/index.ts",
       "./input-ergonomics/index.ts",
+      "./issue-tasks/index.ts",
       "./nushell-default/index.ts",
       "./image-summary/index.ts",
       "./local-models/index.ts",
@@ -63,7 +64,6 @@
       "./pi-vim/index.ts",
       "./request-observability/index.ts",
       "./safe-compaction/index.ts",
-      "./todo/index.ts",
       "./usage-governor/index.ts"
     ]
   },

@@ -90,7 +90,21 @@ test("real cross-scope Git observations remain excluded regardless of output or 
       assert.equal(isRetained(command, "ok", isError), false, command)
     }
   }
-  assert.deepEqual(collectedResult("git -C /outside status --short", "ok"), [])
+  const unknownLocation = collectedResult(
+    "git -C /outside status --short",
+    "ok",
+  )
+  assert.equal(unknownLocation.length, 1)
+  assert.deepEqual(
+    selectRelevantExecutionEvidence(unknownLocation, subject),
+    unknownLocation,
+  )
+  const header = (unknownLocation[0] ?? "").split(" input=")[0] ?? ""
+  assert.match(header, / context=unscoped$/)
+  assert.doesNotMatch(
+    header,
+    / (?:scope|snapshot|commandScope|commandVcsToken|verification)=/,
+  )
 })
 
 test("non-Git failures remain failures when their output contains Git words", () => {

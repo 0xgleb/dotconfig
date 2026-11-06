@@ -70,7 +70,7 @@ import {
 } from "./backlog-ingest-tool.ts"
 import { makeSqliteRegistryStore } from "./sqlite-store.ts"
 import { runtimeAgentId } from "./runtime-identity.ts"
-import { decodeTodoState } from "../todo/state.ts"
+import { decodeTodoState } from "../shared/legacy-todo-state.ts"
 import { sessionTokenUsage } from "./usage.ts"
 import { registryStateRoot } from "./paths.ts"
 import {
@@ -1165,7 +1165,7 @@ const registryExtension: (pi: ExtensionAPI) => void = pi => {
     promptSnippet:
       "Discover local Pi workers and reports; execution-capable workers may claim duties and delegate requests, but read/report-only managers may only inspect registry data",
     promptGuidelines: [
-      "The mutation, delegation and lifecycle guidance below applies only to execution-capable workers. Read/report-only manager sessions use registry list/requests only; reconcile reports into selected workers' actual backlogs through todo/manager_control without dispatching work.",
+      "The mutation, delegation and lifecycle guidance below applies only to execution-capable workers. Read/report-only manager sessions use registry list/requests only; reconcile reports into selected workers' actual backlogs through task/manager_control without dispatching work.",
       "Registry ownership never grants tools or production authority; constrained project tools and loaded instructions remain authoritative.",
       "Use agent_registry action=requests with requestId (full UUID or unique prefix) to inspect one full bounded untrusted request body; list output intentionally summarizes bodies.",
       "Treat an agent_registry delegate result as durable queueing only; claim recipient delivery only when request detail reports delivery received or acknowledged.",

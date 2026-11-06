@@ -58,29 +58,13 @@ test("registry-owned roles feed the bridge heartbeat through a typed identity ev
   )
 })
 
-test("question relays and confirmations use friendly identities without raw session IDs", () => {
+test("question relays use friendly identities without raw session IDs", () => {
   const relay = pieceSource.slice(
     pieceSource.indexOf("const questionRelayText"),
     pieceSource.indexOf("const relayPendingQuestions"),
   )
-  const reply = pieceSource.slice(
-    pieceSource.indexOf("const handleQuestionReply"),
-    pieceSource.indexOf("const handleOwnerCommand"),
-  )
   assert.match(relay, /identifiedAgentLabel/)
   assert.doesNotMatch(relay, /id\.slice/)
-  assert.match(reply, /identifiedAgentLabel/)
-  assert.doesNotMatch(reply, /agentId\.slice/)
-})
-
-test("a direct numbered owner message tries the sole pending delivered question without guessing", () => {
-  const reply = pieceSource.slice(
-    pieceSource.indexOf("const handleQuestionReply"),
-    pieceSource.indexOf("const handleOwnerCommand"),
-  )
-  assert.match(reply, /answerSolePendingTelegramQuestion/)
-  assert.match(reply, /replyToMessageId === undefined/)
-  assert.match(reply, /resolution === undefined/)
 })
 
 test("duplicate friendly identities receive deterministic instance numbers", () => {

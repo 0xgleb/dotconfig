@@ -275,6 +275,7 @@ import {
   latestContinuationPause,
   wasRunAborted,
 } from "../shared/continuation-pause.ts"
+import { TELEGRAM_RESUME_EVENT } from "../shared/telegram-resume.ts"
 import { FOREGROUND_WORKFLOW_WAIT_PROBE_EVENT } from "../shared/foreground-wait.ts"
 import {
   ACTIVITY_PHASE_EVENT,
@@ -288,7 +289,6 @@ import {
   type UserQuestionStateSnapshot,
 } from "../shared/question-events.ts"
 import {
-  MANAGED_OPERATIONAL_ROLE_RESUMED_EVENT,
   REGISTRY_INTENT_REQUEST_EVENT,
   type RegistryIntentReporter,
   type RegistryIntentRequest,
@@ -306,19 +306,20 @@ const classifierModelOverride = (): string | undefined =>
   process.env.PI_CLASSIFIER_MODEL?.trim() || undefined
 
 const sessionClassifierModel = (
-  ctx: Pick<ExtensionContext, "getModel">,
+  ctx: Pick<ExtensionContext, "model">,
 ): string | undefined => {
-  const model = ctx.getModel?.()
+  const model = ctx.model
   return model ? `${model.provider}/${model.id}` : undefined
 }
 
 const classifierCandidates = (
-  ctx: Pick<ExtensionContext, "cwd" | "getModel">,
+  ctx: Pick<ExtensionContext, "cwd" | "model">,
 ): string[] => {
   const override = classifierModelOverride()
+  const sessionModel = sessionClassifierModel(ctx)
   const candidates = tierCandidates("mid", {
     now: () => Date.now(),
-    sessionModel: sessionClassifierModel(ctx),
+    ...(sessionModel ? { sessionModel } : {}),
   })
   return override && !candidates.includes(override)
     ? [override, ...candidates]
@@ -739,7 +740,7 @@ const classifierBackoff: (
 
 const classify = async (
   request: ClassificationRequest,
-  ctx: Pick<ExtensionContext, "cwd" | "getModel">,
+  ctx: Pick<ExtensionContext, "cwd" | "model">,
   signal?: AbortSignal,
   onActivity?: (active: boolean) => void,
   owner?: OwnerAllowance,
@@ -772,6 +773,7 @@ const classify = async (
 
       try {
         attemptsStarted += 1
+        const candidate = candidates[Math.min(attempt, candidates.length - 1)]
         const result = await runPi(
           [
             "--mode",
@@ -784,12 +786,7 @@ const classify = async (
             "--no-prompt-templates",
             "--no-themes",
             "--no-context-files",
-            ...(candidates[Math.min(attempt, candidates.length - 1)]
-              ? [
-                  "--model",
-                  candidates[Math.min(attempt, candidates.length - 1)],
-                ]
-              : []),
+            ...(candidate ? ["--model", candidate] : []),
             "--thinking",
             "low",
             "--system-prompt",
@@ -810,11 +807,7 @@ const classify = async (
         ) {
           const decision = parseClassifierDecision(result.output)
           if (decision.reason !== "Classifier returned an invalid decision") {
-            if (candidates[Math.min(attempt, candidates.length - 1)])
-              markPreferredProvider(
-                candidates[Math.min(attempt, candidates.length - 1)],
-                () => Date.now(),
-              )
+            if (candidate) markPreferredProvider(candidate, () => Date.now())
             return decision
           }
           lastClassifierFailure = "classifier returned an invalid decision"
@@ -861,7 +854,7 @@ const classify = async (
 async function evaluateGoal(
   condition: string,
   transcript: string[],
-  ctx: Pick<ExtensionContext, "cwd" | "getModel">,
+  ctx: Pick<ExtensionContext, "cwd" | "model">,
   owner: OwnerAllowance,
 ): Promise<GoalEvaluation> {
   const controller = new AbortController()
@@ -1203,6 +1196,7 @@ const classifiedWorkflows = (
     },
     window => manager?.expire(window),
   )
+  registerRuntimeVersion(pi, "owner-allowance", "2026.10.25.1")
   manager = registerWorkManager(pi, ownerAllowance)
 
   const awaitQuestionRelay = (
@@ -1255,7 +1249,7 @@ const classifiedWorkflows = (
     request: ClassificationRequest,
     ctx: Pick<
       ExtensionContext,
-      "cwd" | "getContextUsage" | "getSystemPrompt" | "getModel"
+      "cwd" | "getContextUsage" | "getSystemPrompt" | "model"
     >,
     signal?: AbortSignal,
     projectContexts: RuntimeClassificationProjectContexts = runtimeClassificationProjectContexts(
@@ -2798,8 +2792,18 @@ const classifiedWorkflows = (
     if (continuationPaused && latestCtx) setContinuationPaused(false, latestCtx)
   })
 
-  pi.events.on(MANAGED_OPERATIONAL_ROLE_RESUMED_EVENT, () => {
-    if (continuationPaused && latestCtx) setContinuationPaused(false, latestCtx)
+  registerRuntimeVersion(pi, "owner-resume-continuation", "2026.10.24.1")
+  pi.events.on(TELEGRAM_RESUME_EVENT, request => {
+    if (!isRecord(request) || typeof request.sessionId !== "string") {
+      rejectWorkflowEvent(TELEGRAM_RESUME_EVENT)
+      return
+    }
+    if (
+      latestCtx &&
+      request.sessionId === latestCtx.sessionManager.getSessionId() &&
+      continuationPaused
+    )
+      setContinuationPaused(false, latestCtx)
   })
 
   pi.events.on(REMOTE_CAPABILITY_HANDSHAKE_EVENT, handshake => {

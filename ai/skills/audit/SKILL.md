@@ -61,30 +61,16 @@ GitButler is main-worktree-only; every linked, isolated, or scratch worktree
 uses plain Git without probing `but`. In a verified GitButler main worktree,
 confirm workspace mode (`but status` ok) as `/review-sweep` does.
 
-Record the working-tree/index state, then verify directory-wide `.tmp/` coverage
-with `git check-ignore --verbose` on the directory itself and the intended
-artifact path. A file-specific match does not establish directory coverage. If
-coverage is missing, immediately add the directory pattern to this checkout's
-`.gitignore`, preserving existing rules and without asking for separate
-approval, then recheck both paths. Apply the same rule to `.worktrees/` whenever
-it is used; this does not authorize creating a worktree.
-
-Account for an owned ignore repair as a separate preflight unit through the
-repository's already-authorized checkpoint/publication workflow before starting
-the audit. Isolate only the new ignore hunk; never commit pre-existing changes
-with it. This unit is required even when the audit later finds nothing. Preserve
-normal publication gates: an ignore repair does not authorize an otherwise
-unapproved PR, merge, or branch-protection bypass. If a safe scoped checkpoint
-or its required publication is blocked, leave the repair saved and report the
-exact blocker rather than starting another work unit.
+Apply `GLOBAL_AGENTS.md`'s directory-ignore preflight, including state capture
+and separate repair accounting, before the clean-tree gate or any artifact
+write. This preflight also applies to a zero-finding audit.
 
 After accounting for the repair, require a clean working tree/index; stop and
 report any remaining unrelated changes without discarding them. Fix clusters
 start from clean branches off trunk. Recheck ignore coverage after each checkout
 transition, including returning to `start_branch`, before using either
-directory. Immediately repair missing coverage and account for that repair as
-its own preflight unit; never carry an unstaged ignore repair between fix
-clusters.
+directory. Follow the same global preflight at each transition rather than
+carrying an unaccounted repair between fix clusters.
 
 ## 3. Prepare the workspace and build the audit target
 
@@ -93,10 +79,24 @@ the diff-centric engine can audit standing code. Gitignored paths drop out for
 free; exclude the tracked lockfiles.
 
 ```bash
-ts=$(date +%Y-%m-%d_%H-%M-%S)
+invocation_id=$(uuidgen) || exit 1
 safe_scope=$(echo "$scope" | tr '/. ' '___')
-out_dir="$repo_root/.tmp/agent-local-ctx/reviews/audit-${ts}-${safe_scope}"
-mkdir -p "$out_dir"
+out_dir="$repo_root/.tmp/agent-local-ctx/reviews/audit-${invocation_id}-${safe_scope}"
+```
+
+After step 2's preflight covers this invocation path, create and record its
+resolved absolute directory through the registered harness tool:
+
+```json
+{ "action": "create_directory", "path": "<resolved absolute out_dir>" }
+```
+
+Use `artifact_provenance` or an available registered harness equivalent. Require
+successful creation/recording before writing descendants; the recorded directory
+covers them. Add `crossWorkspace: true` only for an explicitly authorized target
+outside the tool session's workspace. Do not substitute raw `mkdir`.
+
+```bash
 empty=$(git -C "$repo_root" hash-object -t tree /dev/null)   # canonical empty-tree object
 git -C "$repo_root" diff "$empty" HEAD -- "$scope" \
   ':(exclude)*.lock' ':(exclude)Cargo.lock' ':(exclude)flake.lock' \
@@ -317,9 +317,6 @@ each exact draft and obtain confirmation before creating it.
    active harness's classified workflow. Do not launch external model CLIs.
 8. **Filing deferred findings is gated**: show drafts, confirm, then create. Use
    GitHub issues with problem-only descriptions.
-9. Immediately add missing `.tmp/` or `.worktrees/` directory patterns to the
-   containing checkout's `.gitignore` when used. Preserve existing rules; no
-   separate approval is needed.
 
 ## Failure modes
 

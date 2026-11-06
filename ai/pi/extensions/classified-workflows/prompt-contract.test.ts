@@ -195,7 +195,10 @@ test("classifier project, skill and eight runtime context DTOs stay in their cor
 
 test("classifier optional-context fallbacks and child-return scope follow the requested boundary", () => {
   const fallbacks = [
-    ["VISIBLE INTENT AND ACTIVE WORK", "- No visible user intent; block."],
+    [
+      "VISIBLE INTENT AND ACTIVE WORK",
+      "- No visible user intent; follow the applicable loaded instructions.",
+    ],
     ["LOADED PROJECT INSTRUCTIONS", "No project instructions were loaded."],
     [
       "VERIFIED RUNTIME PROJECT POLICY CONTEXT",

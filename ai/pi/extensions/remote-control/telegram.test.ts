@@ -46,9 +46,10 @@ test("owner authorization requires both the pinned id and current username", () 
     { ...ownerMessage, userId: 9999 },
     "dianov",
   )
+  const { username: _username, ...messageWithoutUsername } = ownerMessage
   const missingUsername = authorizeTelegramMessage(
     pinned,
-    { ...ownerMessage, username: undefined },
+    messageWithoutUsername,
     "dianov",
   )
 

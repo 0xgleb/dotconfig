@@ -25,7 +25,7 @@ import {
 } from "./registry.ts"
 import { runtimeAgentId } from "./runtime-identity.ts"
 import type { AgentTokenUsage } from "./usage.ts"
-import { decodeTodoState } from "../todo/state.ts"
+import { decodeTodoState } from "../shared/legacy-todo-state.ts"
 import { boundedRegistryRequestPreview } from "./presentation.ts"
 
 const withStores: (
