@@ -25,23 +25,28 @@ const decoded = decodeIssueNextQuery({
 })
 assert.ok(Either.isRight(decoded))
 const query = decoded.right
+
 const issueReference = (repository = query.repository) => {
   const parsed = decodeIssueReference({ repository, number: 7 })
   assert.ok(Either.isRight(parsed))
   return parsed.right
 }
+
 const ctx = {
   cwd: "/work/repository",
   sessionManager: { getSessionId: () => "session-one" },
 }
+
 const events = () => {
   const handlers = new Map<string, Set<(value: unknown) => void>>()
+
   return {
     events: {
       on: (name: string, callback: (value: unknown) => void) => {
         const listeners = handlers.get(name) ?? new Set()
         handlers.set(name, listeners)
         listeners.add(callback)
+
         return () => {
           listeners.delete(callback)
         }
@@ -55,12 +60,15 @@ const events = () => {
 
 const branch = (kind: "verified" | "partial" | "unknown" = "verified") => {
   const issue = { repository: query.repository, number: 7 }
+
   const viewer = { id: "viewer-id", login: "owner" }
+
   const status = {
     projectId: "project-id",
     fieldId: "status-field",
     optionId: "in-progress",
   }
+
   const target = {
     issue,
     viewer,
@@ -68,6 +76,7 @@ const branch = (kind: "verified" | "partial" | "unknown" = "verified") => {
     issueNodeId: "issue-id",
     inProgress: status,
   }
+
   const observed = {
     ...target,
     projectId: status.projectId,
@@ -76,6 +85,7 @@ const branch = (kind: "verified" | "partial" | "unknown" = "verified") => {
     assignees: [viewer],
     status: { fieldId: status.fieldId, optionId: status.optionId },
   }
+
   return [
     {
       type: "message",
@@ -259,11 +269,13 @@ const scheduler = () => {
   const start = source.indexOf("  const clearTaskContinuationTimer =")
   const end = source.indexOf("  const clearManualReloadPending =", start)
   assert.ok(start >= 0 && end > start)
+
   let timer: (() => void | Promise<void>) | undefined
   let allowed = true
   let editor = ""
   let sessionId = "session-one"
   const sent: unknown[] = []
+
   const context = {
     ...ctx,
     sessionManager: {
@@ -275,12 +287,14 @@ const scheduler = () => {
     hasPendingMessages: () => false,
     ui: { getEditorText: () => editor, notify: () => {} },
   }
+
   const pi = {
     ...events(),
     sendMessage: (message: unknown) => {
       sent.push(message)
     },
   }
+
   const controls = runInNewContext(
     `
     let taskContinuationTimer;
@@ -315,6 +329,7 @@ const scheduler = () => {
       },
     },
   ) as { schedule: (value: typeof context) => void; clear: () => void }
+
   return {
     pi,
     context,
@@ -366,6 +381,7 @@ for (const change of ["expire", "edit", "replaceSession", "clear"] as const) {
         value: Either.Either<string | undefined, TaskContinuationError>,
       ) => void = () => assert.fail("Reader not entered")
       let started: () => void = () => assert.fail("Reader not started")
+
       const ready = new Promise<void>(resolve => {
         started = resolve
       })
@@ -374,6 +390,7 @@ for (const change of ["expire", "edit", "replaceSession", "clear"] as const) {
       >(resolve => {
         finish = resolve
       })
+
       registerTaskContinuation(runtime.pi, runtime.context, () => {
         started()
         return result
@@ -381,9 +398,11 @@ for (const change of ["expire", "edit", "replaceSession", "clear"] as const) {
       runtime.schedule()
       const delivering = runtime.flush()
       await ready
+
       runtime[change]()
       finish(Either.right("Stale work must not wake"))
       await delivering
+
       assert.equal(runtime.sent.length, 0)
       runtime.clear()
     },
@@ -440,7 +459,9 @@ test("escaped long task text stays within the total prompt budget with complete-
   }))
   const page = { issue, revision: 1, tasks, next: tasks[7]!.id }
   const original = JSON.stringify(page)
+
   const content = formatTaskContinuation(query, issue, page)
+
   assert.ok(content.length <= 4_000)
   assert.match(content, /omitted/)
   assert.match(content, /task getIssue\/read/)

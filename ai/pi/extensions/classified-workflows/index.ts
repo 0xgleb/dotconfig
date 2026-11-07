@@ -1695,10 +1695,12 @@ export default function classifiedWorkflows(
   const scheduleTaskContinuation = (ctx: ExtensionContext): void => {
     clearTaskContinuationTimer()
     if (Either.isLeft(ownerAllowance.admit())) return
-    const worker = () => {
+
+    const isWorker = () => {
       const binding = getManagerBinding(pi, ctx)
       return Either.isRight(binding) && binding.right.role === "worker"
     }
+
     const query = pendingActionRemediation
       ? Either.right(undefined)
       : latestTaskNextQuery(ctx.sessionManager.getBranch())
@@ -1706,12 +1708,18 @@ export default function classifiedWorkflows(
       ctx.ui.notify(query.left.message, "warning")
       return
     }
-    if (!pendingActionRemediation && (query.right === undefined || !worker()))
+    if (
+      !pendingActionRemediation &&
+      (query.right === undefined || !isWorker())
+    ) {
       return
+    }
+
     const epoch = taskContinuationEpoch
     const sessionId = ctx.sessionManager.getSessionId()
     const cwd = ctx.cwd
-    const active = () =>
+
+    const isContinuationCurrent = () =>
       epoch === taskContinuationEpoch &&
       ctx.sessionManager.getSessionId() === sessionId &&
       ctx.cwd === cwd &&
@@ -1720,46 +1728,59 @@ export default function classifiedWorkflows(
       !continuationPaused &&
       !capabilityCircuit.open &&
       !manualReloadPending
-    const busy = () =>
+
+    const isSessionBusy = () =>
       !ctx.isIdle() ||
       ctx.ui.getEditorText().trim().length > 0 ||
       ctx.hasPendingMessages()
+
     taskContinuationTimer = setTimeout(async () => {
       taskContinuationTimer = undefined
-      if (!active()) return
-      if (busy()) {
+      if (!isContinuationCurrent()) return
+      if (isSessionBusy()) {
         scheduleTaskContinuation(ctx)
         return
       }
+
       let content = pendingActionRemediation
         ? remediationContinuationMessage(pendingActionRemediation)
         : undefined
       let taskWork = false
-      if (!content && query.right !== undefined && worker()) {
+
+      if (!content && query.right !== undefined && isWorker()) {
         const controller = new AbortController()
         taskContinuationAbort = controller
+
         const observed = await readTaskContinuation(
           pi,
           ctx,
           query.right,
           controller.signal,
         )
-        if (taskContinuationAbort === controller)
+
+        if (taskContinuationAbort === controller) {
           taskContinuationAbort = undefined
-        if (!active() || controller.signal.aborted) return
+        }
+        if (!isContinuationCurrent() || controller.signal.aborted) return
         if (Either.isLeft(observed)) {
-          if (observed.left.code !== "interrupted")
+          if (observed.left.code !== "interrupted") {
             ctx.ui.notify(observed.left.message, "warning")
+          }
           return
         }
+
         content = observed.right
         taskWork = true
       }
-      if (!content || !active() || (taskWork && !worker())) return
-      if (busy()) {
+
+      if (!content || !isContinuationCurrent() || (taskWork && !isWorker())) {
+        return
+      }
+      if (isSessionBusy()) {
         scheduleTaskContinuation(ctx)
         return
       }
+
       pi.sendMessage(
         { customType: TASK_MESSAGE, content, display: true },
         { triggerTurn: true, deliverAs: "followUp" },

@@ -83,12 +83,14 @@ export const registerNativeTaskHost = (
     const registered = Either.try({
       try: () => {
         pi.registerTool(opened.value)
-        if (pi.events !== undefined)
+
+        if (pi.events !== undefined) {
           lifetime.unregisterContinuation = registerTaskContinuation(
             { events: pi.events },
             ctx,
             opened.value.continuation,
           )
+        }
       },
       catch: () =>
         new TaskHostError({

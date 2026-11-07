@@ -122,10 +122,14 @@ test("task continuation retries a transient queued-message guard without losing 
   )
   assert.ok(start >= 0 && end > start)
   const source = stripTypeScriptTypes(extensionSource.slice(start, end))
+
   let timer: (() => void | Promise<void>) | undefined
+
   const readTimer = () => timer
+
   let queued = true
   let sent = 0
+
   const ctx = {
     cwd: "/fixture",
     sessionManager: { getBranch: () => [], getSessionId: () => "worker" },
@@ -133,6 +137,7 @@ test("task continuation retries a transient queued-message guard without losing 
     ui: { getEditorText: () => "" },
     hasPendingMessages: () => queued,
   }
+
   const schedule = new Function(
     "setTimeout",
     "pi",
@@ -143,14 +148,23 @@ test("task continuation retries a transient queued-message guard without losing 
     let taskContinuationTimer;
     let taskContinuationAbort;
     let taskContinuationEpoch = 0;
+
     const clearTaskContinuationTimer = () => {};
-    const latestTaskNextQuery = () => Either.right({repository: "owner/repository", project: "personal"});
-    const getManagerBinding = () => Either.right({role: "worker"});
-    const readTaskContinuation = async () => Either.right("continue pending work");
+
+    const latestTaskNextQuery = () => Either.right({
+      repository: "owner/repository",
+      project: "personal",
+    });
+
+    const getManagerBinding = () => Either.right({ role: "worker" });
+
+    const readTaskContinuation = async () =>
+      Either.right("continue pending work");
+
     const pendingActionRemediation = undefined;
     const continuationPaused = false;
     const workflowLifecycleActive = true;
-    const capabilityCircuit = {open: false};
+    const capabilityCircuit = { open: false };
     const manualReloadPending = false;
     const TASK_CONTINUATION_QUIET_MS = 1;
     const TASK_MESSAGE = "task";
@@ -171,12 +185,14 @@ test("task continuation retries a transient queued-message guard without losing 
     { admit: () => Either.right(undefined) },
     AbortController,
   )
+
   schedule(ctx)
   const first = readTimer()
   assert.ok(first)
   timer = undefined
   await first()
   assert.equal(sent, 0)
+
   const second = readTimer()
   assert.ok(second, "transient queued message must rearm the quiet timer")
   queued = false

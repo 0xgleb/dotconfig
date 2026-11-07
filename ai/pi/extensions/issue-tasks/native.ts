@@ -48,6 +48,7 @@ export const acquireNativeTaskTool = (
     renderOutput,
     onCloseFailure,
   } = options
+
   const storeOptions = Object.freeze({
     databasePath,
     ...(busyTimeoutMs === undefined ? {} : { busyTimeoutMs }),
@@ -62,6 +63,7 @@ export const acquireNativeTaskTool = (
     )
 
     const running = new Set<Promise<unknown>>()
+
     const lifetime = yield* Effect.acquireRelease(
       Effect.sync(() => new AbortController()),
       controller =>
@@ -72,18 +74,22 @@ export const acquireNativeTaskTool = (
           )
         }),
     )
+
     const github = createGitHubCliReader({ cwd })
     const issueReader = createIssueTaskReader({ github, tasks: store })
+
     const nextReader = createIssueNextReader({
       projects: createGitHubCliProjectReader({ cwd }),
       github,
       tasks: store,
     })
+
     const nextPicker = createIssueNextPicker({
       reader: nextReader,
       pickup: createGitHubCliPickupClient({ cwd }),
     })
     const placement = createGitHubCliProjectPlacement({ cwd })
+
     const tool = createTaskTool({
       store,
       issueReader,
@@ -92,6 +98,7 @@ export const acquireNativeTaskTool = (
       contextForCall,
       renderOutput,
     })
+
     const execute: IssueTaskTool["execute"] = async (
       id,
       parameters,
@@ -111,6 +118,7 @@ export const acquireNativeTaskTool = (
           isError: true,
         }
       }
+
       const activeSignal =
         signal === undefined
           ? lifetime.signal
@@ -123,25 +131,31 @@ export const acquireNativeTaskTool = (
         context,
       )
       running.add(execution)
+
       try {
         return await execution
       } finally {
         running.delete(execution)
       }
     }
+
     const continuation: TaskContinuationReader = async (query, signal) => {
-      if (lifetime.signal.aborted || signal.aborted)
+      if (lifetime.signal.aborted || signal.aborted) {
         return Either.left(
           new TaskContinuationError({
             code: "interrupted",
             message: "Task continuation was interrupted.",
           }),
         )
+      }
+
       const execution = Effect.runPromiseExit(
         nextReader.read(query).pipe(
           Effect.flatMap(observed => {
-            if (observed.selection.kind !== "selected")
+            if (observed.selection.kind !== "selected") {
               return Effect.succeed(undefined)
+            }
+
             const issue = observed.selection.issue
             return store
               .readTasks(issue, { limit: 20 })
@@ -159,8 +173,10 @@ export const acquireNativeTaskTool = (
         { signal: AbortSignal.any([signal, lifetime.signal]) },
       )
       running.add(execution)
+
       try {
         const result = await execution
+
         return Exit.isSuccess(result)
           ? Either.right(result.value)
           : Either.left(
@@ -176,6 +192,7 @@ export const acquireNativeTaskTool = (
         running.delete(execution)
       }
     }
+
     return { ...tool, execute, continuation }
   })
 }
