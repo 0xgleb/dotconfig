@@ -17,7 +17,6 @@ import {
 import {
   decodeHarnessResearchHandoff,
   decodeHarnessResearchPayload,
-  validateNewHarnessResearchPayload,
   type HarnessResearchHandoff,
   type HarnessResearchPayload,
 } from "./harness-research-protocol.ts"
@@ -313,7 +312,7 @@ const enqueuePayloadDecoders = (home: CanonicalPath): JobPayloadDecoders => ({
   "harness.review": value =>
     asRuntimeError(decodeHarnessReviewPayload(value, home)),
   "harness.research": value =>
-    asRuntimeError(validateNewHarnessResearchPayload(value)),
+    asRuntimeError(decodeHarnessResearchPayload(value)),
 })
 
 /**

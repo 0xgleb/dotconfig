@@ -181,7 +181,7 @@ test("source-fixed review-duty loops migrate to two hours plus or minus one", ()
   const reviewLoop: ActiveLoopState = {
     ...active,
     instruction:
-      "Re-scan ST0x-Technology and rainlanguage PR duty; process newly actionable own and assigned-review work under the loaded repository and review policies, then remain operational.",
+      "Re-scan 0xgleb and rainlanguage PR duty; process newly actionable own and assigned-review work under the loaded repository and review policies, then remain operational.",
     intervalMs: 15 * 60 * 1_000,
     nextRunAt: 100_000,
   }

@@ -1,7 +1,6 @@
 import assert from "node:assert/strict"
 import test from "node:test"
 import {
-  agentAllocation,
   applyInteractionPacing,
   allowanceRunway,
   effectiveThrottleRatio,
@@ -134,57 +133,24 @@ test("future checkpoints cannot govern an earlier decision", () => {
 })
 
 test("open pacing removes autonomous cadence while pressure preserves role weights", () => {
-  assert.deepEqual(rolePollingPolicy("moneymentum-operator", "open"), {
-    role: "moneymentum-operator",
+  assert.deepEqual(rolePollingPolicy("general", "open"), {
+    role: "general",
     baseIntervalMs: 4 * 60 * 60 * 1_000,
     weight: 1,
     effectiveIntervalMs: 60_000,
     tokenScale: 1,
   })
-  assert.deepEqual(rolePollingPolicy("moneymentum-operator", "critical"), {
-    role: "moneymentum-operator",
+  assert.deepEqual(rolePollingPolicy("general", "critical"), {
+    role: "general",
     baseIntervalMs: 4 * 60 * 60 * 1_000,
     weight: 1,
     effectiveIntervalMs: 16 * 60 * 60 * 1_000,
     tokenScale: 0.25,
   })
   assert.equal(
-    rolePollingPolicy("yielduck-operator", "critical").effectiveIntervalMs,
+    rolePollingPolicy("reviewer", "critical").effectiveIntervalMs,
     16 * 60 * 60 * 1_000,
   )
-})
-
-test("each st0x agent receives twice the allocation of every other agent", () => {
-  const now = 10 * 60 * 60 * 1_000
-  const st0x = agentAllocation(
-    "/Users/example/code/st0x/st0x.liquidity",
-    now,
-    now,
-  )
-  const other = agentAllocation(
-    "/Users/example/code/dataclique/yielduck",
-    now,
-    now,
-  )
-
-  assert.equal(st0x.configuredWeight, 2)
-  assert.equal(other.configuredWeight, 1)
-  assert.equal(st0x.effectiveWeight, other.effectiveWeight * 2)
-})
-
-test("agent allocation decays smoothly toward a nonzero progress floor", () => {
-  const now = 10 * 60 * 60 * 1_000
-  const recent = agentAllocation("/Users/example/code/project", now, now)
-  const twoHoursOld = agentAllocation(
-    "/Users/example/code/project",
-    now - 2 * 60 * 60 * 1_000,
-    now,
-  )
-  const never = agentAllocation("/Users/example/code/project", undefined, now)
-
-  assert.equal(recent.effectiveWeight, 1)
-  assert.equal(twoHoursOld.effectiveWeight, 0.625)
-  assert.equal(never.effectiveWeight, 0.25)
 })
 
 test("combined capacity follows the same measured runway controller", () => {
@@ -287,11 +253,7 @@ test("five percent hard reserve denies workflow token spend", () => {
     ],
     now,
   )
-  const role = rolePollingPolicy(
-    "yielduck-operator",
-    result.pace,
-    result.throttleRatio,
-  )
+  const role = rolePollingPolicy("reviewer", result.pace, result.throttleRatio)
   assert.equal(result.pace, "reserve")
   assert.equal(role.tokenScale, 0)
   assert.equal(workflowTokenBudget(800_000, role).allowed, false)

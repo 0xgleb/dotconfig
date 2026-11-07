@@ -1,5 +1,4 @@
 export const REVIEW_DUTY_PROFILES = [
-  "st0x-review",
   "dataclique-review",
   "personal-review",
 ] as const
@@ -119,7 +118,6 @@ const CONTROL_CHARACTER = /\p{Cc}/u
 const MAX_PATH_LENGTH = 1_024
 
 const PROFILE_OWNERS: Readonly<Record<ReviewDutyProfile, readonly string[]>> = {
-  "st0x-review": ["st0x-technology", "rainlanguage"],
   "dataclique-review": ["dataclique", "0xgleb"],
   "personal-review": ["0xgleb"],
 }
@@ -142,14 +140,10 @@ const AUTOMATIC_REPOSITORIES: Readonly<
  * repository's registered root is `<its owner's workspace>/<repository name>`
  * unless the repository has an explicit checkout location below.
  *
- * The workspace is keyed by owner rather than by profile because a profile
- * reviews several organisations — the st0x duty covers both the st0x and the
- * rainlanguage checkouts — and a profile-keyed table would accept either
- * organisation's directory for either organisation's repository.
+ * Workspaces are keyed by repository owner so multi-owner profiles cannot
+ * accept another owner's checkout for a repository.
  */
 const OWNER_WORKSPACES: Readonly<Record<string, string>> = {
-  "st0x-technology": "code/st0x",
-  "rainlanguage": "code/rainlanguage",
   "dataclique": "code/dataclique",
   "0xgleb": "code/0xgleb",
 }

@@ -54,11 +54,11 @@ const home = canonical("/Users/example")
 
 const reviewSpec: RegisteredJobSpec = {
   kind: "review-duty.scan",
-  payload: { profile: "st0x-review" },
+  payload: { profile: "personal-review" },
   runAt: 2_000,
   maxAttempts: 3,
   recurrence: { baseMs: 2 * 60 * 60 * 1_000, jitterMs: 60 * 60 * 1_000 },
-  idempotencyKey: "review-duty:st0x-review",
+  idempotencyKey: "review-duty:personal-review",
 }
 
 const harnessHeadSha = commit("a".repeat(40))

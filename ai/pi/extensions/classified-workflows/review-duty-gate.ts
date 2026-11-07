@@ -66,7 +66,6 @@ const validKind = (value: unknown): value is ReviewDutyJob["kind"] =>
   value === "own" || value === "assigned" || value === "auto"
 
 const REVIEW_DUTY_SESSIONS = [
-  "st0x-review-duty",
   "dataclique-review-duty",
   "personal-review-duty",
 ] as const
@@ -83,14 +82,6 @@ export const resolveReviewDutySessionName = (
     return sessionName as (typeof REVIEW_DUTY_SESSIONS)[number]
   const normalizedCwd = resolve(cwd)
   const managedRoots = [
-    {
-      root: resolve(home, "code", "st0x"),
-      sessionName: "st0x-review-duty",
-    },
-    {
-      root: resolve(home, "code", "dataclique"),
-      sessionName: "dataclique-review-duty",
-    },
     {
       root: resolve(home, "code", "0xgleb"),
       sessionName: "personal-review-duty",
@@ -113,7 +104,6 @@ export const reviewDutyJobAllowed = (
   job: ReviewDutyJob,
 ): boolean => {
   const repository = job.repository.toLowerCase()
-  if (sessionName === "st0x-review-duty") return job.kind !== "auto"
   if (sessionName === "dataclique-review-duty") {
     if (!repository.startsWith("dataclique/")) return false
     return job.kind !== "auto" || repository === "dataclique/yielduck"

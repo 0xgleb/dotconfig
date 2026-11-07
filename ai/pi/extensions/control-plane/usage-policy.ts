@@ -15,7 +15,6 @@ const BURN_RATE_HALF_LIFE_MS = 12 * HOUR_MS
 const AUTONOMOUS_RESERVE_PERCENT = 3
 const HARD_RESERVE_PERCENT = 5
 const MIN_THROTTLE_RATIO = 0.02
-const AGENT_ALLOCATION_FLOOR = 0.25
 const AGENT_INTERVENTION_HALF_LIFE_MS = 2 * HOUR_MS
 
 export type UsagePace =
@@ -60,8 +59,7 @@ export interface AllowanceRunway {
   readonly planningHorizonAt: number
 }
 
-export type AutonomousRole =
-  "general" | "reviewer" | "yielduck-operator" | "moneymentum-operator"
+export type AutonomousRole = "general" | "reviewer"
 
 export interface RolePollingPolicy {
   readonly role: AutonomousRole
@@ -185,10 +183,8 @@ const ROLE_POLLING_CONFIG: Readonly<
     { readonly baseIntervalMs: number; readonly weight: number }
   >
 > = {
-  "general": { baseIntervalMs: 4 * HOUR_MS, weight: 1 },
-  "reviewer": { baseIntervalMs: 4 * HOUR_MS, weight: 1 },
-  "yielduck-operator": { baseIntervalMs: 4 * HOUR_MS, weight: 1 },
-  "moneymentum-operator": { baseIntervalMs: 4 * HOUR_MS, weight: 1 },
+  general: { baseIntervalMs: 4 * HOUR_MS, weight: 1 },
+  reviewer: { baseIntervalMs: 4 * HOUR_MS, weight: 1 },
 }
 
 const PACE_PRESSURE: Readonly<Record<UsagePace, number>> = {
@@ -200,10 +196,7 @@ const PACE_PRESSURE: Readonly<Record<UsagePace, number>> = {
 }
 
 export const isAutonomousRole = (role: unknown): role is AutonomousRole =>
-  role === "general" ||
-  role === "reviewer" ||
-  role === "yielduck-operator" ||
-  role === "moneymentum-operator"
+  role === "general" || role === "reviewer"
 
 const autonomousRole = (role: string): AutonomousRole =>
   isAutonomousRole(role) ? role : "general"
@@ -475,42 +468,6 @@ const continuousMinimumInterval = (throttleRatio: number): number =>
         WEEK_MS,
         Math.ceil((15 * 60 * 1_000) / Math.max(0.01, throttleRatio)),
       )
-
-export interface AgentAllocation {
-  readonly configuredWeight: number
-  readonly recencyFactor: number
-  readonly effectiveWeight: number
-}
-
-const configuredAgentWeight = (cwd: string): number =>
-  /\/code\/st0x(?:\/|$)/u.test(cwd) ? 2 : 1
-
-export const agentAllocation = (
-  cwd: string,
-  ownerInteractionAt: number | undefined,
-  now: number,
-): AgentAllocation => {
-  const configuredWeight = configuredAgentWeight(cwd)
-  const ageMs =
-    ownerInteractionAt !== undefined &&
-    Number.isSafeInteger(ownerInteractionAt) &&
-    ownerInteractionAt >= 0 &&
-    ownerInteractionAt <= now
-      ? now - ownerInteractionAt
-      : Number.POSITIVE_INFINITY
-  const recencyFactor =
-    ageMs === Number.POSITIVE_INFINITY
-      ? AGENT_ALLOCATION_FLOOR
-      : AGENT_ALLOCATION_FLOOR +
-        (1 - AGENT_ALLOCATION_FLOOR) *
-          2 ** (-ageMs / AGENT_INTERVENTION_HALF_LIFE_MS)
-
-  return {
-    configuredWeight,
-    recencyFactor,
-    effectiveWeight: configuredWeight * recencyFactor,
-  }
-}
 
 export const usagePolicy = (
   checkpoints: readonly AllowanceCheckpointInput[],

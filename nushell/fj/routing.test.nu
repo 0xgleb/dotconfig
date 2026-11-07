@@ -110,24 +110,6 @@ def "test clanker new starts a fresh pi session" [] {
   assert (("fix the bug" in $route.args))
 }
 
-def "test fresh moneymentum clanker starts the five hour operator drain" [] {
-  let route = (clanker-route true true --cwd "/Users/example/code/dataclique/moneymentum" --home "/Users/example" --new)
-  assert equal $route.tool "pi"
-  assert (not ("--continue" in $route.args))
-  assert (("/register 5h" in $route.args))
-}
-
-def "test explicit moneymentum prompt suppresses the automatic operator drain" [] {
-  let route = (clanker-route false false --cwd "/Users/example/code/dataclique/moneymentum" --home "/Users/example" "fix this first")
-  assert (("fix this first" in $route.args))
-  assert (not ("/register 5h" in $route.args))
-}
-
-def "test other projects do not receive the moneymentum operator drain" [] {
-  let route = (clanker-route false false --cwd "/Users/example/code/dataclique/other" --home "/Users/example")
-  assert (not ("/register 5h" in $route.args))
-}
-
 def "test clanker does not double an explicit pi continue flag" [] {
   let count = (clanker-route true true --continue | get args | where { $in == "--continue" } | length)
   assert equal $count 1

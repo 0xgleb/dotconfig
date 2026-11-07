@@ -290,11 +290,11 @@ test("non-harness jobs are never claimed or executed by the harness worker", asy
       headers: { "content-type": "application/json" },
       body: JSON.stringify({
         kind: "review-duty.scan",
-        payload: { profile: "st0x-review" },
+        payload: { profile: "personal-review" },
         runAt: 0,
         maxAttempts: 3,
         recurrence: { baseMs: 7_200_000, jitterMs: 3_600_000 },
-        idempotencyKey: "review-duty:st0x-review",
+        idempotencyKey: "review-duty:personal-review",
       }),
     })
     assert.equal(response.status, 201)

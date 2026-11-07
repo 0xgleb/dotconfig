@@ -91,14 +91,14 @@ const withServer = async (
 
 const enqueueBody = {
   kind: "review-duty.scan",
-  payload: { profile: "st0x-review" },
+  payload: { profile: "personal-review" },
   runAt: 1_000,
   maxAttempts: 3,
   recurrence: {
     baseMs: 2 * 60 * 60 * 1_000,
     jitterMs: 60 * 60 * 1_000,
   },
-  idempotencyKey: "review-duty:st0x-review",
+  idempotencyKey: "review-duty:personal-review",
 }
 
 const harnessHeadSha = "a".repeat(40)
@@ -226,7 +226,7 @@ test("registered enqueue is idempotent and unknown executable kinds fail closed"
     })
   }))
 
-test("research enqueue requires typed project or agentops support ownership", async () =>
+test("research enqueue requires project ownership and valid scheduling", async () =>
   withServer(async origin => {
     const post = (payload: unknown, runAt = Date.now()): Promise<Response> =>
       fetch(`${origin}/v1/jobs`, {
@@ -239,55 +239,33 @@ test("research enqueue requires typed project or agentops support ownership", as
           maxAttempts: 2,
         }),
       })
-    const legacy = {
+    const payload = {
       lane: "subscription-plan",
       harness: "claude-plan",
-      profile: "agentops-yielduck",
+      profile: "yielduck-research",
       project: "yielduck",
       task: "yielduck-portfolio-replay-attribution",
       repositoryRoot: "/Users/example/yielduck",
       isolation: "read-only",
-    }
-    assert.equal((await post(legacy)).status, 400)
-    assert.equal(
-      (
-        await post({
-          ...legacy,
-          ownership: {
-            kind: "project-domain",
-            project: "yielduck",
-            role: "agentops-yielduck",
-          },
-        })
-      ).status,
-      400,
-    )
-    const projectOwned = {
-      ...legacy,
-      profile: "yielduck-research",
       ownership: {
         kind: "project-domain",
         project: "yielduck",
         role: "yielduck-research",
       },
     }
-    assert.equal((await post(projectOwned, 8)).status, 400)
-    assert.equal((await post(projectOwned)).status, 201)
+    const { ownership, ...unowned } = payload
+    assert.equal((await post(unowned)).status, 400)
     assert.equal(
       (
         await post({
-          ...legacy,
-          task: "classifier-stale-evidence-diagnosis",
-          ownership: {
-            kind: "agentops-support",
-            project: "yielduck",
-            role: "agentops-yielduck",
-            supportArea: "classifier",
-          },
+          ...payload,
+          ownership: { ...ownership, project: "another-project" },
         })
       ).status,
-      201,
+      400,
     )
+    assert.equal((await post(payload, 8)).status, 400)
+    assert.equal((await post(payload)).status, 201)
   }))
 
 test("concurrent idempotent enqueue reports exactly one creation", async () => {
@@ -295,11 +273,11 @@ test("concurrent idempotent enqueue reports exactly one creation", async () => {
     id: jobIdentifier("job-a"),
     spec: {
       kind: "review-duty.scan",
-      payload: { profile: "st0x-review" },
+      payload: { profile: "personal-review" },
       runAt: 1_000,
       maxAttempts: 3,
       recurrence: { baseMs: 2 * 60 * 60 * 1_000, jitterMs: 60 * 60 * 1_000 },
-      idempotencyKey: "review-duty:st0x-review",
+      idempotencyKey: "review-duty:personal-review",
     },
     state: "ready",
     attempt: 0,

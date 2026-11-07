@@ -14,7 +14,7 @@ import type { BridgeAgent } from "./protocol.ts"
 const agents: BridgeAgent[] = [
   {
     id: "019fba03-aaaa",
-    label: "Dotconfig · Pi Support",
+    label: "Dotconfig · Reviewer",
     cwd: "/Users/example/.config",
     accepting: true,
     workDelivery: "native-pi",
@@ -24,7 +24,7 @@ const agents: BridgeAgent[] = [
   },
   {
     id: "019fb9e8-bbbb",
-    label: "Yielduck · Operator",
+    label: "Yielduck · Reviewer",
     cwd: "/Users/example/code/dataclique/yielduck",
     accepting: true,
     workDelivery: "native-pi",
@@ -73,17 +73,17 @@ test("Telegram chat routing uses typed delivery capability, never agent-id shape
 
 test("human-readable labels and ID prefixes both select agents", () => {
   assert.equal(agentMatchesSelector(agents[0]!, ".config"), true)
-  assert.equal(agentMatchesSelector(agents[0]!, "Dotconfig · Pi Support"), true)
+  assert.equal(agentMatchesSelector(agents[0]!, "Dotconfig · Reviewer"), true)
   assert.equal(agentMatchesSelector(agents[0]!, "019fba03"), true)
   assert.equal(agentMatchesSelector(agents[1]!, "yielduck"), true)
   assert.equal(agentMatchesSelector(agents[1]!, ".config"), false)
 })
 
 test("dotconfig is the default unless an explicit selection remains live", () => {
-  assert.equal(preferredAgent(agents)?.label, "Dotconfig · Pi Support")
+  assert.equal(preferredAgent(agents)?.label, "Dotconfig · Reviewer")
   assert.equal(
     preferredAgent(agents, agents[1]!.id)?.label,
-    "Yielduck · Operator",
+    "Yielduck · Reviewer",
   )
 })
 
@@ -128,7 +128,7 @@ test("Telegram defaults to one verified native manager, never a worker or mislea
 
 test("agent list exposes copyable Telegram code selectors", () => {
   const html = agentListHtml(agents)
-  assert.match(html, /Dotconfig · Pi Support/)
+  assert.match(html, /Dotconfig · Reviewer/)
   assert.match(html, /<code>\.config<\/code>/)
   assert.match(html, /<code>019fba03<\/code>/)
   assert.match(html, /<code>\/use \.config<\/code>/)
