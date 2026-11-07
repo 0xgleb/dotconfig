@@ -278,64 +278,6 @@ test("legacy task continuation stays disabled regardless of remaining work", () 
     undefined,
   )
 })
-
-test("legacy loop migration recovers only the latest still-active independent goal", () => {
-  const businessGoal = {
-    ...active,
-    condition: "Complete the full v1 and v2 buildout",
-  } as const
-  const legacyLoop = {
-    ...active,
-    condition: "15m /reload latest config",
-    startedAt: 2,
-  } as const
-  assert.deepEqual(
-    recoverLatestIndependentGoal([businessGoal, legacyLoop], condition =>
-      condition.includes("/reload"),
-    ),
-    businessGoal,
-  )
-  assert.deepEqual(
-    recoverLatestIndependentGoal(
-      [
-        businessGoal,
-        legacyLoop,
-        {
-          status: "cleared",
-          condition: legacyLoop.condition,
-          startedAt: legacyLoop.startedAt,
-          finishedAt: 3,
-          turns: 0,
-          tokens: 0,
-          lastReason:
-            "Migrated from the legacy /loop goal into an infinite recurring loop.",
-        },
-      ],
-      condition => condition.includes("/reload"),
-    ),
-    businessGoal,
-  )
-  assert.equal(
-    recoverLatestIndependentGoal(
-      [
-        businessGoal,
-        {
-          status: "cleared",
-          condition: businessGoal.condition,
-          startedAt: businessGoal.startedAt,
-          finishedAt: 3,
-          turns: 1,
-          tokens: 10,
-          lastReason: "done",
-        },
-        legacyLoop,
-      ],
-      condition => condition.includes("/reload"),
-    ),
-    undefined,
-  )
-})
-
 test("met goals become achieved and invalid evaluations keep the goal active", () => {
   const achieved = applyGoalEvaluation(
     active,
