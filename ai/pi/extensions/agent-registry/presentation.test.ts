@@ -4,7 +4,6 @@ import { Effect } from "effect"
 import { registryListingResult } from "./listing.ts"
 import {
   boundedRegistryRequestPreview,
-  operatorBacklogText,
   registryListText,
   registryRequestDetailText,
   registryWidgetLines,
@@ -309,17 +308,6 @@ test("registry widget keeps operational ownership visible with an inbox count", 
     "Agent registry: 1 role · /agents",
     "● .config/pi-support · operational · active · inbox 1 · oldest 59s · drift 1 · ttl 60s",
   ])
-})
-
-test("operator backlog shows request age and runtime drift with navigation", () => {
-  const text = operatorBacklogText(snapshot, "agent-a", 61_000)
-  assert.match(text, /Operator control plane/)
-  assert.match(text, /backlog 1 · runtime drift 1/)
-  assert.match(text, /request-.*59s.*st0x PR reviewer.*fix workflow retries/i)
-  assert.match(
-    text,
-    /\/agents for fleet detail.*\/blocked for blocker triage.*\/questions/is,
-  )
 })
 
 test("registry listing bounds a large open inbox and reports omitted rows", () => {

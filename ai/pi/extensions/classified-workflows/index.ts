@@ -294,7 +294,6 @@ import {
 } from "../shared/registry-intent-events.ts"
 import { registerRuntimeVersion } from "../shared/runtime-version.ts"
 import { markPreferredProvider, tierCandidates } from "../shared/model-tiers.ts"
-import { AGENTOPS_INCIDENT_EVENT } from "../shared/agentops-events.ts"
 import { remoteBridgeDatabasePath } from "../remote-control/paths.ts"
 import { RemoteBridgeError } from "../remote-control/protocol.ts"
 import { makeRemoteBridgeStore } from "../remote-control/sqlite-store.ts"
@@ -2400,7 +2399,6 @@ export default function classifiedWorkflows(
 
   pi.events.on(FOREGROUND_WORKFLOW_WAIT_PROBE_EVENT, probe => {
     if (!isRecord(probe) || typeof probe.waiting !== "boolean") {
-      rejectWorkflowEvent(FOREGROUND_WORKFLOW_WAIT_PROBE_EVENT)
       return
     }
     probe.waiting = detachableForegroundWorkflow !== undefined
@@ -2629,7 +2627,6 @@ export default function classifiedWorkflows(
 
   pi.events.on(AUTO_RELOAD_ACTIVITY_REQUEST_EVENT, report => {
     if (typeof report !== "function") {
-      rejectWorkflowEvent(AUTO_RELOAD_ACTIVITY_REQUEST_EVENT)
       return
     }
     report(
@@ -2748,21 +2745,8 @@ export default function classifiedWorkflows(
     Array.isArray(value.activeTools) &&
     value.activeTools.every(tool => typeof tool === "string")
 
-  const rejectWorkflowEvent = (eventName: string): void => {
-    const error = new WorkflowScriptError({
-      message: `Invalid workflow event payload: ${eventName}`,
-    })
-    pi.events.emit(AGENTOPS_INCIDENT_EVENT, {
-      severity: "error",
-      component: "classified-workflows",
-      operation: "decode internal event",
-      summary: error.message,
-    })
-  }
-
   pi.events.on(QUESTION_STATE_EVENT, snapshot => {
     if (!isWorkflowQuestionState(snapshot)) {
-      rejectWorkflowEvent(QUESTION_STATE_EVENT)
       return
     }
     questionState = snapshot
@@ -2770,7 +2754,6 @@ export default function classifiedWorkflows(
 
   pi.events.on(QUESTION_RESOLVED_EVENT, resolution => {
     if (!isWorkflowResolution(resolution)) {
-      rejectWorkflowEvent(QUESTION_RESOLVED_EVENT)
       return
     }
     questionState = applyQuestionResolutionSnapshot(questionState, resolution)
@@ -2780,7 +2763,6 @@ export default function classifiedWorkflows(
   registerRuntimeVersion(pi, "owner-resume-continuation", "2026.10.24.1")
   pi.events.on(TELEGRAM_RESUME_EVENT, request => {
     if (!isRecord(request) || typeof request.sessionId !== "string") {
-      rejectWorkflowEvent(TELEGRAM_RESUME_EVENT)
       return
     }
     if (
@@ -2793,7 +2775,6 @@ export default function classifiedWorkflows(
 
   pi.events.on(REMOTE_CAPABILITY_HANDSHAKE_EVENT, handshake => {
     if (!isWorkflowHandshake(handshake)) {
-      rejectWorkflowEvent(REMOTE_CAPABILITY_HANDSHAKE_EVENT)
       return
     }
     if (!latestCtx) return

@@ -202,39 +202,6 @@ export const registryWidgetLines: (
   ]
 }
 
-export const operatorBacklogText = (
-  snapshot: RegistrySnapshot,
-  currentAgentId: string,
-  now: number,
-): string => {
-  const owned = snapshot.leases.filter(
-    ({ owner }) => owner.id === currentAgentId,
-  )
-  if (owned.length === 0) return "No operator roles owned by this session."
-  const drift = driftedAgents(snapshot, currentAgentId)
-  const lines = owned.flatMap(lease => {
-    const requests = openRequests(snapshot.requests, lease).sort(
-      (left, right) => left.createdAt - right.createdAt,
-    )
-    return [
-      `● ${lease.project}/${lease.role} · ${lease.mode} · ${lease.status}`,
-      `  backlog ${requests.length} · runtime drift ${drift}`,
-      ...(requests.length === 0
-        ? ["  no open registry requests"]
-        : requests.map(
-            request =>
-              `  ${request.status === "claimed" ? "◉" : "○"} ${request.id.slice(0, 8)} · ${formatAge(now - request.createdAt)} · delivery ${requestDeliveryStatus(request)} · ${request.requesterLabel ?? compact(request.requesterId, 18)} · ${compact(request.text, 88)}`,
-          )),
-    ]
-  })
-  return [
-    "Operator control plane",
-    ...lines,
-    "",
-    "Use /agents for fleet detail · /blocked for blocker triage · /questions for explicit decisions.",
-  ].join("\n")
-}
-
 export const registryListText: (
   snapshot: RegistrySnapshot,
   currentAgentId: string,
