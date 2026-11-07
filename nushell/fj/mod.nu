@@ -173,7 +173,7 @@ export def --wrapped clanker [...args: string] {
     and ((glob $"($pi_dir)/*.jsonl") | is-not-empty)
   )
   let on_nixxxos = ((^hostname | str trim) == "nixxxos")
-  let routed = (clanker-route $pi_has_session $claude_has_session --remote-control=$on_nixxxos --cwd $env.PWD --home $env.HOME ...$args)
+  let routed = (clanker-route $pi_has_session $claude_has_session --remote-control=$on_nixxxos ...$args)
   let route = (live-safe-pi-resume $routed $pi_dir $env.PWD $env.HOME)
   match $route.tool {
     "pi" => { ^pi ...$route.args }
