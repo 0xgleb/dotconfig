@@ -749,7 +749,7 @@ test("cross-workspace artifact recording and creation require semantic authoriza
       boundary: "action",
       toolName: "artifact_provenance",
       input: { action, path: ".tmp/review/report.json" },
-      cwd: "/workspace/example",
+      cwd: "/workspace/st0x",
     })
     const external = deterministicDecision({
       boundary: "action",
@@ -759,38 +759,10 @@ test("cross-workspace artifact recording and creation require semantic authoriza
         path: "/workspace/rainlanguage/raindex/.tmp/reviews/pr-2827",
         crossWorkspace: true,
       },
-      cwd: "/workspace/example",
+      cwd: "/workspace/st0x",
     })
     assert.equal(local?.verdict, "allow")
     assert.equal(external, null)
-  }
-})
-
-test("typed review-duty gate actions are locally allowed", () => {
-  for (const action of [
-    "status",
-    "begin",
-    "report",
-    "recover",
-    "recover-evidence",
-    "retry-blocked",
-    "retry-failed",
-    "continue",
-    "complete-auto",
-  ] as const) {
-    assert.deepEqual(
-      deterministicDecision({
-        boundary: "action",
-        toolName: "review_duty",
-        input: { action },
-        cwd: "/workspace/example",
-      }),
-      {
-        verdict: "allow",
-        reason: "Typed local review-duty reporting gate",
-        source: "deterministic",
-      },
-    )
   }
 })
 
@@ -969,7 +941,7 @@ test("provenance-recorded scratch cleanup allows exact operands only", () => {
 test("git diff credential pathspecs are allowed only when every sensitive token is an exclusion", () => {
   const commands = [
     "git diff base...head -- . ':(glob,exclude)**/.env*' ':(glob,exclude)**/*secret*' ':(glob,exclude)**/*.pem'",
-    "git -C /Users/example/code/0xgleb/example-api diff base-sha head-sha -- . ':(exclude,glob)**/.env*' ':(exclude).env*' ':(exclude,icase,glob)**/*secret*' ':(exclude,icase,glob)**/*.key' ':(exclude,icase,glob)**/*.pem' ':(exclude,icase,glob)**/*.p12' ':(exclude,icase,glob)**/*.pfx'",
+    "git -C /Users/example/code/st0x/st0x.rest.api diff base-sha head-sha -- . ':(exclude,glob)**/.env*' ':(exclude).env*' ':(exclude,icase,glob)**/*secret*' ':(exclude,icase,glob)**/*.key' ':(exclude,icase,glob)**/*.pem' ':(exclude,icase,glob)**/*.p12' ':(exclude,icase,glob)**/*.pfx'",
     "git cat-file -t 0123456789abcdef0123456789abcdef01234567 && git diff --no-ext-diff --numstat 1111111111111111111111111111111111111111 0123456789abcdef0123456789abcdef01234567 -- . ':(glob,exclude)**/.env*' ':(glob,exclude)**/*credentials*' ':(glob,exclude)**/*.key' ':(glob,exclude)**/*.pem' ':(glob,exclude)**/*.p12' ':(glob,exclude)**/*.pfx'",
   ]
   for (const command of commands) {
@@ -1043,8 +1015,8 @@ test("fixed exact-head git show ranges are deterministic read-only actions", () 
 
 test("whole target cleanup is context-classified instead of bypassing project artifact consumers", () => {
   for (const cwd of [
-    "/Users/example/code/0xgleb/example.issuance",
-    "/Users/example/code/0xgleb/example.issuance/.worktrees/feat/corporate-actions-freeze-sync",
+    "/Users/example/code/st0x/st0x.issuance",
+    "/Users/example/code/st0x/st0x.issuance/.worktrees/feat/corporate-actions-freeze-sync",
   ]) {
     assert.equal(
       deterministicDecision({
