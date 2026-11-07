@@ -116,7 +116,6 @@ import {
   parseGoalCommand,
   parseGoalEvaluation,
   parseStoredGoal,
-  recoverLatestIndependentGoal,
   restoreGoal,
   todoClassifierIntent,
   todoWorkSnapshot,
@@ -128,7 +127,6 @@ import {
   advanceLoop,
   formatLoopStatus,
   loopDispatch,
-  migrateLegacyReloadLoop,
   nextLoopRunAt,
   parseLoopCommand,
   parseStoredLoop,
@@ -2391,56 +2389,7 @@ export default function classifiedWorkflows(
     )
     goalRunTokens = 0
     const now = Date.now()
-    const goalHistory = goalEntries.flatMap(entry => {
-      if (entry.type !== "custom") return []
-      const state = parseStoredGoal(entry.data)
-      return state ? [state] : []
-    })
-    const recoveredGoal = recoverLatestIndependentGoal(
-      goalHistory,
-      condition => migrateLegacyReloadLoop(condition, now) !== undefined,
-    )
-    const migratedLoop =
-      !loopState && goalState?.status === "active"
-        ? migrateLegacyReloadLoop(goalState.condition, now)
-        : undefined
-    const wasAlreadyMigrated =
-      loopState?.status === "active" &&
-      goalState?.status === "cleared" &&
-      goalState.lastReason ===
-        "Migrated from the legacy /loop goal into an infinite recurring loop."
-    if (migratedLoop && goalState?.status === "active") {
-      loopState = migratedLoop
-      goalState = recoveredGoal
-        ? {
-            ...recoveredGoal,
-            lastReason:
-              "Recovered after separating the legacy /loop alias from the independent goal.",
-          }
-        : {
-            status: "cleared",
-            condition: goalState.condition,
-            startedAt: goalState.startedAt,
-            finishedAt: now,
-            turns: goalState.turns,
-            tokens: goalState.tokens,
-            lastReason:
-              "Migrated from the legacy /loop goal into an infinite recurring loop.",
-          }
-      pi.appendEntry(GOAL_ENTRY, goalState)
-      pi.appendEntry(LOOP_ENTRY, loopState)
-      showLoopMessage(
-        `Migrated legacy loop state.${recoveredGoal ? " Recovered the preceding independent goal." : ""}\n${formatLoopStatus(loopState, now)}`,
-      )
-    } else if (wasAlreadyMigrated && recoveredGoal) {
-      goalState = {
-        ...recoveredGoal,
-        lastReason:
-          "Recovered after separating the legacy /loop alias from the independent goal.",
-      }
-      pi.appendEntry(GOAL_ENTRY, goalState)
-      showGoalMessage(`Recovered independent goal: ${goalState.condition}`)
-    } else if (goalState?.status === "active" && event.reason !== "reload") {
+    if (goalState?.status === "active" && event.reason !== "reload") {
       goalState = restoreGoal(goalState, now)
       pi.appendEntry(GOAL_ENTRY, goalState)
     }

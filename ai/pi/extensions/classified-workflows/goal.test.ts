@@ -11,7 +11,6 @@ import {
   parseGoalEvaluation,
   parseStoredGoal,
   pendingTodoTexts,
-  recoverLatestIndependentGoal,
   restoreGoal,
   taskContinuationMessage,
   todoClassifierIntent,
@@ -367,7 +366,7 @@ test("met goals become achieved and invalid evaluations keep the goal active", (
   )
 })
 
-test("active and legacy paused goals restore while terminal goals stay terminal", () => {
+test("active goals restore while terminal goals stay terminal", () => {
   assert.deepEqual(restoreGoal(active, 5_000), {
     status: "active",
     condition: active.condition,
@@ -375,29 +374,6 @@ test("active and legacy paused goals restore while terminal goals stay terminal"
     turns: 0,
     tokens: 0,
   })
-
-  assert.deepEqual(
-    restoreGoal(
-      {
-        status: "paused",
-        condition: active.condition,
-        startedAt: 1_000,
-        finishedAt: 2_000,
-        turns: 3,
-        tokens: 350,
-        lastReason: "old evaluator outage",
-      },
-      5_000,
-    ),
-    {
-      status: "active",
-      condition: active.condition,
-      startedAt: 5_000,
-      turns: 0,
-      tokens: 0,
-      lastReason: "Restored from paused legacy state: old evaluator outage",
-    },
-  )
 
   const achieved = applyGoalEvaluation(
     active,
@@ -421,8 +397,21 @@ test("goal status reports condition, elapsed time, turns, tokens, and reason", (
   assert.match(status, /one test still fails/)
 })
 
-test("stored goals reject malformed session data", () => {
+test("stored goals round trip supported states and reject malformed session data", () => {
   assert.deepEqual(parseStoredGoal(active), active)
+  for (const status of ["achieved", "cleared"] as const) {
+    const terminal: GoalState = {
+      ...active,
+      status,
+      finishedAt: 2_000,
+      lastReason: "Finished goal",
+    }
+    assert.deepEqual(
+      parseStoredGoal(JSON.parse(JSON.stringify(terminal))),
+      terminal,
+    )
+    assert.deepEqual(restoreGoal(terminal, 5_000), terminal)
+  }
   assert.equal(parseStoredGoal({ ...active, turns: -1 }), undefined)
   assert.equal(parseStoredGoal({ ...active, status: "unknown" }), undefined)
   assert.equal(parseStoredGoal("active"), undefined)
