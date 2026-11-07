@@ -65,7 +65,7 @@ const snapshot: RegistrySnapshot = {
     {
       id: "lease-1",
       project: "/Users/example/.config",
-      role: "pi-support",
+      role: "reviewer",
       mode: "operational",
       owner: {
         id: "agent-a",
@@ -87,7 +87,7 @@ const snapshot: RegistrySnapshot = {
     {
       id: "request-12345678",
       project: "/Users/example/.config",
-      role: "pi-support",
+      role: "reviewer",
       requesterId: "agent-b",
       requesterLabel: "example PR reviewer",
       requesterCwd: "/Users/example/code/0xgleb/example-api",
@@ -174,7 +174,7 @@ test("request receipt display leads with sender, target, and bounded message con
     requestId: "request-12345678",
     sender: "example PR reviewer",
     senderProject: "example-api",
-    target: ".config/pi-support",
+    target: ".config/reviewer",
     preview: "fix workflow retries",
     olderQueued: 2,
   })
@@ -182,10 +182,10 @@ test("request receipt display leads with sender, target, and bounded message con
   const compact = requestNotificationDisplayText(details, false)
   assert.match(
     compact,
-    /^example PR reviewer · example\.rest\.api → \.config\/pi-support/m,
+    /^example PR reviewer · example-api → \.config\/reviewer/m,
   )
   assert.match(compact, /fix workflow retries/)
-  assert.match(compact, /\+2 older queued · \/operator/)
+  assert.match(compact, /\+2 older queued/)
   assert.doesNotMatch(
     compact,
     /agent_registry requests|Receipt does not claim|request-12345678/,
@@ -237,7 +237,7 @@ test("request detail exposes full bounded coordination text with source identity
   assert.ok(request)
   const text = registryRequestDetailText(request)
   assert.match(text, /Request request-12345678/)
-  assert.match(text, /Source agent: example PR reviewer.*example\.rest\.api/)
+  assert.match(text, /Source agent: example PR reviewer.*example-api/)
   assert.match(text, /Priority: normal/)
   assert.match(text, /Delivery: queued/)
   assert.match(text, /fix workflow retries/)
@@ -306,7 +306,7 @@ test("request detail does not compact an accepted 8k request body", () => {
 test("registry widget keeps operational ownership visible with an inbox count", () => {
   assert.deepEqual(registryWidgetLines(snapshot, "agent-a", 61_000), [
     "Agent registry: 1 role · /agents",
-    "● .config/pi-support · operational · active · inbox 1 · oldest 59s · drift 1 · ttl 60s",
+    "● .config/reviewer · operational · active · inbox 1 · oldest 59s · drift 1 · ttl 60s",
   ])
 })
 
@@ -335,7 +335,7 @@ test("registry listing shows safe owner and request lifecycle details", () => {
   const text = registryListText(snapshot, "agent-a", 61_000)
   assert.match(text, /Live agents:/)
   assert.match(text, /dotconfig.*session you.*questions@2026\.07\.23\.2/i)
-  assert.match(text, /\.config\/pi-support.*owner you.*ttl 60s/i)
+  assert.match(text, /\.config\/reviewer.*owner you.*ttl 60s/i)
   assert.match(text, /classified-workflows@2026\.07\.23\.2/)
   assert.match(text, /todo@2026\.07\.23\.2/)
   assert.match(text, /request-.*queued.*delivery queued.*fix workflow retries/i)

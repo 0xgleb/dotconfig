@@ -1,13 +1,12 @@
 import { createHash } from "node:crypto"
 import { homedir } from "node:os"
-import { join } from "node:path"
 import {
   type ExtensionAPI,
   type ExtensionContext,
 } from "@earendil-works/pi-coding-agent"
 import { Text } from "@earendil-works/pi-tui"
 import { Type } from "typebox"
-import { Cause, Effect, Either, Option, Runtime } from "effect"
+import { Cause, Effect, Option, Runtime } from "effect"
 import { isContinuationPaused } from "../shared/continuation-pause.ts"
 import {
   AUTO_RELOAD_PENDING_REQUEST_EVENT,
@@ -52,7 +51,7 @@ import {
   type RequestNotificationDetails,
 } from "./presentation.ts"
 import {
-  prioritizedActiveReceiptLeases,
+  activeReceiptLeases,
   RegistryError,
   registryReceiptAvailable,
   registrySyncNotification,
@@ -700,10 +699,7 @@ const registryExtension: (pi: ExtensionAPI) => void = pi => {
           autoReloadPending: autoReloadPending(),
         })
       ) {
-        for (const lease of prioritizedActiveReceiptLeases(
-          snapshot,
-          agent.id,
-        )) {
+        for (const lease of activeReceiptLeases(snapshot, agent.id)) {
           const requests = snapshot.requests
             .filter(
               candidate =>
@@ -780,7 +776,7 @@ const registryExtension: (pi: ExtensionAPI) => void = pi => {
     }
   }
 
-  pi.on("session_start", async (event, ctx) => {
+  pi.on("session_start", async (_event, ctx) => {
     const epoch = ++lifecycleEpoch
     activeLifecycleEpoch = epoch
     if (timer) clearInterval(timer)
@@ -1078,13 +1074,11 @@ const registryExtension: (pi: ExtensionAPI) => void = pi => {
           const text = await run(requireText("text", request.text))
           const ownerInteractionAt = currentOwnerIntervention(pi)
           let snapshot = await run(store.snapshot(now))
-          let lease = snapshot.leases.find(
+          const lease = snapshot.leases.find(
             candidate =>
               candidate.project === project && candidate.role === role,
           )
-          let outcome: "delegated" | "queued_unowned" | "self_claimed" = lease
-            ? "delegated"
-            : "queued_unowned"
+          const outcome = lease ? "delegated" : "queued_unowned"
           const queued = await run(
             store.enqueue({
               project,
@@ -1098,7 +1092,6 @@ const registryExtension: (pi: ExtensionAPI) => void = pi => {
               now,
             }),
           )
-          let durableRequest = queued
           if (lease && ownerInteractionAt !== undefined) {
             const relay: OwnerInterventionRelay = {
               targetAgentId: lease.owner.id,
@@ -1114,17 +1107,15 @@ const registryExtension: (pi: ExtensionAPI) => void = pi => {
               {
                 type: "text",
                 text:
-                  outcome === "self_claimed"
-                    ? `No live owner existed; self-claimed ${project}/${role}. Request ${queued.id} is acknowledged by this session and is yours to add to todos and execute.`
-                    : outcome === "queued_unowned"
-                      ? `Durably queued request ${queued.id} for the standing ${project}/${role} operator; no live recipient has received it. Do not duplicate it locally.`
-                      : `Durably queued request ${queued.id} for ${project}/${role}, owned by ${lease?.owner.id}; delivery pending recipient receipt.`,
+                  outcome === "queued_unowned"
+                    ? `Durably queued request ${queued.id} for ${project}/${role}; no live recipient has received it. Do not duplicate it locally.`
+                    : `Durably queued request ${queued.id} for ${project}/${role}, owned by ${lease?.owner.id}; delivery pending recipient receipt.`,
               },
             ],
             details: {
               outcome,
-              delivery: requestDeliveryStatus(durableRequest),
-              request: durableRequest,
+              delivery: requestDeliveryStatus(queued),
+              request: queued,
               lease,
             },
           }

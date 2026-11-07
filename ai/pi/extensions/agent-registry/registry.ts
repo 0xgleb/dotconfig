@@ -232,17 +232,13 @@ export const registryReceiptAvailable = (
   availability.editorText.length === 0 &&
   !availability.autoReloadPending
 
-export const prioritizedActiveReceiptLeases = (
+export const activeReceiptLeases = (
   snapshot: RegistrySnapshot,
   agentId: string,
 ): readonly Lease[] =>
-  snapshot.leases
-    .filter(lease => lease.owner.id === agentId && lease.status === "active")
-    .sort(
-      (left, right) =>
-        Number(right.mode === "operational") -
-        Number(left.mode === "operational"),
-    )
+  snapshot.leases.filter(
+    lease => lease.owner.id === agentId && lease.status === "active",
+  )
 
 export interface ReconcileLeaseInput extends ClaimLeaseInput {
   readonly store: RegistryStore

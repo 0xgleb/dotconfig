@@ -60,7 +60,7 @@ test("delegate results show bounded request content instead of only queue metada
   )
   assert.match(source, /Request content/)
   assert.match(source, /delivery pending recipient receipt/i)
-  assert.match(source, /requestDeliveryStatus\(durableRequest\)/)
+  assert.match(source, /requestDeliveryStatus\(queued\)/)
 })
 
 test("owner-directed delegation attributes intervention to the receiving agent", () => {

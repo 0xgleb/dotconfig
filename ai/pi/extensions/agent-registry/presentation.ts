@@ -140,9 +140,7 @@ export const requestNotificationDisplayText = (
     ? ` · ${details.senderProject}`
     : ""
   const backlog =
-    details.olderQueued > 0
-      ? `\n+${details.olderQueued} older queued · /operator`
-      : ""
+    details.olderQueued > 0 ? `\n+${details.olderQueued} older queued` : ""
   const handling = expanded
     ? `\n\nRequest ${details.requestId} · received, not claimed\nInspect full body: agent_registry requests requestId=${details.requestId}\nThen add the verified request to todos and claim it explicitly.`
     : ""
