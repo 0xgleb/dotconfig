@@ -1,155 +1,79 @@
-import type { HarnessReviewHandoff } from "./harness-protocol.ts"
-import type {
-  HarnessReviewResult,
-  Job,
-  RegisteredJobSpec,
-  ReviewDutyScanSpec,
+import {
+  toJobId,
+  type Job,
+  type RegisteredJobSpec,
+  type HarnessResearchResult,
 } from "./job-runtime.ts"
 
-/**
- * Compile-time regression suite for the terminal Job invariants (issue #58).
- * It carries no runtime assertions: `tsc --noEmit` over this file is the
- * test. Every `@ts-expect-error` below is a state that must stay
- * unrepresentable; if one becomes constructible again the directive turns
- * unused and the typecheck fails.
- */
+const id = toJobId("research-typecheck")
+if (id === undefined) throw new Error("fixture job ID must be valid")
 
-type HarnessReviewSpec = Extract<
-  RegisteredJobSpec,
-  { readonly kind: "harness.review" }
->
-
-const scanSpec: ReviewDutyScanSpec = {
-  kind: "review-duty.scan",
-  payload: { profile: "personal-review" },
-  runAt: 1_000,
-  maxAttempts: 3,
-}
-
-const harnessSpec: HarnessReviewSpec = {
-  kind: "harness.review",
+const spec: RegisteredJobSpec = {
+  kind: "harness.research",
   payload: {
-    lane: "claude-code-max",
-    task: "review-loop",
-    profile: "personal-review",
-    repository: "0xgleb/example",
-    pullRequest: 7,
-    kind: "own",
-    inputHeadSha: "a".repeat(40),
-    repositoryRoot: "/Users/example/code/0xgleb/example",
-    isolation: "approved-worktree",
+    lane: "subscription-plan",
+    harness: "claude-plan",
+    profile: "research-config",
+    project: "dotconfig",
+    task: "subscription-harness-adversarial-review",
+    repositoryRoot: "/Users/example/.config",
+    isolation: "read-only",
+    ownership: {
+      kind: "project-domain",
+      project: "dotconfig",
+      role: "research-config",
+    },
   },
   runAt: 1_000,
   maxAttempts: 2,
 }
 
-const handoff: HarnessReviewHandoff = {
-  protocolVersion: 1,
-  jobId: "job-h",
-  attempt: 1,
-  lane: "claude-code-max",
-  repository: "0xgleb/example",
-  pullRequest: 7,
-  inputHeadSha: "a".repeat(40),
-  outputHeadSha: "a".repeat(40),
-  status: "clean",
-  assessment: "No verified findings.",
-  evidence: ["check:review-core"],
-  verifier: "fable-clean",
-  executorProvenance: "subscription-verified",
+const result: HarnessResearchResult = {
+  kind: "harness.research",
+  handoff: {
+    protocolVersion: 1,
+    jobId: id,
+    attempt: 1,
+    lane: "subscription-plan",
+    profile: "research-config",
+    task: "subscription-harness-adversarial-review",
+    status: "completed",
+    summary: "Verified the bounded research task",
+    evidence: ["source.ts: task boundary verified"],
+  },
 }
 
-const result: HarnessReviewResult = { kind: "harness.review", handoff }
-
 const terminal = {
-  id: "job-1",
+  id,
   attempt: 1,
   createdAt: 1_000,
   updatedAt: 2_000,
   finishedAt: 2_000,
   summary: "done",
+  spec,
 } as const
 
-export const harnessSucceeded: Job = {
-  ...terminal,
-  spec: harnessSpec,
-  state: "succeeded",
-  result,
-}
-
-export const harnessCancelledWithResult: Job = {
-  ...terminal,
-  spec: harnessSpec,
-  state: "cancelled",
-  result,
-}
-
-export const harnessCancelledWithoutResult: Job = {
-  ...terminal,
-  spec: harnessSpec,
-  state: "cancelled",
-}
-
-export const scanSucceeded: Job = {
-  ...terminal,
-  spec: scanSpec,
-  state: "succeeded",
-}
-
-export const harnessFailed: Job = {
-  ...terminal,
-  attempt: 2,
-  spec: harnessSpec,
-  state: "failed",
-}
-
-const harnessSucceededWithoutResultShape = {
-  ...terminal,
-  spec: harnessSpec,
-  state: "succeeded",
-} as const
-
-// @ts-expect-error a successful harness job must carry its typed result
-export const harnessSucceededWithoutResult: Job =
-  harnessSucceededWithoutResultShape
-
-const scanSucceededWithResultShape = {
-  ...terminal,
-  spec: scanSpec,
-  state: "succeeded",
-  result,
-} as const
-
-// @ts-expect-error a review-duty scan job can never carry a harness result
-export const scanSucceededWithResult: Job = scanSucceededWithResultShape
-
-const scanCancelledWithResultShape = {
-  ...terminal,
-  spec: scanSpec,
-  state: "cancelled",
-  result,
-} as const
-
-// @ts-expect-error a cancelled scan job can never carry a harness result
-export const scanCancelledWithResult: Job = scanCancelledWithResultShape
+export const succeeded: Job = { ...terminal, state: "succeeded", result }
+export const cancelled: Job = { ...terminal, state: "cancelled", result }
+export const cancelledWithoutResult: Job = { ...terminal, state: "cancelled" }
+export const failed: Job = { ...terminal, attempt: 2, state: "failed" }
 
 const failedWithResultShape = {
   ...terminal,
   attempt: 2,
-  spec: harnessSpec,
   state: "failed",
   result,
 } as const
 
-// @ts-expect-error a failed job never carries a result
+// @ts-expect-error a failed attempt cannot hold a completed research result
 export const failedWithResult: Job = failedWithResultShape
 
 const leasedWithResultShape = {
-  id: "job-1",
+  id,
   attempt: 1,
   createdAt: 1_000,
   updatedAt: 2_000,
-  spec: harnessSpec,
+  spec,
   state: "leased",
   workerId: "worker-a",
   leaseToken: "lease-a",
@@ -157,5 +81,5 @@ const leasedWithResultShape = {
   result,
 } as const
 
-// @ts-expect-error a leased job never carries a result
+// @ts-expect-error an in-flight attempt cannot already hold its completed result
 export const leasedWithResult: Job = leasedWithResultShape

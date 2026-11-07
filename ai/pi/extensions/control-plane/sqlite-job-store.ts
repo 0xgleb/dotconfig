@@ -17,17 +17,15 @@ import {
   completeJob,
   createJob,
   decodeStoredJob,
-  decodeStoredJobSpec,
+  decodeJobSpec,
   failJob,
   JobRuntimeError,
   recoverExpiredJob,
-  REGISTERED_JOB_KINDS,
   type Job,
   type RegisteredJobKind,
   type RegisteredJobResult,
   type RegisteredJobSpec,
 } from "./job-runtime.ts"
-import type { CanonicalPath } from "./review-duty-profile.ts"
 import {
   isAllowanceRemainingPercent,
   MAX_ALLOWANCE_PERCENT,
@@ -178,18 +176,12 @@ export interface SqliteJobStore {
     summary: string,
     result?: RegisteredJobResult,
   ) => Effect.Effect<Job, JobStoreError | JobRuntimeError>
-  /**
-   * Records an attempt its lease holder could not finish. A harness review
-   * passes back the handoff that explains why, and the handoff is stored with
-   * the job when the attempt is its last, so the reason outlives the lease.
-   */
   readonly fail: (
     id: string,
     leaseToken: string,
     now: number,
     retryDelayMs: number,
     summary: string,
-    result?: RegisteredJobResult,
   ) => Effect.Effect<Job, JobStoreError | JobRuntimeError>
   readonly cancel: (
     id: string,
@@ -243,16 +235,6 @@ export interface SqliteJobStore {
     readonly actualTokens: number
     readonly now: number
   }) => Effect.Effect<ProviderCallSettlement, JobStoreError>
-  readonly acquireWorkspaceLock: (
-    resource: string,
-    owner: string,
-    now: number,
-    ttlMs: number,
-  ) => Effect.Effect<boolean, JobStoreError>
-  readonly releaseWorkspaceLock: (
-    resource: string,
-    owner: string,
-  ) => Effect.Effect<void, JobStoreError>
   readonly close: () => void
   readonly unsafeDatabaseForTests: DatabaseSync
 }
@@ -505,10 +487,7 @@ const usageSampleFromRow = (
     }
   })
 
-const makeStore = (
-  database: DatabaseSync,
-  home: CanonicalPath,
-): SqliteJobStore => {
+const makeStore = (database: DatabaseSync): SqliteJobStore => {
   const inTransaction = <A, E>(
     operation: Effect.Effect<A, E>,
   ): Effect.Effect<A, E | JobStoreError> =>
@@ -619,7 +598,7 @@ const makeStore = (
     id = randomUUID(),
     now = Date.now(),
   ) =>
-    Effect.flatMap(decodeStoredJobSpec(spec), decodedSpec =>
+    Effect.flatMap(decodeJobSpec(spec), decodedSpec =>
       Effect.flatMap(validateId(id), jobId =>
         inTransaction(
           Effect.gen(function* () {
@@ -671,7 +650,7 @@ const makeStore = (
                 storeError("capacity", "job store capacity is exhausted"),
               )
 
-            const job = yield* createJob(decodedSpec, jobId, now, home)
+            const job = yield* createJob(decodedSpec, jobId, now)
             yield* sql(
               () =>
                 database
@@ -816,12 +795,11 @@ const makeStore = (
     now,
     retryDelayMs,
     summary,
-    result,
   ) =>
     inTransaction(
       Effect.flatMap(get(id), job =>
         Effect.flatMap(
-          failJob(job, leaseToken, now, retryDelayMs, summary, result),
+          failJob(job, leaseToken, now, retryDelayMs, summary),
           persist,
         ),
       ),
@@ -1597,88 +1575,6 @@ const makeStore = (
       ),
     )
 
-  const acquireWorkspaceLock: SqliteJobStore["acquireWorkspaceLock"] = (
-    resource,
-    owner,
-    now,
-    ttlMs,
-  ) =>
-    Effect.flatMap(validateId(resource), lockResource =>
-      Effect.flatMap(validateId(owner), lockOwner =>
-        inTransaction(
-          Effect.gen(function* () {
-            const acquiredAt = yield* timestamp(
-              now,
-              "workspace lock",
-              "invalid_input",
-            )
-            if (
-              !Number.isSafeInteger(ttlMs) ||
-              ttlMs < 1 ||
-              ttlMs > 120_000 ||
-              !Number.isSafeInteger(acquiredAt + ttlMs)
-            )
-              return yield* Effect.fail(
-                storeError("invalid_input", "workspace lock ttl is malformed"),
-              )
-            const current = yield* sql(
-              () =>
-                database
-                  .prepare(
-                    "SELECT owner, expires_at FROM workspace_locks WHERE resource = ?",
-                  )
-                  .get(lockResource),
-              "failed to read workspace lock",
-            )
-            if (current !== undefined) {
-              const row = yield* rowFrom(current)
-              const expiresAt = yield* timestamp(
-                row.expires_at,
-                "persisted workspace lock expiry",
-                "corrupt_state",
-              )
-              if (expiresAt > acquiredAt && row.owner !== lockOwner)
-                return false
-            }
-            yield* sql(
-              () =>
-                database
-                  .prepare(
-                    `INSERT INTO workspace_locks (resource, owner, expires_at)
-                     VALUES (?, ?, ?)
-                     ON CONFLICT(resource) DO UPDATE SET
-                       owner = excluded.owner,
-                       expires_at = excluded.expires_at`,
-                  )
-                  .run(lockResource, lockOwner, acquiredAt + ttlMs),
-              "failed to persist workspace lock",
-            )
-            return true
-          }),
-        ),
-      ),
-    )
-
-  const releaseWorkspaceLock: SqliteJobStore["releaseWorkspaceLock"] = (
-    resource,
-    owner,
-  ) =>
-    Effect.flatMap(validateId(resource), lockResource =>
-      Effect.flatMap(validateId(owner), lockOwner =>
-        Effect.asVoid(
-          sql(
-            () =>
-              database
-                .prepare(
-                  "DELETE FROM workspace_locks WHERE resource = ? AND owner = ?",
-                )
-                .run(lockResource, lockOwner),
-            "failed to release workspace lock",
-          ),
-        ),
-      ),
-    )
-
   return {
     enqueue,
     get,
@@ -1698,22 +1594,13 @@ const makeStore = (
     agentIntervention,
     reserveProviderCall,
     settleProviderCall,
-    acquireWorkspaceLock,
-    releaseWorkspaceLock,
     close: () => database.close(),
     unsafeDatabaseForTests: database,
   }
 }
 
-/**
- * Opens the job database and binds it to the home its harness payloads are
- * admitted against. The home is a parameter because the registered checkout
- * locations are relative to it: the caller that read the environment decides
- * which home applies rather than the store discovering one.
- */
 export const makeSqliteJobStore = (
   path: string,
-  home: CanonicalPath,
 ): Effect.Effect<SqliteJobStore, JobStoreError> => {
   if (!isAbsolute(path) || path.length > 1_024)
     return Effect.fail(
@@ -1920,11 +1807,6 @@ export const makeSqliteJobStore = (
         );
         CREATE INDEX IF NOT EXISTS provider_call_queue_order_idx
           ON provider_call_queue (enqueued_at, reservation_id);
-        CREATE TABLE IF NOT EXISTS workspace_locks (
-          resource TEXT PRIMARY KEY,
-          owner TEXT NOT NULL,
-          expires_at INTEGER NOT NULL
-        );
         PRAGMA user_version = ${SCHEMA_VERSION};
         COMMIT;
       `)
@@ -1943,7 +1825,7 @@ export const makeSqliteJobStore = (
     }, "failed to initialize job database"),
     outcome =>
       outcome.status === "opened"
-        ? Effect.succeed(makeStore(outcome.database, home))
+        ? Effect.succeed(makeStore(outcome.database))
         : Effect.fail(outcome.error),
   )
 }

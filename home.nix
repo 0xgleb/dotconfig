@@ -132,9 +132,7 @@ let
       cp ($source_root | path join "job-runtime.ts") ($build_root | path join "job-runtime.ts")
       cp ($source_root | path join "job-presentation.ts") ($build_root | path join "job-presentation.ts")
       cp ($source_root | path join "usage-policy.ts") ($build_root | path join "usage-policy.ts")
-      cp ($source_root | path join "harness-protocol.ts") ($build_root | path join "harness-protocol.ts")
       cp ($source_root | path join "harness-research-protocol.ts") ($build_root | path join "harness-research-protocol.ts")
-      cp ($source_root | path join "review-duty-profile.ts") ($build_root | path join "review-duty-profile.ts")
       ^${pkgs.coreutils}/bin/rm --recursive --force ($build_root | path join "node_modules")
       ^${pkgs.coreutils}/bin/ln --symbolic --no-target-directory ${piExtensionNodeModules}/node_modules ($build_root | path join "node_modules")
       (
@@ -170,14 +168,7 @@ let
     '';
     meta.mainProgram = "pi-control-plane-watch";
   };
-  piHarnessWorker = pkgs.writeShellApplication {
-    name = "pi-harness-worker";
-    runtimeInputs = [ pkgs.nodejs ];
-    text = ''
-      export PI_HARNESS_ALLOWED_ROOTS="''${PI_HARNESS_ALLOWED_ROOTS:-$HOME/code/dataclique:$HOME/code/0xgleb:$HOME/.config}"
-      exec node "$HOME/.config/ai/pi/extensions/control-plane/harness-worker-main.ts" "$@"
-    '';
-  };
+
   pieceOfPiTelegram = pkgs.writeShellApplication {
     name = "piece-of-pi-telegram";
     runtimeInputs = [
@@ -237,7 +228,6 @@ in
         piBridge
         piControlPlane
         piControlPlaneWatch
-        piHarnessWorker
         piSolReview
         unstable.pi-coding-agent
         pkgs.nixd

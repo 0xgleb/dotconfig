@@ -6,17 +6,6 @@ const appUrl = new URL("./app.tsx", import.meta.url)
 const app = readFileSync(appUrl, "utf8")
 const css = readFileSync(new URL("./app.css", import.meta.url), "utf8")
 const html = readFileSync(new URL("./index.html", import.meta.url), "utf8")
-const browserRuntimeSources = [
-  "../job-runtime.ts",
-  "../job-presentation.ts",
-  "../harness-protocol.ts",
-  "../harness-research-protocol.ts",
-  "../review-duty-profile.ts",
-].map(path => readFileSync(new URL(path, import.meta.url), "utf8"))
-const dashboardNix = readFileSync(
-  new URL("../../../dashboard.nix", import.meta.url),
-  "utf8",
-)
 
 test("dashboard uses Solid lifecycle primitives and validates API job state", () => {
   assert.match(app, /from "solid-js"/)
@@ -93,13 +82,6 @@ test("dashboard uses Solid lifecycle primitives and validates API job state", ()
   assert.doesNotMatch(app, /innerHTML|dangerouslySetInnerHTML/)
 })
 
-test("dashboard browser bundle dependencies do not import Node built-ins", () => {
-  assert.doesNotMatch(
-    [app, ...browserRuntimeSources].join("\n"),
-    /(?:from|import\()\s*["']node:/,
-  )
-})
-
 test("dashboard remains observational until typed control commands exist", () => {
   assert.match(app, /VIEW ONLY/)
   assert.match(app, /Browser controls remain disabled/)
@@ -124,42 +106,16 @@ const localImportGraph = (
   )
 }
 
-const literal = (value: string): string =>
-  value.replace(/[.*+?^${}()|[\]\\]/gu, "\\$&")
-
-test("the dashboard derivation fileset stages the full local import graph", () => {
+test("the dashboard browser import graph contains no Node built-ins", () => {
   const graph = localImportGraph(appUrl, new Map())
   const imported = [...graph.keys()].filter(href => href !== appUrl.href)
   assert.ok(imported.length > 0, "app.tsx must reach at least one local module")
-  // The fileset roots are written relative to the repo root (./extensions/…).
-  const toFilesetEntry = (href: string): string => {
-    const afterExtensions = href.slice(href.indexOf("control-plane/"))
-    return `./extensions/${afterExtensions}`
-  }
-  assert.match(
-    dashboardNix,
-    /\.\/extensions\/control-plane\/dashboard\/app\.tsx/u,
-  )
-  for (const href of imported) {
-    const entry = literal(toFilesetEntry(href))
-    assert.match(
-      dashboardNix,
-      new RegExp(entry, "u"),
-      `${href} must be in the dashboard derivation fileset`,
-    )
-  }
   for (const [href, source] of graph)
     assert.doesNotMatch(
       source,
       /from "node:/u,
       `${href} imports a Node builtin`,
     )
-  assert.match(dashboardNix, /bun2nix\.mkDerivation/)
-  assert.match(dashboardNix, /bunDeps = bun2nix\.fetchBunDeps/)
-  assert.match(
-    dashboardNix,
-    /nu --no-config-file --no-history pi\/build-dashboard\.nu/,
-  )
 })
 
 test("dashboard assets are local, responsive, and share the terminal archeofuturism palette", () => {
