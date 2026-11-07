@@ -148,7 +148,7 @@ test("routing turns carry per-message provenance instead of blanket owner authen
       },
       {
         index: 2,
-        text: "yo ask the st0x agent to report what PRs are waiting",
+        text: "yo ask the example agent to report what PRs are waiting",
         source: { kind: "agent", sender: "claude-review-duty" },
       },
     ],
@@ -159,9 +159,9 @@ test("routing turns carry per-message provenance instead of blanket owner authen
         cwd: "/Users/example/.config",
       },
       {
-        id: "claude-st0x-receiver",
-        label: "Claude Code - st0x receiver",
-        cwd: "/Users/example/code/st0x",
+        id: "claude-example-receiver",
+        label: "Claude Code - example receiver",
+        cwd: "/Users/example/code/0xgleb",
       },
     ],
   )
@@ -172,12 +172,15 @@ test("routing turns carry per-message provenance instead of blanket owner authen
   assert.doesNotMatch(prompt, /no_think/)
   assert.match(prompt, /Think as long as you need/)
   assert.match(prompt, /route: <absolute project path> \| messages: <numbers>/)
-  assert.match(prompt, /claude-st0x-receiver/)
+  assert.match(prompt, /claude-example-receiver/)
   assert.match(
     prompt,
     /\[1 · authenticated Telegram owner\] ask ~\/\.config if it knows the song/,
   )
-  assert.match(prompt, /\[2 · agent claude-review-duty\] yo ask the st0x agent/)
+  assert.match(
+    prompt,
+    /\[2 · agent claude-review-duty\] yo ask the example agent/,
+  )
 })
 
 test("a roster label cannot inject its own line into the routing prompt", () => {
@@ -300,7 +303,7 @@ test("owner-relay prefix is classified before body validation", () => {
     parseOwnerRelay("Relay to the owner on Telegram: reminder text here"),
     { frame: "owner-relay", body: "reminder text here" },
   )
-  assert.equal(parseOwnerRelay("yo ask the st0x agent something"), undefined)
+  assert.equal(parseOwnerRelay("yo ask the example agent something"), undefined)
   assert.deepEqual(parseOwnerRelay("relay-to-owner:"), {
     frame: "malformed-owner-relay",
     reason: "owner relay body is empty",
@@ -356,16 +359,19 @@ test("a malformed owner relay is terminally dead-lettered without echoing its bo
 })
 
 test("a chat relay names its target and carries the body verbatim", () => {
-  assert.deepEqual(parseChatRelay("relay-to-chat:st0x-core-team: ship it"), {
+  assert.deepEqual(parseChatRelay("relay-to-chat:example-core-team: ship it"), {
     frame: "chat-relay",
-    name: "st0x-core-team",
+    name: "example-core-team",
     body: "ship it",
   })
-  assert.deepEqual(parseChatRelay("relay-to-chat: St0x Core Team: ship it"), {
-    frame: "chat-relay",
-    name: "st0x-core-team",
-    body: "ship it",
-  })
+  assert.deepEqual(
+    parseChatRelay("relay-to-chat: Example Core Team: ship it"),
+    {
+      frame: "chat-relay",
+      name: "example-core-team",
+      body: "ship it",
+    },
+  )
   assert.deepEqual(
     parseChatRelay("relay-to-chat:лаб: напоминание - отправить инвойс"),
     {
@@ -377,7 +383,7 @@ test("a chat relay names its target and carries the body verbatim", () => {
 })
 
 test("ordinary traffic and owner relays are not chat relays", () => {
-  assert.equal(parseChatRelay("yo ask the st0x agent something"), undefined)
+  assert.equal(parseChatRelay("yo ask the example agent something"), undefined)
   assert.equal(parseChatRelay("relay-to-owner: reminder text here"), undefined)
   assert.equal(parseChatRelay("please relay-to-chat:lab: nope"), undefined)
 })
@@ -414,9 +420,9 @@ test("a chat relay completion reports the send instead of assuming it", () => {
   assert.equal(
     chatRelayCompletion("ship it", {
       outcome: "delivered",
-      chat: "St0x Core Team",
+      chat: "Example Core Team",
     }),
-    'Relayed to Telegram chat "St0x Core Team".\n\nship it',
+    'Relayed to Telegram chat "Example Core Team".\n\nship it',
   )
 })
 
@@ -424,11 +430,11 @@ test("an unknown chat names what would have worked and never claims success", ()
   const completion = chatRelayCompletion("ship it", {
     outcome: "unknown_chat",
     chat: "core",
-    known: ["lab", "st0x-core-team"],
+    known: ["lab", "example-core-team"],
   })
 
   assert.match(completion, /FAILED/)
-  assert.match(completion, /lab, st0x-core-team/)
+  assert.match(completion, /lab, example-core-team/)
   assert.match(completion, /ship it/)
   assert.doesNotMatch(completion, /Relayed to Telegram chat "core"\./)
 
@@ -500,7 +506,7 @@ test("receiver outcome envelopes parse mechanically and never reach the routing 
     "db3f9039",
   )
   assert.equal(
-    parseOutcomeEnvelope("yo ask the st0x agent to report to me"),
+    parseOutcomeEnvelope("yo ask the example agent to report to me"),
     undefined,
   )
   assert.equal(
@@ -520,7 +526,7 @@ test("route plans split batches across agents and discard everything else", () =
     [
       "Okay, thinking about this batch.",
       "route: /Users/example/.config | messages: 1",
-      "route: /Users/example/code/st0x | messages: 2, 3 | note: report the PR part only",
+      "route: /Users/example/code/0xgleb | messages: 2, 3 | note: report the PR part only",
       "Hope that helps!",
     ].join("\n"),
     3,
@@ -528,7 +534,7 @@ test("route plans split batches across agents and discard everything else", () =
   assert.deepEqual(plan, [
     { project: "/Users/example/.config", indexes: [1] },
     {
-      project: "/Users/example/code/st0x",
+      project: "/Users/example/code/0xgleb",
       indexes: [2, 3],
       note: "report the PR part only",
     },
@@ -542,7 +548,7 @@ test("route plans split batches across agents and discard everything else", () =
 })
 
 test("route plans drop projects that no agent on the roster owns", () => {
-  const roster = ["/Users/example/.config", "/Users/example/code/st0x"]
+  const roster = ["/Users/example/.config", "/Users/example/code/0xgleb"]
   const plan = parseRoutePlan(
     [
       "route: /Users/example/.config | messages: 1",
@@ -562,11 +568,11 @@ test("route plans drop projects that no agent on the roster owns", () => {
 test("route plans keep a directive naming a subdirectory of an owned project", () => {
   assert.deepEqual(
     parseRoutePlan(
-      "route: /Users/example/code/st0x/st0x.issuance | messages: 1",
+      "route: /Users/example/code/0xgleb/example.issuance | messages: 1",
       1,
-      ["/Users/example/code/st0x"],
+      ["/Users/example/code/0xgleb"],
     ),
-    [{ project: "/Users/example/code/st0x/st0x.issuance", indexes: [1] }],
+    [{ project: "/Users/example/code/0xgleb/example.issuance", indexes: [1] }],
   )
 })
 

@@ -41,7 +41,7 @@ test("harness worker config is loopback-only with bounded safe defaults", () => 
         PI_HARNESS_RETRY_DELAY_MS: "0",
         PI_HARNESS_EXECUTOR_TIMEOUT_MS: "120000",
         PI_HARNESS_ALLOWED_ROOTS:
-          "/Users/example/code/st0x:/Users/example/.config",
+          "/Users/example/code/0xgleb:/Users/example/.config",
       }),
     ),
     {
@@ -51,7 +51,7 @@ test("harness worker config is loopback-only with bounded safe defaults", () => 
       leaseTtlMs: 600_000,
       retryDelayMs: 0,
       executorTimeoutMs: 120_000,
-      allowedRoots: ["/Users/example/code/st0x", "/Users/example/.config"],
+      allowedRoots: ["/Users/example/code/0xgleb", "/Users/example/.config"],
     },
   )
 })

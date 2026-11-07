@@ -43,11 +43,7 @@ interface AgentWorkspaceParams {
   readonly repositoryRoot?: string
 }
 
-const PROFILE_NAMES = [
-  "st0x-review",
-  "dataclique-review",
-  "personal-review",
-] as const
+const PROFILE_NAMES = ["dataclique-review", "personal-review"] as const
 
 export const paneNames = (stdout: string): readonly string[] => {
   const parsed = Effect.runSync(
@@ -177,11 +173,7 @@ export default function agentWorkspace(pi: ExtensionAPI): void {
     ],
     parameters: Type.Object({
       action: StringEnum(["start", "status", "dispatch", "replace"] as const),
-      profile: StringEnum([
-        "st0x-review",
-        "dataclique-review",
-        "personal-review",
-      ] as const),
+      profile: StringEnum(["dataclique-review", "personal-review"] as const),
       mode: Type.Optional(StringEnum(["inventory", "review"] as const)),
       repository: Type.Optional(Type.String({ maxLength: 120 })),
       pullRequest: Type.Optional(Type.Integer({ minimum: 1 })),

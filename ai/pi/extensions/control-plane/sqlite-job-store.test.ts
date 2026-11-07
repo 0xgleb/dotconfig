@@ -66,7 +66,9 @@ const harnessSpec = (
 
 const reviewSpec = (
   profile:
-    "st0x-review" | "dataclique-review" | "personal-review" = "st0x-review",
+    | "personal-review"
+    | "dataclique-review"
+    | "personal-review" = "personal-review",
 ): RegisteredJobSpec => ({
   kind: "review-duty.scan",
   payload: { profile },
@@ -169,7 +171,7 @@ test("owner intervention survives closing and reopening the SQLite adapter", asy
     await Effect.runPromise(
       first.recordAgentIntervention({
         agentId: "agent-a",
-        cwd: "/Users/example/code/st0x",
+        cwd: "/Users/example/code/0xgleb",
         ownerInteractionAt: 1_000,
       }),
     )
@@ -611,7 +613,7 @@ test("usage samples survive agent expiry and update within a bounded time bucket
     )
     await Effect.runPromise(
       store.recordUsage(
-        [agent("agent-b", "/Users/example/code/st0x", 80)],
+        [agent("agent-b", "/Users/example/code/0xgleb", 80)],
         30 * 60 * 1_000,
       ),
     )
@@ -1062,12 +1064,12 @@ test("provider queue ages work by its per-agent allocation weight", async () =>
       false,
     )
     assert.equal(
-      (await reserve("st0x-session", "agent-st0x", 2, 3_000)).allowed,
+      (await reserve("example-session", "agent-example", 2, 3_000)).allowed,
       false,
     )
 
     assert.equal(
-      (await reserve("st0x-session", "agent-st0x", 2, 61_000)).allowed,
+      (await reserve("example-session", "agent-example", 2, 61_000)).allowed,
       true,
     )
     assert.equal(

@@ -1,28 +1,10 @@
 import { Data, Effect } from "effect"
 
-export const HARNESS_SUPPORT_AREAS = [
-  "infrastructure",
-  "tooling",
-  "classifier",
-  "reload",
-  "observability",
-  "operator-support",
-] as const
-
-export type HarnessSupportArea = (typeof HARNESS_SUPPORT_AREAS)[number]
-
-export type HarnessResearchOwnership =
-  | {
-      readonly kind: "project-domain"
-      readonly project: string
-      readonly role: string
-    }
-  | {
-      readonly kind: "agentops-support"
-      readonly project: string
-      readonly role: string
-      readonly supportArea: HarnessSupportArea
-    }
+export interface HarnessResearchOwnership {
+  readonly kind: "project-domain"
+  readonly project: string
+  readonly role: string
+}
 
 export interface HarnessResearchPayload {
   readonly lane: "subscription-plan"
@@ -32,11 +14,6 @@ export interface HarnessResearchPayload {
   readonly task: string
   readonly repositoryRoot: string
   readonly isolation: "read-only"
-  /** Absent only on persisted legacy jobs. New admission requires ownership. */
-  readonly ownership?: HarnessResearchOwnership
-}
-
-export type NewHarnessResearchPayload = HarnessResearchPayload & {
   readonly ownership: HarnessResearchOwnership
 }
 
@@ -118,31 +95,14 @@ const decodeOwnership = (
     typeof value.role !== "string"
   )
     return undefined
-  if (value.kind === "project-domain") {
-    if (
-      !exactKeys(value, ["kind", "project", "role"]) ||
-      !safeIdentifier(value.role, 128) ||
-      value.role !== profile ||
-      value.role.startsWith("agentops-")
-    )
-      return undefined
-    return { kind: value.kind, project: value.project, role: value.role }
-  }
   if (
-    value.kind !== "agentops-support" ||
-    !exactKeys(value, ["kind", "project", "role", "supportArea"]) ||
+    value.kind !== "project-domain" ||
+    !exactKeys(value, ["kind", "project", "role"]) ||
     !safeIdentifier(value.role, 128) ||
-    value.role !== profile ||
-    value.role !== `agentops-${project}` ||
-    !HARNESS_SUPPORT_AREAS.includes(value.supportArea as HarnessSupportArea)
+    value.role !== profile
   )
     return undefined
-  return {
-    kind: value.kind,
-    project: value.project,
-    role: value.role,
-    supportArea: value.supportArea as HarnessSupportArea,
-  }
+  return { kind: value.kind, project: value.project, role: value.role }
 }
 
 const invalidHandoff = <A>(
@@ -157,31 +117,17 @@ export const decodeHarnessResearchPayload = (
 ): Effect.Effect<HarnessResearchPayload, HarnessResearchProtocolError> => {
   if (!isRecord(value))
     return invalidPayload("harness research payload is malformed")
-  const hasOwnership = "ownership" in value
   if (
-    !exactKeys(
-      value,
-      hasOwnership
-        ? [
-            "lane",
-            "harness",
-            "profile",
-            "project",
-            "task",
-            "repositoryRoot",
-            "isolation",
-            "ownership",
-          ]
-        : [
-            "lane",
-            "harness",
-            "profile",
-            "project",
-            "task",
-            "repositoryRoot",
-            "isolation",
-          ],
-    ) ||
+    !exactKeys(value, [
+      "lane",
+      "harness",
+      "profile",
+      "project",
+      "task",
+      "repositoryRoot",
+      "isolation",
+      "ownership",
+    ]) ||
     value.lane !== "subscription-plan" ||
     !safeIdentifier(value.harness, 64) ||
     !safeIdentifier(value.profile, 128) ||
@@ -191,10 +137,12 @@ export const decodeHarnessResearchPayload = (
     value.isolation !== "read-only"
   )
     return invalidPayload("harness research payload is malformed")
-  const ownership = hasOwnership
-    ? decodeOwnership(value.ownership, value.project, value.profile)
-    : undefined
-  if (hasOwnership && ownership === undefined)
+  const ownership = decodeOwnership(
+    value.ownership,
+    value.project,
+    value.profile,
+  )
+  if (ownership === undefined)
     return invalidPayload("harness research ownership is malformed")
   return Effect.succeed({
     lane: value.lane,
@@ -204,18 +152,9 @@ export const decodeHarnessResearchPayload = (
     task: value.task,
     repositoryRoot: value.repositoryRoot,
     isolation: value.isolation,
-    ...(ownership ? { ownership } : {}),
+    ownership,
   })
 }
-
-export const validateNewHarnessResearchPayload = (
-  value: unknown,
-): Effect.Effect<NewHarnessResearchPayload, HarnessResearchProtocolError> =>
-  Effect.flatMap(decodeHarnessResearchPayload(value), payload =>
-    payload.ownership
-      ? Effect.succeed(payload as NewHarnessResearchPayload)
-      : invalidPayload("new harness research jobs require typed ownership"),
-  )
 
 export const decodeHarnessResearchHandoff = (
   value: unknown,

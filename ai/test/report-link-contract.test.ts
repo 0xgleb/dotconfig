@@ -17,7 +17,7 @@ test("owner-report examples demonstrate verified GitHub links without retired or
   assert.ok(
     shape.includes("[#76](https://github.com/0xgleb/dotconfig/issues/76)"),
   )
-  assert.doesNotMatch(source, /\b(?:st0x|rainlanguage|linear|graphite)\b/i)
+  assert.doesNotMatch(source, /\b(?:example|rainlanguage|linear|graphite)\b/i)
   assert.ok(
     source.includes(
       "Every external reference must carry its corresponding verified link",

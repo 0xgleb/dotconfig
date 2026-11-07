@@ -90,12 +90,12 @@ const LAUNCH_PREFIX = [
 const claudePayload: HarnessReviewPayload = {
   lane: "claude-code-max",
   task: "review-pr",
-  profile: "st0x-review",
-  repository: "st0x-technology/example",
+  profile: "personal-review",
+  repository: "0xgleb/example",
   pullRequest: 42,
   kind: "assigned",
   inputHeadSha: headSha,
-  repositoryRoot: canonical("/Users/example/code/st0x/example"),
+  repositoryRoot: canonical("/Users/example/code/0xgleb/example"),
   isolation: "read-only",
 }
 
@@ -147,7 +147,7 @@ const unvalidatedRoots = (roots: readonly string[]): RegisteredWorkspaceRoots =>
   roots as RegisteredWorkspaceRoots
 
 const allowedRoots = registeredRoots([
-  "/Users/example/code/st0x/example",
+  "/Users/example/code/0xgleb/example",
   "/Users/example/code/0xgleb/example",
   "/Users/example/.config",
 ])
@@ -222,7 +222,7 @@ test("the Claude lane builds exact source-fixed subscription argv", () => {
   ])
   assert.equal(
     launch.argv.at(-1),
-    `You are a fresh Claude Code subscription-harness review executor for st0x-technology/example#42, kind assigned, input head ${headSha}, profile st0x-review. Verify the unchanged input head, then invoke the shared review-pr skill exactly. Assigned work is read-only: no checkout, no mutation, empty-body pending inline-only, and never a submitted verdict. Run an independent native Fable verification before handoff; report blocked if it is unavailable. Never use an Anthropic API provider, SDK, curl, or paid API key. At completion, return exactly one bounded harness handoff v1 for job job-a attempt 1 with matching lane, repository, pull request, and input head SHA. Never include prompts, reasoning, credentials, diffs, or raw logs, and never treat model output as approval or merge authority.`,
+    `You are a fresh Claude Code subscription-harness review executor for 0xgleb/example#42, kind assigned, input head ${headSha}, profile personal-review. Verify the unchanged input head, then invoke the shared review-pr skill exactly. Assigned work is read-only: no checkout, no mutation, empty-body pending inline-only, and never a submitted verdict. Run an independent native Fable verification before handoff; report blocked if it is unavailable. Never use an Anthropic API provider, SDK, curl, or paid API key. At completion, return exactly one bounded harness handoff v1 for job job-a attempt 1 with matching lane, repository, pull request, and input head SHA. Never include prompts, reasoning, credentials, diffs, or raw logs, and never treat model output as approval or merge authority.`,
   )
 })
 
@@ -382,14 +382,14 @@ test("registered workspace roots confine every launch", () => {
   assert.equal(registered.cwd, claudePayload.repositoryRoot)
 
   const worktreeRoot =
-    "/Users/example/code/st0x/example/.worktrees/feat/harness"
+    "/Users/example/code/0xgleb/example/.worktrees/feat/harness"
   const worktree = plan({ ...claudePayload, repositoryRoot: worktreeRoot })
   assert.equal(worktree.cwd, worktreeRoot)
 
   for (const outside of [
     "/tmp/example",
     "/Users/example/code/other/example",
-    "/Users/example/code/st0x/example-fork/example",
+    "/Users/example/code/0xgleb/example-fork/example",
   ])
     assert.equal(
       planErrorCode({ ...claudePayload, repositoryRoot: outside }),
@@ -401,7 +401,7 @@ test("registered workspace roots confine every launch", () => {
       claudePayload,
       "job-a",
       1,
-      registeredRoots(["/Users/example/code/0xgleb/example"]),
+      registeredRoots(["/Users/example/code/dataclique/example"]),
     ),
     "invalid_input",
   )
@@ -412,10 +412,10 @@ test("launches require canonical registered workspace roots", () => {
     [],
     ["relative/path"],
     ["/"],
-    ["/Users/example/code/st0x/example/"],
-    ["/Users/example/code/st0x/../st0x/example"],
-    ["/Users/example/code/st0x/example/.."],
-    ["/Users/example/code/st0x/example", "relative/path"],
+    ["/Users/example/code/0xgleb/example/"],
+    ["/Users/example/code/0xgleb/../example/example"],
+    ["/Users/example/code/0xgleb/example/.."],
+    ["/Users/example/code/0xgleb/example", "relative/path"],
   ])
     assert.equal(
       planErrorCode(claudePayload, "job-a", 1, unvalidatedRoots(roots)),

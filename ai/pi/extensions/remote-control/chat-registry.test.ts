@@ -10,7 +10,7 @@ import {
 } from "./chat-registry.ts"
 
 test("a chat name is what both an agent and the owner can retype", () => {
-  assert.equal(normalizedChatName("St0x · Core Team!"), "st0x-core-team")
+  assert.equal(normalizedChatName("Example · Core Team!"), "example-core-team")
   assert.equal(normalizedChatName("Кланкер Лаб"), "кланкер-лаб")
   assert.equal(normalizedChatName("   "), undefined)
   assert.equal(normalizedChatName("···"), undefined)
@@ -19,14 +19,14 @@ test("a chat name is what both an agent and the owner can retype", () => {
 test("a group chat the owner spoke in becomes an addressable target", () => {
   const registration = recordGroupChat(
     {},
-    { id: -1001234567890, title: "St0x Core Team" },
+    { id: -1001234567890, title: "Example Core Team" },
   )
 
   assert.equal(registration.outcome, "recorded")
   if (registration.outcome !== "recorded") return
-  assert.equal(registration.name, "st0x-core-team")
+  assert.equal(registration.name, "example-core-team")
   assert.deepEqual(registration.chats, {
-    "st0x-core-team": { id: -1001234567890, title: "St0x Core Team" },
+    "example-core-team": { id: -1001234567890, title: "Example Core Team" },
   })
 })
 
@@ -134,18 +134,18 @@ test("a prototype-shaped key never enters the registry", () => {
 
 test("chats resolve by name however the caller spelled it", () => {
   const chats = {
-    "st0x-core-team": { id: -100, title: "St0x Core Team" },
+    "example-core-team": { id: -100, title: "Example Core Team" },
     "lab": { id: -101, title: "Lab" },
   }
 
-  assert.deepEqual(resolveChat(chats, "St0x Core Team"), {
+  assert.deepEqual(resolveChat(chats, "Example Core Team"), {
     id: -100,
-    title: "St0x Core Team",
+    title: "Example Core Team",
   })
-  assert.deepEqual(resolveChat(chats, "st0x-core-team"), {
+  assert.deepEqual(resolveChat(chats, "example-core-team"), {
     id: -100,
-    title: "St0x Core Team",
+    title: "Example Core Team",
   })
-  assert.equal(resolveChat(chats, "st0x core"), undefined)
-  assert.deepEqual(knownChatNames(chats), ["lab", "st0x-core-team"])
+  assert.equal(resolveChat(chats, "example core"), undefined)
+  assert.deepEqual(knownChatNames(chats), ["lab", "example-core-team"])
 })

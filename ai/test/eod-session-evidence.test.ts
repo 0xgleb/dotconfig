@@ -31,7 +31,7 @@ test("EOD collector exposes explicit project scope without a retired tracker dep
   assert.match(result.stdout, /GitHub organization logins/)
   assert.doesNotMatch(
     result.stdout,
-    /--linear-repo|ST0x-Technology|rainlanguage|\/code\/st0x/,
+    /--linear-repo|0xgleb|rainlanguage|\/code\/example/,
   )
   assert.doesNotMatch(
     collector,

@@ -8,7 +8,7 @@ test("dedicated workspace launch is profile-bound and shell-free", () => {
   assert.match(source, /name: "agent_workspace"/)
   assert.match(
     source,
-    /StringEnum\(\s*\[\s*"st0x-review",\s*"dataclique-review",\s*"personal-review",?\s*\]/,
+    /StringEnum\(\s*\[\s*"dataclique-review",\s*"personal-review",?\s*\]/,
   )
   assert.match(source, /claudeWorkspaceLaunchArguments/)
   assert.doesNotMatch(source, /pi\.exec\("(?:bash|sh|zsh)"/)

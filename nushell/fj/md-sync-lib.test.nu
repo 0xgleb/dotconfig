@@ -21,7 +21,7 @@ def "test undot handles single file" [] {
 }
 
 def "test undot preserves dots mid-segment" [] {
-  assert equal (undot "st0x.liquidity/README.md") "st0x.liquidity/README.md"
+  assert equal (undot "example-liquidity/README.md") "example-liquidity/README.md"
 }
 
 # --- note-file mapping (.local stripping + undot), exported from md-sync-lib ---
@@ -42,23 +42,23 @@ def "test note-file handles .local with nested dirs" [] {
 
 def test-targets [] {
   [
-    { name: "liquidity", path: "/org/st0x.liquidity" }
-    { name: "issuance", path: "/org/st0x.issuance" }
+    { name: "liquidity", path: "/org/example-liquidity" }
+    { name: "issuance", path: "/org/example.issuance" }
     {
       name: "liquidity/worktrees/untouchable"
-      path: "/org/st0x.liquidity/.worktrees/feat/untouchable"
+      path: "/org/example-liquidity/.worktrees/feat/untouchable"
     }
   ]
 }
 
 def "test repo-for-path matches repo file" [] {
-  let result = (repo-for-path "/org/st0x.liquidity/docs/cqrs.md" (test-targets) "/org/notes")
+  let result = (repo-for-path "/org/example-liquidity/docs/cqrs.md" (test-targets) "/org/notes")
   assert equal $result "liquidity"
 }
 
 def "test repo-for-path matches worktree over main repo" [] {
   let result = (repo-for-path
-    "/org/st0x.liquidity/.worktrees/feat/untouchable/docs/cqrs.md"
+    "/org/example-liquidity/.worktrees/feat/untouchable/docs/cqrs.md"
     (test-targets)
     "/org/notes")
   assert equal $result "liquidity/worktrees/untouchable"

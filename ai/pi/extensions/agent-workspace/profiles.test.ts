@@ -33,43 +33,6 @@ const assertSupervisorProfile = (
   assert.match(bootstrap, /empty-body pending inline-only/i)
 }
 
-test("st0x review workspace is a Luna supervisor with isolated authority", () => {
-  const profile = workspaceProfile("st0x-review", "/Users/example")
-
-  assert.equal(profile.tabName, "st0x")
-  assert.equal(profile.cwd, "/Users/example/code/st0x")
-  assert.deepEqual(profile.allowedOwners, ["st0x-technology", "rainlanguage"])
-  assertSupervisorProfile(
-    profile,
-    "st0x-review-duty",
-    expectedLoop(
-      "Re-scan ST0x-Technology and rainlanguage PR duty; process newly actionable own and assigned-review work under the loaded repository and review policies, then remain operational.",
-    ),
-  )
-  assert.match(profile.command.at(-1) ?? "", /No automatic merge lane exists/i)
-  const workspaceArgs = claudeWorkspaceLaunchArguments(
-    profile,
-    "supervisor-session",
-    "workspace-dedupe",
-  )
-  assert.deepEqual(workspaceArgs.slice(0, 6), [
-    "action",
-    "new-pane",
-    "--name",
-    "claude-st0x-review",
-    "--cwd",
-    "/Users/example/code/st0x",
-  ])
-  const jf = workspaceArgs.indexOf("jf")
-  assert.deepEqual(workspaceArgs.slice(jf, jf + 4), [
-    "jf",
-    "clanker",
-    "--claude",
-    "--new",
-  ])
-  assert.equal(workspaceArgs.includes("pi"), false)
-})
-
 test("DataClique workspace is one combined Claude reviewer for DataClique and personal scope", () => {
   const profile = workspaceProfile("dataclique-review", "/Users/example")
 
@@ -169,7 +132,7 @@ test("in-place replacement preserves the existing pane and uses fresh clanker", 
 })
 
 test("Claude inventory dispatch uses the verified fresh clanker subscription route", () => {
-  const profile = workspaceProfile("st0x-review", "/Users/example")
+  const profile = workspaceProfile("personal-review", "/Users/example")
   const args = claudeExecutorLaunchArguments(
     profile,
     { mode: "inventory" },
@@ -183,7 +146,7 @@ test("Claude inventory dispatch uses the verified fresh clanker subscription rou
     "--name",
     "claude-inventory",
     "--cwd",
-    "/Users/example/code/st0x",
+    "/Users/example/code/0xgleb",
   ])
   const jf = args.indexOf("jf")
   assert.deepEqual(args.slice(jf, jf + 4), [
@@ -240,7 +203,7 @@ test("Claude PR dispatch invokes shared skills and mandatory native Fable verifi
 test("unknown workspace profiles fail closed", () => {
   assert.equal(
     workspaceProfile(
-      "unknown" as "st0x-review" | "dataclique-review" | "personal-review",
+      "unknown" as "personal-review" | "dataclique-review" | "personal-review",
       "/Users/example",
     ),
     undefined,

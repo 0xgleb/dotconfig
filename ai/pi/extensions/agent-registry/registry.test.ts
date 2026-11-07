@@ -1050,8 +1050,8 @@ test("two live processes resumed from one session keep distinct presence and mig
       Effect.runPromise(
         store.heartbeatAgent({
           agent: identity,
-          cwd: "/workspace/st0x",
-          label: "st0x",
+          cwd: "/workspace/example",
+          label: "example",
           usage,
           now,
           ttlMs: 10_000,
@@ -1062,7 +1062,7 @@ test("two live processes resumed from one session keep distinct presence and mig
     const claimed = await Effect.runPromise(
       store.claim({
         agent: firstLegacy,
-        project: "/workspace/st0x",
+        project: "/workspace/example",
         role: "reviewer",
         mode: "operational",
         policyDigest: "p1",
@@ -1076,7 +1076,7 @@ test("two live processes resumed from one session keep distinct presence and mig
         : assert.fail("missing lease")
     const queued = await Effect.runPromise(
       store.enqueue({
-        project: "/workspace/st0x",
+        project: "/workspace/example",
         role: "reviewer",
         requesterId: "requester-session",
         text: "review current PR",
@@ -1316,8 +1316,8 @@ test("acknowledged request history stays durable without entering operational sn
         project: "/workspace/project",
         role: "pi-support",
         requesterId: "requester",
-        requesterLabel: "st0x PR reviewer",
-        requesterCwd: "/workspace/st0x.rest.api",
+        requesterLabel: "example PR reviewer",
+        requesterCwd: "/workspace/example-api",
         text: "fix classifier",
         now: 1_010,
       }),
@@ -1369,8 +1369,8 @@ test("acknowledged request history stays durable without entering operational sn
       .get(queued.id)
     assert.equal(persisted?.status, "completed")
     assert.equal(persisted?.requester_acknowledged_at, 1_040)
-    assert.equal(persisted?.requester_label, "st0x PR reviewer")
-    assert.equal(persisted?.requester_cwd, "/workspace/st0x.rest.api")
+    assert.equal(persisted?.requester_label, "example PR reviewer")
+    assert.equal(persisted?.requester_cwd, "/workspace/example-api")
   })
 })
 

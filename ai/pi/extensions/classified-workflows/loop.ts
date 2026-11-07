@@ -200,7 +200,6 @@ export const migrateLegacyReloadLoop: (
 }
 
 const REVIEW_DUTY_INSTRUCTIONS = [
-  /^Re-scan ST0x-Technology and rainlanguage PR duty; process newly actionable own and assigned-review work under the loaded repository and review policies, then remain operational\.$/,
   /^Re-scan DataClique PR duty; process newly actionable own and assigned-review work under the loaded repository and review policies, then remain operational\.$/,
   /^Re-scan 0xgleb personal-repository PR duty; process newly actionable own and assigned-review work under the loaded repository and review policies, then remain operational\.$/,
 ] as const

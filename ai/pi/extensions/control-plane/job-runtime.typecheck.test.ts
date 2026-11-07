@@ -21,7 +21,7 @@ type HarnessReviewSpec = Extract<
 
 const scanSpec: ReviewDutyScanSpec = {
   kind: "review-duty.scan",
-  payload: { profile: "st0x-review" },
+  payload: { profile: "personal-review" },
   runAt: 1_000,
   maxAttempts: 3,
 }

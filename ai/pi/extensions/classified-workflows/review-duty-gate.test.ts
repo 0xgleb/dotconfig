@@ -37,7 +37,7 @@ const rejectionReason = (result: ReviewDutyTransition): string => {
 }
 
 const job = {
-  repository: "st0x.liquidity",
+  repository: "example-liquidity",
   pullRequest: 1101,
   kind: "own" as const,
 }
@@ -472,19 +472,11 @@ test("review reporting waits boundedly for asynchronous Telegram linkage", () =>
   )
 })
 
-test("managed reviewer roots resolve to source-fixed dedicated review-duty identities", () => {
+test("explicit reviewer sessions and personal roots resolve to scoped review identities", () => {
   const home = "/Users/reviewer"
-  assert.equal(
-    resolveReviewDutySessionName("dataclique", `${home}/code/dataclique`, home),
-    "dataclique-review-duty",
-  )
   assert.equal(
     resolveReviewDutySessionName("0xgleb", `${home}/code/0xgleb`, home),
     "personal-review-duty",
-  )
-  assert.equal(
-    resolveReviewDutySessionName("st0x", `${home}/code/st0x`, home),
-    "st0x-review-duty",
   )
   assert.equal(
     resolveReviewDutySessionName(
@@ -630,7 +622,7 @@ test("dedicated review gates apply only to actual PR review workflows", () => {
   assert.equal(isPullRequestReviewWorkflow(inventoryWorkflow), false)
 
   for (const sessionName of [
-    "st0x-review-duty",
+    "personal-review-duty",
     "dataclique-review-duty",
     "personal-review-duty",
   ]) {
@@ -668,7 +660,7 @@ test("every dedicated reviewer must begin a typed job before workflow execution"
     code: 'return agent("Review the pull request diff")',
   }
   for (const sessionName of [
-    "st0x-review-duty",
+    "personal-review-duty",
     "dataclique-review-duty",
     "personal-review-duty",
   ]) {
@@ -702,15 +694,22 @@ test("a completed assigned review workflow must link a verdict question before a
     code: 'return agent("Review the pull request diff")',
   }
   assert.equal(
-    reviewWorkflowBlockReason("st0x-review-duty", active.state, reviewWorkflow),
+    reviewWorkflowBlockReason(
+      "personal-review-duty",
+      active.state,
+      reviewWorkflow,
+    ),
     undefined,
   )
 
   const awaiting = startReviewWorkflow(active.state, 20)
   assert.equal(awaiting.phase, "awaiting_report")
   assert.match(
-    reviewWorkflowBlockReason("st0x-review-duty", awaiting, reviewWorkflow) ??
-      "",
+    reviewWorkflowBlockReason(
+      "personal-review-duty",
+      awaiting,
+      reviewWorkflow,
+    ) ?? "",
     /persisted verdict question with an owner-authorized delivery channel/i,
   )
   const next = beginReviewDuty(

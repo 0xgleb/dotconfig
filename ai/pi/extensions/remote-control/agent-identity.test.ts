@@ -38,7 +38,10 @@ test("agent display labels combine a friendly project and operational role", () 
     agentDisplayLabel(".config", [{ role: "pi-support", mode: "operational" }]),
     "Dotconfig · Pi Support",
   )
-  assert.equal(agentDisplayLabel("st0x-review-duty", []), "ST0x Review Duty")
+  assert.equal(
+    agentDisplayLabel("personal-review-duty", []),
+    "Example Review Duty",
+  )
 })
 
 test("registry-owned roles feed the bridge heartbeat through a typed identity event", () => {

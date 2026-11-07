@@ -1,7 +1,6 @@
 import { join } from "node:path"
 
-export type AgentWorkspaceProfileName =
-  "st0x-review" | "dataclique-review" | "personal-review"
+export type AgentWorkspaceProfileName = "dataclique-review" | "personal-review"
 
 export interface AgentWorkspaceProfile {
   readonly name: AgentWorkspaceProfileName
@@ -26,9 +25,6 @@ export type ClaudeReviewDispatch =
       readonly repositoryRoot: string
     }
 
-const ST0X_REVIEW_LOOP =
-  "/loop 2h+-1h Re-scan ST0x-Technology and rainlanguage PR duty; process newly actionable own and assigned-review work under the loaded repository and review policies, then remain operational."
-
 const DATACLIQUE_REVIEW_LOOP =
   "/loop 2h+-1h Re-scan DataClique and 0xgleb personal PR duty; automatically review-loop dataclique/yielduck and 0xgleb/dotconfig, post pending inline reviews on the rest, then remain operational."
 
@@ -36,13 +32,12 @@ const PERSONAL_REVIEW_LOOP =
   "/loop 2h+-1h Re-scan 0xgleb personal-repository PR duty; process newly actionable own and assigned-review work under the loaded repository and review policies, then remain operational."
 
 const supervisorBootstrap = (
-  root: string,
   scope: string,
   automaticLane: string | undefined,
 ): string =>
   `You are the narrow long-running Pi supervisor for ${scope} review duty.
 
-Claim project ${root} role reviewer in operational mode. Poll every two hours, inventory only the source-fixed owner scope, deduplicate by repository/PR/head SHA, and never run a review panel in Pi. An empty scan never completes the operational role and never starts an executor.
+Inventory only the explicitly assigned owner scope, deduplicate by repository/PR/head SHA, and never run a review panel in Pi. An empty scan never starts an executor.
 
 For one actionable PR, call review_duty begin first, then call agent_workspace dispatch with this exact profile, mode review, verified repository, PR, kind, head SHA, and canonical repository root. That action launches a fresh visible Claude Code subscription-harness executor in this Zellij tab. Claude review work must use the shared review-loop or review-pr skills and native Claude Code Fable verification; never request a Claude model through Pi or an Anthropic API provider.
 
@@ -54,28 +49,6 @@ export const workspaceProfile = (
   name: AgentWorkspaceProfileName,
   home: string,
 ): AgentWorkspaceProfile | undefined => {
-  if (name === "st0x-review") {
-    const cwd = join(home, "code", "st0x")
-    return {
-      name,
-      tabName: "st0x",
-      paneName: "claude-st0x-review",
-      cwd,
-      sessionName: "st0x-review-duty",
-      allowedOwners: ["st0x-technology", "rainlanguage"],
-      additionalRepositoryRoots: [],
-      command: [
-        "pi",
-        "--approve",
-        "--name",
-        "st0x-review-duty",
-        "--model",
-        "openai-codex/gpt-5.6-luna:high",
-        ST0X_REVIEW_LOOP,
-        supervisorBootstrap(cwd, "ST0x-Technology and rainlanguage", undefined),
-      ],
-    }
-  }
   if (name === "dataclique-review") {
     const datacliqueRoot = join(home, "code", "dataclique")
     const personalRoot = join(home, "code", "0xgleb")
@@ -98,7 +71,6 @@ export const workspaceProfile = (
         "openai-codex/gpt-5.6-luna:high",
         DATACLIQUE_REVIEW_LOOP,
         supervisorBootstrap(
-          datacliqueRoot,
           "DataClique and 0xgleb personal repositories",
           "dataclique/yielduck and 0xgleb/dotconfig",
         ),
@@ -123,11 +95,7 @@ export const workspaceProfile = (
         "--model",
         "openai-codex/gpt-5.6-luna:high",
         PERSONAL_REVIEW_LOOP,
-        supervisorBootstrap(
-          cwd,
-          "0xgleb personal repositories",
-          "0xgleb/dotconfig",
-        ),
+        supervisorBootstrap("0xgleb personal repositories", "0xgleb/dotconfig"),
       ],
     }
   }
@@ -152,7 +120,7 @@ const CLAUDE_HARNESS_ENVIRONMENT = [
 ] as const
 
 const handoffInstruction = (supervisorId: string, dedupeKey: string): string =>
-  `At completion, send exactly one bounded CLAUDE_REVIEW_HANDOFF v1 on stdin to: pi-bridge send --agent ${supervisorId} --requester claude-review-duty --dedupe ${dedupeKey}. Use exactly these fields in order: mode: inventory|review; profile: st0x-review|dataclique-review|personal-review; repository: owner/repo|none; pull_request: positive integer|none; kind: own|assigned|auto|none; input_head_sha: lowercase hex|none; output_head_sha: lowercase hex|none; status: empty|clean|findings_fixed|findings_pending|blocked|failed; assessment: one factual line; evidence: bounded identifiers or none; verifier: fable-clean|fable-rejected|unavailable|not-applicable. A selected inventory candidate is kind own or assigned and status findings_pending, never custom values such as assigned-review or selected. Never include prompts, reasoning, credentials, diffs, or logs.`
+  `At completion, send exactly one bounded CLAUDE_REVIEW_HANDOFF v1 on stdin to: pi-bridge send --agent ${supervisorId} --requester claude-review-duty --dedupe ${dedupeKey}. Use exactly these fields in order: mode: inventory|review; profile: dataclique-review|personal-review; repository: owner/repo|none; pull_request: positive integer|none; kind: own|assigned|auto|none; input_head_sha: lowercase hex|none; output_head_sha: lowercase hex|none; status: empty|clean|findings_fixed|findings_pending|blocked|failed; assessment: one factual line; evidence: bounded identifiers or none; verifier: fable-clean|fable-rejected|unavailable|not-applicable. A selected inventory candidate is kind own or assigned and status findings_pending, never custom values such as assigned-review or selected. Never include prompts, reasoning, credentials, diffs, or logs.`
 
 const claudeExecutorPrompt = (
   profile: AgentWorkspaceProfile,

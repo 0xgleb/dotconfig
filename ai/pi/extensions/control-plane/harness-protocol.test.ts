@@ -48,12 +48,12 @@ const home = canonical("/Users/example")
 const claudePayload: HarnessReviewPayload = {
   lane: "claude-code-max",
   task: "review-pr",
-  profile: "st0x-review",
-  repository: "st0x-technology/example",
+  profile: "personal-review",
+  repository: "0xgleb/example",
   pullRequest: 42,
   kind: "assigned",
   inputHeadSha: headSha,
-  repositoryRoot: canonical("/Users/example/code/st0x/example"),
+  repositoryRoot: canonical("/Users/example/code/0xgleb/example"),
   isolation: "read-only",
 }
 
@@ -82,15 +82,15 @@ const automaticPayload: HarnessReviewPayload = {
   isolation: "approved-worktree",
 }
 
-const rainlanguagePayload: HarnessReviewPayload = {
+const datacliquePayload: HarnessReviewPayload = {
   lane: "claude-code-max",
   task: "review-pr",
-  profile: "st0x-review",
-  repository: "rainlanguage/rain.orderbook",
+  profile: "dataclique-review",
+  repository: "dataclique/example-shared",
   pullRequest: 12,
   kind: "assigned",
   inputHeadSha: headSha,
-  repositoryRoot: canonical("/Users/example/code/rainlanguage/rain.orderbook"),
+  repositoryRoot: canonical("/Users/example/code/dataclique/example-shared"),
   isolation: "read-only",
 }
 
@@ -110,29 +110,13 @@ test("registered harness review payloads decode exactly", () => {
   // The cursor lane is retired: its payloads are rejected at the boundary.
   assert.equal(errorCode(cursorPayload), "invalid_input")
   const worktreeRoot =
-    "/Users/example/code/st0x/example/.worktrees/feat/harness"
+    "/Users/example/code/0xgleb/example/.worktrees/feat/harness"
   assert.deepEqual(
     decoded({ ...claudePayload, repositoryRoot: worktreeRoot }),
     {
       ...claudePayload,
       repositoryRoot: worktreeRoot,
     },
-  )
-})
-
-test("st0x review duty reaches the rainlanguage checkout workspace", () => {
-  assert.deepEqual(decoded(rainlanguagePayload), rainlanguagePayload)
-  const worktreeRoot = `${rainlanguagePayload.repositoryRoot}/.worktrees/feat/probe`
-  assert.deepEqual(
-    decoded({ ...rainlanguagePayload, repositoryRoot: worktreeRoot }),
-    { ...rainlanguagePayload, repositoryRoot: worktreeRoot },
-  )
-  assert.equal(
-    errorCode({
-      ...rainlanguagePayload,
-      repositoryRoot: "/Users/example/code/rainlanguage/other",
-    }),
-    "invalid_input",
   )
 })
 
@@ -146,27 +130,27 @@ test("a repository binds to its own organisation's workspace, never another's", 
       "invalid_input",
     )
   for (const root of [
-    "/Users/example/code/st0x/rain.orderbook",
-    "/Users/example/code/st0x/rain.orderbook/.worktrees/feat/probe",
+    "/Users/example/code/0xgleb/rain.orderbook",
+    "/Users/example/code/0xgleb/rain.orderbook/.worktrees/feat/probe",
   ])
     assert.equal(
-      errorCode({ ...rainlanguagePayload, repositoryRoot: root }),
+      errorCode({ ...datacliquePayload, repositoryRoot: root }),
       "invalid_input",
     )
 })
 
 test("a repository name shared across organisations keeps its own checkout", () => {
   const sharedName: HarnessReviewPayload = {
-    ...rainlanguagePayload,
-    repository: "rainlanguage/example",
-    repositoryRoot: canonical("/Users/example/code/rainlanguage/example"),
+    ...datacliquePayload,
+    repository: "dataclique/example",
+    repositoryRoot: canonical("/Users/example/code/dataclique/example"),
   }
   assert.deepEqual(decoded(sharedName), sharedName)
   assert.deepEqual(decoded(claudePayload), claudePayload)
   assert.equal(
     errorCode({
       ...sharedName,
-      repositoryRoot: "/Users/example/code/st0x/example",
+      repositoryRoot: "/Users/example/code/0xgleb/example",
     }),
     "invalid_input",
   )
@@ -266,7 +250,7 @@ test("credential path segments are recognised whatever their case", () => {
   ])
     assert.equal(isCredentialBearingPath(path), true)
   for (const path of [
-    "/Users/example/code/st0x/example",
+    "/Users/example/code/0xgleb/example",
     "/Users/example/code/0xgleb/environment",
     "/Users/example/.config",
   ])
@@ -309,8 +293,8 @@ test("harness task, isolation, and identity invariants fail closed", () => {
     { ...claudePayload, repositoryRoot: "/Users/example/.ssh" },
     { ...claudePayload, repositoryRoot: "/Users/example/.gnupg/example" },
     { ...claudePayload, repositoryRoot: "/Users/example/.aws/example" },
-    { ...claudePayload, repositoryRoot: "/Users/example/code/st0x/.env" },
-    { ...claudePayload, repositoryRoot: "/Users/example/code/st0x/other" },
+    { ...claudePayload, repositoryRoot: "/Users/example/code/0xgleb/.env" },
+    { ...claudePayload, repositoryRoot: "/Users/example/code/0xgleb/other" },
     { ...claudePayload, inputHeadSha: "A".repeat(40) },
     { ...claudePayload, pullRequest: 0 },
     {

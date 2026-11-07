@@ -459,7 +459,7 @@ def "test build-all-targets vault path is org/repo/file" [] {
     let vault = $"($dir)/vault"
     mkdir $vault
 
-    let org = $"($dir)/st0x"
+    let org = $"($dir)/example"
     mkdir $org
     let repo = $"($org)/liquidity"
     mkdir $repo
@@ -472,7 +472,7 @@ def "test build-all-targets vault path is org/repo/file" [] {
     let targets = (build-all-targets $config)
     let actions = (compute-actions $targets $vault)
 
-    assert equal ($actions | first | get destination) $"($vault)/st0x/liquidity/README.md"
+    assert equal ($actions | first | get destination) $"($vault)/example/liquidity/README.md"
   }
 }
 

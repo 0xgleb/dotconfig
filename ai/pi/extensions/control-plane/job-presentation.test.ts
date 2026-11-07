@@ -7,7 +7,7 @@ const baseJob = {
   id: "job-a",
   spec: {
     kind: "review-duty.scan" as const,
-    payload: { profile: "st0x-review" as const },
+    payload: { profile: "personal-review" as const },
     runAt: 8,
     maxAttempts: 2,
   },

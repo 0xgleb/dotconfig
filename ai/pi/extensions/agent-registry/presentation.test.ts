@@ -54,8 +54,8 @@ const snapshot: RegistrySnapshot = {
           "classified-workflows": "2026.07.23.23",
         },
       },
-      cwd: "/Users/example/code/st0x/st0x.rest.api",
-      label: "st0x PR reviewer",
+      cwd: "/Users/example/code/0xgleb/example-api",
+      label: "example PR reviewer",
       usage: emptyUsage,
       heartbeatAt: 60_000,
       expiresAt: 121_000,
@@ -89,8 +89,8 @@ const snapshot: RegistrySnapshot = {
       project: "/Users/example/.config",
       role: "pi-support",
       requesterId: "agent-b",
-      requesterLabel: "st0x PR reviewer",
-      requesterCwd: "/Users/example/code/st0x/st0x.rest.api",
+      requesterLabel: "example PR reviewer",
+      requesterCwd: "/Users/example/code/0xgleb/example-api",
       text: "fix workflow retries",
       priority: "normal",
       createdAt: 2_000,
@@ -123,7 +123,7 @@ test("cross-project terminal outcomes never enter the requester conversation", (
     terminalOutcomeBelongsToContext(
       request,
       "agent-b",
-      "/Users/example/code/st0x/st0x.rest.api",
+      "/Users/example/code/0xgleb/example-api",
     ),
     false,
   )
@@ -172,8 +172,8 @@ test("request receipt display leads with sender, target, and bounded message con
   assert.deepEqual(details, {
     kind: "request-receipt",
     requestId: "request-12345678",
-    sender: "st0x PR reviewer",
-    senderProject: "st0x.rest.api",
+    sender: "example PR reviewer",
+    senderProject: "example-api",
     target: ".config/pi-support",
     preview: "fix workflow retries",
     olderQueued: 2,
@@ -182,7 +182,7 @@ test("request receipt display leads with sender, target, and bounded message con
   const compact = requestNotificationDisplayText(details, false)
   assert.match(
     compact,
-    /^st0x PR reviewer · st0x\.rest\.api → \.config\/pi-support/m,
+    /^example PR reviewer · example\.rest\.api → \.config\/pi-support/m,
   )
   assert.match(compact, /fix workflow retries/)
   assert.match(compact, /\+2 older queued · \/operator/)
@@ -237,7 +237,7 @@ test("request detail exposes full bounded coordination text with source identity
   assert.ok(request)
   const text = registryRequestDetailText(request)
   assert.match(text, /Request request-12345678/)
-  assert.match(text, /Source agent: st0x PR reviewer.*st0x\.rest\.api/)
+  assert.match(text, /Source agent: example PR reviewer.*example\.rest\.api/)
   assert.match(text, /Priority: normal/)
   assert.match(text, /Delivery: queued/)
   assert.match(text, /fix workflow retries/)
