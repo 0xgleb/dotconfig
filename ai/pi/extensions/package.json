@@ -46,7 +46,6 @@
     "extensions": [
       "./activity-status/index.ts",
       "./agent-registry/index.ts",
-      "./agent-workspace/index.ts",
       "./auto-reload/index.ts",
       "./write-result-inspector/index.ts",
       "./classified-workflows/main.ts",
