@@ -8,11 +8,6 @@ import { readFile } from "node:fs/promises"
 import { isAbsolute, join } from "node:path"
 import { Clock, Data, Effect, Either } from "effect"
 import {
-  governedAllowanceCheckpoints,
-  providerCallAllowanceCheckpoints,
-  type ProviderAllowanceCheckpoint,
-} from "./allowance-pool.ts"
-import {
   decodeHarnessResearchHandoff,
   harnessResearchHandoffMatchesAttempt,
 } from "./harness-research-protocol.ts"
@@ -27,16 +22,6 @@ import {
   type SqliteJobStore,
   type StoredJob,
 } from "./sqlite-job-store.ts"
-import {
-  allowanceRunway,
-  calibrateProviderTokens,
-  providerTokenPolicy,
-  rolePollingPolicy,
-  usagePolicy,
-  type AutonomousRole,
-  type ProviderUsagePoint,
-} from "./usage-policy.ts"
-import { ThrottleActivity } from "./throttle-activity.ts"
 import { sampleCodexWeeklyAllowance } from "./codex-allowance.ts"
 
 /** Minimal read-only registry snapshot source the usage sampler needs. */
@@ -53,65 +38,7 @@ const MAX_REQUEST_BODY_BYTES = 16 * 1_024
 const LOOPBACK_HOSTS = ["127.0.0.1", "::1"] as const
 const USAGE_SAMPLE_INTERVAL_MS = 60_000
 const CODEX_ALLOWANCE_SAMPLE_INTERVAL_MS = 15 * 60_000
-const USAGE_HISTORY_WINDOW_MS = 7 * 24 * 60 * 60 * 1_000
 const MAX_RESEARCH_SCHEDULE_SKEW_MS = 7 * 24 * 60 * 60 * 1_000
-const OPENAI_AUTONOMOUS_ROLES: readonly AutonomousRole[] = [
-  "general",
-  "reviewer",
-]
-
-const openAiControlCheckpoints = (
-  checkpoints: readonly ProviderAllowanceCheckpoint[],
-  now: number,
-): readonly ProviderAllowanceCheckpoint[] => {
-  const providerCheckpoints = providerCallAllowanceCheckpoints(
-    checkpoints,
-    "openai",
-  )
-  const manualCheckpoints = providerCheckpoints.filter(
-    checkpoint => checkpoint.source === "manual",
-  )
-  if (allowanceRunway(manualCheckpoints, now)) return manualCheckpoints
-  const observedCheckpoints = providerCheckpoints.filter(
-    checkpoint => checkpoint.source === "codex-app-server",
-  )
-  return allowanceRunway(observedCheckpoints, now)
-    ? observedCheckpoints
-    : governedAllowanceCheckpoints(checkpoints)
-}
-
-const openAiControlSnapshot = (
-  checkpoints: readonly ProviderAllowanceCheckpoint[],
-  samples: readonly ProviderUsagePoint[],
-  now: number,
-  activity: ThrottleActivity,
-) => {
-  const controlCheckpoints = openAiControlCheckpoints(checkpoints, now)
-  const latest = [...controlCheckpoints].sort(
-    (left, right) => right.capturedAt - left.capturedAt,
-  )[0]
-  const policy = usagePolicy(controlCheckpoints, now)
-  const calibration = calibrateProviderTokens(controlCheckpoints, samples)
-  const providerBudget = providerTokenPolicy(policy, calibration)
-  return {
-    computedAt: now,
-    provider: "openai" as const,
-    pool: latest?.pool ?? "chatgpt-shared-weekly",
-    source: latest?.source ?? "unavailable",
-    profile: {
-      kind: "flat-until-reset" as const,
-      participants: 1,
-    },
-    policy,
-    ...(calibration ? { calibration } : {}),
-    ...(providerBudget ? { providerBudget } : {}),
-    roles: OPENAI_AUTONOMOUS_ROLES.map(role =>
-      rolePollingPolicy(role, policy.pace, policy.throttleRatio),
-    ),
-    activity: activity.snapshot(now),
-  }
-}
-
 export class ControlPlaneServerError extends Data.TaggedError(
   "ControlPlaneServerError",
 )<{
@@ -701,7 +628,6 @@ export const startControlPlaneServer = (
   }
 
   return Effect.async(resume => {
-    const throttleActivity = new ThrottleActivity()
     const usageSampling: UsageSamplingStatus = {
       status: options.registryStore ? "sampling" : "unavailable",
       allowance: {

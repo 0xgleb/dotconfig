@@ -1,6 +1,5 @@
 import { spawn } from "node:child_process"
 import { createHash, randomUUID } from "node:crypto"
-import { homedir } from "node:os"
 import { basename, isAbsolute, resolve } from "node:path"
 import { fileURLToPath } from "node:url"
 import type { AgentToolResult } from "@earendil-works/pi-agent-core"
@@ -83,7 +82,6 @@ import {
   type WorkflowLimits,
 } from "./core.ts"
 import {
-  boundedRelevantExecutionEvidence,
   branchExecutionEvidence,
   currentInstructionReadDisprovesMissingReadBlock,
   selectRelevantExecutionEvidence,
@@ -96,7 +94,6 @@ import {
   classifierAttemptBudget,
   createClassifiedAgentRunner,
   createToolResultAllowance,
-  formatDecisionReason,
   resolveActionDecision,
   retainLatestCustomMessages,
   runtimeProactiveHandoverContext,
