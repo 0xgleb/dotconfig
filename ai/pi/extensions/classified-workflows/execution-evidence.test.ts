@@ -571,7 +571,7 @@ test("tool-input digests are canonical and distinguish materially new mutation p
 })
 
 test("successful read evidence retains the verified source path", () => {
-  const path = "/workspace/example/example.issuance/AGENTS.md"
+  const path = "/workspace/st0x/st0x.issuance/AGENTS.md"
   const evidence = toolResultExecutionEvidence({
     toolName: "read",
     text: "# Repository instructions\nFollow Graphite workflow.",
@@ -581,7 +581,7 @@ test("successful read evidence retains the verified source path", () => {
   })
 
   assert.match(evidence, /^read result status=success input=/)
-  assert.match(evidence, /example\.issuance\/AGENTS\.md/)
+  assert.match(evidence, /st0x\.issuance\/AGENTS\.md/)
   assert.match(evidence, /Repository instructions/)
 })
 
@@ -1015,7 +1015,7 @@ test("empty successful tool results retain typed execution status", () => {
 
 test("older source-read evidence remains relevant to a sequential review workflow", () => {
   const agentsEvidence =
-    'read result status=success input={"path":"/workspace/example/example-liquidity/AGENTS.md"}: repository rules loaded'
+    'read result status=success input={"path":"/workspace/st0x/st0x.liquidity/AGENTS.md"}: repository rules loaded'
   const candidates = [
     agentsEvidence,
     ...Array.from(
@@ -1028,7 +1028,7 @@ test("older source-read evidence remains relevant to a sequential review workflo
     {
       toolName: "workflow",
       input: {
-        code: "Re-review PR1101 using /workspace/example/example-liquidity/AGENTS.md",
+        code: "Re-review PR1101 using /workspace/st0x/st0x.liquidity/AGENTS.md",
       },
     },
     3,
@@ -1040,7 +1040,7 @@ test("older source-read evidence remains relevant to a sequential review workflo
 
 test("instruction reads survive unrelated intermediate results before a selective Graphite commit", () => {
   const agentsEvidence =
-    'read result status=success input={"path":"/workspace/example/example-liquidity/AGENTS.md"}: repository rules loaded'
+    'read result status=success input={"path":"/workspace/st0x/st0x.liquidity/AGENTS.md"}: repository rules loaded'
   const skillEvidence =
     'functions.read result status=success input={"path":"/workspace/.pi/agent/skills/graphite/SKILL.md"}: Graphite workflow loaded'
   const candidates = [
@@ -1075,7 +1075,7 @@ test("an exact successful instruction read disproves only a matching unread-file
             id: "read-1",
             name: "read",
             arguments: {
-              path: "/workspace/example/example-liquidity/AGENTS.md",
+              path: "/workspace/st0x/st0x.liquidity/AGENTS.md",
             },
           },
         ],
@@ -1094,7 +1094,7 @@ test("an exact successful instruction read disproves only a matching unread-file
 
   assert.equal(
     currentInstructionReadDisprovesMissingReadBlock({
-      reason: "example-liquidity/AGENTS.md was not read before the commit",
+      reason: "st0x.liquidity/AGENTS.md was not read before the commit",
       branch,
     }),
     true,

@@ -15,7 +15,7 @@ test("provider reservation payload carries the authenticated agent boundary", as
     state.providerCallReservationPayload({
       reservationId: "call-a",
       agentId: "session-a",
-      cwd: "/Users/example/code/0xgleb",
+      cwd: "/Users/example/code/st0x",
       role: "general",
       requestedTokens: 42,
       lane: "human",
@@ -24,7 +24,7 @@ test("provider reservation payload carries the authenticated agent boundary", as
     {
       reservationId: "call-a",
       agentId: "session-a",
-      cwd: "/Users/example/code/0xgleb",
+      cwd: "/Users/example/code/st0x",
       role: "general",
       provider: "openai",
       requestedTokens: 42,

@@ -38,7 +38,7 @@ test("Effect logging writes queryable JSON and drops unsafe channel messages", (
       timestamp: 1_787_277_600_000,
       elapsedMs: 91,
       pid: 99754,
-      project: "example",
+      project: "st0x",
       provider: "openai-codex",
       model: "gpt-5.6-sol",
     })
@@ -50,7 +50,7 @@ test("Effect logging writes queryable JSON and drops unsafe channel messages", (
       timestamp: 1_787_277_600_001,
       elapsedMs: 92,
       pid: 99754,
-      project: "example",
+      project: "st0x",
       headers: { authorization: "secret" },
     })
 
@@ -80,7 +80,7 @@ test("request lifecycle events expose only the bounded diagnostic schema", () =>
     timestamp: 1_787_277_600_000,
     elapsedMs: 42,
     pid: 99754,
-    project: "example",
+    project: "st0x",
     provider: "openai-codex",
     model: "gpt-5.6-sol",
   })
@@ -93,7 +93,7 @@ test("request lifecycle events expose only the bounded diagnostic schema", () =>
     timestamp: 1_787_277_600_000,
     elapsedMs: 42,
     pid: 99754,
-    project: "example",
+    project: "st0x",
     provider: "openai-codex",
     model: "gpt-5.6-sol",
   })
@@ -120,7 +120,7 @@ test("request lifecycle validation rejects payload and credential-shaped fields"
     timestamp: Date.now(),
     elapsedMs: 0,
     pid: process.pid,
-    project: "example",
+    project: "st0x",
     payload: { input: "secret prompt" },
     accessToken: "secret",
   }
@@ -137,7 +137,7 @@ test("request lifecycle validation rejects unknown phases and failure classes", 
     timestamp: Date.now(),
     elapsedMs: 5,
     pid: process.pid,
-    project: "example",
+    project: "st0x",
     outcome: "failed",
     failureClass: "unknown",
   }

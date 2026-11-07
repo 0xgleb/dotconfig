@@ -888,7 +888,7 @@ test("a group message is discovered as a chat and never as owner input", async (
       groupUpdate({
         id: -1001234567890,
         type: "supergroup",
-        title: "Example Core Team",
+        title: "St0x Core Team",
       }),
     ),
   )
@@ -898,7 +898,7 @@ test("a group message is discovered as a chat and never as owner input", async (
       updateId: 300,
       groupChat: {
         chatId: -1001234567890,
-        title: "Example Core Team",
+        title: "St0x Core Team",
         userId: 1001,
         username: "dianov",
       },
@@ -959,7 +959,7 @@ test("a chat that is not a titled group is not discovered", async () => {
 test("only the pinned owner turns a group into a delivery target", () => {
   const groupChat = {
     chatId: -1001234567890,
-    title: "Example Core Team",
+    title: "St0x Core Team",
     userId: 1001,
     username: "dianov",
   }
@@ -972,7 +972,7 @@ test("only the pinned owner turns a group into a delivery target", () => {
   assert.equal(recorded.outcome, "recorded")
   if (recorded.outcome === "recorded") {
     assert.deepEqual(recorded.chats, {
-      "example-core-team": { id: -1001234567890, title: "Example Core Team" },
+      "st0x-core-team": { id: -1001234567890, title: "St0x Core Team" },
     })
   }
 

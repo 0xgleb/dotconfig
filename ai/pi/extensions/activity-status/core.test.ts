@@ -48,7 +48,7 @@ test("usage policy is described truthfully only in dotconfig and Yielduck sessio
     /USAGE · frontier driver → delegated workers/,
   )
   assert.equal(
-    usageThrottleLabel("/Users/example/code/0xgleb", "/Users/example"),
+    usageThrottleLabel("/Users/example/code/st0x", "/Users/example"),
     undefined,
   )
 })

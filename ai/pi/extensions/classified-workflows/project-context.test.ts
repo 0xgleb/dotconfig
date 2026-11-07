@@ -87,21 +87,18 @@ test("path-qualified Git commands fail closed without executable provenance", ()
 
 test("runtime project context identifies repository roots and descendants", () => {
   assert.deepEqual(
-    describeRuntimeProjectContext("/workspace/example", "/workspace/example"),
+    describeRuntimeProjectContext("/workspace/st0x", "/workspace/st0x"),
     {
-      cwd: "/workspace/example",
-      gitToplevel: "/workspace/example",
+      cwd: "/workspace/st0x",
+      gitToplevel: "/workspace/st0x",
       cwdRelation: "repository-root",
     },
   )
   assert.deepEqual(
-    describeRuntimeProjectContext(
-      "/workspace/example/crate",
-      "/workspace/example",
-    ),
+    describeRuntimeProjectContext("/workspace/st0x/crate", "/workspace/st0x"),
     {
-      cwd: "/workspace/example/crate",
-      gitToplevel: "/workspace/example",
+      cwd: "/workspace/st0x/crate",
+      gitToplevel: "/workspace/st0x",
       cwdRelation: "inside-repository",
     },
   )

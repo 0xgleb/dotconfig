@@ -73,7 +73,7 @@ test("recovery requires exact ordering, owner, query semantics, and success", ()
       ...recoveredBranch.slice(0, 2),
       call(
         "alternate",
-        "gh api --method GET search/issues -f q='org:0xgleb is:pr is:open author:0xgleb archived:false'",
+        "gh api --method GET search/issues -f q='org:ST0x-Technology is:pr is:open author:0xgleb archived:false'",
       ),
       result("alternate", '{"total_count":0,"items":[]}'),
     ],

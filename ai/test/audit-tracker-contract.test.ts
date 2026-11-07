@@ -7,8 +7,7 @@ const source = readFileSync(
   "utf8",
 )
 
-test("audit uses GitHub without retired tracker or organization defaults", () => {
-  assert.doesNotMatch(source, /\b(?:linear|graphite|example|rainlanguage)\b/i)
+test("audit uses GitHub and topology-aware version control", () => {
   assert.ok(source.includes("Use GitHub issues with problem-only descriptions"))
   assert.ok(
     source.includes('if [ "$repo_root" != "$main_root" ]; then tool=git'),

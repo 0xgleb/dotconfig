@@ -9,7 +9,7 @@ import {
 } from "./presentation.ts"
 
 const input: FooterPresentation = {
-  cwd: "~/code/0xgleb",
+  cwd: "~/code/st0x",
   branch: "feat/footer",
   modelId: "gpt-5.6-sol",
   thinkingLevel: "high",
@@ -27,7 +27,7 @@ test("footer is a single readable line with spaced groups", () => {
   assert.equal(footer.split("\n").length, 1)
   assert.equal(
     footer,
-    "~/code/0xgleb (feat/footer)  ·  ctx 12.3% of 372k  ·  cache 98.8%  ·  ↑12k ↓4.2k  ·  gpt-5.6-sol / high  ·  /goal · 2 turns",
+    "~/code/st0x (feat/footer)  ·  ctx 12.3% of 372k  ·  cache 98.8%  ·  ↑12k ↓4.2k  ·  gpt-5.6-sol / high  ·  /goal · 2 turns",
   )
 })
 
