@@ -257,14 +257,14 @@ test("latest compaction summary remains available as bounded classifier evidence
   )
 })
 
-test("task continuation stops only when complete or every remainder is blocked", () => {
-  assert.match(
+test("legacy task continuation stays disabled regardless of remaining work", () => {
+  assert.equal(
     taskContinuationMessage({
       pending: ["#2 Fix release"],
       blocked: [],
       completed: [],
-    }) ?? "",
-    /continue working/i,
+    }),
+    undefined,
   )
   assert.equal(
     taskContinuationMessage({
