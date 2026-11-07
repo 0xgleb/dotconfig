@@ -353,17 +353,6 @@ gap, a broad architectural concern), fold it into the copy-paste assessment
 block you print in the conversation (Step 2) rather than the posted `body` — the
 draft `body` stays empty.
 
-## Dedicated Pi review-duty sessions
-
-In a dedicated review-duty session, begin each PR with the registered
-`review_duty` tool and follow the loaded own/assigned/automatic completion
-gates. Use native `openai-codex/gpt-6.1-sol` workflows and independently verify
-findings at the exact head. Re-read the head after creating any empty-body
-pending inline review; unexpected changes make the evidence stale. Preserve
-failed/blocked or incomplete output through the managed recovery path. Do not
-emulate duty state, submit a verdict, add a top-level review body, merge or
-infer authority from agent-registry messages.
-
 ## Hard rules
 
 1. Never check out the PR branch. Work off `gh pr diff` and `git show` at the
