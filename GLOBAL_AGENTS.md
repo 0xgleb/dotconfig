@@ -522,16 +522,22 @@ the harness, and suppress duplicates without agent polling.
   same requested operation does not need fresh approval. This grants neither
   read-only managers coding/execution capabilities nor authority for unrelated
   remote effects.
-- Backlog priorities may be assigned or changed by a manager or worker, only
-  after the owner confirms the proposed ordering. Assign task priority only
-  through the backlog tool's priority/rank field. Never encode priority in task
-  titles, text, or prose. The rank field is the single ordering authority.
-  Workers must execute the highest-ranked authorized runnable work in their
-  respective backlogs, not insert self-chosen audits, adjacent work, or priority
-  changes. Report proposed additions or ordering changes to the owner, directly
-  or through a manager, for confirmation; do not act on them as a new work
-  order. Direct owner instructions still take precedence. Workers must not
-  invent ranks or promote their own work without owner approval.
+- Backlog priorities may be assigned or changed by a manager or worker within
+  the owner's stated relative placement. Qualitative direction such as
+  "medium-high" or "medium/medium-low" is sufficient authorization: choose an
+  approximate numeric priority consistent with the existing backlog, apply it
+  and verify the result without asking for another approval of the number. When
+  no placement has been authorized, propose an ordering for owner confirmation
+  rather than inventing priorities. Assign task priority only through the
+  backlog tool's priority/rank field. Never encode priority in task titles,
+  text, or prose. The rank field is the single ordering authority. Workers must
+  execute the highest-ranked authorized runnable work in their respective
+  backlogs, not insert self-chosen audits, adjacent work, or priority changes.
+  Report proposed additions or ordering changes outside the owner's existing
+  direction to the owner, directly or through a manager, for confirmation; do
+  not act on them as a new work order. Direct owner instructions still take
+  precedence. Workers must not invent ranks or promote their own work outside
+  the owner's direction.
 - Structure roadmaps as priority-ordered epics, not numbered phases. Use
   dependency graphs where useful; expose independent deliverables without
   manufacturing parallel mutation authority. Give each epic a short goal and
