@@ -245,9 +245,9 @@ in
           '';
         };
       in
-      (with unstable; [
-        codex
-      ])
+      [
+        (unstable.callPackage ./codex.nix { })
+      ]
       ++ [
         pkgs.ragenix
         pkgs.age

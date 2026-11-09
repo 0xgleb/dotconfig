@@ -99,6 +99,20 @@
             ${pkgs.nushell}/bin/nu workflow.test.nu
             touch $out
           '';
+
+      codexSystemCryptoCheck =
+        system:
+        let
+          pkgs = import inputs.nixpkgs-unstable { inherit system; };
+          codex = pkgs.callPackage ./codex.nix { };
+        in
+        assert import ./scripts/codex-system-crypto.test.nix {
+          inherit codex;
+          inherit (pkgs) lib aws-lc openssl;
+        };
+        pkgs.runCommand "codex-system-crypto-test" { } ''
+          touch "$out"
+        '';
     in
     {
 
@@ -176,6 +190,7 @@
         in
         {
           git-hooks = gitHooks.aarch64-darwin;
+          codex-system-crypto = codexSystemCryptoCheck "aarch64-darwin";
 
           atuin-darwin =
             assert import ./scripts/atuin-darwin-checks.test.nix {
@@ -391,6 +406,7 @@
               '';
         };
 
+      checks.x86_64-linux.codex-system-crypto = codexSystemCryptoCheck "x86_64-linux";
       checks.x86_64-linux.git-hooks = gitHooks.x86_64-linux;
       checks.x86_64-linux.fj-workflow = fjWorkflowCheck "x86_64-linux";
 
