@@ -1,4 +1,17 @@
-{ codex, aws-lc }:
+{
+  codex,
+  aws-lc,
+  oniguruma,
+  sqlite,
+  zlib,
+  zstd,
+}:
 codex.overrideAttrs (previous: {
-  buildInputs = previous.buildInputs ++ [ aws-lc ];
+  buildInputs = previous.buildInputs ++ [
+    aws-lc
+    oniguruma
+    sqlite
+    zlib
+    zstd
+  ];
 })

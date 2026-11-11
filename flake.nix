@@ -108,7 +108,15 @@
         in
         assert import ./scripts/codex-system-crypto.test.nix {
           inherit codex;
-          inherit (pkgs) lib aws-lc openssl;
+          inherit (pkgs)
+            lib
+            aws-lc
+            openssl
+            oniguruma
+            sqlite
+            zlib
+            zstd
+            ;
         };
         pkgs.runCommand "codex-system-crypto-test" { } ''
           touch "$out"
