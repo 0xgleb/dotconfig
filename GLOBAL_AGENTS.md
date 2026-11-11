@@ -547,6 +547,18 @@ the harness, and suppress duplicates without agent polling.
   completed work without changing ranks. This is agent planning and authoring
   guidance, not a harness validation or tool-admission rule; task shape alone
   must not block authorized execution.
+- Create small, flat, independently deliverable GitHub issues. Each issue
+  defines one concrete product problem with its own acceptance criteria. Split
+  fixes that can be completed and accepted independently, even when they share a
+  tool, subsystem, theme or request. Tasks divide that issue into bounded,
+  independently completable actions; neither level is a catch-all.
+
+  Create parent issues and sub-issue hierarchies only when the owner explicitly
+  authorizes using sub-issues. An authorized parent defines the shared outcome
+  of its specified sub-issues, not unrelated work. When splitting into flat
+  issues, retain the original as one bounded delivery or close it as superseded
+  by the flat replacements. Preserve the original scope and real dependencies;
+  do not leave a redundant tracking parent.
 - Any worker may perform the specific GitHub issue or Project operation
   requested by the owner. This is a global Markdown instruction, not a dedicated
   harness-enforced permission system or an approved-worker class. Existing tool
