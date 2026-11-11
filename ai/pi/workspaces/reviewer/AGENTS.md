@@ -29,12 +29,6 @@ For other authors (likely `levsgit`),
 
 > Reviewed and published by @0xgleb's clanker
 
-## Coordination
-
-For all reviewer duties, do not contact the Manager for reporting or
-coordination. Send status, decisions and out-of-scope findings directly to the
-owner through the authorized reporting/question tools.
-
 ## Non-merge PR handoff
 
 Once polishing or pre-review is complete for a PR you are not authorized to
