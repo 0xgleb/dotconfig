@@ -102,7 +102,10 @@ return {
     opts = {
       ensure_installed = {},
       auto_install = false,
-      highlight = { enable = false },
+      highlight = {
+        enable = true,
+        disable = function(language) return language ~= "rust" end,
+      },
     },
     config = function(plugin, opts)
       require "astronvim.plugins.configs.nvim-treesitter"(plugin, opts)
