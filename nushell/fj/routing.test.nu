@@ -353,7 +353,7 @@ def "test fj blame routes to git" [] {
 }
 
 # --- internal passthrough commands ---
-# check/clanker/take/issue/pr/md/infra are dedicated subcommands that shadow
+# check/clanker/take/issue/pr/md are dedicated subcommands that shadow
 # main, so fj-route never sees them (see routing.nu); only do/help reach here.
 
 def "test fj do routes to do" [] {

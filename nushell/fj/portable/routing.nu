@@ -65,7 +65,7 @@ const git_commands = [
 
 # Route an `fj` invocation to a tool + args. Only the PASSTHROUGH space reaches
 # here: commands with dedicated `export def` subcommands (check, clanker, take,
-# issue, pr, md, infra) are intercepted by nushell before main calls fj-route
+# issue, pr, md) are intercepted by nushell before main calls fj-route
 # (see mod.nu's dispatch model), so routing them here would be dead code.
 #
 #   <empty>           -> status
