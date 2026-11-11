@@ -495,12 +495,12 @@ the harness, and suppress duplicates without agent polling.
   does not authorize reverting work; remove only evidenced agent-owned
   unjustified deltas.
 - Every task belongs to a repository-qualified GitHub issue, without exceptions
-  for short-lived or one-off work. Keep tasks granular. Record requests,
-  corrections, blockers, and next actions without replacing a direct answer with
-  task bookkeeping. Preserve deferred work and explicit constraints. Follow an
-  approved plan; do not substitute another design without the required
-  agreement. New human direction supersedes the plan. For verified-finding work,
-  fix every valid finding and explain invalid findings at completion.
+  for short-lived or one-off work. Record requests, corrections, blockers, and
+  next actions without replacing a direct answer with task bookkeeping. Preserve
+  deferred work and explicit constraints. Follow an approved plan; do not
+  substitute another design without the required agreement. New human direction
+  supersedes the plan. For verified-finding work, fix every valid finding and
+  explain invalid findings at completion.
 - Issues and PRs map one-to-one: each PR delivers exactly one product issue, and
   an issue is delivered by only one PR. There are only two exceptions:
   1. The owner explicitly authorizes a particular PR to close multiple issues.
@@ -528,6 +528,25 @@ the harness, and suppress duplicates without agent polling.
   product issue and scoped tasks. Correct a misassignment by transferring the
   tasks to the matching issue while preserving state, evidence, dependencies and
   completed work; do not silently discard work or change its priority.
+- Write small, granular tasks: one bounded action and one observable completion
+  point. State the action, its scope, and what makes it done. An issue or PR is
+  not itself a task. Do not bundle a delivery lifecycle such as "review, fix,
+  test, publish, and merge" into one task. Separate independently completable
+  work: a bounded review pass, one finding's disposition, a small repair with
+  its regression, a test run, publication, a published-head CI check, and an
+  authorized merge. A tightly coupled fix and regression may form one outcome;
+  do not split work into mechanical keystrokes. Examples: "Review the snapshot
+  recovery path; done when findings or none are recorded", "Fix duplicate
+  completion; done when its regression passes", and "Publish the tested repair;
+  done when its commit is on the PR branch". Keep product context and desired
+  outcomes in the issue, shared operating constraints in standing instructions,
+  and sequencing/blockers in task fields. Include only task-specific context or
+  evidence needed to execute or finish that action; do not paste a whole
+  handoff, global rules, or delivery history into every task. When splitting
+  current work, preserve requirements, authority, evidence, dependencies and
+  completed work without changing ranks. This is agent planning and authoring
+  guidance, not a harness validation or tool-admission rule; task shape alone
+  must not block authorized execution.
 - Any worker may perform the specific GitHub issue or Project operation
   requested by the owner. This is a global Markdown instruction, not a dedicated
   harness-enforced permission system or an approved-worker class. Existing tool

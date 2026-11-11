@@ -53,6 +53,14 @@ two explicitly authorized exceptions. If no issue matches, create the product
 issue for that PR, not an issue about performing a review. Verify the actual
 PR–issue link; do not treat a shared theme or a task reference as that link.
 
+The stages above describe PR delivery, not one backlog task. Keep a bounded
+review pass, each concrete repair, publication, CI verification and an
+authorized merge independently completable. Create finding-specific work only
+when the finding exists, not a placeholder to "fix everything". Transfer
+misassigned tasks to the correct issue while preserving their state, evidence
+and dependencies. Splitting or transferring tasks does not change scope,
+ordering or execution authority.
+
 ## Existing feedback
 
 When available, collect CodeRabbit feedback and other unaddressed PR review
