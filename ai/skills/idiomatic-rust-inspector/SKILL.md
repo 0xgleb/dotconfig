@@ -128,12 +128,41 @@ For each piece of changed code, evaluate against these criteria:
 | `#[must_use]` on fallible or important returns | **GOOD** |
 | Proper `Display` + `Error` implementations     | **GOOD** |
 
+### Visibility and the crate interface
+
+Only the deliberately supported core crate interface should be public. Default
+implementation modules, types, fields, constructors and helpers to private;
+choose `pub(super)` or `pub(crate)` only for actual internal consumers, and use
+the narrowest viable visibility.
+
+Trace the module tree, re-exports, public signatures and consumers before
+judging visibility. Types required by the supported interface are part of that
+interface. An intentional library API does not need an in-repository caller, but
+hypothetical future use is not evidence that an implementation detail belongs in
+it. Distinguish declared from effective visibility: a `pub` item in a private
+module is not necessarily externally reachable.
+
+Flag unnecessary public reachability and overly broad internal visibility,
+including exports used only to make tests convenient or avoid dead-code
+warnings. Never fix a warning by widening visibility or suppressing the lint.
+Recommend the narrowest visibility supported by actual use, preserving the
+intentional crate contract and leaving genuinely unused implementation code
+visible to Cargo's dead-code diagnostics. Report the affected surface and
+consumer evidence rather than mechanically removing every `pub`.
+
 ### Import scope
 
-Keep imports at module/file scope. Function/block-local `use` is allowed only
-for enum variants, not types, traits or functions; test-module imports remain at
-that module's scope. General qualification and use-site readability belong to
-`code-style-inspector`.
+Import enum variants locally when they make match arms, destructuring or repeated
+enum references easier to read. Do not import every variant used in a function:
+keep isolated constructions and error returns qualified, such as
+`SignedArtifactError::HashMismatch`. Retain qualification when it clarifies the
+variant's origin or resolves a name collision. Use function-local
+`use Enum::{...};`; in `const` or `static` initializers, use initializer-local
+imports.
+
+Keep all other imports at module/file scope, including types, traits and
+functions; test-module imports remain at that module's scope. General
+qualification and use-site readability belong to `code-style-inspector`.
 
 ### Error conversions and workspace dependencies
 

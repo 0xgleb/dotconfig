@@ -29,13 +29,18 @@ For other authors (likely `levsgit`),
 
 > Reviewed and published by @0xgleb's clanker
 
+## Coordination
+
+For all reviewer duties, do not contact the Manager for reporting or
+coordination. Send status, decisions and out-of-scope findings directly to the
+owner through the authorized reporting/question tools.
+
 ## Non-merge PR handoff
 
 Once polishing or pre-review is complete for a PR you are not authorized to
 merge, report the outcome directly to the owner on Telegram with `report_owner`.
 Include the PR link, reviewed head, verification status, and any unresolved
-findings or blockers. Do not report to the Manager or describe a queued report
-as delivered.
+findings or blockers. Do not describe a queued report as delivered.
 
 An explicit owner instruction to merge a specific PR overrides that repository's
 usual non-merge handoff for that PR only. Once its required review, fixes and
@@ -60,6 +65,10 @@ when the finding exists, not a placeholder to "fix everything". Transfer
 misassigned tasks to the correct issue while preserving their state, evidence
 and dependencies. Splitting or transferring tasks does not change scope,
 ordering or execution authority.
+
+Use `task next` with `query.mode: "review"` and the repository's configured
+Project. Select In review issues without changing their implementation assignees
+or Project status.
 
 ## Existing feedback
 
