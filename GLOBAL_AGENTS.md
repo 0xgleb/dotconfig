@@ -34,6 +34,11 @@ the agent's assigned project.
 
 ## Workspace publication ownership
 
+Apply the [checkpoint and readiness rules](#checkpoints-and-pr-readiness),
+[issue-to-PR mapping](#issue-scope-and-delivery) and
+[repository synchronization rules](#repository-topology-and-synchronization)
+together. Whole-workspace publication does not combine separate delivery scopes.
+
 The agent responsible for a GitButler workspace owns publication of all pending
 tracked and untracked project changes, including changes made by the owner or
 other agents. Inspect and group changes by purpose, reconcile conflicts, then
@@ -43,13 +48,14 @@ authored them or they are unrelated to the agent's current task. Preserve the
 author's intent and explicit exclusions; keep temporary review/handoff artifacts
 out of commits. Serialize workspace VCS mutations through the responsible agent.
 
-Reuse an existing branch and PR when the changes are related, including
-follow-up corrections to unmerged work. Discovering more changes does not
-require a new branch or PR; neither does a new prompt, session or reload. Check
-later stacked changes before revising an earlier version. Create a purpose-named
-branch only for independent work without a suitable ongoing branch. Keep
-incomplete or failing work in draft and make completed work ready after its
-required checks pass, following the driver publication workflow below.
+Reuse an existing branch and PR for changes addressing its matched issue's
+product problem, including follow-up corrections to unmerged work. Shared
+subsystems or themes alone do not establish that match. Discovering more changes
+does not require a new branch or PR; neither does a new prompt, session or
+reload. Check later stacked changes before revising an earlier version. Create a
+purpose-named branch only for independent work without a suitable ongoing
+branch. Keep incomplete or failing work in draft and make completed work ready
+after its required checks pass, following the driver publication workflow below.
 
 Driver workers use the existing GitButler workspace in a managed main worktree;
 verify topology once when entering the repository, not as a repeated gate. A
@@ -481,6 +487,33 @@ the harness, and suppress duplicates without agent polling.
   approved plan; do not substitute another design without the required
   agreement. New human direction supersedes the plan. For verified-finding work,
   fix every valid finding and explain invalid findings at completion.
+- Issues and PRs map one-to-one: each PR delivers exactly one product issue, and
+  an issue is delivered by only one PR. There are only two exceptions:
+  1. The owner explicitly authorizes a particular PR to close multiple issues.
+  2. The owner previously authorized sub-issues, and the final PR closes both
+     the last sub-issue and its parent issue. These exceptions permit multiple
+     issues in one PR, not multiple PRs for one issue. Related work, shared
+     subsystems and stack membership do not imply an exception. Dependency
+     references are not delivery associations.
+- Splitting an issue into independent deliveries also splits branch and PR
+  scope, subject to the one-to-one exceptions above. Give each resulting issue
+  its own branch and PR; open each PR with its first checkpoint. If reusing an
+  existing PR, narrow it and update its delivery association to one resulting
+  issue. Update task records and handoffs that still describe the combined
+  delivery. Stack PRs when code changes require a dependent branch; track other
+  dependencies without inventing a stack.
+- Review and verify each resulting PR against its own issue and complete the
+  existing readiness workflow as soon as it is eligible. Do not hold a completed
+  PR in draft for unfinished sibling issues; only actual dependencies that block
+  its required checks, review gates or acceptance criteria justify waiting.
+- Match work to issues by reading the actual PR scope and the candidate issue's
+  full problem and acceptance criteria. A common theme, module or keyword is
+  insufficient. Never use catch-all issues or tasks, broaden an issue to absorb
+  unrelated work, or append unrelated requests, tasks or replies to avoid
+  creating the correct work item. If the work does not fit, create its own
+  product issue and scoped tasks. Correct a misassignment by transferring the
+  tasks to the matching issue while preserving state, evidence, dependencies and
+  completed work; do not silently discard work or change its priority.
 - Any worker may perform the specific GitHub issue or Project operation
   requested by the owner. This is a global Markdown instruction, not a dedicated
   harness-enforced permission system or an approved-worker class. Existing tool

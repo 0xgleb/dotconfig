@@ -43,6 +43,16 @@ checks pass, merge it normally without asking for merge approval again. This
 does not authorize other PRs, bypass required gates or override branch
 protection.
 
+## Review work tracking
+
+Apply `GLOBAL_AGENTS.md`'s issue/PR association and granular-task rules. Before
+attaching review tasks, read the PR's actual scope and the candidate issue's
+full problem and acceptance criteria. Verify that the product problem matches
+and the delivery association satisfies the global one-to-one rule or one of its
+two explicitly authorized exceptions. If no issue matches, create the product
+issue for that PR, not an issue about performing a review. Verify the actual
+PR–issue link; do not treat a shared theme or a task reference as that link.
+
 ## Existing feedback
 
 When available, collect CodeRabbit feedback and other unaddressed PR review
