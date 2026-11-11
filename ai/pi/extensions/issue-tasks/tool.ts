@@ -359,7 +359,8 @@ export interface TaskToolOptions {
   readonly store: Pick<
     SqliteTaskStore,
     "apply" | "readTasks" | "readTask" | "readManyTasks"
-  >
+  > &
+    Partial<Pick<SqliteTaskStore, "readProgress">>
   readonly contextForCall: (
     call: TaskNativeCall,
   ) => Effect.Effect<TaskApplyContext, TaskHostError>
@@ -370,7 +371,7 @@ export interface TaskToolOptions {
 export type IssueTaskTool = ToolDefinition<
   typeof TaskParameters,
   TaskToolDetails
->
+> & { readonly readProgress?: SqliteTaskStore["readProgress"] }
 
 type TaskFailure =
   | TaskRequestDecodeError
@@ -672,6 +673,9 @@ export const createTaskTool = (options: TaskToolOptions): IssueTaskTool => ({
     "Select and pick up an eligible issue with next query {repository,project:personal|dataclique,mode?:implementation|review}; review mode selects In review without changing assignees or status. Read/get issue-qualified tasks, listIssues/getIssue metadata with local tasks, or apply an atomic explicit-issue mutation batch. read uses issue/page/filter; readMany explicit queries totals at most 100 requested tasks; get uses issue/id. listIssues uses query {repository,state,page,tasks:{limit,filter?}} with at most 100 aggregate requested tasks; getIssue uses query {issue,related:{limit,blockedByAfter?,deliveryAfter?},tasks:{page,filter?}}. apply uses complete issues/operations (add, edit, status, block, transfer). No worker selection or replies. Mutation authority and request identity come only from the host.",
   parameters: TaskParameters,
   ...taskRenderers,
+  ...(options.store.readProgress === undefined
+    ? {}
+    : { readProgress: options.store.readProgress }),
   execute: async (toolCallId, params, signal, onUpdate, ctx) => {
     let outcome: TaskExecutionOutcome
     let completedInvocation: TaskNativeCall | undefined
