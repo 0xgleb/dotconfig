@@ -114,7 +114,7 @@ test("blocker diagnostics cannot authorize recovery by changing task state", () 
   }
 })
 
-test("task continuation retries a transient queued-message guard without losing its wake", () => {
+test("task continuation retries a transient queued-message guard without losing its wake", async () => {
   const start = extensionSource.indexOf("  const scheduleTaskContinuation =")
   const end = extensionSource.indexOf(
     "  const clearManualReloadPending =",
@@ -122,30 +122,49 @@ test("task continuation retries a transient queued-message guard without losing 
   )
   assert.ok(start >= 0 && end > start)
   const source = stripTypeScriptTypes(extensionSource.slice(start, end))
-  let timer: (() => void) | undefined
-  const readTimer: () => (() => void) | undefined = () => timer
+
+  let timer: (() => void | Promise<void>) | undefined
+
+  const readTimer = () => timer
+
   let queued = true
   let sent = 0
+
   const ctx = {
-    sessionManager: { getBranch: () => [] },
+    cwd: "/fixture",
+    sessionManager: { getBranch: () => [], getSessionId: () => "worker" },
     isIdle: () => true,
     ui: { getEditorText: () => "" },
     hasPendingMessages: () => queued,
   }
+
   const schedule = new Function(
     "setTimeout",
     "pi",
     "Either",
     "ownerAllowance",
+    "AbortController",
     `
     let taskContinuationTimer;
+    let taskContinuationAbort;
+    let taskContinuationEpoch = 0;
+
     const clearTaskContinuationTimer = () => {};
-    const todoWorkSnapshot = () => ({pending: [1]});
-    const taskContinuationMessage = () => "continue pending work";
+
+    const latestTaskNextQuery = () => Either.right({
+      repository: "owner/repository",
+      project: "personal",
+    });
+
+    const getManagerBinding = () => Either.right({ role: "worker" });
+
+    const readTaskContinuation = async () =>
+      Either.right("continue pending work");
+
     const pendingActionRemediation = undefined;
     const continuationPaused = false;
     const workflowLifecycleActive = true;
-    const capabilityCircuit = {open: false};
+    const capabilityCircuit = { open: false };
     const manualReloadPending = false;
     const TASK_CONTINUATION_QUIET_MS = 1;
     const TASK_MESSAGE = "task";
@@ -153,7 +172,7 @@ test("task continuation retries a transient queued-message guard without losing 
     return scheduleTaskContinuation;
   `,
   )(
-    (callback: () => void) => {
+    (callback: () => void | Promise<void>) => {
       timer = callback
       return 1
     },
@@ -164,17 +183,20 @@ test("task continuation retries a transient queued-message guard without losing 
     },
     Either,
     { admit: () => Either.right(undefined) },
+    AbortController,
   )
+
   schedule(ctx)
   const first = readTimer()
   assert.ok(first)
   timer = undefined
-  first()
+  await first()
   assert.equal(sent, 0)
+
   const second = readTimer()
   assert.ok(second, "transient queued message must rearm the quiet timer")
   queued = false
-  second()
+  await second()
   assert.equal(sent, 1)
 })
 
@@ -328,10 +350,10 @@ test("manual abort pause state persists defensively and keys off the final assis
   )
 })
 
-test("pending todos continue after a quiet settled turn without seizing user input", () => {
+test("issue-task continuation uses the quiet settled boundary without seizing user input", () => {
   assert.match(
     extensionSource,
-    /scheduleTaskContinuation[\s\S]*?taskContinuationMessage\(work\)[\s\S]*?setTimeout/,
+    /scheduleTaskContinuation[\s\S]*?readTaskContinuation/,
   )
   assert.match(
     extensionSource,

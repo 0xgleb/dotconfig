@@ -361,11 +361,6 @@ export const latestCompactionSummary: (
   return undefined
 }
 
-/** Compatibility export: legacy todo data no longer schedules work. */
-export const taskContinuationMessage: (
-  snapshot: TodoWorkSnapshot,
-) => string | undefined = _snapshot => undefined
-
 export function assistantUsageTokens(messages: unknown[]): number {
   return messages.reduce<number>((total, message) => {
     if (

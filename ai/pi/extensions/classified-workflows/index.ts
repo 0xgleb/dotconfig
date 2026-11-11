@@ -18,6 +18,11 @@ import { Type } from "typebox"
 import { registerGitHookAuthority } from "./hook-authority.ts"
 import { registerOwnerAllowance } from "./owner-allowance-extension.ts"
 import { registerWorkManager } from "./manager.ts"
+import { getManagerBinding } from "../shared/manager-binding.ts"
+import {
+  latestTaskNextQuery,
+  readTaskContinuation,
+} from "../issue-tasks/continuation.ts"
 import {
   OWNER_PARENT_DEADLINE_ENV,
   type OwnerAllowance,
@@ -1019,6 +1024,7 @@ export default function classifiedWorkflows(
 ): void {
   const withGitHookAuthority = registerGitHookAuthority(pi)
   registerRuntimeVersion(pi, "classified-workflows", "2026.10.17.28")
+  registerRuntimeVersion(pi, "task-continuation", "0.1.0")
   const childTokenLimitResult = Effect.runSync(
     Effect.either(
       workflowChildTokenLimit(process.env[WORKFLOW_CHILD_TOKEN_LIMIT_ENV]),
@@ -1066,6 +1072,8 @@ export default function classifiedWorkflows(
   let loopState: LoopState | undefined
   let loopTimer: ReturnType<typeof setTimeout> | undefined
   let taskContinuationTimer: ReturnType<typeof setTimeout> | undefined
+  let taskContinuationAbort: AbortController | undefined
+  let taskContinuationEpoch = 0
   let manualReloadFailsafeTimer: ReturnType<typeof setTimeout> | undefined
   let pendingActionRemediation: PendingActionRemediation | undefined
   let loopWakePending = false
@@ -1674,6 +1682,9 @@ export default function classifiedWorkflows(
   const clearTaskContinuationTimer = (): void => {
     if (taskContinuationTimer) clearTimeout(taskContinuationTimer)
     taskContinuationTimer = undefined
+    taskContinuationAbort?.abort()
+    taskContinuationAbort = undefined
+    taskContinuationEpoch += 1
   }
 
   const setPendingActionRemediation = (state: ActionRemediationState): void => {
@@ -1684,33 +1695,92 @@ export default function classifiedWorkflows(
   const scheduleTaskContinuation = (ctx: ExtensionContext): void => {
     clearTaskContinuationTimer()
     if (Either.isLeft(ownerAllowance.admit())) return
-    const pendingMessage = pendingActionRemediation
-      ? remediationContinuationMessage(pendingActionRemediation)
-      : undefined
-    if (!pendingMessage) return
-    taskContinuationTimer = setTimeout(() => {
+
+    const isWorker = () => {
+      const binding = getManagerBinding(pi, ctx)
+      return Either.isRight(binding) && binding.right.role === "worker"
+    }
+
+    const query = pendingActionRemediation
+      ? Either.right(undefined)
+      : latestTaskNextQuery(ctx.sessionManager.getBranch())
+    if (Either.isLeft(query)) {
+      ctx.ui.notify(query.left.message, "warning")
+      return
+    }
+    if (
+      !pendingActionRemediation &&
+      (query.right === undefined || !isWorker())
+    ) {
+      return
+    }
+
+    const epoch = taskContinuationEpoch
+    const sessionId = ctx.sessionManager.getSessionId()
+    const cwd = ctx.cwd
+
+    const isContinuationCurrent = () =>
+      epoch === taskContinuationEpoch &&
+      ctx.sessionManager.getSessionId() === sessionId &&
+      ctx.cwd === cwd &&
+      Either.isRight(ownerAllowance.admit()) &&
+      workflowLifecycleActive &&
+      !continuationPaused &&
+      !capabilityCircuit.open &&
+      !manualReloadPending
+
+    const isSessionBusy = () =>
+      !ctx.isIdle() ||
+      ctx.ui.getEditorText().trim().length > 0 ||
+      ctx.hasPendingMessages()
+
+    taskContinuationTimer = setTimeout(async () => {
       taskContinuationTimer = undefined
-      if (
-        Either.isLeft(ownerAllowance.admit()) ||
-        !workflowLifecycleActive ||
-        continuationPaused ||
-        capabilityCircuit.open ||
-        manualReloadPending
-      ) {
-        return
-      }
-      if (
-        !ctx.isIdle() ||
-        ctx.ui.getEditorText().trim().length > 0 ||
-        ctx.hasPendingMessages()
-      ) {
+      if (!isContinuationCurrent()) return
+      if (isSessionBusy()) {
         scheduleTaskContinuation(ctx)
         return
       }
-      const content = pendingActionRemediation
+
+      let content = pendingActionRemediation
         ? remediationContinuationMessage(pendingActionRemediation)
         : undefined
-      if (!content) return
+      let taskWork = false
+
+      if (!content && query.right !== undefined && isWorker()) {
+        const controller = new AbortController()
+        taskContinuationAbort = controller
+
+        const observed = await readTaskContinuation(
+          pi,
+          ctx,
+          query.right,
+          controller.signal,
+        )
+
+        if (taskContinuationAbort === controller) {
+          taskContinuationAbort = undefined
+        }
+        if (!isContinuationCurrent() || controller.signal.aborted) return
+        if (Either.isLeft(observed)) {
+          if (observed.left.code !== "interrupted") {
+            ctx.ui.notify(observed.left.message, "warning")
+          }
+          return
+        }
+
+        content = observed.right
+        taskWork = true
+      }
+
+      if (!content || !isContinuationCurrent() || (taskWork && !isWorker())) {
+        return
+      }
+      if (isSessionBusy()) {
+        scheduleTaskContinuation(ctx)
+        return
+      }
+
       pi.sendMessage(
         { customType: TASK_MESSAGE, content, display: true },
         { triggerTurn: true, deliverAs: "followUp" },
@@ -2343,6 +2413,7 @@ export default function classifiedWorkflows(
   }
 
   pi.on("session_start", async (event, ctx) => {
+    clearTaskContinuationTimer()
     latestCtx = ctx
     const branch = ctx.sessionManager.getBranch()
     const goalEntries = branch.filter(
@@ -2617,6 +2688,9 @@ export default function classifiedWorkflows(
   })
 
   pi.on("agent_start", () => {
+    clearTaskContinuationTimer()
+  })
+  pi.on("session_tree", () => {
     clearTaskContinuationTimer()
   })
 

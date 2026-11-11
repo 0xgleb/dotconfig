@@ -13,7 +13,6 @@ import {
   pendingTodoTexts,
   recoverLatestIndependentGoal,
   restoreGoal,
-  taskContinuationMessage,
   todoClassifierIntent,
   todoWorkSnapshot,
   type GoalState,
@@ -254,29 +253,6 @@ test("latest compaction summary remains available as bounded classifier evidence
       { type: "compaction", summary: "Todo #23: stage the rebuy hotfix IDs" },
     ]),
     "Todo #23: stage the rebuy hotfix IDs",
-  )
-})
-
-test("legacy task continuation stays disabled regardless of remaining work", () => {
-  assert.equal(
-    taskContinuationMessage({
-      pending: ["#2 Fix release"],
-      blocked: [],
-      completed: [],
-    }),
-    undefined,
-  )
-  assert.equal(
-    taskContinuationMessage({
-      pending: [],
-      blocked: ["#3 Deploy — no access"],
-      completed: [],
-    }),
-    undefined,
-  )
-  assert.equal(
-    taskContinuationMessage({ pending: [], blocked: [], completed: [] }),
-    undefined,
   )
 })
 
