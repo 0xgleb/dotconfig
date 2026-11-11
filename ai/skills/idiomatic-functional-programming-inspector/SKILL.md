@@ -47,6 +47,11 @@ nushell, nix); illustrate in whichever the file is written in.
 10. **Referential transparency.** An expression can be replaced by its value
     without changing behavior. Impure builtins (current time, env, global
     mutable state) break it.
+11. **Match on variants without repeated enum names.** Where the language
+    supports unqualified enum variants in patterns, import or bind unambiguous
+    variants locally rather than repeating the enum name in each arm. In Rust,
+    use function-local `use Enum::{...};`. Keep qualification only for genuine
+    name collisions and other imports at module/file scope.
 
 ## 1. Get the code to review
 
@@ -228,5 +233,6 @@ Wait for the user's direction.
 8. **Functional-programming-specific only — the general reviewers and the other
    inspectors handle the rest.** Don't restate language-level idioms the
    idiomatic-rust-inspector, strong-typing-inspector, or test-inspector already
-   cover. Focus on the cross-cutting functional concerns: purity, immutability,
-   totality, composition, and domain modeling.
+   cover. The shared variant-qualification convention also belongs here;
+   consolidate duplicate findings with the language inspector. Otherwise focus
+   on purity, immutability, totality, composition, and domain modeling.
