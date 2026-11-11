@@ -54,9 +54,9 @@ const toolKind = (toolName: string): string => {
 export const toolPhase = (toolName: string): ActivityPhase =>
   toolName === "workflow" || toolName === "agent"
     ? {
-      kind: "subagent",
-      label: `SUBAGENT · ${toolName} · ${toolKind(toolName)}`,
-    }
+        kind: "subagent",
+        label: `SUBAGENT · ${toolName} · ${toolKind(toolName)}`,
+      }
     : { kind: "tool", label: `TOOL · ${toolName} · ${toolKind(toolName)}` }
 
 export interface ToolProgress {
