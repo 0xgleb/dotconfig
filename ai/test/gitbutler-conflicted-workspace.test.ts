@@ -29,29 +29,26 @@ test("GitButler guidance contains the conflicted workspace recovery boundary", (
   ]
 
   for (const guidance of sections) {
-    const body = guidance.slice(guidance.indexOf("\n") + 1)
-    assert.doesNotMatch(body, /^#{2,3} /m)
-    assert.match(guidance, /workspace-wide graph/i)
+    const normalized = guidance.replace(/\s+/g, " ")
+    assert.match(normalized, /workspace-wide graph/i)
     assert.match(
-      guidance,
-      /consistent with.*upstream workspace-graph failure/is,
+      normalized,
+      /Failed to merge bases while cherry picking commit/i,
     )
-    assert.match(guidance, /Failed to merge bases while cherry picking commit/i)
-    assert.match(guidance, /issues\/12065/)
-    assert.match(guidance, /issues\/15112/)
-    assert.match(guidance, /do not retry[^.]*while[^.]*unresolved/i)
-    assert.match(guidance, /preserve the conflicted commit and its order/i)
-    assert.match(guidance, /independently authorized/i)
+    assert.match(normalized, /do not retry[^.]*while[^.]*unresolved/i)
+    assert.match(normalized, /preserve the conflicted commit and its order/i)
     assert.match(
-      guidance,
-      /independently authorized.*consider a retry only after.*recovery.*verification of a clean graph/is,
+      normalized,
+      /independently authorized.*consider a retry only after recovery and verification of a clean graph/i,
     )
     assert.match(
-      guidance,
-      /unrelated task already authorizes.*linked\/non-main worktree from a verified clean live head.*use plain Git there/is,
+      normalized,
+      /unrelated task already authorizes an existing linked\/non-main worktree from a verified clean live head, use plain Git there/i,
     )
-    assert.match(guidance, /leave the.*GitButler workspace untouched/i)
-    assert.match(guidance, /do not[^.]*raw Git/i)
-    assert.match(guidance, /main worktree/i)
+    assert.match(
+      normalized,
+      /leave the affected GitButler workspace untouched/i,
+    )
+    assert.match(normalized, /do not use raw Git.*managed main worktree/i)
   }
 })

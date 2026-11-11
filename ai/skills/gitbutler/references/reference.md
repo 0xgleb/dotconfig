@@ -197,6 +197,22 @@ Resolve conflicts in a commit or in uncommitted files
   resolves all conflicted commits in the workspace, oldest first. Undo the
   result with but undo.
 
+### Workspace-graph failure while another commit is conflicted
+
+If a mutation reports `Failed to merge bases while cherry picking commit` while
+another applied commit is conflicted, inspect the workspace-wide graph before
+blaming the selected changes. Do not retry unrelated mutations while that
+conflict remains unresolved. Preserve the conflicted commit and its order.
+
+Recovery must be independently authorized. Use the existing conflict-resolution
+workflow, and consider a retry only after recovery and verification of a clean
+graph. Do not use raw Git to bypass the failure in a managed main worktree.
+
+If the unrelated task already authorizes an existing linked/non-main worktree
+from a verified clean live head, use plain Git there and leave the affected
+GitButler workspace untouched. This does not authorize creating a worktree for
+isolation or resolving unrelated work.
+
 ### but resolve conflicts [COMMIT]
 
 List the conflicts of a conflicted commit, without entering resolution mode

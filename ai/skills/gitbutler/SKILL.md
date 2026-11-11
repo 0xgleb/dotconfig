@@ -527,6 +527,22 @@ single branch is checked out, `but resolve <commit-id>` refuses, so use `apply`.
 4. Repeat for remaining conflicted commits, oldest first — finishing a lower
    commit rebases the ones above it.
 
+### A conflicted applied stack can block unrelated mutations
+
+If a mutation reports `Failed to merge bases while cherry picking commit` while
+another applied commit is conflicted, inspect the workspace-wide graph before
+blaming the selected changes. Do not retry unrelated mutations while that
+conflict remains unresolved. Preserve the conflicted commit and its order.
+
+Recovery must be independently authorized. Use the existing conflict-resolution
+workflow, and consider a retry only after recovery and verification of a clean
+graph. Do not use raw Git to bypass the failure in a managed main worktree.
+
+If the unrelated task already authorizes an existing linked/non-main worktree
+from a verified clean live head, use plain Git there and leave the affected
+GitButler workspace untouched. This does not authorize creating a worktree for
+isolation or resolving unrelated work.
+
 ### Conflicts in uncommitted files
 
 `but status` marks uncommitted files with unresolved merge conflicts
@@ -566,7 +582,7 @@ with that state; it then shows as an ordinary uncommitted change.
   creates `main` to track it if missing. Never `git branch --set-upstream-to` on
   your own branch, which makes that branch the target.
 - `but undo` restores the whole snapshot, so uncommitted edits made after the
-  undone operation are lost (`but redo` brings them back). Commit them first.
+  undone operation are lost (`but redo` brings them back).
 - Read-only git inspection (`git log`, `git blame`, `git show --stat`) is
   allowed.
 - If `but` prints an `AGENT ACTION REQUIRED` skill warning, run the suggested

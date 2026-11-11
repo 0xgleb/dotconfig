@@ -47,11 +47,12 @@ nushell, nix); illustrate in whichever the file is written in.
 10. **Referential transparency.** An expression can be replaced by its value
     without changing behavior. Impure builtins (current time, env, global
     mutable state) break it.
-11. **Match on variants without repeated enum names.** Where the language
-    supports unqualified enum variants in patterns, import or bind unambiguous
-    variants locally rather than repeating the enum name in each arm. In Rust,
-    use function-local `use Enum::{...};`. Keep qualification only for genuine
-    name collisions and other imports at module/file scope.
+11. **Keep variant references readable.** Import or bind variants locally when
+    that makes repeated match arms or destructuring clearer. Keep isolated
+    constructions and error returns qualified; retain qualification when it
+    clarifies the variant's origin or avoids a name collision. In Rust, use
+    function-local `use Enum::{...};`, or initializer-local imports in `const`
+    and `static` initializers. Keep other imports at module/file scope.
 
 ## 1. Get the code to review
 
