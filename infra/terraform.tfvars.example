@@ -1,6 +1,0 @@
-do_token          = ""
-tailscale_api_key = ""
-
-# tailscale_tailnet defaults to "-" (the API key owner's default tailnet);
-# override only if the key spans multiple tailnets.
-# tailscale_tailnet = "example.com"
