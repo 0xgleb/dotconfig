@@ -156,6 +156,13 @@ the harness, and suppress duplicates without agent polling.
   main worktree, where GitButler is mandatory. GitButler checkpoint publication
   follows the whole-workspace synchronization rule below, never an isolated
   branch push.
+- When marking an authorized PR ready, verify its issue association follows the
+  one-to-one rule and its two authorized exceptions below. Ensure the PR is
+  linked to the corresponding issue or authorized issue set, and each issue is
+  in its configured Project with Status set to In review, using that Project's
+  actual field and option. Verify these effects before reporting the readiness
+  workflow complete. Keep required checks and existing review and merge
+  authority unchanged; PR readiness does not close issues or authorize a merge.
 - AGENTS.md files define standing rules of engagement and agent behavior. Never
   put transient task state, progress reports, one-off migration notes, temporary
   waiting conditions, session journals, or handoff notes in them; use task
