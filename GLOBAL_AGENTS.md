@@ -122,6 +122,13 @@ the harness, and suppress duplicates without agent polling.
   or a new worker assignment. This standing owner rule applies globally, not
   only in the conversation that surfaced the example. This does not authorize
   new audit tasks, expanded scope, or worker reprioritization.
+- When starting implementation work on an issue, set its configured GitHub
+  Project item to the actual In progress status and verify the result. Marking
+  local tasks as doing is not a Project-status update. If the remote update
+  fails or is unconfirmed, preserve local progress and report the failed or
+  unknown synchronization; do not claim the Project is current or blindly retry.
+  Review-only work leaves assignees and Project status unchanged. Do not
+  overwrite a newer status using stale pickup information.
 - Driver workers (agents owning implementation) must commit and push regularly
   throughout assigned work, except for cross-project harness-resource edits left
   for the responsible workspace agent under the routing rule above. Open a draft
