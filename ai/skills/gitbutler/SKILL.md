@@ -401,7 +401,9 @@ not use `but undo` to unstack.
    also rebases worktree branches. If that leaves a worktree commit
    `{conflicted}`, the branch name doesn't find it: take its commit ID from
    `but status` and run `but resolve conflicts <commit-id>`, then
-   `but resolve apply <path>:<N> --commit <commit-id>`.
+   `but resolve apply <path>:<N> --commit <commit-id>`. Each apply rewrites the
+   commit: refresh SHA-based or `#N`-suffixed IDs from `but status -fv` before
+   the next conflict query or apply; do not reuse a stale target.
 5. When done, `but worktree remove <name>` deletes the directory and keeps the
    branch. It refuses while the worktree has uncommitted changes; `-f` discards
    them. To delete the branch as well, run `but branch delete <name>`
