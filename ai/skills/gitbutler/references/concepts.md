@@ -2,6 +2,11 @@
 
 Deep dive into GitButler's conceptual model and philosophy.
 
+Local routing takes precedence over native CLI capabilities described here: use
+GitButler only in verified managed main worktrees. The installed wrapper rejects
+linked worktrees; use plain Git in linked/non-main worktrees and unmanaged
+repositories.
+
 ## The Workspace Model
 
 ### GitButler: Parallel Stacks
