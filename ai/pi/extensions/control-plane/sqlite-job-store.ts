@@ -745,14 +745,17 @@ const makeStore = (database: DatabaseSync): SqliteJobStore => {
     now,
     ttlMs,
   ) =>
-    Effect.flatMap(validateId(profile), registeredProfile =>
-      inTransaction(
-        Effect.gen(function* () {
-          const value = yield* sql(
+    Effect.flatMap(validateId(profile), registeredProfile => {
+      const claimNextResearch = (): Effect.Effect<
+        Job | undefined,
+        JobStoreError | JobRuntimeError
+      > =>
+        Effect.flatMap(
+          sql(
             () =>
               database
                 .prepare(
-                  `SELECT document FROM jobs
+                  `SELECT job_id, document FROM jobs
                    WHERE kind = 'harness.research'
                      AND state IN ('scheduled', 'ready', 'retry_wait')
                      AND run_at <= ?
@@ -762,16 +765,27 @@ const makeStore = (database: DatabaseSync): SqliteJobStore => {
                 )
                 .get(now, registeredProfile),
             "failed to select due research job",
-          )
-          if (value === undefined) return undefined
-          const job = yield* Effect.flatMap(rowFrom(value), documentFromRow)
-          return yield* Effect.flatMap(
-            claimJob(job, workerId, leaseToken, now, ttlMs),
-            persist,
-          )
-        }),
-      ),
-    )
+          ),
+          value =>
+            value === undefined
+              ? Effect.succeed(undefined)
+              : Effect.flatMap(rowFrom(value), row =>
+                  Effect.matchEffect(documentFromRow(row), {
+                    onFailure: failure =>
+                      Effect.flatMap(quarantine(row, failure.message), () =>
+                        claimNextResearch(),
+                      ),
+                    onSuccess: job =>
+                      Effect.flatMap(
+                        claimJob(job, workerId, leaseToken, now, ttlMs),
+                        persist,
+                      ),
+                  }),
+                ),
+        )
+
+      return inTransaction(claimNextResearch())
+    })
 
   const complete: SqliteJobStore["complete"] = (
     id,

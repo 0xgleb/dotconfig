@@ -1051,6 +1051,118 @@ test("an unreadable job is quarantined instead of blocking the jobs behind it", 
     store.close()
   }))
 
+test("research claims quarantine unreadable rows and preserve other profiles and history", async () =>
+  withStore(async path => {
+    const store = await Effect.runPromise(makeSqliteJobStore(path))
+    try {
+      await Effect.runPromise(store.enqueue(researchSpec(), "job-a", 1_000))
+      await Effect.runPromise(
+        store.enqueue(
+          { ...researchSpec(), idempotencyKey: "research:second" },
+          "job-b",
+          1_000,
+        ),
+      )
+      await Effect.runPromise(
+        store.enqueue(researchSpec("other-profile"), "job-other", 1_000),
+      )
+      await Effect.runPromise(
+        store.enqueue(
+          { ...researchSpec(), idempotencyKey: "research:healthy" },
+          "job-z",
+          1_000,
+        ),
+      )
+      store.unsafeDatabaseForTests
+        .prepare(
+          "UPDATE jobs SET document = json_remove(document, '$.spec.payload.ownership') WHERE job_id IN (?, ?)",
+        )
+        .run("job-a", "job-b")
+      const documents = store.unsafeDatabaseForTests.prepare(
+        "SELECT job_id, document FROM jobs WHERE job_id IN (?, ?) ORDER BY job_id",
+      )
+      const originalDocuments = documents.all("job-a", "job-b")
+
+      const claimed = await Effect.runPromise(
+        store.claimDueResearch(
+          "research-config",
+          "worker-a",
+          "lease-a",
+          1_000,
+          90_000,
+        ),
+      )
+      assert.equal(claimed?.id, "job-z")
+      assert.equal(stateOf(store, "job-a"), "corrupt")
+      assert.equal(stateOf(store, "job-b"), "corrupt")
+      assert.equal(stateOf(store, "job-other"), "ready")
+      assert.deepEqual(documents.all("job-a", "job-b"), originalDocuments)
+      assert.deepEqual(unreadableIds(await Effect.runPromise(store.list())), [
+        "job-a",
+        "job-b",
+      ])
+      assert.equal(
+        await Effect.runPromise(
+          store.claimDueResearch(
+            "research-config",
+            "worker-b",
+            "lease-b",
+            1_000,
+            90_000,
+          ),
+        ),
+        undefined,
+      )
+      assert.equal(
+        (
+          await Effect.runPromise(
+            store.claimDueResearch(
+              "other-profile",
+              "worker-c",
+              "lease-c",
+              1_000,
+              90_000,
+            ),
+          )
+        )?.id,
+        "job-other",
+      )
+    } finally {
+      store.close()
+    }
+  }))
+
+test("research claims commit quarantine when no readable job remains", async () =>
+  withStore(async path => {
+    const store = await Effect.runPromise(makeSqliteJobStore(path))
+    try {
+      await Effect.runPromise(store.enqueue(researchSpec(), "job-a", 1_000))
+      store.unsafeDatabaseForTests
+        .prepare(
+          "UPDATE jobs SET document = json_remove(document, '$.spec.payload.ownership') WHERE job_id = ?",
+        )
+        .run("job-a")
+      assert.equal(
+        await Effect.runPromise(
+          store.claimDueResearch(
+            "research-config",
+            "worker-a",
+            "lease-a",
+            1_000,
+            90_000,
+          ),
+        ),
+        undefined,
+      )
+      assert.equal(stateOf(store, "job-a"), "corrupt")
+      assert.deepEqual(unreadableIds(await Effect.runPromise(store.list())), [
+        "job-a",
+      ])
+    } finally {
+      store.close()
+    }
+  }))
+
 test("an unreadable expired lease is quarantined and the others still recover", async () =>
   withStore(async path => {
     const store = await Effect.runPromise(makeSqliteJobStore(path))

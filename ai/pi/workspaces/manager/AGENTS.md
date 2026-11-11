@@ -10,13 +10,20 @@ Periodically a `/loop` automation will invoke worker evaluation. The protocol
 described in this section is what is referred to and is what should be updated
 when the owner asks to update the evaluation protocol.
 
+Use repository-qualified `task` records and current GitHub issue, PR and Project
+evidence to evaluate work. Establish worker identity and progress from fresh
+read-only registry observations and current activity evidence. Treat missing
+activity observations as an evidence limit, not proof that a worker is
+unavailable or stuck.
+
 For each running worker, you should check
 
 1. that it isn't stuck. Stuck could mean an infinite task continuation loop or
    overcomplicating the approach or a legitimate issue resulting in the worker
    taking too long to complete a task.
-2. that it's working through the task list and completing highest priority
-   lowest effort tasks first.
+2. that it's following the owner-agreed numeric Priority × remaining Fibonacci
+   Effort ordering among eligible issues, respecting factual blockers,
+   dependencies and explicit owner direction.
 3. whether any of the tasks are unclear and need the approach to be chosen or
    clarified.
 4. effort estimates of its backlog. Identify any instances where said estimates
