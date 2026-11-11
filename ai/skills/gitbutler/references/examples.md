@@ -2,11 +2,15 @@
 
 Real-world examples of common workflows.
 
-**Note on CLI IDs:** Examples use illustrative IDs such as `nn` and `a1`; copy actual IDs from current `but status` or `but diff` output. Real output may use longer IDs (e.g., `mzm:uvw:2e4`). Use full branch names for mutations. Commit change-ID prefixes survive history edits; SHA prefixes can go stale.
+**Note on CLI IDs:** Examples use illustrative IDs such as `nn` and `a1`; copy
+actual IDs from current `but status` or `but diff` output. Real output may use
+longer IDs (e.g., `mzm:uvw:2e4`). Use full branch names for mutations. Commit
+change-ID prefixes survive history edits; SHA prefixes can go stale.
 
 ## Example 1: Starting Independent Parallel Work
 
-**Scenario:** Need to work on two independent features: a new API endpoint and UI styling updates.
+**Scenario:** Need to work on two independent features: a new API endpoint and
+UI styling updates.
 
 ```bash
 # 1. Make changes to multiple files
@@ -29,11 +33,13 @@ but pr new api-endpoint -m "Add user details endpoint"
 but pr new ui-styling -m "Update button hover styles"
 ```
 
-**Why parallel branches?** The API endpoint and UI styling are independent - neither depends on the other. They can be reviewed and merged separately.
+**Why parallel branches?** The API endpoint and UI styling are independent -
+neither depends on the other. They can be reviewed and merged separately.
 
 ## Example 2: Building Stacked Features
 
-**Scenario:** Need to add authentication, then build a user profile page that requires auth.
+**Scenario:** Need to add authentication, then build a user profile page that
+requires auth.
 
 ```bash
 # 1. Update
@@ -60,7 +66,8 @@ but pr new user-profile -t
 
 ## Example 3: Amending Fixes Into Existing Commits
 
-**Scenario:** Made a small typo fix that should be part of an existing commit, not a new commit.
+**Scenario:** Made a small typo fix that should be part of an existing commit,
+not a new commit.
 
 ```bash
 # 1. Check current commits and uncommitted changes
@@ -81,13 +88,16 @@ but status -fv
 but amend -t nn a1    # Amend just this file into nn
 ```
 
-**Why amend?** Keeps history clean. Small fixes belong in the commits they fix, not as separate "fix typo" commits. You know what you changed and why — pick the target commit yourself.
+**Why amend?** Keeps history clean. Small fixes belong in the commits they fix,
+not as separate "fix typo" commits. You know what you changed and why — pick the
+target commit yourself.
 
 ## Example 4: Reorganizing Commit History
 
 ### Scenario A: Squashing Commits
 
-**Situation:** Made 5 small WIP commits, want to combine into one logical commit.
+**Situation:** Made 5 small WIP commits, want to combine into one logical
+commit.
 
 ```bash
 # Before (newest first):
@@ -161,7 +171,8 @@ but move nn --unstack -b independent-work
 
 ## Example 5: Stacking Existing Branches
 
-**Scenario:** Two independent branches exist, but one now depends on the other. Stack them.
+**Scenario:** Two independent branches exist, but one now depends on the other.
+Stack them.
 
 ```bash
 # 1. Check current state — two independent branches in separate stacks
@@ -181,7 +192,8 @@ but commit -b feature/backend -m "Add caching layer" <id>
 but commit -b feature/frontend -m "Add dialog component" <id>
 ```
 
-**Key point:** branch stack moves use full branch names like `feature/frontend`. Commit reordering still uses commit IDs.
+**Key point:** branch stack moves use full branch names like `feature/frontend`.
+Commit reordering still uses commit IDs.
 
 ## Example 6: Conflict Resolution
 
@@ -237,9 +249,9 @@ but resolve conflicts feature-x
 # Branch "feature-x" has no conflicted commits.
 ```
 
-To build or test against a resolution, use edit mode instead (`but resolve <commit>`, edit the
-files, `but resolve finish`). Edit mode needs `gitbutler/workspace` and is refused while a single
-branch is checked out.
+To build or test against a resolution, use edit mode instead
+(`but resolve <commit>`, edit the files, `but resolve finish`). Edit mode needs
+`gitbutler/workspace` and is refused while a single branch is checked out.
 
 ## Example 7: After a Pull Request Is Merged
 
@@ -253,7 +265,8 @@ but pull
 
 ## Example 8: Working with Applied/Unapplied Branches
 
-**Scenario:** Three branches are applied, and you want to finish one without the other two in the working tree.
+**Scenario:** Three branches are applied, and you want to finish one without the
+other two in the working tree.
 
 ```bash
 # 1. Check active branches
@@ -279,7 +292,8 @@ but apply feature-c
 
 ## Example 9: Fixing History Before Pushing
 
-**Scenario:** Made several commits, realized you need to reword messages and reorder.
+**Scenario:** Made several commits, realized you need to reword messages and
+reorder.
 
 ```bash
 # 1. Current state
@@ -370,7 +384,8 @@ but push my-feature --dry-run   # See what would be pushed
 
 ### Multiple Commits From One Diff
 
-Chain `but commit` calls to split a dirty diff into several commits off one `but diff` read:
+Chain `but commit` calls to split a dirty diff into several commits off one
+`but diff` read:
 
 ```bash
 but diff   # read the file/hunk IDs once
@@ -379,8 +394,8 @@ but commit -b my-branch -m "Add parser" qs:5 qs:2 \
   && but commit -b my-branch -m "Add tests" uo:d
 ```
 
-The commits stack in the order you write them, so `Add parser` ends up below (older
-than) `Add tests`.
+The commits stack in the order you write them, so `Add parser` ends up below
+(older than) `Add tests`.
 
 ### Viewing History
 

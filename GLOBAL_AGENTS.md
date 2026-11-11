@@ -71,9 +71,20 @@ replace implementation. Keep temporary task state out of standing-rule files.
 
 ## Pi delegation scope and standing authorization
 
-Routine factual lookups, issue inventories, iteration comparisons and status summaries do not need an independent Pi critique. Complete them directly. Do not turn every substantive reply into a review workflow. An explicit owner instruction that no critique is needed overrides skill-level critique requirements for that task.
+Routine factual lookups, issue inventories, iteration comparisons and status
+summaries do not need an independent Pi critique. Complete them directly. Do not
+turn every substantive reply into a review workflow. An explicit owner
+instruction that no critique is needed overrides skill-level critique
+requirements for that task.
 
-The owner authorizes task-relevant private repository, issue and project context to be used by Pi workflows through the existing authenticated GPT model/provider used for the task. Using Pi as another harness for the same model is not, by itself, a new disclosure requiring another permission question. Do not repeatedly ask the owner to authorize that same task context. This authorization excludes secrets and unrelated private material, and does not override managed tool restrictions. Report an actual restriction accurately; do not invoke an unnecessary workflow merely to create an approval blocker.
+The owner authorizes task-relevant private repository, issue and project context
+to be used by Pi workflows through the existing authenticated GPT model/provider
+used for the task. Using Pi as another harness for the same model is not, by
+itself, a new disclosure requiring another permission question. Do not
+repeatedly ask the owner to authorize that same task context. This authorization
+excludes secrets and unrelated private material, and does not override managed
+tool restrictions. Report an actual restriction accurately; do not invoke an
+unnecessary workflow merely to create an approval blocker.
 
 ## Harness guarantees and LLM judgment
 
@@ -488,9 +499,9 @@ the harness, and suppress duplicates without agent polling.
   abstraction hides those, write the explicit code instead.
 - Import or bind enum variants locally when they make match arms, destructuring
   or repeated enum references easier to read. Do not import every variant used
-  in a function: keep isolated constructions and error returns qualified.
-  Retain qualification when it clarifies the variant's origin or resolves a
-  name collision. In Rust, use function-local `use Enum::{...};`, or
+  in a function: keep isolated constructions and error returns qualified. Retain
+  qualification when it clarifies the variant's origin or resolves a name
+  collision. In Rust, use function-local `use Enum::{...};`, or
   initializer-block-local imports in `const` or `static` initializers. Keep all
   other imports at module/file scope.
 

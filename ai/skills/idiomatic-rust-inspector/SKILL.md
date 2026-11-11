@@ -152,9 +152,9 @@ consumer evidence rather than mechanically removing every `pub`.
 
 ### Import scope
 
-Import enum variants locally when they make match arms, destructuring or repeated
-enum references easier to read. Do not import every variant used in a function:
-keep isolated constructions and error returns qualified, such as
+Import enum variants locally when they make match arms, destructuring or
+repeated enum references easier to read. Do not import every variant used in a
+function: keep isolated constructions and error returns qualified, such as
 `SignedArtifactError::HashMismatch`. Retain qualification when it clarifies the
 variant's origin or resolves a name collision. Use function-local
 `use Enum::{...};`; in `const` or `static` initializers, use initializer-local
