@@ -177,25 +177,6 @@ export const parseStoredLoop: (
   return undefined
 }
 
-export const migrateLegacyReloadLoop: (
-  condition: string,
-  now: number,
-) => ActiveLoopState | undefined = (condition, now) => {
-  if (!/^\d+[smhd]\s+\/reload(?:\s|$)/i.test(condition.trim())) return undefined
-  const parsed = parseLoopCommandResult(condition)
-  if (!parsed.ok || parsed.value.action !== "set") return undefined
-  const nextRunAt = now + DEFAULT_LOOP_INTERVAL_MS
-  if (!isTimestamp(now) || !isTimestamp(nextRunAt)) return undefined
-  return {
-    status: "active",
-    instruction: parsed.value.instruction,
-    intervalMs: DEFAULT_LOOP_INTERVAL_MS,
-    startedAt: now,
-    nextRunAt,
-    runs: 0,
-  }
-}
-
 export const nextLoopRunAt = (
   state: Pick<ActiveLoopState, "intervalMs" | "jitterMs">,
   now: number,

@@ -7,7 +7,6 @@ import {
   DEFAULT_LOOP_INTERVAL_MS,
   formatLoopStatus,
   loopDispatch,
-  migrateLegacyReloadLoop,
   nextLoopRunAt as nextLoopRunAtEffect,
   parseLoopCommand as parseLoopCommandEffect,
   parseStoredLoop,
@@ -151,25 +150,6 @@ test("multiline instruction length excludes the parsed cadence prefix", () => {
     () => parseLoopCommand(`5m ${instruction}a`),
     /at most 4,000 characters/i,
   )
-})
-
-test("legacy reload goals migrate at the user's corrected hourly cadence", () => {
-  assert.deepEqual(
-    migrateLegacyReloadLoop(
-      "15m /reload to get latest ~/.config updated",
-      5_000,
-    ),
-    {
-      status: "active",
-      instruction: "/reload to get latest ~/.config updated",
-      intervalMs: DEFAULT_LOOP_INTERVAL_MS,
-      startedAt: 5_000,
-      nextRunAt: 3_605_000,
-      runs: 0,
-    },
-  )
-  assert.equal(migrateLegacyReloadLoop("finish all tests", 5_000), undefined)
-  assert.equal(migrateLegacyReloadLoop("/reload once", 5_000), undefined)
 })
 
 test("infinite loops advance without an achieved terminal state", () => {
