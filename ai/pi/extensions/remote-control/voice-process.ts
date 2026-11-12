@@ -1,6 +1,8 @@
 import { spawn } from "node:child_process"
 import { rm } from "node:fs/promises"
 import * as Effect from "effect/Effect"
+import * as Cause from "effect/Cause"
+import * as Exit from "effect/Exit"
 
 import { VoiceTranscriptionError } from "./voice.ts"
 
@@ -99,6 +101,36 @@ const defaultCleanupDependencies: VoiceCleanupDependencies = {
   remove: directory => rm(directory, { recursive: true, force: true }),
   sleep: delayMs => new Promise(resolve => setTimeout(resolve, delayMs)),
 }
+
+export const withVoiceDirectory = <A, E, R>(
+  acquire: Effect.Effect<string, VoiceTranscriptionError>,
+  use: (directory: string) => Effect.Effect<A, E, R>,
+  cleanup: (
+    directory: string,
+  ) => Effect.Effect<void, VoiceTranscriptionError> = directory =>
+    cleanupVoiceDirectory(directory),
+): Effect.Effect<A, E | VoiceTranscriptionError, R> =>
+  Effect.uninterruptibleMask(restore =>
+    Effect.gen(function* () {
+      const directory = yield* acquire
+      const admitted = yield* Effect.exit(restore(Effect.void))
+      // In-flight filesystem and process operations must settle before release.
+      const used: Exit.Exit<A, E> = Exit.isFailure(admitted)
+        ? Exit.failCause(admitted.cause)
+        : yield* Effect.exit(Effect.suspend(() => use(directory)))
+      const cleaned = yield* Effect.exit(
+        Effect.suspend(() => cleanup(directory)),
+      )
+
+      if (Exit.isFailure(used) && Exit.isFailure(cleaned))
+        return yield* Effect.failCause(
+          Cause.sequential(used.cause, cleaned.cause),
+        )
+      if (Exit.isFailure(used)) return yield* Effect.failCause(used.cause)
+      if (Exit.isFailure(cleaned)) return yield* Effect.failCause(cleaned.cause)
+      return used.value
+    }),
+  )
 
 export const cleanupVoiceDirectory = (
   directory: string,

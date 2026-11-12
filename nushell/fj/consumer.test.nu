@@ -75,7 +75,7 @@ def verify-consumer [fixture: path] {
     } | complete)
     assert equal $exports.exit_code 0 $exports.stderr
     let names = ($exports.stdout | from json)
-    for name in ["fj clanker" "fj take" "fj check" "fj md sync" "fj infra provision" "fj cheatsheet"] {
+    for name in ["fj clanker" "fj take" "fj check" "fj md sync" "fj cheatsheet"] {
       assert ($name in $names) $"local command lost: ($name)"
     }
     print "ok: local command exports preserved"

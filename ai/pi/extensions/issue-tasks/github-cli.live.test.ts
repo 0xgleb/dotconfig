@@ -14,7 +14,6 @@ test(
     const reader = createGitHubCliReader({
       cwd: fileURLToPath(new URL("../../../../", import.meta.url)),
     })
-
     const page = await Effect.runPromise(
       reader.list({
         repository: "0xgleb/dotconfig",
@@ -23,7 +22,6 @@ test(
       }),
       { signal: t.signal },
     )
-
     assert.equal(page.repository, "0xgleb/dotconfig")
     assert.equal(page.issues.length <= 1, true)
     assert.equal(
@@ -38,7 +36,6 @@ test(
       }),
       { signal: t.signal },
     )
-
     assert.equal(issue.issue.repository, "0xgleb/dotconfig")
     assert.equal(issue.issue.number, 86)
     assert.equal(issue.detail !== null, true)

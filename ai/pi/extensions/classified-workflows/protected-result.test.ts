@@ -247,7 +247,7 @@ test("tool-result middleware sanitizes before any classifier input", () => {
   const source = readFileSync(new URL("./index.ts", import.meta.url), "utf8")
   const start = source.indexOf('pi.on("tool_result"')
   const end = source.indexOf(
-    'pi.registerTool({\n    name: "review_duty"',
+    'pi.registerTool({\n    name: "artifact_provenance"',
     start,
   )
   assert.ok(start >= 0 && end > start)

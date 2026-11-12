@@ -39,11 +39,10 @@ changes provider or model.
   be presented or persisted as a provider reset.
 - Provider-call reservations carry the authenticated Pi session id and cwd.
   Durable per-agent intervention timestamps determine a smoothly decaying
-  allocation weight with a nonzero progress floor. ST0x sessions receive a
-  configured 2× base weight; role names alone never grant that weight. A direct
-  owner turn updates its own agent, while a successful owner-directed registry
-  delegation records the intervention against the receiving lease owner rather
-  than the intermediary.
+  allocation weight with a nonzero progress floor. A direct owner turn updates
+  its own agent, while a successful owner-directed registry delegation records
+  the intervention against the receiving lease owner rather than the
+  intermediary.
 - At or below the hard reserve, autonomous OpenAI calls and workflow token
   grants fail closed. Above reserve, the sample-derived token bucket is the
   primary control; recurring wake cadence remains only a reconciliation
@@ -71,9 +70,8 @@ changes provider or model.
 - Expired reservations cannot create free budget or erase late provider usage.
 - Malformed, negative, overflowing, forged-provider, missing-agent, and
   stale-cycle reservation inputs fail closed.
-- Agent allocation decays toward a nonzero floor, preserves FIFO aging inside
-  weighted contention, and gives equal-recency ST0x agents exactly twice another
-  agent's allocation.
+- Agent allocation decays toward a nonzero floor and preserves FIFO aging inside
+  weighted contention.
 - An owner-directed registry relay updates the receiving agent's intervention
   timestamp; ordinary agent coordination and failed or unowned delegation do not
   invent an owner intervention.

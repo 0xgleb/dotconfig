@@ -8,17 +8,28 @@ const read = (path: string): string =>
 const skill = read("../skills/gitbutler/SKILL.md")
 const reference = read("../skills/gitbutler/references/reference.md")
 
-test("GitButler pick documentation preserves 0.22.0 stack-top semantics", () => {
-  for (const document of [skill, reference]) {
+test("GitButler pick guidance describes explicit branch and relative placement", () => {
+  const skillStart = skill.indexOf("- Copy commits")
+  const referenceStart = reference.indexOf("### but pick <SOURCES>...")
+  assert.ok(skillStart >= 0, "missing skill pick guidance")
+  assert.ok(referenceStart >= 0, "missing reference pick guidance")
+
+  const sections = [
+    skill.slice(skillStart, skill.indexOf("- Move committed", skillStart)),
+    reference.slice(referenceStart).split(/\n### /)[0],
+  ]
+
+  for (const section of sections) {
+    const normalized = section.replace(/\s+/g, " ")
     assert.match(
-      document,
-      /targets? an applied \*\*stack\*\*|selects an applied stack/,
+      normalized,
+      /on that applied branch's tip|on the branch BRANCH/,
     )
-    assert.match(document, /first\/top branch|stack's top branch/)
     assert.match(
-      document,
-      /Naming a lower branch[^.]*not|desired destination is lower/,
+      normalized,
+      /new independent branch|created as an unstacked branch/,
     )
-    assert.match(document, /do not use `but undo`/i)
+    assert.match(normalized, /--above/)
+    assert.match(normalized, /--below/)
   }
 })

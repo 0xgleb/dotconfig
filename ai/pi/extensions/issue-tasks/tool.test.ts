@@ -1,9 +1,8 @@
 import assert from "node:assert/strict"
 import { execFileSync } from "node:child_process"
 import { mkdirSync, mkdtempSync, realpathSync, rmSync } from "node:fs"
-import { createRequire } from "node:module"
 import { dirname, join } from "node:path"
-import test, { mock } from "node:test"
+import test, { after, mock } from "node:test"
 import { DatabaseSync } from "node:sqlite"
 import { fileURLToPath, pathToFileURL } from "node:url"
 import { Deferred, Effect, Either, Option, Schema } from "effect"
@@ -26,54 +25,72 @@ import {
 } from "./issue-view.ts"
 import { createGitHubCliReader } from "./github-cli.ts"
 import type { IssueTaskTool, TaskToolOptions } from "./tool.ts"
+import { registryStateRoot } from "../agent-registry/paths.ts"
 
 const piExecutable = realpathSync(
   execFileSync("which", ["pi"], { encoding: "utf8" }).trim(),
 )
-
 const hostRoot = join(
   dirname(dirname(piExecutable)),
   "lib/node_modules/pi-monorepo",
 )
-
-const host = createRequire(join(hostRoot, "package.json"))
-
-const { createJiti } = await import(
-  pathToFileURL(join(hostRoot, "dist/core/extensions/jiti-loader.js")).href
-)
-
-const loader = createJiti(import.meta.url, {
-  alias: { typebox: host.resolve("typebox") },
-  moduleCache: false,
-  fsCache: false,
+// Jiti documents this non-secret switch; keep every SDK load inside this test
+// process from leaving transform files outside its owned fixture directories.
+const previousFsCache = process.env.JITI_FS_CACHE
+process.env.JITI_FS_CACHE = "false"
+after(() => {
+  if (previousFsCache === undefined) delete process.env.JITI_FS_CACHE
+  else process.env.JITI_FS_CACHE = previousFsCache
 })
 
-const tools: typeof import("./tool.ts") = await loader.import(
-  fileURLToPath(new URL("./tool.ts", import.meta.url)),
+const sdk = await import(
+  pathToFileURL(join(hostRoot, "dist/bundle/index.js")).href
+)
+const bridgeParent = fileURLToPath(
+  new URL("../../../../.tmp/task-renderer-tests/", import.meta.url),
+)
+mkdirSync(bridgeParent, { recursive: true, mode: 0o700 })
+const bridgeRoot = mkdtempSync(join(bridgeParent, "sdk-host-"))
+const eventBus = sdk.createEventBus()
+const captured: unknown[] = []
+const unsubscribe = eventBus.on("issue-task-test-host", (value: unknown) =>
+  captured.push(value),
 )
 
-const { validateToolArguments } = await import(
-  pathToFileURL(
-    join(
-      hostRoot,
-      "node_modules/@earendil-works/pi-ai/dist/utils/validation.js",
-    ),
-  ).href
-)
+try {
+  const loaded = await sdk.discoverAndLoadExtensions(
+    [fileURLToPath(new URL("./test-fixtures/sdk-host.ts", import.meta.url))],
+    bridgeRoot,
+    bridgeRoot,
+    eventBus,
+  )
+  assert.deepEqual(loaded.errors, [])
+  assert.equal(loaded.extensions.length, 1)
+  assert.equal(captured.length, 1)
+} finally {
+  unsubscribe()
+  rmSync(bridgeRoot, { recursive: true })
+}
+
+const bridge = captured[0] as {
+  readonly version: string
+  readonly visibleWidth: (text: string) => number
+  readonly tools: typeof import("./tool.ts")
+  readonly validateToolArguments: (typeof import("@earendil-works/pi-ai"))["validateToolArguments"]
+}
+assert.equal(bridge.version, sdk.VERSION)
+const { tools, validateToolArguments } = bridge
 
 const rawIssue = { repository: "0xgleb/dotconfig", number: 1 }
-
 const fixtureParent = fileURLToPath(
   new URL("../../../../.tmp/issue-plans-tests/", import.meta.url),
 )
-
 const fixture = async (
   work: (store: SqliteTaskStore) => Promise<void>,
   options: Omit<SqliteTaskStoreOptions, "databasePath"> = {},
 ) => {
   mkdirSync(fixtureParent, { recursive: true, mode: 0o700 })
   const root = mkdtempSync(join(fixtureParent, "tool-"))
-
   try {
     const store = await Effect.runPromise(
       openSqliteTaskStore({
@@ -81,7 +98,6 @@ const fixture = async (
         databasePath: join(root, "tasks.sqlite"),
       }),
     )
-
     try {
       await work(store)
     } finally {
@@ -91,14 +107,11 @@ const fixture = async (
     rmSync(root, { recursive: true })
   }
 }
-
 const nativeContext = {
   sessionManager: { getSessionId: () => "fixture-reader" },
 } as unknown as Parameters<IssueTaskTool["execute"]>[4]
-
 const register = (options: TaskToolOptions): IssueTaskTool => {
   const captured: unknown[] = []
-
   const tool = tools.registerTaskTool(
     {
       registerTool: (definition: unknown) => {
@@ -109,10 +122,8 @@ const register = (options: TaskToolOptions): IssueTaskTool => {
   )
   assert.deepEqual(captured, [tool])
   assert.equal(tool.name, "task")
-
   return tool
 }
-
 const invoke = (
   tool: IssueTaskTool,
   args: unknown,
@@ -125,7 +136,6 @@ const invoke = (
     name: "task",
     arguments: args,
   })
-
   return tool.execute(id, validated, signal, undefined, nativeContext)
 }
 
@@ -134,7 +144,6 @@ const issue = () => {
   assert.ok(Either.isRight(decoded))
   return decoded.right
 }
-
 const ordinaryOptions = (store: SqliteTaskStore): TaskToolOptions => ({
   store,
   contextForCall: call =>
@@ -146,7 +155,6 @@ const ordinaryOptions = (store: SqliteTaskStore): TaskToolOptions => ({
     }),
   renderOutput: outcome => Effect.succeed(JSON.stringify(outcome)),
 })
-
 const addRequest = {
   action: "apply",
   issues: [rawIssue],
@@ -159,13 +167,11 @@ const listIssuesQuery = {
   page: { limit: 1 },
   tasks: { limit: 1 },
 }
-
 const getIssueQuery = {
   issue: rawIssue,
   related: { limit: 1 },
   tasks: { page: { limit: 1 } },
 }
-
 const remoteIssue = {
   ...rawIssue,
   title: "Fixture issue",
@@ -174,7 +180,6 @@ const remoteIssue = {
   updatedAt: "2026-10-20T20:14:47Z",
   repository: { nameWithOwner: rawIssue.repository },
 }
-
 const listIssuesResponse = JSON.stringify({
   data: {
     repository: {
@@ -186,7 +191,6 @@ const listIssuesResponse = JSON.stringify({
     },
   },
 })
-
 const getIssueResponse = JSON.stringify({
   data: {
     repository: {
@@ -210,14 +214,12 @@ const getIssueResponse = JSON.stringify({
 
 // Same source-owned non-secret live-read opt-in as github-cli.live.test.ts.
 const liveReadEnabled = process.env.PI_ISSUE_TASK_GITHUB_LIVE_READ_TESTS === "1"
-
 test(
   "actual SDK task issue reads compose the default GitHub CLI and isolated SQLite",
   { skip: !liveReadEnabled, timeout: 45_000 },
   async t =>
     fixture(async store => {
       let grants = 0
-
       const options = ordinaryOptions(store)
       const tool = register({
         ...options,
@@ -236,7 +238,6 @@ test(
             `Outcome ${outcome.kind}; full data retained in details.`,
           ),
       })
-
       const target = { repository: rawIssue.repository, number: 86 }
       const seeded = await invoke(
         tool,
@@ -255,11 +256,9 @@ test(
         "native-live-seed",
         t.signal,
       )
-
       assert.equal(seeded.details.outcome.kind, "saved")
       if (seeded.details.outcome.kind !== "saved")
         assert.fail("Expected isolated fixture write")
-
       const created = seeded.details.outcome.result.created[0]
       assert.ok(created)
       assert.equal(grants, 1)
@@ -274,7 +273,6 @@ test(
       assert.equal(listed.details.outcome.kind, "issue_list")
       if (listed.details.outcome.kind !== "issue_list")
         assert.fail("Expected bounded native issue list")
-
       const listView: IssueTaskListView = listed.details.outcome.view
       assert.equal(listView.repository, rawIssue.repository)
       assert.equal(listView.issues.length <= 1, true)
@@ -294,7 +292,6 @@ test(
       assert.equal(found.details.outcome.kind, "issue_detail")
       if (found.details.outcome.kind !== "issue_detail")
         assert.fail("Expected qualified native issue detail")
-
       const view: IssueTaskDetailView = found.details.outcome.view
       assert.equal(view.issue.repository, target.repository)
       assert.equal(view.issue.number, 86)
@@ -310,10 +307,8 @@ test(
 test("registered task listIssues joins real issue decoding and SQLite without mutation grants", async () =>
   fixture(async store => {
     await invoke(register(ordinaryOptions(store)), addRequest, "seed")
-
     let grants = 0
     const requests: GitHubIssueQueryExecution[] = []
-
     const issueReader = createIssueTaskReader({
       github: createGitHubIssueReader({
         executeQuery: request =>
@@ -324,7 +319,6 @@ test("registered task listIssues joins real issue decoding and SQLite without mu
       }),
       tasks: store,
     })
-
     const options = ordinaryOptions(store)
     const tool = register({
       ...options,
@@ -341,7 +335,6 @@ test("registered task listIssues joins real issue decoding and SQLite without mu
     assert.equal(result.details.outcome.kind, "issue_list")
     if (result.details.outcome.kind !== "issue_list")
       assert.fail("Expected qualified issue list")
-
     assert.equal(
       result.details.outcome.view.issues[0]?.metadata.issue.number,
       1,
@@ -357,9 +350,7 @@ test("registered task listIssues joins real issue decoding and SQLite without mu
 test("registered task getIssue retains body, qualified task page and independent relation arguments", async () =>
   fixture(async store => {
     await invoke(register(ordinaryOptions(store)), addRequest, "seed")
-
     const requests: GitHubIssueQueryExecution[] = []
-
     const tool = register({
       ...ordinaryOptions(store),
       issueReader: createIssueTaskReader({
@@ -387,7 +378,6 @@ test("registered task getIssue retains body, qualified task page and independent
     assert.equal(result.details.outcome.kind, "issue_detail")
     if (result.details.outcome.kind !== "issue_detail")
       assert.fail("Expected issue detail")
-
     assert.deepEqual(result.details.outcome.view.issue, issue())
     assert.equal(
       result.details.outcome.view.detail?.body,
@@ -411,7 +401,6 @@ test("registered task explicitly reports missing issue-reader capability while l
       assert.equal(result.details.outcome.kind, "failed")
       if (result.details.outcome.kind !== "failed")
         assert.fail("Expected missing host capability")
-
       assert.equal(result.details.outcome.code, "host_unavailable")
     }
     const local = await invoke(tool, {
@@ -453,7 +442,6 @@ test("actual SDK describes strict issue query shapes without widening local task
 test("registered issue actions reject excess root fields and aggregate budgets before any read", async () =>
   fixture(async store => {
     let calls = 0
-
     const options = ordinaryOptions(store)
     const tool = register({
       ...options,
@@ -498,7 +486,6 @@ test("registered issue actions reject excess root fields and aggregate budgets b
       assert.equal(result.details.outcome.kind, "failed")
       if (result.details.outcome.kind !== "failed")
         assert.fail("Expected semantic request rejection")
-
       assert.equal(result.details.outcome.code, "invalid_request")
     }
     assert.equal(calls, 0)
@@ -507,7 +494,6 @@ test("registered issue actions reject excess root fields and aggregate budgets b
 test("registered issue renderer failure retains qualified unavailable metadata and existing local tasks", async () =>
   fixture(async store => {
     await invoke(register(ordinaryOptions(store)), addRequest, "seed")
-
     const tool = register({
       ...ordinaryOptions(store),
       issueReader: createIssueTaskReader({
@@ -531,7 +517,6 @@ test("registered issue renderer failure retains qualified unavailable metadata a
     assert.equal(result.details.outcome.kind, "issue_detail")
     if (result.details.outcome.kind !== "issue_detail")
       assert.fail("Expected preserved detail outcome")
-
     assert.deepEqual(result.details.outcome.view.issue, issue())
     assert.equal(result.details.outcome.view.detail, null)
     assert.equal(result.details.outcome.view.tasks?.tasks.length, 1)
@@ -562,7 +547,6 @@ test("registered issue list overflow keeps the full view and a bounded qualified
     assert.equal(result.details.outcome.kind, "issue_list")
     if (result.details.outcome.kind !== "issue_list")
       assert.fail("Expected preserved list outcome")
-
     assert.equal(result.details.outcome.view.issues.length, 1)
     assert.equal(result.details.output, "unavailable")
     const content = result.content[0]
@@ -574,7 +558,6 @@ test("registered issue list overflow keeps the full view and a bounded qualified
 test("pre-aborted registered issue reads make no remote call or mutation-context request", async () =>
   fixture(async store => {
     let calls = 0
-
     const options = ordinaryOptions(store)
     const tool = register({
       ...options,
@@ -622,7 +605,6 @@ test(
       })
       let released = false
       let grants = 0
-
       const options = ordinaryOptions(store)
       const tool = register({
         ...options,
@@ -661,7 +643,6 @@ test(
         )
         controller.abort()
         const result = await pending
-
         assert.equal(result.details.outcome.kind, "interrupted")
         assert.equal(result.isError, false)
         assert.equal(released, true)
@@ -676,9 +657,7 @@ test(
 test("registered task apply uses host identity, replays one native request and supports qualified get", async () =>
   fixture(async store => {
     const options = ordinaryOptions(store)
-
     const nativeCalls: unknown[] = []
-
     const tool = register({
       ...options,
       contextForCall: call => {
@@ -697,7 +676,6 @@ test("registered task apply uses host identity, replays one native request and s
       replay.details.outcome.kind !== "saved"
     )
       assert.fail("Expected saved receipts")
-
     assert.equal(first.details.outcome.result.receipt, "committed")
     assert.equal(replay.details.outcome.result.receipt, "replayed")
     assert.deepEqual(
@@ -720,7 +698,6 @@ test("registered task apply uses host identity, replays one native request and s
     assert.equal(found.details.outcome.kind, "task")
     if (found.details.outcome.kind !== "task")
       assert.fail("Expected task detail")
-
     assert.equal(found.details.outcome.detail.task.id, created.id)
     assert.deepEqual(found.details.outcome.detail.dependsOn, [])
     assert.equal(
@@ -744,7 +721,6 @@ for (const field of [
   test(`actual SDK rejects caller authority or legacy metadata: ${field}`, async () =>
     fixture(async store => {
       let hostCalls = 0
-
       const options = ordinaryOptions(store)
       const tool = register({
         ...options,
@@ -767,7 +743,6 @@ for (const field of [
 test("registered task validates per-action fields before host context or store effects", async () =>
   fixture(async store => {
     let hostCalls = 0
-
     const options = ordinaryOptions(store)
     const tool = register({
       ...options,
@@ -821,10 +796,8 @@ test("registered task distinguishes ordinary worker operations from explicit pri
     assert.equal(created.details.outcome.kind, "saved")
     if (created.details.outcome.kind !== "saved")
       assert.fail("Expected saved addition")
-
     const task = created.details.outcome.result.created[0]
     assert.ok(task)
-
     const statusRequest = (status: string) => ({
       action: "apply",
       issues: [rawIssue],
@@ -846,9 +819,7 @@ test("registered task distinguishes ordinary worker operations from explicit pri
     assert.equal(denied.details.outcome.kind, "failed")
     if (denied.details.outcome.kind !== "failed")
       assert.fail("Expected denied transition")
-
     assert.equal(denied.details.outcome.code, "unauthorized")
-
     const granted = register({
       ...options,
       contextForCall: call =>
@@ -908,17 +879,14 @@ test("post-commit renderer failure preserves saved outcome and same-request repl
       replay.details.outcome.kind !== "saved"
     )
       assert.fail("Expected durable receipts")
-
     assert.equal(first.details.output, "unavailable")
     assert.equal(replay.details.outcome.result.receipt, "replayed")
-
     const text = first.content
       .filter(part => part.type === "text")
       .map(part => part.text)
       .join("\n")
     assert.ok(text.includes(first.details.outcome.result.batchId))
     assert.ok(!text.includes("Private rendering diagnostic"))
-
     const page = await Effect.runPromise(
       store.readTasks(issue(), { limit: 100 }),
     )
@@ -937,7 +905,6 @@ for (const output of ["x".repeat(50 * 1_024 + 1), "x\n".repeat(2_001)]) {
 
       assert.equal(result.details.outcome.kind, "saved")
       assert.equal(result.details.output, "unavailable")
-
       const text = result.content
         .filter(part => part.type === "text")
         .map(part => part.text)
@@ -950,7 +917,6 @@ for (const output of ["x".repeat(50 * 1_024 + 1), "x\n".repeat(2_001)]) {
 test("pre-aborted task execution performs no host resolution or task write", async () =>
   fixture(async store => {
     let hostCalls = 0
-
     const options = ordinaryOptions(store)
     const tool = register({
       ...options,
@@ -1010,7 +976,6 @@ test(
         assert.equal(result.details.outcome.kind, "unconfirmed")
         if (result.details.outcome.kind !== "unconfirmed")
           assert.fail("Expected explicit unconfirmed write")
-
         assert.equal(result.details.outcome.stop, "interrupted")
         assert.deepEqual(result.details.outcome.invocation, {
           toolCallId: "interrupt-write",
@@ -1035,18 +1000,14 @@ test(
 test("signal abort at successful COMMIT preserves unconfirmed invocation and durable replay", async () =>
   fixture(async store => {
     const tool = register(ordinaryOptions(store))
-
     const controller = new AbortController()
-
     const exec = DatabaseSync.prototype.exec
     const interception = mock.method(
       DatabaseSync.prototype,
       "exec",
       function (this: DatabaseSync, query: string) {
         const result = Reflect.apply(exec, this, [query])
-
         if (query === "COMMIT") controller.abort()
-
         return result
       },
     )
@@ -1060,7 +1021,6 @@ test("signal abort at successful COMMIT preserves unconfirmed invocation and dur
       assert.equal(result.details.outcome.kind, "unconfirmed")
       if (result.details.outcome.kind !== "unconfirmed")
         assert.fail("Expected explicit unconfirmed write")
-
       assert.equal(result.details.outcome.stop, "interrupted")
       assert.deepEqual(result.details.outcome.invocation, {
         toolCallId: "commit-abort",
@@ -1076,9 +1036,7 @@ test("signal abort at successful COMMIT preserves unconfirmed invocation and dur
     assert.equal(replay.details.outcome.kind, "saved")
     if (replay.details.outcome.kind !== "saved")
       assert.fail("Expected durable original receipt")
-
     assert.equal(replay.details.outcome.result.receipt, "replayed")
-
     const page = await Effect.runPromise(store.readTasks(issue(), { limit: 1 }))
     assert.ok(Option.isSome(page))
     assert.equal(page.value.tasks.length, 1)
@@ -1089,9 +1047,7 @@ test("typed unknown completion is projected without raw cause or automatic retry
     const batchId = Schema.decodeUnknownSync(MutationBatchIdSchema)(
       "aaaaaaaa-aaaa-4aaa-8aaa-aaaaaaaaaaaa",
     )
-
     let calls = 0
-
     const port: SqliteTaskStore = {
       ...store,
       apply: () => {
@@ -1113,7 +1069,6 @@ test("typed unknown completion is projected without raw cause or automatic retry
 
     assert.equal(result.details.outcome.kind, "unknown")
     assert.equal(calls, 1)
-
     const text = result.content
       .filter(part => part.type === "text")
       .map(part => part.text)
@@ -1142,7 +1097,6 @@ test("host unavailability is a typed failure without task writes", async () =>
     assert.equal(result.details.outcome.kind, "failed")
     if (result.details.outcome.kind !== "failed")
       assert.fail("Expected host failure")
-
     assert.equal(result.details.outcome.code, "host_unavailable")
     assert.ok(
       Option.isNone(
@@ -1200,7 +1154,6 @@ for (const stage of ["host", "store"] as const) {
         stage === "store"
           ? { ...store, apply: () => Effect.die("Private defect detail") }
           : store
-
       const options = ordinaryOptions(port)
       const tool = register({
         ...options,
@@ -1216,13 +1169,11 @@ for (const stage of ["host", "store"] as const) {
         assert.equal(result.details.outcome.kind, "failed")
         if (result.details.outcome.kind !== "failed")
           assert.fail("Expected pre-write failure")
-
         assert.equal(result.details.outcome.code, "execution_defect")
       } else {
         assert.equal(result.details.outcome.kind, "unconfirmed")
         if (result.details.outcome.kind !== "unconfirmed")
           assert.fail("Expected unconfirmed write")
-
         assert.equal(result.details.outcome.stop, "execution_defect")
         assert.deepEqual(result.details.outcome.invocation, {
           toolCallId: "defect-call",
@@ -1244,7 +1195,6 @@ test("qualified get misses retain the requested task even when the issue exists"
     })
     const seeded = await invoke(tool, addRequest, "existing-issue")
     assert.equal(seeded.details.outcome.kind, "saved")
-
     const id = "bbbbbbbb-bbbb-4bbb-8bbb-bbbbbbbbbbbb"
 
     const result = await invoke(tool, { action: "get", issue: rawIssue, id })
@@ -1253,7 +1203,6 @@ test("qualified get misses retain the requested task even when the issue exists"
       kind: "missing_task",
       target: { issue: issue(), id },
     })
-
     const text = result.content
       .filter((part: { type: string }) => part.type === "text")
       .map((part: { type: string; text?: string }) => part.text ?? "")
@@ -1270,7 +1219,6 @@ test("qualified get misses retain the requested task even when the issue exists"
 test("actual SDK exposes and validates operation and qualified-reference shapes", async () =>
   fixture(async store => {
     const tool = register(ordinaryOptions(store))
-
     const target = {
       issue: rawIssue,
       task: { kind: "existing", id: "aaaaaaaa-aaaa-4aaa-8aaa-aaaaaaaaaaaa" },
@@ -1292,9 +1240,7 @@ test("actual SDK exposes and validates operation and qualified-reference shapes"
 test("actual SDK executes all documented mutation shapes including creation references", async () =>
   fixture(async store => {
     const tool = register(ordinaryOptions(store))
-
     const destination = { repository: "other/repo", number: 1 }
-
     const target = { issue: rawIssue, task: { kind: "added", key: "one" } }
 
     const result = await invoke(tool, {
@@ -1312,7 +1258,6 @@ test("actual SDK executes all documented mutation shapes including creation refe
     assert.equal(result.details.outcome.kind, "saved")
     if (result.details.outcome.kind !== "saved")
       assert.fail("Expected saved batch")
-
     const created = result.details.outcome.result.created[0]
     assert.ok(created)
     const found = await invoke(tool, {
@@ -1324,7 +1269,6 @@ test("actual SDK executes all documented mutation shapes including creation refe
     assert.equal(found.details.outcome.kind, "task")
     if (found.details.outcome.kind !== "task")
       assert.fail("Expected transferred task")
-
     assert.equal(found.details.outcome.detail.task.text, "Edited")
     assert.equal(found.details.outcome.detail.task.blocker, "Blocked")
     assert.equal(found.details.outcome.detail.task.status, "doing")
@@ -1363,7 +1307,6 @@ for (const failure of ["defect", "interrupt"] as const) {
         assert.equal(result.details.output, "unavailable")
         assert.notEqual(result.isError, true)
         assert.ok(!JSON.stringify(result).includes("Private renderer defect"))
-
         const replay = await invoke(
           register(options),
           addRequest,
@@ -1372,7 +1315,6 @@ for (const failure of ["defect", "interrupt"] as const) {
         assert.equal(replay.details.outcome.kind, "saved")
         if (replay.details.outcome.kind !== "saved")
           assert.fail("Expected saved replay")
-
         assert.equal(replay.details.outcome.result.receipt, "replayed")
       }),
   )
@@ -1410,10 +1352,8 @@ test("actual SDK executes readMany without mutation grants or live workers", asy
 test("actual SDK readMany retains each query filter and bounds failures before store access", async () =>
   fixture(async store => {
     await invoke(register(ordinaryOptions(store)), addRequest, "seed-many")
-
     let storeCalls = 0
     let hostCalls = 0
-
     const tool = register({
       ...ordinaryOptions(store),
       store: {
@@ -1433,7 +1373,6 @@ test("actual SDK readMany retains each query filter and bounds failures before s
         )
       },
     })
-
     const query = { issue: rawIssue, page: { limit: 1 } }
     const result = await invoke(tool, {
       action: "readMany",
@@ -1445,13 +1384,11 @@ test("actual SDK readMany retains each query filter and bounds failures before s
     assert.equal(result.details.outcome.kind, "pages")
     if (result.details.outcome.kind !== "pages")
       assert.fail("Expected qualified pages")
-
     assert.deepEqual(
       result.details.outcome.pages.map(page => page.page?.tasks.length),
       [0, 1],
     )
     assert.equal(storeCalls, 1)
-
     const rejected = await invoke(tool, {
       action: "readMany",
       queries: [
@@ -1462,7 +1399,6 @@ test("actual SDK readMany retains each query filter and bounds failures before s
     assert.equal(rejected.details.outcome.kind, "failed")
     if (rejected.details.outcome.kind !== "failed")
       assert.fail("Expected invalid query budget")
-
     assert.equal(rejected.details.outcome.code, "invalid_queries")
     assert.equal(storeCalls, 1)
     assert.equal(hostCalls, 0)
@@ -1484,6 +1420,7 @@ test("readMany output failure retains complete qualified results without failed-
     assert.deepEqual(result.details, {
       outcome: { kind: "pages", pages: [{ issue: issue(), page: null }] },
       output: "unavailable",
+      invocation: { toolCallId: "fixture-call", sessionId: "fixture-reader" },
     })
     assert.notEqual(result.isError, true)
     assert.ok(!JSON.stringify(result).includes("Private output failure"))
@@ -1492,9 +1429,7 @@ test("readMany output failure retains complete qualified results without failed-
 test("actual SDK forwards filtered issue reads without resolving mutation grants", async () =>
   fixture(async store => {
     await invoke(register(ordinaryOptions(store)), addRequest, "seed-filter")
-
     let hostCalls = 0
-
     const tool = register({
       ...ordinaryOptions(store),
       contextForCall: () => {
@@ -1518,7 +1453,6 @@ test("actual SDK forwards filtered issue reads without resolving mutation grants
     assert.equal(result.details.outcome.kind, "page")
     if (result.details.outcome.kind !== "page")
       assert.fail("Expected filtered page")
-
     assert.deepEqual(result.details.outcome.page.tasks, [])
     assert.equal(result.details.outcome.page.revision, 1)
     assert.equal(hostCalls, 0)
@@ -1527,7 +1461,6 @@ test("actual SDK forwards filtered issue reads without resolving mutation grants
 test("actual SDK and domain decoder reject unsupported filter fields and actions before effects", async () =>
   fixture(async store => {
     let hostCalls = 0
-
     const options = ordinaryOptions(store)
     const tool = register({
       ...options,
@@ -1562,7 +1495,6 @@ test("actual SDK and domain decoder reject unsupported filter fields and actions
       assert.equal(result.details.outcome.kind, "failed")
       if (result.details.outcome.kind !== "failed")
         assert.fail("Expected invalid request")
-
       assert.equal(result.details.outcome.code, "invalid_request")
     }
     assert.equal(hostCalls, 0)
@@ -1570,6 +1502,185 @@ test("actual SDK and domain decoder reject unsupported filter fields and actions
       Option.isNone(
         await Effect.runPromise(store.readTasks(issue(), { limit: 1 })),
       ),
+    )
+  }))
+
+test("installed SDK reload registers and renders persisted task state through the real extension entry", async () => {
+  const root = mkdtempSync(join(bridgeParent, "registered-render-"))
+  // Source-owned, non-secret registry state path; never use the live database.
+  const previous = process.env.XDG_STATE_HOME
+  process.env.XDG_STATE_HOME = root
+  const sessionManager = sdk.SessionManager.inMemory(root)
+  const errors: unknown[] = []
+  let runner: InstanceType<typeof sdk.ExtensionRunner> | undefined
+  try {
+    for (const reason of ["startup", "reload"] as const) {
+      const loaded = await sdk.discoverAndLoadExtensions(
+        [fileURLToPath(new URL("./index.ts", import.meta.url))],
+        root,
+        root,
+        sdk.createEventBus(),
+      )
+      assert.deepEqual(loaded.errors, [])
+      assert.equal(loaded.extensions.length, 1)
+      const active = new sdk.ExtensionRunner(
+        loaded.extensions,
+        loaded.runtime,
+        root,
+        sessionManager,
+        {},
+      )
+      runner = active
+      active.onError((error: unknown) => errors.push(error))
+      assert.equal(active.getToolDefinition("task"), undefined)
+      await active.emit({ type: "session_start", reason })
+      const registered = active.getToolDefinition("task")
+      assert.ok(registered)
+      assert.equal(typeof registered.renderCall, "function")
+      assert.equal(typeof registered.renderResult, "function")
+      if (reason === "startup") {
+        const seed = await Effect.runPromise(
+          openSqliteTaskStore({
+            databasePath: join(
+              registryStateRoot(root, root),
+              "registry.sqlite",
+            ),
+          }),
+        )
+        try {
+          await Effect.runPromise(
+            seed.apply(
+              {
+                issues: [rawIssue],
+                operations: [
+                  {
+                    op: "add",
+                    issue: rawIssue,
+                    key: "native",
+                    text: "Persist native renderer state",
+                  },
+                ],
+              },
+              {
+                actorId: "fixture",
+                requestId: "native-seed",
+                now: 1000,
+                cancellation: "forbidden",
+              },
+            ),
+          )
+        } finally {
+          await Effect.runPromise(seed.close())
+        }
+      }
+      const args = { action: "read", issue: rawIssue, page: { limit: 10 } }
+      const callId = `native-render-${reason}`
+      const params = validateToolArguments(registered, {
+        type: "toolCall",
+        id: callId,
+        name: "task",
+        arguments: args,
+      })
+      const result = await registered.execute(
+        callId,
+        params,
+        undefined,
+        undefined,
+        active.createToolContext(callId, undefined),
+      )
+      assert.equal(result.details.outcome.kind, "page")
+      assert.equal(
+        result.details.invocation.sessionId,
+        sessionManager.getSessionId(),
+      )
+      sdk.initTheme("dark")
+      const component = new sdk.ToolExecutionComponent(
+        "task",
+        callId,
+        args,
+        {},
+        registered,
+        { requestRender: () => {} },
+        root,
+      )
+      component.setArgsComplete()
+      component.markExecutionStarted()
+      component.updateResult({ ...result, isError: result.isError === true })
+      assert.match(
+        component.render(80).join("\n"),
+        /Persist native renderer state/,
+      )
+      component.setExpanded(true)
+      const expanded = component.render(80).join("\n")
+      assert.match(expanded, /Retained output/)
+      assert.match(expanded, new RegExp(callId))
+      await active.emit({
+        type: "session_shutdown",
+        reason: reason === "startup" ? "reload" : "quit",
+      })
+      runner = undefined
+      const closed = await registered.execute(
+        `${callId}-closed`,
+        params,
+        undefined,
+        undefined,
+        active.createToolContext(`${callId}-closed`, undefined),
+      )
+      assert.equal(closed.details.outcome.kind, "failed")
+      assert.equal(closed.details.outcome.code, "closed")
+    }
+    assert.deepEqual(errors, [])
+  } finally {
+    try {
+      if (runner !== undefined)
+        await runner.emit({ type: "session_shutdown", reason: "quit" })
+    } finally {
+      if (previous === undefined) delete process.env.XDG_STATE_HOME
+      else process.env.XDG_STATE_HOME = previous
+      rmSync(root, { recursive: true })
+    }
+  }
+})
+
+test("installed SDK shell renders task names and expands the retained native receipt", async () =>
+  fixture(async store => {
+    const tool = register(ordinaryOptions(store))
+    const added = await invoke(tool, addRequest, "sdk-render-add")
+    assert.equal(added.details.outcome.kind, "saved")
+    if (added.details.outcome.kind !== "saved")
+      assert.fail("Expected saved task")
+    const created = added.details.outcome.result.created[0]
+    assert.ok(created)
+    const args = { action: "read", issue: rawIssue, page: { limit: 10 } }
+    const result = await invoke(tool, args, "sdk-render-read")
+    sdk.initTheme("dark")
+    const component = new sdk.ToolExecutionComponent(
+      "task",
+      "sdk-render-read",
+      args,
+      { outputPad: 1 },
+      tool,
+      { requestRender: () => {} },
+      process.cwd(),
+    )
+    component.setArgsComplete()
+    component.markExecutionStarted()
+    component.updateResult({ ...result, isError: result.isError === true })
+    const compact = component.render(80).join("\n")
+    assert.match(compact, /Task · read/)
+    assert.match(compact, /Requirement/)
+    assert.match(compact, /todo/)
+    assert.doesNotMatch(compact, new RegExp(created.id))
+    component.setExpanded(true)
+    const expanded = component.render(80).join("\n")
+    assert.match(expanded, /Requirement/)
+    assert.match(expanded, new RegExp(created.id))
+    assert.match(expanded, /fixture-reader/)
+    assert.match(expanded, /sdk-render-read/)
+    assert.ok(
+      component
+        .render(24)
+        .every((line: string) => bridge.visibleWidth(line) <= 24),
     )
   }))
 
@@ -1591,9 +1702,7 @@ test("actual SDK validates and executes an unwired registered issue task read of
         },
       ),
     )
-
     let hostCalls = 0
-
     const tool = register({
       store,
       contextForCall: () => {
@@ -1618,7 +1727,6 @@ test("actual SDK validates and executes an unwired registered issue task read of
     assert.equal(result.details.outcome.kind, "page")
     if (result.details.outcome.kind !== "page")
       assert.fail("Expected task page")
-
     assert.equal(result.details.outcome.page.tasks[0]?.id, saved.created[0]?.id)
     assert.equal(
       hostCalls,

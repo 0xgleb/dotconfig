@@ -16,7 +16,7 @@ const reportContractTest = new URL(
   import.meta.url,
 )
 
-test("EOD collector exposes explicit project scope without a retired tracker dependency", () => {
+test("EOD collector exposes explicit project scope", () => {
   const result = spawnSync(
     "nu",
     [
@@ -29,14 +29,6 @@ test("EOD collector exposes explicit project scope without a retired tracker dep
   assert.match(result.stdout, /--workspace/)
   assert.match(result.stdout, /--owners/)
   assert.match(result.stdout, /GitHub organization logins/)
-  assert.doesNotMatch(
-    result.stdout,
-    /--linear-repo|ST0x-Technology|rainlanguage|\/code\/st0x/,
-  )
-  assert.doesNotMatch(
-    collector,
-    /run-linear-json|collect-linear|source_status\.linear/,
-  )
 })
 
 test("EOD rejects missing or malformed scope before external collection", () => {

@@ -46,7 +46,6 @@
     "extensions": [
       "./activity-status/index.ts",
       "./agent-registry/index.ts",
-      "./agent-workspace/index.ts",
       "./auto-reload/index.ts",
       "./write-result-inspector/index.ts",
       "./classified-workflows/main.ts",
@@ -56,6 +55,7 @@
       "./compact-read/index.ts",
       "./disk-pressure/index.ts",
       "./input-ergonomics/index.ts",
+      "./issue-tasks/index.ts",
       "./nushell-default/index.ts",
       "./image-summary/index.ts",
       "./local-models/index.ts",
@@ -64,7 +64,6 @@
       "./release-cadence/index.ts",
       "./request-observability/index.ts",
       "./safe-compaction/index.ts",
-      "./todo/index.ts",
       "./usage-governor/index.ts"
     ]
   },

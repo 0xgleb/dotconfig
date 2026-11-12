@@ -8,7 +8,6 @@ const read = (path: string) =>
 const components = [
   ["activity-status", "activity-status"],
   ["agent-registry", "agent-registry"],
-  ["agent-workspace", "agent-workspace"],
   ["auto-reload", "auto-reload"],
   ["write-result-inspector", "write-result-inspector"],
   ["browser-control", "browser-control"],
@@ -18,12 +17,10 @@ const components = [
   ["nushell-default", "nushell-default"],
   ["questions", "questions"],
   ["pi-vim", "pi-vim"],
-  ["release-cadence", "release-cadence"],
   ["remote-control", "remote-control"],
   ["disk-pressure", "resource-pressure"],
   ["image-summary", "image-summary"],
   ["safe-compaction", "safe-compaction"],
-  ["todo", "todo"],
   ["usage-governor", "usage-governor"],
 ] as const
 

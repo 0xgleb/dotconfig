@@ -126,32 +126,6 @@
         ];
       };
 
-      # Remote NixOS on Digital Ocean
-      nixosConfigurations.nixxxos = nixpkgs.lib.nixosSystem {
-        system = "x86_64-linux";
-        specialArgs = { inherit inputs; };
-        modules = [
-          ./common.nix
-          ./nixos.nix
-          ./digitalocean.nix
-          disko.nixosModules.disko
-          home-manager.nixosModules.home-manager
-          {
-            home-manager.useGlobalPkgs = true;
-            home-manager.useUserPackages = true;
-            home-manager.extraSpecialArgs = { inherit inputs; };
-            home-manager.users."0xgleb" =
-              { inputs, ... }:
-              {
-                imports = [
-                  inputs.nix-doom-emacs-unstraightened.homeModule
-                  ./home.nix
-                ];
-              };
-          }
-        ];
-      };
-
       packages.aarch64-darwin =
         let
           pkgs = import nixpkgs {
@@ -164,8 +138,7 @@
             inherit pkgs;
             metagendaFj = pkgs.callPackage ./nushell/fj/portable { };
           };
-        }
-        // import ./infra { inherit pkgs inputs; };
+        };
 
       checks.aarch64-darwin =
         let
@@ -185,6 +158,16 @@
         in
         {
           git-hooks = gitHooks.aarch64-darwin;
+
+          atuin-darwin =
+            assert import ./scripts/atuin-darwin-checks.test.nix {
+              pkgs = self.legacyPackages.aarch64-darwin;
+              upstreamAtuin = pkgs.atuin;
+              nushellCheck = self.checks.aarch64-darwin.nushell-config;
+            };
+            pkgs.runCommand "atuin-darwin-checks" { } ''
+              touch "$out"
+            '';
 
           obsidian-packaging =
             let
@@ -259,9 +242,9 @@
           nushell-config =
             pkgs.runCommand "nushell-config-test"
               {
-                nativeBuildInputs = with pkgs; [
-                  atuin
-                  nushell
+                nativeBuildInputs = [
+                  self.legacyPackages.aarch64-darwin.atuin
+                  pkgs.nushell
                 ];
               }
               ''

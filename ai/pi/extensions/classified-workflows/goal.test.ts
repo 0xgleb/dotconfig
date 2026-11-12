@@ -11,7 +11,6 @@ import {
   parseGoalEvaluation,
   parseStoredGoal,
   pendingTodoTexts,
-  recoverLatestIndependentGoal,
   restoreGoal,
   taskContinuationMessage,
   todoClassifierIntent,
@@ -257,14 +256,14 @@ test("latest compaction summary remains available as bounded classifier evidence
   )
 })
 
-test("task continuation stops only when complete or every remainder is blocked", () => {
-  assert.match(
+test("legacy task continuation stays disabled regardless of remaining work", () => {
+  assert.equal(
     taskContinuationMessage({
       pending: ["#2 Fix release"],
       blocked: [],
       completed: [],
-    }) ?? "",
-    /continue working/i,
+    }),
+    undefined,
   )
   assert.equal(
     taskContinuationMessage({
@@ -279,64 +278,6 @@ test("task continuation stops only when complete or every remainder is blocked",
     undefined,
   )
 })
-
-test("legacy loop migration recovers only the latest still-active independent goal", () => {
-  const businessGoal = {
-    ...active,
-    condition: "Complete the full v1 and v2 buildout",
-  } as const
-  const legacyLoop = {
-    ...active,
-    condition: "15m /reload latest config",
-    startedAt: 2,
-  } as const
-  assert.deepEqual(
-    recoverLatestIndependentGoal([businessGoal, legacyLoop], condition =>
-      condition.includes("/reload"),
-    ),
-    businessGoal,
-  )
-  assert.deepEqual(
-    recoverLatestIndependentGoal(
-      [
-        businessGoal,
-        legacyLoop,
-        {
-          status: "cleared",
-          condition: legacyLoop.condition,
-          startedAt: legacyLoop.startedAt,
-          finishedAt: 3,
-          turns: 0,
-          tokens: 0,
-          lastReason:
-            "Migrated from the legacy /loop goal into an infinite recurring loop.",
-        },
-      ],
-      condition => condition.includes("/reload"),
-    ),
-    businessGoal,
-  )
-  assert.equal(
-    recoverLatestIndependentGoal(
-      [
-        businessGoal,
-        {
-          status: "cleared",
-          condition: businessGoal.condition,
-          startedAt: businessGoal.startedAt,
-          finishedAt: 3,
-          turns: 1,
-          tokens: 10,
-          lastReason: "done",
-        },
-        legacyLoop,
-      ],
-      condition => condition.includes("/reload"),
-    ),
-    undefined,
-  )
-})
-
 test("met goals become achieved and invalid evaluations keep the goal active", () => {
   const achieved = applyGoalEvaluation(
     active,
@@ -367,7 +308,7 @@ test("met goals become achieved and invalid evaluations keep the goal active", (
   )
 })
 
-test("active and legacy paused goals restore while terminal goals stay terminal", () => {
+test("active goals restore while terminal goals stay terminal", () => {
   assert.deepEqual(restoreGoal(active, 5_000), {
     status: "active",
     condition: active.condition,
@@ -375,29 +316,6 @@ test("active and legacy paused goals restore while terminal goals stay terminal"
     turns: 0,
     tokens: 0,
   })
-
-  assert.deepEqual(
-    restoreGoal(
-      {
-        status: "paused",
-        condition: active.condition,
-        startedAt: 1_000,
-        finishedAt: 2_000,
-        turns: 3,
-        tokens: 350,
-        lastReason: "old evaluator outage",
-      },
-      5_000,
-    ),
-    {
-      status: "active",
-      condition: active.condition,
-      startedAt: 5_000,
-      turns: 0,
-      tokens: 0,
-      lastReason: "Restored from paused legacy state: old evaluator outage",
-    },
-  )
 
   const achieved = applyGoalEvaluation(
     active,
@@ -421,8 +339,21 @@ test("goal status reports condition, elapsed time, turns, tokens, and reason", (
   assert.match(status, /one test still fails/)
 })
 
-test("stored goals reject malformed session data", () => {
+test("stored goals round trip supported states and reject malformed session data", () => {
   assert.deepEqual(parseStoredGoal(active), active)
+  for (const status of ["achieved", "cleared"] as const) {
+    const terminal: GoalState = {
+      ...active,
+      status,
+      finishedAt: 2_000,
+      lastReason: "Finished goal",
+    }
+    assert.deepEqual(
+      parseStoredGoal(JSON.parse(JSON.stringify(terminal))),
+      terminal,
+    )
+    assert.deepEqual(restoreGoal(terminal, 5_000), terminal)
+  }
   assert.equal(parseStoredGoal({ ...active, turns: -1 }), undefined)
   assert.equal(parseStoredGoal({ ...active, status: "unknown" }), undefined)
   assert.equal(parseStoredGoal("active"), undefined)
