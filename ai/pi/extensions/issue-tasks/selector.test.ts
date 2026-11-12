@@ -53,6 +53,51 @@ const winner = (rows: readonly { readonly issue: unknown }[]) => {
   return result.issue
 }
 
+for (const [field, value, code] of [
+  ["priority", -0.5, "invalid_priority"],
+  ["priority", 0, "invalid_priority"],
+  ["effort", 4, "invalid_effort"],
+] as const) {
+  test(`invalid ${field} identifies the qualified issue and rejected value ${value}`, () => {
+    const result = Effect.runSync(
+      Effect.either(
+        selectIssueAssignment(
+          snapshot([
+            candidate(1),
+            candidate(99, { [field]: numeric(value) }, "dataclique/yielduck"),
+          ]),
+        ),
+      ),
+    )
+
+    assert.ok(Either.isLeft(result))
+    assert.equal(result.left.code, code)
+    assert.match(result.left.message, /dataclique\/yielduck#99/)
+    assert.ok(result.left.message.includes(`Received ${value}.`))
+  })
+}
+
+for (const field of ["priority", "effort"] as const) {
+  test(`invalid ${field} identifies nonnumeric input without echoing its payload`, () => {
+    const payload = "private payload\u001b[31m\n"
+    const result = Effect.runSync(
+      Effect.either(
+        selectIssueAssignment(
+          snapshot([
+            candidate(99, { [field]: { kind: "number", value: payload } }),
+          ]),
+        ),
+      ),
+    )
+
+    assert.ok(Either.isLeft(result))
+    assert.equal(result.left.code, `invalid_${field}`)
+    assert.match(result.left.message, /owner\/repository#99/)
+    assert.match(result.left.message, /Received type string\./)
+    assert.ok(!result.left.message.includes(payload))
+  })
+}
+
 test("read-only selection needs factual gates, not worker permission attestations", () => {
   const result = run(
     snapshot([
@@ -92,6 +137,44 @@ test("selects the smallest exact Priority times remaining Effort, not rank or in
 
   assert.equal(winner(rows).number, 2)
   assert.equal(winner(rows.toReversed()).number, 2)
+})
+
+test("positive fractional priorities participate in weighted selection", () => {
+  assert.equal(
+    winner([
+      candidate(568, { priority: numeric(31.5), effort: numeric(2) }),
+      candidate(567, { priority: numeric(32.5) }),
+      candidate(566, { priority: numeric(36.5) }),
+    ]).number,
+    567,
+  )
+})
+
+test("decimal product ties use Priority rather than floating-point rounding", () => {
+  assert.equal(
+    winner([
+      candidate(1, { priority: numeric(0.3) }),
+      candidate(2, { priority: numeric(0.1), effort: numeric(3) }),
+    ]).number,
+    2,
+  )
+})
+
+test("scientific notation and extreme finite priorities compare without overflow or underflow", () => {
+  assert.equal(
+    winner([
+      candidate(1, { priority: numeric(1e308), effort: numeric(3) }),
+      candidate(2, { priority: numeric(1e308), effort: numeric(2) }),
+    ]).number,
+    2,
+  )
+  assert.equal(
+    winner([
+      candidate(1, { priority: numeric(1e-323) }),
+      candidate(2, { priority: numeric(Number.MIN_VALUE), effort: numeric(2) }),
+    ]).number,
+    2,
+  )
 })
 
 test("product comparison remains exact when Number products collide", () => {
@@ -243,14 +326,7 @@ test("empty scope returns none and refinement alone does not create an assignmen
   )
 })
 
-for (const priority of [
-  0,
-  -1,
-  1.5,
-  Number.MAX_SAFE_INTEGER + 1,
-  Infinity,
-  Number.NaN,
-]) {
+for (const priority of [0, -1, Infinity, Number.NaN]) {
   test(`invalid Priority ${priority} rejects the whole snapshot even on closed work`, () => {
     assert.equal(
       errorCode(

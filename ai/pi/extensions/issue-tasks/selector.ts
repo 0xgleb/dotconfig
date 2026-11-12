@@ -13,9 +13,8 @@ import {
 export const MAX_ISSUE_SELECTION_CANDIDATES = 10_000
 
 const IssuePrioritySchema = Schema.Number.pipe(
-  Schema.int(),
+  Schema.finite(),
   Schema.positive(),
-  Schema.lessThanOrEqualTo(Number.MAX_SAFE_INTEGER),
   Schema.brand("IssuePriority"),
 )
 
@@ -166,8 +165,7 @@ const selectionError = (code: IssueSelectionError["code"]) =>
     code,
     message: {
       invalid_input: "Issue assignment input has an invalid shape or identity.",
-      invalid_priority:
-        "Priority must be unset or a positive safe-integer rank.",
+      invalid_priority: "Priority must be unset or a positive finite number.",
       invalid_effort: "Effort must be unset or positive safe Fibonacci points.",
       duplicate_issue:
         "Issue assignment input contains duplicate qualified issues.",
@@ -177,6 +175,22 @@ const selectionError = (code: IssueSelectionError["code"]) =>
       capacity: "Issue assignment input exceeds the candidate capacity.",
     }[code],
   })
+
+const schedulingValueError = (
+  code: "invalid_priority" | "invalid_effort",
+  issue: IssueReference,
+  value: unknown,
+): IssueSelectionError => {
+  const received =
+    typeof value === "number"
+      ? String(value)
+      : `type ${value === null ? "null" : typeof value}`
+
+  return new IssueSelectionError({
+    code,
+    message: `${issueKey(issue)}: ${selectionError(code).message} Received ${received}.`,
+  })
+}
 
 const decode = <A, I>(schema: Schema.Schema<A, I>, value: unknown) =>
   Schema.decodeUnknownEither(schema, { onExcessProperty: "error" })(value).pipe(
@@ -191,23 +205,43 @@ const decodeCandidate = (
     const issue = yield* decodeIssueReference(raw.issue).pipe(
       Either.mapLeft(() => selectionError("invalid_input")),
     )
+
+    const priorityInput = raw.priority
     const priority =
-      raw.priority.kind === "unset"
-        ? raw.priority
+      priorityInput.kind === "unset"
+        ? priorityInput
         : Object.freeze({
             kind: "number" as const,
             value: yield* Schema.decodeUnknownEither(IssuePrioritySchema)(
-              raw.priority.value,
-            ).pipe(Either.mapLeft(() => selectionError("invalid_priority"))),
+              priorityInput.value,
+            ).pipe(
+              Either.mapLeft(() =>
+                schedulingValueError(
+                  "invalid_priority",
+                  issue,
+                  priorityInput.value,
+                ),
+              ),
+            ),
           })
+
+    const effortInput = raw.effort
     const effort =
-      raw.effort.kind === "unset"
-        ? raw.effort
+      effortInput.kind === "unset"
+        ? effortInput
         : Object.freeze({
             kind: "number" as const,
             value: yield* Schema.decodeUnknownEither(EffortSchema)(
-              raw.effort.value,
-            ).pipe(Either.mapLeft(() => selectionError("invalid_effort"))),
+              effortInput.value,
+            ).pipe(
+              Either.mapLeft(() =>
+                schedulingValueError(
+                  "invalid_effort",
+                  issue,
+                  effortInput.value,
+                ),
+              ),
+            ),
           })
 
     return Object.freeze({
@@ -301,12 +335,36 @@ const assessCandidate = (
   })
 }
 
+const priorityDecimal = (priority: IssuePriority) => {
+  const text = String(priority)
+  const exponentIndex = text.indexOf("e")
+  const coefficient = exponentIndex < 0 ? text : text.slice(0, exponentIndex)
+  const exponent = exponentIndex < 0 ? 0 : Number(text.slice(exponentIndex + 1))
+  const decimalIndex = coefficient.indexOf(".")
+  const fractionDigits =
+    decimalIndex < 0 ? 0 : coefficient.length - decimalIndex - 1
+
+  return {
+    coefficient: BigInt(coefficient.replace(".", "")),
+    scale: fractionDigits - exponent,
+  }
+}
+
 const compareCandidates = (
   left: EligibleAssessment,
   right: EligibleAssessment,
 ): number => {
-  const leftScore = BigInt(left.priority) * BigInt(left.effort)
-  const rightScore = BigInt(right.priority) * BigInt(right.effort)
+  const leftPriority = priorityDecimal(left.priority)
+  const rightPriority = priorityDecimal(right.priority)
+  const scale = Math.max(leftPriority.scale, rightPriority.scale)
+  const leftScore =
+    leftPriority.coefficient *
+    BigInt(left.effort) *
+    10n ** BigInt(scale - leftPriority.scale)
+  const rightScore =
+    rightPriority.coefficient *
+    BigInt(right.effort) *
+    10n ** BigInt(scale - rightPriority.scale)
 
   if (leftScore !== rightScore) return leftScore < rightScore ? -1 : 1
   if (left.priority !== right.priority)
