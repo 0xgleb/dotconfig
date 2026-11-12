@@ -497,8 +497,26 @@ test("next rejects caller clearance and malformed targets before any source read
   })
 })
 
+test("next selects work with existing fractional Project priorities", async () => {
+  await withStore(async tasks => {
+    const source = ports([
+      projectPayload([
+        { number: 568, priority: 31.5, effort: 2 },
+        { number: 567, priority: 32.5, effort: 1 },
+        { number: 566, priority: 36.5, effort: 1 },
+      ]),
+    ])
+    const result = await run(
+      createIssueNextReader({ ...source, tasks }).next(query),
+    )
+
+    assert.ok(result.kind === "selected")
+    assert.equal(result.issue.number, 567)
+  })
+})
+
 for (const [field, value, code] of [
-  ["priority", 0.5, "invalid_priority"],
+  ["priority", -0.5, "invalid_priority"],
   ["effort", 4, "invalid_effort"],
 ] as const) {
   test(`public task-next preserves the offending issue and invalid ${field}`, async () => {

@@ -54,7 +54,7 @@ const winner = (rows: readonly { readonly issue: unknown }[]) => {
 }
 
 for (const [field, value, code] of [
-  ["priority", 0.5, "invalid_priority"],
+  ["priority", -0.5, "invalid_priority"],
   ["priority", 0, "invalid_priority"],
   ["effort", 4, "invalid_effort"],
 ] as const) {
@@ -137,6 +137,44 @@ test("selects the smallest exact Priority times remaining Effort, not rank or in
 
   assert.equal(winner(rows).number, 2)
   assert.equal(winner(rows.toReversed()).number, 2)
+})
+
+test("positive fractional priorities participate in weighted selection", () => {
+  assert.equal(
+    winner([
+      candidate(568, { priority: numeric(31.5), effort: numeric(2) }),
+      candidate(567, { priority: numeric(32.5) }),
+      candidate(566, { priority: numeric(36.5) }),
+    ]).number,
+    567,
+  )
+})
+
+test("decimal product ties use Priority rather than floating-point rounding", () => {
+  assert.equal(
+    winner([
+      candidate(1, { priority: numeric(0.3) }),
+      candidate(2, { priority: numeric(0.1), effort: numeric(3) }),
+    ]).number,
+    2,
+  )
+})
+
+test("scientific notation and extreme finite priorities compare without overflow or underflow", () => {
+  assert.equal(
+    winner([
+      candidate(1, { priority: numeric(1e308), effort: numeric(3) }),
+      candidate(2, { priority: numeric(1e308), effort: numeric(2) }),
+    ]).number,
+    2,
+  )
+  assert.equal(
+    winner([
+      candidate(1, { priority: numeric(1e-323) }),
+      candidate(2, { priority: numeric(Number.MIN_VALUE), effort: numeric(2) }),
+    ]).number,
+    2,
+  )
 })
 
 test("product comparison remains exact when Number products collide", () => {
@@ -288,14 +326,7 @@ test("empty scope returns none and refinement alone does not create an assignmen
   )
 })
 
-for (const priority of [
-  0,
-  -1,
-  1.5,
-  Number.MAX_SAFE_INTEGER + 1,
-  Infinity,
-  Number.NaN,
-]) {
+for (const priority of [0, -1, Infinity, Number.NaN]) {
   test(`invalid Priority ${priority} rejects the whole snapshot even on closed work`, () => {
     assert.equal(
       errorCode(
