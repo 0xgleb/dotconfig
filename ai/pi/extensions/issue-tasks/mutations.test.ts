@@ -52,6 +52,19 @@ const rejected = (input: unknown, code?: string) => {
   if (code !== undefined) assert.equal(result.left.code, code)
 }
 
+test("blocked status owns an immutable detached reason", () => {
+  const status = { _tag: "blocked", reason: "Waiting for verification" }
+  const result = accepted(batch([{ op: "status", target: existing(), status }]))
+  status.reason = "Changed by caller"
+  const operation = result.operations[0]
+  assert.ok(operation?.op === "status")
+  assert.deepEqual(operation.status, {
+    _tag: "blocked",
+    reason: "Waiting for verification",
+  })
+  assert.ok(Object.isFrozen(operation.status))
+})
+
 test("qualified mutations canonicalize issues and correlate only earlier additions", () => {
   const uppercase = { repository: "0xGleb/DotConfig", number: 1 }
 
@@ -68,9 +81,9 @@ test("qualified mutations canonicalize issues and correlate only earlier additio
           dependsOn: [added("next", second)],
         },
         {
-          op: "block",
+          op: "status",
           target: existing(second),
-          reason: "Missing required input",
+          status: { _tag: "blocked", reason: "Missing required input" },
         },
       ],
       [uppercase, second],
@@ -150,7 +163,12 @@ test("unknown fields cannot introduce revisions, caller authority or scheduling"
     rejected(batch([{ ...add(), ...extra }]), "invalid_operation")
   rejected(
     batch([
-      { op: "block", target: existing(), reason: "Waiting", deferred: true },
+      {
+        op: "status",
+        target: existing(),
+        status: { _tag: "blocked", reason: "Waiting" },
+        deferred: true,
+      },
     ]),
     "invalid_operation",
   )
@@ -197,7 +215,7 @@ test("dependency lists are explicit and do not silently deduplicate", () => {
   const result = accepted(
     batch([
       { op: "edit", target: existing(), dependsOn: [] },
-      { op: "block", target: existing(), reason: null },
+      { op: "status", target: existing(), status: "todo" },
     ]),
   )
 

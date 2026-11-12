@@ -102,15 +102,23 @@ const cases: readonly CorruptionCase[] = [
     corrupt: replace('"before":"doing"', '"before":"cancelled"'),
   },
   {
-    name: "blocker continuity",
+    name: "blocked status reason continuity",
     operations: [
       add,
-      { op: "block", target: reference(), reason: "first blocker" },
-      { op: "block", target: reference(), reason: "second blocker" },
+      {
+        op: "status",
+        target: reference(),
+        status: { _tag: "blocked", reason: "first blocker" },
+      },
+      {
+        op: "status",
+        target: reference(),
+        status: { _tag: "blocked", reason: "second blocker" },
+      },
     ],
     operationIndex: 2,
     target: "history",
-    corrupt: replace('"before":"first blocker"', '"before":"phantom blocker"'),
+    corrupt: replace('"reason":"first blocker"', '"reason":"phantom blocker"'),
   },
   {
     name: "text continuity",
@@ -165,7 +173,11 @@ const cases: readonly CorruptionCase[] = [
     operations: [
       add,
       { op: "status", target: reference(), status: "doing" },
-      { op: "block", target: reference(), reason: "blocked" },
+      {
+        op: "status",
+        target: reference(),
+        status: { _tag: "blocked", reason: "blocked" },
+      },
     ],
     operationIndex: 1,
     target: "missing-event",

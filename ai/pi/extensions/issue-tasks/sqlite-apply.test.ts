@@ -328,7 +328,11 @@ for (const change of ["text", "status", "block", "transfer"] as const) {
             : change === "status"
               ? { op: "status", target, status: "doing" }
               : change === "block"
-                ? { op: "block", target, reason: "Waiting" }
+                ? {
+                    op: "status",
+                    target,
+                    status: { _tag: "blocked", reason: "Waiting" },
+                  }
                 : { op: "transfer", target, toIssue: b }
         await run(
           store.apply(batch([operation]), context(`selective-${change}`)),
@@ -588,7 +592,7 @@ test("issue-addressed task writes and reads expose issue revisions without an in
             issue: a,
             id: created.id,
             revision: 1,
-            fields: ["text", "status", "blocker", "dependsOn"],
+            fields: ["text", "status", "dependsOn"],
           },
         ],
         created: [{ issue: a, key: "only", id: created.id }],
@@ -606,7 +610,6 @@ test("issue-addressed task writes and reads expose issue revisions without an in
             id: created.id,
             text: "Issue requirement",
             status: "todo",
-            blocker: { _tag: "Unblocked" },
           },
         ],
         next: null,
@@ -666,7 +669,11 @@ for (const change of ["add", "edit", "block"]) {
             ? { op: "add", issue: a, key: "boundary", text: "x" }
             : change === "edit"
               ? { op: "edit", target: existing(target.id), text: "xx" }
-              : { op: "block", target: existing(target.id), reason: "x" }
+              : {
+                  op: "status",
+                  target: existing(target.id),
+                  status: { _tag: "blocked", reason: "x" },
+                }
 
         const boundary = await run(
           store.apply(
@@ -684,7 +691,11 @@ for (const change of ["add", "edit", "block"]) {
             ? { op: "add", issue: a, key: "overflow", text: "x" }
             : change === "edit"
               ? { op: "edit", target: existing(target.id), text: "xxx" }
-              : { op: "block", target: existing(target.id), reason: "xx" }
+              : {
+                  op: "status",
+                  target: existing(target.id),
+                  status: { _tag: "blocked", reason: "xx" },
+                }
         await errorCode(
           store.apply(
             batch([...noOps(loadedIds), overflowOperation], [a]),
@@ -703,10 +714,8 @@ for (const change of ["add", "edit", "block"]) {
         assert.ok(unchanged)
         assert.equal(unchanged.text, change === "edit" ? "xx" : "x")
         assert.deepEqual(
-          unchanged.blocker,
-          change === "block"
-            ? { _tag: "Blocked", reason: "x" }
-            : { _tag: "Unblocked" },
+          unchanged.status,
+          change === "block" ? { _tag: "blocked", reason: "x" } : "todo",
         )
       })
     }))
@@ -730,9 +739,9 @@ test("an atomic multi-issue write persists stable tasks, edges, revisions and pr
             },
             { op: "status", target: added("first"), status: "doing" },
             {
-              op: "block",
+              op: "status",
               target: added("second", b),
-              reason: "Awaiting external input",
+              status: { _tag: "blocked", reason: "Awaiting external input" },
             },
           ]),
           context("multi"),
@@ -763,8 +772,8 @@ test("an atomic multi-issue write persists stable tasks, edges, revisions and pr
       assert.equal(first.value.tasks[0]?.id, firstId)
       assert.equal(first.value.tasks[0]?.status, "doing")
       assert.equal(second.value.tasks[0]?.id, secondId)
-      assert.deepEqual(second.value.tasks[0]?.blocker, {
-        _tag: "Blocked",
+      assert.deepEqual(second.value.tasks[0]?.status, {
+        _tag: "blocked",
         reason: "Awaiting external input",
       })
     })
@@ -809,9 +818,12 @@ test("cross-issue transfer preserves task identity, state, dependency edges and 
       },
       { op: "status", target: added("moved"), status: "done" },
       {
-        op: "block",
+        op: "status",
         target: added("moved"),
-        reason: "External input remains documented",
+        status: {
+          _tag: "blocked",
+          reason: "External input remains documented",
+        },
       },
     ])
     await withStore(path, async store => {
@@ -872,9 +884,8 @@ test("cross-issue transfer preserves task identity, state, dependency edges and 
         {
           id: movedId,
           text: "Completed requirement",
-          status: "done",
-          blocker: {
-            _tag: "Blocked",
+          status: {
+            _tag: "blocked",
             reason: "External input remains documented",
           },
         },
@@ -933,7 +944,14 @@ test("cross-issue transfer preserves task identity, state, dependency edges and 
       const currentOwner = await run(
         store.apply(
           batch([
-            { op: "status", target: existing(movedId, b), status: "done" },
+            {
+              op: "status",
+              target: existing(movedId, b),
+              status: {
+                _tag: "blocked",
+                reason: "External input remains documented",
+              },
+            },
           ]),
           context("transfer-current-owner"),
         ),
@@ -959,9 +977,9 @@ test("cross-issue transfer preserves task identity, state, dependency edges and 
         [dependencyId],
       )
       assert.equal(destination.value.tasks.length, 2)
-      assert.equal(
+      assert.deepEqual(
         destination.value.tasks.find(task => task.id === movedId)?.status,
-        "done",
+        { _tag: "blocked", reason: "External input remains documented" },
       )
     })
   }))
@@ -1141,7 +1159,7 @@ test("cancellation policy is trusted context, not batch data, and failed cancell
         store.apply(
           {
             ...batch([
-              { op: "block", target: existing(task.id), reason: null },
+              { op: "status", target: existing(task.id), status: "todo" },
             ]),
             authority: "owner",
           },
@@ -1211,7 +1229,6 @@ test("request replay rejects a changed-field summary inconsistent with add histo
       assert.deepEqual(saved.changed[0]?.fields, [
         "text",
         "status",
-        "blocker",
         "dependsOn",
       ])
 
@@ -1261,7 +1278,7 @@ test("request replay rejects a changed-field summary inconsistent with add histo
     })
   }))
 
-for (const omitted of ["text", "status", "blocker", "dependsOn"]) {
+for (const omitted of ["text", "status", "dependsOn"]) {
   test(`add receipt requires its complete history field union: ${omitted}`, async () =>
     fixture(async path => {
       await withStore(path, async store => {
@@ -1333,9 +1350,12 @@ for (const kind of ["status", "block", "transfer"]) {
               ? { op: "status", target: existing(task.id), status: "doing" }
               : kind === "block"
                 ? {
-                    op: "block",
+                    op: "status",
                     target: existing(task.id),
-                    reason: "Awaiting external input",
+                    status: {
+                      _tag: "blocked",
+                      reason: "Awaiting external input",
+                    },
                   }
                 : { op: "transfer", target: existing(task.id), toIssue: b }
           const input = batch([operation])
@@ -1515,8 +1535,12 @@ test("receipt field unions retain net-zero events but exclude no-op edit request
         { op: "edit", target: existing(task.id), text: "Original" },
         { op: "status", target: existing(task.id), status: "doing" },
         { op: "status", target: existing(task.id), status: "todo" },
-        { op: "block", target: existing(task.id), reason: "Temporary input" },
-        { op: "block", target: existing(task.id), reason: null },
+        {
+          op: "status",
+          target: existing(task.id),
+          status: { _tag: "blocked", reason: "Temporary input" },
+        },
+        { op: "status", target: existing(task.id), status: "todo" },
         { op: "transfer", target: existing(task.id), toIssue: b },
         { op: "transfer", target: existing(task.id, b), toIssue: a },
       ])
@@ -1526,7 +1550,7 @@ test("receipt field unions retain net-zero events but exclude no-op edit request
 
       const changed = saved.changed[0]
       assert.ok(changed)
-      assert.deepEqual(changed.fields, ["text", "status", "blocker", "issue"])
+      assert.deepEqual(changed.fields, ["text", "status", "issue"])
       assert.deepEqual(
         (await run(store.apply(input, request))).changed,
         saved.changed,
@@ -1576,9 +1600,9 @@ test("receipt field reconciliation is per task rather than a batch-wide union", 
         [
           { op: "edit", target: existing(first.id), text: "Updated first" },
           {
-            op: "block",
+            op: "status",
             target: existing(second.id),
-            reason: "Missing external input",
+            status: { _tag: "blocked", reason: "Missing external input" },
           },
         ],
         [a],
@@ -1586,8 +1610,8 @@ test("receipt field reconciliation is per task rather than a batch-wide union", 
       const request = context("per-task-fields")
       const saved = await run(store.apply(input, request))
       assert.deepEqual(saved.changed[0]?.fields, ["text"])
-      assert.deepEqual(saved.changed[1]?.fields, ["blocker"])
-      forgeReceiptFields(path, saved.batchId, ["blocker"], 0)
+      assert.deepEqual(saved.changed[1]?.fields, ["status"])
+      forgeReceiptFields(path, saved.batchId, ["status"], 0)
 
       const forged = forgeReceiptFields(path, saved.batchId, ["text"], 1)
       const before = await run(store.readTasks(issue(), { limit: 10 }))
@@ -1622,7 +1646,6 @@ test("new task edit and transfer events replay their full union after returning 
       assert.deepEqual(result.changed[0]?.fields, [
         "text",
         "status",
-        "blocker",
         "dependsOn",
         "issue",
       ])
@@ -1746,14 +1769,21 @@ for (const noOp of ["text", "empty dependencies", "reordered dependencies"]) {
     }))
 }
 
-for (const kind of ["status", "block"]) {
-  test(`receipt reconciliation rejects forged no-op ${kind} contribution`, async () =>
+for (const status of ["todo", { _tag: "blocked", reason: "Waiting" }]) {
+  test(`receipt reconciliation rejects forged no-op ${JSON.stringify(status)} contribution`, async () =>
     fixture(async path => {
       await withStore(path, async store => {
         const seed = await run(
           store.apply(
             batch(
-              [{ op: "add", issue: a, key: "work", text: "Original" }],
+              [
+                { op: "add", issue: a, key: "work", text: "Original" },
+                {
+                  op: "status",
+                  target: { issue: a, task: { kind: "added", key: "work" } },
+                  status,
+                },
+              ],
               [a],
             ),
             context("other-no-op-seed"),
@@ -1762,10 +1792,7 @@ for (const kind of ["status", "block"]) {
         const task = seed.created[0]
         assert.ok(task)
 
-        const noOp =
-          kind === "status"
-            ? { op: "status", target: existing(task.id), status: "todo" }
-            : { op: "block", target: existing(task.id), reason: null }
+        const noOp = { op: "status", target: existing(task.id), status }
         const input = batch(
           [{ op: "edit", target: existing(task.id), text: "Updated" }, noOp],
           [a],
@@ -1775,19 +1802,19 @@ for (const kind of ["status", "block"]) {
         assert.equal(saved.eventCount, 1)
 
         const payload = {
-          op: kind,
+          op: "status",
           operationIndex: 1,
           issue: a,
           id: task.id,
-          before: kind === "status" ? "todo" : null,
-          after: kind === "status" ? "todo" : null,
+          before: status,
+          after: status,
         }
         sql(path, database =>
           database
             .prepare(
               "INSERT INTO issue_plan_history (batch_id, plan_id, task_id, operation_index, kind, recorded_at, payload_json) SELECT batch_id, plan_id, task_id, 1, ?, recorded_at, ? FROM issue_plan_history WHERE batch_id = ? LIMIT 1",
             )
-            .run(kind, JSON.stringify(payload), saved.batchId),
+            .run("status", JSON.stringify(payload), saved.batchId),
         )
         const receipt: unknown = JSON.parse(receiptJson(path, saved.batchId))
         assert.ok(typeof receipt === "object" && receipt !== null)
@@ -1795,7 +1822,7 @@ for (const kind of ["status", "block"]) {
         writeReceiptJson(path, saved.batchId, JSON.stringify(receipt))
         const forged = forgeReceiptFields(path, saved.batchId, [
           "text",
-          kind === "status" ? "status" : "blocker",
+          "status",
         ])
         const before = await run(store.readTasks(issue(), { limit: 10 }))
         await errorCode(store.apply(input, request), "corrupt_state")
@@ -1809,14 +1836,14 @@ for (const kind of ["status", "block"]) {
             database
               .prepare("SELECT COUNT(*) AS count FROM issue_plan_history")
               .get()?.count,
-            3,
+            typeof status === "string" ? 3 : 4,
           ),
         )
       })
     }))
 }
 
-for (const kind of ["text", "dependsOn", "status", "block"]) {
+for (const kind of ["text", "dependsOn", "status", "blocked"]) {
   test(`receipt reconciliation rejects ${kind} history result inconsistent with the request`, async () =>
     fixture(async path => {
       await withStore(path, async store => {
@@ -1854,7 +1881,11 @@ for (const kind of ["text", "dependsOn", "status", "block"]) {
                 }
               : kind === "status"
                 ? { op: "status", target: existing(task.id), status: "doing" }
-                : { op: "block", target: existing(task.id), reason: "Waiting" }
+                : {
+                    op: "status",
+                    target: existing(task.id),
+                    status: { _tag: "blocked", reason: "Waiting" },
+                  }
         const input = batch([operation], [a])
         const request = context("request-result")
         const saved = await run(store.apply(input, request))
@@ -1881,7 +1912,10 @@ for (const kind of ["text", "dependsOn", "status", "block"]) {
             change.after = kind === "text" ? "Other text" : [second.id]
           } else
             Object.assign(payload, {
-              after: kind === "status" ? "done" : "Other input",
+              after:
+                kind === "status"
+                  ? "done"
+                  : { _tag: "blocked", reason: "Other input" },
             })
           database
             .prepare(
@@ -2479,7 +2513,11 @@ for (const kind of ["edit", "status", "block"] as const) {
             ? { op: "edit", target, text: "Changed" }
             : kind === "status"
               ? { op: "status", target, status: "doing" }
-              : { op: "block", target, reason: "Blocked" },
+              : {
+                  op: "status",
+                  target,
+                  status: { _tag: "blocked", reason: "Blocked" },
+                },
         ])
         const request = context("nul-suffixed-history")
         const saved = await run(store.apply(input, request))
@@ -3024,16 +3062,12 @@ for (const field of ["text", "blocker"] as const) {
 
         const observed = await observeReads(
           query =>
-            query.includes("issue_plan_tasks.status = ?") &&
+            query.includes("THEN 'blocked' ELSE status END = ?") &&
             query.includes("ORDER BY"),
           () =>
             run(
               Effect.either(
-                store.readTasks(
-                  issue(),
-                  { limit: 1 },
-                  { status: "todo", blocked: "blocked" },
-                ),
+                store.readTasks(issue(), { limit: 1 }, { status: "blocked" }),
               ),
             ),
         )
@@ -3061,10 +3095,10 @@ const pageFilters: readonly (TaskFilter | undefined)[] = [
   undefined,
   {},
   { status: "todo" },
-  { blocked: "blocked" },
-  { blocked: "unblocked" },
-  { status: "todo", blocked: "blocked" },
-  { status: "todo", blocked: "unblocked" },
+  { status: "blocked" },
+  { status: "todo" },
+  { status: "blocked" },
+  { status: "todo" },
 ]
 
 for (const filter of pageFilters) {
@@ -3173,9 +3207,9 @@ for (const encoding of ["UTF-8", "UTF-16le", "UTF-16be"] as const) {
           store.apply(
             batch([
               {
-                op: "block",
+                op: "status",
                 target: existing(created.id),
-                reason: supplementary,
+                status: { _tag: "blocked", reason: supplementary },
               },
             ]),
             context("unicode-blocker"),
@@ -3197,15 +3231,15 @@ for (const encoding of ["UTF-8", "UTF-16le", "UTF-16be"] as const) {
         const tasks = [...first.value.tasks, ...second.value.tasks]
         assert.equal(tasks.length, 2)
         assert.equal(tasks.find(task => task.id === created.id)?.text, bmp)
-        assert.deepEqual(tasks.find(task => task.id === created.id)?.blocker, {
-          _tag: "Blocked",
+        assert.deepEqual(tasks.find(task => task.id === created.id)?.status, {
+          _tag: "blocked",
           reason: supplementary,
         })
 
         const other = tasks.find(task => task.id !== created.id)
         assert.ok(other)
         assert.equal(other.text, supplementary)
-        assert.deepEqual(other.blocker, { _tag: "Unblocked" })
+        assert.equal(other.status, "todo")
       })
     }))
 }

@@ -29,7 +29,33 @@ export const TextSchema = Schema.String.pipe(
   ),
 )
 
-export const StatusSchema = Schema.Literal("todo", "doing", "done", "cancelled")
+export const UnitStatusSchema = Schema.Literal(
+  "todo",
+  "doing",
+  "done",
+  "cancelled",
+)
+
+export const BlockedReasonSchema = TextSchema.pipe(
+  Schema.brand("TaskBlockedReason"),
+)
+
+export const StatusSchema = Schema.Union(
+  UnitStatusSchema,
+  Schema.TaggedStruct("blocked", { reason: BlockedReasonSchema }),
+)
+
+export const StatusFilterSchema = Schema.Literal(
+  "todo",
+  "doing",
+  "done",
+  "cancelled",
+  "blocked",
+)
+
+export type UnitTaskStatus = typeof UnitStatusSchema.Type
+
+export type BlockedReason = typeof BlockedReasonSchema.Type
 
 export type TaskId = typeof TaskIdSchema.Type
 
@@ -42,26 +68,18 @@ export interface IssueTaskRevision {
   readonly revision: number
 }
 
-export const TaskBlockerReasonSchema = TextSchema.pipe(
-  Schema.brand("TaskBlockerReason"),
-)
-
-export type TaskBlockerReason = typeof TaskBlockerReasonSchema.Type
-
-export const TaskBlockerSchema = Schema.Union(
-  Schema.TaggedStruct("Unblocked", {}),
-  Schema.TaggedStruct("Blocked", { reason: TaskBlockerReasonSchema }),
-)
-
-export type TaskBlocker = typeof TaskBlockerSchema.Type
-
-export const BlockingFilterSchema = Schema.Literal("blocked", "unblocked")
+export const storedTaskStatus = (
+  status: UnitTaskStatus,
+  reason: BlockedReason | null,
+): TaskStatus =>
+  status === "done" || status === "cancelled" || reason === null
+    ? status
+    : Object.freeze({ _tag: "blocked", reason })
 
 export interface IssueTask {
   readonly id: TaskId
   readonly text: string
   readonly status: TaskStatus
-  readonly blocker: TaskBlocker
 }
 
 export interface IssueTaskPage extends IssueTaskRevision {
@@ -80,8 +98,7 @@ export interface IssueTaskDetail extends IssueTaskRevision {
 }
 
 export interface TaskFilter {
-  readonly status?: TaskStatus
-  readonly blocked?: typeof BlockingFilterSchema.Type
+  readonly status?: typeof StatusFilterSchema.Type
 }
 
 export const TaskFilterSchema = Schema.Unknown.pipe(
@@ -90,14 +107,11 @@ export const TaskFilterSchema = Schema.Unknown.pipe(
       typeof value === "object" &&
       value !== null &&
       !Array.isArray(value) &&
-      Reflect.ownKeys(value).every(
-        key => key === "status" || key === "blocked",
-      ),
+      Reflect.ownKeys(value).every(key => key === "status"),
   ),
   Schema.compose(
     Schema.Struct({
-      status: Schema.optional(StatusSchema),
-      blocked: Schema.optional(BlockingFilterSchema),
+      status: Schema.optional(StatusFilterSchema),
     }),
   ),
 )

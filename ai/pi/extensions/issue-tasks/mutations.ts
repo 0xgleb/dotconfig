@@ -50,11 +50,6 @@ export type TaskMutation =
       readonly status: TaskStatus
     }
   | {
-      readonly op: "block"
-      readonly target: TaskReference
-      readonly reason: string | null
-    }
-  | {
       readonly op: "transfer"
       readonly target: TaskReference
       readonly toIssue: IssueReference
@@ -307,16 +302,12 @@ const mutation = (
         const target = yield* reference(raw.target, scope, additions)
         const status = yield* leaf(StatusSchema, raw.status)
 
-        return freezeMutation({ op: "status", target, status })
-      }
-      case "block": {
-        if (!shape(raw, ["op", "target", "reason"], ["op", "target", "reason"]))
-          return yield* invalid("invalid_operation", "Invalid blocker fields")
-
-        const target = yield* reference(raw.target, scope, additions)
-        const reason = yield* leaf(Schema.NullOr(TextSchema), raw.reason)
-
-        return freezeMutation({ op: "block", target, reason })
+        return freezeMutation({
+          op: "status",
+          target,
+          status:
+            typeof status === "string" ? status : Object.freeze({ ...status }),
+        })
       }
       case "transfer": {
         if (
@@ -386,13 +377,13 @@ export const decodeTaskMutationBatch = (
           break
         case "status":
           references += 1
+          textSize +=
+            typeof operation.status === "string"
+              ? 0
+              : operation.status.reason.length
           break
         case "transfer":
           references += 2
-          break
-        case "block":
-          references += 1
-          textSize += operation.reason === null ? 0 : operation.reason.length
           break
       }
 

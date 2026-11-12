@@ -130,7 +130,7 @@ const appendTask = (store: SqliteTaskStore, target: IssueReference = issue()) =>
     },
   )
 
-test("blocking variants carry reasons and named filters preserve lifecycle", async () =>
+test("blocked is a reason-carrying status and leaving it requires an explicit status", async () =>
   fixture(async root =>
     withStore(join(root, "tasks.sqlite"), async store => {
       const target = issue()
@@ -139,7 +139,6 @@ test("blocking variants carry reasons and named filters preserve lifecycle", asy
       assert.ok(Option.isSome(page))
       const task = page.value.tasks[0]
       assert.ok(task)
-      assert.deepEqual(task.blocker, { _tag: "Unblocked" })
       const reference = {
         issue: target,
         task: { kind: "existing", id: task.id },
@@ -150,52 +149,46 @@ test("blocking variants carry reasons and named filters preserve lifecycle", asy
         now: 1000,
         cancellation: "forbidden",
       })
+      const blockedStatus = {
+        _tag: "blocked",
+        reason: "Requires verified dependency",
+      }
       await run(
         store.apply(
           {
             issues: [target],
             operations: [
-              { op: "status", target: reference, status: "doing" },
-              {
-                op: "block",
-                target: reference,
-                reason: "Requires verified dependency",
-              },
+              { op: "status", target: reference, status: blockedStatus },
             ],
           },
           context(),
         ),
       )
       const blocked = await run(
-        store.readTasks(target, { limit: 1 }, { blocked: "blocked" }),
+        store.readTasks(target, { limit: 1 }, { status: "blocked" }),
       )
       assert.ok(Option.isSome(blocked))
-      assert.equal(blocked.value.tasks[0]?.status, "doing")
-      assert.deepEqual(blocked.value.tasks[0]?.blocker, {
-        _tag: "Blocked",
-        reason: "Requires verified dependency",
-      })
+      assert.deepEqual(blocked.value.tasks[0]?.status, blockedStatus)
       const detail = await run(store.readTask(target, task.id))
       assert.ok(Option.isSome(detail))
-      assert.deepEqual(
-        detail.value.task.blocker,
-        blocked.value.tasks[0]?.blocker,
-      )
+      assert.deepEqual(detail.value.task.status, blockedStatus)
       await run(
         store.apply(
           {
             issues: [target],
-            operations: [{ op: "block", target: reference, reason: null }],
+            operations: [{ op: "status", target: reference, status: "doing" }],
           },
           context(),
         ),
       )
-      const clear = await run(
-        store.readTasks(target, { limit: 1 }, { blocked: "unblocked" }),
+      const resumed = await run(store.readTask(target, task.id))
+      assert.ok(Option.isSome(resumed))
+      assert.equal(resumed.value.task.status, "doing")
+      const remaining = await run(
+        store.readTasks(target, { limit: 1 }, { status: "blocked" }),
       )
-      assert.ok(Option.isSome(clear))
-      assert.equal(clear.value.tasks[0]?.status, "doing")
-      assert.deepEqual(clear.value.tasks[0]?.blocker, { _tag: "Unblocked" })
+      assert.ok(Option.isSome(remaining))
+      assert.equal(remaining.value.tasks.length, 0)
     }),
   ))
 
@@ -584,7 +577,7 @@ test(
     }),
 )
 
-test("filtered task pages combine status and factual blocker without changing issue state", async () =>
+test("filtered task pages select lifecycle status without changing issue state", async () =>
   fixture(async root => {
     const path = join(root, "tasks.sqlite")
     await withStore(path, async store => {
@@ -605,11 +598,7 @@ test("filtered task pages combine status and factual blocker without changing is
       })
 
       const filtered = await run(
-        store.readTasks(
-          issue(),
-          { limit: 100 },
-          { status: "doing", blocked: "blocked" },
-        ),
+        store.readTasks(issue(), { limit: 100 }, { status: "blocked" }),
       )
 
       assert.ok(Option.isSome(filtered))
@@ -621,13 +610,13 @@ test("filtered task pages combine status and factual blocker without changing is
       assert.equal(filtered.value.revision, 0)
 
       const unblocked = await run(
-        store.readTasks(issue(), { limit: 100 }, { blocked: "unblocked" }),
+        store.readTasks(issue(), { limit: 100 }, { status: "todo" }),
       )
 
       assert.ok(Option.isSome(unblocked))
       assert.deepEqual(
         unblocked.value.tasks.map(task => task.id),
-        ids.slice(0, 2),
+        [ids[0]],
       )
 
       const all = await run(store.readTasks(issue(), { limit: 100 }))
@@ -647,7 +636,7 @@ test("filtered task pages combine status and factual blocker without changing is
       assert.ok(Option.isSome(statusOnly))
       assert.deepEqual(
         statusOnly.value.tasks.map(task => task.id),
-        ids.slice(1),
+        [ids[1]],
       )
 
       const noMatch = await run(
@@ -663,7 +652,7 @@ test("filtered task pages combine status and factual blocker without changing is
             store.readTasks(
               issue("absent/repo"),
               { limit: 1 },
-              { blocked: "blocked" },
+              { status: "blocked" },
             ),
           ),
         ),
@@ -807,7 +796,6 @@ test("single-task lookup returns issue revision, full task data and dependency a
           id: created.id,
           text: "Persisted requirement",
           status: "todo",
-          blocker: { _tag: "Unblocked" },
         },
         dependsOn: [],
       })

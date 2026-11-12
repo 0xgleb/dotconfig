@@ -1226,7 +1226,7 @@ test("actual SDK exposes and validates operation and qualified-reference shapes"
       { op: "add", issue: rawIssue, key: "one" },
       { op: "edit", target, authority: "owner" },
       { op: "status", target, status: "in_review" },
-      { op: "block", target },
+      { op: "status", target, status: { _tag: "blocked" } },
       { op: "transfer", target },
       { op: "edit", target: { task: target.task }, text: "Changed" },
     ])
@@ -1247,7 +1247,11 @@ test("actual SDK executes all documented mutation shapes including creation refe
       operations: [
         ...addRequest.operations,
         { op: "edit", target, text: "Edited" },
-        { op: "block", target, reason: "Blocked" },
+        {
+          op: "status",
+          target,
+          status: { _tag: "blocked", reason: "Blocked" },
+        },
         { op: "transfer", target, toIssue: destination },
         { op: "status", target, status: "doing" },
       ],
@@ -1268,10 +1272,6 @@ test("actual SDK executes all documented mutation shapes including creation refe
     if (found.details.outcome.kind !== "task")
       assert.fail("Expected transferred task")
     assert.equal(found.details.outcome.detail.task.text, "Edited")
-    assert.deepEqual(found.details.outcome.detail.task.blocker, {
-      _tag: "Blocked",
-      reason: "Blocked",
-    })
     assert.equal(found.details.outcome.detail.task.status, "doing")
   }))
 
@@ -1379,7 +1379,7 @@ test("actual SDK readMany retains each query filter and bounds failures before s
       action: "readMany",
       queries: [
         { ...query, filter: { status: "done" } },
-        { ...query, filter: { status: "todo", blocked: "unblocked" } },
+        { ...query, filter: { status: "todo" } },
       ],
     })
     assert.equal(result.details.outcome.kind, "pages")
@@ -1448,7 +1448,7 @@ test("actual SDK forwards filtered issue reads without resolving mutation grants
       action: "read",
       issue: rawIssue,
       page: { limit: 1 },
-      filter: { status: "done", blocked: "unblocked" },
+      filter: { status: "done" },
     })
 
     assert.equal(result.details.outcome.kind, "page")

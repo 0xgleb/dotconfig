@@ -400,7 +400,11 @@ test("transfer A→B→C places every affected owner once, excluding untouched s
             },
             { op: "edit", target, text: "Edited" },
             { op: "status", target, status: "doing" },
-            { op: "block", target, reason: "Fixture blocker" },
+            {
+              op: "status",
+              target,
+              status: { _tag: "blocked", reason: "Fixture blocker" },
+            },
             { op: "transfer", target, toIssue: b },
             { op: "transfer", target, toIssue: c },
           ],

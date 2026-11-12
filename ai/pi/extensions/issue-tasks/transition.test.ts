@@ -135,9 +135,9 @@ test("creation-qualified aliases survive transfers and preserve intermediate iss
     { op: "edit", target: added(a, "moved"), dependsOn: [existing(a, t1)] },
     { op: "transfer", target: added(a, "moved"), toIssue: a },
     {
-      op: "block",
+      op: "status",
       target: added(a, "moved"),
-      reason: "External input missing",
+      status: { _tag: "blocked", reason: "External input missing" },
     },
   ])
   const result = success(input)
@@ -146,7 +146,7 @@ test("creation-qualified aliases survive transfers and preserve intermediate iss
 
   assert.ok(moved)
   assert.deepEqual(moved.issue, a)
-  assert.equal(moved.status, "doing")
+  assert.equal(moved.status, "todo")
   assert.equal(moved.blocker, "External input missing")
   assert.deepEqual(moved.dependsOn, [t1])
   assert.deepEqual(
@@ -183,9 +183,9 @@ test("a complete multi-issue batch prepares changes and advances each touched is
     },
     { op: "status", target: added(a, "new"), status: "doing" },
     {
-      op: "block",
+      op: "status",
       target: added(a, "new"),
-      reason: "External input is missing",
+      status: { _tag: "blocked", reason: "External input is missing" },
     },
     { op: "edit", target: existing(a, t1), text: "Updated requirement" },
     { op: "status", target: existing(b, t2), status: "done" },
@@ -213,7 +213,7 @@ test("a complete multi-issue batch prepares changes and advances each touched is
   const created = result.tasks.find(task => task.id === taskId(100))
 
   assert.ok(created)
-  assert.equal(created.status, "doing")
+  assert.equal(created.status, "todo")
   assert.equal(created.blocker, "External input is missing")
   assert.deepEqual(created.dependsOn, [t2])
   assert.equal(result.changed.length, 3)
@@ -386,7 +386,7 @@ test("no-op batches preserve exhausted revisions but real changes cannot overflo
         text: "Original requirement",
         dependsOn: [],
       },
-      { op: "block", target: existing(a, t1), reason: null },
+      { op: "status", target: existing(a, t1), status: "todo" },
     ]),
     state,
   )
@@ -435,7 +435,7 @@ test("malformed projections and ID allocations fail rather than overwrite data",
   fails(input, "invalid_allocation", base, context(add))
 })
 
-test("status changes preserve factual blockers and history records only changed fields", () => {
+test("leaving blocked replaces its reason with the selected status and records history", () => {
   const base = snapshot()
 
   const state: TaskSnapshot = {
@@ -452,13 +452,17 @@ test("status changes preserve factual blockers and history records only changed 
     state,
   )
 
-  assert.equal(result.tasks[0]?.blocker, "Awaiting external input")
+  assert.equal(result.tasks[0]?.status, "done")
+  assert.equal(result.tasks[0]?.blocker, null)
   assert.deepEqual(result.changed[0]?.fields, ["status"])
 
   const event = result.events[0]
 
   assert.ok(event?.op === "status")
-  assert.equal(event.before, "doing")
+  assert.deepEqual(event.before, {
+    _tag: "blocked",
+    reason: "Awaiting external input",
+  })
   assert.equal(event.after, "done")
   assert.ok(Object.isFrozen(result))
   assert.ok(Object.isFrozen(result.tasks))

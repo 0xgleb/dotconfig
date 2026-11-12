@@ -16,8 +16,10 @@ import {
   MAX_TASK_TEXT,
   MAX_TASK_PAGE_SIZE,
   StatusSchema,
+  UnitStatusSchema,
   TaskFilterSchema,
-  TaskBlockerReasonSchema,
+  BlockedReasonSchema,
+  storedTaskStatus,
   type IssueTask,
   type IssueTaskRevision,
   type IssueTaskPage,
@@ -85,18 +87,15 @@ const PlanRowSchema = Schema.Struct({
 const TaskRowSchema = Schema.Struct({
   id: TaskIdSchema,
   text: TextSchema,
-  status: StatusSchema,
-  blocker: Schema.NullOr(TaskBlockerReasonSchema),
+  status: UnitStatusSchema,
+  blocker: Schema.NullOr(BlockedReasonSchema),
 })
 
 const projectTask = (row: typeof TaskRowSchema.Type): IssueTask =>
   Object.freeze({
-    ...row,
-    blocker: Object.freeze(
-      row.blocker === null
-        ? { _tag: "Unblocked" as const }
-        : { _tag: "Blocked" as const, reason: row.blocker },
-    ),
+    id: row.id,
+    text: row.text,
+    status: storedTaskStatus(row.status, row.blocker),
   })
 
 export type {
@@ -862,7 +861,7 @@ const SavedResultSchema = Schema.Struct({
       id: TaskIdSchema,
       revision: RevisionSchema,
       fields: Schema.Array(
-        Schema.Literal("text", "status", "blocker", "dependsOn", "issue"),
+        Schema.Literal("text", "status", "dependsOn", "issue"),
       ),
     }),
   ),
@@ -976,15 +975,6 @@ const StatusEventSchema = Schema.Struct({
   id: TaskIdSchema,
   before: StatusSchema,
   after: StatusSchema,
-})
-
-const BlockEventSchema = Schema.Struct({
-  op: Schema.Literal("block"),
-  operationIndex: RevisionSchema,
-  issue: Schema.Unknown,
-  id: TaskIdSchema,
-  before: Schema.NullOr(TextSchema),
-  after: Schema.NullOr(TextSchema),
 })
 
 const TransferEventSchema = Schema.Struct({
@@ -1290,7 +1280,11 @@ const readReceipt = (
     const locations = new Map<TaskId, IssueReference>()
     const fieldStates = new Map<
       TaskId,
-      Partial<Pick<CurrentTask, "text" | "status" | "blocker" | "dependsOn">>
+      Partial<
+        Pick<CurrentTask, "text" | "dependsOn"> & {
+          readonly status: typeof StatusSchema.Type
+        }
+      >
     >()
 
     const verifyAbsentOperation = (
@@ -1343,23 +1337,15 @@ const readReceipt = (
               )
             break
           case "status":
-            if (state.status !== undefined && state.status !== operation.status)
+            if (
+              state.status !== undefined &&
+              !isDeepStrictEqual(state.status, operation.status)
+            )
               return yield* fail(
                 "corrupt_state",
                 "Status change has no history event",
               )
             state = { ...state, status: operation.status }
-            break
-          case "block":
-            if (
-              state.blocker !== undefined &&
-              state.blocker !== operation.reason
-            )
-              return yield* fail(
-                "corrupt_state",
-                "Blocker change has no history event",
-              )
-            state = { ...state, blocker: operation.reason }
             break
           case "edit": {
             if (operation.text !== undefined) {
@@ -1608,10 +1594,9 @@ const readReceipt = (
           fieldState = {
             text: payload.task.text,
             status: payload.task.status,
-            blocker: payload.task.blocker,
             dependsOn: payload.task.dependsOn,
           }
-          eventFields = ["text", "status", "blocker", "dependsOn"]
+          eventFields = ["text", "status", "dependsOn"]
           break
         }
         case "status": {
@@ -1624,10 +1609,10 @@ const readReceipt = (
             payload.id !== task.id ||
             payload.operationIndex !== history.operation_index ||
             issueKey(owner) !== issueKey(before) ||
-            payload.before === payload.after ||
+            isDeepStrictEqual(payload.before, payload.after) ||
             (fieldState.status !== undefined &&
-              fieldState.status !== payload.before) ||
-            payload.after !== operation.status
+              !isDeepStrictEqual(fieldState.status, payload.before)) ||
+            !isDeepStrictEqual(payload.after, operation.status)
           )
             return yield* fail(
               "corrupt_state",
@@ -1636,30 +1621,6 @@ const readReceipt = (
 
           fieldState = { ...fieldState, status: payload.after }
           eventFields = ["status"]
-          break
-        }
-        case "block": {
-          const payload = yield* decodeEventPayload(
-            BlockEventSchema,
-            history.state_payload,
-          )
-          const owner = yield* storedIssue(payload.issue)
-          if (
-            payload.id !== task.id ||
-            payload.operationIndex !== history.operation_index ||
-            issueKey(owner) !== issueKey(before) ||
-            payload.before === payload.after ||
-            (fieldState.blocker !== undefined &&
-              fieldState.blocker !== payload.before) ||
-            payload.after !== operation.reason
-          )
-            return yield* fail(
-              "corrupt_state",
-              "Blocker history is inconsistent with the requested change",
-            )
-
-          fieldState = { ...fieldState, blocker: payload.after }
-          eventFields = ["blocker"]
           break
         }
         case "transfer":
@@ -1915,8 +1876,8 @@ const loadTaskSnapshot = (
     const rowSchema = Schema.Struct({
       id: TaskIdSchema,
       text: TextSchema,
-      status: StatusSchema,
-      blocker: Schema.NullOr(TextSchema),
+      status: UnitStatusSchema,
+      blocker: Schema.NullOr(BlockedReasonSchema),
       repository: Schema.String,
       issue_number: Schema.Number,
     })
@@ -2595,7 +2556,7 @@ const readIssueTasks = (
       TaskFilterSchema,
       selection === undefined ? {} : selection,
       "invalid_input",
-      "Task filter requires a lifecycle status and a named blocked/unblocked case",
+      "Task filter requires a lifecycle status case",
     )
 
     const stored = yield* findPlan(database, issue)
@@ -2631,17 +2592,13 @@ const readIssueTasks = (
     const cursorPredicate =
       after === undefined ? "" : " AND issue_plan_tasks.id > ?"
     const statusPredicate =
-      filter.status === undefined ? "" : " AND issue_plan_tasks.status = ?"
-    const blockerPredicate =
-      filter.blocked === undefined
+      filter.status === undefined
         ? ""
-        : filter.blocked === "blocked"
-          ? " AND issue_plan_tasks.blocker IS NOT NULL"
-          : " AND issue_plan_tasks.blocker IS NULL"
+        : " AND CASE WHEN status IN ('done', 'cancelled') THEN status WHEN blocker IS NOT NULL THEN 'blocked' ELSE status END = ?"
     const rows = yield* io("Could not read issue tasks", () =>
       database
         .prepare(
-          `SELECT ${taskColumns} FROM issue_plan_tasks WHERE plan_id = ?${cursorPredicate}${statusPredicate}${blockerPredicate} ORDER BY issue_plan_tasks.id LIMIT ?`,
+          `SELECT ${taskColumns} FROM issue_plan_tasks WHERE plan_id = ?${cursorPredicate}${statusPredicate} ORDER BY issue_plan_tasks.id LIMIT ?`,
         )
         .all(
           plan.id,

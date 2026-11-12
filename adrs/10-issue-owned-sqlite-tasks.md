@@ -29,22 +29,21 @@ accepting caller revision tokens. A retry with the same authenticated request
 identity returns the original durable receipt, not a new observation of current
 state.
 
-Task transfers preserve identity, content, lifecycle, blockers and dependency
+Task transfers preserve identity, content, lifecycle status and dependency
 edges. History records the prior issue from the executor's observed state.
 Advance each affected issue's revision once per batch, including intermediate
 issue associations; no-op operations do not advance revisions. References by
 existing task ID must name its currently associated issue. Batch-local creation
 aliases retain their creation-time issue qualification after a transfer.
 
-`task` mutations are add, edit, status, block and transfer. Its lifecycle values
-are `todo | doing | done | cancelled`. Trusted host context supplies
-cancellation and reopening authority, never model-authored fields. Blocking is
-independent of lifecycle. A task's blocker is a tagged `Unblocked` variant or a
-`Blocked` variant carrying a validated reason. A task can remain `doing` while
-blocked; clearing its blocker leaves it `doing`. Read filters use
-`blocked: "blocked"` or `blocked: "unblocked"` to select the corresponding case.
-Numeric issue Priority expresses ordering; factual blockers and issue
-dependencies express work that cannot proceed.
+`task` mutations are add, edit, status and transfer. Lifecycle status is
+`todo | doing | done | cancelled | blocked(reason)`. The `blocked` variant
+carries a validated reason. A status mutation replaces the entire status;
+leaving `blocked` requires explicitly selecting the next status. Read filters
+select lifecycle cases, including `status: "blocked"`. Trusted host context
+supplies cancellation and reopening authority, never model-authored fields.
+Numeric issue Priority expresses ordering; blocked tasks and issue dependencies
+express work that cannot proceed.
 
 Use the existing personal Project and existing organization Project. Bind their
 verified numeric **Priority** fields with their actual scopes: the personal

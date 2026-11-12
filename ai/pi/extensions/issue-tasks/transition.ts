@@ -1,10 +1,14 @@
 import { Data, Either } from "effect"
+import { isDeepStrictEqual } from "node:util"
+import { storedTaskStatus } from "./model.ts"
 import { issueKey, type IssueReference } from "./identity.ts"
 import type {
   IssueTaskRevision,
   IssueTask,
   TaskId,
   TaskStatus,
+  UnitTaskStatus,
+  BlockedReason,
 } from "./model.ts"
 import type {
   DraftTaskKey,
@@ -12,8 +16,9 @@ import type {
   TaskReference,
 } from "./mutations.ts"
 
-export interface CurrentTask extends Omit<IssueTask, "blocker"> {
-  readonly blocker: string | null
+export interface CurrentTask extends Omit<IssueTask, "status"> {
+  readonly status: UnitTaskStatus
+  readonly blocker: BlockedReason | null
   readonly issue: IssueReference
   readonly dependsOn: readonly TaskId[]
 }
@@ -78,14 +83,6 @@ export type TaskEvent =
       readonly after: TaskStatus
     }
   | {
-      readonly op: "block"
-      readonly operationIndex: number
-      readonly issue: IssueReference
-      readonly id: TaskId
-      readonly before: string | null
-      readonly after: string | null
-    }
-  | {
       readonly op: "transfer"
       readonly operationIndex: number
       readonly issue: IssueReference
@@ -97,9 +94,7 @@ export interface TaskChangeSummary {
   readonly issue: IssueReference
   readonly id: TaskId
   readonly revision: number
-  readonly fields: readonly (
-    "text" | "dependsOn" | "status" | "blocker" | "issue"
-  )[]
+  readonly fields: readonly ("text" | "dependsOn" | "status" | "issue")[]
 }
 
 export interface PreparedIssueChange {
@@ -452,7 +447,7 @@ export const prepareTaskChanges = (
         tasks.set(id, task)
         graph.set(id, task.dependsOn)
         record({ op: "add", operationIndex, task })
-        mark(id, ["text", "status", "blocker", "dependsOn"])
+        mark(id, ["text", "status", "dependsOn"])
         continue
       }
 
@@ -522,43 +517,36 @@ export const prepareTaskChanges = (
           break
         }
         case "status": {
+          const before = storedTaskStatus(task.status, task.blocker)
           if (
             context.cancellation !== "owner-authorized" &&
-            (task.status === "cancelled" || operation.status === "cancelled")
+            (before === "cancelled" || operation.status === "cancelled")
           )
             return yield* fail(
               "unauthorized",
               "Cancelling or reopening tasks requires owner approval",
             )
-          if (task.status === operation.status) break
+          if (isDeepStrictEqual(before, operation.status)) break
 
-          const current = frozenTask({ ...task, status: operation.status })
+          const current = frozenTask({
+            ...task,
+            status:
+              typeof operation.status === "string" ? operation.status : "todo",
+            blocker:
+              typeof operation.status === "string"
+                ? null
+                : operation.status.reason,
+          })
           tasks.set(current.id, current)
           record({
             op: "status",
             operationIndex,
             issue: current.issue,
             id: current.id,
-            before: task.status,
-            after: current.status,
+            before,
+            after: operation.status,
           })
           mark(current.id, ["status"])
-          break
-        }
-        case "block": {
-          if (task.blocker === operation.reason) break
-
-          const current = frozenTask({ ...task, blocker: operation.reason })
-          tasks.set(current.id, current)
-          record({
-            op: "block",
-            operationIndex,
-            issue: current.issue,
-            id: current.id,
-            before: task.blocker,
-            after: current.blocker,
-          })
-          mark(current.id, ["blocker"])
           break
         }
       }
@@ -634,7 +622,6 @@ export const prepareTaskChanges = (
     const fieldOrder: readonly ChangedField[] = [
       "text",
       "status",
-      "blocker",
       "dependsOn",
       "issue",
     ]

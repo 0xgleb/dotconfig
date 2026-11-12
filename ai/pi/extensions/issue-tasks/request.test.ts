@@ -43,7 +43,7 @@ test("multi-issue task queries normalize and detach every qualified page", () =>
     {
       issue: { repository: "Owner/Repo", number: 12 },
       page: { limit: 1 },
-      filter: { blocked: "unblocked" },
+      filter: { status: "todo" },
     },
   ]
 
@@ -51,7 +51,7 @@ test("multi-issue task queries normalize and detach every qualified page", () =>
 
   assert.ok(Either.isRight(decoded))
   assert.deepEqual(decoded.right, [
-    { issue: a, page: { limit: 1 }, filter: { blocked: "unblocked" } },
+    { issue: a, page: { limit: 1 }, filter: { status: "todo" } },
   ])
 
   const first = source[0]
@@ -60,10 +60,10 @@ test("multi-issue task queries normalize and detach every qualified page", () =>
 
   first.issue.repository = "Other/Repo"
   first.page.limit = 2
-  first.filter.blocked = "blocked"
+  first.filter.status = "blocked"
 
   assert.deepEqual(decoded.right, [
-    { issue: a, page: { limit: 1 }, filter: { blocked: "unblocked" } },
+    { issue: a, page: { limit: 1 }, filter: { status: "todo" } },
   ])
   assert.ok(Object.isFrozen(decoded.right))
   assert.ok(
@@ -151,22 +151,22 @@ test("task readMany rejects malformed vectors, later queries and aggregate overf
 })
 
 test("task read decodes a detached explicit status and blocker filter", () => {
-  const filter = { status: "doing", blocked: "unblocked" }
+  const filter = { status: "doing" }
 
   const decoded = decodeTaskRequest({ ...read, filter })
 
   assert.ok(Either.isRight(decoded))
   assert.deepEqual(decoded.right, {
     ...read,
-    filter: { status: "doing", blocked: "unblocked" },
+    filter: { status: "doing" },
   })
 
   filter.status = "done"
-  filter.blocked = "blocked"
+  filter.status = "blocked"
 
   assert.deepEqual(decoded.right, {
     ...read,
-    filter: { status: "doing", blocked: "unblocked" },
+    filter: { status: "doing" },
   })
   assert.ok(decoded.right.action === "read")
   assert.ok(Object.isFrozen(decoded.right.filter))
@@ -190,18 +190,15 @@ test("task filters reject malformed or authority-bearing predicates without coer
   failure({ ...apply, filter: {} }, "invalid_request")
 })
 
-test("task filters accept all lifecycle statuses and named or omitted blocking cases", () => {
-  for (const status of ["todo", "doing", "done", "cancelled"])
-    for (const blocked of [undefined, "blocked", "unblocked"]) {
-      const filter = { status, ...(blocked === undefined ? {} : { blocked }) }
+test("task filters accept each lifecycle case", () => {
+  for (const status of ["todo", "doing", "done", "cancelled", "blocked"]) {
+    const filter = { status }
+    const decoded = decodeTaskRequest({ ...read, filter })
+    assert.ok(Either.isRight(decoded))
+    assert.deepEqual(decoded.right, { ...read, filter })
+  }
 
-      const decoded = decodeTaskRequest({ ...read, filter })
-
-      assert.ok(Either.isRight(decoded))
-      assert.deepEqual(decoded.right, { ...read, filter })
-    }
-
-  for (const filter of [{}, { status: undefined, blocked: undefined }]) {
+  for (const filter of [{}, { status: undefined }]) {
     const decoded = decodeTaskRequest({ ...read, filter })
     assert.ok(Either.isRight(decoded))
     assert.deepEqual(decoded.right, { ...read, filter: {} })

@@ -14,11 +14,7 @@ import { selectIssueAssignment } from "./selector.ts"
 import { Text, visibleWidth } from "@earendil-works/pi-tui"
 import { Effect, Either, Option, Schema } from "effect"
 import { decodeIssueReference } from "./identity.ts"
-import {
-  MutationBatchIdSchema,
-  TaskIdSchema,
-  TaskBlockerSchema,
-} from "./model.ts"
+import { MutationBatchIdSchema, TaskIdSchema, StatusSchema } from "./model.ts"
 import {
   createTaskTool,
   type TaskToolDetails,
@@ -40,9 +36,8 @@ const batchId = Schema.decodeUnknownSync(MutationBatchIdSchema)(
 const task = {
   id,
   text: "Render task names",
-  status: "doing" as const,
-  blocker: Schema.decodeUnknownSync(TaskBlockerSchema)({
-    _tag: "Blocked",
+  status: Schema.decodeUnknownSync(StatusSchema)({
+    _tag: "blocked",
     reason: "Needs terminal verification",
   }),
 }
@@ -90,7 +85,7 @@ test("registered task renderer shows task names, status and blockers before rece
   const text = render(outcome)
   assert.match(text, /0xgleb\/dotconfig#228/)
   assert.match(text, /Render task names/)
-  assert.match(text, /doing/)
+  assert.match(text, /blocked/)
   assert.match(text, /Needs terminal verification/)
   assert.match(text, /more/i)
   assert.doesNotMatch(text, /"revision"/)
@@ -273,8 +268,8 @@ test("compact output bounds long blockers without dropping their availability", 
       revision: 1,
       tasks: Array.from({ length: 100 }, () => ({
         ...task,
-        blocker: Schema.decodeUnknownSync(TaskBlockerSchema)({
-          _tag: "Blocked",
+        status: Schema.decodeUnknownSync(StatusSchema)({
+          _tag: "blocked",
           reason: "Blocker detail ".repeat(8000),
         }),
       })),

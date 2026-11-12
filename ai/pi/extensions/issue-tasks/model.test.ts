@@ -1,29 +1,30 @@
 import assert from "node:assert/strict"
 import test from "node:test"
 import { Either, Schema } from "effect"
-import { TaskBlockerSchema } from "./model.ts"
+import { StatusSchema } from "./model.ts"
 
-const decode = Schema.decodeUnknownEither(TaskBlockerSchema, {
+const decode = Schema.decodeUnknownEither(StatusSchema, {
   onExcessProperty: "error",
 })
 
-test("blocking states distinguish unblocked work from a validated blocking reason", () => {
-  for (const state of [
-    { _tag: "Unblocked" },
-    { _tag: "Blocked", reason: "Requires a verified dependency" },
+test("blocked is a lifecycle variant carrying a validated reason", () => {
+  for (const status of [
+    "todo",
+    "doing",
+    "done",
+    "cancelled",
+    {
+      _tag: "blocked",
+      reason: "Requires a verified dependency",
+    },
   ]) {
-    const result = decode(state)
+    const result = decode(status)
     assert.ok(Either.isRight(result))
-    assert.deepEqual(result.right, state)
+    assert.deepEqual(result.right, status)
   }
 })
 
-test("blocked work cannot omit its reason or carry malformed reason data", () => {
+test("blocked status requires a nonempty valid reason", () => {
   for (const reason of [undefined, null, "", " ", 0, "invalid\u0000reason"])
-    assert.ok(Either.isLeft(decode({ _tag: "Blocked", reason })))
-
-  assert.ok(
-    Either.isLeft(decode({ _tag: "Unblocked", reason: "contradiction" })),
-  )
-  assert.ok(Either.isLeft(decode({ _tag: "Unknown" })))
+    assert.ok(Either.isLeft(decode({ _tag: "blocked", reason })))
 })
