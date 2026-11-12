@@ -102,7 +102,7 @@ const fixture = async (
 
 const theme = {
   fg: (token: string, text: string) =>
-    `\u001b[${token === "muted" ? 90 : token === "accent" ? 36 : 34}m${text}\u001b[39m`,
+    `\u001b[${token === "muted" ? "90" : token === "accent" ? "38;2;40;120;200" : "38;2;240;50;180"}m${text}\u001b[39m`,
   bold: (text: string) => `\u001b[1m${text}\u001b[22m`,
 } as unknown as Theme
 
@@ -263,4 +263,88 @@ test("native component pulses by wall clock without a background timer or render
     } finally {
       timer.mock.restore()
     }
+  }))
+
+const renderedBar = (line: string): string =>
+  line.match(/[▰▱]/gu)?.join("") ?? ""
+
+const brightCells = (line: string): number =>
+  [...line.matchAll(/\u001b\[38;2;115;167;219m▰/gu)].length
+
+test("HUD progress is right-aligned on a continuous header rule", async () =>
+  fixture(async (_store, view) => {
+    const headline = taskHudLines(view, 160)[0]
+    assert.ok(headline)
+    assert.match(headline, /settled.*─+.*[▰▱]/u)
+    assert.ok(headline.trimEnd().endsWith("50% ─╮"))
+  }))
+
+test("completed HUD cells use the accent palette rather than the border palette", async () =>
+  fixture(async (_store, view) => {
+    const component = createTaskHudComponent(
+      () => view,
+      theme,
+      () => 300,
+      () => false,
+    )
+    const headline = component.render(160)[0]
+    assert.ok(headline)
+    const filled = [...headline.matchAll(/\u001b\[38;2;(\d+);(\d+);(\d+)m▰/gu)]
+    assert.ok(filled.length > 1)
+    assert.ok(filled.every(cell => cell.slice(1).join(",") === "40,120,200"))
+  }))
+
+test("active HUD pulses completed cells then the whole region without hiding progress", async () =>
+  fixture(async (_store, view) => {
+    let now = 0
+    const component = createTaskHudComponent(
+      () => view,
+      theme,
+      () => now,
+      () => false,
+    )
+    const initial = component.render(160)[0]
+    assert.ok(initial)
+    const bar = renderedBar(initial)
+    const completed = [...bar].filter(cell => cell === "▰").length
+    assert.ok(completed > 1)
+    assert.equal(brightCells(initial), 1)
+    now = 300
+    assert.equal(brightCells(component.render(160)[0] ?? ""), 0)
+    now = 600
+    assert.equal(brightCells(component.render(160)[0] ?? ""), 1)
+    now = completed * 600
+    const whole = component.render(160)[0] ?? ""
+    assert.equal(brightCells(whole), completed)
+    assert.equal(renderedBar(whole), bar)
+    assert.match(whole, /50%/)
+  }))
+
+test("idle HUD blinks the completed region together without changing task counts", async () =>
+  fixture(async (_store, view) => {
+    let now = 0
+    let idle = true
+    const component = createTaskHudComponent(
+      () => view,
+      theme,
+      () => now,
+      () => idle,
+    )
+    const initial = component.render(160)[0] ?? ""
+    const off = renderedBar(initial)
+    assert.ok(off.length >= 8)
+    assert.ok([...off].every(cell => cell === "▱"))
+    now = 1000
+    assert.equal(renderedBar(component.render(160)[0] ?? ""), off)
+    now = 1500
+    const on = component.render(160)[0] ?? ""
+    assert.match(renderedBar(on), /▰+▱+/u)
+    assert.match(on, /2\/4 settled/)
+    assert.match(on, /50%/)
+    assert.deepEqual(component.render(160), component.render(160))
+    idle = false
+    now = 0
+    assert.match(renderedBar(component.render(160)[0] ?? ""), /▰+▱+/u)
+    assert.equal(view.progress.counts.done, 1)
+    assert.equal(view.progress.counts.cancelled, 1)
   }))

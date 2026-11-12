@@ -232,6 +232,7 @@ export const createTaskHudComponent = (
   view: () => TaskHudView,
   theme: Theme,
   clock: () => number = Date.now,
+  isIdle: () => boolean = () => false,
 ): Component => {
   let cachedView: TaskHudView | undefined
   let cachedWidth: number | undefined
