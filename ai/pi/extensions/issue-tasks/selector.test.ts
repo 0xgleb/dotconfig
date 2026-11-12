@@ -53,6 +53,51 @@ const winner = (rows: readonly { readonly issue: unknown }[]) => {
   return result.issue
 }
 
+for (const [field, value, code] of [
+  ["priority", 0.5, "invalid_priority"],
+  ["priority", 0, "invalid_priority"],
+  ["effort", 4, "invalid_effort"],
+] as const) {
+  test(`invalid ${field} identifies the qualified issue and rejected value ${value}`, () => {
+    const result = Effect.runSync(
+      Effect.either(
+        selectIssueAssignment(
+          snapshot([
+            candidate(1),
+            candidate(99, { [field]: numeric(value) }, "dataclique/yielduck"),
+          ]),
+        ),
+      ),
+    )
+
+    assert.ok(Either.isLeft(result))
+    assert.equal(result.left.code, code)
+    assert.match(result.left.message, /dataclique\/yielduck#99/)
+    assert.ok(result.left.message.includes(`Received ${value}.`))
+  })
+}
+
+for (const field of ["priority", "effort"] as const) {
+  test(`invalid ${field} identifies nonnumeric input without echoing its payload`, () => {
+    const payload = "private payload\u001b[31m\n"
+    const result = Effect.runSync(
+      Effect.either(
+        selectIssueAssignment(
+          snapshot([
+            candidate(99, { [field]: { kind: "number", value: payload } }),
+          ]),
+        ),
+      ),
+    )
+
+    assert.ok(Either.isLeft(result))
+    assert.equal(result.left.code, `invalid_${field}`)
+    assert.match(result.left.message, /owner\/repository#99/)
+    assert.match(result.left.message, /Received type string\./)
+    assert.ok(!result.left.message.includes(payload))
+  })
+}
+
 test("read-only selection needs factual gates, not worker permission attestations", () => {
   const result = run(
     snapshot([

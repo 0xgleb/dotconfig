@@ -8,6 +8,8 @@ import { Effect, Either } from "effect"
 import { createGitHubProjectReader } from "./github-project-read.ts"
 import { createGitHubIssueReader } from "./github-read.ts"
 import { createIssueNextReader } from "./next.ts"
+import { createIssueNextPicker } from "./pickup.ts"
+import { createTaskTool, type IssueTaskTool } from "./tool.ts"
 import { openSqliteTaskStore, type SqliteTaskStore } from "./sqlite-store.ts"
 
 const run = Effect.runPromise
@@ -494,3 +496,67 @@ test("next rejects caller clearance and malformed targets before any source read
     assert.deepEqual(source.calls, [])
   })
 })
+
+for (const [field, value, code] of [
+  ["priority", 0.5, "invalid_priority"],
+  ["effort", 4, "invalid_effort"],
+] as const) {
+  test(`public task-next preserves the offending issue and invalid ${field}`, async () => {
+    await withStore(async tasks => {
+      const source = ports([
+        projectPayload([
+          { number: 1, priority: 1, effort: 1 },
+          { number: 99, priority: 2, effort: 1, [field]: value },
+        ]),
+      ])
+
+      const unexpectedPickup = (): never =>
+        assert.fail("Invalid scheduling metadata must prevent pickup")
+
+      const picker = createIssueNextPicker({
+        reader: createIssueNextReader({ ...source, tasks }),
+        pickup: {
+          inspect: unexpectedPickup,
+          assignOwner: unexpectedPickup,
+          setInProgress: unexpectedPickup,
+        },
+      })
+
+      const tool = createTaskTool({
+        store: tasks,
+        nextPicker: picker,
+        contextForCall: call =>
+          Effect.succeed({
+            actorId: call.sessionId,
+            requestId: call.toolCallId,
+            now: 1,
+            cancellation: "forbidden",
+          }),
+        renderOutput: outcome => Effect.succeed(JSON.stringify(outcome)),
+      })
+
+      const result = await tool.execute(
+        "invalid-scheduling-metadata",
+        { action: "next", query },
+        undefined,
+        undefined,
+        {
+          sessionManager: { getSessionId: () => "test-session" },
+        } as Parameters<IssueTaskTool["execute"]>[4],
+      )
+      const outcome = result.details.outcome
+
+      assert.equal(result.isError, true)
+      assert.ok(outcome.kind === "failed")
+      assert.equal(outcome.code, code)
+      assert.match(outcome.message, /owner\/repository#99/)
+      assert.ok(outcome.message.includes(`Received ${value}.`))
+      assert.ok(
+        result.content.some(
+          block =>
+            block.type === "text" && block.text.includes(outcome.message),
+        ),
+      )
+    })
+  })
+}

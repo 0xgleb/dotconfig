@@ -178,6 +178,22 @@ const selectionError = (code: IssueSelectionError["code"]) =>
     }[code],
   })
 
+const schedulingValueError = (
+  code: "invalid_priority" | "invalid_effort",
+  issue: IssueReference,
+  value: unknown,
+): IssueSelectionError => {
+  const received =
+    typeof value === "number"
+      ? String(value)
+      : `type ${value === null ? "null" : typeof value}`
+
+  return new IssueSelectionError({
+    code,
+    message: `${issueKey(issue)}: ${selectionError(code).message} Received ${received}.`,
+  })
+}
+
 const decode = <A, I>(schema: Schema.Schema<A, I>, value: unknown) =>
   Schema.decodeUnknownEither(schema, { onExcessProperty: "error" })(value).pipe(
     Either.mapLeft(() => selectionError("invalid_input")),
@@ -191,23 +207,43 @@ const decodeCandidate = (
     const issue = yield* decodeIssueReference(raw.issue).pipe(
       Either.mapLeft(() => selectionError("invalid_input")),
     )
+
+    const priorityInput = raw.priority
     const priority =
-      raw.priority.kind === "unset"
-        ? raw.priority
+      priorityInput.kind === "unset"
+        ? priorityInput
         : Object.freeze({
             kind: "number" as const,
             value: yield* Schema.decodeUnknownEither(IssuePrioritySchema)(
-              raw.priority.value,
-            ).pipe(Either.mapLeft(() => selectionError("invalid_priority"))),
+              priorityInput.value,
+            ).pipe(
+              Either.mapLeft(() =>
+                schedulingValueError(
+                  "invalid_priority",
+                  issue,
+                  priorityInput.value,
+                ),
+              ),
+            ),
           })
+
+    const effortInput = raw.effort
     const effort =
-      raw.effort.kind === "unset"
-        ? raw.effort
+      effortInput.kind === "unset"
+        ? effortInput
         : Object.freeze({
             kind: "number" as const,
             value: yield* Schema.decodeUnknownEither(EffortSchema)(
-              raw.effort.value,
-            ).pipe(Either.mapLeft(() => selectionError("invalid_effort"))),
+              effortInput.value,
+            ).pipe(
+              Either.mapLeft(() =>
+                schedulingValueError(
+                  "invalid_effort",
+                  issue,
+                  effortInput.value,
+                ),
+              ),
+            ),
           })
 
     return Object.freeze({
