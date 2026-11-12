@@ -133,16 +133,20 @@ export class TaskTransitionError extends Data.TaggedError(
 }> {}
 
 type Result<A> = Either.Either<A, TaskTransitionError>
+
 type ChangedField = TaskChangeSummary["fields"][number]
 
 const fail = (
   code: TaskTransitionError["code"],
   message: string,
 ): Result<never> => Either.left(new TaskTransitionError({ code, message }))
+
 const aliasKey = (issue: IssueReference, key: DraftTaskKey): string =>
   `${issueKey(issue)}:${key}`
+
 const frozenIssue = (issue: IssueReference): IssueReference =>
   Object.freeze({ repository: issue.repository, number: issue.number })
+
 const frozenTask = (task: CurrentTask): CurrentTask =>
   Object.freeze({
     issue: frozenIssue(task.issue),
@@ -152,6 +156,7 @@ const frozenTask = (task: CurrentTask): CurrentTask =>
     blocker: task.blocker,
     dependsOn: Object.freeze([...task.dependsOn].sort()),
   })
+
 const equalIds = (
   first: readonly TaskId[],
   second: readonly TaskId[],
@@ -168,15 +173,20 @@ const validateGraph = (
   const incoming = new Map<TaskId, number>(
     Array.from(graph.keys(), id => [id, 0]),
   )
+
   let edgeCount = 0
+
   for (const dependencies of graph.values()) {
     edgeCount += dependencies.length
+
     if (edgeCount > MAX_TRANSITION_EDGES)
       return fail("capacity", "Task dependency component has too many edges")
     if (new Set(dependencies).size !== dependencies.length)
       return fail("corrupt_state", "Persisted dependency edges are duplicated")
+
     for (const id of dependencies) {
       const count = incoming.get(id)
+
       if (count === undefined)
         return fail("corrupt_state", "Task dependency closure is incomplete")
 
@@ -185,26 +195,32 @@ const validateGraph = (
   }
 
   const ready: TaskId[] = []
+
   for (const [id, count] of incoming) if (count === 0) ready.push(id)
 
   let visited = 0
+
   while (visited < ready.length) {
     const id = ready[visited]
+
     if (id === undefined)
       return fail("corrupt_state", "Invalid dependency traversal position")
 
     const dependencies = graph.get(id)
+
     if (dependencies === undefined)
       return fail("corrupt_state", "Dependency traversal lost a node")
 
     for (const dependency of dependencies) {
       const count = incoming.get(dependency)
+
       if (count === undefined || count <= 0)
         return fail("corrupt_state", "Invalid dependency degree")
 
       incoming.set(dependency, count - 1)
       if (count === 1) ready.push(dependency)
     }
+
     visited += 1
   }
 
@@ -228,10 +244,13 @@ export const prepareTaskChanges = (
       return yield* fail("capacity", "Task dependency component is too large")
 
     const scope = new Set(batch.issues.map(issueKey))
+
     const issueStates = new Map<string, IssueCandidate>()
+
     for (const candidate of snapshot.issues) {
       const key = issueKey(candidate.state.issue)
       const revision = candidate.state.revision
+
       if (
         !scope.has(key) ||
         issueStates.has(key) ||
@@ -248,10 +267,14 @@ export const prepareTaskChanges = (
     }
 
     const tasks = new Map<TaskId, CurrentTask>()
+
     const graph = new Map<TaskId, readonly TaskId[]>()
+
     let textSize = 0
+
     for (const task of snapshot.tasks) {
       const candidate = issueStates.get(issueKey(task.issue))
+
       if (
         candidate === undefined ||
         candidate.kind !== "stored" ||
@@ -264,6 +287,7 @@ export const prepareTaskChanges = (
 
       textSize +=
         task.text.length + (task.blocker === null ? 0 : task.blocker.length)
+
       if (textSize > MAX_TRANSITION_TEXT)
         return yield* fail(
           "capacity",
@@ -278,28 +302,36 @@ export const prepareTaskChanges = (
     for (const node of snapshot.external) {
       if (graph.has(node.id))
         return yield* fail("corrupt_state", "Dependency projections overlap")
+
       graph.set(node.id, Object.freeze([...node.dependsOn]))
     }
 
     yield* validateGraph(graph)
 
     const initialIds = new Set(tasks.keys())
+
     const expected = new Set<string>()
+
     for (const operation of batch.operations)
       if (operation.op === "add") {
         const key = aliasKey(operation.issue, operation.key)
+
         if (expected.has(key))
           return yield* fail(
             "invalid_allocation",
             "Draft additions are duplicated",
           )
+
         expected.add(key)
       }
 
     const allocations = new Map<string, TaskId>()
+
     const allocatedIds = new Set<TaskId>()
+
     for (const addition of context.additions) {
       const key = aliasKey(addition.issue, addition.key)
+
       if (
         !expected.has(key) ||
         allocations.has(key) ||
@@ -314,6 +346,7 @@ export const prepareTaskChanges = (
       allocations.set(key, addition.id)
       allocatedIds.add(addition.id)
     }
+
     if (allocations.size !== expected.size)
       return yield* fail(
         "invalid_allocation",
@@ -325,6 +358,7 @@ export const prepareTaskChanges = (
         reference.task.kind === "existing"
           ? reference.task.id
           : allocations.get(aliasKey(reference.issue, reference.task.key))
+
       if (
         id === undefined ||
         (reference.task.kind === "existing" && !initialIds.has(id))
@@ -335,6 +369,7 @@ export const prepareTaskChanges = (
         )
 
       const task = tasks.get(id)
+
       if (task === undefined)
         return fail("missing_task", "Referenced task has not been created")
       if (
@@ -351,6 +386,7 @@ export const prepareTaskChanges = (
     ): Result<readonly TaskId[]> =>
       Either.gen(function* () {
         const ids: TaskId[] = []
+
         for (const reference of references)
           ids.push((yield* resolve(reference)).id)
 
@@ -364,17 +400,23 @@ export const prepareTaskChanges = (
       })
 
     const events: TaskEvent[] = []
+
     const changedIssues = new Set<string>()
+
     const touched = new Map<TaskId, Set<ChangedField>>()
+
     const mark = (id: TaskId, fields: readonly ChangedField[]): void => {
       const prior = touched.get(id)
       const current = prior === undefined ? new Set<ChangedField>() : prior
+
       for (const field of fields) current.add(field)
+
       touched.set(id, current)
     }
 
     const record = (event: TaskEvent): void => {
       const issue = event.op === "add" ? event.task.issue : event.issue
+
       changedIssues.add(issueKey(issue))
       if (event.op === "transfer") changedIssues.add(issueKey(event.splitFrom))
       events.push(Object.freeze(event))
@@ -389,6 +431,7 @@ export const prepareTaskChanges = (
           )
 
         const id = allocations.get(aliasKey(operation.issue, operation.key))
+
         if (id === undefined || tasks.has(id))
           return yield* fail(
             "invalid_allocation",
@@ -413,14 +456,18 @@ export const prepareTaskChanges = (
       }
 
       const task = yield* resolve(operation.target)
+
       switch (operation.op) {
         case "edit": {
           const text = operation.text === undefined ? task.text : operation.text
+
           const dependsOn =
             operation.dependsOn === undefined
               ? task.dependsOn
               : yield* dependencies(operation.dependsOn)
+
           const changes: EditChange[] = []
+
           if (text !== task.text)
             changes.push(
               Object.freeze({ field: "text", before: task.text, after: text }),
@@ -517,9 +564,11 @@ export const prepareTaskChanges = (
     }
 
     let finalTextSize = 0
+
     for (const task of tasks.values()) {
       finalTextSize +=
         task.text.length + (task.blocker === null ? 0 : task.blocker.length)
+
       if (finalTextSize > MAX_TRANSITION_TEXT)
         return yield* fail(
           "capacity",
@@ -530,8 +579,10 @@ export const prepareTaskChanges = (
     yield* validateGraph(graph)
 
     const changedTasks: CurrentTask[] = []
+
     for (const id of touched.keys()) {
       const task = tasks.get(id)
+
       if (task === undefined)
         return yield* fail(
           "corrupt_state",
@@ -543,12 +594,16 @@ export const prepareTaskChanges = (
     }
 
     const preparedIssues: PreparedIssueChange[] = []
+
     const revisions = new Map<string, number>()
+
     for (const issue of batch.issues) {
       const key = issueKey(issue)
+
       if (!changedIssues.has(key)) continue
 
       const candidate = issueStates.get(key)
+
       if (candidate === undefined)
         return yield* fail(
           "corrupt_state",
@@ -556,6 +611,7 @@ export const prepareTaskChanges = (
         )
 
       const revision = candidate.state.revision + 1
+
       if (!Number.isSafeInteger(revision))
         return yield* fail(
           "revision_exhausted",
@@ -573,6 +629,7 @@ export const prepareTaskChanges = (
     }
 
     const changed: TaskChangeSummary[] = []
+
     const fieldOrder: readonly ChangedField[] = [
       "text",
       "status",
@@ -580,9 +637,11 @@ export const prepareTaskChanges = (
       "dependsOn",
       "issue",
     ]
+
     for (const task of changedTasks) {
       const fields = touched.get(task.id)
       const revision = revisions.get(issueKey(task.issue))
+
       if (fields === undefined || revision === undefined)
         return yield* fail(
           "corrupt_state",

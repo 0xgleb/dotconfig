@@ -302,9 +302,23 @@ the harness, and suppress duplicates without agent polling.
   branch protections. Incomplete work remains a truthful draft checkpoint, not a
   reason to substitute an isolated push. If the full workflow is blocked,
   preserve the state and report the exact blocker. Apart from the bounded
-  corrective-publication exception below, other deviations require explicit
-  owner approval through `ask_user` and must be completely necessary. Plain-Git
-  workflows outside managed main worktrees are unchanged.
+  local-conflict reconciliation and corrective-publication exceptions below,
+  other deviations require explicit owner approval through `ask_user` and must
+  be completely necessary. Plain-Git workflows outside managed main worktrees
+  are unchanged.
+- Local-conflict reconciliation exception: within an existing driver assignment,
+  when supported GitButler commands demonstrably cannot apply or reconcile an
+  existing issue branch with the current target, use plain Git locally in the
+  same checkout to reconcile that branch. First verify the exact branch and
+  target tips, preserve pending working-tree and index changes, and record the
+  applied workspace branches. Merge the verified target into the existing issue
+  branch, resolve conflicts and commit with normal hooks, preserving its
+  history. No additional owner approval is required for this bounded fallback.
+  It does not authorize a new branch or worktree, discarded work, history
+  rewrites, force operations, a merge into the target, plain-Git publication or
+  bypassing guards and hooks. Restore the workspace branches and pending edits,
+  leaving explicitly parked branches unapplied, then return to the normal
+  whole-workspace `but pull`, conflict resolution and bare `but push` workflow.
 - Corrective-publication exception: within an existing driver assignment, if
   GitButler demonstrably rewinds a published branch or publishes its internal
   conflict-storage history, the driver may use a narrowly scoped plain-Git push

@@ -2,28 +2,23 @@
 
 - Status: Accepted
 - Date: 2026-10-26
-- Issue: Tracking issue pending creation
+- Issue: [#255](https://github.com/0xgleb/dotconfig/issues/255)
 
 ## Context
 
-The retiring `todo` tool restores writable records from a Pi session journal.
-Manager access to those records uses a selected worker's live endpoint. Session
-ancestry and process availability therefore constrain access to work that should
-outlive both.
-
-The replacement `task` tool manages local execution steps associated with GitHub
-issues. GitHub issues describe deliverables, and GitHub Projects provide
-cross-repository scheduling. Task definitions and state are stored in SQLite,
-not in GitHub issue bodies. Worker sessions execute tasks without defining their
-identity or storage.
+Execution tasks need durable shared storage independent of worker availability
+and session ancestry. The `task` tool manages local execution steps associated
+with repository-qualified GitHub issues. GitHub issues describe deliverables,
+and GitHub Projects provide cross-repository scheduling. Task definitions and
+state are stored in SQLite, not in GitHub issue bodies. Worker sessions execute
+tasks without defining their identity or storage.
 
 ## Decision
 
 Each task is associated with exactly one repository-qualified GitHub issue; an
 issue can have multiple tasks. Store task definitions, state, stable identities,
-dependencies, factual blockers and immutable history in local SQLite. There is
-no separately addressable plan or container. SQL row identifiers are private
-storage bookkeeping, not `task` API inputs or outputs.
+dependencies, factual blockers and immutable history in local SQLite. SQL row
+identifiers are private storage bookkeeping, not `task` API inputs or outputs.
 
 Share the registry's physical database, with feature-owned schema versioning
 that preserves registry tables and its `user_version` ownership. Address task
@@ -41,60 +36,28 @@ issue associations; no-op operations do not advance revisions. References by
 existing task ID must name its currently associated issue. Batch-local creation
 aliases retain their creation-time issue qualification after a transfer.
 
-`task` replaces `todo`. Its mutations are add, edit, status, block and transfer;
-its lifecycle values are `todo | doing | done | cancelled`. Trusted host context
-supplies cancellation and reopening authority, never model-authored fields.
-Blocking is independent of lifecycle: a non-null `blocker` marks a task as
-blocked without changing its lifecycle value. For example, a task can remain
-`doing` while blocked; clearing its blocker leaves it `doing`. The
-`blocked: true` read filter selects tasks with a non-null blocker. Numeric issue
-Priority expresses ordering; factual blockers and issue dependencies express
-work that cannot proceed.
+`task` mutations are add, edit, status, block and transfer. Its lifecycle values
+are `todo | doing | done | cancelled`. Trusted host context supplies
+cancellation and reopening authority, never model-authored fields. Blocking is
+independent of lifecycle: a non-null `blocker` marks a task as blocked without
+changing its lifecycle value. For example, a task can remain `doing` while
+blocked; clearing its blocker leaves it `doing`. The `blocked: true` read filter
+selects tasks with a non-null blocker. Numeric issue Priority expresses
+ordering; factual blockers and issue dependencies express work that cannot
+proceed.
 
 Use the existing personal Project and existing organization Project. Bind their
 verified numeric **Priority** fields with their actual scopes: the personal
 field is project-local, while the organization field is an issue field surfaced
-in the Project. Do not create a replacement Project or a Rank field.
-Remaining-delivery Fibonacci effort belongs to issue scheduling, not individual
-tasks; its binding must identify the actual field and scope rather than treating
-an Estimate field as an Effort field. Issues missing Effort remain in refinement
-and are ineligible for assignment.
-
-Initially, issue and Project operations follow a global Markdown rule, not a new
-harness-enforced permission system. Any worker may perform the specific issue
-creation, edit, split or Project-field change requested by the owner; there is
-no approved-worker class. A manager role, a live manager and worker-manager
-communication are not prerequisites. Existing general classification and privacy
-rules still apply. Registry ownership grants no remote mutation authority or
-read-only manager coding capability.
+in the Project. Remaining-delivery Fibonacci effort belongs to issue scheduling,
+not individual tasks; its binding identifies the actual field and scope. Issues
+missing Effort remain in refinement and are ineligible for assignment.
 
 GitHub operations cannot participate in a SQLite transaction. Distinguish saved
 effects, confirmed failures and unknown completion, retaining the evidence
-needed to reconcile partial success. A split issue remains unscheduled until its
-issue, tasks and dependencies are consistent.
-
-Use one assignment selector across issue-next, HUD, continuation, manager views
-and safe-boundary notifications. Order eligible issues by numeric Priority ×
-remaining Fibonacci Effort. Respect factual blockers, issue dependencies and
-execution scope. Selection does not mutate scheduling data, renew an allowance
-or start an idle or paused worker.
+needed to reconcile partial success.
 
 ## Alternatives Considered
-
-### Read `todo` records from session journals on every offline read
-
-- Pros: Recovers existing `todo` records without waiting for a worker endpoint.
-- Cons: Keeps access coupled to session ancestry and does not make offline edits
-  authoritative.
-- Rejected because: The SQLite `task` store must replace session-owned writable
-  `todo` state, not add another restoration path.
-
-### Publish `todo` snapshots to a manager cache
-
-- Pros: Removes endpoint dependence for the last published observation.
-- Cons: Snapshots can omit requirements or lag writes; editable snapshots create
-  another writable backlog and reconciliation protocol.
-- Rejected because: A cache cannot be the authority for task records in SQLite.
 
 ### Keep execution checklists entirely in GitHub issue bodies
 
@@ -118,6 +81,3 @@ or adding it to registry reports.
 The `task` issue-scope decoder accepts at most 100 distinct issues per call as a
 resource bound, not a scheduling limit. Larger reads paginate; oversized
 mutations fail before writing rather than splitting into partial batches.
-
-Structured VCS tools, a new daemon, registry-role redesign and messaging changes
-are not prerequisites for the `task` tool.
