@@ -39,12 +39,12 @@ aliases retain their creation-time issue qualification after a transfer.
 `task` mutations are add, edit, status, block and transfer. Its lifecycle values
 are `todo | doing | done | cancelled`. Trusted host context supplies
 cancellation and reopening authority, never model-authored fields. Blocking is
-independent of lifecycle: a non-null `blocker` marks a task as blocked without
-changing its lifecycle value. For example, a task can remain `doing` while
-blocked; clearing its blocker leaves it `doing`. The `blocked: true` read filter
-selects tasks with a non-null blocker. Numeric issue Priority expresses
-ordering; factual blockers and issue dependencies express work that cannot
-proceed.
+independent of lifecycle. A task's blocker is a tagged `Unblocked` variant or a
+`Blocked` variant carrying a validated reason. A task can remain `doing` while
+blocked; clearing its blocker leaves it `doing`. Read filters use
+`blocked: "blocked"` or `blocked: "unblocked"` to select the corresponding case.
+Numeric issue Priority expresses ordering; factual blockers and issue
+dependencies express work that cannot proceed.
 
 Use the existing personal Project and existing organization Project. Bind their
 verified numeric **Priority** fields with their actual scopes: the personal

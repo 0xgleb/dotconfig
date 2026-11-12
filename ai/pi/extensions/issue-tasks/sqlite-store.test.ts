@@ -130,6 +130,75 @@ const appendTask = (store: SqliteTaskStore, target: IssueReference = issue()) =>
     },
   )
 
+test("blocking variants carry reasons and named filters preserve lifecycle", async () =>
+  fixture(async root =>
+    withStore(join(root, "tasks.sqlite"), async store => {
+      const target = issue()
+      await run(appendTask(store, target))
+      const page = await run(store.readTasks(target, { limit: 1 }))
+      assert.ok(Option.isSome(page))
+      const task = page.value.tasks[0]
+      assert.ok(task)
+      assert.deepEqual(task.blocker, { _tag: "Unblocked" })
+      const reference = {
+        issue: target,
+        task: { kind: "existing", id: task.id },
+      }
+      const context = () => ({
+        actorId: "fixture-worker",
+        requestId: randomUUID(),
+        now: 1000,
+        cancellation: "forbidden",
+      })
+      await run(
+        store.apply(
+          {
+            issues: [target],
+            operations: [
+              { op: "status", target: reference, status: "doing" },
+              {
+                op: "block",
+                target: reference,
+                reason: "Requires verified dependency",
+              },
+            ],
+          },
+          context(),
+        ),
+      )
+      const blocked = await run(
+        store.readTasks(target, { limit: 1 }, { blocked: "blocked" }),
+      )
+      assert.ok(Option.isSome(blocked))
+      assert.equal(blocked.value.tasks[0]?.status, "doing")
+      assert.deepEqual(blocked.value.tasks[0]?.blocker, {
+        _tag: "Blocked",
+        reason: "Requires verified dependency",
+      })
+      const detail = await run(store.readTask(target, task.id))
+      assert.ok(Option.isSome(detail))
+      assert.deepEqual(
+        detail.value.task.blocker,
+        blocked.value.tasks[0]?.blocker,
+      )
+      await run(
+        store.apply(
+          {
+            issues: [target],
+            operations: [{ op: "block", target: reference, reason: null }],
+          },
+          context(),
+        ),
+      )
+      const clear = await run(
+        store.readTasks(target, { limit: 1 }, { blocked: "unblocked" }),
+      )
+      assert.ok(Option.isSome(clear))
+      assert.equal(clear.value.tasks[0]?.status, "doing")
+      assert.deepEqual(clear.value.tasks[0]?.blocker, { _tag: "Unblocked" })
+    }),
+  ))
+
 for (const supplied of [undefined, 0, 250, 2_000] as const) {
   test(`native busy timeout ${supplied ?? "default"} is retained by commit recovery`, async t =>
     fixture(async root => {
@@ -539,7 +608,7 @@ test("filtered task pages combine status and factual blocker without changing is
         store.readTasks(
           issue(),
           { limit: 100 },
-          { status: "doing", blocked: true },
+          { status: "doing", blocked: "blocked" },
         ),
       )
 
@@ -552,7 +621,7 @@ test("filtered task pages combine status and factual blocker without changing is
       assert.equal(filtered.value.revision, 0)
 
       const unblocked = await run(
-        store.readTasks(issue(), { limit: 100 }, { blocked: false }),
+        store.readTasks(issue(), { limit: 100 }, { blocked: "unblocked" }),
       )
 
       assert.ok(Option.isSome(unblocked))
@@ -594,7 +663,7 @@ test("filtered task pages combine status and factual blocker without changing is
             store.readTasks(
               issue("absent/repo"),
               { limit: 1 },
-              { blocked: true },
+              { blocked: "blocked" },
             ),
           ),
         ),
@@ -738,7 +807,7 @@ test("single-task lookup returns issue revision, full task data and dependency a
           id: created.id,
           text: "Persisted requirement",
           status: "todo",
-          blocker: null,
+          blocker: { _tag: "Unblocked" },
         },
         dependsOn: [],
       })

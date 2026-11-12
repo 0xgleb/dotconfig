@@ -17,6 +17,8 @@ import {
   MAX_TASK_PAGE_SIZE,
   StatusSchema,
   TaskFilterSchema,
+  TaskBlockerReasonSchema,
+  type IssueTask,
   type IssueTaskRevision,
   type IssueTaskPage,
   type IssueTaskDetail,
@@ -84,8 +86,18 @@ const TaskRowSchema = Schema.Struct({
   id: TaskIdSchema,
   text: TextSchema,
   status: StatusSchema,
-  blocker: Schema.NullOr(TextSchema),
+  blocker: Schema.NullOr(TaskBlockerReasonSchema),
 })
+
+const projectTask = (row: typeof TaskRowSchema.Type): IssueTask =>
+  Object.freeze({
+    ...row,
+    blocker: Object.freeze(
+      row.blocker === null
+        ? { _tag: "Unblocked" as const }
+        : { _tag: "Blocked" as const, reason: row.blocker },
+    ),
+  })
 
 export type {
   TaskId,
@@ -2583,7 +2595,7 @@ const readIssueTasks = (
       TaskFilterSchema,
       selection === undefined ? {} : selection,
       "invalid_input",
-      "Task filter requires a lifecycle status and boolean blocked predicate",
+      "Task filter requires a lifecycle status and a named blocked/unblocked case",
     )
 
     const stored = yield* findPlan(database, issue)
@@ -2623,7 +2635,7 @@ const readIssueTasks = (
     const blockerPredicate =
       filter.blocked === undefined
         ? ""
-        : filter.blocked
+        : filter.blocked === "blocked"
           ? " AND issue_plan_tasks.blocker IS NOT NULL"
           : " AND issue_plan_tasks.blocker IS NULL"
     const rows = yield* io("Could not read issue tasks", () =>
@@ -2646,9 +2658,7 @@ const readIssueTasks = (
       "Invalid persisted task",
     )
 
-    const visible = Object.freeze(
-      tasks.slice(0, page.limit).map(task => Object.freeze(task)),
-    )
+    const visible = Object.freeze(tasks.slice(0, page.limit).map(projectTask))
     const last = visible.at(-1)
 
     if (tasks.length > page.limit && last === undefined)
@@ -2892,7 +2902,7 @@ const makeStore = (
             Object.freeze({
               issue: plan.issue,
               revision: plan.revision,
-              task: Object.freeze(task),
+              task: projectTask(task),
               dependsOn: Object.freeze(dependsOn),
             }),
           )

@@ -42,11 +42,26 @@ export interface IssueTaskRevision {
   readonly revision: number
 }
 
+export const TaskBlockerReasonSchema = TextSchema.pipe(
+  Schema.brand("TaskBlockerReason"),
+)
+
+export type TaskBlockerReason = typeof TaskBlockerReasonSchema.Type
+
+export const TaskBlockerSchema = Schema.Union(
+  Schema.TaggedStruct("Unblocked", {}),
+  Schema.TaggedStruct("Blocked", { reason: TaskBlockerReasonSchema }),
+)
+
+export type TaskBlocker = typeof TaskBlockerSchema.Type
+
+export const BlockingFilterSchema = Schema.Literal("blocked", "unblocked")
+
 export interface IssueTask {
   readonly id: TaskId
   readonly text: string
   readonly status: TaskStatus
-  readonly blocker: string | null
+  readonly blocker: TaskBlocker
 }
 
 export interface IssueTaskPage extends IssueTaskRevision {
@@ -66,7 +81,7 @@ export interface IssueTaskDetail extends IssueTaskRevision {
 
 export interface TaskFilter {
   readonly status?: TaskStatus
-  readonly blocked?: boolean
+  readonly blocked?: typeof BlockingFilterSchema.Type
 }
 
 export const TaskFilterSchema = Schema.Unknown.pipe(
@@ -82,7 +97,7 @@ export const TaskFilterSchema = Schema.Unknown.pipe(
   Schema.compose(
     Schema.Struct({
       status: Schema.optional(StatusSchema),
-      blocked: Schema.optional(Schema.Boolean),
+      blocked: Schema.optional(BlockingFilterSchema),
     }),
   ),
 )

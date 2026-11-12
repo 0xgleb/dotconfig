@@ -43,7 +43,7 @@ test("multi-issue task queries normalize and detach every qualified page", () =>
     {
       issue: { repository: "Owner/Repo", number: 12 },
       page: { limit: 1 },
-      filter: { blocked: false },
+      filter: { blocked: "unblocked" },
     },
   ]
 
@@ -51,7 +51,7 @@ test("multi-issue task queries normalize and detach every qualified page", () =>
 
   assert.ok(Either.isRight(decoded))
   assert.deepEqual(decoded.right, [
-    { issue: a, page: { limit: 1 }, filter: { blocked: false } },
+    { issue: a, page: { limit: 1 }, filter: { blocked: "unblocked" } },
   ])
 
   const first = source[0]
@@ -60,10 +60,10 @@ test("multi-issue task queries normalize and detach every qualified page", () =>
 
   first.issue.repository = "Other/Repo"
   first.page.limit = 2
-  first.filter.blocked = true
+  first.filter.blocked = "blocked"
 
   assert.deepEqual(decoded.right, [
-    { issue: a, page: { limit: 1 }, filter: { blocked: false } },
+    { issue: a, page: { limit: 1 }, filter: { blocked: "unblocked" } },
   ])
   assert.ok(Object.isFrozen(decoded.right))
   assert.ok(
@@ -151,22 +151,22 @@ test("task readMany rejects malformed vectors, later queries and aggregate overf
 })
 
 test("task read decodes a detached explicit status and blocker filter", () => {
-  const filter = { status: "doing", blocked: false }
+  const filter = { status: "doing", blocked: "unblocked" }
 
   const decoded = decodeTaskRequest({ ...read, filter })
 
   assert.ok(Either.isRight(decoded))
   assert.deepEqual(decoded.right, {
     ...read,
-    filter: { status: "doing", blocked: false },
+    filter: { status: "doing", blocked: "unblocked" },
   })
 
   filter.status = "done"
-  filter.blocked = true
+  filter.blocked = "blocked"
 
   assert.deepEqual(decoded.right, {
     ...read,
-    filter: { status: "doing", blocked: false },
+    filter: { status: "doing", blocked: "unblocked" },
   })
   assert.ok(decoded.right.action === "read")
   assert.ok(Object.isFrozen(decoded.right.filter))
@@ -190,9 +190,9 @@ test("task filters reject malformed or authority-bearing predicates without coer
   failure({ ...apply, filter: {} }, "invalid_request")
 })
 
-test("task filters accept all lifecycle statuses and preserve false or omitted predicates", () => {
+test("task filters accept all lifecycle statuses and named or omitted blocking cases", () => {
   for (const status of ["todo", "doing", "done", "cancelled"])
-    for (const blocked of [undefined, true, false]) {
+    for (const blocked of [undefined, "blocked", "unblocked"]) {
       const filter = { status, ...(blocked === undefined ? {} : { blocked }) }
 
       const decoded = decodeTaskRequest({ ...read, filter })
@@ -316,24 +316,21 @@ for (const field of [
   "cancellation",
   "authority",
   "expectedRevisions",
-  "worker",
-  "planId",
-  "reply",
+  "unexpected",
 ]) {
-  test(`task request rejects caller metadata or legacy field: ${field}`, () => {
+  test(`task request rejects caller context and unknown fields: ${field}`, () => {
     for (const input of [read, readMany, get, apply])
       failure({ ...input, [field]: "forged" }, "invalid_request")
   })
 }
 
-test("task requests reject missing, unknown and legacy action envelopes", () => {
+test("task requests reject missing and unknown action envelopes", () => {
   for (const input of [
     null,
     [],
     "read",
     {},
-    { ...read, action: "reply" },
-    { ...read, action: "createPlan" },
+    { ...read, action: "unknown_action" },
     { action: "read", issue: a },
     { action: "read", page: { limit: 1 } },
     { action: "apply", issues: [a] },
@@ -365,7 +362,7 @@ test("task read validates qualified issue identity rather than inferring a repos
   for (const target of [
     { number: 12 },
     { repository: "Owner/Repo", number: 0 },
-    { repository: "Owner/Repo", number: 12, planId: id },
+    { repository: "Owner/Repo", number: 12, unexpected: id },
     "Owner/Repo#12",
   ])
     failure({ ...read, issue: target }, "invalid_issue")
@@ -393,7 +390,7 @@ test("task apply does not discard unexpected nested mutation fields", () => {
       ...apply,
       operations: [
         {
-          op: "reply",
+          op: "unknown_operation",
           target: { issue: a, task: { kind: "existing", id } },
           text: "New assignment",
         },

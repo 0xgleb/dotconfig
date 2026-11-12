@@ -12,7 +12,8 @@ import type {
   TaskReference,
 } from "./mutations.ts"
 
-export interface CurrentTask extends IssueTask {
+export interface CurrentTask extends Omit<IssueTask, "blocker"> {
+  readonly blocker: string | null
   readonly issue: IssueReference
   readonly dependsOn: readonly TaskId[]
 }

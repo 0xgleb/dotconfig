@@ -606,12 +606,11 @@ test("issue-addressed task writes and reads expose issue revisions without an in
             id: created.id,
             text: "Issue requirement",
             status: "todo",
-            blocker: null,
+            blocker: { _tag: "Unblocked" },
           },
         ],
         next: null,
       })
-      assert.equal("ensurePlan" in store, false)
     })
   }))
 
@@ -703,7 +702,12 @@ for (const change of ["add", "edit", "block"]) {
         const unchanged = after.value.tasks.find(row => row.id === target.id)
         assert.ok(unchanged)
         assert.equal(unchanged.text, change === "edit" ? "xx" : "x")
-        assert.equal(unchanged.blocker, change === "block" ? "x" : null)
+        assert.deepEqual(
+          unchanged.blocker,
+          change === "block"
+            ? { _tag: "Blocked", reason: "x" }
+            : { _tag: "Unblocked" },
+        )
       })
     }))
 }
@@ -759,7 +763,10 @@ test("an atomic multi-issue write persists stable tasks, edges, revisions and pr
       assert.equal(first.value.tasks[0]?.id, firstId)
       assert.equal(first.value.tasks[0]?.status, "doing")
       assert.equal(second.value.tasks[0]?.id, secondId)
-      assert.equal(second.value.tasks[0]?.blocker, "Awaiting external input")
+      assert.deepEqual(second.value.tasks[0]?.blocker, {
+        _tag: "Blocked",
+        reason: "Awaiting external input",
+      })
     })
     sql(path, database => {
       assert.equal(
@@ -866,7 +873,10 @@ test("cross-issue transfer preserves task identity, state, dependency edges and 
           id: movedId,
           text: "Completed requirement",
           status: "done",
-          blocker: "External input remains documented",
+          blocker: {
+            _tag: "Blocked",
+            reason: "External input remains documented",
+          },
         },
       )
       sql(path, database => {
@@ -3022,7 +3032,7 @@ for (const field of ["text", "blocker"] as const) {
                 store.readTasks(
                   issue(),
                   { limit: 1 },
-                  { status: "todo", blocked: true },
+                  { status: "todo", blocked: "blocked" },
                 ),
               ),
             ),
@@ -3051,10 +3061,10 @@ const pageFilters: readonly (TaskFilter | undefined)[] = [
   undefined,
   {},
   { status: "todo" },
-  { blocked: true },
-  { blocked: false },
-  { status: "todo", blocked: true },
-  { status: "todo", blocked: false },
+  { blocked: "blocked" },
+  { blocked: "unblocked" },
+  { status: "todo", blocked: "blocked" },
+  { status: "todo", blocked: "unblocked" },
 ]
 
 for (const filter of pageFilters) {
@@ -3187,15 +3197,15 @@ for (const encoding of ["UTF-8", "UTF-16le", "UTF-16be"] as const) {
         const tasks = [...first.value.tasks, ...second.value.tasks]
         assert.equal(tasks.length, 2)
         assert.equal(tasks.find(task => task.id === created.id)?.text, bmp)
-        assert.equal(
-          tasks.find(task => task.id === created.id)?.blocker,
-          supplementary,
-        )
+        assert.deepEqual(tasks.find(task => task.id === created.id)?.blocker, {
+          _tag: "Blocked",
+          reason: supplementary,
+        })
 
         const other = tasks.find(task => task.id !== created.id)
         assert.ok(other)
         assert.equal(other.text, supplementary)
-        assert.equal(other.blocker, null)
+        assert.deepEqual(other.blocker, { _tag: "Unblocked" })
       })
     }))
 }

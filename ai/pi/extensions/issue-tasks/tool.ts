@@ -160,7 +160,9 @@ const TaskPageParameters = Type.Object(
 const TaskFilterParameters = Type.Object(
   {
     status: Type.Optional(TaskStatusParameter),
-    blocked: Type.Optional(Type.Boolean()),
+    blocked: Type.Optional(
+      Type.Union([Type.Literal("blocked"), Type.Literal("unblocked")]),
+    ),
   },
   { additionalProperties: false },
 )

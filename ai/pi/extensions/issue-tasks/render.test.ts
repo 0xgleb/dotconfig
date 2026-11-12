@@ -14,7 +14,11 @@ import { selectIssueAssignment } from "./selector.ts"
 import { Text, visibleWidth } from "@earendil-works/pi-tui"
 import { Effect, Either, Option, Schema } from "effect"
 import { decodeIssueReference } from "./identity.ts"
-import { MutationBatchIdSchema, TaskIdSchema } from "./model.ts"
+import {
+  MutationBatchIdSchema,
+  TaskIdSchema,
+  TaskBlockerSchema,
+} from "./model.ts"
 import {
   createTaskTool,
   type TaskToolDetails,
@@ -37,7 +41,10 @@ const task = {
   id,
   text: "Render task names",
   status: "doing" as const,
-  blocker: "Needs terminal verification",
+  blocker: Schema.decodeUnknownSync(TaskBlockerSchema)({
+    _tag: "Blocked",
+    reason: "Needs terminal verification",
+  }),
 }
 const tool = createTaskTool({
   store: {
@@ -266,7 +273,10 @@ test("compact output bounds long blockers without dropping their availability", 
       revision: 1,
       tasks: Array.from({ length: 100 }, () => ({
         ...task,
-        blocker: "Blocker detail ".repeat(9000),
+        blocker: Schema.decodeUnknownSync(TaskBlockerSchema)({
+          _tag: "Blocked",
+          reason: "Blocker detail ".repeat(8000),
+        }),
       })),
       next: null,
     },

@@ -5,7 +5,12 @@ import {
   issueKey,
   type IssueReference,
 } from "./identity.ts"
-import { TaskIdSchema, StatusSchema, RevisionSchema } from "./model.ts"
+import {
+  TaskIdSchema,
+  StatusSchema,
+  RevisionSchema,
+  TaskBlockerSchema,
+} from "./model.ts"
 import type { IssueTaskTool } from "./tool.ts"
 import { GitHubUserSchema } from "./github-user.ts"
 import {
@@ -27,7 +32,7 @@ const TaskSchema = Schema.Struct({
   id: TaskIdSchema,
   text: Schema.String,
   status: StatusSchema,
-  blocker: Schema.NullOr(Schema.String),
+  blocker: TaskBlockerSchema,
 })
 const PageSchema = Schema.Struct({
   issue: IssueSchema,
@@ -331,7 +336,7 @@ const callLines = (args: unknown): readonly string[] => {
 }
 
 const taskLine = (task: typeof TaskSchema.Type): string =>
-  `${task.status} · ${label(task.text).slice(0, 200)}${task.blocker === null ? "" : ` · Blocked: ${label(task.blocker).slice(0, 160)}${task.blocker.length > 160 ? "… (expand for full blocker)" : ""}`}`
+  `${task.status} · ${label(task.text).slice(0, 200)}${task.blocker._tag === "Unblocked" ? "" : ` · Blocked: ${label(task.blocker.reason).slice(0, 160)}${task.blocker.reason.length > 160 ? "… (expand for full blocker)" : ""}`}`
 
 const pageLines = (page: typeof PageSchema.Type): readonly string[] => [
   `${issueKey(page.issue)} · ${page.tasks.length} tasks on this page${page.next === null ? "" : " · more available"}`,
@@ -339,9 +344,9 @@ const pageLines = (page: typeof PageSchema.Type): readonly string[] => [
   ...(page.tasks.length > 3
     ? [`${page.tasks.length - 3} more tasks in expanded details`]
     : []),
-  ...(page.tasks.slice(3).some(task => task.blocker !== null)
+  ...(page.tasks.slice(3).some(task => task.blocker._tag === "Blocked")
     ? [
-        `${page.tasks.slice(3).filter(task => task.blocker !== null).length} additional blocked tasks · expand for blockers`,
+        `${page.tasks.slice(3).filter(task => task.blocker._tag === "Blocked").length} additional blocked tasks · expand for blockers`,
       ]
     : []),
 ]
