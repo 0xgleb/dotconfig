@@ -54,6 +54,7 @@ export const registerNativeTaskHost = (
 
     if (previous !== undefined) await release(previous)
 
+    let hudFailure: TaskHudError | undefined
     const opened = await Effect.runPromiseExit(
       Scope.extend(
         Effect.gen(function* () {
@@ -86,7 +87,7 @@ export const registerNativeTaskHost = (
           if (Exit.isFailure(hud)) {
             const cleanup = yield* Effect.exit(Scope.close(hudScope, hud))
             if (!Cause.isInterruptedOnly(hud.cause)) {
-              const error = Exit.isFailure(cleanup)
+              hudFailure = Exit.isFailure(cleanup)
                 ? new TaskHudError({
                     code: "ui_unavailable",
                     message: "Task HUD cleanup did not complete",
@@ -99,7 +100,6 @@ export const registerNativeTaskHost = (
                         message: "Task HUD initialization did not complete",
                       }),
                   })
-              yield* reportHudFailure(error)
             }
           }
           return tool
@@ -143,7 +143,12 @@ export const registerNativeTaskHost = (
       current = undefined
       await release(lifetime)
       await Effect.runPromise(onOpenFailure(registered.left))
+      return
     }
+
+    const warning = hudFailure
+    if (warning !== undefined)
+      await Effect.runPromise(Effect.suspend(() => reportHudFailure(warning)))
   })
 
   pi.on("session_shutdown", async () => {

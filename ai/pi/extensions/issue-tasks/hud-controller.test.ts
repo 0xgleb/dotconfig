@@ -741,11 +741,26 @@ test(
         onOpenFailure: () => Effect.void,
       })
       await runner.emit({ type: "session_start", reason: "startup" })
+      const tool = runner.getToolDefinition("task")
       assert.ok(
-        runner.getToolDefinition("task"),
+        tool,
         "Optional presentation reporting cannot disable task operations",
       )
       assert.equal(errors.length, 1)
+      assert.match(JSON.stringify(errors), /SDK warning transport failed/)
+      const result = await tool.execute(
+        "read-after-reporter-failure",
+        {
+          action: "read",
+          issue: { repository: "owner/repo", number: 7 },
+          page: { limit: 1 },
+        },
+        undefined,
+        undefined,
+        runner.createContext(),
+      )
+      assert.equal(result.isError, false)
+      assert.equal(result.details.outcome.kind, "missing_issue")
     }),
 )
 
