@@ -129,7 +129,7 @@ const headline = (content: HudContent, width: number): string => {
           `${focus.mode === "review" ? "Review " : ""}#${focus.issue.number}`,
         ) + 2
   const includesSummary = focus === null || focusRoom >= minimumFocus
-  let text =
+  const text =
     focus === null
       ? content.summary
       : includesSummary
@@ -142,14 +142,18 @@ const headline = (content: HudContent, width: number): string => {
     const percent = `${Number((settled * 100n) / total)}%`
     const cells = Math.min(
       32,
-      width - visibleWidth(text) - visibleWidth(percent) - 2,
+      width - visibleWidth(text) - visibleWidth(percent) - 4,
     )
     if (cells >= 8) {
       const filled = Number((settled * BigInt(cells)) / total)
-      text += ` ${"▰".repeat(filled)}${"▱".repeat(cells - filled)} ${percent}`
+      const right = `${"▰".repeat(filled)}${"▱".repeat(cells - filled)} ${percent}`
+      const rule = "─".repeat(
+        width - visibleWidth(text) - visibleWidth(right) - 2,
+      )
+      return `${text} ${rule} ${right}`
     }
   }
-  return text
+  return visibleWidth(text) < width ? `${text} ` : text
 }
 
 export const taskHudLines = (view: TaskHudView, width: number): string[] => {
@@ -160,12 +164,12 @@ export const taskHudLines = (view: TaskHudView, width: number): string[] => {
   const frameWidth = width - inset * 2
   const inner = Math.max(0, frameWidth - 6)
   const margin = " ".repeat(inset)
-  const pad = (text: string): string => {
+  const pad = (text: string, fill = " "): string => {
     const clipped = truncateToWidth(text, inner, "…")
-    return clipped + " ".repeat(Math.max(0, inner - visibleWidth(clipped)))
+    return clipped + fill.repeat(Math.max(0, inner - visibleWidth(clipped)))
   }
   return [
-    `${margin}╭─ ${pad(headline(content, inner))} ─╮${margin}`,
+    `${margin}╭─ ${pad(headline(content, inner), "─")} ─╮${margin}`,
     `${margin}│  ${pad(content.preview)}  │${margin}`,
   ]
 }
@@ -192,15 +196,29 @@ export const taskHudStatus = (view: TaskHudView): string | undefined => {
   }
 }
 
+const brightenForeground = (text: string): string =>
+  text.replace(
+    /\u001b\[38;2;(\d{1,3});(\d{1,3});(\d{1,3})m/u,
+    (color: string, red: string, green: string, blue: string) => {
+      const channels = [red, green, blue].map(Number)
+      if (channels.some(channel => channel > 255)) return color
+      const brighter = channels.map(channel =>
+        Math.round(channel + (255 - channel) * 0.35),
+      )
+      return `\u001b[38;2;${brighter.join(";")}m`
+    },
+  )
+
 const colorHeadline = (
   line: string,
   theme: Theme,
   now: number,
-  active: boolean,
+  idle: boolean,
 ): string => {
-  const cells = line.match(/[▰▱]/gu)?.length ?? 0
-  const pulse =
-    cells === 0 ? -1 : Math.floor(now / (active ? 300 : 500)) % cells
+  const completed = line.match(/▰/gu)?.length ?? 0
+  const frame = Math.floor(now / (idle ? 500 : 300))
+  const phase = frame % (completed * 2 + 2)
+  const hidden = idle && Math.floor(frame / 3) % 2 === 0
   let index = 0
   return line
     .split(/([▰▱])/u)
@@ -208,11 +226,15 @@ const colorHeadline = (
       if (part === "") return ""
       if (part !== "▰" && part !== "▱")
         return theme.bold(theme.fg("borderAccent", part))
-      const highlighted = index === pulse
+      const highlighted =
+        !idle &&
+        part === "▰" &&
+        phase % 2 === 0 &&
+        (phase >= completed * 2 || index === Math.floor(phase / 2))
       index += 1
-      return highlighted
-        ? theme.bold(theme.fg("accent", part))
-        : theme.fg(part === "▰" ? "borderAccent" : "muted", part)
+      const displayed = hidden ? "▱" : part
+      const hued = theme.fg(displayed === "▰" ? "accent" : "muted", displayed)
+      return highlighted ? theme.bold(brightenForeground(hued)) : hued
     })
     .join("")
 }
@@ -247,12 +269,8 @@ export const createTaskHudComponent = (
       }
       const [head, ...preview] = lines
       if (head === undefined) return []
-      const active =
-        snapshot.kind === "ready" &&
-        snapshot.progress.currentTask?.status === "doing" &&
-        snapshot.progress.currentTask.blocker === null
       return [
-        colorHeadline(head, theme, clock(), active),
+        colorHeadline(head, theme, clock(), isIdle()),
         ...preview.map(line => colorPreview(line, theme)),
       ]
     },

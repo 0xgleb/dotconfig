@@ -2,7 +2,7 @@ import assert from "node:assert/strict"
 import { execFileSync } from "node:child_process"
 import { mkdirSync, mkdtempSync, realpathSync, rmSync } from "node:fs"
 import { dirname, join } from "node:path"
-import test, { after } from "node:test"
+import test, { after, mock } from "node:test"
 import { fileURLToPath, pathToFileURL } from "node:url"
 import { Deferred, Effect, Exit, Option, Scope } from "effect"
 import { setImmediate } from "node:timers/promises"
@@ -621,6 +621,77 @@ test(
         assert.deepEqual(failures, ["invalid_progress"])
       } finally {
         await Effect.runPromise(Scope.close(scope, Exit.void))
+      }
+    }),
+)
+
+test(
+  "HUD animation follows actual SDK idleness rather than persisted doing tasks",
+  { timeout: 5000 },
+  async () =>
+    fixture(async ({ runner, session, store, bridge, frame, waitStatus }) => {
+      const selected = await nativeNextResult()
+      await seed(store, selected.issue, "Still persisted as doing")
+      await Effect.runPromise(
+        store.apply(
+          {
+            issues: [selected.issue],
+            operations: [
+              {
+                op: "add",
+                issue: selected.issue,
+                key: "settled",
+                text: "Settled requirement",
+              },
+              {
+                op: "status",
+                target: {
+                  issue: selected.issue,
+                  task: { kind: "added", key: "settled" },
+                },
+                status: "done",
+              },
+            ],
+          },
+          {
+            actorId: "hud-fixture",
+            requestId: "animation-state",
+            now: 1000,
+            cancellation: "forbidden",
+          },
+        ),
+      )
+      session.appendMessage(assistant("idle-next", selected.args))
+      session.appendMessage(resultMessage("idle-next", selected.details))
+      const scope = Effect.runSync(Scope.make())
+      const clock = mock.method(Date, "now", () => 0)
+      let idle = true
+      const ctx = runner.createContext()
+      const activity = mock.method(ctx, "isIdle", () => idle)
+      try {
+        await Effect.runPromise(
+          Scope.extend(
+            bridge.acquire({
+              ctx,
+              readProgress: store.readProgress,
+              isCurrent: () => true,
+              claimPresentation: () => {},
+              ownsPresentation: () => true,
+              onFailure: () => Effect.void,
+            }),
+            scope,
+          ),
+        )
+        await waitStatus("tasks:1/2 settled")
+        assert.doesNotMatch(frame(), /▰/u)
+        idle = false
+        assert.match(frame(), /▰/u)
+        assert.match(frame(), /1\/2 settled/)
+        assert.match(frame(), /Still persisted as doing/)
+      } finally {
+        await Effect.runPromise(Scope.close(scope, Exit.void))
+        clock.mock.restore()
+        activity.mock.restore()
       }
     }),
 )

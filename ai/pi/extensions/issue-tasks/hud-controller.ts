@@ -115,6 +115,8 @@ const makeController = (options: TaskHudOptions) => {
                   ? snapshot
                   : none,
               theme,
+              Date.now,
+              () => ctx.isIdle(),
             )
           },
           { placement: "aboveEditor" },
