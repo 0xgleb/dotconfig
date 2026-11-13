@@ -56,15 +56,15 @@ a process sandbox, or a source of production credentials.
 | Repudiation            | Nobody can tell whether a request was merely persisted, visibly received, or accepted as work                                                                | Durable `recipient_received_at` plus recipient lease/agent identity distinguishes queued from received; explicit claim distinguishes acknowledged                                                                                                                                                               |
 | Information disclosure | An automatic receipt injects an untrusted request body into the recipient model context                                                                      | Receipt notices include only bounded request ID and validated target metadata; the body requires an explicit classified detail read                                                                                                                                                                             |
 | Denial of service      | A sender floods a live agent, labels prose “urgent” to force one model turn per request, or accumulated terminal history exhausts the Pi heap during polling | Priority must be explicit typed data; normal receipt stays passive; urgent receipt coalesces at most 64 requests into one bounded idle turn and yields to human/reload/pending work; acknowledged terminal rows remain durable but are excluded by the operational snapshot SQL before SQLite materializes them |
-| Elevation of privilege | Claiming `production-operator` grants shell, wallet, signer, SSH, or database rights                                                                         | Registry never changes active tools; policy revision is descriptive and tool-level allow/deny tests remain authoritative                                                                                                                                                                                        |
+| Elevation of privilege | Claiming `privileged-role` grants shell, wallet, signer, SSH, or database rights                                                                             | Registry never changes active tools; policy revision is descriptive and tool-level allow/deny tests remain authoritative                                                                                                                                                                                        |
 
 ## Security invariants
 
 - Exactly one unexpired lease may exist per canonical project-role key.
 - A lease is valid only for its owner, lease ID, policy digest, and TTL.
 - Model identity never affects authority.
-- Unowned roles self-claim in the current session; the registry never launches a
-  process automatically.
+- Creating a role lease requires an explicit claim. Queuing a request does not
+  assign its role or launch a process.
 - Operational leases have no automatic completed state.
 - Durable queueing, recipient receipt, urgent wake, and explicit acknowledgment
   are separate facts. A successful enqueue never proves delivery or acceptance.

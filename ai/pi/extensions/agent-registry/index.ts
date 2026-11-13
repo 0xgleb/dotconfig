@@ -6,7 +6,12 @@ import {
 } from "@earendil-works/pi-coding-agent"
 import { Text } from "@earendil-works/pi-tui"
 import { Type } from "typebox"
-import { Cause, Effect, Option, Runtime } from "effect"
+import { Cause, Effect, Either, Option, Runtime } from "effect"
+import {
+  AGENT_ROLES,
+  decodeAgentRole,
+  type AgentRole,
+} from "../shared/agent-role.ts"
 import { isContinuationPaused } from "../shared/continuation-pause.ts"
 import {
   AUTO_RELOAD_PENDING_REQUEST_EVENT,
@@ -86,7 +91,7 @@ interface RegistryToolRequest {
     | "fail_request"
     | "cancel_request"
   readonly project?: string
-  readonly role?: string
+  readonly role?: AgentRole
   readonly mode?: "task" | "operational"
   readonly priority?: RegistryRequestPriority
   readonly requestId?: string
@@ -356,10 +361,6 @@ const registryExtension: (pi: ExtensionAPI) => void = pi => {
       typeof payload.project !== "string" ||
       !payload.project.startsWith("/") ||
       payload.project.length > 512 ||
-      !("role" in payload) ||
-      typeof payload.role !== "string" ||
-      payload.role.length === 0 ||
-      payload.role.length > 64 ||
       !("text" in payload) ||
       typeof payload.text !== "string" ||
       payload.text.length === 0 ||
@@ -380,10 +381,24 @@ const registryExtension: (pi: ExtensionAPI) => void = pi => {
     const callback = payload.report
     const report: RegistryDelegateRequest["report"] = outcome =>
       callback(outcome)
+    const role = "role" in payload ? payload.role : undefined
+    const decodedRole = decodeAgentRole(role)
+
+    if (Either.isLeft(decodedRole)) {
+      report({
+        outcome: "failed",
+        reason:
+          role === undefined
+            ? "missing_selection: an explicit canonical recipient role is required"
+            : decodedRole.left.message,
+      })
+      return
+    }
+
     void run(
       store.enqueue({
         project: payload.project,
-        role: payload.role,
+        role: decodedRole.right,
         requesterId: payload.requesterId,
         requesterLabel: payload.requesterLabel,
         requesterCwd: payload.requesterCwd,
@@ -467,7 +482,7 @@ const registryExtension: (pi: ExtensionAPI) => void = pi => {
           report({ outcome: "recorded" })
           return
         }
-        let lease = snapshot.leases.find(
+        const lease = snapshot.leases.find(
           candidate =>
             candidate.owner.id === agent.id &&
             candidate.project === target.project &&
@@ -475,18 +490,11 @@ const registryExtension: (pi: ExtensionAPI) => void = pi => {
             candidate.status === "active",
         )
         if (!lease) {
-          const claim = await run(
-            store.claim({
-              agent,
-              project: target.project,
-              role: target.role,
-              mode: "task",
-              policyDigest: currentPolicyDigest(ctx),
-              now,
-              ttlMs: LEASE_TTL_MS,
-            }),
-          )
-          lease = claim.lease
+          report({
+            outcome: "failed",
+            reason: "request role must be claimed explicitly",
+          })
+          return
         }
         if (target.status === "queued") {
           await run(
@@ -903,7 +911,9 @@ const registryExtension: (pi: ExtensionAPI) => void = pi => {
         Type.Literal("cancel_request"),
       ]),
       project: Type.Optional(Type.String()),
-      role: Type.Optional(Type.String()),
+      role: Type.Optional(
+        Type.Union(AGENT_ROLES.map(role => Type.Literal(role))),
+      ),
       mode: Type.Optional(
         Type.Union([Type.Literal("task"), Type.Literal("operational")]),
       ),
@@ -970,6 +980,20 @@ const registryExtension: (pi: ExtensionAPI) => void = pi => {
       const requesterId = ctx.sessionManager.getSessionId()
       const project = request.project?.trim() || ctx.cwd
       try {
+        if ("role" in request && request.role !== undefined) {
+          const decodedRole = decodeAgentRole(request.role)
+
+          if (Either.isLeft(decodedRole))
+            return await run(
+              Effect.fail(
+                new RegistryError({
+                  code: "invalid_input",
+                  message: decodedRole.left.message,
+                }),
+              ),
+            )
+        }
+
         if (request.action === "clear") {
           const preservedProject = await run(
             requireText("project", request.project),
