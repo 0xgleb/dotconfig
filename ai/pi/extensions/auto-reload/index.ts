@@ -249,6 +249,36 @@ const autoReload: (pi: ExtensionAPI) => void = pi => {
       )
     },
   )
+  const reportIncident = (
+    severity: "error" | "warning",
+    operation: string,
+    summary: string,
+  ): void => {
+    const detail = summary
+      .replace(/[\u0000-\u001f\u007f]+/g, " ")
+      .replace(/\s+/g, " ")
+      .trim()
+      .slice(0, 240)
+    try {
+      pi.sendMessage(
+        {
+          customType: "auto-reload.failure",
+          content: `${severity}: ${operation}: ${detail}`,
+          display: true,
+        },
+        { triggerTurn: false },
+      )
+    } catch {
+      console.error(
+        JSON.stringify({
+          level: "error",
+          component: "auto-reload",
+          event: "notice-delivery-failed",
+          operation,
+        }),
+      )
+    }
+  }
   let watchers: FSWatcher[] = []
   let timer: ReturnType<typeof setTimeout> | undefined
   let handoffTimer: ReturnType<typeof setInterval> | undefined
@@ -334,10 +364,20 @@ const autoReload: (pi: ExtensionAPI) => void = pi => {
         expectedWrappedEntrypoint,
       })
       if (!verified) {
+        reportIncident(
+          "error",
+          "verify replacement Pi host",
+          "Stable Pi host rejected before migration: stable host markers do not match",
+        )
         return undefined
       }
       return { stableEntrypoint, sessionFile }
     } catch (error) {
+      reportIncident(
+        "error",
+        "verify replacement Pi host",
+        `Could not verify the activated Pi host for live migration: ${error instanceof Error ? error.message : "unknown error"}`,
+      )
       return undefined
     }
   }
@@ -367,6 +407,8 @@ const autoReload: (pi: ExtensionAPI) => void = pi => {
     ctx: ExtensionContext,
     plan: HostMigrationPlan,
   ): void => {
+    let failureReported = false
+
     const migrateWhenIdle = (): void => {
       hostMigrationTimer = undefined
       if (agentRunActive || !ctx.isIdle() || ctx.hasPendingMessages()) {
@@ -384,6 +426,14 @@ const autoReload: (pi: ExtensionAPI) => void = pi => {
         false,
       )
       if (typeof process.execve !== "function") {
+        if (!failureReported) {
+          failureReported = true
+          reportIncident(
+            "error",
+            "replace running Pi host",
+            "This runtime does not expose process.execve for in-place host replacement",
+          )
+        }
         ctx.ui.setStatus(STATUS_KEY, "reload:host-migration-retrying")
         hostMigrationTimer = setTimeout(
           migrateWhenIdle,
@@ -402,7 +452,15 @@ const autoReload: (pi: ExtensionAPI) => void = pi => {
             delivery === "resume" || delivery === "followUp",
           ),
         )
-      } catch {
+      } catch (error) {
+        if (!failureReported) {
+          failureReported = true
+          reportIncident(
+            "error",
+            "replace running Pi host",
+            `Could not replace the running Pi host: ${error instanceof Error ? error.message : "unknown error"}`,
+          )
+        }
         ctx.ui.setStatus(STATUS_KEY, "reload:host-migration-retrying")
         hostMigrationTimer = setTimeout(
           migrateWhenIdle,
@@ -451,7 +509,13 @@ const autoReload: (pi: ExtensionAPI) => void = pi => {
           { triggerTurn: true, deliverAs: "followUp" },
         )
         recordHostMigrationDelivery(delivery, branch)
-      } catch {}
+      } catch {
+        reportIncident(
+          "warning",
+          "resume after host migration",
+          "Preserved work could not be resumed after host migration",
+        )
+      }
     }
     hostMigrationTimer = setTimeout(resumeWhenIdle, 0)
     hostMigrationTimer.unref?.()
@@ -529,6 +593,11 @@ const autoReload: (pi: ExtensionAPI) => void = pi => {
         expandPromptTemplates: true,
       })
     } catch (error) {
+      reportIncident(
+        "error",
+        "automatic extension reload",
+        `Automatic Pi reload failed: ${error instanceof Error ? error.message : "unknown error"}`,
+      )
       pending = true
       pendingSince = Date.now()
       composerSafeSince = undefined
@@ -557,6 +626,11 @@ const autoReload: (pi: ExtensionAPI) => void = pi => {
         // handler. When the runner was replaced, the replacement session
         // has already started and owns the retry surface instead.
         try {
+          reportIncident(
+            "error",
+            "automatic extension reload",
+            `Automatic Pi reload failed: ${error instanceof Error ? error.message : "unknown error"}`,
+          )
           if (!pending) pendingSince = Date.now()
           pending = true
           composerSafeSince = undefined
@@ -752,7 +826,13 @@ const autoReload: (pi: ExtensionAPI) => void = pi => {
             try {
               pi.sendMessage(message, { deliverAs: "nextTurn" })
               recordDelivery()
-            } catch {}
+            } catch {
+              reportIncident(
+                "warning",
+                "defer reload continuation",
+                "Reload continuation could not be queued passively; user input remains available",
+              )
+            }
             return
           }
           if (agentRunActive || !ctx.isIdle() || managedWorkIsActive()) {
@@ -769,12 +849,23 @@ const autoReload: (pi: ExtensionAPI) => void = pi => {
               deliverAs: "followUp",
             })
             recordDelivery()
-          } catch {}
+          } catch {
+            reportIncident(
+              "warning",
+              "deliver reload continuation",
+              "Reload continuation delivery failed without blocking user input",
+            )
+          }
         }
         reloadContinuationTimer = setTimeout(deliverWhenSettled, 0)
         reloadContinuationTimer.unref?.()
       }
       if (modelRefreshFailure) {
+        reportIncident(
+          "error",
+          "refresh model catalog after reload",
+          modelRefreshFailure,
+        )
         ctx.ui.notify(displayText, "error")
       } else if (delivery === "resume") {
         scheduleContinuation("resume")
@@ -821,6 +912,8 @@ const autoReload: (pi: ExtensionAPI) => void = pi => {
           ),
         )
       } catch (error) {
+        const summary = `Could not watch managed Pi path: ${error instanceof Error ? error.message : "unknown error"}`
+        reportIncident("warning", "watch managed Pi resources", summary)
         ctx.ui.notify(
           `Could not watch ${path}: ${error instanceof Error ? error.message : "unknown error"}`,
           "warning",
@@ -892,6 +985,7 @@ const autoReload: (pi: ExtensionAPI) => void = pi => {
         handoffTimer.unref?.()
       } catch (error) {
         const summary = `Could not watch Pi handoffs: ${error instanceof Error ? error.message : "unknown error"}`
+        reportIncident("warning", "watch Pi handoffs", summary)
         ctx.ui.notify(summary, "warning")
       }
     }

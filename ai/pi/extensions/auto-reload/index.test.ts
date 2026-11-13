@@ -10,12 +10,15 @@ import {
 import { tmpdir } from "node:os"
 import { join } from "node:path"
 import test from "node:test"
-import {
+import { installRegistrationHost } from "../shared/registration-host-fixture.ts"
+
+const importHooks = installRegistrationHost()
+const {
   createReloadExecutionScheduler,
   createManagedGenerationReconciler,
   createManagedGenerationTracker,
   managedGeneration,
-} from "./index.ts"
+} = await import("./index.ts").finally(() => importHooks.deregister())
 
 const source = readFileSync(new URL("./index.ts", import.meta.url), "utf8")
 
@@ -64,6 +67,27 @@ test("post-reload continuation waits for a later idle macrotask without owning t
   assert.doesNotMatch(
     source,
     /delivery === "resume"[\s\S]{0,160}pi\.sendMessage\(message, \{ triggerTurn: true/,
+  )
+})
+
+test("reload degradation stays local without starting an agent turn", () => {
+  const start = source.indexOf("  const reportIncident =")
+  const end = source.indexOf("  let watchers:", start)
+  assert.ok(start >= 0 && end > start)
+  const reporter = source.slice(start, end)
+  assert.match(reporter, /pi\.sendMessage\(/)
+  assert.match(reporter, /customType: "auto-reload.failure"/)
+  assert.match(reporter, /triggerTurn: false/)
+  assert.doesNotMatch(reporter, /pi\.events\.emit/)
+  assert.match(
+    source,
+    /reportIncident\([\s\S]*?"error",[\s\S]*?"refresh model catalog after reload"/,
+  )
+  assert.match(source, /"automatic extension reload"/)
+  assert.match(source, /Automatic Pi reload failed/)
+  assert.match(
+    source,
+    /reportIncident\([\s\S]*?"warning",[\s\S]*?"watch managed Pi resources"/,
   )
 })
 

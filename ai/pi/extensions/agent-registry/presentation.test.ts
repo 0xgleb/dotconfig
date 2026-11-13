@@ -65,7 +65,7 @@ const snapshot: RegistrySnapshot = {
     {
       id: "lease-1",
       project: "/Users/example/.config",
-      role: "reviewer",
+      role: "driver-worker",
       mode: "operational",
       owner: {
         id: "agent-a",
@@ -87,7 +87,7 @@ const snapshot: RegistrySnapshot = {
     {
       id: "request-12345678",
       project: "/Users/example/.config",
-      role: "reviewer",
+      role: "driver-worker",
       requesterId: "agent-b",
       requesterLabel: "example PR reviewer",
       requesterCwd: "/Users/example/code/0xgleb/example-api",
@@ -174,7 +174,7 @@ test("request receipt display leads with sender, target, and bounded message con
     requestId: "request-12345678",
     sender: "example PR reviewer",
     senderProject: "example-api",
-    target: ".config/reviewer",
+    target: ".config/driver-worker",
     preview: "fix workflow retries",
     olderQueued: 2,
   })
@@ -182,7 +182,7 @@ test("request receipt display leads with sender, target, and bounded message con
   const compact = requestNotificationDisplayText(details, false)
   assert.match(
     compact,
-    /^example PR reviewer · example-api → \.config\/reviewer/m,
+    /^example PR reviewer · example-api → \.config\/driver-worker/m,
   )
   assert.match(compact, /fix workflow retries/)
   assert.match(compact, /\+2 older queued/)
@@ -306,7 +306,7 @@ test("request detail does not compact an accepted 8k request body", () => {
 test("registry widget keeps operational ownership visible with an inbox count", () => {
   assert.deepEqual(registryWidgetLines(snapshot, "agent-a", 61_000), [
     "Agent registry: 1 role · /agents",
-    "● .config/reviewer · operational · active · inbox 1 · oldest 59s · drift 1 · ttl 60s",
+    "● .config/driver-worker · operational · active · inbox 1 · oldest 59s · drift 1 · ttl 60s",
   ])
 })
 
@@ -335,7 +335,7 @@ test("registry listing shows safe owner and request lifecycle details", () => {
   const text = registryListText(snapshot, "agent-a", 61_000)
   assert.match(text, /Live agents:/)
   assert.match(text, /dotconfig.*session you.*questions@2026\.07\.23\.2/i)
-  assert.match(text, /\.config\/reviewer.*owner you.*ttl 60s/i)
+  assert.match(text, /\.config\/driver-worker.*owner you.*ttl 60s/i)
   assert.match(text, /classified-workflows@2026\.07\.23\.2/)
   assert.match(text, /todo@2026\.07\.23\.2/)
   assert.match(text, /request-.*queued.*delivery queued.*fix workflow retries/i)

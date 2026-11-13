@@ -389,7 +389,7 @@ const restoredModel = (
   return undefined
 }
 
-export default function usageGovernor(pi: ExtensionAPI): void {
+const usageGovernor = (pi: ExtensionAPI): void => {
   registerRuntimeVersion(pi, "usage-governor", "2026.09.04.1")
   let turnLaneState = emptyTurnLaneState()
   let preferredModel: PersistedModelRef | undefined
@@ -910,3 +910,5 @@ export default function usageGovernor(pi: ExtensionAPI): void {
     ctx.ui.setStatus("usage-governor", "usage:unthrottled")
   })
 }
+
+export default usageGovernor

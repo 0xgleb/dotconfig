@@ -29,18 +29,20 @@ const agent = (id: string, label: string): BridgeAgent => ({
   expiresAt: 2,
 })
 
-test("agent display labels combine a friendly project and assigned role", () => {
+test("agent display labels combine a friendly project and declared role", () => {
   assert.equal(
-    agentDisplayLabel("yielduck", [{ role: "reviewer", mode: "task" }]),
-    "Yielduck · Reviewer",
+    agentDisplayLabel("yielduck", [
+      { role: "driver-worker", mode: "operational" },
+    ]),
+    "Yielduck · Driver Worker",
   )
   assert.equal(
-    agentDisplayLabel(".config", [{ role: "reviewer", mode: "task" }]),
-    "Dotconfig · Reviewer",
+    agentDisplayLabel(".config", [{ role: "manager", mode: "operational" }]),
+    "Dotconfig · Manager",
   )
   assert.equal(
-    agentDisplayLabel("personal-review-duty", []),
-    "Personal Review Duty",
+    agentDisplayLabel("reviews", [{ role: "review-worker", mode: "task" }]),
+    "Reviews · Review Worker",
   )
 })
 
@@ -66,17 +68,20 @@ test("question relays use friendly identities without raw session IDs", () => {
 
 test("duplicate friendly identities receive deterministic instance numbers", () => {
   const agents = [
-    agent("019f-a", "Yielduck · Reviewer"),
-    agent("019f-b", "Yielduck · Reviewer"),
-    agent("019f-c", "Dotconfig · Reviewer"),
+    agent("019f-a", "Yielduck · Developer"),
+    agent("019f-b", "Yielduck · Developer"),
+    agent("019f-c", "Dotconfig · Maintainer"),
   ]
   assert.equal(
     identifiedAgentLabel(agents[0]!, agents),
-    "Yielduck · Reviewer · Instance 1",
+    "Yielduck · Developer · Instance 1",
   )
   assert.equal(
     identifiedAgentLabel(agents[1]!, agents),
-    "Yielduck · Reviewer · Instance 2",
+    "Yielduck · Developer · Instance 2",
   )
-  assert.equal(identifiedAgentLabel(agents[2]!, agents), "Dotconfig · Reviewer")
+  assert.equal(
+    identifiedAgentLabel(agents[2]!, agents),
+    "Dotconfig · Maintainer",
+  )
 })

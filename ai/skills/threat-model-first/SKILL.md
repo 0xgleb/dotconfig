@@ -86,8 +86,11 @@ test is the spec for the fix.
   unchecked arithmetic on attacker-influenced amounts, boundary widths (`u256`
   truncated to `u64`), property invariants that must hold for all inputs.
 
-Run the suite and confirm the abuse tests FAIL for the right reason before
-writing the fix. A test that passes before the fix proves nothing.
+A reproduction of a vulnerability being fixed must fail for the right reason
+before the fix. Existing passing malformed-input and security tests for current
+retained contracts remain valuable. Apply GLOBAL_AGENTS.md's obsolete-capability
+rule: removing a capability does not require replacement tests or an inventory
+of retired names.
 
 ## 5. Solidity canon
 

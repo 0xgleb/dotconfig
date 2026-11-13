@@ -655,7 +655,7 @@ test("exact dispatcher bridge routing commands are locally allowed", () => {
     "pi-bridge agents",
     "pi-bridge send --agent 019fc63f --dedupe req-123",
     "printf '%s' 'request:req-123 outcome:completed summary:done evidence:pr-62' | pi-bridge send --agent 019fc63f --dedupe req-123",
-    "echo 'request:req-9 outcome:failed summary:dispatcher unreachable' | pi-bridge send --agent 019fc63f --dedupe req-9 --requester yielduck-operator",
+    "echo 'request:req-9 outcome:failed summary:dispatcher unreachable' | pi-bridge send --agent 019fc63f --dedupe req-9 --requester project-worker",
     "printf '%s' '**Done** (1) - PR 42 reviewed' | pi-bridge owner-report --sender claude-review-duty",
   ]) {
     assert.equal(
@@ -764,37 +764,6 @@ test("cross-workspace artifact recording and creation require semantic authoriza
     assert.equal(local?.verdict, "allow")
     assert.equal(external, null)
   }
-})
-
-test("release cadence bookkeeping is locally allowed without granting release authority", () => {
-  for (const action of ["status", "enable", "disable", "mark"]) {
-    assert.deepEqual(
-      deterministicDecision({
-        boundary: "action",
-        toolName: "release_cadence",
-        input: { action },
-        cwd: "/repo",
-      }),
-      {
-        verdict: "allow",
-        reason: "Session-local verified release cadence bookkeeping",
-        source: "deterministic",
-      },
-    )
-  }
-  assert.equal(
-    deterministicDecision({
-      boundary: "action",
-      toolName: "release_cadence",
-      input: { action: "ship" },
-      cwd: "/repo",
-    }),
-    null,
-  )
-  assert.equal(
-    deterministicToolResultDecision("release_cadence")?.verdict,
-    "allow",
-  )
 })
 
 test("the dedicated Pi reload tool is locally allowed", () => {

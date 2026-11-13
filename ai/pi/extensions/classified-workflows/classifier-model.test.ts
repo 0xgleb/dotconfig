@@ -27,7 +27,7 @@ test("classifier candidate selection retains the SDK session model and supports 
   clearTierCaches()
   t.after(clearTierCaches)
   const start = source.indexOf("const sessionClassifierModel =")
-  const end = source.indexOf("const REVIEW_DUTY_RELAY_ATTEMPTS =", start)
+  const end = source.indexOf("const MAX_CHILD_STDERR_CHARACTERS =", start)
   assert.ok(start >= 0 && end > start)
   const install = new Function(
     "tierCandidates",

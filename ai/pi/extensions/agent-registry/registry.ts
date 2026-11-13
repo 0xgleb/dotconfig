@@ -1,5 +1,6 @@
 import { Context, Data, Effect } from "effect"
 import type { AgentTokenUsage } from "./usage.ts"
+import type { AgentRole } from "../shared/agent-role.ts"
 
 export type LeaseMode = "task" | "operational"
 export type LeaseStatus = "active" | "paused" | "suspended"
@@ -16,7 +17,7 @@ export interface AgentIdentity {
 interface LeaseBase {
   readonly id: string
   readonly project: string
-  readonly role: string
+  readonly role: AgentRole
   readonly mode: LeaseMode
   readonly owner: AgentIdentity
   readonly policyDigest: string
@@ -35,7 +36,7 @@ export type Lease =
 interface RequestBase {
   readonly id: string
   readonly project: string
-  readonly role: string
+  readonly role: AgentRole
   readonly requesterId: string
   readonly requesterLabel?: string
   readonly requesterCwd?: string
