@@ -16,6 +16,31 @@ const section = (document: string, heading: RegExp): string => {
   return next === -1 ? rest : rest.slice(0, next)
 }
 
+test("standing recovery authorization covers blocked workspace graphs without a second approval", () => {
+  const global = read("../../GLOBAL_AGENTS.md").replace(/\s+/g, " ")
+  const start = global.indexOf("- Local-conflict reconciliation exception:")
+  const end = global.indexOf("- Corrective-publication exception:", start)
+  assert.ok(start >= 0 && end > start)
+  const exception = global.slice(start, end)
+  assert.match(exception, /No additional owner approval is required/)
+  assert.match(
+    exception,
+    /standing permission satisfies the GitButler guidance's independently authorized recovery requirement/,
+  )
+  assert.match(
+    exception,
+    /another applied conflicted commit blocks reconciliation/,
+  )
+  assert.match(
+    exception,
+    /raw-Git prohibitions apply outside this bounded exception/,
+  )
+  assert.match(
+    exception,
+    /normal whole-workspace `but pull`, conflict resolution and bare `but push` workflow/,
+  )
+})
+
 test("GitButler guidance contains the conflicted workspace recovery boundary", () => {
   const sections = [
     section(

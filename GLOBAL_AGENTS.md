@@ -314,11 +314,15 @@ the harness, and suppress duplicates without agent polling.
   applied workspace branches. Merge the verified target into the existing issue
   branch, resolve conflicts and commit with normal hooks, preserving its
   history. No additional owner approval is required for this bounded fallback.
-  It does not authorize a new branch or worktree, discarded work, history
-  rewrites, force operations, a merge into the target, plain-Git publication or
-  bypassing guards and hooks. Restore the workspace branches and pending edits,
-  leaving explicitly parked branches unapplied, then return to the normal
-  whole-workspace `but pull`, conflict resolution and bare `but push` workflow.
+  This standing permission satisfies the GitButler guidance's independently
+  authorized recovery requirement, including when another applied conflicted
+  commit blocks reconciliation. That guidance's raw-Git prohibitions apply
+  outside this bounded exception. It does not authorize a new branch or
+  worktree, discarded work, history rewrites, force operations, a merge into the
+  target, plain-Git publication or bypassing guards and hooks. Restore the
+  workspace branches and pending edits, leaving explicitly parked branches
+  unapplied, then return to the normal whole-workspace `but pull`, conflict
+  resolution and bare `but push` workflow.
 - Corrective-publication exception: within an existing driver assignment, if
   GitButler demonstrably rewinds a published branch or publishes its internal
   conflict-storage history, the driver may use a narrowly scoped plain-Git push
