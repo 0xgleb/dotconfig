@@ -15,7 +15,6 @@ import {
   type OwnerInterventionRelay,
 } from "../shared/usage-governor-events.ts"
 import {
-  autonomousRoleForCwd,
   controlPlaneUsageAdmissionUrl,
   controlPlaneUsageControlUrl,
   controlPlaneUsageUrl,
@@ -555,7 +554,7 @@ export default function usageGovernor(pi: ExtensionAPI): void {
             reservationId,
             ctx.sessionManager.getSessionId(),
             ctx.cwd,
-            autonomousRoleForCwd(ctx.cwd, process.env.HOME),
+            "general",
             requestedProviderTokens(ctx),
             activeTurnLane,
             activeOwnerInteractionAt,
@@ -595,10 +594,10 @@ export default function usageGovernor(pi: ExtensionAPI): void {
     while (true) {
       const result = await Effect.runPromise(
         Effect.either(
-          requestAutonomousAdmission(
-            autonomousRoleForCwd(ctx.cwd, process.env.HOME),
-            { kind: "workflow", requestedTokens },
-          ),
+          requestAutonomousAdmission("general", {
+            kind: "workflow",
+            requestedTokens,
+          }),
         ),
       )
       if (Either.isLeft(result)) {

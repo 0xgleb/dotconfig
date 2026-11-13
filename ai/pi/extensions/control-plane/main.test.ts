@@ -25,7 +25,6 @@ test("control-plane config is loopback-only with a state-root database", () => {
       host: "127.0.0.1",
       port: 43_121,
       databasePath: "/Users/example/state/pi/control-plane/jobs.sqlite",
-      home: "/Users/example",
       dashboardDirectory: "/nix/store/dashboard",
     },
   )
@@ -35,7 +34,6 @@ test("control-plane config is loopback-only with a state-root database", () => {
       host: "127.0.0.1",
       port: 43_121,
       databasePath: "/Users/example/.local/state/pi/control-plane/jobs.sqlite",
-      home: "/Users/example",
     },
   )
 })

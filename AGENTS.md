@@ -96,8 +96,7 @@ Common mistakes to avoid:
 `fj` (aliases `f`, `j`) is a nushell module at `nushell/fj/` that is the user's
 single entry point for day-to-day version control and dev chores. It dispatches
 a subcommand to the right underlying tool: `git`, `but`, `gh`, or an internal
-workflow (`do`, `check`, `take`, `md`, `infra`). Run `fj help` for the full
-command list.
+workflow (`do`, `check`, `take`, `md`). Run `fj help` for the full command list.
 
 ## VCS backend routing
 
@@ -111,8 +110,9 @@ aliases and route by verified topology:
 
 Never invoke GitButler outside the main worktree; detect topology before routing
 instead of waiting for `but` to fail. These are shared defaults, not
-organization-specific rules; explicit repository-local workflows may override
-them. Do not migrate repositories, change branches, or rewrite history merely to
+organization-specific rules. Repository-local workflows remain subject to the
+global managed-main publication rule and its explicit owner-approval exceptions.
+Do not migrate repositories, change branches, or rewrite history merely to
 select a backend.
 
 Plain git commands (`add`, `commit`, `push`, `status`, `diff`, `log`, …) always
@@ -155,15 +155,10 @@ nu nushell/fj/routing.test.nu
 Use type-only Conventional Commit prefixes such as `fix:`, `feat:`, `refactor:`,
 `test:`, and `docs:` according to the change. Do not use `wip(pi):`.
 
-Requested global settings, skill, rule and harness-source changes follow
-`GLOBAL_AGENTS.md`: work directly in this repository's main worktree, create a
-separate purpose-named branch in the existing GitButler workspace, commit and
-push validated units continuously, open a draft PR and mark it ready only when
-the requested scope and verification are complete. Preserve unrelated changes.
-Do not hand routine Markdown edits to another agent or ask again for normal
-publication authority. Direct-to-master delivery requires explicit owner
-direction or a separately authorized role workflow; never merge or override
-branch protection as part of this default.
+Follow the workspace publication and delivery rules in `GLOBAL_AGENTS.md`.
+Direct-to-master delivery requires explicit owner direction or a separately
+authorized role workflow; never merge or override branch protection as part of
+this default.
 
 # Work Tracking
 
@@ -171,14 +166,13 @@ Use GitHub issues/PRs for current project tracking. Preserve historical tracker
 records; changing the current toolchain does not authorize external cleanup.
 
 Name each task for one concrete action or outcome. Keep attribution, recency,
-priority, and constraints in its details, not generic title prefixes. Split
-independent deliverables into separate tasks and use artifact-level subtasks to
-show processing stages and progress.
+and constraints in its details, not generic title prefixes. Task ordering
+follows the rank-field policy in `GLOBAL_AGENTS.md`. Split independent
+deliverables into separate tasks and use artifact-level subtasks to show
+processing stages and progress.
 
 Keep SPEC/ROADMAP → GitHub issues → local execution tasks as the planning
-hierarchy. Aim for approximately 95% of substantive local tasks to link to an
-issue, with explicit short-lived one-off exceptions. Notes and memories provide
-context rather than a competing backlog.
+hierarchy. Notes and memories provide context rather than a competing backlog.
 
 # Current environment
 

@@ -8,12 +8,6 @@ import { readFile } from "node:fs/promises"
 import { isAbsolute, join } from "node:path"
 import { Clock, Data, Effect, Either } from "effect"
 import {
-  governedAllowanceCheckpoints,
-  providerCallAllowanceCheckpoints,
-  type ProviderAllowanceCheckpoint,
-} from "./allowance-pool.ts"
-import { decodeHarnessReviewHandoff } from "./harness-protocol.ts"
-import {
   decodeHarnessResearchHandoff,
   harnessResearchHandoffMatchesAttempt,
 } from "./harness-research-protocol.ts"
@@ -23,22 +17,11 @@ import {
   JobRuntimeError,
   type Job,
 } from "./job-runtime.ts"
-import type { CanonicalPath } from "./review-duty-profile.ts"
 import {
   JobStoreError,
   type SqliteJobStore,
   type StoredJob,
 } from "./sqlite-job-store.ts"
-import {
-  allowanceRunway,
-  calibrateProviderTokens,
-  providerTokenPolicy,
-  rolePollingPolicy,
-  usagePolicy,
-  type AutonomousRole,
-  type ProviderUsagePoint,
-} from "./usage-policy.ts"
-import { ThrottleActivity } from "./throttle-activity.ts"
 import { sampleCodexWeeklyAllowance } from "./codex-allowance.ts"
 
 /** Minimal read-only registry snapshot source the usage sampler needs. */
@@ -55,70 +38,7 @@ const MAX_REQUEST_BODY_BYTES = 16 * 1_024
 const LOOPBACK_HOSTS = ["127.0.0.1", "::1"] as const
 const USAGE_SAMPLE_INTERVAL_MS = 60_000
 const CODEX_ALLOWANCE_SAMPLE_INTERVAL_MS = 15 * 60_000
-const USAGE_HISTORY_WINDOW_MS = 7 * 24 * 60 * 60 * 1_000
 const MAX_RESEARCH_SCHEDULE_SKEW_MS = 7 * 24 * 60 * 60 * 1_000
-const OPENAI_AUTONOMOUS_ROLES: readonly AutonomousRole[] = [
-  "general",
-  "reviewer",
-  "yielduck-operator",
-  "moneymentum-operator",
-]
-
-const openAiControlCheckpoints = (
-  checkpoints: readonly ProviderAllowanceCheckpoint[],
-  now: number,
-): readonly ProviderAllowanceCheckpoint[] => {
-  const providerCheckpoints = providerCallAllowanceCheckpoints(
-    checkpoints,
-    "openai",
-  )
-  const manualCheckpoints = providerCheckpoints.filter(
-    checkpoint => checkpoint.source === "manual",
-  )
-  if (allowanceRunway(manualCheckpoints, now)) return manualCheckpoints
-  const observedCheckpoints = providerCheckpoints.filter(
-    checkpoint => checkpoint.source === "codex-app-server",
-  )
-  return allowanceRunway(observedCheckpoints, now)
-    ? observedCheckpoints
-    : governedAllowanceCheckpoints(checkpoints)
-}
-
-const openAiControlSnapshot = (
-  checkpoints: readonly ProviderAllowanceCheckpoint[],
-  samples: readonly ProviderUsagePoint[],
-  now: number,
-  activity: ThrottleActivity,
-) => {
-  const controlCheckpoints = openAiControlCheckpoints(checkpoints, now)
-  const latest = [...controlCheckpoints].sort(
-    (left, right) => right.capturedAt - left.capturedAt,
-  )[0]
-  const policy = usagePolicy(controlCheckpoints, now)
-  const calibration = calibrateProviderTokens(controlCheckpoints, samples)
-  const providerBudget = providerTokenPolicy(policy, calibration)
-  return {
-    computedAt: now,
-    provider: "openai" as const,
-    pool: latest?.pool ?? "chatgpt-shared-weekly",
-    source: latest?.source ?? "unavailable",
-    profile: {
-      kind: "flat-until-reset" as const,
-      participants: 1,
-    },
-    policy,
-    ...(calibration ? { calibration } : {}),
-    ...(providerBudget ? { providerBudget } : {}),
-    roles: OPENAI_AUTONOMOUS_ROLES.map(role =>
-      rolePollingPolicy(role, policy.pace, policy.throttleRatio),
-    ),
-    activity: activity.snapshot(now),
-  }
-}
-
-/** Delay before an unsuccessful harness attempt becomes claimable again. */
-const HARNESS_RETRY_DELAY_MS = 5 * 60 * 1_000
-
 export class ControlPlaneServerError extends Data.TaggedError(
   "ControlPlaneServerError",
 )<{
@@ -141,11 +61,7 @@ export class ControlPlaneServerError extends Data.TaggedError(
 export type ControlPlaneFailure =
   ControlPlaneServerError | JobRuntimeError | JobStoreError
 
-/**
- * The store operations a request can reach. Naming them keeps the routes
- * honest about what they touch — cancellation, recovery and the raw database
- * are not among them — and lets a caller supply exactly those.
- */
+/** Store operations reachable through the HTTP routes. */
 export type ControlPlaneJobStore = Pick<
   SqliteJobStore,
   | "enqueue"
@@ -163,8 +79,6 @@ export interface ControlPlaneServerOptions {
   readonly host: string
   readonly port: number
   readonly store: ControlPlaneJobStore
-  /** Home the harness payloads of enqueued jobs are admitted against. */
-  readonly home: CanonicalPath
   readonly dashboardDirectory?: string
   readonly codexExecutable?: string
   /** Read-only registry snapshot source for usage sampling. */
@@ -342,7 +256,6 @@ const handleJobs = (
   request: IncomingMessage,
   response: ServerResponse,
   store: ControlPlaneJobStore,
-  home: CanonicalPath,
 ): Effect.Effect<void, ControlPlaneFailure> => {
   if (request.method === "GET") {
     return Effect.flatMap(store.list(), stored =>
@@ -371,7 +284,7 @@ const handleJobs = (
   return Effect.gen(function* () {
     const body = yield* readBody(request)
     const input = yield* parseJson(body)
-    const spec = yield* decodeJobSpec(input, home)
+    const spec = yield* decodeJobSpec(input)
     // Research jobs are scheduled near the present: a runAt far from now is
     // a stale replay of an already-served plan, not fresh work.
     if (spec.kind === "harness.research") {
@@ -478,15 +391,7 @@ const handleClaim = (
   })
 }
 
-/**
- * Publishes what a leased worker reports. The handler owns only the request
- * shape: which transition a harness handoff drives, and whether it belongs to
- * the live attempt, is decided by the job runtime inside the store
- * transaction, so its typed failures pick the response status. The reply is
- * the record the transition produced, so a blocked attempt that still has
- * retries answers with the retrying job and the summary it was left with,
- * rather than reading as a finished one.
- */
+/** Validates the research handoff before the lease-bound store transition. */
 const handleComplete = (
   id: string,
   request: IncomingMessage,
@@ -509,93 +414,39 @@ const handleComplete = (
   return Effect.gen(function* () {
     const input = yield* Effect.flatMap(readBody(request), parseJson)
     const current = yield* store.get(id)
-    if (current.spec.kind === "harness.review") {
-      if (
-        !isRecord(input) ||
-        !exactKeys(input, ["leaseToken", "handoff"]) ||
-        typeof input.leaseToken !== "string"
-      ) {
-        return yield* Effect.fail(
-          serverError("invalid_payload", "typed harness handoff is required"),
-        )
-      }
-      const handoff = yield* Effect.mapError(
-        decodeHarnessReviewHandoff(input.handoff),
-        // The decoder names the field an untrusted caller got wrong, so the
-        // reply stays generic; the job runtime keeps the detail internally.
-        () => serverError("invalid_payload", "harness handoff is invalid"),
-      )
-      const leaseToken = input.leaseToken
-      const summary = `harness ${handoff.status}: ${handoff.assessment}`
-      const result = { kind: "harness.review" as const, handoff }
-      // Sampled against the transaction it is handed to, so a cancellation
-      // that commits while the handoff is being decoded cannot make this
-      // timestamp precede the state the transaction reads.
-      const now = yield* Clock.currentTimeMillis
-      const publish =
-        handoff.status === "blocked" || handoff.status === "failed"
-          ? store.fail(
-              id,
-              leaseToken,
-              now,
-              HARNESS_RETRY_DELAY_MS,
-              summary,
-              result,
-            )
-          : store.complete(id, leaseToken, now, summary, result)
-      const job = yield* publish
-      sendJson(response, 200, { job })
-      return
-    }
-    if (current.spec.kind === "harness.research") {
-      if (
-        !isRecord(input) ||
-        !exactKeys(input, ["leaseToken", "handoff"]) ||
-        typeof input.leaseToken !== "string"
-      )
-        return yield* Effect.fail(
-          serverError("request_failed", "typed research handoff is required"),
-        )
-      const handoff = yield* Effect.mapError(
-        decodeHarnessResearchHandoff(input.handoff),
-        () => serverError("request_failed", "research handoff is invalid"),
-      )
-      if (
-        !harnessResearchHandoffMatchesAttempt(
-          handoff,
-          current.spec.payload,
-          current.id,
-          current.attempt,
-        )
-      )
-        return yield* Effect.fail(
-          serverError(
-            "request_failed",
-            "research handoff does not match the live attempt",
-          ),
-        )
-      const job = yield* store.complete(
-        id,
-        input.leaseToken,
-        Date.now(),
-        handoff.summary,
-        { kind: "harness.research", handoff },
-      )
-      sendJson(response, 200, { job })
-      return
-    }
     if (
       !isRecord(input) ||
-      !exactKeys(input, ["leaseToken", "summary"]) ||
-      typeof input.leaseToken !== "string" ||
-      typeof input.summary !== "string"
-    ) {
+      !exactKeys(input, ["leaseToken", "handoff"]) ||
+      typeof input.leaseToken !== "string"
+    )
       return yield* Effect.fail(
-        serverError("invalid_payload", "job completion payload is invalid"),
+        serverError("request_failed", "typed research handoff is required"),
       )
-    }
-    const now = yield* Clock.currentTimeMillis
-    const job = yield* store.complete(id, input.leaseToken, now, input.summary)
+    const handoff = yield* Effect.mapError(
+      decodeHarnessResearchHandoff(input.handoff),
+      () => serverError("request_failed", "research handoff is invalid"),
+    )
+    if (
+      !harnessResearchHandoffMatchesAttempt(
+        handoff,
+        current.spec.payload,
+        current.id,
+        current.attempt,
+      )
+    )
+      return yield* Effect.fail(
+        serverError(
+          "request_failed",
+          "research handoff does not match the live attempt",
+        ),
+      )
+    const job = yield* store.complete(
+      id,
+      input.leaseToken,
+      Date.now(),
+      handoff.summary,
+      { kind: "harness.research", handoff },
+    )
     sendJson(response, 200, { job })
   })
 }
@@ -678,7 +529,6 @@ const handleRequest = (
   request: IncomingMessage,
   response: ServerResponse,
   store: ControlPlaneJobStore,
-  home: CanonicalPath,
   dashboardDirectory?: string,
 ): Effect.Effect<void> => {
   const route: Effect.Effect<string, ControlPlaneFailure> = Effect.try({
@@ -704,7 +554,7 @@ const handleRequest = (
         })
         return Effect.void
       }
-      if (path === "/v1/jobs") return handleJobs(request, response, store, home)
+      if (path === "/v1/jobs") return handleJobs(request, response, store)
       if (path === "/v1/worker/claim")
         return handleClaim(request, response, store)
       const completeMatch =
@@ -778,7 +628,6 @@ export const startControlPlaneServer = (
   }
 
   return Effect.async(resume => {
-    const throttleActivity = new ThrottleActivity()
     const usageSampling: UsageSamplingStatus = {
       status: options.registryStore ? "sampling" : "unavailable",
       allowance: {
@@ -876,7 +725,6 @@ export const startControlPlaneServer = (
           request,
           response,
           options.store,
-          options.home,
           options.dashboardDirectory,
         ),
       )

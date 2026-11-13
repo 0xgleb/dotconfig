@@ -24,21 +24,11 @@ The assigned checkout remains the default workspace. Without owner-authorized
 concurrent work or an explicit inventory/cleanup request, inspect only that
 checkout and do not enter other worktrees.
 
-Record the working-tree/index state before the directory-ignore preflight.
-Before using `.tmp/` or `.worktrees/`, verify directory-wide coverage with
-`git check-ignore --verbose` on the directory itself and the intended artifact
-path; a file-specific match is insufficient. If coverage is missing, immediately
-add its directory pattern to the containing checkout's `.gitignore`, preserving
-existing rules, then recheck both paths. No separate approval is needed; this
-does not authorize creating a worktree.
-
-Account for an owned ignore repair separately through the repository's
-already-authorized checkpoint/publication workflow, isolating only the new
-ignore hunk and preserving pre-existing changes. If that checkpoint or required
-publication is blocked, leave the repair saved and report the blocker before
-starting concurrent work. Recheck in a newly created checkout before using its
-temporary directories. Do not defer the repair's disposition until cleanup or
-infer authority to discard it or force-remove a dirty worktree.
+Apply `GLOBAL_AGENTS.md`'s directory-ignore preflight before using temporary
+directories or creating a slot. Recheck in a newly created checkout before using
+its temporary directories. Account for any owned repair during preflight, not at
+cleanup; a saved repair does not authorize discarding it or force-removing a
+dirty worktree.
 
 ## Procedure
 
@@ -54,9 +44,15 @@ infer authority to discard it or force-remove a dirty worktree.
    experiment-, or task-named directories. Verify existing ownership before
    reusing a slot.
 4. Create only the selected slot from the task's verified base. Do not change
-   VCS backends, fetch unrelated branches, or initialize environments as routine
-   setup. Record artifact provenance for a newly created disposable slot when
-   the harness exposes that tool.
+   VCS backends, fetch unrelated branches, or initialize unapproved
+   environments. When the main worktree uses direnv and its repository
+   environment is already owner-approved, run `direnv allow <worktree-root>` in
+   the linked or review checkout before tests or commits. Main-checkout approval
+   does not activate a new checkout. Use the repository's declared complete
+   setup, not partial hook configs or skipped hooks. This grants no new secret,
+   host-configuration or deployment authority. Diagnose activation errors rather
+   than silently working outside the environment. Record artifact provenance for
+   a newly created disposable slot when the harness exposes that tool.
 5. Repair submodules only if concurrent work actually requires them. Use
    `fix-worktree-submodules` only when that command exists; otherwise inspect
    the repository's documented equivalent before acting.

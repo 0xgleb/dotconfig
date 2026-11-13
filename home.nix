@@ -11,12 +11,15 @@ let
     inherit pkgs;
     metagendaFj = pkgs.callPackage ./nushell/fj/portable { };
   };
+
   skills = config.lib.file.mkOutOfStoreSymlink "${aiDir}/skills";
+
   globalInstructions = config.lib.file.mkOutOfStoreSymlink "${config.home.homeDirectory}/.config/GLOBAL_AGENTS.md";
   isDarwin = pkgs.stdenv.hostPlatform.isDarwin;
   aiDir = "${config.home.homeDirectory}/.config/ai";
   cursorDir = "${config.home.homeDirectory}/.cursor";
   piDir = "${config.home.homeDirectory}/.pi/agent";
+
   moveAnalyzer = pkgs.writeShellApplication {
     name = "move-analyzer";
     text = ''
@@ -27,12 +30,62 @@ let
       exec sui analyzer "$@"
     '';
   };
+
   moveTreeSitter = pkgs.vimPlugins.nvim-treesitter.grammarToPlugin pkgs.tree-sitter-grammars.tree-sitter-move;
+  rustTreeSitter = pkgs.vimPlugins.nvim-treesitter.grammarToPlugin pkgs.tree-sitter-grammars.tree-sitter-rust;
+  solidityServerExtension =
+    pkgs.vscode-extensions.nomicfoundation.hardhat-solidity.overrideAttrs
+      (previous: {
+        postInstall = (previous.postInstall or "") + ''
+          # Foundry makes source names relative; exact import remappings must agree.
+          substituteInPlace "$out/share/vscode/extensions/nomicfoundation.hardhat-solidity/server/out/index.js" \
+            --replace-fail \
+            'const inputRemappings = basicCompilation.input.settings.remappings ?? [];' \
+            'const inputRemappings = (basicCompilation.input.settings.remappings ?? []).map((remapping) => {
+              const separator = remapping.indexOf("=");
+              const target = remapping.slice(separator + 1);
+              if (import_path12.default.isAbsolute(target) && directoryContains(this.basePath, target)) {
+                return remapping.slice(0, separator + 1) + toUnixStyle(import_path12.default.relative(this.basePath, target));
+              }
+              return remapping;
+            });'
+        '';
+      });
+
+  solidityLanguageServer = pkgs.writeShellApplication {
+    name = "nomicfoundation-solidity-language-server";
+    runtimeInputs = [ pkgs.nodejs ];
+    text = ''
+      exec node ${solidityServerExtension}/share/vscode/extensions/nomicfoundation.hardhat-solidity/server/out/index.js "$@"
+    '';
+  };
+
+  researchParsers = pkgs.symlinkJoin {
+    name = "nvim-research-parsers";
+    paths =
+      (pkgs.vimPlugins.nvim-treesitter.withPlugins (grammars: [
+        grammars.haskell
+        grammars.markdown
+        grammars.markdown_inline
+      ])).dependencies;
+  };
+
+  researchMolten = pkgs.vimPlugins.molten-nvim.overrideAttrs (previous: {
+    postPatch = (previous.postPatch or "") + ''
+      # Imported errors already include output_type. The exporter supplies that
+      # argument positionally; retaining it in extras breaks every later save.
+      substituteInPlace rplugin/python3/molten/ipynb.py \
+        --replace-fail 'chunk.extras = output_data' \
+        'chunk.extras = {key: value for key, value in output_data.items() if key != "output_type"}'
+    '';
+  });
+
   but-unwrapped = inputs.but-nix.packages.${pkgs.stdenv.hostPlatform.system}.gitbutler-cli;
   but = pkgs.writeShellScriptBin "but" ''
     exec ${pkgs.bash}/bin/bash ${./scripts/but-linked-worktree-guard.sh} \
       ${but-unwrapped}/bin/but "$@"
   '';
+
   system = pkgs.stdenv.hostPlatform.system;
   unstable = import inputs.nixpkgs-unstable {
     inherit system;
@@ -58,6 +111,7 @@ let
     inherit (pkgs) nodejs;
     derivationArgs.npmInstallFlags = "--legacy-peer-deps --omit=dev";
   };
+
   pieceOfPiWhisper =
     (pkgs.whisper-cpp.override {
       coreMLSupport = false;
@@ -74,10 +128,12 @@ let
           done
         '';
       });
+
   pieceOfPiWhisperModel = pkgs.fetchurl {
     url = "https://huggingface.co/ggerganov/whisper.cpp/resolve/main/ggml-base-q5_1.bin";
     hash = "sha256-Qi8a5FKt5vMKAE1+XGpDGV5EM7w3C/I/rJzFkfAaiJg=";
   };
+
   piBridge = pkgs.writeShellApplication {
     name = "pi-bridge";
     runtimeInputs = [ pkgs.nodejs ];
@@ -86,6 +142,7 @@ let
         "$HOME/.config/ai/pi/extensions/remote-control/bridge-cli.ts" "$@"
     '';
   };
+
   piControlPlane = pkgs.writeTextFile {
     name = "pi-control-plane";
     destination = "/bin/pi-control-plane";
@@ -103,9 +160,7 @@ let
       cp ($source_root | path join "job-runtime.ts") ($build_root | path join "job-runtime.ts")
       cp ($source_root | path join "job-presentation.ts") ($build_root | path join "job-presentation.ts")
       cp ($source_root | path join "usage-policy.ts") ($build_root | path join "usage-policy.ts")
-      cp ($source_root | path join "harness-protocol.ts") ($build_root | path join "harness-protocol.ts")
       cp ($source_root | path join "harness-research-protocol.ts") ($build_root | path join "harness-research-protocol.ts")
-      cp ($source_root | path join "review-duty-profile.ts") ($build_root | path join "review-duty-profile.ts")
       ^${pkgs.coreutils}/bin/rm --recursive --force ($build_root | path join "node_modules")
       ^${pkgs.coreutils}/bin/ln --symbolic --no-target-directory ${piExtensionNodeModules}/node_modules ($build_root | path join "node_modules")
       (
@@ -130,6 +185,7 @@ let
     '';
     meta.mainProgram = "pi-control-plane";
   };
+
   piControlPlaneWatch = pkgs.writeTextFile {
     name = "pi-control-plane-watch";
     destination = "/bin/pi-control-plane-watch";
@@ -141,14 +197,7 @@ let
     '';
     meta.mainProgram = "pi-control-plane-watch";
   };
-  piHarnessWorker = pkgs.writeShellApplication {
-    name = "pi-harness-worker";
-    runtimeInputs = [ pkgs.nodejs ];
-    text = ''
-      export PI_HARNESS_ALLOWED_ROOTS="''${PI_HARNESS_ALLOWED_ROOTS:-$HOME/code/st0x:$HOME/code/dataclique:$HOME/code/0xgleb:$HOME/.config}"
-      exec node "$HOME/.config/ai/pi/extensions/control-plane/harness-worker-main.ts" "$@"
-    '';
-  };
+
   pieceOfPiTelegram = pkgs.writeShellApplication {
     name = "piece-of-pi-telegram";
     runtimeInputs = [
@@ -208,7 +257,6 @@ in
         piBridge
         piControlPlane
         piControlPlaneWatch
-        piHarnessWorker
         piSolReview
         unstable.pi-coding-agent
         pkgs.nixd
@@ -228,6 +276,7 @@ in
       "/opt/homebrew/bin"
       "/usr/local/bin"
     ];
+
     file = {
       "${nuConfigDir}/fj".source = "${jf.fjLib}/fj";
       ".agents/skills".source = skills;
@@ -244,7 +293,7 @@ in
       ".cursor/CLAUDE.md".force = true;
       ".pi/agent/AGENTS.md".source = globalInstructions;
       ".pi/agent/AGENTS.md".force = true;
-      ".pi/agent/manager/global/.pi/settings.json".source =
+      ".config/ai/pi/workspaces/manager/.pi/settings.json".source =
         config.lib.file.mkOutOfStoreSymlink "${aiDir}/pi/manager.settings.json";
       ".pi/agent/bin/but".source = "${but}/bin/but";
       ".pi/agent/bin/but".force = true;
@@ -266,6 +315,8 @@ in
         config.lib.file.mkOutOfStoreSymlink "${aiDir}/pi/keybindings.json";
       ".local/share/nvim/site/parser/move.so".source = "${moveTreeSitter}/parser/move.so";
       ".local/share/nvim/site/queries/move".source = "${moveTreeSitter}/queries/move";
+      ".local/share/nvim/site/parser/rust.so".source = "${rustTreeSitter}/parser/rust.so";
+      ".local/share/nvim/solidity-language-server".source = solidityLanguageServer;
       ".config/ai/pi/extensions/node_modules" = {
         source = "${piExtensionNodeModules}/node_modules";
         force = true;
@@ -337,14 +388,9 @@ in
     zellij.enable = true;
     nushell = {
       enable = true;
+      loadSessionVariables = true;
       envFile.source = ./nushell/env.src.nu;
       configFile.source = ./nushell/config.src.nu;
-      # configDir = nuDir;
-
-      # plugins = with pkgs.nushellPlugins; [
-      #   polars
-      #   query
-      # ];
     };
 
     git = {
@@ -354,6 +400,8 @@ in
         user.name = "0xgleb";
         init.defaultBranch = "master";
         push.autoSetupRemote = true;
+        # Native fsmonitor queries stall for ~1s per nested repository on macOS.
+        core.fsmonitor = false;
       };
     };
 
@@ -366,10 +414,29 @@ in
     neovim = {
       enable = true;
       withRuby = false;
-      withPython3 = false;
+      withPython3 = true;
+      # Home Manager clears the wrapper's packpath. Make Molten visible during
+      # Nix's remote-plugin manifest generation as well as normal startup.
+      extraWrapperArgs = [
+        "--add-flags"
+        "--cmd 'set runtimepath+=${researchMolten}'"
+        "--add-flags"
+        ''--cmd "lua ${config.programs.neovim.finalPackage.providerLuaRc}"''
+      ];
+
+      extraPython3Packages =
+        ps: with ps; [
+          jupyter-client
+          cairosvg
+          nbformat
+          pillow
+        ];
+
       extraPackages = with pkgs; [
         fd
         gcc
+        haskell-language-server
+        imagemagick
         lazygit
         lua-language-server
         luarocks
@@ -377,12 +444,17 @@ in
         nil
         ripgrep
         rust-analyzer
+        solidityLanguageServer
         svelte-language-server
         typescript-language-server
       ];
+
       plugins = with pkgs.vimPlugins; [
+        researchMolten
+        image-nvim
         (nvim-treesitter.withPlugins (grammars: [
           grammars.bash
+          grammars.haskell
           grammars.html
           grammars.css
           grammars.javascript
@@ -398,7 +470,15 @@ in
           grammars.yaml
         ]))
       ];
-      initLua = builtins.readFile ./nvim/bootstrap.lua;
+
+      initLua = ''
+        vim.g.research_plugin_paths = {
+          image = "${pkgs.vimPlugins.image-nvim}",
+          molten = "${researchMolten}",
+          parsers = "${researchParsers}",
+        }
+      ''
+      + builtins.readFile ./nvim/bootstrap.lua;
     };
 
     # Atuin — fuzzy history search (ctrl+r) for nushell

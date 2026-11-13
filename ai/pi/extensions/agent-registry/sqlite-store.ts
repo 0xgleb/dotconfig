@@ -3,35 +3,11 @@ import { dirname, isAbsolute, join, normalize, relative, sep } from "node:path"
 import { randomUUID } from "node:crypto"
 import { DatabaseSync } from "node:sqlite"
 import { Cause, Effect, Either, Exit } from "effect"
-import {
-  BacklogError,
-  ingestBacklogSource,
-  isBacklogIdentifier,
-  transitionBacklogItem,
-  type BacklogAuthority,
-  type BacklogEvidencePhase,
-  type BacklogEvidenceRecord,
-  type BacklogItem,
-  type BacklogItemState,
-  type BacklogRequirementRecord,
-  type BacklogSourceKind,
-  type BacklogSourceRecord,
-  type BacklogState,
-  type BacklogStore,
-  type BacklogTransitionRecord,
-  type IngestBacklogSourceResult,
-} from "./backlog.ts"
-import type {
-  BranchTodoBacklogSnapshot,
-  CanonicalBacklogSnapshot,
-  MessageBacklogRecord,
-} from "../shared/backlog-events.ts"
 import type { AgentTokenUsage } from "./usage.ts"
 import { parseRuntimeAgentId, sameRuntimeSession } from "./runtime-identity.ts"
 import {
   RegistryError,
   type AcknowledgeRequestInput,
-  type AdvanceRequestBacklogInput,
   type AgentActivity,
   type AgentHeartbeatInput,
   type AgentIdentity,
@@ -56,27 +32,12 @@ import {
   type ReleaseLeaseInput,
 } from "./registry.ts"
 
-export interface SqliteRegistryStore
-  extends RegistryStore, BacklogStore<RegistryError> {
-  readonly reconcileBranchTodos: (
-    snapshot: BranchTodoBacklogSnapshot,
-  ) => Effect.Effect<BacklogState, RegistryError>
-  readonly ingestMessage: (
-    message: MessageBacklogRecord,
-  ) => Effect.Effect<BacklogState, RegistryError>
-  readonly reconcileCanonicalBacklog: (
-    snapshot: CanonicalBacklogSnapshot,
-  ) => Effect.Effect<BacklogState, RegistryError>
+export interface SqliteRegistryStore extends RegistryStore {
   readonly close: () => void
 }
-
-// Source identity, cumulative token usage, and the shadow backlog ledger are
-// additive so sessions still running the prior adapter can coexist during
-// rolling Pi reloads.
 const SCHEMA_VERSION = 5
 const MAX_LEASES = 1_024
 const MAX_REQUESTS = 10_000
-const MAX_BACKLOG_PROJECTS = 1_024
 const MAX_REQUEST_TEXT = 8_000
 const MAX_SUMMARY_TEXT = 4_000
 const MAX_AGENT_ACTIVITIES = 3
@@ -148,6 +109,22 @@ const dbCall = <T>(label: string, operation: () => T): RegistryEffect<T> =>
     catch: error => asRegistryError(error, label),
   })
 
+const retryRegistryBusy = <T>(
+  operation: RegistryEffect<T>,
+  remaining = 2,
+): RegistryEffect<T> =>
+  operation.pipe(
+    Effect.catchIf(
+      error => error.code === "busy" && remaining > 0,
+      () =>
+        Effect.sleep("25 millis").pipe(
+          Effect.andThen(
+            Effect.suspend(() => retryRegistryBusy(operation, remaining - 1)),
+          ),
+        ),
+    ),
+  )
+
 const rollbackEffect = (
   database: DatabaseSync,
   retire: (database: DatabaseSync) => RegistryEffect<void>,
@@ -168,8 +145,10 @@ const databaseTransactionEffect = <T>(
 ): RegistryEffect<T> =>
   Effect.uninterruptibleMask(restore =>
     Effect.gen(function* () {
-      yield* dbCall("Could not begin registry transaction", () =>
-        database.exec("BEGIN IMMEDIATE"),
+      yield* retryRegistryBusy(
+        dbCall("Could not begin registry transaction", () =>
+          database.exec("BEGIN IMMEDIATE"),
+        ),
       )
       const exit = yield* Effect.exit(
         restore(
@@ -593,67 +572,6 @@ const validateActivitiesEffect = (
     )
   })
 
-const jsonObjectEffect = (
-  encoded: string,
-  label: string,
-): RegistryEffect<Row> =>
-  Effect.try({
-    try: (): unknown => JSON.parse(encoded),
-    catch: () => registryError("corrupt_state", `${label} is malformed JSON`),
-  }).pipe(
-    Effect.flatMap(decoded =>
-      isRecordValue(decoded)
-        ? Effect.succeed(decoded)
-        : failRegistry("corrupt_state", `${label} is malformed`),
-    ),
-  )
-
-const backlogJsonObject = (
-  encoded: string,
-  label: string,
-): RegistryEffect<Row> => jsonObjectEffect(encoded, label)
-
-const backlogItemStateFromRow = (row: Row): RegistryEffect<BacklogItemState> =>
-  backlogItemStateEffect(row)
-
-const backlogItemFromRow = (row: Row): RegistryEffect<BacklogItem> =>
-  backlogItemEffect(row)
-
-const backlogSourceKind = (value: string): RegistryEffect<BacklogSourceKind> =>
-  backlogSourceKindEffect(value)
-
-const backlogAuthorityFromRow = (row: Row): RegistryEffect<BacklogAuthority> =>
-  backlogAuthorityEffect(row)
-
-const backlogSourceFromRow = (row: Row): RegistryEffect<BacklogSourceRecord> =>
-  backlogSourceEffect(row)
-
-const backlogRequirementFromRow = (
-  row: Row,
-): RegistryEffect<BacklogRequirementRecord> => backlogRequirementEffect(row)
-
-const backlogStateKind = (
-  value: string,
-): RegistryEffect<BacklogTransitionRecord["from"]> =>
-  backlogStateKindEffect(value)
-
-const backlogTransitionEvent = (
-  value: string,
-): RegistryEffect<BacklogTransitionRecord["event"]> =>
-  backlogTransitionEventEffect(value)
-
-const backlogTransitionFromRow = (
-  row: Row,
-): RegistryEffect<BacklogTransitionRecord> => backlogTransitionEffect(row)
-
-const backlogEvidencePhase = (
-  value: string,
-): RegistryEffect<BacklogEvidencePhase> => backlogEvidencePhaseEffect(value)
-
-const backlogEvidenceFromRow = (
-  row: Row,
-): RegistryEffect<BacklogEvidenceRecord> => backlogEvidenceEffect(row)
-
 const optionalNumberFieldEffect = (
   row: Row,
   key: string,
@@ -921,993 +839,6 @@ const requestRowEffect = (row: Row): RegistryEffect<RegistryRequest> =>
     )
   })
 
-const backlogSourceKindEffect = (
-  value: string,
-): RegistryEffect<BacklogSourceKind> =>
-  value === "owner-message" ||
-  value === "bridge-message" ||
-  value === "registry-request" ||
-  value === "branch-todo" ||
-  value === "tracker-item" ||
-  value === "backlog-document"
-    ? Effect.succeed(value)
-    : failRegistry("corrupt_state", "backlog source kind is malformed")
-
-const backlogStateKindEffect = (
-  value: string,
-): RegistryEffect<BacklogTransitionRecord["from"]> =>
-  value === "unreconciled" ||
-  value === "ready" ||
-  value === "assigned" ||
-  value === "implementing" ||
-  value === "in-review" ||
-  value === "publishing" ||
-  value === "blocked" ||
-  value === "terminal"
-    ? Effect.succeed(value)
-    : failRegistry("corrupt_state", "backlog transition state is malformed")
-
-const backlogTransitionEventEffect = (
-  value: string,
-): RegistryEffect<BacklogTransitionRecord["event"]> =>
-  value === "assign" ||
-  value === "rebind" ||
-  value === "start" ||
-  value === "review" ||
-  value === "publish" ||
-  value === "block" ||
-  value === "ready" ||
-  value === "complete" ||
-  value === "reconcile" ||
-  value === "cancel"
-    ? Effect.succeed(value)
-    : failRegistry("corrupt_state", "backlog transition event is malformed")
-
-const backlogEvidencePhaseEffect = (
-  value: string,
-): RegistryEffect<BacklogEvidencePhase> =>
-  value === "implementation" ||
-  value === "review" ||
-  value === "publication" ||
-  value === "terminal"
-    ? Effect.succeed(value)
-    : failRegistry("corrupt_state", "backlog evidence phase is malformed")
-
-const backlogAuthorityEffect = (row: Row): RegistryEffect<BacklogAuthority> =>
-  Effect.gen(function* () {
-    const kind = yield* requiredStringField(row, "authority_kind")
-    if (kind === "routing-only") return { kind }
-    const ref = yield* optionalStringField(row, "authority_ref")
-    if (
-      !ref ||
-      ref.length > 1_024 ||
-      hasUnsafeControlCharacters(ref) ||
-      (kind !== "authenticated-owner" && kind !== "repository-policy")
-    )
-      return yield* failRegistry(
-        "corrupt_state",
-        "backlog authority is malformed",
-      )
-    return { kind, ref }
-  })
-
-const backlogItemStateEffect = (row: Row): RegistryEffect<BacklogItemState> =>
-  Effect.gen(function* () {
-    const kind = yield* requiredStringField(row, "state_kind")
-    const encoded = yield* requiredStringField(row, "state_json")
-    const details = yield* jsonObjectEffect(encoded, "backlog item state")
-    if ((yield* requiredStringField(details, "kind")) !== kind)
-      return yield* failRegistry(
-        "corrupt_state",
-        "backlog state kind does not match its encoded state",
-      )
-    const expectedKeys =
-      kind === "unreconciled" || kind === "ready"
-        ? ["kind"]
-        : kind === "blocked"
-          ? ["kind", "reason"]
-          : kind === "assigned"
-            ? ["agentId", "kind", "leaseId"]
-            : kind === "implementing"
-              ? ["agentId", "implementationRef", "kind", "leaseId"]
-              : kind === "in-review"
-                ? [
-                    "agentId",
-                    "implementationRef",
-                    "kind",
-                    "leaseId",
-                    "reviewRef",
-                  ]
-                : kind === "publishing"
-                  ? [
-                      "agentId",
-                      "implementationRef",
-                      "kind",
-                      "leaseId",
-                      "publicationRef",
-                      "reviewRef",
-                    ]
-                  : kind === "terminal"
-                    ? ["evidence", "kind", "outcome"]
-                    : undefined
-    if (!expectedKeys)
-      return yield* failRegistry(
-        "corrupt_state",
-        "backlog item state is malformed",
-      )
-    if (
-      Object.keys(details).toSorted().join("\u001f") !==
-      expectedKeys.join("\u001f")
-    )
-      return yield* failRegistry(
-        "corrupt_state",
-        "backlog state contains unexpected fields",
-      )
-    if (
-      Object.entries(details).some(
-        ([key, value]) =>
-          key !== "evidence" &&
-          (typeof value !== "string" ||
-            value.length === 0 ||
-            value.length > 4_096 ||
-            hasUnsafeControlCharacters(value)),
-      )
-    )
-      return yield* failRegistry(
-        "corrupt_state",
-        "backlog state contains an unsafe or unbounded field",
-      )
-    if (kind === "unreconciled" || kind === "ready") return { kind }
-    if (kind === "blocked")
-      return { kind, reason: yield* requiredStringField(details, "reason") }
-    if (kind === "assigned")
-      return {
-        kind,
-        agentId: yield* requiredStringField(details, "agentId"),
-        leaseId: yield* requiredStringField(details, "leaseId"),
-      }
-    if (kind === "implementing")
-      return {
-        kind,
-        agentId: yield* requiredStringField(details, "agentId"),
-        leaseId: yield* requiredStringField(details, "leaseId"),
-        implementationRef: yield* requiredStringField(
-          details,
-          "implementationRef",
-        ),
-      }
-    if (kind === "in-review")
-      return {
-        kind,
-        agentId: yield* requiredStringField(details, "agentId"),
-        leaseId: yield* requiredStringField(details, "leaseId"),
-        implementationRef: yield* requiredStringField(
-          details,
-          "implementationRef",
-        ),
-        reviewRef: yield* requiredStringField(details, "reviewRef"),
-      }
-    if (kind === "publishing")
-      return {
-        kind,
-        agentId: yield* requiredStringField(details, "agentId"),
-        leaseId: yield* requiredStringField(details, "leaseId"),
-        implementationRef: yield* requiredStringField(
-          details,
-          "implementationRef",
-        ),
-        reviewRef: yield* requiredStringField(details, "reviewRef"),
-        publicationRef: yield* requiredStringField(details, "publicationRef"),
-      }
-    if (kind !== "terminal")
-      return yield* failRegistry(
-        "corrupt_state",
-        "backlog item state is malformed",
-      )
-    const outcome = yield* requiredStringField(details, "outcome")
-    if (outcome !== "completed" && outcome !== "cancelled")
-      return yield* failRegistry(
-        "corrupt_state",
-        "backlog terminal state is malformed",
-      )
-    const evidenceValue = details.evidence
-    if (!Array.isArray(evidenceValue) || evidenceValue.length === 0)
-      return yield* failRegistry(
-        "corrupt_state",
-        "backlog terminal state is malformed",
-      )
-    const evidence = yield* Effect.forEach(evidenceValue, value =>
-      Effect.gen(function* () {
-        const record = yield* rowEffect(value)
-        return {
-          kind: yield* persistedStringField(record, "kind", 128),
-          ref: yield* persistedStringField(record, "ref", 1_024),
-        }
-      }),
-    )
-    return { kind, outcome, evidence }
-  })
-
-const backlogIdentifierField = (
-  row: Row,
-  key: string,
-): RegistryEffect<string> =>
-  Effect.flatMap(requiredStringField(row, key), value =>
-    isBacklogIdentifier(value)
-      ? Effect.succeed(value)
-      : failRegistry("corrupt_state", `backlog ${key} is malformed`),
-  )
-
-const backlogItemEffect = (row: Row): RegistryEffect<BacklogItem> =>
-  Effect.gen(function* () {
-    const priority = yield* requiredStringField(row, "priority")
-    if (priority !== "normal" && priority !== "urgent")
-      return yield* failRegistry(
-        "corrupt_state",
-        "backlog priority is malformed",
-      )
-    const dedupeDigest = yield* persistedStringField(row, "dedupe_digest", 64)
-    if (!/^[0-9a-f]{64}$/u.test(dedupeDigest))
-      return yield* failRegistry(
-        "corrupt_state",
-        "registry column dedupe_digest violates its persisted bound",
-      )
-    const project = yield* persistedStringField(row, "project", 1_024)
-    const canonicalProject = yield* canonicalProjectEffect(project).pipe(
-      Effect.mapError(() =>
-        registryError("corrupt_state", "backlog project is malformed"),
-      ),
-    )
-    if (canonicalProject !== project)
-      return yield* failRegistry(
-        "corrupt_state",
-        "backlog project is not canonical",
-      )
-    const revision = yield* requiredNumberField(row, "revision")
-    const createdAt = yield* requiredNumberField(row, "created_at")
-    const updatedAt = yield* requiredNumberField(row, "updated_at")
-    if (revision < 1 || createdAt < 0 || updatedAt < createdAt)
-      return yield* failRegistry(
-        "corrupt_state",
-        "backlog revision or timestamp is malformed",
-      )
-    return {
-      id: yield* backlogIdentifierField(row, "item_id"),
-      project,
-      priority,
-      state: yield* backlogItemStateEffect(row),
-      dedupeDigest,
-      revision,
-      createdAt,
-      updatedAt,
-    }
-  })
-
-const backlogSourceEffect = (row: Row): RegistryEffect<BacklogSourceRecord> =>
-  Effect.gen(function* () {
-    const observedAt = yield* requiredNumberField(row, "observed_at")
-    const contentDigest = yield* persistedStringField(row, "content_digest", 64)
-    if (observedAt < 0 || !/^[0-9a-f]{64}$/u.test(contentDigest))
-      return yield* failRegistry(
-        "corrupt_state",
-        "backlog source timestamp or digest is malformed",
-      )
-    return {
-      kind: yield* backlogSourceKindEffect(
-        yield* persistedStringField(row, "source_kind", 64),
-      ),
-      id: yield* backlogIdentifierField(row, "source_id"),
-      itemId: yield* backlogIdentifierField(row, "item_id"),
-      authority: yield* backlogAuthorityEffect(row),
-      observedAt,
-      contentDigest,
-    }
-  })
-
-const backlogRequirementEffect = (
-  row: Row,
-): RegistryEffect<BacklogRequirementRecord> =>
-  Effect.gen(function* () {
-    const digest = yield* persistedStringField(row, "digest", 64)
-    if (!/^[0-9a-f]{64}$/u.test(digest))
-      return yield* failRegistry(
-        "corrupt_state",
-        "backlog requirement digest is malformed",
-      )
-    return {
-      id: yield* persistedStringField(row, "requirement_id", 1_024),
-      itemId: yield* persistedStringField(row, "item_id", 512),
-      sourceKind: yield* backlogSourceKindEffect(
-        yield* persistedStringField(row, "source_kind", 64),
-      ),
-      sourceId: yield* persistedStringField(row, "source_id", 1_024),
-      text: yield* persistedStringField(row, "text", 4_000),
-      digest,
-    }
-  })
-
-const backlogTransitionEffect = (
-  row: Row,
-): RegistryEffect<BacklogTransitionRecord> =>
-  Effect.gen(function* () {
-    const revision = yield* requiredNumberField(row, "revision")
-    const at = yield* requiredNumberField(row, "observed_at")
-    if (revision < 1 || at < 0)
-      return yield* failRegistry(
-        "corrupt_state",
-        "backlog transition revision or timestamp is malformed",
-      )
-    return {
-      itemId: yield* persistedStringField(row, "item_id", 512),
-      revision,
-      actor: yield* persistedStringField(row, "actor", 512),
-      event: yield* backlogTransitionEventEffect(
-        yield* persistedStringField(row, "event", 64),
-      ),
-      from: yield* backlogStateKindEffect(
-        yield* persistedStringField(row, "prior_state", 64),
-      ),
-      to: yield* backlogStateKindEffect(
-        yield* persistedStringField(row, "next_state", 64),
-      ),
-      at,
-    }
-  })
-
-const backlogEvidenceEffect = (
-  row: Row,
-): RegistryEffect<BacklogEvidenceRecord> =>
-  Effect.gen(function* () {
-    const at = yield* requiredNumberField(row, "observed_at")
-    if (at < 0)
-      return yield* failRegistry(
-        "corrupt_state",
-        "backlog evidence timestamp is malformed",
-      )
-    return {
-      id: yield* persistedStringField(row, "evidence_id", 1_024),
-      itemId: yield* persistedStringField(row, "item_id", 512),
-      phase: yield* backlogEvidencePhaseEffect(
-        yield* persistedStringField(row, "phase", 64),
-      ),
-      kind: yield* persistedStringField(row, "kind", 128),
-      ref: yield* persistedStringField(row, "ref", 1_024),
-      at,
-    }
-  })
-
-const backlogStateEffect = (
-  database: DatabaseSync,
-  project: string,
-): RegistryEffect<BacklogState> =>
-  Effect.gen(function* () {
-    const canonical = yield* canonicalProjectEffect(project)
-    const raw = yield* dbCall("Could not read backlog rows", () => ({
-      items: database
-        .prepare(
-          "SELECT * FROM backlog_items WHERE project = ? ORDER BY created_at, item_id",
-        )
-        .all(canonical),
-      sources: database
-        .prepare(
-          "SELECT source.* FROM backlog_sources AS source JOIN backlog_items AS item ON item.item_id = source.item_id WHERE item.project = ? ORDER BY source.observed_at, source.source_kind, source.source_id",
-        )
-        .all(canonical),
-      requirements: database
-        .prepare(
-          "SELECT requirement.* FROM backlog_requirements AS requirement JOIN backlog_items AS item ON item.item_id = requirement.item_id WHERE item.project = ? ORDER BY requirement.requirement_id",
-        )
-        .all(canonical),
-      evidence: database
-        .prepare(
-          "SELECT evidence.* FROM backlog_evidence AS evidence JOIN backlog_items AS item ON item.item_id = evidence.item_id WHERE item.project = ? ORDER BY evidence.observed_at, evidence.evidence_id",
-        )
-        .all(canonical),
-      transitions: database
-        .prepare(
-          "SELECT transition.* FROM backlog_transitions AS transition JOIN backlog_items AS item ON item.item_id = transition.item_id WHERE item.project = ? ORDER BY transition.observed_at, transition.revision, transition.transition_id",
-        )
-        .all(canonical),
-    }))
-    const itemRows = yield* rowsEffect(raw.items)
-    const sourceRows = yield* rowsEffect(raw.sources)
-    const requirementRows = yield* rowsEffect(raw.requirements)
-    const evidenceRows = yield* rowsEffect(raw.evidence)
-    const transitionRows = yield* rowsEffect(raw.transitions)
-    const items = yield* Effect.forEach(itemRows, backlogItemEffect)
-    const sources = yield* Effect.forEach(sourceRows, backlogSourceEffect)
-    const requirements = yield* Effect.forEach(
-      requirementRows,
-      backlogRequirementEffect,
-    )
-    const evidence = yield* Effect.forEach(evidenceRows, backlogEvidenceEffect)
-    const transitions = yield* Effect.forEach(
-      transitionRows,
-      backlogTransitionEffect,
-    )
-    const terminalEvidenceReconciles = items.every(item => {
-      if (item.state.kind !== "terminal") return true
-      const persisted = evidence.filter(
-        record => record.itemId === item.id && record.phase === "terminal",
-      )
-      return (
-        persisted.length === item.state.evidence.length &&
-        item.state.evidence.every(expected =>
-          persisted.some(
-            record =>
-              record.kind === expected.kind && record.ref === expected.ref,
-          ),
-        )
-      )
-    })
-    if (!terminalEvidenceReconciles)
-      return yield* failRegistry(
-        "corrupt_state",
-        "terminal evidence does not reconcile with persisted evidence rows",
-      )
-    return { items, sources, requirements, evidence, transitions }
-  })
-
-const BACKLOG_REQUIREMENT_MAX_CHARACTERS = 4_000
-
-const registryRequestBacklogRequirements = (
-  text: string,
-): readonly { readonly text: string }[] => {
-  const requirements: { readonly text: string }[] = []
-  for (let offset = 0; offset < text.length;) {
-    let end = Math.min(offset + BACKLOG_REQUIREMENT_MAX_CHARACTERS, text.length)
-    if (
-      end < text.length &&
-      end > offset &&
-      /[\uD800-\uDBFF]/u.test(text[end - 1] ?? "")
-    )
-      end -= 1
-    requirements.push({ text: text.slice(offset, end) })
-    offset = end
-  }
-  return requirements
-}
-
-const persistBacklogIngestionEffect = (
-  database: DatabaseSync,
-  prior: BacklogState,
-  result: IngestBacklogSourceResult,
-): RegistryEffect<BacklogState> =>
-  Effect.gen(function* () {
-    const source = result.state.sources.at(-1)
-    if (!source)
-      return yield* failRegistry(
-        "corrupt_state",
-        "backlog source was not produced",
-      )
-    if (
-      prior.sources.some(
-        current => current.kind === source.kind && current.id === source.id,
-      )
-    )
-      return result.state
-    yield* dbCall("Could not persist backlog ingestion", () => {
-      if (result.created) {
-        database
-          .prepare(
-            "INSERT INTO backlog_items (item_id, project, priority, state_kind, state_json, dedupe_digest, revision, created_at, updated_at) VALUES (?, ?, ?, ?, ?, ?, ?, ?, ?)",
-          )
-          .run(
-            result.item.id,
-            result.item.project,
-            result.item.priority,
-            result.item.state.kind,
-            JSON.stringify(result.item.state),
-            result.item.dedupeDigest,
-            result.item.revision,
-            result.item.createdAt,
-            result.item.updatedAt,
-          )
-      } else {
-        database
-          .prepare(
-            "UPDATE backlog_items SET priority = ?, revision = ?, updated_at = ? WHERE item_id = ?",
-          )
-          .run(
-            result.item.priority,
-            result.item.revision,
-            result.item.updatedAt,
-            result.item.id,
-          )
-      }
-      database
-        .prepare(
-          "INSERT INTO backlog_sources (source_kind, source_id, item_id, authority_kind, authority_ref, observed_at, content_digest) VALUES (?, ?, ?, ?, ?, ?, ?)",
-        )
-        .run(
-          source.kind,
-          source.id,
-          source.itemId,
-          source.authority.kind,
-          source.authority.kind === "routing-only"
-            ? null
-            : source.authority.ref,
-          source.observedAt,
-          source.contentDigest,
-        )
-      const requirements = result.state.requirements.filter(
-        requirement =>
-          requirement.sourceKind === source.kind &&
-          requirement.sourceId === source.id,
-      )
-      const insertRequirement = database.prepare(
-        "INSERT INTO backlog_requirements (requirement_id, item_id, source_kind, source_id, text, digest) VALUES (?, ?, ?, ?, ?, ?)",
-      )
-      for (const requirement of requirements)
-        insertRequirement.run(
-          requirement.id,
-          requirement.itemId,
-          requirement.sourceKind,
-          requirement.sourceId,
-          requirement.text,
-          requirement.digest,
-        )
-    })
-    return result.state
-  })
-
-const backlogDomainEffect = <T>(
-  operation: Effect.Effect<T, BacklogError>,
-): RegistryEffect<T> =>
-  operation.pipe(
-    Effect.mapError(error => registryError("invalid_input", error.message)),
-  )
-
-const persistRegistryRequestBacklogEffect = (
-  database: DatabaseSync,
-  request: RegistryRequest,
-  priorState?: BacklogState,
-): RegistryEffect<BacklogState> =>
-  Effect.gen(function* () {
-    const prior =
-      priorState ?? (yield* backlogStateEffect(database, request.project))
-    const result = yield* backlogDomainEffect(
-      ingestBacklogSource(prior, {
-        newItemId: randomUUID(),
-        project: request.project,
-        source: { kind: "registry-request", id: request.id },
-        observedAt: request.createdAt,
-        priority: request.priority,
-        requirements: registryRequestBacklogRequirements(request.text),
-        authority: { kind: "routing-only" },
-        dedupe: { kind: "exact-content", scope: request.role },
-        initialState: "ready",
-      }),
-    )
-    return yield* persistBacklogIngestionEffect(database, prior, result)
-  })
-
-const persistBacklogTransitionEffect = (
-  database: DatabaseSync,
-  prior: BacklogState,
-  next: BacklogState,
-  item: BacklogItem,
-): RegistryEffect<void> =>
-  dbCall("Could not persist backlog transition", () => {
-    database
-      .prepare(
-        "UPDATE backlog_items SET state_kind = ?, state_json = ?, revision = ?, updated_at = ? WHERE item_id = ?",
-      )
-      .run(
-        item.state.kind,
-        JSON.stringify(item.state),
-        item.revision,
-        item.updatedAt,
-        item.id,
-      )
-    const transition = next.transitions.at(-1)
-    if (transition)
-      database
-        .prepare(
-          "INSERT INTO backlog_transitions (transition_id, item_id, revision, actor, event, prior_state, next_state, observed_at) VALUES (?, ?, ?, ?, ?, ?, ?, ?)",
-        )
-        .run(
-          randomUUID(),
-          transition.itemId,
-          transition.revision,
-          transition.actor,
-          transition.event,
-          transition.from,
-          transition.to,
-          transition.at,
-        )
-    const priorEvidenceIds = new Set(
-      prior.evidence.map(evidence => evidence.id),
-    )
-    const insertEvidence = database.prepare(
-      "INSERT INTO backlog_evidence (evidence_id, item_id, phase, kind, ref, observed_at) VALUES (?, ?, ?, ?, ?, ?)",
-    )
-    for (const evidence of next.evidence) {
-      if (evidence.itemId !== item.id || priorEvidenceIds.has(evidence.id))
-        continue
-      insertEvidence.run(
-        evidence.id,
-        evidence.itemId,
-        evidence.phase,
-        evidence.kind,
-        evidence.ref,
-        evidence.at,
-      )
-    }
-  })
-
-const transitionRegistryRequestBacklogEffect = (
-  database: DatabaseSync,
-  request: RegistryRequest,
-): RegistryEffect<void> =>
-  Effect.gen(function* () {
-    let state = yield* backlogStateEffect(database, request.project)
-    const source = state.sources.find(
-      candidate =>
-        candidate.kind === "registry-request" && candidate.id === request.id,
-    )
-    if (!source) return
-    const initialItem = state.items.find(
-      candidate => candidate.id === source.itemId,
-    )
-    if (!initialItem)
-      return yield* failRegistry(
-        "corrupt_state",
-        "linked backlog item is missing",
-      )
-    let item: BacklogItem = initialItem
-
-    const transition = (
-      event: Parameters<typeof transitionBacklogItem>[1]["event"],
-    ) =>
-      backlogDomainEffect(
-        transitionBacklogItem(state, {
-          itemId: item.id,
-          expectedRevision: item.revision,
-          actor: "agent-registry",
-          now: request.updatedAt,
-          event,
-        }),
-      ).pipe(
-        Effect.tap(result =>
-          persistBacklogTransitionEffect(
-            database,
-            state,
-            result.state,
-            result.item,
-          ),
-        ),
-      )
-
-    if (request.status === "claimed") {
-      if (
-        item.state.kind === "assigned" &&
-        item.state.agentId === request.agentId &&
-        item.state.leaseId === request.leaseId
-      )
-        return
-      if (
-        (item.state.kind === "assigned" ||
-          item.state.kind === "implementing" ||
-          item.state.kind === "in-review" ||
-          item.state.kind === "publishing") &&
-        sameRuntimeSession(item.state.agentId, request.agentId) &&
-        item.state.leaseId !== request.leaseId
-      ) {
-        const verifiedLease = yield* leaseByIdEffect(database, request.leaseId)
-        if (
-          verifiedLease.owner.id !== request.agentId ||
-          verifiedLease.project !== request.project ||
-          verifiedLease.role !== request.role ||
-          verifiedLease.status !== "active" ||
-          verifiedLease.expiresAt <= request.updatedAt
-        )
-          return yield* failRegistry(
-            "stale_lease",
-            "replacement lease is not current for this request",
-          )
-        const priorKind = item.state.kind
-        const updated: BacklogItem = {
-          ...item,
-          revision: item.revision + 1,
-          updatedAt: request.updatedAt,
-          state: {
-            ...item.state,
-            agentId: request.agentId,
-            leaseId: request.leaseId,
-          },
-        }
-        const reboundState: BacklogState = {
-          ...state,
-          items: state.items.map(current =>
-            current.id === item.id ? updated : current,
-          ),
-          transitions: [
-            ...state.transitions,
-            {
-              itemId: item.id,
-              revision: updated.revision,
-              actor: "agent-registry",
-              event: "rebind",
-              from: priorKind,
-              to: priorKind,
-              at: request.updatedAt,
-            },
-          ],
-        }
-        yield* persistBacklogTransitionEffect(
-          database,
-          state,
-          reboundState,
-          updated,
-        )
-        return
-      }
-      if (item.state.kind !== "ready") return
-      yield* transition({
-        kind: "assign",
-        agentId: request.agentId,
-        leaseId: request.leaseId,
-      })
-      return
-    }
-
-    if (request.status === "completed") {
-      if (item.state.kind === "assigned") {
-        const started = yield* transition({
-          kind: "start",
-          implementationRef: request.id,
-        })
-        state = started.state
-        item = started.item
-      }
-      const evidence = [
-        { kind: "registry-outcome", ref: request.id },
-        { kind: "implementation-summary", ref: request.id },
-      ] as const
-      if (item.state.kind === "terminal") {
-        if (item.state.outcome === "cancelled")
-          return yield* failRegistry(
-            "invalid_transition",
-            "cancelled backlog item cannot be completed",
-          )
-        if (
-          evidence.every(expected =>
-            item.state.kind === "terminal"
-              ? item.state.evidence.some(
-                  current =>
-                    current.kind === expected.kind &&
-                    current.ref === expected.ref,
-                )
-              : false,
-          )
-        )
-          return
-        const added = evidence.filter(
-          expected =>
-            item.state.kind === "terminal" &&
-            !item.state.evidence.some(
-              current =>
-                current.kind === expected.kind && current.ref === expected.ref,
-            ),
-        )
-        const updated: BacklogItem = {
-          ...item,
-          revision: item.revision + 1,
-          updatedAt: request.updatedAt,
-          state: {
-            ...item.state,
-            evidence: [...item.state.evidence, ...added],
-          },
-        }
-        const addedEvidence: readonly BacklogEvidenceRecord[] = added.map(
-          (record, index) => ({
-            id: `${item.id}:${updated.revision}:terminal:${index}`,
-            itemId: item.id,
-            phase: "terminal",
-            kind: record.kind,
-            ref: record.ref,
-            at: request.updatedAt,
-          }),
-        )
-        const nextState: BacklogState = {
-          ...state,
-          items: state.items.map(current =>
-            current.id === item.id ? updated : current,
-          ),
-          evidence: [...state.evidence, ...addedEvidence],
-          transitions: [
-            ...state.transitions,
-            {
-              itemId: item.id,
-              revision: updated.revision,
-              actor: "agent-registry",
-              event: "complete",
-              from: "terminal",
-              to: "terminal",
-              at: request.updatedAt,
-            },
-          ],
-        }
-        yield* persistBacklogTransitionEffect(
-          database,
-          state,
-          nextState,
-          updated,
-        )
-        return
-      }
-      yield* transition({ kind: "complete", evidence })
-      return
-    }
-
-    if (request.status === "cancelled") {
-      if (item.state.kind === "terminal") return
-      yield* transition({
-        kind: "cancel",
-        evidence: [{ kind: "registry-cancellation", ref: request.id }],
-      })
-      return
-    }
-
-    if (request.status === "failed" && item.state.kind !== "terminal")
-      yield* transition(
-        request.failure === "cancelled"
-          ? {
-              kind: "cancel",
-              evidence: [{ kind: "registry-failure", ref: request.id }],
-            }
-          : {
-              kind: "block",
-              reason: `registry request ${request.failure}`,
-            },
-      )
-  })
-
-const advanceRegistryRequestBacklogEffect = (
-  database: DatabaseSync,
-  request: RegistryRequest,
-  input: AdvanceRequestBacklogInput,
-): RegistryEffect<void> =>
-  Effect.gen(function* () {
-    const state = yield* backlogStateEffect(database, request.project)
-    const source = state.sources.find(
-      candidate =>
-        candidate.kind === "registry-request" && candidate.id === request.id,
-    )
-    if (!source)
-      return yield* failRegistry(
-        "corrupt_state",
-        "linked backlog source is missing",
-      )
-    const item = state.items.find(candidate => candidate.id === source.itemId)
-    if (!item)
-      return yield* failRegistry(
-        "corrupt_state",
-        "linked backlog item is missing",
-      )
-    if (item.state.kind === "terminal")
-      return yield* failRegistry(
-        "invalid_transition",
-        "backlog item is terminal",
-      )
-    if (
-      item.state.kind !== "ready" &&
-      (!("agentId" in item.state) ||
-        !("leaseId" in item.state) ||
-        item.state.agentId !== input.agentId ||
-        item.state.leaseId !== input.leaseId)
-    )
-      return yield* failRegistry(
-        "invalid_transition",
-        "backlog item is assigned to another lease",
-      )
-
-    const ref = yield* boundedTextEffect(
-      "backlog phase evidence",
-      input.evidenceRef,
-      1_024,
-    )
-    if (
-      (input.phase === "implementation" &&
-        item.state.kind === "implementing" &&
-        item.state.implementationRef === ref) ||
-      (input.phase === "review" &&
-        item.state.kind === "in-review" &&
-        item.state.reviewRef === ref) ||
-      (input.phase === "publication" &&
-        item.state.kind === "publishing" &&
-        item.state.publicationRef === ref)
-    )
-      return
-
-    const event =
-      input.phase === "implementation"
-        ? ({ kind: "start", implementationRef: ref } as const)
-        : input.phase === "review"
-          ? ({ kind: "review", reviewRef: ref } as const)
-          : ({ kind: "publish", publicationRef: ref } as const)
-    const result = yield* backlogDomainEffect(
-      transitionBacklogItem(state, {
-        itemId: item.id,
-        expectedRevision: item.revision,
-        actor: input.agentId,
-        now: input.now,
-        event,
-      }),
-    )
-    yield* persistBacklogTransitionEffect(
-      database,
-      state,
-      result.state,
-      result.item,
-    )
-  })
-
-const installBacklogSchema = (database: DatabaseSync): void => {
-  database.exec(`
-    CREATE TABLE IF NOT EXISTS backlog_items (
-      item_id TEXT PRIMARY KEY,
-      project TEXT NOT NULL,
-      priority TEXT NOT NULL,
-      state_kind TEXT NOT NULL,
-      state_json TEXT NOT NULL,
-      dedupe_digest TEXT NOT NULL,
-      revision INTEGER NOT NULL,
-      created_at INTEGER NOT NULL,
-      updated_at INTEGER NOT NULL
-    ) STRICT;
-    CREATE INDEX IF NOT EXISTS backlog_items_project_state
-      ON backlog_items (project, state_kind, created_at, item_id);
-    CREATE TABLE IF NOT EXISTS backlog_sources (
-      source_kind TEXT NOT NULL,
-      source_id TEXT NOT NULL,
-      item_id TEXT NOT NULL,
-      authority_kind TEXT NOT NULL,
-      authority_ref TEXT,
-      observed_at INTEGER NOT NULL,
-      content_digest TEXT NOT NULL,
-      PRIMARY KEY (source_kind, source_id),
-      FOREIGN KEY (item_id) REFERENCES backlog_items(item_id)
-    ) STRICT;
-    CREATE INDEX IF NOT EXISTS backlog_sources_item
-      ON backlog_sources (item_id, observed_at, source_kind, source_id);
-    CREATE TABLE IF NOT EXISTS backlog_requirements (
-      requirement_id TEXT PRIMARY KEY,
-      item_id TEXT NOT NULL,
-      source_kind TEXT NOT NULL,
-      source_id TEXT NOT NULL,
-      text TEXT NOT NULL,
-      digest TEXT NOT NULL,
-      FOREIGN KEY (item_id) REFERENCES backlog_items(item_id),
-      FOREIGN KEY (source_kind, source_id)
-        REFERENCES backlog_sources(source_kind, source_id)
-    ) STRICT;
-    CREATE INDEX IF NOT EXISTS backlog_requirements_item
-      ON backlog_requirements (item_id, requirement_id);
-    CREATE TABLE IF NOT EXISTS backlog_evidence (
-      evidence_id TEXT PRIMARY KEY,
-      item_id TEXT NOT NULL,
-      phase TEXT NOT NULL,
-      kind TEXT NOT NULL,
-      ref TEXT NOT NULL,
-      observed_at INTEGER NOT NULL,
-      FOREIGN KEY (item_id) REFERENCES backlog_items(item_id)
-    ) STRICT;
-    CREATE TABLE IF NOT EXISTS backlog_transitions (
-      transition_id TEXT PRIMARY KEY,
-      item_id TEXT NOT NULL,
-      revision INTEGER NOT NULL,
-      actor TEXT NOT NULL,
-      event TEXT NOT NULL,
-      prior_state TEXT NOT NULL,
-      next_state TEXT NOT NULL,
-      observed_at INTEGER NOT NULL,
-      FOREIGN KEY (item_id) REFERENCES backlog_items(item_id)
-    ) STRICT;
-  `)
-}
-
 const schemaVersionEffect = (database: DatabaseSync): RegistryEffect<number> =>
   dbCall("Could not read registry schema version", () =>
     database.prepare("PRAGMA user_version").get(),
@@ -1937,15 +868,6 @@ const currentAdditiveSchemaEffect = (
     const requests = yield* tableColumnsEffect(database, "requests")
     const leases = yield* tableColumnsEffect(database, "leases")
     const agents = yield* tableColumnsEffect(database, "agents")
-    const backlogItems = yield* tableColumnsEffect(database, "backlog_items")
-    const backlogSources = yield* tableColumnsEffect(
-      database,
-      "backlog_sources",
-    )
-    const backlogRequirements = yield* tableColumnsEffect(
-      database,
-      "backlog_requirements",
-    )
     return (
       [
         "requester_acknowledged_at",
@@ -1969,73 +891,8 @@ const currentAdditiveSchemaEffect = (
         "usage_total",
         "activities",
         "expires_at",
-      ].every(column => agents.has(column)) &&
-      [
-        "item_id",
-        "project",
-        "priority",
-        "state_kind",
-        "state_json",
-        "dedupe_digest",
-        "revision",
-        "created_at",
-        "updated_at",
-      ].every(column => backlogItems.has(column)) &&
-      [
-        "source_kind",
-        "source_id",
-        "item_id",
-        "authority_kind",
-        "authority_ref",
-        "observed_at",
-        "content_digest",
-      ].every(column => backlogSources.has(column)) &&
-      [
-        "requirement_id",
-        "item_id",
-        "source_kind",
-        "source_id",
-        "text",
-        "digest",
-      ].every(column => backlogRequirements.has(column))
+      ].every(column => agents.has(column))
     )
-  })
-
-const backfillOpenRegistryRequestsEffect = (
-  database: DatabaseSync,
-): RegistryEffect<void> =>
-  Effect.gen(function* () {
-    const raw = yield* dbCall(
-      "Could not read requests for backlog backfill",
-      () =>
-        database
-          .prepare(
-            "SELECT * FROM requests WHERE status IN ('queued', 'claimed') ORDER BY created_at, request_id",
-          )
-          .all(),
-    )
-    const rows = yield* rowsEffect(raw)
-    const requests = yield* Effect.forEach(rows, requestRowEffect)
-    const states = new Map<string, BacklogState>()
-    for (const request of requests) {
-      const prior =
-        states.get(request.project) ??
-        (yield* backlogStateEffect(database, request.project))
-      const existing = yield* dbCall("Could not inspect backlog backfill", () =>
-        database
-          .prepare(
-            "SELECT 1 AS present FROM backlog_sources WHERE source_kind = 'registry-request' AND source_id = ?",
-          )
-          .get(request.id),
-      )
-      if (existing === undefined)
-        yield* persistRegistryRequestBacklogEffect(database, request, prior)
-      yield* transitionRegistryRequestBacklogEffect(database, request)
-      states.set(
-        request.project,
-        yield* backlogStateEffect(database, request.project),
-      )
-    }
   })
 
 const initializeEffect = (
@@ -2049,15 +906,20 @@ const initializeEffect = (
     })
     const journalRow = yield* rowEffect(journalRaw)
     const journalMode = yield* requiredStringField(journalRow, "journal_mode")
-    if (journalMode.toLowerCase() !== "wal")
-      yield* dbCall("Could not enable registry WAL", () =>
-        database.prepare("PRAGMA journal_mode = WAL").get(),
-      ).pipe(
-        Effect.catchIf(
-          error => error.code === "busy",
-          () => Effect.void,
+    if (journalMode.toLowerCase() !== "wal") {
+      const configured = yield* retryRegistryBusy(
+        dbCall("Could not enable registry WAL", () =>
+          database.prepare("PRAGMA journal_mode = WAL").get(),
         ),
       )
+      const row = yield* rowEffect(configured)
+      const mode = yield* requiredStringField(row, "journal_mode")
+      if (mode.toLowerCase() !== "wal")
+        return yield* failRegistry(
+          "io",
+          "Registry WAL mode could not be enabled",
+        )
+    }
     yield* dbCall("Could not configure registry", () => {
       database.exec("PRAGMA synchronous = NORMAL;")
       database.exec("PRAGMA foreign_keys = ON;")
@@ -2249,10 +1111,6 @@ const initializeEffect = (
             "priority TEXT NOT NULL DEFAULT 'normal'",
           )
         }
-        yield* dbCall("Could not install backlog schema", () =>
-          installBacklogSchema(database),
-        )
-        yield* backfillOpenRegistryRequestsEffect(database)
         yield* dbCall("Could not advance registry schema", () =>
           database.exec(`PRAGMA user_version = ${SCHEMA_VERSION};`),
         )
@@ -2281,28 +1139,20 @@ const makeDatabaseAccess = (databasePath: string): DatabaseAccess => {
 
   const openEffect = (label: string): RegistryEffect<DatabaseSync> => {
     if (database) return Effect.succeed(database)
-    return dbCall(label, () => {
-      mkdirSync(dirname(databasePath), { recursive: true, mode: 0o700 })
-      return new DatabaseSync(databasePath)
-    }).pipe(
-      Effect.flatMap(opened =>
-        initializeEffect(opened, databasePath).pipe(
-          Effect.tap(() =>
-            Effect.sync(() => {
+    return Effect.acquireUseRelease(
+      dbCall(label, () => {
+        mkdirSync(dirname(databasePath), { recursive: true, mode: 0o700 })
+        return new DatabaseSync(databasePath)
+      }),
+      opened => initializeEffect(opened, databasePath).pipe(Effect.as(opened)),
+      (opened, exit) =>
+        Exit.isSuccess(exit)
+          ? Effect.sync(() => {
               database = opened
-            }),
-          ),
-          Effect.as(opened),
-          Effect.catchAll(error =>
-            dbCall("Could not close invalid registry", () =>
+            })
+          : dbCall("Could not close invalid registry", () =>
               opened.close(),
-            ).pipe(
-              Effect.catchAll(() => Effect.void),
-              Effect.andThen(Effect.fail(error)),
-            ),
-          ),
-        ),
-      ),
+            ).pipe(Effect.ignore),
     )
   }
 
@@ -2445,254 +1295,6 @@ const migrateLegacyRuntimeIdentityEffect = (
     )
   })
 
-const persistMessageBacklogEffect = (
-  database: DatabaseSync,
-  message: MessageBacklogRecord,
-): RegistryEffect<BacklogState> =>
-  Effect.gen(function* () {
-    const prior = yield* backlogStateEffect(database, message.project)
-    const result = yield* backlogDomainEffect(
-      ingestBacklogSource(prior, {
-        newItemId: randomUUID(),
-        project: message.project,
-        source: { kind: message.source, id: message.messageId },
-        observedAt: message.observedAt,
-        priority: "normal",
-        requirements: message.requirements.map(text => ({ text })),
-        authority:
-          message.authority === "authenticated-owner"
-            ? { kind: "authenticated-owner", ref: message.messageId }
-            : { kind: "routing-only" },
-        dedupe: { kind: "exact-content" },
-        initialState: "unreconciled",
-      }),
-    )
-    return yield* persistBacklogIngestionEffect(database, prior, result)
-  })
-
-const reconcileCanonicalBacklogEffect = (
-  database: DatabaseSync,
-  snapshot: CanonicalBacklogSnapshot,
-): RegistryEffect<BacklogState> =>
-  Effect.gen(function* () {
-    let state = yield* backlogStateEffect(database, snapshot.project)
-    const groups = new Map<
-      string,
-      CanonicalBacklogSnapshot["items"][number][]
-    >()
-    for (const record of snapshot.items)
-      groups.set(record.canonicalId, [
-        ...(groups.get(record.canonicalId) ?? []),
-        record,
-      ])
-
-    for (const [canonicalId, records] of groups) {
-      const status = records[0]?.status
-      if (!status || records.some(record => record.status !== status))
-        return yield* failRegistry(
-          "invalid_input",
-          "canonical backlog records disagree on lifecycle state",
-        )
-      const sourcePrefix = `${snapshot.scopeId}:${canonicalId}:`
-      const existingSource = state.sources.find(
-        source =>
-          source.kind === snapshot.source && source.id.startsWith(sourcePrefix),
-      )
-      if ((status === "completed" || status === "cancelled") && !existingSource)
-        continue
-
-      let item = existingSource
-        ? state.items.find(current => current.id === existingSource.itemId)
-        : undefined
-      for (const record of records) {
-        const result = yield* backlogDomainEffect(
-          ingestBacklogSource(state, {
-            newItemId: randomUUID(),
-            project: snapshot.project,
-            source: { kind: snapshot.source, id: record.sourceId },
-            observedAt: snapshot.observedAt,
-            priority: record.priority,
-            requirements: record.requirements.map(text => ({ text })),
-            authority: { kind: "routing-only" },
-            dedupe: item
-              ? { kind: "item-id", itemId: item.id }
-              : {
-                  kind: "canonical-key",
-                  key: `${snapshot.source}:${snapshot.scopeId}:${canonicalId}`,
-                },
-            initialState: "ready",
-          }),
-        )
-        state = yield* persistBacklogIngestionEffect(database, state, result)
-        item = result.item
-      }
-      if (!item || item.state.kind === "terminal") continue
-
-      let event:
-        Parameters<typeof transitionBacklogItem>[1]["event"] | undefined
-      if (status === "completed")
-        event = {
-          kind: "reconcile",
-          outcome: "completed",
-          evidence: [
-            {
-              kind: `${snapshot.source}-status`,
-              ref: `${snapshot.scopeId}:${canonicalId}`,
-            },
-          ],
-        }
-      else if (status === "cancelled")
-        event = {
-          kind: "reconcile",
-          outcome: "cancelled",
-          evidence: [
-            {
-              kind: `${snapshot.source}-status`,
-              ref: `${snapshot.scopeId}:${canonicalId}`,
-            },
-          ],
-        }
-      else if (status === "blocked") {
-        const reason = records[0]?.reason
-        if (!reason)
-          return yield* failRegistry(
-            "invalid_input",
-            "blocked canonical backlog item is missing its reason",
-          )
-        if (item.state.kind !== "blocked" || item.state.reason !== reason)
-          event = { kind: "block", reason }
-      } else if (
-        item.state.kind === "blocked" ||
-        item.state.kind === "unreconciled"
-      )
-        event = { kind: "ready" }
-
-      if (!event) continue
-      const result = yield* backlogDomainEffect(
-        transitionBacklogItem(state, {
-          itemId: item.id,
-          expectedRevision: item.revision,
-          actor: `${snapshot.source}-adapter`,
-          now: snapshot.observedAt,
-          event,
-        }),
-      )
-      yield* persistBacklogTransitionEffect(
-        database,
-        state,
-        result.state,
-        result.item,
-      )
-      state = result.state
-    }
-    return state
-  })
-
-const reconcileBranchTodoBacklogEffect = (
-  database: DatabaseSync,
-  snapshot: BranchTodoBacklogSnapshot,
-): RegistryEffect<BacklogState> =>
-  Effect.gen(function* () {
-    let state = yield* backlogStateEffect(database, snapshot.project)
-    const groups = new Map<
-      string,
-      BranchTodoBacklogSnapshot["todos"][number][]
-    >()
-    for (const todo of snapshot.todos)
-      groups.set(todo.canonicalId, [
-        ...(groups.get(todo.canonicalId) ?? []),
-        todo,
-      ])
-
-    for (const [canonicalId, records] of groups) {
-      const status = records[0]?.status
-      if (!status || records.some(record => record.status !== status))
-        return yield* failRegistry(
-          "invalid_input",
-          "branch todo snapshots disagree on lifecycle state",
-        )
-      const existingSource = state.sources.find(
-        source =>
-          source.kind === "branch-todo" &&
-          source.id.startsWith(`${canonicalId}:`),
-      )
-      if ((status === "completed" || status === "cancelled") && !existingSource)
-        continue
-
-      let item = existingSource
-        ? state.items.find(current => current.id === existingSource.itemId)
-        : undefined
-      for (const record of records) {
-        const result = yield* backlogDomainEffect(
-          ingestBacklogSource(state, {
-            newItemId: randomUUID(),
-            project: snapshot.project,
-            source: { kind: "branch-todo", id: record.sourceId },
-            observedAt: snapshot.observedAt,
-            priority: "normal",
-            requirements: record.requirements.map(text => ({ text })),
-            authority: { kind: "routing-only" },
-            dedupe: item
-              ? { kind: "item-id", itemId: item.id }
-              : { kind: "canonical-key", key: canonicalId },
-            initialState: "ready",
-          }),
-        )
-        state = yield* persistBacklogIngestionEffect(database, state, result)
-        item = result.item
-      }
-      if (!item || item.state.kind === "terminal") continue
-
-      let event:
-        Parameters<typeof transitionBacklogItem>[1]["event"] | undefined
-      if (status === "completed")
-        event = {
-          kind: "reconcile",
-          outcome: "completed",
-          evidence: [{ kind: "branch-todo-status", ref: canonicalId }],
-        }
-      else if (status === "cancelled")
-        event = {
-          kind: "reconcile",
-          outcome: "cancelled",
-          evidence: [{ kind: "branch-todo-status", ref: canonicalId }],
-        }
-      else if (status === "blocked") {
-        const reason = records[0]?.reason
-        if (!reason)
-          return yield* failRegistry(
-            "invalid_input",
-            "blocked branch todo is missing its reason",
-          )
-        if (item.state.kind !== "blocked" || item.state.reason !== reason)
-          event = { kind: "block", reason }
-      } else if (
-        item.state.kind === "blocked" ||
-        item.state.kind === "unreconciled"
-      )
-        event = { kind: "ready" }
-
-      if (!event) continue
-      const result = yield* backlogDomainEffect(
-        transitionBacklogItem(state, {
-          itemId: item.id,
-          expectedRevision: item.revision,
-          actor: "branch-todo-adapter",
-          now: snapshot.observedAt,
-          event,
-        }),
-      )
-      yield* persistBacklogTransitionEffect(
-        database,
-        state,
-        result.state,
-        result.item,
-      )
-      state = result.state
-    }
-    return state
-  })
-
 const useDatabaseEffect = <T>(
   access: DatabaseAccess,
   label: string,
@@ -2762,89 +1364,6 @@ export const makeSqliteRegistryStore: (
             requests: yield* Effect.forEach(requestRows, requestRowEffect),
           } satisfies RegistrySnapshot
         }),
-      ),
-
-    backlogProjects: () =>
-      useDatabaseEffect(
-        databaseAccess,
-        "Could not list backlog projects",
-        database =>
-          Effect.gen(function* () {
-            const raw = yield* dbCall("Could not list backlog projects", () =>
-              database
-                .prepare(
-                  "SELECT DISTINCT project FROM backlog_items ORDER BY project LIMIT ?",
-                )
-                .all(MAX_BACKLOG_PROJECTS + 1),
-            )
-            const rows = yield* rowsEffect(raw)
-            if (rows.length > MAX_BACKLOG_PROJECTS)
-              return yield* failRegistry(
-                "capacity",
-                "backlog project limit reached",
-              )
-            return yield* Effect.forEach(rows, row =>
-              Effect.gen(function* () {
-                const project = yield* persistedStringField(
-                  row,
-                  "project",
-                  1_024,
-                )
-                const canonical = yield* canonicalProjectEffect(project).pipe(
-                  Effect.mapError(() =>
-                    registryError(
-                      "corrupt_state",
-                      "backlog project is malformed",
-                    ),
-                  ),
-                )
-                if (canonical !== project)
-                  return yield* failRegistry(
-                    "corrupt_state",
-                    "backlog project is not canonical",
-                  )
-                return project
-              }),
-            )
-          }),
-      ),
-
-    backlogSnapshot: project =>
-      useDatabaseEffect(databaseAccess, "Could not read backlog", database =>
-        backlogStateEffect(database, project),
-      ),
-
-    reconcileBranchTodos: snapshot =>
-      useDatabaseEffect(
-        databaseAccess,
-        "Could not reconcile branch todos",
-        database =>
-          transactionEffect(
-            database,
-            reconcileBranchTodoBacklogEffect(database, snapshot),
-          ),
-      ),
-
-    ingestMessage: message =>
-      useDatabaseEffect(
-        databaseAccess,
-        "Could not ingest owner or bridge message",
-        database =>
-          transactionEffect(
-            database,
-            persistMessageBacklogEffect(database, message),
-          ),
-      ),
-
-    reconcileCanonicalBacklog: snapshot =>
-      useDatabaseEffect(
-        databaseAccess,
-        "Could not reconcile canonical external backlog",
-        database =>
-          transactionEffect(
-            database,
-            reconcileCanonicalBacklogEffect(database, snapshot),
-          ),
       ),
 
     heartbeatAgent: (input: AgentHeartbeatInput) =>
@@ -3244,7 +1763,6 @@ export const makeSqliteRegistryStore: (
                   request.status,
                 ),
             )
-            yield* persistRegistryRequestBacklogEffect(database, request)
             return request
           }),
         ),
@@ -3387,7 +1905,6 @@ export const makeSqliteRegistryStore: (
               status: "cancelled",
               updatedAt: now,
             }
-            yield* transitionRegistryRequestBacklogEffect(database, cancelled)
             return cancelled
           }),
         ),
@@ -3407,9 +1924,6 @@ export const makeSqliteRegistryStore: (
               () => ({
                 requests: database
                   .prepare("SELECT request_id, project FROM requests")
-                  .all(),
-                backlog: database
-                  .prepare("SELECT item_id, project FROM backlog_items")
                   .all(),
                 leases: database
                   .prepare("SELECT lease_id, project FROM leases")
@@ -3452,11 +1966,6 @@ export const makeSqliteRegistryStore: (
               "request_id",
               "project",
             )
-            const backlogItemIds = yield* outsideProjectIds(
-              raw.backlog,
-              "item_id",
-              "project",
-            )
             const leaseIds = yield* outsideProjectIds(
               raw.leases,
               "lease_id",
@@ -3471,21 +1980,6 @@ export const makeSqliteRegistryStore: (
               const deleteRequest = database.prepare(
                 "DELETE FROM requests WHERE request_id = ?",
               )
-              const deleteBacklogRequirements = database.prepare(
-                "DELETE FROM backlog_requirements WHERE item_id = ?",
-              )
-              const deleteBacklogEvidence = database.prepare(
-                "DELETE FROM backlog_evidence WHERE item_id = ?",
-              )
-              const deleteBacklogTransitions = database.prepare(
-                "DELETE FROM backlog_transitions WHERE item_id = ?",
-              )
-              const deleteBacklogSources = database.prepare(
-                "DELETE FROM backlog_sources WHERE item_id = ?",
-              )
-              const deleteBacklogItem = database.prepare(
-                "DELETE FROM backlog_items WHERE item_id = ?",
-              )
               const deleteLease = database.prepare(
                 "DELETE FROM leases WHERE lease_id = ?",
               )
@@ -3493,13 +1987,6 @@ export const makeSqliteRegistryStore: (
                 "DELETE FROM agents WHERE agent_id = ?",
               )
               for (const requestId of requestIds) deleteRequest.run(requestId)
-              for (const itemId of backlogItemIds) {
-                deleteBacklogRequirements.run(itemId)
-                deleteBacklogEvidence.run(itemId)
-                deleteBacklogTransitions.run(itemId)
-                deleteBacklogSources.run(itemId)
-                deleteBacklogItem.run(itemId)
-              }
               for (const leaseId of leaseIds) deleteLease.run(leaseId)
               for (const agentId of agentIds) deleteAgent.run(agentId)
             })
@@ -3565,48 +2052,9 @@ export const makeSqliteRegistryStore: (
               agentId: lease.owner.id,
               updatedAt: now,
             }
-            yield* transitionRegistryRequestBacklogEffect(database, claimed)
             return claimed
           }),
         ),
-      ),
-
-    advanceRequestBacklog: (input: AdvanceRequestBacklogInput) =>
-      useDatabaseEffect(
-        databaseAccess,
-        "Could not advance request backlog",
-        database =>
-          transactionEffect(
-            database,
-            Effect.gen(function* () {
-              const now = yield* validateTimeEffect("now", input.now)
-              const lease = yield* currentLeaseEffect(
-                database,
-                input.leaseId,
-                input.agentId,
-                now,
-              )
-              const request = yield* requestByIdEffect(
-                database,
-                input.requestId,
-              )
-              if (
-                request.status !== "claimed" ||
-                request.leaseId !== lease.id ||
-                request.agentId !== lease.owner.id
-              )
-                return yield* failRegistry(
-                  "invalid_transition",
-                  "request is not claimed by this lease",
-                )
-              yield* advanceRegistryRequestBacklogEffect(
-                database,
-                request,
-                input,
-              )
-              return request
-            }),
-          ),
       ),
 
     completeRequest: (input: CompleteRequestInput) =>
@@ -3662,7 +2110,6 @@ export const makeSqliteRegistryStore: (
                 summary,
                 updatedAt: now,
               }
-              yield* transitionRegistryRequestBacklogEffect(database, completed)
               return completed
             }),
           ),
@@ -3717,7 +2164,6 @@ export const makeSqliteRegistryStore: (
               diagnostic,
               updatedAt: now,
             }
-            yield* transitionRegistryRequestBacklogEffect(database, failed)
             return failed
           }),
         ),

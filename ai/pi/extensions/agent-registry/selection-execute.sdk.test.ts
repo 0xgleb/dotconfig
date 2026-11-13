@@ -5,10 +5,17 @@ import { tmpdir } from "node:os"
 import { join } from "node:path"
 import { pathToFileURL } from "node:url"
 import { Effect } from "effect"
+import { InMemoryCredentialStore } from "@earendil-works/pi-ai"
 import {
+  createEventBus,
+  createExtensionRuntime,
+  ExtensionRunner,
   getPackageDir,
-  type ExtensionAPI,
-  type ExtensionContext,
+  ModelRegistry,
+  ModelRuntime,
+  SessionManager,
+  type Extension,
+  type ExtensionError,
 } from "@earendil-works/pi-coding-agent"
 import registryExtension from "./index.ts"
 import { makeSqliteRegistryStore } from "./sqlite-store.ts"
@@ -24,51 +31,50 @@ test("registered SDK handler returns exact stored selectors and translates budge
     pathToFileURL(join(packageRoot, "dist", "core", "extensions", "loader.js"))
       .href
   )
-  const busModule = await import(
-    pathToFileURL(join(packageRoot, "dist", "core", "event-bus.js")).href
+  const runtime = createExtensionRuntime()
+  const modelRegistry = new ModelRegistry(
+    await ModelRuntime.create({
+      credentials: new InMemoryCredentialStore(),
+      modelsPath: null,
+      allowModelNetwork: false,
+      refreshOnCreate: false,
+    }),
   )
-  let tool: Parameters<ExtensionAPI["registerTool"]>[0] | undefined
-  const ctx = {
-    cwd: "/project",
-    sessionManager: { getSessionId: () => "manager-session" },
-    ui: { setStatus: () => {}, setWidget: () => {} },
-  } as unknown as ExtensionContext
-  let shutdown: (() => Promise<unknown>) | undefined
+  let extension: Extension
   // index.ts reads this documented non-secret path key only when constructing its store.
   // Node runs this file in its own process; restore it before executing the handler.
   const previous = process.env.XDG_STATE_HOME
   process.env.XDG_STATE_HOME = root
   try {
-    await loader.loadExtensionFromFactory(
-      (pi: ExtensionAPI) => {
-        registryExtension({
-          ...pi,
-          on: (name, handler) => {
-            if (name === "session_shutdown")
-              shutdown = async () =>
-                handler({ type: "session_shutdown", reason: "reload" }, ctx)
-            pi.on(name, handler)
-          },
-          registerTool: definition => {
-            if (definition.name === "agent_registry") tool = definition
-            pi.registerTool(definition)
-          },
-        })
-      },
+    extension = await loader.loadExtensionFromFactory(
+      registryExtension,
       process.cwd(),
-      busModule.createEventBus(),
-      loader.createExtensionRuntime(),
+      createEventBus(),
+      runtime,
       "registry-selection-execute.test",
     )
   } finally {
     if (previous === undefined) delete process.env.XDG_STATE_HOME
     else process.env.XDG_STATE_HOME = previous
   }
+  const runner = new ExtensionRunner(
+    [extension],
+    runtime,
+    "/project",
+    SessionManager.inMemory("/project", { id: "manager-session" }),
+    modelRegistry,
+  )
+  const extensionErrors: ExtensionError[] = []
+  runner.onError(error => extensionErrors.push(error))
   const producer = makeSqliteRegistryStore(registryStateRoot(root, root))
   t.after(async () => {
-    producer.close()
-    await shutdown?.()
-    rmSync(root, { recursive: true })
+    try {
+      producer.close()
+      await runner.emit({ type: "session_shutdown", reason: "reload" })
+      assert.deepEqual(extensionErrors, [])
+    } finally {
+      rmSync(root, { recursive: true })
+    }
   })
   const now = Date.now()
   const session = "00000000-0000-4000-8000-000000000001"
@@ -90,8 +96,22 @@ test("registered SDK handler returns exact stored selectors and translates budge
       ttlMs: 60000,
     }),
   )
-  if (tool === undefined)
-    return assert.fail("actual registered registry tool missing")
+  const registered = extension.tools.get("agent_registry")
+  assert.ok(registered, "actual registered registry tool missing")
+  assert.strictEqual(registered.sourceInfo, extension.sourceInfo)
+  const tool = registered.definition
+  const ctx = runner.createToolContext("selectable-list", undefined)
+  assert.equal(ctx.sessionManager.getSessionId(), "manager-session")
+  assert.deepEqual(ctx.tools, [])
+  const nestedFailure = await ctx.executeTool("unregistered-test-tool", {})
+  assert.equal(nestedFailure.isError, true)
+  assert.equal(nestedFailure.toolCall.id, "selectable-list/0")
+  assert.deepEqual(nestedFailure.result.content, [
+    {
+      type: "text",
+      text: "Nested tool calls are not available in this context",
+    },
+  ])
   const success: unknown = await tool.execute(
     "selectable-list",
     { action: "list", includeSelection: true },
@@ -136,7 +156,7 @@ test("registered SDK handler returns exact stored selectors and translates budge
     { action: "list", includeSelection: true },
     undefined,
     undefined,
-    ctx,
+    runner.createToolContext("oversized-list", undefined),
   )
   if (!record(failure) || !record(failure.details))
     return assert.fail("handler lost typed failure")

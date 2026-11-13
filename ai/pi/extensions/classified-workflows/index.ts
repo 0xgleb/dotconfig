@@ -1,6 +1,5 @@
 import { spawn } from "node:child_process"
 import { createHash, randomUUID } from "node:crypto"
-import { homedir } from "node:os"
 import { basename, isAbsolute, resolve } from "node:path"
 import { fileURLToPath } from "node:url"
 import type { AgentToolResult } from "@earendil-works/pi-agent-core"
@@ -83,7 +82,6 @@ import {
   type WorkflowLimits,
 } from "./core.ts"
 import {
-  boundedRelevantExecutionEvidence,
   branchExecutionEvidence,
   currentInstructionReadDisprovesMissingReadBlock,
   selectRelevantExecutionEvidence,
@@ -96,7 +94,6 @@ import {
   classifierAttemptBudget,
   createClassifiedAgentRunner,
   createToolResultAllowance,
-  formatDecisionReason,
   resolveActionDecision,
   retainLatestCustomMessages,
   runtimeProactiveHandoverContext,
@@ -119,9 +116,7 @@ import {
   parseGoalCommand,
   parseGoalEvaluation,
   parseStoredGoal,
-  recoverLatestIndependentGoal,
   restoreGoal,
-  taskContinuationMessage,
   todoClassifierIntent,
   todoWorkSnapshot,
   type GoalCommand,
@@ -132,8 +127,6 @@ import {
   advanceLoop,
   formatLoopStatus,
   loopDispatch,
-  migrateLegacyReloadLoop,
-  migrateReviewDutyLoopCadence,
   nextLoopRunAt,
   parseLoopCommand,
   parseStoredLoop,
@@ -168,35 +161,6 @@ import {
   restoredCapabilityDisprovesCommunicationOnlyBlock,
 } from "./intent-context.ts"
 import {
-  beginReviewDuty,
-  clearedHistoricalReviewQuestion,
-  completeAutoReviewDuty,
-  continueReviewDuty,
-  emptyReviewDutyState,
-  inConversationReviewQuestionAuthorized,
-  isPullRequestReviewWorkflow,
-  isReviewDutySession,
-  preExecutionReviewWorkflowBlockObserved,
-  recoverCompletedReviewDuty,
-  releaseUnusableReviewDuty,
-  startReviewWorkflow,
-  retryBlockedReviewDuty,
-  retryFailedReviewDuty,
-  reportReviewDuty,
-  resolveReviewDutySessionName,
-  reviewDutyJobAllowed,
-  restoreReviewDutyState,
-  reviewWorkflowBlockReason,
-  runtimeReviewDutyContext,
-  REVIEW_DUTY_STATE_ENTRY,
-  type ReviewDutyState,
-} from "./review-duty-gate.ts"
-import {
-  selectReviewWorkflowAudit,
-  selectReviewContinuationAudit,
-  workflowMatchesReviewJob,
-} from "./review-workflow.ts"
-import {
   gitEnvironmentOverrideBlockReason,
   hardenedGitPushCommandForSubject,
   repositoryRootForPath,
@@ -228,10 +192,6 @@ import {
   appendWorkflowAudit,
   auditedAgentRunner,
   emptyWorkflowAuditState,
-  latestCompletedWorkflowAfter,
-  latestFailedWorkflowAfter,
-  latestLegacyUnmarkedCancellationAfter,
-  latestManagedReloadCancellationAfter,
   MANAGED_RELOAD_WORKFLOW_CANCELLATION,
   nextWorkflowSequence,
   restoreWorkflowAudits,
@@ -275,6 +235,7 @@ import {
   latestContinuationPause,
   wasRunAborted,
 } from "../shared/continuation-pause.ts"
+import { TELEGRAM_RESUME_EVENT } from "../shared/telegram-resume.ts"
 import { FOREGROUND_WORKFLOW_WAIT_PROBE_EVENT } from "../shared/foreground-wait.ts"
 import {
   ACTIVITY_PHASE_EVENT,
@@ -288,17 +249,12 @@ import {
   type UserQuestionStateSnapshot,
 } from "../shared/question-events.ts"
 import {
-  MANAGED_OPERATIONAL_ROLE_RESUMED_EVENT,
   REGISTRY_INTENT_REQUEST_EVENT,
   type RegistryIntentReporter,
   type RegistryIntentRequest,
 } from "../shared/registry-intent-events.ts"
 import { registerRuntimeVersion } from "../shared/runtime-version.ts"
 import { markPreferredProvider, tierCandidates } from "../shared/model-tiers.ts"
-import { AGENTOPS_INCIDENT_EVENT } from "../shared/agentops-events.ts"
-import { remoteBridgeDatabasePath } from "../remote-control/paths.ts"
-import { RemoteBridgeError } from "../remote-control/protocol.ts"
-import { makeRemoteBridgeStore } from "../remote-control/sqlite-store.ts"
 
 const CLASSIFIER_TIMEOUT_MS = 60_000
 const CLASSIFIER_RETRY_BASE_MS = 1_000
@@ -307,25 +263,25 @@ const classifierModelOverride = (): string | undefined =>
   process.env.PI_CLASSIFIER_MODEL?.trim() || undefined
 
 const sessionClassifierModel = (
-  ctx: Pick<ExtensionContext, "getModel">,
+  ctx: Pick<ExtensionContext, "model">,
 ): string | undefined => {
-  const model = ctx.getModel?.()
+  const model = ctx.model
   return model ? `${model.provider}/${model.id}` : undefined
 }
 
 const classifierCandidates = (
-  ctx: Pick<ExtensionContext, "cwd" | "getModel">,
+  ctx: Pick<ExtensionContext, "cwd" | "model">,
 ): string[] => {
   const override = classifierModelOverride()
+  const sessionModel = sessionClassifierModel(ctx)
   const candidates = tierCandidates("mid", {
     now: () => Date.now(),
-    sessionModel: sessionClassifierModel(ctx),
+    ...(sessionModel ? { sessionModel } : {}),
   })
   return override && !candidates.includes(override)
     ? [override, ...candidates]
     : candidates
 }
-const REVIEW_DUTY_RELAY_ATTEMPTS = 12
 const MAX_CHILD_STDERR_CHARACTERS = 12_000
 const TASK_CONTINUATION_QUIET_MS = 2_000
 const MANUAL_RELOAD_FAILSAFE_MS = 30_000
@@ -618,28 +574,6 @@ const structuredWorkflowResultComponent = (
   invalidate: () => undefined,
 })
 
-function managedReloadCompletionObservedAfterAudit(
-  entries: readonly unknown[],
-  auditId: string,
-): boolean {
-  const auditIndex = entries.findLastIndex(entry =>
-    restoreWorkflowAudits([entry]).workflows.some(({ id }) => id === auditId),
-  )
-  if (auditIndex < 0) return false
-  return entries.slice(auditIndex + 1).some(entry => {
-    if (
-      !isRecord(entry) ||
-      entry.type !== "message" ||
-      !isRecord(entry.message)
-    )
-      return false
-    return (
-      entry.message.role === "custom" &&
-      entry.message.customType === "auto-reload.completed"
-    )
-  })
-}
-
 function visibleIntent(
   pi: ExtensionAPI,
   ctx: ExtensionContext,
@@ -740,7 +674,7 @@ const classifierBackoff: (
 
 async function classify(
   request: ClassificationRequest,
-  ctx: Pick<ExtensionContext, "cwd" | "getModel">,
+  ctx: Pick<ExtensionContext, "cwd" | "model">,
   signal?: AbortSignal,
   onActivity?: (active: boolean) => void,
   owner?: OwnerAllowance,
@@ -773,6 +707,7 @@ async function classify(
 
       try {
         attemptsStarted += 1
+        const candidate = candidates[Math.min(attempt, candidates.length - 1)]
         const result = await runPi(
           [
             "--mode",
@@ -785,12 +720,7 @@ async function classify(
             "--no-prompt-templates",
             "--no-themes",
             "--no-context-files",
-            ...(candidates[Math.min(attempt, candidates.length - 1)]
-              ? [
-                  "--model",
-                  candidates[Math.min(attempt, candidates.length - 1)],
-                ]
-              : []),
+            ...(candidate ? ["--model", candidate] : []),
             "--thinking",
             "low",
             "--system-prompt",
@@ -811,11 +741,7 @@ async function classify(
         ) {
           const decision = parseClassifierDecision(result.output)
           if (decision.reason !== "Classifier returned an invalid decision") {
-            if (candidates[Math.min(attempt, candidates.length - 1)])
-              markPreferredProvider(
-                candidates[Math.min(attempt, candidates.length - 1)],
-                () => Date.now(),
-              )
+            if (candidate) markPreferredProvider(candidate, () => Date.now())
             return decision
           }
           lastClassifierFailure = "classifier returned an invalid decision"
@@ -862,7 +788,7 @@ async function classify(
 async function evaluateGoal(
   condition: string,
   transcript: string[],
-  ctx: Pick<ExtensionContext, "cwd" | "getModel">,
+  ctx: Pick<ExtensionContext, "cwd" | "model">,
   owner: OwnerAllowance,
 ): Promise<GoalEvaluation> {
   const controller = new AbortController()
@@ -1030,31 +956,6 @@ function blockedResult(reason: string): AgentToolResult<{ status: "blocked" }> {
   }
 }
 
-const ReviewDutyParameters = Type.Object({
-  action: Type.Union([
-    Type.Literal("status"),
-    Type.Literal("begin"),
-    Type.Literal("report"),
-    Type.Literal("recover"),
-    Type.Literal("recover-evidence"),
-    Type.Literal("retry-blocked"),
-    Type.Literal("retry-failed"),
-    Type.Literal("release-unusable"),
-    Type.Literal("continue"),
-    Type.Literal("complete-auto"),
-  ]),
-  repository: Type.Optional(Type.String({ minLength: 1, maxLength: 120 })),
-  pullRequest: Type.Optional(Type.Integer({ minimum: 1 })),
-  kind: Type.Optional(
-    Type.Union([
-      Type.Literal("own"),
-      Type.Literal("assigned"),
-      Type.Literal("auto"),
-    ]),
-  ),
-  questionId: Type.Optional(Type.Integer({ minimum: 1 })),
-})
-
 const ArtifactProvenanceParameters = Type.Object({
   action: Type.Union([
     Type.Literal("list"),
@@ -1172,21 +1073,13 @@ export default function classifiedWorkflows(
   let workflowLifecycleActive = true
   let capabilityCircuit: CapabilityCircuitState = emptyCapabilityCircuit
   let skipNextCapabilityOutcome = false
-  let reviewDutyState: ReviewDutyState = emptyReviewDutyState
   let artifactProvenance: ArtifactProvenanceState = emptyArtifactProvenanceState
   let workflowAudits: WorkflowAuditState = emptyWorkflowAuditState
   let workflowRuntime: WorkflowRuntimeState = emptyWorkflowRuntimeState
   const runtimeStartedAt = Date.now()
-  const remoteBridge = makeRemoteBridgeStore(
-    remoteBridgeDatabasePath(process.env.XDG_STATE_HOME, homedir()),
-  )
   const deterministicResultAllowance = createToolResultAllowance()
   let nextWorkflowId = 1
   let latestCtx: ExtensionContext | undefined
-  const reviewDutySessionName = (
-    ctx: Pick<ExtensionContext, "cwd">,
-  ): string | undefined =>
-    resolveReviewDutySessionName(pi.getSessionName(), ctx.cwd, homedir())
   let questionState: UserQuestionStateSnapshot = { questions: [] }
   const backgroundWorkflows = new Map<string, BackgroundWorkflow>()
   const activeForegroundWorkflowControllers = new Set<AbortController>()
@@ -1204,59 +1097,14 @@ export default function classifiedWorkflows(
     },
     window => manager?.expire(window),
   )
+  registerRuntimeVersion(pi, "owner-allowance", "2026.10.25.1")
   manager = registerWorkManager(pi, ownerAllowance)
-
-  const awaitQuestionRelay = (
-    agentId: string,
-    questionId: number,
-    attempt = 1,
-  ): Effect.Effect<boolean, RemoteBridgeError> =>
-    remoteBridge
-      .isQuestionRelayed({ agentId, questionId })
-      .pipe(
-        Effect.flatMap(relayed =>
-          relayed || attempt >= REVIEW_DUTY_RELAY_ATTEMPTS
-            ? Effect.succeed(relayed)
-            : Effect.sleep("1 second").pipe(
-                Effect.flatMap(() =>
-                  awaitQuestionRelay(agentId, questionId, attempt + 1),
-                ),
-              ),
-        ),
-      )
-
-  const awaitConversationQuestionDelivery = (
-    agentId: string,
-    questionId: number,
-    attempt = 1,
-  ): Effect.Effect<void, RemoteBridgeError> =>
-    remoteBridge
-      .markQuestionDeliveredInConversation({
-        agentId,
-        questionId,
-        now: Date.now(),
-      })
-      .pipe(
-        Effect.catchAll(error =>
-          error.code === "not_found" && attempt < REVIEW_DUTY_RELAY_ATTEMPTS
-            ? Effect.sleep("1 second").pipe(
-                Effect.flatMap(() =>
-                  awaitConversationQuestionDelivery(
-                    agentId,
-                    questionId,
-                    attempt + 1,
-                  ),
-                ),
-              )
-            : Effect.fail(error),
-        ),
-      )
 
   const classifyWithActivity = (
     request: ClassificationRequest,
     ctx: Pick<
       ExtensionContext,
-      "cwd" | "getContextUsage" | "getSystemPrompt" | "getModel"
+      "cwd" | "getContextUsage" | "getSystemPrompt" | "model"
     >,
     signal?: AbortSignal,
     projectContexts: RuntimeClassificationProjectContexts = runtimeClassificationProjectContexts(
@@ -1284,10 +1132,6 @@ export default function classifiedWorkflows(
         ...(runtimePolicyContext
           ? { runtimeProjectPolicyContext: runtimePolicyContext }
           : {}),
-        runtimeReviewDutyContext: runtimeReviewDutyContext(
-          reviewDutySessionName(ctx),
-          reviewDutyState,
-        ),
         ...(runtimeHandoverContext ? { runtimeHandoverContext } : {}),
       },
       checkedRequest =>
@@ -1838,10 +1682,9 @@ export default function classifiedWorkflows(
   const scheduleTaskContinuation = (ctx: ExtensionContext): void => {
     clearTaskContinuationTimer()
     if (Either.isLeft(ownerAllowance.admit())) return
-    const work = todoWorkSnapshot(ctx.sessionManager.getBranch())
     const pendingMessage = pendingActionRemediation
       ? remediationContinuationMessage(pendingActionRemediation)
-      : taskContinuationMessage(work)
+      : undefined
     if (!pendingMessage) return
     taskContinuationTimer = setTimeout(() => {
       taskContinuationTimer = undefined
@@ -1862,10 +1705,9 @@ export default function classifiedWorkflows(
         scheduleTaskContinuation(ctx)
         return
       }
-      const currentWork = todoWorkSnapshot(ctx.sessionManager.getBranch())
       const content = pendingActionRemediation
         ? remediationContinuationMessage(pendingActionRemediation)
-        : taskContinuationMessage(currentWork)
+        : undefined
       if (!content) return
       pi.sendMessage(
         { customType: TASK_MESSAGE, content, display: true },
@@ -2409,7 +2251,6 @@ export default function classifiedWorkflows(
 
   pi.events.on(FOREGROUND_WORKFLOW_WAIT_PROBE_EVENT, probe => {
     if (!isRecord(probe) || typeof probe.waiting !== "boolean") {
-      rejectWorkflowEvent(FOREGROUND_WORKFLOW_WAIT_PROBE_EVENT)
       return
     }
     probe.waiting = detachableForegroundWorkflow !== undefined
@@ -2522,7 +2363,6 @@ export default function classifiedWorkflows(
     continuationPaused = latestContinuationPause(branch)?.paused ?? false
     pendingActionRemediation = restorePendingActionRemediation(branch)
     capabilityCircuit = restoreCapabilityCircuit(branch)
-    reviewDutyState = restoreReviewDutyState(branch)
     if (capabilityCircuit.open && pi.getActiveTools().length > 0) {
       capabilityCircuit = {
         consecutiveBlockers: 0,
@@ -2549,79 +2389,7 @@ export default function classifiedWorkflows(
     )
     goalRunTokens = 0
     const now = Date.now()
-    const migratedReviewCadenceResult = isReviewDutySession(
-      reviewDutySessionName(ctx),
-    )
-      ? await Effect.runPromise(
-          Effect.either(migrateReviewDutyLoopCadence(loopState, now)),
-        )
-      : undefined
-    if (
-      migratedReviewCadenceResult &&
-      Either.isLeft(migratedReviewCadenceResult)
-    )
-      showLoopMessage(migratedReviewCadenceResult.left.message)
-    const migratedReviewCadence =
-      migratedReviewCadenceResult && Either.isRight(migratedReviewCadenceResult)
-        ? migratedReviewCadenceResult.right
-        : undefined
-    if (migratedReviewCadence) {
-      loopState = migratedReviewCadence
-      pi.appendEntry(LOOP_ENTRY, loopState)
-      showLoopMessage(
-        `Updated review-duty polling cadence.\n${formatLoopStatus(loopState, now)}`,
-      )
-    }
-    const goalHistory = goalEntries.flatMap(entry => {
-      if (entry.type !== "custom") return []
-      const state = parseStoredGoal(entry.data)
-      return state ? [state] : []
-    })
-    const recoveredGoal = recoverLatestIndependentGoal(
-      goalHistory,
-      condition => migrateLegacyReloadLoop(condition, now) !== undefined,
-    )
-    const migratedLoop =
-      !loopState && goalState?.status === "active"
-        ? migrateLegacyReloadLoop(goalState.condition, now)
-        : undefined
-    const wasAlreadyMigrated =
-      loopState?.status === "active" &&
-      goalState?.status === "cleared" &&
-      goalState.lastReason ===
-        "Migrated from the legacy /loop goal into an infinite recurring loop."
-    if (migratedLoop && goalState?.status === "active") {
-      loopState = migratedLoop
-      goalState = recoveredGoal
-        ? {
-            ...recoveredGoal,
-            lastReason:
-              "Recovered after separating the legacy /loop alias from the independent goal.",
-          }
-        : {
-            status: "cleared",
-            condition: goalState.condition,
-            startedAt: goalState.startedAt,
-            finishedAt: now,
-            turns: goalState.turns,
-            tokens: goalState.tokens,
-            lastReason:
-              "Migrated from the legacy /loop goal into an infinite recurring loop.",
-          }
-      pi.appendEntry(GOAL_ENTRY, goalState)
-      pi.appendEntry(LOOP_ENTRY, loopState)
-      showLoopMessage(
-        `Migrated legacy loop state.${recoveredGoal ? " Recovered the preceding independent goal." : ""}\n${formatLoopStatus(loopState, now)}`,
-      )
-    } else if (wasAlreadyMigrated && recoveredGoal) {
-      goalState = {
-        ...recoveredGoal,
-        lastReason:
-          "Recovered after separating the legacy /loop alias from the independent goal.",
-      }
-      pi.appendEntry(GOAL_ENTRY, goalState)
-      showGoalMessage(`Recovered independent goal: ${goalState.condition}`)
-    } else if (goalState?.status === "active" && event.reason !== "reload") {
+    if (goalState?.status === "active" && event.reason !== "reload") {
       goalState = restoreGoal(goalState, now)
       pi.appendEntry(GOAL_ENTRY, goalState)
     }
@@ -2638,7 +2406,6 @@ export default function classifiedWorkflows(
 
   pi.events.on(AUTO_RELOAD_ACTIVITY_REQUEST_EVENT, report => {
     if (typeof report !== "function") {
-      rejectWorkflowEvent(AUTO_RELOAD_ACTIVITY_REQUEST_EVENT)
       return
     }
     report(
@@ -2652,7 +2419,6 @@ export default function classifiedWorkflows(
   pi.events.on(AUTO_RELOAD_PREEMPT_EVENT, () => {
     managedReloadPreemptPending = true
     pi.appendEntry(CAPABILITY_CIRCUIT_ENTRY, capabilityCircuit)
-    pi.appendEntry(REVIEW_DUTY_STATE_ENTRY, reviewDutyState)
     pi.appendEntry(ARTIFACT_PROVENANCE_ENTRY, artifactProvenance)
     pi.appendEntry(WORKFLOW_AUDIT_ENTRY, workflowAudits)
     pi.appendEntry(WORKFLOW_RUNTIME_ENTRY, workflowRuntime)
@@ -2669,7 +2435,6 @@ export default function classifiedWorkflows(
 
   pi.on("session_compact", () => {
     pi.appendEntry(CAPABILITY_CIRCUIT_ENTRY, capabilityCircuit)
-    pi.appendEntry(REVIEW_DUTY_STATE_ENTRY, reviewDutyState)
     pi.appendEntry(ARTIFACT_PROVENANCE_ENTRY, artifactProvenance)
     pi.appendEntry(WORKFLOW_AUDIT_ENTRY, workflowAudits)
     pi.appendEntry(WORKFLOW_RUNTIME_ENTRY, workflowRuntime)
@@ -2757,21 +2522,8 @@ export default function classifiedWorkflows(
     Array.isArray(value.activeTools) &&
     value.activeTools.every(tool => typeof tool === "string")
 
-  const rejectWorkflowEvent = (eventName: string): void => {
-    const error = new WorkflowScriptError({
-      message: `Invalid workflow event payload: ${eventName}`,
-    })
-    pi.events.emit(AGENTOPS_INCIDENT_EVENT, {
-      severity: "error",
-      component: "classified-workflows",
-      operation: "decode internal event",
-      summary: error.message,
-    })
-  }
-
   pi.events.on(QUESTION_STATE_EVENT, snapshot => {
     if (!isWorkflowQuestionState(snapshot)) {
-      rejectWorkflowEvent(QUESTION_STATE_EVENT)
       return
     }
     questionState = snapshot
@@ -2779,20 +2531,27 @@ export default function classifiedWorkflows(
 
   pi.events.on(QUESTION_RESOLVED_EVENT, resolution => {
     if (!isWorkflowResolution(resolution)) {
-      rejectWorkflowEvent(QUESTION_RESOLVED_EVENT)
       return
     }
     questionState = applyQuestionResolutionSnapshot(questionState, resolution)
     if (continuationPaused && latestCtx) setContinuationPaused(false, latestCtx)
   })
 
-  pi.events.on(MANAGED_OPERATIONAL_ROLE_RESUMED_EVENT, () => {
-    if (continuationPaused && latestCtx) setContinuationPaused(false, latestCtx)
+  registerRuntimeVersion(pi, "owner-resume-continuation", "2026.10.24.1")
+  pi.events.on(TELEGRAM_RESUME_EVENT, request => {
+    if (!isRecord(request) || typeof request.sessionId !== "string") {
+      return
+    }
+    if (
+      latestCtx &&
+      request.sessionId === latestCtx.sessionManager.getSessionId() &&
+      continuationPaused
+    )
+      setContinuationPaused(false, latestCtx)
   })
 
   pi.events.on(REMOTE_CAPABILITY_HANDSHAKE_EVENT, handshake => {
     if (!isWorkflowHandshake(handshake)) {
-      rejectWorkflowEvent(REMOTE_CAPABILITY_HANDSHAKE_EVENT)
       return
     }
     if (!latestCtx) return
@@ -2837,7 +2596,6 @@ export default function classifiedWorkflows(
       scheduleTaskContinuation(ctx)
       return
     }
-    const work = todoWorkSnapshot(ctx.sessionManager.getBranch())
     if (goalEvaluating) return
     const evaluating = goalState
     const usageTokens = goalRunTokens
@@ -2864,13 +2622,12 @@ export default function classifiedWorkflows(
       evaluation,
       usageTokens,
       Date.now(),
-      work.pending,
     )
     pi.appendEntry(GOAL_ENTRY, goalState)
     updateGoalStatus(ctx)
     if (goalState.status === "active") {
       showGoalMessage(
-        `Goal remains active · ${work.pending.length} pending task${work.pending.length === 1 ? "" : "s"} · continue working.`,
+        "Goal remains active · continue working toward the explicit goal.",
         true,
       )
     } else if (goalState.status === "achieved") {
@@ -2881,30 +2638,6 @@ export default function classifiedWorkflows(
   })
 
   pi.on("tool_call", async (event: ToolCallEvent, ctx) => {
-    const dutySessionName = reviewDutySessionName(ctx)
-    const startsReviewWorkflow =
-      event.toolName === "workflow" &&
-      isReviewDutySession(dutySessionName) &&
-      isPullRequestReviewWorkflow(event.input)
-    const persistReviewWorkflowStart = (): void => {
-      if (!startsReviewWorkflow) return
-      reviewDutyState = startReviewWorkflow(reviewDutyState, Date.now())
-      pi.appendEntry(REVIEW_DUTY_STATE_ENTRY, reviewDutyState)
-    }
-    if (event.toolName === "workflow") {
-      const dutyBlock = reviewWorkflowBlockReason(
-        dutySessionName,
-        reviewDutyState,
-        event.input,
-      )
-      if (dutyBlock) {
-        return resolveActionDecision({
-          verdict: "block",
-          reason: dutyBlock,
-          source: "deterministic",
-        })
-      }
-    }
     const deterministic = deterministicDecision({
       boundary: "action",
       toolName: event.toolName,
@@ -2920,7 +2653,6 @@ export default function classifiedWorkflows(
       if (shouldCarryDeterministicResultAllowance(deterministic)) {
         deterministicResultAllowance.record(event.toolCallId)
       }
-      persistReviewWorkflowStart()
       return
     }
     if (isLocalDispatchProvider(ctx.model?.provider)) {
@@ -2976,10 +2708,6 @@ export default function classifiedWorkflows(
     }
     const buildActionRequest = (): ClassificationRequest => ({
       boundary: "action",
-      runtimeReviewDutyContext: runtimeReviewDutyContext(
-        reviewDutySessionName(ctx),
-        reviewDutyState,
-      ),
       intent: visibleIntent(
         pi,
         ctx,
@@ -2995,11 +2723,6 @@ export default function classifiedWorkflows(
         ...(artifactPaths(artifactProvenance).length > 0
           ? [
               `current typed artifact provenance: ${JSON.stringify(artifactPaths(artifactProvenance))}`,
-            ]
-          : []),
-        ...(isReviewDutySession(dutySessionName)
-          ? [
-              `current typed review-duty state: ${JSON.stringify(reviewDutyState)}`,
             ]
           : []),
       ],
@@ -3037,7 +2760,6 @@ export default function classifiedWorkflows(
         branch: ctx.sessionManager.getBranch(),
       })
     ) {
-      persistReviewWorkflowStart()
       return
     }
     if (
@@ -3046,7 +2768,6 @@ export default function classifiedWorkflows(
         snapshot: questionState,
       })
     ) {
-      persistReviewWorkflowStart()
       return
     }
     if (
@@ -3058,7 +2779,6 @@ export default function classifiedWorkflows(
         cwd: ctx.cwd,
       })
     ) {
-      persistReviewWorkflowStart()
       return
     }
     if (
@@ -3068,7 +2788,6 @@ export default function classifiedWorkflows(
         toolName: event.toolName,
       })
     ) {
-      persistReviewWorkflowStart()
       return
     }
     const remediation = remediationForDecision(
@@ -3090,7 +2809,6 @@ export default function classifiedWorkflows(
           cwd: ctx.cwd,
         })
       ) {
-        persistReviewWorkflowStart()
         return
       }
       const ownershipEvidence =
@@ -3148,7 +2866,6 @@ export default function classifiedWorkflows(
           reportHeadlessClassifierBlock(ctx, "action", reconsidered.reason)
           return resolveActionDecision(reconsidered)
         }
-        persistReviewWorkflowStart()
         return
       }
       if (
@@ -3157,7 +2874,6 @@ export default function classifiedWorkflows(
           branch: ctx.sessionManager.getBranch(),
         })
       ) {
-        persistReviewWorkflowStart()
         return
       }
       if (resourcePreflightDisprovesBlock(decision.reason, resourcePreflight))
@@ -3168,9 +2884,6 @@ export default function classifiedWorkflows(
           reason: decision.reason,
           bash: event.input,
           branch: ctx.sessionManager.getBranch(),
-          ...(isReviewDutySession(dutySessionName)
-            ? { authenticatedAuthor: "0xgleb" }
-            : {}),
         })
       )
         return
@@ -3244,7 +2957,6 @@ export default function classifiedWorkflows(
         deterministicResultAllowance.record(event.toolCallId)
       }
     }
-    persistReviewWorkflowStart()
   })
 
   pi.on("tool_result", async (event: ToolResultEvent, ctx) => {
@@ -3319,698 +3031,6 @@ export default function classifiedWorkflows(
       return withheldExecutedToolResultPatch(event.isError, decision.reason)
     }
     return protectedPatch
-  })
-
-  pi.registerTool({
-    name: "review_duty",
-    label: "Review-duty reporting gate",
-    description:
-      "Begin a dedicated PR review job, inspect its gate, release a wrongly begun or unusable job with no usable completed evidence, recover a proven pre-execution block, failed execution, or usable completed evidence whose completion gate was lost, continue a bounded same-PR fix re-review, complete an own or exact source-authorized automatic lane, or prove an assigned review's typed verdict question has an owner-authorized delivery channel before advancing.",
-    promptSnippet:
-      "Gate each dedicated PR review on exact own/automatic completion or an assigned-review verdict-question delivery",
-    promptGuidelines: [
-      "In any dedicated *-review-duty session, call review_duty begin before every PR workflow.",
-      "For kind own, never create or request an Approve/Request changes verdict. After a failed workflow call retry-failed so its partial evidence remains available; after actionable findings call continue for the same PR fix re-review; after a completed clean workflow call complete-auto, then request human reviewers only when separately authorized.",
-      "Use kind auto only for dataclique/yielduck in dataclique-review-duty or 0xgleb/dotconfig in personal-review-duty; after a completed clean workflow call complete-auto.",
-      "Only kind assigned creates one ask_user question after the workflow that identifies the PR, includes assessment/finding status, and offers Approve, Request changes, Inspect first in that order.",
-      "Telegram relay is the default delivery proof for assigned reviews. If the authenticated owner explicitly directs the current verdict question to be asked here after the current assigned review completes, review_duty may instead verify that exact persisted question in the current conversation; assistant text and stale instructions never authorize this path.",
-      "Use release-unusable only when the current job has no running workflow and no completed child with usable output; it clears the stale gate but grants no review, mutation, or publication authority.",
-      "Use recover-evidence only when the active job has no running workflow and a completed child with usable output; it preserves that evidence and restores the matching own, assigned, or automatic completion gate without granting new review, mutation, or publication authority.",
-      "Call review_duty report with the question ID only for kind assigned; do not begin the next assigned PR until it confirms Telegram relay or an explicit current-conversation owner delivery instruction.",
-    ],
-    parameters: ReviewDutyParameters,
-    async execute(_toolCallId, request, _signal, _onUpdate, ctx) {
-      const dutySessionName = reviewDutySessionName(ctx)
-      if (!isReviewDutySession(dutySessionName)) {
-        return {
-          content: [
-            {
-              type: "text" as const,
-              text: "review_duty is available only in a dedicated review-duty session",
-            },
-          ],
-          details: { outcome: "error" as const },
-          isError: true,
-        }
-      }
-      if (request.action === "status") {
-        return {
-          content: [
-            { type: "text" as const, text: JSON.stringify(reviewDutyState) },
-          ],
-          details: { outcome: "status" as const, state: reviewDutyState },
-        }
-      }
-      if (request.action === "begin") {
-        if (
-          !request.repository ||
-          request.pullRequest === undefined ||
-          request.kind === undefined
-        ) {
-          return {
-            content: [
-              {
-                type: "text" as const,
-                text: "begin requires repository, pullRequest, and kind",
-              },
-            ],
-            details: { outcome: "error" as const },
-            isError: true,
-          }
-        }
-        const job = {
-          repository: request.repository,
-          pullRequest: request.pullRequest,
-          kind: request.kind,
-        } as const
-        if (!reviewDutyJobAllowed(dutySessionName, job)) {
-          return {
-            content: [
-              {
-                type: "text" as const,
-                text: "review-duty job is outside this dedicated reviewer's source-fixed repository or auto-merge scope",
-              },
-            ],
-            details: { outcome: "error" as const },
-            isError: true,
-          }
-        }
-        const transition = beginReviewDuty(reviewDutyState, job, Date.now())
-        if (!transition.ok) {
-          return {
-            content: [{ type: "text" as const, text: transition.error }],
-            details: { outcome: "error" as const, error: transition.error },
-            isError: true,
-          }
-        }
-        reviewDutyState = transition.state
-        pi.appendEntry(REVIEW_DUTY_STATE_ENTRY, reviewDutyState)
-        return {
-          content: [
-            {
-              type: "text" as const,
-              text: `Review duty started for ${request.repository}#${request.pullRequest}`,
-            },
-          ],
-          details: { outcome: "begun" as const, state: reviewDutyState },
-        }
-      }
-
-      if (request.action === "recover-evidence") {
-        refreshWorkflowAudits(ctx)
-        const startedAt =
-          reviewDutyState.phase === "idle"
-            ? Number.MAX_SAFE_INTEGER
-            : reviewDutyState.startedAt
-        const workflowRunning = [...backgroundWorkflows.values()].some(
-          workflow =>
-            workflow.status === "running" && workflow.startedAt >= startedAt,
-        )
-        const usableCompletedWorkflow = workflowAudits.workflows
-          .filter(
-            workflow =>
-              workflow.status === "completed" &&
-              workflow.startedAt >= startedAt &&
-              workflow.children.some(
-                child =>
-                  child.status === "completed" && child.outputCharacters > 0,
-              ),
-          )
-          .sort((left, right) => right.startedAt - left.startedAt)[0]
-        const transition = recoverCompletedReviewDuty(
-          reviewDutyState,
-          usableCompletedWorkflow?.startedAt ?? 0,
-          usableCompletedWorkflow !== undefined,
-          workflowRunning,
-        )
-        if (!transition.ok) {
-          return {
-            content: [{ type: "text" as const, text: transition.error }],
-            details: { outcome: "error" as const, error: transition.error },
-            isError: true,
-          }
-        }
-        reviewDutyState = transition.state
-        pi.appendEntry(REVIEW_DUTY_STATE_ENTRY, reviewDutyState)
-        return {
-          content: [
-            {
-              type: "text" as const,
-              text:
-                reviewDutyState.kind === "assigned"
-                  ? `Recovered completed review evidence ${usableCompletedWorkflow?.id ?? "unknown"} for ${reviewDutyState.repository}#${reviewDutyState.pullRequest} and preserved its usable output; create or reuse the exact verdict question, then call review_duty report before beginning another PR`
-                  : `Recovered completed review evidence ${usableCompletedWorkflow?.id ?? "unknown"} for ${reviewDutyState.repository}#${reviewDutyState.pullRequest} and preserved its usable output; call review_duty continue after actionable findings or complete-auto only after a clean ${reviewDutyState.kind} pass`,
-            },
-          ],
-          details: {
-            outcome: "recovered-evidence" as const,
-            state: reviewDutyState,
-            priorAuditId: usableCompletedWorkflow?.id,
-          },
-        }
-      }
-
-      if (request.action === "retry-blocked") {
-        refreshWorkflowAudits(ctx)
-        const completedAt =
-          reviewDutyState.phase === "awaiting_report"
-            ? reviewDutyState.completedAt
-            : Number.MAX_SAFE_INTEGER
-        const workflowObserved =
-          workflowAudits.workflows.some(
-            workflow => workflow.startedAt >= completedAt,
-          ) ||
-          [...backgroundWorkflows.values()].some(
-            workflow => workflow.startedAt >= completedAt,
-          )
-        const transition = retryBlockedReviewDuty(
-          reviewDutyState,
-          workflowObserved,
-          preExecutionReviewWorkflowBlockObserved(
-            ctx.sessionManager.getBranch(),
-            reviewDutyState,
-          ),
-        )
-        if (!transition.ok) {
-          return {
-            content: [{ type: "text" as const, text: transition.error }],
-            details: { outcome: "error" as const, error: transition.error },
-            isError: true,
-          }
-        }
-        reviewDutyState = transition.state
-        pi.appendEntry(REVIEW_DUTY_STATE_ENTRY, reviewDutyState)
-        return {
-          content: [
-            {
-              type: "text" as const,
-              text: `Recovered pre-execution workflow block for ${reviewDutyState.repository}#${reviewDutyState.pullRequest}; retry the same review without creating a verdict question`,
-            },
-          ],
-          details: {
-            outcome: "retry-blocked" as const,
-            state: reviewDutyState,
-          },
-        }
-      }
-
-      if (request.action === "continue") {
-        refreshWorkflowAudits(ctx)
-        const selection = selectReviewContinuationAudit(
-          reviewDutyState,
-          workflowAudits,
-          [...backgroundWorkflows.values()],
-        )
-        if (selection.kind !== "selected")
-          return {
-            content: [{ type: "text" as const, text: selection.reason }],
-            details: {
-              outcome: "error" as const,
-              error: selection.reason,
-              selection,
-            },
-            isError: true,
-          }
-        const reviewAudits = { workflows: [selection.workflow] }
-        const completedAt =
-          reviewDutyState.phase === "awaiting_report"
-            ? reviewDutyState.completedAt
-            : Number.MAX_SAFE_INTEGER
-        const startedAt =
-          reviewDutyState.phase === "idle"
-            ? Number.MAX_SAFE_INTEGER
-            : reviewDutyState.startedAt
-        const completedWorkflow = latestCompletedWorkflowAfter(
-          reviewAudits,
-          completedAt,
-        )
-        const workflowRunning = [...backgroundWorkflows.values()].some(
-          workflow =>
-            workflow.status === "running" &&
-            workflow.startedAt >= completedAt &&
-            workflowMatchesReviewJob(reviewDutyState, workflow),
-        )
-        const completedPasses = workflowAudits.workflows.filter(
-          workflow =>
-            workflow.status === "completed" &&
-            workflow.startedAt >= startedAt &&
-            workflowMatchesReviewJob(reviewDutyState, workflow) &&
-            workflow.children.some(
-              child =>
-                child.status === "completed" && child.outputCharacters > 0,
-            ),
-        ).length
-        const transition = continueReviewDuty(
-          reviewDutyState,
-          completedWorkflow !== undefined &&
-            completedWorkflow.children.some(
-              child =>
-                child.status === "completed" && child.outputCharacters > 0,
-            ),
-          workflowRunning,
-          completedPasses,
-          selection.evidenceKind,
-        )
-        if (!transition.ok) {
-          return {
-            content: [{ type: "text" as const, text: transition.error }],
-            details: { outcome: "error" as const, error: transition.error },
-            isError: true,
-          }
-        }
-        reviewDutyState = transition.state
-        pi.appendEntry(REVIEW_DUTY_STATE_ENTRY, reviewDutyState)
-        return {
-          content: [
-            {
-              type: "text" as const,
-              text:
-                selection.evidenceKind === "repair"
-                  ? `Continued ${reviewDutyState.repository}#${reviewDutyState.pullRequest} using scoped repair evidence ${selection.workflow.id}; this is not a completed whole-PR review. Resume only the same PR fixes, then complete the required full review gate`
-                  : `Continued ${reviewDutyState.repository}#${reviewDutyState.pullRequest} after completed pass ${completedWorkflow?.id ?? "unknown"} (${completedPasses} completed pass(es)); run only the same PR fix re-review, then ${reviewDutyState.kind === "own" ? "call complete-auto after the clean pass without creating a verdict question" : "complete the consolidated report gate"}`,
-            },
-          ],
-          details: {
-            outcome: "continued" as const,
-            state: reviewDutyState,
-            priorAuditId: completedWorkflow?.id,
-            completedPasses,
-            evidenceKind: selection.evidenceKind,
-          },
-        }
-      }
-
-      if (request.action === "complete-auto") {
-        refreshWorkflowAudits(ctx)
-        const selection = selectReviewWorkflowAudit(
-          reviewDutyState,
-          workflowAudits,
-        )
-        if (selection.kind !== "selected")
-          return {
-            content: [{ type: "text" as const, text: selection.reason }],
-            details: {
-              outcome: "error" as const,
-              error: selection.reason,
-              selection,
-            },
-            isError: true,
-          }
-        const reviewAudits = { workflows: [selection.workflow] }
-        const completedAt =
-          reviewDutyState.phase === "awaiting_report"
-            ? reviewDutyState.completedAt
-            : Number.MAX_SAFE_INTEGER
-        const completedWorkflow = latestCompletedWorkflowAfter(
-          reviewAudits,
-          completedAt,
-        )
-        const workflowRunning = [...backgroundWorkflows.values()].some(
-          workflow =>
-            workflow.status === "running" &&
-            workflow.startedAt >= completedAt &&
-            workflowMatchesReviewJob(reviewDutyState, workflow),
-        )
-        const completingKind =
-          reviewDutyState.phase === "idle" ? undefined : reviewDutyState.kind
-        const allowedCompletionLane =
-          reviewDutyState.phase !== "idle" &&
-          reviewDutyJobAllowed(dutySessionName, reviewDutyState)
-        const transition = completeAutoReviewDuty(
-          reviewDutyState,
-          completedWorkflow !== undefined &&
-            completedWorkflow.children.some(
-              child =>
-                child.status === "completed" && child.outputCharacters > 0,
-            ),
-          workflowRunning,
-          allowedCompletionLane,
-        )
-        if (!transition.ok) {
-          return {
-            content: [{ type: "text" as const, text: transition.error }],
-            details: { outcome: "error" as const, error: transition.error },
-            isError: true,
-          }
-        }
-        reviewDutyState = transition.state
-        pi.appendEntry(REVIEW_DUTY_STATE_ENTRY, reviewDutyState)
-        return {
-          content: [
-            {
-              type: "text" as const,
-              text:
-                completingKind === "own"
-                  ? `Verified completed clean own-review workflow ${completedWorkflow?.id ?? "unknown"}; the gate is clear without an owner verdict. Requesting human reviewers remains a separate authorized action.`
-                  : `Verified completed automatic review workflow ${completedWorkflow?.id ?? "unknown"}. The exact repository may merge only after separately verifying current CI, mergeability, head SHA, unresolved feedback, and repository delivery gates.`,
-            },
-          ],
-          details: {
-            outcome: "complete-auto" as const,
-            state: reviewDutyState,
-            priorAuditId: completedWorkflow?.id,
-          },
-        }
-      }
-
-      if (request.action === "retry-failed") {
-        refreshWorkflowAudits(ctx)
-        const selection = selectReviewWorkflowAudit(
-          reviewDutyState,
-          workflowAudits,
-        )
-        if (selection.kind !== "selected")
-          return {
-            content: [{ type: "text" as const, text: selection.reason }],
-            details: {
-              outcome: "error" as const,
-              error: selection.reason,
-              selection,
-            },
-            isError: true,
-          }
-        const reviewAudits = { workflows: [selection.workflow] }
-        const completedAt =
-          reviewDutyState.phase === "awaiting_report"
-            ? reviewDutyState.completedAt
-            : Number.MAX_SAFE_INTEGER
-        const workflowRunning = [...backgroundWorkflows.values()].some(
-          workflow =>
-            workflow.status === "running" &&
-            workflow.startedAt >= completedAt &&
-            workflowMatchesReviewJob(reviewDutyState, workflow),
-        )
-        const failedWorkflow = latestFailedWorkflowAfter(
-          reviewAudits,
-          completedAt,
-        )
-        const markedManagedReloadCancellation =
-          latestManagedReloadCancellationAfter(reviewAudits, completedAt)
-        const legacyUnmarkedCancellation =
-          latestLegacyUnmarkedCancellationAfter(reviewAudits, completedAt)
-        const manualPause = latestContinuationPause(
-          ctx.sessionManager.getBranch(),
-        )
-        const legacyReloadCompletionObserved =
-          legacyUnmarkedCancellation !== undefined &&
-          managedReloadCompletionObservedAfterAudit(
-            ctx.sessionManager.getBranch(),
-            legacyUnmarkedCancellation.id,
-          )
-        // Current managed reloads carry the source-fixed marker. An exact
-        // unmarked abort can therefore be migrated only from an older runtime;
-        // explicit workflow cancellation has a different reason, and a manual
-        // foreground abort persists the pause checked here.
-        const legacyManagedReloadCancellation =
-          legacyUnmarkedCancellation && !manualPause
-            ? legacyUnmarkedCancellation
-            : undefined
-        const managedReloadCancellation =
-          markedManagedReloadCancellation ?? legacyManagedReloadCancellation
-        const transition = retryFailedReviewDuty(
-          reviewDutyState,
-          failedWorkflow !== undefined,
-          workflowRunning,
-          managedReloadCancellation !== undefined,
-          legacyManagedReloadCancellation !== undefined,
-        )
-        if (!transition.ok) {
-          const recoveryEvidence = [
-            `failed=${failedWorkflow !== undefined}`,
-            `markedReloadCancellation=${markedManagedReloadCancellation !== undefined}`,
-            `legacyCancellation=${legacyUnmarkedCancellation !== undefined}`,
-            `legacyReloadCompleted=${legacyReloadCompletionObserved}`,
-            `manualPause=${manualPause}`,
-            `continuation=${reviewDutyState.phase === "awaiting_report" ? (reviewDutyState.continuation ?? "missing") : "not-awaiting"}`,
-          ].join(", ")
-          return {
-            content: [
-              {
-                type: "text" as const,
-                text: `${transition.error}; recovery evidence: ${recoveryEvidence}`,
-              },
-            ],
-            details: {
-              outcome: "error" as const,
-              error: transition.error,
-              recoveryEvidence,
-            },
-            isError: true,
-          }
-        }
-        reviewDutyState = transition.state
-        pi.appendEntry(REVIEW_DUTY_STATE_ENTRY, reviewDutyState)
-        const recoveredWorkflow = failedWorkflow ?? managedReloadCancellation
-        const partialChildren =
-          recoveredWorkflow?.children.filter(
-            child => child.outputCharacters > 0,
-          ) ?? []
-        return {
-          content: [
-            {
-              type: "text" as const,
-              text: `Recovered ${managedReloadCancellation ? "managed-reload-cancelled" : "failed"} workflow ${recoveredWorkflow?.id ?? "unknown"} for ${reviewDutyState.repository}#${reviewDutyState.pullRequest}; preserved ${partialChildren.length} partial child result reference(s) in the workflow audit for final consolidated reporting. Retry only this same review without creating a recovery question`,
-            },
-          ],
-          details: {
-            outcome: "retry-failed" as const,
-            state: reviewDutyState,
-            recoveredAuditId: recoveredWorkflow?.id,
-            partialChildren: partialChildren.map(child => ({
-              index: child.index,
-              status: child.status,
-              outputCharacters: child.outputCharacters,
-              ...(child.retainedOutput
-                ? { retainedOutput: child.retainedOutput }
-                : {}),
-            })),
-          },
-        }
-      }
-
-      if (request.action === "release-unusable") {
-        refreshWorkflowAudits(ctx)
-        const startedAt =
-          reviewDutyState.phase === "idle"
-            ? Number.MAX_SAFE_INTEGER
-            : reviewDutyState.startedAt
-        const workflowRunning = [...backgroundWorkflows.values()].some(
-          workflow =>
-            workflow.status === "running" &&
-            workflow.startedAt >= startedAt &&
-            workflowMatchesReviewJob(reviewDutyState, workflow),
-        )
-        const usableCompletedWorkflowObserved = workflowAudits.workflows.some(
-          workflow =>
-            workflowMatchesReviewJob(reviewDutyState, workflow) &&
-            workflow.startedAt >= startedAt &&
-            workflow.children.some(
-              child =>
-                child.status === "completed" && child.outputCharacters > 0,
-            ),
-        )
-        const releasedJob =
-          reviewDutyState.phase === "idle"
-            ? undefined
-            : `${reviewDutyState.repository}#${reviewDutyState.pullRequest}`
-        const transition = releaseUnusableReviewDuty(
-          reviewDutyState,
-          usableCompletedWorkflowObserved,
-          workflowRunning,
-        )
-        if (!transition.ok) {
-          return {
-            content: [{ type: "text" as const, text: transition.error }],
-            details: { outcome: "error" as const, error: transition.error },
-            isError: true,
-          }
-        }
-        reviewDutyState = transition.state
-        pi.appendEntry(REVIEW_DUTY_STATE_ENTRY, reviewDutyState)
-        return {
-          content: [
-            {
-              type: "text" as const,
-              text: `Released unusable review-duty job ${releasedJob}; this clears only the stale gate and grants no review, mutation, or publication authority`,
-            },
-          ],
-          details: {
-            outcome: "released-unusable" as const,
-            state: reviewDutyState,
-          },
-        }
-      }
-
-      if (request.questionId === undefined) {
-        return {
-          content: [
-            {
-              type: "text" as const,
-              text: `${request.action} requires questionId`,
-            },
-          ],
-          details: { outcome: "error" as const },
-          isError: true,
-        }
-      }
-      if (request.action === "recover") {
-        const historical = clearedHistoricalReviewQuestion(
-          ctx.sessionManager.getBranch(),
-          request.questionId,
-        )
-        if (!historical) {
-          return {
-            content: [
-              {
-                type: "text" as const,
-                text: `question ${request.questionId} is not a resolved-and-cleared historical verdict question`,
-              },
-            ],
-            details: { outcome: "error" as const },
-            isError: true,
-          }
-        }
-        const relayEvidence = await Effect.runPromise(
-          Effect.either(
-            remoteBridge.isQuestionHistoricallyRelayed({
-              agentId: ctx.sessionManager.getSessionId(),
-              questionId: request.questionId,
-            }),
-          ),
-        )
-        if (Either.isLeft(relayEvidence) || !relayEvidence.right) {
-          return {
-            content: [
-              {
-                type: "text" as const,
-                text: `question ${request.questionId} has no durable historical Telegram relay evidence`,
-              },
-            ],
-            details: { outcome: "error" as const },
-            isError: true,
-          }
-        }
-        const recovered = reportReviewDuty(
-          reviewDutyState,
-          historical,
-          true,
-          Date.now(),
-        )
-        if (!recovered.ok) {
-          return {
-            content: [{ type: "text" as const, text: recovered.error }],
-            details: { outcome: "error" as const, error: recovered.error },
-            isError: true,
-          }
-        }
-        reviewDutyState = recovered.state
-        pi.appendEntry(REVIEW_DUTY_STATE_ENTRY, reviewDutyState)
-        return {
-          content: [
-            {
-              type: "text" as const,
-              text: `Recovered linked user-cleared verdict question ${request.questionId}; the existing review may continue without creating another question`,
-            },
-          ],
-          details: { outcome: "recovered" as const, state: reviewDutyState },
-        }
-      }
-      const question = questionState.questions.find(
-        ({ id }) => id === request.questionId,
-      )
-      if (!question) {
-        return {
-          content: [
-            {
-              type: "text" as const,
-              text: `question ${request.questionId} is not persisted in this session`,
-            },
-          ],
-          details: { outcome: "error" as const },
-          isError: true,
-        }
-      }
-      const inConversationAuthorized = inConversationReviewQuestionAuthorized(
-        ctx.sessionManager.getBranch(),
-        reviewDutyState,
-        question,
-      )
-      const relayStatus = inConversationAuthorized
-        ? Either.right(false)
-        : await Effect.runPromise(
-            Effect.either(
-              awaitQuestionRelay(
-                ctx.sessionManager.getSessionId(),
-                request.questionId,
-              ),
-            ),
-          )
-      if (Either.isLeft(relayStatus)) {
-        return {
-          content: [
-            {
-              type: "text" as const,
-              text: `Could not verify an owner-authorized verdict-question delivery channel: ${relayStatus.left.message}`,
-            },
-          ],
-          details: { outcome: "error" as const },
-          isError: true,
-        }
-      }
-      const deliveryChannel = inConversationAuthorized
-        ? "current-conversation"
-        : "telegram"
-      const transition = reportReviewDuty(
-        reviewDutyState,
-        question,
-        inConversationAuthorized || relayStatus.right,
-        Date.now(),
-      )
-      if (!transition.ok) {
-        return {
-          content: [{ type: "text" as const, text: transition.error }],
-          details: { outcome: "error" as const, error: transition.error },
-          isError: true,
-        }
-      }
-      if (inConversationAuthorized) {
-        const persistedDelivery = await Effect.runPromise(
-          Effect.either(
-            awaitConversationQuestionDelivery(
-              ctx.sessionManager.getSessionId(),
-              request.questionId,
-            ),
-          ),
-        )
-        if (Either.isLeft(persistedDelivery)) {
-          return {
-            content: [
-              {
-                type: "text" as const,
-                text: `Could not persist in-conversation verdict-question delivery: ${persistedDelivery.left.message}`,
-              },
-            ],
-            details: { outcome: "error" as const },
-            isError: true,
-          }
-        }
-      }
-      reviewDutyState = transition.state
-      pi.appendEntry(REVIEW_DUTY_STATE_ENTRY, reviewDutyState)
-      return {
-        content: [
-          {
-            type: "text" as const,
-            text: `Verdict question ${request.questionId} is linked through ${deliveryChannel}; the next PR may begin`,
-          },
-        ],
-        details: {
-          outcome: "reported" as const,
-          state: reviewDutyState,
-          deliveryChannel,
-        },
-      }
-    },
   })
 
   pi.registerTool({

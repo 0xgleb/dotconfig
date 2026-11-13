@@ -93,10 +93,19 @@ end
 return {
   {
     "nvim-treesitter/nvim-treesitter",
+    init = function(plugin)
+      -- Astro exposes legacy predicates before VeryLazy. Replace them at that
+      -- same boundary, before Snacks or a notebook starts a native parser.
+      require("astronvim.plugins.treesitter").init(plugin)
+      register_nvim_0_12_query_handlers()
+    end,
     opts = {
       ensure_installed = {},
       auto_install = false,
-      highlight = { enable = false },
+      highlight = {
+        enable = true,
+        disable = function(language) return language ~= "rust" end,
+      },
     },
     config = function(plugin, opts)
       require "astronvim.plugins.configs.nvim-treesitter"(plugin, opts)

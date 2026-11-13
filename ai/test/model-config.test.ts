@@ -31,9 +31,9 @@ test("parent Codex turns use bounded sustained-overload retries", () => {
 test("Pi and shared agent skill roots use the same writable managed source", () => {
   assert.match(
     home,
-    /\bskills\s*=\s*config\.lib\.file\.mkOutOfStoreSymlink\s+"\$\{aiDir\}\/skills"\s*;/,
+    /skills\s*=\s*config\.lib\.file\.mkOutOfStoreSymlink\s+"\$\{aiDir\}\/skills"/,
   )
-  assert.match(home, /"\.agents\/skills"\.source\s*=\s*skills\s*;/)
-  assert.match(home, /"\.pi\/agent\/skills"\.source\s*=\s*skills\s*;/)
+  assert.match(home, /"\.agents\/skills"\.source\s*=\s*skills;/)
+  assert.match(home, /"\.pi\/agent\/skills"\.source\s*=\s*skills;/)
   assert.doesNotMatch(home, /emptyPiSkillRoot/)
 })

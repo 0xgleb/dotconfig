@@ -18,13 +18,12 @@ use help.nu
 const portable_fj = "@metagendaFj@/bin/fj"
 
 export use md.nu
-export use infra.nu
 export use cheatsheet.nu
 
 # unified dev command — run `fj help` for details.
 #
 # Dispatch model: commands with typed flags, completions, or their own help
-# (check, clanker, take, issue, pr, md, infra) are `export def` subcommands
+# (check, clanker, take, issue, pr, md) are `export def` subcommands
 # below. Nushell resolves `fj <those>` to the subcommand, which SHADOWS this
 # `--wrapped main`, so main only ever runs for the passthrough space:
 # no-args, ui, do, mut, the stack/git verbs, help, and unknowns. `fj-route`
@@ -173,7 +172,7 @@ export def --wrapped clanker [...args: string] {
     and ((glob $"($pi_dir)/*.jsonl") | is-not-empty)
   )
   let on_nixxxos = ((^hostname | str trim) == "nixxxos")
-  let routed = (clanker-route $pi_has_session $claude_has_session --remote-control=$on_nixxxos --cwd $env.PWD --home $env.HOME ...$args)
+  let routed = (clanker-route $pi_has_session $claude_has_session --remote-control=$on_nixxxos ...$args)
   let route = (live-safe-pi-resume $routed $pi_dir $env.PWD $env.HOME)
   match $route.tool {
     "pi" => { ^pi ...$route.args }

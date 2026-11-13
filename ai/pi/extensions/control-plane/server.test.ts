@@ -3,23 +3,14 @@ import { mkdir, mkdtemp, rm, writeFile } from "node:fs/promises"
 import { tmpdir } from "node:os"
 import { join } from "node:path"
 import test from "node:test"
-import { setTimeout as delay } from "node:timers/promises"
 import { Effect, Either } from "effect"
-import { toJobId, type JobId } from "./harness-protocol.ts"
-import type { Job } from "./job-runtime.ts"
+import { toJobId, type JobId, type Job } from "./job-runtime.ts"
 import { startControlPlaneServer, type ControlPlaneJobStore } from "./server.ts"
-import { canonicalPath, type CanonicalPath } from "./review-duty-profile.ts"
 import {
   makeSqliteJobStore,
   type SqliteJobStore,
   type StoredJob,
 } from "./sqlite-job-store.ts"
-
-const canonical = (value: string): CanonicalPath => {
-  const path = canonicalPath(value)
-  if (path === undefined) throw new Error(`fixture is not canonical: ${value}`)
-  return path
-}
 
 const jobIdentifier = (value: string): JobId => {
   const id = toJobId(value)
@@ -27,15 +18,6 @@ const jobIdentifier = (value: string): JobId => {
     throw new Error(`fixture is not a job identifier: ${value}`)
   return id
 }
-
-/**
- * The home a payload is admitted against is stated by the fixture rather than
- * read from the machine, so a checkout the tests describe is registered no
- * matter which account runs them.
- */
-const home = canonical("/Users/example")
-
-const registeredCheckout = (relative: string): string => `${home}/${relative}`
 
 /**
  * A store that implements only the operations a test exercises. Every other
@@ -51,6 +33,9 @@ const partialStore = (
   claimDue: unavailable("claimDue"),
   complete: unavailable("complete"),
   fail: unavailable("fail"),
+  recoverExpired: unavailable("recoverExpired"),
+  recordUsage: unavailable("recordUsage"),
+  recordAllowanceCheckpoint: unavailable("recordAllowanceCheckpoint"),
   ...operations,
 })
 
@@ -62,23 +47,13 @@ const readableJobs = (stored: readonly StoredJob[]): readonly Job[] =>
 
 const withServer = async (
   run: (origin: string, store: SqliteJobStore) => Promise<void>,
-  options: { readonly bridgeStore?: RemoteBridgeStore } = {},
 ): Promise<void> => {
   const root = await mkdtemp(join(tmpdir(), "pi-control-plane-http-test-"))
   const store = await Effect.runPromise(
-    makeSqliteJobStore(join(root, "jobs.sqlite"), home),
+    makeSqliteJobStore(join(root, "jobs.sqlite")),
   )
-  const registryStore = {
-    snapshot: () =>
-      Effect.succeed({
-        version: 1 as const,
-        agents: [],
-        leases: [],
-        requests: [],
-      }),
-  } as unknown as RegistryStore
   const server = await Effect.runPromise(
-    startControlPlaneServer({ host: "127.0.0.1", port: 0, store, home }),
+    startControlPlaneServer({ host: "127.0.0.1", port: 0, store }),
   )
   try {
     await run(server.origin, store)
@@ -90,81 +65,47 @@ const withServer = async (
 }
 
 const enqueueBody = {
-  kind: "review-duty.scan",
-  payload: { profile: "st0x-review" },
+  kind: "harness.research",
+  payload: {
+    lane: "subscription-plan",
+    harness: "claude-plan",
+    profile: "research-config",
+    project: "dotconfig",
+    task: "subscription-harness-adversarial-review",
+    repositoryRoot: "/Users/example/.config",
+    isolation: "read-only",
+    ownership: {
+      kind: "project-domain",
+      project: "dotconfig",
+      role: "research-config",
+    },
+  },
   runAt: 1_000,
   maxAttempts: 3,
   recurrence: {
     baseMs: 2 * 60 * 60 * 1_000,
     jitterMs: 60 * 60 * 1_000,
   },
-  idempotencyKey: "review-duty:st0x-review",
+  idempotencyKey: "research:dotconfig:1",
 }
 
-const harnessHeadSha = "a".repeat(40)
-const harnessEnqueueBody = {
-  kind: "harness.review",
-  payload: {
-    lane: "claude-code-max",
-    task: "review-loop",
-    profile: "personal-review",
-    repository: "0xgleb/example",
-    pullRequest: 7,
-    kind: "own",
-    inputHeadSha: harnessHeadSha,
-    repositoryRoot: registeredCheckout("code/0xgleb/example"),
-    isolation: "approved-worktree",
-  },
-  runAt: 0,
+const retryEnqueueBody = {
+  ...enqueueBody,
   maxAttempts: 2,
-  idempotencyKey: "harness:personal:example:7:head",
+  idempotencyKey: "research:retry",
 }
 
-const harnessHandoff = (
-  jobId: string,
-  attempt: number,
-  overrides: Readonly<Record<string, unknown>> = {},
-): Readonly<Record<string, unknown>> => ({
+const researchHandoff = (jobId: string, attempt: number) => ({
   protocolVersion: 1,
   jobId,
   attempt,
-  lane: "claude-code-max",
-  repository: "0xgleb/example",
-  pullRequest: 7,
-  inputHeadSha: harnessHeadSha,
-  outputHeadSha: harnessHeadSha,
-  status: "clean",
-  assessment: "No verified findings.",
-  evidence: ["check:review-core"],
-  verifier: "fable-clean",
-  executorProvenance: "subscription-verified",
-  ...overrides,
+  lane: "subscription-plan",
+  profile: enqueueBody.payload.profile,
+  task: enqueueBody.payload.task,
+  status: "completed",
+  summary: "Verified the bounded research task",
+  evidence: ["source.ts: task boundary verified"],
 })
-
-const claimJob = async (
-  origin: string,
-  workerId: string,
-): Promise<{ leaseToken: string; attempt: number }> => {
-  const claimed = await fetch(`${origin}/v1/worker/claim`, {
-    method: "POST",
-    headers: { "content-type": "application/json" },
-    body: JSON.stringify({ workerId, ttlMs: 90_000 }),
-  })
-  return (
-    (await claimed.json()) as {
-      job: { leaseToken: string; attempt: number }
-    }
-  ).job
-}
-
-const enqueueJob = async (origin: string, body: unknown): Promise<string> => {
-  const enqueued = await fetch(`${origin}/v1/jobs`, {
-    method: "POST",
-    headers: { "content-type": "application/json" },
-    body: JSON.stringify(body),
-  })
-  return ((await enqueued.json()) as { job: { id: string } }).job.id
-}
 
 test("the server refuses non-loopback bind addresses", async () => {
   const result = await Effect.runPromise(
@@ -173,7 +114,6 @@ test("the server refuses non-loopback bind addresses", async () => {
         host: "0.0.0.0",
         port: 0,
         store: partialStore({}),
-        home,
       }),
     ),
   )
@@ -226,7 +166,7 @@ test("registered enqueue is idempotent and unknown executable kinds fail closed"
     })
   }))
 
-test("research enqueue requires typed project or agentops support ownership", async () =>
+test("research enqueue requires project ownership and valid scheduling", async () =>
   withServer(async origin => {
     const post = (payload: unknown, runAt = Date.now()): Promise<Response> =>
       fetch(`${origin}/v1/jobs`, {
@@ -239,67 +179,47 @@ test("research enqueue requires typed project or agentops support ownership", as
           maxAttempts: 2,
         }),
       })
-    const legacy = {
+    const payload = {
       lane: "subscription-plan",
       harness: "claude-plan",
-      profile: "agentops-yielduck",
+      profile: "yielduck-research",
       project: "yielduck",
       task: "yielduck-portfolio-replay-attribution",
       repositoryRoot: "/Users/example/yielduck",
       isolation: "read-only",
-    }
-    assert.equal((await post(legacy)).status, 400)
-    assert.equal(
-      (
-        await post({
-          ...legacy,
-          ownership: {
-            kind: "project-domain",
-            project: "yielduck",
-            role: "agentops-yielduck",
-          },
-        })
-      ).status,
-      400,
-    )
-    const projectOwned = {
-      ...legacy,
-      profile: "yielduck-research",
       ownership: {
         kind: "project-domain",
         project: "yielduck",
         role: "yielduck-research",
       },
     }
-    assert.equal((await post(projectOwned, 8)).status, 400)
-    assert.equal((await post(projectOwned)).status, 201)
+    const { ownership, ...unowned } = payload
+    assert.equal((await post(unowned)).status, 400)
     assert.equal(
       (
         await post({
-          ...legacy,
-          task: "classifier-stale-evidence-diagnosis",
-          ownership: {
-            kind: "agentops-support",
-            project: "yielduck",
-            role: "agentops-yielduck",
-            supportArea: "classifier",
-          },
+          ...payload,
+          ownership: { ...ownership, project: "another-project" },
         })
       ).status,
-      201,
+      400,
     )
+    assert.equal((await post(payload, 8)).status, 400)
+    assert.equal((await post(payload)).status, 201)
   }))
 
 test("concurrent idempotent enqueue reports exactly one creation", async () => {
   const job: Job = {
     id: jobIdentifier("job-a"),
     spec: {
-      kind: "review-duty.scan",
-      payload: { profile: "st0x-review" },
-      runAt: 1_000,
-      maxAttempts: 3,
-      recurrence: { baseMs: 2 * 60 * 60 * 1_000, jitterMs: 60 * 60 * 1_000 },
-      idempotencyKey: "review-duty:st0x-review",
+      ...enqueueBody,
+      kind: "harness.research",
+      payload: {
+        ...enqueueBody.payload,
+        lane: "subscription-plan",
+        isolation: "read-only",
+        ownership: { ...enqueueBody.payload.ownership, kind: "project-domain" },
+      },
     },
     state: "ready",
     attempt: 0,
@@ -328,7 +248,7 @@ test("concurrent idempotent enqueue reports exactly one creation", async () => {
       }),
   })
   const server = await Effect.runPromise(
-    startControlPlaneServer({ host: "127.0.0.1", port: 0, store, home }),
+    startControlPlaneServer({ host: "127.0.0.1", port: 0, store }),
   )
   try {
     const enqueue = () =>
@@ -388,12 +308,31 @@ test("workers claim due jobs with server-issued leases and stale completion is f
     const stale = await fetch(`${origin}/v1/jobs/${created.job.id}/complete`, {
       method: "POST",
       headers: { "content-type": "application/json" },
-      body: JSON.stringify({ leaseToken: "stale-token", summary: "done" }),
+      body: JSON.stringify({
+        leaseToken: "stale-token",
+        handoff: researchHandoff(created.job.id, 1),
+      }),
     })
     assert.equal(stale.status, 409)
     assert.deepEqual(await stale.json(), {
       error: { code: "stale_lease", message: "job lease is stale" },
     })
+
+    for (const handoff of [
+      { ...researchHandoff(created.job.id, 1), jobId: "another-job" },
+      researchHandoff(created.job.id, 2),
+      { ...researchHandoff(created.job.id, 1), status: "failed" },
+    ]) {
+      const rejected = await fetch(
+        `${origin}/v1/jobs/${created.job.id}/complete`,
+        {
+          method: "POST",
+          headers: { "content-type": "application/json" },
+          body: JSON.stringify({ leaseToken: claimed.job.leaseToken, handoff }),
+        },
+      )
+      assert.equal(rejected.status, 400)
+    }
 
     const complete = await fetch(
       `${origin}/v1/jobs/${created.job.id}/complete`,
@@ -402,7 +341,7 @@ test("workers claim due jobs with server-issued leases and stale completion is f
         headers: { "content-type": "application/json" },
         body: JSON.stringify({
           leaseToken: claimed.job.leaseToken,
-          summary: "review scan completed",
+          handoff: researchHandoff(created.job.id, 1),
         }),
       },
     )
@@ -411,180 +350,6 @@ test("workers claim due jobs with server-issued leases and stale completion is f
       ((await complete.json()) as { job: { state: string } }).job.state,
       "succeeded",
     )
-  }))
-
-test("harness jobs accept only a matching bounded typed handoff", async () =>
-  withServer(async origin => {
-    const id = await enqueueJob(origin, harnessEnqueueBody)
-    const claimed = await claimJob(origin, "harness-supervisor")
-    const endpoint = `${origin}/v1/jobs/${id}/complete`
-    const complete = async (body: unknown): Promise<Response> =>
-      fetch(endpoint, {
-        method: "POST",
-        headers: { "content-type": "application/json" },
-        body: JSON.stringify(body),
-      })
-
-    const legacySummary = await complete({
-      leaseToken: claimed.leaseToken,
-      summary: "untyped",
-    })
-    assert.equal(legacySummary.status, 400)
-    assert.deepEqual(await legacySummary.json(), {
-      error: { code: "invalid_input", message: "request payload is invalid" },
-    })
-
-    const undecodable = await complete({
-      leaseToken: claimed.leaseToken,
-      handoff: harnessHandoff(id, claimed.attempt, { protocolVersion: 2 }),
-    })
-    assert.equal(undecodable.status, 400)
-    assert.deepEqual(await undecodable.json(), {
-      error: { code: "invalid_input", message: "request payload is invalid" },
-    })
-
-    const mismatched = await complete({
-      leaseToken: claimed.leaseToken,
-      handoff: harnessHandoff(id, claimed.attempt, {
-        inputHeadSha: "b".repeat(40),
-      }),
-    })
-    assert.equal(mismatched.status, 400)
-    assert.deepEqual(await mismatched.json(), {
-      error: { code: "invalid_input", message: "job request is invalid" },
-    })
-
-    const staleLease = await complete({
-      leaseToken: "stale-token",
-      handoff: harnessHandoff(id, claimed.attempt),
-    })
-    assert.equal(staleLease.status, 409)
-    assert.deepEqual(await staleLease.json(), {
-      error: { code: "stale_lease", message: "job lease is stale" },
-    })
-
-    const succeeded = await complete({
-      leaseToken: claimed.leaseToken,
-      handoff: harnessHandoff(id, claimed.attempt),
-    })
-    assert.equal(succeeded.status, 200)
-    const completed = (await succeeded.json()) as {
-      job: {
-        state: string
-        result?: { kind: string; handoff: { jobId: string } }
-      }
-    }
-    assert.equal(completed.job.state, "succeeded")
-    assert.equal(completed.job.result?.kind, "harness.review")
-    assert.equal(completed.job.result?.handoff.jobId, id)
-
-    const persisted = await fetch(`${origin}/v1/jobs`)
-    assert.equal(persisted.status, 200)
-    const persistedJobs = (await persisted.json()) as {
-      jobs: Array<{ result?: { handoff: { jobId: string } } }>
-    }
-    assert.equal(persistedJobs.jobs[0]?.result?.handoff.jobId, id)
-  }))
-
-test("the harness completion envelope accepts exactly a lease token and a handoff", async () =>
-  withServer(async origin => {
-    const id = await enqueueJob(origin, harnessEnqueueBody)
-    const claimed = await claimJob(origin, "harness-supervisor")
-    const complete = async (body: unknown): Promise<Response> =>
-      fetch(`${origin}/v1/jobs/${id}/complete`, {
-        method: "POST",
-        headers: { "content-type": "application/json" },
-        body: JSON.stringify(body),
-      })
-
-    const extraField = await complete({
-      leaseToken: claimed.leaseToken,
-      handoff: harnessHandoff(id, claimed.attempt),
-      urgent: true,
-    })
-    assert.equal(extraField.status, 400)
-    assert.deepEqual(await extraField.json(), {
-      error: { code: "invalid_input", message: "request payload is invalid" },
-    })
-
-    const withoutHandoff = await complete({ leaseToken: claimed.leaseToken })
-    assert.equal(withoutHandoff.status, 400)
-    assert.deepEqual(await withoutHandoff.json(), {
-      error: { code: "invalid_input", message: "request payload is invalid" },
-    })
-  }))
-
-test("a blocked harness attempt with retries left answers with the retrying job", async () =>
-  withServer(async origin => {
-    const id = await enqueueJob(origin, harnessEnqueueBody)
-    const claimed = await claimJob(origin, "harness-supervisor")
-
-    const blocked = await fetch(`${origin}/v1/jobs/${id}/complete`, {
-      method: "POST",
-      headers: { "content-type": "application/json" },
-      body: JSON.stringify({
-        leaseToken: claimed.leaseToken,
-        handoff: harnessHandoff(id, claimed.attempt, {
-          status: "blocked",
-          assessment: "Fable verification is unavailable.",
-          evidence: [],
-          verifier: "unavailable",
-        }),
-      }),
-    })
-    assert.equal(blocked.status, 200)
-    const retrying = (await blocked.json()) as {
-      job: { state: string; lastAttemptSummary?: string }
-    }
-    assert.equal(retrying.job.state, "retry_wait")
-    assert.equal(
-      retrying.job.lastAttemptSummary,
-      "harness blocked: Fable verification is unavailable.",
-    )
-
-    const persisted = (await (await fetch(`${origin}/v1/jobs`)).json()) as {
-      jobs: Array<{ state: string; lastAttemptSummary?: string }>
-    }
-    assert.equal(persisted.jobs[0]?.state, "retry_wait")
-    assert.equal(
-      persisted.jobs[0]?.lastAttemptSummary,
-      "harness blocked: Fable verification is unavailable.",
-    )
-  }))
-
-test("a blocked harness handoff ends the attempt and keeps its evidence", async () =>
-  withServer(async origin => {
-    const id = await enqueueJob(origin, {
-      ...harnessEnqueueBody,
-      maxAttempts: 1,
-    })
-    const claimed = await claimJob(origin, "harness-supervisor")
-
-    const blocked = await fetch(`${origin}/v1/jobs/${id}/complete`, {
-      method: "POST",
-      headers: { "content-type": "application/json" },
-      body: JSON.stringify({
-        leaseToken: claimed.leaseToken,
-        handoff: harnessHandoff(id, claimed.attempt, {
-          status: "blocked",
-          assessment: "Fable verification is unavailable.",
-          evidence: [],
-          verifier: "unavailable",
-        }),
-      }),
-    })
-    assert.equal(blocked.status, 200)
-    const failed = (await blocked.json()) as {
-      job: { state: string; result?: { handoff: { status: string } } }
-    }
-    assert.equal(failed.job.state, "failed")
-    assert.equal(failed.job.result?.handoff.status, "blocked")
-
-    const persisted = (await (await fetch(`${origin}/v1/jobs`)).json()) as {
-      jobs: Array<{ state: string; result?: { handoff: { status: string } } }>
-    }
-    assert.equal(persisted.jobs[0]?.state, "failed")
-    assert.equal(persisted.jobs[0]?.result?.handoff.status, "blocked")
   }))
 
 test("completing a job that does not exist reports it as missing", async () =>
@@ -609,24 +374,13 @@ test("kind-filtered worker claims accept only registered bounded kinds", async (
     })
     assert.equal(enqueued.status, 201)
 
-    const filtered = await fetch(`${origin}/v1/worker/claim`, {
-      method: "POST",
-      headers: { "content-type": "application/json" },
-      body: JSON.stringify({
-        workerId: "harness-supervisor",
-        ttlMs: 90_000,
-        kinds: ["harness.review"],
-      }),
-    })
-    assert.equal(filtered.status, 204)
-
     for (const kinds of [
       [],
       ["unregistered.kind"],
       [42],
-      ["harness.review", "harness.review"],
-      Array.from({ length: 9 }, () => "harness.review"),
-      "harness.review",
+      ["harness.research", "harness.research"],
+      Array.from({ length: 9 }, () => "harness.research"),
+      "harness.research",
     ]) {
       const rejected = await fetch(`${origin}/v1/worker/claim`, {
         method: "POST",
@@ -646,14 +400,14 @@ test("kind-filtered worker claims accept only registered bounded kinds", async (
       body: JSON.stringify({
         workerId: "review-supervisor",
         ttlMs: 90_000,
-        kinds: ["review-duty.scan"],
+        kinds: ["harness.research"],
       }),
     })
     assert.equal(matching.status, 200)
     const claimed = (await matching.json()) as {
       job: { spec: { kind: string } }
     }
-    assert.equal(claimed.job.spec.kind, "review-duty.scan")
+    assert.equal(claimed.job.spec.kind, "harness.research")
   }))
 
 test("failed attempts retry through the fail route until attempts are exhausted", async () =>
@@ -661,7 +415,7 @@ test("failed attempts retry through the fail route until attempts are exhausted"
     const enqueued = await fetch(`${origin}/v1/jobs`, {
       method: "POST",
       headers: { "content-type": "application/json" },
-      body: JSON.stringify(harnessEnqueueBody),
+      body: JSON.stringify(retryEnqueueBody),
     })
     const created = (await enqueued.json()) as { job: { id: string } }
     const endpoint = `${origin}/v1/jobs/${created.job.id}/fail`
@@ -732,7 +486,7 @@ test("expired leases are recovered on the next worker claim", async () =>
     const enqueued = await fetch(`${origin}/v1/jobs`, {
       method: "POST",
       headers: { "content-type": "application/json" },
-      body: JSON.stringify(harnessEnqueueBody),
+      body: JSON.stringify(retryEnqueueBody),
     })
     const created = (await enqueued.json()) as { job: { id: string } }
 
@@ -818,14 +572,13 @@ test("the loopback server exposes only the three reviewed dashboard assets", asy
     writeFile(join(dashboardDirectory, "app.css"), "body{background:#07111f}"),
   ])
   const store = await Effect.runPromise(
-    makeSqliteJobStore(join(root, "jobs.sqlite"), home),
+    makeSqliteJobStore(join(root, "jobs.sqlite")),
   )
   const server = await Effect.runPromise(
     startControlPlaneServer({
       host: "127.0.0.1",
       port: 0,
       store,
-      home,
       dashboardDirectory,
     }),
   )

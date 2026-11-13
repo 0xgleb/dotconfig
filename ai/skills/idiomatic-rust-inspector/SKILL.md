@@ -36,9 +36,9 @@ than fighting them.
 5. **Enums over booleans.** `fn connect(use_tls: bool)` should be
    `fn connect(tls: TlsMode)`. Boolean parameters are unreadable at call sites
    and don't scale when a third option appears.
-6. **Newtypes over primitives.** `amount: u64` is a bug waiting to happen when
-   you also have `quantity: u64` and `price: u64`. Newtypes make the compiler
-   catch unit mismatches.
+6. **Keep type-modeling ownership clear.** Domain-primitive/newtype
+   opportunities belong to `strong-typing-inspector`. This lane checks
+   Rust-specific representation, conversion and ownership mechanics.
 7. **`impl Trait` and generics over `dyn Trait` unless you need heterogeneity.**
    Static dispatch is faster, more ergonomic, and catches errors at compile
    time. `dyn` is for genuinely heterogeneous collections and plugin
@@ -102,7 +102,6 @@ For each piece of changed code, evaluate against these criteria:
 | Duplicated common dependency versions                            | Member repeats a version already shared by workspace members                                       | **FIX** — declare the shared version under `[workspace.dependencies]` and inherit `workspace = true`; preserve local features and optionality |
 | Boolean parameters                                               | `fn send(msg, compressed: bool, encrypted: bool)`                                                  | **FIX** — use enums                                                                                                                           |
 | Stringly-typed API                                               | `fn set_mode(mode: &str)`                                                                          | **FIX** — use an enum                                                                                                                         |
-| Raw primitive where newtype fits                                 | `amount: u64, price: u64` in same scope                                                            | **FIX** — newtype wrapper                                                                                                                     |
 | Wildcard `_` on owned enum                                       | `match event { A => ..., _ => {} }`                                                                | **FIX** — enumerate variants                                                                                                                  |
 | `Box<dyn Error>` in library                                      | Public API returning boxed errors                                                                  | **FIX** — custom error type                                                                                                                   |
 | `to_string()` / `format!()` for error                            | Building error messages as strings                                                                 | **FIX** — structured error variant                                                                                                            |
@@ -128,6 +127,42 @@ For each piece of changed code, evaluate against these criteria:
 | `Cow<'_, str>` where ownership varies          | **GOOD** |
 | `#[must_use]` on fallible or important returns | **GOOD** |
 | Proper `Display` + `Error` implementations     | **GOOD** |
+
+### Visibility and the crate interface
+
+Only the deliberately supported core crate interface should be public. Default
+implementation modules, types, fields, constructors and helpers to private;
+choose `pub(super)` or `pub(crate)` only for actual internal consumers, and use
+the narrowest viable visibility.
+
+Trace the module tree, re-exports, public signatures and consumers before
+judging visibility. Types required by the supported interface are part of that
+interface. An intentional library API does not need an in-repository caller, but
+hypothetical future use is not evidence that an implementation detail belongs in
+it. Distinguish declared from effective visibility: a `pub` item in a private
+module is not necessarily externally reachable.
+
+Flag unnecessary public reachability and overly broad internal visibility,
+including exports used only to make tests convenient or avoid dead-code
+warnings. Never fix a warning by widening visibility or suppressing the lint.
+Recommend the narrowest visibility supported by actual use, preserving the
+intentional crate contract and leaving genuinely unused implementation code
+visible to Cargo's dead-code diagnostics. Report the affected surface and
+consumer evidence rather than mechanically removing every `pub`.
+
+### Import scope
+
+Import enum variants locally when they make match arms, destructuring or
+repeated enum references easier to read. Do not import every variant used in a
+function: keep isolated constructions and error returns qualified, such as
+`SignedArtifactError::HashMismatch`. Retain qualification when it clarifies the
+variant's origin or resolves a name collision. Use function-local
+`use Enum::{...};`; in `const` or `static` initializers, use initializer-local
+imports.
+
+Keep all other imports at module/file scope, including types, traits and
+functions; test-module imports remain at that module's scope. General
+qualification and use-site readability belong to `code-style-inspector`.
 
 ### Error conversions and workspace dependencies
 

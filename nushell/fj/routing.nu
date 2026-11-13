@@ -75,7 +75,7 @@ const git_commands = [
 
 # Route an `fj` invocation to a tool + args. Only the PASSTHROUGH space reaches
 # here: commands with dedicated `export def` subcommands (check, clanker, take,
-# issue, pr, md, infra) are intercepted by nushell before main calls fj-route
+# issue, pr, md) are intercepted by nushell before main calls fj-route
 # (see mod.nu's dispatch model), so routing them here would be dead code.
 #
 #   <empty>           -> status
@@ -308,8 +308,6 @@ export def --wrapped clanker-route [
   pi_has_session: bool
   claude_has_session: bool
   --remote-control
-  --cwd: string = ""
-  --home: string = ""
   ...args: string
 ]: nothing -> record<tool: string, args: list<string>> {
   let wants_claude = ("--claude" in $args)
@@ -348,20 +346,9 @@ export def --wrapped clanker-route [
     }
   } else {
     let resume = (session-args $pi_has_session $start_fresh ["--continue" "-c" "--resume" "-r" "--session" "--session-id" "--fork"] $forwarded)
-    let moneymentum_root = if ($home | is-empty) { "" } else { $"($home)/code/dataclique/moneymentum" }
-    let operator_register = if (
-      ($forwarded | is-empty)
-      and ($resume | is-empty)
-      and (not ($moneymentum_root | is-empty))
-      and ($cwd == $moneymentum_root)
-    ) {
-      ["/register 5h"]
-    } else {
-      []
-    }
     {
       tool: "pi"
-      args: (["--thinking" "high"] | append $resume | append $forwarded | append $operator_register)
+      args: (["--thinking" "high"] | append $resume | append $forwarded)
     }
   }
 }

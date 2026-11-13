@@ -9,7 +9,7 @@ const remoteControlSource = readFileSync(
 )
 
 test("remote turns mechanically disable tools and restore the exact prior set once", () => {
-  let active = ["read", "bash", "todo"]
+  let active = ["read", "bash", "task"]
   const writes: string[][] = []
   const guard = enterRemoteToolGuard({
     getActiveTools: () => [...active],
@@ -20,18 +20,102 @@ test("remote turns mechanically disable tools and restore the exact prior set on
   })
 
   assert.deepEqual(active, [])
-  assert.deepEqual(guard.priorTools, ["read", "bash", "todo"])
+  assert.deepEqual(guard.priorTools, ["read", "bash", "task"])
   guard.enforce()
   assert.deepEqual(active, [])
   assert.deepEqual(guard.restore(), {
     status: "restored",
     recoveryAttempts: 0,
-    expectedTools: ["read", "bash", "todo"],
-    activeTools: ["read", "bash", "todo"],
+    expectedTools: ["read", "bash", "task"],
+    activeTools: ["read", "bash", "task"],
   })
   assert.equal(guard.restore().status, "restored")
-  assert.deepEqual(active, ["read", "bash", "todo"])
-  assert.deepEqual(writes, [[], [], ["read", "bash", "todo"]])
+  assert.deepEqual(active, ["read", "bash", "task"])
+  assert.deepEqual(writes, [[], [], ["read", "bash", "task"]])
+})
+
+test("management turns retain active GitHub CLI and coordination tools without coding delegation", () => {
+  let active = [
+    "read",
+    "bash",
+    "task",
+    "agent_registry",
+    "manager_control",
+    "ask_user",
+    "web_search",
+    "web_fetch",
+    "workflow",
+    "write",
+    "edit",
+  ]
+  const prior = [...active]
+  const guard = enterRemoteToolGuard(
+    {
+      getActiveTools: () => [...active],
+      setActiveTools: tools => {
+        active = [...tools]
+      },
+    },
+    "management",
+  )
+  const permitted = [
+    "read",
+    "bash",
+    "task",
+    "agent_registry",
+    "manager_control",
+    "ask_user",
+    "web_search",
+    "web_fetch",
+    "workflow",
+    "write",
+    "edit",
+  ]
+  assert.deepEqual(active, permitted)
+  active = ["bash", "task"]
+  guard.enforce()
+  assert.deepEqual(active, permitted)
+  guard.restore()
+  assert.deepEqual(active, prior)
+})
+
+for (const mode of ["communication", "management"] as const) {
+  test(`${mode} turns preserve issue-task capability boundaries and exact restoration`, () => {
+    let active = ["task", "agent_workspace"]
+    const prior = [...active]
+    const guard = enterRemoteToolGuard(
+      {
+        getActiveTools: () => [...active],
+        setActiveTools: tools => {
+          active = [...tools]
+        },
+      },
+      mode,
+    )
+    const expected = mode === "management" ? ["task"] : []
+
+    assert.deepEqual(active, expected)
+    active = [...prior]
+    guard.enforce()
+    assert.deepEqual(active, expected)
+    assert.equal(guard.restore().status, "restored")
+    assert.deepEqual(active, prior)
+    assert.equal(guard.restore().status, "restored")
+  })
+}
+
+test("management mode cannot add tools that were not active before the turn", () => {
+  let active = ["task"]
+  enterRemoteToolGuard(
+    {
+      getActiveTools: () => [...active],
+      setActiveTools: tools => {
+        active = [...tools]
+      },
+    },
+    "management",
+  )
+  assert.deepEqual(active, ["task"])
 })
 
 test("remote tool restoration makes one managed recovery attempt", () => {

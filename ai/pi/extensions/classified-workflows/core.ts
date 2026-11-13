@@ -176,17 +176,6 @@ const ARTIFACT_PROVENANCE_ACTIONS = new Set([
   "create_directory",
   "forget",
 ])
-const REVIEW_DUTY_ACTIONS = new Set([
-  "status",
-  "begin",
-  "report",
-  "recover",
-  "recover-evidence",
-  "retry-blocked",
-  "retry-failed",
-  "continue",
-  "complete-auto",
-])
 const RELEASE_CADENCE_ACTIONS = new Set(["status", "enable", "disable", "mark"])
 const isSkillView = (
   toolName: string,
@@ -233,7 +222,6 @@ const LOCALLY_GENERATED_RESULT_TOOLS = new Set([
   "todo",
   "ask_user",
   "artifact_provenance",
-  "review_duty",
   "release_cadence",
   "reload_pi",
   "loop_control",
@@ -808,17 +796,6 @@ export function deterministicDecision(request: ToolRequest): Decision | null {
     return {
       verdict: "allow",
       reason: "Session-local typed agent artifact provenance",
-      source: "deterministic",
-    }
-  }
-
-  if (
-    request.toolName === "review_duty" &&
-    REVIEW_DUTY_ACTIONS.has(String(request.input.action))
-  ) {
-    return {
-      verdict: "allow",
-      reason: "Typed local review-duty reporting gate",
       source: "deterministic",
     }
   }
