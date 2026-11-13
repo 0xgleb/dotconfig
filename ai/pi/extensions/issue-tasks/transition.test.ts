@@ -6,7 +6,12 @@ import {
   issueKey,
   type IssueReference,
 } from "./identity.ts"
-import { TaskIdSchema, type IssueTaskRevision, type TaskId } from "./model.ts"
+import {
+  BlockedReasonSchema,
+  TaskIdSchema,
+  type IssueTaskRevision,
+  type TaskId,
+} from "./model.ts"
 import { decodeTaskMutationBatch, type TaskMutationBatch } from "./mutations.ts"
 import {
   prepareTaskChanges,
@@ -437,12 +442,16 @@ test("malformed projections and ID allocations fail rather than overwrite data",
 
 test("leaving blocked replaces its reason with the selected status and records history", () => {
   const base = snapshot()
+  const reason = Schema.decodeUnknownEither(BlockedReasonSchema)(
+    "Awaiting external input",
+  )
+  assert.ok(Either.isRight(reason))
 
   const state: TaskSnapshot = {
     ...base,
     tasks: base.tasks.map(task =>
       task.id === t1
-        ? { ...task, status: "doing", blocker: "Awaiting external input" }
+        ? { ...task, status: "doing", blocker: reason.right }
         : task,
     ),
   }
