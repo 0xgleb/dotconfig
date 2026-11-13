@@ -3,20 +3,15 @@ import test from "node:test"
 import { Either } from "effect"
 import { OWNER_ALLOWANCE_ENTRY, OWNER_ALLOWANCE_MS } from "./owner-allowance.ts"
 
-type InstalledOwnerAllowance = ReturnType<
+type OwnerAllowanceHost = Parameters<
   typeof import("./owner-allowance-extension.ts").registerOwnerAllowance
->
+>[0]
 
 const installOwnerAllowance = (
   module: typeof import("./owner-allowance-extension.ts"),
-  host: unknown,
+  host: OwnerAllowanceHost,
   cancelBackground: () => void,
-): InstalledOwnerAllowance =>
-  Reflect.apply<undefined, [unknown, () => void], InstalledOwnerAllowance>(
-    Reflect.get(module, "registerOwnerAllowance"),
-    undefined,
-    [host, cancelBackground],
-  )
+) => module.registerOwnerAllowance(host, cancelBackground)
 
 for (const elapsedMinutes of [90, 150]) {
   test(`registered session-start restores a historical four-hour window at ${elapsedMinutes} minutes`, async t => {
@@ -28,8 +23,14 @@ for (const elapsedMinutes of [90, 150]) {
     const saved: unknown[] = []
     let aborts = 0
     const host = {
-      on: (name: string, callback: (...args: unknown[]) => unknown) =>
-        callbacks.set(name, callback),
+      on: (name: string, callback: Function) => {
+        callbacks.set(name, (...args) =>
+          Reflect.apply(callback, undefined, args),
+        )
+        return () => {
+          callbacks.delete(name)
+        }
+      },
       appendEntry: (type: string, data: unknown) => {
         assert.equal(type, OWNER_ALLOWANCE_ENTRY)
         saved.push(data)
@@ -87,7 +88,12 @@ test("authenticated queued input renews only at the native model dispatch bounda
   const authorized = new Set<string>()
   let dispatch: Function | undefined
   const host = {
-    on: (name: string, callback: Function) => callbacks.set(name, callback),
+    on: (name: string, callback: Function) => {
+      callbacks.set(name, callback)
+      return () => {
+        callbacks.delete(name)
+      }
+    },
     appendEntry: () => {},
     registerCommand: () => {},
     registerModelInputDeliveryGuard: (callback: Function) => {
@@ -149,7 +155,12 @@ test("delivery-capable host refuses interactive input without a valid native rec
   t.mock.timers.enable({ apis: ["Date", "setTimeout"], now: 1_000 })
   const callbacks = new Map<string, Function>()
   const host = {
-    on: (name: string, callback: Function) => callbacks.set(name, callback),
+    on: (name: string, callback: Function) => {
+      callbacks.set(name, callback)
+      return () => {
+        callbacks.delete(name)
+      }
+    },
     appendEntry: () => {},
     registerCommand: () => {},
     registerModelInputDeliveryGuard: () => ({
@@ -194,7 +205,7 @@ test("model dispatch admission does not depend on presentation callbacks", async
   t.mock.timers.enable({ apis: ["Date", "setTimeout"], now: 1_000 })
   let dispatch: Function | undefined
   const host = {
-    on: () => {},
+    on: () => () => {},
     appendEntry: () => {},
     registerCommand: () => {},
     registerModelInputDeliveryGuard: (handler: Function) => {
@@ -242,7 +253,12 @@ test("native expiry integration failure cannot skip foreground cancellation", as
   let dispatch: Function | undefined
   let aborts = 0
   const host = {
-    on: (name: string, callback: Function) => callbacks.set(name, callback),
+    on: (name: string, callback: Function) => {
+      callbacks.set(name, callback)
+      return () => {
+        callbacks.delete(name)
+      }
+    },
     appendEntry: () => {},
     registerCommand: () => {},
     registerModelInputDeliveryGuard: (handler: Function) => {
@@ -297,6 +313,9 @@ test("real registered hooks enforce tools, provider starts, automation and watch
   const host = {
     on: (name: string, callback: Function) => {
       callbacks.set(name, callback)
+      return () => {
+        callbacks.delete(name)
+      }
     },
     events: {
       on: (name: string, callback: Function) => {

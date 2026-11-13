@@ -17,6 +17,11 @@ import {
   type OwnerWindow,
 } from "./owner-allowance.ts"
 
+type OwnerAllowanceHost = Pick<
+  ExtensionAPI,
+  "on" | "appendEntry" | "registerCommand"
+>
+
 interface NativeDeliveryBinding extends InputDeliveryBinding {
   readonly expireActiveRun?: () => void
 }
@@ -31,13 +36,13 @@ interface NativeDeliveryHost {
 
 /** Always on; delivery-time renewal requires the host's private provenance API. */
 export const registerOwnerAllowance = (
-  pi: ExtensionAPI,
+  pi: OwnerAllowanceHost,
   cancelBackground: (reason: OwnerAllowanceError) => void,
   onExpired?: (window: OwnerWindow) => void,
 ) => {
   let context: ExtensionContext | undefined
   let inputDelivery: NativeDeliveryBinding | undefined
-  const deliveryHost: ExtensionAPI & NativeDeliveryHost = pi
+  const deliveryHost: OwnerAllowanceHost & NativeDeliveryHost = pi
   const guard = createOwnerAllowance<ReturnType<typeof setTimeout>>({
     inheritedDeadline: process.env[OWNER_PARENT_DEADLINE_ENV],
     now: () => Date.now(),
