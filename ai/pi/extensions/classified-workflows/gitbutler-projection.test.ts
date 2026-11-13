@@ -158,6 +158,7 @@ test("pinned observations obey scope and newer full-status supersession", () => 
     toolResultExecutionEvidence({
       toolName: "bash",
       input: { command },
+      subject: { toolName: "bash", input: { command } },
       text: "[]",
       isError: false,
     }),
