@@ -241,11 +241,13 @@ export const decodeGitHubProjectPage = (
     )
       return yield* invalid("unavailable")
 
+    const statusField = project.statusField
+
     yield* validateField(project.priorityField, "Priority", binding.priority)
     yield* validateField(project.effortField, "Effort", binding.effort)
     const inProgress = yield* decodeGitHubInProgressTarget(
       project.id,
-      project.statusField,
+      statusField,
     )
 
     const { nodes, pageInfo } = project.items
@@ -259,7 +261,7 @@ export const decodeGitHubProjectPage = (
       return yield* invalid("invalid_response")
 
     const items = yield* Either.all(
-      nodes.map(node => decodeItem(node, binding, project.statusField.options)),
+      nodes.map(node => decodeItem(node, binding, statusField.options)),
     )
     const issues = items.flatMap(item =>
       item.kind === "issue" ? [issueKey(item.issue)] : [],
@@ -276,7 +278,7 @@ export const decodeGitHubProjectPage = (
       viewer: Object.freeze({ ...envelope.data.viewer }),
       inProgress: Object.freeze(inProgress),
       statusOptions: Object.freeze(
-        project.statusField.options.map(option => Object.freeze({ ...option })),
+        statusField.options.map(option => Object.freeze({ ...option })),
       ),
       items: Object.freeze(items),
       pageInfo: Object.freeze({ ...pageInfo }),
