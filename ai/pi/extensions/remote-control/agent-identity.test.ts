@@ -44,7 +44,6 @@ test("agent display labels combine a friendly project and declared role", () => 
     agentDisplayLabel("reviews", [{ role: "review-worker", mode: "task" }]),
     "Reviews · Review Worker",
   )
-  assert.equal(agentDisplayLabel("st0x-review-duty", []), "ST0x Review Duty")
 })
 
 test("registry-owned roles feed the bridge heartbeat through a typed identity event", () => {

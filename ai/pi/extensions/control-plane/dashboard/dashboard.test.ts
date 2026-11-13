@@ -6,20 +6,6 @@ const appUrl = new URL("./app.tsx", import.meta.url)
 const app = readFileSync(appUrl, "utf8")
 const css = readFileSync(new URL("./app.css", import.meta.url), "utf8")
 const html = readFileSync(new URL("./index.html", import.meta.url), "utf8")
-const browserRuntimeSources = [
-  "../job-runtime.ts",
-  "../job-presentation.ts",
-  "../harness-protocol.ts",
-  "../review-duty-profile.ts",
-].map(path => readFileSync(new URL(path, import.meta.url), "utf8"))
-const home = readFileSync(
-  new URL("../../../../../home.nix", import.meta.url),
-  "utf8",
-)
-const dashboardLauncher = home.slice(
-  home.indexOf("  piControlPlane ="),
-  home.indexOf("  piControlPlaneWatch ="),
-)
 
 test("dashboard uses Solid lifecycle primitives and validates API job state", () => {
   assert.match(app, /from "solid-js"/)
@@ -88,20 +74,12 @@ test("dashboard uses Solid lifecycle primitives and validates API job state", ()
     /\.filter\(\(\{ resetAt \}\) => resetAt === activeRunway\.latest\.resetAt\)/,
   )
   assert.match(app, /PROJECT ALLOCATION/)
-  assert.doesNotMatch(app, /FEEDER LANES/)
   assert.match(app, /job\.spec\.payload\.task/)
   assert.match(app, /jobSchedulePresentation\(job\)/)
   assert.match(app, /classList=\{\{ stale: schedule\.stale \}\}/)
   assert.doesNotMatch(app, /job\.state === "leased" \? "Lease" : "Run"/)
   assert.match(app, /Array\.isArray\(value\.checkpoints\)/)
   assert.doesNotMatch(app, /innerHTML|dangerouslySetInnerHTML/)
-})
-
-test("dashboard browser bundle dependencies do not import Node built-ins", () => {
-  assert.doesNotMatch(
-    [app, ...browserRuntimeSources].join("\n"),
-    /(?:from|import\()\s*["']node:/,
-  )
 })
 
 test("dashboard remains observational until typed control commands exist", () => {
@@ -128,34 +106,16 @@ const localImportGraph = (
   )
 }
 
-test("the dashboard launcher stages the full local browser import graph", () => {
+test("the dashboard browser import graph contains no Node built-ins", () => {
   const graph = localImportGraph(appUrl, new Map())
   const imported = [...graph.keys()].filter(href => href !== appUrl.href)
   assert.ok(imported.length > 0, "app.tsx must reach at least one local module")
-  for (const href of graph.keys()) {
-    const relative = href.slice(
-      href.indexOf("control-plane/") + "control-plane/".length,
-    )
-    const argumentsText = relative
-      .split("/")
-      .map(segment => JSON.stringify(segment))
-      .join(" ")
-    const stage = `cp ($source_root | path join ${argumentsText}) ($build_root | path join ${argumentsText})`
-    assert.ok(
-      dashboardLauncher.includes(stage),
-      `${relative} must be staged by the dashboard launcher`,
-    )
-  }
   for (const [href, source] of graph)
     assert.doesNotMatch(
       source,
       /from "node:/u,
       `${href} imports a Node builtin`,
     )
-  assert.match(dashboardLauncher, /piExtensionNodeModules\}\/node_modules/)
-  assert.match(dashboardLauncher, /babel-preset-solid/)
-  assert.match(dashboardLauncher, /pkgs\.esbuild/)
-  assert.match(dashboardLauncher, /--platform=browser/)
 })
 
 test("dashboard assets are local, responsive, and share the terminal archeofuturism palette", () => {

@@ -1,7 +1,6 @@
 import { isAbsolute, join, resolve } from "node:path"
 import { fileURLToPath } from "node:url"
 import { Cause, Data, Effect, Exit } from "effect"
-import { canonicalPath, type CanonicalPath } from "./review-duty-profile.ts"
 import { startControlPlaneServer } from "./server.ts"
 import { makeSqliteJobStore } from "./sqlite-job-store.ts"
 
@@ -12,12 +11,6 @@ export interface ControlPlaneConfig {
   readonly host: typeof LOOPBACK_HOST
   readonly port: number
   readonly databasePath: string
-  /**
-   * Home the registered checkout locations of harness payloads are resolved
-   * against. It is read from the environment once, here, so the boundaries
-   * that admit a payload are handed the home instead of discovering one.
-   */
-  readonly home: CanonicalPath
   readonly dashboardDirectory?: string
 }
 
@@ -55,6 +48,19 @@ export const formatControlPlaneFailure = (
     return `${boundedLogText(failure.name)}: ${message}`
   return message
 }
+
+const canonicalPath = (value: string): string | undefined =>
+  value.length > 1 &&
+  value.length <= 1_024 &&
+  !/\p{Cc}/u.test(value) &&
+  value.startsWith("/") &&
+  !value.endsWith("/") &&
+  value
+    .slice(1)
+    .split("/")
+    .every(segment => segment !== "" && segment !== "." && segment !== "..")
+    ? value
+    : undefined
 
 const absoluteDirectory = (value: unknown): string | undefined =>
   typeof value === "string" &&
@@ -111,7 +117,6 @@ export const parseControlPlaneConfig = (
     host: LOOPBACK_HOST,
     port,
     databasePath: join(stateRoot, "pi", "control-plane", "jobs.sqlite"),
-    home,
     ...(dashboardDirectory ? { dashboardDirectory } : {}),
   })
 }
@@ -131,13 +136,12 @@ export const runControlPlane = (
   config: ControlPlaneConfig,
 ): Effect.Effect<void, unknown> =>
   Effect.gen(function* () {
-    const store = yield* makeSqliteJobStore(config.databasePath, config.home)
+    const store = yield* makeSqliteJobStore(config.databasePath)
     try {
       const server = yield* startControlPlaneServer({
         host: config.host,
         port: config.port,
         store,
-        home: config.home,
         ...(config.dashboardDirectory
           ? { dashboardDirectory: config.dashboardDirectory }
           : {}),

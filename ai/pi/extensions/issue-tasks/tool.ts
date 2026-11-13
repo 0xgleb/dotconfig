@@ -4,6 +4,7 @@ import type {
 } from "@earendil-works/pi-coding-agent"
 import { Cause, Data, Effect, Either, Exit, Option } from "effect"
 import { Type } from "typebox"
+import { taskRenderers } from "./render.ts"
 import {
   decodeIssueNextQuery,
   type IssueNextQuery,
@@ -29,6 +30,7 @@ import {
   MAX_TASK_PAGE_SIZE,
   type IssueTaskPageResult,
   type IssueTaskDetail,
+  type IssueTask,
   type IssueTaskPage,
   type MutationBatchId,
   type TaskAddress,
@@ -102,6 +104,10 @@ const TaskStatusParameter = Type.Union([
   Type.Literal("doing"),
   Type.Literal("done"),
   Type.Literal("cancelled"),
+  Type.Object(
+    { _tag: Type.Literal("blocked"), reason: TaskTextParameter },
+    { additionalProperties: false },
+  ),
 ])
 const OperationParameters = Type.Union([
   Type.Object(
@@ -133,14 +139,6 @@ const OperationParameters = Type.Union([
   ),
   Type.Object(
     {
-      op: Type.Literal("block"),
-      target: TaskReferenceParameters,
-      reason: Type.Union([Type.Null(), TaskTextParameter]),
-    },
-    { additionalProperties: false },
-  ),
-  Type.Object(
-    {
       op: Type.Literal("transfer"),
       target: TaskReferenceParameters,
       toIssue: IssueParameters,
@@ -157,8 +155,15 @@ const TaskPageParameters = Type.Object(
 )
 const TaskFilterParameters = Type.Object(
   {
-    status: Type.Optional(TaskStatusParameter),
-    blocked: Type.Optional(Type.Boolean()),
+    status: Type.Optional(
+      Type.Union([
+        Type.Literal("todo"),
+        Type.Literal("doing"),
+        Type.Literal("done"),
+        Type.Literal("cancelled"),
+        Type.Literal("blocked"),
+      ]),
+    ),
   },
   { additionalProperties: false },
 )
@@ -340,6 +345,11 @@ export type TaskExecutionOutcome =
 export interface TaskToolDetails {
   readonly outcome: TaskExecutionOutcome
   readonly output: "complete" | "unavailable"
+  readonly invocation?: TaskNativeCall
+  readonly displayTasks?: readonly {
+    readonly issue: IssueReference
+    readonly task: IssueTask
+  }[]
 }
 export interface TaskNativeCall {
   readonly toolCallId: string
@@ -618,7 +628,7 @@ const placeSavedOutcome = async (
     if (place !== undefined) {
       const attempted = await Effect.runPromiseExit(
         Effect.suspend(() => place(saved.result, invocation, observe)),
-        { signal },
+        signal === undefined ? {} : { signal },
       )
       if (Exit.isSuccess(attempted)) observe(attempted.value)
       else
@@ -662,8 +672,9 @@ export const createTaskTool = (options: TaskToolOptions): IssueTaskTool => ({
   name: "task",
   label: "Task",
   description:
-    "Select and pick up an eligible issue with next query {repository,project:personal|dataclique,mode?:implementation|review}; review mode selects In review without changing assignees or status. Read/get issue-qualified tasks, listIssues/getIssue metadata with local tasks, or apply an atomic explicit-issue mutation batch. read uses issue/page/filter; readMany explicit queries totals at most 100 requested tasks; get uses issue/id. listIssues uses query {repository,state,page,tasks:{limit,filter?}} with at most 100 aggregate requested tasks; getIssue uses query {issue,related:{limit,blockedByAfter?,deliveryAfter?},tasks:{page,filter?}}. apply uses complete issues/operations (add, edit, status, block, transfer). No worker selection or replies. Mutation authority and request identity come only from the host.",
+    "Select and pick up an eligible issue with next query {repository,project:personal|dataclique,mode?:implementation|review}; review mode selects In review without changing assignees or status. Use positive integers when writing GitHub Priority ranks; next also accepts existing positive finite fractional priorities. Read/get issue-qualified tasks, listIssues/getIssue metadata with local tasks, or apply an atomic explicit-issue mutation batch. read uses issue/page/filter; readMany explicit queries totals at most 100 requested tasks; get uses issue/id. listIssues uses query {repository,state,page,tasks:{limit,filter?}} with at most 100 aggregate requested tasks; getIssue uses query {issue,related:{limit,blockedByAfter?,deliveryAfter?},tasks:{page,filter?}}. apply uses complete issues/operations (add, edit, status, block, transfer). No worker selection or replies. Mutation authority and request identity come only from the host.",
   parameters: TaskParameters,
+  ...taskRenderers,
   execute: async (toolCallId, params, signal, onUpdate, ctx) => {
     let outcome: TaskExecutionOutcome
     let completedInvocation: TaskNativeCall | undefined
@@ -764,6 +775,36 @@ export const createTaskTool = (options: TaskToolOptions): IssueTaskTool => ({
         signal,
       )
 
+    // Only receipt-matching readback may supply display names/states. A failed
+    // display read never changes the already-established mutation outcome.
+    let displayTasks: TaskToolDetails["displayTasks"]
+    if (outcome.kind === "saved") {
+      const named = await Effect.runPromiseExit(
+        Effect.forEach(outcome.result.changed.slice(0, 3), row =>
+          Effect.suspend(() => options.store.readTask(row.issue, row.id)).pipe(
+            Effect.map(detail =>
+              Option.filter(
+                detail,
+                value =>
+                  value.revision === row.revision &&
+                  value.task.id === row.id &&
+                  value.issue.repository === row.issue.repository &&
+                  value.issue.number === row.issue.number,
+              ),
+            ),
+          ),
+        ),
+        signal === undefined ? {} : { signal },
+      )
+      displayTasks = Exit.isSuccess(named)
+        ? named.value.flatMap(detail =>
+            Option.isSome(detail)
+              ? [{ issue: detail.value.issue, task: detail.value.task }]
+              : [],
+          )
+        : []
+    }
+
     const rendered =
       signal?.aborted === true
         ? undefined
@@ -779,7 +820,14 @@ export const createTaskTool = (options: TaskToolOptions): IssueTaskTool => ({
 
     return {
       content: [{ type: "text", text }],
-      details: { outcome, output: complete ? "complete" : "unavailable" },
+      details: {
+        outcome,
+        output: complete ? "complete" : "unavailable",
+        ...(completedInvocation === undefined
+          ? {}
+          : { invocation: completedInvocation }),
+        ...(displayTasks === undefined ? {} : { displayTasks }),
+      },
       isError:
         outcome.kind === "failed" ||
         outcome.kind === "unknown" ||

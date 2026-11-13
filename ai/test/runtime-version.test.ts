@@ -8,7 +8,6 @@ const read = (path: string) =>
 const components = [
   ["activity-status", "activity-status"],
   ["agent-registry", "agent-registry"],
-  ["agent-workspace", "agent-workspace"],
   ["auto-reload", "auto-reload"],
   ["write-result-inspector", "write-result-inspector"],
   ["browser-control", "browser-control"],

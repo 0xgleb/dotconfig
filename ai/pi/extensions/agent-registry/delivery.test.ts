@@ -32,20 +32,6 @@ test("cross-project terminal outcomes stay out of unrelated model context", () =
   assert.doesNotMatch(outcomeSource, /pi\.sendMessage\(/)
 })
 
-test("request work phases use one typed implementation-review-publication pipeline", () => {
-  assert.match(source, /Type\.Literal\("start_request"\)/)
-  assert.match(source, /Type\.Literal\("review_request"\)/)
-  assert.match(source, /Type\.Literal\("publish_request"\)/)
-  assert.match(
-    source,
-    /evidenceRef: Type\.Optional\([\s\S]*?Type\.String\(\{ minLength: 1, maxLength: 1_024 \}\)/,
-  )
-  assert.match(
-    source,
-    /store\.advanceRequestBacklog\(\{[\s\S]*?requestId,[\s\S]*?leaseId: lease\.id,[\s\S]*?agentId: agent\.id,[\s\S]*?phase,[\s\S]*?evidenceRef:/,
-  )
-})
-
 test("request mutation shortcuts require an active owned lease", () => {
   assert.match(
     source,
@@ -62,36 +48,6 @@ test("request mutations resolve an exact id or unique prefix to the canonical id
   assert.match(source, /request prefix is ambiguous/)
 })
 
-test("operational receipts wake one safe turn while task-role receipts remain passive", () => {
-  const syncStart = source.indexOf("  const sync = async")
-  const syncEnd = source.indexOf("  const collectDeclaredBacklog", syncStart)
-  assert.ok(syncStart >= 0 && syncEnd > syncStart)
-  const syncSource = source.slice(syncStart, syncEnd)
-  assert.match(syncSource, /store\.heartbeatAgent\(/)
-  assert.match(syncSource, /store\.heartbeat\(/)
-  assert.match(syncSource, /registryReceiptAvailable\(\{/)
-  assert.match(syncSource, /idle: ctx\.isIdle\(\)/)
-  assert.match(syncSource, /pendingMessages: ctx\.hasPendingMessages\(\)/)
-  assert.match(syncSource, /editorText: ctx\.ui\.getEditorText\(\)/)
-  assert.match(syncSource, /autoReloadPending: autoReloadPending\(\)/)
-  assert.match(syncSource, /requestNotificationText\(/)
-  assert.match(syncSource, /requestNotificationDetails\(/)
-  assert.match(syncSource, /store\s*\.\s*receiveRequest\(/)
-  assert.match(syncSource, /lease\.mode === "operational"/)
-  assert.match(syncSource, /triggerTurn: true/)
-  assert.match(
-    syncSource,
-    /This operational receipt started a turn to inspect and prioritize the request/,
-  )
-  assert.match(
-    syncSource,
-    /This task-role receipt remains passive until the next polling or human turn/,
-  )
-  assert.match(syncSource, /notifiedRequests\.add\(request\.id\)/)
-  assert.match(syncSource, /persistNotifiedRequests\(\)/)
-  assert.doesNotMatch(syncSource, /store\.claimRequest\(/)
-})
-
 test("delegate results show bounded request content instead of only queue metadata", () => {
   assert.match(
     source,
@@ -104,7 +60,7 @@ test("delegate results show bounded request content instead of only queue metada
   )
   assert.match(source, /Request content/)
   assert.match(source, /delivery pending recipient receipt/i)
-  assert.match(source, /requestDeliveryStatus\(durableRequest\)/)
+  assert.match(source, /requestDeliveryStatus\(queued\)/)
 })
 
 test("owner-directed delegation attributes intervention to the receiving agent", () => {

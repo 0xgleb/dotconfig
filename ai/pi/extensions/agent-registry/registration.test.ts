@@ -3,11 +3,6 @@ import test from "node:test"
 import type { ExtensionAPI } from "@earendil-works/pi-coding-agent"
 
 import {
-  BRANCH_TODO_BACKLOG_EVENT,
-  CANONICAL_BACKLOG_EVENT,
-  MESSAGE_BACKLOG_EVENT,
-} from "../shared/backlog-events.ts"
-import {
   REGISTRY_DELEGATE_REQUEST_EVENT,
   REGISTRY_IDENTITY_REQUEST_EVENT,
   REGISTRY_INTENT_REQUEST_EVENT,
@@ -51,9 +46,6 @@ test("registry registration subscribes only to current coordination events", () 
     runtime.subscriptions,
     new Set([
       RUNTIME_VERSION_REQUEST_EVENT,
-      MESSAGE_BACKLOG_EVENT,
-      CANONICAL_BACKLOG_EVENT,
-      BRANCH_TODO_BACKLOG_EVENT,
       REGISTRY_INTENT_REQUEST_EVENT,
       REGISTRY_IDENTITY_REQUEST_EVENT,
       REGISTRY_DELEGATE_REQUEST_EVENT,
@@ -68,6 +60,7 @@ test("registry registration subscribes only to current coordination events", () 
       "session_compact",
       "agent_settled",
       "input",
+      "before_agent_start",
       "session_shutdown",
     ]),
   )

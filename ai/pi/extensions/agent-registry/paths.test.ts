@@ -1,6 +1,5 @@
 import assert from "node:assert/strict"
 import test from "node:test"
-
 import { registryStateRoot } from "./paths.ts"
 
 test("registry state root is fixed outside the repository", () => {

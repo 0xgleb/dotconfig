@@ -229,13 +229,9 @@ for (const action of [
   "delegate",
   "clear",
   "claim_request",
-  "start_request",
-  "review_request",
-  "publish_request",
   "complete_request",
   "fail_request",
   "cancel_request",
-  "ingest_backlog",
 ])
   test(`raw registered ${action} rejects malformed roles before opening SQLite`, async t => {
     const f = fixture(t)

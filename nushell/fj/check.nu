@@ -15,59 +15,6 @@ const skill_issues = [
   "no cap your code is cooked, respectfully go fix it"
 ]
 
-def stox-liquidity-check [] {
-  let branch = (^git branch --show-current)
-  log info $"st0x.liquidity checks on ($branch)"
-
-  let worktree_path = (^git rev-parse --show-toplevel)
-  cd $worktree_path
-  log debug $"running from ($worktree_path)"
-
-  try { rm ./dashboard/src/lib/api/* e> /dev/null }
-
-  ^cargo check --color=always
-
-  log debug "auto-fixing before checks"
-  try {
-    (^cargo fix --quiet --allow-staged
-      --tests --workspace --all-features
-      e> /dev/null)
-  }
-
-  (^cargo nextest run --color=always
-    --workspace --all-features
-    --profile dev --show-progress=only)
-
-  (^cargo clippy --color=always --quiet
-    --workspace --all-targets --all-features
-    -- -D clippy::all -D warnings)
-
-  log info "backend's looking good, checking the dashboard"
-
-  cd $"($worktree_path)/dashboard"
-
-  with-env { FORCE_COLOR: "1" } {
-    ^bun install
-    ^bun run check
-    ^bun run test:run
-    ^bun run lint:fix
-  }
-  log info "dashboard seems good to go too"
-
-  log debug "running pre-commit hooks"
-  # First run may auto-fix and exit non-zero; the retry verifies a clean pass.
-  try {
-    ^pre-commit run -a
-  } catch {
-    ^pre-commit run -a
-  }
-
-  log info (
-    $"st0x.liquidity on ($branch)"
-    + " just passed the vibe check"
-  )
-}
-
 def dotconfig-check [] {
   log info "dotconfig checks"
 
@@ -84,9 +31,7 @@ def dotconfig-check [] {
 
 def detect-repo []: nothing -> string {
   let url = (^git remote get-url origin)
-  if ($url | str contains "st0x.liquidity") {
-    "liquidity"
-  } else if ($url | str contains "dotconfig") {
+  if ($url | str contains "dotconfig") {
     "dotconfig"
   } else {
     "unknown"
@@ -96,7 +41,6 @@ def detect-repo []: nothing -> string {
 # Detect the current repo and run its checks; errors if it isn't recognized.
 def dispatch-check [] {
   match (detect-repo) {
-    "liquidity" => { stox-liquidity-check }
     "dotconfig" => { dotconfig-check }
     _ => { error make { msg: $"Couldn't determine what checks to run in (pwd)" } }
   }

@@ -185,11 +185,6 @@ export interface ClaimRequestInput {
   readonly now: number
 }
 
-export interface AdvanceRequestBacklogInput extends ClaimRequestInput {
-  readonly phase: "implementation" | "review" | "publication"
-  readonly evidenceRef: string
-}
-
 export interface CompleteRequestInput extends ClaimRequestInput {
   readonly summary: string
 }
@@ -238,17 +233,17 @@ export const registryReceiptAvailable = (
   availability.editorText.length === 0 &&
   !availability.autoReloadPending
 
-export const prioritizedActiveReceiptLeases = (
+export const activeReceiptLeases = (
   snapshot: RegistrySnapshot,
   agentId: string,
 ): readonly Lease[] =>
-  snapshot.leases
-    .filter(lease => lease.owner.id === agentId && lease.status === "active")
-    .sort(
-      (left, right) =>
-        Number(right.mode === "operational") -
-        Number(left.mode === "operational"),
-    )
+  snapshot.leases.filter(
+    lease => lease.owner.id === agentId && lease.status === "active",
+  )
+
+export interface ReconcileLeaseInput extends ClaimLeaseInput {
+  readonly store: RegistryStore
+}
 
 export interface RegistryStore {
   readonly snapshot: (
@@ -290,9 +285,6 @@ export interface RegistryStore {
   readonly claimRequest: (
     input: ClaimRequestInput,
   ) => Effect.Effect<RegistryRequest, RegistryError>
-  readonly advanceRequestBacklog: (
-    input: AdvanceRequestBacklogInput,
-  ) => Effect.Effect<RegistryRequest, RegistryError>
   readonly completeRequest: (
     input: CompleteRequestInput,
   ) => Effect.Effect<RegistryRequest, RegistryError>
@@ -308,6 +300,31 @@ export const RegistryStore = Context.GenericTag<RegistryStore>(
 export const runRegistryEffect: <T>(
   operation: Effect.Effect<T, RegistryError>,
 ) => Promise<T> = operation => Effect.runPromise(operation)
+
+export const reconcileSessionLease: (
+  input: ReconcileLeaseInput,
+) => Effect.Effect<ClaimLeaseResult, RegistryError> = input =>
+  Effect.gen(function* () {
+    const snapshot = yield* input.store.snapshot(input.now)
+    const existing = snapshot.leases.find(
+      lease =>
+        lease.project === input.project &&
+        lease.role === input.role &&
+        lease.owner.id === input.agent.id,
+    )
+    if (
+      existing &&
+      (existing.status === "suspended" ||
+        existing.policyDigest !== input.policyDigest)
+    ) {
+      yield* input.store.release({
+        leaseId: existing.id,
+        agentId: input.agent.id,
+        now: input.now,
+      })
+    }
+    return yield* input.store.claim(input)
+  })
 
 export const registrySnapshotForProject = (
   snapshot: RegistrySnapshot,

@@ -408,6 +408,7 @@ const autoReload: (pi: ExtensionAPI) => void = pi => {
     plan: HostMigrationPlan,
   ): void => {
     let failureReported = false
+
     const migrateWhenIdle = (): void => {
       hostMigrationTimer = undefined
       if (agentRunActive || !ctx.isIdle() || ctx.hasPendingMessages()) {

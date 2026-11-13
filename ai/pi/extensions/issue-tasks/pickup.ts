@@ -244,7 +244,10 @@ export const createIssueNextPicker = (options: {
       if (
         !eligibleObservation(target, initial) ||
         (initial.status !== null &&
-          observation.refineOptions?.includes(initial.status.optionId) === true)
+          (observation.refineOptions?.includes(initial.status.optionId) ===
+            true ||
+            observation.inReviewOptions?.includes(initial.status.optionId) ===
+              true))
       )
         return yield* Effect.fail(pickError("stale_selection"))
       record({

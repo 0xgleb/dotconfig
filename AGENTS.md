@@ -96,8 +96,7 @@ Common mistakes to avoid:
 `fj` (aliases `f`, `j`) is a nushell module at `nushell/fj/` that is the user's
 single entry point for day-to-day version control and dev chores. It dispatches
 a subcommand to the right underlying tool: `git`, `but`, `gh`, or an internal
-workflow (`do`, `check`, `take`, `md`, `infra`). Run `fj help` for the full
-command list.
+workflow (`do`, `check`, `take`, `md`). Run `fj help` for the full command list.
 
 ## VCS backend routing
 

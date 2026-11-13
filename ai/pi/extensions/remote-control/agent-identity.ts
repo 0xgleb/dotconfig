@@ -6,7 +6,6 @@ export type AgentRoleIdentity = RegistryRoleIdentity
 const titleWord = (word: string): string => {
   const normalized = word.toLowerCase()
   if (normalized === "pi") return "Pi"
-  if (normalized === "st0x") return "ST0x"
   return normalized
     ? `${normalized[0]?.toUpperCase()}${normalized.slice(1)}`
     : ""
@@ -26,10 +25,9 @@ export const agentDisplayLabel = (
   roles: readonly AgentRoleIdentity[],
 ): string => {
   const project = titleLabel(baseLabel)
-  const role = [...roles].sort((left, right) => {
-    if (left.mode !== right.mode) return left.mode === "operational" ? -1 : 1
-    return left.role.localeCompare(right.role)
-  })[0]
+  const role = [...roles].sort((left, right) =>
+    left.role.localeCompare(right.role),
+  )[0]
   if (!role) return project
   const roleLabel = titleLabel(role.role)
   return project.toLowerCase().includes(roleLabel.toLowerCase())

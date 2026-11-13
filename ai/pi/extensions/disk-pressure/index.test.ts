@@ -24,24 +24,6 @@ test("macOS capacity uses the shared pressure-aware provider instead of raw free
   assert.match(source, /only.*available.*reserve/is)
 })
 
-test("resource failures retain local diagnostics without incident dispatch", () => {
-  assert.doesNotMatch(source, /pi\.events\.emit/)
-  assert.match(source, /ctx\.ui\.notify\(summary, "warning"\)/)
-  assert.match(source, /Disk pressure critical/)
-  assert.match(source, /Memory pressure requires action/)
-  assert.match(source, /Post-build cleanup failed safely/)
-})
-
-test("critical memory incidents steer the active session instead of waiting passively", () => {
-  assert.match(source, /customType: "resource-pressure\.incident"/)
-  assert.match(source, /triggerTurn: true, deliverAs: "steer"/)
-  assert.match(source, /This is an actionable incident, not a passive warning/)
-  assert.match(
-    source,
-    /Bounded RSS aggregate \(command names only; no arguments\)/,
-  )
-})
-
 test("disk blocks direct standing-authority cleanup and exact uncertain-state verification", () => {
   assert.match(source, /standing exact cleanup authority/)
   assert.match(source, /dust or Nushell/)

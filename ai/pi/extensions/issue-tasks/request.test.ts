@@ -13,17 +13,25 @@ const issue = (repository = "Owner/Repo", number = 12) => {
   assert.ok(Either.isRight(decoded))
   return decoded.right
 }
+
 const a = issue()
 const b = issue("Owner/Other")
+
 const id = "aaaaaaaa-aaaa-4aaa-8aaa-aaaaaaaaaaaa"
+
 const addition = { op: "add", issue: a, key: "one", text: "One" }
+
 const read = { action: "read", issue: a, page: { limit: 1 } }
+
 const readMany = {
   action: "readMany",
   queries: [{ issue: a, page: { limit: 1 } }],
 }
+
 const get = { action: "get", issue: a, id }
+
 const apply = { action: "apply", issues: [a], operations: [addition] }
+
 const failure = (input: unknown, code: TaskRequestDecodeError["code"]) => {
   const decoded = decodeTaskRequest(input)
   assert.ok(Either.isLeft(decoded))
@@ -35,22 +43,27 @@ test("multi-issue task queries normalize and detach every qualified page", () =>
     {
       issue: { repository: "Owner/Repo", number: 12 },
       page: { limit: 1 },
-      filter: { blocked: false },
+      filter: { status: "todo" },
     },
   ]
+
   const decoded = decodeTaskReadQueries(source)
 
   assert.ok(Either.isRight(decoded))
   assert.deepEqual(decoded.right, [
-    { issue: a, page: { limit: 1 }, filter: { blocked: false } },
+    { issue: a, page: { limit: 1 }, filter: { status: "todo" } },
   ])
+
   const first = source[0]
+
   assert.ok(first)
+
   first.issue.repository = "Other/Repo"
   first.page.limit = 2
-  first.filter.blocked = true
+  first.filter.status = "blocked"
+
   assert.deepEqual(decoded.right, [
-    { issue: a, page: { limit: 1 }, filter: { blocked: false } },
+    { issue: a, page: { limit: 1 }, filter: { status: "todo" } },
   ])
   assert.ok(Object.isFrozen(decoded.right))
   assert.ok(
@@ -69,6 +82,7 @@ test("task readMany decodes explicit pages without worker or mutation authority"
     { issue: a, page: { limit: 1 } },
     { issue: b, page: { limit: 2 }, filter: { status: "doing" } },
   ]
+
   const decoded = decodeTaskRequest({ action: "readMany", queries })
 
   assert.ok(Either.isRight(decoded))
@@ -92,6 +106,7 @@ test("task readMany accepts the exact shared row budget with repeated issue quer
 
 test("task readMany rejects malformed vectors, later queries and aggregate overflow", () => {
   const query = { issue: a, page: { limit: 1 } }
+
   for (const queries of [
     null,
     [],
@@ -136,19 +151,22 @@ test("task readMany rejects malformed vectors, later queries and aggregate overf
 })
 
 test("task read decodes a detached explicit status and blocker filter", () => {
-  const filter = { status: "doing", blocked: false }
+  const filter = { status: "doing" }
+
   const decoded = decodeTaskRequest({ ...read, filter })
 
   assert.ok(Either.isRight(decoded))
   assert.deepEqual(decoded.right, {
     ...read,
-    filter: { status: "doing", blocked: false },
+    filter: { status: "doing" },
   })
+
   filter.status = "done"
-  filter.blocked = true
+  filter.status = "blocked"
+
   assert.deepEqual(decoded.right, {
     ...read,
-    filter: { status: "doing", blocked: false },
+    filter: { status: "doing" },
   })
   assert.ok(decoded.right.action === "read")
   assert.ok(Object.isFrozen(decoded.right.filter))
@@ -172,20 +190,22 @@ test("task filters reject malformed or authority-bearing predicates without coer
   failure({ ...apply, filter: {} }, "invalid_request")
 })
 
-test("task filters accept all lifecycle statuses and preserve false or omitted predicates", () => {
-  for (const status of ["todo", "doing", "done", "cancelled"])
-    for (const blocked of [undefined, true, false]) {
-      const filter = { status, ...(blocked === undefined ? {} : { blocked }) }
-      const decoded = decodeTaskRequest({ ...read, filter })
-      assert.ok(Either.isRight(decoded))
-      assert.deepEqual(decoded.right, { ...read, filter })
-    }
-  for (const filter of [{}, { status: undefined, blocked: undefined }]) {
+test("task filters accept each lifecycle case", () => {
+  for (const status of ["todo", "doing", "done", "cancelled", "blocked"]) {
+    const filter = { status }
+    const decoded = decodeTaskRequest({ ...read, filter })
+    assert.ok(Either.isRight(decoded))
+    assert.deepEqual(decoded.right, { ...read, filter })
+  }
+
+  for (const filter of [{}, { status: undefined }]) {
     const decoded = decodeTaskRequest({ ...read, filter })
     assert.ok(Either.isRight(decoded))
     assert.deepEqual(decoded.right, { ...read, filter: {} })
   }
+
   const omitted = decodeTaskRequest({ ...read, filter: undefined })
+
   assert.ok(Either.isRight(omitted))
   assert.deepEqual(omitted.right, read)
 })
@@ -196,6 +216,7 @@ test("task read request canonicalizes its explicit issue and preserves its page"
     issue: { repository: "Owner/Repo", number: 12 },
     page: { limit: 1 },
   })
+
   assert.ok(Either.isRight(decoded))
   assert.deepEqual(decoded.right, {
     action: "read",
@@ -273,9 +294,11 @@ test("task apply delegates complete issue-qualified mutations without an indepen
     issues: [{ repository: "Owner/Repo", number: 12 }, b],
     operations: [addition, { ...addition, issue: b, text: "Other" }],
   })
+
   assert.ok(Either.isRight(decoded))
   assert.equal(decoded.right.action, "apply")
   if (decoded.right.action !== "apply") assert.fail("Expected apply request")
+
   assert.deepEqual(decoded.right.batch.issues, [a, b])
   assert.deepEqual(decoded.right.batch.operations, [
     { ...addition, dependsOn: [] },
@@ -290,24 +313,21 @@ for (const field of [
   "cancellation",
   "authority",
   "expectedRevisions",
-  "worker",
-  "planId",
-  "reply",
+  "unexpected",
 ]) {
-  test(`task request rejects caller metadata or legacy field: ${field}`, () => {
+  test(`task request rejects caller context and unknown fields: ${field}`, () => {
     for (const input of [read, readMany, get, apply])
       failure({ ...input, [field]: "forged" }, "invalid_request")
   })
 }
 
-test("task requests reject missing, unknown and legacy action envelopes", () => {
+test("task requests reject missing and unknown action envelopes", () => {
   for (const input of [
     null,
     [],
     "read",
     {},
-    { ...read, action: "reply" },
-    { ...read, action: "createPlan" },
+    { ...read, action: "unknown_action" },
     { action: "read", issue: a },
     { action: "read", page: { limit: 1 } },
     { action: "apply", issues: [a] },
@@ -339,7 +359,7 @@ test("task read validates qualified issue identity rather than inferring a repos
   for (const target of [
     { number: 12 },
     { repository: "Owner/Repo", number: 0 },
-    { repository: "Owner/Repo", number: 12, planId: id },
+    { repository: "Owner/Repo", number: 12, unexpected: id },
     "Owner/Repo#12",
   ])
     failure({ ...read, issue: target }, "invalid_issue")
@@ -367,7 +387,7 @@ test("task apply does not discard unexpected nested mutation fields", () => {
       ...apply,
       operations: [
         {
-          op: "reply",
+          op: "unknown_operation",
           target: { issue: a, task: { kind: "existing", id } },
           text: "New assignment",
         },
@@ -420,7 +440,9 @@ test("task decoding treats lifecycle intent as data, not a cancellation grant", 
       },
     ],
   })
+
   assert.ok(Either.isRight(decoded))
+
   failure(
     {
       ...apply,
@@ -442,18 +464,24 @@ test("decoded requests detach from mutable caller data and are immutable", () =>
     issue: { repository: "Owner/Repo", number: 12 },
     page: { limit: 1, after: id },
   }
+
   const decoded = decodeTaskRequest(source)
+
   assert.ok(Either.isRight(decoded))
   assert.equal(decoded.right.action, "read")
   if (decoded.right.action !== "read") assert.fail("Expected read request")
+
   source.issue.repository = "Owner/Other"
   source.page.limit = 100
   source.page.after = "bbbbbbbb-bbbb-4bbb-8bbb-bbbbbbbbbbbb"
+
   assert.deepEqual(decoded.right, { ...read, page: { limit: 1, after: id } })
   assert.ok(Object.isFrozen(decoded.right))
   assert.ok(Object.isFrozen(decoded.right.issue))
   assert.ok(Object.isFrozen(decoded.right.page))
+
   const write = decodeTaskRequest(apply)
+
   assert.ok(Either.isRight(write))
   assert.ok(Object.isFrozen(write.right))
 })

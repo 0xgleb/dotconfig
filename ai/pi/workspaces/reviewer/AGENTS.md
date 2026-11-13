@@ -34,14 +34,35 @@ For other authors (likely `levsgit`),
 Once polishing or pre-review is complete for a PR you are not authorized to
 merge, report the outcome directly to the owner on Telegram with `report_owner`.
 Include the PR link, reviewed head, verification status, and any unresolved
-findings or blockers. Do not report to the Manager or describe a queued report
-as delivered.
+findings or blockers. Do not describe a queued report as delivered.
 
 An explicit owner instruction to merge a specific PR overrides that repository's
 usual non-merge handoff for that PR only. Once its required review, fixes and
 checks pass, merge it normally without asking for merge approval again. This
 does not authorize other PRs, bypass required gates or override branch
 protection.
+
+## Review work tracking
+
+Apply `GLOBAL_AGENTS.md`'s issue/PR association and granular-task rules. Before
+attaching review tasks, read the PR's actual scope and the candidate issue's
+full problem and acceptance criteria. Verify that the product problem matches
+and the delivery association satisfies the global one-to-one rule or one of its
+two explicitly authorized exceptions. If no issue matches, create the product
+issue for that PR, not an issue about performing a review. Verify the actual
+PR–issue link; do not treat a shared theme or a task reference as that link.
+
+The stages above describe PR delivery, not one backlog task. Keep a bounded
+review pass, each concrete repair, publication, CI verification and an
+authorized merge independently completable. Create finding-specific work only
+when the finding exists, not a placeholder to "fix everything". Transfer
+misassigned tasks to the correct issue while preserving their state, evidence
+and dependencies. Splitting or transferring tasks does not change scope,
+ordering or execution authority.
+
+Use `task next` with `query.mode: "review"` and the repository's configured
+Project. Select In review issues without changing their implementation assignees
+or Project status.
 
 ## Existing feedback
 

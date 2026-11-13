@@ -103,10 +103,9 @@ own side-effect idempotency. The runtime never claims exactly-once execution.
 A registered retry policy contains maximum attempts, base delay, multiplier,
 maximum delay, and bounded jitter. The chosen `runAt` is persisted when retry or
 recurrence is scheduled; workers do not independently recompute it after
-restart. Recurring review duty uses a two-hour base with plus-or-minus-one-hour
-jitter. A recurring job schedules its successor transactionally when its attempt
-reaches a terminal state, so a crash cannot silently lose the recurrence or
-create an unbounded duplicate series.
+restart. A recurring job schedules its successor transactionally when its
+attempt reaches a terminal state, so a crash cannot silently lose the recurrence
+or create an unbounded duplicate series.
 
 ### Registered handlers, not arbitrary remote execution
 
@@ -117,7 +116,6 @@ tool arguments, credentials, or approval tokens.
 Pi processes remain the workers for policy-sensitive agent jobs. A worker claims
 a supported job, then invokes the existing typed local implementation:
 
-- review polling becomes a recurring `review-duty.scan` job;
 - a classified workflow becomes a `classified-workflow.run` job whose payload is
   the already-bounded workflow request and limits;
 - deferred todo wakeups become `todo.wake` jobs;

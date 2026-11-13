@@ -8,20 +8,11 @@ const read = (path: string): string =>
 const questions = read("../pi/extensions/questions/index.ts")
 const remote = read("../pi/extensions/remote-control/index.ts")
 const telegram = read("../pi/extensions/remote-control/piece-of-pi.ts")
-const classified = read("../pi/extensions/classified-workflows/index.ts")
 
 test("pending questions publish to the exact remote Pi session", () => {
   assert.match(questions, /pi\.events\.emit\(QUESTION_STATE_EVENT, snapshot\)/)
   assert.match(remote, /store\.syncQuestions\(/)
   assert.match(remote, /agentId: ctx\.sessionManager\.getSessionId\(\)/)
-})
-
-test("dedicated review duty cannot advance until its verdict question is Telegram-linked", () => {
-  assert.match(classified, /name: "review_duty"/)
-  assert.match(classified, /reviewWorkflowBlockReason/)
-  assert.match(classified, /startReviewWorkflow\(reviewDutyState/)
-  assert.match(classified, /remoteBridge\.isQuestionRelayed/)
-  assert.match(classified, /reportReviewDuty\(/)
 })
 
 test("Telegram replies return only through the typed question resolution event", () => {

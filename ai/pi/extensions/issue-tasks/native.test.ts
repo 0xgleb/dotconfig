@@ -1,14 +1,8 @@
 import assert from "node:assert/strict"
-import { execFileSync } from "node:child_process"
-import {
-  existsSync,
-  mkdirSync,
-  mkdtempSync,
-  realpathSync,
-  rmSync,
-} from "node:fs"
+import { existsSync, mkdirSync, mkdtempSync, rmSync } from "node:fs"
 import { createRequire } from "node:module"
-import { dirname, join } from "node:path"
+import { join } from "node:path"
+import { getPackageDir } from "@earendil-works/pi-coding-agent"
 import test, { mock } from "node:test"
 import { DatabaseSync } from "node:sqlite"
 import { fileURLToPath, pathToFileURL } from "node:url"
@@ -17,13 +11,7 @@ import type { NativeTaskToolOptions } from "./native.ts"
 import type { IssueTaskTool } from "./tool.ts"
 import { openSqliteTaskStore, type TaskStoreError } from "./sqlite-store.ts"
 
-const executable = realpathSync(
-  execFileSync("which", ["pi"], { encoding: "utf8" }).trim(),
-)
-const hostRoot = join(
-  dirname(dirname(executable)),
-  "lib/node_modules/pi-monorepo",
-)
+const hostRoot = getPackageDir()
 const host = createRequire(join(hostRoot, "package.json"))
 
 const { createJiti } = await import(

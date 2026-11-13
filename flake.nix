@@ -126,32 +126,6 @@
         ];
       };
 
-      # Remote NixOS on Digital Ocean
-      nixosConfigurations.nixxxos = nixpkgs.lib.nixosSystem {
-        system = "x86_64-linux";
-        specialArgs = { inherit inputs; };
-        modules = [
-          ./common.nix
-          ./nixos.nix
-          ./digitalocean.nix
-          disko.nixosModules.disko
-          home-manager.nixosModules.home-manager
-          {
-            home-manager.useGlobalPkgs = true;
-            home-manager.useUserPackages = true;
-            home-manager.extraSpecialArgs = { inherit inputs; };
-            home-manager.users."0xgleb" =
-              { inputs, ... }:
-              {
-                imports = [
-                  inputs.nix-doom-emacs-unstraightened.homeModule
-                  ./home.nix
-                ];
-              };
-          }
-        ];
-      };
-
       packages.aarch64-darwin =
         let
           pkgs = import nixpkgs {
@@ -164,8 +138,7 @@
             inherit pkgs;
             metagendaFj = pkgs.callPackage ./nushell/fj/portable { };
           };
-        }
-        // import ./infra { inherit pkgs inputs; };
+        };
 
       checks.aarch64-darwin =
         let
@@ -370,7 +343,6 @@
                   ai/pi/extensions/classified-workflows/intent-context.test.ts \
                   ai/pi/extensions/classified-workflows/manual-reload-boundary.test.ts \
                   ai/pi/extensions/control-plane/job-runtime.test.ts \
-                  ai/pi/extensions/control-plane/review-duty-profile.test.ts \
                   ai/pi/extensions/control-plane/server.test.ts \
                   ai/pi/extensions/control-plane/sqlite-job-store.test.ts \
                   ai/pi/extensions/control-plane/usage-policy.test.ts \
@@ -387,9 +359,6 @@
                   ai/pi/extensions/agent-registry/registry.test.ts \
                   ai/pi/extensions/agent-registry/presentation.test.ts \
                   ai/pi/extensions/agent-registry/listing.test.ts \
-                  ai/pi/extensions/agent-registry/backlog-wake-controller.test.ts \
-                  ai/pi/extensions/agent-registry/backlog-wake.test.ts \
-                  ai/pi/extensions/agent-registry/backlog.test.ts \
                   ai/pi/extensions/remote-control/agent-identity.test.ts \
                   ai/pi/extensions/auto-reload/index.test.ts \
                   ai/pi/extensions/auto-reload/local-failures.test.ts \

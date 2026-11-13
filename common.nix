@@ -10,9 +10,6 @@ in
   # Export for use in other modules
   _module.args.userConfig = user;
 
-  # programs.zsh.enable = true;
-  # programs.direnv.enable = true;
-
   environment = {
     # etc."nushell/config.nu".source = ./nushell/config.nu;
     # etc."nushell/env.nu".source = ./nushell/env.nu;
@@ -36,7 +33,6 @@ in
       jq
       magic-wormhole
       fastfetch
-      # oh-my-zsh
       ripgrep
       tldr
       tree
@@ -51,18 +47,13 @@ in
       # Git
       gh
       git
-      gitui
       git-lfs
       git-extras
 
       # Dev tools
       nodejs_24
-      bacon
+      cargo-watch
       fswatch
-
-      # # AI
-      opencode
-      ollama
 
       # Nix tools
       nil

@@ -47,7 +47,7 @@ test("bounded intent keeps explicit human authority across assistant churn", () 
       type: "message",
       message: {
         role: "user",
-        content: "Run the st0x-review agent now.",
+        content: "Run the personal-review agent now.",
       },
     },
     ...Array.from({ length: 20 }, (_, index) => ({
@@ -62,7 +62,7 @@ test("bounded intent keeps explicit human authority across assistant churn", () 
   const evidence = boundedConversationIntentEvidence(entries, 12, 8)
   assert.equal(
     evidence[0],
-    "Newest human message (authoritative only for what it actually says): Run the st0x-review agent now.",
+    "Newest human message (authoritative only for what it actually says): Run the personal-review agent now.",
   )
   assert.equal(evidence.length, 13)
   assert.match(evidence.at(-1) ?? "", /untrusted progress 19/)
@@ -198,7 +198,7 @@ test("retired retrieval cannot restore EOD scope for a current question", () => 
             name: "session_search",
             arguments: {
               query: "newest owner request draft eod telegram",
-              project: "st0x",
+              project: "example",
             },
           },
         ],
@@ -216,7 +216,7 @@ test("retired retrieval cannot restore EOD scope for a current question", () => 
             type: "text",
             text: [
               "Found 1 result:",
-              "📅 Aug 31, 2026 | 📁 st0x | 👤 User",
+              "📅 Aug 31, 2026 | 📁 example | 👤 User",
               "make sure to start a draft eod and send it to me on telegram",
             ].join("\n"),
           },
@@ -245,7 +245,7 @@ test("retired retrieval cannot restore EOD scope for a current question", () => 
       branch,
       toolName: "ask_user",
       input: proposedQuestion,
-      cwd: "/Users/example/st0x",
+      cwd: "/Users/example/example",
     }),
     false,
   )
@@ -266,7 +266,7 @@ test("retired retrieval cannot restore EOD scope for a current question", () => 
       branch,
       toolName: "ask_user",
       input: proposedQuestion,
-      cwd: "/Users/example/st0x",
+      cwd: "/Users/example/example",
     }),
     false,
   )
@@ -285,7 +285,7 @@ test("retired retrieval cannot restore EOD scope for a current question", () => 
       ],
       toolName: "ask_user",
       input: proposedQuestion,
-      cwd: "/Users/example/st0x",
+      cwd: "/Users/example/example",
     }),
     false,
   )
@@ -733,7 +733,7 @@ test("action admission applies the restored-capability stale-verdict correction"
   const source = readFileSync(new URL("./index.ts", import.meta.url), "utf8")
   assert.match(
     source,
-    /if \(\s*restoredCapabilityDisprovesCommunicationOnlyBlock\(\{\s*reason: decision\.reason,\s*branch: ctx\.sessionManager\.getBranch\(\),\s*\}\)\s*\) \{\s*persistReviewWorkflowStart\(\)\s*return/s,
+    /if \(\s*restoredCapabilityDisprovesCommunicationOnlyBlock\(\{\s*reason: decision\.reason,\s*branch: ctx\.sessionManager\.getBranch\(\),\s*\}\)\s*\) \{\s*return/s,
   )
 })
 

@@ -1,7 +1,6 @@
 import assert from "node:assert/strict"
 import test from "node:test"
 import {
-  agentAllocation,
   applyInteractionPacing,
   allowanceRunway,
   effectiveThrottleRatio,
@@ -152,39 +151,6 @@ test("open pacing removes autonomous cadence while pressure preserves role weigh
     rolePollingPolicy("reviewer", "critical").effectiveIntervalMs,
     16 * 60 * 60 * 1_000,
   )
-})
-
-test("each st0x agent receives twice the allocation of every other agent", () => {
-  const now = 10 * 60 * 60 * 1_000
-  const st0x = agentAllocation(
-    "/Users/example/code/st0x/st0x.liquidity",
-    now,
-    now,
-  )
-  const other = agentAllocation(
-    "/Users/example/code/dataclique/yielduck",
-    now,
-    now,
-  )
-
-  assert.equal(st0x.configuredWeight, 2)
-  assert.equal(other.configuredWeight, 1)
-  assert.equal(st0x.effectiveWeight, other.effectiveWeight * 2)
-})
-
-test("agent allocation decays smoothly toward a nonzero progress floor", () => {
-  const now = 10 * 60 * 60 * 1_000
-  const recent = agentAllocation("/Users/example/code/project", now, now)
-  const twoHoursOld = agentAllocation(
-    "/Users/example/code/project",
-    now - 2 * 60 * 60 * 1_000,
-    now,
-  )
-  const never = agentAllocation("/Users/example/code/project", undefined, now)
-
-  assert.equal(recent.effectiveWeight, 1)
-  assert.equal(twoHoursOld.effectiveWeight, 0.625)
-  assert.equal(never.effectiveWeight, 0.25)
 })
 
 test("combined capacity follows the same measured runway controller", () => {

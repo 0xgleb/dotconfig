@@ -1,5 +1,5 @@
 import assert from "node:assert/strict"
-import { mkdtempSync, readFileSync, rmSync, type BigIntStatsFs } from "node:fs"
+import { mkdtempSync, rmSync, type BigIntStatsFs } from "node:fs"
 import { createRequire, syncBuiltinESMExports } from "node:module"
 import { tmpdir } from "node:os"
 import { join } from "node:path"
@@ -33,14 +33,6 @@ const resourceRuntime = async (
   memory: () => bigint | undefined,
 ) => {
   const root = mkdtempSync(join(tmpdir(), "pi-pressure-fixture-"))
-  const incidentPath = join(
-    root,
-    ".local",
-    "state",
-    "pi",
-    "resource-pressure",
-    "incident.json",
-  )
   const hooks = new Map<string, Set<Hook>>()
   const notifications: { message: string; level: unknown }[] = []
   const messages: unknown[] = []
@@ -196,7 +188,6 @@ const resourceRuntime = async (
     messages,
     events,
     root,
-    incidentPath,
     assertIsolated: () => {
       assert.ok(probes.length > 0)
       for (const probe of probes)
@@ -258,7 +249,7 @@ test("critical disk stays visible and blocks expensive work locally", async t =>
   runtime.assertIsolated()
 })
 
-test("critical memory persists one deduplicated in-session remediation incident", async t => {
+test("critical memory blocks expensive work with a capacity explanation", async t => {
   const runtime = await resourceRuntime(
     t,
     resource.WARNING_FREE_BYTES,
@@ -266,29 +257,14 @@ test("critical memory persists one deduplicated in-session remediation incident"
   )
 
   const decision = await runtime.dispatch("tool_call", buildCall)
-  const persisted = readFileSync(runtime.incidentPath, "utf8")
-  const repeated = await runtime.dispatch("tool_call", buildCall)
 
   assert.ok(
     record(decision) &&
       decision.block === true &&
       typeof decision.reason === "string",
   )
-  assert.match(decision.reason, /Memory pressure incident/u)
-  assert.deepEqual(repeated, decision)
-  assert.equal(runtime.notifications.length, 1)
-  assert.equal(runtime.messages.length, 1)
-  const message = runtime.messages[0]
-  assert.ok(record(message) && record(message.message))
-  assert.equal(message.message.customType, "resource-pressure.incident")
-  assert.deepEqual(message.options, { triggerTurn: true, deliverAs: "steer" })
-  const incident: unknown = JSON.parse(persisted)
-  assert.ok(
-    record(incident) &&
-      incident.sessionId === "fixture-session" &&
-      typeof incident.createdAt === "number",
-  )
-  assert.equal(readFileSync(runtime.incidentPath, "utf8"), persisted)
+  assert.match(decision.reason, /Memory pressure guard/u)
+  assert.match(decision.reason, /available; reserve/u)
   runtime.assertIsolated()
 })
 

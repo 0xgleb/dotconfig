@@ -11,7 +11,7 @@ export type GoalState =
       lastReason?: string
     }
   | {
-      status: "achieved" | "cleared" | "paused"
+      status: "achieved" | "cleared"
       condition: string
       startedAt: number
       finishedAt: number
@@ -67,9 +67,7 @@ export function parseStoredGoal(value: unknown): GoalState | undefined {
     }
   }
   if (
-    (value.status !== "achieved" &&
-      value.status !== "cleared" &&
-      value.status !== "paused") ||
+    (value.status !== "achieved" && value.status !== "cleared") ||
     !isNonNegativeInteger(value.finishedAt) ||
     typeof value.lastReason !== "string"
   ) {
@@ -150,19 +148,6 @@ export function buildGoalEvaluatorPrompt(
     transcript.join("\n\n"),
     "</transcript>",
   ].join("\n")
-}
-
-export const recoverLatestIndependentGoal: (
-  states: readonly GoalState[],
-  isLegacyLoopCondition: (condition: string) => boolean,
-) => Extract<GoalState, { status: "active" }> | undefined = (
-  states,
-  isLegacyLoopCondition,
-) => {
-  const state = states.findLast(
-    value => !isLegacyLoopCondition(value.condition),
-  )
-  return state?.status === "active" ? state : undefined
 }
 
 export interface TodoWorkSnapshot {
@@ -361,12 +346,10 @@ export const latestCompactionSummary: (
   return undefined
 }
 
+/** Compatibility export: legacy todo data no longer schedules work. */
 export const taskContinuationMessage: (
   snapshot: TodoWorkSnapshot,
-) => string | undefined = snapshot =>
-  snapshot.pending.length > 0
-    ? `The task list is not complete. Continue working without stopping. Pending: ${snapshot.pending.slice(0, 5).join("; ")}${snapshot.pending.length > 5 ? `; plus ${snapshot.pending.length - 5} more` : ""}.`
-    : undefined
+) => string | undefined = _snapshot => undefined
 
 export function assistantUsageTokens(messages: unknown[]): number {
   return messages.reduce<number>((total, message) => {
@@ -424,16 +407,13 @@ export function applyGoalEvaluation(
 }
 
 export function restoreGoal(state: GoalState, now: number): GoalState {
-  if (state.status !== "active" && state.status !== "paused") return state
+  if (state.status !== "active") return state
   return {
     status: "active",
     condition: state.condition,
     startedAt: now,
     turns: 0,
     tokens: 0,
-    ...(state.status === "paused"
-      ? { lastReason: `Restored from paused legacy state: ${state.lastReason}` }
-      : {}),
   }
 }
 

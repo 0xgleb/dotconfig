@@ -1,8 +1,7 @@
 import assert from "node:assert/strict"
 import { spawn } from "node:child_process"
-import { existsSync, readFileSync } from "node:fs"
+import { existsSync } from "node:fs"
 import { mkdtemp, rm, writeFile } from "node:fs/promises"
-import { stripTypeScriptTypes } from "node:module"
 import { tmpdir } from "node:os"
 import { join } from "node:path"
 import test from "node:test"
@@ -13,7 +12,8 @@ import {
   type SqliteRegistryStore,
 } from "./sqlite-store.ts"
 import {
-  prioritizedActiveReceiptLeases,
+  activeReceiptLeases,
+  reconcileSessionLease,
   RegistryError,
   registryReceiptAvailable,
   registrySyncNotification,
@@ -25,8 +25,6 @@ import {
 } from "./registry.ts"
 import { runtimeAgentId } from "./runtime-identity.ts"
 import type { AgentTokenUsage } from "./usage.ts"
-import { decodeTodoState } from "../shared/legacy-todo-state.ts"
-import { boundedRegistryRequestPreview } from "./presentation.ts"
 
 const withStores: (
   run: (
@@ -144,17 +142,16 @@ test("registry receipt availability preserves active input and reload work", () 
   )
 })
 
-test("operational receipt leases are selected before task leases", () => {
+test("receipts select active leases owned by the current session", () => {
   const lease = (
     id: string,
-    mode: "task" | "operational",
     ownerId = "agent-a",
     status: "active" | "paused" = "active",
   ): Lease => ({
     id,
     project: "/project",
     role: "driver-worker",
-    mode,
+    mode: "task",
     owner: agent(ownerId),
     policyDigest: "policy",
     acquiredAt: 1,
@@ -165,16 +162,16 @@ test("operational receipt leases are selected before task leases", () => {
   const snapshot: RegistrySnapshot = {
     version: 1,
     leases: [
-      lease("task", "task"),
-      lease("operational", "operational"),
-      lease("paused", "operational", "agent-a", "paused"),
-      lease("other-owner", "operational", "agent-b"),
+      lease("review"),
+      lease("research"),
+      lease("paused", "agent-a", "paused"),
+      lease("other-owner", "agent-b"),
     ],
     requests: [],
   }
   assert.deepEqual(
-    prioritizedActiveReceiptLeases(snapshot, "agent-a").map(({ id }) => id),
-    ["operational", "task"],
+    activeReceiptLeases(snapshot, "agent-a").map(({ id }) => id),
+    ["review", "research"],
   )
 })
 
@@ -914,96 +911,6 @@ test("administrative clear does not preserve lookalike path prefixes", async () 
   })
 })
 
-const activityProjection = (text: string): readonly AgentActivity[] => {
-  const source = readFileSync(new URL("./index.ts", import.meta.url), "utf8")
-  const start = source.indexOf("  const activities =")
-  const end = source.indexOf("  const store = makeSqliteRegistryStore", start)
-  assert.ok(start >= 0 && end > start, "actual activity producer must be found")
-  const create = new Function(
-    "Option",
-    "decodeTodoState",
-    "boundedRegistryRequestPreview",
-    `${stripTypeScriptTypes(source.slice(start, end))}\nreturn activities`,
-  )
-  const project: (context: unknown) => readonly AgentActivity[] = create(
-    Option,
-    decodeTodoState,
-    boundedRegistryRequestPreview,
-  )
-  const state = Object.freeze({
-    nextId: 2,
-    todos: Object.freeze([Object.freeze({ id: 1, status: "in_review", text })]),
-  })
-  const result = project({
-    sessionManager: {
-      getBranch: () => [
-        { type: "custom", customType: "todo.state", data: state },
-      ],
-    },
-  })
-  assert.equal(
-    state.todos[0]?.text,
-    text,
-    "projection must preserve the full todo",
-  )
-  return result
-}
-
-test("valid todo activity summaries cannot prevent presence and lease renewal", async () => {
-  for (const text of [
-    "Prepare verified changes ".repeat(30),
-    "Review\n  two\trows",
-    "x".repeat(508) + "😀" + "tail".repeat(60),
-  ]) {
-    await withStores(async store => {
-      const identity = agent("agent-a")
-      const claimed = await Effect.runPromise(
-        store.claim({
-          agent: identity,
-          project: "/workspace/project",
-          role: "driver-worker",
-          mode: "operational",
-          policyDigest: "p1",
-          now: 1_000,
-          ttlMs: 10_000,
-        }),
-      )
-      assert.equal(claimed.outcome, "claimed")
-      const activities = activityProjection(text)
-      const presence = await Effect.runPromise(
-        store.heartbeatAgent({
-          agent: identity,
-          cwd: "/workspace/project",
-          label: "activity regression",
-          usage,
-          activities,
-          now: 9_000,
-          ttlMs: 10_000,
-        }),
-      )
-      await Effect.runPromise(
-        store.heartbeat({
-          leaseId: claimed.lease.id,
-          agentId: identity.id,
-          policyDigest: "p1",
-          now: 9_000,
-          ttlMs: 10_000,
-        }),
-      )
-      const displayed = presence.activities?.[0]?.text
-      assert.ok(typeof displayed === "string")
-      assert.ok(displayed.length > 0 && displayed.length <= 512)
-      assert.equal(Buffer.from(displayed).toString("utf8"), displayed)
-      if (text.length > 512) assert.ok(displayed.endsWith("..."))
-      else assert.equal(displayed, "Review two rows")
-      const snapshot = await Effect.runPromise(store.snapshot(11_001))
-      assert.equal(snapshot.agents?.length, 1)
-      assert.equal(snapshot.leases[0]?.id, claimed.lease.id)
-      assert.equal(snapshot.leases[0]?.status, "active")
-    })
-  }
-})
-
 test("activity projection does not weaken the store text bound", async () => {
   await withStores(async store => {
     await assert.rejects(
@@ -1081,8 +988,8 @@ test("two live processes resumed from one session keep distinct presence and mig
       Effect.runPromise(
         store.heartbeatAgent({
           agent: identity,
-          cwd: "/workspace/st0x",
-          label: "st0x",
+          cwd: "/workspace/example",
+          label: "example",
           usage,
           now,
           ttlMs: 10_000,
@@ -1093,7 +1000,7 @@ test("two live processes resumed from one session keep distinct presence and mig
     const claimed = await Effect.runPromise(
       store.claim({
         agent: firstLegacy,
-        project: "/workspace/st0x",
+        project: "/workspace/example",
         role: "review-worker",
         mode: "operational",
         policyDigest: "p1",
@@ -1107,7 +1014,7 @@ test("two live processes resumed from one session keep distinct presence and mig
         : assert.fail("missing lease")
     const queued = await Effect.runPromise(
       store.enqueue({
-        project: "/workspace/st0x",
+        project: "/workspace/example",
         role: "review-worker",
         requesterId: "requester-session",
         text: "review current PR",
@@ -1347,8 +1254,8 @@ test("acknowledged request history stays durable without entering operational sn
         project: "/workspace/project",
         role: "manager",
         requesterId: "requester",
-        requesterLabel: "st0x PR reviewer",
-        requesterCwd: "/workspace/st0x.rest.api",
+        requesterLabel: "example PR reviewer",
+        requesterCwd: "/workspace/example-api",
         text: "fix classifier",
         now: 1_010,
       }),
@@ -1400,8 +1307,8 @@ test("acknowledged request history stays durable without entering operational sn
       .get(queued.id)
     assert.equal(persisted?.status, "completed")
     assert.equal(persisted?.requester_acknowledged_at, 1_040)
-    assert.equal(persisted?.requester_label, "st0x PR reviewer")
-    assert.equal(persisted?.requester_cwd, "/workspace/st0x.rest.api")
+    assert.equal(persisted?.requester_label, "example PR reviewer")
+    assert.equal(persisted?.requester_cwd, "/workspace/example-api")
   })
 })
 
@@ -1849,83 +1756,5 @@ test("SQLite adapter commits complete versioned state", async () => {
     } finally {
       database.close()
     }
-  })
-})
-
-test("request lifecycle retains start evidence through review into publication", async () => {
-  await withStores(async store => {
-    const claimed = await Effect.runPromise(
-      store.claim({
-        agent: agent("agent-a"),
-        project: "/workspace/project",
-        role: "driver-worker",
-        mode: "operational",
-        policyDigest: "p1",
-        now: 1_000,
-        ttlMs: 10_000,
-      }),
-    )
-    assert.equal(claimed.outcome, "claimed")
-    const lease =
-      claimed.outcome === "claimed"
-        ? claimed.lease
-        : assert.fail("missing lease")
-    const request = await Effect.runPromise(
-      store.enqueue({
-        project: "/workspace/project",
-        role: "driver-worker",
-        requesterId: "requester",
-        text: "deliver the reviewed change",
-        now: 1_010,
-      }),
-    )
-    await Effect.runPromise(
-      store.claimRequest({
-        requestId: request.id,
-        leaseId: lease.id,
-        agentId: "agent-a",
-        now: 1_020,
-      }),
-    )
-    await Effect.runPromise(
-      store.advanceRequestBacklog({
-        requestId: request.id,
-        leaseId: lease.id,
-        agentId: "agent-a",
-        phase: "implementation",
-        evidenceRef: "refs/heads/work@abc123",
-        now: 1_030,
-      }),
-    )
-    await Effect.runPromise(
-      store.advanceRequestBacklog({
-        requestId: request.id,
-        leaseId: lease.id,
-        agentId: "agent-a",
-        phase: "review",
-        evidenceRef: "reviews/42@approved",
-        now: 1_040,
-      }),
-    )
-    const published = await Effect.runPromise(
-      store.advanceRequestBacklog({
-        requestId: request.id,
-        leaseId: lease.id,
-        agentId: "agent-a",
-        phase: "publication",
-        evidenceRef: "pulls/42@merged",
-        now: 1_050,
-      }),
-    )
-    assert.equal(published.status, "claimed")
-    await Effect.runPromise(
-      store.completeRequest({
-        requestId: request.id,
-        leaseId: lease.id,
-        agentId: "agent-a",
-        summary: "published and completed",
-        now: 1_060,
-      }),
-    )
   })
 })

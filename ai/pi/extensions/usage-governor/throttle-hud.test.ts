@@ -114,25 +114,6 @@ test("compact CLI status states only the current slowdown in plain language", ()
   assert.doesNotMatch(status, /provider|reserved|tokens|calls/)
 })
 
-test("agent recency changes the displayed slowdown without exposing counters", () => {
-  const control = decodeThrottleControl({
-    ...fixture,
-    allocation: {
-      configuredWeight: 2,
-      recencyFactor: 0.5,
-      effectiveWeight: 1,
-    },
-  })
-  assert.ok(control)
-
-  const status = throttleStatusText(control)
-  assert.match(status, /84% slower/)
-  assert.match(status, /16% of normal/)
-  const hud = throttleHudLines(control, 180).join("\n")
-  assert.match(hud, /THROTTLE · 84% SLOWER/)
-  assert.match(hud, /ST0x receives 2× share/)
-})
-
 test("semantic content color never recolors the single-color frame", () => {
   assert.match(source, /colorThrottleRow/)
   assert.match(

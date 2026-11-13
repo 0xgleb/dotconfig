@@ -51,7 +51,6 @@ fj/
   completions.nu      -- subcommand tab completions
   cheatsheet.nu       -- `fj cheatsheet` data + renderer
   log.nu              -- logging helpers
-  infra.nu            -- `fj infra` terraform-app wrappers
   md.nu               -- `fj md` subcommands (plan, diff, sync)
   md-lib.nu           -- mdup library (actions, diffs, plan/apply logic)
   md-sync-lib.nu      -- shared md library (config, targets, file ops)

@@ -65,11 +65,6 @@ export interface ThrottleControl {
     readonly participants: number
   }
   readonly policy: ThrottlePolicy
-  readonly allocation?: {
-    readonly configuredWeight: number
-    readonly recencyFactor: number
-    readonly effectiveWeight: number
-  }
   readonly calibration?: {
     readonly observedBurnPercent: number
     readonly observedTokens: number
@@ -233,18 +228,6 @@ export const decodeThrottleControl = (
   )
     return undefined
 
-  if (value.allocation !== undefined) {
-    if (
-      !isRecord(value.allocation) ||
-      !finite(value.allocation.configuredWeight, 1) ||
-      value.allocation.configuredWeight > 2 ||
-      !finite(value.allocation.recencyFactor, 0.25) ||
-      value.allocation.recencyFactor > 1 ||
-      !finite(value.allocation.effectiveWeight, 0.25) ||
-      value.allocation.effectiveWeight > 2
-    )
-      return undefined
-  }
   if (value.calibration !== undefined) {
     if (
       !isRecord(value.calibration) ||
@@ -314,11 +297,7 @@ const latestDecision = (control: ThrottleControl): string => {
 }
 
 const currentSpeed = (control: ThrottleControl): number =>
-  Math.round(
-    control.policy.throttleRatio *
-      (control.allocation?.recencyFactor ?? 1) *
-      100,
-  )
+  Math.round(control.policy.throttleRatio * 100)
 
 export const throttleStatusText = (control: ThrottleControl): string => {
   const remaining = control.policy.actualRemainingPercent
@@ -407,7 +386,7 @@ export const throttleHudLines = (
     ),
     row(`NOW · ${enforcementNow(control)}`),
     row(
-      `${poolLabel(control)} ${remaining} left · ${delta} · ${resetLabel(policy.resetAt)}${control.allocation?.configuredWeight === 2 ? " · ST0x receives 2× share" : ""}`,
+      `${poolLabel(control)} ${remaining} left · ${delta} · ${resetLabel(policy.resetAt)}`,
     ),
   ]
   if (expanded) {

@@ -111,11 +111,11 @@ test("manual reload cancels a continuation from the superseded generation", () =
   assert.match(manualHandler, /hostMigrationTimer = undefined/)
 })
 
-test("failed host replacement keeps watchers active and retries without incident spam", () => {
+test("failed host replacement keeps watchers active and retries", () => {
   assert.match(source, /HOST_MIGRATION_FAILURE_RETRY_MS/)
   assert.match(
     source,
-    /catch \(error\) \{[\s\S]*?if \(!failureReported\)[\s\S]*?hostMigrationTimer = setTimeout\([\s\S]*?migrateWhenIdle,[\s\S]*?HOST_MIGRATION_FAILURE_RETRY_MS/,
+    /catch \{[\s\S]*?hostMigrationTimer = setTimeout\([\s\S]*?migrateWhenIdle,[\s\S]*?HOST_MIGRATION_FAILURE_RETRY_MS/,
   )
   assert.doesNotMatch(
     source,
@@ -147,10 +147,6 @@ test("a failed command-boundary reload restores the pending retry", () => {
   )
 
   assert.match(handler, /try \{[\s\S]*?await ctx\.reload\(\)/)
-  assert.match(
-    handler,
-    /catch \(error\) \{[\s\S]*?"automatic extension reload"[\s\S]*?Automatic Pi reload failed/,
-  )
   assert.match(
     handler,
     /if \(!pending\) pendingSince = Date\.now\(\)\s*pending = true/,
@@ -303,7 +299,6 @@ test("completed reloads resume only when the composer is free", () => {
   assert.match(source, /deliverAs: "resume"/)
   assert.match(source, /deliverAs: "followUp"/)
   assert.match(source, /Resuming preserved work now/)
-  assert.match(source, /user input remains available/)
   assert.doesNotMatch(source, /ctx\.abort\(\)/)
 })
 
