@@ -2,6 +2,12 @@
 
 Real-world examples of common workflows.
 
+Local routing takes precedence over these native CLI examples: use GitButler
+only in verified managed main worktrees. The installed wrapper rejects linked
+worktrees; use plain Git in linked/non-main worktrees and unmanaged
+repositories. Worktree examples below do not authorize bypassing the wrapper or
+creating a worktree.
+
 **Note on CLI IDs:** Examples use illustrative IDs such as `nn` and `a1`; copy
 actual IDs from current `but status` or `but diff` output. Real output may use
 longer IDs (e.g., `mzm:uvw:2e4`). Use full branch names for mutations. Commit
