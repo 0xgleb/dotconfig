@@ -216,6 +216,33 @@ test("implementation pickup refuses a selection that moves to Refine before live
   assert.deepEqual(source.calls, ["inspect"])
 })
 
+test("implementation pickup cannot move an issue out of In review after selection", async () => {
+  const inReview = Schema.decodeUnknownSync(GitHubInProgressTargetSchema)({
+    projectId: target.inProgress.projectId,
+    fieldId: target.inProgress.fieldId,
+    optionId: "aba860b9",
+  })
+  const source = fixture({
+    ...initial,
+    assignees: [viewer],
+    status: { fieldId: inReview.fieldId, optionId: inReview.optionId },
+  })
+  const picker = createIssueNextPicker({
+    reader: {
+      read: () =>
+        Effect.succeed({
+          ...recommendation,
+          inReviewOptions: [inReview.optionId],
+        }),
+    },
+    pickup: source.client,
+  })
+  const result = await run(Effect.either(picker.next({}, invocation)))
+  assert.ok(Either.isLeft(result))
+  assert.equal(result.left.code, "stale_selection")
+  assert.deepEqual(source.calls, ["inspect"])
+})
+
 test("native pickup adds owner, changes only selected item status, and verifies actual readback", async () => {
   const source = fixture()
   const result = await run(source.picker().next({}, invocation))
