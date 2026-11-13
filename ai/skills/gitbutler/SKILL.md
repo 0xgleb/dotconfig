@@ -1,13 +1,21 @@
 ---
 name: but
 version: 0.23.2
-description: "Commit, push, branch, and manage version control with GitButler. Use for commits, selective dirty-file or hunk commits, branches, diffs, PRs, history edits, squashes, amends, undo, merge, fetching, pulling and syncing a branch with its remote, apply, unapply, and linked worktrees. For selected dirty files or hunks, inspect with `but diff`; use compact `but status` for commit order, branch/stack placement, or conflict overview; use `but status -fv` when file IDs or per-commit file details matter. Replaces git write commands, including fetch and pull. Applies in every checkout of the repository, even when a plain branch is checked out, including linked worktrees such as `.claude/worktrees/*`, and to git writes made while testing or cleaning up (stash, checkout -- <file>, restore, reset)."
+description: "Commit, push, branch, and manage version control with GitButler. Use for commits, selective dirty-file or hunk commits, branches, diffs, PRs, history edits, squashes, amends, undo, merge, fetching, pulling and syncing a branch with its remote, apply, unapply, and linked worktrees. For selected dirty files or hunks, inspect with `but diff`; use compact `but status` for commit order, branch/stack placement, or conflict overview; use `but status -fv` when file IDs or per-commit file details matter. Replaces git writes in verified GitButler-managed main worktrees. In linked or non-main worktrees, use plain Git: the installed wrapper rejects GitButler there."
 author: GitButler Team
 ---
 
 # GitButler CLI Skill
 
-Use GitButler CLI (`but`) as the default version-control interface.
+Use GitButler CLI (`but`) in verified GitButler-managed main worktrees. The
+installed wrapper rejects all invocations from linked worktrees; use plain Git
+in linked/non-main worktrees and unmanaged repositories. Native CLI worktree
+capabilities described below are reference information, not permission to bypass
+this local routing policy.
+
+Before any history edit or conflict resolution, compare `but --version` with
+this skill's declared version. Do not translate syntax from a stale version
+report; consult the installed CLI's help when versions differ.
 
 ## Start Here
 

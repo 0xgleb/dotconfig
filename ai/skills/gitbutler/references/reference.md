@@ -1,5 +1,13 @@
 # but command reference
 
+## Local routing policy
+
+The installed wrapper rejects all GitButler invocations from linked worktrees.
+Use GitButler only in a verified managed main worktree; use plain Git in
+linked/non-main worktrees and unmanaged repositories. The native CLI worktree
+behavior documented below does not override that restriction or authorize
+creating a worktree.
+
 - IDs for commits, branches, files, and hunks: `but help cli-ids`.
 - Terms (workspace, applied, stack, target, `@`): `but skill concepts`.
 - Workspace edits such as `commit`, `amend`, `squash`, `move`, `discard` and
