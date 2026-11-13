@@ -19,7 +19,10 @@ const issueTaskExtension = (pi: ExtensionAPI): void => {
         pi.sendMessage(
           {
             customType: "task-host-failure",
-            content: `Task host ${report.phase} failed (${report.code}).`,
+            content:
+              report.phase === "hud"
+                ? `Task HUD unavailable (${report.code}).`
+                : `Task host ${report.phase} failed (${report.code}).`,
             details: report,
             display: true,
           },
