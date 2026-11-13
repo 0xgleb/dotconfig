@@ -38,13 +38,13 @@ export const registerOwnerAllowance = (
   let context: ExtensionContext | undefined
   let inputDelivery: NativeDeliveryBinding | undefined
   const deliveryHost: ExtensionAPI & NativeDeliveryHost = pi
-  const guard = createOwnerAllowance({
+  const guard = createOwnerAllowance<ReturnType<typeof setTimeout>>({
     inheritedDeadline: process.env[OWNER_PARENT_DEADLINE_ENV],
     now: () => Date.now(),
     schedule: (callback, delay) => setTimeout(callback, delay),
     clear: handle => clearTimeout(handle),
     persist: window => pi.appendEntry(OWNER_ALLOWANCE_ENTRY, window),
-    onExpired,
+    ...(onExpired === undefined ? {} : { onExpired }),
     cancel: reason => {
       const results = [
         () => cancelBackground(reason),
