@@ -662,13 +662,16 @@ the harness, and suppress duplicates without agent polling.
   authorized, propose an ordering for owner confirmation rather than inventing
   priorities. Assign task priority only through the backlog tool's priority/rank
   field. Never encode priority in task titles, text, or prose. The rank field is
-  the single ordering authority. Workers must execute the highest-ranked
-  authorized runnable work in their respective backlogs, not insert self-chosen
-  audits, adjacent work, or priority changes. Report proposed additions or
-  ordering changes outside the owner's existing direction to the owner, directly
-  or through a manager, for confirmation; do not act on them as a new work
-  order. Direct owner instructions still take precedence. Workers must not
-  invent ranks or promote their own work outside the owner's direction.
+  the single ordering authority. At every next-task pickup, invoke the available
+  native task-next operation afresh. Never reuse a previous selection after a
+  halt or a new next-task prompt: backlog state and ownership may have changed.
+  Workers must execute the highest-ranked authorized runnable work in their
+  respective backlogs, not insert self-chosen audits, adjacent work, or priority
+  changes. Report proposed additions or ordering changes outside the owner's
+  existing direction to the owner, directly or through a manager, for
+  confirmation; do not act on them as a new work order. Direct owner
+  instructions still take precedence. Workers must not invent ranks or promote
+  their own work outside the owner's direction.
 - Structure roadmaps as priority-ordered epics, not numbered phases. Use
   dependency graphs where useful; expose independent deliverables without
   manufacturing parallel mutation authority. Give each epic a short goal and
