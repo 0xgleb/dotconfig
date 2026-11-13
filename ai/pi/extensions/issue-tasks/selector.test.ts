@@ -1,0 +1,583 @@
+import assert from "node:assert/strict"
+import test from "node:test"
+import { Effect, Either } from "effect"
+import { isFibonacciEffort } from "../shared/fibonacci-effort.ts"
+import { decodeGitHubProjectPage } from "./github-project-read.ts"
+import {
+  MAX_ISSUE_SELECTION_CANDIDATES,
+  selectIssueAssignment,
+  type IssueSelectionEligibility,
+} from "./selector.ts"
+
+const eligibility: IssueSelectionEligibility = {
+  blockers: "clear",
+  dependencies: "clear",
+}
+
+const numeric = (value: number) => ({ kind: "number", value })
+
+const candidate = (
+  number: number,
+  patch: Readonly<Record<string, unknown>> = {},
+  repository = "owner/repository",
+) => ({
+  issue: { repository, number },
+  state: "open",
+  priority: numeric(1),
+  effort: numeric(1),
+  eligibility: { ...eligibility },
+  ...patch,
+})
+
+const snapshot = <A extends { readonly issue: unknown }>(
+  candidates: readonly A[],
+) => ({
+  scope: candidates.map(row => row.issue),
+  coverage: "complete",
+  candidates,
+})
+
+const run = (input: unknown) => Effect.runSync(selectIssueAssignment(input))
+
+const errorCode = (input: unknown) => {
+  const result = Effect.runSync(Effect.either(selectIssueAssignment(input)))
+
+  assert.ok(Either.isLeft(result))
+  return result.left.code
+}
+
+const winner = (rows: readonly { readonly issue: unknown }[]) => {
+  const result = run(snapshot(rows))
+
+  assert.ok(result.kind === "selected")
+  return result.issue
+}
+
+for (const [field, value, code] of [
+  ["priority", -0.5, "invalid_priority"],
+  ["priority", 0, "invalid_priority"],
+  ["effort", 4, "invalid_effort"],
+] as const) {
+  test(`invalid ${field} identifies the qualified issue and rejected value ${value}`, () => {
+    const result = Effect.runSync(
+      Effect.either(
+        selectIssueAssignment(
+          snapshot([
+            candidate(1),
+            candidate(99, { [field]: numeric(value) }, "dataclique/yielduck"),
+          ]),
+        ),
+      ),
+    )
+
+    assert.ok(Either.isLeft(result))
+    assert.equal(result.left.code, code)
+    assert.match(result.left.message, /dataclique\/yielduck#99/)
+    assert.ok(result.left.message.includes(`Received ${value}.`))
+  })
+}
+
+for (const field of ["priority", "effort"] as const) {
+  test(`invalid ${field} identifies nonnumeric input without echoing its payload`, () => {
+    const payload = "private payload\u001b[31m\n"
+    const result = Effect.runSync(
+      Effect.either(
+        selectIssueAssignment(
+          snapshot([
+            candidate(99, { [field]: { kind: "number", value: payload } }),
+          ]),
+        ),
+      ),
+    )
+
+    assert.ok(Either.isLeft(result))
+    assert.equal(result.left.code, `invalid_${field}`)
+    assert.match(result.left.message, /owner\/repository#99/)
+    assert.match(result.left.message, /Received type string\./)
+    assert.ok(!result.left.message.includes(payload))
+  })
+}
+
+test("read-only selection needs factual gates, not worker permission attestations", () => {
+  const result = run(
+    snapshot([
+      candidate(1, {
+        eligibility: { blockers: "clear", dependencies: "clear" },
+      }),
+    ]),
+  )
+
+  assert.ok(result.kind === "selected")
+  assert.equal(result.issue.number, 1)
+})
+
+test("rejects unsupported ownership or permission flags instead of invented clearance", () => {
+  for (const [field, value] of [
+    ["ownership", "available"],
+    ["ownership", "current"],
+    ["authorization", "allowed"],
+    ["authorization", "denied"],
+  ] as const) {
+    assert.equal(
+      errorCode(
+        snapshot([
+          candidate(1, { eligibility: { ...eligibility, [field]: value } }),
+        ]),
+      ),
+      "invalid_input",
+    )
+  }
+})
+
+test("selects the smallest exact Priority times remaining Effort, not rank or input position", () => {
+  const rows = [
+    candidate(1, { effort: numeric(13) }),
+    candidate(2, { priority: numeric(3), effort: numeric(2) }),
+  ]
+
+  assert.equal(winner(rows).number, 2)
+  assert.equal(winner(rows.toReversed()).number, 2)
+})
+
+test("positive fractional priorities participate in weighted selection", () => {
+  assert.equal(
+    winner([
+      candidate(568, { priority: numeric(31.5), effort: numeric(2) }),
+      candidate(567, { priority: numeric(32.5) }),
+      candidate(566, { priority: numeric(36.5) }),
+    ]).number,
+    567,
+  )
+})
+
+test("decimal product ties use Priority rather than floating-point rounding", () => {
+  assert.equal(
+    winner([
+      candidate(1, { priority: numeric(0.3) }),
+      candidate(2, { priority: numeric(0.1), effort: numeric(3) }),
+    ]).number,
+    2,
+  )
+})
+
+test("scientific notation and extreme finite priorities compare without overflow or underflow", () => {
+  assert.equal(
+    winner([
+      candidate(1, { priority: numeric(1e308), effort: numeric(3) }),
+      candidate(2, { priority: numeric(1e308), effort: numeric(2) }),
+    ]).number,
+    2,
+  )
+  assert.equal(
+    winner([
+      candidate(1, { priority: numeric(1e-323) }),
+      candidate(2, { priority: numeric(Number.MIN_VALUE), effort: numeric(2) }),
+    ]).number,
+    2,
+  )
+})
+
+test("product comparison remains exact when Number products collide", () => {
+  const largerRank = 9007199254740988
+  const smallerRank = 6004799503160659
+
+  assert.equal(largerRank * 2, smallerRank * 3)
+  assert.equal(BigInt(largerRank) * 2n + 1n, BigInt(smallerRank) * 3n)
+  assert.equal(
+    winner([
+      candidate(1, { priority: numeric(smallerRank), effort: numeric(3) }),
+      candidate(2, { priority: numeric(largerRank), effort: numeric(2) }),
+    ]).number,
+    2,
+  )
+})
+
+test("ties prefer lower Priority, then canonical repository and numeric issue identity", () => {
+  assert.equal(
+    winner([
+      candidate(1, { priority: numeric(3), effort: numeric(2) }),
+      candidate(2, { priority: numeric(2), effort: numeric(3) }),
+    ]).number,
+    2,
+  )
+
+  const rows = [candidate(10), candidate(2), candidate(1, {}, "Z/Repository")]
+
+  for (const input of [
+    rows,
+    rows.toReversed(),
+    rows.slice(1).concat(rows.slice(0, 1)),
+  ]) {
+    assert.deepEqual(winner(input), {
+      repository: "owner/repository",
+      number: 2,
+    })
+  }
+})
+
+for (const [field, value, reason] of [
+  ["blockers", "blocked", "blocked"],
+  ["blockers", "unknown", "unknown_blockers"],
+  ["dependencies", "blocked", "blocked_dependencies"],
+  ["dependencies", "unknown", "unknown_dependencies"],
+] as const) {
+  test(`${field} ${value} excludes the issue despite a smaller product`, () => {
+    const rows = [
+      candidate(1, { eligibility: { ...eligibility, [field]: value } }),
+      candidate(2, { priority: numeric(2) }),
+    ]
+    const result = run(snapshot(rows))
+    const assessment = result.assessments[0]
+
+    assert.ok(result.kind === "selected")
+    assert.equal(result.issue.number, 2)
+    assert.ok(assessment?.kind === "ineligible")
+    assert.deepEqual(assessment.reasons, [reason])
+  })
+}
+
+test("lower priority changes ordering rather than creating an exclusion state", () => {
+  const rows = [candidate(1), candidate(2, { priority: numeric(99) })]
+  const result = run(snapshot(rows))
+
+  assert.ok(result.kind === "selected")
+  assert.equal(result.issue.number, 1)
+  assert.deepEqual(
+    result.assessments.map(row => row.kind),
+    ["eligible", "eligible"],
+  )
+  assert.equal(winner(rows.slice(1)).number, 2)
+})
+
+test("rejects independent scheduling states and implicit parent exclusions", () => {
+  for (const scheduling of ["active", "held", "deferred", "refinement"]) {
+    assert.equal(
+      errorCode(
+        snapshot([
+          candidate(1, {
+            eligibility: { ...eligibility, scheduling, parent: "clear" },
+          }),
+        ]),
+      ),
+      "invalid_input",
+    )
+  }
+
+  assert.equal(
+    errorCode(
+      snapshot([
+        candidate(1, {
+          eligibility: { ...eligibility, scheduling: "active", parent: "held" },
+        }),
+      ]),
+    ),
+    "invalid_input",
+  )
+})
+
+test("missing effort is explicit refinement rather than an invented weight", () => {
+  const result = run(
+    snapshot([
+      candidate(1, { effort: { kind: "unset" } }),
+      candidate(2, { priority: numeric(5), effort: numeric(3) }),
+    ]),
+  )
+
+  assert.ok(result.kind === "selected")
+  assert.equal(result.issue.number, 2)
+  assert.deepEqual(result.assessments[0], {
+    kind: "refinement",
+    issue: { repository: "owner/repository", number: 1 },
+    reason: "missing_effort",
+  })
+})
+
+test("exclusions precede refinement, with fixed complete reason ordering", () => {
+  const result = run(
+    snapshot([
+      candidate(1, {
+        state: "closed",
+        priority: { kind: "unset" },
+        effort: { kind: "unset" },
+        eligibility: {
+          blockers: "blocked",
+          dependencies: "blocked",
+        },
+      }),
+    ]),
+  )
+  const assessment = result.assessments[0]
+
+  assert.equal(result.kind, "none")
+  assert.ok(assessment?.kind === "ineligible")
+  assert.deepEqual(assessment.reasons, [
+    "closed",
+    "blocked",
+    "blocked_dependencies",
+    "unranked",
+  ])
+})
+
+test("empty scope returns none and refinement alone does not create an assignment", () => {
+  assert.deepEqual(run(snapshot([])), { kind: "none", assessments: [] })
+  assert.equal(
+    run(snapshot([candidate(1, { effort: { kind: "unset" } })])).kind,
+    "none",
+  )
+})
+
+for (const priority of [0, -1, Infinity, Number.NaN]) {
+  test(`invalid Priority ${priority} rejects the whole snapshot even on closed work`, () => {
+    assert.equal(
+      errorCode(
+        snapshot([
+          candidate(1, { state: "closed", priority: numeric(priority) }),
+          candidate(2),
+        ]),
+      ),
+      "invalid_priority",
+    )
+  })
+}
+
+for (const effort of [
+  0,
+  -1,
+  4,
+  1.5,
+  Number.MAX_SAFE_INTEGER,
+  Infinity,
+  Number.NaN,
+]) {
+  test(`invalid Effort ${effort} rejects the whole snapshot`, () => {
+    assert.equal(
+      errorCode(
+        snapshot([candidate(1, { effort: numeric(effort) }), candidate(2)]),
+      ),
+      "invalid_effort",
+    )
+  })
+}
+
+test("rejects malformed tags, missing gates, caller extras and invalid identities", () => {
+  for (const row of [
+    candidate(1, { priority: { kind: "default" } }),
+    candidate(1, { effort: null }),
+    candidate(1, { eligibility: {} }),
+    candidate(1, { eligibility: { ...eligibility, dependencies: "maybe" } }),
+    candidate(1, { issue: { repository: "not-a-repository", number: 1 } }),
+    candidate(1, { issue: { repository: "owner/repository", number: 0 } }),
+    candidate(1, { authority: "owner" }),
+  ]) {
+    assert.equal(errorCode(snapshot([row])), "invalid_input")
+  }
+
+  assert.equal(errorCode({ ...snapshot([]), revision: 1 }), "invalid_input")
+  assert.equal(
+    errorCode({ ...snapshot([]), coverage: "guessed" }),
+    "invalid_input",
+  )
+})
+
+test("explicit incompleteness and missing or extra joins cannot choose a prefix", () => {
+  assert.equal(
+    errorCode({ ...snapshot([candidate(1)]), coverage: "incomplete" }),
+    "incomplete_snapshot",
+  )
+  assert.equal(
+    errorCode({
+      ...snapshot([candidate(1), candidate(2)]),
+      candidates: [candidate(1)],
+    }),
+    "scope_mismatch",
+  )
+  assert.equal(
+    errorCode({
+      ...snapshot([candidate(1)]),
+      candidates: [candidate(1), candidate(2)],
+    }),
+    "scope_mismatch",
+  )
+})
+
+test("normalizes scope identities and rejects duplicate candidates or scope aliases", () => {
+  const row = candidate(1)
+
+  assert.equal(
+    errorCode(snapshot([row, candidate(1, {}, "OWNER/REPOSITORY")])),
+    "duplicate_issue",
+  )
+  assert.equal(
+    errorCode({ ...snapshot([row]), candidates: [row, row] }),
+    "duplicate_issue",
+  )
+  assert.equal(
+    run({
+      ...snapshot([row]),
+      scope: [{ repository: "OWNER/REPOSITORY", number: 1 }],
+    }).kind,
+    "selected",
+  )
+  assert.equal(
+    winner([candidate(1), candidate(1, {}, "another/repository")]).repository,
+    "another/repository",
+  )
+})
+
+test("bounds the complete snapshot without truncation and accepts the upper limit", () => {
+  const rows = Array.from(
+    { length: MAX_ISSUE_SELECTION_CANDIDATES },
+    (_, index) => candidate(index + 1),
+  )
+  const result = run(snapshot(rows))
+
+  assert.ok(result.kind === "selected")
+  assert.equal(result.issue.number, 1)
+  assert.equal(result.assessments.length, MAX_ISSUE_SELECTION_CANDIDATES)
+  assert.equal(
+    errorCode(
+      snapshot([...rows, candidate(MAX_ISSUE_SELECTION_CANDIDATES + 1)]),
+    ),
+    "capacity",
+  )
+})
+
+test("detaches and freezes JSON-compatible results without mutating inputs", () => {
+  const input = snapshot([candidate(1)])
+  const original = structuredClone(input)
+  const result = run(input)
+
+  assert.deepEqual(input, original)
+  const originalCandidate = input.candidates[0]
+
+  assert.ok(originalCandidate)
+  originalCandidate.issue.repository = "changed/repository"
+  assert.ok(result.kind === "selected")
+  assert.equal(result.issue.repository, "owner/repository")
+  assert.ok(Object.isFrozen(result))
+  assert.ok(Object.isFrozen(result.issue))
+  assert.ok(Object.isFrozen(result.assessments))
+  assert.ok(Object.isFrozen(result.assessments[0]))
+  assert.doesNotThrow(() => JSON.stringify(result))
+})
+
+test("throwing external getters become sanitized typed failures", () => {
+  const input = Object.defineProperty({}, "coverage", {
+    enumerable: true,
+    get: () => {
+      throw new Error("private caller detail")
+    },
+  })
+  const result = Effect.runSync(Effect.either(selectIssueAssignment(input)))
+
+  assert.ok(Either.isLeft(result))
+  assert.equal(result.left.code, "invalid_input")
+  assert.doesNotMatch(result.left.message, /private caller detail/)
+})
+
+test("shared Fibonacci validation enforces safe numeric boundaries", () => {
+  for (const value of [1, 2, 3, 5, 8, 13, 8944394323791464])
+    assert.equal(isFibonacciEffort(value), true)
+  for (const value of [
+    0,
+    -1,
+    4,
+    1.5,
+    Number.MAX_SAFE_INTEGER,
+    Number.MAX_SAFE_INTEGER + 1,
+    "3",
+    null,
+  ])
+    assert.equal(isFibonacciEffort(value), false)
+})
+
+test("decoded Project observations enter the consumer contract without eligibility filtering", () => {
+  const field = (id: string, name: string) => ({
+    __typename: "ProjectV2Field",
+    id,
+    name,
+    dataType: "NUMBER",
+    isIssueField: false,
+    issueField: null,
+  })
+  const priorityId = "PVTF_lAHOAl_tIc4BpO1UzhnrZvE"
+  const effortId = "PVTF_lAHOAl_tIc4BpO1UzhnrY5k"
+  const payload = {
+    data: {
+      viewer: { id: "fixture-viewer-id", login: "0xgleb" },
+      node: {
+        __typename: "ProjectV2",
+        id: "PVT_kwHOAl_tIc4BpO1U",
+        number: 4,
+        owner: { __typename: "User", login: "0xgleb" },
+        priorityField: field(priorityId, "Priority"),
+        effortField: field(effortId, "Effort"),
+        statusField: {
+          __typename: "ProjectV2SingleSelectField",
+          id: "PVTSSF_lAHOAl_tIc4BpO1UzhnrYfs",
+          name: "Status",
+          dataType: "SINGLE_SELECT",
+          options: [{ id: "47fc9ee4", name: "In progress" }],
+        },
+        items: {
+          nodes: [1, 2].map(number => ({
+            id: `item-${number}`,
+            isArchived: false,
+            content: {
+              __typename: "Issue",
+              id: `issue-node-${number}`,
+              assignees: {
+                nodes: [],
+                totalCount: 0,
+                pageInfo: { hasNextPage: false, endCursor: null },
+              },
+              number,
+              state: "OPEN",
+              repository: { nameWithOwner: "Owner/Repository" },
+            },
+            priority: {
+              __typename: "ProjectV2ItemFieldNumberValue",
+              field: { id: priorityId },
+              number,
+            },
+            effort: {
+              __typename: "ProjectV2ItemFieldNumberValue",
+              field: { id: effortId },
+              number: 1,
+            },
+            status: null,
+          })),
+          pageInfo: { hasNextPage: false, endCursor: null },
+        },
+      },
+    },
+  }
+  const decoded = decodeGitHubProjectPage(JSON.stringify(payload), {
+    project: "personal",
+    page: { limit: 2 },
+  })
+
+  assert.ok(Either.isRight(decoded))
+  const rows = decoded.right.items.flatMap(item =>
+    item.kind === "issue"
+      ? [
+          {
+            issue: item.issue,
+            state: item.state,
+            priority: item.priority,
+            effort: item.effort,
+            eligibility: {
+              ...eligibility,
+              dependencies: item.issue.number === 1 ? "blocked" : "clear",
+            },
+          },
+        ]
+      : [],
+  )
+  const result = run(snapshot(rows))
+
+  assert.equal(result.assessments.length, 2)
+  assert.ok(result.kind === "selected")
+  assert.equal(result.issue.number, 2)
+  assert.equal(result.assessments[0]?.kind, "ineligible")
+})

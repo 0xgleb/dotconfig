@@ -26,11 +26,35 @@ test("managed GitButler skill matches the installed CLI", () => {
 })
 
 test("managed GitButler skill requires a version check before history edits", () => {
+  const normalized = skill.replace(/\s+/g, " ")
   assert.match(
-    skill,
+    normalized,
     /Before any history edit or conflict resolution, compare `but --version`/,
   )
-  assert.match(skill, /Do not translate syntax from a stale version report/)
+  assert.match(
+    normalized,
+    /Do not translate syntax from a stale version report/,
+  )
+})
+
+test("native GitButler worktree guidance preserves the local routing boundary", () => {
+  const documents = [
+    skill,
+    ...["reference.md", "concepts.md", "examples.md"].map(name =>
+      readFileSync(
+        new URL(`../skills/gitbutler/references/${name}`, import.meta.url),
+        "utf8",
+      ),
+    ),
+  ]
+  for (const document of documents) {
+    const normalized = document.replace(/\s+/g, " ")
+    assert.match(
+      normalized,
+      /wrapper rejects (?:all invocations from |all GitButler invocations from )?linked worktrees/,
+    )
+    assert.match(normalized, /plain Git in linked\/non-main worktrees/)
+  }
 })
 
 test("Pi panes resolve the managed GitButler wrapper before project dev shells", () => {

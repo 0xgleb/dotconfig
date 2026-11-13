@@ -1286,10 +1286,16 @@ export const branchExecutionEvidence = ({
         : undefined
     const input = isRecord(toolCall?.input) ? toolCall.input : undefined
     const commandSubject = {
-      toolName: message.toolName,
+      toolName:
+        typeof message.toolName === "string"
+          ? message.toolName.replace(/^functions\./, "")
+          : message.toolName,
       input,
     }
-    if (hasUnresolvedGitCommandLocation(scope, commandSubject)) return []
+    const unresolvedGitLocation = hasUnresolvedGitCommandLocation(
+      scope,
+      commandSubject,
+    )
     const commandLocation = runtimeCommandLocationForSubject(
       scope,
       commandSubject,
@@ -1298,22 +1304,27 @@ export const branchExecutionEvidence = ({
       input && commandLocation
         ? { ...input, command: commandLocation.command }
         : input
-    return [
-      renderToolResultExecutionEvidence(
-        {
-          toolName: message.toolName,
-          text,
-          isError: message.isError,
-          input: snapshotInput,
-          ...(toolCall?.digest ? { inputDigest: toolCall.digest } : {}),
-          subject,
-          scope: commandLocation?.commandCwd ?? scope,
-          maxCharacters,
-        },
-        commandLocation,
-        typeof input?.command === "string" ? input.command : undefined,
-      ),
-    ]
+    const rendered = renderToolResultExecutionEvidence(
+      {
+        toolName: message.toolName,
+        text,
+        isError: message.isError,
+        input: snapshotInput,
+        ...(toolCall?.digest ? { inputDigest: toolCall.digest } : {}),
+        subject,
+        ...(unresolvedGitLocation
+          ? {}
+          : { scope: commandLocation?.commandCwd ?? scope }),
+        maxCharacters,
+      },
+      commandLocation,
+      typeof input?.command === "string" ? input.command : undefined,
+    )
+
+    if (!unresolvedGitLocation) return [rendered]
+
+    const context = unscopedResultEvidence(rendered)
+    return context ? [context] : []
   })
 }
 
@@ -1366,6 +1377,29 @@ const supersededFailureIndexes = (
 
 const STRUCTURED_RESULT_EVIDENCE =
   /^(?:functions\.)?\S+ result status=(?:success|error|unknown)\b/i
+
+const UNSCOPED_RESULT_EVIDENCE =
+  /^(?:functions\.)?bash result status=(?:success|error|unknown)(?: inputDigest=[0-9a-f]{64})? context=unscoped(?: input=|: )/i
+
+// Preserve the observation, not witness fields from a scope that cannot be
+// related to the proposed command. Input and output remain untrusted data.
+const unscopedResultEvidence = (candidate: string): string | undefined => {
+  const identity =
+    /^(?:functions\.)?\S+ result status=(?:success|error|unknown)(?: inputDigest=[0-9a-f]{64})?\b/i.exec(
+      candidate,
+    )?.[0]
+
+  if (!identity) return undefined
+
+  const boundaries = [
+    candidate.indexOf(" input="),
+    candidate.indexOf(": "),
+  ].filter(index => index >= identity.length)
+
+  if (boundaries.length === 0) return undefined
+
+  return `${identity} context=unscoped${candidate.slice(Math.min(...boundaries))}`
+}
 
 const STATE_SNAPSHOT_MARKER =
   /^(?:functions\.)?\S+ result status=success(?: inputDigest=[0-9a-f]{64})? scope=([0-9a-f]{16}) snapshot=(git-status|git-path-status|git-index-paths|git-index-blobs|git-object-hashes|gitbutler-status|gitbutler-uncommitted|pull-request-view|qualified-pull-request-query|registry-completion|registry-claim|registry-phase|registry-terminal|registry-version|git-current-branch|git-head|git-history|git-push|git-remote-sha)(?: anchor=([a-z0-9_./:-]{1,128}))?\b/i
@@ -1501,9 +1535,10 @@ export const selectRelevantExecutionEvidence = (
       latestSnapshotIndexes.set(identity, index)
     })
   }
-  const currentCandidates = nonSupersededCandidates.filter(
+  const currentCandidates = nonSupersededCandidates.flatMap(
     (candidate, index) => {
-      if (supersededSnapshotIndexes.has(index)) return false
+      if (supersededSnapshotIndexes.has(index)) return []
+      if (UNSCOPED_RESULT_EVIDENCE.test(candidate)) return [candidate]
       const marker = stateSnapshotMarker(candidate)
       const declaredKind =
         STATE_SNAPSHOT_MARKER.exec(candidate)?.[2]?.toLowerCase()
@@ -1512,14 +1547,15 @@ export const selectRelevantExecutionEvidence = (
         isRegistryRequestSnapshotKind(declaredKind) &&
         !marker
       )
-        return false
+        return []
       if (
         marker &&
-        (marker.kind === "gitbutler-uncommitted" ||
+        ((marker.kind === "gitbutler-uncommitted" &&
+          !subjectHasUnsafeGitLocation) ||
           isRegistryRequestSnapshotKind(marker.kind)) &&
         marker.scope !== subjectScope
       )
-        return false
+        return []
       // A source-produced Node marker identifies the command; Git words in
       // its filenames or untrusted stdout do not make it a VCS observation.
       const inputBoundary = candidate.indexOf(" input=")
@@ -1546,8 +1582,10 @@ export const selectRelevantExecutionEvidence = (
       if (
         subjectHasUnsafeGitLocation &&
         (marker?.kind.startsWith("git") || hasVcsCommandResult)
-      )
-        return false
+      ) {
+        const context = unscopedResultEvidence(candidate)
+        return context ? [context] : []
+      }
       if (
         subjectHasGitCommand &&
         hasVcsCommandResult &&
@@ -1555,8 +1593,10 @@ export const selectRelevantExecutionEvidence = (
           (marker?.scope !== subjectScope &&
             verifiedCommandScope !== subjectScope))
       )
-        return false
+        return []
       return !subjectScope || !marker || marker.scope === subjectScope
+        ? [candidate]
+        : []
     },
   )
   const recentIndexes = new Set<number>()

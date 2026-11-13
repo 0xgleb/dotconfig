@@ -35,15 +35,19 @@ const toolKind = (toolName: string): string => {
     ].includes(toolName)
   )
     return "filesystem"
+
   if (toolName === "bash") return "process running"
   if (toolName === "browser") return "operator browser I/O"
   if (toolName === "workflow" || toolName === "agent") return "model generation"
+
   if (["session_search", "memory_search", "memory"].includes(toolName))
     return "local index query"
+
   if (
     ["agent_registry", "todo", "ask_user", "workflow_audit"].includes(toolName)
   )
     return "local state"
+
   return "external operation"
 }
 

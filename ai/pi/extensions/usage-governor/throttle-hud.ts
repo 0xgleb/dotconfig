@@ -4,12 +4,7 @@ import { truncateToWidth, visibleWidth } from "@earendil-works/pi-tui"
 import { framedChromeInset } from "../shared/chrome.ts"
 import type { UsagePace } from "./core.ts"
 
-const ROLE_NAMES = [
-  "general",
-  "reviewer",
-  "yielduck-operator",
-  "moneymentum-operator",
-] as const
+const ROLE_NAMES = ["general", "reviewer"] as const
 
 type ThrottleRole = (typeof ROLE_NAMES)[number]
 
@@ -67,11 +62,6 @@ export interface ThrottleControl {
     readonly participants: number
   }
   readonly policy: ThrottlePolicy
-  readonly allocation?: {
-    readonly configuredWeight: number
-    readonly recencyFactor: number
-    readonly effectiveWeight: number
-  }
   readonly calibration?: {
     readonly observedBurnPercent: number
     readonly observedTokens: number
@@ -235,18 +225,6 @@ export const decodeThrottleControl = (
   )
     return undefined
 
-  if (value.allocation !== undefined) {
-    if (
-      !isRecord(value.allocation) ||
-      !finite(value.allocation.configuredWeight, 1) ||
-      value.allocation.configuredWeight > 2 ||
-      !finite(value.allocation.recencyFactor, 0.25) ||
-      value.allocation.recencyFactor > 1 ||
-      !finite(value.allocation.effectiveWeight, 0.25) ||
-      value.allocation.effectiveWeight > 2
-    )
-      return undefined
-  }
   if (value.calibration !== undefined) {
     if (
       !isRecord(value.calibration) ||
@@ -289,9 +267,6 @@ const compactTokens = (value: number): string =>
       ? `${(value / 1_000).toFixed(1)}k`
       : String(value)
 
-const decisionRoleLabel = (role: string): string =>
-  role.replace(/-operator$/u, "")
-
 const decisionAge = (at: number, now: number): string => {
   const seconds = Math.max(0, Math.floor((now - at) / 1_000))
   return seconds < 60 ? `${seconds}s ago` : `${Math.floor(seconds / 60)}m ago`
@@ -315,15 +290,11 @@ const latestDecision = (control: ThrottleControl): string => {
     latest.requestedTokens !== undefined || latest.grantedTokens !== undefined
       ? ` ${compactTokens(latest.requestedTokens ?? 0)}→${compactTokens(latest.grantedTokens ?? 0)}`
       : ""
-  return `latest · ${latest.kind} ${decisionRoleLabel(latest.role)} ${latest.outcome}${tokenChange} · ${decisionAge(latest.at, control.computedAt)}`
+  return `latest · ${latest.kind} ${latest.role} ${latest.outcome}${tokenChange} · ${decisionAge(latest.at, control.computedAt)}`
 }
 
 const currentSpeed = (control: ThrottleControl): number =>
-  Math.round(
-    control.policy.throttleRatio *
-      (control.allocation?.recencyFactor ?? 1) *
-      100,
-  )
+  Math.round(control.policy.throttleRatio * 100)
 
 export const throttleStatusText = (control: ThrottleControl): string => {
   const remaining = control.policy.actualRemainingPercent
@@ -343,13 +314,6 @@ const padBetween = (left: string, right: string, width: number): string => {
   )
   return `${boundedLeft}${"─".repeat(gap)}${boundedRight}`
 }
-
-const roleLabel = (role: ThrottleRole): string =>
-  role === "yielduck-operator"
-    ? "yielduck"
-    : role === "moneymentum-operator"
-      ? "moneymentum"
-      : role
 
 export const throttleHudLines = (
   control: ThrottleControl,
@@ -404,10 +368,7 @@ export const throttleHudLines = (
     : "token capacity calibrating"
   const profile = `${control.profile.kind === "flat-until-reset" ? "flat 24/7" : control.profile.kind} · ${control.profile.participants} ${control.profile.participants === 1 ? "owner" : "owners"}`
   const roles = control.roles
-    .map(
-      ({ role, tokenScale }) =>
-        `${roleLabel(role)} ${percent(tokenScale * 100)}`,
-    )
+    .map(({ role, tokenScale }) => `${role} ${percent(tokenScale * 100)}`)
     .join(" · ")
   const { counts } = control.activity
   const activityRollup = `${Math.round(control.activity.windowMs / 60_000)}m · ${counts.admitted} admitted · ${counts.deferred} deferred · ${counts.scaled} scaled · ${counts.settled} settled`
@@ -422,7 +383,7 @@ export const throttleHudLines = (
     ),
     row(`NOW · ${enforcementNow(control)}`),
     row(
-      `${poolLabel(control)} ${remaining} left · ${delta} · ${resetLabel(policy.resetAt)}${control.allocation?.configuredWeight === 2 ? " · ST0x receives 2× share" : ""}`,
+      `${poolLabel(control)} ${remaining} left · ${delta} · ${resetLabel(policy.resetAt)}`,
     ),
   ]
   if (expanded) {

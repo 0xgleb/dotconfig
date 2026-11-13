@@ -1,17 +1,29 @@
 import assert from "node:assert/strict"
 import test from "node:test"
-import type { Job } from "./job-runtime.ts"
+import { toJobId, type Job } from "./job-runtime.ts"
 import { jobSchedulePresentation } from "./job-presentation.ts"
-import { toJobId } from "./harness-protocol.ts"
 
-const fixtureId = toJobId("job-a")
-assert.ok(fixtureId !== undefined)
+const id = toJobId("job-a")
+assert.ok(id)
 
 const baseJob = {
-  id: fixtureId,
+  id,
   spec: {
-    kind: "review-duty.scan" as const,
-    payload: { profile: "st0x-review" as const },
+    kind: "harness.research" as const,
+    payload: {
+      lane: "subscription-plan" as const,
+      harness: "claude-plan",
+      profile: "research-config",
+      project: "dotconfig",
+      task: "subscription-harness-adversarial-review",
+      repositoryRoot: "/Users/example/.config",
+      isolation: "read-only" as const,
+      ownership: {
+        kind: "project-domain" as const,
+        project: "dotconfig",
+        role: "research-config",
+      },
+    },
     runAt: 8,
     maxAttempts: 2,
   },

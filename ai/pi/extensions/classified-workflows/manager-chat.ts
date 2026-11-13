@@ -96,7 +96,7 @@ export class ManagerChatPanel extends VStack implements Focusable {
     this.composer.focused = value
   }
 
-  override render(width: number): string[] {
+  render(width: number): string[] {
     const height = Math.max(1, Math.floor(this.tui.terminal.rows * 0.85))
     const composerRows = Math.min(8, this.composer.render(width).length)
     const fixedRows =
@@ -123,8 +123,8 @@ export class ManagerChatPanel extends VStack implements Focusable {
       return
     }
 
-    if (matchesKey(data, "pageUp") || matchesKey(data, "pageDown")) {
-      this.scroll.scrollBy(matchesKey(data, "pageUp") ? -8 : 8)
+    if (matchesKey(data, "pageup") || matchesKey(data, "pagedown")) {
+      this.scroll.scrollBy(matchesKey(data, "pageup") ? -8 : 8)
       this.tui.requestRender()
       return
     }

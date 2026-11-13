@@ -28,9 +28,7 @@ const repeated = (
 ): readonly CabaItem[] =>
   Array.from({ length: count }, (_, index) => makeItem(index))
 
-const calisthenicsRound = (
-  round: number,
-): readonly [CabaItem, ...CabaItem[]] => [
+const calisthenicsRound = (round: number): readonly CabaItem[] => [
   item(
     "Calisthenics",
     `Round ${round} · Pull-ups`,
@@ -80,7 +78,7 @@ const supersetRounds = (
     item("Strength/prehab", `${label} · Round ${index + 1}/${count}`, detail),
   )
 
-const CABA_ITEMS: readonly [CabaItem, ...CabaItem[]] = [
+const CABA_ITEMS: readonly CabaItem[] = [
   ...calisthenicsRound(1),
   ...calisthenicsRound(2),
   item("Calisthenics", "Active hang 1/2", "15 seconds on jugs"),

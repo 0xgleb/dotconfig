@@ -29,16 +29,19 @@ const agent = (id: string, label: string): BridgeAgent => ({
   expiresAt: 2,
 })
 
-test("agent display labels combine a friendly project and operational role", () => {
+test("agent display labels combine a friendly project and assigned role", () => {
   assert.equal(
-    agentDisplayLabel("yielduck", [{ role: "operator", mode: "operational" }]),
-    "Yielduck · Operator",
+    agentDisplayLabel("yielduck", [{ role: "reviewer", mode: "task" }]),
+    "Yielduck · Reviewer",
   )
   assert.equal(
-    agentDisplayLabel(".config", [{ role: "pi-support", mode: "operational" }]),
-    "Dotconfig · Pi Support",
+    agentDisplayLabel(".config", [{ role: "reviewer", mode: "task" }]),
+    "Dotconfig · Reviewer",
   )
-  assert.equal(agentDisplayLabel("st0x-review-duty", []), "ST0x Review Duty")
+  assert.equal(
+    agentDisplayLabel("personal-review-duty", []),
+    "Personal Review Duty",
+  )
 })
 
 test("registry-owned roles feed the bridge heartbeat through a typed identity event", () => {
@@ -52,47 +55,28 @@ test("registry-owned roles feed the bridge heartbeat through a typed identity ev
   )
 })
 
-test("question relays and confirmations use friendly identities without raw session IDs", () => {
+test("question relays use friendly identities without raw session IDs", () => {
   const relay = pieceSource.slice(
     pieceSource.indexOf("const questionRelayText"),
     pieceSource.indexOf("const relayPendingQuestions"),
   )
-  const reply = pieceSource.slice(
-    pieceSource.indexOf("const handleQuestionReply"),
-    pieceSource.indexOf("const handleOwnerCommand"),
-  )
   assert.match(relay, /identifiedAgentLabel/)
   assert.doesNotMatch(relay, /id\.slice/)
-  assert.match(reply, /identifiedAgentLabel/)
-  assert.doesNotMatch(reply, /agentId\.slice/)
-})
-
-test("a direct numbered owner message tries the sole pending delivered question without guessing", () => {
-  const reply = pieceSource.slice(
-    pieceSource.indexOf("const handleQuestionReply"),
-    pieceSource.indexOf("const handleOwnerCommand"),
-  )
-  assert.match(reply, /answerSolePendingTelegramQuestion/)
-  assert.match(reply, /replyToMessageId === undefined/)
-  assert.match(reply, /resolution === undefined/)
 })
 
 test("duplicate friendly identities receive deterministic instance numbers", () => {
   const agents = [
-    agent("019f-a", "Yielduck · Operator"),
-    agent("019f-b", "Yielduck · Operator"),
-    agent("019f-c", "Dotconfig · Pi Support"),
+    agent("019f-a", "Yielduck · Reviewer"),
+    agent("019f-b", "Yielduck · Reviewer"),
+    agent("019f-c", "Dotconfig · Reviewer"),
   ]
   assert.equal(
     identifiedAgentLabel(agents[0]!, agents),
-    "Yielduck · Operator · Instance 1",
+    "Yielduck · Reviewer · Instance 1",
   )
   assert.equal(
     identifiedAgentLabel(agents[1]!, agents),
-    "Yielduck · Operator · Instance 2",
+    "Yielduck · Reviewer · Instance 2",
   )
-  assert.equal(
-    identifiedAgentLabel(agents[2]!, agents),
-    "Dotconfig · Pi Support",
-  )
+  assert.equal(identifiedAgentLabel(agents[2]!, agents), "Dotconfig · Reviewer")
 })

@@ -21,7 +21,6 @@ import {
   type ManagerPriorityReceipt,
 } from "./manager-pair-protocol.ts"
 import { ManagerSessionError } from "./manager-session-core.ts"
-import type { TodoRequest } from "../todo/state.ts"
 
 export interface NativeManagerState {
   readonly publish: (
@@ -36,20 +35,26 @@ export interface NativeManagerState {
     revision: string,
   ) => Either.Either<string, ManagerSessionError>
   readonly enqueueTodo: (
-    request: TodoRequest,
+    request: unknown,
     revision: string,
   ) => Either.Either<string, ManagerSessionError>
   readonly processPriorities: (
     revision: () => string,
     apply: (text: string) => Either.Either<string, ManagerSessionError>,
     applyTodo?: (
-      request: TodoRequest,
+      request: unknown,
     ) => Either.Either<string, ManagerSessionError>,
   ) => Either.Either<readonly ManagerPriorityReceipt[], ManagerSessionError>
   readonly receipt: (
     id: string,
   ) => Either.Either<ManagerPriorityReceipt | undefined, ManagerSessionError>
 }
+
+export const takeNativeManagerCheckIn = (
+  _agentDir: string,
+  _now: number,
+): Either.Either<never, ManagerSessionError> =>
+  failure("unavailable", "Native manager check-ins are unavailable.")
 
 export const prepareNativeManagerState = (
   directory: string,
@@ -74,12 +79,6 @@ export const prepareNativeManagerState = (
       )
     }
 
-    for (const child of ["requests", "receipts"]) {
-      yield* io(() =>
-        mkdirSync(join(directory, child), { recursive: true, mode: 0o700 }),
-      )
-      yield* privateDirectory(join(directory, child))
-    }
     return yield* openNativeManagerState(directory, scope)
   })
 
@@ -93,6 +92,8 @@ export const openNativeManagerState = (
     if (
       !record(stored) ||
       stored.version !== 1 ||
+      typeof stored.workerSessionId !== "string" ||
+      typeof stored.cwd !== "string" ||
       stored.workerSessionId !== scope.workerSessionId ||
       stored.cwd !== scope.cwd
     ) {
@@ -101,9 +102,6 @@ export const openNativeManagerState = (
         "Manager state belongs to another worker.",
       )
     }
-    for (const child of ["requests", "receipts"])
-      yield* privateDirectory(join(directory, child))
-
     const receipt = (
       id: string,
     ): Either.Either<ManagerPriorityReceipt | undefined, ManagerSessionError> =>
@@ -113,7 +111,10 @@ export const openNativeManagerState = (
             "invalid_input",
             "Invalid manager request identity.",
           )
-        const path = join(directory, "receipts", `${id}.json`)
+        const receipts = join(directory, "receipts")
+        if (!existsSync(receipts)) return undefined
+        yield* privateDirectory(receipts)
+        const path = join(receipts, `${id}.json`)
         if (!existsSync(path)) return undefined
         const value = yield* readJson(path)
         if (
@@ -146,16 +147,9 @@ export const openNativeManagerState = (
         ),
       receipt,
       enqueuePriorities: () =>
-        failure(
-          "unavailable",
-          `Queued manager calls are retired for ${scope.cwd} (session ${scope.workerSessionId}); use direct task control.`,
-        ),
+        failure("unavailable", "Legacy task control is unavailable."),
       enqueueTodo: () =>
-        failure(
-          "unavailable",
-          `Queued manager calls are retired for ${scope.cwd} (session ${scope.workerSessionId}); use direct task control.`,
-        ),
-      // Callable compatibility only: historical commands remain inert.
+        failure("unavailable", "Legacy task control is unavailable."),
       processPriorities: () => Either.right([]),
     }
   })
@@ -198,9 +192,11 @@ const privateDirectory = (
     }
   })
 
+const PRIVATE_STATE_MAX_BYTES = 256_000
+
 const readPrivate = (
   path: string,
-  maximumBytes = 256_000,
+  maximumBytes = PRIVATE_STATE_MAX_BYTES,
 ): Either.Either<string, ManagerSessionError> =>
   Either.flatMap(
     io(() => {

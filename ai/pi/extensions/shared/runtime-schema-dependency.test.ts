@@ -19,6 +19,11 @@ test("Pi supplies host packages through wildcard peers, not runtime dependencies
   }
 })
 
+test("local verification declares pinned host packages as development dependencies", () => {
+  assert.equal(manifest.devDependencies?.["@earendil-works/pi-tui"], "0.84.1")
+  assert.equal(manifest.devDependencies?.typebox, "1.3.7")
+})
+
 test("local tooling can construct the host schemas used by Pi tools", async () => {
   await assert.doesNotReject(async () => {
     const { Type } = await import("typebox")

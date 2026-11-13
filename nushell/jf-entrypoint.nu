@@ -88,27 +88,3 @@ def "main md sync" [
 ] {
   fj md sync --plan $plan --yes=$yes
 }
-
-def "main infra" [] {
-  fj infra
-}
-
-def "main infra consequences" [] {
-  fj infra consequences
-}
-
-def "main infra enact" [] {
-  fj infra enact
-}
-
-def "main infra edit vars" [] {
-  fj infra edit vars
-}
-
-def --wrapped "main infra provision" [...args: string] {
-  fj infra provision ...$args
-}
-
-def --wrapped "main infra decommission" [...args: string] {
-  fj infra decommission ...$args
-}

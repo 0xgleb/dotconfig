@@ -7,7 +7,7 @@ const section = (title: string, entries: readonly string[]): string[] =>
     : [`${title} (${entries.length})`, ...entries.map(entry => `- ${entry}`)]
 
 export const remoteKanbanResponse = (entries: readonly unknown[]): string => {
-  const snapshot = todoWorkSnapshot([...entries])
+  const snapshot = todoWorkSnapshot(entries)
   return [
     "**TASKS**",
     "",

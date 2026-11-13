@@ -1,4 +1,6 @@
 import { homedir } from "node:os"
+import { randomUUID } from "node:crypto"
+import { resumeWorkers, resumeOutcomeText } from "./resume.ts"
 import type {
   ExtensionAPI,
   ExtensionContext,
@@ -15,11 +17,12 @@ import {
   type ReportSnapshot,
 } from "./report-jobs.ts"
 import { Type } from "typebox"
-import {
-  backlogRequirementsFromText,
-  MESSAGE_BACKLOG_EVENT,
-} from "../shared/backlog-events.ts"
 import { wasRunAborted } from "../shared/continuation-pause.ts"
+import {
+  TELEGRAM_RESUME_EVENT,
+  TELEGRAM_RESUME_REQUEST,
+  TELEGRAM_RESUME_TAG,
+} from "../shared/telegram-resume.ts"
 import { isLocalDispatchProvider } from "../shared/local-lane.ts"
 import {
   REGISTRY_DELEGATE_REQUEST_EVENT,
@@ -249,12 +252,7 @@ export default function remoteControl(
     description:
       "Deliver the real interactive Boulder CABA tracker card directly to the owner's Telegram.",
     parameters: Type.Object({}, { additionalProperties: false }),
-    async execute(): Promise<{
-      content: { type: "text"; text: string }[]
-      details:
-        { outcome: "delivered" } | { outcome: "undelivered"; reason: string }
-      isError?: true
-    }> {
+    async execute() {
       const delivery = await run(deliverCabaCardRelay())
       if (Either.isLeft(delivery)) {
         const reason = safeDeliveryError(delivery.left)
@@ -655,6 +653,149 @@ export default function remoteControl(
     }
   }
 
+  registerRuntimeVersion(pi, "owner-resume-input", "2026.10.24.2")
+  const resumeOwnerWork = async (
+    message: ClaimedBridgeMessage,
+    ctx: ExtensionContext,
+  ): Promise<boolean> => {
+    if (
+      !message.text.startsWith(TELEGRAM_RESUME_TAG) ||
+      !remoteSourceCarriesOwnerAuthority(
+        remoteMessageSource(message.requesterId),
+      )
+    )
+      return false
+    const authorizeOwnerInput = options.authorizeOwnerInput
+    const nativeOwnerDelivery =
+      "registerModelInputDeliveryGuard" in pi &&
+      typeof pi.registerModelInputDeliveryGuard === "function"
+    if (
+      !nativeOwnerDelivery &&
+      onAuthenticatedOwnerMessage &&
+      options.reporting?.execution
+    ) {
+      const received = await run(
+        Effect.try({
+          try: () => onAuthenticatedOwnerMessage(Date.now()),
+          catch: () =>
+            new RemoteBridgeError({
+              code: "io",
+              message: "could not receive authenticated resume input",
+            }),
+        }),
+      )
+      const admitted = options.reporting.execution.admit()
+      const sent =
+        Either.isLeft(received) || Either.isLeft(admitted)
+          ? Either.left(
+              new RemoteBridgeError({
+                code: "invalid_input",
+                message: "owner allowance denied resume input",
+              }),
+            )
+          : await run(
+              Effect.try({
+                try: () =>
+                  pi.sendUserMessage(TELEGRAM_RESUME_REQUEST, {
+                    deliverAs: "steer",
+                  }),
+                catch: () =>
+                  new RemoteBridgeError({
+                    code: "io",
+                    message: "could not queue resume input",
+                  }),
+              }),
+            )
+      if (Either.isRight(sent)) {
+        pi.events.emit(HUMAN_TURN_EVENT, TELEGRAM_RESUME_REQUEST)
+        pi.events.emit(TELEGRAM_RESUME_EVENT, {
+          sessionId: ctx.sessionManager.getSessionId(),
+        })
+        await run(
+          store.complete({
+            messageId: message.id,
+            claimToken: message.claimToken,
+            response: `Resume input accepted: ${ctx.cwd} · session ${ctx.sessionManager.getSessionId()}. Existing authorized work and tools are preserved.`,
+            now: Date.now(),
+          }),
+        )
+      } else
+        await run(
+          store.fail({
+            messageId: message.id,
+            claimToken: message.claimToken,
+            failure: "model_error",
+            now: Date.now(),
+          }),
+        )
+      return true
+    }
+    if (!nativeOwnerDelivery || !authorizeOwnerInput) {
+      await run(
+        store.fail({
+          messageId: message.id,
+          claimToken: message.claimToken,
+          failure: "model_error",
+          now: Date.now(),
+        }),
+      )
+      return true
+    }
+    const deliveryOptions = {
+      deliverAs: "steer" as const,
+      authorizeInput: (inputId: string): DeliveryResult<void> => {
+        const authorized = authorizeOwnerInput(inputId)
+        if (authorized.ok) {
+          pi.events.emit(HUMAN_TURN_EVENT, TELEGRAM_RESUME_REQUEST)
+          pi.events.emit(TELEGRAM_RESUME_EVENT, {
+            sessionId: ctx.sessionManager.getSessionId(),
+          })
+        }
+        const completion = authorized.ok
+          ? store.complete({
+              messageId: message.id,
+              claimToken: message.claimToken,
+              response: `Resume input accepted: ${ctx.cwd} · session ${ctx.sessionManager.getSessionId()}. Existing authorized work and tools are preserved.`,
+              now: Date.now(),
+            })
+          : store.fail({
+              messageId: message.id,
+              claimToken: message.claimToken,
+              failure: "model_error",
+              now: Date.now(),
+            })
+        void run(completion).then(result => {
+          if (Either.isLeft(result))
+            ctx.ui.setStatus(
+              STATUS_KEY,
+              `remote:error · ${safeError(result.left)}`,
+            )
+        })
+        return authorized
+      },
+    }
+    const sent = await run(
+      Effect.try({
+        try: () => pi.sendUserMessage(TELEGRAM_RESUME_REQUEST, deliveryOptions),
+        catch: () =>
+          new RemoteBridgeError({
+            code: "io",
+            message: "could not queue native resume input",
+          }),
+      }),
+    )
+    if (Either.isLeft(sent))
+      await run(
+        store.fail({
+          messageId: message.id,
+          claimToken: message.claimToken,
+          failure: "model_error",
+          now: Date.now(),
+        }),
+      )
+    return true
+  }
+
   const beginTurn = async (
     message: Extract<RemoteMessage, { readonly status: "claimed" }>,
     ctx: ExtensionContext,
@@ -723,14 +864,6 @@ export default function remoteControl(
       onAuthenticatedOwnerMessage?.(message.createdAt)
     if (authenticatedOwner && prompt?.type === "text")
       pi.events.emit(HUMAN_TURN_EVENT, prompt.text)
-    pi.events.emit(MESSAGE_BACKLOG_EVENT, {
-      project: ctx.cwd,
-      messageId: message.id,
-      observedAt: message.createdAt,
-      source: authenticatedOwner ? "owner-message" : "bridge-message",
-      authority: authenticatedOwner ? "authenticated-owner" : "routing-only",
-      requirements: backlogRequirementsFromText(message.text),
-    })
     const sent = await Effect.runPromise(
       Effect.either(
         Effect.try({
@@ -1038,6 +1171,7 @@ export default function remoteControl(
               )
             continue
           }
+          if (await resumeOwnerWork(message, ctx)) continue
           if (message.text.trim() === "/kanban") {
             const completed = await run(
               store.complete({
@@ -1071,6 +1205,7 @@ export default function remoteControl(
         return
       }
       if (claimed.right?.status === "claimed") {
+        if (await resumeOwnerWork(claimed.right, ctx)) return
         if (claimed.right.text.trim() === "/kanban") {
           const completed = await run(
             store.complete({
@@ -1151,6 +1286,67 @@ export default function remoteControl(
     return undefined
   })
 
+  // Registered commands run before input provenance is available.
+  // Keep /round on the native input hook so only interactive owner input can invoke it.
+  const handleTuiResumeInput = async (
+    event: {
+      readonly text: string
+      readonly source: string
+      readonly inputId?: unknown
+    },
+    ctx: ExtensionContext,
+  ): Promise<boolean> => {
+    const text = event.text.trim()
+    if (!/^\/round(?:\s|$)/.test(text)) return false
+    if (text !== "/round" || event.source !== "interactive") {
+      ctx.ui.notify(
+        "Use bare /round from the owner TUI; worker and RPC invocations are not authorized.",
+        "warning",
+      )
+      return true
+    }
+    const nativeOwnerDelivery =
+      "registerModelInputDeliveryGuard" in pi &&
+      typeof pi.registerModelInputDeliveryGuard === "function"
+    if (nativeOwnerDelivery) {
+      if (
+        typeof event.inputId !== "string" ||
+        !options.authorizeOwnerInput ||
+        !options.authorizeOwnerInput(event.inputId).ok
+      ) {
+        ctx.ui.notify(
+          "Resume was not queued: native owner-input authorization is unavailable or denied.",
+          "warning",
+        )
+        return true
+      }
+    } else if (
+      !onAuthenticatedOwnerMessage ||
+      !options.reporting?.execution ||
+      Either.isLeft(options.reporting.execution.admit())
+    ) {
+      ctx.ui.notify(
+        "Resume was not queued: the existing owner-input guard did not admit it.",
+        "warning",
+      )
+      return true
+    }
+    pi.events.emit(HUMAN_TURN_EVENT, text)
+    const resumed = await run(
+      resumeWorkers(store, {
+        requesterId: "owner-pane",
+        invocationId: `pane-${typeof event.inputId === "string" ? event.inputId : randomUUID()}`,
+      }),
+    )
+    ctx.ui.notify(
+      Either.isLeft(resumed)
+        ? "Resume could not be queued."
+        : resumeOutcomeText(resumed.right),
+      Either.isLeft(resumed) ? "warning" : "info",
+    )
+    return true
+  }
+
   /**
    * Owner text typed into the pane joins the bridge queue so the dispatch lane
    * drains it mechanically instead of letting the local model answer freehand.
@@ -1159,6 +1355,7 @@ export default function remoteControl(
    * re-enqueuing those would loop.
    */
   pi.on("input", async (event, ctx) => {
+    if (await handleTuiResumeInput(event, ctx)) return { action: "handled" }
     if (!isLocalDispatchProvider(ctx.model?.provider))
       return { action: "continue" }
     if (event.source !== "interactive") return { action: "continue" }

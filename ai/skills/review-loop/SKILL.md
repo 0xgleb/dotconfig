@@ -1022,17 +1022,6 @@ continue the upstack walk — do not stop here. Follow the global checkpoint
 cadence while advancing and publish any remaining work at the end; stack mode
 does not impose an end-only publication gate.
 
-### Dedicated Pi review-duty sessions
-
-Begin each PR with the registered `review_duty` tool and follow its loaded
-own/assigned/automatic gates. Use native `openai-codex/gpt-6.1-sol` workflows,
-independently verify the final head/diff/fixes and distinguish input from output
-heads. Publish verified fixes only under the exact repository/owner authority;
-never infer that authority from a worker or role. Preserve failed/incomplete
-results through managed recovery, and finish through the duty tool rather than
-emulating lifecycle state. No review verdict, top-level review body or merge is
-authorized by this adapter.
-
 ---
 
 ## Failure modes

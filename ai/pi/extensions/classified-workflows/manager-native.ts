@@ -1,4 +1,4 @@
-import { createHash, randomUUID } from "node:crypto"
+import { randomUUID } from "node:crypto"
 import { chmodSync, lstatSync, mkdirSync } from "node:fs"
 import { Type } from "typebox"
 import { join } from "node:path"
@@ -11,7 +11,6 @@ import {
 import { Effect, Either } from "effect"
 import { readPromptFile } from "../shared/prompt-text.ts"
 import { registerManagerBinding } from "../shared/manager-binding.ts"
-import type { TodoRequest } from "../todo/state.ts"
 import { decodeManagerSummary, type ManagerSummary } from "./manager-core.ts"
 import {
   openNativeManagerState,
@@ -23,6 +22,7 @@ import {
   globalManagerSessionLaunchPlan,
   ManagerSessionError,
 } from "./manager-session-core.ts"
+import type { OwnerProgressCheckIn } from "./owner-allowance.ts"
 import {
   readManagerTarget,
   selectManagerTarget,
@@ -32,7 +32,7 @@ import {
 export interface NativeManagerWorker {
   readonly todo?: (
     ctx: ExtensionContext,
-    request: TodoRequest,
+    request: unknown,
   ) => Either.Either<string, ManagerSessionError>
   readonly snapshot: (
     ctx: ExtensionContext,
@@ -47,13 +47,22 @@ export interface NativeManagerWorker {
 export interface NativeManagerRuntime {
   readonly agentDir: string
   readonly piExecutable: string
+  readonly now?: () => number
+  readonly deadline?: (callback: () => void, delay: number) => () => void
   readonly schedule: (tick: () => void) => () => void
 }
 
 export interface NativeManager {
+  readonly checkIn?: (
+    ctx: ExtensionContext,
+    request: OwnerProgressCheckIn,
+  ) => Either.Either<string, ManagerSessionError>
   readonly isManager: () => boolean
   readonly open: (ctx: ExtensionContext) => Promise<void>
-  readonly command: (ctx: ExtensionContext, text: string) => void
+  readonly command: (
+    ctx: ExtensionContext,
+    text: string,
+  ) => void | Promise<void>
 }
 
 export const registerNativeManager = (
@@ -98,12 +107,13 @@ export const registerNativeManager = (
         }
       : { role: "manager-unavailable", message: target.left.message }
   })
-  const submitted = new Set<string>()
+  let workerGeneration = 0
   const delivering = new Set<string>()
 
   const notice = (ctx: ExtensionContext, error: ManagerSessionError) =>
     ctx.ui.notify(error.message, "warning")
-  const stop = () => {
+  const stop = async () => {
+    workerGeneration += 1
     cancelPolling?.()
     cancelPolling = undefined
     delivering.clear()
@@ -119,9 +129,11 @@ export const registerNativeManager = (
       return Either.right({ workerSessionId: legacy, cwd: ctx.cwd })
     return failed(
       "unavailable",
-      "Select an existing worker with manager_control before using its backlog or priorities. Discover workers with agent_registry.",
+      "Select an existing worker with manager_control before inspecting its context. Discover workers with agent_registry.",
     )
   }
+  const workerAttribution = (target: ManagerTarget): string =>
+    `source worker ${target.workerSessionId} at ${target.cwd}`
   const binding = (ctx: ExtensionContext) =>
     Either.flatMap(
       isManager()
@@ -185,23 +197,16 @@ export const registerNativeManager = (
     ) {
       const report = decodeManagerSummary(current.right.data.roundReport)
       if (Either.isRight(report) && report.right.status !== "started") {
-        deliver(ctx, `round-${report.right.round}`, reportText(report.right))
-      }
-    }
-    for (const id of submitted) {
-      const receipt = state.right.receipt(id)
-      if (
-        Either.isRight(receipt) &&
-        receipt.right &&
-        receipt.right.status !== "started"
-      ) {
-        deliver(ctx, `priority-${id}`, receipt.right.message)
-        submitted.delete(id)
+        deliver(
+          ctx,
+          `round-${JSON.stringify([current.right.cwd, current.right.workerSessionId, report.right.round])}`,
+          reportText(report.right, workerAttribution(current.right)),
+        )
       }
     }
   }
 
-  const startWorker = (
+  const startWorker = async (
     ctx: ExtensionContext,
     state: NativeManagerState,
     epoch: string,
@@ -209,19 +214,16 @@ export const registerNativeManager = (
     let lastLeaf: string | undefined
     const sessionId = ctx.sessionManager.getSessionId()
     const cwd = ctx.cwd
-    const todo = worker.todo
+    const generation = workerGeneration
+    const currentScope = () =>
+      generation === workerGeneration &&
+      activeSessionId === sessionId &&
+      ctx.sessionManager.getSessionId() === sessionId &&
+      ctx.cwd === cwd &&
+      !isManager()
+
     const tick = () => {
-      if (ctx.sessionManager.getSessionId() !== sessionId || ctx.cwd !== cwd)
-        return
-      const applied = state.processPriorities(
-        () => `${epoch}-${worker.priorityId(ctx)}`,
-        text => worker.priorities(ctx, text),
-        todo ? request => todo(ctx, request) : undefined,
-      )
-      if (Either.isLeft(applied)) {
-        notice(ctx, applied.left)
-        return
-      }
+      if (!currentScope()) return
       const leaf = ctx.sessionManager.getBranch().at(-1)?.id
       if (leaf === lastLeaf && lastLeaf !== undefined) return
       const snapshot = worker.snapshot(ctx)
@@ -238,7 +240,6 @@ export const registerNativeManager = (
       if (Either.isLeft(published)) notice(ctx, published.left)
       else lastLeaf = leaf
     }
-    stop()
     tick()
     cancelPolling = runtime.schedule(tick)
   }
@@ -275,16 +276,11 @@ export const registerNativeManager = (
       name: "manager_control",
       label: "Manager worker control",
       description:
-        "Select an existing worker using its session ID and cwd from agent_registry, inspect the selection, or queue confirmed priorities. Does not start worker rounds.",
+        "Select an existing worker using its session ID and cwd from agent_registry, or inspect the selection. Does not start worker rounds.",
       parameters: Type.Object({
-        action: Type.Union([
-          Type.Literal("select"),
-          Type.Literal("current"),
-          Type.Literal("priorities"),
-        ]),
+        action: Type.Union([Type.Literal("select"), Type.Literal("current")]),
         workerSessionId: Type.Optional(Type.String()),
         cwd: Type.Optional(Type.String()),
-        order: Type.Optional(Type.String()),
       }),
       execute: async (_id, params, _signal, _update, ctx) => {
         if (!isManager())
@@ -338,46 +334,20 @@ export const registerNativeManager = (
             isError: false,
             details: { outcome: "selected", ...selected.right },
           }
-        if (typeof params.order !== "string" || !params.order.trim())
-          return controlError(
-            new ManagerSessionError({
-              code: "invalid_input",
-              message:
-                "Priorities require an explicit order of task IDs or clear.",
-            }),
-          )
-        const state = client(ctx)
-        if (Either.isLeft(state)) return controlError(state.left)
-        const current = state.right.context()
-        if (Either.isLeft(current)) return controlError(current.left)
-        const queued = state.right.enqueuePriorities(
-          params.order,
-          current.right.priorityRevision,
+        return controlError(
+          new ManagerSessionError({
+            code: "invalid_input",
+            message: "Unknown manager control action.",
+          }),
         )
-        if (Either.isLeft(queued)) return controlError(queued.left)
-        submitted.add(queued.right)
-        return {
-          content: [
-            {
-              type: "text" as const,
-              text: `Queued priority request ${queued.right}; worker completion is not confirmed.`,
-            },
-          ],
-          isError: false,
-          details: {
-            outcome: "queued",
-            requestId: queued.right,
-            ...selected.right,
-          },
-        }
       },
     })
     controlRegistered = true
   }
-  const resume = (ctx: ExtensionContext, mode: "restore" | "replace") => {
+  const resume = async (ctx: ExtensionContext, mode: "restore" | "replace") => {
     activeSessionId = ctx.sessionManager.getSessionId()
     activeCtx = ctx
-    stop()
+    await stop()
     if (isManager()) {
       registerControl()
       pi.setActiveTools([...MANAGEMENT_TOOLS])
@@ -395,13 +365,13 @@ export const registerNativeManager = (
     const epoch = epochFor(ctx, mode)
     if (Either.isLeft(state)) notice(ctx, state.left)
     else if (Either.isLeft(epoch)) notice(ctx, epoch.left)
-    else startWorker(ctx, state.right, epoch.right)
+    else await startWorker(ctx, state.right, epoch.right)
   }
 
   pi.on("session_start", (_event, ctx) => resume(ctx, "restore"))
   pi.on("session_tree", (_event, ctx) => resume(ctx, "replace"))
-  pi.on("session_shutdown", () => {
-    stop()
+  pi.on("session_shutdown", async () => {
+    await stop()
     activeSessionId = undefined
     activeCtx = undefined
     releaseBinding()
@@ -457,8 +427,13 @@ export const registerNativeManager = (
   })
 
   return {
+    checkIn: () =>
+      failed(
+        "unavailable",
+        "Native manager check-in delivery is not implemented.",
+      ),
     isManager,
-    command: (ctx, text) => {
+    command: async (ctx, text) => {
       if (!text || text === "history") {
         ctx.ui.notify("This is the native manager chat.", "info")
         return
@@ -481,26 +456,14 @@ export const registerNativeManager = (
           deliver(
             ctx,
             `requested-report-${randomUUID()}`,
-            reportText(report.right),
+            reportText(report.right, workerAttribution(current.right)),
           )
         return
       }
-      if (!text.startsWith("priorities ")) {
-        ctx.ui.notify(
-          "Use /manager priorities <ids> to commit an order.",
-          "info",
-        )
-        return
-      }
-      const queued = state.right.enqueuePriorities(
-        text.slice("priorities ".length),
-        current.right.priorityRevision,
+      ctx.ui.notify(
+        "Use /manager summary to read the latest worker report.",
+        "info",
       )
-      if (Either.isLeft(queued)) notice(ctx, queued.left)
-      else {
-        submitted.add(queued.right)
-        ctx.ui.notify("Priority change queued for the worker.", "info")
-      }
     },
     open: async ctx => {
       const queried = await Effect.runPromise(
@@ -636,16 +599,24 @@ const prepareGlobalWorkspace = (
 
 const MANAGEMENT_TOOLS: readonly string[] = [
   "agent_registry",
-  "todo",
+  "task",
   "manager_control",
+  "read",
+  "bash",
+  "write",
+  "edit",
+  "ask_user",
+  "report_owner",
+  "workflow",
 ]
 const SCOPE_ENTRY = "manager.native-scope.v1"
 const NATIVE_MESSAGE = "manager-native-update"
 
 const reportText = (
   report: Exclude<ManagerSummary, { status: "started" }>,
+  attribution: string,
 ): string =>
-  `**Manager round report · ${report.elapsedMs}ms**\n\n${report.text}`
+  `${attribution}\n\n**Manager round report · ${report.elapsedMs}ms**\n\n${report.text}`
 
 const record = (value: unknown): value is Record<string, unknown> =>
   typeof value === "object" && value !== null && !Array.isArray(value)

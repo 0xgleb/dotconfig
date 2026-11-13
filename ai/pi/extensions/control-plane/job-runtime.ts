@@ -1,38 +1,18 @@
 import { Data, Effect } from "effect"
 import {
-  decodeHarnessReviewHandoff,
-  decodeHarnessReviewPayload,
-  includesAny,
-  isCredentialBearingPath,
-  requireHandoffMatchesAttempt,
-  toCommitSha,
-  toJobId,
-  type CommitSha,
-  type HarnessProtocolError,
-  type HarnessReviewHandoff,
-  type HarnessReviewPayload,
-  type JobId,
-  type ReviewKind,
-} from "./harness-protocol.ts"
-import {
   decodeHarnessResearchHandoff,
   decodeHarnessResearchPayload,
-  validateNewHarnessResearchPayload,
+  harnessResearchHandoffMatchesAttempt,
   type HarnessResearchHandoff,
   type HarnessResearchPayload,
 } from "./harness-research-protocol.ts"
-import {
-  canonicalPath,
-  repositorySlug,
-  REVIEW_DUTY_PROFILES,
-  type CanonicalPath,
-  type ReviewDutyProfile,
-} from "./review-duty-profile.ts"
 
-export {
-  REVIEW_DUTY_PROFILES,
-  type ReviewDutyProfile,
-} from "./review-duty-profile.ts"
+export type JobId = string & { readonly __brand: "JobId" }
+
+export const toJobId = (value: string): JobId | undefined =>
+  /^[A-Za-z0-9][A-Za-z0-9:._-]{0,127}$/u.test(value)
+    ? (value as JobId)
+    : undefined
 
 interface JobSchedule {
   readonly runAt: number
@@ -45,8 +25,6 @@ interface JobSchedule {
 }
 
 export interface RegisteredJobPayloads {
-  readonly "review-duty.scan": { readonly profile: ReviewDutyProfile }
-  readonly "harness.review": HarnessReviewPayload
   readonly "harness.research": HarnessResearchPayload
 }
 
@@ -59,53 +37,12 @@ export type RegisteredJobSpec = {
   }
 }[RegisteredJobKind]
 
-export type ReviewDutyScanSpec = Extract<
-  RegisteredJobSpec,
-  { readonly kind: "review-duty.scan" }
->
-
-export type HarnessReviewSpec = Extract<
-  RegisteredJobSpec,
-  { readonly kind: "harness.review" }
->
-
-/** Specs of the job kinds that finish without producing a typed result. */
-export type ResultlessJobSpec = Exclude<RegisteredJobSpec, HarnessReviewSpec>
-
-/** Handoff statuses that report a review the executor actually carried out. */
-export type VerifiedHandoffStatus =
-  "clean" | "findings_fixed" | "findings_pending"
-
-/** Handoff statuses that report an attempt which produced no review outcome. */
-export type UnsuccessfulHandoffStatus = "blocked" | "failed"
-
-export type VerifiedHarnessHandoff = HarnessReviewHandoff & {
-  readonly status: VerifiedHandoffStatus
-}
-
-export type UnsuccessfulHarnessHandoff = HarnessReviewHandoff & {
-  readonly status: UnsuccessfulHandoffStatus
-}
-
-export interface HarnessReviewResult {
-  readonly kind: "harness.review"
-  readonly handoff: HarnessReviewHandoff
-}
-
 export interface HarnessResearchResult {
   readonly kind: "harness.research"
   readonly handoff: HarnessResearchHandoff
 }
 
-export interface VerifiedHarnessReviewResult extends HarnessReviewResult {
-  readonly handoff: VerifiedHarnessHandoff
-}
-
-export interface UnsuccessfulHarnessReviewResult extends HarnessReviewResult {
-  readonly handoff: UnsuccessfulHarnessHandoff
-}
-
-export type RegisteredJobResult = HarnessReviewResult | HarnessResearchResult
+export type RegisteredJobResult = HarnessResearchResult
 
 interface JobIdentity {
   readonly id: JobId
@@ -132,14 +69,10 @@ interface TerminalFields extends JobIdentity {
 export type RetryingJob = JobBase & {
   readonly state: "retry_wait"
   readonly lastAttemptSummary: string
-  readonly result?: never
 }
 
 export type Job =
-  | (JobBase & {
-      readonly state: "scheduled" | "ready"
-      readonly result?: never
-    })
+  | (JobBase & { readonly state: "scheduled" | "ready" })
   | RetryingJob
   | (JobBase & {
       readonly state: "leased"
@@ -151,39 +84,16 @@ export type Job =
     })
   | TerminalJob
 
-/**
- * A job that has stopped, together with the evidence its attempt produced.
- * Which evidence a job can hold is decided by its kind and by how it stopped:
- * only a harness review hands back a typed handoff, only a verified handoff
- * can succeed, and only an unsuccessful one can accompany a failure. An
- * attempt abandoned before any handoff — a cancellation before the first
- * claim, or an expired lease — keeps none.
- */
 export type TerminalJob =
   | (TerminalFields & {
-      readonly spec: ResultlessJobSpec
-      readonly state: "succeeded"
-      readonly result?: never
+      readonly spec: RegisteredJobSpec
+      readonly state: "succeeded" | "cancelled"
+      readonly result?: RegisteredJobResult
     })
   | (TerminalFields & {
       readonly spec: RegisteredJobSpec
-      readonly state: "failed" | "cancelled"
-      readonly result?: never
-    })
-  | (TerminalFields & {
-      readonly spec: HarnessReviewSpec
-      readonly state: "succeeded"
-      readonly result: VerifiedHarnessReviewResult
-    })
-  | (TerminalFields & {
-      readonly spec: HarnessReviewSpec
       readonly state: "failed"
-      readonly result: UnsuccessfulHarnessReviewResult
-    })
-  | (TerminalFields & {
-      readonly spec: HarnessReviewSpec
-      readonly state: "cancelled"
-      readonly result: HarnessReviewResult
+      readonly result?: never
     })
 
 /**
@@ -262,26 +172,11 @@ const isSafeSummary = (value: unknown): value is string =>
   value.length <= 4_000 &&
   !UNSAFE_CONTROL.test(value)
 
-const isVerifiedHandoff = (
-  handoff: HarnessReviewHandoff,
-): handoff is VerifiedHarnessHandoff =>
-  handoff.status !== "blocked" && handoff.status !== "failed"
-
-const isUnsuccessfulHandoff = (
-  handoff: HarnessReviewHandoff,
-): handoff is UnsuccessfulHarnessHandoff =>
-  handoff.status === "blocked" || handoff.status === "failed"
-
 const checkedAdd = (left: number, right: number): number | undefined => {
   const sum = left + right
   return isTimestamp(sum) ? sum : undefined
 }
 
-/**
- * The payload decoders one boundary applies. The enqueue boundary and the
- * stored-job boundary ask different questions of the same payload, so each
- * supplies its own table and neither can be reached with the other's rules.
- */
 type JobPayloadDecoders = {
   readonly [Kind in RegisteredJobKind]: (
     value: unknown,
@@ -298,213 +193,41 @@ const asRuntimeError = <A, E>(
     ),
   )
 
-const decodeReviewDutyScanPayload = (
-  value: unknown,
-): Effect.Effect<RegisteredJobPayloads["review-duty.scan"], JobRuntimeError> =>
-  isRecord(value) &&
-  hasOnlyKeys(value, ["profile"]) &&
-  isReviewDutyProfile(value.profile)
-    ? Effect.succeed({ profile: value.profile })
-    : invalid("review-duty.scan requires a registered profile")
-
-/**
- * Decoders for a payload arriving at the untrusted enqueue boundary. A harness
- * payload is bound here to a checkout registered under `home`, which the
- * caller that read the environment states rather than this module discovering
- * it: a payload cannot nominate the home that decides whether the root it
- * names is a registered checkout.
- */
-const enqueuePayloadDecoders = (home: CanonicalPath): JobPayloadDecoders => ({
-  "review-duty.scan": decodeReviewDutyScanPayload,
-  "harness.review": value =>
-    asRuntimeError(decodeHarnessReviewPayload(value, home)),
-  "harness.research": value =>
-    asRuntimeError(validateNewHarnessResearchPayload(value)),
-})
-
-/**
- * Decoders for a payload read back out of the store. A stored payload was
- * already bound to a registered checkout when it was admitted, so re-hydrating
- * it checks only the form it must still have and never re-decides containment.
- * Containment depends on the home the service runs as and on the registered
- * checkout locations; deciding it again on every read would turn a relaunch
- * under another home, or an edited location table, into a store full of
- * unreadable jobs instead of a rejected enqueue.
- */
-const STORED_PAYLOAD_DECODERS: JobPayloadDecoders = {
-  "review-duty.scan": decodeReviewDutyScanPayload,
-  "harness.review": value => decodeStoredHarnessPayload(value),
+const JOB_PAYLOAD_DECODERS: JobPayloadDecoders = {
   "harness.research": value =>
     asRuntimeError(decodeHarnessResearchPayload(value)),
 }
 
 export const REGISTERED_JOB_KINDS = Object.freeze(
-  Object.keys(STORED_PAYLOAD_DECODERS) as RegisteredJobKind[],
+  Object.keys(JOB_PAYLOAD_DECODERS) as RegisteredJobKind[],
 )
 
 const isOneOf = <T extends string>(
   candidates: readonly T[],
   value: unknown,
-): value is T => typeof value === "string" && includesAny(candidates, value)
-
-const isReviewDutyProfile = (value: unknown): value is ReviewDutyProfile =>
-  isOneOf(REVIEW_DUTY_PROFILES, value)
+): value is T =>
+  typeof value === "string" && candidates.some(candidate => candidate === value)
 
 export const isRegisteredJobKind = (
   value: unknown,
 ): value is RegisteredJobKind => isOneOf(REGISTERED_JOB_KINDS, value)
 
-const MAX_PULL_REQUEST = 2_147_483_647
-const REVIEW_KINDS: readonly ReviewKind[] = ["own", "assigned", "auto"]
-const HARNESS_PAYLOAD_KEYS = [
-  "lane",
-  "task",
-  "profile",
-  "repository",
-  "pullRequest",
-  "kind",
-  "inputHeadSha",
-  "repositoryRoot",
-  "isolation",
-]
-
-interface StoredHarnessIdentity {
-  readonly profile: ReviewDutyProfile
-  readonly repository: string
-  readonly pullRequest: number
-  readonly kind: ReviewKind
-  readonly inputHeadSha: CommitSha
-  readonly repositoryRoot: CanonicalPath
-}
-
-/**
- * Re-hydrates a stored harness payload from its form alone: the registered
- * lane, task, kind and isolation it must pair, a slug-shaped repository, a
- * bounded pull request, a canonical root that names no credential store, and a
- * head in the one accepted commit form. Whether that root is a registered
- * checkout was decided when the payload was enqueued and is not asked again.
- */
-const decodeStoredHarnessPayload = (
-  value: unknown,
-): Effect.Effect<HarnessReviewPayload, JobRuntimeError> => {
-  if (!isRecord(value))
-    return invalid("stored harness payload must be an object")
-  const identity = storedHarnessIdentity(value)
-  if (identity === undefined)
-    return invalid("stored harness payload identity is malformed")
-  if (value.lane === "claude-code-max") {
-    if (!hasOnlyKeys(value, HARNESS_PAYLOAD_KEYS))
-      return invalid("stored Claude review payload contains unknown fields")
-    if (identity.kind === "assigned") {
-      return value.task === "review-pr" && value.isolation === "read-only"
-        ? Effect.succeed<HarnessReviewPayload>({
-            ...identity,
-            kind: identity.kind,
-            lane: "claude-code-max",
-            task: "review-pr",
-            isolation: "read-only",
-          })
-        : invalid("stored Claude review task does not match its kind")
-    }
-    return value.task === "review-loop" &&
-      value.isolation === "approved-worktree"
-      ? Effect.succeed<HarnessReviewPayload>({
-          ...identity,
-          kind: identity.kind,
-          lane: "claude-code-max",
-          task: "review-loop",
-          isolation: "approved-worktree",
-        })
-      : invalid("stored Claude review task does not match its kind")
-  }
-  if (value.lane === "cursor-subscription")
-    return invalid("stored harness lane is not registered")
-  return invalid("stored harness lane is not registered")
-}
-
-const storedHarnessIdentity = (
-  value: Readonly<Record<string, unknown>>,
-): StoredHarnessIdentity | undefined => {
-  const repository =
-    typeof value.repository === "string"
-      ? repositorySlug(value.repository)
-      : undefined
-  const repositoryRoot =
-    typeof value.repositoryRoot === "string"
-      ? canonicalPath(value.repositoryRoot)
-      : undefined
-  const inputHeadSha =
-    typeof value.inputHeadSha === "string"
-      ? toCommitSha(value.inputHeadSha)
-      : undefined
-  if (
-    !isReviewDutyProfile(value.profile) ||
-    !isOneOf(REVIEW_KINDS, value.kind) ||
-    !isBoundedInteger(value.pullRequest, 1, MAX_PULL_REQUEST) ||
-    repository === undefined ||
-    repositoryRoot === undefined ||
-    isCredentialBearingPath(repositoryRoot) ||
-    inputHeadSha === undefined
-  ) {
-    return undefined
-  }
-  return {
-    profile: value.profile,
-    repository,
-    pullRequest: value.pullRequest,
-    kind: value.kind,
-    inputHeadSha,
-    repositoryRoot,
-  }
-}
-
-/**
- * Pairs a decoded payload with the kind that selected its decoder. Both
- * branches read alike on purpose: indexing the decoder table with an
- * un-narrowed kind yields a payload that could belong to any kind, and the
- * resulting pair is not a `RegisteredJobSpec`. Narrowing the discriminant to a
- * single literal first is what makes the compiler check that a payload and the
- * kind it is stored under belong together.
- */
 const decodeRegisteredSpec = (
   kind: RegisteredJobKind,
   payload: unknown,
   schedule: JobSchedule,
   decoders: JobPayloadDecoders,
 ): Effect.Effect<RegisteredJobSpec, JobRuntimeError> =>
-  kind === "review-duty.scan"
-    ? Effect.map(decoders[kind](payload), decoded => ({
-        ...schedule,
-        kind,
-        payload: decoded,
-      }))
-    : kind === "harness.review"
-      ? Effect.map(decoders[kind](payload), decoded => ({
-          ...schedule,
-          kind,
-          payload: decoded,
-        }))
-      : Effect.map(decoders[kind](payload), decoded => ({
-          ...schedule,
-          kind,
-          payload: decoded,
-        }))
+  Effect.map(decoders[kind](payload), decoded => ({
+    ...schedule,
+    kind,
+    payload: decoded,
+  }))
 
-/**
- * Decodes a job spec offered to the enqueue boundary, binding any harness
- * payload to a checkout registered under `home`.
- */
 export const decodeJobSpec = (
   value: unknown,
-  home: CanonicalPath,
 ): Effect.Effect<RegisteredJobSpec, JobRuntimeError> =>
-  decodeSpecWith(value, enqueuePayloadDecoders(home))
-
-/** Decodes a job spec read back out of the store, by form only. */
-export const decodeStoredJobSpec = (
-  value: unknown,
-): Effect.Effect<RegisteredJobSpec, JobRuntimeError> =>
-  decodeSpecWith(value, STORED_PAYLOAD_DECODERS)
+  decodeSpecWith(value, JOB_PAYLOAD_DECODERS)
 
 const decodeSpecWith = (
   value: unknown,
@@ -626,7 +349,7 @@ export const decodeStoredJob = (
   ) {
     return invalid("stored job base fields are malformed")
   }
-  return Effect.flatMap(decodeStoredJobSpec(value.spec), spec => {
+  return Effect.flatMap(decodeJobSpec(value.spec), spec => {
     if (attempt > spec.maxAttempts)
       return invalid("stored job attempt exceeds its limit")
     const base: JobBase = { id, spec, attempt, createdAt, updatedAt }
@@ -731,40 +454,13 @@ const decodeStoredTerminal = (
     finishedAt,
     ...(isSafeSummary(summary) ? { summary } : {}),
   }
-  if (value.result === undefined) {
-    if (state !== "succeeded") return Effect.succeed({ ...fields, spec, state })
-    return spec.kind === "harness.review"
-      ? invalid("a succeeded harness review requires the handoff it produced")
-      : Effect.succeed({ ...fields, spec, state })
-  }
-  if (spec.kind !== "harness.review")
-    return invalid("stored job result is not valid for this job kind")
-  return Effect.flatMap(
-    storedHarnessHandoff(value.result, spec, base.id, base.attempt),
-    handoff => {
-      if (state === "cancelled") {
-        const result: HarnessReviewResult = { kind: "harness.review", handoff }
-        return Effect.succeed({ ...fields, spec, state, result })
-      }
-      if (state === "succeeded") {
-        return isVerifiedHandoff(handoff)
-          ? Effect.succeed({
-              ...fields,
-              spec,
-              state,
-              result: { kind: "harness.review" as const, handoff },
-            })
-          : invalid("a succeeded harness review requires a verified handoff")
-      }
-      return isUnsuccessfulHandoff(handoff)
-        ? Effect.succeed({
-            ...fields,
-            spec,
-            state,
-            result: { kind: "harness.review" as const, handoff },
-          })
-        : invalid("a failed harness review cannot carry a verified handoff")
-    },
+  if (value.result === undefined)
+    return Effect.succeed({ ...fields, spec, state })
+  if (state === "failed")
+    return invalid("a failed job cannot carry a completed research result")
+  return Effect.map(
+    validatedResearchResult(value.result, spec, base.id, base.attempt),
+    result => ({ ...fields, spec, state, result }),
   )
 }
 
@@ -780,14 +476,11 @@ export const createJob = (
   spec: RegisteredJobSpec,
   id: string,
   now: number,
-  home: CanonicalPath,
 ): Effect.Effect<Job, JobRuntimeError> => {
   const jobId = toJobId(id)
   if (jobId === undefined) return invalid("job id must be bounded and safe")
   if (!isTimestamp(now)) return invalid("now must be a safe timestamp")
-  // Job creation validates the stored form only: the untrusted enqueue
-  // boundary (the HTTP route) applies the stricter admission decoders.
-  return Effect.map(decodeStoredJobSpec(spec), decoded => ({
+  return Effect.map(decodeJobSpec(spec), decoded => ({
     id: jobId,
     spec: decoded,
     state: decoded.runAt <= now ? "ready" : "scheduled",
@@ -851,12 +544,6 @@ const currentLease = (
   return Effect.succeed(job)
 }
 
-/**
- * Publishes the outcome its lease holder reports. A harness review must hand
- * back the handoff it produced: the handoff is decoded here rather than
- * trusted from the caller, bound to the leased attempt, and stored with the
- * job, so a review that succeeded always carries the evidence for it.
- */
 export const completeJob = (
   job: Job,
   leaseToken: string,
@@ -870,62 +557,24 @@ export const completeJob = (
   if (!isSafeSummary(summary))
     return invalid("summary must be bounded safe text")
   return Effect.flatMap(currentLease(job, leaseToken, now), leased => {
-    const spec = leased.spec
     const fields = terminalFields(leased, now, summary)
-    if (spec.kind !== "harness.review") {
-      if (result !== undefined)
-        return invalid("job kind does not accept a typed harness result")
-      return Effect.succeed(
-        leased.cancelRequestedAt === undefined
-          ? { ...fields, spec, state: "succeeded" as const }
-          : { ...fields, spec, state: "cancelled" as const },
-      )
-    }
+    const state =
+      leased.cancelRequestedAt === undefined ? "succeeded" : "cancelled"
     if (result === undefined)
-      return invalid(
-        "harness completion requires the typed handoff it produced",
-      )
-    return Effect.flatMap(
-      boundHandoff(result.handoff, spec, leased.id, leased.attempt),
-      handoff => {
-        if (!isVerifiedHandoff(handoff))
-          return invalidTransition(
-            "unsuccessful harness handoff cannot complete a job",
-          )
-        const verified: VerifiedHarnessReviewResult = {
-          kind: "harness.review",
-          handoff,
-        }
-        return Effect.succeed(
-          leased.cancelRequestedAt === undefined
-            ? { ...fields, spec, state: "succeeded" as const, result: verified }
-            : {
-                ...fields,
-                spec,
-                state: "cancelled" as const,
-                result: verified,
-              },
-        )
-      },
+      return Effect.succeed({ ...fields, spec: leased.spec, state })
+    return Effect.map(
+      validatedResearchResult(result, leased.spec, leased.id, leased.attempt),
+      validated => ({ ...fields, spec: leased.spec, state, result: validated }),
     )
   })
 }
 
-/**
- * Records an attempt its lease holder could not finish. A harness review may
- * hand back the blocked or failed handoff it produced, and that handoff is
- * decoded, bound to the attempt, and stored with the terminal job so the
- * reason survives past the attempt. A retry keeps the summary of the attempt
- * that failed rather than the handoff itself: the next attempt produces its
- * own evidence, but why the last one stopped stays readable.
- */
 export const failJob = (
   job: Job,
   leaseToken: string,
   now: number,
   retryDelayMs: number,
   summary: string,
-  result?: RegisteredJobResult,
 ): Effect.Effect<Job, JobRuntimeError> => {
   if (!isTimestamp(now)) return invalid("now must be a safe timestamp")
   if (now < job.updatedAt)
@@ -936,29 +585,9 @@ export const failJob = (
     return invalid("retry timestamp exceeds safe range")
   if (!isSafeSummary(summary))
     return invalid("summary must be bounded safe text")
-  return Effect.flatMap(currentLease(job, leaseToken, now), leased => {
-    if (result === undefined)
-      return Effect.succeed(
-        retryOrFail(leased, now, retryDelayMs, summary, undefined),
-      )
-    const spec = leased.spec
-    if (spec.kind !== "harness.review")
-      return invalid("job kind does not accept a typed harness result")
-    return Effect.flatMap(
-      boundHandoff(result.handoff, spec, leased.id, leased.attempt),
-      handoff =>
-        isUnsuccessfulHandoff(handoff)
-          ? Effect.succeed(
-              retryOrFail(leased, now, retryDelayMs, summary, {
-                kind: "harness.review",
-                handoff,
-              }),
-            )
-          : invalidTransition(
-              "a verified harness handoff completes a job instead of failing it",
-            ),
-    )
-  })
+  return Effect.map(currentLease(job, leaseToken, now), leased =>
+    retryOrFail(leased, now, retryDelayMs, summary),
+  )
 }
 
 export const cancelJob = (
@@ -1020,7 +649,7 @@ export const recoverExpiredJob = (
   if (job.state !== "leased" || job.leaseUntil > now)
     return invalidTransition("only expired leases may be recovered")
   return Effect.succeed(
-    retryOrFail(job, now, retryDelayMs, "worker lease expired", undefined),
+    retryOrFail(job, now, retryDelayMs, "worker lease expired"),
   )
 }
 
@@ -1042,65 +671,49 @@ const retryOrFail = (
   now: number,
   retryDelayMs: number,
   summary: string,
-  result: UnsuccessfulHarnessReviewResult | undefined,
 ): Job => {
-  const spec = leased.spec
   if (
     leased.cancelRequestedAt === undefined &&
-    leased.attempt < spec.maxAttempts
-  ) {
+    leased.attempt < leased.spec.maxAttempts
+  )
     return {
       id: leased.id,
-      spec: { ...spec, runAt: now + retryDelayMs },
+      spec: { ...leased.spec, runAt: now + retryDelayMs },
       state: "retry_wait",
       attempt: leased.attempt,
       createdAt: leased.createdAt,
       updatedAt: now,
       lastAttemptSummary: summary,
     }
+  return {
+    ...terminalFields(leased, now, summary),
+    spec: leased.spec,
+    state: leased.cancelRequestedAt === undefined ? "failed" : "cancelled",
   }
-  const fields = terminalFields(leased, now, summary)
-  if (spec.kind !== "harness.review" || result === undefined) {
-    const state =
-      leased.cancelRequestedAt === undefined ? "failed" : "cancelled"
-    return { ...fields, spec, state }
-  }
-  return leased.cancelRequestedAt === undefined
-    ? { ...fields, spec, state: "failed" as const, result }
-    : { ...fields, spec, state: "cancelled" as const, result }
 }
 
-/**
- * Decodes an untrusted handoff and binds it to the attempt it claims to
- * answer, so no handoff reaches a job without passing the same two checks.
- */
-const boundHandoff = (
+const validatedResearchResult = (
   value: unknown,
-  spec: HarnessReviewSpec,
+  spec: RegisteredJobSpec,
   jobId: JobId,
   attempt: number,
-): Effect.Effect<HarnessReviewHandoff, JobRuntimeError> =>
-  Effect.flatMap(asRuntimeError(decodeHarnessReviewHandoff(value)), handoff =>
-    Effect.map(
-      asRuntimeError(
-        requireHandoffMatchesAttempt(handoff, spec.payload, jobId, attempt),
-      ),
-      () => handoff,
-    ),
-  )
-
-const storedHarnessHandoff = (
-  value: unknown,
-  spec: HarnessReviewSpec,
-  jobId: JobId,
-  attempt: number,
-): Effect.Effect<HarnessReviewHandoff, JobRuntimeError> => {
+): Effect.Effect<RegisteredJobResult, JobRuntimeError> => {
   if (
     !isRecord(value) ||
     !hasOnlyKeys(value, ["kind", "handoff"]) ||
-    value.kind !== "harness.review"
-  ) {
-    return invalid("stored harness result is malformed")
-  }
-  return boundHandoff(value.handoff, spec, jobId, attempt)
+    value.kind !== "harness.research"
+  )
+    return invalid("research result must contain its typed handoff")
+  return Effect.flatMap(
+    asRuntimeError(decodeHarnessResearchHandoff(value.handoff)),
+    handoff =>
+      harnessResearchHandoffMatchesAttempt(
+        handoff,
+        spec.payload,
+        jobId,
+        attempt,
+      )
+        ? Effect.succeed({ kind: "harness.research", handoff })
+        : invalid("research handoff does not match the job attempt"),
+  )
 }

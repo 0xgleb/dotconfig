@@ -131,9 +131,7 @@ test("host-owned clones preserve image-only lineage; mutation invalidates it", (
   value(f.ledger.associate(receipt, message, false))
   const clone = structuredClone(message)
   value(f.ledger.preserveClone(message, clone))
-  const image = clone.content[0]
-  assert.ok(image)
-  image.data = "replaced"
+  clone.content[0].data = "replaced"
   const denied = f.ledger.dispatch([clone], () =>
     assert.fail("must not dispatch mutated owner content"),
   )

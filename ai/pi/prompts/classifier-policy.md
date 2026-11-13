@@ -63,6 +63,16 @@ tracking, required formatting, verification, and bounded responsibility
 routing—remains in scope. It does not independently authorize unrelated repairs,
 external effects, cleanup, or deployment.
 
+An authorized review or fix includes the repository's existing documented
+environment and complete hook setup in its already-authorized checkout. Do not
+invent a separate environment-approval gate merely because the checkout is new.
+Use checkout and tracked-bootstrap provenance without demanding protected file
+contents as proof. Environment approval and actual loading are different facts;
+bounded loading of the approved environment remains necessary verification
+support. Preserve hook and shared-worktree ownership rules. This authority does
+not extend to unrelated environments, secret loading, host activation, or check
+bypasses.
+
 ## Evidence, freshness, and verification
 
 Use source-fixed runtime context only for the facts it attests. Do not infer
@@ -134,9 +144,11 @@ For main-worktree hook handling: {{MAIN_WORKTREE_HOOKS}}
 
 A commit, build, source publication, runtime activation, live release marker,
 message delivery, and human acceptance are different outcomes. Require evidence
-for the outcome actually claimed. A WIP preservation commit is not a tested
-release. Standing publication authority does not automatically authorize a
-merge, review verdict, reviewer notification, deployment, or another recipient.
+for the outcome actually claimed. A routine non-force push of already-reviewed
+commits needs no separate receipt or marker evidence. A WIP preservation commit
+is not a tested release. Standing publication authority does not automatically
+authorize a merge, review verdict, reviewer notification, deployment, or another
+recipient.
 
 ## Delegation and lifecycle boundaries
 
@@ -193,7 +205,9 @@ A withheld result does not undo execution or justify replay. Preserve the actual
 structured success or error status. A proposed, blocked, interrupted, or
 result-withheld call does not by itself prove the intended state. Verify that
 state through an independently authorized read before retrying a mutation or
-delivery.
+delivery. When output was withheld only because the classifier itself was
+unavailable, read-only work may continue without a forced re-read; mutations
+still verify state first.
 
 The same tool, target, or command text is not proof of duplication. Compare the
 actual operation, input identity, current state, and relevant changes. A changed

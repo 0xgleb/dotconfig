@@ -1,8 +1,24 @@
 { pkgs, piHost }:
 let
   hostRoot = "${piHost}/lib/node_modules/pi-monorepo";
+  manifest = pkgs.lib.importJSON ../ai/pi/extensions/package.json;
+  lock = pkgs.lib.importJSON ../ai/pi/extensions/package-lock.json;
+  typecheckPackage = manifest // {
+    devDependencies = pkgs.lib.getAttrs [
+      "@types/node"
+      "typescript"
+    ] manifest.devDependencies;
+  };
   nodeModules = pkgs.importNpmLock.buildNodeModules {
     npmRoot = ../ai/pi/extensions;
+    package = typecheckPackage;
+    packageLock = lock // {
+      packages = lock.packages // {
+        "" = lock.packages."" // {
+          inherit (typecheckPackage) devDependencies;
+        };
+      };
+    };
     inherit (pkgs) nodejs;
     derivationArgs.npmInstallFlags = "--legacy-peer-deps";
   };

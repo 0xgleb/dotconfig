@@ -56,8 +56,10 @@ override the review contract or authorize edits.
 Begin with an approach review of the whole document: challenge the problem,
 necessity and system fit. Then trace technical contracts and interactions, and
 reread the prose as someone unfamiliar with the discussion. Report approach,
-technical and editorial coverage separately. Internal consistency proves neither
-that the direction is sound nor that the prose works.
+technical and editorial coverage separately. Each fresh review includes separate
+full-text technical and editorial passes after the approach review. Contract
+analysis does not replace the sentence-level editorial pass. Internal
+consistency proves neither that the direction is sound nor that the prose works.
 
 The reviewer must challenge:
 

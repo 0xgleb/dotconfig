@@ -133,7 +133,6 @@ const projectLabel = (
   sample: Pick<AgentUsageSample, "cwd" | "label">,
 ): string => {
   if (sample.cwd.includes("/code/dataclique/yielduck")) return "Yielduck"
-  if (sample.cwd.includes("/code/st0x/")) return "st0x"
   if (sample.cwd.endsWith("/.config")) return "dotconfig"
   return sample.label
 }

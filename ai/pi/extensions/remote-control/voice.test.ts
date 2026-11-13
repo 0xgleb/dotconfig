@@ -110,9 +110,7 @@ test("Telegram voice bytes require bounded Ogg Opus content", async () => {
       contentType: "audio/ogg",
       bytes: (() => {
         const bytes = oggOpus()
-        const checksumByte = bytes[22]
-        assert.ok(checksumByte !== undefined)
-        bytes[22] = checksumByte ^ 0xff
+        bytes[22] ^= 0xff
         return bytes
       })(),
     },
