@@ -621,7 +621,22 @@ const usageGovernor = (pi: ExtensionAPI): void => {
     }
   }
 
-  pi.registerTool({
+  const checkpointParameters = Type.Object({
+    remainingPercent: Type.Number({
+      minimum: 0,
+      maximum: MAX_ALLOWANCE_PERCENT,
+    }),
+    pool: Type.Optional(
+      Type.Union([
+        Type.Literal("chatgpt-shared-weekly"),
+        Type.Literal("codex-app-server-weekly"),
+      ]),
+    ),
+    resetAt: Type.Optional(Type.String({ maxLength: 80 })),
+    capturedAt: Type.String({ maxLength: 80 }),
+  })
+
+  pi.registerTool<typeof checkpointParameters>({
     name: "usage_checkpoint",
     label: "Usage checkpoint",
     description:
@@ -632,20 +647,7 @@ const usageGovernor = (pi: ExtensionAPI): void => {
       "Use usage_checkpoint only for allowance values and timestamps explicitly verified by the owner or provider UI; never infer missing checkpoint fields or reuse a stale reset after a refill.",
       "Select codex-app-server-weekly when the owner is correcting the Codex allowance shown by Pi; omitted pool values preserve the existing ChatGPT shared-weekly behavior.",
     ],
-    parameters: Type.Object({
-      remainingPercent: Type.Number({
-        minimum: 0,
-        maximum: MAX_ALLOWANCE_PERCENT,
-      }),
-      pool: Type.Optional(
-        Type.Union([
-          Type.Literal("chatgpt-shared-weekly"),
-          Type.Literal("codex-app-server-weekly"),
-        ]),
-      ),
-      resetAt: Type.Optional(Type.String({ maxLength: 80 })),
-      capturedAt: Type.String({ maxLength: 80 }),
-    }),
+    parameters: checkpointParameters,
     async execute(_toolCallId, request) {
       const checkpoint = parseAllowanceCheckpointInput(
         `${request.remainingPercent} ${request.resetAt ?? "refill"} ${request.capturedAt}`,
