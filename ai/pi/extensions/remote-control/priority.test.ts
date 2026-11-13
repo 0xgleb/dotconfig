@@ -9,7 +9,7 @@ test("Telegram prompts steer an active local turn at the next safe boundary", ()
   assert.doesNotMatch(source, /accepting: ctx\.isIdle\(\)/)
   assert.match(
     source,
-    /remoteTurnContent\([\s\S]*?message\.text,[\s\S]*?message\.images,[\s\S]*?"conversational",[\s\S]*?sendUserMessage\(content, \{[\s\S]*?deliverAs: "steer"/,
+    /remoteTurnContent\([\s\S]*?message\.text,[\s\S]*?message\.images,[\s\S]*?"conversational",[\s\S]*?sendUserMessage\(\[\.\.\.content\], \{[\s\S]*?deliverAs: "steer"/,
   )
   assert.doesNotMatch(source, /if \(active \|\| !ctx\.isIdle\(\)\) return/)
 })
@@ -21,18 +21,7 @@ test("only authenticated Telegram ingress records a direct owner intervention", 
   )
   assert.match(
     source,
-    /const authenticatedOwner = remoteSourceCarriesOwnerAuthority\(source\)[\s\S]*?if \(authenticatedOwner && prompt\?\.type === "text"\)[\s\S]*?pi\.events\.emit\(HUMAN_TURN_EVENT, prompt\.text\)[\s\S]*?pi\.sendUserMessage\(content,/,
-  )
-})
-
-test("claimed owner and agent messages enter the durable backlog before model delivery", () => {
-  assert.match(
-    source,
-    /import \{[\s\S]*?backlogRequirementsFromText,[\s\S]*?MESSAGE_BACKLOG_EVENT,[\s\S]*?\} from "\.\.\/shared\/backlog-events\.ts"/,
-  )
-  assert.match(
-    source,
-    /const authenticatedOwner = remoteSourceCarriesOwnerAuthority\(source\)[\s\S]*?pi\.events\.emit\(MESSAGE_BACKLOG_EVENT, \{[\s\S]*?project: ctx\.cwd,[\s\S]*?messageId: message\.id,[\s\S]*?source: authenticatedOwner \? "owner-message" : "bridge-message"[\s\S]*?requirements: backlogRequirementsFromText\(message\.text\)[\s\S]*?\}\)[\s\S]*?pi\.sendUserMessage\(content,/,
+    /const authenticatedOwner = remoteSourceCarriesOwnerAuthority\(source\)[\s\S]*?if \(authenticatedOwner && prompt\?\.type === "text"\)[\s\S]*?pi\.events\.emit\(HUMAN_TURN_EVENT, prompt\.text\)[\s\S]*?pi\.sendUserMessage\(\[\.\.\.content\],/,
   )
 })
 

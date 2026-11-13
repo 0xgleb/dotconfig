@@ -67,24 +67,6 @@ test("post-reload continuation waits for a later idle macrotask without owning t
   )
 })
 
-test("reload degradation is automatically routed as an agentops incident", () => {
-  assert.match(source, /AGENTOPS_INCIDENT_EVENT/)
-  assert.match(
-    source,
-    /component: "auto-reload"[\s\S]*?operation[\s\S]*?summary/,
-  )
-  assert.match(
-    source,
-    /reportIncident\([\s\S]*?"error",[\s\S]*?"refresh model catalog after reload"/,
-  )
-  assert.match(source, /"automatic extension reload"/)
-  assert.match(source, /Automatic Pi reload failed/)
-  assert.match(
-    source,
-    /reportIncident\([\s\S]*?"warning",[\s\S]*?"watch managed Pi resources"/,
-  )
-})
-
 test("manual reload cancels a continuation from the superseded generation", () => {
   const manualStart = source.indexOf("pi.events.on(MANUAL_RELOAD_REQUEST_EVENT")
   const manualEnd = source.indexOf(
@@ -105,11 +87,11 @@ test("manual reload cancels a continuation from the superseded generation", () =
   assert.match(manualHandler, /hostMigrationTimer = undefined/)
 })
 
-test("failed host replacement keeps watchers active and retries without incident spam", () => {
+test("failed host replacement keeps watchers active and retries", () => {
   assert.match(source, /HOST_MIGRATION_FAILURE_RETRY_MS/)
   assert.match(
     source,
-    /catch \(error\) \{[\s\S]*?if \(!failureReported\)[\s\S]*?hostMigrationTimer = setTimeout\([\s\S]*?migrateWhenIdle,[\s\S]*?HOST_MIGRATION_FAILURE_RETRY_MS/,
+    /catch \{[\s\S]*?hostMigrationTimer = setTimeout\([\s\S]*?migrateWhenIdle,[\s\S]*?HOST_MIGRATION_FAILURE_RETRY_MS/,
   )
   assert.doesNotMatch(
     source,
@@ -141,10 +123,6 @@ test("a failed command-boundary reload restores the pending retry", () => {
   )
 
   assert.match(handler, /try \{[\s\S]*?await ctx\.reload\(\)/)
-  assert.match(
-    handler,
-    /catch \(error\) \{[\s\S]*?"automatic extension reload"[\s\S]*?Automatic Pi reload failed/,
-  )
   assert.match(
     handler,
     /if \(!pending\) pendingSince = Date\.now\(\)\s*pending = true/,
@@ -297,7 +275,6 @@ test("completed reloads resume only when the composer is free", () => {
   assert.match(source, /deliverAs: "resume"/)
   assert.match(source, /deliverAs: "followUp"/)
   assert.match(source, /Resuming preserved work now/)
-  assert.match(source, /user input remains available/)
   assert.doesNotMatch(source, /ctx\.abort\(\)/)
 })
 

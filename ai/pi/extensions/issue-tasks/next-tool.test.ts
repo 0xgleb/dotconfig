@@ -77,6 +77,23 @@ const args = (
     arguments: input,
   })
 
+test("task guidance recommends integer Priority writes without rejecting fractional reads", () => {
+  const tool = createTaskTool(
+    options({
+      next: () => Effect.succeed({ kind: "none", observation }),
+    }),
+  )
+
+  assert.match(
+    tool.description,
+    /Use positive integers when writing GitHub Priority ranks/,
+  )
+  assert.match(
+    tool.description,
+    /accepts existing positive finite fractional priorities/,
+  )
+})
+
 test("actual SDK argument dispatch exposes native next and derives invocation from host", async () => {
   const calls: unknown[] = []
   const tool = createTaskTool(

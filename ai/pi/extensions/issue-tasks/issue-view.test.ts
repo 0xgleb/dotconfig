@@ -132,15 +132,15 @@ test("combined issue queries normalize/detach strict budgets and qualified task 
     repository: "0xGleb/DotConfig",
     state: "open",
     page: { limit: 10 },
-    tasks: { limit: 10, filter: { status: "todo", blocked: false } },
+    tasks: { limit: 10, filter: { status: "todo" } },
   }
   const result = decodeIssueTaskListQuery(input)
   assert.ok(Either.isRight(result))
   input.tasks.limit = 11
-  input.tasks.filter.blocked = true
+  input.tasks.filter.status = "blocked"
   assert.equal(result.right.repository, repository)
   assert.equal(result.right.tasks.limit, 10)
-  assert.equal(result.right.tasks.filter?.blocked, false)
+  assert.equal(result.right.tasks.filter?.status, "todo")
   assert.ok(
     Object.isFrozen(result.right) &&
       Object.isFrozen(result.right.tasks) &&

@@ -1,13 +1,8 @@
 import assert from "node:assert/strict"
 import test from "node:test"
-import { Either } from "effect"
 import { todoWorkSnapshot } from "./goal.ts"
-import {
-  managerObservation,
-  parseManagerPriorities,
-  MANAGER_PRIORITY_ENTRY,
-} from "./manager-core.ts"
-import type { Todo, TodoState } from "../todo/state.ts"
+import { managerObservation, MANAGER_PRIORITY_ENTRY } from "./manager-core.ts"
+import type { Todo, TodoState } from "../shared/legacy-todo-state.ts"
 
 const entries = (todos: readonly Todo[], order?: readonly number[]) => [
   {
@@ -27,7 +22,7 @@ const entries = (todos: readonly Todo[], order?: readonly number[]) => [
 ]
 const ids = (lines: readonly string[]) => lines.map(line => line.split(" ")[0])
 
-test("continuation ranks assigned worker priority before unassigned work without rewriting committed order", () => {
+test("historical projection ranks assigned priority without rewriting committed order", () => {
   const todos: Todo[] = [
     { id: 1, text: "Later", status: "pending", priority: 3 },
     { id: 2, text: "First", status: "pending", priority: 1 },
@@ -79,7 +74,6 @@ test("rank cannot make a child of a held parent runnable or selectable", () => {
         text => text.startsWith("#2 ") && text.includes("parent"),
       ),
     )
-    assert.ok(Either.isLeft(parseManagerPriorities("2", todos)))
     assert.equal(JSON.stringify(todos), before)
   }
 })

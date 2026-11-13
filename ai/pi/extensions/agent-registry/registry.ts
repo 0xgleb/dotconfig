@@ -184,11 +184,6 @@ export interface ClaimRequestInput {
   readonly now: number
 }
 
-export interface AdvanceRequestBacklogInput extends ClaimRequestInput {
-  readonly phase: "implementation" | "review" | "publication"
-  readonly evidenceRef: string
-}
-
 export interface CompleteRequestInput extends ClaimRequestInput {
   readonly summary: string
 }
@@ -237,17 +232,13 @@ export const registryReceiptAvailable = (
   availability.editorText.length === 0 &&
   !availability.autoReloadPending
 
-export const prioritizedActiveReceiptLeases = (
+export const activeReceiptLeases = (
   snapshot: RegistrySnapshot,
   agentId: string,
 ): readonly Lease[] =>
-  snapshot.leases
-    .filter(lease => lease.owner.id === agentId && lease.status === "active")
-    .sort(
-      (left, right) =>
-        Number(right.mode === "operational") -
-        Number(left.mode === "operational"),
-    )
+  snapshot.leases.filter(
+    lease => lease.owner.id === agentId && lease.status === "active",
+  )
 
 export interface ReconcileLeaseInput extends ClaimLeaseInput {
   readonly store: RegistryStore
@@ -292,9 +283,6 @@ export interface RegistryStore {
   ) => Effect.Effect<ClearedRegistryCounts, RegistryError>
   readonly claimRequest: (
     input: ClaimRequestInput,
-  ) => Effect.Effect<RegistryRequest, RegistryError>
-  readonly advanceRequestBacklog: (
-    input: AdvanceRequestBacklogInput,
   ) => Effect.Effect<RegistryRequest, RegistryError>
   readonly completeRequest: (
     input: CompleteRequestInput,

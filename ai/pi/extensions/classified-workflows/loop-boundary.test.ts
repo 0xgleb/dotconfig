@@ -3,7 +3,6 @@ import { Effect, Either } from "effect"
 import test from "node:test"
 import {
   advanceLoop,
-  migrateLegacyReloadLoop,
   nextLoopRunAt,
   parseStoredLoop,
   parseLoopCommand,
@@ -64,16 +63,6 @@ test("persisted scheduler values reject unsafe integers", () => {
       undefined,
     )
   assert.deepEqual(parseStoredLoop(JSON.parse(JSON.stringify(active))), active)
-})
-
-test("legacy migration rejects malformed or overflowing timestamps", () => {
-  for (const now of [-1, NaN, Infinity, Number.MAX_SAFE_INTEGER]) {
-    assert.equal(migrateLegacyReloadLoop("1h /reload", now), undefined)
-  }
-  assert.equal(
-    migrateLegacyReloadLoop("1h /reload", 1_000)?.nextRunAt,
-    3_601_000,
-  )
 })
 
 test("valid explicit and sampled jitter remain within the parsed cadence", () => {

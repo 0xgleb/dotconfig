@@ -19,29 +19,35 @@ import { decodeIssueReference, type IssueReference } from "./identity.ts"
 import {
   openSqliteTaskStore,
   type SqliteTaskStore,
+  type TaskApplyContext,
   type TaskId,
   type TaskFilter,
   type TaskReadQuery,
 } from "./sqlite-store.ts"
 
 const run = Effect.runPromise
+
 const fixtureParent = fileURLToPath(
   new URL("../../../../.tmp/issue-plans-tests/", import.meta.url),
 )
+
 const issue = (repository = "0xgleb/dotconfig", number = 1) => {
   const result = decodeIssueReference({ repository, number })
   assert.ok(Either.isRight(result))
   return result.right
 }
+
 const fixture = async (work: (root: string) => Promise<void>) => {
   mkdirSync(fixtureParent, { recursive: true, mode: 0o700 })
   const root = mkdtempSync(join(fixtureParent, "case-"))
+
   try {
     await work(root)
   } finally {
     rmSync(root, { recursive: true, force: true })
   }
 }
+
 const withStore = async (
   path: string,
   work: (store: SqliteTaskStore) => Promise<void>,
@@ -50,12 +56,14 @@ const withStore = async (
   const store = await run(
     openSqliteTaskStore({ databasePath: path, busyTimeoutMs }),
   )
+
   try {
     await work(store)
   } finally {
     await run(store.close())
   }
 }
+
 const expectError = async <T, E extends { readonly code: string }>(
   operation: Effect.Effect<T, E>,
   code: E["code"],
@@ -64,19 +72,23 @@ const expectError = async <T, E extends { readonly code: string }>(
   assert.ok(Either.isLeft(result))
   assert.equal(result.left.code, code)
 }
+
 const sql = <A>(path: string, work: (database: DatabaseSync) => A): A => {
   const database = new DatabaseSync(path)
+
   try {
     return work(database)
   } finally {
     database.close()
   }
 }
+
 const ids: readonly [string, string, string] = [
   "00000000-0000-4000-8000-000000000001",
   "00000000-0000-4000-8000-000000000002",
   "00000000-0000-4000-8000-000000000003",
 ]
+
 const seedIssueRecord = (path: string, target = issue()): string =>
   sql(path, database => {
     const id = randomUUID()
@@ -85,8 +97,10 @@ const seedIssueRecord = (path: string, target = issue()): string =>
         "INSERT INTO issue_plans (id, repository, issue_number, revision) VALUES (?, ?, ?, 0)",
       )
       .run(id, target.repository, target.number)
+
     return id
   })
+
 const seedTask = (path: string, issueRowId: string, id: string, text: string) =>
   sql(path, database => {
     database
@@ -95,6 +109,7 @@ const seedTask = (path: string, issueRowId: string, id: string, text: string) =>
       )
       .run(id, issueRowId, text)
   })
+
 const appendTask = (store: SqliteTaskStore, target: IssueReference = issue()) =>
   store.apply(
     {
@@ -116,6 +131,213 @@ const appendTask = (store: SqliteTaskStore, target: IssueReference = issue()) =>
     },
   )
 
+test("blocked is a reason-carrying status and leaving it requires an explicit status", async () =>
+  fixture(async root =>
+    withStore(join(root, "tasks.sqlite"), async store => {
+      const target = issue()
+      await run(appendTask(store, target))
+      const page = await run(store.readTasks(target, { limit: 1 }))
+      assert.ok(Option.isSome(page))
+      const task = page.value.tasks[0]
+      assert.ok(task)
+      const reference = {
+        issue: target,
+        task: { kind: "existing", id: task.id },
+      }
+      const context = (): TaskApplyContext => ({
+        actorId: "fixture-worker",
+        requestId: randomUUID(),
+        now: 1000,
+        cancellation: "forbidden",
+      })
+      const blockedStatus = {
+        _tag: "blocked",
+        reason: "Requires verified dependency",
+      }
+      await run(
+        store.apply(
+          {
+            issues: [target],
+            operations: [
+              { op: "status", target: reference, status: blockedStatus },
+            ],
+          },
+          context(),
+        ),
+      )
+      const blocked = await run(
+        store.readTasks(target, { limit: 1 }, { status: "blocked" }),
+      )
+      assert.ok(Option.isSome(blocked))
+      assert.deepEqual(blocked.value.tasks[0]?.status, blockedStatus)
+      const detail = await run(store.readTask(target, task.id))
+      assert.ok(Option.isSome(detail))
+      assert.deepEqual(detail.value.task.status, blockedStatus)
+      await run(
+        store.apply(
+          {
+            issues: [target],
+            operations: [{ op: "status", target: reference, status: "doing" }],
+          },
+          context(),
+        ),
+      )
+      const resumed = await run(store.readTask(target, task.id))
+      assert.ok(Option.isSome(resumed))
+      assert.equal(resumed.value.task.status, "doing")
+      const remaining = await run(
+        store.readTasks(target, { limit: 1 }, { status: "blocked" }),
+      )
+      assert.ok(Option.isSome(remaining))
+      assert.equal(remaining.value.tasks.length, 0)
+    }),
+  ))
+
+for (const supplied of [undefined, 0, 250, 2_000] as const) {
+  test(`native busy timeout ${supplied ?? "default"} is retained by commit recovery`, async t =>
+    fixture(async root => {
+      const path = join(root, "tasks.sqlite")
+      const expected = supplied ?? 0
+      const configured: unknown[] = []
+      const exec = DatabaseSync.prototype.exec
+      let loseAcknowledgement = false
+
+      t.mock.method(
+        DatabaseSync.prototype,
+        "exec",
+        function (this: DatabaseSync, ...args: Parameters<typeof exec>) {
+          exec.apply(this, args)
+          if (args[0].startsWith("PRAGMA busy_timeout"))
+            configured.push(this.prepare("PRAGMA busy_timeout").get()?.timeout)
+          if (loseAcknowledgement && args[0] === "COMMIT") {
+            loseAcknowledgement = false
+            throw new Error("fixture lost acknowledgement after native commit")
+          }
+        },
+      )
+
+      const options =
+        supplied === undefined
+          ? { databasePath: path }
+          : { databasePath: path, busyTimeoutMs: supplied }
+      const store = await run(openSqliteTaskStore(options))
+
+      try {
+        loseAcknowledgement = true
+        const saved = await run(appendTask(store))
+
+        assert.equal(saved.receipt, "recovered")
+        assert.deepEqual(configured, [expected, expected])
+      } finally {
+        await run(store.close())
+      }
+    }))
+}
+
+test(
+  "default task-store contention yields between bounded retries without partial writes",
+  { timeout: 10_000 },
+  async t =>
+    fixture(async root => {
+      const path = join(root, "tasks.sqlite")
+      const store = await run(openSqliteTaskStore({ databasePath: path }))
+      const holder = new DatabaseSync(path)
+
+      const exec = DatabaseSync.prototype.exec
+      const nativeTimeouts: unknown[] = []
+      let busyAttempts = 0
+      let locked = false
+      let progressed = false
+      let progress: ReturnType<typeof setImmediate> | undefined
+
+      t.mock.method(
+        DatabaseSync.prototype,
+        "exec",
+        function (this: DatabaseSync, ...args: Parameters<typeof exec>) {
+          const observed = this !== holder && args[0] === "BEGIN IMMEDIATE"
+          if (observed)
+            nativeTimeouts.push(
+              this.prepare("PRAGMA busy_timeout").get()?.timeout,
+            )
+          try {
+            return exec.apply(this, args)
+          } catch (error) {
+            if (
+              observed &&
+              typeof error === "object" &&
+              error !== null &&
+              "errcode" in error &&
+              error.errcode === 5
+            ) {
+              busyAttempts += 1
+              if (busyAttempts === 1)
+                progress = setImmediate(() => {
+                  progressed = true
+                })
+            }
+            throw error
+          }
+        },
+      )
+
+      const mutation = appendTask(store)
+
+      try {
+        holder.exec("BEGIN IMMEDIATE")
+        locked = true
+        const blocked = await run(Effect.either(mutation), { signal: t.signal })
+
+        assert.ok(Either.isLeft(blocked))
+        assert.equal(blocked.left.code, "busy")
+        assert.equal(busyAttempts, 3)
+        assert.deepEqual(nativeTimeouts, [0, 0, 0])
+        assert.equal(progressed, true)
+        sql(path, database => {
+          for (const table of [
+            "issue_plans",
+            "issue_plan_tasks",
+            "issue_plan_dependencies",
+            "issue_plan_batches",
+            "issue_plan_history",
+          ]) {
+            assert.equal(
+              database.prepare(`SELECT COUNT(*) AS count FROM ${table}`).get()
+                ?.count,
+              0,
+            )
+          }
+        })
+
+        holder.exec("ROLLBACK")
+        locked = false
+        const saved = await run(mutation, { signal: t.signal })
+
+        assert.equal(saved.receipt, "committed")
+        assert.equal(saved.issues[0]?.revision, 1)
+        assert.equal(saved.created.length, 1)
+        sql(path, database => {
+          for (const table of [
+            "issue_plans",
+            "issue_plan_tasks",
+            "issue_plan_batches",
+            "issue_plan_history",
+          ]) {
+            assert.equal(
+              database.prepare(`SELECT COUNT(*) AS count FROM ${table}`).get()
+                ?.count,
+              1,
+            )
+          }
+        })
+      } finally {
+        if (progress !== undefined) clearImmediate(progress)
+        if (locked) holder.exec("ROLLBACK")
+        holder.close()
+        await run(store.close())
+      }
+    }),
+)
+
 test(
   "multi-issue task reads echo ordered qualified pages, repeated filters and missing state",
   { timeout: 5_000 },
@@ -126,8 +348,10 @@ test(
         const missing = issue("missing/repo")
         await run(appendTask(store))
         await run(appendTask(store, other))
+
         const first = await run(store.readTasks(issue(), { limit: 1 }))
         const second = await run(store.readTasks(other, { limit: 1 }))
+
         assert.ok(Option.isSome(first) && Option.isSome(second))
 
         const pages = await run(
@@ -173,6 +397,7 @@ test(
         const otherOwner = seedIssueRecord(path, other)
         seedTask(path, owner, ids[0], "Old A")
         seedTask(path, otherOwner, ids[1], "Old B")
+
         const prepare = DatabaseSync.prototype.prepare
         let advanced = false
         const interception = mock.method(
@@ -192,6 +417,7 @@ test(
                     statement,
                     parameters,
                   )
+
                   if (!advanced) {
                     advanced = true
                     sql(path, writer => {
@@ -209,13 +435,16 @@ test(
                       writer.exec("COMMIT")
                     })
                   }
+
                   return result
                 },
               })
             }
+
             return statement
           },
         )
+
         try {
           const pages = await run(
             store.readManyTasks([
@@ -239,7 +468,9 @@ test(
         } finally {
           interception.mock.restore()
         }
+
         const latest = await run(store.readTasks(other, { limit: 1 }))
+
         assert.ok(Option.isSome(latest))
         assert.equal(latest.value.revision, 1)
         assert.equal(latest.value.tasks[0]?.text, "New B")
@@ -254,7 +485,9 @@ test(
     fixture(async root => {
       await withStore(join(root, "tasks.sqlite"), async store => {
         await run(appendTask(store))
+
         const query = { issue: issue(), page: { limit: 1 } }
+
         const fetched: string[] = []
         const prepare = DatabaseSync.prototype.prepare
         const interception = mock.method(
@@ -265,6 +498,7 @@ test(
             return prepare.call(this, text)
           },
         )
+
         try {
           for (const queries of [
             null,
@@ -286,8 +520,11 @@ test(
         } finally {
           interception.mock.restore()
         }
+
         assert.deepEqual(fetched, [])
+
         const unchanged = await run(store.readTasks(issue(), { limit: 1 }))
+
         assert.ok(Option.isSome(unchanged))
         assert.equal(unchanged.value.revision, 1)
       })
@@ -301,10 +538,12 @@ test(
     fixture(async root => {
       await withStore(join(root, "tasks.sqlite"), async store => {
         await run(appendTask(store))
+
         const query = { issue: issue(), page: { limit: 1 } }
         const pages = await run(
           store.readManyTasks(Array.from({ length: 100 }, () => query)),
         )
+
         assert.equal(pages.length, 100)
         assert.ok(
           pages.every(
@@ -312,8 +551,11 @@ test(
               result.page?.tasks.length === 1 && result.page.revision === 1,
           ),
         )
+
         const first = pages[0]?.page?.tasks[0]
+
         assert.ok(first)
+
         await expectError(
           store.readManyTasks([
             query,
@@ -324,15 +566,19 @@ test(
           ]),
           "invalid_input",
         )
+
         const afterFailure = await run(store.readManyTasks([query]))
+
         assert.deepEqual(afterFailure, [pages[0]])
+
         await run(store.close())
+
         await expectError(store.readManyTasks([query]), "closed")
       })
     }),
 )
 
-test("filtered task pages combine status and factual blocker without changing issue state", async () =>
+test("filtered task pages select lifecycle status without changing issue state", async () =>
   fixture(async root => {
     const path = join(root, "tasks.sqlite")
     await withStore(path, async store => {
@@ -353,11 +599,7 @@ test("filtered task pages combine status and factual blocker without changing is
       })
 
       const filtered = await run(
-        store.readTasks(
-          issue(),
-          { limit: 100 },
-          { status: "doing", blocked: true },
-        ),
+        store.readTasks(issue(), { limit: 100 }, { status: "blocked" }),
       )
 
       assert.ok(Option.isSome(filtered))
@@ -367,15 +609,19 @@ test("filtered task pages combine status and factual blocker without changing is
       )
       assert.equal(filtered.value.next, null)
       assert.equal(filtered.value.revision, 0)
+
       const unblocked = await run(
-        store.readTasks(issue(), { limit: 100 }, { blocked: false }),
+        store.readTasks(issue(), { limit: 100 }, { status: "todo" }),
       )
+
       assert.ok(Option.isSome(unblocked))
       assert.deepEqual(
         unblocked.value.tasks.map(task => task.id),
-        ids.slice(0, 2),
+        [ids[0]],
       )
+
       const all = await run(store.readTasks(issue(), { limit: 100 }))
+
       assert.ok(Option.isSome(all))
       assert.equal(all.value.tasks.length, 3)
       assert.equal(all.value.revision, 0)
@@ -383,17 +629,21 @@ test("filtered task pages combine status and factual blocker without changing is
         await run(store.readTasks(issue(), { limit: 100 }, {})),
         all,
       )
+
       const statusOnly = await run(
         store.readTasks(issue(), { limit: 100 }, { status: "doing" }),
       )
+
       assert.ok(Option.isSome(statusOnly))
       assert.deepEqual(
         statusOnly.value.tasks.map(task => task.id),
-        ids.slice(1),
+        [ids[1]],
       )
+
       const noMatch = await run(
         store.readTasks(issue(), { limit: 100 }, { status: "done" }),
       )
+
       assert.ok(Option.isSome(noMatch))
       assert.deepEqual(noMatch.value.tasks, [])
       assert.equal(noMatch.value.revision, 0)
@@ -403,7 +653,7 @@ test("filtered task pages combine status and factual blocker without changing is
             store.readTasks(
               issue("absent/repo"),
               { limit: 1 },
-              { blocked: true },
+              { status: "blocked" },
             ),
           ),
         ),
@@ -422,19 +672,25 @@ test("filtered task pages keep qualified keysets and filtered lookahead across r
           .prepare("UPDATE issue_plan_tasks SET status = 'done' WHERE id = ?")
           .run(ids[1]),
       )
+
       const unfiltered = await run(store.readTasks(issue(), { limit: 100 }))
+
       assert.ok(Option.isSome(unfiltered))
+
       const middle = unfiltered.value.tasks[1]
+
       assert.ok(middle)
 
       const first = await run(
         store.readTasks(issue(), { limit: 1 }, { status: "todo" }),
       )
+
       assert.ok(Option.isSome(first) && first.value.next)
       assert.deepEqual(
         first.value.tasks.map(task => task.id),
         [ids[0]],
       )
+
       const second = await run(
         store.readTasks(
           issue(),
@@ -442,6 +698,7 @@ test("filtered task pages keep qualified keysets and filtered lookahead across r
           { status: "todo" },
         ),
       )
+
       assert.ok(Option.isSome(second))
       assert.deepEqual(
         second.value.tasks.map(task => task.id),
@@ -466,6 +723,7 @@ test("filtered task pages keep qualified keysets and filtered lookahead across r
         ),
         "invalid_input",
       )
+
       const foreignOwner = seedIssueRecord(path, issue("other/repo"))
       seedTask(
         path,
@@ -486,6 +744,7 @@ test("filtered task pages keep qualified keysets and filtered lookahead across r
       const reopened = await run(
         store.readTasks(issue(), { limit: 100 }, { status: "todo" }),
       )
+
       assert.ok(Option.isSome(reopened))
       assert.deepEqual(
         reopened.value.tasks.map(task => task.id),
@@ -538,7 +797,6 @@ test("single-task lookup returns issue revision, full task data and dependency a
           id: created.id,
           text: "Persisted requirement",
           status: "todo",
-          blocker: null,
         },
         dependsOn: [],
       })
@@ -715,7 +973,9 @@ test("single-task lookup bounds dependency cardinality before decoding addresses
         const owner = database
           .prepare("SELECT plan_id FROM issue_plan_tasks WHERE id = ?")
           .get(created.id)
+
         assert.ok(owner && typeof owner.plan_id === "string")
+
         const add = database.prepare(
           "INSERT INTO issue_plan_tasks (id, plan_id, text, status) VALUES (?, ?, 'Dependency', 'todo')",
         )
@@ -740,7 +1000,9 @@ test("single-task lookup bounds dependency cardinality before decoding addresses
         const owner = database
           .prepare("SELECT plan_id FROM issue_plan_tasks WHERE id = ?")
           .get(created.id)
+
         assert.ok(owner && typeof owner.plan_id === "string")
+
         const id = randomUUID()
         database
           .prepare(
@@ -813,6 +1075,7 @@ for (const order of ["registry-first", "tasks-first"]) {
     fixture(async root => {
       const path = join(root, "registry.sqlite")
       const registry = makeSqliteRegistryStore(root)
+
       const populateRegistry = () =>
         run(
           registry.enqueue({
@@ -823,6 +1086,7 @@ for (const order of ["registry-first", "tasks-first"]) {
             now: 1_000,
           }),
         )
+
       try {
         const request =
           order === "registry-first" ? await populateRegistry() : undefined
@@ -838,11 +1102,14 @@ for (const order of ["registry-first", "tasks-first"]) {
           assert.deepEqual(second.issues, [{ issue: issue(), revision: 1 }])
           if (order === "tasks-first") await populateRegistry()
         })
+
         const snapshot = await run(registry.snapshot(1_000))
+
         assert.equal(snapshot.requests.length, 1)
         if (request) assert.equal(snapshot.requests[0]?.id, request.id)
         await withStore(path, async store => {
           const page = await run(store.readTasks(issue(), { limit: 10 }))
+
           assert.ok(Option.isSome(page))
           assert.deepEqual(page.value.issue, issue())
           assert.equal(page.value.revision, 1)
@@ -877,27 +1144,35 @@ test("qualified issue task pages survive reopening without worker presence", asy
     })
     await withStore(path, async store => {
       const first = await run(store.readTasks(issue(), { limit: 1 }))
+
       assert.ok(Option.isSome(first))
       assert.deepEqual(
         first.value.tasks.map(task => task.text),
         ["First requirement"],
       )
       assert.ok(first.value.next)
+
       const next = await run(
         store.readTasks(issue(), { limit: 1, after: first.value.next }),
       )
+
       assert.ok(Option.isSome(next))
       assert.deepEqual(
         next.value.tasks.map(task => task.id),
         [ids[1]],
       )
       assert.equal(next.value.next, null)
+
       const other = await run(
         store.readTasks(issue("dataclique/yielduck"), { limit: 1 }),
       )
+
       assert.ok(Option.isSome(other))
+
       const foreign = other.value.tasks[0]
+
       assert.ok(foreign)
+
       await expectError(
         store.readTasks(issue(), { limit: 1, after: foreign.id }),
         "invalid_input",
@@ -916,6 +1191,7 @@ test("a separate process reads the same persisted issue tasks", async () =>
     await withStore(path, async () => {
       const row = seedIssueRecord(path)
       seedTask(path, row, ids[0], "Visible across processes")
+
       const worker = fileURLToPath(
         new URL("./sqlite-store.worker.ts", import.meta.url),
       )
@@ -923,6 +1199,7 @@ test("a separate process reads the same persisted issue tasks", async () =>
         encoding: "utf8",
         timeout: 10_000,
       })
+
       assert.deepEqual(JSON.parse(output), {
         issue: issue(),
         revision: 0,
@@ -950,7 +1227,9 @@ test("malformed persisted task identity fails instead of returning partial tasks
           .prepare("DELETE FROM issue_plan_tasks WHERE id = ?")
           .run("malformed-uuid"),
       )
+
       const recovered = await run(store.readTasks(issue(), { limit: 1 }))
+
       assert.ok(Option.isSome(recovered))
       assert.deepEqual(
         recovered.value.tasks.map(task => task.id),
@@ -1000,12 +1279,14 @@ test("page bounds and closed connections fail explicitly", async () =>
     const store = await run(
       openSqliteTaskStore({ databasePath: join(root, "registry.sqlite") }),
     )
+
     try {
       for (const limit of [0, -1, 101, 1.5, Number.NaN])
         await expectError(store.readTasks(issue(), { limit }), "invalid_input")
     } finally {
       await run(store.close())
     }
+
     await expectError(store.readTasks(issue(), { limit: 10 }), "closed")
     await expectError(appendTask(store), "closed")
     await run(store.close())
@@ -1015,6 +1296,7 @@ test("symlink database paths are rejected before touching their target", async (
   fixture(async root => {
     const target = join(root, "target.txt")
     writeFileSync(target, "untouched fixture", { mode: 0o600 })
+
     const path = join(root, "registry.sqlite")
     symlinkSync(target, path)
     await expectError(
@@ -1029,6 +1311,7 @@ test("writer lock exhaustion is typed and never creates partial issue tasks", as
     const path = join(root, "registry.sqlite")
     await withStore(path, async () => {})
     const lock = new DatabaseSync(path)
+
     try {
       lock.exec("BEGIN IMMEDIATE")
       await withStore(
@@ -1101,6 +1384,7 @@ test("caller revision tokens and blank persisted blockers are not accepted", asy
           1,
         ),
       )
+
       const extraIssue = { ...issue(), expectedRevisions: {} }
       const extraPage = { limit: 10, expectedRevisions: {} }
       await expectError(
@@ -1108,8 +1392,11 @@ test("caller revision tokens and blank persisted blockers are not accepted", asy
         "invalid_input",
       )
       await expectError(store.readTasks(issue(), extraPage), "invalid_input")
+
       const id = first.created[0]?.id
+
       assert.ok(id)
+
       sql(path, database =>
         database
           .prepare("UPDATE issue_plan_tasks SET blocker = ? WHERE id = ?")
@@ -1163,6 +1450,7 @@ test("production qualified-issue lookups use a bounded index for existing and ab
           insert.run(randomUUID(), repository, number)
         database.exec("COMMIT")
       })
+
       const lookups: string[] = []
       const prepare = DatabaseSync.prototype.prepare
       const tracked = mock.method(
@@ -1174,6 +1462,7 @@ test("production qualified-issue lookups use a bounded index for existing and ab
           return prepare.call(this, query)
         },
       )
+
       try {
         assert.ok(
           Option.isSome(
@@ -1190,6 +1479,7 @@ test("production qualified-issue lookups use a bounded index for existing and ab
       } finally {
         tracked.mock.restore()
       }
+
       assert.ok(lookups.length >= 4)
       sql(path, database => {
         for (const query of new Set(lookups)) {
@@ -1197,6 +1487,7 @@ test("production qualified-issue lookups use a bounded index for existing and ab
             const plan = database
               .prepare(`EXPLAIN QUERY PLAN ${query}`)
               .all(repository, number)
+
             assert.ok(
               plan.some(
                 row =>
@@ -1233,7 +1524,9 @@ test("a matching-column schema without issue uniqueness is rejected", async () =
     const opened = await run(
       Effect.either(openSqliteTaskStore({ databasePath: path })),
     )
+
     if (Either.isRight(opened)) await run(opened.right.close())
+
     assert.ok(Either.isLeft(opened))
     assert.equal(opened.left.code, "unsupported_schema")
     sql(path, database =>
@@ -1268,7 +1561,9 @@ for (const object of [
       const opened = await run(
         Effect.either(openSqliteTaskStore({ databasePath: path })),
       )
+
       if (Either.isRight(opened)) await run(opened.right.close())
+
       sql(path, database =>
         assert.equal(
           database.prepare("PRAGMA journal_mode").get()?.journal_mode,

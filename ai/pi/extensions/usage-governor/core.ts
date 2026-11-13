@@ -250,25 +250,7 @@ export const controlPlaneUsageControlUrl = (
   return usageUrl ? `${usageUrl}/control` : undefined
 }
 
-const AUTONOMOUS_ROLE =
-  /^(?:general|reviewer|yielduck-operator|moneymentum-operator)$/u
-
-export const autonomousRoleForCwd = (
-  cwd: string,
-  home: string | undefined,
-): string => {
-  if (!home) return "general"
-  if (cwd === `${home}/code/dataclique/yielduck`) return "yielduck-operator"
-  if (cwd === `${home}/code/dataclique/moneymentum`)
-    return "moneymentum-operator"
-  if (
-    cwd === `${home}/code/dataclique` ||
-    cwd === `${home}/code/st0x` ||
-    cwd === `${home}/code/0xgleb`
-  )
-    return "reviewer"
-  return "general"
-}
+const AUTONOMOUS_ROLE = /^(?:general|reviewer)$/u
 
 export const controlPlaneUsageAdmissionUrl = (
   portValue: string | undefined,

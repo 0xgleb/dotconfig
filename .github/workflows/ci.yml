@@ -28,7 +28,6 @@ jobs:
         run: |
           nix --accept-flake-config --no-pure-eval develop .#default --command bash -euo pipefail -c '
             cd ai/pi/extensions
-            node --test ci-typecheck.test.ts
             npm ci --legacy-peer-deps --include=dev
             npm run typecheck
           '

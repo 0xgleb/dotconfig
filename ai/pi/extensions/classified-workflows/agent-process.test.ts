@@ -202,12 +202,7 @@ test("workflow children activate only requested source tools and not extension c
   const selectedTools = args[args.indexOf("--tools") + 1]
   assert.ok(selectedTools)
   assert.equal(selectedTools, "read")
-  for (const tool of [
-    "workflow",
-    "workflow_audit",
-    "review_duty",
-    "artifact_provenance",
-  ]) {
+  for (const tool of ["workflow", "workflow_audit", "artifact_provenance"]) {
     assert.equal(selectedTools.split(",").includes(tool), false)
   }
 })

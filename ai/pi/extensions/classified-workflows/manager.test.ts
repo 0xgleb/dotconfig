@@ -165,17 +165,6 @@ test("ordinary manager conversation preserves worker queue and deadline; replace
   assert.ok(f.entries.some(entry => entry.customType === MANAGER_CHAT_ENTRY))
 })
 
-test("only owner priority command changes the existing continuation order", async () => {
-  const f = fixture()
-  await f.emit("session_start")
-  await f.command("priorities 1 2")
-  assert.ok(todoWorkSnapshot(f.entries).pending[0]?.startsWith("#1 "))
-  assert.equal(f.requests.length, 0)
-  await f.command("priorities 999")
-  assert.ok(f.notices.some(message => message.includes("existing runnable")))
-  assert.ok(todoWorkSnapshot(f.entries).pending[0]?.startsWith("#1 "))
-})
-
 test("actual expiry generates one summary; repeated notifications cannot replay it", async () => {
   const f = fixture()
   await f.emit("session_start")

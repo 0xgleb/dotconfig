@@ -59,8 +59,10 @@ const PageSchema = Schema.Struct({
   ),
   after: Schema.optional(TaskIdSchema),
 })
+
 const record = (input: unknown): input is Readonly<Record<string, unknown>> =>
   typeof input === "object" && input !== null && !Array.isArray(input)
+
 const shape = (
   input: unknown,
   allowed: readonly string[],
@@ -71,6 +73,7 @@ const shape = (
     key => typeof key === "string" && allowed.includes(key),
   ) &&
   required.every(key => Object.hasOwn(input, key))
+
 const invalid = (code: TaskRequestError["code"]) =>
   Either.left(
     new TaskRequestError({
@@ -124,9 +127,6 @@ const decodeTaskReadQuery = (
       ...(decodedFilter.right.status === undefined
         ? {}
         : { status: decodedFilter.right.status }),
-      ...(decodedFilter.right.blocked === undefined
-        ? {}
-        : { blocked: decodedFilter.right.blocked }),
     })
 
     return Object.freeze({
@@ -163,6 +163,7 @@ export const decodeTaskRequest = (
 ): Either.Either<TaskRequest, TaskRequestDecodeError> =>
   Either.gen(function* () {
     if (!record(input)) return yield* invalid("invalid_request")
+
     switch (input.action) {
       case "read": {
         if (
@@ -213,10 +214,12 @@ export const decodeTaskRequest = (
           )
         )
           return yield* invalid("invalid_request")
+
         const batch = yield* decodeTaskMutationBatch({
           issues: input.issues,
           operations: input.operations,
         })
+
         return Object.freeze({ action: "apply", batch })
       }
       default:

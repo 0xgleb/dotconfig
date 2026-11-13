@@ -8,6 +8,8 @@ import { Effect, Either } from "effect"
 import { createGitHubProjectReader } from "./github-project-read.ts"
 import { createGitHubIssueReader } from "./github-read.ts"
 import { createIssueNextReader } from "./next.ts"
+import { createIssueNextPicker } from "./pickup.ts"
+import { createTaskTool, type IssueTaskTool } from "./tool.ts"
 import { openSqliteTaskStore, type SqliteTaskStore } from "./sqlite-store.ts"
 
 const run = Effect.runPromise
@@ -186,6 +188,41 @@ const withStore = async (work: (store: SqliteTaskStore) => Promise<void>) => {
   } finally {
     rmSync(root, { recursive: true })
   }
+}
+
+for (const mode of [undefined, "implementation"] as const) {
+  test(`implementation next excludes In review before ranking: ${mode ?? "default"}`, async () => {
+    await withStore(async tasks => {
+      const source = ports([
+        projectPayload([
+          {
+            number: 1,
+            priority: 1,
+            effort: 1,
+            status: "aba860b9",
+            assignees: [viewer],
+          },
+          {
+            number: 2,
+            priority: 2,
+            effort: 1,
+            status: "47fc9ee4",
+            assignees: [viewer],
+          },
+        ]),
+      ])
+      const observed = await run(
+        createIssueNextReader({ ...source, tasks }).read({
+          ...query,
+          ...(mode === undefined ? {} : { mode }),
+        }),
+      )
+      assert.ok(observed.selection.kind === "selected")
+      assert.equal(observed.selection.issue.number, 2)
+      assert.deepEqual(observed.inReviewOptions, ["aba860b9"])
+      assert.ok(!source.calls.includes("issue:1"))
+    })
+  })
 }
 
 test("implementation next excludes actual Refine status before ranking even with complete numeric metadata", async () => {
@@ -441,9 +478,12 @@ test("next derives factual blocking from actual local work without changing life
           operations: [
             { op: "add", issue: issue(1), key: "work", text: "Fixture work" },
             {
-              op: "block",
+              op: "status",
               target: { issue: issue(1), task: { kind: "added", key: "work" } },
-              reason: "Required fixture resource is unavailable",
+              status: {
+                _tag: "blocked",
+                reason: "Required fixture resource is unavailable",
+              },
             },
           ],
         },
@@ -494,3 +534,85 @@ test("next rejects caller clearance and malformed targets before any source read
     assert.deepEqual(source.calls, [])
   })
 })
+
+test("next selects work with existing fractional Project priorities", async () => {
+  await withStore(async tasks => {
+    const source = ports([
+      projectPayload([
+        { number: 568, priority: 31.5, effort: 2 },
+        { number: 567, priority: 32.5, effort: 1 },
+        { number: 566, priority: 36.5, effort: 1 },
+      ]),
+    ])
+    const result = await run(
+      createIssueNextReader({ ...source, tasks }).next(query),
+    )
+
+    assert.ok(result.kind === "selected")
+    assert.equal(result.issue.number, 567)
+  })
+})
+
+for (const [field, value, code] of [
+  ["priority", -0.5, "invalid_priority"],
+  ["effort", 4, "invalid_effort"],
+] as const) {
+  test(`public task-next preserves the offending issue and invalid ${field}`, async () => {
+    await withStore(async tasks => {
+      const source = ports([
+        projectPayload([
+          { number: 1, priority: 1, effort: 1 },
+          { number: 99, priority: 2, effort: 1, [field]: value },
+        ]),
+      ])
+
+      const unexpectedPickup = (): never =>
+        assert.fail("Invalid scheduling metadata must prevent pickup")
+
+      const picker = createIssueNextPicker({
+        reader: createIssueNextReader({ ...source, tasks }),
+        pickup: {
+          inspect: unexpectedPickup,
+          assignOwner: unexpectedPickup,
+          setInProgress: unexpectedPickup,
+        },
+      })
+
+      const tool = createTaskTool({
+        store: tasks,
+        nextPicker: picker,
+        contextForCall: call =>
+          Effect.succeed({
+            actorId: call.sessionId,
+            requestId: call.toolCallId,
+            now: 1,
+            cancellation: "forbidden",
+          }),
+        renderOutput: outcome => Effect.succeed(JSON.stringify(outcome)),
+      })
+
+      const result = await tool.execute(
+        "invalid-scheduling-metadata",
+        { action: "next", query },
+        undefined,
+        undefined,
+        {
+          sessionManager: { getSessionId: () => "test-session" },
+        } as Parameters<IssueTaskTool["execute"]>[4],
+      )
+      const outcome = result.details.outcome
+
+      assert.equal(result.isError, true)
+      assert.ok(outcome.kind === "failed")
+      assert.equal(outcome.code, code)
+      assert.match(outcome.message, /owner\/repository#99/)
+      assert.ok(outcome.message.includes(`Received ${value}.`))
+      assert.ok(
+        result.content.some(
+          block =>
+            block.type === "text" && block.text.includes(outcome.message),
+        ),
+      )
+    })
+  })
+}

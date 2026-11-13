@@ -35,12 +35,6 @@
           "--skip=filtered_commands_leave_no_captured_output"
         ];
       });
-      # The pinned 6.0.2 pnpm dependency fetch has an incorrect Darwin hash.
-      typescript-language-server = prev.typescript-language-server.overrideAttrs (old: {
-        pnpmDeps = old.pnpmDeps.overrideAttrs {
-          outputHash = "sha256-PmyJb8090pEPc09Tbv8RgdvQpzpba2L8ve87+aVncQU=";
-        };
-      });
     })
   ];
 
@@ -74,15 +68,12 @@
   homebrew = {
     enable = true;
 
-    # brews = [ "tkhq/tap/turnkey" ];
     casks = [
       "amethyst"
       "chatgpt"
-      # "coderabbit"
       "font-jetbrains-mono-nerd-font"
       "ghostty"
       "karabiner-elements"
-      # "tailscale-app"
     ];
 
     onActivation = {

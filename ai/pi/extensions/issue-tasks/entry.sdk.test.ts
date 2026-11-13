@@ -22,7 +22,7 @@ const configuredSettings = JSON.parse(
   readFileSync(new URL("../../../pi.settings.json", import.meta.url), "utf8"),
 )
 
-test("actual SDK resolves task and todo from the configured package, then executes persisted task work without a model", async () => {
+test("actual SDK discovers the configured task tool and executes persisted task work", async () => {
   const packageRoot = getPackageDir()
   const loader = await import(
     pathToFileURL(join(packageRoot, "dist/core/extensions/loader.js")).href
@@ -72,12 +72,7 @@ test("actual SDK resolves task and todo from the configured package, then execut
       resource => resource.path === join(extensionDirectory, "index.ts"),
     )
 
-    const todoResource = resources.extensions.find(
-      resource => resource.path === join(extensionPackage, "todo/index.ts"),
-    )
-
     assert.equal(taskResource?.enabled, true, "configured package exposes task")
-    assert.equal(todoResource?.enabled, true, "configured package retains todo")
     assert.ok(taskResource)
     const loaded = await loader.loadExtensions(
       [taskResource.path],

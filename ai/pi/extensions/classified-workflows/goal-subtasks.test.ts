@@ -23,7 +23,7 @@ test("completed roots do not hide pending children or their root links", () => {
   assert.deepEqual(work.blocked, [
     "#3 (subtask of #1) Verify runtime — Reload pending",
   ])
-  assert.match(taskContinuationMessage(work) ?? "", /subtask of #1/)
+  assert.equal(taskContinuationMessage(work), undefined)
 })
 
 test("malformed parent links are explicit blockers, never trusted relationships", () => {
@@ -43,10 +43,10 @@ test("malformed parent links are explicit blockers, never trusted relationships"
   assert.match(work.blocked[0] ?? "", /#3 Grandchild.*invalid parent/i)
 })
 
-test("review work remains executable work rather than disappearing from continuation", () => {
+test("review work remains visible for manual migration without automatic continuation", () => {
   const work = snapshot([
     { id: 4, text: "Review before delivery", status: "in_review" },
   ])
   assert.deepEqual(work.pending, ["#4 Review before delivery"])
-  assert.match(taskContinuationMessage(work) ?? "", /Review before delivery/)
+  assert.equal(taskContinuationMessage(work), undefined)
 })

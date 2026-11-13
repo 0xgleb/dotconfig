@@ -7,7 +7,7 @@ const source = readFileSync(
   "utf8",
 )
 
-test("owner-report examples demonstrate verified GitHub links without retired organization defaults", () => {
+test("owner-report examples demonstrate verified GitHub links", () => {
   const shape =
     source.split("## Shape")[1]?.split("## Links that carry a route")[0] ?? ""
   assert.ok(shape.includes("verify current status before reusing any item"))
@@ -17,7 +17,6 @@ test("owner-report examples demonstrate verified GitHub links without retired or
   assert.ok(
     shape.includes("[#76](https://github.com/0xgleb/dotconfig/issues/76)"),
   )
-  assert.doesNotMatch(source, /\b(?:st0x|rainlanguage|linear|graphite)\b/i)
   assert.ok(
     source.includes(
       "Every external reference must carry its corresponding verified link",

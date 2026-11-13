@@ -5,7 +5,6 @@ import {
   decodeHarnessResearchHandoff,
   decodeHarnessResearchPayload,
   harnessResearchHandoffMatchesAttempt,
-  validateNewHarnessResearchPayload,
 } from "./harness-research-protocol.ts"
 
 const payload = {
@@ -16,6 +15,11 @@ const payload = {
   task: "subscription-harness-adversarial-review",
   repositoryRoot: "/Users/example/.config",
   isolation: "read-only",
+  ownership: {
+    kind: "project-domain",
+    project: "dotconfig",
+    role: "research-config",
+  },
 } as const
 
 const handoff = {
@@ -38,108 +42,26 @@ test("research payloads carry identifiers but no executable prompt or command", 
     Effect.runSync(decodeHarnessResearchPayload(payload)),
     payload,
   )
-  assert.equal(
-    succeeds(
-      decodeHarnessResearchPayload({ ...payload, prompt: "commit everything" }),
-    ),
-    false,
-  )
-  assert.equal(
-    succeeds(
-      decodeHarnessResearchPayload({ ...payload, repositoryRoot: "relative" }),
-    ),
-    false,
-  )
-  for (const repositoryRoot of ["/tmp/\u0000x", "/tmp/../x", "/tmp/x/"]) {
-    assert.equal(
-      succeeds(decodeHarnessResearchPayload({ ...payload, repositoryRoot })),
-      false,
-    )
-  }
-  assert.equal(
-    succeeds(
-      decodeHarnessResearchPayload({ ...payload, task: "task\ncommit" }),
-    ),
-    false,
-  )
+  for (const invalid of [
+    { ...payload, prompt: "commit everything" },
+    { ...payload, repositoryRoot: "relative" },
+    { ...payload, repositoryRoot: "/tmp/\u0000x" },
+    { ...payload, repositoryRoot: "/tmp/../x" },
+    { ...payload, repositoryRoot: "/tmp/x/" },
+    { ...payload, task: "task\ncommit" },
+  ])
+    assert.equal(succeeds(decodeHarnessResearchPayload(invalid)), false)
 })
 
-test("new research jobs require explicit non-spoofable ownership", () => {
-  const projectOwned = {
-    ...payload,
-    ownership: {
-      kind: "project-domain",
-      project: "dotconfig",
-      role: "dotconfig-research",
-    },
-    profile: "dotconfig-research",
-  } as const
-  assert.deepEqual(
-    Effect.runSync(validateNewHarnessResearchPayload(projectOwned)),
-    projectOwned,
-  )
-  assert.equal(
-    succeeds(validateNewHarnessResearchPayload(payload)),
-    false,
-    "legacy payloads remain readable but cannot seed new jobs",
-  )
-  assert.equal(
-    succeeds(
-      validateNewHarnessResearchPayload({
-        ...projectOwned,
-        profile: "agentops-dotconfig",
-        ownership: {
-          kind: "project-domain",
-          project: "dotconfig",
-          role: "agentops-dotconfig",
-        },
-      }),
-    ),
-    false,
-  )
-
-  assert.equal(
-    succeeds(
-      validateNewHarnessResearchPayload({
-        ...projectOwned,
-        ownership: { ...projectOwned.ownership, project: "moneymentum" },
-      }),
-    ),
-    false,
-  )
-
-  const agentopsOwned = {
-    ...payload,
-    profile: "agentops-dotconfig",
-    ownership: {
-      kind: "agentops-support",
-      project: "dotconfig",
-      role: "agentops-dotconfig",
-      supportArea: "classifier",
-    },
-  } as const
-  assert.deepEqual(
-    Effect.runSync(validateNewHarnessResearchPayload(agentopsOwned)),
-    agentopsOwned,
-  )
-  assert.equal(
-    succeeds(
-      validateNewHarnessResearchPayload({
-        ...agentopsOwned,
-        ownership: { ...agentopsOwned.ownership, role: "agentops-yielduck" },
-      }),
-    ),
-    false,
-  )
-  assert.equal(
-    succeeds(
-      validateNewHarnessResearchPayload({
-        ...agentopsOwned,
-        ownership: { ...agentopsOwned.ownership, supportArea: "portfolio" },
-      }),
-    ),
-    false,
-  )
+test("research ownership must match the project and selected profile", () => {
+  const { ownership, ...unowned } = payload
+  for (const invalid of [
+    unowned,
+    { ...payload, ownership: { ...ownership, project: "another-project" } },
+    { ...payload, ownership: { ...ownership, role: "another-profile" } },
+    { ...payload, ownership: { ...ownership, permission: "write" } },
+  ])
+    assert.equal(succeeds(decodeHarnessResearchPayload(invalid)), false)
 })
 
 test("research handoffs are bounded inert data fenced to one attempt", () => {

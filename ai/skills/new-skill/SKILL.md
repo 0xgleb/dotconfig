@@ -14,8 +14,8 @@ allowed-tools:
 
 `~/.config` is the Git toplevel and main worktree for global skills and harness
 configuration. Follow its `GLOBAL_AGENTS.md` and `AGENTS.md`; do not hand a
-routine requested skill edit to another operator or substitute a scratch draft
-for changing the canonical source.
+routine requested skill edit to another agent or substitute a scratch draft for
+changing the canonical source.
 
 ## Procedure
 
@@ -65,6 +65,4 @@ for changing the canonical source.
 
 Missing context, broken live links or unavailable validation must be reported
 precisely, not hidden behind a clean claim. Preserve completed evidence and
-continue independent authorized work. A genuine platform incident follows the
-repository's support-routing policy; it does not transfer routine skill editing
-or grant new authority.
+continue independent authorized work.

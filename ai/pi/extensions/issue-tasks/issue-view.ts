@@ -149,9 +149,6 @@ export const decodeIssueTaskListQuery = (
                 ...(filter.status === undefined
                   ? {}
                   : { status: filter.status }),
-                ...(filter.blocked === undefined
-                  ? {}
-                  : { blocked: filter.blocked }),
               }),
             }),
       }),
