@@ -4,11 +4,16 @@ import { Effect } from "effect"
 import type { NativeTaskHostOptions } from "./host.ts"
 import { TaskHostError, TaskOutputError } from "./tool.ts"
 import { TaskStoreError } from "./sqlite-store.ts"
+import type { TaskHudError } from "./hud-controller.ts"
 
-export interface NativeTaskHostReport {
-  readonly phase: "initialization" | "release"
-  readonly code: Parameters<NativeTaskHostOptions["onOpenFailure"]>[0]["code"]
-}
+export type NativeTaskHostReport =
+  | {
+      readonly phase: "initialization" | "release"
+      readonly code: Parameters<
+        NativeTaskHostOptions["onOpenFailure"]
+      >[0]["code"]
+    }
+  | { readonly phase: "hud"; readonly code: TaskHudError["code"] }
 
 export const nativeTaskRuntimeOptions = (
   databasePath: string,
@@ -55,6 +60,10 @@ export const nativeTaskRuntimeOptions = (
               new TaskOutputError({ message: "Task output is not text" }),
             ),
       ),
+    ),
+  onHudFailure: error =>
+    Effect.suspend(() =>
+      report(Object.freeze({ phase: "hud", code: error.code })),
     ),
   onOpenFailure: error =>
     Effect.suspend(() =>
