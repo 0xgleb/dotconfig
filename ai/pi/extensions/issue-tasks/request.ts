@@ -127,9 +127,6 @@ const decodeTaskReadQuery = (
       ...(decodedFilter.right.status === undefined
         ? {}
         : { status: decodedFilter.right.status }),
-      ...(decodedFilter.right.blocked === undefined
-        ? {}
-        : { blocked: decodedFilter.right.blocked }),
     })
 
     return Object.freeze({

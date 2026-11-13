@@ -5,6 +5,7 @@ import {
   mkdirSync,
   mkdtempSync,
   renameSync,
+  readFileSync,
   rmSync,
 } from "node:fs"
 import { join } from "node:path"
@@ -1167,6 +1168,60 @@ test("cancellation policy is trusted context, not batch data, and failed cancell
         ),
         "invalid_batch",
       )
+    })
+  }))
+
+test("committed add receipts from the deployed base replay without rewriting stored truth", async () =>
+  fixture(async path => {
+    sql(path, database =>
+      database.exec(
+        "BEGIN; PRAGMA defer_foreign_keys = ON;\n" +
+          readFileSync(
+            new URL(
+              "./test-fixtures/committed-add-receipt.sql",
+              import.meta.url,
+            ),
+            "utf8",
+          ) +
+          "\nCOMMIT;",
+      ),
+    )
+    chmodSync(path, 0o600)
+    const issue = { repository: "owner/receipt-fixture", number: 1 }
+    const input = {
+      issues: [issue],
+      operations: [
+        { op: "add", issue, key: "work", text: "Persisted requirement" },
+      ],
+    }
+    const context: TaskApplyContext = {
+      actorId: "receipt-fixture",
+      requestId: "committed-add",
+      now: 1000,
+      cancellation: "forbidden",
+    }
+    await withStore(path, async store => {
+      const receiptBefore = sql(path, database => {
+        const row = database
+          .prepare("SELECT result_json FROM issue_plan_batches")
+          .get()
+        assert.ok(row && typeof row.result_json === "string")
+        return row.result_json
+      })
+      const result = await run(store.apply(input, context))
+      assert.equal(result.receipt, "replayed")
+      assert.equal(result.batchId, "15d347f4-b84f-4865-a6d1-9dc84a002e41")
+      assert.deepEqual(result.changed[0]?.fields, [
+        "text",
+        "status",
+        "dependsOn",
+      ])
+      assert.equal(receiptJson(path, result.batchId), receiptBefore)
+      const page = await run(store.readTasks(issue, { limit: 10 }))
+      assert.ok(Option.isSome(page))
+      assert.equal(page.value.revision, 1)
+      assert.equal(page.value.tasks.length, 1)
+      assert.equal(page.value.tasks[0]?.text, "Persisted requirement")
     })
   }))
 

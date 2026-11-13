@@ -861,7 +861,7 @@ const SavedResultSchema = Schema.Struct({
       id: TaskIdSchema,
       revision: RevisionSchema,
       fields: Schema.Array(
-        Schema.Literal("text", "status", "dependsOn", "issue"),
+        Schema.Literal("text", "status", "blocker", "dependsOn", "issue"),
       ),
     }),
   ),
@@ -1176,7 +1176,13 @@ const readReceipt = (
           issue,
           id: task.id,
           revision: task.revision,
-          fields: Object.freeze([...task.fields]),
+          fields: Object.freeze([
+            ...new Set(
+              task.fields.map(field =>
+                field === "blocker" ? ("status" as const) : field,
+              ),
+            ),
+          ]),
         }),
       )
     }

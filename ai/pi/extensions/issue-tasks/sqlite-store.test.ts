@@ -19,6 +19,7 @@ import { decodeIssueReference, type IssueReference } from "./identity.ts"
 import {
   openSqliteTaskStore,
   type SqliteTaskStore,
+  type TaskApplyContext,
   type TaskId,
   type TaskFilter,
   type TaskReadQuery,
@@ -143,7 +144,7 @@ test("blocked is a reason-carrying status and leaving it requires an explicit st
         issue: target,
         task: { kind: "existing", id: task.id },
       }
-      const context = () => ({
+      const context = (): TaskApplyContext => ({
         actorId: "fixture-worker",
         requestId: randomUUID(),
         now: 1000,
