@@ -27,7 +27,6 @@ const TaskSchema = Schema.Struct({
   id: TaskIdSchema,
   text: Schema.String,
   status: StatusSchema,
-  blocker: Schema.NullOr(Schema.String),
 })
 const PageSchema = Schema.Struct({
   issue: IssueSchema,
@@ -331,7 +330,7 @@ const callLines = (args: unknown): readonly string[] => {
 }
 
 const taskLine = (task: typeof TaskSchema.Type): string =>
-  `${task.status} · ${label(task.text).slice(0, 200)}${task.blocker === null ? "" : ` · Blocked: ${label(task.blocker).slice(0, 160)}${task.blocker.length > 160 ? "… (expand for full blocker)" : ""}`}`
+  `${typeof task.status === "string" ? task.status : "blocked"} · ${label(task.text).slice(0, 200)}${typeof task.status === "string" ? "" : ` · Blocked: ${label(task.status.reason).slice(0, 160)}${task.status.reason.length > 160 ? "… (expand for full reason)" : ""}`}`
 
 const pageLines = (page: typeof PageSchema.Type): readonly string[] => [
   `${issueKey(page.issue)} · ${page.tasks.length} tasks on this page${page.next === null ? "" : " · more available"}`,
@@ -339,9 +338,9 @@ const pageLines = (page: typeof PageSchema.Type): readonly string[] => [
   ...(page.tasks.length > 3
     ? [`${page.tasks.length - 3} more tasks in expanded details`]
     : []),
-  ...(page.tasks.slice(3).some(task => task.blocker !== null)
+  ...(page.tasks.slice(3).some(task => typeof task.status !== "string")
     ? [
-        `${page.tasks.slice(3).filter(task => task.blocker !== null).length} additional blocked tasks · expand for blockers`,
+        `${page.tasks.slice(3).filter(task => typeof task.status !== "string").length} additional blocked tasks · expand for blockers`,
       ]
     : []),
 ]

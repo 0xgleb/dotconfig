@@ -1,4 +1,5 @@
 import { Data, Effect, Either, Option, Schema } from "effect"
+import { isDeepStrictEqual } from "node:util"
 import {
   decodeIssueRepository,
   issueKey,
@@ -309,8 +310,7 @@ export const createIssueNextReader = (
           if (
             issueKey(detail.issue) !== issueKey(issue) ||
             detail.task.id !== row.id ||
-            detail.task.status !== row.status ||
-            detail.task.blocker !== row.blocker
+            !isDeepStrictEqual(detail.task.status, row.status)
           )
             return yield* Effect.fail(readError("inconsistent_readback"))
           yield* recordRevision(detail.issue, detail.revision)
@@ -352,9 +352,9 @@ export const createIssueNextReader = (
               if (taskCount > MAX_ISSUE_SELECTION_CANDIDATES)
                 return yield* Effect.fail(readError("capacity"))
               taskStates.set(addressKey({ issue, id: row.id }), row.status)
-              if (row.status !== "todo" && row.status !== "doing") continue
+              if (row.status === "done" || row.status === "cancelled") continue
               unfinished = true
-              if (!ready && row.blocker === null)
+              if (!ready && typeof row.status === "string")
                 ready = yield* runnable(issue, { ...row })
             }
             if (page.next === null) break

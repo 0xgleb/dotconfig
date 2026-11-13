@@ -8,9 +8,11 @@ const RepositoryInputSchema = Schema.String.pipe(
   Schema.filter(value => !value.split("/")[0]?.includes("--")),
   Schema.filter(value => ![".", ".."].includes(value.split("/")[1] ?? "")),
 )
+
 const RepositorySchema = RepositoryInputSchema.pipe(
   Schema.brand("IssueRepository"),
 )
+
 const IssueNumberSchema = Schema.Number.pipe(
   Schema.int(),
   Schema.positive(),
@@ -19,6 +21,7 @@ const IssueNumberSchema = Schema.Number.pipe(
 )
 
 export type IssueRepository = typeof RepositorySchema.Type
+
 export type IssueNumber = typeof IssueNumberSchema.Type
 
 export interface IssueReference {
@@ -61,14 +64,19 @@ export const decodeIssueReference = (
         message:
           "An issue requires only a repository (owner/name) and a positive safe integer number.",
       })
+
     if (
       typeof value !== "object" ||
       value === null ||
       Array.isArray(value) ||
+      !Object.hasOwn(value, "repository") ||
       !("repository" in value) ||
       typeof value.repository !== "string" ||
+      !Object.hasOwn(value, "number") ||
       !("number" in value) ||
-      Object.keys(value).some(key => !["repository", "number"].includes(key))
+      Reflect.ownKeys(value).some(
+        key => key !== "repository" && key !== "number",
+      )
     )
       return yield* Either.left(invalid())
 
@@ -96,6 +104,7 @@ export const decodeIssueScope = (
         code: "invalid_scope",
         message: `Issue scope requires 1–${MAX_PLAN_ISSUES_PER_CALL} distinct repository-qualified issues.`,
       })
+
     if (
       !Array.isArray(value) ||
       value.length === 0 ||

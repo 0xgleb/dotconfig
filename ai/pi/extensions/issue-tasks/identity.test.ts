@@ -13,6 +13,21 @@ const issue = (repository = "0xgleb/dotconfig", number = 1) => ({
   number,
 })
 
+for (const [name, input] of [
+  ["inherited required fields", Object.create(issue())],
+  ["symbol excess field", { ...issue(), [Symbol("extra")]: true }],
+  [
+    "non-enumerable excess field",
+    Object.defineProperty(issue(), "extra", { value: true }),
+  ],
+] as const) {
+  test(`issue decoding rejects ${name} at the native-object boundary`, () => {
+    const decoded = decodeIssueReference(input)
+    assert.ok(Either.isLeft(decoded))
+    assert.equal(decoded.left.code, "invalid_issue")
+  })
+}
+
 test("repository discovery targets normalize without fabricating an issue identity", () => {
   for (const source of [
     "Owner/Repo",
@@ -54,6 +69,7 @@ test("repository discovery rejects malformed or Unicode-aliased targets without 
 test("repository-qualified identities distinguish identical issue numbers", () => {
   const first = decodeIssueReference(issue())
   const second = decodeIssueReference(issue("dataclique/yielduck"))
+
   assert.ok(Either.isRight(first))
   assert.ok(Either.isRight(second))
   assert.notEqual(issueKey(first.right), issueKey(second.right))
@@ -89,6 +105,7 @@ test("malformed and ambiguous issue targets fail at the boundary", () => {
     { ...issue(), workerSessionId: "stale-worker" },
     { ...issue(), expectedRevisions: {} },
   ]
+
   for (const value of invalid) {
     const result = decodeIssueReference(value)
     assert.ok(Either.isLeft(result), JSON.stringify(value))
@@ -98,16 +115,20 @@ test("malformed and ambiguous issue targets fail at the boundary", () => {
 
 test("multi-issue scope is explicit, bounded and rejects case-equivalent duplicates", () => {
   const accepted = decodeIssueScope([issue(), issue("dataclique/yielduck")])
+
   assert.ok(Either.isRight(accepted))
+
   const maximum = decodeIssueScope(
     Array.from({ length: 100 }, (_, index) => issue("owner/repo", index + 1)),
   )
+
   assert.ok(Either.isRight(maximum))
   assert.equal(maximum.right.length, 100)
   assert.deepEqual(accepted.right.map(issueKey), [
     "0xgleb/dotconfig#1",
     "dataclique/yielduck#1",
   ])
+
   for (const value of [
     undefined,
     [],

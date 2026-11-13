@@ -104,6 +104,10 @@ const TaskStatusParameter = Type.Union([
   Type.Literal("doing"),
   Type.Literal("done"),
   Type.Literal("cancelled"),
+  Type.Object(
+    { _tag: Type.Literal("blocked"), reason: TaskTextParameter },
+    { additionalProperties: false },
+  ),
 ])
 const OperationParameters = Type.Union([
   Type.Object(
@@ -135,14 +139,6 @@ const OperationParameters = Type.Union([
   ),
   Type.Object(
     {
-      op: Type.Literal("block"),
-      target: TaskReferenceParameters,
-      reason: Type.Union([Type.Null(), TaskTextParameter]),
-    },
-    { additionalProperties: false },
-  ),
-  Type.Object(
-    {
       op: Type.Literal("transfer"),
       target: TaskReferenceParameters,
       toIssue: IssueParameters,
@@ -159,8 +155,15 @@ const TaskPageParameters = Type.Object(
 )
 const TaskFilterParameters = Type.Object(
   {
-    status: Type.Optional(TaskStatusParameter),
-    blocked: Type.Optional(Type.Boolean()),
+    status: Type.Optional(
+      Type.Union([
+        Type.Literal("todo"),
+        Type.Literal("doing"),
+        Type.Literal("done"),
+        Type.Literal("cancelled"),
+        Type.Literal("blocked"),
+      ]),
+    ),
   },
   { additionalProperties: false },
 )
@@ -625,7 +628,7 @@ const placeSavedOutcome = async (
     if (place !== undefined) {
       const attempted = await Effect.runPromiseExit(
         Effect.suspend(() => place(saved.result, invocation, observe)),
-        { signal },
+        signal === undefined ? {} : { signal },
       )
       if (Exit.isSuccess(attempted)) observe(attempted.value)
       else

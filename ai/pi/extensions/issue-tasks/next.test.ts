@@ -443,9 +443,12 @@ test("next derives factual blocking from actual local work without changing life
           operations: [
             { op: "add", issue: issue(1), key: "work", text: "Fixture work" },
             {
-              op: "block",
+              op: "status",
               target: { issue: issue(1), task: { kind: "added", key: "work" } },
-              reason: "Required fixture resource is unavailable",
+              status: {
+                _tag: "blocked",
+                reason: "Required fixture resource is unavailable",
+              },
             },
           ],
         },
