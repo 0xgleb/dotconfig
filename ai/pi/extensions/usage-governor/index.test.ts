@@ -1,10 +1,7 @@
 import assert from "node:assert/strict"
 import test from "node:test"
 import { fileURLToPath } from "node:url"
-import type {
-  BeforeAgentStartEvent,
-  ExtensionAPI,
-} from "@earendil-works/pi-coding-agent"
+import type { ExtensionAPI } from "@earendil-works/pi-coding-agent"
 import {
   HUMAN_TURN_EVENT,
   OWNER_INTERVENTION_QUERY_EVENT,
@@ -179,7 +176,7 @@ test("legacy and current user-start hooks correlate the actual human turn", asyn
     messageType: "user",
     prompt,
     ...promptState,
-  } satisfies BeforeAgentStartEvent
+  }
   for (const event of [
     { type: "before_agent_start", prompt, systemPrompt: "" },
     current,
@@ -208,7 +205,7 @@ test("custom-start hooks cannot impersonate or consume a pending human turn", as
     messageType: "custom",
     ...promptState,
     message: { customType: "fixture.wake", content: "fixture", display: false },
-  } satisfies BeforeAgentStartEvent
+  }
   await emit.start(custom)
   const reports: (number | undefined)[] = []
   const query = {
