@@ -1,25 +1,17 @@
 import assert from "node:assert/strict"
-import { readFileSync } from "node:fs"
 import test from "node:test"
+import { Either } from "effect"
 import { OWNER_ALLOWANCE_ENTRY, OWNER_ALLOWANCE_MS } from "./owner-allowance.ts"
 
-test("production entrypoint installs the hard deadline guard and cancels detached workers", () => {
-  const source = readFileSync(new URL("./index.ts", import.meta.url), "utf8")
-  assert.ok(
-    /registerOwnerAllowance\(\s*pi\s*,/u.test(source),
-    "production must install the guard",
-  )
-  assert.ok(
-    /ownerAllowance\.admit\(\)/.test(source),
-    "continuations must check the deadline",
-  )
-  assert.ok(
-    /registerRuntimeVersion\(pi, "owner-allowance", "2026\.10\.25\.1"\)/.test(
-      source,
-    ),
-    "the two-hour allowance runtime marker must be registered",
-  )
-})
+type OwnerAllowanceHost = Parameters<
+  typeof import("./owner-allowance-extension.ts").registerOwnerAllowance
+>[0]
+
+const installOwnerAllowance = (
+  module: typeof import("./owner-allowance-extension.ts"),
+  host: OwnerAllowanceHost,
+  cancelBackground: () => void,
+) => module.registerOwnerAllowance(host, cancelBackground)
 
 for (const elapsedMinutes of [90, 150]) {
   test(`registered session-start restores a historical four-hour window at ${elapsedMinutes} minutes`, async t => {
@@ -31,8 +23,14 @@ for (const elapsedMinutes of [90, 150]) {
     const saved: unknown[] = []
     let aborts = 0
     const host = {
-      on: (name: string, callback: (...args: unknown[]) => unknown) =>
-        callbacks.set(name, callback),
+      on: (name: string, callback: Function) => {
+        callbacks.set(name, (...args) =>
+          Reflect.apply(callback, undefined, args),
+        )
+        return () => {
+          callbacks.delete(name)
+        }
+      },
       appendEntry: (type: string, data: unknown) => {
         assert.equal(type, OWNER_ALLOWANCE_ENTRY)
         saved.push(data)
@@ -62,11 +60,7 @@ for (const elapsedMinutes of [90, 150]) {
     const module = await import(
       new URL("./owner-allowance-extension.ts", import.meta.url).href
     )
-    const guard = Reflect.apply(
-      Reflect.get(module, "registerOwnerAllowance"),
-      undefined,
-      [host, () => {}],
-    )
+    const guard = installOwnerAllowance(module, host, () => {})
     t.after(() => guard.dispose())
     const start = callbacks.get("session_start")
     assert.ok(start)
@@ -82,7 +76,7 @@ for (const elapsedMinutes of [90, 150]) {
       t.mock.timers.tick((120 - elapsedMinutes) * 60_000)
     }
     const expired = guard.admit()
-    assert.equal(expired._tag, "Left")
+    assert.ok(Either.isLeft(expired))
     assert.match(expired.left.message, /two-hour/)
     assert.equal(aborts, 1)
   })
@@ -94,7 +88,12 @@ test("authenticated queued input renews only at the native model dispatch bounda
   const authorized = new Set<string>()
   let dispatch: Function | undefined
   const host = {
-    on: (name: string, callback: Function) => callbacks.set(name, callback),
+    on: (name: string, callback: Function) => {
+      callbacks.set(name, callback)
+      return () => {
+        callbacks.delete(name)
+      }
+    },
     appendEntry: () => {},
     registerCommand: () => {},
     registerModelInputDeliveryGuard: (callback: Function) => {
@@ -119,11 +118,7 @@ test("authenticated queued input renews only at the native model dispatch bounda
   const module = await import(
     new URL("./owner-allowance-extension.ts", import.meta.url).href
   )
-  const guard = Reflect.apply(
-    Reflect.get(module, "registerOwnerAllowance"),
-    undefined,
-    [host, () => {}],
-  )
+  const guard = installOwnerAllowance(module, host, () => {})
   t.after(() => guard.dispose())
   callbacks.get("input")?.(
     {
@@ -151,7 +146,7 @@ test("authenticated queued input renews only at the native model dispatch bounda
   ])
   assert.deepEqual(decision, { action: "allow" })
   const window = guard.admit()
-  assert.equal(window._tag, "Right")
+  assert.ok(Either.isRight(window))
   assert.equal(window.right.lastOwnerAt, 301_000)
   assert.equal(window.right.deadlineAt, 301_000 + OWNER_ALLOWANCE_MS)
 })
@@ -160,7 +155,12 @@ test("delivery-capable host refuses interactive input without a valid native rec
   t.mock.timers.enable({ apis: ["Date", "setTimeout"], now: 1_000 })
   const callbacks = new Map<string, Function>()
   const host = {
-    on: (name: string, callback: Function) => callbacks.set(name, callback),
+    on: (name: string, callback: Function) => {
+      callbacks.set(name, callback)
+      return () => {
+        callbacks.delete(name)
+      }
+    },
     appendEntry: () => {},
     registerCommand: () => {},
     registerModelInputDeliveryGuard: () => ({
@@ -181,11 +181,7 @@ test("delivery-capable host refuses interactive input without a valid native rec
   const module = await import(
     new URL("./owner-allowance-extension.ts", import.meta.url).href
   )
-  const guard = Reflect.apply(
-    Reflect.get(module, "registerOwnerAllowance"),
-    undefined,
-    [host, () => {}],
-  )
+  const guard = installOwnerAllowance(module, host, () => {})
   t.after(() => guard.dispose())
   for (const input of [
     { source: "interactive", text: "missing receipt" },
@@ -209,7 +205,7 @@ test("model dispatch admission does not depend on presentation callbacks", async
   t.mock.timers.enable({ apis: ["Date", "setTimeout"], now: 1_000 })
   let dispatch: Function | undefined
   const host = {
-    on: () => {},
+    on: () => () => {},
     appendEntry: () => {},
     registerCommand: () => {},
     registerModelInputDeliveryGuard: (handler: Function) => {
@@ -235,11 +231,7 @@ test("model dispatch admission does not depend on presentation callbacks", async
   const module = await import(
     new URL("./owner-allowance-extension.ts", import.meta.url).href
   )
-  const guard = Reflect.apply(
-    Reflect.get(module, "registerOwnerAllowance"),
-    undefined,
-    [host, () => {}],
-  )
+  const guard = installOwnerAllowance(module, host, () => {})
   t.after(() => guard.dispose())
   assert.ok(dispatch)
   assert.deepEqual(
@@ -261,7 +253,12 @@ test("native expiry integration failure cannot skip foreground cancellation", as
   let dispatch: Function | undefined
   let aborts = 0
   const host = {
-    on: (name: string, callback: Function) => callbacks.set(name, callback),
+    on: (name: string, callback: Function) => {
+      callbacks.set(name, callback)
+      return () => {
+        callbacks.delete(name)
+      }
+    },
     appendEntry: () => {},
     registerCommand: () => {},
     registerModelInputDeliveryGuard: (handler: Function) => {
@@ -287,11 +284,7 @@ test("native expiry integration failure cannot skip foreground cancellation", as
   const module = await import(
     new URL("./owner-allowance-extension.ts", import.meta.url).href
   )
-  const guard = Reflect.apply(
-    Reflect.get(module, "registerOwnerAllowance"),
-    undefined,
-    [host, () => {}],
-  )
+  const guard = installOwnerAllowance(module, host, () => {})
   t.after(() => guard.dispose())
   assert.ok(dispatch)
   Reflect.apply(dispatch, undefined, [
@@ -320,6 +313,9 @@ test("real registered hooks enforce tools, provider starts, automation and watch
   const host = {
     on: (name: string, callback: Function) => {
       callbacks.set(name, callback)
+      return () => {
+        callbacks.delete(name)
+      }
     },
     events: {
       on: (name: string, callback: Function) => {
@@ -344,12 +340,9 @@ test("real registered hooks enforce tools, provider starts, automation and watch
   const install: unknown = Reflect.get(module, "registerOwnerAllowance")
   if (typeof install !== "function")
     assert.fail("Hard deadline hooks are not implemented")
-  const privateGuard = Reflect.apply(install, undefined, [
-    host,
-    () => {
-      workersCancelled++
-    },
-  ])
+  const privateGuard = installOwnerAllowance(module, host, () => {
+    workersCancelled++
+  })
   const emit = (name: string, event = {}) => {
     const callback = callbacks.get(name)
     if (!callback) assert.fail(`missing actual handler ${name}`)

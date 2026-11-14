@@ -128,7 +128,13 @@ const fixture = (t: test.TestContext) => {
       exec: async (_command, args) => {
         executions.push(args)
 
-        return { code: 0, stdout: "[]", stderr: "", killed: false }
+        return {
+          code: 0,
+          stdout: "[]",
+          stderr: "",
+          killed: false,
+          truncated: false,
+        }
       },
     } satisfies Pick<
       ExtensionAPI,

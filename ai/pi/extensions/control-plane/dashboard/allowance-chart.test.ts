@@ -7,6 +7,7 @@ import {
   allowanceChartSegments,
   allowanceChartX,
   reconstructChatGptSharedHistory,
+  inferredAllowanceBailouts,
 } from "./allowance-chart.ts"
 
 test("allowance chart retains history when the provider revises the reset timestamp", () => {
@@ -50,6 +51,46 @@ test("allowance chart never draws continuity across a reset or allowance increas
     [history[0], history[1]],
     [history[2], history[3]],
   ])
+})
+
+test("resetless refills retain precision without invented resets or continuity", () => {
+  const sample = {
+    provider: "openai" as const,
+    pool: "chatgpt-shared-weekly" as const,
+    source: "manual" as const,
+    capturedAt: 1_000,
+    remainingPercent: 20,
+    resetAt: 9_000,
+  }
+  const refill = {
+    provider: "openai" as const,
+    pool: "chatgpt-shared-weekly" as const,
+    source: "manual" as const,
+    capturedAt: 2_000,
+    remainingPercent: 150.125,
+    event: "refill" as const,
+  }
+  const { points } = reconstructChatGptSharedHistory([refill, sample])
+  assert.equal(points.length, 2)
+  assert.deepEqual(points[1], { ...refill, evidence: "observed" })
+  assert.equal(Object.hasOwn(points[1] ?? {}, "resetAt"), false)
+  assert.deepEqual(allowanceChartDomain(points), {
+    startAt: 1_000,
+    endAt: 2_000,
+  })
+  assert.deepEqual(allowanceChartSegments(points), [[points[0]], [points[1]]])
+  assert.deepEqual(inferredAllowanceBailouts(points), [])
+  const following = { ...sample, capturedAt: 3_000, remainingPercent: 140.25 }
+  assert.deepEqual(allowanceChartSegments([...points, following]), [
+    [points[0]],
+    [points[1]],
+    [following],
+  ])
+  for (const history of [[], [refill]]) {
+    const domain = allowanceChartDomain(history)
+    assert.equal(domain, undefined)
+    assert.equal(allowanceChartX(refill.capturedAt, domain), 0)
+  }
 })
 
 test("ChatGPT history reconstruction shows both resets, exhaustion, and bailout without merging app-server usage", () => {
@@ -118,11 +159,13 @@ test("ChatGPT history reconstruction shows both resets, exhaustion, and bailout 
 
   const reconstructed = reconstructChatGptSharedHistory(history)
   assert.deepEqual(
-    reconstructed.points.map(({ remainingPercent, evidence, event }) => ({
-      remainingPercent,
-      evidence,
-      event,
-    })),
+    reconstructed.points.map(
+      ({ remainingPercent, evidence, historyEvent: event }) => ({
+        remainingPercent,
+        evidence,
+        event,
+      }),
+    ),
     [
       { remainingPercent: 100, evidence: "estimated", event: "cycle-start" },
       { remainingPercent: 79, evidence: "observed", event: undefined },

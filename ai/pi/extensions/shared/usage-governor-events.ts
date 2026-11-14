@@ -1,3 +1,5 @@
+import { Schema } from "effect"
+
 export const HUMAN_TURN_EVENT = "usage-governor:human-turn"
 export const RESPONSIVE_AUTONOMOUS_TURN_EVENT =
   "usage-governor:responsive-autonomous-turn"
@@ -16,3 +18,26 @@ export interface OwnerInterventionRelay {
   readonly targetCwd: string
   readonly ownerInteractionAt: number
 }
+
+const OwnerInterventionQuerySchema = Schema.Struct({
+  report: Schema.declare<OwnerInterventionQuery["report"]>(
+    (value): value is OwnerInterventionQuery["report"] =>
+      typeof value === "function",
+  ),
+})
+
+const OwnerInterventionRelaySchema = Schema.Struct({
+  targetAgentId: Schema.String,
+  targetCwd: Schema.String,
+  ownerInteractionAt: Schema.Number.pipe(Schema.int(), Schema.nonNegative()),
+})
+
+export const decodeOwnerInterventionQuery = Schema.decodeUnknownEither(
+  OwnerInterventionQuerySchema,
+  { onExcessProperty: "ignore" },
+)
+
+export const decodeOwnerInterventionRelay = Schema.decodeUnknownEither(
+  OwnerInterventionRelaySchema,
+  { onExcessProperty: "ignore" },
+)

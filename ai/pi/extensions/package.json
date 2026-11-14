@@ -5,7 +5,7 @@
   "scripts": {
     "format": "prettier --write --no-error-on-unmatched-pattern --config ../../../prettier.config.mjs ../../../ai/**/*.{ts,tsx,mts,cts}",
     "format:check": "prettier --check --no-error-on-unmatched-pattern --config ../../../prettier.config.mjs ../../../ai/**/*.{ts,tsx,mts,cts}",
-    "typecheck": "tsc --noEmit -p tsconfig.json"
+    "typecheck": "nix build --no-link ../../..#pi-extension-typecheck"
   },
   "keywords": [
     "pi-package"

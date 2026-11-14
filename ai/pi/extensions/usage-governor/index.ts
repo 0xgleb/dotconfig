@@ -11,7 +11,8 @@ import {
   OWNER_INTERVENTION_QUERY_EVENT,
   OWNER_INTERVENTION_RELAY_EVENT,
   RESPONSIVE_AUTONOMOUS_TURN_EVENT,
-  type OwnerInterventionQuery,
+  decodeOwnerInterventionQuery,
+  decodeOwnerInterventionRelay,
   type OwnerInterventionRelay,
 } from "../shared/usage-governor-events.ts"
 import {
@@ -621,7 +622,22 @@ const usageGovernor = (pi: ExtensionAPI): void => {
     }
   }
 
-  pi.registerTool({
+  const checkpointParameters = Type.Object({
+    remainingPercent: Type.Number({
+      minimum: 0,
+      maximum: MAX_ALLOWANCE_PERCENT,
+    }),
+    pool: Type.Optional(
+      Type.Union([
+        Type.Literal("chatgpt-shared-weekly"),
+        Type.Literal("codex-app-server-weekly"),
+      ]),
+    ),
+    resetAt: Type.Optional(Type.String({ maxLength: 80 })),
+    capturedAt: Type.String({ maxLength: 80 }),
+  })
+
+  pi.registerTool<typeof checkpointParameters>({
     name: "usage_checkpoint",
     label: "Usage checkpoint",
     description:
@@ -632,20 +648,7 @@ const usageGovernor = (pi: ExtensionAPI): void => {
       "Use usage_checkpoint only for allowance values and timestamps explicitly verified by the owner or provider UI; never infer missing checkpoint fields or reuse a stale reset after a refill.",
       "Select codex-app-server-weekly when the owner is correcting the Codex allowance shown by Pi; omitted pool values preserve the existing ChatGPT shared-weekly behavior.",
     ],
-    parameters: Type.Object({
-      remainingPercent: Type.Number({
-        minimum: 0,
-        maximum: MAX_ALLOWANCE_PERCENT,
-      }),
-      pool: Type.Optional(
-        Type.Union([
-          Type.Literal("chatgpt-shared-weekly"),
-          Type.Literal("codex-app-server-weekly"),
-        ]),
-      ),
-      resetAt: Type.Optional(Type.String({ maxLength: 80 })),
-      capturedAt: Type.String({ maxLength: 80 }),
-    }),
+    parameters: checkpointParameters,
     async execute(_toolCallId, request) {
       const checkpoint = parseAllowanceCheckpointInput(
         `${request.remainingPercent} ${request.resetAt ?? "refill"} ${request.capturedAt}`,
@@ -748,23 +751,21 @@ const usageGovernor = (pi: ExtensionAPI): void => {
     turnLaneState = markHumanFollowUp(turnLaneState, prompt, now)
   })
 
-  pi.events.on(
-    OWNER_INTERVENTION_QUERY_EVENT,
-    (query: OwnerInterventionQuery) => {
-      query.report(
-        activeTurnLane === "human" ? activeOwnerInteractionAt : undefined,
-      )
-    },
-  )
+  pi.events.on(OWNER_INTERVENTION_QUERY_EVENT, data => {
+    const query = decodeOwnerInterventionQuery(data)
+    if (Either.isLeft(query)) return
+    query.right.report(
+      activeTurnLane === "human" ? activeOwnerInteractionAt : undefined,
+    )
+  })
 
-  pi.events.on(
-    OWNER_INTERVENTION_RELAY_EVENT,
-    (intervention: OwnerInterventionRelay) => {
-      void Effect.runPromise(
-        Effect.ignore(recordRelayedOwnerIntervention(intervention)),
-      )
-    },
-  )
+  pi.events.on(OWNER_INTERVENTION_RELAY_EVENT, data => {
+    const intervention = decodeOwnerInterventionRelay(data)
+    if (Either.isLeft(intervention)) return
+    void Effect.runPromise(
+      Effect.ignore(recordRelayedOwnerIntervention(intervention.right)),
+    )
+  })
 
   pi.events.on(RESPONSIVE_AUTONOMOUS_TURN_EVENT, (prompt: unknown) => {
     turnLaneState = markResponsiveAutonomousTurn(turnLaneState, prompt)
@@ -900,7 +901,10 @@ const usageGovernor = (pi: ExtensionAPI): void => {
   })
 
   pi.on("before_agent_start", async (event, ctx) => {
-    const turn = takeTurnLane(turnLaneState, event.prompt)
+    const turn: ReturnType<typeof takeTurnLane> =
+      "prompt" in event
+        ? takeTurnLane(turnLaneState, event.prompt)
+        : { state: turnLaneState, lane: "autonomous" }
     turnLaneState = turn.state
     activeTurnLane = turn.lane
     activeOwnerInteractionAt =

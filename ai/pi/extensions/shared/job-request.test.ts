@@ -134,7 +134,7 @@ test("allowed tools must be a resolved, duplicate-free, bounded set", async () =
   await expectMalformed({ ...base, allowedTools: [] })
   await expectMalformed({
     ...base,
-    allowedTools: Array.from({ length: 17 }, () => "read"),
+    allowedTools: Array.from({ length: 17 }, (_, index) => `tool-${index}`),
   })
   await expectMalformed({ ...base, allowedTools: ["read", "read"] })
   await expectMalformed({ ...base, allowedTools: [""] })
@@ -185,7 +185,7 @@ const expectSchemaRejection = (input: unknown) => {
   assert.throws(() => decodeSync(input))
 }
 
-test("a valid request decoded through the committed surface is not yet preserved frozen", () => {
+test("schema decoding preserves the deeply frozen request contract", () => {
   const request = decodeSync(validRequest())
   assert.ok(Object.isFrozen(request), "decoded request must be deeply frozen")
   assert.ok(
@@ -197,6 +197,28 @@ test("a valid request decoded through the committed surface is not yet preserved
     Object.isFrozen(request.allowedTools),
     "allowed tools must be frozen",
   )
+})
+
+test("encoding round-trips frozen values and rejects mutable containers", () => {
+  const request = decodeSync(validRequest())
+  const encoded = Schema.encodeSync(JobRequest)(request)
+  assert.deepEqual(encoded, validRequest())
+  const roundTrip = decodeSync(encoded)
+  assert.deepEqual(roundTrip, request)
+  assert.ok(Object.isFrozen(roundTrip))
+  assert.ok(Object.isFrozen(roundTrip.allowedTools))
+  assert.ok(Object.isFrozen(roundTrip.execution))
+  assert.ok(Object.isFrozen(roundTrip.budget))
+
+  for (const mutable of [
+    { ...request },
+    Object.freeze({ ...request, allowedTools: [...request.allowedTools] }),
+    Object.freeze({ ...request, execution: { ...request.execution } }),
+    Object.freeze({ ...request, budget: { ...request.budget } }),
+  ]) {
+    const result = Schema.encodeUnknownEither(JobRequest)(mutable)
+    assert.equal(result._tag, "Left")
+  }
 })
 
 test("the declared schema itself rejects unresolved tool spellings and bounds", () => {

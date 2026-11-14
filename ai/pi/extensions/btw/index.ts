@@ -11,12 +11,14 @@ const padded = (text: string, width: number): string => {
   return clipped + " ".repeat(Math.max(0, width - visibleWidth(clipped)))
 }
 
+type AnswerPanelTheme = Pick<Theme, "fg" | "bold">
+
 export class ManagerAnswerPanel {
   private scroll = 0
   private readonly question: string
   private readonly answer: string
   private readonly model: string
-  private readonly theme: Theme
+  private readonly theme: AnswerPanelTheme
   private readonly close: (continueChat: boolean) => void
   private readonly requestRender: () => void
   private readonly label: string
@@ -25,7 +27,7 @@ export class ManagerAnswerPanel {
     question: string,
     answer: string,
     model: string,
-    theme: Theme,
+    theme: AnswerPanelTheme,
     close: (continueChat: boolean) => void,
     requestRender: () => void,
     label = "/manager",
@@ -46,8 +48,8 @@ export class ManagerAnswerPanel {
     }
     if (matchesKey(data, "up")) this.scroll = Math.max(0, this.scroll - 1)
     if (matchesKey(data, "down")) this.scroll += 1
-    if (matchesKey(data, "pageup")) this.scroll = Math.max(0, this.scroll - 8)
-    if (matchesKey(data, "pagedown")) this.scroll += 8
+    if (matchesKey(data, "pageUp")) this.scroll = Math.max(0, this.scroll - 8)
+    if (matchesKey(data, "pageDown")) this.scroll += 8
     if (matchesKey(data, "home")) this.scroll = 0
     if (matchesKey(data, "end")) this.scroll = Number.MAX_SAFE_INTEGER
     this.requestRender()

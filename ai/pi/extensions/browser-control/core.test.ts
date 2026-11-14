@@ -420,6 +420,8 @@ test("debug target decoder accepts the documented Chromium response and rejects 
 
 test("an existing exact-URL operator target is reused instead of duplicated", () => {
   const [target] = run(parseDebugTargets([recordedTarget], 9222))
+  assert.ok(target)
+
   const other = {
     ...target,
     id: "OTHER",
@@ -475,6 +477,7 @@ test("the explicitly opened local target survives a managed Pi reload", () => {
 
 test("only the explicitly opened local target can become active", () => {
   const [target] = run(parseDebugTargets([recordedTarget], 9222))
+  assert.ok(target)
   assert.equal(run(selectActiveTarget([target], "DAB7")), target)
   assert.throws(() => run(selectActiveTarget([target], undefined)), /opened/i)
   assert.throws(() => run(selectActiveTarget([target], "OTHER")), /opened/i)
@@ -482,6 +485,7 @@ test("only the explicitly opened local target can become active", () => {
 
 test("public target details cannot disclose the debugger websocket", () => {
   const [target] = run(parseDebugTargets([recordedTarget], 9222))
+  assert.ok(target)
   assert.deepEqual(publicTarget(target), {
     id: "DAB7",
     title: "Dashboard",

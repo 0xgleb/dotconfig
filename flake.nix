@@ -99,6 +99,16 @@
             ${pkgs.nushell}/bin/nu workflow.test.nu
             touch $out
           '';
+      piExtensionTypecheck =
+        system:
+        let
+          pkgs = nixpkgs.legacyPackages.${system};
+          unstable = import inputs.nixpkgs-unstable { inherit system; };
+        in
+        import ./scripts/pi-extension-typecheck.nix {
+          inherit pkgs;
+          piHost = unstable.pi-coding-agent;
+        };
     in
     {
 
@@ -134,11 +144,14 @@
           };
         in
         {
+          pi-extension-typecheck = piExtensionTypecheck "aarch64-darwin";
           jf = import ./nushell/jf.nix {
             inherit pkgs;
             metagendaFj = pkgs.callPackage ./nushell/fj/portable { };
           };
         };
+
+      packages.x86_64-linux.pi-extension-typecheck = piExtensionTypecheck "x86_64-linux";
 
       checks.aarch64-darwin =
         let
@@ -176,6 +189,7 @@
         in
         {
           git-hooks = gitHooks.aarch64-darwin;
+          pi-extension-typecheck = piExtensionTypecheck "aarch64-darwin";
 
           atuin-darwin =
             assert import ./scripts/atuin-darwin-checks.test.nix {
@@ -391,8 +405,11 @@
               '';
         };
 
-      checks.x86_64-linux.git-hooks = gitHooks.x86_64-linux;
-      checks.x86_64-linux.fj-workflow = fjWorkflowCheck "x86_64-linux";
+      checks.x86_64-linux = {
+        git-hooks = gitHooks.x86_64-linux;
+        fj-workflow = fjWorkflowCheck "x86_64-linux";
+        pi-extension-typecheck = piExtensionTypecheck "x86_64-linux";
+      };
 
       devShells = nixpkgs.lib.genAttrs hookSystems (
         system:

@@ -9,9 +9,9 @@ export interface InferredAllowanceBailout {
   readonly increasePercent: number
 }
 
-export interface AllowanceChartPoint extends AllowanceCheckpointInput {
+export type AllowanceChartPoint = AllowanceCheckpointInput & {
   readonly evidence: "observed" | "estimated"
-  readonly event?: AllowanceHistoryEvent
+  readonly historyEvent?: AllowanceHistoryEvent
 }
 
 export interface ReconstructedAllowanceHistory {
@@ -43,25 +43,36 @@ export const reconstructChatGptSharedHistory = (
   if (!first) return { points: [] }
 
   const points: AllowanceChartPoint[] = []
-  const cycleStartAt = first.resetAt - WEEK_MS
-  if (
-    isLegacyAllowance(first) &&
-    first.remainingPercent < 100 &&
-    cycleStartAt >= 0 &&
-    cycleStartAt < first.capturedAt
-  )
-    points.push({
-      capturedAt: cycleStartAt,
-      remainingPercent: 100,
-      resetAt: first.resetAt,
-      evidence: "estimated",
-      event: "cycle-start",
-    })
+  if (first.event !== "refill") {
+    const cycleStartAt = first.resetAt - WEEK_MS
+    if (
+      isLegacyAllowance(first) &&
+      first.remainingPercent < 100 &&
+      cycleStartAt >= 0 &&
+      cycleStartAt < first.capturedAt
+    )
+      points.push({
+        capturedAt: cycleStartAt,
+        remainingPercent: 100,
+        resetAt: first.resetAt,
+        evidence: "estimated",
+        historyEvent: "cycle-start",
+      })
+  }
 
   observed.forEach((checkpoint, index) => {
+    if (checkpoint.event === "refill") {
+      points.push({
+        ...checkpoint,
+        evidence:
+          checkpoint.source === "estimated-history" ? "estimated" : "observed",
+      })
+      return
+    }
     const previous = observed[index - 1]
     if (
       previous &&
+      previous.event !== "refill" &&
       isLegacyAllowance(previous) &&
       isLegacyAllowance(checkpoint) &&
       checkpoint.remainingPercent > previous.remainingPercent
@@ -73,15 +84,16 @@ export const reconstructChatGptSharedHistory = (
         remainingPercent: 100,
         resetAt: checkpoint.resetAt,
         evidence: "estimated",
-        event: "provider-reset",
+        historyEvent: "provider-reset",
       })
 
     const isBailout =
       previous !== undefined &&
+      previous.event !== "refill" &&
       isLegacyAllowance(previous) &&
       isChatGptSharedAllowance(checkpoint) &&
       checkpoint.remainingPercent === 100
-    if (isBailout)
+    if (isBailout && previous && previous.event !== "refill")
       points.push({
         capturedAt: Math.max(
           previous.capturedAt + 1,
@@ -90,22 +102,18 @@ export const reconstructChatGptSharedHistory = (
         remainingPercent: 0,
         resetAt: previous.resetAt,
         evidence: "estimated",
-        event: "exhaustion",
+        historyEvent: "exhaustion",
       })
 
     points.push({
-      capturedAt: checkpoint.capturedAt,
-      remainingPercent: checkpoint.remainingPercent,
-      resetAt: checkpoint.resetAt,
+      ...checkpoint,
       evidence:
         checkpoint.source === "estimated-history" ? "estimated" : "observed",
-      ...(isBailout ? { event: "bailout" as const } : {}),
+      ...(isBailout ? { historyEvent: "bailout" as const } : {}),
     })
   })
 
-  return {
-    points: allowanceChartCheckpoints(points) as readonly AllowanceChartPoint[],
-  }
+  return { points: allowanceChartCheckpoints(points) }
 }
 
 export interface AllowanceChartDomain {
@@ -113,9 +121,11 @@ export interface AllowanceChartDomain {
   readonly endAt: number
 }
 
-export const allowanceChartCheckpoints = (
-  checkpoints: readonly AllowanceCheckpointInput[],
-): readonly AllowanceCheckpointInput[] =>
+export const allowanceChartCheckpoints = <
+  Checkpoint extends AllowanceCheckpointInput,
+>(
+  checkpoints: readonly Checkpoint[],
+): readonly Checkpoint[] =>
   [...checkpoints].sort((left, right) => left.capturedAt - right.capturedAt)
 
 export const allowanceChartDomain = (
@@ -125,7 +135,10 @@ export const allowanceChartDomain = (
   const first = ordered[0]
   const latest = ordered.at(-1)
   if (!first || !latest) return undefined
-  const endAt = Math.max(latest.capturedAt, latest.resetAt)
+  const endAt =
+    latest.event === "refill"
+      ? latest.capturedAt
+      : Math.max(latest.capturedAt, latest.resetAt)
   return endAt > first.capturedAt
     ? { startAt: first.capturedAt, endAt }
     : undefined
@@ -156,6 +169,8 @@ export const allowanceChartSegments = (
       if (
         !active ||
         !previous ||
+        checkpoint.event === "refill" ||
+        previous.event === "refill" ||
         checkpoint.resetAt !== previous.resetAt ||
         checkpoint.remainingPercent > previous.remainingPercent
       ) {
@@ -176,6 +191,8 @@ export const inferredAllowanceBailouts = (
   return ordered.flatMap((current, index) => {
     const previous = ordered[index - 1]
     return previous &&
+      previous.event !== "refill" &&
+      current.event !== "refill" &&
       current.remainingPercent > previous.remainingPercent &&
       current.capturedAt < previous.resetAt
       ? [

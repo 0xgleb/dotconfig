@@ -740,7 +740,10 @@ export const createTaskTool = (options: TaskToolOptions): IssueTaskTool => ({
           observeNext,
         )
       })
-      const executed = await Effect.runPromiseExit(operation, { signal })
+      const executed = await Effect.runPromiseExit(
+        operation,
+        signal === undefined ? {} : { signal },
+      )
 
       if (Exit.isSuccess(executed)) outcome = executed.value
       else {
@@ -810,7 +813,7 @@ export const createTaskTool = (options: TaskToolOptions): IssueTaskTool => ({
         ? undefined
         : await Effect.runPromiseExit(
             Effect.suspend(() => options.renderOutput(outcome)),
-            { signal },
+            signal === undefined ? {} : { signal },
           )
     const complete =
       rendered !== undefined &&
