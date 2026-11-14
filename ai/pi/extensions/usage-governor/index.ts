@@ -11,7 +11,8 @@ import {
   OWNER_INTERVENTION_QUERY_EVENT,
   OWNER_INTERVENTION_RELAY_EVENT,
   RESPONSIVE_AUTONOMOUS_TURN_EVENT,
-  type OwnerInterventionQuery,
+  decodeOwnerInterventionQuery,
+  decodeOwnerInterventionRelay,
   type OwnerInterventionRelay,
 } from "../shared/usage-governor-events.ts"
 import {
@@ -750,23 +751,21 @@ const usageGovernor = (pi: ExtensionAPI): void => {
     turnLaneState = markHumanFollowUp(turnLaneState, prompt, now)
   })
 
-  pi.events.on(
-    OWNER_INTERVENTION_QUERY_EVENT,
-    (query: OwnerInterventionQuery) => {
-      query.report(
-        activeTurnLane === "human" ? activeOwnerInteractionAt : undefined,
-      )
-    },
-  )
+  pi.events.on(OWNER_INTERVENTION_QUERY_EVENT, data => {
+    const query = decodeOwnerInterventionQuery(data)
+    if (Either.isLeft(query)) return
+    query.right.report(
+      activeTurnLane === "human" ? activeOwnerInteractionAt : undefined,
+    )
+  })
 
-  pi.events.on(
-    OWNER_INTERVENTION_RELAY_EVENT,
-    (intervention: OwnerInterventionRelay) => {
-      void Effect.runPromise(
-        Effect.ignore(recordRelayedOwnerIntervention(intervention)),
-      )
-    },
-  )
+  pi.events.on(OWNER_INTERVENTION_RELAY_EVENT, data => {
+    const intervention = decodeOwnerInterventionRelay(data)
+    if (Either.isLeft(intervention)) return
+    void Effect.runPromise(
+      Effect.ignore(recordRelayedOwnerIntervention(intervention.right)),
+    )
+  })
 
   pi.events.on(RESPONSIVE_AUTONOMOUS_TURN_EVENT, (prompt: unknown) => {
     turnLaneState = markResponsiveAutonomousTurn(turnLaneState, prompt)
@@ -902,7 +901,10 @@ const usageGovernor = (pi: ExtensionAPI): void => {
   })
 
   pi.on("before_agent_start", async (event, ctx) => {
-    const turn = takeTurnLane(turnLaneState, event.prompt)
+    const turn: ReturnType<typeof takeTurnLane> =
+      "prompt" in event
+        ? takeTurnLane(turnLaneState, event.prompt)
+        : { state: turnLaneState, lane: "autonomous" }
     turnLaneState = turn.state
     activeTurnLane = turn.lane
     activeOwnerInteractionAt =

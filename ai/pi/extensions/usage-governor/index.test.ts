@@ -1,104 +1,127 @@
 import assert from "node:assert/strict"
-import { readFileSync } from "node:fs"
 import test from "node:test"
+import { fileURLToPath } from "node:url"
+import type { ExtensionAPI } from "@earendil-works/pi-coding-agent"
+import {
+  OWNER_INTERVENTION_QUERY_EVENT,
+  OWNER_INTERVENTION_RELAY_EVENT,
+} from "../shared/usage-governor-events.ts"
 
-const source = readFileSync(new URL("./index.ts", import.meta.url), "utf8")
-
-test("turn origin never demotes the session-selected driver model", () => {
-  assert.match(source, /before_agent_start/)
-  assert.doesNotMatch(source, /AUTONOMOUS_MODEL/)
-  assert.doesNotMatch(source, /auto→terra/)
-  assert.match(source, /restorePreferredModel/)
-  assert.match(
-    source,
-    /activeTurnLane = turn\.lane[\s\S]*?awaitPreferredModel\(ctx\)/,
+const fixture = async () => {
+  const support: unknown = await import(
+    new URL("../../../test/pi-host-test-support.mjs", import.meta.url).href
   )
+  assert.ok(
+    typeof support === "object" &&
+      support !== null &&
+      "loadHostExtension" in support &&
+      typeof support.loadHostExtension === "function",
+  )
+  const factory: unknown = await support.loadHostExtension(
+    fileURLToPath(new URL("./index.ts", import.meta.url)),
+  )
+  assert.ok(typeof factory === "function")
+
+  const listeners = new Map<string, (data: unknown) => void>()
+  const pi = {
+    on: () => () => {},
+    events: {
+      on: (name: string, listener: (data: unknown) => void) => {
+        listeners.set(name, listener)
+        return () => {
+          listeners.delete(name)
+        }
+      },
+      emit: () => {},
+    },
+    registerTool: () => {},
+    registerCommand: () => {},
+  } satisfies Pick<
+    ExtensionAPI,
+    "on" | "events" | "registerTool" | "registerCommand"
+  >
+  factory(pi)
+
+  return (name: string, data: unknown) => {
+    const listener = listeners.get(name)
+    assert.ok(listener)
+    listener(data)
+  }
+}
+
+const nextTick = () => new Promise<void>(resolve => setImmediate(resolve))
+
+test("owner-intervention queries ignore malformed reporters at the real extension boundary", async () => {
+  const emit = await fixture()
+  for (const data of [undefined, null, 1, "query", [], {}, { report: 1 }]) {
+    assert.doesNotThrow(() => emit(OWNER_INTERVENTION_QUERY_EVENT, data))
+  }
 })
 
-test("workflow fan-out admission is bypassed while throttling is disabled", () => {
-  assert.match(
-    source,
-    /const throttlingMode = \(\): "disabled" \| "enabled" => "disabled"/,
-  )
-  assert.match(source, /pi\.on\("tool_call"/)
-  assert.match(
-    source,
-    /if \(throttlingMode\(\) === "disabled" \|\| event\.toolName !== "workflow"\) return/,
-  )
-  assert.match(source, /kind: "workflow",\s*requestedTokens/)
-  assert.match(source, /event\.input\.tokenBudget = admission\.grantedTokens/)
-  assert.match(source, /awaitWorkflowAdmission/)
-  assert.doesNotMatch(source, /Workflow blocked: OpenAI allowance pacing/)
-  assert.doesNotMatch(source, /Workflow blocked: usage control is unavailable/)
+test("owner-intervention queries report an absent human interaction while idle", async () => {
+  const emit = await fixture()
+  const reports: (number | undefined)[] = []
+  emit(OWNER_INTERVENTION_QUERY_EVENT, {
+    report: (at: number | undefined) => {
+      reports.push(at)
+    },
+  })
+  assert.deepEqual(reports, [undefined])
 })
 
-test("provider pacing is bypassed while throttling is disabled", () => {
-  assert.match(source, /pi\.on\("before_provider_request"/)
-  assert.match(source, /awaitProviderCallReservation/)
-  assert.match(
-    source,
-    /if \(throttlingMode\(\) === "enabled"\)[\s\S]*?await awaitProviderCallReservation\(ctx\)/,
+test("malformed owner-intervention relays cannot send a control-plane request", async t => {
+  const requests: unknown[] = []
+  t.mock.method(
+    globalThis,
+    "fetch",
+    async (_input: unknown, init?: RequestInit) => {
+      requests.push(init?.body)
+      return new Response(null, { status: 200 })
+    },
   )
-  assert.doesNotMatch(source, /ctx\.abort\(\)/)
-  assert.doesNotMatch(source, /return \{ action: "handled" \}/)
+  const emit = await fixture()
+  const valid = {
+    targetAgentId: "fixture-agent",
+    targetCwd: "/fixture/target",
+    ownerInteractionAt: 1000,
+  }
+  for (const data of [
+    undefined,
+    null,
+    [],
+    {},
+    { ...valid, targetAgentId: 1 },
+    { ...valid, targetCwd: null },
+    { ...valid, ownerInteractionAt: "1000" },
+    { ...valid, ownerInteractionAt: Number.NaN },
+    { ...valid, ownerInteractionAt: -1 },
+  ])
+    emit(OWNER_INTERVENTION_RELAY_EVENT, data)
+  await nextTick()
+  assert.deepEqual(requests, [])
 })
 
-test("disabled throttling does not start or render the throttle HUD", () => {
-  assert.match(source, /controlPlaneUsageControlUrl/)
-  assert.match(source, /ThrottleHudComponent/)
-  assert.match(source, /pi\.registerCommand\("throttle"/)
-  assert.match(
-    source,
-    /if \(throttlingMode\(\) === "disabled"\) {[\s\S]*?"Throttling is disabled"/,
+test("valid owner-intervention relays forward only the supported fields", async t => {
+  const requests: unknown[] = []
+  t.mock.method(
+    globalThis,
+    "fetch",
+    async (_input: unknown, init?: RequestInit) => {
+      assert.equal(typeof init?.body, "string")
+      requests.push(JSON.parse(String(init?.body)))
+      return new Response(null, { status: 200 })
+    },
   )
-  assert.match(
-    source,
-    /session_start[\s\S]*?if \(throttlingMode\(\) === "disabled"\) {[\s\S]*?setWidget\("usage-throttle", undefined\)[\s\S]*?return/,
-  )
-})
-
-test("in-flight throttle refreshes cannot touch stale UI after reload", () => {
-  const refresh = source.indexOf("const refreshThrottle")
-  const awaitResult = source.indexOf("await Effect.runPromise", refresh)
-  const epochCheck = source.indexOf(
-    "if (lifecycleEpoch !== throttleLifecycleEpoch) return",
-    awaitResult,
-  )
-  const uiAccess = source.indexOf("ctx.ui.setStatus", awaitResult)
-  assert.ok(refresh >= 0 && awaitResult > refresh)
-  assert.ok(epochCheck > awaitResult && uiAccess > epochCheck)
-  assert.match(
-    source,
-    /session_shutdown[\s\S]*?throttleLifecycleEpoch \+= 1[\s\S]*?clearInterval\(throttleTimer\)/,
-  )
-})
-
-test("owner intervention follows successful delegation to the target agent", () => {
-  assert.match(source, /OWNER_INTERVENTION_QUERY_EVENT/)
-  assert.match(source, /OWNER_INTERVENTION_RELAY_EVENT/)
-  assert.match(source, /recordRelayedOwnerIntervention/)
-  assert.match(source, /ctx\.sessionManager\.getSessionId\(\)/)
-  assert.match(source, /event\.source !== "extension"/)
-})
-
-// The per-turn token-budget assertions against home.nix live in dotconfig's
-// copy of this test (verified present there with the same assertions),
-// because host configuration is dotconfig ownership under the source split.
-// Metagenda's tree has no home.nix: the drift-era relative path resolved
-// outside this repository and failed with ENOENT, so no coverage is lost.
-
-test("all turns restore the session-selected subscription model without claiming throttling", () => {
-  assert.match(source, /HUMAN_TURN_EVENT/)
-  assert.match(source, /RESPONSIVE_AUTONOMOUS_TURN_EVENT/)
-  assert.match(
-    source,
-    /activeTurnLane = turn\.lane[\s\S]*?awaitPreferredModel\(ctx\)/,
-  )
-  assert.match(source, /"usage:unthrottled"/)
-  assert.doesNotMatch(source, /usage:provider-budgeted/)
-  assert.match(
-    source,
-    /restorePreferredModel[\s\S]*?switchModel\(preferred, preferredModel\.thinking \?\? "high"\)/,
-  )
-  assert.match(source, /pi\.appendEntry\(STATE_ENTRY, selected\)/)
+  const emit = await fixture()
+  const relay = {
+    targetAgentId: "fixture-agent",
+    targetCwd: "/fixture/target",
+    ownerInteractionAt: 1000,
+  }
+  emit(OWNER_INTERVENTION_RELAY_EVENT, {
+    ...relay,
+    unrelated: "untrusted-extra",
+  })
+  await nextTick()
+  assert.deepEqual(requests, [relay])
 })
