@@ -1,8 +1,12 @@
 import assert from "node:assert/strict"
 import test from "node:test"
 import { fileURLToPath } from "node:url"
-import type { ExtensionAPI } from "@earendil-works/pi-coding-agent"
+import type {
+  BeforeAgentStartEvent,
+  ExtensionAPI,
+} from "@earendil-works/pi-coding-agent"
 import {
+  HUMAN_TURN_EVENT,
   OWNER_INTERVENTION_QUERY_EVENT,
   OWNER_INTERVENTION_RELAY_EVENT,
 } from "../shared/usage-governor-events.ts"
@@ -23,8 +27,14 @@ const fixture = async () => {
   assert.ok(typeof factory === "function")
 
   const listeners = new Map<string, (data: unknown) => void>()
+  const hooks = new Map<string, unknown>()
   const pi = {
-    on: () => () => {},
+    on: (name: string, handler: unknown) => {
+      hooks.set(name, handler)
+      return () => {
+        hooks.delete(name)
+      }
+    },
     events: {
       on: (name: string, listener: (data: unknown) => void) => {
         listeners.set(name, listener)
@@ -36,20 +46,54 @@ const fixture = async () => {
     },
     registerTool: () => {},
     registerCommand: () => {},
+    appendEntry: () => {},
   } satisfies Pick<
     ExtensionAPI,
-    "on" | "events" | "registerTool" | "registerCommand"
+    "on" | "events" | "registerTool" | "registerCommand" | "appendEntry"
   >
   factory(pi)
 
-  return (name: string, data: unknown) => {
+  const emit = (name: string, data: unknown) => {
     const listener = listeners.get(name)
     assert.ok(listener)
     listener(data)
   }
+  const model = { provider: "fixture-provider", id: "fixture-model" }
+  const context = {
+    model,
+    thinkingLevel: "high",
+    modelRegistry: { find: () => model },
+    ui: { setStatus: () => {} },
+  }
+  const start = async (event: unknown) => {
+    const handler = hooks.get("before_agent_start")
+    assert.ok(typeof handler === "function")
+    await handler(event, context)
+  }
+  const input = (text: string) => {
+    const handler = hooks.get("input")
+    assert.ok(typeof handler === "function")
+    handler({ type: "input", source: "extension", text, images: [] }, context)
+  }
+  return Object.assign(emit, { start, input })
 }
 
 const nextTick = () => new Promise<void>(resolve => setImmediate(resolve))
+
+const promptState = {
+  systemPrompt: "",
+  systemPromptOptions: {
+    selectedTools: [],
+    hiddenTools: [],
+    toolSnippets: {},
+    toolGuidelines: {},
+    promptGuidelines: [],
+    appendSystemPrompt: "",
+    sections: {},
+    contextFiles: [],
+    skills: [],
+  },
+}
 
 test("owner-intervention queries ignore malformed reporters at the real extension boundary", async () => {
   const emit = await fixture()
@@ -124,4 +168,56 @@ test("valid owner-intervention relays forward only the supported fields", async 
   })
   await nextTick()
   assert.deepEqual(requests, [relay])
+})
+
+test("legacy and current user-start hooks correlate the actual human turn", async t => {
+  t.mock.method(Date, "now", () => 1000)
+  const emit = await fixture()
+  const prompt = "human fixture turn"
+  const current = {
+    type: "before_agent_start",
+    messageType: "user",
+    prompt,
+    ...promptState,
+  } satisfies BeforeAgentStartEvent
+  for (const event of [
+    { type: "before_agent_start", prompt, systemPrompt: "" },
+    current,
+  ]) {
+    emit(HUMAN_TURN_EVENT, prompt)
+    emit.input(prompt)
+    await emit.start(event)
+    const reports: (number | undefined)[] = []
+    emit(OWNER_INTERVENTION_QUERY_EVENT, {
+      report: (at: number | undefined) => {
+        reports.push(at)
+      },
+    })
+    assert.deepEqual(reports, [1000])
+  }
+})
+
+test("custom-start hooks cannot impersonate or consume a pending human turn", async t => {
+  t.mock.method(Date, "now", () => 1000)
+  const emit = await fixture()
+  const prompt = "pending human fixture"
+  emit(HUMAN_TURN_EVENT, prompt)
+  emit.input(prompt)
+  const custom = {
+    type: "before_agent_start",
+    messageType: "custom",
+    ...promptState,
+    message: { customType: "fixture.wake", content: "fixture", display: false },
+  } satisfies BeforeAgentStartEvent
+  await emit.start(custom)
+  const reports: (number | undefined)[] = []
+  const query = {
+    report: (at: number | undefined) => {
+      reports.push(at)
+    },
+  }
+  emit(OWNER_INTERVENTION_QUERY_EVENT, query)
+  await emit.start({ type: "before_agent_start", prompt, systemPrompt: "" })
+  emit(OWNER_INTERVENTION_QUERY_EVENT, query)
+  assert.deepEqual(reports, [undefined, 1000])
 })
