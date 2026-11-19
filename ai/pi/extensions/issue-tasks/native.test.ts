@@ -1,9 +1,14 @@
 import assert from "node:assert/strict"
-import { existsSync, mkdirSync, mkdtempSync, rmSync } from "node:fs"
-import { createRequire } from "node:module"
-import { join } from "node:path"
-import { getPackageDir } from "@earendil-works/pi-coding-agent"
-import test, { mock } from "node:test"
+import { execFileSync } from "node:child_process"
+import {
+  existsSync,
+  mkdirSync,
+  mkdtempSync,
+  realpathSync,
+  rmSync,
+} from "node:fs"
+import { dirname, join } from "node:path"
+import test, { after, mock } from "node:test"
 import { DatabaseSync } from "node:sqlite"
 import { fileURLToPath, pathToFileURL } from "node:url"
 import { Cause, Deferred, Effect, Either, Exit, Scope } from "effect"
@@ -11,30 +16,51 @@ import type { NativeTaskToolOptions } from "./native.ts"
 import type { IssueTaskTool } from "./tool.ts"
 import { openSqliteTaskStore, type TaskStoreError } from "./sqlite-store.ts"
 
-const hostRoot = getPackageDir()
-const host = createRequire(join(hostRoot, "package.json"))
-
-const { createJiti } = await import(
-  pathToFileURL(join(hostRoot, "dist/core/extensions/jiti-loader.js")).href
+const executable = realpathSync(
+  execFileSync("which", ["pi"], { encoding: "utf8" }).trim(),
 )
-const loader = createJiti(import.meta.url, {
-  alias: { typebox: host.resolve("typebox") },
-  moduleCache: false,
-  fsCache: false,
+const hostRoot = join(
+  dirname(dirname(executable)),
+  "lib/node_modules/pi-monorepo",
+)
+// Documented non-secret Jiti control; the installed bundle provides the actual
+// host validator through supported virtual modules, not unbundled internals.
+const previousFsCache = process.env.JITI_FS_CACHE
+process.env.JITI_FS_CACHE = "false"
+after(() => {
+  if (previousFsCache === undefined) delete process.env.JITI_FS_CACHE
+  else process.env.JITI_FS_CACHE = previousFsCache
 })
-
-const native: typeof import("./native.ts") = await loader.import(
-  fileURLToPath(new URL("./native.ts", import.meta.url)),
+const sdk = await import(
+  pathToFileURL(join(hostRoot, "dist/bundle/index.js")).href
 )
-
-const { validateToolArguments } = await import(
-  pathToFileURL(
-    join(
-      hostRoot,
-      "node_modules/@earendil-works/pi-ai/dist/utils/validation.js",
-    ),
-  ).href
+const bridgeParent = fileURLToPath(
+  new URL("../../../../.tmp/task-hud/", import.meta.url),
 )
+mkdirSync(bridgeParent, { recursive: true, mode: 0o700 })
+const bridgeRoot = mkdtempSync(join(bridgeParent, "native-sdk-"))
+const bus = sdk.createEventBus()
+const captured: unknown[] = []
+const unsubscribe = bus.on("issue-task-test-host", (value: unknown) =>
+  captured.push(value),
+)
+try {
+  const loaded = await sdk.discoverAndLoadExtensions(
+    [fileURLToPath(new URL("./test-fixtures/sdk-host.ts", import.meta.url))],
+    bridgeRoot,
+    bridgeRoot,
+    bus,
+  )
+  assert.deepEqual(loaded.errors, [])
+  assert.equal(captured.length, 1)
+} finally {
+  unsubscribe()
+  rmSync(bridgeRoot, { recursive: true })
+}
+const { native, validateToolArguments } = captured[0] as {
+  readonly native: typeof import("./native.ts")
+  readonly validateToolArguments: (typeof import("@earendil-works/pi-ai"))["validateToolArguments"]
+}
 
 const fixtureParent = fileURLToPath(
   new URL("../../../../.tmp/issue-task-native-tests/", import.meta.url),

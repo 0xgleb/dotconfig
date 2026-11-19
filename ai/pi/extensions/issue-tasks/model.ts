@@ -97,6 +97,24 @@ export interface IssueTaskDetail extends IssueTaskRevision {
   readonly dependsOn: readonly TaskAddress[]
 }
 
+export interface IssueTaskCounts {
+  readonly total: number
+  readonly todo: number
+  readonly doing: number
+  readonly done: number
+  readonly cancelled: number
+  readonly blocked: number
+}
+
+export interface IssueTaskProgress extends IssueTaskRevision {
+  readonly counts: IssueTaskCounts
+  readonly currentTask:
+    | (IssueTask & {
+        readonly status: Exclude<TaskStatus, "done" | "cancelled">
+      })
+    | null
+}
+
 export interface TaskFilter {
   readonly status?: typeof StatusFilterSchema.Type
 }
