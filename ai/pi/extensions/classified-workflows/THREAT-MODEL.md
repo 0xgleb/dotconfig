@@ -1,45 +1,29 @@
-# Classified action remediation threat model
+# Classified action decision threat model
 
 ## Trust boundaries and assets
 
 The classifier completion crosses from untrusted model output into the typed
 action decision. A model-authored tool call then crosses from the session into
-an external Telegram delivery. The protected assets are the owner's authority,
-the factual integrity and confidentiality of stakeholder updates, delivery audit
-truth, exactly-once delivery after verification, and session liveness.
+an external action. The protected assets are the owner's authority, factual
+integrity, confidentiality, and truthful delivery reporting.
 
-## STRIDE analysis
+## Decision handling
 
-- **Spoofing:** a model cannot create delivery authority. Human intent and
-  loaded policy remain the authority inputs; a remediation decision grants no
-  permission to execute the tool.
-- **Tampering:** disputed or insufficiently verified claims must not be sent.
-  The classifier can require verification and correction before the same action
-  is retried.
-- **Repudiation:** pending verification is persisted as typed session state and
-  cleared only after the matching tool completes successfully.
+- **Spoofing/elevation:** human intent and loaded policy remain the authority
+  inputs. Only an `allow` decision executes an action.
+- **Tampering:** a `remediate` decision interrupts the attempted action and
+  returns the missing verification to the caller. A subsequent attempt must
+  satisfy the applicable gates using current evidence.
+- **Repudiation:** classifier interruptions are returned as tool-call results;
+  they do not establish that the requested external action occurred.
 - **Information disclosure:** deterministic protected-path and sensitive-result
-  guards run unchanged. Remediation never bypasses them or exposes withheld
-  content.
-- **Denial of service:** missing verification cannot become a terminal
-  classifier veto. A bounded continuation keeps the action pending and requires
-  verify, correct, and retry or an exact blocker report.
-- **Elevation of privilege:** only an `allow` decision executes an action.
-  `remediate` preserves the requested outcome without executing the external
-  side effect, and `block` remains terminal for absent authority or a hard
-  policy violation.
+  guards remain applicable to verification and subsequent attempts.
 
 ## Required regressions
 
-- A valid classifier `remediate` response parses as remediation rather than a
-  generic block or an allow.
-- An explicitly requested Telegram delivery with unverified claims produces a
-  verification continuation, not a terminal veto.
-- Pending remediation survives session reconstruction and cannot settle while
-  the requested action remains unfinished.
-- Only a successful result for the matching tool clears pending remediation;
-  failures and unrelated tools do not.
-- Hard policy blocks remain blocks, and remediation never executes the tool.
+- Valid classifier decisions decode into their distinct verdicts.
+- Both `remediate` and `block` interrupt the action rather than execute it.
+- An `allow` decision leaves the action available for execution.
 
 ## Blocker diagnostic provenance
 

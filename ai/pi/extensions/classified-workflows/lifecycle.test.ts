@@ -470,23 +470,15 @@ test("proactive handover context requires a verified active procedure and curren
   )
 })
 
-test("action remediation is persisted and continued after settlement", () => {
-  assert.match(
-    extensionSource,
-    /remediationForDecision\([\s\S]*?setPendingActionRemediation\([\s\S]*?remediationInterruption/,
-  )
-  assert.match(
-    extensionSource,
-    /pi\.on\("agent_settled"[\s\S]*?scheduleTaskContinuation\(ctx\)/,
-  )
-  assert.match(
-    extensionSource,
-    /remediationContinuationMessage\(pendingActionRemediation\)/,
-  )
-  assert.match(
-    extensionSource,
-    /reconcileActionRemediation\([\s\S]*?outcome: event\.isError \? "failed" : "succeeded"[\s\S]*?setPendingActionRemediation\(resolvedRemediation\)/,
-  )
+test("verification decisions return an action interruption", () => {
+  const reason = "Verify the selected changes before staging"
+  const interruption = resolveActionDecision({
+    verdict: "remediate",
+    reason,
+    source: "classifier",
+  })
+  assert.equal(interruption?.block, true)
+  assert.ok(interruption?.reason.includes(reason))
 })
 
 test("auto mode returns classifier blocks without waiting for approval", () => {
