@@ -24,6 +24,7 @@ import {
   type IssueTaskRevision,
   type IssueTaskPage,
   type IssueTaskDetail,
+  type IssueTaskProgress,
   type TaskPageInput,
   type TaskFilter,
   type TaskReadQuery,
@@ -97,6 +98,14 @@ const projectTask = (row: typeof TaskRowSchema.Type): IssueTask =>
     text: row.text,
     status: storedTaskStatus(row.status, row.blocker),
   })
+const TaskCountsSchema = Schema.Struct({
+  total: RevisionSchema,
+  todo: RevisionSchema,
+  doing: RevisionSchema,
+  done: RevisionSchema,
+  cancelled: RevisionSchema,
+  blocked: RevisionSchema,
+})
 
 export type {
   TaskId,
@@ -180,6 +189,9 @@ export interface SqliteTaskStore {
     page: TaskPageInput,
     filter?: TaskFilter,
   ) => StoreEffect<Option.Option<IssueTaskPage>>
+  readonly readProgress: (
+    issue: IssueReference,
+  ) => StoreEffect<Option.Option<IssueTaskProgress>>
   readonly readManyTasks: (
     queries: readonly TaskReadQuery[],
   ) => StoreEffect<readonly IssueTaskPageResult[]>
@@ -2637,6 +2649,98 @@ const readIssueTasks = (
     )
   })
 
+const readIssueProgress = (
+  database: DatabaseSync,
+  target: IssueReference,
+): StoreEffect<Option.Option<IssueTaskProgress>> =>
+  Effect.gen(function* () {
+    const issue = yield* checkedIssue(target, "invalid_input")
+    const stored = yield* findPlan(database, issue)
+    if (Option.isNone(stored)) return Option.none()
+    const plan = stored.value
+    const rawCounts = yield* io("Could not read issue task progress", () =>
+      database
+        .prepare(
+          `SELECT COUNT(*) AS total,
+          COUNT(*) FILTER (WHERE status = 'todo' AND blocker IS NULL) AS todo,
+          COUNT(*) FILTER (WHERE status = 'doing' AND blocker IS NULL) AS doing,
+          COUNT(*) FILTER (WHERE status = 'done') AS done,
+          COUNT(*) FILTER (WHERE status = 'cancelled') AS cancelled,
+          COUNT(*) FILTER (WHERE status IN ('todo', 'doing') AND blocker IS NOT NULL) AS blocked
+        FROM issue_plan_tasks WHERE plan_id = ?`,
+        )
+        .get(plan.id),
+    )
+    const counts = yield* decode(
+      TaskCountsSchema,
+      rawCounts,
+      "corrupt_state",
+      "Invalid task progress counters",
+    )
+    const lifecycleTotal =
+      counts.todo +
+      counts.doing +
+      counts.done +
+      counts.cancelled +
+      counts.blocked
+    if (
+      !Number.isSafeInteger(lifecycleTotal) ||
+      lifecycleTotal !== counts.total ||
+      counts.blocked > counts.total
+    )
+      return yield* fail(
+        "corrupt_state",
+        "Task progress counters disagree with persisted state",
+      )
+    if (counts.todo + counts.doing + counts.blocked === 0)
+      return Option.some(
+        Object.freeze({
+          issue: plan.issue,
+          revision: plan.revision,
+          counts: Object.freeze(counts),
+          currentTask: null,
+        }),
+      )
+
+    const rawTask = yield* io("Could not read current issue task", () =>
+      database
+        .prepare(
+          `SELECT ${taskColumns} FROM issue_plan_tasks
+        WHERE plan_id = ? AND status IN ('todo', 'doing')
+        ORDER BY CASE WHEN blocker IS NOT NULL THEN 2
+          WHEN status = 'doing' THEN 0 ELSE 1 END, id
+        LIMIT 1`,
+        )
+        .get(plan.id),
+    )
+    const task = yield* decode(
+      TaskRowSchema,
+      rawTask,
+      "corrupt_state",
+      "Invalid current issue task",
+    )
+    const current = projectTask(task)
+    if (current.status === "done" || current.status === "cancelled")
+      return yield* fail("corrupt_state", "Current task is already settled")
+    const count =
+      typeof current.status === "string"
+        ? counts[current.status]
+        : counts.blocked
+    if (count === 0)
+      return yield* fail(
+        "corrupt_state",
+        "Current task disagrees with issue progress",
+      )
+    return Option.some(
+      Object.freeze({
+        issue: plan.issue,
+        revision: plan.revision,
+        counts: Object.freeze(counts),
+        currentTask: Object.freeze({ ...current, status: current.status }),
+      }),
+    )
+  })
+
 const makeStore = (
   database: DatabaseSync,
   options: ValidatedPlanStoreOptions,
@@ -2873,6 +2977,7 @@ const makeStore = (
       ),
     readTasks: (target, input, selection) =>
       use("read", readIssueTasks(database, target, input, selection)),
+    readProgress: target => use("read", readIssueProgress(database, target)),
     close: () =>
       gate.withPermits(1)(
         Effect.suspend(() => {

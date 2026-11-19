@@ -162,6 +162,8 @@ const NextSchema = Schema.Union(
     )
   }),
 )
+export const decodeTaskNextResult = Schema.decodeUnknownEither(NextSchema)
+
 const PlacementSchema = Schema.Union(
   Schema.Struct({ kind: Schema.Literal("linked"), issue: IssueSchema }),
   Schema.Struct({ kind: Schema.Literal("unknown"), issue: IssueSchema }),

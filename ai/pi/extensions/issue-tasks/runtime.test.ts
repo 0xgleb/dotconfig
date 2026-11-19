@@ -6,6 +6,7 @@ import {
   type NativeTaskHostReport,
 } from "./runtime.ts"
 import { TaskStoreError } from "./sqlite-store.ts"
+import { TaskHudError } from "./hud-controller.ts"
 
 const options = () =>
   nativeTaskRuntimeOptions("/unused/tasks.sqlite", () => Effect.void)
@@ -62,6 +63,28 @@ test("task runtime renders structured outcomes with instruction-like text kept a
   const rendered = await Effect.runPromise(options().renderOutput(outcome))
 
   assert.deepEqual(JSON.parse(rendered), outcome)
+})
+
+test("HUD degradation reports a separate bounded phase without claiming core task initialization failed", async () => {
+  const reports: NativeTaskHostReport[] = []
+  const input = nativeTaskRuntimeOptions("/unused/tasks.sqlite", report =>
+    Effect.sync(() => {
+      reports.push(report)
+    }),
+  )
+  assert.equal(typeof input.onHudFailure, "function")
+  assert.ok(input.onHudFailure)
+  await Effect.runPromise(
+    input.onHudFailure(
+      new TaskHudError({
+        code: "subscription_unavailable",
+        message: "Private UI boundary details",
+      }),
+    ),
+  )
+  assert.deepEqual(reports, [
+    { phase: "hud", code: "subscription_unavailable" },
+  ])
 })
 
 test("task runtime reports only bounded phase and code, never private error data", async () => {
