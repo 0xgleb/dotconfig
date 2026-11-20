@@ -71,7 +71,7 @@ message, not in `adrs/`.
 
 6. **Surface the review point and preserve implementation authority.** Summarize
    the decision and alternatives and link `adrs/NN-name.md`. Use the current
-   native `openai-codex/gpt-6.1-sol` reviewer. Model selection does not grant
+   native `openai-codex/gpt-6.2-sol` reviewer. Model selection does not grant
    approval, publication or implementation authority.
 
    Continue already-authorized reversible implementation under the owner's

@@ -74,7 +74,7 @@ const fixture = (t: test.TestContext, process: ContentProcess) => {
   const context = {
     cwd: processCwd,
     sessionId: "session",
-    getModel: () => ({ provider: "openai-codex", id: "gpt-6.1-sol" }),
+    getModel: () => ({ provider: "openai-codex", id: "gpt-6.2-sol" }),
     isCurrent: () => true,
   }
   return { jobs, guard, journal, sent, terminal, context }

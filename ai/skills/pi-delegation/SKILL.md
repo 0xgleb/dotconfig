@@ -1,6 +1,6 @@
 ---
 name: pi-delegation
-description: Delegate read-only work through Pi classified workflows or visible Pi Zellij workers using authenticated gpt-6.1-sol. Use for parallel investigation, independent verification or multi-agent synthesis.
+description: Delegate read-only work through Pi classified workflows or visible Pi Zellij workers using authenticated gpt-6.2-sol. Use for parallel investigation, independent verification or multi-agent synthesis.
 ---
 
 # Pi delegation
@@ -42,7 +42,7 @@ action.
 ## Current model and harness
 
 Use Pi's classified `workflow` tool with authenticated
-`openai-codex/gpt-6.1-sol` for every agent lane, including editing criticism,
+`openai-codex/gpt-6.2-sol` for every agent lane, including editing criticism,
 inspection, verification and synthesis. Keep execution within Pi; do not launch
 external model CLIs or subscription wrappers. If the required model/tool is
 unavailable, retain the exact incomplete state rather than switching model,
@@ -138,7 +138,7 @@ Pass agent promises directly to `parallel`, for example
 `await parallel([agent("first task"), agent("second task")])`. Every call must
 provide a focused task, working directory when it differs from the parent, tool
 capabilities, and model or thinking level when the default is not appropriate.
-Set `model: "openai-codex/gpt-6.1-sol"` for every lane. Discovery, review,
+Set `model: "openai-codex/gpt-6.2-sol"` for every lane. Discovery, review,
 verification and synthesis use the same current model; role labels do not select
 a different tier or imply additional authority.
 

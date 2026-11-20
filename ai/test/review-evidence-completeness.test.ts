@@ -231,7 +231,7 @@ test("legacy external-command metadata stays native and its blocked lane remains
     ],
     {
       inspectRequest: request => {
-        assert.equal(request.model, "openai-codex/gpt-6.1-sol")
+        assert.equal(request.model, "openai-codex/gpt-6.2-sol")
         assert.doesNotMatch(request.task, /Use Bash to run external/)
         assert.doesNotMatch(request.task, /fixture-only-command/)
       },
@@ -248,12 +248,12 @@ test("legacy external-command metadata stays native and its blocked lane remains
   assert.equal(report.report, null)
 })
 
-test("review, verification and synthesis keep GPT-6.1-sol despite caller tier overrides", async () => {
+test("review, verification and synthesis keep GPT-6.2-sol despite caller tier overrides", async () => {
   const models: (string | undefined)[] = []
   const { report, calls } = await runReview({}, [], [], {
     tierModels: { light: "foreign/light", mid: "foreign/mid" },
     inspectRequest: request => {
-      assert.equal(request.model, "openai-codex/gpt-6.1-sol")
+      assert.equal(request.model, "openai-codex/gpt-6.2-sol")
       models.push(request.model)
     },
   })

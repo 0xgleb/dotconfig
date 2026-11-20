@@ -188,7 +188,7 @@ Verify prerequisites before doing anything:
    ```
    If dirty, tell the user and stop.
 
-The review engine uses native Pi `openai-codex/gpt-6.1-sol` lanes throughout. Do
+The review engine uses native Pi `openai-codex/gpt-6.2-sol` lanes throughout. Do
 not probe or launch external model CLIs, subscription wrappers or other
 providers.
 
@@ -377,7 +377,7 @@ Workflow → after-workflow handling → print findings). Pass the contract inpu
 | `{SOURCE_ACCESS}`                                       | `Read source files directly from the working tree, which already reflects the change under review.`                                                                                                                                                        |
 | `{SCOPE_NOTE}`                                          | `The diff is scoped to exactly the changes under review (the current branch against its parent).`                                                                                                                                                          |
 | `{INSPECTOR_ARG}`                                       | empty string (the inspectors review the current branch)                                                                                                                                                                                                    |
-| `{REPORT_HEADER}`                                       | `# Review — <branch>\n**Commit:** <head_sha>\n**Parent:** <parent_sha> (<parent branch>)\n**Files changed:** <N>\n**Diff size:** <LOC> lines\n**Panel:** native gpt-6.1-sol focus lanes and applicable inspectors; independent verification and synthesis` |
+| `{REPORT_HEADER}`                                       | `# Review — <branch>\n**Commit:** <head_sha>\n**Parent:** <parent_sha> (<parent branch>)\n**Files changed:** <N>\n**Diff size:** <LOC> lines\n**Panel:** native gpt-6.2-sol focus lanes and applicable inspectors; independent verification and synthesis` |
 | `{TERMINAL_HEADER}`                                     | `Review — <branch>\n<N> files, <LOC> lines changed`                                                                                                                                                                                                        |
 | `{SYNTHESIS_EXTRA}`                                     | empty string                                                                                                                                                                                                                                               |
 | `{INCLUDE_ATTRIBUTION}`                                 | `true`                                                                                                                                                                                                                                                     |
@@ -604,7 +604,7 @@ Always supply `markdownFiles` from the scoped manifest, including an explicit
 empty array when none exist. For a nonempty list, supply an existing Markdown
 prompt using power-unslop's whole-set contract. Never infer that a missing
 Markdown result means there were no Markdown files. `tierModels` is retained for
-compatibility; both fields name `openai-codex/gpt-6.1-sol`, and the workflow
+compatibility; both fields name `openai-codex/gpt-6.2-sol`, and the workflow
 pins that model rather than selecting by provider or tier. `reviewSource` must
 contain `mode` (`single` or `stack`), `branch`, `parentSha`, `headSha`,
 `sourceRoot`, and `ownedDeltaPath`, all resolved from step 2. In stack mode
@@ -695,7 +695,7 @@ const {
   markdownPromptPath,
 } = parsedArgs;
 // All native lanes use the current authenticated model.
-const lightModel = "openai-codex/gpt-6.1-sol";
+const lightModel = "openai-codex/gpt-6.2-sol";
 const scopeFields = [
   "branch",
   "parentSha",
@@ -1077,7 +1077,7 @@ does not impose an end-only publication gate.
 10. Cap at 4 review passes (full or delta). Convergence requires a clean pass —
     never end on a fix. Stop and ask the user if you don't converge.
 11. The review pass runs as a single `Workflow` invocation (review-core), using
-    read-only native `openai-codex/gpt-6.1-sol` lanes. Do not launch external
+    read-only native `openai-codex/gpt-6.2-sol` lanes. Do not launch external
     model CLIs. Verification and synthesis happen inside the workflow, never in
     the main session.
 12. Delta mode is only valid when the fix delta is small (~200 lines) and

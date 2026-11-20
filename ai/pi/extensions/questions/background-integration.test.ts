@@ -106,7 +106,7 @@ test("registered ask_user publishes the final author revision after two editoria
   }
   const ctx = {
     cwd: process.cwd(),
-    model: { provider: "openai-codex", id: "gpt-6.1-sol" },
+    model: { provider: "openai-codex", id: "gpt-6.2-sol" },
     hasUI: false,
     sessionManager: {
       getSessionId: () => "integration",

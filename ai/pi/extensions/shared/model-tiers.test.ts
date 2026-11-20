@@ -23,9 +23,9 @@ test("zai has no mid-tier model, so mid reuses the top-tier model", () => {
 })
 
 test("models come only from the latest series of their provider", () => {
-  assert.match(tierModel("top", "openai-codex") ?? "", /gpt-6\.1-sol/)
-  assert.equal(tierModel("mid", "openai-codex"), "openai-codex/gpt-6.1-sol")
-  assert.equal(tierModel("light", "openai-codex"), "openai-codex/gpt-6.1-sol")
+  assert.equal(tierModel("top", "openai-codex"), "openai-codex/gpt-6.2-sol")
+  assert.equal(tierModel("mid", "openai-codex"), "openai-codex/gpt-6.2-sol")
+  assert.equal(tierModel("light", "openai-codex"), "openai-codex/gpt-6.2-sol")
   assert.equal(tierModel("top", "zai"), "zai/glm-5.3")
   assert.equal(tierModel("light", "zai"), "zai/glm-5.3-flash")
   assert.ok(!JSON.stringify(MODEL_TIER_PROVIDERS).includes("gpt-5.4"))
@@ -68,8 +68,8 @@ test("the cached preference orders later tier resolutions first", () => {
   markPreferredProvider("zai/glm-5.3", () => 1_000)
   const candidates = tierCandidates("light", {
     now: () => 2_000,
-    sessionModel: "openai-codex/gpt-6.1-sol",
+    sessionModel: "openai-codex/gpt-6.2-sol",
   })
   assert.equal(candidates[0], "zai/glm-5.3-flash")
-  assert.equal(candidates.at(-1), "openai-codex/gpt-6.1-sol")
+  assert.equal(candidates.at(-1), "openai-codex/gpt-6.2-sol")
 })

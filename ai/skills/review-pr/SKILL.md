@@ -156,7 +156,7 @@ Keep only the paths — they become `docsPaths` for the engine.
 ## 6. Run the review engine
 
 Run every review, inspector, verifier, Markdown and synthesis lane through Pi's
-classified workflow with authenticated `openai-codex/gpt-6.1-sol`. Do not launch
+classified workflow with authenticated `openai-codex/gpt-6.2-sol`. Do not launch
 external model CLIs or substitute another provider/model. If required execution
 is unavailable, preserve incomplete evidence and the exact blocker, not a clean
 result.
@@ -392,5 +392,5 @@ draft `body` stays empty.
    independently executable cleanup, and identify GitHub support escalation if
    submitted-review deletion or emptying is rejected.
 10. The review runs as a single `Workflow` invocation (review-core), using
-    read-only native `openai-codex/gpt-6.1-sol` lanes. Do not launch external
+    read-only native `openai-codex/gpt-6.2-sol` lanes. Do not launch external
     model CLIs or substitute another provider when a required lane is blocked.

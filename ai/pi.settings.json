@@ -1,6 +1,6 @@
 {
   "defaultProvider": "openai-codex",
-  "defaultModel": "gpt-6.1-sol",
+  "defaultModel": "gpt-6.2-sol",
   "defaultThinkingLevel": "high",
   "theme": "archeofuturism",
   "themes": ["/Users/0xgleb/.config/ai/pi/themes"],
