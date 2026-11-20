@@ -129,7 +129,7 @@ const fixture = (
     cwd: manager === "global" ? join(root, "manager", "global") : scope.cwd,
     mode: "tui",
     isIdle: options.idle ?? (() => true),
-    model: { provider: "openai-codex", id: "gpt-6.1-sol" },
+    model: { provider: "openai-codex", id: "gpt-6.2-sol" },
     sessionManager: {
       getSessionId: () => (manager ? "manager-456" : scope.workerSessionId),
       getBranch: () => entries,

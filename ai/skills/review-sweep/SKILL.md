@@ -128,7 +128,7 @@ out any applied series. Resolve names and order from current metadata.
 
 Common: confirm the review tooling is available exactly as `/review-loop` step 1
 requires, then resolve review-core step 1 once for the whole sweep. Use the
-native `openai-codex/gpt-6.1-sol` lanes for every branch, including inspection,
+native `openai-codex/gpt-6.2-sol` lanes for every branch, including inspection,
 verification, Markdown review and synthesis. Do not probe or launch external
 model CLIs or substitute providers mid-sweep; preserve a concrete unavailable
 execution blocker instead.
@@ -401,7 +401,7 @@ modify/submit rule below is **author-mode only**.
    branch that failed to converge — their scope is built on unsettled code.
 8. **Per branch, the shared engine owns the review.** Each panel is
    `review-core` (single `review-panel` Workflow, verify + synthesize inside it,
-   read-only authenticated `openai-codex/gpt-6.1-sol` lanes, no external model
+   read-only authenticated `openai-codex/gpt-6.2-sol` lanes, no external model
    CLIs). The per-branch action is `/review-loop`'s fix loop (author) or
    `/review-pr`'s draft flow (reviewer). Do not hand-roll the fan-out or relax
    those rules.

@@ -14,7 +14,7 @@ import { makeQuestionJudge, type JudgeContext } from "./quality.ts"
 const context = (execution?: JudgeContext["execution"]): JudgeContext => ({
   cwd: process.cwd(),
   ...(execution === undefined ? {} : { execution }),
-  getModel: () => ({ provider: "openai-codex", id: "gpt-6.1-sol" }),
+  getModel: () => ({ provider: "openai-codex", id: "gpt-6.2-sol" }),
 })
 
 test(

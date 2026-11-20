@@ -20,7 +20,7 @@ const registered = () => ({
   kind: "registered" as const,
   role: "worker" as const,
   capabilities: {
-    model: "openai-codex/gpt-6.1-sol",
+    model: "openai-codex/gpt-6.2-sol",
     reasoning: "medium" as const,
     tools: ["read", "grep", "workflow_audit"],
   },

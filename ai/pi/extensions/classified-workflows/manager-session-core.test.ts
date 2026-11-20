@@ -18,7 +18,7 @@ const input: ManagerSessionLaunchInput = {
   agentDir: "/state/pi/agent",
   piExecutable: "/state/pi/agent/bin/pi",
   provider: "openai-codex",
-  modelId: "gpt-6.1-sol",
+  modelId: "gpt-6.2-sol",
   existingPaneNames: [],
 }
 
@@ -66,7 +66,7 @@ test("native Pi's actual CLI parser accepts the launch flags without a startup m
   assert.equal(parsed.continue, true)
   assert.equal(parsed.noBuiltinTools, true)
   assert.equal(parsed.noExtensions, undefined)
-  assert.equal(parsed.model, "openai-codex/gpt-6.1-sol")
+  assert.equal(parsed.model, "openai-codex/gpt-6.2-sol")
   assert.equal(parsed.unknownFlags.get("manager-worker"), input.workerSessionId)
 })
 

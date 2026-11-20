@@ -313,7 +313,7 @@ each exact draft and obtain confirmation before creating it.
 6. The audit target is a synthetic diff against the empty tree — everything
    shown is in scope; "pre-existing/out of scope" never applies.
 7. The review runs as a single `Workflow` invocation per pass (review-core),
-   using read-only authenticated `openai-codex/gpt-6.1-sol` lanes through the
+   using read-only authenticated `openai-codex/gpt-6.2-sol` lanes through the
    active harness's classified workflow. Do not launch external model CLIs.
 8. **Filing deferred findings is gated**: show drafts, confirm, then create. Use
    GitHub issues with problem-only descriptions.

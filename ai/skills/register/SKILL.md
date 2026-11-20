@@ -229,7 +229,7 @@ lane. Session crons die with the session, so a fresh session re-arms by invoking
 
 ## Ask the owner instead of guessing
 
-Use the current authenticated `openai-codex/gpt-6.1-sol` for substantive work.
+Use the current authenticated `openai-codex/gpt-6.2-sol` for substantive work.
 Model identity does not establish facts or authority: resolve real missing
 requirements from repository/current owner evidence, and ask only when a genuine
 unsettled decision prevents safe execution.
@@ -270,6 +270,6 @@ agents, or touches credential files. Full-capability sessions are worker lanes
 and run the drain above.
 
 Generation beyond deterministic bookkeeping stays queued for a full-capability
-native Pi session using the current authenticated gpt-6.1-sol model. The
+native Pi session using the current authenticated gpt-6.2-sol model. The
 dispatcher never starts an external model worker, guesses through an ambiguous
 routing target, or stalls the queue waiting for an unavailable delegate.

@@ -175,7 +175,7 @@ const fixture = (t: test.TestContext) => {
     const partialUi: Partial<ExtensionUIContext> = ui
     const modelIdentity: Partial<NonNullable<ExtensionContext["model"]>> = {
       provider: "openai-codex",
-      id: "gpt-6.1-sol",
+      id: "gpt-6.2-sol",
     }
     const context = {
       mode: "tui",

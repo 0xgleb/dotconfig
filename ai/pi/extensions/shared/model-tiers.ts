@@ -29,9 +29,9 @@ const TIER_MODELS: Readonly<
   Record<string, Readonly<Record<ModelTier, string>>>
 > = {
   "openai-codex": {
-    top: "openai-codex/gpt-6.1-sol",
-    mid: "openai-codex/gpt-6.1-sol",
-    light: "openai-codex/gpt-6.1-sol",
+    top: "openai-codex/gpt-6.2-sol",
+    mid: "openai-codex/gpt-6.2-sol",
+    light: "openai-codex/gpt-6.2-sol",
   },
   "zai": {
     top: "zai/glm-5.3",

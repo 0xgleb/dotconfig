@@ -48,7 +48,7 @@ test("a failed native process reports a bounded typed cause without exposing std
   const result = await makeQuestionJudge({
     cwd: process.cwd(),
     execution: guard,
-    getModel: () => ({ provider: "openai-codex", id: "gpt-6.1-sol" }),
+    getModel: () => ({ provider: "openai-codex", id: "gpt-6.2-sol" }),
     onUnavailable: (value: unknown) => {
       cause = value
     },
