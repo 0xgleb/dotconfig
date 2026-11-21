@@ -1,5 +1,8 @@
 name: CI
 
+permissions:
+  contents: read
+
 on:
   push:
     branches: [master]
@@ -17,4 +20,14 @@ jobs:
         with:
           extra_nix_config: |
             experimental-features = nix-command flakes
+
       - run: nix --no-pure-eval flake check
+
+      - name: Typecheck Pi extensions
+        timeout-minutes: 10
+        run: |
+          nix --accept-flake-config --no-pure-eval develop .#default --command bash -euo pipefail -c '
+            cd ai/pi/extensions
+            npm ci --legacy-peer-deps --include=dev
+            npm run typecheck
+          '
