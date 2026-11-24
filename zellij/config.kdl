@@ -446,7 +446,7 @@ stacked_resize false
 // Choose the path to the default shell that zellij will use for opening new panes
 // Default: $SHELL
 // 
-// default_shell "fish"
+default_shell "/Users/0xgleb/.nix-profile/bin/nu"
 
 // Choose the path to override cwd that zellij will use for opening new panes
 // 

@@ -14,6 +14,20 @@ def "test swap panes do not contain template insertion points" [] {
   assert equal ($nested_children | length) 0
 }
 
+def "test new panes explicitly launch Nushell" [] {
+  let config = ($env.CURRENT_FILE
+    | path dirname
+    | path join "config.kdl"
+    | open --raw)
+  let shells = ($config
+    | lines
+    | parse --regex '^\s*default_shell\s+"(?<shell>[^"]+)"'
+    | get shell)
+
+  assert equal $shells ["/Users/0xgleb/.nix-profile/bin/nu"]
+  assert ($shells.0 | path exists)
+}
+
 def "test zellij configuration parses" [] {
   let result = (do { ^zellij setup --check } | complete)
 
