@@ -35,8 +35,27 @@ test("narrow panes shorten location before dropping context or model details", (
   assert.equal(visibleWidth(line), 68)
   assert.match(
     line,
-    /…\/dex-offender \(main\) +· +ctx 12\.3% of 372k +· +gpt-5\.6-sol \/ high/,
+    /\.\.\.\/dex-offender \(main\) +· +ctx 12\.3% of 372k +· +gpt-5\.6-sol \/ high/,
   )
+})
+
+test("narrow footer preserves a short home path without embedded color resets", () => {
+  const line = formatFooter(
+    {
+      ...input,
+      cwd: "~/.config",
+      branch: "gitbutler/workspace",
+      modelId: "gpt-6.2-sol",
+      contextWindow: 500_000,
+      contextPercent: 72.6,
+    },
+    70,
+  )
+  assert.equal(visibleWidth(line), 70)
+  assert.ok(line.includes("~/.config (gitbutler/workspace)"))
+  assert.ok(line.includes("500k") && line.includes("72.6%"))
+  assert.ok(line.includes("gpt-6.2-sol") && line.includes("high"))
+  assert.ok(!line.includes("\x1b"))
 })
 
 test("wide panes distribute groups across the available width", () => {

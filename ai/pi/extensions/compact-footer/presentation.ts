@@ -1,4 +1,4 @@
-import { truncateToWidth, visibleWidth } from "@earendil-works/pi-tui"
+import { visibleWidth } from "@earendil-works/pi-tui"
 import { alignChromeLine, chromeInset } from "../shared/chrome.ts"
 
 export interface FooterPresentation {
@@ -40,27 +40,27 @@ export function formatFooter(
   const available = Math.max(0, width - 2 * chromeInset(width))
   const metricWidth = visibleWidth(context) + visibleWidth(model)
   const locationBudget = available - metricWidth - 2 * separator.length
-  if (locationBudget < 1)
-    return alignFooterLine(`${context}${separator}${model}`, width)
-
   const branch = input.branch ? ` (${input.branch})` : ""
-  const branchWidth = visibleWidth(branch)
   const leaf = input.cwd.split("/").at(-1)
-  const shortLocation =
-    leaf && leaf !== input.cwd ? `…/${leaf}${branch}` : location
+  const candidate = leaf ? `.../${leaf}${branch}` : location
   const fittedLocation =
-    visibleWidth(location) <= locationBudget
-      ? location
-      : visibleWidth(shortLocation) <= locationBudget
-        ? shortLocation
-        : branchWidth < locationBudget
-          ? truncateToWidth(
-              leaf || input.cwd,
-              locationBudget - branchWidth,
-              "…",
-            ) + branch
-          : truncateToWidth(shortLocation, locationBudget, "…")
+    visibleWidth(location) > locationBudget &&
+    visibleWidth(candidate) < visibleWidth(location)
+      ? candidate
+      : location
   const slack = locationBudget - visibleWidth(fittedLocation)
+  if (slack < 0) {
+    const compactContext = `${contextPercent}/${formatTokens(input.contextWindow)}`
+    const compactModel = input.thinkingLevel
+      ? `${input.modelId}/${input.thinkingLevel}`
+      : model
+    let line = ""
+    for (const group of [fittedLocation, compactContext, compactModel]) {
+      const next = line ? `${line}${separator}${group}` : group
+      if (visibleWidth(next) <= available) line = next
+    }
+    return alignFooterLine(line, width)
+  }
   const firstGap = Math.floor(slack / 2)
   const secondGap = slack - firstGap
 
