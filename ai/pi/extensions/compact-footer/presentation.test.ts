@@ -23,16 +23,20 @@ test("footer is a single readable line with spaced groups", () => {
   assert.equal(footer.split("\n").length, 1)
   assert.equal(
     footer,
-    "~/code/st0x (feat/footer) ctx 12.3% of 372k gpt-5.6-sol / high",
+    "~/code/st0x (feat/footer) · ctx 12.3% of 372k · gpt-5.6-sol / high",
   )
 })
 
 test("narrow panes shorten location before dropping context or model details", () => {
-  const line = formatFooter(input, 52)
-  assert.equal(visibleWidth(line), 52)
-  assert.ok(line.includes("ctx 12.3% of 372k"))
-  assert.ok(line.trimEnd().endsWith("gpt-5.6-sol / high"))
-  assert.ok(line.includes("…"))
+  const line = formatFooter(
+    { ...input, cwd: "~/code/dataclique/dex-offender", branch: "main" },
+    68,
+  )
+  assert.equal(visibleWidth(line), 68)
+  assert.match(
+    line,
+    /…\/dex-offender \(main\) +· +ctx 12\.3% of 372k +· +gpt-5\.6-sol \/ high/,
+  )
 })
 
 test("wide panes distribute groups across the available width", () => {

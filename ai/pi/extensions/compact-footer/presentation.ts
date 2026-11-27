@@ -35,30 +35,41 @@ export function formatFooter(
     ? `${input.modelId} / ${input.thinkingLevel}`
     : input.modelId
 
-  if (width === undefined) return `${location} ${context} ${model}`
+  const separator = " · "
+  if (width === undefined) return [location, context, model].join(separator)
   const available = Math.max(0, width - 2 * chromeInset(width))
   const metricWidth = visibleWidth(context) + visibleWidth(model)
-  const locationBudget = available - metricWidth - 2
-  if (locationBudget < 1) return alignFooterLine(`${context} ${model}`, width)
+  const locationBudget = available - metricWidth - 2 * separator.length
+  if (locationBudget < 1)
+    return alignFooterLine(`${context}${separator}${model}`, width)
 
   const branch = input.branch ? ` (${input.branch})` : ""
   const branchWidth = visibleWidth(branch)
+  const leaf = input.cwd.split("/").at(-1)
+  const shortLocation =
+    leaf && leaf !== input.cwd ? `…/${leaf}${branch}` : location
   const fittedLocation =
     visibleWidth(location) <= locationBudget
       ? location
-      : branchWidth < locationBudget
-        ? truncateToWidth(input.cwd, locationBudget - branchWidth, "…") + branch
-        : truncateToWidth(location, locationBudget, "…")
-  const slack = available - visibleWidth(fittedLocation) - metricWidth
+      : visibleWidth(shortLocation) <= locationBudget
+        ? shortLocation
+        : branchWidth < locationBudget
+          ? truncateToWidth(
+              leaf || input.cwd,
+              locationBudget - branchWidth,
+              "…",
+            ) + branch
+          : truncateToWidth(shortLocation, locationBudget, "…")
+  const slack = locationBudget - visibleWidth(fittedLocation)
   const firstGap = Math.floor(slack / 2)
   const secondGap = slack - firstGap
 
+  const gap = (extra: number): string =>
+    " ".repeat(Math.floor(extra / 2)) +
+    separator +
+    " ".repeat(Math.ceil(extra / 2))
   return alignFooterLine(
-    fittedLocation +
-      " ".repeat(firstGap) +
-      context +
-      " ".repeat(secondGap) +
-      model,
+    fittedLocation + gap(firstGap) + context + gap(secondGap) + model,
     width,
   )
 }
