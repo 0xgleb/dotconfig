@@ -38,8 +38,10 @@ export default function compactRead(pi: ExtensionAPI): void {
   const originalRead = createReadTool(process.cwd())
   const originalEdit = createEditTool(process.cwd())
 
-  pi.on("session_start", (_event, ctx) => {
-    if (ctx.mode === "tui") ctx.ui.setToolsExpanded(true)
+  pi.on("session_start", (event, ctx) => {
+    if (event.reason === "startup" && ctx.mode === "tui") {
+      ctx.ui.setToolsExpanded(true)
+    }
   })
 
   pi.registerTool({
